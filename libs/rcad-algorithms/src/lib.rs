@@ -2801,6 +2801,56 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
     Ok(r)
 }
 
+/// Merge duplicate edges: when two or more edges connect the same vertex pair
+/// (start, end), remap all face wire references to use a single canonical edge.
+/// This fixes the 2× EDGE_CURVE count in BooleanBuilder results (P3) and any
+/// other code path that creates separate edge entries for shared boundaries.
+fn deduplicate_edges(mut brep: BRep) -> BRep {
+    use std::collections::HashMap;
+    use rcad_kernel::topology::WireEdge;
+
+    if brep.edges.len() < 2 { return brep; }
+
+    // Simple dedup by vertex INDEX (not position).  Merges redundant edges
+    // that the BooleanBuilder creates for the same (start, end) vertex pair.
+    // This is safe: it only remaps wire references, doesn't trim edges.
+    let mut canon: HashMap<(usize, usize), usize> = HashMap::new();
+    let mut remap: Vec<usize> = (0..brep.edges.len()).collect();
+    for ei in 0..brep.edges.len() {
+        if let Some(e) = brep.edges.get(ei) {
+            let key = if e.start < e.end { (e.start, e.end) } else { (e.end, e.start) };
+            let entry = canon.entry(key).or_insert(ei);
+            if *entry != ei {
+                remap[ei] = *entry;
+            }
+        }
+    }
+
+    // Remap wire edges in all faces (only once, no trimming).
+    let mut changed = false;
+    for solid in &mut brep.solids {
+        for shell in &mut solid.shells {
+            for face in &mut shell.faces {
+                fn do_remap(edges: &mut [WireEdge], remap: &[usize], changed: &mut bool) {
+                    for we in edges.iter_mut() {
+                        let new = remap[we.idx];
+                        if new != we.idx { *changed = true; we.idx = new; }
+                    }
+                }
+                do_remap(&mut face.outer_wire.edges, &remap, &mut changed);
+                for wire in &mut face.inner_wires {
+                    do_remap(&mut wire.edges, &remap, &mut changed);
+                }
+            }
+        }
+    }
+
+    // No edge trimming needed (keeping all edges preserves vertex indices).
+    // The remap ensures edges are SHARED between adjacent faces, which fixes
+    // the 2× EDGE_CURVE count in the STEP output for PaveFiller results.
+    brep
+}
+
 /// Post-process a boolean operation's BRep result: merge coplanar faces on
 /// the same plane, share edges between adjacent faces, and detect holes
 /// (inner wires) for faces with missing interior regions.
@@ -3023,16 +3073,19 @@ pub fn boolean_op_with_retry(
     b: &BRep,
 ) -> Result<BRep, BooleanError> {
     // First attempt: standard path including fast-paths (containment, box-box, etc.).
-    // Previously called boolean_op_pave_fill_build directly, which bypassed fast-paths
-    // and caused bcommon_simple box-box failures (e.g. E1 expected SA=4 got SA=5).
-    if let Ok(brep) = boolean_op(op, a, b) {
-        return Ok(brep);
-    }
-    // Fallback: retry with escalating tolerance.
-    boolean::boolean_op_with_retry_policy(
-        op, a, b, &RetryPolicy::conservative(), BooleanOptions::default(),
-    )
-    .map(|(brep, _report)| brep)
+    let brep = if let Ok(brep) = boolean_op(op, a, b) {
+        brep
+    } else {
+        // Fallback: retry with escalating tolerance.
+        boolean::boolean_op_with_retry_policy(
+            op, a, b, &RetryPolicy::conservative(), BooleanOptions::default(),
+        )
+        .map(|(brep, _report)| brep)?
+    };
+    // Edge deduplication: merge edges sharing the same geometric vertex pair.
+    // Applied to ALL boolean results (fast-paths + PaveFiller) so the STEP
+    // output has correct EDGE_CURVE counts matching OCCT references.
+    Ok(deduplicate_edges(brep))
 }
 
 /// Perform a boolean operation with advanced execution options and report.
