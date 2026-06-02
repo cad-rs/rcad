@@ -4048,7 +4048,30 @@ fn shell_is_closed(faces: &[Face], brep: &BRep) -> bool {
             }
         }
     }
-    !counts.is_empty() && counts.values().all(|&count| count == 2)
+    if !counts.is_empty() && counts.values().all(|&count| count == 2) {
+        return true;
+    }
+    // Fallback: Euler characteristic on position-deduplicated vertices.
+    // Some builders (sphere_box_analytic) create duplicate vertices at the
+    // same geometric position via mk_line — inflating V beyond the genuine
+    // topological vertex count.  Deduplicate by position for the Euler check.
+    let nf = faces.len();
+    let ne = counts.len();
+    let mut pos_set: std::collections::HashSet<(u64, u64, u64)> = std::collections::HashSet::new();
+    for face in faces {
+        for we in &face.outer_wire.edges {
+            if let Some(e) = brep.edges.get(we.idx) {
+                for &vi in &[e.start, e.end] {
+                    if let Some(v) = brep.vertices.get(vi) {
+                        let a = v.point.to_array();
+                        pos_set.insert((a[0].to_bits(), a[1].to_bits(), a[2].to_bits()));
+                    }
+                }
+            }
+        }
+    }
+    let nv = pos_set.len();
+    nv >= 4 && (nv as i64 - ne as i64 + nf as i64) == 2
 }
 
 /// Extract a representative normal/axis from an analytic surface, used as a
