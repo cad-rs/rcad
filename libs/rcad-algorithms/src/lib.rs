@@ -2796,8 +2796,10 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         }
     };
     // Topology optimization: merge coplanar faces, share edges, detect holes.
-    // Applied to every boolean result for consistent topology.
     let r = optimize_boolean_topology(r);
+    // Promote planar BSpline → Plane AFTER topology optimization to avoid
+    // perturbing orthogonal_face_fuse plane-equation matching: bspline_to_plane
+    // can introduce slight plane offsets that break coplanarity detection.
     let r = promote_planar_surfaces(r);
     Ok(r)
 }
