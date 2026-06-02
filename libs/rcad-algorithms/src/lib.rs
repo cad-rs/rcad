@@ -810,8 +810,8 @@ pub use shape_construct::{
 pub use shape_custom::{
     BSplineSimplifyOptions, ConversionReport, GeometryRestrictions, SimplificationResult,
     convert_to_bspline, curve_degree, ensure_bspline_curve, ensure_bspline_surface,
-    is_bspline_curve, is_bspline_surface, restrict_geometry, simplify_bspline_curve,
-    simplify_bspline_surface, surface_degrees,
+    is_bspline_curve, is_bspline_surface, restrict_geometry, restrict_to_bspline,
+    simplify_bspline_curve, simplify_bspline_surface, surface_degrees,
 };
 pub use shape_extend::{
     // ShapeExtend_CompositeSurface

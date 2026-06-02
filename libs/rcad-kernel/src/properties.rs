@@ -3021,12 +3021,29 @@ pub fn surface_area(brep: &BRep) -> f64 {
     let mut total = 0.0f64;
 
     for (_fi, f) in face_flat_iter(brep) {
-        let analytic = try_analytic_face_surface_area(brep, f, _fi);
-        let a = match analytic {
-            Some(sa) => sa,
-            None => {
-                let tris = face_triangles(brep, f, _fi);
-                tris.iter().map(|&[a, b, c]| tri_area(a, b, c)).sum()
+        // Pre-computed clean triangles take priority (e.g. Steinmetz analytic
+        // builder which tessellates each face accurately in UV space).  This
+        // avoids `short_delta_on_circle_01` picking the wrong direction for
+        // triangular faces that span >π on a cylinder's angular domain.
+        let has_clean_tris = !f.triangles.is_empty() && !f.mesh_dirty;
+        let analytic = if has_clean_tris {
+            None
+        } else {
+            try_analytic_face_surface_area(brep, f, _fi)
+        };
+        let a = if has_clean_tris {
+            f.triangles.iter().map(|&[a, b, c]| tri_area(
+                brep.vertices.get(a).map(|v| v.point).unwrap_or(DVec3::ZERO),
+                brep.vertices.get(b).map(|v| v.point).unwrap_or(DVec3::ZERO),
+                brep.vertices.get(c).map(|v| v.point).unwrap_or(DVec3::ZERO),
+            )).sum()
+        } else {
+            match analytic {
+                Some(sa) => sa,
+                None => {
+                    let tris = face_triangles(brep, f, _fi);
+                    tris.iter().map(|&[a, b, c]| tri_area(a, b, c)).sum()
+                }
             }
         };
         total += a;

@@ -2806,6 +2806,108 @@ fn build_perpendicular_cylinder_intersection(
         geom, compound: None, compsolid: None,
     })
 }
+fn build_steinmetz_brep(
+    c1: CylParams, c2: CylParams,
+    e1: &Ellipse3, e2: &Ellipse3,
+) -> Option<BRep> {
+    use std::f64::consts::{PI, TAU};
+    use rcad_kernel::topology::*;
+    use rcad_kernel::geom::*;
+    let r = c1.radius;
+    if (r - c2.radius).abs() > 1e-6 { return None; }
+    let minor_dir_1 = e1.normal.cross(e1.major_dir);
+    let minor_dir_2 = e2.normal.cross(e2.major_dir);
+    let eval_e1 = |t: f64| -> DVec3 {
+        e1.center + e1.major_radius * t.cos() * e1.major_dir
+                   + e1.minor_radius * t.sin() * minor_dir_1
+    };
+    let eval_e2 = |t: f64| -> DVec3 {
+        e2.center + e2.major_radius * t.cos() * e2.major_dir
+                   + e2.minor_radius * t.sin() * minor_dir_2
+    };
+    let p_v0 = eval_e2(0.0);
+    let p_v1 = eval_e1(0.0);
+    let p_v3 = eval_e1(PI / 2.0);
+    let p_v2 = eval_e1(3.0 * PI / 2.0);
+    let p_v4 = eval_e2(PI);
+    let mut brep = BRep::new();
+    macro_rules! add_v { ($p:expr) => {{ let i = brep.vertices.len(); brep.vertices.push(Vertex { point: $p }); i }}; }
+    let v0 = add_v!(p_v0);
+    let v1 = add_v!(p_v1);
+    let v2 = add_v!(p_v2);
+    let v3 = add_v!(p_v3);
+    let v4 = add_v!(p_v4);
+    macro_rules! add_edge {
+        ($s:expr, $e:expr, $curve:expr, $t0:expr, $t1:expr) => {{
+            let idx = brep.edges.len();
+            brep.edges.push(Edge { start: $s, end: $e });
+            let ci = brep.geom.curves.len();
+            brep.geom.curves.push($curve);
+            while brep.geom.edge_curve.len() <= idx {
+                brep.geom.edge_curve.push(None);
+                brep.geom.edge_curve_range.push(None);
+                brep.geom.edge_degenerated.push(false);
+            }
+            brep.geom.edge_curve[idx] = Some(ci);
+            brep.geom.edge_curve_range[idx] = Some([$t0, $t1]);
+            brep.geom.edge_pcurves.push(Vec::new());
+            idx
+        }};
+    }
+    let e1_32 = add_edge!(v2, v1, Curve3::Ellipse(*e1), 3.0*PI/2.0, TAU);
+    let e1_02 = add_edge!(v1, v3, Curve3::Ellipse(*e1), 0.0, PI/2.0);
+    let e1_23 = add_edge!(v3, v2, Curve3::Ellipse(*e1), PI/2.0, 3.0*PI/2.0);
+    let e2_32 = add_edge!(v2, v0, Curve3::Ellipse(*e2), 3.0*PI/2.0, TAU);
+    let e2_02 = add_edge!(v0, v3, Curve3::Ellipse(*e2), 0.0, PI/2.0);
+    let e2_2p = add_edge!(v3, v4, Curve3::Ellipse(*e2), PI/2.0, PI);
+    let e2_p3 = add_edge!(v4, v2, Curve3::Ellipse(*e2), PI, 3.0*PI/2.0);
+    let a_seam = add_edge!(v0, v1,
+        Curve3::Line(Line3 { origin: p_v0, direction: (p_v1 - p_v0).normalize() }),
+        0.0, (p_v1 - p_v0).length());
+    let b_seam = add_edge!(v1, v4,
+        Curve3::Line(Line3 { origin: p_v1, direction: (p_v4 - p_v1).normalize() }),
+        0.0, (p_v4 - p_v1).length());
+    let cyl_a_surf = Surface3::Cylinder(CylindricalSurface {
+        origin: c1.origin, axis: c1.axis, ref_dir: c1.any_perp, radius: r,
+    });
+    let cyl_b_surf = Surface3::Cylinder(CylindricalSurface {
+        origin: c2.origin, axis: c2.axis, ref_dir: c2.any_perp, radius: r,
+    });
+    // Face layout matching OCCT reference:
+    //   A1(CylA): +a_seam, -e1_32, +e2_32
+    //   A2(CylA): -e1_02, -a_seam, +e2_02
+    //   A3(CylA): -e2_2p, +e1_23, -e2_p3
+    //   B1(CylB): +e1_32, +b_seam, +e2_p3
+    //   B2(CylB): -e1_23, -e2_02, -e2_32
+    //   B3(CylB): -b_seam, +e1_02, +e2_2p
+    let face_defs: [(usize, &[(usize, bool)]); 6] = [
+        (0, &[(a_seam, true),  (e1_32, false), (e2_32, true) ]),
+        (0, &[(e1_02, false), (a_seam, false), (e2_02, true) ]),
+        (0, &[(e2_2p, false), (e1_23, true),  (e2_p3, false)]),
+        (1, &[(e1_32, true),  (b_seam, true),  (e2_p3, true) ]),
+        (1, &[(e1_23, false), (e2_02, false), (e2_32, false)]),
+        (1, &[(b_seam, false), (e1_02, true),  (e2_2p, true) ]),
+    ];
+    let mut shell_faces = Vec::new();
+    for (cyl_idx, oriented_edges) in &face_defs {
+        let wire_edges: Vec<WireEdge> = oriented_edges.iter().map(|&(ei, fwd)| {
+            if fwd { WireEdge::fwd(ei) } else { WireEdge::rev(ei) }
+        }).collect();
+        let surf_idx = brep.geom.surfaces.len();
+        brep.geom.surfaces.push(
+            if *cyl_idx == 0 { cyl_a_surf.clone() } else { cyl_b_surf.clone() }
+        );
+        brep.geom.face_surface.push(Some(surf_idx));
+        brep.geom.face_surface_range.push(None);
+        shell_faces.push(Face {
+            outer_wire: Wire { edges: wire_edges },
+            inner_wires: vec![], normal: DVec3::ZERO,
+            triangles: vec![], sample_point: None, mesh_dirty: true,
+        });
+    }
+    brep.solids.push(Solid { shells: vec![Shell { faces: shell_faces }] });
+    Some(brep)
+}
 
 #[derive(Clone, Copy)]
 struct CylParams {
@@ -2853,17 +2955,27 @@ pub fn try_intersection_cylinder_cylinder_perpendicular(a: &BRep, b: &BRep) -> O
     let result = intersect_cylinder_cylinder(&surf1, &surf2);
     match result {
         CylinderCylinderResult::TwoEllipses(ref e1, ref e2) => {
-            let p1 = CylParams { center: c1.0, axis: c1.1, radius: c1.2, height: c1.3, any_perp: c1.5, origin: c1.4 };
-            let p2 = CylParams { center: c2.0, axis: c2.1, radius: c2.2, height: c2.3, any_perp: c2.5, origin: c2.4 };
-            build_perpendicular_cylinder_intersection(p1, p2, e1, e2)
+            build_steinmetz_brep(
+                CylParams { center: c1.0, axis: c1.1, radius: c1.2, height: c1.3, any_perp: c1.5, origin: c1.4 },
+                CylParams { center: c2.0, axis: c2.1, radius: c2.2, height: c2.3, any_perp: c2.5, origin: c2.4 },
+                e1, e2,
+            )
         }
-        CylinderCylinderResult::PerpendicularOffsetCurves { .. } => {
-            let p1 = CylParams { center: c1.0, axis: c1.1, radius: c1.2, height: c1.3, any_perp: c1.5, origin: c1.4 };
-            let p2 = CylParams { center: c2.0, axis: c2.1, radius: c2.2, height: c2.3, any_perp: c2.5, origin: c2.4 };
-            // Mesh-only for offset curves (non-equal radius or offset axes).
-            build_perpendicular_cylinder_intersection(p1, p2, &Ellipse3 { center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X, major_radius: 1.0, minor_radius: 1.0 }, &Ellipse3 { center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X, major_radius: 1.0, minor_radius: 1.0 })
+        CylinderCylinderResult::TwoCircles(ref c1c, ref c2c) => {
+            let to_ellipse = |c: &Circle3| -> Ellipse3 {
+                let perp = if c.normal.x.abs() > 0.1 || c.normal.y.abs() > 0.1 {
+                    DVec3::new(-c.normal.y, c.normal.x, 0.0).normalize()
+                } else { DVec3::new(1.0, 0.0, 0.0) };
+                Ellipse3 { center: c.center, normal: c.normal, major_dir: perp, major_radius: c.radius, minor_radius: c.radius }
+            };
+            let e1 = to_ellipse(c1c); let e2 = to_ellipse(c2c);
+            build_steinmetz_brep(
+                CylParams { center: c1.0, axis: c1.1, radius: c1.2, height: c1.3, any_perp: c1.5, origin: c1.4 },
+                CylParams { center: c2.0, axis: c2.1, radius: c2.2, height: c2.3, any_perp: c2.5, origin: c2.4 },
+                &e1, &e2,
+            )
         }
-        _ => None, // Fall through to PaveFiller
+        _ => None,
     }
 }
 
@@ -13630,13 +13742,12 @@ fn try_intersect_cylinder_box_one_dir(cyl_brep: &BRep, box_brep: &BRep) -> Optio
     let full_v = cv - cyl_r >= -ev - tol && cv + cyl_r <= ev + tol;
 
     if full_u && full_v {
-        // Full XY containment: build sub-cylinder for the intersection Z range.
+        // Full XY containment: build sub-cylinder with 4 lateral quadrant faces
+        // (matching OCCT topology when the cylinder touches box faces tangentially).
         let h = inter_hi - inter_lo;
         let cz = inter_lo + h / 2.0;
-        return make_cylinder_brep(
-            DVec3::new(cyl_center.x, cyl_center.y, cz),
-            cyl_axis, u_ax, cyl_r, h,
-        ).ok();
+        let center = DVec3::new(cyl_center.x, cyl_center.y, cz);
+        return Some(build_cylinder_quadrant_brep(center, cyl_axis, u_ax, cyl_r, h));
     }
 
     // Collect clip planes from all partially-contained axes.
@@ -14538,3 +14649,84 @@ mod tests {
         }
     }}
 
+/// Build a cylinder split into 4 lateral quadrant faces + 2 planar caps.
+fn build_cylinder_quadrant_brep(
+    center: DVec3, axis: DVec3, ref_dir: DVec3, r: f64, h: f64,
+) -> BRep {
+    use std::f64::consts::PI;
+    let half_h = h * 0.5;
+    let v_dir = axis.cross(ref_dir).normalize();
+    let lo = center - half_h * axis;
+    let hi = center + half_h * axis;
+    let mut brep = BRep::new();
+    macro_rules! v { ($p:expr) => {{ let i = brep.vertices.len(); brep.vertices.push(Vertex { point: $p }); i }}; }
+    let angles = [0.0, PI / 2.0, PI, 3.0 * PI / 2.0];
+    let mut b = [0usize; 4]; let mut t = [0usize; 4];
+    for (i, &ang) in angles.iter().enumerate() {
+        let p_on_cyl = |z: DVec3| -> DVec3 { z + r * (ang.cos() * ref_dir + ang.sin() * v_dir) };
+        b[i] = v!(p_on_cyl(lo)); t[i] = v!(p_on_cyl(hi));
+    }
+    macro_rules! e {
+        ($s:expr, $e:expr, $curve:expr, $t0:expr, $t1:expr) => {{
+            let idx = brep.edges.len();
+            brep.edges.push(Edge { start: $s, end: $e });
+            let ci = brep.geom.curves.len(); brep.geom.curves.push($curve);
+            while brep.geom.edge_curve.len() <= idx {
+                brep.geom.edge_curve.push(None); brep.geom.edge_curve_range.push(None);
+                brep.geom.edge_degenerated.push(false);
+            }
+            brep.geom.edge_curve[idx] = Some(ci);
+            brep.geom.edge_curve_range[idx] = Some([$t0, $t1]);
+            brep.geom.edge_pcurves.push(Vec::new());
+            idx
+        }};
+    }
+    let mut gens = [0usize; 4];
+    for i in 0..4 {
+        let dir = (brep.vertices[t[i]].point - brep.vertices[b[i]].point).normalize();
+        gens[i] = e!(b[i], t[i],
+            Curve3::Line(Line3 { origin: brep.vertices[b[i]].point, direction: dir }), 0.0, h);
+    }
+    let cyl_surf_3 = Surface3::Cylinder(CylindricalSurface { origin: lo, axis, ref_dir, radius: r });
+    let bot_c = lo; let top_c = hi;
+    let mut bot_arcs = [0usize; 4]; let mut top_arcs = [0usize; 4];
+    for i in 0..4 {
+        let j = (i + 1) % 4;
+        let a0 = angles[i]; let a1 = angles[j];
+        bot_arcs[i] = e!(b[i], b[j],
+            Curve3::Circle(Circle3 { center: bot_c, normal: axis, radius: r }), a0, a1);
+        top_arcs[i] = e!(t[i], t[j],
+            Curve3::Circle(Circle3 { center: top_c, normal: axis, radius: r }), a0, a1);
+    }
+    let cyl_id = brep.geom.surfaces.len(); brep.geom.surfaces.push(cyl_surf_3.clone());
+    let bp_id = brep.geom.surfaces.len(); brep.geom.surfaces.push(Surface3::Plane(Plane { origin: bot_c, normal: -axis }));
+    let tp_id = brep.geom.surfaces.len(); brep.geom.surfaces.push(Surface3::Plane(Plane { origin: top_c, normal: axis }));
+    let mut faces = Vec::new();
+    for i in 0..4 {
+        let j = (i + 1) % 4;
+        let wire_edges = vec![
+            WireEdge::fwd(gens[i]), WireEdge::rev(top_arcs[i]),
+            WireEdge::rev(gens[j]), WireEdge::fwd(bot_arcs[i]),
+        ];
+        let fs = brep.geom.surfaces.len(); brep.geom.surfaces.push(cyl_surf_3.clone());
+        brep.geom.face_surface.push(Some(fs)); brep.geom.face_surface_range.push(None);
+        faces.push(Face { outer_wire: Wire { edges: wire_edges }, inner_wires: vec![],
+            normal: DVec3::ZERO, triangles: vec![], sample_point: None, mesh_dirty: true });
+    }
+    // Bottom cap (normal = -axis, outward)
+    {
+        let wire_edges: Vec<WireEdge> = (0..4).map(|i| WireEdge::fwd(bot_arcs[i])).collect();
+        brep.geom.face_surface.push(Some(bp_id)); brep.geom.face_surface_range.push(None);
+        faces.push(Face { outer_wire: Wire { edges: wire_edges }, inner_wires: vec![],
+            normal: -axis, triangles: vec![], sample_point: None, mesh_dirty: true });
+    }
+    // Top cap (normal = axis, outward)
+    {
+        let wire_edges: Vec<WireEdge> = (0..4).map(|i| WireEdge::fwd(top_arcs[i])).collect();
+        brep.geom.face_surface.push(Some(tp_id)); brep.geom.face_surface_range.push(None);
+        faces.push(Face { outer_wire: Wire { edges: wire_edges }, inner_wires: vec![],
+            normal: axis, triangles: vec![], sample_point: None, mesh_dirty: true });
+    }
+    brep.solids.push(Solid { shells: vec![Shell { faces }] });
+    brep
+}
