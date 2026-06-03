@@ -828,8 +828,11 @@ pub fn try_union_axis_aligned_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
                 );
             }
         }
-        // Gap, edge/vertex contact, or partial-face touch: keep separate.
-        return Some(BRep::compound_from_shapes(&[a.clone(), b.clone()]));
+        // Gap, edge/vertex contact, or partial-face touch: let the general
+        // PaveFiller path handle it (may fuse the touching faces into a single
+        // solid).  Returning a compound from here skips the PaveFiller and leaves
+        // the boxes as separate solids with no shared-edge topology.
+        return None;
     }
     // Positive-volume overlap.
     // Containment: if one box entirely contains the other, return the larger.
