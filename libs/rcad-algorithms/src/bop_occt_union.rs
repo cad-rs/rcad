@@ -457,11 +457,40 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     validate_union_brep_output("union: result failed checks after build", &result)?;
     // Sew boolean seam vertices so coplanar edge-adjacent patches share endpoints; orthogonal
     // fuse / `unify_same_domain_faces` need coincident topology to merge remaining fragments.
-    let (sewn, _) = merge_close_vertices(&result, crate::tolerance::TOLERANCE_ABS * 64.0);
+    let (sewn, _) = merge_close_vertices(&result, crate::tolerance::TOLERANCE_ABS * 1000.0);
     result = sewn;
-    // Dedup edges by vertex index after vertex merge so coplanar
-    // adjacent sub-faces share boundary edges (closes the shell).
-    use crate::deduplicate_edges;
+    // Position-based edge dedup: merge edges at the same geometric endpoints.
+    // After merge_close_vertices, most vertices are merged but some edge pairs
+    // still connect different vertex indices at the same positions (PaveFiller
+    // noise > 6.4e-6 tolerance).  Use 1e-5 quantization to catch these.
+    {
+        use std::collections::HashMap;
+        let inv = 1.0 / 1e-5;
+        let q = |p: glam::DVec3| -> (i64, i64, i64) {
+            ((p.x * inv).round() as i64, (p.y * inv).round() as i64, (p.z * inv).round() as i64)
+        };
+        let vpos: Vec<glam::DVec3> = result.vertices.iter().map(|v| v.point).collect();
+        let mut canon: Vec<usize> = (0..result.edges.len()).collect();
+        let mut geom: HashMap<((i64,i64,i64),(i64,i64,i64)), usize> = HashMap::new();
+        for ei in 0..result.edges.len() {
+            if let Some(e) = result.edges.get(ei) {
+                let a = q(vpos[e.start]); let b = q(vpos[e.end]);
+                let key = if a < b { (a, b) } else { (b, a) };
+                let entry = geom.entry(key).or_insert(ei);
+                if *entry != ei { canon[ei] = *entry; }
+            }
+        }
+        for s in &mut result.solids {
+            for sh in &mut s.shells {
+                for face in &mut sh.faces {
+                    for we in &mut face.outer_wire.edges { we.idx = canon[we.idx]; }
+                    for w in &mut face.inner_wires { for we in &mut w.edges { we.idx = canon[we.idx]; } }
+                }
+            }
+        }
+    }
+    // Index-based edge dedup (catches any remaining duplicates).
+    result = crate::deduplicate_edges(result);
     geom_populate::recompute_plane_surfaces(&mut result);
     validate_union_brep_output("union: result failed checks after vertex merge", &result)?;
     let checkpoint = result.clone();

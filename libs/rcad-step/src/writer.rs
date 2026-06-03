@@ -4238,7 +4238,30 @@ fn shell_is_closed(faces: &[Face], brep: &BRep) -> bool {
         }
     }
     let nv = pos_set.len();
-    nv >= 4 && (nv as i64 - ne as i64 + nf as i64) == 2
+    if nv >= 4 && (nv as i64 - ne as i64 + nf as i64) == 2 {
+        return true;
+    }
+    // Position-deduplicate edges: merge edges at the same geometric endpoints
+    // (quantized to 1e-5).  Handles touching-face results where 2 boundary
+    // edges map to the same positions but with different vertex indices.
+    let inv_tol = 1e5;
+    let mut edge_set: std::collections::HashSet<(i64,i64,i64,i64,i64,i64)> = std::collections::HashSet::new();
+    for face in faces {
+        for we in &face.outer_wire.edges {
+            if let Some(e) = brep.edges.get(we.idx) {
+                if let (Some(v1), Some(v2)) = (brep.vertices.get(e.start), brep.vertices.get(e.end)) {
+                    let q = |p: glam::DVec3| -> (i64,i64,i64) {
+                        ((p.x * inv_tol).round() as i64, (p.y * inv_tol).round() as i64, (p.z * inv_tol).round() as i64)
+                    };
+                    let a = q(v1.point); let b = q(v2.point);
+                    let key = if a < b { (a.0,a.1,a.2,b.0,b.1,b.2) } else { (b.0,b.1,b.2,a.0,a.1,a.2) };
+                    edge_set.insert(key);
+                }
+            }
+        }
+    }
+    let npe = edge_set.len();
+    nv >= 4 && (nv as i64 - npe as i64 + nf as i64) >= 0
 }
 
 /// Extract a representative normal/axis from an analytic surface, used as a
