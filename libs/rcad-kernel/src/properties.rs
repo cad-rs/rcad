@@ -1431,6 +1431,7 @@ fn try_planar_face_area_shoelace(
 ) -> Option<f64> {
     if face.inner_wires.is_empty() {
         if let Some(a_rect) = try_axis_aligned_world_rect_plane_area(brep, face, face_normal) {
+            // axis-aligned rect path
             let mut outer = sample_wire_polyline_3d(brep, &face.outer_wire);
             trim_almost_closed_polyline(&mut outer, 1e-5);
             if outer.len() >= 3 {
@@ -2446,13 +2447,65 @@ fn try_analytic_face_surface_area(
         Surface3::Plane(_) => {
             // Exact arc-aware contour area (handles circular arc edges from
             // sphere-plane intersection analytically).  Falls back to shoelace.
-            try_planar_face_exact_contour_area(brep, face, face.normal)
-                .or_else(|| try_planar_face_area_shoelace(brep, face, face.normal))
+            let a = try_planar_face_exact_contour_area(brep, face, face.normal)
+                .or_else(|| try_planar_face_area_shoelace(brep, face, face.normal));
+            if a.is_some() { return a; }
+            // Vertex-polygon fallback: the main shoelace path can return None
+            // for valid planar faces with boolean-T-junction scrambled wires
+            // or curves that the exact-contour handler cannot process.
+            let pts: Vec<DVec3> = face.outer_wire.edges.iter().filter_map(|we| {
+                let e = brep.edges.get(we.idx)?;
+                let vi = if we.forward { e.start } else { e.end };
+                brep.vertices.get(vi).map(|v| v.point)
+            }).collect();
+            if pts.len() >= 3 {
+                let n = face.normal;
+                let (ux, uy) = local_basis_from_normal(n);
+                let mut area2 = 0.0;
+                for i in 0..pts.len() {
+                    let a = pts[i];
+                    let b = pts[(i + 1) % pts.len()];
+                    area2 += (a.dot(ux)) * (b.dot(uy)) - (b.dot(ux)) * (a.dot(uy));
+                }
+                let v = 0.5 * area2.abs();
+                if v > 0.0 && v.is_finite() { return Some(v); }
+            }
+            None
         }
         // Planar BSpline/Bezier (e.g. from nurbsconvert): use shoelace.
-        Surface3::BSpline(bsp) if bsp.control_points.iter().all(|r| r.len() >= 2) && crate::geom::bspline_is_planar(bsp, 1e-12) => {
+        Surface3::BSpline(bsp) => {
+            // Try multiple tolerances: restrict_to_bspline can introduce tiny
+            // numerical deviations in control points for an exactly-planar surface.
+            let is_p12 = crate::geom::bspline_is_planar(bsp, 1e-12);
+            let is_p7 = crate::geom::bspline_is_planar(bsp, 1e-7);
+            let is_p4 = crate::geom::bspline_is_planar(bsp, 1e-4);
+            if !is_p12 && !is_p7 && !is_p4 { return None; }
             let plane = crate::geom::bspline_to_plane(bsp);
-            try_planar_face_area_shoelace(brep, face, plane.normal)
+            let sa = try_planar_face_area_shoelace(brep, face, plane.normal);
+            if sa.is_some() { return sa; }
+            // Fallback: compute polygon area from face vertices directly.
+            // The primary shoelace path can return None for valid planar
+            // BSpline faces when the dense-sampled polyline is unreliable
+            // (boolean T-junction wire reordering, bspline edge evaluation
+            // noise from restrict_to_bspline).  The mesh vertices are exact.
+            let pts: Vec<DVec3> = face.outer_wire.edges.iter().filter_map(|we| {
+                let e = brep.edges.get(we.idx)?;
+                let vi = if we.forward { e.start } else { e.end };
+                brep.vertices.get(vi).map(|v| v.point)
+            }).collect();
+            if pts.len() >= 3 {
+                let n = plane.normal;
+                let (ux, uy) = local_basis_from_normal(n);
+                let mut area2 = 0.0;
+                for i in 0..pts.len() {
+                    let a = pts[i];
+                    let b = pts[(i + 1) % pts.len()];
+                    area2 += (a.dot(ux)) * (b.dot(uy)) - (b.dot(ux)) * (a.dot(uy));
+                }
+                let a = 0.5 * area2.abs();
+                if a > 0.0 && a.is_finite() { return Some(a); }
+            }
+            try_planar_face_area_shoelace(brep, face, face.normal)
         }
         Surface3::Bezier(bez) if bez.control_points.len() >= 2 && bez.control_points.iter().all(|r| r.len() >= 2) => {
             let degree_u = bez.control_points.len().saturating_sub(1);
@@ -3085,26 +3138,26 @@ pub fn surface_area(brep: &BRep) -> f64 {
     let mut total = 0.0f64;
 
     for (_fi, f) in face_flat_iter(brep) {
-        // Pre-computed clean triangles take priority (e.g. Steinmetz analytic
-        // builder which tessellates each face accurately in UV space).  This
-        // avoids `short_delta_on_circle_01` picking the wrong direction for
+        // Pre-computed clean triangles (e.g. Steinmetz analytic builder which
+        // tessellates each face accurately in UV space) avoid
+        // `short_delta_on_circle_01` picking the wrong direction for
         // triangular faces that span >π on a cylinder's angular domain.
+        // HOWEVER: `mesh_brep` (called after boolean pipeline) tessellates
+        // sphere faces using the full default UV domain [0,2π]×[-π/2,π/2]
+        // instead of the trimmed portion, producing wrong triangles for
+        // trimmed spherical sub-faces.  Always try analytic first.
+        let analytic = try_analytic_face_surface_area(brep, f, _fi);
         let has_clean_tris = !f.triangles.is_empty() && !f.mesh_dirty;
-        let analytic = if has_clean_tris {
-            None
-        } else {
-            try_analytic_face_surface_area(brep, f, _fi)
-        };
-        let a = if has_clean_tris {
-            f.triangles.iter().map(|&[a, b, c]| tri_area(
-                brep.vertices.get(a).map(|v| v.point).unwrap_or(DVec3::ZERO),
-                brep.vertices.get(b).map(|v| v.point).unwrap_or(DVec3::ZERO),
-                brep.vertices.get(c).map(|v| v.point).unwrap_or(DVec3::ZERO),
-            )).sum()
-        } else {
-            match analytic {
-                Some(sa) => sa,
-                None => {
+        let a = match analytic {
+            Some(sa) => sa,
+            None => {
+                if has_clean_tris {
+                    f.triangles.iter().map(|&[a, b, c]| tri_area(
+                        brep.vertices.get(a).map(|v| v.point).unwrap_or(DVec3::ZERO),
+                        brep.vertices.get(b).map(|v| v.point).unwrap_or(DVec3::ZERO),
+                        brep.vertices.get(c).map(|v| v.point).unwrap_or(DVec3::ZERO),
+                    )).sum()
+                } else {
                     let tris = face_triangles(brep, f, _fi);
                     tris.iter().map(|&[a, b, c]| tri_area(a, b, c)).sum()
                 }
@@ -3112,6 +3165,14 @@ pub fn surface_area(brep: &BRep) -> f64 {
         };
         total += a;
 
+        if cfg!(debug_assertions) && std::env::var("RCAD_DEBUG_SA").is_ok() {
+            let vname = brep.geom.face_surface.get(_fi).copied().flatten()
+                .and_then(|si| brep.geom.surfaces.get(si))
+                .map(|s| match s { Surface3::Plane(_) => "Plane", Surface3::BSpline(_) => "BSpline", Surface3::Sphere(_) => "Sphere", Surface3::Cylinder(_) => "Cylinder", _ => "Other" })
+                .unwrap_or("none");
+            eprintln!("[SA_FACE] fi={} surf={} analytic={:?} area={:.6} n_tris={} mesh_dirty={}",
+                _fi, vname, analytic, a, f.triangles.len(), f.mesh_dirty);
+        }
         // CI assertion: warn if any face has no surface reference (mesh-only fast-path).
         // All boolean results should have proper analytic surfaces for exact SA.
         if analytic.is_none() && !f.triangles.is_empty() && cfg!(debug_assertions) {

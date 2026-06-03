@@ -3119,7 +3119,7 @@ fn deduplicate_surfaces(mut brep: BRep) -> BRep {
     let n = brep.geom.surfaces.len();
     if n < 2 { return brep; }
     let ang_tol = 1e-6;  // TOLERANCE_ANG_HEURISTIC_RAD
-    let lin_tol = 1e-6;  // TOLERANCE_PARAM_LEGACY
+    let lin_tol = crate::tolerance::TOLERANCE_PLANE_DIST_RELAX;  // 5e-6 — PaveFiller numerical noise exceeds 1e-6
 
     // Compute a canonical index for each surface.
     let mut canon: Vec<usize> = (0..n).collect();
