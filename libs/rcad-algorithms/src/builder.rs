@@ -633,7 +633,7 @@ impl ResultBuilder {
             .map(|point| Vertex { point })
             .collect();
 
-        let edges = self
+        let mut edges: Vec<Edge> = self
             .edges
             .into_iter()
             .map(|(start, end)| Edge { start, end })
@@ -675,6 +675,37 @@ impl ResultBuilder {
             geom.surfaces.push(surface);
             geom.face_surface.push(Some(surf_idx));
             geom.face_surface_range.push(uv_domain);
+        }
+
+        // Remove edges referenced by only 1 face (leftover from ON-face removal
+        // in Union, where touching-face boundary edges become orphaned).
+        if !edges.is_empty() {
+            let mut edge_refs = vec![0usize; edges.len()];
+            for f in &faces {
+                for we in &f.outer_wire.edges { if we.idx < edge_refs.len() { edge_refs[we.idx] += 1; } }
+                for w in &f.inner_wires { for we in &w.edges { if we.idx < edge_refs.len() { edge_refs[we.idx] += 1; } } }
+            }
+            let mut remap: Vec<usize> = (0..edges.len()).collect();
+            let mut kept: Vec<rcad_kernel::Edge> = Vec::new();
+            for ei in 0..edges.len() {
+                if edge_refs[ei] >= 2 {
+                    remap[ei] = kept.len();
+                    kept.push(edges[ei].clone());
+                } else {
+                    remap[ei] = usize::MAX;
+                }
+            }
+            for f in &mut faces {
+                for we in &mut f.outer_wire.edges { we.idx = remap[we.idx]; }
+                for w in &mut f.inner_wires { for we in &mut w.edges { we.idx = remap[we.idx]; } }
+            }
+            // Remove wire edges whose remap was MAX (orphaned) and faces with <3 edges.
+            for f in &mut faces {
+                f.outer_wire.edges.retain(|we| we.idx != usize::MAX);
+                for w in &mut f.inner_wires { w.edges.retain(|we| we.idx != usize::MAX); }
+            }
+            faces.retain(|f| f.outer_wire.edges.len() >= 3);
+            edges = kept;
         }
 
         let history = BooleanHistory {
