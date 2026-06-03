@@ -13485,6 +13485,8 @@ pub fn snap_planar_brep_vertices(brep: &BRep) -> BRep {
         return brep.clone();
     }
 
+    let sa_before = crate::brep_algo::total_surface_area(brep);
+
     // Build vertex to face adjacency
     let mut vertex_faces: Vec<Vec<usize>> = vec![Vec::new(); n_verts];
     let mut flat_fi = 0usize;
