@@ -13463,6 +13463,7 @@ fn merge_faces_in_shell(brep: &BRep, faces: &[Face], tolerance: f64) -> (Vec<Fac
 /// on multi-step boolean chains (bcut_simple J/K/L series).
 pub fn snap_planar_brep_vertices(brep: &BRep) -> BRep {
     if !all_faces_are_planes(brep) {
+        eprintln!("snap_planar_brep_vertices: SKIP (non-planar faces, {} total)", brep.vertices.len());
         return brep.clone();
     }
 
@@ -13470,6 +13471,7 @@ pub fn snap_planar_brep_vertices(brep: &BRep) -> BRep {
     if n_verts == 0 {
         return brep.clone();
     }
+    eprintln!("snap_planar_brep_vertices: {} vertices", n_verts);
 
     // Build vertex to face adjacency
     let mut vertex_faces: Vec<Vec<usize>> = vec![Vec::new(); n_verts];
