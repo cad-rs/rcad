@@ -2680,6 +2680,7 @@ macro_rules! try_fast_path {
 }
 
 fn finalize_fast_path_result(r: BRep) -> BRep {
+    let (r, _) = crate::brep_repair::merge_close_vertices(&r, crate::tolerance::TOLERANCE_ABS * 64.0);
     let r = deduplicate_edges(r);
     let closure = crate::brep_check::validate_solid_closure(&r);
     let has_open_closure = closure.issues.iter().any(|issue| {
@@ -2779,6 +2780,9 @@ fn preserve_full_circle_hole_cylinder_topology(brep: &BRep) -> bool {
 }
 
 fn finalize_boolean_result(r: BRep) -> BRep {
+    // Sew close vertices so edge-adjacent patches share endpoints for
+    // deduplicate_edges and unify_same_domain_faces (same as fast path).
+    let (r, _) = crate::brep_repair::merge_close_vertices(&r, crate::tolerance::TOLERANCE_ABS * 64.0);
     // Edge deduplication BEFORE topology optimization so that face adjacency
     // detection in unify_same_domain_faces works correctly (it uses edge INDEX
     // to find adjacent faces; the PaveFiller creates duplicate edges at the
@@ -2962,6 +2966,11 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
             r
         }
     };
+    // Sew close vertices before finalize so edge-adjacent patches share endpoints.
+    // Without this the PaveFiller's vertex-position noise (>1e-6) prevents
+    // deduplicate_edges from merging edges, which blocks unify_same_domain_faces
+    // from merging faces — the root cause of 2× over-splitting in Difference ops.
+    let (r, _) = crate::brep_repair::merge_close_vertices(&r, crate::tolerance::TOLERANCE_ABS * 64.0);
     Ok(finalize_boolean_result(r))
 }
 
