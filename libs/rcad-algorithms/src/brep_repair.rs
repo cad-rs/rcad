@@ -50,11 +50,25 @@ fn make_connected_has_future_tolerance_increase(
 }
 
 /// Returns true if every face in the BRep has a Plane surface.
+/// Iterates actual shell faces (not `geom.face_surface` directly, which may be
+/// stale after internal face removal in sew_slabs_into_solid).
 fn all_faces_are_planes(brep: &BRep) -> bool {
-    brep.geom.face_surface.iter().all(|opt| {
-        opt.and_then(|si| brep.geom.surfaces.get(si))
-            .map_or(false, |s| matches!(s, Surface3::Plane(_)))
-    })
+    let mut flat_fi = 0usize;
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for _face in &shell.faces {
+                let is_plane = brep.geom.face_surface.get(flat_fi)
+                    .and_then(|opt| *opt)
+                    .and_then(|si| brep.geom.surfaces.get(si))
+                    .map_or(false, |s| matches!(s, Surface3::Plane(_)));
+                if !is_plane {
+                    return false;
+                }
+                flat_fi += 1;
+            }
+        }
+    }
+    true
 }
 
 /// Collect the set of vertex indices referenced by a face (outer + inner wires).
@@ -13463,34 +13477,6 @@ fn merge_faces_in_shell(brep: &BRep, faces: &[Face], tolerance: f64) -> (Vec<Fac
 /// on multi-step boolean chains (bcut_simple J/K/L series).
 pub fn snap_planar_brep_vertices(brep: &BRep) -> BRep {
     if !all_faces_are_planes(brep) {
-        let n_planar = brep.geom.face_surface.iter().filter(|opt| {
-            opt.and_then(|si| brep.geom.surfaces.get(si)).map_or(false, |s| matches!(s, Surface3::Plane(_)))
-        }).count();
-        let n_total = brep.geom.face_surface.len();
-        // Count each surface type for debugging
-        use std::fmt::Write;
-        let mut type_counts = std::collections::HashMap::<&str, usize>::new();
-        for opt in &brep.geom.face_surface {
-            if let Some(si) = opt {
-                if let Some(s) = brep.geom.surfaces.get(*si) {
-                    let name = match s {
-                        Surface3::Plane(_) => "Plane",
-                        Surface3::Cylinder(_) => "Cylinder",
-                        Surface3::Cone(_) => "Cone",
-                        Surface3::Sphere(_) => "Sphere",
-                        Surface3::Torus(_) => "Torus",
-                        Surface3::BSpline(_) => "BSpline",
-                        _ => "Other",
-                    };
-                    *type_counts.entry(name).or_insert(0) += 1;
-                }
-            }
-        }
-        let mut type_str = String::new();
-        for (name, count) in &type_counts {
-            let _ = write!(type_str, " {name}={count}");
-        }
-        eprintln!("snap_planar_brep_vertices: SKIP (non-planar, {} faces, {} planar, types:[{}], {} verts)", n_total, n_planar, type_str, brep.vertices.len());
         return brep.clone();
     }
 
@@ -13498,7 +13484,6 @@ pub fn snap_planar_brep_vertices(brep: &BRep) -> BRep {
     if n_verts == 0 {
         return brep.clone();
     }
-    eprintln!("snap_planar_brep_vertices: {} vertices", n_verts);
 
     // Build vertex to face adjacency
     let mut vertex_faces: Vec<Vec<usize>> = vec![Vec::new(); n_verts];
