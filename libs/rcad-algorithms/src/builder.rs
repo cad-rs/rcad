@@ -704,7 +704,19 @@ impl ResultBuilder {
                 f.outer_wire.edges.retain(|we| we.idx != usize::MAX);
                 for w in &mut f.inner_wires { w.edges.retain(|we| we.idx != usize::MAX); }
             }
+            let pre_retain_count = faces.len();
+            let should_keep: Vec<bool> = faces.iter().map(|f| f.outer_wire.edges.len() >= 3).collect();
             faces.retain(|f| f.outer_wire.edges.len() >= 3);
+            // Trim face_origins to match surviving faces (parallel Vec).
+            let mut new_origins: Vec<FaceOrigin> = Vec::with_capacity(faces.len());
+            for (i, keep) in should_keep.iter().enumerate() {
+                if *keep {
+                    if let Some(o) = self.face_origins.get(i) {
+                        new_origins.push(*o);
+                    }
+                }
+            }
+            self.face_origins = new_origins;
             edges = kept;
         }
 
