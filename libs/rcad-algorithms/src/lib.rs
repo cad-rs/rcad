@@ -2952,6 +2952,10 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         // redirect to box ∩ cylinder.  The Pave-Filler cannot correctly process
         // BReps with inner-wire topology (e.g. the M3 test pattern).
         try_fast_path!(boolean_unit_octant::try_difference_box_minus_brep_with_hole(a, b), "try_difference_box_minus_brep_with_hole");
+        // Fast-path: bbox-disjoint Difference → return A unchanged.
+        // Avoids PaveFiller overhead for multi-step chains where the tool
+        // doesn't overlap the workpiece (bcut_simple J/K/L cases).
+        try_fast_path!(boolean_unit_octant::try_difference_disjoint(a, b), "try_difference_disjoint");
     }
 
     let r = match boolean_op_pave_fill_build(op, a, b) {

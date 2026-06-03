@@ -290,6 +290,26 @@ pub fn try_union_disjoint(a: &BRep, b: &BRep) -> Option<BRep> {
     None
 }
 
+/// Fast-path for Difference when shapes are bbox-disjoint (no overlap at all).
+///
+/// When A and B don't overlap, `A - B = A` — just return A unchanged.
+/// This avoids the PaveFiller for multi-step boolean chains where the
+/// intermediate result doesn't overlap the next tool (bcut_simple J/K/L).
+pub fn try_difference_disjoint(a: &BRep, b: &BRep) -> Option<BRep> {
+    if a.compound.is_some() || b.compound.is_some() {
+        return None;
+    }
+    let Some([amin, amax]) = a.bounding_box() else { return None; };
+    let Some([bmin, bmax]) = b.bounding_box() else { return None; };
+    if amax.x < bmin.x || amin.x > bmax.x
+        || amax.y < bmin.y || amin.y > bmax.y
+        || amax.z < bmin.z || amin.z > bmax.z
+    {
+        return Some(a.clone());
+    }
+    None
+}
+
 /// Like [`try_union_disjoint`] but treats touching bboxes as disjoint (uses <=/>=).
 ///
 /// For non-box shapes (sphere-box etc.), touching bboxes with </> means the actual
