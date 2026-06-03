@@ -459,6 +459,9 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     // fuse / `unify_same_domain_faces` need coincident topology to merge remaining fragments.
     let (sewn, _) = merge_close_vertices(&result, crate::tolerance::TOLERANCE_ABS * 64.0);
     result = sewn;
+    // Dedup edges by vertex index after vertex merge so coplanar
+    // adjacent sub-faces share boundary edges (closes the shell).
+    use crate::deduplicate_edges;
     geom_populate::recompute_plane_surfaces(&mut result);
     validate_union_brep_output("union: result failed checks after vertex merge", &result)?;
     let checkpoint = result.clone();

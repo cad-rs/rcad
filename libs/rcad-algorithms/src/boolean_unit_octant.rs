@@ -303,9 +303,9 @@ pub fn try_union_disjoint_or_touching(a: &BRep, b: &BRep) -> Option<BRep> {
     }
     let Some([amin, amax]) = a.bounding_box() else { return None; };
     let Some([bmin, bmax]) = b.bounding_box() else { return None; };
-    if amax.x <= bmin.x || amin.x >= bmax.x
-        || amax.y <= bmin.y || amin.y >= bmax.y
-        || amax.z <= bmin.z || amin.z >= bmax.z
+    if amax.x < bmin.x || amin.x > bmax.x
+        || amax.y < bmin.y || amin.y > bmax.y
+        || amax.z < bmin.z || amin.z > bmax.z
     {
         return Some(BRep::compound_from_shapes(&[a.clone(), b.clone()]));
     }
