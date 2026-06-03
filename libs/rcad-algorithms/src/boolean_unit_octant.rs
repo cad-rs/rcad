@@ -1783,10 +1783,120 @@ let sa_b = surface_area(a); // SA of the input box B (being cut).
         return Some(fused);
     }
     if !ok {
-        // Union errored 鈥?fall through to Pave-Filler.
+        // Union errored - fall through to Pave-Filler.
+        // Before giving up, try concatenating slabs and running topology
+        // optimization.  bop_occt_union::fuse cannot merge touching-face
+        // slabs (bfuse touching-face issue), but optimize_boolean_topology
+        // can merge coplanar adjacent faces.
+        if let Some(combined) = concatenate_and_merge_slabs(&result) {
+            let cv = volume(&combined);
+            if (cv - slab_vol_sum).abs() < vol_tol * (result.len() as f64).max(1000.0) {
+                return Some(combined);
+            }
+        }
         return None;
     }
     None
+}
+
+/// Concatenate multiple slab BReps into one and run topology optimization.
+fn concatenate_and_merge_slabs(slabs: &[BRep]) -> Option<BRep> {
+    use std::collections::HashMap;
+    use rcad_kernel::topology::{Face, Shell, Solid, Wire, WireEdge};
+    if slabs.is_empty() { return None; }
+    if slabs.len() == 1 { return Some(slabs[0].clone()); }
+
+    let mut out = BRep::new();
+    let mut v_offset: Vec<usize> = Vec::new();
+    let mut e_offset: Vec<usize> = Vec::new();
+    let mut s_offset: Vec<usize> = Vec::new();
+    let mut surf_remap: Vec<HashMap<usize, usize>> = Vec::new();
+
+    for slab in slabs {
+        v_offset.push(out.vertices.len());
+        e_offset.push(out.edges.len());
+        s_offset.push(out.geom.surfaces.len());
+        out.vertices.extend_from_slice(&slab.vertices);
+
+        let mut remap: HashMap<usize, usize> = HashMap::new();
+        for (old_si, surf) in slab.geom.surfaces.iter().enumerate() {
+            let new_si = out.geom.surfaces.iter().position(|s| surfaces_eq(s, surf))
+                .unwrap_or_else(|| { let idx = out.geom.surfaces.len(); out.geom.surfaces.push(surf.clone()); idx });
+            remap.insert(old_si, new_si);
+        }
+        surf_remap.push(remap);
+
+        let vo = *v_offset.last().unwrap_or(&0);
+        for e in &slab.edges {
+            out.edges.push(rcad_kernel::Edge { start: e.start + vo, end: e.end + vo });
+        }
+        let eo = *e_offset.last().unwrap_or(&0);
+        for (ei, curve_idx_opt) in slab.geom.edge_curve.iter().enumerate() {
+            if let Some(&ci) = curve_idx_opt.as_ref() {
+                if let Some(curve) = slab.geom.curves.get(ci) {
+                    let new_ci = out.geom.curves.len();
+                    out.geom.curves.push(curve.clone());
+                    while out.geom.edge_curve.len() <= eo + ei { out.geom.edge_curve.push(None); }
+                    out.geom.edge_curve[eo + ei] = Some(new_ci);
+                }
+            }
+        }
+        for (ei, range) in slab.geom.edge_curve_range.iter().enumerate() {
+            while out.geom.edge_curve_range.len() <= eo + ei { out.geom.edge_curve_range.push(None); }
+            out.geom.edge_curve_range[eo + ei] = *range;
+        }
+        for (ei, sp) in slab.geom.edge_same_parameter.iter().enumerate() {
+            while out.geom.edge_same_parameter.len() <= eo + ei { out.geom.edge_same_parameter.push(false); }
+            out.geom.edge_same_parameter[eo + ei] = *sp;
+        }
+        for (ei, pcs) in slab.geom.edge_pcurves.iter().enumerate() {
+            if !pcs.is_empty() {
+                while out.geom.edge_pcurves.len() <= eo + ei { out.geom.edge_pcurves.push(Vec::new()); }
+                out.geom.edge_pcurves[eo + ei] = pcs.clone();
+            }
+        }
+        for face in &slab.solids[0].shells[0].faces {
+            let remap_we = |we: &WireEdge| WireEdge { idx: we.idx + eo, forward: we.forward };
+            let outer_wire = Wire { edges: face.outer_wire.edges.iter().map(remap_we).collect() };
+            let inner_wires: Vec<Wire> = face.inner_wires.iter().map(|w| Wire {
+                edges: w.edges.iter().map(remap_we).collect()
+            }).collect();
+            out.solids.push(Solid {
+                shells: vec![Shell { faces: vec![Face {
+                    outer_wire, inner_wires,
+                    normal: face.normal,
+                    triangles: vec![], sample_point: None, mesh_dirty: true,
+                }]}]
+            });
+        }
+    }
+
+    let mut flat_fi = 0usize;
+    for (si, slab) in slabs.iter().enumerate() {
+        let remap = &surf_remap[si];
+        for (old_fi, _) in slab.solids[0].shells[0].faces.iter().enumerate() {
+            let old_si = slab.geom.face_surface.get(old_fi).copied().flatten().unwrap_or(0);
+            let new_si = remap.get(&old_si).copied().unwrap_or(0);
+            while out.geom.face_surface.len() <= flat_fi { out.geom.face_surface.push(None); }
+            out.geom.face_surface[flat_fi] = Some(new_si);
+            flat_fi += 1;
+        }
+    }
+
+    let out = crate::deduplicate_surfaces(out);
+    let out = crate::optimize_boolean_topology(out);
+    Some(out)
+}
+
+/// Compare two surfaces for geometric equality.
+fn surfaces_eq(a: &rcad_kernel::geom::Surface3, b: &rcad_kernel::geom::Surface3) -> bool {
+    use rcad_kernel::geom::Surface3;
+    let tol = 1e-8;
+    match (a, b) {
+        (Surface3::Plane(p1), Surface3::Plane(p2)) =>
+            (p1.normal - p2.normal).length() < tol && (p1.origin - p2.origin).length() < tol,
+        _ => std::mem::discriminant(a) == std::mem::discriminant(b),
+    }
 }
 
 /// Union of two general boxes (axis-aligned or rotated), computed analytically.
