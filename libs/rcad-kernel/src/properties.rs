@@ -2025,11 +2025,32 @@ fn try_cylinder_trimmed_face_area(
             }
         }
 
-        // Return max of shoelace, GL (V-extent), and envelope (band).
-        // The GL handles figure-8 polygons; the envelope handles
-        // full-wrap cases that GL might miss.  For simple polygons
-        // all three agree.
-        let result = uv_area.max(gl_area).max(band_area);
+        // Return max of shoelace and GL by default. The envelope/band method is
+        // only reliable for near-full-wrap cylinder faces; on narrow trimmed
+        // patches near the seam it can overcount by integrating across empty U bins.
+        let mut result = uv_area.max(gl_area);
+        let allow_band = brep
+            .geom
+            .face_surface_range
+            .get(face_flat_idx)
+            .and_then(|entry| *entry)
+            .map(|[u0, u1, _v0, _v1]| (u1 - u0).abs() > std::f64::consts::PI * 1.75)
+            .unwrap_or(true);
+        if allow_band {
+            result = result.max(band_area);
+        }
+        if std::env::var("RCAD_DEBUG_CYL_AREA").is_ok() {
+            eprintln!(
+                "[CYL_AREA] face={} pts={} shoelace={:.6} gl={:.6} band={:.6} allow_band={} chosen={:.6}",
+                face_flat_idx,
+                n,
+                uv_area,
+                gl_area,
+                band_area,
+                allow_band,
+                result,
+            );
+        }
         Some(result)
     };
 
@@ -2082,6 +2103,25 @@ fn try_cylinder_trimmed_face_area(
                 total_uv_area = TWO_PI * (v_max - v_min);
             } // else: non-wrap, shoelace is fine; keep total_uv_area as computed
         }
+    }
+    if std::env::var("RCAD_DEBUG_CYL_AREA").is_ok() {
+        let rect_est = brep
+            .geom
+            .face_surface_range
+            .get(face_flat_idx)
+            .and_then(|entry| *entry)
+            .map(|[u0, u1, v0, v1]| (u1 - u0).abs() * (v1 - v0).abs())
+            .unwrap_or(0.0);
+        eprintln!(
+            "[CYL_AREA_TOTAL] face={} outer={:.6} inner={:.6} total_uv={:.6} rect_est={:.6} radius={:.6} area={:.6}",
+            face_flat_idx,
+            outer_area,
+            inner_area,
+            total_uv_area,
+            rect_est,
+            cyl.radius,
+            cyl.radius * total_uv_area,
+        );
     }
     if total_uv_area > 1e-14 { Some(cyl.radius * total_uv_area) } else { None }
 }
@@ -2440,6 +2480,30 @@ fn try_analytic_face_surface_area(
             }
             let ctx = spherical_holed_uv_mask_setup(s, brep, face)?;
             let v = sphere_gauss_legendre_area_sum(s, &ctx);
+            let full_sphere_area = 4.0 * std::f64::consts::PI * s.radius * s.radius;
+            let sample_inside = face
+                .sample_point
+                .map(|p| point_in_spherical_polygon_3d(&ctx.outer_3d, p))
+                .unwrap_or(true);
+            if std::env::var("RCAD_DEBUG_SPHERE_SPLIT").is_ok() {
+                eprintln!(
+                    "[SPHERE_AREA] face={} area={:.6} sphere_full={:.6} u=[{:.4},{:.4}] v=[{:.4},{:.4}] sample_inside={} outer_pts={} inner_loops={}",
+                    face_flat_idx,
+                    v,
+                    full_sphere_area,
+                    ctx.umin,
+                    ctx.umax,
+                    ctx.vmin,
+                    ctx.vmax,
+                    sample_inside,
+                    ctx.outer_3d.len(),
+                    ctx.inner_3d.len(),
+                );
+            }
+            let suspicious_wrap = (ctx.umax - ctx.umin).abs() > std::f64::consts::TAU + 0.25;
+            if suspicious_wrap || !sample_inside || v > full_sphere_area * 1.001 {
+                return None;
+            }
             if v > 0.0 { return Some(v); }
             // UV polygon wraps u multiple times — analytic area integral
             // over-counts because du spans >2π. Fall through to tessellation.

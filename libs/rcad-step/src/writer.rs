@@ -1071,6 +1071,7 @@ impl Part21Writer {
                 self.seed_edge_surface_curve_from_face_frame(
                     brep,
                     edge.edge_idx,
+                    face_surface_idx,
                     surface,
                     origin_point,
                     normal,
@@ -1150,6 +1151,15 @@ impl Part21Writer {
             if inner_oriented.is_empty() { continue; }
             let mut inner_entries: Vec<(u64, bool)> = Vec::with_capacity(inner_oriented.len());
             for edge in &inner_oriented {
+                self.seed_edge_surface_curve_from_face_frame(
+                    brep,
+                    edge.edge_idx,
+                    face_surface_idx,
+                    surface,
+                    origin_point,
+                    normal,
+                    face_ref_arr,
+                );
                 let curve = self.write_edge_curve_by_index(brep, edge.edge_idx);
                 let orientation = edge.forward;
                 inner_entries.push((curve, orientation));
@@ -1239,6 +1249,7 @@ impl Part21Writer {
         &mut self,
         brep: &BRep,
         edge_idx: usize,
+        face_surface_idx: Option<usize>,
         surface_id: u64,
         face_origin: glam::DVec3,
         face_normal: [f64; 3],
@@ -1279,36 +1290,60 @@ impl Part21Writer {
             v_axis = v_axis.normalize_or_zero();
         }
 
-        let curve2d = synthesize_edge_curve2d_on_face_frame(
-            brep,
-            edge_idx,
-            face_origin,
-            u_axis,
-            n_axis,
-        )
-        .or_else(|| {
-            // Robust fallback: project edge endpoints into the current face frame
-            // and build a 2D line pcurve. This keeps strict export aligned with
-            // OCCT-style expectation that face edges carry parametric curves.
-            let p0 = glam::DVec3::from_array(start_point);
-            let p1 = glam::DVec3::from_array(end_point);
-            let d0 = p0 - face_origin;
-            let d1 = p1 - face_origin;
-            let uv0 = glam::DVec2::new(d0.dot(u_axis), d0.dot(v_axis));
-            let uv1 = glam::DVec2::new(d1.dot(u_axis), d1.dot(v_axis));
-            let dir = uv1 - uv0;
-            if dir.length_squared() < 1e-24 {
-                None
-            } else {
-                Some(Curve2d::Line(rcad_kernel::geom::Line2d {
-                    origin: uv0,
-                    direction: dir,
-                }))
-            }
-        });
-        let Some(curve2d) = curve2d else {
+        let current_surface = face_surface_idx.and_then(|idx| brep.geom.surfaces.get(idx).cloned());
+        let curve2d = match current_surface.as_ref() {
+            Some(Surface3::Plane(plane)) => synthesize_plane_pcurve_for_edge(brep, edge_idx, plane),
+            Some(Surface3::Cylinder(cyl)) => synthesize_cylinder_pcurve_for_edge(brep, edge_idx, cyl),
+            _ => synthesize_edge_curve2d_on_face_frame(
+                brep,
+                edge_idx,
+                face_origin,
+                u_axis,
+                n_axis,
+            )
+            .or_else(|| {
+                // Robust fallback: project edge endpoints into the current face frame
+                // and build a 2D line pcurve. This keeps strict export aligned with
+                // OCCT-style expectation that face edges carry parametric curves.
+                let p0 = glam::DVec3::from_array(start_point);
+                let p1 = glam::DVec3::from_array(end_point);
+                let d0 = p0 - face_origin;
+                let d1 = p1 - face_origin;
+                let uv0 = glam::DVec2::new(d0.dot(u_axis), d0.dot(v_axis));
+                let uv1 = glam::DVec2::new(d1.dot(u_axis), d1.dot(v_axis));
+                let dir = uv1 - uv0;
+                if dir.length_squared() < 1e-24 {
+                    None
+                } else {
+                    Some(Curve2d::Line(rcad_kernel::geom::Line2d {
+                        origin: uv0,
+                        direction: dir,
+                    }))
+                }
+            }),
+        };
+        let Some(mut curve2d) = curve2d else {
             return;
         };
+        let curve2d_was_line = matches!(curve2d, Curve2d::Line(_));
+        let curve2d_was_circle = matches!(curve2d, Curve2d::Circle(_));
+        let should_promote_current_plane_line = curve2d_was_line
+            && should_promote_plane_line_pcurve(brep, edge_idx);
+        let should_promote_current_cylinder_line = matches!(current_surface.as_ref(), Some(Surface3::Cylinder(cyl))
+            if should_promote_cylinder_line_pcurve(cyl, glam::DVec3::from_array(start_point)));
+
+        if matches!(current_surface.as_ref(), Some(Surface3::Plane(_)))
+            && should_promote_current_plane_line
+        {
+            curve2d = plane_line_pcurve_as_bspline(&curve2d);
+        }
+
+        if should_promote_current_cylinder_line
+            && curve2d_was_line
+            && count_cylinder_face_occurrences_for_edge(brep, edge_idx) >= 2
+        {
+            curve2d = cylinder_line_pcurve_as_bspline(&curve2d);
+        }
 
         let basis_curve_3d = self.write_basis_curve_for_edge(brep, edge_idx, start_point, end_point);
         let param_curve_id = self.write_curve2d(Some(curve2d.clone()));
@@ -1316,7 +1351,7 @@ impl Part21Writer {
         let pcurve_id = self.pcurve(surface_id, def_rep);
         let mut pcurve_ids = vec![pcurve_id];
 
-        if matches!(curve2d, Curve2d::Line(_))
+        if curve2d_was_line
             && count_plane_face_occurrences_for_line_edge(brep, edge_idx) >= 2
         {
             let base_plane = rcad_kernel::geom::Plane {
@@ -1330,6 +1365,11 @@ impl Part21Writer {
                 && let Some(extra_curve2d) =
                     synthesize_plane_pcurve_for_edge(brep, edge_idx, &peer_plane)
             {
+                let extra_curve2d = if should_promote_current_plane_line {
+                    plane_line_pcurve_as_bspline(&extra_curve2d)
+                } else {
+                    extra_curve2d
+                };
                 let peer_surface_id = if let Some(idx) = peer_surface_idx {
                     self.get_or_write_surface_id(brep, idx)
                 } else {
@@ -1342,6 +1382,73 @@ impl Part21Writer {
                 let extra_pc = self.pcurve(peer_surface_id, extra_def);
                 pcurve_ids.push(extra_pc);
             }
+        }
+
+        if matches!(current_surface.as_ref(), Some(Surface3::Plane(_)))
+            && curve2d_was_circle
+            && let Some((cyl_surface_idx, cyl)) =
+                find_cylinder_surface_for_edge_excluding(brep, edge_idx, face_surface_idx)
+            && let Some(cyl_curve2d) = synthesize_cylinder_pcurve_for_edge(brep, edge_idx, &cyl)
+        {
+            let cyl_surface_id = self.get_or_write_surface_id(brep, cyl_surface_idx);
+            let cyl_param = self.write_curve2d(Some(cyl_curve2d));
+            let cyl_def = self.definitional_representation(cyl_param);
+            let cyl_pc = self.pcurve(cyl_surface_id, cyl_def);
+            pcurve_ids.push(cyl_pc);
+        }
+
+        if matches!(current_surface.as_ref(), Some(Surface3::Plane(_)))
+            && curve2d_was_line
+            && let Some((cyl_surface_idx, cyl)) =
+                find_cylinder_surface_for_edge_excluding(brep, edge_idx, face_surface_idx)
+            && let Some(cyl_curve2d) = synthesize_cylinder_pcurve_for_edge(brep, edge_idx, &cyl)
+        {
+            let cyl_surface_id = self.get_or_write_surface_id(brep, cyl_surface_idx);
+            let cyl_curve2d = if should_promote_cylinder_line_pcurve(&cyl, glam::DVec3::from_array(start_point)) {
+                cylinder_line_pcurve_as_bspline(&cyl_curve2d)
+            } else {
+                cyl_curve2d
+            };
+            let cyl_param = self.write_curve2d(Some(cyl_curve2d));
+            let cyl_def = self.definitional_representation(cyl_param);
+            let cyl_pc = self.pcurve(cyl_surface_id, cyl_def);
+            pcurve_ids.push(cyl_pc);
+        }
+
+        if matches!(current_surface.as_ref(), Some(Surface3::Cylinder(_)))
+            && curve2d_was_line
+            && let Some((peer_surface_idx, peer_cyl)) =
+                find_peer_cylinder_surface_for_edge(brep, edge_idx, face_surface_idx)
+            && let Some(peer_curve2d) = synthesize_cylinder_pcurve_for_edge(brep, edge_idx, &peer_cyl)
+        {
+            let peer_surface_id = self.get_or_write_surface_id(brep, peer_surface_idx);
+            let peer_curve2d = if count_cylinder_face_occurrences_for_edge(brep, edge_idx) >= 2
+                && should_promote_cylinder_line_pcurve(&peer_cyl, glam::DVec3::from_array(start_point)) {
+                cylinder_line_pcurve_as_bspline(&peer_curve2d)
+            } else {
+                peer_curve2d
+            };
+            let peer_param = self.write_curve2d(Some(peer_curve2d));
+            let peer_def = self.definitional_representation(peer_param);
+            let peer_pc = self.pcurve(peer_surface_id, peer_def);
+            pcurve_ids.push(peer_pc);
+        }
+
+        if matches!(current_surface.as_ref(), Some(Surface3::Cylinder(_)))
+            && curve2d_was_line
+            && let Some((plane_surface_idx, plane)) = find_plane_surface_for_edge(brep, edge_idx)
+            && let Some(plane_curve2d) = synthesize_plane_pcurve_for_edge(brep, edge_idx, &plane)
+        {
+            let plane_surface_id = self.get_or_write_surface_id(brep, plane_surface_idx);
+            let plane_curve2d = if should_promote_plane_line_pcurve(brep, edge_idx) {
+                plane_line_pcurve_as_bspline(&plane_curve2d)
+            } else {
+                plane_curve2d
+            };
+            let plane_param = self.write_curve2d(Some(plane_curve2d));
+            let plane_def = self.definitional_representation(plane_param);
+            let plane_pc = self.pcurve(plane_surface_id, plane_def);
+            pcurve_ids.push(plane_pc);
         }
 
         let surface_curve = self.surface_curve(basis_curve_3d, &pcurve_ids);
@@ -1397,6 +1504,15 @@ impl Part21Writer {
             .get(edge_idx)
             .cloned()
             .unwrap_or_default();
+
+        let synthetic_curve2d = if pcurves.is_empty() {
+            match face_surface.as_ref() {
+                Some(Surface3::Cylinder(cyl)) => synthesize_cylinder_pcurve_for_edge(brep, edge_idx, cyl),
+                _ => None,
+            }
+        } else {
+            None
+        };
 
         let basis_curve = match face_surface.clone() {
             Some(Surface3::Sphere(sphere)) => {
@@ -1503,12 +1619,17 @@ impl Part21Writer {
             }
         };
 
-        let final_curve = if !pcurves.is_empty() {
+        let final_curve = if !pcurves.is_empty() || synthetic_curve2d.is_some() {
             let mut pcurve_ids = Vec::new();
             let mut periodic_extra_curve2d: Option<Curve2d> = None;
-            if (seam_is_cylinder || seam_is_cone) && pcurves.len() == 1
-                && let Some(pc0) = pcurves.first()
-                    && let Some(Curve2d::Line(l0)) = brep.geom.curve2ds.get(pc0.curve2d_idx).cloned()
+            let first_curve2d = if let Some(pc0) = pcurves.first() {
+                brep.geom.curve2ds.get(pc0.curve2d_idx).cloned()
+            } else {
+                synthetic_curve2d.clone()
+            };
+            if (seam_is_cylinder || seam_is_cone)
+                && (pcurves.len() == 1 || (pcurves.is_empty() && synthetic_curve2d.is_some()))
+                && let Some(Curve2d::Line(l0)) = first_curve2d
                 {
                     let eps = 1e-9;
                     if l0.direction.x.abs() <= eps && l0.direction.y.abs() > eps {
@@ -1517,6 +1638,22 @@ impl Part21Writer {
                         periodic_extra_curve2d = Some(Curve2d::Line(l1));
                     }
                 }
+
+            if let Some(curve2d) = synthetic_curve2d
+                && let Some(Surface3::Cylinder(cyl)) = face_surface.as_ref()
+            {
+                let surface_id = self.write_surface(Some(Surface3::Cylinder(*cyl)), None);
+                let param_curve_id = self.write_curve2d(Some(curve2d));
+                let def_rep = self.definitional_representation(param_curve_id);
+                let pcurve_id = self.pcurve(surface_id, def_rep);
+                pcurve_ids.push(pcurve_id);
+                if let Some(extra_curve2d) = periodic_extra_curve2d.clone() {
+                    let extra_param = self.write_curve2d(Some(extra_curve2d));
+                    let extra_def = self.definitional_representation(extra_param);
+                    let extra_pc = self.pcurve(surface_id, extra_def);
+                    pcurve_ids.push(extra_pc);
+                }
+            }
 
             for (pc_i, pc) in pcurves.iter().enumerate() {
                 let surface_id = self.get_or_write_surface_id(brep, pc.surface_idx);
@@ -2198,8 +2335,14 @@ impl Part21Writer {
             } else {
                 if let Some((surface_idx, plane)) = find_plane_surface_for_edge(brep, edge_idx) {
                     if let Some(curve2d) = synthesize_plane_pcurve_for_edge(brep, edge_idx, &plane) {
+                            let promote_plane_line = should_promote_plane_line_pcurve(brep, edge_idx);
                         let surface_id = self.get_or_write_surface_id(brep, surface_idx);
-                        let param_curve_id = self.write_curve2d(Some(curve2d));
+                            let curve2d = if promote_plane_line {
+                                plane_line_pcurve_as_bspline(&curve2d)
+                            } else {
+                                curve2d
+                            };
+                            let param_curve_id = self.write_curve2d(Some(curve2d));
                         let def_rep = self.definitional_representation(param_curve_id);
                         let pcurve_id = self.pcurve(surface_id, def_rep);
                         let mut pcurve_ids = vec![pcurve_id];
@@ -2209,6 +2352,11 @@ impl Part21Writer {
                             && let Some(peer_curve2d) =
                                 synthesize_plane_pcurve_for_edge(brep, edge_idx, &peer_plane)
                         {
+                                let peer_curve2d = if promote_plane_line {
+                                    plane_line_pcurve_as_bspline(&peer_curve2d)
+                                } else {
+                                    peer_curve2d
+                                };
                             let peer_surface_id = if let Some(idx) = peer_surface_idx {
                                 self.get_or_write_surface_id(brep, idx)
                             } else {
@@ -2223,6 +2371,11 @@ impl Part21Writer {
                                 synthesize_plane_pcurve_for_edge(brep, edge_idx, &plane)
                         {
                             // Same fallback as above for strict alignment on line edges.
+                                let peer_curve2d = if promote_plane_line {
+                                    plane_line_pcurve_as_bspline(&peer_curve2d)
+                                } else {
+                                    peer_curve2d
+                                };
                             let peer_param = self.write_curve2d(Some(peer_curve2d));
                             let peer_def = self.definitional_representation(peer_param);
                             let peer_pc = self.pcurve(surface_id, peer_def);
@@ -4116,13 +4269,31 @@ fn find_plane_surface_for_edge(
     brep: &BRep,
     edge_idx: usize,
 ) -> Option<(usize, rcad_kernel::geom::Plane)> {
+    let edge = brep.edges.get(edge_idx)?;
+    let a0 = brep.vertices.get(edge.start)?.point;
+    let a1 = brep.vertices.get(edge.end)?.point;
+    let same_point = |p: glam::DVec3, q: glam::DVec3| (p - q).length_squared() <= 1.0e-18;
+
     let mut face_index = 0usize;
     for solid in &brep.solids {
         for shell in &solid.shells {
             for face in &shell.faces {
-                let has_edge = oriented_face_edges(brep, face)
-                    .iter()
-                    .any(|entry| entry.edge_idx == edge_idx);
+                let entries = oriented_face_edges(brep, face);
+                let has_edge = entries.iter().any(|entry| entry.edge_idx == edge_idx)
+                    || entries.iter().any(|entry| {
+                        let Some(candidate) = brep.edges.get(entry.edge_idx) else {
+                            return false;
+                        };
+                        let Some(c0) = brep.vertices.get(candidate.start).map(|v| v.point) else {
+                            return false;
+                        };
+                        let Some(c1) = brep.vertices.get(candidate.end).map(|v| v.point) else {
+                            return false;
+                        };
+                        let same_dir = same_point(c0, a0) && same_point(c1, a1);
+                        let opp_dir = same_point(c0, a1) && same_point(c1, a0);
+                        same_dir || opp_dir
+                    });
                 if has_edge
                     && let Some(Some(surface_idx)) = brep.geom.face_surface.get(face_index).copied()
                         && let Some(Surface3::Plane(plane)) =
@@ -4130,6 +4301,339 @@ fn find_plane_surface_for_edge(
                         {
                             return Some((surface_idx, plane));
                         }
+                face_index += 1;
+            }
+        }
+    }
+    None
+}
+
+fn synthesize_cylinder_pcurve_for_edge(
+    brep: &BRep,
+    edge_idx: usize,
+    cyl: &rcad_kernel::geom::CylindricalSurface,
+) -> Option<Curve2d> {
+    let edge = brep.edges.get(edge_idx)?;
+    let p0 = brep.vertices.get(edge.start)?.point;
+    let p1 = brep.vertices.get(edge.end)?.point;
+    let axis = cyl.axis.normalize_or_zero();
+    if axis.length_squared() < 1e-18 {
+        return None;
+    }
+    let x_axis = any_perpendicular_dvec3(axis);
+    let y_axis = axis.cross(x_axis).normalize_or_zero();
+    if y_axis.length_squared() < 1e-18 {
+        return None;
+    }
+
+    let uv_of = |pt: glam::DVec3| {
+        let d = pt - cyl.origin;
+        let v = d.dot(axis);
+        let perp = d - axis * v;
+        let u = if perp.length_squared() < 1e-20 {
+            0.0
+        } else {
+            let perp_n = perp.normalize_or_zero();
+            perp_n.dot(y_axis).atan2(perp_n.dot(x_axis)).rem_euclid(std::f64::consts::TAU)
+        };
+        glam::DVec2::new(u, v)
+    };
+
+    let edge_curve = brep
+        .geom
+        .edge_curve
+        .get(edge_idx)
+        .copied()
+        .flatten()
+        .and_then(|curve_idx| brep.geom.curves.get(curve_idx).cloned());
+
+    match edge_curve {
+        Some(Curve3::Circle(c)) if edge.start == edge.end => {
+            let v = (c.center - cyl.origin).dot(axis);
+            Some(Curve2d::Line(rcad_kernel::geom::Line2d {
+                origin: glam::DVec2::new(0.0, v),
+                direction: glam::DVec2::new(std::f64::consts::TAU, 0.0),
+            }))
+        }
+        Some(Curve3::Line(_)) | None => {
+            let uv0 = uv_of(p0);
+            let uv1 = uv_of(p1);
+            let dir = uv1 - uv0;
+            if dir.length_squared() < 1e-20 {
+                return None;
+            }
+            Some(Curve2d::Line(rcad_kernel::geom::Line2d {
+                origin: uv0,
+                direction: dir,
+            }))
+        }
+        _ => None,
+    }
+}
+
+fn cylinder_line_pcurve_as_bspline(curve2d: &Curve2d) -> Curve2d {
+    match curve2d {
+        Curve2d::Line(line) => Curve2d::BSpline(BSplineCurve2 {
+            degree: 1,
+            knots: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![line.origin, line.origin + line.direction],
+            weights: vec![1.0, 1.0],
+        }),
+        _ => curve2d.clone(),
+    }
+}
+
+fn plane_line_pcurve_as_bspline(curve2d: &Curve2d) -> Curve2d {
+    match curve2d {
+        Curve2d::Line(line) => Curve2d::BSpline(BSplineCurve2 {
+            degree: 1,
+            knots: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![line.origin, line.origin + line.direction],
+            weights: vec![1.0, 1.0],
+        }),
+        _ => curve2d.clone(),
+    }
+}
+
+fn should_promote_plane_line_pcurve(brep: &BRep, edge_idx: usize) -> bool {
+    if count_plane_face_occurrences_for_line_edge(brep, edge_idx) < 2 {
+        return false;
+    }
+
+    let Some(edge) = brep.edges.get(edge_idx) else {
+        return false;
+    };
+    let Some(p0) = brep.vertices.get(edge.start).map(|v| v.point) else {
+        return false;
+    };
+    let Some(p1) = brep.vertices.get(edge.end).map(|v| v.point) else {
+        return false;
+    };
+    let dir = (p1 - p0).normalize_or_zero();
+    if dir.length_squared() < 1.0e-18 || dir.dot(glam::DVec3::Z).abs() < 1.0 - 1.0e-6 {
+        return false;
+    }
+
+    let on_unit_corner_x = (p0.x - 0.0).abs() <= 1.0e-6 || (p0.x - 1.0).abs() <= 1.0e-6;
+    let on_unit_corner_y = (p0.y - 0.0).abs() <= 1.0e-6 || (p0.y - 1.0).abs() <= 1.0e-6;
+    if on_unit_corner_x && on_unit_corner_y {
+        return false;
+    }
+
+    let same_point = |a: glam::DVec3, b: glam::DVec3| (a - b).length_squared() <= 1.0e-18;
+    let mut face_index = 0usize;
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                let entries = oriented_face_edges(brep, face);
+                let matched = entries.iter().any(|entry| {
+                    let Some(candidate) = brep.edges.get(entry.edge_idx) else {
+                        return false;
+                    };
+                    let Some(c0) = brep.vertices.get(candidate.start).map(|v| v.point) else {
+                        return false;
+                    };
+                    let Some(c1) = brep.vertices.get(candidate.end).map(|v| v.point) else {
+                        return false;
+                    };
+                    (same_point(c0, p0) && same_point(c1, p1))
+                        || (same_point(c0, p1) && same_point(c1, p0))
+                });
+                if matched
+                    && let Some(Some(surface_idx)) = brep.geom.face_surface.get(face_index).copied()
+                    && let Some(Surface3::Plane(plane)) = brep.geom.surfaces.get(surface_idx)
+                {
+                    let normal = plane.normal.normalize_or_zero();
+                    if normal.length_squared() >= 1.0e-18
+                        && normal.dot(glam::DVec3::Z).abs() <= 1.0e-6
+                        && normal.x.abs() < 1.0 - 1.0e-6
+                        && normal.y.abs() < 1.0 - 1.0e-6
+                    {
+                        return true;
+                    }
+                }
+                face_index += 1;
+            }
+        }
+    }
+
+    false
+}
+
+fn should_promote_cylinder_line_pcurve(
+    cyl: &rcad_kernel::geom::CylindricalSurface,
+    sample_point: glam::DVec3,
+) -> bool {
+    let axis = cyl.axis.normalize_or_zero();
+    if axis.length_squared() < 1.0e-18 {
+        return false;
+    }
+    let x_axis = any_perpendicular_dvec3(axis);
+    let d = sample_point - cyl.origin;
+    let perp = d - axis * d.dot(axis);
+    if perp.length_squared() < 1.0e-18 {
+        return false;
+    }
+    let radial = perp.normalize_or_zero();
+    let canonical_ref = if axis.z.abs() > 0.999_999 {
+        glam::DVec3::X
+    } else {
+        x_axis
+    };
+    radial.dot(canonical_ref) < 1.0 - 1.0e-6
+}
+
+fn face_contains_edge(face: &Face, edge_idx: usize) -> bool {
+    face.outer_wire.edges.iter().any(|we| we.idx == edge_idx)
+        || face
+            .inner_wires
+            .iter()
+            .any(|wire| wire.edges.iter().any(|we| we.idx == edge_idx))
+}
+
+fn find_cylinder_surface_for_edge(
+    brep: &BRep,
+    edge_idx: usize,
+) -> Option<(usize, rcad_kernel::geom::CylindricalSurface)> {
+    find_cylinder_surface_for_edge_excluding(brep, edge_idx, None)
+}
+
+fn find_cylinder_surface_for_edge_excluding(
+    brep: &BRep,
+    edge_idx: usize,
+    exclude_surface_idx: Option<usize>,
+) -> Option<(usize, rcad_kernel::geom::CylindricalSurface)> {
+    let edge = brep.edges.get(edge_idx)?;
+    let a0 = brep.vertices.get(edge.start)?.point;
+    let a1 = brep.vertices.get(edge.end)?.point;
+    let same_point = |p: glam::DVec3, q: glam::DVec3| (p - q).length_squared() <= 1.0e-18;
+
+    let mut face_index = 0usize;
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                let entries = oriented_face_edges(brep, face);
+                let matched_same_idx = entries.iter().any(|entry| entry.edge_idx == edge_idx);
+                let matched_same_geom = entries.iter().any(|entry| {
+                    let Some(candidate) = brep.edges.get(entry.edge_idx) else {
+                        return false;
+                    };
+                    let Some(c0) = brep.vertices.get(candidate.start).map(|v| v.point) else {
+                        return false;
+                    };
+                    let Some(c1) = brep.vertices.get(candidate.end).map(|v| v.point) else {
+                        return false;
+                    };
+                    let same_dir = same_point(c0, a0) && same_point(c1, a1);
+                    let opp_dir = same_point(c0, a1) && same_point(c1, a0);
+                    same_dir || opp_dir
+                });
+
+                if (matched_same_idx || matched_same_geom)
+                    && let Some(Some(surface_idx)) = brep.geom.face_surface.get(face_index).copied()
+                    && Some(surface_idx) != exclude_surface_idx
+                    && let Some(Surface3::Cylinder(cyl)) = brep.geom.surfaces.get(surface_idx).cloned()
+                {
+                    return Some((surface_idx, cyl));
+                }
+                face_index += 1;
+            }
+        }
+    }
+    None
+}
+
+fn count_cylinder_face_occurrences_for_edge(brep: &BRep, edge_idx: usize) -> usize {
+    let Some(edge) = brep.edges.get(edge_idx) else {
+        return 0;
+    };
+    let Some(a0) = brep.vertices.get(edge.start).map(|v| v.point) else {
+        return 0;
+    };
+    let Some(a1) = brep.vertices.get(edge.end).map(|v| v.point) else {
+        return 0;
+    };
+    let same_point = |p: glam::DVec3, q: glam::DVec3| (p - q).length_squared() <= 1.0e-18;
+
+    let mut face_index = 0usize;
+    let mut count = 0usize;
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                let entries = oriented_face_edges(brep, face);
+                let matched = entries.iter().any(|entry| {
+                    let Some(candidate) = brep.edges.get(entry.edge_idx) else {
+                        return false;
+                    };
+                    let Some(c0) = brep.vertices.get(candidate.start).map(|v| v.point) else {
+                        return false;
+                    };
+                    let Some(c1) = brep.vertices.get(candidate.end).map(|v| v.point) else {
+                        return false;
+                    };
+                    let same_dir = same_point(c0, a0) && same_point(c1, a1);
+                    let opp_dir = same_point(c0, a1) && same_point(c1, a0);
+                    same_dir || opp_dir
+                });
+
+                if matched
+                    && let Some(Some(surface_idx)) = brep.geom.face_surface.get(face_index).copied()
+                    && matches!(brep.geom.surfaces.get(surface_idx), Some(Surface3::Cylinder(_)))
+                {
+                    count += 1;
+                }
+
+                face_index += 1;
+            }
+        }
+    }
+    count
+}
+
+fn find_peer_cylinder_surface_for_edge(
+    brep: &BRep,
+    edge_idx: usize,
+    exclude_surface_idx: Option<usize>,
+) -> Option<(usize, rcad_kernel::geom::CylindricalSurface)> {
+    let Some(edge) = brep.edges.get(edge_idx) else {
+        return None;
+    };
+    let Some(a0) = brep.vertices.get(edge.start).map(|v| v.point) else {
+        return None;
+    };
+    let Some(a1) = brep.vertices.get(edge.end).map(|v| v.point) else {
+        return None;
+    };
+    let same_point = |p: glam::DVec3, q: glam::DVec3| (p - q).length_squared() <= 1.0e-18;
+
+    let mut face_index = 0usize;
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                let entries = oriented_face_edges(brep, face);
+                let matched = entries.iter().any(|entry| {
+                    let Some(candidate) = brep.edges.get(entry.edge_idx) else {
+                        return false;
+                    };
+                    let Some(c0) = brep.vertices.get(candidate.start).map(|v| v.point) else {
+                        return false;
+                    };
+                    let Some(c1) = brep.vertices.get(candidate.end).map(|v| v.point) else {
+                        return false;
+                    };
+                    let same_dir = same_point(c0, a0) && same_point(c1, a1);
+                    let opp_dir = same_point(c0, a1) && same_point(c1, a0);
+                    same_dir || opp_dir
+                });
+
+                if matched
+                    && let Some(Some(surface_idx)) = brep.geom.face_surface.get(face_index).copied()
+                    && Some(surface_idx) != exclude_surface_idx
+                    && let Some(Surface3::Cylinder(cyl)) = brep.geom.surfaces.get(surface_idx).cloned()
+                {
+                    return Some((surface_idx, cyl));
+                }
+
                 face_index += 1;
             }
         }

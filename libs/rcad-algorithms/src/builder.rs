@@ -656,7 +656,12 @@ impl ResultBuilder {
                     }).collect(),
                 })
                 .collect();
-            let mesh_dirty = triangles.is_empty();
+            // BooleanBuilder faces inherit or accumulate triangles during
+            // splitting, but those tessellations are not guaranteed to remain
+            // valid for exact property evaluation after trimming/rewiring.
+            // Keep them as fallback display meshes only; exact consumers should
+            // regenerate or use analytic surface integration.
+            let mesh_dirty = true;
             faces.push(Face {
                 outer_wire: wire,
                 inner_wires,
@@ -1218,10 +1223,30 @@ fn classify_against_solid_for_boolean(
             };
         }
 
-        if probe_pts.len() > 1 || total > 0 {
+        if std::env::var("RCAD_DEBUG_BOOL_CLASSIFY").is_ok() && (probe_pts.len() > 1 || total > 0) {
             let sp = sub.sample_point();
-            eprintln!("[PROBE] face_class={:?} n_probe={} n_classified={} in={} out={} sample=({:.4},{:.4},{:.4})",
-                c0, probe_pts.len(), total, in_count, out_count, sp.x, sp.y, sp.z);
+            let surface_kind = match &sub.surface {
+                Surface3::Plane(_) => "Plane",
+                Surface3::Cylinder(_) => "Cylinder",
+                Surface3::Cone(_) => "Cone",
+                Surface3::Sphere(_) => "Sphere",
+                Surface3::Torus(_) => "Torus",
+                Surface3::BSpline(_) => "BSpline",
+                _ => "Other",
+            };
+            eprintln!(
+                "[PROBE] src={:?} surf={} face_class={:?} n_probe={} n_classified={} in={} out={} sample=({:.4},{:.4},{:.4})",
+                source,
+                surface_kind,
+                c0,
+                probe_pts.len(),
+                total,
+                in_count,
+                out_count,
+                sp.x,
+                sp.y,
+                sp.z
+            );
         }
         return c0;
     }
@@ -1567,6 +1592,7 @@ impl<'a> BooleanBuilder<'a> {
         for &fi in &a_faces {
             let sub_faces = self.split_face(fi);
             let face_split = sub_faces.len() > 1;
+            let mut kept_subs: Vec<SubFace> = Vec::new();
             for (si, sub) in sub_faces.iter().enumerate() {
                 let class = classify_against_solid_for_boolean(self.op, SourceSide::A, sub, &b_faces, self.ds);
                 let keep = if self.op == BooleanOpType::Union
@@ -1608,12 +1634,7 @@ impl<'a> BooleanBuilder<'a> {
                     );
                 }
                 if keep {
-                    let src = self.ds.faces[fi].source_face_idx;
-                    result.emit_face_with_origin(sub, false, FaceOrigin::FromA(src));
-                    // Track A-face planes for coplanar dedup with B faces
-                    if let Surface3::Plane(p) = &sub.surface {
-                        a_on_planes.push((p.normal, p.origin));
-                    }
+                    kept_subs.push(sub.clone());
                 } else if class == Classification::In
                     && self.op == BooleanOpType::Difference
                     && !b_cylinders.is_empty()
@@ -1634,6 +1655,17 @@ impl<'a> BooleanBuilder<'a> {
                             }
                         }
                     }
+                }
+            }
+
+            if kept_subs.len() > 1 {
+                merge_subfaces_of_same_face(&mut kept_subs);
+            }
+            for sub in kept_subs {
+                let src = self.ds.faces[fi].source_face_idx;
+                result.emit_face_with_origin(&sub, false, FaceOrigin::FromA(src));
+                if let Surface3::Plane(p) = &sub.surface {
+                    a_on_planes.push((p.normal, p.origin));
                 }
             }
         }
@@ -1787,6 +1819,33 @@ impl<'a> BooleanBuilder<'a> {
                 }
                 brep = merged;
                 history.face_origins.truncate(brep.solids[0].shells[0].faces.len());
+            }
+        }
+
+        if std::env::var("RCAD_DEBUG_FACE_ORIGINS").is_ok() {
+            for (fi, face) in brep.solids[0].shells[0].faces.iter().enumerate() {
+                let surf_name = brep
+                    .geom
+                    .face_surface
+                    .get(fi)
+                    .and_then(|entry| *entry)
+                    .and_then(|surface_idx| brep.geom.surfaces.get(surface_idx))
+                    .map(|surface| match surface {
+                        Surface3::Plane(_) => "Plane",
+                        Surface3::Cylinder(_) => "Cylinder",
+                        Surface3::Cone(_) => "Cone",
+                        Surface3::Sphere(_) => "Sphere",
+                        Surface3::Torus(_) => "Torus",
+                        Surface3::BSpline(_) => "BSpline",
+                        _ => "Other",
+                    })
+                    .unwrap_or("None");
+                let origin = history.face_origins.get(fi).copied();
+                eprintln!(
+                    "[FACE_ORIGIN] face[{fi}] surf={surf_name} origin={origin:?} outer_edges={} tris={}",
+                    face.outer_wire.edges.len(),
+                    face.triangles.len(),
+                );
             }
         }
 

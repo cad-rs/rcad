@@ -181,6 +181,14 @@ pub fn make_conical_frustum_brep(
         return Ok(brep);
     }
 
+    // Reuse the stable "narrower bottom → wider top" cone parameterization for
+    // the inverted frustum case by reversing the construction axis. This keeps
+    // the cone V direction and apex-side semantics consistent instead of using a
+    // separate mirrored branch that can drift in area/topology behavior.
+    if rb > rt {
+        return make_conical_frustum_brep(center, -axis, ref_dir, rt, rb, height);
+    }
+
     use std::f64::consts::PI;
     use glam::DVec2;
     use rcad_kernel::{
@@ -195,17 +203,11 @@ pub fn make_conical_frustum_brep(
 
     // Compute apex position and cone orientation.
     // The apex is on the central axis, on the side of the narrower end.
-    let (apex_y, axis_dir, v_bottom, v_top) = if rt > rb {
-        // Wider at top → apex below bottom, axis = +Y
-        let d_bottom = rb / tan_ha;
-        let ay = -half_h - d_bottom;
-        (ay, DVec3::Y, d_bottom / cos_ha, (d_bottom + height) / cos_ha)
-    } else {
-        // Wider at bottom → apex above top, axis = -Y
-        let d_top = rt / tan_ha;
-        let ay = half_h + d_top;
-        (ay, -DVec3::Y, (d_top + height) / cos_ha, d_top / cos_ha)
-    };
+    let d_bottom = rb / tan_ha;
+    let apex_y = -half_h - d_bottom;
+    let axis_dir = DVec3::Y;
+    let v_bottom = d_bottom / cos_ha;
+    let v_top = (d_bottom + height) / cos_ha;
 
     // Vertices (in local coordinates: axis = Y, bottom at -half_h, top at +half_h)
     let bottom_pt = DVec3::new(rb, -half_h, 0.0);
@@ -413,6 +415,53 @@ pub fn make_torus_brep(
     minor_radius: f64,
 ) -> Result<BRep, BuildError> {
     torus_brep(center, axis, ref_dir, major_radius, minor_radius)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::make_conical_frustum_brep;
+    use glam::DVec3;
+    use rcad_kernel::properties::{signed_volume, surface_area};
+
+    #[test]
+    fn conical_frustum_swapped_radii_preserve_area_and_volume() {
+        let wide_bottom = make_conical_frustum_brep(
+            DVec3::ZERO,
+            DVec3::Z,
+            DVec3::X,
+            6.0,
+            1.0,
+            10.0,
+        )
+        .expect("wide-bottom frustum");
+        let wide_top = make_conical_frustum_brep(
+            DVec3::ZERO,
+            DVec3::Z,
+            DVec3::X,
+            1.0,
+            6.0,
+            10.0,
+        )
+        .expect("wide-top frustum");
+
+        let area_bottom = surface_area(&wide_bottom);
+        let area_top = surface_area(&wide_top);
+        assert!(
+            (area_bottom - area_top).abs() <= 1e-6,
+            "surface area mismatch: bottom={} top={}",
+            area_bottom,
+            area_top
+        );
+
+        let volume_bottom = signed_volume(&wide_bottom).abs();
+        let volume_top = signed_volume(&wide_top).abs();
+        assert!(
+            (volume_bottom - volume_top).abs() <= 1e-6,
+            "volume mismatch: bottom={} top={}",
+            volume_bottom,
+            volume_top
+        );
+    }
 }
 
 /// Create a BRep with a single rectangular planar face.

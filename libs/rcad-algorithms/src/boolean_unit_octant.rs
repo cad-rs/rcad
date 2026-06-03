@@ -196,6 +196,28 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
         {
             continue;
         }
+        // For Intersection we normally prefer the inner shape's vertex-only bbox
+        // to avoid circular-edge over-expansion on face-with-hole solids. But
+        // some curved primitives (notably make_cylinder_brep) place all vertices
+        // on a single generator, producing a degenerate vertex bbox that can fit
+        // inside a touching box even when the real curved wall extends outside
+        // it. In that case, require the curves bbox to fit as well.
+        if matches!(op, BooleanOpType::Intersection) {
+            let vx = imax.x - imin.x;
+            let vy = imax.y - imin.y;
+            let vz = imax.z - imin.z;
+            let degenerate_axis = vx <= tol || vy <= tol || vz <= tol;
+            if degenerate_axis {
+                if let Some([icmin, icmax]) = inner.vertices_curves_bounding_box() {
+                    if !(icmin.x >= omin.x - tol && icmax.x <= omax.x + tol &&
+                         icmin.y >= omin.y - tol && icmax.y <= omax.y + tol &&
+                         icmin.z >= omin.z - tol && icmax.z <= omax.z + tol)
+                    {
+                        continue;
+                    }
+                }
+            }
+        }
         // All inner vertices must be inside the outer solid (not just its bbox).
         // This is critical for curved solids (e.g. sphere bbox contains box corners
         // that are outside the sphere surface).
@@ -3133,6 +3155,20 @@ pub(crate) fn build_sphere_clipped_by_z_planes(
     let has_top_cap = (z_max - (center.z + radius)).abs() > 1e-12;
     let has_bot_cap = (z_min - (center.z - radius)).abs() > 1e-12;
 
+    if std::env::var("RCAD_DEBUG_SPHERE_SPLIT").is_ok() {
+        eprintln!(
+            "[SPHERE_CLIP] center_z={:.6} r={:.6} z=[{:.6},{:.6}] v=[{:.6},{:.6}] top_cap={} bot_cap={}",
+            center.z,
+            radius,
+            z_min,
+            z_max,
+            v_hi,
+            v_lo,
+            has_top_cap,
+            has_bot_cap,
+        );
+    }
+
     // Radii of the clip-plane circles
     let r_hi = radius * v_hi.sin();
     let r_lo = radius * v_lo.sin();
@@ -3152,8 +3188,8 @@ pub(crate) fn build_sphere_clipped_by_z_planes(
     let e0_curve = Curve3::Circle(Circle3 { center: c_hi, normal: DVec3::Z, radius: r_hi });
     let e0 = make_edge(&mut brep, e0_curve, 0.0, two_pi, v_hi_idx, v_hi_idx).ok()?;
 
-    // E1: circle at v_lo (lower z, larger v) 鈥?only needed when both caps exist
-    let e1 = if has_top_cap && has_bot_cap {
+    // E1: circle at v_lo (lower z, larger v) whenever the lower clip plane exists.
+    let e1 = if has_bot_cap {
         let c_lo = DVec3::new(center.x, center.y, center.z + radius * v_lo.cos());
         let curve = Curve3::Circle(Circle3 { center: c_lo, normal: -DVec3::Z, radius: r_lo });
         let idx = make_edge(&mut brep, curve, 0.0, two_pi, v_lo_idx, v_lo_idx).ok()?;
@@ -3162,9 +3198,17 @@ pub(crate) fn build_sphere_clipped_by_z_planes(
         None
     };
 
-    // E2 (or E1 for single-cap): seam from v_hi to v_lo at u=0 (arc in XZ-plane)
+    // E2 (or E1 for single-cap): seam from v_hi to v_lo at u=0 (arc in XZ-plane).
+    // Use an explicit major direction so t=v follows north -> equator -> south,
+    // matching the sphere parameterization instead of Circle3's implicit frame.
     let seam = {
-        let curve = Curve3::Circle(Circle3 { center, normal: DVec3::Y, radius });
+        let curve = Curve3::Ellipse(Ellipse3 {
+            center,
+            normal: DVec3::Y,
+            major_dir: DVec3::Z,
+            major_radius: radius,
+            minor_radius: radius,
+        });
         make_edge(&mut brep, curve, v_hi, v_lo, v_hi_idx, v_lo_idx).ok()?
     };
 
@@ -3203,7 +3247,7 @@ pub(crate) fn build_sphere_clipped_by_z_planes(
     //   Seam rev on sphere: u=2蟺, v from v_lo to v_hi
     let seam_rev = Curve2d::Line(Line2d { origin: glam::DVec2::new(two_pi, v_lo), direction: glam::DVec2::new(0.0, -1.0) });
     //   E1 on sphere (if present): iso-v = v_lo
-    let e1_on_sphere = if has_top_cap && has_bot_cap {
+    let e1_on_sphere = if has_bot_cap {
         Some(Curve2d::Line(Line2d { origin: glam::DVec2::new(0.0, v_lo), direction: glam::DVec2::new(1.0, 0.0) }))
     } else {
         None
@@ -3215,7 +3259,7 @@ pub(crate) fn build_sphere_clipped_by_z_planes(
     } else {
         None
     };
-    let e1_on_bot_plane = if has_bot_cap && has_top_cap {
+    let e1_on_bot_plane = if has_bot_cap {
         Some(Curve2d::Circle(rcad_kernel::geom::Circle2d { center: glam::DVec2::ZERO, radius: r_lo }))
     } else {
         None
@@ -3307,25 +3351,23 @@ pub(crate) fn build_sphere_clipped_by_z_planes(
     let mut face_wires_sphere: Vec<WireEdge> = Vec::new();
 
     if has_top_cap && has_bot_cap {
-        // Both caps: pattern = bottom_fwd 鈫?seam_fwd 鈫?top_rev 鈫?seam_rev
-        // where bottom = v_lo (lower z), top = v_hi (higher z)
+        // Both caps: trace the UV rectangle counter-clockwise.
         face_wires_sphere.push(WireEdge::fwd(e1.unwrap())); // E1 fwd at v_lo
-        face_wires_sphere.push(WireEdge::fwd(seam));        // seam fwd v_lo鈫抳_hi
+        face_wires_sphere.push(WireEdge::rev(seam));        // seam rev v_lo->v_hi at u=2pi
         face_wires_sphere.push(WireEdge::rev(e0));           // E0 rev at v_hi
-        face_wires_sphere.push(WireEdge::rev(seam));         // seam rev v_hi鈫抳_lo
+        face_wires_sphere.push(WireEdge::fwd(seam));         // seam fwd v_hi->v_lo at u=0
     } else if has_top_cap {
         // Only top cap (v_bot is at south pole): pattern = E0_rev 鈫?seam_fwd 鈫?seam_rev
         face_wires_sphere.push(WireEdge::rev(e0));
         face_wires_sphere.push(WireEdge::fwd(seam));
         face_wires_sphere.push(WireEdge::rev(seam));
     } else if has_bot_cap {
-        // Only bottom cap (v_hi is at north pole): pattern = seam_fwd 鈫?E0_rev 鈫?seam_rev
-        // Actually: bottom circle fwd 鈫?seam fwd 鈫?seam_rev (no top circle since at pole)
-        // Since E0 is at v_hi=north pole and E1 is at v_lo:
-        //   lateral = E0_fwd 鈫?seam_fwd 鈫?seam_rev
-        face_wires_sphere.push(WireEdge::fwd(e0));
-        face_wires_sphere.push(WireEdge::fwd(seam));
+        // Only bottom cap (v_hi is at north pole). The upper spherical patch is
+        // bounded by the lower clip circle plus the periodic seam pair meeting
+        // at the pole; the seam order must trace the small cap, not its complement.
+        face_wires_sphere.push(WireEdge::fwd(e1.unwrap()));
         face_wires_sphere.push(WireEdge::rev(seam));
+        face_wires_sphere.push(WireEdge::fwd(seam));
     } else {
         // No caps 鈥?sphere entirely inside cylinder, entire z-range inside
         return None; // Should have been caught by containment
@@ -11836,22 +11878,19 @@ fn build_box_minus_cylinder_full_uv_z_fail(
 
     let mut brep = box_brep.clone();
 
-    // For each Z-level: 2 vertices (胃=0, 胃=蟺) + 2 half-circle edges (0鈫捪€, 蟺鈫?蟺).
-    struct CircleRing { z: f64, v0: usize, v1: usize, e0: usize, e1: usize }
+    // For each Z-level: one seam vertex at u=0 and one full-circle self-loop edge.
+    struct CircleRing { z: f64, v: usize, e: usize }
     let mut rings: Vec<CircleRing> = Vec::new();
 
     for &z in &z_levels {
         let cc = circle_center_at(z);
         let p0 = cc + cyl_r * x_ax;  // 胃 = 0
-        let p1 = cc - cyl_r * x_ax;  // 胃 = 蟺
 
-        let v0 = make_vertex(&mut brep, p0);
-        let v1 = make_vertex(&mut brep, p1);
+        let v = make_vertex(&mut brep, p0);
         let cc_curve = Curve3::Circle(Circle3 { center: cc, normal: z_ax, radius: cyl_r });
-        let e0 = make_edge(&mut brep, cc_curve.clone(), 0.0, pi, v0, v1).ok()?;
-        let e1 = make_edge(&mut brep, cc_curve, pi, two_pi, v1, v0).ok()?;
+        let e = make_edge(&mut brep, cc_curve, 0.0, two_pi, v, v).ok()?;
 
-        rings.push(CircleRing { z, v0, v1, e0, e1 });
+        rings.push(CircleRing { z, v, e });
     }
 
     // Find Z- and Z+ face indices by matching plane-surface normals.
@@ -11873,33 +11912,35 @@ fn build_box_minus_cylinder_full_uv_z_fail(
     if needs_z_minus_inner {
         let r = ring_at(-ew)?;
         brep.solids[0].shells[0].faces[z_minus_fi].inner_wires
-            .push(make_wire(vec![WireEdge::fwd(r.e0), WireEdge::fwd(r.e1)]));
+            .push(make_wire(vec![WireEdge::fwd(r.e)]));
     }
     // Z+ face inner wire: CW viewed from +z_ax (outside) 鈫?rev edges.
     if needs_z_plus_inner {
         let r = ring_at(ew)?;
         brep.solids[0].shells[0].faces[z_plus_fi].inner_wires
-            .push(make_wire(vec![WireEdge::rev(r.e0), WireEdge::rev(r.e1)]));
+            .push(make_wire(vec![WireEdge::rev(r.e)]));
     }
 
     // 鈹€鈹€ Cap disks 鈹€鈹€
     // Bottom cap at inter_lo (normal 鈭抸_ax, CCW from 鈭抸_ax 鈫?rev edges).
+    let mut bot_cap_fi = None;
     if needs_bot_cap {
         let r = ring_at(inter_lo)?;
-        make_face(&mut brep,
+        bot_cap_fi = Some(make_face(&mut brep,
             Surface3::Plane(Plane { origin: circle_center_at(inter_lo), normal: -z_ax }),
-            make_wire(vec![WireEdge::rev(r.e0), WireEdge::rev(r.e1)]),
+            make_wire(vec![WireEdge::rev(r.e)]),
             vec![],
-        ).ok()?;
+        ).ok()?);
     }
     // Top cap at inter_hi (normal +z_ax, CCW from +z_ax 鈫?fwd edges).
+    let mut top_cap_fi = None;
     if needs_top_cap {
         let r = ring_at(inter_hi)?;
-        make_face(&mut brep,
+        top_cap_fi = Some(make_face(&mut brep,
             Surface3::Plane(Plane { origin: circle_center_at(inter_hi), normal: z_ax }),
-            make_wire(vec![WireEdge::fwd(r.e0), WireEdge::fwd(r.e1)]),
+            make_wire(vec![WireEdge::fwd(r.e)]),
             vec![],
-        ).ok()?;
+        ).ok()?);
     }
 
     // 鈹€鈹€ Cylindrical wall face 鈹€鈹€
@@ -11907,30 +11948,23 @@ fn build_box_minus_cylinder_full_uv_z_fail(
     let wall_top = ring_at(inter_hi)?;
     let wall_h = inter_hi - inter_lo;
 
-    // Generators: along z_ax at 胃 = 蟺 (v1) and 胃 = 0 (v0).
-    let p_bot_v1 = brep.vertices[wall_bot.v1].point;
-    let _p_top_v1 = brep.vertices[wall_top.v1].point;
-    let p_bot_v0 = brep.vertices[wall_bot.v0].point;
-    let _p_top_v0 = brep.vertices[wall_top.v0].point;
-    let gen_pi = make_edge(&mut brep,
-        Curve3::Line(Line3 { origin: p_bot_v1, direction: z_ax }),
-        0.0, wall_h, wall_bot.v1, wall_top.v1,
-    ).ok()?;
+    // Single seam generator at u=0; use it twice around the periodic wall face.
+    let p_bot_v = brep.vertices[wall_bot.v].point;
     let gen_0 = make_edge(&mut brep,
-        Curve3::Line(Line3 { origin: p_bot_v0, direction: z_ax }),
-        0.0, wall_h, wall_bot.v0, wall_top.v0,
+        Curve3::Line(Line3 { origin: p_bot_v, direction: z_ax }),
+        0.0, wall_h, wall_bot.v, wall_top.v,
     ).ok()?;
 
     let wall_surf = Surface3::Cylinder(CylindricalSurface {
         origin: circle_center_at(inter_lo), axis: z_ax, radius: cyl_r, ref_dir: x_ax,
     });
-    // Wire: bot arc (0鈫捪€) 鈫?gen at 蟺 鈫?top arc (蟺鈫?蟺) 鈫?gen at 0 (rev).
-    // Traces a CCW loop in uv-space on the cylinder surface.
+    // Same topological pattern as the working cone-cylinder builder:
+    // bottom full circle (rev) -> seam up -> top full circle (fwd) -> seam down.
     let wall_fi = make_face(&mut brep, wall_surf,
         make_wire(vec![
-            WireEdge::fwd(wall_bot.e0),
-            WireEdge::fwd(gen_pi),
-            WireEdge::fwd(wall_top.e1),
+            WireEdge::rev(wall_bot.e),
+            WireEdge::fwd(gen_0),
+            WireEdge::fwd(wall_top.e),
             WireEdge::rev(gen_0),
         ]),
         vec![],
@@ -11941,7 +11975,7 @@ fn build_box_minus_cylinder_full_uv_z_fail(
     brep.geom.face_surface_range[wall_fi] = Some([0.0, two_pi, 0.0, wall_h]);
 
     // Push p-curve slots for new edges (make_edge does not push edge_pcurves).
-    for _ in 0..z_levels.len() * 2 + 2 {
+    for _ in 0..z_levels.len() + 1 {
         brep.geom.edge_pcurves.push(Vec::new());
     }
 
@@ -12234,6 +12268,64 @@ pub(crate) fn compute_valid_theta_ranges(r: f64, clip_planes: &[(DVec3, f64)]) -
     valid
 }
 
+fn split_theta_ranges(intervals: &[(f64, f64)], split_thetas: &[f64]) -> Vec<(f64, f64)> {
+    let two_pi = 2.0 * std::f64::consts::PI;
+    if intervals.is_empty() {
+        return Vec::new();
+    }
+
+    let mut splits: Vec<f64> = split_thetas.iter()
+        .map(|theta| {
+            let t = theta.rem_euclid(two_pi);
+            if t >= two_pi - 1e-12 { 0.0 } else { t }
+        })
+        .collect();
+    splits.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    splits.dedup_by(|a, b| (*a - *b).abs() < 1e-12);
+
+    let mut result = Vec::new();
+    for &(lo, hi) in intervals {
+        let mut cuts = vec![lo];
+        for &split in &splits {
+            if split > lo + 1e-12 && split < hi - 1e-12 {
+                cuts.push(split);
+            }
+        }
+        cuts.push(hi);
+        for pair in cuts.windows(2) {
+            if pair[1] > pair[0] + 1e-12 {
+                result.push((pair[0], pair[1]));
+            }
+        }
+    }
+    result
+}
+
+fn cylinder_box_tangent_split_thetas(
+    full_u: bool,
+    full_v: bool,
+    cu: f64,
+    cv: f64,
+    u_ax: DVec3,
+    v_ax: DVec3,
+    eu: f64,
+    ev: f64,
+    cyl_r: f64,
+    tol: f64,
+) -> Vec<f64> {
+    let mut split_thetas = Vec::new();
+    for &(full_axis, cp, ax, ext) in &[(full_u, cu, u_ax, eu), (full_v, cv, v_ax, ev)] {
+        let _ = full_axis;
+        if (cp - cyl_r + ext).abs() <= tol {
+            split_thetas.push((-ax).y.atan2((-ax).x));
+        }
+        if (cp + cyl_r - ext).abs() <= tol {
+            split_thetas.push(ax.y.atan2(ax.x));
+        }
+    }
+    split_thetas
+}
+
 /// Compute the complement (inverse) of a set of 胃 intervals within [0, 2蟺).
 /// Each interval (lo, hi) is assumed sorted and non-overlapping.
 /// The result covers the parts of [0, 2蟺) not in any input interval.
@@ -12413,7 +12505,17 @@ fn build_cylinder_box_intersection_brep(
     h: f64,
     clip_planes: &[(DVec3, f64)],
 ) -> BRep {
-    let intervals = compute_valid_theta_ranges(r, clip_planes);
+    build_cylinder_box_intersection_brep_with_splits(center, r, h, clip_planes, &[])
+}
+
+fn build_cylinder_box_intersection_brep_with_splits(
+    center: DVec3,
+    r: f64,
+    h: f64,
+    clip_planes: &[(DVec3, f64)],
+    split_thetas: &[f64],
+) -> BRep {
+    let intervals = split_theta_ranges(&compute_valid_theta_ranges(r, clip_planes), split_thetas);
     build_cylinder_box_clipped_brep(center, r, h, &intervals, clip_planes, false, false, true)
 }
 
@@ -12890,11 +12992,12 @@ pub(crate) fn build_cylinder_box_clipped_brep(
             ref_dir: DVec3::X,
         }));
 
+        let mid_theta = 0.5 * (s_raw + e_raw);
         let fi = brep.solids[0].shells[0].faces.len();
         brep.solids[0].shells[0].faces.push(Face {
             outer_wire: cyl_wire,
             inner_wires: Vec::new(),
-            normal: DVec3::new(0.0, 0.0, 0.0), // will be set later (same for all cyl faces)
+            normal: DVec3::new(mid_theta.cos(), mid_theta.sin(), 0.0),
             triangles: Vec::new(),
             sample_point: None,
             mesh_dirty: true,
@@ -12910,19 +13013,6 @@ pub(crate) fn build_cylinder_box_clipped_brep(
         brep.geom.face_surface_range[fi] = Some([s_raw, e_raw, 0.0, h]);
 
         interval_edges.push(IntervalEdges { ba, rg, ta, lg });
-    }
-
-    // Fix the normal on all cylindrical wall faces (they all point the same way)
-    let cyl_face_normal = if clip_planes.is_empty() {
-        DVec3::Z
-    } else {
-        // Average of clip-plane inward normals (all horizontal 鈫?result is horizontal)
-        let mut avg = DVec3::ZERO;
-        for &(n, _) in clip_planes { avg += n; }
-        avg.normalize()
-    };
-    for fi in 0..brep.solids[0].shells[0].faces.len() {
-        brep.solids[0].shells[0].faces[fi].normal = cyl_face_normal;
     }
 
     // ---- 5. chord edges between interval endpoints (on clip planes) ----
@@ -13793,14 +13883,25 @@ fn try_intersect_cylinder_box_one_dir(cyl_brep: &BRep, box_brep: &BRep) -> Optio
     let cv = (cyl_center - bc).dot(v_ax);
     let full_u = cu - cyl_r >= -eu - tol && cu + cyl_r <= eu + tol;
     let full_v = cv - cyl_r >= -ev - tol && cv + cyl_r <= ev + tol;
+    let tangent_splits = cylinder_box_tangent_split_thetas(
+        full_u, full_v, cu, cv, u_ax, v_ax, eu, ev, cyl_r, tol,
+    );
 
     if full_u && full_v {
-        // Full XY containment: build sub-cylinder with 4 lateral quadrant faces
-        // (matching OCCT topology when the cylinder touches box faces tangentially).
         let h = inter_hi - inter_lo;
         let cz = inter_lo + h / 2.0;
         let center = DVec3::new(cyl_center.x, cyl_center.y, cz);
-        return Some(build_cylinder_quadrant_brep(center, cyl_axis, u_ax, cyl_r, h));
+        return if tangent_splits.is_empty() {
+            Some(make_cylinder_brep(center, cyl_axis, u_ax, cyl_r, h).ok()?)
+        } else {
+            Some(build_cylinder_box_intersection_brep_with_splits(
+                center,
+                cyl_r,
+                h,
+                &[],
+                &tangent_splits,
+            ))
+        };
     }
 
     // Collect clip planes from all partially-contained axes.
@@ -13835,11 +13936,19 @@ fn try_intersect_cylinder_box_one_dir(cyl_brep: &BRep, box_brep: &BRep) -> Optio
         if cut_dist < -cyl_r + 1e-12 {
             return Some(BRep::default());
         }
-        return Some(build_half_cylinder_intersection_brep(adj_center, cyl_r, h, clip_dir, cut_dist));
+        if tangent_splits.is_empty() {
+            return Some(build_half_cylinder_intersection_brep(adj_center, cyl_r, h, clip_dir, cut_dist));
+        }
     }
 
     // Multiple clip planes 鈫?general multi-plane builder.
-    Some(build_cylinder_box_intersection_brep(adj_center, cyl_r, h, &clip_planes))
+    Some(build_cylinder_box_intersection_brep_with_splits(
+        adj_center,
+        cyl_r,
+        h,
+        &clip_planes,
+        &tangent_splits,
+    ))
 }
 
 /// Build box 鈭?cylinder difference when the cylinder center is inside the box UV
@@ -14700,7 +14809,60 @@ mod tests {
                 println!("  SA: {:.6}", rcad_kernel::surface_area(r));
             }
         }
-    }}
+    }
+
+    fn count_face_surface_kinds(brep: &BRep) -> (usize, usize) {
+        let mut n_cyl = 0;
+        let mut n_plan = 0;
+        let mut global_fi = 0usize;
+        for solid in &brep.solids {
+            for shell in &solid.shells {
+                for _face in &shell.faces {
+                    let Some(si) = brep.geom.face_surface.get(global_fi).and_then(|s| *s) else {
+                        global_fi += 1;
+                        continue;
+                    };
+                    match &brep.geom.surfaces[si] {
+                        Surface3::Cylinder(_) => n_cyl += 1,
+                        Surface3::Plane(_) => n_plan += 1,
+                        _ => {}
+                    }
+                    global_fi += 1;
+                }
+            }
+        }
+        (n_cyl, n_plan)
+    }
+
+    #[test]
+    fn cylinder_box_intersection_splits_half_cylinder_at_internal_tangent() {
+        let cyl = make_cylinder_brep(DVec3::new(0.0, 0.0, 1.0), DVec3::Z, DVec3::X, 1.0, 2.0).unwrap();
+        let bx = make_box_brep(DVec3::new(-1.0, -1.0, 0.0), DVec3::X, DVec3::Y, 3.0, 1.0, 1.0).unwrap();
+        let brep = try_intersect_cylinder_box_one_dir(&cyl, &bx).expect("half-cylinder tangent split");
+        let n_faces: usize = brep.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
+        let (n_cyl, n_plan) = count_face_surface_kinds(&brep);
+        assert_eq!((n_faces, n_cyl, n_plan), (5, 2, 3));
+    }
+
+    #[test]
+    fn cylinder_box_intersection_splits_full_cylinder_at_tangent_generators() {
+        let cyl = make_cylinder_brep(DVec3::new(0.0, 0.0, 1.0), DVec3::Z, DVec3::X, 1.0, 2.0).unwrap();
+        let bx = make_box_brep(DVec3::new(-1.0, -1.0, 0.0), DVec3::X, DVec3::Y, 2.5, 3.0, 1.0).unwrap();
+        let brep = try_intersect_cylinder_box_one_dir(&cyl, &bx).expect("full-cylinder tangent split");
+        let n_faces: usize = brep.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
+        let (n_cyl, n_plan) = count_face_surface_kinds(&brep);
+        assert_eq!((n_faces, n_cyl, n_plan), (5, 3, 2));
+    }
+
+    #[test]
+    fn cylinder_box_intersection_external_tangent_is_empty() {
+        let cyl = make_cylinder_brep(DVec3::new(0.0, 0.0, 1.0), DVec3::Z, DVec3::X, 1.0, 2.0).unwrap();
+        let bx = make_box_brep(DVec3::new(1.0, -1.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let brep = try_intersection_cylinder_box(&cyl, &bx).expect("external tangent handled by cylinder-box fast path");
+        assert!(brep.solids.is_empty(), "expected empty tangent intersection, got {} solids", brep.solids.len());
+    }
+
+}
 
 /// Build a cylinder split into 4 lateral quadrant faces + 2 planar caps.
 fn build_cylinder_quadrant_brep(

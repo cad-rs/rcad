@@ -2593,6 +2593,54 @@ pub(crate) fn boolean_postprocess_pave_result(
     }
     if !result.solids.is_empty() && !result.solids[0].shells.is_empty() {
         eprintln!("Post-process result: {} faces", result.solids[0].shells[0].faces.len());
+        if std::env::var("RCAD_DEBUG_RESULT_FACES").is_ok() {
+            let mut flat_idx = 0usize;
+            for solid in &result.solids {
+                for shell in &solid.shells {
+                    for face in &shell.faces {
+                        let surf_name = result
+                            .geom
+                            .face_surface
+                            .get(flat_idx)
+                            .and_then(|entry| *entry)
+                            .and_then(|surface_idx| result.geom.surfaces.get(surface_idx))
+                            .map(|surface| match surface {
+                                rcad_kernel::geom::Surface3::Plane(_) => "Plane",
+                                rcad_kernel::geom::Surface3::Cylinder(_) => "Cylinder",
+                                rcad_kernel::geom::Surface3::Cone(_) => "Cone",
+                                rcad_kernel::geom::Surface3::Sphere(_) => "Sphere",
+                                rcad_kernel::geom::Surface3::Torus(_) => "Torus",
+                                rcad_kernel::geom::Surface3::BSpline(_) => "BSpline",
+                                _ => "Other",
+                            })
+                            .unwrap_or("None");
+                        let area = rcad_kernel::properties::face_surface_area(&result, face, flat_idx);
+                        let uv_range = result
+                            .geom
+                            .face_surface_range
+                            .get(flat_idx)
+                            .and_then(|entry| *entry)
+                            .map(|[u0, u1, v0, v1]| {
+                                format!(" uv=[{u0:.4},{u1:.4}]x[{v0:.4},{v1:.4}]")
+                            })
+                            .unwrap_or_default();
+                        let sample = face
+                            .sample_point
+                            .map(|p| format!(" sample=({:.4},{:.4},{:.4})", p.x, p.y, p.z))
+                            .unwrap_or_default();
+                        eprintln!(
+                            "[RESULT_FACE] face[{flat_idx}] surf={surf_name} area={area:.6} outer_edges={} inner_wires={} tris={}{}{}",
+                            face.outer_wire.edges.len(),
+                            face.inner_wires.len(),
+                            face.triangles.len(),
+                            uv_range,
+                            sample,
+                        );
+                        flat_idx += 1;
+                    }
+                }
+            }
+        }
     }
     Ok(result)
 }
@@ -2626,9 +2674,122 @@ macro_rules! try_fast_path {
             if std::env::var("RCAD_DEBUG_FAST_PATH").is_ok() {
                 eprintln!("FAST_PATH: {}", $n);
             }
-            return Ok(r);
+            return Ok(finalize_fast_path_result(r));
         }
     }};
+}
+
+fn finalize_fast_path_result(r: BRep) -> BRep {
+    let r = deduplicate_edges(r);
+    let closure = crate::brep_check::validate_solid_closure(&r);
+    let has_open_closure = closure.issues.iter().any(|issue| {
+        matches!(issue, crate::CheckIssue::SolidNotClosed { .. })
+    });
+    let r = if has_open_closure
+        || preserve_tangent_split_cylinder_topology(&r)
+        || preserve_full_circle_hole_cylinder_topology(&r)
+    {
+        r
+    } else {
+        optimize_boolean_topology(r)
+    };
+    let r = promote_planar_surfaces(r);
+    r
+}
+
+fn preserve_tangent_split_cylinder_topology(brep: &BRep) -> bool {
+    use rcad_kernel::geom::Surface3;
+
+    let mut plane_faces = 0usize;
+    let mut cylinder_faces = 0usize;
+    let mut cylinder_key: Option<(glam::DVec3, glam::DVec3, f64)> = None;
+    let mut global_fi = 0usize;
+
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for _face in &shell.faces {
+                let Some(si) = brep.geom.face_surface.get(global_fi).and_then(|s| *s) else {
+                    return false;
+                };
+                match &brep.geom.surfaces[si] {
+                    Surface3::Plane(_) => plane_faces += 1,
+                    Surface3::Cylinder(cyl) => {
+                        cylinder_faces += 1;
+                        let key = (cyl.origin, cyl.axis.normalize(), cyl.radius);
+                        if let Some(prev) = cylinder_key {
+                            if (prev.0 - key.0).length() > 1e-8
+                                || prev.1.dot(key.1).abs() < 1.0 - 1e-8
+                                || (prev.2 - key.2).abs() > 1e-8
+                            {
+                                return false;
+                            }
+                        } else {
+                            cylinder_key = Some(key);
+                        }
+                    }
+                    _ => return false,
+                }
+                global_fi += 1;
+            }
+        }
+    }
+
+    (2..=3).contains(&plane_faces) && cylinder_faces >= 2
+}
+
+fn preserve_full_circle_hole_cylinder_topology(brep: &BRep) -> bool {
+    use rcad_kernel::geom::Surface3;
+
+    let mut plane_faces = 0usize;
+    let mut cylinder_faces = 0usize;
+    let mut single_edge_plane_faces = 0usize;
+    let mut single_edge_inner_wires = 0usize;
+    let mut global_fi = 0usize;
+
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                let Some(si) = brep.geom.face_surface.get(global_fi).and_then(|s| *s) else {
+                    return false;
+                };
+                match &brep.geom.surfaces[si] {
+                    Surface3::Plane(_) => {
+                        plane_faces += 1;
+                        if face.outer_wire.edges.len() == 1 {
+                            single_edge_plane_faces += 1;
+                        }
+                        single_edge_inner_wires += face
+                            .inner_wires
+                            .iter()
+                            .filter(|wire| wire.edges.len() == 1)
+                            .count();
+                    }
+                    Surface3::Cylinder(_) => cylinder_faces += 1,
+                    _ => return false,
+                }
+                global_fi += 1;
+            }
+        }
+    }
+
+    cylinder_faces == 1
+        && plane_faces >= 6
+        && single_edge_plane_faces >= 1
+        && single_edge_inner_wires >= 1
+}
+
+fn finalize_boolean_result(r: BRep) -> BRep {
+    // Edge deduplication BEFORE topology optimization so that face adjacency
+    // detection in unify_same_domain_faces works correctly (it uses edge INDEX
+    // to find adjacent faces; the PaveFiller creates duplicate edges at the
+    // same geometric boundary).
+    let r = deduplicate_edges(r);
+    // Topology optimization: merge coplanar faces, share edges, detect holes.
+    let r = optimize_boolean_topology(r);
+    // Promote planar BSpline → Plane AFTER topology optimization to avoid
+    // perturbing orthogonal_face_fuse plane-equation matching: bspline_to_plane
+    // can introduce slight plane offsets that break coplanarity detection.
+    promote_planar_surfaces(r)
 }
 
 pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
@@ -2743,7 +2904,13 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         // overlaps (bcommon_simple_c1 — SA=3 vs expected 2.5).
         try_fast_path!(boolean_unit_octant::try_intersection_box_box(a, b), "try_intersection_box_box");
         // Fast-path: general box-box intersection (rotated boxes) via half-spaces.
-        try_fast_path!(boolean_unit_octant::try_intersection_box_general(a, b), "try_intersection_box_general");
+        // The raw convex polyhedron already has the intended planar face split;
+        // routing it through optimize_boolean_topology can incorrectly collapse
+        // the oblique side faces on cases like bopcommon_simple C3/C5/C6.
+        if let Some(r) = boolean_unit_octant::try_intersection_box_general(a, b) {
+            if std::env::var("RCAD_DEBUG_FAST_PATH").is_ok() { eprintln!("FAST_PATH: try_intersection_box_general"); }
+            return Ok(promote_planar_surfaces(deduplicate_edges(r)));
+        }
         try_fast_path!(boolean_unit_octant::try_intersection_concentric_spheres(a, b), "try_intersection_concentric_spheres");
         try_fast_path!(boolean_unit_octant::try_intersection_coaxial_cone_cylinder(a, b), "try_intersection_coaxial_cone_cylinder");
         try_fast_path!(boolean_unit_octant::try_intersection_coaxial_cylinder_cylinder(a, b), "try_intersection_coaxial_cylinder_cylinder");
@@ -2795,18 +2962,7 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
             r
         }
     };
-    // Edge deduplication BEFORE topology optimization so that face adjacency
-    // detection in unify_same_domain_faces works correctly (it uses edge INDEX
-    // to find adjacent faces; the PaveFiller creates duplicate edges at the
-    // same geometric boundary).
-    let r = deduplicate_edges(r);
-    // Topology optimization: merge coplanar faces, share edges, detect holes.
-    let r = optimize_boolean_topology(r);
-    // Promote planar BSpline → Plane AFTER topology optimization to avoid
-    // perturbing orthogonal_face_fuse plane-equation matching: bspline_to_plane
-    // can introduce slight plane offsets that break coplanarity detection.
-    let r = promote_planar_surfaces(r);
-    Ok(r)
+    Ok(finalize_boolean_result(r))
 }
 
 /// Split disconnected face sets into separate shells (multi-body results).
@@ -2830,15 +2986,21 @@ fn split_disconnected_shells(mut brep: BRep) -> BRep {
             let mut e2f: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
             for (fi, face) in faces.iter().enumerate() {
                 let mut seen = HashSet::new();
-                for we in &face.outer_wire.edges {
-                    if let Some(edge) = brep.edges.get(we.idx) {
-                        let key = if edge.start < edge.end {
-                            (edge.start, edge.end)
-                        } else { (edge.end, edge.start) };
-                        if seen.insert(key) {
-                            e2f.entry(key).or_default().push(fi);
+                let mut add_wire_edges = |wire: &rcad_kernel::topology::Wire| {
+                    for we in &wire.edges {
+                        if let Some(edge) = brep.edges.get(we.idx) {
+                            let key = if edge.start < edge.end {
+                                (edge.start, edge.end)
+                            } else { (edge.end, edge.start) };
+                            if seen.insert(key) {
+                                e2f.entry(key).or_default().push(fi);
+                            }
                         }
                     }
+                };
+                add_wire_edges(&face.outer_wire);
+                for inner_wire in &face.inner_wires {
+                    add_wire_edges(inner_wire);
                 }
             }
             for (_, flist) in &e2f {
@@ -3046,6 +3208,9 @@ fn optimize_boolean_topology(mut brep: BRep) -> BRep {
     let tol = tolerance::TOLERANCE_ABS.max(1e-8);
     // Pass 1: orthogonal grid-based fuse
     let (m1, _) = crate::orthogonal_face_fuse::fuse_orthogonal_coplanar_faces(&brep, tol);
+    // Pass 1 can mint fresh edge records for boundaries that are geometrically
+    // shared, so re-share them before same-domain adjacency walks by edge index.
+    let m1 = deduplicate_edges(m1);
     // Surface deduplication: merge identical surface geometries (same plane,
     // same cylinder, etc.) into a single surface entry.  The PaveFiller creates
     // separate entries for each sub-face even when they share the same geometry.
@@ -6039,28 +6204,68 @@ fn unify_one_merge_pass_with_origins(brep: &mut BRep, face_origins: Option<&[Fac
         for shi in 0..brep.solids[si].shells.len() {
             let nfaces = brep.solids[si].shells[shi].faces.len();
 
+            fn quantize_edge_point(p: glam::DVec3) -> (i64, i64, i64) {
+                let inv_tol = 1.0 / tolerance::TOLERANCE_PARAM_LEGACY.max(tolerance::TOLERANCE_ABS);
+                (
+                    (p.x * inv_tol).round() as i64,
+                    (p.y * inv_tol).round() as i64,
+                    (p.z * inv_tol).round() as i64,
+                )
+            }
+
+            fn geometric_edge_key(brep: &BRep, edge_idx: usize) -> Option<((i64, i64, i64), (i64, i64, i64))> {
+                let edge = brep.edges.get(edge_idx)?;
+                let start = quantize_edge_point(brep.vertices.get(edge.start)?.point);
+                let end = quantize_edge_point(brep.vertices.get(edge.end)?.point);
+                Some(if start <= end { (start, end) } else { (end, start) })
+            }
+
             // Build edge → [face_index_in_shell] adjacency for this shell.
             let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
+            let mut geom_edge_to_faces: HashMap<((i64, i64, i64), (i64, i64, i64)), Vec<(usize, usize)>> = HashMap::new();
             for fi in 0..nfaces {
                 for we in &brep.solids[si].shells[shi].faces[fi].outer_wire.edges {
                     edge_to_faces.entry(we.idx).or_default().push(fi);
+                    if let Some(key) = geometric_edge_key(brep, we.idx) {
+                        geom_edge_to_faces.entry(key).or_default().push((fi, we.idx));
+                    }
                 }
                 for iw in &brep.solids[si].shells[shi].faces[fi].inner_wires {
                     for we in &iw.edges {
                         edge_to_faces.entry(we.idx).or_default().push(fi);
+                        if let Some(key) = geometric_edge_key(brep, we.idx) {
+                            geom_edge_to_faces.entry(key).or_default().push((fi, we.idx));
+                        }
                     }
                 }
             }
 
             // Find the first internal edge shared by exactly 2 same-domain faces.
             // Sort by edge index for deterministic iteration (HashMap order varies between runs).
-            let mut edge_faces_sorted: Vec<(usize, &Vec<usize>)> = edge_to_faces.iter().map(|(&k, v)| (k, v)).collect();
-            edge_faces_sorted.sort_by_key(|(k, _)| *k);
-            for (edge_idx, face_refs) in &edge_faces_sorted {
-                if face_refs.len() != 2 {
+            let mut adjacency_candidates: Vec<(usize, usize, usize, usize)> = edge_to_faces
+                .iter()
+                .filter_map(|(&edge_idx, face_refs)| {
+                    if face_refs.len() == 2 {
+                        Some((edge_idx, edge_idx, face_refs[0], face_refs[1]))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for face_edges in geom_edge_to_faces.values() {
+                if face_edges.len() != 2 {
                     continue;
                 }
-                let (fi1, fi2) = (face_refs[0], face_refs[1]);
+                let (fi1, edge_idx1) = face_edges[0];
+                let (fi2, edge_idx2) = face_edges[1];
+                if fi1 == fi2 || edge_idx1 == edge_idx2 {
+                    continue;
+                }
+                adjacency_candidates.push((edge_idx1, edge_idx2, fi1, fi2));
+            }
+            adjacency_candidates.sort_unstable();
+            adjacency_candidates.dedup();
+            for &(edge_idx1, edge_idx2, fi1, fi2) in &adjacency_candidates {
                 if fi1 == fi2 {
                     continue;
                 }
@@ -6146,8 +6351,13 @@ fn unify_one_merge_pass_with_origins(brep: &mut BRep, face_origins: Option<&[Fac
                 // faces with incompatible topology or UV regions.
                 if should_merge {
                     // Check shared edge continuity (PCurve alignment).
-                    let edge_continuous =
-                        validate_shared_edge_continuity(brep, si, shi, fi1, fi2, *edge_idx);
+                    let edge_continuous = if edge_idx1 == edge_idx2 {
+                        validate_shared_edge_continuity(brep, si, shi, fi1, fi2, edge_idx1)
+                    } else {
+                        // Geometric-edge fallback found equivalent boundaries with distinct
+                        // edge indices, so there is no single shared topological edge to validate.
+                        true
+                    };
                     if !edge_continuous {
                         should_merge = false;
                     }
@@ -6192,7 +6402,7 @@ fn unify_one_merge_pass_with_origins(brep: &mut BRep, face_origins: Option<&[Fac
                     .edges
                     .clone();
 
-                if let Some(merged_wire_edges) = splice_wires(&wire1, &wire2, *edge_idx) {
+                if let Some(merged_wire_edges) = splice_wires(&wire1, edge_idx1, &wire2, edge_idx2) {
                     let merged_wire_edges = cleanup_merged_wire_edges(brep, &merged_wire_edges);
                     // Collect inner wires from both faces.
                     let inner1 = brep.solids[si].shells[shi].faces[fi1].inner_wires.clone();
@@ -6278,11 +6488,12 @@ fn unify_one_merge_pass_with_origins(brep: &mut BRep, face_origins: Option<&[Fac
 /// Returns `None` if the shared edge is not found in either wire.
 fn splice_wires(
     wire_a: &[rcad_kernel::topology::WireEdge],
+    shared_edge_idx_a: usize,
     wire_b: &[rcad_kernel::topology::WireEdge],
-    shared_edge_idx: usize,
+    shared_edge_idx_b: usize,
 ) -> Option<Vec<rcad_kernel::topology::WireEdge>> {
-    let pos_a = wire_a.iter().position(|we| we.idx == shared_edge_idx)?;
-    let pos_b = wire_b.iter().position(|we| we.idx == shared_edge_idx)?;
+    let pos_a = wire_a.iter().position(|we| we.idx == shared_edge_idx_a)?;
+    let pos_b = wire_b.iter().position(|we| we.idx == shared_edge_idx_b)?;
 
     let n_b = wire_b.len();
     // B's edges (excluding the shared edge), in cyclic order starting at pos_b + 1
@@ -8547,7 +8758,7 @@ mod tests {
         let wire_a = vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)];
         let wire_b = vec![WireEdge::fwd(3), WireEdge::fwd(4), WireEdge::rev(1)];
 
-        let merged = splice_wires(&wire_a, &wire_b, 1).expect("splice should succeed");
+        let merged = splice_wires(&wire_a, 1, &wire_b, 1).expect("splice should succeed");
         // e1 at pos_a=1 is replaced by B's edges starting at pos_b+1: e1_rev is at pos_b=2,
         // so b_edges = [e3_fwd, e4_fwd]
         // result = [e0_fwd] + [e3_fwd, e4_fwd] + [e2_fwd]
@@ -8561,7 +8772,7 @@ mod tests {
         let wire_a = vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)];
         let wire_b = vec![WireEdge::fwd(3), WireEdge::fwd(4), WireEdge::fwd(5)];
         // edge 99 is not in either wire
-        assert!(splice_wires(&wire_a, &wire_b, 99).is_none());
+        assert!(splice_wires(&wire_a, 99, &wire_b, 99).is_none());
     }
 
     #[test]
@@ -8575,7 +8786,7 @@ mod tests {
             WireEdge::fwd(3),
         ];
         let wire_b = vec![WireEdge::fwd(4), WireEdge::fwd(5), WireEdge::rev(1)];
-        let merged = splice_wires(&wire_a, &wire_b, 1).expect("splice should succeed");
+        let merged = splice_wires(&wire_a, 1, &wire_b, 1).expect("splice should succeed");
         assert_eq!(merged.len(), 5);
     }
 
