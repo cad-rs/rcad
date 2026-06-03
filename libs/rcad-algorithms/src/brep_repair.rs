@@ -13467,7 +13467,30 @@ pub fn snap_planar_brep_vertices(brep: &BRep) -> BRep {
             opt.and_then(|si| brep.geom.surfaces.get(si)).map_or(false, |s| matches!(s, Surface3::Plane(_)))
         }).count();
         let n_total = brep.geom.face_surface.len();
-        eprintln!("snap_planar_brep_vertices: SKIP (non-planar, {} faces, {} planar of {}, {} verts)", n_total, n_planar, n_total, brep.vertices.len());
+        // Count each surface type for debugging
+        use std::fmt::Write;
+        let mut type_counts = std::collections::HashMap::<&str, usize>::new();
+        for opt in &brep.geom.face_surface {
+            if let Some(si) = opt {
+                if let Some(s) = brep.geom.surfaces.get(*si) {
+                    let name = match s {
+                        Surface3::Plane(_) => "Plane",
+                        Surface3::Cylinder(_) => "Cylinder",
+                        Surface3::Cone(_) => "Cone",
+                        Surface3::Sphere(_) => "Sphere",
+                        Surface3::Torus(_) => "Torus",
+                        Surface3::BSpline(_) => "BSpline",
+                        _ => "Other",
+                    };
+                    *type_counts.entry(name).or_insert(0) += 1;
+                }
+            }
+        }
+        let mut type_str = String::new();
+        for (name, count) in &type_counts {
+            let _ = write!(type_str, " {name}={count}");
+        }
+        eprintln!("snap_planar_brep_vertices: SKIP (non-planar, {} faces, {} planar, types:[{}], {} verts)", n_total, n_planar, type_str, brep.vertices.len());
         return brep.clone();
     }
 
