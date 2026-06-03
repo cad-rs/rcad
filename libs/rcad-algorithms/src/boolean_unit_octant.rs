@@ -1199,9 +1199,9 @@ fn sew_slabs_into_solid(slabs: &[BRep], zero_tol: f64) -> BRep {
     // The internal array is indexed by the pre-removal face order within the single shell;
     // face_surface is in the same order. Keep only entries for non-removed faces.
     let new_face_surface: Vec<Option<usize>> = brep.geom.face_surface.iter()
-        .zip(internal.iter())
-        .filter(|(_, &is_internal)| !is_internal)
-        .map(|(opt, _)| *opt)
+        .enumerate()
+        .filter(|(fi, _)| fi < &internal.len() && !internal[*fi])
+        .map(|(_, opt)| *opt)
         .collect();
     brep.geom.face_surface = new_face_surface;
 
