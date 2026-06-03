@@ -1412,12 +1412,28 @@ fn try_planar_face_exact_contour_area(brep: &BRep, face: &Face, face_normal: DVe
     let mut total = shoelace.abs() * 0.5;
 
     // Add circular segment corrections for arc edges.
+    let mut seg_total = 0.0;
+    let mut n_neg = 0u32;
+    let mut n_pos = 0u32;
     for edge in &edges {
         if edge.is_arc {
             let t = edge.theta;
             let seg = edge.radius * edge.radius * (t - t.sin()) * 0.5;
-            total += edge.sign * seg;
+            if edge.sign < 0.0 { n_neg += 1; seg_total -= seg; }
+            else { n_pos += 1; seg_total += seg; }
         }
+    }
+    // If all edges have the same sign and the corrections DEGRADE the area
+    // (shoelace is larger than total), the traversal direction inverted the
+    // bulge test.  This happens for cylinder-box cap faces where the face
+    // normal from Newell's method is inverted relative to the surface normal
+    // (H7: 4 arcs, all sign=-1 -> total = shoelace - corrections = 0.858).
+    let shoelace_raw = total;
+    total = shoelace_raw;
+    if (n_neg == 0 || n_pos == 0) && seg_total < 0.0 {
+        total -= seg_total;  // subtract negative = add positive corrections
+    } else {
+        total += seg_total;
     }
 
     if total > 0.0 && total.is_finite() { Some(total) } else { None }
@@ -2444,11 +2460,14 @@ fn try_analytic_face_surface_area(
     let surf_idx = brep.geom.face_surface.get(face_flat_idx).copied().flatten()?;
     let surf = brep.geom.surfaces.get(surf_idx)?;
     match surf {
-        Surface3::Plane(_) => {
-            // Exact arc-aware contour area (handles circular arc edges from
-            // sphere-plane intersection analytically).  Falls back to shoelace.
-            let a = try_planar_face_exact_contour_area(brep, face, face.normal)
-                .or_else(|| try_planar_face_area_shoelace(brep, face, face.normal));
+        Surface3::Plane(p) => {
+            // Exact arc-aware contour area.  Use surface normal from Plane
+            // geometry (not face.normal) for the arc bulge sign computation.
+            // face.normal from Newell's method can be inverted for some cap
+            // faces (cylinder-box bottom cap), flipping all arc correction
+            // signs and producing area 0.858 instead of pi (H7).
+            let a = try_planar_face_exact_contour_area(brep, face, p.normal)
+                .or_else(|| try_planar_face_area_shoelace(brep, face, p.normal));
             if a.is_some() { return a; }
             // Vertex-polygon fallback: the main shoelace path can return None
             // for valid planar faces with boolean-T-junction scrambled wires
