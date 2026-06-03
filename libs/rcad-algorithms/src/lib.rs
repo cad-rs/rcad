@@ -6328,10 +6328,10 @@ fn unify_one_merge_pass_with_origins(brep: &mut BRep, face_origins: Option<&[Fac
                             ) {
                                 let all_vs1_on_plane1 = vs1
                                     .iter()
-                                    .all(|p| (*p - pt1).dot(n).abs() <= tolerance::TOLERANCE_PARAM_LEGACY);
+                                    .all(|p| (*p - pt1).dot(n).abs() <= tolerance::TOLERANCE_PLANE_DIST_RELAX);
                                 let all_vs2_on_plane1 = vs2
                                     .iter()
-                                    .all(|p| (*p - pt1).dot(n).abs() <= tolerance::TOLERANCE_PARAM_LEGACY);
+                                    .all(|p| (*p - pt1).dot(n).abs() <= tolerance::TOLERANCE_PLANE_DIST_RELAX);
                                 all_vs1_on_plane1 && all_vs2_on_plane1
                             } else {
                                 false
