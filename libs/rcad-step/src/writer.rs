@@ -68,6 +68,8 @@ pub struct StepWriteOptions {
     pub header: StepHeader,
     /// Include standalone 1D entities as wireframe overlays in full-model export.
     pub export_standalone_wire_overlay: bool,
+    /// Keep planar BSpline surfaces as-is instead of promoting to PLANE.
+    pub preserve_bspline: bool,
 }
 
 impl Default for StepWriteOptions {
@@ -79,6 +81,7 @@ impl Default for StepWriteOptions {
             ap242_metadata: None,
             header: StepHeader::default(),
             export_standalone_wire_overlay: true,
+            preserve_bspline: false,
         }
     }
 }
@@ -152,6 +155,7 @@ impl StepWriter {
             options.protocol,
             options.header.clone(),
             options.export_standalone_wire_overlay,
+            options.preserve_bspline,
         );
         writer.write_brep(
             brep,
@@ -315,6 +319,7 @@ struct Part21Writer {
     records: Vec<String>,
     vertex_point_ids: HashMap<usize, u64>,
     surface_ids: HashMap<usize, u64>,
+    preserve_bspline: bool,
     edge_curve_ids: HashMap<usize, u64>,
     seam_edge_curve_ids: HashMap<usize, u64>,
     edge_geometry_ids: HashMap<usize, u64>,
@@ -329,6 +334,7 @@ impl Part21Writer {
         protocol: StepProtocol,
         header: StepHeader,
         export_standalone_wire_overlay: bool,
+        preserve_bspline: bool,
     ) -> Self {
         Self {
             next_id: 1,
@@ -341,6 +347,7 @@ impl Part21Writer {
             protocol,
             header,
             export_standalone_wire_overlay,
+            preserve_bspline,
             strict_plane_closed_ellipse_done: false,
         }
     }
@@ -1758,7 +1765,7 @@ impl Part21Writer {
             Some(Surface3::BSpline(bs)) => {
                 // Promote planar BSpline to PLANE so the STEP output matches
                 // OCCT's use of analytic plane surfaces for box faces, etc.
-                if rcad_kernel::geom::bspline_is_planar(&bs, 1e-12) {
+                if !self.preserve_bspline && rcad_kernel::geom::bspline_is_planar(&bs, 1e-12) {
                     let plane = rcad_kernel::geom::bspline_to_plane(&bs);
                     let origin = self.cartesian_point("face_plane_origin", dvec3_to_array(plane.origin));
                     let axis = self.direction("face_plane_normal", dvec3_to_array(plane.normal));
