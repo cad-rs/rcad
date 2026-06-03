@@ -729,6 +729,53 @@ pub fn golden_section_max<F: Fn(f64) -> f64>(f: F, a: f64, b: f64, tol: f64) -> 
     golden_section_min(|x| -f(x), a, b, tol)
 }
 
+/// Snap a point to the best-fit intersection of one or more planes.
+///
+/// Each plane is `(normal, origin_point)` defining `n · (x - origin) = 0`.
+///
+/// - 0 planes: return point unchanged.
+/// - 1 plane:  project point onto the plane.
+/// - 2 planes: solve least-squares (project onto intersection line).
+/// - 3+ planes: solve 3x3 normal-equations system via `inverse_3x3`.
+pub fn snap_point_to_planes(point: DVec3, planes: &[(DVec3, DVec3)]) -> DVec3 {
+    match planes.len() {
+        0 => point,
+        1 => {
+            let (n, o) = planes[0];
+            // Project onto plane: p' = p - n*(n·(p - o))
+            let d = n.dot(point - o);
+            point - n * d
+        }
+        _ => {
+            // Build normal equations: A^T A x = A^T b
+            let mut ata = DMat3::ZERO;
+            let mut atb = DVec3::ZERO;
+            for &(n, o) in planes {
+                let d = n.dot(o);
+                // A^T A += n · n^T (outer product)
+                ata.x_axis += n * n.x;
+                ata.y_axis += n * n.y;
+                ata.z_axis += n * n.z;
+                // A^T b += n * d
+                atb += n * d;
+            }
+            // Solve 3x3 system
+            match inverse_3x3(ata) {
+                Some(inv) => inv * atb,
+                None => {
+                    // Singular system (parallel or degenerate planes).
+                    // Fall back to sequential projection onto each plane.
+                    let mut p = point;
+                    for &(n, o) in planes {
+                        p = p - n * n.dot(p - o);
+                    }
+                    p
+                }
+            }
+        }
+    }
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -1052,5 +1099,54 @@ mod tests {
 
         let max_x = golden_section_max(f, -2.0, 2.0, TOLERANCE_LINEAR_ULTRA_STRICT);
         assert!(max_x.abs() < TOLERANCE_MESH_LEGACY);
+    }
+
+    // --- snap_point_to_planes Tests ---
+
+    #[test]
+    fn test_snap_point_to_planes_single() {
+        // Plane z=0, point (1,2,5) -> z should be 0
+        let planes = vec![(DVec3::Z, DVec3::ZERO)];
+        let result = snap_point_to_planes(DVec3::new(1.0, 2.0, 5.0), &planes);
+        assert!((result.x - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((result.y - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((result.z - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+    }
+
+    #[test]
+    fn test_snap_point_to_planes_three() {
+        // Planes x=0, y=0, z=0, point (1,2,3) -> (0,0,0)
+        let planes = vec![
+            (DVec3::X, DVec3::ZERO),
+            (DVec3::Y, DVec3::ZERO),
+            (DVec3::Z, DVec3::ZERO),
+        ];
+        let result = snap_point_to_planes(DVec3::new(1.0, 2.0, 3.0), &planes);
+        assert!((result.x - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((result.y - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((result.z - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+    }
+
+    #[test]
+    fn test_snap_point_to_planes_two() {
+        // Planes x=0, y=0, point (5,7,13) -> (0,0,13)
+        let planes = vec![
+            (DVec3::X, DVec3::ZERO),
+            (DVec3::Y, DVec3::ZERO),
+        ];
+        let result = snap_point_to_planes(DVec3::new(5.0, 7.0, 13.0), &planes);
+        assert!((result.x - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((result.y - 0.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((result.z - 13.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+    }
+
+    #[test]
+    fn test_snap_point_to_planes_empty() {
+        // Empty planes -> point unchanged
+        let planes: Vec<(DVec3, DVec3)> = vec![];
+        let result = snap_point_to_planes(DVec3::new(4.0, 5.0, 6.0), &planes);
+        assert!((result.x - 4.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((result.y - 5.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+        assert!((result.z - 6.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 }
