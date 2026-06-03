@@ -2650,18 +2650,25 @@ pub(crate) fn boolean_postprocess_pave_result(
 /// Used internally when a coaxial shortcut must call difference without re-entering other coaxial
 /// difference branches (e.g. cylinder − loft frustum after `cone ∩ cylinder`).
 pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
-    let mut ds = bopds::ds::DS::new(a, b);
+    // Pre-process planar-only BReps: snap vertices to exact analytic plane
+    // intersections. This eliminates accumulated numerical noise from
+    // multi-step boolean chains (bcut_simple J/K/L series) — the PaveFiller
+    // intersection-curve endpoints align cleanly with existing face boundaries.
+    let a = crate::brep_repair::snap_planar_brep_vertices(a);
+    let b = crate::brep_repair::snap_planar_brep_vertices(b);
 
-    let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
+    let mut ds = bopds::ds::DS::new(&a, &b);
+
+    let (bvh_a, bvh_b) = build_optional_bvhs(&a, &b);
     let mut filler = match (&bvh_a, &bvh_b) {
-        (Some(a), Some(b)) => pave_filler::PaveFiller::with_bvh(&mut ds, a, b),
+        (Some(ba), Some(bb)) => pave_filler::PaveFiller::with_bvh(&mut ds, ba, bb),
         _ => pave_filler::PaveFiller::new(&mut ds),
     };
     filler.perform();
 
     let builder = builder::BooleanBuilder::new(&ds, op);
     let result = builder.build()?;
-    boolean_postprocess_pave_result(op, a, b, result)
+    boolean_postprocess_pave_result(op, &a, &b, result)
 }
 
 /// Perform a boolean operation on two BReps.

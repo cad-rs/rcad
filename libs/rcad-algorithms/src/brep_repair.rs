@@ -13453,9 +13453,6 @@ fn merge_faces_in_shell(brep: &BRep, faces: &[Face], tolerance: f64) -> (Vec<Fac
     (result, merged_count)
 }
 
-#[cfg(test)]
-mod tests {
-
 /// Snap each vertex to the exact intersection of its incident face planes.
 ///
 /// Only processes BReps where ALL faces are `Surface3::Plane`.
@@ -13474,7 +13471,7 @@ pub fn snap_planar_brep_vertices(brep: &BRep) -> BRep {
         return brep.clone();
     }
 
-    // Build vertex → face adjacency
+    // Build vertex to face adjacency
     let mut vertex_faces: Vec<Vec<usize>> = vec![Vec::new(); n_verts];
     let mut flat_fi = 0usize;
     for solid in &brep.solids {
@@ -13525,6 +13522,10 @@ pub fn snap_planar_brep_vertices(brep: &BRep) -> BRep {
 
     result
 }
+
+#[cfg(test)]
+mod tests {
+
     use super::*;
     use crate::tolerance::{
         TOLERANCE_ABS, TOLERANCE_ADAPTIVE_MAX, TOLERANCE_COORD_SUB, TOLERANCE_FLOAT_DEDUP,
