@@ -1598,13 +1598,10 @@ impl<'a> BooleanBuilder<'a> {
                 let keep = if self.op == BooleanOpType::Union
                     && class == Classification::On
                     && matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
-                    && (self.is_glued_face(fi, &b_faces)
-                        || self.coplanar_ff_normals_opposite(fi) == Some(false))
                 {
-                    // For Union, planar On sub-faces coplanar with a B-face can be
-                    // removed — the B-face covers this region on the external surface.
-                    // Same-normal coplanar faces (normals point the same direction)
-                    // mean this face is redundant in the union result.
+                    // For Union, ALL planar On sub-faces are internal to the
+                    // combined solid and must be removed regardless of normal
+                    // direction.  The other solid covers this region externally.
                     false
                 } else if !face_split
                     && self.op == BooleanOpType::Difference
