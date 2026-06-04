@@ -155,7 +155,7 @@ pub use properties::{
     InertiaTensor, centroid, face_surface_area, face_triangles_pub, try_analytic_face_surface_area_pub, point_in_spherical_polygon_3d_pub, inertia_tensor, signed_volume, surface_area, volume,
 };
 pub use tolerance::{
-    ANGULAR, APPROXIMATION, CONFUSION, edge_same_parameter, edge_same_range, edge_tolerance,
+    ANGULAR, APPROXIMATION, brep_same_parameter, compute_vertex_tolerances, CONFUSION, edge_same_parameter, edge_same_range, edge_tolerance,
     face_domain, face_tolerance, model_tolerance, vertex_tolerance,
     resize_tolerance_arrays,
     set_vertex_tolerance, update_vertex_tolerance,
@@ -1445,14 +1445,17 @@ impl BRep {
     ///
     /// User-facing code should prefer `rcad-modeling` construction helpers.
     pub fn from_primitive(primitive: PrimitiveSolid) -> Self {
-        match primitive {
+        let mut brep = match primitive {
             PrimitiveSolid::Box {
                 width,
                 height,
                 depth,
             } => Self::create_box(width, height, depth),
             PrimitiveSolid::Sphere { radius } => Self::create_sphere(radius),
-            PrimitiveSolid::Cylinder { radius, height } => Self::create_cylinder(radius, height),
+            PrimitiveSolid::Cylinder {
+                radius,
+                height,
+            } => Self::create_cylinder(radius, height),
             PrimitiveSolid::Cone {
                 base_radius,
                 height,
@@ -1461,7 +1464,22 @@ impl BRep {
                 major_radius,
                 minor_radius,
             } => Self::create_torus(major_radius, minor_radius),
-        }
+        };
+        // Initialize per-entity tolerance arrays to CONFUSION default.
+        use crate::tolerance::CONFUSION;
+        brep.geom.vertex_tolerance
+            .resize(brep.vertices.len(), CONFUSION);
+        brep.geom.edge_tolerance
+            .resize(brep.edges.len(), CONFUSION);
+        let n_faces: usize = brep
+            .solids
+            .iter()
+            .flat_map(|s| &s.shells)
+            .map(|sh| sh.faces.len())
+            .sum();
+        brep.geom.face_tolerance
+            .resize(n_faces, CONFUSION);
+        brep
     }
 
     pub fn center(&self) -> DVec3 {
