@@ -49,51 +49,7 @@ fn make_connected_has_future_tolerance_increase(
     next_tolerance > current_tolerance + TOLERANCE_FLOAT_DEDUP
 }
 
-/// Returns true if every face in the BRep has a Plane surface.
-/// Iterates actual shell faces (not `geom.face_surface` directly, which may be
-/// stale after internal face removal in sew_slabs_into_solid).
-fn all_faces_are_planes(brep: &BRep) -> bool {
-    let mut flat_fi = 0usize;
-    for solid in &brep.solids {
-        for shell in &solid.shells {
-            for _face in &shell.faces {
-                let is_plane = brep.geom.face_surface.get(flat_fi)
-                    .and_then(|opt| *opt)
-                    .and_then(|si| brep.geom.surfaces.get(si))
-                    .map_or(false, |s| matches!(s, Surface3::Plane(_)));
-                if !is_plane {
-                    return false;
-                }
-                flat_fi += 1;
-            }
-        }
-    }
-    true
-}
-
-/// Collect the set of vertex indices referenced by a face (outer + inner wires).
-fn face_vertex_indices(brep: &BRep, face: &Face) -> Vec<usize> {
-    let mut verts = Vec::new();
-    for we in &face.outer_wire.edges {
-        if let Some(edge) = brep.edges.get(we.idx) {
-            verts.push(edge.start);
-            verts.push(edge.end);
-        }
-    }
-    for wire in &face.inner_wires {
-        for we in &wire.edges {
-            if let Some(edge) = brep.edges.get(we.idx) {
-                verts.push(edge.start);
-                verts.push(edge.end);
-            }
-        }
-    }
-    verts.sort();
-    verts.dedup();
-    verts
-}
-
-// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+//鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Public API
 // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
@@ -13465,76 +13421,6 @@ fn merge_faces_in_shell(brep: &BRep, faces: &[Face], tolerance: f64) -> (Vec<Fac
     }
 
     (result, merged_count)
-}
-
-/// Snap each vertex to the exact intersection of its incident face planes.
-///
-/// Only processes BReps where ALL faces are `Surface3::Plane`.
-/// For non-planar BReps, returns a clone unchanged.
-///
-/// This eliminates accumulated numerical noise from previous boolean
-/// operations, enabling PaveFiller to compute clean face-face intersections
-/// on multi-step boolean chains (bcut_simple J/K/L series).
-pub fn snap_planar_brep_vertices(brep: &BRep) -> BRep {
-    if !all_faces_are_planes(brep) {
-        return brep.clone();
-    }
-
-    let n_verts = brep.vertices.len();
-    if n_verts == 0 {
-        return brep.clone();
-    }
-
-    // Build vertex to face adjacency
-    let mut vertex_faces: Vec<Vec<usize>> = vec![Vec::new(); n_verts];
-    let mut flat_fi = 0usize;
-    for solid in &brep.solids {
-        for shell in &solid.shells {
-            for face in &shell.faces {
-                for vi in face_vertex_indices(brep, face) {
-                    if vi < n_verts {
-                        vertex_faces[vi].push(flat_fi);
-                    }
-                }
-                flat_fi += 1;
-            }
-        }
-    }
-
-    // Collect plane equations: (normal, origin) for each face.
-    // face_surface is indexed by flat face index (same traversal order as above).
-    let face_planes: Vec<Option<(DVec3, DVec3)>> = brep.geom.face_surface.iter().map(|opt_si| {
-        opt_si.and_then(|si| brep.geom.surfaces.get(si)).and_then(|s| {
-            match s {
-                Surface3::Plane(p) => Some((p.normal, p.origin)),
-                _ => None,
-            }
-        })
-    }).collect();
-
-    // Snap each vertex
-    let mut result = brep.clone();
-    for vi in 0..n_verts {
-        let face_indices = &vertex_faces[vi];
-        if face_indices.is_empty() {
-            continue;
-        }
-        // Collect all incident planes
-        let mut planes: Vec<(DVec3, DVec3)> = face_indices.iter()
-            .filter_map(|&fi| face_planes.get(fi).copied().flatten())
-            .collect();
-        // Deduplicate by normal direction (parallel planes)
-        planes.dedup_by(|a, b| a.0.distance_squared(b.0) < 1e-12 && (a.1 - b.1).length_squared() < 1e-12);
-
-        if planes.is_empty() {
-            continue;
-        }
-
-        let old_pos = result.vertices[vi].point;
-        result.vertices[vi].point = crate::math_utils::snap_point_to_planes(old_pos, &planes);
-    }
-
-    result
 }
 
 #[cfg(test)]
