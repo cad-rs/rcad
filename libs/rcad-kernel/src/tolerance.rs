@@ -26,7 +26,7 @@
 //! ```
 
 use crate::BRep;
-use crate::geom::SurfaceEval;
+use crate::geom::{Curve2dEval, CurveEval, SurfaceEval};
 
 // ── Precision constants ───────────────────────────────────────────────────────
 
@@ -323,6 +323,66 @@ pub fn finalize_tolerance_hierarchy(brep: &mut BRep) {
             && etol > *vtol {
                 *vtol = etol;
             }
+    }
+}
+
+/// Part A: OCCT `BRepLib::SameParameter` equivalent.
+///
+/// For each edge that has a 3D curve and at least one pcurve, sample the
+/// deviation between `curve(t)` and `surface(u(t), v(t))` at `samples_per_edge`
+/// points.  Update the edge tolerance to `max(current, max_deviation)`.
+///
+/// Edges without a 3D curve, without pcurves, or without a parametric range
+/// are skipped.
+pub fn brep_same_parameter(brep: &mut BRep, samples_per_edge: usize) {
+    let samples = samples_per_edge.max(2);
+    for ei in 0..brep.edges.len() {
+        // Get 3D curve
+        let Some(curve_idx) = brep.geom.edge_curve.get(ei).copied().flatten() else {
+            continue;
+        };
+        let Some(curve) = brep.geom.curves.get(curve_idx) else {
+            continue;
+        };
+        // Get parametric range
+        let Some([t1, t2]) = brep.geom.edge_curve_range.get(ei).copied().flatten() else {
+            continue;
+        };
+        if (t2 - t1).abs() < 1e-15 {
+            continue;
+        }
+        // Get pcurves
+        let Some(pcurves) = brep.geom.edge_pcurves.get(ei) else {
+            continue;
+        };
+        if pcurves.is_empty() {
+            continue;
+        }
+
+        let mut max_dev = 0.0_f64;
+        for pc in pcurves {
+            let Some(surface) = brep.geom.surfaces.get(pc.surface_idx) else {
+                continue;
+            };
+            let Some(pc_curve) = brep.geom.curve2ds.get(pc.curve2d_idx) else {
+                continue;
+            };
+
+            for si in 0..samples {
+                let t = t1 + (t2 - t1) * si as f64 / (samples - 1) as f64;
+                let uv = pc_curve.point_at(t);
+                let p_surface = surface.point_at(uv.x, uv.y);
+                let p_curve = curve.point_at(t);
+                let dev = (p_surface - p_curve).length();
+                if dev > max_dev {
+                    max_dev = dev;
+                }
+            }
+        }
+
+        if max_dev > 0.0 {
+            crate::tolerance::set_edge_tolerance(brep, ei, max_dev);
+        }
     }
 }
 
