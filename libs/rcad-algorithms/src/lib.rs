@@ -2694,7 +2694,12 @@ fn finalize_fast_path_result(r: BRep) -> BRep {
     } else {
         optimize_boolean_topology(r)
     };
-    let r = promote_planar_surfaces(r);
+    let mut r = promote_planar_surfaces(r);
+    // Compute and propagate per-entity tolerances (OCCT BRepLib::SameParameter + hierarchy).
+    rcad_kernel::tolerance::resize_tolerance_arrays(&mut r);
+    rcad_kernel::brep_same_parameter(&mut r, 10);
+    rcad_kernel::compute_vertex_tolerances(&mut r);
+    rcad_kernel::tolerance::finalize_tolerance_hierarchy(&mut r);
     r
 }
 
@@ -2793,7 +2798,13 @@ fn finalize_boolean_result(r: BRep) -> BRep {
     // Promote planar BSpline → Plane AFTER topology optimization to avoid
     // perturbing orthogonal_face_fuse plane-equation matching: bspline_to_plane
     // can introduce slight plane offsets that break coplanarity detection.
-    promote_planar_surfaces(r)
+    let mut r = promote_planar_surfaces(r);
+    // Compute and propagate per-entity tolerances.
+    rcad_kernel::tolerance::resize_tolerance_arrays(&mut r);
+    rcad_kernel::brep_same_parameter(&mut r, 10);
+    rcad_kernel::compute_vertex_tolerances(&mut r);
+    rcad_kernel::tolerance::finalize_tolerance_hierarchy(&mut r);
+    r
 }
 
 pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
@@ -3447,10 +3458,12 @@ pub fn boolean_op_with_retry(
     };
     // Edge dedup + BSPLINE→PLANE for ALL results (safe, no topology changes).
     let brep = deduplicate_edges(brep);
-    let brep = promote_planar_surfaces(brep);
-    // NOTE: optimize_boolean_topology is NOT called here — it runs only inside
-    // boolean_op for PaveFiller results.  Calling it on fast-path results can
-    // over-merge faces that fast-path builders intentionally keep separate.
+    let mut brep = promote_planar_surfaces(brep);
+    // Compute and propagate per-entity tolerances.
+    rcad_kernel::tolerance::resize_tolerance_arrays(&mut brep);
+    rcad_kernel::brep_same_parameter(&mut brep, 10);
+    rcad_kernel::compute_vertex_tolerances(&mut brep);
+    rcad_kernel::tolerance::finalize_tolerance_hierarchy(&mut brep);
     let brep = split_disconnected_shells(brep);
     Ok(brep)
 }
