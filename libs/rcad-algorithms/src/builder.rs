@@ -37,6 +37,11 @@ pub enum BooleanError {
     IncompleteIntersection(&'static str),
     /// Result contains self-intersecting geometry.
     SelfIntersection(&'static str),
+    /// Result shell has edges with incorrect face reference counts (orphan or over-shared).
+    OpenShell {
+        orphan_edges: Vec<usize>,
+        over_shared_edges: Vec<usize>,
+    },
 }
 
 impl std::fmt::Display for BooleanError {
@@ -50,6 +55,10 @@ impl std::fmt::Display for BooleanError {
             Self::InvalidResult(msg) => write!(f, "invalid result: {msg}"),
             Self::IncompleteIntersection(msg) => write!(f, "incomplete intersection: {msg}"),
             Self::SelfIntersection(msg) => write!(f, "self-intersection: {msg}"),
+            Self::OpenShell { orphan_edges, over_shared_edges } => {
+                write!(f, "open shell: {} orphan edges, {} over-shared edges",
+                    orphan_edges.len(), over_shared_edges.len())
+            }
         }
     }
 }
@@ -1902,6 +1911,14 @@ impl<'a> BooleanBuilder<'a> {
             );
         }
 
+        // Edge→face reference validation: detect orphan and over-shared edges
+        // that would produce an OPEN_SHELL result. If issues are found, run
+        // diagnostics and warn gracefully — the shell may still be usable.
+        if let Err(e) = self.validate_edge_face_references(&brep) {
+            eprintln!("[WARN] Edge-face reference validation: {:?}", e);
+            self.diagnose_orphan_edges(&brep);
+        }
+
         Ok((brep, history))
     }
 
@@ -2005,7 +2022,7 @@ impl<'a> BooleanBuilder<'a> {
             result.emit_face_with_origin(&sub, flip, origin);
         }
 
-        let (brep, mut history) = result.build(matches!(self.op, BooleanOpType::Union));
+        let (mut brep, mut history) = result.build(matches!(self.op, BooleanOpType::Union));
         if brep.solids[0].shells[0].faces.is_empty() {
             if matches!(self.op, BooleanOpType::Intersection | BooleanOpType::Difference) {
                 return Ok((BRep::default(), BooleanHistory::default()));
@@ -2022,6 +2039,12 @@ impl<'a> BooleanBuilder<'a> {
                 face.normal != glam::DVec3::ZERO,
                 "boolean_op result face {fi} has zero normal"
             );
+        }
+
+        // Edge→face reference validation (same as build_with_history).
+        if let Err(e) = self.validate_edge_face_references(&brep) {
+            eprintln!("[WARN] Edge-face reference validation (par): {:?}", e);
+            self.diagnose_orphan_edges(&brep);
         }
 
         Ok((brep, history))
@@ -4420,6 +4443,93 @@ impl<'a> BooleanBuilder<'a> {
             return Some(pcurve.clone());
         }
         None
+    }
+
+    /// Build a map from edge index to the list of face indices that reference it.
+    /// Iterates over all solids and shells in the BRep.
+    fn build_edge_ref_map(brep: &BRep) -> Vec<Vec<usize>> {
+        let n_edges = brep.edges.len();
+        if n_edges == 0 {
+            return Vec::new();
+        }
+        let mut edge_refs: Vec<Vec<usize>> = vec![Vec::new(); n_edges];
+        for (_shell_idx, shell) in brep.solids.iter().flat_map(|s| &s.shells).enumerate() {
+            for (face_idx, face) in shell.faces.iter().enumerate() {
+                for we in &face.outer_wire.edges {
+                    if we.idx < edge_refs.len() {
+                        edge_refs[we.idx].push(face_idx);
+                    }
+                }
+                for iw in &face.inner_wires {
+                    for we in &iw.edges {
+                        if we.idx < edge_refs.len() {
+                            edge_refs[we.idx].push(face_idx);
+                        }
+                    }
+                }
+            }
+        }
+        edge_refs
+    }
+
+    /// After building the BRep, validate that every edge in every shell has
+    /// exactly 2 face references (closed shell). Edges with <2 references
+    /// (orphan edges) or >2 references (over-shared edges) indicate a
+    /// topological defect that would produce an OPEN_SHELL result.
+    pub fn validate_edge_face_references(&self, brep: &BRep) -> Result<(), BooleanError> {
+        let edge_refs = Self::build_edge_ref_map(brep);
+        if edge_refs.is_empty() {
+            return Ok(());
+        }
+
+        let orphan_edges: Vec<usize> = edge_refs.iter().enumerate()
+            .filter(|(_, refs)| refs.is_empty() || refs.len() == 1)
+            .map(|(ei, _)| ei)
+            .collect();
+        let over_shared_edges: Vec<usize> = edge_refs.iter().enumerate()
+            .filter(|(_, refs)| refs.len() > 2)
+            .map(|(ei, _)| ei)
+            .collect();
+
+        if !orphan_edges.is_empty() || !over_shared_edges.is_empty() {
+            return Err(BooleanError::OpenShell {
+                orphan_edges,
+                over_shared_edges,
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Diagnostic stub: report orphan edges (edges referenced by 0 or 1 faces).
+    /// This is a replacement for the previous `recover_orphan_edges` which was a no-op
+    /// (it counted candidate faces but never mutated the BRep). The real value of RC2
+    /// is the validation (detecting OPEN_SHELL), not automatic topology repair.
+    ///
+    /// Returns the total number of orphan edges found (both zero-ref and single-ref).
+    pub fn diagnose_orphan_edges(&self, brep: &BRep) -> usize {
+        let edge_refs = Self::build_edge_ref_map(brep);
+        if edge_refs.is_empty() {
+            return 0;
+        }
+
+        let zero_ref_edges: Vec<usize> = edge_refs.iter().enumerate()
+            .filter(|(_, refs)| refs.is_empty())
+            .map(|(ei, _)| ei)
+            .collect();
+
+        let single_ref_edges: Vec<usize> = edge_refs.iter().enumerate()
+            .filter(|(_, refs)| refs.len() == 1)
+            .map(|(ei, _)| ei)
+            .collect();
+
+        let total = zero_ref_edges.len() + single_ref_edges.len();
+        if total > 0 {
+            eprintln!("[INFO] diagnose_orphan_edges: {} edges with zero refs, {} edges with one ref (manual topology repair needed)",
+                zero_ref_edges.len(), single_ref_edges.len());
+        }
+
+        total
     }
 }
 

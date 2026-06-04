@@ -1573,6 +1573,7 @@ pub fn classify_boolean_retry(err: &BooleanError) -> BooleanRetryClass {
         BooleanError::InvalidResult(_) => BooleanRetryClass::DegenerateTopology,
         BooleanError::IncompleteIntersection(_) => BooleanRetryClass::DegenerateTopology,
         BooleanError::SelfIntersection(_) => BooleanRetryClass::DegenerateTopology,
+        BooleanError::OpenShell { .. } => BooleanRetryClass::DegenerateTopology,
     }
 }
 
@@ -1590,6 +1591,7 @@ pub fn classify_boolean_failure(err: &BooleanError) -> BooleanFailureClass {
         BooleanError::InvalidResult(_) => BooleanFailureClass::InvalidResult,
         BooleanError::IncompleteIntersection(_) => BooleanFailureClass::IncompleteIntersection,
         BooleanError::SelfIntersection(_) => BooleanFailureClass::SelfIntersection,
+        BooleanError::OpenShell { .. } => BooleanFailureClass::InvalidResult,
     }
 }
 
