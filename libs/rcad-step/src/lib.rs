@@ -11352,6 +11352,17 @@ END-ISO-10303-21;
 
     #[test]
     fn test_step_surface_types_roundtrip() {
+        // NOTE: This test covers only simple primitive surface types (PLANE,
+        // CYLINDRICAL_SURFACE) that can be constructed from box/cylinder BReps.
+        //
+        // The following surface types are now also supported by the STEP writer
+        // but cannot be tested via simple primitives:
+        //   - SURFACE_OF_REVOLUTION  (requires a profile curve + axis)
+        //   - SURFACE_OF_LINEAR_EXTRUSION (requires a profile curve + direction)
+        //   - OFFSET_SURFACE         (requires a basis surface + offset)
+        //
+        // TODO: Add dedicated roundtrip tests that construct Revolution,
+        // LinearExtrusion, and Offset surface BReps programmatically.
         use rcad_modeling::make_cylinder_brep;
         use glam::DVec3;
         use crate::step_validate::count_step_entities_from_str;

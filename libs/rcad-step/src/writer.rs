@@ -1817,8 +1817,18 @@ impl Part21Writer {
                 // Write as SURFACE_OF_REVOLUTION referencing the profile curve
                 // and axis placement, matching OCCT STEP output.
                 let domain = rev.profile.default_domain();
-                let start_pt = dvec3_to_array(rev.profile.point_at(domain[0]));
-                let end_pt = dvec3_to_array(rev.profile.point_at(domain[1]));
+                let p_start = if domain[0].is_finite() {
+                    rev.profile.point_at(domain[0])
+                } else {
+                    glam::DVec3::ZERO
+                };
+                let p_end = if domain[1].is_finite() {
+                    rev.profile.point_at(domain[1])
+                } else {
+                    glam::DVec3::new(0.0, 0.0, 1.0)
+                };
+                let start_pt = dvec3_to_array(p_start);
+                let end_pt = dvec3_to_array(p_end);
                 let curve_id = self.write_curve3_entity(&rev.profile, start_pt, end_pt);
                 let origin = self.cartesian_point("rev_origin", dvec3_to_array(rev.axis_origin));
                 let axis = self.direction("rev_axis", normalize(dvec3_to_array(rev.axis_dir)));
@@ -1829,8 +1839,18 @@ impl Part21Writer {
                 // Write as SURFACE_OF_LINEAR_EXTRUSION referencing the profile
                 // curve and extrusion vector, matching OCCT STEP output.
                 let domain = ext.profile.default_domain();
-                let start_pt = dvec3_to_array(ext.profile.point_at(domain[0]));
-                let end_pt = dvec3_to_array(ext.profile.point_at(domain[1]));
+                let p_start = if domain[0].is_finite() {
+                    ext.profile.point_at(domain[0])
+                } else {
+                    glam::DVec3::ZERO
+                };
+                let p_end = if domain[1].is_finite() {
+                    ext.profile.point_at(domain[1])
+                } else {
+                    glam::DVec3::new(0.0, 0.0, 1.0)
+                };
+                let start_pt = dvec3_to_array(p_start);
+                let end_pt = dvec3_to_array(p_end);
                 let curve_id = self.write_curve3_entity(&ext.profile, start_pt, end_pt);
                 let dir = normalize(dvec3_to_array(ext.direction));
                 let dir_id = self.direction("ext_dir", dir);
@@ -3249,7 +3269,7 @@ impl Part21Writer {
 
     fn offset_surface(&mut self, name: &str, basis_surface: u64, offset_distance: f64) -> u64 {
         self.push(format!(
-            "OFFSET_SURFACE('{}',#{},{:.9})",
+            "OFFSET_SURFACE('{}',#{},{:.9},.F.)",
             name, basis_surface, offset_distance
         ))
     }
@@ -6456,3 +6476,4 @@ mod tests {
         assert!(step.contains("TOLERANCE_ZONE_DEFINITION('cylindrical','symmetric',#90,#110,#120)"));
     }
 }
+
