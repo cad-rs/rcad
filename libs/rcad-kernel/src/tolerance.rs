@@ -386,6 +386,59 @@ pub fn brep_same_parameter(brep: &mut BRep, samples_per_edge: usize) {
     }
 }
 
+/// Part B: Compute per-vertex tolerance from distance to adjacent edges.
+///
+/// For each vertex, find all adjacent edges and compute the minimum distance
+/// from the vertex to each edge's 3D curve (sampled).  Update vertex tolerance
+/// via `update_vertex_tolerance(brep, vi, max_dist)`.
+///
+/// Edges without 3D curves fall back to half the edge length as a heuristic.
+pub fn compute_vertex_tolerances(brep: &mut BRep) {
+    use crate::topo_query::vertex_adjacent_edges;
+
+    for vi in 0..brep.vertices.len() {
+        let v_pos = brep.vertices[vi].point;
+        let adj_edges = vertex_adjacent_edges(brep, vi);
+        if adj_edges.is_empty() {
+            continue;
+        }
+
+        let mut max_dist = 0.0_f64;
+        for &ei in &adj_edges {
+            let Some(edge) = brep.edges.get(ei) else { continue; };
+            let other_vi = if edge.start == vi { edge.end } else { edge.start };
+            let Some(other) = brep.vertices.get(other_vi) else { continue; };
+            let edge_len = (other.point - v_pos).length();
+
+            // Prefer 3D curve distance over edge-length fallback
+            if let Some(curve_idx) = brep.geom.edge_curve.get(ei).copied().flatten() {
+                if let Some(curve) = brep.geom.curves.get(curve_idx) {
+                    if let Some([t1, t2]) = brep.geom.edge_curve_range.get(ei).copied().flatten() {
+                        let mut min_dist = f64::MAX;
+                        for s in 0..20 {
+                            let t = t1 + (t2 - t1) * s as f64 / 19.0;
+                            let pt = curve.point_at(t);
+                            let d = (pt - v_pos).length();
+                            if d < min_dist { min_dist = d; }
+                        }
+                        if min_dist < f64::MAX && min_dist > max_dist {
+                            max_dist = min_dist;
+                        }
+                        continue; // used curve distance, skip edge-length fallback
+                    }
+                }
+            }
+            // Fallback: half edge length
+            let half = edge_len * 0.5;
+            if half > max_dist { max_dist = half; }
+        }
+
+        if max_dist > 0.0 {
+            crate::tolerance::update_vertex_tolerance(brep, vi, max_dist);
+        }
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
