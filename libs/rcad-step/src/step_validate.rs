@@ -2,6 +2,7 @@
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct StepEntityCounts {
     pub manifold_solid_brep: usize,
+    pub advanced_face: usize,
     pub plane: usize,
     pub cylindrical_surface: usize,
     pub conical_surface: usize,
@@ -38,6 +39,8 @@ pub fn count_step_entities_from_str(content: &str) -> StepEntityCounts {
 
         if after_id.starts_with("MANIFOLD_SOLID_BREP") {
             counts.manifold_solid_brep += 1;
+        } else if after_id.starts_with("ADVANCED_FACE") {
+            counts.advanced_face += 1;
         } else if after_id.starts_with("PLANE(") || after_id.starts_with("PLANE (") {
             counts.plane += 1;
         } else if after_id.starts_with("CYLINDRICAL_SURFACE") {
@@ -60,4 +63,10 @@ pub fn count_step_entities_from_str(content: &str) -> StepEntityCounts {
     }
 
     counts
+}
+
+/// Count STEP entity types in a STEP file.
+pub fn count_step_entities(path: &std::path::Path) -> Result<StepEntityCounts, Box<dyn std::error::Error>> {
+    let content = std::fs::read_to_string(path)?;
+    Ok(count_step_entities_from_str(&content))
 }

@@ -152,6 +152,8 @@ struct ParsedStep {
     parabolas: HashMap<u64, (u64, f64)>,
     /// OFFSET_CURVE_3D: maps entity id ->(basis_curve_ref, offset_distance, ref_dir_ref)
     offset_curves_3d: HashMap<u64, (u64, f64, u64)>,
+    /// OFFSET_SURFACE: maps entity id ->(basis_surface_ref, offset_distance)
+    offset_surfaces: HashMap<u64, (u64, f64)>,
     /// Global uncertainty value from UNCERTAINTY_MEASURE_WITH_UNIT, if present.
     uncertainty_value: Option<f64>,
 
@@ -219,6 +221,7 @@ impl ParsedStep {
             hyperbolas: HashMap::new(),
             parabolas: HashMap::new(),
             offset_curves_3d: HashMap::new(),
+            offset_surfaces: HashMap::new(),
             uncertainty_value: None,
             colour_rgbs: HashMap::new(),
             fill_area_style_colours: HashMap::new(),
@@ -4900,6 +4903,12 @@ fn parse_entities(content: &str) -> Result<ParsedStep, StepError> {
                         parsed.revolutions.insert(id, (refs[0], refs[1]));
                     }
                 }
+                "OFFSET_SURFACE" => {
+                    // OFFSET_SURFACE('name', #basis_surface, offset_distance, .F.)
+                    if let Some((basis_ref, offset_dist)) = parse_offset_surface(args) {
+                        parsed.offset_surfaces.insert(id, (basis_ref, offset_dist));
+                    }
+                }
                 "RECTANGULAR_TRIMMED_SURFACE" => {
                     // RECTANGULAR_TRIMMED_SURFACE('name', #basis, u1, u2, v1, v2, .T., .T.)
                     if let Some((basis_ref, trim)) = parse_rectangular_trimmed_surface(args) {
@@ -8102,6 +8111,19 @@ fn parse_offset_curve_3d(args: &str) -> Option<(u64, f64, u64)> {
     ))
 }
 
+/// Parse OFFSET_SURFACE args:
+/// ('name', #basis_surface, offset_distance, .self_intersect.)
+fn parse_offset_surface(args: &str) -> Option<(u64, f64)> {
+    let parts = split_top_level(args, ',');
+    if parts.len() < 4 {
+        return None;
+    }
+    Some((
+        parse_ref(parts[1])?,
+        parts[2].trim().parse::<f64>().ok()?,
+    ))
+}
+
 fn parse_advanced_face(args: &str) -> Option<(Vec<u64>, Option<u64>)> {
     let parts = split_top_level(args, ',');
     if parts.len() < 3 {
@@ -8309,6 +8331,16 @@ fn resolve_surface(parsed: &ParsedStep, surface_ref: u64) -> Option<Surface3> {
                 axis_dir: axis_dir.normalize_or_zero(),
             }));
         }
+    }
+
+    // OFFSET_SURFACE
+    if let Some((basis_ref, offset_dist)) = parsed.offset_surfaces.get(&surface_ref).copied()
+        && let Some(basis) = resolve_surface(parsed, basis_ref)
+    {
+        return Some(Surface3::Offset(rcad_kernel::geom::OffsetSurface {
+            basis: Box::new(basis),
+            offset_distance: offset_dist,
+        }));
     }
 
     // RECTANGULAR_TRIMMED_SURFACE
@@ -11412,6 +11444,109 @@ END-ISO-10303-21;
             counts.manifold_solid_brep, 1,
             "Cylinder should be a single MSB, got {}",
             counts.manifold_solid_brep
+        );
+    }
+
+    #[test]
+    fn test_step_roundtrip_box_surface_types() {
+        use glam::DVec3;
+        use rcad_modeling::make_box_brep;
+
+        let original = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+
+        // Write to STEP string
+        let step = StepWriter::write_string(
+            &original,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+        );
+
+        // Read back
+        let roundtrip =
+            StepReader::parse_string(&step).expect("Failed to read back STEP");
+
+        // Compare topology counts
+        let orig_faces: usize = original
+            .solids
+            .iter()
+            .flat_map(|s| &s.shells)
+            .map(|sh| sh.faces.len())
+            .sum();
+        let rt_faces: usize = roundtrip
+            .solids
+            .iter()
+            .flat_map(|s| &s.shells)
+            .map(|sh| sh.faces.len())
+            .sum();
+        assert_eq!(orig_faces, rt_faces, "Face count mismatch on round-trip");
+
+        let orig_edges = original.edges.len();
+        let rt_edges = roundtrip.edges.len();
+        assert_eq!(orig_edges, rt_edges, "Edge count mismatch on round-trip");
+
+        // Vertex count may differ because triangulation nodes are stored as
+        // additional BRep.vertices entries. Compare only topological vertices
+        // (those referenced by edges).
+        let topological_verts = |brep: &BRep| -> usize {
+            use std::collections::HashSet;
+            brep.edges.iter().flat_map(|e| [e.start, e.end]).collect::<HashSet<_>>().len()
+        };
+        let orig_verts = topological_verts(&original);
+        let rt_verts = topological_verts(&roundtrip);
+        assert_eq!(orig_verts, rt_verts, "Topological vertex count mismatch on round-trip");
+
+        let orig_solids = original.solids.len();
+        let rt_solids = roundtrip.solids.len();
+        assert_eq!(
+            orig_solids, rt_solids,
+            "Solid count mismatch on round-trip"
+        );
+    }
+
+    #[test]
+    fn test_read_occt_step_file() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let path = manifest_dir
+            .join("../../../tests/occt/step_output/occt_boolean_bcommon_simple_a1.step");
+        let path = path.canonicalize().unwrap_or(path);
+
+        if !path.exists() {
+            eprintln!(
+                "Skipping: OCCT reference STEP not found at {}",
+                path.display()
+            );
+            return;
+        }
+
+        // Read via StepReader
+        let brep = crate::StepReader::read_file(&path)
+            .expect("Failed to read OCCT STEP file");
+
+        // Verify basic topology
+        assert!(!brep.solids.is_empty(), "Should have at least one solid");
+        let n_faces: usize = brep
+            .solids
+            .iter()
+            .flat_map(|s| &s.shells)
+            .map(|sh| sh.faces.len())
+            .sum();
+        assert!(n_faces >= 1, "Should have at least one face");
+
+        // Count entities in the file
+        let counts = crate::step_validate::count_step_entities(&path)
+            .expect("Failed to count STEP entities");
+        assert!(counts.advanced_face >= 1);
+        assert!(counts.manifold_solid_brep >= 1);
+
+        println!(
+            "OCCT STEP file '{}': {} faces, {} edges, {} vertices, {} solids",
+            path.file_name().unwrap().to_string_lossy(),
+            n_faces,
+            brep.edges.len(),
+            brep.vertices.len(),
+            brep.solids.len()
         );
     }
 }
