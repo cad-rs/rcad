@@ -35,7 +35,7 @@ pub enum StepProtocol {
     /// ISO 10303-242 "Managed Model Based 3D Engineering".
     Ap242,
 }
-use rcad_kernel::{BRep, BSplineCurve2, Curve2d, Curve3, Face, Surface3};
+use rcad_kernel::{BRep, BSplineCurve2, Curve2d, Curve3, CurveEval, Face, Surface3};
 use std::collections::{BTreeSet, HashMap};
 use std::io::Write;
 
@@ -1813,14 +1813,41 @@ impl Part21Writer {
                 );
                 self.write_bspline_surface_named(&name, &bs)
             }
+            Some(Surface3::Revolution(rev)) => {
+                // Write as SURFACE_OF_REVOLUTION referencing the profile curve
+                // and axis placement, matching OCCT STEP output.
+                let domain = rev.profile.default_domain();
+                let start_pt = dvec3_to_array(rev.profile.point_at(domain[0]));
+                let end_pt = dvec3_to_array(rev.profile.point_at(domain[1]));
+                let curve_id = self.write_curve3_entity(&rev.profile, start_pt, end_pt);
+                let origin = self.cartesian_point("rev_origin", dvec3_to_array(rev.axis_origin));
+                let axis = self.direction("rev_axis", normalize(dvec3_to_array(rev.axis_dir)));
+                let axis_placement = self.axis1_placement("rev_axis_placement", origin, axis);
+                self.surface_of_revolution("face_revolution", curve_id, axis_placement)
+            }
+            Some(Surface3::LinearExtrusion(ext)) => {
+                // Write as SURFACE_OF_LINEAR_EXTRUSION referencing the profile
+                // curve and extrusion vector, matching OCCT STEP output.
+                let domain = ext.profile.default_domain();
+                let start_pt = dvec3_to_array(ext.profile.point_at(domain[0]));
+                let end_pt = dvec3_to_array(ext.profile.point_at(domain[1]));
+                let curve_id = self.write_curve3_entity(&ext.profile, start_pt, end_pt);
+                let dir = normalize(dvec3_to_array(ext.direction));
+                let dir_id = self.direction("ext_dir", dir);
+                let vec_id = self.vector("ext_vec", dir_id, 1.0);
+                self.surface_of_linear_extrusion("face_extrusion", curve_id, vec_id)
+            }
+            Some(Surface3::Offset(offset)) => {
+                // Write as OFFSET_SURFACE referencing the basis surface and
+                // offset distance, matching OCCT STEP output.
+                let basis_id = self.write_surface(Some(*offset.basis), None);
+                self.offset_surface("face_offset", basis_id, offset.offset_distance)
+            }
             Some(surface @ Surface3::Pipe(_))
-            | Some(surface @ Surface3::LinearExtrusion(_))
-            | Some(surface @ Surface3::Revolution(_))
             | Some(surface @ Surface3::Ruled(_))
             | Some(surface @ Surface3::Coons(_))
             | Some(surface @ Surface3::TriBezier(_))
-            | Some(surface @ Surface3::Bezier(_))
-            | Some(surface @ Surface3::Offset(_)) => {
+            | Some(surface @ Surface3::Bezier(_)) => {
                 // Export higher-level surfaces through a sampled NURBS fallback
                 // instead of collapsing them to a plane.
                 let bs = surface_to_bspline(&surface, 9, 9);
@@ -3194,6 +3221,36 @@ impl Part21Writer {
         self.push(format!(
             "TOROIDAL_SURFACE('{}',#{},{:.9},{:.9})",
             name, placement, major_radius, minor_radius
+        ))
+    }
+
+    fn axis1_placement(&mut self, name: &str, origin: u64, axis: u64) -> u64 {
+        self.push(format!("AXIS1_PLACEMENT('{}',#{},#{})", name, origin, axis))
+    }
+
+    fn surface_of_revolution(&mut self, name: &str, swept_curve: u64, axis_placement: u64) -> u64 {
+        self.push(format!(
+            "SURFACE_OF_REVOLUTION('{}',#{},#{})",
+            name, swept_curve, axis_placement
+        ))
+    }
+
+    fn surface_of_linear_extrusion(
+        &mut self,
+        name: &str,
+        swept_curve: u64,
+        extrusion_axis: u64,
+    ) -> u64 {
+        self.push(format!(
+            "SURFACE_OF_LINEAR_EXTRUSION('{}',#{},#{})",
+            name, swept_curve, extrusion_axis
+        ))
+    }
+
+    fn offset_surface(&mut self, name: &str, basis_surface: u64, offset_distance: f64) -> u64 {
+        self.push(format!(
+            "OFFSET_SURFACE('{}',#{},{:.9})",
+            name, basis_surface, offset_distance
         ))
     }
 

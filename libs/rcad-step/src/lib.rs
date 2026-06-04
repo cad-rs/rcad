@@ -16,6 +16,7 @@ pub mod assembly;
 pub mod iges;
 pub mod obj_writer;
 pub mod occt_brep;
+pub mod step_validate;
 pub mod writer;
 
 pub use occt_brep::{OcctBrepError, OcctBrepReader};
@@ -11347,5 +11348,59 @@ END-ISO-10303-21;
 
         let has_torus = round_tripped.geom.surfaces.iter().any(|s| matches!(s, Surface3::Torus(_)));
         assert!(has_torus, "should preserve toroidal surface");
+    }
+
+    #[test]
+    fn test_step_surface_types_roundtrip() {
+        use rcad_modeling::make_cylinder_brep;
+        use glam::DVec3;
+        use crate::step_validate::count_step_entities_from_str;
+
+        // Box: should have 6 PLANE surfaces
+        let box_brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let step = StepWriter::write_string(
+            &box_brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+        );
+        let counts = count_step_entities_from_str(&step);
+        assert_eq!(
+            counts.plane, 6,
+            "Box should have 6 PLANE surfaces, got {}",
+            counts.plane
+        );
+        assert_eq!(
+            counts.manifold_solid_brep, 1,
+            "Box should be a single MSB, got {}",
+            counts.manifold_solid_brep
+        );
+
+        // Cylinder: should have 1 CYLINDRICAL_SURFACE + 2 PLANE caps
+        let cyl_brep = make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 2.0).unwrap();
+        let step = StepWriter::write_string(
+            &cyl_brep,
+            ExportSelection {
+                selected_faces: &[],
+                selected_edges: &[],
+            },
+        );
+        let counts = count_step_entities_from_str(&step);
+        assert_eq!(
+            counts.cylindrical_surface, 1,
+            "Cylinder should have 1 CYLINDRICAL_SURFACE, got {}",
+            counts.cylindrical_surface
+        );
+        assert_eq!(
+            counts.plane, 2,
+            "Cylinder should have 2 PLANE caps, got {}",
+            counts.plane
+        );
+        assert_eq!(
+            counts.manifold_solid_brep, 1,
+            "Cylinder should be a single MSB, got {}",
+            counts.manifold_solid_brep
+        );
     }
 }
