@@ -2371,12 +2371,15 @@ impl<'a> BooleanBuilder<'a> {
         if let Surface3::BSpline(bsp) = &face.surface {
             if rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS) {
                 let plane = rcad_kernel::geom::bspline_to_plane(bsp);
-                let cids = self.merged_split_curve_ids_for_planar_face(face_idx, &plane);
+                // Use raw curves_in from DS — the merged version may fail when
+                // the BSpline-derived plane differs slightly from the original.
+                let cids: Vec<usize> = fi.curves_in.iter().copied().collect();
                 if cids.is_empty() {
                     return self.single_subface_from_whole_face(face_idx);
                 }
                 let mut subs = self.split_planar_face(face_idx, &plane, &cids);
                 for sub in &mut subs { sub.surface = face.surface.clone(); }
+                eprintln!("[BSplineSplit] face[{}] curves_in={:?} -> {} subs", face_idx, fi.curves_in, subs.len());
                 return subs;
             }
         }
@@ -3187,25 +3190,36 @@ impl<'a> BooleanBuilder<'a> {
                     Some(next)
                     } // end else (radius >= TOLERANCE_ABS)
                 }
-                Curve3::Line(line) => {
-                    // Use segment from start to end vertex
+                Curve3::Line(_line) => {
+                    // Use segment from start to end vertex. OCCT's PerformLoops
+                    // uses the intersection curve as a 2D segment (pcurve endpoints
+                    // on the face boundary). The line-direction approach fails when
+                    // the projected line is parallel to a polygon edge, as both
+                    // endpoints and shared edges all have zero signed distance.
                     let p_start = self.ds.vertices[ic.start_vertex].point;
                     let p_end = self.ds.vertices[ic.end_vertex].point;
                     if points_coincide(p_start, p_end) {
                         None
                     } else {
                         let seg_s2d = project_to_2d(p_start);
-                        let _seg_e2d = project_to_2d(p_end);
+                        let seg_e2d = project_to_2d(p_end);
                         let mut next: Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)> = Vec::new();
                         for (poly, existing_wires) in &poly_wires {
-                            // Use line direction to split
-                            let dir = DVec2::new(
-                                (line.direction - plane.normal * line.direction.dot(plane.normal))
-                                    .dot(u_axis),
-                                (line.direction - plane.normal * line.direction.dot(plane.normal))
-                                    .dot(v_axis),
-                            );
-                            let halves = split_polygon_2d_by_line(poly, seg_s2d, dir);
+                            let halves = split_polygon_2d_by_segment(poly, seg_s2d, seg_e2d);
+                            if halves.len() == 1 && seg_s2d != seg_e2d {
+                                let dists: Vec<f64> = poly.iter().map(|&p| {
+                                    let d = p - seg_s2d;
+                                    let dir = (seg_e2d - seg_s2d).normalize();
+                                    dir.x * d.y - dir.y * d.x
+                                }).collect();
+                                let n_pos = dists.iter().filter(|&&d| d > 1e-7).count();
+                                let n_neg = dists.iter().filter(|&&d| d < -1e-7).count();
+                                let crossing_info = if n_pos > 0 && n_neg > 0 { "CROSSES" } else { "NO_CROSS" };
+                                eprintln!("[SPLIT_FAIL] {} n={} n2={} seg_s=({:.4},{:.4}) seg_e=({:.4},{:.4}) pos={} neg={}",
+                                    crossing_info, poly.len(), halves[0].len(),
+                                    seg_s2d.x, seg_s2d.y, seg_e2d.x, seg_e2d.y, n_pos, n_neg);
+                                eprintln!("  poly: {:?}", poly);
+                            }
                             for half in halves {
                                 next.push((half, existing_wires.clone()));
                             }
@@ -7215,6 +7229,19 @@ fn dedup_consecutive_poly2d(poly: &[DVec2], tol: f64) -> Vec<DVec2> {
 ///
 /// Vertices on the positive side (cross product > 0) form one group, negative side the other.
 fn split_polygon_2d_by_line(poly: &[DVec2], point: DVec2, dir: DVec2) -> Vec<Vec<DVec2>> {
+    split_polygon_2d_by_line_opt(poly, point, dir, None)
+}
+
+/// OCCT-aligned: when the split line coincides with a polygon edge (both
+/// endpoints on the line), insert a crossing at the point where the actual
+/// intersection segment leaves the edge.  Without this fix the polygon
+/// passes through unsplit when the segment endpoint is on the edge.
+fn split_polygon_2d_by_line_opt(
+    poly: &[DVec2],
+    point: DVec2,
+    dir: DVec2,
+    seg_end: Option<DVec2>,
+) -> Vec<Vec<DVec2>> {
     let n = poly.len();
     if n < 3 {
         return vec![poly.to_vec()];
@@ -7278,6 +7305,28 @@ fn split_polygon_2d_by_line(poly: &[DVec2], point: DVec2, dir: DVec2) -> Vec<Vec
             }
         }
 
+        if di.abs() < tol && dj.abs() < tol {
+            // Both endpoints on the line: the split line coincides with this
+            // polygon edge.  If the segment endpoint (from the actual
+            // intersection curve) lies within this edge range, insert a
+            // crossing so the polygon IS split (OCCT alignment).
+            if let Some(seg_e) = seg_end {
+                let edge_start = poly[i];
+                let edge_end = poly[j];
+                let e_vec = edge_end - edge_start;
+                let e_len2 = e_vec.length_squared();
+                if e_len2 > TOLERANCE_FLOAT_LOOSE {
+                    let t = (seg_e - edge_start).dot(e_vec) / e_len2;
+                    if t > TOLERANCE_COORD_SUB && t < 1.0 - TOLERANCE_COORD_SUB {
+                        let proj = edge_start + t * e_vec;
+                        if (seg_e - proj).length() < tol * 100.0 {
+                            crossings.push((i, proj));
+                        }
+                    }
+                }
+            }
+            continue;
+        }
         if di.abs() < tol || dj.abs() < tol {
             continue;
         }
@@ -7355,7 +7404,7 @@ fn split_polygon_2d_by_segment(
     if dir.length_squared() < TOLERANCE_FLOAT_ULTRA {
         return vec![poly.to_vec()];
     }
-    split_polygon_2d_by_line(poly, seg_start, dir.normalize())
+    split_polygon_2d_by_line_opt(poly, seg_start, dir.normalize(), Some(seg_end))
 }
 
 // ============================================================================
