@@ -6209,6 +6209,18 @@ fn unify_one_merge_pass_with_origins(brep: &mut BRep, face_origins: Option<&[Fac
                 (Some(false), true)
             }
             (Surface3::BSpline(b1), Surface3::BSpline(b2)) => {
+                // For planar degree-1 BSpline (from plane_to_bspline), treat as
+                // NOT same-domain.  These faces were split by the OCCT-style
+                // split_planar_bspline_occt and should remain separate — merging
+                // them would undo the split.  Non-planar BSpline surfaces are
+                // checked for identical geometry below.
+                if b1.degree_u == 1 && b1.degree_v == 1
+                    && rcad_kernel::geom::bspline_is_planar(b1, 1e-7)
+                    && rcad_kernel::geom::bspline_is_planar(b2, 1e-7)
+                {
+                    return (Some(false), true);
+                }
+
                 // BSpline same-domain detection.
                 // Two BSpline surfaces are considered same-domain if they have:
                 // - Identical degrees
