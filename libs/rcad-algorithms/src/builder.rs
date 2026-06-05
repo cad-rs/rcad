@@ -2364,26 +2364,6 @@ impl<'a> BooleanBuilder<'a> {
         let face = &self.ds.faces[face_idx];
         let fi = &face.face_info;
 
-        // Planar BSpline (nurbsconvert): use split_planar_face for clean edges.
-        // For boundary-coincident curves (split_planar_face returns ≤1 sub),
-        // use split_curved_face_parametric with reduced UV sampling to avoid
-        // edge fragmentation from the DS's 8-sample-per-edge UV boundary.
-        if let Surface3::BSpline(bsp) = &face.surface {
-            if !fi.curves_in.is_empty()
-                && rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS)
-            {
-                let plane = rcad_kernel::geom::bspline_to_plane(bsp);
-                let cids: Vec<usize> = fi.curves_in.iter().copied().collect();
-                let subs = self.split_planar_face(face_idx, &plane, &cids);
-                if subs.len() > 1 {
-                    let mut out = subs;
-                    for sub in &mut out { sub.surface = face.surface.clone(); }
-                    return out;
-                }
-                // Fall through to split_curved_face_parametric
-            }
-        }
-
         if let Surface3::Plane(plane) = &face.surface {
             let cids = self.merged_split_curve_ids_for_planar_face(face_idx, plane);
             if cids.is_empty() {
@@ -4475,6 +4455,20 @@ impl<'a> BooleanBuilder<'a> {
             _debug_sphere_polygons(3, &uv_polygons);
         }
 
+
+        // Debug: check why BSpline faces with curves_in don't split
+        let has_curves = !self.ds.faces[face_idx].face_info.curves_in.is_empty();
+        if uv_polygons.len() <= 1 && has_curves {
+            eprintln!("[DBG_SPLIT_B] face[{}] curves_in={:?} n_trim={} final={} first_len={}",
+                face_idx, self.ds.faces[face_idx].face_info.curves_in, trim_polylines.len(),
+                uv_polygons.len(), uv_polygons.first().map_or(0, |p| p.len()));
+            for (ti, trim) in trim_polylines.iter().enumerate() {
+                if !trim.is_empty() {
+                    eprintln!("  trim[{}]: {} pts start=({:.6},{:.6}) end=({:.6},{:.6})",
+                        ti, trim.len(), trim[0].x, trim[0].y, trim[trim.len()-1].x, trim[trim.len()-1].y);
+                }
+            }
+        }
 
         // Map each UV sub-polygon back to 3D
         eprintln!("[DBG] split_face[{}]: {} uv_polys -> {} valid", face_idx, uv_polygons.len(),
