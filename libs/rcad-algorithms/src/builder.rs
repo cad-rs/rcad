@@ -627,19 +627,41 @@ impl ResultBuilder {
             self.subdivide_edges_at_interior_vertices();
             eprintln!("AFTER subdivide: {} vertices, {} edges, {} faces", self.vertices.len(), self.edges.len(), self.faces.len());
         }
-        let vertices = self
+        let vertices: Vec<Vertex> = self
             .vertices
             .into_iter()
             .map(|point| Vertex { point })
             .collect();
 
-        let edges = self
-            .edges
-            .into_iter()
+        let edges_vec: Vec<(usize, usize)> = self.edges.clone();
+        let edges: Vec<Edge> = self.edges.into_iter()
             .map(|(start, end)| Edge { start, end })
             .collect();
 
         let mut geom = rcad_kernel::GeomStore::default();
+
+        // Create line edge curves from vertex positions so edge-based face
+        // boundary computation (sample_wire_polyline_3d, outer_wire_*_vertex_uvs)
+        // uses correct 3D geometry. This is essential when vertices are at
+        // different 3D positions than the edge endpoints (degenerate edges
+        // after vertex merging to match OCCT's NURBS boolean topology).
+        use rcad_kernel::geom::{Curve3, Line3};
+        for (start, end) in &edges_vec {
+            let p0 = vertices[*start].point;
+            let p1 = vertices[*end].point;
+            let len = (p1 - p0).length();
+            if len < 1e-15 {
+                geom.edge_curve.push(None);
+                geom.edge_curve_range.push(None);
+            } else {
+                let dir = (p1 - p0) / len;
+                let curve = Curve3::Line(Line3 { origin: p0, direction: dir });
+                let ci = geom.curves.len();
+                geom.curves.push(curve);
+                geom.edge_curve.push(Some(ci));
+                geom.edge_curve_range.push(Some([0.0, len]));
+            }
+        }
         let mut faces = Vec::new();
 
         for (edge_indices, inner_wire_edges, triangles, normal, surface, uv_domain, _centroid, _area) in self.faces {
