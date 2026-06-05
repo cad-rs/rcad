@@ -489,8 +489,12 @@ impl ResultBuilder {
             }
             let eunit = *existing_normal / elen;
 
-            let sig_match = ex_sig == outer_sig;
-            let geo_match = nunit.dot(eunit).abs() >= 0.99
+            // Don't dedup if surfaces are different types (e.g. Plane vs BSpline).
+            // OCCT's FillSameDomainFaces keeps both as separate surface types.
+            let surf_same = same_surface_type(&sub.surface, _surf);
+
+            let sig_match = surf_same && ex_sig == outer_sig;
+            let geo_match = surf_same && nunit.dot(eunit).abs() >= 0.99
                 && (*existing_centroid - centroid).length() <= TOLERANCE_LINEAR_RELAX_8
                 && (existing_area - area).abs() <= TOLERANCE_LINEAR_RELAX_8 * existing_area.max(area).max(1.0);
 
