@@ -227,6 +227,10 @@ pub struct DS {
     pub shared_topology: SharedTopologyInfo,
     /// Extreme geometry analysis results.
     pub extreme_geometry: ExtremeGeometryInfo,
+    /// Pre-computed overlap polygons for same-domain (coplanar) face pairs.
+    /// Each entry is (face_a_index, face_b_index, overlap_boundary_in_3d).
+    /// Populated during PaveFiller's coplanar analysis, consumed by Builder.
+    pub same_domain_overlaps: Vec<(usize, usize, Vec<DVec3>)>,
 }
 
 impl DS {
@@ -252,6 +256,7 @@ impl DS {
             a_face_count: 0,
             shared_topology: SharedTopologyInfo::default(),
             extreme_geometry: ExtremeGeometryInfo::default(),
+            same_domain_overlaps: Vec::new(),
         };
 
         ds.load_brep(a, ShapeOrigin::ShapeA);

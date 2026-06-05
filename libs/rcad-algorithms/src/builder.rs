@@ -1515,8 +1515,25 @@ impl<'a> BooleanBuilder<'a> {
             _ => return None,
         };
 
-        // Get 3D boundary positions from edge curves (handles degenerate edges
-        // where start==end but the edge curve goes between two different positions).
+        // Use pre-computed overlap from PaveFiller's coplanar analysis if available.
+        if let Some(overlap) = self.ds.same_domain_overlaps.iter()
+            .find(|(a, b, _)| (*a == fi_a && *b == fi_b) || (*a == fi_b && *b == fi_a))
+            .map(|(_, _, poly)| poly.clone())
+        {
+            if overlap.len() >= 3 {
+                return Some(SubFace {
+                    boundary: overlap,
+                    surface: Surface3::Plane(plane),
+                    normal: face_a.normal,
+                    uv_centroid: None,
+                    sample_override: None,
+                    uv_domain: None,
+                    inner_wires: vec![],
+                });
+            }
+        }
+
+        // Fallback: compute boundary from edge curves.
         let boundary_from_verts = |face: &DSFace| -> Vec<DVec3> {
             (0..face.boundary_verts.len()).map(|i| {
                 let vi = face.boundary_verts[i];

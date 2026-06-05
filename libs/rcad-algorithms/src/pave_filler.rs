@@ -1713,6 +1713,12 @@ impl<'a> PaveFiller<'a> {
                 curves: vec![],
                 points: vec![],
             });
+            // Store the pre-computed overlap polygon so the Builder can read it
+            // directly instead of re-computing from DS face boundaries.
+            // Take the first (largest) overlap region for simplicity.
+            if let Some(overlap) = result.overlap.into_iter().max_by_key(|poly| poly.len()) {
+                self.ds.same_domain_overlaps.push((f1, f2, overlap));
+            }
         }
     }
 
