@@ -3994,6 +3994,15 @@ impl<'a> BooleanBuilder<'a> {
                     },
                     // Analytic curves (Line2d, Circle2d, Ellipse2d) use the same
                     // t parameterization as the 3D intersection curve.
+                    // OCCT's PerformLoops uses the curve directly, not sampled
+                    // points. For Line2d, only 2 endpoints are needed — 64
+                    // points creates 64 small edge fragments (B3/B4 box-box).
+                    rcad_kernel::geom::Curve2d::Line(_) => (0..=2)
+                        .map(|i| {
+                            let t = t0 + (t1 - t0) * i as f64 / 2_f64;
+                            pcurve.point_at(t)
+                        })
+                        .collect(),
                     _ => (0..=N)
                         .map(|i| {
                             let t = t0 + (t1 - t0) * i as f64 / N as f64;
