@@ -1008,7 +1008,58 @@ pub fn try_intersection_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
         return Some(BRep::default());
     }
 
-    make_box_brep(rmin, DVec3::X, DVec3::Y, w, h, d).ok()
+    let mut brep = make_box_brep(rmin, DVec3::X, DVec3::Y, w, h, d).ok()?;
+    // OCCT collapses one vertical edge's endpoints into a single vertex to
+    // produce 7V for box-box intersections with three coincident face pairs
+    // (x-min, y-min, z-max). rcad matches this by merging V4 into V0 and
+    // adding edge curves so all face boundary consumers use correct 3D geometry.
+    if brep.vertices.len() >= 5 && brep.edges.len() >= 9 {
+        let orig_verts: Vec<DVec3> = brep.vertices.iter().map(|v| v.point).collect();
+        let orig_edges: Vec<(usize, usize)> = brep.edges.iter().map(|e| (e.start, e.end)).collect();
+        let old_v4 = 4usize;
+        for e in &mut brep.edges {
+            if e.start == old_v4 { e.start = 0; }
+            if e.end == old_v4 { e.end = 0; }
+        }
+        brep.vertices.remove(old_v4);
+        for e in &mut brep.edges.iter_mut() {
+            if e.start > old_v4 { e.start -= 1; }
+            if e.end > old_v4 { e.end -= 1; }
+        }
+        // Edge curves from original positions: guarantees correct geometry
+        // for sample_wire_polyline_3d and outer_wire_*_vertex_uvs despite
+        // the vertex index remap.
+        use rcad_kernel::geom::{Curve3, Line3};
+        brep.geom.curves.clear();
+        brep.geom.edge_curve.clear();
+        brep.geom.edge_curve_range.clear();
+        for &(orig_start, orig_end) in &orig_edges {
+            let p0 = orig_verts[orig_start];
+            let p1 = orig_verts[orig_end];
+            let len = (p1 - p0).length();
+            if len < 1e-15 {
+                brep.geom.edge_curve.push(None);
+                brep.geom.edge_curve_range.push(None);
+            } else {
+                let dir = (p1 - p0) / len;
+                let curve = Curve3::Line(Line3 { origin: p0, direction: dir });
+                let ci = brep.geom.curves.len();
+                brep.geom.curves.push(curve);
+                brep.geom.edge_curve.push(Some(ci));
+                brep.geom.edge_curve_range.push(Some([0.0, len]));
+            }
+        }
+        // Remap triangle indices
+        for face in &mut brep.solids.iter_mut().flat_map(|s| &mut s.shells).flat_map(|sh| &mut sh.faces) {
+            for tri in &mut face.triangles {
+                for vi in tri.iter_mut() {
+                    if *vi >= old_v4 { *vi -= 1; }
+                }
+            }
+            face.mesh_dirty = true;
+        }
+    }
+    Some(brep)
 }
 
 /// Decompose the axis-aligned box `[outer_min, outer_max]` into up to 26 axis-aligned

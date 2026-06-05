@@ -1049,6 +1049,12 @@ fn wire_edge_endpoint_3d(brep: &BRep, we: &WireEdge) -> Option<DVec3> {
         let range = brep.geom.edge_curve_range.get(we.idx)
             .and_then(|o| *o)
             .unwrap_or_else(|| curve.default_domain());
+        // For degenerate edges (start==end), the curve spans between two
+        // different positions. The face boundary needs BOTH curve endpoints
+        // to form a correct polygon. Use the EDGE DIRECTION to select which
+        // endpoint: forward → range[0], reverse → range[1]. For non-degenerate
+        // edges this matches vertex.position; for degenerate edges it gives
+        // the correct geometric position on the face boundary.
         let t = if we.forward { range[0] } else { range[1] };
         return Some(curve.point_at(t));
     }
