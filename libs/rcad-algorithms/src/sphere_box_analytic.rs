@@ -62,6 +62,41 @@ fn align_edge_geom(brep: &mut BRep, edge_idx: usize) {
     }
 }
 
+/// Get or create a shared box edge (and its corner vertices) lazily.
+/// If the edge already exists in `box_edge_map`, returns it.  Otherwise creates
+/// the required corner vertices (if not yet created), builds the edge, inserts
+/// it into the map, and returns the new edge index.
+fn get_or_create_box_edge(
+    brep: &mut BRep,
+    box_edge_map: &mut std::collections::HashMap<(usize, usize), usize>,
+    cvi: &mut [Option<usize>; 8],
+    corners: &[DVec3; 8],
+    a: usize,
+    b: usize,
+) -> Option<usize> {
+    let key = if a < b { (a, b) } else { (b, a) };
+    if let Some(&ei) = box_edge_map.get(&key) {
+        return Some(ei);
+    }
+    // Create corner vertices if they don't exist yet.
+    if cvi[a].is_none() {
+        cvi[a] = Some(make_vertex(brep, corners[a]));
+    }
+    if cvi[b].is_none() {
+        cvi[b] = Some(make_vertex(brep, corners[b]));
+    }
+    let p0 = corners[a];
+    let p1 = corners[b];
+    let curve = Curve3::Line(Line3 {
+        origin: p0,
+        direction: p1 - p0,
+    });
+    let ei = make_edge(brep, curve, 0.0, 1.0, cvi[a].unwrap(), cvi[b].unwrap()).ok()?;
+    align_edge_geom(brep, ei);
+    box_edge_map.insert(key, ei);
+    Some(ei)
+}
+
 /// Compute the UV coordinate of a point on a sphere surface, propagating the
 /// longitude (U) from `other_point` when `point` is at the pole (|V| ≈ π/2).
 /// This ensures iso-parametric curves (meridians) get a consistent U value
@@ -91,7 +126,7 @@ pub fn build_sphere_box_union_analytic(sphere: &BRep, box_: &BRep) -> Option<BRe
     let mut brep = BRep::new();
     let two_pi = 2.0 * std::f64::consts::PI;
 
-    // ── 1. Box corner vertices (8 unique) ─────────────────────────────
+    // ── 1. Box corner positions (vertices created lazily) ──
     let corners: [DVec3; 8] = [
         DVec3::new(bmin.x, bmin.y, bmin.z), // 0
         DVec3::new(bmax.x, bmin.y, bmin.z), // 1
@@ -102,10 +137,7 @@ pub fn build_sphere_box_union_analytic(sphere: &BRep, box_: &BRep) -> Option<BRe
         DVec3::new(bmax.x, bmax.y, bmax.z), // 6
         DVec3::new(bmin.x, bmax.y, bmax.z), // 7
     ];
-    let mut cvi = [0usize; 8];
-    for (i, &p) in corners.iter().enumerate() {
-        cvi[i] = make_vertex(&mut brep, p);
-    }
+    let mut cvi: [Option<usize>; 8] = [None; 8]; // created lazily
 
     // ── 2. Box face definitions ──────────────────────────────────────
     // Each entry: (indices into `corners[]` in CCW order from outside,
@@ -135,27 +167,9 @@ pub fn build_sphere_box_union_analytic(sphere: &BRep, box_: &BRep) -> Option<BRe
         FaceInfo { corners: [1, 2, 6, 5], normal: DVec3::X,     plane_origin: DVec3::new(bmax.x, 0.0, 0.0) },
     ];
 
-    // ── 3. Shared box edges (12 unique) ──────────────────────────────
-    // Pre-create all box edges once and share them between adjacent faces.
-    let box_edge_pairs: [(usize, usize); 12] = [
-        (0, 1), (0, 3), (0, 4),
-        (1, 2), (1, 5),
-        (2, 3), (2, 6),
-        (3, 7),
-        (4, 5), (4, 7),
-        (5, 6),
-        (6, 7),
-    ];
+    // ── 3. Shared box edges (created lazily) ─────────────────────────
     let mut edge_map: std::collections::HashMap<(usize, usize), usize> =
         std::collections::HashMap::new();
-    for &(a, b) in &box_edge_pairs {
-        let p0 = corners[a];
-        let p1 = corners[b];
-        let curve = Curve3::Line(Line3 { origin: p0, direction: p1 - p0 });
-        let ei = make_edge(&mut brep, curve, 0.0, 1.0, cvi[a], cvi[b]).ok()?;
-        align_edge_geom(&mut brep, ei);
-        edge_map.insert((a, b), ei);
-    }
 
     // ── 4. Build faces ───────────────────────────────────────────────
     // For each box face: if the sphere intersects the plane, build a trimmed
@@ -169,7 +183,7 @@ pub fn build_sphere_box_union_analytic(sphere: &BRep, box_: &BRep) -> Option<BRe
 
         if d.abs() < radius {
             let arcs = build_plane_intersection_face(
-                &mut brep, center, radius, &corners, &cvi, &edge_map,
+                &mut brep, center, radius, &corners, &mut cvi, &mut edge_map,
                 &fi.corners, n, pp, true,
             )?;
             all_arcs.extend(arcs);
@@ -181,8 +195,7 @@ pub fn build_sphere_box_union_analytic(sphere: &BRep, box_: &BRep) -> Option<BRe
                 let j = (i + 1) % 4;
                 let a = c[i];
                 let b = c[j];
-                let (ea, eb) = if a < b { (a, b) } else { (b, a) };
-                let ei = edge_map[&(ea, eb)];
+                let ei = get_or_create_box_edge(&mut brep, &mut edge_map, &mut cvi, &corners, a, b)?;
                 wire_edges.push(if a < b {
                     WireEdge::fwd(ei)
                 } else {
@@ -409,8 +422,8 @@ fn build_plane_intersection_face(
     center: DVec3,
     radius: f64,
     corners: &[DVec3; 8],
-    cvi: &[usize; 8],
-    box_edge_map: &std::collections::HashMap<(usize, usize), usize>,
+    cvi: &mut [Option<usize>; 8],
+    box_edge_map: &mut std::collections::HashMap<(usize, usize), usize>,
     corner_indices: &[usize; 4],
     normal: DVec3,
     plane_origin: DVec3,
@@ -528,10 +541,14 @@ fn build_plane_intersection_face(
     for x in &xs {
         // Reuse box-corner vertices when the intersection point coincides
         // with a corner — avoids duplicate VERTEX_POINT in the STEP output.
+        // Creates the corner vertex lazily if it doesn't exist yet.
         let mut reused = None;
-        for (ci, &corner_vi) in cvi.iter().enumerate() {
+        for (ci, corner_vi) in cvi.iter_mut().enumerate() {
             if (x.pos - corners[ci]).length() < 1e-12 {
-                reused = Some(corner_vi);
+                if corner_vi.is_none() {
+                    *corner_vi = Some(make_vertex(brep, corners[ci]));
+                }
+                reused = *corner_vi;
                 break;
             }
         }
@@ -570,7 +587,7 @@ fn build_plane_intersection_face(
         Some(ei)
     };
 
-    let walk_perim = |brep: &mut BRep, from_pos: DVec3, from_edge: usize, to_pos: DVec3, to_edge: usize| -> Option<Vec<WireEdge>> {
+    let mut walk_perim = |brep: &mut BRep, from_pos: DVec3, from_edge: usize, to_pos: DVec3, to_edge: usize| -> Option<Vec<WireEdge>> {
         let mut wes = Vec::new();
         let mut cur = from_pos;
         let mut e = from_edge;
@@ -580,8 +597,7 @@ fn build_plane_intersection_face(
             let ci = c[e];
             let cj = c[(e + 1) % 4];
             let nc = corners[cj];
-            // New: if cur is already at the next corner (start-at-end-of-edge),
-            // skip this edge and advance to the next one.
+            // If cur is already at the next corner, skip this edge and advance.
             if (cur - nc).length() < 1e-12 {
                 if e == to_edge { break; }
                 cur = nc;
@@ -589,28 +605,23 @@ fn build_plane_intersection_face(
                 continue;
             }
             let at_start_corner = (cur - corners[ci]).length() < 1e-12;
-            // Check if this is a full box edge (both endpoints are corners)
-            // so we can reuse the pre-created shared edge.
-            let key = if ci < cj { (ci, cj) } else { (cj, ci) };
-            let use_shared = at_start_corner && box_edge_map.contains_key(&key);
-            if use_shared && e == to_edge {
-                // Also verify to_pos is at the end corner for this final segment.
+            // Handle final segment where destination is mid-edge (not at a corner).
+            if at_start_corner && e == to_edge {
                 let at_end_corner = (to_pos - corners[cj]).length() < 1e-12;
                 if !at_end_corner {
-                    // to_pos is mid-edge; must create partial line.
                     if let Some(ei) = mk_line(brep, cur, to_pos) { wes.push(WireEdge::fwd(ei)); }
                     break;
                 }
             }
-            let ei = if use_shared {
-                box_edge_map.get(&key).copied()
+            let ei = if at_start_corner {
+                get_or_create_box_edge(brep, box_edge_map, cvi, corners, ci, cj)
             } else if e == to_edge {
                 mk_line(brep, cur, to_pos)
             } else {
                 mk_line(brep, cur, nc)
             };
             if let Some(ei) = ei {
-                let forward = if use_shared { ci < cj } else { true };
+                let forward = if at_start_corner { ci < cj } else { true };
                 wes.push(if forward { WireEdge::fwd(ei) } else { WireEdge::rev(ei) });
             }
             if e == to_edge { break; }
@@ -713,7 +724,7 @@ pub fn build_sphere_box_intersection_analytic(sphere: &BRep, box_: &BRep) -> Opt
 
     let mut brep = BRep::new();
 
-    // ── 1. Box corner vertices ──
+    // ── 1. Box corner positions (vertices created lazily) ──
     let corners: [DVec3; 8] = [
         DVec3::new(bmin.x, bmin.y, bmin.z), // 0
         DVec3::new(bmax.x, bmin.y, bmin.z), // 1
@@ -724,10 +735,7 @@ pub fn build_sphere_box_intersection_analytic(sphere: &BRep, box_: &BRep) -> Opt
         DVec3::new(bmax.x, bmax.y, bmax.z), // 6
         DVec3::new(bmin.x, bmax.y, bmax.z), // 7
     ];
-    let mut cvi = [0usize; 8];
-    for (i, &p) in corners.iter().enumerate() {
-        cvi[i] = make_vertex(&mut brep, p);
-    }
+    let mut cvi: [Option<usize>; 8] = [None; 8]; // created lazily
 
     // ── 2. Face definitions ──
     let faces: [([usize; 4], DVec3, DVec3); 6] = [
@@ -739,32 +747,15 @@ pub fn build_sphere_box_intersection_analytic(sphere: &BRep, box_: &BRep) -> Opt
         ([1, 2, 6, 5], DVec3::X,     DVec3::new(bmax.x, 0.0, 0.0)),
     ];
 
-    // ── 3. Shared box edges ──
-    let box_edge_pairs: [(usize, usize); 12] = [
-        (0, 1), (0, 3), (0, 4),
-        (1, 2), (1, 5),
-        (2, 3), (2, 6),
-        (3, 7),
-        (4, 5), (4, 7),
-        (5, 6),
-        (6, 7),
-    ];
+    // ── 3. Shared box edges (created lazily) ──
     let mut edge_map: std::collections::HashMap<(usize, usize), usize> =
         std::collections::HashMap::new();
-    for &(a, b) in &box_edge_pairs {
-        let p0 = corners[a];
-        let p1 = corners[b];
-        let curve = Curve3::Line(Line3 { origin: p0, direction: p1 - p0 });
-        let ei = make_edge(&mut brep, curve, 0.0, 1.0, cvi[a], cvi[b]).ok()?;
-        align_edge_geom(&mut brep, ei);
-        edge_map.insert((a, b), ei);
-    }
 
     // ── 4. Build planar faces; collect arc edges ──
     let mut all_arcs: Vec<usize> = Vec::new();
     for (fi, &(ref ci, n, pp)) in faces.iter().enumerate() {
         let arcs = build_plane_intersection_face(
-            &mut brep, center, radius, &corners, &cvi, &edge_map, ci, n, pp, false,
+            &mut brep, center, radius, &corners, &mut cvi, &mut edge_map, ci, n, pp, false,
         )?;
         all_arcs.extend(arcs);
     }

@@ -2688,6 +2688,7 @@ fn finalize_fast_path_result(r: BRep) -> BRep {
     let r = if has_open_closure
         || preserve_tangent_split_cylinder_topology(&r)
         || preserve_full_circle_hole_cylinder_topology(&r)
+        || preserve_sphere_box_topology(&r)
     {
         r
     } else {
@@ -2695,6 +2696,27 @@ fn finalize_fast_path_result(r: BRep) -> BRep {
     };
     let r = promote_planar_surfaces(r);
     r
+}
+
+/// Detect sphere-box analytic result: a closed shell with both spherical and
+/// planar faces that should preserve its analytic topology through the pipeline.
+/// Detect sphere-box analytic result: a closed shell with exactly 1 spherical
+/// surface and 3-7 planar surfaces (sphere-box intersection/union/difference).
+/// The analytic topology should be preserved through the pipeline — the
+/// general `optimize_boolean_topology` pass can incorrectly collapse the
+/// distinct faces (planar + spherical) into a single merged face.
+fn preserve_sphere_box_topology(brep: &BRep) -> bool {
+    use rcad_kernel::geom::Surface3;
+    let mut n_sphere = 0usize;
+    let mut n_plane = 0usize;
+    for si in &brep.geom.surfaces {
+        match si {
+            Surface3::Sphere(_) => n_sphere += 1,
+            Surface3::Plane(_) => n_plane += 1,
+            _ => {}
+        }
+    }
+    n_sphere == 1 && n_plane >= 3
 }
 
 fn preserve_tangent_split_cylinder_topology(brep: &BRep) -> bool {
