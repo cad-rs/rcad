@@ -1327,67 +1327,19 @@ fn classify_against_solid_for_boolean(
     Classification::Out
 }
 
-/// OCCT-style face classification using multi-point interior sampling with
-/// ray casting.  Classifies a sub-face by sampling its UV interior at multiple
-/// points and using `classify_point` (ray casting) at each — matching OCCT's
-/// ClassifyFaces / BOPAlgo_FillIn3DParts approach of classifying the face
-/// interior rather than checking boundary vertices against AABB extents.
-///
-/// Returns `Some(In/Out/On)` when the UV-probe vote is clear (≥70% majority
-/// or any `On` hit), or `None` when the result is ambiguous (mixed In/Out
-/// without a clear majority) — letting the caller fall through to the existing
-/// AABB fast path and probe-grid fallbacks.
+/// OCCT-style face classification: classify the sub-face's representative
+/// interior point against the solid.  OCCT's ClassifyFaces / BOPAlgo_FillIn3DParts
+/// classifies the face as a whole (using a single sample point), not by
+/// multi-point UV grid voting — the grid approach misclassifies sub-faces
+/// that straddle the other solid's boundary (part inside, part outside).
 fn classify_face_occt_style(
     sub: &SubFace,
     solid_face_indices: &[usize],
     ds: &DS,
     _op: BooleanOpType,
 ) -> Option<Classification> {
-    // OCCT uses interior points of the face — sample the UV domain.
-    let uv_domain = sub.uv_domain?;
-    let [u0, u1, v0, v1] = uv_domain;
-    if (u1 - u0).abs() < TOLERANCE_FLOAT_LOOSE || (v1 - v0).abs() < TOLERANCE_FLOAT_LOOSE {
-        return None;
-    }
-
-    let nu = 4usize;
-    let nv = 4usize;
-    let mut in_count = 0u32;
-    let mut out_count = 0u32;
-    let mut total = 0u32;
-
-    // Sample a 4×4 grid across the UV interior (not boundary edges).
-    for iu in 0..nu {
-        for iv in 0..nv {
-            let u = u0 + (u1 - u0) * (iu as f64 + 0.5) / nu as f64;
-            let v = v0 + (v1 - v0) * (iv as f64 + 0.5) / nv as f64;
-            let p = sub.surface.point_at(u, v);
-            match classify_point(p, solid_face_indices, ds) {
-                Classification::In => { in_count += 1; total += 1; }
-                Classification::Out => { out_count += 1; total += 1; }
-                Classification::On => return Some(Classification::On),
-            }
-        }
-    }
-
-    if total == 0 {
-        return None;
-    }
-
-    // Simple majority: whichever has more votes wins.  This is more reliable
-    // than the existing probe-grid fallback (which biases toward In for curved
-    // surfaces via out_count >= in_count threshold) because OCCT's approach of
-    // many interior sample points gives a truer picture of the sub-face's
-    // relationship with the other solid.
-    if in_count > out_count {
-        return Some(Classification::In);
-    }
-    if out_count > in_count {
-        return Some(Classification::Out);
-    }
-
-    // Tie — let caller fall through to AABB / probe-grid fallbacks.
-    None
+    let p = sub.sample_point();
+    Some(classify_point(p, solid_face_indices, ds))
 }
 
 impl<'a> BooleanBuilder<'a> {
@@ -1493,6 +1445,29 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         None
+    }
+
+    /// Check if any coplanar FaceFace partner has a DIFFERENT surface type
+    /// than this A-face.  When true, the On removal in Union should NOT apply
+    /// because OCCT's FillSameDomainFaces would keep both faces as separate
+    /// surface types (e.g. Plane vs BSpline from nurbsconvert).
+    fn has_coplanar_ff_with_diff_surface(&self, a_fi: usize, b_faces: &[usize]) -> bool {
+        let a_surf = &self.ds.faces[a_fi].surface;
+        for inf in &self.ds.interferences {
+            if let Interference::FaceFace { f1, f2, curves, .. } = inf {
+                if curves.is_empty() && (*f1 == a_fi || *f2 == a_fi) {
+                    let other_idx = if *f1 == a_fi { *f2 } else { *f1 };
+                    if b_faces.contains(&other_idx) {
+                        let b_surf = &self.ds.faces[other_idx].surface;
+                        // Different surface type → keep both
+                        if !same_surface_type(a_surf, b_surf) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
     }
 
     fn keep_subface(
@@ -1834,6 +1809,10 @@ impl<'a> BooleanBuilder<'a> {
                     && matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
                     && (self.is_glued_face(fi, &b_faces)
                         || self.coplanar_ff_normals_opposite(fi) == Some(false))
+                    // Don't remove if the coplanar partner has a DIFFERENT surface
+                    // type (e.g. Plane vs BSpline). OCCT's FillSameDomainFaces
+                    // would not merge them, so both should be kept.
+                    && !self.has_coplanar_ff_with_diff_surface(fi, &b_faces)
                 {
                     // For Union, planar On sub-faces coplanar with a B-face can be
                     // removed — the B-face covers this region on the external surface.
@@ -7110,6 +7089,20 @@ fn clip_polygon_by_convex_polygon(subject: &[DVec2], clip: &[DVec2]) -> Vec<DVec
         deduped.pop();
     }
     deduped
+}
+
+/// Two surface types are "the same" for coplanar dedup if they're both Plane
+/// or both BSpline with identical geometry.  Plane vs BSpline → NOT same,
+/// so OCCT's FillSameDomainFaces keeps both as separate surface types.
+fn same_surface_type(a: &Surface3, b: &Surface3) -> bool {
+    matches!((a, b),
+        (Surface3::Plane(_), Surface3::Plane(_))
+        | (Surface3::BSpline(_), Surface3::BSpline(_))
+        | (Surface3::Cylinder(_), Surface3::Cylinder(_))
+        | (Surface3::Sphere(_), Surface3::Sphere(_))
+        | (Surface3::Cone(_), Surface3::Cone(_))
+        | (Surface3::Torus(_), Surface3::Torus(_))
+    )
 }
 
 /// Check if a 2D point is inside a 2D polygon using ray casting.
