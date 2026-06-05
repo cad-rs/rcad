@@ -281,6 +281,8 @@ struct ResultBuilder {
     /// Extra A/B source when a later emission is deduplicated against an existing result face
     /// (see [`crate::history::BooleanHistory::co_face_origins`]).
     co_face_origins: Vec<(usize, FaceOrigin)>,
+    ds_vertices: Vec<DVec3>,
+    ds_to_result: Vec<Option<usize>>,
 }
 
 impl ResultBuilder {
@@ -339,21 +341,49 @@ impl ResultBuilder {
             faces: Vec::new(),
             face_origins: Vec::new(),
             co_face_origins: Vec::new(),
+            ds_vertices: Vec::new(),
+            ds_to_result: Vec::new(),
+        }
+    }
+
+    fn new_with_ds(ds: &DS) -> Self {
+        let n_ds = ds.vertices.len();
+        Self {
+            vertices: Vec::new(),
+            vertex_map: HashMap::new(),
+            edges: Vec::new(),
+            faces: Vec::new(),
+            face_origins: Vec::new(),
+            co_face_origins: Vec::new(),
+            ds_vertices: ds.vertices.iter().map(|v| v.point).collect(),
+            ds_to_result: vec![None; n_ds],
         }
     }
 
     fn add_vertex(&mut self, point: DVec3) -> usize {
         let key = hash_point(point);
         if let Some(&idx) = self.vertex_map.get(&key) {
-            // Double-check actual coincidence (hash collision protection)
             if points_coincide(self.vertices[idx], point) {
                 return idx;
             }
         }
-        // Linear scan fallback for hash collisions
         for (i, v) in self.vertices.iter().enumerate() {
             if points_coincide(*v, point) {
                 return i;
+            }
+        }
+        // Check DS operand vertex pool (OCCT-style): if the position matches
+        // an operand vertex, create a result vertex that maps back to it.
+        for (ds_i, ds_pt) in self.ds_vertices.iter().enumerate() {
+            if points_coincide(*ds_pt, point) {
+                if let Some(existing) = self.ds_to_result[ds_i] {
+                    return existing;
+                }
+                let idx = self.vertices.len();
+                self.vertices.push(point);
+                self.vertex_map.insert(key, idx);
+                self.ds_to_result[ds_i] = Some(idx);
+                return idx;
             }
         }
         let idx = self.vertices.len();
@@ -1708,7 +1738,7 @@ impl<'a> BooleanBuilder<'a> {
             return Err(BooleanError::EmptyInput);
         }
 
-        let mut result = ResultBuilder::new();
+        let mut result = ResultBuilder::new_with_ds(self.ds);
 
         // Debug tracing: set to true to print sub-face classification for debugging
         let debug_trace = std::env::var("RCAD_DEBUG_BUILDER").is_ok();
@@ -2176,7 +2206,7 @@ impl<'a> BooleanBuilder<'a> {
         b_results.sort_by(cmp_boolean_emit_order);
 
         // Merge results into ResultBuilder
-        let mut result = ResultBuilder::new();
+        let mut result = ResultBuilder::new_with_ds(self.ds);
         for (sub, flip, origin) in a_results.into_iter().chain(b_results.into_iter()) {
             result.emit_face_with_origin(&sub, flip, origin);
         }
