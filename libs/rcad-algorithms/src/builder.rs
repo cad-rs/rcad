@@ -2364,23 +2364,23 @@ impl<'a> BooleanBuilder<'a> {
         let face = &self.ds.faces[face_idx];
         let fi = &face.face_info;
 
-        // Planar BSpline (from nurbsconvert): use split_planar_face (3D polygon
-        // clipping) instead of split_curved_face_parametric (UV splitting which
-        // can fail when pcurves don't intersect the UV boundary polygon). OCCT's
-        // BOPAlgo_BuilderFace preserves the original surface type.
+        // Planar BSpline (nurbsconvert): use split_planar_face for clean edges.
+        // For boundary-coincident curves (split_planar_face returns ≤1 sub),
+        // use split_curved_face_parametric with reduced UV sampling to avoid
+        // edge fragmentation from the DS's 8-sample-per-edge UV boundary.
         if let Surface3::BSpline(bsp) = &face.surface {
-            if rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS) {
+            if !fi.curves_in.is_empty()
+                && rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS)
+            {
                 let plane = rcad_kernel::geom::bspline_to_plane(bsp);
-                // Use raw curves_in from DS — the merged version may fail when
-                // the BSpline-derived plane differs slightly from the original.
                 let cids: Vec<usize> = fi.curves_in.iter().copied().collect();
-                if cids.is_empty() {
-                    return self.single_subface_from_whole_face(face_idx);
+                let subs = self.split_planar_face(face_idx, &plane, &cids);
+                if subs.len() > 1 {
+                    let mut out = subs;
+                    for sub in &mut out { sub.surface = face.surface.clone(); }
+                    return out;
                 }
-                let mut subs = self.split_planar_face(face_idx, &plane, &cids);
-                for sub in &mut subs { sub.surface = face.surface.clone(); }
-                eprintln!("[BSplineSplit] face[{}] curves_in={:?} -> {} subs", face_idx, fi.curves_in, subs.len());
-                return subs;
+                // Fall through to split_curved_face_parametric
             }
         }
 
@@ -3206,20 +3206,6 @@ impl<'a> BooleanBuilder<'a> {
                         let mut next: Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)> = Vec::new();
                         for (poly, existing_wires) in &poly_wires {
                             let halves = split_polygon_2d_by_segment(poly, seg_s2d, seg_e2d);
-                            if halves.len() == 1 && seg_s2d != seg_e2d {
-                                let dists: Vec<f64> = poly.iter().map(|&p| {
-                                    let d = p - seg_s2d;
-                                    let dir = (seg_e2d - seg_s2d).normalize();
-                                    dir.x * d.y - dir.y * d.x
-                                }).collect();
-                                let n_pos = dists.iter().filter(|&&d| d > 1e-7).count();
-                                let n_neg = dists.iter().filter(|&&d| d < -1e-7).count();
-                                let crossing_info = if n_pos > 0 && n_neg > 0 { "CROSSES" } else { "NO_CROSS" };
-                                eprintln!("[SPLIT_FAIL] {} n={} n2={} seg_s=({:.4},{:.4}) seg_e=({:.4},{:.4}) pos={} neg={}",
-                                    crossing_info, poly.len(), halves[0].len(),
-                                    seg_s2d.x, seg_s2d.y, seg_e2d.x, seg_e2d.y, n_pos, n_neg);
-                                eprintln!("  poly: {:?}", poly);
-                            }
                             for half in halves {
                                 next.push((half, existing_wires.clone()));
                             }
