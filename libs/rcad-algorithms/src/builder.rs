@@ -1474,6 +1474,73 @@ impl<'a> BooleanBuilder<'a> {
         false
     }
 
+    /// OCCT-style planar BSpline split: when split_planar_face fails for
+    /// boundary-coincident curves, build sub-faces by splitting the 3D boundary
+    /// polygon along the line from the intersection curve's midpoint toward the
+    /// polygon centroid.  This matches OCCT's wire-based approach where each
+    /// intersection edge naturally connects at shared vertices on the boundary.
+    fn split_planar_bspline_occt(
+        &self,
+        face_idx: usize,
+        plane: &Plane,
+        cids: &[usize],
+    ) -> Option<Vec<SubFace>> {
+        let face = &self.ds.faces[face_idx];
+        let (u_axis, v_axis) = plane_local_basis(plane);
+
+        // Project face boundary to 2D
+        if face.boundary_verts.len() < 3 { return None; }
+        let bnd_2d: Vec<DVec2> = face.boundary_verts.iter()
+            .map(|&vi| { let d = self.ds.vertices[vi].point - plane.origin;
+                DVec2::new(d.dot(u_axis), d.dot(v_axis)) })
+            .collect();
+
+        // Compute polygon centroid in 2D
+        let centroid = bnd_2d.iter().copied().sum::<DVec2>() / bnd_2d.len() as f64;
+
+        // Take the first valid intersection curve for splitting
+        let split_line = cids.iter().find_map(|&ci| {
+            let ic = &self.ds.intersection_curves[ci];
+            let p_start = self.ds.vertices[ic.start_vertex].point;
+            let p_end = self.ds.vertices[ic.end_vertex].point;
+            if (p_start - p_end).length() < TOLERANCE_ABS { return None; }
+            // Project midpoint to 2D
+            let mid = (p_start + p_end) * 0.5;
+            let d_mid = mid - plane.origin;
+            let mid_2d = DVec2::new(d_mid.dot(u_axis), d_mid.dot(v_axis));
+            // Split direction: from midpoint toward centroid
+            let split_dir = (centroid - mid_2d).normalize_or_zero();
+            if split_dir.length_squared() < 0.1 { return None; }
+            Some((mid_2d, split_dir))
+        })?;
+
+        // Split the polygon by the line (midpoint, direction)
+        let halves = split_polygon_2d_by_line(&bnd_2d, split_line.0, split_line.1);
+        if halves.len() < 2 { return None; }
+
+        // Create SubFaces, preserving BSpline surface type
+        let lift = |uv: DVec2| -> DVec3 { plane.origin + u_axis * uv.x + v_axis * uv.y };
+        let out: Vec<SubFace> = halves.into_iter()
+            .filter(|p| p.len() >= 3)
+            .map(|poly_2d| {
+                let boundary: Vec<DVec3> = poly_2d.iter().map(|&uv| lift(uv)).collect();
+                SubFace {
+                    boundary,
+                    surface: face.surface.clone(),
+                    normal: face.normal,
+                    uv_centroid: None,
+                    sample_override: None,
+                    uv_domain: None,
+                    inner_wires: vec![],
+                }
+            })
+            .collect();
+        if out.len() >= 2 { eprintln!("[OCCT_SPLIT] face[{}] -> {} subs", face_idx, out.len()); Some(out) } else {
+            eprintln!("[OCCT_SPLIT] face[{}] FAILED out={}", face_idx, out.len());
+            None
+        }
+    }
+
     fn keep_subface(
         &self,
         source: SourceSide,
@@ -1875,7 +1942,10 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
 
-            if kept_subs.len() > 1 {
+            // OCCT: for planar BSpline faces split by intersection curves, don't
+            // merge sub-faces back.  The intersection creates separate topological
+            // parts (like OCCT's FillImagesFaces / BuildSplitFaces).
+            if kept_subs.len() > 1 && !(face_split && matches!(self.ds.faces[fi].surface, Surface3::BSpline(_))) {
                 merge_subfaces_of_same_face(&mut kept_subs);
             }
             for sub in kept_subs {
@@ -2012,9 +2082,7 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
 
-            // Merge kept sub-faces from the same original face that share
-            // boundary edges. Disconnected UV intervals are not merged.
-            if kept_subs.len() > 1 {
+            if kept_subs.len() > 1 && !(face_split && matches!(self.ds.faces[fi].surface, Surface3::BSpline(_))) {
                 merge_subfaces_of_same_face(&mut kept_subs);
             }
             let flip = self.op == BooleanOpType::Difference;
@@ -2364,9 +2432,11 @@ impl<'a> BooleanBuilder<'a> {
         let face = &self.ds.faces[face_idx];
         let fi = &face.face_info;
 
-        // Planar BSpline: try split_planar_face first for clean edges.
-        // If the curve is on the polygon boundary (split returns ≤1 sub),
-        // fall through to split_curved_face_parametric with pcurve conversion.
+        // Planar BSpline: OCCT's BOPAlgo_BuilderFace assembles sub-faces from
+        // topological wires (edges connected at shared vertices), not from polygon
+        // clipping.  When split_planar_face fails for boundary-coincident curves,
+        // use a planar 3D approach: project the intersection curve's midpoint and
+        // split along a line through the midpoint toward the polygon centroid.
         if let Surface3::BSpline(bsp) = &face.surface {
             if !fi.curves_in.is_empty()
                 && rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS)
@@ -2379,7 +2449,11 @@ impl<'a> BooleanBuilder<'a> {
                     for sub in &mut out { sub.surface = face.surface.clone(); }
                     return out;
                 }
-                // Fall through to UV splitting with pcurve conversion
+                // Planar OCCT-style fallback: build sub-faces by projecting the
+                // intersection curve's midpoint and splitting toward the centroid.
+                if let Some(subs) = self.split_planar_bspline_occt(face_idx, &plane, &cids) {
+                    return subs;
+                }
             }
         }
 
