@@ -1469,6 +1469,130 @@ impl<'a> BooleanBuilder<'a> {
         policy
     }
 
+    /// Find a B-face that shares the same infinite surface as the given A-face.
+    /// For planes: checks that normals are parallel (same or opposite) and the
+    /// plane origins are on the same infinite plane (within tolerance).
+    fn find_same_domain_b_partner(&self, fi_a: usize, b_faces: &[usize]) -> Option<usize> {
+        let face_a = &self.ds.faces[fi_a];
+        match &face_a.surface {
+            Surface3::Plane(pa) => {
+                let n_a = pa.normal.normalize_or_zero();
+                let d_a = n_a.dot(pa.origin);
+                for &fi_b in b_faces {
+                    let face_b = &self.ds.faces[fi_b];
+                    if let Surface3::Plane(pb) = &face_b.surface {
+                        let n_b = pb.normal.normalize_or_zero();
+                        // Normals must be parallel (same direction OR opposite)
+                        let dot = n_a.dot(n_b).abs();
+                        if dot < 1.0 - crate::tolerance::TOLERANCE_ANG * 10.0 {
+                            continue;
+                        }
+                        // Origins must be on the same infinite plane
+                        let d_b = n_b.dot(pb.origin);
+                        // For same-normal planes: d_a ≈ d_b
+                        // For opposite-normal planes: d_a ≈ -d_b
+                        let d_b_proj = if n_a.dot(n_b) > 0.0 { d_b } else { -d_b };
+                        if (d_a - d_b_proj).abs() > crate::tolerance::TOLERANCE_ABS * 100.0 {
+                            continue;
+                        }
+                        return Some(fi_b);
+                    }
+                }
+                None
+            }
+            _ => None, // Non-planar same-domain not yet handled
+        }
+    }
+
+    /// For a pair of same-domain planar faces (same infinite plane), compute the
+    /// overlapping region as a SubFace. Used when the PaveFiller produces no
+    /// intersection curves for coincident face pairs.
+    fn compute_planar_same_domain_overlap(&self, fi_a: usize, fi_b: usize) -> Option<SubFace> {
+        let face_a = &self.ds.faces[fi_a];
+        let face_b = &self.ds.faces[fi_b];
+        let plane = match &face_a.surface {
+            Surface3::Plane(p) => p.clone(),
+            _ => return None,
+        };
+
+        // Get 3D boundary vertices
+        let boundary_a: Vec<DVec3> = face_a.boundary_verts.iter()
+            .map(|&vi| self.ds.vertices[vi].point).collect();
+        let boundary_b: Vec<DVec3> = face_b.boundary_verts.iter()
+            .map(|&vi| self.ds.vertices[vi].point).collect();
+
+        if boundary_a.len() < 3 || boundary_b.len() < 3 {
+            return None;
+        }
+
+        // Build an orthonormal 2D basis on the shared plane
+        let n = plane.normal.normalize_or_zero();
+        let u_ax = if n.x.abs() > 0.5 {
+            DVec3::new(-n.y, n.x, 0.0).normalize()
+        } else {
+            DVec3::new(0.0, -n.z, n.y).normalize()
+        };
+        let v_ax = n.cross(u_ax).normalize();
+
+        // Use the first vertex of boundary_a as reference origin for projection
+        let origin = boundary_a[0];
+        fn to_2d(p: DVec3, o: DVec3, u: DVec3, v: DVec3) -> DVec2 {
+            DVec2::new((p - o).dot(u), (p - o).dot(v))
+        }
+        fn to_3d(uv: DVec2, o: DVec3, u: DVec3, v: DVec3) -> DVec3 {
+            o + uv.x * u + uv.y * v
+        }
+
+        // Project both boundaries to 2D
+        let mut proj_a: Vec<DVec2> = boundary_a.iter()
+            .map(|&p| to_2d(p, origin, u_ax, v_ax)).collect();
+        let mut proj_b: Vec<DVec2> = boundary_b.iter()
+            .map(|&p| to_2d(p, origin, u_ax, v_ax)).collect();
+
+        // Ensure CCW winding for the clip polygon (clip_polygon_by_convex_polygon
+        // expects the clip polygon in CCW order with interior to the LEFT of each edge).
+        let signed_area = |poly: &[DVec2]| -> f64 {
+            let mut area = 0.0;
+            for i in 0..poly.len() {
+                let j = (i + 1) % poly.len();
+                area += poly[i].x * poly[j].y - poly[j].x * poly[i].y;
+            }
+            area
+        };
+        if signed_area(&proj_a) < 0.0 { proj_a.reverse(); }
+        if signed_area(&proj_b) < 0.0 { proj_b.reverse(); }
+
+        // Compute 2D polygon intersection using Sutherland-Hodgman clipping
+        let overlap_2d = clip_polygon_by_convex_polygon(&proj_a, &proj_b);
+        if overlap_2d.len() < 3 {
+            return None; // No overlap
+        }
+
+        // Project back to 3D
+        let overlap_3d: Vec<DVec3> = overlap_2d.iter()
+            .map(|&uv| to_3d(uv, origin, u_ax, v_ax)).collect();
+
+        // Compute a sample point INSIDE the other solid (not on the boundary).
+        // The overlap boundary vertices lie on the face at the solid's surface,
+        // so the centroid is also on the surface. Push it DEEP into the interior
+        // opposite to the face normal to avoid boundary tolerance issues in the
+        // multi-ray-voting classifier (points too close to the boundary can be
+        // misclassified as Out when a ray grazes an edge/vertex).
+        let overlap_centroid = overlap_3d.iter().copied().sum::<DVec3>() / overlap_3d.len() as f64;
+        let n = face_a.normal.normalize_or_zero();
+        let sample_override = Some(overlap_centroid - n * 0.1);
+
+        Some(SubFace {
+            boundary: overlap_3d,
+            surface: Surface3::Plane(plane),
+            normal: face_a.normal,
+            uv_centroid: None,
+            sample_override,
+            uv_domain: None,
+            inner_wires: vec![],
+        })
+    }
+
     fn pcurve_matches_face_surface(
         &self,
         pcurve: &rcad_kernel::geom::Curve2d,
@@ -1590,10 +1714,40 @@ impl<'a> BooleanBuilder<'a> {
         // Process A faces against B solid
         let mut a_on_planes: Vec<(DVec3, DVec3)> = Vec::new(); // (normal, origin) from emitted A-face planes
         for &fi in &a_faces {
-            let sub_faces = self.split_face(fi);
+            let mut sub_faces = self.split_face(fi);
+            // Same-domain handling: for planar faces with a same-domain B-partner,
+            // compute the overlap region directly. The PaveFiller cannot compute
+            // intersection curves for coincident plane pairs, and ICs with OTHER
+            // faces produce sub-faces whose classification fails (the sample point
+            // falls outside the other solid due to the normal offset). Computing the
+            // domain overlap directly matches OCCT's same-domain face handling.
+            if matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
+                && self.op == BooleanOpType::Intersection
+            {
+                if let Some(bfi) = self.find_same_domain_b_partner(fi, &b_faces) {
+                    if let Some(overlap) = self.compute_planar_same_domain_overlap(fi, bfi) {
+                        sub_faces = vec![overlap];
+                    } else {
+                        // No overlap — skip this face entirely
+                        sub_faces = Vec::new();
+                    }
+                }
+            }
+            // Detect same-domain face: any planar face with a same-domain B partner.
+            let is_same_domain = matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
+                && self.find_same_domain_b_partner(fi, &b_faces).is_some();
             let face_split = sub_faces.len() > 1;
             let mut kept_subs: Vec<SubFace> = Vec::new();
             for (si, sub) in sub_faces.iter().enumerate() {
+                // Same-domain trimmed faces: skip classifier (classifier can
+                // mis-classify points near the solid's boundary) and force-keep.
+                if is_same_domain {
+                    if let Surface3::Plane(p) = &sub.surface {
+                        a_on_planes.push((p.normal, p.origin));
+                    }
+                    kept_subs.push(sub.clone());
+                    continue;
+                }
                 let class = classify_against_solid_for_boolean(self.op, SourceSide::A, sub, &b_faces, self.ds);
                 let keep = if self.op == BooleanOpType::Union
                     && class == Classification::On
@@ -1672,7 +1826,19 @@ impl<'a> BooleanBuilder<'a> {
 
         // Process B faces against A solid
         for &fi in &b_faces {
-            let sub_faces = self.split_face(fi);
+            let mut sub_faces = self.split_face(fi);
+            // Same-domain handling for B-faces: mirror of the A-face logic above.
+            if matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
+                && self.op == BooleanOpType::Intersection
+            {
+                if let Some(afi) = self.find_same_domain_b_partner(fi, &a_faces) {
+                    if let Some(overlap) = self.compute_planar_same_domain_overlap(fi, afi) {
+                        sub_faces = vec![overlap];
+                    } else {
+                        sub_faces = Vec::new();
+                    }
+                }
+            }
             let face_split = sub_faces.len() > 1;
             let mut kept_subs: Vec<SubFace> = Vec::new();
             for (si, sub) in sub_faces.iter().enumerate() {

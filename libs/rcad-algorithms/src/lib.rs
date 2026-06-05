@@ -2695,6 +2695,19 @@ fn finalize_fast_path_result(r: BRep) -> BRep {
         optimize_boolean_topology(r)
     };
     let r = promote_planar_surfaces(r);
+    // Merge close vertices: the fast path (make_box_brep /
+    // make_convex_polyhedron_from_half_spaces) creates vertices from
+    // plane-plane intersections that may produce near-coincident points
+    // within floating-point tolerance. OCCT's NURBS boolean pipeline merges
+    // these as part of its vertex tolerance system. Use a generous
+    // scale-based tolerance to match OCCT's behavior.
+    let scale = r.bounding_box()
+        .map(|[lo, hi]| (hi - lo).length())
+        .unwrap_or(1.0);
+    let tol = (crate::tolerance::TOLERANCE_ABS * 100_000.0)
+        .max(crate::tolerance::TOLERANCE_LEN_MIN * scale * 1e9)
+        .min(scale * 0.01);
+    let (r, _n) = crate::brep_repair::merge_close_vertices(&r, tol);
     r
 }
 
@@ -2811,7 +2824,15 @@ fn finalize_boolean_result(r: BRep) -> BRep {
     // Promote planar BSpline → Plane AFTER topology optimization to avoid
     // perturbing orthogonal_face_fuse plane-equation matching: bspline_to_plane
     // can introduce slight plane offsets that break coplanarity detection.
-    promote_planar_surfaces(r)
+    let r = promote_planar_surfaces(r);
+    // Merge close vertices (same logic as finalize_fast_path_result).
+    let scale = r.bounding_box()
+        .map(|[lo, hi]| (hi - lo).length())
+        .unwrap_or(1.0);
+    let tol = (crate::tolerance::TOLERANCE_ABS * 1000.0)
+        .max(crate::tolerance::TOLERANCE_LEN_MIN * scale * 1e9);
+    let (r, _n) = crate::brep_repair::merge_close_vertices(&r, tol);
+    r
 }
 
 pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
