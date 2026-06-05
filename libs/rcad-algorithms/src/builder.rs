@@ -2364,28 +2364,22 @@ impl<'a> BooleanBuilder<'a> {
         let face = &self.ds.faces[face_idx];
         let fi = &face.face_info;
 
-        // Planar BSpline: use split_planar_face (consistent 2D projection from
-        // the analytic plane) instead of split_curved_face_parametric (pcurve UV
-        // from line_pcurve_on_plane is inconsistent with DS UV boundary).
+        // Planar BSpline: try split_planar_face first for clean edges.
+        // If the curve is on the polygon boundary (split returns ≤1 sub),
+        // fall through to split_curved_face_parametric with pcurve conversion.
         if let Surface3::BSpline(bsp) = &face.surface {
             if !fi.curves_in.is_empty()
                 && rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS)
             {
                 let plane = rcad_kernel::geom::bspline_to_plane(bsp);
                 let cids: Vec<usize> = fi.curves_in.iter().copied().collect();
-                let mut subs = self.split_planar_face(face_idx, &plane, &cids);
-                eprintln!("[BS_DBG] face[{}] split_planar_face -> {} subs", face_idx, subs.len());
+                let subs = self.split_planar_face(face_idx, &plane, &cids);
                 if subs.len() > 1 {
-                    eprintln!("[BS] face[{}] split_planar_face OK -> {} subs", face_idx, subs.len());
-                    for sub in &mut subs { sub.surface = face.surface.clone(); }
-                    return subs;
+                    let mut out = subs;
+                    for sub in &mut out { sub.surface = face.surface.clone(); }
+                    return out;
                 }
-                eprintln!("[BS] face[{}] split_planar_face FAIL -> {} subs (boundary curve), curves_in={:?}",
-                    face_idx, subs.len(), fi.curves_in);
-                // Boundary curve: split_planar_face returned ≤1 sub. The curve
-                // endpoints are on the polygon boundary, so the split doesn't
-                // create 2 distinct sub-polygons.  Fall through to UV splitting
-                // (which may or may not work depending on pcurve consistency).
+                // Fall through to UV splitting with pcurve conversion
             }
         }
 
@@ -4024,6 +4018,21 @@ impl<'a> BooleanBuilder<'a> {
                         })
                         .collect(),
                 };
+
+                // OCCT-aligned: convert pcurve UV from plane space to BSpline space
+                // for planar BSpline faces.  The PaveFiller's line_pcurve_on_plane
+                // creates pcurves in PLANE UV; the UV boundary uses BSPLINE UV
+                // (from closest_point_on_surface).  The mapping is:(plane_u+1)/2.
+                let raw_pts = if let Surface3::BSpline(ref bsp) = surface {
+                    if bsp.degree_u == 1 && bsp.degree_v == 1
+                        && rcad_kernel::geom::bspline_is_planar(bsp, 1e-7)
+                    {
+                        raw_pts.into_iter()
+                            .map(|p| DVec2::new(p.x * 0.5 + 0.5, p.y * 0.5 + 0.5))
+                            .collect()
+                    } else { raw_pts }
+                } else { raw_pts };
+
                 if raw_pts.len() < 2 {
                     continue;
                 }
