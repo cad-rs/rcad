@@ -472,6 +472,39 @@ pub fn closest_point_on_surface(
             }
         }
 
+        // ── Planar BSpline: use analytic plane projection ──────────────────────
+        Surface3::BSpline(bsp) if bsp.degree_u == 1 && bsp.degree_v == 1
+            && bsp.control_points.len() >= 2 && bsp.control_points[0].len() >= 2 =>
+        {
+            // The degree-1 BSpline from plane_to_bspline is geometrically a plane.
+            // Use the analytic Plane projection instead of numeric_surface_projection
+            // which may converge to the wrong UV when the query point is far from
+            // the initial grid sample.
+            let p00 = bsp.control_points[0][0];
+            let p10 = bsp.control_points[1][0];
+            let p01 = bsp.control_points[0][1];
+            let du = p10 - p00;
+            let dv = p01 - p00;
+            let normal = du.cross(dv).normalize_or_zero();
+            if normal.length_squared() > 0.5 {
+                let n = normal;
+                let d = (query - p00).dot(n);
+                let point = query - n * d;
+                let diff = point - p00;
+                // Project onto the bilinear patch's local axes
+                let u_len2 = du.length_squared();
+                let v_len2 = dv.length_squared();
+                let (u, v) = if u_len2 > 1e-30 && v_len2 > 1e-30 {
+                    (diff.dot(du) / u_len2, diff.dot(dv) / v_len2)
+                } else {
+                    (0.0, 0.0)
+                };
+                SurfaceProjection { point, params: (u, v), distance: d.abs() }
+            } else {
+                numeric_surface_projection(surface, query, n_samples)
+            }
+        }
+
         // ── Numerical fallback for parametric surfaces ─────────────────────────
         _ => numeric_surface_projection(surface, query, n_samples),
     }

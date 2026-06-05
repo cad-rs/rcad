@@ -2364,6 +2364,31 @@ impl<'a> BooleanBuilder<'a> {
         let face = &self.ds.faces[face_idx];
         let fi = &face.face_info;
 
+        // Planar BSpline: use split_planar_face (consistent 2D projection from
+        // the analytic plane) instead of split_curved_face_parametric (pcurve UV
+        // from line_pcurve_on_plane is inconsistent with DS UV boundary).
+        if let Surface3::BSpline(bsp) = &face.surface {
+            if !fi.curves_in.is_empty()
+                && rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS)
+            {
+                let plane = rcad_kernel::geom::bspline_to_plane(bsp);
+                let cids: Vec<usize> = fi.curves_in.iter().copied().collect();
+                let mut subs = self.split_planar_face(face_idx, &plane, &cids);
+                eprintln!("[BS_DBG] face[{}] split_planar_face -> {} subs", face_idx, subs.len());
+                if subs.len() > 1 {
+                    eprintln!("[BS] face[{}] split_planar_face OK -> {} subs", face_idx, subs.len());
+                    for sub in &mut subs { sub.surface = face.surface.clone(); }
+                    return subs;
+                }
+                eprintln!("[BS] face[{}] split_planar_face FAIL -> {} subs (boundary curve), curves_in={:?}",
+                    face_idx, subs.len(), fi.curves_in);
+                // Boundary curve: split_planar_face returned ≤1 sub. The curve
+                // endpoints are on the polygon boundary, so the split doesn't
+                // create 2 distinct sub-polygons.  Fall through to UV splitting
+                // (which may or may not work depending on pcurve consistency).
+            }
+        }
+
         if let Surface3::Plane(plane) = &face.surface {
             let cids = self.merged_split_curve_ids_for_planar_face(face_idx, plane);
             if cids.is_empty() {
@@ -3286,6 +3311,11 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         let debug_split = std::env::var("RCAD_DEBUG_SPLIT").is_ok();
+
+        if poly_wires.len() <= 1 {
+            eprintln!("[SP_DBG] face[{}] {} wires after all splits, first_len={}",
+                face_idx, poly_wires.len(), poly_wires.first().map(|(p,_)| p.len()).unwrap_or(0));
+        }
 
         poly_wires
             .into_iter()
