@@ -420,6 +420,14 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
     sorted.sort_unstable();
 
     let tol = AdaptiveTolerance::from_scale(ds.model_scale());
+
+    // OCCT IntTools_FClass2d approach: for convex solids (all faces planar or
+    // planar BSpline), classify by signed distance from each face's plane.
+    // A point is INSIDE if it's behind ALL faces (signed_distance <= 0).
+    if let Some(class) = classify_point_convex_planar(point, &sorted, ds, tol) {
+        return class;
+    }
+
     debug!(
         "classify_point: scale={:.3e}, adaptive_tol={:.3e}, faces={}",
         ds.model_scale(),
@@ -427,6 +435,51 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
         sorted.len(),
     );
     classify_point_internal(point, &sorted, ds, tol, 0.0)
+}
+
+/// OCCT-style convex solid classification: check signed distance from each
+/// face's plane. A closed convex solid has all face normals pointing outward;
+/// a point is INSIDE iff it's on the back side of EVERY face.
+/// Handles Plane and planar BSpline (degree-1) surfaces.
+fn classify_point_convex_planar(
+    point: DVec3,
+    solid_face_indices: &[usize],
+    ds: &DS,
+    tol: AdaptiveTolerance,
+) -> Option<Classification> {
+    let mut behind_all = true;
+    let mut on_any = false;
+    let flat_tol = tol.tolerance(ToleranceLevel::Normal);
+
+    for &fi in solid_face_indices {
+        let face = &ds.faces[fi];
+        let (origin, normal) = match &face.surface {
+            Surface3::Plane(p) => (p.origin, p.normal),
+            Surface3::BSpline(bsp) => {
+                if let Some(n) = bspline_planar_normal(bsp) {
+                    (bsp.control_points[0][0], n)
+                } else {
+                    // Non-planar BSpline — fall back to ray casting
+                    return None;
+                }
+            }
+            _ => return None, // Non-planar surface — fall back to ray casting
+        };
+        let signed_dist = (point - origin).dot(normal);
+        if signed_dist > flat_tol {
+            behind_all = false;
+            break; // In front of one face → outside
+        }
+        if signed_dist.abs() <= flat_tol {
+            on_any = true;
+        }
+    }
+
+    if behind_all {
+        Some(if on_any { Classification::On } else { Classification::In })
+    } else {
+        None // Let ray casting decide
+    }
 }
 
 fn classify_point_internal(
@@ -1137,6 +1190,27 @@ fn ray_cast_classify(
                 let crossings_torus = ray_torus_crossings(point, ray_dir, t, fi, ds, ray_tol, boundary_tol);
                 crossings += crossings_torus;
             }
+            // BSpline surfaces: for planar BSpline (from plane_to_bspline),
+            // use plane-equivalent ray intersection (same as Plane branch above).
+            Surface3::BSpline(bsp) => {
+                if let Some(plane_normal) = bspline_planar_normal(bsp) {
+                    let denom = ray_dir.dot(plane_normal);
+                    if denom.abs() < ray_tol { continue; }
+                    // Use first control point as the plane origin
+                    let p0 = bsp.control_points[0][0];
+                    let t_val = (p0 - point).dot(plane_normal) / denom;
+                    if t_val < ray_tol { continue; }
+                    let hit = point + ray_dir * t_val;
+                    let face_verts = ds.face_boundary_points(fi);
+                    let plane = rcad_kernel::geom::Plane { origin: p0, normal: plane_normal };
+                    if is_near_polygon_boundary(&hit, &face_verts, &plane, boundary_tol) {
+                        return None;
+                    }
+                    if point_in_face_aabb(hit, &face_verts, boundary_tol) {
+                        crossings += 1;
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -1149,6 +1223,19 @@ fn ray_cast_classify(
 }
 
 /// Count ray-torus crossings using quartic root finding.
+/// For a planar degree-1 BSpline (from plane_to_bspline), compute the
+/// plane normal from the 2×2 control point grid. Returns None for non-planar
+/// or non-degree-1 BSpline surfaces.
+fn bspline_planar_normal(bsp: &rcad_kernel::geom::BSplineSurface) -> Option<DVec3> {
+    if bsp.degree_u != 1 || bsp.degree_v != 1 { return None; }
+    if bsp.control_points.len() < 2 || bsp.control_points[0].len() < 2 { return None; }
+    let du = bsp.control_points[1][0] - bsp.control_points[0][0];
+    let dv = bsp.control_points[0][1] - bsp.control_points[0][0];
+    let n = du.cross(dv);
+    if n.length_squared() < 1e-30 { return None; }
+    Some(n.normalize())
+}
+
 fn ray_torus_crossings(
     point: DVec3,
     ray_dir: DVec3,
