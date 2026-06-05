@@ -2364,6 +2364,23 @@ impl<'a> BooleanBuilder<'a> {
         let face = &self.ds.faces[face_idx];
         let fi = &face.face_info;
 
+        // Planar BSpline (from nurbsconvert): use split_planar_face (3D polygon
+        // clipping) instead of split_curved_face_parametric (UV splitting which
+        // can fail when pcurves don't intersect the UV boundary polygon). OCCT's
+        // BOPAlgo_BuilderFace preserves the original surface type.
+        if let Surface3::BSpline(bsp) = &face.surface {
+            if rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS) {
+                let plane = rcad_kernel::geom::bspline_to_plane(bsp);
+                let cids = self.merged_split_curve_ids_for_planar_face(face_idx, &plane);
+                if cids.is_empty() {
+                    return self.single_subface_from_whole_face(face_idx);
+                }
+                let mut subs = self.split_planar_face(face_idx, &plane, &cids);
+                for sub in &mut subs { sub.surface = face.surface.clone(); }
+                return subs;
+            }
+        }
+
         if let Surface3::Plane(plane) = &face.surface {
             let cids = self.merged_split_curve_ids_for_planar_face(face_idx, plane);
             if cids.is_empty() {

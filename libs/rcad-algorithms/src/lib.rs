@@ -6200,18 +6200,13 @@ fn unify_one_merge_pass_with_origins(brep: &mut BRep, face_origins: Option<&[Fac
                 let dc = (s1.center - s2.center).length();
                 (Some(dc <= lin_tol), false)
             }
-            // Cross-type: BSpline + Plane — convert BSpline to Plane if planar
-            (Surface3::BSpline(b), Surface3::Plane(p))
-            | (Surface3::Plane(p), Surface3::BSpline(b)) => {
-                if rcad_kernel::geom::bspline_is_planar(b, 1e-7) {
-                    let bp = rcad_kernel::geom::bspline_to_plane(b);
-                    let cross = p.normal.cross(bp.normal).length();
-                    if cross > ang_tol { return (Some(false), true); }
-                    let d = (bp.origin - p.origin).dot(p.normal).abs();
-                    (Some(d <= lin_tol), true)
-                } else {
-                    (Some(false), false)
-                }
+            // Cross-type: BSpline + Plane — NOT same domain even when coplanar.
+            // OCCT's FillSameDomainFaces treats Plane and BSpline as different
+            // surfaces and does NOT merge them, preserving both surface types
+            // in the result (nurbsconvert alignment).
+            (Surface3::BSpline(_), Surface3::Plane(_))
+            | (Surface3::Plane(_), Surface3::BSpline(_)) => {
+                (Some(false), true)
             }
             (Surface3::BSpline(b1), Surface3::BSpline(b2)) => {
                 // BSpline same-domain detection.
