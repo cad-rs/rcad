@@ -166,6 +166,22 @@ pub fn clip_line_to_polygon_with_tol(
         // line_dir × edge_dir — zero means parallel
         let denom = line_u * ey - line_v * ex;
         if denom.abs() < eps {
+            // OCCT-aligned: when the line coincides with a polygon edge (parallel
+            // AND zero distance), use the edge endpoints as intersection t-values.
+            // Without this, boundary-coincident intersection lines lose the portion
+            // of the line that runs along the polygon edge (e.g. bfuse_simple B3
+            // face[6] intersection at z=0, which is on the face boundary).
+            let dist = (origin_u - ax) * ey - (origin_v - ay) * ex;
+            if dist.abs() < eps {
+                // Line coincides with this edge — add t at both endpoints
+                let dir_len2 = line_u * line_u + line_v * line_v;
+                if dir_len2 > 1e-30 {
+                    let t_a = ((ax - origin_u) * line_u + (ay - origin_v) * line_v) / dir_len2;
+                    let t_b = ((bx - origin_u) * line_u + (by - origin_v) * line_v) / dir_len2;
+                    t_vals.push(t_a);
+                    t_vals.push(t_b);
+                }
+            }
             continue;
         }
 
