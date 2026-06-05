@@ -472,16 +472,17 @@ impl DS {
                 })
                 .collect();
 
-            // For planar surfaces, decimate colinear UV points. The DS samples
-            // N_SAMPLES=8 per edge, creating ~32 UV points for a 4-edge face.
-            // Each point becomes a 3D vertex in the result — colinear points on
-            // straight edges create unnecessary edge fragments (OCCT uses 1 edge
-            // per boundary, not 8 small segments).
+            // For planar surfaces (Plane and planar BSpline), decimate colinear
+            // UV points. OCCT's BOPAlgo_BuilderFace uses the face's topological
+            // edges directly (each edge has exactly 2 vertices), not sampled UV
+            // polylines.  The 8-sample-per-edge UV boundary creates edge fragments.
+            // Tolerance 1e-6 * edge_length accounts for projection noise from
+            // closest_point_on_surface on BSpline surfaces (Newton iteration).
             let is_planar = matches!(&surface, Surface3::Plane(_))
                 || (if let Surface3::BSpline(ref bsp) = surface { rcad_kernel::geom::bspline_is_planar(bsp, 1e-7) } else { false });
             let decimated = if is_planar {
                 let n = uv_pts.len();
-                if n > 3 {
+                if n > 2 {
                     let mut kept: Vec<DVec2> = Vec::with_capacity(n);
                     for i in 0..n {
                         let prev = uv_pts[(i + n - 1) % n];
@@ -492,14 +493,16 @@ impl DS {
                         let cross = (d1.x * d2.y - d1.y * d2.x).abs();
                         let len1 = d1.length_squared();
                         let len2 = d2.length_squared();
-                        if cross < 1e-10 * len1.max(len2).max(1e-30)
-                            && len1 > 1e-30 && len2 > 1e-30
+                        if cross < 1e-6 * len1.max(len2).max(f64::MIN_POSITIVE)
+                            && len1 > f64::MIN_POSITIVE && len2 > f64::MIN_POSITIVE
                         {
                             continue;
                         }
                         kept.push(curr);
                     }
-                    if kept.len() >= 3 { kept } else { uv_pts }
+                    if kept.len() >= 3 && kept.len() < uv_pts.len() {
+                        kept
+                    } else { uv_pts }
                 } else { uv_pts }
             } else {
                 uv_pts
