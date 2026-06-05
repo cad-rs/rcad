@@ -1498,29 +1498,33 @@ impl<'a> BooleanBuilder<'a> {
         // Compute polygon centroid in 2D
         let centroid = bnd_2d.iter().copied().sum::<DVec2>() / bnd_2d.len() as f64;
 
-        // Take the first valid intersection curve for splitting
-        let split_line = cids.iter().find_map(|&ci| {
+        // Take the first valid intersection curve for splitting.
+        // For faces with multiple curves, each curve defines a split line.
+        // Process them sequentially (OCCT's WireSplitter connects all edges).
+        let mut current_polys = vec![bnd_2d.clone()];
+        for &ci in cids {
             let ic = &self.ds.intersection_curves[ci];
             let p_start = self.ds.vertices[ic.start_vertex].point;
             let p_end = self.ds.vertices[ic.end_vertex].point;
-            if (p_start - p_end).length() < TOLERANCE_ABS { return None; }
-            // Project midpoint to 2D
+            if (p_start - p_end).length() < TOLERANCE_ABS { continue; }
             let mid = (p_start + p_end) * 0.5;
             let d_mid = mid - plane.origin;
             let mid_2d = DVec2::new(d_mid.dot(u_axis), d_mid.dot(v_axis));
-            // Split direction: from midpoint toward centroid
             let split_dir = (centroid - mid_2d).normalize_or_zero();
-            if split_dir.length_squared() < 0.1 { return None; }
-            Some((mid_2d, split_dir))
-        })?;
+            if split_dir.length_squared() < 0.1 { continue; }
+            let mut next_polys = Vec::new();
+            for poly in &current_polys {
+                let halves = split_polygon_2d_by_line(poly, mid_2d, split_dir);
+                next_polys.extend(halves);
+            }
+            current_polys = next_polys;
+            if current_polys.is_empty() { return None; }
+        }
+        if current_polys.len() < 2 { eprintln!("[OCCT_SPLIT] face[{}] FAILED: {} polys after all curves", face_idx, current_polys.len()); return None; }
 
-        // Split the polygon by the line (midpoint, direction)
-        let halves = split_polygon_2d_by_line(&bnd_2d, split_line.0, split_line.1);
-        if halves.len() < 2 { return None; }
-
-        // Create SubFaces, preserving BSpline surface type
+        // Create SubFaces from the split polygons
         let lift = |uv: DVec2| -> DVec3 { plane.origin + u_axis * uv.x + v_axis * uv.y };
-        let out: Vec<SubFace> = halves.into_iter()
+        let out: Vec<SubFace> = current_polys.into_iter()
             .filter(|p| p.len() >= 3)
             .map(|poly_2d| {
                 let boundary: Vec<DVec3> = poly_2d.iter().map(|&uv| lift(uv)).collect();
@@ -1536,7 +1540,6 @@ impl<'a> BooleanBuilder<'a> {
             })
             .collect();
         if out.len() >= 2 { eprintln!("[OCCT_SPLIT] face[{}] -> {} subs", face_idx, out.len()); Some(out) } else {
-            eprintln!("[OCCT_SPLIT] face[{}] FAILED out={}", face_idx, out.len());
             None
         }
     }
