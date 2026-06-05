@@ -162,18 +162,6 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
             }
         }
 
-        // Skip containment for Union when the outer operand has any BSpline
-        // surfaces. OCCT's NURBS boolean always goes through the full PaveFiller
-        // pipeline, splitting outer faces along the inner shape's boundaries even
-        // when the inner shape is fully contained. Skipping containment forces
-        // the PaveFiller path, matching OCCT's face count (e.g. bfuse_simple
-        // B1/B5/B6: ref=10/14/9 faces vs rcad=6 if containment returns outer).
-        if matches!(op, BooleanOpType::Union)
-            && outer.geom.surfaces.iter().any(|s| matches!(s, Surface3::BSpline(_)))
-        {
-            continue;
-        }
-
         // Use vertices+curves bbox (excluding surface expansion) for the outer
         // pre-check.  Surface expansion inflates bboxes for shapes like cone
         // frustums (apex extends past the solid), causing false containment
@@ -1890,16 +1878,6 @@ let sa_b = surface_area(a); // SA of the input box B (being cut).
 /// Falls through to Pave-Filler (returns `None`) when sewing fails or excessive
 /// internal-face inflation is detected.
 pub fn try_union_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
-    // Skip fast path when either operand has BSpline surfaces (from nurbsconvert).
-    // OCCT's NURBS boolean always goes through PaveFiller and produces topology
-    // with split faces along intersection boundaries. The slab decomposition here
-    // returns identity for containment (6 faces), missing OCCT's split faces.
-    for operand in [a, b] {
-        if operand.geom.surfaces.iter().any(|s| matches!(s, Surface3::BSpline(_))) {
-            return None;
-        }
-    }
-
     let info_a = try_as_box(a)?;
     let info_b = try_as_box(b)?;
 
