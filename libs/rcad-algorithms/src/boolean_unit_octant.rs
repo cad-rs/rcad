@@ -162,14 +162,6 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
             }
         }
 
-        // Skip containment for Union with NURBS outer — OCCT's PaveFiller
-        // always splits outer faces even for fully contained shapes.
-        if matches!(op, BooleanOpType::Union)
-            && outer.geom.surfaces.iter().any(|s| matches!(s, Surface3::BSpline(_)))
-        {
-            continue;
-        }
-
         // Use vertices+curves bbox (excluding surface expansion) for the outer
         // pre-check.  Surface expansion inflates bboxes for shapes like cone
         // frustums (apex extends past the solid), causing false containment
@@ -1886,13 +1878,6 @@ let sa_b = surface_area(a); // SA of the input box B (being cut).
 /// Falls through to Pave-Filler (returns `None`) when sewing fails or excessive
 /// internal-face inflation is detected.
 pub fn try_union_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
-    // OCCT does not have fast paths — skip NURBS so PaveFiller+Builder
-    // preserves BSpline surface types (nurbsconvert cases).
-    for operand in [a, b] {
-        if operand.geom.surfaces.iter().any(|s| matches!(s, Surface3::BSpline(_))) {
-            return None;
-        }
-    }
     let info_a = try_as_box(a)?;
     let info_b = try_as_box(b)?;
 
