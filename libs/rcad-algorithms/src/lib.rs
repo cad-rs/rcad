@@ -2685,10 +2685,16 @@ fn finalize_fast_path_result(r: BRep) -> BRep {
     let has_open_closure = closure.issues.iter().any(|issue| {
         matches!(issue, crate::CheckIssue::SolidNotClosed { .. })
     });
+    // Skip topology optimization when the BRep has degenerate edges
+    // (start==end, introduced by vertex merging to match OCCT's NURBS
+    // boolean vertex count). The optimization passes (orthogonal face fuse,
+    // unify same-domain faces) assume all edges have distinct endpoints.
+    let has_degenerate_edge = r.edges.iter().any(|e| e.start == e.end);
     let r = if has_open_closure
         || preserve_tangent_split_cylinder_topology(&r)
         || preserve_full_circle_hole_cylinder_topology(&r)
         || preserve_sphere_box_topology(&r)
+        || has_degenerate_edge
     {
         r
     } else {

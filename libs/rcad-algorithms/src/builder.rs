@@ -1515,11 +1515,22 @@ impl<'a> BooleanBuilder<'a> {
             _ => return None,
         };
 
-        // Get 3D boundary vertices
-        let boundary_a: Vec<DVec3> = face_a.boundary_verts.iter()
-            .map(|&vi| self.ds.vertices[vi].point).collect();
-        let boundary_b: Vec<DVec3> = face_b.boundary_verts.iter()
-            .map(|&vi| self.ds.vertices[vi].point).collect();
+        // Get 3D boundary positions from edge curves (handles degenerate edges
+        // where start==end but the edge curve goes between two different positions).
+        let boundary_from_verts = |face: &DSFace| -> Vec<DVec3> {
+            (0..face.boundary_verts.len()).map(|i| {
+                let vi = face.boundary_verts[i];
+                let ei = face.boundary_edges[i % face.boundary_edges.len()];
+                let edge = &self.ds.edges[ei];
+                if edge.start_vertex == vi {
+                    edge.curve.point_at(edge.t_range[0])
+                } else {
+                    edge.curve.point_at(edge.t_range[1])
+                }
+            }).collect()
+        };
+        let boundary_a = boundary_from_verts(face_a);
+        let boundary_b = boundary_from_verts(face_b);
 
         if boundary_a.len() < 3 || boundary_b.len() < 3 {
             return None;
@@ -2242,10 +2253,23 @@ impl<'a> BooleanBuilder<'a> {
 
     fn single_subface_from_whole_face(&self, face_idx: usize) -> Vec<SubFace> {
         let face = &self.ds.faces[face_idx];
-        let boundary: Vec<DVec3> = face
-            .boundary_verts
-            .iter()
-            .map(|&vi| self.ds.vertices[vi].point)
+        // Compute face boundary from edge curves, not vertex positions.
+        // OCCT allows edges with start==end (both vertices at the same index)
+        // where the edge curve goes between two different 3D positions. In this
+        // case, the vertex position is wrong — the curve endpoint is the correct
+        // 3D position for the face boundary. Using edge curves ensures correct
+        // boundary even with topologically degenerate edges.
+        let boundary: Vec<DVec3> = (0..face.boundary_verts.len())
+            .map(|i| {
+                let vi = face.boundary_verts[i];
+                let ei = face.boundary_edges[i % face.boundary_edges.len()];
+                let edge = &self.ds.edges[ei];
+                if edge.start_vertex == vi {
+                    edge.curve.point_at(edge.t_range[0])
+                } else {
+                    edge.curve.point_at(edge.t_range[1])
+                }
+            })
             .collect();
 
         // If boundary has <3 unique vertices, sample from UV boundary instead.
