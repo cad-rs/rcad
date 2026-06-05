@@ -1756,19 +1756,7 @@ impl Part21Writer {
                 self.plane("face_plane", placement)
             }
             Some(Surface3::BSpline(bs)) => {
-                // Promote planar BSpline to PLANE so the STEP output matches
-                // OCCT's use of analytic plane surfaces for box faces, etc.
-                if rcad_kernel::geom::bspline_is_planar(&bs, 1e-12) {
-                    let plane = rcad_kernel::geom::bspline_to_plane(&bs);
-                    let origin = self.cartesian_point("face_plane_origin", dvec3_to_array(plane.origin));
-                    let axis = self.direction("face_plane_normal", dvec3_to_array(plane.normal));
-                    let x_dir = any_perpendicular_dvec3(plane.normal);
-                    let ref_dir = self.direction("face_plane_ref", dvec3_to_array(x_dir));
-                    let placement = self.axis2_placement_3d("face_plane_axis", origin, axis, ref_dir);
-                    self.plane("face_plane", placement)
-                } else {
-                    self.write_bspline_surface(&bs.clone())
-                }
+                self.write_bspline_surface(&bs.clone())
             }
             Some(Surface3::Ellipsoid(ellipsoid)) => {
                 let bs = surface_to_bspline(&Surface3::Ellipsoid(ellipsoid), 9, 9);

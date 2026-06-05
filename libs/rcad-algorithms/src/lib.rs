@@ -2700,7 +2700,6 @@ fn finalize_fast_path_result(r: BRep) -> BRep {
     } else {
         optimize_boolean_topology(r)
     };
-    let r = promote_planar_surfaces(r);
     // Merge close vertices: the fast path (make_box_brep /
     // make_convex_polyhedron_from_half_spaces) creates vertices from
     // plane-plane intersections that may produce near-coincident points
@@ -2830,7 +2829,6 @@ fn finalize_boolean_result(r: BRep) -> BRep {
     // Promote planar BSpline → Plane AFTER topology optimization to avoid
     // perturbing orthogonal_face_fuse plane-equation matching: bspline_to_plane
     // can introduce slight plane offsets that break coplanarity detection.
-    let r = promote_planar_surfaces(r);
     // Merge close vertices (same logic as finalize_fast_path_result).
     let scale = r.bounding_box()
         .map(|[lo, hi]| (hi - lo).length())
@@ -2958,7 +2956,7 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         // the oblique side faces on cases like bopcommon_simple C3/C5/C6.
         if let Some(r) = boolean_unit_octant::try_intersection_box_general(a, b) {
             if std::env::var("RCAD_DEBUG_FAST_PATH").is_ok() { eprintln!("FAST_PATH: try_intersection_box_general"); }
-            return Ok(promote_planar_surfaces(deduplicate_edges(r)));
+            return Ok(deduplicate_edges(r));
         }
         try_fast_path!(boolean_unit_octant::try_intersection_concentric_spheres(a, b), "try_intersection_concentric_spheres");
         try_fast_path!(boolean_unit_octant::try_intersection_coaxial_cone_cylinder(a, b), "try_intersection_coaxial_cone_cylinder");
@@ -3092,10 +3090,12 @@ fn split_disconnected_shells(mut brep: BRep) -> BRep {
     brep
 }
 
-/// Scan all surfaces and promote planar BSpline surfaces to Plane so the
-/// STEP output uses analytic plane entities matching OCCT reference topology.
-/// The PaveFiller already does this during intersection, but the BooleanBuilder
-/// may create new BSpline surfaces during result assembly.
+/// Scan all surfaces and promote planar BSpline surfaces to Plane.
+/// DISABLED — preserving BSpline surfaces is required for STEP topology
+/// alignment (OCCT nurbsconvert cases use B_SPLINE_SURFACE_WITH_KNOTS).
+/// The kernel's unify_same_domain_faces and try_analytic_face_surface_area
+/// both handle planar BSpline surfaces natively, so conversion is unnecessary.
+#[allow(dead_code)]
 fn promote_planar_surfaces(mut brep: BRep) -> BRep {
     use rcad_kernel::geom::bspline_is_planar;
     for surf in &mut brep.geom.surfaces {
@@ -3511,9 +3511,8 @@ pub fn boolean_op_with_retry(
         )
         .map(|(brep, _report)| brep)?
     };
-    // Edge dedup + BSPLINE→PLANE for ALL results (safe, no topology changes).
+    // Edge dedup for ALL results (safe, no topology changes).
     let brep = deduplicate_edges(brep);
-    let brep = promote_planar_surfaces(brep);
     // NOTE: optimize_boolean_topology is NOT called here — it runs only inside
     // boolean_op for PaveFiller results.  Calling it on fast-path results can
     // over-merge faces that fast-path builders intentionally keep separate.
