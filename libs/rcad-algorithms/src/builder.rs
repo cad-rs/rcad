@@ -3948,6 +3948,10 @@ impl<'a> BooleanBuilder<'a> {
 
         let face = &self.ds.faces[face_idx];
 
+        if face_idx == 6 && !face.face_info.curves_in.is_empty() {
+            eprintln!("[SPLIT_DBG] face[6] uv_boundary={:?}", face.uv_boundary.as_ref().map(|b| b.len()));
+        }
+
         // Need UV boundary to operate in parameter space
         let uv_boundary = match &face.uv_boundary {
             Some(b) if b.len() >= 3 => b.clone(),
@@ -4065,6 +4069,16 @@ impl<'a> BooleanBuilder<'a> {
                     trim_polylines.push(pts);
                 } else {
                     trim_polylines.push(pts);
+                }
+            }
+        }
+
+        if face_idx == 6 && !trim_polylines.is_empty() {
+            eprintln!("[SPLIT_DBG] face[6] {} trims:", trim_polylines.len());
+            for (ti, trim) in trim_polylines.iter().enumerate() {
+                if !trim.is_empty() {
+                    eprintln!("  trim[{}]: {} pts, first=({:.6},{:.6}) last=({:.6},{:.6})",
+                        ti, trim.len(), trim[0].x, trim[0].y, trim[trim.len()-1].x, trim[trim.len()-1].y);
                 }
             }
         }
