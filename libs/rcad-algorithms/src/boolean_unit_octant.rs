@@ -1563,7 +1563,38 @@ pub fn try_intersection_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
     let info_b = try_as_box(b)?;
     let mut planes = info_a.planes();
     planes.extend(info_b.planes());
-    let result = make_convex_polyhedron_from_half_spaces(&planes).ok()?;
+    let mut result = make_convex_polyhedron_from_half_spaces(&planes).ok()?;
+    // Compact vertices: remove any not referenced by at least one edge.
+    // make_convex_polyhedron_from_half_spaces computes all 3-plane intersections
+    // and adds every valid one as a vertex, but faces with <3 vertices are
+    // skipped — leaving orphan vertices that inflate the vertex count vs OCCT.
+    {
+        let old_len = result.vertices.len();
+        let mut used = vec![false; old_len];
+        for e in &result.edges {
+            if e.start < old_len {
+                used[e.start] = true;
+            }
+            if e.end < old_len {
+                used[e.end] = true;
+            }
+        }
+        let mut remap = vec![0usize; old_len];
+        let mut new_verts = Vec::new();
+        for (i, (&used, v)) in used.iter().zip(result.vertices.iter()).enumerate() {
+            if used {
+                remap[i] = new_verts.len();
+                new_verts.push(*v);
+            }
+        }
+        if new_verts.len() < old_len {
+            result.vertices = new_verts;
+            for e in &mut result.edges {
+                e.start = remap[e.start];
+                e.end = remap[e.end];
+            }
+        }
+    }
     // Reject zero-volume intersection (boxes adjacent/touching without overlap)
     // such as the OCCT bopcommon_simple/N3 negative-dimension-box case.
     // Minimum 4 vertices for a tetrahedron; boxes that intersect in a face or

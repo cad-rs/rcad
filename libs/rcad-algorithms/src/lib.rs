@@ -3095,7 +3095,6 @@ fn deduplicate_edges(mut brep: BRep) -> BRep {
 
     // Simple dedup by vertex INDEX (not position).  Merges redundant edges
     // that the BooleanBuilder creates for the same (start, end) vertex pair.
-    // This is safe: it only remaps wire references, doesn't trim edges.
     let mut canon: HashMap<(usize, usize), usize> = HashMap::new();
     let mut remap: Vec<usize> = (0..brep.edges.len()).collect();
     for ei in 0..brep.edges.len() {
@@ -3108,28 +3107,59 @@ fn deduplicate_edges(mut brep: BRep) -> BRep {
         }
     }
 
-    // Remap wire edges in all faces (only once, no trimming).
-    let mut changed = false;
+    // Remap wire edges in all faces.
     for solid in &mut brep.solids {
         for shell in &mut solid.shells {
             for face in &mut shell.faces {
-                fn do_remap(edges: &mut [WireEdge], remap: &[usize], changed: &mut bool) {
+                fn do_remap(edges: &mut [WireEdge], remap: &[usize]) {
                     for we in edges.iter_mut() {
-                        let new = remap[we.idx];
-                        if new != we.idx { *changed = true; we.idx = new; }
+                        we.idx = remap[we.idx];
                     }
                 }
-                do_remap(&mut face.outer_wire.edges, &remap, &mut changed);
+                do_remap(&mut face.outer_wire.edges, &remap);
                 for wire in &mut face.inner_wires {
-                    do_remap(&mut wire.edges, &remap, &mut changed);
+                    do_remap(&mut wire.edges, &remap);
                 }
             }
         }
     }
 
-    // No edge trimming needed (keeping all edges preserves vertex indices).
-    // The remap ensures edges are SHARED between adjacent faces, which fixes
-    // the 2× EDGE_CURVE count in the STEP output for PaveFiller results.
+    // Trim duplicate edges from the vector and compact indices.
+    // make_convex_polyhedron_from_half_spaces creates one edge per face per
+    // boundary segment, so each geometric edge appears exactly twice (once
+    // per adjacent face).  We must trim the duplicates so that
+    // brep.edges.len() != 2 × OCCT edge count.
+    if canon.len() < brep.edges.len() {
+        let mut new_edges = Vec::with_capacity(canon.len());
+        let mut compact: Vec<usize> = vec![0; brep.edges.len()];
+        for (old_idx, &mapped) in remap.iter().enumerate() {
+            if mapped == old_idx {
+                compact[old_idx] = new_edges.len();
+                new_edges.push(brep.edges[old_idx]);
+            } else {
+                // mapped < old_idx (canonical edge was processed first)
+                compact[old_idx] = compact[mapped];
+            }
+        }
+        // Update wire references to compacted indices.
+        for solid in &mut brep.solids {
+            for shell in &mut solid.shells {
+                for face in &mut shell.faces {
+                    fn do_compact(edges: &mut [WireEdge], compact: &[usize]) {
+                        for we in edges.iter_mut() {
+                            we.idx = compact[we.idx];
+                        }
+                    }
+                    do_compact(&mut face.outer_wire.edges, &compact);
+                    for wire in &mut face.inner_wires {
+                        do_compact(&mut wire.edges, &compact);
+                    }
+                }
+            }
+        }
+        brep.edges = new_edges;
+    }
+
     brep
 }
 
