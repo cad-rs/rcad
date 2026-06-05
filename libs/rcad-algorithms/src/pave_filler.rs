@@ -2000,7 +2000,14 @@ impl<'a> PaveFiller<'a> {
         let d = d_vec.length();
 
         // No intersection if disjoint or one contains the other
-        if d < TOLERANCE_FLOAT_LOOSE || d >= sph1.radius + sph2.radius || d <= (sph1.radius - sph2.radius).abs() {
+        if d < TOLERANCE_FLOAT_LOOSE {
+            // Concentric spheres: same-domain (same center). Record empty FaceFace.
+            self.ds.interferences.push(Interference::FaceFace {
+                f1, f2, curves: vec![], points: vec![],
+            });
+            return;
+        }
+        if d >= sph1.radius + sph2.radius || d <= (sph1.radius - sph2.radius).abs() {
             return;
         }
 
@@ -2345,7 +2352,15 @@ impl<'a> PaveFiller<'a> {
         let mut curve_indices = Vec::new();
 
         match intersect_cylinder_cylinder(cyl1, cyl2) {
-            CylinderCylinderResult::NoIntersection | CylinderCylinderResult::Coaxial => return,
+            CylinderCylinderResult::NoIntersection => return,
+            CylinderCylinderResult::Coaxial => {
+                // Same-domain coaxial cylinders: record empty-curves FaceFace so
+                // the Builder treats this pair as coincident (no intersection to split).
+                self.ds.interferences.push(Interference::FaceFace {
+                    f1, f2, curves: vec![], points: vec![],
+                });
+                return;
+            }
 
             CylinderCylinderResult::PerpendicularOffsetCurves {
                 cyl1: off_cyl1,
@@ -3263,7 +3278,12 @@ impl<'a> PaveFiller<'a> {
         };
 
         match intersect_cone_cone(cone1, cone2) {
-            ConeConeResult::NoIntersection | ConeConeResult::Coaxial => (),
+            ConeConeResult::NoIntersection => (),
+            ConeConeResult::Coaxial => {
+                self.ds.interferences.push(Interference::FaceFace {
+                    f1, f2, curves: vec![], points: vec![],
+                });
+            }
 
             ConeConeResult::CoaxialPoint(_pt) => {
                 // Single shared apex — a point contact, not a curve.
