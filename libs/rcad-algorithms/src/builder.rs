@@ -2394,8 +2394,11 @@ impl<'a> BooleanBuilder<'a> {
             }
             // split_planar_face handles circular faces (< 3 boundary verts) internally
             // by reconstructing the circular boundary from the two diameter endpoints.
+            // When the curve is on the boundary (split fails for poly edges on the
+            // line), split_planar_face returns ≤1 sub. Fall through to UV splitting.
             let subs = self.split_planar_face(face_idx, plane, &cids);
-            return subs;
+            if subs.len() > 1 { return subs; }
+            // Fall through: curve on boundary -> use split_curved_face_parametric
         }
 
         if fi.curves_in.is_empty() {
@@ -2639,7 +2642,8 @@ impl<'a> BooleanBuilder<'a> {
             | Surface3::Cone(_)
             | Surface3::Torus(_)
             | Surface3::BSpline(_)
-            | Surface3::Bezier(_) => self.split_curved_face_parametric(face_idx),
+            | Surface3::Bezier(_)
+            | Surface3::Plane(_) => self.split_curved_face_parametric(face_idx),
             _ => {
                 // Other curved surfaces — return whole face for now
                 self.single_subface_from_whole_face(face_idx)

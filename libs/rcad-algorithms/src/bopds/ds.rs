@@ -472,7 +472,40 @@ impl DS {
                 })
                 .collect();
 
-            self.faces[fi].uv_boundary = Some(uv_pts);
+            // For planar surfaces, decimate colinear UV points. The DS samples
+            // N_SAMPLES=8 per edge, creating ~32 UV points for a 4-edge face.
+            // Each point becomes a 3D vertex in the result — colinear points on
+            // straight edges create unnecessary edge fragments (OCCT uses 1 edge
+            // per boundary, not 8 small segments).
+            let is_planar = matches!(&surface, Surface3::Plane(_))
+                || (if let Surface3::BSpline(ref bsp) = surface { rcad_kernel::geom::bspline_is_planar(bsp, 1e-7) } else { false });
+            let decimated = if is_planar {
+                let n = uv_pts.len();
+                if n > 3 {
+                    let mut kept: Vec<DVec2> = Vec::with_capacity(n);
+                    for i in 0..n {
+                        let prev = uv_pts[(i + n - 1) % n];
+                        let curr = uv_pts[i];
+                        let next = uv_pts[(i + 1) % n];
+                        let d1 = curr - prev;
+                        let d2 = next - curr;
+                        let cross = (d1.x * d2.y - d1.y * d2.x).abs();
+                        let len1 = d1.length_squared();
+                        let len2 = d2.length_squared();
+                        if cross < 1e-10 * len1.max(len2).max(1e-30)
+                            && len1 > 1e-30 && len2 > 1e-30
+                        {
+                            continue;
+                        }
+                        kept.push(curr);
+                    }
+                    if kept.len() >= 3 { kept } else { uv_pts }
+                } else { uv_pts }
+            } else {
+                uv_pts
+            };
+
+            self.faces[fi].uv_boundary = Some(decimated);
         }
     }
 
