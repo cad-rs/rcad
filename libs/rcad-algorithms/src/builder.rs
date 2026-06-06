@@ -2563,7 +2563,38 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         if let Surface3::Plane(plane) = &face.surface {
-            let cids = self.merged_split_curve_ids_for_planar_face(face_idx, plane);
+            let cids_raw = self.merged_split_curve_ids_for_planar_face(face_idx, plane);
+            // For A-side Plane faces: filter ICs whose BOTH endpoints lie on
+            // the face boundary.  These ICs cause split_planar_face to fail
+            // (midpoint falls on boundary), and the UV tessellation fallback
+            // over-creates sub-faces.  For B-side faces, these same ICs are
+            // handled by the planar-BSpline path which keeps them.
+            let is_a_side = face_idx < self.ds.a_face_count;
+            let cids: Vec<usize> = if cids_raw.len() > 1 && is_a_side {
+                let eps = TOLERANCE_MESH_LEGACY;
+                let bnd_pts: Vec<DVec3> = face.boundary_verts.iter()
+                    .map(|&vi| self.ds.vertices[vi].point).collect();
+                let on_boundary = |pt: DVec3| -> bool {
+                    if bnd_pts.len() < 3 { return false; }
+                    let n = bnd_pts.len(); let mut j = n - 1;
+                    for i in 0..n {
+                        let ab = bnd_pts[j] - bnd_pts[i];
+                        let t = ((pt - bnd_pts[i]).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
+                        let closest = bnd_pts[i] + ab * t;
+                        if (pt - closest).length() <= eps { return true; }
+                        j = i;
+                    }
+                    false
+                };
+                cids_raw.into_iter().filter(|&ci| {
+                    let ic = &self.ds.intersection_curves[ci];
+                    let p0 = self.ds.vertices[ic.start_vertex].point;
+                    let p1 = self.ds.vertices[ic.end_vertex].point;
+                    let both_on = on_boundary(p0) && on_boundary(p1);
+                    if both_on { return false; }
+                    true
+                }).collect()
+            } else { cids_raw };
             if cids.is_empty() {
                 // No intersection curves 鈥?return the whole face as one subface.
                 let subs = self.single_subface_from_whole_face(face_idx);
