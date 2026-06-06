@@ -1535,40 +1535,40 @@ impl<'a> BooleanBuilder<'a> {
     /// Check if ALL intersection curves on this face have both endpoints
     /// on the face boundary (OCCT: PaveBlocksOn without PaveBlocksIn/Sc).
     /// When all ICs are boundary-only, the face doesn't need splitting.
+    /// An IC connecting non-adjacent boundary edges crosses the interior.
     fn all_ics_on_boundary(&self, face_idx: usize) -> bool {
         let face = &self.ds.faces[face_idx];
         if face.face_info.curves_in.is_empty() { return false; }
 
-        // Build a set of boundary vertex positions (tolerance-based)
         let tol = TOLERANCE_MESH_LEGACY;
-        let mut bnd_positions: Vec<DVec3> = face.boundary_verts.iter()
+        let bnd: Vec<DVec3> = face.boundary_verts.iter()
             .map(|&vi| self.ds.vertices[vi].point).collect();
+        let nb = bnd.len();
+        if nb < 3 { return false; }
 
-        // For each IC, check if both endpoints are on the boundary polygon
+        let edge_of = |p: DVec3| -> Option<usize> {
+            for i in 0..nb {
+                let j = (i + 1) % nb;
+                let ab = bnd[j] - bnd[i]; let l2 = ab.length_squared();
+                if l2 < tol * tol { continue; }
+                let t = ((p - bnd[i]).dot(ab) / l2).clamp(0.0, 1.0);
+                if (p - (bnd[i] + ab * t)).length() <= tol { return Some(i); }
+            }
+            None
+        };
+
         for &ci in &face.face_info.curves_in {
             let ic = &self.ds.intersection_curves[ci];
-            let p1 = self.ds.vertices[ic.start_vertex].point;
-            let p2 = self.ds.vertices[ic.end_vertex].point;
-
-            let on_bnd = |p: DVec3| -> bool {
-                // Check if p is within tol of any boundary edge segment
-                for i in 0..bnd_positions.len() {
-                    let j = (i + 1) % bnd_positions.len();
-                    let a = bnd_positions[i];
-                    let b = bnd_positions[j];
-                    // Closest point on segment a-b to p
-                    let ab = b - a;
-                    let t = ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
-                    let closest = a + ab * t;
-                    if (p - closest).length() <= tol {
-                        return true;
-                    }
+            match (edge_of(self.ds.vertices[ic.start_vertex].point),
+                   edge_of(self.ds.vertices[ic.end_vertex].point)) {
+                (Some(i), Some(j)) => {
+                    // IC connects non-adjacent edges -> crosses interior
+                    let adjacent = i == j
+                        || (i + 1) % nb == j || j == (i + 1) % nb
+                        || (i == 0 && j == nb - 1) || (j == 0 && i == nb - 1);
+                    if !adjacent { return false; }
                 }
-                false
-            };
-
-            if !on_bnd(p1) || !on_bnd(p2) {
-                return false; // At least one IC crosses the face interior
+                _ => { return false; }
             }
         }
         true
