@@ -2128,14 +2128,24 @@ impl<'a> BooleanBuilder<'a> {
             // Merge kept On and Out sub-faces SEPARATELY to avoid merging
             // across classification boundaries (OCCT's FillImagesFaces approach).
             let flip = self.op == BooleanOpType::Difference;
-            for subs in [&mut kept_on, &mut kept_out] {
-                if subs.len() > 1 {
-                    merge_subfaces_of_same_face(subs);
+            // Merge On sub-faces separately, then emit as PLANE (OCCT's
+            // FillImagesFaces assigns PLANE type to interface faces).
+            if kept_on.len() > 1 { merge_subfaces_of_same_face(&mut kept_on); }
+            for sub in &kept_on {
+                let mut s = sub.clone();
+                if let Surface3::BSpline(bsp) = &s.surface {
+                    if rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS) {
+                        s.surface = Surface3::Plane(rcad_kernel::geom::bspline_to_plane(bsp));
+                    }
                 }
-                for sub in subs {
-                    let src = self.ds.faces[fi].source_face_idx;
-                    result.emit_face_with_origin(sub, flip, FaceOrigin::FromB(src));
-                }
+                let src = self.ds.faces[fi].source_face_idx;
+                result.emit_face_with_origin(&s, flip, FaceOrigin::FromB(src));
+            }
+            // Merge Out sub-faces separately, keep BSpline surface type.
+            if kept_out.len() > 1 { merge_subfaces_of_same_face(&mut kept_out); }
+            for sub in &kept_out {
+                let src = self.ds.faces[fi].source_face_idx;
+                result.emit_face_with_origin(sub, flip, FaceOrigin::FromB(src));
             }
         }
 
