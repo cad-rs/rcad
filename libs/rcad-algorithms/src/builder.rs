@@ -2543,27 +2543,26 @@ impl<'a> BooleanBuilder<'a> {
         let face = &self.ds.faces[face_idx];
         let fi = &face.face_info;
 
-        // Planar BSpline: OCCT's BOPAlgo_BuilderFace assembles sub-faces from
-        // topological wires (edges connected at shared vertices), not from polygon
-        // clipping.  When split_planar_face fails for boundary-coincident curves,
-        // use a planar 3D approach: project the intersection curve's midpoint and
-        // split along a line through the midpoint toward the polygon centroid.
+        // Planar BSpline: OCCT's BOPAlgo_BuilderFace uses wire-based splitting.
+        // Our polygon clipping (`split_planar_face`) can create the wrong number
+        // of sub-faces for boundary-coincident intersection curves.  Use the
+        // OCCT-style centroid-projection split directly (skipping polygon clipping).
         if let Surface3::BSpline(bsp) = &face.surface {
             if !fi.curves_in.is_empty()
                 && rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS)
             {
                 let plane = rcad_kernel::geom::bspline_to_plane(bsp);
                 let cids: Vec<usize> = fi.curves_in.iter().copied().collect();
+                // OCCT-style wire-aware split (midpoint projection toward centroid).
+                if let Some(subs) = self.split_planar_bspline_occt(face_idx, &plane, &cids) {
+                    return subs;
+                }
+                // Fallback: polygon clipping when OCCT-style fails.
                 let subs = self.split_planar_face(face_idx, &plane, &cids);
                 if subs.len() > 1 {
                     let mut out = subs;
                     for sub in &mut out { sub.surface = face.surface.clone(); }
                     return out;
-                }
-                // Planar OCCT-style fallback: build sub-faces by projecting the
-                // intersection curve's midpoint and splitting toward the centroid.
-                if let Some(subs) = self.split_planar_bspline_occt(face_idx, &plane, &cids) {
-                    return subs;
                 }
             }
         }
