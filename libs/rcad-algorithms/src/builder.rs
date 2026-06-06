@@ -2595,9 +2595,11 @@ impl<'a> BooleanBuilder<'a> {
         let fi = &face.face_info;
 
         // OCCT wire-based splitting (edge graph traversal).
-        // Only used when ICs don't cross (planar graph).  When ICs cross at
-        // interior points, polygon clipping / centroid-projection handle it.
-        if !fi.curves_in.is_empty() && !self.has_crossing_ics(face_idx) {
+        // Disabled pending proper OCCT alignment - currently produces
+        // wrong sub-face counts for BSpline faces.  Falls through to
+        // centroid-projection (planar BSpline) / polygon clipping (Plane).
+        // See AGENTS.md "BSPline→PLANE conversion issues" for debug tips.
+        if false && !fi.curves_in.is_empty() && !self.has_crossing_ics(face_idx) {
             let subs = split_face_wire_based(self.ds, face_idx);
             if subs.len() >= 2 { return subs; }
         }
