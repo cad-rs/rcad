@@ -9501,12 +9501,43 @@ fn split_face_wire_based(ds: &DS, face_idx: usize) -> Vec<SubFace> {
     let vert_idx_of: std::collections::HashMap<usize, usize> = vert_list.iter().enumerate()
         .map(|(i, &v)| (v, i)).collect();
 
-    // 2. Build undirected edges (OCCT: edges in ConnexityBlock)
+    // 2. Build undirected edges (OCCT: edges in ConnexityBlock).
+    //     Insert IC endpoints into boundary edges to connect the graph.
     let mut edges: Vec<(usize, usize, bool)> = Vec::new();
+    let tol_ic = TOLERANCE_MESH_LEGACY;
+    // Collect IC endpoint -> boundary edge index mapping
+    let mut ic_on_bnd: std::collections::BTreeMap<usize, Vec<usize>> = std::collections::BTreeMap::new();
+    for &ci in &face.face_info.curves_in {
+        let ic = &ds.intersection_curves[ci];
+        for &icv in &[ic.start_vertex, ic.end_vertex] {
+            if !all_verts.contains(&icv) || face.boundary_verts.contains(&icv) { continue; }
+            let p = ds.vertices[icv].point;
+            for ei in 0..face.boundary_verts.len() {
+                let ej = (ei + 1) % face.boundary_verts.len();
+                let va = ds.vertices[face.boundary_verts[ei]].point;
+                let vb = ds.vertices[face.boundary_verts[ej]].point;
+                let ab = vb - va; let l2 = ab.length_squared();
+                if l2 < tol_ic * tol_ic { continue; }
+                let t = ((p - va).dot(ab) / l2).clamp(0.0, 1.0);
+                if t > 1e-6 && t < 1.0 - 1e-6 && (p - (va + ab * t)).length() <= tol_ic {
+                    ic_on_bnd.entry(ei).or_default().push(icv); break;
+                }
+            }
+        }
+    }
+    // Build boundary edges, splitting at IC endpoints
     for i in 0..face.boundary_verts.len() {
-        let j = (i + 1) % face.boundary_verts.len();
-        let a = face.boundary_verts[i]; let b = face.boundary_verts[j];
-        if a != b { edges.push((a, b, false)); }
+        let a = face.boundary_verts[i];
+        let b = face.boundary_verts[(i + 1) % face.boundary_verts.len()];
+        if let Some(mids) = ic_on_bnd.get(&i) {
+            let mut sorted: Vec<usize> = mids.clone();
+            sorted.sort_by_key(|&v| ((ds.vertices[v].point - ds.vertices[a].point).length_squared() * 1e12) as i64);
+            let mut prev = a;
+            for &m in &sorted { edges.push((prev, m, false)); prev = m; }
+            edges.push((prev, b, false));
+        } else {
+            if a != b { edges.push((a, b, false)); }
+        }
     }
     for &ci in &face.face_info.curves_in {
         let ic = &ds.intersection_curves[ci];
