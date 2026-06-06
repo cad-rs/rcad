@@ -2672,7 +2672,7 @@ impl<'a> BooleanBuilder<'a> {
             && !self.has_crossing_ics(face_idx)
             && !matches!(face.surface, Surface3::Plane(_))
         {
-            let subs = split_face_wire_based(self.ds, face_idx);
+            let subs = split_face_wire_based(self.ds, face_idx, &interior_cids);
             if subs.len() >= 2 { return subs; }
         }
 
@@ -9531,16 +9531,16 @@ fn segments_intersect_interior(a1: DVec2, a2: DVec2, b1: DVec2, b2: DVec2, tol: 
 
 /// OCCT BOPAlgo_WireSplitter-aligned face splitting with per-vertex
 /// EdgeInfo (edge, IsIn, angle, passed) and ClockWiseAngle traversal.
-fn split_face_wire_based(ds: &DS, face_idx: usize) -> Vec<SubFace> {
+fn split_face_wire_based(ds: &DS, face_idx: usize, ic_ids: &[usize]) -> Vec<SubFace> {
     #[derive(Clone)]
     struct EdgeInfo { edge_idx: usize, is_in: bool, angle: f64, passed: bool }
 
     let face = &ds.faces[face_idx];
-    if face.boundary_verts.len() < 3 || face.face_info.curves_in.is_empty() { return vec![]; }
+    if face.boundary_verts.len() < 3 || ic_ids.is_empty() { return vec![]; }
 
     // 1. Collect all unique DS vertex indices on this face
     let mut all_verts: std::collections::BTreeSet<usize> = face.boundary_verts.iter().copied().collect();
-    for &ci in &face.face_info.curves_in {
+    for &ci in ic_ids {
         let ic = &ds.intersection_curves[ci];
         all_verts.insert(ic.start_vertex); all_verts.insert(ic.end_vertex);
     }
@@ -9554,7 +9554,7 @@ fn split_face_wire_based(ds: &DS, face_idx: usize) -> Vec<SubFace> {
     let tol_ic = TOLERANCE_MESH_LEGACY;
     // Collect IC endpoint -> boundary edge index mapping
     let mut ic_on_bnd: std::collections::BTreeMap<usize, Vec<usize>> = std::collections::BTreeMap::new();
-    for &ci in &face.face_info.curves_in {
+    for &ci in ic_ids {
         let ic = &ds.intersection_curves[ci];
         for &icv in &[ic.start_vertex, ic.end_vertex] {
             if !all_verts.contains(&icv) || face.boundary_verts.contains(&icv) { continue; }
