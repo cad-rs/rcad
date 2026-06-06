@@ -2072,6 +2072,10 @@ impl<'a> BooleanBuilder<'a> {
                     && class == Classification::On
                     && matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
                     && self.coplanar_ff_normals_opposite(fi) == Some(false)
+                    // Don't remove if the coplanar partner has a DIFFERENT surface
+                    // type (e.g. Plane vs BSpline). Keep the Plane face so the correct
+                    // surface type is preserved (mirrors A-face logic at lines 1956-1960).
+                    && !self.has_coplanar_ff_with_diff_surface(fi, &a_faces)
                 {
                     // For Union, planar On sub-faces coplanar with an A-face (same
                     // normal) can be removed — the A-face covers this region on the
@@ -2594,10 +2598,13 @@ impl<'a> BooleanBuilder<'a> {
         let face = &self.ds.faces[face_idx];
         let fi = &face.face_info;
 
-        // OCCT wire-based splitting (edge graph traversal).
-        // OCCT BOPAlgo_WireSplitter-aligned: per-vertex EdgeInfo with
-        // ClockWiseAngle rightmost-turn traversal.
-        if !fi.curves_in.is_empty() && !self.has_crossing_ics(face_idx) {
+        // OCCT wire-based splitting (edge graph traversal, BSpline only).
+        // Plane faces use polygon clipping (split_planar_face) which handles
+        // the planar case correctly without creating extra sub-faces.
+        if !fi.curves_in.is_empty()
+            && !self.has_crossing_ics(face_idx)
+            && !matches!(face.surface, Surface3::Plane(_))
+        {
             let subs = split_face_wire_based(self.ds, face_idx);
             if subs.len() >= 2 { return subs; }
         }
