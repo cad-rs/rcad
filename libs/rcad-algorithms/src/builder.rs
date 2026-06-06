@@ -9525,6 +9525,9 @@ fn split_face_wire_based(ds: &DS, face_idx: usize) -> Vec<SubFace> {
     }
 
     // 5. Traverse via rightmost-turn (OCCT Path function, WireSplitter_1.cxx:359-550)
+    // OCCT tracks visited vertices (aVertVa) and closes the cycle when
+    // ANY previously-visited vertex is revisited (aVPrev.IsSame(aVb)),
+    // not just when returning to the start vertex.
     let mut subs: Vec<SubFace> = Vec::new();
 
     for v_start in 0..nv {
@@ -9538,9 +9541,10 @@ fn split_face_wire_based(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             let mut cur_v = v_start;
             let mut cur_ei = ei_local;
             let mut cycle: Vec<DVec3> = Vec::new();
+            // Track visited vertex indices (OCCT aVertVa)
+            let mut visited_v: Vec<usize> = Vec::new();
 
             loop {
-                // Mark as passed (OCCT: SetPassed(true))
                 if my_smart_map[cur_v][cur_ei].passed { cycle.clear(); break; }
                 my_smart_map[cur_v][cur_ei].passed = true;
 
@@ -9549,24 +9553,29 @@ fn split_face_wire_based(ds: &DS, face_idx: usize) -> Vec<SubFace> {
                 let ev = [vert_idx_of[&va], vert_idx_of[&vb]];
                 let other_v = if ev[0] == cur_v { ev[1] } else { ev[0] };
 
-                // Add current vertex to cycle
+                // OCCT: aVPrev.IsSame(aVb) check - close cycle when ANY
+                // previously-visited vertex is revisited (not just start)
+                if visited_v.contains(&other_v) {
+                    if cycle.len() >= 2 {
+                        // Push the final vertex to close the current segment
+                        cycle.push(ds.vertices[vert_list[cur_v]].point);
+                    }
+                    break;
+                }
+
                 cycle.push(ds.vertices[vert_list[cur_v]].point);
+                visited_v.push(cur_v);
 
-                // If we returned to start vertex, cycle is complete
-                if other_v == v_start && cycle.len() >= 2 { break; }
-
-                // Find AngleIn at other_v (same edge, IsIn=true: we arrive at the end of the edge)
+                // Find AngleIn at other_v (OCCT: edge arriving at other_v)
                 let incoming_angle = my_smart_map[other_v].iter()
                     .find(|e| e.edge_idx == ei.edge_idx && e.is_in)
                     .map(|e| e.angle).unwrap_or(0.0);
 
-                // Select the outgoing edge with smallest ClockWiseAngle
-                // ClockWiseAngle = (AngleIn - AngleOut + 2pi) % 2pi
+                // Select outgoing edge with smallest ClockWiseAngle (rightmost turn)
                 let mut best_oi: Option<usize> = None;
                 let mut best_cw = std::f64::consts::TAU;
                 for (oi, oei) in my_smart_map[other_v].iter().enumerate() {
                     if oei.passed || oei.is_in { continue; }
-                    // Skip reverse of incoming edge unless no alternative
                     if oei.edge_idx == ei.edge_idx {
                         let has_other = my_smart_map[other_v].iter().any(|e|
                             e.edge_idx != ei.edge_idx && !e.passed && !e.is_in);
