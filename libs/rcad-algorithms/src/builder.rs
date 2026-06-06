@@ -2543,6 +2543,15 @@ impl<'a> BooleanBuilder<'a> {
         let face = &self.ds.faces[face_idx];
         let fi = &face.face_info;
 
+        // OCCT wire-based splitting: build edge graph from boundary edges and
+        // intersection curves, traverse to find cycles (sub-faces).
+        if !fi.curves_in.is_empty() {
+            let subs = split_face_wire_based(self.ds, face_idx);
+            if subs.len() >= 2 {
+                return subs;
+            }
+        }
+
         // Planar BSpline: OCCT's BOPAlgo_BuilderFace uses wire-based splitting.
         // Our polygon clipping (`split_planar_face`) can create the wrong number
         // of sub-faces for boundary-coincident intersection curves.  Use the
@@ -9364,4 +9373,116 @@ fn merge_vertex_adjacent_subs(subs: &mut Vec<SubFace>) {
         }
         if !merged { return; }
     }
+}
+
+/// OCCT wire-based splitting: build edge graph from boundary edges and
+/// intersection curves, traverse cycles -> sub-faces.
+fn split_face_wire_based(ds: &DS, face_idx: usize) -> Vec<SubFace> {
+    let face = &ds.faces[face_idx];
+    if face.boundary_verts.len() < 3 { return vec![]; }
+    let tol = TOLERANCE_MESH_LEGACY;
+    let quant = |p: DVec3| -> (i64,i64,i64) {
+        ((p.x/tol).round() as i64, (p.y/tol).round() as i64, (p.z/tol).round() as i64)
+    };
+
+    // Collect all vertices
+    let mut vert_set = std::collections::BTreeSet::<(i64,i64,i64)>::new();
+    for &vi in &face.boundary_verts { vert_set.insert(quant(ds.vertices[vi].point)); }
+    for &ci in &face.face_info.curves_in {
+        let ic = &ds.intersection_curves[ci];
+        vert_set.insert(quant(ds.vertices[ic.start_vertex].point));
+        vert_set.insert(quant(ds.vertices[ic.end_vertex].point));
+    }
+
+    // Build boundary edges + intersection curve edges
+    let mut edges: Vec<((i64,i64,i64),(i64,i64,i64))> = Vec::new();
+    for i in 0..face.boundary_verts.len() {
+        let j = (i + 1) % face.boundary_verts.len();
+        let a = quant(ds.vertices[face.boundary_verts[i]].point);
+        let b = quant(ds.vertices[face.boundary_verts[j]].point);
+        if a != b { edges.push(if a <= b {(a,b)} else {(b,a)}); }
+    }
+    for &ci in &face.face_info.curves_in {
+        let ic = &ds.intersection_curves[ci];
+        let a = quant(ds.vertices[ic.start_vertex].point);
+        let b = quant(ds.vertices[ic.end_vertex].point);
+        if a != b && vert_set.contains(&a) && vert_set.contains(&b) {
+            edges.push(if a <= b {(a,b)} else {(b,a)});
+        }
+    }
+    if edges.len() < 3 { return vec![]; }
+
+    // Build adjacency
+    use std::collections::BTreeMap;
+    let mut adj: BTreeMap<(i64,i64,i64), Vec<(i64,i64,i64)>> = BTreeMap::new();
+    for &(a, b) in &edges {
+        adj.entry(a).or_default().push(b);
+        adj.entry(b).or_default().push(a);
+    }
+
+    // 2D UV for angle ordering
+    let plane = match &face.surface {
+        Surface3::Plane(p) => p.clone(),
+        Surface3::BSpline(bsp) if bspline_is_planar(bsp, TOLERANCE_ABS) => bspline_to_plane(bsp),
+        _ => { return vec![]; }
+    };
+    let (u_ax, v_ax) = plane_local_basis(&plane);
+    let to_2d = |k: (i64,i64,i64)| -> DVec2 {
+        let p = DVec3::new(k.0 as f64*tol, k.1 as f64*tol, k.2 as f64*tol);
+        let d = p - plane.origin;
+        DVec2::new(d.dot(u_ax), d.dot(v_ax))
+    };
+    let mut uv_of: BTreeMap<(i64,i64,i64), DVec2> = BTreeMap::new();
+    for &v in vert_set.iter().chain(adj.keys()) { uv_of.entry(v).or_insert_with(|| to_2d(v)); }
+
+    // Traverse cycles
+    let mut used = std::collections::BTreeSet::<((i64,i64,i64),(i64,i64,i64))>::new();
+    let mut subs: Vec<SubFace> = Vec::new();
+
+    loop {
+        let start_edge = edges.iter().find(|&&(a,b)|
+            !used.contains(&(a,b)) && !used.contains(&(b,a)) &&
+            adj.get(&a).map_or(false, |v| v.len() >= 2) &&
+            adj.get(&b).map_or(false, |v| v.len() >= 2));
+        let &(mut cur, mut next) = match start_edge { Some(e) => { used.insert(*e); e } _ => break };
+        let start_v = cur;
+        let mut bnd: Vec<DVec3> = Vec::new();
+        bnd.push(DVec3::new(cur.0 as f64*tol, cur.1 as f64*tol, cur.2 as f64*tol));
+
+        loop {
+            let neighbors = match adj.get(&next) { Some(v) => v, _ => break };
+            // Pick next edge: smallest positive CCW angle from incoming
+            let incoming = uv_of[&next] - uv_of[&cur];
+            let mut best: Option<(i64,i64,i64)> = None;
+            let mut best_angle = f64::MAX;
+            for &n in neighbors {
+                if n == cur && neighbors.len() > 2 { continue; }
+                let key = if next <= n {(next,n)} else {(n,next)};
+                if used.contains(&key) { continue; }
+                let out = uv_of[&n] - uv_of[&next];
+                let cross = incoming.x * out.y - incoming.y * out.x;
+                let dot = incoming.x * out.x + incoming.y * out.y;
+                let angle = (-cross).atan2(dot).rem_euclid(std::f64::consts::TAU);
+                if angle < best_angle { best_angle = angle; best = Some(n); }
+            }
+            let nxt = match best { Some(n) => n, _ => break };
+            let key = if next <= nxt {(next,nxt)} else {(nxt,next)};
+            if used.contains(&key) { break; }
+            used.insert(key);
+            cur = next; next = nxt;
+            bnd.push(DVec3::new(next.0 as f64*tol, next.1 as f64*tol, next.2 as f64*tol));
+            if next == start_v { break; }
+        }
+        if bnd.len() >= 3 {
+            let mut dedup: Vec<DVec3> = Vec::new();
+            for p in &bnd {
+                if dedup.last().map_or(true, |l| (p-l).length_squared() > tol*tol) { dedup.push(*p); }
+            }
+            if dedup.len() >= 3 { subs.push(SubFace {
+                boundary: dedup, surface: face.surface.clone(), normal: face.normal,
+                uv_centroid: None, sample_override: None, uv_domain: None, inner_wires: vec![],
+            }); }
+        }
+    }
+    subs
 }
