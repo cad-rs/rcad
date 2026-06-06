@@ -1536,6 +1536,40 @@ impl<'a> BooleanBuilder<'a> {
     /// on the face boundary (OCCT: PaveBlocksOn without PaveBlocksIn/Sc).
     /// When all ICs are boundary-only, the face doesn't need splitting.
     /// An IC connecting non-adjacent boundary edges crosses the interior.
+
+    /// Check if a single IC has both endpoints on the face boundary
+    /// (OCCT PaveBlockOn classification).  Returns true if the IC is
+    /// boundary-only (doesn't cross the face interior).
+    fn is_boundary_ic(&self, face_idx: usize, ci: usize) -> bool {
+        let face = &self.ds.faces[face_idx];
+        let ic = &self.ds.intersection_curves[ci];
+        let tol = TOLERANCE_MESH_LEGACY;
+        let bnd: Vec<DVec3> = face.boundary_verts.iter()
+            .map(|vi| self.ds.vertices[*vi].point).collect();
+        let nb = bnd.len();
+        if nb < 3 { return false; }
+
+        let edge_of = |p: DVec3| -> Option<usize> {
+            for i in 0..nb {
+                let ab = bnd[(i + 1) % nb] - bnd[i]; let l2 = ab.length_squared();
+                if l2 < tol * tol { continue; }
+                let t = ((p - bnd[i]).dot(ab) / l2).clamp(0.0, 1.0);
+                if (p - (bnd[i] + ab * t)).length() <= tol { return Some(i); }
+            }
+            None
+        };
+
+        match (edge_of(self.ds.vertices[ic.start_vertex].point),
+               edge_of(self.ds.vertices[ic.end_vertex].point)) {
+            (Some(i), Some(j)) => {
+                let adjacent = i == j || (i + 1) % nb == j || j == (i + 1) % nb
+                    || (i == 0 && j == nb - 1) || (j == 0 && i == nb - 1);
+                adjacent
+            }
+            _ => false,
+        }
+    }
+
     fn all_ics_on_boundary(&self, face_idx: usize) -> bool {
         let face = &self.ds.faces[face_idx];
         if face.face_info.curves_in.is_empty() { return false; }
@@ -2628,7 +2662,10 @@ impl<'a> BooleanBuilder<'a> {
         // (OCCT BuildSplitFaces skip at lines 297-328: no PaveBlocksIn/Sc,
         //  no internal edges, no modified wires → keep original face).
         // Plane faces use polygon clipping which handles this correctly.
-        let has_interior_ics = !fi.curves_in.is_empty() && !self.all_ics_on_boundary(face_idx);
+        let interior_cids: Vec<usize> = fi.curves_in.iter().copied()
+            .filter(|&ci| !self.is_boundary_ic(face_idx, ci))
+            .collect();
+        let has_interior_ics = !interior_cids.is_empty();
 
         // OCCT wire-based splitting (edge graph traversal, BSpline only).
         if has_interior_ics
@@ -2639,22 +2676,18 @@ impl<'a> BooleanBuilder<'a> {
             if subs.len() >= 2 { return subs; }
         }
 
-        // Planar BSpline: OCCT's BOPAlgo_BuilderFace uses wire-based splitting.
-        // Our polygon clipping (`split_planar_face`) can create the wrong number
-        // of sub-faces for boundary-coincident intersection curves.  Use the
-        // OCCT-style centroid-projection split directly (skipping polygon clipping).
+        // Planar BSpline: use only interior ICs for splitting.
         if let Surface3::BSpline(bsp) = &face.surface {
             if has_interior_ics
                 && rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS)
             {
                 let plane = rcad_kernel::geom::bspline_to_plane(bsp);
-                let cids: Vec<usize> = fi.curves_in.iter().copied().collect();
-                // OCCT-style wire-aware split (midpoint projection toward centroid).
-                if let Some(subs) = self.split_planar_bspline_occt(face_idx, &plane, &cids) {
+                // OCCT-style wire-aware split using interior ICs only
+                if let Some(subs) = self.split_planar_bspline_occt(face_idx, &plane, &interior_cids) {
                     return subs;
                 }
-                // Fallback: polygon clipping when OCCT-style fails.
-                let subs = self.split_planar_face(face_idx, &plane, &cids);
+                // Fallback: polygon clipping
+                let subs = self.split_planar_face(face_idx, &plane, &interior_cids);
                 if subs.len() > 1 {
                     let mut out = subs;
                     for sub in &mut out { sub.surface = face.surface.clone(); }
@@ -2662,6 +2695,7 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
         }
+
 
         if let Surface3::Plane(plane) = &face.surface {
             let cids = self.merged_split_curve_ids_for_planar_face(face_idx, plane);
