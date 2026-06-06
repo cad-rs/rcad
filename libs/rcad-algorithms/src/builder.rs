@@ -1532,6 +1532,48 @@ impl<'a> BooleanBuilder<'a> {
         false
     }
 
+    /// Check if ALL intersection curves on this face have both endpoints
+    /// on the face boundary (OCCT: PaveBlocksOn without PaveBlocksIn/Sc).
+    /// When all ICs are boundary-only, the face doesn't need splitting.
+    fn all_ics_on_boundary(&self, face_idx: usize) -> bool {
+        let face = &self.ds.faces[face_idx];
+        if face.face_info.curves_in.is_empty() { return false; }
+
+        // Build a set of boundary vertex positions (tolerance-based)
+        let tol = TOLERANCE_MESH_LEGACY;
+        let mut bnd_positions: Vec<DVec3> = face.boundary_verts.iter()
+            .map(|&vi| self.ds.vertices[vi].point).collect();
+
+        // For each IC, check if both endpoints are on the boundary polygon
+        for &ci in &face.face_info.curves_in {
+            let ic = &self.ds.intersection_curves[ci];
+            let p1 = self.ds.vertices[ic.start_vertex].point;
+            let p2 = self.ds.vertices[ic.end_vertex].point;
+
+            let on_bnd = |p: DVec3| -> bool {
+                // Check if p is within tol of any boundary edge segment
+                for i in 0..bnd_positions.len() {
+                    let j = (i + 1) % bnd_positions.len();
+                    let a = bnd_positions[i];
+                    let b = bnd_positions[j];
+                    // Closest point on segment a-b to p
+                    let ab = b - a;
+                    let t = ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
+                    let closest = a + ab * t;
+                    if (p - closest).length() <= tol {
+                        return true;
+                    }
+                }
+                false
+            };
+
+            if !on_bnd(p1) || !on_bnd(p2) {
+                return false; // At least one IC crosses the face interior
+            }
+        }
+        true
+    }
+
     fn split_planar_bspline_occt(
         &self,
         face_idx: usize,
@@ -2569,10 +2611,14 @@ impl<'a> BooleanBuilder<'a> {
         let face = &self.ds.faces[face_idx];
         let fi = &face.face_info;
 
+        // OCCT-style: skip splitting when all ICs are on the face boundary
+        // (OCCT BuildSplitFaces skip at lines 297-328: no PaveBlocksIn/Sc,
+        //  no internal edges, no modified wires → keep original face).
+        // Plane faces use polygon clipping which handles this correctly.
+        let has_interior_ics = !fi.curves_in.is_empty() && !self.all_ics_on_boundary(face_idx);
+
         // OCCT wire-based splitting (edge graph traversal, BSpline only).
-        // Plane faces use polygon clipping (split_planar_face) which handles
-        // the planar case correctly without creating extra sub-faces.
-        if !fi.curves_in.is_empty()
+        if has_interior_ics
             && !self.has_crossing_ics(face_idx)
             && !matches!(face.surface, Surface3::Plane(_))
         {
@@ -2585,7 +2631,7 @@ impl<'a> BooleanBuilder<'a> {
         // of sub-faces for boundary-coincident intersection curves.  Use the
         // OCCT-style centroid-projection split directly (skipping polygon clipping).
         if let Surface3::BSpline(bsp) = &face.surface {
-            if !fi.curves_in.is_empty()
+            if has_interior_ics
                 && rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS)
             {
                 let plane = rcad_kernel::geom::bspline_to_plane(bsp);
