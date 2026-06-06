@@ -9559,7 +9559,11 @@ fn split_face_wire_based(ds: &DS, face_idx: usize) -> Vec<SubFace> {
     let mut subs: Vec<SubFace> = Vec::new();
 
     // Walk one cycle starting from edge `start_ei` in direction a→b.
-    'walk: while let Some(start_ei) = edges.iter().position(|(_, _, _, u)| !u) {
+    // Safety: limit to edges.len()+1 iterations to prevent infinite loop.
+    for _ in 0..=edges.len() {
+        let start_ei = match edges.iter().position(|(_, _, _, u)| !u) {
+            Some(ei) => ei, None => break,
+        };
         let (a, b, _, _) = edges[start_ei];
         // Must have at least one junction vertex to avoid taking the whole
         // boundary as a cycle before ICs are used.
@@ -9567,7 +9571,7 @@ fn split_face_wire_based(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             // If this is a pure-boundary edge with no junction at either end,
             // it cannot start a split.  Mark it used and move on.
             used[start_ei] = true;
-            continue 'walk;
+            continue;
         }
         used[start_ei] = true;
 
