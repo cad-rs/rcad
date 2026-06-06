@@ -1342,56 +1342,8 @@ fn classify_face_occt_style(
     ds: &DS,
     _op: BooleanOpType,
 ) -> Option<Classification> {
-    // Use the primary sample point first (fast path).
-    let p0 = sub.sample_point();
-    let c0 = classify_point(p0, solid_face_indices, ds);
-    // If the result is clearly In or Out (not On), trust it immediately.
-    if !matches!(c0, Classification::On) {
-        return Some(c0);
-    }
-    // The point lies ON the boundary of the other solid (interface region).
-    // OCCT's IntTools_FClass2d samples a 3x3 UV grid to disambiguate.
-    // Sample 5 points in a cross pattern around the centroid.
-    let center = sub.boundary.iter().sum::<DVec3>() / sub.boundary.len() as f64;
-    // Compute face extent for nudge distance
-    let mut max_extent = 0.0f64;
-    for v in &sub.boundary {
-        max_extent = max_extent.max((*v - center).length());
-    }
-    let nudge = (max_extent * 0.05).max(TOLERANCE_ABS * 100.0);
-    let offsets = [
-        DVec3::ZERO,
-        DVec3::new(nudge, 0.0, 0.0),
-        DVec3::new(-nudge, 0.0, 0.0),
-        DVec3::new(0.0, nudge, 0.0),
-        DVec3::new(0.0, -nudge, 0.0),
-        DVec3::new(0.0, 0.0, nudge),
-        DVec3::new(0.0, 0.0, -nudge),
-    ];
-    let mut has_in = false;
-    let mut has_out = false;
-    let mut has_on = false;
-    for off in &offsets {
-        let pt = center + *off;
-        let c = classify_point(pt, solid_face_indices, ds);
-        match c {
-            Classification::In => has_in = true,
-            Classification::Out => has_out = true,
-            Classification::On => has_on = true,
-        }
-    }
-    if has_in && !has_out {
-        return Some(Classification::In);
-    }
-    if has_out && !has_in {
-        return Some(Classification::Out);
-    }
-    if has_on && !has_in && !has_out {
-        // Grid pattern still on boundary — use original sample point
-        return Some(c0);
-    }
-    // Mixed: some In, some Out → point is near the boundary, classify as On
-    Some(Classification::On)
+    let p = sub.sample_point();
+    Some(classify_point(p, solid_face_indices, ds))
 }
 
 impl<'a> BooleanBuilder<'a> {
@@ -2227,9 +2179,9 @@ impl<'a> BooleanBuilder<'a> {
             // Merge kept On and Out sub-faces SEPARATELY to avoid merging
             // across classification boundaries (OCCT's FillImagesFaces approach).
             let flip = self.op == BooleanOpType::Difference;
-            // Merge On sub-faces separately, then emit as PLANE (OCCT's
-            // FillImagesFaces assigns PLANE type to interface faces).
+            // Merge On sub-faces separately, then emit as PLANE.
             if kept_on.len() > 1 { merge_subfaces_of_same_face(&mut kept_on); }
+            if kept_on.len() > 1 { merge_vertex_adjacent_subs(&mut kept_on); }
             for sub in &kept_on {
                 let mut s = sub.clone();
                 if let Surface3::BSpline(bsp) = &s.surface {
@@ -2241,6 +2193,9 @@ impl<'a> BooleanBuilder<'a> {
                 result.emit_face_with_origin(&s, flip, FaceOrigin::FromB(src));
             }
             // Merge Out sub-faces separately, keep BSpline surface type.
+            // Vertex-adjacent merge is NOT used for Out (can merge across
+            // different faces' sub-faces incorrectly — OCCT wire-splitter
+            // naturally avoids this).
             if kept_out.len() > 1 { merge_subfaces_of_same_face(&mut kept_out); }
             for sub in &kept_out {
                 let src = self.ds.faces[fi].source_face_idx;
