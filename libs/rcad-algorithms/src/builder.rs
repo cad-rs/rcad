@@ -2038,9 +2038,22 @@ impl<'a> BooleanBuilder<'a> {
                 }
                 if keep {
                     match class {
-                        Classification::On => kept_a_on.push(sub.clone()),
+                        Classification::On => {
+                            // For Union, A-side BSpline On sub-faces of a SPLIT face
+                            // are redundant when coplanar with a B-side Plane face —
+                            // the B-side Plane preserves the correct surface type.
+                            // BUT: for UNSPlit faces where the entire face is On,
+                            // keep it (the B-side Plane doesn't fully cover it).
+                            let skip_bspline_on = self.op == BooleanOpType::Union
+                                && face_split
+                                && !matches!(sub.surface, Surface3::Plane(_))
+                                && self.has_coplanar_ff_with_diff_surface(fi, &b_faces);
+                            if !skip_bspline_on {
+                                kept_a_on.push(sub.clone());
+                            }
+                        }
                         Classification::Out => kept_a_out.push(sub.clone()),
-                        _ => {} // IN → discarded (OCCT does not create draft faces for IN)
+                        _ => {}
                     }
                 } else if class == Classification::In
                     && self.op == BooleanOpType::Difference
