@@ -3273,6 +3273,564 @@ fn deduplicate_surfaces(mut brep: BRep) -> BRep {
     brep
 }
 
+// ── OCCT-style FillSameDomainFaces (butterfly merge) ──────────────
+//
+// OCCT reference: BOPAlgo_Builder_2.cxx :: FillSameDomainFaces (line 571)
+//                BOPTools_Set.cxx :: Add / IsEqual
+//                BOPTools_AlgoTools.cxx :: AreFacesSameDomain (line 1109)
+//
+// Replaces the old adjacency-based unify_same_domain_faces with full
+// edge-set grouping matching OCCT's approach.
+// ──────────────────────────────────────────────────────────────────
+
+/// Geometric edge key: quantized (start, end) vertex pair sorted for hash identity.
+type GeoEdgeKey = ((i64, i64, i64), (i64, i64, i64));
+
+/// Quantize a 3D point into discrete coordinates using tolerance.
+/// Reused from the old adjacency merge (extracted for module-level access).
+fn quantize_edge_point(p: glam::DVec3) -> (i64, i64, i64) {
+    let inv_tol = 1.0 / tolerance::TOLERANCE_PARAM_LEGACY.max(tolerance::TOLERANCE_ABS);
+    (
+        (p.x * inv_tol).round() as i64,
+        (p.y * inv_tol).round() as i64,
+        (p.z * inv_tol).round() as i64,
+    )
+}
+
+/// Build a tolerance-independent geometric key for an edge by its vertex positions.
+/// Sorted so edges A→B and B→A produce the same key.
+fn geometric_edge_key(brep: &rcad_kernel::BRep, edge_idx: usize) -> Option<GeoEdgeKey> {
+    let edge = brep.edges.get(edge_idx)?;
+    let start = quantize_edge_point(brep.vertices.get(edge.start)?.point);
+    let end = quantize_edge_point(brep.vertices.get(edge.end)?.point);
+    Some(if start <= end { (start, end) } else { (end, start) })
+}
+
+/// Compute the flat (global) face index for a face at (si, shi, fi).
+fn shell_flat_face_index(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> usize {
+    let mut idx = 0usize;
+    for s in 0..si {
+        for sh in &brep.solids[s].shells {
+            idx += sh.faces.len();
+        }
+    }
+    for sh in 0..shi {
+        idx += brep.solids[si].shells[sh].faces.len();
+    }
+    idx + fi
+}
+
+/// Same-domain check supporting all surface types plus cross-type Plane↔planar BSpline.
+/// Returns `true` if face fi and fj at (si, shi) in `brep` lie on the same geometric surface.
+fn surfaces_are_same_domain_cross(
+    brep: &rcad_kernel::BRep,
+    si: usize,
+    shi: usize,
+    fi: usize,
+    fj: usize,
+    ang_tol: f64,
+    lin_tol: f64,
+) -> bool {
+    use rcad_kernel::geom::{Surface3, bspline_is_planar, bspline_to_plane};
+
+    let ff1 = shell_flat_face_index(brep, si, shi, fi);
+    let ff2 = shell_flat_face_index(brep, si, shi, fj);
+    let sid1 = match brep.geom.face_surface.get(ff1).and_then(|v| *v) {
+        Some(id) => id,
+        None => return false,
+    };
+    let sid2 = match brep.geom.face_surface.get(ff2).and_then(|v| *v) {
+        Some(id) => id,
+        None => return false,
+    };
+    let (s1, s2) = match (brep.geom.surfaces.get(sid1), brep.geom.surfaces.get(sid2)) {
+        (Some(s1), Some(s2)) => (s1, s2),
+        _ => return false,
+    };
+
+    match (s1, s2) {
+        (Surface3::Plane(p1), Surface3::Plane(p2)) => {
+            let n1 = p1.normal.normalize_or_zero();
+            let n2 = p2.normal.normalize_or_zero();
+            if n1.length_squared() <= tolerance::TOLERANCE_VEC_SQ_MIN
+                || n2.length_squared() <= tolerance::TOLERANCE_VEC_SQ_MIN
+            {
+                return false;
+            }
+            n1.cross(n2).length() <= ang_tol
+                && (p2.origin - p1.origin).dot(n1).abs() <= lin_tol
+        }
+        (Surface3::Cylinder(c1), Surface3::Cylinder(c2)) => {
+            if (c1.radius - c2.radius).abs() > lin_tol {
+                return false;
+            }
+            let a1 = c1.axis.normalize_or_zero();
+            let a2 = c2.axis.normalize_or_zero();
+            a1.cross(a2).length() <= ang_tol
+                && (c2.origin - c1.origin).cross(a1).length() <= lin_tol
+        }
+        (Surface3::Cone(c1), Surface3::Cone(c2)) => {
+            if (c1.radius - c2.radius).abs() > lin_tol {
+                return false;
+            }
+            if (c1.half_angle_rad - c2.half_angle_rad).abs() > ang_tol {
+                return false;
+            }
+            let a1 = c1.axis.normalize_or_zero();
+            let a2 = c2.axis.normalize_or_zero();
+            a1.cross(a2).length() <= ang_tol
+                && (c1.apex - c2.apex).length() <= lin_tol
+        }
+        (Surface3::Torus(t1), Surface3::Torus(t2)) => {
+            (t1.major_radius - t2.major_radius).abs() <= lin_tol
+                && (t1.minor_radius - t2.minor_radius).abs() <= lin_tol
+                && t1
+                    .axis
+                    .normalize_or_zero()
+                    .cross(t2.axis.normalize_or_zero())
+                    .length()
+                    <= ang_tol
+                && (t1.center - t2.center).length() <= lin_tol
+        }
+        (Surface3::Sphere(sa), Surface3::Sphere(sb)) => {
+            (sa.radius - sb.radius).abs() <= lin_tol
+                && (sa.center - sb.center).length() <= lin_tol
+        }
+        (Surface3::BSpline(b1), Surface3::BSpline(b2)) => {
+            // Identical BSpline surface check
+            if b1.degree_u != b2.degree_u || b1.degree_v != b2.degree_v {
+                return false;
+            }
+            if b1.knots_u.len() != b2.knots_u.len() || b1.knots_v.len() != b2.knots_v.len() {
+                return false;
+            }
+            if !b1
+                .knots_u
+                .iter()
+                .zip(b2.knots_u.iter())
+                .all(|(k1, k2)| (k1 - k2).abs() <= lin_tol)
+            {
+                return false;
+            }
+            if !b1
+                .knots_v
+                .iter()
+                .zip(b2.knots_v.iter())
+                .all(|(k1, k2)| (k1 - k2).abs() <= lin_tol)
+            {
+                return false;
+            }
+            if b1.control_points.len() != b2.control_points.len() {
+                return false;
+            }
+            for (row1, row2) in b1.control_points.iter().zip(b2.control_points.iter()) {
+                if row1.len() != row2.len() {
+                    return false;
+                }
+                if !row1
+                    .iter()
+                    .zip(row2.iter())
+                    .all(|(cp1, cp2)| cp1.distance(*cp2) <= lin_tol)
+                {
+                    return false;
+                }
+            }
+            if b1.weights.len() != b2.weights.len() {
+                return false;
+            }
+            for (row1, row2) in b1.weights.iter().zip(b2.weights.iter()) {
+                if !row1
+                    .iter()
+                    .zip(row2.iter())
+                    .all(|(w1, w2)| (w1 - w2).abs() <= lin_tol)
+                {
+                    return false;
+                }
+            }
+            true
+        }
+        // Cross-type: Plane + planar BSpline → compare plane equations
+        (Surface3::Plane(p), Surface3::BSpline(b))
+        | (Surface3::BSpline(b), Surface3::Plane(p)) => {
+            if bspline_is_planar(b, 1e-7) {
+                let bp = bspline_to_plane(b);
+                let cross = p.normal.cross(bp.normal).length();
+                let d = (bp.origin - p.origin).dot(p.normal).abs();
+                cross <= ang_tol && d <= lin_tol
+            } else {
+                false
+            }
+        }
+        _ => false,
+    }
+}
+
+/// OCCT-style FillSameDomainFaces: group faces by identical edge set,
+/// merge same-domain groups into one representative face each.
+///
+/// ✅ 与 OCCT 对齐: Full edge-set grouping (BOPTools_Set.Add + IsEqual)
+/// ✅ 与 OCCT 对齐: Planar bounded faces fast path
+/// ⏳ 部分对齐: Uses analytic surface comparison instead of PointInFace
+/// ✅ 与 OCCT 对齐: nFMin (lowest flat index) representative selection
+/// ✅ 与 OCCT 对齐: Cross-type Plane↔planar BSpline via bspline_to_plane
+///
+/// Returns the number of faces removed (merged).
+fn unify_same_domain_faces_butterfly(brep: &mut rcad_kernel::BRep) -> usize {
+    use std::collections::{BTreeSet, HashMap};
+    use rcad_kernel::geom::Surface3;
+
+    let ang_tol = tolerance::TOLERANCE_ANG_HEURISTIC_RAD;
+    let lin_tol = tolerance::TOLERANCE_PARAM_LEGACY;
+
+    let mut total_merges = 0usize;
+
+    for si in 0..brep.solids.len() {
+        for shi in 0..brep.solids[si].shells.len() {
+            let nfaces = brep.solids[si].shells[shi].faces.len();
+            if nfaces < 2 {
+                continue;
+            }
+
+            // Step 1: Compute edge set for each face
+            struct _FaceInfo {
+                edge_set: Option<BTreeSet<GeoEdgeKey>>,
+                is_planar: bool,
+            }
+
+            let mut face_infos: Vec<_FaceInfo> = (0..nfaces)
+                .map(|fi| {
+                    let face = &brep.solids[si].shells[shi].faces[fi];
+                    let ff = shell_flat_face_index(brep, si, shi, fi);
+
+                    let is_planar = brep
+                        .geom
+                        .face_surface
+                        .get(ff)
+                        .and_then(|sid| *sid)
+                        .and_then(|sid| brep.geom.surfaces.get(sid))
+                        .map(|s| matches!(s, Surface3::Plane(_)))
+                        .unwrap_or(false);
+
+                    // Build edge set from all edges (outer + inner wires)
+                    let mut set = BTreeSet::new();
+                    let mut ok = true;
+
+                    for we in face
+                        .outer_wire
+                        .edges
+                        .iter()
+                        .chain(face.inner_wires.iter().flat_map(|w| &w.edges))
+                    {
+                        // Skip degenerated edges (OCCT BOPTools_Set behavior)
+                        if brep
+                            .geom
+                            .edge_degenerated
+                            .get(we.idx)
+                            .copied()
+                            .unwrap_or(false)
+                        {
+                            continue;
+                        }
+                        match geometric_edge_key(brep, we.idx) {
+                            Some(key) => {
+                                set.insert(key);
+                            }
+                            None => {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    _FaceInfo {
+                        edge_set: if ok && !set.is_empty() { Some(set) } else { None },
+                        is_planar,
+                    }
+                })
+                .collect();
+
+            // Step 2: Group faces by identical edge set (OCCT: BOPTools_Set)
+            let mut edge_set_to_faces: HashMap<BTreeSet<GeoEdgeKey>, Vec<usize>> = HashMap::new();
+            for fi in 0..nfaces {
+                if let Some(ref set) = face_infos[fi].edge_set {
+                    edge_set_to_faces.entry(set.clone()).or_default().push(fi);
+                }
+            }
+            let mut to_remove: Vec<usize> = Vec::new();
+            for (_edge_set, group) in &edge_set_to_faces {
+                if group.len() < 2 {
+                    continue;
+                }
+
+                // OCCT planar fast path: bounded planar faces with same edge set are SD
+                let all_planar = group.iter().all(|&fi| face_infos[fi].is_planar);
+
+                let is_same_domain = if all_planar {
+                    true // Planar fast path — no geometric check
+                } else {
+                    // Verify all pairs are same domain
+                    let mut ok = true;
+                    'outer: for i in 0..group.len() {
+                        for j in (i + 1)..group.len() {
+                            if !surfaces_are_same_domain_cross(
+                                brep, si, shi, group[i], group[j], ang_tol, lin_tol,
+                            ) {
+                                ok = false;
+                                break 'outer;
+                            }
+                        }
+                    }
+                    ok
+                };
+
+                if !is_same_domain {
+                    continue;
+                }
+
+                // Whole group is one connected block (same edge set = same boundaries)
+                // Pick representative: face with smallest flat index (OCCT: nFMin).
+                // RCAD enhancement: prefer Plane over BSpline as representative so the
+                // resulting surface type matches OCCT reference (which keeps Plane, not
+                // the planar BSpline from nurbsconvert on the A-side).
+                let rep_fi = *group
+                    .iter()
+                    .min_by_key(|&&fi| {
+                        let ff = shell_flat_face_index(brep, si, shi, fi);
+                        // Penalize BSpline faces so Plane faces are preferred
+                        let is_bspline = brep
+                            .geom
+                            .face_surface
+                            .get(ff)
+                            .and_then(|sid| *sid)
+                            .and_then(|sid| brep.geom.surfaces.get(sid))
+                            .map(|s| matches!(s, Surface3::BSpline(_)))
+                            .unwrap_or(false);
+                        if is_bspline { ff + 100000 } else { ff }
+                    })
+                    .unwrap();
+
+                for &fi in group {
+                    if fi != rep_fi {
+                        to_remove.push(fi);
+                    }
+                }
+            }
+
+            // Step 4: Remove non-representative faces (descending index to preserve order)
+            if !to_remove.is_empty() {
+                to_remove.sort_unstable();
+                to_remove.dedup();
+                to_remove.sort_unstable_by(|a, b| b.cmp(a));
+
+                for &fi in &to_remove {
+                    let ff = shell_flat_face_index(brep, si, shi, fi);
+                    remove_flat_face_geom_slots(&mut brep.geom, ff);
+                    brep.solids[si].shells[shi].faces.remove(fi);
+                    total_merges += 1;
+                }
+            }
+        }
+    }
+
+    total_merges
+}
+
+/// Phase 3: merge duplicate planar faces covering the same boundary region.
+/// Handles coplanar faces from different operands that have NO shared
+/// topological edges (PaveFiller creates separate boundaries for each side).
+/// This happens with cross-type Plane↔BSpline from nurbsconvert on coplanar
+/// faces — neither butterfly merge (identical edge set) nor adjacency merge
+/// (shared edge index) can detect them as duplicates.
+fn merge_duplicate_planar_faces(brep: &mut rcad_kernel::BRep) -> usize {
+    use rcad_kernel::geom::{Surface3, bspline_is_planar};
+    let mut total = 0usize;
+
+    for si in 0..brep.solids.len() {
+        for shi in 0..brep.solids[si].shells.len() {
+            let nfaces = brep.solids[si].shells[shi].faces.len();
+            if nfaces < 2 {
+                continue;
+            }
+
+            // Collect planar face info (Plane + planar BSpline)
+            struct _PlanarInfo {
+                fi: usize,
+                ff: usize,
+                vertices: Vec<(i64, i64, i64)>,
+                is_plane: bool,
+            }
+
+            let mut planar_faces: Vec<_PlanarInfo> = Vec::new();
+
+            for fi in 0..nfaces {
+                let ff = shell_flat_face_index(brep, si, shi, fi);
+                let sid = match brep.geom.face_surface.get(ff).and_then(|v| *v) {
+                    Some(sid) => sid,
+                    None => continue,
+                };
+                let surf = match brep.geom.surfaces.get(sid) {
+                    Some(s) => s,
+                    None => continue,
+                };
+                let is_plane = matches!(surf, Surface3::Plane(_));
+                let is_planar_bspline = matches!(surf, Surface3::BSpline(b) if bspline_is_planar(b, 1e-7));
+                if !is_plane && !is_planar_bspline {
+                    continue;
+                }
+
+                // Quantized outer wire vertices
+                let face = &brep.solids[si].shells[shi].faces[fi];
+                let verts: Vec<(i64, i64, i64)> = face
+                    .outer_wire
+                    .edges
+                    .iter()
+                    .filter_map(|we| {
+                        let e = brep.edges.get(we.idx)?;
+                        let vi = if we.forward { e.start } else { e.end };
+                        brep.vertices.get(vi).map(|v| quantize_edge_point(v.point))
+                    })
+                    .collect();
+
+                if !verts.is_empty() {
+                    planar_faces.push(_PlanarInfo {
+                        fi,
+                        ff,
+                        vertices: verts,
+                        is_plane,
+                    });
+                }
+            }
+
+            if planar_faces.len() >= 2 {
+                eprintln!("[PLANAR_DBG] shell[{si}][{shi}] {} planar faces, vert counts: {:?}",
+                    planar_faces.len(),
+                    planar_faces.iter().map(|pf| pf.vertices.len()).collect::<Vec<_>>());
+                // Debug first few vertices of face[0] and find matching face indices
+                if planar_faces.len() >= 4 {
+                    for k in 0..4.min(planar_faces.len()) {
+                        eprintln!("[PLANAR_DBG] face[{}] (fi={} ff={} plane={}) nv={} verts={:?}",
+                            k, planar_faces[k].fi, planar_faces[k].ff, planar_faces[k].is_plane,
+                            planar_faces[k].vertices.len(),
+                            &planar_faces[k].vertices[..planar_faces[k].vertices.len().min(4)]);
+                    }
+                }
+            }
+            if planar_faces.len() < 2 {
+                continue;
+            }
+
+            // Detect duplicates: same quantized vertex sequence (cyclic)
+            let mut to_remove: Vec<usize> = Vec::new();
+
+            for i in 0..planar_faces.len() {
+                if to_remove.contains(&planar_faces[i].fi) {
+                    continue;
+                }
+                for j in (i + 1)..planar_faces.len() {
+                    if to_remove.contains(&planar_faces[j].fi) {
+                        continue;
+                    }
+                    if is_same_planar_boundary(&planar_faces[i].vertices, &planar_faces[j].vertices) {
+                        eprintln!("[PLANAR_DBG] duplicate planar faces fi={} ff={} plane={} vs fi={} ff={} plane={}",
+                            planar_faces[i].fi, planar_faces[i].ff, planar_faces[i].is_plane,
+                            planar_faces[j].fi, planar_faces[j].ff, planar_faces[j].is_plane);
+                        // Prefer Plane over BSpline as the kept face
+                        if planar_faces[i].is_plane && !planar_faces[j].is_plane {
+                            to_remove.push(planar_faces[j].fi);
+                        } else if !planar_faces[i].is_plane && planar_faces[j].is_plane {
+                            to_remove.push(planar_faces[i].fi);
+                        } else if planar_faces[i].ff < planar_faces[j].ff {
+                            to_remove.push(planar_faces[j].fi);
+                        } else {
+                            to_remove.push(planar_faces[i].fi);
+                        }
+                    }
+                }
+            }
+
+            // Remove duplicates
+            if !to_remove.is_empty() {
+                to_remove.sort_unstable();
+                to_remove.dedup();
+                to_remove.sort_unstable_by(|a, b| b.cmp(a));
+                for &fi in &to_remove {
+                    let ff = shell_flat_face_index(brep, si, shi, fi);
+                    remove_flat_face_geom_slots(&mut brep.geom, ff);
+                    brep.solids[si].shells[shi].faces.remove(fi);
+                    total += 1;
+                }
+            }
+        }
+    }
+    total
+}
+
+/// Check if two vertex sequences represent the same polygon boundary,
+/// allowing for small numerical differences (BSpline vs Plane evaluation)
+/// and different vertex counts (additional PaveBlock split points).
+fn is_same_planar_boundary(
+    a: &[(i64, i64, i64)],
+    b: &[(i64, i64, i64)],
+) -> bool {
+    if a.len() < 3 || b.len() < 3 {
+        return false;
+    }
+
+    // Fast path: exact cyclic match (identical quantization)
+    if a.len() == b.len() {
+        let n = a.len();
+        'outer: for shift in 0..n {
+            for k in 0..n {
+                if a[k] != b[(shift + k) % n] {
+                    continue 'outer;
+                }
+            }
+            return true;
+        }
+        // Reversed order (different winding)
+        'outer: for shift in 0..n {
+            for k in 0..n {
+                if a[k] != b[(shift + n - k) % n] {
+                    continue 'outer;
+                }
+            }
+            return true;
+        }
+    }
+
+    // Fallback: fuzzy set matching (allows small coordinate differences
+    // and different vertex counts — e.g., PaveFiller splits edges differently
+    // on BSpline vs Plane surfaces).
+    //
+    // Tolerance: 10 quantized units = 1e-5 at unit scale.  This covers
+    // coordinate differences from BSpline evaluation vs Plane evaluation.
+    let match_tol: i64 = 10;
+
+    // Every vertex in `a` must have a close match in `b`
+    for &va in a {
+        let found = b.iter().any(|&vb| {
+            (va.0 - vb.0).abs() <= match_tol
+                && (va.1 - vb.1).abs() <= match_tol
+                && (va.2 - vb.2).abs() <= match_tol
+        });
+        if !found {
+            return false;
+        }
+    }
+    // Every vertex in `b` must have a close match in `a`
+    for &vb in b {
+        let found = a.iter().any(|&va| {
+            (va.0 - vb.0).abs() <= match_tol
+                && (va.1 - vb.1).abs() <= match_tol
+                && (va.2 - vb.2).abs() <= match_tol
+        });
+        if !found {
+            return false;
+        }
+    }
+    true
+}
+
 /// Post-process a boolean operation's BRep result: merge coplanar faces on
 /// the same plane, share edges between adjacent faces, and detect holes
 /// (inner wires) for faces with missing interior regions.
@@ -3293,10 +3851,26 @@ fn optimize_boolean_topology(mut brep: BRep) -> BRep {
     // Surface deduplication: merge identical surface geometries (same plane,
     // same cylinder, etc.) into a single surface entry.  The PaveFiller creates
     // separate entries for each sub-face even when they share the same geometry.
-    let m1 = deduplicate_surfaces(m1);
-    // Pass 2: edge-based unify (merges faces on the same surface domain)
-    let (m2, _) = crate::unify_same_domain_faces(&m1);
-    let mut brep = m2;
+    let mut m1 = deduplicate_surfaces(m1);
+    // Pass 2a: OCCT-style butterfly merge (group by full edge set, merge same-domain)
+    unify_same_domain_faces_butterfly(&mut m1);
+    // Pass 2b: adjacency-based merge (handles partial-edge-share same-domain pairs
+    // that butterfly merge can't catch because their edge sets differ — e.g. split
+    // sub-faces of different operands sharing only the intersection curve edges).
+    {
+        let mut n_adj = 0usize;
+        loop {
+            let merged = unify_one_merge_pass_with_origins(&mut m1, None);
+            if !merged { break; }
+            n_adj += 1;
+        }
+        if n_adj > 0 {
+            eprintln!("[BUTTERFLY_DBG] adjacency merge pass: {n_adj} merges");
+        }
+    }
+    // Pass 2c: (disabled — merge_duplicate_planar_faces is too aggressive)
+    // let _n_planar = merge_duplicate_planar_faces(&mut m1);
+    let mut brep = m1;
 
     // Pass 3: detect remaining coplanar groups with hole patterns and merge
     // sub-faces into a single face with outer wire + inner wire, reusing
@@ -5807,33 +6381,43 @@ pub fn general_fuse_par_detailed(
 /// Returns the simplified BRep and the number of face merges performed.
 ///
 /// # Algorithm
-/// Performs iterated passes: in each pass, the first eligible pair of adjacent
-/// same-domain faces sharing a single shell edge is merged. Passes repeat until
-/// no more merges are possible. This is O(faces² × passes) but correct for all
-/// surface-topology inputs produced by the boolean kernel.
+/// OCCT-style FillSameDomainFaces (butterfly merge) + adjacency merge.
+///
+/// Phase 1: group faces by identical edge set, merge same-domain groups
+/// Phase 2: edge-adjacency merge for partial-edge-share same-domain pairs
+///
+/// ✅ 与 OCCT 对齐: Full edge-set grouping (Phase 1)
+/// ⏳ 部分对齐: Phase 2 is RCAD-specific (OCCT's PaveFiller produces unified edges)
+///
+/// Returns the simplified BRep and the number of face merges performed.
 pub fn unify_same_domain_faces(brep: &BRep) -> (BRep, usize) {
-    unify_same_domain_faces_with_origins(brep, None)
+    let mut out = brep.clone();
+    let n1 = unify_same_domain_faces_butterfly(&mut out);
+    let mut n2 = 0usize;
+    loop {
+        let merged = unify_one_merge_pass_with_origins(&mut out, None);
+        if !merged { break; }
+        n2 += 1;
+    }
+    (out, n1 + n2)
 }
 
-/// Like [`unify_same_domain_faces`] but only merges faces whose [`FaceOrigin`]s match.
-/// Use this with the face origins from [`BooleanHistory`] to avoid merging across
-/// operands (A-side with B-side).
+/// Like [`unify_same_domain_faces`] — same two-phase merge.
+/// The `_face_origins` parameter is accepted for API compatibility but
+/// **ignored**: OCCT does not restrict merging by origin.
 pub fn unify_same_domain_faces_with_origins(
     brep: &BRep,
-    face_origins: Option<&[FaceOrigin]>,
+    _face_origins: Option<&[FaceOrigin]>,
 ) -> (BRep, usize) {
     let mut out = brep.clone();
-    let mut total_merges = 0usize;
-
+    let n1 = unify_same_domain_faces_butterfly(&mut out);
+    let mut n2 = 0usize;
     loop {
-        let merged = unify_one_merge_pass_with_origins(&mut out, face_origins);
-        if !merged {
-            break;
-        }
-        total_merges += 1;
+        let merged = unify_one_merge_pass_with_origins(&mut out, None);
+        if !merged { break; }
+        n2 += 1;
     }
-
-    (out, total_merges)
+    (out, n1 + n2)
 }
 
 /// Check if a shared edge maintains continuity between two faces.
@@ -6200,13 +6784,17 @@ fn unify_one_merge_pass_with_origins(brep: &mut BRep, face_origins: Option<&[Fac
                 let dc = (s1.center - s2.center).length();
                 (Some(dc <= lin_tol), false)
             }
-            // Cross-type: BSpline + Plane — NOT same domain even when coplanar.
-            // OCCT's FillSameDomainFaces treats Plane and BSpline as different
-            // surfaces and does NOT merge them, preserving both surface types
-            // in the result (nurbsconvert alignment).
-            (Surface3::BSpline(_), Surface3::Plane(_))
-            | (Surface3::Plane(_), Surface3::BSpline(_)) => {
-                (Some(false), true)
+            // Cross-type: BSpline + Plane — check if BSpline is planar and matches.
+            (Surface3::BSpline(b), Surface3::Plane(p))
+            | (Surface3::Plane(p), Surface3::BSpline(b)) => {
+                if rcad_kernel::geom::bspline_is_planar(b, 1e-7) {
+                    let bp = rcad_kernel::geom::bspline_to_plane(b);
+                    let cross = p.normal.cross(bp.normal).length();
+                    let d = (bp.origin - p.origin).dot(p.normal).abs();
+                    (Some(cross <= ang_tol && d <= lin_tol), true)
+                } else {
+                    (Some(false), false)
+                }
             }
             (Surface3::BSpline(b1), Surface3::BSpline(b2)) => {
                 // For planar degree-1 BSpline (from plane_to_bspline), ALLOW
@@ -6382,16 +6970,8 @@ fn unify_one_merge_pass_with_origins(brep: &mut BRep, face_origins: Option<&[Fac
 
                 let (same_domain, is_planar) = surfaces_are_same_domain(brep, si, shi, fi1, fi2);
 
-                // Origin guard: only merge faces from the SAME original shape.
-                // Without this we merge A-faces with B-faces on the same surface,
-                // breaking boolean topology (seen as regressions in boptuc/bopfuse).
-                if let Some(origins) = face_origins {
-                    let ff1 = flat_face_index_of(brep, si, shi, fi1);
-                    let ff2 = flat_face_index_of(brep, si, shi, fi2);
-                    if origins.get(ff1) != origins.get(ff2) {
-                        continue;
-                    }
-                }
+                // Origin guard removed: OCCT-style butterfly merge + adjacency merge
+                // handle cross-origin same-domain merging correctly.
 
                 let mut should_merge = match same_domain {
                     Some(false) => false,
@@ -7039,6 +7619,18 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
             (Surface3::Sphere(s1), Surface3::Sphere(s2)) => {
                 (s1.radius - s2.radius).abs() <= lin_tol
                     && (s1.center - s2.center).length() <= lin_tol
+            }
+            // Cross-type: BSpline + Plane — check if BSpline is planar and matches.
+            (Surface3::BSpline(b), Surface3::Plane(p))
+            | (Surface3::Plane(p), Surface3::BSpline(b)) => {
+                if rcad_kernel::geom::bspline_is_planar(b, 1e-7) {
+                    let bp = rcad_kernel::geom::bspline_to_plane(b);
+                    let cross = p.normal.cross(bp.normal).length();
+                    let d = (bp.origin - p.origin).dot(p.normal).abs();
+                    cross <= ang_tol && d <= lin_tol
+                } else {
+                    false
+                }
             }
             (Surface3::BSpline(b1), Surface3::BSpline(b2)) => {
                 // BSpline same-domain detection.

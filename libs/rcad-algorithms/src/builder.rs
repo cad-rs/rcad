@@ -1451,11 +1451,14 @@ impl<'a> BooleanBuilder<'a> {
         None
     }
 
-    /// Check if any coplanar FaceFace partner has a DIFFERENT surface type
-    /// than this A-face.  When true, the On removal in Union should NOT apply
-    /// because OCCT's FillSameDomainFaces would keep both faces as separate
-    /// surface types (e.g. Plane vs BSpline from nurbsconvert).
-    fn has_coplanar_ff_with_diff_surface(&self, a_fi: usize, b_faces: &[usize]) -> bool {
+    /// Check if any coplanar B-face has the same surface type as this A-face.
+    /// Uses FaceFace interferences (empty curves = coplanar) and
+    /// `same_surface_type` to determine compatibility.
+    /// When true, the A-side Plane On face can be safely removed in Union
+    /// (the B-face Plane covers it). When false (B-face is BSpline on same
+    /// plane), the A-side Plane must be kept so the butterfly merge gets
+    /// a Plane representative.
+    fn coplanar_b_face_surface_matches(&self, a_fi: usize, b_faces: &[usize]) -> bool {
         let a_surf = &self.ds.faces[a_fi].surface;
         for inf in &self.ds.interferences {
             if let Interference::FaceFace { f1, f2, curves, .. } = inf {
@@ -1463,10 +1466,7 @@ impl<'a> BooleanBuilder<'a> {
                     let other_idx = if *f1 == a_fi { *f2 } else { *f1 };
                     if b_faces.contains(&other_idx) {
                         let b_surf = &self.ds.faces[other_idx].surface;
-                        // Different surface type → keep both (A-side Plane,
-                        // B-side BSpline). The B-side On sub-face is skipped
-                        // later so the correct PLANE type is preserved.
-                        if !same_surface_type(a_surf, b_surf) {
+                        if same_surface_type(a_surf, b_surf) {
                             return true;
                         }
                     }
@@ -1713,6 +1713,19 @@ impl<'a> BooleanBuilder<'a> {
         }
         let policy = Self::keep_subface_policy(self.op, source, class);
         policy
+    }
+
+    /// Find the overlap polygon for a face that has a coplanar FaceFace partner.
+    /// Works for any surface type (Plane or planar BSpline).
+    fn find_coplanar_overlap(&self, fi: usize) -> Option<Vec<glam::DVec3>> {
+        for (a, b, poly) in &self.ds.same_domain_overlaps {
+            if *a == fi || *b == fi {
+                if poly.len() >= 3 {
+                    return Some(poly.clone());
+                }
+            }
+        }
+        None
     }
 
     /// Find a B-face that shares the same infinite surface as the given A-face.
@@ -2013,7 +2026,7 @@ impl<'a> BooleanBuilder<'a> {
             let face_split = sub_faces.len() > 1;
             let mut kept_a_on: Vec<SubFace> = Vec::new();
             let mut kept_a_out: Vec<SubFace> = Vec::new();
-            for (si, sub) in sub_faces.iter().enumerate() {
+            for (si, sub) in sub_faces.iter_mut().enumerate() {
                 // Same-domain trimmed faces: skip classifier (classifier can
                 // mis-classify points near the solid's boundary) and force-keep.
                 if is_same_domain {
@@ -2033,7 +2046,7 @@ impl<'a> BooleanBuilder<'a> {
                     // type (e.g. Plane vs BSpline). The A-side Plane face is kept
                     // and the B-side BSpline On sub-face is skipped instead, so the
                     // correct surface type (PLANE) is preserved on the boundary.
-                    && !self.has_coplanar_ff_with_diff_surface(fi, &b_faces)
+                    && self.coplanar_b_face_surface_matches(fi, &b_faces)
                     // For containment: always keep A-side Plane On faces when the
                     // B-face is BSpline (the B-side On sub-face will be skipped).
                     // Without this, the On region would become BSpline instead of PLANE.
@@ -2078,13 +2091,10 @@ impl<'a> BooleanBuilder<'a> {
                             // the B-side Plane preserves the correct surface type.
                             // BUT: for UNSPlit faces where the entire face is On,
                             // keep it (the B-side Plane doesn't fully cover it).
-                            let skip_bspline_on = self.op == BooleanOpType::Union
-                                && face_split
-                                && !matches!(sub.surface, Surface3::Plane(_))
-                                && self.has_coplanar_ff_with_diff_surface(fi, &b_faces);
-                            if !skip_bspline_on {
-                                kept_a_on.push(sub.clone());
-                            }
+                            // All On sub-faces are kept — the OCCT-style butterfly merge
+                            // (unify_same_domain_faces_butterfly) handles merging of
+                            // same-domain duplicate faces across operands.
+                            kept_a_on.push(sub.clone());
                         }
                         Classification::Out => kept_a_out.push(sub.clone()),
                         _ => {}
@@ -2125,8 +2135,8 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 }
             }
-        }
 
+        }
         // Process B faces against A solid
         for &fi in &b_faces {
             let mut sub_faces = self.split_face(fi);
@@ -2147,7 +2157,7 @@ impl<'a> BooleanBuilder<'a> {
             // classification-aware merging (On separate from Out).
             let mut kept_on: Vec<SubFace> = Vec::new();
             let mut kept_out: Vec<SubFace> = Vec::new();
-            for (si, sub) in sub_faces.iter().enumerate() {
+            for (si, sub) in sub_faces.iter_mut().enumerate() {
                 let class = classify_against_solid_for_boolean(self.op, SourceSide::B, sub, &a_faces, self.ds);
                 let keep = if !face_split
                     && self.op == BooleanOpType::Union
@@ -2164,7 +2174,7 @@ impl<'a> BooleanBuilder<'a> {
                     // Don't remove if the coplanar partner has a DIFFERENT surface
                     // type (e.g. Plane vs BSpline). Keep the Plane face so the correct
                     // surface type is preserved (mirrors A-face logic at lines 1956-1960).
-                    && !self.has_coplanar_ff_with_diff_surface(fi, &a_faces)
+                    && self.coplanar_b_face_surface_matches(fi, &a_faces)
                 {
                     // For Union, planar On sub-faces coplanar with an A-face (same
                     // normal) can be removed — the A-face covers this region on the
@@ -2188,6 +2198,24 @@ impl<'a> BooleanBuilder<'a> {
                         face_split,
                     );
                 }
+                // OCCT: FillSameDomainFaces operates on ALL split results — SD merging
+                // happens before classification filtering.  For B-faces with a coplanar
+                // overlap partner, force-keep the sub-face (reclassifying as On) so the
+                // butterfly merge can match it with the A-side counterpart.
+                let has_overlap = self.find_coplanar_overlap(fi);
+                let coplanar_override = !keep && self.op == BooleanOpType::Union
+                    && has_overlap.is_some();
+                let keep = keep || coplanar_override;
+                if coplanar_override {
+                    if let Some(poly) = self.find_coplanar_overlap(fi) {
+                        sub.boundary = poly;
+                    }
+                }
+                let class = if coplanar_override {
+                    Classification::On
+                } else {
+                    class
+                };
                 if keep {
                     // For Difference, skip B-side In planar sub-faces that are coplanar with
                     // already-emitted A-side faces.  The A-face already covers this plane
@@ -2281,9 +2309,31 @@ impl<'a> BooleanBuilder<'a> {
                         }
                         // Collect for edge-based merge, grouped by classification.
                         match class {
-                            Classification::On => kept_on.push(sub.clone()),
+                            Classification::On => {
+                                // For B-faces with a coplanar overlap partner (Union only),
+                                // use the overlap polygon boundary so both sides produce
+                                // matching edge topology for the butterfly merge.
+                                if self.op == BooleanOpType::Union {
+                                    if let Some(poly) = self.find_coplanar_overlap(fi) {
+                                        sub.boundary = poly;
+                                    }
+                                }
+                                kept_on.push(sub.clone())
+                            }
                             Classification::Out => kept_out.push(sub.clone()),
-                            _ => {} // In → discarded (draft face handled below)
+                            _ => {
+                                // OCCT: FillSameDomainFaces operates on ALL split results,
+                                // classification filtering happens in BuildResult, not here.
+                                // For B-faces with a coplanar overlap partner (Union), keep
+                                // the sub-face as On so the butterfly merge can match it with
+                                // the A-side On sub-face regardless of classifier tolerance.
+                                if self.op == BooleanOpType::Union {
+                                    if let Some(poly) = self.find_coplanar_overlap(fi) {
+                                        sub.boundary = poly;
+                                        kept_on.push(sub.clone());
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -2299,6 +2349,11 @@ impl<'a> BooleanBuilder<'a> {
             if kept_on.len() > 1 { merge_vertex_adjacent_subs(&mut kept_on); }
             for sub in &kept_on {
                 let mut s = sub.clone();
+                if self.op == BooleanOpType::Union {
+                    if let Some(poly) = self.find_coplanar_overlap(fi) {
+                        s.boundary = poly;
+                    }
+                }
                 if let Surface3::BSpline(bsp) = &s.surface {
                     if rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS) {
                         s.surface = Surface3::Plane(rcad_kernel::geom::bspline_to_plane(bsp));
