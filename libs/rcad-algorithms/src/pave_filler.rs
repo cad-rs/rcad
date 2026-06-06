@@ -1546,17 +1546,26 @@ impl<'a> PaveFiller<'a> {
         let s1 = self.ds.faces[f1].surface.clone();
         let s2 = self.ds.faces[f2].surface.clone();
 
-        // Promote planar BSpline surfaces to Plane so they hit the analytic
-        // Plane × * dispatch arms instead of falling through to marching.
+        // Promote planar BSpline surfaces to Plane using the face's stored normal
+        // and boundary centroid (avoid bspline_to_plane whose control-point origin
+        // causes the promoted plane to deviate from actual face geometry).
         let s1 = match &s1 {
             Surface3::BSpline(bsp) if bspline_is_planar(bsp, TOLERANCE_ABS) => {
-                Surface3::Plane(bspline_to_plane(bsp))
+                let face = &self.ds.faces[f1];
+                let c = face.boundary_verts.iter()
+                    .map(|&vi| self.ds.vertices[vi].point)
+                    .sum::<DVec3>() / face.boundary_verts.len().max(1) as f64;
+                Surface3::Plane(Plane { origin: c, normal: face.normal })
             }
             _ => s1,
         };
         let s2 = match &s2 {
             Surface3::BSpline(bsp) if bspline_is_planar(bsp, TOLERANCE_ABS) => {
-                Surface3::Plane(bspline_to_plane(bsp))
+                let face = &self.ds.faces[f2];
+                let c = face.boundary_verts.iter()
+                    .map(|&vi| self.ds.vertices[vi].point)
+                    .sum::<DVec3>() / face.boundary_verts.len().max(1) as f64;
+                Surface3::Plane(Plane { origin: c, normal: face.normal })
             }
             _ => s2,
         };
@@ -1635,21 +1644,36 @@ impl<'a> PaveFiller<'a> {
     fn intersect_plane_plane_faces(&mut self, f1: usize, f2: usize, p1: &Plane, p2: &Plane) {
         use inttools::pcurve_derive::line_pcurve_on_plane;
 
+        let debug_ff = f1 == 4 && f2 == 8;
+        if debug_ff { eprintln!("[PF_DBG] intersect_plane_plane(4,8)"); }
+
         match inttools::plane_plane::intersect_plane_plane(p1, p2) {
-            inttools::plane_plane::PlanePlaneResult::Parallel => {}
+            inttools::plane_plane::PlanePlaneResult::Parallel => {
+                if debug_ff { eprintln!("[PF_DBG]   PARALLEL"); }
+            }
             inttools::plane_plane::PlanePlaneResult::Coincident => {
-                // Coplanar — handled via coplanar analysis
+                if debug_ff { eprintln!("[PF_DBG]   COINCIDENT"); }
                 self.handle_coplanar_faces(f1, f2, p1);
             }
             inttools::plane_plane::PlanePlaneResult::Line(line) => {
                 let verts1 = self.ds.face_boundary_points(f1);
                 let verts2 = self.ds.face_boundary_points(f2);
                 let clip_tol = self.ff_tol(f1, f2);
+                if debug_ff { eprintln!("[PF_DBG]   LINE clip_tol={:.2e}", clip_tol);
+                    eprintln!("[PF_DBG]   p1=({:.3},{:.3},{:.3}) n1=({:.3},{:.3},{:.3})",
+                        p1.origin.x,p1.origin.y,p1.origin.z,p1.normal.x,p1.normal.y,p1.normal.z);
+                    eprintln!("[PF_DBG]   p2=({:.3},{:.3},{:.3}) n2=({:.3},{:.3},{:.3})",
+                        p2.origin.x,p2.origin.y,p2.origin.z,p2.normal.x,p2.normal.y,p2.normal.z);
+                    eprintln!("[PF_DBG]   line o=({:.3},{:.3},{:.3}) d=({:.3},{:.3},{:.3})",
+                        line.origin.x,line.origin.y,line.origin.z,
+                        line.direction.x,line.direction.y,line.direction.z);
+                }
 
                 let ranges1 =
                     inttools::edge_face::clip_line_to_polygon_with_tol(&line, p1, &verts1, clip_tol);
                 let ranges2 =
                     inttools::edge_face::clip_line_to_polygon_with_tol(&line, p2, &verts2, clip_tol);
+                if debug_ff { eprintln!("[PF_DBG]   ranges1={:?} ranges2={:?}", ranges1, ranges2); }
 
                 for &(t1_min, t1_max) in &ranges1 {
                     for &(t2_min, t2_max) in &ranges2 {
