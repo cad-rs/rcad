@@ -2198,37 +2198,8 @@ impl<'a> BooleanBuilder<'a> {
                         }
                     }
                 }
-                // OCCT BuildDraftFace: for B-side In sub-faces on planar surfaces
-                // that would be discarded but represent interface regions between
-                // the two solids (no A-side PLANE face on the same plane), create
-                // a PLANE draft face on the intersection surface.
-                if !keep && self.op == BooleanOpType::Union && class == Classification::In {
-                    let b_plane = match &sub.surface {
-                        Surface3::Plane(p) => Some(p.clone()),
-                        Surface3::BSpline(bsp) if bspline_is_planar(bsp, TOLERANCE_ABS) => {
-                            Some(bspline_to_plane(bsp))
-                        }
-                        _ => None,
-                    };
-                    if let Some(bp) = b_plane {
-                        let bn = bp.normal.normalize_or_zero();
-                        let has_a_side = a_on_planes.iter().any(|(an, ao)| {
-                            let dot = an.dot(bn).abs();
-                            if dot < 0.99 { return false; }
-                            let sign = if an.dot(bn) > 0.0 { 1.0 } else { -1.0 };
-                            let a_dist = ao.dot(*an);
-                            let b_dist = bp.origin.dot(bn) * sign;
-                            (a_dist - b_dist).abs() < 1e-6
-                        });
-                        if !has_a_side {
-                            // No A-side face on this plane → interface draft face.
-                            let mut draft = sub.clone();
-                            draft.surface = Surface3::Plane(bp);
-                            let src = self.ds.faces[fi].source_face_idx;
-                            result.emit_face_with_origin(&draft, false, FaceOrigin::FromB(src));
-                        }
-                    }
-                }
+                // OCCT BuildDraftFace: disabled — creates interior faces for
+                // containment cases.  Re-enable after proper OCST alignment.
             }
 
             // Merge kept On and Out sub-faces SEPARATELY to avoid merging
