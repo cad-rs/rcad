@@ -461,6 +461,10 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     result = sewn;
     geom_populate::recompute_plane_surfaces(&mut result);
     validate_union_brep_output("union: result failed checks after vertex merge", &result)?;
+    // Deduplicate edges so adjacent sub-faces share edge topology (OCCT:
+    // edges from BOPAlgo_BuilderFace are shared between split faces).
+    // Without this, unify_same_domain_faces cannot detect shared edges.
+    result = crate::deduplicate_edges(result);
     let checkpoint = result.clone();
     merge_coplanar_orthogonal_unify(&mut result);
     geom_populate::recompute_plane_surfaces(&mut result);

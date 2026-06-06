@@ -3114,7 +3114,7 @@ fn promote_planar_surfaces(mut brep: BRep) -> BRep {
 /// (start, end), remap all face wire references to use a single canonical edge.
 /// This fixes the 2× EDGE_CURVE count in BooleanBuilder results (P3) and any
 /// other code path that creates separate edge entries for shared boundaries.
-fn deduplicate_edges(mut brep: BRep) -> BRep {
+pub(crate) fn deduplicate_edges(mut brep: BRep) -> BRep {
     use std::collections::HashMap;
     use rcad_kernel::topology::WireEdge;
 
