@@ -1342,8 +1342,56 @@ fn classify_face_occt_style(
     ds: &DS,
     _op: BooleanOpType,
 ) -> Option<Classification> {
-    let p = sub.sample_point();
-    Some(classify_point(p, solid_face_indices, ds))
+    // Use the primary sample point first (fast path).
+    let p0 = sub.sample_point();
+    let c0 = classify_point(p0, solid_face_indices, ds);
+    // If the result is clearly In or Out (not On), trust it immediately.
+    if !matches!(c0, Classification::On) {
+        return Some(c0);
+    }
+    // The point lies ON the boundary of the other solid (interface region).
+    // OCCT's IntTools_FClass2d samples a 3x3 UV grid to disambiguate.
+    // Sample 5 points in a cross pattern around the centroid.
+    let center = sub.boundary.iter().sum::<DVec3>() / sub.boundary.len() as f64;
+    // Compute face extent for nudge distance
+    let mut max_extent = 0.0f64;
+    for v in &sub.boundary {
+        max_extent = max_extent.max((*v - center).length());
+    }
+    let nudge = (max_extent * 0.05).max(TOLERANCE_ABS * 100.0);
+    let offsets = [
+        DVec3::ZERO,
+        DVec3::new(nudge, 0.0, 0.0),
+        DVec3::new(-nudge, 0.0, 0.0),
+        DVec3::new(0.0, nudge, 0.0),
+        DVec3::new(0.0, -nudge, 0.0),
+        DVec3::new(0.0, 0.0, nudge),
+        DVec3::new(0.0, 0.0, -nudge),
+    ];
+    let mut has_in = false;
+    let mut has_out = false;
+    let mut has_on = false;
+    for off in &offsets {
+        let pt = center + *off;
+        let c = classify_point(pt, solid_face_indices, ds);
+        match c {
+            Classification::In => has_in = true,
+            Classification::Out => has_out = true,
+            Classification::On => has_on = true,
+        }
+    }
+    if has_in && !has_out {
+        return Some(Classification::In);
+    }
+    if has_out && !has_in {
+        return Some(Classification::Out);
+    }
+    if has_on && !has_in && !has_out {
+        // Grid pattern still on boundary — use original sample point
+        return Some(c0);
+    }
+    // Mixed: some In, some Out → point is near the boundary, classify as On
+    Some(Classification::On)
 }
 
 impl<'a> BooleanBuilder<'a> {
@@ -1519,8 +1567,17 @@ impl<'a> BooleanBuilder<'a> {
             // the IC, which handles most cases correctly.
             let cs = DVec2::new((p_start - plane.origin).dot(u_axis), (p_start - plane.origin).dot(v_axis));
             let ce = DVec2::new((p_end - plane.origin).dot(u_axis), (p_end - plane.origin).dot(v_axis));
-            let split_dir = (centroid - mid_2d).normalize_or_zero();
-            if split_dir.length_squared() < 0.1 { continue; }
+            let mut split_dir = (centroid - mid_2d).normalize_or_zero();
+            if split_dir.length_squared() < 0.1 {
+                // Degenerate: midpoint equals centroid.  Use IC's perpendicular
+                // direction instead (splits the face at the interface line).
+                let cs = DVec2::new((p_start - plane.origin).dot(u_axis), (p_start - plane.origin).dot(v_axis));
+                let ce = DVec2::new((p_end - plane.origin).dot(u_axis), (p_end - plane.origin).dot(v_axis));
+                let ic_dir = (ce - cs).normalize_or_zero();
+                if ic_dir.length_squared() > 0.5 {
+                    split_dir = DVec2::new(-ic_dir.y, ic_dir.x); // Perpendicular
+                } else { continue; }
+            }
             let mut next_polys = Vec::new();
             for poly in &current_polys {
                 let halves = split_polygon_2d_by_line(poly, mid_2d, split_dir);
