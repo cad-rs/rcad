@@ -1543,6 +1543,7 @@ impl<'a> PaveFiller<'a> {
     }
 
     fn intersect_face_face(&mut self, f1: usize, f2: usize) {
+        if f1 == 0 { eprintln!("[FF_CALL] intersect_face_face({}, {})", f1, f2); }
         let s1 = self.ds.faces[f1].surface.clone();
         let s2 = self.ds.faces[f2].surface.clone();
 
@@ -1644,7 +1645,7 @@ impl<'a> PaveFiller<'a> {
     fn intersect_plane_plane_faces(&mut self, f1: usize, f2: usize, p1: &Plane, p2: &Plane) {
         use inttools::pcurve_derive::line_pcurve_on_plane;
 
-        let debug_ff = f1 == 4 && f2 == 8;
+        let debug_ff = (f1 == 4 && f2 == 8) || (f1 == 0 && f2 == 9);
         if debug_ff { eprintln!("[PF_DBG] intersect_plane_plane(4,8)"); }
 
         match inttools::plane_plane::intersect_plane_plane(p1, p2) {

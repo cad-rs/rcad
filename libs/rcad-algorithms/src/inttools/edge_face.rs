@@ -85,7 +85,7 @@ fn ray_cast_contains_with_tol(px: f64, py: f64, poly: &[(f64, f64)], eps: f64) -
     for i in 0..n {
         let (xi, yi) = poly[i];
         let (xj, yj) = poly[j];
-        if (yi > py) != (yj > py) {
+        if (yi >= py - eps) != (yj >= py - eps) {
             let dy = yj - yi;
             if dy.abs() < eps {
                 j = i;
