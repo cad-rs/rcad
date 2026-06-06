@@ -1877,7 +1877,6 @@ impl<'a> BooleanBuilder<'a> {
             let face_split = sub_faces.len() > 1;
             let mut kept_a_on: Vec<SubFace> = Vec::new();
             let mut kept_a_out: Vec<SubFace> = Vec::new();
-            let mut draft_candidates: Vec<SubFace> = Vec::new();
             for (si, sub) in sub_faces.iter().enumerate() {
                 // Same-domain trimmed faces: skip classifier (classifier can
                 // mis-classify points near the solid's boundary) and force-keep.
@@ -1939,15 +1938,8 @@ impl<'a> BooleanBuilder<'a> {
                     match class {
                         Classification::On => kept_a_on.push(sub.clone()),
                         Classification::Out => kept_a_out.push(sub.clone()),
-                        _ => {}
+                        _ => {} // IN → discarded (OCCT does not create draft faces for IN)
                     }
-                } else if class == Classification::In
-                    && self.op == BooleanOpType::Union
-                    && matches!(sub.surface, Surface3::Plane(_))
-                {
-                    // OCCT BuildDraftFace: collect planar In sub-faces.
-                    // Emitted later if this face also has Out sub-faces.
-                    draft_candidates.push(sub.clone());
                 } else if class == Classification::In
                     && self.op == BooleanOpType::Difference
                     && !b_cylinders.is_empty()
@@ -1971,30 +1963,17 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
 
-            // Merge and emit On and Out sub-faces SEPARATELY (prevents
-            // merging sub-faces with different classifications).
-            let has_interface = false;
-            for (subs, is_on) in [(&mut kept_a_on, true), (&mut kept_a_out, false)] {
+            // Merge and emit On and Out sub-faces SEPARATELY (OCCT
+            // FillImagesFaces: same-classification sub-faces merge).
+            for subs in [&mut kept_a_on, &mut kept_a_out] {
                 if subs.len() > 1 { merge_subfaces_of_same_face(subs); }
                 if subs.len() > 1 { merge_vertex_adjacent_subs(subs); }
-                if !subs.is_empty() && (is_on || draft_candidates.is_empty()) {
-                    // has_interface tracked separately below
-                }
                 for sub in subs.iter() {
                     let src = self.ds.faces[fi].source_face_idx;
                     result.emit_face_with_origin(sub, false, FaceOrigin::FromA(src));
                     if let Surface3::Plane(p) = &sub.surface {
                         a_on_planes.push((p.normal, p.origin));
                     }
-                }
-            }
-            let has_interface = !kept_a_on.is_empty() || !kept_a_out.is_empty();
-            // OCCT BuildDraftFace: emit A-side In sub-faces as PLANE draft
-            // faces when the face also has kept Out/On sub-faces (interface).
-            if has_interface {
-                for draft in &draft_candidates {
-                    let src = self.ds.faces[fi].source_face_idx;
-                    result.emit_face_with_origin(draft, false, FaceOrigin::FromA(src));
                 }
             }
         }
