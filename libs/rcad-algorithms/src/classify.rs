@@ -467,19 +467,15 @@ fn classify_point_convex_planar(
         };
         let signed_dist = (point - origin).dot(normal);
         if signed_dist > flat_tol {
-            behind_all = false;
-            break; // In front of one face → outside
+            return Some(Classification::Out); // In front of one face → outside convex solid
         }
         if signed_dist.abs() <= flat_tol {
             on_any = true;
         }
     }
 
-    if behind_all {
-        Some(if on_any { Classification::On } else { Classification::In })
-    } else {
-        None // Let ray casting decide
-    }
+    // All faces have signed_dist <= flat_tol → point is inside or on boundary
+    Some(if on_any { Classification::On } else { Classification::In })
 }
 
 fn classify_point_internal(
