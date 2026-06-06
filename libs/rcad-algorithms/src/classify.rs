@@ -7,7 +7,7 @@
 //! - Spatial indexing and caching for performance
 //! - Parallel batch classification
 
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -441,41 +441,104 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
 /// face's plane. A closed convex solid has all face normals pointing outward;
 /// a point is INSIDE iff it's on the back side of EVERY face.
 /// Handles Plane and planar BSpline (degree-1) surfaces.
+/// OCCT IntTools_FClass2d-style 2D UV classifier: project point to each face's
+/// plane, check 2D point-in-polygon via ray casting.  For convex solids this
+/// is equivalent to the signed-distance approach but more robust for BSpline
+/// faces (no normal-direction dependency).
 fn classify_point_convex_planar(
     point: DVec3,
     solid_face_indices: &[usize],
     ds: &DS,
     tol: AdaptiveTolerance,
 ) -> Option<Classification> {
-    let mut behind_all = true;
-    let mut on_any = false;
     let flat_tol = tol.tolerance(ToleranceLevel::Normal);
+    let mut on_any = false;
 
     for &fi in solid_face_indices {
         let face = &ds.faces[fi];
-        let (origin, normal) = match &face.surface {
-            Surface3::Plane(p) => (p.origin, p.normal),
+
+        // Get plane for projection (for both Plane and planar BSpline)
+        let (plane, bnd_2d) = match &face.surface {
+            Surface3::Plane(p) => {
+                let bnd = build_face_boundary_2d(face, ds, p);
+                (p.clone(), bnd)
+            }
             Surface3::BSpline(bsp) => {
                 if let Some(n) = bspline_planar_normal(bsp) {
-                    (bsp.control_points[0][0], n)
+                    let p = Plane { origin: bsp.control_points[0][0], normal: n };
+                    let bnd = build_face_boundary_2d(face, ds, &p);
+                    (p, bnd)
                 } else {
-                    // Non-planar BSpline — fall back to ray casting
-                    return None;
+                    return None; // Non-planar BSpline — fall back to ray casting
                 }
             }
             _ => return None, // Non-planar surface — fall back to ray casting
         };
-        let signed_dist = (point - origin).dot(normal);
-        if signed_dist > flat_tol {
-            return Some(Classification::Out); // In front of one face → outside convex solid
+
+        if bnd_2d.len() < 3 {
+            continue;
         }
-        if signed_dist.abs() <= flat_tol {
+
+        // Project the 3D point to the face plane
+        let (u_axis, v_axis) = crate::inttools::edge_face::plane_local_basis(&plane);
+        let d = point - plane.origin;
+        let p2d = DVec2::new(d.dot(u_axis), d.dot(v_axis));
+
+        // Classify 2D point against face boundary polygon using ray casting
+        let mut inside = false;
+        let mut on_boundary = false;
+        let n = bnd_2d.len();
+        let mut j = n - 1;
+        for i in 0..n {
+            let (xi, yi) = (bnd_2d[i].x, bnd_2d[i].y);
+            let (xj, yj) = (bnd_2d[j].x, bnd_2d[j].y);
+
+            // Check if point is ON an edge
+            let edge_len = ((xj - xi).powi(2) + (yj - yi).powi(2)).sqrt();
+            if edge_len > 1e-15 {
+                let t = ((p2d.x - xi) * (xj - xi) + (p2d.y - yi) * (yj - yi)) / edge_len;
+                let t_clamped = t.clamp(0.0, edge_len);
+                let closest_x = xi + (xj - xi) * t_clamped / edge_len;
+                let closest_y = yi + (yj - yi) * t_clamped / edge_len;
+                if (p2d.x - closest_x).abs() <= flat_tol && (p2d.y - closest_y).abs() <= flat_tol {
+                    on_boundary = true;
+                    break;
+                }
+            }
+
+            // Ray casting (even-odd rule)
+            if ((yi > p2d.y) != (yj > p2d.y))
+                && (p2d.x < (xj - xi) * (p2d.y - yi) / (yj - yi) + xi)
+            {
+                inside = !inside;
+            }
+            j = i;
+        }
+
+        if on_boundary {
             on_any = true;
+            continue; // Check other faces too — need all to be On or In
+        }
+
+        if !inside {
+            // Point projects outside this face's boundary → outside the solid
+            return Some(Classification::Out);
         }
     }
 
-    // All faces have signed_dist <= flat_tol → point is inside or on boundary
+    // Point projects inside (or on) ALL face boundaries → inside or on
     Some(if on_any { Classification::On } else { Classification::In })
+}
+
+/// Build a 2D boundary polygon for a face, projected to the given plane.
+fn build_face_boundary_2d(face: &DSFace, ds: &DS, plane: &Plane) -> Vec<DVec2> {
+    let (u_axis, v_axis) = crate::inttools::edge_face::plane_local_basis(plane);
+    face.boundary_verts.iter()
+        .map(|&vi| {
+            let d = ds.vertices[vi].point - plane.origin;
+            DVec2::new(d.dot(u_axis), d.dot(v_axis))
+        })
+        .collect()
 }
 
 fn classify_point_internal(
