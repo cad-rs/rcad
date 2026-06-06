@@ -1875,7 +1875,8 @@ impl<'a> BooleanBuilder<'a> {
             let is_same_domain = matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
                 && self.find_same_domain_b_partner(fi, &b_faces).is_some();
             let face_split = sub_faces.len() > 1;
-            let mut kept_subs: Vec<SubFace> = Vec::new();
+            let mut kept_a_on: Vec<SubFace> = Vec::new();
+            let mut kept_a_out: Vec<SubFace> = Vec::new();
             let mut draft_candidates: Vec<SubFace> = Vec::new();
             for (si, sub) in sub_faces.iter().enumerate() {
                 // Same-domain trimmed faces: skip classifier (classifier can
@@ -1884,7 +1885,7 @@ impl<'a> BooleanBuilder<'a> {
                     if let Surface3::Plane(p) = &sub.surface {
                         a_on_planes.push((p.normal, p.origin));
                     }
-                    kept_subs.push(sub.clone());
+                    kept_a_on.push(sub.clone());
                     continue;
                 }
                 let class = classify_against_solid_for_boolean(self.op, SourceSide::A, sub, &b_faces, self.ds);
@@ -1935,7 +1936,11 @@ impl<'a> BooleanBuilder<'a> {
                     );
                 }
                 if keep {
-                    kept_subs.push(sub.clone());
+                    match class {
+                        Classification::On => kept_a_on.push(sub.clone()),
+                        Classification::Out => kept_a_out.push(sub.clone()),
+                        _ => {}
+                    }
                 } else if class == Classification::In
                     && self.op == BooleanOpType::Union
                     && matches!(sub.surface, Surface3::Plane(_))
@@ -1966,21 +1971,24 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
 
-            // Merge adjacent kept sub-faces (edge-based, then vertex-adjacent).
-            if kept_subs.len() > 1 {
-                merge_subfaces_of_same_face(&mut kept_subs);
-            }
-            if kept_subs.len() > 1 {
-                merge_vertex_adjacent_subs(&mut kept_subs);
-            }
-            let has_interface = !kept_subs.is_empty();
-            for sub in &kept_subs {
-                let src = self.ds.faces[fi].source_face_idx;
-                result.emit_face_with_origin(sub, false, FaceOrigin::FromA(src));
-                if let Surface3::Plane(p) = &sub.surface {
-                    a_on_planes.push((p.normal, p.origin));
+            // Merge and emit On and Out sub-faces SEPARATELY (prevents
+            // merging sub-faces with different classifications).
+            let has_interface = false;
+            for (subs, is_on) in [(&mut kept_a_on, true), (&mut kept_a_out, false)] {
+                if subs.len() > 1 { merge_subfaces_of_same_face(subs); }
+                if subs.len() > 1 { merge_vertex_adjacent_subs(subs); }
+                if !subs.is_empty() && (is_on || draft_candidates.is_empty()) {
+                    // has_interface tracked separately below
+                }
+                for sub in subs.iter() {
+                    let src = self.ds.faces[fi].source_face_idx;
+                    result.emit_face_with_origin(sub, false, FaceOrigin::FromA(src));
+                    if let Surface3::Plane(p) = &sub.surface {
+                        a_on_planes.push((p.normal, p.origin));
+                    }
                 }
             }
+            let has_interface = !kept_a_on.is_empty() || !kept_a_out.is_empty();
             // OCCT BuildDraftFace: emit A-side In sub-faces as PLANE draft
             // faces when the face also has kept Out/On sub-faces (interface).
             if has_interface {
