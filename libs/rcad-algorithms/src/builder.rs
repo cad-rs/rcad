@@ -2595,11 +2595,9 @@ impl<'a> BooleanBuilder<'a> {
         let fi = &face.face_info;
 
         // OCCT wire-based splitting (edge graph traversal).
-        // Disabled pending proper OCCT alignment - currently produces
-        // wrong sub-face counts for BSpline faces.  Falls through to
-        // centroid-projection (planar BSpline) / polygon clipping (Plane).
-        // See AGENTS.md "BSPline→PLANE conversion issues" for debug tips.
-        if false && !fi.curves_in.is_empty() && !self.has_crossing_ics(face_idx) {
+        // OCCT BOPAlgo_WireSplitter-aligned: per-vertex EdgeInfo with
+        // ClockWiseAngle rightmost-turn traversal.
+        if !fi.curves_in.is_empty() && !self.has_crossing_ics(face_idx) {
             let subs = split_face_wire_based(self.ds, face_idx);
             if subs.len() >= 2 { return subs; }
         }
@@ -9460,222 +9458,135 @@ fn segments_intersect_interior(a1: DVec2, a2: DVec2, b1: DVec2, b2: DVec2, tol: 
     (o1 > eps) != (o2 > eps) && (o3 > eps) != (o4 > eps)
 }
 
-/// OCCT wire-based face splitting: build edge graph from boundary + intersection
-/// curves, traverse using rightmost-turn (CCW angle ordering) to find sub-face cycles.
-///
-/// OCCT BOPAlgo_WireSplitter works in UV space using pcurves. For planar faces
-/// (including planar BSpline), projecting boundary + IC endpoints to the face plane
-/// and building a 2D edge graph is equivalent.
-///
-/// Returns all cycles found. Caller filters: the largest (by signed area, CCW) is
-/// the outer boundary; the rest are sub-faces.
+/// OCCT BOPAlgo_WireSplitter-aligned face splitting with per-vertex
+/// EdgeInfo (edge, IsIn, angle, passed) and ClockWiseAngle traversal.
 fn split_face_wire_based(ds: &DS, face_idx: usize) -> Vec<SubFace> {
-    let face = &ds.faces[face_idx];
-    if face.boundary_verts.len() < 3 || face.face_info.curves_in.is_empty() {
-        return vec![];
-    }
-    let tol = TOLERANCE_MESH_LEGACY;
-    let quant = |p: DVec3| -> (i64, i64, i64) {
-        ((p.x / tol).round() as i64,
-         (p.y / tol).round() as i64,
-         (p.z / tol).round() as i64)
-    };
+    #[derive(Clone)]
+    struct EdgeInfo { edge_idx: usize, is_in: bool, angle: f64, passed: bool }
 
-    // Collect all unique vertices with their original 3D positions
-    let mut vert_pos: std::collections::BTreeMap<(i64, i64, i64), DVec3> = std::collections::BTreeMap::new();
-    for &vi in &face.boundary_verts {
-        let p = ds.vertices[vi].point;
-        vert_pos.entry(quant(p)).or_insert(p);
-    }
+    let face = &ds.faces[face_idx];
+    if face.boundary_verts.len() < 3 || face.face_info.curves_in.is_empty() { return vec![]; }
+
+    // 1. Collect all unique DS vertex indices on this face
+    let mut all_verts: std::collections::BTreeSet<usize> = face.boundary_verts.iter().copied().collect();
     for &ci in &face.face_info.curves_in {
         let ic = &ds.intersection_curves[ci];
-        let p1 = ds.vertices[ic.start_vertex].point;
-        let p2 = ds.vertices[ic.end_vertex].point;
-        vert_pos.entry(quant(p1)).or_insert(p1);
-        vert_pos.entry(quant(p2)).or_insert(p2);
+        all_verts.insert(ic.start_vertex); all_verts.insert(ic.end_vertex);
     }
+    let vert_list: Vec<usize> = all_verts.iter().copied().collect();
+    let vert_idx_of: std::collections::HashMap<usize, usize> = vert_list.iter().enumerate()
+        .map(|(i, &v)| (v, i)).collect();
 
-    // Build undirected edges. Directed traversal picks the CCW-next outgoing edge.
-    // Edge tuple: (a, b, is_intersection_curve, used_flag)
-    let mut edges: Vec<((i64, i64, i64), (i64, i64, i64), bool, bool)> = Vec::new();
-
-    // Boundary edges
+    // 2. Build undirected edges (OCCT: edges in ConnexityBlock)
+    let mut edges: Vec<(usize, usize, bool)> = Vec::new();
     for i in 0..face.boundary_verts.len() {
         let j = (i + 1) % face.boundary_verts.len();
-        let a = quant(ds.vertices[face.boundary_verts[i]].point);
-        let b = quant(ds.vertices[face.boundary_verts[j]].point);
-        if a != b {
-            edges.push((a, b, false, false));
-        }
+        let a = face.boundary_verts[i]; let b = face.boundary_verts[j];
+        if a != b { edges.push((a, b, false)); }
     }
-    // Intersection curve edges
     for &ci in &face.face_info.curves_in {
         let ic = &ds.intersection_curves[ci];
-        let a = quant(ds.vertices[ic.start_vertex].point);
-        let b = quant(ds.vertices[ic.end_vertex].point);
-        if a != b && vert_pos.contains_key(&a) && vert_pos.contains_key(&b) {
-            edges.push((a, b, true, false));
-        }
+        let a = ic.start_vertex; let b = ic.end_vertex;
+        if a != b && all_verts.contains(&a) && all_verts.contains(&b) { edges.push((a, b, true)); }
     }
-    if edges.is_empty() {
-        return vec![];
-    }
+    if edges.is_empty() { return vec![]; }
 
-    // Build vertex → incident edge indices map
-    let mut vert_edges: std::collections::HashMap<(i64, i64, i64), Vec<usize>> =
-        std::collections::HashMap::new();
-    for (ei, &(a, b, _, _)) in edges.iter().enumerate() {
-        vert_edges.entry(a).or_default().push(ei);
-        vert_edges.entry(b).or_default().push(ei);
-    }
-
-    // Project all vertices to 2D for angle computation
+    // 3. Project to 2D for angle computation (OCCT: BRepAdaptor_Surface + pcurves)
     let plane = match &face.surface {
         Surface3::Plane(p) => p.clone(),
         Surface3::BSpline(bsp) if rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS) => {
             rcad_kernel::geom::bspline_to_plane(bsp)
         }
-        _ => {
-            return vec![];
-        }
+        _ => return vec![],
     };
     let (u_ax, v_ax) = plane_local_basis(&plane);
-    let uv_of = |k: (i64, i64, i64)| -> DVec2 {
-        let p = vert_pos[&k];
-        let d = p - plane.origin;
+    let to_2d = |vi: usize| -> DVec2 {
+        let p = ds.vertices[vi].point; let d = p - plane.origin;
         DVec2::new(d.dot(u_ax), d.dot(v_ax))
     };
 
-    // Mark vertices whose degree != 2 (junctions with intersection curves).
-    // Boundary-only vertices have degree=2. IC endpoints have degree=3+.
-    let junction: std::collections::HashSet<(i64, i64, i64)> = vert_edges
-        .iter()
-        .filter(|(_, eis)| eis.len() != 2)
-        .map(|(k, _)| *k)
-        .collect();
+    // 4. Build mySmartMap: per-vertex EdgeInfo list (OCCT WireSplitter_1.cxx:138-195)
+    // Each undirected edge creates 4 EdgeInfo entries:
+    //   At A: forward (A->B, IsIn=false), reverse (B->A, IsIn=true)
+    //   At B: forward (B->A, IsIn=false), reverse (A->B, IsIn=true)
+    let nv = vert_list.len();
+    let mut my_smart_map: Vec<Vec<EdgeInfo>> = vec![Vec::new(); nv];
+    for (ei, &(va, vb, _)) in edges.iter().enumerate() {
+        let ai = vert_idx_of[&va]; let bi = vert_idx_of[&vb];
+        let pa = to_2d(va); let pb = to_2d(vb);
+        let dab = (pb - pa).normalize_or_zero();
+        let a_ab = dab.y.atan2(dab.x).rem_euclid(std::f64::consts::TAU); // angle A->B
+        let dba = (pa - pb).normalize_or_zero();
+        let a_ba = dba.y.atan2(dba.x).rem_euclid(std::f64::consts::TAU); // angle B->A
+        my_smart_map[ai].push(EdgeInfo { edge_idx: ei, is_in: false, angle: a_ab, passed: false });
+        my_smart_map[ai].push(EdgeInfo { edge_idx: ei, is_in: true,  angle: a_ba, passed: false });
+        my_smart_map[bi].push(EdgeInfo { edge_idx: ei, is_in: false, angle: a_ba, passed: false });
+        my_smart_map[bi].push(EdgeInfo { edge_idx: ei, is_in: true,  angle: a_ab, passed: false });
+    }
 
-    // ── Cycle traversal ──────────────────────────────────────────────────
-    // For each unused edge, walk from a→b using rightmost-turn at each vertex.
-    // A completed cycle (back to start vertex) is a sub-face boundary.
-    let mut used = vec![false; edges.len()];
+    // 5. Traverse via rightmost-turn (OCCT Path function, WireSplitter_1.cxx:359-550)
     let mut subs: Vec<SubFace> = Vec::new();
 
-    // Walk one cycle starting from edge `start_ei` in direction a→b.
-    // Safety: limit to edges.len()+1 iterations to prevent infinite loop.
-    for _ in 0..=edges.len() {
-        let start_ei = match edges.iter().position(|(_, _, _, u)| !u) {
-            Some(ei) => ei, None => break,
-        };
-        let (a, b, _, _) = edges[start_ei];
-        // Must have at least one junction vertex to avoid taking the whole
-        // boundary as a cycle before ICs are used.
-        if !junction.contains(&a) && !junction.contains(&b) {
-            // If this is a pure-boundary edge with no junction at either end,
-            // it cannot start a split.  Mark it used and move on.
-            used[start_ei] = true;
-            continue;
-        }
-        used[start_ei] = true;
-
-        let mut cur = b;
-        let mut prev = a;
-        // Start with the first two vertices
-        let mut cycle_keys: Vec<(i64, i64, i64)> = vec![a, b];
-
-        loop {
-            // At vertex `cur` (arriving from `prev`), find the outgoing edge
-            // with smallest positive ClockWiseAngle (rightmost turn).
-            let incoming_uv = uv_of(cur) - uv_of(prev);
-            let in_len = incoming_uv.length();
-            if in_len < 1e-15 {
-                break; // degenerate
+    for v_start in 0..nv {
+        let n_ei = my_smart_map[v_start].len();
+        let mut ei_local = 0usize;
+        while ei_local < n_ei {
+            if my_smart_map[v_start][ei_local].passed || my_smart_map[v_start][ei_local].is_in {
+                ei_local += 1; continue;
             }
 
-            let mut best: Option<((i64, i64, i64), usize)> = None;
-            let mut best_cw = std::f64::consts::TAU;
+            let mut cur_v = v_start;
+            let mut cur_ei = ei_local;
+            let mut cycle: Vec<DVec3> = Vec::new();
 
-            if let Some(eis) = vert_edges.get(&cur) {
-                for &ei in eis.iter() {
-                    if used[ei] {
-                        continue;
-                    }
-                    let (ea, eb, _, _) = edges[ei];
-                    let other = if ea == cur { eb } else { ea };
-                    if other == prev {
-                        // Going back the way we came — only allowed as last resort
-                        continue;
-                    }
+            loop {
+                // Mark as passed (OCCT: SetPassed(true))
+                if my_smart_map[cur_v][cur_ei].passed { cycle.clear(); break; }
+                my_smart_map[cur_v][cur_ei].passed = true;
 
-                    let outgoing_uv = uv_of(other) - uv_of(cur);
-                    let out_len = outgoing_uv.length();
-                    if out_len < 1e-15 {
-                        continue;
-                    }
+                let ei = &my_smart_map[cur_v][cur_ei];
+                let (va, vb, _) = edges[ei.edge_idx];
+                let ev = [vert_idx_of[&va], vert_idx_of[&vb]];
+                let other_v = if ev[0] == cur_v { ev[1] } else { ev[0] };
 
-                    // ClockWiseAngle = (AngleIn - AngleOut + 2π) % 2π
-                    // Using atan2 of cross/dot with sign convention:
-                    //   cross = |in|·|out|·sin(θ)  where θ = angle from in to out (CCW)
-                    //   We want CW angle = -θ (mod 2π)
-                    //   cw_angle = (-atan2(cross, dot) + 2π) % 2π
-                    let cross = incoming_uv.x * outgoing_uv.y - incoming_uv.y * outgoing_uv.x;
-                    let dot = incoming_uv.x * outgoing_uv.x + incoming_uv.y * outgoing_uv.y;
-                    let cw_angle = (-cross.atan2(dot)).rem_euclid(std::f64::consts::TAU);
+                // Add current vertex to cycle
+                cycle.push(ds.vertices[vert_list[cur_v]].point);
 
-                    if cw_angle > 1e-12 && cw_angle < best_cw {
-                        best_cw = cw_angle;
-                        best = Some((other, ei));
+                // If we returned to start vertex, cycle is complete
+                if other_v == v_start && cycle.len() >= 2 { break; }
+
+                // Find AngleIn at other_v (same edge, IsIn=true: we arrive at the end of the edge)
+                let incoming_angle = my_smart_map[other_v].iter()
+                    .find(|e| e.edge_idx == ei.edge_idx && e.is_in)
+                    .map(|e| e.angle).unwrap_or(0.0);
+
+                // Select the outgoing edge with smallest ClockWiseAngle
+                // ClockWiseAngle = (AngleIn - AngleOut + 2pi) % 2pi
+                let mut best_oi: Option<usize> = None;
+                let mut best_cw = std::f64::consts::TAU;
+                for (oi, oei) in my_smart_map[other_v].iter().enumerate() {
+                    if oei.passed || oei.is_in { continue; }
+                    // Skip reverse of incoming edge unless no alternative
+                    if oei.edge_idx == ei.edge_idx {
+                        let has_other = my_smart_map[other_v].iter().any(|e|
+                            e.edge_idx != ei.edge_idx && !e.passed && !e.is_in);
+                        if has_other { continue; }
                     }
+                    let cw = (incoming_angle - oei.angle).rem_euclid(std::f64::consts::TAU);
+                    if cw > 1e-12 && cw < best_cw { best_cw = cw; best_oi = Some(oi); }
                 }
-            }
 
-            let (next, ei) = match best {
-                Some(v) => v,
-                None => {
-                    // No outgoing edge found — dead end. Discard this partial walk.
-                    cycle_keys.clear();
-                    break;
+                match best_oi {
+                    Some(oi) => { cur_v = other_v; cur_ei = oi; }
+                    None => { cycle.clear(); break; }
                 }
-            };
 
-            used[ei] = true;
-
-            // Check for cycle completion
-            if next == cycle_keys[0] {
-                break; // closed cycle
+                if cycle.len() > vert_list.len() + edges.len() { cycle.clear(); break; }
             }
 
-            // Avoid revisiting a vertex we've already passed (except the start vertex)
-            // This prevents infinite loops on boundary-parallel ICs.
-            if cycle_keys.len() > 2 && cycle_keys[1..].contains(&next) {
-                break;
-            }
-
-            cycle_keys.push(next);
-            prev = cur;
-            cur = next;
-
-            // Safety: prevent runaway
-            if cycle_keys.len() > vert_pos.len() + edges.len() {
-                cycle_keys.clear();
-                break;
-            }
-        }
-
-        if cycle_keys.len() >= 3 && cycle_keys[0] == *cycle_keys.last().unwrap_or(&(0, 0, 0)) {
-            // Deduplicate consecutive identical keys
-            let mut dedup: Vec<(i64, i64, i64)> = Vec::new();
-            for &k in &cycle_keys {
-                if dedup.last().map_or(true, |&l| l != k) {
-                    dedup.push(k);
-                }
-            }
-            if dedup.len() >= 3
-                && dedup[0] == *dedup.last().unwrap()
-            {
-                // Convert to 3D boundary
-                let bnd: Vec<DVec3> = dedup.iter().map(|k| vert_pos[k]).collect();
+            if cycle.len() >= 3 {
                 subs.push(SubFace {
-                    boundary: bnd,
+                    boundary: cycle,
                     surface: face.surface.clone(),
                     normal: face.normal,
                     uv_centroid: None,
@@ -9684,29 +9595,16 @@ fn split_face_wire_based(ds: &DS, face_idx: usize) -> Vec<SubFace> {
                     inner_wires: vec![],
                 });
             }
+
+            ei_local += 1;
         }
     }
 
-    // ── Filter: return only faces that share at least one IC edge ────────
-    // The outer boundary (no IC edges) should be excluded.
-    let ic_edge_set: std::collections::HashSet<usize> = edges
-        .iter()
-        .enumerate()
-        .filter(|(_, (_, _, is_ic, _))| *is_ic)
-        .map(|(ei, _)| ei)
-        .collect();
-
-    subs.retain(|sf| {
-        // Check if the sub-face's boundary uses any IC edge
-        let tol2 = tol * tol;
-        sf.boundary.iter().any(|p| {
-            edges.iter().enumerate().any(|(ei, (ea, eb, is_ic, _))| {
-                *is_ic
-                    && (vert_pos[ea] - *p).length_squared() < tol2
-                    && sf.boundary.iter().any(|p2| (vert_pos[eb] - *p2).length_squared() < tol2)
-            })
-        })
-    });
-
+    // 6. Filter: keep only cycles that include IC edges (exclude outer boundary)
+    subs.retain(|sf| sf.boundary.iter().any(|p|
+        edges.iter().enumerate().any(|(ei, (va, vb, ic))|
+            *ic && (ds.vertices[*va].point - *p).length_squared() < 1e-12
+            && sf.boundary.iter().any(|p2|
+                (ds.vertices[*vb].point - *p2).length_squared() < 1e-12))));
     subs
 }
