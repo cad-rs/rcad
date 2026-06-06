@@ -1512,6 +1512,13 @@ impl<'a> BooleanBuilder<'a> {
             let mid = (p_start + p_end) * 0.5;
             let d_mid = mid - plane.origin;
             let mid_2d = DVec2::new(d_mid.dot(u_axis), d_mid.dot(v_axis));
+            // Split toward the polygon centroid (OCCT wire-splitter uses
+            // edge connectivity, so the split direction is implicit from
+            // shared vertices.  Our polygon clipper needs an explicit
+            // direction: midpoint toward centroid splits perpendicular to
+            // the IC, which handles most cases correctly.
+            let cs = DVec2::new((p_start - plane.origin).dot(u_axis), (p_start - plane.origin).dot(v_axis));
+            let ce = DVec2::new((p_end - plane.origin).dot(u_axis), (p_end - plane.origin).dot(v_axis));
             let split_dir = (centroid - mid_2d).normalize_or_zero();
             if split_dir.length_squared() < 0.1 { continue; }
             let mut next_polys = Vec::new();
