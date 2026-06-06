@@ -1481,6 +1481,57 @@ impl<'a> BooleanBuilder<'a> {
     /// polygon along the line from the intersection curve's midpoint toward the
     /// polygon centroid.  This matches OCCT's wire-based approach where each
     /// intersection edge naturally connects at shared vertices on the boundary.
+    /// Check if any pair of intersection curves on this face cross at an
+    /// interior point (not at a shared vertex).  Crossing ICs make the edge
+    /// graph non-planar, which the simple wire-traversal cannot handle.
+    fn has_crossing_ics(&self, face_idx: usize) -> bool {
+        let face = &self.ds.faces[face_idx];
+        let cids: Vec<usize> = face.face_info.curves_in.iter().copied().collect();
+        if cids.len() < 2 { return false; }
+
+        // Project IC endpoints to 2D (plane or UV space)
+        let plane = match &face.surface {
+            Surface3::Plane(p) => p.clone(),
+            Surface3::BSpline(bsp) if rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS) => {
+                rcad_kernel::geom::bspline_to_plane(bsp)
+            }
+            _ => return false,
+        };
+        let (u_ax, v_ax) = plane_local_basis(&plane);
+        let to_2d = |p: DVec3| -> DVec2 {
+            let d = p - plane.origin;
+            DVec2::new(d.dot(u_ax), d.dot(v_ax))
+        };
+
+        // Collect 2D endpoints for each IC
+        let ic_segments: Vec<(DVec2, DVec2, usize, usize)> = cids.iter().map(|&ci| {
+            let ic = &self.ds.intersection_curves[ci];
+            let p1 = to_2d(self.ds.vertices[ic.start_vertex].point);
+            let p2 = to_2d(self.ds.vertices[ic.end_vertex].point);
+            (p1, p2, ic.start_vertex, ic.end_vertex)
+        }).collect();
+
+        // Check each pair for interior intersection
+        let tol = TOLERANCE_MESH_LEGACY;
+        for i in 0..ic_segments.len() {
+            let (a1, a2, av1, av2) = &ic_segments[i];
+            for j in (i + 1)..ic_segments.len() {
+                let (b1, b2, bv1, bv2) = &ic_segments[j];
+
+                // Skip if they share a vertex (endpoint connection, not crossing)
+                if av1 == bv1 || av1 == bv2 || av2 == bv1 || av2 == bv2 {
+                    continue;
+                }
+
+                // Check if the two line segments intersect at an interior point
+                if segments_intersect_interior(*a1, *a2, *b1, *b2, tol) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     fn split_planar_bspline_occt(
         &self,
         face_idx: usize,
@@ -2543,13 +2594,12 @@ impl<'a> BooleanBuilder<'a> {
         let face = &self.ds.faces[face_idx];
         let fi = &face.face_info;
 
-        // OCCT wire-based splitting: build edge graph from boundary edges and
-        // intersection curves, traverse to find cycles (sub-faces).
-        if !fi.curves_in.is_empty() {
+        // OCCT wire-based splitting (edge graph traversal).
+        // Only used when ICs don't cross (planar graph).  When ICs cross at
+        // interior points, polygon clipping / centroid-projection handle it.
+        if !fi.curves_in.is_empty() && !self.has_crossing_ics(face_idx) {
             let subs = split_face_wire_based(self.ds, face_idx);
-            if subs.len() >= 2 {
-                return subs;
-            }
+            if subs.len() >= 2 { return subs; }
         }
 
         // Planar BSpline: OCCT's BOPAlgo_BuilderFace uses wire-based splitting.
@@ -9375,114 +9425,282 @@ fn merge_vertex_adjacent_subs(subs: &mut Vec<SubFace>) {
     }
 }
 
-/// OCCT wire-based splitting: build edge graph from boundary edges and
-/// intersection curves, traverse cycles -> sub-faces.
-fn split_face_wire_based(ds: &DS, face_idx: usize) -> Vec<SubFace> {
-    let face = &ds.faces[face_idx];
-    if face.boundary_verts.len() < 3 { return vec![]; }
-    let tol = TOLERANCE_MESH_LEGACY;
-    let quant = |p: DVec3| -> (i64,i64,i64) {
-        ((p.x/tol).round() as i64, (p.y/tol).round() as i64, (p.z/tol).round() as i64)
+/// Check if two 2D line segments intersect at an interior point (not just at
+/// endpoints).  Uses the orientation-based crossing test.
+fn segments_intersect_interior(a1: DVec2, a2: DVec2, b1: DVec2, b2: DVec2, tol: f64) -> bool {
+    let orient = |p: DVec2, q: DVec2, r: DVec2| -> f64 {
+        (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)
     };
+    let o1 = orient(a1, a2, b1);
+    let o2 = orient(a1, a2, b2);
+    let o3 = orient(b1, b2, a1);
+    let o4 = orient(b1, b2, a2);
 
-    // Collect all vertices
-    let mut vert_set = std::collections::BTreeSet::<(i64,i64,i64)>::new();
-    for &vi in &face.boundary_verts { vert_set.insert(quant(ds.vertices[vi].point)); }
-    for &ci in &face.face_info.curves_in {
-        let ic = &ds.intersection_curves[ci];
-        vert_set.insert(quant(ds.vertices[ic.start_vertex].point));
-        vert_set.insert(quant(ds.vertices[ic.end_vertex].point));
+    // Interior intersection: endpoints have opposite orientations (general case)
+    let eps = tol.max(1e-12);
+
+    if o1.abs() < eps || o2.abs() < eps || o3.abs() < eps || o4.abs() < eps {
+        // Endpoint-on-edge case — check if the endpoint lies on the segment interior
+        // This is a "crossing at non-vertex" when an IC endpoint lies on another IC.
+        // Return true only if an endpoint of one segment lies strictly inside the other.
+        let on_segment = |p: DVec2, s1: DVec2, s2: DVec2| -> bool {
+            let d = (s2 - s1).length();
+            if d < eps { return false; }
+            (p - s1).length() + (p - s2).length() - d < eps
+        };
+        return (o1.abs() < eps && on_segment(b1, a1, a2) && b1 != a1 && b1 != a2)
+            || (o2.abs() < eps && on_segment(b2, a1, a2) && b2 != a1 && b2 != a2)
+            || (o3.abs() < eps && on_segment(a1, b1, b2) && a1 != b1 && a1 != b2)
+            || (o4.abs() < eps && on_segment(a2, b1, b2) && a2 != b1 && a2 != b2);
     }
 
-    // Build boundary edges + intersection curve edges
-    let mut edges: Vec<((i64,i64,i64),(i64,i64,i64))> = Vec::new();
+    // General case: opposite orientations on both sides
+    (o1 > eps) != (o2 > eps) && (o3 > eps) != (o4 > eps)
+}
+
+/// OCCT wire-based face splitting: build edge graph from boundary + intersection
+/// curves, traverse using rightmost-turn (CCW angle ordering) to find sub-face cycles.
+///
+/// OCCT BOPAlgo_WireSplitter works in UV space using pcurves. For planar faces
+/// (including planar BSpline), projecting boundary + IC endpoints to the face plane
+/// and building a 2D edge graph is equivalent.
+///
+/// Returns all cycles found. Caller filters: the largest (by signed area, CCW) is
+/// the outer boundary; the rest are sub-faces.
+fn split_face_wire_based(ds: &DS, face_idx: usize) -> Vec<SubFace> {
+    let face = &ds.faces[face_idx];
+    if face.boundary_verts.len() < 3 || face.face_info.curves_in.is_empty() {
+        return vec![];
+    }
+    let tol = TOLERANCE_MESH_LEGACY;
+    let quant = |p: DVec3| -> (i64, i64, i64) {
+        ((p.x / tol).round() as i64,
+         (p.y / tol).round() as i64,
+         (p.z / tol).round() as i64)
+    };
+
+    // Collect all unique vertices with their original 3D positions
+    let mut vert_pos: std::collections::BTreeMap<(i64, i64, i64), DVec3> = std::collections::BTreeMap::new();
+    for &vi in &face.boundary_verts {
+        let p = ds.vertices[vi].point;
+        vert_pos.entry(quant(p)).or_insert(p);
+    }
+    for &ci in &face.face_info.curves_in {
+        let ic = &ds.intersection_curves[ci];
+        let p1 = ds.vertices[ic.start_vertex].point;
+        let p2 = ds.vertices[ic.end_vertex].point;
+        vert_pos.entry(quant(p1)).or_insert(p1);
+        vert_pos.entry(quant(p2)).or_insert(p2);
+    }
+
+    // Build undirected edges. Directed traversal picks the CCW-next outgoing edge.
+    // Edge tuple: (a, b, is_intersection_curve, used_flag)
+    let mut edges: Vec<((i64, i64, i64), (i64, i64, i64), bool, bool)> = Vec::new();
+
+    // Boundary edges
     for i in 0..face.boundary_verts.len() {
         let j = (i + 1) % face.boundary_verts.len();
         let a = quant(ds.vertices[face.boundary_verts[i]].point);
         let b = quant(ds.vertices[face.boundary_verts[j]].point);
-        if a != b { edges.push(if a <= b {(a,b)} else {(b,a)}); }
+        if a != b {
+            edges.push((a, b, false, false));
+        }
     }
+    // Intersection curve edges
     for &ci in &face.face_info.curves_in {
         let ic = &ds.intersection_curves[ci];
         let a = quant(ds.vertices[ic.start_vertex].point);
         let b = quant(ds.vertices[ic.end_vertex].point);
-        if a != b && vert_set.contains(&a) && vert_set.contains(&b) {
-            edges.push(if a <= b {(a,b)} else {(b,a)});
+        if a != b && vert_pos.contains_key(&a) && vert_pos.contains_key(&b) {
+            edges.push((a, b, true, false));
         }
     }
-    if edges.len() < 3 { return vec![]; }
-
-    // Build adjacency
-    use std::collections::BTreeMap;
-    let mut adj: BTreeMap<(i64,i64,i64), Vec<(i64,i64,i64)>> = BTreeMap::new();
-    for &(a, b) in &edges {
-        adj.entry(a).or_default().push(b);
-        adj.entry(b).or_default().push(a);
+    if edges.is_empty() {
+        return vec![];
     }
 
-    // 2D UV for angle ordering
+    // Build vertex → incident edge indices map
+    let mut vert_edges: std::collections::HashMap<(i64, i64, i64), Vec<usize>> =
+        std::collections::HashMap::new();
+    for (ei, &(a, b, _, _)) in edges.iter().enumerate() {
+        vert_edges.entry(a).or_default().push(ei);
+        vert_edges.entry(b).or_default().push(ei);
+    }
+
+    // Project all vertices to 2D for angle computation
     let plane = match &face.surface {
         Surface3::Plane(p) => p.clone(),
-        Surface3::BSpline(bsp) if bspline_is_planar(bsp, TOLERANCE_ABS) => bspline_to_plane(bsp),
-        _ => { return vec![]; }
+        Surface3::BSpline(bsp) if rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS) => {
+            rcad_kernel::geom::bspline_to_plane(bsp)
+        }
+        _ => {
+            return vec![];
+        }
     };
     let (u_ax, v_ax) = plane_local_basis(&plane);
-    let to_2d = |k: (i64,i64,i64)| -> DVec2 {
-        let p = DVec3::new(k.0 as f64*tol, k.1 as f64*tol, k.2 as f64*tol);
+    let uv_of = |k: (i64, i64, i64)| -> DVec2 {
+        let p = vert_pos[&k];
         let d = p - plane.origin;
         DVec2::new(d.dot(u_ax), d.dot(v_ax))
     };
-    let mut uv_of: BTreeMap<(i64,i64,i64), DVec2> = BTreeMap::new();
-    for &v in vert_set.iter().chain(adj.keys()) { uv_of.entry(v).or_insert_with(|| to_2d(v)); }
 
-    // Traverse cycles
-    let mut used = std::collections::BTreeSet::<((i64,i64,i64),(i64,i64,i64))>::new();
+    // Mark vertices whose degree != 2 (junctions with intersection curves).
+    // Boundary-only vertices have degree=2. IC endpoints have degree=3+.
+    let junction: std::collections::HashSet<(i64, i64, i64)> = vert_edges
+        .iter()
+        .filter(|(_, eis)| eis.len() != 2)
+        .map(|(k, _)| *k)
+        .collect();
+
+    // ── Cycle traversal ──────────────────────────────────────────────────
+    // For each unused edge, walk from a→b using rightmost-turn at each vertex.
+    // A completed cycle (back to start vertex) is a sub-face boundary.
+    let mut used = vec![false; edges.len()];
     let mut subs: Vec<SubFace> = Vec::new();
 
-    loop {
-        let start_edge = edges.iter().find(|&&(a,b)|
-            !used.contains(&(a,b)) && !used.contains(&(b,a)) &&
-            adj.get(&a).map_or(false, |v| v.len() >= 2) &&
-            adj.get(&b).map_or(false, |v| v.len() >= 2));
-        let &(mut cur, mut next) = match start_edge { Some(e) => { used.insert(*e); e } _ => break };
-        let start_v = cur;
-        let mut bnd: Vec<DVec3> = Vec::new();
-        bnd.push(DVec3::new(cur.0 as f64*tol, cur.1 as f64*tol, cur.2 as f64*tol));
+    // Walk one cycle starting from edge `start_ei` in direction a→b.
+    'walk: while let Some(start_ei) = edges.iter().position(|(_, _, _, u)| !u) {
+        let (a, b, _, _) = edges[start_ei];
+        // Must have at least one junction vertex to avoid taking the whole
+        // boundary as a cycle before ICs are used.
+        if !junction.contains(&a) && !junction.contains(&b) {
+            // If this is a pure-boundary edge with no junction at either end,
+            // it cannot start a split.  Mark it used and move on.
+            used[start_ei] = true;
+            continue 'walk;
+        }
+        used[start_ei] = true;
+
+        let mut cur = b;
+        let mut prev = a;
+        // Start with the first two vertices
+        let mut cycle_keys: Vec<(i64, i64, i64)> = vec![a, b];
 
         loop {
-            let neighbors = match adj.get(&next) { Some(v) => v, _ => break };
-            // Pick next edge: smallest positive CCW angle from incoming
-            let incoming = uv_of[&next] - uv_of[&cur];
-            let mut best: Option<(i64,i64,i64)> = None;
-            let mut best_angle = f64::MAX;
-            for &n in neighbors {
-                if n == cur && neighbors.len() > 2 { continue; }
-                let key = if next <= n {(next,n)} else {(n,next)};
-                if used.contains(&key) { continue; }
-                let out = uv_of[&n] - uv_of[&next];
-                let cross = incoming.x * out.y - incoming.y * out.x;
-                let dot = incoming.x * out.x + incoming.y * out.y;
-                let angle = (-cross).atan2(dot).rem_euclid(std::f64::consts::TAU);
-                if angle < best_angle { best_angle = angle; best = Some(n); }
+            // At vertex `cur` (arriving from `prev`), find the outgoing edge
+            // with smallest positive ClockWiseAngle (rightmost turn).
+            let incoming_uv = uv_of(cur) - uv_of(prev);
+            let in_len = incoming_uv.length();
+            if in_len < 1e-15 {
+                break; // degenerate
             }
-            let nxt = match best { Some(n) => n, _ => break };
-            let key = if next <= nxt {(next,nxt)} else {(nxt,next)};
-            if used.contains(&key) { break; }
-            used.insert(key);
-            cur = next; next = nxt;
-            bnd.push(DVec3::new(next.0 as f64*tol, next.1 as f64*tol, next.2 as f64*tol));
-            if next == start_v { break; }
+
+            let mut best: Option<((i64, i64, i64), usize)> = None;
+            let mut best_cw = std::f64::consts::TAU;
+
+            if let Some(eis) = vert_edges.get(&cur) {
+                for &ei in eis.iter() {
+                    if used[ei] {
+                        continue;
+                    }
+                    let (ea, eb, _, _) = edges[ei];
+                    let other = if ea == cur { eb } else { ea };
+                    if other == prev {
+                        // Going back the way we came — only allowed as last resort
+                        continue;
+                    }
+
+                    let outgoing_uv = uv_of(other) - uv_of(cur);
+                    let out_len = outgoing_uv.length();
+                    if out_len < 1e-15 {
+                        continue;
+                    }
+
+                    // ClockWiseAngle = (AngleIn - AngleOut + 2π) % 2π
+                    // Using atan2 of cross/dot with sign convention:
+                    //   cross = |in|·|out|·sin(θ)  where θ = angle from in to out (CCW)
+                    //   We want CW angle = -θ (mod 2π)
+                    //   cw_angle = (-atan2(cross, dot) + 2π) % 2π
+                    let cross = incoming_uv.x * outgoing_uv.y - incoming_uv.y * outgoing_uv.x;
+                    let dot = incoming_uv.x * outgoing_uv.x + incoming_uv.y * outgoing_uv.y;
+                    let cw_angle = (-cross.atan2(dot)).rem_euclid(std::f64::consts::TAU);
+
+                    if cw_angle > 1e-12 && cw_angle < best_cw {
+                        best_cw = cw_angle;
+                        best = Some((other, ei));
+                    }
+                }
+            }
+
+            let (next, ei) = match best {
+                Some(v) => v,
+                None => {
+                    // No outgoing edge found — dead end. Discard this partial walk.
+                    cycle_keys.clear();
+                    break;
+                }
+            };
+
+            used[ei] = true;
+
+            // Check for cycle completion
+            if next == cycle_keys[0] {
+                break; // closed cycle
+            }
+
+            // Avoid revisiting a vertex we've already passed (except the start vertex)
+            // This prevents infinite loops on boundary-parallel ICs.
+            if cycle_keys.len() > 2 && cycle_keys[1..].contains(&next) {
+                break;
+            }
+
+            cycle_keys.push(next);
+            prev = cur;
+            cur = next;
+
+            // Safety: prevent runaway
+            if cycle_keys.len() > vert_pos.len() + edges.len() {
+                cycle_keys.clear();
+                break;
+            }
         }
-        if bnd.len() >= 3 {
-            let mut dedup: Vec<DVec3> = Vec::new();
-            for p in &bnd {
-                if dedup.last().map_or(true, |l| (p-l).length_squared() > tol*tol) { dedup.push(*p); }
+
+        if cycle_keys.len() >= 3 && cycle_keys[0] == *cycle_keys.last().unwrap_or(&(0, 0, 0)) {
+            // Deduplicate consecutive identical keys
+            let mut dedup: Vec<(i64, i64, i64)> = Vec::new();
+            for &k in &cycle_keys {
+                if dedup.last().map_or(true, |&l| l != k) {
+                    dedup.push(k);
+                }
             }
-            if dedup.len() >= 3 { subs.push(SubFace {
-                boundary: dedup, surface: face.surface.clone(), normal: face.normal,
-                uv_centroid: None, sample_override: None, uv_domain: None, inner_wires: vec![],
-            }); }
+            if dedup.len() >= 3
+                && dedup[0] == *dedup.last().unwrap()
+            {
+                // Convert to 3D boundary
+                let bnd: Vec<DVec3> = dedup.iter().map(|k| vert_pos[k]).collect();
+                subs.push(SubFace {
+                    boundary: bnd,
+                    surface: face.surface.clone(),
+                    normal: face.normal,
+                    uv_centroid: None,
+                    sample_override: None,
+                    uv_domain: None,
+                    inner_wires: vec![],
+                });
+            }
         }
     }
+
+    // ── Filter: return only faces that share at least one IC edge ────────
+    // The outer boundary (no IC edges) should be excluded.
+    let ic_edge_set: std::collections::HashSet<usize> = edges
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, _, is_ic, _))| *is_ic)
+        .map(|(ei, _)| ei)
+        .collect();
+
+    subs.retain(|sf| {
+        // Check if the sub-face's boundary uses any IC edge
+        let tol2 = tol * tol;
+        sf.boundary.iter().any(|p| {
+            edges.iter().enumerate().any(|(ei, (ea, eb, is_ic, _))| {
+                *is_ic
+                    && (vert_pos[ea] - *p).length_squared() < tol2
+                    && sf.boundary.iter().any(|p2| (vert_pos[eb] - *p2).length_squared() < tol2)
+            })
+        })
+    });
+
     subs
 }
