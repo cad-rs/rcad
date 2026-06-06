@@ -260,6 +260,15 @@ pub fn clip_line_to_polygon_with_tol(
         let mid_pt = line.origin + line.direction * t_mid;
         if point_in_planar_face_with_tol(mid_pt, plane, face_verts, geom_tol) {
             result.push((deduped[k], deduped[k + 1]));
+        } else {
+            // The midpoint might land exactly on a boundary edge (coincident
+            // line case).  Nudge perpendicular to the line direction and retry.
+            let perp = line.direction.cross(plane.normal).normalize_or_zero() * (eps * 10.0);
+            if perp.length_squared() > 0.0
+                && point_in_planar_face_with_tol(mid_pt + perp, plane, face_verts, geom_tol)
+            {
+                result.push((deduped[k], deduped[k + 1]));
+            }
         }
     }
 

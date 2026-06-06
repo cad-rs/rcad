@@ -162,6 +162,14 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
             }
         }
 
+        // Skip containment for Union with NURBS outer — OCCT's PaveFiller
+        // always splits outer faces even for fully contained shapes (bfuse B1).
+        if matches!(op, BooleanOpType::Union)
+            && outer.geom.surfaces.iter().any(|s| matches!(s, Surface3::BSpline(_)))
+        {
+            continue;
+        }
+
         // Use vertices+curves bbox (excluding surface expansion) for the outer
         // pre-check.  Surface expansion inflates bboxes for shapes like cone
         // frustums (apex extends past the solid), causing false containment
@@ -222,7 +230,7 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
         // This is critical for curved solids (e.g. sphere bbox contains box corners
         // that are outside the sphere surface).
         // Nudge each vertex toward the centroid so boundary points (on faces/edges)
-        // move slightly inside before ray testing 鈥?ray casting from exact boundary
+        // move slightly inside before ray testing — ray casting from exact boundary
         // points is unreliable because `param > TOLERANCE_ABS` discards the
         // starting-point hit, breaking parity-based inside/outside detection.
         let centroid = inner.center();
@@ -250,7 +258,8 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
                         && outer.solids.first().map_or(false, |s| s.shells.first().map_or(false, |sh| sh.faces.len() == 6))
                         && inner.solids.first().map_or(false, |s| s.shells.first().map_or(false, |sh| sh.faces.len() == 6))
                     {
-                        if let Some(r) = build_union_box_containment(omin, omax, imin, imax) {
+                        let r = build_union_box_containment(omin, omax, imin, imax);
+                        if let Some(r) = r {
                             return Some(r);
                         }
                     }
@@ -766,8 +775,6 @@ fn build_union_box_containment(
     let mut z_boundaries: Vec<f64> = Vec::new();
     if inner_min.z > outer_min.z && inner_min.z < outer_max.z { z_boundaries.push(inner_min.z); }
     if inner_max.z > outer_min.z && inner_max.z < outer_max.z { z_boundaries.push(inner_max.z); }
-
-    let brep = build_extruded_multi_z(&outline, &z_vals)?;
 
     build_extruded_multi_z(&outline, &z_vals)
 }
@@ -1878,10 +1885,20 @@ let sa_b = surface_area(a); // SA of the input box B (being cut).
 /// Falls through to Pave-Filler (returns `None`) when sewing fails or excessive
 /// internal-face inflation is detected.
 pub fn try_union_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
+    // OCCT does not have fast paths — skip NURBS so PaveFiller+Builder
+    // preserves BSpline surface types (nurbsconvert cases).
+    for operand in [a, b] {
+        if operand.geom.surfaces.iter().any(|s| matches!(s, Surface3::BSpline(_))) {
+            return None;
+        }
+    }
     let info_a = try_as_box(a)?;
     let info_b = try_as_box(b)?;
 
-    let inter = try_intersection_box_general(a, b)?;
+    let inter = match try_intersection_box_general(a, b) {
+        Some(inter) => inter,
+        None => return Some(BRep::compound_from_shapes(&[a.clone(), b.clone()])),
+    };
 
     // No overlap 鈫?compound (disjoint boxes).
     if inter.vertices.len() < 4 {

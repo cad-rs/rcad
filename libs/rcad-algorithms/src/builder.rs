@@ -1463,7 +1463,9 @@ impl<'a> BooleanBuilder<'a> {
                     let other_idx = if *f1 == a_fi { *f2 } else { *f1 };
                     if b_faces.contains(&other_idx) {
                         let b_surf = &self.ds.faces[other_idx].surface;
-                        // Different surface type → keep both
+                        // Different surface type → keep both (A-side Plane,
+                        // B-side BSpline). The B-side On sub-face is skipped
+                        // later so the correct PLANE type is preserved.
                         if !same_surface_type(a_surf, b_surf) {
                             return true;
                         }
@@ -1884,9 +1886,13 @@ impl<'a> BooleanBuilder<'a> {
                     && (self.is_glued_face(fi, &b_faces)
                         || self.coplanar_ff_normals_opposite(fi) == Some(false))
                     // Don't remove if the coplanar partner has a DIFFERENT surface
-                    // type (e.g. Plane vs BSpline). OCCT's FillSameDomainFaces
-                    // would not merge them, so both should be kept.
+                    // type (e.g. Plane vs BSpline). The A-side Plane face is kept
+                    // and the B-side BSpline On sub-face is skipped instead, so the
+                    // correct surface type (PLANE) is preserved on the boundary.
                     && !self.has_coplanar_ff_with_diff_surface(fi, &b_faces)
+                    // For containment: always keep A-side Plane On faces when the
+                    // B-face is BSpline (the B-side On sub-face will be skipped).
+                    // Without this, the On region would become BSpline instead of PLANE.
                 {
                     // For Union, planar On sub-faces coplanar with a B-face can be
                     // removed — the B-face covers this region on the external surface.
@@ -1945,11 +1951,12 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
 
-            // OCCT: for planar BSpline faces split by intersection curves, don't
-            // merge sub-faces back.  The intersection creates separate topological
-            // parts (like OCCT's FillImagesFaces / BuildSplitFaces).
-            if kept_subs.len() > 1 && !(face_split && matches!(self.ds.faces[fi].surface, Surface3::BSpline(_))) {
+            // Merge adjacent kept sub-faces (edge-based, then vertex-adjacent).
+            if kept_subs.len() > 1 {
                 merge_subfaces_of_same_face(&mut kept_subs);
+            }
+            if kept_subs.len() > 1 {
+                merge_vertex_adjacent_subs(&mut kept_subs);
             }
             for sub in kept_subs {
                 let src = self.ds.faces[fi].source_face_idx;
@@ -1976,7 +1983,10 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             let face_split = sub_faces.len() > 1;
-            let mut kept_subs: Vec<SubFace> = Vec::new();
+            // Track kept sub-faces with their classification for
+            // classification-aware merging (On separate from Out).
+            let mut kept_on: Vec<SubFace> = Vec::new();
+            let mut kept_out: Vec<SubFace> = Vec::new();
             for (si, sub) in sub_faces.iter().enumerate() {
                 let class = classify_against_solid_for_boolean(self.op, SourceSide::B, sub, &a_faces, self.ds);
                 let keep = if !face_split
@@ -2079,19 +2089,53 @@ impl<'a> BooleanBuilder<'a> {
                         let src = self.ds.faces[fi].source_face_idx;
                         result.emit_face_with_origin(&trimmed, false, FaceOrigin::FromB(src));
                     } else {
-                        // Collect for edge-based merge.
-                        kept_subs.push(sub.clone());
+                        // For B-side On sub-faces: skip if an A-side Plane face on
+                        // the same plane has already been emitted (the A-side face
+                        // preserves the PLANE surface type on coincident boundary
+                        // regions, e.g. bfuse_simple B1 face[0]/face[2]/face[3]/face[4]).
+                        if class == Classification::On && !a_on_planes.is_empty() {
+                            let b_plane = match &sub.surface {
+                                Surface3::Plane(p) => Some(p.clone()),
+                                Surface3::BSpline(bsp) if rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS) => {
+                                    Some(rcad_kernel::geom::bspline_to_plane(bsp))
+                                }
+                                _ => None,
+                            };
+                            if let Some(bp) = b_plane {
+                                let bn = bp.normal.normalize_or_zero();
+                                let covered = a_on_planes.iter().any(|(an, ao)| {
+                                    let dot = an.dot(bn).abs();
+                                    if dot < 0.99 { return false; }
+                                    // Check perpendicular distance from A-plane origin to B-plane.
+                                    let sign = if an.dot(bn) > 0.0 { 1.0 } else { -1.0 };
+                                    let a_dist = ao.dot(*an);
+                                    let b_dist = bp.origin.dot(bn) * sign;
+                                    (a_dist - b_dist).abs() < 1e-6
+                                });
+                                if covered { continue; }
+                            }
+                        }
+                        // Collect for edge-based merge, grouped by classification.
+                        match class {
+                            Classification::On => kept_on.push(sub.clone()),
+                            Classification::Out => kept_out.push(sub.clone()),
+                            _ => {} // In → discarded
+                        }
                     }
                 }
             }
 
-            if kept_subs.len() > 1 && !(face_split && matches!(self.ds.faces[fi].surface, Surface3::BSpline(_))) {
-                merge_subfaces_of_same_face(&mut kept_subs);
-            }
+            // Merge kept On and Out sub-faces SEPARATELY to avoid merging
+            // across classification boundaries (OCCT's FillImagesFaces approach).
             let flip = self.op == BooleanOpType::Difference;
-            for sub in kept_subs {
-                let src = self.ds.faces[fi].source_face_idx;
-                result.emit_face_with_origin(&sub, flip, FaceOrigin::FromB(src));
+            for subs in [&mut kept_on, &mut kept_out] {
+                if subs.len() > 1 {
+                    merge_subfaces_of_same_face(subs);
+                }
+                for sub in subs {
+                    let src = self.ds.faces[fi].source_face_idx;
+                    result.emit_face_with_origin(sub, flip, FaceOrigin::FromB(src));
+                }
             }
         }
 
@@ -2461,17 +2505,50 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         if let Surface3::Plane(plane) = &face.surface {
-            let cids = self.merged_split_curve_ids_for_planar_face(face_idx, plane);
+            let cids_raw = self.merged_split_curve_ids_for_planar_face(face_idx, plane);
+            // Filter out ICs whose line lies entirely on the face boundary.
+            // OCCT's BOPAlgo_BuilderFace only splits by curves that cross the
+            // interior — boundary-coincident curves do not create sub-faces.
+            let cids: Vec<usize> = if cids_raw.len() > 1 {
+                let eps = TOLERANCE_MESH_LEGACY;
+                let bnd_pts: Vec<DVec3> = face.boundary_verts.iter()
+                    .map(|&vi| self.ds.vertices[vi].point).collect();
+                let on_boundary = |pt: DVec3| -> bool {
+                    if bnd_pts.len() < 3 { return false; }
+                    let u_ax = plane_local_basis(plane).0;
+                    let v_ax = plane_local_basis(plane).1;
+                    let q = DVec2::new((pt - plane.origin).dot(u_ax), (pt - plane.origin).dot(v_ax));
+                    let n = bnd_pts.len();
+                    let mut j = n - 1;
+                    for i in 0..n {
+                        let a = DVec2::new((bnd_pts[i] - plane.origin).dot(u_ax), (bnd_pts[i] - plane.origin).dot(v_ax));
+                        let b = DVec2::new((bnd_pts[j] - plane.origin).dot(u_ax), (bnd_pts[j] - plane.origin).dot(v_ax));
+                        // Check distance from point to segment
+                        let ab = b - a;
+                        let t = ((q - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
+                        let closest = a + ab * t;
+                        if (q - closest).length() <= eps { return true; }
+                        j = i;
+                    }
+                    false
+                };
+                cids_raw.into_iter().filter(|&ci| {
+                    let ic = &self.ds.intersection_curves[ci];
+                    let p0 = self.ds.vertices[ic.start_vertex].point;
+                    let p1 = self.ds.vertices[ic.end_vertex].point;
+                    // Skip if BOTH endpoints are on the boundary (the curve
+                    // is entirely on the boundary and doesn't split the face).
+                    // Keep if at least one endpoint is interior.
+                    let both_on = on_boundary(p0) && on_boundary(p1);
+                    if both_on { return false; }
+                    true
+                }).collect()
+            } else { cids_raw };
             if cids.is_empty() {
                 // No intersection curves 鈥?return the whole face as one subface.
-                // split_planar_face would only return the unsplit polygon.
                 let subs = self.single_subface_from_whole_face(face_idx);
                 return subs;
             }
-            // split_planar_face handles circular faces (< 3 boundary verts) internally
-            // by reconstructing the circular boundary from the two diameter endpoints.
-            // When the curve is on the boundary (split fails for poly edges on the
-            // line), split_planar_face returns ≤1 sub. Fall through to UV splitting.
             let subs = self.split_planar_face(face_idx, plane, &cids);
             if subs.len() > 1 { return subs; }
             // Fall through: curve on boundary -> use split_curved_face_parametric
@@ -4874,6 +4951,15 @@ fn merge_two_subfaces(a: &SubFace, b: &SubFace, ai: usize, bi: usize, forward: b
     let mut merged_boundary = Vec::with_capacity(1 + b_non_shared.len() + a_non_shared.len());
     merged_boundary.push(a.boundary[ai]); // vs
     merged_boundary.extend(b_non_shared);
+    // Drop last element of b_non_shared if it's the same as vs (degenerate
+    // edge when B's path ends at the shared start vertex).
+    if merged_boundary.len() > 1 {
+        let last = merged_boundary.len() - 1;
+        let dedup_tol = TOLERANCE_MESH_LEGACY * 10.0;
+        if (merged_boundary[last] - merged_boundary[0]).length_squared() < dedup_tol * dedup_tol {
+            merged_boundary.pop();
+        }
+    }
     merged_boundary.extend(a_non_shared);
 
     // Concatenate inner wires (holes) from both sub-faces.
@@ -9142,3 +9228,106 @@ mod glue_tests {
     }
 }
 
+
+/// Check if `point` is inside a convex polygon (both in 3D, projected to
+/// the polygon's plane for 2D testing). Uses standard ray-casting.
+fn point_in_convex_polygon(polygon_verts: &[DVec3], point: DVec3) -> bool {
+    if polygon_verts.len() < 3 { return false; }
+    let d1 = polygon_verts[1] - polygon_verts[0];
+    let d2 = polygon_verts[2] - polygon_verts[0];
+    let normal = d1.cross(d2).normalize_or_zero();
+    if normal.length_squared() < 0.5 { return false; }
+    let ref_dir = if normal.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
+    let u_ax = normal.cross(ref_dir).normalize();
+    let v_ax = normal.cross(u_ax).normalize();
+    let proj = |p: DVec3| -> DVec2 {
+        let d = p - polygon_verts[0];
+        DVec2::new(d.dot(u_ax), d.dot(v_ax))
+    };
+    let pts_2d: Vec<DVec2> = polygon_verts.iter().map(|&p| proj(p)).collect();
+    let q = proj(point);
+    let n = pts_2d.len();
+    let mut inside = false;
+    let mut j = n - 1;
+    for i in 0..n {
+        let (xi, yi) = (pts_2d[i].x, pts_2d[i].y);
+        let (xj, yj) = (pts_2d[j].x, pts_2d[j].y);
+        if (yi > q.y) != (yj > q.y) {
+            let xint = (xj - xi) * (q.y - yi) / (yj - yi) + xi;
+            if q.x < xint { inside = !inside; }
+        }
+        j = i;
+    }
+    inside
+}
+
+/// Merge sub-faces that share a vertex but not an edge (vertex-adjacent).
+/// This handles the cross-cutting case where polygon clipping creates
+/// fragments that only meet at a single interior point (e.g. 4 quadrants
+/// from 2 crossing intersection curves).  Uses edge-cancellation:
+/// shared edges between the two sub-faces are removed, and the remaining
+/// perimeter edges form the merged boundary.
+fn merge_vertex_adjacent_subs(subs: &mut Vec<SubFace>) {
+    if subs.len() < 2 { return; }
+    let tol = TOLERANCE_MESH_LEGACY;
+    loop {
+        let n = subs.len();
+        if n < 2 { return; }
+        let mut merged = false;
+        'outer: for i in 0..n {
+            for j in (i + 1)..n {
+                // Find any shared vertex
+                let shared = subs[i].boundary.iter().any(|pa|
+                    subs[j].boundary.iter().any(|pb| (*pa - *pb).length() <= tol));
+                if !shared { continue; }
+
+                // Edge cancellation: count edges, keep perimeter
+                let mut ec: std::collections::HashMap<((i64,i64,i64),(i64,i64,i64)), usize> = std::collections::HashMap::new();
+                for s in [&subs[i], &subs[j]] {
+                    let b = &s.boundary;
+                    for ii in 0..b.len() {
+                        let jj = (ii + 1) % b.len();
+                        let k = |p: &DVec3| ((p.x/tol).round() as i64, (p.y/tol).round() as i64, (p.z/tol).round() as i64);
+                        let (k1, k2) = (k(&b[ii]), k(&b[jj]));
+                        let key = if k1 <= k2 { (k1, k2) } else { (k2, k1) };
+                        *ec.entry(key).or_insert(0) += 1;
+                    }
+                }
+                let perimeter: Vec<_> = ec.into_iter().filter(|(_,c)| *c == 1).map(|(k,_)| k).collect();
+                if perimeter.len() < 3 { continue; }
+
+                // Walk perimeter
+                use std::collections::HashMap;
+                let mut adj: HashMap<(i64,i64,i64), Vec<(i64,i64,i64)>> = HashMap::new();
+                for (a, b) in &perimeter { adj.entry(*a).or_default().push(*b); adj.entry(*b).or_default().push(*a); }
+                let start = perimeter[0].0;
+                let mut walk = Vec::new();
+                let mut cur = start;
+                let mut prev = None;
+                loop {
+                    walk.push(cur);
+                    let nbs = match adj.get(&cur) { Some(v) => v, _ => break };
+                    let next = nbs.iter().find(|&&n| Some(n) != prev).copied();
+                    match next { Some(n) => { prev=Some(cur); cur=n; } None => break, }
+                    if cur == start || walk.len() > perimeter.len() { break; }
+                }
+                if walk.len() < 3 { continue; }
+
+                let merged_bnd: Vec<DVec3> = walk.iter().map(|&k| DVec3::new(k.0 as f64*tol, k.1 as f64*tol, k.2 as f64*tol)).collect();
+                subs[i] = SubFace {
+                    boundary: merged_bnd,
+                    surface: subs[i].surface.clone(),
+                    normal: subs[i].normal,
+                    uv_centroid: subs[i].uv_centroid,
+                    sample_override: subs[i].sample_override.or(subs[j].sample_override),
+                    uv_domain: subs[i].uv_domain,
+                    inner_wires: { let mut iw=subs[i].inner_wires.clone(); iw.extend(subs[j].inner_wires.clone()); iw },
+                };
+                subs.remove(j);
+                merged = true;
+                break 'outer;
+            }
+        }
+        if !merged { return; }
+    }
+}
