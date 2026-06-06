@@ -1869,6 +1869,7 @@ impl<'a> BooleanBuilder<'a> {
                 && self.find_same_domain_b_partner(fi, &b_faces).is_some();
             let face_split = sub_faces.len() > 1;
             let mut kept_subs: Vec<SubFace> = Vec::new();
+            let mut draft_candidates: Vec<SubFace> = Vec::new();
             for (si, sub) in sub_faces.iter().enumerate() {
                 // Same-domain trimmed faces: skip classifier (classifier can
                 // mis-classify points near the solid's boundary) and force-keep.
@@ -1929,6 +1930,13 @@ impl<'a> BooleanBuilder<'a> {
                 if keep {
                     kept_subs.push(sub.clone());
                 } else if class == Classification::In
+                    && self.op == BooleanOpType::Union
+                    && matches!(sub.surface, Surface3::Plane(_))
+                {
+                    // OCCT BuildDraftFace: collect planar In sub-faces.
+                    // Emitted later if this face also has Out sub-faces.
+                    draft_candidates.push(sub.clone());
+                } else if class == Classification::In
                     && self.op == BooleanOpType::Difference
                     && !b_cylinders.is_empty()
                     && matches!(sub.surface, Surface3::Plane(_))
@@ -1958,11 +1966,20 @@ impl<'a> BooleanBuilder<'a> {
             if kept_subs.len() > 1 {
                 merge_vertex_adjacent_subs(&mut kept_subs);
             }
-            for sub in kept_subs {
+            let has_interface = !kept_subs.is_empty();
+            for sub in &kept_subs {
                 let src = self.ds.faces[fi].source_face_idx;
-                result.emit_face_with_origin(&sub, false, FaceOrigin::FromA(src));
+                result.emit_face_with_origin(sub, false, FaceOrigin::FromA(src));
                 if let Surface3::Plane(p) = &sub.surface {
                     a_on_planes.push((p.normal, p.origin));
+                }
+            }
+            // OCCT BuildDraftFace: emit A-side In sub-faces as PLANE draft
+            // faces when the face also has kept Out/On sub-faces (interface).
+            if has_interface {
+                for draft in &draft_candidates {
+                    let src = self.ds.faces[fi].source_face_idx;
+                    result.emit_face_with_origin(draft, false, FaceOrigin::FromA(src));
                 }
             }
         }
@@ -2546,45 +2563,7 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         if let Surface3::Plane(plane) = &face.surface {
-            let cids_raw = self.merged_split_curve_ids_for_planar_face(face_idx, plane);
-            // Filter out ICs whose line lies entirely on the face boundary.
-            // OCCT's BOPAlgo_BuilderFace only splits by curves that cross the
-            // interior — boundary-coincident curves do not create sub-faces.
-            let cids: Vec<usize> = if cids_raw.len() > 1 {
-                let eps = TOLERANCE_MESH_LEGACY;
-                let bnd_pts: Vec<DVec3> = face.boundary_verts.iter()
-                    .map(|&vi| self.ds.vertices[vi].point).collect();
-                let on_boundary = |pt: DVec3| -> bool {
-                    if bnd_pts.len() < 3 { return false; }
-                    let u_ax = plane_local_basis(plane).0;
-                    let v_ax = plane_local_basis(plane).1;
-                    let q = DVec2::new((pt - plane.origin).dot(u_ax), (pt - plane.origin).dot(v_ax));
-                    let n = bnd_pts.len();
-                    let mut j = n - 1;
-                    for i in 0..n {
-                        let a = DVec2::new((bnd_pts[i] - plane.origin).dot(u_ax), (bnd_pts[i] - plane.origin).dot(v_ax));
-                        let b = DVec2::new((bnd_pts[j] - plane.origin).dot(u_ax), (bnd_pts[j] - plane.origin).dot(v_ax));
-                        // Check distance from point to segment
-                        let ab = b - a;
-                        let t = ((q - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
-                        let closest = a + ab * t;
-                        if (q - closest).length() <= eps { return true; }
-                        j = i;
-                    }
-                    false
-                };
-                cids_raw.into_iter().filter(|&ci| {
-                    let ic = &self.ds.intersection_curves[ci];
-                    let p0 = self.ds.vertices[ic.start_vertex].point;
-                    let p1 = self.ds.vertices[ic.end_vertex].point;
-                    // Skip if BOTH endpoints are on the boundary (the curve
-                    // is entirely on the boundary and doesn't split the face).
-                    // Keep if at least one endpoint is interior.
-                    let both_on = on_boundary(p0) && on_boundary(p1);
-                    if both_on { return false; }
-                    true
-                }).collect()
-            } else { cids_raw };
+            let cids = self.merged_split_curve_ids_for_planar_face(face_idx, plane);
             if cids.is_empty() {
                 // No intersection curves 鈥?return the whole face as one subface.
                 let subs = self.single_subface_from_whole_face(face_idx);
