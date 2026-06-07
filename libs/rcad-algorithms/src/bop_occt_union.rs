@@ -472,7 +472,6 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
         use crate::classify::{classify_point, Classification};
         use crate::history::FaceOrigin;
         use crate::tolerance::TOLERANCE_ABS;
-        let nudge = TOLERANCE_ABS;
         let a_ids: Vec<usize> = (0..ds.a_face_count).collect();
         let b_ids: Vec<usize> = (ds.a_face_count..ds.faces.len()).collect();
         let mut to_remove: Vec<(usize, usize, usize)> = Vec::new();
@@ -500,8 +499,21 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
                     }
                     if pts.len() < 3 { continue; }
                     let centroid = pts.iter().copied().sum::<DVec3>() / pts.len() as f64;
-                    let test_pt = centroid + face.normal * nudge;
-                    if classify_point(test_pt, classify_ids, &ds) == Classification::In {
+
+                    // OCCT ComputeState: classify face against solid.
+                    // First try centroid nudged by tolerance.  If the result is On
+                    // (test point on the solid boundary), retry with a larger nudge
+                    // to push the point into the interior.  This handles faces whose
+                    // centroid is on the shared boundary between operands (e.g., the
+                    // y=0 shelf face in bfuse_simple B7 where centroid at y=0 is On
+                    // but y=0+1e-4 is inside the other solid).
+                    let test_pt_small = centroid + face.normal * TOLERANCE_ABS;
+                    let mut interior = classify_point(test_pt_small, classify_ids, &ds) == Classification::In;
+                    if !interior && matches!(origin, Some(FaceOrigin::FromB(_))) {
+                        let test_pt_large = centroid + face.normal * (TOLERANCE_ABS * 1000.0);
+                        interior = classify_point(test_pt_large, classify_ids, &ds) == Classification::In;
+                    }
+                    if interior {
                         to_remove.push((si, shi, fi));
                     }
                 }
@@ -522,7 +534,7 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
 
     // Second OCCT FillSameDomainFaces pass (butterfly merge).
     result = crate::unify_same_domain_faces(&result).0;
-    geom_populate::recompute_plane_surfaces(&mut result);
+    // SKIP: second recompute_plane_surfaces would promote cross-operand merged faces
 
     result = crate::prune_unused_topology(result);
     result = crate::deduplicate_edges(result);
