@@ -1645,7 +1645,6 @@ impl<'a> PaveFiller<'a> {
         use inttools::pcurve_derive::line_pcurve_on_plane;
 
         let debug_ff = (f1 == 4 && f2 == 8) || (f1 == 0 && f2 == 9);
-        if debug_ff { eprintln!("[PF_DBG] intersect_plane_plane(4,8)"); }
 
         match inttools::plane_plane::intersect_plane_plane(p1, p2) {
             inttools::plane_plane::PlanePlaneResult::Parallel => {
@@ -1659,21 +1658,11 @@ impl<'a> PaveFiller<'a> {
                 let verts1 = self.ds.face_boundary_points(f1);
                 let verts2 = self.ds.face_boundary_points(f2);
                 let clip_tol = self.ff_tol(f1, f2);
-                if debug_ff { eprintln!("[PF_DBG]   LINE clip_tol={:.2e}", clip_tol);
-                    eprintln!("[PF_DBG]   p1=({:.3},{:.3},{:.3}) n1=({:.3},{:.3},{:.3})",
-                        p1.origin.x,p1.origin.y,p1.origin.z,p1.normal.x,p1.normal.y,p1.normal.z);
-                    eprintln!("[PF_DBG]   p2=({:.3},{:.3},{:.3}) n2=({:.3},{:.3},{:.3})",
-                        p2.origin.x,p2.origin.y,p2.origin.z,p2.normal.x,p2.normal.y,p2.normal.z);
-                    eprintln!("[PF_DBG]   line o=({:.3},{:.3},{:.3}) d=({:.3},{:.3},{:.3})",
-                        line.origin.x,line.origin.y,line.origin.z,
-                        line.direction.x,line.direction.y,line.direction.z);
-                }
 
                 let ranges1 =
                     inttools::edge_face::clip_line_to_polygon_with_tol(&line, p1, &verts1, clip_tol);
                 let ranges2 =
                     inttools::edge_face::clip_line_to_polygon_with_tol(&line, p2, &verts2, clip_tol);
-                if debug_ff { eprintln!("[PF_DBG]   ranges1={:?} ranges2={:?}", ranges1, ranges2); }
 
                 for &(t1_min, t1_max) in &ranges1 {
                     for &(t2_min, t2_max) in &ranges2 {

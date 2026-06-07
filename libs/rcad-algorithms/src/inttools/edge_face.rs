@@ -262,12 +262,15 @@ pub fn clip_line_to_polygon_with_tol(
             result.push((deduped[k], deduped[k + 1]));
         } else {
             // The midpoint might land exactly on a boundary edge (coincident
-            // line case).  Nudge perpendicular to the line direction and retry.
+            // line case).  Nudge perpendicular to the line direction (try
+            // BOTH directions) and retry.
             let perp = line.direction.cross(plane.normal).normalize_or_zero() * (eps * 10.0);
-            if perp.length_squared() > 0.0
-                && point_in_planar_face_with_tol(mid_pt + perp, plane, face_verts, geom_tol)
-            {
-                result.push((deduped[k], deduped[k + 1]));
+            if perp.length_squared() > 0.0 {
+                if point_in_planar_face_with_tol(mid_pt + perp, plane, face_verts, geom_tol)
+                    || point_in_planar_face_with_tol(mid_pt - perp, plane, face_verts, geom_tol)
+                {
+                    result.push((deduped[k], deduped[k + 1]));
+                }
             }
         }
     }
