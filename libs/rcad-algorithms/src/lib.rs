@@ -3559,7 +3559,29 @@ fn surfaces_are_same_domain_cross(
 /// ✅ 与 OCCT 对齐: Cross-type Plane↔planar BSpline via bspline_to_plane
 ///
 /// Returns the number of faces removed (merged).
-fn unify_same_domain_faces_butterfly(brep: &mut rcad_kernel::BRep) -> usize {
+fn unify_same_domain_faces_butterfly(
+    brep: &mut rcad_kernel::BRep,
+) -> usize {
+    unify_same_domain_faces_butterfly_impl(brep, None, None)
+}
+
+/// Like [`unify_same_domain_faces_butterfly`] but with OCCT-aligned FF-interference
+/// filtering.  Only processes faces whose source DS face index (from `face_origins`)
+/// is in `ff_face_set`.  Skips faces that don't participate in FaceFace interferences
+/// (BOPAlgo_Builder_2.cxx line 592-613).
+fn unify_same_domain_faces_butterfly_ff(
+    brep: &mut rcad_kernel::BRep,
+    ff_face_set: &std::collections::HashSet<usize>,
+    face_origins: &[FaceOrigin],
+) -> usize {
+    unify_same_domain_faces_butterfly_impl(brep, Some(ff_face_set), Some(face_origins))
+}
+
+fn unify_same_domain_faces_butterfly_impl(
+    brep: &mut rcad_kernel::BRep,
+    ff_face_set: Option<&std::collections::HashSet<usize>>,
+    face_origins: Option<&[FaceOrigin]>,
+) -> usize {
     use std::collections::{BTreeSet, HashMap};
     use rcad_kernel::geom::Surface3;
 
@@ -3585,6 +3607,25 @@ fn unify_same_domain_faces_butterfly(brep: &mut rcad_kernel::BRep) -> usize {
                 .map(|fi| {
                     let face = &brep.solids[si].shells[shi].faces[fi];
                     let ff = shell_flat_face_index(brep, si, shi, fi);
+
+                    // OCCT FillSameDomainFaces: only process faces that
+                    // participate in FaceFace interferences (BOPAlgo_Builder_2.cxx
+                    // line 592-613).  When FF set is provided, skip faces whose
+                    // source DS face index is not in the set.
+                    let in_ff_set = match (ff_face_set, face_origins) {
+                        (Some(fs), Some(o)) => {
+                            let src_idx = match o.get(ff) {
+                                Some(FaceOrigin::FromA(s)) => *s,
+                                Some(FaceOrigin::FromB(s)) => *s,
+                                _ => usize::MAX,
+                            };
+                            fs.contains(&src_idx)
+                        }
+                        _ => true, // no filter → process all faces
+                    };
+                    if !in_ff_set {
+                        return _FaceInfo { edge_set: None, is_planar: false };
+                    }
 
                     let is_planar = brep
                         .geom
@@ -6518,13 +6559,28 @@ pub fn unify_same_domain_faces_with_origins(
     _face_origins: Option<&[FaceOrigin]>,
 ) -> (BRep, usize) {
     let mut out = brep.clone();
-    // OCCT FillSameDomainFaces: butterfly merge (edge-set grouping) only.
-    // The adjacency merge (unify_one_merge_pass_with_origins) is intentionally
-    // excluded — it does NOT correspond to any OCCT algorithm and can merge
-    // Plane and BSpline faces sharing an edge on the same plane even when
-    // they cover DIFFERENT regions, losing Out sub-faces.
     let n1 = unify_same_domain_faces_butterfly(&mut out);
     (out, n1)
+}
+
+/// OCCT-aligned FillSameDomainFaces with FF-interference filtering.
+/// Only processes faces whose source DS face index is in `ff_face_set`.
+/// This matches OCCT's behavior of only processing faces that participate
+/// in FaceFace interferences (BOPAlgo_Builder_2.cxx line 592-613).
+/// `face_origins` maps BRep face index → source DS face index via FaceOrigin.
+pub fn unify_same_domain_faces_ff(
+    brep: &BRep,
+    ff_face_set: Option<&std::collections::HashSet<usize>>,
+    face_origins: Option<&[FaceOrigin]>,
+) -> (BRep, usize) {
+    let mut out = brep.clone();
+    if let (Some(ff_set), Some(origins)) = (ff_face_set, face_origins) {
+        let n = unify_same_domain_faces_butterfly_ff(&mut out, ff_set, origins);
+        (out, n)
+    } else {
+        let n = unify_same_domain_faces_butterfly(&mut out);
+        (out, n)
+    }
 }
 
 /// Check if a shared edge maintains continuity between two faces.
