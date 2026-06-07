@@ -520,6 +520,8 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
         }
     }
 
+    result = crate::prune_unused_topology(result);
+    result = crate::deduplicate_edges(result);
     validate_union_brep_output("union: result failed checks after same-plane merge", &result)?;
     Ok(result)
 }

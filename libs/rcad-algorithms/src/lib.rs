@@ -3190,6 +3190,90 @@ pub(crate) fn deduplicate_edges(mut brep: BRep) -> BRep {
     brep
 }
 
+/// Remove vertices and edges that are not referenced by any remaining face.
+/// OCCT's BuildResult builds the shape from scratch using only the images of
+/// surviving faces — vertices/edges of removed faces are naturally excluded.
+/// RCAD's incremental face removal leaves orphaned topology that must be
+/// pruned to match OCCT's V/E counts (bfuse_simple B6).
+pub(crate) fn prune_unused_topology(mut brep: BRep) -> BRep {
+    use std::collections::BTreeSet;
+    // Collect referenced edge indices.
+    let mut ref_edges: BTreeSet<usize> = BTreeSet::new();
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                for we in &face.outer_wire.edges { ref_edges.insert(we.idx); }
+                for wire in &face.inner_wires {
+                    for we in &wire.edges { ref_edges.insert(we.idx); }
+                }
+            }
+        }
+    }
+    if ref_edges.len() == brep.edges.len() {
+        // All edges referenced — also check vertices.
+        let mut ref_verts: BTreeSet<usize> = BTreeSet::new();
+        for &ei in &ref_edges {
+            if let Some(e) = brep.edges.get(ei) {
+                ref_verts.insert(e.start);
+                ref_verts.insert(e.end);
+            }
+        }
+        if ref_verts.len() == brep.vertices.len() { return brep; }
+        // Prune vertices only (edges unchanged but some vertices unreferenced).
+        let mut v_remap: Vec<Option<usize>> = vec![None; brep.vertices.len()];
+        let mut new_verts = Vec::new();
+        for (vi, v) in brep.vertices.iter().enumerate() {
+            if ref_verts.contains(&vi) {
+                v_remap[vi] = Some(new_verts.len());
+                new_verts.push(*v);
+            }
+        }
+        if new_verts.len() < brep.vertices.len() {
+            for e in &mut brep.edges { e.start = v_remap[e.start].unwrap_or(0); e.end = v_remap[e.end].unwrap_or(0); }
+            brep.vertices = new_verts;
+        }
+        return brep;
+    }
+    // Build edge remap (old → new index, keep only referenced).
+    let mut e_remap: Vec<Option<usize>> = vec![None; brep.edges.len()];
+    let mut new_edges = Vec::new();
+    for (ei, e) in brep.edges.iter().enumerate() {
+        if ref_edges.contains(&ei) {
+            e_remap[ei] = Some(new_edges.len());
+            new_edges.push(*e);
+        }
+    }
+    // Update wire references.
+    for solid in &mut brep.solids {
+        for shell in &mut solid.shells {
+            for face in &mut shell.faces {
+                for we in &mut face.outer_wire.edges { we.idx = e_remap[we.idx].unwrap_or(0); }
+                for wire in &mut face.inner_wires {
+                    for we in &mut wire.edges { we.idx = e_remap[we.idx].unwrap_or(0); }
+                }
+            }
+        }
+    }
+    brep.edges = new_edges;
+    // Collect referenced vertex indices from surviving edges.
+    let mut ref_verts: BTreeSet<usize> = BTreeSet::new();
+    for e in &brep.edges { ref_verts.insert(e.start); ref_verts.insert(e.end); }
+    // Build vertex remap.
+    let mut v_remap: Vec<Option<usize>> = vec![None; brep.vertices.len()];
+    let mut new_verts = Vec::new();
+    for (vi, v) in brep.vertices.iter().enumerate() {
+        if ref_verts.contains(&vi) {
+            v_remap[vi] = Some(new_verts.len());
+            new_verts.push(*v);
+        }
+    }
+    if new_verts.len() < brep.vertices.len() {
+        for e in &mut brep.edges { e.start = v_remap[e.start].unwrap_or(0); e.end = v_remap[e.end].unwrap_or(0); }
+        brep.vertices = new_verts;
+    }
+    brep
+}
+
 /// Merge identical surface geometries (same plane, same cylinder etc.) into
 /// a single surface entry.  The PaveFiller creates separate GeomStore entries
 /// for each sub-face even when they share the same geometric surface.
