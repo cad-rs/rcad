@@ -3691,15 +3691,12 @@ fn unify_same_domain_faces_butterfly_impl(
             }
             let mut to_remove: Vec<usize> = Vec::new();
             // Step 2a: Strict edge-set matching (OCCT BOPTools_Set).
-            // Faces with identical edge sets are Same Domain, BUT only when
-            // they come from the SAME operand (OCCT: faces from different original
-            // faces never share topological edge handles → different edge sets).
-            // Cross-operand groups are skipped so they remain separate and can
-            // only be merged via the relaxed matching (different edge counts).
+            // Faces with identical edge sets are Same Domain.
+            // Cross-operand groups ARE allowed — OCCT FillSameDomainFaces
+            // merges by edge set regardless of operand origin (the edge set
+            // comparison is topological in OCCT, geometric via GeoEdgeKey here).
             for (_edge_set, group) in &edge_set_to_faces {
                 if group.len() < 2 { continue; }
-                let all_same_op = group.iter().all(|&fi| face_infos[fi].is_from_a == face_infos[group[0]].is_from_a);
-                if !all_same_op { continue; }
                 let all_planar = group.iter().all(|&fi| face_infos[fi].is_planar);
                 let is_same_domain = if all_planar {
                     true

@@ -2269,24 +2269,13 @@ impl<'a> BooleanBuilder<'a> {
 
     fn single_subface_from_whole_face(&self, face_idx: usize) -> Vec<SubFace> {
         let face = &self.ds.faces[face_idx];
-        // Compute face boundary from edge curves, not vertex positions.
-        // OCCT allows edges with start==end (both vertices at the same index)
-        // where the edge curve goes between two different 3D positions. In this
-        // case, the vertex position is wrong — the curve endpoint is the correct
-        // 3D position for the face boundary. Using edge curves ensures correct
-        // boundary even with topologically degenerate edges.
-        let boundary: Vec<DVec3> = (0..face.boundary_verts.len())
-            .map(|i| {
-                let vi = face.boundary_verts[i];
-                let ei = face.boundary_edges[i % face.boundary_edges.len()];
-                let edge = &self.ds.edges[ei];
-                if edge.start_vertex == vi {
-                    edge.curve.point_at(edge.t_range[0])
-                } else {
-                    edge.curve.point_at(edge.t_range[1])
-                }
-            })
-            .collect();
+        // Compute face boundary from vertex positions, not edge curves.
+        // Using vertex positions ensures the boundary matches sub-faces from
+        // subdivided_face (which also uses vertex positions), so that same
+        // geometric vertices produce the same BRep vertices and edges can
+        // be deduplicated for FillSameDomainFaces edge-set matching.
+        let boundary: Vec<DVec3> = face.boundary_verts.iter()
+            .map(|vi| self.ds.vertices[*vi].point).collect();
 
         // If boundary has <3 unique vertices, sample from UV boundary instead.
         // This handles faces whose DS wire has only 2 edges (e.g. cylinder caps),
