@@ -367,15 +367,31 @@ impl ResultBuilder {
                 return idx;
             }
         }
+        // Search existing vertices (tolerance TOLERANCE_ABS)
         for (i, v) in self.vertices.iter().enumerate() {
             if points_coincide(*v, point) {
+                // If this existing vertex can also be mapped to a DS vertex,
+                // create the DS→result mapping for future lookups.
+                let ds_tol_sq = TOLERANCE_MESH_LEGACY * TOLERANCE_MESH_LEGACY;
+                for (ds_i, ds_pt) in self.ds_vertices.iter().enumerate() {
+                    if self.ds_to_result[ds_i].is_none()
+                        && (point - *ds_pt).length_squared() < ds_tol_sq
+                    {
+                        self.ds_to_result[ds_i] = Some(i);
+                        break;
+                    }
+                }
                 return i;
             }
         }
         // Check DS operand vertex pool (OCCT-style): if the position matches
         // an operand vertex, create a result vertex that maps back to it.
+        // Uses relaxed tolerance (TOLERANCE_MESH_LEGACY) because vertices from
+        // different sub-faces may differ by more than TOLERANCE_ABS (1e-7) due
+        // to numerical differences in the wire-based graph traversal.
+        let ds_tol_sq = TOLERANCE_MESH_LEGACY * TOLERANCE_MESH_LEGACY;
         for (ds_i, ds_pt) in self.ds_vertices.iter().enumerate() {
-            if points_coincide(*ds_pt, point) {
+            if (point - *ds_pt).length_squared() < ds_tol_sq {
                 if let Some(existing) = self.ds_to_result[ds_i] {
                     return existing;
                 }
