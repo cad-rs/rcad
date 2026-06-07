@@ -469,13 +469,17 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     merge_coplanar_orthogonal_unify(&mut result);
     geom_populate::recompute_plane_surfaces(&mut result);
 
-    // OCCT ClassifyFaces (BuildSolid): for each face, classify its center
-    // against the OTHER operand using the DS.  Plane faces (from A-side)
-    // are tested against B; BSpline faces (from B-side) against A.
-    // If State_IN → the face is interior to the union → remove.
+    // OCCT ClassifyFaces (BuildSolid): for each face, nudge the centroid
+    // OUTWARD (in the face normal direction) by Precision::Confusion (1e-7)
+    // and classify against the OTHER operand.  If still State_IN → interior.
+    // The outward nudge prevents boundary points from being misclassified as
+    // State_IN — OCCT's BRepClass3d_SolidClassifier::Perform uses the same
+    // Precision::Confusion tolerance for point-on-boundary disambiguation.
     {
         use rcad_kernel::geom::Surface3;
         use crate::classify::{classify_point, Classification};
+        use crate::tolerance::TOLERANCE_ABS;
+        let nudge = TOLERANCE_ABS; // Precision::Confusion() == 1e-7
         let a_ids: Vec<usize> = (0..ds.a_face_count).collect();
         let b_ids: Vec<usize> = (ds.a_face_count..ds.faces.len()).collect();
         let mut to_remove: Vec<(usize, usize, usize)> = Vec::new();
@@ -485,7 +489,6 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
                     let si2 = result.geom.face_surface.get(fi).copied().flatten();
                     let is_plane = si2.and_then(|i| result.geom.surfaces.get(i))
                         .is_some_and(|s| matches!(s, Surface3::Plane(_)));
-                    // Compute centroid from boundary vertices
                     let mut pts: Vec<DVec3> = Vec::new();
                     for we in &face.outer_wire.edges {
                         if let Some(edge) = result.edges.get(we.idx) {
@@ -495,11 +498,12 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
                     }
                     if pts.len() < 3 { continue; }
                     let centroid = pts.iter().copied().sum::<DVec3>() / pts.len() as f64;
-                    // Classify against the other operand
+                    // Nudge outward so the test point is NOT on the boundary
+                    let test_pt = centroid + face.normal * nudge;
                     let interior = if is_plane {
-                        classify_point(centroid, &b_ids, &ds) == Classification::In
+                        classify_point(test_pt, &b_ids, &ds) == Classification::In
                     } else {
-                        classify_point(centroid, &a_ids, &ds) == Classification::In
+                        classify_point(test_pt, &a_ids, &ds) == Classification::In
                     };
                     if interior {
                         to_remove.push((si, shi, fi));
