@@ -1694,6 +1694,39 @@ impl<'a> BooleanBuilder<'a> {
         true
     }
 
+    /// OCCT PaveBlocksIn filter: returns true if BOTH endpoints of the IC
+    /// lie on the face boundary (at vertices or on boundary edges).  ICs with
+    /// interior endpoints cannot be used by BOPAlgo_WireSplitter — they
+    /// represent alone vertices handled by BuildDraftFace.
+    fn is_splittable_ic(&self, face_idx: usize, ci: usize) -> bool {
+        let face = &self.ds.faces[face_idx];
+        let ic = &self.ds.intersection_curves[ci];
+        let tol = TOLERANCE_MESH_LEGACY;
+        let bnd: Vec<DVec3> = face.boundary_verts.iter()
+            .map(|vi| self.ds.vertices[*vi].point).collect();
+        let nb = bnd.len();
+        if nb < 3 { return false; }
+        let on_boundary = |vi: usize| -> bool {
+            let p = self.ds.vertices[vi].point;
+            // Check vertex match
+            for &bv in &bnd {
+                if (p - bv).length() <= tol { return true; }
+            }
+            // Check on-edge match
+            for i in 0..nb {
+                let j = (i + 1) % nb;
+                let ab = bnd[j] - bnd[i]; let l2 = ab.length_squared();
+                if l2 < tol * tol { continue; }
+                let t = ((p - bnd[i]).dot(ab) / l2).clamp(0.0, 1.0);
+                if t > 1e-6 && t < 1.0 - 1e-6 && (p - (bnd[i] + ab * t)).length() <= tol {
+                    return true;
+                }
+            }
+            false
+        };
+        on_boundary(ic.start_vertex) && on_boundary(ic.end_vertex)
+    }
+
     fn keep_subface(
         &self,
         source: SourceSide,
@@ -2373,8 +2406,22 @@ impl<'a> BooleanBuilder<'a> {
         let has_interior_ics = !interior_cids.is_empty();
         let has_crossing = has_interior_ics && self.has_crossing_ics(face_idx);
         if has_interior_ics && !has_crossing {
-            let subs = split_face_wire_based(self.ds, face_idx, &interior_cids);
-            if subs.len() >= 2 { return subs; }
+            // OCCT PaveBlocksIn filter: only use ICs with BOTH endpoints on the face
+            // boundary for WireSplitTER.  ICs with interior endpoints (alone vertices)
+            // are handled by BuildDraftFace — they represent wire junctions that the
+            // rightmost-turn traversal cannot partition correctly, producing
+            // overlapping sub-faces.
+            let splittable_cids: Vec<usize> = interior_cids.iter().copied()
+                .filter(|&ci| self.is_splittable_ic(face_idx, ci))
+                .collect();
+            if !splittable_cids.is_empty() {
+                let subs = split_face_wire_based(self.ds, face_idx, &splittable_cids);
+                if subs.len() >= 2 { return subs; }
+            }
+            // BuildDraftFace: return face with subdivided boundary (IC endpoints
+            // on boundary edges are inserted into the boundary polygon).
+            let all_cids: Vec<usize> = fi.curves_in.iter().copied().collect();
+            return self.single_subface_from_subdivided_face(face_idx, &all_cids);
         }
 
         // OCCT BuildDraftFace: when a face has boundary-only ICs (no interior ICs
