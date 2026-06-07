@@ -3120,17 +3120,21 @@ pub(crate) fn deduplicate_edges(mut brep: BRep) -> BRep {
 
     if brep.edges.len() < 2 { return brep; }
 
-    // Simple dedup by vertex INDEX (not position).  Merges redundant edges
-    // that the BooleanBuilder creates for the same (start, end) vertex pair.
-    let mut canon: HashMap<(usize, usize), usize> = HashMap::new();
+    // Geometric dedup by quantized vertex POSITION (GeoEdgeKey).
+    // Matches OCCT's shared-edge topology: edges at the same position
+    // between the same vertices are merged regardless of BRep vertex index.
+    let key_of = |ei: usize| -> Option<((i64,i64,i64), (i64,i64,i64))> {
+        let e = brep.edges.get(ei)?;
+        let sp = crate::quantize_edge_point(brep.vertices.get(e.start)?.point);
+        let ep = crate::quantize_edge_point(brep.vertices.get(e.end)?.point);
+        Some(if sp <= ep { (sp, ep) } else { (ep, sp) })
+    };
+    let mut canon: HashMap<((i64,i64,i64), (i64,i64,i64)), usize> = HashMap::new();
     let mut remap: Vec<usize> = (0..brep.edges.len()).collect();
     for ei in 0..brep.edges.len() {
-        if let Some(e) = brep.edges.get(ei) {
-            let key = if e.start < e.end { (e.start, e.end) } else { (e.end, e.start) };
+        if let Some(key) = key_of(ei) {
             let entry = canon.entry(key).or_insert(ei);
-            if *entry != ei {
-                remap[ei] = *entry;
-            }
+            if *entry != ei { remap[ei] = *entry; }
         }
     }
 
