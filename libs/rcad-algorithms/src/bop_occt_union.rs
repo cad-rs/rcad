@@ -35,7 +35,7 @@ use crate::bopds::ds::{DS, Interference};
 use crate::builder;
 use crate::bvh;
 use crate::geom_populate;
-use crate::history::BooleanHistory;
+use crate::history::{BooleanHistory, FaceOrigin};
 use crate::pave_filler;
 use crate::tolerance::*;
 use crate::total_surface_area;
@@ -461,46 +461,36 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     result = sewn;
     geom_populate::recompute_plane_surfaces(&mut result);
     validate_union_brep_output("union: result failed checks after vertex merge", &result)?;
-    // Deduplicate edges so adjacent sub-faces share edge topology (OCCT:
-    // edges from BOPAlgo_BuilderFace are shared between split faces).
-    // Without this, unify_same_domain_faces cannot detect shared edges.
+    // Deduplicate edges so adjacent sub-faces share edge topology.
     result = crate::deduplicate_edges(result);
-    // OCCT FillSameDomainFaces: edge-set grouping only (no orthogonal fuse).
-    result = crate::unify_same_domain_faces(&result).0;
-    // Adjacency merge: handles cross-operand coplanar pairs that share
-    // edges (e.g. BuildDraftFace notch face + Plane coplanar partner in
-    // bfuse_simple B7).  The butterfly merge skips cross-operand groups.
-    {
-        let mut n_adj = 0usize;
-        loop {
-            if !crate::unify_one_merge_pass_with_origins(&mut result, None) {
-                break;
-            }
-            n_adj += 1;
-        }
-        if n_adj > 0 {
-            eprintln!("[UNIFY] adjacency merge: {n_adj} merges");
-        }
-    }
-    geom_populate::recompute_plane_surfaces(&mut result);
 
     // OCCT ClassifyFaces (BuildSolid): remove interior faces classified as
-    // State_IN for the OTHER operand.  Runs AFTER the SA guard so the guard
-    // only evaluates the merge (FillSameDomainFaces), not the classification.
+    // State_IN for the OTHER operand.  Runs BEFORE the second butterfly merge
+    // so history.face_origins (from build_with_history's internal merge) are valid.
     {
         use rcad_kernel::geom::Surface3;
         use crate::classify::{classify_point, Classification};
+        use crate::history::FaceOrigin;
         use crate::tolerance::TOLERANCE_ABS;
-        let nudge = TOLERANCE_ABS; // Precision::Confusion() == 1e-7
+        let nudge = TOLERANCE_ABS;
         let a_ids: Vec<usize> = (0..ds.a_face_count).collect();
         let b_ids: Vec<usize> = (ds.a_face_count..ds.faces.len()).collect();
         let mut to_remove: Vec<(usize, usize, usize)> = Vec::new();
+        let origins = &history.face_origins;
         for (si, solid) in result.solids.iter().enumerate() {
             for (shi, shell) in solid.shells.iter().enumerate() {
                 for (fi, face) in shell.faces.iter().enumerate() {
-                    let si2 = result.geom.face_surface.get(fi).copied().flatten();
-                    let is_plane = si2.and_then(|i| result.geom.surfaces.get(i))
-                        .is_some_and(|s| matches!(s, Surface3::Plane(_)));
+                    let origin = origins.get(fi).copied();
+                    let classify_ids = match origin {
+                        Some(FaceOrigin::FromA(_)) => &b_ids,
+                        Some(FaceOrigin::FromB(_)) => &a_ids,
+                        _ => {
+                            let is_plane = result.geom.face_surface.get(fi).copied().flatten()
+                                .and_then(|si| result.geom.surfaces.get(si))
+                                .is_some_and(|s| matches!(s, Surface3::Plane(_)));
+                            if is_plane { &b_ids } else { &a_ids }
+                        }
+                    };
                     let mut pts: Vec<DVec3> = Vec::new();
                     for we in &face.outer_wire.edges {
                         if let Some(edge) = result.edges.get(we.idx) {
@@ -511,12 +501,7 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
                     if pts.len() < 3 { continue; }
                     let centroid = pts.iter().copied().sum::<DVec3>() / pts.len() as f64;
                     let test_pt = centroid + face.normal * nudge;
-                    let interior = if is_plane {
-                        classify_point(test_pt, &b_ids, &ds) == Classification::In
-                    } else {
-                        classify_point(test_pt, &a_ids, &ds) == Classification::In
-                    };
-                    if interior {
+                    if classify_point(test_pt, classify_ids, &ds) == Classification::In {
                         to_remove.push((si, shi, fi));
                     }
                 }
@@ -534,6 +519,10 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
             }
         }
     }
+
+    // Second OCCT FillSameDomainFaces pass (butterfly merge).
+    result = crate::unify_same_domain_faces(&result).0;
+    geom_populate::recompute_plane_surfaces(&mut result);
 
     result = crate::prune_unused_topology(result);
     result = crate::deduplicate_edges(result);
