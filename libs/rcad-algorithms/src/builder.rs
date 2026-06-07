@@ -2360,11 +2360,11 @@ impl<'a> BooleanBuilder<'a> {
                         s.boundary = poly;
                     }
                 }
-                if let Surface3::BSpline(bsp) = &s.surface {
-                    if rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS) {
-                        s.surface = Surface3::Plane(rcad_kernel::geom::bspline_to_plane(bsp));
-                    }
-                }
+                // OCCT FillSameDomainFaces handles Plane+BSpline merging
+                // via edge-set grouping.  Do NOT convert planar BSpline to
+                // Plane here — it would cause `fuse_orthogonal_coplanar_faces`
+                // to merge BSpline faces into adjacent Plane faces, losing
+                // surface type information (bfuse_simple B4/B5).
                 let src = self.ds.faces[fi].source_face_idx;
                 result.emit_face_with_origin(&s, flip, FaceOrigin::FromB(src));
             }
@@ -2698,6 +2698,73 @@ impl<'a> BooleanBuilder<'a> {
         }]
     }
 
+    /// OCCT BuildDraftFace: return a single SubFace for a face whose boundary edges
+    /// are subdivided at IC endpoints.  The DS boundary_verts may not include the IC
+    /// endpoint vertices (they are stored in the DS as separate vertices), so we
+    /// insert them into the boundary polygon to match the edge count of WireSplitter
+    /// sub-faces.  This is required for FillSameDomainFaces edge-set grouping to
+    /// detect Plane+BSpline same-domain pairs (bfuse_simple B3/B4/B5).
+    fn single_subface_from_subdivided_face(&self, face_idx: usize, cids: &[usize]) -> Vec<SubFace> {
+        let face = &self.ds.faces[face_idx];
+        let tol = TOLERANCE_MESH_LEGACY;
+        // Build the initial boundary from face boundary vertices.
+        let bnd: Vec<DVec3> = face.boundary_verts.iter()
+            .map(|vi| self.ds.vertices[*vi].point).collect();
+        let nb = bnd.len();
+        if nb < 3 || cids.is_empty() {
+            return self.single_subface_from_whole_face(face_idx);
+        }
+        // Collect IC endpoints that lie on boundary edges (but aren't in boundary_verts)
+        // and insert them to subdivide the boundary.
+        let mut extra_verts: Vec<(usize, DVec3)> = Vec::new(); // (edge_index, position)
+        for &ci in cids {
+            let ic = &self.ds.intersection_curves[ci];
+            for &icv in &[ic.start_vertex, ic.end_vertex] {
+                if face.boundary_verts.contains(&icv) { continue; }
+                let p = self.ds.vertices[icv].point;
+                for ei in 0..nb {
+                    let ej = (ei + 1) % nb;
+                    let va = bnd[ei]; let vb = bnd[ej];
+                    let ab = vb - va; let l2 = ab.length_squared();
+                    if l2 < tol * tol { continue; }
+                    let t = ((p - va).dot(ab) / l2).clamp(0.0, 1.0);
+                    if t > 1e-6 && t < 1.0 - 1e-6 && (p - (va + ab * t)).length() <= tol {
+                        extra_verts.push((ei, p));
+                        break;
+                    }
+                }
+            }
+        }
+        if extra_verts.is_empty() {
+            return self.single_subface_from_whole_face(face_idx);
+        }
+        // Build subdivided boundary: walk original vertices, inserting extra vertices.
+        let mut subdivided: Vec<DVec3> = Vec::new();
+        for i in 0..nb {
+            subdivided.push(bnd[i]);
+            let mut on_this_edge: Vec<DVec3> = extra_verts.iter()
+                .filter(|(ei, _)| *ei == i)
+                .map(|(_, p)| *p)
+                .collect();
+            on_this_edge.sort_by(|a, b| {
+                let da = (a - bnd[i]).length_squared();
+                let db = (b - bnd[i]).length_squared();
+                da.partial_cmp(&db).unwrap()
+            });
+            subdivided.extend(on_this_edge);
+        }
+        vec![SubFace {
+            boundary: subdivided,
+            surface: face.surface.clone(),
+            normal: face.normal,
+            ds_vertex_indices: None,
+            uv_centroid: None,
+            sample_override: None,
+            uv_domain: None,
+            inner_wires: vec![],
+        }]
+    }
+
     /// Split a face by intersection curves. If no intersection curves cross this
     /// face, returns the whole face as a single SubFace.
     fn split_face(&self, face_idx: usize) -> Vec<SubFace> {
@@ -2718,14 +2785,13 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // OCCT BuildDraftFace: when a face has boundary-only ICs (no interior ICs
-        // to split it), return the whole face with the subdivided boundary.  The
-        // DS face boundary already includes IC endpoints from the PaveFiller's
-        // edge splitting, so the resulting SubFace has edges subdivided at the
-        // same vertices as WireSplitter sub-faces.  This ensures matching edge
-        // sets during FillSameDomainFaces (edge-set grouping) for Plane+BSpline
-        // duplicate face pairs.
+        // to split it), return the whole face with the subdivided boundary that
+        // includes IC endpoints as boundary vertices.  This matches the edge count
+        // of WireSplitter sub-faces so FillSameDomainFaces can merge same-domain
+        // Plane+BSpline pairs (bfuse_simple B3/B4/B5).
         if !has_interior_ics && !fi.curves_in.is_empty() {
-            return self.single_subface_from_whole_face(face_idx);
+            let bnd_cids: Vec<usize> = fi.curves_in.iter().copied().collect();
+            return self.single_subface_from_subdivided_face(face_idx, &bnd_cids);
         }
 
         if fi.curves_in.is_empty() {
