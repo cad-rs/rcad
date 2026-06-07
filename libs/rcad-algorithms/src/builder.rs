@@ -1549,25 +1549,31 @@ impl<'a> BooleanBuilder<'a> {
         let nb = bnd.len();
         if nb < 3 { return false; }
 
-        let edge_of = |p: DVec3| -> Option<usize> {
+        // OCCT BOPTools_Set: check ALL matching edges for each endpoint
+        // (vertex endpoints can match multiple edges).  If ANY pair (one
+        // from each endpoint) is on the same or adjacent edges, the IC
+        // lies on the face boundary and should be treated as such.
+        let all_edges_of = |p: DVec3| -> Vec<usize> {
+            let mut result = Vec::new();
             for i in 0..nb {
                 let ab = bnd[(i + 1) % nb] - bnd[i]; let l2 = ab.length_squared();
                 if l2 < tol * tol { continue; }
                 let t = ((p - bnd[i]).dot(ab) / l2).clamp(0.0, 1.0);
-                if (p - (bnd[i] + ab * t)).length() <= tol { return Some(i); }
+                if (p - (bnd[i] + ab * t)).length() <= tol { result.push(i); }
             }
-            None
+            result
         };
-
-        match (edge_of(self.ds.vertices[ic.start_vertex].point),
-               edge_of(self.ds.vertices[ic.end_vertex].point)) {
-            (Some(i), Some(j)) => {
-                let adjacent = i == j || (i + 1) % nb == j || j == (i + 1) % nb
-                    || (i == 0 && j == nb - 1) || (j == 0 && i == nb - 1);
-                adjacent
+        let es = all_edges_of(self.ds.vertices[ic.start_vertex].point);
+        let ee = all_edges_of(self.ds.vertices[ic.end_vertex].point);
+        if es.is_empty() || ee.is_empty() { return false; }
+        for &i in &es {
+            for &j in &ee {
+                if i == j || (i + 1) % nb == j || j == (i + 1) % nb
+                    || (i == 0 && j == nb - 1) || (j == 0 && i == nb - 1)
+                { return true; }
             }
-            _ => false,
         }
+        false
     }
 
     fn all_ics_on_boundary(&self, face_idx: usize) -> bool {
