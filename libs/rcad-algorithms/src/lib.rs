@@ -3715,12 +3715,13 @@ fn unify_same_domain_faces_butterfly_impl(
                     ok
                 };
                 if !is_same_domain { continue; }
+                // OCCT: representative = face with smallest index in DS (A-side < B-side).
+                // RCAD: flat face index gives same ordering (A-side emitted first).
+                // No BSpline penalty — the inner region from BuildDraftFace (BSpline, low
+                // flat index) should be representative over Plane coplanar partner (high
+                // flat index), matching OCCT's DS-index-based selection.
                 let rep_fi = *group.iter().min_by_key(|&&f| {
-                    let ff = shell_flat_face_index(brep, si, shi, f);
-                    let is_bspline = brep.geom.face_surface.get(ff).and_then(|v| *v)
-                        .and_then(|sid| brep.geom.surfaces.get(sid))
-                        .is_some_and(|s| matches!(s, Surface3::BSpline(_)));
-                    if is_bspline { ff + 100000 } else { ff }
+                    shell_flat_face_index(brep, si, shi, f)
                 }).unwrap();
                 for &fi in group {
                     if fi != rep_fi { to_remove.push(fi); }
@@ -3769,11 +3770,7 @@ fn unify_same_domain_faces_butterfly_impl(
                     // Same Domain via relaxed matching.
                     // Pick representative: prefer Plane over BSpline.
                     let rep_fi = *[fi, fj].iter().min_by_key(|&&f| {
-                        let ff = shell_flat_face_index(brep, si, shi, f);
-                        let is_bspline = brep.geom.face_surface.get(ff).and_then(|v| *v)
-                            .and_then(|sid| brep.geom.surfaces.get(sid))
-                            .is_some_and(|s| matches!(s, Surface3::BSpline(_)));
-                        if is_bspline { ff + 100000 } else { ff }
+                        shell_flat_face_index(brep, si, shi, f)
                     }).unwrap();
                     let rm_fi = if fi == rep_fi { fj } else { fi };
                     to_remove.push(rm_fi);
