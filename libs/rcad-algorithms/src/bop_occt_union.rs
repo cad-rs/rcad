@@ -469,12 +469,31 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     merge_coplanar_orthogonal_unify(&mut result);
     geom_populate::recompute_plane_surfaces(&mut result);
 
-    // OCCT ClassifyFaces (BuildSolid): for each face, nudge the centroid
-    // OUTWARD (in the face normal direction) by Precision::Confusion (1e-7)
-    // and classify against the OTHER operand.  If still State_IN → interior.
-    // The outward nudge prevents boundary points from being misclassified as
-    // State_IN — OCCT's BRepClass3d_SolidClassifier::Perform uses the same
-    // Precision::Confusion tolerance for point-on-boundary disambiguation.
+    let pen_before = solid_closure_boundary_penalty(&checkpoint);
+    let pen_after = solid_closure_boundary_penalty(&result);
+    let n_before = shell_face_total(&checkpoint);
+    let n_after = shell_face_total(&result);
+    let sa_before = total_surface_area(&checkpoint);
+    let sa_after = total_surface_area(&result);
+    // Revert if the merge changes SA significantly (in either direction) with a large
+    // face-count drop — indicates that unify_same_domain_faces merged cylinder sub-faces
+    // whose UV projection overcounts (or undercounts) area in try_cylinder_trimmed_face_area.
+    let large_sa_change = {
+        let abs_delta = (sa_after - sa_before).abs();
+        abs_delta > 1e-6 && abs_delta > 0.005 * sa_before.max(1.0)
+    };
+    let suspicious_planar_snarl = (pen_after > pen_before
+        && (n_after <= 10 || n_after.saturating_add(12) < n_before))
+        || (large_sa_change && n_after < n_before && n_after.saturating_add(12) < n_before)
+        || (large_sa_change && (sa_after - sa_before).abs() > 0.10 * sa_before.max(1.0));
+    if suspicious_planar_snarl {
+        result = checkpoint;
+        geom_populate::recompute_plane_surfaces(&mut result);
+    }
+
+    // OCCT ClassifyFaces (BuildSolid): remove interior faces classified as
+    // State_IN for the OTHER operand.  Runs AFTER the SA guard so the guard
+    // only evaluates the merge (FillSameDomainFaces), not the classification.
     {
         use rcad_kernel::geom::Surface3;
         use crate::classify::{classify_point, Classification};
@@ -498,7 +517,6 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
                     }
                     if pts.len() < 3 { continue; }
                     let centroid = pts.iter().copied().sum::<DVec3>() / pts.len() as f64;
-                    // Nudge outward so the test point is NOT on the boundary
                     let test_pt = centroid + face.normal * nudge;
                     let interior = if is_plane {
                         classify_point(test_pt, &b_ids, &ds) == Classification::In
@@ -522,28 +540,6 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
                 }
             }
         }
-    }
-
-    let pen_before = solid_closure_boundary_penalty(&checkpoint);
-    let pen_after = solid_closure_boundary_penalty(&result);
-    let n_before = shell_face_total(&checkpoint);
-    let n_after = shell_face_total(&result);
-    let sa_before = total_surface_area(&checkpoint);
-    let sa_after = total_surface_area(&result);
-    // Revert if the merge changes SA significantly (in either direction) with a large
-    // face-count drop — indicates that unify_same_domain_faces merged cylinder sub-faces
-    // whose UV projection overcounts (or undercounts) area in try_cylinder_trimmed_face_area.
-    let large_sa_change = {
-        let abs_delta = (sa_after - sa_before).abs();
-        abs_delta > 1e-6 && abs_delta > 0.005 * sa_before.max(1.0)
-    };
-    let suspicious_planar_snarl = (pen_after > pen_before
-        && (n_after <= 10 || n_after.saturating_add(12) < n_before))
-        || (large_sa_change && n_after < n_before && n_after.saturating_add(12) < n_before)
-        || (large_sa_change && (sa_after - sa_before).abs() > 0.10 * sa_before.max(1.0));
-    if suspicious_planar_snarl {
-        result = checkpoint;
-        geom_populate::recompute_plane_surfaces(&mut result);
     }
 
     validate_union_brep_output("union: result failed checks after same-plane merge", &result)?;
