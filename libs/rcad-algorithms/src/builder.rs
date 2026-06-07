@@ -2325,11 +2325,16 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     /// OCCT BuildDraftFace: return a single SubFace for a face whose boundary edges
-    /// are subdivided at IC endpoints.  The DS boundary_verts may not include the IC
-    /// endpoint vertices (they are stored in the DS as separate vertices), so we
-    /// insert them into the boundary polygon to match the edge count of WireSplitter
-    /// sub-faces.  This is required for FillSameDomainFaces edge-set grouping to
-    /// detect Plane+BSpline same-domain pairs (bfuse_simple B3/B4/B5).
+    /// are subdivided at IC endpoints, AND whose alone vertices (interior IC endpoints)
+    /// are inserted into the boundary polygon to form a notch that excludes the
+    /// overlap region.  This gives the face a different edge set from the coplanar
+    /// partner, enabling FillSameDomainFaces edge-set grouping to detect or prevent
+    /// same-domain merging as OCCT does.
+    ///
+    /// For a BSpline y=0 face with ICs meeting at interior vertex v_int:
+    ///   subdivided boundary: v0→b1→v1→v2→v3→b2→v0
+    ///   L-shaped output:     b1→v1→v2→v3→b2→v_int→b1
+    /// The inner region (v0→b1→v_int→b2→v0) is covered by the coplanar partner.
     fn single_subface_from_subdivided_face(&self, face_idx: usize, cids: &[usize]) -> Vec<SubFace> {
         let face = &self.ds.faces[face_idx];
         let tol = TOLERANCE_MESH_LEGACY;
@@ -2343,11 +2348,20 @@ impl<'a> BooleanBuilder<'a> {
         // Collect IC endpoints that lie on boundary edges (but aren't in boundary_verts)
         // and insert them to subdivide the boundary.
         let mut extra_verts: Vec<(usize, DVec3)> = Vec::new(); // (edge_index, position)
+        // Also collect interior IC endpoints (alone vertices) and their boundary-on connections
+        struct InteriorConn { pt: DVec3, bnd_edge_ids: Vec<usize>, bnd_pts: Vec<DVec3> }
+        let mut interior_verts: Vec<InteriorConn> = Vec::new();
+        // Helper: check if a 3D position is at a boundary vertex (positional, not by index)
+        let is_at_bnd_vert = |p: DVec3| -> bool {
+            bnd.iter().any(|bv| (*bv - p).length() <= tol)
+        };
         for &ci in cids {
             let ic = &self.ds.intersection_curves[ci];
             for &icv in &[ic.start_vertex, ic.end_vertex] {
-                if face.boundary_verts.contains(&icv) { continue; }
                 let p = self.ds.vertices[icv].point;
+                if is_at_bnd_vert(p) { continue; }
+                // Check if on boundary edge
+                let mut is_boundary = false;
                 for ei in 0..nb {
                     let ej = (ei + 1) % nb;
                     let va = bnd[ei]; let vb = bnd[ej];
@@ -2356,29 +2370,107 @@ impl<'a> BooleanBuilder<'a> {
                     let t = ((p - va).dot(ab) / l2).clamp(0.0, 1.0);
                     if t > 1e-6 && t < 1.0 - 1e-6 && (p - (va + ab * t)).length() <= tol {
                         extra_verts.push((ei, p));
+                        is_boundary = true;
                         break;
                     }
                 }
+                if is_boundary { continue; }
+                // Interior vertex: find boundary-on vertices connecting via shared ICs
+                let mut bnd_edge_ids: Vec<usize> = Vec::new();
+                let mut bnd_pts: Vec<DVec3> = Vec::new();
+                for &ci2 in cids {
+                    let ic2 = &self.ds.intersection_curves[ci2];
+                    if ic2.start_vertex != icv && ic2.end_vertex != icv { continue; }
+                    let partner_v = if ic2.start_vertex == icv { ic2.end_vertex } else { ic2.start_vertex };
+                    let pp = self.ds.vertices[partner_v].point;
+                    // Check if partner is on a boundary edge
+                    for ei in 0..nb {
+                        let ej = (ei + 1) % nb;
+                        let va = bnd[ei]; let vb = bnd[ej];
+                        let ab = vb - va; let l2 = ab.length_squared();
+                        if l2 < tol * tol { continue; }
+                        let t = ((pp - va).dot(ab) / l2).clamp(0.0, 1.0);
+                        if t > 1e-6 && t < 1.0 - 1e-6 && (pp - (va + ab * t)).length() <= tol {
+                            bnd_edge_ids.push(ei);
+                            bnd_pts.push(pp);
+                            break;
+                        }
+                    }
+                }
+                if bnd_edge_ids.len() >= 2 {
+                    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+                        eprintln!("[BUILD_DRAFT] face[{}] alone vertex at ({:.4},{:.4},{:.4}) with {} connections",
+                            face_idx, p.x, p.y, p.z, bnd_edge_ids.len());
+                    }
+                    interior_verts.push(InteriorConn { pt: p, bnd_edge_ids, bnd_pts });
+                }
             }
         }
-        if extra_verts.is_empty() {
+        if extra_verts.is_empty() && interior_verts.is_empty() {
             return self.single_subface_from_whole_face(face_idx);
         }
         // Build subdivided boundary: walk original vertices, inserting extra vertices.
         let mut subdivided: Vec<DVec3> = Vec::new();
         for i in 0..nb {
             subdivided.push(bnd[i]);
-            let mut on_this_edge: Vec<DVec3> = extra_verts.iter()
+            let mut on_this_edge: Vec<(DVec3, bool)> = extra_verts.iter()
                 .filter(|(ei, _)| *ei == i)
-                .map(|(_, p)| *p)
+                .map(|(_, p)| (*p, false))
                 .collect();
+            // Also track which subdivided indices are boundary-on IC endpoints
             on_this_edge.sort_by(|a, b| {
-                let da = (a - bnd[i]).length_squared();
-                let db = (b - bnd[i]).length_squared();
+                let da = (a.0 - bnd[i]).length_squared();
+                let db = (b.0 - bnd[i]).length_squared();
                 da.partial_cmp(&db).unwrap()
             });
-            subdivided.extend(on_this_edge);
+            for (pt, _) in on_this_edge {
+                subdivided.push(pt);
+            }
         }
+
+        // OCCT BuildDraftFace: insert alone vertices into the boundary polygon.
+        // For each interior vertex with ≥2 boundary-on connections, find its two
+        // boundary-on points in the subdivided boundary and replace the segment
+        // between them with a detour through the interior vertex.
+        for iv in &interior_verts {
+            if iv.bnd_pts.len() < 2 { continue; }
+            let (bp0, bp1) = (iv.bnd_pts[0], iv.bnd_pts[1]);
+            // Find positions in subdivided boundary
+            let mut pos0 = None;
+            let mut pos1 = None;
+            for (i, p) in subdivided.iter().enumerate() {
+                if (*p - bp0).length() <= tol { pos0 = Some(i); }
+                if (*p - bp1).length() <= tol { pos1 = Some(i); }
+            }
+            let (Some(i0), Some(i1)) = (pos0, pos1) else { continue; };
+            // Determine forward (shorter) vs backward boundary path between i0 and i1.
+            // The IC detour replaces the shorter boundary segment.
+            let n = subdivided.len();
+            let fwd_len = if i1 >= i0 { i1 - i0 } else { i1 + n - i0 };
+            let bwd_len = n - fwd_len;
+            let (cut_start, cut_end) = if fwd_len <= bwd_len {
+                (i0, i1)   // fwd is shorter → replace fwd
+            } else {
+                (i1, i0)   // bwd is shorter → replace fwd from i1 to i0
+            };
+            // Build new boundary: copy from cut_end to cut_start (the longer path)
+            // then insert interior vertex
+            let mut new_boundary: Vec<DVec3> = Vec::with_capacity(n + 1);
+            let mut idx = cut_end;
+            loop {
+                new_boundary.push(subdivided[idx]);
+                if idx == cut_start { break; }
+                idx = (idx + 1) % n;
+            }
+            // Insert interior vertex between cut_start and the rest
+            new_boundary.push(iv.pt);
+            if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+                eprintln!("[BUILD_DRAFT] face[{}] subdivided {} pts → {} pts (L-shaped notch)",
+                    face_idx, subdivided.len(), new_boundary.len());
+            }
+            subdivided = new_boundary;
+        }
+
         vec![SubFace {
             boundary: subdivided,
             surface: face.surface.clone(),
