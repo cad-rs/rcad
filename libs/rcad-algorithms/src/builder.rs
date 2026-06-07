@@ -2398,10 +2398,6 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 }
                 if bnd_edge_ids.len() >= 2 {
-                    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
-                        eprintln!("[BUILD_DRAFT] face[{}] alone vertex at ({:.4},{:.4},{:.4}) with {} connections",
-                            face_idx, p.x, p.y, p.z, bnd_edge_ids.len());
-                    }
                     interior_verts.push(InteriorConn { pt: p, bnd_edge_ids, bnd_pts });
                 }
             }
@@ -2464,10 +2460,6 @@ impl<'a> BooleanBuilder<'a> {
             }
             // Insert interior vertex between cut_start and the rest
             new_boundary.push(iv.pt);
-            if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
-                eprintln!("[BUILD_DRAFT] face[{}] subdivided {} pts → {} pts (L-shaped notch)",
-                    face_idx, subdivided.len(), new_boundary.len());
-            }
             subdivided = new_boundary;
         }
 
