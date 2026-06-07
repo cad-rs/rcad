@@ -61,29 +61,41 @@ impl std::error::Error for BooleanError {}
 pub struct SubFace {
     /// Boundary vertex positions in 3D (ordered polygon).
     pub boundary: Vec<DVec3>,
+    /// DS vertex indices for each boundary vertex (wire-based split only).
+    /// Enables OCCT-style shared edges: same DS vertex → same ResultBuilder
+    /// vertex → shared edge between adjacent sub-faces.
+    pub ds_vertex_indices: Option<Vec<usize>>,
     /// The surface this lies on.
     pub surface: Surface3,
     /// Normal direction.
     pub normal: DVec3,
     /// UV centroid of this sub-face's parameter-space polygon (for curved surfaces).
-    /// Used by `sample_point` to produce a geometrically representative interior point.
     pub uv_centroid: Option<DVec2>,
-    /// Explicit override for the sample point. When set, `sample_point()` uses this
-    /// instead of computing it from the boundary centroid. Used when the centroid would
-    /// fall in a different classification region (e.g. the outer annular region around
-    /// an embedded circle, whose centroid falls inside the circle).
+    /// Explicit override for the sample point.
     pub sample_override: Option<DVec3>,
     /// UV domain [u0, u1, v0, v1] of this sub-face's parameter-space region.
-    /// Propagated to `GeomStore.face_surface_range` in the result BRep so that
-    /// `tessellate_curved_face` uses the correct sub-domain instead of the full
-    /// surface domain.
     pub uv_domain: Option<[f64; 4]>,
-    /// Inner wire boundaries (holes) in 3D. Each inner wire is an ordered polygon
-    /// representing a closed trim curve that forms a hole in the face.
+    /// Inner wire boundaries (holes) in 3D.
     pub inner_wires: Vec<Vec<DVec3>>,
 }
 
 impl SubFace {
+    /// Create a SubFace without DS vertex indices (defaults to `None`).
+    /// Callers that have DS vertex indices should set them after construction.
+    #[allow(dead_code)]
+    fn base(boundary: Vec<DVec3>, surface: Surface3, normal: DVec3) -> Self {
+        SubFace {
+            boundary,
+            ds_vertex_indices: None,
+            surface,
+            normal,
+            uv_centroid: None,
+            sample_override: None,
+            uv_domain: None,
+            inner_wires: vec![],
+        }
+    }
+
     fn sample_point(&self) -> DVec3 {
         // Returns a point slightly INSIDE the surface (toward the interior of the solid),
         // so classify_point can tell whether this sub-face is inside or outside
@@ -432,7 +444,39 @@ impl ResultBuilder {
             return;
         }
 
-        let vert_indices: Vec<usize> = sub.boundary.iter().map(|&p| self.add_vertex(p)).collect();
+        // When ds_vertex_indices is available (wire-based split), use direct DS→result
+        // mapping for OCCT-style shared edges: same DS vertex → same ResultBuilder vertex.
+        let vert_indices: Vec<usize> = if let Some(ds_indices) = &sub.ds_vertex_indices {
+            ds_indices.iter().map(|&ds_i| {
+                if let Some(rvi) = self.ds_to_result[ds_i] {
+                    rvi
+                } else {
+                    let pt = self.ds_vertices[ds_i];
+                    let key = hash_point(pt);
+                    // Check existing vertices by position (may have been added via add_vertex)
+                    if let Some(&idx) = self.vertex_map.get(&key) {
+                        if points_coincide(self.vertices[idx], pt) {
+                            self.ds_to_result[ds_i] = Some(idx);
+                            return idx;
+                        }
+                    }
+                    for (i, v) in self.vertices.iter().enumerate() {
+                        if points_coincide(*v, pt) {
+                            self.vertex_map.insert(key, i);
+                            self.ds_to_result[ds_i] = Some(i);
+                            return i;
+                        }
+                    }
+                    let idx = self.vertices.len();
+                    self.vertices.push(pt);
+                    self.vertex_map.insert(key, idx);
+                    self.ds_to_result[ds_i] = Some(idx);
+                    idx
+                }
+            }).collect()
+        } else {
+            sub.boundary.iter().map(|&p| self.add_vertex(p)).collect()
+        };
 
         // Add edges for outer boundary. Track the forward flag so that when
         // add_edge reuses an existing edge whose stored vertex order is reversed
@@ -1569,13 +1613,33 @@ impl<'a> BooleanBuilder<'a> {
         // (vertex endpoints can match multiple edges).  If ANY pair (one
         // from each endpoint) is on the same or adjacent edges, the IC
         // lies on the face boundary and should be treated as such.
+        //
+        // Also checks IC endpoints at face boundary vertices (t=0 or t=1
+        // in edge parameterization) — these are valid boundary ICs in OCCT's
+        // PaveBlockOn classification (PaveFiller stores paves at face vertices
+        // on the boundary edge).  The t-range check below excludes exact
+        // endpoints, so we match boundary vertices separately.
         let all_edges_of = |p: DVec3| -> Vec<usize> {
             let mut result = Vec::new();
             for i in 0..nb {
                 let ab = bnd[(i + 1) % nb] - bnd[i]; let l2 = ab.length_squared();
                 if l2 < tol * tol { continue; }
                 let t = ((p - bnd[i]).dot(ab) / l2).clamp(0.0, 1.0);
-                if (p - (bnd[i] + ab * t)).length() <= tol { result.push(i); }
+                if (p - (bnd[i] + ab * t)).length() <= tol {
+                    result.push(i);
+                    continue;
+                }
+                // Match IC endpoints at face boundary vertices (t=0 or t=1).
+                // bnd[i] is the start vertex of edge i and the end vertex of edge (i-1).
+                if (p - bnd[i]).length() <= tol {
+                    result.push(i);                    // edge i (bnd[i] is start vertex)
+                    if i > 0 { result.push(i - 1); }   // edge i-1 (bnd[i] is end vertex)
+                }
+            }
+            // Also check the last vertex (bnd[nb-1]) — end of edge nb-1, start of edge 0.
+            if nb > 1 && (p - bnd[nb - 1]).length() <= tol {
+                result.push(nb - 1);  // edge nb-1 (end vertex)
+                result.push(0);       // edge 0 (start vertex)
             }
             result
         };
@@ -1628,82 +1692,6 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
         true
-    }
-
-    fn split_planar_bspline_occt(
-        &self,
-        face_idx: usize,
-        plane: &Plane,
-        cids: &[usize],
-    ) -> Option<Vec<SubFace>> {
-        let face = &self.ds.faces[face_idx];
-        let (u_axis, v_axis) = plane_local_basis(plane);
-
-        // Project face boundary to 2D
-        if face.boundary_verts.len() < 3 { return None; }
-        let bnd_2d: Vec<DVec2> = face.boundary_verts.iter()
-            .map(|&vi| { let d = self.ds.vertices[vi].point - plane.origin;
-                DVec2::new(d.dot(u_axis), d.dot(v_axis)) })
-            .collect();
-
-        // Compute polygon centroid in 2D
-        let centroid = bnd_2d.iter().copied().sum::<DVec2>() / bnd_2d.len() as f64;
-
-        // Take the first valid intersection curve for splitting.
-        // For faces with multiple curves, each curve defines a split line.
-        // Process them sequentially (OCCT's WireSplitter connects all edges).
-        let mut current_polys = vec![bnd_2d.clone()];
-        for &ci in cids {
-            let ic = &self.ds.intersection_curves[ci];
-            let p_start = self.ds.vertices[ic.start_vertex].point;
-            let p_end = self.ds.vertices[ic.end_vertex].point;
-            if (p_start - p_end).length() < TOLERANCE_ABS { continue; }
-            let mid = (p_start + p_end) * 0.5;
-            let d_mid = mid - plane.origin;
-            let mid_2d = DVec2::new(d_mid.dot(u_axis), d_mid.dot(v_axis));
-            let cs = DVec2::new((p_start - plane.origin).dot(u_axis), (p_start - plane.origin).dot(v_axis));
-            let ce = DVec2::new((p_end - plane.origin).dot(u_axis), (p_end - plane.origin).dot(v_axis));
-            let mut split_dir = (centroid - mid_2d).normalize_or_zero();
-            if split_dir.length_squared() < 0.1 {
-                // Degenerate: midpoint equals centroid.  Use IC's perpendicular
-                // direction instead (splits the face at the interface line).
-                let cs = DVec2::new((p_start - plane.origin).dot(u_axis), (p_start - plane.origin).dot(v_axis));
-                let ce = DVec2::new((p_end - plane.origin).dot(u_axis), (p_end - plane.origin).dot(v_axis));
-                let ic_dir = (ce - cs).normalize_or_zero();
-                if ic_dir.length_squared() > 0.5 {
-                    split_dir = DVec2::new(-ic_dir.y, ic_dir.x); // Perpendicular
-                } else { continue; }
-            }
-            let mut next_polys = Vec::new();
-            for poly in &current_polys {
-                let halves = split_polygon_2d_by_line(poly, mid_2d, split_dir);
-                next_polys.extend(halves);
-            }
-            current_polys = next_polys;
-            if current_polys.is_empty() { return None; }
-        }
-        if current_polys.len() < 2 { eprintln!("[OCCT_SPLIT] face[{}] FAILED: {} polys after all curves", face_idx, current_polys.len()); return None; }
-
-        // Create SubFaces from the split polygons
-        let lift = |uv: DVec2| -> DVec3 { plane.origin + u_axis * uv.x + v_axis * uv.y };
-        let out: Vec<SubFace> = current_polys.into_iter()
-            .filter(|p| p.len() >= 3)
-            .map(|poly_2d| {
-                let boundary: Vec<DVec3> = poly_2d.iter().map(|&uv| lift(uv)).collect();
-                SubFace {
-                    boundary,
-                    surface: face.surface.clone(),
-                    normal: face.normal,
-                    uv_centroid: None,
-                    sample_override: None,
-                    uv_domain: None,
-                    inner_wires: vec![],
-                }
-            })
-            .collect();
-        if out.len() >= 2 { eprintln!("[OCCT_SPLIT] face[{}] -> {} subs", face_idx, out.len()); Some(out) } else {
-            None
-        }
     }
 
     fn keep_subface(
@@ -1801,6 +1789,7 @@ impl<'a> BooleanBuilder<'a> {
                     boundary: overlap,
                     surface: Surface3::Plane(plane),
                     normal: face_a.normal,
+                    ds_vertex_indices: None,
                     uv_centroid: None,
                     sample_override: None,
                     uv_domain: None,
@@ -1890,6 +1879,7 @@ impl<'a> BooleanBuilder<'a> {
             boundary: overlap_3d,
             surface: Surface3::Plane(plane),
             normal: face_a.normal,
+            ds_vertex_indices: None,
             uv_centroid: None,
             sample_override,
             uv_domain: None,
@@ -2305,32 +2295,11 @@ impl<'a> BooleanBuilder<'a> {
                         let src = self.ds.faces[fi].source_face_idx;
                         result.emit_face_with_origin(&trimmed, false, FaceOrigin::FromB(src));
                     } else {
-                        // For B-side On sub-faces: skip if an A-side Plane face on
-                        // the same plane has already been emitted (the A-side face
-                        // preserves the PLANE surface type on coincident boundary
-                        // regions, e.g. bfuse_simple B1 face[0]/face[2]/face[3]/face[4]).
-                        if class == Classification::On && !a_on_planes.is_empty() {
-                            let b_plane = match &sub.surface {
-                                Surface3::Plane(p) => Some(p.clone()),
-                                Surface3::BSpline(bsp) if rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS) => {
-                                    Some(rcad_kernel::geom::bspline_to_plane(bsp))
-                                }
-                                _ => None,
-                            };
-                            if let Some(bp) = b_plane {
-                                let bn = bp.normal.normalize_or_zero();
-                                let covered = a_on_planes.iter().any(|(an, ao)| {
-                                    let dot = an.dot(bn).abs();
-                                    if dot < 0.99 { return false; }
-                                    // Check perpendicular distance from A-plane origin to B-plane.
-                                    let sign = if an.dot(bn) > 0.0 { 1.0 } else { -1.0 };
-                                    let a_dist = ao.dot(*an);
-                                    let b_dist = bp.origin.dot(bn) * sign;
-                                    (a_dist - b_dist).abs() < 1e-6
-                                });
-                                if covered { continue; }
-                            }
-                        }
+                        // OCCT FillSameDomainFaces: emit ALL sub-faces regardless of
+                        // surface type (Plane or BSpline). The edge-set grouping
+                        // (unify_same_domain_faces) handles merging of same-domain
+                        // Plane+BSpline duplicates. No RCAD-specific early removal
+                        // of B-side BSpline On faces.
                         // Collect for edge-based merge, grouped by classification.
                         match class {
                             Classification::On => {
@@ -2673,22 +2642,6 @@ impl<'a> BooleanBuilder<'a> {
         out
     }
 
-    fn merged_split_curve_ids_for_planar_face(&self, face_idx: usize, plane: &Plane) -> Vec<usize> {
-        let mut c: Vec<usize> = self.ds.faces[face_idx]
-            .face_info
-            .curves_in
-            .iter()
-            .copied()
-            .collect();
-        for e in self.extra_coplanar_circle_curves_for_plane_face(face_idx, plane) {
-            if !c.contains(&e) {
-                c.push(e);
-            }
-        }
-        c.sort_unstable();
-        c
-    }
-
     fn single_subface_from_whole_face(&self, face_idx: usize) -> Vec<SubFace> {
         let face = &self.ds.faces[face_idx];
         // Compute face boundary from edge curves, not vertex positions.
@@ -2724,6 +2677,7 @@ impl<'a> BooleanBuilder<'a> {
                         boundary: sampled,
                         surface: face.surface.clone(),
                         normal: face.normal,
+                        ds_vertex_indices: None,
                         uv_centroid: None,
                         sample_override: None,
                         uv_domain: None,
@@ -2737,6 +2691,7 @@ impl<'a> BooleanBuilder<'a> {
             boundary,
             surface: face.surface.clone(),
             normal: face.normal,
+            ds_vertex_indices: None,
             uv_centroid: None,
             sample_override: None,
             uv_domain: None,
@@ -2752,68 +2707,17 @@ impl<'a> BooleanBuilder<'a> {
         // OCCT-style: skip splitting when all ICs are on the face boundary
         // (OCCT BuildSplitFaces skip at lines 297-328: no PaveBlocksIn/Sc,
         //  no internal edges, no modified wires → keep original face).
-        // Plane faces use polygon clipping which handles this correctly.
+        // OCCT WireSplitter for all surface types (OCCT BOPAlgo_WireSplitter).
         let interior_cids: Vec<usize> = fi.curves_in.iter().copied()
             .filter(|&ci| !self.is_boundary_ic(face_idx, ci))
             .collect();
         let has_interior_ics = !interior_cids.is_empty();
-
-        // OCCT wire-based splitting (edge graph traversal, BSpline only).
         let has_crossing = has_interior_ics && self.has_crossing_ics(face_idx);
-        if has_interior_ics
-            && !has_crossing
-            && !matches!(face.surface, Surface3::Plane(_))
-        {
+        if has_interior_ics && !has_crossing {
             let subs = split_face_wire_based(self.ds, face_idx, &interior_cids);
             if subs.len() >= 2 { return subs; }
         }
 
-        // Planar BSpline: use only interior ICs for splitting.
-        if let Surface3::BSpline(bsp) = &face.surface {
-            if has_interior_ics
-                && rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS)
-            {
-                let plane = rcad_kernel::geom::bspline_to_plane(bsp);
-                let crossing = self.has_crossing_ics(face_idx);
-                // When ICs cross (form a non-planar edge graph), skip the wire-aware
-                // splitter — the polygon-based splitter handles crossing ICs correctly.
-                // Otherwise, try the OCCT-style split first.
-                if !crossing {
-                    if let Some(subs) = self.split_planar_bspline_occt(face_idx, &plane, &interior_cids) {
-                        return subs;
-                    }
-                }
-                // Fallback: polygon clipping
-                let subs = self.split_planar_face(face_idx, &plane, &interior_cids);
-                if subs.len() > 1 {
-                    let mut out = subs;
-                    for sub in &mut out { sub.surface = face.surface.clone(); }
-                    return out;
-                }
-            }
-        }
-
-
-        if let Surface3::Plane(plane) = &face.surface {
-            let cids = self.merged_split_curve_ids_for_planar_face(face_idx, plane);
-            if cids.is_empty() {
-                // No intersection curves 鈥?return the whole face as one subface.
-                let subs = self.single_subface_from_whole_face(face_idx);
-                return subs;
-            }
-            let subs = self.split_planar_face(face_idx, plane, &cids);
-            if subs.len() > 1 { return subs; }
-            // Fallback: OCCT-style split for boundary-coincident curves.
-            // Project each intersection curve midpoint toward the polygon
-            // centroid and split along that line (same approach used for
-            // planar BSpline faces in split_planar_bspline_occt).
-            if !cids.is_empty() {
-                if let Some(subs) = self.split_planar_bspline_occt(face_idx, plane, &cids) {
-                    return subs;
-                }
-            }
-            // Fall through: curve on boundary -> use split_curved_face_parametric
-        }
 
         if fi.curves_in.is_empty() {
             // Closed surfaces with seam edges (sphere) may have < 3 boundary vertices,
@@ -3127,6 +3031,7 @@ impl<'a> BooleanBuilder<'a> {
                     boundary,
                     surface: face.surface.clone(),
                     normal: outward,
+                    ds_vertex_indices: None,
                     uv_centroid: Some(DVec2::new(0.5 * (u0 + u1), 0.5 * (v0 + v1))),
                     sample_override: None,
                     uv_domain: Some([u0, u1, v0, v1]),
@@ -3200,6 +3105,7 @@ impl<'a> BooleanBuilder<'a> {
                 boundary,
                 surface: face.surface.clone(),
                 normal: sub_normal,
+                ds_vertex_indices: None,
                 uv_centroid: Some(DVec2::new(u_mid, v_mid)),
                 sample_override: None,
                 uv_domain: Some([u0, u1, v_min, v_max]),
@@ -3284,6 +3190,7 @@ impl<'a> BooleanBuilder<'a> {
                     boundary,
                     surface: face.surface.clone(),
                     normal: sub_normal,
+                    ds_vertex_indices: None,
                     uv_centroid: Some(DVec2::new(u_mid, v_mid)),
                     // Use the exact surface center as the sample point so
                     // classify_analytic_cylinder_solid uses the Steinmetz formula
@@ -3383,6 +3290,7 @@ impl<'a> BooleanBuilder<'a> {
                     boundary,
                     surface: face.surface.clone(),
                     normal: sub_normal,
+                    ds_vertex_indices: None,
                     uv_centroid: Some(DVec2::new(u_mid, v_mid)),
                     sample_override: Some(cone.point_at(u_mid, v_mid)),
                     uv_domain: Some([u_mid - 1e-9, u_mid + 1e-9, v_mid - 1e-9, v_mid + 1e-9]),
@@ -3402,409 +3310,6 @@ impl<'a> BooleanBuilder<'a> {
     /// 4. Walk augmented boundary to extract sub-polygons on each side
     /// `split_curve_ids` is `face_info.curves_in` plus any merged coplanar circles (see
     /// [`Self::merged_split_curve_ids_for_planar_face`]).
-    fn split_planar_face(
-        &self,
-        face_idx: usize,
-        plane: &Plane,
-        split_curve_ids: &[usize],
-    ) -> Vec<SubFace> {
-        let face = &self.ds.faces[face_idx];
-
-        // Collect 3D boundary points
-        let (u_axis, v_axis) = plane_local_basis(plane);
-        let mut boundary_3d: Vec<DVec3> = face
-            .boundary_verts
-            .iter()
-            .map(|&vi| self.ds.vertices[vi].point)
-            .collect();
-
-        if boundary_3d.len() < 3 {
-            if boundary_3d.len() == 2 {
-                // Circular face with only 2 boundary vertices (diameter endpoints).
-                // Reconstruct the circular boundary so we can split it by intersection
-                // curves (cylinder cap cut by a plane).
-                let center = (boundary_3d[0] + boundary_3d[1]) * 0.5;
-                let radius = (boundary_3d[0] - boundary_3d[1]).length() * 0.5;
-                if radius >= TOLERANCE_LEN_MIN {
-                    const N: usize = 32;
-                    boundary_3d = Vec::with_capacity(N);
-                    use std::f64::consts::TAU;
-                    // Offset start angle to avoid vertices landing on the splitting line
-                    // (split_polygon_2d_by_line skips edges with endpoints on the line,
-                    // which prevents splitting a circle by its diameter).
-                    let offset = TAU / (2.0 * N as f64);
-                    for i in 0..N {
-                        let theta = offset + i as f64 * TAU / N as f64;
-                        boundary_3d.push(center
-                            + u_axis * (radius * theta.cos())
-                            + v_axis * (radius * theta.sin()));
-                    }
-                }
-            }
-            // If circular reconstruction didn't produce a valid boundary (e.g. degenerate
-            // cap from a standard cylinder where both boundary_verts point to the same vertex),
-            // fall back to the UV boundary from the DS face, which samples boundary edges
-            // through `compute_uv_boundaries`.
-            if boundary_3d.len() < 3 {
-                if let Some(uv_bnd) = &face.uv_boundary {
-                    if uv_bnd.len() >= 3 {
-                        boundary_3d = uv_bnd.iter()
-                            .map(|uv| plane.point_at(uv.x, uv.y))
-                            .collect();
-                    } else {
-                        return vec![];
-                    }
-                } else {
-                    return vec![];
-                }
-            }
-        }
-
-        // Project boundary to 2D in the plane
-        let project_to_2d = |p: DVec3| -> DVec2 {
-            let d = p - plane.origin;
-            DVec2::new(d.dot(u_axis), d.dot(v_axis))
-        };
-        let lift_to_3d = |uv: DVec2| -> DVec3 { plane.origin + u_axis * uv.x + v_axis * uv.y };
-
-        let boundary_2d: Vec<DVec2> = boundary_3d.iter().map(|&p| project_to_2d(p)).collect();
-
-        // Process each intersection curve to split the polygon
-        let mut poly_wires: Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)> = vec![(boundary_2d.clone(), vec![])];
-        // Track circles that were embedded inside polygons (center_2d, radius).
-        // When such a circle is fully inside a polygon, that polygon's centroid
-        // may fall inside the circle 鈥?we must use a vertex-based sample instead.
-        let mut embedded_circles: Vec<(DVec2, f64)> = Vec::new();
-
-        for &ci in split_curve_ids {
-            let ic = &self.ds.intersection_curves[ci];
-
-            let curve_result: Option<Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)>> = match &ic.curve {
-                Curve3::Circle(circle) => {
-                    // Plane-sphere intersection produces a circle lying in the plane.
-                    // Project the circle center to 2D and split by the circle boundary.
-                    let center_2d = project_to_2d(circle.center);
-                    let radius = circle.radius;
-
-                    // Skip degenerate circles (radius ≈ 0) from tangent sphere-plane
-                    // intersections.  These cannot split the planar face and would produce
-                    // a damaged boundary triangle instead of the full face rectangle.
-                    // Use a relaxed tolerance — the sphere-plane distance may produce
-                    // a radius of ~1e-6 from floating-point noise (e.g. sqrt(1²-1²)).
-                    if radius < TOLERANCE_PLANE_DIST_RELAX {
-                        None
-                    } else {
-                    let mut next: Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)> = Vec::new();
-
-                    // Pre-sample the 3D circle at 128 3D points, projected to 2D.
-                    // `split_curved_face_parametric` samples sphere UV edges at 32 points
-                    // (EDGE_SAMPLES) per edge, so 128 鈫?32 per quadrant matches that density,
-                    // ensuring plane-side arc positions are bit-identical to sphere-side
-                    // boundary positions so `ResultBuilder::add_vertex` deduplicates them.
-                    const ARC_PRE_N: usize = 128;
-                    let pre_2d: Vec<DVec2> = (0..ARC_PRE_N)
-                        .map(|i| project_to_2d(circle.point_at(
-                            std::f64::consts::TAU * i as f64 / ARC_PRE_N as f64,
-                        )))
-                        .collect();
-                    let on_circle_tol = TOLERANCE_COORD_SUB;
-
-                    for (poly, existing_wires) in &poly_wires {
-                        let (halves, new_inner_wires) = split_polygon_by_circle_2d(poly, center_2d, radius, Some(self.op));
-                        for half in halves {
-                            let all_wires = [existing_wires.clone(), new_inner_wires.clone()].concat();
-                            // Check whether this half has a contiguous on-circle arc segment.
-                            let on: Vec<bool> = half.iter()
-                                .map(|p| ((*p - center_2d).length() - radius).abs() < on_circle_tol)
-                                .collect();
-                            let fi = on.iter().position(|&x| x);
-                            let li = on.iter().rposition(|&x| x);
-                            let replace = match (fi, li) {
-                                (Some(f), Some(l)) => {
-                                    let cnt = on.iter().filter(|&&x| x).count();
-                                    if cnt >= 3 && l - f + 1 == cnt {
-                                        if f == 0 && l == half.len() - 1 {
-                                            // All vertices on the circle boundary.
-                                            // A full-circle polygon (angular span ~2π) must
-                                            // NOT be replaced — the direction logic breaks
-                                            // down for a closed ring of on-circle vertices.
-                                            // But a partial circular segment (all vertices on
-                                            // the circle, e.g. curved triangle from splitting
-                                            // an inscribed polygon by line edges) DOES need
-                                            // the high-density arc replacement.
-                                            if cnt >= 4 {
-                                                let first_angle = (half[0] - center_2d).to_angle();
-                                                let last_angle = (half[l] - center_2d).to_angle();
-                                                let span = (last_angle - first_angle
-                                                    + std::f64::consts::TAU)
-                                                    % std::f64::consts::TAU;
-                                                span < std::f64::consts::TAU - 0.01
-                                            } else {
-                                                // cnt == 3: too few vertices for a full circle
-                                                true
-                                            }
-                                        } else {
-                                            true
-                                        }
-                                    } else {
-                                        false
-                                    }
-                                }
-                                _ => false,
-                            };
-
-                            if replace {
-                                let fi = fi.unwrap();
-                                let li = li.unwrap();
-
-                                let theta1 = (half[fi] - center_2d).to_angle();
-                                let theta_n = (half[fi + 1] - center_2d).to_angle();
-                                let d_ccw = (theta_n - theta1
-                                    + std::f64::consts::TAU)
-                                    % std::f64::consts::TAU;
-                                let going_ccw = d_ccw < std::f64::consts::PI;
-
-                                let j1 = (((theta1 % std::f64::consts::TAU
-                                    + std::f64::consts::TAU) % std::f64::consts::TAU)
-                                    / std::f64::consts::TAU * ARC_PRE_N as f64 + 0.5)
-                                    .floor() as usize % ARC_PRE_N;
-                                let jn = ((((half[li] - center_2d).to_angle()
-                                    % std::f64::consts::TAU + std::f64::consts::TAU)
-                                    % std::f64::consts::TAU)
-                                    / std::f64::consts::TAU * ARC_PRE_N as f64 + 0.5)
-                                    .floor() as usize % ARC_PRE_N;
-
-                                let mut arc: Vec<DVec2> = Vec::new();
-                                if going_ccw {
-                                    let mut j = (j1 + 1) % ARC_PRE_N;
-                                    while j != jn {
-                                        arc.push(pre_2d[j]);
-                                        j = (j + 1) % ARC_PRE_N;
-                                    }
-                                } else {
-                                    let mut j = (j1 + ARC_PRE_N - 1) % ARC_PRE_N;
-                                    while j != jn {
-                                        arc.push(pre_2d[j]);
-                                        j = (j + ARC_PRE_N - 1) % ARC_PRE_N;
-                                    }
-                                }
-
-                                let mut replaced: Vec<DVec2> =
-                                    Vec::with_capacity(fi + 1 + arc.len() + half.len() - li);
-                                replaced.extend_from_slice(&half[..=fi]);
-                                replaced.extend(arc);
-                                replaced.extend_from_slice(&half[li..]);
-                                replaced.dedup_by(|a, b| {
-                                    (*a - *b).length_squared() < on_circle_tol * on_circle_tol
-                                });
-                                next.push((replaced, all_wires));
-                            } else {
-                                next.push((half, all_wires));
-                            }
-                        }
-                    }
-                    // Track this circle so we can compute correct sample points later
-                    embedded_circles.push((center_2d, radius));
-                    Some(next)
-                    } // end else (radius >= TOLERANCE_ABS)
-                }
-                Curve3::Line(_line) => {
-                    // Use segment from start to end vertex. OCCT's PerformLoops
-                    // uses the intersection curve as a 2D segment (pcurve endpoints
-                    // on the face boundary). The line-direction approach fails when
-                    // the projected line is parallel to a polygon edge, as both
-                    // endpoints and shared edges all have zero signed distance.
-                    let p_start = self.ds.vertices[ic.start_vertex].point;
-                    let p_end = self.ds.vertices[ic.end_vertex].point;
-                    if points_coincide(p_start, p_end) {
-                        None
-                    } else {
-                        let seg_s2d = project_to_2d(p_start);
-                        let seg_e2d = project_to_2d(p_end);
-                        let mut next: Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)> = Vec::new();
-                        for (poly, existing_wires) in &poly_wires {
-                            let halves = split_polygon_2d_by_segment(poly, seg_s2d, seg_e2d);
-                            for half in halves {
-                                next.push((half, existing_wires.clone()));
-                            }
-                        }
-                        Some(next)
-                    }
-                }
-                _ => {
-                    // For other curves, fall back to segment approach
-                    let p_start = self.ds.vertices[ic.start_vertex].point;
-                    let p_end = self.ds.vertices[ic.end_vertex].point;
-                    if !points_coincide(p_start, p_end) {
-                        let seg_s2d = project_to_2d(p_start);
-                        let seg_e2d = project_to_2d(p_end);
-                        let mut next: Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)> = Vec::new();
-                        for (poly, existing_wires) in &poly_wires {
-                            let halves = split_polygon_2d_by_segment(poly, seg_s2d, seg_e2d);
-                            for half in halves {
-                                next.push((half, existing_wires.clone()));
-                            }
-                        }
-                        Some(next)
-                    } else {
-                        None
-                    }
-                }
-            };
-
-            if let Some(new_polys) = curve_result
-                && !new_polys.is_empty()
-            {
-                poly_wires = new_polys;
-            }
-        }
-
-        // Insert intersection endpoints that lie on polygon edges so wires share vertices.
-        // Include endpoints from **all** DS intersection curves that lie on this plane, not only
-        // `curves_in` for this face 鈥?otherwise partner faces (e.g. B lateral vs A +X) miss
-        // imprint points and T-junctions remain.
-        let edge_tol = (TOLERANCE_ABS * 1e4).max(TOLERANCE_COORD_SUB);
-        let plane_tol = (TOLERANCE_ABS * 1e5).max(TOLERANCE_ABS);
-        let n_plane = plane.normal.normalize_or_zero();
-        let dist_plane = |p: DVec3| -> f64 { (p - plane.origin).dot(n_plane).abs() };
-
-        let mut imprint_uv: Vec<DVec2> = split_curve_ids
-            .iter()
-            .flat_map(|&ci| {
-                let ic = &self.ds.intersection_curves[ci];
-                [
-                    project_to_2d(self.ds.vertices[ic.start_vertex].point),
-                    project_to_2d(self.ds.vertices[ic.end_vertex].point),
-                ]
-            })
-            .collect();
-        // Bounding box of this face in UV (expand slightly) 鈥?only add global imprint points
-        // near this face so unrelated coplanar curves elsewhere do not disturb the polygon.
-        let (mut umin, mut umax, mut vmin, mut vmax) = (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY);
-        for &q in &boundary_2d {
-            umin = umin.min(q.x);
-            umax = umax.max(q.x);
-            vmin = vmin.min(q.y);
-            vmax = vmax.max(q.y);
-        }
-        let margin = plane_tol * 100.0;
-        umin -= margin;
-        umax += margin;
-        vmin -= margin;
-        vmax += margin;
-        let in_uv_aabb = |q: DVec2| q.x >= umin && q.x <= umax && q.y >= vmin && q.y <= vmax;
-
-        for ic in &self.ds.intersection_curves {
-            let p0 = self.ds.vertices[ic.start_vertex].point;
-            let p1 = self.ds.vertices[ic.end_vertex].point;
-            if dist_plane(p0) <= plane_tol && dist_plane(p1) <= plane_tol {
-                let q0 = project_to_2d(p0);
-                let q1 = project_to_2d(p1);
-                if in_uv_aabb(q0) {
-                    imprint_uv.push(q0);
-                }
-                if in_uv_aabb(q1) {
-                    imprint_uv.push(q1);
-                }
-            }
-        }
-        imprint_uv.sort_by(|a, b| {
-            a.x.partial_cmp(&b.x)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.y.partial_cmp(&b.y).unwrap_or(std::cmp::Ordering::Equal))
-        });
-        imprint_uv.dedup_by(|a, b| (*a - *b).length_squared() < edge_tol * edge_tol);
-
-        for (poly, _) in &mut poly_wires {
-            *poly = insert_points_on_polygon_edges(poly, &imprint_uv, edge_tol);
-        }
-
-        let debug_split = std::env::var("RCAD_DEBUG_SPLIT").is_ok();
-
-        if poly_wires.len() <= 1 {
-            eprintln!("[SP_DBG] face[{}] {} wires after all splits, first_len={}",
-                face_idx, poly_wires.len(), poly_wires.first().map(|(p,_)| p.len()).unwrap_or(0));
-        }
-
-        poly_wires
-            .into_iter()
-            .filter(|(p, _)| p.len() >= 3)
-            .map(|(poly_2d, inner_wires_2d)| {
-                let boundary: Vec<DVec3> = poly_2d.iter().map(|&uv| lift_to_3d(uv)).collect();
-                let inner_wires: Vec<Vec<DVec3>> = inner_wires_2d.iter()
-                    .map(|iw| iw.iter().map(|uv| lift_to_3d(*uv)).collect())
-                    .collect();
-                // If there are embedded circles and this polygon's centroid falls inside
-                // one of them, use the first boundary vertex (offset by normal) as the
-                // sample point instead. All polygon vertices of the outer region are
-                // outside all embedded circles, so the first vertex is a valid sample.
-                let sample_override = if !embedded_circles.is_empty() {
-                    let centroid_2d = {
-                        let sum = poly_2d.iter().fold(DVec2::ZERO, |acc, &p| acc + p);
-                        sum / poly_2d.len() as f64
-                    };
-                    // Tolerance for "definitely outside a circle" — on-circle vertices can
-                    // be up to ~2e-5 beyond the true radius after the center nudge in
-                    // split_polygon_by_circle_2d (max 2e-5). Use 1000× TOLERANCE_ABS (1e-4)
-                    // to safely exclude them; genuine outside vertices (dist ~√2 ≈ 0.414
-                    // beyond the circle) are well above this threshold.
-                    const OUTSIDE_TOL: f64 = crate::tolerance::TOLERANCE_ABS * 1000.0;
-                    // Only consider circles that actually cut holes — a circle that
-                    // contains ALL polygon vertices (e.g. the outer boundary circle
-                    // from a merged coplanar face) is not a hole and shouldn't block
-                    // the outside-point search below.
-                    let hole_circles: Vec<_> = embedded_circles.iter().filter(|&&(c, r)| {
-                        poly_2d.iter().any(|uv| (*uv - c).length() > r + OUTSIDE_TOL)
-                    }).collect();
-                    let centroid_in_hole = hole_circles.iter().any(|&&(c, r)| {
-                        (centroid_2d - c).length() < r
-                    });
-                    if centroid_in_hole && !boundary.is_empty() {
-                        // Find the first boundary vertex outside every hole circle.
-                        // boundary[0] can be on a circle boundary (crossing point), so
-                        // use the OUTSIDE_TOL margin to exclude on-circle vertices.
-                        let outside_pt = poly_2d.iter().zip(boundary.iter()).find(|(uv, _)| {
-                            hole_circles.iter().all(|&&(c, r)| {
-                                (*uv - c).length() > r + OUTSIDE_TOL
-                            })
-                        }).map(|(_, p3d)| *p3d);
-                        outside_pt.map(|p| p + face.normal * crate::tolerance::TOLERANCE_ABS * 10.0)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-                if debug_split {
-                    let centroid_2d = poly_2d.iter().fold(DVec2::ZERO, |acc, &p| acc + p) / poly_2d.len() as f64;
-                    let samp = sample_override.unwrap_or_else(|| {
-                        let c3d = if boundary.len() >= 3 {
-                            planar_polygon_centroid(&boundary, face.normal)
-                        } else { boundary.iter().copied().sum::<DVec3>() / boundary.len() as f64 };
-                        c3d + face.normal * crate::tolerance::TOLERANCE_ABS * 10.0
-                    });
-                    eprintln!("SPLIT_POLY nverts={} centroid2d=({:.4},{:.4}) sample_override={} sample=({:.4},{:.4},{:.4})",
-                        poly_2d.len(), centroid_2d.x, centroid_2d.y,
-                        sample_override.is_some(), samp.x, samp.y, samp.z);
-                    if poly_2d.len() <= 15 {
-                        for (i,v) in poly_2d.iter().enumerate() {
-                            eprintln!("  v[{i}]=({:.4},{:.4}) dist={:.4}", v.x, v.y, (*v - embedded_circles.first().map(|&(c,_)| c).unwrap_or(DVec2::ZERO)).length());
-                        }
-                    }
-                }
-                SubFace {
-                    boundary,
-                    surface: face.surface.clone(),
-                    normal: face.normal,
-                    uv_centroid: None,
-                    sample_override,
-                    uv_domain: None,
-                    inner_wires,
-                }
-            })
-            .collect()
-    }
-
     fn faces_of(&self, origin: ShapeOrigin) -> Vec<usize> {
         let mut v: Vec<usize> = self
             .ds
@@ -4057,6 +3562,7 @@ impl<'a> BooleanBuilder<'a> {
                 boundary,
                 surface,
                 normal,
+                ds_vertex_indices: None,
                 uv_centroid: None,
                 sample_override: None,
                 uv_domain: None,
@@ -4076,6 +3582,7 @@ impl<'a> BooleanBuilder<'a> {
                 boundary: boundary_pts,
                 surface,
                 normal,
+                ds_vertex_indices: None,
                 uv_centroid: None,
                 sample_override: None,
                 uv_domain: None,
@@ -4173,6 +3680,7 @@ impl<'a> BooleanBuilder<'a> {
                 boundary,
                 surface: surface.clone(),
                 normal,
+                ds_vertex_indices: None,
                 uv_centroid: None,
                 sample_override: None,
                 uv_domain: None,
@@ -5071,6 +4579,7 @@ impl<'a> BooleanBuilder<'a> {
                     boundary,
                     surface: surface.clone(),
                     normal: sub_normal,
+                    ds_vertex_indices: None,
                     uv_centroid: Some(centroid_uv),
                     sample_override: None,
                     uv_domain,
@@ -5244,6 +4753,7 @@ fn merge_two_subfaces(a: &SubFace, b: &SubFace, ai: usize, bi: usize, forward: b
         boundary: merged_boundary,
         surface: a.surface.clone(),
         normal: a.normal,
+        ds_vertex_indices: None,
         uv_centroid: None,
         sample_override: a.sample_override.or(b.sample_override),
         uv_domain: merged_uv_domain,
@@ -7689,184 +7199,6 @@ fn dedup_consecutive_poly2d(poly: &[DVec2], tol: f64) -> Vec<DVec2> {
 /// Split a 2D polygon by an infinite line through `point` with direction `dir`.
 ///
 /// Vertices on the positive side (cross product > 0) form one group, negative side the other.
-fn split_polygon_2d_by_line(poly: &[DVec2], point: DVec2, dir: DVec2) -> Vec<Vec<DVec2>> {
-    split_polygon_2d_by_line_opt(poly, point, dir, None)
-}
-
-/// OCCT-aligned: when the split line coincides with a polygon edge (both
-/// endpoints on the line), insert a crossing at the point where the actual
-/// intersection segment leaves the edge.  Without this fix the polygon
-/// passes through unsplit when the segment endpoint is on the edge.
-fn split_polygon_2d_by_line_opt(
-    poly: &[DVec2],
-    point: DVec2,
-    dir: DVec2,
-    seg_end: Option<DVec2>,
-) -> Vec<Vec<DVec2>> {
-    let n = poly.len();
-    if n < 3 {
-        return vec![poly.to_vec()];
-    }
-    let tol = TOLERANCE_ABS;
-
-    // Signed distance from line
-    let signed_dist = |p: DVec2| -> f64 {
-        let d = p - point;
-        dir.x * d.y - dir.y * d.x // perpendicular component
-    };
-
-    let dists: Vec<f64> = poly.iter().map(|&p| signed_dist(p)).collect();
-    // Vertices exactly on the line (|d| < tol) are neutral 鈥?they don't count as
-    // "all on one side".  Only strictly positive (> tol) or strictly negative (< -tol)
-    // vertices determine whether the polygon crosses the line.
-    let all_pos = dists.iter().all(|&d| d > tol);
-    let all_neg = dists.iter().all(|&d| d < -tol);
-
-    if all_pos || all_neg {
-        return vec![poly.to_vec()];
-    }
-
-    let mut crossings: Vec<(usize, DVec2)> = Vec::new();
-    for i in 0..n {
-        let j = (i + 1) % n;
-        let di = dists[i];
-        let dj = dists[j];
-
-        // When a vertex lies exactly on the split line (|d| < tol), the original
-        // edge-crossing test would skip the edge entirely, losing the crossing.
-        // This happens when a circular face with few boundary vertices is split
-        // by a line passing through two vertices (e.g. an inscribed square on a
-        // cylinder cap, where box edge passes through circle polygon vertices).
-        //
-        // Fix: two cases:
-        // 1. *Current* vertex on line, *next* off: search backward for the first
-        //    non-on-line vertex. If its sign opposes the next vertex's sign, the
-        //    line crosses at this vertex.
-        // 2. *Next* vertex on line, *current* off: search forward from the next
-        //    for the first non-on-line vertex. If its sign opposes the current
-        //    vertex's sign, the line crosses at the next vertex.
-        if di.abs() < tol && dj.abs() >= tol {
-            let mut pi = (i + n - 1) % n;
-            while pi != i && dists[pi].abs() < tol {
-                pi = (pi + n - 1) % n;
-            }
-            if pi != i && dists[pi] * dj < 0.0 {
-                crossings.push((i, poly[i]));
-                continue;
-            }
-        }
-        if di.abs() >= tol && dj.abs() < tol {
-            let mut nj = (j + 1) % n;
-            while nj != j && dists[nj].abs() < tol {
-                nj = (nj + 1) % n;
-            }
-            if nj != j && di * dists[nj] < 0.0 {
-                crossings.push((j, poly[j]));
-                continue;
-            }
-        }
-
-        if di.abs() < tol && dj.abs() < tol {
-            // Both endpoints on the line: the split line coincides with this
-            // polygon edge.  If the segment endpoint (from the actual
-            // intersection curve) lies within this edge range, insert a
-            // crossing so the polygon IS split (OCCT alignment).
-            if let Some(seg_e) = seg_end {
-                let edge_start = poly[i];
-                let edge_end = poly[j];
-                let e_vec = edge_end - edge_start;
-                let e_len2 = e_vec.length_squared();
-                if e_len2 > TOLERANCE_FLOAT_LOOSE {
-                    let t = (seg_e - edge_start).dot(e_vec) / e_len2;
-                    if t > TOLERANCE_COORD_SUB && t < 1.0 - TOLERANCE_COORD_SUB {
-                        let proj = edge_start + t * e_vec;
-                        if (seg_e - proj).length() < tol * 100.0 {
-                            crossings.push((i, proj));
-                        }
-                    }
-                }
-            }
-            continue;
-        }
-        if di.abs() < tol || dj.abs() < tol {
-            continue;
-        }
-        if di * dj < 0.0 {
-            let t = di / (di - dj);
-            let pt = poly[i] + t * (poly[j] - poly[i]);
-            crossings.push((i, pt));
-        }
-    }
-
-    if crossings.len() < 2 {
-        return vec![poly.to_vec()];
-    }
-
-    // Deduplicate: the forward-search and backward-search may both detect
-    // a crossing at the same vertex from adjacent edges (e.g. a diamond
-    // polygon split by a line through two opposite vertices).
-    crossings.sort_by_key(|(idx, _)| *idx);
-    crossings.dedup_by(|a, b| a.0 == b.0);
-    if crossings.len() < 2 {
-        return vec![poly.to_vec()];
-    }
-
-    let (idx1, pt1) = crossings[0];
-    let (idx2, pt2) = crossings[1];
-    if idx1 == idx2 {
-        return vec![poly.to_vec()];
-    }
-
-    let mut sub_a: Vec<DVec2> = poly[..=idx1].to_vec();
-    sub_a.push(pt1);
-    sub_a.push(pt2);
-    sub_a.extend_from_slice(&poly[idx2 + 1..]);
-
-    let mut sub_b: Vec<DVec2> = vec![pt1];
-    sub_b.extend_from_slice(&poly[idx1 + 1..=idx2]);
-    sub_b.push(pt2);
-
-    let dedup = |v: Vec<DVec2>| -> Vec<DVec2> {
-        let mut result: Vec<DVec2> = Vec::new();
-        for p in v {
-            if result.is_empty() || (p - result[result.len() - 1]).length_squared() > TOLERANCE_FLOAT_ULTRA {
-                result.push(p);
-            }
-        }
-        if result.len() > 1 && (result[0] - result[result.len() - 1]).length_squared() < TOLERANCE_FLOAT_ULTRA {
-            result.pop();
-        }
-        result
-    };
-
-    let sub_a = dedup(sub_a);
-    let sub_b = dedup(sub_b);
-    let mut out = Vec::new();
-    if sub_a.len() >= 3 {
-        out.push(sub_a);
-    }
-    if sub_b.len() >= 3 {
-        out.push(sub_b);
-    }
-    if out.is_empty() {
-        vec![poly.to_vec()]
-    } else {
-        out
-    }
-}
-
-/// Split a 2D polygon by a segment from `seg_start` to `seg_end`.
-fn split_polygon_2d_by_segment(
-    poly: &[DVec2],
-    seg_start: DVec2,
-    seg_end: DVec2,
-) -> Vec<Vec<DVec2>> {
-    let dir = seg_end - seg_start;
-    if dir.length_squared() < TOLERANCE_FLOAT_ULTRA {
-        return vec![poly.to_vec()];
-    }
-    split_polygon_2d_by_line_opt(poly, seg_start, dir.normalize(), Some(seg_end))
-}
 
 // ============================================================================
 // Glue Path Enhancement Types and Functions
@@ -8576,6 +7908,7 @@ fn try_trim_planar_subface_by_cylinder(
         boundary: result_boundary,
         surface: sub.surface.clone(),
         normal: sub.normal,
+        ds_vertex_indices: None,
         uv_centroid: None,
         sample_override: None,
         uv_domain: None,
@@ -9343,43 +8676,6 @@ mod glue_tests {
     /// split line passes through two opposite vertices (vertices exactly on the line).
     /// This tests the forward-search and backward-search crossing detection.
     #[test]
-    fn split_diamond_by_diagonal() {
-        use glam::DVec2;
-        // Diamond with vertices at cardinal points — split by x-axis
-        // The line y=0 passes through vertex 0 (1,0) and vertex 2 (-1,0).
-        let poly = vec![
-            DVec2::new(1.0, 0.0),
-            DVec2::new(0.0, 1.0),
-            DVec2::new(-1.0, 0.0),
-            DVec2::new(0.0, -1.0),
-        ];
-        let out = super::split_polygon_2d_by_line(&poly, DVec2::new(0.0, 0.0), DVec2::new(1.0, 0.0));
-        assert!(out.len() >= 2, "diamond split by diagonal should produce 2+ polygons, got {}", out.len());
-        // Each sub-polygon should be non-degenerate
-        for (i, p) in out.iter().enumerate() {
-            assert!(p.len() >= 3, "sub-polygon {i} has {} vertices", p.len());
-        }
-    }
-
-    /// `split_polygon_2d_by_line` must correctly split a polygon when the split line
-    /// does NOT pass through any vertex (normal case, no regression).
-    #[test]
-    fn split_square_offset_line() {
-        use glam::DVec2;
-        let poly = vec![
-            DVec2::new(0.0, 0.0),
-            DVec2::new(2.0, 0.0),
-            DVec2::new(2.0, 2.0),
-            DVec2::new(0.0, 2.0),
-        ];
-        // Vertical line x=1.2 — does not pass through any vertex
-        let out = super::split_polygon_2d_by_line(&poly, DVec2::new(1.2, 0.0), DVec2::new(0.0, 1.0));
-        assert!(out.len() >= 2, "square split by offset line should produce 2+ polygons, got {}", out.len());
-    }
-
-    /// Debug: ZD3 cylinder-cylinder concentric union SA undercount.
-    /// rcad reports 16.3 vs expected 22.0 (= 7π ≈ 21.9911).
-    #[test]
     fn zd3_concentric_cylinder_union() {
         use crate::boolean::boolean_op_with_retry_policy;
         use crate::brep_algo::total_surface_area;
@@ -9579,6 +8875,7 @@ fn merge_vertex_adjacent_subs(subs: &mut Vec<SubFace>) {
                     boundary: merged_bnd,
                     surface: subs[i].surface.clone(),
                     normal: subs[i].normal,
+                    ds_vertex_indices: None,
                     uv_centroid: subs[i].uv_centroid,
                     sample_override: subs[i].sample_override.or(subs[j].sample_override),
                     uv_domain: subs[i].uv_domain,
@@ -9740,11 +9037,14 @@ fn split_face_wire_based(ds: &DS, face_idx: usize, ic_ids: &[usize]) -> Vec<SubF
             let mut cur_v = v_start;
             let mut cur_ei = ei_local;
             let mut cycle: Vec<DVec3> = Vec::new();
+            // Parallel DS vertex indices for each boundary point (OCCT BOPAlgo_BuilderFace
+            // shared edge: same DS vertex → same ResultBuilder vertex).
+            let mut cycle_ds: Vec<usize> = Vec::new();
             // Track visited vertex indices (OCCT aVertVa)
             let mut visited_v: Vec<usize> = Vec::new();
 
             loop {
-                if my_smart_map[cur_v][cur_ei].passed { cycle.clear(); break; }
+                if my_smart_map[cur_v][cur_ei].passed { cycle.clear(); cycle_ds.clear(); break; }
                 my_smart_map[cur_v][cur_ei].passed = true;
 
                 let ei = &my_smart_map[cur_v][cur_ei];
@@ -9758,11 +9058,13 @@ fn split_face_wire_based(ds: &DS, face_idx: usize, ic_ids: &[usize]) -> Vec<SubF
                     if cycle.len() >= 2 {
                         // Push the final vertex to close the current segment
                         cycle.push(ds.vertices[vert_list[cur_v]].point);
+                        cycle_ds.push(vert_list[cur_v]);
                     }
                     break;
                 }
 
                 cycle.push(ds.vertices[vert_list[cur_v]].point);
+                cycle_ds.push(vert_list[cur_v]);
                 visited_v.push(cur_v);
 
                 // Find AngleIn at other_v (OCCT: edge arriving at other_v)
@@ -9797,6 +9099,7 @@ fn split_face_wire_based(ds: &DS, face_idx: usize, ic_ids: &[usize]) -> Vec<SubF
                     boundary: cycle,
                     surface: face.surface.clone(),
                     normal: face.normal,
+                    ds_vertex_indices: Some(cycle_ds),
                     uv_centroid: None,
                     sample_override: None,
                     uv_domain: None,
@@ -9808,11 +9111,8 @@ fn split_face_wire_based(ds: &DS, face_idx: usize, ic_ids: &[usize]) -> Vec<SubF
         }
     }
 
-    // 6. Filter: keep only cycles that include IC edges (exclude outer boundary)
-    subs.retain(|sf| sf.boundary.iter().any(|p|
-        edges.iter().enumerate().any(|(ei, (va, vb, ic))|
-            *ic && (ds.vertices[*va].point - *p).length_squared() < 1e-12
-            && sf.boundary.iter().any(|p2|
-                (ds.vertices[*vb].point - *p2).length_squared() < 1e-12))));
+    // OCCT BOPAlgo_WireSplitter: ALL cycles from the graph traversal are kept.
+    // No RCAD-specific filter that removes non-IC cycles — the wire graph
+    // naturally produces one sub-face per region the ICs divide the face into.
     subs
 }

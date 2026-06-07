@@ -162,10 +162,12 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
             }
         }
 
-        // Skip containment for Union with NURBS outer — OCCT's PaveFiller
-        // always splits outer faces even for fully contained shapes (bfuse B1).
+        // Skip containment for Union with NURBS outer or inner — OCCT's
+        // PaveFiller always splits faces even for fully contained shapes
+        // (bfuse B1 when outer is NURBS, bfuse B2/B6/B8 when inner is NURBS).
         if matches!(op, BooleanOpType::Union)
-            && outer.geom.surfaces.iter().any(|s| matches!(s, Surface3::BSpline(_)))
+            && (outer.geom.surfaces.iter().any(|s| matches!(s, Surface3::BSpline(_)))
+                || inner.geom.surfaces.iter().any(|s| matches!(s, Surface3::BSpline(_))))
         {
             continue;
         }
