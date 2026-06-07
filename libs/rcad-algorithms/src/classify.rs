@@ -484,6 +484,18 @@ fn classify_point_convex_planar(
         let d = point - plane.origin;
         let p2d = DVec2::new(d.dot(u_axis), d.dot(v_axis));
 
+        // OCCT BRepClass3d_SolidClassifier: check signed distance from the
+        // face plane.  For a convex solid with outward-pointing normals, a
+        // point with signed_distance > flat_tol is OUTSIDE this face → outside
+        // the solid.
+        let n_sign = (point - plane.origin).dot(plane.normal);
+        if n_sign > flat_tol {
+            return Some(Classification::Out);
+        }
+        // When |signed_distance| ≤ flat_tol, the point is ON the face plane
+        // (within tolerance).  Record this so we can detect the On case.
+        let on_face_plane = n_sign.abs() <= flat_tol;
+
         // Classify 2D point against face boundary polygon using ray casting
         let mut inside = false;
         let mut on_boundary = false;
@@ -515,13 +527,17 @@ fn classify_point_convex_planar(
             j = i;
         }
 
+        if on_face_plane && inside {
+            on_any = true; // Point is ON this face (within tolerance)
+            continue; // Check other faces — need all to be On or In
+        }
+
         if on_boundary {
             on_any = true;
-            continue; // Check other faces too — need all to be On or In
+            continue;
         }
 
         if !inside {
-            // Point projects outside this face's boundary → outside the solid
             return Some(Classification::Out);
         }
     }
