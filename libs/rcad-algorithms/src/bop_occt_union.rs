@@ -475,9 +475,6 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     let n_after = shell_face_total(&result);
     let sa_before = total_surface_area(&checkpoint);
     let sa_after = total_surface_area(&result);
-    // Revert if the merge changes SA significantly (in either direction) with a large
-    // face-count drop — indicates that unify_same_domain_faces merged cylinder sub-faces
-    // whose UV projection overcounts (or undercounts) area in try_cylinder_trimmed_face_area.
     let large_sa_change = {
         let abs_delta = (sa_after - sa_before).abs();
         abs_delta > 1e-6 && abs_delta > 0.005 * sa_before.max(1.0)

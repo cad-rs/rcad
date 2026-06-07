@@ -3557,6 +3557,8 @@ fn unify_same_domain_faces_butterfly(brep: &mut rcad_kernel::BRep) -> usize {
                 }
             }
             let mut to_remove: Vec<usize> = Vec::new();
+            // OCCT FillSameDomainFaces: edge-set grouping (BOPTools_Set).
+            // All faces in a group share the same edge set and are Same Domain.
             for (_edge_set, group) in &edge_set_to_faces {
                 if group.len() < 2 {
                     continue;

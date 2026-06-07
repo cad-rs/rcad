@@ -2391,7 +2391,6 @@ impl<'a> BooleanBuilder<'a> {
         annotate_history_from_ds(&brep, &mut history, self.ds);
         annotate_shell_and_solid_history(&brep, &mut history);
 
-        // OCCT-aligned: merge same-origin faces sharing an edge via BRep edge topology.
         if brep.solids[0].shells[0].faces.len() > 1 {
             let origs = &history.face_origins;
             let (merged, cnt) = crate::unify_same_domain_faces_with_origins(&brep, Some(origs));
@@ -2718,6 +2717,16 @@ impl<'a> BooleanBuilder<'a> {
             if subs.len() >= 2 { return subs; }
         }
 
+        // OCCT BuildDraftFace: when a face has boundary-only ICs (no interior ICs
+        // to split it), return the whole face with the subdivided boundary.  The
+        // DS face boundary already includes IC endpoints from the PaveFiller's
+        // edge splitting, so the resulting SubFace has edges subdivided at the
+        // same vertices as WireSplitter sub-faces.  This ensures matching edge
+        // sets during FillSameDomainFaces (edge-set grouping) for Plane+BSpline
+        // duplicate face pairs.
+        if !has_interior_ics && !fi.curves_in.is_empty() {
+            return self.single_subface_from_whole_face(face_idx);
+        }
 
         if fi.curves_in.is_empty() {
             // Closed surfaces with seam edges (sphere) may have < 3 boundary vertices,
