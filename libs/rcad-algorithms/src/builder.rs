@@ -2720,7 +2720,6 @@ impl<'a> BooleanBuilder<'a> {
     fn split_face(&self, face_idx: usize) -> Vec<SubFace> {
         let face = &self.ds.faces[face_idx];
         let fi = &face.face_info;
-
         // OCCT-style: skip splitting when all ICs are on the face boundary
         // (OCCT BuildSplitFaces skip at lines 297-328: no PaveBlocksIn/Sc,
         //  no internal edges, no modified wires → keep original face).
@@ -2731,8 +2730,9 @@ impl<'a> BooleanBuilder<'a> {
         let has_interior_ics = !interior_cids.is_empty();
 
         // OCCT wire-based splitting (edge graph traversal, BSpline only).
+        let has_crossing = has_interior_ics && self.has_crossing_ics(face_idx);
         if has_interior_ics
-            && !self.has_crossing_ics(face_idx)
+            && !has_crossing
             && !matches!(face.surface, Surface3::Plane(_))
         {
             let subs = split_face_wire_based(self.ds, face_idx, &interior_cids);
@@ -2745,9 +2745,20 @@ impl<'a> BooleanBuilder<'a> {
                 && rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_ABS)
             {
                 let plane = rcad_kernel::geom::bspline_to_plane(bsp);
-                // OCCT-style wire-aware split using interior ICs only
-                if let Some(subs) = self.split_planar_bspline_occt(face_idx, &plane, &interior_cids) {
-                    return subs;
+                let crossing = self.has_crossing_ics(face_idx);
+                // Debug: trace ALL B-faces
+                if self.ds.faces[face_idx].origin == crate::bopds::ds::ShapeOrigin::ShapeB {
+                        face_idx, self.ds.faces[face_idx].source_face_idx, fi.curves_in.len(),
+                        interior_cids.len(), crossing,
+                        matches!(face.surface, Surface3::Plane(_)));
+                }
+                // When ICs cross (form a non-planar edge graph), skip the wire-aware
+                // splitter — the polygon-based splitter handles crossing ICs correctly.
+                // Otherwise, try the OCCT-style split first.
+                if !crossing {
+                    if let Some(subs) = self.split_planar_bspline_occt(face_idx, &plane, &interior_cids) {
+                        return subs;
+                    }
                 }
                 // Fallback: polygon clipping
                 let subs = self.split_planar_face(face_idx, &plane, &interior_cids);
