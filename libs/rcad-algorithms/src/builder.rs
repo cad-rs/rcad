@@ -2531,7 +2531,8 @@ impl<'a> BooleanBuilder<'a> {
         // unify_same_domain_faces handles any remaining edge-count differences
         // (e.g. 5-edge Plane sub-face vs 4-edge BSpline face).
         if !has_interior_ics && !fi.curves_in.is_empty() {
-            return self.single_subface_from_whole_face(face_idx);
+            let all_cids: Vec<usize> = fi.curves_in.iter().copied().collect();
+            return self.single_subface_from_subdivided_face(face_idx, &all_cids);
         }
 
         if fi.curves_in.is_empty() {
