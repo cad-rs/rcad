@@ -2785,13 +2785,14 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // OCCT BuildDraftFace: when a face has boundary-only ICs (no interior ICs
-        // to split it), return the whole face with the subdivided boundary that
-        // includes IC endpoints as boundary vertices.  This matches the edge count
-        // of WireSplitter sub-faces so FillSameDomainFaces can merge same-domain
-        // Plane+BSpline pairs (bfuse_simple B3/B4/B5).
+        // to split it), return the whole face.  The DS face boundary already includes
+        // IC endpoints on edges from the PaveFiller (via edge splitting), so the
+        // resulting SubFace has edges subdivided at the same vertices as the
+        // WireSplitter sub-faces.  The relaxed edge-set matching in
+        // unify_same_domain_faces handles any remaining edge-count differences
+        // (e.g. 5-edge Plane sub-face vs 4-edge BSpline face).
         if !has_interior_ics && !fi.curves_in.is_empty() {
-            let bnd_cids: Vec<usize> = fi.curves_in.iter().copied().collect();
-            return self.single_subface_from_subdivided_face(face_idx, &bnd_cids);
+            return self.single_subface_from_whole_face(face_idx);
         }
 
         if fi.curves_in.is_empty() {
