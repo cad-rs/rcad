@@ -6830,7 +6830,7 @@ fn unify_one_merge_pass(brep: &mut BRep) -> bool {
     unify_one_merge_pass_with_origins(brep, None)
 }
 
-fn unify_one_merge_pass_with_origins(brep: &mut BRep, face_origins: Option<&[FaceOrigin]>) -> bool {
+pub(crate) fn unify_one_merge_pass_with_origins(brep: &mut BRep, face_origins: Option<&[FaceOrigin]>) -> bool {
     use std::collections::HashMap;
 
     fn closure_score(brep: &BRep) -> usize {
