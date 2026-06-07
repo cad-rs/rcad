@@ -2336,9 +2336,9 @@ impl<'a> BooleanBuilder<'a> {
         }
         // Collect IC endpoints that lie on boundary edges (but aren't in boundary_verts)
         // and insert them to subdivide the boundary.
-        let mut extra_verts: Vec<(usize, DVec3)> = Vec::new(); // (edge_index, position)
+        let mut extra_verts: Vec<(usize, DVec3, usize)> = Vec::new(); // (edge_index, position, ds_vertex_idx)
         // Also collect interior IC endpoints (alone vertices) and their boundary-on connections
-        struct InteriorConn { pt: DVec3, bnd_edge_ids: Vec<usize>, bnd_pts: Vec<DVec3> }
+        struct InteriorConn { pt: DVec3, pt_ds: usize, bnd_edge_ids: Vec<usize>, bnd_pts: Vec<DVec3>, bnd_ds: Vec<usize> }
         let mut interior_verts: Vec<InteriorConn> = Vec::new();
         // Helper: check if a 3D position is at a boundary vertex (positional, not by index)
         let is_at_bnd_vert = |p: DVec3| -> bool {
@@ -2358,7 +2358,7 @@ impl<'a> BooleanBuilder<'a> {
                     if l2 < tol * tol { continue; }
                     let t = ((p - va).dot(ab) / l2).clamp(0.0, 1.0);
                     if t > 1e-6 && t < 1.0 - 1e-6 && (p - (va + ab * t)).length() <= tol {
-                        extra_verts.push((ei, p));
+                        extra_verts.push((ei, p, icv));
                         is_boundary = true;
                         break;
                     }
@@ -2367,6 +2367,7 @@ impl<'a> BooleanBuilder<'a> {
                 // Interior vertex: find boundary-on vertices connecting via shared ICs
                 let mut bnd_edge_ids: Vec<usize> = Vec::new();
                 let mut bnd_pts: Vec<DVec3> = Vec::new();
+                let mut bnd_ds: Vec<usize> = Vec::new();
                 for &ci2 in cids {
                     let ic2 = &self.ds.intersection_curves[ci2];
                     if ic2.start_vertex != icv && ic2.end_vertex != icv { continue; }
@@ -2382,12 +2383,13 @@ impl<'a> BooleanBuilder<'a> {
                         if t > 1e-6 && t < 1.0 - 1e-6 && (pp - (va + ab * t)).length() <= tol {
                             bnd_edge_ids.push(ei);
                             bnd_pts.push(pp);
+                            bnd_ds.push(partner_v);
                             break;
                         }
                     }
                 }
                 if bnd_edge_ids.len() >= 2 {
-                    interior_verts.push(InteriorConn { pt: p, bnd_edge_ids, bnd_pts });
+                    interior_verts.push(InteriorConn { pt: p, pt_ds: icv, bnd_edge_ids, bnd_pts, bnd_ds });
                 }
             }
         }
@@ -2396,31 +2398,29 @@ impl<'a> BooleanBuilder<'a> {
         }
         // Build subdivided boundary: walk original vertices, inserting extra vertices.
         let mut subdivided: Vec<DVec3> = Vec::new();
+        let mut subdivided_ds: Vec<usize> = Vec::new();
         for i in 0..nb {
             subdivided.push(bnd[i]);
-            let mut on_this_edge: Vec<(DVec3, bool)> = extra_verts.iter()
-                .filter(|(ei, _)| *ei == i)
-                .map(|(_, p)| (*p, false))
+            subdivided_ds.push(face.boundary_verts[i]);
+            let mut on_this_edge: Vec<(DVec3, usize)> = extra_verts.iter()
+                .filter(|(ei, _, _)| *ei == i)
+                .map(|(_, p, dsi)| (*p, *dsi))
                 .collect();
-            // Also track which subdivided indices are boundary-on IC endpoints
             on_this_edge.sort_by(|a, b| {
                 let da = (a.0 - bnd[i]).length_squared();
                 let db = (b.0 - bnd[i]).length_squared();
                 da.partial_cmp(&db).unwrap()
             });
-            for (pt, _) in on_this_edge {
+            for (pt, dsi) in on_this_edge {
                 subdivided.push(pt);
+                subdivided_ds.push(dsi);
             }
         }
 
         // OCCT BuildDraftFace: insert alone vertices into the boundary polygon.
-        // For each interior vertex with ≥2 boundary-on connections, find its two
-        // boundary-on points in the subdivided boundary and replace the segment
-        // between them with a detour through the interior vertex.
         for iv in &interior_verts {
             if iv.bnd_pts.len() < 2 { continue; }
             let (bp0, bp1) = (iv.bnd_pts[0], iv.bnd_pts[1]);
-            // Find positions in subdivided boundary
             let mut pos0 = None;
             let mut pos1 = None;
             for (i, p) in subdivided.iter().enumerate() {
@@ -2428,76 +2428,61 @@ impl<'a> BooleanBuilder<'a> {
                 if (*p - bp1).length() <= tol { pos1 = Some(i); }
             }
             let (Some(i0), Some(i1)) = (pos0, pos1) else { continue; };
-            // Determine forward (shorter) vs backward boundary path between i0 and i1.
-            // The IC detour replaces the shorter boundary segment.
             let n = subdivided.len();
             let fwd_len = if i1 >= i0 { i1 - i0 } else { i1 + n - i0 };
             let bwd_len = n - fwd_len;
             let (cut_start, cut_end) = if fwd_len <= bwd_len {
-                (i0, i1)   // fwd is shorter → replace fwd
+                (i0, i1)
             } else {
-                (i1, i0)   // bwd is shorter → replace fwd from i1 to i0
+                (i1, i0)
             };
-            // Build new boundary: copy from cut_end to cut_start (the longer path)
-            // then insert interior vertex
-            let mut outer_boundary: Vec<DVec3> = Vec::with_capacity(n + 1);
+            // Outer boundary (L-shaped): longer boundary path + interior vertex
+            let mut outer_bnd: Vec<DVec3> = Vec::with_capacity(n + 1);
+            let mut outer_ds: Vec<usize> = Vec::with_capacity(n + 1);
             let mut idx = cut_end;
             loop {
-                outer_boundary.push(subdivided[idx]);
+                outer_bnd.push(subdivided[idx]);
+                outer_ds.push(subdivided_ds[idx]);
                 if idx == cut_start { break; }
                 idx = (idx + 1) % n;
             }
-            outer_boundary.push(iv.pt);
+            outer_bnd.push(iv.pt);
+            outer_ds.push(iv.pt_ds);
 
-            // OCCT: also produce the INNER region (the cutout bounded by the shorter
-            // boundary path + interior vertex).  This SubFace matches the coplanar
-            // partner's boundary (e.g. b2's Plane y=0 face covers the b2 footprint),
-            // enabling FillSameDomainFaces to merge them.
-            let mut inner_boundary: Vec<DVec3> = Vec::new();
+            // Inner boundary (cutout rectangle): shorter path + interior vertex
+            let mut inner_bnd: Vec<DVec3> = Vec::new();
+            let mut inner_ds: Vec<usize> = Vec::new();
             let mut idx2 = cut_start;
             let mut visited_start = false;
             loop {
                 if idx2 == cut_start && visited_start { break; }
                 visited_start = true;
-                inner_boundary.push(subdivided[idx2]);
+                inner_bnd.push(subdivided[idx2]);
+                inner_ds.push(subdivided_ds[idx2]);
                 if idx2 == cut_end { break; }
                 idx2 = (idx2 + 1) % n;
             }
-            inner_boundary.push(iv.pt);
+            inner_bnd.push(iv.pt);
+            inner_ds.push(iv.pt_ds);
 
-            // Emit BOTH sub-faces: outer (L-shaped) and inner (rectangle)
-            if inner_boundary.len() >= 3 {
+            // Emit BOTH sub-faces with DS vertex indices
+            if inner_bnd.len() >= 3 {
                 return vec![
-                    SubFace {
-                        boundary: outer_boundary,
-                        surface: face.surface.clone(),
-                        normal: face.normal,
-                        ds_vertex_indices: None,
-                        uv_centroid: None,
-                        sample_override: None,
-                        uv_domain: None,
-                        inner_wires: vec![],
-                    },
-                    SubFace {
-                        boundary: inner_boundary,
-                        surface: face.surface.clone(),
-                        normal: face.normal,
-                        ds_vertex_indices: None,
-                        uv_centroid: None,
-                        sample_override: None,
-                        uv_domain: None,
-                        inner_wires: vec![],
-                    },
+                    SubFace { boundary: outer_bnd, surface: face.surface.clone(),
+                        normal: face.normal, ds_vertex_indices: Some(outer_ds),
+                        uv_centroid: None, sample_override: None, uv_domain: None, inner_wires: vec![] },
+                    SubFace { boundary: inner_bnd, surface: face.surface.clone(),
+                        normal: face.normal, ds_vertex_indices: Some(inner_ds),
+                        uv_centroid: None, sample_override: None, uv_domain: None, inner_wires: vec![] },
                 ];
             }
-            subdivided = outer_boundary;
         }
 
         vec![SubFace {
             boundary: subdivided,
             surface: face.surface.clone(),
             normal: face.normal,
-            ds_vertex_indices: None,
+            ds_vertex_indices: Some(subdivided_ds),
             uv_centroid: None,
             sample_override: None,
             uv_domain: None,
