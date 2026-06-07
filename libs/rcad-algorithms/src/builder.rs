@@ -2451,16 +2451,57 @@ impl<'a> BooleanBuilder<'a> {
             };
             // Build new boundary: copy from cut_end to cut_start (the longer path)
             // then insert interior vertex
-            let mut new_boundary: Vec<DVec3> = Vec::with_capacity(n + 1);
+            let mut outer_boundary: Vec<DVec3> = Vec::with_capacity(n + 1);
             let mut idx = cut_end;
             loop {
-                new_boundary.push(subdivided[idx]);
+                outer_boundary.push(subdivided[idx]);
                 if idx == cut_start { break; }
                 idx = (idx + 1) % n;
             }
-            // Insert interior vertex between cut_start and the rest
-            new_boundary.push(iv.pt);
-            subdivided = new_boundary;
+            outer_boundary.push(iv.pt);
+
+            // OCCT: also produce the INNER region (the cutout bounded by the shorter
+            // boundary path + interior vertex).  This SubFace matches the coplanar
+            // partner's boundary (e.g. b2's Plane y=0 face covers the b2 footprint),
+            // enabling FillSameDomainFaces to merge them.
+            let mut inner_boundary: Vec<DVec3> = Vec::new();
+            let mut idx2 = cut_start;
+            let mut visited_start = false;
+            loop {
+                if idx2 == cut_start && visited_start { break; }
+                visited_start = true;
+                inner_boundary.push(subdivided[idx2]);
+                if idx2 == cut_end { break; }
+                idx2 = (idx2 + 1) % n;
+            }
+            inner_boundary.push(iv.pt);
+
+            // Emit BOTH sub-faces: outer (L-shaped) and inner (rectangle)
+            if inner_boundary.len() >= 3 {
+                return vec![
+                    SubFace {
+                        boundary: outer_boundary,
+                        surface: face.surface.clone(),
+                        normal: face.normal,
+                        ds_vertex_indices: None,
+                        uv_centroid: None,
+                        sample_override: None,
+                        uv_domain: None,
+                        inner_wires: vec![],
+                    },
+                    SubFace {
+                        boundary: inner_boundary,
+                        surface: face.surface.clone(),
+                        normal: face.normal,
+                        ds_vertex_indices: None,
+                        uv_centroid: None,
+                        sample_override: None,
+                        uv_domain: None,
+                        inner_wires: vec![],
+                    },
+                ];
+            }
+            subdivided = outer_boundary;
         }
 
         vec![SubFace {

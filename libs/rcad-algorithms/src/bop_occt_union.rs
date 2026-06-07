@@ -441,7 +441,7 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     pave_fill(&mut ds, a, b, use_bvh);
     validate_ds_invariants(&ds)?;
     let builder = builder::BooleanBuilder::new(&ds, BooleanOpType::Union);
-    let mut result = builder.build()?;
+    let (mut result, mut history) = builder.build_with_history()?;
     if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
         let mut fi = 0usize;
         for solid in &result.solids {
@@ -467,6 +467,21 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     result = crate::deduplicate_edges(result);
     // OCCT FillSameDomainFaces: edge-set grouping only (no orthogonal fuse).
     result = crate::unify_same_domain_faces(&result).0;
+    // Adjacency merge: handles cross-operand coplanar pairs that share
+    // edges (e.g. BuildDraftFace notch face + Plane coplanar partner in
+    // bfuse_simple B7).  The butterfly merge skips cross-operand groups.
+    {
+        let mut n_adj = 0usize;
+        loop {
+            if !crate::unify_one_merge_pass_with_origins(&mut result, None) {
+                break;
+            }
+            n_adj += 1;
+        }
+        if n_adj > 0 {
+            eprintln!("[UNIFY] adjacency merge: {n_adj} merges");
+        }
+    }
     geom_populate::recompute_plane_surfaces(&mut result);
 
     // OCCT ClassifyFaces (BuildSolid): remove interior faces classified as
