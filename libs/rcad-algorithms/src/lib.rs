@@ -6392,17 +6392,16 @@ pub fn general_fuse_par_detailed(
 /// Returns the simplified BRep and the number of face merges performed.
 pub fn unify_same_domain_faces(brep: &BRep) -> (BRep, usize) {
     let mut out = brep.clone();
-    let n1 = unify_same_domain_faces_butterfly(&mut out);
-    let mut n2 = 0usize;
-    loop {
-        let merged = unify_one_merge_pass_with_origins(&mut out, None);
-        if !merged { break; }
-        n2 += 1;
-    }
-    (out, n1 + n2)
+    // OCCT FillSameDomainFaces: butterfly merge (edge-set grouping) only.
+    // The adjacency merge (unify_one_merge_pass_with_origins) is intentionally
+    // excluded — it does NOT correspond to any OCCT algorithm and can merge
+    // Plane and BSpline faces sharing an edge on the same plane even when
+    // they cover DIFFERENT regions, losing Out sub-faces (bfuse_simple B1).
+    let n = unify_same_domain_faces_butterfly(&mut out);
+    (out, n)
 }
 
-/// Like [`unify_same_domain_faces`] — same two-phase merge.
+/// Like [`unify_same_domain_faces`] — butterfly merge only.
 /// The `_face_origins` parameter is accepted for API compatibility but
 /// **ignored**: OCCT does not restrict merging by origin.
 pub fn unify_same_domain_faces_with_origins(

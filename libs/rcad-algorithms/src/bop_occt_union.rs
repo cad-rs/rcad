@@ -36,7 +36,6 @@ use crate::bvh;
 use crate::geom_populate;
 use crate::history::BooleanHistory;
 use crate::pave_filler;
-use crate::unify_same_domain_faces;
 use crate::tolerance::*;
 use crate::total_surface_area;
 use crate::BooleanError;
@@ -495,15 +494,6 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     Ok(result)
 }
 
-/// OCCT-aligned FillSameDomainFaces: butterfly merge (edge-set grouping) only.
-/// Skips the adjacency merge loop that OCCT does NOT perform at this stage —
-/// RCAD's adjacency merge can incorrectly merge Plane and BSpline faces that
-/// share an edge on the same domain but cover DIFFERENT regions, losing Out
-/// sub-faces (e.g. bfuse_simple B1 loses 2 faces).
-fn unify_butterfly_only(brep: &mut BRep) -> usize {
-    crate::unify_same_domain_faces_butterfly(brep)
-}
-
 /// Merge coplanar orthogonal panels left by boolean split (re-run groups after each success).
 fn merge_coplanar_orthogonal_unify(brep: &mut BRep) {
     let tol = TOLERANCE_ABS;
@@ -511,8 +501,8 @@ fn merge_coplanar_orthogonal_unify(brep: &mut BRep) {
         let (next, m) = crate::orthogonal_face_fuse::fuse_orthogonal_coplanar_faces(brep, tol);
         *brep = next;
         geom_populate::recompute_plane_surfaces(brep);
-        // OCCT FillSameDomainFaces: butterfly merge only (edge-set grouping)
-        unify_butterfly_only(brep);
+        // OCCT FillSameDomainFaces: butterfly merge only (no adjacency merge)
+        crate::unify_same_domain_faces(brep);
         geom_populate::recompute_plane_surfaces(brep);
         if m == 0 { break; }
     }
