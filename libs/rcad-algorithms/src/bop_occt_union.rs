@@ -28,6 +28,7 @@
 //! a full [`crate::brep_check::check`] pass. Failures surface as [`BooleanError::InvalidResult`],
 //! [`BooleanError::EmptyInput`], or [`BooleanError::NumericalFailure`] with message prefix `union:`.
 
+use glam::DVec3;
 use crate::brep_repair::merge_close_vertices;
 use crate::bopds;
 use crate::bopds::ds::{DS, Interference};
@@ -468,18 +469,23 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     merge_coplanar_orthogonal_unify(&mut result);
     geom_populate::recompute_plane_surfaces(&mut result);
 
-    // OCCT ClassifyFaces (BuildSolid): remove faces whose centroid is
-    // State_IN relative to the other operand.  For each face, classify
-    // against both A and B using the DS.  Faces that are In for the
-    // other operand (but not their own) are interior to the union.
+    // OCCT ClassifyFaces (BuildSolid): for each face, classify its center
+    // against the OTHER operand using the DS.  Plane faces (from A-side)
+    // are tested against B; BSpline faces (from B-side) against A.
+    // If State_IN → the face is interior to the union → remove.
     {
+        use rcad_kernel::geom::Surface3;
         use crate::classify::{classify_point, Classification};
-        let a_face_ids: Vec<usize> = (0..ds.a_face_count).collect();
-        let b_face_ids: Vec<usize> = (ds.a_face_count..ds.faces.len()).collect();
+        let a_ids: Vec<usize> = (0..ds.a_face_count).collect();
+        let b_ids: Vec<usize> = (ds.a_face_count..ds.faces.len()).collect();
         let mut to_remove: Vec<(usize, usize, usize)> = Vec::new();
         for (si, solid) in result.solids.iter().enumerate() {
             for (shi, shell) in solid.shells.iter().enumerate() {
                 for (fi, face) in shell.faces.iter().enumerate() {
+                    let si2 = result.geom.face_surface.get(fi).copied().flatten();
+                    let is_plane = si2.and_then(|i| result.geom.surfaces.get(i))
+                        .is_some_and(|s| matches!(s, Surface3::Plane(_)));
+                    // Compute centroid from boundary vertices
                     let mut pts: Vec<DVec3> = Vec::new();
                     for we in &face.outer_wire.edges {
                         if let Some(edge) = result.edges.get(we.idx) {
@@ -489,11 +495,13 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
                     }
                     if pts.len() < 3 { continue; }
                     let centroid = pts.iter().copied().sum::<DVec3>() / pts.len() as f64;
-                    let cls_a = classify_point(centroid, &a_face_ids, &ds);
-                    let cls_b = classify_point(centroid, &b_face_ids, &ds);
-                    // State_IN for the other operand → interior to the union
-                    let is_plane = matches!(face.normal, _); // always true — not used
-                    if cls_a == Classification::In && cls_b == Classification::In {
+                    // Classify against the other operand
+                    let interior = if is_plane {
+                        classify_point(centroid, &b_ids, &ds) == Classification::In
+                    } else {
+                        classify_point(centroid, &a_ids, &ds) == Classification::In
+                    };
+                    if interior {
                         to_remove.push((si, shi, fi));
                     }
                 }
