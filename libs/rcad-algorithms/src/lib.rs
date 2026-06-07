@@ -3601,6 +3601,7 @@ fn unify_same_domain_faces_butterfly_impl(
             struct _FaceInfo {
                 edge_set: Option<BTreeSet<GeoEdgeKey>>,
                 is_planar: bool,
+                is_from_a: bool,
             }
 
             let mut face_infos: Vec<_FaceInfo> = (0..nfaces)
@@ -3623,8 +3624,14 @@ fn unify_same_domain_faces_butterfly_impl(
                         }
                         _ => true, // no filter → process all faces
                     };
+                    // Determine operand from face_origins if available.
+                    let is_from_a = face_origins
+                        .and_then(|o| o.get(ff))
+                        .map(|fo| matches!(fo, FaceOrigin::FromA(_)))
+                        .unwrap_or(true);
+
                     if !in_ff_set {
-                        return _FaceInfo { edge_set: None, is_planar: false };
+                        return _FaceInfo { edge_set: None, is_planar: false, is_from_a };
                     }
 
                     let is_planar = brep
@@ -3670,6 +3677,7 @@ fn unify_same_domain_faces_butterfly_impl(
                     _FaceInfo {
                         edge_set: if ok && !set.is_empty() { Some(set) } else { None },
                         is_planar,
+                        is_from_a,
                     }
                 })
                 .collect();
@@ -3683,11 +3691,15 @@ fn unify_same_domain_faces_butterfly_impl(
             }
             let mut to_remove: Vec<usize> = Vec::new();
             // Step 2a: Strict edge-set matching (OCCT BOPTools_Set).
-            // Faces with identical edge sets are Same Domain.
+            // Faces with identical edge sets are Same Domain, BUT only when
+            // they come from the SAME operand (OCCT: faces from different original
+            // faces never share topological edge handles → different edge sets).
+            // Cross-operand groups are skipped so they remain separate and can
+            // only be merged via the relaxed matching (different edge counts).
             for (_edge_set, group) in &edge_set_to_faces {
-                if group.len() < 2 {
-                    continue;
-                }
+                if group.len() < 2 { continue; }
+                let all_same_op = group.iter().all(|&fi| face_infos[fi].is_from_a == face_infos[group[0]].is_from_a);
+                if !all_same_op { continue; }
                 let all_planar = group.iter().all(|&fi| face_infos[fi].is_planar);
                 let is_same_domain = if all_planar {
                     true
@@ -3739,13 +3751,18 @@ fn unify_same_domain_faces_butterfly_impl(
                     let fj = remaining[j];
                     if to_remove.contains(&fj) { continue; }
                     let Some(ref eset_j) = face_infos[fj].edge_set else { continue; };
-                    // Different-sized edge sets: check containment with 1-edge slack.
+                    // OCCT: cross-operand faces never share topological edges
+                    // (different TopoDS_Edge handles → different BOPTools_Set).
+                    // Skip ALL cross-operand relaxed matching regardless of size.
+                    if face_infos[fi].is_from_a != face_infos[fj].is_from_a {
+                        continue;
+                    }
+                    // Different-size pairs: check containment with 1-edge slack.
                     let (small, large) = if eset_i.len() <= eset_j.len() {
                         (eset_i, eset_j)
                     } else {
                         (eset_j, eset_i)
                     };
-                    // small ⊂ large with at most 1 missing edge → candidates
                     let common = small.intersection(large).count();
                     if common + 1 < small.len() { continue; }
                     // Both must be on the same plane (Plane or planar BSpline).
