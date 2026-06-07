@@ -2305,7 +2305,7 @@ impl<'a> BooleanBuilder<'a> {
             boundary,
             surface: face.surface.clone(),
             normal: face.normal,
-            ds_vertex_indices: None,
+            ds_vertex_indices: Some(face.boundary_verts.clone()),
             uv_centroid: None,
             sample_override: None,
             uv_domain: None,
