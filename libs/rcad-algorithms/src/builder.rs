@@ -2021,6 +2021,7 @@ impl<'a> BooleanBuilder<'a> {
             let face_split = sub_faces.len() > 1;
             let mut kept_a_on: Vec<SubFace> = Vec::new();
             let mut kept_a_out: Vec<SubFace> = Vec::new();
+            let mut kept_a_in: Vec<SubFace> = Vec::new();
             for (si, sub) in sub_faces.iter_mut().enumerate() {
                 // Same-domain trimmed faces: skip classifier (classifier can
                 // mis-classify points near the solid's boundary) and force-keep.
@@ -2092,10 +2093,11 @@ impl<'a> BooleanBuilder<'a> {
                             kept_a_on.push(sub.clone());
                         }
                         Classification::Out => kept_a_out.push(sub.clone()),
+                        Classification::In => kept_a_in.push(sub.clone()),
                         _ => {}
                     }
-                } else if class == Classification::In
-                    && self.op == BooleanOpType::Difference
+                } else if class == Classification::In {
+                    if self.op == BooleanOpType::Difference
                         && !b_cylinders.is_empty()
                         && matches!(sub.surface, Surface3::Plane(_))
                     {
@@ -2115,11 +2117,16 @@ impl<'a> BooleanBuilder<'a> {
                             }
                         }
                     }
+                    // OCCT BuildSplitFaces: emit ALL sub-faces unconditionally.
+                    // Classification filtering happens in BuildSolid (ClassifyFaces).
+                    kept_a_in.push(sub.clone());
+                }
             }
 
             // Merge and emit On and Out sub-faces SEPARATELY (OCCT
             // FillImagesFaces: same-classification sub-faces merge).
-            for subs in [&mut kept_a_on, &mut kept_a_out] {
+            // In sub-faces are also emitted — OCCT operates on ALL split results.
+            for subs in [&mut kept_a_on, &mut kept_a_out, &mut kept_a_in] {
                 if subs.len() > 1 { merge_subfaces_of_same_face(subs); }
                 if subs.len() > 1 { merge_vertex_adjacent_subs(subs); }
                 for sub in subs.iter() {
@@ -2746,12 +2753,6 @@ impl<'a> BooleanBuilder<'a> {
             {
                 let plane = rcad_kernel::geom::bspline_to_plane(bsp);
                 let crossing = self.has_crossing_ics(face_idx);
-                // Debug: trace ALL B-faces
-                if self.ds.faces[face_idx].origin == crate::bopds::ds::ShapeOrigin::ShapeB {
-                        face_idx, self.ds.faces[face_idx].source_face_idx, fi.curves_in.len(),
-                        interior_cids.len(), crossing,
-                        matches!(face.surface, Surface3::Plane(_)));
-                }
                 // When ICs cross (form a non-planar edge graph), skip the wire-aware
                 // splitter — the polygon-based splitter handles crossing ICs correctly.
                 // Otherwise, try the OCCT-style split first.

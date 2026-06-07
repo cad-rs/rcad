@@ -468,6 +468,50 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     merge_coplanar_orthogonal_unify(&mut result);
     geom_populate::recompute_plane_surfaces(&mut result);
 
+    // OCCT ClassifyFaces (BuildSolid): remove faces whose centroid is
+    // State_IN relative to the other operand.  For each face, classify
+    // against both A and B using the DS.  Faces that are In for the
+    // other operand (but not their own) are interior to the union.
+    {
+        use crate::classify::{classify_point, Classification};
+        let a_face_ids: Vec<usize> = (0..ds.a_face_count).collect();
+        let b_face_ids: Vec<usize> = (ds.a_face_count..ds.faces.len()).collect();
+        let mut to_remove: Vec<(usize, usize, usize)> = Vec::new();
+        for (si, solid) in result.solids.iter().enumerate() {
+            for (shi, shell) in solid.shells.iter().enumerate() {
+                for (fi, face) in shell.faces.iter().enumerate() {
+                    let mut pts: Vec<DVec3> = Vec::new();
+                    for we in &face.outer_wire.edges {
+                        if let Some(edge) = result.edges.get(we.idx) {
+                            pts.push(result.vertices[edge.start].point);
+                            pts.push(result.vertices[edge.end].point);
+                        }
+                    }
+                    if pts.len() < 3 { continue; }
+                    let centroid = pts.iter().copied().sum::<DVec3>() / pts.len() as f64;
+                    let cls_a = classify_point(centroid, &a_face_ids, &ds);
+                    let cls_b = classify_point(centroid, &b_face_ids, &ds);
+                    // State_IN for the other operand → interior to the union
+                    let is_plane = matches!(face.normal, _); // always true — not used
+                    if cls_a == Classification::In && cls_b == Classification::In {
+                        to_remove.push((si, shi, fi));
+                    }
+                }
+            }
+        }
+        if !to_remove.is_empty() {
+            eprintln!("[CLASSIFY_FACES] removing {} interior faces", to_remove.len());
+            to_remove.sort_by(|a, b| b.cmp(a));
+            for &(si, shi, fi) in &to_remove {
+                if let Some(s) = result.solids.get_mut(si) {
+                    if let Some(sh) = s.shells.get_mut(shi) {
+                        if fi < sh.faces.len() { sh.faces.remove(fi); }
+                    }
+                }
+            }
+        }
+    }
+
     let pen_before = solid_closure_boundary_penalty(&checkpoint);
     let pen_after = solid_closure_boundary_penalty(&result);
     let n_before = shell_face_total(&checkpoint);
