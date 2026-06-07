@@ -465,28 +465,9 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     // edges from BOPAlgo_BuilderFace are shared between split faces).
     // Without this, unify_same_domain_faces cannot detect shared edges.
     result = crate::deduplicate_edges(result);
-    let checkpoint = result.clone();
-    merge_coplanar_orthogonal_unify(&mut result);
+    // OCCT FillSameDomainFaces: edge-set grouping only (no orthogonal fuse).
+    result = crate::unify_same_domain_faces(&result).0;
     geom_populate::recompute_plane_surfaces(&mut result);
-
-    let pen_before = solid_closure_boundary_penalty(&checkpoint);
-    let pen_after = solid_closure_boundary_penalty(&result);
-    let n_before = shell_face_total(&checkpoint);
-    let n_after = shell_face_total(&result);
-    let sa_before = total_surface_area(&checkpoint);
-    let sa_after = total_surface_area(&result);
-    let large_sa_change = {
-        let abs_delta = (sa_after - sa_before).abs();
-        abs_delta > 1e-6 && abs_delta > 0.005 * sa_before.max(1.0)
-    };
-    let suspicious_planar_snarl = (pen_after > pen_before
-        && (n_after <= 10 || n_after.saturating_add(12) < n_before))
-        || (large_sa_change && n_after < n_before && n_after.saturating_add(12) < n_before)
-        || (large_sa_change && (sa_after - sa_before).abs() > 0.10 * sa_before.max(1.0));
-    if suspicious_planar_snarl {
-        result = checkpoint;
-        geom_populate::recompute_plane_surfaces(&mut result);
-    }
 
     // OCCT ClassifyFaces (BuildSolid): remove interior faces classified as
     // State_IN for the OTHER operand.  Runs AFTER the SA guard so the guard
@@ -541,20 +522,6 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
 
     validate_union_brep_output("union: result failed checks after same-plane merge", &result)?;
     Ok(result)
-}
-
-/// Merge coplanar orthogonal panels left by boolean split (re-run groups after each success).
-fn merge_coplanar_orthogonal_unify(brep: &mut BRep) {
-    let tol = TOLERANCE_ABS;
-    for _ in 0..12 {
-        let (next, m) = crate::orthogonal_face_fuse::fuse_orthogonal_coplanar_faces(brep, tol);
-        *brep = next;
-        geom_populate::recompute_plane_surfaces(brep);
-        // OCCT FillSameDomainFaces: butterfly merge only (no adjacency merge)
-        crate::unify_same_domain_faces(brep);
-        geom_populate::recompute_plane_surfaces(brep);
-        if m == 0 { break; }
-    }
 }
 
 /// Same phases as [`fuse`], but returns [`BooleanHistory`] and does not run plane recompute

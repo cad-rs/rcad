@@ -3557,20 +3557,16 @@ fn unify_same_domain_faces_butterfly(brep: &mut rcad_kernel::BRep) -> usize {
                 }
             }
             let mut to_remove: Vec<usize> = Vec::new();
-            // OCCT FillSameDomainFaces: edge-set grouping (BOPTools_Set).
-            // All faces in a group share the same edge set and are Same Domain.
+            // Step 2a: Strict edge-set matching (OCCT BOPTools_Set).
+            // Faces with identical edge sets are Same Domain.
             for (_edge_set, group) in &edge_set_to_faces {
                 if group.len() < 2 {
                     continue;
                 }
-
-                // OCCT planar fast path: bounded planar faces with same edge set are SD
                 let all_planar = group.iter().all(|&fi| face_infos[fi].is_planar);
-
                 let is_same_domain = if all_planar {
-                    true // Planar fast path — no geometric check
+                    true
                 } else {
-                    // Verify all pairs are same domain
                     let mut ok = true;
                     'outer: for i in 0..group.len() {
                         for j in (i + 1)..group.len() {
@@ -3584,37 +3580,64 @@ fn unify_same_domain_faces_butterfly(brep: &mut rcad_kernel::BRep) -> usize {
                     }
                     ok
                 };
-
-                if !is_same_domain {
-                    continue;
-                }
-
-                // Whole group is one connected block (same edge set = same boundaries)
-                // Pick representative: face with smallest flat index (OCCT: nFMin).
-                // RCAD enhancement: prefer Plane over BSpline as representative so the
-                // resulting surface type matches OCCT reference (which keeps Plane, not
-                // the planar BSpline from nurbsconvert on the A-side).
-                let rep_fi = *group
-                    .iter()
-                    .min_by_key(|&&fi| {
-                        let ff = shell_flat_face_index(brep, si, shi, fi);
-                        // Penalize BSpline faces so Plane faces are preferred
-                        let is_bspline = brep
-                            .geom
-                            .face_surface
-                            .get(ff)
-                            .and_then(|sid| *sid)
-                            .and_then(|sid| brep.geom.surfaces.get(sid))
-                            .map(|s| matches!(s, Surface3::BSpline(_)))
-                            .unwrap_or(false);
-                        if is_bspline { ff + 100000 } else { ff }
-                    })
-                    .unwrap();
-
+                if !is_same_domain { continue; }
+                let rep_fi = *group.iter().min_by_key(|&&f| {
+                    let ff = shell_flat_face_index(brep, si, shi, f);
+                    let is_bspline = brep.geom.face_surface.get(ff).and_then(|v| *v)
+                        .and_then(|sid| brep.geom.surfaces.get(sid))
+                        .is_some_and(|s| matches!(s, Surface3::BSpline(_)));
+                    if is_bspline { ff + 100000 } else { ff }
+                }).unwrap();
                 for &fi in group {
-                    if fi != rep_fi {
-                        to_remove.push(fi);
+                    if fi != rep_fi { to_remove.push(fi); }
+                }
+            }
+
+            // Step 2b: Relaxed edge-set matching for faces with different edge counts
+            // but ≥ min(N1,N2)-1 common GeoEdgeKeys on the same plane (OCCT: two
+            // faces on the same geometric plane with nearly identical boundaries are
+            // Same Domain even when one has extra IC-edge subdivisions).  This handles
+            // the case where a WireSplitter sub-face has 5 edges (4 boundary + 1 IC)
+            // and the corresponding BSpline face has 4 edges (all boundary).
+            // Build a set of already-removed face indices for fast lookup.
+            let removed_set: std::collections::BTreeSet<usize> = to_remove.iter().copied().collect();
+            // Collect indices of faces NOT yet removed or planned for removal.
+            let remaining: Vec<usize> = (0..nfaces)
+                .filter(|fi| !removed_set.contains(fi))
+                .collect();
+            // Try to find relaxed matches among remaining faces.
+            for i in 0..remaining.len() {
+                let fi = remaining[i];
+                if to_remove.contains(&fi) { continue; }
+                let Some(ref eset_i) = face_infos[fi].edge_set else { continue; };
+                for j in (i + 1)..remaining.len() {
+                    let fj = remaining[j];
+                    if to_remove.contains(&fj) { continue; }
+                    let Some(ref eset_j) = face_infos[fj].edge_set else { continue; };
+                    // Different-sized edge sets: check containment with 1-edge slack.
+                    let (small, large) = if eset_i.len() <= eset_j.len() {
+                        (eset_i, eset_j)
+                    } else {
+                        (eset_j, eset_i)
+                    };
+                    // small ⊂ large with at most 1 missing edge → candidates
+                    let common = small.intersection(large).count();
+                    if common + 1 < small.len() { continue; }
+                    // Both must be on the same plane (Plane or planar BSpline).
+                    if !surfaces_are_same_domain_cross(brep, si, shi, fi, fj, ang_tol, lin_tol) {
+                        continue;
                     }
+                    // Same Domain via relaxed matching.
+                    // Pick representative: prefer Plane over BSpline.
+                    let rep_fi = *[fi, fj].iter().min_by_key(|&&f| {
+                        let ff = shell_flat_face_index(brep, si, shi, f);
+                        let is_bspline = brep.geom.face_surface.get(ff).and_then(|v| *v)
+                            .and_then(|sid| brep.geom.surfaces.get(sid))
+                            .is_some_and(|s| matches!(s, Surface3::BSpline(_)));
+                        if is_bspline { ff + 100000 } else { ff }
+                    }).unwrap();
+                    let rm_fi = if fi == rep_fi { fj } else { fi };
+                    to_remove.push(rm_fi);
                 }
             }
 
