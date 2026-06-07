@@ -1639,11 +1639,6 @@ impl<'a> BooleanBuilder<'a> {
             let mid = (p_start + p_end) * 0.5;
             let d_mid = mid - plane.origin;
             let mid_2d = DVec2::new(d_mid.dot(u_axis), d_mid.dot(v_axis));
-            // Split toward the polygon centroid (OCCT wire-splitter uses
-            // edge connectivity, so the split direction is implicit from
-            // shared vertices.  Our polygon clipper needs an explicit
-            // direction: midpoint toward centroid splits perpendicular to
-            // the IC, which handles most cases correctly.
             let cs = DVec2::new((p_start - plane.origin).dot(u_axis), (p_start - plane.origin).dot(v_axis));
             let ce = DVec2::new((p_end - plane.origin).dot(u_axis), (p_end - plane.origin).dot(v_axis));
             let mut split_dir = (centroid - mid_2d).normalize_or_zero();
@@ -2101,25 +2096,25 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 } else if class == Classification::In
                     && self.op == BooleanOpType::Difference
-                    && !b_cylinders.is_empty()
-                    && matches!(sub.surface, Surface3::Plane(_))
-                {
-                    // In-classified planar sub-face: try to keep the portion
-                    // outside the B-cylinder wall (the inside-cylinder portion
-                    // would be removed material in Difference).
-                    if let Surface3::Plane(plane) = &sub.surface {
-                        for cyl in &b_cylinders {
-                            if let Some(trimmed) = try_trim_planar_subface_by_cylinder(
-                                sub, plane.normal, plane.origin, cyl, false,
-                            ) {
-                                let src = self.ds.faces[fi].source_face_idx;
-                                result.emit_face_with_origin(&trimmed, false, FaceOrigin::FromA(src));
-                                a_on_planes.push((plane.normal, plane.origin));
-                                break;
+                        && !b_cylinders.is_empty()
+                        && matches!(sub.surface, Surface3::Plane(_))
+                    {
+                        // In-classified planar sub-face: try to keep the portion
+                        // outside the B-cylinder wall (the inside-cylinder portion
+                        // would be removed material in Difference).
+                        if let Surface3::Plane(plane) = &sub.surface {
+                            for cyl in &b_cylinders {
+                                if let Some(trimmed) = try_trim_planar_subface_by_cylinder(
+                                    sub, plane.normal, plane.origin, cyl, false,
+                                ) {
+                                    let src = self.ds.faces[fi].source_face_idx;
+                                    result.emit_face_with_origin(&trimmed, false, FaceOrigin::FromA(src));
+                                    a_on_planes.push((plane.normal, plane.origin));
+                                    break;
+                                }
                             }
                         }
                     }
-                }
             }
 
             // Merge and emit On and Out sub-faces SEPARATELY (OCCT
@@ -2135,7 +2130,6 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 }
             }
-
         }
         // Process B faces against A solid
         for &fi in &b_faces {
@@ -2157,6 +2151,7 @@ impl<'a> BooleanBuilder<'a> {
             // classification-aware merging (On separate from Out).
             let mut kept_on: Vec<SubFace> = Vec::new();
             let mut kept_out: Vec<SubFace> = Vec::new();
+            let mut kept_in: Vec<SubFace> = Vec::new();
             for (si, sub) in sub_faces.iter_mut().enumerate() {
                 let class = classify_against_solid_for_boolean(self.op, SourceSide::B, sub, &a_faces, self.ds);
                 let keep = if !face_split
@@ -2324,18 +2319,25 @@ impl<'a> BooleanBuilder<'a> {
                             _ => {
                                 // OCCT: FillSameDomainFaces operates on ALL split results,
                                 // classification filtering happens in BuildResult, not here.
-                                // For B-faces with a coplanar overlap partner (Union), keep
-                                // the sub-face as On so the butterfly merge can match it with
-                                // the A-side On sub-face regardless of classifier tolerance.
+                                // Emit all sub-faces (including In) so the butterfly merge can
+                                // absorb them into On counterparts.
                                 if self.op == BooleanOpType::Union {
                                     if let Some(poly) = self.find_coplanar_overlap(fi) {
                                         sub.boundary = poly;
                                         kept_on.push(sub.clone());
+                                    } else {
+                                        kept_in.push(sub.clone());
                                     }
+                                } else {
+                                    kept_in.push(sub.clone());
                                 }
                             }
                         }
                     }
+                } else if class == Classification::In {
+                    // OCCT: FillSameDomainFaces operates on ALL split results;
+                    // classification filtering happens in BuildResult.
+                    kept_in.push(sub.clone());
                 }
                 // OCCT BuildDraftFace: disabled — creates interior faces for
                 // containment cases.  Re-enable after proper OCST alignment.
@@ -2344,6 +2346,12 @@ impl<'a> BooleanBuilder<'a> {
             // Merge kept On and Out sub-faces SEPARATELY to avoid merging
             // across classification boundaries (OCCT's FillImagesFaces approach).
             let flip = self.op == BooleanOpType::Difference;
+            // Emit kept In sub-faces (OCCT: merge before classification filter).
+            if kept_in.len() > 1 { merge_subfaces_of_same_face(&mut kept_in); }
+            for sub in &kept_in {
+                let src = self.ds.faces[fi].source_face_idx;
+                result.emit_face_with_origin(sub, flip, FaceOrigin::FromB(src));
+            }
             // Merge On sub-faces separately, then emit as PLANE.
             if kept_on.len() > 1 { merge_subfaces_of_same_face(&mut kept_on); }
             if kept_on.len() > 1 { merge_vertex_adjacent_subs(&mut kept_on); }

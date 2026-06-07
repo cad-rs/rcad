@@ -1543,7 +1543,6 @@ impl<'a> PaveFiller<'a> {
     }
 
     fn intersect_face_face(&mut self, f1: usize, f2: usize) {
-        if f1 == 0 { eprintln!("[FF_CALL] intersect_face_face({}, {})", f1, f2); }
         let s1 = self.ds.faces[f1].surface.clone();
         let s2 = self.ds.faces[f2].surface.clone();
 
@@ -1731,7 +1730,7 @@ impl<'a> PaveFiller<'a> {
         let result = inttools::coplanar::analyze_coplanar_faces(&verts1, &verts2, plane);
 
         if !result.overlap.is_empty() {
-            // Record as a FaceFace interference with no curves (coplanar overlap)
+            // Record as a FaceFace interference with no curves (coplanar overlap marker)
             self.ds.interferences.push(Interference::FaceFace {
                 f1,
                 f2,
