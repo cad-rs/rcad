@@ -2098,19 +2098,18 @@ impl<'a> BooleanBuilder<'a> {
 
         // ✅ OCCT对齐: FillSameDomainFaces — 合并同域子面。
         //    OCCT 在 BuildSolid 后执行,合并共边同域的相邻子面。rcad 用
-        //    unify_same_domain_faces_with_origins(同源过滤)实现,避免跨操作数合并。
-        //    对 Union 启用是 OCCT 标准行为(bfuse A 系列球面卦限需要此步骤)。
-        if brep.solids[0].shells[0].faces.len() > 1 && history.face_origins.len() >= brep.solids[0].shells[0].faces.len() {
-            let origs = &history.face_origins;
-            let (merged, cnt) = crate::unify_same_domain_faces_with_origins(&brep, Some(origs));
+        //    unify_same_domain_faces(无源过滤)实现。origin 过滤在此处会
+        //    因 face_origins 未随合并更新而失效(merge 从中间移除面后索引偏移,
+        //    truncate 不能正确移除对应 origin)。
+        if brep.solids[0].shells[0].faces.len() > 1 {
+            let (merged, cnt) = crate::unify_same_domain_faces(&brep);
             if cnt > 0 {
                 if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
-                    eprintln!("unify_same_domain_faces_with_origins: {} -> {} ({} merges)",
+                    eprintln!("unify_same_domain_faces: {} -> {} ({} merges)",
                         brep.solids[0].shells[0].faces.len(),
                         merged.solids[0].shells[0].faces.len(), cnt);
                 }
                 brep = merged;
-                history.face_origins.truncate(brep.solids[0].shells[0].faces.len());
             }
         }
 
