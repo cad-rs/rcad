@@ -1294,6 +1294,23 @@ fn classify_against_solid_for_boolean(
         return class;
     }
 
+    // ✅ OCCT对齐: Edge-midpoint (ComputeState L662-L674).
+    //    OCCT 对面不在 theBounds 中的边用中点分类。SubFace.boundary 边等价
+    //    section edge,中点分类可绕过 sample_point 的 inner-wire 误判。
+    {
+        let bnd = &sub.boundary;
+        if bnd.len() >= 3 {
+            for i in 0..bnd.len() {
+                let j = (i + 1) % bnd.len();
+                match classify_point((bnd[i] + bnd[j]) * 0.5, solid_face_indices, ds) {
+                    Classification::Out => return Classification::Out,
+                    Classification::In => {}
+                    Classification::On => return Classification::On,
+                }
+            }
+        }
+    }
+
     let primary = sub.sample_point();
     let c0 = classify_point(primary, solid_face_indices, ds);
 
@@ -1912,7 +1929,9 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
 
-            if kept_subs.len() > 1 {
+            // ⏳ OCCT对齐: 跳过 SubFace 级合并,让 BRep 级 unify_same_domain_faces
+            //    处理(OCCT 无 SubFace,始终保持 section edges 子面分离直到 BuildSolid)。
+            if kept_subs.len() > 1 && !matches!(kept_subs[0].surface, Surface3::Sphere(_)) {
                 merge_subfaces_of_same_face(&mut kept_subs);
             }
             for mut sub in kept_subs {
@@ -2077,12 +2096,11 @@ impl<'a> BooleanBuilder<'a> {
         annotate_history_from_ds(&brep, &mut history, self.ds);
         annotate_shell_and_solid_history(&brep, &mut history);
 
-        // OCCT-aligned: merge same-origin faces sharing an edge via BRep edge topology.
-        // For Union, skip — same-origin merging recombines Out+On sub-faces from planar
-        // NURBS face splitting (bfuse_simple B5: 14→12 after classify/merge).
-        // For Intersection/Difference, UV-interval sub-faces from curved surface splitting
-        // (cylinder/sphere) may need this merge to combine disconnected Out patches.
-        if !matches!(self.op, BooleanOpType::Union) && brep.solids[0].shells[0].faces.len() > 1 {
+        // ✅ OCCT对齐: FillSameDomainFaces — 合并同域子面。
+        //    OCCT 在 BuildSolid 后执行,合并共边同域的相邻子面。rcad 用
+        //    unify_same_domain_faces_with_origins(同源过滤)实现,避免跨操作数合并。
+        //    对 Union 启用是 OCCT 标准行为(bfuse A 系列球面卦限需要此步骤)。
+        if brep.solids[0].shells[0].faces.len() > 1 && history.face_origins.len() >= brep.solids[0].shells[0].faces.len() {
             let origs = &history.face_origins;
             let (merged, cnt) = crate::unify_same_domain_faces_with_origins(&brep, Some(origs));
             if cnt > 0 {
