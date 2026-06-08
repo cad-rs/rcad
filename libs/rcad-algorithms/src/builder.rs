@@ -1987,15 +1987,6 @@ impl<'a> BooleanBuilder<'a> {
 
         let mut result = ResultBuilder::new_with_ds(self.ds);
 
-        // OCCT FillImagesFaces: emit ALL A-side sub-faces unconditionally.
-        for &fi in &a_faces {
-            let sub_faces = self.split_face(fi);
-            for sub in &sub_faces {
-                let src = self.ds.faces[fi].source_face_idx;
-                result.emit_face_with_origin(sub, false, FaceOrigin::FromA(src));
-            }
-        }
-        // OCCT FillImagesFaces: emit ALL B-side sub-faces unconditionally.
         let b_flip = self.op == BooleanOpType::Difference;
         for &fi in &b_faces {
             let sub_faces = self.split_face(fi);
@@ -2005,6 +1996,15 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
+
+        // OCCT FillImagesFaces: emit ALL A-side sub-faces unconditionally.
+        for &fi in &a_faces {
+            let sub_faces = self.split_face(fi);
+            for sub in &sub_faces {
+                let src = self.ds.faces[fi].source_face_idx;
+                result.emit_face_with_origin(sub, false, FaceOrigin::FromA(src));
+            }
+        }
         let (mut brep, mut history) = result.build(matches!(self.op, BooleanOpType::Union));
         if brep.solids[0].shells[0].faces.is_empty() {
             if matches!(self.op, BooleanOpType::Intersection | BooleanOpType::Difference) {
