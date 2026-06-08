@@ -635,8 +635,6 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     // from planar NURBS face splitting (bfuse_simple B5: 14→6 faces).  The builder's
     // build_with_history already runs same-origin butterfly merge.  The edge-set-based
     // approach (OCCT FillSameDomainFaces) doesn't have this issue.
-    let (merged, _cnt) = crate::occt_merge_same_surface_faces(&result);
-    result = merged;
     if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
         let nf = result.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
         eprintln!("[CLASSIFY] after merge: {} faces", nf);
@@ -644,6 +642,8 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
 
     result = crate::prune_unused_topology(result);
     result = crate::deduplicate_edges(result);
+    let (merged, _cnt) = crate::unify_same_domain_faces(&result);
+    result = merged;
     validate_union_brep_output("union: result failed checks after same-plane merge", &result)?;
     Ok(result)
 }
