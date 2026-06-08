@@ -829,7 +829,7 @@ pub fn build_sphere_box_intersection_analytic(sphere: &BRep, box_: &BRep) -> Opt
         // so that edges are shared between planar and spherical faces.
         // This allows shell_is_closed to detect a watertight shell and emit
         // CLOSED_SHELL + MANIFOLD_SOLID_BREP instead of OPEN_SHELL.
-        let mut sphere_wes: Vec<WireEdge> = Vec::with_capacity(n_arcs);
+        let mut sphere_wes: Vec<WireEdge> = Vec::with_capacity(n_arcs + 1);
         for &ei in &ordered {
             sphere_wes.push(WireEdge::rev(ei));
         }

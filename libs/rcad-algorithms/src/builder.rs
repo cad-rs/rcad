@@ -90,6 +90,16 @@ pub struct SubFace {
     /// Inner wire boundaries (holes) in 3D. Each inner wire is an ordered polygon
     /// representing a closed trim curve that forms a hole in the face.
     pub inner_wires: Vec<Vec<DVec3>>,
+    /// ✅ OCCT对齐: 外边界精确圆弧边。
+    ///    OCCT: MakeBlocks → section edges(精确 Circle3)
+    ///    (edge_index_in_boundary → Curve3::Circle) 指定外边界哪些边用
+    ///    add_circle_edge 替代 add_edge。由 split_sphere_by_circles 等函数设置。
+    pub outer_circle_edges: Vec<(usize, Curve3)>,
+    /// ✅ OCCT对齐: sphere face 的 seam edge。
+    ///    OCCT sphere face 在参数化接缝处有一条 seam edge,与一条外边界弧
+    ///    共享相同的顶点对（"长路径"）。此字段指定边界索引→Circle3 用于
+    ///    add_seam_edge（不进行顶点去重）。
+    pub seam_edge: Option<(usize, Curve3)>,
 }
 
 impl SubFace {
@@ -400,6 +410,21 @@ impl ResultBuilder {
         idx
     }
 
+    /// ✅ OCCT对齐: 创建 seam edge（不进行顶点去重）。
+    ///    OCCT 中 sphere face 的 seam edge 与一条边界弧共享相同的顶点对,
+    ///    但代表球面参数化接缝的另一半（"长路径"）。add_edge 按顶点去重,
+    ///    会误将 seam 合并到正常弧。此方法强制创建新 edge 条目。
+    ///    ！仅在 split_sphere_by_circles 中用于 sphere 的 seam edge。
+    fn add_seam_edge(&mut self, v1: usize, v2: usize, circle: Curve3) -> usize {
+        let idx = self.edges.len();
+        self.edges.push((v1, v2));
+        while self.custom_edge_curves.len() <= idx {
+            self.custom_edge_curves.push(None);
+        }
+        self.custom_edge_curves[idx] = Some(circle);
+        idx
+    }
+
     /// ✅ OCCT对齐: 检测并精简 SubFace 的圆弧内边界 + 返回 inner_wire_circles。
     ///    OCCT: MakeBlocks → BOPTools_AlgoTools::MakeEdge(aIC,...)
     ///    split_planar_face 生成的内边界有128+点,简化为2端点(arc_simplify),
@@ -483,6 +508,10 @@ impl ResultBuilder {
         circles
     }
 
+    /// ✅ OCCT对齐: 发射面,支持内外边界的精确圆弧覆盖。
+    ///    OCCT: MakeBlocks → BOPTools_AlgoTools::MakeEdge → section edge(精确)
+    ///    sub.outer_circle_edges: 外边界哪些边用 Circle3 替代 Line3。
+    ///    inner_wire_circles: 指定内边界哪些边用 Circle3。
     fn emit_face_with_origin(
         &mut self,
         sub: &SubFace,
@@ -509,9 +538,32 @@ impl ResultBuilder {
         let mut edge_indices = Vec::new();
         for i in 0..vert_indices.len() {
             let j = (i + 1) % vert_indices.len();
-            let ei = self.add_edge(vert_indices[i], vert_indices[j]);
+            // ✅ OCCT对齐: 从 SubFace.outer_circle_edges 检查外边界此边是否需精确圆弧
+            let ei = if let Some(&(_, ref crv)) = sub.outer_circle_edges.iter().find(|&&(si, _)| si == i) {
+                self.add_circle_edge(vert_indices[i], vert_indices[j], crv.clone())
+            } else {
+                self.add_edge(vert_indices[i], vert_indices[j])
+            };
             let forward = self.edges[ei].0 == vert_indices[i];
             edge_indices.push((ei, forward));
+        }
+
+        // ✅ OCCT对齐: 添加 sphere face 的 seam edge。
+        //    OCCT 的 sphere face 在参数化接缝(z=0 大圆弧)处有一条额外的 seam edge,
+        //    与其一条边界弧共享顶点对但不进行顶点去重。
+        //    seam_edge = (边界索引, Circle3),在对应边界边之后插入。
+        if let Some((sei, ref crv)) = sub.seam_edge {
+            eprintln!("[DBG_EMIT] seam_edge present: boundary={} sei={} verts_n={}", sub.boundary.len(), sei, vert_indices.len());
+            if sei < vert_indices.len() {
+                let sj = (sei + 1) % vert_indices.len();
+                let seam_ei = self.add_seam_edge(vert_indices[sei], vert_indices[sj], crv.clone());
+                let forward = self.edges[seam_ei].0 == vert_indices[sei];
+                // 在对应边界边之后插入以确保 wire 闭合
+                edge_indices.insert(sei + 1, (seam_ei, forward));
+                eprintln!("[DBG_EMIT] seam edge added: idx={}", seam_ei);
+            } else {
+                eprintln!("[DBG_EMIT] seam_edge sei={} >= vert_indices.len={}", sei, vert_indices.len());
+            }
         }
 
         // Add edges for inner wire boundaries (holes).
@@ -2339,6 +2391,8 @@ impl<'a> BooleanBuilder<'a> {
                         sample_override: None,
                         uv_domain: None,
                         inner_wires: vec![],
+                        outer_circle_edges: vec![],
+                        seam_edge: None,
                     }];
                 }
             }
@@ -2352,12 +2406,16 @@ impl<'a> BooleanBuilder<'a> {
             sample_override: None,
             uv_domain: None,
             inner_wires: vec![],
+            outer_circle_edges: vec![],
+            seam_edge: None,
         }]
     }
 
     /// Split a face by intersection curves. If no intersection curves cross this
     /// face, returns the whole face as a single SubFace.
     fn split_face(&self, face_idx: usize) -> Vec<SubFace> {
+        eprintln!("[DBG_SPLIT_FACE_ENTER] face_idx={}", face_idx);
+        if face_idx == 0 { eprintln!("[DBG_SPLIT_FACE_ZERO] entering split_face for face 0"); }
         let face = &self.ds.faces[face_idx];
         let fi = &face.face_info;
 
@@ -2412,6 +2470,8 @@ impl<'a> BooleanBuilder<'a> {
                                 boundary, surface: face.surface.clone(), normal: face.normal,
                                 uv_centroid: None, sample_override: Some(fp),
                                 uv_domain: None, inner_wires: vec![iw],
+                                outer_circle_edges: vec![],
+                                seam_edge: None,
                             }]);
                             break;
                         }
@@ -2618,11 +2678,13 @@ impl<'a> BooleanBuilder<'a> {
         // sphere face has 2 boundary vertices from the seam edge, which emit_face_with_origin
         // rejects as having <3 boundary points).
         if matches!(&face.surface, Surface3::Sphere(_)) && fi.curves_in.is_empty() {
+            eprintln!("[DBG_SPLIT_FACE] sphere curves_in empty → tessellate");
             return self.tessellate_sphere_face(face_idx);
         }
 
         // ✅ OCCT对齐: Sphere + circle 交线 → 用精确大圆弧构建球面子面
         if matches!(&face.surface, Surface3::Sphere(_)) {
+            eprintln!("[DBG_SPLIT_FACE] sphere curves_in={} n_curves_in={}", fi.curves_in.len(), fi.curves_in.len());
             let circles: Vec<&rcad_kernel::geom::Circle3> = fi.curves_in.iter()
                 .filter_map(|&ci| {
                     if let rcad_kernel::geom::Curve3::Circle(ref c) = self.ds.intersection_curves[ci].curve { Some(c) } else { None }
@@ -2770,6 +2832,8 @@ impl<'a> BooleanBuilder<'a> {
                     sample_override: None,
                     uv_domain: Some([u0, u1, v0, v1]),
                     inner_wires: vec![],
+                    outer_circle_edges: vec![],
+                    seam_edge: None,
                 });
             }
         }
@@ -2843,6 +2907,8 @@ impl<'a> BooleanBuilder<'a> {
                 sample_override: None,
                 uv_domain: Some([u0, u1, v_min, v_max]),
                 inner_wires: vec![],
+                outer_circle_edges: vec![],
+                seam_edge: None,
             });
         }
         subs
@@ -2939,6 +3005,8 @@ impl<'a> BooleanBuilder<'a> {
                     // classify the patch as "In".
                     uv_domain: Some([u_mid - 1e-9, u_mid + 1e-9, v_mid - 1e-9, v_mid + 1e-9]),
                     inner_wires: vec![],
+                    outer_circle_edges: vec![],
+                    seam_edge: None,
                 });
             }
         }
@@ -3026,6 +3094,8 @@ impl<'a> BooleanBuilder<'a> {
                     sample_override: Some(cone.point_at(u_mid, v_mid)),
                     uv_domain: Some([u_mid - 1e-9, u_mid + 1e-9, v_mid - 1e-9, v_mid + 1e-9]),
                     inner_wires: vec![],
+                    outer_circle_edges: vec![],
+                    seam_edge: None,
                 });
             }
         }
@@ -3453,6 +3523,8 @@ impl<'a> BooleanBuilder<'a> {
                     sample_override,
                     uv_domain: None,
                     inner_wires,
+                    outer_circle_edges: vec![],
+                    seam_edge: None,
                 }
             })
             .collect()
@@ -3718,6 +3790,8 @@ impl<'a> BooleanBuilder<'a> {
                 sample_override: None,
                 uv_domain: None,
                 inner_wires: vec![],
+                outer_circle_edges: vec![],
+                seam_edge: None,
             }];
         }
 
@@ -3737,6 +3811,8 @@ impl<'a> BooleanBuilder<'a> {
                 sample_override: None,
                 uv_domain: None,
                 inner_wires: vec![],
+                outer_circle_edges: vec![],
+                seam_edge: None,
             }];
         }
 
@@ -3834,6 +3910,8 @@ impl<'a> BooleanBuilder<'a> {
                 sample_override: None,
                 uv_domain: None,
                 inner_wires: vec![],
+                outer_circle_edges: vec![],
+                seam_edge: None,
             })
             .collect()
     }
@@ -4010,11 +4088,32 @@ impl<'a> BooleanBuilder<'a> {
         for &(ia, ib, ic) in &octants {
             let (va, vb, vc) = (pts[ia], pts[ib], pts[ic]);
             let boundary = vec![va, vb, vc];
-            let arcs: Vec<Vec<DVec3>> = [(va,vb),(vb,vc),(vc,va)].iter()
-                .map(|&(v1, v2)| vec![v1, (v1+v2).normalize()*r, v2]).collect();
+            // ✅ OCCT对齐: 每个外边界边(大圆弧)用 Circle3 精确表示。
+            //    OCCT MakeBlocks → section edges 是精确几何,不是折线。
+            let outer_circles: Vec<(usize, Curve3)> = [(va,vb),(vb,vc),(vc,va)].iter().enumerate()
+                .map(|(ei, &(v1, v2))| {
+                    let n = (v1 - c).cross(v2 - c).normalize();
+                    (ei, Curve3::Circle(Circle3 { center: c, normal: n, radius: r }))
+                }).collect();
+            // ✅ OCCT对齐: 检测 octant 是否包含 seam edge(z=0 大圆弧)。
+            //    OCCT 的 sphere face 在参数化接缝处有一条额外的 seam edge。
+            //    当 octant 的 z=0 平面弧与球面接缝重合时,需要添加 seam edge。
+            //    octant(0,2,4)=(+X,+Y,+Z) 的 edge 0 是 z=0 平面弧 → seam。
+            eprintln!("[DBG_SPLIT] octant({},{},{}): va=({:.3},{:.3},{:.3}) vb=({:.3},{:.3},{:.3}) vc=({:.3},{:.3},{:.3})",
+                ia, ib, ic, va.x, va.y, va.z, vb.x, vb.y, vb.z, vc.x, vc.y, vc.z);
+            let seam: Option<(usize, Curve3)> = if ia == 0 && ib == 2 && ic == 4 {
+                // Edge 0: (va,vb) = (+X,+Y) 在 z=0 平面 = seam
+                let n = (va - c).cross(vb - c).normalize();
+                Some((0, Curve3::Circle(Circle3 { center: c, normal: n, radius: r })))
+            } else {
+                None
+            };
+            eprintln!("[DBG_SPLIT] push subface: seam={:?} outer_circles={} boundary={}",
+                seam.is_some(), outer_circles.len(), boundary.len());
             subs.push(SubFace { boundary, surface: Surface3::Sphere(sphere),
                 normal: (va-c).normalize(), uv_centroid: None, sample_override: None,
-                uv_domain: None, inner_wires: arcs });
+                uv_domain: None, inner_wires: vec![],
+                outer_circle_edges: outer_circles, seam_edge: seam });
         }
         subs
     }
@@ -4710,6 +4809,8 @@ impl<'a> BooleanBuilder<'a> {
                     sample_override: None,
                     uv_domain,
                     inner_wires,
+                    outer_circle_edges: vec![],
+                    seam_edge: None,
                 }
             })
             .collect()
@@ -4961,6 +5062,8 @@ fn merge_two_subfaces(a: &SubFace, b: &SubFace, ai: usize, bi: usize, forward: b
         sample_override: a.sample_override.or(b.sample_override),
         uv_domain: merged_uv_domain,
         inner_wires: merged_inner,
+        outer_circle_edges: vec![],
+        seam_edge: None,
     }
 }
 
@@ -8236,6 +8339,8 @@ fn try_trim_planar_subface_by_cylinder(
         sample_override: None,
         uv_domain: None,
         inner_wires: vec![],
+        outer_circle_edges: vec![],
+        seam_edge: None,
     })
 }
 

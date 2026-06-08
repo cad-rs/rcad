@@ -1,4 +1,4 @@
-﻿//! Face imprinting and gap/overlap detection.
+//! Face imprinting and gap/overlap detection.
 //!
 //! **Face imprinting** (`imprint_shape`): splits each face of `target` wherever
 //! the boundary of `tool` crosses it, without performing a boolean classification.
@@ -202,6 +202,8 @@ fn split_face_by_curves(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             sample_override: None,
             uv_domain: None,
             inner_wires: vec![],
+            outer_circle_edges: vec![],
+            seam_edge: None,
         }];
     }
 
@@ -226,6 +228,8 @@ fn split_face_by_curves(ds: &DS, face_idx: usize) -> Vec<SubFace> {
                 sample_override: None,
             uv_domain: None,
             inner_wires: vec![],
+            outer_circle_edges: vec![],
+            seam_edge: None,
             }]
         }
     }
@@ -262,6 +266,8 @@ fn split_planar_face_simple(ds: &DS, face_idx: usize, plane: &Plane) -> Vec<SubF
             sample_override: None,
             uv_domain: None,
             inner_wires: vec![],
+            outer_circle_edges: vec![],
+            seam_edge: None,
         }];
     }
 
@@ -300,6 +306,8 @@ fn split_planar_face_simple(ds: &DS, face_idx: usize, plane: &Plane) -> Vec<SubF
             sample_override: None,
             uv_domain: None,
             inner_wires: vec![],
+            outer_circle_edges: vec![],
+            seam_edge: None,
             }
         })
         .collect()
@@ -721,6 +729,8 @@ fn split_curved_face(ds: &DS, face_idx: usize) -> Vec<SubFace> {
                 sample_override: None,
             uv_domain: None,
             inner_wires: vec![],
+            outer_circle_edges: vec![],
+            seam_edge: None,
             }
         })
         .collect()
@@ -766,6 +776,8 @@ fn split_curved_face_legacy(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             sample_override: None,
             uv_domain: None,
             inner_wires: vec![],
+            outer_circle_edges: vec![],
+            seam_edge: None,
         }];
     }
 
@@ -785,6 +797,8 @@ fn split_curved_face_legacy(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             sample_override: None,
             uv_domain: None,
             inner_wires: vec![],
+            outer_circle_edges: vec![],
+            seam_edge: None,
         }];
     }
 
@@ -878,6 +892,8 @@ fn split_curved_face_legacy(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             sample_override: None,
             uv_domain: None,
             inner_wires: vec![],
+            outer_circle_edges: vec![],
+            seam_edge: None,
         })
         .collect()
 }
