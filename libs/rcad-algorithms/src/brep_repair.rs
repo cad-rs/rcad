@@ -3618,7 +3618,7 @@ pub fn merge_close_vertices(brep: &BRep, tolerance: f64) -> (BRep, usize) {
                                 inner_wires: face.inner_wires.iter().map(remap_wire).collect(),
                                 normal: face.normal,
                                 triangles: face.triangles.clone(),
-                                sample_point: None,
+                                sample_point: face.sample_point,
                                 mesh_dirty: true,
                             }
                         })
@@ -3758,7 +3758,7 @@ pub fn recompute_face_normals(brep: &BRep) -> (BRep, usize) {
                                 inner_wires: face.inner_wires.clone(),
                                 normal: new_normal,
                                 triangles: face.triangles.clone(),
-                                sample_point: None,
+                                sample_point: face.sample_point,
                                 mesh_dirty: true,
                             }
                         })
@@ -3814,7 +3814,7 @@ pub fn fix_wire_orientation(brep: &BRep, tolerance: f64) -> (BRep, usize) {
                                 inner_wires: new_inners,
                                 normal: face.normal,
                                 triangles: face.triangles.clone(),
-                                sample_point: None,
+                                sample_point: face.sample_point,
                                 mesh_dirty: true,
                             }
                         })
@@ -3869,7 +3869,7 @@ pub fn fix_face_orientation(brep: &BRep) -> (BRep, usize) {
                                     inner_wires: face.inner_wires.iter().map(reverse_wire).collect(),
                                     normal: -face.normal,
                                     triangles: face.triangles.clone(),
-                                    sample_point: None,
+                                    sample_point: face.sample_point,
                                     mesh_dirty: true,
                                 }
                             } else {

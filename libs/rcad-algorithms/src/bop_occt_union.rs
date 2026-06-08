@@ -558,7 +558,19 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
                         if _pts.len() < 3 { continue; }
                         classify_pt = _pts.iter().copied().sum::<DVec3>() / _pts.len() as f64;
                     }
-                    let interior = classify_point(classify_pt, classify_ids, &ds) == Classification::In;
+                    let cls = classify_point(classify_pt, classify_ids, &ds);
+                    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+                        let surf_name = result.geom.face_surface.get(fi).copied().flatten()
+                            .and_then(|si| result.geom.surfaces.get(si))
+                            .map(|s| match s {
+                                Surface3::Plane(_) => "Plane",
+                                Surface3::BSpline(_) => "BSpline",
+                                _ => "Other",
+                            }).unwrap_or("None");
+                        eprintln!("[CLASSIFY_CLS] fi={fi} origin={origin:?} surf={surf_name} pt=({:.6},{:.6},{:.6}) cls={:?}",
+                            classify_pt.x, classify_pt.y, classify_pt.z, cls);
+                    }
+                    let interior = cls == Classification::In;
                     if interior {
                         if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
                             let surf_name = result.geom.face_surface.get(fi).copied().flatten()
