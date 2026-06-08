@@ -522,15 +522,32 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
                             if is_plane { &b_ids } else { &a_ids }
                         }
                     };
-                    // Use the face's sample_point (which has a normal nudge) instead of
-                    // the vertex centroid.  The vertex centroid of a face exactly on the
-                    // operand boundary (e.g. b1's x=0 NURBS box face vs b2's x=0 box face)
-                    // falls ON the other operand's surface, causing classify_point to return
-                    // In/On incorrectly under tolerance.  OCCT uses PointInFace which
-                    // guarantees a point strictly inside the face's UV domain.
-                    let classify_pt = if let Some(sp) = face.sample_point {
-                        sp
-                    } else {
+                    // ✅ OCCT对齐: BOPTools_AlgoTools::ComputeState for Face.
+                    // 遍历面的每条边，找到一条不在对面实体边界上的边，用其中点做分类。
+                    // OCCT 源码: BOPTools_AlgoTools.cxx L650-L674
+                    let mut classify_pt = face.sample_point.unwrap_or(DVec3::ZERO);
+                    let mut found_pt = face.sample_point.is_some();
+                    if !found_pt {
+                        // 优先从边中点做分类（OCCT 主路径）
+                        for we in &face.outer_wire.edges {
+                            if let Some(edge) = result.edges.get(we.idx) {
+                                let p1 = result.vertices.get(edge.start).map(|v| v.point);
+                                let p2 = result.vertices.get(edge.end).map(|v| v.point);
+                                if let (Some(p1), Some(p2)) = (p1, p2) {
+                                    let mid = (p1 + p2) * 0.5;
+                                    let cls = classify_point(mid, classify_ids, &ds);
+                                    if cls != Classification::On {
+                                        // 边的中点不在对方实体边界上→可用的分类点
+                                        classify_pt = mid;
+                                        found_pt = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if !found_pt {
+                        // 所有边都在边界上→回退到顶点质心（OCCT PointInFace fallback）
                         let mut _pts: Vec<DVec3> = Vec::new();
                         for we in &face.outer_wire.edges {
                             if let Some(edge) = result.edges.get(we.idx) {
@@ -539,8 +556,8 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
                             }
                         }
                         if _pts.len() < 3 { continue; }
-                        _pts.iter().copied().sum::<DVec3>() / _pts.len() as f64
-                    };
+                        classify_pt = _pts.iter().copied().sum::<DVec3>() / _pts.len() as f64;
+                    }
                     let interior = classify_point(classify_pt, classify_ids, &ds) == Classification::In;
                     if interior {
                         if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
