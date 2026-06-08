@@ -860,7 +860,7 @@ pub fn bounding_box(brep: &BRep) -> Option<[DVec3; 2]> {
 /// This function rebuilds the BRep using only vertices and edges that are
 /// referenced by at least one face wire, producing a minimal self-contained
 /// copy with correct bounding box.
-fn compact_brep(brep: &BRep) -> BRep {
+pub(crate) fn compact_brep(brep: &BRep) -> BRep {
     // Preserve multi-solid structure: compact each solid separately.
     if brep.solids.len() > 1 {
         let mut flat_idx = 0usize;

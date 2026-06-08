@@ -522,23 +522,26 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
                             if is_plane { &b_ids } else { &a_ids }
                         }
                     };
-                    let mut pts: Vec<DVec3> = Vec::new();
-                    for we in &face.outer_wire.edges {
-                        if let Some(edge) = result.edges.get(we.idx) {
-                            pts.push(result.vertices[edge.start].point);
-                            pts.push(result.vertices[edge.end].point);
+                    // Use the face's sample_point (which has a normal nudge) instead of
+                    // the vertex centroid.  The vertex centroid of a face exactly on the
+                    // operand boundary (e.g. b1's x=0 NURBS box face vs b2's x=0 box face)
+                    // falls ON the other operand's surface, causing classify_point to return
+                    // In/On incorrectly under tolerance.  OCCT uses PointInFace which
+                    // guarantees a point strictly inside the face's UV domain.
+                    let classify_pt = if let Some(sp) = face.sample_point {
+                        sp
+                    } else {
+                        let mut _pts: Vec<DVec3> = Vec::new();
+                        for we in &face.outer_wire.edges {
+                            if let Some(edge) = result.edges.get(we.idx) {
+                                _pts.push(result.vertices[edge.start].point);
+                                _pts.push(result.vertices[edge.end].point);
+                            }
                         }
-                    }
-                    if pts.len() < 3 { continue; }
-                    let centroid = pts.iter().copied().sum::<DVec3>() / pts.len() as f64;
-
-                    // OCCT BOPTools_AlgoTools::ComputeState: classify interior
-                    // point of the face against the other solid.  RCAD approximates
-                    // this with vertex centroid (OCCT uses PointInFace for a point
-                    // strictly inside the face boundary).  If the point is On (on the
-                    // boundary of the classify-against solid), the face is on the
-                    // shared interface and NOT interior — keep it.
-                    let interior = classify_point(centroid, classify_ids, &ds) == Classification::In;
+                        if _pts.len() < 3 { continue; }
+                        _pts.iter().copied().sum::<DVec3>() / _pts.len() as f64
+                    };
+                    let interior = classify_point(classify_pt, classify_ids, &ds) == Classification::In;
                     if interior {
                         if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
                             let surf_name = result.geom.face_surface.get(fi).copied().flatten()
@@ -548,8 +551,8 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
                                     Surface3::BSpline(_) => "BSpline",
                                     _ => "Other",
                                 }).unwrap_or("None");
-                            eprintln!("[CLASSIFY] REMOVE fi={fi} origin={origin:?} surf={surf_name} centroid=({:.6},{:.6},{:.6}) n=({:.4},{:.4},{:.4})",
-                                centroid.x, centroid.y, centroid.z,
+                            eprintln!("[CLASSIFY] REMOVE fi={fi} origin={origin:?} surf={surf_name} pt=({:.6},{:.6},{:.6}) n=({:.4},{:.4},{:.4})",
+                                classify_pt.x, classify_pt.y, classify_pt.z,
                                 face.normal.x, face.normal.y, face.normal.z);
                         }
                         to_remove.push((si, shi, fi));
@@ -561,8 +564,8 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
                                 Surface3::BSpline(_) => "BSpline",
                                 _ => "Other",
                             }).unwrap_or("None");
-                        eprintln!("[CLASSIFY] KEEP   fi={fi} origin={origin:?} surf={surf_name} centroid=({:.6},{:.6},{:.6}) n=({:.4},{:.4},{:.4})",
-                            centroid.x, centroid.y, centroid.z,
+                        eprintln!("[CLASSIFY] KEEP   fi={fi} origin={origin:?} surf={surf_name} pt=({:.6},{:.6},{:.6}) n=({:.4},{:.4},{:.4})",
+                            classify_pt.x, classify_pt.y, classify_pt.z,
                             face.normal.x, face.normal.y, face.normal.z);
                     }
                 }
@@ -599,10 +602,14 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
         let nf = result.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
         eprintln!("[CLASSIFY] after classify: {} faces", nf);
     }
-    result = crate::unify_same_domain_faces(&result).0;
+    // SKIP: Second butterfly merge without origin filtering merges same-surface sub-faces
+    // from planar NURBS face splitting (bfuse_simple B5: 14→6 faces).  The builder's
+    // build_with_history already runs same-origin butterfly merge.  The edge-set-based
+    // approach (OCCT FillSameDomainFaces) doesn't have this issue.
+    //result = crate::unify_same_domain_faces(&result).0;
     if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
         let nf = result.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
-        eprintln!("[CLASSIFY] after butterfly: {} faces", nf);
+        eprintln!("[CLASSIFY] after butterfly: {} faces (skipped)", nf);
     }
     // SKIP: second recompute_plane_surfaces would promote cross-operand merged faces
 

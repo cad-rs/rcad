@@ -981,7 +981,19 @@ fn classify_subface_against_box(
     // `build_with_history` to avoid double-counting the shared area.  The AABB
     // boundary-vertex check was designed for tessellated curved surfaces
     // (cone/cylinder UV grid) where individual grid cells straddle the boundary.
-    if matches!(sub.surface, rcad_kernel::geom::Surface3::Plane(_)) {
+    // Planar BSpline surfaces (from NURBS-converted boxes) are also planar —
+    // their boundary vertices can span both inside and outside the box, causing
+    // a false In/Out from a single vertex check.  OCCT classifies such faces by
+    // sampling interior points (BOPTools_AlgoTools::PointInFace), not by
+    // boundary-vertex AABB test.
+    let is_planar_surf = match &sub.surface {
+        rcad_kernel::geom::Surface3::Plane(_) => true,
+        rcad_kernel::geom::Surface3::BSpline(bsp) => {
+            rcad_kernel::geom::bspline_is_planar(bsp, 1e-7)
+        }
+        _ => false,
+    };
+    if is_planar_surf {
         return None;
     }
     let tol = TOLERANCE_MESH_LEGACY;
@@ -1723,7 +1735,7 @@ impl<'a> BooleanBuilder<'a> {
         for &fi in &b_faces {
             let sub_faces = self.split_face(fi);
             let face_split = sub_faces.len() > 1;
-            let mut kept_subs: Vec<SubFace> = Vec::new();
+            let mut kept_subs: Vec<(SubFace, Classification)> = Vec::new();
             for (si, sub) in sub_faces.iter().enumerate() {
                 let class = classify_against_solid_for_boolean(self.op, SourceSide::B, sub, &a_faces, self.ds);
                 let keep = if !face_split
@@ -1827,20 +1839,33 @@ impl<'a> BooleanBuilder<'a> {
                         result.emit_face_with_origin(&trimmed, false, FaceOrigin::FromB(src));
                     } else {
                         // Collect for edge-based merge.
-                        kept_subs.push(sub.clone());
+                        kept_subs.push((sub.clone(), class));
                     }
                 }
             }
 
             // Merge kept sub-faces from the same original face that share
-            // boundary edges. Disconnected UV intervals are not merged.
+            // boundary edges.  Only merge sub-faces with the same classification
+            // (Out↔Out, On↔On) — merging Out with On recreates the full original
+            // face and undoes the planar split (bfuse_simple B5 regression: 14→6).
             if kept_subs.len() > 1 {
-                merge_subfaces_of_same_face(&mut kept_subs);
+                let out_group: Vec<SubFace> = kept_subs.iter()
+                    .filter(|(_, c)| *c != Classification::On)
+                    .map(|(s, _)| s.clone()).collect();
+                let mut out_merged = out_group.clone();
+                if out_merged.len() > 1 { merge_subfaces_of_same_face(&mut out_merged); }
+                let on_group: Vec<SubFace> = kept_subs.iter()
+                    .filter(|(_, c)| *c == Classification::On)
+                    .map(|(s, _)| s.clone()).collect();
+                let mut on_merged = on_group.clone();
+                if on_merged.len() > 1 { merge_subfaces_of_same_face(&mut on_merged); }
+                kept_subs = out_merged.into_iter().map(|s| (s, Classification::Out)).collect::<Vec<_>>()
+                    .into_iter().chain(on_merged.into_iter().map(|s| (s, Classification::On))).collect();
             }
             let flip = self.op == BooleanOpType::Difference;
-            for sub in kept_subs {
+            for (sub, _class) in &kept_subs {
                 let src = self.ds.faces[fi].source_face_idx;
-                result.emit_face_with_origin(&sub, flip, FaceOrigin::FromB(src));
+                result.emit_face_with_origin(sub, flip, FaceOrigin::FromB(src));
             }
         }
 
@@ -1857,7 +1882,11 @@ impl<'a> BooleanBuilder<'a> {
         annotate_shell_and_solid_history(&brep, &mut history);
 
         // OCCT-aligned: merge same-origin faces sharing an edge via BRep edge topology.
-        if brep.solids[0].shells[0].faces.len() > 1 {
+        // For Union, skip — same-origin merging recombines Out+On sub-faces from planar
+        // NURBS face splitting (bfuse_simple B5: 14→12 after classify/merge).
+        // For Intersection/Difference, UV-interval sub-faces from curved surface splitting
+        // (cylinder/sphere) may need this merge to combine disconnected Out patches.
+        if !matches!(self.op, BooleanOpType::Union) && brep.solids[0].shells[0].faces.len() > 1 {
             let origs = &history.face_origins;
             let (merged, cnt) = crate::unify_same_domain_faces_with_origins(&brep, Some(origs));
             if cnt > 0 {
@@ -2197,6 +2226,22 @@ impl<'a> BooleanBuilder<'a> {
             // by reconstructing the circular boundary from the two diameter endpoints.
             let subs = self.split_planar_face(face_idx, plane, &cids);
             return subs;
+        }
+
+        // Planar BSpline → treat as Plane for splitting.
+        // OCCT's BRepAlgo_Builder detects planarity via Geom_Surface::IsKind(STANDARD_TYPE(Geom_Plane)),
+        // so a NURBS box (planar BSpline) routes through the same planar face splitting logic.
+        // Without this, planar BSpline faces go to `split_curved_face_parametric` which can produce
+        // sub-faces with different edge/vertex topology than the equivalent Plane split.
+        if let Surface3::BSpline(bsp) = &face.surface {
+            if rcad_kernel::geom::bspline_is_planar(bsp, 1e-7) {
+                let plane = rcad_kernel::geom::bspline_to_plane(bsp);
+                let cids = self.merged_split_curve_ids_for_planar_face(face_idx, &plane);
+                if cids.is_empty() {
+                    return self.single_subface_from_whole_face(face_idx);
+                }
+                return self.split_planar_face(face_idx, &plane, &cids);
+            }
         }
 
         if fi.curves_in.is_empty() {

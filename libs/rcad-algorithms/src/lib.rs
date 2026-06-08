@@ -3458,9 +3458,15 @@ pub fn boolean_op_with_retry(
         )
         .map(|(brep, _report)| brep)?
     };
-    // Edge dedup + BSPLINE→PLANE for ALL results (safe, no topology changes).
-    let brep = deduplicate_edges(brep);
-    let mut brep = promote_planar_surfaces(brep);
+    // Edge dedup for ALL results.
+    let mut brep = deduplicate_edges(brep);
+    // Skip BSPLINE→PLANE promotion — OCCT preserves the original surface type
+    // of each operand face (a NURBS-converted box keeps BSpline surfaces even
+    // though they are geometrically planar).  promote_planar_surfaces would
+    // flatten NURBS box BSpline faces to Plane, changing the surface-type
+    // distribution vs OCCT's reference (bfuse_simple B2: 6BS+5PL → 11PL).
+    // OCCT's STEP export writes the original surfaces as-is.
+    // brep = promote_planar_surfaces(brep);
     // Compute and propagate per-entity tolerances.
     rcad_kernel::tolerance::resize_tolerance_arrays(&mut brep);
     rcad_kernel::brep_same_parameter(&mut brep, 10);
@@ -5757,6 +5763,14 @@ pub fn general_fuse_par_detailed(
 /// Returns the simplified BRep and the number of face merges performed.
 ///
 /// # Algorithm
+/// Remove unreferenced geometry (surfaces, curves, edges, vertices) that are
+/// no longer used by any face in the result.  After butterfly merge + classify,
+/// pruned surface entries are no longer indexed by any face_surface slot.
+/// OCCT's BuildResult does this implicitly via compact shape copy.
+pub fn prune_unused_topology(brep: BRep) -> BRep {
+    crate::brep_tools::compact_brep(&brep)
+}
+
 /// Performs iterated passes: in each pass, the first eligible pair of adjacent
 /// same-domain faces sharing a single shell edge is merged. Passes repeat until
 /// no more merges are possible. This is O(faces² × passes) but correct for all
@@ -6150,19 +6164,15 @@ fn unify_one_merge_pass_with_origins(brep: &mut BRep, face_origins: Option<&[Fac
                 let dc = (s1.center - s2.center).length();
                 (Some(dc <= lin_tol), false)
             }
-            // Cross-type: BSpline + Plane — convert BSpline to Plane if planar
-            (Surface3::BSpline(b), Surface3::Plane(p))
-            | (Surface3::Plane(p), Surface3::BSpline(b)) => {
-                if rcad_kernel::geom::bspline_is_planar(b, 1e-7) {
-                    let bp = rcad_kernel::geom::bspline_to_plane(b);
-                    let cross = p.normal.cross(bp.normal).length();
-                    if cross > ang_tol { return (Some(false), true); }
-                    let d = (bp.origin - p.origin).dot(p.normal).abs();
-                    (Some(d <= lin_tol), true)
-                } else {
-                    (Some(false), false)
-                }
-            }
+            // Cross-type: BSpline and Plane are never same-domain.
+            // OCCT FillSameDomainFaces (BOPAlgo_Builder_2.cxx L6153-L6165) only groups
+            // faces by edge set equivalence, then checks planar faces via surface type
+            // (GeomAbs_Plane).  It does NOT promote planar BSpline to Plane and merge
+            // across types — that would incorrectly fuse sub-faces from different
+            // operands whose underlying geometry differs (b1=BSpline box vs b2=box).
+            // The separate `promote_planar_surfaces` pass handles Plane conversion later.
+            (Surface3::BSpline(_), Surface3::Plane(_))
+            | (Surface3::Plane(_), Surface3::BSpline(_)) => (Some(false), false),
             (Surface3::BSpline(b1), Surface3::BSpline(b2)) => {
                 // BSpline same-domain detection.
                 // Two BSpline surfaces are considered same-domain if they have:
