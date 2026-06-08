@@ -400,7 +400,13 @@ impl ResultBuilder {
         idx
     }
 
-    fn emit_face_with_origin(&mut self, sub: &SubFace, flip: bool, origin: FaceOrigin) {
+    fn emit_face_with_origin(
+        &mut self,
+        sub: &SubFace,
+        flip: bool,
+        origin: FaceOrigin,
+        inner_wire_circles: &[(usize, usize, Curve3)],
+    ) {
         if sub.boundary.len() < 3 {
             return;
         }
@@ -433,10 +439,15 @@ impl ResultBuilder {
                 continue;
             }
             let iw_vert_indices: Vec<usize> = iw_poly.iter().map(|&p| self.add_vertex(p)).collect();
+            let iw_idx = inner_wire_edges.len();
             let mut iw_edge_indices = Vec::new();
             for i in 0..iw_vert_indices.len() {
                 let j = (i + 1) % iw_vert_indices.len();
-                let ei = self.add_edge(iw_vert_indices[i], iw_vert_indices[j]);
+                let ei = if let Some(&(_, _, ref crv)) = inner_wire_circles.iter().find(|&&(wi, si, _)| wi == iw_idx && si == i) {
+                    self.add_circle_edge(iw_vert_indices[i], iw_vert_indices[j], crv.clone())
+                } else {
+                    self.add_edge(iw_vert_indices[i], iw_vert_indices[j])
+                };
                 let forward = self.edges[ei].0 == iw_vert_indices[i];
                 iw_edge_indices.push((ei, forward));
             }
@@ -1745,7 +1756,7 @@ impl<'a> BooleanBuilder<'a> {
                                 sub, plane.normal, plane.origin, cyl, false,
                             ) {
                                 let src = self.ds.faces[fi].source_face_idx;
-                                result.emit_face_with_origin(&trimmed, false, FaceOrigin::FromA(src));
+                                result.emit_face_with_origin(&trimmed, false, FaceOrigin::FromA(src), &[]);
                                 a_on_planes.push((plane.normal, plane.origin));
                                 break;
                             }
@@ -1759,7 +1770,7 @@ impl<'a> BooleanBuilder<'a> {
             }
             for sub in kept_subs {
                 let src = self.ds.faces[fi].source_face_idx;
-                result.emit_face_with_origin(&sub, false, FaceOrigin::FromA(src));
+                result.emit_face_with_origin(&sub, false, FaceOrigin::FromA(src), &[]);
                 if let Surface3::Plane(p) = &sub.surface {
                     a_on_planes.push((p.normal, p.origin));
                 }
@@ -1871,7 +1882,7 @@ impl<'a> BooleanBuilder<'a> {
 
                     if let Some(trimmed) = trimmed_opt {
                         let src = self.ds.faces[fi].source_face_idx;
-                        result.emit_face_with_origin(&trimmed, false, FaceOrigin::FromB(src));
+                        result.emit_face_with_origin(&trimmed, false, FaceOrigin::FromB(src), &[]);
                     } else {
                         // Collect for edge-based merge.
                         kept_subs.push((sub.clone(), class));
@@ -1900,7 +1911,7 @@ impl<'a> BooleanBuilder<'a> {
             let flip = self.op == BooleanOpType::Difference;
             for (sub, _class) in &kept_subs {
                 let src = self.ds.faces[fi].source_face_idx;
-                result.emit_face_with_origin(sub, flip, FaceOrigin::FromB(src));
+                result.emit_face_with_origin(sub, flip, FaceOrigin::FromB(src), &[]);
             }
         }
 
@@ -2083,7 +2094,7 @@ impl<'a> BooleanBuilder<'a> {
         // Merge results into ResultBuilder
         let mut result = ResultBuilder::new();
         for (sub, flip, origin) in a_results.into_iter().chain(b_results.into_iter()) {
-            result.emit_face_with_origin(&sub, flip, origin);
+            result.emit_face_with_origin(&sub, flip, origin, &[]);
         }
 
         let (mut brep, mut history) = result.build(matches!(self.op, BooleanOpType::Union));
