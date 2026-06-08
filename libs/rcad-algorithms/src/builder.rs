@@ -492,7 +492,21 @@ impl ResultBuilder {
             if iw_poly.len() < 3 {
                 continue;
             }
-            let iw_vert_indices: Vec<usize> = iw_poly.iter().map(|&p| self.add_vertex(p)).collect();
+            // ✅ OCCT对齐: 环形面的内边界可能只有2个圆弧端点(1条Circle3边)。
+            //    split_uv_polygon_by_trim 的2点trim会过滤掉(<2)。
+            //    但 inner_wire 的2点在这里通过,emit_face_with_origin 用
+            //    inner_wire_circles 指定圆弧边后,add_circle_edge 创建精确边。
+            if iw_poly.len() < 2 && !inner_wire_circles.iter().any(|&(wi, _, _)| wi == inner_wire_edges.len()) {
+                continue;
+            }
+            // 对于2点内边界的特殊情况(圆弧 inner_wire),在中间补一个中点以使多边形闭合
+            let iw_data: Vec<DVec3> = if iw_poly.len() >= 3 {
+                iw_poly.to_vec()
+            } else {
+                let mid = (iw_poly[0] + iw_poly[1]) * 0.5;
+                vec![iw_poly[0], iw_poly[1], mid]
+            };
+            let iw_vert_indices: Vec<usize> = iw_data.iter().map(|&p| self.add_vertex(p)).collect();
             let iw_idx = inner_wire_edges.len();
             let mut iw_edge_indices = Vec::new();
             for i in 0..iw_vert_indices.len() {
