@@ -1297,68 +1297,18 @@ fn ray_cast_classify(
     })
 }
 
-/// Compute the plane normal of a planar BSpline surface of ANY degree.
-///
-/// For degree-1 BSpline (from `plane_to_bspline`), uses the fast 2×2 control-point
-/// grid.  For higher-degree planar BSpline (from `nurbsconvert` of planar shapes),
-/// samples surface evaluation points and fits the normal from 3 non-collinear
-/// corner points, then verifies planarity with interior samples.
-///
-/// Returns `None` for non-planar surfaces.
+/// Count ray-torus crossings using quartic root finding.
+/// For a planar degree-1 BSpline (from plane_to_bspline), compute the
+/// plane normal from the 2×2 control point grid. Returns None for non-planar
+/// or non-degree-1 BSpline surfaces.
 fn bspline_planar_normal(bsp: &rcad_kernel::geom::BSplineSurface) -> Option<DVec3> {
-    // Fast-path: degree-1 BSpline (from plane_to_bspline conversion).
-    if bsp.degree_u == 1 && bsp.degree_v == 1 {
-        if bsp.control_points.len() < 2 || bsp.control_points[0].len() < 2 { return None; }
-        let du = bsp.control_points[1][0] - bsp.control_points[0][0];
-        let dv = bsp.control_points[0][1] - bsp.control_points[0][0];
-        let n = du.cross(dv);
-        if n.length_squared() < 1e-30 { return None; }
-        return Some(n.normalize());
-    }
-
-    // General case: sample surface evaluations to detect planarity.
-    // OCCT nurbsconvert produces degree-3 BSpline surfaces for planar faces.
-    // Use corner + interior samples — if all lie on the same plane, the
-    // surface is geometrically planar regardless of control-point degree.
-    let [u0, u1, v0, v1] = bsp.default_domain();
-    let p00 = bsp.point_at(u0, v0);
-    let p10 = bsp.point_at(u1, v0);
-    let p01 = bsp.point_at(u0, v1);
-
-    let du = p10 - p00;
-    let dv = p01 - p00;
+    if bsp.degree_u != 1 || bsp.degree_v != 1 { return None; }
+    if bsp.control_points.len() < 2 || bsp.control_points[0].len() < 2 { return None; }
+    let du = bsp.control_points[1][0] - bsp.control_points[0][0];
+    let dv = bsp.control_points[0][1] - bsp.control_points[0][0];
     let n = du.cross(dv);
-    let len = n.length();
-    if len < 1e-30 {
-        return None;
-    }
-    let n = n / len;
-
-    let planar_tol = 1e-7;
-
-    // Check the 4th corner
-    let p11 = bsp.point_at(u1, v1);
-    if (p11 - p00).dot(n).abs() > planar_tol {
-        return None;
-    }
-
-    // Check interior sample points (up to 3×3 grid) to confirm planarity.
-    let nu = 3usize.min(bsp.control_points.len().max(2) - 1);
-    let nv = 3usize.min(bsp.control_points[0].len().max(2) - 1);
-    for i in 0..=nu {
-        let u = u0 + (u1 - u0) * i as f64 / nu.max(1) as f64;
-        for j in 0..=nv {
-            // Skip corner points already checked
-            if (i == 0 || i == nu) && (j == 0 || j == nv) { continue; }
-            let v = v0 + (v1 - v0) * j as f64 / nv.max(1) as f64;
-            let p = bsp.point_at(u, v);
-            if (p - p00).dot(n).abs() > planar_tol {
-                return None;
-            }
-        }
-    }
-
-    Some(n)
+    if n.length_squared() < 1e-30 { return None; }
+    Some(n.normalize())
 }
 
 fn ray_torus_crossings(
