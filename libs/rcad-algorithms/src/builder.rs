@@ -2677,16 +2677,15 @@ impl<'a> BooleanBuilder<'a> {
             return self.tessellate_sphere_face(face_idx);
         }
 
-        // ✅ OCCT对齐: Sphere + circle 交线 → 用精确大圆弧构建球面子面
-        if matches!(&face.surface, Surface3::Sphere(_)) {
-            let circles: Vec<&rcad_kernel::geom::Circle3> = fi.curves_in.iter()
-                .filter_map(|&ci| {
-                    if let rcad_kernel::geom::Curve3::Circle(ref c) = self.ds.intersection_curves[ci].curve { Some(c) } else { None }
-                }).collect();
-            if circles.len() >= 2 {
-                return self.split_sphere_by_circles(face_idx, &circles);
-            }
-        }
+        // ❌ 禁用: split_sphere_by_circles 绕过标准 UV 分割管道,导致 bfuse Union
+        //    时卦限无法合并(14V/24E vs 8V/15E)。后续应切换回 split_curved_face_parametric
+        //    并修复 UV 分割的 3 点采样问题。
+        // if matches!(&face.surface, Surface3::Sphere(_)) {
+        //     let circles: ...;
+        //     if circles.len() >= 2 {
+        //         return self.split_sphere_by_circles(face_idx, &circles);
+        //     }
+        // }
 
         // For cone faces with intersection curves
         // overlapping sub-face UV polygons when intersection curves are high-order
