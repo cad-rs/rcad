@@ -1988,21 +1988,22 @@ impl<'a> BooleanBuilder<'a> {
         let mut result = ResultBuilder::new_with_ds(self.ds);
 
         let b_flip = self.op == BooleanOpType::Difference;
-        for &fi in &b_faces {
-            let sub_faces = self.split_face(fi);
-            for sub in &sub_faces {
-                let src = self.ds.faces[fi].source_face_idx;
-                result.emit_face_with_origin(sub, b_flip, FaceOrigin::FromB(src));
-            }
-        }
-
-
         // OCCT FillImagesFaces: emit ALL A-side sub-faces unconditionally.
+        // A-side first → lower flat face indices → butterfly merge keeps
+        // A-side faces as representatives (matches OCCT DS-index preference).
         for &fi in &a_faces {
             let sub_faces = self.split_face(fi);
             for sub in &sub_faces {
                 let src = self.ds.faces[fi].source_face_idx;
                 result.emit_face_with_origin(sub, false, FaceOrigin::FromA(src));
+            }
+        }
+
+        for &fi in &b_faces {
+            let sub_faces = self.split_face(fi);
+            for sub in &sub_faces {
+                let src = self.ds.faces[fi].source_face_idx;
+                result.emit_face_with_origin(sub, b_flip, FaceOrigin::FromB(src));
             }
         }
         let (mut brep, mut history) = result.build(matches!(self.op, BooleanOpType::Union));
