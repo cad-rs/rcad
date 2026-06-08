@@ -206,7 +206,10 @@ impl SubFace {
                     self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
                 };
                 // Offset AWAY from the interior (in direction of outward normal)
-                if !self.inner_wires.is_empty() && self.boundary.len() >= 3 {
+                // For polygon boundaries with dense arc sampling (sphere intersection),
+                // the area centroid can fall inside the sphere despite the face being
+                // outside.  Use the farthest boundary vertex from the centroid instead.
+                if self.boundary.len() >= 3 {
                     let center = centroid;
                     if let Some(farthest) = self.boundary.iter()
                         .copied()
