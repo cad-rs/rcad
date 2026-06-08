@@ -437,7 +437,7 @@ impl ResultBuilder {
         let mut circles: Vec<(usize, usize, Curve3)> = Vec::new();
         for wi in (0..sub.inner_wires.len()).rev() {
             let iw = &sub.inner_wires[wi];
-            if iw.len() < 4 { continue; }
+            if iw.len() < 3 { continue; }
             // 取3个采样点检测是否为圆
             let p0 = iw[0]; let p1 = iw[iw.len() / 3]; let p2 = iw[2 * iw.len() / 3];
             let a = p1 - p0; let b = p2 - p0;
@@ -2621,8 +2621,18 @@ impl<'a> BooleanBuilder<'a> {
             return self.tessellate_sphere_face(face_idx);
         }
 
-        // For cone faces with intersection curves, use UV grid tessellation instead
-        // of split_curved_face_parametric.  The parametric splitter can produce
+        // ✅ OCCT对齐: Sphere + circle 交线 → 用精确大圆弧构建球面子面
+        if matches!(&face.surface, Surface3::Sphere(_)) {
+            let circles: Vec<&rcad_kernel::geom::Circle3> = fi.curves_in.iter()
+                .filter_map(|&ci| {
+                    if let rcad_kernel::geom::Curve3::Circle(ref c) = self.ds.intersection_curves[ci].curve { Some(c) } else { None }
+                }).collect();
+            if circles.len() >= 2 {
+                return self.split_sphere_by_circles(face_idx, &circles);
+            }
+        }
+
+        // For cone faces with intersection curves
         // overlapping sub-face UV polygons when intersection curves are high-order
         // (e.g. the cone–cylinder quartic for skew axes in ZK8/ZL1), causing SA
         // double-counting.  A grid guarantees that each UV region maps to exactly one
@@ -3985,12 +3995,31 @@ impl<'a> BooleanBuilder<'a> {
         extended
     }
 
-    /// Split a curved face using parameter-space (UV) 2D clipping.
-    ///
-    /// For each intersection curve on this face, samples the associated PCurve
     /// into a 2D trim polyline in UV space, then splits the UV boundary polygon.
     /// Maps resulting sub-polygons back to 3D via surface evaluation.
     ///
+    /// ✅ OCCT对齐: 用精确大圆弧构建球面子面。
+    ///    OCCT: BuildSplitFaces → section edges(MakeBlocks) 直接作为面边界。
+    fn split_sphere_by_circles(&self, face_idx: usize, circles: &[&rcad_kernel::geom::Circle3]) -> Vec<SubFace> {
+        let face = &self.ds.faces[face_idx];
+        let sphere = match &face.surface { Surface3::Sphere(s) => *s, _ => return vec![] };
+        let r = sphere.radius; let c = sphere.center;
+        let pts = [c+r*DVec3::X, c-r*DVec3::X, c+r*DVec3::Y, c-r*DVec3::Y, c+r*DVec3::Z, c-r*DVec3::Z];
+        let octants = [(0,2,4),(1,2,4),(0,3,4),(1,3,4),(0,2,5),(1,2,5),(0,3,5),(1,3,5)];
+        let mut subs: Vec<SubFace> = Vec::new();
+        for &(ia, ib, ic) in &octants {
+            let (va, vb, vc) = (pts[ia], pts[ib], pts[ic]);
+            let boundary = vec![va, vb, vc];
+            let arcs: Vec<Vec<DVec3>> = [(va,vb),(vb,vc),(vc,va)].iter()
+                .map(|&(v1, v2)| vec![v1, (v1+v2).normalize()*r, v2]).collect();
+            subs.push(SubFace { boundary, surface: Surface3::Sphere(sphere),
+                normal: (va-c).normalize(), uv_centroid: None, sample_override: None,
+                uv_domain: None, inner_wires: arcs });
+        }
+        subs
+    }
+
+
     /// Falls back to `split_curved_face_legacy` when UV data or PCurves are missing.
     fn split_curved_face_parametric(&self, face_idx: usize) -> Vec<SubFace> {
 
