@@ -6361,39 +6361,31 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
         }
     }
 
-    // Sub-polygon A: poly[0..=ia] + p_a + (left portion of interior) + p_b + poly[ib+1..]
+    // ✅ OCCT对齐: 子多边形只包含 trim 的端点(已投影到边界),不包含内部点。
+    //    OCCT 的 BOPAlgo_BuilderFace 用 MakeBlocks 生成的 section edge
+    //    (每条边不分段)直接构建面线框。rcad 的 split_uv_polygon_by_trim
+    //    如果把 trim 内部点都复制进子多边形,每个 trim 会贡献多条边(3点→2边,
+    //    65点→64边),而不是 OCCT 的 1 section edge / 曲线。
+    //    Sub-polygon A: poly[0..=ia] + p_a + p_b + poly[ib+1..]
     let mut sub_a: Vec<DVec2> = poly[..=ia].to_vec();
     sub_a.push(p_a);
     if let Some(si) = split_idx {
-        // Left portion: trim points from index 1 up to si (all have u <= u_mid)
-        for &p in trim_pts.iter().skip(1).take(si.saturating_sub(1)) {
-            sub_a.push(p);
-        }
         if si > 0 && si < trim_pts.len() {
             sub_a.push(trim_pts[si]); // split point shared with Sub B
+        } else {
+            sub_a.push(p_b);
         }
     } else {
-        for &p in trim_pts.iter().skip(1).take(trim_pts.len().saturating_sub(2)) {
-            sub_a.push(p);
-        }
+        sub_a.push(p_b);
     }
     sub_a.push(p_b);
     sub_a.extend_from_slice(&poly[ib + 1..]);
 
-    // Sub-polygon B: p_a + poly[ia+1..=ib] + p_b + (right portion of interior, reversed)
+    // ✅ OCCT对齐: 子多边形 B 不含 trim 内部点。
+    //    Sub-polygon B: p_a + poly[ia+1..=ib] + p_b
     let mut sub_b: Vec<DVec2> = vec![p_a];
     sub_b.extend_from_slice(&poly[ia + 1..=ib]);
     sub_b.push(p_b);
-    if let Some(si) = split_idx {
-        // Right portion: trim points from si to N-2, in reverse order
-        for i in (si..trim_pts.len().saturating_sub(1)).rev() {
-            sub_b.push(trim_pts[i]);
-        }
-    } else {
-        for &p in trim_pts.iter().skip(1).rev().skip(1) {
-            sub_b.push(p);
-        }
-    }
 
     // Deduplicate consecutive near-equal points
     let dedup_2d = |v: Vec<DVec2>| -> Vec<DVec2> {
