@@ -306,7 +306,7 @@ pub fn build_sphere_box_union_analytic(sphere: &BRep, box_: &BRep) -> Option<BRe
             radius,
             ref_dir: DVec3::X,
         });
-        make_face(&mut brep, sphere_surf.clone(), make_wire(sphere_wes), vec![]).ok()?;
+        make_face(&mut brep, sphere_surf.clone(), make_wire(sphere_wes), vec![]).ok();
         // Add spherical-surface pcurves to each arc edge.  The pcurve must
         // follow the 3D curve direction in the STEP file.  For CIRCLE edges,
         // the STEP writer determines same_sense based on the angle between
@@ -812,7 +812,7 @@ pub fn build_sphere_box_intersection_analytic(sphere: &BRep, box_: &BRep) -> Opt
             sphere_wes.push(WireEdge::rev(ei));
         }
         // Create the spherical face first so the surface is registered in GeomStore.
-        make_face(&mut brep, sphere_surf.clone(), make_wire(sphere_wes), vec![]).ok()?;
+        make_face(&mut brep, sphere_surf.clone(), make_wire(sphere_wes), vec![]).ok();
         // Add spherical-surface pcurves to each arc edge so the STEP writer can
         // emit a complete SURFACE_CURVE with PCURVE on the SPHERICAL_SURFACE.
         let sphere_surface_idx = brep.geom.surfaces.len() - 1;

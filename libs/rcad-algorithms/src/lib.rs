@@ -2696,7 +2696,8 @@ fn finalize_fast_path_result(r: BRep) -> BRep {
     } else {
         optimize_boolean_topology(r)
     };
-    let mut r = promote_planar_surfaces(r);
+    // promote_planar_surfaces skipped — OCCT preserves original surface types
+    let mut r = r;
     // Compute and propagate per-entity tolerances (OCCT BRepLib::SameParameter + hierarchy).
     rcad_kernel::tolerance::resize_tolerance_arrays(&mut r);
     rcad_kernel::brep_same_parameter(&mut r, 10);
@@ -2800,7 +2801,8 @@ fn finalize_boolean_result(r: BRep) -> BRep {
     // Promote planar BSpline → Plane AFTER topology optimization to avoid
     // perturbing orthogonal_face_fuse plane-equation matching: bspline_to_plane
     // can introduce slight plane offsets that break coplanarity detection.
-    let mut r = promote_planar_surfaces(r);
+    // promote_planar_surfaces skipped — OCCT preserves original surface types
+    let mut r = r;
     // Compute and propagate per-entity tolerances.
     rcad_kernel::tolerance::resize_tolerance_arrays(&mut r);
     rcad_kernel::brep_same_parameter(&mut r, 10);
@@ -3414,25 +3416,23 @@ fn optimize_boolean_topology(mut brep: BRep) -> BRep {
     // duplicates, degenerate faces, vertex merge, edge sewing).
     // Skip for curved-surface results (most faces are Cylinder/Cone/Sphere)
     // where the O(n^2) detection is expensive and rarely beneficial.
-    let n_planar = brep.geom.surfaces.iter().filter(|s| matches!(s, Surface3::Plane(_))).count();
-    let n_curved = brep.geom.surfaces.len().saturating_sub(n_planar);
-    if n_planar > n_curved && brep.solids.iter().any(|s| s.shells.iter().any(|sh| sh.faces.len() > 4)) {
-        // Pass 4 disabled — cleanup_boolean_result can incorrectly remove
-        // faces from concave-extruded shapes (H1/H2), breaking the solid.
-        // let (cleaned, _report) = crate::brep_repair::cleanup_boolean_result(&brep, tol);
-        // brep = cleaned;
-    }
-
-    // Pass 5: Advanced simplification for planar-heavy results.
-    if n_planar > n_curved {
-        let s_opts = crate::SimplifyOptions {
-            remove_small_edges: true,
-            ..Default::default()
-        };
-        let (simplified, _srep) = crate::simplify_brep_post_ops(&brep, s_opts);
-        brep = simplified;
-    }
-
+//     let n_planar = brep.geom.surfaces.iter().filter(|s| matches!(s, Surface3::Plane(_))).count();
+//     let n_curved = brep.geom.surfaces.len().saturating_sub(n_planar);
+//     if n_planar > n_curved && brep.solids.iter().any(|s| s.shells.iter().any(|sh| sh.faces.len() > 4)) {
+//         // Pass 4 disabled — cleanup_boolean_result can incorrectly remove
+//         // faces from concave-extruded shapes (H1/H2), breaking the solid.
+//         // let (cleaned, _report) = crate::brep_repair::cleanup_boolean_result(&brep, tol);
+//         // brep = cleaned;
+//     }
+// 
+//     // Pass 5: Advanced simplification for planar-heavy results.
+//     if n_planar > n_curved {
+//         let s_opts = crate::SimplifyOptions {
+//             remove_small_edges: true,
+//             ..Default::default()
+//         };
+//         let (simplified, _srep) = crate::simplify_brep_post_ops(&brep, s_opts);
+//         brep = simplified;
     brep
 }
 
