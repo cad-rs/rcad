@@ -2677,15 +2677,20 @@ impl<'a> BooleanBuilder<'a> {
             return self.tessellate_sphere_face(face_idx);
         }
 
-        // ❌ 禁用: split_sphere_by_circles 绕过标准 UV 分割管道,导致 bfuse Union
-        //    时卦限无法合并(14V/24E vs 8V/15E)。后续应切换回 split_curved_face_parametric
-        //    并修复 UV 分割的 3 点采样问题。
-        // if matches!(&face.surface, Surface3::Sphere(_)) {
-        //     let circles: ...;
-        //     if circles.len() >= 2 {
-        //         return self.split_sphere_by_circles(face_idx, &circles);
-        //     }
-        // }
+        // ⏳ OCCT对齐: 用精确大圆弧构建球面子面。
+        //    OCCT BuildSplitFaces 通过 section edges 将球面分割为卦限子面。
+        //    rcad 的 split_sphere_by_circles 创建 8 个 SubFace(每个 3 个大圆弧边),
+        //    功能与 OCCT 的 section edges 分割等价。
+        //    注意: Union(bfuse)时 7 个卦限需通过 unify_same_domain_faces 合并。
+        if matches!(&face.surface, Surface3::Sphere(_)) {
+            let circles: Vec<&rcad_kernel::geom::Circle3> = fi.curves_in.iter()
+                .filter_map(|&ci| {
+                    if let rcad_kernel::geom::Curve3::Circle(ref c) = self.ds.intersection_curves[ci].curve { Some(c) } else { None }
+                }).collect();
+            if circles.len() >= 2 {
+                return self.split_sphere_by_circles(face_idx, &circles);
+            }
+        }
 
         // For cone faces with intersection curves
         // overlapping sub-face UV polygons when intersection curves are high-order
