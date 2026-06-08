@@ -404,6 +404,35 @@ impl ResultBuilder {
     ///    OCCT: MakeBlocks → BOPTools_AlgoTools::MakeEdge(aIC,...)
     ///    split_planar_face 生成的内边界有128+点,简化为2端点(arc_simplify),
     ///    然后 emit_face_with_origin 用 add_circle_edge 创建精确 Circle3 边。
+    /// ✅ OCCT对齐: 检测外边界中的圆弧段,移到内边界并返回 Circle3 信息。
+    ///    split_planar_face 把圆弧合并到外边界(128点折线),此函数检测圆弧并将
+    ///    其转为独立内边界,外边界替换为无弧的矩形轮廓。
+    ///    OCCT: MakeBlocks → BuildSplitFaces(section edges 直接作为面边界)
+    fn convert_outer_arc_to_inner_wire(&self, sub: &mut SubFace) -> Vec<(usize, usize, Curve3)> {
+        if sub.boundary.len() < 6 { return vec![]; }
+        let bnd = &sub.boundary;
+        for start in 0..bnd.len().saturating_sub(4) {
+            let p0 = bnd[start]; let p1 = bnd[(start + bnd.len() / 3).min(bnd.len()-1)]; let p2 = bnd[(start + 2 * bnd.len() / 3).min(bnd.len()-1)];
+            let a = p1 - p0; let b2 = p2 - p0; let cross = a.cross(b2);
+            if cross.length_squared() < 1e-30 { continue; }
+            let a2 = a.length_squared(); let b2_sq = b2.length_squared();
+            let center = p0 + (b2.cross(cross) * a2 + cross.cross(a) * b2_sq) / (2.0 * cross.length_squared());
+            let r = p0.distance(center);
+            let mut end = start;
+            while end + 1 < bnd.len() && (bnd[end+1].distance(center) - r).abs() < 1e-4 { end += 1; }
+            if end - start >= 3 {
+                let iw = vec![bnd[start], bnd[end]];
+                let norm = cross.normalize();
+                let arc = Curve3::Circle(rcad_kernel::geom::Circle3 { center, normal: norm, radius: r });
+                let mut new_bnd: Vec<DVec3> = Vec::new();
+                new_bnd.extend_from_slice(&bnd[..start]);
+                new_bnd.extend_from_slice(&bnd[end+1..]);
+                if new_bnd.len() >= 3 { sub.boundary = new_bnd; sub.inner_wires.push(iw); return vec![(sub.inner_wires.len()-1, 0, arc)]; }
+            }
+        }
+        vec![]
+    }
+
     fn find_inner_wire_circles(&mut self, sub: &mut SubFace) -> Vec<(usize, usize, Curve3)> {
         let mut circles: Vec<(usize, usize, Curve3)> = Vec::new();
         for wi in (0..sub.inner_wires.len()).rev() {
@@ -1980,7 +2009,8 @@ impl<'a> BooleanBuilder<'a> {
             let flip = self.op == BooleanOpType::Difference;
             for pair in kept_subs.iter_mut() {
                 let src = self.ds.faces[fi].source_face_idx;
-                let _bcircs = result.find_inner_wire_circles(&mut pair.0);
+                let _barc = result.convert_outer_arc_to_inner_wire(&mut pair.0);
+                let _bcircs = [_barc.as_slice(), result.find_inner_wire_circles(&mut pair.0).as_slice()].concat();
                 result.emit_face_with_origin(&pair.0, flip, FaceOrigin::FromB(src), &_bcircs);
             }
         }
