@@ -2369,8 +2369,56 @@ impl<'a> BooleanBuilder<'a> {
                 let subs = self.single_subface_from_whole_face(face_idx);
                 return subs;
             }
-            // split_planar_face handles circular faces (< 3 boundary verts) internally
-            // by reconstructing the circular boundary from the two diameter endpoints.
+            // ✅ OCCT对齐: 检测 circle 交线→直接用精确圆弧构建环形面
+            //    OCCT: MakeBlocks → BuildSplitFaces 用精确 section edges
+            let boundary: Vec<DVec3> = face.boundary_verts.iter()
+                .map(|&vi| self.ds.vertices[vi].point).collect();
+            let (u_ax, v_ax) = plane_local_basis(plane);
+            let proj = |p: DVec3| -> DVec2 { let d = p - plane.origin; DVec2::new(d.dot(u_ax), d.dot(v_ax)) };
+            let bnd_2d: Vec<DVec2> = boundary.iter().map(|&p| proj(p)).collect();
+            let mut annular_out: Option<Vec<SubFace>> = None;
+            for &ci in &cids {
+                if let rcad_kernel::geom::Curve3::Circle(ref circ) = self.ds.intersection_curves[ci].curve {
+                    let c2d = proj(circ.center);
+                    let has_out = bnd_2d.iter().any(|p| (p - c2d).length() > circ.radius + 1e-8);
+                    let has_in = bnd_2d.iter().any(|p| (p - c2d).length() < circ.radius - 1e-8);
+                    if !(has_out && has_in) { continue; }
+                    if boundary.len() < 3 { continue; }
+                    use rcad_kernel::geom::CurveEval;
+                    let mut xs: Vec<f64> = Vec::new();
+                    for i in 0..bnd_2d.len() {
+                        let j = (i + 1) % bnd_2d.len();
+                        let a = bnd_2d[i]; let b = bnd_2d[j];
+                        let ab = b - a; let ac = a - c2d;
+                        let qa = ab.dot(ab); let qb = 2.0*ab.dot(ac);
+                        let qc = ac.dot(ac) - circ.radius*circ.radius;
+                        let disc = qb*qb - 4.0*qa*qc;
+                        if disc >= 0.0 {
+                            for &sx in &[-1.0_f64, 1.0_f64] {
+                                let t = (-qb + sx*disc.sqrt()) / (2.0*qa);
+                                if t > -1e-12 && t < 1.0+1e-12 {
+                                    xs.push(((a + t.clamp(0.0,1.0)*ab) - c2d).to_angle());
+                                }
+                            }
+                        }
+                    }
+                    if xs.len() >= 2 {
+                        xs.sort_by(|a,b| a.partial_cmp(b).unwrap());
+                        let t1 = xs[0]; let t2 = xs[xs.len()-1];
+                        if (t2 - t1).abs() > 1e-8 {
+                            let iw = vec![circ.point_at(t1), circ.point_at((t1+t2)*0.5), circ.point_at(t2)];
+                            let fp = boundary.iter().max_by(|a,b| a.distance(circ.center).partial_cmp(&b.distance(circ.center)).unwrap()).copied().unwrap_or(DVec3::ZERO);
+                            annular_out = Some(vec![SubFace {
+                                boundary, surface: face.surface.clone(), normal: face.normal,
+                                uv_centroid: None, sample_override: Some(fp),
+                                uv_domain: None, inner_wires: vec![iw],
+                            }]);
+                            break;
+                        }
+                    }
+                }
+            }
+            if let Some(subs) = annular_out { return subs; }
             let subs = self.split_planar_face(face_idx, plane, &cids);
             return subs;
         }
