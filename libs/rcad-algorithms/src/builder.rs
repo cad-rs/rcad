@@ -198,7 +198,7 @@ impl SubFace {
                 // points cluster near the circle boundary, pulling the vertex centroid
                 // inside the sphere even when the sub-face is geometrically outside.
                 // The area centroid always lies in the correct geometric interior.
-                let mut centroid = if self.boundary.len() >= 3 {
+                let centroid = if self.boundary.len() >= 3 {
                     planar_polygon_centroid(&self.boundary, self.normal)
                 } else if self.boundary.is_empty() {
                     DVec3::ZERO
@@ -206,20 +206,6 @@ impl SubFace {
                     self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
                 };
                 // Offset AWAY from the interior (in direction of outward normal)
-                // For polygon boundaries with dense arc sampling (sphere intersection),
-                // the area centroid can fall inside the sphere despite the face being
-                // outside.  Use the farthest boundary vertex from the centroid instead.
-                if self.boundary.len() >= 3 {
-                    let center = centroid;
-                    if let Some(farthest) = self.boundary.iter()
-                        .copied()
-                        .max_by(|a, b| (a - center).length_squared()
-                            .partial_cmp(&(b - center).length_squared())
-                            .unwrap_or(std::cmp::Ordering::Equal))
-                    {
-                        centroid = farthest;
-                    }
-                }
                 centroid + self.normal * TOLERANCE_ABS * 10.0
             }
         }
@@ -3671,7 +3657,7 @@ impl<'a> BooleanBuilder<'a> {
         bnd_u_span: f64,
         bnd_v_span: f64,
     ) -> Vec<DVec2> {
-        if trim.len() < 2 {
+        if trim.len() < 3 {
             return trim.to_vec();
         }
 
@@ -3840,11 +3826,15 @@ impl<'a> BooleanBuilder<'a> {
             if let Some(pcurve) = self.find_pcurve_for_face(ci, face_idx) {
                 let ic = &self.ds.intersection_curves[ci];
                 let [t0, t1] = ic.t_range;
-                // OCCT alignment: sphere surfaces use exact circle curves — 2 endpoints suffice.
-                // The 64-point sampling creates trim polylines with 64 segments per curve,
-                // each becoming a separate 3D edge (4000+ vertices for sphere-box union).
-                // ⚠️ Non-sphere analytic surfaces still use 64-point sampling here.
-                let n_samp: usize = if is_sphere { 2 } else { 64 };
+                // ✅ OCCT对齐: sphere 面用精确 pcurve 端点(3点)代替采样折线。
+                //    OCCT 的 BOPAlgo_BuilderFace 用 MakeBlocks 生成的 section edges
+                //    (每个 PaveBlock 一条精确边) 做面分裂。rcad 无 MakeBlocks 等价物，
+                //    因此用 pcurve 的 t0/t_mid/t1 生成 3 点 trim。3 >= 原始 <3 过滤，
+                //    每个 trim 在 split_uv_polygon_by_trim 中只取首尾点 → 1 条边，
+                //    等价于 OCCT 的 1 section edge / curve。
+                //    非 sphere 面保持 64 点采样。
+                let n_samp: usize = 64;
+                const N_SPHERE: usize = 2;
                 let raw_pts: Vec<DVec2> = match &pcurve {
                     // BSpline PCurves from `fallback_pcurve_by_projection` are defined on [0,1]
                     // but that domain does **not** match the 3D curve's `t_range` (e.g. plane鈥搒phere
@@ -3858,9 +3848,9 @@ impl<'a> BooleanBuilder<'a> {
                         // The BSpline pcurve itself is the correct UV representation
                         // (created by polyline_pcurve_by_projection in the pave_filler),
                         // so sample it directly on its [0, 1] domain.
-                        let raw: Vec<DVec2> = (0..=n_samp)
+                        let raw: Vec<DVec2> = (0..=if is_sphere { N_SPHERE } else { n_samp })
                             .map(|i| {
-                                let t = i as f64 / n_samp as f64;
+                                let t = i as f64 / if is_sphere { N_SPHERE as f64 } else { n_samp as f64 };
                                 pcurve.point_at(t)
                             })
                             .collect();
@@ -3873,9 +3863,9 @@ impl<'a> BooleanBuilder<'a> {
                     },
                     // Analytic curves (Line2d, Circle2d, Ellipse2d) use the same
                     // t parameterization as the 3D intersection curve.
-                    _ => (0..=n_samp)
+                    _ => (0..=if is_sphere { N_SPHERE } else { n_samp })
                         .map(|i| {
-                            let t = t0 + (t1 - t0) * i as f64 / n_samp as f64;
+                            let t = t0 + (t1 - t0) * i as f64 / if is_sphere { N_SPHERE as f64 } else { n_samp as f64 };
                             pcurve.point_at(t)
                         })
                         .collect(),
@@ -3956,7 +3946,7 @@ impl<'a> BooleanBuilder<'a> {
                 // Accept 2-point trims (sphere great-circle pcurves with n_samp=2).
                 // The standard 64-point sampling creates ≥3 points per trim, so <3
                 // only filters truly degenerate 1-point trims on periodic surfaces.
-                if trim.len() < 2 {
+                if trim.len() < 3 {
                     continue;
                 }
                 let u_min = trim.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
@@ -4090,7 +4080,7 @@ impl<'a> BooleanBuilder<'a> {
                 let bnd_v_max = uv_boundary.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
                 let mut v_cuts: Vec<f64> = Vec::new();
                 for trim in &trim_polylines {
-                    if trim.len() < 2 { continue; }
+                    if trim.len() < 3 { continue; }
                     let v0 = trim[0].y;
                     let v1 = trim[trim.len()-1].y;
                     if (v0 - v1).abs() > TOLERANCE_COORD_SUB { continue; }
@@ -5833,7 +5823,7 @@ fn dedup_3d_points(points: &[DVec3]) -> Vec<DVec3> {
 
 /// Check if a UV trim is a closed loop (first and last points coincide).
 fn is_closed_uv_trim(trim: &[DVec2]) -> bool {
-    if trim.len() < 2 {
+    if trim.len() < 3 {
         return false;
     }
     let d_sq = (trim[0] - trim[trim.len() - 1]).length_squared();
