@@ -291,6 +291,7 @@ struct ResultBuilder {
     /// Extra A/B source when a later emission is deduplicated against an existing result face
     /// (see [`crate::history::BooleanHistory::co_face_origins`]).
     co_face_origins: Vec<(usize, FaceOrigin)>,
+    custom_edge_curves: Vec<Option<Curve3>>,
 }
 
 impl ResultBuilder {
@@ -349,6 +350,7 @@ impl ResultBuilder {
             faces: Vec::new(),
             face_origins: Vec::new(),
             co_face_origins: Vec::new(),
+            custom_edge_curves: Vec::new(),
         }
     }
 
@@ -381,6 +383,20 @@ impl ResultBuilder {
         }
         let idx = self.edges.len();
         self.edges.push((v1, v2));
+        idx
+    }
+
+    /// ✅ OCCT对齐: 创建具有精确圆曲线几何的 edge（MakeBlocks → MakeEdge）。
+    ///    与 add_edge 相同但记录 Circle3 曲线,在 build() 中设置 edge_curve
+    ///    为 Curve3::Circle 而不是默认的 recompute_plane_surfaces 补的 Line3。
+    ///    OCCT: BOPAlgo_PaveFiller::MakeBlocks → BOPTools_AlgoTools::MakeEdge(aIC,...)
+    fn add_circle_edge(&mut self, v1: usize, v2: usize, circle: Curve3) -> usize {
+        let idx = self.add_edge(v1, v2);
+        // 扩展 custom_edge_curves 到足够长度
+        while self.custom_edge_curves.len() <= idx {
+            self.custom_edge_curves.push(None);
+        }
+        self.custom_edge_curves[idx] = Some(circle);
         idx
     }
 
@@ -729,6 +745,23 @@ impl ResultBuilder {
             }
             self.face_origins = new_origins;
             edges = kept;
+
+            // ✅ OCCT对齐: 设置 section edge 的精确曲线(来自 add_circle_edge)。
+            //    OCCT: MakeEdge(aIC, ...) 直接创建带精确几何曲线的 BRep edge。
+            //    rcad 默认由 recompute_plane_surfaces 补 Line3,这里覆盖为 Circle3。
+            for (ei, curve_opt) in self.custom_edge_curves.iter().enumerate() {
+                if let Some(crv) = curve_opt {
+                    let new_ei = remap[ei];
+                    if new_ei != usize::MAX {
+                        let curve_idx = geom.curves.len();
+                        geom.curves.push(crv.clone());
+                        while geom.edge_curve.len() <= new_ei {
+                            geom.edge_curve.push(None);
+                        }
+                        geom.edge_curve[new_ei] = Some(curve_idx);
+                    }
+                }
+            }
         }
 
         let history = BooleanHistory {
