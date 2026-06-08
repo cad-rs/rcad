@@ -3008,6 +3008,8 @@ impl<'a> BooleanBuilder<'a> {
 
         // Process each intersection curve to split the polygon
         let mut poly_wires: Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)> = vec![(boundary_2d.clone(), vec![])];
+        // OCCT对齐: 保存原始矩形边界,用于 circle 交线时替代被切割的外边界
+        let original_rect_2d = boundary_2d.clone();
         // Track circles that were embedded inside polygons (center_2d, radius).
         // When such a circle is fully inside a polygon, that polygon's centroid
         // may fall inside the circle 鈥?we must use a vertex-based sample instead.
@@ -3016,6 +3018,7 @@ impl<'a> BooleanBuilder<'a> {
         for &ci in split_curve_ids {
             let ic = &self.ds.intersection_curves[ci];
 
+                            eprintln!("[CURVE] processing Circle curve, poly_wires={}", poly_wires.len());
             let curve_result: Option<Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)>> = match &ic.curve {
                 Curve3::Circle(circle) => {
                     // Plane-sphere intersection produces a circle lying in the plane.
@@ -3056,6 +3059,19 @@ impl<'a> BooleanBuilder<'a> {
                                 .collect();
                             let fi = on.iter().position(|&x| x);
                             let li = on.iter().rposition(|&x| x);
+                            // ✅ OCCT对齐: 检测环形面(有圆外交点+圆上弧段→外边界=矩形,内边界=弧)
+                            if let (Some(f), Some(l)) = (fi, li) {
+                                let has_outer = half.iter().any(|p| (p - center_2d).length() > radius + on_circle_tol);
+                                let on_cnt = on.iter().filter(|&&v| v).count();
+                                if has_outer && on_cnt >= 3 {
+                                    // 环形面: 外边界=原始矩形, 内边界=弧线段
+                                    let arc: Vec<DVec2> = half[f..=l].to_vec();
+                                    let mut new_wires = all_wires.clone();
+                                    new_wires.push(arc);
+                                    next.push((original_rect_2d.clone(), new_wires));
+                                    continue; // 跳过标准 replace 流程
+                                }
+                            }
                             let replace = match (fi, li) {
                                 (Some(f), Some(l)) => {
                                     let cnt = on.iter().filter(|&&x| x).count();
