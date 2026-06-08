@@ -1,4 +1,4 @@
-﻿use rcad_kernel::appearance::{Color, StepColor};
+use rcad_kernel::appearance::{Color, StepColor};
 use rcad_algorithms::{HealingOptions, HealingReport, analyze_and_heal, analyze_wire_issues};
 use rcad_kernel::geom::BSplineCurve3;
 use rcad_kernel::tolerance::CONFUSION;
@@ -5845,6 +5845,7 @@ fn build_face(
                 triangles,
                 sample_point: None,
                 mesh_dirty: false,
+                surface_idx: None,
             },
             face_surface,
         ));
@@ -6061,6 +6062,7 @@ fn build_face(
             // - force rebuild for planar faces and hole faces
             sample_point: None,
             mesh_dirty: force_rebuild,
+            surface_idx: None,
         },
         bound_ids.surface,
     ))

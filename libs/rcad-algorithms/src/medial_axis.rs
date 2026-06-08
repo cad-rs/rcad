@@ -1,4 +1,4 @@
-﻿//! Medial axis extraction and wall thickness analysis.
+//! Medial axis extraction and wall thickness analysis.
 //!
 //! This module provides algorithms for computing the medial axis (also known as
 //! the skeleton) of 2D profiles and 3D solids. The medial axis represents the
@@ -2329,6 +2329,7 @@ fn create_mid_surface_patch(
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     };
 
     // Create plane surface
@@ -2414,6 +2415,7 @@ fn create_mid_surface_point(
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     };
 
     // Create plane surface
@@ -3026,6 +3028,7 @@ pub fn compute_mid_surface(brep: &BRep, opts: &MedialAxisOptions) -> MidSurfaceR
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         };
 
         let face_idx = mid_brep.geom.face_surface.len();

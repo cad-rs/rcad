@@ -1,4 +1,4 @@
-﻿//! Array (pattern) operations 鈥?linear and circular repetition of BRep solids.
+//! Array (pattern) operations 鈥?linear and circular repetition of BRep solids.
 //!
 //! Analogous to OCCT `BRepOffsetAPI_MakeThickSolid`-style patterns and
 //! `BRepFeat_MakeLinearForm` / `BRepFeat_MakeRevol` for feature repetition.
@@ -965,6 +965,7 @@ fn append_transformed_brep(
                 triangles: face.triangles.iter().map(|[i, j, k]| [i + v_offset, j + v_offset, k + v_offset]).collect(),
                 sample_point: face.sample_point,
                 mesh_dirty: face.mesh_dirty,
+                surface_idx: None,
             });
         }
         target.solids.push(Solid {

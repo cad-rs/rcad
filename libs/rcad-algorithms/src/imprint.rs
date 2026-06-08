@@ -141,6 +141,7 @@ pub fn imprint_shape(target: &BRep, tool: &BRep) -> ImprintResult {
                 triangles,
                 sample_point,
                 mesh_dirty: false,
+                surface_idx: None,
             });
         }
 

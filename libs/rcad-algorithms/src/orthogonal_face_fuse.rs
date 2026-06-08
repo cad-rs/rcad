@@ -1,4 +1,4 @@
-﻿//! Fuse coplanar **axis-aligned** rectangular patches into one [`Face`] using a 2D
+//! Fuse coplanar **axis-aligned** rectangular patches into one [`Face`] using a 2D
 //! axis-aligned rectangle union on a grid, producing one outer boundary and optional
 //! inner wires (holes). Complements [`unify_same_domain_faces`](crate::unify_same_domain_faces),
 //! which only merges along shared **edges** and leaves corner-only adjacency split.
@@ -925,6 +925,7 @@ fn try_fuse_orthogonal_group(
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     };
 
     let surf_idx = {
@@ -1807,6 +1808,7 @@ pub fn clip_coplanar_overlap_for_intersection(brep: &BRep, a: &BRep, b: &BRep, t
                                         triangles: vec![],
                                         sample_point: None,
                                         mesh_dirty: true,
+                surface_idx: None,
                                     };
 
                                     let surf_idx = {
@@ -2030,6 +2032,7 @@ fn clip_one_coplanar_pair(
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     };
 
     // Plane surface

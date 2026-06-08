@@ -302,6 +302,7 @@ fn do_mirror_brep(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> BRep
                 triangles: face.triangles.iter().map(|[i, j, k]| [*i, *k, *j]).collect(),
                 sample_point: face.sample_point,
                 mesh_dirty: face.mesh_dirty,
+                surface_idx: None,
             });
         }
         out.solids.push(rcad_kernel::topology::Solid {

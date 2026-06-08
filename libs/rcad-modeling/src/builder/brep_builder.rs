@@ -104,6 +104,7 @@ pub fn make_face(
         triangles: Vec::new(),
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     });
 
     // Align face_surface vec

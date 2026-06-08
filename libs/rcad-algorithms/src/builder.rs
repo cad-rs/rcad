@@ -2101,16 +2101,7 @@ impl<'a> BooleanBuilder<'a> {
         //    unify_same_domain_faces(无源过滤)实现。origin 过滤在此处会
         //    因 face_origins 未随合并更新而失效(merge 从中间移除面后索引偏移,
         //    truncate 不能正确移除对应 origin)。
-        if !matches!(self.op, BooleanOpType::Union) && brep.solids[0].shells[0].faces.len() > 1 {
-            let (merged, cnt) = crate::unify_same_domain_faces(&brep);
-            if cnt > 0 {
-                if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
-                    eprintln!("unify_same_domain_faces: {} -> {} ({} merges)",
-                        brep.solids[0].shells[0].faces.len(),
-                        merged.solids[0].shells[0].faces.len(), cnt);
-                }
-                brep = merged;
-            }
+        // (removed unify_same_domain_faces for OCCT alignment)
             // Vertex dedup after face merge: merged faces may reference different vertex
             // indices for the same 3D position (leftover from pre-merge face vertices).
             let (deduped, _) = crate::brep_repair::merge_close_vertices(

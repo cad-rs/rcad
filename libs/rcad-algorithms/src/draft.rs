@@ -1,4 +1,4 @@
-﻿//! Draft angle operations 鈥?analogous to OCCT `BRepDraftBuilder`.
+//! Draft angle operations 鈥?analogous to OCCT `BRepDraftBuilder`.
 //!
 //! # Algorithm
 //!
@@ -987,6 +987,7 @@ fn build_drafted_brep(
             triangles,
             sample_point: face.sample_point,
             mesh_dirty: face.mesh_dirty,
+                surface_idx: None,
         });
 
         // Copy surface reference

@@ -1,4 +1,4 @@
-﻿//! BRepChamfer-style edge chamfer operations 鈥?analogous to OCCT `BRepFilletAPI_MakeChamfer`.
+//! BRepChamfer-style edge chamfer operations 鈥?analogous to OCCT `BRepFilletAPI_MakeChamfer`.
 //!
 //! # Overview
 //!
@@ -1026,6 +1026,7 @@ fn apply_chamfer_to_brep(
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     };
 
     // Add the chamfer surface to GeomStore

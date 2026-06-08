@@ -1,4 +1,4 @@
-﻿//! BRepLib-style utilities for low-level BRep operations.
+//! BRepLib-style utilities for low-level BRep operations.
 //!
 //! This module provides utilities analogous to OCCT's `BRepLib` class:
 //!
@@ -1081,6 +1081,7 @@ pub fn add_face_with_surface(
         triangles: Vec::new(),
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     };
 
     // Add face

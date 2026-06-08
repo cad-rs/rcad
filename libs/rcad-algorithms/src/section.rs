@@ -1,4 +1,4 @@
-﻿//! Section: surface-solid intersection returning curves and wires.
+//! Section: surface-solid intersection returning curves and wires.
 //!
 //! Analogous to OCCT `BRepAlgoAPI_Section`. Computes the intersection of a
 //! cutting surface with the faces of a BRep, returning curves and wires.
@@ -395,6 +395,7 @@ pub fn section(brep: &BRep, plane: &Plane) -> BRep {
                 triangles: vec![],
                 sample_point: None,
                 mesh_dirty: true,
+                surface_idx: None,
             })
             .collect();
         result.solids.push(Solid {
@@ -1884,6 +1885,7 @@ fn build_brep_from_polylines(polylines: &[Vec<DVec3>]) -> BRep {
                         triangles: vec![],
                         sample_point: None,
                         mesh_dirty: true,
+                surface_idx: None,
                     }],
                 }],
             });
@@ -2255,6 +2257,7 @@ fn create_ruled_face(brep: &mut BRep, pts1: &[DVec3], pts2: &[DVec3]) -> Option<
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     })
 }
 

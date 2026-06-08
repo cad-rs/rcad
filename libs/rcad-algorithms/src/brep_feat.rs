@@ -1,4 +1,4 @@
-﻿//! BRepFeat-style feature-based modeling operations.
+//! BRepFeat-style feature-based modeling operations.
 //!
 //! This module provides feature-based modeling operations analogous to OCCT's TKFeat
 //! (BRepFeat package). Features are operations that add or remove material from a
@@ -296,6 +296,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         });
         let si = brep.geom.surfaces.len();
         brep.geom.surfaces.push(Surface3::Plane(Plane { origin: bot[0], normal: -dir }));
@@ -314,6 +315,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         });
         let si = brep.geom.surfaces.len();
         brep.geom.surfaces.push(Surface3::Plane(Plane { origin: top[0], normal: dir }));
@@ -345,6 +347,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         });
         let si = brep.geom.surfaces.len();
         brep.geom.surfaces.push(Surface3::Plane(Plane { origin: a, normal: face_normal }));
@@ -393,6 +396,7 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<BRep, BRepFeatErro
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     };
 
     brep.solids.push(Solid {
@@ -895,6 +899,7 @@ fn build_loft_solid(sections: &[Vec<DVec3>]) -> Result<BRep, BRepFeatError> {
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     });
 
     // Top cap
@@ -914,6 +919,7 @@ fn build_loft_solid(sections: &[Vec<DVec3>]) -> Result<BRep, BRepFeatError> {
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     });
 
     // Lateral faces (quads between sections)
@@ -943,6 +949,7 @@ fn build_loft_solid(sections: &[Vec<DVec3>]) -> Result<BRep, BRepFeatError> {
                 triangles: vec![],
                 sample_point: None,
                 mesh_dirty: true,
+                surface_idx: None,
             });
         }
     }

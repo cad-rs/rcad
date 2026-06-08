@@ -1,4 +1,4 @@
-﻿//! First-stage feature operations (TKFeat-like APIs).
+//! First-stage feature operations (TKFeat-like APIs).
 //!
 //! This module builds practical feature workflows on top of the existing
 //! boolean kernel. The first shipped feature is a cylindrical hole.
@@ -316,6 +316,8 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<BRep, FeatureError
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
+
     };
 
     brep.solids.push(Solid {
@@ -384,7 +386,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
             .map(|i| WireEdge { idx: bot_edges[n - 1 - i], forward: false })
             .collect();
         faces.push(Face { outer_wire: Wire { edges: wire_edges }, inner_wires: vec![],
-            normal: -dir, triangles: vec![], sample_point: None, mesh_dirty: true });
+            normal: -dir, triangles: vec![], sample_point: None, mesh_dirty: true, surface_idx: None });
         let si = brep.geom.surfaces.len();
         brep.geom.surfaces.push(Surface3::Plane(Plane { origin: bot[0], normal: -dir }));
         brep.geom.face_surface.push(Some(si));
@@ -396,7 +398,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
             .map(|i| WireEdge { idx: top_edges[i], forward: true })
             .collect();
         faces.push(Face { outer_wire: Wire { edges: wire_edges }, inner_wires: vec![],
-            normal: dir, triangles: vec![], sample_point: None, mesh_dirty: true });
+            normal: dir, triangles: vec![], sample_point: None, mesh_dirty: true, surface_idx: None });
         let si = brep.geom.surfaces.len();
         brep.geom.surfaces.push(Surface3::Plane(Plane { origin: top[0], normal: dir }));
         brep.geom.face_surface.push(Some(si));
@@ -422,7 +424,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
             WireEdge { idx: vert_edges[i], forward: false },
         ];
         faces.push(Face { outer_wire: Wire { edges: wire_edges }, inner_wires: vec![],
-            normal: face_normal, triangles: vec![], sample_point: None, mesh_dirty: true });
+            normal: face_normal, triangles: vec![], sample_point: None, mesh_dirty: true, surface_idx: None });
         let si = brep.geom.surfaces.len();
         brep.geom.surfaces.push(Surface3::Plane(Plane { origin: a, normal: face_normal }));
         brep.geom.face_surface.push(Some(si));
@@ -741,6 +743,8 @@ pub fn split_face_by_wire(
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
+
     };
     let face_b = Face {
         outer_wire: Wire { edges: wire_b },
@@ -749,6 +753,8 @@ pub fn split_face_by_wire(
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
+
     };
 
     // Update GeomStore face_surface flat index.
@@ -830,6 +836,8 @@ mod split_tests {
                     triangles: vec![],
                     sample_point: None,
                     mesh_dirty: true,
+                surface_idx: None,
+
                 }],
             }],
         });

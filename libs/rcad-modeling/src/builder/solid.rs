@@ -297,6 +297,7 @@ pub fn make_conical_frustum_brep(
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     };
     // F1 bottom cap (plane): E0 rev (CCW when viewed from -Y)
     let f1 = Face {
@@ -308,6 +309,7 @@ pub fn make_conical_frustum_brep(
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     };
     // F2 top cap (plane): E1 fwd (CCW when viewed from +Y)
     let f2 = Face {
@@ -319,6 +321,7 @@ pub fn make_conical_frustum_brep(
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     };
 
     let solid = Solid {

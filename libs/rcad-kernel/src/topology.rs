@@ -1,4 +1,4 @@
-﻿use glam::DVec3;
+use glam::DVec3;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -72,6 +72,7 @@ pub struct Face {
     /// This field is not serialised (transient rendering state).
     #[serde(skip, default = "face_mesh_dirty_default")]
     pub mesh_dirty: bool,
+    pub surface_idx: Option<usize>,
 }
 
 impl Face {

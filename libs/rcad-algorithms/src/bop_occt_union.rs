@@ -642,7 +642,7 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
 
     result = crate::prune_unused_topology(result);
     result = crate::deduplicate_edges(result);
-    let (merged, _cnt) = crate::unify_same_domain_faces(&result);
+    let (merged, _cnt) = crate::occt_merge_same_surface_faces(&result);
     result = merged;
     validate_union_brep_output("union: result failed checks after same-plane merge", &result)?;
     Ok(result)

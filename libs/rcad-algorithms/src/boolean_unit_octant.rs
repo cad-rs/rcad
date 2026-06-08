@@ -1,4 +1,4 @@
-﻿//! Special-case intersections used by OCCT DRAW ports when the generic `BooleanBuilder`
+//! Special-case intersections used by OCCT DRAW ports when the generic `BooleanBuilder`
 //! path is wrong or overly faceted: (1) unit ball 閳?`[0,1]椴乣, (2) coaxial sharp cone 閳?finite
 //! cylinder (ZP7), (3) coaxial sharp cone minus cylinder sealing the base (ZP8),
 //! (4) coaxial cylinder minus cone via sewn loft shells (`boptuc_simple`/ZP3).
@@ -1991,6 +1991,7 @@ fn concatenate_and_merge_slabs(slabs: &[BRep]) -> Option<BRep> {
                     outer_wire, inner_wires,
                     normal: face.normal,
                     triangles: vec![], sample_point: None, mesh_dirty: true,
+                surface_idx: None,
                 }]}]
             });
         }
@@ -2399,6 +2400,7 @@ fn add_annular_ring(
         outer_wire: empty_wire(), inner_wires: vec![],
         normal: DVec3::ZERO, triangles: tris,
         sample_point: None, mesh_dirty: false,
+                surface_idx: None,
     });
 }
 
@@ -2503,6 +2505,7 @@ fn build_cylinder_minus_sphere_tessellated(
                 outer_wire: empty_wire(), inner_wires: vec![],
                 normal: DVec3::ZERO, triangles: tris,
                 sample_point: None, mesh_dirty: false,
+                surface_idx: None,
             });
         }
     }
@@ -2626,6 +2629,7 @@ fn build_spherical_slice_solid(center: DVec3, radius: f64, z_lo: f64, z_hi: f64)
                 triangles: tris,
                 sample_point: None,
                 mesh_dirty: false,
+                surface_idx: None,
             });
         }
     }
@@ -2681,6 +2685,7 @@ fn push_cap_disk(brep: &mut BRep, faces: &mut Vec<Face>, center: DVec3, r: f64, 
         triangles: tris,
         sample_point: None,
         mesh_dirty: false,
+                surface_idx: None,
     });
 }
 
@@ -3057,6 +3062,7 @@ fn build_perpendicular_cylinder_intersection(
         outer_wire: empty_wire(), inner_wires: vec![],
         normal: DVec3::ZERO, triangles: tris,
         sample_point: None, mesh_dirty: false,
+                surface_idx: None,
     }];
 
     let geom = GeomStore {
@@ -3226,6 +3232,7 @@ fn build_steinmetz_brep(
             outer_wire: Wire { edges: wire_edges },
             inner_wires: vec![], normal: DVec3::ZERO,
             triangles: tris, sample_point: None, mesh_dirty: false,
+                surface_idx: None,
         });
     }
     brep.solids.push(Solid { shells: vec![Shell { faces: shell_faces }] });
@@ -3629,6 +3636,7 @@ pub(crate) fn build_sphere_clipped_by_z_planes(
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     };
 
     // Push sphere face
@@ -3654,6 +3662,7 @@ pub(crate) fn build_sphere_clipped_by_z_planes(
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         };
         let fi = brep.solids[0].shells[0].faces.len();
         brep.solids[0].shells[0].faces.push(cap_face);
@@ -3673,6 +3682,7 @@ pub(crate) fn build_sphere_clipped_by_z_planes(
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         };
         let fi = brep.solids[0].shells[0].faces.len();
         brep.solids[0].shells[0].faces.push(cap_face);
@@ -3904,6 +3914,7 @@ fn build_cylinder_sphere_intersection_brep(
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     };
     let fi_sph = brep.solids[0].shells[0].faces.len();
     brep.solids[0].shells[0].faces.push(sph_face);
@@ -3925,6 +3936,7 @@ fn build_cylinder_sphere_intersection_brep(
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     };
     let fi_cyl = brep.solids[0].shells[0].faces.len();
     brep.solids[0].shells[0].faces.push(cyl_face);
@@ -3941,6 +3953,7 @@ fn build_cylinder_sphere_intersection_brep(
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     };
     let fi_cap = brep.solids[0].shells[0].faces.len();
     brep.solids[0].shells[0].faces.push(cap_face);
@@ -4235,6 +4248,7 @@ fn build_cylinder_torus_intersection_brep(
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     };
     let fi_cyl = brep.solids[0].shells[0].faces.len();
     brep.solids[0].shells[0].faces.push(cyl_face);
@@ -4257,6 +4271,7 @@ fn build_cylinder_torus_intersection_brep(
         triangles: vec![],
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     };
     let fi_tor = brep.solids[0].shells[0].faces.len();
     brep.solids[0].shells[0].faces.push(tor_face);
@@ -4494,6 +4509,7 @@ pub(crate) fn append_frustum_brep(dst: &mut BRep, src: BRep) {
                         .collect(),
                     sample_point: face.sample_point,
                     mesh_dirty: true,
+                surface_idx: None,
                 });
             }
             new_shells.push(Shell { faces: new_faces });
@@ -5100,6 +5116,7 @@ fn brep_difference_sphere_minus_box() -> BRep {
         outer_wire: empty_wire(), inner_wires: vec![],
         normal: DVec3::ZERO, triangles: tris,
         sample_point: None, mesh_dirty: false,
+                surface_idx: None,
     }];
     let geom = GeomStore {
         curves: vec![], surfaces: vec![], curve2ds: vec![],
@@ -5671,6 +5688,7 @@ fn build_cylinder_torus_difference_brep(
             WireEdge::rev(e1), WireEdge::rev(e_seam_low),
         ]),
         inner_wires: vec![], normal: DVec3::Z, triangles: vec![], sample_point: None, mesh_dirty: true,
+                surface_idx: None,
     };
     let fi = brep.solids[0].shells[0].faces.len();
     brep.solids[0].shells[0].faces.push(f_lower);
@@ -5686,6 +5704,7 @@ fn build_cylinder_torus_difference_brep(
             WireEdge::fwd(e2), WireEdge::fwd(e_seam_torus),
         ]),
         inner_wires: vec![], normal: DVec3::X, triangles: vec![], sample_point: None, mesh_dirty: true,
+                surface_idx: None,
     };
     let fi = brep.solids[0].shells[0].faces.len();
     brep.solids[0].shells[0].faces.push(f_torus);
@@ -5701,6 +5720,7 @@ fn build_cylinder_torus_difference_brep(
             WireEdge::rev(e3), WireEdge::rev(e_seam_upper),
         ]),
         inner_wires: vec![], normal: DVec3::Z, triangles: vec![], sample_point: None, mesh_dirty: true,
+                surface_idx: None,
     };
     let fi = brep.solids[0].shells[0].faces.len();
     brep.solids[0].shells[0].faces.push(f_upper);
@@ -5713,6 +5733,7 @@ fn build_cylinder_torus_difference_brep(
     let f_bot = Face {
         outer_wire: make_wire(vec![WireEdge::rev(e0)]),
         inner_wires: vec![], normal: -DVec3::Z, triangles: vec![], sample_point: None, mesh_dirty: true,
+                surface_idx: None,
     };
     let fi = brep.solids[0].shells[0].faces.len();
     brep.solids[0].shells[0].faces.push(f_bot);
@@ -5724,6 +5745,7 @@ fn build_cylinder_torus_difference_brep(
     let f_top = Face {
         outer_wire: make_wire(vec![WireEdge::fwd(e3)]),
         inner_wires: vec![], normal: DVec3::Z, triangles: vec![], sample_point: None, mesh_dirty: true,
+                surface_idx: None,
     };
     let fi = brep.solids[0].shells[0].faces.len();
     brep.solids[0].shells[0].faces.push(f_top);
@@ -5846,6 +5868,7 @@ fn build_torus_minus_cylinder_brep(
             WireEdge::rev(e_top), WireEdge::rev(e_seam_torus),
         ]),
         inner_wires: vec![], normal: DVec3::Z, triangles: vec![], sample_point: None, mesh_dirty: true,
+                surface_idx: None,
     };
     let fi = brep.solids[0].shells[0].faces.len();
     brep.solids[0].shells[0].faces.push(f_torus);
@@ -5861,6 +5884,7 @@ fn build_torus_minus_cylinder_brep(
             WireEdge::rev(e_top), WireEdge::rev(e_seam_cyl),
         ]),
         inner_wires: vec![], normal: DVec3::Z, triangles: vec![], sample_point: None, mesh_dirty: true,
+                surface_idx: None,
     };
     let fi = brep.solids[0].shells[0].faces.len();
     brep.solids[0].shells[0].faces.push(f_cyl);
@@ -6332,6 +6356,7 @@ fn build_coaxial_cone_cylinder_union_tessellated(
             outer_wire: empty_wire(), inner_wires: vec![],
             normal: DVec3::ZERO, triangles: tris,
             sample_point: None, mesh_dirty: false,
+                surface_idx: None,
         });
     }
 
@@ -6369,6 +6394,7 @@ fn build_coaxial_cone_cylinder_union_tessellated(
                 outer_wire: empty_wire(), inner_wires: vec![],
                 normal: DVec3::ZERO, triangles: tris,
                 sample_point: None, mesh_dirty: false,
+                surface_idx: None,
             });
         }
     }
@@ -6580,6 +6606,7 @@ fn build_cylinder_cone_union_wider_cyl(
             outer_wire: Wire { edges: outer },
             inner_wires: inner.map(|e| vec![Wire { edges: e }]).unwrap_or_default(),
             normal: norm, triangles: vec![], sample_point: None, mesh_dirty: true,
+                surface_idx: None,
         });
     };
     push_face(&mut brep, si_cyl, vec![WireEdge::rev(e0), WireEdge::fwd(e2), WireEdge::fwd(e1), WireEdge::rev(e2)], None, DVec3::ZERO, Some([0.0, two_pi, 0.0, h]));
@@ -6715,6 +6742,7 @@ fn build_cylinder_torus_union_tessellated(
                 outer_wire: empty_wire(), inner_wires: vec![],
                 normal: DVec3::ZERO, triangles: tris,
                 sample_point: None, mesh_dirty: false,
+                surface_idx: None,
             });
         }
     }
@@ -6953,6 +6981,7 @@ fn build_same_center_tori_union_mesh(tori: &[ToroidalSurface]) -> Option<BRep> {
         triangles,
         sample_point: None,
         mesh_dirty: false,
+                surface_idx: None,
     };
 
     let mut brep = BRep {
@@ -7070,6 +7099,7 @@ fn build_coaxial_cones_union_tessellated(
                 outer_wire: empty_wire(), inner_wires: vec![],
                 normal: DVec3::ZERO, triangles: tris,
                 sample_point: None, mesh_dirty: false,
+                surface_idx: None,
             });
         }
 
@@ -7105,6 +7135,7 @@ fn build_coaxial_cones_union_tessellated(
                     outer_wire: empty_wire(), inner_wires: vec![],
                     normal: DVec3::ZERO, triangles: tris,
                     sample_point: None, mesh_dirty: false,
+                surface_idx: None,
                 });
             }
         }
@@ -7343,7 +7374,7 @@ fn build_cone_cone_union_tessellated(
                 tris.push([idx[j], idx[k], idx[n + k]]);
                 tris.push([idx[j], idx[n + k], idx[n + j]]);
             }
-            faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
+            faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false, surface_idx: None });
         }
 
         // 鈹€鈹€ Interface face at overlap_hi: two-circle union minus the circle of cone 1 鈹€鈹€
@@ -7415,7 +7446,7 @@ fn build_cone_cone_union_tessellated(
                     tris.push([idx[j], idx[k], idx[n + k]]);
                     tris.push([idx[j], idx[n + k], idx[n + j]]);
                 }
-                faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
+                faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false, surface_idx: None });
             }
 
             // Top cap at c1_z_hi.
@@ -7575,7 +7606,7 @@ fn build_conical_frustum_minus_frustum_brep(
     {
         let mut tris = Vec::new();
         wall_grid(&mut add_v, &outer_bot, &outer_top, &mut tris);
-        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
+        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false, surface_idx: None });
     }
 
     // 2. Bottom at z=zo_lo
@@ -7585,11 +7616,11 @@ fn build_conical_frustum_minus_frustum_brep(
         // Hole goes through the bottom
         let mut tris = Vec::new();
         annulus_tri_fan(&mut add_v, DVec3::new(0.0, 0.0, zo_lo), ri_at_olap_lo, ro_lo, N, &mut tris);
-        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
+        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false, surface_idx: None });
     } else {
         let mut tris = Vec::new();
         disk_tri_fan(&mut add_v, DVec3::new(0.0, 0.0, zo_lo), ro_lo, N, &mut tris);
-        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
+        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false, surface_idx: None });
     }
 
     // 3. Top at z=zo_hi
@@ -7598,11 +7629,11 @@ fn build_conical_frustum_minus_frustum_brep(
     if zi_hi >= zo_hi - tol && has_overlap && ri_at_olap_hi < ro_hi - tol {
         let mut tris = Vec::new();
         annulus_tri_fan(&mut add_v, DVec3::new(0.0, 0.0, zo_hi), ri_at_olap_hi, ro_hi, N, &mut tris);
-        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
+        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false, surface_idx: None });
     } else {
         let mut tris = Vec::new();
         disk_tri_fan(&mut add_v, DVec3::new(0.0, 0.0, zo_hi), ro_hi, N, &mut tris);
-        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
+        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false, surface_idx: None });
     }
 
     // 4. Inner lateral 鈥?cavity wall (overlap region only)
@@ -7611,21 +7642,21 @@ fn build_conical_frustum_minus_frustum_brep(
         let inner_top = ring_pts(z_olap_hi, ri_at_olap_hi);
         let mut tris = Vec::new();
         wall_grid(&mut add_v, &inner_bot, &inner_top, &mut tris);
-        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
+        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false, surface_idx: None });
     }
 
     // 5. Cavity floor 鈥?where hole starts (if inner starts above outer bottom)
     if zi_lo > zo_lo + tol && has_overlap && ri_at_olap_lo > tol {
         let mut tris = Vec::new();
         disk_tri_fan(&mut add_v, DVec3::new(0.0, 0.0, z_olap_lo), ri_at_olap_lo, N, &mut tris);
-        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
+        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false, surface_idx: None });
     }
 
     // 6. Cavity ceiling 鈥?where hole ends (if inner ends below outer top)
     if zi_hi < zo_hi - tol && has_overlap && ri_at_olap_hi > tol {
         let mut tris = Vec::new();
         disk_tri_fan(&mut add_v, DVec3::new(0.0, 0.0, z_olap_hi), ri_at_olap_hi, N, &mut tris);
-        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false });
+        faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false, surface_idx: None });
     }
 
     if faces.is_empty() { return None; }
@@ -7852,6 +7883,7 @@ fn build_sphere_clipped_by_plane(
         outer_wire: empty_wire(), inner_wires: vec![],
         normal: DVec3::ZERO, triangles: tris,
         sample_point: None, mesh_dirty: false,
+                surface_idx: None,
     }];
 
     let geom = GeomStore {
@@ -8037,6 +8069,7 @@ fn build_sphere_clipped_by_planes(
         triangles: tris,
         sample_point: None,
         mesh_dirty: false,
+                surface_idx: None,
     }];
 
     let geom = GeomStore {
@@ -9182,6 +9215,7 @@ fn build_box_minus_cone_tessellated(
                 outer_wire: empty_wire(), inner_wires: vec![],
                 normal: DVec3::ZERO, triangles: tris,
                 sample_point: None, mesh_dirty: false,
+                surface_idx: None,
             });
         } else if !bot.is_empty() {
             // Top is empty (cone closed off at this Z) 鈫?cap the top
@@ -9206,6 +9240,7 @@ fn build_box_minus_cone_tessellated(
                 outer_wire: empty_wire(), inner_wires: vec![],
                 normal: DVec3::ZERO, triangles: tris,
                 sample_point: None, mesh_dirty: false,
+                surface_idx: None,
             });
         } else if !top.is_empty() {
             // Bottom is empty (cone opened at this Z) 鈫?cap the bottom
@@ -9228,6 +9263,7 @@ fn build_box_minus_cone_tessellated(
                 outer_wire: empty_wire(), inner_wires: vec![],
                 normal: DVec3::ZERO, triangles: tris,
                 sample_point: None, mesh_dirty: false,
+                surface_idx: None,
             });
         }
     }
@@ -9251,6 +9287,7 @@ fn build_box_minus_cone_tessellated(
             outer_wire: empty_wire(), inner_wires: vec![],
             normal: DVec3::ZERO, triangles: remapped_tris,
             sample_point: None, mesh_dirty: false,
+                surface_idx: None,
         });
     }
 
@@ -9271,6 +9308,7 @@ fn build_box_minus_cone_tessellated(
             outer_wire: empty_wire(), inner_wires: vec![],
             normal: DVec3::ZERO, triangles: remapped_tris,
             sample_point: None, mesh_dirty: false,
+                surface_idx: None,
         });
     }
 
@@ -9541,6 +9579,7 @@ fn build_cone_minus_box_tessellated(
                 outer_wire: empty_wire(), inner_wires: vec![],
                 normal: DVec3::ZERO, triangles: tris,
                 sample_point: None, mesh_dirty: false,
+                surface_idx: None,
             });
         } else if !bot.is_empty() {
             // Top is empty (void closed off) 鈫?cap the top with triangle fan
@@ -9563,6 +9602,7 @@ fn build_cone_minus_box_tessellated(
                 outer_wire: empty_wire(), inner_wires: vec![],
                 normal: DVec3::ZERO, triangles: tris,
                 sample_point: None, mesh_dirty: false,
+                surface_idx: None,
             });
         } else if !top.is_empty() {
             // Bottom is empty (void opened at this Z) 鈫?cap the bottom with triangle fan
@@ -9585,6 +9625,7 @@ fn build_cone_minus_box_tessellated(
                 outer_wire: empty_wire(), inner_wires: vec![],
                 normal: DVec3::ZERO, triangles: tris,
                 sample_point: None, mesh_dirty: false,
+                surface_idx: None,
             });
         }
     }
@@ -9606,6 +9647,7 @@ fn build_cone_minus_box_tessellated(
             outer_wire: empty_wire(), inner_wires: vec![],
             normal: DVec3::ZERO, triangles: remapped_tris,
             sample_point: None, mesh_dirty: false,
+                surface_idx: None,
         });
     }
 
@@ -9625,6 +9667,7 @@ fn build_cone_minus_box_tessellated(
             outer_wire: empty_wire(), inner_wires: vec![],
             normal: DVec3::ZERO, triangles: remapped_tris,
             sample_point: None, mesh_dirty: false,
+                surface_idx: None,
         });
     }
 
@@ -9974,6 +10017,7 @@ fn build_cylinder_box_diff_tessellated(
                     outer_wire: empty_wire(), inner_wires: vec![],
                     normal: DVec3::ZERO, triangles: tris,
                     sample_point: None, mesh_dirty: false,
+                surface_idx: None,
                 });
             }
 
@@ -9988,6 +10032,7 @@ fn build_cylinder_box_diff_tessellated(
                     outer_wire: empty_wire(), inner_wires: vec![],
                     normal: DVec3::ZERO, triangles: remapped,
                     sample_point: None, mesh_dirty: false,
+                surface_idx: None,
                 });
             }
 
@@ -10002,6 +10047,7 @@ fn build_cylinder_box_diff_tessellated(
                     outer_wire: empty_wire(), inner_wires: vec![],
                     normal: DVec3::ZERO, triangles: remapped,
                     sample_point: None, mesh_dirty: false,
+                surface_idx: None,
                 });
             }
         }
@@ -10428,6 +10474,7 @@ fn add_wall_section(
             outer_wire: empty_wire(), inner_wires: vec![],
             normal: DVec3::ZERO, triangles: tris,
             sample_point: None, mesh_dirty: false,
+                surface_idx: None,
         });
     }
 }
@@ -10452,6 +10499,7 @@ fn add_cap_face(
         outer_wire: empty_wire(), inner_wires: vec![],
         normal: DVec3::ZERO, triangles: remapped,
         sample_point: None, mesh_dirty: false,
+                surface_idx: None,
     });
 }
 
@@ -10491,6 +10539,7 @@ fn add_interface_face(
         outer_wire: empty_wire(), inner_wires: vec![],
         normal: DVec3::ZERO, triangles: remapped,
         sample_point: None, mesh_dirty: false,
+                surface_idx: None,
     });
 }
 
@@ -10980,6 +11029,7 @@ fn build_cone_box_union_tessellated(
                 outer_wire: empty_wire(), inner_wires: vec![],
                 normal: DVec3::ZERO, triangles: tris,
                 sample_point: None, mesh_dirty: false,
+                surface_idx: None,
             });
         }
     }
@@ -11033,6 +11083,7 @@ fn build_cone_box_union_tessellated(
                 outer_wire: empty_wire(), inner_wires: vec![],
                 normal: DVec3::ZERO, triangles: tris,
                 sample_point: None, mesh_dirty: false,
+                surface_idx: None,
             });
         }
     }
@@ -11072,6 +11123,7 @@ fn build_cone_box_union_tessellated(
                 outer_wire: empty_wire(), inner_wires: vec![],
                 normal: DVec3::ZERO, triangles: tris,
                 sample_point: None, mesh_dirty: false,
+                surface_idx: None,
             });
         }
     }
@@ -11236,6 +11288,7 @@ fn build_cone_box_intersection_tessellated(
             outer_wire: empty_wire(), inner_wires: vec![],
             normal: DVec3::ZERO, triangles: tris,
             sample_point: None, mesh_dirty: false,
+                surface_idx: None,
         });
     }
 
@@ -11948,6 +12001,7 @@ fn build_box_minus_cylinder_tessellated(
             outer_wire: empty_wire(), inner_wires: vec![],
             normal: DVec3::ZERO, triangles: tris,
             sample_point: None, mesh_dirty: false,
+                surface_idx: None,
         });
     }
 
@@ -12434,6 +12488,7 @@ fn build_box_minus_cylinder_one_v_face_exit(
         triangles: Vec::new(),
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     });
     while brep.geom.face_surface.len() <= fi {
         brep.geom.face_surface.push(None);
@@ -12908,6 +12963,7 @@ fn build_cylinder_box_difference_full_wall(
         outer_wire: cyl_wire, inner_wires: Vec::new(),
         normal: DVec3::ZERO, triangles: Vec::new(),
         sample_point: None, mesh_dirty: true,
+                surface_idx: None,
     });
     while brep.geom.face_surface.len() <= fi_cyl { brep.geom.face_surface.push(None); }
     brep.geom.face_surface[fi_cyl] = Some(cyl_surf_idx);
@@ -12964,6 +13020,7 @@ fn build_cylinder_box_difference_full_wall(
                 },
                 inner_wires: Vec::new(), normal: -n,
                 triangles: Vec::new(), sample_point: None, mesh_dirty: true,
+                surface_idx: None,
             });
             while brep.geom.face_surface.len() <= fi { brep.geom.face_surface.push(None); }
             brep.geom.face_surface[fi] = Some(side_plane_idx);
@@ -13007,6 +13064,7 @@ fn build_cylinder_box_difference_full_wall(
         inner_wires: vec![Wire { edges: inner_edges.clone() }],
         normal: -DVec3::Z, triangles: Vec::new(),
         sample_point: None, mesh_dirty: true,
+                surface_idx: None,
     });
     while brep.geom.face_surface.len() <= fi_bot { brep.geom.face_surface.push(None); }
     brep.geom.face_surface[fi_bot] = Some(bot_surf_idx);
@@ -13018,6 +13076,7 @@ fn build_cylinder_box_difference_full_wall(
         inner_wires: vec![Wire { edges: inner_edges }],
         normal: DVec3::Z, triangles: Vec::new(),
         sample_point: None, mesh_dirty: true,
+                surface_idx: None,
     });
     while brep.geom.face_surface.len() <= fi_top { brep.geom.face_surface.push(None); }
     brep.geom.face_surface[fi_top] = Some(top_surf_idx);
@@ -13243,6 +13302,7 @@ pub(crate) fn build_cylinder_box_clipped_brep(
             triangles: Vec::new(),
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         });
         while brep.geom.face_surface.len() <= fi {
             brep.geom.face_surface.push(None);
@@ -13528,6 +13588,7 @@ pub(crate) fn build_cylinder_box_clipped_brep(
             triangles: Vec::new(),
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         });
         while brep.geom.face_surface.len() <= fi {
             brep.geom.face_surface.push(None);
@@ -13750,6 +13811,7 @@ fn build_cylinder_arc_for_difference_skip(
         brep.solids[0].shells[0].faces.push(Face {
             outer_wire: outer, inner_wires: Vec::new(), normal,
             triangles: Vec::new(), sample_point: None, mesh_dirty: true,
+                surface_idx: None,
         });
         while brep.geom.face_surface.len() <= fi {
             brep.geom.face_surface.push(None);
@@ -14023,6 +14085,7 @@ fn build_half_cylinder_intersection_brep(
             triangles: Vec::new(),
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         });
         while brep.geom.face_surface.len() <= fi {
             brep.geom.face_surface.push(None);
@@ -15168,21 +15231,21 @@ fn build_cylinder_quadrant_brep(
         let fs = brep.geom.surfaces.len(); brep.geom.surfaces.push(cyl_surf_3.clone());
         brep.geom.face_surface.push(Some(fs)); brep.geom.face_surface_range.push(None);
         faces.push(Face { outer_wire: Wire { edges: wire_edges }, inner_wires: vec![],
-            normal: DVec3::ZERO, triangles: vec![], sample_point: None, mesh_dirty: true });
+            normal: DVec3::ZERO, triangles: vec![], sample_point: None, mesh_dirty: true, surface_idx: None });
     }
     // Bottom cap (normal = -axis, outward)
     {
         let wire_edges: Vec<WireEdge> = (0..4).map(|i| WireEdge::fwd(bot_arcs[i])).collect();
         brep.geom.face_surface.push(Some(bp_id)); brep.geom.face_surface_range.push(None);
         faces.push(Face { outer_wire: Wire { edges: wire_edges }, inner_wires: vec![],
-            normal: -axis, triangles: vec![], sample_point: None, mesh_dirty: true });
+            normal: -axis, triangles: vec![], sample_point: None, mesh_dirty: true, surface_idx: None });
     }
     // Top cap (normal = axis, outward)
     {
         let wire_edges: Vec<WireEdge> = (0..4).map(|i| WireEdge::fwd(top_arcs[i])).collect();
         brep.geom.face_surface.push(Some(tp_id)); brep.geom.face_surface_range.push(None);
         faces.push(Face { outer_wire: Wire { edges: wire_edges }, inner_wires: vec![],
-            normal: axis, triangles: vec![], sample_point: None, mesh_dirty: true });
+            normal: axis, triangles: vec![], sample_point: None, mesh_dirty: true, surface_idx: None });
     }
     brep.solids.push(Solid { shells: vec![Shell { faces }] });
     brep

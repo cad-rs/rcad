@@ -1,4 +1,4 @@
-﻿//! BRepBlend-style blend surface operations - analogous to OCCT `BRepBlend` module.
+//! BRepBlend-style blend surface operations - analogous to OCCT `BRepBlend` module.
 //!
 //! # Overview
 //!
@@ -1538,6 +1538,7 @@ fn add_face(brep: &mut BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -
         triangles: Vec::new(),
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     });
 
     while brep.geom.face_surface.len() <= idx {

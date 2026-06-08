@@ -1,4 +1,4 @@
-﻿//! BRepAlgoAPI-style high-level boolean algorithms.
+//! BRepAlgoAPI-style high-level boolean algorithms.
 //!
 //! This module provides OCCT BRepAlgoAPI-like API for boolean operations:
 //! - **BRepAlgoAPI_Common**: Intersection (common volume)
@@ -1358,6 +1358,7 @@ impl<'a> BRepAlgoAPI_Section<'a> {
                     triangles: vec![],
                     sample_point: None,
                     mesh_dirty: true,
+                surface_idx: None,
                 })
                 .collect();
             result.solids.push(Solid {

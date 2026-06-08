@@ -1,4 +1,4 @@
-﻿//! BRepOffsetAPI-style offset operations 鈥?high-level API for offset, hollow, and evolved shapes.
+//! BRepOffsetAPI-style offset operations 鈥?high-level API for offset, hollow, and evolved shapes.
 //!
 //! This module provides high-level offset operations analogous to OCCT's BRepOffsetAPI:
 //!
@@ -1178,6 +1178,7 @@ impl<'a> MakePipeShell<'a> {
             triangles: Vec::new(),
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         });
 
         result_brep.geom.face_surface.push(Some(surface_idx));
@@ -1251,6 +1252,7 @@ impl<'a> MakePipeShell<'a> {
             triangles: Vec::new(),
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         });
 
         result_brep.geom.face_surface.push(Some(surface_idx));
@@ -1478,6 +1480,7 @@ fn add_face(brep: &mut BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -
         triangles: Vec::new(),
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     });
 
     while brep.geom.face_surface.len() <= idx {

@@ -1,4 +1,4 @@
-﻿//! BRepSweep-style sweep operations for creating shapes by sweeping profiles.
+//! BRepSweep-style sweep operations for creating shapes by sweeping profiles.
 //!
 //! This module provides comprehensive sweep operations analogous to OCCT's BRepSweep:
 //! - **LinearSweep**: Extrude profiles along a direction
@@ -451,6 +451,7 @@ pub fn linear_sweep_with_options(
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         };
         let fi = faces.len();
         faces.push(face);
@@ -480,6 +481,7 @@ pub fn linear_sweep_with_options(
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         };
         let fi = faces.len();
         faces.push(face);
@@ -524,6 +526,7 @@ pub fn linear_sweep_with_options(
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         };
         let fi = faces.len();
         faces.push(face);
@@ -718,6 +721,7 @@ pub fn rotational_sweep_with_options(
                 triangles: vec![],
                 sample_point: None,
                 mesh_dirty: true,
+                surface_idx: None,
             };
             let fi = faces.len();
             faces.push(face);
@@ -749,6 +753,7 @@ pub fn rotational_sweep_with_options(
                 triangles: vec![],
                 sample_point: None,
                 mesh_dirty: true,
+                surface_idx: None,
             };
             let fi = faces.len();
             faces.push(face);
@@ -793,6 +798,7 @@ pub fn rotational_sweep_with_options(
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         };
         let fi = faces.len();
         faces.push(face);
@@ -1058,6 +1064,7 @@ fn build_lofted_solid(sections: &[Vec<DVec3>], _closed: bool) -> Result<(BRep, S
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         };
         let fi = faces.len();
         faces.push(face);
@@ -1088,6 +1095,7 @@ fn build_lofted_solid(sections: &[Vec<DVec3>], _closed: bool) -> Result<(BRep, S
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         };
         let fi = faces.len();
         faces.push(face);
@@ -1134,6 +1142,7 @@ fn build_lofted_solid(sections: &[Vec<DVec3>], _closed: bool) -> Result<(BRep, S
                 triangles: vec![],
                 sample_point: None,
                 mesh_dirty: true,
+                surface_idx: None,
             };
             let fi = faces.len();
             faces.push(face);

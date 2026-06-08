@@ -521,6 +521,7 @@ impl BRep {
                     .map(|[a, b, c]| [a + v0, b + v0, c + v0])
                     .collect(),
                 mesh_dirty: face.mesh_dirty,
+                surface_idx: None,
                 sample_point: face.sample_point,
             }
         };
@@ -730,6 +731,7 @@ impl BRep {
                 triangles: vec![[0, 1, 2], [0, 2, 3]],
                 sample_point: None,
             mesh_dirty: false,
+                surface_idx: None,
             },
             // Back   (z=d, normal +Z)
             Face {
@@ -746,6 +748,7 @@ impl BRep {
                 triangles: vec![[5, 4, 7], [5, 7, 6]],
                 sample_point: None,
             mesh_dirty: false,
+                surface_idx: None,
             },
             // Bottom (y=0, normal -Y)
             Face {
@@ -762,6 +765,7 @@ impl BRep {
                 triangles: vec![[0, 1, 5], [0, 5, 4]],
                 sample_point: None,
             mesh_dirty: false,
+                surface_idx: None,
             },
             // Top    (y=h, normal +Y)
             Face {
@@ -778,6 +782,7 @@ impl BRep {
                 triangles: vec![[3, 2, 6], [3, 6, 7]],
                 sample_point: None,
             mesh_dirty: false,
+                surface_idx: None,
             },
             // Left   (x=0, normal -X)
             Face {
@@ -794,6 +799,7 @@ impl BRep {
                 triangles: vec![[0, 3, 7], [0, 7, 4]],
                 sample_point: None,
             mesh_dirty: false,
+                surface_idx: None,
             },
             // Right  (x=w, normal +X)
             Face {
@@ -810,6 +816,7 @@ impl BRep {
                 triangles: vec![[1, 2, 6], [1, 6, 5]],
                 sample_point: None,
             mesh_dirty: false,
+                surface_idx: None,
             },
         ];
 
@@ -896,6 +903,7 @@ impl BRep {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         };
         let shell = Shell { faces: vec![face] };
         let solid = Solid {
@@ -1009,6 +1017,7 @@ impl BRep {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         };
         let f1 = Face {
             outer_wire: Wire {
@@ -1019,6 +1028,7 @@ impl BRep {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         };
         let f2 = Face {
             outer_wire: Wire {
@@ -1029,6 +1039,7 @@ impl BRep {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         };
         let shell = Shell {
             faces: vec![f0, f1, f2],
@@ -1181,6 +1192,7 @@ impl BRep {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         };
         // F1 base cap: E0 reversed (base circle CW from -Y view)
         let f1 = Face {
@@ -1192,6 +1204,7 @@ impl BRep {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         };
         let shell = Shell {
             faces: vec![f0, f1],
@@ -1338,6 +1351,7 @@ impl BRep {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         };
         let shell = Shell { faces: vec![face] };
         let solid = Solid {

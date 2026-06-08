@@ -1,4 +1,4 @@
-﻿//! BRepFilletAPI-style edge fillet operations 鈥?analogous to OCCT `BRepFilletAPI_MakeFillet`.
+//! BRepFilletAPI-style edge fillet operations 鈥?analogous to OCCT `BRepFilletAPI_MakeFillet`.
 //!
 //! # Overview
 //!
@@ -1338,6 +1338,7 @@ fn build_fillet_brep(
                     triangles: Vec::new(),
                     sample_point: None,
                     mesh_dirty: true,
+                surface_idx: None,
                 };
                 result.solids[0].shells[0].faces.push(face);
             }
@@ -1594,6 +1595,7 @@ fn apply_cylinder_fillet(
         triangles: Vec::new(),
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     };
 
     // ── Store fillet surface ───────────────────────────────────────────────
@@ -1675,6 +1677,7 @@ fn trim_face_at_vertex(
         triangles: Vec::new(),
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     };
 }
 
@@ -1792,6 +1795,7 @@ fn build_trimmed_face(
         triangles: Vec::new(),
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     })
 }
 

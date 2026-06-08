@@ -133,6 +133,7 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
                             .collect(),
                         sample_point: face.sample_point,
                         mesh_dirty: face.mesh_dirty,
+                surface_idx: None,
                     });
                 }
             }

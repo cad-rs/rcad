@@ -1,4 +1,4 @@
-﻿//! ShapeBuild-style robust shape construction utilities.
+//! ShapeBuild-style robust shape construction utilities.
 //!
 //! Analogous to OCCT `ShapeBuild` package providing validated shape construction
 //! with comprehensive error reporting and automatic fixing capabilities.
@@ -472,6 +472,7 @@ impl BuildFace {
             triangles: Vec::new(),
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         })
     }
 
@@ -549,6 +550,7 @@ impl BuildFace {
             triangles: Vec::new(),
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         };
 
         Ok((vertices, edges, face))
@@ -847,6 +849,7 @@ impl Rebuild {
             triangles: Vec::new(),
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         }
     }
 
@@ -1234,6 +1237,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         };
 
         let shell = BuildShell::build_shell_from_faces(&[face.clone()], TOLERANCE_ABS);
@@ -1262,6 +1266,7 @@ mod tests {
                 triangles: vec![],
                 sample_point: None,
                 mesh_dirty: true,
+                surface_idx: None,
             }],
         };
 
@@ -1329,6 +1334,7 @@ mod tests {
                     triangles: vec![],
                     sample_point: None,
                     mesh_dirty: true,
+                surface_idx: None,
                 },
                 Face {
                     outer_wire: Wire { edges: vec![WireEdge::rev(0)] },
@@ -1337,6 +1343,7 @@ mod tests {
                     triangles: vec![],
                     sample_point: None,
                     mesh_dirty: true,
+                surface_idx: None,
                 },
             ],
         };
@@ -1356,6 +1363,7 @@ mod tests {
                     triangles: vec![],
                     sample_point: None,
                     mesh_dirty: true,
+                surface_idx: None,
                 }],
             }],
         };
@@ -1406,6 +1414,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         };
 
         let rebuilt = Rebuild::rebuild_face(&face, &edges, &vertices, TOLERANCE_ABS);
@@ -1444,6 +1453,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         };
         let f0 = builder.add_face(face);
 
@@ -1459,6 +1469,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         }]};
         builder.add_shell(shell);
 

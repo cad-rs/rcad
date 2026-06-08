@@ -1,4 +1,4 @@
-﻿//! Shell thickening 鈥?analogous to OCCT `BRepOffsetAPI_MakeThickSolid`.
+//! Shell thickening 鈥?analogous to OCCT `BRepOffsetAPI_MakeThickSolid`.
 //!
 //! # Algorithm
 //!
@@ -881,6 +881,7 @@ fn add_face(brep: &mut BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -
         outer_wire: outer, inner_wires: inner, normal, triangles: Vec::new(),
         sample_point: None,
         mesh_dirty: true,
+                surface_idx: None,
     });
     while brep.geom.face_surface.len() <= idx { brep.geom.face_surface.push(None); }
     let si = brep.geom.surfaces.len();

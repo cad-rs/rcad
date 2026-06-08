@@ -1,4 +1,4 @@
-﻿//! BRepTools-style utilities for BRep I/O, transformation, and queries.
+//! BRepTools-style utilities for BRep I/O, transformation, and queries.
 //!
 //! This module provides utilities analogous to OCCT's `BRepTools` class:
 //!
@@ -1107,6 +1107,7 @@ fn extract_brep_subset(source: &BRep, face_indices: &[usize]) -> BRep {
                 .collect(),
             sample_point: None,
             mesh_dirty: true,
+                surface_idx: None,
         });
 
         // face-level geometry

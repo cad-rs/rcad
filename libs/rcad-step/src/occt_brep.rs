@@ -1103,6 +1103,7 @@ fn build_brep(
                 triangles: tris_out,
                 sample_point: None,
                 mesh_dirty,
+                surface_idx: None,
             });
             vertices = v_local;
         }
