@@ -90,15 +90,17 @@ pub struct SubFace {
     /// Inner wire boundaries (holes) in 3D. Each inner wire is an ordered polygon
     /// representing a closed trim curve that forms a hole in the face.
     pub inner_wires: Vec<Vec<DVec3>>,
-    /// ✅ OCCT对齐: 外边界精确圆弧边。
-    ///    OCCT: MakeBlocks → section edges(精确 Circle3)
-    ///    (edge_index_in_boundary → Curve3::Circle) 指定外边界哪些边用
-    ///    add_circle_edge 替代 add_edge。由 split_sphere_by_circles 等函数设置。
+    /// ⏳ 部分对齐: 外边界精确圆弧边。
+    ///    OCCT: MakeBlocks → section edges 直接作为 BRep 边的 Curve3。
+    ///    rcad: SubFace 不直接对应 BRep face,需在 emit 时由 outer_circle_edges
+    ///    指定哪些外边界边用 add_circle_edge(存 Curve3::Circle)。概念等效,
+    ///    但 OCCT 不需要这个中间存储结构。
     pub outer_circle_edges: Vec<(usize, Curve3)>,
-    /// ✅ OCCT对齐: sphere face 的 seam edge。
-    ///    OCCT sphere face 在参数化接缝处有一条 seam edge,与一条外边界弧
-    ///    共享相同的顶点对（"长路径"）。此字段指定边界索引→Circle3 用于
-    ///    add_seam_edge（不进行顶点去重）。
+    /// ❌ 未对齐 / 自创方案: sphere face 的 seam edge。
+    ///    OCCT sphere face 的 seam edge 直接包含在 BRep face 的 wire 中。
+    ///    rcad 的 SubFace 需要额外 seam_edge 字段来在 emit_face_with_origin
+    ///    时调用 add_seam_edge（旁路顶点去重）。OCCT 的 MakeEdge 不存在
+    ///    顶点去重问题,不需要此机制。
     pub seam_edge: Option<(usize, Curve3)>,
 }
 
@@ -396,10 +398,10 @@ impl ResultBuilder {
         idx
     }
 
-    /// ✅ OCCT对齐: 创建具有精确圆曲线几何的 edge（MakeBlocks → MakeEdge）。
-    ///    与 add_edge 相同但记录 Circle3 曲线,在 build() 中设置 edge_curve
-    ///    为 Curve3::Circle 而不是默认的 recompute_plane_surfaces 补的 Line3。
-    ///    OCCT: BOPAlgo_PaveFiller::MakeBlocks → BOPTools_AlgoTools::MakeEdge(aIC,...)
+    /// ⏳ 部分对齐: 创建具有精确圆曲线几何的 edge。
+    ///    OCCT: BOPTools_AlgoTools::MakeEdge(aIC,...) 直接创建 BRep Edge,无顶点去重。
+    ///    rcad: 通过 add_edge(顶点去重)创建边,在 build() 中设置 edge_curve。
+    ///    顶点去重逻辑不影响正确性(Circle3 曲线正确设置),但实现方式不同。
     fn add_circle_edge(&mut self, v1: usize, v2: usize, circle: Curve3) -> usize {
         let idx = self.add_edge(v1, v2);
         // 扩展 custom_edge_curves 到足够长度
@@ -410,10 +412,10 @@ impl ResultBuilder {
         idx
     }
 
-    /// ✅ OCCT对齐: 创建 seam edge（不进行顶点去重）。
-    ///    OCCT 中 sphere face 的 seam edge 与一条边界弧共享相同的顶点对,
-    ///    但代表球面参数化接缝的另一半（"长路径"）。add_edge 按顶点去重,
-    ///    会误将 seam 合并到正常弧。此方法强制创建新 edge 条目。
+    /// ❌ 未对齐 / 自创方案: 创建 seam edge（不进行顶点去重）。
+    ///    OCCT 中 sphere face 的 seam edge 由 MakeEdge 正常创建,不存在顶点
+    ///    去重问题。rcad 的 add_edge 按顶点对去重,会误将 seam 合并到正常弧。
+    ///    此方法绕过顶点去重,是 rcad 特有的 workaround。
     ///    ！仅在 split_sphere_by_circles 中用于 sphere 的 seam edge。
     fn add_seam_edge(&mut self, v1: usize, v2: usize, circle: Curve3) -> usize {
         let idx = self.edges.len();
@@ -508,10 +510,10 @@ impl ResultBuilder {
         circles
     }
 
-    /// ✅ OCCT对齐: 发射面,支持内外边界的精确圆弧覆盖。
-    ///    OCCT: MakeBlocks → BOPTools_AlgoTools::MakeEdge → section edge(精确)
-    ///    sub.outer_circle_edges: 外边界哪些边用 Circle3 替代 Line3。
-    ///    inner_wire_circles: 指定内边界哪些边用 Circle3。
+    /// ⏳ 部分对齐: 发射面,支持内外边界的精确圆弧覆盖。
+    ///    OCCT: BuildSplitFaces → 直接创建 BRep face,section edges 自动为精确几何。
+    ///    rcad: SubFace → add_vertex/add_edge 构建 BRep face 的 wire。
+    ///    outer_circle_edges 和 inner_wire_circles 是 rcad 的中间层适配。
     fn emit_face_with_origin(
         &mut self,
         sub: &SubFace,
@@ -548,21 +550,17 @@ impl ResultBuilder {
             edge_indices.push((ei, forward));
         }
 
-        // ✅ OCCT对齐: 添加 sphere face 的 seam edge。
-        //    OCCT 的 sphere face 在参数化接缝(z=0 大圆弧)处有一条额外的 seam edge,
-        //    与其一条边界弧共享顶点对但不进行顶点去重。
-        //    seam_edge = (边界索引, Circle3),在对应边界边之后插入。
+        // ❌ 未对齐 / 自创方案: 添加 sphere face 的 seam edge。
+        //    OCCT sphere face 的 seam edge 是 BRep 固有拓扑的一部分,不需要
+        //    在构建 wire 时特殊处理。rcad 因 add_edge 顶点去重需用 seam_edge
+        //    附加信息调用 add_seam_edge。当前仅用于 bcommon_simple 快速路径
+        //    (analytic builder),PaveFiller 路径未使用因为该路径不经过此代码。
         if let Some((sei, ref crv)) = sub.seam_edge {
-            eprintln!("[DBG_EMIT] seam_edge present: boundary={} sei={} verts_n={}", sub.boundary.len(), sei, vert_indices.len());
             if sei < vert_indices.len() {
                 let sj = (sei + 1) % vert_indices.len();
                 let seam_ei = self.add_seam_edge(vert_indices[sei], vert_indices[sj], crv.clone());
                 let forward = self.edges[seam_ei].0 == vert_indices[sei];
-                // 在对应边界边之后插入以确保 wire 闭合
                 edge_indices.insert(sei + 1, (seam_ei, forward));
-                eprintln!("[DBG_EMIT] seam edge added: idx={}", seam_ei);
-            } else {
-                eprintln!("[DBG_EMIT] seam_edge sei={} >= vert_indices.len={}", sei, vert_indices.len());
             }
         }
 
@@ -2414,8 +2412,6 @@ impl<'a> BooleanBuilder<'a> {
     /// Split a face by intersection curves. If no intersection curves cross this
     /// face, returns the whole face as a single SubFace.
     fn split_face(&self, face_idx: usize) -> Vec<SubFace> {
-        eprintln!("[DBG_SPLIT_FACE_ENTER] face_idx={}", face_idx);
-        if face_idx == 0 { eprintln!("[DBG_SPLIT_FACE_ZERO] entering split_face for face 0"); }
         let face = &self.ds.faces[face_idx];
         let fi = &face.face_info;
 
@@ -2678,13 +2674,11 @@ impl<'a> BooleanBuilder<'a> {
         // sphere face has 2 boundary vertices from the seam edge, which emit_face_with_origin
         // rejects as having <3 boundary points).
         if matches!(&face.surface, Surface3::Sphere(_)) && fi.curves_in.is_empty() {
-            eprintln!("[DBG_SPLIT_FACE] sphere curves_in empty → tessellate");
             return self.tessellate_sphere_face(face_idx);
         }
 
         // ✅ OCCT对齐: Sphere + circle 交线 → 用精确大圆弧构建球面子面
         if matches!(&face.surface, Surface3::Sphere(_)) {
-            eprintln!("[DBG_SPLIT_FACE] sphere curves_in={} n_curves_in={}", fi.curves_in.len(), fi.curves_in.len());
             let circles: Vec<&rcad_kernel::geom::Circle3> = fi.curves_in.iter()
                 .filter_map(|&ci| {
                     if let rcad_kernel::geom::Curve3::Circle(ref c) = self.ds.intersection_curves[ci].curve { Some(c) } else { None }
@@ -4076,8 +4070,10 @@ impl<'a> BooleanBuilder<'a> {
     /// into a 2D trim polyline in UV space, then splits the UV boundary polygon.
     /// Maps resulting sub-polygons back to 3D via surface evaluation.
     ///
-    /// ✅ OCCT对齐: 用精确大圆弧构建球面子面。
-    ///    OCCT: BuildSplitFaces → section edges(MakeBlocks) 直接作为面边界。
+    /// ⏳ 部分对齐: 用精确大圆弧构建球面子面。
+    ///    OCCT: BuildSplitFaces → section edges 直接创建 BRep sub-face。
+    ///    rcad: 手动计算 8 个卦限的 SubFace,用 outer_circle_edges 记录大圆弧。
+    ///    功能等价(8 个半球面区域 + 精确圆弧边界),但 OCCT 不需要中间 SubFace。
     fn split_sphere_by_circles(&self, face_idx: usize, circles: &[&rcad_kernel::geom::Circle3]) -> Vec<SubFace> {
         let face = &self.ds.faces[face_idx];
         let sphere = match &face.surface { Surface3::Sphere(s) => *s, _ => return vec![] };
@@ -4090,26 +4086,19 @@ impl<'a> BooleanBuilder<'a> {
             let boundary = vec![va, vb, vc];
             // ✅ OCCT对齐: 每个外边界边(大圆弧)用 Circle3 精确表示。
             //    OCCT MakeBlocks → section edges 是精确几何,不是折线。
+            //    rcad 用 outer_circle_edges Vec 存储,在 emit 时调用 add_circle_edge。
             let outer_circles: Vec<(usize, Curve3)> = [(va,vb),(vb,vc),(vc,va)].iter().enumerate()
                 .map(|(ei, &(v1, v2))| {
                     let n = (v1 - c).cross(v2 - c).normalize();
                     (ei, Curve3::Circle(Circle3 { center: c, normal: n, radius: r }))
                 }).collect();
-            // ✅ OCCT对齐: 检测 octant 是否包含 seam edge(z=0 大圆弧)。
-            //    OCCT 的 sphere face 在参数化接缝处有一条额外的 seam edge。
-            //    当 octant 的 z=0 平面弧与球面接缝重合时,需要添加 seam edge。
-            //    octant(0,2,4)=(+X,+Y,+Z) 的 edge 0 是 z=0 平面弧 → seam。
-            eprintln!("[DBG_SPLIT] octant({},{},{}): va=({:.3},{:.3},{:.3}) vb=({:.3},{:.3},{:.3}) vc=({:.3},{:.3},{:.3})",
-                ia, ib, ic, va.x, va.y, va.z, vb.x, vb.y, vb.z, vc.x, vc.y, vc.z);
-            let seam: Option<(usize, Curve3)> = if ia == 0 && ib == 2 && ic == 4 {
-                // Edge 0: (va,vb) = (+X,+Y) 在 z=0 平面 = seam
-                let n = (va - c).cross(vb - c).normalize();
-                Some((0, Curve3::Circle(Circle3 { center: c, normal: n, radius: r })))
-            } else {
-                None
-            };
-            eprintln!("[DBG_SPLIT] push subface: seam={:?} outer_circles={} boundary={}",
-                seam.is_some(), outer_circles.len(), boundary.len());
+            // ⏳ 部分对齐: 检测 octant 是否应添加 seam edge。
+            //    OCCT sphere face 的 seam edge 始终存在于 BRep wire 中。
+            //    rcad 只对通过 PaveFiller 路径的 sphere face 添加 seam(见 split_face
+            //    → emit_face_with_origin),此处已禁用(PaveFiller 路径对 A1 不工作)。
+            //    ！当前 seam_edge 相关的代码(builder.rs + sphere_box_analytic.rs)
+            //      仅在快速路径中使用,未实际通过 PaveFiller 路径生效。
+            let seam: Option<(usize, Curve3)> = None; // ❌ seam edge 仅在 sphere_box_analytic.rs 快速路径中处理
             subs.push(SubFace { boundary, surface: Surface3::Sphere(sphere),
                 normal: (va-c).normalize(), uv_centroid: None, sample_override: None,
                 uv_domain: None, inner_wires: vec![],

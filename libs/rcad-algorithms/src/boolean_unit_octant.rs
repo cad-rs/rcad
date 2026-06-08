@@ -8114,10 +8114,8 @@ fn box_faces_match_aabb(brep: &BRep, bmin: DVec3, bmax: DVec3) -> bool {
 /// that avoids the PaveFiller (24鈥?1s 鈫?<0.01s) for the common case where the
 /// sphere center lies inside the box (all bcommon_simple sphere-box tests).
 pub fn try_intersection_sphere_box(a: &BRep, b: &BRep) -> Option<BRep> {
-    let r = try_intersection_sphere_box_pair(a, b)
-        .or_else(|| try_intersection_sphere_box_pair(b, a));
-    if r.is_some() { eprintln!("[DBG_SPHERE_BOX] try_intersection_sphere_box returned Some"); }
-    r
+    try_intersection_sphere_box_pair(a, b)
+        .or_else(|| try_intersection_sphere_box_pair(b, a))
 }
 
 // 鈹€鈹€ Box鈥揅ylinder Difference Fast Path (box 鈭?cylinder, Z-axis cylinder) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€

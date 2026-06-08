@@ -2652,9 +2652,7 @@ pub(crate) fn boolean_postprocess_pave_result(
 /// Used internally when a coaxial shortcut must call difference without re-entering other coaxial
 /// difference branches (e.g. cylinder − loft frustum after `cone ∩ cylinder`).
 pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
-    eprintln!("[DBG_PAVE_FILL_BUILD] entering...");
     let mut ds = bopds::ds::DS::new(a, b);
-    eprintln!("[DBG_PAVE_FILL_BUILD] DS has {} faces", ds.faces.len());
 
     let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
     let mut filler = match (&bvh_a, &bvh_b) {
@@ -2662,11 +2660,9 @@ pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) 
         _ => pave_filler::PaveFiller::new(&mut ds),
     };
     filler.perform();
-    eprintln!("[DBG_PAVE_FILL_BUILD] PaveFiller done, ds has {} intersection curves", ds.intersection_curves.len());
 
     let builder = builder::BooleanBuilder::new(&ds, op);
     let result = builder.build()?;
-    eprintln!("[DBG_PAVE_FILL_BUILD] build done, result has {} edges", result.edges.len());
     boolean_postprocess_pave_result(op, a, b, result)
 }
 
@@ -2865,8 +2861,7 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
 
     // Fast-path: containment (one solid fully inside another).
     if let Some(r) = boolean_unit_octant::try_containment(a, b, op) {
-        let _nf: usize = r.solids.iter().flat_map(|s| &s.shells).map(|sh| sh.faces.len()).sum();
-        eprintln!("[DBG_BOOL_OP] try_containment returned Some ({} edges, {} faces)", r.edges.len(), _nf);
+        if std::env::var("RCAD_DEBUG_FAST_PATH").is_ok() { eprintln!("[DBG_BOOL_OP] try_containment returned Some ({} edges)", r.edges.len()); }
         return Ok(r);
     }
 
