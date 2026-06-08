@@ -500,29 +500,59 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
                     if pts.len() < 3 { continue; }
                     let centroid = pts.iter().copied().sum::<DVec3>() / pts.len() as f64;
 
-                    // OCCT ComputeState: classify face against solid.
-                    // First try centroid nudged by tolerance.  If the result is On
-                    // (test point on the solid boundary), retry with a larger nudge
-                    // to push the point into the interior.  This handles faces whose
-                    // centroid is on the shared boundary between operands (e.g., the
-                    // y=0 shelf face in bfuse_simple B7 where centroid at y=0 is On
-                    // but y=0+1e-4 is inside the other solid).
-                    let test_pt_small = centroid + face.normal * TOLERANCE_ABS;
-                    let mut interior = classify_point(test_pt_small, classify_ids, &ds) == Classification::In;
-                    if !interior && matches!(origin, Some(FaceOrigin::FromB(_))) {
-                        let test_pt_large = centroid + face.normal * (TOLERANCE_ABS * 1000.0);
-                        interior = classify_point(test_pt_large, classify_ids, &ds) == Classification::In;
-                    }
+                    // OCCT BOPTools_AlgoTools::ComputeState: classify interior
+                    // point of the face against the other solid.  RCAD approximates
+                    // this with vertex centroid (OCCT uses PointInFace for a point
+                    // strictly inside the face boundary).  If the point is On (on the
+                    // boundary of the classify-against solid), the face is on the
+                    // shared interface and NOT interior — keep it.
+                    let interior = classify_point(centroid, classify_ids, &ds) == Classification::In;
                     if interior {
+                        if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+                            let surf_name = result.geom.face_surface.get(fi).copied().flatten()
+                                .and_then(|si| result.geom.surfaces.get(si))
+                                .map(|s| match s {
+                                    Surface3::Plane(_) => "Plane",
+                                    Surface3::BSpline(_) => "BSpline",
+                                    _ => "Other",
+                                }).unwrap_or("None");
+                            eprintln!("[CLASSIFY] REMOVE fi={fi} origin={origin:?} surf={surf_name} centroid=({:.6},{:.6},{:.6}) n=({:.4},{:.4},{:.4})",
+                                centroid.x, centroid.y, centroid.z,
+                                face.normal.x, face.normal.y, face.normal.z);
+                        }
                         to_remove.push((si, shi, fi));
+                    } else if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+                        let surf_name = result.geom.face_surface.get(fi).copied().flatten()
+                            .and_then(|si| result.geom.surfaces.get(si))
+                            .map(|s| match s {
+                                Surface3::Plane(_) => "Plane",
+                                Surface3::BSpline(_) => "BSpline",
+                                _ => "Other",
+                            }).unwrap_or("None");
+                        eprintln!("[CLASSIFY] KEEP   fi={fi} origin={origin:?} surf={surf_name} centroid=({:.6},{:.6},{:.6}) n=({:.4},{:.4},{:.4})",
+                            centroid.x, centroid.y, centroid.z,
+                            face.normal.x, face.normal.y, face.normal.z);
                     }
                 }
             }
         }
         if !to_remove.is_empty() {
-            eprintln!("[CLASSIFY_FACES] removing {} interior faces", to_remove.len());
+            eprintln!("[CLASSIFY_FACES] removing {} interior faces (from {})", to_remove.len(),
+                result.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count());
             to_remove.sort_by(|a, b| b.cmp(a));
             for &(si, shi, fi) in &to_remove {
+                // Compute flat face index: sum faces in preceding solids/shells + fi
+                let mut ff = 0usize;
+                for s in 0..si {
+                    for sh in &result.solids[s].shells {
+                        ff += sh.faces.len();
+                    }
+                }
+                for sh in 0..shi {
+                    ff += result.solids[si].shells[sh].faces.len();
+                }
+                ff += fi;
+                crate::remove_flat_face_geom_slots(&mut result.geom, ff);
                 if let Some(s) = result.solids.get_mut(si) {
                     if let Some(sh) = s.shells.get_mut(shi) {
                         if fi < sh.faces.len() { sh.faces.remove(fi); }
@@ -533,7 +563,15 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     }
 
     // Second OCCT FillSameDomainFaces pass (butterfly merge).
+    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+        let nf = result.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
+        eprintln!("[CLASSIFY] after classify: {} faces", nf);
+    }
     result = crate::unify_same_domain_faces(&result).0;
+    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+        let nf = result.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
+        eprintln!("[CLASSIFY] after butterfly: {} faces", nf);
+    }
     // SKIP: second recompute_plane_surfaces would promote cross-operand merged faces
 
     result = crate::prune_unused_topology(result);
