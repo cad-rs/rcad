@@ -3378,6 +3378,7 @@ fn optimize_boolean_topology(mut brep: BRep) -> BRep {
                     outer_wire: Wire{edges: outer_we},
                     inner_wires: vec![Wire{edges: inner_we}],
                     normal: n, triangles: vec![], sample_point: None, mesh_dirty: true,
+            surface_idx: None,
                 });
             }
             if new_faces.is_empty() { continue; }
@@ -5144,6 +5145,7 @@ fn compact_brep_isolated_solid(full: &BRep, solid_idx: usize) -> Option<BRep> {
                 .collect(),
             sample_point: face.sample_point,
             mesh_dirty: face.mesh_dirty,
+            surface_idx: None,
         }
     };
 
@@ -5880,7 +5882,8 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                 let iws: Vec<rcad_kernel::topology::Wire> = loops.iter().map(|lp| rcad_kernel::topology::Wire { edges: lp.iter().map(|&(ei,f)| WireEdge{idx:ei,forward:f}).collect() }).collect();
                 let nm = out.solids[si].shells[shi].faces[g[0]].normal;
                 let sd = out.solids[si].shells[shi].faces[g[0]].surface_idx;
-                let mf = rcad_kernel::Face { outer_wire: ow, inner_wires: iws, normal: nm, triangles: vec![], sample_point: None, mesh_dirty: true, surface_idx: sd };
+                let mf = rcad_kernel::Face { outer_wire: ow, inner_wires: iws, normal: nm, triangles: vec![], sample_point: None, mesh_dirty: true,
+            surface_idx: None, surface_idx: sd };
                 let kp = g[0]; out.solids[si].shells[shi].faces[kp] = mf;
                 let mut rd: Vec<usize> = g.iter().skip(1).copied().collect();
                 rd.sort_unstable_by(|a,b| b.cmp(a));
@@ -6559,6 +6562,7 @@ fn unify_one_merge_pass_with_origins(brep: &mut BRep, face_origins: Option<&[Fac
                         triangles: vec![],
                         sample_point: None,
                         mesh_dirty: true,
+            surface_idx: None,
                     };
 
                     // Planar guard: refuse merges whose merged outer area is larger than the
@@ -8768,6 +8772,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         // Exact duplicate boundary but opposite orientation/normal.
         let f2 = Face {
@@ -8784,6 +8789,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
 
         brep.solids.push(Solid {
@@ -9196,6 +9202,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         // Adjacent square [1,2]x[0,1], shares only edge e1 with f1.
         let f2 = Face {
@@ -9212,6 +9219,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
 
         brep.solids.push(Solid {
@@ -9289,6 +9297,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
 
         let f2 = Face {
@@ -9305,6 +9314,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
 
         brep.solids.push(Solid {
@@ -9360,6 +9370,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
 
         // Twin 2: opposite boundary order, normal=-Z (true internal duplicate signature)
@@ -9377,6 +9388,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
 
         brep.solids.push(Solid {
@@ -9430,6 +9442,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         let f2 = Face {
             outer_wire: Wire {
@@ -9440,6 +9453,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
 
         brep.solids.push(Solid {
@@ -9495,6 +9509,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         let f2 = Face {
             outer_wire: Wire {
@@ -9505,6 +9520,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
 
         brep.geom.surfaces.push(Surface3::Plane(Plane {
@@ -9587,6 +9603,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         // Face B: bottom arc (rev e0) + seam e2(fwd) + e1(fwd) + seam e3(rev)
         let fb = Face {
@@ -9603,6 +9620,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
 
         brep.solids.push(Solid {
@@ -9670,6 +9688,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         let fb = Face {
             outer_wire: Wire {
@@ -9685,6 +9704,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
 
         brep.solids.push(Solid {
@@ -9749,6 +9769,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         let f2 = Face {
             outer_wire: Wire {
@@ -9759,6 +9780,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
 
         brep.solids.push(Solid {
@@ -9839,6 +9861,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         let fb = Face {
             outer_wire: Wire {
@@ -9854,6 +9877,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
 
         brep.solids.push(Solid {
@@ -11309,6 +11333,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         let f1 = Face {
             outer_wire: Wire {
@@ -11319,6 +11344,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
 
         brep.solids.push(Solid {
@@ -11375,6 +11401,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         let f1 = Face {
             outer_wire: Wire {
@@ -11385,6 +11412,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell {
@@ -11458,6 +11486,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         let f1 = Face {
             outer_wire: Wire {
@@ -11468,6 +11497,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell {
@@ -11538,6 +11568,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         let f1 = Face {
             outer_wire: Wire {
@@ -11548,6 +11579,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell {
@@ -11614,6 +11646,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],
@@ -11701,6 +11734,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],
@@ -11785,6 +11819,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         let face_b = Face {
             outer_wire: Wire {
@@ -11795,6 +11830,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell {
@@ -11868,6 +11904,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],
@@ -11947,6 +11984,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],
@@ -12045,6 +12083,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         let face_b = Face {
             outer_wire: Wire {
@@ -12055,6 +12094,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell {
@@ -12166,6 +12206,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         let face_b = Face {
             outer_wire: Wire {
@@ -12176,6 +12217,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell {
