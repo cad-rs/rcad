@@ -7,7 +7,7 @@
 //! - Spatial indexing and caching for performance
 //! - Parallel batch classification
 
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -420,6 +420,14 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
     sorted.sort_unstable();
 
     let tol = AdaptiveTolerance::from_scale(ds.model_scale());
+
+    // OCCT IntTools_FClass2d approach: for convex solids (all faces planar or
+    // planar BSpline), classify by signed distance from each face's plane.
+    // A point is INSIDE if it's behind ALL faces (signed_distance <= 0).
+    if let Some(class) = classify_point_convex_planar(point, &sorted, ds, tol) {
+        return class;
+    }
+
     debug!(
         "classify_point: scale={:.3e}, adaptive_tol={:.3e}, faces={}",
         ds.model_scale(),
@@ -427,6 +435,126 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
         sorted.len(),
     );
     classify_point_internal(point, &sorted, ds, tol, 0.0)
+}
+
+/// OCCT-style convex solid classification: check signed distance from each
+/// face's plane. A closed convex solid has all face normals pointing outward;
+/// a point is INSIDE iff it's on the back side of EVERY face.
+/// Handles Plane and planar BSpline (degree-1) surfaces.
+/// OCCT IntTools_FClass2d-style 2D UV classifier: project point to each face's
+/// plane, check 2D point-in-polygon via ray casting.  For convex solids this
+/// is equivalent to the signed-distance approach but more robust for BSpline
+/// faces (no normal-direction dependency).
+fn classify_point_convex_planar(
+    point: DVec3,
+    solid_face_indices: &[usize],
+    ds: &DS,
+    tol: AdaptiveTolerance,
+) -> Option<Classification> {
+    let flat_tol = tol.tolerance(ToleranceLevel::Normal);
+    let mut on_any = false;
+
+    for &fi in solid_face_indices {
+        let face = &ds.faces[fi];
+
+        // Get plane for projection (for both Plane and planar BSpline)
+        let (plane, bnd_2d) = match &face.surface {
+            Surface3::Plane(p) => {
+                let bnd = build_face_boundary_2d(face, ds, p);
+                (p.clone(), bnd)
+            }
+            Surface3::BSpline(bsp) => {
+                if let Some(n) = bspline_planar_normal(bsp) {
+                    let p = Plane { origin: bsp.control_points[0][0], normal: n };
+                    let bnd = build_face_boundary_2d(face, ds, &p);
+                    (p, bnd)
+                } else {
+                    return None; // Non-planar BSpline — fall back to ray casting
+                }
+            }
+            _ => return None, // Non-planar surface — fall back to ray casting
+        };
+
+        if bnd_2d.len() < 3 {
+            continue;
+        }
+
+        // Project the 3D point to the face plane
+        let (u_axis, v_axis) = crate::inttools::edge_face::plane_local_basis(&plane);
+        let d = point - plane.origin;
+        let p2d = DVec2::new(d.dot(u_axis), d.dot(v_axis));
+
+        // OCCT BRepClass3d_SolidClassifier: check signed distance from the
+        // face plane.  For a convex solid with outward-pointing normals, a
+        // point with signed_distance > flat_tol is OUTSIDE this face → outside
+        // the solid.
+        let n_sign = (point - plane.origin).dot(plane.normal);
+        if n_sign > flat_tol {
+            return Some(Classification::Out);
+        }
+        // When |signed_distance| ≤ flat_tol, the point is ON the face plane
+        // (within tolerance).  Record this so we can detect the On case.
+        let on_face_plane = n_sign.abs() <= flat_tol;
+
+        // Classify 2D point against face boundary polygon using ray casting
+        let mut inside = false;
+        let mut on_boundary = false;
+        let n = bnd_2d.len();
+        let mut j = n - 1;
+        for i in 0..n {
+            let (xi, yi) = (bnd_2d[i].x, bnd_2d[i].y);
+            let (xj, yj) = (bnd_2d[j].x, bnd_2d[j].y);
+
+            // Check if point is ON an edge
+            let edge_len = ((xj - xi).powi(2) + (yj - yi).powi(2)).sqrt();
+            if edge_len > 1e-15 {
+                let t = ((p2d.x - xi) * (xj - xi) + (p2d.y - yi) * (yj - yi)) / edge_len;
+                let t_clamped = t.clamp(0.0, edge_len);
+                let closest_x = xi + (xj - xi) * t_clamped / edge_len;
+                let closest_y = yi + (yj - yi) * t_clamped / edge_len;
+                if (p2d.x - closest_x).abs() <= flat_tol && (p2d.y - closest_y).abs() <= flat_tol {
+                    on_boundary = true;
+                    break;
+                }
+            }
+
+            // Ray casting (even-odd rule)
+            if ((yi > p2d.y) != (yj > p2d.y))
+                && (p2d.x < (xj - xi) * (p2d.y - yi) / (yj - yi) + xi)
+            {
+                inside = !inside;
+            }
+            j = i;
+        }
+
+        if on_face_plane && inside {
+            on_any = true; // Point is ON this face (within tolerance)
+            continue; // Check other faces — need all to be On or In
+        }
+
+        if on_boundary {
+            on_any = true;
+            continue;
+        }
+
+        if !inside {
+            return Some(Classification::Out);
+        }
+    }
+
+    // Point projects inside (or on) ALL face boundaries → inside or on
+    Some(if on_any { Classification::On } else { Classification::In })
+}
+
+/// Build a 2D boundary polygon for a face, projected to the given plane.
+fn build_face_boundary_2d(face: &DSFace, ds: &DS, plane: &Plane) -> Vec<DVec2> {
+    let (u_axis, v_axis) = crate::inttools::edge_face::plane_local_basis(plane);
+    face.boundary_verts.iter()
+        .map(|&vi| {
+            let d = ds.vertices[vi].point - plane.origin;
+            DVec2::new(d.dot(u_axis), d.dot(v_axis))
+        })
+        .collect()
 }
 
 fn classify_point_internal(
@@ -1137,6 +1265,27 @@ fn ray_cast_classify(
                 let crossings_torus = ray_torus_crossings(point, ray_dir, t, fi, ds, ray_tol, boundary_tol);
                 crossings += crossings_torus;
             }
+            // BSpline surfaces: for planar BSpline (from plane_to_bspline),
+            // use plane-equivalent ray intersection (same as Plane branch above).
+            Surface3::BSpline(bsp) => {
+                if let Some(plane_normal) = bspline_planar_normal(bsp) {
+                    let denom = ray_dir.dot(plane_normal);
+                    if denom.abs() < ray_tol { continue; }
+                    // Use first control point as the plane origin
+                    let p0 = bsp.control_points[0][0];
+                    let t_val = (p0 - point).dot(plane_normal) / denom;
+                    if t_val < ray_tol { continue; }
+                    let hit = point + ray_dir * t_val;
+                    let face_verts = ds.face_boundary_points(fi);
+                    let plane = rcad_kernel::geom::Plane { origin: p0, normal: plane_normal };
+                    if is_near_polygon_boundary(&hit, &face_verts, &plane, boundary_tol) {
+                        return None;
+                    }
+                    if point_in_face_aabb(hit, &face_verts, boundary_tol) {
+                        crossings += 1;
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -1149,6 +1298,19 @@ fn ray_cast_classify(
 }
 
 /// Count ray-torus crossings using quartic root finding.
+/// For a planar degree-1 BSpline (from plane_to_bspline), compute the
+/// plane normal from the 2×2 control point grid. Returns None for non-planar
+/// or non-degree-1 BSpline surfaces.
+fn bspline_planar_normal(bsp: &rcad_kernel::geom::BSplineSurface) -> Option<DVec3> {
+    if bsp.degree_u != 1 || bsp.degree_v != 1 { return None; }
+    if bsp.control_points.len() < 2 || bsp.control_points[0].len() < 2 { return None; }
+    let du = bsp.control_points[1][0] - bsp.control_points[0][0];
+    let dv = bsp.control_points[0][1] - bsp.control_points[0][0];
+    let n = du.cross(dv);
+    if n.length_squared() < 1e-30 { return None; }
+    Some(n.normalize())
+}
+
 fn ray_torus_crossings(
     point: DVec3,
     ray_dir: DVec3,

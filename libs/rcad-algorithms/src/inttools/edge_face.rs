@@ -85,7 +85,7 @@ fn ray_cast_contains_with_tol(px: f64, py: f64, poly: &[(f64, f64)], eps: f64) -
     for i in 0..n {
         let (xi, yi) = poly[i];
         let (xj, yj) = poly[j];
-        if (yi > py) != (yj > py) {
+        if (yi >= py - eps) != (yj >= py - eps) {
             let dy = yj - yi;
             if dy.abs() < eps {
                 j = i;
@@ -166,6 +166,22 @@ pub fn clip_line_to_polygon_with_tol(
         // line_dir × edge_dir — zero means parallel
         let denom = line_u * ey - line_v * ex;
         if denom.abs() < eps {
+            // OCCT-aligned: when the line coincides with a polygon edge (parallel
+            // AND zero distance), use the edge endpoints as intersection t-values.
+            // Without this, boundary-coincident intersection lines lose the portion
+            // of the line that runs along the polygon edge (e.g. bfuse_simple B3
+            // face[6] intersection at z=0, which is on the face boundary).
+            let dist = (origin_u - ax) * ey - (origin_v - ay) * ex;
+            if dist.abs() < eps {
+                // Line coincides with this edge — add t at both endpoints
+                let dir_len2 = line_u * line_u + line_v * line_v;
+                if dir_len2 > 1e-30 {
+                    let t_a = ((ax - origin_u) * line_u + (ay - origin_v) * line_v) / dir_len2;
+                    let t_b = ((bx - origin_u) * line_u + (by - origin_v) * line_v) / dir_len2;
+                    t_vals.push(t_a);
+                    t_vals.push(t_b);
+                }
+            }
             continue;
         }
 
@@ -244,6 +260,18 @@ pub fn clip_line_to_polygon_with_tol(
         let mid_pt = line.origin + line.direction * t_mid;
         if point_in_planar_face_with_tol(mid_pt, plane, face_verts, geom_tol) {
             result.push((deduped[k], deduped[k + 1]));
+        } else {
+            // The midpoint might land exactly on a boundary edge (coincident
+            // line case).  Nudge perpendicular to the line direction (try
+            // BOTH directions) and retry.
+            let perp = line.direction.cross(plane.normal).normalize_or_zero() * (eps * 10.0);
+            if perp.length_squared() > 0.0 {
+                if point_in_planar_face_with_tol(mid_pt + perp, plane, face_verts, geom_tol)
+                    || point_in_planar_face_with_tol(mid_pt - perp, plane, face_verts, geom_tol)
+                {
+                    result.push((deduped[k], deduped[k + 1]));
+                }
+            }
         }
     }
 

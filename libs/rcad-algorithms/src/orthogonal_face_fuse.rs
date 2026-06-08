@@ -548,6 +548,16 @@ fn try_fuse_one_axis_aligned_edge_adjacent_pair(brep: &mut BRep, si: usize, shi:
             if ki != kj {
                 continue;
             }
+            // Skip non-Plane faces (BSpline, etc.) — only merge axis-aligned
+            // Plane faces.  The main fuse_orthogonal_in_shell already filters
+            // by face_is_plane; this edge-adjacent fallback must do the same
+            // (bfuse_simple B4/B5: planar BSpline faces were being merged with
+            // adjacent Plane faces, losing surface type).
+            if !face_is_plane(brep, flat_face_index(brep, si, shi, fi))
+                || !face_is_plane(brep, flat_face_index(brep, si, shi, fj))
+            {
+                continue;
+            }
             if rects_2d_bbox_positive_area_overlap(bi, bj, gap) {
                 continue;
             }

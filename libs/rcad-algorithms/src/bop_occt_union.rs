@@ -28,15 +28,15 @@
 //! a full [`crate::brep_check::check`] pass. Failures surface as [`BooleanError::InvalidResult`],
 //! [`BooleanError::EmptyInput`], or [`BooleanError::NumericalFailure`] with message prefix `union:`.
 
+use glam::DVec3;
 use crate::brep_repair::merge_close_vertices;
 use crate::bopds;
 use crate::bopds::ds::{DS, Interference};
 use crate::builder;
 use crate::bvh;
 use crate::geom_populate;
-use crate::history::BooleanHistory;
+use crate::history::{BooleanHistory, FaceOrigin};
 use crate::pave_filler;
-use crate::unify_same_domain_faces;
 use crate::tolerance::*;
 use crate::total_surface_area;
 use crate::BooleanError;
@@ -441,7 +441,7 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     pave_fill(&mut ds, a, b, use_bvh);
     validate_ds_invariants(&ds)?;
     let builder = builder::BooleanBuilder::new(&ds, BooleanOpType::Union);
-    let mut result = builder.build()?;
+    let (mut result, mut history) = builder.build_with_history()?;
     if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
         let mut fi = 0usize;
         for solid in &result.solids {
@@ -493,52 +493,123 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     result = crate::deduplicate_edges(result);
     geom_populate::recompute_plane_surfaces(&mut result);
     validate_union_brep_output("union: result failed checks after vertex merge", &result)?;
-    let checkpoint = result.clone();
-    merge_coplanar_orthogonal_unify(&mut result);
-    geom_populate::recompute_plane_surfaces(&mut result);
+    // Deduplicate edges so adjacent sub-faces share edge topology.
+    result = crate::deduplicate_edges(result);
 
-    let pen_before = solid_closure_boundary_penalty(&checkpoint);
-    let pen_after = solid_closure_boundary_penalty(&result);
-    let n_before = shell_face_total(&checkpoint);
-    let n_after = shell_face_total(&result);
-    let sa_before = total_surface_area(&checkpoint);
-    let sa_after = total_surface_area(&result);
-    // Revert if the merge changes SA significantly (in either direction) with a large
-    // face-count drop — indicates that unify_same_domain_faces merged cylinder sub-faces
-    // whose UV projection overcounts (or undercounts) area in try_cylinder_trimmed_face_area.
-    let large_sa_change = {
-        let abs_delta = (sa_after - sa_before).abs();
-        abs_delta > 1e-6 && abs_delta > 0.005 * sa_before.max(1.0)
-    };
-    let suspicious_planar_snarl = (pen_after > pen_before
-        && (n_after <= 10 || n_after.saturating_add(12) < n_before))
-        || (large_sa_change && n_after < n_before && n_after.saturating_add(12) < n_before)
-        || (large_sa_change && (sa_after - sa_before).abs() > 0.10 * sa_before.max(1.0));
-    if suspicious_planar_snarl {
-        result = checkpoint;
-        geom_populate::recompute_plane_surfaces(&mut result);
-    }
+    // OCCT ClassifyFaces (BuildSolid): remove interior faces classified as
+    // State_IN for the OTHER operand.  Runs BEFORE the second butterfly merge
+    // so history.face_origins (from build_with_history's internal merge) are valid.
+    {
+        use rcad_kernel::geom::Surface3;
+        use crate::classify::{classify_point, Classification};
+        use crate::history::FaceOrigin;
+        use crate::tolerance::TOLERANCE_ABS;
+        let a_ids: Vec<usize> = (0..ds.a_face_count).collect();
+        let b_ids: Vec<usize> = (ds.a_face_count..ds.faces.len()).collect();
+        let mut to_remove: Vec<(usize, usize, usize)> = Vec::new();
+        let origins = &history.face_origins;
+        for (si, solid) in result.solids.iter().enumerate() {
+            for (shi, shell) in solid.shells.iter().enumerate() {
+                for (fi, face) in shell.faces.iter().enumerate() {
+                    let origin = origins.get(fi).copied();
+                    let classify_ids = match origin {
+                        Some(FaceOrigin::FromA(_)) => &b_ids,
+                        Some(FaceOrigin::FromB(_)) => &a_ids,
+                        _ => {
+                            let is_plane = result.geom.face_surface.get(fi).copied().flatten()
+                                .and_then(|si| result.geom.surfaces.get(si))
+                                .is_some_and(|s| matches!(s, Surface3::Plane(_)));
+                            if is_plane { &b_ids } else { &a_ids }
+                        }
+                    };
+                    let mut pts: Vec<DVec3> = Vec::new();
+                    for we in &face.outer_wire.edges {
+                        if let Some(edge) = result.edges.get(we.idx) {
+                            pts.push(result.vertices[edge.start].point);
+                            pts.push(result.vertices[edge.end].point);
+                        }
+                    }
+                    if pts.len() < 3 { continue; }
+                    let centroid = pts.iter().copied().sum::<DVec3>() / pts.len() as f64;
 
-    validate_union_brep_output("union: result failed checks after same-plane merge", &result)?;
-    Ok(result)
-}
-
-/// Merge coplanar orthogonal panels left by boolean split (re-run groups after each success).
-fn merge_coplanar_orthogonal_unify(brep: &mut BRep) {
-    // Extra rounds help large coplanar stacks (e.g. OCCT `boolean/supported` overlapping boxes)
-    // settle before `total_surface_area` vs `checkprops -s` stabilizes.
-    let tol = TOLERANCE_ABS;
-    for _ in 0..12 {
-        let (next, m) = crate::orthogonal_face_fuse::fuse_orthogonal_coplanar_faces(brep, tol);
-        *brep = next;
-        geom_populate::recompute_plane_surfaces(brep);
-        let (u, n_unify) = unify_same_domain_faces(brep);
-        *brep = u;
-        geom_populate::recompute_plane_surfaces(brep);
-        if m == 0 && n_unify == 0 {
-            break;
+                    // OCCT BOPTools_AlgoTools::ComputeState: classify interior
+                    // point of the face against the other solid.  RCAD approximates
+                    // this with vertex centroid (OCCT uses PointInFace for a point
+                    // strictly inside the face boundary).  If the point is On (on the
+                    // boundary of the classify-against solid), the face is on the
+                    // shared interface and NOT interior — keep it.
+                    let interior = classify_point(centroid, classify_ids, &ds) == Classification::In;
+                    if interior {
+                        if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+                            let surf_name = result.geom.face_surface.get(fi).copied().flatten()
+                                .and_then(|si| result.geom.surfaces.get(si))
+                                .map(|s| match s {
+                                    Surface3::Plane(_) => "Plane",
+                                    Surface3::BSpline(_) => "BSpline",
+                                    _ => "Other",
+                                }).unwrap_or("None");
+                            eprintln!("[CLASSIFY] REMOVE fi={fi} origin={origin:?} surf={surf_name} centroid=({:.6},{:.6},{:.6}) n=({:.4},{:.4},{:.4})",
+                                centroid.x, centroid.y, centroid.z,
+                                face.normal.x, face.normal.y, face.normal.z);
+                        }
+                        to_remove.push((si, shi, fi));
+                    } else if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+                        let surf_name = result.geom.face_surface.get(fi).copied().flatten()
+                            .and_then(|si| result.geom.surfaces.get(si))
+                            .map(|s| match s {
+                                Surface3::Plane(_) => "Plane",
+                                Surface3::BSpline(_) => "BSpline",
+                                _ => "Other",
+                            }).unwrap_or("None");
+                        eprintln!("[CLASSIFY] KEEP   fi={fi} origin={origin:?} surf={surf_name} centroid=({:.6},{:.6},{:.6}) n=({:.4},{:.4},{:.4})",
+                            centroid.x, centroid.y, centroid.z,
+                            face.normal.x, face.normal.y, face.normal.z);
+                    }
+                }
+            }
+        }
+        if !to_remove.is_empty() {
+            eprintln!("[CLASSIFY_FACES] removing {} interior faces (from {})", to_remove.len(),
+                result.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count());
+            to_remove.sort_by(|a, b| b.cmp(a));
+            for &(si, shi, fi) in &to_remove {
+                // Compute flat face index: sum faces in preceding solids/shells + fi
+                let mut ff = 0usize;
+                for s in 0..si {
+                    for sh in &result.solids[s].shells {
+                        ff += sh.faces.len();
+                    }
+                }
+                for sh in 0..shi {
+                    ff += result.solids[si].shells[sh].faces.len();
+                }
+                ff += fi;
+                crate::remove_flat_face_geom_slots(&mut result.geom, ff);
+                if let Some(s) = result.solids.get_mut(si) {
+                    if let Some(sh) = s.shells.get_mut(shi) {
+                        if fi < sh.faces.len() { sh.faces.remove(fi); }
+                    }
+                }
+            }
         }
     }
+
+    // Second OCCT FillSameDomainFaces pass (butterfly merge).
+    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+        let nf = result.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
+        eprintln!("[CLASSIFY] after classify: {} faces", nf);
+    }
+    result = crate::unify_same_domain_faces(&result).0;
+    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+        let nf = result.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
+        eprintln!("[CLASSIFY] after butterfly: {} faces", nf);
+    }
+    // SKIP: second recompute_plane_surfaces would promote cross-operand merged faces
+
+    result = crate::prune_unused_topology(result);
+    result = crate::deduplicate_edges(result);
+    validate_union_brep_output("union: result failed checks after same-plane merge", &result)?;
+    Ok(result)
 }
 
 /// Same phases as [`fuse`], but returns [`BooleanHistory`] and does not run plane recompute

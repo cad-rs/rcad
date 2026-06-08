@@ -1546,17 +1546,26 @@ impl<'a> PaveFiller<'a> {
         let s1 = self.ds.faces[f1].surface.clone();
         let s2 = self.ds.faces[f2].surface.clone();
 
-        // Promote planar BSpline surfaces to Plane so they hit the analytic
-        // Plane × * dispatch arms instead of falling through to marching.
+        // Promote planar BSpline surfaces to Plane using the face's stored normal
+        // and boundary centroid (avoid bspline_to_plane whose control-point origin
+        // causes the promoted plane to deviate from actual face geometry).
         let s1 = match &s1 {
             Surface3::BSpline(bsp) if bspline_is_planar(bsp, TOLERANCE_ABS) => {
-                Surface3::Plane(bspline_to_plane(bsp))
+                let face = &self.ds.faces[f1];
+                let c = face.boundary_verts.iter()
+                    .map(|&vi| self.ds.vertices[vi].point)
+                    .sum::<DVec3>() / face.boundary_verts.len().max(1) as f64;
+                Surface3::Plane(Plane { origin: c, normal: face.normal })
             }
             _ => s1,
         };
         let s2 = match &s2 {
             Surface3::BSpline(bsp) if bspline_is_planar(bsp, TOLERANCE_ABS) => {
-                Surface3::Plane(bspline_to_plane(bsp))
+                let face = &self.ds.faces[f2];
+                let c = face.boundary_verts.iter()
+                    .map(|&vi| self.ds.vertices[vi].point)
+                    .sum::<DVec3>() / face.boundary_verts.len().max(1) as f64;
+                Surface3::Plane(Plane { origin: c, normal: face.normal })
             }
             _ => s2,
         };
@@ -1635,10 +1644,14 @@ impl<'a> PaveFiller<'a> {
     fn intersect_plane_plane_faces(&mut self, f1: usize, f2: usize, p1: &Plane, p2: &Plane) {
         use inttools::pcurve_derive::line_pcurve_on_plane;
 
+        let debug_ff = (f1 == 4 && f2 == 8) || (f1 == 0 && f2 == 9);
+
         match inttools::plane_plane::intersect_plane_plane(p1, p2) {
-            inttools::plane_plane::PlanePlaneResult::Parallel => {}
+            inttools::plane_plane::PlanePlaneResult::Parallel => {
+                if debug_ff { eprintln!("[PF_DBG]   PARALLEL"); }
+            }
             inttools::plane_plane::PlanePlaneResult::Coincident => {
-                // Coplanar — handled via coplanar analysis
+                if debug_ff { eprintln!("[PF_DBG]   COINCIDENT"); }
                 self.handle_coplanar_faces(f1, f2, p1);
             }
             inttools::plane_plane::PlanePlaneResult::Line(line) => {
@@ -1706,13 +1719,19 @@ impl<'a> PaveFiller<'a> {
         let result = inttools::coplanar::analyze_coplanar_faces(&verts1, &verts2, plane);
 
         if !result.overlap.is_empty() {
-            // Record as a FaceFace interference with no curves (coplanar overlap)
+            // Record as a FaceFace interference with no curves (coplanar overlap marker)
             self.ds.interferences.push(Interference::FaceFace {
                 f1,
                 f2,
                 curves: vec![],
                 points: vec![],
             });
+            // Store the pre-computed overlap polygon so the Builder can read it
+            // directly instead of re-computing from DS face boundaries.
+            // Take the first (largest) overlap region for simplicity.
+            if let Some(overlap) = result.overlap.into_iter().max_by_key(|poly| poly.len()) {
+                self.ds.same_domain_overlaps.push((f1, f2, overlap));
+            }
         }
     }
 
@@ -1994,7 +2013,14 @@ impl<'a> PaveFiller<'a> {
         let d = d_vec.length();
 
         // No intersection if disjoint or one contains the other
-        if d < TOLERANCE_FLOAT_LOOSE || d >= sph1.radius + sph2.radius || d <= (sph1.radius - sph2.radius).abs() {
+        if d < TOLERANCE_FLOAT_LOOSE {
+            // Concentric spheres: same-domain (same center). Record empty FaceFace.
+            self.ds.interferences.push(Interference::FaceFace {
+                f1, f2, curves: vec![], points: vec![],
+            });
+            return;
+        }
+        if d >= sph1.radius + sph2.radius || d <= (sph1.radius - sph2.radius).abs() {
             return;
         }
 
@@ -2339,7 +2365,15 @@ impl<'a> PaveFiller<'a> {
         let mut curve_indices = Vec::new();
 
         match intersect_cylinder_cylinder(cyl1, cyl2) {
-            CylinderCylinderResult::NoIntersection | CylinderCylinderResult::Coaxial => return,
+            CylinderCylinderResult::NoIntersection => return,
+            CylinderCylinderResult::Coaxial => {
+                // Same-domain coaxial cylinders: record empty-curves FaceFace so
+                // the Builder treats this pair as coincident (no intersection to split).
+                self.ds.interferences.push(Interference::FaceFace {
+                    f1, f2, curves: vec![], points: vec![],
+                });
+                return;
+            }
 
             CylinderCylinderResult::PerpendicularOffsetCurves {
                 cyl1: off_cyl1,
@@ -3257,7 +3291,12 @@ impl<'a> PaveFiller<'a> {
         };
 
         match intersect_cone_cone(cone1, cone2) {
-            ConeConeResult::NoIntersection | ConeConeResult::Coaxial => (),
+            ConeConeResult::NoIntersection => (),
+            ConeConeResult::Coaxial => {
+                self.ds.interferences.push(Interference::FaceFace {
+                    f1, f2, curves: vec![], points: vec![],
+                });
+            }
 
             ConeConeResult::CoaxialPoint(_pt) => {
                 // Single shared apex — a point contact, not a curve.

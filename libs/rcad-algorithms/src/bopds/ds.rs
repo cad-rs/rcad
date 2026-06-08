@@ -227,6 +227,10 @@ pub struct DS {
     pub shared_topology: SharedTopologyInfo,
     /// Extreme geometry analysis results.
     pub extreme_geometry: ExtremeGeometryInfo,
+    /// Pre-computed overlap polygons for same-domain (coplanar) face pairs.
+    /// Each entry is (face_a_index, face_b_index, overlap_boundary_in_3d).
+    /// Populated during PaveFiller's coplanar analysis, consumed by Builder.
+    pub same_domain_overlaps: Vec<(usize, usize, Vec<DVec3>)>,
 }
 
 impl DS {
@@ -252,6 +256,7 @@ impl DS {
             a_face_count: 0,
             shared_topology: SharedTopologyInfo::default(),
             extreme_geometry: ExtremeGeometryInfo::default(),
+            same_domain_overlaps: Vec::new(),
         };
 
         ds.load_brep(a, ShapeOrigin::ShapeA);
@@ -467,7 +472,43 @@ impl DS {
                 })
                 .collect();
 
-            self.faces[fi].uv_boundary = Some(uv_pts);
+            // For planar surfaces (Plane and planar BSpline), decimate colinear
+            // UV points. OCCT's BOPAlgo_BuilderFace uses the face's topological
+            // edges directly (each edge has exactly 2 vertices), not sampled UV
+            // polylines.  The 8-sample-per-edge UV boundary creates edge fragments.
+            // Tolerance 1e-6 * edge_length accounts for projection noise from
+            // closest_point_on_surface on BSpline surfaces (Newton iteration).
+            let is_planar = matches!(&surface, Surface3::Plane(_))
+                || (if let Surface3::BSpline(ref bsp) = surface { rcad_kernel::geom::bspline_is_planar(bsp, 1e-7) } else { false });
+            let decimated = if is_planar {
+                let n = uv_pts.len();
+                if n > 2 {
+                    let mut kept: Vec<DVec2> = Vec::with_capacity(n);
+                    for i in 0..n {
+                        let prev = uv_pts[(i + n - 1) % n];
+                        let curr = uv_pts[i];
+                        let next = uv_pts[(i + 1) % n];
+                        let d1 = curr - prev;
+                        let d2 = next - curr;
+                        let cross = (d1.x * d2.y - d1.y * d2.x).abs();
+                        let len1 = d1.length_squared();
+                        let len2 = d2.length_squared();
+                        if cross < 1e-6 * len1.max(len2).max(f64::MIN_POSITIVE)
+                            && len1 > f64::MIN_POSITIVE && len2 > f64::MIN_POSITIVE
+                        {
+                            continue;
+                        }
+                        kept.push(curr);
+                    }
+                    if kept.len() >= 3 && kept.len() < uv_pts.len() {
+                        kept
+                    } else { uv_pts }
+                } else { uv_pts }
+            } else {
+                uv_pts
+            };
+
+            self.faces[fi].uv_boundary = Some(decimated);
         }
     }
 

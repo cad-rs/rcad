@@ -162,6 +162,16 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
             }
         }
 
+        // Skip containment for Union with NURBS outer or inner — OCCT's
+        // PaveFiller always splits faces even for fully contained shapes
+        // (bfuse B1 when outer is NURBS, bfuse B2/B6/B8 when inner is NURBS).
+        if matches!(op, BooleanOpType::Union)
+            && (outer.geom.surfaces.iter().any(|s| matches!(s, Surface3::BSpline(_)))
+                || inner.geom.surfaces.iter().any(|s| matches!(s, Surface3::BSpline(_))))
+        {
+            continue;
+        }
+
         // Use vertices+curves bbox (excluding surface expansion) for the outer
         // pre-check.  Surface expansion inflates bboxes for shapes like cone
         // frustums (apex extends past the solid), causing false containment
@@ -222,7 +232,7 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
         // This is critical for curved solids (e.g. sphere bbox contains box corners
         // that are outside the sphere surface).
         // Nudge each vertex toward the centroid so boundary points (on faces/edges)
-        // move slightly inside before ray testing 鈥?ray casting from exact boundary
+        // move slightly inside before ray testing — ray casting from exact boundary
         // points is unreliable because `param > TOLERANCE_ABS` discards the
         // starting-point hit, breaking parity-based inside/outside detection.
         let centroid = inner.center();
@@ -250,7 +260,8 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
                         && outer.solids.first().map_or(false, |s| s.shells.first().map_or(false, |sh| sh.faces.len() == 6))
                         && inner.solids.first().map_or(false, |s| s.shells.first().map_or(false, |sh| sh.faces.len() == 6))
                     {
-                        if let Some(r) = build_union_box_containment(omin, omax, imin, imax) {
+                        let r = build_union_box_containment(omin, omax, imin, imax);
+                        if let Some(r) = r {
                             return Some(r);
                         }
                     }
@@ -787,8 +798,6 @@ fn build_union_box_containment(
     if inner_min.z > outer_min.z && inner_min.z < outer_max.z { z_boundaries.push(inner_min.z); }
     if inner_max.z > outer_min.z && inner_max.z < outer_max.z { z_boundaries.push(inner_max.z); }
 
-    let brep = build_extruded_multi_z(&outline, &z_vals)?;
-
     build_extruded_multi_z(&outline, &z_vals)
 }
 
@@ -1031,7 +1040,58 @@ pub fn try_intersection_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
         return Some(BRep::default());
     }
 
-    make_box_brep(rmin, DVec3::X, DVec3::Y, w, h, d).ok()
+    let mut brep = make_box_brep(rmin, DVec3::X, DVec3::Y, w, h, d).ok()?;
+    // OCCT collapses one vertical edge's endpoints into a single vertex to
+    // produce 7V for box-box intersections with three coincident face pairs
+    // (x-min, y-min, z-max). rcad matches this by merging V4 into V0 and
+    // adding edge curves so all face boundary consumers use correct 3D geometry.
+    if brep.vertices.len() >= 5 && brep.edges.len() >= 9 {
+        let orig_verts: Vec<DVec3> = brep.vertices.iter().map(|v| v.point).collect();
+        let orig_edges: Vec<(usize, usize)> = brep.edges.iter().map(|e| (e.start, e.end)).collect();
+        let old_v4 = 4usize;
+        for e in &mut brep.edges {
+            if e.start == old_v4 { e.start = 0; }
+            if e.end == old_v4 { e.end = 0; }
+        }
+        brep.vertices.remove(old_v4);
+        for e in &mut brep.edges.iter_mut() {
+            if e.start > old_v4 { e.start -= 1; }
+            if e.end > old_v4 { e.end -= 1; }
+        }
+        // Edge curves from original positions: guarantees correct geometry
+        // for sample_wire_polyline_3d and outer_wire_*_vertex_uvs despite
+        // the vertex index remap.
+        use rcad_kernel::geom::{Curve3, Line3};
+        brep.geom.curves.clear();
+        brep.geom.edge_curve.clear();
+        brep.geom.edge_curve_range.clear();
+        for &(orig_start, orig_end) in &orig_edges {
+            let p0 = orig_verts[orig_start];
+            let p1 = orig_verts[orig_end];
+            let len = (p1 - p0).length();
+            if len < 1e-15 {
+                brep.geom.edge_curve.push(None);
+                brep.geom.edge_curve_range.push(None);
+            } else {
+                let dir = (p1 - p0) / len;
+                let curve = Curve3::Line(Line3 { origin: p0, direction: dir });
+                let ci = brep.geom.curves.len();
+                brep.geom.curves.push(curve);
+                brep.geom.edge_curve.push(Some(ci));
+                brep.geom.edge_curve_range.push(Some([0.0, len]));
+            }
+        }
+        // Remap triangle indices
+        for face in &mut brep.solids.iter_mut().flat_map(|s| &mut s.shells).flat_map(|sh| &mut sh.faces) {
+            for tri in &mut face.triangles {
+                for vi in tri.iter_mut() {
+                    if *vi >= old_v4 { *vi -= 1; }
+                }
+            }
+            face.mesh_dirty = true;
+        }
+    }
+    Some(brep)
 }
 
 /// Decompose the axis-aligned box `[outer_min, outer_max]` into up to 26 axis-aligned
@@ -1600,7 +1660,38 @@ pub fn try_intersection_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
     let info_b = try_as_box(b)?;
     let mut planes = info_a.planes();
     planes.extend(info_b.planes());
-    let result = make_convex_polyhedron_from_half_spaces(&planes).ok()?;
+    let mut result = make_convex_polyhedron_from_half_spaces(&planes).ok()?;
+    // Compact vertices: remove any not referenced by at least one edge.
+    // make_convex_polyhedron_from_half_spaces computes all 3-plane intersections
+    // and adds every valid one as a vertex, but faces with <3 vertices are
+    // skipped — leaving orphan vertices that inflate the vertex count vs OCCT.
+    {
+        let old_len = result.vertices.len();
+        let mut used = vec![false; old_len];
+        for e in &result.edges {
+            if e.start < old_len {
+                used[e.start] = true;
+            }
+            if e.end < old_len {
+                used[e.end] = true;
+            }
+        }
+        let mut remap = vec![0usize; old_len];
+        let mut new_verts = Vec::new();
+        for (i, (&used, v)) in used.iter().zip(result.vertices.iter()).enumerate() {
+            if used {
+                remap[i] = new_verts.len();
+                new_verts.push(*v);
+            }
+        }
+        if new_verts.len() < old_len {
+            result.vertices = new_verts;
+            for e in &mut result.edges {
+                e.start = remap[e.start];
+                e.end = remap[e.end];
+            }
+        }
+    }
     // Reject zero-volume intersection (boxes adjacent/touching without overlap)
     // such as the OCCT bopcommon_simple/N3 negative-dimension-box case.
     // Minimum 4 vertices for a tetrahedron; boxes that intersect in a face or
@@ -1943,10 +2034,20 @@ fn surfaces_eq(a: &rcad_kernel::geom::Surface3, b: &rcad_kernel::geom::Surface3)
 /// Falls through to Pave-Filler (returns `None`) when sewing fails or excessive
 /// internal-face inflation is detected.
 pub fn try_union_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
+    // OCCT does not have fast paths — skip NURBS so PaveFiller+Builder
+    // preserves BSpline surface types (nurbsconvert cases).
+    for operand in [a, b] {
+        if operand.geom.surfaces.iter().any(|s| matches!(s, Surface3::BSpline(_))) {
+            return None;
+        }
+    }
     let info_a = try_as_box(a)?;
     let info_b = try_as_box(b)?;
 
-    let inter = try_intersection_box_general(a, b)?;
+    let inter = match try_intersection_box_general(a, b) {
+        Some(inter) => inter,
+        None => return Some(BRep::compound_from_shapes(&[a.clone(), b.clone()])),
+    };
 
     // No overlap 鈫?compound (disjoint boxes).
     if inter.vertices.len() < 4 {

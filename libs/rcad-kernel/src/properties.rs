@@ -12,8 +12,8 @@ use glam::{DVec2, DVec3};
 use std::f64::consts::PI;
 
 use crate::BRep;
-use crate::geom::{ConicalSurface, Curve3, CylindricalSurface, SphericalSurface, Surface3, SurfaceEval};
-use crate::topology::{Face, Wire};
+use crate::geom::{ConicalSurface, Curve3, CurveEval, CylindricalSurface, SphericalSurface, Surface3, SurfaceEval};
+use crate::topology::{Face, Wire, WireEdge};
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -1038,6 +1038,30 @@ fn bbox2d_components(uv: &[(f64, f64)]) -> Option<(f64, f64, f64, f64)> {
 /// Dense [`sample_wire_polyline_3d`] can self-cross after boolean edge reordering while the
 /// vertex ring still traces the true boundary; comparing both shoelaces disambiguates that
 /// from legitimate concave faces (`bfuse_simple/D9` vs `bfuse_simple/E5`).
+fn wire_edge_endpoint_3d(brep: &BRep, we: &WireEdge) -> Option<DVec3> {
+    let edge = brep.edges.get(we.idx)?;
+    // Use edge curve when available (handles degenerate edges where start==end
+    // but curve spans the full distance between two different positions).
+    if let Some(curve) = brep.geom.edge_curve.get(we.idx)
+        .and_then(|o| *o)
+        .and_then(|ci| brep.geom.curves.get(ci))
+    {
+        let range = brep.geom.edge_curve_range.get(we.idx)
+            .and_then(|o| *o)
+            .unwrap_or_else(|| curve.default_domain());
+        // For degenerate edges (start==end), the curve spans between two
+        // different positions. The face boundary needs BOTH curve endpoints
+        // to form a correct polygon. Use the EDGE DIRECTION to select which
+        // endpoint: forward → range[0], reverse → range[1]. For non-degenerate
+        // edges this matches vertex.position; for degenerate edges it gives
+        // the correct geometric position on the face boundary.
+        let t = if we.forward { range[0] } else { range[1] };
+        return Some(curve.point_at(t));
+    }
+    let vidx = if we.forward { edge.start } else { edge.end };
+    Some(brep.vertices.get(vidx)?.point)
+}
+
 fn outer_wire_ordered_vertex_uvs(
     brep: &BRep,
     wire: &Wire,
@@ -1047,18 +1071,9 @@ fn outer_wire_ordered_vertex_uvs(
 ) -> Vec<(f64, f64)> {
     let mut out: Vec<(f64, f64)> = Vec::new();
     for we in &wire.edges {
-        let Some(edge) = brep.edges.get(we.idx) else {
+        let Some(p) = wire_edge_endpoint_3d(brep, we) else {
             continue;
         };
-        let vidx = if we.forward {
-            edge.start
-        } else {
-            edge.end
-        };
-        let Some(v) = brep.vertices.get(vidx) else {
-            continue;
-        };
-        let p = v.point;
         let uv = (p[i], p[j]);
         if let Some(&(u0, v0)) = out.last() {
             if (uv.0 - u0).abs() <= pos_tol && (uv.1 - v0).abs() <= pos_tol {
@@ -1094,11 +1109,24 @@ fn outer_wire_unique_vertex_uvs(
         let Some(edge) = brep.edges.get(we.idx) else {
             continue;
         };
-        for vi in [edge.start, edge.end] {
-            let Some(v) = brep.vertices.get(vi) else {
-                continue;
-            };
-            let p = v.point;
+        // Use edge curve endpoints when available (handles degenerate edges
+        // where start==end but the curve spans two different positions).
+        let pts: [DVec3; 2] = if let Some(curve) = brep.geom.edge_curve.get(we.idx)
+            .and_then(|o| *o)
+            .and_then(|ci| brep.geom.curves.get(ci))
+        {
+            let range = brep.geom.edge_curve_range.get(we.idx)
+                .and_then(|o| *o)
+                .unwrap_or_else(|| curve.default_domain());
+            [curve.point_at(range[0]), curve.point_at(range[1])]
+        } else {
+            let p0 = brep.vertices.get(edge.start).map(|v| v.point)
+                .unwrap_or(DVec3::ZERO);
+            let p1 = brep.vertices.get(edge.end).map(|v| v.point)
+                .unwrap_or(DVec3::ZERO);
+            [p0, p1]
+        };
+        for &p in &pts {
             let uv = (p[i], p[j]);
             if !out
                 .iter()
