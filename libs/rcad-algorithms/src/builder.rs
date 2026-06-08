@@ -198,7 +198,7 @@ impl SubFace {
                 // points cluster near the circle boundary, pulling the vertex centroid
                 // inside the sphere even when the sub-face is geometrically outside.
                 // The area centroid always lies in the correct geometric interior.
-                let centroid = if self.boundary.len() >= 3 {
+                let mut centroid = if self.boundary.len() >= 3 {
                     planar_polygon_centroid(&self.boundary, self.normal)
                 } else if self.boundary.is_empty() {
                     DVec3::ZERO
@@ -206,6 +206,17 @@ impl SubFace {
                     self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
                 };
                 // Offset AWAY from the interior (in direction of outward normal)
+                if !self.inner_wires.is_empty() && self.boundary.len() >= 3 {
+                    let center = centroid;
+                    if let Some(farthest) = self.boundary.iter()
+                        .copied()
+                        .max_by(|a, b| (a - center).length_squared()
+                            .partial_cmp(&(b - center).length_squared())
+                            .unwrap_or(std::cmp::Ordering::Equal))
+                    {
+                        centroid = farthest;
+                    }
+                }
                 centroid + self.normal * TOLERANCE_ABS * 10.0
             }
         }
@@ -274,6 +285,7 @@ type FaceEntry = (
     Option<[f64; 4]>,
     DVec3,
     f64,
+    DVec3,
 );
 
 /// Builds result BRep, deduplicating vertices and edges.
@@ -453,7 +465,7 @@ impl ResultBuilder {
         outer_sig.sort_unstable();
         let nlen = normal.length();
         let nunit = if nlen > TOLERANCE_LEN_MIN { normal / nlen } else { normal };
-        for (existing_idx, (existing_outer, existing_inner, _existing_tris, existing_normal, _surf, _uv, existing_centroid, existing_area)) in
+        for (existing_idx, (existing_outer, existing_inner, _existing_tris, existing_normal, _surf, _uv, existing_centroid, existing_area, _existing_sp)) in
             self.faces.iter().enumerate()
         {
             let mut ex_sig: Vec<usize> = existing_outer.iter().map(|&(eid, _)| eid).collect();
@@ -488,6 +500,7 @@ impl ResultBuilder {
             sub.uv_domain,
             centroid,
             area,
+            sub.sample_point(),
         ));
         self.face_origins.push(origin);
     }
@@ -539,7 +552,7 @@ impl ResultBuilder {
                 break;
             }
 
-            for (outer, inner, _, _, _, _, _, _) in &mut self.faces {
+            for (outer, inner, _, _, _, _, _, _, _) in &mut self.faces {
                 *outer = Self::replace_edge_ids_in_wire(outer, &replacements);
                 for iw in inner.iter_mut() {
                     *iw = Self::replace_edge_ids_in_wire(iw, &replacements);
@@ -651,7 +664,7 @@ impl ResultBuilder {
         let mut geom = rcad_kernel::GeomStore::default();
         let mut faces = Vec::new();
 
-        for (edge_indices, inner_wire_edges, triangles, normal, surface, uv_domain, _centroid, _area) in self.faces {
+        for (edge_indices, inner_wire_edges, triangles, normal, surface, uv_domain, _centroid, _area, sample_point) in self.faces {
             let wire = Wire {
                 edges: edge_indices.iter().map(|&(idx, forward)| {
                     if forward { WireEdge::fwd(idx) } else { WireEdge::rev(idx) }
@@ -676,7 +689,7 @@ impl ResultBuilder {
                 inner_wires,
                 normal,
                 triangles,
-                sample_point: None,
+                sample_point: Some(sample_point),
                 mesh_dirty,
             });
 
@@ -697,7 +710,7 @@ impl ResultBuilder {
             let mut remap: Vec<usize> = (0..edges.len()).collect();
             let mut kept: Vec<rcad_kernel::Edge> = Vec::new();
             for ei in 0..edges.len() {
-                if edge_refs[ei] >= 2 {
+                if edge_refs[ei] >= 1 {
                     remap[ei] = kept.len();
                     kept.push(edges[ei].clone());
                 } else {
