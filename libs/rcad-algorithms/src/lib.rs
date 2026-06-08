@@ -2901,7 +2901,10 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         // MUST come AFTER box-box paths so that face-touching box fusion
         // is handled first by try_union_axis_aligned_box_box.
         try_fast_path!(boolean_unit_octant::try_union_disjoint_or_touching(a, b), "try_union_disjoint_or_touching");
-        try_fast_path!(boolean_unit_octant::try_union_sphere_box(a, b), "try_union_sphere_box");
+        // ❌ DELETED: try_union_sphere_box fast-path — 完全绕过 OCCT PaveFiller 管道。
+        // OCCT 通过 IntTools_FaceFace::Perform(精确圆曲线) + MakeBlocks + BuildSplitFaces
+        // 处理 sphere-box 求交。如果 split_curved_face_parametric 的 64 点采样问题
+        // 已修复，sphere-box 会自然走 fuse() → PaveFiller 路径得到 7 面正确拓扑。
         try_fast_path!(boolean_unit_octant::try_union_cylinder_box(a, b), "try_union_cylinder_box");
         try_fast_path!(boolean_unit_octant::try_union_cone_box(a, b), "try_union_cone_box");
         try_fast_path!(boolean_unit_octant::try_union_coaxial_cone_cylinder(a, b), "try_union_coaxial_cone_cylinder");

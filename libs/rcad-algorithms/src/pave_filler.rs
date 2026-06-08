@@ -1914,24 +1914,20 @@ impl<'a> PaveFiller<'a> {
             interpolate_points_2d(&pts).ok().map(Curve2d::BSpline)
         };
 
-        // Seam detection: u at ±π coincides with the sphere's existing seam edge.
-        // Skip the sphere pcurve for these branches to avoid duplicate-edge issues.
-        let seam_tol = TOLERANCE_ANG;
-        let at_seam0 = (u_for_half0.abs() - PI).abs() < seam_tol;
-        let at_seam1 = (u_for_half1.abs() - PI).abs() < seam_tol;
+        // Always provide sphere pcurve — OCCT's BuildSplitFaces expects pcurves
+        // for ALL intersection curves on both faces.  The original "skip at seam"
+        // optimization (rcad-specific) prevented the builder from splitting the
+        // sphere face, causing fallback to tessellation (4000+ vertices).
+        // The builder edge dedup handles duplicates correctly.
 
-        // Half 0: t0 → t0+π (north → south)
-        // Pcurve maps t → v = t - t0, so v(t0)=0 (north), v(t0+π)=π (south).
+        // Half 0: t0 342206222 t0+317200 (north 342206222 south)
+        // Pcurve maps t 342206222 v = t - t0, so v(t0)=0 (north), v(t0+317200)=317200 (south).
         let t_half0_end = t0 + PI;
         let half0_plane = sample_plane_half(t0, t_half0_end);
-        let sphere_pc0 = if at_seam0 {
-            None
-        } else {
-            Some(Curve2d::Line(Line2d {
-                origin: DVec2::new(u_for_half0, -t0),
-                direction: DVec2::new(0.0, 1.0),
-            }))
-        };
+        let sphere_pc0 = Some(Curve2d::Line(Line2d {
+            origin: DVec2::new(u_for_half0, -t0),
+            direction: DVec2::new(0.0, 1.0),
+        }));
         let (pc_a0, pc_b0) = if plane_is_f1 {
             (half0_plane, sphere_pc0)
         } else {
@@ -1954,14 +1950,10 @@ impl<'a> PaveFiller<'a> {
         // so v(t0+π)=π (south), v(t0+2π)=0 (north).
         let t_half1_end = t_half0_end + PI;
         let half1_plane = sample_plane_half(t_half0_end, t_half1_end);
-        let sphere_pc1 = if at_seam1 {
-            None
-        } else {
-            Some(Curve2d::Line(Line2d {
-                origin: DVec2::new(u_for_half1, t0 + TAU),
-                direction: DVec2::new(0.0, -1.0),
-            }))
-        };
+        let sphere_pc1 = Some(Curve2d::Line(Line2d {
+            origin: DVec2::new(u_for_half1, t0 + TAU),
+            direction: DVec2::new(0.0, -1.0),
+        }));
         let (pc_a1, pc_b1) = if plane_is_f1 {
             (half1_plane, sphere_pc1)
         } else {

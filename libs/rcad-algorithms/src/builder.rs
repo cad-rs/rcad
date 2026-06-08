@@ -2228,6 +2228,9 @@ impl<'a> BooleanBuilder<'a> {
             return subs;
         }
 
+    if matches!(face.surface, Surface3::Sphere(_)) {
+        eprintln!("[SPHERE_SPLIT] fi={} curves_in={} verts_in={}", face_idx, fi.curves_in.len(), fi.vertices_in.len());
+    }
         // Planar BSpline → treat as Plane for splitting.
         // OCCT's BRepAlgo_Builder detects planarity via Geom_Surface::IsKind(STANDARD_TYPE(Geom_Plane)),
         // so a NURBS box (planar BSpline) routes through the same planar face splitting logic.
@@ -2413,10 +2416,13 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        // For sphere faces, use UV tessellation into patches to provide valid
-        // boundary polygons (the sphere's single face has only 2 boundary vertices:
-        // north and south poles along the seam).
-        if matches!(&face.surface, Surface3::Sphere(_)) {
+        // For sphere faces WITH intersection curves: route through split_curved_face_parametric
+        // (OCCT BuildSplitFaces alignment).  The sphere's UV boundary (4-point rectangle) is
+        // split by trim polylines from the pcurves, producing sub-faces with valid 4+ vertex
+        // boundary polygons.  Only sphere faces WITHOUT curves_in need tessellation (the bare
+        // sphere face has 2 boundary vertices from the seam edge, which emit_face_with_origin
+        // rejects as having <3 boundary points).
+        if matches!(&face.surface, Surface3::Sphere(_)) && fi.curves_in.is_empty() {
             return self.tessellate_sphere_face(face_idx);
         }
 
@@ -3453,6 +3459,9 @@ impl<'a> BooleanBuilder<'a> {
         let surface = face.surface.clone();
         let normal = face.normal;
 
+    if matches!(surface, Surface3::Sphere(_) | Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Torus(_)) {
+        eprintln!("[WARN] split_curved_face_legacy for analytic surface -- missing pcurve");
+    }
         // Collect all intersection polylines for this face
         let mut all_polylines: Vec<Vec<DVec3>> = Vec::new();
         for &ci in &face.face_info.curves_in {
@@ -3462,9 +3471,10 @@ impl<'a> BooleanBuilder<'a> {
             } else {
                 // Analytic curve 鈥?sample it into a polyline (128 segments ~0.03 chord
                 // error for R=100, giving sub-0.1% surface-area error on trimmed faces).
-                let pts: Vec<DVec3> = (0..=128)
+                let n_legacy: usize = if matches!(surface, Surface3::Sphere(_)) { 2 } else { 128 };
+                let pts: Vec<DVec3> = (0..=n_legacy)
                     .map(|i| {
-                        let t = ic.t_range[0] + (ic.t_range[1] - ic.t_range[0]) * i as f64 / 128.0;
+                        let t = ic.t_range[0] + (ic.t_range[1] - ic.t_range[0]) * i as f64 / n_legacy as f64;
                         use rcad_kernel::CurveEval;
                         ic.curve.point_at(t)
                     })
@@ -3814,7 +3824,11 @@ impl<'a> BooleanBuilder<'a> {
             if let Some(pcurve) = self.find_pcurve_for_face(ci, face_idx) {
                 let ic = &self.ds.intersection_curves[ci];
                 let [t0, t1] = ic.t_range;
-                const N: usize = 64;
+                // OCCT alignment: sphere surfaces use exact circle curves — 2 endpoints suffice.
+                // The 64-point sampling creates trim polylines with 64 segments per curve,
+                // each becoming a separate 3D edge (4000+ vertices for sphere-box union).
+                // ⚠️ Non-sphere analytic surfaces still use 64-point sampling here.
+                let n_samp: usize = if is_sphere { 2 } else { 64 };
                 let raw_pts: Vec<DVec2> = match &pcurve {
                     // BSpline PCurves from `fallback_pcurve_by_projection` are defined on [0,1]
                     // but that domain does **not** match the 3D curve's `t_range` (e.g. plane鈥搒phere
@@ -3828,9 +3842,9 @@ impl<'a> BooleanBuilder<'a> {
                         // The BSpline pcurve itself is the correct UV representation
                         // (created by polyline_pcurve_by_projection in the pave_filler),
                         // so sample it directly on its [0, 1] domain.
-                        let raw: Vec<DVec2> = (0..=N)
+                        let raw: Vec<DVec2> = (0..=n_samp)
                             .map(|i| {
-                                let t = i as f64 / N as f64;
+                                let t = i as f64 / n_samp as f64;
                                 pcurve.point_at(t)
                             })
                             .collect();
@@ -3843,9 +3857,9 @@ impl<'a> BooleanBuilder<'a> {
                     },
                     // Analytic curves (Line2d, Circle2d, Ellipse2d) use the same
                     // t parameterization as the 3D intersection curve.
-                    _ => (0..=N)
+                    _ => (0..=n_samp)
                         .map(|i| {
-                            let t = t0 + (t1 - t0) * i as f64 / N as f64;
+                            let t = t0 + (t1 - t0) * i as f64 / n_samp as f64;
                             pcurve.point_at(t)
                         })
                         .collect(),
@@ -3923,7 +3937,10 @@ impl<'a> BooleanBuilder<'a> {
 
             let mut clean: Vec<Vec<DVec2>> = Vec::new();
             for trim in trim_polylines.drain(..) {
-                if trim.len() < 3 {
+                // Accept 2-point trims (sphere great-circle pcurves with n_samp=2).
+                // The standard 64-point sampling creates ≥3 points per trim, so <3
+                // only filters truly degenerate 1-point trims on periodic surfaces.
+                if trim.len() < 2 {
                     continue;
                 }
                 let u_min = trim.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);

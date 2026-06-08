@@ -5120,16 +5120,10 @@ fn brep_difference_sphere_minus_box() -> BRep {
 
 /// Fast path: union unit sphere + unit cube (corner configuration).
 /// Build a mesh-based BRep for sphere 鈭?box (general case).
-/// Points on the sphere surface OUTSIDE the box become the spherical face.
-/// Points on each box face OUTSIDE the sphere become the planar faces.
-fn try_union_sphere_box_pair(sphere: &BRep, box_: &BRep) -> Option<BRep> {
-    crate::sphere_box_analytic::build_sphere_box_union_analytic(sphere, box_)
-}
-
-pub fn try_union_sphere_box(a: &BRep, b: &BRep) -> Option<BRep> {
-    try_union_sphere_box_pair(a, b)
-        .or_else(|| try_union_sphere_box_pair(b, a))
-}
+/// ❌ DELETED: try_union_sphere_box — 完全绕过 OCCT PaveFiller 管道。
+/// OCCT 通过 IntTools_FaceFace::Perform(精确圆曲线) + MakeBlocks + BuildSplitFaces
+/// 处理 sphere-box 求交。此 fast-path 在 2026-06-08 的 A1-A5 对齐中被移除。
+/// 见 sphere_box_analytic.rs 模块顶部的对齐说明。
 
 /// Detect a unit cube whose corner coincides with the sphere center.
 /// Returns 3 directions from sphere center to the adjacent box corners and

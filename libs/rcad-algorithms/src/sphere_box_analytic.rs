@@ -1,5 +1,15 @@
 //! Analytic sphere-box union builder.
 //!
+//! ⚠️ OCCT 对齐状态: ❌ 未对齐 — 完全绕过 PaveFiller + BooleanBuilder 管道。
+//!    OCCT 通过 BOPAlgo_PaveFiller::MakeBlocks + BOPAlgo_Builder::BuildSplitFaces
+//!    完成 sphere-box 求交和面分裂（使用 IntTools_FaceFace 的精确解析交线）。
+//!    本模块是 rcad 自创的解析 BRep 构造器，不依赖 PaveFiller，能在不经过采样
+//!    折线的情况下直接生成正确拓扑。功能等效但代码路径完全不同。
+//!
+//! KEPT: 因 rcade PaveFiller 的 split_curved_face_parametric 在 sphere 面上
+//! 使用 64 点采样导致 4000+ 顶点（见 builder.rs:3773），而 OCCT 使用精确圆曲线
+//! + IsExistingPaveBlock 复用已有拓扑，不会产生多余顶点。
+//!
 //! Builds a BRep for the union of a sphere and an axis-aligned box using exact
 //! analytic geometry (no tessellation).
 //!
@@ -18,6 +28,7 @@ use rcad_modeling::builder::brep_builder::{make_edge, make_face, make_vertex, ma
 // ── Helpers ───────────────────────────────────────────────────────────
 
 /// Detect sphere center and radius from a BRep by scanning all face surfaces.
+/// ✅ OCCT 对齐: OCCT 的 BRep_Tool::Surface 同样提取几何信息。
 fn sphere_center_r(sphere: &BRep) -> Option<(DVec3, f64)> {
     for s in &sphere.solids {
         for sh in &s.shells {
@@ -35,6 +46,7 @@ fn sphere_center_r(sphere: &BRep) -> Option<(DVec3, f64)> {
 
 /// Compute the axis-aligned bounding-box min/max from a BRep's vertices.
 /// Returns `None` if the vertex set is degenerate.
+/// ✅ OCCT 对齐: BRep_Tool::Vertices + 遍历。
 fn compute_bbox_min_max(brep: &BRep) -> Option<(DVec3, DVec3)> {
     let mut bmin = DVec3::splat(f64::MAX);
     let mut bmax = DVec3::splat(f64::MIN);
@@ -119,6 +131,16 @@ fn sphere_uv_propagate(sphere: &SphericalSurface, point: DVec3, other_point: DVe
 ///
 /// The box is assumed to be axis-aligned (extents discovered from vertex
 /// bounding-box).  Returns `None` when either operand cannot be identified.
+///
+/// ❌ OCCT 对齐: 此函数完全绕过 OCCT 的 PaveFiller + BooleanBuilder 管道。
+///    OCCT 的标准路径是: IntTools_FaceFace::Perform(精确圆交线) →
+///    PutBoundPaveOnCurve(截断圆弧) → IsExistingPaveBlock(复用box边) →
+///    MakeEdge(仅在需要时创建section边) → BuildSplitFaces(精确面分裂)。
+///    rcad 的 PaveFiller 虽然也存了精确圆曲线，但 buildder 的
+///    split_curved_face_parametric 在 sphere 面上用 64 点采样折线代替精确曲线
+///    (builder.rs:3773)，产生 4000+ 顶点。本函数使用纯解析几何直接构造 BRep，
+///    功能等效（产生 7 faces 匹配 OCCT），但代码路径完全不同。
+///    KEPT: 作为 OCCT 标准路径的替代品，因为 rcad 的 builder 不能处理 sphere 面。
 pub fn build_sphere_box_union_analytic(sphere: &BRep, box_: &BRep) -> Option<BRep> {
     let (center, radius) = sphere_center_r(sphere)?;
     let (bmin, bmax) = compute_bbox_min_max(box_)?;
