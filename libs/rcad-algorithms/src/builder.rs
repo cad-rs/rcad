@@ -400,6 +400,60 @@ impl ResultBuilder {
         idx
     }
 
+    /// ✅ OCCT对齐: 检测并精简 SubFace 的圆弧内边界 + 返回 inner_wire_circles。
+    ///    OCCT: MakeBlocks → BOPTools_AlgoTools::MakeEdge(aIC,...)
+    ///    split_planar_face 生成的内边界有128+点,简化为2端点(arc_simplify),
+    ///    然后 emit_face_with_origin 用 add_circle_edge 创建精确 Circle3 边。
+    fn find_inner_wire_circles(&mut self, sub: &mut SubFace) -> Vec<(usize, usize, Curve3)> {
+        let mut circles: Vec<(usize, usize, Curve3)> = Vec::new();
+        for wi in (0..sub.inner_wires.len()).rev() {
+            let iw = &sub.inner_wires[wi];
+            if iw.len() < 4 { continue; }
+            // 取3个采样点检测是否为圆
+            let p0 = iw[0]; let p1 = iw[iw.len() / 3]; let p2 = iw[2 * iw.len() / 3];
+            let a = p1 - p0; let b = p2 - p0;
+            let cross = a.cross(b);
+            if cross.length_squared() < 1e-30 { continue; }
+            let a2 = a.length_squared(); let b2 = b.length_squared();
+            let center = p0 + (b.cross(cross) * a2 + cross.cross(a) * b2) / (2.0 * cross.length_squared());
+            let r = p0.distance(center);
+            if !iw.iter().all(|pt| (pt.distance(center) - r).abs() < 1e-8) { continue; }
+            // ✅ OCCT对齐: 所有点在圆上 → 构建圆弧 inner_wire
+            // 原内边界: [rect_corner, arc_start, ...128 arc pts..., arc_end, rect_corner]
+            // 精简后: [rect_corner, arc_start, arc_end] — 3点3边
+            let norm = cross.normalize();
+            // 找弧的起点和终点: 从第1点开始沿边行走,当方向变化时即为弧起点
+            let arc_start_idx = if iw.len() >= 3 && (iw[1] - iw[0]).dot(iw[2] - iw[1]).abs() < 0.99 { 1 } else {
+                let mut idx = 1usize;
+                while idx + 1 < iw.len() && (iw[idx+1] - iw[idx]).normalize().dot((iw[idx] - iw[idx-1]).normalize()).abs() > 0.99 { idx += 1; }
+                idx
+            };
+            let arc_end_idx = if iw.len() >= 3 {
+                let mut idx = iw.len() - 2;
+                while idx > arc_start_idx {
+                    let dir_prev = (iw[idx] - iw[idx-1]).normalize();
+                    let dir_next = (iw[(idx+1) % iw.len()] - iw[idx]).normalize();
+                    if idx + 1 < iw.len() && dir_prev.dot(dir_next).abs() < 0.99 { break; }
+                    idx = idx.saturating_sub(1);
+                }
+                idx
+            } else { iw.len() - 2 };
+            let arc_start = iw[arc_start_idx];
+            let arc_end = iw[arc_end_idx];
+            // 构建 Circle3 曲线
+            let circle = Curve3::Circle(rcad_kernel::geom::Circle3 { center, normal: norm, radius: r });
+            circles.push((wi, 1, circle)); // inner_wire edge 1 (from arc_start to arc_end) 用 Circle3
+            // 简化内边界: [rect_corner, arc_start, arc_end]
+            let mut iw_simple: Vec<DVec3> = Vec::new();
+            iw_simple.push(iw[0]);  // rectangle corner (line segment start)
+            iw_simple.push(arc_start); // arc starting point
+            iw_simple.push(arc_end);   // arc ending point
+            // 3 points with 3 edges: Line(0→1), Circle(1→2 via circle_curve), Line(2→0)
+            sub.inner_wires[wi] = iw_simple;
+        }
+        circles
+    }
+
     fn emit_face_with_origin(
         &mut self,
         sub: &SubFace,
@@ -1768,9 +1822,10 @@ impl<'a> BooleanBuilder<'a> {
             if kept_subs.len() > 1 {
                 merge_subfaces_of_same_face(&mut kept_subs);
             }
-            for sub in kept_subs {
+            for mut sub in kept_subs {
                 let src = self.ds.faces[fi].source_face_idx;
-                result.emit_face_with_origin(&sub, false, FaceOrigin::FromA(src), &[]);
+                let _acircs = result.find_inner_wire_circles(&mut sub);
+                result.emit_face_with_origin(&sub, false, FaceOrigin::FromA(src), &_acircs);
                 if let Surface3::Plane(p) = &sub.surface {
                     a_on_planes.push((p.normal, p.origin));
                 }
@@ -1909,9 +1964,10 @@ impl<'a> BooleanBuilder<'a> {
                     .into_iter().chain(on_merged.into_iter().map(|s| (s, Classification::On))).collect();
             }
             let flip = self.op == BooleanOpType::Difference;
-            for (sub, _class) in &kept_subs {
+            for pair in kept_subs.iter_mut() {
                 let src = self.ds.faces[fi].source_face_idx;
-                result.emit_face_with_origin(sub, flip, FaceOrigin::FromB(src), &[]);
+                let _bcircs = result.find_inner_wire_circles(&mut pair.0);
+                result.emit_face_with_origin(&pair.0, flip, FaceOrigin::FromB(src), &_bcircs);
             }
         }
 
@@ -2093,8 +2149,9 @@ impl<'a> BooleanBuilder<'a> {
 
         // Merge results into ResultBuilder
         let mut result = ResultBuilder::new();
-        for (sub, flip, origin) in a_results.into_iter().chain(b_results.into_iter()) {
-            result.emit_face_with_origin(&sub, flip, origin, &[]);
+        for (mut sub, flip, origin) in a_results.into_iter().chain(b_results.into_iter()) {
+            let _gcircs = result.find_inner_wire_circles(&mut sub);
+            result.emit_face_with_origin(&sub, flip, origin, &_gcircs);
         }
 
         let (mut brep, mut history) = result.build(matches!(self.op, BooleanOpType::Union));
