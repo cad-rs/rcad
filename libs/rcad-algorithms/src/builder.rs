@@ -2111,6 +2111,14 @@ impl<'a> BooleanBuilder<'a> {
                 }
                 brep = merged;
             }
+            // Vertex dedup after face merge: merged faces may reference different vertex
+            // indices for the same 3D position (leftover from pre-merge face vertices).
+            let (deduped, _) = crate::brep_repair::merge_close_vertices(
+                &brep, crate::tolerance::TOLERANCE_ABS * 10000.0
+            );
+            brep = deduped;
+            brep = crate::prune_unused_topology(brep);
+            brep = crate::deduplicate_edges(brep);
         }
 
         if std::env::var("RCAD_DEBUG_FACE_ORIGINS").is_ok() {
