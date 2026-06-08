@@ -4412,7 +4412,13 @@ impl<'a> BooleanBuilder<'a> {
         let bnd_v_span = bnd_v_max - bnd_v_min;
         trim_polylines = trim_polylines
             .into_iter()
-            .map(|trim| Self::extend_trim_to_uv_boundary(&trim, &uv_boundary, bnd_u_span, bnd_v_span))
+            .map(|trim| {
+                if is_sphere {
+                    trim
+                } else {
+                    Self::extend_trim_to_uv_boundary(&trim, &uv_boundary, bnd_u_span, bnd_v_span)
+                }
+            })
             .collect();
 
 
