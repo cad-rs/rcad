@@ -1240,7 +1240,7 @@ fn merge_close_vertices_scoped(
                             triangles: face.triangles.clone(),
                             sample_point: None,
                             mesh_dirty: true,
-                surface_idx: None,
+                surface_idx: face.surface_idx,
                         })
                         .collect(),
                 })
@@ -3622,7 +3622,7 @@ pub fn merge_close_vertices(brep: &BRep, tolerance: f64) -> (BRep, usize) {
                                 triangles: face.triangles.clone(),
                                 sample_point: face.sample_point,
                                 mesh_dirty: true,
-                surface_idx: None,
+                surface_idx: face.surface_idx,
                             }
                         })
                         .collect(),

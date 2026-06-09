@@ -5830,6 +5830,7 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
             }
             for gi in 0..grps.len() {
                 let g = &grps[gi]; if g.len() < 2 { continue; }
+                if std::env::var("RCAD_DEBUG_MERGE").is_ok() { eprintln!("[MERGE] group[{}]: {} faces with surface_idx={:?}", gi, g.len(), out.solids[si].shells[shi].faces[g[0]].surface_idx); }
                 let mut gr: HashMap<usize,usize> = HashMap::new();
                 for &fi in g {
                     for we in &out.solids[si].shells[shi].faces[fi].outer_wire.edges {
@@ -5837,6 +5838,7 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                     }
                 }
                 let bnd: Vec<usize> = gr.iter().filter(|(_, c)| **c==1).map(|(&e,_)| e).collect();
+                if std::env::var("RCAD_DEBUG_MERGE").is_ok() { eprintln!("[MERGE]   group[{}]: {} edges, {} boundary", gi, gr.len(), bnd.len()); }
                 if bnd.len() < 3 { continue; }
                 let mut v2e: HashMap<usize,Vec<(usize,bool)>> = HashMap::new();
                 for &ei in &bnd {

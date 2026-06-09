@@ -913,6 +913,7 @@ fn extract_brep_subset(source: &BRep, face_indices: &[usize]) -> BRep {
     let mut edge_set: HashSet<usize> = HashSet::new();
     #[derive(Clone)]
     struct FaceTopo {
+        surface_idx: Option<usize>,
         outer: Vec<WireEdge>,
         inner: Vec<Vec<WireEdge>>,
         normal: DVec3,
@@ -935,8 +936,8 @@ fn extract_brep_subset(source: &BRep, face_indices: &[usize]) -> BRep {
                 edge_set.insert(we.idx);
             }
         }
-
         face_topos.push(FaceTopo {
+            surface_idx: face.surface_idx,
             outer: face.outer_wire.edges.clone(),
             inner: face.inner_wires.iter().map(|w| w.edges.clone()).collect(),
             normal: face.normal,
@@ -1107,7 +1108,7 @@ fn extract_brep_subset(source: &BRep, face_indices: &[usize]) -> BRep {
                 .collect(),
             sample_point: None,
             mesh_dirty: true,
-                surface_idx: None,
+                surface_idx: ft.surface_idx,
         });
 
         // face-level geometry
