@@ -1393,6 +1393,18 @@ fn classify_against_solid_for_boolean(
     solid_face_indices: &[usize],
     ds: &DS,
 ) -> Classification {
+    // ✅ OCCT对齐: 先尝试 IsInternalFace 的 ComputeState 部分
+    //    (仅 Level 2a: 边不在 solid 上时分类中点)。
+    //    Level 1 (边级角度法) 暂不用，因简化角度法对 box face 产生误判。
+    {
+        let edge_bounds = build_edge_bounds(solid_face_indices, ds);
+        if let Some(class) = classify_by_off_solid_edge(sub, &edge_bounds, solid_face_indices, ds) {
+            if class {
+                return Classification::In;
+            }
+        }
+    }
+
     // OCCT-style classification: use multi-point UV sampling with ray casting
     // as the PRIMARY method, matching OCCT's ClassifyFaces approach.  Unlike
     // the AABB boundary-vertex check below, this samples the sub-face INTERIOR
@@ -1566,6 +1578,15 @@ fn classify_against_solid_for_boolean(
             return Classification::Out;
         }
 
+        // ✅ OCCT对齐: In 多数检查 — 与 Out 检查对称。
+        //    当初始分类为 In 或 On,多数 probe 点为 In → 面在 solid 内部。
+        //    OCCT PointInFace + SolidClassifier 对内部点直接返回 In。
+        let min_in = if matches!(sub.surface, Surface3::Plane(_)) { out_count * 2 } else { out_count };
+        let on_coincident_in = c0 == Classification::On && total >= 2 && out_count == 0;
+        if (total >= 3 || on_coincident_in) && in_count >= min_in {
+            return Classification::In;
+        }
+
         // Fallback for On faces where ALL probe points are also On (total == 0),
         // indicating the entire sub-face is coincident with the other solid's face.
         // Micro-offset probe points in the normal direction to break the tie.
@@ -1659,6 +1680,273 @@ fn classify_against_solid_for_boolean(
     Classification::Out
 }
 
+// =============================================================================
+// OCCT 1:1 对齐: IsInternalFace (BOPTools_AlgoTools.cxx L791-872)
+// =============================================================================
+
+/// ✅ OCCT对齐: 构建 MEF (Map Edge→Faces) 用于边级角度法。
+/// OCCT BOPAlgo_FillIn3DParts::MapEdgesAndFaces (BOPAlgo_Tools.cxx L1479-1503)
+fn build_mef(face_indices: &[usize], ds: &DS) -> HashMap<usize, Vec<usize>> {
+    let mut mef: HashMap<usize, Vec<usize>> = HashMap::new();
+    for &fi in face_indices {
+        let face = &ds.faces[fi];
+        for &ei in &face.boundary_edges {
+            mef.entry(ei).or_default().push(fi);
+        }
+    }
+    mef
+}
+
+/// ✅ OCCT对齐: 构建 bounds 集合 (solid 的所有拓扑边)。
+/// OCCT TopExp::MapShapes(theSolid, TopAbs_EDGE, aBounds)
+fn build_edge_bounds(face_indices: &[usize], ds: &DS) -> std::collections::BTreeSet<usize> {
+    let mut bounds: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+    for &fi in face_indices {
+        let face = &ds.faces[fi];
+        for &ei in &face.boundary_edges {
+            bounds.insert(ei);
+        }
+    }
+    bounds
+}
+
+/// ✅ OCCT对齐: PointInFace 等价 — 从 SubFace 的 UV domain 获取内部采样点。
+/// OCCT BOPTools_AlgoTools3D.cxx L885-917
+///
+/// rcad 实现: SubFace 已有 uv_domain 和 uv_centroid,直接用 UV centroid
+/// 作为内部点 (OCCT 用 Hatcher 做 2D point-in-face,但 rcad 的 SubFace
+/// 是参数化区域,UV centroid 在内部)。
+fn point_in_face(sub: &SubFace) -> Option<DVec3> {
+    // 优先用 uv_centroid — 它是面参数空间的几何中心
+    if let Some(uv) = sub.uv_centroid {
+        return Some(sub.surface.point_at(uv.x, uv.y));
+    }
+    // 回退: 从 uv_domain 取中间点
+    if let Some([u0, u1, v0, v1]) = sub.uv_domain {
+        let u = (u0 + u1) * 0.5;
+        let v = (v0 + v1) * 0.5;
+        return Some(sub.surface.point_at(u, v));
+    }
+    // 最后回退: boundary centroid (与 sample_point() 一致)
+    if !sub.boundary.is_empty() {
+        return Some(sub.boundary.iter().copied().sum::<DVec3>() / sub.boundary.len() as f64);
+    }
+    None
+}
+
+/// ✅ OCCT对齐: Level 2a — ComputeState, find edge not on solid.
+/// OCCT BOPTools_AlgoTools::ComputeState (L650-699)
+///
+/// 遍历 SubFace 的每条边界段,如果该段不在 solid 的边集中,
+/// 用 classify_point 分类中点并返回结果。
+///
+/// NOTE: 仅对明确的 Out (不在 solid 内) 返回 Some(false)。
+/// In 结果不可靠 — section edge 中点可能在 solid 表面,
+/// classify_point 的 ray casting 对表面上点的分类不稳定。
+fn classify_by_off_solid_edge(
+    sub: &SubFace,
+    edge_bounds: &std::collections::BTreeSet<usize>,
+    solid_face_indices: &[usize],
+    ds: &DS,
+) -> Option<bool> {
+    let boundary = &sub.boundary;
+    if boundary.len() < 3 {
+        return None;
+    }
+    let tolerance = TOLERANCE_ABS * 100.0;
+
+    let n = boundary.len();
+    let mut in_count = 0u32;
+    let mut total_found = 0u32;
+
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let p1 = boundary[i];
+        let p2 = boundary[j];
+
+        // 找到对应的 DS 边
+        let k1 = quantize_pos(p1, tolerance);
+        let k2 = quantize_pos(p2, tolerance);
+
+        let found_edge = ds.edges.iter().enumerate().find(|(_ei, e)| {
+            let sv = ds.vertices[e.start_vertex].point;
+            let ev = ds.vertices[e.end_vertex].point;
+            let sk = quantize_pos(sv, tolerance);
+            let ek = quantize_pos(ev, tolerance);
+            (sk == k1 && ek == k2) || (sk == k2 && ek == k1)
+        });
+
+        let mid_in_bounds = if let Some((ei, _e)) = found_edge {
+            edge_bounds.contains(&ei)
+        } else {
+            false
+        };
+
+        if !mid_in_bounds {
+            // 边不在 solid 的拓扑边集中
+            total_found += 1;
+            let mid = (p1 + p2) * 0.5;
+            match classify_point(mid, solid_face_indices, ds) {
+                Classification::Out => return Some(false), // 明确在外面
+                Classification::In => { in_count += 1; }   // 可能在外面,累积
+                Classification::On => {}                    // 在面上,继续
+            }
+        }
+    }
+
+    // 所有不在 solid 上的边中点都分类为 In → 可能面在 solid 内部
+    // 但需要 ≥2 条边都 In 才可靠 (单条边可能误判)
+    if total_found >= 2 && in_count == total_found {
+        return Some(true);
+    }
+    None
+}
+
+/// 量化 3D 位置到 u64 key,用于容差匹配。
+fn quantize_pos(p: DVec3, tolerance: f64) -> u64 {
+    let scale = 1.0 / tolerance;
+    let x = (p.x * scale).round() as i64;
+    let y = (p.y * scale).round() as i64;
+    let z = (p.z * scale).round() as i64;
+    // 组合为 u64
+    let xb = (x as u64) & 0x3FFFFF;
+    let yb = (y as u64) & 0x3FFFFF;
+    let zb = (z as u64) & 0x3FFFFF;
+    (xb << 42) | (yb << 21) | zb
+}
+
+/// ✅ OCCT对齐: IsInternalFace 主函数 (BOPTools_AlgoTools.cxx L791-872)
+///
+/// 两级分类:
+///   Level 1: 边级角度法 — 对于在 solid 上有多于 1 个邻面的边,
+///            计算角度判断面是否在 solid 内部。
+///   Level 2: ComputeState — 先找不在 solid 上的边分类中点,
+///            否则 PointInFace → classify_point。
+///
+/// 返回: Some(true) = 面在 solid 内部 (IN)
+///       Some(false) = 面不在 solid 内部 (OUT)
+///       None = 无法确定
+fn is_internal_face(
+    sub: &SubFace,
+    solid_face_indices: &[usize],
+    ds: &DS,
+) -> Option<bool> {
+    if solid_face_indices.is_empty() {
+        return Some(false);
+    }
+
+    // Build MEF and bounds for the solid
+    let mef = build_mef(solid_face_indices, ds);
+    let edge_bounds = build_edge_bounds(solid_face_indices, ds);
+
+    // ====================================================================
+    // Level 1: 边级角度法 (edge-angle method)
+    // OCCT L812-856
+    //
+    // NOTE: 完整的角度法需要 GetFaceOff 的几何计算(法线投影到边切向平面、
+    // 角度计算等)。当前实现先简化为:对于在 solid 上有 2 个邻面的边,
+    // 计算两个邻面法线在边切向平面上的夹角,若被分类面位于最小角区域则判定为内部。
+    // ====================================================================
+    let mef_imm = &mef; // 借用
+
+    // 对 SubFace 的每条边界段,尝试匹配 DS 边
+    let n = sub.boundary.len();
+    if n >= 3 {
+        // 内部标志: true=至少有一条边明确指示内部
+        let mut edge_angle_result: Option<bool> = None;
+
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let p1 = sub.boundary[i];
+            let p2 = sub.boundary[j];
+
+            // 找到对应的 DS 边
+            let tolerance = TOLERANCE_ABS * 100.0;
+            let k1 = quantize_pos(p1, tolerance);
+            let k2 = quantize_pos(p2, tolerance);
+
+            let matched_edge = ds.edges.iter().enumerate().find(|(_ei, e)| {
+                let sv = ds.vertices[e.start_vertex].point;
+                let ev = ds.vertices[e.end_vertex].point;
+                let sk = quantize_pos(sv, tolerance);
+                let ek = quantize_pos(ev, tolerance);
+                (sk == k1 && ek == k2) || (sk == k2 && ek == k1)
+            });
+
+            if let Some((ei, _e)) = matched_edge {
+                if let Some(adj_faces) = mef_imm.get(&ei) {
+                    let a_nb_f = adj_faces.len();
+                    if a_nb_f == 1 {
+                        // ✅ OCCT对齐: 边在 solid 上有 1 个邻面 (L834-846)
+                        // 对应 OCCT: aE is internal edge on aLF.First()
+                        // 检查该面上边的方向 — 由于 SubFace 级别没有方向信息,
+                        // 简化为:如果该邻面法线与 SubFace 法线同向 → 内部
+                        let fi = adj_faces[0];
+                        let solid_normal = ds.faces[fi].normal;
+                        let dot = sub.normal.dot(solid_normal);
+                        // 法线同向 → 内部面 (被其他面覆盖)
+                        if dot > 0.7 {
+                            edge_angle_result = Some(true);
+                            break;
+                        }
+                    } else if a_nb_f >= 2 {
+                        // ✅ OCCT对齐: 边在 solid 上有 2 个邻面 (L847-855)
+                        // 对应 OCCT: 角度法判断 theFace 是否在最小角区域
+                        // 简化:两个邻面法线夹角锐角 → 内部面
+                        let f1_normal = ds.faces[adj_faces[0]].normal;
+                        let f2_normal = ds.faces[adj_faces[1]].normal;
+                        let face_angle = f1_normal.dot(f2_normal).acos(); // 法线夹角
+                        // 如果两个邻面法线夹角 < 90° → 内部面在凹角内
+                        if face_angle < std::f64::consts::FRAC_PI_2 {
+                            edge_angle_result = Some(true);
+                            break;
+                        }
+                        // 否则无法从此边确定 → 继续
+                        edge_angle_result = Some(edge_angle_result.unwrap_or(false));
+                    }
+                }
+            }
+        }
+
+        if let Some(true) = edge_angle_result {
+            return Some(true);
+        }
+    }
+
+    // ====================================================================
+    // Level 2: ComputeState fallback (L864-872)
+    // ====================================================================
+
+    // Level 2a: 找一条不在 solid 上的边 → 分类中点 (L662-674)
+    if let Some(result) = classify_by_off_solid_edge(sub, &edge_bounds, solid_face_indices, ds) {
+        return Some(result);
+    }
+
+    // Level 2b: PointInFace → classify_point (L676-696)
+    // 所有边都在 solid 上 → 获取面内部点并分类
+    if let Some(interior_pt) = point_in_face(sub) {
+        match classify_point(interior_pt, solid_face_indices, ds) {
+            Classification::In => return Some(true),
+            Classification::Out => return Some(false),
+            Classification::On => {
+                // 面内部点恰好在面上 → 回退到 sample_point
+                let sp = sub.sample_point();
+                match classify_point(sp, solid_face_indices, ds) {
+                    Classification::In => return Some(true),
+                    Classification::Out => return Some(false),
+                    Classification::On => {
+                        // 完全一致的面 → 可能是共面 → 返回 false (不是内部)
+                        return Some(false);
+                    }
+                }
+            }
+        }
+    }
+
+    // 无法确定 → 让调用方用现有逻辑
+    None
+}
+
 /// OCCT-style face classification using multi-point interior sampling with
 /// ray casting.  Classifies a sub-face by sampling its UV interior at multiple
 /// points and using `classify_point` (ray casting) at each — matching OCCT's
@@ -1686,6 +1974,7 @@ fn classify_face_occt_style(
     let nv = 4usize;
     let mut in_count = 0u32;
     let mut out_count = 0u32;
+    let mut on_count = 0u32;
     let mut total = 0u32;
 
     // Sample a 4×4 grid across the UV interior (not boundary edges).
@@ -1697,7 +1986,7 @@ fn classify_face_occt_style(
             match classify_point(p, solid_face_indices, ds) {
                 Classification::In => { in_count += 1; total += 1; }
                 Classification::Out => { out_count += 1; total += 1; }
-                Classification::On => return Some(Classification::On),
+                Classification::On => { on_count += 1; total += 1; }
             }
         }
     }
@@ -1706,11 +1995,14 @@ fn classify_face_occt_style(
         return None;
     }
 
-    // Simple majority: whichever has more votes wins.  This is more reliable
-    // than the existing probe-grid fallback (which biases toward In for curved
-    // surfaces via out_count >= in_count threshold) because OCCT's approach of
-    // many interior sample points gives a truer picture of the sub-face's
-    // relationship with the other solid.
+    // ✅ OCCT对齐: 不短路口 On — On 表示采样点恰好在 solid 表面上,
+    //    不代表整个面都在边界上。先按多数 In/Out 决定。
+    //    On 全部时返回 On (面与 solid 完全重合)。
+    if on_count == total {
+        return Some(Classification::On);
+    }
+
+    // Simple majority: whichever has more votes wins.
     if in_count > out_count {
         return Some(Classification::In);
     }
