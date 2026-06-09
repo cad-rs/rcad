@@ -1106,7 +1106,15 @@ fn extract_brep_subset(source: &BRep, face_indices: &[usize]) -> BRep {
                     ]
                 })
                 .collect(),
-            sample_point: None,
+            // ✅ OCCT对齐: 保存原始 face 的 sample_point。compact_brep 之前设为
+            //    None,导致后续 pipeline 分类退回边中点→误判内含面为 In→删除。
+            //    OCCT BRep_Builder::UpdateFace 保留 sample_point。
+            sample_point: source
+                .solids
+                .get(flat_index_map[fi].0)
+                .and_then(|s| s.shells.get(flat_index_map[fi].1))
+                .and_then(|sh| sh.faces.get(flat_index_map[fi].2))
+                .and_then(|f| f.sample_point),
             mesh_dirty: true,
                 surface_idx: ft.surface_idx.and_then(|si| s_remap.get(&si).copied()),
         });

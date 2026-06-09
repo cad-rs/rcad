@@ -205,6 +205,7 @@ fn split_face_by_curves(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             inner_wires: vec![],
             outer_circle_edges: vec![],
             seam_edge: None,
+            inner_wire_circle: None,
         }];
     }
 
@@ -231,6 +232,7 @@ fn split_face_by_curves(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             inner_wires: vec![],
             outer_circle_edges: vec![],
             seam_edge: None,
+            inner_wire_circle: None,
             }]
         }
     }
@@ -269,6 +271,7 @@ fn split_planar_face_simple(ds: &DS, face_idx: usize, plane: &Plane) -> Vec<SubF
             inner_wires: vec![],
             outer_circle_edges: vec![],
             seam_edge: None,
+            inner_wire_circle: None,
         }];
     }
 
@@ -309,6 +312,7 @@ fn split_planar_face_simple(ds: &DS, face_idx: usize, plane: &Plane) -> Vec<SubF
             inner_wires: vec![],
             outer_circle_edges: vec![],
             seam_edge: None,
+            inner_wire_circle: None,
             }
         })
         .collect()
@@ -732,6 +736,7 @@ fn split_curved_face(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             inner_wires: vec![],
             outer_circle_edges: vec![],
             seam_edge: None,
+            inner_wire_circle: None,
             }
         })
         .collect()
@@ -779,6 +784,7 @@ fn split_curved_face_legacy(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             inner_wires: vec![],
             outer_circle_edges: vec![],
             seam_edge: None,
+            inner_wire_circle: None,
         }];
     }
 
@@ -800,6 +806,7 @@ fn split_curved_face_legacy(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             inner_wires: vec![],
             outer_circle_edges: vec![],
             seam_edge: None,
+            inner_wire_circle: None,
         }];
     }
 
@@ -895,6 +902,7 @@ fn split_curved_face_legacy(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             inner_wires: vec![],
             outer_circle_edges: vec![],
             seam_edge: None,
+            inner_wire_circle: None,
         })
         .collect()
 }

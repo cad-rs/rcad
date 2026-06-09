@@ -102,6 +102,8 @@ pub struct SubFace {
     ///    时调用 add_seam_edge（旁路顶点去重）。OCCT 的 MakeEdge 不存在
     ///    顶点去重问题,不需要此机制。
     pub seam_edge: Option<(usize, Curve3)>,
+    /// ✅ OCCT对齐: 内边界精确圆曲线。
+    pub inner_wire_circle: Option<(usize, Curve3)>,
 }
 
 impl SubFace {
@@ -578,25 +580,24 @@ impl ResultBuilder {
         let mut inner_wire_edges: Vec<Vec<(usize, bool)>> = Vec::new();
         let mut iw_vert_indices_all: Vec<usize> = Vec::new();
         for iw_poly in &sub.inner_wires {
-            if iw_poly.len() < 3 {
-                continue;
-            }
-            // ✅ OCCT对齐: 环形面的内边界可能只有2个圆弧端点(1条Circle3边)。
-            //    split_uv_polygon_by_trim 的2点trim会过滤掉(<2)。
-            //    但 inner_wire 的2点在这里通过,emit_face_with_origin 用
-            //    inner_wire_circles 指定圆弧边后,add_circle_edge 创建精确边。
-            if iw_poly.len() < 2 && !inner_wire_circles.iter().any(|&(wi, _, _)| wi == inner_wire_edges.len()) {
-                continue;
-            }
-            // 对于2点内边界的特殊情况(圆弧 inner_wire),在中间补一个中点以使多边形闭合
-            let iw_data: Vec<DVec3> = if iw_poly.len() >= 3 {
-                iw_poly.to_vec()
-            } else {
-                let mid = (iw_poly[0] + iw_poly[1]) * 0.5;
-                vec![iw_poly[0], iw_poly[1], mid]
-            };
-            let iw_vert_indices: Vec<usize> = iw_data.iter().map(|&p| self.add_vertex(p)).collect();
             let iw_idx = inner_wire_edges.len();
+            // ✅ OCCT对齐: 2-point inner wire → 单条Circle3共享边。
+            if iw_poly.len() == 2
+                && sub.inner_wire_circle.as_ref().map_or(false, |(wi, _)| *wi == iw_idx)
+            {
+                let v0 = self.add_vertex(iw_poly[0]);
+                let v1 = self.add_vertex(iw_poly[1]);
+                let (_, crv) = sub.inner_wire_circle.as_ref().unwrap();
+                let ei = self.add_circle_edge(v0, v1, crv.clone());
+                inner_wire_edges.push(vec![(ei, true), (ei, false)]);
+                let mid = (iw_poly[0] + iw_poly[1]) * 0.5;
+                let mid_v = self.add_vertex(mid);
+                iw_vert_indices_all.extend([v0, mid_v, v1]);
+                continue;
+            }
+            if iw_poly.len() < 3 { continue; }
+            let iw_data: Vec<DVec3> = iw_poly.to_vec();
+            let iw_vert_indices: Vec<usize> = iw_data.iter().map(|&p| self.add_vertex(p)).collect();
             let mut iw_edge_indices = Vec::new();
             for i in 0..iw_vert_indices.len() {
                 let j = (i + 1) % iw_vert_indices.len();
@@ -2504,6 +2505,7 @@ impl<'a> BooleanBuilder<'a> {
                         inner_wires: vec![],
                         outer_circle_edges: vec![],
                         seam_edge: None,
+            inner_wire_circle: None,
                     }];
                 }
             }
@@ -2519,6 +2521,7 @@ impl<'a> BooleanBuilder<'a> {
             inner_wires: vec![],
             outer_circle_edges: vec![],
             seam_edge: None,
+            inner_wire_circle: None,
         }]
     }
 
@@ -2573,7 +2576,8 @@ impl<'a> BooleanBuilder<'a> {
                         xs.sort_by(|a,b| a.partial_cmp(b).unwrap());
                         let t1 = xs[0]; let t2 = xs[xs.len()-1];
                         if (t2 - t1).abs() > 1e-8 {
-                            let iw = vec![circ.point_at(t1), circ.point_at((t1+t2)*0.5), circ.point_at(t2)];
+                            let iw = vec![circ.point_at(t1), circ.point_at(t2)];
+                            let iw_circ_curve = Curve3::Circle(*circ);
                             let fp = boundary.iter().max_by(|a,b| a.distance(circ.center).partial_cmp(&b.distance(circ.center)).unwrap()).copied().unwrap_or(DVec3::ZERO);
                             annular_out = Some(vec![SubFace {
                                 boundary, surface: face.surface.clone(), normal: face.normal,
@@ -2581,6 +2585,7 @@ impl<'a> BooleanBuilder<'a> {
                                 uv_domain: None, inner_wires: vec![iw],
                                 outer_circle_edges: vec![],
                                 seam_edge: None,
+                                inner_wire_circle: Some((0, iw_circ_curve)),
                             }]);
                             break;
                         }
@@ -2945,6 +2950,7 @@ impl<'a> BooleanBuilder<'a> {
                     inner_wires: vec![],
                     outer_circle_edges: vec![],
                     seam_edge: None,
+            inner_wire_circle: None,
                 });
             }
         }
@@ -3020,6 +3026,7 @@ impl<'a> BooleanBuilder<'a> {
                 inner_wires: vec![],
                 outer_circle_edges: vec![],
                 seam_edge: None,
+            inner_wire_circle: None,
             });
         }
         subs
@@ -3118,6 +3125,7 @@ impl<'a> BooleanBuilder<'a> {
                     inner_wires: vec![],
                     outer_circle_edges: vec![],
                     seam_edge: None,
+            inner_wire_circle: None,
                 });
             }
         }
@@ -3207,6 +3215,7 @@ impl<'a> BooleanBuilder<'a> {
                     inner_wires: vec![],
                     outer_circle_edges: vec![],
                     seam_edge: None,
+            inner_wire_circle: None,
                 });
             }
         }
@@ -3636,6 +3645,7 @@ impl<'a> BooleanBuilder<'a> {
                     inner_wires,
                     outer_circle_edges: vec![],
                     seam_edge: None,
+            inner_wire_circle: None,
                 }
             })
             .collect()
@@ -3903,6 +3913,7 @@ impl<'a> BooleanBuilder<'a> {
                 inner_wires: vec![],
                 outer_circle_edges: vec![],
                 seam_edge: None,
+            inner_wire_circle: None,
             }];
         }
 
@@ -3924,6 +3935,7 @@ impl<'a> BooleanBuilder<'a> {
                 inner_wires: vec![],
                 outer_circle_edges: vec![],
                 seam_edge: None,
+            inner_wire_circle: None,
             }];
         }
 
@@ -4023,6 +4035,7 @@ impl<'a> BooleanBuilder<'a> {
                 inner_wires: vec![],
                 outer_circle_edges: vec![],
                 seam_edge: None,
+            inner_wire_circle: None,
             })
             .collect()
     }
@@ -4219,7 +4232,8 @@ impl<'a> BooleanBuilder<'a> {
             subs.push(SubFace { boundary, surface: Surface3::Sphere(sphere),
                 normal: (va-c).normalize(), uv_centroid: None, sample_override: None,
                 uv_domain: None, inner_wires: vec![],
-                outer_circle_edges: outer_circles, seam_edge: seam });
+                outer_circle_edges: outer_circles, seam_edge: seam,
+                inner_wire_circle: None });
         }
         subs
     }
@@ -4923,6 +4937,7 @@ impl<'a> BooleanBuilder<'a> {
                     inner_wires,
                     outer_circle_edges: vec![],
                     seam_edge: None,
+            inner_wire_circle: None,
                 }
             })
             .collect()
@@ -5176,6 +5191,7 @@ fn merge_two_subfaces(a: &SubFace, b: &SubFace, ai: usize, bi: usize, forward: b
         inner_wires: merged_inner,
         outer_circle_edges: vec![],
         seam_edge: None,
+            inner_wire_circle: None,
     }
 }
 
@@ -8453,6 +8469,7 @@ fn try_trim_planar_subface_by_cylinder(
         inner_wires: vec![],
         outer_circle_edges: vec![],
         seam_edge: None,
+            inner_wire_circle: None,
     })
 }
 

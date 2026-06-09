@@ -5864,39 +5864,6 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                 }).map(|(&e,_)| e).collect();
                 if std::env::var("RCAD_DEBUG_MERGE").is_ok() { eprintln!("[MERGE]   group[{}]: {} edges, {} boundary", gi, gr.len(), bnd.len()); }
                 if bnd.len() < 3 { continue; }
-                // ✅ OCCT对齐: 为闭曲面(sphere)添加 seam edge 到边界集。
-                //    OCCT FillSameDomainFaces 通过 pcurve 检测 seam edge (UV边界处的边)。
-                //    rcad 因 merge 函数无 pcurve 访问(brep_same_parameter 在后处理执行),
-                //    用几何方法: 找到连接边界顶点与球体极点的边,加入边界集。
-                //    OCCT 源码: BOPAlgo_Builder_2.cxx L571 (FillSameDomainFaces)
-                use rcad_kernel::geom::Surface3;
-                let gr_sd = out.solids[si].shells[shi].faces[g[0]].surface_idx;
-                if let Some(sid) = gr_sd.and_then(|s| out.geom.surfaces.get(s).cloned()) {
-                    if let Surface3::Sphere(ref sphere) = sid {
-                        let north = sphere.center + sphere.axis * sphere.radius;
-                        let south = sphere.center - sphere.axis * sphere.radius;
-                        let bv: std::collections::HashSet<usize> = bnd.iter().flat_map(|&ei|
-                            out.edges.get(ei).map(|e| [e.start, e.end].into_iter()).into_iter().flatten()
-                        ).collect();
-                        let new_seam: Vec<usize> = gr.iter().filter_map(|(&ei, _c)| {
-                            if bnd.contains(&ei) { return None; }
-                            let eg = out.edges.get(ei)?;
-                            let sb = bv.contains(&eg.start);
-                            let eb = bv.contains(&eg.end);
-                            if sb != eb {
-                                let nv = if sb { eg.end } else { eg.start };
-                                let v = out.vertices.get(nv)?;
-                                if (v.point - north).length() < 1e-6 || (v.point - south).length() < 1e-6 {
-                                    return Some(ei);
-                                }
-                            }
-                            None
-                        }).collect();
-                        if new_seam.len() > 0 {
-                            bnd.extend(new_seam.into_iter());
-                        }
-                    }
-                }
                 let mut v2e: HashMap<usize,Vec<(usize,bool)>> = HashMap::new();
                 for &ei in &bnd {
                     if let Some(eg) = out.edges.get(ei) {
@@ -5952,10 +5919,10 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                 }
                 let oi = areas.iter().enumerate().max_by(|(_,a),(_,b)| a.partial_cmp(b).unwrap()).map(|(i,_)|i).unwrap_or(0);
                 let mut ol = loops.swap_remove(oi);
-                // ⏳ 部分对齐: signed-area 翻转 — 补偿 seam edge 缺失。
-                //    OCCT FillSameDomainFaces 因 seam edge + 共享边使 loop 方向自然正确。
-                //    rcad 缺少 seam edge 检测(需 pcurve 访问),对有界凸曲面(sphere/torus)
-                //    用 signed-area 检测并翻转 loop 方向。非凸曲面(cylinder/cone)无需翻转。
+                // ⏳ 部分对齐: signed-area 翻转 — 补偿 patch 边界方向不确定性。
+                //    OCCT FillSameDomainFaces 因共享边自然得到正确 loop 方向。
+                //    rcad 用 signed-area 检测闭环方向并翻转有界凸曲面(sphere/torus)
+                //    的 outer wire,使 face 覆盖保留区(大区域)而非内部(小三角形)。
                 if ol.len() >= 3 {
                     let nm = out.solids[si].shells[shi].faces[g[0]].normal;
                     let sd = out.solids[si].shells[shi].faces[g[0]].surface_idx;
