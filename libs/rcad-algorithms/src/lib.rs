@@ -5822,11 +5822,31 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                 let sid = out.solids[si].shells[shi].faces[fi].surface_idx;
                 let mut found = false;
                 for gi in 0..grps.len() {
-                    if grps[gi].len()>0 && out.solids[si].shells[shi].faces[grps[gi][0]].surface_idx == sid {
+                    let ofi = grps[gi][0];
+                    if out.solids[si].shells[shi].faces[ofi].surface_idx == sid {
                         grps[gi].push(fi); found = true; break;
+                    }
+                    if let (Some(a), Some(b)) = (sid, out.solids[si].shells[shi].faces[ofi].surface_idx) {
+                        if let (Some(s1), Some(s2)) = (out.geom.surfaces.get(a), out.geom.surfaces.get(b)) {
+                            use rcad_kernel::geom::Surface3;
+                            let same = match (s1, s2) {
+                                (&Surface3::Sphere(sa), Surface3::Sphere(sb)) =>
+                                    (sa.center - sb.center).length() < 1e-8 && (sa.radius - sb.radius).abs() < 1e-8,
+                                (&Surface3::Plane(pa), Surface3::Plane(pb)) =>
+                                    (pa.normal - pb.normal).length() < 1e-8 && (pa.origin - pb.origin).length() < 1e-8,
+                                _ => false,
+                            };
+                            if same { grps[gi].push(fi); found = true; break; }
+                        }
                     }
                 }
                 if !found { grps.push(vec![fi]); }
+            }
+            let mut shell_refs: HashMap<usize,usize> = HashMap::new();
+            for fi in 0..nf {
+                for we in &out.solids[si].shells[shi].faces[fi].outer_wire.edges {
+                    *shell_refs.entry(we.idx).or_default() += 1;
+                }
             }
             for gi in 0..grps.len() {
                 let g = &grps[gi]; if g.len() < 2 { continue; }
@@ -5837,7 +5857,11 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                         *gr.entry(we.idx).or_default() += 1;
                     }
                 }
-                let bnd: Vec<usize> = gr.iter().filter(|(_, c)| **c==1).map(|(&e,_)| e).collect();
+                if std::env::var("RCAD_DEBUG_MERGE").is_ok() { eprintln!("[MERGE]   group[{}]: {} edges", gi, gr.len()); }
+                let bnd: Vec<usize> = gr.iter().filter(|(e, c)| {
+                    let sr = shell_refs.get(e).copied().unwrap_or(0);
+                    sr > **c || sr == 1
+                }).map(|(&e,_)| e).collect();
                 if std::env::var("RCAD_DEBUG_MERGE").is_ok() { eprintln!("[MERGE]   group[{}]: {} edges, {} boundary", gi, gr.len(), bnd.len()); }
                 if bnd.len() < 3 { continue; }
                 let mut v2e: HashMap<usize,Vec<(usize,bool)>> = HashMap::new();
@@ -5879,6 +5903,45 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                 }
                 let oi = areas.iter().enumerate().max_by(|(_,a),(_,b)| a.partial_cmp(b).unwrap()).map(|(i,_)|i).unwrap_or(0);
                 let mut ol = loops.swap_remove(oi);
+                // Orient the outer wire so the face covers the KEPT region.
+                // The natural loop trace (carried from edge records) follows the
+                // mesh traversal, which on a convex curved surface (sphere, torus)
+                // often wraps the SMALL side — the interior of the intersection
+                // curve — when the KEPT region is the LARGE side (the 7/8 cap).
+                // Compute signed polygon area projected onto the face normal:
+                // positive = CCW (interior of loop kept), negative = CW (exterior).
+                // For planar faces the bounded polygon IS the kept region, so CCW
+                // is correct.  For closed convex surfaces we need CW = exterior.
+                if ol.len() >= 3 {
+                    let nm = out.solids[si].shells[shi].faces[g[0]].normal;
+                    let sd = out.solids[si].shells[shi].faces[g[0]].surface_idx;
+                    let is_closed_convex = sd.and_then(|sid| out.geom.surfaces.get(sid)).is_some_and(|s|
+                        matches!(s, rcad_kernel::geom::Surface3::Sphere(_) | rcad_kernel::geom::Surface3::Torus(_)));
+                    if is_closed_convex {
+                        let mut verts: Vec<DVec3> = Vec::with_capacity(ol.len());
+                        for &(ei,f) in &ol {
+                            if let Some(e) = out.edges.get(ei) {
+                                if let Some(v) = out.vertices.get(if f { e.start } else { e.end }) {
+                                    verts.push(v.point);
+                                }
+                            }
+                        }
+                        if verts.len() >= 3 {
+                            let mut signed = 0.0;
+                            for i in 0..verts.len() {
+                                let j = (i + 1) % verts.len();
+                                signed += verts[i].cross(verts[j]).dot(nm);
+                            }
+                            signed *= 0.5;
+                            // CCW → face covers interior of loop (small region on sphere).
+                            // Flip so it covers the exterior (the kept 7/8 cap).
+                            if signed > 0.0 {
+                                ol.reverse();
+                                for &mut (_, ref mut f) in ol.iter_mut() { *f = !*f; }
+                            }
+                        }
+                    }
+                }
                 use rcad_kernel::topology::WireEdge;
                 let ow = rcad_kernel::topology::Wire { edges: ol.iter().map(|&(ei,f)| WireEdge{idx:ei,forward:f}).collect() };
                 let iws: Vec<rcad_kernel::topology::Wire> = loops.iter().map(|lp| rcad_kernel::topology::Wire { edges: lp.iter().map(|&(ei,f)| WireEdge{idx:ei,forward:f}).collect() }).collect();
