@@ -586,7 +586,7 @@ impl ResultBuilder {
             //    add_edge 按顶点对去重: sphere侧add_circle_edge(v0,v1,circle)创建edge E14,
             //    这里的add_circle_edge(v0,v1,circle)因相同顶点对返回同一E14。
             //    BRep wire: 同一条边 forward + reverse 形成闭合环路(同球面seam wire)。
-            if iw_poly.len() == 2 && sub.inner_wire_circle.is_some() {
+            if iw_poly.len() == 2 && sub.inner_wire_circle.is_some() { 
                 let v0 = self.add_vertex(iw_poly[0]);
                 let v1 = self.add_vertex(iw_poly[1]);
                 let (_, crv) = sub.inner_wire_circle.as_ref().unwrap();
@@ -616,11 +616,18 @@ impl ResultBuilder {
         }
 
         // Triangulate outer boundary with optional holes.
+        // Build holes list with 2-point inner wires expanded to 3-point for triangulation.
+        let tri_holes: Vec<Vec<DVec3>> = sub.inner_wires.iter().map(|h| {
+            if h.len() == 2 {
+                let mid = (h[0] + h[1]) * 0.5;
+                vec![h[0], mid, h[1]]
+            } else { h.clone() }
+        }).collect();
         let all_vert_indices: Vec<usize> = [vert_indices.as_slice(), iw_vert_indices_all.as_slice()].concat();
-        let mut tris = if sub.inner_wires.is_empty() {
+        let mut tris = if tri_holes.is_empty() {
             triangulate_polygon(&sub.boundary, normal)
         } else {
-            triangulate_polygon_with_holes(&sub.boundary, &sub.inner_wires, normal)
+            triangulate_polygon_with_holes(&sub.boundary, &tri_holes, normal)
         };
         for tri in &mut tris {
             for idx in tri.iter_mut() {
@@ -704,6 +711,8 @@ impl ResultBuilder {
             let mut replacements: Vec<Option<Vec<usize>>> = vec![None; n_edges];
             let mut any = false;
             for ei in 0..n_edges {
+                // ✅ OCCT对齐: 跳过精确 Circle3 弧边(T-junction只细分直边)。
+                if self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).is_some() { continue; }
                 let Some(seq) = vertex_sequences[ei].as_ref() else {
                     continue;
                 };
