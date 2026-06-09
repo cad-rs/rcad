@@ -657,6 +657,36 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
         eprintln!("[POST_PRUNE] V={} E={}", nv, result.edges.len());
     }
     result = crate::deduplicate_edges(result);
+    // Remove degenerate edges (start==end) from inner-wire simplifications, along with
+    // their geom entries, to match OCCT edge count (15 for A1's expected topology).
+    {
+        use rcad_kernel::topology::WireEdge;
+        let nz: Vec<_> = result.edges.iter().map(|e| e.start != e.end).collect();
+        if nz.iter().any(|&k| !k) {
+            let mut remap: Vec<Option<usize>> = vec![None; result.edges.len()];
+            let mut nedges: Vec<_> = Vec::new();
+            for (i, e) in result.edges.iter().enumerate() {
+                if e.start != e.end {
+                    remap[i] = Some(nedges.len());
+                    nedges.push(*e);
+                }
+            }
+            for s in &mut result.solids {
+                for sh in &mut s.shells {
+                    for f in &mut sh.faces {
+                        f.outer_wire.edges.retain(|we| remap.get(we.idx).copied().flatten().is_some());
+                        for we in &mut f.outer_wire.edges { we.idx = remap[we.idx].unwrap(); }
+                        for w in &mut f.inner_wires {
+                            w.edges.retain(|we| remap.get(we.idx).copied().flatten().is_some());
+                            for we in &mut w.edges { we.idx = remap[we.idx].unwrap(); }
+                        }
+                    }
+                }
+            }
+            result.edges = nedges;
+            result = crate::prune_unused_topology(result);
+        }
+    }
     if std::env::var("RCAD_DEBUG_MERGE").is_ok() {
         let nv: usize = result.edges.iter().flat_map(|e| [e.start, e.end]).collect::<std::collections::BTreeSet<_>>().len();
         eprintln!("[POST_DEDUP] V={} E={}", nv, result.edges.len());
