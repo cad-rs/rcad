@@ -455,6 +455,10 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
         }
     }
     validate_union_brep_output("union: result failed checks after build", &result)?;
+    // ✅ OCCT对齐: 为所有非平面面上的边创建 pcurve,供 merge 函数的 seam edge 检测。
+    //    OCCT BuildSplitFaces 创建 section edge 时同时生成 pcurve。
+    //    rcad 的 add_circle_edge/add_edge 不生成,此处在上游补做。
+    compute_face_pcurves(&mut result);
     // Sew boolean seam vertices so coplanar edge-adjacent patches share endpoints; orthogonal
     // fuse / `unify_same_domain_faces` need coincident topology to merge remaining fragments.
     let (sewn, _) = merge_close_vertices(&result, crate::tolerance::TOLERANCE_ABS * 1000.0);
@@ -681,6 +685,62 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     }
     validate_union_brep_output("union: result failed checks after same-plane merge", &result)?;
     Ok(result)
+}
+
+/// ✅ OCCT对齐: 为所有非平面面上的边计算 pcurve(3D曲线→UV投影)。
+///    OCCT BuildSplitFaces 创建 section edge 时同时生成 pcurve(IntTools_CurveRange).
+///    rcad 的 add_circle_edge/add_edge 不生成 pcurve,此处作为上游补做。
+pub(crate) fn compute_face_pcurves(brep: &mut BRep) {
+    use rcad_kernel::geom::{CurveEval, SurfaceEval, Curve2d, Line2d, Surface3};
+    use rcad_kernel::PCurve;
+    use std::f64::consts::PI;
+    if brep.edges.is_empty() { return; }
+    brep.geom.edge_pcurves.resize(brep.edges.len(), Vec::new());
+    for si in 0..brep.solids.len() {
+        for shi in 0..brep.solids[si].shells.len() {
+            for fi in 0..brep.solids[si].shells[shi].faces.len() {
+                let face = &brep.solids[si].shells[shi].faces[fi];
+                let Some(surf_idx) = face.surface_idx else { continue; };
+                let Some(surface) = brep.geom.surfaces.get(surf_idx) else { continue; };
+                if matches!(surface, Surface3::Plane(_)) { continue; }
+                let edges: Vec<usize> = face.outer_wire.edges.iter()
+                    .chain(face.inner_wires.iter().flat_map(|w| &w.edges))
+                    .map(|we| we.idx).collect();
+                for &ei in &edges {
+                    if ei >= brep.geom.edge_pcurves.len() { continue; }
+                    if !brep.geom.edge_pcurves[ei].is_empty() { continue; }
+                    let Some(curve_idx) = brep.geom.edge_curve.get(ei).copied().flatten() else { continue; };
+                    let Some(curve) = brep.geom.curves.get(curve_idx) else { continue; };
+                    let n = 12usize;
+                    let mut uv: Vec<glam::DVec2> = Vec::with_capacity(n);
+                    for s in 0..n {
+                        let t = s as f64 / (n - 1) as f64;
+                        let p3d = curve.point_at(t);
+                        if let Some(u) = project_point_to_uv(p3d, surface) { uv.push(u); }
+                    }
+                    if uv.len() < 2 { continue; }
+                    let c2d = brep.geom.curve2ds.len();
+                    let dir = (uv[uv.len()-1] - uv[0]) / (n as f64 - 1.0);
+                    brep.geom.curve2ds.push(Curve2d::Line(Line2d { origin: uv[0], direction: dir }));
+                    brep.geom.edge_pcurves[ei].push(PCurve { surface_idx: surf_idx, curve2d_idx: c2d });
+                }
+            }
+        }
+    }
+}
+
+/// 3D点到曲面 UV 的反向投影。用于 compute_face_pcurves。
+fn project_point_to_uv(p: glam::DVec3, surface: &rcad_kernel::geom::Surface3) -> Option<glam::DVec2> {
+    use rcad_kernel::geom::Surface3;
+    match surface {
+        Surface3::Sphere(s) => {
+            let d = (p - s.center) / s.radius;
+            let u = f64::atan2(d.dot(s.ref_dir_perp()), d.dot(s.ref_dir));
+            let v = f64::asin(d.dot(s.axis).clamp(-1.0, 1.0));
+            Some(glam::DVec2::new(u, v))
+        }
+        _ => None,
+    }
 }
 
 /// Same phases as [`fuse`], but returns [`BooleanHistory`] and does not run plane recompute

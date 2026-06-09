@@ -198,6 +198,14 @@ pub struct SphericalSurface {
     pub ref_dir: Vec3,
 }
 
+impl SphericalSurface {
+    /// Direction perpendicular to ref_dir in the equatorial plane (axis × ref_dir).
+    /// Used for UV mapping: U = atan2(dot(ref_dir_perp), dot(ref_dir)).
+    pub fn ref_dir_perp(&self) -> Vec3 {
+        self.axis.cross(self.ref_dir).normalize_or_zero()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ConicalSurface {
     /// Point on the cone axis where the surface radius equals `radius`.
