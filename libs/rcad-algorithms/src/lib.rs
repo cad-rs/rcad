@@ -5864,6 +5864,39 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                 }).map(|(&e,_)| e).collect();
                 if std::env::var("RCAD_DEBUG_MERGE").is_ok() { eprintln!("[MERGE]   group[{}]: {} edges, {} boundary", gi, gr.len(), bnd.len()); }
                 if bnd.len() < 3 { continue; }
+                // ✅ OCCT对齐: 为闭曲面(sphere)添加 seam edge 到边界集。
+                //    OCCT FillSameDomainFaces 通过 pcurve 检测 seam edge (UV边界处的边)。
+                //    源码: BOPAlgo_Builder_2.cxx L571 (FillSameDomainFaces)
+                //    rcad 因 merge 函数无 pcurve 访问(brep_same_parameter 在后处理执行),
+                //    用几何方法: 找到连接边界顶点与球体极点的边,加入边界集。
+                {
+                    use rcad_kernel::geom::Surface3;
+                    let sd = out.solids[si].shells[shi].faces[g[0]].surface_idx;
+                    if let Some(sid) = sd.and_then(|s| out.geom.surfaces.get(s).cloned()) {
+                        if let Surface3::Sphere(ref sphere) = sid {
+                            let north = sphere.center + sphere.axis * sphere.radius;
+                            let south = sphere.center - sphere.axis * sphere.radius;
+                            let bv: std::collections::HashSet<usize> = bnd.iter().flat_map(|&ei|
+                                out.edges.get(ei).map(|e| [e.start, e.end].into_iter()).into_iter().flatten()
+                            ).collect();
+                            let new_seam: Vec<usize> = gr.iter().filter_map(|(&ei, _)| {
+                                if bnd.contains(&ei) { return None; }
+                                let eg = out.edges.get(ei)?;
+                                let sb = bv.contains(&eg.start);
+                                let eb = bv.contains(&eg.end);
+                                if sb != eb {
+                                    let nv = if sb { eg.end } else { eg.start };
+                                    let v = out.vertices.get(nv)?;
+                                    if (v.point - north).length() < 1e-6 || (v.point - south).length() < 1e-6 {
+                                        return Some(ei);
+                                    }
+                                }
+                                None
+                            }).collect();
+                            if new_seam.len() > 0 { bnd.extend(new_seam); }
+                        }
+                    }
+                }
                 let mut v2e: HashMap<usize,Vec<(usize,bool)>> = HashMap::new();
                 for &ei in &bnd {
                     if let Some(eg) = out.edges.get(ei) {

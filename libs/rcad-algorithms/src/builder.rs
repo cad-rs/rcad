@@ -582,9 +582,11 @@ impl ResultBuilder {
         for iw_poly in &sub.inner_wires {
             let iw_idx = inner_wire_edges.len();
             // ✅ OCCT对齐: 2-point inner wire → 单条Circle3共享边。
-            if iw_poly.len() == 2 {
-                let same_wire = sub.inner_wire_circle.as_ref().map_or(false, |x| x.0 == iw_idx);
-                if same_wire {
+            // ✅ OCCT对齐: 2-point inner wire → 单条Circle3共享边(与sphere侧同一edge index)。
+            //    add_edge 按顶点对去重: sphere侧add_circle_edge(v0,v1,circle)创建edge E14,
+            //    这里的add_circle_edge(v0,v1,circle)因相同顶点对返回同一E14。
+            //    BRep wire: 同一条边 forward + reverse 形成闭合环路(同球面seam wire)。
+            if iw_poly.len() == 2 && sub.inner_wire_circle.is_some() {
                 let v0 = self.add_vertex(iw_poly[0]);
                 let v1 = self.add_vertex(iw_poly[1]);
                 let (_, crv) = sub.inner_wire_circle.as_ref().unwrap();
@@ -594,7 +596,6 @@ impl ResultBuilder {
                 let mid_v = self.add_vertex(mid);
                 iw_vert_indices_all.extend([v0, mid_v, v1]);
                 continue;
-            }
             }
             if iw_poly.len() < 3 { continue; }
             let iw_data: Vec<DVec3> = iw_poly.to_vec();
