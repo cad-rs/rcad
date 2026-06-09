@@ -5893,14 +5893,7 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                             None
                         }).collect();
                         if new_seam.len() > 0 {
-                            let added = new_seam.len();
                             bnd.extend(new_seam.into_iter());
-                            if std::env::var("RCAD_DEBUG_MERGE").is_ok() {
-                                let bv_cnt: std::collections::HashSet<usize> = bnd.iter().flat_map(|&ei|
-                                    out.edges.get(ei).map(|e| [e.start, e.end].into_iter()).into_iter().flatten()
-                                ).collect();
-                                eprintln!("[MERGE]   added {} seam edges (bnd verts: {})", added, bv_cnt.len());
-                            }
                         }
                     }
                 }
@@ -5943,15 +5936,6 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                     }
                 }
                 if best_loop.len() >= 3 { loops.push(best_loop); }
-                if std::env::var("RCAD_DEBUG_MERGE").is_ok() {
-                    let bv: std::collections::HashSet<usize> = bnd.iter().flat_map(|&ei|
-                        out.edges.get(ei).map(|e| [e.start, e.end].into_iter()).into_iter().flatten()
-                    ).collect();
-                    eprintln!("[MERGE]   loops: {} formed from {} bnd edges (bnd verts: {})", loops.len(), bnd.len(), bv.len());
-                    for (li, lp) in loops.iter().enumerate() {
-                        eprintln!("[MERGE]     loop[{}]: {} edges", li, lp.len());
-                    }
-                }
                 if loops.is_empty() { continue; }
                 use glam::DVec3;
                 let mut areas: Vec<f64> = Vec::new();
@@ -6008,20 +5992,6 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                 let mf = rcad_kernel::Face { outer_wire: ow, inner_wires: iws, normal: nm, triangles: vec![], sample_point: None, mesh_dirty: true,
             surface_idx: sd };
                 let kp = g[0]; out.solids[si].shells[shi].faces[kp] = mf;
-                if std::env::var("RCAD_DEBUG_MERGE").is_ok() {
-                    let mf = &out.solids[si].shells[shi].faces[kp];
-                    let verts: std::collections::BTreeSet<usize> = mf.outer_wire.edges.iter().flat_map(|we| {
-                        out.edges.get(we.idx).map(|e| [e.start, e.end].into_iter()).into_iter().flatten()
-                    }).collect();
-                    eprintln!("[MERGE_FACE] merged face: {} outer edges, {} outer verts, {} inner wires", mf.outer_wire.edges.len(), verts.len(), mf.inner_wires.len());
-                    for we in &mf.outer_wire.edges {
-                        if let Some(e) = out.edges.get(we.idx) {
-                            eprintln!("[MERGE_FACE]   edge[{}] fwd={}: v{}→v{}", we.idx, we.forward, e.start, e.end);
-                        }
-                    }
-                    let nf: usize = out.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
-                    eprintln!("[MERGE_FACE] total faces after merge: {}", nf);
-                }
                 let mut rd: Vec<usize> = g.iter().skip(1).copied().collect();
                 rd.sort_unstable_by(|a,b| b.cmp(a));
                 for &fi in &rd { out.solids[si].shells[shi].faces.remove(fi); }

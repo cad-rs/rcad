@@ -644,21 +644,13 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     result = crate::deduplicate_edges(result);
     let (merged, _cnt) = crate::occt_merge_same_surface_faces(&result);
     result = merged;
-    if std::env::var("RCAD_DEBUG_MERGE").is_ok() {
-        let nv: usize = result.edges.iter().flat_map(|e| [e.start, e.end]).collect::<std::collections::BTreeSet<_>>().len();
-        eprintln!("[POST_MERGE] V={} E={}", nv, result.edges.len());
-    }
     // compact_brep after merge removes edges/vertices that were only referenced by
     // the now-removed faces — OCCT FillSameDomainFaces does not clear the edge list,
     // but compact_brep is the RCAD equivalent of rebuilding the shape after merge.
     result = crate::prune_unused_topology(result);
-    if std::env::var("RCAD_DEBUG_MERGE").is_ok() {
-        let nv: usize = result.edges.iter().flat_map(|e| [e.start, e.end]).collect::<std::collections::BTreeSet<_>>().len();
-        eprintln!("[POST_PRUNE] V={} E={}", nv, result.edges.len());
-    }
     result = crate::deduplicate_edges(result);
-    // Remove degenerate edges (start==end) from inner-wire simplifications, along with
-    // their geom entries, to match OCCT edge count (15 for A1's expected topology).
+    // Remove degenerate edges (start==end) that survive compact_brep due to
+    // face-replacement index juggling in the merge function.
     {
         use rcad_kernel::topology::WireEdge;
         let nz: Vec<_> = result.edges.iter().map(|e| e.start != e.end).collect();
@@ -686,10 +678,6 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
             result.edges = nedges;
             result = crate::prune_unused_topology(result);
         }
-    }
-    if std::env::var("RCAD_DEBUG_MERGE").is_ok() {
-        let nv: usize = result.edges.iter().flat_map(|e| [e.start, e.end]).collect::<std::collections::BTreeSet<_>>().len();
-        eprintln!("[POST_DEDUP] V={} E={}", nv, result.edges.len());
     }
     validate_union_brep_output("union: result failed checks after same-plane merge", &result)?;
     Ok(result)
