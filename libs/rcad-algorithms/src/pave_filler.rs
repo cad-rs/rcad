@@ -4344,7 +4344,7 @@ impl<'a> PaveFiller<'a> {
     ///   Line3: 仅端点替换。
     fn make_blocks(&mut self) {
         let n_ef = self.ds.interferences.iter().filter(|inf| matches!(inf, Interference::EdgeFace { .. })).count();
-        eprintln!("[MAKE_BLOCKS] start: {} total interferences, {} EdgeFace, {} curves", self.ds.interferences.len(), n_ef, self.ds.intersection_curves.len());
+        let _ = n_ef; // suppress unused warning
         // ── Phase 1: Collect data ────────────────────────────────────────
         let ef_verts: Vec<(usize, DVec3)> = self.ds.interferences.iter()
             .filter_map(|inf| {
@@ -4484,7 +4484,7 @@ impl<'a> PaveFiller<'a> {
         }
 
         // Second pass: create new curves for remaining segments
-        let orig_n_curves = self.ds.intersection_curves.len();
+        let _orig_n_curves = self.ds.intersection_curves.len();
         let mut new_curves_info: Vec<(usize, usize)> = Vec::new(); // (old_ci, new_ci)
 
         for act in &actions {
