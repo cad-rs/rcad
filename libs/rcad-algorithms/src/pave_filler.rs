@@ -4346,17 +4346,37 @@ impl<'a> PaveFiller<'a> {
         let n_ef = self.ds.interferences.iter().filter(|inf| matches!(inf, Interference::EdgeFace { .. })).count();
         let _ = n_ef; // suppress unused warning
         // ── Phase 1: Collect data ────────────────────────────────────────
-        let ef_verts: Vec<(usize, DVec3)> = self.ds.interferences.iter()
+        let n_curves = self.ds.intersection_curves.len();
+        let n_faces = self.ds.faces.len();
+
+        // ✅ OCCT对齐: 收集所有候选顶点 (SubShapesOnIn: ON/IN/boundary/EF)
+        let mut all_verts: Vec<(usize, DVec3)> = self.ds.interferences.iter()
             .filter_map(|inf| {
                 if let Interference::EdgeFace { new_vertex, point, .. } = inf {
                     Some((*new_vertex, *point))
                 } else { None }
             })
             .collect();
-        if ef_verts.is_empty() { return; }
-
-        let n_curves = self.ds.intersection_curves.len();
-        let n_faces = self.ds.faces.len();
+        // 加上 face 边界顶点 (OCCT FaceInfo 原始边界顶点)
+        let mut seen: std::collections::BTreeSet<usize> =
+            all_verts.iter().map(|(vi, _)| *vi).collect();
+        for face in &self.ds.faces {
+            for &vi in &face.boundary_verts {
+                if seen.insert(vi) {
+                    all_verts.push((vi, self.ds.vertices[vi].point));
+                }
+            }
+            for &vi in &face.face_info.vertices_in {
+                if seen.insert(vi) {
+                    all_verts.push((vi, self.ds.vertices[vi].point));
+                }
+            }
+            for &vi in &face.face_info.vertices_on {
+                if seen.insert(vi) {
+                    all_verts.push((vi, self.ds.vertices[vi].point));
+                }
+            }
+        }
 
         // Curve snapshots: collect all data upfront to avoid borrow conflicts
         struct CurveSnapshot {
@@ -4404,29 +4424,24 @@ impl<'a> PaveFiller<'a> {
             let mut on_curve: Vec<(f64, usize)> = Vec::new();
 
             match &snap.curve {
-                Curve3::Circle(circ) => {
-                    let x_ax = rcad_kernel::geom::any_perpendicular(DVec3::from(circ.normal));
-                    let y_ax = DVec3::from(circ.normal).cross(x_ax);
-                    for &(evi, ept) in &ef_verts {
+                Curve3::Circle(_circ) => {
+                    // ✅ OCCT对齐: 仅端点位置匹配 (避免全圆参数匹配误注入边界外顶点)
+                    //    rcad 的 IntersectionCurve.t_range 为基曲线范围 [0,TAU),
+                    //    尚未裁剪到 face 重叠区域。参数匹配会把完整圆上的所有边界
+                    //    顶点都注入(如球面两极),导致曲线被错误分裂。
+                    //    改为 3D 位置匹配: 仅候选顶点在曲线端点容差内时替换。
+                    for &(evi, ept) in &all_verts {
                         if evi == snap.sv || evi == snap.ev { continue; }
-                        let to_c = ept - DVec3::from(circ.center);
-                        if (to_c.length() - circ.radius).abs() > tol { continue; }
-                        let proj = to_c / circ.radius;
-                        let a = proj.dot(x_ax).atan2(proj.dot(y_ax));
-                        let mut p = a;
-                        if p < t0 { p += std::f64::consts::TAU; }
-                        while p > t0 + std::f64::consts::TAU - 1e-12 {
-                            p -= std::f64::consts::TAU;
-                        }
-                        if p >= t0 - tol && p <= t1 + tol {
-                            on_curve.push((p, evi));
+                        if ept.distance_squared(snap.sv_pos) < tol * tol {
+                            self.ds.intersection_curves[ci].start_vertex = evi;
+                        } else if ept.distance_squared(snap.ev_pos) < tol * tol {
+                            self.ds.intersection_curves[ci].end_vertex = evi;
                         }
                     }
-                    if on_curve.is_empty() { continue; }
                 }
                 _ => {
                     // Line3: endpoint replacement only
-                    for &(evi, ept) in &ef_verts {
+                    for &(evi, ept) in &all_verts {
                         if evi == snap.sv || evi == snap.ev { continue; }
                         if ept.distance_squared(snap.sv_pos) < tol * tol {
                             self.ds.intersection_curves[ci].start_vertex = evi;
