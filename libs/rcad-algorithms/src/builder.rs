@@ -582,9 +582,9 @@ impl ResultBuilder {
         for iw_poly in &sub.inner_wires {
             let iw_idx = inner_wire_edges.len();
             // ✅ OCCT对齐: 2-point inner wire → 单条Circle3共享边。
-            if iw_poly.len() == 2
-                && sub.inner_wire_circle.as_ref().map_or(false, |(wi, _)| *wi == iw_idx)
-            {
+            if iw_poly.len() == 2 {
+                let same_wire = sub.inner_wire_circle.as_ref().map_or(false, |x| x.0 == iw_idx);
+                if same_wire {
                 let v0 = self.add_vertex(iw_poly[0]);
                 let v1 = self.add_vertex(iw_poly[1]);
                 let (_, crv) = sub.inner_wire_circle.as_ref().unwrap();
@@ -594,6 +594,7 @@ impl ResultBuilder {
                 let mid_v = self.add_vertex(mid);
                 iw_vert_indices_all.extend([v0, mid_v, v1]);
                 continue;
+            }
             }
             if iw_poly.len() < 3 { continue; }
             let iw_data: Vec<DVec3> = iw_poly.to_vec();
