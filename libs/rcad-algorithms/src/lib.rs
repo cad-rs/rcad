@@ -5952,38 +5952,11 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                 }
                 let oi = areas.iter().enumerate().max_by(|(_,a),(_,b)| a.partial_cmp(b).unwrap()).map(|(i,_)|i).unwrap_or(0);
                 let mut ol = loops.swap_remove(oi);
-                // ⏳ 部分对齐: signed-area 翻转 — 补偿 patch 边界方向不确定性。
-                //    OCCT FillSameDomainFaces 因共享边自然得到正确 loop 方向。
-                //    rcad 用 signed-area 检测闭环方向并翻转有界凸曲面(sphere/torus)
-                //    的 outer wire,使 face 覆盖保留区(大区域)而非内部(小三角形)。
-                if ol.len() >= 3 {
-                    let nm = out.solids[si].shells[shi].faces[g[0]].normal;
-                    let sd = out.solids[si].shells[shi].faces[g[0]].surface_idx;
-                    let is_closed_convex = sd.and_then(|sid| out.geom.surfaces.get(sid)).is_some_and(|s|
-                        matches!(s, rcad_kernel::geom::Surface3::Sphere(_) | rcad_kernel::geom::Surface3::Torus(_)));
-                    if is_closed_convex {
-                        let mut verts: Vec<DVec3> = Vec::with_capacity(ol.len());
-                        for &(ei,f) in &ol {
-                            if let Some(e) = out.edges.get(ei) {
-                                if let Some(v) = out.vertices.get(if f { e.start } else { e.end }) {
-                                    verts.push(v.point);
-                                }
-                            }
-                        }
-                        if verts.len() >= 3 {
-                            let mut signed = 0.0;
-                            for i in 0..verts.len() {
-                                let j = (i + 1) % verts.len();
-                                signed += verts[i].cross(verts[j]).dot(nm);
-                            }
-                            signed *= 0.5;
-                            if signed > 0.0 {
-                                ol.reverse();
-                                for &mut (_, ref mut f) in ol.iter_mut() { *f = !*f; }
-                            }
-                        }
-                    }
-                }
+                // ✅ OCCT对齐: loop 方向来自共享边的自然绕行。
+                //    OCCT FillSameDomainFaces 不翻转 loop 方向——共享边的遍历方向
+                //    自然使 merged face 覆盖正确区域(大区域/小区域由 surface normal
+                //    确定)。rcad 的 DFS 找到最长环,方向由 edge 的 forward flag 确定,
+                //    因共享边索引一致,方向与 OCCT 等价。
                 use rcad_kernel::topology::WireEdge;
                 let ow = rcad_kernel::topology::Wire { edges: ol.iter().map(|&(ei,f)| WireEdge{idx:ei,forward:f}).collect() };
                 let iws: Vec<rcad_kernel::topology::Wire> = loops.iter().map(|lp| rcad_kernel::topology::Wire { edges: lp.iter().map(|&(ei,f)| WireEdge{idx:ei,forward:f}).collect() }).collect();
