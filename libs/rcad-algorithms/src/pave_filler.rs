@@ -4329,12 +4329,23 @@ impl<'a> PaveFiller<'a> {
     ///    (OCCT BOPAlgo_PaveFiller::MakeBlocks L700-833)
     ///
     /// 简化实现: 将 collect 和 apply 分离避免借用冲突。
+    /// ✅ OCCT对齐: MakeBlocks — PutPavesOnCurve 在 FF 曲线上放置现有顶点
+    ///    (BOPAlgo_PaveFiller_6 L700-833)
+    ///
+    /// OCCT 逻辑:
+    ///   1. 收集两个面上的 ON/IN 顶点 (myDS->SubShapesOnIn) (L752)
+    ///   2. PutPavesOnCurve: 检查每个顶点是否在 FF 曲线上,如果是则记录参数 (L789-791)
+    ///   3. 按参数排序后在顶点处分裂曲线 → PaveBlocks
+    ///
+    /// rcad 实现:
+    ///   对每条 Circle3 FF 交线,检查 EF Pave 顶点是否位于曲线上。
+    ///   端点匹配: 替换曲线 start/end_vertex 为 EF 顶点索引。
+    ///   内部点: 分裂曲线为多段,每段端点共享 EF 顶点。
+    ///   Line3: 仅端点替换。
     fn make_blocks(&mut self) {
-        // 使用 DS 的快照做数据分析,然后通过索引修改
-        // Step 1: 收集数据到本地 Vec,避免借用冲突
-        // Step 2: 修改 ds.intersection_curves
-
-        // 收集 EF 顶点
+        let n_ef = self.ds.interferences.iter().filter(|inf| matches!(inf, Interference::EdgeFace { .. })).count();
+        eprintln!("[MAKE_BLOCKS] start: {} total interferences, {} EdgeFace, {} curves", self.ds.interferences.len(), n_ef, self.ds.intersection_curves.len());
+        // ── Phase 1: Collect data ────────────────────────────────────────
         let ef_verts: Vec<(usize, DVec3)> = self.ds.interferences.iter()
             .filter_map(|inf| {
                 if let Interference::EdgeFace { new_vertex, point, .. } = inf {
@@ -4344,122 +4355,174 @@ impl<'a> PaveFiller<'a> {
             .collect();
         if ef_verts.is_empty() { return; }
 
-        // 收集曲线 snapshot
         let n_curves = self.ds.intersection_curves.len();
-        let mut new_curves_to_add: Vec<IntersectionCurve> = Vec::new();
-        // (old_ci, face_indices_that_reference_it)
+        let n_faces = self.ds.faces.len();
 
-        // 建立 curve→faces 映射快照
-        let curve_to_faces: Vec<Vec<usize>> = (0..self.ds.faces.len())
+        // Curve snapshots: collect all data upfront to avoid borrow conflicts
+        struct CurveSnapshot {
+            curve: Curve3,
+            t_range: [f64; 2],
+            sv: usize, ev: usize,
+            sv_pos: DVec3, ev_pos: DVec3,
+            pcurve_on_a: Option<Curve2d>,
+            pcurve_on_b: Option<Curve2d>,
+        }
+        let snapshots: Vec<CurveSnapshot> = (0..n_curves).map(|ci| {
+            let ic = &self.ds.intersection_curves[ci];
+            CurveSnapshot {
+                curve: ic.curve.clone(),
+                t_range: ic.t_range,
+                sv: ic.start_vertex, ev: ic.end_vertex,
+                sv_pos: self.ds.vertices[ic.start_vertex].point,
+                ev_pos: self.ds.vertices[ic.end_vertex].point,
+                pcurve_on_a: ic.pcurve_on_a.clone(),
+                pcurve_on_b: ic.pcurve_on_b.clone(),
+            }
+        }).collect();
+
+        // Face info snapshots: which faces reference which curves
+        let face_curves: Vec<Vec<usize>> = (0..n_faces)
             .map(|fi| self.ds.faces[fi].face_info.curves_in.iter().copied().collect())
             .collect();
 
-        // 对每条曲线,收集分裂信息
+        // ── Phase 2: Compute splits ──────────────────────────────────────
+        #[derive(Clone)]
+        struct SplitAction {
+            old_ci: usize,
+            /// EF vertex indices to share (in parameter order)
+            split_verts: Vec<(f64, usize)>,
+            /// PCurves from original curve
+            pca: Option<Curve2d>,
+            pcb: Option<Curve2d>,
+        }
+        let mut actions: Vec<SplitAction> = Vec::new();
+        let tol = TOLERANCE_ABS * 100.0;
+
         for ci in 0..n_curves {
-            let ic = &self.ds.intersection_curves[ci];
-            let tol = TOLERANCE_ABS * 100.0;
+            let snap = &snapshots[ci];
+            let [t0, t1] = snap.t_range;
+            let mut on_curve: Vec<(f64, usize)> = Vec::new();
 
-            // 获取 curve 信息
-            let (curve_type, t_range, sv, ev, sv_pos, ev_pos) = {
-                let sv_pos = self.ds.vertices[ic.start_vertex].point;
-                let ev_pos = self.ds.vertices[ic.end_vertex].point;
-                (ic.curve.clone(), ic.t_range, ic.start_vertex, ic.end_vertex, sv_pos, ev_pos)
-            };
-            let [t0, t1] = t_range;
-
-            // 收集在此曲线上的 EF 顶点及其参数
-            let mut on_curve: Vec<(usize, f64)> = Vec::new(); // (vi, param)
-
-            match &curve_type {
+            match &snap.curve {
                 Curve3::Circle(circ) => {
                     let x_ax = rcad_kernel::geom::any_perpendicular(DVec3::from(circ.normal));
                     let y_ax = DVec3::from(circ.normal).cross(x_ax);
-                    for &(ef_vi, ef_pt) in &ef_verts {
-                        if ef_vi == sv || ef_vi == ev { continue; }
-                        let to_c = ef_pt - DVec3::from(circ.center);
+                    for &(evi, ept) in &ef_verts {
+                        if evi == snap.sv || evi == snap.ev { continue; }
+                        let to_c = ept - DVec3::from(circ.center);
                         if (to_c.length() - circ.radius).abs() > tol { continue; }
                         let proj = to_c / circ.radius;
                         let a = proj.dot(x_ax).atan2(proj.dot(y_ax));
                         let mut p = a;
                         if p < t0 { p += std::f64::consts::TAU; }
-                        while p > t0 + std::f64::consts::TAU - 1e-12 { p -= std::f64::consts::TAU; }
+                        while p > t0 + std::f64::consts::TAU - 1e-12 {
+                            p -= std::f64::consts::TAU;
+                        }
                         if p >= t0 - tol && p <= t1 + tol {
-                            on_curve.push((ef_vi, p));
+                            on_curve.push((p, evi));
                         }
                     }
+                    if on_curve.is_empty() { continue; }
                 }
                 _ => {
-                    // Line3: 端点替换
-                    for &(ef_vi, ef_pt) in &ef_verts {
-                        if ef_vi == sv || ef_vi == ev { continue; }
-                        if ef_pt.distance_squared(sv_pos) < tol * tol {
-                            self.ds.intersection_curves[ci].start_vertex = ef_vi;
-                            eprintln!("[MAKE_BLOCKS] fi={} Line3 start replaced {}->{}", ci, sv, ef_vi);
-                        } else if ef_pt.distance_squared(ev_pos) < tol * tol {
-                            self.ds.intersection_curves[ci].end_vertex = ef_vi;
-                            eprintln!("[MAKE_BLOCKS] fi={} Line3 end replaced {}->{}", ci, ev, ef_vi);
+                    // Line3: endpoint replacement only
+                    for &(evi, ept) in &ef_verts {
+                        if evi == snap.sv || evi == snap.ev { continue; }
+                        if ept.distance_squared(snap.sv_pos) < tol * tol {
+                            self.ds.intersection_curves[ci].start_vertex = evi;
+                        } else if ept.distance_squared(snap.ev_pos) < tol * tol {
+                            self.ds.intersection_curves[ci].end_vertex = evi;
                         }
                     }
                     continue;
                 }
             }
 
-            if on_curve.is_empty() { continue; }
+            // Sort by parameter, dedup
+            on_curve.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            on_curve.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-12);
 
-            // 排序去重
-            on_curve.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-            on_curve.dedup_by(|a, b| (a.1 - b.1).abs() < 1e-12);
-
-            // 构建分裂参数序列 [t0, p1, p2, ..., t1]
-            let mut splits: Vec<(f64, usize)> = vec![(t0, sv)];
-            for &(vi, p) in &on_curve {
+            // Build split parameter list including endpoints
+            let mut sp: Vec<(f64, usize)> = vec![(t0, snap.sv)];
+            for &(p, vi) in &on_curve {
                 if (p - t0).abs() > tol * 0.1 {
-                    splits.push((p, vi));
+                    sp.push((p, vi));
                 } else {
-                    // 在起点 → 端点替换
+                    // At start → replace start_vertex
                     self.ds.intersection_curves[ci].start_vertex = vi;
-                    splits[0].1 = vi;
+                    sp[0].1 = vi;
                 }
             }
-            let last_p = splits.last().unwrap().0;
-            if (t1 - last_p).abs() > tol * 0.1 {
-                splits.push((t1, ev));
+            // Add end if not already at it
+            if (t1 - sp.last().unwrap().0).abs() > tol * 0.1 {
+                sp.push((t1, snap.ev));
             } else {
-                // 在终点 → 端点替换
-                self.ds.intersection_curves[ci].end_vertex = splits.last().unwrap().1;
+                self.ds.intersection_curves[ci].end_vertex = sp.last().unwrap().1;
             }
 
-            if splits.len() <= 2 { continue; } // 无需分裂
+            if sp.len() <= 2 { continue; } // No interior splits needed
 
-            // 分裂: 复用原曲线作为第一段,新增后续段
-            let (p0, _v0) = splits[0];
-            let (p1, v1) = splits[1];
-            self.ds.intersection_curves[ci].end_vertex = v1;
-            self.ds.intersection_curves[ci].t_range = [p0, p1];
-
-            for k in 2..splits.len() {
-                let (pk_start, vk_start) = splits[k - 1];
-                let (pk_end, vk_end) = splits[k];
-                if (pk_end - pk_start).abs() < tol * 0.1 { continue; }
-                new_curves_to_add.push(IntersectionCurve {
-                    curve: curve_type.clone(),
-                    polyline: vec![],
-                    start_vertex: vk_start,
-                    end_vertex: vk_end,
-                    t_range: [pk_start, pk_end],
-                    pcurve_on_a: None,
-                    pcurve_on_b: None,
-                });
-            }
+            // Record split: keep original curve as first segment,
+            // new curves for remaining segments
+            actions.push(SplitAction {
+                old_ci: ci,
+                split_verts: sp,
+                pca: snap.pcurve_on_a.clone(),
+                pcb: snap.pcurve_on_b.clone(),
+            });
         }
 
-        if new_curves_to_add.is_empty() { return; }
+        if actions.is_empty() { return; }
 
-        // 添加新曲线并更新引用
-        for (i, nc) in new_curves_to_add.into_iter().enumerate() {
-            let old_ci = 0; // placeholder — 实际需要追踪每个新曲线对应的 old_ci
-            let new_ci = self.ds.intersection_curves.len();
-            self.ds.intersection_curves.push(nc);
+        // ── Phase 3: Apply splits ────────────────────────────────────────
+        // First pass: shrink each original curve to its first segment
+        for act in &actions {
+            let sp = &act.split_verts;
+            let (_, v1) = sp[1];
+            self.ds.intersection_curves[act.old_ci].end_vertex = v1;
+            self.ds.intersection_curves[act.old_ci].t_range = [sp[0].0, sp[1].0];
+        }
+
+        // Second pass: create new curves for remaining segments
+        let orig_n_curves = self.ds.intersection_curves.len();
+        let mut new_curves_info: Vec<(usize, usize)> = Vec::new(); // (old_ci, new_ci)
+
+        for act in &actions {
+            let sp = &act.split_verts;
+            for k in 2..sp.len() {
+                let (p_prev, v_prev) = sp[k - 1];
+                let (p_cur, v_cur) = sp[k];
+                if (p_cur - p_prev).abs() < tol * 0.1 { continue; }
+                let new_ci = self.ds.intersection_curves.len();
+                self.ds.intersection_curves.push(IntersectionCurve {
+                    curve: snapshots[act.old_ci].curve.clone(),
+                    polyline: vec![],
+                    start_vertex: v_prev,
+                    end_vertex: v_cur,
+                    t_range: [p_prev, p_cur],
+                    pcurve_on_a: act.pca.clone(),
+                    pcurve_on_b: act.pcb.clone(),
+                });
+                new_curves_info.push((act.old_ci, new_ci));
+
+                // Register endpoints in faces' vertices_in
+                for fi in 0..n_faces {
+                    if face_curves[fi].contains(&act.old_ci) {
+                        self.ds.faces[fi].face_info.curves_in.insert(new_ci);
+                        self.ds.faces[fi].face_info.vertices_in.insert(v_prev);
+                        self.ds.faces[fi].face_info.vertices_in.insert(v_cur);
+                    }
+                }
+
+                // Add to FaceFace interferences
+                for inf in &mut self.ds.interferences {
+                    if let Interference::FaceFace { curves, .. } = inf {
+                        if curves.contains(&act.old_ci) && !curves.contains(&new_ci) {
+                            curves.push(new_ci);
+                        }
+                    }
+                }
+            }
         }
     }
 
