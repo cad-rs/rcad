@@ -847,12 +847,6 @@ impl ResultBuilder {
             // Keep them as fallback display meshes only; exact consumers should
             // regenerate or use analytic surface integration.
             let mesh_dirty = true;
-            faces.push(Face {
-                outer_wire: wire,
-                inner_wires,
-                normal,
-                triangles,
-                sample_point: Some(sample_point),
             let surf_idx = geom.surfaces.len();
             faces.push(Face {
                 outer_wire: wire,
@@ -2116,6 +2110,7 @@ impl<'a> BooleanBuilder<'a> {
             brep = deduped;
             brep = crate::prune_unused_topology(brep);
             brep = crate::deduplicate_edges(brep);
+
         if std::env::var("RCAD_DEBUG_FACE_ORIGINS").is_ok() {
             for (fi, face) in brep.solids[0].shells[0].faces.iter().enumerate() {
                 let surf_name = brep

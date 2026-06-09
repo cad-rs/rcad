@@ -5836,7 +5836,7 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                         *gr.entry(we.idx).or_default() += 1;
                     }
                 }
-                let bnd: Vec<usize> = gr.iter().filter(|(_,&c)| c==1).map(|(&e,_)| e).collect();
+                let bnd: Vec<usize> = gr.iter().filter(|(_, c)| **c==1).map(|(&e,_)| e).collect();
                 if bnd.len() < 3 { continue; }
                 let mut v2e: HashMap<usize,Vec<(usize,bool)>> = HashMap::new();
                 for &ei in &bnd {
@@ -5883,7 +5883,7 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                 let nm = out.solids[si].shells[shi].faces[g[0]].normal;
                 let sd = out.solids[si].shells[shi].faces[g[0]].surface_idx;
                 let mf = rcad_kernel::Face { outer_wire: ow, inner_wires: iws, normal: nm, triangles: vec![], sample_point: None, mesh_dirty: true,
-            surface_idx: None, surface_idx: sd };
+            surface_idx: sd };
                 let kp = g[0]; out.solids[si].shells[shi].faces[kp] = mf;
                 let mut rd: Vec<usize> = g.iter().skip(1).copied().collect();
                 rd.sort_unstable_by(|a,b| b.cmp(a));
