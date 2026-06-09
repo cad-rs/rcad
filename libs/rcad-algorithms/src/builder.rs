@@ -2086,47 +2086,42 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize) -> Vec<WireSegment> {
     segments
 }
 
-/// ✅ OCCT对齐: 从边集合构建闭合 wire (PerformLoops L239-383)
+/// ✅ OCCT对齐: 从边集合构建闭合 wire — 使用位置匹配而非顶点索引匹配
+///    (PerformLoops L239-383)
 ///
-/// OCCT 流程:
-///   1. 过滤 myShapesToAvoid 后的边 → aWES (WireEdgeSet) (L258-266)
-///   2. BOPAlgo_WireSplitter 从 WES 构建 wire (L268-275)
-///   3. 后处理: 未使用的边加入 myShapesToAvoid → 构建 myLoopsInternal (L284-382)
-///
-/// rcad 实现:
-///   1. 建立顶点→段邻接表 (双向: start→end 和 end→start 都记录)
-///   2. 从任意未访问段开始,沿邻接遍历直到回到起点 → 闭合 wire
-///   3. 同段 FORWARD/REVERSED 不共线 — 每条 IC 只有一个副本
-fn build_closed_wires(segments: &[WireSegment]) -> Vec<Vec<usize>> {
+/// rcad: 使用 quantized 3D 位置匹配,避免对共享顶点索引的依赖。
+/// IC 端点可能与 face 边界边顶点有不同的 DS 索引但相同 3D 位置,
+/// 位置匹配能正确连接这些段形成闭合 wire。
+fn build_closed_wires(segments: &[WireSegment], ds: &DS) -> Vec<Vec<usize>> {
     if segments.is_empty() {
         return vec![];
     }
 
-    // 建立顶点→段索引的邻接表 (双向)
-    // 每个段有两种连接可能: start→end 和 end→start
-    let mut vert_adj: std::collections::HashMap<usize, Vec<usize>> =
-        std::collections::HashMap::new();
-    for (si, seg) in segments.iter().enumerate() {
-        vert_adj.entry(seg.start_vertex).or_default().push(si);
-        vert_adj.entry(seg.end_vertex).or_default().push(si);
-    }
+    let tol = TOLERANCE_ABS * 100.0;
+    // 为每个 segment 计算量化端点
+    let seg_keys: Vec<(u64, u64)> = segments.iter().map(|seg| {
+        let sp = ds.vertices[seg.start_vertex].point;
+        let ep = ds.vertices[seg.end_vertex].point;
+        (quantize_pos(sp, tol), quantize_pos(ep, tol))
+    }).collect();
 
     let n = segments.len();
     let mut visited = vec![false; n];
     let mut wires: Vec<Vec<usize>> = Vec::new();
 
-    // 建立顶点→通过顶点的段列表(按段方向区分)
-    // 对于每个顶点: 记录哪些段 FROM 该顶点 (start==v),哪些 TO 该顶点 (end==v)
-    let mut from_vert: std::collections::HashMap<usize, Vec<usize>> =
+    // 构建位置→段索引映射
+    let mut pos_to_segs: std::collections::HashMap<u64, Vec<usize>> =
         std::collections::HashMap::new();
-    let mut to_vert: std::collections::HashMap<usize, Vec<usize>> =
+    for (si, (sk, _ek)) in seg_keys.iter().enumerate() {
+        pos_to_segs.entry(*sk).or_default().push(si);
+    }
+    let mut end_pos_to_segs: std::collections::HashMap<u64, Vec<usize>> =
         std::collections::HashMap::new();
-    for (si, seg) in segments.iter().enumerate() {
-        from_vert.entry(seg.start_vertex).or_default().push(si);
-        to_vert.entry(seg.end_vertex).or_default().push(si);
+    for (si, (_sk, ek)) in seg_keys.iter().enumerate() {
+        end_pos_to_segs.entry(*ek).or_default().push(si);
     }
 
-    // 从任一未访问段开始,DFS 构建 wire
+    // 从任意未访问段开始遍历
     loop {
         let start_idx = match visited.iter().position(|&v| !v) {
             Some(idx) => idx,
@@ -2134,53 +2129,37 @@ fn build_closed_wires(segments: &[WireSegment]) -> Vec<Vec<usize>> {
         };
 
         let mut wire: Vec<usize> = Vec::new();
-        let mut current_vi = segments[start_idx].start_vertex;
-        let target_vi = segments[start_idx].start_vertex;
+        let target_key = seg_keys[start_idx].0; // start 位置
         let mut ci = start_idx;
+        let mut arrived_key = seg_keys[start_idx].1; // end 位置
 
-        // 遍历直到回到起点
         loop {
             if visited[ci] && ci != start_idx {
-                break; // 已经访问过(非起点) → 断路
+                break;
             }
             visited[ci] = true;
             wire.push(ci);
 
-            // 当前段到达的顶点
-            let arrived_at = segments[ci].end_vertex;
-
             // 回到起点 → 闭合
-            if arrived_at == target_vi && wire.len() > 1 {
+            if arrived_key == target_key && wire.len() > 1 {
                 break;
             }
 
-            // 找从 arrived_at 出发的未访问段
-            let next_candidates = from_vert.get(&arrived_at);
-            match next_candidates {
-                Some(candidates) => {
-                    let next = candidates.iter().copied().find(|&ni| !visited[ni]);
-                    match next {
-                        Some(ni) => { ci = ni; current_vi = arrived_at; }
-                        None => {
-                            // 没找到 from 段 → 检查是否可通过 seam(start==end) 继续
-                            // seam 段的 start==end,所以从 end 也可以找到
-                            // 尝试任何未访问的邻接段
-                            let any_next = vert_adj.get(&arrived_at)
-                                .and_then(|neighbors| {
-                                    neighbors.iter().copied().find(|&ni| !visited[ni])
-                                });
-                            match any_next {
-                                Some(ni) => { ci = ni; current_vi = arrived_at; }
-                                None => break, // 断路
-                            }
-                        }
-                    }
+            // 找从 arrived_key 出发的未访问段
+            let next = match pos_to_segs.get(&arrived_key) {
+                Some(candidates) => candidates.iter().copied().find(|&ni| !visited[ni]),
+                None => None,
+            };
+
+            match next {
+                Some(ni) => {
+                    ci = ni;
+                    arrived_key = seg_keys[ni].1;
                 }
-                None => break, // 无出边 → 断路
+                None => break,
             }
         }
 
-        // 只保存闭合 wire (至少 2 段)
         if wire.len() >= 2 {
             wires.push(wire);
         }
@@ -2298,25 +2277,18 @@ pub(crate) fn split_face_occt_wire_pipeline(ds: &DS, face_idx: usize) -> Option<
     if face.face_info.curves_in.is_empty() {
         return None;
     }
-
-    // 1. ✅ OCCT对齐: 收集边集 (BuildSplitFaces L357-489)
     let segments = collect_face_edge_segments(ds, face_idx);
     if segments.is_empty() {
         return None;
     }
-
-    // 2. ✅ OCCT对齐: 构建闭合 wire (PerformLoops L239-383)
-    let wires = build_closed_wires(&segments);
+    let wires = build_closed_wires(&segments, ds);
     if wires.is_empty() {
         return None;
     }
-
-    // 3. ✅ OCCT对齐: wire → SubFace (PerformAreas L387-606)
     let subs = subfaces_from_wires(&wires, &segments, ds, face_idx, &[]);
     if subs.is_empty() {
         return None;
     }
-
     Some(subs)
 }
 
@@ -3410,6 +3382,12 @@ impl<'a> BooleanBuilder<'a> {
         //    功能与 OCCT 的 section edges 分割等价。
         //    注意: Union(bfuse)时 7 个卦限需通过 unify_same_domain_faces 合并。
         if matches!(&face.surface, Surface3::Sphere(_)) {
+            // ✅ OCCT对齐: 先尝试 wire pipeline (位置匹配)
+            if !fi.curves_in.is_empty() {
+                if let Some(subs) = split_face_occt_wire_pipeline(self.ds, face_idx) {
+                    return subs;
+                }
+            }
             let circles: Vec<&rcad_kernel::geom::Circle3> = fi.curves_in.iter()
                 .filter_map(|&ci| {
                     if let rcad_kernel::geom::Curve3::Circle(ref c) = self.ds.intersection_curves[ci].curve { Some(c) } else { None }
