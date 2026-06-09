@@ -933,9 +933,15 @@ fn try_spherical_polygon_great_circle_area(
     }
 
     let r2 = s.radius * s.radius;
-    let area = r2 * (sum_angles - (n as f64 - 2.0) * std::f64::consts::PI);
-
+    let mut area = r2 * (sum_angles - (n as f64 - 2.0) * std::f64::consts::PI);
+    // ✅ OCCT对齐: 根据 sample_point 选择大/小区域。
     if area > 0.0 && area <= 4.0 * std::f64::consts::PI * r2 + 1e-12 {
+        let full = 4.0 * std::f64::consts::PI * r2;
+        if area > full * 0.5 { area = full - area; }
+        if let Some(sp) = face.sample_point {
+            let inside = point_in_spherical_polygon_3d(&verts[..n], sp);
+            if !inside { area = full - area; }
+        }
         Some(area)
     } else {
         None
@@ -1464,7 +1470,27 @@ fn try_planar_face_exact_contour_area(brep: &BRep, face: &Face, face_normal: DVe
         total += seg_total;
     }
 
-    if total > 0.0 && total.is_finite() { Some(total) } else { None }
+    if total > 0.0 && total.is_finite() {
+        // ✅ OCCT对齐: 扣除退化内边界(单Circle3边 forward+reverse)的弧-弦面积。
+        for w in &face.inner_wires {
+            if w.edges.len() == 2 && w.edges[0].idx == w.edges[1].idx {
+                let ei = w.edges[0].idx;
+                if let (Some(ci), Some(e)) = (brep.geom.edge_curve.get(ei).copied().flatten(), brep.edges.get(ei)) {
+                    if let Some(Curve3::Circle(c)) = brep.geom.curves.get(ci) {
+                        if let (Some(v0), Some(v1)) = (brep.vertices.get(e.start), brep.vertices.get(e.end)) {
+                            let d0 = (v0.point - c.center).normalize();
+                            let d1 = (v1.point - c.center).normalize();
+                            let theta = d0.dot(d1).clamp(-1.0, 1.0).acos();
+                            if theta > 1e-12 {
+                                total -= c.radius * c.radius * (theta - theta.sin()) * 0.5;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return Some(total);
+    } else { None }
 }
 
 /// Shoelace area of outer wire minus |hole areas| in the face plane (pivot = first outer point).
@@ -1562,6 +1588,24 @@ fn try_planar_face_area_shoelace(
         }
     }
     for w in &face.inner_wires {
+        // ✅ OCCT对齐: 退化内边界(单Circle3边 forward+reverse)→直接计算弧-弦面积。
+        if w.edges.len() == 2 && w.edges[0].idx == w.edges[1].idx {
+            let ei = w.edges[0].idx;
+            if let (Some(ci), Some(e)) = (brep.geom.edge_curve.get(ei).copied().flatten(), brep.edges.get(ei)) {
+                if let Some(Curve3::Circle(c)) = brep.geom.curves.get(ci) {
+                    let (p0, p1) = (brep.vertices.get(e.start), brep.vertices.get(e.end));
+                    if let (Some(v0), Some(v1)) = (p0, p1) {
+                        let d0 = (v0.point - c.center).normalize();
+                        let d1 = (v1.point - c.center).normalize();
+                        let theta = d0.dot(d1).clamp(-1.0, 1.0).acos();
+                        if theta > 1e-12 {
+                            a -= c.radius * c.radius * (theta - theta.sin()) * 0.5;
+                        }
+                    }
+                }
+            }
+            continue;
+        }
         let mut h = sample_wire_polyline_3d(brep, w);
         trim_almost_closed_polyline(&mut h, 1e-5);
         if h.len() < 3 {

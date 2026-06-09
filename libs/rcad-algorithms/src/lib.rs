@@ -5950,12 +5950,21 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                 let iws: Vec<rcad_kernel::topology::Wire> = loops.iter().map(|lp| rcad_kernel::topology::Wire { edges: lp.iter().map(|&(ei,f)| WireEdge{idx:ei,forward:f}).collect() }).collect();
                 let nm = out.solids[si].shells[shi].faces[g[0]].normal;
                 let sd = out.solids[si].shells[shi].faces[g[0]].surface_idx;
-                let mf = rcad_kernel::Face { outer_wire: ow, inner_wires: iws, normal: nm, triangles: vec![], sample_point: None, mesh_dirty: true,
+                let sp = out.solids[si].shells[shi].faces[g[0]].sample_point;
+                let mf = rcad_kernel::Face { outer_wire: ow, inner_wires: iws, normal: nm, triangles: vec![], sample_point: sp, mesh_dirty: true,
             surface_idx: sd };
                 let kp = g[0]; out.solids[si].shells[shi].faces[kp] = mf;
                 let mut rd: Vec<usize> = g.iter().skip(1).copied().collect();
                 rd.sort_unstable_by(|a,b| b.cmp(a));
-                for &fi in &rd { out.solids[si].shells[shi].faces.remove(fi); }
+                // ✅ OCCT对齐: 删除面时同步更新 face_surface Vec。
+                for &fi in &rd {
+                    let mut flat = 0usize;
+                    for s in 0..si { for sh in &out.solids[s].shells { flat += sh.faces.len(); } }
+                    for sh in 0..shi { flat += out.solids[si].shells[sh].faces.len(); }
+                    flat += fi;
+                    out.solids[si].shells[shi].faces.remove(fi);
+                    if flat < out.geom.face_surface.len() { out.geom.face_surface.remove(flat); }
+                }
                 total += 1;
             }
         }
