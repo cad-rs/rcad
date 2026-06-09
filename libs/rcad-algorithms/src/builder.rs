@@ -484,7 +484,11 @@ impl ResultBuilder {
                 while idx + 1 < iw.len() && (iw[idx+1] - iw[idx]).normalize().dot((iw[idx] - iw[idx-1]).normalize()).abs() > 0.99 { idx += 1; }
                 idx
             };
-            let arc_end_idx = if iw.len() >= 3 {
+            let arc_end_idx = if iw.len() == 3 {
+                // 3点内边界: 弧终点就是 iw[2](split_face 的 annular_out 路径,
+                // 内边界 [p_t1, p_mid, p_t2] 3个点都在圆上,终点是 p_t2)。
+                2_usize
+            } else if iw.len() >= 3 {
                 let mut idx = iw.len() - 2;
                 while idx > arc_start_idx {
                     let dir_prev = (iw[idx] - iw[idx-1]).normalize();
@@ -498,7 +502,13 @@ impl ResultBuilder {
             let arc_end = iw[arc_end_idx];
             // 构建 Circle3 曲线
             let circle = Curve3::Circle(rcad_kernel::geom::Circle3 { center, normal: norm, radius: r });
-            circles.push((wi, 1, circle)); // inner_wire edge 1 (from arc_start to arc_end) 用 Circle3
+            // ✅ OCCT对齐: Circle3 边的选择取决于 iw[0] 是否在圆上。
+            //    环形面(annular_out, 3点): iw[0]在圆上 → circle edge 用 edge[2],
+            //      add_edge(iw[2],iw[0])因顶点对去重返回与sphere侧相同edge index。
+            //    平面分割(split_planar_face): iw[0]是矩形角(不在圆上) → circle edge 用 edge[1]。
+            let iw0_on_circle = (iw[0].distance(center) - r).abs() < 1e-8;
+            let circle_edge_idx = if iw0_on_circle && iw.len() == 3 { 2_usize } else { 1_usize };
+            circles.push((wi, circle_edge_idx, circle));
             // 简化内边界: [rect_corner, arc_start, arc_end]
             let mut iw_simple: Vec<DVec3> = Vec::new();
             iw_simple.push(iw[0]);  // rectangle corner (line segment start)
@@ -812,6 +822,94 @@ impl ResultBuilder {
             self.subdivide_edges_at_interior_vertices();
             eprintln!("AFTER subdivide: {} vertices, {} edges, {} faces", self.vertices.len(), self.edges.len(), self.faces.len());
         }
+        // ✅ OCCT对齐: BuildSplitFaces 创建共享边 — 合并PaveFiller为两侧面创建的几何重合边。
+        //    OCCT IntTools_FaceFace 创建一条3D交线,BuildSplitFaces 用该交线同时在两侧
+        //    面创建同一 TopoDS_Edge(仅 orientation 相反),两侧自然共享边索引。
+        //    rcad 的 add_edge 按顶点对 `(v_min,v_max)` 去重,但 PaveFiller 数值噪声(≈1e-6)
+        //    使两侧的 add_vertex 创建不同 vertex index,导致 add_edge(v_a1,v_a2) ≠
+        //    add_edge(v_b1,v_b2),两侧不共享 edge index。此处先合并重合顶点(relaxed
+        //    tolerance),再按顶点对合并边,等价于 OCCT 的「一条交线 → 一个 Edge」。
+        //
+        //    OCCT 源码: BOPTools_AlgoTools.cxx L662-L674 (MakeEdge for section edges)
+        //    rcad 等价实现: 此处几何级顶点+边合并(自创,但语义等价)
+        {
+            let merge_tol_sq = TOLERANCE_ABS_SQ * 4096.0; // (64*TOLERANCE_ABS)² ≈ 4e-11
+            if std::env::var("RCAD_DEBUG_MERGE").is_ok() {
+                eprintln!("[BUILD_MERGE] pre: {} verts, {} edges, {} faces", self.vertices.len(), self.edges.len(), self.faces.len());
+            }
+
+            // Step 1: 顶点合并 — 按位置分组,映射到最小 index
+            let nv = self.vertices.len();
+            let mut v_canon: Vec<usize> = (0..nv).collect();
+            for i in 0..nv {
+                for j in (i+1)..nv {
+                    if (self.vertices[i] - self.vertices[j]).length_squared() < merge_tol_sq {
+                        let c = v_canon[i].min(v_canon[j]);
+                        v_canon[i] = c;
+                        v_canon[j] = c;
+                    }
+                }
+            }
+            for i in 0..nv {
+                let mut r = v_canon[i];
+                while r != v_canon[r] { r = v_canon[r]; }
+                v_canon[i] = r;
+            }
+
+            // Step 2: 更新 edge 顶点 index
+            for e in self.edges.iter_mut() {
+                e.0 = v_canon[e.0];
+                e.1 = v_canon[e.1];
+            }
+
+            // Step 3: 边去重 — 相同 (v_min,v_max) 对的边合并为同一 index
+            let ne = self.edges.len();
+            let mut e_canon: Vec<usize> = (0..ne).collect();
+            for i in 0..ne {
+                if e_canon[i] != i { continue; }
+                let (a1, a2) = (self.edges[i].0.min(self.edges[i].1), self.edges[i].0.max(self.edges[i].1));
+                for j in (i+1)..ne {
+                    let (b1, b2) = (self.edges[j].0.min(self.edges[j].1), self.edges[j].0.max(self.edges[j].1));
+                    if a1 == b1 && a2 == b2 {
+                        e_canon[j] = i;
+                    }
+                }
+            }
+
+            // Step 4: 更新 face 中所有 edge 引用
+            for f in self.faces.iter_mut() {
+                for we in f.0.iter_mut() { we.0 = e_canon[we.0]; }
+                for iw in f.1.iter_mut() {
+                    for we in iw.iter_mut() { we.0 = e_canon[we.0]; }
+                }
+            }
+
+            // Step 5: 压缩边数组 — 移除重复边,保持 curve 数据同步
+            let mut new_edges: Vec<(usize, usize)> = Vec::new();
+            let mut new_curves: Vec<Option<Curve3>> = Vec::new();
+            let mut e_remap: Vec<usize> = (0..ne).collect();
+            for i in 0..ne {
+                if e_canon[i] == i {
+                    e_remap[i] = new_edges.len();
+                    new_edges.push(self.edges[i]);
+                    new_curves.push(self.custom_edge_curves.get(i).cloned().unwrap_or(None));
+                } else {
+                    e_remap[i] = e_remap[e_canon[i]];
+                }
+            }
+            for f in self.faces.iter_mut() {
+                for we in f.0.iter_mut() { we.0 = e_remap[we.0]; }
+                for iw in f.1.iter_mut() {
+                    for we in iw.iter_mut() { we.0 = e_remap[we.0]; }
+                }
+            }
+            self.edges = new_edges;
+            self.custom_edge_curves = new_curves;
+            if std::env::var("RCAD_DEBUG_MERGE").is_ok() {
+                eprintln!("[BUILD_MERGE] post: {} verts, {} edges, {} faces", self.vertices.len(), self.edges.len(), self.faces.len());
+            }
+        }
+
         let vertices = self
             .vertices
             .into_iter()

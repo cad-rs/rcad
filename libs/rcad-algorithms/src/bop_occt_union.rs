@@ -644,6 +644,11 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     result = crate::deduplicate_edges(result);
     let (merged, _cnt) = crate::occt_merge_same_surface_faces(&result);
     result = merged;
+    // compact_brep after merge removes edges/vertices that were only referenced by
+    // the now-removed faces — OCCT FillSameDomainFaces does not clear the edge list,
+    // but compact_brep is the RCAD equivalent of rebuilding the shape after merge.
+    result = crate::prune_unused_topology(result);
+    result = crate::deduplicate_edges(result);
     validate_union_brep_output("union: result failed checks after same-plane merge", &result)?;
     Ok(result)
 }

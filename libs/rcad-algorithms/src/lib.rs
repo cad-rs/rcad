@@ -5903,15 +5903,10 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                 }
                 let oi = areas.iter().enumerate().max_by(|(_,a),(_,b)| a.partial_cmp(b).unwrap()).map(|(i,_)|i).unwrap_or(0);
                 let mut ol = loops.swap_remove(oi);
-                // Orient the outer wire so the face covers the KEPT region.
-                // The natural loop trace (carried from edge records) follows the
-                // mesh traversal, which on a convex curved surface (sphere, torus)
-                // often wraps the SMALL side — the interior of the intersection
-                // curve — when the KEPT region is the LARGE side (the 7/8 cap).
-                // Compute signed polygon area projected onto the face normal:
-                // positive = CCW (interior of loop kept), negative = CW (exterior).
-                // For planar faces the bounded polygon IS the kept region, so CCW
-                // is correct.  For closed convex surfaces we need CW = exterior.
+                // ⏳ 部分对齐: signed-area 翻转 — 补偿 seam edge 缺失。
+                //    OCCT FillSameDomainFaces 因 seam edge + 共享边使 loop 方向自然正确。
+                //    rcad 缺少 seam edge 检测(需 pcurve 访问),对有界凸曲面(sphere/torus)
+                //    用 signed-area 检测并翻转 loop 方向。非凸曲面(cylinder/cone)无需翻转。
                 if ol.len() >= 3 {
                     let nm = out.solids[si].shells[shi].faces[g[0]].normal;
                     let sd = out.solids[si].shells[shi].faces[g[0]].surface_idx;
@@ -5933,8 +5928,6 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                                 signed += verts[i].cross(verts[j]).dot(nm);
                             }
                             signed *= 0.5;
-                            // CCW → face covers interior of loop (small region on sphere).
-                            // Flip so it covers the exterior (the kept 7/8 cap).
                             if signed > 0.0 {
                                 ol.reverse();
                                 for &mut (_, ref mut f) in ol.iter_mut() { *f = !*f; }
