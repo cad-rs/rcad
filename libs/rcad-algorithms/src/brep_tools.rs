@@ -1108,7 +1108,7 @@ fn extract_brep_subset(source: &BRep, face_indices: &[usize]) -> BRep {
                 .collect(),
             sample_point: None,
             mesh_dirty: true,
-                surface_idx: ft.surface_idx,
+                surface_idx: ft.surface_idx.and_then(|si| s_remap.get(&si).copied()),
         });
 
         // face-level geometry
