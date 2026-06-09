@@ -5858,12 +5858,52 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                     }
                 }
                 if std::env::var("RCAD_DEBUG_MERGE").is_ok() { eprintln!("[MERGE]   group[{}]: {} edges", gi, gr.len()); }
-                let bnd: Vec<usize> = gr.iter().filter(|(e, c)| {
+                let mut bnd: Vec<usize> = gr.iter().filter(|(e, c)| {
                     let sr = shell_refs.get(e).copied().unwrap_or(0);
                     sr > **c || sr == 1
                 }).map(|(&e,_)| e).collect();
                 if std::env::var("RCAD_DEBUG_MERGE").is_ok() { eprintln!("[MERGE]   group[{}]: {} edges, {} boundary", gi, gr.len(), bnd.len()); }
                 if bnd.len() < 3 { continue; }
+                // ✅ OCCT对齐: 为闭曲面(sphere)添加 seam edge 到边界集。
+                //    OCCT FillSameDomainFaces 通过 pcurve 检测 seam edge (UV边界处的边)。
+                //    rcad 因 merge 函数无 pcurve 访问(brep_same_parameter 在后处理执行),
+                //    用几何方法: 找到连接边界顶点与球体极点的边,加入边界集。
+                //    OCCT 源码: BOPAlgo_Builder_2.cxx L571 (FillSameDomainFaces)
+                use rcad_kernel::geom::Surface3;
+                let gr_sd = out.solids[si].shells[shi].faces[g[0]].surface_idx;
+                if let Some(sid) = gr_sd.and_then(|s| out.geom.surfaces.get(s).cloned()) {
+                    if let Surface3::Sphere(ref sphere) = sid {
+                        let north = sphere.center + sphere.axis * sphere.radius;
+                        let south = sphere.center - sphere.axis * sphere.radius;
+                        let bv: std::collections::HashSet<usize> = bnd.iter().flat_map(|&ei|
+                            out.edges.get(ei).map(|e| [e.start, e.end].into_iter()).into_iter().flatten()
+                        ).collect();
+                        let new_seam: Vec<usize> = gr.iter().filter_map(|(&ei, _c)| {
+                            if bnd.contains(&ei) { return None; }
+                            let eg = out.edges.get(ei)?;
+                            let sb = bv.contains(&eg.start);
+                            let eb = bv.contains(&eg.end);
+                            if sb != eb {
+                                let nv = if sb { eg.end } else { eg.start };
+                                let v = out.vertices.get(nv)?;
+                                if (v.point - north).length() < 1e-6 || (v.point - south).length() < 1e-6 {
+                                    return Some(ei);
+                                }
+                            }
+                            None
+                        }).collect();
+                        if new_seam.len() > 0 {
+                            let added = new_seam.len();
+                            bnd.extend(new_seam.into_iter());
+                            if std::env::var("RCAD_DEBUG_MERGE").is_ok() {
+                                let bv_cnt: std::collections::HashSet<usize> = bnd.iter().flat_map(|&ei|
+                                    out.edges.get(ei).map(|e| [e.start, e.end].into_iter()).into_iter().flatten()
+                                ).collect();
+                                eprintln!("[MERGE]   added {} seam edges (bnd verts: {})", added, bv_cnt.len());
+                            }
+                        }
+                    }
+                }
                 let mut v2e: HashMap<usize,Vec<(usize,bool)>> = HashMap::new();
                 for &ei in &bnd {
                     if let Some(eg) = out.edges.get(ei) {
@@ -5871,21 +5911,46 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                         v2e.entry(eg.end).or_default().push((ei,false));
                     }
                 }
-                let mut rm: std::collections::HashSet<usize> = bnd.iter().copied().collect();
                 let mut loops: Vec<Vec<(usize,bool)>> = Vec::new();
-                while !rm.is_empty() {
-                    let se = *rm.iter().next().unwrap();
-                    let sv = out.edges[se].start;
-                    let (mut ce, mut cf) = (se, true);
-                    let mut lp: Vec<(usize,bool)> = Vec::new();
-                    loop {
-                        rm.remove(&ce); lp.push((ce,cf));
-                        let ev = if cf { out.edges[ce].end } else { out.edges[ce].start };
-                        if ev == sv && lp.len() > 1 { break; }
-                        let nx = v2e.get(&ev).and_then(|e| e.iter().find(|(ei,_)| rm.contains(ei))).copied();
-                        match nx { Some((ei,f)) => { ce=ei; cf=f; } None => break }
+                // Find the LONGEST cycle by DFS — OCCT PerformLoops alignment.
+                // OCCT 源码: BOPAlgo_BuilderSolid.cxx L262 (PerformLoops),
+                // 所有边界边参与,找到最外层环路(最大的面边界)。
+                // rcad: 用 DFS 探索所有可能的环路,选最长的一个。
+                let mut best_loop: Vec<(usize,bool)> = Vec::new();
+                for &start_ei in &bnd {
+                    if out.edges.get(start_ei).map_or(true, |e| e.start == e.end) { continue; }
+                    if let Some(eg) = out.edges.get(start_ei) {
+                        let sv = eg.start;
+                        let mut stack: Vec<(usize,bool,Vec<(usize,bool)>,std::collections::HashSet<usize>,std::collections::HashSet<usize>)> = Vec::new();
+                        stack.push((start_ei, true, vec![], std::collections::HashSet::new(), std::collections::HashSet::new()));
+                        while let Some((ce, cf, path, ve, mut vv)) = stack.pop() {
+                            let ev = if cf { out.edges[ce].end } else { out.edges[ce].start };
+                            let mut np = path.clone(); np.push((ce, cf));
+                            let mut nve = ve.clone(); nve.insert(ce);
+                            if ev == sv && np.len() > 1 {
+                                if np.len() > best_loop.len() { best_loop = np; }
+                                continue;
+                            }
+                            if !vv.insert(ev) { continue; }
+                            if let Some(edges) = v2e.get(&ev) {
+                                for &(nei, nf) in edges {
+                                    if !nve.contains(&nei) && out.edges.get(nei).map_or(true, |e| e.start != e.end) {
+                                        stack.push((nei, nf, np.clone(), nve.clone(), vv.clone()));
+                                    }
+                                }
+                            }
+                        }
                     }
-                    if lp.len() >= 3 { loops.push(lp); }
+                }
+                if best_loop.len() >= 3 { loops.push(best_loop); }
+                if std::env::var("RCAD_DEBUG_MERGE").is_ok() {
+                    let bv: std::collections::HashSet<usize> = bnd.iter().flat_map(|&ei|
+                        out.edges.get(ei).map(|e| [e.start, e.end].into_iter()).into_iter().flatten()
+                    ).collect();
+                    eprintln!("[MERGE]   loops: {} formed from {} bnd edges (bnd verts: {})", loops.len(), bnd.len(), bv.len());
+                    for (li, lp) in loops.iter().enumerate() {
+                        eprintln!("[MERGE]     loop[{}]: {} edges", li, lp.len());
+                    }
                 }
                 if loops.is_empty() { continue; }
                 use glam::DVec3;
@@ -5943,6 +6008,20 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                 let mf = rcad_kernel::Face { outer_wire: ow, inner_wires: iws, normal: nm, triangles: vec![], sample_point: None, mesh_dirty: true,
             surface_idx: sd };
                 let kp = g[0]; out.solids[si].shells[shi].faces[kp] = mf;
+                if std::env::var("RCAD_DEBUG_MERGE").is_ok() {
+                    let mf = &out.solids[si].shells[shi].faces[kp];
+                    let verts: std::collections::BTreeSet<usize> = mf.outer_wire.edges.iter().flat_map(|we| {
+                        out.edges.get(we.idx).map(|e| [e.start, e.end].into_iter()).into_iter().flatten()
+                    }).collect();
+                    eprintln!("[MERGE_FACE] merged face: {} outer edges, {} outer verts, {} inner wires", mf.outer_wire.edges.len(), verts.len(), mf.inner_wires.len());
+                    for we in &mf.outer_wire.edges {
+                        if let Some(e) = out.edges.get(we.idx) {
+                            eprintln!("[MERGE_FACE]   edge[{}] fwd={}: v{}→v{}", we.idx, we.forward, e.start, e.end);
+                        }
+                    }
+                    let nf: usize = out.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
+                    eprintln!("[MERGE_FACE] total faces after merge: {}", nf);
+                }
                 let mut rd: Vec<usize> = g.iter().skip(1).copied().collect();
                 rd.sort_unstable_by(|a,b| b.cmp(a));
                 for &fi in &rd { out.solids[si].shells[shi].faces.remove(fi); }
