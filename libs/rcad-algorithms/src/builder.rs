@@ -2646,33 +2646,46 @@ fn perform_areas(
         return vec![];
     }
 
-    // ✅ OCCT对齐: 用面积 + 中点测试分类 outer/hole wires
-    //    对应 OCCT PerformAreas L439-456 (IsGrowthWire + FClass2d::IsHole)
+    // ✅ OCCT对齐: 分类 wires 为 valid(≥3 点) 和 seam-only(<3 点且全是 seam)。
+    //    seam-only wires 对应 OCCT 中 seam 边形成的独立 wire。
+    //    OCCT DoSplitSEAMOnFace 使 seam 在 PerformLoops 中单独成 wire,
+    //    PerformAreas 通过 IsHole 将其作为 inner wire 分配到主 face。
+    //    rcad: valid wires 做 outer/hole 分类; seam-only wires 作为 inner wires。
+    let mut seam_wire_idxs: Vec<usize> = Vec::new();
     struct WireData { wire_idx: usize, boundary: Vec<DVec3>, area: f64 }
     let mut wds: Vec<WireData> = wires.iter().enumerate().filter_map(|(wi, w)| {
         let b = wire_boundary_3d(w, segments, ds);
-        if b.len() < 3 { return None; }
+        if b.len() < 3 {
+            // 检查是否 seam-only wire (所有 segment 都是 seam)
+            let all_seam = w.iter().all(|&si| segments[si].is_seam);
+            if all_seam {
+                seam_wire_idxs.push(wi);
+            }
+            return None;
+        }
         let a = projected_area_xy(&b);
         Some(WireData { wire_idx: wi, boundary: b, area: a })
     }).collect();
 
+    // 没有 valid wires → 把 seam wires 作为 outer
     if wds.is_empty() {
-        return vec![];
-    }
-    if wds.len() == 1 {
-        return vec![WireFace {
-            outer_wire: wires[wds[0].wire_idx].clone(),
+        if seam_wire_idxs.is_empty() {
+            return vec![];
+        }
+        // 每个 seam wire 单独成 WireFace (退化为 2-point boundary)
+        return seam_wire_idxs.iter().map(|&wi| WireFace {
+            outer_wire: wires[wi].clone(),
             inner_wires: vec![],
-        }];
+        }).collect();
     }
 
-    // 按面积降序: 最大 wire 为 outer
+    // 排序,最大为 outer
     wds.sort_by(|a, b| b.area.partial_cmp(&a.area).unwrap());
     let outer_wire_idx = wds[0].wire_idx;
     let outer_boundary = wds[0].boundary.clone();
     let rest = &wds[1..];
 
-    // 分类剩余 wire
+    // 分类 valid wires
     let mut hole_wire_idxs: Vec<usize> = Vec::new();
     let mut indep_wire_idxs: Vec<usize> = Vec::new();
     for wd in rest {
@@ -2684,9 +2697,13 @@ fn perform_areas(
         }
     }
 
+    // ✅ OCCT对齐: seam wires → 作为主 face 的 inner wires
+    //    (对应 OCCT PerformAreas L575-605: hole wire 分配到 outer face)
+    let all_holes: Vec<usize> = hole_wire_idxs.iter().chain(seam_wire_idxs.iter()).copied().collect();
+
     let mut result = vec![WireFace {
         outer_wire: wires[outer_wire_idx].clone(),
-        inner_wires: hole_wire_idxs.iter().map(|&wi| wires[wi].clone()).collect(),
+        inner_wires: all_holes.iter().map(|&wi| wires[wi].clone()).collect(),
     }];
     for &wi in &indep_wire_idxs {
         result.push(WireFace {
