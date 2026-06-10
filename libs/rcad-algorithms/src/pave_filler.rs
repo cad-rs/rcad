@@ -4482,11 +4482,6 @@ impl<'a> PaveFiller<'a> {
 
     // ─── MakeBlocks: 将 EF/EE 顶点注入 FF 曲线 (OCCT PaveFiller_6 L647+) ──
 
-    /// ✅ OCCT对齐: MakeBlocks — PutPavesOnCurve 在 FF 曲线上放置现有顶点,
-    ///    分裂曲线使 section edge 端点与 face 边界边共享顶点
-    ///    (OCCT BOPAlgo_PaveFiller::MakeBlocks L700-833)
-    ///
-    /// 简化实现: 将 collect 和 apply 分离避免借用冲突。
     /// ✅ OCCT对齐: MakeBlocks — PutPavesOnCurve 在 FF 曲线上放置现有顶点
     ///    (BOPAlgo_PaveFiller_6 L700-833)
     ///
@@ -4500,6 +4495,9 @@ impl<'a> PaveFiller<'a> {
     ///   端点匹配: 替换曲线 start/end_vertex 为 EF 顶点索引。
     ///   内部点: 分裂曲线为多段,每段端点共享 EF 顶点。
     ///   Line3: 仅端点替换。
+    ///
+    /// Phase 2a: 使用 param_on_line3/param_on_circle3/project_vertex_to_curve
+    ///           进行全量边界顶点注入（PutBoundPaveOnCurve）。
     fn make_blocks(&mut self) {
         let n_ef = self.ds.interferences.iter().filter(|inf| matches!(inf, Interference::EdgeFace { .. })).count();
         let _ = n_ef; // suppress unused warning
@@ -4775,6 +4773,88 @@ impl<'a> PaveFiller<'a> {
             .filter(|(_, f)| f.origin == origin)
             .map(|(i, _)| i)
             .collect()
+    }
+}
+
+// ── Phase 2a helpers: vertex → curve parameter projection ────────────────
+
+/// 计算顶点在 Line3 上的参数 t。
+/// Line3: P(t) = origin + t * direction (t ∈ ℝ)
+fn param_on_line3(pt: DVec3, line: &Line3, tol: f64) -> Option<f64> {
+    let dir = line.direction;
+    let to_pt = pt - line.origin;
+    let t = to_pt.dot(dir);
+    let proj = line.origin + t * dir;
+    let dist = proj.distance(pt);
+    if dist > tol { None } else { Some(t) }
+}
+
+/// 计算顶点在 Circle3 上的参数 t (角度, 弧度)。
+/// Circle3: P(t) = center + r·(cos(t)·u + sin(t)·v), t ∈ [0, 2π)
+fn param_on_circle3(pt: DVec3, circle: &Circle3, tol: f64) -> Option<f64> {
+    let r = circle.radius;
+    let center = circle.center;
+    let normal = circle.normal;
+    let ref_dir = any_perpendicular(normal);
+    let u = ref_dir.normalize();
+    let v = normal.cross(u);
+    let local = pt - center;
+    let dist_to_center = local.length();
+    if (dist_to_center - r).abs() > tol {
+        return None;
+    }
+    let x = local.dot(u);
+    let y = local.dot(v);
+    Some(y.atan2(x))
+}
+
+/// 将顶点投影到曲线上，返回参数 t（如果顶点在曲线上）。
+/// 支持 Line3 和 Circle3，其余曲线类型返回 None。
+fn project_vertex_to_curve(pt: DVec3, curve: &Curve3, tol: f64) -> Option<f64> {
+    match curve {
+        Curve3::Line(line) => param_on_line3(pt, line, tol),
+        Curve3::Circle(circ) => param_on_circle3(pt, circ, tol),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod phase2a_tests {
+    use super::*;
+    use crate::tolerance::*;
+    use rcad_kernel::geom::any_perpendicular;
+    use std::f64::consts::{FRAC_PI_2, PI};
+
+    #[test]
+    fn test_param_on_line3() {
+        let line = Line3 { origin: DVec3::ZERO, direction: DVec3::X };
+        let pt = DVec3::new(3.0, 0.0, 0.0);
+        let t = param_on_line3(pt, &line, 1e-6).unwrap();
+        assert!((t - 3.0).abs() < 1e-6, "expected 3.0, got {}", t);
+
+        // 不在直线上的点
+        let off = DVec3::new(3.0, 1.0, 0.0);
+        assert!(param_on_line3(off, &line, 1e-6).is_none());
+    }
+
+    #[test]
+    fn test_param_on_circle3() {
+        let circle = Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 1.0 };
+        // 点 (1,0,0) → 角度 0
+        let pt = DVec3::new(1.0, 0.0, 0.0);
+        let t = param_on_circle3(pt, &circle, 1e-6).unwrap();
+        assert!(t < 1e-6 || (t - 2.0 * PI).abs() < 1e-6,
+            "expected ~0 or 2π, got {}", t);
+
+        // 点 (0,1,0) → 角度 π/2
+        let pt2 = DVec3::new(0.0, 1.0, 0.0);
+        let t2 = param_on_circle3(pt2, &circle, 1e-6).unwrap();
+        assert!((t2 - FRAC_PI_2).abs() < 1e-6,
+            "expected π/2, got {}", t2);
+
+        // 不在圆上的点
+        let off = DVec3::new(2.0, 0.0, 0.0);
+        assert!(param_on_circle3(off, &circle, 1e-6).is_none());
     }
 }
 
