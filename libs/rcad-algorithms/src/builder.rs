@@ -976,15 +976,25 @@ impl ResultBuilder {
             }
         }
 
+        // ✅ OCCT对齐: 球面退化边 + seam 边 (OCCT sphere face 外环含退化边+seam)
         let mut internal_verts = Vec::new();
         if matches!(face.surface, Surface3::Sphere(_)) && !face.face_info.curves_in.is_empty() {
-            // OCCT aligned: seam endpoints are internal vertices on the sphere face
             for &ei in &face.boundary_edges {
                 let edge = &ds.edges[ei];
                 let sv = self.add_vertex(ds.vertices[edge.start_vertex].point);
                 let ev = self.add_vertex(ds.vertices[edge.end_vertex].point);
+                let sdeg = self.add_edge(sv, sv);
+                edge_indices.push((sdeg, true));
                 internal_verts.push(sv);
-                if sv != ev { internal_verts.push(ev); }
+                if sv != ev {
+                    let edeg = self.add_edge(ev, ev);
+                    edge_indices.push((edeg, true));
+                    internal_verts.push(ev);
+                    let seam_ei = self.add_edge(sv, ev);
+                    edge_indices.push((seam_ei, true));
+                    edge_indices.push((seam_ei, false));
+                }
+                break;
             }
         }
         self.face_internal_vtx.push(internal_verts);

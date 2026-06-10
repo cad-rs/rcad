@@ -662,7 +662,8 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
             let mut remap: Vec<Option<usize>> = vec![None; result.edges.len()];
             let mut nedges: Vec<_> = Vec::new();
             for (i, e) in result.edges.iter().enumerate() {
-                if e.start != e.end {
+                let is_degen = result.geom.edge_degenerated.get(i).copied().unwrap_or(false);
+                if e.start != e.end || is_degen {
                     remap[i] = Some(nedges.len());
                     nedges.push(*e);
                 }
