@@ -455,6 +455,7 @@ struct ResultBuilder {
     /// (see [`crate::history::BooleanHistory::co_face_origins`]).
     co_face_origins: Vec<(usize, FaceOrigin)>,
     custom_edge_curves: Vec<Option<Curve3>>,
+    face_internal_vtx: Vec<Vec<usize>>,
 }
 
 impl ResultBuilder {
@@ -514,6 +515,7 @@ impl ResultBuilder {
             face_origins: Vec::new(),
             co_face_origins: Vec::new(),
             custom_edge_curves: Vec::new(),
+            face_internal_vtx: Vec::new(),
         }
     }
 
@@ -974,6 +976,18 @@ impl ResultBuilder {
             }
         }
 
+        let mut internal_verts = Vec::new();
+        if matches!(face.surface, Surface3::Sphere(_)) && !face.face_info.curves_in.is_empty() {
+            // OCCT aligned: seam endpoints are internal vertices on the sphere face
+            for &ei in &face.boundary_edges {
+                let edge = &ds.edges[ei];
+                let sv = self.add_vertex(ds.vertices[edge.start_vertex].point);
+                let ev = self.add_vertex(ds.vertices[edge.end_vertex].point);
+                internal_verts.push(sv);
+                if sv != ev { internal_verts.push(ev); }
+            }
+        }
+        self.face_internal_vtx.push(internal_verts);
         self.faces.push((
             edge_indices,
             inner_wire_edges,
@@ -1292,6 +1306,7 @@ impl ResultBuilder {
             geom.face_surface.push(Some(surf_idx));
             geom.face_surface_range.push(uv_domain);
         }
+        geom.face_internal_vertices = self.face_internal_vtx;
 
         // Remove edges referenced by only 1 face (leftover from ON-face removal
         // in Union, where touching-face boundary edges become orphaned).
