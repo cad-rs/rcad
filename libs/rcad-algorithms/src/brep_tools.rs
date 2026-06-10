@@ -1132,6 +1132,10 @@ fn extract_brep_subset(source: &BRep, face_indices: &[usize]) -> BRep {
             .geom
             .face_tolerance
             .push(*source.geom.face_tolerance.get(fi).unwrap_or(&CONFUSION));
+        // ✅ OCCT对齐: 传播 face_internal_vertices (FillInternalVertices)
+        let old_ivs: &[usize] = source.geom.face_internal_vertices.get(fi).map_or(&[], |v| v.as_slice());
+        let new_ivs: Vec<usize> = old_ivs.iter().filter_map(|&ov| v_remap.get(&ov).copied()).collect();
+        result.geom.face_internal_vertices.push(new_ivs);
     }
 
     // Wrap in solid/shell topology.
