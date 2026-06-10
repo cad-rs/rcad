@@ -699,6 +699,173 @@ impl ResultBuilder {
         self.face_origins.push(origin);
     }
 
+    /// ✅ OCCT对齐: 从 WireFace 发射 BRep 面 (替代 emit_face_with_origin)。
+    ///    直接从 WireSegment 获取边拓扑,无需 SubFace 的中间多边形表示。
+    fn emit_wire_face(
+        &mut self,
+        face_idx: usize,
+        wf: &WireFace,
+        segments: &[WireSegment],
+        ds: &DS,
+        flip: bool,
+        origin: FaceOrigin,
+    ) {
+        let face = &ds.faces[face_idx];
+        let mut normal = if flip { -face.normal } else { face.normal };
+        if normal.length_squared() <= TOLERANCE_METRIC_SQ_NEAR_ZERO {
+            normal = Self::estimate_boundary_normal_from_segments(&wf.outer_wire, segments, ds);
+        }
+        if normal.length_squared() <= TOLERANCE_METRIC_SQ_NEAR_ZERO {
+            return;
+        }
+
+        // ── Outer wire: vertices + edges from WireSegments ──
+        let mut vert_indices = Vec::new();
+        let mut edge_indices = Vec::new();
+        for &si in &wf.outer_wire {
+            let seg = &segments[si];
+            let v1 = self.add_vertex(ds.vertices[seg.start_vertex].point);
+            let v2 = self.add_vertex(ds.vertices[seg.end_vertex].point);
+            if vert_indices.is_empty() || vert_indices.last() != Some(&v1) {
+                vert_indices.push(v1);
+            }
+            // Determine curve type from WireSegment.source
+            let ei = match &seg.source {
+                WireEdgeSource::IntersectionCurve(ci) => {
+                    let crv = &ds.intersection_curves[*ci].curve;
+                    if let Curve3::Circle(_) = crv {
+                        self.add_circle_edge(v1, v2, crv.clone())
+                    } else {
+                        self.add_edge(v1, v2)
+                    }
+                }
+                WireEdgeSource::DsEdge(_) | WireEdgeSource::SeamEdge => {
+                    self.add_edge(v1, v2)
+                }
+            };
+            let forward = self.edges[ei].0 == v1;
+            edge_indices.push((ei, forward));
+        }
+
+        // ── Inner wires (holes) ──
+        let mut inner_wire_edges: Vec<Vec<(usize, bool)>> = Vec::new();
+        let mut iw_vert_indices_all: Vec<usize> = Vec::new();
+        for iw in &wf.inner_wires {
+            let mut iw_verts = Vec::new();
+            let mut iw_edges = Vec::new();
+            for &si in iw {
+                let seg = &segments[si];
+                let v1 = self.add_vertex(ds.vertices[seg.start_vertex].point);
+                let v2 = self.add_vertex(ds.vertices[seg.end_vertex].point);
+                if iw_verts.is_empty() || iw_verts.last() != Some(&v1) {
+                    iw_verts.push(v1);
+                }
+                let ei = match &seg.source {
+                    WireEdgeSource::IntersectionCurve(ci) => {
+                        let crv = &ds.intersection_curves[*ci].curve;
+                        if let Curve3::Circle(_) = crv {
+                            self.add_circle_edge(v1, v2, crv.clone())
+                        } else {
+                            self.add_edge(v1, v2)
+                        }
+                    }
+                    _ => self.add_edge(v1, v2),
+                };
+                let forward = self.edges[ei].0 == v1;
+                iw_edges.push((ei, forward));
+            }
+            inner_wire_edges.push(iw_edges);
+            iw_vert_indices_all.extend(iw_verts);
+        }
+
+        // ── Triangulation ──
+        let outer_boundary: Vec<DVec3> = vert_indices.iter().map(|&vi| self.vertices[vi]).collect();
+        let iw_boundaries: Vec<Vec<DVec3>> = inner_wire_edges.iter().map(|iw_es| {
+            // Get one vertex per edge pair to reconstruct hole polygon
+            let mut pts = Vec::new();
+            for &(ei, _) in iw_es {
+                let (a, b) = self.edges[ei];
+                if pts.is_empty() || pts.last() != Some(&a) {
+                    pts.push(a);
+                }
+            }
+            pts.iter().map(|&vi| self.vertices[vi]).collect()
+        }).collect();
+        let all_vert_indices: Vec<usize> = [vert_indices.as_slice(), iw_vert_indices_all.as_slice()].concat();
+        let mut tris = if iw_boundaries.is_empty() {
+            triangulate_polygon(&outer_boundary, normal)
+        } else {
+            triangulate_polygon_with_holes(&outer_boundary, &iw_boundaries, normal)
+        };
+        for tri in &mut tris {
+            for idx in tri.iter_mut() {
+                *idx = all_vert_indices[*idx];
+            }
+        }
+
+        // ── Coincident face dedup ──
+        let centroid = outer_boundary.iter().copied().sum::<DVec3>() / outer_boundary.len().max(1) as f64;
+        let area = Self::polygon_signed_area_on_normal(&outer_boundary, normal);
+        let mut outer_sig: Vec<usize> = edge_indices.iter().map(|&(eid, _)| eid).collect();
+        outer_sig.sort_unstable();
+        let nlen = normal.length();
+        let nunit = if nlen > TOLERANCE_LEN_MIN { normal / nlen } else { normal };
+        for (existing_idx, (existing_outer, existing_inner, _existing_tris, existing_normal, _surf, _uv, existing_centroid, existing_area, _existing_sp)) in
+            self.faces.iter().enumerate()
+        {
+            let mut ex_sig: Vec<usize> = existing_outer.iter().map(|&(eid, _)| eid).collect();
+            for iw_edges in existing_inner {
+                ex_sig.extend(iw_edges.iter().map(|&(eid, _)| eid));
+            }
+            ex_sig.sort_unstable();
+            let elen = existing_normal.length();
+            if elen <= TOLERANCE_LEN_MIN { continue; }
+            let eunit = *existing_normal / elen;
+            let sig_match = ex_sig == outer_sig;
+            let geo_match = nunit.dot(eunit).abs() >= 0.99
+                && (*existing_centroid - centroid).length() <= TOLERANCE_LINEAR_RELAX_8
+                && (existing_area - area).abs() <= TOLERANCE_LINEAR_RELAX_8 * existing_area.max(area).max(1.0);
+            if sig_match || geo_match {
+                self.co_face_origins.push((existing_idx, origin));
+                return;
+            }
+        }
+
+        self.faces.push((
+            edge_indices,
+            inner_wire_edges,
+            tris,
+            normal,
+            face.surface.clone(),
+            None, // uv_domain — not computed in wire pipeline; set later in BRep build
+            centroid,
+            area,
+            // sample point: use the first vertex (vertex 0 of face boundary)
+            ds.vertices.get(0).map(|v| v.point).unwrap_or(DVec3::ZERO),
+        ));
+        self.face_origins.push(origin);
+    }
+
+    fn estimate_boundary_normal_from_segments(
+        outer_wire: &[usize],
+        segments: &[WireSegment],
+        ds: &DS,
+    ) -> DVec3 {
+        if outer_wire.len() < 3 { return DVec3::ZERO; }
+        let pts: Vec<DVec3> = outer_wire.iter().map(|&si| {
+            let seg = &segments[si];
+            ds.vertices[seg.start_vertex].point
+        }).collect();
+        let mut normal = DVec3::ZERO;
+        for i in 0..pts.len() {
+            let j = (i + 1) % pts.len();
+            normal.x += (pts[i].y - pts[j].y) * (pts[i].z + pts[j].z);
+            normal.y += (pts[i].z - pts[j].z) * (pts[i].x + pts[j].x);
+            normal.z += (pts[i].x - pts[j].x) * (pts[i].y + pts[j].y);
+        }
+        normal
+    }
+
     /// When an edge鈥檚 open segment passes through another result vertex (classic
     /// T-junction), replace that edge in all wires by a chain of shorter edges
     /// through those vertices so adjacent faces share identical topology.
@@ -2759,12 +2926,30 @@ impl<'a> BooleanBuilder<'a> {
             if kept_subs.len() > 1 && !matches!(kept_subs[0].surface, Surface3::Sphere(_)) {
                 merge_subfaces_of_same_face(&mut kept_subs);
             }
-            for mut sub in kept_subs {
-                let src = self.ds.faces[fi].source_face_idx;
-                let _acircs = result.find_inner_wire_circles(&mut sub);
-                result.emit_face_with_origin(&sub, false, FaceOrigin::FromA(src), &_acircs);
-                if let Surface3::Plane(p) = &sub.surface {
-                    a_on_planes.push((p.normal, p.origin));
+
+            // ✅ OCCT对齐: 尝试用 emit_wire_face 发射 sphere 面
+            let wire_emit_used = if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) {
+                if let Some((w_segments, w_faces)) = split_face_occt_wire_pipeline(self.ds, fi) {
+                    for wf in &w_faces {
+                        let src = self.ds.faces[fi].source_face_idx;
+                        result.emit_wire_face(fi, wf, &w_segments, self.ds, false, FaceOrigin::FromA(src));
+                    }
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            if !wire_emit_used {
+                for mut sub in kept_subs {
+                    let src = self.ds.faces[fi].source_face_idx;
+                    let _acircs = result.find_inner_wire_circles(&mut sub);
+                    result.emit_face_with_origin(&sub, false, FaceOrigin::FromA(src), &_acircs);
+                    if let Surface3::Plane(p) = &sub.surface {
+                        a_on_planes.push((p.normal, p.origin));
+                    }
                 }
             }
         }
