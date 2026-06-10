@@ -1863,7 +1863,25 @@ impl<'a> PaveFiller<'a> {
                 continue;
             }
             tc.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            let nr = [tc[0].max(t0), tc[tc.len()-1].min(t1)];
+            // ✅ OCCT对齐: 相邻交点之间选择最短圆弧(OCCT IntTools_Curve类似选择最小区间)
+            let mut best: Option<[f64;2]> = None;
+            for i in 0..tc.len() {
+                let j = (i + 1) % tc.len();
+                let a_start = tc[i];
+                let a_end = if j == 0 { tc[j] + std::f64::consts::TAU } else { tc[j] };
+                let a_len = a_end - a_start;
+                if a_len <= tol { continue; }
+                let replace = match best {
+                    Some(prev) => { let pl = if prev[0]<=prev[1] {prev[1]-prev[0]} else {std::f64::consts::TAU-prev[0]+prev[1]}; a_len < pl }
+                    None => true,
+                };
+                if replace {
+                    let ws = a_start % std::f64::consts::TAU;
+                    let we = tc[j];
+                    best = Some(if ws <= we { [ws, we] } else { [ws, std::f64::consts::TAU] });
+                }
+            }
+            let nr = match best { Some(r) => r, None => continue, };
             if nr[1] - nr[0] > tol {
                 result = Some(match result {
                     Some(prev) => [prev[0].max(nr[0]), prev[1].min(nr[1])],
@@ -1937,6 +1955,11 @@ impl<'a> PaveFiller<'a> {
                 } else {
                     (0.0, std::f64::consts::TAU)
                 };
+
+                // ✅ OCCT对齐: 跳过从相切点膨胀来的退化圆(OCCT IntPatch_Point处理单点接触)
+                if circle.radius <= TOLERANCE_MESH_LEGACY + TOLERANCE_ABS {
+                    return;
+                }
 
                 let pcurve_plane = circle_pcurve_on_plane(&circle, plane);
                 let pcurve_sphere = if (axis_dot_normal - 1.0).abs() < TOLERANCE_MESH_LEGACY {
@@ -4586,41 +4609,27 @@ impl<'a> PaveFiller<'a> {
             let [t0, t1] = snap.t_range;
             let mut on_curve: Vec<(f64, usize)> = Vec::new();
 
-            match &snap.curve {
-                Curve3::Circle(_circ) => {
-                    // ✅ OCCT对齐: 仅端点位置匹配 (避免全圆参数匹配误注入边界外顶点)
-                    //    rcad 的 IntersectionCurve.t_range 为基曲线范围 [0,TAU),
-                    //    尚未裁剪到 face 重叠区域。参数匹配会把完整圆上的所有边界
-                    //    顶点都注入(如球面两极),导致曲线被错误分裂。
-                    //    改为 3D 位置匹配: 仅候选顶点在曲线端点容差内时替换。
-                    for &(evi, ept) in &all_verts {
-                        if evi == snap.sv || evi == snap.ev { continue; }
-                        if ept.distance_squared(snap.sv_pos) < tol * tol {
-                            self.ds.intersection_curves[ci].start_vertex = evi;
-                        } else if ept.distance_squared(snap.ev_pos) < tol * tol {
-                            self.ds.intersection_curves[ci].end_vertex = evi;
-                        }
-                    }
+            // ✅ OCCT对齐: 端点替换(3D位置匹配)对所有曲线类型统一执行
+            for &(evi, ept) in &all_verts {
+                if evi == snap.sv || evi == snap.ev { continue; }
+                if ept.distance_squared(snap.sv_pos) < tol * tol {
+                    self.ds.intersection_curves[ci].start_vertex = evi;
+                } else if ept.distance_squared(snap.ev_pos) < tol * tol {
+                    self.ds.intersection_curves[ci].end_vertex = evi;
                 }
-                _ => {
-                    // Line3: endpoint replacement (3D position matching)
-                    for &(evi, ept) in &all_verts {
-                        if evi == snap.sv || evi == snap.ev { continue; }
-                        if ept.distance_squared(snap.sv_pos) < tol * tol {
-                            self.ds.intersection_curves[ci].start_vertex = evi;
-                        } else if ept.distance_squared(snap.ev_pos) < tol * tol {
-                            self.ds.intersection_curves[ci].end_vertex = evi;
-                        }
-                    }
-                    // Phase 2a: 面边界顶点参数注入 (PutBoundPaveOnCurve)
-                    let face_idxs = find_face_idxs_for_curve(&self.ds, ci);
-                    let bound_paves = put_bound_pave_on_curve(
-                        &self.ds, ci, &face_idxs, tol
-                    );
-                    on_curve.extend(bound_paves);
-                    on_curve = filter_paves_on_curves(&self.ds, ci, &on_curve);
-                    put_closing_pave_on_curve(&mut on_curve, false);
-                }
+            }
+
+            // ✅ OCCT对齐: PutBoundPaveOnCurve 对所有曲线类型执行
+            //    OCCT BOPAlgo_PaveFiller_6.cxx L798-832
+            {
+                let face_idxs = find_face_idxs_for_curve(&self.ds, ci);
+                let bound_paves = put_bound_pave_on_curve(
+                    &self.ds, ci, &face_idxs, tol
+                );
+                on_curve.extend(bound_paves);
+                on_curve = filter_paves_on_curves(&self.ds, ci, &on_curve);
+                let is_closed = matches!(&snap.curve, Curve3::Circle(_));
+                put_closing_pave_on_curve(&mut on_curve, is_closed);
             }
 
             // Sort by parameter, dedup
@@ -4809,14 +4818,18 @@ fn param_on_circle3(pt: DVec3, circle: &Circle3, tol: f64) -> Option<f64> {
     let r = circle.radius;
     let center = circle.center;
     let normal = circle.normal;
-    let ref_dir = any_perpendicular(normal);
-    let u = ref_dir.normalize();
-    let v = normal.cross(u);
+    // ✅ OCCT对齐: 点必须在圆的平面上 (Geom_Circle::Value 天然要求)
     let local = pt - center;
+    if local.dot(normal).abs() > tol {
+        return None;
+    }
     let dist_to_center = local.length();
     if (dist_to_center - r).abs() > tol {
         return None;
     }
+    let ref_dir = any_perpendicular(normal);
+    let u = ref_dir.normalize();
+    let v = normal.cross(u);
     let x = local.dot(u);
     let y = local.dot(v);
     Some(y.atan2(x))

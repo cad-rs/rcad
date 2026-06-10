@@ -355,9 +355,6 @@ pub struct BSplineSurface {
 /// Returns `true` if the BSpline surface is planar (degree ≤ 1 in both directions
 /// and all control points lie within `tol` of a single plane).
 pub fn bspline_is_planar(bsp: &BSplineSurface, tol: f64) -> bool {
-    if bsp.degree_u > 1 || bsp.degree_v > 1 {
-        return false;
-    }
     if bsp.control_points.is_empty() {
         return false;
     }

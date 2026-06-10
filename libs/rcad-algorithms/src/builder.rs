@@ -627,7 +627,11 @@ impl ResultBuilder {
             // 精简后: [rect_corner, arc_start, arc_end] — 3点3边
             let norm = cross.normalize();
             // 找弧的起点和终点: 从第1点开始沿边行走,当方向变化时即为弧起点
-            let arc_start_idx = if iw.len() >= 3 && (iw[1] - iw[0]).dot(iw[2] - iw[1]).abs() < 0.99 { 1 } else {
+            let arc_start_idx = if iw.len() == 3 {
+                // 3点内边界 [p_t1, p_mid, p_t2]: 3点都在圆上(annular_out 路径),
+                // 弧起点就是 iw[0], 不是 iw[1](方向变化检测对全弧场景无效)。
+                0_usize
+            } else if iw.len() >= 3 && (iw[1] - iw[0]).dot(iw[2] - iw[1]).abs() < 0.99 { 1 } else {
                 let mut idx = 1usize;
                 while idx + 1 < iw.len() && (iw[idx+1] - iw[idx]).normalize().dot((iw[idx] - iw[idx-1]).normalize()).abs() > 0.99 { idx += 1; }
                 idx
@@ -651,19 +655,21 @@ impl ResultBuilder {
             // 构建 Circle3 曲线
             let circle = Curve3::Circle(rcad_kernel::geom::Circle3 { center, normal: norm, radius: r });
             // ✅ OCCT对齐: Circle3 边的选择取决于 iw[0] 是否在圆上。
-            //    环形面(annular_out, 3点): iw[0]在圆上 → circle edge 用 edge[2],
-            //      add_edge(iw[2],iw[0])因顶点对去重返回与sphere侧相同edge index。
-            //    平面分割(split_planar_face): iw[0]是矩形角(不在圆上) → circle edge 用 edge[1]。
+            //    环形面(annular_out, 3点全在圆上): 两条圆弧边(seg 0+1) + 闭合直边(seg 2)
+            //    平面分割(split_planar_face): 矩形角→弧: circle edge 用 edge[1]
             let iw0_on_circle = (iw[0].distance(center) - r).abs() < 1e-8;
-            let circle_edge_idx = if iw0_on_circle && iw.len() == 3 { 2_usize } else { 1_usize };
-            circles.push((wi, circle_edge_idx, circle));
-            // 简化内边界: [rect_corner, arc_start, arc_end]
-            let mut iw_simple: Vec<DVec3> = Vec::new();
-            iw_simple.push(iw[0]);  // rectangle corner (line segment start)
-            iw_simple.push(arc_start); // arc starting point
-            iw_simple.push(arc_end);   // arc ending point
-            // 3 points with 3 edges: Line(0→1), Circle(1→2 via circle_curve), Line(2→0)
-            sub.inner_wires[wi] = iw_simple;
+            if iw.len() == 3 && iw0_on_circle {
+                circles.push((wi, 0_usize, circle.clone()));
+                circles.push((wi, 1_usize, circle));
+            } else {
+                let circle_edge_idx = if iw0_on_circle && iw.len() == 3 { 2_usize } else { 1_usize };
+                circles.push((wi, circle_edge_idx, circle));
+                let mut iw_simple: Vec<DVec3> = Vec::new();
+                iw_simple.push(iw[0]);
+                iw_simple.push(arc_start);
+                iw_simple.push(arc_end);
+                sub.inner_wires[wi] = iw_simple;
+            }
         }
         circles
     }
@@ -730,12 +736,16 @@ impl ResultBuilder {
             //    add_edge 按顶点对去重: sphere侧add_circle_edge(v0,v1,circle)创建edge E14,
             //    这里的add_circle_edge(v0,v1,circle)因相同顶点对返回同一E14。
             //    BRep wire: 同一条边 forward + reverse 形成闭合环路(同球面seam wire)。
-            if iw_poly.len() == 2 && sub.inner_wire_circle.is_some() { 
+            if iw_poly.len() == 2 && sub.inner_wire_circle.is_some() {
                 let v0 = self.add_vertex(iw_poly[0]);
                 let v1 = self.add_vertex(iw_poly[1]);
                 let (_, crv) = sub.inner_wire_circle.as_ref().unwrap();
-                let ei = self.add_circle_edge(v0, v1, crv.clone());
-                inner_wire_edges.push(vec![(ei, true), (ei, false)]);
+                // ✅ OCCT对齐: 内环由圆弧边+闭合直边构成,而非 [ei_fwd, ei_rev]。
+                //    [ei_fwd, ei_rev] 沿同一弧往返形成退化零面积线。
+                //    圆弧 v0→v1 + 直边 v1→v0 形成有面积的闭合内环边界。
+                let ei_circ = self.add_circle_edge(v0, v1, crv.clone());
+                let ei_close = self.add_edge(v1, v0);
+                inner_wire_edges.push(vec![(ei_circ, true), (ei_close, true)]);
                 let mid = (iw_poly[0] + iw_poly[1]) * 0.5;
                 let mid_v = self.add_vertex(mid);
                 iw_vert_indices_all.extend([v0, mid_v, v1]);
@@ -2454,7 +2464,14 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize) -> Vec<WireSegment> {
             is_seam: false,
         });
         // 闭合曲线 (start==end) 不加 REVERSED — 位置匹配自动处理
-        if sv != ev {
+        // ⏳ OCCT对齐: OCCT BuildSplitFaces L478-489 加 FORWARD+REVERSED,
+        //    但 BOPAlgo_BuilderFace::PerformLoops 用 BOPAlgo_WireSplitter
+        //    正确选择方向。rcad 的 build_closed_wires 用贪心遍历,FORWARD+REVERSED
+        //    会导致同一边被遍历两次(球面 3条四分之一弧变成 6 段退化线)。
+        //    球面上 3 条 section edge 天然构成闭合环路,无需 REVERSED。
+        //    平面面不走 wire pipeline,不受此影响。
+        let needs_rev = !matches!(&ds.faces[face_idx].surface, rcad_kernel::geom::Surface3::Sphere(_));
+        if sv != ev && needs_rev {
             segments.push(WireSegment {
                 start_vertex: ev,
                 end_vertex: sv,
@@ -3247,13 +3264,30 @@ impl<'a> BooleanBuilder<'a> {
                     .into_iter().chain(on_merged.into_iter().map(|s| (s, Classification::On))).collect();
             }
             let flip = self.op == BooleanOpType::Difference;
-            for pair in kept_subs.iter_mut() {
+            // ✅ OCCT对齐: B-side sphere 面使用 emit_wire_face (同 A-side)
+            //    OCCT BuildSplitFaces 对 A/B 侧面统一处理。
+            let wire_emit_used = if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) {
+                if let Some((w_segments, w_faces)) = split_face_occt_wire_pipeline(self.ds, fi) {
+                    for wf in &w_faces {
+                        let src = self.ds.faces[fi].source_face_idx;
+                        result.emit_wire_face(fi, wf, &w_segments, self.ds, flip, FaceOrigin::FromB(src));
+                    }
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            if !wire_emit_used {
+                for pair in kept_subs.iter_mut() {
                 let src = self.ds.faces[fi].source_face_idx;
                 let _barc = result.convert_outer_arc_to_inner_wire(&mut pair.0);
                 let _bcircs = [_barc.as_slice(), result.find_inner_wire_circles(&mut pair.0).as_slice()].concat();
                 result.emit_face_with_origin(&pair.0, flip, FaceOrigin::FromB(src), &_bcircs);
             }
         }
+    }
 
         let (mut brep, mut history) = result.build(matches!(self.op, BooleanOpType::Union));
         if brep.solids[0].shells[0].faces.is_empty() {
@@ -3648,25 +3682,34 @@ impl<'a> BooleanBuilder<'a> {
                         xs.sort_by(|a,b| a.partial_cmp(b).unwrap());
                         let t1 = xs[0]; let t2 = xs[xs.len()-1];
                         if (t2 - t1).abs() > 1e-8 {
-                            let iw = vec![circ.point_at(t1), circ.point_at(t2)];
-                            let iw_circ_curve = Curve3::Circle(*circ);
-                            let fp = boundary.iter().max_by(|a,b| a.distance(circ.center).partial_cmp(&b.distance(circ.center)).unwrap()).copied().unwrap_or(DVec3::ZERO);
-                            annular_out = Some(vec![SubFace {
-                                boundary, surface: face.surface.clone(), normal: face.normal,
-                                uv_centroid: None, sample_override: Some(fp),
-                                uv_domain: None, inner_wires: vec![iw],
-                                outer_circle_edges: vec![],
-                                seam_edge: None,
-                                inner_wire_circle: Some((0, iw_circ_curve)),
-                            }]);
-                            break;
+                            // ✅ OCCT对齐: 裁剪面替代环形面(OCCT BuildSplitFaces不用环形路径)。
+                            //    原环形路径创建「全矩形+内环」,球内角点 V2=(0,0,0) 在外环上。
+                            //    正确拓扑: 移除球内角点,用圆弧替换,得到裁剪后的单外环面。
+                            let c_r = circ.radius;
+                            let c_center = circ.center;
+                            let keep: Vec<DVec3> = boundary.iter()
+                                .filter(|p| p.distance(c_center) >= c_r - 1e-8)
+                                .copied().collect();
+                            let fp = keep.iter().max_by(|a,b| a.distance(c_center).partial_cmp(&b.distance(c_center)).unwrap()).copied().unwrap_or(DVec3::ZERO);
+                            if keep.len() >= 2 && keep.len() < boundary.len() {
+                                let arc_curve = Curve3::Circle(*circ);
+                                let n_seg = keep.len();
+                                annular_out = Some(vec![SubFace {
+                                    boundary: keep,
+                                    surface: face.surface.clone(), normal: face.normal,
+                                    uv_centroid: None, sample_override: Some(fp),
+                                    uv_domain: None, inner_wires: vec![],
+                                    outer_circle_edges: vec![(n_seg - 1, arc_curve)],
+                                    seam_edge: None,
+                                    inner_wire_circle: None,
+                                }]);
+                                break;
+                            }
                         }
                     }
                 }
             }
             if let Some(subs) = annular_out { return subs; }
-            let subs = self.split_planar_face(face_idx, plane, &cids);
-            return subs;
         }
 
     if matches!(face.surface, Surface3::Sphere(_)) {
