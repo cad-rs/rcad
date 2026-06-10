@@ -2096,72 +2096,91 @@ impl<'a> PaveFiller<'a> {
         // sphere face, causing fallback to tessellation (4000+ vertices).
         // The builder edge dedup handles duplicates correctly.
 
-        // Half 0: t0 342206222 t0+317200 (north 342206222 south)
-        // Pcurve maps t 342206222 v = t - t0, so v(t0)=0 (north), v(t0+317200)=317200 (south).
+        // ✅ OCCT对齐: 裁剪大圆弧到 box face 多边形边界 (PutBoundPaveOnCurve 等价)。
+        //    OCCT PutBoundPaveOnCurve (L2222-2280) 将 face 边界顶点注入到 IC 上,
+        //    曲线在边界处分裂,面外部分被丢弃。此处将每个半弧投影到 plane face 2D
+        //    多边形,找到面内的参数范围,用裁剪后的端点创建 IC。
+        let bnd_2d: Vec<DVec2> = {
+            let fi = if plane_is_f1 { f1 } else { f2 };
+            self.ds.face_boundary_points(fi).iter().map(|&p| {
+                let d = p - plane.origin;
+                DVec2::new(d.dot(pu_ax), d.dot(pv_ax))
+            }).collect()
+        };
+        let c2d = { let d = DVec3::from(circle.center) - plane.origin; DVec2::new(d.dot(pu_ax), d.dot(pv_ax)) };
+
+        let clip_arc = |t_start: f64, t_end: f64| -> Option<[f64; 2]> {
+            let mut tc: Vec<f64> = Vec::new();
+            for k in 0..bnd_2d.len() {
+                let l = (k + 1) % bnd_2d.len();
+                let a = bnd_2d[k]; let b2 = bnd_2d[l];
+                let ab = b2 - a; let ac = a - c2d;
+                let qa = ab.dot(ab); let qb = 2.0 * ab.dot(ac);
+                let qc = ac.dot(ac) - circle.radius * circle.radius;
+                let disc = qb * qb - 4.0 * qa * qc;
+                if disc < 0.0 { continue; }
+                for &sign in &[-1.0_f64, 1.0_f64] {
+                    let t = (-qb + sign * disc.sqrt()) / (2.0 * qa);
+                    if t >= -1e-12 && t <= 1.0 + 1e-12 {
+                        let pt2d = a + t.clamp(0.0, 1.0) * ab;
+                        let mut ang = (pt2d - c2d).to_angle();
+                        while ang < t_start { ang += std::f64::consts::TAU; }
+                        while ang >= t_start + std::f64::consts::TAU { ang -= std::f64::consts::TAU; }
+                        if ang >= t_start && ang <= t_end { tc.push(ang); }
+                    }
+                }
+            }
+            if tc.is_empty() { return None; }
+            tc.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let clip0 = tc.first().copied().unwrap().max(t_start);
+            let clip1 = tc.last().copied().unwrap().min(t_end);
+            if clip1 - clip0 > TOLERANCE_ABS { Some([clip0, clip1]) } else { None }
+        };
+
         let t_half0_end = t0 + PI;
-        let half0_plane = sample_plane_half(t0, t_half0_end);
-        let sphere_pc0 = Some(Curve2d::Line(Line2d {
-            origin: DVec2::new(u_for_half0, -t0),
-            direction: DVec2::new(0.0, 1.0),
-        }));
-        let (pc_a0, pc_b0) = if plane_is_f1 {
-            (half0_plane, sphere_pc0)
-        } else {
-            (sphere_pc0, half0_plane)
-        };
-
-        let ci0 = self.ds.intersection_curves.len();
-        self.ds.intersection_curves.push(IntersectionCurve {
-            curve: Curve3::Circle(*circle),
-            polyline: vec![],
-            start_vertex: v_north,
-            end_vertex: v_south,
-            t_range: [t0, t_half0_end],
-            pcurve_on_a: pc_a0,
-            pcurve_on_b: pc_b0,
-        });
-
-        // Half 1: t0+π → t0+2π (south → north)
-        // Pcurve maps t → v = -(t - (t0+π)) + π = -t + t0 + 2π,
-        // so v(t0+π)=π (south), v(t0+2π)=0 (north).
         let t_half1_end = t_half0_end + PI;
-        let half1_plane = sample_plane_half(t_half0_end, t_half1_end);
-        let sphere_pc1 = Some(Curve2d::Line(Line2d {
-            origin: DVec2::new(u_for_half1, t0 + TAU),
-            direction: DVec2::new(0.0, -1.0),
-        }));
-        let (pc_a1, pc_b1) = if plane_is_f1 {
-            (half1_plane, sphere_pc1)
-        } else {
-            (sphere_pc1, half1_plane)
-        };
+        let mut ics: Vec<(IntersectionCurve, f64, f64, f64)> = Vec::new(); // (ic, t_start, t_end, u_val)
 
-        let ci1 = self.ds.intersection_curves.len();
-        self.ds.intersection_curves.push(IntersectionCurve {
-            curve: Curve3::Circle(*circle),
-            polyline: vec![],
-            start_vertex: v_south,
-            end_vertex: v_north,
-            t_range: [t_half0_end, t_half1_end],
-            pcurve_on_a: pc_a1,
-            pcurve_on_b: pc_b1,
-        });
+        for (t_start, t_end, u_val) in [(t0, t_half0_end, u_for_half0), (t_half0_end, t_half1_end, u_for_half1)] {
+            let [eff_t0, eff_t1] = match clip_arc(t_start, t_end) { Some(r) => r, None => continue };
+            let p_start = circle.point_at(eff_t0);
+            let p_end = circle.point_at(eff_t1);
+            let v_start = { let idx = self.ds.vertices.len();
+                self.ds.vertices.push(crate::bopds::ds::DSVertex { point: p_start, origin: None, geom_tol: TOLERANCE_ABS }); idx };
+            let v_end = { let idx = self.ds.vertices.len();
+                self.ds.vertices.push(crate::bopds::ds::DSVertex { point: p_end, origin: None, geom_tol: TOLERANCE_ABS }); idx };
+            let plane_pc = sample_plane_half(eff_t0, eff_t1);
+            let sphere_pc = Some(Curve2d::Line(Line2d { origin: DVec2::new(u_val, -eff_t0), direction: DVec2::new(0.0, 1.0) }));
+            let (pc_a, pc_b) = if plane_is_f1 { (plane_pc, sphere_pc) } else { (sphere_pc, plane_pc) };
+            ics.push((IntersectionCurve {
+                curve: Curve3::Circle(*circle), polyline: vec![],
+                start_vertex: v_start, end_vertex: v_end,
+                t_range: [eff_t0, eff_t1], pcurve_on_a: pc_a, pcurve_on_b: pc_b,
+            }, eff_t0, eff_t1, u_val));
+        }
 
-        // Register both curves and their vertices on both faces
-        for &ci in &[ci0, ci1] {
+        if ics.is_empty() { return; }
+
+        let first_ci = self.ds.intersection_curves.len();
+        let mut all_ci: Vec<usize> = Vec::new();
+        let mut all_v: Vec<usize> = Vec::new();
+        for (ic, _t0, _t1, _u) in &ics {
+            let ci = self.ds.intersection_curves.len();
+            self.ds.intersection_curves.push(ic.clone());
+            all_ci.push(ci);
+            all_v.push(ic.start_vertex);
+            all_v.push(ic.end_vertex);
+        }
+        for &ci in &all_ci {
             self.ds.faces[f1].face_info.curves_in.insert(ci);
             self.ds.faces[f2].face_info.curves_in.insert(ci);
         }
-        for &v in &[v_north, v_south] {
+        for &v in &all_v {
             self.ds.faces[f1].face_info.vertices_in.insert(v);
             self.ds.faces[f2].face_info.vertices_in.insert(v);
         }
-
         self.ds.interferences.push(Interference::FaceFace {
-            f1,
-            f2,
-            curves: vec![ci0, ci1],
-            points: vec![],
+            f1, f2, curves: all_ci, points: vec![],
         });
     }
 
