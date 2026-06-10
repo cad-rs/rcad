@@ -1621,7 +1621,7 @@ impl<'a> PaveFiller<'a> {
         // and boundary centroid (avoid bspline_to_plane whose control-point origin
         // causes the promoted plane to deviate from actual face geometry).
         let s1 = match &s1 {
-            Surface3::BSpline(bsp) if bspline_is_planar(bsp, TOLERANCE_ABS) => {
+            Surface3::BSpline(bsp) if bspline_is_planar(bsp, 1e-3) => {
                 let face = &self.ds.faces[f1];
                 let c = face.boundary_verts.iter()
                     .map(|&vi| self.ds.vertices[vi].point)
@@ -1631,7 +1631,7 @@ impl<'a> PaveFiller<'a> {
             _ => s1,
         };
         let s2 = match &s2 {
-            Surface3::BSpline(bsp) if bspline_is_planar(bsp, TOLERANCE_ABS) => {
+            Surface3::BSpline(bsp) if bspline_is_planar(bsp, 1e-3) => {
                 let face = &self.ds.faces[f2];
                 let c = face.boundary_verts.iter()
                     .map(|&vi| self.ds.vertices[vi].point)

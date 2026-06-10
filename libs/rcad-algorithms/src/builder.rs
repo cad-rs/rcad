@@ -1638,7 +1638,7 @@ fn classify_subface_against_box(
     let is_planar_surf = match &sub.surface {
         rcad_kernel::geom::Surface3::Plane(_) => true,
         rcad_kernel::geom::Surface3::BSpline(bsp) => {
-            rcad_kernel::geom::bspline_is_planar(bsp, 1e-7)
+            rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_PLANE_DIST_RELAX)
         }
         _ => false,
     };
@@ -3747,7 +3747,7 @@ impl<'a> BooleanBuilder<'a> {
         // Without this, planar BSpline faces go to `split_curved_face_parametric` which can produce
         // sub-faces with different edge/vertex topology than the equivalent Plane split.
         if let Surface3::BSpline(bsp) = &face.surface {
-            if rcad_kernel::geom::bspline_is_planar(bsp, 1e-7) {
+            if rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_PLANE_DIST_RELAX) {
                 let plane = rcad_kernel::geom::bspline_to_plane(bsp);
                 let cids = self.merged_split_curve_ids_for_planar_face(face_idx, &plane);
                 if cids.is_empty() {
