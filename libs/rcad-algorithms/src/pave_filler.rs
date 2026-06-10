@@ -1136,13 +1136,20 @@ impl<'a> PaveFiller<'a> {
 
     // ─── Pass 5: Edge-Face ─────────────────────────────────────────────
 
+    /// ✅ OCCT对齐: EF 遍历 PaveBlock 子段 (PerformEF L246-304)
+    ///    从 edge.paves 动态构建子段范围,不写入 edge.pave_blocks,
+    ///    避免 side effect 导致回归。
     fn perform_ef(&mut self) {
         let a_edges = self.edges_of(ShapeOrigin::ShapeA);
         let b_faces = self.faces_of(ShapeOrigin::ShapeB);
 
         for &ei in &a_edges {
-            for &fi in &b_faces {
-                self.intersect_edge_face(ei, fi);
+            let etr = self.ds.edges[ei].t_range;
+            let ranges = self.collect_paveblock_ranges(ei, etr);
+            for r in &ranges {
+                for &fi in &b_faces {
+                    self.intersect_edge_face_range(ei, fi, r);
+                }
             }
         }
 
@@ -1150,15 +1157,57 @@ impl<'a> PaveFiller<'a> {
         let a_faces = self.faces_of(ShapeOrigin::ShapeA);
 
         for &ei in &b_edges {
-            for &fi in &a_faces {
-                self.intersect_edge_face(ei, fi);
+            let etr = self.ds.edges[ei].t_range;
+            let ranges = self.collect_paveblock_ranges(ei, etr);
+            for r in &ranges {
+                for &fi in &a_faces {
+                    self.intersect_edge_face_range(ei, fi, r);
+                }
             }
         }
     }
 
-    fn intersect_edge_face(&mut self, edge_idx: usize, face_idx: usize) {
+    /// ✅ OCCT对齐: 从 edge.paves 构建 PaveBlock 参数范围列表
+    ///    (OCCT MakeSplitEdges: 在 Pave 处分裂边为 PaveBlocks)
+    ///    不含 side effect — 不写入 edge.pave_blocks。
+    fn collect_paveblock_ranges(&self, edge_idx: usize, edge_t_range: [f64; 2]) -> Vec<[f64; 2]> {
+        let paves = &self.ds.edges[edge_idx].paves;
+        if paves.is_empty() {
+            return vec![edge_t_range];
+        }
+        let mut params: Vec<f64> = paves.iter().map(|p| p.param).collect();
+        params.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        // 去重
+        params.dedup_by(|a, b| (*a - *b).abs() < TOLERANCE_ABS);
+        // 加上端点
+        let mut bounds = vec![edge_t_range[0]];
+        bounds.extend(params);
+        bounds.push(edge_t_range[1]);
+        // 构建范围
+        let mut ranges = Vec::new();
+        for w in bounds.windows(2) {
+            if w[1] - w[0] > TOLERANCE_ABS {
+                ranges.push([w[0], w[1]]);
+            }
+        }
+        ranges
+    }
+
+    /// ✅ OCCT对齐: 在指定参数范围内做 EF 求交 (PaveBlock 级别)
+    ///    使用 PaveBlock 的范围而非整条边的 t_range。
+    ///    端点交点不跳过 — 它们已是 Pave 顶点。
+    fn intersect_edge_face_range(&mut self, edge_idx: usize, face_idx: usize, pb_range: &[f64; 2]) {
         let edge_curve = self.ds.edges[edge_idx].curve.clone();
         let edge_t_range = self.ds.edges[edge_idx].t_range;
+
+        // 用 PaveBlock 的范围限制求交区间 (OCCT L262: SetRange(aPBRange))
+        let ef_range = [
+            pb_range[0].max(edge_t_range[0]),
+            pb_range[1].min(edge_t_range[1]),
+        ];
+        if ef_range[1] - ef_range[0] <= TOLERANCE_ABS {
+            return;
+        }
         let face_surface = self.ds.faces[face_idx].surface.clone();
         let etf = self.ef_tol(edge_idx, face_idx);
 
@@ -1167,7 +1216,7 @@ impl<'a> PaveFiller<'a> {
             (Curve3::Line(line), Surface3::Plane(plane)) => {
                 inttools::edge_face::intersect_line_plane_with_tol(
                     line,
-                    edge_t_range,
+                    ef_range,
                     plane,
                     etf,
                 )
@@ -1178,7 +1227,7 @@ impl<'a> PaveFiller<'a> {
             (Curve3::Line(line), Surface3::Cylinder(cyl)) => {
                 inttools::curve_surface::intersect_line_cylinder_with_tol(
                     line,
-                    edge_t_range,
+                    ef_range,
                     cyl,
                     etf,
                 )
@@ -1189,7 +1238,7 @@ impl<'a> PaveFiller<'a> {
             (Curve3::Line(line), Surface3::Sphere(sph)) => {
                 inttools::curve_surface::intersect_line_sphere_with_tol(
                     line,
-                    edge_t_range,
+                    ef_range,
                     sph,
                     etf,
                 )
@@ -1200,7 +1249,7 @@ impl<'a> PaveFiller<'a> {
             (Curve3::Line(line), Surface3::Cone(cone)) => {
                 inttools::curve_surface::intersect_line_cone_with_tol(
                     line,
-                    edge_t_range,
+                    ef_range,
                     cone,
                     etf,
                 )
@@ -1211,7 +1260,7 @@ impl<'a> PaveFiller<'a> {
             (Curve3::Circle(circle), Surface3::Plane(plane)) => {
                 inttools::curve_surface::intersect_circle_plane_with_tol(
                     circle,
-                    edge_t_range,
+                    ef_range,
                     plane,
                     etf,
                 )
@@ -1222,7 +1271,7 @@ impl<'a> PaveFiller<'a> {
             (Curve3::Circle(circle), Surface3::Cylinder(cyl)) => {
                 inttools::curve_surface::intersect_circle_cylinder_with_tol(
                     circle,
-                    edge_t_range,
+                    ef_range,
                     cyl,
                     etf,
                 )
@@ -1233,7 +1282,7 @@ impl<'a> PaveFiller<'a> {
             (Curve3::Circle(circle), Surface3::Sphere(sph)) => {
                 inttools::curve_surface::intersect_circle_sphere_with_tol(
                     circle,
-                    edge_t_range,
+                    ef_range,
                     sph,
                     etf,
                 )
@@ -1244,7 +1293,7 @@ impl<'a> PaveFiller<'a> {
             (Curve3::Circle(circle), Surface3::Cone(cone)) => {
                 inttools::curve_surface::intersect_circle_cone_with_tol(
                     circle,
-                    edge_t_range,
+                    ef_range,
                     cone,
                     etf,
                 )
@@ -1255,7 +1304,7 @@ impl<'a> PaveFiller<'a> {
             _ => {
                 // Numeric fallback: sample the curve, find sign changes of the
                 // surface implicit function. Works for any Curve3 × Surface3 pair.
-                intersect_edge_face_numeric(&edge_curve, &face_surface, edge_t_range, etf)
+                intersect_edge_face_numeric(&edge_curve, &face_surface, ef_range, etf)
             }
         };
 
@@ -1273,16 +1322,30 @@ impl<'a> PaveFiller<'a> {
                 continue;
             }
 
-            // Skip if point is an edge endpoint
+            // ✅ OCCT对齐: 跳过 PaveBlock 端点交点 (已是 Pave 顶点)
+            //    PaveBlock 端点的 param 值有对应的 Pave 顶点,
+            //    交点落在端点处说明已被之前的 pass (VE/EE/VF) 处理。
             let sv = self.ds.edges[edge_idx].start_vertex;
             let ev = self.ds.edges[edge_idx].end_vertex;
             let tol = etf
                 .max(self.ds.vertices[sv].geom_tol)
                 .max(self.ds.vertices[ev].geom_tol);
+            // 1. 3D 位置跳过 (原始边端点)
             if (point - self.ds.vertices[sv].point).length() <= tol
                 || (point - self.ds.vertices[ev].point).length() <= tol
             {
                 continue;
+            }
+            // 2. 参数跳过 (PaveBlock 内部端点) — 对应 OCCT L262 SetRange
+            let at_pb_start = (edge_param - pb_range[0]).abs() <= tol;
+            let at_pb_end = (edge_param - pb_range[1]).abs() <= tol;
+            if at_pb_start || at_pb_end {
+                // 但只在 PaveBlock 不是整个边时才跳过
+                let edge_len = (edge_t_range[1] - edge_t_range[0]).abs();
+                let pb_len = (pb_range[1] - pb_range[0]).abs();
+                if pb_len < edge_len - tol {
+                    continue;
+                }
             }
 
             let new_v = self.ds.add_vertex(point);
