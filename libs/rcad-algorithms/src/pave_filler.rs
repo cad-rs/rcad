@@ -4596,7 +4596,7 @@ impl<'a> PaveFiller<'a> {
                     }
                 }
                 _ => {
-                    // Line3: endpoint replacement only
+                    // Line3: endpoint replacement (3D position matching)
                     for &(evi, ept) in &all_verts {
                         if evi == snap.sv || evi == snap.ev { continue; }
                         if ept.distance_squared(snap.sv_pos) < tol * tol {
@@ -4605,7 +4605,14 @@ impl<'a> PaveFiller<'a> {
                             self.ds.intersection_curves[ci].end_vertex = evi;
                         }
                     }
-                    continue;
+                    // Phase 2a: 面边界顶点参数注入 (PutBoundPaveOnCurve)
+                    let face_idxs = find_face_idxs_for_curve(&self.ds, ci);
+                    let bound_paves = put_bound_pave_on_curve(
+                        &self.ds, ci, &face_idxs, tol
+                    );
+                    on_curve.extend(bound_paves);
+                    on_curve = filter_paves_on_curves(&self.ds, ci, &on_curve);
+                    put_closing_pave_on_curve(&mut on_curve, false);
                 }
             }
 
@@ -4855,6 +4862,111 @@ mod phase2a_tests {
         // 不在圆上的点
         let off = DVec3::new(2.0, 0.0, 0.0);
         assert!(param_on_circle3(off, &circle, 1e-6).is_none());
+    }
+}
+
+// ── Phase 2a: MakeBlocks candidate injection helpers ─────────────────────
+
+/// 找到引用某条交线的两个面索引
+fn find_face_idxs_for_curve(ds: &DS, ci: usize) -> [usize; 2] {
+    let mut result = [usize::MAX; 2];
+    let mut idx = 0;
+    for (fi, face) in ds.faces.iter().enumerate() {
+        if face.face_info.curves_in.contains(&ci) {
+            if idx < 2 {
+                result[idx] = fi;
+                idx += 1;
+            }
+        }
+    }
+    result
+}
+
+/// 将面边界顶点注入到交线上 (OCCT PutBoundPaveOnCurve)。
+fn put_bound_pave_on_curve(
+    ds: &DS,
+    curve_idx: usize,
+    face_idxs: &[usize; 2],
+    tol: f64,
+) -> Vec<(f64, usize)> {
+    let ic = &ds.intersection_curves[curve_idx];
+    let [t0, t1] = ic.t_range;
+    let mut result: Vec<(f64, usize)> = Vec::new();
+
+    for &fi in face_idxs.iter().filter(|&&fi| fi != usize::MAX) {
+        let face = &ds.faces[fi];
+        for &vi in &face.boundary_verts {
+            if let Some(t) = project_vertex_to_curve(
+                ds.vertices[vi].point, &ic.curve, tol
+            ) {
+                if t >= t0 - tol * 0.1 && t <= t1 + tol * 0.1 {
+                    result.push((t, vi));
+                }
+            }
+        }
+        for &vi in &face.face_info.vertices_in {
+            if let Some(t) = project_vertex_to_curve(
+                ds.vertices[vi].point, &ic.curve, tol
+            ) {
+                if t >= t0 - tol * 0.1 && t <= t1 + tol * 0.1 {
+                    result.push((t, vi));
+                }
+            }
+        }
+        for &vi in &face.face_info.vertices_on {
+            if let Some(t) = project_vertex_to_curve(
+                ds.vertices[vi].point, &ic.curve, tol
+            ) {
+                if t >= t0 - tol * 0.1 && t <= t1 + tol * 0.1 {
+                    result.push((t, vi));
+                }
+            }
+        }
+    }
+
+    result.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+    result.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-12);
+    let mut seen = std::collections::BTreeSet::new();
+    result.retain(|&(_, vi)| seen.insert(vi));
+    result
+}
+
+/// 清理错误匹配的 Pave (OCCT L796 FilterPavesOnCurves)。
+fn filter_paves_on_curves(
+    ds: &DS,
+    curve_idx: usize,
+    paves: &[(f64, usize)],
+) -> Vec<(f64, usize)> {
+    let ic = &ds.intersection_curves[curve_idx];
+    let tol_sq = TOLERANCE_ABS_SQ;
+    paves.iter().filter(|&&(_, vi)| {
+        let pt = ds.vertices[vi].point;
+        let dist_sq = match &ic.curve {
+            Curve3::Line(line) => {
+                let to_pt = pt - line.origin;
+                let proj = line.origin + line.direction * to_pt.dot(line.direction);
+                proj.distance_squared(pt)
+            }
+            Curve3::Circle(circ) => {
+                let center_dist = pt.distance(circ.center);
+                (center_dist - circ.radius).powi(2)
+            }
+            _ => 0.0,
+        };
+        dist_sq < tol_sq
+    }).copied().collect()
+}
+
+/// 确保闭合曲线的首尾 Pave 一致 (OCCT L828-833 PutClosingPaveOnCurve)。
+fn put_closing_pave_on_curve(
+    paves: &mut Vec<(f64, usize)>,
+    is_closed: bool,
+) {
+    if paves.len() < 2 { return; }
+    if is_closed {
+        let first_vi = paves[0].1;
+        let last_idx = paves.len() - 1;
+        paves[last_idx].1 = first_vi;
     }
 }
 
