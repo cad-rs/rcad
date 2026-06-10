@@ -265,6 +265,10 @@ pub struct GeomStore {
     /// When absent or empty, assumed `true` for analytic primitives we generate.
     #[serde(default)]
     pub edge_same_range: Vec<bool>,
+    /// ✅ OCCT对齐: 面上的内部顶点索引 (FillInternalVertices 等价)
+    ///    并行于 face_surface (同一 flat face index)。
+    #[serde(default)]
+    pub face_internal_vertices: Vec<Vec<usize>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -843,7 +847,7 @@ impl BRep {
         // Face surface indices
         let face_surface: Vec<Option<usize>> = (0..6).map(Some).collect();
 
-        let geom = GeomStore {
+        let geom = GeomStore { face_internal_vertices: vec![],
             curves: Vec::new(),
             surfaces,
             curve2ds: Vec::new(),
@@ -934,7 +938,7 @@ impl BRep {
             origin: glam::DVec2::new(2.0 * PI, PI),
             direction: glam::DVec2::new(0.0, -1.0),
         });
-        let geom = GeomStore {
+        let geom = GeomStore { face_internal_vertices: vec![],
             curves: vec![seam_curve],
             surfaces: vec![sphere_surf],
             curve2ds: vec![pc_fwd, pc_rev],
@@ -1099,7 +1103,7 @@ impl BRep {
             direction: glam::DVec2::new(0.0, -1.0),
         });
 
-        let geom = GeomStore {
+        let geom = GeomStore { face_internal_vertices: vec![],
             curves: vec![top_circle, bot_circle, seam_line],
             surfaces: vec![cyl_surf, top_plane, bot_plane],
             curve2ds: vec![e0_on_f0, e0_on_f1, e1_on_f0, e1_on_f2, e2_on_f0],
@@ -1256,7 +1260,7 @@ impl BRep {
             direction: glam::DVec2::new(0.0, 1.0),
         });
 
-        let geom = GeomStore {
+        let geom = GeomStore { face_internal_vertices: vec![],
             curves: vec![base_circle, slant],
             surfaces: vec![cone_surf, base_plane],
             curve2ds: vec![e0_on_f0, e0_on_f1, e1_on_f0],
@@ -1396,7 +1400,7 @@ impl BRep {
             direction: glam::DVec2::new(0.0, -1.0),
         });
 
-        let geom = GeomStore {
+        let geom = GeomStore { face_internal_vertices: vec![],
             curves: vec![major_circle, minor_circle],
             surfaces: vec![torus_surf],
             curve2ds: vec![e0_on_f0, e0_on_f0_rev, e1_on_f0, e1_on_f0_rev],
