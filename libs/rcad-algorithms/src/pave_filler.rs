@@ -1936,12 +1936,11 @@ impl<'a> PaveFiller<'a> {
                     .normalize()
                     .dot(plane.normal.normalize())
                     .abs();
-                let passes_poles = is_great && axis_dot_normal < TOLERANCE_ABS;
+                let _passes_poles = is_great && axis_dot_normal < TOLERANCE_ABS;
 
-                if passes_poles {
-                    self.add_great_circle_curves(f1, f2, plane, sphere, &circle, plane_is_f1);
-                    return;
-                }
+                // ✅ OCCT对齐: 所有 plane-sphere 交线走 clip_circle_to_faces 统一路径。
+                //    add_great_circle_curves 已禁用 — 双半弧分支为 rcad 自创方案,
+                //    OCCT IntTools_FaceFace 创建的交线直接使用 PutBoundPaveOnCurve 裁剪。
 
                 // ✅ OCCT对齐: 裁剪 Circle3 到 planar face 的多边形边界
                 //    OCCT IntTools_Curve 在创建时已限制范围到 face 边界内。
