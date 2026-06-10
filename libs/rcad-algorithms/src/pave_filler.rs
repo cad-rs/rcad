@@ -1322,30 +1322,31 @@ impl<'a> PaveFiller<'a> {
                 continue;
             }
 
-            // ✅ OCCT对齐: 跳过 PaveBlock 端点交点 (已是 Pave 顶点)
-            //    PaveBlock 端点的 param 值有对应的 Pave 顶点,
-            //    交点落在端点处说明已被之前的 pass (VE/EE/VF) 处理。
+            // ✅ OCCT对齐: PaveBlock 端点交点处理
+            //    OCCT L262 SetRange: PaveBlock 端点已是 Pave 顶点。
+            //    rcad: 如果交点在边端点,不创建新顶点但把已有顶点
+            //    注册到 vertices_on,供后续 MakeBlocks 使用。
             let sv = self.ds.edges[edge_idx].start_vertex;
             let ev = self.ds.edges[edge_idx].end_vertex;
             let tol = etf
                 .max(self.ds.vertices[sv].geom_tol)
                 .max(self.ds.vertices[ev].geom_tol);
-            // 1. 3D 位置跳过 (原始边端点)
-            if (point - self.ds.vertices[sv].point).length() <= tol
-                || (point - self.ds.vertices[ev].point).length() <= tol
-            {
+            // 1. 3D 位置 — 原始边端点
+            let at_sv = (point - self.ds.vertices[sv].point).length() <= tol;
+            let at_ev = (point - self.ds.vertices[ev].point).length() <= tol;
+            if at_sv || at_ev {
+                // 不创建新 Pave,但注册已有顶点到 faces 的 vertices_on
+                let existing_v = if at_sv { sv } else { ev };
+                self.ds.faces[face_idx].face_info.vertices_on.insert(existing_v);
                 continue;
             }
-            // 2. 参数跳过 (PaveBlock 内部端点) — 对应 OCCT L262 SetRange
+            // 2. 参数跳过 (PaveBlock 内部端点) — PaveBlock 的端点已是 Pave
             let at_pb_start = (edge_param - pb_range[0]).abs() <= tol;
             let at_pb_end = (edge_param - pb_range[1]).abs() <= tol;
             if at_pb_start || at_pb_end {
-                // 但只在 PaveBlock 不是整个边时才跳过
                 let edge_len = (edge_t_range[1] - edge_t_range[0]).abs();
                 let pb_len = (pb_range[1] - pb_range[0]).abs();
-                if pb_len < edge_len - tol {
-                    continue;
-                }
+                if pb_len < edge_len - tol { continue; }
             }
 
             let new_v = self.ds.add_vertex(point);
@@ -1807,6 +1808,90 @@ impl<'a> PaveFiller<'a> {
 
     // ── Plane × Sphere analytic face-face intersection ─────────────────────────
 
+    /// ✅ OCCT对齐: 裁剪 Circle3 到 given planar faces 的多边形边界
+    ///    返回 [t_min, t_max] 有效范围,None=整圆,Some([0,0])=空
+    fn clip_circle_to_faces(
+        &self, circle: &rcad_kernel::geom::Circle3,
+        f1: usize, f2: usize,
+    ) -> Option<[f64; 2]> {
+        use crate::inttools::edge_face::plane_local_basis;
+        let tol = TOLERANCE_ABS * 100.0;
+        let mut result: Option<[f64; 2]> = None;
+        let [t0, t1] = [0.0, std::f64::consts::TAU];
+
+        for &fi in &[f1, f2] {
+            let Surface3::Plane(plane) = &self.ds.faces[fi].surface else { continue };
+            let bnd = self.ds.face_boundary_points(fi);
+            if bnd.len() < 3 { continue; }
+            let (u_ax, v_ax) = plane_local_basis(plane);
+            let to2 = |pt: DVec3| -> DVec2 {
+                let d = pt - plane.origin; DVec2::new(d.dot(u_ax), d.dot(v_ax))
+            };
+            let c2d = to2(DVec3::from(circle.center));
+            let b2d: Vec<DVec2> = bnd.iter().map(|&pt| to2(pt)).collect();
+
+            let mut tc: Vec<f64> = Vec::new();
+            for k in 0..b2d.len() {
+                let l = (k + 1) % b2d.len();
+                let a = b2d[k]; let b = b2d[l];
+                let ab = b - a; let ac = a - c2d;
+                let qa = ab.dot(ab); let qb = 2.0 * ab.dot(ac);
+                let qc = ac.dot(ac) - circle.radius * circle.radius;
+                let disc = qb * qb - 4.0 * qa * qc;
+                if disc < 0.0 { continue; }
+                for &sign in &[-1.0_f64, 1.0_f64] {
+                    let t = (-qb + sign * disc.sqrt()) / (2.0 * qa);
+                    if t >= -1e-12 && t <= 1.0 + 1e-12 {
+                        let pt2 = a + t.clamp(0.0, 1.0) * ab;
+                        let ang = (pt2 - c2d).to_angle();
+                        let mut a2 = ang;
+                        if a2 < t0 { a2 += std::f64::consts::TAU; }
+                        while a2 > t0 + std::f64::consts::TAU - 1e-12 { a2 -= std::f64::consts::TAU; }
+                        if a2 >= t0 && a2 <= t1 { tc.push(a2); }
+                    }
+                }
+            }
+            if tc.is_empty() {
+                let mut inside = false; let mut j = b2d.len() - 1;
+                for i in 0..b2d.len() {
+                    if ((b2d[i].y > c2d.y) != (b2d[j].y > c2d.y))
+                        && (c2d.x < (b2d[j].x - b2d[i].x) * (c2d.y - b2d[i].y) / (b2d[j].y - b2d[i].y) + b2d[i].x)
+                    { inside = !inside; }
+                    j = i;
+                }
+                if !inside { return Some([0.0, 0.0]); }
+                continue;
+            }
+            tc.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let nr = [tc[0].max(t0), tc[tc.len()-1].min(t1)];
+            if nr[1] - nr[0] > tol {
+                result = Some(match result {
+                    Some(prev) => [prev[0].max(nr[0]), prev[1].min(nr[1])],
+                    None => nr,
+                });
+            }
+        }
+        result
+    }
+
+    /// ✅ OCCT对齐: 在 face 边界/vertices_in/vertices_on 中查找已有顶点
+    fn find_existing_on_face(&self, pt: DVec3, faces: &[usize]) -> Option<usize> {
+        let tol = TOLERANCE_ABS * 100.0;
+        for &fi in faces {
+            let face = &self.ds.faces[fi];
+            for &vi in &face.boundary_verts {
+                if self.ds.vertices[vi].point.distance_squared(pt) < tol * tol { return Some(vi); }
+            }
+            for &vi in &face.face_info.vertices_in {
+                if self.ds.vertices[vi].point.distance_squared(pt) < tol * tol { return Some(vi); }
+            }
+            for &vi in &face.face_info.vertices_on {
+                if self.ds.vertices[vi].point.distance_squared(pt) < tol * tol { return Some(vi); }
+            }
+        }
+        None
+    }
+
     fn intersect_plane_sphere_faces(
         &mut self,
         f1: usize,
@@ -1858,18 +1943,23 @@ impl<'a> PaveFiller<'a> {
                     return;
                 }
 
-                // Non-great-circle path (original logic).
-                let pts = sample_circle_arc(&circle, 0.0, std::f64::consts::TAU, 32);
-                if pts.len() < 2 {
-                    return;
-                }
+                // ✅ OCCT对齐: 裁剪 Circle3 到 planar face 的多边形边界
+                //    OCCT IntTools_Curve 在创建时已限制范围到 face 边界内。
+                //    rcad: 将 Circle3 投影到 plane face 的 2D 多边形,
+                //    求交得到圆在 face 内的有效参数范围,用该范围的端点
+                //    作为 curve 的 start/end vertex。
+                let clipped_range = self.clip_circle_to_faces(&circle, f1, f2);
+                let clipped = clipped_range.unwrap_or([0.0, std::f64::consts::TAU]);
+                let (effective_t0, effective_t1) = if clipped[1] - clipped[0] > TOLERANCE_ABS {
+                    (clipped[0], clipped[1])
+                } else {
+                    (0.0, std::f64::consts::TAU)
+                };
 
                 let pcurve_plane = circle_pcurve_on_plane(&circle, plane);
                 let pcurve_sphere = if (axis_dot_normal - 1.0).abs() < TOLERANCE_MESH_LEGACY {
-                    // Axis is parallel to plane normal → latitude line is exact.
                     circle_pcurve_on_sphere(&circle, sphere)
                 } else {
-                    // Axis is NOT aligned → use projection fallback.
                     fallback_pcurve_by_projection(
                         &Curve3::Circle(circle),
                         &[0.0, std::f64::consts::TAU],
@@ -1882,8 +1972,13 @@ impl<'a> PaveFiller<'a> {
                     (Some(pcurve_sphere), Some(pcurve_plane))
                 };
 
-                let v_start = self.ds.add_vertex(pts[0]);
-                let v_end = self.ds.add_vertex(pts[pts.len() - 1]);
+                // 在裁剪后的端点位置查找已有顶点,共享索引
+                let p_start = circle.point_at(effective_t0);
+                let p_end = circle.point_at(effective_t1);
+                let v_start = self.find_existing_on_face(p_start, &[f1, f2])
+                    .unwrap_or_else(|| self.ds.add_vertex(p_start));
+                let v_end = self.find_existing_on_face(p_end, &[f1, f2])
+                    .unwrap_or_else(|| self.ds.add_vertex(p_end));
 
                 let curve_idx = self.ds.intersection_curves.len();
                 self.ds.intersection_curves.push(IntersectionCurve {
@@ -1891,7 +1986,7 @@ impl<'a> PaveFiller<'a> {
                     polyline: vec![],
                     start_vertex: v_start,
                     end_vertex: v_end,
-                    t_range: [0.0, std::f64::consts::TAU],
+                    t_range: [effective_t0, effective_t1],
                     pcurve_on_a,
                     pcurve_on_b,
                 });
