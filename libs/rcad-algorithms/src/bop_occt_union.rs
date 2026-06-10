@@ -646,6 +646,10 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
 
     result = crate::prune_unused_topology(result);
     result = crate::deduplicate_edges(result);
+    result.geom.edge_degenerated.resize(result.edges.len(), false);
+    for (i, e) in result.edges.iter().enumerate() {
+        if e.start == e.end { result.geom.edge_degenerated[i] = true; }
+    }
     let (merged, _cnt) = crate::occt_merge_same_surface_faces(&result);
     result = merged;
     // compact_brep after merge removes edges/vertices that were only referenced by
@@ -653,6 +657,13 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     // but compact_brep is the RCAD equivalent of rebuilding the shape after merge.
     result = crate::prune_unused_topology(result);
     result = crate::deduplicate_edges(result);
+    // OCCT aligned: mark start==end edges as degenerated
+    result.geom.edge_degenerated.resize(result.edges.len(), false);
+    for (i, e) in result.edges.iter().enumerate() {
+        if e.start == e.end {
+            result.geom.edge_degenerated[i] = true;
+        }
+    }
     // Remove degenerate edges (start==end) that survive compact_brep due to
     // face-replacement index juggling in the merge function.
     {
