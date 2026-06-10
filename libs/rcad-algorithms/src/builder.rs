@@ -2479,14 +2479,10 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize) -> Vec<WireSegment> {
             is_seam: false,
         });
         // 闭合曲线 (start==end) 不加 REVERSED — 位置匹配自动处理
-        // ⏳ OCCT对齐: OCCT BuildSplitFaces L478-489 加 FORWARD+REVERSED,
-        //    但 BOPAlgo_BuilderFace::PerformLoops 用 BOPAlgo_WireSplitter
-        //    正确选择方向。rcad 的 build_closed_wires 用贪心遍历,FORWARD+REVERSED
-        //    会导致同一边被遍历两次(球面 3条四分之一弧变成 6 段退化线)。
-        //    球面上 3 条 section edge 天然构成闭合环路,无需 REVERSED。
-        //    平面面不走 wire pipeline,不受此影响。
-        let needs_rev = !matches!(&ds.faces[face_idx].surface, rcad_kernel::geom::Surface3::Sphere(_));
-        if sv != ev && needs_rev {
+        // ✅ OCCT对齐: OCCT BuildSplitFaces L478-489 加 FORWARD+REVERSED,
+        //    BOPAlgo_WireSplitter 处理方向选择; rcad 的 build_closed_wires
+        //    用反向排除防止 backtracking。
+        if sv != ev {
             segments.push(WireSegment {
                 start_vertex: ev,
                 end_vertex: sv,
@@ -2548,6 +2544,7 @@ fn build_closed_wires(segments: &[WireSegment], ds: &DS) -> Vec<Vec<usize>> {
         let target_key = seg_keys[start_idx].0; // start 位置
         let start_seam = seg_keys[start_idx].2; // is_seam 标记
         let mut ci = start_idx;
+        let mut last_key = seg_keys[start_idx].0;
         let mut arrived_key = seg_keys[start_idx].1; // end 位置
 
         loop {
@@ -2562,14 +2559,18 @@ fn build_closed_wires(segments: &[WireSegment], ds: &DS) -> Vec<Vec<usize>> {
                 break;
             }
 
-            // 找从 arrived_key 出发的未访问段 (同 is_seam)
+            // ✅ OCCT对齐: WireSplitter 等价 — 排除回到 last_key 的段防止 backtracking
             let next = match pos_to_segs.get(&(arrived_key, start_seam)) {
-                Some(candidates) => candidates.iter().copied().find(|&ni| !visited[ni]),
+                Some(candidates) => candidates.iter().copied()
+                    .filter(|&ni| !visited[ni])
+                    .find(|&ni| seg_keys[ni].1 != last_key)
+                    .or_else(|| candidates.iter().copied().find(|&ni| !visited[ni])),
                 None => None,
             };
 
             match next {
                 Some(ni) => {
+                    last_key = arrived_key;
                     ci = ni;
                     arrived_key = seg_keys[ni].1;
                 }
