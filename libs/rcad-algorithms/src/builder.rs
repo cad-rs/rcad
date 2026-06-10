@@ -2265,23 +2265,19 @@ fn wire_boundary_3d(wire: &[usize], segments: &[WireSegment], ds: &DS) -> Vec<DV
     pts
 }
 
-/// ✅ OCCT对齐: wire → SubFace (PerformAreas 简化版)
+/// ✅ OCCT对齐: wire → 多个 SubFace (PerformAreas L387-606)
 ///
-/// OCCT PerformAreas (L387-606):
-///   1. 对每条 wire: 创建 TopoDS_Face (用原面 surface + wire) (L435-437)
-///   2. IsGrowthWire / FClass2d::IsHole 判断 outer/inner (L439-445)
-///   3. 生长 wire → aNewFaces (L448-450)
-///   4. 孔 wire → aHoleFaces → 插入对应的 outer face (L575-605)
+/// OCCT PerformAreas:
+///   1. 对每条 wire 分类 growth(outer) / hole(inner) (L439-445)
+///   2. 每个 growth wire 创建一个 face; hole wire 分配到对应 face (L575-605)
 ///
-/// rcad 实现:
-///   按 OCCT 分类 wire: 第一个 wire 为 outer,其余检查是否为 hole。
-///   创建 SubFace 并设 inner_wires。
-fn subfaces_from_wires(
+/// rcad 实现: 用近似面积分类 outer/hole, 为每个 outer + 其 holes 创建 SubFace。
+/// 多条独立 outer wire 产生多个 SubFace（多区域分割）。
+fn perform_areas(
     wires: &[Vec<usize>],
     segments: &[WireSegment],
     ds: &DS,
     face_idx: usize,
-    subs_inner: &[Vec<DVec3>], // 额外的 inner wire (如从孤立段生成)
 ) -> Vec<SubFace> {
     if wires.is_empty() {
         return vec![];
@@ -2291,40 +2287,81 @@ fn subfaces_from_wires(
     let surface = face.surface.clone();
     let normal = face.normal;
 
-    // 构建每个 wire 的 3D 边界
-    let mut wire_boundaries: Vec<Vec<DVec3>> = wires
-        .iter()
-        .map(|w| wire_boundary_3d(w, segments, ds))
-        .collect();
+    // 构建每个 wire 的 3D 边界 + 面积
+    struct WireData { boundary: Vec<DVec3>, area: f64 }
+    let mut wds: Vec<WireData> = wires.iter().filter_map(|w| {
+        let b = wire_boundary_3d(w, segments, ds);
+        if b.len() < 3 { return None; }
+        let a = projected_area_xy(&b);
+        Some(WireData { boundary: b, area: a })
+    }).collect();
 
-    // 过滤无效边界 (< 3 点)
-    wire_boundaries.retain(|b| b.len() >= 3);
-
-    if wire_boundaries.is_empty() {
+    if wds.is_empty() {
         return vec![];
     }
+    if wds.len() == 1 {
+        let w = wds.swap_remove(0);
+        return vec![SubFace {
+            boundary: w.boundary, surface, normal,
+            inner_wires: vec![], outer_circle_edges: vec![],
+            seam_edge: None, inner_wire_circle: None,
+            uv_centroid: None, sample_override: None, uv_domain: None,
+        }];
+    }
 
-    // OCCT PerformAreas L439-456: 分类 wire 为 growth(outer) 或 hole(inner)
-    // 第一个 wire 是 outer,其余按空间位置分类
-    let outer = wire_boundaries.swap_remove(0);
-    let mut inner_wires = wire_boundaries.clone();
-    // 添加额外 inner wires (从孤立段)
-    inner_wires.extend(subs_inner.iter().cloned());
+    // 按面积降序: 最大 wire 为 outer
+    wds.sort_by(|a, b| b.area.partial_cmp(&a.area).unwrap());
+    let outer = wds.remove(0);
 
-    // 创建 outer SubFace
-    let sub = SubFace {
-        boundary: outer,
-        surface,
-        normal,
-        uv_centroid: None,
-        sample_override: None,
-        uv_domain: None,
-        inner_wires,
-        outer_circle_edges: vec![],
-        seam_edge: None,
-        inner_wire_circle: None,
-    };
-    vec![sub]
+    // 分类剩余 wire: 中点测试 → 在 outer 内则为 hole, 否则为独立 region
+    let mut holes: Vec<Vec<DVec3>> = Vec::new();
+    let mut indep: Vec<Vec<DVec3>> = Vec::new();
+    for wd in wds {
+        let mid = wd.boundary.iter().sum::<DVec3>() / wd.boundary.len() as f64;
+        if point_in_polygon_xy(mid, &outer.boundary) {
+            holes.push(wd.boundary);
+        } else {
+            indep.push(wd.boundary);
+        }
+    }
+
+    let mut subs = vec![SubFace {
+        boundary: outer.boundary, surface: face.surface.clone(), normal,
+        inner_wires: holes, outer_circle_edges: vec![],
+        seam_edge: None, inner_wire_circle: None,
+        uv_centroid: None, sample_override: None, uv_domain: None,
+    }];
+    for b in indep {
+        subs.push(SubFace {
+            boundary: b, surface: face.surface.clone(), normal,
+            inner_wires: vec![], outer_circle_edges: vec![],
+            seam_edge: None, inner_wire_circle: None,
+            uv_centroid: None, sample_override: None, uv_domain: None,
+        });
+    }
+    subs
+}
+
+/// 计算 3D 边界在 XY 平面的投影面积 (Shoelace)
+fn projected_area_xy(b: &[DVec3]) -> f64 {
+    (0..b.len()).map(|i| {
+        let j = (i + 1) % b.len();
+        b[i].x * b[j].y - b[j].x * b[i].y
+    }).sum::<f64>().abs() * 0.5
+}
+
+/// 射线法判断点是否在 XY 投影多边形内
+fn point_in_polygon_xy(pt: DVec3, poly: &[DVec3]) -> bool {
+    let mut inside = false;
+    let n = poly.len();
+    for i in 0..n {
+        let j = (n + i - 1) % n;
+        let (vi, vj) = (poly[i], poly[j]);
+        if ((vi.y > pt.y) != (vj.y > pt.y)) &&
+            pt.x < (vj.x - vi.x) * (pt.y - vi.y) / (vj.y - vi.y) + vi.x
+        { inside = !inside; }
+    }
+    inside
 }
 
 /// ✅ OCCT对齐: split_face 的 OCCT 等价路径 — 边→wire→SubFace
@@ -2348,7 +2385,7 @@ pub(crate) fn split_face_occt_wire_pipeline(ds: &DS, face_idx: usize) -> Option<
     if wires.is_empty() {
         return None;
     }
-    let subs = subfaces_from_wires(&wires, &segments, ds, face_idx, &[]);
+    let subs = perform_areas(&wires, &segments, ds, face_idx);
     if subs.is_empty() {
         return None;
     }
