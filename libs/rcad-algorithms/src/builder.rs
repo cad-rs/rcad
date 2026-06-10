@@ -65,6 +65,17 @@ impl std::fmt::Display for BooleanError {
 
 impl std::error::Error for BooleanError {}
 
+/// ✅ OCCT对齐: 替代 SubFace。对应 OCCT PerformAreas 输出的 TopoDS_Face。
+///    每个 WireFace 包含一个 outer wire + 可选的 hole wires (作为 WireSegment 索引链)。
+///    WireSegment 的 start/end_vertex 提供边拓扑,emit 时直接建 BRep 边。
+#[derive(Debug, Clone)]
+pub struct WireFace {
+    /// 外边界 wire: 有序的 WireSegment 索引链
+    pub outer_wire: Vec<usize>,
+    /// 内边界(hole) wires
+    pub inner_wires: Vec<Vec<usize>>,
+}
+
 /// A sub-region of an original face after splitting by intersection curves.
 #[derive(Debug, Clone)]
 pub struct SubFace {
@@ -2265,81 +2276,114 @@ fn wire_boundary_3d(wire: &[usize], segments: &[WireSegment], ds: &DS) -> Vec<DV
     pts
 }
 
-/// ✅ OCCT对齐: wire → 多个 SubFace (PerformAreas L387-606)
+/// ⏳ 桥接: WireFace → Vec<SubFace> (迁移过渡期使用)
+fn wire_faces_to_sub_faces(
+    wfs: &[WireFace],
+    segments: &[WireSegment],
+    ds: &DS,
+    face_idx: usize,
+) -> Vec<SubFace> {
+    let face = &ds.faces[face_idx];
+    let surface = face.surface.clone();
+    let normal = face.normal;
+
+    wfs.iter().map(|wf| {
+        // 从 outer_wire 的 WireSegment 构建 3D boundary
+        let boundary: Vec<DVec3> = wf.outer_wire.iter().map(|&si| {
+            let seg = &segments[si];
+            ds.vertices[if seg.forward { seg.start_vertex } else { seg.end_vertex }].point
+        }).collect();
+
+        // inner_wires: 每个 hole wire 的 3D 多边形
+        let inner_wires: Vec<Vec<DVec3>> = wf.inner_wires.iter().map(|iw| {
+            iw.iter().map(|&si| {
+                let seg = &segments[si];
+                ds.vertices[if seg.forward { seg.start_vertex } else { seg.end_vertex }].point
+            }).collect()
+        }).collect();
+
+        SubFace {
+            boundary,
+            surface: surface.clone(),
+            normal,
+            uv_centroid: None,
+            sample_override: None,
+            uv_domain: None,
+            inner_wires,
+            outer_circle_edges: vec![],
+            seam_edge: None,
+            inner_wire_circle: None,
+        }
+    }).collect()
+}
+
+/// ✅ OCCT对齐: wire → 多个 WireFace (PerformAreas L387-606)
 ///
 /// OCCT PerformAreas:
 ///   1. 对每条 wire 分类 growth(outer) / hole(inner) (L439-445)
 ///   2. 每个 growth wire 创建一个 face; hole wire 分配到对应 face (L575-605)
 ///
-/// rcad 实现: 用近似面积分类 outer/hole, 为每个 outer + 其 holes 创建 SubFace。
-/// 多条独立 outer wire 产生多个 SubFace（多区域分割）。
+/// rcad 实现: 用近似面积分类 outer/hole, 为每个 outer + 其 holes 创建 WireFace。
+/// 多条独立 outer wire 产生多个 WireFace（多区域分割）。
 fn perform_areas(
     wires: &[Vec<usize>],
     segments: &[WireSegment],
     ds: &DS,
     face_idx: usize,
-) -> Vec<SubFace> {
+) -> Vec<WireFace> {
     if wires.is_empty() {
         return vec![];
     }
 
-    let face = &ds.faces[face_idx];
-    let surface = face.surface.clone();
-    let normal = face.normal;
-
-    // 构建每个 wire 的 3D 边界 + 面积
-    struct WireData { boundary: Vec<DVec3>, area: f64 }
-    let mut wds: Vec<WireData> = wires.iter().filter_map(|w| {
+    // ✅ OCCT对齐: 用面积 + 中点测试分类 outer/hole wires
+    //    对应 OCCT PerformAreas L439-456 (IsGrowthWire + FClass2d::IsHole)
+    struct WireData { wire_idx: usize, boundary: Vec<DVec3>, area: f64 }
+    let mut wds: Vec<WireData> = wires.iter().enumerate().filter_map(|(wi, w)| {
         let b = wire_boundary_3d(w, segments, ds);
         if b.len() < 3 { return None; }
         let a = projected_area_xy(&b);
-        Some(WireData { boundary: b, area: a })
+        Some(WireData { wire_idx: wi, boundary: b, area: a })
     }).collect();
 
     if wds.is_empty() {
         return vec![];
     }
     if wds.len() == 1 {
-        let w = wds.swap_remove(0);
-        return vec![SubFace {
-            boundary: w.boundary, surface, normal,
-            inner_wires: vec![], outer_circle_edges: vec![],
-            seam_edge: None, inner_wire_circle: None,
-            uv_centroid: None, sample_override: None, uv_domain: None,
+        return vec![WireFace {
+            outer_wire: wires[wds[0].wire_idx].clone(),
+            inner_wires: vec![],
         }];
     }
 
     // 按面积降序: 最大 wire 为 outer
     wds.sort_by(|a, b| b.area.partial_cmp(&a.area).unwrap());
-    let outer = wds.remove(0);
+    let outer_wire_idx = wds[0].wire_idx;
+    let outer_boundary = wds[0].boundary.clone();
+    let rest = &wds[1..];
 
-    // 分类剩余 wire: 中点测试 → 在 outer 内则为 hole, 否则为独立 region
-    let mut holes: Vec<Vec<DVec3>> = Vec::new();
-    let mut indep: Vec<Vec<DVec3>> = Vec::new();
-    for wd in wds {
+    // 分类剩余 wire
+    let mut hole_wire_idxs: Vec<usize> = Vec::new();
+    let mut indep_wire_idxs: Vec<usize> = Vec::new();
+    for wd in rest {
         let mid = wd.boundary.iter().sum::<DVec3>() / wd.boundary.len() as f64;
-        if point_in_polygon_xy(mid, &outer.boundary) {
-            holes.push(wd.boundary);
+        if point_in_polygon_xy(mid, &outer_boundary) {
+            hole_wire_idxs.push(wd.wire_idx);
         } else {
-            indep.push(wd.boundary);
+            indep_wire_idxs.push(wd.wire_idx);
         }
     }
 
-    let mut subs = vec![SubFace {
-        boundary: outer.boundary, surface: face.surface.clone(), normal,
-        inner_wires: holes, outer_circle_edges: vec![],
-        seam_edge: None, inner_wire_circle: None,
-        uv_centroid: None, sample_override: None, uv_domain: None,
+    let mut result = vec![WireFace {
+        outer_wire: wires[outer_wire_idx].clone(),
+        inner_wires: hole_wire_idxs.iter().map(|&wi| wires[wi].clone()).collect(),
     }];
-    for b in indep {
-        subs.push(SubFace {
-            boundary: b, surface: face.surface.clone(), normal,
-            inner_wires: vec![], outer_circle_edges: vec![],
-            seam_edge: None, inner_wire_circle: None,
-            uv_centroid: None, sample_override: None, uv_domain: None,
+    for &wi in &indep_wire_idxs {
+        result.push(WireFace {
+            outer_wire: wires[wi].clone(),
+            inner_wires: vec![],
         });
     }
-    subs
+    result
 }
 
 /// 计算 3D 边界在 XY 平面的投影面积 (Shoelace)
@@ -2364,12 +2408,13 @@ fn point_in_polygon_xy(pt: DVec3, poly: &[DVec3]) -> bool {
     inside
 }
 
-/// ✅ OCCT对齐: split_face 的 OCCT 等价路径 — 边→wire→SubFace
+/// ✅ OCCT对齐: split_face 的 OCCT 等价路径 — 边→wire→WireFace
 ///
 ///    对应 OCCT BuildSplitFaces (L232-548) + BuilderFace::Perform (L117-148)
-///
-///    当前仅在 sphere 面上启用,逐步扩展到其他面类型。
-pub(crate) fn split_face_occt_wire_pipeline(ds: &DS, face_idx: usize) -> Option<Vec<SubFace>> {
+pub(crate) fn split_face_occt_wire_pipeline(
+    ds: &DS,
+    face_idx: usize,
+) -> Option<(Vec<WireSegment>, Vec<WireFace>)> {
     let face = &ds.faces[face_idx];
     if !matches!(face.surface, Surface3::Sphere(_)) {
         return None;
@@ -2385,11 +2430,11 @@ pub(crate) fn split_face_occt_wire_pipeline(ds: &DS, face_idx: usize) -> Option<
     if wires.is_empty() {
         return None;
     }
-    let subs = perform_areas(&wires, &segments, ds, face_idx);
-    if subs.is_empty() {
+    let wfs = perform_areas(&wires, &segments, ds, face_idx);
+    if wfs.is_empty() {
         return None;
     }
-    Some(subs)
+    Some((segments, wfs))
 }
 
 impl<'a> BooleanBuilder<'a> {
@@ -3484,8 +3529,14 @@ impl<'a> BooleanBuilder<'a> {
         if matches!(&face.surface, Surface3::Sphere(_)) {
             // ✅ OCCT对齐: 先尝试 wire pipeline (位置匹配)
             if !fi.curves_in.is_empty() {
-                if let Some(subs) = split_face_occt_wire_pipeline(self.ds, face_idx) {
-                    return subs;
+                if let Some((segments, wfs)) = split_face_occt_wire_pipeline(self.ds, face_idx) {
+                    // ⏳ 桥接: WireFace → SubFace (后续迁移完成前保持兼容)
+                    let subs: Vec<SubFace> = wire_faces_to_sub_faces(
+                        &wfs, &segments, self.ds, face_idx
+                    );
+                    if !subs.is_empty() {
+                        return subs;
+                    }
                 }
             }
             let circles: Vec<&rcad_kernel::geom::Circle3> = fi.curves_in.iter()
