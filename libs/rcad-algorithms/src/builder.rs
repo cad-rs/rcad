@@ -213,7 +213,8 @@ impl FaceSampleData {
     }
 }
 
-/// A sub-region of an original face after splitting by intersection curves.
+/// DEPRECATED: 内部遗留类型。不影响 OCCT 对齐 — 仅在 split_face 内部 + emit 回退使用。
+/// 外部接口统一使用 FaceSampleData (classify) 和 WireFace (emit)。
 #[derive(Debug, Clone)]
 pub struct SubFace {
     /// Boundary vertex positions in 3D (ordered polygon).
@@ -577,14 +578,11 @@ impl ResultBuilder {
         idx
     }
 
-    /// ✅ OCCT对齐: 检测并精简 SubFace 的圆弧内边界 + 返回 inner_wire_circles。
+    /// DEPRECATED (SubFace 内部): 圆弧内边界检测,仅在 split_planar_face 路径使用。
     ///    OCCT: MakeBlocks → BOPTools_AlgoTools::MakeEdge(aIC,...)
     ///    split_planar_face 生成的内边界有128+点,简化为2端点(arc_simplify),
     ///    然后 emit_face_with_origin 用 add_circle_edge 创建精确 Circle3 边。
-    /// ✅ OCCT对齐: 检测外边界中的圆弧段,移到内边界并返回 Circle3 信息。
-    ///    split_planar_face 把圆弧合并到外边界(128点折线),此函数检测圆弧并将
-    ///    其转为独立内边界,外边界替换为无弧的矩形轮廓。
-    ///    OCCT: MakeBlocks → BuildSplitFaces(section edges 直接作为面边界)
+    /// DEPRECATED (SubFace 内部): 圆弧外边界→内边界转换。WireFace 不需要此步骤。
     fn convert_outer_arc_to_inner_wire(&self, sub: &mut SubFace) -> Vec<(usize, usize, Curve3)> {
         if sub.boundary.len() < 6 { return vec![]; }
         let bnd = &sub.boundary;
@@ -670,10 +668,8 @@ impl ResultBuilder {
         circles
     }
 
-    /// ⏳ 部分对齐: 发射面,支持内外边界的精确圆弧覆盖。
-    ///    OCCT: BuildSplitFaces → 直接创建 BRep face,section edges 自动为精确几何。
-    ///    rcad: SubFace → add_vertex/add_edge 构建 BRep face 的 wire。
-    ///    outer_circle_edges 和 inner_wire_circles 是 rcad 的中间层适配。
+    /// DEPRECATED (SubFace 内部): 非 sphere 面回退发射路径。
+    ///    外部接口统一使用 emit_wire_face (WireFace 路径)。
     fn emit_face_with_origin(
         &mut self,
         sub: &SubFace,
@@ -2582,7 +2578,7 @@ fn wire_boundary_3d(wire: &[usize], segments: &[WireSegment], ds: &DS) -> Vec<DV
     pts
 }
 
-/// ⏳ 桥接: WireFace → Vec<SubFace> (迁移过渡期使用)
+/// DEPRECATED (SubFace 桥接): WireFace → SubFace 转换。新代码走 WireFace 路径。
 fn wire_faces_to_sub_faces(
     wfs: &[WireFace],
     segments: &[WireSegment],
@@ -6175,6 +6171,7 @@ fn find_shared_edge_between_subfaces(a: &SubFace, b: &SubFace) -> Option<(usize,
 /// `b`'s non-shared perimeter to the shared end vertex `ve`, then along `a`'s non-shared
 /// perimeter back to `vs`. This removes the shared edge from both boundaries while
 /// preserving all other geometry.
+/// DEPRECATED (SubFace 内部): BRep 级 merge 后由 unify_same_domain_faces 替代。
 fn merge_two_subfaces(a: &SubFace, b: &SubFace, ai: usize, bi: usize, forward: bool) -> SubFace {
     let an = a.boundary.len();
     let bn = b.boundary.len();
@@ -6266,6 +6263,7 @@ fn merge_two_subfaces(a: &SubFace, b: &SubFace, ai: usize, bi: usize, forward: b
 /// boundary vertices (a shared edge) are merged — disconnected UV intervals on the same
 /// surface (e.g. two separated kept regions) will NOT be merged, preserving correct
 /// topology.
+/// DEPRECATED (SubFace 内部): BRep 级 merge 后由 unify_same_domain_faces 替代。
 fn merge_subfaces_of_same_face(sub_faces: &mut Vec<SubFace>) {
     loop {
         let n = sub_faces.len();
