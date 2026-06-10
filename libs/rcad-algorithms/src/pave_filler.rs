@@ -1875,13 +1875,13 @@ impl<'a> PaveFiller<'a> {
     }
 
     /// ✅ OCCT对齐: 在 face 边界/vertices_in/vertices_on 中查找已有顶点
+    /// ✅ OCCT对齐: IC 端点查找已有顶点,不匹配 face.boundary_verts。
+    ///    IC 端点只匹配 vertices_in/vertices_on (其他 EF/FF 分割产生的顶点)。
+    ///    不匹配 boundary_verts — 避免 IC 端点共享 seam 边的顶点索引。
     fn find_existing_on_face(&self, pt: DVec3, faces: &[usize]) -> Option<usize> {
         let tol = TOLERANCE_ABS * 100.0;
         for &fi in faces {
             let face = &self.ds.faces[fi];
-            for &vi in &face.boundary_verts {
-                if self.ds.vertices[vi].point.distance_squared(pt) < tol * tol { return Some(vi); }
-            }
             for &vi in &face.face_info.vertices_in {
                 if self.ds.vertices[vi].point.distance_squared(pt) < tol * tol { return Some(vi); }
             }
@@ -2058,8 +2058,19 @@ impl<'a> PaveFiller<'a> {
         };
         let u_for_half1 = if u_for_half0 == u_a { u_b } else { u_a };
 
-        let v_north = self.ds.add_vertex(north_pole);
-        let v_south = self.ds.add_vertex(south_pole);
+        // ✅ OCCT对齐: 直接 push 避免 DS.add_vertex 复用已有顶点。
+        //    add_vertex 在容差内匹配已有顶点(球面极点),会返回 seam 顶点索引。
+        //    OCCT 创建新边时使用独立顶点,IC 端点不应共享 seam 顶点。
+        let v_north = {
+            let idx = self.ds.vertices.len();
+            self.ds.vertices.push(crate::bopds::ds::DSVertex { point: north_pole, origin: None, geom_tol: TOLERANCE_ABS });
+            idx
+        };
+        let v_south = {
+            let idx = self.ds.vertices.len();
+            self.ds.vertices.push(crate::bopds::ds::DSVertex { point: south_pole, origin: None, geom_tol: TOLERANCE_ABS });
+            idx
+        };
 
         // Build plane UV basis for the half-circle pcurves
         let pu_ax = any_perpendicular(plane.normal);
