@@ -76,6 +76,143 @@ pub struct WireFace {
     pub inner_wires: Vec<Vec<usize>>,
 }
 
+/// ✅ OCCT对齐: classify 阶段需要的数据,替代 SubFace。
+///    从 WireFace + WireSegments + DS + face_idx 提取。
+///    sample_point() / surface / normal / boundary 等 classify 依赖的字段。
+#[derive(Debug, Clone)]
+pub struct FaceSampleData {
+    pub boundary: Vec<DVec3>,
+    pub surface: Surface3,
+    pub normal: DVec3,
+    pub inner_wires: Vec<Vec<DVec3>>,
+    pub uv_domain: Option<[f64; 4]>,
+    pub uv_centroid: Option<DVec2>,
+    pub sample_override: Option<DVec3>,
+}
+
+impl FaceSampleData {
+    /// ⏳ 桥接: 从 SubFace 构造 (过渡期使用,移动作后删除)。
+    fn from_sub_face(sub: &SubFace) -> Self {
+        FaceSampleData {
+            boundary: sub.boundary.clone(),
+            surface: sub.surface.clone(),
+            normal: sub.normal,
+            inner_wires: sub.inner_wires.clone(),
+            uv_domain: sub.uv_domain,
+            uv_centroid: sub.uv_centroid,
+            sample_override: sub.sample_override,
+        }
+    }
+
+    /// ⏳ 桥接: 从 WireFace + DS 构造 classify 需要的数据。
+    ///    后续 migration 完成后可直接用 DS 字段,不再需要这个桥接。
+    fn from_wire_face(
+        face_idx: usize,
+        wf: &WireFace,
+        segments: &[WireSegment],
+        ds: &DS,
+    ) -> Self {
+        let face = &ds.faces[face_idx];
+        let boundary: Vec<DVec3> = wf.outer_wire.iter().map(|&si| {
+            let seg = &segments[si];
+            ds.vertices[if seg.forward { seg.start_vertex } else { seg.end_vertex }].point
+        }).collect();
+        let inner_wires: Vec<Vec<DVec3>> = wf.inner_wires.iter().map(|iw| {
+            iw.iter().map(|&si| {
+                let seg = &segments[si];
+                ds.vertices[if seg.forward { seg.start_vertex } else { seg.end_vertex }].point
+            }).collect()
+        }).collect();
+        FaceSampleData {
+            boundary,
+            surface: face.surface.clone(),
+            normal: face.normal,
+            inner_wires,
+            uv_domain: None,
+            uv_centroid: None,
+            sample_override: None,
+        }
+    }
+
+    /// Returns a point slightly INSIDE the surface (toward the interior of the solid).
+    /// 从 SubFace::sample_point 移植,使用 WireFace 的数据源。
+    fn sample_point(&self) -> DVec3 {
+        if let Some(pt) = self.sample_override {
+            return pt;
+        }
+        match &self.surface {
+            Surface3::Sphere(s) => {
+                let surface_pt = if let Some(uv) = self.uv_centroid {
+                    s.point_at(uv.x, uv.y)
+                } else if !self.boundary.is_empty() {
+                    self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
+                } else {
+                    s.center + s.radius * DVec3::X
+                };
+                let to_center = (s.center - surface_pt).normalize_or_zero();
+                let inward = if to_center.length_squared() > 0.5 { to_center } else { -self.normal };
+                surface_pt + inward * (TOLERANCE_ABS * 10.0)
+            }
+            Surface3::Cylinder(c) => {
+                use rcad_kernel::geom::SurfaceEval;
+                let surface_pt = if let Some(uv) = self.uv_centroid {
+                    c.point_at(uv.x, uv.y)
+                } else if !self.boundary.is_empty() {
+                    self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
+                } else {
+                    c.origin + c.axis.normalize() * 0.5
+                };
+                let axis = c.axis.normalize();
+                let to_axis = c.origin + axis * (surface_pt - c.origin).dot(axis) - surface_pt;
+                let inward = to_axis.normalize_or_zero();
+                surface_pt + inward * (TOLERANCE_ABS * 5000.0)
+            }
+            Surface3::Torus(t) => {
+                use rcad_kernel::geom::SurfaceEval;
+                let surface_pt = if let Some(uv) = self.uv_centroid {
+                    t.point_at(uv.x, uv.y)
+                } else if !self.boundary.is_empty() {
+                    self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
+                } else {
+                    t.center + (t.major_radius + t.minor_radius) * DVec3::X
+                };
+                let axis = t.axis.normalize_or_zero();
+                let local = surface_pt - t.center;
+                let axial = local.dot(axis);
+                let radial = local - axial * axis;
+                let inward = if radial.length_squared() > TOLERANCE_FLOAT_ULTRA {
+                    let tube_center = t.center + axial * axis + radial.normalize() * t.major_radius;
+                    (tube_center - surface_pt).normalize_or_zero()
+                } else { -self.normal };
+                surface_pt + inward * (TOLERANCE_ABS * 10.0)
+            }
+            Surface3::Cone(c) => {
+                use rcad_kernel::geom::SurfaceEval;
+                let surface_pt = if let Some(uv) = self.uv_centroid {
+                    c.point_at(uv.x, uv.y)
+                } else if !self.boundary.is_empty() {
+                    self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
+                } else { c.point_at(0.0, 1.0) };
+                let axis = c.axis_dir();
+                let local = surface_pt - c.apex;
+                let axial = local.dot(axis);
+                let axis_pt = c.apex + axis * axial;
+                let inward = (axis_pt - surface_pt).normalize_or_zero();
+                let inward = if inward.length_squared() > 0.5 { inward } else { -self.normal };
+                surface_pt + inward * (TOLERANCE_ABS * 5000.0)
+            }
+            _ => {
+                let centroid = if self.boundary.len() >= 3 {
+                    planar_polygon_centroid(&self.boundary, self.normal)
+                } else if self.boundary.is_empty() { DVec3::ZERO } else {
+                    self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
+                };
+                centroid + self.normal * TOLERANCE_ABS * 10.0
+            }
+        }
+    }
+}
+
 /// A sub-region of an original face after splitting by intersection curves.
 #[derive(Debug, Clone)]
 pub struct SubFace {
@@ -1451,7 +1588,7 @@ enum SourceSide {
 /// - Difference B-side: sub-face is kept only when ENTIRELY inside the box.
 /// - Union/Difference A-side: sub-face is kept only when ENTIRELY outside the box.
 fn classify_subface_against_box(
-    sub: &SubFace,
+    sub: &FaceSampleData,
     solid_face_indices: &[usize],
     ds: &DS,
     op: BooleanOpType,
@@ -1564,10 +1701,12 @@ fn classify_subface_against_box(
 /// happen to fall within the tolerance band of the other solid's surface despite the
 /// sub-face being entirely outside (e.g. a planar sub-face of a box near a sphere's
 /// surface). In that case we probe boundary and interior samples to break the tie.
+// ✅ OCCT对齐: 分类子面为 In/Out/On (ClassifyFaces)。
+//    接受 FaceSampleData(从 WireFace 或 SubFace 构造)。
 fn classify_against_solid_for_boolean(
     op: BooleanOpType,
     source: SourceSide,
-    sub: &SubFace,
+    sub: &FaceSampleData,
     solid_face_indices: &[usize],
     ds: &DS,
 ) -> Classification {
@@ -1894,7 +2033,7 @@ fn build_edge_bounds(face_indices: &[usize], ds: &DS) -> std::collections::BTree
 /// rcad 实现: SubFace 已有 uv_domain 和 uv_centroid,直接用 UV centroid
 /// 作为内部点 (OCCT 用 Hatcher 做 2D point-in-face,但 rcad 的 SubFace
 /// 是参数化区域,UV centroid 在内部)。
-fn point_in_face(sub: &SubFace) -> Option<DVec3> {
+fn point_in_face(sub: &FaceSampleData) -> Option<DVec3> {
     // 优先用 uv_centroid — 它是面参数空间的几何中心
     if let Some(uv) = sub.uv_centroid {
         return Some(sub.surface.point_at(uv.x, uv.y));
@@ -1922,7 +2061,7 @@ fn point_in_face(sub: &SubFace) -> Option<DVec3> {
 /// In 结果不可靠 — section edge 中点可能在 solid 表面,
 /// classify_point 的 ray casting 对表面上点的分类不稳定。
 fn classify_by_off_solid_edge(
-    sub: &SubFace,
+    sub: &FaceSampleData,
     edge_bounds: &std::collections::BTreeSet<usize>,
     solid_face_indices: &[usize],
     ds: &DS,
@@ -2005,7 +2144,7 @@ fn quantize_pos(p: DVec3, tolerance: f64) -> u64 {
 ///       Some(false) = 面不在 solid 内部 (OUT)
 ///       None = 无法确定
 fn is_internal_face(
-    sub: &SubFace,
+    sub: &FaceSampleData,
     solid_face_indices: &[usize],
     ds: &DS,
 ) -> Option<bool> {
@@ -2136,7 +2275,7 @@ fn is_internal_face(
 /// without a clear majority) — letting the caller fall through to the existing
 /// AABB fast path and probe-grid fallbacks.
 fn classify_face_occt_style(
-    sub: &SubFace,
+    sub: &FaceSampleData,
     solid_face_indices: &[usize],
     ds: &DS,
     _op: BooleanOpType,
@@ -2860,7 +2999,7 @@ impl<'a> BooleanBuilder<'a> {
             let face_split = sub_faces.len() > 1;
             let mut kept_subs: Vec<SubFace> = Vec::new();
             for (si, sub) in sub_faces.iter().enumerate() {
-                let class = classify_against_solid_for_boolean(self.op, SourceSide::A, sub, &b_faces, self.ds);
+                let class = classify_against_solid_for_boolean(self.op, SourceSide::A, &FaceSampleData::from_sub_face(sub), &b_faces, self.ds);
                 let keep = if self.op == BooleanOpType::Union
                     && class == Classification::On
                     && matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
@@ -2960,7 +3099,7 @@ impl<'a> BooleanBuilder<'a> {
             let face_split = sub_faces.len() > 1;
             let mut kept_subs: Vec<(SubFace, Classification)> = Vec::new();
             for (si, sub) in sub_faces.iter().enumerate() {
-                let class = classify_against_solid_for_boolean(self.op, SourceSide::B, sub, &a_faces, self.ds);
+                let class = classify_against_solid_for_boolean(self.op, SourceSide::B, &FaceSampleData::from_sub_face(sub), &a_faces, self.ds);
                 let keep = if !face_split
                     && self.op == BooleanOpType::Union
                     && matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
@@ -3205,7 +3344,7 @@ impl<'a> BooleanBuilder<'a> {
                 sub_faces
                     .into_iter()
                     .filter_map(|sub| {
-                        let class = classify_against_solid_for_boolean(self.op, SourceSide::A, &sub, &b_faces, self.ds);
+                        let class = classify_against_solid_for_boolean(self.op, SourceSide::A, &FaceSampleData::from_sub_face(&sub), &b_faces, self.ds);
 
                         let keep = if !face_split
                             && self.op == BooleanOpType::Difference
@@ -3236,7 +3375,7 @@ impl<'a> BooleanBuilder<'a> {
                 let mut kept: Vec<(SubFace, bool, FaceOrigin)> = sub_faces
                     .into_iter()
                     .filter_map(|sub| {
-                        let class = classify_against_solid_for_boolean(self.op, SourceSide::B, &sub, &a_faces, self.ds);
+                        let class = classify_against_solid_for_boolean(self.op, SourceSide::B, &FaceSampleData::from_sub_face(&sub), &a_faces, self.ds);
 
                         let keep = self.keep_subface(SourceSide::B, fi, class, &a_faces);
 
