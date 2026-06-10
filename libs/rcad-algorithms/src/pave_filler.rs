@@ -1875,23 +1875,6 @@ impl<'a> PaveFiller<'a> {
     }
 
     /// ✅ OCCT对齐: 在 face 边界/vertices_in/vertices_on 中查找已有顶点
-    /// ✅ OCCT对齐: IC 端点查找已有顶点,不匹配 face.boundary_verts。
-    ///    IC 端点只匹配 vertices_in/vertices_on (其他 EF/FF 分割产生的顶点)。
-    ///    不匹配 boundary_verts — 避免 IC 端点共享 seam 边的顶点索引。
-    fn find_existing_on_face(&self, pt: DVec3, faces: &[usize]) -> Option<usize> {
-        let tol = TOLERANCE_ABS * 100.0;
-        for &fi in faces {
-            let face = &self.ds.faces[fi];
-            for &vi in &face.face_info.vertices_in {
-                if self.ds.vertices[vi].point.distance_squared(pt) < tol * tol { return Some(vi); }
-            }
-            for &vi in &face.face_info.vertices_on {
-                if self.ds.vertices[vi].point.distance_squared(pt) < tol * tol { return Some(vi); }
-            }
-        }
-        None
-    }
-
     fn intersect_plane_sphere_faces(
         &mut self,
         f1: usize,
@@ -1974,10 +1957,8 @@ impl<'a> PaveFiller<'a> {
                 // 在裁剪后的端点位置查找已有顶点,共享索引
                 let p_start = circle.point_at(effective_t0);
                 let p_end = circle.point_at(effective_t1);
-                let v_start = self.find_existing_on_face(p_start, &[f1, f2])
-                    .unwrap_or_else(|| self.ds.add_vertex(p_start));
-                let v_end = self.find_existing_on_face(p_end, &[f1, f2])
-                    .unwrap_or_else(|| self.ds.add_vertex(p_end));
+                let v_start = self.ds.add_vertex(p_start);
+                let v_end = self.ds.add_vertex(p_end);
 
                 let curve_idx = self.ds.intersection_curves.len();
                 self.ds.intersection_curves.push(IntersectionCurve {
@@ -2144,13 +2125,8 @@ impl<'a> PaveFiller<'a> {
             let [eff_t0, eff_t1] = match clip_arc(t_start, t_end) { Some(r) => r, None => continue };
             let p_start = circle.point_at(eff_t0);
             let p_end = circle.point_at(eff_t1);
-            // ✅ OCCT对齐: (PutPavesOnCurve L789-791) 在 IC 共享点处使用同一顶点。
-            //    y=0 IC 和 z=0 IC 在 box edge 交点处都调用 find_existing_on_face,
-            //    返回同一顶点索引 → wires 通过此共享顶点连通成多段闭合回路。
-            let v_start = self.find_existing_on_face(p_start, &[f1, f2])
-                .unwrap_or_else(|| self.ds.add_vertex(p_start));
-            let v_end = self.find_existing_on_face(p_end, &[f1, f2])
-                .unwrap_or_else(|| self.ds.add_vertex(p_end));
+            let v_start = self.ds.add_vertex(p_start);
+            let v_end = self.ds.add_vertex(p_end);
             let plane_pc = sample_plane_half(eff_t0, eff_t1);
             let sphere_pc = Some(Curve2d::Line(Line2d { origin: DVec2::new(u_val, -eff_t0), direction: DVec2::new(0.0, 1.0) }));
             let (pc_a, pc_b) = if plane_is_f1 { (plane_pc, sphere_pc) } else { (sphere_pc, plane_pc) };
