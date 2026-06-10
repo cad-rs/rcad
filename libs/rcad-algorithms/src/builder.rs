@@ -2056,18 +2056,65 @@ impl WireSegment {
 ///   1. **原始边界边** (L357-460)
 ///      — 含 seam edge 检测: closed surface 上 U/V 等参线同时是 seam →
 ///        FORWARD+REVERSED 都加 (L444-447)
+///      — INTERNAL 边: FORWARD+REVERSED 都加 (L366-372)
 ///   2. **Section 边** (L478-489) — FORWARD+REVERSED 都加
 ///
 /// rcad 实现:
 ///   使用 ds 中的 boundary_edges + intersection_curves。
-///   seam 边不纳入 wire 构建(IC 顶点不共享 seam 顶点),改为直接使用
-///   各 sub-face 的 outer_circle_edges/seam_edge 字段在 emit 时处理。
+///   位置匹配(build_closed_wires)通过 quantized 3D 位置连接段,
+///   不要求顶点索引完全一致。
 fn collect_face_edge_segments(ds: &DS, face_idx: usize) -> Vec<WireSegment> {
     let face = &ds.faces[face_idx];
     let mut segments: Vec<WireSegment> = Vec::new();
 
+    // 判断面是否是 closed (U/V) — 用于 seam 边检测
+    // OCCT L383-388: GeomLib::IsClosed 检查曲面 U/V 是否闭合
+    let (is_u_closed, is_v_closed) = match &face.surface {
+        Surface3::Sphere(_) => (true, true),
+        Surface3::Cylinder(_) => (true, false),
+        Surface3::Cone(_) => (true, false),
+        _ => (false, false),
+    };
+
     // ================================================================
-    // 1. Section 边 — 交线 (OCCT L478-489)
+    // 1. 原始边界边 (OCCT L357-460)
+    // ================================================================
+    for &ei in &face.boundary_edges {
+        let edge = &ds.edges[ei];
+        let sv = edge.start_vertex;
+        let ev = edge.end_vertex;
+
+        // ✅ OCCT对齐: seam 边检测 (L392-449)
+        //    OCCT L394: BRep_Tool::IsClosed(aE, aF) 检查边在面上是否闭合。
+        //    rcad: seam 边的 start_vertex == end_vertex (退化边) 或
+        //    曲面 U/V closed 且边既是 U-isoline 又是 V-isoline。
+        let is_seam = (is_u_closed || is_v_closed)
+            && (sv == ev || are_verts_coincident(ds, sv, ev));
+
+        if is_seam {
+            // ✅ OCCT对齐: seam 边 FORWARD+REVERSED (L444-447)
+            segments.push(WireSegment {
+                start_vertex: sv, end_vertex: ev,
+                source: WireEdgeSource::DsEdge(ei),
+                forward: true,
+            });
+            segments.push(WireSegment {
+                start_vertex: ev, end_vertex: sv,
+                source: WireEdgeSource::DsEdge(ei),
+                forward: false,
+            });
+        } else {
+            // ✅ OCCT对齐: 普通边按原始方向添加 (L374-378)
+            segments.push(WireSegment {
+                start_vertex: sv, end_vertex: ev,
+                source: WireEdgeSource::DsEdge(ei),
+                forward: true,
+            });
+        }
+    }
+
+    // ================================================================
+    // 2. Section 边 — 交线 (OCCT L478-489)
     //    OCCT 为每个 FaceFace 交线的 PaveBlock 加 FORWARD+REVERSED
     // ================================================================
     for &ci in &face.face_info.curves_in {
@@ -2081,9 +2128,25 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize) -> Vec<WireSegment> {
             source: WireEdgeSource::IntersectionCurve(ci),
             forward: true,
         });
+        // 闭合曲线 (start==end) 不加 REVERSED — 位置匹配自动处理
+        if sv != ev {
+            segments.push(WireSegment {
+                start_vertex: ev,
+                end_vertex: sv,
+                source: WireEdgeSource::IntersectionCurve(ci),
+                forward: false,
+            });
+        }
     }
 
     segments
+}
+
+/// 检查两个 DS 顶点是否在同一位置 (容差内)
+fn are_verts_coincident(ds: &DS, vi: usize, vj: usize) -> bool {
+    if vi == vj { return true; }
+    let d2 = ds.vertices[vi].point.distance_squared(ds.vertices[vj].point);
+    d2 < TOLERANCE_ABS_SQ
 }
 
 /// ✅ OCCT对齐: 从边集合构建闭合 wire — 使用位置匹配而非顶点索引匹配
