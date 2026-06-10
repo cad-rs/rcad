@@ -4505,7 +4505,8 @@ impl<'a> PaveFiller<'a> {
         let n_curves = self.ds.intersection_curves.len();
         let n_faces = self.ds.faces.len();
 
-        // ✅ OCCT对齐: 收集所有候选顶点 (SubShapesOnIn: ON/IN/boundary/EF)
+        // ✅ OCCT对齐: 收集 EF 候选顶点 (EdgeFace interferences)。
+        //    这些才是 IC 端点应该共享的顶点(边与面的交点)。
         let mut all_verts: Vec<(usize, DVec3)> = self.ds.interferences.iter()
             .filter_map(|inf| {
                 if let Interference::EdgeFace { new_vertex, point, .. } = inf {
@@ -4513,15 +4514,10 @@ impl<'a> PaveFiller<'a> {
                 } else { None }
             })
             .collect();
-        // 加上 face 边界顶点 (OCCT FaceInfo 原始边界顶点)
+        // 加上 vertices_in/vertices_on (IC 分割产生的顶点 + 面内顶点)
         let mut seen: std::collections::BTreeSet<usize> =
             all_verts.iter().map(|(vi, _)| *vi).collect();
         for face in &self.ds.faces {
-            for &vi in &face.boundary_verts {
-                if seen.insert(vi) {
-                    all_verts.push((vi, self.ds.vertices[vi].point));
-                }
-            }
             for &vi in &face.face_info.vertices_in {
                 if seen.insert(vi) {
                     all_verts.push((vi, self.ds.vertices[vi].point));
@@ -4533,6 +4529,9 @@ impl<'a> PaveFiller<'a> {
                 }
             }
         }
+        // 注意: 面边界顶点(如球面极点)不加入 all_verts,避免 IC 端点替换
+        // 误将边界顶点索引赋给 IC 端点。PutBoundPaveOnCurve 从 DS 直接读取
+        // face.boundary_verts,不需要通过 all_verts。
 
         // Curve snapshots: collect all data upfront to avoid borrow conflicts
         struct CurveSnapshot {

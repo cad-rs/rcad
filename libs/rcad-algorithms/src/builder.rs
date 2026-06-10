@@ -2350,6 +2350,10 @@ struct WireSegment {
     /// true = FORWARD orientation (as stored in source);
     /// false = REVERSED orientation.
     forward: bool,
+    /// ✅ OCCT对齐: Seam edge 标记。seam 段只与其他 seam 段匹配,
+    ///    不与 section 段匹配,避免 seam 与 IC 端点共享顶点时形成退化 wire。
+    ///    对应 OCCT DoSplitSEAMOnFace 的逻辑分离。
+    is_seam: bool,
 }
 
 impl WireSegment {
@@ -2359,6 +2363,7 @@ impl WireSegment {
             end_vertex: self.start_vertex,
             source: self.source.clone(),
             forward: !self.forward,
+            is_seam: self.is_seam,
         }
     }
 }
@@ -2399,10 +2404,13 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize) -> Vec<WireSegment> {
 
         // ✅ OCCT对齐: seam 边检测 (L392-449)
         //    OCCT L394: BRep_Tool::IsClosed(aE, aF) 检查边在面上是否闭合。
-        //    rcad: seam 边的 start_vertex == end_vertex (退化边) 或
-        //    曲面 U/V closed 且边既是 U-isoline 又是 V-isoline。
-        let is_seam = (is_u_closed || is_v_closed)
-            && (sv == ev || are_verts_coincident(ds, sv, ev));
+        //    rcad: 对 Sphere 面,唯一边界边就是 seam (U/V 均闭合)。
+        //    对 Cylinder/Cone: start==end 表示 seam(等参线两端重合)。
+        let is_seam = match &face.surface {
+            Surface3::Sphere(_) => true, // 球面唯一边界边就是 seam
+            _ => (is_u_closed || is_v_closed)
+                && (sv == ev || are_verts_coincident(ds, sv, ev)),
+        };
 
         if is_seam {
             // ✅ OCCT对齐: seam 边 FORWARD+REVERSED (L444-447)
@@ -2410,11 +2418,13 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize) -> Vec<WireSegment> {
                 start_vertex: sv, end_vertex: ev,
                 source: WireEdgeSource::DsEdge(ei),
                 forward: true,
+                is_seam: true,
             });
             segments.push(WireSegment {
                 start_vertex: ev, end_vertex: sv,
                 source: WireEdgeSource::DsEdge(ei),
                 forward: false,
+                is_seam: true,
             });
         } else {
             // ✅ OCCT对齐: 普通边按原始方向添加 (L374-378)
@@ -2422,6 +2432,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize) -> Vec<WireSegment> {
                 start_vertex: sv, end_vertex: ev,
                 source: WireEdgeSource::DsEdge(ei),
                 forward: true,
+                is_seam: false,
             });
         }
     }
@@ -2440,6 +2451,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize) -> Vec<WireSegment> {
             end_vertex: ev,
             source: WireEdgeSource::IntersectionCurve(ci),
             forward: true,
+            is_seam: false,
         });
         // 闭合曲线 (start==end) 不加 REVERSED — 位置匹配自动处理
         if sv != ev {
@@ -2448,6 +2460,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize) -> Vec<WireSegment> {
                 end_vertex: sv,
                 source: WireEdgeSource::IntersectionCurve(ci),
                 forward: false,
+                is_seam: false,
             });
         }
     }
@@ -2462,39 +2475,34 @@ fn are_verts_coincident(ds: &DS, vi: usize, vj: usize) -> bool {
     d2 < TOLERANCE_ABS_SQ
 }
 
-/// ✅ OCCT对齐: 从边集合构建闭合 wire — 使用位置匹配而非顶点索引匹配
+/// ✅ OCCT对齐: 从边集合构建闭合 wire — 使用位置匹配 + is_seam 过滤
 ///    (PerformLoops L239-383)
 ///
-/// rcad: 使用 quantized 3D 位置匹配,避免对共享顶点索引的依赖。
-/// IC 端点可能与 face 边界边顶点有不同的 DS 索引但相同 3D 位置,
-/// 位置匹配能正确连接这些段形成闭合 wire。
+/// seam 段只与其他 seam 段匹配,不与 section 段匹配(避免 seam 端点
+/// 与 IC 端点共享 3D 位置时形成退化 2 段 wire)。对应 OCCT
+/// DoSplitSEAMOnFace 的逻辑分离。
 fn build_closed_wires(segments: &[WireSegment], ds: &DS) -> Vec<Vec<usize>> {
     if segments.is_empty() {
         return vec![];
     }
 
     let tol = TOLERANCE_ABS * 100.0;
-    // 为每个 segment 计算量化端点
-    let seg_keys: Vec<(u64, u64)> = segments.iter().map(|seg| {
+    // 为每个 segment 计算量化端点 + seam 标记
+    let seg_keys: Vec<(u64, u64, bool)> = segments.iter().map(|seg| {
         let sp = ds.vertices[seg.start_vertex].point;
         let ep = ds.vertices[seg.end_vertex].point;
-        (quantize_pos(sp, tol), quantize_pos(ep, tol))
+        (quantize_pos(sp, tol), quantize_pos(ep, tol), seg.is_seam)
     }).collect();
 
     let n = segments.len();
     let mut visited = vec![false; n];
     let mut wires: Vec<Vec<usize>> = Vec::new();
 
-    // 构建位置→段索引映射
-    let mut pos_to_segs: std::collections::HashMap<u64, Vec<usize>> =
+    // 构建位置→段索引映射 (只匹配同 is_seam 的段)
+    let mut pos_to_segs: std::collections::HashMap<(u64, bool), Vec<usize>> =
         std::collections::HashMap::new();
-    for (si, (sk, _ek)) in seg_keys.iter().enumerate() {
-        pos_to_segs.entry(*sk).or_default().push(si);
-    }
-    let mut end_pos_to_segs: std::collections::HashMap<u64, Vec<usize>> =
-        std::collections::HashMap::new();
-    for (si, (_sk, ek)) in seg_keys.iter().enumerate() {
-        end_pos_to_segs.entry(*ek).or_default().push(si);
+    for (si, (sk, _ek, is_seam)) in seg_keys.iter().enumerate() {
+        pos_to_segs.entry((*sk, *is_seam)).or_default().push(si);
     }
 
     // 从任意未访问段开始遍历
@@ -2506,6 +2514,7 @@ fn build_closed_wires(segments: &[WireSegment], ds: &DS) -> Vec<Vec<usize>> {
 
         let mut wire: Vec<usize> = Vec::new();
         let target_key = seg_keys[start_idx].0; // start 位置
+        let start_seam = seg_keys[start_idx].2; // is_seam 标记
         let mut ci = start_idx;
         let mut arrived_key = seg_keys[start_idx].1; // end 位置
 
@@ -2521,8 +2530,8 @@ fn build_closed_wires(segments: &[WireSegment], ds: &DS) -> Vec<Vec<usize>> {
                 break;
             }
 
-            // 找从 arrived_key 出发的未访问段
-            let next = match pos_to_segs.get(&arrived_key) {
+            // 找从 arrived_key 出发的未访问段 (同 is_seam)
+            let next = match pos_to_segs.get(&(arrived_key, start_seam)) {
                 Some(candidates) => candidates.iter().copied().find(|&ni| !visited[ni]),
                 None => None,
             };
