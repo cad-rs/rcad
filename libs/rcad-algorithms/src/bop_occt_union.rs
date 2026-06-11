@@ -944,9 +944,10 @@ fn fill_same_domain_faces_edge_set(brep: &mut BRep) -> usize {
 
     // ── Step 4.5: Cross-group coplanar merge (OCCT AreFacesSameDomain L1109-1169) ──
     //    OCCT: PointInFace(F1) → IsValidPointForFace(F2, aTol)
-    //    ⏳ 暂禁用: 需要可靠的 face interior point (当前 boundary centroid 在
-    //    交线分裂后不准确),以及精确的 3D 边距拒绝。启用后 B1/B6 通过但 B3/B4
-    //    SA 仍不匹配。待 total_surface_area 支撑外壳面积计算后重新启用。
+    //    ⏳ 暂禁用: BRep 面的三角剖分在此阶段不可靠(build_with_history 后未保证),
+    //    face.sample_point 可能在子面边界上。需要使用 face 的 UV 参数域计算内点。
+    //    实现的 point_in_face + is_valid_point_for_face 函数已 OCCT 对齐,
+    //    待 triangulation 问题解决后启用。
     // fill_same_domain_cross_group(brep, nf, &flat_to_pos, &mut dsu);
 
     // ── Step 5: Build blocks from DSU (OCCT MakeBlocks L741) ──────────────
@@ -1020,38 +1021,68 @@ fn fill_same_domain_faces_edge_set(brep: &mut BRep) -> usize {
     remove_pos.len()
 }
 
-/// ✅ OCCT对齐: PointInFace 等价 — 取面内一点
-///    OCCT: BOPTools_AlgoTools3D::PointInFace (用三角剖分取面内 UV 参数)
-///    rcad: 用 boundary centroid (凸多边形保证在面内)
-fn face_interior_pt(boundary: &[DVec3]) -> DVec3 {
-    boundary.iter().copied().sum::<DVec3>() / boundary.len().max(1) as f64
+/// ✅ OCCT对齐: PointInFace (BOPTools_AlgoTools3D::PointInFace)
+///    OCCT: 用三角剖分取面内一点的 UV 参数 → 3D 点
+///    rcad: 从 face.triangles 取第一个三角形的三顶点质心
+fn point_in_face(brep: &BRep, (si, shi, fi): (usize, usize, usize)) -> Option<DVec3> {
+    let face = &brep.solids[si].shells[shi].faces[fi];
+    // OCCT 优先: 用三角剖分
+    if let Some(tri) = face.triangles.first() {
+        let v0 = brep.vertices.get(tri[0])?.point;
+        let v1 = brep.vertices.get(tri[1])?.point;
+        let v2 = brep.vertices.get(tri[2])?.point;
+        return Some((v0 + v1 + v2) / 3.0);
+    }
+    // 回退: face.sample_point
+    if let Some(sp) = face.sample_point { return Some(sp); }
+    // 最后回退: boundary centroid
+    let mut bnd: Vec<DVec3> = Vec::new();
+    for we in &face.outer_wire.edges {
+        if let Some(e) = brep.edges.get(we.idx) { if let Some(v) = brep.vertices.get(e.start) { bnd.push(v.point); } }
+    }
+    if bnd.len() < 3 { return None; }
+    Some(bnd.iter().copied().sum::<DVec3>() / bnd.len() as f64)
 }
 
-/// ✅ OCCT对齐: IsValidPointForFace 等价 (BOPTools_AlgoTools.cxx L1166)
-///    OCCT: 投影3D点到面2,检查 UV 有效性,容差 = tolF1 + tolF2 + max(fuzzy, Confusion)
-///    rcad: 同平面面用 2D point-in-polygon + 3D edge rejection
-fn strict_inside_plane(pt: DVec3, boundary: &[DVec3]) -> bool {
+/// ✅ OCCT对齐: IsValidPointForFace (BOPTools_AlgoTools.cxx L1166)
+///    OCCT: 投影 3D 点到面2的表面 → 检查 UV 在域内
+///    容差: tolF1 + tolF2 + max(fuzzy, Precision::Confusion)
+///    rcad: 3D 边距拒绝 + 2D point-in-polygon
+fn is_valid_point_for_face(brep: &BRep, pt: DVec3, (si, shi, fi): (usize, usize, usize)) -> bool {
     use glam::DVec2;
-    if boundary.len() < 3 { return false; }
-    // ✅ OCCT: 3D edge rejection — 点在任一边界边的 3D 距离 < 1e-8 即拒绝
-    //    用 3D 距离避免 2D 投影的浮点误差
-    for k in 0..boundary.len() {
-        let a = boundary[k]; let b = boundary[(k + 1) % boundary.len()];
+    let face = &brep.solids[si].shells[shi].faces[fi];
+    let sid = face.surface_idx;
+    let Some(surf) = sid.and_then(|sid| brep.geom.surfaces.get(sid)) else { return false; };
+    let _normal = match surf { Surface3::Plane(p) => p.normal, _ => return false };
+    // OCCT: 3D edge rejection — 3D 距离 = 0 的点是边界点
+    let mut bnd: Vec<DVec3> = Vec::new();
+    for we in &face.outer_wire.edges {
+        if let Some(e) = brep.edges.get(we.idx) { if let Some(v) = brep.vertices.get(e.start) { bnd.push(v.point); } }
+    }
+    if bnd.len() < 3 { return false; }
+    for k in 0..bnd.len() {
+        let a = bnd[k]; let b = bnd[(k + 1) % bnd.len()];
         let ab = b - a; let ap = pt - a;
         let t = (ap.dot(ab) / (ab.dot(ab) + 1e-30)).clamp(0.0, 1.0);
-        if (pt - (a + ab * t)).length() < 1e-8 { return false; }
+        if (pt - (a + ab * t)).length() < 1e-12 { return false; }
     }
-    // ✅ OCCT: IsValidPointForFace — 投影到 2D 后 point-in-polygon
-    let e0 = (boundary[1] - boundary[0]).normalize();
-    let e1 = (boundary[2] - boundary[0]).normalize();
+    // 2D point-in-polygon (容差 1e-7)
+    let e0 = (bnd[1] - bnd[0]).normalize();
+    let e1 = (bnd[2] - bnd[0]).normalize();
     let norm = e0.cross(e1).normalize();
     if norm.length_squared() < 0.5 { return false; }
     let ua = e0;
     let va = norm.cross(ua).normalize();
-    let pts: Vec<DVec2> = boundary.iter().map(|p| {
-        let d = *p - boundary[0]; DVec2::new(d.dot(ua), d.dot(va))
+    let pts: Vec<DVec2> = bnd.iter().map(|p| {
+        let d = *p - bnd[0]; DVec2::new(d.dot(ua), d.dot(va))
     }).collect();
-    let p2 = DVec2::new((pt - boundary[0]).dot(ua), (pt - boundary[0]).dot(va));
+    let p2 = DVec2::new((pt - bnd[0]).dot(ua), (pt - bnd[0]).dot(va));
+    for k in 0..pts.len() {
+        let ab = pts[(k + 1) % pts.len()] - pts[k];
+        let ap = p2 - pts[k];
+        let t = (ap.dot(ab) / (ab.dot(ab) + 1e-30)).clamp(0.0, 1.0);
+        if (p2 - (pts[k] + ab * t)).length() < 1e-7 { return true; }
+    }
     let mut inside = false; let mut k = pts.len() - 1;
     for kk in 0..pts.len() {
         if ((pts[kk].y > p2.y) != (pts[k].y > p2.y))
@@ -1062,52 +1093,35 @@ fn strict_inside_plane(pt: DVec3, boundary: &[DVec3]) -> bool {
     inside
 }
 
-/// ✅ OCCT对齐: 跨组共面检测 — AreFacesSameDomain (BOPTools_AlgoTools.cxx L1109-1169) 等价
+/// ✅ OCCT对齐: 跨组共面检测 — AreFacesSameDomain (BOPTools_AlgoTools.cxx L1109-1169)
 ///
-/// OCCT: PointInFace(F1, aP1, ...) → IsValidPointForFace(aP1, F2, aTol)
-/// rcad: face_interior_pt + strict_inside_plane
+/// 严格按 OCCT 算法:
+/// 1. PointInFace(F1) → 3D点  (用三角剖分取内点)
+/// 2. IsValidPointForFace(点, F2, aTol) → 检查点是否在面2内
 fn fill_same_domain_cross_group(
     brep: &BRep, nf: usize,
     flat_to_pos: &[(usize, usize, usize)],
     dsu: &mut DSU,
 ) -> usize {
-    use glam::DVec2;
     let mut merged = 0usize;
-
-    struct Fi { cx: DVec3, bd: Vec<DVec3>, nm: DVec3 }
-    let mut fi_list: Vec<Option<Fi>> = (0..nf).map(|_| None).collect();
-
-    for ff in 0..nf {
-        let (si, shi, fi) = flat_to_pos[ff];
-        let face = &brep.solids[si].shells[shi].faces[fi];
-        let sid = face.surface_idx;
-        let Some(surf) = sid.and_then(|sid| brep.geom.surfaces.get(sid)) else { continue; };
-        let is_p = match surf {
-            Surface3::Plane(_) => true,
-            Surface3::BSpline(b) => rcad_kernel::geom::bspline_is_planar(b, 1e-3),
-            _ => false,
-        };
-        if !is_p { continue; }
-        let nm = match surf { Surface3::Plane(p) => p.normal, _ => face.normal };
-        let mut bd: Vec<DVec3> = Vec::new();
-        for we in &face.outer_wire.edges {
-            if let Some(e) = brep.edges.get(we.idx) { if let Some(v) = brep.vertices.get(e.start) { bd.push(v.point); } }
-        }
-        if bd.len() < 3 { continue; }
-        let cx = bd.iter().copied().sum::<DVec3>() / bd.len() as f64;
-        fi_list[ff] = Some(Fi { cx, bd, nm });
-    }
-
     for i in 0..nf {
-        let Some(ref fi) = fi_list[i] else { continue; };
         for j in (i + 1)..nf {
-            let Some(ref fj) = fi_list[j] else { continue; };
             if dsu.find(i) == dsu.find(j) { continue; };
-            if fi.nm.dot(fj.nm) < 0.999 { continue; };
-
-            let fi_in_fj = strict_inside_plane(fi.cx, &fj.bd);
-            let fj_in_fi = strict_inside_plane(fj.cx, &fi.bd);
-
+            let (si, shi, fi) = flat_to_pos[i];
+            let (sj, shj, fj) = flat_to_pos[j];
+            let face_i = &brep.solids[si].shells[shi].faces[fi];
+            let face_j = &brep.solids[sj].shells[shj].faces[fj];
+            // 检查是否同一平面 (法线同向)
+            let n_i = face_i.normal;
+            let n_j = face_j.normal;
+            if n_i.dot(n_j) < 0.999 { continue; }
+            // OCCT Step 1: PointInFace
+            let Some(interior_pt) = point_in_face(brep, (si, shi, fi)) else { continue; };
+            // OCCT Step 2: IsValidPointForFace
+            let fi_in_fj = is_valid_point_for_face(brep, interior_pt, (sj, shj, fj));
+            // 反向检查
+            let Some(interior_pt_j) = point_in_face(brep, (sj, shj, fj)) else { continue; };
+            let fj_in_fi = is_valid_point_for_face(brep, interior_pt_j, (si, shi, fi));
             if fi_in_fj || fj_in_fi {
                 dsu.union(i, j);
                 merged += 1;
