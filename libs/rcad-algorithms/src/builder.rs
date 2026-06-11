@@ -1772,10 +1772,8 @@ fn classify_against_solid_for_boolean(
         if bnd.len() >= 3 {
             for i in 0..bnd.len() {
                 let j = (i + 1) % bnd.len();
-                match classify_point((bnd[i] + bnd[j]) * 0.5, solid_face_indices, ds) {
-                    Classification::Out => return Classification::Out,
-                    Classification::In => {}
-                    Classification::On => return Classification::On,
+                if matches!(classify_point((bnd[i] + bnd[j]) * 0.5, solid_face_indices, ds), Classification::Out) {
+                    return Classification::Out;
                 }
             }
         }
@@ -3275,7 +3273,12 @@ impl<'a> BooleanBuilder<'a> {
             // boundary edges.  Only merge sub-faces with the same classification
             // (Out↔Out, On↔On) — merging Out with On recreates the full original
             // face and undoes the planar split (bfuse_simple B5 regression: 14→6).
-            if kept_subs.len() > 1 {
+            // Skip merge for sphere faces — merge_two_subfaces clears outer_circle_edges,
+            // causing the merged face to have straight edges instead of circular arcs.
+            // Individual octants with correct circle arcs get merged later by
+            // optimize_boolean_topology (unify_same_domain_faces).
+            let is_sphere = matches!(self.ds.faces[fi].surface, Surface3::Sphere(_));
+            if kept_subs.len() > 1 && !is_sphere {
                 let out_group: Vec<SubFace> = kept_subs.iter()
                     .filter(|(_, c)| *c != Classification::On)
                     .map(|(s, _)| s.clone()).collect();
@@ -3738,9 +3741,6 @@ impl<'a> BooleanBuilder<'a> {
             if let Some(subs) = annular_out { return subs; }
         }
 
-    if matches!(face.surface, Surface3::Sphere(_)) {
-        eprintln!("[SPHERE_SPLIT] fi={} curves_in={} verts_in={}", face_idx, fi.curves_in.len(), fi.vertices_in.len());
-    }
         // Planar BSpline → treat as Plane for splitting.
         // OCCT's BRepAlgo_Builder detects planarity via Geom_Surface::IsKind(STANDARD_TYPE(Geom_Plane)),
         // so a NURBS box (planar BSpline) routes through the same planar face splitting logic.
