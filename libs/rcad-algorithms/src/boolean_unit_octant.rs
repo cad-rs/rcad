@@ -162,14 +162,12 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
             }
         }
 
-        // Skip containment for Union when the OUTER has NURBS surfaces —
-        // OCCT's PaveFiller always splits faces for fully contained NURBS
-        // shapes (bfuse B1 when outer is NURBS, the split result passes).
-        // When outer is Plane-only and inner is NURBS but fully contained,
-        // containment returns the Plane outer directly, matching OCCT's
-        // reference SA (bfuse_simple A7: Plane box ∪ fully-contained NURBS box).
+        // Skip containment for Union with NURBS outer or inner — OCCT's
+        // PaveFiller always splits faces even for fully contained shapes
+        // (bfuse B1 when outer is NURBS, bfuse B2/B6/B8 when inner is NURBS).
         if matches!(op, BooleanOpType::Union)
-            && outer.geom.surfaces.iter().any(|s| matches!(s, Surface3::BSpline(_)))
+            && (outer.geom.surfaces.iter().any(|s| matches!(s, Surface3::BSpline(_)))
+                || inner.geom.surfaces.iter().any(|s| matches!(s, Surface3::BSpline(_))))
         {
             continue;
         }

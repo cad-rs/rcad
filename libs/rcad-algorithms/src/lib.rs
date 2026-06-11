@@ -3199,7 +3199,7 @@ fn split_disconnected_shells(mut brep: BRep) -> BRep {
 /// STEP output uses analytic plane entities matching OCCT reference topology.
 /// The PaveFiller already does this during intersection, but the BooleanBuilder
 /// may create new BSpline surfaces during result assembly.
-fn promote_planar_surfaces(mut brep: BRep) -> BRep {
+pub(crate) fn promote_planar_surfaces(mut brep: BRep) -> BRep {
     use rcad_kernel::geom::bspline_is_planar;
     for surf in &mut brep.geom.surfaces {
         if let rcad_kernel::geom::Surface3::BSpline(bsp) = surf {
