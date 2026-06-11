@@ -3173,14 +3173,20 @@ impl<'a> BooleanBuilder<'a> {
                     false
                 } else if self.op == BooleanOpType::Union
                     && class == Classification::On
-                    && matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
+                    && !face_split
+                    && (matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
+                        || matches!(self.ds.faces[fi].surface, Surface3::BSpline(ref bsp)
+                            if rcad_kernel::geom::bspline_is_planar(bsp, 1e-3)))
                     && self.coplanar_ff_normals_opposite(fi) == Some(false)
                 {
-                    // For Union, planar On sub-faces coplanar with an A-face (same
-                    // normal) can be removed — the A-face covers this region on the
-                    // external surface. Mirrors the A-face logic at lines ~1240-1250.
-                    // Fixes cylinder-box Union where the box bottom face is split by
-                    // a circle coplanar with the cylinder bottom cap (e.g. X7/X8/Y9).
+                    // For Union, unsplit planar On faces coplanar with an A-face
+                    // (same normal) are entirely internal — the A-face covers this
+                    // region externally.  Only unsplit faces qualify: split faces
+                    // have On sub-faces on the outer boundary after the A-face's
+                    // coincident part is removed.
+                    // Mirrors the A-face logic at lines ~3066-3073.
+                    // ✅ OCCT 对齐: BSpline 扩展。OCCT FillSameDomainFaces
+                    //    (BOPAlgo_Builder_2.cxx L571) 按几何比较表面。
                     false
                 } else {
                     self.keep_subface(SourceSide::B, fi, class, &a_faces)
