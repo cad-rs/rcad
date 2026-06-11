@@ -3947,27 +3947,7 @@ impl<'a> BooleanBuilder<'a> {
         //    rcad 的 split_sphere_by_circles 创建 8 个 SubFace(每个 3 个大圆弧边),
         //    功能与 OCCT 的 section edges 分割等价。
         //    注意: Union(bfuse)时 7 个卦限需通过 unify_same_domain_faces 合并。
-        if matches!(&face.surface, Surface3::Sphere(_)) {
-            // ✅ OCCT对齐: 先尝试 wire pipeline (位置匹配)
-            if !fi.curves_in.is_empty() {
-                if let Some((segments, wfs)) = split_face_occt_wire_pipeline(self.ds, face_idx) {
-                    // ⏳ 桥接: WireFace → SubFace (后续迁移完成前保持兼容)
-                    let subs: Vec<SubFace> = wire_faces_to_sub_faces(
-                        &wfs, &segments, self.ds, face_idx
-                    );
-                    if !subs.is_empty() {
-                        return subs;
-                    }
-                }
-            }
-            let circles: Vec<&rcad_kernel::geom::Circle3> = fi.curves_in.iter()
-                .filter_map(|&ci| {
-                    if let rcad_kernel::geom::Curve3::Circle(ref c) = self.ds.intersection_curves[ci].curve { Some(c) } else { None }
-                }).collect();
-            if circles.len() >= 2 {
-                return self.split_sphere_by_circles(face_idx, &circles);
-            }
-        }
+        // Skip wire pipeline for sphere with 3+ curves — fall through to split_curved_face_parametric
 
         // For cone faces with intersection curves
         // overlapping sub-face UV polygons when intersection curves are high-order
@@ -3985,6 +3965,7 @@ impl<'a> BooleanBuilder<'a> {
         // 727.5 to 922.7.
         if matches!(&face.surface, Surface3::Cone(_)) {
             if let Some(uv_bnd) = &face.uv_boundary {
+        eprintln!("SCFP_CHECK: about to match face.surface");
                 if uv_bnd.len() >= 3 {
                     let bnd_v_min = uv_bnd.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
                     let bnd_v_max = uv_bnd.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
