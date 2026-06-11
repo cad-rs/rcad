@@ -979,6 +979,8 @@ impl ResultBuilder {
         // ✅ OCCT对齐: 球面退化边 + seam 边 (OCCT sphere face 外环含退化边+seam)
         let mut internal_verts = Vec::new();
         if matches!(face.surface, Surface3::Sphere(_)) && !face.face_info.curves_in.is_empty() {
+            // ⏳ 部分对齐: 跳过 seam 边添加(交线分割后不需 seam)
+        } else if matches!(face.surface, Surface3::Sphere(_)) {
             for &ei in &face.boundary_edges {
                 let edge = &ds.edges[ei];
                 let sv = self.add_vertex(ds.vertices[edge.start_vertex].point);
@@ -2738,9 +2740,9 @@ fn perform_areas(
         }
     }
 
-    // ✅ OCCT对齐: seam wires → 作为主 face 的 inner wires
-    //    (对应 OCCT PerformAreas L575-605: hole wire 分配到 outer face)
-    let all_holes: Vec<usize> = hole_wire_idxs.iter().chain(seam_wire_idxs.iter()).copied().collect();
+    // ⏳ 部分对齐: seam wires → 跳过(不加入 inner wires)。
+    //    OCCT BuildSplitFaces 在球面被大圆分割后不再需要 seam。
+    let all_holes: Vec<usize> = hole_wire_idxs.clone();
 
     let mut result = vec![WireFace {
         outer_wire: wires[outer_wire_idx].clone(),
