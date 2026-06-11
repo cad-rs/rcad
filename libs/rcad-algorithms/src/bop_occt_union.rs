@@ -814,7 +814,7 @@ pub(crate) fn fuse_with_history_par_bvh(
 ///
 /// 返回合并(移除)的面数。
 fn fill_same_domain_faces_edge_set(brep: &mut BRep) -> usize {
-    use std::collections::{HashMap, HashSet, BTreeSet};
+    use std::collections::{HashMap, BTreeSet};
     use rcad_kernel::geom::Surface3;
 
     if brep.solids.is_empty() || brep.solids[0].shells.is_empty() {
@@ -914,52 +914,42 @@ fn fill_same_domain_faces_edge_set(brep: &mut BRep) -> usize {
             continue;
         }
 
-        // Precompute per-face surface info for this group
-        struct SurfInfo {
-            is_planar_bounded: bool,
-            surf_type_tag: u64,  // hash of surface type + geometry params
-        }
-        let mut info: Vec<Option<SurfInfo>> = Vec::with_capacity(nf);
-        for _ in 0..nf { info.push(None); }
+        // Precompute planar flag per face (OCCT L636-647: planar bounded check)
+        let mut is_planar: Vec<bool> = Vec::with_capacity(nf);
+        for _ in 0..nf { is_planar.push(false); }
         for &ff in members {
             let (si, shi, fi) = flat_to_pos[ff];
             let face = &brep.solids[si].shells[shi].faces[fi];
             let sid = face.surface_idx;
-            let sinfo = sid.and_then(|sid| brep.geom.surfaces.get(sid)).map(|surf| {
-                let (p, tag) = classify_surface_for_sd(surf);
-                SurfInfo { is_planar_bounded: p, surf_type_tag: tag }
+            is_planar[ff] = sid.and_then(|sid| brep.geom.surfaces.get(sid)).map_or(false, |surf| {
+                match surf {
+                    Surface3::Plane(_) => true,
+                    Surface3::BSpline(bsp) => rcad_kernel::geom::bspline_is_planar(bsp, 1e-3),
+                    _ => false,
+                }
             });
-            info[ff] = sinfo;
         }
 
-        // Compare every pair within the edge-set group
+        // Compare every pair within the edge-set group — OCCT L686-709
         let m = members.len();
         for i in 0..m {
             let fi = members[i];
-            let Some(ref si) = info[fi] else { continue };
 
             for j in (i + 1)..m {
                 let fj = members[j];
-                let Some(ref sj) = info[fj] else { continue };
 
-                if si.is_planar_bounded && sj.is_planar_bounded {
-                    // ⚡ 快速路径: 两平面面 → 直接 SameDomain (OCCT L697-701)
-                    //    OCCT: 无需几何分析,直接 FillMap
-                    dsu.union(fi, fj);
-                } else if si.surf_type_tag > 0 && si.surf_type_tag == sj.surf_type_tag {
-                    // ⚡ 同表面类型非平面面 → 表面几何匹配即 SameDomain
-                    //    OCCT BOPAlgo_Builder_2.cxx L703-708:
-                    //    此对进入 aVPSB 做几何分析,
-                    //    BOPTools_AlgoTools::AreFacesSameDomain (L1109-1169)
-                    //    检查: 面1内点 → 投影到面2 → 是否在面2内
-                    //    等价实现: 同 surface type tag = 相同表面几何
+                // ⚡ OCCT L697-701: 平面面同edge set = 自动 SameDomain
+                //    OCCT 检查 GeomAbs_Plane + Bnd_Box non-open,
+                //    rcad: 所有平面面(Plane/planar BSpline)都是 bounded 的
+                if is_planar[fi] && is_planar[fj] {
                     dsu.union(fi, fj);
                 } else {
-                    // ⏳ TODO: 跨表面类型非平面面的几何分析 (尚未测试到)
-                    //    OCCT: BOPTools_AlgoTools::AreFacesSameDomain
-                    //    逻辑: 在一个面上取内点,投影到另一个面检查有效性
-                    //    对于 rcad: 需要实现曲面→曲面的投影和有效性检查
-                    //    当前跳过此对 (不建立 SameDomain 连接)
+                    // ⏳ OCCT L703-720: 几何分析路径 (尚未测试到)
+                    //    OCCT 用 BOPTools_AlgoTools::AreFacesSameDomain (L1109-1169):
+                    //      1. PointInFace(theF1, aP1, aP2D1, myContext) — 在面1内取点
+                    //      2. IsValidPointForFace(aP1, theF2, aTol) — 点投影到面2的有效性
+                    //    rcad TODO: 实现 PointInFace 等价 + 曲面→曲面投影
+                    //    当前跳过此对,非平面面的合并由 occt_merge_same_surface_faces 兜底
                 }
             }
         }
@@ -1048,109 +1038,3 @@ fn surface_priority_for_merge(brep: &BRep, (si, shi, fi): (usize, usize, usize))
     }
 }
 
-/// 对曲面进行分类,返回 (is_planar_bounded, surf_type_tag)。
-///
-/// surf_type_tag:
-///   = 0   → 未知表面类型 (无法判断 SameDomain)
-///   > 0   → 表面类型的哈希: 相同 tag 表示几何上可能 SameDomain
-///
-/// OCCT 在 FillSameDomainFaces (BOPAlgo_Builder_2.cxx L697-709) 中:
-/// - 平面面 → 快速路径 (无需几何分析)
-/// - 非平面面 → 进入 aVPSB 做 AreFacesSameDomain 几何分析
-///   这里根据表面类型生成 tag,让同类型表面通过快速路径,
-///   跨类型的走 TODO 占位路径。
-fn classify_surface_for_sd(surf: &Surface3) -> (bool, u64) {
-    use rcad_kernel::geom::Surface3;
-    match surf {
-        Surface3::Plane(_) => (true, 1),
-        Surface3::BSpline(bsp) => {
-            if rcad_kernel::geom::bspline_is_planar(bsp, 1e-3) {
-                // 平面 BSpline → 按平面处理 (快速路径)
-                (true, 1)
-            } else {
-                // ⏳ 非平面 BSpline → 需要几何分析 (尚未测试到)
-                //    OCCT: AreFacesSameDomain 检查
-                //    rcad TODO: 实现 BSpline→BSpline 的 UV 投影+有效性检查
-                (false, 0)
-            }
-        }
-        Surface3::Cylinder(c) => {
-            // 圆柱面: 同轴同半径 → SameDomain 候选
-            // OCCT BOPAlgo_Builder_2.cxx L703-708: 几何分析路径
-            let tag = hash_cyl(c);
-            (false, tag)
-        }
-        Surface3::Sphere(s) => {
-            let tag = hash_sphere(s);
-            (false, tag)
-        }
-        Surface3::Cone(c) => {
-            let tag = hash_cone(c);
-            (false, tag)
-        }
-        Surface3::Torus(t) => {
-            let tag = hash_torus(t);
-            (false, tag)
-        }
-        // ⏳ 其他表面类型 (Ellipsoid/Helicoid/Pipe/Revolution/Extrusion/Offset/Other)
-        //    OCCT: 进入 aVPSB 做 AreFacesSameDomain 几何分析
-        //    rcad: 当前无法判断同域性,返回 tag=0 (不建立连接)
-        _ => (false, 0),
-    }
-}
-
-/// 圆柱曲面: 用轴方向+原点+半径生成哈希
-fn hash_cyl(c: &rcad_kernel::geom::CylindricalSurface) -> u64 {
-    use std::hash::{Hash, Hasher};
-    use std::collections::hash_map::DefaultHasher;
-    let mut h = DefaultHasher::new();
-    (c.axis.x.to_bits() >> 8).hash(&mut h);
-    (c.axis.y.to_bits() >> 8).hash(&mut h);
-    (c.axis.z.to_bits() >> 8).hash(&mut h);
-    (c.origin.x.to_bits() >> 8).hash(&mut h);
-    (c.origin.y.to_bits() >> 8).hash(&mut h);
-    (c.origin.z.to_bits() >> 8).hash(&mut h);
-    (c.radius.to_bits() >> 10).hash(&mut h);
-    h.finish()
-}
-
-/// 球面: 用心+半径生成哈希
-fn hash_sphere(s: &rcad_kernel::geom::SphericalSurface) -> u64 {
-    use std::hash::{Hash, Hasher};
-    use std::collections::hash_map::DefaultHasher;
-    let mut h = DefaultHasher::new();
-    (s.center.x.to_bits() >> 8).hash(&mut h);
-    (s.center.y.to_bits() >> 8).hash(&mut h);
-    (s.center.z.to_bits() >> 8).hash(&mut h);
-    (s.radius.to_bits() >> 10).hash(&mut h);
-    h.finish()
-}
-
-/// 圆锥面: 用轴+顶点+半径+半角生成哈希
-fn hash_cone(c: &rcad_kernel::geom::ConicalSurface) -> u64 {
-    use std::hash::{Hash, Hasher};
-    use std::collections::hash_map::DefaultHasher;
-    let mut h = DefaultHasher::new();
-    (c.axis.x.to_bits() >> 8).hash(&mut h);
-    (c.axis.y.to_bits() >> 8).hash(&mut h);
-    (c.axis.z.to_bits() >> 8).hash(&mut h);
-    (c.apex.x.to_bits() >> 8).hash(&mut h);
-    (c.apex.y.to_bits() >> 8).hash(&mut h);
-    (c.apex.z.to_bits() >> 8).hash(&mut h);
-    (c.radius.to_bits() >> 10).hash(&mut h);
-    (c.half_angle_rad.to_bits() >> 12).hash(&mut h);
-    h.finish()
-}
-
-/// 环面: 用中心+主半径+次半径生成哈希
-fn hash_torus(t: &rcad_kernel::geom::ToroidalSurface) -> u64 {
-    use std::hash::{Hash, Hasher};
-    use std::collections::hash_map::DefaultHasher;
-    let mut h = DefaultHasher::new();
-    (t.center.x.to_bits() >> 8).hash(&mut h);
-    (t.center.y.to_bits() >> 8).hash(&mut h);
-    (t.center.z.to_bits() >> 8).hash(&mut h);
-    (t.major_radius.to_bits() >> 10).hash(&mut h);
-    (t.minor_radius.to_bits() >> 10).hash(&mut h);
-    h.finish()
-}
