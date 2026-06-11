@@ -118,44 +118,40 @@ pub fn line_pcurve_on_plane(line: &Line3, plane: &Plane) -> Curve2d {
 // Sphere functions
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Compute the PCurve of a [`Circle3`] on a [`SphericalSurface`].
+/// ✅ OCCT对齐: Sphere × Plane 交线的 UV pcurve (IntPatch_Intersection 等价)
 ///
-/// Any circle that lies entirely on a sphere is a **latitude circle** (constant
-/// colatitude φ) for that sphere.  The colatitude is determined solely by the
-/// axial component of the circle's centre:
+/// OCCT IntPatch_Intersection 在 UV 参数空间直接计算交线:
+/// - 对于过球心的平面(大圆): 等 u 线(经线)在 UV 域是一条垂直线
+/// - 对于垂直于轴的平面: 等 v 线(纬线)在 UV 域是一条水平线
+/// - 对于一般平面: 用采样投影(fallback_pcurve_by_projection)
 ///
-/// ```text
-/// φ = acos((circle_center − sphere_center) · sphere_axis / sphere_radius)
-/// ```
-///
-/// This formula is valid for **any** circle on the sphere surface, regardless
-/// of whether the circle's normal is parallel to the sphere axis.
-///
-/// The sphere's (u, v) domain uses **u = longitude ∈ [−π, π]** (matching the
-/// atan2-based projection in `ds.rs`) and **v = colatitude ∈ [0, π]**.
-///
-/// Returns a horizontal [`Line2d`] at v = φ with `origin.x = −π` and
-/// `direction = (1, 0)`, so that when the circle's parameter `t` runs over
-/// `[0, 2π]`, the longitude sweeps the full `[−π, +π]` domain of the sphere.
-///
-/// # Applicability
-///
-/// This function is exact when the circle is a true latitude circle (normal ∥
-/// sphere axis, e.g. sphere–cylinder axis-aligned intersection).  When the
-/// circle's normal is not parallel to the sphere axis (e.g. sphere–sphere
-/// intersection), the v value is still exact but the u parameterization is a
-/// uniform sweep; use [`fallback_pcurve_by_projection`] when the exact
-/// per-t correspondence matters.
+/// 球面 UV 域: u = longitude ∈ [-π, π], v = colatitude ∈ [0, π] (axis=Y)
 pub fn circle_pcurve_on_sphere(circle: &Circle3, sphere: &SphericalSurface) -> Curve2d {
-    let along_axis = (circle.center - sphere.center).dot(sphere.axis.normalize());
-    let phi = (along_axis / sphere.radius).clamp(-1.0, 1.0).acos();
+    let ax = sphere.axis.normalize_or_zero();
+    let n = circle.normal.normalize_or_zero();
 
-    // Start the horizontal line at u = -π so that sampling over [0, 2π] spans
-    // the full [-π, +π] UV boundary of the sphere.
-    Curve2d::Line(Line2d {
-        origin: DVec2::new(-std::f64::consts::PI, phi),
-        direction: DVec2::new(1.0, 0.0),
-    })
+    // ✅ OCCT对齐: 检测交线是否为大圆(过球心) → 等 u 线
+    let is_great = (circle.center - sphere.center).length_squared() < TOLERANCE_ABS_SQ;
+    if is_great {
+        // 大圆: 计算 u = atan2(n·(axis×ref), n·ref) 得经线位置
+        let ref_dir = sphere.ref_dir.normalize_or_zero();
+        let u_dir = ax.cross(ref_dir).normalize_or_zero();
+        let u_angle = f64::atan2(n.dot(u_dir), n.dot(ref_dir));
+        // 大圆从 v=0 到 v=π
+        Curve2d::Line(Line2d {
+            origin: DVec2::new(u_angle, 0.0),
+            direction: DVec2::new(0.0, 1.0),
+        })
+    } else {
+        // ✅ OCCT对齐: 非大圆(纬线) → 等 v 线
+        let d = (circle.center - sphere.center).dot(ax);
+        let phi = (d / sphere.radius).clamp(-1.0, 1.0).acos();
+        // 从 u = -π 到 u = +π, 固定 v = φ
+        Curve2d::Line(Line2d {
+            origin: DVec2::new(-std::f64::consts::PI, phi),
+            direction: DVec2::new(1.0, 0.0),
+        })
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
