@@ -2440,7 +2440,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize) -> Vec<WireSegment> {
         //    rcad: 对 Sphere 面,唯一边界边就是 seam (U/V 均闭合)。
         //    对 Cylinder/Cone: start==end 表示 seam(等参线两端重合)。
         let is_seam = match &face.surface {
-            Surface3::Sphere(_) => false, // OCCT-aligned
+            Surface3::Sphere(_) => true, // seam edge (separate from intersection curves)
             _ => (is_u_closed || is_v_closed)
                 && (sv == ev || are_verts_coincident(ds, sv, ev)),
         };
