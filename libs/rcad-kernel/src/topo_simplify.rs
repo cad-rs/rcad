@@ -1,4 +1,5 @@
-﻿use crate::{BRep, Edge, WireEdge};
+﻿use std::collections::HashMap;
+use crate::{BRep, Edge, WireEdge, topology::Wire};
 
 fn oriented_edge_vertices(brep: &BRep, we: WireEdge) -> Option<(usize, usize)> {
     let e = brep.edges.get(we.idx)?;
@@ -162,6 +163,219 @@ pub fn merge_collinear_edges_in_wires(brep: &mut BRep, linear_tol: f64) -> usize
     }
 
     merged_total
+}
+
+/// ✅ OCCT对齐: BRep 级共线邻接边合并 — OCCT BuildSolid + MakeBlocks 自然合并,
+///    rcad 的 build_split_edges 会创建分段边,需要显式合并。
+///
+/// 算法 (OCCT BOPAlgo_BuilderSolid / BOPAlgo_Tools::MakeBlocks):
+///   1. 构建 vertex → edges 邻接表
+///   2. 对 degree=2 的 vertex (只有2条边):
+///      a. 检查两条边是否在同一几何曲线上 (same edge_curve index)
+///      b. 对于 Line 曲线: 检查共线性
+///      c. 如果可合并: 创建合并边,更新所有 wire 引用,移除旧边
+///   3. 重复直到没有可合并的边对
+///
+/// 返回合并的边数。
+pub fn merge_collinear_brep_edges(brep: &mut BRep, linear_tol: f64) -> usize {
+    let tol = linear_tol.max(1e-12);
+    let mut total_merged = 0usize;
+
+    // 循环合并直到稳定
+    loop {
+        // 1. 构建 vertex → edges 邻接表
+        let mut vert_edges: HashMap<usize, Vec<usize>> = HashMap::new();
+        for si in 0..brep.solids.len() {
+            for shi in 0..brep.solids[si].shells.len() {
+                for fi in 0..brep.solids[si].shells[shi].faces.len() {
+                    let face = &brep.solids[si].shells[shi].faces[fi];
+                    let mut collect = |wire: &Wire| {
+                        for we in &wire.edges {
+                            if let Some(e) = brep.edges.get(we.idx) {
+                                vert_edges.entry(e.start).or_default().push(we.idx);
+                                vert_edges.entry(e.end).or_default().push(we.idx);
+                            }
+                        }
+                    };
+                    collect(&face.outer_wire);
+                    for w in &face.inner_wires {
+                        collect(w);
+                    }
+                }
+            }
+        }
+
+        let mut merged_any = false;
+
+        // 2. 对 degree=2 的 vertex 检查合并
+        let mut to_merge: Vec<(usize, usize, usize)> = Vec::new(); // (keep_ei, remove_ei, shared_v)
+
+        for (vi, edges) in &vert_edges {
+            if edges.len() != 2 { continue; }
+            let e1 = edges[0];
+            let e2 = edges[1];
+            if e1 == e2 { continue; }
+
+            // 检查两条边是否在同一几何曲线上
+            let c1 = brep.geom.edge_curve.get(e1).copied().flatten();
+            let c2 = brep.geom.edge_curve.get(e2).copied().flatten();
+            let same_curve = match (c1, c2) {
+                (Some(ci1), Some(ci2)) => ci1 == ci2,
+                _ => false,
+            };
+            if !same_curve { continue; }
+
+            // 检查共享顶点
+            let edge1 = &brep.edges[e1];
+            let edge2 = &brep.edges[e2];
+            let shared_v = *vi;
+            let (e1_other, e2_other) = if edge1.start == shared_v {
+                (edge1.end, if edge2.start == shared_v { edge2.end } else { edge2.start })
+            } else if edge1.end == shared_v {
+                (edge1.start, if edge2.start == shared_v { edge2.end } else { edge2.start })
+            } else {
+                continue;
+            };
+            if e1_other == e2_other { continue; } // 退化
+
+            // 检查三个顶点是否共线
+            let p1 = brep.vertices.get(e1_other).map(|v| v.point);
+            let ps = brep.vertices.get(shared_v).map(|v| v.point);
+            let p2 = brep.vertices.get(e2_other).map(|v| v.point);
+            let (Some(p_a), Some(p_b), Some(p_c)) = (p1, ps, p2) else { continue; };
+
+            // 检查共线性: AB × BC 的叉积长度
+            let ab = p_b - p_a;
+            let bc = p_c - p_b;
+            let ab_len = ab.length();
+            let bc_len = bc.length();
+            if ab_len <= 1e-12 || bc_len <= 1e-12 { continue; }
+            let cross = ab.cross(bc).length();
+            if cross > tol * (ab_len + bc_len) { continue; }
+            // 检查方向一致性: AB · BC > 0 (三点同向排列)
+            if ab.dot(bc) <= 0.0 { continue; }
+
+            // 检查共享顶点是否被其他拓扑结构引用 (face_internal_vertices 等)
+            let used_as_corner = brep.geom.face_internal_vertices.iter().any(|fiv| fiv.contains(&shared_v));
+            if used_as_corner { continue; }
+
+            to_merge.push((e1, e2, shared_v));
+        }
+
+        // 3. 执行合并 (去重后)
+        to_merge.sort_unstable();
+        to_merge.dedup_by(|a, b| a.1 == b.1 || a.0 == b.1 || a.1 == b.0);
+
+        for &(keep_ei, remove_ei, _shared_v) in &to_merge {
+            if keep_ei == remove_ei { continue; }
+            // 检查两条边是否构成 A→B→C
+            let ek = &brep.edges[keep_ei];
+            let er = &brep.edges[remove_ei];
+            let (new_start, new_end) = if ek.start == er.start || ek.start == er.end {
+                // keep edge starts at shared vertex, need to extend backward
+                let other_v = if ek.start == er.start { er.end } else { er.start };
+                (other_v, ek.end)
+            } else if ek.end == er.start || ek.end == er.end {
+                let other_v = if ek.end == er.start { er.end } else { er.start };
+                (ek.start, other_v)
+            } else {
+                continue;
+            };
+
+            // 更新 keep 边的端点
+            if let Some(e) = brep.edges.get_mut(keep_ei) {
+                e.start = new_start;
+                e.end = new_end;
+            }
+
+            // 更新所有 wire 引用: remove_ei → keep_ei
+            for si in 0..brep.solids.len() {
+                for shi in 0..brep.solids[si].shells.len() {
+                    for fi in 0..brep.solids[si].shells[shi].faces.len() {
+                        let face = &mut brep.solids[si].shells[shi].faces[fi];
+                        fn remap_in_wire(wire: &mut Wire, from: usize, to: usize) {
+                            for we in &mut wire.edges {
+                                if we.idx == from { we.idx = to; }
+                            }
+                        }
+                        remap_in_wire(&mut face.outer_wire, remove_ei, keep_ei);
+                        for w in &mut face.inner_wires {
+                            remap_in_wire(w, remove_ei, keep_ei);
+                        }
+                    }
+                }
+            }
+
+            merged_any = true;
+            total_merged += 1;
+        }
+
+        if !merged_any { break; }
+
+        // 清理已移除边的几何槽位
+        let mut keep_set: Vec<bool> = (0..brep.edges.len()).map(|_| true).collect();
+        // 被移除的边可能在 wire 中不再被引用,但在 to_merge 中标记了
+        for &(_, remove_ei, _) in &to_merge {
+            if remove_ei < keep_set.len() {
+                keep_set[remove_ei] = false;
+            }
+        }
+        // 重建 edge 数组
+        let mut remap: Vec<Option<usize>> = vec![None; brep.edges.len()];
+        let mut new_edges: Vec<Edge> = Vec::new();
+        for (i, e) in brep.edges.iter().enumerate() {
+            if i < keep_set.len() && keep_set[i] {
+                remap[i] = Some(new_edges.len());
+                new_edges.push(*e);
+            }
+        }
+        // 更新 wire 引用
+        for si in 0..brep.solids.len() {
+            for shi in 0..brep.solids[si].shells.len() {
+                for fi in 0..brep.solids[si].shells[shi].faces.len() {
+                    let face = &mut brep.solids[si].shells[shi].faces[fi];
+                    fn remap_wire(wire: &mut Wire, remap: &[Option<usize>]) {
+                        for we in &mut wire.edges {
+                            if let Some(new) = remap.get(we.idx).copied().flatten() {
+                                we.idx = new;
+                            }
+                        }
+                    }
+                    remap_wire(&mut face.outer_wire, &remap);
+                    for w in &mut face.inner_wires {
+                        remap_wire(w, &remap);
+                    }
+                }
+            }
+        }
+        // 更新 geom 平行数组
+        let mut new_ec: Vec<Option<usize>> = Vec::new();
+        for (i, ec) in brep.geom.edge_curve.iter().enumerate() {
+            if i < keep_set.len() && keep_set[i] {
+                new_ec.push(*ec);
+            }
+        }
+        brep.edges = new_edges;
+        brep.geom.edge_curve = new_ec;
+        // edge_pcurves 先清空让 compute_face_pcurves 重建
+        // edge_tolerance, edge_degenerated, edge_same_parameter, edge_curve_range 保持同步
+        if brep.geom.edge_tolerance.len() == remap.len() {
+            let mut new_et: Vec<f64> = Vec::new();
+            for (i, et) in brep.geom.edge_tolerance.iter().enumerate() {
+                if i < keep_set.len() && keep_set[i] { new_et.push(*et); }
+            }
+            brep.geom.edge_tolerance = new_et;
+        }
+        if brep.geom.edge_degenerated.len() == remap.len() {
+            let mut new_ed: Vec<bool> = Vec::new();
+            for (i, ed) in brep.geom.edge_degenerated.iter().enumerate() {
+                if i < keep_set.len() && keep_set[i] { new_ed.push(*ed); }
+            }
+            brep.geom.edge_degenerated = new_ed;
+        }
+    }
+
+    total_merged
 }
 
 #[cfg(test)]

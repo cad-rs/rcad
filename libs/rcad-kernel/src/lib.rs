@@ -170,7 +170,7 @@ pub use topo_query::{
     periodic_seam_edge_indices, wire_edges_unique_by_index,
     topological_vertex_count, vertex_adjacent_edges, vertex_indices,
 };
-pub use topo_simplify::merge_collinear_edges_in_wires;
+pub use topo_simplify::{merge_collinear_edges_in_wires, merge_collinear_brep_edges};
 pub use brep_graph::{
     BfsFaces, BRepGraph, BRepGraphBuilder, BRepGraphCheckpointData,
     BRepGraphTool, DfsEdgesFromVertex, DfsFaces,

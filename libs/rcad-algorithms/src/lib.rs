@@ -3583,8 +3583,13 @@ pub fn boolean_op_with_retry(
         )
         .map(|(brep, _report)| brep)?
     };
-    // Edge dedup for ALL results.
+    // Edge dedup for ALL results, then remove orphan edges.
+    // ✅ OCCT对齐: deduplicate_edges 只 remap 不移除,prune_unused_topology
+    //    清理未被任何面引用的边 (compact_brep),等价于 OCCT BuildSolid
+    //    中重建 shell 时自然丢弃孤立边的行为。
     let mut brep = deduplicate_edges(brep);
+    brep = crate::prune_unused_topology(brep);
+    brep = deduplicate_edges(brep);
     // Skip BSPLINE→PLANE promotion — OCCT preserves the original surface type
     // of each operand face (a NURBS-converted box keeps BSpline surfaces even
     // though they are geometrically planar).  promote_planar_surfaces would
