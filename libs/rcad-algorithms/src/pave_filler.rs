@@ -721,6 +721,22 @@ impl<'a> PaveFiller<'a> {
             }
         }
 
+        // ✅ OCCT对齐: ForceInterfEE (PaveFiller_3.cxx L978-1276)
+        //    OCCT L302: ForceInterfEE — 在 RepeatIntersection 之后,对共享顶点
+        //    的边对用增大的容差强制求交,发现共线/重合边 (common block)。
+        //    ⏳ rcad: 简化实现,只检查共享 pave 顶点的线-线边对。
+        if !skip_ee {
+            self.force_interf_ee();
+        }
+
+        // ✅ OCCT对齐: ForceInterfEF (PaveFiller_5.cxx L764-1099+)
+        //    OCCT L309: ForceInterfEF — 在 ForceInterfEE 之后,对两个端点
+        //    都在面上的边用增大的容差强制求交。
+        //    ⏳ rcad: 简化实现,只检查两端点都在面上的边-面对。
+        if !skip_ef {
+            self.force_interf_ef();
+        }
+
         if !skip_ff {
             self.perform_ff();
         }
@@ -1605,6 +1621,209 @@ impl<'a> PaveFiller<'a> {
     }
 
     // ─── Pass 6: Face-Face ─────────────────────────────────────────────
+
+    /// ✅ OCCT对齐: 检查 EE interference 是否已存在 (OCCT L1123-1128: 跳过已有 CommonBlock)
+    fn has_ee_interf(&self, e1: usize, e2: usize) -> bool {
+        self.ds.interferences.iter().any(|inf| {
+            matches!(inf, Interference::EdgeEdge { e1: a, e2: b, .. }
+                if (*a == e1 && *b == e2) || (*a == e2 && *b == e1))
+        })
+    }
+
+    /// ✅ OCCT对齐: ForceInterfEE (PaveFiller_3.cxx L978-1276)
+    ///    在 RepeatIntersection 之后,对共享顶点(通过 paves)的边对用
+    ///    增大的容差强制求交,发现共线/重合边。
+    ///
+    ///    OCCT 算法 (L978-1276):
+    ///    1. L989-1002: 初始化所有参与过求交的顶点的 PaveBlock
+    ///    2. L1003-1049: 建立 (nV1,nV2) → PaveBlock 列表的映射
+    ///    3. L1060-1177: 对共享顶点的 PaveBlock 对:
+    ///       a. L1077-1083: aTolAdd = 2 * max(tol(V1), tol(V2))
+    ///       b. L1097-1102: 取边中点,检查边方向向量
+    ///       c. L1134-1157: 角度检查: >25° 则不用 addTol
+    ///       d. L1160-1175: 设置 FuzzyValue = myFuzzyValue + aTolAdd
+    ///    4. L1198-1199: Perform 所有 EdgeEdge 求交
+    ///    5. L1208-1275: 对 TopAbs_EDGE 结果创建 CommonBlock
+    ///
+    ///    ⏳ rcad 简化:
+    ///    - 没有 OCCT 的 PaveBlock/Rank/CommonBlock 结构
+    ///    - 只检查线-线边对的共线性,用增大容差
+    fn force_interf_ee(&mut self) {
+        // OCCT L989-1002: 收集参与求交的顶点
+        // rcad: 从 edge.paves 收集参与了求交的顶点
+        // 建立 vertex → list of (edge_idx, param) 的映射
+        let mut vert_edges: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+        for (ei, edge) in self.ds.edges.iter().enumerate() {
+            if edge.paves.is_empty() { continue; }
+            for pave in &edge.paves {
+                vert_edges.entry(pave.vertex_idx).or_default().push(ei);
+            }
+        }
+
+        // OCCT L1060-1177: 对共享顶点的 PaveBlock 对做求交
+        for (&vi, edges) in &vert_edges {
+            if edges.len() < 2 { continue; }
+            for i in 0..edges.len() {
+                let e1 = edges[i];
+                for j in (i + 1)..edges.len() {
+                    let e2 = edges[j];
+                    // OCCT L1113-1121: 检查两条边来自不同 operand
+                    let o1 = self.ds.edges[e1].origin;
+                    let o2 = self.ds.edges[e2].origin;
+                    if o1 == o2 { continue; }
+
+                    // OCCT L1123-1128: 跳过已形成 CommonBlock 的边对
+                    if self.has_ee_interf(e1, e2) { continue; }
+
+                    // OCCT L1077-1083: aTolAdd = 2 * max(tol(V1), tol(V2))
+                    let v_tol = self.ds.vertices[vi].geom_tol;
+                    let tol_add = 2.0 * v_tol;
+
+                    // 只检查线-线边 (OCCT L1138-1157: 角度检查)
+                    let c1 = &self.ds.edges[e1].curve;
+                    let c2 = &self.ds.edges[e2].curve;
+                    match (c1, c2) {
+                        (Curve3::Line(l1), Curve3::Line(l2)) => {
+                            // OCCT L1097-1102: 中点方向向量,检查夹角
+                            let d1 = l1.direction;
+                            let d2 = l2.direction;
+                            let cos_angle = d1.dot(d2).abs();
+                            // OCCT L1155: angle > 25° → cos < 0.9063 → 不用 addTol
+                            let fuzzy = if cos_angle >= 0.9063 {
+                                self.ds.fuzzy_tol + tol_add
+                            } else {
+                                self.ds.fuzzy_tol
+                            };
+
+                            // 检查共线性 (OCCT EdgeEdge intersection)
+                            // intersect_line_line 返回 Option<(f64,f64,DVec3)>
+                            if let Some((t1, t2, pt)) = intersect_line_line(
+                                l1, self.ds.edges[e1].t_range,
+                                l2, self.ds.edges[e2].t_range, fuzzy)
+                            {
+                                self.ds.interferences.push(Interference::EdgeEdge {
+                                    e1, e2, point: pt, param1: t1, param2: t2, new_vertex: vi,
+                                });
+                            }
+                        }
+                        (Curve3::Circle(circ), Curve3::Circle(_)) => {
+                            // ⏳ 圆-圆共线检测简化: 使用常规容差
+                            // intersect_circle_circle 返回 Vec<DVec3>
+                            let fuzzy = self.ds.fuzzy_tol + tol_add;
+                            let cp_hits = intersect_circle_circle(circ, circ, fuzzy);
+                            if let Some(&pt) = cp_hits.first() {
+                                self.ds.interferences.push(Interference::EdgeEdge {
+                                    e1, e2, point: pt, param1: 0.0, param2: 0.0, new_vertex: vi,
+                                });
+                            }
+                        }
+                        _ => {
+                            // ⏳ 其他曲线类型跳过 (OCCT 对非直线也做角度检查,先简化)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// ✅ OCCT对齐: ForceInterfEF (PaveFiller_5.cxx L764-1099+)
+    ///    在 ForceInterfEE 之后,对两个端点都在面上的边用增大的容差
+    ///    检查边是否在面上。
+    ///
+    ///    OCCT 算法 (L815-1099+):
+    ///    1. L825-854: 构建 PaveBlock 的 BVH 树
+    ///    2. L863-1057: 对每面,找到共享顶点的 PaveBlock:
+    ///       a. L888-911: 收集面上的所有顶点
+    ///       b. L928-932: 检查 PaveBlock 的两端点都在面上
+    ///       c. L956-986: 中点投影+角度检查
+    ///       d. L1008-1035: aTolAdd = max(endpoint→face distance)
+    ///       e. L1053: FuzzyValue = myFuzzyValue + aTolAdd
+    ///    3. L1078-1079: Perform 所有 EdgeFace 求交
+    ///    4. L1095+: 收集结果
+    ///
+    ///    ⏳ rcad 简化:
+    ///    - 没有 OCCT 的 PaveBlock/FaceInfo/PaveBlocksOn 等结构
+    ///    - 只检查 edges 的两端点是否在同一个面上
+    fn force_interf_ef(&mut self) {
+        // OCCT L779-805: 收集所有有 PaveBlock 的边
+        // rcad: 遍历所有有 paves 的边
+        for ei in 0..self.ds.edges.len() {
+            let edge = &self.ds.edges[ei];
+            if edge.paves.is_empty() { continue; }
+            let sv = edge.start_vertex;
+            let ev = edge.end_vertex;
+
+            // OCCT L928-932: 检查 PaveBlock 的两端点都在面上
+            for fi in 0..self.ds.faces.len() {
+                // OCCT L942-944: 边和面来自不同 operand
+                if edge.origin == self.ds.faces[fi].origin { continue; }
+
+                // OCCT L888-911: 检查面的 vertices_on + vertices_in 顶点集合
+                let on_face_s = self.ds.faces[fi].face_info.vertices_on.contains(&sv)
+                    || self.ds.faces[fi].face_info.vertices_in.contains(&sv);
+                let on_face_e = self.ds.faces[fi].face_info.vertices_on.contains(&ev)
+                    || self.ds.faces[fi].face_info.vertices_in.contains(&ev);
+                if !(on_face_s && on_face_e) { continue; }
+
+                // OCCT L1113-1121: 跳过已有的 EF interference
+                let exists = self.ds.interferences.iter().any(|inf| {
+                    matches!(inf, Interference::EdgeFace { edge: e, face: f, .. } if *e == ei && *f == fi)
+                });
+                if exists { continue; }
+
+                // OCCT L976-984: aTolCheck = 2 * max(tol(V1), tol(V2))
+                let v_tol_s = self.ds.vertices[sv].geom_tol;
+                let v_tol_e = self.ds.vertices[ev].geom_tol;
+                let tol_add = 2.0 * v_tol_s.max(v_tol_e);
+
+                // OCCT L1134-1157: 中点方向角度检查
+                let mid_t = (edge.t_range[0] + edge.t_range[1]) * 0.5;
+                let mid_pt = edge.curve.point_at(mid_t);
+                let face_surf = &self.ds.faces[fi].surface;
+
+                // OCCT L970-972: 投影中点到面
+                let proj_dist = match face_surf {
+                    Surface3::Plane(pl) => {
+                        let d = mid_pt - pl.origin;
+                        (d - d.dot(pl.normal) * pl.normal).length()
+                    }
+                    // ⏳ 非平面面简化处理
+                    _ => {
+                        // 用中点检查边是否靠近面
+                        let fuzzy = self.ds.fuzzy_tol + tol_add;
+                        let ef_hits = match (&edge.curve, face_surf) {
+                            (Curve3::Line(l), Surface3::Plane(pl)) => {
+                                inttools::edge_face::intersect_line_plane_with_tol(
+                                    l, edge.t_range, pl, fuzzy)
+                                    .into_iter().map(|h| (h.point, h.edge_param)).collect::<Vec<_>>()
+                            }
+                            _ => vec![],
+                        };
+                        if !ef_hits.is_empty() {
+                            self.ds.interferences.push(Interference::EdgeFace {
+                                edge: ei, face: fi,
+                                point: mid_pt,
+                                edge_param: mid_t,
+                                new_vertex: sv,
+                            });
+                        }
+                        continue;
+                    }
+                };
+
+                // OCCT L986-987: 距离检查
+                if proj_dist > tol_add + self.ds.fuzzy_tol { continue; }
+
+                // 找到交点,创建 interference
+                self.ds.interferences.push(Interference::EdgeFace {
+                    edge: ei, face: fi,
+                    point: mid_pt,
+                    edge_param: mid_t,
+                    new_vertex: sv,
+                });
+            }
+        }
+    }
 
     fn perform_ff(&mut self) {
         let a_faces = self.faces_of(ShapeOrigin::ShapeA);
