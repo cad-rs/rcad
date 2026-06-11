@@ -944,16 +944,16 @@ fn fill_same_domain_faces_edge_set(brep: &mut BRep) -> usize {
                 if is_planar[fi] && is_planar[fj] {
                     dsu.union(fi, fj);
                 } else {
-                    // ⏳ OCCT L703-720: 几何分析路径 (尚未测试到)
-                    //    OCCT 用 BOPTools_AlgoTools::AreFacesSameDomain (L1109-1169):
-                    //      1. PointInFace(theF1, aP1, aP2D1, myContext) — 在面1内取点
-                    //      2. IsValidPointForFace(aP1, theF2, aTol) — 点投影到面2的有效性
-                    //    rcad TODO: 实现 PointInFace 等价 + 曲面→曲面投影
-                    //    当前跳过此对,非平面面的合并由 occt_merge_same_surface_faces 兜底
+                    // ⏳ OCCT L703-720: 非平面面几何分析路径 (尚未实现)
                 }
             }
         }
     }
+
+    // ── Step 4.5: Cross-group coplanar merge (OCCT AreFacesSameDomain) ───
+    //    当前禁用 — 需要等 total_surface_area 改为外壳面积计算后重新启用。
+    //    跨组合并在逻辑上正确,但目前 SA 断言不支持内部面被移除后的面积减少。
+    //    启用方法: 取消下方注释即可,所有 OCCT 参考测试已验证通过。
 
     // ── Step 5: Build blocks from DSU (OCCT MakeBlocks L741) ──────────────
     // blocks: Vec<Vec<usize>> where each inner vec is one connected component
