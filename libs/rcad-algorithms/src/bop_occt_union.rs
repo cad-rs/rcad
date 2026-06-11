@@ -44,6 +44,30 @@ use crate::BooleanOpType;
 use rcad_kernel::geom::Surface3;
 use rcad_kernel::BRep;
 
+/// DSU (Union-Find) for building connected SameDomain groups — equivalent to OCCT FillMap + MakeBlocks.
+struct DSU {
+    parent: Vec<usize>,
+    rank: Vec<u32>,
+}
+impl DSU {
+    fn new(n: usize) -> Self {
+        Self { parent: (0..n).collect(), rank: vec![0; n] }
+    }
+    fn find(&mut self, x: usize) -> usize {
+        if self.parent[x] != x { self.parent[x] = self.find(self.parent[x]); }
+        self.parent[x]
+    }
+    fn union(&mut self, a: usize, b: usize) {
+        let ra = self.find(a);
+        let rb = self.find(b);
+        if ra != rb {
+            if self.rank[ra] < self.rank[rb] { self.parent[ra] = rb; }
+            else if self.rank[ra] > self.rank[rb] { self.parent[rb] = ra; }
+            else { self.parent[rb] = ra; self.rank[ra] += 1; }
+        }
+    }
+}
+
 /// Operands must be usable as boolean arguments: non-empty face set and **index-consistent**
 /// topology (plus finite vertex coordinates). We intentionally do **not** require a watertight
 /// shell here — downstream feature code may pass intermediate shapes that are not yet
@@ -875,38 +899,6 @@ fn fill_same_domain_faces_edge_set(brep: &mut BRep) -> usize {
 
     // ── Step 4: Detect SameDomain pairs within each group ─────────────────
     // OCCT: BOPAlgo_Builder_2.cxx L676-709
-    //
-    // DSU (Union-Find) 用于构建连通组 → 等价于 OCCT 的 FillMap + MakeBlocks。
-    struct DSU {
-        parent: Vec<usize>,
-        rank: Vec<u32>,
-    }
-    impl DSU {
-        fn new(n: usize) -> Self {
-            Self { parent: (0..n).collect(), rank: vec![0; n] }
-        }
-        fn find(&mut self, x: usize) -> usize {
-            if self.parent[x] != x {
-                self.parent[x] = self.find(self.parent[x]);
-            }
-            self.parent[x]
-        }
-        fn union(&mut self, a: usize, b: usize) {
-            let ra = self.find(a);
-            let rb = self.find(b);
-            if ra != rb {
-                if self.rank[ra] < self.rank[rb] {
-                    self.parent[ra] = rb;
-                } else if self.rank[ra] > self.rank[rb] {
-                    self.parent[rb] = ra;
-                } else {
-                    self.parent[rb] = ra;
-                    self.rank[ra] += 1;
-                }
-            }
-        }
-    }
-
     let mut dsu = DSU::new(nf);
 
     for (_keys, members) in groups.iter() {
@@ -950,10 +942,12 @@ fn fill_same_domain_faces_edge_set(brep: &mut BRep) -> usize {
         }
     }
 
-    // ── Step 4.5: Cross-group coplanar merge (OCCT AreFacesSameDomain) ───
-    //    当前禁用 — 需要等 total_surface_area 改为外壳面积计算后重新启用。
-    //    跨组合并在逻辑上正确,但目前 SA 断言不支持内部面被移除后的面积减少。
-    //    启用方法: 取消下方注释即可,所有 OCCT 参考测试已验证通过。
+    // ── Step 4.5: Cross-group coplanar merge (OCCT AreFacesSameDomain L1109-1169) ──
+    //    OCCT: PointInFace(F1) → IsValidPointForFace(F2, aTol)
+    //    ⏳ 暂禁用: 需要可靠的 face interior point (当前 boundary centroid 在
+    //    交线分裂后不准确),以及精确的 3D 边距拒绝。启用后 B1/B6 通过但 B3/B4
+    //    SA 仍不匹配。待 total_surface_area 支撑外壳面积计算后重新启用。
+    // fill_same_domain_cross_group(brep, nf, &flat_to_pos, &mut dsu);
 
     // ── Step 5: Build blocks from DSU (OCCT MakeBlocks L741) ──────────────
     // blocks: Vec<Vec<usize>> where each inner vec is one connected component
@@ -1024,6 +1018,103 @@ fn fill_same_domain_faces_edge_set(brep: &mut BRep) -> usize {
     }
 
     remove_pos.len()
+}
+
+/// ✅ OCCT对齐: PointInFace 等价 — 取面内一点
+///    OCCT: BOPTools_AlgoTools3D::PointInFace (用三角剖分取面内 UV 参数)
+///    rcad: 用 boundary centroid (凸多边形保证在面内)
+fn face_interior_pt(boundary: &[DVec3]) -> DVec3 {
+    boundary.iter().copied().sum::<DVec3>() / boundary.len().max(1) as f64
+}
+
+/// ✅ OCCT对齐: IsValidPointForFace 等价 (BOPTools_AlgoTools.cxx L1166)
+///    OCCT: 投影3D点到面2,检查 UV 有效性,容差 = tolF1 + tolF2 + max(fuzzy, Confusion)
+///    rcad: 同平面面用 2D point-in-polygon + 3D edge rejection
+fn strict_inside_plane(pt: DVec3, boundary: &[DVec3]) -> bool {
+    use glam::DVec2;
+    if boundary.len() < 3 { return false; }
+    // ✅ OCCT: 3D edge rejection — 点在任一边界边的 3D 距离 < 1e-8 即拒绝
+    //    用 3D 距离避免 2D 投影的浮点误差
+    for k in 0..boundary.len() {
+        let a = boundary[k]; let b = boundary[(k + 1) % boundary.len()];
+        let ab = b - a; let ap = pt - a;
+        let t = (ap.dot(ab) / (ab.dot(ab) + 1e-30)).clamp(0.0, 1.0);
+        if (pt - (a + ab * t)).length() < 1e-8 { return false; }
+    }
+    // ✅ OCCT: IsValidPointForFace — 投影到 2D 后 point-in-polygon
+    let e0 = (boundary[1] - boundary[0]).normalize();
+    let e1 = (boundary[2] - boundary[0]).normalize();
+    let norm = e0.cross(e1).normalize();
+    if norm.length_squared() < 0.5 { return false; }
+    let ua = e0;
+    let va = norm.cross(ua).normalize();
+    let pts: Vec<DVec2> = boundary.iter().map(|p| {
+        let d = *p - boundary[0]; DVec2::new(d.dot(ua), d.dot(va))
+    }).collect();
+    let p2 = DVec2::new((pt - boundary[0]).dot(ua), (pt - boundary[0]).dot(va));
+    let mut inside = false; let mut k = pts.len() - 1;
+    for kk in 0..pts.len() {
+        if ((pts[kk].y > p2.y) != (pts[k].y > p2.y))
+            && (p2.x < (pts[k].x - pts[kk].x) * (p2.y - pts[kk].y) / (pts[k].y - pts[kk].y) + pts[kk].x)
+        { inside = !inside; }
+        k = kk;
+    }
+    inside
+}
+
+/// ✅ OCCT对齐: 跨组共面检测 — AreFacesSameDomain (BOPTools_AlgoTools.cxx L1109-1169) 等价
+///
+/// OCCT: PointInFace(F1, aP1, ...) → IsValidPointForFace(aP1, F2, aTol)
+/// rcad: face_interior_pt + strict_inside_plane
+fn fill_same_domain_cross_group(
+    brep: &BRep, nf: usize,
+    flat_to_pos: &[(usize, usize, usize)],
+    dsu: &mut DSU,
+) -> usize {
+    use glam::DVec2;
+    let mut merged = 0usize;
+
+    struct Fi { cx: DVec3, bd: Vec<DVec3>, nm: DVec3 }
+    let mut fi_list: Vec<Option<Fi>> = (0..nf).map(|_| None).collect();
+
+    for ff in 0..nf {
+        let (si, shi, fi) = flat_to_pos[ff];
+        let face = &brep.solids[si].shells[shi].faces[fi];
+        let sid = face.surface_idx;
+        let Some(surf) = sid.and_then(|sid| brep.geom.surfaces.get(sid)) else { continue; };
+        let is_p = match surf {
+            Surface3::Plane(_) => true,
+            Surface3::BSpline(b) => rcad_kernel::geom::bspline_is_planar(b, 1e-3),
+            _ => false,
+        };
+        if !is_p { continue; }
+        let nm = match surf { Surface3::Plane(p) => p.normal, _ => face.normal };
+        let mut bd: Vec<DVec3> = Vec::new();
+        for we in &face.outer_wire.edges {
+            if let Some(e) = brep.edges.get(we.idx) { if let Some(v) = brep.vertices.get(e.start) { bd.push(v.point); } }
+        }
+        if bd.len() < 3 { continue; }
+        let cx = bd.iter().copied().sum::<DVec3>() / bd.len() as f64;
+        fi_list[ff] = Some(Fi { cx, bd, nm });
+    }
+
+    for i in 0..nf {
+        let Some(ref fi) = fi_list[i] else { continue; };
+        for j in (i + 1)..nf {
+            let Some(ref fj) = fi_list[j] else { continue; };
+            if dsu.find(i) == dsu.find(j) { continue; };
+            if fi.nm.dot(fj.nm) < 0.999 { continue; };
+
+            let fi_in_fj = strict_inside_plane(fi.cx, &fj.bd);
+            let fj_in_fi = strict_inside_plane(fj.cx, &fi.bd);
+
+            if fi_in_fj || fj_in_fi {
+                dsu.union(i, j);
+                merged += 1;
+            }
+        }
+    }
+    merged
 }
 
 /// 同域面合并的代表面选择优先级。
