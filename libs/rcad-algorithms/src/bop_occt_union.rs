@@ -41,6 +41,7 @@ use crate::tolerance::*;
 use crate::total_surface_area;
 use crate::BooleanError;
 use crate::BooleanOpType;
+use rcad_kernel::geom::Surface3;
 use rcad_kernel::BRep;
 
 /// Operands must be usable as boolean arguments: non-empty face set and **index-consistent**
@@ -799,21 +800,28 @@ pub(crate) fn fuse_with_history_par_bvh(
 /// ✅ OCCT对齐: 按 edge set (BOPTools_Set) 对共面面做同域合并。
 ///    OCCT 源码: BOPAlgo_Builder_2.cxx L571-L832 (FillSameDomainFaces)
 ///
-/// 算法步骤:
+/// 算法步骤 (对应 OCCT):
 /// 1. 收集每面的 edge key set (外环边界的量化顶点对,去重排序)
-/// 2. 按 edge key set 分组
-/// 3. 每组≥2面且全为平面面(Plane/planar BSpline) → nFMin 选代表,删除其余
+/// 2. 按 edge key set 分组 → anESetFaces
+/// 3. 对每组≥2面,逐对检测是否 SameDomain:
+///    a. 平面面(Plane/planar BSpline) → 快速路径 (OCCT L697-701: 无需几何分析)
+///    b. 同表面类型的非平面面(Cylinder+Cylinder 等) → 表面几何比较 (OCCT L703-708)
+///    c. 跨表面类型非平面面 → TODO: 几何分析 AreFacesSameDomain (OCCT L703-708)
+/// 4. MakeBlocks: 从 Face→Face 映射构建连通组 (OCCT L741: BOPAlgo_Tools::MakeBlocks)
+/// 5. 每组选代表面: 优先原面(原始DS面) > 子面,同优先级按 flat index
+///    (OCCT L758-788: nFMin → myDS->Index(aF) >= 0 的原面优先)
+/// 6. 删除非代表面,更新 geom slots
 ///
-/// 返回合并(移除)的面数。不返回 face_origins,因为 classify pass 已使其不同步。
+/// 返回合并(移除)的面数。
 fn fill_same_domain_faces_edge_set(brep: &mut BRep) -> usize {
-    use std::collections::{HashMap, BTreeSet};
+    use std::collections::{HashMap, HashSet, BTreeSet};
     use rcad_kernel::geom::Surface3;
 
     if brep.solids.is_empty() || brep.solids[0].shells.is_empty() {
         return 0;
     }
 
-    // Step 1: Build flat face index → (si, shi, fi) reverse mapping
+    // ── Step 1: Flat face index → (si, shi, fi) ──────────────────────────
     let mut flat_to_pos: Vec<(usize, usize, usize)> = Vec::new();
     for (si, solid) in brep.solids.iter().enumerate() {
         for (shi, shell) in solid.shells.iter().enumerate() {
@@ -827,7 +835,7 @@ fn fill_same_domain_faces_edge_set(brep: &mut BRep) -> usize {
         return 0;
     }
 
-    // Step 2: Compute edge key for each face
+    // ── Step 2: Compute edge key per face ─────────────────────────────────
     type EdgeKey = ((i64, i64, i64), (i64, i64, i64));
     let inv = 1.0 / 1e-5;
     let q = |p: glam::DVec3| -> (i64, i64, i64) {
@@ -841,20 +849,11 @@ fn fill_same_domain_faces_edge_set(brep: &mut BRep) -> usize {
         let mut keys = BTreeSet::new();
         let mut has_valid = false;
         for we in &face.outer_wire.edges {
-            if we.idx >= brep.edges.len() {
-                continue;
-            }
-            // Skip degenerate edges (start == end)
-            if brep.geom.edge_degenerated.get(we.idx).copied().unwrap_or(false) {
-                continue;
-            }
+            if we.idx >= brep.edges.len() { continue; }
+            if brep.geom.edge_degenerated.get(we.idx).copied().unwrap_or(false) { continue; }
             let edge = &brep.edges[we.idx];
-            if edge.start >= brep.vertices.len() || edge.end >= brep.vertices.len() {
-                continue;
-            }
-            if edge.start == edge.end {
-                continue;
-            }
+            if edge.start >= brep.vertices.len() || edge.end >= brep.vertices.len() { continue; }
+            if edge.start == edge.end { continue; }
             let qs = q(brep.vertices[edge.start].point);
             let qe = q(brep.vertices[edge.end].point);
             let key = if qs < qe { (qs, qe) } else { (qe, qs) };
@@ -866,7 +865,7 @@ fn fill_same_domain_faces_edge_set(brep: &mut BRep) -> usize {
         }
     }
 
-    // Step 3: Group by edge key set
+    // ── Step 3: Group by edge key set (OCCT anESetFaces) ──────────────────
     let mut groups: HashMap<BTreeSet<EdgeKey>, Vec<usize>> = HashMap::new();
     for ff in 0..nf {
         if let Some(ref keys) = face_keys[ff] {
@@ -874,33 +873,117 @@ fn fill_same_domain_faces_edge_set(brep: &mut BRep) -> usize {
         }
     }
 
-    // Step 4-5: Process each group and select representative
-    // Collect (si, shi, fi) tuples for removal, sorted for safe removal
-    let mut remove_pos: Vec<(usize, usize, usize)> = Vec::new();
+    // ── Step 4: Detect SameDomain pairs within each group ─────────────────
+    // OCCT: BOPAlgo_Builder_2.cxx L676-709
+    //
+    // DSU (Union-Find) 用于构建连通组 → 等价于 OCCT 的 FillMap + MakeBlocks。
+    struct DSU {
+        parent: Vec<usize>,
+        rank: Vec<u32>,
+    }
+    impl DSU {
+        fn new(n: usize) -> Self {
+            Self { parent: (0..n).collect(), rank: vec![0; n] }
+        }
+        fn find(&mut self, x: usize) -> usize {
+            if self.parent[x] != x {
+                self.parent[x] = self.find(self.parent[x]);
+            }
+            self.parent[x]
+        }
+        fn union(&mut self, a: usize, b: usize) {
+            let ra = self.find(a);
+            let rb = self.find(b);
+            if ra != rb {
+                if self.rank[ra] < self.rank[rb] {
+                    self.parent[ra] = rb;
+                } else if self.rank[ra] > self.rank[rb] {
+                    self.parent[rb] = ra;
+                } else {
+                    self.parent[rb] = ra;
+                    self.rank[ra] += 1;
+                }
+            }
+        }
+    }
+
+    let mut dsu = DSU::new(nf);
 
     for (_keys, members) in groups.iter() {
         if members.len() < 2 {
             continue;
         }
 
-        // Planarity check: all faces in the group must be planar
-        let all_planar = members.iter().all(|&ff| {
+        // Precompute per-face surface info for this group
+        struct SurfInfo {
+            is_planar_bounded: bool,
+            surf_type_tag: u64,  // hash of surface type + geometry params
+        }
+        let mut info: Vec<Option<SurfInfo>> = Vec::with_capacity(nf);
+        for _ in 0..nf { info.push(None); }
+        for &ff in members {
             let (si, shi, fi) = flat_to_pos[ff];
-            let sid = brep.solids[si].shells[shi].faces[fi].surface_idx;
-            match sid.and_then(|sid| brep.geom.surfaces.get(sid)) {
-                Some(Surface3::Plane(_)) => true,
-                Some(Surface3::BSpline(bsp)) => {
-                    rcad_kernel::geom::bspline_is_planar(bsp, 1e-3)
+            let face = &brep.solids[si].shells[shi].faces[fi];
+            let sid = face.surface_idx;
+            let sinfo = sid.and_then(|sid| brep.geom.surfaces.get(sid)).map(|surf| {
+                let (p, tag) = classify_surface_for_sd(surf);
+                SurfInfo { is_planar_bounded: p, surf_type_tag: tag }
+            });
+            info[ff] = sinfo;
+        }
+
+        // Compare every pair within the edge-set group
+        let m = members.len();
+        for i in 0..m {
+            let fi = members[i];
+            let Some(ref si) = info[fi] else { continue };
+
+            for j in (i + 1)..m {
+                let fj = members[j];
+                let Some(ref sj) = info[fj] else { continue };
+
+                if si.is_planar_bounded && sj.is_planar_bounded {
+                    // ⚡ 快速路径: 两平面面 → 直接 SameDomain (OCCT L697-701)
+                    //    OCCT: 无需几何分析,直接 FillMap
+                    dsu.union(fi, fj);
+                } else if si.surf_type_tag > 0 && si.surf_type_tag == sj.surf_type_tag {
+                    // ⚡ 同表面类型非平面面 → 表面几何匹配即 SameDomain
+                    //    OCCT BOPAlgo_Builder_2.cxx L703-708:
+                    //    此对进入 aVPSB 做几何分析,
+                    //    BOPTools_AlgoTools::AreFacesSameDomain (L1109-1169)
+                    //    检查: 面1内点 → 投影到面2 → 是否在面2内
+                    //    等价实现: 同 surface type tag = 相同表面几何
+                    dsu.union(fi, fj);
+                } else {
+                    // ⏳ TODO: 跨表面类型非平面面的几何分析 (尚未测试到)
+                    //    OCCT: BOPTools_AlgoTools::AreFacesSameDomain
+                    //    逻辑: 在一个面上取内点,投影到另一个面检查有效性
+                    //    对于 rcad: 需要实现曲面→曲面的投影和有效性检查
+                    //    当前跳过此对 (不建立 SameDomain 连接)
                 }
-                _ => false,
             }
-        });
-        if !all_planar {
+        }
+    }
+
+    // ── Step 5: Build blocks from DSU (OCCT MakeBlocks L741) ──────────────
+    // blocks: Vec<Vec<usize>> where each inner vec is one connected component
+    let mut block_map: HashMap<usize, Vec<usize>> = HashMap::new();
+    for ff in 0..nf {
+        let root = dsu.find(ff);
+        block_map.entry(root).or_default().push(ff);
+    }
+
+    // ── Step 6: Per-block representative selection (OCCT nFMin L758-788) ──
+    let mut remove_pos: Vec<(usize, usize, usize)> = Vec::new();
+
+    for (_root, members) in block_map.iter() {
+        if members.len() < 2 {
             continue;
         }
 
-        // Representative selection: prefer Plane over planar BSpline,
-        // then by flat face index (deterministic).
+        // OCCT L758-782: 优先选 DS 中的原面 (myDS->Index(aF) >= 0),
+        // DS index 最小者为代表。在 rcad 中,classify pass 后 face_origins
+        // 已不同步,改用 surface priority + flat index 作为确定性选择。
         let rep = members
             .iter()
             .copied()
@@ -911,7 +994,6 @@ fn fill_same_domain_faces_edge_set(brep: &mut BRep) -> usize {
             })
             .unwrap();
 
-        // Mark non-representative faces
         for &ff in members {
             if ff != rep {
                 remove_pos.push(flat_to_pos[ff]);
@@ -923,12 +1005,13 @@ fn fill_same_domain_faces_edge_set(brep: &mut BRep) -> usize {
         return 0;
     }
 
-    // Step 6: Remove non-representative faces (reverse order for safety)
+    // ── Step 7: Remove non-representative faces (reverse order) ───────────
+    //    OCCT L790-796: myShapesSD.Bind(aF, *pFSD) — 更新 SD 映射
+    //    rcad: 直接删除非代表面,BRep 级操作
     remove_pos.sort_by(|a, b| b.cmp(a));
     remove_pos.dedup();
 
     for &(si, shi, fi) in &remove_pos {
-        // Compute current flat index
         let mut ff = 0usize;
         for s in 0..si {
             for sh in &brep.solids[s].shells {
@@ -953,10 +1036,9 @@ fn fill_same_domain_faces_edge_set(brep: &mut BRep) -> usize {
     remove_pos.len()
 }
 
-/// Priority for representative selection in edge-set merge.
-/// Lower value = higher priority (prefer native Plane over planar BSpline).
+/// 同域面合并的代表面选择优先级。
+/// 低值 = 高优先级 (优先原生 Plane > planar BSpline > 其他)。
 fn surface_priority_for_merge(brep: &BRep, (si, shi, fi): (usize, usize, usize)) -> u32 {
-    use rcad_kernel::geom::Surface3;
     let face = &brep.solids[si].shells[shi].faces[fi];
     let sid = face.surface_idx;
     match sid.and_then(|sid| brep.geom.surfaces.get(sid)) {
@@ -964,4 +1046,111 @@ fn surface_priority_for_merge(brep: &BRep, (si, shi, fi): (usize, usize, usize))
         Some(Surface3::BSpline(bsp)) if rcad_kernel::geom::bspline_is_planar(bsp, 1e-3) => 1,
         _ => 2,
     }
+}
+
+/// 对曲面进行分类,返回 (is_planar_bounded, surf_type_tag)。
+///
+/// surf_type_tag:
+///   = 0   → 未知表面类型 (无法判断 SameDomain)
+///   > 0   → 表面类型的哈希: 相同 tag 表示几何上可能 SameDomain
+///
+/// OCCT 在 FillSameDomainFaces (BOPAlgo_Builder_2.cxx L697-709) 中:
+/// - 平面面 → 快速路径 (无需几何分析)
+/// - 非平面面 → 进入 aVPSB 做 AreFacesSameDomain 几何分析
+///   这里根据表面类型生成 tag,让同类型表面通过快速路径,
+///   跨类型的走 TODO 占位路径。
+fn classify_surface_for_sd(surf: &Surface3) -> (bool, u64) {
+    use rcad_kernel::geom::Surface3;
+    match surf {
+        Surface3::Plane(_) => (true, 1),
+        Surface3::BSpline(bsp) => {
+            if rcad_kernel::geom::bspline_is_planar(bsp, 1e-3) {
+                // 平面 BSpline → 按平面处理 (快速路径)
+                (true, 1)
+            } else {
+                // ⏳ 非平面 BSpline → 需要几何分析 (尚未测试到)
+                //    OCCT: AreFacesSameDomain 检查
+                //    rcad TODO: 实现 BSpline→BSpline 的 UV 投影+有效性检查
+                (false, 0)
+            }
+        }
+        Surface3::Cylinder(c) => {
+            // 圆柱面: 同轴同半径 → SameDomain 候选
+            // OCCT BOPAlgo_Builder_2.cxx L703-708: 几何分析路径
+            let tag = hash_cyl(c);
+            (false, tag)
+        }
+        Surface3::Sphere(s) => {
+            let tag = hash_sphere(s);
+            (false, tag)
+        }
+        Surface3::Cone(c) => {
+            let tag = hash_cone(c);
+            (false, tag)
+        }
+        Surface3::Torus(t) => {
+            let tag = hash_torus(t);
+            (false, tag)
+        }
+        // ⏳ 其他表面类型 (Ellipsoid/Helicoid/Pipe/Revolution/Extrusion/Offset/Other)
+        //    OCCT: 进入 aVPSB 做 AreFacesSameDomain 几何分析
+        //    rcad: 当前无法判断同域性,返回 tag=0 (不建立连接)
+        _ => (false, 0),
+    }
+}
+
+/// 圆柱曲面: 用轴方向+原点+半径生成哈希
+fn hash_cyl(c: &rcad_kernel::geom::CylindricalSurface) -> u64 {
+    use std::hash::{Hash, Hasher};
+    use std::collections::hash_map::DefaultHasher;
+    let mut h = DefaultHasher::new();
+    (c.axis.x.to_bits() >> 8).hash(&mut h);
+    (c.axis.y.to_bits() >> 8).hash(&mut h);
+    (c.axis.z.to_bits() >> 8).hash(&mut h);
+    (c.origin.x.to_bits() >> 8).hash(&mut h);
+    (c.origin.y.to_bits() >> 8).hash(&mut h);
+    (c.origin.z.to_bits() >> 8).hash(&mut h);
+    (c.radius.to_bits() >> 10).hash(&mut h);
+    h.finish()
+}
+
+/// 球面: 用心+半径生成哈希
+fn hash_sphere(s: &rcad_kernel::geom::SphericalSurface) -> u64 {
+    use std::hash::{Hash, Hasher};
+    use std::collections::hash_map::DefaultHasher;
+    let mut h = DefaultHasher::new();
+    (s.center.x.to_bits() >> 8).hash(&mut h);
+    (s.center.y.to_bits() >> 8).hash(&mut h);
+    (s.center.z.to_bits() >> 8).hash(&mut h);
+    (s.radius.to_bits() >> 10).hash(&mut h);
+    h.finish()
+}
+
+/// 圆锥面: 用轴+顶点+半径+半角生成哈希
+fn hash_cone(c: &rcad_kernel::geom::ConicalSurface) -> u64 {
+    use std::hash::{Hash, Hasher};
+    use std::collections::hash_map::DefaultHasher;
+    let mut h = DefaultHasher::new();
+    (c.axis.x.to_bits() >> 8).hash(&mut h);
+    (c.axis.y.to_bits() >> 8).hash(&mut h);
+    (c.axis.z.to_bits() >> 8).hash(&mut h);
+    (c.apex.x.to_bits() >> 8).hash(&mut h);
+    (c.apex.y.to_bits() >> 8).hash(&mut h);
+    (c.apex.z.to_bits() >> 8).hash(&mut h);
+    (c.radius.to_bits() >> 10).hash(&mut h);
+    (c.half_angle_rad.to_bits() >> 12).hash(&mut h);
+    h.finish()
+}
+
+/// 环面: 用中心+主半径+次半径生成哈希
+fn hash_torus(t: &rcad_kernel::geom::ToroidalSurface) -> u64 {
+    use std::hash::{Hash, Hasher};
+    use std::collections::hash_map::DefaultHasher;
+    let mut h = DefaultHasher::new();
+    (t.center.x.to_bits() >> 8).hash(&mut h);
+    (t.center.y.to_bits() >> 8).hash(&mut h);
+    (t.center.z.to_bits() >> 8).hash(&mut h);
+    (t.major_radius.to_bits() >> 10).hash(&mut h);
+    (t.minor_radius.to_bits() >> 10).hash(&mut h);
+    h.finish()
 }
