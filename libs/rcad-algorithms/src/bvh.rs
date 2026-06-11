@@ -9,7 +9,7 @@
 
 use glam::DVec3;
 use rcad_kernel::BRep;
-use rcad_kernel::geom::SurfaceEval;
+use rcad_kernel::geom::{Surface3, SurfaceEval};
 
 use crate::tolerance::*;
 
@@ -185,19 +185,76 @@ impl Bvh {
                 aabb.expand_point(v1);
             }
 
-            // For curved faces, expand with interior UV samples
+            // ✅ OCCT对齐: BRepBndLib::Add (BRepBndLib.cxx L83+) — 根据面类型计算 AABB。
+            //    OCCT BndLib_AddSurface (BndLib_AddSurface.cxx L275-306):
+            //    Sphere: 中心 ± 半径 (L299-306); Cylinder/Cone/Torus: 专用 BndLib (L287-297)
+            //    Plane: 4 角点 (L278-286); BSpline/Bezier: 网格采样/控制点凸包 (L315-316)
             if let Some(surf_idx) = brep.geom.face_surface.get(fi).and_then(|s| *s) {
-                let surface = &brep.geom.surfaces[surf_idx];
-                let domain = surface.default_domain();
-                let [u0, u1, v0, v1] = domain;
-                // 3×3 grid over the default UV domain
-                for i in 0..=2 {
-                    for j in 0..=2 {
-                        let u = u0 + (u1 - u0) * i as f64 / 2.0;
-                        let v = v0 + (v1 - v0) * j as f64 / 2.0;
-                        let p = surface.point_at(u, v);
-                        if p.is_finite() {
-                            aabb.expand_point(p);
+                if let Some(surf) = brep.geom.surfaces.get(surf_idx) {
+                    match surf {
+                        Surface3::Sphere(s) => {
+                            let r = s.radius.abs() + TOLERANCE_LINEAR_ULTRA_STRICT;
+                            aabb.expand_point(s.center - DVec3::splat(r));
+                            aabb.expand_point(s.center + DVec3::splat(r));
+                        }
+                        Surface3::Cylinder(c) => {
+                            let domain = surf.default_domain();
+                            let [_, _, v0, v1] = domain;
+                            let ax = c.axis.normalize_or_zero();
+                            let perp = if ax.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
+                            let u_dir = ax.cross(perp).normalize_or_zero();
+                            let v_dir = ax.cross(u_dir).normalize_or_zero();
+                            let r = c.radius.abs() + TOLERANCE_LINEAR_ULTRA_STRICT;
+                            for &vh in &[v0, v1] {
+                                for k in 0..8 {
+                                    let a = std::f64::consts::TAU * k as f64 / 8.0;
+                                    let p = c.origin + ax * vh + u_dir * r * a.cos() + v_dir * r * a.sin();
+                                    aabb.expand_point(p);
+                                }
+                            }
+                        }
+                        Surface3::Cone(c) => {
+                            let domain = surf.default_domain();
+                            let [_, _, v0, v1] = domain;
+                            let ax = c.axis.normalize_or_zero();
+                            let perp = if ax.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
+                            let u_dir = ax.cross(perp).normalize_or_zero();
+                            let v_dir = ax.cross(u_dir).normalize_or_zero();
+                            for &vh in &[v0, v1] {
+                                let r_at = (c.radius + vh * c.half_angle_rad.tan()).abs() + TOLERANCE_LINEAR_ULTRA_STRICT;
+                                let center = c.apex + ax * vh;
+                                for k in 0..8 {
+                                    let a = std::f64::consts::TAU * k as f64 / 8.0;
+                                    let p = center + u_dir * r_at * a.cos() + v_dir * r_at * a.sin();
+                                    aabb.expand_point(p);
+                                }
+                            }
+                        }
+                        Surface3::Torus(t) => {
+                            let r_out = t.major_radius.abs() + t.minor_radius.abs() + TOLERANCE_LINEAR_ULTRA_STRICT;
+                            let ax = t.axis.normalize_or_zero();
+                            let perp = if ax.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
+                            let u_dir = ax.cross(perp).normalize_or_zero();
+                            let v_dir = ax.cross(u_dir).normalize_or_zero();
+                            for k in 0..8 {
+                                let a = std::f64::consts::TAU * k as f64 / 8.0;
+                                let c = t.center + u_dir * t.major_radius * a.cos() + v_dir * t.major_radius * a.sin();
+                                aabb.expand_point(c + ax * t.minor_radius);
+                                aabb.expand_point(c - ax * t.minor_radius);
+                            }
+                        }
+                        // Plane 和其余类型: 用边界顶点 + UV 采样
+                        _ => {
+                            let domain = surf.default_domain();
+                            let [u0, u1, v0, v1] = domain;
+                            for i in 0..=2 {
+                                for j in 0..=2 {
+                                    let u = u0 + (u1 - u0) * i as f64 / 2.0;
+                                    let v = v0 + (v1 - v0) * j as f64 / 2.0;
+                                    let p = surf.point_at(u, v);
+                                    if p.is_finite() { aabb.expand_point(p); }
+                                }
+                            }
                         }
                     }
                 }
