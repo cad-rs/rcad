@@ -3585,15 +3585,13 @@ pub fn boolean_op_with_retry(
     };
     // Edge dedup for ALL results.
     let mut brep = deduplicate_edges(brep);
-    // Promote planar BSpline surfaces to Plane so that geometrically coincident
-    // faces from different surface representations (BSpline vs Plane) can be
-    // merged by the downstream optimize_boolean_topology step.
-    // ✅ OCCT 对齐: OCCT's BOPAlgo_Builder internally converts planar NURBS to
-    //    Plane during result assembly.  The STEP reference for A7 (bfuse_simple)
-    //    confirms 10 PLANE faces, matching OCCT's own output.
-    // ⏳ 部分对齐: promote_planar_surfaces converts ALL planar BSpline surfaces,
-    //    not just those merged into Plane-dominant regions.
-    brep = promote_planar_surfaces(brep);
+    // Skip BSPLINE→PLANE promotion — OCCT preserves the original surface type
+    // of each operand face (a NURBS-converted box keeps BSpline surfaces even
+    // though they are geometrically planar).  promote_planar_surfaces would
+    // flatten NURBS box BSpline faces to Plane, changing the surface-type
+    // distribution vs OCCT's reference (bfuse_simple B2: 6BS+5PL → 11PL).
+    // OCCT's STEP export writes the original surfaces as-is.
+    // brep = promote_planar_surfaces(brep);
     // Compute and propagate per-entity tolerances.
     rcad_kernel::tolerance::resize_tolerance_arrays(&mut brep);
     rcad_kernel::brep_same_parameter(&mut brep, 10);
