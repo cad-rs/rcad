@@ -3722,22 +3722,38 @@ impl<'a> BooleanBuilder<'a> {
                             //    正确拓扑: 移除球内角点,用圆弧替换,得到裁剪后的单外环面。
                             let c_r = circ.radius;
                             let c_center = circ.center;
+                            let c_r = circ.radius;
+                            let c_center = circ.center;
                             let keep: Vec<DVec3> = boundary.iter()
                                 .filter(|p| p.distance(c_center) >= c_r - 1e-8)
                                 .copied().collect();
+                            let inside: Vec<DVec3> = boundary.iter()
+                                .filter(|p| p.distance(c_center) <= c_r + 1e-8)
+                                .copied().collect();
                             let fp = keep.iter().max_by(|a,b| a.distance(c_center).partial_cmp(&b.distance(c_center)).unwrap()).copied().unwrap_or(DVec3::ZERO);
-                            if keep.len() >= 2 && keep.len() < boundary.len() {
-                                let arc_curve = Curve3::Circle(*circ);
-                                let n_seg = keep.len();
-                                annular_out = Some(vec![SubFace {
-                                    boundary: keep,
-                                    surface: face.surface.clone(), normal: face.normal,
-                                    uv_centroid: None, sample_override: Some(fp),
-                                    uv_domain: None, inner_wires: vec![],
-                                    outer_circle_edges: vec![(n_seg - 1, arc_curve)],
-                                    seam_edge: None,
-                                    inner_wire_circle: None,
-                                }]);
+                            if keep.len() >= 2 && keep.len() < boundary.len() && inside.len() >= 2 {
+                                let arc_curve_outer = Curve3::Circle(*circ);
+                                let arc_curve_inner = Curve3::Circle(*circ);
+                                let n_keep = keep.len();
+                                let n_inside = inside.len();
+                                annular_out = Some(vec![
+                                    SubFace {
+                                        boundary: keep,
+                                        surface: face.surface.clone(), normal: face.normal,
+                                        uv_centroid: None, sample_override: Some(fp),
+                                        uv_domain: None, inner_wires: vec![],
+                                        outer_circle_edges: vec![(n_keep - 1, arc_curve_outer)],
+                                        seam_edge: None, inner_wire_circle: None,
+                                    },
+                                    SubFace {
+                                        boundary: inside,
+                                        surface: face.surface.clone(), normal: face.normal,
+                                        uv_centroid: None, sample_override: None,
+                                        uv_domain: None, inner_wires: vec![],
+                                        outer_circle_edges: vec![(n_inside - 1, arc_curve_inner)],
+                                        seam_edge: None, inner_wire_circle: None,
+                                    },
+                                ]);
                                 break;
                             }
                         }
