@@ -631,17 +631,15 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     }
 
     // Second OCCT FillSameDomainFaces pass (butterfly merge).
+    // ✅ OCCT对齐: 用 edge set (BOPTools_Set) 对共面面做跨类型(Plane+BSpline)分组合并。
     if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
         let nf = result.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
         eprintln!("[CLASSIFY] after classify: {} faces", nf);
     }
-    // SKIP: Second butterfly merge without origin filtering merges same-surface sub-faces
-    // from planar NURBS face splitting (bfuse_simple B5: 14→6 faces).  The builder's
-    // build_with_history already runs same-origin butterfly merge.  The edge-set-based
-    // approach (OCCT FillSameDomainFaces) doesn't have this issue.
+    let merged_count = fill_same_domain_faces_edge_set(&mut result);
     if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
         let nf = result.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
-        eprintln!("[CLASSIFY] after merge: {} faces", nf);
+        eprintln!("[CLASSIFY] edge-set merge: removed {} faces, remaining {}", merged_count, nf);
     }
 
     result = crate::prune_unused_topology(result);
@@ -796,4 +794,174 @@ pub(crate) fn fuse_with_history_par_bvh(
     let (brep, hist) = builder.build_with_history_par()?;
     validate_union_brep_output("union: result failed checks after build (history par)", &brep)?;
     Ok((brep, hist))
+}
+
+/// ✅ OCCT对齐: 按 edge set (BOPTools_Set) 对共面面做同域合并。
+///    OCCT 源码: BOPAlgo_Builder_2.cxx L571-L832 (FillSameDomainFaces)
+///
+/// 算法步骤:
+/// 1. 收集每面的 edge key set (外环边界的量化顶点对,去重排序)
+/// 2. 按 edge key set 分组
+/// 3. 每组≥2面且全为平面面(Plane/planar BSpline) → nFMin 选代表,删除其余
+///
+/// 返回合并(移除)的面数。不返回 face_origins,因为 classify pass 已使其不同步。
+fn fill_same_domain_faces_edge_set(brep: &mut BRep) -> usize {
+    use std::collections::{HashMap, BTreeSet};
+    use rcad_kernel::geom::Surface3;
+
+    if brep.solids.is_empty() || brep.solids[0].shells.is_empty() {
+        return 0;
+    }
+
+    // Step 1: Build flat face index → (si, shi, fi) reverse mapping
+    let mut flat_to_pos: Vec<(usize, usize, usize)> = Vec::new();
+    for (si, solid) in brep.solids.iter().enumerate() {
+        for (shi, shell) in solid.shells.iter().enumerate() {
+            for fi in 0..shell.faces.len() {
+                flat_to_pos.push((si, shi, fi));
+            }
+        }
+    }
+    let nf = flat_to_pos.len();
+    if nf < 2 {
+        return 0;
+    }
+
+    // Step 2: Compute edge key for each face
+    type EdgeKey = ((i64, i64, i64), (i64, i64, i64));
+    let inv = 1.0 / 1e-5;
+    let q = |p: glam::DVec3| -> (i64, i64, i64) {
+        ((p.x * inv).round() as i64, (p.y * inv).round() as i64, (p.z * inv).round() as i64)
+    };
+
+    let mut face_keys: Vec<Option<BTreeSet<EdgeKey>>> = vec![None; nf];
+    for ff in 0..nf {
+        let (si, shi, fi) = flat_to_pos[ff];
+        let face = &brep.solids[si].shells[shi].faces[fi];
+        let mut keys = BTreeSet::new();
+        let mut has_valid = false;
+        for we in &face.outer_wire.edges {
+            if we.idx >= brep.edges.len() {
+                continue;
+            }
+            // Skip degenerate edges (start == end)
+            if brep.geom.edge_degenerated.get(we.idx).copied().unwrap_or(false) {
+                continue;
+            }
+            let edge = &brep.edges[we.idx];
+            if edge.start >= brep.vertices.len() || edge.end >= brep.vertices.len() {
+                continue;
+            }
+            if edge.start == edge.end {
+                continue;
+            }
+            let qs = q(brep.vertices[edge.start].point);
+            let qe = q(brep.vertices[edge.end].point);
+            let key = if qs < qe { (qs, qe) } else { (qe, qs) };
+            keys.insert(key);
+            has_valid = true;
+        }
+        if has_valid {
+            face_keys[ff] = Some(keys);
+        }
+    }
+
+    // Step 3: Group by edge key set
+    let mut groups: HashMap<BTreeSet<EdgeKey>, Vec<usize>> = HashMap::new();
+    for ff in 0..nf {
+        if let Some(ref keys) = face_keys[ff] {
+            groups.entry(keys.clone()).or_default().push(ff);
+        }
+    }
+
+    // Step 4-5: Process each group and select representative
+    // Collect (si, shi, fi) tuples for removal, sorted for safe removal
+    let mut remove_pos: Vec<(usize, usize, usize)> = Vec::new();
+
+    for (_keys, members) in groups.iter() {
+        if members.len() < 2 {
+            continue;
+        }
+
+        // Planarity check: all faces in the group must be planar
+        let all_planar = members.iter().all(|&ff| {
+            let (si, shi, fi) = flat_to_pos[ff];
+            let sid = brep.solids[si].shells[shi].faces[fi].surface_idx;
+            match sid.and_then(|sid| brep.geom.surfaces.get(sid)) {
+                Some(Surface3::Plane(_)) => true,
+                Some(Surface3::BSpline(bsp)) => {
+                    rcad_kernel::geom::bspline_is_planar(bsp, 1e-3)
+                }
+                _ => false,
+            }
+        });
+        if !all_planar {
+            continue;
+        }
+
+        // Representative selection: prefer Plane over planar BSpline,
+        // then by flat face index (deterministic).
+        let rep = members
+            .iter()
+            .copied()
+            .min_by(|&a, &b| {
+                let pa = surface_priority_for_merge(brep, flat_to_pos[a]);
+                let pb = surface_priority_for_merge(brep, flat_to_pos[b]);
+                pa.cmp(&pb).then_with(|| a.cmp(&b))
+            })
+            .unwrap();
+
+        // Mark non-representative faces
+        for &ff in members {
+            if ff != rep {
+                remove_pos.push(flat_to_pos[ff]);
+            }
+        }
+    }
+
+    if remove_pos.is_empty() {
+        return 0;
+    }
+
+    // Step 6: Remove non-representative faces (reverse order for safety)
+    remove_pos.sort_by(|a, b| b.cmp(a));
+    remove_pos.dedup();
+
+    for &(si, shi, fi) in &remove_pos {
+        // Compute current flat index
+        let mut ff = 0usize;
+        for s in 0..si {
+            for sh in &brep.solids[s].shells {
+                ff += sh.faces.len();
+            }
+        }
+        for sh in 0..shi {
+            ff += brep.solids[si].shells[sh].faces.len();
+        }
+        ff += fi;
+
+        crate::remove_flat_face_geom_slots(&mut brep.geom, ff);
+        if let Some(s) = brep.solids.get_mut(si) {
+            if let Some(sh) = s.shells.get_mut(shi) {
+                if fi < sh.faces.len() {
+                    sh.faces.remove(fi);
+                }
+            }
+        }
+    }
+
+    remove_pos.len()
+}
+
+/// Priority for representative selection in edge-set merge.
+/// Lower value = higher priority (prefer native Plane over planar BSpline).
+fn surface_priority_for_merge(brep: &BRep, (si, shi, fi): (usize, usize, usize)) -> u32 {
+    use rcad_kernel::geom::Surface3;
+    let face = &brep.solids[si].shells[shi].faces[fi];
+    let sid = face.surface_idx;
+    match sid.and_then(|sid| brep.geom.surfaces.get(sid)) {
+        Some(Surface3::Plane(_)) => 0,
+        Some(Surface3::BSpline(bsp)) if rcad_kernel::geom::bspline_is_planar(bsp, 1e-3) => 1,
+        _ => 2,
+    }
 }

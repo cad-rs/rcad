@@ -3067,10 +3067,10 @@ impl<'a> BooleanBuilder<'a> {
                     && class == Classification::On
                     && matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
                 {
-                    // For Union, ALL planar On sub-faces are internal to the
-                    // combined solid and must be removed regardless of normal
-                    // direction.  The other solid covers this region externally.
-                    false
+                    // ✅ OCCT对齐: 保留平面 ON 子面,由下游 edge-set merge 处理。
+                    //    OCCT FillSameDomainFaces (BOPAlgo_Builder_2.cxx L571) 保留所有 ON
+                    //    子面,用 edge set 分组后选 DS index 最小面为代表。
+                    true
                 } else if !face_split
                     && self.op == BooleanOpType::Difference
                     && class == Classification::On
