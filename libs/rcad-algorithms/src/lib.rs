@@ -3046,26 +3046,24 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         // Avoids Pave-Filler coplanar-face classification errors for partial
         // overlaps (bcommon_simple_c1 — SA=3 vs expected 2.5).
         try_fast_path!(boolean_unit_octant::try_intersection_box_box(a, b), "try_intersection_box_box");
+        // ❌ DELETED: try_intersection_box_sphere_single_face — 绕过 PaveFiller 自建单面结果。
+        //    OCCT 通过 PaveFiller(IntTools_FaceFace) 产生精确圆交线 + MakeBlocks 分裂球面,
+        //    得到 4面正确拓扑。此 fast path 只产生 1 面,不符合 OCCT 行为。
+        // ❌ DELETED: try_intersection_box_general — 自建凸多面体,绕过 PaveFiller。
+        // ❌ DELETED: try_intersection_cylinder_box — 绕过 PaveFiller,圆柱-盒拓扑不匹配。
+        // ❌ DELETED: try_intersection_cone_box — 同上。
         // Fast-path: general box-box intersection (rotated boxes) via half-spaces.
-        // The raw convex polyhedron already has the intended planar face split;
-        // routing it through optimize_boolean_topology can incorrectly collapse
-        // the oblique side faces on cases like bopcommon_simple C3/C5/C6.
-        if let Some(r) = boolean_unit_octant::try_intersection_box_general(a, b) {
-            if std::env::var("RCAD_DEBUG_FAST_PATH").is_ok() { eprintln!("FAST_PATH: try_intersection_box_general"); }
-            return Ok(promote_planar_surfaces(deduplicate_edges(r)));
-        }
+        // The raw convex polyhedron already has the intended planar face split (kept for now).
         try_fast_path!(boolean_unit_octant::try_intersection_concentric_spheres(a, b), "try_intersection_concentric_spheres");
         try_fast_path!(boolean_unit_octant::try_intersection_coaxial_cone_cylinder(a, b), "try_intersection_coaxial_cone_cylinder");
         try_fast_path!(boolean_unit_octant::try_intersection_coaxial_cylinder_cylinder(a, b), "try_intersection_coaxial_cylinder_cylinder");
-        // Fast-path: perpendicular equal-radius cylinder-cylinder (Steinmetz-like).
-        // Avoids PaveFiller (5.3s → <0.01s) for the I9 test case (r=100 cylinders
         // along Z and X axes). OCCT has no equivalent — pure rcad optimization.
         try_fast_path!(boolean_unit_octant::try_intersection_cylinder_cylinder_perpendicular(a, b), "try_intersection_cylinder_cylinder_perpendicular");
         try_fast_path!(boolean_unit_octant::try_intersection_coaxial_cylinder_sphere(a, b), "try_intersection_coaxial_cylinder_sphere");
         try_fast_path!(boolean_unit_octant::try_intersection_coaxial_cylinder_torus(a, b), "try_intersection_coaxial_cylinder_torus");
-        try_fast_path!(boolean_unit_octant::try_intersection_box_sphere_single_face(a, b), "try_intersection_box_sphere_single_face");
-        try_fast_path!(boolean_unit_octant::try_intersection_cylinder_box(a, b), "try_intersection_cylinder_box");
-        try_fast_path!(boolean_unit_octant::try_intersection_cone_box(a, b), "try_intersection_cone_box");
+        // ❌ DELETED: try_intersection_box_sphere_single_face (绕过PaveFiller)
+        // ❌ DELETED: try_intersection_cylinder_box (绕过PaveFiller)
+        // ❌ DELETED: try_intersection_cone_box (绕过PaveFiller)
     }
 
     if matches!(op, BooleanOpType::Difference) && boolean_difference_empty_coincident(a, b) {
