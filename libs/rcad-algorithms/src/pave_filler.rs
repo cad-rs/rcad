@@ -748,6 +748,19 @@ impl<'a> PaveFiller<'a> {
         //    rcad 当前仅做端点匹配(完整 PutPavesOnCurve 需参数沿曲线排序 + 分裂)。
         self.make_blocks();
 
+        // ✅ OCCT对齐: RemoveMicroEdges (PaveFiller_6.cxx L4229-4270)
+        //    OCCT L346: RemoveMicroEdges — 在 MakeBlocks 之后、MakePCurves 之前,
+        //    清除 start==end 的零长 PaveBlock (micro edge)。
+        //    OCCT 算法:
+        //    1. L4239-4267: 遍历所有边的 PaveBlock:
+        //       a. L4242-4244: <2 个 PaveBlock 的边跳过(未分裂)
+        //       b. L4246-4247: 退化边跳过
+        //       c. L4257-4265: 取 PaveBlock 顶点索引,若 nV1==nV2 且无有效
+        //          ShrunkData → 加入 aMicroEdges
+        //    2. L4269: RemovePaveBlocks(aMicroEdges) 从 DS 中移除
+        //    rcad: 在 build_split_edges 前,清除 paves 中 start==end 的零长分段。
+        self.remove_micro_edges();
+
         self.build_split_edges();
     }
 
@@ -1628,6 +1641,66 @@ impl<'a> PaveFiller<'a> {
             matches!(inf, Interference::EdgeEdge { e1: a, e2: b, .. }
                 if (*a == e1 && *b == e2) || (*a == e2 && *b == e1))
         })
+    }
+
+    /// ✅ OCCT对齐: RemoveMicroEdges (PaveFiller_6.cxx L4229-4270)
+    ///    清除 start==end 的零长 PaveBlock (micro edge)。
+    ///
+    ///    OCCT 算法:
+    ///    1. L4239-4244: 遍历所有边的 PaveBlock, <2 个或退化边跳过
+    ///    2. L4255-4264: 对 RealPaveBlock, 若 nV1==nV2 且无有效 ShrunkData → micro edge
+    ///    3. L4269: RemovePaveBlocks(aMicroEdges) 从 DS 移除
+    ///
+    ///    rcad 等价: 遍历 edges, 对 edge.paves 中相邻 Pave 有相同 vertex_idx 的分段,
+    ///    视为零长分段,从 paves 中移除对应的 Pave。
+    fn remove_micro_edges(&mut self) {
+        // OCCT L4239: 遍历所有边的 PaveBlock
+        // rcad: 遍历所有 DS edges
+        for ei in 0..self.ds.edges.len() {
+            // OCCT L4242-4244: <2 个 PaveBlock 的边跳过 (没有分段)
+            if self.ds.edges[ei].paves.len() < 2 { continue; }
+
+            // OCCT L4246-4247: 退化边跳过
+            if self.ds.edges[ei].start_vertex == self.ds.edges[ei].end_vertex { continue; }
+
+            // OCCT L4255-4264: 检查 PaveBlock 是否 nV1 == nV2
+            // rcad: 检查相邻 Pave 是否引用同一 vertex_idx
+            // 链: start → pave[0] → pave[1] → ... → end
+            let sv = self.ds.edges[ei].start_vertex;
+            let ev = self.ds.edges[ei].end_vertex;
+
+            // 按参数排序 paves
+            let mut sorted: Vec<usize> = (0..self.ds.edges[ei].paves.len()).collect();
+            sorted.sort_by(|&a, &b| {
+                self.ds.edges[ei].paves[a].param
+                    .partial_cmp(&self.ds.edges[ei].paves[b].param)
+                    .unwrap()
+            });
+
+            // 检查每个分段: prev → pave[i], pave[i] → pave[i+1], pave[last] → end
+            let mut micro_pave_indices: Vec<usize> = Vec::new();
+            let mut prev_v = sv;
+            for &si in &sorted {
+                let pv = self.ds.edges[ei].paves[si].vertex_idx;
+                // OCCT L4259: nV1 == nV2 → micro edge
+                if pv == prev_v {
+                    micro_pave_indices.push(si);
+                }
+                prev_v = pv;
+            }
+            // 检查最后一段: 最后一个 Pave → end_vertex (这是正常的,不移除)
+            // (end_vertex 可以与最后一段的终点相同 — 这表示边端点的段)
+
+            // OCCT L4269: RemovePaveBlocks — 从 DS 移除
+            // 逆序移除避免索引偏移
+            micro_pave_indices.sort_unstable_by(|a, b| b.cmp(a));
+            micro_pave_indices.dedup();
+            for &pi in &micro_pave_indices {
+                if pi < self.ds.edges[ei].paves.len() {
+                    self.ds.edges[ei].paves.remove(pi);
+                }
+            }
+        }
     }
 
     /// ✅ OCCT对齐: ForceInterfEE (PaveFiller_3.cxx L978-1276)
