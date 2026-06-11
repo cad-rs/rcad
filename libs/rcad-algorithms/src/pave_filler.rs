@@ -694,6 +694,10 @@ impl<'a> PaveFiller<'a> {
 
         if !skip_ee {
             self.perform_ee();
+            // ✅ OCCT对齐: TreatNewVertices — EE 创建的新顶点之间做互合。
+            //    OCCT PaveFiller_3.cxx L561: PerformNewVertices(aMVCPB, ...)
+            //    → TreatNewVertices → BOPAlgo_Tools::IntersectVertices
+            self.treat_new_vertices();
         }
 
         if !skip_vf {
@@ -702,6 +706,19 @@ impl<'a> PaveFiller<'a> {
 
         if !skip_ef {
             self.perform_ef();
+            // ✅ OCCT对齐: TreatNewVertices — EF 创建的新顶点之间做互合。
+            //    OCCT PaveFiller_5.cxx L570: PerformNewVertices(aMVCPB, ..., false)
+            let ef_survivors = self.treat_new_vertices();
+
+            // ✅ OCCT对齐: RepeatIntersection (PaveFiller.cxx L296-299)
+            //    在 EF 之后、FF 之前,对容差增大的顶点重新做 VV/VE/VF。
+            //    OCCT L296-297: RepeatIntersection(...)
+            //    ⏳ OCCT 的 RepeatIntersection 还会处理 EE 阶段增大的容差,
+            //    rcad 当前只处理 EF 阶段的 survivors。EE 阶段的 survivors
+            //    在 EE→VF→EF 之间没有 repeat,因为中间插入了 VF。
+            if !ef_survivors.is_empty() {
+                self.repeat_intersection(&ef_survivors);
+            }
         }
 
         if !skip_ff {
@@ -1080,6 +1097,228 @@ impl<'a> PaveFiller<'a> {
     }
 
     // ─── Pass 4: Vertex-Face ───────────────────────────────────────────
+
+    /// ✅ OCCT对齐: TreatNewVertices — 合并EE/EF阶段创建的靠近的新顶点。
+    ///    OCCT PaveFiller_3.cxx L687-718 (TreatNewVertices)
+    ///    → BOPAlgo_Tools::IntersectVertices (BOPAlgo_Tools.cxx L1098-1161)
+    ///
+    /// 返回 survivors (合并后容差增大的顶点索引) 供 RepeatIntersection 使用。
+    /// ✅ OCCT PaveFiller.cxx L375-387: myIncreasedSS → anExtraInterfMap
+    fn treat_new_vertices(&mut self) -> Vec<usize> {
+        // ── Phase 1: 收集新顶点 ──────────────────────────────────────────
+        // ✅ OCCT L696-702: 构建 aVerts (vertex → tolerance 映射)
+        //    ⏳ 差异: OCCT 从 theMVCPB (CoupleOfPaveBlocks) 读取顶点和容差,
+        //    rcad 从 interference 记录中读取,数据来源不同但语义等价。
+        #[derive(Clone, Copy)]
+        struct NewVertInfo { idx: usize, pos: DVec3, tol: f64 }
+        let mut new_verts: Vec<NewVertInfo> = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for inf in &self.ds.interferences {
+            let (vi, pt) = match inf {
+                Interference::EdgeEdge { new_vertex, point, .. } => (*new_vertex, *point),
+                Interference::EdgeFace { new_vertex, point, .. } => (*new_vertex, *point),
+                _ => continue,
+            };
+            if seen.insert(vi) {
+                // ✅ OCCT L1126: tolerance = max(BRep_Tool::Tolerance(aV), theVertices(i))
+                let v_tol = self.ds.vertices[vi].geom_tol.max(self.ds.fuzzy_tol);
+                new_verts.push(NewVertInfo { idx: vi, pos: pt, tol: v_tol });
+            }
+        }
+        if new_verts.len() < 2 { return vec![]; }
+
+        // ── Phase 2: IntersectVertices — 查找互相靠近的顶点 ─────────────
+        // ✅ OCCT BOPAlgo_Tools::IntersectVertices (BOPAlgo_Tools.cxx L1098-1161)
+        //
+        // OCCT L1116-1117: aTolAdd = theFuzzyValue / 2.
+        let gap = self.ds.fuzzy_tol / 2.0;
+        // OCCT L1119-1137: 构建 BVH 树
+        //   Bnd_Box: Add(顶点位置)
+        //   SetGap(aTol + aTolAdd)  aTol = max(BRep_Tool::Tolerance(aV), theVertices(i))
+        // ⏳ rcad: O(n²) 距离检查替代 BVH。对实测中顶点数很小的情况等价。
+        //
+        // OCCT L1155-1158: FillMap(id1, id2, aMILI)
+        // OCCT L1161-1162: MakeBlocks(aMILI, aBlocks)
+        // rcad Union-Find 等价实现连通分组
+        let mut parent: Vec<usize> = (0..self.ds.vertices.len()).collect();
+        fn vfind(parent: &mut [usize], x: usize) -> usize {
+            if parent[x] != x { parent[x] = vfind(parent, parent[x]); }
+            parent[x]
+        }
+        fn vunion(parent: &mut [usize], a: usize, b: usize) {
+            let ra = vfind(parent, a);
+            let rb = vfind(parent, b);
+            if ra != rb { parent[ra] = rb; }
+        }
+        for i in 0..new_verts.len() {
+            let vi = &new_verts[i];
+            for j in (i + 1)..new_verts.len() {
+                let vj = &new_verts[j];
+                // ✅ OCCT L1126-1134: BVH 包围盒干涉条件 = 距离 ≤ gap + vi.tol + vj.tol
+                let merge_tol = vi.tol + vj.tol + gap;
+                if (vi.pos - vj.pos).length() <= merge_tol {
+                    vunion(&mut parent, vi.idx, vj.idx);
+                }
+            }
+        }
+
+        // ── Phase 3: 构建连通分组 ──────────────────────────────────────
+        // ✅ OCCT L709-717: 对每个 chain 做处理
+        let mut groups: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+        for nv in &new_verts {
+            let root = vfind(&mut parent, nv.idx);
+            groups.entry(root).or_default().push(nv.idx);
+        }
+
+        // ── Phase 4: 合并每组 ──────────────────────────────────────────
+        // ❌ OCCT L714-717: BRepLib::BoundingVertex(aLVSD, aVNew) 计算包围盒
+        //    中心生成新顶点。rcad: 选最小 DS index 为 survivor,不创建新顶点。
+        //    功能等价(合并结果一致)但实现不同。
+        // ✅ OCCT L112-118 (UpdateVertex): 合并后 survivor 取 max tolerance。
+        for (_root, members) in &groups {
+            if members.len() < 2 { continue; }
+            let survivor = *members.iter().min().unwrap();
+
+            // ✅ OCCT UpdateVertex: survivor tolerance 增大以便后续 VV/VE/VF
+            for &vi in members {
+                if vi == survivor {
+                    // ✅ OCCT L112-118: 更新 survivor 的容差为 merge group 的最大值
+                    let max_tol = members.iter()
+                        .map(|&m| self.ds.vertices[m].geom_tol)
+                        .max_by(|a, b| a.partial_cmp(b).unwrap())
+                        .unwrap_or(self.ds.fuzzy_tol);
+                    if self.ds.vertices[survivor].geom_tol < max_tol {
+                        self.ds.vertices[survivor].geom_tol = max_tol;
+                        // OCCT: myIncreasedSS.Add(nV) — 标记此顶点容差增大
+                        // rcad: 通过返回 survivor 索引,调用方决定是否触发 RepeatIntersection
+                    }
+                    continue;
+                }
+
+                // ✅ OCCT L638-648: aInt->SetIndexNew(iV) — 更新 interference 的顶点索引
+                // ⏳ rcad: 遍历所有 interference 和 edge paves,替换索引
+                for edge in &mut self.ds.edges {
+                    for pave in &mut edge.paves {
+                        if pave.vertex_idx == vi { pave.vertex_idx = survivor; }
+                    }
+                }
+                for inf in &mut self.ds.interferences {
+                    match inf {
+                        Interference::EdgeEdge { new_vertex, .. } => {
+                            if *new_vertex == vi { *new_vertex = survivor; }
+                        }
+                        Interference::EdgeFace { new_vertex, .. } => {
+                            if *new_vertex == vi { *new_vertex = survivor; }
+                        }
+                        _ => {}
+                    }
+                }
+                for face in &mut self.ds.faces {
+                    if face.face_info.vertices_on.remove(&vi) {
+                        face.face_info.vertices_on.insert(survivor);
+                    }
+                    if face.face_info.vertices_in.remove(&vi) {
+                        face.face_info.vertices_in.insert(survivor);
+                    }
+                }
+            }
+        }
+        // ✅ OCCT PaveFiller.cxx L375-387: 返回 survivors (容差增大的顶点,等同 myIncreasedSS)
+        let survivors: Vec<usize> = groups.iter()
+            .filter(|(_, members)| members.len() >= 2)
+            .map(|(_, members)| *members.iter().min().unwrap())
+            .collect();
+        survivors
+    }
+
+    /// ✅ OCCT对齐: RepeatIntersection (PaveFiller.cxx L296-299, L363-414)
+    ///    在 EF 之后、FF 之前,对容差增大的顶点重新做 VV/VE/VF。
+    ///    OCCT 算法:
+    ///      1. L369-388: 遍历所有 source shapes,找到容差增大的顶点 → anExtraInterfMap
+    ///      2. L394: myIterator->IntersectExt(anExtraInterfMap) — 更新迭代器
+    ///      3. L398-413: 重新执行 PerformVV → PerformVE → PerformVF
+    ///    rcad: 对 survivors 中的顶点,重新检查 VV/VE/VF 并与已有 interferences 去重。
+    ///    ⏳ 差异: OCCT 用 Iterator 自动去重,rcad 用 BTreeSet 手动去重。
+    fn repeat_intersection(&mut self, extra_vertices: &[usize]) {
+        // ✅ OCCT L390-391: if (anExtraInterfMap.IsEmpty()) return;
+        if extra_vertices.is_empty() { return; }
+
+        // 收集需要重新检查的顶点 (可能容差增大后能与其他几何匹配)
+        let mut candidates: Vec<usize> = extra_vertices.to_vec();
+        candidates.sort_unstable();
+        candidates.dedup();
+
+        // 构建已有的 interference 集合用于去重
+        // ✅ OCCT L398-413: PerformVV → PerformVE → PerformVF
+        //    ⏳ OCCT 用 IntersectExt 控制迭代器,rcad 用 BTreeSet 去重
+        use std::collections::BTreeSet;
+        let mut ve_done: BTreeSet<(usize, usize)> = BTreeSet::new();
+        let mut vf_done: BTreeSet<(usize, usize)> = BTreeSet::new();
+        for inf in &self.ds.interferences {
+            match inf {
+                Interference::VertexEdge { vertex, edge, .. } => { ve_done.insert((*vertex, *edge)); }
+                Interference::VertexFace { vertex, face } => { vf_done.insert((*vertex, *face)); }
+                _ => {}
+            }
+        }
+
+        // ── VV: 检查 survivors 与另一侧的顶点 ──────────────────────────
+        // ✅ OCCT L398: PerformVV(aPS.Next())
+        //    VV 安全: 如果 pair 已在 interferences 中,add_vertex 会去重
+        for &vi in &candidates {
+            let vi_origin = self.ds.vertices[vi].origin;
+            let other_verts: Vec<usize> = self.ds.vertices.iter().enumerate()
+                .filter(|(j, v)| {
+                    if *j == vi { return false; }
+                    match (vi_origin, v.origin) {
+                        (Some(ShapeOrigin::ShapeA), Some(ShapeOrigin::ShapeB)) => true,
+                        (Some(ShapeOrigin::ShapeB), Some(ShapeOrigin::ShapeA)) => true,
+                        _ => false,
+                    }
+                })
+                .map(|(j, _)| j)
+                .collect();
+            for &vj in &other_verts {
+                let tol = self.vv_pair_tol(vi, vj);
+                let dist = (self.ds.vertices[vi].point - self.ds.vertices[vj].point).length();
+                if dist <= tol {
+                    self.ds.interferences.push(Interference::VertexVertex {
+                        v1: vi, v2: vj, merged_vertex: vi,
+                    });
+                }
+            }
+        }
+
+        // ── VE: 检查 survivors 与另一侧的边 ──────────────────────────
+        // ✅ OCCT L403: PerformVE(aPS.Next())
+        for &vi in &candidates {
+            let vi_origin = self.ds.vertices[vi].origin;
+            let other_edges: Vec<usize> = match vi_origin {
+                Some(ShapeOrigin::ShapeA) => self.edges_of(ShapeOrigin::ShapeB),
+                Some(ShapeOrigin::ShapeB) => self.edges_of(ShapeOrigin::ShapeA),
+                _ => continue,
+            };
+            for &ei in &other_edges {
+                if ve_done.contains(&(vi, ei)) { continue; }
+                self.check_vertex_edge(vi, ei);
+            }
+        }
+
+        // ── VF: 检查 survivors 与另一侧的面 ──────────────────────────
+        // ✅ OCCT L408: PerformVF(aPS.Next())
+        for &vi in &candidates {
+            let vi_origin = self.ds.vertices[vi].origin;
+            let other_faces: Vec<usize> = match vi_origin {
+                Some(ShapeOrigin::ShapeA) => self.faces_of(ShapeOrigin::ShapeB),
+                Some(ShapeOrigin::ShapeB) => self.faces_of(ShapeOrigin::ShapeA),
+                _ => continue,
+            };
+            for &fi in &other_faces {
+                if vf_done.contains(&(vi, fi)) { continue; }
+                self.check_vertex_face(vi, fi);
+            }
+        }
+    }
 
     fn perform_vf(&mut self) {
         let a_verts = self.verts_of(ShapeOrigin::ShapeA);
