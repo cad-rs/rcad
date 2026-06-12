@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use glam::{DVec2, DVec3};
 use rayon::prelude::*;
@@ -2379,6 +2379,10 @@ enum WireEdgeSource {
 
 /// ✅ OCCT对齐: Virtual edge used in the edge→wire pipeline.
 ///    对应 OCCT 的 TopoDS_Edge + PaveBlock 组合。
+///
+/// OCCT BOPAlgo_WireSplitter Angle2D 在每个顶点处计算边的 2D 方向角
+/// (BOPAlgo_WireSplitter.lxx L22-69 / .cxx L769-841),
+/// 用于多连接顶点处的最小顺时针角选择。
 #[derive(Debug, Clone)]
 struct WireSegment {
     start_vertex: usize,
@@ -2387,20 +2391,30 @@ struct WireSegment {
     /// true = FORWARD orientation (as stored in source);
     /// false = REVERSED orientation.
     forward: bool,
-    /// ✅ OCCT对齐: Seam edge 标记。seam 段只与其他 seam 段匹配,
-    ///    不与 section 段匹配,避免 seam 与 IC 端点共享顶点时形成退化 wire。
-    ///    对应 OCCT DoSplitSEAMOnFace 的逻辑分离。
+    /// ✅ OCCT对齐: Seam edge 标记。用于下游 face 分类(非 wire 构建)。
     is_seam: bool,
+    /// ✅ OCCT对齐: 起点处的 2D p-curve 切线方向角 [0, 2π) (Angle2D)。
+    ///    对 IC 段: pcurve 在起始参数处的正向方向角。
+    ///    对 seam 段: 等参数线方向(球面 u=const isoline → 垂直)。
+    ///    None = 未知(保留给非关键边界边,fallback 到位置匹配)。
+    tangent_start: Option<f64>,
+    /// ✅ OCCT对齐: 终点处的 2D p-curve 切线方向角 [0, 2π) (Angle2D)。
+    tangent_end: Option<f64>,
 }
 
 impl WireSegment {
     fn reversed(&self) -> Self {
+        // ✅ OCCT对齐: 反向段交换起点/终点,切向角反转(±π)。
         WireSegment {
             start_vertex: self.end_vertex,
             end_vertex: self.start_vertex,
             source: self.source.clone(),
             forward: !self.forward,
             is_seam: self.is_seam,
+            tangent_start: self.tangent_end
+                .map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+            tangent_end: self.tangent_start
+                .map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
         }
     }
 }
@@ -2414,11 +2428,8 @@ impl WireSegment {
 ///      — INTERNAL 边: FORWARD+REVERSED 都加 (L366-372)
 ///   2. **Section 边** (L478-489) — FORWARD+REVERSED 都加
 ///
-/// rcad 实现:
-///   使用 ds 中的 boundary_edges + intersection_curves。
-///   位置匹配(build_closed_wires)通过 quantized 3D 位置连接段,
-///   不要求顶点索引完全一致。
-fn collect_face_edge_segments(ds: &DS, face_idx: usize) -> Vec<WireSegment> {
+/// 加入 Angle2D 切线角度用于 BOPAlgo_WireSplitter 最小角转向选择。
+fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(usize) -> Option<Curve2d>) -> Vec<WireSegment> {
     let face = &ds.faces[face_idx];
     let mut segments: Vec<WireSegment> = Vec::new();
 
@@ -2440,31 +2451,31 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize) -> Vec<WireSegment> {
         let ev = edge.end_vertex;
 
         // ✅ OCCT对齐: seam 边检测 (L392-449)
-        //    OCCT L394: BRep_Tool::IsClosed(aE, aF) 检查边在面上是否闭合。
-        //    rcad: 对 Sphere 面,唯一边界边就是 seam (U/V 均闭合)。
-        //    对 Cylinder/Cone: start==end 表示 seam(等参线两端重合)。
         let is_seam = match &face.surface {
-            Surface3::Sphere(_) => true, // seam edge (separate from intersection curves)
+            Surface3::Sphere(_) => true,
             _ => (is_u_closed || is_v_closed)
                 && (sv == ev || are_verts_coincident(ds, sv, ev)),
         };
 
         if is_seam {
             // ✅ OCCT对齐: seam 边 FORWARD+REVERSED (BOPAlgo_Builder_2.cxx L444-447)
-            //    seam edge 始终加入 edge set,无论是否有 intersection curves。
-            //    OCCT BuildSplitFaces 对每条 seam edge 加 FORWARD+REVERSED,
-            //    BOPAlgo_BuilderFace 用 dual orientation 构建闭合 wire。
+            //    计算 UV 方向角: 投影端点 UV 获得切向。
+            let (t_start, t_end) = compute_seam_tangent_angles(ds, sv, ev, &face.surface);
             segments.push(WireSegment {
                 start_vertex: sv, end_vertex: ev,
                 source: WireEdgeSource::DsEdge(ei),
                 forward: true,
                 is_seam: true,
+                tangent_start: t_start,
+                tangent_end: t_end,
             });
             segments.push(WireSegment {
                 start_vertex: ev, end_vertex: sv,
                 source: WireEdgeSource::DsEdge(ei),
                 forward: false,
                 is_seam: true,
+                tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+                tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
             });
         } else {
             // ✅ OCCT对齐: 普通边按原始方向添加 (L374-378)
@@ -2473,39 +2484,89 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize) -> Vec<WireSegment> {
                 source: WireEdgeSource::DsEdge(ei),
                 forward: true,
                 is_seam: false,
+                tangent_start: None,
+                tangent_end: None,
             });
         }
     }
 
     // ================================================================
     // 2. Section 边 — 交线 (OCCT L478-489)
-    //    OCCT 为每个 FaceFace 交线的 PaveBlock 加 FORWARD+REVERSED,
-    //    BOPAlgo_WireSplitter 用最小角度转向选择正确路径。
-    //    rcad 的 build_closed_wires 用位置匹配,FORWARD+REVERSED 共存
-    //    会使正反向段在同一个 is_seam=false 池中交叉连接,形成退化 wire。
-    //    因此只加 FORWARD 段,利用 IC 端点自闭合形成 wire(适用于 sphere 面)。
+    //    OCCT 加 FORWARD+REVERSED, BOPAlgo_WireSplitter
+    //    用最小角度转向选择正确路径。
     // ================================================================
     for &ci in &face.face_info.curves_in {
         let ic = &ds.intersection_curves[ci];
         let sv = ic.start_vertex;
         let ev = ic.end_vertex;
-        // ✅ OCCT对齐: 跳过退化 IC(start==end)。OCCT MakeBlocks 的
-        //    IsValidBlockForFaces 会移除此类无效块; rcad 在收集段时过滤。
+        // ✅ OCCT对齐: 跳过退化 IC
         if sv == ev || ds.vertices[sv].point.distance_squared(ds.vertices[ev].point) < TOLERANCE_ABS_SQ {
             continue;
         }
-        // ✅ OCCT对齐: section 边 FORWARD 方向 (OCCT 加双方向,rcad 因
-        //    build_closed_wires 无角度选择能力,只加 FORWARD 防止退化 wire)
+
+        // 计算 pcurve 切线角度 (Angle2D)
+        let pcurve = pcurve_lookup(ci);
+        let (t_start, t_end) = if let Some(ref pc) = pcurve {
+            let domain = ic.t_range;
+            (pcurve_tangent_angle(pc, domain[0], domain), pcurve_tangent_angle(pc, domain[1], domain))
+        } else {
+            (None, None)
+        };
+
+        // ✅ OCCT对齐: FORWARD+REVERSED (BOPAlgo_Builder_2.cxx L478-489)
         segments.push(WireSegment {
             start_vertex: sv,
             end_vertex: ev,
             source: WireEdgeSource::IntersectionCurve(ci),
             forward: true,
             is_seam: false,
+            tangent_start: t_start,
+            tangent_end: t_end,
+        });
+        segments.push(WireSegment {
+            start_vertex: ev,
+            end_vertex: sv,
+            source: WireEdgeSource::IntersectionCurve(ci),
+            forward: false,
+            is_seam: false,
+            tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+            tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
         });
     }
 
     segments
+}
+
+/// ✅ OCCT对齐: 计算 seam 边在面上的 UV 方向角。
+///    球面 seam = u=const isoline → 切向沿 V 轴。
+///    柱面 seam 类似。
+fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface: &Surface3) -> (Option<f64>, Option<f64>) {
+    match surface {
+        Surface3::Sphere(sph) => {
+            let uvs = sph.world_to_uv(ds.vertices[sv].point);
+            let uve = sph.world_to_uv(ds.vertices[ev].point);
+            let dir = uve - uvs;
+            if dir.length_squared() < 1e-30 {
+                return (None, None);
+            }
+            let a = dir_to_angle(dir);
+            (Some(a), Some(a))
+        }
+        Surface3::Cylinder(cyl) => {
+            // Cylinder seam: u=0 or u=2π isoline, along V direction.
+            // Compute approximate direction.
+            let sv_pt = ds.vertices[sv].point;
+            let ev_pt = ds.vertices[ev].point;
+            // Project onto cylinder axis to get V coordinate
+            let ax = cyl.axis.normalize_or_zero();
+            let sv_v = (sv_pt - cyl.origin).dot(ax);
+            let ev_v = (ev_pt - cyl.origin).dot(ax);
+            let dir = if ev_v > sv_v { DVec2::new(0.0, 1.0) } else { DVec2::new(0.0, -1.0) };
+            let a = dir_to_angle(dir);
+            (Some(a), Some(a))
+        }
+        _ => (None, None),
+    }
 }
 
 /// 检查两个 DS 顶点是否在同一位置 (容差内)
@@ -2515,91 +2576,374 @@ fn are_verts_coincident(ds: &DS, vi: usize, vj: usize) -> bool {
     d2 < TOLERANCE_ABS_SQ
 }
 
-/// ✅ OCCT对齐: 从边集合构建闭合 wire — 使用位置匹配 + is_seam 过滤
-///    (PerformLoops L239-383)
+// ================================================================
+// ✅ OCCT对齐: Angle2D 辅助函数 (BOPAlgo_WireSplitter_1.cxx L769-841)
+// ================================================================
+
+/// Convert a 2D direction vector to an angle in [0, 2π).
+/// 对应 OCCT 中 atan2(dir.y, dir.x) 并归一化到 [0, 2π)。
+#[inline]
+fn dir_to_angle(dir: DVec2) -> f64 {
+    let a = dir.y.atan2(dir.x);
+    if a < 0.0 { a + std::f64::consts::TAU } else { a }
+}
+
+/// Compute the 2D p-curve tangent direction angle at parameter t.
+/// Uses finite difference with a step proportional to the domain length.
+/// ✅ OCCT对齐: Angle2D 自适应步长 (L796-841):
+///   dt = max(curve_resolution(tol2d), Precision::PConfusion())
+///   对非 Line 曲线还考虑曲率半径。这里用简化的相对步长。
+fn pcurve_tangent_angle(curve: &Curve2d, t: f64, domain: [f64; 2]) -> Option<f64> {
+    let range = (domain[1] - domain[0]).abs();
+    let dt = (1e-8 * range.max(1.0)).max(1e-12);
+
+    // For start point: forward difference; for end point: backward difference;
+    // for interior: central difference.
+    let (p_lo, p_hi) = if (t - domain[0]).abs() < dt * 0.5 {
+        (curve.point_at(t), curve.point_at(domain[0] + dt))
+    } else if (t - domain[1]).abs() < dt * 0.5 {
+        (curve.point_at(domain[1] - dt), curve.point_at(t))
+    } else {
+        (curve.point_at(t - dt), curve.point_at(t + dt))
+    };
+
+    let dir = p_hi - p_lo;
+    if dir.length_squared() < 1e-40 {
+        return None;
+    }
+    Some(dir_to_angle(dir))
+}
+
+/// ✅ OCCT对齐: ClockWiseAngle (BOPAlgo_WireSplitter_1.cxx L622-660)
+///    计算从入边反向到出边的顺时针转角 [0, 2π)。
+///    值越小转向越「锐利」（更顺时针）。
+///    入边角度 angle_in: 作为入边(到达顶点)时的角度 (对应 in_flag=true)
+///    出边角度 angle_out: 作为出边(离开顶点)时的角度 (对应 in_flag=false)
+fn clock_wise_angle(angle_in: f64, angle_out: f64) -> f64 {
+    let a1 = (angle_in + std::f64::consts::PI) % std::f64::consts::TAU;
+    let mut d = a1 - angle_out;
+    if d <= 0.0 {
+        d += std::f64::consts::TAU;
+    }
+    d
+}
+
+/// ✅ OCCT对齐: 从边集合构建闭合 wire — 使用 BOPAlgo_WireSplitter
+///    MakeConnexityBlocks + Path 角度转向 (PerformLoops L239-383)
 ///
-/// seam 段只与其他 seam 段匹配,不与 section 段匹配(避免 seam 端点
-/// 与 IC 端点共享 3D 位置时形成退化 2 段 wire)。对应 OCCT
-/// DoSplitSEAMOnFace 的逻辑分离。
+/// 算法步骤:
+///   1. MakeConnexityBlocks: BFS 按共享顶点分组
+///   2. Regular block (所有顶点 degree=2): 简单的链式跟随
+///   3. Irregular block (有 degree>2 顶点): SmartMap + Path 最小角选择
 fn build_closed_wires(segments: &[WireSegment], ds: &DS) -> Vec<Vec<usize>> {
     if segments.is_empty() {
         return vec![];
     }
 
-    let tol = TOLERANCE_ABS * 100.0;
-    // 为每个 segment 计算量化端点 + seam 标记
-    let seg_keys: Vec<(u64, u64, bool)> = segments.iter().map(|seg| {
-        let sp = ds.vertices[seg.start_vertex].point;
-        let ep = ds.vertices[seg.end_vertex].point;
-        (quantize_pos(sp, tol), quantize_pos(ep, tol), seg.is_seam)
-    }).collect();
-
     let n = segments.len();
-    let mut visited = vec![false; n];
-    let mut wires: Vec<Vec<usize>> = Vec::new();
 
-    // 构建位置→段索引映射 (只匹配同 is_seam 的段)
-    // ✅ OCCT对齐: seam/non-seam 分开匹配避免正向段和反向段交叉连接。
-    //    OCCT BOPAlgo_WireSplitter 处理含 seam 边的 wire set 时,
-    //    seam 边自身 dual orientation 形成闭合 seam wire (2-point)。
-    //    下游 perform_areas 将 seam wire 作为 hole 合并到主 wire。
-    let mut pos_to_segs: std::collections::HashMap<(u64, bool), Vec<usize>> =
-        std::collections::HashMap::new();
-    for (si, (sk, _ek, is_seam)) in seg_keys.iter().enumerate() {
-        pos_to_segs.entry((*sk, *is_seam)).or_default().push(si);
+    // Build vertex→segments adjacency (no is_seam isolation)
+    let mut vert_to_segs: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (si, seg) in segments.iter().enumerate() {
+        vert_to_segs.entry(seg.start_vertex).or_default().push(si);
+        vert_to_segs.entry(seg.end_vertex).or_default().push(si);
     }
 
-    // 从任意未访问段开始遍历
-    loop {
-        let start_idx = match visited.iter().position(|&v| !v) {
-            Some(idx) => idx,
-            None => break,
-        };
+    // MakeConnexityBlocks: BFS to find connected components
+    let mut visited_seg = vec![false; n];
+    let mut blocks: Vec<Vec<usize>> = Vec::new();
 
-        let mut wire: Vec<usize> = Vec::new();
-        let target_key = seg_keys[start_idx].0; // start 位置
-        let start_seam = seg_keys[start_idx].2; // is_seam 标记
-        let mut ci = start_idx;
-        let mut last_key = seg_keys[start_idx].0;
-        let mut arrived_key = seg_keys[start_idx].1; // end 位置
+    for si in 0..n {
+        if visited_seg[si] {
+            continue;
+        }
+        let mut block = Vec::new();
+        let mut queue = VecDeque::new();
+        queue.push_back(si);
+        visited_seg[si] = true;
 
-        loop {
-            if visited[ci] && ci != start_idx {
-                break;
-            }
-            visited[ci] = true;
-            wire.push(ci);
-
-            // 回到起点 → 闭合
-            if arrived_key == target_key && wire.len() > 1 {
-                break;
-            }
-
-            // ✅ OCCT对齐: WireSplitter 等价 — 排除回到 last_key 的段防止 backtracking
-            let next = match pos_to_segs.get(&(arrived_key, start_seam)) {
-                Some(candidates) => candidates.iter().copied()
-                    .filter(|&ni| !visited[ni])
-                    .find(|&ni| seg_keys[ni].1 != last_key)
-                    .or_else(|| candidates.iter().copied().find(|&ni| !visited[ni])),
-                None => None,
-            };
-
-            match next {
-                Some(ni) => {
-                    last_key = arrived_key;
-                    ci = ni;
-                    arrived_key = seg_keys[ni].1;
+        while let Some(ci) = queue.pop_front() {
+            block.push(ci);
+            let seg = &segments[ci];
+            for &vi in &[seg.start_vertex, seg.end_vertex] {
+                if let Some(neighbors) = vert_to_segs.get(&vi) {
+                    for &ni in neighbors {
+                        if !visited_seg[ni] {
+                            visited_seg[ni] = true;
+                            queue.push_back(ni);
+                        }
+                    }
                 }
-                None => break,
             }
         }
+        blocks.push(block);
+    }
 
-        if wire.len() >= 2 {
-            wires.push(wire);
+    // Process each block
+    let mut wires: Vec<Vec<usize>> = Vec::new();
+
+    for block in &blocks {
+        if block.len() < 2 {
+            continue;
+        }
+
+        // Check vertex degrees within this block
+        let mut block_vert_count: HashMap<usize, usize> = HashMap::new();
+        for &si in block {
+            let seg = &segments[si];
+            *block_vert_count.entry(seg.start_vertex).or_default() += 1;
+            *block_vert_count.entry(seg.end_vertex).or_default() += 1;
+        }
+        let is_regular = block_vert_count.values().all(|&d| d == 2);
+
+        if is_regular {
+            // Regular block: all degree 2, simple chain following
+            if let Some(wire) = build_regular_wire(block, segments, &vert_to_segs) {
+                wires.push(wire);
+            }
+        } else {
+            // Irregular block: SmartMap + angle-based Path walking
+            let block_wires = build_irregular_wires(block, segments);
+            wires.extend(block_wires);
         }
     }
 
     wires
+}
+
+/// ✅ OCCT对齐: 从 Regular block (所有顶点 degree=2) 构建闭合 wire。
+///    简单的链式跟随,无角度选择必要。
+fn build_regular_wire(
+    block: &[usize],
+    segments: &[WireSegment],
+    vert_to_segs: &HashMap<usize, Vec<usize>>,
+) -> Option<Vec<usize>> {
+    let block_set: std::collections::HashSet<usize> = block.iter().copied().collect();
+    let mut visited = vec![false; segments.len()];
+    let mut wire: Vec<usize> = Vec::new();
+
+    let start_si = block[0];
+    let start_seg = &segments[start_si];
+    let start_vertex = start_seg.start_vertex;
+
+    let mut ci = start_si;
+    // We start at start_vertex. The first segment takes us to end_vertex.
+    let mut arrived_vertex = start_seg.end_vertex;
+
+    loop {
+        visited[ci] = true;
+        wire.push(ci);
+
+        // Check if we've returned to the starting vertex
+        if arrived_vertex == start_vertex && wire.len() >= 2 {
+            break;
+        }
+
+        // Find next unvisited segment at arrived_vertex in this block
+        let next = vert_to_segs.get(&arrived_vertex).and_then(|neighbors| {
+            neighbors.iter().find(|&&ni| !visited[ni] && block_set.contains(&ni))
+        }).copied();
+
+        match next {
+            Some(ni) => {
+                let seg = &segments[ni];
+                ci = ni;
+                arrived_vertex = if seg.start_vertex == arrived_vertex {
+                    seg.end_vertex
+                } else {
+                    seg.start_vertex
+                };
+            }
+            None => break,
+        }
+    }
+
+    if wire.len() >= 2 { Some(wire) } else { None }
+}
+
+/// ✅ OCCT对齐: EdgeInfo 结构 (BOPAlgo_WireSplitter.lxx L22-69)
+#[derive(Debug, Clone)]
+struct EdgeInfo {
+    seg_idx: usize,
+    passed: bool,
+    /// true = entering the vertex (vertex is end_vertex);
+    /// false = leaving the vertex (vertex is start_vertex)
+    in_flag: bool,
+    /// true = internal edge (intersection curve), not part of original boundary
+    is_inside: bool,
+    /// 2D direction angle [0, 2π) at this vertex
+    angle: f64,
+}
+
+/// ✅ OCCT对齐: 为 irregular block 构建 SmartMap + Path 行走。
+///    (BOPAlgo_WireSplitter_1.cxx L359-618)
+fn build_irregular_wires(block: &[usize], segments: &[WireSegment]) -> Vec<Vec<usize>> {
+    // Build SmartMap: vertex → Vec<EdgeInfo>
+    let mut smart_map: HashMap<usize, Vec<EdgeInfo>> = HashMap::new();
+
+    for &si in block {
+        let seg = &segments[si];
+        let is_inside = matches!(seg.source, WireEdgeSource::IntersectionCurve(_));
+
+        // At start_vertex: edge LEAVES the vertex (in_flag = false)
+        if let Some(angle) = seg.tangent_start {
+            smart_map.entry(seg.start_vertex).or_default().push(EdgeInfo {
+                seg_idx: si,
+                passed: false,
+                in_flag: false,
+                is_inside,
+                angle,
+            });
+        }
+
+        // At end_vertex: edge ENTERS the vertex (in_flag = true)
+        if let Some(angle) = seg.tangent_end {
+            smart_map.entry(seg.end_vertex).or_default().push(EdgeInfo {
+                seg_idx: si,
+                passed: false,
+                in_flag: true,
+                is_inside,
+                angle,
+            });
+        }
+    }
+
+    // Walk paths from each unpassed segment
+    let mut wires: Vec<Vec<usize>> = Vec::new();
+    for &start_si in block {
+        if is_seg_passed(&smart_map, start_si) {
+            continue;
+        }
+        if let Some(wire) = walk_path(start_si, segments, &mut smart_map) {
+            wires.push(wire);
+        }
+    }
+    wires
+}
+
+/// Check if a segment has been marked passed at a specific vertex with a specific in_flag.
+fn is_seg_passed(smart_map: &HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize) -> bool {
+    for infos in smart_map.values() {
+        if infos.iter().any(|ei| ei.seg_idx == seg_idx && ei.passed) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Mark only the specific EdgeInfo for a segment at a vertex+in_flag as passed.
+/// ✅ OCCT对齐: passed 标记在每个顶点的方向级 EdgeInfo 上,
+///    而不是全局边级别,允许同一边的正反向段在不同顶点独立使用。
+fn mark_edge_passed(smart_map: &mut HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize, vertex: usize, in_flag: bool) {
+    if let Some(infos) = smart_map.get_mut(&vertex) {
+        for info in infos.iter_mut() {
+            if info.seg_idx == seg_idx && info.in_flag == in_flag {
+                info.passed = true;
+                return;
+            }
+        }
+    }
+}
+
+/// Mark both orientations of a segment as passed (used for initial cleanup).
+/// Not used during Path walking — use mark_edge_passed instead.
+#[allow(dead_code)]
+fn mark_seg_passed(smart_map: &mut HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize) {
+    for infos in smart_map.values_mut() {
+        for info in infos.iter_mut() {
+            if info.seg_idx == seg_idx {
+                info.passed = true;
+            }
+        }
+    }
+}
+
+/// Find the EdgeInfo angle for a segment at a vertex with the given in_flag.
+fn find_angle_at(smart_map: &HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize, vertex: usize, in_flag: bool) -> Option<f64> {
+    smart_map.get(&vertex)?.iter()
+        .find(|ei| ei.seg_idx == seg_idx && ei.in_flag == in_flag)
+        .map(|ei| ei.angle)
+}
+
+/// Select the best outgoing edge at a vertex using ClockWiseAngle minimum selection.
+/// (OCCT L622-660)
+fn select_best_outgoing<'a>(
+    candidates: &[&'a EdgeInfo],
+    angle_in: f64,
+) -> Option<&'a EdgeInfo> {
+    if candidates.is_empty() {
+        return None;
+    }
+    // Special rule (OCCT): when incoming is boundary and there is exactly 1
+    // internal outgoing edge, prefer it over angle-based selection.
+    if candidates.len() == 1 {
+        return Some(candidates[0]);
+    }
+    candidates.iter()
+        .min_by(|a, b| {
+            clock_wise_angle(angle_in, a.angle)
+                .partial_cmp(&clock_wise_angle(angle_in, b.angle))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .copied()
+}
+
+/// ✅ OCCT对齐: Path 行走函数 (BOPAlgo_WireSplitter_1.cxx L359-618).
+///    从起始段开始行走,在每个多连接顶点用 ClockWiseAngle 选择出射边。
+///
+///    标记策略: 在每个顶点使用 per-EdgeInfo passed 标记,
+///    允许同一边的正反向独立遍历(BOPAlgo_WireSplitter.lxx L22-69)。
+fn walk_path(
+    start_si: usize,
+    segments: &[WireSegment],
+    smart_map: &mut HashMap<usize, Vec<EdgeInfo>>,
+) -> Option<Vec<usize>> {
+    let start_seg = &segments[start_si];
+    let start_vertex = start_seg.start_vertex;
+
+    let mut wire: Vec<usize> = Vec::new();
+    let mut ci = start_si;
+    let mut arrived_vertex = start_seg.end_vertex;
+
+    loop {
+        // ✅ OCCT对齐: 标记当前边的入边方向(到达当前顶点 in_flag=true)
+        mark_edge_passed(smart_map, ci, arrived_vertex, true);
+
+        // 标记当前边的出边方向(从它的起始顶点出发 in_flag=false)
+        let seg = &segments[ci];
+        let leave_vertex = seg.start_vertex;
+        mark_edge_passed(smart_map, ci, leave_vertex, false);
+
+        wire.push(ci);
+
+        // Check if we've returned to the start vertex → wire closed
+        if arrived_vertex == start_vertex && wire.len() >= 2 {
+            break;
+        }
+
+        // Get angle of current edge arriving at arrived_vertex (in_flag = true)
+        let angle_in = match find_angle_at(smart_map, ci, arrived_vertex, true) {
+            Some(a) => a,
+            None => break,
+        };
+
+        // Gather unpassed outgoing edges at arrived_vertex
+        let candidates: Vec<&EdgeInfo> = if let Some(infos) = smart_map.get(&arrived_vertex) {
+            infos.iter().filter(|ei| !ei.passed && !ei.in_flag).collect()
+        } else {
+            break;
+        };
+
+        let best = match select_best_outgoing(&candidates, angle_in) {
+            Some(e) => e,
+            None => break,
+        };
+
+        ci = best.seg_idx;
+        arrived_vertex = segments[ci].end_vertex;
+    }
+
+    if wire.len() >= 2 { Some(wire) } else { None }
 }
 
 /// ✅ OCCT对齐: 从 wire 的边链构建 3D boundary polygon。
@@ -2685,6 +3029,8 @@ fn wire_faces_to_sub_faces(
 ///
 /// rcad 实现: 用近似面积分类 outer/hole, 为每个 outer + 其 holes 创建 WireFace。
 /// 多条独立 outer wire 产生多个 WireFace（多区域分割）。
+/// ✅ OCCT对齐: 分类 wires 为 outer/hole/independent (PerformAreas)。
+///    角度转向后 seam 边已正确嵌入主 wire,不再需要 seam merge。
 fn perform_areas(
     wires: &[Vec<usize>],
     segments: &[WireSegment],
@@ -2695,37 +3041,18 @@ fn perform_areas(
         return vec![];
     }
 
-    // ✅ OCCT对齐: 分类 wires 为 valid(≥3 点) 和 seam-only(<3 点且全是 seam)。
-    //    seam-only wires 对应 OCCT 中 seam 边形成的独立 wire。
-    //    OCCT DoSplitSEAMOnFace 使 seam 在 PerformLoops 中单独成 wire,
-    //    PerformAreas 通过 IsHole 将其作为 inner wire 分配到主 face。
-    //    rcad: valid wires 做 outer/hole 分类; seam-only wires 作为 inner wires。
-    let mut seam_wire_idxs: Vec<usize> = Vec::new();
     struct WireData { wire_idx: usize, boundary: Vec<DVec3>, area: f64 }
     let mut wds: Vec<WireData> = wires.iter().enumerate().filter_map(|(wi, w)| {
         let b = wire_boundary_3d(w, segments, ds);
         if b.len() < 3 {
-            // 检查是否 seam-only wire (所有 segment 都是 seam)
-            let all_seam = w.iter().all(|&si| segments[si].is_seam);
-            if all_seam {
-                seam_wire_idxs.push(wi);
-            }
             return None;
         }
         let a = projected_area_xy(&b);
         Some(WireData { wire_idx: wi, boundary: b, area: a })
     }).collect();
 
-    // 没有 valid wires → 把 seam wires 作为 outer
     if wds.is_empty() {
-        if seam_wire_idxs.is_empty() {
-            return vec![];
-        }
-        // 每个 seam wire 单独成 WireFace (退化为 2-point boundary)
-        return seam_wire_idxs.iter().map(|&wi| WireFace {
-            outer_wire: wires[wi].clone(),
-            inner_wires: vec![],
-        }).collect();
+        return vec![];
     }
 
     // 排序,最大为 outer
@@ -2746,35 +3073,8 @@ fn perform_areas(
         }
     }
 
-    // ✅ OCCT对齐: 将 seam wires 合并到 outer wire 中(BOPAlgo_Builder_2.cxx L444-447)
-    //    seam edge 在 OCCT 中是 outer wire 的一部分(非 hole)。seam wire 是
-    //    2-segment 闭环(v0→v1→v0),应插入 outer wire 中 v0-v1 相邻位置。
-    let mut merged_outer = wires[outer_wire_idx].clone();
-    if !seam_wire_idxs.is_empty() {
-        for &swi in &seam_wire_idxs {
-            let seam_wire = &wires[swi];
-            if seam_wire.len() < 2 { continue; }
-            let seg_a = &segments[seam_wire[0]];
-            let sa_pt = ds.vertices[seg_a.start_vertex].point;
-            let ea_pt = ds.vertices[seg_a.end_vertex].point;
-            // Find segment in outer wire matching either orientation of the seam
-            // Tolerance: squared position match
-            let tol_sq = TOLERANCE_LEN_MIN * TOLERANCE_LEN_MIN;
-            let found = (0..merged_outer.len()).find(|&i| {
-                let oseg = &segments[merged_outer[i]];
-                let os_sv = ds.vertices[oseg.start_vertex].point;
-                let os_ev = ds.vertices[oseg.end_vertex].point;
-                (os_sv.distance_squared(sa_pt) < tol_sq && os_ev.distance_squared(ea_pt) < tol_sq)
-                    || (os_sv.distance_squared(ea_pt) < tol_sq && os_ev.distance_squared(sa_pt) < tol_sq)
-            });
-            if let Some(pos) = found {
-                merged_outer.splice(pos+1..pos+1, seam_wire.iter().copied());
-            }
-        }
-    }
-
     let mut result = vec![WireFace {
-        outer_wire: merged_outer,
+        outer_wire: wires[outer_wire_idx].clone(),
         inner_wires: hole_wire_idxs.iter().map(|&wi| wires[wi].clone()).collect(),
     }];
     for &wi in &indep_wire_idxs {
@@ -2808,59 +3108,66 @@ fn point_in_polygon_xy(pt: DVec3, poly: &[DVec3]) -> bool {
     inside
 }
 
-/// ✅ OCCT对齐: split_face 的 OCCT 等价路径 — 边→wire→WireFace
-///
-///    对应 OCCT BuildSplitFaces (L232-548) + BuilderFace::Perform (L117-148)
-pub(crate) fn split_face_occt_wire_pipeline(
-    ds: &DS,
-    face_idx: usize,
-) -> Option<(Vec<WireSegment>, Vec<WireFace>)> {
-    let face = &ds.faces[face_idx];
-    if !matches!(face.surface, Surface3::Sphere(_)) {
-        return None;
-    }
-    if face.face_info.curves_in.is_empty() {
-        return None;
-    }
-    let segments = collect_face_edge_segments(ds, face_idx);
-    if segments.is_empty() {
-        return None;
-    }
-    // Debug: check IC endpoints for sphere faces
-    if std::env::var("RCAD_DEBUG_IC").is_ok() && matches!(face.surface, Surface3::Sphere(_)) {
-        for &ci in &face.face_info.curves_in {
-            let ic = &ds.intersection_curves[ci];
-            let sv = &ds.vertices[ic.start_vertex];
-            let ev = &ds.vertices[ic.end_vertex];
-            eprintln!("[IC_RAW] ci={} t=[{:.6},{:.6}] sv=({:.6},{:.6},{:.6}) ev=({:.6},{:.6},{:.6})",
-                ci, ic.t_range[0], ic.t_range[1],
-                sv.point.x, sv.point.y, sv.point.z,
-                ev.point.x, ev.point.y, ev.point.z);
+impl<'a> BooleanBuilder<'a> {
+    /// ✅ OCCT对齐: split_face 的 OCCT 等价路径 — 边→wire→WireFace (方法版)
+    ///
+    ///    对应 OCCT BuildSplitFaces (L232-548) + BuilderFace::Perform (L117-148)
+    ///    使用 collect_face_edge_segments + build_closed_wires +
+    ///    BOPAlgo_WireSplitter 角度转向。
+    pub(crate) fn split_face_occt_wire_pipeline(
+        &self,
+        face_idx: usize,
+    ) -> Option<(Vec<WireSegment>, Vec<WireFace>)> {
+        let ds = self.ds;
+        let face = &ds.faces[face_idx];
+        if !matches!(face.surface, Surface3::Sphere(_)) {
+            return None;
         }
-        let ics: Vec<_> = segments.iter().filter(|s| !s.is_seam).collect();
-        if ics.len() >= 2 {
-            for i in 0..ics.len() {
-                let si = &ics[i];
-                let sj = &ics[(i+1)%ics.len()];
-                let si_ep = ds.vertices[si.end_vertex].point;
-                let sj_sp = ds.vertices[sj.start_vertex].point;
-                let d = si_ep.distance_squared(sj_sp);
-                eprintln!("[IC_CHAIN] seg[{}] ({:.3},{:.3},{:.3})→({:.3},{:.3},{:.3}) → seg[{}] dist={:.12}",
-                    i, ds.vertices[si.start_vertex].point.x, ds.vertices[si.start_vertex].point.y, ds.vertices[si.start_vertex].point.z,
-                    si_ep.x, si_ep.y, si_ep.z,
-                    (i+1)%ics.len(), d);
+        if face.face_info.curves_in.is_empty() {
+            return None;
+        }
+        // Build pcurve lookup closure for this face
+        let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
+        let segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
+        if segments.is_empty() {
+            return None;
+        }
+        // Debug: check IC endpoints for sphere faces
+        if std::env::var("RCAD_DEBUG_IC").is_ok() && matches!(face.surface, Surface3::Sphere(_)) {
+            for &ci in &face.face_info.curves_in {
+                let ic = &ds.intersection_curves[ci];
+                let sv = &ds.vertices[ic.start_vertex];
+                let ev = &ds.vertices[ic.end_vertex];
+                eprintln!("[IC_RAW] ci={} t=[{:.6},{:.6}] sv=({:.6},{:.6},{:.6}) ev=({:.6},{:.6},{:.6})",
+                    ci, ic.t_range[0], ic.t_range[1],
+                    sv.point.x, sv.point.y, sv.point.z,
+                    ev.point.x, ev.point.y, ev.point.z);
+            }
+            let ics: Vec<_> = segments.iter().filter(|s| !s.is_seam).collect();
+            if ics.len() >= 2 {
+                for i in 0..ics.len() {
+                    let si = &ics[i];
+                    let sj = &ics[(i+1)%ics.len()];
+                    let si_ep = ds.vertices[si.end_vertex].point;
+                    let sj_sp = ds.vertices[sj.start_vertex].point;
+                    let d = si_ep.distance_squared(sj_sp);
+                    eprintln!("[IC_CHAIN] seg[{}] ({:.3},{:.3},{:.3})→({:.3},{:.3},{:.3}) → seg[{}] dist={:.12}",
+                        i, ds.vertices[si.start_vertex].point.x, ds.vertices[si.start_vertex].point.y, ds.vertices[si.start_vertex].point.z,
+                        si_ep.x, si_ep.y, si_ep.z,
+                        (i+1)%ics.len(), d);
+                }
             }
         }
+        let wires = build_closed_wires(&segments, ds);
+        if wires.is_empty() {
+            return None;
+        }
+        let wfs = perform_areas(&wires, &segments, ds, face_idx);
+        if wfs.is_empty() {
+            return None;
+        }
+        Some((segments, wfs))
     }
-    let wires = build_closed_wires(&segments, ds);
-    if wires.is_empty() {
-        return None;
-    }
-    let wfs = perform_areas(&wires, &segments, ds, face_idx);
-    if wfs.is_empty() {
-        return None;
-    }
-    Some((segments, wfs))
 }
 
 impl<'a> BooleanBuilder<'a> {
@@ -3188,7 +3495,7 @@ impl<'a> BooleanBuilder<'a> {
 
             // ✅ OCCT对齐: 尝试用 emit_wire_face 发射 sphere 面
             let wire_emit_used = if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) {
-                if let Some((w_segments, w_faces)) = split_face_occt_wire_pipeline(self.ds, fi) {
+                if let Some((w_segments, w_faces)) = self.split_face_occt_wire_pipeline(fi) {
                     for wf in &w_faces {
                         let src = self.ds.faces[fi].source_face_idx;
                         result.emit_wire_face(fi, wf, &w_segments, self.ds, false, FaceOrigin::FromA(src));
@@ -3359,7 +3666,7 @@ impl<'a> BooleanBuilder<'a> {
             // ✅ OCCT对齐: B-side sphere 面使用 emit_wire_face (同 A-side)
             //    OCCT BuildSplitFaces 对 A/B 侧面统一处理。
             let wire_emit_used = if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) {
-                if let Some((w_segments, w_faces)) = split_face_occt_wire_pipeline(self.ds, fi) {
+                if let Some((w_segments, w_faces)) = self.split_face_occt_wire_pipeline(fi) {
                     for wf in &w_faces {
                         let src = self.ds.faces[fi].source_face_idx;
                         result.emit_wire_face(fi, wf, &w_segments, self.ds, flip, FaceOrigin::FromB(src));
