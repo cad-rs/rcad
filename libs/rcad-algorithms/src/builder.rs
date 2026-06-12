@@ -2476,11 +2476,52 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
         };
 
         if is_seam {
-            // ✅ OCCT对齐: seam 边 FORWARD+REVERSED (BOPAlgo_Builder_2.cxx L444-447)
-            //    计算 UV 方向角: 投影端点 UV 获得切向。
-            let (t_start, t_end) = compute_seam_tangent_angles(ds, sv, ev, &face.surface);
+            // ✅ OCCT对齐: DoSplitSEAMOnFace — seam 只覆盖到 IC 端点在 seam 上的位置
+            //    对球面: seam 端点若不是任何 IC 端点,改为最近的在 seam 上的 IC 端点。
+            let (sv_use, ev_use) = if matches!(face.surface, Surface3::Sphere(_))
+                && !face.face_info.curves_in.is_empty()
+            {
+                let mut replace = |vi: usize| -> usize {
+                    if let Surface3::Sphere(sph) = &face.surface {
+                        let seam_tol = TOLERANCE_COORD_SUB;
+                        let pt = ds.vertices[vi].point;
+                        let uv = sph.world_to_uv(pt);
+                        let on_seam = uv.x.abs() < seam_tol || (uv.x - std::f64::consts::TAU).abs() < seam_tol;
+                        if on_seam {
+                            // Check if this seam vertex is shared with any IC endpoint
+                            for &ci in &face.face_info.curves_in {
+                                let ic = &ds.intersection_curves[ci];
+                                if ic.start_vertex == vi || ic.end_vertex == vi {
+                                    return vi; // Already shared → keep
+                                }
+                            }
+                            // Not shared → find the nearest IC endpoint on the seam
+                            let mut best: Option<(usize, f64)> = None;
+                            for &ci in &face.face_info.curves_in {
+                                let ic = &ds.intersection_curves[ci];
+                                for &evi in &[ic.start_vertex, ic.end_vertex] {
+                                    if evi == vi { continue; }
+                                    let euv = sph.world_to_uv(ds.vertices[evi].point);
+                                    if euv.x.abs() < seam_tol || (euv.x - std::f64::consts::TAU).abs() < seam_tol {
+                                        let d = (uv - euv).length_squared();
+                                        if best.map_or(true, |(_, bd)| d < bd) {
+                                            best = Some((evi, d));
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some((best_vi, _)) = best { return best_vi; }
+                        }
+                    }
+                    vi
+                };
+                (replace(sv), replace(ev))
+            } else {
+                (sv, ev)
+            };
+            let (t_start, t_end) = compute_seam_tangent_angles(ds, sv_use, ev_use, &face.surface);
             segments.push(WireSegment {
-                start_vertex: sv, end_vertex: ev,
+                start_vertex: sv_use, end_vertex: ev_use,
                 source: WireEdgeSource::DsEdge(ei),
                 forward: true,
                 is_seam: true,
@@ -2488,7 +2529,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                 tangent_end: t_end,
             });
             segments.push(WireSegment {
-                start_vertex: ev, end_vertex: sv,
+                start_vertex: ev_use, end_vertex: sv_use,
                 source: WireEdgeSource::DsEdge(ei),
                 forward: false,
                 is_seam: true,

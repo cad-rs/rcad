@@ -2456,6 +2456,8 @@ impl<'a> PaveFiller<'a> {
                 continue;
             }
             tc.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            // Dedup near-equal angles (same intersection point from adjacent edges)
+            tc.dedup_by(|a, b| (*a - *b).abs() < tol);
             // ✅ OCCT对齐: 弧中点面内测试选择候选弧(IntTools_FaceFace.cxx L1084-1101)
             //    OCCT 对圆/椭圆交线,将全周分为 18 份采样,用 dom->Classify() 测试
             //    每份 UV 是否在面内。rcad 对每个候选弧测试其中点在 2D 多边形内。
@@ -2466,11 +2468,9 @@ impl<'a> PaveFiller<'a> {
                 let a_end = if j == 0 { tc[j] + std::f64::consts::TAU } else { tc[j] };
                 let a_len = a_end - a_start;
                 if a_len <= tol { continue; }
-                // 取弧中点,测试 3D 点投影到面 2D 后是否在面多边形内(OCCT dom->Classify 等价)
                 let mid_angle = (a_start + a_end) * 0.5;
                 let mid_3d = circle.center + circle.radius * (mid_angle.cos() * u_ax + mid_angle.sin() * v_ax);
                 let mid_2d = to2(mid_3d);
-                // 射线法判断中点是否在多边形内(OCCT IntTools_FClass2d::SiDans)
                 let mut inside = false;
                 {
                     let mut k = b2d.len() - 1;
@@ -2482,7 +2482,6 @@ impl<'a> PaveFiller<'a> {
                     }
                 }
                 if !inside { continue; }
-                // ✅ OCCT对齐: 首个面内的弧即为正确候选(OCCT 顺序遍历 tc 匹配面内弧)
                 let ws = a_start % std::f64::consts::TAU;
                 let we = tc[j];
                 best = Some(if ws <= we { [ws, we] } else { [ws, std::f64::consts::TAU] });
