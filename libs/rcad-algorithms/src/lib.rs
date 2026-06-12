@@ -2851,6 +2851,7 @@ fn add_sphere_seam_edges(mut brep: BRep) -> BRep {
                 let sphere = match &brep.geom.surfaces[surf_idx] {
                     Surface3::Sphere(s) => *s, _ => continue,
                 };
+                if face.outer_wire.edges.len() > 2 { continue; }
                 if face.outer_wire.edges.iter().any(|we| brep.edges.get(we.idx).map(|e| e.start == e.end).unwrap_or(false)) { continue; }
                 finfos.push(FInfo { sidx: si, shidx: shi, fidx: fi, sphere });
             }
