@@ -5367,13 +5367,85 @@ fn param_on_circle3(pt: DVec3, circle: &Circle3, tol: f64) -> Option<f64> {
 }
 
 /// 将顶点投影到曲线上，返回参数 t（如果顶点在曲线上）。
-/// 支持 Line3 和 Circle3，其余曲线类型返回 None。
+/// ✅ OCCT对齐: 支持 Line3/Circle3/Ellipse3, BSpline 用数值投影。
+///    OCCT GeomLib::Parameter 通过 Newton 法对所有曲线类型求参数。
 fn project_vertex_to_curve(pt: DVec3, curve: &Curve3, tol: f64) -> Option<f64> {
     match curve {
         Curve3::Line(line) => param_on_line3(pt, line, tol),
         Curve3::Circle(circ) => param_on_circle3(pt, circ, tol),
-        _ => None,
+        Curve3::Ellipse(ell) => param_on_ellipse3(pt, ell, tol),
+        _ => param_on_curve3_numeric(pt, curve, tol),
     }
+}
+
+/// Ellipse3 参数投影: P(t)=center+major_r*cos(t)*u+minor_r*sin(t)*v, t∈[0,2π)
+/// 采样 64 点找最近, Newton 精化。
+fn param_on_ellipse3(pt: DVec3, ellipse: &Ellipse3, tol: f64) -> Option<f64> {
+    use rcad_kernel::geom::CurveEval;
+    let local = pt - ellipse.center;
+    if local.dot(ellipse.normal).abs() > tol { return None; }
+    let y_ax = ellipse.normal.cross(ellipse.major_dir).normalize();
+    let n_sample = 64usize;
+    let mut best_t = 0.0f64;
+    let mut best_dist = f64::INFINITY;
+    for i in 0..n_sample {
+        let t = std::f64::consts::TAU * i as f64 / n_sample as f64;
+        let p = ellipse.point_at(t);
+        let d = p.distance_squared(pt);
+        if d < best_dist { best_dist = d; best_t = t; }
+    }
+    if best_dist.sqrt() > tol * 100.0 { return None; }
+    // Newton: f(t) = (C(t)-P)·C'(t)=0
+    for _ in 0..6 {
+        let (ct, st) = (best_t.cos(), best_t.sin());
+        let c = ellipse.center + ellipse.major_radius * ct * ellipse.major_dir
+            + ellipse.minor_radius * st * y_ax;
+        let d = c - pt;
+        let cp = -ellipse.major_radius * st * ellipse.major_dir
+            + ellipse.minor_radius * ct * y_ax;
+        let f = d.dot(cp);
+        let cpp = -ellipse.major_radius * ct * ellipse.major_dir
+            - ellipse.minor_radius * st * y_ax;
+        let fp = cp.dot(cp) + d.dot(cpp);
+        if fp.abs() < 1e-15 { break; }
+        best_t -= f / fp;
+        if (f/fp).abs() < 1e-12 { break; }
+    }
+    best_t = best_t.rem_euclid(std::f64::consts::TAU);
+    if ellipse.point_at(best_t).distance(pt) > tol { None } else { Some(best_t) }
+}
+
+/// 通用数值参数投影 (BSpline 等): 采样 128 点找最近, Newton 精化。
+fn param_on_curve3_numeric(pt: DVec3, curve: &Curve3, tol: f64) -> Option<f64> {
+    use rcad_kernel::geom::CurveEval;
+    let (t0, t1) = match curve {
+        Curve3::BSpline(bsp) => { let k = &bsp.knots;
+            if k.len() >= 2 { (k[0], k[k.len()-1]) } else { (0.0, 1.0) } }
+        _ => (0.0, 1.0),
+    };
+    if (t1 - t0).abs() < 1e-15 { return None; }
+    let n_sample = 128usize;
+    let mut best_t = t0; let mut best_dist = f64::INFINITY;
+    for i in 0..n_sample {
+        let t = t0 + (t1 - t0) * i as f64 / (n_sample - 1) as f64;
+        let p = curve.point_at(t);
+        let d = p.distance_squared(pt);
+        if d < best_dist { best_dist = d; best_t = t; }
+    }
+    if best_dist.sqrt() > tol * 100.0 { return None; }
+    for _ in 0..6 {
+        let c = curve.point_at(best_t);
+        let cp = curve.tangent_at(best_t);
+        let f = (c - pt).dot(cp);
+        let eps = 1e-6_f64.max((best_t - t0).abs() * 1e-6);
+        let t_eps = (best_t + eps).min(t1);
+        let f2 = (curve.point_at(t_eps) - pt).dot(curve.tangent_at(t_eps));
+        let fp = (f2 - f) / (t_eps - best_t);
+        if fp.abs() < 1e-15 { break; }
+        best_t = (best_t - f / fp).clamp(t0, t1);
+        if (f/fp).abs() < 1e-12 { break; }
+    }
+    if curve.point_at(best_t).distance(pt) > tol { None } else { Some(best_t) }
 }
 
 #[cfg(test)]
