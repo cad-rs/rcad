@@ -2450,24 +2450,22 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize) -> Vec<WireSegment> {
         };
 
         if is_seam {
-            // ✅ OCCT对齐: seam 边 FORWARD+REVERSED (L444-447)
-            // ✅ OCCT对齐: 有 curves_in(被 section edges 分割)时跳过 seam。
-            //    OCCT BOPAlgo_Builder_2.cxx BuildSplitFaces 在被分割的
-            //    球面上没有 seam edge，仅完整(未分割)球面需要 seam。
-            if face.face_info.curves_in.is_empty() {
-                segments.push(WireSegment {
-                    start_vertex: sv, end_vertex: ev,
-                    source: WireEdgeSource::DsEdge(ei),
-                    forward: true,
-                    is_seam: true,
-                });
-                segments.push(WireSegment {
-                    start_vertex: ev, end_vertex: sv,
-                    source: WireEdgeSource::DsEdge(ei),
-                    forward: false,
-                    is_seam: true,
-                });
-            }
+            // ✅ OCCT对齐: seam 边 FORWARD+REVERSED (BOPAlgo_Builder_2.cxx L444-447)
+            //    seam edge 始终加入 edge set,无论是否有 intersection curves。
+            //    OCCT BuildSplitFaces 对每条 seam edge 加 FORWARD+REVERSED,
+            //    BOPAlgo_BuilderFace 用 dual orientation 构建闭合 wire。
+            segments.push(WireSegment {
+                start_vertex: sv, end_vertex: ev,
+                source: WireEdgeSource::DsEdge(ei),
+                forward: true,
+                is_seam: true,
+            });
+            segments.push(WireSegment {
+                start_vertex: ev, end_vertex: sv,
+                source: WireEdgeSource::DsEdge(ei),
+                forward: false,
+                is_seam: true,
+            });
         } else {
             // ✅ OCCT对齐: 普通边按原始方向添加 (L374-378)
             segments.push(WireSegment {
@@ -2544,6 +2542,10 @@ fn build_closed_wires(segments: &[WireSegment], ds: &DS) -> Vec<Vec<usize>> {
     let mut wires: Vec<Vec<usize>> = Vec::new();
 
     // 构建位置→段索引映射 (只匹配同 is_seam 的段)
+    // ✅ OCCT对齐: seam/non-seam 分开匹配避免正向段和反向段交叉连接。
+    //    OCCT BOPAlgo_WireSplitter 处理含 seam 边的 wire set 时,
+    //    seam 边自身 dual orientation 形成闭合 seam wire (2-point)。
+    //    下游 perform_areas 将 seam wire 作为 hole 合并到主 wire。
     let mut pos_to_segs: std::collections::HashMap<(u64, bool), Vec<usize>> =
         std::collections::HashMap::new();
     for (si, (sk, _ek, is_seam)) in seg_keys.iter().enumerate() {
@@ -2747,14 +2749,36 @@ fn perform_areas(
         }
     }
 
-    // ✅ OCCT对齐: seam wires → 作为主 face 的 inner wires
-    //    (对应 OCCT PerformAreas L575-605: hole wire 分配到 outer face)
-    // ⏳ 部分对齐: 不含 seam 段(collect_face_edge_segments 已跳过),seam_wire_idxs 虽为空但排除更安全。
-    let all_holes: Vec<usize> = hole_wire_idxs.clone();
+    // ✅ OCCT对齐: 将 seam wires 合并到 outer wire 中(BOPAlgo_Builder_2.cxx L444-447)
+    //    seam edge 在 OCCT 中是 outer wire 的一部分(非 hole)。seam wire 是
+    //    2-segment 闭环(v0→v1→v0),应插入 outer wire 中 v0-v1 相邻位置。
+    let mut merged_outer = wires[outer_wire_idx].clone();
+    if !seam_wire_idxs.is_empty() {
+        for &swi in &seam_wire_idxs {
+            let seam_wire = &wires[swi];
+            if seam_wire.len() < 2 { continue; }
+            let seg_a = &segments[seam_wire[0]];
+            let sa_pt = ds.vertices[seg_a.start_vertex].point;
+            let ea_pt = ds.vertices[seg_a.end_vertex].point;
+            // Find segment in outer wire matching either orientation of the seam
+            // Tolerance: squared position match
+            let tol_sq = TOLERANCE_LEN_MIN * TOLERANCE_LEN_MIN;
+            let found = (0..merged_outer.len()).find(|&i| {
+                let oseg = &segments[merged_outer[i]];
+                let os_sv = ds.vertices[oseg.start_vertex].point;
+                let os_ev = ds.vertices[oseg.end_vertex].point;
+                (os_sv.distance_squared(sa_pt) < tol_sq && os_ev.distance_squared(ea_pt) < tol_sq)
+                    || (os_sv.distance_squared(ea_pt) < tol_sq && os_ev.distance_squared(sa_pt) < tol_sq)
+            });
+            if let Some(pos) = found {
+                merged_outer.splice(pos+1..pos+1, seam_wire.iter().copied());
+            }
+        }
+    }
 
     let mut result = vec![WireFace {
-        outer_wire: wires[outer_wire_idx].clone(),
-        inner_wires: all_holes.iter().map(|&wi| wires[wi].clone()).collect(),
+        outer_wire: merged_outer,
+        inner_wires: hole_wire_idxs.iter().map(|&wi| wires[wi].clone()).collect(),
     }];
     for &wi in &indep_wire_idxs {
         result.push(WireFace {
