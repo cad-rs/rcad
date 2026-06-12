@@ -1908,27 +1908,28 @@ impl<'a> PaveFiller<'a> {
                         let d = mid_pt - pl.origin;
                         (d - d.dot(pl.normal) * pl.normal).length()
                     }
-                    // ⏳ 非平面面简化处理
+                    // ✅ OCCT对齐: 非平面面 — 投影中点到面,距离检查
+
                     _ => {
-                        // 用中点检查边是否靠近面
+
                         let fuzzy = self.ds.fuzzy_tol + tol_add;
-                        let ef_hits = match (&edge.curve, face_surf) {
-                            (Curve3::Line(l), Surface3::Plane(pl)) => {
-                                inttools::edge_face::intersect_line_plane_with_tol(
-                                    l, edge.t_range, pl, fuzzy)
-                                    .into_iter().map(|h| (h.point, h.edge_param)).collect::<Vec<_>>()
-                            }
-                            _ => vec![],
-                        };
-                        if !ef_hits.is_empty() {
+
+                        let (_, proj_pt) = crate::extrema::closest_point_on_surface(face_surf, mid_pt);
+
+                        if mid_pt.distance(proj_pt) <= fuzzy {
+
                             self.ds.interferences.push(Interference::EdgeFace {
+
                                 edge: ei, face: fi,
-                                point: mid_pt,
-                                edge_param: mid_t,
-                                new_vertex: sv,
+
+                                point: mid_pt, edge_param: mid_t, new_vertex: sv,
+
                             });
+
                         }
+
                         continue;
+
                     }
                 };
 
