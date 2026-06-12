@@ -748,6 +748,19 @@ impl<'a> PaveFiller<'a> {
         //    rcad 当前仅做端点匹配(完整 PutPavesOnCurve 需参数沿曲线排序 + 分裂)。
         self.make_blocks();
 
+        // ✅ OCCT对齐: 清理退化 IC(start==end 位置重合)。OCCT IsValidBlockForFaces
+        //    通过 mid-point 投影移除无效块,但 rcad 的 IC 端点可能在 EF 替换后重合。
+        let degen_tol_sq = TOLERANCE_ABS_SQ;
+        for ci in 0..self.ds.intersection_curves.len() {
+            let sv_pt = self.ds.vertices[self.ds.intersection_curves[ci].start_vertex].point;
+            let ev_pt = self.ds.vertices[self.ds.intersection_curves[ci].end_vertex].point;
+            if sv_pt.distance_squared(ev_pt) < degen_tol_sq {
+                for fi in 0..self.ds.faces.len() {
+                    self.ds.faces[fi].face_info.curves_in.remove(&ci);
+                }
+            }
+        }
+
         // ✅ OCCT对齐: RemoveMicroEdges (PaveFiller_6.cxx L4229-4270)
         //    OCCT L346: RemoveMicroEdges — 在 MakeBlocks 之后、MakePCurves 之前,
         //    清除 start==end 的零长 PaveBlock (micro edge)。
@@ -2443,7 +2456,9 @@ impl<'a> PaveFiller<'a> {
                 continue;
             }
             tc.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            // ✅ OCCT对齐: 相邻交点之间选择最短圆弧(OCCT IntTools_Curve类似选择最小区间)
+            // ✅ OCCT对齐: 弧中点面内测试选择候选弧(IntTools_FaceFace.cxx L1084-1101)
+            //    OCCT 对圆/椭圆交线,将全周分为 18 份采样,用 dom->Classify() 测试
+            //    每份 UV 是否在面内。rcad 对每个候选弧测试其中点在 2D 多边形内。
             let mut best: Option<[f64;2]> = None;
             for i in 0..tc.len() {
                 let j = (i + 1) % tc.len();
@@ -2451,15 +2466,27 @@ impl<'a> PaveFiller<'a> {
                 let a_end = if j == 0 { tc[j] + std::f64::consts::TAU } else { tc[j] };
                 let a_len = a_end - a_start;
                 if a_len <= tol { continue; }
-                let replace = match best {
-                    Some(prev) => { let pl = if prev[0]<=prev[1] {prev[1]-prev[0]} else {std::f64::consts::TAU-prev[0]+prev[1]}; a_len < pl }
-                    None => true,
-                };
-                if replace {
-                    let ws = a_start % std::f64::consts::TAU;
-                    let we = tc[j];
-                    best = Some(if ws <= we { [ws, we] } else { [ws, std::f64::consts::TAU] });
+                // 取弧中点,测试 3D 点投影到面 2D 后是否在面多边形内(OCCT dom->Classify 等价)
+                let mid_angle = (a_start + a_end) * 0.5;
+                let mid_3d = circle.center + circle.radius * (mid_angle.cos() * u_ax + mid_angle.sin() * v_ax);
+                let mid_2d = to2(mid_3d);
+                // 射线法判断中点是否在多边形内(OCCT IntTools_FClass2d::SiDans)
+                let mut inside = false;
+                {
+                    let mut k = b2d.len() - 1;
+                    for i2 in 0..b2d.len() {
+                        if ((b2d[i2].y > mid_2d.y) != (b2d[k].y > mid_2d.y))
+                            && (mid_2d.x < (b2d[k].x - b2d[i2].x) * (mid_2d.y - b2d[i2].y) / (b2d[k].y - b2d[i2].y) + b2d[i2].x)
+                        { inside = !inside; }
+                        k = i2;
+                    }
                 }
+                if !inside { continue; }
+                // ✅ OCCT对齐: 首个面内的弧即为正确候选(OCCT 顺序遍历 tc 匹配面内弧)
+                let ws = a_start % std::f64::consts::TAU;
+                let we = tc[j];
+                best = Some(if ws <= we { [ws, we] } else { [ws, std::f64::consts::TAU] });
+                break;
             }
             let nr = match best { Some(r) => r, None => continue, };
             if nr[1] - nr[0] > tol {
@@ -2529,15 +2556,31 @@ impl<'a> PaveFiller<'a> {
                 //    求交得到圆在 face 内的有效参数范围,用该范围的端点
                 //    作为 curve 的 start/end vertex。
                 let clipped_range = self.clip_circle_to_faces(&circle, f1, f2);
-                let clipped = clipped_range.unwrap_or([0.0, std::f64::consts::TAU]);
-                let (effective_t0, effective_t1) = if clipped[1] - clipped[0] > TOLERANCE_ABS {
-                    (clipped[0], clipped[1])
-                } else {
-                    (0.0, std::f64::consts::TAU)
+                let clipped = match clipped_range {
+                    Some(r) => r,
+                    None => return, // No valid arc within face boundaries
                 };
+                // ✅ OCCT对齐: 跳过退化弧(相切点接触)。OCCT IntPatch_Point 处理单点接触,
+                //    IntTools_FaceFace 不为退化 intersection curve 创建 PaveBlock。
+                if clipped[1] - clipped[0] <= TOLERANCE_ABS {
+                    return;
+                }
+                let (effective_t0, effective_t1) = (clipped[0], clipped[1]);
 
                 // ✅ OCCT对齐: 跳过从相切点膨胀来的退化圆(OCCT IntPatch_Point处理单点接触)
+                if std::env::var("RCAD_DEBUG_IC").is_ok() && circle.radius < 1e-4 {
+                    eprintln!("[IC_SMALL] face[{f1}]×[{f2}] radius={:.12} clipped=({:.6},{:.6}) center=({:.6},{:.6},{:.6})",
+                        circle.radius, clipped[0], clipped[1], circle.center.x, circle.center.y, circle.center.z);
+                }
                 if circle.radius <= TOLERANCE_MESH_LEGACY + TOLERANCE_ABS {
+                    return;
+                }
+                // ⏳ OCCT对齐: 跳过裁剪后退化的弧(点接触)。OCCT MakeBlocks 的
+                //    IsValidBlockForFaces 会移除无效块; rcad 在生成 IC 时提前过滤。
+                let valid_arc = clipped_range.map(|r| r[1] - r[0]).unwrap_or(0.0);
+                if valid_arc <= TOLERANCE_ABS {
+                    eprintln!("[IC_SKIP] face[{f1}]×[{f2}] degenerate arc len={:.12} radius={:.12} center=({:.6},{:.6},{:.6})",
+                        valid_arc, circle.radius, circle.center.x, circle.center.y, circle.center.z);
                     return;
                 }
 
@@ -2560,6 +2603,14 @@ impl<'a> PaveFiller<'a> {
                 // 在裁剪后的端点位置查找已有顶点,共享索引
                 let p_start = circle.point_at(effective_t0);
                 let p_end = circle.point_at(effective_t1);
+                if std::env::var("RCAD_DEBUG_IC").is_ok() {
+                    eprintln!("[IC_CREATE] f[{f1}]×[{f2}] t=[{:.6},{:.6}] r={:.6} p_start=({:.6},{:.6},{:.6}) p_end=({:.6},{:.6},{:.6})",
+                        effective_t0, effective_t1, circle.radius,
+                        p_start.x, p_start.y, p_start.z, p_end.x, p_end.y, p_end.z);
+                }
+                if p_start.distance_squared(p_end) < TOLERANCE_ABS_SQ {
+                    return;
+                }
                 let v_start = self.ds.add_vertex(p_start);
                 let v_end = self.ds.add_vertex(p_end);
 
@@ -5193,9 +5244,15 @@ impl<'a> PaveFiller<'a> {
             for &(evi, ept) in &all_verts {
                 if evi == snap.sv || evi == snap.ev { continue; }
                 if ept.distance_squared(snap.sv_pos) < tol * tol {
-                    self.ds.intersection_curves[ci].start_vertex = evi;
+                    let cur_ev = self.ds.intersection_curves[ci].end_vertex;
+                    if ept.distance_squared(self.ds.vertices[cur_ev].point) > tol * tol {
+                        self.ds.intersection_curves[ci].start_vertex = evi;
+                    }
                 } else if ept.distance_squared(snap.ev_pos) < tol * tol {
-                    self.ds.intersection_curves[ci].end_vertex = evi;
+                    let cur_sv = self.ds.intersection_curves[ci].start_vertex;
+                    if ept.distance_squared(self.ds.vertices[cur_sv].point) > tol * tol {
+                        self.ds.intersection_curves[ci].end_vertex = evi;
+                    }
                 }
             }
 
@@ -5993,16 +6050,24 @@ fn filter_paves_on_curves(
     }).copied().collect()
 }
 
-/// 确保闭合曲线的首尾 Pave 一致 (OCCT L828-833 PutClosingPaveOnCurve)。
+/// ✅ OCCT对齐: PutClosingPaveOnCurve (L828-833)
+///    仅当曲线跨越完整闭合周期(首尾参数差 ≈ 2π 或全曲线范围)时替换末顶点。
+///    圆弧(参数差 < π)不替换,避免将圆弧终点错误地改为起点。
 fn put_closing_pave_on_curve(
     paves: &mut Vec<(f64, usize)>,
     is_closed: bool,
 ) {
     if paves.len() < 2 { return; }
     if is_closed {
-        let first_vi = paves[0].1;
-        let last_idx = paves.len() - 1;
-        paves[last_idx].1 = first_vi;
+        let first_t = paves[0].0;
+        let last_t = paves[paves.len() - 1].0;
+        let span = last_t - first_t;
+        // Only replace if the curve spans at least one full period (≈ 2π for circles)
+        if (span - std::f64::consts::TAU).abs() < 0.1 {
+            let first_vi = paves[0].1;
+            let last_idx = paves.len() - 1;
+            paves[last_idx].1 = first_vi;
+        }
     }
 }
 

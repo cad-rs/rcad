@@ -2489,6 +2489,11 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize) -> Vec<WireSegment> {
         let ic = &ds.intersection_curves[ci];
         let sv = ic.start_vertex;
         let ev = ic.end_vertex;
+        // ✅ OCCT对齐: 跳过退化 IC(start==end)。OCCT MakeBlocks 的
+        //    IsValidBlockForFaces 会移除此类无效块; rcad 在收集段时过滤。
+        if sv == ev || ds.vertices[sv].point.distance_squared(ds.vertices[ev].point) < TOLERANCE_ABS_SQ {
+            continue;
+        }
         // ✅ OCCT对齐: section 边 FORWARD 方向 (OCCT 加双方向,rcad 因
         //    build_closed_wires 无角度选择能力,只加 FORWARD 防止退化 wire)
         segments.push(WireSegment {
@@ -2820,6 +2825,32 @@ pub(crate) fn split_face_occt_wire_pipeline(
     let segments = collect_face_edge_segments(ds, face_idx);
     if segments.is_empty() {
         return None;
+    }
+    // Debug: check IC endpoints for sphere faces
+    if std::env::var("RCAD_DEBUG_IC").is_ok() && matches!(face.surface, Surface3::Sphere(_)) {
+        for &ci in &face.face_info.curves_in {
+            let ic = &ds.intersection_curves[ci];
+            let sv = &ds.vertices[ic.start_vertex];
+            let ev = &ds.vertices[ic.end_vertex];
+            eprintln!("[IC_RAW] ci={} t=[{:.6},{:.6}] sv=({:.6},{:.6},{:.6}) ev=({:.6},{:.6},{:.6})",
+                ci, ic.t_range[0], ic.t_range[1],
+                sv.point.x, sv.point.y, sv.point.z,
+                ev.point.x, ev.point.y, ev.point.z);
+        }
+        let ics: Vec<_> = segments.iter().filter(|s| !s.is_seam).collect();
+        if ics.len() >= 2 {
+            for i in 0..ics.len() {
+                let si = &ics[i];
+                let sj = &ics[(i+1)%ics.len()];
+                let si_ep = ds.vertices[si.end_vertex].point;
+                let sj_sp = ds.vertices[sj.start_vertex].point;
+                let d = si_ep.distance_squared(sj_sp);
+                eprintln!("[IC_CHAIN] seg[{}] ({:.3},{:.3},{:.3})→({:.3},{:.3},{:.3}) → seg[{}] dist={:.12}",
+                    i, ds.vertices[si.start_vertex].point.x, ds.vertices[si.start_vertex].point.y, ds.vertices[si.start_vertex].point.z,
+                    si_ep.x, si_ep.y, si_ep.z,
+                    (i+1)%ics.len(), d);
+            }
+        }
     }
     let wires = build_closed_wires(&segments, ds);
     if wires.is_empty() {
