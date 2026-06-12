@@ -2808,6 +2808,10 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment]) -> Vec<Vec<u
         }
     }
 
+    // ✅ OCCT对齐: RefineAngles (BOPAlgo_WireSplitter_1.cxx L904-1028)
+    //    在边界边的"外侧"扇区内的内部边,调整其角度使其指向面内侧。
+    refine_angles(&mut smart_map, segments);
+
     // Walk paths from each unpassed segment
     let mut wires: Vec<Vec<usize>> = Vec::new();
     for &start_si in block {
@@ -2886,6 +2890,74 @@ fn select_best_outgoing<'a>(
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
         .copied()
+}
+
+/// ✅ OCCT对齐: RefineAngles (BOPAlgo_WireSplitter_1.cxx L904-1028)
+///
+/// 对恰有 2 条 boundary edges (1 in, 1 out) 的顶点:
+///   1. 计算 boundary 之间的 delta = ClockWiseAngle(a_in_bnd, a_out_bnd) — 即「外侧」扇区
+///   2. 对每条内部出射边,如果其角度在外侧扇区内:
+///      - 尝试 RefineAngle2D: 用射线与 p-curve 求交得到真实方向 (⏳ 尚未实现)
+///      - 失败时且恰有 2 条内部边: 将角度推到 boundary 内侧
+fn refine_angles(
+    smart_map: &mut HashMap<usize, Vec<EdgeInfo>>,
+    _segments: &[WireSegment],
+) {
+    let vertices: Vec<usize> = smart_map.keys().copied().collect();
+    for &v in &vertices {
+        let Some(infos) = smart_map.get(&v).cloned() else { continue; };
+
+        // Separate boundary (is_inside=false) and internal (is_inside=true)
+        let bnd_in = infos.iter().find(|ei| !ei.is_inside && ei.in_flag);
+        let bnd_out = infos.iter().find(|ei| !ei.is_inside && !ei.in_flag);
+        let internal_out: Vec<&EdgeInfo> = infos.iter().filter(|ei| ei.is_inside && !ei.in_flag).collect();
+
+        let (Some(a_in_bnd), Some(a_out_bnd)) = (bnd_in, bnd_out) else { continue; };
+        if internal_out.is_empty() {
+            continue;
+        }
+
+        let a_in = a_in_bnd.angle;
+        let a_out = a_out_bnd.angle;
+
+        // delta_bnd = outside sector: clockwise angle from boundary in to boundary out
+        let delta_bnd = clock_wise_angle(a_in, a_out);
+
+        // Internal edges that need refinement (their angle falls in the outside sector)
+        let mut to_refine: Vec<(usize, f64)> = Vec::new(); // (index_in_internal_out, current_angle)
+        for (i, ei) in internal_out.iter().enumerate() {
+            let d = clock_wise_angle(a_in, ei.angle);
+            if d < delta_bnd {
+                // This internal edge points to the outside → needs refinement
+                to_refine.push((i, ei.angle));
+            }
+        }
+
+        if to_refine.is_empty() {
+            continue;
+        }
+
+        // ⏳ RefineAngle2D: 用射线与 p-curve 求交得到真实方向
+        //    OCCT BOPAlgo_WireSplitter_1.cxx L938-1028
+        //    当前使用简化策略: 将角度推到 boundary 内侧。
+        //
+        //    a1_in = (a_in + π) % 2π 是入边方向的反向(即沿入边的行进方向)。
+        //    内侧扇区 = 从 a_out 逆时针到 a1_in 的范围(大小 = 2π - delta_bnd)。
+        //    将不在内侧的内部边推入该扇区的中点:
+        let inside_mid = (a_out + (std::f64::consts::TAU - delta_bnd) * 0.5) % std::f64::consts::TAU;
+
+        if let Some(infos) = smart_map.get_mut(&v) {
+            for (ii, _old_angle) in &to_refine {
+                let internal_idx = internal_out[*ii].seg_idx;
+                let internal_in_flag = internal_out[*ii].in_flag;
+                if let Some(ei) = infos.iter_mut().find(|ei| {
+                    ei.seg_idx == internal_idx && ei.in_flag == internal_in_flag
+                }) {
+                    ei.angle = inside_mid;
+                }
+            }
+        }
+    }
 }
 
 /// ✅ OCCT对齐: Path 行走函数 (BOPAlgo_WireSplitter_1.cxx L359-618).
