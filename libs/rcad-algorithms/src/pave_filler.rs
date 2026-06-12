@@ -692,13 +692,11 @@ impl<'a> PaveFiller<'a> {
             self.perform_ve();
         }
 
-        if !skip_ee {
+        let ee_survivors: Vec<usize> = if !skip_ee {
             self.perform_ee();
             // ✅ OCCT对齐: TreatNewVertices — EE 创建的新顶点之间做互合。
-            //    OCCT PaveFiller_3.cxx L561: PerformNewVertices(aMVCPB, ...)
-            //    → TreatNewVertices → BOPAlgo_Tools::IntersectVertices
-            self.treat_new_vertices();
-        }
+            self.treat_new_vertices()
+        } else { vec![] };
 
         if !skip_vf {
             self.perform_vf();
@@ -712,12 +710,14 @@ impl<'a> PaveFiller<'a> {
 
             // ✅ OCCT对齐: RepeatIntersection (PaveFiller.cxx L296-299)
             //    在 EF 之后、FF 之前,对容差增大的顶点重新做 VV/VE/VF。
-            //    OCCT L296-297: RepeatIntersection(...)
-            //    ⏳ OCCT 的 RepeatIntersection 还会处理 EE 阶段增大的容差,
-            //    rcad 当前只处理 EF 阶段的 survivors。EE 阶段的 survivors
-            //    在 EE→VF→EF 之间没有 repeat,因为中间插入了 VF。
-            if !ef_survivors.is_empty() {
-                self.repeat_intersection(&ef_survivors);
+            //    OCCT 同时处理 EE 和 EF 阶段的 survivors (myIncreasedSS)。
+            let all_survivors: Vec<usize> = {
+                let mut v = ee_survivors.clone();
+                v.extend(&ef_survivors);
+                v.sort_unstable(); v.dedup(); v
+            };
+            if !all_survivors.is_empty() {
+                self.repeat_intersection(&all_survivors);
             }
         }
 
