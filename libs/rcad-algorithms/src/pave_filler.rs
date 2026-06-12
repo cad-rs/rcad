@@ -5988,28 +5988,22 @@ fn put_bound_pave_on_curve(
 
     for &fi in face_idxs.iter().filter(|&&fi| fi != usize::MAX) {
         let face = &ds.faces[fi];
+        // ✅ OCCT对齐: PutBoundPaveOnCurve (BOPAlgo_PaveFiller_6.cxx L798-832)
+        //    OCCT 通过 face edge 的 pcurve 获取顶点参数,只处理边上的顶点。
+        //    边界顶点只有在与 IC 端点重合时才应该影响 IC 分裂(即不同顶点索引
+        //    指向同一 3D 位置)。否则,边界顶点在其它边上,不应导致 IC 分裂。
         for &vi in &face.boundary_verts {
-            if let Some(t) = project_vertex_to_curve(
-                ds.vertices[vi].point, &ic.curve, tol
-            ) {
-                if t >= t0 - tol * 0.1 && t <= t1 + tol * 0.1 {
-                    result.push((t, vi));
-                }
+            if vi == ic.start_vertex || vi == ic.end_vertex {
+                continue; // Already the endpoint, handled at split list construction
             }
-        }
-        for &vi in &face.face_info.vertices_in {
-            if let Some(t) = project_vertex_to_curve(
-                ds.vertices[vi].point, &ic.curve, tol
-            ) {
-                if t >= t0 - tol * 0.1 && t <= t1 + tol * 0.1 {
-                    result.push((t, vi));
-                }
+            let pt = ds.vertices[vi].point;
+            let near_ic_end = pt.distance_squared(ds.vertices[ic.start_vertex].point) < tol * tol
+                || pt.distance_squared(ds.vertices[ic.end_vertex].point) < tol * tol;
+            // ⏳ 部分对齐: OCCT 通过 pcurve 参数匹配,rcad 用 3D 距离近似。
+            if !near_ic_end {
+                continue;
             }
-        }
-        for &vi in &face.face_info.vertices_on {
-            if let Some(t) = project_vertex_to_curve(
-                ds.vertices[vi].point, &ic.curve, tol
-            ) {
+            if let Some(t) = project_vertex_to_curve(pt, &ic.curve, tol) {
                 if t >= t0 - tol * 0.1 && t <= t1 + tol * 0.1 {
                     result.push((t, vi));
                 }
