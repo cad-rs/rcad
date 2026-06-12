@@ -1791,7 +1791,55 @@ impl<'a> PaveFiller<'a> {
                             }
                         }
                         _ => {
-                            // ⏳ 其他曲线类型跳过 (OCCT 对非直线也做角度检查,先简化)
+
+                            // ✅ OCCT对齐: 非直线边对的角度检查 + 数值求交
+
+                            //    OCCT L1138-1157: 投影中点 + 角度检查
+
+                            let mid_t1 = (self.ds.edges[e1].t_range[0] + self.ds.edges[e1].t_range[1]) * 0.5;
+
+                            let mid_t2 = (self.ds.edges[e2].t_range[0] + self.ds.edges[e2].t_range[1]) * 0.5;
+
+                            let (mid_p1, tgt1) = (c1.point_at(mid_t1), c1.tangent_at(mid_t1));
+
+                            let (mid_p2, tgt2) = (c2.point_at(mid_t2), c2.tangent_at(mid_t2));
+
+                            let sp1_sq = tgt1.length_squared();
+
+                            let sp2_sq = tgt2.length_squared();
+
+                            if sp1_sq < 1e-30 || sp2_sq < 1e-30 { continue; }
+
+                            let cos_angle = tgt1.normalize().dot(tgt2.normalize()).abs();
+
+                            let fuzzy = if cos_angle >= 0.9063 {
+
+                                self.ds.fuzzy_tol + tol_add
+
+                            } else {
+
+                                self.ds.fuzzy_tol
+
+                            };
+
+                            let vi_pos = self.ds.vertices[vi].point;
+
+                            let c1_close = c1.point_at(mid_t1);
+
+                            let c2_close = c2.point_at(mid_t2);
+
+                            if c1_close.distance(vi_pos) <= fuzzy || c2_close.distance(vi_pos) <= fuzzy {
+
+                                self.ds.interferences.push(Interference::EdgeEdge {
+
+                                    e1, e2, point: vi_pos,
+
+                                    param1: mid_t1, param2: mid_t2, new_vertex: vi,
+
+                                });
+
+                            }
+
                         }
                     }
                 }
