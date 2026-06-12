@@ -2479,13 +2479,18 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize) -> Vec<WireSegment> {
 
     // ================================================================
     // 2. Section 边 — 交线 (OCCT L478-489)
-    //    OCCT 为每个 FaceFace 交线的 PaveBlock 加 FORWARD+REVERSED
+    //    OCCT 为每个 FaceFace 交线的 PaveBlock 加 FORWARD+REVERSED,
+    //    BOPAlgo_WireSplitter 用最小角度转向选择正确路径。
+    //    rcad 的 build_closed_wires 用位置匹配,FORWARD+REVERSED 共存
+    //    会使正反向段在同一个 is_seam=false 池中交叉连接,形成退化 wire。
+    //    因此只加 FORWARD 段,利用 IC 端点自闭合形成 wire(适用于 sphere 面)。
     // ================================================================
     for &ci in &face.face_info.curves_in {
         let ic = &ds.intersection_curves[ci];
         let sv = ic.start_vertex;
         let ev = ic.end_vertex;
-        // ✅ OCCT对齐: section 边 FORWARD 方向
+        // ✅ OCCT对齐: section 边 FORWARD 方向 (OCCT 加双方向,rcad 因
+        //    build_closed_wires 无角度选择能力,只加 FORWARD 防止退化 wire)
         segments.push(WireSegment {
             start_vertex: sv,
             end_vertex: ev,
@@ -2493,19 +2498,6 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize) -> Vec<WireSegment> {
             forward: true,
             is_seam: false,
         });
-        // 闭合曲线 (start==end) 不加 REVERSED — 位置匹配自动处理
-        // ✅ OCCT对齐: OCCT BuildSplitFaces L478-489 加 FORWARD+REVERSED,
-        //    BOPAlgo_WireSplitter 处理方向选择; rcad 的 build_closed_wires
-        //    用反向排除防止 backtracking。
-        if sv != ev {
-            segments.push(WireSegment {
-                start_vertex: ev,
-                end_vertex: sv,
-                source: WireEdgeSource::IntersectionCurve(ci),
-                forward: false,
-                is_seam: false,
-            });
-        }
     }
 
     segments
