@@ -5259,6 +5259,35 @@ impl<'a> PaveFiller<'a> {
             // ✅ OCCT对齐: PutBoundPaveOnCurve 对所有曲线类型执行
             //    OCCT BOPAlgo_PaveFiller_6.cxx L798-832
             {
+                // TEMP: debug extra vertex (0,-1,0) origin
+                if cfg!(debug_assertions) {
+                    for &(evi, ept) in &all_verts {
+                        if (ept - DVec3::new(0.0, -1.0, 0.0)).length_squared() < 1e-10 {
+                            eprintln!("[PFP] VERTEX (0,-1,0) in all_verts (evi={})", evi);
+                        }
+                    }
+                    let ic_tmp = &self.ds.intersection_curves[ci];
+                    let face_ids_tmp = find_face_idxs_for_curve(&self.ds, ci);
+                    for &fi in &[face_ids_tmp[0], face_ids_tmp[1]] {
+                        if fi == usize::MAX { continue; }
+                        let f = &self.ds.faces[fi];
+                        for &vi in &f.boundary_verts {
+                            if (self.ds.vertices[vi].point - DVec3::new(0.0, -1.0, 0.0)).length_squared() < 1e-10 {
+                                eprintln!("[PFP] BOUNDARY_VERT (0,-1,0) at face={} vert={}", fi, vi);
+                            }
+                        }
+                        for &vi in &f.face_info.vertices_in {
+                            if (self.ds.vertices[vi].point - DVec3::new(0.0, -1.0, 0.0)).length_squared() < 1e-10 {
+                                eprintln!("[PFP] VERTICES_IN (0,-1,0) at face={} vert={}", fi, vi);
+                            }
+                        }
+                        for &vi in &f.face_info.vertices_on {
+                            if (self.ds.vertices[vi].point - DVec3::new(0.0, -1.0, 0.0)).length_squared() < 1e-10 {
+                                eprintln!("[PFP] VERTICES_ON (0,-1,0) at face={} vert={}", fi, vi);
+                            }
+                        }
+                    }
+                }
                 let face_idxs = find_face_idxs_for_curve(&self.ds, ci);
                 let bound_paves = put_bound_pave_on_curve(
                     &self.ds, ci, &face_idxs, tol
@@ -5269,9 +5298,22 @@ impl<'a> PaveFiller<'a> {
                 put_closing_pave_on_curve(&mut on_curve, is_closed);
             }
 
-            // Sort by parameter, dedup
-            on_curve.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-            on_curve.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-12);
+            // ✅ OCCT对齐: FilterPavesOnCurves 后过滤 — 移除不在任何面边界或 EF 中的顶点
+            if on_curve.len() >= 2 {
+                let face_ids = find_face_idxs_for_curve(&self.ds, ci);
+                on_curve.retain(|&(_, vi)| {
+                    let from_ef = self.ds.interferences.iter().any(|inf| {
+                        matches!(inf, Interference::EdgeFace { new_vertex, .. } if *new_vertex == vi)
+                    });
+                    if from_ef { return true; }
+                    for &fi in &[face_ids[0], face_ids[1]] {
+                        if fi != usize::MAX && self.ds.faces[fi].boundary_verts.contains(&vi) {
+                            return true;
+                        }
+                    }
+                    false
+                });
+            }
 
             // Build split parameter list including endpoints
             let mut sp: Vec<(f64, usize)> = vec![(t0, snap.sv)];

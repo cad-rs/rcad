@@ -875,20 +875,38 @@ impl ResultBuilder {
                 vert_indices.push(v1);
             }
             // Determine curve type from WireSegment.source
-            let ei = match &seg.source {
-                WireEdgeSource::IntersectionCurve(ci) => {
-                    let crv = &ds.intersection_curves[*ci].curve;
-                    if let Curve3::Circle(_) = crv {
-                        self.add_circle_edge(v1, v2, crv.clone())
-                    } else {
+            let (ei, forward) = if seg.is_seam {
+                // ✅ OCCT对齐: seam edge → degenerate edge
+                //    OCCT sphere face wire 中的 seam edge 是退化边(两端同一顶点),
+                //    不产生额外拓扑顶点。rcad wire pipeline 中 seam segment 用 v→v 退化边。
+                let v = if vert_indices.is_empty() || vert_indices.last() != Some(&v1) {
+                    v1
+                } else {
+                    // Use the last vertex in the wire (degenerate closure for seam)
+                    let vi = self.add_vertex(ds.vertices[seg.start_vertex].point);
+                    vert_indices.push(vi);
+                    vi
+                };
+                let ei = self.add_edge(v, v);
+                (ei, true)
+            } else {
+                let ei = match &seg.source {
+                    WireEdgeSource::IntersectionCurve(ci) => {
+                        let crv = &ds.intersection_curves[*ci].curve;
+                        if let Curve3::Circle(_) = crv {
+                            self.add_circle_edge(v1, v2, crv.clone())
+                        } else {
+                            self.add_edge(v1, v2)
+                        }
+                    }
+                    WireEdgeSource::DsEdge(_) => {
                         self.add_edge(v1, v2)
                     }
-                }
-                WireEdgeSource::DsEdge(_) | WireEdgeSource::SeamEdge => {
-                    self.add_edge(v1, v2)
-                }
+                    _ => self.add_edge(v1, v2),
+                };
+                let forward = self.edges[ei].0 == v1;
+                (ei, forward)
             };
-            let forward = self.edges[ei].0 == v1;
             edge_indices.push((ei, forward));
         }
 
