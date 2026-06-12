@@ -2422,7 +2422,6 @@ impl<'a> PaveFiller<'a> {
             };
             let c2d = to2(DVec3::from(circle.center));
             let b2d: Vec<DVec2> = bnd.iter().map(|&pt| to2(pt)).collect();
-
             let mut tc: Vec<f64> = Vec::new();
             for k in 0..b2d.len() {
                 let l = (k + 1) % b2d.len();
@@ -2456,8 +2455,8 @@ impl<'a> PaveFiller<'a> {
                 continue;
             }
             tc.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            // Dedup near-equal angles (same intersection point from adjacent edges)
-            tc.dedup_by(|a, b| (*a - *b).abs() < tol);
+            // ✅ OCCT对齐: 去重相近角度(同一交点被相邻边各检测一次)
+            tc.dedup_by(|a, b| (*a - *b).abs() < TOLERANCE_ABS * 1000.0);
             // ✅ OCCT对齐: 弧中点面内测试选择候选弧(IntTools_FaceFace.cxx L1084-1101)
             //    OCCT 对圆/椭圆交线,将全周分为 18 份采样,用 dom->Classify() 测试
             //    每份 UV 是否在面内。rcad 对每个候选弧测试其中点在 2D 多边形内。
@@ -2599,9 +2598,12 @@ impl<'a> PaveFiller<'a> {
                     (Some(pcurve_sphere), Some(pcurve_plane))
                 };
 
-                // 在裁剪后的端点位置查找已有顶点,共享索引
-                let p_start = circle.point_at(effective_t0);
-                let p_end = circle.point_at(effective_t1);
+                // ✅ OCCT对齐: IC 端点用 plane_local_basis(与 clip_circle_to_faces 一致)
+                //    circle.point_at 使用 Circle3.normal 的 any_perpendicular 轴,
+                //    可能和 plane_local_basis 方向相反,导致端点位置翻转。
+                let (u_ax_p, v_ax_p) = crate::inttools::edge_face::plane_local_basis(plane);
+                let p_start = circle.center + circle.radius * (effective_t0.cos() * u_ax_p + effective_t0.sin() * v_ax_p);
+                let p_end = circle.center + circle.radius * (effective_t1.cos() * u_ax_p + effective_t1.sin() * v_ax_p);
                 if std::env::var("RCAD_DEBUG_IC").is_ok() {
                     eprintln!("[IC_CREATE] f[{f1}]×[{f2}] t=[{:.6},{:.6}] r={:.6} p_start=({:.6},{:.6},{:.6}) p_end=({:.6},{:.6},{:.6})",
                         effective_t0, effective_t1, circle.radius,
@@ -2612,6 +2614,12 @@ impl<'a> PaveFiller<'a> {
                 }
                 let v_start = self.ds.add_vertex(p_start);
                 let v_end = self.ds.add_vertex(p_end);
+                if std::env::var("RCAD_DEBUG_IC").is_ok() {
+                    eprintln!("[IC_VERTICES] f1={} f2={} t_range=[{:.6},{:.6}] v_start={} pt=({:.6},{:.6},{:.6}) v_end={} pt=({:.6},{:.6},{:.6})",
+                        f1, f2, effective_t0, effective_t1,
+                        v_start, p_start.x, p_start.y, p_start.z,
+                        v_end, p_end.x, p_end.y, p_end.z);
+                }
 
                 let curve_idx = self.ds.intersection_curves.len();
                 self.ds.intersection_curves.push(IntersectionCurve {
