@@ -5304,6 +5304,67 @@ impl<'a> PaveFiller<'a> {
             }
 
         }
+        // ✅ OCCT对齐: ShrunkData — 计算每条新曲线的有效(shrunk)参数范围
+
+        //    OCCT L910-938: FindValidRange 排除顶点容差球覆盖的无效段。
+
+        {
+
+            let sv_tol_base = TOLERANCE_ABS;
+
+            let mut micro_curves: Vec<usize> = Vec::new();
+
+            for &(_old_ci, new_ci) in &new_curves_info {
+
+                let ic = &self.ds.intersection_curves[new_ci];
+
+                let [t0, t1] = ic.t_range;
+
+                if (t1 - t0).abs() < 1e-12 { micro_curves.push(new_ci); continue; }
+
+                let sv_pt = self.ds.vertices[ic.start_vertex].point;
+
+                let ev_pt = self.ds.vertices[ic.end_vertex].point;
+
+                let sv_tol = self.ds.vertices[ic.start_vertex].geom_tol.max(sv_tol_base);
+
+                let ev_tol = self.ds.vertices[ic.end_vertex].geom_tol.max(sv_tol_base);
+
+                if let Some((f, l)) = find_valid_range(
+
+                    &ic.curve, t0, t1, sv_pt, sv_tol, ev_pt, ev_tol,
+
+                ) {
+
+                    if (l - f).abs() > 1e-12 {
+
+                        self.ds.intersection_curves[new_ci].t_range = [f, l];
+
+                    } else {
+
+                        micro_curves.push(new_ci);
+
+                    }
+
+                } else {
+
+                    micro_curves.push(new_ci);
+
+                }
+
+            }
+
+            for fi in 0..n_faces {
+
+                for &ci in &micro_curves {
+
+                    self.ds.faces[fi].face_info.curves_in.remove(&ci);
+
+                }
+
+            }
+
+        }
     }
 
     fn build_split_edges(&mut self) {
@@ -5503,6 +5564,145 @@ fn param_on_curve3_numeric(pt: DVec3, curve: &Curve3, tol: f64) -> Option<f64> {
     if curve.point_at(best_t).distance(pt) > tol { None } else { Some(best_t) }
 }
 
+
+// ── FindValidRange / ShrunkData 辅助函数 (OCCT BRepLib_1.cxx L26-219) ──────
+
+
+
+/// 曲线上参数步长: 沿曲线移动 tol 距离所需的参数增量 (OCCT Adaptor3d_Curve::Resolution)
+
+fn curve_resolution(curve: &Curve3, t: f64, tol: f64) -> f64 {
+
+    use rcad_kernel::geom::CurveEval;
+
+    let speed = curve.tangent_at(t).length();
+
+    if speed < 1e-15 { tol } else { tol / speed }
+
+
+}
+
+
+
+/// ✅ OCCT对齐: findNearestValidPoint (BRepLib_1.cxx L31-148)
+
+/// 从曲线一端出发,沿曲线步进直到超出顶点容差球,然后二分法精化。
+
+fn find_nearest_valid_point(
+
+    curve: &Curve3, first: f64, last: f64, is_first: bool,
+
+    vert_pt: DVec3, vert_tol: f64, eps: f64,
+
+) -> Option<f64> {
+
+    use rcad_kernel::geom::CurveEval;
+
+    let (start_u, end_u) = if is_first { (first, last) } else { (last, first) };
+
+    let tol_sq = vert_tol * vert_tol;
+
+    // 1. 检查端点是否在容差球内
+
+    if curve.point_at(start_u).distance_squared(vert_pt) > tol_sq { return None; }
+
+    // 2. 步进直到超出容差球
+
+    let step = curve_resolution(curve, start_u, vert_tol).max(eps);
+
+    let step = if is_first { step } else { -step };
+
+    let (mut u_in, mut u_out) = (start_u, start_u);
+
+    loop {
+
+        u_in = u_out; u_out += step;
+
+        if (is_first && u_out > end_u) || (!is_first && u_out < end_u) {
+
+            if curve.point_at(end_u).distance_squared(vert_pt) <= tol_sq { return None; }
+
+            u_out = end_u; break;
+
+        }
+
+        if curve.point_at(u_out).distance_squared(vert_pt) > tol_sq { break; }
+
+    }
+
+    // 3. 二分精化
+
+    while (u_out - u_in).abs() > eps {
+
+        let mid = (u_in + u_out) * 0.5;
+
+        if curve.point_at(mid).distance_squared(vert_pt) > tol_sq {
+
+            u_out = mid;
+
+        } else { u_in = mid; }
+
+    }
+
+    Some(if is_first { u_out } else { u_in })
+
+}
+
+
+
+/// ✅ OCCT对齐: FindValidRange (BRepLib_1.cxx L153-220)
+
+/// 计算曲线段 [t0,t1] 排除端点容差球后的有效(shrunk)范围。
+
+/// 返回 (first, last); 若完全被容差球覆盖则返回 None (micro edge)。
+
+fn find_valid_range(
+
+    curve: &Curve3, t0: f64, t1: f64,
+
+    sv_pt: DVec3, sv_tol: f64, ev_pt: DVec3, ev_tol: f64,
+
+) -> Option<(f64, f64)> {
+
+    use rcad_kernel::geom::CurveEval;
+
+    if (t1 - t0).abs() < 1e-12 { return None; }
+
+    let abs_max = t0.abs().max(t1.abs()).max(1.0);
+
+    let eps = curve_resolution(curve, (t0+t1)*0.5, 1e-7).max(abs_max * 1e-12).max(1e-12);
+
+    // 起点端 shrunk
+
+    let first = if t0.is_infinite() { t0 } else {
+
+        match find_nearest_valid_point(curve, t0, t1, true, sv_pt, sv_tol, eps) {
+
+            Some(f) => { if (t1 - f).abs() < eps { return None; } f }
+
+            None => { return None; }
+
+        }
+
+    };
+
+    // 终点端 shrunk
+
+    let last = if t1.is_infinite() { t1 } else {
+
+        match find_nearest_valid_point(curve, t0, t1, false, ev_pt, ev_tol, eps) {
+
+            Some(l) => { if (l - t0).abs() < eps { return None; } l }
+
+            None => { return None; }
+
+        }
+
+    };
+
+    if first > last { None } else { Some((first, last)) }
+
+}
 #[cfg(test)]
 mod phase2a_tests {
     use super::*;
@@ -7665,7 +7865,7 @@ impl<'a> PaveFiller<'a> {
     }
 }
 
-#[cfg(test)]
+
 mod tests {
     use super::*;
     use rcad_kernel::{BRep, PrimitiveSolid};
