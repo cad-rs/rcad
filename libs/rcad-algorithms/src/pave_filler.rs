@@ -5360,6 +5360,115 @@ impl<'a> PaveFiller<'a> {
 
                     self.ds.faces[fi].face_info.curves_in.remove(&ci);
 
+        // ✅ OCCT对齐: FilterPavesOnCurves — 跨曲线顶点去重
+
+        //    OCCT L796, L2349-2443: 同一顶点在多个曲线上的,只保留最匹配的曲线。
+
+        // inline FilterPavesOnCurves
+
+        {
+
+            let a_sin_angle_min: f64 = 0.5;
+
+            // 1. 收集每个顶点所在的曲线列表
+
+            let mut vert_curves: std::collections::HashMap<usize, Vec<(usize, bool)>> = std::collections::HashMap::new();
+
+            //      (curve_idx, is_start)
+
+            let all_curve_ids: Vec<usize> = (0..self.ds.intersection_curves.len()).collect();
+
+            for &ci in &all_curve_ids {
+
+                let ic = &self.ds.intersection_curves[ci];
+
+                vert_curves.entry(ic.start_vertex).or_default().push((ci, true));
+
+                if ic.start_vertex != ic.end_vertex {
+
+                    vert_curves.entry(ic.end_vertex).or_default().push((ci, false));
+
+                }
+
+            }
+
+            // 2. 只处理在多个曲线上出现的顶点
+
+            let mut remove_curves: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+
+            for (n_v, curves) in &vert_curves {
+
+                if curves.len() < 2 { continue; }
+
+                // 对每个曲线计算距离和角度
+
+                struct CurveDist { ci: usize, sq_dist: f64, sin_angle: f64, tol: f64 }
+
+                let mut dists: Vec<CurveDist> = Vec::new();
+
+                for &(ci, is_start) in curves {
+
+                    let ic = &self.ds.intersection_curves[ci];
+
+                    let par = if is_start { ic.t_range[0] } else { ic.t_range[1] };
+
+                    let pt = self.ds.vertices[*n_v].point;
+
+                    let curve_pt = ic.curve.point_at(par);
+
+                    let tangent = ic.curve.tangent_at(par);
+
+                    let to_curve = curve_pt - pt;
+
+                    let sq_dist = to_curve.length_squared();
+
+                    let speed_sq = tangent.length_squared();
+
+                    let sin_angle = if sq_dist > 1e-30 && speed_sq > 1e-30 {
+
+                        (to_curve.cross(tangent).length_squared() / (sq_dist * speed_sq)).sqrt()
+
+                    } else { 0.0 };
+
+                    let tol = TOLERANCE_ABS * 100.0;
+
+                    dists.push(CurveDist { ci, sq_dist, sin_angle, tol });
+
+                }
+
+                // 找最小距离
+
+                let min_dist = dists.iter().map(|d| d.sq_dist).min_by(|a,b| a.partial_cmp(b).unwrap()).unwrap_or(0.0);
+
+                // 标记需要移除的曲线
+
+                for d in &dists {
+
+                    let check_dist = 100.0 * tol.max(min_dist);
+
+                    if d.sq_dist > check_dist && d.sin_angle < a_sin_angle_min {
+
+                        remove_curves.insert(d.ci);
+
+                    }
+
+                }
+
+            }
+
+            // 3. 移除曲线
+
+            for fi in 0..n_faces {
+
+                for &ci in &remove_curves {
+
+                    self.ds.faces[fi].face_info.curves_in.remove(&ci);
+
+                }
+
+            }
+
+        }
                 }
 
             }
