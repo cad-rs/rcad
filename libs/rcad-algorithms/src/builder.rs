@@ -1241,16 +1241,36 @@ impl ResultBuilder {
                 e.1 = v_canon[e.1];
             }
 
-            // Step 3: 边去重 — 相同 (v_min,v_max) 对的边合并为同一 index
+            // Step 3: 边去重 — 相同 (v_min,v_max) 对且曲线类型相同的边合并
+            // ✅ OCCT对齐: 不合并不同曲线类型的边(IC圆弧 vs 平面直边共享相同顶点对但几何不同)
             let ne = self.edges.len();
             let mut e_canon: Vec<usize> = (0..ne).collect();
             for i in 0..ne {
                 if e_canon[i] != i { continue; }
                 let (a1, a2) = (self.edges[i].0.min(self.edges[i].1), self.edges[i].0.max(self.edges[i].1));
+                let ci = self.custom_edge_curves.get(i).and_then(|c| c.as_ref());
                 for j in (i+1)..ne {
                     let (b1, b2) = (self.edges[j].0.min(self.edges[j].1), self.edges[j].0.max(self.edges[j].1));
                     if a1 == b1 && a2 == b2 {
-                        e_canon[j] = i;
+                        // Only merge if both have the same curve type (or both are plain)
+                        let cj = self.custom_edge_curves.get(j).and_then(|c| c.as_ref());
+                        let merge = match (ci, cj) {
+                            (Some(circ_i), Some(circ_j)) => {
+                                use rcad_kernel::geom::Curve3;
+                                match (circ_i, circ_j) {
+                                    (Curve3::Circle(ci_c), Curve3::Circle(cj_c)) =>
+                                        (ci_c.center - cj_c.center).length_squared() < 1e-12
+                                        && (ci_c.radius - cj_c.radius).abs() < 1e-12
+                                        && (ci_c.normal.normalize() - cj_c.normal.normalize()).length_squared() < 1e-12,
+                                    _ => false,
+                                }
+                            }
+                            (None, None) => true, // Both plain: merge
+                            _ => false, // Curve mismatch: don't merge
+                        };
+                        if merge {
+                            e_canon[j] = i;
+                        }
                     }
                 }
             }
