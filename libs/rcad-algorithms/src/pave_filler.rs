@@ -5249,6 +5249,61 @@ impl<'a> PaveFiller<'a> {
                 }
             }
         }
+        // ✅ OCCT对齐: IsValidBlockForFaces — 验证新曲线段在两张面上
+
+        //    OCCT L892-896: 采样曲线段中点在两张面上投影,距离超 tol 则无效。
+
+        //    无效段从 faces[curves_in] 移除,避免错误拓扑连接。
+
+        {
+
+            let tol_sq = (TOLERANCE_ABS * 100.0).powi(2);
+
+            let mut remove_curves: Vec<usize> = Vec::new();
+
+            for &(_old_ci, new_ci) in &new_curves_info {
+
+                let ic = &self.ds.intersection_curves[new_ci];
+
+                let fi = find_face_idxs_for_curve(&self.ds, new_ci);
+
+                if fi[0] == usize::MAX || fi[1] == usize::MAX { continue; }
+
+                let mid_t = (ic.t_range[0] + ic.t_range[1]) * 0.5;
+
+                let mid_pt = ic.curve.point_at(mid_t);
+
+                let s1 = &self.ds.faces[fi[0]].surface;
+
+                let s2 = &self.ds.faces[fi[1]].surface;
+
+                let (_, p1) = crate::extrema::closest_point_on_surface(s1, mid_pt);
+
+                let (_, p2) = crate::extrema::closest_point_on_surface(s2, mid_pt);
+
+                if p1.distance_squared(mid_pt) > tol_sq
+
+                    || p2.distance_squared(mid_pt) > tol_sq
+
+                {
+
+                    remove_curves.push(new_ci);
+
+                }
+
+            }
+
+            for fi in 0..n_faces {
+
+                for &ci in &remove_curves {
+
+                    self.ds.faces[fi].face_info.curves_in.remove(&ci);
+
+                }
+
+            }
+
+        }
     }
 
     fn build_split_edges(&mut self) {
