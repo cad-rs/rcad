@@ -2823,115 +2823,6 @@ fn finalize_boolean_result(r: BRep) -> BRep {
 /// - seam 边: 从南极到北极的半圆弧（Circle3）
 /// - 两个极点处的退化边（start==end）
 /// - 将 seam 回路插入面的 outer_wire
-fn add_sphere_seam_edges(mut brep: BRep) -> BRep {
-    use rcad_kernel::geom::{self, Curve3, Circle3, Surface3, SphericalSurface, Line2d};
-    use rcad_kernel::topology::WireEdge;
-    use rcad_kernel::{Edge, Vertex, PCurve};
-    use std::f64::consts::PI;
-    use glam::{DVec2, DVec3};
-    use crate::tolerance::TOLERANCE_ABS;
-
-    // 找到所有球面索引
-    let sphere_surf_indices: Vec<usize> = brep.geom.surfaces.iter().enumerate()
-        .filter(|(_, s)| matches!(s, Surface3::Sphere(_)))
-        .map(|(i, _)| i)
-        .collect();
-    if sphere_surf_indices.is_empty() {
-        return brep;
-    }
-
-    // 收集需要添加 seam 的球面 (两遍扫描避免 borrow checker)
-    struct FInfo { sidx: usize, shidx: usize, fidx: usize, sphere: SphericalSurface }
-    let mut finfos: Vec<FInfo> = Vec::new();
-    for (si, sol) in brep.solids.iter().enumerate() {
-        for (shi, sh) in sol.shells.iter().enumerate() {
-            for (fi, face) in sh.faces.iter().enumerate() {
-                let Some(surf_idx) = face.surface_idx else { continue; };
-                if !sphere_surf_indices.contains(&surf_idx) { continue; }
-                let sphere = match &brep.geom.surfaces[surf_idx] {
-                    Surface3::Sphere(s) => *s, _ => continue,
-                };
-                if face.outer_wire.edges.len() > 2 { continue; }
-                if face.outer_wire.edges.iter().any(|we| brep.edges.get(we.idx).map(|e| e.start == e.end).unwrap_or(false)) { continue; }
-                finfos.push(FInfo { sidx: si, shidx: shi, fidx: fi, sphere });
-            }
-        }
-    }
-    for fi in &finfos {
-        let s = fi.sphere;
-        let c = s.center; let axis = s.axis.normalize(); let rd = s.ref_dir.normalize(); let r = s.radius;
-        let npt = c + axis * r; let spt = c - axis * r;
-
-        // 查找或创建极点 vertices (直接操作 brep)
-        let nv = brep.vertices.iter().position(|v| (v.point - npt).length() < TOLERANCE_ABS * 10.0)
-            .unwrap_or_else(|| { brep.vertices.push(Vertex { point: npt }); brep.geom.vertex_tolerance.push(TOLERANCE_ABS); brep.vertices.len() - 1 });
-        let sv = brep.vertices.iter().position(|v| (v.point - spt).length() < TOLERANCE_ABS * 10.0)
-            .unwrap_or_else(|| { brep.vertices.push(Vertex { point: spt }); brep.geom.vertex_tolerance.push(TOLERANCE_ABS); brep.vertices.len() - 1 });
-
-        // Seam curve: half-circle in plane perpendicular to ref_dir (OCCT BRepPrim_Sphere::SetMeridian)
-        let sci = brep.geom.curves.len();
-        brep.geom.curves.push(Curve3::Circle(Circle3 { center: c, normal: rd.cross(axis), radius: r }));
-
-        // Seam edge: 南→北 (edge_curve_range [-π/2, π/2])
-        let se = brep.edges.len();
-        brep.edges.push(Edge { start: sv, end: nv });
-        brep.geom.edge_curve.push(Some(sci));
-        brep.geom.edge_curve_range.push(Some([-PI / 2.0, PI / 2.0]));
-        brep.geom.edge_degenerated.push(false);
-        brep.geom.edge_tolerance.push(TOLERANCE_ABS);
-
-        // PCurves: fwd(南→北) at u=2π, rev(北→南) at u=0, both v∈[0,π]
-        let pf = brep.geom.curve2ds.len();
-        brep.geom.curve2ds.push(rcad_kernel::geom::Curve2d::Line(Line2d { origin: DVec2::new(2.0 * PI, PI), direction: DVec2::new(0.0, -1.0) }));
-        brep.geom.curve2ds.push(rcad_kernel::geom::Curve2d::Line(Line2d { origin: DVec2::new(0.0, 0.0), direction: DVec2::new(0.0, 1.0) }));
-        brep.geom.curve2d_range.push(Some([0.0, PI]));
-        brep.geom.curve2d_range.push(Some([0.0, PI]));
-
-        let si = brep.solids[fi.sidx].shells[fi.shidx].faces[fi.fidx].surface_idx.unwrap();
-        brep.geom.edge_pcurves.push(vec![
-            PCurve { surface_idx: si, curve2d_idx: pf },
-            PCurve { surface_idx: si, curve2d_idx: pf + 1 },
-        ]);
-
-        // 退化边: 北极×2 + 南极×1 (OCCT: edge1+edge4 at north, edge3 at south)
-        let push_de = |b: &mut BRep, vi: usize, si: usize, uv: DVec2| -> usize {
-            let de = b.edges.len();
-            b.edges.push(Edge { start: vi, end: vi });
-            b.geom.edge_curve.push(None); b.geom.edge_curve_range.push(None);
-            b.geom.edge_degenerated.push(true); b.geom.edge_tolerance.push(TOLERANCE_ABS);
-            let pc_i = b.geom.curve2ds.len();
-            b.geom.curve2ds.push(rcad_kernel::geom::Curve2d::Line(Line2d { origin: uv, direction: DVec2::ZERO }));
-            b.geom.curve2d_range.push(Some([0.0, 0.0]));
-            b.geom.edge_pcurves.push(vec![PCurve { surface_idx: si, curve2d_idx: pc_i }]);
-            de
-        };
-        let dn1 = push_de(&mut brep, nv, si, DVec2::new(0.0, 0.0));
-        let dn2 = push_de(&mut brep, nv, si, DVec2::new(0.0, 0.0));
-        let ds1 = push_de(&mut brep, sv, si, DVec2::new(0.0, PI));
-
-        // 插入 seam 回路到 outer_wire (直接索引访问,无 face 引用冲突)
-        let we = &brep.solids[fi.sidx].shells[fi.shidx].faces[fi.fidx].outer_wire.edges.clone();
-        let mut pos: Option<usize> = None;
-        for (i, w) in we.iter().enumerate() {
-            if let Some(e) = brep.edges.get(w.idx) {
-                if (if w.forward { e.end } else { e.start }) == nv { pos = Some(i); break; }
-            }
-        }
-        let sl: Vec<WireEdge> = vec![
-            WireEdge::fwd(dn1), WireEdge::rev(se), WireEdge::fwd(ds1),
-            WireEdge::fwd(se), WireEdge::fwd(dn2),
-        ];
-        let mut nw = Vec::with_capacity(we.len() + sl.len());
-        if let Some(p) = pos {
-            nw.extend_from_slice(&we[..=p]); nw.extend_from_slice(&sl); nw.extend_from_slice(&we[p + 1..]);
-        } else {
-            nw.extend_from_slice(we); nw.extend_from_slice(&sl);
-        }
-        brep.solids[fi.sidx].shells[fi.shidx].faces[fi.fidx].outer_wire.edges = nw;
-    }
-    brep
-}
-
 pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
     // Fast-path: identical operands (union/intersection → either operand, difference → empty).
     if let Some(r) = boolean_unit_octant::try_identical_operands(a, b, op) {
@@ -3602,7 +3493,6 @@ pub fn boolean_op_with_retry(
     rcad_kernel::compute_vertex_tolerances(&mut brep);
     rcad_kernel::tolerance::finalize_tolerance_hierarchy(&mut brep);
     let brep = split_disconnected_shells(brep);
-    let brep = add_sphere_seam_edges(brep);
     Ok(brep)
 }
 
