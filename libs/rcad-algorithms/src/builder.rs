@@ -979,7 +979,9 @@ impl ResultBuilder {
         // ✅ OCCT对齐: 球面退化边 + seam 边 (OCCT sphere face 外环含退化边+seam)
         let mut internal_verts = Vec::new();
         if matches!(face.surface, Surface3::Sphere(_)) && !face.face_info.curves_in.is_empty() {
-            // ⏳ 部分对齐: 跳过 seam 边添加(交线分割后不需 seam)
+            // ⏳ 部分对齐: wire pipeline 未覆盖时(section segments 退化为 2-point),
+            //    emit_face_with_origin 会添加 seam 顶点到 internal_verts。跳过
+            //    以避免南极点计入 face_internal_vertices 拓扑计数(V+1)。
         } else if matches!(face.surface, Surface3::Sphere(_)) {
             for &ei in &face.boundary_edges {
                 let edge = &ds.edges[ei];
@@ -2449,18 +2451,23 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize) -> Vec<WireSegment> {
 
         if is_seam {
             // ✅ OCCT对齐: seam 边 FORWARD+REVERSED (L444-447)
-            segments.push(WireSegment {
-                start_vertex: sv, end_vertex: ev,
-                source: WireEdgeSource::DsEdge(ei),
-                forward: true,
-                is_seam: true,
-            });
-            segments.push(WireSegment {
-                start_vertex: ev, end_vertex: sv,
-                source: WireEdgeSource::DsEdge(ei),
-                forward: false,
-                is_seam: true,
-            });
+            // ✅ OCCT对齐: 有 curves_in(被 section edges 分割)时跳过 seam。
+            //    OCCT BOPAlgo_Builder_2.cxx BuildSplitFaces 在被分割的
+            //    球面上没有 seam edge，仅完整(未分割)球面需要 seam。
+            if face.face_info.curves_in.is_empty() {
+                segments.push(WireSegment {
+                    start_vertex: sv, end_vertex: ev,
+                    source: WireEdgeSource::DsEdge(ei),
+                    forward: true,
+                    is_seam: true,
+                });
+                segments.push(WireSegment {
+                    start_vertex: ev, end_vertex: sv,
+                    source: WireEdgeSource::DsEdge(ei),
+                    forward: false,
+                    is_seam: true,
+                });
+            }
         } else {
             // ✅ OCCT对齐: 普通边按原始方向添加 (L374-378)
             segments.push(WireSegment {
@@ -2740,8 +2747,9 @@ fn perform_areas(
         }
     }
 
-    // ⏳ 部分对齐: seam wires → 跳过(不加入 inner wires)。
-    //    OCCT BuildSplitFaces 在球面被大圆分割后不再需要 seam。
+    // ✅ OCCT对齐: seam wires → 作为主 face 的 inner wires
+    //    (对应 OCCT PerformAreas L575-605: hole wire 分配到 outer face)
+    // ⏳ 部分对齐: 不含 seam 段(collect_face_edge_segments 已跳过),seam_wire_idxs 虽为空但排除更安全。
     let all_holes: Vec<usize> = hole_wire_idxs.clone();
 
     let mut result = vec![WireFace {
