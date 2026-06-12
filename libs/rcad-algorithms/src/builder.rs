@@ -551,6 +551,25 @@ impl ResultBuilder {
         idx
     }
 
+    /// ✅ OCCT对齐: 创建退化 seam 边(带半球圆曲线,防止被边去重合并)。
+    ///    OCCT 的 sphere face 外环总是有一条退化 seam 边(两端同顶点)。
+    ///    添加一个球面水平圆曲线(circle.normal = axis)使边在某些上下文中可识别。
+    fn add_edge_seam_degenerate(&mut self, v1: usize, sphere_surf: &SphericalSurface) -> usize {
+        let idx = self.edges.len();
+        self.edges.push((v1, v1));
+        while self.custom_edge_curves.len() <= idx {
+            self.custom_edge_curves.push(None);
+        }
+        // 存储该退化 seam 对应的球面圆曲线(用于 STEP writer)
+        let seam_circle = Curve3::Circle(Circle3 {
+            center: sphere_surf.center,
+            normal: sphere_surf.axis,
+            radius: sphere_surf.radius,
+        });
+        self.custom_edge_curves[idx] = Some(seam_circle);
+        idx
+    }
+
     /// ⏳ 部分对齐: 创建具有精确圆曲线几何的 edge。
     ///    OCCT: BOPTools_AlgoTools::MakeEdge(aIC,...) 直接创建 BRep Edge,无顶点去重。
     ///    rcad: 通过 add_edge(顶点去重)创建边,在 build() 中设置 edge_curve。
@@ -879,15 +898,19 @@ impl ResultBuilder {
                 // ✅ OCCT对齐: seam edge → degenerate edge
                 //    OCCT sphere face wire 中的 seam edge 是退化边(两端同一顶点),
                 //    不产生额外拓扑顶点。rcad wire pipeline 中 seam segment 用 v→v 退化边。
+                // ✅ OCCT对齐: 退化 seam 边 — 用 add_edge_seam_degenerate 创建独立 edge
                 let v = if vert_indices.is_empty() || vert_indices.last() != Some(&v1) {
                     v1
                 } else {
-                    // Use the last vertex in the wire (degenerate closure for seam)
                     let vi = self.add_vertex(ds.vertices[seg.start_vertex].point);
                     vert_indices.push(vi);
                     vi
                 };
-                let ei = self.add_edge(v, v);
+                let sphere_surf = match &ds.faces[face_idx].surface {
+                    Surface3::Sphere(s) => s,
+                    _ => &SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, ref_dir: DVec3::X },
+                };
+                let ei = self.add_edge_seam_degenerate(v, sphere_surf);
                 (ei, true)
             } else {
                 let ei = match &seg.source {
