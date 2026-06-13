@@ -4847,15 +4847,13 @@ impl<'a> PaveFiller<'a> {
         let s1 = self.ds.faces[f1].surface.clone();
         let s2 = self.ds.faces[f2].surface.clone();
 
-        // For curved-curved surface pairs (e.g. Cylinder × Cylinder), use the
-        // sign-change grid marching from numeric_intss_with_density, which produces
-        // ordered polylines directly without the closure/drift issues of the gradient
-        // marcher.
-        let both_curved = !matches!(&s1, Surface3::Plane(_)) && !matches!(&s2, Surface3::Plane(_));
-        if both_curved {
-            // Adaptive grid density: scale with the surface characteristic dimension.
-            // Larger surfaces need finer grids to detect narrow intersection bands
-            // (e.g. a small cylinder intersecting a large sphere).
+        // ✅ OCCT对齐: 对任何非 Plane 面使用 sign-change grid marching (IntTools_FaceFace)
+        let any_curved = !matches!(&s1, Surface3::Plane(_)) || !matches!(&s2, Surface3::Plane(_));
+        if any_curved {
+            if std::env::var("RCAD_DEBUG_IC").is_ok() {
+                eprintln!("[MARCH] f1={} f2={} s1={:?} s2={:?}", f1, f2,
+                    std::mem::discriminant(&s1), std::mem::discriminant(&s2));
+            }
             let char_len = |s: &Surface3| -> f64 {
                 match s {
                     Surface3::Sphere(sp) => sp.radius,
@@ -4868,9 +4866,6 @@ impl<'a> PaveFiller<'a> {
             let avg_len = (char_len(&s1) + char_len(&s2)) * 0.5;
             let mut grid_n = ((avg_len * 10.0) as usize).max(64).min(256);
 
-            // For skew cone-cylinder pairs, boost the s1 grid density.
-            // Perpendicular/skewed axes produce narrow intersection bands
-            // that need finer sampling to detect reliably (see ZK6).
             let skew_factor = match (&s1, &s2) {
                 (Surface3::Cylinder(c1), Surface3::Cone(c2))
                 | (Surface3::Cone(c2), Surface3::Cylinder(c1)) => {
