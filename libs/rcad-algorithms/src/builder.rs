@@ -743,7 +743,12 @@ impl ResultBuilder {
         //    附加信息调用 add_seam_edge。当前仅用于 bcommon_simple 快速路径
         //    (analytic builder),PaveFiller 路径未使用因为该路径不经过此代码。
         if let Some((sei, ref crv)) = sub.seam_edge {
-            if sei < vert_indices.len() {
+            if sei == vert_indices.len() {
+                // Degenerate seam edge at vertex 0 (sphere face seam).
+                let seam_ei = self.add_seam_edge(vert_indices[0], vert_indices[0], crv.clone());
+                let forward = self.edges[seam_ei].0 == vert_indices[0];
+                edge_indices.push((seam_ei, forward));
+            } else if sei < vert_indices.len() {
                 let sj = (sei + 1) % vert_indices.len();
                 let seam_ei = self.add_seam_edge(vert_indices[sei], vert_indices[sj], crv.clone());
                 let forward = self.edges[seam_ei].0 == vert_indices[sei];
@@ -3647,6 +3652,11 @@ impl<'a> BooleanBuilder<'a> {
                         face_split,
                     );
                 }
+                if matches!(sub.surface, Surface3::Sphere(_)) {
+                    let sp = sub.sample_point();
+                    eprintln!("[SPHERE_CLASSIFY] fi={} keep={} class={:?} sample=({:.3},{:.3},{:.3})",
+                        fi, keep, class, sp.x, sp.y, sp.z);
+                }
                 if keep {
                     kept_subs.push(sub.clone());
                 } else if class == Classification::In
@@ -3679,7 +3689,12 @@ impl<'a> BooleanBuilder<'a> {
             }
 
             // ✅ OCCT对齐: 尝试用 emit_wire_face 发射 sphere 面
-            let wire_emit_used = if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) {
+            let has_circle_curves_a = matches!(self.ds.faces[fi].surface, Surface3::Sphere(_))
+                && self.ds.faces[fi].face_info.curves_in.iter().any(|&ci|
+                    matches!(self.ds.intersection_curves[ci].curve, Curve3::Circle(_)));
+            let wire_emit_used = if has_circle_curves_a {
+                false
+            } else if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) {
                 if let Some((w_segments, w_faces)) = self.split_face_occt_wire_pipeline(fi) {
                     for wf in &w_faces {
                         let src = self.ds.faces[fi].source_face_idx;
@@ -3850,7 +3865,14 @@ impl<'a> BooleanBuilder<'a> {
             let flip = self.op == BooleanOpType::Difference;
             // ✅ OCCT对齐: B-side sphere 面使用 emit_wire_face (同 A-side)
             //    OCCT BuildSplitFaces 对 A/B 侧面统一处理。
-            let wire_emit_used = if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) {
+            //    Skip wire pipeline when sphere face has circular intersection curves
+            //    (handled by build_sphere_sub_faces_by_circles producing exact arcs).
+            let has_circle_curves = matches!(self.ds.faces[fi].surface, Surface3::Sphere(_))
+                && self.ds.faces[fi].face_info.curves_in.iter().any(|&ci|
+                    matches!(self.ds.intersection_curves[ci].curve, Curve3::Circle(_)));
+            let wire_emit_used = if has_circle_curves {
+                false
+            } else if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) {
                 if let Some((w_segments, w_faces)) = self.split_face_occt_wire_pipeline(fi) {
                     for wf in &w_faces {
                         let src = self.ds.faces[fi].source_face_idx;
@@ -4280,12 +4302,10 @@ impl<'a> BooleanBuilder<'a> {
                                 .filter(|p| p.distance(c_center) <= c_r + 1e-8)
                                 .copied().collect();
                             let fp = keep.iter().max_by(|a,b| a.distance(c_center).partial_cmp(&b.distance(c_center)).unwrap()).copied().unwrap_or(DVec3::ZERO);
-                            if keep.len() >= 2 && keep.len() < boundary.len() && inside.len() >= 2 {
+                            if keep.len() >= 2 && keep.len() < boundary.len() && inside.len() >= 1 {
                                 let arc_curve_outer = Curve3::Circle(*circ);
-                                let arc_curve_inner = Curve3::Circle(*circ);
                                 let n_keep = keep.len();
-                                let n_inside = inside.len();
-                                annular_out = Some(vec![
+                                let mut out_subs = vec![
                                     SubFace {
                                         boundary: keep,
                                         surface: face.surface.clone(), normal: face.normal,
@@ -4294,15 +4314,20 @@ impl<'a> BooleanBuilder<'a> {
                                         outer_circle_edges: vec![(n_keep - 1, arc_curve_outer)],
                                         seam_edge: None, inner_wire_circle: None,
                                     },
-                                    SubFace {
+                                ];
+                                if inside.len() >= 2 {
+                                    let arc_curve_inner = Curve3::Circle(*circ);
+                                    let n_inside = inside.len();
+                                    out_subs.push(SubFace {
                                         boundary: inside,
                                         surface: face.surface.clone(), normal: face.normal,
                                         uv_centroid: None, sample_override: None,
                                         uv_domain: None, inner_wires: vec![],
                                         outer_circle_edges: vec![(n_inside - 1, arc_curve_inner)],
                                         seam_edge: None, inner_wire_circle: None,
-                                    },
-                                ]);
+                                    });
+                                }
+                                annular_out = Some(out_subs);
                                 break;
                             }
                         }
@@ -4513,12 +4538,18 @@ impl<'a> BooleanBuilder<'a> {
             return self.tessellate_sphere_face(face_idx);
         }
 
-        // ⏳ OCCT对齐: 用精确大圆弧构建球面子面。
-        //    OCCT BuildSplitFaces 通过 section edges 将球面分割为卦限子面。
-        //    rcad 的 split_sphere_by_circles 创建 8 个 SubFace(每个 3 个大圆弧边),
-        //    功能与 OCCT 的 section edges 分割等价。
-        //    注意: Union(bfuse)时 7 个卦限需通过 unify_same_domain_faces 合并。
-        // Skip wire pipeline for sphere with 3+ curves — fall through to split_curved_face_parametric
+        // ✅ OCCT对齐: 球面有圆交线时用精确大圆弧分割 (BOPAlgo_BuilderFace 等价)。
+        //    仅对 Intersection (bcommon) 启用。Union/Difference 的球面分割
+        //    需要圆形区域补集(6顶点6边),走 parametric 路径(split_curved_face_parametric)。
+        if self.op == BooleanOpType::Intersection {
+            if let Surface3::Sphere(_) = &face.surface {
+                if fi.curves_in.iter().any(|&ci|
+                    matches!(self.ds.intersection_curves[ci].curve, Curve3::Circle(_))
+                ) {
+                    return self.build_sphere_sub_faces_by_circles(face_idx);
+                }
+            }
+        }
 
         // For cone faces with intersection curves
         // overlapping sub-face UV polygons when intersection curves are high-order
@@ -5949,6 +5980,142 @@ impl<'a> BooleanBuilder<'a> {
         subs
     }
 
+
+    /// ✅ OCCT对齐: 用精确大圆弧构建球面子面 (BOPAlgo_BuilderFace 等价)。
+    fn build_sphere_sub_faces_by_circles(&self, face_idx: usize) -> Vec<SubFace> {
+        let face = &self.ds.faces[face_idx];
+        let sphere = match &face.surface { Surface3::Sphere(s) => *s, _ => return vec![] };
+
+        let mut circles: Vec<Circle3> = Vec::new();
+        let mut inside_normals: Vec<DVec3> = Vec::new();
+        for &ci in &face.face_info.curves_in {
+            if let Curve3::Circle(ref c) = self.ds.intersection_curves[ci].curve {
+                circles.push(*c);
+                // ✅ OCCT aligned: circle normal direction depends on boolean operation type
+                //    Intersection: keep inside (toward interior of intersecting shape)
+                //    Union: keep outside (away from intersecting shape)
+                //    Difference: same as Intersection (keep inside for cutting)
+                let inward = match self.op {
+                    BooleanOpType::Intersection | BooleanOpType::Difference => -c.normal.normalize(),
+                    BooleanOpType::Union => c.normal.normalize(),
+                };
+                inside_normals.push(inward);
+            }
+        }
+        if circles.len() < 2 { return self.split_curved_face_parametric(face_idx); }
+
+        let sc = sphere.center;
+        let sr = sphere.radius;
+        let mut pts_3d: Vec<DVec3> = Vec::new();
+
+        // Intersection of circle pairs -> sphere surface points
+        for i in 0..circles.len() {
+            for j in (i + 1)..circles.len() {
+                let ni = inside_normals[i];
+                let nj = inside_normals[j];
+                let line_dir = ni.cross(nj);
+                if line_dir.length_squared() < TOLERANCE_ABS_SQ { continue; }
+                let line_dir = line_dir.normalize();
+                let nidotnj = ni.dot(nj);
+                let denom = 1.0 - nidotnj * nidotnj;
+                if denom.abs() < TOLERANCE_ABS { continue; }
+                let d1 = ni.dot(circles[i].center);
+                let d2 = nj.dot(circles[j].center);
+                let coeff_i = (d1 - d2 * nidotnj) / denom;
+                let coeff_j = (d2 - d1 * nidotnj) / denom;
+                let p_any = coeff_i * ni + coeff_j * nj;
+                let delta = p_any - sc;
+                let bb = 2.0 * delta.dot(line_dir);
+                let cc = delta.dot(delta) - sr * sr;
+                let disc = bb * bb - 4.0 * cc;
+                if disc < 0.0 { continue; }
+                let sqrt_disc = disc.sqrt();
+                pts_3d.push(p_any + (-bb + sqrt_disc) / 2.0 * line_dir);
+                pts_3d.push(p_any + (-bb - sqrt_disc) / 2.0 * line_dir);
+            }
+        }
+
+        // Filter: inside all circles + deduplicate
+        let mut inside_pts: Vec<DVec3> = Vec::new();
+        for &p in &pts_3d {
+            let mut valid = true;
+            for (k, c) in circles.iter().enumerate() {
+                if (p - c.center).dot(inside_normals[k]) < -TOLERANCE_ABS {
+                    valid = false; break;
+                }
+            }
+            if !valid { continue; }
+            if inside_pts.iter().any(|e| e.distance_squared(p) < TOLERANCE_ABS_SQ) { continue; }
+            inside_pts.push(p);
+        }
+        if inside_pts.len() < 3 {
+            eprintln!("[SPHERE_SPLIT] fallback: {} circles, {} pts, {} inside",
+                circles.len(), pts_3d.len(), inside_pts.len());
+            return self.split_curved_face_parametric(face_idx);
+        }
+
+        // Project all vertices onto sphere surface to fix numerical drift
+        for p in inside_pts.iter_mut() {
+            let dir = *p - sc;
+            let dist = dir.length();
+            if dist > 0.0 {
+                *p = sc + (sr / dist) * dir;
+            }
+        }
+
+        eprintln!("[SPHERE_SPLIT] face_idx={} inside_pts={} n_circles={}",
+            face_idx, inside_pts.len(), circles.len());
+
+        // Sort by azimuth around centroid for closed polygon
+        let centroid = inside_pts.iter().copied().sum::<DVec3>() / inside_pts.len() as f64;
+        let up_dir = (centroid - sc).normalize();
+        let ref_dir = any_perpendicular(up_dir);
+        let cross_dir = up_dir.cross(ref_dir);
+        inside_pts.sort_by(|a, b| {
+            let a_az = f64::atan2((*a - sc).dot(cross_dir), (*a - sc).dot(ref_dir));
+            let b_az = f64::atan2((*b - sc).dot(cross_dir), (*b - sc).dot(ref_dir));
+            a_az.partial_cmp(&b_az).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        // Assign each edge to its matching circle
+        let n = inside_pts.len();
+        let outer_circle_edges: Vec<(usize, Curve3)> = (0..n).map(|i| {
+            let va = inside_pts[i];
+            let vb = inside_pts[(i + 1) % n];
+            let best_k = (0..circles.len()).min_by(|&a, &b| {
+                let da = (va - circles[a].center).dot(inside_normals[a]).abs()
+                       + (vb - circles[a].center).dot(inside_normals[a]).abs();
+                let db = (va - circles[b].center).dot(inside_normals[b]).abs()
+                       + (vb - circles[b].center).dot(inside_normals[b]).abs();
+                da.partial_cmp(&db).unwrap()
+            }).unwrap_or(0);
+            (i, Curve3::Circle(circles[best_k]))
+        }).collect();
+
+        // Seam edge at vertex nearest sphere pole
+        let seam_dir = sphere.axis.normalize();
+        let seam_idx = inside_pts.iter().enumerate()
+            .min_by(|(_, a), (_, b)| {
+                let da = ((*a - sc).normalize().dot(seam_dir) - 1.0).abs();
+                let db = ((*b - sc).normalize().dot(seam_dir) - 1.0).abs();
+                da.partial_cmp(&db).unwrap()
+            }).map(|(i, _)| i).unwrap_or(0);
+        let seam_normal = any_perpendicular(sphere.axis).normalize();
+        let seam_circle = Curve3::Circle(Circle3 {
+            center: sc, normal: seam_normal, radius: sr,
+        });
+
+        vec![SubFace {
+            boundary: inside_pts,
+            surface: Surface3::Sphere(sphere),
+            normal: (centroid - sc).normalize(),
+            uv_centroid: None, sample_override: Some(centroid), uv_domain: None,
+            inner_wires: vec![],
+            outer_circle_edges,
+            seam_edge: None,
+            inner_wire_circle: None,
+        }]
+    }
 
     /// Falls back to `split_curved_face_legacy` when UV data or PCurves are missing.
     fn split_curved_face_parametric(&self, face_idx: usize) -> Vec<SubFace> {
