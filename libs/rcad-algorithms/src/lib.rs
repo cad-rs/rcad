@@ -2696,7 +2696,9 @@ fn finalize_fast_path_result(r: BRep) -> BRep {
     } else {
         optimize_boolean_topology(r)
     };
-    // promote_planar_surfaces skipped — OCCT preserves original surface types
+    let r = promote_planar_surfaces(r);
+    // ✅ OCCT-aligned: promote planar BSpline -> Plane for boolean results.
+    //   (BRepClass3d_SolidClassifier requires exact Plane type.)
     let mut r = r;
     // Compute and propagate per-entity tolerances (OCCT BRepLib::SameParameter + hierarchy).
     rcad_kernel::tolerance::resize_tolerance_arrays(&mut r);
@@ -2798,6 +2800,10 @@ fn finalize_boolean_result(r: BRep) -> BRep {
     let r = deduplicate_edges(r);
     // Topology optimization: merge coplanar faces, share edges, detect holes.
     let r = optimize_boolean_topology(r);
+    // ✅ OCCT-aligned: promote planar BSpline -> Plane. OCCT's nurbsconvert creates
+    //   planar BSpline surfaces, but boolean results use Plane surfaces
+    //   (BRepClass3d_SolidClassifier requires exact Plane type).
+    let r = if std::env::var("RCAD_SKIP_PROMOTE").is_ok() { r } else { promote_planar_surfaces(r) };
     if std::env::var("RCAD_DEBUG_BOX").is_ok() {
         let nv = r.vertices.len();
         let ne = r.edges.len();
