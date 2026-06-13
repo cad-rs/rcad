@@ -4488,11 +4488,8 @@ impl<'a> BooleanBuilder<'a> {
                                 }
                                 return false;
                             }
-                            let at_v_top = (v_max_f - bnd_v_max).abs() <= vb_tol;
-                            let at_v_bot = (v_min_f - bnd_v_min).abs() <= vb_tol;
-                            // OCCT: only single-V-boundary curves are boundary curves.
-                            // Full-span curves are interior cuts that must split the face.
-                            (at_v_top || at_v_bot) && !(at_v_top && at_v_bot)
+                            // Vertical lines are always interior cut curves, not boundary curves.
+                            false
                         })
                     });
                     if all_at_boundary {
