@@ -6172,6 +6172,12 @@ impl<'a> BooleanBuilder<'a> {
 
     /// Falls back to `split_curved_face_legacy` when UV data or PCurves are missing.
     fn split_curved_face_parametric(&self, face_idx: usize) -> Vec<SubFace> {
+        let face = &self.ds.faces[face_idx];
+        eprintln!("[SCFP] face_idx={} surface={:?} curves_in={} uv_boundary={}",
+            face_idx,
+            std::mem::discriminant(&face.surface),
+            face.face_info.curves_in.len(),
+            face.uv_boundary.as_ref().map(|b| b.len()).unwrap_or(0));
 
         let _debug_sphere_polygons = |checkpoint: usize, polys: &[Vec<DVec2>]| {
             if std::env::var("RCAD_DEBUG_SPHERE_SPLIT").is_ok() {
@@ -6326,6 +6332,31 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             trim_polylines = converted;
+        }
+
+        // ✅ OCCT对齐: 去重相同u值的trim(周期性柱面u=0和u=2蟺是同一交线)
+        //    OCCT BOPAlgo_WireSplitter 用连通块+角度排序,不会重复边。
+        if u_period > 0.0 || is_sphere {
+            let period = if is_sphere { std::f64::consts::TAU } else { u_period };
+            let mut seen_u: Vec<f64> = Vec::new();
+            let mut deduped: Vec<Vec<DVec2>> = Vec::new();
+            for trim in trim_polylines.drain(..) {
+                if trim.len() >= 2 {
+                    // For periodic surfaces, check if this trim's u value is a duplicate
+                    let u0 = trim[0].x;
+                    let u1 = trim[trim.len()-1].x;
+                    let is_uv_vertical = (u0 - u1).abs() < TOLERANCE_COORD_SUB;
+                    if is_uv_vertical {
+                        // Vertical trim (constant u): check if another trim has same u
+                        let u_norm = u0.rem_euclid(period);
+                        let is_dup = seen_u.iter().any(|&u| (u - u_norm).abs() < TOLERANCE_COORD_SUB);
+                        if is_dup { continue; }
+                        seen_u.push(u_norm);
+                    }
+                }
+                deduped.push(trim);
+            }
+            trim_polylines = deduped;
         }
 
         // Filter degenerate trims (single-point closed loops).
@@ -8835,18 +8866,22 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
         eprintln!("[DBG_SPLIT] sub_b: u=[{:.6}, {:.6}] v=[{:.6}, {:.6}]", u_min, u_max, v_min, v_max);
     }
 
-    let mut out = Vec::new();
-    if sub_a.len() >= 3 {
-        out.push(sub_a);
-    }
-    if sub_b.len() >= 3 {
-        out.push(sub_b);
-    }
+    let sub_a_deduped = dedup_2d(sub_a);
+    let sub_b_deduped = dedup_2d(sub_b);
 
-    if out.is_empty() {
-        vec![poly.to_vec()]
+    // ✅ OCCT对齐: 如果子多边形退化(<3顶点),返回原始多边形。
+    //    发生在trim与多边形边界重合时(如周期性柱面u=2π的边)。
+    let sub_a_valid = sub_a_deduped.len() >= 3;
+    let sub_b_valid = sub_b_deduped.len() >= 3;
+
+    if sub_a_valid && sub_b_valid {
+        vec![sub_a_deduped, sub_b_deduped]
+    } else if sub_a_valid {
+        vec![sub_a_deduped]
+    } else if sub_b_valid {
+        vec![sub_b_deduped]
     } else {
-        out
+        vec![poly.to_vec()]
     }
 }
 
