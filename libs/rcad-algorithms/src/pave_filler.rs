@@ -2002,6 +2002,7 @@ impl<'a> PaveFiller<'a> {
                         if self.should_skip_glued_face_pair(af, bf) {
                             continue;
                         }
+                        eprintln!("[FF] perform_ff: af={} bf={}", af, bf);
                         self.intersect_face_face(af, bf);
                     }
             }
@@ -2012,6 +2013,7 @@ impl<'a> PaveFiller<'a> {
                     if self.should_skip_glued_face_pair(af, bf) {
                         continue;
                     }
+                    eprintln!("[FF] perform_ff: af={} bf={}", af, bf);
                     self.intersect_face_face(af, bf);
                 }
             }
@@ -3320,6 +3322,8 @@ impl<'a> PaveFiller<'a> {
         plane: &Plane,
         cyl: &CylindricalSurface,
     ) {
+        eprintln!("[PC] intersect_plane_cylinder_faces f1={} f2={} result={:?}",
+            f1, f2, std::mem::discriminant(&intersect_plane_cylinder(plane, cyl)));
         use inttools::pcurve_derive::{
             circle_pcurve_on_cylinder, circle_pcurve_on_plane, ellipse_pcurve_on_cylinder,
             ellipse_pcurve_on_plane, line_pcurve_on_cylinder,
