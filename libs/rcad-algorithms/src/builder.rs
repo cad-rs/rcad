@@ -4457,7 +4457,9 @@ impl<'a> BooleanBuilder<'a> {
                             }
                             let at_v_top = (v_max_f - bnd_v_max).abs() <= vb_tol;
                             let at_v_bot = (v_min_f - bnd_v_min).abs() <= vb_tol;
-                            at_v_top || at_v_bot
+                            // OCCT: only single-V-boundary curves are boundary curves.
+                            // Full-span curves are interior cuts that must split the face.
+                            (at_v_top || at_v_bot) && !(at_v_top && at_v_bot)
                         })
                     });
                     if all_at_boundary {
@@ -6224,14 +6226,23 @@ impl<'a> BooleanBuilder<'a> {
                         eprintln!("[DBG] pcurve_sampled UV: u=[{:.6}, {:.6}] v=[{:.6}, {:.6}] n={}", u_min, u_max, v_min, v_max, raw.len());
                         raw
                     },
-                    // Analytic curves (Line2d, Circle2d, Ellipse2d) use the same
-                    // t parameterization as the 3D intersection curve.
-                    _ => (0..=if is_sphere { N_SPHERE } else { n_samp })
-                        .map(|i| {
-                            let t = t0 + (t1 - t0) * i as f64 / if is_sphere { N_SPHERE as f64 } else { n_samp as f64 };
-                            pcurve.point_at(t)
-                        })
-                        .collect(),
+                    // For analytic pcurves: Line2d needs only 2 points (straight line).
+                    // Circle/Ellipse need more to capture curvature.
+                    _ => {
+                        let n_pts: usize = if is_sphere {
+                            N_SPHERE
+                        } else if matches!(pcurve.inner(), rcad_kernel::geom::Curve2d::Line(_)) {
+                            2  // Line2d: just start + end
+                        } else {
+                            n_samp  // Circle/Ellipse: 64 points
+                        };
+                        (0..=n_pts)
+                            .map(|i| {
+                                let t = t0 + (t1 - t0) * i as f64 / n_pts as f64;
+                                pcurve.point_at(t)
+                            })
+                            .collect()
+                    },
                 };
                 if raw_pts.len() < 2 {
                     continue;
@@ -7341,7 +7352,11 @@ fn curved_subface_boundary_3d(
     // Use fewer samples for high-vertex-count UV polygons (e.g. trims from
     // sphere_closed_trim_to_open_isolines with 65 vertices per meridian)
     // since each edge is already short.
-    let edge_samples: usize = if uv_poly.len() > 80 {
+    let edge_samples: usize = if matches!(&surface, rcad_kernel::geom::Surface3::Cylinder(_)) {
+        // Cylinder: UV edges are straight lines, 2 samples per edge is sufficient.
+        // OCCT BOPAlgo_BuilderFace uses exact edges, not sampled polylines.
+        2
+    } else if uv_poly.len() > 80 {
         4
     } else if uv_poly.len() > 30 {
         8
