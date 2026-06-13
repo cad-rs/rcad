@@ -1041,6 +1041,13 @@ pub fn try_intersection_box_box(a: &BRep, b: &BRep) -> Option<BRep> {
     }
 
     let brep = make_box_brep(rmin, DVec3::X, DVec3::Y, w, h, d).ok()?;
+    if std::env::var("RCAD_DEBUG_BOX").is_ok() {
+        let nv = brep.vertices.len();
+        let ne = brep.edges.len();
+        let nf = brep.solids.get(0).and_then(|s| s.shells.get(0)).map(|sh| sh.faces.len()).unwrap_or(0);
+        eprintln!("[BOX_FAST] overlap=({:.0},{:.0},{:.0})-({:.0},{:.0},{:.0}) dims=({:.0},{:.0},{:.0}) V={} E={} F={}",
+            rmin.x, rmin.y, rmin.z, rmax.x, rmax.y, rmax.z, w, h, d, nv, ne, nf);
+    }
     Some(brep)
 }
 

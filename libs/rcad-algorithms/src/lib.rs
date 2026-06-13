@@ -2798,6 +2798,12 @@ fn finalize_boolean_result(r: BRep) -> BRep {
     let r = deduplicate_edges(r);
     // Topology optimization: merge coplanar faces, share edges, detect holes.
     let r = optimize_boolean_topology(r);
+    if std::env::var("RCAD_DEBUG_BOX").is_ok() {
+        let nv = r.vertices.len();
+        let ne = r.edges.len();
+        let nf = r.solids.get(0).and_then(|s| s.shells.get(0)).map(|sh| sh.faces.len()).unwrap_or(0);
+        eprintln!("[POST_FINAL] V={} E={} F={} solids={}", nv, ne, nf, r.solids.len());
+    }
     // Promote planar BSpline → Plane AFTER topology optimization to avoid
     // perturbing orthogonal_face_fuse plane-equation matching: bspline_to_plane
     // can introduce slight plane offsets that break coplanarity detection.
@@ -3448,6 +3454,12 @@ fn optimize_boolean_topology(mut brep: BRep) -> BRep {
 //         };
 //         let (simplified, _srep) = crate::simplify_brep_post_ops(&brep, s_opts);
 //         brep = simplified;
+    if std::env::var("RCAD_DEBUG_BOX").is_ok() {
+        let nv = brep.vertices.len();
+        let ne = brep.edges.len();
+        let nf = brep.solids.get(0).and_then(|s| s.shells.get(0)).map(|sh| sh.faces.len()).unwrap_or(0);
+        eprintln!("[POST_OPT] V={} E={} F={}", nv, ne, nf);
+    }
     brep
 }
 
