@@ -1187,6 +1187,7 @@ fn curve2d_domain(curve: &Curve2d) -> [f64; 2] {
             ]
         }
         Curve2d::Bezier(_) => [0.0, 1.0],
+        Curve2d::Trimmed(tc) => curve2d_domain(tc.curve.as_ref()),
     }
 }
 

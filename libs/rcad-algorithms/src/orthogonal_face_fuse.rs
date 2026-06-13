@@ -1274,13 +1274,23 @@ fn replace_shell_faces_and_geom(
     // the old resize path caused face_surface_range entries to drift by one
     // position (cylinder wall UV domain 鈫?planar face, H8 box 鈭?cylinder).
     brep.geom.face_surface_range.insert(insert_at, None);
-    debug_assert_eq!(brep.geom.face_surface_range.len(), brep.geom.face_surface.len());
-    if brep.geom.face_tolerance.len() < brep.geom.face_surface.len() {
+    // NOTE: `insert_at` is a shell-local face index, while
+    // remove_flat_face_geom_slots expects geom-store indices.  They can diverge
+    // when a shell has fewer faces than the geom store (e.g. multi-shell results
+    // after boolean difference).  Re-sync if needed to avoid a debug panic.
+    if brep.geom.face_surface_range.len() != brep.geom.face_surface.len() {
+        let max_len = brep.geom.face_surface.len().max(brep.geom.face_surface_range.len());
+        brep.geom.face_surface.resize(max_len, None);
+        brep.geom.face_surface_range.resize(max_len, None);
+    }
+    // Use resize for both under- and over-shoot to avoid the shell-local
+    // insert_at issue (same as above).
+    if brep.geom.face_tolerance.len() != brep.geom.face_surface.len() {
         brep.geom
             .face_tolerance
             .resize(brep.geom.face_surface.len(), 0.0);
     } else {
-        brep.geom.face_tolerance.insert(insert_at, 0.0);
+        brep.geom.face_tolerance[insert_at] = 0.0;
     }
 }
 

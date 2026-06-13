@@ -9,8 +9,9 @@ use crate::tolerance::*;
 use glam::{DVec2, DVec3};
 use rcad_kernel::fit::interpolate_points_2d;
 use rcad_kernel::geom::{
-    Circle2d, Circle3, ConicalSurface, Curve2d, CurveEval, CylindricalSurface, Ellipse2d,
-    Ellipse3, Line2d, Line3, Plane, SphericalSurface, Surface3, any_perpendicular,
+    Circle2d, Circle3, ConicalSurface, Curve2d, Curve2dEval, CurveEval, CylindricalSurface,
+    Ellipse2d, Ellipse3, Line2d, Line3, Plane, SphericalSurface, Surface3, SurfaceEval,
+    any_perpendicular,
 };
 use rcad_kernel::projection::closest_point_on_surface;
 
@@ -413,7 +414,9 @@ pub fn sampled_pcurve_on_cone(
 ///
 /// Intended as a fallback for curve/surface combinations that do not have an
 /// analytic form.  Returns a [`BSplineCurve2`] interpolated through the
-/// projected (u, v) points.
+/// projected (u, v) points, wrapped in [`TrimmedCurve2`] to preserve the
+/// mapping between the 3D curve's parameter range and the BSpline's native
+/// `[0, 1]` parameterization.
 ///
 /// When projection collapses (e.g. very short edges), fall back to a UV line.
 pub fn fallback_pcurve_by_projection(
@@ -458,7 +461,17 @@ pub fn fallback_pcurve_by_projection(
     }
 
     match interpolate_points_2d(&pts) {
-        Ok(bspline) => Curve2d::BSpline(bspline),
+        Ok(bspline) => {
+            // ✅ OCCT对齐: Geom2d_TrimmedCurve — wrap in TrimmedCurve2 to
+            // preserve the mapping between 3D curve parameter range [t0, t1]
+            // and BSpline's native [0, 1] parameterization.
+            let tc = rcad_kernel::geom::TrimmedCurve2 {
+                curve: Box::new(Curve2d::BSpline(bspline)),
+                t_min: t_range[0],
+                t_max: t_range[1],
+            };
+            Curve2d::Trimmed(tc)
+        }
         Err(_) => {
             let a = pts[0];
             let b = *pts.last().unwrap_or(&a);
@@ -590,6 +603,337 @@ pub fn polyline_pcurve_by_projection(polyline: &[DVec3], surface: &Surface3) -> 
     }
 
     interpolate_points_2d(&pts).ok().map(Curve2d::BSpline)
+}
+
+/// Check whether `pcurve` lies entirely within the given UV bounds.
+///
+/// ✅ OCCT对齐: CheckPCurve (IntTools_FaceFace.cxx L2924-2999)
+///
+/// Samples each C0-interval at NPoints (OCCT uses 23 per interval) and
+/// verifies every sample lies within the UV bounds (plus a relative
+/// tolerance of 1% of span, minimum `TOLERANCE_ABS`).
+///
+/// For periodic surfaces, shifts the UV bounds by whole periods so the
+/// midpoint of the pcurve falls within the shifted domain.  This matches
+/// OCCT's approach of evaluating the midpoint first and shifting accordingly.
+///
+/// `t_range` is the effective parameter range to sample — for most curves
+/// this is the 3D curve's [`IntersectionCurve::t_range`]; for BSpline/Bezier
+/// pcurves it should be `[0.0, 1.0]`.
+///
+/// Returns `true` when all sampled points are within bounds (or the curve
+/// is degenerate / has no finite range).
+pub fn check_pcurve_in_face(
+    pcurve: &Curve2d,
+    t_range: [f64; 2],
+    uv_bounds: [f64; 4],
+    u_period: Option<f64>,
+    v_period: Option<f64>,
+) -> bool {
+    const N_POINTS: usize = 23;
+
+    let [umin, umax, vmin, vmax] = uv_bounds;
+    let tol_u = ((umax - umin) * 0.01).max(TOLERANCE_ABS);
+    let tol_v = ((vmax - vmin) * 0.01).max(TOLERANCE_ABS);
+
+    let [t0, t1] = t_range;
+    if !t0.is_finite() || !t1.is_finite() || (t1 - t0).abs() < TOLERANCE_LEN_MIN {
+        return true; // degenerate range — skip
+    }
+
+    // Periodic shift: shift UV bounds so the midpoint pcurve parameter
+    // falls in the shifted domain (matching OCCT's approach).
+    let mid_t = 0.5 * (t0 + t1);
+    let mid_uv = match pcurve {
+        Curve2d::Trimmed(tc) => {
+            // For a TrimmedCurve2, the effective range is [t_min, t_max],
+            // but point_at(t) for t in that range maps correctly.  Compute
+            // the midpoint in the inner curve's native range by mapping.
+            let mt = 0.5 * (tc.t_min + tc.t_max);
+            tc.curve.as_ref().point_at(mt)
+        }
+        other => other.point_at(mid_t),
+    };
+
+    let u_shift = u_period
+        .map(|per| {
+            let raw = mid_uv.x - umin;
+            (raw / per).floor() * per
+        })
+        .unwrap_or(0.0);
+    let v_shift = v_period
+        .map(|per| {
+            let raw = mid_uv.y - vmin;
+            (raw / per).floor() * per
+        })
+        .unwrap_or(0.0);
+
+    // Sample N_POINTS evenly over the parameter range
+    for i in 0..N_POINTS {
+        let t = t0 + (t1 - t0) * i as f64 / (N_POINTS - 1) as f64;
+        let uv = pcurve.point_at(t);
+        let u = uv.x - u_shift;
+        let v = uv.y - v_shift;
+        if umin - u > tol_u || u - umax > tol_u || vmin - v > tol_v || v - vmax > tol_v {
+            return false;
+        }
+    }
+    true
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IsCurveValid — pcurve self-intersection check
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Check whether a 2D curve is free of self-intersections.
+///
+/// ✅ OCCT对齐: IsCurveValid (IntTools_FaceFace.cxx L2252-2289)
+///
+/// For analytic curves (Line, Circle, Ellipse, etc.) trivially returns true.
+/// For BSpline/Bezier curves, samples the curve and checks for non-adjacent
+/// segment intersections.
+///
+/// Returns `false` if the curve is self-intersecting or null.
+pub fn is_curve_valid_2d(curve: &Curve2d) -> bool {
+    match curve {
+        Curve2d::Trimmed(tc) => is_curve_valid_2d(tc.curve.as_ref()),
+        // Analytic curves never self-intersect
+        Curve2d::Line(_)
+        | Curve2d::Circle(_)
+        | Curve2d::Ellipse(_)
+        | Curve2d::CircleInvolute(_)
+        | Curve2d::ArchimedeanSpiral(_)
+        | Curve2d::LogarithmicSpiral(_)
+        | Curve2d::SineWave(_) => true,
+        // BSpline/Bezier: check polyline self-intersection
+        Curve2d::BSpline(_) | Curve2d::Bezier(_) => {
+            let pts = (0..100)
+                .map(|i| {
+                    let t = i as f64 / 99.0; // [0, 1]
+                    curve.point_at(t)
+                })
+                .collect::<Vec<_>>();
+            !has_polyline_self_intersection_2d(&pts)
+        }
+    }
+}
+
+/// Check if a polyline has non-adjacent segments that intersect.
+fn has_polyline_self_intersection_2d(points: &[DVec2]) -> bool {
+    if points.len() < 4 {
+        return false;
+    }
+    for i in 0..points.len() - 1 {
+        for j in (i + 2)..points.len() - 1 {
+            if segments_intersect_2d_open(points[i], points[i + 1], points[j], points[j + 1]) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Check if two 2D open segments intersect in their interiors.
+/// Returns false for parallel, collinear, or endpoint-only intersections.
+fn segments_intersect_2d_open(p1: DVec2, p2: DVec2, p3: DVec2, p4: DVec2) -> bool {
+    let d1 = p2 - p1;
+    let d2 = p4 - p3;
+    let cross = d1.perp_dot(d2);
+    if cross.abs() < TOLERANCE_LEN_MIN {
+        return false; // parallel
+    }
+    let dp = p3 - p1;
+    let t = dp.perp_dot(d2) / cross;
+    let u = dp.perp_dot(d1) / cross;
+    // Open interval (0, 1) — endpoints are shared vertices
+    t > TOLERANCE_ABS && t < 1.0 - TOLERANCE_ABS && u > TOLERANCE_ABS && u < 1.0 - TOLERANCE_ABS
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ComputeTolReached3d — deviation between 3D curve and pcurve
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compute the maximum deviation between a 3D curve and its pcurve on a surface.
+///
+/// ✅ OCCT对齐: IntTools_Tools::ComputeTolerance / FindMaxDistance
+/// (IntTools_FaceFace.cxx L603-681, L2813-2918)
+///
+/// Uses golden-section search to find `t` in `[t0, t1]` that maximises
+/// `||C3D(t) - surface(pcurve(t))||`.
+///
+/// Returns the maximum deviation in model units.
+pub fn compute_max_deviation_3d_to_pcurve(
+    curve_3d: &rcad_kernel::geom::Curve3,
+    pcurve: &Curve2d,
+    surface: &Surface3,
+    t_range: [f64; 2],
+) -> f64 {
+    let [t0, t1] = t_range;
+    if !t0.is_finite() || !t1.is_finite() || (t1 - t0).abs() < TOLERANCE_LEN_MIN {
+        return 0.0;
+    }
+    let f = |t: f64| {
+        let p3 = curve_3d.point_at(t);
+        let uv = pcurve.point_at(t);
+        let p_surf = surface.point_at(uv.x, uv.y);
+        (p3 - p_surf).length()
+    };
+    crate::golden_section_max(f, t0, t1, TOLERANCE_PARAM_LEGACY)
+}
+
+/// Compute the maximum deviation between a 3D curve and a surface
+/// (when no pcurve is available).
+///
+/// ✅ OCCT对齐: FindMaxDistance (IntTools_FaceFace.cxx L2813-2847)
+///
+/// Projects equally-spaced samples onto the surface and uses golden-section
+/// search per segment to find the maximum distance.
+pub fn compute_max_deviation_from_surface(
+    curve_3d: &rcad_kernel::geom::Curve3,
+    surface: &Surface3,
+    t_range: [f64; 2],
+) -> f64 {
+    let [t0, t1] = t_range;
+    if !t0.is_finite() || !t1.is_finite() || (t1 - t0).abs() < TOLERANCE_LEN_MIN {
+        return 0.0;
+    }
+    // Divide into 11 segments (OCCT uses aNbS = 11)
+    let n_seg = 11_usize;
+    let dt = (t1 - t0) / n_seg as f64;
+    let an_eps = 1e-4 * dt;
+    let mut max_d = 0.0;
+    for seg in 0..n_seg {
+        let seg_start = t0 + seg as f64 * dt;
+        let seg_end = (seg_start + dt).min(t1);
+        let f = |t: f64| {
+            let p3 = curve_3d.point_at(t);
+            let proj = closest_point_on_surface(surface, p3, 16);
+            (p3 - proj.point).length()
+        };
+        let d = crate::golden_section_max(f, seg_start, seg_end, an_eps);
+        if d > max_d {
+            max_d = d;
+        }
+    }
+    max_d
+}
+
+/// Compute the tolerance and tangential tolerance for an intersection curve
+/// by evaluating the deviation between its 3D curve and pcurves on both surfaces.
+///
+/// ✅ OCCT对齐: ComputeTolReached3d (IntTools_FaceFace.cxx L603-681)
+///
+/// `current_tol` is the starting tolerance (e.g. from the intersection algorithm).
+/// Returns `(updated_tolerance, tangential_tolerance)`.
+pub fn compute_intersection_curve_tolerance(
+    curve_3d: &rcad_kernel::geom::Curve3,
+    pcurve_on_a: Option<&Curve2d>,
+    pcurve_on_b: Option<&Curve2d>,
+    surface_a: &Surface3,
+    surface_b: &Surface3,
+    t_range: [f64; 2],
+    face_tol_a: f64,
+    face_tol_b: f64,
+    current_tol: f64,
+) -> (f64, f64) {
+    let mut tol = current_tol;
+    let [t0, t1] = t_range;
+    // PCurve on surface A
+    if let Some(pca) = pcurve_on_a {
+        let d = compute_max_deviation_3d_to_pcurve(curve_3d, pca, surface_a, [t0, t1]);
+        if d > tol {
+            tol = d;
+        }
+    } else {
+        let d = compute_max_deviation_from_surface(curve_3d, surface_a, [t0, t1]);
+        if d > tol {
+            tol = d;
+        }
+    }
+    // PCurve on surface B
+    if let Some(pcb) = pcurve_on_b {
+        let d = compute_max_deviation_3d_to_pcurve(curve_3d, pcb, surface_b, [t0, t1]);
+        if d > tol {
+            tol = d;
+        }
+    } else {
+        let d = compute_max_deviation_from_surface(curve_3d, surface_b, [t0, t1]);
+        if d > tol {
+            tol = d;
+        }
+    }
+    // Tangential tolerance: at least the max face tolerance
+    let tang_tol = face_tol_a.max(face_tol_b);
+    (tol, tang_tol)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PrepareLines3D — closed‑curve splitting + redundant‑line filtering
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Split a closed intersection curve (full circle / ellipse) into two halves
+/// at the u-parameter midpoint.
+///
+/// ✅ OCCT对齐: IntTools_Tools::SplitCurve (用于 PrepareLines3D)
+///
+/// When a closed curve has the full [0, 2π] parametric range it cannot be
+/// properly trimmed as a single segment — OCCT splits it into complementary
+/// arcs.  Returns `None` for curves that are not closed or not full-range.
+fn split_closed_curve(
+    curve_3d: &rcad_kernel::geom::Curve3,
+    t_range: &[f64; 2],
+) -> Option<[[f64; 2]; 2]> {
+    let [t0, t1] = *t_range;
+    let is_full_circle = match curve_3d {
+        rcad_kernel::geom::Curve3::Circle(_) | rcad_kernel::geom::Curve3::Ellipse(_) => {
+            (t1 - t0 - std::f64::consts::TAU).abs() < TOLERANCE_ANG
+        }
+        _ => false,
+    };
+    if !is_full_circle {
+        return None;
+    }
+    // Split at mid-point of the range
+    let tm = 0.5 * (t0 + t1);
+    Some([[t0, tm], [tm, t1]])
+}
+
+/// Post-process intersection curves: split closed curves and reject redundant
+/// lines.
+///
+/// ✅ OCCT对齐: PrepareLines3D (IntTools_FaceFace.cxx L1898-1979)
+///
+/// 1. Splits closed 3D curves (circles/ellipses with full [0, 2π] range) at
+///    the parametric midpoint so they can be trimmed properly.
+/// 2. (Future) Plane/Cone 4-line redundant-line rejection.
+///
+/// Operates on the `curves` vector in place.
+pub fn prepare_lines_3d(curves: &mut Vec<crate::bopds::ds::IntersectionCurve>) {
+    let mut new_curves: Vec<crate::bopds::ds::IntersectionCurve> = Vec::new();
+
+    for ic in curves.drain(..) {
+        // 1. Split closed curves
+        let splits = split_closed_curve(&ic.curve, &ic.t_range);
+        if let Some([r0, r1]) = splits {
+            // Create two sub-curves with half ranges
+            let mut c0 = ic.clone();
+            c0.t_range = r0;
+            c0.pcurve_on_a = c0.pcurve_on_a.clone();
+            c0.pcurve_on_b = c0.pcurve_on_b.clone();
+            let mut c1 = ic;
+            c1.t_range = r1;
+            c1.pcurve_on_a = c1.pcurve_on_a.clone();
+            c1.pcurve_on_b = c1.pcurve_on_b.clone();
+            new_curves.push(c0);
+            new_curves.push(c1);
+        } else {
+            new_curves.push(ic);
+        }
+    }
+
+    // 2. (Plane/Cone 4-line rejection — reserved for future alignment)
+
+    *curves = new_curves;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -2583,6 +2583,11 @@ impl Part21Writer {
     /// Writes a 2D curve entity (for use inside DEFINITIONAL_REPRESENTATION).
     fn write_curve2d(&mut self, curve2d: Option<Curve2d>) -> u64 {
         match curve2d {
+            Some(Curve2d::Trimmed(tc)) => {
+                // Unwrap Trimmed and write the inner curve — the range
+                // restriction is metadata, not a separate STEP entity.
+                self.write_curve2d(Some((*tc.curve).clone()))
+            }
             Some(Curve2d::Line(l)) => {
                 let p = self.cartesian_point_2d("pc_origin", [l.origin.x, l.origin.y]);
                 let dir = self.direction_2d("pc_dir", normalize2([l.direction.x, l.direction.y]));

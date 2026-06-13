@@ -9507,6 +9507,14 @@ fn extend_pcurve_to_boundary(
         Curve2d::Bezier(_) => {
             None
         }
+        Curve2d::Trimmed(tc) => {
+            extend_pcurve_to_boundary(tc.curve.as_ref(), range, gap, target_uv, _surface)
+                .map(|inner| Curve2d::Trimmed(rcad_kernel::geom::TrimmedCurve2 {
+                    curve: Box::new(inner),
+                    t_min: tc.t_min,
+                    t_max: tc.t_max,
+                }))
+        }
     }
 }
 
@@ -9691,7 +9699,8 @@ fn wrap_pcurve_to_domain(
         }
         Curve2d::BSpline(_) | Curve2d::Circle(_) | Curve2d::Ellipse(_) |
         Curve2d::CircleInvolute(_) | Curve2d::ArchimedeanSpiral(_) |
-        Curve2d::LogarithmicSpiral(_) | Curve2d::SineWave(_) | Curve2d::Bezier(_) => {
+        Curve2d::LogarithmicSpiral(_) | Curve2d::SineWave(_) | Curve2d::Bezier(_) |
+        Curve2d::Trimmed(_) => {
             let _ = range;
             None
         }

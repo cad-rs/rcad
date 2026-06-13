@@ -6354,6 +6354,10 @@ fn sample_oriented_edge_uv_points(
 
 fn curve2d_default_range(curve: &Curve2d) -> [f64; 2] {
     match curve {
+        Curve2d::Trimmed(tc) => {
+            // For trimmed curves, the effective range is [t_min, t_max].
+            [tc.t_min, tc.t_max]
+        }
         Curve2d::Line(_) => [0.0, 1.0],
         Curve2d::Circle(_) | Curve2d::Ellipse(_) => [0.0, std::f64::consts::TAU],
         Curve2d::CircleInvolute(_) => [0.0, 4.0 * std::f64::consts::PI],

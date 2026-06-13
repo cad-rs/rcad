@@ -700,6 +700,21 @@ pub struct BezierCurve2 {
     pub weights: Vec<f64>,
 }
 
+/// A trimmed 2D curve — wraps a curve with a restricted parameter range.
+///
+/// Analogous to OCCT `Geom2d_TrimmedCurve`. `point_at(t)` clamps `t` to
+/// `[t_min, t_max]` before delegating, emulating OCCT's behavior of returning
+/// the endpoint value for out-of-range parameters.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrimmedCurve2 {
+    /// The underlying curve (full-range expression).
+    pub curve: Box<Curve2d>,
+    /// Lower bound of the valid parameter range.
+    pub t_min: f64,
+    /// Upper bound of the valid parameter range.
+    pub t_max: f64,
+}
+
 /// A curve defined in the 2D parameter space (u, v) of a surface.
 ///
 /// Used for PCurves: the image of a 3D edge on the parameter domain of an
@@ -715,6 +730,9 @@ pub enum Curve2d {
     SineWave(SineWave2d),
     BSpline(BSplineCurve2),
     Bezier(BezierCurve2),
+    /// Trimmed curve: restricts evaluation to `[t_min, t_max]`.
+    /// See [`TrimmedCurve2`] for details.
+    Trimmed(TrimmedCurve2),
 }
 
 /// Returns a vector perpendicular to `v`. Stable for any non-zero input.
@@ -1952,6 +1970,7 @@ impl Curve2dEval for BSplineCurve2 {
 impl Curve2dEval for Curve2d {
     fn point_at(&self, t: f64) -> DVec2 {
         match self {
+            Curve2d::Trimmed(tc) => tc.point_at(t),
             Curve2d::Line(c) => c.point_at(t),
             Curve2d::Circle(c) => c.point_at(t),
             Curve2d::Ellipse(c) => c.point_at(t),
@@ -1961,6 +1980,41 @@ impl Curve2dEval for Curve2d {
             Curve2d::SineWave(c) => c.point_at(t),
             Curve2d::BSpline(c) => c.point_at(t),
             Curve2d::Bezier(c) => c.point_at(t),
+        }
+    }
+}
+
+impl Curve2dEval for TrimmedCurve2 {
+    fn point_at(&self, t: f64) -> DVec2 {
+        let t_clamped = t.clamp(self.t_min, self.t_max);
+        // BSpline/Bezier inner curves are natively parameterized over [0, 1]
+        // (chord-length).  Map the clamped outer parameter to the native range.
+        match self.curve.as_ref() {
+            Curve2d::BSpline(_) | Curve2d::Bezier(_) => {
+                let span = self.t_max - self.t_min;
+                if span > 0.0 {
+                    let t_norm = (t_clamped - self.t_min) / span;
+                    self.curve.point_at(t_norm)
+                } else {
+                    self.curve.point_at(0.0)
+                }
+            }
+            // Analytic curves (Line, Circle, Ellipse, etc.) share the same
+            // parameterization as the outer 3D curve — no mapping needed.
+            _ => self.curve.point_at(t_clamped),
+        }
+    }
+}
+
+// --- Curve2d helper methods ---
+
+impl Curve2d {
+    /// Unwrap through a [`Curve2d::Trimmed`] layer, returning a reference to
+    /// the innermost curve. If not trimmed, returns `self` unchanged.
+    pub fn inner(&self) -> &Curve2d {
+        match self {
+            Curve2d::Trimmed(tc) => tc.curve.as_ref(),
+            other => other,
         }
     }
 }

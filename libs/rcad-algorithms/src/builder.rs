@@ -3503,7 +3503,7 @@ impl<'a> BooleanBuilder<'a> {
             vec![ic.curve.point_at(t0), ic.curve.point_at(tm), ic.curve.point_at(t1)]
         };
 
-        let params: Vec<f64> = match pcurve {
+        let params: Vec<f64> = match pcurve.inner() {
             rcad_kernel::geom::Curve2d::BSpline(_) => {
                 if samples.len() <= 1 {
                     vec![0.0]
@@ -4378,7 +4378,7 @@ impl<'a> BooleanBuilder<'a> {
                             // t_range may exceed the face domain (e.g. generator lines with
                             // extent=20).  BSpline/Bezier pcurves already have a bounded
                             // t_range ([0, 1]) within the face.
-                            let is_line = matches!(pcurve, Curve2d::Line(_));
+                            let is_line = matches!(pcurve.inner(), Curve2d::Line(_));
                             let v_min_f = if is_line { v_min.max(bnd_v_min) } else { v_min };
                             let v_max_f = if is_line { v_max.min(bnd_v_max) } else { v_max };
                             if is_line && v_max_f - v_min_f < vb_tol * 0.5 {
@@ -4426,7 +4426,7 @@ impl<'a> BooleanBuilder<'a> {
                                         // BSpline/Bezier pcurves have knot domain [0, 1],
                                         // not the IC's t_range (e.g. [0, 2π] for an ellipse).
                                         // Normalize so de_boor_2d evaluates within the knot domain.
-                                        let t = match pcurve {
+                                        let t = match pcurve.inner() {
                                             Curve2d::BSpline(_) | Curve2d::Bezier(_) => {
                                                 i as f64 / N as f64
                                             }
@@ -4487,7 +4487,7 @@ impl<'a> BooleanBuilder<'a> {
                     // UV polygons, inflating the surface area in the same way as cone faces.
                     let has_complex_curve = fi.curves_in.iter().any(|&ci| {
                         self.find_pcurve_for_face(ci, face_idx).is_some_and(|pc| {
-                            matches!(pc, Curve2d::BSpline(_) | Curve2d::Bezier(_))
+                            matches!(pc.inner(), Curve2d::BSpline(_) | Curve2d::Bezier(_))
                         })
                     });
                     if has_complex_curve {
@@ -4549,7 +4549,7 @@ impl<'a> BooleanBuilder<'a> {
                                 return true;
                             }
                             // For line pcurves, clip t_range to face V bounds.
-                            let is_line = matches!(pcurve, Curve2d::Line(_));
+                            let is_line = matches!(pcurve.inner(), Curve2d::Line(_));
                             let v_min_f = if is_line { v_min.max(bnd_v_min) } else { v_min };
                             let v_max_f = if is_line { v_max.min(bnd_v_max) } else { v_max };
                             if is_line && v_max_f - v_min_f < vb_tol * 0.5 {
@@ -5997,7 +5997,7 @@ impl<'a> BooleanBuilder<'a> {
                 //    非 sphere 面保持 64 点采样。
                 let n_samp: usize = 64;
                 const N_SPHERE: usize = 2;
-                let raw_pts: Vec<DVec2> = match &pcurve {
+                let raw_pts: Vec<DVec2> = match pcurve.inner() {
                     // BSpline PCurves from `fallback_pcurve_by_projection` are defined on [0,1]
                     // but that domain does **not** match the 3D curve's `t_range` (e.g. plane鈥搒phere
                     // circles use [0, 2蟺]). Re-sample the 3D intersection curve and project to UV so

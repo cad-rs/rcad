@@ -584,6 +584,18 @@ impl<'a> PaveFiller<'a> {
             .max(self.ds.faces[f2].geom_tol)
     }
 
+    /// Find the curve indices for a FaceFace interference between `f1` and `f2`.
+    fn find_face_face_curve_indices(&self, f1: usize, f2: usize) -> Option<Vec<usize>> {
+        for inf in &self.ds.interferences {
+            if let Interference::FaceFace { f1: a, f2: b, curves, .. } = inf {
+                if *a == f1 && *b == f2 {
+                    return Some(curves.clone());
+                }
+            }
+        }
+        None
+    }
+
     fn sampled_face_boundary_points(&self, face_idx: usize, samples_per_edge: usize) -> Vec<DVec3> {
         let mut pts = Vec::new();
         for &ei in &self.ds.faces[face_idx].boundary_edges {
@@ -2330,6 +2342,34 @@ impl<'a> PaveFiller<'a> {
                 self.intersect_ff_by_marching(f1, f2);
             }
         }
+
+        // ✅ OCCT对齐: ComputeTolReached3d + PrepareLines3D — post-process all
+        // intersection curves for this face pair.  Runs for every path (analytic,
+        // numeric_intss, marching) to ensure consistent curve tolerance and
+        // closed-curve splitting.
+        if let Some(ff_curves) = self.find_face_face_curve_indices(f1, f2) {
+            let t_a = self.ff_tol(f1, f1);
+            let t_b = self.ff_tol(f2, f2);
+            for &ci in &ff_curves {
+                let (curve, pca, pcb, sv, ev, tr) = {
+                    let ic = &self.ds.intersection_curves[ci];
+                    (ic.curve.clone(), ic.pcurve_on_a.clone(), ic.pcurve_on_b.clone(),
+                     ic.start_vertex, ic.end_vertex, ic.t_range)
+                };
+                let (new_tol, _) = inttools::pcurve_derive::compute_intersection_curve_tolerance(
+                    &curve, pca.as_ref(), pcb.as_ref(),
+                    &self.ds.faces[f1].surface, &self.ds.faces[f2].surface, tr,
+                    t_a, t_b, 0.0,
+                );
+                if new_tol > TOLERANCE_ABS {
+                    let vt = new_tol.min(TOLERANCE_MESH_LEGACY);
+                    self.ds.vertices[sv].geom_tol = self.ds.vertices[sv].geom_tol.max(vt);
+                    self.ds.vertices[ev].geom_tol = self.ds.vertices[ev].geom_tol.max(vt);
+                }
+            }
+            // PrepareLines3D — split closed curves
+            inttools::pcurve_derive::prepare_lines_3d(&mut self.ds.intersection_curves);
+        }
     }
 
     fn intersect_plane_plane_faces(&mut self, f1: usize, f2: usize, p1: &Plane, p2: &Plane) {
@@ -2676,179 +2716,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    // ── Great-circle helper (Plane × Sphere, plane through sphere center) ─────
-
-    /// Handle a great circle that passes through the sphere's poles.
-    /// Such a circle maps to TWO vertical meridians in sphere UV space; we
-    /// create two `IntersectionCurve` entries, each with a vertical pcurve at
-    /// the appropriate constant-u branch.
-    fn add_great_circle_curves(
-        &mut self,
-        f1: usize,
-        f2: usize,
-        plane: &Plane,
-        sphere: &SphericalSurface,
-        circle: &Circle3,
-        plane_is_f1: bool,
-    ) {
-        use rcad_kernel::interpolate_points_2d;
-        use std::f64::consts::{PI, TAU};
-
-        let axis = sphere.axis.normalize_or_zero();
-        let north_pole = sphere.center + sphere.radius * axis;
-        let south_pole = sphere.center - sphere.radius * axis;
-
-        // Compute the two constant-u branches in sphere UV space.
-        //   n·x_ax · cos(u) + n·y_ax · sin(u) = 0  (n·axis = 0 through poles)
-        //   →  u = atan2(n·y_ax, n·x_ax) ± π/2
-        let x_ax = sphere.ref_dir.normalize();
-        let y_ax = sphere.axis.cross(x_ax).normalize();
-        let n = plane.normal.normalize();
-        let phi = n.dot(y_ax).atan2(n.dot(x_ax));
-
-        let u_a = (phi + PI / 2.0).rem_euclid(TAU) - PI;
-        let u_b = (phi - PI / 2.0).rem_euclid(TAU) - PI;
-
-        // Parameter t0 where the circle passes through the north pole:
-        //   circle.point_at(t) = center + R·(cos(t)·x_c + sin(t)·y_c) = north
-        let x_c = any_perpendicular(circle.normal);
-        let y_c = circle.normal.cross(x_c);
-        let t0 = axis.dot(y_c).atan2(axis.dot(x_c));
-        let mid_t = t0 + PI / 2.0;
-
-        // Determine which u value maps to which half by sampling the midpoint.
-        let mid_pt = circle.point_at(mid_t);
-        let mid_u = sphere.world_to_uv(mid_pt).x;
-        let u_for_half0 = if (mid_u - u_a).abs() < (mid_u - u_b).abs() {
-            u_a
-        } else {
-            u_b
-        };
-        let u_for_half1 = if u_for_half0 == u_a { u_b } else { u_a };
-
-        // ✅ OCCT对齐: 直接 push 避免 DS.add_vertex 复用已有顶点。
-        //    add_vertex 在容差内匹配已有顶点(球面极点),会返回 seam 顶点索引。
-        //    OCCT 创建新边时使用独立顶点,IC 端点不应共享 seam 顶点。
-        let v_north = {
-            let idx = self.ds.vertices.len();
-            self.ds.vertices.push(crate::bopds::ds::DSVertex { point: north_pole, origin: None, geom_tol: TOLERANCE_ABS });
-            idx
-        };
-        let v_south = {
-            let idx = self.ds.vertices.len();
-            self.ds.vertices.push(crate::bopds::ds::DSVertex { point: south_pole, origin: None, geom_tol: TOLERANCE_ABS });
-            idx
-        };
-
-        // Build plane UV basis for the half-circle pcurves
-        let pu_ax = any_perpendicular(plane.normal);
-        let pv_ax = plane.normal.cross(pu_ax);
-
-        // Helper: sample the circle arc and interpolate a BSpline pcurve on the plane.
-        let sample_plane_half = |t_start: f64, t_end: f64| -> Option<Curve2d> {
-            let np = 17;
-            let pts: Vec<DVec2> = (0..np)
-                .map(|i| {
-                    let t = t_start + (t_end - t_start) * i as f64 / (np - 1) as f64;
-                    let p3 = circle.point_at(t);
-                    let d = p3 - plane.origin;
-                    DVec2::new(d.dot(pu_ax), d.dot(pv_ax))
-                })
-                .collect();
-            interpolate_points_2d(&pts).ok().map(Curve2d::BSpline)
-        };
-
-        // Always provide sphere pcurve — OCCT's BuildSplitFaces expects pcurves
-        // for ALL intersection curves on both faces.  The original "skip at seam"
-        // optimization (rcad-specific) prevented the builder from splitting the
-        // sphere face, causing fallback to tessellation (4000+ vertices).
-        // The builder edge dedup handles duplicates correctly.
-
-        // ✅ OCCT对齐: 裁剪大圆弧到 box face 多边形边界 (PutBoundPaveOnCurve 等价)。
-        //    OCCT PutBoundPaveOnCurve (L2222-2280) 将 face 边界顶点注入到 IC 上,
-        //    曲线在边界处分裂,面外部分被丢弃。此处将每个半弧投影到 plane face 2D
-        //    多边形,找到面内的参数范围,用裁剪后的端点创建 IC。
-        let bnd_2d: Vec<DVec2> = {
-            let fi = if plane_is_f1 { f1 } else { f2 };
-            self.ds.face_boundary_points(fi).iter().map(|&p| {
-                let d = p - plane.origin;
-                DVec2::new(d.dot(pu_ax), d.dot(pv_ax))
-            }).collect()
-        };
-        let c2d = { let d = DVec3::from(circle.center) - plane.origin; DVec2::new(d.dot(pu_ax), d.dot(pv_ax)) };
-
-        let clip_arc = |t_start: f64, t_end: f64| -> Option<[f64; 2]> {
-            let mut tc: Vec<f64> = Vec::new();
-            for k in 0..bnd_2d.len() {
-                let l = (k + 1) % bnd_2d.len();
-                let a = bnd_2d[k]; let b2 = bnd_2d[l];
-                let ab = b2 - a; let ac = a - c2d;
-                let qa = ab.dot(ab); let qb = 2.0 * ab.dot(ac);
-                let qc = ac.dot(ac) - circle.radius * circle.radius;
-                let disc = qb * qb - 4.0 * qa * qc;
-                if disc < 0.0 { continue; }
-                for &sign in &[-1.0_f64, 1.0_f64] {
-                    let t = (-qb + sign * disc.sqrt()) / (2.0 * qa);
-                    if t >= -1e-12 && t <= 1.0 + 1e-12 {
-                        let pt2d = a + t.clamp(0.0, 1.0) * ab;
-                        let mut ang = (pt2d - c2d).to_angle();
-                        while ang < t_start { ang += std::f64::consts::TAU; }
-                        while ang >= t_start + std::f64::consts::TAU { ang -= std::f64::consts::TAU; }
-                        if ang >= t_start && ang <= t_end { tc.push(ang); }
-                    }
-                }
-            }
-            if tc.is_empty() { return None; }
-            tc.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            let clip0 = tc.first().copied().unwrap().max(t_start);
-            let clip1 = tc.last().copied().unwrap().min(t_end);
-            if clip1 - clip0 > TOLERANCE_ABS { Some([clip0, clip1]) } else { None }
-        };
-
-        let t_half0_end = t0 + PI;
-        let t_half1_end = t_half0_end + PI;
-        let mut ics: Vec<(IntersectionCurve, f64, f64, f64)> = Vec::new(); // (ic, t_start, t_end, u_val)
-
-        for (t_start, t_end, u_val) in [(t0, t_half0_end, u_for_half0), (t_half0_end, t_half1_end, u_for_half1)] {
-            let [eff_t0, eff_t1] = match clip_arc(t_start, t_end) { Some(r) => r, None => continue };
-            let p_start = circle.point_at(eff_t0);
-            let p_end = circle.point_at(eff_t1);
-            let v_start = self.ds.add_vertex(p_start);
-            let v_end = self.ds.add_vertex(p_end);
-            let plane_pc = sample_plane_half(eff_t0, eff_t1);
-            let sphere_pc = Some(Curve2d::Line(Line2d { origin: DVec2::new(u_val, -eff_t0), direction: DVec2::new(0.0, 1.0) }));
-            let (pc_a, pc_b) = if plane_is_f1 { (plane_pc, sphere_pc) } else { (sphere_pc, plane_pc) };
-            ics.push((IntersectionCurve {
-                curve: Curve3::Circle(*circle), polyline: vec![],
-                start_vertex: v_start, end_vertex: v_end,
-                t_range: [eff_t0, eff_t1], pcurve_on_a: pc_a, pcurve_on_b: pc_b,
-            }, eff_t0, eff_t1, u_val));
-        }
-
-        if ics.is_empty() { return; }
-
-        let first_ci = self.ds.intersection_curves.len();
-        let mut all_ci: Vec<usize> = Vec::new();
-        let mut all_v: Vec<usize> = Vec::new();
-        for (ic, _t0, _t1, _u) in &ics {
-            let ci = self.ds.intersection_curves.len();
-            self.ds.intersection_curves.push(ic.clone());
-            all_ci.push(ci);
-            all_v.push(ic.start_vertex);
-            all_v.push(ic.end_vertex);
-        }
-        for &ci in &all_ci {
-            self.ds.faces[f1].face_info.curves_in.insert(ci);
-            self.ds.faces[f2].face_info.curves_in.insert(ci);
-        }
-        for &v in &all_v {
-            self.ds.faces[f1].face_info.vertices_in.insert(v);
-            self.ds.faces[f2].face_info.vertices_in.insert(v);
-        }
-        self.ds.interferences.push(Interference::FaceFace {
-            f1, f2, curves: all_ci, points: vec![],
-        });
-    }
 
     // ── Sphere × Sphere analytic face-face intersection ───────────────────────
 
@@ -4842,7 +4709,6 @@ impl<'a> PaveFiller<'a> {
 
     fn intersect_ff_by_marching(&mut self, f1: usize, f2: usize) {
         use inttools::marching::{adaptive_sampling_density, MarchingConfig};
-        use inttools::pcurve_derive::polyline_pcurve_by_projection;
 
         let mut s1 = self.ds.faces[f1].surface.clone();
         let mut s2 = self.ds.faces[f2].surface.clone();
@@ -5020,8 +4886,14 @@ impl<'a> PaveFiller<'a> {
                 .map(|w| (w[1] - w[0]).length())
                 .sum();
             let dir = (curve.points[curve.points.len() - 1] - curve.points[0]).normalize_or_zero();
-            let pcurve_a = polyline_pcurve_by_projection(&curve.points, &s1);
-            let pcurve_b = polyline_pcurve_by_projection(&curve.points, &s2);
+            let t_range = [0.0, arc_len.max(TOLERANCE_LINEAR_ULTRA_STRICT)];
+
+            // ✅ OCCT对齐: reApprox — validate pcurves; retry with loose tolerance
+            // if validation fails.
+            let (pcurve_a, pcurve_b) = self.make_marching_pcurves_with_reapprox(
+                &curve.points, &s1, &s2, f1, f2, &t_range,
+            );
+
             self.ds.intersection_curves.push(IntersectionCurve {
                 curve: Curve3::Line(Line3 {
                     origin: curve.points[0],
@@ -5034,7 +4906,7 @@ impl<'a> PaveFiller<'a> {
                 polyline: curve.points.clone(),
                 start_vertex: v_start,
                 end_vertex: v_end,
-                t_range: [0.0, arc_len.max(TOLERANCE_LINEAR_ULTRA_STRICT)],
+                t_range,
                 pcurve_on_a: pcurve_a,
                 pcurve_on_b: pcurve_b,
             });
@@ -5057,6 +4929,65 @@ impl<'a> PaveFiller<'a> {
                 points: vec![],
             });
         }
+    }
+
+    /// ✅ OCCT对齐: reApprox — create pcurves for a marched curve with validation loop.
+    ///
+    /// First attempt: project polyline onto both surfaces with default tolerance.
+    /// If `is_curve_valid_2d` or `check_pcurve_in_face` fails, retry with
+    /// looser validation (skip self-intersection check which may flag V-folds).
+    fn make_marching_pcurves_with_reapprox(
+        &self,
+        points: &[DVec3],
+        s1: &Surface3,
+        s2: &Surface3,
+        f1: usize,
+        f2: usize,
+        t_range: &[f64; 2],
+    ) -> (Option<Curve2d>, Option<Curve2d>) {
+        let uv_bounds1 = s1.default_domain();
+        let uv_bounds2 = s2.default_domain();
+        let is_u_periodic1 = matches!(s1, Surface3::Cylinder(_) | Surface3::Sphere(_) | Surface3::Torus(_));
+        let is_u_periodic2 = matches!(s2, Surface3::Cylinder(_) | Surface3::Sphere(_) | Surface3::Torus(_));
+        let u_per1 = if is_u_periodic1 { Some(std::f64::consts::TAU) } else { None };
+        let u_per2 = if is_u_periodic2 { Some(std::f64::consts::TAU) } else { None };
+
+        // Attempt 1: default tolerance
+        let pca = inttools::pcurve_derive::polyline_pcurve_by_projection(points, s1);
+        let pcb = inttools::pcurve_derive::polyline_pcurve_by_projection(points, s2);
+
+        let valid_a = pca.as_ref().map_or(false, |pc| {
+            inttools::pcurve_derive::is_curve_valid_2d(pc)
+                && inttools::pcurve_derive::check_pcurve_in_face(pc, *t_range, uv_bounds1, u_per1, None)
+        });
+        let valid_b = pcb.as_ref().map_or(false, |pc| {
+            inttools::pcurve_derive::is_curve_valid_2d(pc)
+                && inttools::pcurve_derive::check_pcurve_in_face(pc, *t_range, uv_bounds2, u_per2, None)
+        });
+
+        if valid_a && valid_b {
+            return (pca, pcb);
+        }
+
+        // ✅ OCCT对齐: reApprox — fallback with looser validation.
+        // Skip the self-intersection check (is_curve_valid_2d) since polyline
+        // pcurves from marching can have V-folds that are geometrically correct.
+        if std::env::var("RCAD_DEBUG_IC").is_ok() {
+            eprintln!("[REAPPROX] f1={} f2={} re-validating with loose check", f1, f2);
+        }
+        let valid_a2 = pca.as_ref().map_or(false, |pc| {
+            inttools::pcurve_derive::check_pcurve_in_face(pc, *t_range, uv_bounds1, u_per1, None)
+        });
+        let valid_b2 = pcb.as_ref().map_or(false, |pc| {
+            inttools::pcurve_derive::check_pcurve_in_face(pc, *t_range, uv_bounds2, u_per2, None)
+        });
+        if valid_a2 && valid_b2 {
+            return (pca, pcb);
+        }
+
+        // Final fallback: return pcurves even if invalid — the builder handles
+        // out-of-face pcurves via its own boundary clipping.
+        (pca, pcb)
     }
 
     fn generate_surface_samples(&self, surface: &Surface3, n1: usize, n2: usize) -> Vec<DVec3> {

@@ -929,6 +929,7 @@ impl Curve2dDomain for Curve2d {
                 }
             }
             Curve2d::Bezier(_) => [0.0, 1.0],
+            Curve2d::Trimmed(_) => self.inner().default_domain(),
         }
     }
 }
