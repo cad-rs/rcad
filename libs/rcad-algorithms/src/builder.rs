@@ -4327,8 +4327,6 @@ impl<'a> BooleanBuilder<'a> {
                             //    正确拓扑: 移除球内角点,用圆弧替换,得到裁剪后的单外环面。
                             let c_r = circ.radius;
                             let c_center = circ.center;
-                            let c_r = circ.radius;
-                            let c_center = circ.center;
                             let keep: Vec<DVec3> = boundary.iter()
                                 .filter(|p| p.distance(c_center) >= c_r - 1e-8)
                                 .copied().collect();
@@ -4352,12 +4350,20 @@ impl<'a> BooleanBuilder<'a> {
                                 if inside.len() >= 2 {
                                     let arc_curve_inner = Curve3::Circle(*circ);
                                     let n_inside = inside.len();
+                                    // ✅ OCCT修复: 正确计算内部子面的圆弧位置
+                                    //    圆弧必须连接两个在圆上的边界顶点,而不是从圆上顶点连接
+                                    //    到圆内顶点。在内部顶点列表中,查找两个连续圆上顶点的边。
+                                    let inside_arc_pos = (0..n_inside).find(|&i| {
+                                        let j = (i + 1) % n_inside;
+                                        inside[i].distance(c_center) >= c_r - 1e-8
+                                            && inside[j].distance(c_center) >= c_r - 1e-8
+                                    }).unwrap_or(n_inside - 1);
                                     out_subs.push(SubFace {
                                         boundary: inside,
                                         surface: face.surface.clone(), normal: face.normal,
                                         uv_centroid: None, sample_override: None,
                                         uv_domain: None, inner_wires: vec![],
-                                        outer_circle_edges: vec![(n_inside - 1, arc_curve_inner)],
+                                        outer_circle_edges: vec![(inside_arc_pos, arc_curve_inner)],
                                         seam_edge: None, inner_wire_circle: None,
                                     });
                                 }
@@ -4368,7 +4374,9 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 }
             }
-            if let Some(subs) = annular_out { return subs; }
+            if let Some(subs) = annular_out {
+                return subs;
+            }
 
             // ✅ OCCT对齐: 平面面有交线但非环形圆时,用 split_planar_face 做2D多边形分裂。
             //    OCCT BOPAlgo_BuilderFace 对所有面统一处理(section edges → MakeLoops → Areas)。
@@ -9019,41 +9027,51 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
         if on_i && on_j {
             continue;
         }
-        // One vertex exactly on circle, adjacent clearly not on circle
-        // 鈫?crossing at the on-circle vertex itself.
-        // BUT: also check if the edge midpoint is inside the circle, which
-        // indicates the edge enters the circle at an interior point before
-        // reaching the on-circle vertex (or exits at an interior point after).
-        // This happens when a polygon vertex lies on the circle AND the edge
-        // passes through the circle interior.
-        // IMPORTANT: when an interior crossing exists on this edge, we skip
-        // adding the vertex crossing here 鈥?the neighbor edge (the OTHER
-        // on-circle-vertex case) provides it, keeping crossings on distinct
-        // edges so the two-crossing split logic works correctly.
+                // ✅ OCCT_aligned: Handle one vertex on circle, the other not on circle
+        //   BOPAlgo_BuilderFace uses Hatcher to split parametric domain with 2D pcurves,
+        //   correctly handling vertices on cutting curves.
+        //
+        //   When the non-on-circle vertex is INSIDE (di/dj < -tol), the crossing IS at
+        //   the on-circle vertex; record it directly.
+        //   When the non-on-circle vertex is OUTSIDE (di/dj > tol), check edge midpoint:
+        //     midpoint inside → edge pierces through circle interior, find interior crossing
+        //     midpoint outside → crossing is at the on-circle vertex
+        //  Before fix: INSIDE→ON and ON→INSIDE edges missed crossings because the
+        //    midpoint was inside the circle but both (mid, end) or (start, mid) were
+        //    fully inside.
         if on_i && !on_j {
-            let mid = (poly[i] + poly[j]) * 0.5;
-            if signed_dist(mid) < -tol {
-                // Edge goes from on-circle INTO the circle, then back out.
-                // Find the exit crossing between mid (inside) and poly[j] (outside).
-                if let Some(pt) = find_circle_segment_crossing(mid, poly[j], center, radius, tol) {
-                    crossings.push((i, pt));
-                }
-            } else {
+            if dj < -tol {
+                // poly[j] is INSIDE the circle: crossing at on-circle vertex poly[i]
                 crossings.push((i, poly[i]));
+            } else if dj > tol {
+                // poly[j] is OUTSIDE the circle: check for interior crossing
+                let mid = (poly[i] + poly[j]) * 0.5;
+                if signed_dist(mid) < -tol {
+                    // Edge goes from on-circle INTO circle, then back out.
+                    if let Some(pt) = find_circle_segment_crossing(mid, poly[j], center, radius, tol) {
+                        crossings.push((i, pt));
+                    }
+                } else {
+                    crossings.push((i, poly[i]));
+                }
             }
             continue;
         }
         if !on_i && on_j {
-            let mid = (poly[i] + poly[j]) * 0.5;
-            if signed_dist(mid) < -tol {
-                // Edge goes from outside to inside before reaching the
-                // on-circle vertex. Find the entry crossing between
-                // poly[i] (outside) and mid (inside).
-                if let Some(pt) = find_circle_segment_crossing(poly[i], mid, center, radius, tol) {
-                    crossings.push((i, pt));
-                }
-            } else {
+            if di < -tol {
+                // poly[i] is INSIDE the circle: crossing at on-circle vertex poly[j]
                 crossings.push((i, poly[j]));
+            } else if di > tol {
+                // poly[i] is OUTSIDE the circle: check for interior crossing
+                let mid = (poly[i] + poly[j]) * 0.5;
+                if signed_dist(mid) < -tol {
+                    // Edge goes from outside INTO circle, then reaches on-circle vertex.
+                    if let Some(pt) = find_circle_segment_crossing(poly[i], mid, center, radius, tol) {
+                        crossings.push((i, pt));
+                    }
+                } else {
+                    crossings.push((i, poly[j]));
+                }
             }
             continue;
         }
@@ -9440,6 +9458,7 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
         (out, vec![])
     }
 }
+
 
 /// Clip a subject polygon against a convex clip polygon using Sutherland–Hodgman.
 ///

@@ -2652,7 +2652,6 @@ pub(crate) fn boolean_postprocess_pave_result(
 /// Used internally when a coaxial shortcut must call difference without re-entering other coaxial
 /// difference branches (e.g. cylinder − loft frustum after `cone ∩ cylinder`).
 pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
-    eprintln!("[PAVE_FILL_BUILD] op={:?}", op);
     let mut ds = bopds::ds::DS::new(a, b);
 
     let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
@@ -2837,7 +2836,6 @@ fn finalize_boolean_result(r: BRep) -> BRep {
 /// - 两个极点处的退化边（start==end）
 /// - 将 seam 回路插入面的 outer_wire
 pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
-    eprintln!("[BOOLEAN_OP] op={:?} a_vertices={} b_vertices={}", op, a.vertices.len(), b.vertices.len());
     // Fast-path: identical operands (union/intersection → either operand, difference → empty).
     if let Some(r) = boolean_unit_octant::try_identical_operands(a, b, op) {
         return Ok(r);
