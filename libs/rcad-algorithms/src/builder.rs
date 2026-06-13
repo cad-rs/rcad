@@ -4371,11 +4371,10 @@ impl<'a> BooleanBuilder<'a> {
             return self.split_planar_face(face_idx, plane, &cids);
         }
 
-        // Planar BSpline → treat as Plane for splitting.
-        // OCCT's BRepAlgo_Builder detects planarity via Geom_Surface::IsKind(STANDARD_TYPE(Geom_Plane)),
-        // so a NURBS box (planar BSpline) routes through the same planar face splitting logic.
-        // Without this, planar BSpline faces go to `split_curved_face_parametric` which can produce
-        // sub-faces with different edge/vertex topology than the equivalent Plane split.
+        // Planar BSpline -> treat as Plane for splitting.
+        // OCCT's BRepAlgo_Builder detects planarity via Geom_Surface::IsKind(STANDARD_TYPE(Geom_Plane)).
+        // Primary check uses BSpline control points; if they deviate from planar due to numerical
+        // noise, fall back to a boundary-vertex coplanarity test (OCCT alignment).
         if let Surface3::BSpline(bsp) = &face.surface {
             if rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_PLANE_DIST_RELAX) {
                 let plane = rcad_kernel::geom::bspline_to_plane(bsp);
@@ -4384,6 +4383,34 @@ impl<'a> BooleanBuilder<'a> {
                     return self.single_subface_from_whole_face(face_idx);
                 }
                 return self.split_planar_face(face_idx, &plane, &cids);
+            }
+            // Fallback: boundary-vertex coplanarity check for BSpline surfaces
+            // whose control points deviate from planarity due to numerical noise.
+            let verts: Vec<DVec3> = face.boundary_verts.iter()
+                .filter_map(|&vi| self.ds.vertices.get(vi).map(|v| v.point))
+                .collect();
+            if verts.len() >= 3 {
+                let origin = verts[0];
+                let mut normal = DVec3::ZERO;
+                for i in 1..verts.len() - 1 {
+                    let n = (verts[i] - origin).cross(verts[i + 1] - origin);
+                    if n.length_squared() > TOLERANCE_ABS_SQ {
+                        normal = n.normalize();
+                        break;
+                    }
+                }
+                if normal.length_squared() > 0.5 {
+                    let all_planar =
+                        verts.iter().all(|p| (p - origin).dot(normal).abs() < TOLERANCE_PLANE_DIST_RELAX);
+                    if all_planar {
+                        let plane = Plane { origin, normal };
+                        let cids = self.merged_split_curve_ids_for_planar_face(face_idx, &plane);
+                        if cids.is_empty() {
+                            return self.single_subface_from_whole_face(face_idx);
+                        }
+                        return self.split_planar_face(face_idx, &plane, &cids);
+                    }
+                }
             }
         }
 
