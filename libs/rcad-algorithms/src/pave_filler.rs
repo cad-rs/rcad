@@ -3377,7 +3377,18 @@ impl<'a> PaveFiller<'a> {
 
         match result {
             PlaneCylinderResult::NoIntersection => return,
-            PlaneCylinderResult::TangentLine(_) => return, // zero-area intersection
+            PlaneCylinderResult::TangentLine(line) => {
+                // ✅ OCCT aligned: tangent lines are also valid intersection curves,
+                //    used to split the cylinder face. OCCT IntTools_FaceFace::MakeCurve
+                //    creates BRep edges for tangent lines too.
+                let extent = 20.0_f64;
+                let (pca, pcb) = make_pcurves(
+                    line_pcurve_on_plane(&line, plane),
+                    line_pcurve_on_cylinder(&line, cyl),
+                );
+                let ci = add_curve(self.ds, Curve3::Line(line), [-extent, extent], pca, pcb, f1, f2);
+                curve_indices.push(ci);
+            }
             PlaneCylinderResult::TwoLines(l1, l2) => {
                 // Clip each line to the face bounding-box extent
                 let extent = 20.0_f64;
