@@ -561,9 +561,13 @@ impl ResultBuilder {
             self.custom_edge_curves.push(None);
         }
         // 存储该退化 seam 对应的球面圆曲线(用于 STEP writer)
+        // ✅ OCCT对齐: seam 圆 = 球面子午线(通过 pole,normal ⟂ axis)
+        //    OCCT 中 sphere face 的 seam 是过极点的经线,不同于 IC 圆。
+        //    如果 normal = axis,会与平面-球面 IC 圆重合导致曲线去重误合并。
+        let seam_normal = any_perpendicular(sphere_surf.axis).normalize();
         let seam_circle = Curve3::Circle(Circle3 {
             center: sphere_surf.center,
-            normal: sphere_surf.axis,
+            normal: seam_normal,
             radius: sphere_surf.radius,
         });
         self.custom_edge_curves[idx] = Some(seam_circle);
@@ -898,19 +902,25 @@ impl ResultBuilder {
                 // ✅ OCCT对齐: seam edge → degenerate edge
                 //    OCCT sphere face wire 中的 seam edge 是退化边(两端同一顶点),
                 //    不产生额外拓扑顶点。rcad wire pipeline 中 seam segment 用 v→v 退化边。
-                // ✅ OCCT对齐: 退化 seam 边 — 用 add_edge_seam_degenerate 创建独立 edge
-                let v = if vert_indices.is_empty() || vert_indices.last() != Some(&v1) {
-                    v1
-                } else {
-                    let vi = self.add_vertex(ds.vertices[seg.start_vertex].point);
-                    vert_indices.push(vi);
-                    vi
-                };
+                // ✅ OCCT对齐: seam 边 — 退化(v→v)或几何连接
+                let seam_deg = (ds.vertices[seg.start_vertex].point - ds.vertices[seg.end_vertex].point).length_squared() < TOLERANCE_ABS_SQ;
                 let sphere_surf = match &ds.faces[face_idx].surface {
                     Surface3::Sphere(s) => s,
                     _ => &SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, ref_dir: DVec3::X },
                 };
-                let ei = self.add_edge_seam_degenerate(v, sphere_surf);
+                let ei = if seam_deg {
+                    self.add_edge_seam_degenerate(v1, sphere_surf)
+                } else {
+                    // ✅ OCCT对齐: 非退化 seam → 用 add_seam_edge 创建独立几何边
+                    //    (球面子午线圆),不与 IC 弧共享 edge index。
+                    let seam_normal = any_perpendicular(sphere_surf.axis).normalize();
+                    let seam_circle = Curve3::Circle(Circle3 {
+                        center: sphere_surf.center,
+                        normal: seam_normal,
+                        radius: sphere_surf.radius,
+                    });
+                    self.add_seam_edge(v1, v2, seam_circle)
+                };
                 (ei, true)
             } else {
                 let ei = match &seg.source {
@@ -1391,21 +1401,20 @@ impl ResultBuilder {
                 for we in &f.outer_wire.edges { if we.idx < edge_refs.len() { edge_refs[we.idx] += 1; } }
                 for w in &f.inner_wires { for we in &w.edges { if we.idx < edge_refs.len() { edge_refs[we.idx] += 1; } } }
             }
-            let mut remap: Vec<usize> = (0..edges.len()).collect();
-            let mut kept: Vec<rcad_kernel::Edge> = Vec::new();
+            let mut edge_keep: Vec<rcad_kernel::Edge> = Vec::new();
+            let mut edge_remap: Vec<usize> = (0..edges.len()).collect();
             for ei in 0..edges.len() {
                 if edge_refs[ei] >= 1 {
-                    remap[ei] = kept.len();
-                    kept.push(edges[ei].clone());
+                    edge_remap[ei] = edge_keep.len();
+                    edge_keep.push(edges[ei].clone());
                 } else {
-                    remap[ei] = usize::MAX;
+                    edge_remap[ei] = usize::MAX;
                 }
             }
             for f in &mut faces {
-                for we in &mut f.outer_wire.edges { we.idx = remap[we.idx]; }
-                for w in &mut f.inner_wires { for we in &mut w.edges { we.idx = remap[we.idx]; } }
+                for we in &mut f.outer_wire.edges { we.idx = edge_remap[we.idx]; }
+                for w in &mut f.inner_wires { for we in &mut w.edges { we.idx = edge_remap[we.idx]; } }
             }
-            // Remove wire edges whose remap was MAX (orphaned) and faces with <3 edges.
             for f in &mut faces {
                 f.outer_wire.edges.retain(|we| we.idx != usize::MAX);
                 for w in &mut f.inner_wires { w.edges.retain(|we| we.idx != usize::MAX); }
@@ -1413,7 +1422,6 @@ impl ResultBuilder {
             let pre_retain_count = faces.len();
             let should_keep: Vec<bool> = faces.iter().map(|f| f.outer_wire.edges.len() >= 3).collect();
             faces.retain(|f| f.outer_wire.edges.len() >= 3);
-            // Trim face_origins to match surviving faces (parallel Vec).
             let mut new_origins: Vec<FaceOrigin> = Vec::with_capacity(faces.len());
             for (i, keep) in should_keep.iter().enumerate() {
                 if *keep {
@@ -1423,14 +1431,17 @@ impl ResultBuilder {
                 }
             }
             self.face_origins = new_origins;
-            edges = kept;
-
+            edges = edge_keep;
+            if std::env::var("RCAD_DEBUG_IC").is_ok() {
+                eprintln!("[EDGE_FINAL] {} edges: {}", edges.len(),
+                    edges.iter().map(|e| format!("({},{})", e.start, e.end)).collect::<Vec<_>>().join(" "));
+            }
             // ✅ OCCT对齐: 设置 section edge 的精确曲线(来自 add_circle_edge)。
             //    OCCT: MakeEdge(aIC, ...) 直接创建带精确几何曲线的 BRep edge。
             //    rcad 默认由 recompute_plane_surfaces 补 Line3,这里覆盖为 Circle3。
             for (ei, curve_opt) in self.custom_edge_curves.iter().enumerate() {
                 if let Some(crv) = curve_opt {
-                    let new_ei = remap[ei];
+                    let new_ei = edge_remap[ei];
                     if new_ei != usize::MAX {
                         let curve_idx = geom.curves.len();
                         geom.curves.push(crv.clone());
