@@ -4310,6 +4310,12 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             if let Some(subs) = annular_out { return subs; }
+
+            // ✅ OCCT对齐: 平面面有交线但非环形圆时,用 split_planar_face 做2D多边形分裂。
+            //    OCCT BOPAlgo_BuilderFace 对所有面统一处理(section edges → MakeLoops → Areas)。
+            //    rcad 的等价路径: split_planar_face (2D多边形+线裁剪)。
+            //    此回退覆盖 plane-plane 线交线和未裁剪圆路过的所有平面面。
+            return self.split_planar_face(face_idx, plane, &cids);
         }
 
         // Planar BSpline → treat as Plane for splitting.
