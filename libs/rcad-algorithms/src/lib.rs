@@ -5889,15 +5889,14 @@ pub fn occt_fill_same_domain_faces(brep: &BRep) -> (BRep, usize) {
                 groups.entry(face_edges[fi].clone()).or_default().push(fi);
             }
 
-            // ── Phase 3-5: Analyse groups, then mutate ────────────────────
-            // OCCT: BOPAlgo_Builder_2.cxx L636-L796
-            //
-            // The analysis phase borrows `out` immutably (closures, lookups).
-            // After analysis completes, the closure is dropped and we can
-            // mutably borrow `out` for the removal step.
+            // ── Phase 3-5: merge tracking ────────────────────────────────────
             let mut analysis_to_remove: Vec<(usize, usize, usize)> = Vec::new();
             let mut analysis_merges = 0usize;
 
+            // Shared analysis block: Phase 2b + Phase 3-5 analysis.
+            // Both depend on `check_same_surface` which borrows `out`
+            // immutably. The block ensures the borrow is released before
+            // the mutation phase below.
             {
                 fn surfaces_share_domain(s1: &Surface3, s2: &Surface3) -> bool {
                     match (s1, s2) {
@@ -5948,6 +5947,78 @@ pub fn occt_fill_same_domain_faces(brep: &BRep) -> (BRep, usize) {
                     }
                 };
 
+                // ── Phase 2b: Adjacent same-surface faces ──────────────────────
+                // OCCT BOPAlgo_Builder_2.cxx L636-L796: FillSameDomainFaces also
+                // merges faces that share boundary edges and are on the same surface,
+                // even if their edge sets differ (e.g. a coplanar face split by an
+                // intersection curve into two sub-faces).
+                {
+                    // Build edge-adjacency map: for each edge, list of faces using it
+                    let mut edge_faces: HashMap<usize, Vec<usize>> = HashMap::new();
+                    for fi in 0..nf {
+                        let face = &out.solids[si].shells[shi].faces[fi];
+                        for we in &face.outer_wire.edges {
+                            edge_faces.entry(we.idx).or_default().push(fi);
+                        }
+                        for iw in &face.inner_wires {
+                            for we in &iw.edges {
+                                edge_faces.entry(we.idx).or_default().push(fi);
+                            }
+                        }
+                    }
+
+                    // Find face pairs sharing edges + same surface
+                    let mut same_surf_adj: HashMap<usize, Vec<usize>> = HashMap::new();
+                    for (_ei, f_list) in edge_faces.iter() {
+                        if f_list.len() < 2 { continue; }
+                        for i in 0..f_list.len() {
+                            let fi = f_list[i];
+                            for j in (i+1)..f_list.len() {
+                                let fj = f_list[j];
+                                if check_same_surface(fi, fj) {
+                                    same_surf_adj.entry(fi).or_default().push(fj);
+                                    same_surf_adj.entry(fj).or_default().push(fi);
+                                }
+                            }
+                        }
+                    }
+
+                    // BFS connected components for adjacent same-surface faces
+                    let mut visited_sa: HashSet<usize> = HashSet::new();
+                    for start in 0..nf {
+                        if visited_sa.contains(&start) { continue; }
+                        if !same_surf_adj.contains_key(&start) { visited_sa.insert(start); continue; }
+
+                        let mut comp = Vec::new();
+                        let mut queue = std::collections::VecDeque::new();
+                        queue.push_back(start);
+                        visited_sa.insert(start);
+
+                        while let Some(fi) = queue.pop_front() {
+                            comp.push(fi);
+                            if let Some(neighbors) = same_surf_adj.get(&fi) {
+                                for &ni in neighbors {
+                                    if !visited_sa.contains(&ni) {
+                                        visited_sa.insert(ni);
+                                        queue.push_back(ni);
+                                    }
+                                }
+                            }
+                        }
+
+                        if comp.len() >= 2 {
+                            analysis_merges += 1;
+                            for &fi in comp.iter().skip(1) {
+                                let entry = (si, shi, fi);
+                                if !analysis_to_remove.contains(&entry) {
+                                    analysis_to_remove.push(entry);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ── Phase 3-5: Analyse groups ──────────────────────────────────
                 for (_edge_set, members) in groups.iter() {
                     if members.len() < 2 {
                         continue;
@@ -6021,7 +6092,7 @@ pub fn occt_fill_same_domain_faces(brep: &BRep) -> (BRep, usize) {
                         }
                     }
                 }
-            } // Drop check_same_surface closure → release immutable borrow on `out`.
+            } // Drop `check_same_surface` → release immutable borrow on `out`.
 
             // ── Mutation phase: remove recorded faces ────────────────────────
             total_merges += analysis_merges;
