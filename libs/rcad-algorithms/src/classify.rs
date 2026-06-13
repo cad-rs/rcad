@@ -586,7 +586,40 @@ fn classify_point_internal(
         return class;
     }
 
-    // 2. Check if point is ON any face surface within face bounds.
+    // 2. ✅ OCCT-aligned: edge/vertex proximity check (BRepClass3d_SClassifier L207-223)
+    //    OCCT uses UB-tree for acceleration; rcad iterates all edges and vertices of each face.
+    let edge_tol = TOLERANCE_MESH_LEGACY.max(on_surface_tol);
+    for &fi in solid_face_indices {
+        let face = &ds.faces[fi];
+        for &ei in &face.boundary_edges {
+            if let Some(edge) = ds.edges.get(ei) {
+                let sv = ds.vertices[edge.start_vertex].point;
+                let ev = ds.vertices[edge.end_vertex].point;
+                let seg = ev - sv;
+                let seg_len_sq = seg.length_squared();
+                if seg_len_sq < TOLERANCE_LEN_MIN * TOLERANCE_LEN_MIN {
+                    if point.distance_squared(sv) < edge_tol * edge_tol {
+                        return Classification::On;
+                    }
+                    continue;
+                }
+                let t = ((point - sv).dot(seg) / seg_len_sq).clamp(0.0, 1.0);
+                let closest = sv + t * seg;
+                if point.distance_squared(closest) < edge_tol * edge_tol {
+                    return Classification::On;
+                }
+            }
+        }
+        for &vi in &face.boundary_verts {
+            if let Some(v) = ds.vertices.get(vi) {
+                if point.distance_squared(v.point) < edge_tol * edge_tol {
+                    return Classification::On;
+                }
+            }
+        }
+    }
+
+    // 3. Check if point is ON any face surface within face bounds.
     //    If so, do NOT return On — fall through to multi-ray voting
     //    with ray perturbation (OCCT BRepClass3d_SolidClassifier
     //    approach).  Ray perturbation fires rays from the fixed point
