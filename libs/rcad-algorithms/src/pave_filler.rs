@@ -2206,33 +2206,43 @@ impl<'a> PaveFiller<'a> {
         !shared.is_empty()
     }
 
+    /// ✅ OCCT对齐: 将 face 降级为 Plane — 不依赖 BSpline 检测,直接用 face.normal
+    ///    和 boundary_verts 构造平面。对应 OCCT ShapeCustom_SweptToElementive:
+    ///    occt ShapeCustom 能识别 BSpline 对应的平面,rcad 从 face 边界推断。
+    fn demote_to_plane(&self, fi: usize) -> Option<Plane> {
+        let face = &self.ds.faces[fi];
+        let bnd = &face.boundary_verts;
+        if bnd.len() < 3 { return None; }
+        // 取前3个非共线边界点计算法向
+        let origin = self.ds.vertices[bnd[0]].point;
+        let mut normal = face.normal; // default to face.normal
+        for i in 1..bnd.len()-1 {
+            let d1 = self.ds.vertices[bnd[i]].point - origin;
+            let d2 = self.ds.vertices[bnd[i+1]].point - origin;
+            let n = d1.cross(d2);
+            if n.length_squared() > TOLERANCE_ABS_SQ {
+                normal = if n.dot(face.normal) > 0.0 { n.normalize() } else { -n.normalize() };
+                break;
+            }
+        }
+        // 验证所有边界点在平面容差内
+        let tol = TOLERANCE_MESH_LEGACY * 100.0; // 1e-4
+        for &vi in bnd {
+            let d = (self.ds.vertices[vi].point - origin).dot(normal);
+            if d.abs() > tol { return None; }
+        }
+        Some(Plane { origin, normal })
+    }
+
     fn intersect_face_face(&mut self, f1: usize, f2: usize) {
         let s1 = self.ds.faces[f1].surface.clone();
         let s2 = self.ds.faces[f2].surface.clone();
 
-        // Promote planar BSpline surfaces to Plane using the face's stored normal
-        // and boundary centroid (avoid bspline_to_plane whose control-point origin
-        // causes the promoted plane to deviate from actual face geometry).
-        let s1 = match &s1 {
-            Surface3::BSpline(bsp) if bspline_is_planar(bsp, 1e-3) => {
-                let face = &self.ds.faces[f1];
-                let c = face.boundary_verts.iter()
-                    .map(|&vi| self.ds.vertices[vi].point)
-                    .sum::<DVec3>() / face.boundary_verts.len().max(1) as f64;
-                Surface3::Plane(Plane { origin: c, normal: face.normal })
-            }
-            _ => s1,
-        };
-        let s2 = match &s2 {
-            Surface3::BSpline(bsp) if bspline_is_planar(bsp, 1e-3) => {
-                let face = &self.ds.faces[f2];
-                let c = face.boundary_verts.iter()
-                    .map(|&vi| self.ds.vertices[vi].point)
-                    .sum::<DVec3>() / face.boundary_verts.len().max(1) as f64;
-                Surface3::Plane(Plane { origin: c, normal: face.normal })
-            }
-            _ => s2,
-        };
+        // ✅ OCCT对齐: BSpline → Plane 降级 — 用边界顶点推断平面,绕过 BSpline 控制点检测。
+        let maybe_plane1 = match &s1 { Surface3::BSpline(_) | Surface3::Bezier(_) => self.demote_to_plane(f1), _ => None };
+        let maybe_plane2 = match &s2 { Surface3::BSpline(_) | Surface3::Bezier(_) => self.demote_to_plane(f2), _ => None };
+        let s1 = maybe_plane1.map_or(s1, |pl| Surface3::Plane(pl));
+        let s2 = maybe_plane2.map_or(s2, |pl| Surface3::Plane(pl));
 
         match (&s1, &s2) {
             (Surface3::Plane(p1), Surface3::Plane(p2)) => {
@@ -2297,6 +2307,23 @@ impl<'a> PaveFiller<'a> {
             | (Surface3::Cone(cone), Surface3::Sphere(sph)) => {
                 let (sph, cone) = (*sph, *cone);
                 self.intersect_sphere_cone_faces(f1, f2, &sph, &cone);
+            }
+            // ✅ OCCT对齐: BSpline/Bezier × Plane — 尝试用 demote_to_plane 降级后走平面交线
+            (Surface3::BSpline(_), Surface3::Plane(_))
+            | (Surface3::Plane(_), Surface3::BSpline(_))
+            | (Surface3::Bezier(_), Surface3::Plane(_))
+            | (Surface3::Plane(_), Surface3::Bezier(_)) => {
+                let plane = if matches!(&s1, Surface3::Plane(_)) {
+                    match &s1 { Surface3::Plane(p) => *p, _ => unreachable!() }
+                } else {
+                    match &s2 { Surface3::Plane(p) => *p, _ => unreachable!() }
+                };
+                let bsp_fi = if matches!(&self.ds.faces[f1].surface, Surface3::BSpline(_) | Surface3::Bezier(_)) { f1 } else { f2 };
+                if let Some(p2) = self.demote_to_plane(bsp_fi) {
+                    self.intersect_plane_plane_faces(f1, f2, &plane, &p2);
+                } else {
+                    self.intersect_ff_by_marching(f1, f2);
+                }
             }
             _ => {
                 // General case: numerical marching
