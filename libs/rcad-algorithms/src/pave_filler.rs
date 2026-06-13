@@ -4844,8 +4844,22 @@ impl<'a> PaveFiller<'a> {
         use inttools::marching::{adaptive_sampling_density, MarchingConfig};
         use inttools::pcurve_derive::polyline_pcurve_by_projection;
 
-        let s1 = self.ds.faces[f1].surface.clone();
-        let s2 = self.ds.faces[f2].surface.clone();
+        let mut s1 = self.ds.faces[f1].surface.clone();
+        let mut s2 = self.ds.faces[f2].surface.clone();
+
+        // ✅ OCCT对齐: BSpline → Plane 降级 — 用边界顶点推断平面
+        let maybe_plane1 = match &s1 { Surface3::BSpline(_) | Surface3::Bezier(_) => self.demote_to_plane(f1), _ => None };
+        let maybe_plane2 = match &s2 { Surface3::BSpline(_) | Surface3::Bezier(_) => self.demote_to_plane(f2), _ => None };
+        if let Some(pl) = maybe_plane1 { s1 = Surface3::Plane(pl); }
+        if let Some(pl) = maybe_plane2 { s2 = Surface3::Plane(pl); }
+
+        // If both demoted to Plane, redirect to the analytic plane-plane intersection
+        if matches!(&s1, Surface3::Plane(_)) && matches!(&s2, Surface3::Plane(_)) {
+            if let (Surface3::Plane(p1), Surface3::Plane(p2)) = (&s1, &s2) {
+                self.intersect_plane_plane_faces(f1, f2, p1, p2);
+                return;
+            }
+        }
 
         // ✅ OCCT对齐: 对任何非 Plane 面使用 sign-change grid marching (IntTools_FaceFace)
         let any_curved = !matches!(&s1, Surface3::Plane(_)) || !matches!(&s2, Surface3::Plane(_));
@@ -4892,14 +4906,14 @@ impl<'a> PaveFiller<'a> {
 
         let _samples = self.generate_surface_samples_grid(&s1, n_u, n_v);
         // Use multi-scale seed detection for improved robustness
-        // Scales: coarse (8x8), medium (16x16), fine (32x32)
+        // Scales: coarse (8x8), medium (16x16), fine (32x32), ultra (64x64)
         let base_step = self.estimate_step_size(&s1, &s2);
         let seed_dedup = (base_step * 2.0).max(self.ff_tol(f1, f2) * 2.0);
         let seeds = inttools::marching::find_seed_points_multiscale(
             &s1,
             &s2,
             |nu, nv| self.generate_surface_samples_grid(&s1, nu, nv),
-            &[8, 16, 32],
+            &[8, 16, 32, 64],
             seed_dedup,
         );
 

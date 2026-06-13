@@ -39,9 +39,15 @@ impl Default for MarchingConfig {
         Self {
             step_size: 0.1,
             min_step_size: TOLERANCE_LINEAR_ULTRA_STRICT,
-            max_steps: 500,
+            // 2000 steps per direction gives max ~400 units of arc per direction
+            // at default step_size=0.1, enough for most large mechanical parts.
+            // Callers can reduce this for small/simple geometry.
+            max_steps: 2000,
             max_oscillations: 3,
-            step_reduction_factor: 0.5,
+            // 0.7 is gentler than 0.5: after 3 oscillations steps shrink to
+            // 34% instead of 12.5% of the original, avoiding stalling on
+            // slightly noisy tangent estimation near singularities.
+            step_reduction_factor: 0.7,
             multiscale_seeds: false,
         }
     }
@@ -593,7 +599,7 @@ fn march_one_direction_monitored_simple(
                             break;
                         }
                         arc_len += step_dist;
-                        let arc_cap = step_size * (max_steps as f64).min(400.0);
+                        let arc_cap = step_size * max_steps as f64;
                         if arc_len >= arc_cap {
                             break;
                         }
@@ -649,7 +655,9 @@ fn march_one_direction_monitored_simple(
         }
 
         // Cap arc length to prevent runaway on infinite/very long open curves.
-        let arc_cap = step_size * (max_steps as f64).min(400.0);
+        // Use the actual max_steps rather than a hardcoded cap of 400 so that
+        // callers who set max_steps higher (for large surfaces) get the full budget.
+        let arc_cap = step_size * max_steps as f64;
         if arc_len >= arc_cap {
             break;
         }
