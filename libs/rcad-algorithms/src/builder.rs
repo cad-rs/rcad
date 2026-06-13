@@ -1846,16 +1846,44 @@ fn classify_against_solid_for_boolean(
     }
 
     // ✅ OCCT对齐: Edge-midpoint (ComputeState L662-L674).
-    //    OCCT 对面不在 theBounds 中的边用中点分类。SubFace.boundary 边等价
-    //    section edge,中点分类可绕过 sample_point 的 inner-wire 误判。
     {
         let bnd = &sub.boundary;
         if bnd.len() >= 3 {
+            let tol = TOLERANCE_ABS * 100.0;
+            let edge_bounds = build_edge_bounds(solid_face_indices, ds);
+            let mut all_on_solid = true;
+
             for i in 0..bnd.len() {
                 let j = (i + 1) % bnd.len();
-                if matches!(classify_point((bnd[i] + bnd[j]) * 0.5, solid_face_indices, ds), Classification::Out) {
-                    return Classification::Out;
+                let p1 = bnd[i];
+                let p2 = bnd[j];
+
+                let edge_idx = ds.edges.iter().position(|e| {
+                    let k1 = quantize_pos(ds.vertices[e.start_vertex].point, tol);
+                    let k2 = quantize_pos(ds.vertices[e.end_vertex].point, tol);
+                    let kp1 = quantize_pos(p1, tol);
+                    let kp2 = quantize_pos(p2, tol);
+                    (kp1 == k1 && kp2 == k2) || (kp1 == k2 && kp2 == k1)
+                });
+                let edge_is_on_solid = edge_idx.map_or(false, |ei| edge_bounds.contains(&ei));
+
+                if !edge_is_on_solid {
+                    all_on_solid = false;
+                    if matches!(classify_point((p1 + p2) * 0.5, solid_face_indices, ds), Classification::Out) {
+                        return Classification::Out;
+                    }
                 }
+            }
+
+            if all_on_solid {
+                if let Some(pt) = point_in_face(sub) {
+                    let c = classify_point(pt, solid_face_indices, ds);
+                    if c != Classification::Out {
+                        return c;
+                    }
+                }
+                let pt = sub.sample_point();
+                return classify_point(pt, solid_face_indices, ds);
             }
         }
     }
