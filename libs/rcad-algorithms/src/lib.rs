@@ -3257,8 +3257,8 @@ fn optimize_boolean_topology(mut brep: BRep) -> BRep {
     // same cylinder, etc.) into a single surface entry.  The PaveFiller creates
     // separate entries for each sub-face even when they share the same geometry.
     let m1 = deduplicate_surfaces(m1);
-    // Pass 2: edge-based unify (merges faces on the same surface domain)
-    let (m2, _) = crate::unify_same_domain_faces(&m1);
+    // ✅ OCCT对齐: FillSameDomainFaces — edge-set分组合并同域面 (BOPAlgo_Builder_2.cxx L636-L796)
+    let (m2, _) = crate::occt_fill_same_domain_faces(&m1);
     let mut brep = m2;
 
     // Pass 3: detect remaining coplanar groups with hole patterns and merge
@@ -5816,6 +5816,231 @@ pub fn unify_same_domain_faces_with_origins(
             break;
         }
         total_merges += 1;
+    }
+
+    (out, total_merges)
+}
+
+/// OCCT FillSameDomainFaces: group faces by edge-set equivalence, then merge
+/// same-surface groups.  OCCT source: BOPAlgo_Builder_2.cxx L636-L796.
+///
+/// Algorithm:
+///   1. For each face, compute its edge set (sorted edge indices from all wires).
+///   2. Group faces by identical edge sets (BOPTools_Set equivalence in OCCT).
+///   3. Within each group, verify geometric surface compatibility (same surface
+///      type and parameters).
+///   4. Merge each group: keep the representative face (lowest flat index),
+///      remove the others.
+///
+/// ✅ OCCT对齐: edge-set grouping (BOPTools_Set) + surface-type comparison.
+pub fn occt_fill_same_domain_faces(brep: &BRep) -> (BRep, usize) {
+    use std::collections::{HashMap, HashSet};
+    use rcad_kernel::geom::Surface3;
+
+    if brep.solids.is_empty() {
+        return (brep.clone(), 0);
+    }
+
+    let mut out = brep.clone();
+    let mut total_merges = 0usize;
+
+    for si in 0..out.solids.len() {
+        for shi in 0..out.solids[si].shells.len() {
+            let nf = out.solids[si].shells[shi].faces.len();
+            if nf < 2 {
+                continue;
+            }
+
+            // ── Phase 1: Edge-set signature per face ──────────────────────────
+            // Include edges from all wires (outer + inner) to match OCCT
+            // BOPTools_Set which collects every edge of the face.
+            let face_edges: Vec<Vec<usize>> = (0..nf)
+                .map(|fi| {
+                    let face = &out.solids[si].shells[shi].faces[fi];
+                    let mut edges: Vec<usize> =
+                        face.outer_wire.edges.iter().map(|we| we.idx).collect();
+                    for iw in &face.inner_wires {
+                        edges.extend(iw.edges.iter().map(|we| we.idx));
+                    }
+                    edges.sort_unstable();
+                    edges.dedup();
+                    edges
+                })
+                .collect();
+
+            // ── Phase 2: Group by edge set ────────────────────────────────────
+            let mut groups: HashMap<Vec<usize>, Vec<usize>> = HashMap::new();
+            for fi in 0..nf {
+                if face_edges[fi].is_empty() {
+                    continue;
+                }
+                groups.entry(face_edges[fi].clone()).or_default().push(fi);
+            }
+
+            // ── Phase 3-5: Analyse groups, then mutate ────────────────────
+            // OCCT: BOPAlgo_Builder_2.cxx L636-L796
+            //
+            // The analysis phase borrows `out` immutably (closures, lookups).
+            // After analysis completes, the closure is dropped and we can
+            // mutably borrow `out` for the removal step.
+            let mut analysis_to_remove: Vec<(usize, usize, usize)> = Vec::new();
+            let mut analysis_merges = 0usize;
+
+            {
+                fn surfaces_share_domain(s1: &Surface3, s2: &Surface3) -> bool {
+                    match (s1, s2) {
+                        (Surface3::Plane(p1), Surface3::Plane(p2)) => {
+                            (p1.normal - p2.normal).length() < 1e-8
+                                && (p1.origin - p2.origin).length() < 1e-8
+                        }
+                        (Surface3::Sphere(sp1), Surface3::Sphere(sp2)) => {
+                            (sp1.center - sp2.center).length() < 1e-8
+                                && (sp1.radius - sp2.radius).abs() < 1e-8
+                        }
+                        (Surface3::Cylinder(c1), Surface3::Cylinder(c2)) => {
+                            (c1.radius - c2.radius).abs() < 1e-8
+                                && (c1.axis - c2.axis).length() < 1e-8
+                                && (c2.origin - c1.origin).cross(c1.axis).length() < 1e-8
+                        }
+                        (Surface3::Cone(c1), Surface3::Cone(c2)) => {
+                            (c1.radius - c2.radius).abs() < 1e-8
+                                && (c1.half_angle_rad - c2.half_angle_rad).abs() < 1e-8
+                                && (c1.axis - c2.axis).length() < 1e-8
+                                && (c1.apex - c2.apex).length() < 1e-8
+                        }
+                        (Surface3::Torus(t1), Surface3::Torus(t2)) => {
+                            (t1.major_radius - t2.major_radius).abs() < 1e-8
+                                && (t1.minor_radius - t2.minor_radius).abs() < 1e-8
+                                && (t1.axis - t2.axis).length() < 1e-8
+                                && (t1.center - t2.center).length() < 1e-8
+                        }
+                        _ => false,
+                    }
+                }
+
+                let check_same_surface = |fi1: usize, fi2: usize| -> bool {
+                    let f1 = &out.solids[si].shells[shi].faces[fi1];
+                    let f2 = &out.solids[si].shells[shi].faces[fi2];
+                    match (f1.surface_idx, f2.surface_idx) {
+                        (Some(sid1), Some(sid2)) => {
+                            if sid1 == sid2 {
+                                return true;
+                            }
+                            match (out.geom.surfaces.get(sid1), out.geom.surfaces.get(sid2)) {
+                                (Some(g1), Some(g2)) => surfaces_share_domain(g1, g2),
+                                _ => false,
+                            }
+                        }
+                        (None, None) => true,
+                        _ => false,
+                    }
+                };
+
+                for (_edge_set, members) in groups.iter() {
+                    if members.len() < 2 {
+                        continue;
+                    }
+
+                    // Build adjacency graph: faces are adjacent if they share a
+                    // boundary edge AND are on the same surface.
+                    let mut adj: HashMap<usize, Vec<usize>> = HashMap::new();
+                    for &fi in members {
+                        adj.entry(fi).or_default();
+                    }
+
+                    for i in 0..members.len() {
+                        let fi = members[i];
+                        for j in (i + 1)..members.len() {
+                            let fj = members[j];
+                            if check_same_surface(fi, fj) {
+                                // Same edge set + same surface → always adjacent
+                                // (they share ALL boundary edges).  Record both
+                                // directions for the BFS below.
+                                adj.get_mut(&fi).unwrap().push(fj);
+                                adj.get_mut(&fj).unwrap().push(fi);
+                            }
+                        }
+                    }
+
+                    // ── Phase 4: BFS connected components ────────────────────
+                    let mut visited: HashSet<usize> = HashSet::new();
+                    let mut components: Vec<Vec<usize>> = Vec::new();
+
+                    for &start in members {
+                        if visited.contains(&start) {
+                            continue;
+                        }
+                        let mut comp = Vec::new();
+                        let mut queue = std::collections::VecDeque::new();
+                        queue.push_back(start);
+                        visited.insert(start);
+
+                        while let Some(fi) = queue.pop_front() {
+                            comp.push(fi);
+                            if let Some(neighbors) = adj.get(&fi) {
+                                for &ni in neighbors {
+                                    if !visited.contains(&ni) {
+                                        visited.insert(ni);
+                                        queue.push_back(ni);
+                                    }
+                                }
+                            }
+                        }
+
+                        if comp.len() >= 2 {
+                            components.push(comp);
+                        }
+                    }
+
+                    if components.is_empty() {
+                        continue;
+                    }
+
+                    // ── Phase 5: Record faces to remove per component ───────
+                    for comp in &components {
+                        if comp.len() < 2 {
+                            continue;
+                        }
+                        analysis_merges += 1;
+                        // Keep the first face (lowest index in the shell),
+                        // remove the rest.
+                        for &fi in comp.iter().skip(1) {
+                            analysis_to_remove.push((si, shi, fi));
+                        }
+                    }
+                }
+            } // Drop check_same_surface closure → release immutable borrow on `out`.
+
+            // ── Mutation phase: remove recorded faces ────────────────────────
+            total_merges += analysis_merges;
+            if !analysis_to_remove.is_empty() {
+                analysis_to_remove.sort_by(|a, b| b.cmp(a));
+                analysis_to_remove.dedup();
+
+                for (rsi, rshi, rfi) in analysis_to_remove {
+                    // Compute flat face index for geom slot removal.
+                    let mut ff = 0usize;
+                    for s in 0..rsi {
+                        for sh in &out.solids[s].shells {
+                            ff += sh.faces.len();
+                        }
+                    }
+                    for sh in 0..rshi {
+                        ff += out.solids[rsi].shells[sh].faces.len();
+                    }
+                    ff += rfi;
+
+                    remove_flat_face_geom_slots(&mut out.geom, ff);
+                    if let Some(s) = out.solids.get_mut(rsi) {
+                        if let Some(sh) = s.shells.get_mut(rshi) {
+                            if rfi < sh.faces.len() {
+                                sh.faces.remove(rfi);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     (out, total_merges)

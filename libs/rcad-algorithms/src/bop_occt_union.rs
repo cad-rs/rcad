@@ -675,6 +675,13 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     for (i, e) in result.edges.iter().enumerate() {
         if e.start == e.end { result.geom.edge_degenerated[i] = true; }
     }
+    // OCCT FillSameDomainFaces: edge-set grouping + surface comparison
+    // (edge-index based, handles all surface types).
+    {
+        let (merged, _cnt) = crate::occt_fill_same_domain_faces(&result);
+        result = merged;
+    }
+    // Legacy surface-index based merge (BuildSolid loop/area equivalent).
     let (merged, _cnt) = crate::occt_merge_same_surface_faces(&result);
     result = merged;
     // compact_brep after merge removes edges/vertices that were only referenced by
