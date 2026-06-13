@@ -5981,6 +5981,16 @@ pub fn occt_fill_same_domain_faces(brep: &BRep) -> (BRep, usize) {
                             let fi = f_list[i];
                             for j in (i+1)..f_list.len() {
                                 let fj = f_list[j];
+                                // OCCT-aligned: only merge planar faces by edge adjacency.
+                                // Cylindrical/spherical/toroidal quadrants on the same surface
+                                // belong to different angular regions and must not be merged.
+                                let surf_i = out.solids[si].shells[shi].faces[fi]
+                                    .surface_idx
+                                    .and_then(|sid| out.geom.surfaces.get(sid));
+                                let is_plane = matches!(surf_i, Some(Surface3::Plane(_)));
+                                if !is_plane {
+                                    continue;
+                                }
                                 if check_same_surface(fi, fj) {
                                     same_surf_adj.entry(fi).or_default().push(fj);
                                     same_surf_adj.entry(fj).or_default().push(fi);

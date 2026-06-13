@@ -3712,7 +3712,9 @@ impl<'a> BooleanBuilder<'a> {
 
             // ⏳ OCCT对齐: 跳过 SubFace 级合并,让 BRep 级 unify_same_domain_faces
             //    处理(OCCT 无 SubFace,始终保持 section edges 子面分离直到 BuildSolid)。
-            if kept_subs.len() > 1 && !matches!(kept_subs[0].surface, Surface3::Sphere(_)) {
+            if kept_subs.len() > 1
+                && !matches!(kept_subs[0].surface, Surface3::Sphere(_) | Surface3::Cylinder(_))
+            {
                 merge_subfaces_of_same_face(&mut kept_subs);
             }
 
@@ -3881,12 +3883,16 @@ impl<'a> BooleanBuilder<'a> {
                     .filter(|(_, c)| *c != Classification::On)
                     .map(|(s, _)| s.clone()).collect();
                 let mut out_merged = out_group.clone();
-                if out_merged.len() > 1 { merge_subfaces_of_same_face(&mut out_merged); }
+                if out_merged.len() > 1
+                    && !out_merged.iter().any(|s| matches!(s.surface, Surface3::Cylinder(_)))
+                { merge_subfaces_of_same_face(&mut out_merged); }
                 let on_group: Vec<SubFace> = kept_subs.iter()
                     .filter(|(_, c)| *c == Classification::On)
                     .map(|(s, _)| s.clone()).collect();
                 let mut on_merged = on_group.clone();
-                if on_merged.len() > 1 { merge_subfaces_of_same_face(&mut on_merged); }
+                if on_merged.len() > 1
+                    && !on_merged.iter().any(|s| matches!(s.surface, Surface3::Cylinder(_)))
+                { merge_subfaces_of_same_face(&mut on_merged); }
                 kept_subs = out_merged.into_iter().map(|s| (s, Classification::Out)).collect::<Vec<_>>()
                     .into_iter().chain(on_merged.into_iter().map(|s| (s, Classification::On))).collect();
             }
