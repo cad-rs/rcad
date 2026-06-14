@@ -5160,7 +5160,7 @@ impl<'a> PaveFiller<'a> {
     ///           进行全量边界顶点注入（PutBoundPaveOnCurve）。
     fn make_blocks(&mut self) {
         let n_ef = self.ds.interferences.iter().filter(|inf| matches!(inf, Interference::EdgeFace { .. })).count();
-        let _ = n_ef; // suppress unused warning
+        eprintln!("[MKBLK] n_ef={}", n_ef);
         // ── Phase 1: Collect data ────────────────────────────────────────
         let n_curves = self.ds.intersection_curves.len();
         let n_faces = self.ds.faces.len();
@@ -5291,6 +5291,25 @@ impl<'a> PaveFiller<'a> {
                     &self.ds, ci, &face_idxs, tol
                 );
                 on_curve.extend(bound_paves);
+                // ✅ OCCT对齐: 对 Circle 曲线,将 EF 顶点注入为 Pave 顶点。
+                //    OCCT PutBoundPaveOnCurve 通过 face edge 的 pcurve 匹配顶点,
+                //    rcad 的 bound_paves 只处理 face.boundary_verts(面边界顶点),
+                //    不包含 EF 顶点(边-面交点)。EF 顶点位于圆上(柱面边与柱面
+                //    的交点)且来自另一 shape 的边,应该分裂 Circle 曲线。
+                //    OCCT PaveFiller_6.cxx L752: SubShapesOnIn 收集的顶点包括
+                //    EF 顶点,BOPAlgo_PaveFiller::PutPavesOnCurve 处理时会将
+                //    所有在 IC 上的顶点加入 Pave 列表。
+                if let Curve3::Circle(circ) = &snap.curve {
+                    for &(evi, ept) in &all_verts {
+                        if evi == snap.sv || evi == snap.ev { continue; }
+                        if on_curve.iter().any(|&(_, vi)| vi == evi) { continue; }
+                        if let Some(t) = param_on_circle3(ept, circ, tol) {
+                            if t >= t0 - tol * 0.1 && t <= t1 + tol * 0.1 {
+                                on_curve.push((t, evi));
+                            }
+                        }
+                    }
+                }
                 on_curve = filter_paves_on_curves(&self.ds, ci, &on_curve);
                 let is_closed = matches!(&snap.curve, Curve3::Circle(_));
                 put_closing_pave_on_curve(&mut on_curve, is_closed);
@@ -6037,12 +6056,6 @@ fn put_bound_pave_on_curve(
                 continue; // Already the endpoint, handled at split list construction
             }
             let pt = ds.vertices[vi].point;
-            let near_ic_end = pt.distance_squared(ds.vertices[ic.start_vertex].point) < tol * tol
-                || pt.distance_squared(ds.vertices[ic.end_vertex].point) < tol * tol;
-            // ⏳ 部分对齐: OCCT 通过 pcurve 参数匹配,rcad 用 3D 距离近似。
-            if !near_ic_end {
-                continue;
-            }
             if let Some(t) = project_vertex_to_curve(pt, &ic.curve, tol) {
                 if t >= t0 - tol * 0.1 && t <= t1 + tol * 0.1 {
                     result.push((t, vi));
