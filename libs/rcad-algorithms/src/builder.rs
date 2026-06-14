@@ -1245,6 +1245,7 @@ impl ResultBuilder {
 
     fn build(mut self, subdivide_t_junction_seams: bool) -> (BRep, BooleanHistory) {
         eprintln!("ResultBuilder::build: {} vertices, {} edges, {} faces", self.vertices.len(), self.edges.len(), self.faces.len());
+
         if subdivide_t_junction_seams {
             self.subdivide_edges_at_interior_vertices();
             eprintln!("AFTER subdivide: {} vertices, {} edges, {} faces", self.vertices.len(), self.edges.len(), self.faces.len());
@@ -6620,73 +6621,7 @@ impl<'a> BooleanBuilder<'a> {
 
 
         // Split UV polygon by each trim polyline
-        let mut uv_polygons: Vec<Vec<DVec2>> = {
-            // Pre-split at full-wrap constant-V trims (circles that span the full
-            // U-range on periodic surfaces).  These trims are horizontal isolines
-            // at an interior V — the general splitter creates overlapping polygons
-            // when they coincide with the periodic boundary.  Splitting the initial
-            // UV polygon at those V values makes them boundary edges instead.
-            let use_v_split = is_periodic_u && trim_polylines.iter().any(|trim| {
-                trim.len() >= 2
-                && (trim[0].y - trim[trim.len()-1].y).abs() <= TOLERANCE_COORD_SUB
-            });
-            if use_v_split {
-                let bnd_u_min = uv_boundary.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-                let bnd_u_max = uv_boundary.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
-                let bnd_v_min = uv_boundary.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
-                let bnd_v_max = uv_boundary.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
-                let mut v_cuts: Vec<f64> = Vec::new();
-                for trim in &trim_polylines {
-                    if trim.len() < 3 { continue; }
-                    let v0 = trim[0].y;
-                    let v1 = trim[trim.len()-1].y;
-                    if (v0 - v1).abs() > TOLERANCE_COORD_SUB { continue; }
-                    // Check if this trim spans the full u-range
-                    let tu_min = trim.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-                    let tu_max = trim.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
-                    if (tu_max - tu_min) < (bnd_u_max - bnd_u_min) * 0.85 { continue; }
-                    // Interior (not at boundary) constant-V full-wrap trim
-                    if (v0 - bnd_v_min).abs() > TOLERANCE_COORD_SUB
-                        && (v0 - bnd_v_max).abs() > TOLERANCE_COORD_SUB
-                    {
-                        v_cuts.push(v0);
-                    }
-                }
-                v_cuts.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                v_cuts.dedup_by(|a, b| (*a - *b).abs() < TOLERANCE_COORD_SUB);
-                if !v_cuts.is_empty() {
-                    let mut bands: Vec<Vec<DVec2>> = Vec::new();
-                    let mut prev_v = bnd_v_min;
-                    for &cut in &v_cuts {
-                        if cut <= prev_v + TOLERANCE_COORD_SUB { continue; }
-                        bands.push(vec![
-                            DVec2::new(bnd_u_min, prev_v),
-                            DVec2::new(bnd_u_max, prev_v),
-                            DVec2::new(bnd_u_max, cut),
-                            DVec2::new(bnd_u_min, cut),
-                        ]);
-                        prev_v = cut;
-                    }
-                    if prev_v < bnd_v_max - TOLERANCE_COORD_SUB {
-                        bands.push(vec![
-                            DVec2::new(bnd_u_min, prev_v),
-                            DVec2::new(bnd_u_max, prev_v),
-                            DVec2::new(bnd_u_max, bnd_v_max),
-                            DVec2::new(bnd_u_min, bnd_v_max),
-                        ]);
-                    }
-                    if !bands.is_empty() {
-                        bands
-                    } else {
-                        vec![uv_boundary.clone()]
-                    }
-                } else {
-                    vec![uv_boundary.clone()]
-                }
-            } else {
-                vec![uv_boundary.clone()]
-            }
-        };
+        let mut uv_polygons: Vec<Vec<DVec2>> = vec![uv_boundary.clone()];
         for trim in trim_polylines.iter() {
             let mut next: Vec<Vec<DVec2>> = Vec::new();
             for poly in uv_polygons.drain(..) {
@@ -6751,7 +6686,7 @@ impl<'a> BooleanBuilder<'a> {
             uv_polygons = next;
         }
 
-        // Handle seam crossings for periodic surfaces
+        // ✅ OCCT对齐: Handle seam crossings for periodic surfaces
         if u_period > 0.0 {
             let seam_u = if is_sphere {
                 -std::f64::consts::PI // Sphere seam at u=-蟺 (UV boundary uses [-蟺, 蟺])
@@ -6771,6 +6706,37 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 })
                 .collect();
+        }
+
+        // ✅ OCCT对齐: 清理UV polygon边界上由trim端点或seam分裂产生的多余顶点。
+        //    OCCT Hatcher 基于线段环路构建(见BOPAlgo_WireSplitter),不会产生此类顶点。
+        //    移除在边界直线上的中间顶点(相邻顶点在UV空间中共线)。
+        if !uv_polygons.is_empty() {
+            let collinear_tol = TOLERANCE_COORD_SUB;
+            for poly in &mut uv_polygons {
+                if poly.len() <= 4 { continue; }
+                let mut i = 0;
+                while i < poly.len() && poly.len() > 4 {
+                    let n = poly.len();
+                    let prev = poly[(i + n - 1) % n];
+                    let curr = poly[i];
+                    let next = poly[(i + 1) % n];
+                    let d1 = curr - prev;
+                    let d2 = next - curr;
+                    let len1 = d1.length();
+                    let len2 = d2.length();
+                    if len1 < collinear_tol || len2 < collinear_tol {
+                        i += 1;
+                        continue;
+                    }
+                    if d1.normalize().dot(d2.normalize()).abs() > 0.9999 {
+                        poly.remove(i);
+                        // Don't increment i — re-check new vertex at same position
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
         }
 
         if std::env::var("RCAD_DEBUG_SPLIT").is_ok() && !is_sphere {
@@ -6893,11 +6859,12 @@ impl<'a> BooleanBuilder<'a> {
 
 
         // Map each UV sub-polygon back to 3D
+        let min_verts = if is_sphere { 3 } else { 4 };
         eprintln!("[DBG] split_face[{}]: {} uv_polys -> {} valid", face_idx, uv_polygons.len(),
-            uv_polygons.iter().filter(|p| p.len() >= 3 && is_valid_uv_polygon(p)).count());
+            uv_polygons.iter().filter(|p| p.len() >= min_verts && is_valid_uv_polygon(p)).count());
         uv_polygons
             .into_iter()
-            .filter(|p| p.len() >= 3 && is_valid_uv_polygon(p))
+            .filter(|p| p.len() >= min_verts && is_valid_uv_polygon(p))
             .map(|uv_poly| {
                 let n = uv_poly.len() as f64;
                 let centroid_uv = uv_poly.iter().copied().sum::<DVec2>() / n;
