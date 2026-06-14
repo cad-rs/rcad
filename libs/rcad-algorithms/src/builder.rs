@@ -807,7 +807,17 @@ impl ResultBuilder {
                 vec![h[0], mid, h[1]]
             } else { h.clone() }
         }).collect();
-        let all_vert_indices: Vec<usize> = [vert_indices.as_slice(), iw_vert_indices_all.as_slice()].concat();
+        // ✅ OCCT对齐: 用combined vertex array确保triangulation索引与DS顶点一一对应。
+        //    add_vertex 可能去重(内环端点与边界顶点位置重合),但 triangulation 的
+        //    组合顶点数组中每个位置都需有对应的DS顶点索引(不能仅依赖去重后的紧凑数组)。
+        let combined_verts: Vec<DVec3> = {
+            let mut v = sub.boundary.clone();
+            for h in &tri_holes {
+                v.extend_from_slice(h);
+            }
+            v
+        };
+        let all_vert_indices: Vec<usize> = combined_verts.iter().map(|&p| self.add_vertex(p)).collect();
         let mut tris = if tri_holes.is_empty() {
             triangulate_polygon(&sub.boundary, normal)
         } else {
@@ -5110,6 +5120,10 @@ impl<'a> BooleanBuilder<'a> {
         let mut poly_wires: Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)> = vec![(boundary_2d.clone(), vec![])];
         // OCCT对齐: 保存原始矩形边界,用于 circle 交线时替代被切割的外边界
         let original_rect_2d = boundary_2d.clone();
+        // ✅ OCCT对齐: arc_info 与 poly_wires 并行,记录哪些子面外边界需精确圆边。
+        //    OCCT MakeBlocks → section edges 直接作为 BRep 边的 Curve3; rcad 用
+        //    outer_circle_edges 达到相同效果(arc_info 在 SubFace 创建时传递)。
+        let mut arc_info: Vec<Option<(usize, rcad_kernel::geom::Curve3)>> = vec![None];
         // Track circles that were embedded inside polygons (center_2d, radius).
         // When such a circle is fully inside a polygon, that polygon's centroid
         // may fall inside the circle 鈥?we must use a vertex-based sample instead.
@@ -5119,7 +5133,7 @@ impl<'a> BooleanBuilder<'a> {
             let ic = &self.ds.intersection_curves[ci];
 
                             eprintln!("[CURVE] processing Circle curve, poly_wires={}", poly_wires.len());
-            let curve_result: Option<Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)>> = match &ic.curve {
+            let (curve_result, curve_arc): (Option<Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)>>, Option<Vec<Option<(usize, rcad_kernel::geom::Curve3)>>>) = match &ic.curve {
                 Curve3::Circle(circle) => {
                     // Plane-sphere intersection produces a circle lying in the plane.
                     // Project the circle center to 2D and split by the circle boundary.
@@ -5132,21 +5146,16 @@ impl<'a> BooleanBuilder<'a> {
                     // Use a relaxed tolerance — the sphere-plane distance may produce
                     // a radius of ~1e-6 from floating-point noise (e.g. sqrt(1²-1²)).
                     if radius < TOLERANCE_PLANE_DIST_RELAX {
-                        None
+                        (None, None)
                     } else {
                     let mut next: Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)> = Vec::new();
+                    let mut next_arc: Vec<Option<(usize, rcad_kernel::geom::Curve3)>> = Vec::new();
 
                     // Pre-sample the 3D circle at 128 3D points, projected to 2D.
                     // `split_curved_face_parametric` samples sphere UV edges at 32 points
                     // (EDGE_SAMPLES) per edge, so 128 鈫?32 per quadrant matches that density,
                     // ensuring plane-side arc positions are bit-identical to sphere-side
                     // boundary positions so `ResultBuilder::add_vertex` deduplicates them.
-                    const ARC_PRE_N: usize = 128;
-                    let pre_2d: Vec<DVec2> = (0..ARC_PRE_N)
-                        .map(|i| project_to_2d(circle.point_at(
-                            std::f64::consts::TAU * i as f64 / ARC_PRE_N as f64,
-                        )))
-                        .collect();
                     let on_circle_tol = TOLERANCE_COORD_SUB;
 
                     for (poly, existing_wires) in &poly_wires {
@@ -5169,6 +5178,7 @@ impl<'a> BooleanBuilder<'a> {
                                     let mut new_wires = all_wires.clone();
                                     new_wires.push(arc);
                                     next.push((original_rect_2d.clone(), new_wires));
+                                    next_arc.push(None);
                                     continue; // 跳过标准 replace 流程
                                 }
                             }
@@ -5191,7 +5201,7 @@ impl<'a> BooleanBuilder<'a> {
                                                 let span = (last_angle - first_angle
                                                     + std::f64::consts::TAU)
                                                     % std::f64::consts::TAU;
-                                                span < std::f64::consts::TAU - 0.01
+                                                span < std::f64::consts::TAU - 0.5
                                             } else {
                                                 // cnt == 3: too few vertices for a full circle
                                                 true
@@ -5210,55 +5220,28 @@ impl<'a> BooleanBuilder<'a> {
                                 let fi = fi.unwrap();
                                 let li = li.unwrap();
 
-                                let theta1 = (half[fi] - center_2d).to_angle();
-                                let theta_n = (half[fi + 1] - center_2d).to_angle();
-                                let d_ccw = (theta_n - theta1
-                                    + std::f64::consts::TAU)
-                                    % std::f64::consts::TAU;
-                                let going_ccw = d_ccw < std::f64::consts::PI;
-
-                                let j1 = (((theta1 % std::f64::consts::TAU
-                                    + std::f64::consts::TAU) % std::f64::consts::TAU)
-                                    / std::f64::consts::TAU * ARC_PRE_N as f64 + 0.5)
-                                    .floor() as usize % ARC_PRE_N;
-                                let jn = ((((half[li] - center_2d).to_angle()
-                                    % std::f64::consts::TAU + std::f64::consts::TAU)
-                                    % std::f64::consts::TAU)
-                                    / std::f64::consts::TAU * ARC_PRE_N as f64 + 0.5)
-                                    .floor() as usize % ARC_PRE_N;
-
-                                let mut arc: Vec<DVec2> = Vec::new();
-                                if going_ccw {
-                                    let mut j = (j1 + 1) % ARC_PRE_N;
-                                    while j != jn {
-                                        arc.push(pre_2d[j]);
-                                        j = (j + 1) % ARC_PRE_N;
-                                    }
-                                } else {
-                                    let mut j = (j1 + ARC_PRE_N - 1) % ARC_PRE_N;
-                                    while j != jn {
-                                        arc.push(pre_2d[j]);
-                                        j = (j + ARC_PRE_N - 1) % ARC_PRE_N;
-                                    }
-                                }
-
+                                // ✅ OCCT对齐: 不用128弧采样,直接用两端点+outer_circle_edges。
+                                //    OCCT MakeBlocks → section edges 用精确几何曲线;
+                                //    rcad 用 outer_circle_edges 记录 Circle3,在 emit 时
+                                //    add_circle_edge 创建精确圆弧边。
                                 let mut replaced: Vec<DVec2> =
-                                    Vec::with_capacity(fi + 1 + arc.len() + half.len() - li);
+                                    Vec::with_capacity(fi + 1 + half.len() - li);
                                 replaced.extend_from_slice(&half[..=fi]);
-                                replaced.extend(arc);
                                 replaced.extend_from_slice(&half[li..]);
                                 replaced.dedup_by(|a, b| {
                                     (*a - *b).length_squared() < on_circle_tol * on_circle_tol
                                 });
                                 next.push((replaced, all_wires));
+                                next_arc.push(Some((fi, rcad_kernel::geom::Curve3::Circle(circle.clone()))));
                             } else {
                                 next.push((half, all_wires));
+                                next_arc.push(None);
                             }
                         }
                     }
                     // Track this circle so we can compute correct sample points later
                     embedded_circles.push((center_2d, radius));
-                    Some(next)
+                    (Some(next), Some(next_arc))
                     } // end else (radius >= TOLERANCE_ABS)
                 }
                 Curve3::Line(line) => {
@@ -5266,11 +5249,12 @@ impl<'a> BooleanBuilder<'a> {
                     let p_start = self.ds.vertices[ic.start_vertex].point;
                     let p_end = self.ds.vertices[ic.end_vertex].point;
                     if points_coincide(p_start, p_end) {
-                        None
+                        (None, None)
                     } else {
                         let seg_s2d = project_to_2d(p_start);
                         let _seg_e2d = project_to_2d(p_end);
                         let mut next: Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)> = Vec::new();
+                        let mut next_arc: Vec<Option<(usize, rcad_kernel::geom::Curve3)>> = Vec::new();
                         for (poly, existing_wires) in &poly_wires {
                             // Use line direction to split
                             let dir = DVec2::new(
@@ -5282,9 +5266,10 @@ impl<'a> BooleanBuilder<'a> {
                             let halves = split_polygon_2d_by_line(poly, seg_s2d, dir);
                             for half in halves {
                                 next.push((half, existing_wires.clone()));
+                                next_arc.push(None);
                             }
                         }
-                        Some(next)
+                        (Some(next), Some(next_arc))
                     }
                 }
                 _ => {
@@ -5295,15 +5280,17 @@ impl<'a> BooleanBuilder<'a> {
                         let seg_s2d = project_to_2d(p_start);
                         let seg_e2d = project_to_2d(p_end);
                         let mut next: Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)> = Vec::new();
+                        let mut next_arc: Vec<Option<(usize, rcad_kernel::geom::Curve3)>> = Vec::new();
                         for (poly, existing_wires) in &poly_wires {
                             let halves = split_polygon_2d_by_segment(poly, seg_s2d, seg_e2d);
                             for half in halves {
                                 next.push((half, existing_wires.clone()));
+                                next_arc.push(None);
                             }
                         }
-                        Some(next)
+                        (Some(next), Some(next_arc))
                     } else {
-                        None
+                        (None, None)
                     }
                 }
             };
@@ -5312,6 +5299,9 @@ impl<'a> BooleanBuilder<'a> {
                 && !new_polys.is_empty()
             {
                 poly_wires = new_polys;
+                if let Some(new_arc) = curve_arc {
+                    arc_info = new_arc;
+                }
             }
         }
 
@@ -5379,8 +5369,9 @@ impl<'a> BooleanBuilder<'a> {
 
         poly_wires
             .into_iter()
-            .filter(|(p, _)| p.len() >= 3)
-            .map(|(poly_2d, inner_wires_2d)| {
+            .zip(arc_info.into_iter())
+            .filter(|((p, _), _)| p.len() >= 3)
+            .map(|((poly_2d, inner_wires_2d), arc)| {
                 let boundary: Vec<DVec3> = poly_2d.iter().map(|&uv| lift_to_3d(uv)).collect();
                 let inner_wires: Vec<Vec<DVec3>> = inner_wires_2d.iter()
                     .map(|iw| iw.iter().map(|uv| lift_to_3d(*uv)).collect())
@@ -5451,7 +5442,10 @@ impl<'a> BooleanBuilder<'a> {
                     sample_override,
                     uv_domain: None,
                     inner_wires,
-                    outer_circle_edges: vec![],
+                    outer_circle_edges: match arc {
+                        Some((idx, crv)) => vec![(idx, crv)],
+                        None => vec![],
+                    },
                     seam_edge: None,
             inner_wire_circle: None,
                 }

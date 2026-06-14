@@ -762,10 +762,19 @@ impl<'a> PaveFiller<'a> {
 
         // ✅ OCCT对齐: 清理退化 IC(start==end 位置重合)。OCCT IsValidBlockForFaces
         //    通过 mid-point 投影移除无效块,但 rcad 的 IC 端点可能在 EF 替换后重合。
+        //    ⚠️ 跳过 Circle 曲线: 闭环曲线的 start==end 是自然几何属性(全圆,
+        //    t_range=[0,TAU]),不是退化。OCCT BOPTools_AlgoTools::MakeEdge 对闭环
+        //    曲线的两端创建不同顶点,不视为退化。rcad 因 add_vertex 去重,start 和
+        //    end 顶点索引相同(同一 3D 位置),但曲线本身有效。
         let degen_tol_sq = TOLERANCE_ABS_SQ;
         for ci in 0..self.ds.intersection_curves.len() {
-            let sv_pt = self.ds.vertices[self.ds.intersection_curves[ci].start_vertex].point;
-            let ev_pt = self.ds.vertices[self.ds.intersection_curves[ci].end_vertex].point;
+            let ic = &self.ds.intersection_curves[ci];
+            // Skip closed curves (Circle with full-circle t_range) — start==end is natural
+            if matches!(ic.curve, rcad_kernel::geom::Curve3::Circle(_)) {
+                continue;
+            }
+            let sv_pt = self.ds.vertices[ic.start_vertex].point;
+            let ev_pt = self.ds.vertices[ic.end_vertex].point;
             if sv_pt.distance_squared(ev_pt) < degen_tol_sq {
                 for fi in 0..self.ds.faces.len() {
                     self.ds.faces[fi].face_info.curves_in.remove(&ci);
