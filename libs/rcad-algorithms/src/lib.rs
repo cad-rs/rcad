@@ -2983,7 +2983,7 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         try_fast_path!(boolean_unit_octant::try_difference_cylinder_box(a, b), "try_difference_cylinder_box");
         try_fast_path!(boolean_unit_octant::try_difference_box_cylinder(a, b), "try_difference_box_cylinder");
         try_fast_path!(boolean_unit_octant::try_difference_concentric_spheres(a, b), "try_difference_concentric_spheres");
-        try_fast_path!(boolean_unit_octant::try_difference_sphere_box(a, b), "try_difference_sphere_box");
+        // ❌ DELETED: try_difference_sphere_box — 绕过 OCCT PaveFiller 管道。
         try_fast_path!(boolean_unit_octant::try_difference_coaxial_cylinder_torus(a, b), "try_difference_coaxial_cylinder_torus");
         try_fast_path!(boolean_unit_octant::try_difference_coaxial_cylinder_sphere(a, b), "try_difference_coaxial_cylinder_sphere");
         try_fast_path!(boolean_unit_octant::try_difference_box_cone(a, b), "try_difference_box_cone");
