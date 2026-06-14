@@ -1293,16 +1293,18 @@ impl ResultBuilder {
             // ✅ OCCT对齐: 不合并不同曲线类型的边(IC圆弧 vs 平面直边共享相同顶点对但几何不同)
             let ne = self.edges.len();
             let mut e_canon: Vec<usize> = (0..ne).collect();
+            // Track Circle curves that need to be transferred to the survivor edge
+            // when merging a plain edge (survivor) with a Circle edge (collapsed).
+            let mut circle_transfer: Vec<(usize, Curve3)> = Vec::new();
             for i in 0..ne {
                 if e_canon[i] != i { continue; }
                 let (a1, a2) = (self.edges[i].0.min(self.edges[i].1), self.edges[i].0.max(self.edges[i].1));
-                let ci = self.custom_edge_curves.get(i).and_then(|c| c.as_ref());
                 for j in (i+1)..ne {
                     let (b1, b2) = (self.edges[j].0.min(self.edges[j].1), self.edges[j].0.max(self.edges[j].1));
                     if a1 == b1 && a2 == b2 {
-                        // Only merge if both have the same curve type (or both are plain)
-                        let cj = self.custom_edge_curves.get(j).and_then(|c| c.as_ref());
-                        let merge = match (ci, cj) {
+                        let ci = self.custom_edge_curves.get(i).and_then(|opt| opt.clone());
+                        let cj = self.custom_edge_curves.get(j).and_then(|opt| opt.clone());
+                        let merge = match (&ci, &cj) {
                             (Some(circ_i), Some(circ_j)) => {
                                 use rcad_kernel::geom::Curve3;
                                 match (circ_i, circ_j) {
@@ -1314,13 +1316,27 @@ impl ResultBuilder {
                                 }
                             }
                             (None, None) => true, // Both plain: merge
-                            _ => false, // Curve mismatch: don't merge
+                            // ✅ OCCT对齐: Circle边与plain边共享相同顶点对 → 合并保留Circle。
+                            _ => true, // One Circle, one plain: merge
                         };
                         if merge {
                             e_canon[j] = i;
+                            // Transfer Circle curve to survivor if needed
+                            if ci.is_none() {
+                                if let Some(circ) = cj {
+                                    circle_transfer.push((i, circ));
+                                }
+                            }
                         }
                     }
                 }
+            }
+            // Apply Circle curve transfers to survivor edges
+            for (surv, circ) in &circle_transfer {
+                while self.custom_edge_curves.len() <= *surv {
+                    self.custom_edge_curves.push(None);
+                }
+                self.custom_edge_curves[*surv] = Some(circ.clone());
             }
 
             // Step 4: 更新 face 中所有 edge 引用
@@ -5128,6 +5144,108 @@ impl<'a> BooleanBuilder<'a> {
         // When such a circle is fully inside a polygon, that polygon's centroid
         // may fall inside the circle 鈥?we must use a vertex-based sample instead.
         let mut embedded_circles: Vec<(DVec2, f64)> = Vec::new();
+
+        // ✅ OCCT对齐: 检测全圆盖面(cylinder-box Intersection)。
+        //    OCCT MakeBlocks → Hatcher 直接在 IC 上创建 section edges 作为 BRep 边。
+        //    rcad: split_polygon_by_circle_2d 的 Intersection shortcut 返回24点近似圆,
+        //    顶点与 cylinder 子面弧端点不匹配(导致 V/E 膨胀, open shell)。
+        //    改从以下来源构建 cap face:
+        //    1. Split Circle curve segment vertices (PaveFiller 已分段)
+        //    2. Edge-circle intersection from face boundary polygon (通用回退)
+        if self.op == BooleanOpType::Intersection {
+            use rcad_kernel::geom::Curve3;
+            for &first_ci in split_curve_ids {
+                let first_circ = match &self.ds.intersection_curves[first_ci].curve {
+                    Curve3::Circle(c) => *c,
+                    _ => continue,
+                };
+                let c0_2d = project_to_2d(first_circ.center);
+                let r0 = first_circ.radius;
+                if !point_in_polygon_2d(&boundary_2d, c0_2d) { continue; }
+                let all_outside = boundary_2d.iter().all(|p| (p - c0_2d).length() > r0 - TOLERANCE_ABS * 100.0);
+                if !all_outside { continue; }
+
+                // Collect intersection points between circle and polygon edges.
+                let mut verts_2d: Vec<DVec2> = Vec::new();
+
+                // Method A: from split Circle segment start/end vertices.
+                let circle_ids: Vec<usize> = split_curve_ids.iter()
+                    .filter(|&&ci| {
+                        match &self.ds.intersection_curves[ci].curve {
+                            Curve3::Circle(c) => {
+                                (project_to_2d(c.center) - c0_2d).length() < TOLERANCE_ABS * 1000.0
+                                    && (c.radius - r0).abs() < TOLERANCE_ABS * 1000.0
+                            }
+                            _ => false,
+                        }
+                    })
+                    .copied()
+                    .collect();
+                if circle_ids.len() >= 3 {
+                    for &ci in &circle_ids {
+                        let ic = &self.ds.intersection_curves[ci];
+                        verts_2d.push(project_to_2d(self.ds.vertices[ic.start_vertex].point));
+                        verts_2d.push(project_to_2d(self.ds.vertices[ic.end_vertex].point));
+                    }
+                } else {
+                    // Method B: compute edge-circle intersection directly from boundary polygon.
+                    let n = boundary_2d.len();
+                    for i in 0..n {
+                        let j = (i + 1) % n;
+                        let a = boundary_2d[i];
+                        let b = boundary_2d[j];
+                        let ab = b - a;
+                        let ac = a - c0_2d;
+                        let qa = ab.dot(ab);
+                        if qa < TOLERANCE_ABS_SQ { continue; }
+                        let qb = 2.0 * ab.dot(ac);
+                        let qc = ac.dot(ac) - r0 * r0;
+                        let disc = qb * qb - 4.0 * qa * qc;
+                        if disc >= -TOLERANCE_ABS {
+                            let eps = TOLERANCE_ABS * 100.0;
+                            let abs_disc = disc.max(0.0).sqrt();
+                            for &sx in &[-1.0_f64, 1.0_f64] {
+                                let t = (-qb + sx * abs_disc) / (2.0 * qa);
+                                if t >= -eps && t <= 1.0 + eps {
+                                    let p = a + t.clamp(0.0, 1.0) * ab;
+                                    verts_2d.push(p);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if verts_2d.len() >= 4 {
+                    verts_2d.sort_by(|a, b| {
+                        (a - c0_2d).to_angle()
+                            .partial_cmp(&(b - c0_2d).to_angle())
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    verts_2d.dedup_by(|a, b| (*a - *b).length() < TOLERANCE_ABS * 1000.0);
+                    if verts_2d.len() >= 3 {
+                        let cap_boundary: Vec<DVec3> = verts_2d.iter()
+                            .map(|&uv| lift_to_3d(uv)).collect();
+                        let outer_edges: Vec<(usize, Curve3)> = (0..verts_2d.len())
+                            .map(|i| (i, Curve3::Circle(first_circ.clone())))
+                            .collect();
+                        let center_3d = lift_to_3d(c0_2d);
+                        embedded_circles.push((c0_2d, r0));
+                        return vec![SubFace {
+                            boundary: cap_boundary,
+                            surface: face.surface.clone(),
+                            normal: face.normal,
+                            uv_centroid: Some(c0_2d),
+                            sample_override: Some(center_3d + face.normal * TOLERANCE_ABS * 10.0),
+                            uv_domain: None,
+                            inner_wires: vec![],
+                            outer_circle_edges: outer_edges,
+                            seam_edge: None,
+                            inner_wire_circle: None,
+                        }];
+                    }
+                }
+            }
+        }
 
         for &ci in split_curve_ids {
             let ic = &self.ds.intersection_curves[ci];

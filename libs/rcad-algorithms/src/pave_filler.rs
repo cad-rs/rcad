@@ -5303,7 +5303,17 @@ impl<'a> PaveFiller<'a> {
                     for &(evi, ept) in &all_verts {
                         if evi == snap.sv || evi == snap.ev { continue; }
                         if on_curve.iter().any(|&(_, vi)| vi == evi) { continue; }
-                        if let Some(t) = param_on_circle3(ept, circ, tol) {
+                        if let Some(mut t) = param_on_circle3(ept, circ, tol) {
+                            // ✅ OCCT对齐: 归一化Circle参数到曲线t_range。
+                            //    param_on_circle3返回atan2 ∈ [-π, π],但Circle
+                            //    t_range通常是[0, 2π]。负角度参数会被< t0过滤掉。
+                            //    OCCT IntTools_Curve::Project使用FindParameter
+                            //    返回自然参数域,不会跨边界。
+                            let span = t1 - t0;
+                            if span > 0.0 && t < t0 - tol * 0.1 {
+                                let k = ((t0 - t) / span).ceil();
+                                t = t + k * span;
+                            }
                             if t >= t0 - tol * 0.1 && t <= t1 + tol * 0.1 {
                                 on_curve.push((t, evi));
                             }
