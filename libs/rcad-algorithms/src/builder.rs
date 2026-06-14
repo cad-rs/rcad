@@ -2808,7 +2808,7 @@ fn clock_wise_angle(angle_in: f64, angle_out: f64) -> f64 {
 ///   1. MakeConnexityBlocks: BFS 按共享顶点分组
 ///   2. Regular block (所有顶点 degree=2): 简单的链式跟随
 ///   3. Irregular block (有 degree>2 顶点): SmartMap + Path 最小角选择
-fn build_closed_wires(segments: &[WireSegment], ds: &DS) -> Vec<Vec<usize>> {
+fn build_closed_wires(segments: &[WireSegment], ds: &DS, face_idx: usize) -> Vec<Vec<usize>> {
     if segments.is_empty() {
         return vec![];
     }
@@ -2876,7 +2876,7 @@ fn build_closed_wires(segments: &[WireSegment], ds: &DS) -> Vec<Vec<usize>> {
             }
         } else {
             // Irregular block: SmartMap + angle-based Path walking
-            let block_wires = build_irregular_wires(block, segments);
+            let block_wires = build_irregular_wires(block, segments, ds, face_idx);
             wires.extend(block_wires);
         }
     }
@@ -2950,7 +2950,7 @@ struct EdgeInfo {
 
 /// ✅ OCCT对齐: 为 irregular block 构建 SmartMap + Path 行走。
 ///    (BOPAlgo_WireSplitter_1.cxx L359-618)
-fn build_irregular_wires(block: &[usize], segments: &[WireSegment]) -> Vec<Vec<usize>> {
+fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, face_idx: usize) -> Vec<Vec<usize>> {
     // Build SmartMap: vertex → Vec<EdgeInfo>
     let mut smart_map: HashMap<usize, Vec<EdgeInfo>> = HashMap::new();
 
@@ -2983,7 +2983,7 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment]) -> Vec<Vec<u
 
     // ✅ OCCT对齐: RefineAngles (BOPAlgo_WireSplitter_1.cxx L904-1028)
     //    在边界边的"外侧"扇区内的内部边,调整其角度使其指向面内侧。
-    refine_angles(&mut smart_map, segments);
+    refine_angles(&mut smart_map, segments, ds, face_idx);
 
     // Walk paths from each unpassed segment
     let mut wires: Vec<Vec<usize>> = Vec::new();
@@ -3074,59 +3074,54 @@ fn select_best_outgoing<'a>(
 ///      - 失败时且恰有 2 条内部边: 将角度推到 boundary 内侧
 fn refine_angles(
     smart_map: &mut HashMap<usize, Vec<EdgeInfo>>,
-    _segments: &[WireSegment],
+    segments: &[WireSegment],
+    ds: &DS,
+    face_idx: usize,
 ) {
+    let face_surface = &ds.faces[face_idx].surface;
     let vertices: Vec<usize> = smart_map.keys().copied().collect();
     for &v in &vertices {
         let Some(infos) = smart_map.get(&v).cloned() else { continue; };
 
-        // Separate boundary (is_inside=false) and internal (is_inside=true)
         let bnd_in = infos.iter().find(|ei| !ei.is_inside && ei.in_flag);
         let bnd_out = infos.iter().find(|ei| !ei.is_inside && !ei.in_flag);
         let internal_out: Vec<&EdgeInfo> = infos.iter().filter(|ei| ei.is_inside && !ei.in_flag).collect();
 
         let (Some(a_in_bnd), Some(a_out_bnd)) = (bnd_in, bnd_out) else { continue; };
-        if internal_out.is_empty() {
-            continue;
-        }
+        if internal_out.is_empty() { continue; }
 
         let a_in = a_in_bnd.angle;
         let a_out = a_out_bnd.angle;
-
-        // delta_bnd = outside sector: clockwise angle from boundary in to boundary out
         let delta_bnd = clock_wise_angle(a_in, a_out);
 
-        // Internal edges that need refinement (their angle falls in the outside sector)
-        let mut to_refine: Vec<(usize, f64)> = Vec::new(); // (index_in_internal_out, current_angle)
-        for (i, ei) in internal_out.iter().enumerate() {
-            let d = clock_wise_angle(a_in, ei.angle);
-            if d < delta_bnd {
-                // This internal edge points to the outside → needs refinement
-                to_refine.push((i, ei.angle));
+        // Internal edges that need refinement (angle falls in outside sector)
+        let to_refine: Vec<&EdgeInfo> = internal_out.iter()
+            .filter(|ei| clock_wise_angle(a_in, ei.angle) < delta_bnd)
+            .copied().collect();
+        if to_refine.is_empty() { continue; }
+
+        let i_cnt_int = internal_out.len() + infos.iter().filter(|ei| ei.is_inside && ei.in_flag).count();
+        let mut refined: Vec<(usize, f64)> = Vec::new();
+
+        for ei in &to_refine {
+            let seg = &segments[ei.seg_idx];
+            let corrected = refine_angle_2d(v, seg, segments, ds, face_surface, a_in, a_out, delta_bnd, ei.angle);
+            if let Some(new_angle) = corrected {
+                refined.push((ei.seg_idx, new_angle));
+            } else if i_cnt_int == 2 {
+                // OCCT L997: RefineAngle2D failed + exactly 2 internal edges
+                let push_angle = if ei.angle <= a_out { a_out + 1e-6 } else { a_in - 1e-6 };
+                refined.push((ei.seg_idx, push_angle));
             }
         }
 
-        if to_refine.is_empty() {
-            continue;
-        }
-
-        // ⏳ RefineAngle2D: 用射线与 p-curve 求交得到真实方向
-        //    OCCT BOPAlgo_WireSplitter_1.cxx L938-1028
-        //    当前使用简化策略: 将角度推到 boundary 内侧。
-        //
-        //    a1_in = (a_in + π) % 2π 是入边方向的反向(即沿入边的行进方向)。
-        //    内侧扇区 = 从 a_out 逆时针到 a1_in 的范围(大小 = 2π - delta_bnd)。
-        //    将不在内侧的内部边推入该扇区的中点:
-        let inside_mid = (a_out + (std::f64::consts::TAU - delta_bnd) * 0.5) % std::f64::consts::TAU;
-
         if let Some(infos) = smart_map.get_mut(&v) {
-            for (ii, _old_angle) in &to_refine {
-                let internal_idx = internal_out[*ii].seg_idx;
-                let internal_in_flag = internal_out[*ii].in_flag;
-                if let Some(ei) = infos.iter_mut().find(|ei| {
-                    ei.seg_idx == internal_idx && ei.in_flag == internal_in_flag
-                }) {
-                    ei.angle = inside_mid;
+            for (seg_idx, new_angle) in &refined {
+                for ei in infos.iter_mut() {
+                    if ei.seg_idx == *seg_idx && !ei.in_flag && ei.is_inside { ei.angle = *new_angle; }
+                }
+                for ei in infos.iter_mut() {
+                    if ei.seg_idx == *seg_idx && ei.in_flag && ei.is_inside { ei.angle = (*new_angle + std::f64::consts::PI) % std::f64::consts::TAU; }
                 }
             }
         }
@@ -3137,6 +3132,60 @@ fn refine_angles(
 ///    从起始段开始行走,在每个多连接顶点用 ClockWiseAngle 选择出射边。
 ///
 ///    标记策略: 在每个顶点使用 per-EdgeInfo passed 标记,
+
+/// ✅ OCCT对齐: RefineAngle2D (BOPAlgo_WireSplitter_1.cxx L1032-1124)
+fn refine_angle_2d(
+    vertex_idx: usize,
+    seg: &WireSegment,
+    _segments: &[WireSegment],
+    ds: &DS,
+    face_surface: &Surface3,
+    a_in: f64,
+    a_out: f64,
+    a_delta: f64,
+    _current_angle: f64,
+) -> Option<f64> {
+    let v_pt = ds.vertices[vertex_idx].point;
+    let v_uv = match face_surface {
+        Surface3::Sphere(s) => s.world_to_uv(v_pt),
+        _ => return None,
+    };
+    let pcurve = match &seg.source {
+        WireEdgeSource::IntersectionCurve(ci) => {
+            ds.intersection_curves[*ci].pcurve_on_a.clone()
+        }
+        WireEdgeSource::DsEdge(_) | WireEdgeSource::SeamEdge => None,
+    };
+    let pc = pcurve.as_ref()?;
+    const N_SAMP: usize = 64;
+    let mut best_angle: Option<f64> = None;
+    let mut best_dist = -1.0_f64;
+    for &dir_angle in &[a_out, a_in + std::f64::consts::PI] {
+        let ray_dir = DVec2::new(dir_angle.cos(), dir_angle.sin());
+        if ray_dir.length_squared() < 1e-30 { continue; }
+        for i in 0..=N_SAMP {
+            let t = i as f64 / N_SAMP as f64;
+            let p_uv = pc.point_at(t);
+            let delta = p_uv - v_uv;
+            if delta.length_squared() < TOLERANCE_ABS_SQ { continue; }
+            let along = delta.dot(ray_dir);
+            if along <= 0.0 { continue; }
+            if along > best_dist {
+                let cross = (delta - ray_dir * along).length();
+                if cross / along < 0.5 {
+                    best_dist = along;
+                    let mut corrected = delta.y.atan2(delta.x);
+                    if corrected < 0.0 { corrected += std::f64::consts::TAU; }
+                    if clock_wise_angle(a_in, corrected) >= a_delta {
+                        best_angle = Some(corrected);
+                    }
+                }
+            }
+        }
+        if best_angle.is_some() { return best_angle; }
+    }
+    None
+}
 ///    允许同一边的正反向独立遍历(BOPAlgo_WireSplitter.lxx L22-69)。
 fn walk_path(
     start_si: usize,
@@ -3409,7 +3458,7 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
         }
-        let wires = build_closed_wires(&segments, ds);
+        let wires = build_closed_wires(&segments, ds, face_idx);
         if wires.is_empty() {
             return None;
         }
@@ -4628,14 +4677,8 @@ impl<'a> BooleanBuilder<'a> {
             return self.tessellate_sphere_face(face_idx);
         }
 
-        // ✅ OCCT对齐: 球面有圆交线时用精确大圆弧分割 (所有op启用)
-        if let Surface3::Sphere(_) = &face.surface {
-                if fi.curves_in.iter().any(|&ci|
-                    matches!(self.ds.intersection_curves[ci].curve, Curve3::Circle(_))
-                ) {
-                    return self.build_sphere_sub_faces_by_circles(face_idx);
-                }
-            }
+        // ❌ DELETED: build_sphere_sub_faces_by_circles sphere route (non-OCCT SubFace path).
+        //    OCCT uses edge-based BuilderFace with section edges, not SubFace polygon splitting.
         // overlapping sub-face UV polygons when intersection curves are high-order
         // (e.g. the cone–cylinder quartic for skew axes in ZK8/ZL1), causing SA
         // double-counting.  A grid guarantees that each UV region maps to exactly one
@@ -6282,7 +6325,6 @@ impl<'a> BooleanBuilder<'a> {
             });
         }
 
-        // ⏳ TODO: add seam edge + south_pole vertex for Union/Diff (see task)
         result
     }
 
