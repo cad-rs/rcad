@@ -3288,15 +3288,9 @@ fn perform_areas(
 
     struct WireData { wire_idx: usize, boundary: Vec<DVec3>, area: f64 }
     let mut wds: Vec<WireData> = wires.iter().enumerate().filter_map(|(wi, w)| {
-        let mut b = wire_boundary_3d(w, segments, ds);
+        let b = wire_boundary_3d(w, segments, ds);
         if b.len() < 3 {
-            let mut verts: Vec<DVec3> = w.iter().flat_map(|&si| {
-                let seg = &segments[si];
-                vec![ds.vertices[seg.start_vertex].point, ds.vertices[seg.end_vertex].point]
-            }).collect();
-            verts.sort_by(|a,b| { let cx = a.x.total_cmp(&b.x); if cx != std::cmp::Ordering::Equal { return cx; } let cy = a.y.total_cmp(&b.y); if cy != std::cmp::Ordering::Equal { return cy; } a.z.total_cmp(&b.z) });
-            verts.dedup();
-            if verts.len() >= 3 { b = verts; } else { return None; }
+            return None;
         }
         let a = projected_area_xy(&b);
         Some(WireData { wire_idx: wi, boundary: b, area: a })
@@ -3751,8 +3745,13 @@ impl<'a> BooleanBuilder<'a> {
                 merge_subfaces_of_same_face(&mut kept_subs);
             }
 
-            // ✅ OCCT对齐: 球面用 emit_wire_face (OCCT BOPAlgo_BuilderFace 等价)
-            let wire_emit_used = if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) {
+            // ✅ OCCT对齐: 尝试用 emit_wire_face 发射 sphere 面
+            let has_circle_curves_a = matches!(self.ds.faces[fi].surface, Surface3::Sphere(_))
+                && self.ds.faces[fi].face_info.curves_in.iter().any(|&ci|
+                    matches!(self.ds.intersection_curves[ci].curve, Curve3::Circle(_)));
+            let wire_emit_used = if has_circle_curves_a {
+                false
+            } else if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) {
                 if let Some((w_segments, w_faces)) = self.split_face_occt_wire_pipeline(fi) {
                     for wf in &w_faces {
                         let src = self.ds.faces[fi].source_face_idx;
@@ -3926,7 +3925,13 @@ impl<'a> BooleanBuilder<'a> {
             }
             let flip = self.op == BooleanOpType::Difference;
             // ✅ OCCT对齐: B-side sphere 面使用 emit_wire_face (同 A-side)
-            let wire_emit_used = if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) {
+            //    OCCT BuildSplitFaces 对 A/B 侧面统一处理。
+            //    Skip wire pipeline when sphere face has circular intersection curves
+            //    (handled by build_sphere_sub_faces_by_circles producing exact arcs).
+            let has_circle_curves = matches!(self.ds.faces[fi].surface, Surface3::Sphere(_))
+                && self.ds.faces[fi].face_info.curves_in.iter().any(|&ci|
+                    matches!(self.ds.intersection_curves[ci].curve, Curve3::Circle(_)));
+            let wire_emit_used = if has_circle_curves {
                 false
             } else if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) {
                 if let Some((w_segments, w_faces)) = self.split_face_occt_wire_pipeline(fi) {
@@ -4628,14 +4633,18 @@ impl<'a> BooleanBuilder<'a> {
             return self.tessellate_sphere_face(face_idx);
         }
 
-        // ✅ OCCT对齐: 球面有圆交线时用精确大圆弧分割 (所有op启用)
-        if let Surface3::Sphere(_) = &face.surface {
+        // ✅ OCCT对齐: 球面有圆交线时用精确大圆弧分割 (Intersection 启用,Union待完善)
+        if self.op == BooleanOpType::Intersection {
+            if let Surface3::Sphere(_) = &face.surface {
                 if fi.curves_in.iter().any(|&ci|
                     matches!(self.ds.intersection_curves[ci].curve, Curve3::Circle(_))
                 ) {
                     return self.build_sphere_sub_faces_by_circles(face_idx);
                 }
             }
+        }
+
+        // For cone faces with intersection curves
         // overlapping sub-face UV polygons when intersection curves are high-order
         // (e.g. the cone–cylinder quartic for skew axes in ZK8/ZL1), causing SA
         // double-counting.  A grid guarantees that each UV region maps to exactly one
@@ -6282,7 +6291,6 @@ impl<'a> BooleanBuilder<'a> {
             });
         }
 
-        // ⏳ TODO: add seam edge + south_pole vertex for Union/Diff (see task)
         result
     }
 
