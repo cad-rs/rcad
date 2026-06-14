@@ -5349,7 +5349,9 @@ impl<'a> PaveFiller<'a> {
             } else {
                 self.ds.intersection_curves[ci].end_vertex = sp.last().unwrap().1;
             }
+            eprintln!("[SPLIT_PRE] ci={} on_curve={}", ci, on_curve.len());
 
+            eprintln!("[SPLIT] ci={} curve={} sp.len={}", ci, match &snap.curve { Curve3::Circle(_) => "Circle", _ => "other" }, sp.len());
             if sp.len() <= 2 { continue; } // No interior splits needed
 
             // Record split: keep original curve as first segment,
