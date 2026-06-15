@@ -2541,9 +2541,22 @@ fn classify_face_occt_style(
 fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(usize) -> Option<Curve2d>) -> Vec<WireSegment> {
     let face = &ds.faces[face_idx];
     let mut segments: Vec<WireSegment> = Vec::new();
-    // Track DS edge indices already processed for seam splitting
-    // (sphere face has 2 boundary edges for the same seam; only process once)
     let mut processed_seam_ds_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
+
+    // ✅ OCCT-aligned: boundary vertex position map (ShapesSD equivalent).
+    //    OCCT's DS shares TopoDS_Vertex between shapes at same position.
+    //    rcad loads each shape's vertices independently, so sphere and box
+    //    have different DS indices for vertices at identical positions.
+    //    This remaps IC endpoint vertices to the face's boundary vertex.
+    let bv_positions: Vec<(DVec3, usize)> = face.boundary_edges.iter().flat_map(|&ei| {
+        let e = &ds.edges[ei];
+        [(ds.vertices[e.start_vertex].point, e.start_vertex), (ds.vertices[e.end_vertex].point, e.end_vertex)]
+    }).collect();
+    let remap_ic_v = |v: usize| -> usize {
+        let p = ds.vertices[v].point;
+        let tol = crate::tolerance::TOLERANCE_ABS * 1000.0;
+        bv_positions.iter().find(|(bp, _)| (bp - p).length_squared() <= tol * tol).map(|&(_, bv)| bv).unwrap_or(v)
+    };
 
     // Check if surface is closed (U/V)  for seam edge detection
     // OCCT L383-388: GeomLib::IsClosed  U/V
@@ -2678,8 +2691,9 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
     // ================================================================
     for &ci in &face.face_info.curves_in {
         let ic = &ds.intersection_curves[ci];
-        let sv = ic.start_vertex;
-        let ev = ic.end_vertex;
+        // ✅ OCCT-aligned: remap IC endpoint to boundary vertex (ShapesSD).
+        let sv = remap_ic_v(ic.start_vertex);
+        let ev = remap_ic_v(ic.end_vertex);
         // OCCT-aligned: Skip degenerate IC (unless sphere face, where we try to infer correct vertex)
         let d2 = ds.vertices[sv].point.distance_squared(ds.vertices[ev].point);
         if sv == ev || d2 < TOLERANCE_ABS_SQ {
@@ -3747,6 +3761,10 @@ impl<'a> BooleanBuilder<'a> {
         // OCCT-aligned: BuildSplitFaces works for all surface types (L357-489)
         let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
         let segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
+        if std::env::var("RCAD_DEBUG_IC").is_ok() {
+            let verts: Vec<usize> = segments.iter().flat_map(|s| [s.start_vertex, s.end_vertex]).collect();
+            eprintln!("[PIPELINE] fi={} segments={} verts={:?}", face_idx, segments.len(), &verts);
+        }
         if segments.is_empty() {
             return None;
         }
@@ -4048,6 +4066,10 @@ impl<'a> BooleanBuilder<'a> {
                                 BooleanOpType::Difference => class != Classification::In,
                                 BooleanOpType::Union => true,
                             };
+                            if std::env::var("RCAD_DEBUG_IC").is_ok() {
+                                let sn = match &sub.surface { Surface3::Plane(_) => "PLANE", Surface3::Sphere(_) => "SPHERE", _ => "OTHER" };
+                                eprintln!("[WIRE] fi={} wi={} surf={} class={:?} keep={} nb={}", fi, wi, sn, class, keep, sub.boundary.len());
+                            }
                             if keep {
                                 let src = self.ds.faces[fi].source_face_idx;
                                 result.emit_wire_face(fi, &wfs[wi], &segments, self.ds, false, FaceOrigin::FromA(src));
@@ -4168,6 +4190,9 @@ impl<'a> BooleanBuilder<'a> {
         // Process B faces against A solid
         for &fi in &b_faces {
             // OCCT-aligned: wire pipeline for all face types (BuildSplitFaces + WireSplitter)
+            if std::env::var("RCAD_DEBUG_IC").is_ok() {
+                eprintln!("[B_FACE] fi={} curves_in={}", fi, self.ds.faces[fi].face_info.curves_in.len());
+            }
             if !self.ds.faces[fi].face_info.curves_in.is_empty() {
                 if let Some((segments, wfs)) = self.split_face_occt_wire_pipeline(fi) {
                     if !wfs.is_empty() {
@@ -4181,6 +4206,10 @@ impl<'a> BooleanBuilder<'a> {
                                 BooleanOpType::Difference => class != Classification::In,
                                 BooleanOpType::Union => true,
                             };
+                            if std::env::var("RCAD_DEBUG_IC").is_ok() {
+                                let sn = match &sub.surface { Surface3::Plane(_) => "PLANE", Surface3::Sphere(_) => "SPHERE", _ => "OTHER" };
+                                eprintln!("[WIRE_B] fi={} wi={} surf={} class={:?} keep={} nb={}", fi, wi, sn, class, keep, sub.boundary.len());
+                            }
                             if keep {
                                 let src = self.ds.faces[fi].source_face_idx;
                                 result.emit_wire_face(fi, &wfs[wi], &segments, self.ds, true, FaceOrigin::FromB(src));
@@ -4436,6 +4465,27 @@ impl<'a> BooleanBuilder<'a> {
         if let Err(e) = self.validate_edge_face_references(&brep) {
             eprintln!("[WARN] Edge-face reference validation: {:?}", e);
             self.diagnose_orphan_edges(&brep);
+        }
+
+        if std::env::var("RCAD_DEBUG_IC").is_ok() {
+            use rcad_kernel::geom::Surface3;
+            let nv = {
+                let mut s = std::collections::BTreeSet::new();
+                for sol in &brep.solids { for sh in &sol.shells { for f in &sh.faces {
+                    for we in &f.outer_wire.edges { if let Some(e) = brep.edges.get(we.idx) { s.insert(e.start); s.insert(e.end); } }
+                    for w in &f.inner_wires { for we in &w.edges { if let Some(e) = brep.edges.get(we.idx) { s.insert(e.start); s.insert(e.end); } } }
+                }}}
+                s.len()
+            };
+            eprintln!("[RESULT] n_verts={} n_faces={}", nv,
+                brep.solids.iter().flat_map(|s| &s.shells).map(|sh| sh.faces.len()).sum::<usize>());
+            for sol in &brep.solids { for sh in &sol.shells { for (fi, f) in sh.faces.iter().enumerate() {
+                let sname = brep.geom.face_surface.get(fi).copied().flatten()
+                    .and_then(|si| brep.geom.surfaces.get(si))
+                    .map(|s| match s { Surface3::Plane(_) => "PLANE", Surface3::Sphere(_) => "SPHERE", _ => "OTHER" })
+                    .unwrap_or("NONE");
+                eprintln!("[RESULT_FACE] fi={} surf={} outer_edges={}", fi, sname, f.outer_wire.edges.len());
+            }}}
         }
 
         Ok((brep, history))
