@@ -18,7 +18,6 @@ pub mod bnd_lib;
 pub mod boolean;
 mod boolean_unit_octant;
 mod cylinder_box_analytic;
-mod sphere_box_analytic;
 mod cone_box_analytic;
 mod cylinder_sphere_analytic;
 pub mod bopds;
@@ -2942,8 +2941,8 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
 
     if matches!(op, BooleanOpType::Intersection) {
         // ❌ DELETED: try_intersection_eighth_unit_ball + try_intersection_sphere_box
-        // — 绕过 PaveFiller + BooleanBuilder 管道,用 sphere_box_analytic.rs 的
-        // 快速路径构建 BRep。OCCT 无等价路径。为对齐 OCCT 标准管道已禁用:
+        // — 绕过 PaveFiller + BooleanBuilder 管道构建 BRep。
+        // OCCT 无等价路径。为对齐 OCCT 标准管道已删除:
         // sphere-box 求交由 PaveFiller(IntTools_FaceFace)+split_curved_face_parametric
         // 处理,产生精确圆交线和 UV 子面分割,与 OCCT 行为一致。
         // Fast-path: axis-aligned box-box intersection via AABB overlap.

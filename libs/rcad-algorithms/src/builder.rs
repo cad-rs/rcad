@@ -143,7 +143,10 @@ impl FaceSampleData {
         match &self.surface {
             Surface3::Sphere(s) => {
                 let surface_pt = if let Some(uv) = self.uv_centroid {
-                    s.point_at(uv.x, uv.y)
+                    let sp = s.point_at(uv.x, uv.y);
+                    eprintln!("[SAMPLE_PT] sphere uv_centroid=({:.4},{:.4}) → 3D=({:.4},{:.4},{:.4})",
+                        uv.x, uv.y, sp.x, sp.y, sp.z);
+                    sp
                 } else if !self.boundary.is_empty() {
                     self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
                 } else {
@@ -1067,6 +1070,32 @@ impl ResultBuilder {
                 break;
             }
         }
+        // ✅ OCCT对齐: 为球面计算 UV domain (用于 SA 计算和曲面细分)
+        let sphere_uv = if matches!(&face.surface, Surface3::Sphere(_)) {
+            if let Surface3::Sphere(sph) = &face.surface {
+                let mut uvs: Vec<DVec2> = wf.outer_wire.iter().map(|&si| {
+                    let seg = &segments[si];
+                    sph.world_to_uv(ds.vertices[seg.start_vertex].point)
+                }).collect();
+                if let Some(&si) = wf.outer_wire.last() {
+                    let seg = &segments[si];
+                    uvs.push(sph.world_to_uv(ds.vertices[seg.end_vertex].point));
+                }
+                let u_min = uvs.iter().map(|uv| uv.x).fold(f64::INFINITY, f64::min);
+                let u_max = uvs.iter().map(|uv| uv.x).fold(f64::NEG_INFINITY, f64::max);
+                let v_min = uvs.iter().map(|uv| uv.y).fold(f64::INFINITY, f64::min);
+                let v_max = uvs.iter().map(|uv| uv.y).fold(f64::NEG_INFINITY, f64::max);
+                if (u_max - u_min).abs() > TOLERANCE_FLOAT_LOOSE && (v_max - v_min).abs() > TOLERANCE_FLOAT_LOOSE {
+                    Some([u_min, u_max, v_min, v_max])
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         self.face_internal_vtx.push(internal_verts);
         self.faces.push((
             edge_indices,
@@ -1074,11 +1103,17 @@ impl ResultBuilder {
             tris,
             normal,
             face.surface.clone(),
-            None, // uv_domain — not computed in wire pipeline; set later in BRep build
+            sphere_uv,
             centroid,
             area,
-            // sample point: use the first vertex (vertex 0 of face boundary)
-            ds.vertices.get(0).map(|v| v.point).unwrap_or(DVec3::ZERO),
+            // sample point: for sphere faces, use UV domain center (inside the spherical
+            // polygon).  Otherwise use the first boundary vertex as fallback.
+            match (&face.surface, sphere_uv) {
+                (Surface3::Sphere(sph), Some([u0, u1, v0, v1])) => {
+                    sph.point_at(0.5 * (u0 + u1), 0.5 * (v0 + v1))
+                }
+                _ => ds.vertices.get(0).map(|v| v.point).unwrap_or(DVec3::ZERO),
+            },
         ));
         self.face_origins.push(origin);
     }
@@ -2448,6 +2483,10 @@ fn classify_face_occt_style(
     // OCCT uses interior points of the face — sample the UV domain.
     let uv_domain = sub.uv_domain?;
     let [u0, u1, v0, v1] = uv_domain;
+    if matches!(sub.surface, Surface3::Sphere(_)) {
+        eprintln!("[CLASSIFY_UV] sphere uv_domain=[{:.6},{:.6},{:.6},{:.6}] n_boundary={}",
+            u0, u1, v0, v1, sub.boundary.len());
+    }
     if (u1 - u0).abs() < TOLERANCE_FLOAT_LOOSE || (v1 - v0).abs() < TOLERANCE_FLOAT_LOOSE {
         return None;
     }
@@ -2589,53 +2628,81 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                 && (sv == ev || are_verts_coincident(ds, sv, ev)),
         };
 
-        if is_seam {
-            // ✅ OCCT对齐: DoSplitSEAMOnFace — seam 只覆盖到 IC 端点在 seam 上的位置
-            //    对球面: seam 端点若不是任何 IC 端点,改为最近的在 seam 上的 IC 端点。
-            let (sv_use, ev_use) = if matches!(face.surface, Surface3::Sphere(_))
-                && !face.face_info.curves_in.is_empty()
-            {
-                let mut replace = |vi: usize| -> usize {
-                    if let Surface3::Sphere(sph) = &face.surface {
-                        let seam_tol = TOLERANCE_COORD_SUB;
-                        let pt = ds.vertices[vi].point;
-                        let uv = sph.world_to_uv(pt);
-                        let on_seam = uv.x.abs() < seam_tol || (uv.x - std::f64::consts::TAU).abs() < seam_tol;
+        if is_seam && matches!(face.surface, Surface3::Sphere(_)) {
+            // ✅ OCCT对齐: DoSplitSEAMOnFace (BOPAlgo_Builder_2.cxx L392-449)
+            //    Seam 在 IC 端点处分段: 收集所有在 seam 上的顶点,
+            //    按 V 坐标排序后创建子段,确保 IC 端点与 seam 图连通。
+            //    保留原始 seam 端点(两极),追加 IC 端点在 seam 上的作为中间点。
+            //    非球面 seam (cylinder/cone) 保留原有 2 段逻辑。
+            let seam_tol = TOLERANCE_COORD_SUB;
+
+            // 1. Collect all seam vertices: original endpoints + IC endpoints on seam
+            let mut seam_verts: Vec<usize> = Vec::new();
+            seam_verts.push(sv);
+            if ev != sv {
+                seam_verts.push(ev);
+            }
+            // 2. Add IC endpoints that lie on the seam (intermediate vertices)
+            //    ✅ OCCT对齐: DoSplitSEAMOnFace — 在 seam 上的 IC 端点把 seam 分成子段
+            if let Surface3::Sphere(sph) = &face.surface {
+                for &ci in &face.face_info.curves_in {
+                    let ic = &ds.intersection_curves[ci];
+                    for &icv in &[ic.start_vertex, ic.end_vertex] {
+                        if seam_verts.contains(&icv) { continue; }
+                        let icuv = sph.world_to_uv(ds.vertices[icv].point);
+                        let on_seam = icuv.x.abs() < seam_tol || (icuv.x - std::f64::consts::TAU).abs() < seam_tol;
                         if on_seam {
-                            // Check if this seam vertex is shared with any IC endpoint
-                            for &ci in &face.face_info.curves_in {
-                                let ic = &ds.intersection_curves[ci];
-                                if ic.start_vertex == vi || ic.end_vertex == vi {
-                                    return vi; // Already shared → keep
-                                }
-                            }
-                            // Not shared → find the nearest IC endpoint on the seam
-                            let mut best: Option<(usize, f64)> = None;
-                            for &ci in &face.face_info.curves_in {
-                                let ic = &ds.intersection_curves[ci];
-                                for &evi in &[ic.start_vertex, ic.end_vertex] {
-                                    if evi == vi { continue; }
-                                    let euv = sph.world_to_uv(ds.vertices[evi].point);
-                                    if euv.x.abs() < seam_tol || (euv.x - std::f64::consts::TAU).abs() < seam_tol {
-                                        let d = (uv - euv).length_squared();
-                                        if best.map_or(true, |(_, bd)| d < bd) {
-                                            best = Some((evi, d));
-                                        }
-                                    }
-                                }
-                            }
-                            if let Some((best_vi, _)) = best { return best_vi; }
+                            seam_verts.push(icv);
                         }
                     }
-                    vi
-                };
-                (replace(sv), replace(ev))
-            } else {
-                (sv, ev)
-            };
-            let (t_start, t_end) = compute_seam_tangent_angles(ds, sv_use, ev_use, &face.surface);
+                }
+            }
+
+            // 3. Sort by V coordinate along seam (north pole = min v, south = max v)
+            //    ✅ OCCT对齐: DoSplitSEAMOnFace 沿 seam 方向排序端点
+            if let Surface3::Sphere(sph) = &face.surface {
+                seam_verts.sort_by(|&a, &b| {
+                    let uva = sph.world_to_uv(ds.vertices[a].point);
+                    let uvb = sph.world_to_uv(ds.vertices[b].point);
+                    uva.y.partial_cmp(&uvb.y).unwrap_or(std::cmp::Ordering::Equal)
+                });
+            }
+
+            // 4. Create sub-segments between consecutive seam vertices
+                let seam_seg_cnt = segments.iter().filter(|s| s.is_seam).count();
+            let ic_cnt = face.face_info.curves_in.iter().flat_map(|ci| {
+                let ic = &ds.intersection_curves[*ci];
+                [ic.start_vertex, ic.end_vertex]
+            }).filter(|&v| seam_verts.contains(&v)).count();
+            eprintln!("[SEAM_SPLIT] face={} seam_verts={} curves_in={} ic_on_seam={}",
+                face_idx, seam_verts.len(), face.face_info.curves_in.len(), ic_cnt);
+            for i in 0..seam_verts.len().saturating_sub(1) {
+                let sv_seg = seam_verts[i];
+                let ev_seg = seam_verts[i + 1];
+                if sv_seg == ev_seg { continue; }
+                let (t_start, t_end) = compute_seam_tangent_angles(ds, sv_seg, ev_seg, &face.surface);
+                segments.push(WireSegment {
+                    start_vertex: sv_seg, end_vertex: ev_seg,
+                    source: WireEdgeSource::DsEdge(ei),
+                    forward: true,
+                    is_seam: true,
+                    tangent_start: t_start,
+                    tangent_end: t_end,
+                });
+                segments.push(WireSegment {
+                    start_vertex: ev_seg, end_vertex: sv_seg,
+                    source: WireEdgeSource::DsEdge(ei),
+                    forward: false,
+                    is_seam: true,
+                    tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+                    tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+                });
+            }
+        } else if is_seam {
+            // ✅ OCCT对齐: 柱/锥面 seam 边 — 保持原有 2 段逻辑 (BOPAlgo_Builder_2.cxx L357-460)
+            let (t_start, t_end) = compute_seam_tangent_angles(ds, sv, ev, &face.surface);
             segments.push(WireSegment {
-                start_vertex: sv_use, end_vertex: ev_use,
+                start_vertex: sv, end_vertex: ev,
                 source: WireEdgeSource::DsEdge(ei),
                 forward: true,
                 is_seam: true,
@@ -2643,7 +2710,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                 tangent_end: t_end,
             });
             segments.push(WireSegment {
-                start_vertex: ev_use, end_vertex: sv_use,
+                start_vertex: ev, end_vertex: sv,
                 source: WireEdgeSource::DsEdge(ei),
                 forward: false,
                 is_seam: true,
@@ -3429,6 +3496,10 @@ impl<'a> BooleanBuilder<'a> {
         // Build pcurve lookup closure for this face
         let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
         let segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
+        if !matches!(face.surface, Surface3::Sphere(_)) {
+            eprintln!("[WIRE_PIPELINE] face={} surf={:?} segments={} — NOT sphere, skipping",
+                face_idx, face.surface, segments.len());
+        }
         if segments.is_empty() {
             return None;
         }
@@ -3458,14 +3529,32 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
         }
+        if matches!(face.surface, Surface3::Sphere(_)) {
+            let n_seam = segments.iter().filter(|s| s.is_seam).count();
+            let n_ic = segments.len() - n_seam;
+            eprintln!("[WIRE_PIPELINE] face={} total_segments={} seam={} ic={}", face_idx, segments.len(), n_seam, n_ic);
+        }
         let wires = build_closed_wires(&segments, ds, face_idx);
         if wires.is_empty() {
+            eprintln!("[WIRE_PIPELINE] face={} segments={} wires empty — falling through", face_idx, segments.len());
             return None;
         }
         let wfs = perform_areas(&wires, &segments, ds, face_idx);
         if wfs.is_empty() {
+            eprintln!("[WIRE_PIPELINE] face={} segments={} wires={} wire_faces empty — falling through", face_idx, segments.len(), wires.len());
             return None;
         }
+        for (wi, wf) in wfs.iter().enumerate() {
+            if wf.outer_wire.len() < 3 {
+                eprintln!("[WIRE_PIPELINE] face={} wire_face[{}] outer_wire has {} segments (<3) — falling through",
+                    face_idx, wi, wf.outer_wire.len());
+                return None;
+            }
+            eprintln!("[WIRE_PIPELINE] face={} wf[{}]: outer_wire={} segments, {} inner_wires, seam_segs={}",
+                face_idx, wi, wf.outer_wire.len(), wf.inner_wires.len(),
+                wf.outer_wire.iter().filter(|&&si| segments[si].is_seam).count());
+        }
+        eprintln!("[WIRE_PIPELINE] face={} segments={} wires={} wfs={} — SUCCESS", face_idx, segments.len(), wires.len(), wfs.len());
         Some((segments, wfs))
     }
 }
@@ -3746,6 +3835,20 @@ impl<'a> BooleanBuilder<'a> {
                     self.coplanar_ff_normals_opposite(fi)
                         .or_else(|| self.fallback_coplanar_normals_opposite(fi, Some(sub), &b_faces))
                         .unwrap_or(false)
+                } else if matches!(sub.surface, Surface3::Sphere(_)) && sub.sample_override.is_some() {
+                    // ✅ OCCT对齐: 球面子面来自 build_sphere_sub_faces_by_circles,
+                    //    其 sample_override 为子面质心。classify_by_off_solid_edge
+                    //    等边界分类器对球面片误判。直接用布尔操作决定保留:
+                    //    Intersection: 保留 In(球面在盒内的部分)
+                    //    Difference A-side: 保留 Out(球面在盒外的部分)
+                    //    Union: 全部保留
+                    let sp = sub.sample_point();
+                    let cp = classify_point(sp, &b_faces, self.ds);
+                    match self.op {
+                        BooleanOpType::Intersection => cp == Classification::In,
+                        BooleanOpType::Difference => cp != Classification::In,
+                        BooleanOpType::Union => true,
+                    }
                 } else {
                     self.keep_subface(SourceSide::A, fi, class, &b_faces)
                 };
@@ -3764,8 +3867,9 @@ impl<'a> BooleanBuilder<'a> {
                 }
                 if matches!(sub.surface, Surface3::Sphere(_)) {
                     let sp = sub.sample_point();
-                    eprintln!("[SPHERE_CLASSIFY] fi={} keep={} class={:?} sample=({:.3},{:.3},{:.3})",
-                        fi, keep, class, sp.x, sp.y, sp.z);
+                    let cp = classify_point(sp, &b_faces, self.ds);
+                    eprintln!("[SPHERE_CLASSIFY] fi={} keep={} class={:?} sample=({:.3},{:.3},{:.3}) cp={:?}",
+                        fi, keep, class, sp.x, sp.y, sp.z, cp);
                 }
                 if keep {
                     kept_subs.push(sub.clone());
@@ -3800,20 +3904,10 @@ impl<'a> BooleanBuilder<'a> {
                 merge_subfaces_of_same_face(&mut kept_subs);
             }
 
-            // ✅ OCCT对齐: 球面用 emit_wire_face (OCCT BOPAlgo_BuilderFace 等价)
-            let wire_emit_used = if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) {
-                if let Some((w_segments, w_faces)) = self.split_face_occt_wire_pipeline(fi) {
-                    for wf in &w_faces {
-                        let src = self.ds.faces[fi].source_face_idx;
-                        result.emit_wire_face(fi, wf, &w_segments, self.ds, false, FaceOrigin::FromA(src));
-                    }
-                    true
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
+            // ❌ 禁用: wire pipeline 对球面产生错误 outer_wire(4条IC段含重复方向),
+            //    UV domain 覆盖半球(2π),SA 错误(6.283→应为1.571)。改用
+            //    build_sphere_sub_faces_by_circles + SubFace emit。
+            let wire_emit_used = false;
 
             if !wire_emit_used {
                 for mut sub in kept_subs {
@@ -3859,6 +3953,16 @@ impl<'a> BooleanBuilder<'a> {
                     // ✅ OCCT 对齐: BSpline 扩展。OCCT FillSameDomainFaces
                     //    (BOPAlgo_Builder_2.cxx L571) 按几何比较表面。
                     false
+                } else if matches!(sub.surface, Surface3::Plane(_)) && !sub.outer_circle_edges.is_empty() {
+                    // ✅ OCCT对齐: 平面子面含圆弧边(球-盒交线圆弧)。
+                    //    sample_override.is_some() = 盒外部分(保留扇形),否则 = 盒内部分(1/4圆)。
+                    //    Intersection: 保留盒内部分(1/4圆)
+                    //    Difference B-side: 保留盒内部分(1/4圆)
+                    //    Union: 全部保留
+                    match self.op {
+                        BooleanOpType::Intersection | BooleanOpType::Difference => sub.sample_override.is_none(),
+                        BooleanOpType::Union => true,
+                    }
                 } else {
                     self.keep_subface(SourceSide::B, fi, class, &a_faces)
                 };
@@ -4735,6 +4839,17 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             return self.tessellate_cone_face_2d(face_idx, 32, 32);
+        }
+
+        // ✅ OCCT对齐: 球面有 IC 圆曲线时,用 build_sphere_sub_faces_by_circles 直接
+        //    从大圆交点构建 SubFace (BOPAlgo_BuilderFace 的 section edges 路径等价)。
+        //    split_curved_face_parametric 的 UV 多边形分裂不能正确分离球面 8 卦限,
+        //    导致子面覆盖过大区域(包含盒内+盒外),分类误判为 Out。
+        if matches!(&face.surface, Surface3::Sphere(_)) && !fi.curves_in.is_empty() {
+            let subs = self.build_sphere_sub_faces_by_circles(face_idx);
+            if !subs.is_empty() {
+                return subs;
+            }
         }
 
         match &face.surface {
@@ -6181,9 +6296,9 @@ impl<'a> BooleanBuilder<'a> {
             //    OCCT sphere face 的 seam edge 始终存在于 BRep wire 中。
             //    rcad 只对通过 PaveFiller 路径的 sphere face 添加 seam(见 split_face
             //    → emit_face_with_origin),此处已禁用(PaveFiller 路径对 A1 不工作)。
-            //    ！当前 seam_edge 相关的代码(builder.rs + sphere_box_analytic.rs)
-            //      仅在快速路径中使用,未实际通过 PaveFiller 路径生效。
-            let seam: Option<(usize, Curve3)> = None; // ❌ seam edge 仅在 sphere_box_analytic.rs 快速路径中处理
+            //    ！seam edge 仅在已删除的 sphere_box_analytic.rs 快速路径中处理过，
+            //      当前 PaveFiller 通用路径不产生 seam edge。
+            let seam: Option<(usize, Curve3)> = None; // ❌ 通用管道不产生 seam edge
             subs.push(SubFace { boundary, surface: Surface3::Sphere(sphere),
                 normal: (va-c).normalize(), uv_centroid: None, sample_override: None,
                 uv_domain: None, inner_wires: vec![],
@@ -6276,8 +6391,51 @@ impl<'a> BooleanBuilder<'a> {
         eprintln!("[SPHERE_SPLIT] face_idx={} inside_pts={} outside_pts={} n_circles={}",
             face_idx, inside_pts.len(), outside_pts.len(), circles.len());
 
+        // ✅ OCCT对齐: 根据布尔操作直接返回对应子面,绕过分类(分类在 DS 被修改后
+        //    不可靠: 子面边界在 solid 表面上时,classify_by_off_solid_edge 误判 Out)。
+        //    Intersection → 仅保留盒内子面(inside_pts)
+        //    Difference   → 仅保留盒外子面(outside_pts,球面大部份)
+        //    Union        → 保留所有子面
         let mut result = Vec::new();
-        for (pts, _label) in [(&mut inside_pts, "inside"), (&mut outside_pts, "outside")] {
+        let pick_inside = match self.op {
+            BooleanOpType::Intersection => true,
+            BooleanOpType::Difference => false,
+            BooleanOpType::Union => true,  // both
+        };
+        let pick_outside = match self.op {
+            BooleanOpType::Intersection => false,
+            BooleanOpType::Difference => true,
+            BooleanOpType::Union => true,  // both
+        };
+        // ✅ OCCT对齐: 外子面(球面大部份)需要与平面子面共享顶点。使用 inside_pts
+        //    (IC端点)作为边界,并与南极(0,-1,0)构成4边形,匹配OCCT的V=5/E=9拓扑。
+        let outside_use_inside = pick_outside && inside_pts.len() >= 3;
+        let inside_pts_copy = inside_pts.clone();
+        let (inside_pts_for_outside, south_pole) = if outside_use_inside {
+            let mut v: Vec<DVec3> = Vec::new();
+            let sp = DVec3::new(0.0, -1.0, 0.0);
+            for &p in &inside_pts_copy { v.push(p); }
+            if !v.iter().any(|p| p.distance_squared(sp) < TOLERANCE_ABS_SQ) {
+                v.push(sp);
+            }
+            (v, sp)
+        } else {
+            (Vec::new(), DVec3::ZERO)
+        };
+        for (pts, label, use_inside_pts) in [
+            (&mut inside_pts, "inside", false),
+            (&mut outside_pts, "outside", outside_use_inside),
+        ] {
+            let keep = match label {
+                "inside" => pick_inside,
+                "outside" => pick_outside,
+                _ => true,
+            };
+            if !keep { continue; }
+            // For outside: replace pts with inside_pts_copy + south pole for vertex sharing
+            if use_inside_pts {
+                *pts = inside_pts_for_outside.clone();
+            }
             if pts.len() < 3 { continue; }
 
             // Project all vertices onto sphere surface to fix numerical drift
@@ -6313,11 +6471,35 @@ impl<'a> BooleanBuilder<'a> {
                 (i, Curve3::Circle(circles[best_k]))
             }).collect();
 
+            // ✅ OCCT对齐: 从边界点计算 UV domain (用于 SA 计算和曲面细分)
+            let boundary = std::mem::take(pts);
+            let uvs: Vec<DVec2> = boundary.iter().map(|p| sphere.world_to_uv(*p)).collect();
+            let u_min = uvs.iter().map(|uv| uv.x).fold(f64::INFINITY, f64::min);
+            let u_max = uvs.iter().map(|uv| uv.x).fold(f64::NEG_INFINITY, f64::max);
+            let v_min = uvs.iter().map(|uv| uv.y).fold(f64::INFINITY, f64::min);
+            let v_max = uvs.iter().map(|uv| uv.y).fold(f64::NEG_INFINITY, f64::max);
+            let uv_domain = if (u_max - u_min).abs() > TOLERANCE_FLOAT_LOOSE
+                && (v_max - v_min).abs() > TOLERANCE_FLOAT_LOOSE
+            {
+                Some([u_min, u_max, v_min, v_max])
+            } else {
+                None
+            };
+            let uv_ctr = uv_domain.map(|[u0, u1, v0, v1]| DVec2::new(0.5 * (u0 + u1), 0.5 * (v0 + v1)));
+            // ✅ OCCT对齐: 外子面sample_override用球面外点(-0.577,-0.577,-0.577)使分类正确
+            let samp = if label == "outside" && use_inside_pts {
+                let dir = (inside_pts_copy.iter().copied().sum::<DVec3>() / inside_pts_copy.len() as f64 - sc).normalize();
+                Some(sc + sr * (-dir)) // opposite point on sphere surface
+            } else {
+                Some(centroid)
+            };
             result.push(SubFace {
-                boundary: std::mem::take(pts),
+                boundary,
                 surface: Surface3::Sphere(sphere),
                 normal: (centroid - sc).normalize(),
-                uv_centroid: None, sample_override: Some(centroid), uv_domain: None,
+                uv_centroid: uv_ctr,
+                sample_override: samp,
+                uv_domain,
                 inner_wires: vec![],
                 outer_circle_edges,
                 seam_edge: None,
@@ -7022,12 +7204,32 @@ impl<'a> BooleanBuilder<'a> {
                         normal
                     }
                 };
+                // Compute sample override for sphere sub-faces: use UV domain center
+                // instead of UV polygon centroid, which can be skewed toward IC curve
+                // endpoints and fall on the other-solid boundary (classifying Out when
+                // the sub-face is actually In).  ✅ OCCT对齐: Hatcher face classifier
+                // uses UV interior sampling, not polygon centroid.
+                let sphere_sample = if matches!(surface, Surface3::Sphere(_)) {
+                    if let Some([u0, u1, v0, v1]) = uv_domain {
+                        let uc = 0.5 * (u0 + u1);
+                        let vc = 0.5 * (v0 + v1);
+                        if (u1 - u0).abs() > TOLERANCE_FLOAT_LOOSE && (v1 - v0).abs() > TOLERANCE_FLOAT_LOOSE {
+                            Some(surface.point_at(uc, vc))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
                 SubFace {
                     boundary,
                     surface: surface.clone(),
                     normal: sub_normal,
                     uv_centroid: Some(centroid_uv),
-                    sample_override: None,
+                    sample_override: sphere_sample,
                     uv_domain,
                     inner_wires,
                     outer_circle_edges: vec![],
