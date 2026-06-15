@@ -2680,6 +2680,14 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
         } else {
             // OCCT-aligned: Regular edge with UV tangent (L374-378)
             let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface);
+            if std::env::var("RCAD_DEBUG_IC").is_ok() && matches!(face.surface, Surface3::Plane(_)) {
+                if let (Some(ts), Some(te)) = (t_start, t_end) {
+                    eprintln!("[UV_TANG] fi={} ei={} sv={} ev={} t_start={:.6} t_end={:.6}", face_idx, ei, sv, ev, ts, te);
+                    eprintln!("[UV_POS] fi={} sv_pt=({:.12},{:.12},{:.12}) ev_pt=({:.12},{:.12},{:.12})", face_idx,
+                        ds.vertices[sv].point.x, ds.vertices[sv].point.y, ds.vertices[sv].point.z,
+                        ds.vertices[ev].point.x, ds.vertices[ev].point.y, ds.vertices[ev].point.z);
+                }
+            }
             segments.push(WireSegment {
                 start_vertex: sv, end_vertex: ev,
                 source: WireEdgeSource::DsEdge(ei),
@@ -3139,13 +3147,22 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, fac
     // OCCT-aligned: Path walk loop — walk until no edges remain
     let mut wires: Vec<Vec<usize>> = Vec::new();
     for _outer in 0..block.len().max(1) {
-        // Find first unpassed segment in block
+        if std::env::var("RCAD_DEBUG_IC").is_ok() {
+            for &si in block { eprintln!("[IRR_SEG] face={} si={} passed={}", face_idx, si, is_seg_passed(&smart_map, si)); }
+        }
         let start_si = match block.iter().find(|&&si| !is_seg_passed(&smart_map, si)) {
-            Some(&si) => si,
-            None => break,
+            Some(&si) => { if std::env::var("RCAD_DEBUG_IC").is_ok() { eprintln!("[IRR_WALK] face={} start_si={}", face_idx, si); } si }
+            None => { if std::env::var("RCAD_DEBUG_IC").is_ok() { eprintln!("[IRR_DONE] face={} done", face_idx); } break; }
         };
-        // Walk a path, extracting closed wires along the way
+        let nw_before = wires.len();
         walk_path_extract_wires(start_si, segments, &mut smart_map, &mut wires);
+        if std::env::var("RCAD_DEBUG_IC").is_ok() && wires.len() == nw_before {
+            eprintln!("[IRR_FAIL] face={} start_si={} no new wires", face_idx, start_si);
+        }
+    }
+    if std::env::var("RCAD_DEBUG_IC").is_ok() {
+        eprintln!("[IRR_WIRES] face={} n_wires={}", face_idx, wires.len());
+        for (wi, w) in wires.iter().enumerate() { eprintln!("[IRR_WIRE] face={} wi={} segs={:?}", face_idx, wi, w); }
     }
     wires
 }
@@ -3210,6 +3227,15 @@ fn select_best_outgoing<'a>(
         let internal_out: Vec<&&EdgeInfo> = candidates.iter().filter(|e| e.is_inside).collect();
         if internal_out.len() == 1 {
             return Some(internal_out[0]);
+        }
+    }
+    // OCCT-aligned symmetric rule: when incoming is internal (IC) and there is
+    // exactly 1 boundary outgoing edge, prefer the boundary edge.  This ensures
+    // the path transitions back from IC to boundary, completing the loop.
+    if !incoming_is_boundary {
+        let boundary_out: Vec<&&EdgeInfo> = candidates.iter().filter(|e| !e.is_inside).collect();
+        if boundary_out.len() == 1 {
+            return Some(boundary_out[0]);
         }
     }
     if candidates.len() == 1 {
@@ -3387,6 +3413,7 @@ fn walk_path_extract_wires(
         let seg = &segments[ci];
         mark_edge_passed(smart_map, ci, seg.start_vertex, false);
 
+        if std::env::var("RCAD_DEBUG_IC").is_ok() { eprintln!("[WALK_STEP] ci={} iter={} seq_len={}", ci, _iter, edge_seq.len()+1); }
         edge_seq.push(ci);
         vert_seq.push(current_vertex);
 
