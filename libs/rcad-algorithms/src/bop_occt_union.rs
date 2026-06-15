@@ -492,6 +492,9 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     // After merge_close_vertices, most vertices are merged but some edge pairs
     // still connect different vertex indices at the same positions (PaveFiller
     // noise > 6.4e-6 tolerance).  Use 1e-5 quantization to catch these.
+    // ✅ OCCT-aligned: dedup includes curve identity — edges with the same
+    //    endpoint positions but different curves are kept separate
+    //    (TopoDS_Edge uniqueness requires both vertex pair AND curve).
     {
         use std::collections::HashMap;
         let inv = 1.0 / 1e-5;
@@ -500,11 +503,14 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
         };
         let vpos: Vec<glam::DVec3> = result.vertices.iter().map(|v| v.point).collect();
         let mut canon: Vec<usize> = (0..result.edges.len()).collect();
-        let mut geom: HashMap<((i64,i64,i64),(i64,i64,i64)), usize> = HashMap::new();
+        // ✅ OCCT-aligned: key = (quantized_start, quantized_end, edge_curve_idx)
+        //    to prevent merging edges with different curves (sphere seam vs box edge).
+        let edge_curves = &result.geom.edge_curve;
+        let mut geom: HashMap<((i64,i64,i64),(i64,i64,i64),Option<usize>), usize> = HashMap::new();
         for ei in 0..result.edges.len() {
             if let Some(e) = result.edges.get(ei) {
                 let a = q(vpos[e.start]); let b = q(vpos[e.end]);
-                let key = if a < b { (a, b) } else { (b, a) };
+                let key = if a < b { (a, b, edge_curves.get(ei).copied().flatten()) } else { (b, a, edge_curves.get(ei).copied().flatten()) };
                 let entry = geom.entry(key).or_insert(ei);
                 if *entry != ei { canon[ei] = *entry; }
             }
@@ -524,7 +530,6 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     validate_union_brep_output("union: result failed checks after vertex merge", &result)?;
     // Deduplicate edges so adjacent sub-faces share edge topology.
     result = crate::deduplicate_edges(result);
-
     // OCCT ClassifyFaces (BuildSolid): remove interior faces classified as
     // State_IN for the OTHER operand.  Runs BEFORE the second butterfly merge
     // so history.face_origins (from build_with_history's internal merge) are valid.
@@ -666,7 +671,6 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
         let nf = result.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
         eprintln!("[CLASSIFY] edge-set merge: removed {} faces, remaining {}", merged_count, nf);
     }
-
     result = crate::prune_unused_topology(result);
     result = remove_interior_faces(result);
     result = crate::prune_unused_topology(result);

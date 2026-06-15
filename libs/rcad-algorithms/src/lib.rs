@@ -2925,10 +2925,6 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         // MUST come AFTER box-box paths so that face-touching box fusion
         // is handled first by try_union_axis_aligned_box_box.
         try_fast_path!(boolean_unit_octant::try_union_disjoint_or_touching(a, b), "try_union_disjoint_or_touching");
-        // ❌ DELETED: try_union_sphere_box fast-path — 完全绕过 OCCT PaveFiller 管道。
-        // OCCT 通过 IntTools_FaceFace::Perform(精确圆曲线) + MakeBlocks + BuildSplitFaces
-        // 处理 sphere-box 求交。如果 split_curved_face_parametric 的 64 点采样问题
-        // 已修复，sphere-box 会自然走 fuse() → PaveFiller 路径得到 7 面正确拓扑。
         try_fast_path!(boolean_unit_octant::try_union_cylinder_box(a, b), "try_union_cylinder_box");
         try_fast_path!(boolean_unit_octant::try_union_cone_box(a, b), "try_union_cone_box");
         try_fast_path!(boolean_unit_octant::try_union_coaxial_cone_cylinder(a, b), "try_union_coaxial_cone_cylinder");
@@ -2940,21 +2936,10 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
     }
 
     if matches!(op, BooleanOpType::Intersection) {
-        // ❌ DELETED: try_intersection_eighth_unit_ball + try_intersection_sphere_box
-        // — 绕过 PaveFiller + BooleanBuilder 管道构建 BRep。
-        // OCCT 无等价路径。为对齐 OCCT 标准管道已删除:
-        // sphere-box 求交由 PaveFiller(IntTools_FaceFace)+split_curved_face_parametric
-        // 处理,产生精确圆交线和 UV 子面分割,与 OCCT 行为一致。
         // Fast-path: axis-aligned box-box intersection via AABB overlap.
         // Avoids Pave-Filler coplanar-face classification errors for partial
         // overlaps (bcommon_simple_c1 — SA=3 vs expected 2.5).
         try_fast_path!(boolean_unit_octant::try_intersection_box_box(a, b), "try_intersection_box_box");
-        // ❌ DELETED: try_intersection_box_sphere_single_face — 绕过 PaveFiller 自建单面结果。
-        //    OCCT 通过 PaveFiller(IntTools_FaceFace) 产生精确圆交线 + MakeBlocks 分裂球面,
-        //    得到 4面正确拓扑。此 fast path 只产生 1 面,不符合 OCCT 行为。
-        // ❌ DELETED: try_intersection_box_general — 自建凸多面体,绕过 PaveFiller。
-        // ❌ DELETED: try_intersection_cylinder_box — 绕过 PaveFiller,圆柱-盒拓扑不匹配。
-        // ❌ DELETED: try_intersection_cone_box — 同上。
         // Fast-path: general box-box intersection (rotated boxes) via half-spaces.
         // The raw convex polyhedron already has the intended planar face split (kept for now).
         try_fast_path!(boolean_unit_octant::try_intersection_concentric_spheres(a, b), "try_intersection_concentric_spheres");
@@ -2964,9 +2949,6 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         try_fast_path!(boolean_unit_octant::try_intersection_cylinder_cylinder_perpendicular(a, b), "try_intersection_cylinder_cylinder_perpendicular");
         try_fast_path!(boolean_unit_octant::try_intersection_coaxial_cylinder_sphere(a, b), "try_intersection_coaxial_cylinder_sphere");
         try_fast_path!(boolean_unit_octant::try_intersection_coaxial_cylinder_torus(a, b), "try_intersection_coaxial_cylinder_torus");
-        // ❌ DELETED: try_intersection_box_sphere_single_face (绕过PaveFiller)
-        // ❌ DELETED: try_intersection_cylinder_box (绕过PaveFiller)
-        // ❌ DELETED: try_intersection_cone_box (绕过PaveFiller)
     }
 
     if matches!(op, BooleanOpType::Difference) && boolean_difference_empty_coincident(a, b) {
@@ -2982,7 +2964,6 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         try_fast_path!(boolean_unit_octant::try_difference_cylinder_box(a, b), "try_difference_cylinder_box");
         try_fast_path!(boolean_unit_octant::try_difference_box_cylinder(a, b), "try_difference_box_cylinder");
         try_fast_path!(boolean_unit_octant::try_difference_concentric_spheres(a, b), "try_difference_concentric_spheres");
-        // ❌ DELETED: try_difference_sphere_box — 绕过 OCCT PaveFiller 管道。
         try_fast_path!(boolean_unit_octant::try_difference_coaxial_cylinder_torus(a, b), "try_difference_coaxial_cylinder_torus");
         try_fast_path!(boolean_unit_octant::try_difference_coaxial_cylinder_sphere(a, b), "try_difference_coaxial_cylinder_sphere");
         try_fast_path!(boolean_unit_octant::try_difference_box_cone(a, b), "try_difference_box_cone");
