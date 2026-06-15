@@ -3124,17 +3124,23 @@ pub(crate) fn deduplicate_edges(mut brep: BRep) -> BRep {
 
     if brep.edges.len() < 2 { return brep; }
 
-    // Simple dedup by vertex INDEX (not position).  Merges redundant edges
-    // that the BooleanBuilder creates for the same (start, end) vertex pair.
-    // This is safe: it only remaps wire references, doesn't trim edges.
+    // ✅ OCCT对齐: 按顶点对+曲线去重。两个边即使连接相同顶点,若有不同曲线(如
+    //    seam 子段与 IC 弧)则不合并(TopoDS_Edge 按曲线区分)。仅合并完全相同的边。
+    //    OCCT: edge uniqueness is curve-based, not vertex-pair-based.
     let mut canon: HashMap<(usize, usize), usize> = HashMap::new();
     let mut remap: Vec<usize> = (0..brep.edges.len()).collect();
     for ei in 0..brep.edges.len() {
         if let Some(e) = brep.edges.get(ei) {
             let key = if e.start < e.end { (e.start, e.end) } else { (e.end, e.start) };
-            let entry = canon.entry(key).or_insert(ei);
-            if *entry != ei {
-                remap[ei] = *entry;
+            let ci = brep.geom.edge_curve.get(ei).copied().flatten();
+            if let Some(&existing) = canon.get(&key) {
+                let cj = brep.geom.edge_curve.get(existing).copied().flatten();
+                if ci == cj {
+                    remap[ei] = existing;
+                }
+                // else: different curves → keep as separate edge (OCCT unique)
+            } else {
+                canon.insert(key, ei);
             }
         }
     }
