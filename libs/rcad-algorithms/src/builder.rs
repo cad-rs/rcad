@@ -418,6 +418,10 @@ struct ResultBuilder {
     co_face_origins: Vec<(usize, FaceOrigin)>,
     custom_edge_curves: Vec<Option<Curve3>>,
     face_internal_vtx: Vec<Vec<usize>>,
+    /// ✅ OCCT对齐: 标记非合并边 — 这些边在 build() 的边合并阶段跳过。
+    ///    OCCT 中每个 TopoDS_Edge 是独立实体,即使两条边连接相同顶点且有相同曲线,
+    ///    它们也是不同的边(如 seam 子段与 IC 弧)。此集合阻止 build() 合并这些边。
+    no_merge_edges: std::collections::HashSet<usize>,
 }
 
 impl ResultBuilder {
@@ -478,6 +482,7 @@ impl ResultBuilder {
             co_face_origins: Vec::new(),
             custom_edge_curves: Vec::new(),
             face_internal_vtx: Vec::new(),
+            no_merge_edges: std::collections::HashSet::new(),
         }
     }
 
@@ -501,6 +506,21 @@ impl ResultBuilder {
         idx
     }
 
+    /// ⏳ 部分对齐: OCCT BRep_Builder::MakeEdge — 始终创建新边,不进行顶点去重。
+    ///    OCCT 中每条 TopoDS_Edge 是独立实体,即使连接相同顶点也是不同边。
+    ///    BRep_Builder::Add 将同一条边添加到多个面中实现共享。
+    ///    当前 rcad 的自动去重(add_edge)是简化实现,与 OCCT 不等价。
+    ///    在需要非去重边(如 seam 子段)时使用此方法。
+    fn add_edge_occt(&mut self, v1: usize, v2: usize) -> usize {
+        let idx = self.edges.len();
+        self.edges.push((v1, v2));
+        idx
+    }
+
+    /// ⏳ 部分对齐: 通过顶点对去重创建边。简化实现,不等价于 OCCT 的 MakeEdge。
+    ///    OCCT 中每个 edge 是独立 TopoDS_Edge,此方法按(v1,v2)无序对去重。
+    ///    正确之处: 共享边时返回相同 index (类似 OCCT Add)。
+    ///    差异: OCCT 显式 Add 相同 edge 到多面,rcad 隐式返回已有 index。
     fn add_edge(&mut self, v1: usize, v2: usize) -> usize {
         let key = (v1.min(v2), v1.max(v2));
         for (i, e) in self.edges.iter().enumerate() {
@@ -549,6 +569,19 @@ impl ResultBuilder {
         self.custom_edge_curves[idx] = Some(circle);
         idx
     }
+    /// ✅ OCCT对齐: BOPTools_AlgoTools::MakeEdge 等价 -- 始终创建新边,不进行顶点去重。
+    ///    使用 add_edge_occt,确保不被其他面的边合并。
+    ///    适用于 seam 子段与 IC 弧在 OCCT 中是不同的 TopoDS_Edge。
+    fn add_circle_edge_occt(&mut self, v1: usize, v2: usize, circle: Curve3) -> usize {
+        let idx = self.add_edge_occt(v1, v2);
+        while self.custom_edge_curves.len() <= idx {
+            self.custom_edge_curves.push(None);
+        }
+        self.custom_edge_curves[idx] = Some(circle);
+        self.no_merge_edges.insert(idx);
+        idx
+    }
+
 
     /// ❌ 未对齐/自创鏂规: 鍒涘缓 seam edge锛堜笉杩涜椤剁偣鍘婚噸锛夈€?
     ///    OCCT 涓?sphere face 鐨?seam edge 鐢?MakeEdge 姝ｅ父鍒涘缓,涓嶅瓨鍦ㄩ《鐐?
@@ -847,6 +880,8 @@ impl ResultBuilder {
     /// ✅ OCCT对齐: SubFace-free 面发射器。取原始几何数据直接构建面,绕过 SubFace。
     ///    对应 OCCT BRep_Builder::MakeFace + BRep_Builder::UpdateEdge。
     ///    ⏳ 用于逐步替代 emit_face_with_origin (最终删除 SubFace)。
+    ///    参数 extra_occt_edges: 用 add_circle_edge_occt (非去重)添加的额外边,
+    ///    用于 OCCT 中需要独立 TopoDS_Edge 的场景(如 seam 子段)。
     fn emit_face_data(
         &mut self,
         boundary_pts: &[DVec3],
@@ -856,6 +891,7 @@ impl ResultBuilder {
         sample_point: DVec3,
         uv_domain: Option<[f64; 4]>,
         origin: FaceOrigin,
+        extra_occt_edges: &[(usize, Curve3)],
     ) {
         if boundary_pts.len() < 3 { return; }
         if normal.length_squared() <= TOLERANCE_METRIC_SQ_NEAR_ZERO { return; }
@@ -871,6 +907,14 @@ impl ResultBuilder {
             };
             let forward = self.edges[ei].0 == vert_indices[i];
             edge_indices.push((ei, forward));
+        }
+        // Add extra OCCT edges (non-dedup, for seam sub-segments etc.)
+        for &(ei, ref crv) in extra_occt_edges {
+            let va = vert_indices[ei];
+            let vb = vert_indices[(ei + 1) % vert_indices.len()];
+            let new_ei = self.add_circle_edge_occt(va, vb, crv.clone());
+            let forward = self.edges[new_ei].0 == va;
+            edge_indices.push((new_ei, forward));
         }
 
         let inner_wire_edges: Vec<Vec<(usize, bool)>> = Vec::new();
@@ -1112,8 +1156,10 @@ impl ResultBuilder {
             let mut circle_transfer: Vec<(usize, Curve3)> = Vec::new();
             for i in 0..ne {
                 if e_canon[i] != i { continue; }
+                if self.no_merge_edges.contains(&i) { continue; }
                 let (a1, a2) = (self.edges[i].0.min(self.edges[i].1), self.edges[i].0.max(self.edges[i].1));
                 for j in (i+1)..ne {
+                    if self.no_merge_edges.contains(&j) { continue; }
                     let (b1, b2) = (self.edges[j].0.min(self.edges[j].1), self.edges[j].0.max(self.edges[j].1));
                     if a1 == b1 && a2 == b2 {
                         let ci = self.custom_edge_curves.get(i).and_then(|opt| opt.clone());
@@ -5132,7 +5178,8 @@ impl<'a> BooleanBuilder<'a> {
 
         // 发射 inside 子面
         if pick_inside && inside_pts.len() >= 3 {
-            self.emit_one_sphere_face(&mut inside_pts, &sphere, &circles, &inside_normals, result, origin);
+            let no_extra: &[(usize, Curve3)] = &[];
+            self.emit_one_sphere_face(&mut inside_pts, &sphere, &circles, &inside_normals, result, origin, no_extra);
         }
         // 发射 outside 子面 (使用 inside_pts 共享顶点 + 南极点)
         if pick_outside && outside_pts.len() >= 3 {
@@ -5144,7 +5191,31 @@ impl<'a> BooleanBuilder<'a> {
             } else {
                 outside_pts.clone()
             };
-            self.emit_one_sphere_face(&mut pts, &sphere, &circles, &inside_normals, result, origin);
+            // Compute extra OCCT edge for outside face (seam sub-segment)
+            let extra_occt = if outside_needs_inside {
+                // Find the edge on the z=0 great circle that is also the seam
+                let n = pts.len();
+                let mut extra: Vec<(usize, Curve3)> = Vec::new();
+                for i in 0..n {
+                    let va = pts[i]; let vb = pts[(i + 1) % n];
+                    // Check if this edge is on the z=0 equator (seam line)
+                    if va.z.abs() < 1e-6 && vb.z.abs() < 1e-6 {
+                        let best_k = (0..circles.len()).min_by(|&a, &b| {
+                            let da = (va - circles[a].center).dot(inside_normals[a]).abs()
+                                   + (vb - circles[a].center).dot(inside_normals[a]).abs();
+                            let db = (va - circles[b].center).dot(inside_normals[b]).abs()
+                                   + (vb - circles[b].center).dot(inside_normals[b]).abs();
+                            da.partial_cmp(&db).unwrap()
+                        }).unwrap_or(0);
+                        extra.push((i, Curve3::Circle(circles[best_k])));
+                        break; // one extra edge is enough
+                    }
+                }
+                extra
+            } else {
+                vec![]
+            };
+            self.emit_one_sphere_face(&mut pts, &sphere, &circles, &inside_normals, result, origin, &extra_occt);
         }
     }
 
@@ -5158,6 +5229,7 @@ impl<'a> BooleanBuilder<'a> {
         inside_normals: &[DVec3],
         result: &mut ResultBuilder,
         origin: FaceOrigin,
+        extra_occt: &[(usize, Curve3)],
     ) {
         let sc = sphere.center;
         let sr = sphere.radius;
@@ -5204,7 +5276,7 @@ impl<'a> BooleanBuilder<'a> {
         // sample_point: 球面点
         let sample_pt = centroid; // centroid is inside the face
 
-        result.emit_face_data(pts, &circle_edges, &Surface3::Sphere(*sphere), (centroid - sc).normalize(), sample_pt, uv_domain, origin);
+        result.emit_face_data(pts, &circle_edges, &Surface3::Sphere(*sphere), (centroid - sc).normalize(), sample_pt, uv_domain, origin, extra_occt);
     }
 
     /// ❌ 未对齐/自创方案: 从大圆交点构建 SubFace (rcad自创,等OCCT边级路径)。
