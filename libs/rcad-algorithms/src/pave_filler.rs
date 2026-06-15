@@ -2697,12 +2697,6 @@ impl<'a> PaveFiller<'a> {
                 //    existing vertex within tolerance; only create new if none found.
                 //    The tolerance TOLERANCE_ABS*1000 (1e-4) covers intersection noise.
                 const IC_VERTEX_MERGE_TOL: f64 = crate::tolerance::TOLERANCE_ABS * 1000.0;
-                if std::env::var("RCAD_DEBUG_IC").is_ok() && self.ds.find_vertex_near(p_start, IC_VERTEX_MERGE_TOL).is_none() {
-                    let nearest = self.ds.vertices.iter().enumerate()
-                        .min_by(|(_, a), (_, b)| (a.point - p_start).length_squared().partial_cmp(&(b.point - p_start).length_squared()).unwrap());
-                    eprintln!("[IC_NOVERTS] p_start=({:.12},{:.12},{:.12}) nearest={:?}", p_start.x, p_start.y, p_start.z,
-                        nearest.map(|(i, v)| (i, v.point, (v.point - p_start).length())));
-                }
                 let v_start = self.ds.find_vertex_near(p_start, IC_VERTEX_MERGE_TOL)
                     .unwrap_or_else(|| self.ds.add_vertex(p_start));
                 let v_end = self.ds.find_vertex_near(p_end, IC_VERTEX_MERGE_TOL)
@@ -5268,10 +5262,6 @@ impl<'a> PaveFiller<'a> {
                     }
                 }
             }
-            if std::env::var("RCAD_DEBUG_IC").is_ok() {
-                let ic = &self.ds.intersection_curves[ci];
-                eprintln!("[IC_REMAP] ci={} after_replace: sv={} ev={}", ci, ic.start_vertex, ic.end_vertex);
-            }
 
             // ✅ OCCT对齐: PutBoundPaveOnCurve 对所有曲线类型执行
             //    OCCT BOPAlgo_PaveFiller_6.cxx L798-832
@@ -5382,10 +5372,6 @@ impl<'a> PaveFiller<'a> {
                 sp.push((t1, snap.ev));
             } else if !is_circle {
                 self.ds.intersection_curves[ci].end_vertex = sp.last().unwrap().1;
-            }
-            if std::env::var("RCAD_DEBUG_IC").is_ok() {
-                let ic = &self.ds.intersection_curves[ci];
-                eprintln!("[PUTBOUND] ci={} sv={} ev={} sp.len={}", ci, ic.start_vertex, ic.end_vertex, sp.len());
             }
             eprintln!("[SPLIT_PRE] ci={} on_curve={}", ci, on_curve.len());
 
