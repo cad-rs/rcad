@@ -181,6 +181,8 @@ impl FaceSampleData {
 pub struct WireFace {
     pub outer_wire: Vec<usize>,
     pub inner_wires: Vec<Vec<usize>>,
+    /// OCCT-aligned: Internal wires from PerformShapesToAvoid (BOPAlgo_BuilderFace.cxx L327-382).
+    pub internal_wires: Vec<Vec<usize>>,
 }
 
 /// OCCT-aligned: Source of a virtual edge segment in the edge-to-wire pipeline.
@@ -446,6 +448,7 @@ type FaceEntry = (
     DVec3,
     f64,
     DVec3,
+    Vec<Vec<(usize, bool)>>,   // internal wire edges (TopAbs_INTERNAL)
 );
 
 /// Builds result BRep, deduplicating vertices and edges.
@@ -589,6 +592,31 @@ impl ResultBuilder {
             iw_vert_indices_all.extend(iw_verts);
         }
 
+        // OCCT-aligned: Internal wire edges (TopAbs_INTERNAL from PerformShapesToAvoid)
+        let mut internal_wire_edges: Vec<Vec<(usize, bool)>> = Vec::new();
+        for iw in &wf.internal_wires {
+            let mut iw_edges = Vec::new();
+            for &si in iw {
+                let seg = &segments[si];
+                let v1 = self.add_vertex(ds.vertices[seg.start_vertex].point);
+                let v2 = self.add_vertex(ds.vertices[seg.end_vertex].point);
+                let ei = match &seg.source {
+                    WireEdgeSource::IntersectionCurve(ci) => {
+                        let crv = &ds.intersection_curves[*ci].curve;
+                        if let Curve3::Circle(_) = crv {
+                            self.add_circle_edge(v1, v2, crv.clone())
+                        } else {
+                            self.add_edge(v1, v2)
+                        }
+                    }
+                    _ => self.add_edge(v1, v2),
+                };
+                let forward = self.edges[ei].0 == v1;
+                iw_edges.push((ei, forward));
+            }
+            internal_wire_edges.push(iw_edges);
+        }
+
         // Triangulation
         let outer_boundary: Vec<DVec3> = vert_indices.iter().map(|&vi| self.vertices[vi]).collect();
         let iw_boundaries: Vec<Vec<DVec3>> = inner_wire_edges.iter().map(|iw_es| {
@@ -621,7 +649,7 @@ impl ResultBuilder {
         let nlen = normal.length();
         let nunit = if nlen > TOLERANCE_LEN_MIN { normal / nlen } else { normal };
         for (existing_idx, (existing_outer, existing_inner, _existing_tris, existing_normal,
-             _surf, _uv, existing_centroid, existing_area, _existing_sp))
+             _surf, _uv, existing_centroid, existing_area, _existing_sp, _existing_iw))
             in self.faces.iter().enumerate()
         {
             let mut ex_sig: Vec<usize> = existing_outer.iter().map(|&(eid, _)| eid).collect();
@@ -687,6 +715,7 @@ impl ResultBuilder {
             centroid,
             area,
             sample_pt,
+            internal_wire_edges,
         ));
         self.face_origins.push(origin);
     }
@@ -1102,7 +1131,7 @@ impl ResultBuilder {
         outer_sig.sort_unstable();
         let nlen = normal.length();
         let nunit = if nlen > TOLERANCE_LEN_MIN { normal / nlen } else { normal };
-        for (existing_idx, (existing_outer, existing_inner, _existing_tris, existing_normal, _surf, _uv, existing_centroid, existing_area, _existing_sp)) in
+        for (existing_idx, (existing_outer, existing_inner, _existing_tris, existing_normal, _surf, _uv, existing_centroid, existing_area, _existing_sp, _existing_iw)) in
             self.faces.iter().enumerate()
         {
             let mut ex_sig: Vec<usize> = existing_outer.iter().map(|&(eid, _)| eid).collect();
@@ -1138,6 +1167,7 @@ impl ResultBuilder {
             centroid,
             area,
             sub.sample_point(),
+            vec![], // internal_wire_edges - empty for legacy SubFace path
         ));
         self.face_origins.push(origin);
     }
@@ -1187,7 +1217,7 @@ impl ResultBuilder {
                 break;
             }
 
-            for (outer, inner, _, _, _, _, _, _, _) in &mut self.faces {
+            for (outer, inner, _, _, _, _, _, _, _, _) in &mut self.faces {
                 *outer = Self::replace_edge_ids_in_wire(outer, &replacements);
                 for iw in inner.iter_mut() {
                     *iw = Self::replace_edge_ids_in_wire(iw, &replacements);
@@ -1426,7 +1456,7 @@ impl ResultBuilder {
         let mut geom = rcad_kernel::GeomStore::default();
         let mut faces = Vec::new();
 
-        for (edge_indices, inner_wire_edges, triangles, normal, surface, uv_domain, _centroid, _area, sample_point) in self.faces {
+        for (edge_indices, inner_wire_edges, triangles, normal, surface, uv_domain, _centroid, _area, sample_point, internal_wire_edges) in self.faces {
             let wire = Wire {
                 edges: edge_indices.iter().map(|&(idx, forward)| {
                     if forward { WireEdge::fwd(idx) } else { WireEdge::rev(idx) }
@@ -1440,6 +1470,16 @@ impl ResultBuilder {
                     }).collect(),
                 })
                 .collect();
+            // OCCT-aligned: Add internal wire edges to inner_wires for edge ref counting
+            let mut inner_wires = inner_wires;
+            for iw_edges in internal_wire_edges {
+                let iw: Vec<WireEdge> = iw_edges.iter().map(|&(idx, forward)| {
+                    if forward { WireEdge::fwd(idx) } else { WireEdge::rev(idx) }
+                }).collect();
+                if iw.len() >= 2 {
+                    inner_wires.push(Wire { edges: iw });
+                }
+            }
             // BooleanBuilder faces inherit or accumulate triangles during
             // splitting, but those tessellations are not guaranteed to remain
             // valid for exact property evaluation after trimming/rewiring.
@@ -2710,6 +2750,19 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
     //    OCCT  FORWARD+REVERSED, BOPAlgo_WireSplitter
 
     // ================================================================
+    // Dedup sphere seam segments: remove direct north-south segments that
+    // bypass the IC endpoints and prevent PerformShapesToAvoid from working.
+    if matches!(face.surface, Surface3::Sphere(_)) {
+        let sphere_axis = match &face.surface { Surface3::Sphere(s) => s.axis, _ => DVec3::Z };
+        let radius = match &face.surface { Surface3::Sphere(s) => s.radius, _ => 1.0 };
+        segments.retain(|seg| {
+            if !seg.is_seam { return true; }
+            let p1 = ds.vertices[seg.start_vertex].point;
+            let p2 = ds.vertices[seg.end_vertex].point;
+            let vdiff = (p2 - p1).dot(sphere_axis).abs();
+            vdiff < radius * 1.5
+        });
+    }
     for &ci in &face.face_info.curves_in {
         let ic = &ds.intersection_curves[ci];
         // ✅ OCCT-aligned: remap IC endpoint to boundary vertex (ShapesSD).
@@ -2954,9 +3007,9 @@ fn clock_wise_angle(angle_in: f64, angle_out: f64) -> f64 {
 ///   1. MakeConnexityBlocks: BFS grouping by shared vertices
 ///   2. Regular block ( degree=2):
 ///   3. Irregular block ( degree>2 ): SmartMap + Path
-fn build_closed_wires(segments: &[WireSegment], ds: &DS, face_idx: usize) -> Vec<Vec<usize>> {
+fn build_closed_wires(segments: &[WireSegment], ds: &DS, face_idx: usize) -> (Vec<Vec<usize>>, Vec<Vec<usize>>) {
     if segments.is_empty() {
-        return vec![];
+        return (vec![], vec![]);
     }
 
     let n = segments.len();
@@ -3019,6 +3072,7 @@ fn build_closed_wires(segments: &[WireSegment], ds: &DS, face_idx: usize) -> Vec
 
     // Process each block
     let mut wires: Vec<Vec<usize>> = Vec::new();
+    let mut internal_wires: Vec<Vec<usize>> = Vec::new();
 
     for block in &blocks {
         if block.len() < 2 {
@@ -3041,12 +3095,13 @@ fn build_closed_wires(segments: &[WireSegment], ds: &DS, face_idx: usize) -> Vec
             }
         } else {
             // Irregular block: SmartMap + angle-based Path walking
-            let block_wires = build_irregular_wires(block, segments, ds, face_idx);
+            let (block_wires, block_internal) = build_irregular_wires(block, segments, ds, face_idx);
             wires.extend(block_wires);
+            internal_wires.extend(block_internal);
         }
     }
 
-    wires
+    (wires, internal_wires)
 }
 
 /// OCCT-aligned:  Regular block ( degree=2)  wire
@@ -3115,7 +3170,7 @@ struct EdgeInfo {
 
 /// OCCT-aligned:  irregular block  SmartMap + Path
 ///    (BOPAlgo_WireSplitter_1.cxx L359-618)
-fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, face_idx: usize) -> Vec<Vec<usize>> {
+fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, face_idx: usize) -> (Vec<Vec<usize>>, Vec<Vec<usize>>) {
     // Build SmartMap: vertex  Vec<EdgeInfo>
     let mut smart_map: HashMap<usize, Vec<EdgeInfo>> = HashMap::new();
 
@@ -3149,6 +3204,8 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, fac
     // OCCT-aligned: RefineAngles (BOPAlgo_WireSplitter_1.cxx L904-1028)
     refine_angles(&mut smart_map, segments, ds, face_idx);
 
+    // OCCT-aligned: PerformShapesToAvoid (BOPAlgo_BuilderFace.cxx L152-235)
+    let avoided = perform_shapes_to_avoid(&mut smart_map, segments);
 
     // OCCT-aligned: Path walk loop — walk until no edges remain
     let mut wires: Vec<Vec<usize>> = Vec::new();
@@ -3170,7 +3227,107 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, fac
         eprintln!("[IRR_WIRES] face={} n_wires={}", face_idx, wires.len());
         for (wi, w) in wires.iter().enumerate() { eprintln!("[IRR_WIRE] face={} wi={} segs={:?}", face_idx, wi, w); }
     }
-    wires
+
+    // OCCT-aligned: Assemble internal wires from avoided segments
+    let internal_wires = assemble_internal_wires(&avoided, segments);
+
+    (wires, internal_wires)
+}
+
+// ====================================================================
+// OCCT-aligned: PerformShapesToAvoid (BOPAlgo_BuilderFace.cxx L152-235)
+// ====================================================================
+fn perform_shapes_to_avoid(
+    smart_map: &mut HashMap<usize, Vec<EdgeInfo>>,
+    segments: &[WireSegment],
+) -> Vec<usize> {
+    let mut avoided_set: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    loop {
+        let mut b_found = false;
+        let vertices: Vec<usize> = smart_map.keys().copied().collect();
+        for &v in &vertices {
+            let Some(infos) = smart_map.get(&v) else { continue; };
+            let active: Vec<&EdgeInfo> = infos.iter().filter(|ei| !avoided_set.contains(&ei.seg_idx)).collect();
+            let a_nb_e = active.len();
+            if a_nb_e == 0 { continue; }
+            let ei1 = active[0];
+            let seg1 = &segments[ei1.seg_idx];
+            if a_nb_e == 1 {
+                if seg1.start_vertex == seg1.end_vertex { continue; }
+                b_found = true;
+                avoided_set.insert(ei1.seg_idx);
+            } else if a_nb_e == 2 {
+                let ei2 = active[1];
+                let seg2 = &segments[ei2.seg_idx];
+                let same_source = match (&seg1.source, &seg2.source) {
+                    (WireEdgeSource::DsEdge(a), WireEdgeSource::DsEdge(b)) => a == b,
+                    _ => false,
+                };
+                if same_source && seg1.start_vertex != seg1.end_vertex {
+                    b_found = true;
+                    avoided_set.insert(ei1.seg_idx);
+                    avoided_set.insert(ei2.seg_idx);
+                }
+            }
+        }
+        if !b_found { break; }
+    }
+    for &seg_idx in &avoided_set {
+        let seg = &segments[seg_idx];
+        if let Some(infos) = smart_map.get_mut(&seg.start_vertex) {
+            infos.retain(|ei| ei.seg_idx != seg_idx);
+            if infos.is_empty() { smart_map.remove(&seg.start_vertex); }
+        }
+        if let Some(infos) = smart_map.get_mut(&seg.end_vertex) {
+            infos.retain(|ei| ei.seg_idx != seg_idx);
+            if infos.is_empty() { smart_map.remove(&seg.end_vertex); }
+        }
+    }
+    avoided_set.into_iter().collect()
+}
+// ====================================================================
+// OCCT-aligned: Assemble internal wires from avoided segments
+// (BOPAlgo_BuilderFace.cxx L327-382)
+// ====================================================================
+fn assemble_internal_wires(
+    avoided: &[usize],
+    segments: &[WireSegment],
+) -> Vec<Vec<usize>> {
+    if avoided.is_empty() { return vec![]; }
+    let mut v_to_segs: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+    for &si in avoided {
+        let seg = &segments[si];
+        v_to_segs.entry(seg.start_vertex).or_default().push(si);
+        v_to_segs.entry(seg.end_vertex).or_default().push(si);
+    }
+    let n = segments.len();
+    let mut added = vec![false; n];
+    let mut internal_wires: Vec<Vec<usize>> = Vec::new();
+    for &start_si in avoided {
+        if added[start_si] { continue; }
+        let mut wire: Vec<usize> = Vec::new();
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(start_si);
+        added[start_si] = true;
+        while let Some(si) = queue.pop_front() {
+            wire.push(si);
+            let seg = &segments[si];
+            for &vtx in &[seg.start_vertex, seg.end_vertex] {
+                if let Some(neighbors) = v_to_segs.get(&vtx) {
+                    for &ni in neighbors {
+                        if !added[ni] {
+                            added[ni] = true;
+                            queue.push_back(ni);
+                        }
+                    }
+                }
+            }
+        }
+        if !wire.is_empty() {
+            internal_wires.push(wire);
+        }
+    }
+    internal_wires
 }
 
 /// OCCT-aligned: aE.IsSame(aEOuta) for flat vertex arrays.
@@ -3622,6 +3779,7 @@ fn wire_faces_to_sub_faces(
 /// the GROWTH (outer).
 fn perform_areas(
     wires: &[Vec<usize>],
+    internal_wires: &[Vec<usize>],
     segments: &[WireSegment],
     ds: &DS,
     face_idx: usize,
@@ -3722,6 +3880,7 @@ fn perform_areas(
         result.push(WireFace {
             outer_wire: wires[0].clone(),
             inner_wires: wires[1..].to_vec(),
+            internal_wires: internal_wires.to_vec(),
         });
     } else {
         // Each GROWTH gets its own WireFace; HOLEs are inner of the first GROWTH
@@ -3734,6 +3893,7 @@ fn perform_areas(
             result.push(WireFace {
                 outer_wire: wires[g_idx].clone(),
                 inner_wires: inner,
+                internal_wires: if gi == 0 { internal_wires.to_vec() } else { vec![] },
             });
         }
     }
@@ -3841,11 +4001,11 @@ impl<'a> BooleanBuilder<'a> {
         if segments.is_empty() {
             return None;
         }
-        let wires = build_closed_wires(&segments, ds, face_idx);
-        if wires.is_empty() {
+        let (wires, internal_wires) = build_closed_wires(&segments, ds, face_idx);
+        if wires.is_empty() && internal_wires.is_empty() {
             return None;
         }
-        let wfs = perform_areas(&wires, &segments, ds, face_idx);
+        let wfs = perform_areas(&wires, &internal_wires, &segments, ds, face_idx);
         // OCCT-aligned: for Union/Difference, when the sphere face wires only
         // cover the IC triangle (inner region), we need the complement where
         // the seam forms the outer boundary and the IC triangle is a hole.
