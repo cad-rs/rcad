@@ -3496,11 +3496,13 @@ pub fn boolean_op_with_retry(
         )
         .map(|(brep, _report)| brep)?
     };
-    // Edge dedup for ALL results, then remove orphan edges.
-    // ✅ OCCT对齐: deduplicate_edges 只 remap 不移除,prune_unused_topology
-    //    清理未被任何面引用的边 (compact_brep),等价于 OCCT BuildSolid
-    //    中重建 shell 时自然丢弃孤立边的行为。
-    let mut brep = deduplicate_edges(brep);
+    // OCCT-aligned: merge_close_vertices + deduplicate_edges + prune
+    //   BRepLib::BuildCurves3d 在 OCCT 中重建边时会合并共享顶点和重复边。
+    //   merge_close_vertices 等价于 TopExp::MapShapes 后按容差合并重合顶点。
+    //   deduplicate_edges 等价于 BRep_Builder::MakeEdge 在相同顶点对上复用已有边。
+    let (mut brep, _) = crate::brep_repair::merge_close_vertices(
+        &brep, crate::tolerance::TOLERANCE_ABS * 64.0);
+    brep = deduplicate_edges(brep);
     brep = crate::prune_unused_topology(brep);
     brep = deduplicate_edges(brep);
     // Skip BSPLINE→PLANE promotion — OCCT preserves the original surface type
