@@ -642,25 +642,9 @@ impl ResultBuilder {
             }
         }
 
-        // Sphere: handle internal (degenerate) vertices for seam edges
-        let mut internal_verts = Vec::new();
-        if matches!(face.surface, Surface3::Sphere(_)) && !face.face_info.curves_in.is_empty() {
-            // Wire pipeline handles seam edges directly; no extra internal vertices needed.
-        } else if matches!(face.surface, Surface3::Sphere(_)) {
-            for &ei in &face.boundary_edges {
-                let edge = &ds.edges[ei];
-                let sv = self.add_vertex(ds.vertices[edge.start_vertex].point);
-                let ev = self.add_vertex(ds.vertices[edge.end_vertex].point);
-                let sdeg = self.add_edge(sv, sv);
-                edge_indices.push((sdeg, true));
-                internal_verts.push(sv);
-                if sv != ev {
-                    let edeg = self.add_edge(ev, ev);
-                    edge_indices.push((edeg, true));
-                    internal_verts.push(ev);
-                }
-            }
-        }
+        // ✅ OCCT-aligned: No extra internal vertices needed — wire pipeline handles
+        //    seam edges via WireSegment virtual edges; BuilderFace does not add
+        //    degenerate vertices to the result face.
 
         // Compute UV domain for sphere faces
         let sphere_uv = if matches!(face.surface, Surface3::Sphere(_)) {
@@ -685,7 +669,7 @@ impl ResultBuilder {
             } else { None }
         } else { None };
 
-        self.face_internal_vtx.push(internal_verts);
+        self.face_internal_vtx.push(Vec::new());
         let sample_pt = if !wf.outer_wire.is_empty() {
             let si = wf.outer_wire[0];
             let seg = &segments[si];
@@ -1017,16 +1001,18 @@ impl ResultBuilder {
         //    闄勫姞淇℃伅璋冪敤 add_seam_edge銆傚綋鍓嶄粎鐢ㄤ簬 bcommon_simple 蹇€熻矾寰?
         //    (analytic builder),PaveFiller 璺緞鏈娇鐢ㄥ洜涓鸿璺緞涓嶇粡杩囨浠ｇ爜銆?
         if let Some((sei, ref crv)) = sub.seam_edge {
-            if sei == vert_indices.len() {
-                // Degenerate seam edge at vertex 0 (sphere face seam).
-                let seam_ei = self.add_seam_edge(vert_indices[0], vert_indices[0], crv.clone());
-                let forward = self.edges[seam_ei].0 == vert_indices[0];
-                edge_indices.push((seam_ei, forward));
-            } else if sei < vert_indices.len() {
-                let sj = (sei + 1) % vert_indices.len();
-                let seam_ei = self.add_seam_edge(vert_indices[sei], vert_indices[sj], crv.clone());
-                let forward = self.edges[seam_ei].0 == vert_indices[sei];
-                edge_indices.insert(sei + 1, (seam_ei, forward));
+            // ❌ 非对齐: seam_edge 适配。仅 sphere 面需要,修复 V+1。
+            if matches!(sub.surface, Surface3::Sphere(_)) {
+                if sei == vert_indices.len() {
+                    let seam_ei = self.add_seam_edge(vert_indices[0], vert_indices[0], crv.clone());
+                    let forward = self.edges[seam_ei].0 == vert_indices[0];
+                    edge_indices.push((seam_ei, forward));
+                } else if sei < vert_indices.len() {
+                    let sj = (sei + 1) % vert_indices.len();
+                    let seam_ei = self.add_seam_edge(vert_indices[sei], vert_indices[sj], crv.clone());
+                    let forward = self.edges[seam_ei].0 == vert_indices[sei];
+                    edge_indices.insert(sei + 1, (seam_ei, forward));
+                }
             }
         }
 
@@ -2551,6 +2537,7 @@ fn classify_face_occt_style(
     None
 }
 
+/// ✅ OCCT-aligned: BuildSplitFaces edge assembly (L357-489) + DoSplitSEAMOnFace (L58-227).
 fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(usize) -> Option<Curve2d>) -> Vec<WireSegment> {
     let face = &ds.faces[face_idx];
     let mut segments: Vec<WireSegment> = Vec::new();
@@ -3749,6 +3736,11 @@ impl<'a> BooleanBuilder<'a> {
     ) -> Option<(Vec<WireSegment>, Vec<WireFace>)> {
         let ds = self.ds;
         let face = &ds.faces[face_idx];
+        // ✅ OCCT-aligned: return None when no intersection curves — OCCT's
+        //    BuildSplitFaces skips faces with no intersection data at L292.
+        // ⏳ TODO: implement BuildDraftFace equivalent (BOPAlgo_Builder_2.cxx
+        //    L951-1070) — replaces original boundary edges with split images
+        //    (myImages) for faces with only On edges, avoiding tessellation.
         if face.face_info.curves_in.is_empty() {
             return None;
         }
@@ -4162,19 +4154,13 @@ impl<'a> BooleanBuilder<'a> {
                 merge_subfaces_of_same_face(&mut kept_subs);
             }
 
-            // 鉂?绂佺敤: wire pipeline 瀵圭悆闈骇鐢熼敊璇?outer_wire(4鏉C娈靛惈閲嶅鏂瑰悜),
-            //    UV domain 瑕嗙洊鍗婄悆(2蟺),SA 閿欒(6.283鈫掑簲涓?.571)銆傛敼鐢?
-                        // build_sphere_sub_faces_by_circles + SubFace emit — disabled, use emit_sphere_faces_direct
-            let wire_emit_used = false;
-
-            if !wire_emit_used {
-                for mut sub in kept_subs {
-                    let src = self.ds.faces[fi].source_face_idx;
-                    let _acircs = result.find_inner_wire_circles(&mut sub);
-                    result.emit_face_with_origin(&sub, false, FaceOrigin::FromA(src), &_acircs);
-                    if let Surface3::Plane(p) = &sub.surface {
-                        a_on_planes.push((p.normal, p.origin));
-                    }
+            // ❌ 非对齐: 保持 split_face() 返回的 SubFace,用 emit_face_with_origin 发出。
+            for mut sub in kept_subs {
+                let src = self.ds.faces[fi].source_face_idx;
+                let _acircs = result.find_inner_wire_circles(&mut sub);
+                result.emit_face_with_origin(&sub, false, FaceOrigin::FromA(src), &_acircs);
+                if let Surface3::Plane(p) = &sub.surface {
+                    a_on_planes.push((p.normal, p.origin));
                 }
             }
         }

@@ -2690,8 +2690,17 @@ impl<'a> PaveFiller<'a> {
                 if p_start.distance_squared(p_end) < TOLERANCE_ABS_SQ {
                     return;
                 }
-                let v_start = self.ds.add_vertex(p_start);
-                let v_end = self.ds.add_vertex(p_end);
+                // ✅ OCCT-aligned: try to reuse existing DS vertex (PutPaveOnCurve).
+                //    OCCT's IsVertexOnLine detects boundary vertices ON the curve and
+                //    places their DS index into the pave block, so the section edge
+                //    shares the same TopoDS_Vertex as the boundary edge.  rcad: find
+                //    existing vertex within tolerance; only create new if none found.
+                //    The tolerance TOLERANCE_ABS*1000 (1e-4) covers intersection noise.
+                const IC_VERTEX_MERGE_TOL: f64 = crate::tolerance::TOLERANCE_ABS * 1000.0;
+                let v_start = self.ds.find_vertex_near(p_start, IC_VERTEX_MERGE_TOL)
+                    .unwrap_or_else(|| self.ds.add_vertex(p_start));
+                let v_end = self.ds.find_vertex_near(p_end, IC_VERTEX_MERGE_TOL)
+                    .unwrap_or_else(|| self.ds.add_vertex(p_end));
                 if std::env::var("RCAD_DEBUG_IC").is_ok() {
                     eprintln!("[IC_VERTICES] f1={} f2={} t_range=[{:.6},{:.6}] v_start={} pt=({:.6},{:.6},{:.6}) v_end={} pt=({:.6},{:.6},{:.6})",
                         f1, f2, effective_t0, effective_t1,

@@ -665,6 +665,16 @@ impl DS {
         }
     }
 
+    /// ✅ OCCT-aligned: find existing vertex within tolerance (PutPaveOnCurve equivalent).
+    /// OCCT's IsVertexOnLine checks if a boundary vertex lies on the intersection
+    /// curve, then places the EXISTING vertex index on the curve's pave block,
+    /// ensuring the section edge reuses the same TopoDS_Vertex.  This tolerance-
+    /// based scan achieves the same sharing for rcad's flat vertex array.
+    pub fn find_vertex_near(&self, point: DVec3, tol: f64) -> Option<usize> {
+        let tol2 = tol * tol;
+        self.vertices.iter().position(|v| (v.point - point).length_squared() <= tol2)
+    }
+
     /// Add a vertex, deduplicating against existing vertices.
     ///
     /// Coincidence uses `max(fuzzy_tol, TOLERANCE_ABS, each vertex's geom_tol)` so
