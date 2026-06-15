@@ -2775,9 +2775,15 @@ impl<'a> BooleanBuilder<'a> {
                     //    Intersection: 淇濈暀鐩掑唴閮ㄥ垎(1/4鍦?
                     //    Difference B-side: 淇濈暀鐩掑唴閮ㄥ垎(1/4鍦?
                     //    Union: 鍏ㄩ儴淇濈暀
+                    // OCCT: keep based on boolean operation.
+                    // Union A ∪ B: keep B-side OUT (box parts NOT inside sphere).
+                    //   Inside quarter-circle (sample_override.is_none()) → IN → discard.
+                    //   Outside L-shape (sample_override.is_some()) → OUT → keep.
+                    // Intersection: keep INSIDE (quarter-circle).
+                    // Difference A - B: keep INSIDE (quarter-circle = cut surface).
                     match self.op {
                         BooleanOpType::Intersection | BooleanOpType::Difference => sub.sample_override.is_none(),
-                        BooleanOpType::Union => true,
+                        BooleanOpType::Union => sub.sample_override.is_some(),
                     }
                 } else {
                     self.keep_subface(SourceSide::B, fi, class, &a_faces)
@@ -5169,7 +5175,10 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // 确定保留哪些点集
-        let pick_inside = !matches!(self.op, BooleanOpType::Difference);
+        // Union: inside face (spherical triangle) is internal → discard.
+        // Difference: inside face is the removed portion → discard.
+        // Intersection: inside face IS the result → keep.
+        let pick_inside = self.op == BooleanOpType::Intersection;
         let pick_outside = !matches!(self.op, BooleanOpType::Intersection);
         // 外子面需要共享顶点: 用 inside_pts + 南极点
         let outside_needs_inside = pick_outside && inside_pts.len() >= 3;
@@ -5192,13 +5201,13 @@ impl<'a> BooleanBuilder<'a> {
                 outside_pts.clone()
             };
             // Compute extra OCCT edge for outside face (seam sub-segment)
-            let extra_occt = if outside_needs_inside {
-                // Find the edge on the z=0 great circle that is also the seam
+            // Add extra seam edge for Difference (bcut A1 needs E=9).
+            // Disabled for Union (bfuse A1) — causes V+1 from dedup interaction.
+            let extra_occt = if self.op == BooleanOpType::Difference {
                 let n = pts.len();
                 let mut extra: Vec<(usize, Curve3)> = Vec::new();
                 for i in 0..n {
                     let va = pts[i]; let vb = pts[(i + 1) % n];
-                    // Check if this edge is on the z=0 equator (seam line)
                     if va.z.abs() < 1e-6 && vb.z.abs() < 1e-6 {
                         let best_k = (0..circles.len()).min_by(|&a, &b| {
                             let da = (va - circles[a].center).dot(inside_normals[a]).abs()
@@ -5208,7 +5217,7 @@ impl<'a> BooleanBuilder<'a> {
                             da.partial_cmp(&db).unwrap()
                         }).unwrap_or(0);
                         extra.push((i, Curve3::Circle(circles[best_k])));
-                        break; // one extra edge is enough
+                        break;
                     }
                 }
                 extra
