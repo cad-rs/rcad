@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+﻿use std::collections::{HashMap, VecDeque};
 
 use glam::{DVec2, DVec3};
 use rayon::prelude::*;
@@ -65,20 +65,9 @@ impl std::fmt::Display for BooleanError {
 
 impl std::error::Error for BooleanError {}
 
-/// ✅ OCCT对齐: 替代 SubFace。对应 OCCT PerformAreas 输出的 TopoDS_Face。
-///    每个 WireFace 包含一个 outer wire + 可选的 hole wires (作为 WireSegment 索引链)。
-///    WireSegment 的 start/end_vertex 提供边拓扑,emit 时直接建 BRep 边。
-#[derive(Debug, Clone)]
-pub struct WireFace {
-    /// 外边界 wire: 有序的 WireSegment 索引链
-    pub outer_wire: Vec<usize>,
-    /// 内边界(hole) wires
-    pub inner_wires: Vec<Vec<usize>>,
-}
-
-/// ✅ OCCT对齐: classify 阶段需要的数据,替代 SubFace。
-///    从 WireFace + WireSegments + DS + face_idx 提取。
-///    sample_point() / surface / normal / boundary 等 classify 依赖的字段。
+/// 鉁?OCCT瀵归綈: classify 闃舵闇€瑕佺殑鏁版嵁,鏇夸唬 SubFace銆?
+///    浠?WireFace + WireSegments + DS + face_idx 鎻愬彇銆?
+///    sample_point() / surface / normal / boundary 绛?classify 渚濊禆鐨勫瓧娈点€?
 #[derive(Debug, Clone)]
 pub struct FaceSampleData {
     pub boundary: Vec<DVec3>,
@@ -91,7 +80,7 @@ pub struct FaceSampleData {
 }
 
 impl FaceSampleData {
-    /// ⏳ 桥接: 从 SubFace 构造 (过渡期使用,移动作后删除)。
+    /// 鈴?妗ユ帴: 浠?SubFace 鏋勯€?(杩囨浮鏈熶娇鐢?绉诲姩浣滃悗鍒犻櫎)銆?
     fn from_sub_face(sub: &SubFace) -> Self {
         FaceSampleData {
             boundary: sub.boundary.clone(),
@@ -104,38 +93,8 @@ impl FaceSampleData {
         }
     }
 
-    /// ⏳ 桥接: 从 WireFace + DS 构造 classify 需要的数据。
-    ///    后续 migration 完成后可直接用 DS 字段,不再需要这个桥接。
-    fn from_wire_face(
-        face_idx: usize,
-        wf: &WireFace,
-        segments: &[WireSegment],
-        ds: &DS,
-    ) -> Self {
-        let face = &ds.faces[face_idx];
-        let boundary: Vec<DVec3> = wf.outer_wire.iter().map(|&si| {
-            let seg = &segments[si];
-            ds.vertices[if seg.forward { seg.start_vertex } else { seg.end_vertex }].point
-        }).collect();
-        let inner_wires: Vec<Vec<DVec3>> = wf.inner_wires.iter().map(|iw| {
-            iw.iter().map(|&si| {
-                let seg = &segments[si];
-                ds.vertices[if seg.forward { seg.start_vertex } else { seg.end_vertex }].point
-            }).collect()
-        }).collect();
-        FaceSampleData {
-            boundary,
-            surface: face.surface.clone(),
-            normal: face.normal,
-            inner_wires,
-            uv_domain: None,
-            uv_centroid: None,
-            sample_override: None,
-        }
-    }
-
     /// Returns a point slightly INSIDE the surface (toward the interior of the solid).
-    /// 从 SubFace::sample_point 移植,使用 WireFace 的数据源。
+    /// 浠?SubFace::sample_point 绉绘,浣跨敤 WireFace 鐨勬暟鎹簮銆?
     fn sample_point(&self) -> DVec3 {
         if let Some(pt) = self.sample_override {
             return pt;
@@ -144,7 +103,7 @@ impl FaceSampleData {
             Surface3::Sphere(s) => {
                 let surface_pt = if let Some(uv) = self.uv_centroid {
                     let sp = s.point_at(uv.x, uv.y);
-                    eprintln!("[SAMPLE_PT] sphere uv_centroid=({:.4},{:.4}) → 3D=({:.4},{:.4},{:.4})",
+                    eprintln!("[SAMPLE_PT] sphere uv_centroid=({:.4},{:.4}) 鈫?3D=({:.4},{:.4},{:.4})",
                         uv.x, uv.y, sp.x, sp.y, sp.z);
                     sp
                 } else if !self.boundary.is_empty() {
@@ -216,8 +175,8 @@ impl FaceSampleData {
     }
 }
 
-/// DEPRECATED: 内部遗留类型。不影响 OCCT 对齐 — 仅在 split_face 内部 + emit 回退使用。
-/// 外部接口统一使用 FaceSampleData (classify) 和 WireFace (emit)。
+/// DEPRECATED: 鍐呴儴閬楃暀绫诲瀷銆備笉褰卞搷 OCCT 瀵归綈 鈥?浠呭湪 split_face 鍐呴儴 + emit 鍥為€€浣跨敤銆?
+/// 澶栭儴鎺ュ彛缁熶竴浣跨敤 FaceSampleData (classify) 鍜?WireFace (emit)銆?
 #[derive(Debug, Clone)]
 pub struct SubFace {
     /// Boundary vertex positions in 3D (ordered polygon).
@@ -242,19 +201,19 @@ pub struct SubFace {
     /// Inner wire boundaries (holes) in 3D. Each inner wire is an ordered polygon
     /// representing a closed trim curve that forms a hole in the face.
     pub inner_wires: Vec<Vec<DVec3>>,
-    /// ⏳ 部分对齐: 外边界精确圆弧边。
-    ///    OCCT: MakeBlocks → section edges 直接作为 BRep 边的 Curve3。
-    ///    rcad: SubFace 不直接对应 BRep face,需在 emit 时由 outer_circle_edges
-    ///    指定哪些外边界边用 add_circle_edge(存 Curve3::Circle)。概念等效,
-    ///    但 OCCT 不需要这个中间存储结构。
+    /// 鈴?閮ㄥ垎瀵归綈: 澶栬竟鐣岀簿纭渾寮ц竟銆?
+    ///    OCCT: MakeBlocks 鈫?section edges 鐩存帴浣滀负 BRep 杈圭殑 Curve3銆?
+    ///    rcad: SubFace 涓嶇洿鎺ュ搴?BRep face,闇€鍦?emit 鏃剁敱 outer_circle_edges
+    ///    鎸囧畾鍝簺澶栬竟鐣岃竟鐢?add_circle_edge(瀛?Curve3::Circle)銆傛蹇电瓑鏁?
+    ///    浣?OCCT 涓嶉渶瑕佽繖涓腑闂村瓨鍌ㄧ粨鏋勩€?
     pub outer_circle_edges: Vec<(usize, Curve3)>,
-    /// ❌ 未对齐 / 自创方案: sphere face 的 seam edge。
-    ///    OCCT sphere face 的 seam edge 直接包含在 BRep face 的 wire 中。
-    ///    rcad 的 SubFace 需要额外 seam_edge 字段来在 emit_face_with_origin
-    ///    时调用 add_seam_edge（旁路顶点去重）。OCCT 的 MakeEdge 不存在
-    ///    顶点去重问题,不需要此机制。
+    /// 鉂?鏈榻?/ 鑷垱鏂规: sphere face 鐨?seam edge銆?
+    ///    OCCT sphere face 鐨?seam edge 鐩存帴鍖呭惈鍦?BRep face 鐨?wire 涓€?
+    ///    rcad 鐨?SubFace 闇€瑕侀澶?seam_edge 瀛楁鏉ュ湪 emit_face_with_origin
+    ///    鏃惰皟鐢?add_seam_edge锛堟梺璺《鐐瑰幓閲嶏級銆侽CCT 鐨?MakeEdge 涓嶅瓨鍦?
+    ///    椤剁偣鍘婚噸闂,涓嶉渶瑕佹鏈哄埗銆?
     pub seam_edge: Option<(usize, Curve3)>,
-    /// ✅ OCCT对齐: 内边界精确圆曲线。
+    /// 鉁?OCCT瀵归綈: 鍐呰竟鐣岀簿纭渾鏇茬嚎銆?
     pub inner_wire_circle: Option<(usize, Curve3)>,
 }
 
@@ -307,7 +266,7 @@ impl SubFace {
                 let inward = to_axis.normalize_or_zero();
                 // Use inward offset so the sample is clearly inside the cylinder surface.
                 // The offset must exceed the Relaxed classification tolerance band
-                // (base_tolerance * 100 * model_scale ≈ 3.5e-5 at unit scale) to avoid
+                // (base_tolerance * 100 * model_scale 鈮?3.5e-5 at unit scale) to avoid
                 // misclassification as "On" a nearby face of the other solid.
                 surface_pt + inward * (TOLERANCE_ABS * 5000.0)
             }
@@ -359,7 +318,7 @@ impl SubFace {
             }
             _ => {
                 // Use the true area centroid (shoelace formula) instead of the vertex
-                // average. The vertex average is biased by uneven vertex distribution —
+                // average. The vertex average is biased by uneven vertex distribution 鈥?
                 // for planar faces split by a sphere-plane intersection circle, the arc
                 // points cluster near the circle boundary, pulling the vertex centroid
                 // inside the sphere even when the sub-face is geometrically outside.
@@ -381,7 +340,7 @@ impl SubFace {
 /// Compute the true area centroid of a planar polygon in 3D by projecting onto
 /// the plane's 2D orthonormal basis and using the shoelace formula.
 /// Guaranteed to lie inside a convex polygon and close to the interior of a
-/// concave polygon 鈥?unlike the boundary-vertex centroid which can be arbitrarily
+/// concave polygon 閳?unlike the boundary-vertex centroid which can be arbitrarily
 /// biased by uneven vertex distribution along the boundary.
 fn planar_polygon_centroid(boundary: &[DVec3], normal: DVec3) -> DVec3 {
     if boundary.len() < 3 {
@@ -401,9 +360,9 @@ fn planar_polygon_centroid(boundary: &[DVec3], normal: DVec3) -> DVec3 {
     let origin = boundary[0];
     let count = boundary.len();
 
-    // Shoelace formula in 2D: 2*area = 危(x_i路y_{i+1} - x_{i+1}路y_i)
-    // Centroid: C_x = (1/(6A)) 危(x_i + x_{i+1})(x_i路y_{i+1} - x_{i+1}路y_i)
-    //            C_y = (1/(6A)) 危(y_i + y_{i+1})(x_i路y_{i+1} - x_{i+1}路y_i)
+    // Shoelace formula in 2D: 2*area = 鍗?x_i璺痽_{i+1} - x_{i+1}璺痽_i)
+    // Centroid: C_x = (1/(6A)) 鍗?x_i + x_{i+1})(x_i璺痽_{i+1} - x_{i+1}璺痽_i)
+    //            C_y = (1/(6A)) 鍗?y_i + y_{i+1})(x_i璺痽_{i+1} - x_{i+1}璺痽_i)
     let mut area2 = 0.0_f64;
     let mut cx6 = 0.0_f64;
     let mut cy6 = 0.0_f64;
@@ -421,12 +380,12 @@ fn planar_polygon_centroid(boundary: &[DVec3], normal: DVec3) -> DVec3 {
     }
 
     if area2.abs() < 1e-30 {
-        // Degenerate polygon 鈥?fall back to boundary centroid
+        // Degenerate polygon 閳?fall back to boundary centroid
         return boundary.iter().copied().sum::<DVec3>() / count as f64;
     }
 
-    // Signed area = area2 / 2. The centroid formula uses 6脳area (unsigned), so
-    // we divide by 3脳area2 (sign cancels: cx6 / (6 * area2/2) = cx6 / (3 * area2)).
+    // Signed area = area2 / 2. The centroid formula uses 6鑴砤rea (unsigned), so
+    // we divide by 3鑴砤rea2 (sign cancels: cx6 / (6 * area2/2) = cx6 / (3 * area2)).
     let inv = 1.0 / (3.0 * area2);
     origin + u * (cx6 * inv) + v * (cy6 * inv)
 }
@@ -450,7 +409,7 @@ type FaceEntry = (
 /// vertex that lies in the segment interior so adjacent faces share edge references.
 struct ResultBuilder {
     vertices: Vec<DVec3>,
-    vertex_map: HashMap<u64, usize>, // hash of position 鈫?index
+    vertex_map: HashMap<u64, usize>, // hash of position 閳?index
     edges: Vec<(usize, usize)>,
     faces: Vec<FaceEntry>, // (boundary vertex indices, triangles, normal, surface, uv_domain)
     face_origins: Vec<FaceOrigin>,
@@ -554,19 +513,19 @@ impl ResultBuilder {
         idx
     }
 
-    /// ✅ OCCT对齐: 创建退化 seam 边(带半球圆曲线,防止被边去重合并)。
-    ///    OCCT 的 sphere face 外环总是有一条退化 seam 边(两端同顶点)。
-    ///    添加一个球面水平圆曲线(circle.normal = axis)使边在某些上下文中可识别。
+    /// 鉁?OCCT瀵归綈: 鍒涘缓閫€鍖?seam 杈?甯﹀崐鐞冨渾鏇茬嚎,闃叉琚竟鍘婚噸鍚堝苟)銆?
+    ///    OCCT 鐨?sphere face 澶栫幆鎬绘槸鏈変竴鏉￠€€鍖?seam 杈?涓ょ鍚岄《鐐?銆?
+    ///    娣诲姞涓€涓悆闈㈡按骞冲渾鏇茬嚎(circle.normal = axis)浣胯竟鍦ㄦ煇浜涗笂涓嬫枃涓彲璇嗗埆銆?
     fn add_edge_seam_degenerate(&mut self, v1: usize, sphere_surf: &SphericalSurface) -> usize {
         let idx = self.edges.len();
         self.edges.push((v1, v1));
         while self.custom_edge_curves.len() <= idx {
             self.custom_edge_curves.push(None);
         }
-        // 存储该退化 seam 对应的球面圆曲线(用于 STEP writer)
-        // ✅ OCCT对齐: seam 圆 = 球面子午线(通过 pole,normal ⟂ axis)
-        //    OCCT 中 sphere face 的 seam 是过极点的经线,不同于 IC 圆。
-        //    如果 normal = axis,会与平面-球面 IC 圆重合导致曲线去重误合并。
+        // 瀛樺偍璇ラ€€鍖?seam 瀵瑰簲鐨勭悆闈㈠渾鏇茬嚎(鐢ㄤ簬 STEP writer)
+        // 鉁?OCCT瀵归綈: seam 鍦?= 鐞冮潰瀛愬崍绾?閫氳繃 pole,normal 鉄?axis)
+        //    OCCT 涓?sphere face 鐨?seam 鏄繃鏋佺偣鐨勭粡绾?涓嶅悓浜?IC 鍦嗐€?
+        //    濡傛灉 normal = axis,浼氫笌骞抽潰-鐞冮潰 IC 鍦嗛噸鍚堝鑷存洸绾垮幓閲嶈鍚堝苟銆?
         let seam_normal = any_perpendicular(sphere_surf.axis).normalize();
         let seam_circle = Curve3::Circle(Circle3 {
             center: sphere_surf.center,
@@ -577,13 +536,13 @@ impl ResultBuilder {
         idx
     }
 
-    /// ⏳ 部分对齐: 创建具有精确圆曲线几何的 edge。
-    ///    OCCT: BOPTools_AlgoTools::MakeEdge(aIC,...) 直接创建 BRep Edge,无顶点去重。
-    ///    rcad: 通过 add_edge(顶点去重)创建边,在 build() 中设置 edge_curve。
-    ///    顶点去重逻辑不影响正确性(Circle3 曲线正确设置),但实现方式不同。
+    /// 鈴?閮ㄥ垎瀵归綈: 鍒涘缓鍏锋湁绮剧‘鍦嗘洸绾垮嚑浣曠殑 edge銆?
+    ///    OCCT: BOPTools_AlgoTools::MakeEdge(aIC,...) 鐩存帴鍒涘缓 BRep Edge,鏃犻《鐐瑰幓閲嶃€?
+    ///    rcad: 閫氳繃 add_edge(椤剁偣鍘婚噸)鍒涘缓杈?鍦?build() 涓缃?edge_curve銆?
+    ///    椤剁偣鍘婚噸閫昏緫涓嶅奖鍝嶆纭€?Circle3 鏇茬嚎姝ｇ‘璁剧疆),浣嗗疄鐜版柟寮忎笉鍚屻€?
     fn add_circle_edge(&mut self, v1: usize, v2: usize, circle: Curve3) -> usize {
         let idx = self.add_edge(v1, v2);
-        // 扩展 custom_edge_curves 到足够长度
+        // 鎵╁睍 custom_edge_curves 鍒拌冻澶熼暱搴?
         while self.custom_edge_curves.len() <= idx {
             self.custom_edge_curves.push(None);
         }
@@ -591,11 +550,11 @@ impl ResultBuilder {
         idx
     }
 
-    /// ❌ 未对齐 / 自创方案: 创建 seam edge（不进行顶点去重）。
-    ///    OCCT 中 sphere face 的 seam edge 由 MakeEdge 正常创建,不存在顶点
-    ///    去重问题。rcad 的 add_edge 按顶点对去重,会误将 seam 合并到正常弧。
-    ///    此方法绕过顶点去重,是 rcad 特有的 workaround。
-    ///    ！仅在 split_sphere_by_circles 中用于 sphere 的 seam edge。
+    /// 鉂?鏈榻?/ 鑷垱鏂规: 鍒涘缓 seam edge锛堜笉杩涜椤剁偣鍘婚噸锛夈€?
+    ///    OCCT 涓?sphere face 鐨?seam edge 鐢?MakeEdge 姝ｅ父鍒涘缓,涓嶅瓨鍦ㄩ《鐐?
+    ///    鍘婚噸闂銆俽cad 鐨?add_edge 鎸夐《鐐瑰鍘婚噸,浼氳灏?seam 鍚堝苟鍒版甯稿姬銆?
+    ///    姝ゆ柟娉曠粫杩囬《鐐瑰幓閲?鏄?rcad 鐗规湁鐨?workaround銆?
+    ///    锛佷粎鍦?split_sphere_by_circles 涓敤浜?sphere 鐨?seam edge銆?
     fn add_seam_edge(&mut self, v1: usize, v2: usize, circle: Curve3) -> usize {
         let idx = self.edges.len();
         self.edges.push((v1, v2));
@@ -606,11 +565,11 @@ impl ResultBuilder {
         idx
     }
 
-    /// DEPRECATED (SubFace 内部): 圆弧内边界检测,仅在 split_planar_face 路径使用。
-    ///    OCCT: MakeBlocks → BOPTools_AlgoTools::MakeEdge(aIC,...)
-    ///    split_planar_face 生成的内边界有128+点,简化为2端点(arc_simplify),
-    ///    然后 emit_face_with_origin 用 add_circle_edge 创建精确 Circle3 边。
-    /// DEPRECATED (SubFace 内部): 圆弧外边界→内边界转换。WireFace 不需要此步骤。
+    /// DEPRECATED (SubFace 鍐呴儴): 鍦嗗姬鍐呰竟鐣屾娴?浠呭湪 split_planar_face 璺緞浣跨敤銆?
+    ///    OCCT: MakeBlocks 鈫?BOPTools_AlgoTools::MakeEdge(aIC,...)
+    ///    split_planar_face 鐢熸垚鐨勫唴杈圭晫鏈?28+鐐?绠€鍖栦负2绔偣(arc_simplify),
+    ///    鐒跺悗 emit_face_with_origin 鐢?add_circle_edge 鍒涘缓绮剧‘ Circle3 杈广€?
+    /// DEPRECATED (SubFace 鍐呴儴): 鍦嗗姬澶栬竟鐣屸啋鍐呰竟鐣岃浆鎹€俉ireFace 涓嶉渶瑕佹姝ラ銆?
     fn convert_outer_arc_to_inner_wire(&self, sub: &mut SubFace) -> Vec<(usize, usize, Curve3)> {
         if sub.boundary.len() < 6 { return vec![]; }
         let bnd = &sub.boundary;
@@ -641,7 +600,7 @@ impl ResultBuilder {
         for wi in (0..sub.inner_wires.len()).rev() {
             let iw = &sub.inner_wires[wi];
             if iw.len() < 3 { continue; }
-            // 取3个采样点检测是否为圆
+            // 鍙?涓噰鏍风偣妫€娴嬫槸鍚︿负鍦?
             let p0 = iw[0]; let p1 = iw[iw.len() / 3]; let p2 = iw[2 * iw.len() / 3];
             let a = p1 - p0; let b = p2 - p0;
             let cross = a.cross(b);
@@ -650,14 +609,14 @@ impl ResultBuilder {
             let center = p0 + (b.cross(cross) * a2 + cross.cross(a) * b2) / (2.0 * cross.length_squared());
             let r = p0.distance(center);
             if !iw.iter().all(|pt| (pt.distance(center) - r).abs() < 1e-8) { continue; }
-            // ✅ OCCT对齐: 所有点在圆上 → 构建圆弧 inner_wire
-            // 原内边界: [rect_corner, arc_start, ...128 arc pts..., arc_end, rect_corner]
-            // 精简后: [rect_corner, arc_start, arc_end] — 3点3边
+            // 鉁?OCCT瀵归綈: 鎵€鏈夌偣鍦ㄥ渾涓?鈫?鏋勫缓鍦嗗姬 inner_wire
+            // 鍘熷唴杈圭晫: [rect_corner, arc_start, ...128 arc pts..., arc_end, rect_corner]
+            // 绮剧畝鍚? [rect_corner, arc_start, arc_end] 鈥?3鐐?杈?
             let norm = cross.normalize();
-            // 找弧的起点和终点: 从第1点开始沿边行走,当方向变化时即为弧起点
+            // 鎵惧姬鐨勮捣鐐瑰拰缁堢偣: 浠庣1鐐瑰紑濮嬫部杈硅璧?褰撴柟鍚戝彉鍖栨椂鍗充负寮ц捣鐐?
             let arc_start_idx = if iw.len() == 3 {
-                // 3点内边界 [p_t1, p_mid, p_t2]: 3点都在圆上(annular_out 路径),
-                // 弧起点就是 iw[0], 不是 iw[1](方向变化检测对全弧场景无效)。
+                // 3鐐瑰唴杈圭晫 [p_t1, p_mid, p_t2]: 3鐐归兘鍦ㄥ渾涓?annular_out 璺緞),
+                // 寮ц捣鐐瑰氨鏄?iw[0], 涓嶆槸 iw[1](鏂瑰悜鍙樺寲妫€娴嬪鍏ㄥ姬鍦烘櫙鏃犳晥)銆?
                 0_usize
             } else if iw.len() >= 3 && (iw[1] - iw[0]).dot(iw[2] - iw[1]).abs() < 0.99 { 1 } else {
                 let mut idx = 1usize;
@@ -665,8 +624,8 @@ impl ResultBuilder {
                 idx
             };
             let arc_end_idx = if iw.len() == 3 {
-                // 3点内边界: 弧终点就是 iw[2](split_face 的 annular_out 路径,
-                // 内边界 [p_t1, p_mid, p_t2] 3个点都在圆上,终点是 p_t2)。
+                // 3鐐瑰唴杈圭晫: 寮х粓鐐瑰氨鏄?iw[2](split_face 鐨?annular_out 璺緞,
+                // 鍐呰竟鐣?[p_t1, p_mid, p_t2] 3涓偣閮藉湪鍦嗕笂,缁堢偣鏄?p_t2)銆?
                 2_usize
             } else if iw.len() >= 3 {
                 let mut idx = iw.len() - 2;
@@ -680,11 +639,11 @@ impl ResultBuilder {
             } else { iw.len() - 2 };
             let arc_start = iw[arc_start_idx];
             let arc_end = iw[arc_end_idx];
-            // 构建 Circle3 曲线
+            // 鏋勫缓 Circle3 鏇茬嚎
             let circle = Curve3::Circle(rcad_kernel::geom::Circle3 { center, normal: norm, radius: r });
-            // ✅ OCCT对齐: Circle3 边的选择取决于 iw[0] 是否在圆上。
-            //    环形面(annular_out, 3点全在圆上): 两条圆弧边(seg 0+1) + 闭合直边(seg 2)
-            //    平面分割(split_planar_face): 矩形角→弧: circle edge 用 edge[1]
+            // 鉁?OCCT瀵归綈: Circle3 杈圭殑閫夋嫨鍙栧喅浜?iw[0] 鏄惁鍦ㄥ渾涓娿€?
+            //    鐜舰闈?annular_out, 3鐐瑰叏鍦ㄥ渾涓?: 涓ゆ潯鍦嗗姬杈?seg 0+1) + 闂悎鐩磋竟(seg 2)
+            //    骞抽潰鍒嗗壊(split_planar_face): 鐭╁舰瑙掆啋寮? circle edge 鐢?edge[1]
             let iw0_on_circle = (iw[0].distance(center) - r).abs() < 1e-8;
             if iw.len() == 3 && iw0_on_circle {
                 circles.push((wi, 0_usize, circle.clone()));
@@ -702,8 +661,8 @@ impl ResultBuilder {
         circles
     }
 
-    /// DEPRECATED (SubFace 内部): 非 sphere 面回退发射路径。
-    ///    外部接口统一使用 emit_wire_face (WireFace 路径)。
+    /// DEPRECATED (SubFace 鍐呴儴): 闈?sphere 闈㈠洖閫€鍙戝皠璺緞銆?
+    ///    澶栭儴鎺ュ彛缁熶竴浣跨敤 emit_wire_face (WireFace 璺緞)銆?
     fn emit_face_with_origin(
         &mut self,
         sub: &SubFace,
@@ -730,7 +689,7 @@ impl ResultBuilder {
         let mut edge_indices = Vec::new();
         for i in 0..vert_indices.len() {
             let j = (i + 1) % vert_indices.len();
-            // ✅ OCCT对齐: 从 SubFace.outer_circle_edges 检查外边界此边是否需精确圆弧
+            // 鉁?OCCT瀵归綈: 浠?SubFace.outer_circle_edges 妫€鏌ュ杈圭晫姝よ竟鏄惁闇€绮剧‘鍦嗗姬
             let ei = if let Some(&(_, ref crv)) = sub.outer_circle_edges.iter().find(|&&(si, _)| si == i) {
                 self.add_circle_edge(vert_indices[i], vert_indices[j], crv.clone())
             } else {
@@ -740,11 +699,11 @@ impl ResultBuilder {
             edge_indices.push((ei, forward));
         }
 
-        // ❌ 未对齐 / 自创方案: 添加 sphere face 的 seam edge。
-        //    OCCT sphere face 的 seam edge 是 BRep 固有拓扑的一部分,不需要
-        //    在构建 wire 时特殊处理。rcad 因 add_edge 顶点去重需用 seam_edge
-        //    附加信息调用 add_seam_edge。当前仅用于 bcommon_simple 快速路径
-        //    (analytic builder),PaveFiller 路径未使用因为该路径不经过此代码。
+        // 鉂?鏈榻?/ 鑷垱鏂规: 娣诲姞 sphere face 鐨?seam edge銆?
+        //    OCCT sphere face 鐨?seam edge 鏄?BRep 鍥烘湁鎷撴墤鐨勪竴閮ㄥ垎,涓嶉渶瑕?
+        //    鍦ㄦ瀯寤?wire 鏃剁壒娈婂鐞嗐€俽cad 鍥?add_edge 椤剁偣鍘婚噸闇€鐢?seam_edge
+        //    闄勫姞淇℃伅璋冪敤 add_seam_edge銆傚綋鍓嶄粎鐢ㄤ簬 bcommon_simple 蹇€熻矾寰?
+        //    (analytic builder),PaveFiller 璺緞鏈娇鐢ㄥ洜涓鸿璺緞涓嶇粡杩囨浠ｇ爜銆?
         if let Some((sei, ref crv)) = sub.seam_edge {
             if sei == vert_indices.len() {
                 // Degenerate seam edge at vertex 0 (sphere face seam).
@@ -764,18 +723,18 @@ impl ResultBuilder {
         let mut iw_vert_indices_all: Vec<usize> = Vec::new();
         for iw_poly in &sub.inner_wires {
             let iw_idx = inner_wire_edges.len();
-            // ✅ OCCT对齐: 2-point inner wire → 单条Circle3共享边。
-            // ✅ OCCT对齐: 2-point inner wire → 单条Circle3共享边(与sphere侧同一edge index)。
-            //    add_edge 按顶点对去重: sphere侧add_circle_edge(v0,v1,circle)创建edge E14,
-            //    这里的add_circle_edge(v0,v1,circle)因相同顶点对返回同一E14。
-            //    BRep wire: 同一条边 forward + reverse 形成闭合环路(同球面seam wire)。
+            // 鉁?OCCT瀵归綈: 2-point inner wire 鈫?鍗曟潯Circle3鍏变韩杈广€?
+            // 鉁?OCCT瀵归綈: 2-point inner wire 鈫?鍗曟潯Circle3鍏变韩杈?涓巗phere渚у悓涓€edge index)銆?
+            //    add_edge 鎸夐《鐐瑰鍘婚噸: sphere渚dd_circle_edge(v0,v1,circle)鍒涘缓edge E14,
+            //    杩欓噷鐨刟dd_circle_edge(v0,v1,circle)鍥犵浉鍚岄《鐐瑰杩斿洖鍚屼竴E14銆?
+            //    BRep wire: 鍚屼竴鏉¤竟 forward + reverse 褰㈡垚闂悎鐜矾(鍚岀悆闈eam wire)銆?
             if iw_poly.len() == 2 && sub.inner_wire_circle.is_some() {
                 let v0 = self.add_vertex(iw_poly[0]);
                 let v1 = self.add_vertex(iw_poly[1]);
                 let (_, crv) = sub.inner_wire_circle.as_ref().unwrap();
-                // ✅ OCCT对齐: 内环由圆弧边+闭合直边构成,而非 [ei_fwd, ei_rev]。
-                //    [ei_fwd, ei_rev] 沿同一弧往返形成退化零面积线。
-                //    圆弧 v0→v1 + 直边 v1→v0 形成有面积的闭合内环边界。
+                // 鉁?OCCT瀵归綈: 鍐呯幆鐢卞渾寮ц竟+闂悎鐩磋竟鏋勬垚,鑰岄潪 [ei_fwd, ei_rev]銆?
+                //    [ei_fwd, ei_rev] 娌垮悓涓€寮у線杩斿舰鎴愰€€鍖栭浂闈㈢Н绾裤€?
+                //    鍦嗗姬 v0鈫抳1 + 鐩磋竟 v1鈫抳0 褰㈡垚鏈夐潰绉殑闂悎鍐呯幆杈圭晫銆?
                 let ei_circ = self.add_circle_edge(v0, v1, crv.clone());
                 let ei_close = self.add_edge(v1, v0);
                 inner_wire_edges.push(vec![(ei_circ, true), (ei_close, true)]);
@@ -810,9 +769,9 @@ impl ResultBuilder {
                 vec![h[0], mid, h[1]]
             } else { h.clone() }
         }).collect();
-        // ✅ OCCT对齐: 用combined vertex array确保triangulation索引与DS顶点一一对应。
-        //    add_vertex 可能去重(内环端点与边界顶点位置重合),但 triangulation 的
-        //    组合顶点数组中每个位置都需有对应的DS顶点索引(不能仅依赖去重后的紧凑数组)。
+        // 鉁?OCCT瀵归綈: 鐢╟ombined vertex array纭繚triangulation绱㈠紩涓嶥S椤剁偣涓€涓€瀵瑰簲銆?
+        //    add_vertex 鍙兘鍘婚噸(鍐呯幆绔偣涓庤竟鐣岄《鐐逛綅缃噸鍚?,浣?triangulation 鐨?
+        //    缁勫悎椤剁偣鏁扮粍涓瘡涓綅缃兘闇€鏈夊搴旂殑DS椤剁偣绱㈠紩(涓嶈兘浠呬緷璧栧幓閲嶅悗鐨勭揣鍑戞暟缁?銆?
         let combined_verts: Vec<DVec3> = {
             let mut v = sub.boundary.clone();
             for h in &tri_holes {
@@ -885,260 +844,9 @@ impl ResultBuilder {
         self.face_origins.push(origin);
     }
 
-    /// ✅ OCCT对齐: 从 WireFace 发射 BRep 面 (替代 emit_face_with_origin)。
-    ///    直接从 WireSegment 获取边拓扑,无需 SubFace 的中间多边形表示。
-    fn emit_wire_face(
-        &mut self,
-        face_idx: usize,
-        wf: &WireFace,
-        segments: &[WireSegment],
-        ds: &DS,
-        flip: bool,
-        origin: FaceOrigin,
-    ) {
-        let face = &ds.faces[face_idx];
-        let mut normal = if flip { -face.normal } else { face.normal };
-        if normal.length_squared() <= TOLERANCE_METRIC_SQ_NEAR_ZERO {
-            normal = Self::estimate_boundary_normal_from_segments(&wf.outer_wire, segments, ds);
-        }
-        if normal.length_squared() <= TOLERANCE_METRIC_SQ_NEAR_ZERO {
-            return;
-        }
+    /// 鉁?OCCT瀵归綈: 浠?WireFace 鍙戝皠 BRep 闈?(鏇夸唬 emit_face_with_origin)銆?
 
-        // ── Outer wire: vertices + edges from WireSegments ──
-        let mut vert_indices = Vec::new();
-        let mut edge_indices = Vec::new();
-        for &si in &wf.outer_wire {
-            let seg = &segments[si];
-            let v1 = self.add_vertex(ds.vertices[seg.start_vertex].point);
-            let v2 = self.add_vertex(ds.vertices[seg.end_vertex].point);
-            if vert_indices.is_empty() || vert_indices.last() != Some(&v1) {
-                vert_indices.push(v1);
-            }
-            // Determine curve type from WireSegment.source
-            let (ei, forward) = if seg.is_seam {
-                // ✅ OCCT对齐: seam edge → degenerate edge
-                //    OCCT sphere face wire 中的 seam edge 是退化边(两端同一顶点),
-                //    不产生额外拓扑顶点。rcad wire pipeline 中 seam segment 用 v→v 退化边。
-                // ✅ OCCT对齐: seam 边 — 退化(v→v)或几何连接
-                let seam_deg = (ds.vertices[seg.start_vertex].point - ds.vertices[seg.end_vertex].point).length_squared() < TOLERANCE_ABS_SQ;
-                let sphere_surf = match &ds.faces[face_idx].surface {
-                    Surface3::Sphere(s) => s,
-                    _ => &SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, ref_dir: DVec3::X },
-                };
-                let ei = if seam_deg {
-                    self.add_edge_seam_degenerate(v1, sphere_surf)
-                } else {
-                    // ✅ OCCT对齐: 非退化 seam → 用 add_seam_edge 创建独立几何边
-                    //    (球面子午线圆),不与 IC 弧共享 edge index。
-                    let seam_normal = any_perpendicular(sphere_surf.axis).normalize();
-                    let seam_circle = Curve3::Circle(Circle3 {
-                        center: sphere_surf.center,
-                        normal: seam_normal,
-                        radius: sphere_surf.radius,
-                    });
-                    self.add_seam_edge(v1, v2, seam_circle)
-                };
-                (ei, true)
-            } else {
-                let ei = match &seg.source {
-                    WireEdgeSource::IntersectionCurve(ci) => {
-                        let crv = &ds.intersection_curves[*ci].curve;
-                        if let Curve3::Circle(_) = crv {
-                            self.add_circle_edge(v1, v2, crv.clone())
-                        } else {
-                            self.add_edge(v1, v2)
-                        }
-                    }
-                    WireEdgeSource::DsEdge(_) => {
-                        self.add_edge(v1, v2)
-                    }
-                    _ => self.add_edge(v1, v2),
-                };
-                let forward = self.edges[ei].0 == v1;
-                (ei, forward)
-            };
-            edge_indices.push((ei, forward));
-        }
-
-        // ── Inner wires (holes) ──
-        let mut inner_wire_edges: Vec<Vec<(usize, bool)>> = Vec::new();
-        let mut iw_vert_indices_all: Vec<usize> = Vec::new();
-        for iw in &wf.inner_wires {
-            let mut iw_verts = Vec::new();
-            let mut iw_edges = Vec::new();
-            for &si in iw {
-                let seg = &segments[si];
-                let v1 = self.add_vertex(ds.vertices[seg.start_vertex].point);
-                let v2 = self.add_vertex(ds.vertices[seg.end_vertex].point);
-                if iw_verts.is_empty() || iw_verts.last() != Some(&v1) {
-                    iw_verts.push(v1);
-                }
-                let ei = match &seg.source {
-                    WireEdgeSource::IntersectionCurve(ci) => {
-                        let crv = &ds.intersection_curves[*ci].curve;
-                        if let Curve3::Circle(_) = crv {
-                            self.add_circle_edge(v1, v2, crv.clone())
-                        } else {
-                            self.add_edge(v1, v2)
-                        }
-                    }
-                    _ => self.add_edge(v1, v2),
-                };
-                let forward = self.edges[ei].0 == v1;
-                iw_edges.push((ei, forward));
-            }
-            inner_wire_edges.push(iw_edges);
-            iw_vert_indices_all.extend(iw_verts);
-        }
-
-        // ── Triangulation ──
-        let outer_boundary: Vec<DVec3> = vert_indices.iter().map(|&vi| self.vertices[vi]).collect();
-        let iw_boundaries: Vec<Vec<DVec3>> = inner_wire_edges.iter().map(|iw_es| {
-            // Get one vertex per edge pair to reconstruct hole polygon
-            let mut pts = Vec::new();
-            for &(ei, _) in iw_es {
-                let (a, b) = self.edges[ei];
-                if pts.is_empty() || pts.last() != Some(&a) {
-                    pts.push(a);
-                }
-            }
-            pts.iter().map(|&vi| self.vertices[vi]).collect()
-        }).collect();
-        let all_vert_indices: Vec<usize> = [vert_indices.as_slice(), iw_vert_indices_all.as_slice()].concat();
-        let mut tris = if iw_boundaries.is_empty() {
-            triangulate_polygon(&outer_boundary, normal)
-        } else {
-            triangulate_polygon_with_holes(&outer_boundary, &iw_boundaries, normal)
-        };
-        for tri in &mut tris {
-            for idx in tri.iter_mut() {
-                *idx = all_vert_indices[*idx];
-            }
-        }
-
-        // ── Coincident face dedup ──
-        let centroid = outer_boundary.iter().copied().sum::<DVec3>() / outer_boundary.len().max(1) as f64;
-        let area = Self::polygon_signed_area_on_normal(&outer_boundary, normal);
-        let mut outer_sig: Vec<usize> = edge_indices.iter().map(|&(eid, _)| eid).collect();
-        outer_sig.sort_unstable();
-        let nlen = normal.length();
-        let nunit = if nlen > TOLERANCE_LEN_MIN { normal / nlen } else { normal };
-        for (existing_idx, (existing_outer, existing_inner, _existing_tris, existing_normal, _surf, _uv, existing_centroid, existing_area, _existing_sp)) in
-            self.faces.iter().enumerate()
-        {
-            let mut ex_sig: Vec<usize> = existing_outer.iter().map(|&(eid, _)| eid).collect();
-            for iw_edges in existing_inner {
-                ex_sig.extend(iw_edges.iter().map(|&(eid, _)| eid));
-            }
-            ex_sig.sort_unstable();
-            let elen = existing_normal.length();
-            if elen <= TOLERANCE_LEN_MIN { continue; }
-            let eunit = *existing_normal / elen;
-            let sig_match = ex_sig == outer_sig;
-            let geo_match = nunit.dot(eunit).abs() >= 0.99
-                && (*existing_centroid - centroid).length() <= TOLERANCE_LINEAR_RELAX_8
-                && (existing_area - area).abs() <= TOLERANCE_LINEAR_RELAX_8 * existing_area.max(area).max(1.0);
-            if sig_match || geo_match {
-                self.co_face_origins.push((existing_idx, origin));
-                return;
-            }
-        }
-
-        // ✅ OCCT对齐: 球面退化边 + seam 边 (OCCT sphere face 外环含退化边+seam)
-        let mut internal_verts = Vec::new();
-        if matches!(face.surface, Surface3::Sphere(_)) && !face.face_info.curves_in.is_empty() {
-            // ⏳ 部分对齐: wire pipeline 未覆盖时(section segments 退化为 2-point),
-            //    emit_face_with_origin 会添加 seam 顶点到 internal_verts。跳过
-            //    以避免南极点计入 face_internal_vertices 拓扑计数(V+1)。
-        } else if matches!(face.surface, Surface3::Sphere(_)) {
-            for &ei in &face.boundary_edges {
-                let edge = &ds.edges[ei];
-                let sv = self.add_vertex(ds.vertices[edge.start_vertex].point);
-                let ev = self.add_vertex(ds.vertices[edge.end_vertex].point);
-                let sdeg = self.add_edge(sv, sv);
-                edge_indices.push((sdeg, true));
-                internal_verts.push(sv);
-                if sv != ev {
-                    let edeg = self.add_edge(ev, ev);
-                    edge_indices.push((edeg, true));
-                    internal_verts.push(ev);
-                    let seam_ei = self.add_edge(sv, ev);
-                    edge_indices.push((seam_ei, true));
-                    edge_indices.push((seam_ei, false));
-                }
-                break;
-            }
-        }
-        // ✅ OCCT对齐: 为球面计算 UV domain (用于 SA 计算和曲面细分)
-        let sphere_uv = if matches!(&face.surface, Surface3::Sphere(_)) {
-            if let Surface3::Sphere(sph) = &face.surface {
-                let mut uvs: Vec<DVec2> = wf.outer_wire.iter().map(|&si| {
-                    let seg = &segments[si];
-                    sph.world_to_uv(ds.vertices[seg.start_vertex].point)
-                }).collect();
-                if let Some(&si) = wf.outer_wire.last() {
-                    let seg = &segments[si];
-                    uvs.push(sph.world_to_uv(ds.vertices[seg.end_vertex].point));
-                }
-                let u_min = uvs.iter().map(|uv| uv.x).fold(f64::INFINITY, f64::min);
-                let u_max = uvs.iter().map(|uv| uv.x).fold(f64::NEG_INFINITY, f64::max);
-                let v_min = uvs.iter().map(|uv| uv.y).fold(f64::INFINITY, f64::min);
-                let v_max = uvs.iter().map(|uv| uv.y).fold(f64::NEG_INFINITY, f64::max);
-                if (u_max - u_min).abs() > TOLERANCE_FLOAT_LOOSE && (v_max - v_min).abs() > TOLERANCE_FLOAT_LOOSE {
-                    Some([u_min, u_max, v_min, v_max])
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        self.face_internal_vtx.push(internal_verts);
-        self.faces.push((
-            edge_indices,
-            inner_wire_edges,
-            tris,
-            normal,
-            face.surface.clone(),
-            sphere_uv,
-            centroid,
-            area,
-            // sample point: for sphere faces, use UV domain center (inside the spherical
-            // polygon).  Otherwise use the first boundary vertex as fallback.
-            match (&face.surface, sphere_uv) {
-                (Surface3::Sphere(sph), Some([u0, u1, v0, v1])) => {
-                    sph.point_at(0.5 * (u0 + u1), 0.5 * (v0 + v1))
-                }
-                _ => ds.vertices.get(0).map(|v| v.point).unwrap_or(DVec3::ZERO),
-            },
-        ));
-        self.face_origins.push(origin);
-    }
-
-    fn estimate_boundary_normal_from_segments(
-        outer_wire: &[usize],
-        segments: &[WireSegment],
-        ds: &DS,
-    ) -> DVec3 {
-        if outer_wire.len() < 3 { return DVec3::ZERO; }
-        let pts: Vec<DVec3> = outer_wire.iter().map(|&si| {
-            let seg = &segments[si];
-            ds.vertices[seg.start_vertex].point
-        }).collect();
-        let mut normal = DVec3::ZERO;
-        for i in 0..pts.len() {
-            let j = (i + 1) % pts.len();
-            normal.x += (pts[i].y - pts[j].y) * (pts[i].z + pts[j].z);
-            normal.y += (pts[i].z - pts[j].z) * (pts[i].x + pts[j].x);
-            normal.z += (pts[i].x - pts[j].x) * (pts[i].y + pts[j].y);
-        }
-        normal
-    }
-
-    /// When an edge鈥檚 open segment passes through another result vertex (classic
+    /// When an edge閳ユ獨 open segment passes through another result vertex (classic
     /// T-junction), replace that edge in all wires by a chain of shorter edges
     /// through those vertices so adjacent faces share identical topology.
     fn subdivide_edges_at_interior_vertices(&mut self) {
@@ -1161,7 +869,7 @@ impl ResultBuilder {
             let mut replacements: Vec<Option<Vec<usize>>> = vec![None; n_edges];
             let mut any = false;
             for ei in 0..n_edges {
-                // ✅ OCCT对齐: 跳过精确 Circle3 弧边(T-junction只细分直边)。
+                // 鉁?OCCT瀵归綈: 璺宠繃绮剧‘ Circle3 寮ц竟(T-junction鍙粏鍒嗙洿杈?銆?
                 if self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).is_some() { continue; }
                 let Some(seq) = vertex_sequences[ei].as_ref() else {
                     continue;
@@ -1285,23 +993,23 @@ impl ResultBuilder {
             self.subdivide_edges_at_interior_vertices();
             eprintln!("AFTER subdivide: {} vertices, {} edges, {} faces", self.vertices.len(), self.edges.len(), self.faces.len());
         }
-        // ✅ OCCT对齐: BuildSplitFaces 创建共享边 — 合并PaveFiller为两侧面创建的几何重合边。
-        //    OCCT IntTools_FaceFace 创建一条3D交线,BuildSplitFaces 用该交线同时在两侧
-        //    面创建同一 TopoDS_Edge(仅 orientation 相反),两侧自然共享边索引。
-        //    rcad 的 add_edge 按顶点对 `(v_min,v_max)` 去重,但 PaveFiller 数值噪声(≈1e-6)
-        //    使两侧的 add_vertex 创建不同 vertex index,导致 add_edge(v_a1,v_a2) ≠
-        //    add_edge(v_b1,v_b2),两侧不共享 edge index。此处先合并重合顶点(relaxed
-        //    tolerance),再按顶点对合并边,等价于 OCCT 的「一条交线 → 一个 Edge」。
+        // 鉁?OCCT瀵归綈: BuildSplitFaces 鍒涘缓鍏变韩杈?鈥?鍚堝苟PaveFiller涓轰袱渚ч潰鍒涘缓鐨勫嚑浣曢噸鍚堣竟銆?
+        //    OCCT IntTools_FaceFace 鍒涘缓涓€鏉?D浜ょ嚎,BuildSplitFaces 鐢ㄨ浜ょ嚎鍚屾椂鍦ㄤ袱渚?
+        //    闈㈠垱寤哄悓涓€ TopoDS_Edge(浠?orientation 鐩稿弽),涓や晶鑷劧鍏变韩杈圭储寮曘€?
+        //    rcad 鐨?add_edge 鎸夐《鐐瑰 `(v_min,v_max)` 鍘婚噸,浣?PaveFiller 鏁板€煎櫔澹?鈮?e-6)
+        //    浣夸袱渚х殑 add_vertex 鍒涘缓涓嶅悓 vertex index,瀵艰嚧 add_edge(v_a1,v_a2) 鈮?
+        //    add_edge(v_b1,v_b2),涓や晶涓嶅叡浜?edge index銆傛澶勫厛鍚堝苟閲嶅悎椤剁偣(relaxed
+        //    tolerance),鍐嶆寜椤剁偣瀵瑰悎骞惰竟,绛変环浜?OCCT 鐨勩€屼竴鏉′氦绾?鈫?涓€涓?Edge銆嶃€?
         //
-        //    OCCT 源码: BOPTools_AlgoTools.cxx L662-L674 (MakeEdge for section edges)
-        //    rcad 等价实现: 此处几何级顶点+边合并(自创,但语义等价)
+        //    OCCT 婧愮爜: BOPTools_AlgoTools.cxx L662-L674 (MakeEdge for section edges)
+        //    rcad 绛変环瀹炵幇: 姝ゅ鍑犱綍绾ч《鐐?杈瑰悎骞?鑷垱,浣嗚涔夌瓑浠?
         {
-            let merge_tol_sq = TOLERANCE_ABS_SQ * 4096.0; // (64*TOLERANCE_ABS)² ≈ 4e-11
+            let merge_tol_sq = TOLERANCE_ABS_SQ * 4096.0; // (64*TOLERANCE_ABS)虏 鈮?4e-11
             if std::env::var("RCAD_DEBUG_MERGE").is_ok() {
                 eprintln!("[BUILD_MERGE] pre: {} verts, {} edges, {} faces", self.vertices.len(), self.edges.len(), self.faces.len());
             }
 
-            // Step 1: 顶点合并 — 按位置分组,映射到最小 index
+            // Step 1: 椤剁偣鍚堝苟 鈥?鎸変綅缃垎缁?鏄犲皠鍒版渶灏?index
             let nv = self.vertices.len();
             let mut v_canon: Vec<usize> = (0..nv).collect();
             for i in 0..nv {
@@ -1319,14 +1027,14 @@ impl ResultBuilder {
                 v_canon[i] = r;
             }
 
-            // Step 2: 更新 edge 顶点 index
+            // Step 2: 鏇存柊 edge 椤剁偣 index
             for e in self.edges.iter_mut() {
                 e.0 = v_canon[e.0];
                 e.1 = v_canon[e.1];
             }
 
-            // Step 3: 边去重 — 相同 (v_min,v_max) 对且曲线类型相同的边合并
-            // ✅ OCCT对齐: 不合并不同曲线类型的边(IC圆弧 vs 平面直边共享相同顶点对但几何不同)
+            // Step 3: 杈瑰幓閲?鈥?鐩稿悓 (v_min,v_max) 瀵逛笖鏇茬嚎绫诲瀷鐩稿悓鐨勮竟鍚堝苟
+            // 鉁?OCCT瀵归綈: 涓嶅悎骞朵笉鍚屾洸绾跨被鍨嬬殑杈?IC鍦嗗姬 vs 骞抽潰鐩磋竟鍏变韩鐩稿悓椤剁偣瀵逛絾鍑犱綍涓嶅悓)
             let ne = self.edges.len();
             let mut e_canon: Vec<usize> = (0..ne).collect();
             // Track Circle curves that need to be transferred to the survivor edge
@@ -1352,7 +1060,7 @@ impl ResultBuilder {
                                 }
                             }
                             (None, None) => true, // Both plain: merge
-                            // ✅ OCCT对齐: Circle边与plain边共享相同顶点对 → 合并保留Circle。
+                            // 鉁?OCCT瀵归綈: Circle杈逛笌plain杈瑰叡浜浉鍚岄《鐐瑰 鈫?鍚堝苟淇濈暀Circle銆?
                             _ => true, // One Circle, one plain: merge
                         };
                         if merge {
@@ -1375,7 +1083,7 @@ impl ResultBuilder {
                 self.custom_edge_curves[*surv] = Some(circ.clone());
             }
 
-            // Step 4: 更新 face 中所有 edge 引用
+            // Step 4: 鏇存柊 face 涓墍鏈?edge 寮曠敤
             for f in self.faces.iter_mut() {
                 for we in f.0.iter_mut() { we.0 = e_canon[we.0]; }
                 for iw in f.1.iter_mut() {
@@ -1383,7 +1091,7 @@ impl ResultBuilder {
                 }
             }
 
-            // Step 5: 压缩边数组 — 移除重复边,保持 curve 数据同步
+            // Step 5: 鍘嬬缉杈规暟缁?鈥?绉婚櫎閲嶅杈?淇濇寔 curve 鏁版嵁鍚屾
             let mut new_edges: Vec<(usize, usize)> = Vec::new();
             let mut new_curves: Vec<Option<Curve3>> = Vec::new();
             let mut e_remap: Vec<usize> = (0..ne).collect();
@@ -1503,9 +1211,9 @@ impl ResultBuilder {
                 eprintln!("[EDGE_FINAL] {} edges: {}", edges.len(),
                     edges.iter().map(|e| format!("({},{})", e.start, e.end)).collect::<Vec<_>>().join(" "));
             }
-            // ✅ OCCT对齐: 设置 section edge 的精确曲线(来自 add_circle_edge)。
-            //    OCCT: MakeEdge(aIC, ...) 直接创建带精确几何曲线的 BRep edge。
-            //    rcad 默认由 recompute_plane_surfaces 补 Line3,这里覆盖为 Circle3。
+            // 鉁?OCCT瀵归綈: 璁剧疆 section edge 鐨勭簿纭洸绾?鏉ヨ嚜 add_circle_edge)銆?
+            //    OCCT: MakeEdge(aIC, ...) 鐩存帴鍒涘缓甯︾簿纭嚑浣曟洸绾跨殑 BRep edge銆?
+            //    rcad 榛樿鐢?recompute_plane_surfaces 琛?Line3,杩欓噷瑕嗙洊涓?Circle3銆?
             for (ei, curve_opt) in self.custom_edge_curves.iter().enumerate() {
                 if let Some(crv) = curve_opt {
                     let new_ei = edge_remap[ei];
@@ -1575,7 +1283,7 @@ fn annotate_history_from_ds(brep: &BRep, history: &mut BooleanHistory, ds: &DS) 
     // ds[0..a_vertex_count] = A vertices, ds[a_vertex_count..total] = B vertices,
     // intersection vertices were added later (index >= a_vertex_count + b_vertex_count).
     let a_vc = ds.a_vertex_count;
-    // Map result vertex index 鈫?DS vertex index (or usize::MAX if no match).
+    // Map result vertex index 閳?DS vertex index (or usize::MAX if no match).
     let mut result_to_ds: Vec<usize> = vec![usize::MAX; n_result_verts];
 
     for (ri, rv) in brep.vertices.iter().enumerate() {
@@ -1610,7 +1318,7 @@ fn annotate_history_from_ds(brep: &BRep, history: &mut BooleanHistory, ds: &DS) 
         let origin = if ds_s == usize::MAX || ds_e == usize::MAX {
             EdgeOrigin::Generated
         } else if ds_s < a_vc && ds_e < a_vc {
-            // Both endpoints are A vertices 鈥?look for a DS edge in A range.
+            // Both endpoints are A vertices 閳?look for a DS edge in A range.
             let found = (0..a_ec.min(total_ds_edges)).find(|&dei| {
                 let de = &ds.edges[dei];
                 (de.start_vertex == ds_s && de.end_vertex == ds_e)
@@ -1621,7 +1329,7 @@ fn annotate_history_from_ds(brep: &BRep, history: &mut BooleanHistory, ds: &DS) 
                 None => EdgeOrigin::SplitFromA(ds_s.min(a_vc - 1)),
             }
         } else if ds_s >= a_vc && ds_e >= a_vc {
-            // Both endpoints are B vertices 鈥?look for a DS edge in B range.
+            // Both endpoints are B vertices 閳?look for a DS edge in B range.
             let found = (a_ec..total_ds_edges).find(|&dei| {
                 let de = &ds.edges[dei];
                 (de.start_vertex == ds_s && de.end_vertex == ds_e)
@@ -1768,12 +1476,12 @@ fn classify_subface_against_box(
     op: BooleanOpType,
     source: SourceSide,
 ) -> Option<Classification> {
-    // Skip planar sub-faces — `classify_point` correctly classifies them as On
+    // Skip planar sub-faces 鈥?`classify_point` correctly classifies them as On
     // when they're coplanar with a box face, allowing the coplanar dedup in
     // `build_with_history` to avoid double-counting the shared area.  The AABB
     // boundary-vertex check was designed for tessellated curved surfaces
     // (cone/cylinder UV grid) where individual grid cells straddle the boundary.
-    // Planar BSpline surfaces (from NURBS-converted boxes) are also planar —
+    // Planar BSpline surfaces (from NURBS-converted boxes) are also planar 鈥?
     // their boundary vertices can span both inside and outside the box, causing
     // a false In/Out from a single vertex check.  OCCT classifies such faces by
     // sampling interior points (BOPTools_AlgoTools::PointInFace), not by
@@ -1813,7 +1521,7 @@ fn classify_subface_against_box(
             if n.z > 0.0 { max_z = max_z.min(d.z); }
             else { min_z = min_z.max(d.z); }
         } else {
-            return None; // non-axis-aligned plane → not a simple box
+            return None; // non-axis-aligned plane 鈫?not a simple box
         }
     }
 
@@ -1821,7 +1529,7 @@ fn classify_subface_against_box(
         || min_y.is_infinite() || max_y.is_infinite()
         || min_z.is_infinite() || max_z.is_infinite()
     {
-        return None; // incomplete bounds → not a full box
+        return None; // incomplete bounds 鈫?not a full box
     }
 
     let require_all_inside = op == BooleanOpType::Intersection
@@ -1838,8 +1546,8 @@ fn classify_subface_against_box(
 
         if require_all_inside {
             if !inside {
-                // Boundary vertex outside the box → this sub-face straddles
-                // the boundary.  Don't immediately return Out — the tessellation
+                // Boundary vertex outside the box 鈫?this sub-face straddles
+                // the boundary.  Don't immediately return Out 鈥?the tessellation
                 // vertices of a curved sub-face (cylinder wall near a box face)
                 // can fall outside the box even when most of the sub-face is
                 // inside.  Return None to fall through to the probe grid which
@@ -1853,11 +1561,11 @@ fn classify_subface_against_box(
         }
     }
 
-    // All vertices satisfy the condition → uniform classification
+    // All vertices satisfy the condition 鈫?uniform classification
     let result = if require_all_inside {
-        Classification::In  // all inside → keep for Intersection / Difference B-side
+        Classification::In  // all inside 鈫?keep for Intersection / Difference B-side
     } else {
-        Classification::Out // all outside → keep for Union / Difference A-side
+        Classification::Out // all outside 鈫?keep for Union / Difference A-side
     };
     Some(result)
 }
@@ -1865,7 +1573,7 @@ fn classify_subface_against_box(
 /// Classify a sub-face against the solid described by `solid_face_indices`.
 ///
 /// For [`BooleanOpType::Intersection`], [`SubFace::sample_point`] can land outside the
-/// other solid even when the trimmed patch overlaps both volumes (e.g. sphere 鈭?
+/// other solid even when the trimmed patch overlaps both volumes (e.g. sphere 閳?
 /// finite cylinder: the inward offset toward the sphere center exits the cylinder
 /// slab). When the primary sample is `Out`, we probe a coarse UV grid on
 /// [`SubFace::uv_domain`] before concluding `Out`.
@@ -1875,8 +1583,8 @@ fn classify_subface_against_box(
 /// happen to fall within the tolerance band of the other solid's surface despite the
 /// sub-face being entirely outside (e.g. a planar sub-face of a box near a sphere's
 /// surface). In that case we probe boundary and interior samples to break the tie.
-// ✅ OCCT对齐: 分类子面为 In/Out/On (ClassifyFaces)。
-//    接受 FaceSampleData(从 WireFace 或 SubFace 构造)。
+// 鉁?OCCT瀵归綈: 鍒嗙被瀛愰潰涓?In/Out/On (ClassifyFaces)銆?
+//    鎺ュ彈 FaceSampleData(浠?WireFace 鎴?SubFace 鏋勯€?銆?
 fn classify_against_solid_for_boolean(
     op: BooleanOpType,
     source: SourceSide,
@@ -1884,9 +1592,9 @@ fn classify_against_solid_for_boolean(
     solid_face_indices: &[usize],
     ds: &DS,
 ) -> Classification {
-    // ✅ OCCT对齐: 先尝试 IsInternalFace 的 ComputeState 部分
-    //    (仅 Level 2a: 边不在 solid 上时分类中点)。
-    //    Level 1 (边级角度法) 暂不用，因简化角度法对 box face 产生误判。
+    // 鉁?OCCT瀵归綈: 鍏堝皾璇?IsInternalFace 鐨?ComputeState 閮ㄥ垎
+    //    (浠?Level 2a: 杈逛笉鍦?solid 涓婃椂鍒嗙被涓偣)銆?
+    //    Level 1 (杈圭骇瑙掑害娉? 鏆備笉鐢紝鍥犵畝鍖栬搴︽硶瀵?box face 浜х敓璇垽銆?
     {
         let edge_bounds = build_edge_bounds(solid_face_indices, ds);
         if let Some(class) = classify_by_off_solid_edge(sub, &edge_bounds, solid_face_indices, ds) {
@@ -1907,7 +1615,7 @@ fn classify_against_solid_for_boolean(
         return class;
     }
 
-    // ✅ OCCT对齐: Edge-midpoint (ComputeState L662-L674).
+    // 鉁?OCCT瀵归綈: Edge-midpoint (ComputeState L662-L674).
     {
         let bnd = &sub.boundary;
         if bnd.len() >= 3 {
@@ -1953,7 +1661,7 @@ fn classify_against_solid_for_boolean(
     let primary = sub.sample_point();
     let c0 = classify_point(primary, solid_face_indices, ds);
 
-    // Fast path: axis-aligned box solid — check each boundary vertex of the
+    // Fast path: axis-aligned box solid 鈥?check each boundary vertex of the
     // sub-face against the box AABB.  For tessellated faces (cone/cylinder UV
     // grid), individual grid cells can straddle the box boundary even when
     // their sample point falls inside, inflating the surface area.
@@ -1965,14 +1673,14 @@ fn classify_against_solid_for_boolean(
         return class;
     }
 
-    // For non-Intersection ops, only probe when primary is In or On — the UV centroid
+    // For non-Intersection ops, only probe when primary is In or On 鈥?the UV centroid
     // of a large sub-face can fall inside the other solid even when portions of
     // the sub-face extend outside (e.g. offset cylinder-cylinder where the trim
     // curves don't fully enclose the intersection region on one surface).
     // On-classified sub-faces (e.g. cylinder wall sub-faces whose sample point
     // lands on a box corner) need probe grid fallback to disambiguate.
     //
-    // For Difference B-side (In → keep), probe even when primary is Out, because
+    // For Difference B-side (In 鈫?keep), probe even when primary is Out, because
     // cylinder wall sub-faces near the box boundary can have their UV centroid
     // outside the box even though the sub-face is partially inside (tessellation
     // vertices straddle the boundary).  Without this probe, the wall is discarded
@@ -2002,7 +1710,7 @@ fn classify_against_solid_for_boolean(
     }
 
     // When the primary sample is In or On, the sub-face centroid may not be
-    // representative — boundary-vertex centroids can fall inside the other solid
+    // representative 鈥?boundary-vertex centroids can fall inside the other solid
     // even when the sub-face is entirely outside (e.g. a planar sub-face of a box
     // near a sphere's surface, where arc points cluster on one side of the polygon).
     // Probe additional samples to disambiguate.
@@ -2011,7 +1719,7 @@ fn classify_against_solid_for_boolean(
             // 1. For planar surfaces: true area centroid + interior blend points
             //    (area centroid always inside a convex planar polygon).
             //    For curved surfaces the boundary is NOT planar so skip the
-            //    area centroid — only use UV-domain interior points.
+            //    area centroid 鈥?only use UV-domain interior points.
             let is_planar = matches!(sub.surface, Surface3::Plane(_));
             let interior_pts: Vec<DVec3> = if is_planar && sub.boundary.len() >= 3 {
                 let ac = planar_polygon_centroid(&sub.boundary, sub.normal);
@@ -2032,7 +1740,7 @@ fn classify_against_solid_for_boolean(
                 if (u1 - u0).abs() > TOLERANCE_FLOAT_LOOSE
                     && (v1 - v0).abs() > TOLERANCE_FLOAT_LOOSE
                 {
-                    // For tiny faces (bbox diagonal < 10×TOLERANCE_MESH_LEGACY),
+                    // For tiny faces (bbox diagonal < 10脳TOLERANCE_MESH_LEGACY),
                     // use denser probe grid to avoid misclassification.
                     let bbox_diag = sub.boundary.iter().copied().reduce(|a, b| a.min(b)).zip(
                         sub.boundary.iter().copied().reduce(|a, b| a.max(b)),
@@ -2095,9 +1803,9 @@ fn classify_against_solid_for_boolean(
             return Classification::Out;
         }
 
-        // ✅ OCCT对齐: In 多数检查 — 与 Out 检查对称。
-        //    当初始分类为 In 或 On,多数 probe 点为 In → 面在 solid 内部。
-        //    OCCT PointInFace + SolidClassifier 对内部点直接返回 In。
+        // 鉁?OCCT瀵归綈: In 澶氭暟妫€鏌?鈥?涓?Out 妫€鏌ュ绉般€?
+        //    褰撳垵濮嬪垎绫讳负 In 鎴?On,澶氭暟 probe 鐐逛负 In 鈫?闈㈠湪 solid 鍐呴儴銆?
+        //    OCCT PointInFace + SolidClassifier 瀵瑰唴閮ㄧ偣鐩存帴杩斿洖 In銆?
         let min_in = if matches!(sub.surface, Surface3::Plane(_)) { out_count * 2 } else { out_count };
         let on_coincident_in = c0 == Classification::On && total >= 2 && out_count == 0;
         if (total >= 3 || on_coincident_in) && in_count >= min_in {
@@ -2111,7 +1819,7 @@ fn classify_against_solid_for_boolean(
             && matches!(sub.surface, Surface3::Plane(_))
         {
             let eps = TOLERANCE_ABS * 10.0;
-            // Try offset in the INTERIOR direction (−normal), which moves the
+            // Try offset in the INTERIOR direction (鈭抧ormal), which moves the
             // sample point INTO the parent solid. For a cap coplanar with the other
             // solid's face, interior-offset pushes the point inside the other solid
             // (if the (x,y) centroid lies within the other solid's XY footprint) or
@@ -2135,7 +1843,7 @@ fn classify_against_solid_for_boolean(
         }
         // For On-classified planar faces with mixed In/Out probe results, reclassify
         // based on majority. The sample point fell on an edge/vertex of the other
-        // solid (hence On), but the face itself straddles the boundary — probe
+        // solid (hence On), but the face itself straddles the boundary 鈥?probe
         // points on either side reveal which side the face predominantly belongs to.
         if c0 == Classification::On && in_count > 0 && out_count > 0 {
             return if out_count >= in_count {
@@ -2198,10 +1906,10 @@ fn classify_against_solid_for_boolean(
 }
 
 // =============================================================================
-// OCCT 1:1 对齐: IsInternalFace (BOPTools_AlgoTools.cxx L791-872)
+// OCCT 1:1 瀵归綈: IsInternalFace (BOPTools_AlgoTools.cxx L791-872)
 // =============================================================================
 
-/// ✅ OCCT对齐: 构建 MEF (Map Edge→Faces) 用于边级角度法。
+/// 鉁?OCCT瀵归綈: 鏋勫缓 MEF (Map Edge鈫扚aces) 鐢ㄤ簬杈圭骇瑙掑害娉曘€?
 /// OCCT BOPAlgo_FillIn3DParts::MapEdgesAndFaces (BOPAlgo_Tools.cxx L1479-1503)
 fn build_mef(face_indices: &[usize], ds: &DS) -> HashMap<usize, Vec<usize>> {
     let mut mef: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -2214,7 +1922,7 @@ fn build_mef(face_indices: &[usize], ds: &DS) -> HashMap<usize, Vec<usize>> {
     mef
 }
 
-/// ✅ OCCT对齐: 构建 bounds 集合 (solid 的所有拓扑边)。
+/// 鉁?OCCT瀵归綈: 鏋勫缓 bounds 闆嗗悎 (solid 鐨勬墍鏈夋嫇鎵戣竟)銆?
 /// OCCT TopExp::MapShapes(theSolid, TopAbs_EDGE, aBounds)
 fn build_edge_bounds(face_indices: &[usize], ds: &DS) -> std::collections::BTreeSet<usize> {
     let mut bounds: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
@@ -2227,39 +1935,39 @@ fn build_edge_bounds(face_indices: &[usize], ds: &DS) -> std::collections::BTree
     bounds
 }
 
-/// ✅ OCCT对齐: PointInFace 等价 — 从 SubFace 的 UV domain 获取内部采样点。
+/// 鉁?OCCT瀵归綈: PointInFace 绛変环 鈥?浠?SubFace 鐨?UV domain 鑾峰彇鍐呴儴閲囨牱鐐广€?
 /// OCCT BOPTools_AlgoTools3D.cxx L885-917
 ///
-/// rcad 实现: SubFace 已有 uv_domain 和 uv_centroid,直接用 UV centroid
-/// 作为内部点 (OCCT 用 Hatcher 做 2D point-in-face,但 rcad 的 SubFace
-/// 是参数化区域,UV centroid 在内部)。
+/// rcad 瀹炵幇: SubFace 宸叉湁 uv_domain 鍜?uv_centroid,鐩存帴鐢?UV centroid
+/// 浣滀负鍐呴儴鐐?(OCCT 鐢?Hatcher 鍋?2D point-in-face,浣?rcad 鐨?SubFace
+/// 鏄弬鏁板寲鍖哄煙,UV centroid 鍦ㄥ唴閮?銆?
 fn point_in_face(sub: &FaceSampleData) -> Option<DVec3> {
-    // 优先用 uv_centroid — 它是面参数空间的几何中心
+    // 浼樺厛鐢?uv_centroid 鈥?瀹冩槸闈㈠弬鏁扮┖闂寸殑鍑犱綍涓績
     if let Some(uv) = sub.uv_centroid {
         return Some(sub.surface.point_at(uv.x, uv.y));
     }
-    // 回退: 从 uv_domain 取中间点
+    // 鍥為€€: 浠?uv_domain 鍙栦腑闂寸偣
     if let Some([u0, u1, v0, v1]) = sub.uv_domain {
         let u = (u0 + u1) * 0.5;
         let v = (v0 + v1) * 0.5;
         return Some(sub.surface.point_at(u, v));
     }
-    // 最后回退: boundary centroid (与 sample_point() 一致)
+    // 鏈€鍚庡洖閫€: boundary centroid (涓?sample_point() 涓€鑷?
     if !sub.boundary.is_empty() {
         return Some(sub.boundary.iter().copied().sum::<DVec3>() / sub.boundary.len() as f64);
     }
     None
 }
 
-/// ✅ OCCT对齐: Level 2a — ComputeState, find edge not on solid.
+/// 鉁?OCCT瀵归綈: Level 2a 鈥?ComputeState, find edge not on solid.
 /// OCCT BOPTools_AlgoTools::ComputeState (L650-699)
 ///
-/// 遍历 SubFace 的每条边界段,如果该段不在 solid 的边集中,
-/// 用 classify_point 分类中点并返回结果。
+/// 閬嶅巻 SubFace 鐨勬瘡鏉¤竟鐣屾,濡傛灉璇ユ涓嶅湪 solid 鐨勮竟闆嗕腑,
+/// 鐢?classify_point 鍒嗙被涓偣骞惰繑鍥炵粨鏋溿€?
 ///
-/// NOTE: 仅对明确的 Out (不在 solid 内) 返回 Some(false)。
-/// In 结果不可靠 — section edge 中点可能在 solid 表面,
-/// classify_point 的 ray casting 对表面上点的分类不稳定。
+/// NOTE: 浠呭鏄庣‘鐨?Out (涓嶅湪 solid 鍐? 杩斿洖 Some(false)銆?
+/// In 缁撴灉涓嶅彲闈?鈥?section edge 涓偣鍙兘鍦?solid 琛ㄩ潰,
+/// classify_point 鐨?ray casting 瀵硅〃闈笂鐐圭殑鍒嗙被涓嶇ǔ瀹氥€?
 fn classify_by_off_solid_edge(
     sub: &FaceSampleData,
     edge_bounds: &std::collections::BTreeSet<usize>,
@@ -2281,7 +1989,7 @@ fn classify_by_off_solid_edge(
         let p1 = boundary[i];
         let p2 = boundary[j];
 
-        // 找到对应的 DS 边
+        // 鎵惧埌瀵瑰簲鐨?DS 杈?
         let k1 = quantize_pos(p1, tolerance);
         let k2 = quantize_pos(p2, tolerance);
 
@@ -2300,49 +2008,49 @@ fn classify_by_off_solid_edge(
         };
 
         if !mid_in_bounds {
-            // 边不在 solid 的拓扑边集中
+            // 杈逛笉鍦?solid 鐨勬嫇鎵戣竟闆嗕腑
             total_found += 1;
             let mid = (p1 + p2) * 0.5;
             match classify_point(mid, solid_face_indices, ds) {
-                Classification::Out => return Some(false), // 明确在外面
-                Classification::In => { in_count += 1; }   // 可能在外面,累积
-                Classification::On => {}                    // 在面上,继续
+                Classification::Out => return Some(false), // 鏄庣‘鍦ㄥ闈?
+                Classification::In => { in_count += 1; }   // 鍙兘鍦ㄥ闈?绱Н
+                Classification::On => {}                    // 鍦ㄩ潰涓?缁х画
             }
         }
     }
 
-    // 所有不在 solid 上的边中点都分类为 In → 可能面在 solid 内部
-    // 但需要 ≥2 条边都 In 才可靠 (单条边可能误判)
+    // 鎵€鏈変笉鍦?solid 涓婄殑杈逛腑鐐归兘鍒嗙被涓?In 鈫?鍙兘闈㈠湪 solid 鍐呴儴
+    // 浣嗛渶瑕?鈮? 鏉¤竟閮?In 鎵嶅彲闈?(鍗曟潯杈瑰彲鑳借鍒?
     if total_found >= 2 && in_count == total_found {
         return Some(true);
     }
     None
 }
 
-/// 量化 3D 位置到 u64 key,用于容差匹配。
+/// 閲忓寲 3D 浣嶇疆鍒?u64 key,鐢ㄤ簬瀹瑰樊鍖归厤銆?
 fn quantize_pos(p: DVec3, tolerance: f64) -> u64 {
     let scale = 1.0 / tolerance;
     let x = (p.x * scale).round() as i64;
     let y = (p.y * scale).round() as i64;
     let z = (p.z * scale).round() as i64;
-    // 组合为 u64
+    // 缁勫悎涓?u64
     let xb = (x as u64) & 0x3FFFFF;
     let yb = (y as u64) & 0x3FFFFF;
     let zb = (z as u64) & 0x3FFFFF;
     (xb << 42) | (yb << 21) | zb
 }
 
-/// ✅ OCCT对齐: IsInternalFace 主函数 (BOPTools_AlgoTools.cxx L791-872)
+/// 鉁?OCCT瀵归綈: IsInternalFace 涓诲嚱鏁?(BOPTools_AlgoTools.cxx L791-872)
 ///
-/// 两级分类:
-///   Level 1: 边级角度法 — 对于在 solid 上有多于 1 个邻面的边,
-///            计算角度判断面是否在 solid 内部。
-///   Level 2: ComputeState — 先找不在 solid 上的边分类中点,
-///            否则 PointInFace → classify_point。
+/// 涓ょ骇鍒嗙被:
+///   Level 1: 杈圭骇瑙掑害娉?鈥?瀵逛簬鍦?solid 涓婃湁澶氫簬 1 涓偦闈㈢殑杈?
+///            璁＄畻瑙掑害鍒ゆ柇闈㈡槸鍚﹀湪 solid 鍐呴儴銆?
+///   Level 2: ComputeState 鈥?鍏堟壘涓嶅湪 solid 涓婄殑杈瑰垎绫讳腑鐐?
+///            鍚﹀垯 PointInFace 鈫?classify_point銆?
 ///
-/// 返回: Some(true) = 面在 solid 内部 (IN)
-///       Some(false) = 面不在 solid 内部 (OUT)
-///       None = 无法确定
+/// 杩斿洖: Some(true) = 闈㈠湪 solid 鍐呴儴 (IN)
+///       Some(false) = 闈笉鍦?solid 鍐呴儴 (OUT)
+///       None = 鏃犳硶纭畾
 fn is_internal_face(
     sub: &FaceSampleData,
     solid_face_indices: &[usize],
@@ -2357,19 +2065,19 @@ fn is_internal_face(
     let edge_bounds = build_edge_bounds(solid_face_indices, ds);
 
     // ====================================================================
-    // Level 1: 边级角度法 (edge-angle method)
+    // Level 1: 杈圭骇瑙掑害娉?(edge-angle method)
     // OCCT L812-856
     //
-    // NOTE: 完整的角度法需要 GetFaceOff 的几何计算(法线投影到边切向平面、
-    // 角度计算等)。当前实现先简化为:对于在 solid 上有 2 个邻面的边,
-    // 计算两个邻面法线在边切向平面上的夹角,若被分类面位于最小角区域则判定为内部。
+    // NOTE: 瀹屾暣鐨勮搴︽硶闇€瑕?GetFaceOff 鐨勫嚑浣曡绠?娉曠嚎鎶曞奖鍒拌竟鍒囧悜骞抽潰銆?
+    // 瑙掑害璁＄畻绛?銆傚綋鍓嶅疄鐜板厛绠€鍖栦负:瀵逛簬鍦?solid 涓婃湁 2 涓偦闈㈢殑杈?
+    // 璁＄畻涓や釜閭婚潰娉曠嚎鍦ㄨ竟鍒囧悜骞抽潰涓婄殑澶硅,鑻ヨ鍒嗙被闈綅浜庢渶灏忚鍖哄煙鍒欏垽瀹氫负鍐呴儴銆?
     // ====================================================================
-    let mef_imm = &mef; // 借用
+    let mef_imm = &mef; // 鍊熺敤
 
-    // 对 SubFace 的每条边界段,尝试匹配 DS 边
+    // 瀵?SubFace 鐨勬瘡鏉¤竟鐣屾,灏濊瘯鍖归厤 DS 杈?
     let n = sub.boundary.len();
     if n >= 3 {
-        // 内部标志: true=至少有一条边明确指示内部
+        // 鍐呴儴鏍囧織: true=鑷冲皯鏈変竴鏉¤竟鏄庣‘鎸囩ず鍐呴儴
         let mut edge_angle_result: Option<bool> = None;
 
         for i in 0..n {
@@ -2377,7 +2085,7 @@ fn is_internal_face(
             let p1 = sub.boundary[i];
             let p2 = sub.boundary[j];
 
-            // 找到对应的 DS 边
+            // 鎵惧埌瀵瑰簲鐨?DS 杈?
             let tolerance = TOLERANCE_ABS * 100.0;
             let k1 = quantize_pos(p1, tolerance);
             let k2 = quantize_pos(p2, tolerance);
@@ -2394,31 +2102,31 @@ fn is_internal_face(
                 if let Some(adj_faces) = mef_imm.get(&ei) {
                     let a_nb_f = adj_faces.len();
                     if a_nb_f == 1 {
-                        // ✅ OCCT对齐: 边在 solid 上有 1 个邻面 (L834-846)
-                        // 对应 OCCT: aE is internal edge on aLF.First()
-                        // 检查该面上边的方向 — 由于 SubFace 级别没有方向信息,
-                        // 简化为:如果该邻面法线与 SubFace 法线同向 → 内部
+                        // 鉁?OCCT瀵归綈: 杈瑰湪 solid 涓婃湁 1 涓偦闈?(L834-846)
+                        // 瀵瑰簲 OCCT: aE is internal edge on aLF.First()
+                        // 妫€鏌ヨ闈笂杈圭殑鏂瑰悜 鈥?鐢变簬 SubFace 绾у埆娌℃湁鏂瑰悜淇℃伅,
+                        // 绠€鍖栦负:濡傛灉璇ラ偦闈㈡硶绾夸笌 SubFace 娉曠嚎鍚屽悜 鈫?鍐呴儴
                         let fi = adj_faces[0];
                         let solid_normal = ds.faces[fi].normal;
                         let dot = sub.normal.dot(solid_normal);
-                        // 法线同向 → 内部面 (被其他面覆盖)
+                        // 娉曠嚎鍚屽悜 鈫?鍐呴儴闈?(琚叾浠栭潰瑕嗙洊)
                         if dot > 0.7 {
                             edge_angle_result = Some(true);
                             break;
                         }
                     } else if a_nb_f >= 2 {
-                        // ✅ OCCT对齐: 边在 solid 上有 2 个邻面 (L847-855)
-                        // 对应 OCCT: 角度法判断 theFace 是否在最小角区域
-                        // 简化:两个邻面法线夹角锐角 → 内部面
+                        // 鉁?OCCT瀵归綈: 杈瑰湪 solid 涓婃湁 2 涓偦闈?(L847-855)
+                        // 瀵瑰簲 OCCT: 瑙掑害娉曞垽鏂?theFace 鏄惁鍦ㄦ渶灏忚鍖哄煙
+                        // 绠€鍖?涓や釜閭婚潰娉曠嚎澶硅閿愯 鈫?鍐呴儴闈?
                         let f1_normal = ds.faces[adj_faces[0]].normal;
                         let f2_normal = ds.faces[adj_faces[1]].normal;
-                        let face_angle = f1_normal.dot(f2_normal).acos(); // 法线夹角
-                        // 如果两个邻面法线夹角 < 90° → 内部面在凹角内
+                        let face_angle = f1_normal.dot(f2_normal).acos(); // 娉曠嚎澶硅
+                        // 濡傛灉涓や釜閭婚潰娉曠嚎澶硅 < 90掳 鈫?鍐呴儴闈㈠湪鍑硅鍐?
                         if face_angle < std::f64::consts::FRAC_PI_2 {
                             edge_angle_result = Some(true);
                             break;
                         }
-                        // 否则无法从此边确定 → 继续
+                        // 鍚﹀垯鏃犳硶浠庢杈圭‘瀹?鈫?缁х画
                         edge_angle_result = Some(edge_angle_result.unwrap_or(false));
                     }
                 }
@@ -2434,25 +2142,25 @@ fn is_internal_face(
     // Level 2: ComputeState fallback (L864-872)
     // ====================================================================
 
-    // Level 2a: 找一条不在 solid 上的边 → 分类中点 (L662-674)
+    // Level 2a: 鎵句竴鏉′笉鍦?solid 涓婄殑杈?鈫?鍒嗙被涓偣 (L662-674)
     if let Some(result) = classify_by_off_solid_edge(sub, &edge_bounds, solid_face_indices, ds) {
         return Some(result);
     }
 
-    // Level 2b: PointInFace → classify_point (L676-696)
-    // 所有边都在 solid 上 → 获取面内部点并分类
+    // Level 2b: PointInFace 鈫?classify_point (L676-696)
+    // 鎵€鏈夎竟閮藉湪 solid 涓?鈫?鑾峰彇闈㈠唴閮ㄧ偣骞跺垎绫?
     if let Some(interior_pt) = point_in_face(sub) {
         match classify_point(interior_pt, solid_face_indices, ds) {
             Classification::In => return Some(true),
             Classification::Out => return Some(false),
             Classification::On => {
-                // 面内部点恰好在面上 → 回退到 sample_point
+                // 闈㈠唴閮ㄧ偣鎭板ソ鍦ㄩ潰涓?鈫?鍥為€€鍒?sample_point
                 let sp = sub.sample_point();
                 match classify_point(sp, solid_face_indices, ds) {
                     Classification::In => return Some(true),
                     Classification::Out => return Some(false),
                     Classification::On => {
-                        // 完全一致的面 → 可能是共面 → 返回 false (不是内部)
+                        // 瀹屽叏涓€鑷寸殑闈?鈫?鍙兘鏄叡闈?鈫?杩斿洖 false (涓嶆槸鍐呴儴)
                         return Some(false);
                     }
                 }
@@ -2460,19 +2168,19 @@ fn is_internal_face(
         }
     }
 
-    // 无法确定 → 让调用方用现有逻辑
+    // 鏃犳硶纭畾 鈫?璁╄皟鐢ㄦ柟鐢ㄧ幇鏈夐€昏緫
     None
 }
 
 /// OCCT-style face classification using multi-point interior sampling with
 /// ray casting.  Classifies a sub-face by sampling its UV interior at multiple
-/// points and using `classify_point` (ray casting) at each — matching OCCT's
+/// points and using `classify_point` (ray casting) at each 鈥?matching OCCT's
 /// ClassifyFaces / BOPAlgo_FillIn3DParts approach of classifying the face
 /// interior rather than checking boundary vertices against AABB extents.
 ///
-/// Returns `Some(In/Out/On)` when the UV-probe vote is clear (≥70% majority
+/// Returns `Some(In/Out/On)` when the UV-probe vote is clear (鈮?0% majority
 /// or any `On` hit), or `None` when the result is ambiguous (mixed In/Out
-/// without a clear majority) — letting the caller fall through to the existing
+/// without a clear majority) 鈥?letting the caller fall through to the existing
 /// AABB fast path and probe-grid fallbacks.
 fn classify_face_occt_style(
     sub: &FaceSampleData,
@@ -2480,7 +2188,7 @@ fn classify_face_occt_style(
     ds: &DS,
     _op: BooleanOpType,
 ) -> Option<Classification> {
-    // OCCT uses interior points of the face — sample the UV domain.
+    // OCCT uses interior points of the face 鈥?sample the UV domain.
     let uv_domain = sub.uv_domain?;
     let [u0, u1, v0, v1] = uv_domain;
     if matches!(sub.surface, Surface3::Sphere(_)) {
@@ -2498,7 +2206,7 @@ fn classify_face_occt_style(
     let mut on_count = 0u32;
     let mut total = 0u32;
 
-    // Sample a 4×4 grid across the UV interior (not boundary edges).
+    // Sample a 4脳4 grid across the UV interior (not boundary edges).
     for iu in 0..nu {
         for iv in 0..nv {
             let u = u0 + (u1 - u0) * (iu as f64 + 0.5) / nu as f64;
@@ -2516,9 +2224,9 @@ fn classify_face_occt_style(
         return None;
     }
 
-    // ✅ OCCT对齐: 不短路口 On — On 表示采样点恰好在 solid 表面上,
-    //    不代表整个面都在边界上。先按多数 In/Out 决定。
-    //    On 全部时返回 On (面与 solid 完全重合)。
+    // 鉁?OCCT瀵归綈: 涓嶇煭璺彛 On 鈥?On 琛ㄧず閲囨牱鐐规伆濂藉湪 solid 琛ㄩ潰涓?
+    //    涓嶄唬琛ㄦ暣涓潰閮藉湪杈圭晫涓娿€傚厛鎸夊鏁?In/Out 鍐冲畾銆?
+    //    On 鍏ㄩ儴鏃惰繑鍥?On (闈笌 solid 瀹屽叏閲嶅悎)銆?
     if on_count == total {
         return Some(Classification::On);
     }
@@ -2531,7 +2239,7 @@ fn classify_face_occt_style(
         return Some(Classification::Out);
     }
 
-    // Tie — let caller fall through to AABB / probe-grid fallbacks.
+    // Tie 鈥?let caller fall through to AABB / probe-grid fallbacks.
     None
 }
 
@@ -2539,1026 +2247,7 @@ fn classify_face_occt_style(
 // Phase 2: OCCT 1:1 PerformLoops Alignment (BOPAlgo_BuilderFace.cxx L239-606)
 // =============================================================================
 
-/// Edge-like segment for wire building — can be a DS edge, an intersection curve,
-/// or a synthesized seam edge.
-#[derive(Debug, Clone)]
-enum WireEdgeSource {
-    DsEdge(usize),           // Index into ds.edges
-    IntersectionCurve(usize), // Index into ds.intersection_curves
-    SeamEdge,
-}
-
-/// ✅ OCCT对齐: Virtual edge used in the edge→wire pipeline.
-///    对应 OCCT 的 TopoDS_Edge + PaveBlock 组合。
-///
-/// OCCT BOPAlgo_WireSplitter Angle2D 在每个顶点处计算边的 2D 方向角
-/// (BOPAlgo_WireSplitter.lxx L22-69 / .cxx L769-841),
-/// 用于多连接顶点处的最小顺时针角选择。
-#[derive(Debug, Clone)]
-struct WireSegment {
-    start_vertex: usize,
-    end_vertex: usize,
-    source: WireEdgeSource,
-    /// true = FORWARD orientation (as stored in source);
-    /// false = REVERSED orientation.
-    forward: bool,
-    /// ✅ OCCT对齐: Seam edge 标记。用于下游 face 分类(非 wire 构建)。
-    is_seam: bool,
-    /// ✅ OCCT对齐: 起点处的 2D p-curve 切线方向角 [0, 2π) (Angle2D)。
-    ///    对 IC 段: pcurve 在起始参数处的正向方向角。
-    ///    对 seam 段: 等参数线方向(球面 u=const isoline → 垂直)。
-    ///    None = 未知(保留给非关键边界边,fallback 到位置匹配)。
-    tangent_start: Option<f64>,
-    /// ✅ OCCT对齐: 终点处的 2D p-curve 切线方向角 [0, 2π) (Angle2D)。
-    tangent_end: Option<f64>,
-}
-
-impl WireSegment {
-    fn reversed(&self) -> Self {
-        // ✅ OCCT对齐: 反向段交换起点/终点,切向角反转(±π)。
-        WireSegment {
-            start_vertex: self.end_vertex,
-            end_vertex: self.start_vertex,
-            source: self.source.clone(),
-            forward: !self.forward,
-            is_seam: self.is_seam,
-            tangent_start: self.tangent_end
-                .map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-            tangent_end: self.tangent_start
-                .map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-        }
-    }
-}
-
-/// ✅ OCCT对齐: 收集面拆分的完整边集 (BuildSplitFaces L357-489)
-///
-/// OCCT BuildSplitFaces 为每个面收集 3 类边:
-///   1. **原始边界边** (L357-460)
-///      — 含 seam edge 检测: closed surface 上 U/V 等参线同时是 seam →
-///        FORWARD+REVERSED 都加 (L444-447)
-///      — INTERNAL 边: FORWARD+REVERSED 都加 (L366-372)
-///   2. **Section 边** (L478-489) — FORWARD+REVERSED 都加
-///
-/// 加入 Angle2D 切线角度用于 BOPAlgo_WireSplitter 最小角转向选择。
-fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(usize) -> Option<Curve2d>) -> Vec<WireSegment> {
-    let face = &ds.faces[face_idx];
-    let mut segments: Vec<WireSegment> = Vec::new();
-
-    // 判断面是否是 closed (U/V) — 用于 seam 边检测
-    // OCCT L383-388: GeomLib::IsClosed 检查曲面 U/V 是否闭合
-    let (is_u_closed, is_v_closed) = match &face.surface {
-        Surface3::Sphere(_) => (true, true),
-        Surface3::Cylinder(_) => (true, false),
-        Surface3::Cone(_) => (true, false),
-        _ => (false, false),
-    };
-
-    // ================================================================
-    // 1. 原始边界边 (OCCT L357-460)
-    // ================================================================
-    for &ei in &face.boundary_edges {
-        let edge = &ds.edges[ei];
-        let sv = edge.start_vertex;
-        let ev = edge.end_vertex;
-
-        // ✅ OCCT对齐: seam 边检测 (L392-449)
-        let is_seam = match &face.surface {
-            Surface3::Sphere(_) => true,
-            _ => (is_u_closed || is_v_closed)
-                && (sv == ev || are_verts_coincident(ds, sv, ev)),
-        };
-
-        if is_seam && matches!(face.surface, Surface3::Sphere(_)) {
-            // ✅ OCCT对齐: DoSplitSEAMOnFace (BOPAlgo_Builder_2.cxx L392-449)
-            //    Seam 在 IC 端点处分段: 收集所有在 seam 上的顶点,
-            //    按 V 坐标排序后创建子段,确保 IC 端点与 seam 图连通。
-            //    保留原始 seam 端点(两极),追加 IC 端点在 seam 上的作为中间点。
-            //    非球面 seam (cylinder/cone) 保留原有 2 段逻辑。
-            let seam_tol = TOLERANCE_COORD_SUB;
-
-            // 1. Collect all seam vertices: original endpoints + IC endpoints on seam
-            let mut seam_verts: Vec<usize> = Vec::new();
-            seam_verts.push(sv);
-            if ev != sv {
-                seam_verts.push(ev);
-            }
-            // 2. Add IC endpoints that lie on the seam (intermediate vertices)
-            //    ✅ OCCT对齐: DoSplitSEAMOnFace — 在 seam 上的 IC 端点把 seam 分成子段
-            if let Surface3::Sphere(sph) = &face.surface {
-                for &ci in &face.face_info.curves_in {
-                    let ic = &ds.intersection_curves[ci];
-                    for &icv in &[ic.start_vertex, ic.end_vertex] {
-                        if seam_verts.contains(&icv) { continue; }
-                        let icuv = sph.world_to_uv(ds.vertices[icv].point);
-                        let on_seam = icuv.x.abs() < seam_tol || (icuv.x - std::f64::consts::TAU).abs() < seam_tol;
-                        if on_seam {
-                            seam_verts.push(icv);
-                        }
-                    }
-                }
-            }
-
-            // 3. Sort by V coordinate along seam (north pole = min v, south = max v)
-            //    ✅ OCCT对齐: DoSplitSEAMOnFace 沿 seam 方向排序端点
-            if let Surface3::Sphere(sph) = &face.surface {
-                seam_verts.sort_by(|&a, &b| {
-                    let uva = sph.world_to_uv(ds.vertices[a].point);
-                    let uvb = sph.world_to_uv(ds.vertices[b].point);
-                    uva.y.partial_cmp(&uvb.y).unwrap_or(std::cmp::Ordering::Equal)
-                });
-            }
-
-            // 4. Create sub-segments between consecutive seam vertices
-                let seam_seg_cnt = segments.iter().filter(|s| s.is_seam).count();
-            let ic_cnt = face.face_info.curves_in.iter().flat_map(|ci| {
-                let ic = &ds.intersection_curves[*ci];
-                [ic.start_vertex, ic.end_vertex]
-            }).filter(|&v| seam_verts.contains(&v)).count();
-            eprintln!("[SEAM_SPLIT] face={} seam_verts={} curves_in={} ic_on_seam={}",
-                face_idx, seam_verts.len(), face.face_info.curves_in.len(), ic_cnt);
-            for i in 0..seam_verts.len().saturating_sub(1) {
-                let sv_seg = seam_verts[i];
-                let ev_seg = seam_verts[i + 1];
-                if sv_seg == ev_seg { continue; }
-                let (t_start, t_end) = compute_seam_tangent_angles(ds, sv_seg, ev_seg, &face.surface);
-                segments.push(WireSegment {
-                    start_vertex: sv_seg, end_vertex: ev_seg,
-                    source: WireEdgeSource::DsEdge(ei),
-                    forward: true,
-                    is_seam: true,
-                    tangent_start: t_start,
-                    tangent_end: t_end,
-                });
-                segments.push(WireSegment {
-                    start_vertex: ev_seg, end_vertex: sv_seg,
-                    source: WireEdgeSource::DsEdge(ei),
-                    forward: false,
-                    is_seam: true,
-                    tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-                    tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-                });
-            }
-        } else if is_seam {
-            // ✅ OCCT对齐: 柱/锥面 seam 边 — 保持原有 2 段逻辑 (BOPAlgo_Builder_2.cxx L357-460)
-            let (t_start, t_end) = compute_seam_tangent_angles(ds, sv, ev, &face.surface);
-            segments.push(WireSegment {
-                start_vertex: sv, end_vertex: ev,
-                source: WireEdgeSource::DsEdge(ei),
-                forward: true,
-                is_seam: true,
-                tangent_start: t_start,
-                tangent_end: t_end,
-            });
-            segments.push(WireSegment {
-                start_vertex: ev, end_vertex: sv,
-                source: WireEdgeSource::DsEdge(ei),
-                forward: false,
-                is_seam: true,
-                tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-                tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-            });
-        } else {
-            // ✅ OCCT对齐: 普通边按原始方向添加 (L374-378)
-            segments.push(WireSegment {
-                start_vertex: sv, end_vertex: ev,
-                source: WireEdgeSource::DsEdge(ei),
-                forward: true,
-                is_seam: false,
-                tangent_start: None,
-                tangent_end: None,
-            });
-        }
-    }
-
-    // ================================================================
-    // 2. Section 边 — 交线 (OCCT L478-489)
-    //    OCCT 加 FORWARD+REVERSED, BOPAlgo_WireSplitter
-    //    用最小角度转向选择正确路径。
-    // ================================================================
-    for &ci in &face.face_info.curves_in {
-        let ic = &ds.intersection_curves[ci];
-        let sv = ic.start_vertex;
-        let ev = ic.end_vertex;
-        // ✅ OCCT对齐: 跳过退化 IC
-        if sv == ev || ds.vertices[sv].point.distance_squared(ds.vertices[ev].point) < TOLERANCE_ABS_SQ {
-            continue;
-        }
-
-        // 计算 pcurve 切线角度 (Angle2D)
-        let pcurve = pcurve_lookup(ci);
-        let (t_start, t_end) = if let Some(ref pc) = pcurve {
-            let domain = ic.t_range;
-            (pcurve_tangent_angle(pc, domain[0], domain), pcurve_tangent_angle(pc, domain[1], domain))
-        } else {
-            (None, None)
-        };
-
-        // ✅ OCCT对齐: FORWARD+REVERSED (BOPAlgo_Builder_2.cxx L478-489)
-        segments.push(WireSegment {
-            start_vertex: sv,
-            end_vertex: ev,
-            source: WireEdgeSource::IntersectionCurve(ci),
-            forward: true,
-            is_seam: false,
-            tangent_start: t_start,
-            tangent_end: t_end,
-        });
-        segments.push(WireSegment {
-            start_vertex: ev,
-            end_vertex: sv,
-            source: WireEdgeSource::IntersectionCurve(ci),
-            forward: false,
-            is_seam: false,
-            tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-            tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-        });
-    }
-
-    segments
-}
-
-/// ✅ OCCT对齐: 计算 seam 边在面上的 UV 方向角。
-///    球面 seam = u=const isoline → 切向沿 V 轴。
-///    柱面 seam 类似。
-fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface: &Surface3) -> (Option<f64>, Option<f64>) {
-    match surface {
-        Surface3::Sphere(sph) => {
-            let uvs = sph.world_to_uv(ds.vertices[sv].point);
-            let uve = sph.world_to_uv(ds.vertices[ev].point);
-            let dir = uve - uvs;
-            if dir.length_squared() < 1e-30 {
-                return (None, None);
-            }
-            let a = dir_to_angle(dir);
-            (Some(a), Some(a))
-        }
-        Surface3::Cylinder(cyl) => {
-            // Cylinder seam: u=0 or u=2π isoline, along V direction.
-            // Compute approximate direction.
-            let sv_pt = ds.vertices[sv].point;
-            let ev_pt = ds.vertices[ev].point;
-            // Project onto cylinder axis to get V coordinate
-            let ax = cyl.axis.normalize_or_zero();
-            let sv_v = (sv_pt - cyl.origin).dot(ax);
-            let ev_v = (ev_pt - cyl.origin).dot(ax);
-            let dir = if ev_v > sv_v { DVec2::new(0.0, 1.0) } else { DVec2::new(0.0, -1.0) };
-            let a = dir_to_angle(dir);
-            (Some(a), Some(a))
-        }
-        _ => (None, None),
-    }
-}
-
-/// 检查两个 DS 顶点是否在同一位置 (容差内)
-fn are_verts_coincident(ds: &DS, vi: usize, vj: usize) -> bool {
-    if vi == vj { return true; }
-    let d2 = ds.vertices[vi].point.distance_squared(ds.vertices[vj].point);
-    d2 < TOLERANCE_ABS_SQ
-}
-
-// ================================================================
-// ✅ OCCT对齐: Angle2D 辅助函数 (BOPAlgo_WireSplitter_1.cxx L769-841)
-// ================================================================
-
-/// Convert a 2D direction vector to an angle in [0, 2π).
-/// 对应 OCCT 中 atan2(dir.y, dir.x) 并归一化到 [0, 2π)。
-#[inline]
-fn dir_to_angle(dir: DVec2) -> f64 {
-    let a = dir.y.atan2(dir.x);
-    if a < 0.0 { a + std::f64::consts::TAU } else { a }
-}
-
-/// Compute the 2D p-curve tangent direction angle at parameter t.
-/// Uses finite difference with a step proportional to the domain length.
-/// ✅ OCCT对齐: Angle2D 自适应步长 (L796-841):
-///   dt = max(curve_resolution(tol2d), Precision::PConfusion())
-///   对非 Line 曲线还考虑曲率半径。这里用简化的相对步长。
-fn pcurve_tangent_angle(curve: &Curve2d, t: f64, domain: [f64; 2]) -> Option<f64> {
-    let range = (domain[1] - domain[0]).abs();
-    let dt = (1e-8 * range.max(1.0)).max(1e-12);
-
-    // For start point: forward difference; for end point: backward difference;
-    // for interior: central difference.
-    let (p_lo, p_hi) = if (t - domain[0]).abs() < dt * 0.5 {
-        (curve.point_at(t), curve.point_at(domain[0] + dt))
-    } else if (t - domain[1]).abs() < dt * 0.5 {
-        (curve.point_at(domain[1] - dt), curve.point_at(t))
-    } else {
-        (curve.point_at(t - dt), curve.point_at(t + dt))
-    };
-
-    let dir = p_hi - p_lo;
-    if dir.length_squared() < 1e-40 {
-        return None;
-    }
-    Some(dir_to_angle(dir))
-}
-
-/// ✅ OCCT对齐: ClockWiseAngle (BOPAlgo_WireSplitter_1.cxx L622-660)
-///    计算从入边反向到出边的顺时针转角 [0, 2π)。
-///    值越小转向越「锐利」（更顺时针）。
-///    入边角度 angle_in: 作为入边(到达顶点)时的角度 (对应 in_flag=true)
-///    出边角度 angle_out: 作为出边(离开顶点)时的角度 (对应 in_flag=false)
-fn clock_wise_angle(angle_in: f64, angle_out: f64) -> f64 {
-    let a1 = (angle_in + std::f64::consts::PI) % std::f64::consts::TAU;
-    let mut d = a1 - angle_out;
-    if d <= 0.0 {
-        d += std::f64::consts::TAU;
-    }
-    d
-}
-
-/// ✅ OCCT对齐: 从边集合构建闭合 wire — 使用 BOPAlgo_WireSplitter
-///    MakeConnexityBlocks + Path 角度转向 (PerformLoops L239-383)
-///
-/// 算法步骤:
-///   1. MakeConnexityBlocks: BFS 按共享顶点分组
-///   2. Regular block (所有顶点 degree=2): 简单的链式跟随
-///   3. Irregular block (有 degree>2 顶点): SmartMap + Path 最小角选择
-fn build_closed_wires(segments: &[WireSegment], ds: &DS, face_idx: usize) -> Vec<Vec<usize>> {
-    if segments.is_empty() {
-        return vec![];
-    }
-
-    let n = segments.len();
-
-    // Build vertex→segments adjacency (no is_seam isolation)
-    let mut vert_to_segs: HashMap<usize, Vec<usize>> = HashMap::new();
-    for (si, seg) in segments.iter().enumerate() {
-        vert_to_segs.entry(seg.start_vertex).or_default().push(si);
-        vert_to_segs.entry(seg.end_vertex).or_default().push(si);
-    }
-
-    // MakeConnexityBlocks: BFS to find connected components
-    let mut visited_seg = vec![false; n];
-    let mut blocks: Vec<Vec<usize>> = Vec::new();
-
-    for si in 0..n {
-        if visited_seg[si] {
-            continue;
-        }
-        let mut block = Vec::new();
-        let mut queue = VecDeque::new();
-        queue.push_back(si);
-        visited_seg[si] = true;
-
-        while let Some(ci) = queue.pop_front() {
-            block.push(ci);
-            let seg = &segments[ci];
-            for &vi in &[seg.start_vertex, seg.end_vertex] {
-                if let Some(neighbors) = vert_to_segs.get(&vi) {
-                    for &ni in neighbors {
-                        if !visited_seg[ni] {
-                            visited_seg[ni] = true;
-                            queue.push_back(ni);
-                        }
-                    }
-                }
-            }
-        }
-        blocks.push(block);
-    }
-
-    // Process each block
-    let mut wires: Vec<Vec<usize>> = Vec::new();
-
-    for block in &blocks {
-        if block.len() < 2 {
-            continue;
-        }
-
-        // Check vertex degrees within this block
-        let mut block_vert_count: HashMap<usize, usize> = HashMap::new();
-        for &si in block {
-            let seg = &segments[si];
-            *block_vert_count.entry(seg.start_vertex).or_default() += 1;
-            *block_vert_count.entry(seg.end_vertex).or_default() += 1;
-        }
-        let is_regular = block_vert_count.values().all(|&d| d == 2);
-
-        if is_regular {
-            // Regular block: all degree 2, simple chain following
-            if let Some(wire) = build_regular_wire(block, segments, &vert_to_segs) {
-                wires.push(wire);
-            }
-        } else {
-            // Irregular block: SmartMap + angle-based Path walking
-            let block_wires = build_irregular_wires(block, segments, ds, face_idx);
-            wires.extend(block_wires);
-        }
-    }
-
-    wires
-}
-
-/// ✅ OCCT对齐: 从 Regular block (所有顶点 degree=2) 构建闭合 wire。
-///    简单的链式跟随,无角度选择必要。
-fn build_regular_wire(
-    block: &[usize],
-    segments: &[WireSegment],
-    vert_to_segs: &HashMap<usize, Vec<usize>>,
-) -> Option<Vec<usize>> {
-    let block_set: std::collections::HashSet<usize> = block.iter().copied().collect();
-    let mut visited = vec![false; segments.len()];
-    let mut wire: Vec<usize> = Vec::new();
-
-    let start_si = block[0];
-    let start_seg = &segments[start_si];
-    let start_vertex = start_seg.start_vertex;
-
-    let mut ci = start_si;
-    // We start at start_vertex. The first segment takes us to end_vertex.
-    let mut arrived_vertex = start_seg.end_vertex;
-
-    loop {
-        visited[ci] = true;
-        wire.push(ci);
-
-        // Check if we've returned to the starting vertex
-        if arrived_vertex == start_vertex && wire.len() >= 2 {
-            break;
-        }
-
-        // Find next unvisited segment at arrived_vertex in this block
-        let next = vert_to_segs.get(&arrived_vertex).and_then(|neighbors| {
-            neighbors.iter().find(|&&ni| !visited[ni] && block_set.contains(&ni))
-        }).copied();
-
-        match next {
-            Some(ni) => {
-                let seg = &segments[ni];
-                ci = ni;
-                arrived_vertex = if seg.start_vertex == arrived_vertex {
-                    seg.end_vertex
-                } else {
-                    seg.start_vertex
-                };
-            }
-            None => break,
-        }
-    }
-
-    if wire.len() >= 2 { Some(wire) } else { None }
-}
-
-/// ✅ OCCT对齐: EdgeInfo 结构 (BOPAlgo_WireSplitter.lxx L22-69)
-#[derive(Debug, Clone)]
-struct EdgeInfo {
-    seg_idx: usize,
-    passed: bool,
-    /// true = entering the vertex (vertex is end_vertex);
-    /// false = leaving the vertex (vertex is start_vertex)
-    in_flag: bool,
-    /// true = internal edge (intersection curve), not part of original boundary
-    is_inside: bool,
-    /// 2D direction angle [0, 2π) at this vertex
-    angle: f64,
-}
-
-/// ✅ OCCT对齐: 为 irregular block 构建 SmartMap + Path 行走。
-///    (BOPAlgo_WireSplitter_1.cxx L359-618)
-fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, face_idx: usize) -> Vec<Vec<usize>> {
-    // Build SmartMap: vertex → Vec<EdgeInfo>
-    let mut smart_map: HashMap<usize, Vec<EdgeInfo>> = HashMap::new();
-
-    for &si in block {
-        let seg = &segments[si];
-        let is_inside = matches!(seg.source, WireEdgeSource::IntersectionCurve(_));
-
-        // At start_vertex: edge LEAVES the vertex (in_flag = false)
-        if let Some(angle) = seg.tangent_start {
-            smart_map.entry(seg.start_vertex).or_default().push(EdgeInfo {
-                seg_idx: si,
-                passed: false,
-                in_flag: false,
-                is_inside,
-                angle,
-            });
-        }
-
-        // At end_vertex: edge ENTERS the vertex (in_flag = true)
-        if let Some(angle) = seg.tangent_end {
-            smart_map.entry(seg.end_vertex).or_default().push(EdgeInfo {
-                seg_idx: si,
-                passed: false,
-                in_flag: true,
-                is_inside,
-                angle,
-            });
-        }
-    }
-
-    // ✅ OCCT对齐: RefineAngles (BOPAlgo_WireSplitter_1.cxx L904-1028)
-    //    在边界边的"外侧"扇区内的内部边,调整其角度使其指向面内侧。
-    refine_angles(&mut smart_map, segments, ds, face_idx);
-
-    // Walk paths from each unpassed segment
-    let mut wires: Vec<Vec<usize>> = Vec::new();
-    for &start_si in block {
-        if is_seg_passed(&smart_map, start_si) {
-            continue;
-        }
-        if let Some(wire) = walk_path(start_si, segments, &mut smart_map) {
-            wires.push(wire);
-        }
-    }
-    wires
-}
-
-/// Check if a segment has been marked passed at a specific vertex with a specific in_flag.
-fn is_seg_passed(smart_map: &HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize) -> bool {
-    for infos in smart_map.values() {
-        if infos.iter().any(|ei| ei.seg_idx == seg_idx && ei.passed) {
-            return true;
-        }
-    }
-    false
-}
-
-/// Mark only the specific EdgeInfo for a segment at a vertex+in_flag as passed.
-/// ✅ OCCT对齐: passed 标记在每个顶点的方向级 EdgeInfo 上,
-///    而不是全局边级别,允许同一边的正反向段在不同顶点独立使用。
-fn mark_edge_passed(smart_map: &mut HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize, vertex: usize, in_flag: bool) {
-    if let Some(infos) = smart_map.get_mut(&vertex) {
-        for info in infos.iter_mut() {
-            if info.seg_idx == seg_idx && info.in_flag == in_flag {
-                info.passed = true;
-                return;
-            }
-        }
-    }
-}
-
-/// Mark both orientations of a segment as passed (used for initial cleanup).
-/// Not used during Path walking — use mark_edge_passed instead.
-#[allow(dead_code)]
-fn mark_seg_passed(smart_map: &mut HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize) {
-    for infos in smart_map.values_mut() {
-        for info in infos.iter_mut() {
-            if info.seg_idx == seg_idx {
-                info.passed = true;
-            }
-        }
-    }
-}
-
-/// Find the EdgeInfo angle for a segment at a vertex with the given in_flag.
-fn find_angle_at(smart_map: &HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize, vertex: usize, in_flag: bool) -> Option<f64> {
-    smart_map.get(&vertex)?.iter()
-        .find(|ei| ei.seg_idx == seg_idx && ei.in_flag == in_flag)
-        .map(|ei| ei.angle)
-}
-
-/// Select the best outgoing edge at a vertex using ClockWiseAngle minimum selection.
-/// (OCCT L622-660)
-fn select_best_outgoing<'a>(
-    candidates: &[&'a EdgeInfo],
-    angle_in: f64,
-) -> Option<&'a EdgeInfo> {
-    if candidates.is_empty() {
-        return None;
-    }
-    // Special rule (OCCT): when incoming is boundary and there is exactly 1
-    // internal outgoing edge, prefer it over angle-based selection.
-    if candidates.len() == 1 {
-        return Some(candidates[0]);
-    }
-    candidates.iter()
-        .min_by(|a, b| {
-            clock_wise_angle(angle_in, a.angle)
-                .partial_cmp(&clock_wise_angle(angle_in, b.angle))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .copied()
-}
-
-/// ✅ OCCT对齐: RefineAngles (BOPAlgo_WireSplitter_1.cxx L904-1028)
-///
-/// 对恰有 2 条 boundary edges (1 in, 1 out) 的顶点:
-///   1. 计算 boundary 之间的 delta = ClockWiseAngle(a_in_bnd, a_out_bnd) — 即「外侧」扇区
-///   2. 对每条内部出射边,如果其角度在外侧扇区内:
-///      - 尝试 RefineAngle2D: 用射线与 p-curve 求交得到真实方向 (⏳ 尚未实现)
-///      - 失败时且恰有 2 条内部边: 将角度推到 boundary 内侧
-fn refine_angles(
-    smart_map: &mut HashMap<usize, Vec<EdgeInfo>>,
-    segments: &[WireSegment],
-    ds: &DS,
-    face_idx: usize,
-) {
-    let face_surface = &ds.faces[face_idx].surface;
-    let vertices: Vec<usize> = smart_map.keys().copied().collect();
-    for &v in &vertices {
-        let Some(infos) = smart_map.get(&v).cloned() else { continue; };
-
-        let bnd_in = infos.iter().find(|ei| !ei.is_inside && ei.in_flag);
-        let bnd_out = infos.iter().find(|ei| !ei.is_inside && !ei.in_flag);
-        let internal_out: Vec<&EdgeInfo> = infos.iter().filter(|ei| ei.is_inside && !ei.in_flag).collect();
-
-        let (Some(a_in_bnd), Some(a_out_bnd)) = (bnd_in, bnd_out) else { continue; };
-        if internal_out.is_empty() { continue; }
-
-        let a_in = a_in_bnd.angle;
-        let a_out = a_out_bnd.angle;
-        let delta_bnd = clock_wise_angle(a_in, a_out);
-
-        // Internal edges that need refinement (angle falls in outside sector)
-        let to_refine: Vec<&EdgeInfo> = internal_out.iter()
-            .filter(|ei| clock_wise_angle(a_in, ei.angle) < delta_bnd)
-            .copied().collect();
-        if to_refine.is_empty() { continue; }
-
-        let i_cnt_int = internal_out.len() + infos.iter().filter(|ei| ei.is_inside && ei.in_flag).count();
-        let mut refined: Vec<(usize, f64)> = Vec::new();
-
-        for ei in &to_refine {
-            let seg = &segments[ei.seg_idx];
-            let corrected = refine_angle_2d(v, seg, segments, ds, face_surface, a_in, a_out, delta_bnd, ei.angle);
-            if let Some(new_angle) = corrected {
-                refined.push((ei.seg_idx, new_angle));
-            } else if i_cnt_int == 2 {
-                // OCCT L997: RefineAngle2D failed + exactly 2 internal edges
-                let push_angle = if ei.angle <= a_out { a_out + 1e-6 } else { a_in - 1e-6 };
-                refined.push((ei.seg_idx, push_angle));
-            }
-        }
-
-        if let Some(infos) = smart_map.get_mut(&v) {
-            for (seg_idx, new_angle) in &refined {
-                for ei in infos.iter_mut() {
-                    if ei.seg_idx == *seg_idx && !ei.in_flag && ei.is_inside { ei.angle = *new_angle; }
-                }
-                for ei in infos.iter_mut() {
-                    if ei.seg_idx == *seg_idx && ei.in_flag && ei.is_inside { ei.angle = (*new_angle + std::f64::consts::PI) % std::f64::consts::TAU; }
-                }
-            }
-        }
-    }
-}
-
-/// ✅ OCCT对齐: Path 行走函数 (BOPAlgo_WireSplitter_1.cxx L359-618).
-///    从起始段开始行走,在每个多连接顶点用 ClockWiseAngle 选择出射边。
-///
-///    标记策略: 在每个顶点使用 per-EdgeInfo passed 标记,
-
-/// ✅ OCCT对齐: RefineAngle2D (BOPAlgo_WireSplitter_1.cxx L1032-1124)
-fn refine_angle_2d(
-    vertex_idx: usize,
-    seg: &WireSegment,
-    _segments: &[WireSegment],
-    ds: &DS,
-    face_surface: &Surface3,
-    a_in: f64,
-    a_out: f64,
-    a_delta: f64,
-    _current_angle: f64,
-) -> Option<f64> {
-    let v_pt = ds.vertices[vertex_idx].point;
-    let v_uv = match face_surface {
-        Surface3::Sphere(s) => s.world_to_uv(v_pt),
-        _ => return None,
-    };
-    let pcurve = match &seg.source {
-        WireEdgeSource::IntersectionCurve(ci) => {
-            ds.intersection_curves[*ci].pcurve_on_a.clone()
-        }
-        WireEdgeSource::DsEdge(_) | WireEdgeSource::SeamEdge => None,
-    };
-    let pc = pcurve.as_ref()?;
-    const N_SAMP: usize = 64;
-    let mut best_angle: Option<f64> = None;
-    let mut best_dist = -1.0_f64;
-    for &dir_angle in &[a_out, a_in + std::f64::consts::PI] {
-        let ray_dir = DVec2::new(dir_angle.cos(), dir_angle.sin());
-        if ray_dir.length_squared() < 1e-30 { continue; }
-        for i in 0..=N_SAMP {
-            let t = i as f64 / N_SAMP as f64;
-            let p_uv = pc.point_at(t);
-            let delta = p_uv - v_uv;
-            if delta.length_squared() < TOLERANCE_ABS_SQ { continue; }
-            let along = delta.dot(ray_dir);
-            if along <= 0.0 { continue; }
-            if along > best_dist {
-                let cross = (delta - ray_dir * along).length();
-                if cross / along < 0.5 {
-                    best_dist = along;
-                    let mut corrected = delta.y.atan2(delta.x);
-                    if corrected < 0.0 { corrected += std::f64::consts::TAU; }
-                    if clock_wise_angle(a_in, corrected) >= a_delta {
-                        best_angle = Some(corrected);
-                    }
-                }
-            }
-        }
-        if best_angle.is_some() { return best_angle; }
-    }
-    None
-}
-///    允许同一边的正反向独立遍历(BOPAlgo_WireSplitter.lxx L22-69)。
-fn walk_path(
-    start_si: usize,
-    segments: &[WireSegment],
-    smart_map: &mut HashMap<usize, Vec<EdgeInfo>>,
-) -> Option<Vec<usize>> {
-    let start_seg = &segments[start_si];
-    let start_vertex = start_seg.start_vertex;
-
-    let mut wire: Vec<usize> = Vec::new();
-    let mut ci = start_si;
-    let mut arrived_vertex = start_seg.end_vertex;
-
-    loop {
-        // ✅ OCCT对齐: 标记当前边的入边方向(到达当前顶点 in_flag=true)
-        mark_edge_passed(smart_map, ci, arrived_vertex, true);
-
-        // 标记当前边的出边方向(从它的起始顶点出发 in_flag=false)
-        let seg = &segments[ci];
-        let leave_vertex = seg.start_vertex;
-        mark_edge_passed(smart_map, ci, leave_vertex, false);
-
-        wire.push(ci);
-
-        // Check if we've returned to the start vertex → wire closed
-        if arrived_vertex == start_vertex && wire.len() >= 2 {
-            break;
-        }
-
-        // Get angle of current edge arriving at arrived_vertex (in_flag = true)
-        let angle_in = match find_angle_at(smart_map, ci, arrived_vertex, true) {
-            Some(a) => a,
-            None => break,
-        };
-
-        // Gather unpassed outgoing edges at arrived_vertex
-        let candidates: Vec<&EdgeInfo> = if let Some(infos) = smart_map.get(&arrived_vertex) {
-            infos.iter().filter(|ei| !ei.passed && !ei.in_flag).collect()
-        } else {
-            break;
-        };
-
-        let best = match select_best_outgoing(&candidates, angle_in) {
-            Some(e) => e,
-            None => break,
-        };
-
-        ci = best.seg_idx;
-        arrived_vertex = segments[ci].end_vertex;
-    }
-
-    if wire.len() >= 2 { Some(wire) } else { None }
-}
-
-/// ✅ OCCT对齐: 从 wire 的边链构建 3D boundary polygon。
-///    取每个 DS 顶点的 3D 位置。
-fn wire_boundary_3d(wire: &[usize], segments: &[WireSegment], ds: &DS) -> Vec<DVec3> {
-    let mut pts: Vec<DVec3> = Vec::new();
-    for &si in wire {
-        let seg = &segments[si];
-        let pt = if seg.forward {
-            ds.vertices[seg.start_vertex].point
-        } else {
-            ds.vertices[seg.end_vertex].point
-        };
-        pts.push(pt);
-    }
-    // 去重首尾 (wire 闭合连接处)
-    if pts.len() >= 2 {
-        let d2 = pts[0].distance_squared(*pts.last().unwrap());
-        if d2 < TOLERANCE_ABS_SQ {
-            pts.pop();
-        }
-    }
-    // 去重相邻重复点
-    if pts.len() >= 2 {
-        let mut deduped: Vec<DVec3> = vec![pts[0]];
-        for i in 1..pts.len() {
-            let d2 = deduped.last().unwrap().distance_squared(pts[i]);
-            if d2 >= TOLERANCE_ABS_SQ {
-                deduped.push(pts[i]);
-            }
-        }
-        pts = deduped;
-    }
-    pts
-}
-
-/// DEPRECATED (SubFace 桥接): WireFace → SubFace 转换。新代码走 WireFace 路径。
-fn wire_faces_to_sub_faces(
-    wfs: &[WireFace],
-    segments: &[WireSegment],
-    ds: &DS,
-    face_idx: usize,
-) -> Vec<SubFace> {
-    let face = &ds.faces[face_idx];
-    let surface = face.surface.clone();
-    let normal = face.normal;
-
-    wfs.iter().map(|wf| {
-        // 从 outer_wire 的 WireSegment 构建 3D boundary
-        let boundary: Vec<DVec3> = wf.outer_wire.iter().map(|&si| {
-            let seg = &segments[si];
-            ds.vertices[if seg.forward { seg.start_vertex } else { seg.end_vertex }].point
-        }).collect();
-
-        // inner_wires: 每个 hole wire 的 3D 多边形
-        let inner_wires: Vec<Vec<DVec3>> = wf.inner_wires.iter().map(|iw| {
-            iw.iter().map(|&si| {
-                let seg = &segments[si];
-                ds.vertices[if seg.forward { seg.start_vertex } else { seg.end_vertex }].point
-            }).collect()
-        }).collect();
-
-        SubFace {
-            boundary,
-            surface: surface.clone(),
-            normal,
-            uv_centroid: None,
-            sample_override: None,
-            uv_domain: None,
-            inner_wires,
-            outer_circle_edges: vec![],
-            seam_edge: None,
-            inner_wire_circle: None,
-        }
-    }).collect()
-}
-
-/// ✅ OCCT对齐: wire → 多个 WireFace (PerformAreas L387-606)
-///
-/// OCCT PerformAreas:
-///   1. 对每条 wire 分类 growth(outer) / hole(inner) (L439-445)
-///   2. 每个 growth wire 创建一个 face; hole wire 分配到对应 face (L575-605)
-///
-/// rcad 实现: 用近似面积分类 outer/hole, 为每个 outer + 其 holes 创建 WireFace。
-/// 多条独立 outer wire 产生多个 WireFace（多区域分割）。
-/// ✅ OCCT对齐: 分类 wires 为 outer/hole/independent (PerformAreas)。
-///    角度转向后 seam 边已正确嵌入主 wire,不再需要 seam merge。
-fn perform_areas(
-    wires: &[Vec<usize>],
-    segments: &[WireSegment],
-    ds: &DS,
-    face_idx: usize,
-) -> Vec<WireFace> {
-    if wires.is_empty() {
-        return vec![];
-    }
-
-    struct WireData { wire_idx: usize, boundary: Vec<DVec3>, area: f64 }
-    let mut wds: Vec<WireData> = wires.iter().enumerate().filter_map(|(wi, w)| {
-        let mut b = wire_boundary_3d(w, segments, ds);
-        if b.len() < 3 {
-            let mut verts: Vec<DVec3> = w.iter().flat_map(|&si| {
-                let seg = &segments[si];
-                vec![ds.vertices[seg.start_vertex].point, ds.vertices[seg.end_vertex].point]
-            }).collect();
-            verts.sort_by(|a,b| { let cx = a.x.total_cmp(&b.x); if cx != std::cmp::Ordering::Equal { return cx; } let cy = a.y.total_cmp(&b.y); if cy != std::cmp::Ordering::Equal { return cy; } a.z.total_cmp(&b.z) });
-            verts.dedup();
-            if verts.len() >= 3 { b = verts; } else { return None; }
-        }
-        let a = projected_area_xy(&b);
-        Some(WireData { wire_idx: wi, boundary: b, area: a })
-    }).collect();
-
-    if wds.is_empty() {
-        return vec![];
-    }
-
-    // 排序,最大为 outer
-    wds.sort_by(|a, b| b.area.partial_cmp(&a.area).unwrap());
-    let outer_wire_idx = wds[0].wire_idx;
-    let outer_boundary = wds[0].boundary.clone();
-    let rest = &wds[1..];
-
-    // 分类 valid wires
-    let mut hole_wire_idxs: Vec<usize> = Vec::new();
-    let mut indep_wire_idxs: Vec<usize> = Vec::new();
-    for wd in rest {
-        let mid = wd.boundary.iter().sum::<DVec3>() / wd.boundary.len() as f64;
-        if point_in_polygon_xy(mid, &outer_boundary) {
-            hole_wire_idxs.push(wd.wire_idx);
-        } else {
-            indep_wire_idxs.push(wd.wire_idx);
-        }
-    }
-
-    let mut result = vec![WireFace {
-        outer_wire: wires[outer_wire_idx].clone(),
-        inner_wires: hole_wire_idxs.iter().map(|&wi| wires[wi].clone()).collect(),
-    }];
-    for &wi in &indep_wire_idxs {
-        result.push(WireFace {
-            outer_wire: wires[wi].clone(),
-            inner_wires: vec![],
-        });
-    }
-    result
-}
-
-/// 计算 3D 边界在 XY 平面的投影面积 (Shoelace)
-fn projected_area_xy(b: &[DVec3]) -> f64 {
-    (0..b.len()).map(|i| {
-        let j = (i + 1) % b.len();
-        b[i].x * b[j].y - b[j].x * b[i].y
-    }).sum::<f64>().abs() * 0.5
-}
-
-/// 射线法判断点是否在 XY 投影多边形内
-fn point_in_polygon_xy(pt: DVec3, poly: &[DVec3]) -> bool {
-    let mut inside = false;
-    let n = poly.len();
-    for i in 0..n {
-        let j = (n + i - 1) % n;
-        let (vi, vj) = (poly[i], poly[j]);
-        if ((vi.y > pt.y) != (vj.y > pt.y)) &&
-            pt.x < (vj.x - vi.x) * (pt.y - vi.y) / (vj.y - vi.y) + vi.x
-        { inside = !inside; }
-    }
-    inside
-}
-
-impl<'a> BooleanBuilder<'a> {
-    /// ✅ OCCT对齐: split_face 的 OCCT 等价路径 — 边→wire→WireFace (方法版)
-    ///
-    ///    对应 OCCT BuildSplitFaces (L232-548) + BuilderFace::Perform (L117-148)
-    ///    使用 collect_face_edge_segments + build_closed_wires +
-    ///    BOPAlgo_WireSplitter 角度转向。
-    pub(crate) fn split_face_occt_wire_pipeline(
-        &self,
-        face_idx: usize,
-    ) -> Option<(Vec<WireSegment>, Vec<WireFace>)> {
-        let ds = self.ds;
-        let face = &ds.faces[face_idx];
-        if !matches!(face.surface, Surface3::Sphere(_)) {
-            return None;
-        }
-        if face.face_info.curves_in.is_empty() {
-            return None;
-        }
-        // Build pcurve lookup closure for this face
-        let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
-        let segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
-        if !matches!(face.surface, Surface3::Sphere(_)) {
-            eprintln!("[WIRE_PIPELINE] face={} surf={:?} segments={} — NOT sphere, skipping",
-                face_idx, face.surface, segments.len());
-        }
-        if segments.is_empty() {
-            return None;
-        }
-        // Debug: check IC endpoints for sphere faces
-        if std::env::var("RCAD_DEBUG_IC").is_ok() && matches!(face.surface, Surface3::Sphere(_)) {
-            for &ci in &face.face_info.curves_in {
-                let ic = &ds.intersection_curves[ci];
-                let sv = &ds.vertices[ic.start_vertex];
-                let ev = &ds.vertices[ic.end_vertex];
-                eprintln!("[IC_RAW] ci={} t=[{:.6},{:.6}] sv=({:.6},{:.6},{:.6}) ev=({:.6},{:.6},{:.6})",
-                    ci, ic.t_range[0], ic.t_range[1],
-                    sv.point.x, sv.point.y, sv.point.z,
-                    ev.point.x, ev.point.y, ev.point.z);
-            }
-            let ics: Vec<_> = segments.iter().filter(|s| !s.is_seam).collect();
-            if ics.len() >= 2 {
-                for i in 0..ics.len() {
-                    let si = &ics[i];
-                    let sj = &ics[(i+1)%ics.len()];
-                    let si_ep = ds.vertices[si.end_vertex].point;
-                    let sj_sp = ds.vertices[sj.start_vertex].point;
-                    let d = si_ep.distance_squared(sj_sp);
-                    eprintln!("[IC_CHAIN] seg[{}] ({:.3},{:.3},{:.3})→({:.3},{:.3},{:.3}) → seg[{}] dist={:.12}",
-                        i, ds.vertices[si.start_vertex].point.x, ds.vertices[si.start_vertex].point.y, ds.vertices[si.start_vertex].point.z,
-                        si_ep.x, si_ep.y, si_ep.z,
-                        (i+1)%ics.len(), d);
-                }
-            }
-        }
-        if matches!(face.surface, Surface3::Sphere(_)) {
-            let n_seam = segments.iter().filter(|s| s.is_seam).count();
-            let n_ic = segments.len() - n_seam;
-            eprintln!("[WIRE_PIPELINE] face={} total_segments={} seam={} ic={}", face_idx, segments.len(), n_seam, n_ic);
-        }
-        let wires = build_closed_wires(&segments, ds, face_idx);
-        if wires.is_empty() {
-            eprintln!("[WIRE_PIPELINE] face={} segments={} wires empty — falling through", face_idx, segments.len());
-            return None;
-        }
-        let wfs = perform_areas(&wires, &segments, ds, face_idx);
-        if wfs.is_empty() {
-            eprintln!("[WIRE_PIPELINE] face={} segments={} wires={} wire_faces empty — falling through", face_idx, segments.len(), wires.len());
-            return None;
-        }
-        for (wi, wf) in wfs.iter().enumerate() {
-            if wf.outer_wire.len() < 3 {
-                eprintln!("[WIRE_PIPELINE] face={} wire_face[{}] outer_wire has {} segments (<3) — falling through",
-                    face_idx, wi, wf.outer_wire.len());
-                return None;
-            }
-            eprintln!("[WIRE_PIPELINE] face={} wf[{}]: outer_wire={} segments, {} inner_wires, seam_segs={}",
-                face_idx, wi, wf.outer_wire.len(), wf.inner_wires.len(),
-                wf.outer_wire.iter().filter(|&&si| segments[si].is_seam).count());
-        }
-        eprintln!("[WIRE_PIPELINE] face={} segments={} wires={} wfs={} — SUCCESS", face_idx, segments.len(), wires.len(), wfs.len());
-        Some((segments, wfs))
-    }
-}
-
+/// Edge-like segment for wire building 鈥?can be a DS edge, an intersection curve,
 impl<'a> BooleanBuilder<'a> {
     pub fn new(ds: &'a DS, op: BooleanOpType) -> Self {
         Self {
@@ -3621,7 +2310,7 @@ impl<'a> BooleanBuilder<'a> {
     /// Plane and, if found, returns whether face normals point opposite.
     ///
     /// When `sub_opt` is `Some(sub)` uses the sub-face's normal and centroid
-    /// to construct the A-plane — these are more reliable than the face-level
+    /// to construct the A-plane 鈥?these are more reliable than the face-level
     /// surface after multi-step booleans (the face surface may be stale while
     /// the sub-face captures the actual clipped boundary).
     fn fallback_coplanar_normals_opposite(
@@ -3645,7 +2334,7 @@ impl<'a> BooleanBuilder<'a> {
             let Surface3::Plane(b_plane) = &b_face.surface else { continue; };
             let nb = b_plane.normal.normalize();
 
-            // Check normals are parallel (dot product near ±1).
+            // Check normals are parallel (dot product near 卤1).
             if na.dot(nb).abs() < 0.999 {
                 continue;
             }
@@ -3820,9 +2509,9 @@ impl<'a> BooleanBuilder<'a> {
                     && class == Classification::On
                     && matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
                 {
-                    // ✅ OCCT对齐: 保留平面 ON 子面,由下游 edge-set merge 处理。
-                    //    OCCT FillSameDomainFaces (BOPAlgo_Builder_2.cxx L571) 保留所有 ON
-                    //    子面,用 edge set 分组后选 DS index 最小面为代表。
+                    // 鉁?OCCT瀵归綈: 淇濈暀骞抽潰 ON 瀛愰潰,鐢变笅娓?edge-set merge 澶勭悊銆?
+                    //    OCCT FillSameDomainFaces (BOPAlgo_Builder_2.cxx L571) 淇濈暀鎵€鏈?ON
+                    //    瀛愰潰,鐢?edge set 鍒嗙粍鍚庨€?DS index 鏈€灏忛潰涓轰唬琛ㄣ€?
                     true
                 } else if !face_split
                     && self.op == BooleanOpType::Difference
@@ -3836,12 +2525,12 @@ impl<'a> BooleanBuilder<'a> {
                         .or_else(|| self.fallback_coplanar_normals_opposite(fi, Some(sub), &b_faces))
                         .unwrap_or(false)
                 } else if matches!(sub.surface, Surface3::Sphere(_)) && sub.sample_override.is_some() {
-                    // ✅ OCCT对齐: 球面子面来自 build_sphere_sub_faces_by_circles,
-                    //    其 sample_override 为子面质心。classify_by_off_solid_edge
-                    //    等边界分类器对球面片误判。直接用布尔操作决定保留:
-                    //    Intersection: 保留 In(球面在盒内的部分)
-                    //    Difference A-side: 保留 Out(球面在盒外的部分)
-                    //    Union: 全部保留
+                    // 鉁?OCCT瀵归綈: 鐞冮潰瀛愰潰鏉ヨ嚜 build_sphere_sub_faces_by_circles,
+                    //    鍏?sample_override 涓哄瓙闈㈣川蹇冦€俢lassify_by_off_solid_edge
+                    //    绛夎竟鐣屽垎绫诲櫒瀵圭悆闈㈢墖璇垽銆傜洿鎺ョ敤甯冨皵鎿嶄綔鍐冲畾淇濈暀:
+                    //    Intersection: 淇濈暀 In(鐞冮潰鍦ㄧ洅鍐呯殑閮ㄥ垎)
+                    //    Difference A-side: 淇濈暀 Out(鐞冮潰鍦ㄧ洅澶栫殑閮ㄥ垎)
+                    //    Union: 鍏ㄩ儴淇濈暀
                     let sp = sub.sample_point();
                     let cp = classify_point(sp, &b_faces, self.ds);
                     match self.op {
@@ -3896,17 +2585,17 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
 
-            // ⏳ OCCT对齐: 跳过 SubFace 级合并,让 BRep 级 unify_same_domain_faces
-            //    处理(OCCT 无 SubFace,始终保持 section edges 子面分离直到 BuildSolid)。
+            // 鈴?OCCT瀵归綈: 璺宠繃 SubFace 绾у悎骞?璁?BRep 绾?unify_same_domain_faces
+            //    澶勭悊(OCCT 鏃?SubFace,濮嬬粓淇濇寔 section edges 瀛愰潰鍒嗙鐩村埌 BuildSolid)銆?
             if kept_subs.len() > 1
                 && !matches!(kept_subs[0].surface, Surface3::Sphere(_) | Surface3::Cylinder(_))
             {
                 merge_subfaces_of_same_face(&mut kept_subs);
             }
 
-            // ❌ 禁用: wire pipeline 对球面产生错误 outer_wire(4条IC段含重复方向),
-            //    UV domain 覆盖半球(2π),SA 错误(6.283→应为1.571)。改用
-            //    build_sphere_sub_faces_by_circles + SubFace emit。
+            // 鉂?绂佺敤: wire pipeline 瀵圭悆闈骇鐢熼敊璇?outer_wire(4鏉C娈靛惈閲嶅鏂瑰悜),
+            //    UV domain 瑕嗙洊鍗婄悆(2蟺),SA 閿欒(6.283鈫掑簲涓?.571)銆傛敼鐢?
+            //    build_sphere_sub_faces_by_circles + SubFace emit銆?
             let wire_emit_used = false;
 
             if !wire_emit_used {
@@ -3945,20 +2634,20 @@ impl<'a> BooleanBuilder<'a> {
                     && self.coplanar_ff_normals_opposite(fi) == Some(false)
                 {
                     // For Union, unsplit planar On faces coplanar with an A-face
-                    // (same normal) are entirely internal — the A-face covers this
+                    // (same normal) are entirely internal 鈥?the A-face covers this
                     // region externally.  Only unsplit faces qualify: split faces
                     // have On sub-faces on the outer boundary after the A-face's
                     // coincident part is removed.
                     // Mirrors the A-face logic at lines ~3066-3073.
-                    // ✅ OCCT 对齐: BSpline 扩展。OCCT FillSameDomainFaces
-                    //    (BOPAlgo_Builder_2.cxx L571) 按几何比较表面。
+                    // 鉁?OCCT 瀵归綈: BSpline 鎵╁睍銆侽CCT FillSameDomainFaces
+                    //    (BOPAlgo_Builder_2.cxx L571) 鎸夊嚑浣曟瘮杈冭〃闈€?
                     false
                 } else if matches!(sub.surface, Surface3::Plane(_)) && !sub.outer_circle_edges.is_empty() {
-                    // ✅ OCCT对齐: 平面子面含圆弧边(球-盒交线圆弧)。
-                    //    sample_override.is_some() = 盒外部分(保留扇形),否则 = 盒内部分(1/4圆)。
-                    //    Intersection: 保留盒内部分(1/4圆)
-                    //    Difference B-side: 保留盒内部分(1/4圆)
-                    //    Union: 全部保留
+                    // 鉁?OCCT瀵归綈: 骞抽潰瀛愰潰鍚渾寮ц竟(鐞?鐩掍氦绾垮渾寮?銆?
+                    //    sample_override.is_some() = 鐩掑閮ㄥ垎(淇濈暀鎵囧舰),鍚﹀垯 = 鐩掑唴閮ㄥ垎(1/4鍦?銆?
+                    //    Intersection: 淇濈暀鐩掑唴閮ㄥ垎(1/4鍦?
+                    //    Difference B-side: 淇濈暀鐩掑唴閮ㄥ垎(1/4鍦?
+                    //    Union: 鍏ㄩ儴淇濈暀
                     match self.op {
                         BooleanOpType::Intersection | BooleanOpType::Difference => sub.sample_override.is_none(),
                         BooleanOpType::Union => true,
@@ -4000,7 +2689,7 @@ impl<'a> BooleanBuilder<'a> {
                     }
 
                     // For Intersection, skip B-side On subfaces that are coplanar with an
-                    // already-emitted A-side face (e.g. cylinder cap 鈭?cube face 鈥?both produce
+                    // already-emitted A-side face (e.g. cylinder cap 閳?cube face 閳?both produce
                     // On faces on the same plane; only the A-face should survive).
                     if self.op == BooleanOpType::Intersection && class == Classification::On {
                         if let Surface3::Plane(bp) = &sub.surface {
@@ -4052,9 +2741,9 @@ impl<'a> BooleanBuilder<'a> {
 
             // Merge kept sub-faces from the same original face that share
             // boundary edges.  Only merge sub-faces with the same classification
-            // (Out↔Out, On↔On) — merging Out with On recreates the full original
-            // face and undoes the planar split (bfuse_simple B5 regression: 14→6).
-            // Skip merge for sphere faces — merge_two_subfaces clears outer_circle_edges,
+            // (Out鈫擮ut, On鈫擮n) 鈥?merging Out with On recreates the full original
+            // face and undoes the planar split (bfuse_simple B5 regression: 14鈫?).
+            // Skip merge for sphere faces 鈥?merge_two_subfaces clears outer_circle_edges,
             // causing the merged face to have straight edges instead of circular arcs.
             // Individual octants with correct circle arcs get merged later by
             // optimize_boolean_topology (unify_same_domain_faces).
@@ -4078,22 +2767,7 @@ impl<'a> BooleanBuilder<'a> {
                     .into_iter().chain(on_merged.into_iter().map(|s| (s, Classification::On))).collect();
             }
             let flip = self.op == BooleanOpType::Difference;
-            // ✅ OCCT对齐: B-side sphere 面使用 emit_wire_face (同 A-side)
-            let wire_emit_used = if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) {
-                false
-            } else if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) {
-                if let Some((w_segments, w_faces)) = self.split_face_occt_wire_pipeline(fi) {
-                    for wf in &w_faces {
-                        let src = self.ds.faces[fi].source_face_idx;
-                        result.emit_wire_face(fi, wf, &w_segments, self.ds, flip, FaceOrigin::FromB(src));
-                    }
-                    true
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
+            let wire_emit_used = false;
             if !wire_emit_used {
                 for pair in kept_subs.iter_mut() {
                 let src = self.ds.faces[fi].source_face_idx;
@@ -4116,11 +2790,11 @@ impl<'a> BooleanBuilder<'a> {
         annotate_history_from_ds(&brep, &mut history, self.ds);
         annotate_shell_and_solid_history(&brep, &mut history);
 
-        // ✅ OCCT对齐: FillSameDomainFaces — 合并同域子面。
-        //    OCCT 在 BuildSolid 后执行,合并共边同域的相邻子面。rcad 用
-        //    unify_same_domain_faces(无源过滤)实现。origin 过滤在此处会
-        //    因 face_origins 未随合并更新而失效(merge 从中间移除面后索引偏移,
-        //    truncate 不能正确移除对应 origin)。
+        // 鉁?OCCT瀵归綈: FillSameDomainFaces 鈥?鍚堝苟鍚屽煙瀛愰潰銆?
+        //    OCCT 鍦?BuildSolid 鍚庢墽琛?鍚堝苟鍏辫竟鍚屽煙鐨勭浉閭诲瓙闈€俽cad 鐢?
+        //    unify_same_domain_faces(鏃犳簮杩囨护)瀹炵幇銆俹rigin 杩囨护鍦ㄦ澶勪細
+        //    鍥?face_origins 鏈殢鍚堝苟鏇存柊鑰屽け鏁?merge 浠庝腑闂寸Щ闄ら潰鍚庣储寮曞亸绉?
+        //    truncate 涓嶈兘姝ｇ‘绉婚櫎瀵瑰簲 origin)銆?
         // (removed unify_same_domain_faces for OCCT alignment)
             // Vertex dedup after face merge: merged faces may reference different vertex
             // indices for the same 3D position (leftover from pre-merge face vertices).
@@ -4171,9 +2845,9 @@ impl<'a> BooleanBuilder<'a> {
             );
         }
 
-        // Edge→face reference validation: detect orphan and over-shared edges
+        // Edge鈫抐ace reference validation: detect orphan and over-shared edges
         // that would produce an OPEN_SHELL result. If issues are found, run
-        // diagnostics and warn gracefully — the shell may still be usable.
+        // diagnostics and warn gracefully 鈥?the shell may still be usable.
         if let Err(e) = self.validate_edge_face_references(&brep) {
             eprintln!("[WARN] Edge-face reference validation: {:?}", e);
             self.diagnose_orphan_edges(&brep);
@@ -4302,7 +2976,7 @@ impl<'a> BooleanBuilder<'a> {
             );
         }
 
-        // Edge→face reference validation (same as build_with_history).
+        // Edge鈫抐ace reference validation (same as build_with_history).
         if let Err(e) = self.validate_edge_face_references(&brep) {
             eprintln!("[WARN] Edge-face reference validation (par): {:?}", e);
             self.diagnose_orphan_edges(&brep);
@@ -4311,7 +2985,7 @@ impl<'a> BooleanBuilder<'a> {
         Ok((brep, history))
     }
 
-    /// When PaveFiller does not link a plane鈥搒phere circle to every affected box face, merge in
+    /// When PaveFiller does not link a plane閳ユ悞phere circle to every affected box face, merge in
     /// any coplanar `Curve3::Circle` from `intersection_curves` that overlaps the face 2D AABB.
     fn extra_coplanar_circle_curves_for_plane_face(
         &self,
@@ -4455,13 +3129,13 @@ impl<'a> BooleanBuilder<'a> {
         if let Surface3::Plane(plane) = &face.surface {
             let cids = self.merged_split_curve_ids_for_planar_face(face_idx, plane);
             if cids.is_empty() {
-                // No intersection curves 鈥?return the whole face as one subface.
+                // No intersection curves 閳?return the whole face as one subface.
                 // split_planar_face would only return the unsplit polygon.
                 let subs = self.single_subface_from_whole_face(face_idx);
                 return subs;
             }
-            // ✅ OCCT对齐: 检测 circle 交线→直接用精确圆弧构建环形面
-            //    OCCT: MakeBlocks → BuildSplitFaces 用精确 section edges
+            // 鉁?OCCT瀵归綈: 妫€娴?circle 浜ょ嚎鈫掔洿鎺ョ敤绮剧‘鍦嗗姬鏋勫缓鐜舰闈?
+            //    OCCT: MakeBlocks 鈫?BuildSplitFaces 鐢ㄧ簿纭?section edges
             let boundary: Vec<DVec3> = face.boundary_verts.iter()
                 .map(|&vi| self.ds.vertices[vi].point).collect();
             let (u_ax, v_ax) = plane_local_basis(plane);
@@ -4497,9 +3171,9 @@ impl<'a> BooleanBuilder<'a> {
                         xs.sort_by(|a,b| a.partial_cmp(b).unwrap());
                         let t1 = xs[0]; let t2 = xs[xs.len()-1];
                         if (t2 - t1).abs() > 1e-8 {
-                            // ✅ OCCT对齐: 裁剪面替代环形面(OCCT BuildSplitFaces不用环形路径)。
-                            //    原环形路径创建「全矩形+内环」,球内角点 V2=(0,0,0) 在外环上。
-                            //    正确拓扑: 移除球内角点,用圆弧替换,得到裁剪后的单外环面。
+                            // 鉁?OCCT瀵归綈: 瑁佸壀闈㈡浛浠ｇ幆褰㈤潰(OCCT BuildSplitFaces涓嶇敤鐜舰璺緞)銆?
+                            //    鍘熺幆褰㈣矾寰勫垱寤恒€屽叏鐭╁舰+鍐呯幆銆?鐞冨唴瑙掔偣 V2=(0,0,0) 鍦ㄥ鐜笂銆?
+                            //    姝ｇ‘鎷撴墤: 绉婚櫎鐞冨唴瑙掔偣,鐢ㄥ渾寮ф浛鎹?寰楀埌瑁佸壀鍚庣殑鍗曞鐜潰銆?
                             let c_r = circ.radius;
                             let c_center = circ.center;
                             let keep: Vec<DVec3> = boundary.iter()
@@ -4525,9 +3199,9 @@ impl<'a> BooleanBuilder<'a> {
                                 if inside.len() >= 2 {
                                     let arc_curve_inner = Curve3::Circle(*circ);
                                     let n_inside = inside.len();
-                                    // ✅ OCCT修复: 正确计算内部子面的圆弧位置
-                                    //    圆弧必须连接两个在圆上的边界顶点,而不是从圆上顶点连接
-                                    //    到圆内顶点。在内部顶点列表中,查找两个连续圆上顶点的边。
+                                    // 鉁?OCCT淇: 姝ｇ‘璁＄畻鍐呴儴瀛愰潰鐨勫渾寮т綅缃?
+                                    //    鍦嗗姬蹇呴』杩炴帴涓や釜鍦ㄥ渾涓婄殑杈圭晫椤剁偣,鑰屼笉鏄粠鍦嗕笂椤剁偣杩炴帴
+                                    //    鍒板渾鍐呴《鐐广€傚湪鍐呴儴椤剁偣鍒楄〃涓?鏌ユ壘涓や釜杩炵画鍦嗕笂椤剁偣鐨勮竟銆?
                                     let inside_arc_pos = (0..n_inside).find(|&i| {
                                         let j = (i + 1) % n_inside;
                                         inside[i].distance(c_center) >= c_r - 1e-8
@@ -4553,10 +3227,10 @@ impl<'a> BooleanBuilder<'a> {
                 return subs;
             }
 
-            // ✅ OCCT对齐: 平面面有交线但非环形圆时,用 split_planar_face 做2D多边形分裂。
-            //    OCCT BOPAlgo_BuilderFace 对所有面统一处理(section edges → MakeLoops → Areas)。
-            //    rcad 的等价路径: split_planar_face (2D多边形+线裁剪)。
-            //    此回退覆盖 plane-plane 线交线和未裁剪圆路过的所有平面面。
+            // 鉁?OCCT瀵归綈: 骞抽潰闈㈡湁浜ょ嚎浣嗛潪鐜舰鍦嗘椂,鐢?split_planar_face 鍋?D澶氳竟褰㈠垎瑁傘€?
+            //    OCCT BOPAlgo_BuilderFace 瀵规墍鏈夐潰缁熶竴澶勭悊(section edges 鈫?MakeLoops 鈫?Areas)銆?
+            //    rcad 鐨勭瓑浠疯矾寰? split_planar_face (2D澶氳竟褰?绾胯鍓?銆?
+            //    姝ゅ洖閫€瑕嗙洊 plane-plane 绾夸氦绾垮拰鏈鍓渾璺繃鐨勬墍鏈夊钩闈㈤潰銆?
             return self.split_planar_face(face_idx, plane, &cids);
         }
 
@@ -4623,8 +3297,8 @@ impl<'a> BooleanBuilder<'a> {
 
         // For Cylinder surfaces with curves_in at the UV boundary, use tessellation
         // instead of split_curved_face_parametric.  Curves at the cap seam (v=0 or v=h)
-        // are boundary edges, not interior cuts — splitting along them produces zero-area
-        // subfaces (e.g. cylinder wall ⋃ containing cube with coplanar caps).
+        // are boundary edges, not interior cuts 鈥?splitting along them produces zero-area
+        // subfaces (e.g. cylinder wall 鈰?containing cube with coplanar caps).
         if matches!(&face.surface, Surface3::Cylinder(_)) {
             if let Some(uv_bnd) = &face.uv_boundary {
                 if uv_bnd.len() >= 3 {
@@ -4644,12 +3318,12 @@ impl<'a> BooleanBuilder<'a> {
                             let v_max = pts.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
                             // Skip phantom curves whose V range is entirely outside
                             // the face's V bounds. These are generated by infinite-surface
-                            // intersection (e.g. cylinder × box-bottom at z=0) and do not
+                            // intersection (e.g. cylinder 脳 box-bottom at z=0) and do not
                             // lie on the bounded cylinder face.
                             if v_max < bnd_v_min - vb_tol || v_min > bnd_v_max + vb_tol {
                                 return true;
                             }
-                            // Clip to face V bounds — only for line pcurves whose IC's
+                            // Clip to face V bounds 鈥?only for line pcurves whose IC's
                             // t_range may exceed the face domain (e.g. generator lines with
                             // extent=20).  BSpline/Bezier pcurves already have a bounded
                             // t_range ([0, 1]) within the face.
@@ -4658,9 +3332,9 @@ impl<'a> BooleanBuilder<'a> {
                             let v_max_f = if is_line { v_max.min(bnd_v_max) } else { v_max };
                             if is_line && v_max_f - v_min_f < vb_tol * 0.5 {
                                 // Horizontal line pcurve (constant V). Check if it is
-                                // actually at the V-boundary — a horizontal line interior
+                                // actually at the V-boundary 鈥?a horizontal line interior
                                 // to the V range (e.g. a coaxial circle at z=0 on a cylinder
-                                // with V∈[0,3]) is NOT a boundary curve and must NOT be
+                                // with V鈭圼0,3]) is NOT a boundary curve and must NOT be
                                 // treated as one, otherwise `all_at_boundary` becomes true
                                 // and the face tessellates instead of splitting
                                 // parametrically, losing interior cuts.
@@ -4680,14 +3354,14 @@ impl<'a> BooleanBuilder<'a> {
                         return subs;
                     }
 
-                    // Detect full-wrap curves (u-span ≥ 85 % of cylinder azimuth range):
+                    // Detect full-wrap curves (u-span 鈮?85 % of cylinder azimuth range):
                     // these are Steinmetz-style curves that loop all the way around the
                     // cylinder in the u direction.  The parametric UV-polygon splitter
                     // cannot handle two crossing full-wrap sinusoidal trims, so fall back
-                    // to a 2D tessellation (N_U × N_V grid).  Each patch's boundary
+                    // to a 2D tessellation (N_U 脳 N_V grid).  Each patch's boundary
                     // centroid gives a correct sample point for classification.
                     //
-                    // N_V=32 bounds SA error to ≤ R·π·H/N_V ≈ 40000π/32 ≈ 3930 per
+                    // N_V=32 bounds SA error to 鈮?R路蟺路H/N_V 鈮?40000蟺/32 鈮?3930 per
                     // cylinder, well inside the 7.5 % tolerance used by bcommon_simple/I9.
                     let has_full_wrap = bnd_u_span > TOLERANCE_LEN_MIN
                         && fi.curves_in.iter().any(|&ci| {
@@ -4698,7 +3372,7 @@ impl<'a> BooleanBuilder<'a> {
                                 let uvs: Vec<DVec2> = (0..=N)
                                     .map(|i| {
                                         // BSpline/Bezier pcurves have knot domain [0, 1],
-                                        // not the IC's t_range (e.g. [0, 2π] for an ellipse).
+                                        // not the IC's t_range (e.g. [0, 2蟺] for an ellipse).
                                         // Normalize so de_boor_2d evaluates within the knot domain.
                                         let t = match pcurve.inner() {
                                             Curve2d::BSpline(_) | Curve2d::Bezier(_) => {
@@ -4712,8 +3386,8 @@ impl<'a> BooleanBuilder<'a> {
                                 let span = if bnd_u_min.is_finite() && bnd_u_span.is_finite() && bnd_u_span > 0.0 {
                                     // Circular span for periodic surfaces: unwrapping artifacts in the
                                     // pcurve BSpline can inflate the raw (max-min) span to many times
-                                    // the true range (e.g. 4.7→41.5 when the true values wrap from 6.2
-                                    // back to 0.1 on a [0, 2π) surface).
+                                    // the true range (e.g. 4.7鈫?1.5 when the true values wrap from 6.2
+                                    // back to 0.1 on a [0, 2蟺) surface).
                                     let mut wrapped: Vec<f64> = uvs.iter().map(|p| {
                                         let s = p.x - bnd_u_min;
                                         s - (s / bnd_u_span).floor() * bnd_u_span
@@ -4735,14 +3409,14 @@ impl<'a> BooleanBuilder<'a> {
                                 }
                                 // Exclude full-wrap curves at the V boundary (cap circles).
                                 // Cap circles span the full U-range but follow the cylinder's
-                                // top/bottom edge — they are not interior Steinmetz-style cuts
+                                // top/bottom edge 鈥?they are not interior Steinmetz-style cuts
                                 // that require 2D tessellation to resolve.
                                 let all_at_v_bnd = uvs.iter().all(|p| {
                                     (p.y - bnd_v_min).abs() < vb_tol
                                         || (p.y - bnd_v_max).abs() < vb_tol
                                 });
                                 // Also exclude phantom curves entirely outside the face V range
-                                // (generated by infinite-surface intersection, e.g. cylinder ×
+                                // (generated by infinite-surface intersection, e.g. cylinder 脳
                                 // box-bottom at z=0 producing a circle at V < face V_min).
                                 let all_outside_v = uvs.iter().all(|p| {
                                     p.y < bnd_v_min - vb_tol || p.y > bnd_v_max + vb_tol
@@ -4756,7 +3430,7 @@ impl<'a> BooleanBuilder<'a> {
 
                     // For cylinder faces with complex (marched) intersection curves,
                     // use UV grid tessellation instead of split_curved_face_parametric.
-                    // High-order curves from numeric marching (e.g., the cone–cylinder
+                    // High-order curves from numeric marching (e.g., the cone鈥揷ylinder
                     // quartic in ZK8) cause the parametric splitter to produce overlapping
                     // UV polygons, inflating the surface area in the same way as cone faces.
                     let has_complex_curve = fi.curves_in.iter().any(|&ci| {
@@ -4781,8 +3455,8 @@ impl<'a> BooleanBuilder<'a> {
             return self.tessellate_sphere_face(face_idx);
         }
 
-        // ✅ OCCT对齐: 球面有 IC 圆曲线时,用 build_sphere_sub_faces_by_circles 直接
-        //    从大圆交点构建 SubFace,绕过 UV 多边形分裂(不能正确分离球面卦限)。
+        // 鉁?OCCT瀵归綈: 鐞冮潰鏈?IC 鍦嗘洸绾挎椂,鐢?build_sphere_sub_faces_by_circles 鐩存帴
+        //    浠庡ぇ鍦嗕氦鐐规瀯寤?SubFace,缁曡繃 UV 澶氳竟褰㈠垎瑁?涓嶈兘姝ｇ‘鍒嗙鐞冮潰鍗﹂檺)銆?
         if matches!(&face.surface, Surface3::Sphere(_)) && !fi.curves_in.is_empty() {
             let subs = self.build_sphere_sub_faces_by_circles(face_idx);
             if !subs.is_empty() {
@@ -4790,10 +3464,10 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        // ❌ 已删除: build_sphere_sub_faces_by_circles sphere route (旧代码)。
+        // 鉂?宸插垹闄? build_sphere_sub_faces_by_circles sphere route (鏃т唬鐮?銆?
         //    OCCT uses edge-based BuilderFace with section edges, not SubFace polygon splitting.
         // overlapping sub-face UV polygons when intersection curves are high-order
-        // (e.g. the cone–cylinder quartic for skew axes in ZK8/ZL1), causing SA
+        // (e.g. the cone鈥揷ylinder quartic for skew axes in ZK8/ZL1), causing SA
         // double-counting.  A grid guarantees that each UV region maps to exactly one
         // sub-face whose sample point correctly represents the region.
         //
@@ -4801,9 +3475,9 @@ impl<'a> BooleanBuilder<'a> {
         // outside the face V range), skip tessellation.  The parallel-offset
         // cylinder-cone intersection algorithm computes intersection of the infinite
         // mathematical surfaces, which may produce branches outside the cone frustum
-        // face (e.g. g9: pcyl (1,9) offset 5 from cone (r=7→6, h=4) — intersection
-        // branches at z≥4 are above the cone's actual face boundary).  These spurious
-        // curves_in would trigger unnecessary 32×32 tessellation, inflating SA from
+        // face (e.g. g9: pcyl (1,9) offset 5 from cone (r=7鈫?, h=4) 鈥?intersection
+        // branches at z鈮? are above the cone's actual face boundary).  These spurious
+        // curves_in would trigger unnecessary 32脳32 tessellation, inflating SA from
         // 727.5 to 922.7.
         if matches!(&face.surface, Surface3::Cone(_)) {
             if let Some(uv_bnd) = &face.uv_boundary {
@@ -4857,7 +3531,7 @@ impl<'a> BooleanBuilder<'a> {
             | Surface3::BSpline(_)
             | Surface3::Bezier(_) => self.split_curved_face_parametric(face_idx),
             _ => {
-                // Other curved surfaces — return whole face for now
+                // Other curved surfaces 鈥?return whole face for now
                 self.single_subface_from_whole_face(face_idx)
             }
         }
@@ -5013,11 +3687,11 @@ impl<'a> BooleanBuilder<'a> {
         subs
     }
 
-    /// Tessellate a cylinder face into an N_U × N_V 2D grid of rectangular patches.
+    /// Tessellate a cylinder face into an N_U 脳 N_V 2D grid of rectangular patches.
     ///
-    /// Used for cylinder–cylinder intersections (e.g. Steinmetz) where full-wrap
+    /// Used for cylinder鈥揷ylinder intersections (e.g. Steinmetz) where full-wrap
     /// intersection curves prevent the parametric UV-polygon splitting from working.
-    /// Each patch's sample point (boundary centroid ≈ surface center) is classified
+    /// Each patch's sample point (boundary centroid 鈮?surface center) is classified
     /// independently against the other solid, correctly selecting the Steinmetz lobes.
     fn tessellate_cylinder_face_2d(
         &self,
@@ -5119,7 +3793,7 @@ impl<'a> BooleanBuilder<'a> {
     ///
     /// This replaces [`split_curved_face_parametric`] for cone faces because the UV
     /// splitter can produce overlapping sub-face polygons when intersection curves are
-    /// high-order (e.g. the cone–cylinder quartic from skew axes in ZK8/ZL1), leading
+    /// high-order (e.g. the cone鈥揷ylinder quartic from skew axes in ZK8/ZL1), leading
     /// to SA double-counting.  The grid approach guarantees each UV region is covered
     /// by exactly one sub-face whose sample point correctly represents the region.
     fn tessellate_cone_face_2d(
@@ -5281,24 +3955,24 @@ impl<'a> BooleanBuilder<'a> {
 
         // Process each intersection curve to split the polygon
         let mut poly_wires: Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)> = vec![(boundary_2d.clone(), vec![])];
-        // OCCT对齐: 保存原始矩形边界,用于 circle 交线时替代被切割的外边界
+        // OCCT瀵归綈: 淇濆瓨鍘熷鐭╁舰杈圭晫,鐢ㄤ簬 circle 浜ょ嚎鏃舵浛浠ｈ鍒囧壊鐨勫杈圭晫
         let original_rect_2d = boundary_2d.clone();
-        // ✅ OCCT对齐: arc_info 与 poly_wires 并行,记录哪些子面外边界需精确圆边。
-        //    OCCT MakeBlocks → section edges 直接作为 BRep 边的 Curve3; rcad 用
-        //    outer_circle_edges 达到相同效果(arc_info 在 SubFace 创建时传递)。
+        // 鉁?OCCT瀵归綈: arc_info 涓?poly_wires 骞惰,璁板綍鍝簺瀛愰潰澶栬竟鐣岄渶绮剧‘鍦嗚竟銆?
+        //    OCCT MakeBlocks 鈫?section edges 鐩存帴浣滀负 BRep 杈圭殑 Curve3; rcad 鐢?
+        //    outer_circle_edges 杈惧埌鐩稿悓鏁堟灉(arc_info 鍦?SubFace 鍒涘缓鏃朵紶閫?銆?
         let mut arc_info: Vec<Option<(usize, rcad_kernel::geom::Curve3)>> = vec![None];
         // Track circles that were embedded inside polygons (center_2d, radius).
         // When such a circle is fully inside a polygon, that polygon's centroid
-        // may fall inside the circle 鈥?we must use a vertex-based sample instead.
+        // may fall inside the circle 閳?we must use a vertex-based sample instead.
         let mut embedded_circles: Vec<(DVec2, f64)> = Vec::new();
 
-        // ✅ OCCT对齐: 检测全圆盖面(cylinder-box Intersection)。
-        //    OCCT MakeBlocks → Hatcher 直接在 IC 上创建 section edges 作为 BRep 边。
-        //    rcad: split_polygon_by_circle_2d 的 Intersection shortcut 返回24点近似圆,
-        //    顶点与 cylinder 子面弧端点不匹配(导致 V/E 膨胀, open shell)。
-        //    改从以下来源构建 cap face:
-        //    1. Split Circle curve segment vertices (PaveFiller 已分段)
-        //    2. Edge-circle intersection from face boundary polygon (通用回退)
+        // 鉁?OCCT瀵归綈: 妫€娴嬪叏鍦嗙洊闈?cylinder-box Intersection)銆?
+        //    OCCT MakeBlocks 鈫?Hatcher 鐩存帴鍦?IC 涓婂垱寤?section edges 浣滀负 BRep 杈广€?
+        //    rcad: split_polygon_by_circle_2d 鐨?Intersection shortcut 杩斿洖24鐐硅繎浼煎渾,
+        //    椤剁偣涓?cylinder 瀛愰潰寮х鐐逛笉鍖归厤(瀵艰嚧 V/E 鑶ㄨ儉, open shell)銆?
+        //    鏀逛粠浠ヤ笅鏉ユ簮鏋勫缓 cap face:
+        //    1. Split Circle curve segment vertices (PaveFiller 宸插垎娈?
+        //    2. Edge-circle intersection from face boundary polygon (閫氱敤鍥為€€)
         if self.op == BooleanOpType::Intersection {
             use rcad_kernel::geom::Curve3;
             for &first_ci in split_curve_ids {
@@ -5405,11 +4079,11 @@ impl<'a> BooleanBuilder<'a> {
                     let center_2d = project_to_2d(circle.center);
                     let radius = circle.radius;
 
-                    // Skip degenerate circles (radius ≈ 0) from tangent sphere-plane
+                    // Skip degenerate circles (radius 鈮?0) from tangent sphere-plane
                     // intersections.  These cannot split the planar face and would produce
                     // a damaged boundary triangle instead of the full face rectangle.
-                    // Use a relaxed tolerance — the sphere-plane distance may produce
-                    // a radius of ~1e-6 from floating-point noise (e.g. sqrt(1²-1²)).
+                    // Use a relaxed tolerance 鈥?the sphere-plane distance may produce
+                    // a radius of ~1e-6 from floating-point noise (e.g. sqrt(1虏-1虏)).
                     if radius < TOLERANCE_PLANE_DIST_RELAX {
                         (None, None)
                     } else {
@@ -5418,7 +4092,7 @@ impl<'a> BooleanBuilder<'a> {
 
                     // Pre-sample the 3D circle at 128 3D points, projected to 2D.
                     // `split_curved_face_parametric` samples sphere UV edges at 32 points
-                    // (EDGE_SAMPLES) per edge, so 128 鈫?32 per quadrant matches that density,
+                    // (EDGE_SAMPLES) per edge, so 128 閳?32 per quadrant matches that density,
                     // ensuring plane-side arc positions are bit-identical to sphere-side
                     // boundary positions so `ResultBuilder::add_vertex` deduplicates them.
                     let on_circle_tol = TOLERANCE_COORD_SUB;
@@ -5433,18 +4107,18 @@ impl<'a> BooleanBuilder<'a> {
                                 .collect();
                             let fi = on.iter().position(|&x| x);
                             let li = on.iter().rposition(|&x| x);
-                            // ✅ OCCT对齐: 检测环形面(有圆外交点+圆上弧段→外边界=矩形,内边界=弧)
+                            // 鉁?OCCT瀵归綈: 妫€娴嬬幆褰㈤潰(鏈夊渾澶栦氦鐐?鍦嗕笂寮ф鈫掑杈圭晫=鐭╁舰,鍐呰竟鐣?寮?
                             if let (Some(f), Some(l)) = (fi, li) {
                                 let has_outer = half.iter().any(|p| (p - center_2d).length() > radius + on_circle_tol);
                                 let on_cnt = on.iter().filter(|&&v| v).count();
                                 if has_outer && on_cnt >= 3 {
-                                    // 环形面: 外边界=原始矩形, 内边界=弧线段
+                                    // 鐜舰闈? 澶栬竟鐣?鍘熷鐭╁舰, 鍐呰竟鐣?寮х嚎娈?
                                     let arc: Vec<DVec2> = half[f..=l].to_vec();
                                     let mut new_wires = all_wires.clone();
                                     new_wires.push(arc);
                                     next.push((original_rect_2d.clone(), new_wires));
                                     next_arc.push(None);
-                                    continue; // 跳过标准 replace 流程
+                                    continue; // 璺宠繃鏍囧噯 replace 娴佺▼
                                 }
                             }
                             let replace = match (fi, li) {
@@ -5453,8 +4127,8 @@ impl<'a> BooleanBuilder<'a> {
                                     if cnt >= 3 && l - f + 1 == cnt {
                                         if f == 0 && l == half.len() - 1 {
                                             // All vertices on the circle boundary.
-                                            // A full-circle polygon (angular span ~2π) must
-                                            // NOT be replaced — the direction logic breaks
+                                            // A full-circle polygon (angular span ~2蟺) must
+                                            // NOT be replaced 鈥?the direction logic breaks
                                             // down for a closed ring of on-circle vertices.
                                             // But a partial circular segment (all vertices on
                                             // the circle, e.g. curved triangle from splitting
@@ -5485,10 +4159,10 @@ impl<'a> BooleanBuilder<'a> {
                                 let fi = fi.unwrap();
                                 let li = li.unwrap();
 
-                                // ✅ OCCT对齐: 不用128弧采样,直接用两端点+outer_circle_edges。
-                                //    OCCT MakeBlocks → section edges 用精确几何曲线;
-                                //    rcad 用 outer_circle_edges 记录 Circle3,在 emit 时
-                                //    add_circle_edge 创建精确圆弧边。
+                                // 鉁?OCCT瀵归綈: 涓嶇敤128寮ч噰鏍?鐩存帴鐢ㄤ袱绔偣+outer_circle_edges銆?
+                                //    OCCT MakeBlocks 鈫?section edges 鐢ㄧ簿纭嚑浣曟洸绾?
+                                //    rcad 鐢?outer_circle_edges 璁板綍 Circle3,鍦?emit 鏃?
+                                //    add_circle_edge 鍒涘缓绮剧‘鍦嗗姬杈广€?
                                 let mut replaced: Vec<DVec2> =
                                     Vec::with_capacity(fi + 1 + half.len() - li);
                                 replaced.extend_from_slice(&half[..=fi]);
@@ -5572,7 +4246,7 @@ impl<'a> BooleanBuilder<'a> {
 
         // Insert intersection endpoints that lie on polygon edges so wires share vertices.
         // Include endpoints from **all** DS intersection curves that lie on this plane, not only
-        // `curves_in` for this face 鈥?otherwise partner faces (e.g. B lateral vs A +X) miss
+        // `curves_in` for this face 閳?otherwise partner faces (e.g. B lateral vs A +X) miss
         // imprint points and T-junctions remain.
         let edge_tol = (TOLERANCE_ABS * 1e4).max(TOLERANCE_COORD_SUB);
         let plane_tol = (TOLERANCE_ABS * 1e5).max(TOLERANCE_ABS);
@@ -5589,7 +4263,7 @@ impl<'a> BooleanBuilder<'a> {
                 ]
             })
             .collect();
-        // Bounding box of this face in UV (expand slightly) 鈥?only add global imprint points
+        // Bounding box of this face in UV (expand slightly) 閳?only add global imprint points
         // near this face so unrelated coplanar curves elsewhere do not disturb the polygon.
         let (mut umin, mut umax, mut vmin, mut vmax) = (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY);
         for &q in &boundary_2d {
@@ -5650,13 +4324,13 @@ impl<'a> BooleanBuilder<'a> {
                         let sum = poly_2d.iter().fold(DVec2::ZERO, |acc, &p| acc + p);
                         sum / poly_2d.len() as f64
                     };
-                    // Tolerance for "definitely outside a circle" — on-circle vertices can
+                    // Tolerance for "definitely outside a circle" 鈥?on-circle vertices can
                     // be up to ~2e-5 beyond the true radius after the center nudge in
-                    // split_polygon_by_circle_2d (max 2e-5). Use 1000× TOLERANCE_ABS (1e-4)
-                    // to safely exclude them; genuine outside vertices (dist ~√2 ≈ 0.414
+                    // split_polygon_by_circle_2d (max 2e-5). Use 1000脳 TOLERANCE_ABS (1e-4)
+                    // to safely exclude them; genuine outside vertices (dist ~鈭? 鈮?0.414
                     // beyond the circle) are well above this threshold.
                     const OUTSIDE_TOL: f64 = crate::tolerance::TOLERANCE_ABS * 1000.0;
-                    // Only consider circles that actually cut holes — a circle that
+                    // Only consider circles that actually cut holes 鈥?a circle that
                     // contains ALL polygon vertices (e.g. the outer boundary circle
                     // from a merged coplanar face) is not a hole and shouldn't block
                     // the outside-point search below.
@@ -5950,7 +4624,7 @@ impl<'a> BooleanBuilder<'a> {
             if ic.polyline.len() >= 2 {
                 all_polylines.push(ic.polyline.clone());
             } else {
-                // Analytic curve 鈥?sample it into a polyline (128 segments ~0.03 chord
+                // Analytic curve 閳?sample it into a polyline (128 segments ~0.03 chord
                 // error for R=100, giving sub-0.1% surface-area error on trimmed faces).
                 let n_legacy: usize = if matches!(surface, Surface3::Sphere(_)) { 2 } else { 128 };
                 let pts: Vec<DVec3> = (0..=n_legacy)
@@ -6109,8 +4783,8 @@ impl<'a> BooleanBuilder<'a> {
 
     /// Unwrap a UV polyline's U coordinate to remove seam jumps.
     /// For periodic surfaces (cylinder, cone, torus), consecutive points whose
-    /// U values differ by more than 蟺 indicate a seam crossing; we accumulate
-    /// offsets of 卤period to make the polyline continuous in U.
+    /// U values differ by more than 锜?indicate a seam crossing; we accumulate
+    /// offsets of 鍗eriod to make the polyline continuous in U.
     fn unwrap_u_polyline(&self, pts: Vec<glam::DVec2>, period: f64) -> Vec<glam::DVec2> {
         if pts.len() < 2 {
             return pts;
@@ -6134,11 +4808,11 @@ impl<'a> BooleanBuilder<'a> {
 
     /// Extend axis-aligned trim endpoints to the UV boundary so each open trim
     /// spans from one boundary edge to another. This is necessary for closed
-    /// surfaces (sphere, cylinder, 鈥? where intersection PCurves are clipped
+    /// surfaces (sphere, cylinder, 閳? where intersection PCurves are clipped
     /// to the finite face-face overlap and may not reach the UV boundary.
     ///
     /// Only trims that are nearly axis-aligned (constant-u or constant-v) are
-    /// extended 鈥?general trims pass through unchanged.
+    /// extended 閳?general trims pass through unchanged.
     fn extend_trim_to_uv_boundary(
         trim: &[DVec2],
         uv_boundary: &[DVec2],
@@ -6162,7 +4836,7 @@ impl<'a> BooleanBuilder<'a> {
 
         let boundary_u_span = u_max - u_min;
         let boundary_v_span = v_max - v_min;
-        // 0.5 % of the smaller span 鈥?well above floating-point noise for any
+        // 0.5 % of the smaller span 閳?well above floating-point noise for any
         // practical model, yet tight enough to distinguish axis-aligned trims
         // from oblique ones on a sphere (where u/v vary together).
         let axis_threshold = (boundary_u_span.abs().min(boundary_v_span.abs())).max(TOLERANCE_ABS) * 0.005;
@@ -6171,10 +4845,10 @@ impl<'a> BooleanBuilder<'a> {
         let is_const_v = v_span_trim < axis_threshold;
 
         if !is_const_u && !is_const_v {
-            return trim.to_vec(); // non-axis-aligned 鈥?cannot safely extend
+            return trim.to_vec(); // non-axis-aligned 閳?cannot safely extend
         }
 
-        // 鈹€鈹€ Clip trim points to boundary bounds 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+        // 閳光偓閳光偓 Clip trim points to boundary bounds 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
         // Intersection PCurves may have t_range extending far outside the face's
         // actual UV boundary (hardcoded extent=20 in intersect_plane_cylinder_faces).
         // Without clipping, out-of-bounds points inflate the UV sub-polygon bounding
@@ -6199,8 +4873,8 @@ impl<'a> BooleanBuilder<'a> {
             return extended;
         }
 
-        // 鈹€鈹€ span-checking guard (AFTER clipping) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-        // If this axis-aligned trim already covers 鈮?0 % of the boundary span
+        // 閳光偓閳光偓 span-checking guard (AFTER clipping) 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+        // If this axis-aligned trim already covers 閳?0 % of the boundary span
         // in the varying direction (measured within the boundary, not the raw
         // PCurve span), it runs boundary-to-boundary and needs no extension.
         let clipped_v_span = extended.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max)
@@ -6213,7 +4887,7 @@ impl<'a> BooleanBuilder<'a> {
         if is_const_v && clipped_u_span >= 0.9 * bnd_u_span.abs() {
             return extended;
         }
-        // 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+        // 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
         if is_const_u {
             // Constant-u trim: extend v range to the boundary.
@@ -6267,10 +4941,10 @@ impl<'a> BooleanBuilder<'a> {
     /// into a 2D trim polyline in UV space, then splits the UV boundary polygon.
     /// Maps resulting sub-polygons back to 3D via surface evaluation.
     ///
-    /// ⏳ 部分对齐: 用精确大圆弧构建球面子面。
-    ///    OCCT: BuildSplitFaces → section edges 直接创建 BRep sub-face。
-    ///    rcad: 手动计算 8 个卦限的 SubFace,用 outer_circle_edges 记录大圆弧。
-    ///    功能等价(8 个半球面区域 + 精确圆弧边界),但 OCCT 不需要中间 SubFace。
+    /// 鈴?閮ㄥ垎瀵归綈: 鐢ㄧ簿纭ぇ鍦嗗姬鏋勫缓鐞冮潰瀛愰潰銆?
+    ///    OCCT: BuildSplitFaces 鈫?section edges 鐩存帴鍒涘缓 BRep sub-face銆?
+    ///    rcad: 鎵嬪姩璁＄畻 8 涓崷闄愮殑 SubFace,鐢?outer_circle_edges 璁板綍澶у渾寮с€?
+    ///    鍔熻兘绛変环(8 涓崐鐞冮潰鍖哄煙 + 绮剧‘鍦嗗姬杈圭晫),浣?OCCT 涓嶉渶瑕佷腑闂?SubFace銆?
     fn split_sphere_by_circles(&self, face_idx: usize, circles: &[&rcad_kernel::geom::Circle3]) -> Vec<SubFace> {
         let face = &self.ds.faces[face_idx];
         let sphere = match &face.surface { Surface3::Sphere(s) => *s, _ => return vec![] };
@@ -6281,21 +4955,21 @@ impl<'a> BooleanBuilder<'a> {
         for &(ia, ib, ic) in &octants {
             let (va, vb, vc) = (pts[ia], pts[ib], pts[ic]);
             let boundary = vec![va, vb, vc];
-            // ✅ OCCT对齐: 每个外边界边(大圆弧)用 Circle3 精确表示。
-            //    OCCT MakeBlocks → section edges 是精确几何,不是折线。
-            //    rcad 用 outer_circle_edges Vec 存储,在 emit 时调用 add_circle_edge。
+            // 鉁?OCCT瀵归綈: 姣忎釜澶栬竟鐣岃竟(澶у渾寮?鐢?Circle3 绮剧‘琛ㄧず銆?
+            //    OCCT MakeBlocks 鈫?section edges 鏄簿纭嚑浣?涓嶆槸鎶樼嚎銆?
+            //    rcad 鐢?outer_circle_edges Vec 瀛樺偍,鍦?emit 鏃惰皟鐢?add_circle_edge銆?
             let outer_circles: Vec<(usize, Curve3)> = [(va,vb),(vb,vc),(vc,va)].iter().enumerate()
                 .map(|(ei, &(v1, v2))| {
                     let n = (v1 - c).cross(v2 - c).normalize();
                     (ei, Curve3::Circle(Circle3 { center: c, normal: n, radius: r }))
                 }).collect();
-            // ⏳ 部分对齐: 检测 octant 是否应添加 seam edge。
-            //    OCCT sphere face 的 seam edge 始终存在于 BRep wire 中。
-            //    rcad 只对通过 PaveFiller 路径的 sphere face 添加 seam(见 split_face
-            //    → emit_face_with_origin),此处已禁用(PaveFiller 路径对 A1 不工作)。
-            //    ！seam edge 仅在已删除的 sphere_box_analytic.rs 快速路径中处理过，
-            //      当前 PaveFiller 通用路径不产生 seam edge。
-            let seam: Option<(usize, Curve3)> = None; // ❌ 通用管道不产生 seam edge
+            // 鈴?閮ㄥ垎瀵归綈: 妫€娴?octant 鏄惁搴旀坊鍔?seam edge銆?
+            //    OCCT sphere face 鐨?seam edge 濮嬬粓瀛樺湪浜?BRep wire 涓€?
+            //    rcad 鍙閫氳繃 PaveFiller 璺緞鐨?sphere face 娣诲姞 seam(瑙?split_face
+            //    鈫?emit_face_with_origin),姝ゅ宸茬鐢?PaveFiller 璺緞瀵?A1 涓嶅伐浣?銆?
+            //    锛乻eam edge 浠呭湪宸插垹闄ょ殑 sphere_box_analytic.rs 蹇€熻矾寰勪腑澶勭悊杩囷紝
+            //      褰撳墠 PaveFiller 閫氱敤璺緞涓嶄骇鐢?seam edge銆?
+            let seam: Option<(usize, Curve3)> = None; // 鉂?閫氱敤绠￠亾涓嶄骇鐢?seam edge
             subs.push(SubFace { boundary, surface: Surface3::Sphere(sphere),
                 normal: (va-c).normalize(), uv_centroid: None, sample_override: None,
                 uv_domain: None, inner_wires: vec![],
@@ -6306,7 +4980,7 @@ impl<'a> BooleanBuilder<'a> {
     }
 
 
-    /// ✅ OCCT对齐: 用精确大圆弧构建球面子面 (BOPAlgo_BuilderFace 等价)。
+    /// 鉁?OCCT瀵归綈: 鐢ㄧ簿纭ぇ鍦嗗姬鏋勫缓鐞冮潰瀛愰潰 (BOPAlgo_BuilderFace 绛変环)銆?
     fn build_sphere_sub_faces_by_circles(&self, face_idx: usize) -> Vec<SubFace> {
         let face = &self.ds.faces[face_idx];
         let sphere = match &face.surface { Surface3::Sphere(s) => *s, _ => return vec![] };
@@ -6316,7 +4990,7 @@ impl<'a> BooleanBuilder<'a> {
         for &ci in &face.face_info.curves_in {
             if let Curve3::Circle(ref c) = self.ds.intersection_curves[ci].curve {
                 circles.push(*c);
-                // ✅ OCCT aligned: circle normal direction depends on boolean operation type
+                // 鉁?OCCT aligned: circle normal direction depends on boolean operation type
                 //    Intersection: keep inside (toward interior of intersecting shape)
                 //    Union: keep outside (away from intersecting shape)
                 //    Difference: same as Intersection (keep inside for cutting)
@@ -6388,11 +5062,11 @@ impl<'a> BooleanBuilder<'a> {
         eprintln!("[SPHERE_SPLIT] face_idx={} inside_pts={} outside_pts={} n_circles={}",
             face_idx, inside_pts.len(), outside_pts.len(), circles.len());
 
-        // ✅ OCCT对齐: 根据布尔操作直接返回对应子面,绕过分类(分类在 DS 被修改后
-        //    不可靠: 子面边界在 solid 表面上时,classify_by_off_solid_edge 误判 Out)。
-        //    Intersection → 仅保留盒内子面(inside_pts)
-        //    Difference   → 仅保留盒外子面(outside_pts,球面大部份)
-        //    Union        → 保留所有子面
+        // 鉁?OCCT瀵归綈: 鏍规嵁甯冨皵鎿嶄綔鐩存帴杩斿洖瀵瑰簲瀛愰潰,缁曡繃鍒嗙被(鍒嗙被鍦?DS 琚慨鏀瑰悗
+        //    涓嶅彲闈? 瀛愰潰杈圭晫鍦?solid 琛ㄩ潰涓婃椂,classify_by_off_solid_edge 璇垽 Out)銆?
+        //    Intersection 鈫?浠呬繚鐣欑洅鍐呭瓙闈?inside_pts)
+        //    Difference   鈫?浠呬繚鐣欑洅澶栧瓙闈?outside_pts,鐞冮潰澶ч儴浠?
+        //    Union        鈫?淇濈暀鎵€鏈夊瓙闈?
         let mut result = Vec::new();
         let pick_inside = match self.op {
             BooleanOpType::Intersection => true,
@@ -6404,8 +5078,8 @@ impl<'a> BooleanBuilder<'a> {
             BooleanOpType::Difference => true,
             BooleanOpType::Union => true,  // both
         };
-        // ✅ OCCT对齐: 外子面(球面大部份)需要与平面子面共享顶点。使用 inside_pts
-        //    (IC端点)作为边界,并与南极(0,-1,0)构成4边形,匹配OCCT的V=5/E=9拓扑。
+        // 鉁?OCCT瀵归綈: 澶栧瓙闈?鐞冮潰澶ч儴浠?闇€瑕佷笌骞抽潰瀛愰潰鍏变韩椤剁偣銆備娇鐢?inside_pts
+        //    (IC绔偣)浣滀负杈圭晫,骞朵笌鍗楁瀬(0,-1,0)鏋勬垚4杈瑰舰,鍖归厤OCCT鐨刅=5/E=9鎷撴墤銆?
         let outside_use_inside = pick_outside && inside_pts.len() >= 3;
         let inside_pts_copy = inside_pts.clone();
         let (inside_pts_for_outside, south_pole) = if outside_use_inside {
@@ -6468,7 +5142,7 @@ impl<'a> BooleanBuilder<'a> {
                 (i, Curve3::Circle(circles[best_k]))
             }).collect();
 
-            // ✅ OCCT对齐: 从边界点计算 UV domain (用于 SA 计算和曲面细分)
+            // 鉁?OCCT瀵归綈: 浠庤竟鐣岀偣璁＄畻 UV domain (鐢ㄤ簬 SA 璁＄畻鍜屾洸闈㈢粏鍒?
             let boundary = std::mem::take(pts);
             let uvs: Vec<DVec2> = boundary.iter().map(|p| sphere.world_to_uv(*p)).collect();
             let u_min = uvs.iter().map(|uv| uv.x).fold(f64::INFINITY, f64::min);
@@ -6483,7 +5157,7 @@ impl<'a> BooleanBuilder<'a> {
                 None
             };
             let uv_ctr = uv_domain.map(|[u0, u1, v0, v1]| DVec2::new(0.5 * (u0 + u1), 0.5 * (v0 + v1)));
-            // ✅ OCCT对齐: 外子面sample_override用球面外点(-0.577,-0.577,-0.577)使分类正确
+            // 鉁?OCCT瀵归綈: 澶栧瓙闈ample_override鐢ㄧ悆闈㈠鐐?-0.577,-0.577,-0.577)浣垮垎绫绘纭?
             let samp = if label == "outside" && use_inside_pts {
                 let dir = (inside_pts_copy.iter().copied().sum::<DVec3>() / inside_pts_copy.len() as f64 - sc).normalize();
                 Some(sc + sr * (-dir)) // opposite point on sphere surface
@@ -6549,7 +5223,7 @@ impl<'a> BooleanBuilder<'a> {
         let is_periodic_u = matches!(&surface,
             Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Torus(_)
         );
-        // For sphere, u is also periodic in [-蟺, 蟺].
+        // For sphere, u is also periodic in [-锜? 锜篯.
         let is_sphere = matches!(&surface, Surface3::Sphere(_));
         let u_period = if is_periodic_u { std::f64::consts::TAU } else if is_sphere { std::f64::consts::TAU } else { 0.0 };
 
@@ -6557,25 +5231,25 @@ impl<'a> BooleanBuilder<'a> {
             if let Some(pcurve) = self.find_pcurve_for_face(ci, face_idx) {
                 let ic = &self.ds.intersection_curves[ci];
                 let [t0, t1] = ic.t_range;
-                // ✅ OCCT对齐: sphere 面用精确 pcurve 端点(3点)代替采样折线。
-                //    OCCT 的 BOPAlgo_BuilderFace 用 MakeBlocks 生成的 section edges
-                //    (每个 PaveBlock 一条精确边) 做面分裂。rcad 无 MakeBlocks 等价物，
-                //    因此用 pcurve 的 t0/t_mid/t1 生成 3 点 trim。3 >= 原始 <3 过滤，
-                //    每个 trim 在 split_uv_polygon_by_trim 中只取首尾点 → 1 条边，
-                //    等价于 OCCT 的 1 section edge / curve。
-                //    非 sphere 面保持 64 点采样。
+                // 鉁?OCCT瀵归綈: sphere 闈㈢敤绮剧‘ pcurve 绔偣(3鐐?浠ｆ浛閲囨牱鎶樼嚎銆?
+                //    OCCT 鐨?BOPAlgo_BuilderFace 鐢?MakeBlocks 鐢熸垚鐨?section edges
+                //    (姣忎釜 PaveBlock 涓€鏉＄簿纭竟) 鍋氶潰鍒嗚銆俽cad 鏃?MakeBlocks 绛変环鐗╋紝
+                //    鍥犳鐢?pcurve 鐨?t0/t_mid/t1 鐢熸垚 3 鐐?trim銆? >= 鍘熷 <3 杩囨护锛?
+                //    姣忎釜 trim 鍦?split_uv_polygon_by_trim 涓彧鍙栭灏剧偣 鈫?1 鏉¤竟锛?
+                //    绛変环浜?OCCT 鐨?1 section edge / curve銆?
+                //    闈?sphere 闈繚鎸?64 鐐归噰鏍枫€?
                 let n_samp: usize = 64;
                 const N_SPHERE: usize = 2;
                 let raw_pts: Vec<DVec2> = match pcurve.inner() {
                     // BSpline PCurves from `fallback_pcurve_by_projection` are defined on [0,1]
-                    // but that domain does **not** match the 3D curve's `t_range` (e.g. plane鈥搒phere
-                    // circles use [0, 2蟺]). Re-sample the 3D intersection curve and project to UV so
-                    // sphere trimming matches geometry (fixes sphere 鈭?trotated box / OCCT bcommon A4).
+                    // but that domain does **not** match the 3D curve's `t_range` (e.g. plane閳ユ悞phere
+                    // circles use [0, 2锜篯). Re-sample the 3D intersection curve and project to UV so
+                    // sphere trimming matches geometry (fixes sphere 閳?trotated box / OCCT bcommon A4).
                     rcad_kernel::geom::Curve2d::BSpline(_) => {
                         // For BSpline pcurves the 3D curve is often stored as a chord-line
                         // approximation (e.g. PerpendicularOffsetCurves). Re-sampling the
                         // line produces UV points that lie on the line, not on the actual
-                        // intersection curve — causing degenerate trim polylines.
+                        // intersection curve 鈥?causing degenerate trim polylines.
                         // The BSpline pcurve itself is the correct UV representation
                         // (created by polyline_pcurve_by_projection in the pave_filler),
                         // so sample it directly on its [0, 1] domain.
@@ -6615,24 +5289,24 @@ impl<'a> BooleanBuilder<'a> {
                 }
 
                 // For periodic surfaces, unwrap the u-coordinate to remove seam jumps.
-                // A jump > 蟺 in u between consecutive points indicates a seam crossing;
-                // we add/subtract 2蟺 to make the polyline continuous.
+                // A jump > 锜?in u between consecutive points indicates a seam crossing;
+                // we add/subtract 2锜?to make the polyline continuous.
                 let pts = if u_period > 0.0 {
                     self.unwrap_u_polyline(raw_pts, u_period)
                 } else {
                     raw_pts
                 };
 
-                // If the unwrapped polyline spans more than 2蟺 in u, the intersection
-                // curve goes all the way around the surface 鈥?split at the seam instead
+                // If the unwrapped polyline spans more than 2锜?in u, the intersection
+                // curve goes all the way around the surface 閳?split at the seam instead
                 // of trying to split the UV polygon with a polyline that exits and re-enters.
                 if u_period > 0.0 && pts.len() >= 2 {
                     let u_span = pts.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max)
                         - pts.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-                    // If span > 蟺 (the trim cuts across the seam) we need to clip to [0, 2蟺].
-                    // Shift back into [0, 2蟺] by remapping each point mod 2蟺.
+                    // If span > 锜?(the trim cuts across the seam) we need to clip to [0, 2锜篯.
+                    // Shift back into [0, 2锜篯 by remapping each point mod 2锜?
                     let pts = if u_span > std::f64::consts::PI {
-                        // Re-centre: find the offset that brings the midpoint into [0, 2蟺].
+                        // Re-centre: find the offset that brings the midpoint into [0, 2锜篯.
                         let u_mid = pts.iter().map(|p| p.x).sum::<f64>() / pts.len() as f64;
                         let offset = (u_mid / u_period).floor() * u_period;
                         pts.into_iter().map(|p| DVec2::new(p.x - offset, p.y)).collect::<Vec<_>>()
@@ -6671,8 +5345,8 @@ impl<'a> BooleanBuilder<'a> {
             trim_polylines = converted;
         }
 
-        // ✅ OCCT对齐: 去重相同u值的trim(周期性柱面u=0和u=2蟺是同一交线)
-        //    OCCT BOPAlgo_WireSplitter 用连通块+角度排序,不会重复边。
+        // 鉁?OCCT瀵归綈: 鍘婚噸鐩稿悓u鍊肩殑trim(鍛ㄦ湡鎬ф煴闈=0鍜寀=2锜烘槸鍚屼竴浜ょ嚎)
+        //    OCCT BOPAlgo_WireSplitter 鐢ㄨ繛閫氬潡+瑙掑害鎺掑簭,涓嶄細閲嶅杈广€?
         if u_period > 0.0 || is_sphere {
             let period = if is_sphere { std::f64::consts::TAU } else { u_period };
             let mut seen_u: Vec<f64> = Vec::new();
@@ -6698,7 +5372,7 @@ impl<'a> BooleanBuilder<'a> {
 
         // Filter degenerate trims (single-point closed loops).
         // Also handle periodic trims whose u values are uniformly shifted
-        // outside the boundary range (e.g. equator at v=蟺/2 with u鈭圼蟺,3蟺]).
+        // outside the boundary range (e.g. equator at v=锜?2 with u閳溂锜?3锜篯).
         if u_period > 0.0 || is_sphere {
             let period = if is_sphere { std::f64::consts::TAU } else { u_period };
             let bnd_u_min = uv_boundary.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
@@ -6709,7 +5383,7 @@ impl<'a> BooleanBuilder<'a> {
             let mut clean: Vec<Vec<DVec2>> = Vec::new();
             for trim in trim_polylines.drain(..) {
                 // Accept 2-point trims (sphere great-circle pcurves with n_samp=2).
-                // The standard 64-point sampling creates ≥3 points per trim, so <3
+                // The standard 64-point sampling creates 鈮? points per trim, so <3
                 // only filters truly degenerate 1-point trims on periodic surfaces.
                 if trim.len() < 3 {
                     continue;
@@ -6731,17 +5405,17 @@ impl<'a> BooleanBuilder<'a> {
 
                 // Uniformly wrap trim u values if they are all outside the boundary range.
                 let shifted: Vec<DVec2> = if u_min >= bnd_u_max - TOLERANCE_ABS {
-                    // All points are at or beyond the right boundary 鈥?shift left by one period
+                    // All points are at or beyond the right boundary 閳?shift left by one period
                     trim.iter().map(|p| DVec2::new(p.x - period, p.y)).collect()
                 } else if u_max <= bnd_u_min + TOLERANCE_ABS {
-                    // All points are at or beyond the left boundary 鈥?shift right by one period
+                    // All points are at or beyond the left boundary 閳?shift right by one period
                     trim.iter().map(|p| DVec2::new(p.x + period, p.y)).collect()
                 } else {
                     trim // already in range or spanning across
                 };
 
                 // After shifting, filter trims that coincide with the v-boundary
-                // (v=0 or v=蟺 for sphere) 鈥?they carry no splitting information.
+                // (v=0 or v=锜?for sphere) 閳?they carry no splitting information.
                 if v_span <= TOLERANCE_COORD_SUB {
                     let v_level = v_min; // all at same v
                     if (v_level - bnd_v_min).abs() <= TOLERANCE_COORD_SUB
@@ -6749,7 +5423,7 @@ impl<'a> BooleanBuilder<'a> {
                     {
                         continue;
                     }
-                    // Interior horizontal isoline spanning the full u-period 鈥?
+                    // Interior horizontal isoline spanning the full u-period 閳?
                     // convert to 2-point open isoline so split_uv_polygon_by_trim
                     // produces a clean split instead of extra fragments.
                     let bnd_u_span = bnd_u_max - bnd_u_min;
@@ -6770,7 +5444,7 @@ impl<'a> BooleanBuilder<'a> {
             // This prevents a latitude trim from creating polygon-boundary-aligned splits
             // when applied after the domain has been divided into narrow columns by earlier
             // meridian trims.  The latitude endpoints project to distinct column edges only
-            // when the columns are wide enough 鈥?applying meridians first guarantees this.
+            // when the columns are wide enough 閳?applying meridians first guarantees this.
             if trim_polylines.len() > 1 {
                 trim_polylines.sort_by(|a, b| {
                     let a_v_min = a.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
@@ -6858,7 +5532,7 @@ impl<'a> BooleanBuilder<'a> {
                 // Clip axis-aligned 2-point trims to the polygon's u/v range so
                 // both endpoints land on the boundary.  This prevents ray_to_boundary
                 // from projecting in the wrong direction when the trim's u-range
-                // (e.g. [0, 2蟺] from the global 2-point simplification) is much
+                // (e.g. [0, 2锜篯 from the global 2-point simplification) is much
                 // wider than the polygon's actual range (e.g. [1.57, 4.71]).
                 if effective_trim.len() == 2 {
                     let tv0 = effective_trim[0].y;
@@ -6899,10 +5573,10 @@ impl<'a> BooleanBuilder<'a> {
             uv_polygons = next;
         }
 
-        // ✅ OCCT对齐: Handle seam crossings for periodic surfaces
+        // 鉁?OCCT瀵归綈: Handle seam crossings for periodic surfaces
         if u_period > 0.0 {
             let seam_u = if is_sphere {
-                -std::f64::consts::PI // Sphere seam at u=-蟺 (UV boundary uses [-蟺, 蟺])
+                -std::f64::consts::PI // Sphere seam at u=-锜?(UV boundary uses [-锜? 锜篯)
             } else {
                 0.0 // Standard seam at u=0 for cylinder/cone
             };
@@ -6921,9 +5595,9 @@ impl<'a> BooleanBuilder<'a> {
                 .collect();
         }
 
-        // ✅ OCCT对齐: 清理UV polygon边界上由trim端点或seam分裂产生的多余顶点。
-        //    OCCT Hatcher 基于线段环路构建(见BOPAlgo_WireSplitter),不会产生此类顶点。
-        //    移除在边界直线上的中间顶点(相邻顶点在UV空间中共线)。
+        // 鉁?OCCT瀵归綈: 娓呯悊UV polygon杈圭晫涓婄敱trim绔偣鎴杝eam鍒嗚浜х敓鐨勫浣欓《鐐广€?
+        //    OCCT Hatcher 鍩轰簬绾挎鐜矾鏋勫缓(瑙丅OPAlgo_WireSplitter),涓嶄細浜х敓姝ょ被椤剁偣銆?
+        //    绉婚櫎鍦ㄨ竟鐣岀洿绾夸笂鐨勪腑闂撮《鐐?鐩搁偦椤剁偣鍦║V绌洪棿涓叡绾?銆?
         if !uv_polygons.is_empty() {
             let collinear_tol = TOLERANCE_COORD_SUB;
             for poly in &mut uv_polygons {
@@ -6944,7 +5618,7 @@ impl<'a> BooleanBuilder<'a> {
                     }
                     if d1.normalize().dot(d2.normalize()).abs() > 0.9999 {
                         poly.remove(i);
-                        // Don't increment i — re-check new vertex at same position
+                        // Don't increment i 鈥?re-check new vertex at same position
                     } else {
                         i += 1;
                     }
@@ -6968,8 +5642,8 @@ impl<'a> BooleanBuilder<'a> {
             _debug_sphere_polygons(1, &uv_polygons);
         }
 
-        // Normalise UV u-values to the sphere's [-蟺, 蟺] domain.
-        // Periodic unwrapping + seam splitting can produce u outside [-蟺, 蟺] for
+        // Normalise UV u-values to the sphere's [-锜? 锜篯 domain.
+        // Periodic unwrapping + seam splitting can produce u outside [-锜? 锜篯 for
         // trims that cross the seam, causing the 3D boundary / tessellation to
         // sample the wrong hemisphere (or wrap the full sphere multiple times).
         if is_sphere {
@@ -6980,8 +5654,8 @@ impl<'a> BooleanBuilder<'a> {
                     poly.into_iter()
                         .map(|p| {
                             let mut u = p.x;
-                            // Only shift u values that are significantly OUTSIDE [-蟺, 蟺].
-                            // Values at or near the boundary (e.g. -蟺 itself) must stay put
+                            // Only shift u values that are significantly OUTSIDE [-锜? 锜篯.
+                            // Values at or near the boundary (e.g. -锜?itself) must stay put
                             // to avoid wrapping polygons that touch the seam.
                             if u > std::f64::consts::PI + TOLERANCE_ABS {
                                 u -= period * ((u + std::f64::consts::PI) / period).floor();
@@ -7204,7 +5878,7 @@ impl<'a> BooleanBuilder<'a> {
                 // Compute sample override for sphere sub-faces: use UV domain center
                 // instead of UV polygon centroid, which can be skewed toward IC curve
                 // endpoints and fall on the other-solid boundary (classifying Out when
-                // the sub-face is actually In).  ✅ OCCT对齐: Hatcher face classifier
+                // the sub-face is actually In).  鉁?OCCT瀵归綈: Hatcher face classifier
                 // uses UV interior sampling, not polygon centroid.
                 let sphere_sample = if matches!(surface, Surface3::Sphere(_)) {
                     if let Some([u0, u1, v0, v1]) = uv_domain {
@@ -7361,14 +6035,14 @@ impl<'a> BooleanBuilder<'a> {
     }
 }
 
-// ── Sub-face edge-based merging helpers ──────────────────────────
+// 鈹€鈹€ Sub-face edge-based merging helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Find a shared edge between two sub-face boundaries.
 ///
 /// Returns `(ai, bi, forward)` where:
-/// - `ai` — index in `a.boundary` where the shared edge's start vertex sits
-/// - `bi` — index in `b.boundary` where the shared edge's start vertex sits
-/// - `forward` — `true` if the shared edge runs in the same direction in both boundaries
+/// - `ai` 鈥?index in `a.boundary` where the shared edge's start vertex sits
+/// - `bi` 鈥?index in `b.boundary` where the shared edge's start vertex sits
+/// - `forward` 鈥?`true` if the shared edge runs in the same direction in both boundaries
 ///
 /// Two sub-faces share an edge when they have 2+ consecutive boundary vertices in common
 /// (within `TOLERANCE_MESH_LEGACY` distance). This is the sub-face analogue of
@@ -7407,7 +6081,7 @@ fn find_shared_edge_between_subfaces(a: &SubFace, b: &SubFace) -> Option<(usize,
 /// `b`'s non-shared perimeter to the shared end vertex `ve`, then along `a`'s non-shared
 /// perimeter back to `vs`. This removes the shared edge from both boundaries while
 /// preserving all other geometry.
-/// DEPRECATED (SubFace 内部): BRep 级 merge 后由 unify_same_domain_faces 替代。
+/// DEPRECATED (SubFace 鍐呴儴): BRep 绾?merge 鍚庣敱 unify_same_domain_faces 鏇夸唬銆?
 fn merge_two_subfaces(a: &SubFace, b: &SubFace, ai: usize, bi: usize, forward: bool) -> SubFace {
     let an = a.boundary.len();
     let bn = b.boundary.len();
@@ -7417,7 +6091,7 @@ fn merge_two_subfaces(a: &SubFace, b: &SubFace, ai: usize, bi: usize, forward: b
     // edge in A). We walk the LONG way around B's boundary (opposite to the shared edge
     // direction in B).
     let b_non_shared = if forward {
-        // Shared edge goes bi → (bi+1)%bn = ve. Walk backward from bi to reach ve.
+        // Shared edge goes bi 鈫?(bi+1)%bn = ve. Walk backward from bi to reach ve.
         let end = (bi + 1) % bn;
         let mut path = Vec::new();
         let mut i = (bi + bn - 1) % bn;
@@ -7428,7 +6102,7 @@ fn merge_two_subfaces(a: &SubFace, b: &SubFace, ai: usize, bi: usize, forward: b
         path.push(b.boundary[end]);
         path
     } else {
-        // Shared edge goes bi → (bi-1+bn)%bn = ve (reversed direction).
+        // Shared edge goes bi 鈫?(bi-1+bn)%bn = ve (reversed direction).
         // Walk forward from bi to reach ve.
         let end = (bi + bn - 1) % bn;
         let mut path = Vec::new();
@@ -7452,7 +6126,7 @@ fn merge_two_subfaces(a: &SubFace, b: &SubFace, ai: usize, bi: usize, forward: b
         path
     };
 
-    // Build merged boundary: vs → b_non_shared → a_non_shared.
+    // Build merged boundary: vs 鈫?b_non_shared 鈫?a_non_shared.
     // Closure back to vs is implicit (polygon representation).
     let mut merged_boundary = Vec::with_capacity(1 + b_non_shared.len() + a_non_shared.len());
     merged_boundary.push(a.boundary[ai]); // vs
@@ -7496,10 +6170,10 @@ fn merge_two_subfaces(a: &SubFace, b: &SubFace, ai: usize, bi: usize, forward: b
 ///
 /// This is the sub-face analogue of `unify_one_merge_pass`, operating on boundary
 /// vertex arrays instead of BRep edge indices. Only sub-faces that share 2+ consecutive
-/// boundary vertices (a shared edge) are merged — disconnected UV intervals on the same
+/// boundary vertices (a shared edge) are merged 鈥?disconnected UV intervals on the same
 /// surface (e.g. two separated kept regions) will NOT be merged, preserving correct
 /// topology.
-/// DEPRECATED (SubFace 内部): BRep 级 merge 后由 unify_same_domain_faces 替代。
+/// DEPRECATED (SubFace 鍐呴儴): BRep 绾?merge 鍚庣敱 unify_same_domain_faces 鏇夸唬銆?
 fn merge_subfaces_of_same_face(sub_faces: &mut Vec<SubFace>) {
     loop {
         let n = sub_faces.len();
@@ -7613,7 +6287,7 @@ mod tests {
         let (out_diff, diff_wires) = super::split_polygon_by_circle_2d(&poly, DVec2::new(0.5, 0.5), 0.3, Some(super::BooleanOpType::Difference));
         assert_eq!(out_diff.len(), 1, "Difference should return 1 poly with inner_wire, got {}", out_diff.len());
         assert_eq!(diff_wires.len(), 1, "Difference should return 1 inner_wire, got {}", diff_wires.len());
-        // For Common (A ∩ B), only the circle region is kept
+        // For Common (A 鈭?B), only the circle region is kept
         let (out_common, com_wires) = super::split_polygon_by_circle_2d(&poly, DVec2::new(0.5, 0.5), 0.3, Some(super::BooleanOpType::Intersection));
         assert_eq!(out_common.len(), 1, "Common should return 1 poly (circle), got {}", out_common.len());
         assert_eq!(com_wires.len(), 0, "Common should return 0 inner_wires, got {}", com_wires.len());
@@ -7634,7 +6308,7 @@ mod tests {
         assert!(out.len() >= 2, "expected 2+ polygons, got {}", out.len());
     }
 
-    /// Regression: unit sphere and unit box must register plane鈥搒phere F鈥揊 curves and split
+    /// Regression: unit sphere and unit box must register plane閳ユ悞phere F閳ユ強 curves and split
     /// the sphere in parameter space; otherwise a single A sub-face and one sample can mis-classify the whole face.
     #[test]
     fn sphere_box_difference_split_face_sphere_has_many_subfaces() {
@@ -7653,13 +6327,13 @@ mod tests {
         let subs = builder.split_face(a0);
         assert!(
             subs.len() > 1,
-            "unit sphere 鈥?unit box should split the sphere face (got {} subfaces, {} intersection curves in DS)",
+            "unit sphere 閳?unit box should split the sphere face (got {} subfaces, {} intersection curves in DS)",
             subs.len(),
             ds.faces[a0].face_info.curves_in.len()
         );
     }
 
-    /// Regression: sphere 鈭?offset cylinder 鈥?intersection classification must not rely
+    /// Regression: sphere 閳?offset cylinder 閳?intersection classification must not rely
     /// on a single offset sample (`boolean_integration::sphere_cylinder_complex_intersection`).
     #[test]
     fn sphere_cylinder_intersection_classifies_overlap_patch() {
@@ -7748,7 +6422,7 @@ fn curved_subface_boundary_3d(
     // 1. Sample each UV edge and evaluate 3D positions
     let n = uv_poly.len();
     // Compute the u-span to detect winding polygons. When the UV polygon
-    // spans > π in u, edges near the seam wrap the "long way" around the
+    // spans > 蟺 in u, edges near the seam wrap the "long way" around the
     // sphere in 3D. We redirect such edges to go through the seam instead,
     // producing a compact 3D boundary.
     let pu_min = uv_poly.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
@@ -7787,7 +6461,7 @@ fn curved_subface_boundary_3d(
             uv_poly.len(), pts.len(), pu_max - pu_min > std::f64::consts::PI, pu_min, pu_max, v_min, v_max);
     }
 
-    // 2. Consecutive deduplication 鈥?collapse runs of pole/apex samples
+    // 2. Consecutive deduplication 閳?collapse runs of pole/apex samples
     let mut deduped: Vec<DVec3> = Vec::new();
     for p in &pts {
         if deduped.is_empty() || (*p - deduped[deduped.len() - 1]).length_squared() > TOLERANCE_ABS * TOLERANCE_ABS {
@@ -7961,7 +6635,7 @@ fn split_polygon_at_u_isoline(poly: &[DVec2], u_split: f64) -> Vec<Vec<DVec2>> {
         let u1 = poly[j].x;
         // Check if this edge crosses u_split
         if (u0 - u_split).abs() < TOLERANCE_COORD_SUB {
-            // Vertex is on the isoline — use it directly
+            // Vertex is on the isoline 鈥?use it directly
             if crossings.is_empty() || crossings.last().unwrap().0 != i {
                 crossings.push((i, poly[i]));
             }
@@ -8086,16 +6760,16 @@ fn handle_degenerate_points(
 ) -> Vec<DVec3> {
     match surface {
         Surface3::Sphere(s) => {
-            // Sphere has two poles at v=0 and v=蟺
+            // Sphere has two poles at v=0 and v=锜?
             let v_min = uv_poly.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
             let v_max = uv_poly.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
 
             let mut boundary_3d = Vec::new();
             let pole_tol = 0.01; // Tolerance for detecting near-pole
 
-            // Check if polygon touches the north pole (v 鈮?0)
+            // Check if polygon touches the north pole (v 閳?0)
             let touches_north_pole = v_min < pole_tol;
-            // Check if polygon touches the south pole (v 鈮?蟺)
+            // Check if polygon touches the south pole (v 閳?锜?
             let touches_south_pole = v_max > std::f64::consts::PI - pole_tol;
 
             if touches_north_pole || touches_south_pole {
@@ -8230,7 +6904,7 @@ fn handle_degenerate_points(
 /// Enhanced handling of degenerate UV polygons on surfaces with singularities.
 ///
 /// This function handles UV polygons where vertices collapse at surface singularities:
-/// - Sphere poles (v=0 or v=蟺)
+/// - Sphere poles (v=0 or v=锜?
 /// - Cone apex (v=0)
 ///
 /// The function:
@@ -8370,7 +7044,7 @@ fn handle_cone_degenerate_uv(uv_poly: &[DVec2], cone: &ConicalSurface) -> Vec<DV
     dedup_3d_points(&boundary_3d)
 }
 
-/// Split an edge at a periodic seam if it crosses the U=0/2蟺 boundary.
+/// Split an edge at a periodic seam if it crosses the U=0/2锜?boundary.
 ///
 /// This function detects if an edge on a periodic surface (cylinder, sphere, torus)
 /// crosses the seam and splits it at the crossing point.
@@ -8448,8 +7122,8 @@ pub fn split_edge_at_periodic_seam(
 /// Split a UV polygon at both U and V seams for torus double periodicity.
 ///
 /// The torus has two periodic parameters:
-/// - U period: 2蟺 (around major circle)
-/// - V period: 2蟺 (around tube circle)
+/// - U period: 2锜?(around major circle)
+/// - V period: 2锜?(around tube circle)
 ///
 /// This function handles UV polygon splitting in both directions.
 pub fn split_uv_polygon_torus_double(uv_polygon: &[DVec2], period: f64) -> Vec<Vec<DVec2>> {
@@ -8656,7 +7330,7 @@ fn sphere_closed_trim_to_open_isolines(
     let u_coverage = (trim_u_max - trim_u_min) / bnd_u_span.abs();
     let v_coverage = (trim_v_max - trim_v_min) / bnd_v_span.abs();
     if u_coverage < 0.35 || v_coverage < 0.75 {
-        // Latitude (constant-v) great circles: v 鈮?constant but u spans full range.
+        // Latitude (constant-v) great circles: v 閳?constant but u spans full range.
         // These are great circles like the equator that DON'T pass through the poles,
         // so they form a horizontal line in UV space, not a closed pole-to-pole loop.
         if (trim_v_max - trim_v_min).abs() <= TOLERANCE_COORD_SUB && u_coverage >= 0.9 {
@@ -8678,10 +7352,10 @@ fn sphere_closed_trim_to_open_isolines(
     let period = bnd_u_span;
     let diff = (u_vals[1] - u_vals[0]).abs();
     if diff > period * 0.5 {
-        // The values straddle the seam (e.g. 蟺 and -蟺) 鈥?wrap to get the effective difference
+        // The values straddle the seam (e.g. 锜?and -锜? 閳?wrap to get the effective difference
         let wrapped = (u_vals[1] + period - u_vals[0]).abs();
         if wrapped < period * 0.05 {
-            // Same point 鈥?only one meridian
+            // Same point 閳?only one meridian
             u_vals.pop();
         }
     } else if diff < period * 0.05 {
@@ -8916,7 +7590,7 @@ pub fn split_uv_polygon_at_seam(uv_polygon: &[DVec2], period: f64) -> Vec<Vec<DV
 /// 3. Split polygon into two halves at those points, inserting the trim polyline
 ///    between them.
 ///
-/// For closed trim polylines (start 鈮?end), uses a closed-curve splitting
+/// For closed trim polylines (start 閳?end), uses a closed-curve splitting
 /// algorithm: the trim forms an interior polygon that divides the outer polygon
 /// into "inside trim" and "outside trim" regions.
 ///
@@ -8978,7 +7652,7 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
             let b = poly[j];
             let ab = b - a;
             // Solve: origin + t*dir = a + s*ab
-            // => t*(dir脳ab) = (a-origin)脳ab  (2D cross: x.x*y.y - x.y*y.x)
+            // => t*(dir鑴砤b) = (a-origin)鑴砤b  (2D cross: x.x*y.y - x.y*y.x)
             let denom = dir.x * ab.y - dir.y * ab.x;
             if denom.abs() < TOLERANCE_FLOAT_LOOSE {
                 continue; // parallel
@@ -9006,18 +7680,18 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
         - poly.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
     let boundary_snap_tol = (u_span + v_span) * 0.05;
 
-    // 鈹€鈹€ Closed trim detection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-    // Detect truly-closed trim: start 鈮?end in UV space (e.g. a small loop entirely
-    // inside the face).  Wrapped-closed trims (start and end differ by ~2蟺 in u,
+    // 閳光偓閳光偓 Closed trim detection 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+    // Detect truly-closed trim: start 閳?end in UV space (e.g. a small loop entirely
+    // inside the face).  Wrapped-closed trims (start and end differ by ~2锜?in u,
     // representing a full-circle cut around a cylinder or sphere) are intentionally
-    // NOT treated as closed loops here 鈥?they are open trims whose endpoints lie on
+    // NOT treated as closed loops here 閳?they are open trims whose endpoints lie on
     // opposite sides of the UV boundary seam and should split the face into two bands.
     let close_sq = uv_polyline_trim_closed_len_sq_from_uv_poly(poly);
     let is_closed_trim = (trim_start - trim_end).length_squared() < close_sq;
     if is_closed_trim {
-        // 鈹€鈹€ INTERIOR CLOSED LOOP 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+        // 閳光偓閳光偓 INTERIOR CLOSED LOOP 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
         // The trim is a truly closed loop entirely inside the polygon.
-        // Don't split by closed trims 鈥?return the original polygon unchanged.
+        // Don't split by closed trims 閳?return the original polygon unchanged.
         // The closed trim will be detected as an inner wire (hole) during sub-face
         // construction below, avoiding overlapping UV polygons that would cause
         // double-counting in surface area computation.
@@ -9039,7 +7713,7 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
                 let (edge, _, pt) = closest_on_boundary(endpoint);
                 (edge, pt)
             } else {
-                // Interior endpoint 鈥?cast ray along trim tangent toward boundary
+                // Interior endpoint 閳?cast ray along trim tangent toward boundary
                 let tang = (endpoint - tangent_from).normalize_or_zero();
                 if let Some((edge, pt)) = ray_to_boundary(endpoint, tang) {
                     (edge, pt)
@@ -9087,7 +7761,7 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
             new_poly.extend_from_slice(&poly[ia + 1..]);
             return split_uv_polygon_by_trim(&new_poly, trim);
         }
-        // Degenerate: endpoints are coincident — no split possible, return original.
+        // Degenerate: endpoints are coincident 鈥?no split possible, return original.
         return vec![poly.to_vec()];
     }
 
@@ -9130,11 +7804,11 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
         }
     }
 
-    // ✅ OCCT对齐: 子多边形只包含 trim 的端点(已投影到边界),不包含内部点。
-    //    OCCT 的 BOPAlgo_BuilderFace 用 MakeBlocks 生成的 section edge
-    //    (每条边不分段)直接构建面线框。rcad 的 split_uv_polygon_by_trim
-    //    如果把 trim 内部点都复制进子多边形,每个 trim 会贡献多条边(3点→2边,
-    //    65点→64边),而不是 OCCT 的 1 section edge / 曲线。
+    // 鉁?OCCT瀵归綈: 瀛愬杈瑰舰鍙寘鍚?trim 鐨勭鐐?宸叉姇褰卞埌杈圭晫),涓嶅寘鍚唴閮ㄧ偣銆?
+    //    OCCT 鐨?BOPAlgo_BuilderFace 鐢?MakeBlocks 鐢熸垚鐨?section edge
+    //    (姣忔潯杈逛笉鍒嗘)鐩存帴鏋勫缓闈㈢嚎妗嗐€俽cad 鐨?split_uv_polygon_by_trim
+    //    濡傛灉鎶?trim 鍐呴儴鐐归兘澶嶅埗杩涘瓙澶氳竟褰?姣忎釜 trim 浼氳础鐚鏉¤竟(3鐐光啋2杈?
+    //    65鐐光啋64杈?,鑰屼笉鏄?OCCT 鐨?1 section edge / 鏇茬嚎銆?
     //    Sub-polygon A: poly[0..=ia] + p_a + p_b + poly[ib+1..]
     let mut sub_a: Vec<DVec2> = poly[..=ia].to_vec();
     sub_a.push(p_a);
@@ -9150,7 +7824,7 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
     sub_a.push(p_b);
     sub_a.extend_from_slice(&poly[ib + 1..]);
 
-    // ✅ OCCT对齐: 子多边形 B 不含 trim 内部点。
+    // 鉁?OCCT瀵归綈: 瀛愬杈瑰舰 B 涓嶅惈 trim 鍐呴儴鐐广€?
     //    Sub-polygon B: p_a + poly[ia+1..=ib] + p_b
     let mut sub_b: Vec<DVec2> = vec![p_a];
     sub_b.extend_from_slice(&poly[ia + 1..=ib]);
@@ -9192,8 +7866,8 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
     let sub_a_deduped = dedup_2d(sub_a);
     let sub_b_deduped = dedup_2d(sub_b);
 
-    // ✅ OCCT对齐: 如果子多边形退化(<3顶点),返回原始多边形。
-    //    发生在trim与多边形边界重合时(如周期性柱面u=2π的边)。
+    // 鉁?OCCT瀵归綈: 濡傛灉瀛愬杈瑰舰閫€鍖?<3椤剁偣),杩斿洖鍘熷澶氳竟褰€?
+    //    鍙戠敓鍦╰rim涓庡杈瑰舰杈圭晫閲嶅悎鏃?濡傚懆鏈熸€ф煴闈=2蟺鐨勮竟)銆?
     let sub_a_valid = sub_a_deduped.len() >= 3;
     let sub_b_valid = sub_b_deduped.len() >= 3;
 
@@ -9249,7 +7923,7 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
     let tol = TOLERANCE_ABS;
     // If the circle center coincides with a polygon vertex, distance-to-circle and arc angles
     // degenerate; nudge the center slightly toward the polygon centroid (inside the face for
-    // typical box/sphere trims) so segment鈥揷ircle intersections and arc sampling stay stable.
+    // typical box/sphere trims) so segment閳ユ彿ircle intersections and arc sampling stay stable.
     let mut center = center;
     for &p in poly {
         if (p - center).length() < tol * 50.0 {
@@ -9272,7 +7946,7 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
     let all_outside = dists.iter().all(|&d| d >= -tol);
 
     if all_inside {
-        // All polygon vertices inside circle 鈥?keep whole polygon
+        // All polygon vertices inside circle 閳?keep whole polygon
         return (vec![poly.to_vec()], vec![]);
     }
 
@@ -9293,7 +7967,7 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
                         return (vec![poly.to_vec()], vec![circle_poly]);
                     }
                 Some(BooleanOpType::Intersection) => {
-                    // For Intersection A∩B, the inner_wire (hole) represents the
+                    // For Intersection A鈭〣, the inner_wire (hole) represents the
                 // region of A outside B. The caller's crossing split
                 // produces the non-overlapping circle region separately.
                         return (vec![circle_poly], vec![]);
@@ -9301,7 +7975,7 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
                     _ => {} // Other ops: fall through to crossing-based split
                 }
             }
-            // Circle extends beyond polygon boundary — clip the circle to the
+            // Circle extends beyond polygon boundary 鈥?clip the circle to the
             // polygon and use the clipped region as an inner wire (hole).
             // This avoids the N-crossing (N > 2) case in the crossing-based split,
             // which only handles exactly 2 crossings correctly.
@@ -9335,20 +8009,20 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
         let on_i = di.abs() < tol;
         let on_j = dj.abs() < tol;
 
-        // Both on circle 鈥?edge lies on boundary, no crossing
+        // Both on circle 閳?edge lies on boundary, no crossing
         if on_i && on_j {
             continue;
         }
-                // ✅ OCCT_aligned: Handle one vertex on circle, the other not on circle
+                // 鉁?OCCT_aligned: Handle one vertex on circle, the other not on circle
         //   BOPAlgo_BuilderFace uses Hatcher to split parametric domain with 2D pcurves,
         //   correctly handling vertices on cutting curves.
         //
         //   When the non-on-circle vertex is INSIDE (di/dj < -tol), the crossing IS at
         //   the on-circle vertex; record it directly.
         //   When the non-on-circle vertex is OUTSIDE (di/dj > tol), check edge midpoint:
-        //     midpoint inside → edge pierces through circle interior, find interior crossing
-        //     midpoint outside → crossing is at the on-circle vertex
-        //  Before fix: INSIDE→ON and ON→INSIDE edges missed crossings because the
+        //     midpoint inside 鈫?edge pierces through circle interior, find interior crossing
+        //     midpoint outside 鈫?crossing is at the on-circle vertex
+        //  Before fix: INSIDE鈫扥N and ON鈫扞NSIDE edges missed crossings because the
         //    midpoint was inside the circle but both (mid, end) or (start, mid) were
         //    fully inside.
         if on_i && !on_j {
@@ -9390,7 +8064,7 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
 
         if di * dj < 0.0 {
             // Edge crosses the circle boundary
-            // Find exact crossing: solve |a + t*(b-a) - center|虏 = r虏
+            // Find exact crossing: solve |a + t*(b-a) - center|铏?= r铏?
             let a = poly[i];
             let b = poly[j];
             let ab = b - a;
@@ -9424,8 +8098,8 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
             let mid = (poly[ei] + poly[ej]) * 0.5;
             if signed_dist(mid) < -tol {
                 // Both endpoints are outside the circle, but the edge passes through
-                // it (midpoint inside). Find BOTH crossings: entry (start→mid) and
-                // exit (mid→end). This gives 2 crossings on the same edge.
+                // it (midpoint inside). Find BOTH crossings: entry (start鈫抦id) and
+                // exit (mid鈫抏nd). This gives 2 crossings on the same edge.
                 if let Some(pt) = find_circle_segment_crossing(poly[ei], mid, center, radius, tol) {
                     ec.push((ei, pt));
                 }
@@ -9440,7 +8114,7 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
     }
 
     if crossings.len() < 2 {
-        // Can't split 鈥?keep as-is
+        // Can't split 閳?keep as-is
         return (vec![poly.to_vec()], vec![]);
     }
 
@@ -9466,7 +8140,7 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
             let (e_i, pt_a) = crossings[ci];
             let (e_j, pt_b) = crossings[(ci + 1) % crossings.len()];
             if e_i == e_j {
-                // Both crossings on the same polygon edge — the edge segment
+                // Both crossings on the same polygon edge 鈥?the edge segment
                 // between them is inside the circle. Add the polygon vertices
                 // on this segment, starting at pt_a and ending at pt_b.
                 inner.push(pt_a);
@@ -9484,7 +8158,7 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
                 let _vj = (e_i + 1) % n;
                 // Walk the polygon from vi to vj, collecting vertex parameters.
                 let mut verts_on_edge: Vec<(f64, DVec2)> = Vec::new();
-                // The endpoints are crossings — don't add them here.
+                // The endpoints are crossings 鈥?don't add them here.
                 verts_on_edge.push((t_lo, pt_a));
                 // Find interior vertices of the polygon edge.
                 // The polygon edge is from poly[vi] to poly[vj].
@@ -9497,7 +8171,7 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
                     inner.push(*p);
                 }
             } else {
-                // Crossings on different edges — the circle arc between them is
+                // Crossings on different edges 鈥?the circle arc between them is
                 // inside the polygon.  Sample 12 points on this arc.
                 let a1 = (pt_a - center).to_angle();
                 let a2 = (pt_b - center).to_angle();
@@ -9533,8 +8207,8 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
         let t_pt2 = if elen2 > 1e-30 { (pt2 - e_start).dot(evec) / elen2 } else { 0.0 };
         let (near_start, near_end) = if t_pt1 < t_pt2 { (pt1, pt2) } else { (pt2, pt1) };
 
-        // Interior arc: near_start → near_end through inner_mid_theta (circle interior side).
-        // The chord midpoint points from center toward the chord — the arc nearest the chord
+        // Interior arc: near_start 鈫?near_end through inner_mid_theta (circle interior side).
+        // The chord midpoint points from center toward the chord 鈥?the arc nearest the chord
         // is the interior (smaller) arc, which is the circle-interior side.
         let chord_mid = (near_start + near_end) * 0.5;
         let inner_mid_theta = (chord_mid - center).to_angle();
@@ -9567,7 +8241,7 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
             .collect();
 
         // Inside sub-polygon (circular segment = chord + interior arc):
-        // near_start → interior_arc → near_end (chord closes implicitly).
+        // near_start 鈫?interior_arc 鈫?near_end (chord closes implicitly).
         let mut sub_inside: Vec<DVec2> = Vec::new();
         sub_inside.push(near_start);
         for &p in interior_arc.iter().skip(1) {
@@ -9577,8 +8251,8 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
             }
         }
 
-        // Outside sub-polygon: near_start → backward polygon walk → near_end
-        // → interior_arc_rev (closing through the large/exterior arc).
+        // Outside sub-polygon: near_start 鈫?backward polygon walk 鈫?near_end
+        // 鈫?interior_arc_rev (closing through the large/exterior arc).
         let mut sub_outside: Vec<DVec2> = Vec::new();
         sub_outside.push(near_start);
         // Walk polygon vertices backward from idx1 (through idx1-1, idx1-2, ...,
@@ -9599,7 +8273,7 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
                 sub_outside.push(near_end);
             }
         }
-        // Add interior_arc reversed (near_end → ... → near_start through the
+        // Add interior_arc reversed (near_end 鈫?... 鈫?near_start through the
         // large/exterior arc) to close the outside polygon.
         for &p in interior_arc.iter().rev() {
             let last = *sub_outside.last().unwrap();
@@ -9665,7 +8339,7 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
             // inner_mid_theta is the arc waypoint inside the polygon.
             // The CCW arc from theta1 to theta2:
             //   if theta1 < theta2: spans [theta1, theta2]
-            //   if theta1 > theta2: wraps around 鈥?[theta1, 2蟺) 鈭?[0, theta2]
+            //   if theta1 > theta2: wraps around 閳?[theta1, 2锜? 閳?[0, theta2]
             let going_ccw = if theta1 < theta2 {
                 inner_mid_theta > theta1 && inner_mid_theta < theta2
             } else {
@@ -9697,7 +8371,7 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
             .collect()
     };
 
-    // Sub-polygon "inside" (circle side): pt1 鈫?arc 鈫?pt2 + polygon walk from idx2 to idx1
+    // Sub-polygon "inside" (circle side): pt1 閳?arc 閳?pt2 + polygon walk from idx2 to idx1
     // Actually: vertices of polygon that are INSIDE the circle + arc from pt1 to pt2
     let poly_inside_verts: Vec<DVec2> = poly[idx1 + 1..=idx2].to_vec();
 
@@ -9713,7 +8387,7 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
         sub_inside.push(p);
     }
 
-    // Sub-polygon "outside" (non-circle side): pt2 鈫?arc 鈫?pt1 + polygon walk
+    // Sub-polygon "outside" (non-circle side): pt2 閳?arc 閳?pt1 + polygon walk
     let poly_outside_verts_a: Vec<DVec2> = poly[..=idx1].to_vec();
     let poly_outside_verts_b: Vec<DVec2> = poly[idx2 + 1..].to_vec();
 
@@ -9722,9 +8396,9 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
     if sub_outside.last() != Some(&pt1) {
         sub_outside.push(pt1);
     }
-    // Add inner arc forward (pt1 → pt2) as the closing boundary.
-    // The sub_inside polygon uses the arc REVERSED (pt2 → pt1), so sub_outside
-    // must use the FORWARD direction (pt1 → pt2) to create a non-self-intersecting
+    // Add inner arc forward (pt1 鈫?pt2) as the closing boundary.
+    // The sub_inside polygon uses the arc REVERSED (pt2 鈫?pt1), so sub_outside
+    // must use the FORWARD direction (pt1 鈫?pt2) to create a non-self-intersecting
     // boundary that correctly encloses the non-circle-side region.
     // Using the reversed arc here would cause self-intersecting sub_outside polygons
     // when the circle crossings are at corner vertices (e.g. sphere-plane cut at origin
@@ -9772,7 +8446,7 @@ fn split_polygon_by_circle_2d(poly: &[DVec2], center: DVec2, radius: f64, op: Op
 }
 
 
-/// Clip a subject polygon against a convex clip polygon using Sutherland–Hodgman.
+/// Clip a subject polygon against a convex clip polygon using Sutherland鈥揌odgman.
 ///
 /// Both polygons are assumed to be in 2D, with vertices ordered CCW.
 /// The result is the intersection of the two polygons (also CCW).
@@ -9799,7 +8473,7 @@ fn clip_polygon_by_convex_polygon(subject: &[DVec2], clip: &[DVec2]) -> Vec<DVec
             let current = result[si];
             let next = result[sj];
 
-            // Inside test: cross product (edge × (P - edge_start)) >= 0
+            // Inside test: cross product (edge 脳 (P - edge_start)) >= 0
             // For a CCW clip polygon, interior is to the LEFT of each edge.
             let inside_curr = edge.perp_dot(current - edge_start) >= -tol;
             let inside_next = edge.perp_dot(next - edge_start) >= -tol;
@@ -9808,7 +8482,7 @@ fn clip_polygon_by_convex_polygon(subject: &[DVec2], clip: &[DVec2]) -> Vec<DVec
                 next_ring.push(current);
             }
             if inside_curr != inside_next {
-                // Edge crosses the clipping boundary — find intersection point
+                // Edge crosses the clipping boundary 鈥?find intersection point
                 let delta = next - current;
                 let num = edge.perp_dot(current - edge_start);
                 let den = edge.perp_dot(delta);
@@ -9940,7 +8614,7 @@ fn split_polygon_2d_by_line(poly: &[DVec2], point: DVec2, dir: DVec2) -> Vec<Vec
     };
 
     let dists: Vec<f64> = poly.iter().map(|&p| signed_dist(p)).collect();
-    // Vertices exactly on the line (|d| < tol) are neutral 鈥?they don't count as
+    // Vertices exactly on the line (|d| < tol) are neutral 閳?they don't count as
     // "all on one side".  Only strictly positive (> tol) or strictly negative (< -tol)
     // vertices determine whether the polygon crosses the line.
     let all_pos = dists.iter().all(|&d| d > tol);
@@ -10112,7 +8786,7 @@ pub struct GlueConfig {
     /// Enable geometric hashing for O(n) face pairing (default: true).
     ///
     /// When enabled, uses a spatial hash to quickly find candidate face
-    /// pairs, reducing the complexity from O(n虏) to O(n) for models
+    /// pairs, reducing the complexity from O(n铏? to O(n) for models
     /// with many faces.
     pub use_geometric_hash: bool,
 
@@ -10656,7 +9330,7 @@ fn try_trim_planar_subface_by_cylinder(
     _plane_normal: DVec3,
     _plane_origin: DVec3,
     cylinder: &CylindricalSurface,
-    keep_inside: bool, // true → keep inside-cylinder portion (Intersection), false → keep outside-cylinder portion (Difference)
+    keep_inside: bool, // true 鈫?keep inside-cylinder portion (Intersection), false 鈫?keep outside-cylinder portion (Difference)
 ) -> Option<SubFace> {
     let tol = TOLERANCE_MESH_LEGACY;
     let cyl_axis = cylinder.axis;
@@ -10687,7 +9361,7 @@ fn try_trim_planar_subface_by_cylinder(
         return None;
     }
 
-    // Find crossing edges (Inside ↔ Outside transitions)
+    // Find crossing edges (Inside 鈫?Outside transitions)
     let mut crossing_edges: Vec<usize> = Vec::new();
     for i in 0..n {
         let j = (i + 1) % n;
@@ -10710,25 +9384,25 @@ fn try_trim_planar_subface_by_cylinder(
     // Determine traversal direction based on which side of the cylinder wall to keep.
     //
     // For the outside chain (keep_inside = false):
-    //   O→I: outside at i, inside at j → start at i, step backward
-    //   I→O: inside at i, outside at j → start at j, step forward
+    //   O鈫扞: outside at i, inside at j 鈫?start at i, step backward
+    //   I鈫扥: inside at i, outside at j 鈫?start at j, step forward
     //
     // For the inside chain (keep_inside = true):
-    //   O→I: outside at i, inside at j → start at j, step forward
-    //   I→O: inside at i, outside at j → start at i, step backward
+    //   O鈫扞: outside at i, inside at j 鈫?start at j, step forward
+    //   I鈫扥: inside at i, outside at j 鈫?start at i, step backward
     let (start1, step1, start2) = if keep_inside {
         // Inside chain: walk through inside vertices
         let (s1, st1) = if outs[e1] && ins[j1] {
-            (j1 as i32, 1i32)     // O→I: inside at j, step forward
+            (j1 as i32, 1i32)     // O鈫扞: inside at j, step forward
         } else if ins[e1] && outs[j1] {
-            (e1 as i32, -1i32)    // I→O: inside at e, step backward
+            (e1 as i32, -1i32)    // I鈫扥: inside at e, step backward
         } else {
             return None;
         };
         let s2 = if outs[e2] && ins[j2] {
-            j2 as i32             // O→I: inside at j
+            j2 as i32             // O鈫扞: inside at j
         } else if ins[e2] && outs[j2] {
-            e2 as i32             // I→O: inside at e
+            e2 as i32             // I鈫扥: inside at e
         } else {
             return None;
         };
@@ -10788,7 +9462,7 @@ fn try_trim_planar_subface_by_cylinder(
     })
 }
 
-/// Find the point where line segment `a`–`b` crosses the cylinder wall.
+/// Find the point where line segment `a`鈥揱b` crosses the cylinder wall.
 fn edge_cylinder_crossing(
     a: DVec3,
     b: DVec3,
@@ -10803,7 +9477,7 @@ fn edge_cylinder_crossing(
     let r0 = v0 - cyl_axis * v0_ax;
     let rd = d - cyl_axis * d_ax;
 
-    // Solve |r0 + t·rd|² = cyl_r²
+    // Solve |r0 + t路rd|虏 = cyl_r虏
     let a_c = rd.dot(rd);
     let b_c = 2.0 * r0.dot(rd);
     let c_c = r0.dot(r0) - cyl_r * cyl_r;
@@ -10851,9 +9525,9 @@ fn add_plane_cylinder_intersection_arc(
     let sign = if cross.dot(cyl.axis) >= 0.0 { 1.0 } else { -1.0 };
 
     // Precompute plane-projection coefficients.
-    // For a point on the cylinder: p(θ,h) = origin + r·r̂(θ) + axis·h
-    // Plane equation: n·(p - plane_origin) = 0
-    // Solve for h:  h = -(n·(origin - plane_origin) + r·n·r̂(θ)) / (n·axis)
+    // For a point on the cylinder: p(胃,h) = origin + r路r虃(胃) + axis路h
+    // Plane equation: n路(p - plane_origin) = 0
+    // Solve for h:  h = -(n路(origin - plane_origin) + r路n路r虃(胃)) / (n路axis)
     let denom = plane_normal.dot(cyl.axis);
     let cyl_offset = plane_normal.dot(cyl.origin - plane_origin);
 
@@ -10863,7 +9537,7 @@ fn add_plane_cylinder_intersection_arc(
         let rotated = radial_from * theta.cos() + cyl.axis.cross(radial_from) * theta.sin();
 
         // Height on cylinder axis that satisfies the plane equation.
-        // When the plane is nearly parallel to the axis (denom ≈ 0), the
+        // When the plane is nearly parallel to the axis (denom 鈮?0), the
         // intersection approaches a straight line; fall back to linear
         // height interpolation between the two crossing points.
         let h = if denom.abs() > 1e-10 {
@@ -11127,13 +9801,13 @@ mod glue_tests {
 
     #[test]
     fn split_uv_polygon_detects_seam_crossing_on_cylinder() {
-        // UV polygon that crosses the U=0/2蟺 seam on a cylinder
+        // UV polygon that crosses the U=0/2锜?seam on a cylinder
         // This is a quad that wraps around the seam:
-        // - Right side: u 鈮?5.5 (near 2蟺)
-        // - Left side: u 鈮?0.5 (near 0)
-        let period = std::f64::consts::TAU; // 鈮?6.283
+        // - Right side: u 閳?5.5 (near 2锜?
+        // - Left side: u 閳?0.5 (near 0)
+        let period = std::f64::consts::TAU; // 閳?6.283
         let uv_polygon = vec![
-            DVec2::new(5.5, 0.0),  // Near 2蟺
+            DVec2::new(5.5, 0.0),  // Near 2锜?
             DVec2::new(0.5, 0.0),  // Near 0
             DVec2::new(0.5, 1.0),
             DVec2::new(5.5, 1.0),
@@ -11256,7 +9930,7 @@ mod glue_tests {
         let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Y, 1.0);
         let surface = Surface3::Sphere(sphere);
 
-        // Small triangle near north pole (v 鈮?0)
+        // Small triangle near north pole (v 閳?0)
         let uv_polygon = vec![
             DVec2::new(0.0, 0.001),
             DVec2::new(std::f64::consts::FRAC_PI_2, 0.001),
@@ -11283,11 +9957,11 @@ mod glue_tests {
 
     #[test]
     fn test_handle_degenerate_uv_polygon_sphere_south_pole_cap() {
-        // UV polygon near south pole (v 鈮?蟺)
+        // UV polygon near south pole (v 閳?锜?
         let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Y, 1.0);
         let surface = Surface3::Sphere(sphere);
 
-        // Small triangle near south pole (v 鈮?蟺)
+        // Small triangle near south pole (v 閳?锜?
         let uv_polygon = vec![
             DVec2::new(0.0, std::f64::consts::PI - 0.001),
             DVec2::new(std::f64::consts::FRAC_PI_2, std::f64::consts::PI - 0.001),
@@ -11316,7 +9990,7 @@ mod glue_tests {
         };
         let surface = Surface3::Cone(cone);
 
-        // Small triangle near apex (v 鈮?0)
+        // Small triangle near apex (v 閳?0)
         let uv_polygon = vec![
             DVec2::new(0.0, 0.001),
             DVec2::new(std::f64::consts::FRAC_PI_2, 0.001),
@@ -11373,7 +10047,7 @@ mod glue_tests {
 
     #[test]
     fn test_split_edge_at_periodic_seam_cylinder() {
-        // Edge that crosses U=0/2蟺 boundary on cylinder
+        // Edge that crosses U=0/2锜?boundary on cylinder
         let cylinder = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Y,
@@ -11381,7 +10055,7 @@ mod glue_tests {
             radius: 1.0,
         };
 
-        // Edge from u near 2蟺 to u near 0
+        // Edge from u near 2锜?to u near 0
         let start_uv = DVec2::new(std::f64::consts::TAU - 0.1, 0.5);
         let end_uv = DVec2::new(0.1, 0.5);
 
@@ -11431,7 +10105,7 @@ mod glue_tests {
 
     #[test]
     fn test_split_edge_at_periodic_seam_sphere() {
-        // Edge crossing U=0/2蟺 boundary on sphere
+        // Edge crossing U=0/2锜?boundary on sphere
         let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Y, 1.0);
 
         let start_uv = DVec2::new(std::f64::consts::TAU - 0.1, 1.0);
@@ -11451,7 +10125,7 @@ mod glue_tests {
         // UV polygon on torus that crosses U seam only
         let period = std::f64::consts::TAU;
         let uv_polygon = vec![
-            DVec2::new(5.5, 0.5), // Near U=2蟺
+            DVec2::new(5.5, 0.5), // Near U=2锜?
             DVec2::new(0.5, 0.5), // Near U=0
             DVec2::new(0.5, 1.5),
             DVec2::new(5.5, 1.5),
@@ -11483,7 +10157,7 @@ mod glue_tests {
 
         // Polygon that spans nearly full U range and crosses V seam
         let uv_polygon = vec![
-            DVec2::new(0.1, 5.5), // V near 2蟺
+            DVec2::new(0.1, 5.5), // V near 2锜?
             DVec2::new(5.9, 5.5),
             DVec2::new(5.9, 0.5), // V near 0
             DVec2::new(0.1, 0.5),
@@ -11550,7 +10224,7 @@ mod glue_tests {
     #[test]
     fn split_diamond_by_diagonal() {
         use glam::DVec2;
-        // Diamond with vertices at cardinal points — split by x-axis
+        // Diamond with vertices at cardinal points 鈥?split by x-axis
         // The line y=0 passes through vertex 0 (1,0) and vertex 2 (-1,0).
         let poly = vec![
             DVec2::new(1.0, 0.0),
@@ -11577,13 +10251,13 @@ mod glue_tests {
             DVec2::new(2.0, 2.0),
             DVec2::new(0.0, 2.0),
         ];
-        // Vertical line x=1.2 — does not pass through any vertex
+        // Vertical line x=1.2 鈥?does not pass through any vertex
         let out = super::split_polygon_2d_by_line(&poly, DVec2::new(1.2, 0.0), DVec2::new(0.0, 1.0));
         assert!(out.len() >= 2, "square split by offset line should produce 2+ polygons, got {}", out.len());
     }
 
     /// Debug: ZD3 cylinder-cylinder concentric union SA undercount.
-    /// rcad reports 16.3 vs expected 22.0 (= 7π ≈ 21.9911).
+    /// rcad reports 16.3 vs expected 22.0 (= 7蟺 鈮?21.9911).
     #[test]
     fn zd3_concentric_cylinder_union() {
         use crate::boolean::boolean_op_with_retry_policy;
@@ -11594,12 +10268,12 @@ mod glue_tests {
         use rcad_modeling::make_cylinder_brep;
 
         // OCCT ZD3 geometry:
-        //   pcylinder b1 1 2     → r=1, h=2, z∈[0,2]
-        //   pcylinder b2 0.5 3   → r=0.5, h=3, z∈[-1,2] after ttranslate 0 0 -1
+        //   pcylinder b1 1 2     鈫?r=1, h=2, z鈭圼0,2]
+        //   pcylinder b2 0.5 3   鈫?r=0.5, h=3, z鈭圼-1,2] after ttranslate 0 0 -1
         //
         // rcad make_cylinder_brep centers the cylinder at `center`, so:
-        //   b1: center at z=1 → z∈[0,2]
-        //   b2: center at z=0.5 → z∈[-1,2]
+        //   b1: center at z=1 鈫?z鈭圼0,2]
+        //   b2: center at z=0.5 鈫?z鈭圼-1,2]
         let b1 = make_cylinder_brep(DVec3::new(0.0, 0.0, 1.0), DVec3::Z, DVec3::X, 1.0, 2.0)
             .expect("b1");
         let b2 =
@@ -11628,7 +10302,7 @@ mod glue_tests {
             .count();
 
         println!(
-            "ZD3: SA = {:.4} (expected {:.4} = 7π, diff = {:.4})",
+            "ZD3: SA = {:.4} (expected {:.4} = 7蟺, diff = {:.4})",
             actual_sa,
             expected_sa,
             actual_sa - expected_sa
@@ -11680,7 +10354,7 @@ mod glue_tests {
             }
         }
 
-        // Allow wide tolerance for now — this is a known failure
+        // Allow wide tolerance for now 鈥?this is a known failure
         let tol = (5e-3_f64).max(0.15 * expected_sa.abs());
         if (actual_sa - expected_sa).abs() > tol {
             println!(
