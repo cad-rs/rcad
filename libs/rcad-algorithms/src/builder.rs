@@ -2588,18 +2588,21 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             if !processed_seam_ds_edges.insert(ei) {
                 continue;
             }
-            let _seam_tol = TOLERANCE_COORD_SUB;
-
-            // 1. Collect all seam vertices: original endpoints + IC endpoints on seam
+            // 1. Collect seam vertices: original endpoints + IC endpoints
             let mut seam_verts: Vec<usize> = Vec::new();
             seam_verts.push(sv);
             if ev != sv {
                 seam_verts.push(ev);
             }
-            // 2. Add IC endpoints that lie on the seam (intermediate vertices)
-            //    OCCT-aligned: DoSplitSEAMOnFace splits the seam at section edge
-            //    vertices on the seam line (U=0 or U=2pi in UV space).
+            // 2. Split seam at IC endpoints whose V is between the poles.
+            //    OCCT DoSplitSEAMOnFace checks U approx 0/2pi; rcad's sphere
+            //    (axis=Y) places IC endpoints off that line.  Splitting by V
+            //    achieves the same connectivity effect.
             if let Surface3::Sphere(sph) = &face.surface {
+                let sv_uv = sph.world_to_uv(ds.vertices[sv].point);
+                let ev_uv = sph.world_to_uv(ds.vertices[ev].point);
+                let v_min = sv_uv.y.min(ev_uv.y);
+                let v_max = sv_uv.y.max(ev_uv.y);
                 for &ci in &face.face_info.curves_in {
                     let ic = &ds.intersection_curves[ci];
                     for &icv in &[ic.start_vertex, ic.end_vertex] {
@@ -2608,10 +2611,8 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                         if seam_verts.iter().any(|&sv| ds.vertices[sv].point.distance_squared(ic_pos) < TOLERANCE_ABS_SQ) {
                             continue;
                         }
-                        let icuv = sph.world_to_uv(ic_pos);
-                        let u_norm = icuv.x.rem_euclid(std::f64::consts::TAU);
-                        let on_seam = u_norm < _seam_tol || (u_norm - std::f64::consts::TAU).abs() < _seam_tol;
-                        if on_seam {
+                        let ic_uv = sph.world_to_uv(ic_pos);
+                        if ic_uv.y > v_min + 1e-8 && ic_uv.y < v_max - 1e-8 {
                             seam_verts.push(icv);
                         }
                     }
@@ -3614,24 +3615,15 @@ impl<'a> BooleanBuilder<'a> {
         // the seam forms the outer boundary and the IC triangle is a hole.
         // Detect this: if outer_wire contains only IC (non-seam) segments and
         // the op is not Intersection, build a complement WireFace.
-        // OCCT-aligned: for Intersection the wire pipeline correctly produces
-        // the IC triangle.  For Union/Difference, construct the complement
-        // WireFace where the seam+IC boundary forms the outer wire and the
-        // IC triangle is the inner wire (hole).
+        // FIXME: For Union/Difference, the wire pipeline currently produces
+        // the IC triangle region.  OCCT BuildSplitFaces + BuilderFace would
+        // produce both the IC triangle AND the complement via proper seam
+        // splitting (DoSplitSEAMOnFace).  For now, return None to fall
+        // through to split_curved_face_parametric which handles these modes.
+        // Once DoSplitSEAMOnFace equivalent is implemented (seam edge with
+        // dual pcurves), re-enable this path for all modes.
         if self.op != BooleanOpType::Intersection {
-            // Use FORWARD IC segments as the outer wire (the 3 IC arcs
-            // forming the triangle boundary) plus the IC triangle as inner
-            // wire.  This forms a face with the IC triangle as a hole,
-            // covering the complement (sphere minus triangle).
-            let ic_fwd: Vec<usize> = (0..segments.len())
-                .filter(|&i| !segments[i].is_seam && segments[i].forward).collect();
-            if ic_fwd.len() >= 3 {
-                let complement_wf = WireFace {
-                    outer_wire: ic_fwd,
-                    inner_wires: wfs.iter().map(|wf| wf.outer_wire.clone()).collect(),
-                };
-                return Some((segments, vec![complement_wf]));
-            }
+            return None;
         }
         if wfs.is_empty() {
             return None;
