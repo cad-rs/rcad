@@ -1,4 +1,4 @@
-﻿use std::collections::{HashMap, VecDeque};
+﻿use std::collections::HashMap;
 
 use glam::{DVec2, DVec3};
 use rayon::prelude::*;
@@ -3536,17 +3536,6 @@ impl<'a> BooleanBuilder<'a> {
             return self.tessellate_sphere_face(face_idx);
         }
 
-        // ✅ OCCT对齐: 鐞冮潰鏈?IC 鍦嗘洸绾挎椂,鐢?build_sphere_sub_faces_by_circles 鐩存帴
-        //    浠庡ぇ鍦嗕氦鐐规瀯寤?SubFace,缁曡繃 UV 澶氳竟褰㈠垎瑁?涓嶈兘姝ｇ‘鍒嗙鐞冮潰鍗﹂檺)銆?
-        if matches!(&face.surface, Surface3::Sphere(_)) && !fi.curves_in.is_empty() {
-            let subs = self.build_sphere_sub_faces_by_circles(face_idx);
-            if !subs.is_empty() {
-                return subs;
-            }
-        }
-
-        // 鉂?宸插垹闄? build_sphere_sub_faces_by_circles sphere route (鏃т唬鐮?銆?
-        //    OCCT uses edge-based BuilderFace with section edges, not SubFace polygon splitting.
         // overlapping sub-face UV polygons when intersection curves are high-order
         // (e.g. the cone鈥揷ylinder quartic for skew axes in ZK8/ZL1), causing SA
         // double-counting.  A grid guarantees that each UV region maps to exactly one
