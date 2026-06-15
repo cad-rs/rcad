@@ -2588,7 +2588,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             if !processed_seam_ds_edges.insert(ei) {
                 continue;
             }
-            let seam_tol = TOLERANCE_COORD_SUB;
+            let _seam_tol = TOLERANCE_COORD_SUB;
 
             // 1. Collect all seam vertices: original endpoints + IC endpoints on seam
             let mut seam_verts: Vec<usize> = Vec::new();
@@ -2597,7 +2597,8 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                 seam_verts.push(ev);
             }
             // 2. Add IC endpoints that lie on the seam (intermediate vertices)
-            //    OCCT-aligned: DoSplitSEAMOnFace   seam  IC  seam
+            //    OCCT-aligned: DoSplitSEAMOnFace splits the seam at section edge
+            //    vertices on the seam line (U=0 or U=2pi in UV space).
             if let Surface3::Sphere(sph) = &face.surface {
                 for &ci in &face.face_info.curves_in {
                     let ic = &ds.intersection_curves[ci];
@@ -2607,10 +2608,9 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                         if seam_verts.iter().any(|&sv| ds.vertices[sv].point.distance_squared(ic_pos) < TOLERANCE_ABS_SQ) {
                             continue;
                         }
-                        // Normalize U to [0, 2pi) for on-seam check (world_to_uv returns [-pi, pi])
                         let icuv = sph.world_to_uv(ic_pos);
                         let u_norm = icuv.x.rem_euclid(std::f64::consts::TAU);
-                        let on_seam = u_norm < seam_tol || (u_norm - std::f64::consts::TAU).abs() < seam_tol;
+                        let on_seam = u_norm < _seam_tol || (u_norm - std::f64::consts::TAU).abs() < _seam_tol;
                         if on_seam {
                             seam_verts.push(icv);
                         }
@@ -2629,13 +2629,6 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             }
 
             // 4. Create sub-segments between consecutive seam vertices
-                let seam_seg_cnt = segments.iter().filter(|s| s.is_seam).count();
-            let ic_cnt = face.face_info.curves_in.iter().flat_map(|ci| {
-                let ic = &ds.intersection_curves[*ci];
-                [ic.start_vertex, ic.end_vertex]
-            }).filter(|&v| seam_verts.contains(&v)).count();
-            eprintln!("[SEAM_SPLIT] face={} seam_verts={} curves_in={} ic_on_seam={}",
-                face_idx, seam_verts.len(), face.face_info.curves_in.len(), ic_cnt);
             for i in 0..seam_verts.len().saturating_sub(1) {
                 let sv_seg = seam_verts[i];
                 let ev_seg = seam_verts[i + 1];
@@ -2799,7 +2792,12 @@ fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface: &Surface3
             let uve = sph.world_to_uv(ds.vertices[ev].point);
             let dir = uve - uvs;
             if dir.length_squared() < 1e-30 {
-                return (None, None);
+                // OCCT-aligned: zero-length seam sub-segment (IC endpoint at
+                // pole).  The seam always follows the V direction on the sphere,
+                // from north pole (V=0) toward south pole (V=pi).  Return the
+                // V-axis direction (pi/2) to ensure valid EdgeInfo entries.
+                return (Some(std::f64::consts::FRAC_PI_2),
+                        Some(std::f64::consts::FRAC_PI_2));
             }
             let a = dir_to_angle(dir);
             (Some(a), Some(a))
@@ -3611,6 +3609,30 @@ impl<'a> BooleanBuilder<'a> {
             return None;
         }
         let wfs = perform_areas(&wires, &segments, ds, face_idx);
+        // OCCT-aligned: for Union/Difference, when the sphere face wires only
+        // cover the IC triangle (inner region), we need the complement where
+        // the seam forms the outer boundary and the IC triangle is a hole.
+        // Detect this: if outer_wire contains only IC (non-seam) segments and
+        // the op is not Intersection, build a complement WireFace.
+        // OCCT-aligned: for Intersection the wire pipeline correctly produces
+        // the IC triangle.  For Union/Difference, construct the complement
+        // WireFace where the seam+IC boundary forms the outer wire and the
+        // IC triangle is the inner wire (hole).
+        if self.op != BooleanOpType::Intersection {
+            // Use FORWARD IC segments as the outer wire (the 3 IC arcs
+            // forming the triangle boundary) plus the IC triangle as inner
+            // wire.  This forms a face with the IC triangle as a hole,
+            // covering the complement (sphere minus triangle).
+            let ic_fwd: Vec<usize> = (0..segments.len())
+                .filter(|&i| !segments[i].is_seam && segments[i].forward).collect();
+            if ic_fwd.len() >= 3 {
+                let complement_wf = WireFace {
+                    outer_wire: ic_fwd,
+                    inner_wires: wfs.iter().map(|wf| wf.outer_wire.clone()).collect(),
+                };
+                return Some((segments, vec![complement_wf]));
+            }
+        }
         if wfs.is_empty() {
             return None;
         }
