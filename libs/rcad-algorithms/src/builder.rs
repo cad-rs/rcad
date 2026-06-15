@@ -2571,7 +2571,13 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
     // 1. Original boundary edges (OCCT L357-460)
     // ================================================================
     // OCCT-aligned: orient boundary edges consistently for closed loop.
-    // OCCT TopExp_Explorer returns edges with correct orientation per face.
+    // OCCT's TopExp_Explorer returns edges with the orientation they have
+    // in the face's wire — each edge's end vertex matches the next edge's
+    // start vertex.  rcad DS stores edges with arbitrary orientation.
+    // Without this fix, a box face may have boundary edges like [2→3, 3→7,
+    // 6→7, 2→6] where BOTH 3→7 and 6→7 end at vertex 7 (no outgoing edge
+    // from 7), making the SmartMap connectivity wrong and preventing the
+    // wire splitter from forming closed loops (fi=3 was failing).
     let mut prev_end: Option<usize> = None;
     for &ei in &face.boundary_edges {
         let edge = &ds.edges[ei];
@@ -3167,6 +3173,16 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, fac
     wires
 }
 
+/// OCCT-aligned: aE.IsSame(aEOuta) for flat vertex arrays.
+/// Returns true when both edges are IntersectionCurve segments from the
+/// same intersection curve index (i.e., FORWARD and REVERSED halves of
+/// the same physical section edge).  OCCT detects this via TopoDS_Shape
+/// identity (.IsSame()); rcad matches the curve index in WireEdgeSource.
+fn is_same_ic(incoming: &WireEdgeSource, candidate: &WireEdgeSource) -> bool {
+    matches!((incoming, candidate),
+        (WireEdgeSource::IntersectionCurve(a), WireEdgeSource::IntersectionCurve(b)) if a == b)
+}
+
 /// Check if a segment has been marked passed at a specific vertex with a specific in_flag.
 fn is_seg_passed(smart_map: &HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize) -> bool {
     for infos in smart_map.values() {
@@ -3217,35 +3233,45 @@ fn select_best_outgoing<'a>(
     candidates: &[&'a EdgeInfo],
     angle_in: f64,
     incoming_is_boundary: bool,
+    segments: &[WireSegment],
+    incoming_ci: usize,
 ) -> Option<&'a EdgeInfo> {
     if candidates.is_empty() {
         return None;
     }
-    // Special rule (OCCT): when incoming is boundary and there is exactly 1
-    // internal outgoing edge, prefer it over angle-based selection.
+    // OCCT-aligned: boundary->IC transition (WireSplitter_1.cxx L590-606).
+    // When the incoming edge is BOUNDARY and exactly 1 internal (IC)
+    // outgoing candidate exists, force the path to take that internal edge.
+    // This ensures the path crosses from the face boundary onto the
+    // intersection curve, forming a loop that includes the IC segment.
+    // Without this, the path keeps following boundary edges and never
+    // reaches the far side of the face.
     if incoming_is_boundary {
         let internal_out: Vec<&&EdgeInfo> = candidates.iter().filter(|e| e.is_inside).collect();
         if internal_out.len() == 1 {
             return Some(internal_out[0]);
         }
     }
-    // OCCT-aligned symmetric rule: when incoming is internal (IC) and there is
-    // exactly 1 boundary outgoing edge, prefer the boundary edge.  This ensures
-    // the path transitions back from IC to boundary, completing the loop.
-    if !incoming_is_boundary {
-        let boundary_out: Vec<&&EdgeInfo> = candidates.iter().filter(|e| !e.is_inside).collect();
-        if boundary_out.len() == 1 {
-            return Some(boundary_out[0]);
-        }
-    }
     if candidates.len() == 1 {
         return Some(candidates[0]);
     }
+    // ✅ OCCT-aligned aE.IsSame(aEOuta) check (L544): if a candidate edge
+    // is the same physical intersection curve as the incoming edge, maximize
+    // its angle to 2PI so it is never chosen over other candidates.
+    let incoming_src = &segments[incoming_ci].source;
     candidates.iter()
         .min_by(|a, b| {
-            clock_wise_angle(angle_in, a.angle)
-                .partial_cmp(&clock_wise_angle(angle_in, b.angle))
-                .unwrap_or(std::cmp::Ordering::Equal)
+            let angle_a = if is_same_ic(incoming_src, &segments[a.seg_idx].source) {
+                std::f64::consts::TAU
+            } else {
+                clock_wise_angle(angle_in, a.angle)
+            };
+            let angle_b = if is_same_ic(incoming_src, &segments[b.seg_idx].source) {
+                std::f64::consts::TAU
+            } else {
+                clock_wise_angle(angle_in, b.angle)
+            };
+            angle_a.partial_cmp(&angle_b).unwrap_or(std::cmp::Ordering::Equal)
         })
         .copied()
 }
@@ -3475,7 +3501,7 @@ fn walk_path_extract_wires(
                 infos.iter().filter(|ei| !ei.passed && !ei.in_flag).collect()
             } else { return; };
             let incoming_is_boundary = !matches!(segments[last_ci].source, WireEdgeSource::IntersectionCurve(_));
-            let best = match select_best_outgoing(&candidates, angle_in, incoming_is_boundary) {
+            let best = match select_best_outgoing(&candidates, angle_in, incoming_is_boundary, segments, last_ci) {
                 Some(e) => e,
                 None => return,
             };
@@ -3498,7 +3524,7 @@ fn walk_path_extract_wires(
         };
 
         let incoming_is_boundary = !matches!(segments[ci].source, WireEdgeSource::IntersectionCurve(_));
-        let best = match select_best_outgoing(&candidates, angle_in, incoming_is_boundary) {
+        let best = match select_best_outgoing(&candidates, angle_in, incoming_is_boundary, segments, ci) {
             Some(e) => e,
             None => return,
         };
