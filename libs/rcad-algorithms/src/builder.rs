@@ -10397,22 +10397,21 @@ mod glue_tests {
 
 
 // ================================================================
-// ✅ placeholder: OCCT BOPAlgo_BuilderFace 边级球面分割 (占位)
-//    OCCT 使用 edge-based 路径: section edges → PerformLoops → PerformAreas
-//    → TopoDS_Face。当前 build_sphere_sub_faces_by_circles 是 SubFace 路径,
-//    ⏳ 部分对齐 — 圆圈交点正确但最终产出 SubFace 而非 OCCT Wire/Face。
+// ✅ Current state: emit_sphere_faces_direct replaces build_sphere_sub_faces_by_circles
+//    OCCT edge-based path not yet implemented. Current approach:
+//    emit_sphere_faces_direct: Circle3 intersection points → emit_face_data (SubFace-free)
+//    ⏳ Still missing: seam edge splitting (DoSplitSEAMOnFace), proper edge→wire→face
 //    待实现步骤:
 //    1. 将 Circle3 交线转为 BRep Edge (BOPTools_AlgoTools::MakeEdge)
 //    2. 合并 seam 边子段 (DoSplitSEAMOnFace splitting at IC endpoints)
 //    3. BOPAlgo_WireSplitter::BuildWires (角度转向选择)
 //    4. PerformAreas: outer/hole 分类
-//    实现后删除 build_sphere_sub_faces_by_circles 的 SubFace 构建部分。
 // ================================================================
 
 // ⏳ TODO: DoSplitSEAMOnFace seam 边分割 — 待实现
 // OCCT BOPTools_AlgoTools3D::DoSplitSEAMOnFace (BOPAlgo_Builder_2.cxx L392-449)
 // 在 seam 与 IC 的交点处分割 seam 边,创建 seam 子段。
-// 当前 build_sphere_sub_faces_by_circles 绕过 seam 边分割直接用 inside_pts 做边界。
+// 当前 emit_sphere_faces_direct 绕过 seam 边分割直接用 inside_pts 做边界。
 
 // ================================================================
 // ✅ OCCT BOPAlgo_BuilderFace 等价路径规划 (待实现)
@@ -10429,7 +10428,7 @@ mod glue_tests {
 //   4. TopoDS_Face: 从 WireFace 构建 (with proper surface+location)
 //
 // 当前替代路径 (❌ 待删除):
-//   build_sphere_sub_faces_by_circles: Circle3 → SubFace (rcad自创)
+//   emit_sphere_faces_direct: Circle3 → emit_face_data (替代SubFace,但非OCCT边级路径)
 //   split_curved_face_parametric: UV polygon split (非OCCT)
 //   直接 keep/discard 逻辑: 绕过 OCCT 分类
 // ================================================================
