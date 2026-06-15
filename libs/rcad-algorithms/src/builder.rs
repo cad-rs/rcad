@@ -3752,10 +3752,7 @@ impl<'a> BooleanBuilder<'a> {
         if face.face_info.curves_in.is_empty() {
             return None;
         }
-        // Only use wire pipeline for sphere faces (planar/cylindrical need more testing)
-        if !matches!(face.surface, Surface3::Sphere(_)) {
-            return None;
-        }
+        // OCCT-aligned: BuildSplitFaces works for all surface types (L357-489)
         let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
         let segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
         if segments.is_empty() {
@@ -4045,8 +4042,8 @@ impl<'a> BooleanBuilder<'a> {
         // Process A faces against B solid
         let mut a_on_planes: Vec<(DVec3, DVec3)> = Vec::new(); // (normal, origin) from emitted A-face planes
         for &fi in &a_faces {
-            // OCCT-aligned: wire pipeline for sphere faces (replaces emit_sphere_faces_direct)
-            if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) && !self.ds.faces[fi].face_info.curves_in.is_empty() {
+            // OCCT-aligned: wire pipeline for all face types (BuildSplitFaces + WireSplitter)
+            if !self.ds.faces[fi].face_info.curves_in.is_empty() {
                 if let Some((segments, wfs)) = self.split_face_occt_wire_pipeline(fi) {
                     if !wfs.is_empty() {
                         let wire_subs = wire_faces_to_sub_faces(&wfs, &segments, self.ds, fi);
@@ -4184,8 +4181,8 @@ impl<'a> BooleanBuilder<'a> {
 
         // Process B faces against A solid
         for &fi in &b_faces {
-            // OCCT-aligned: wire pipeline for sphere faces (replaces emit_sphere_faces_direct)
-            if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) && !self.ds.faces[fi].face_info.curves_in.is_empty() {
+            // OCCT-aligned: wire pipeline for all face types (BuildSplitFaces + WireSplitter)
+            if !self.ds.faces[fi].face_info.curves_in.is_empty() {
                 if let Some((segments, wfs)) = self.split_face_occt_wire_pipeline(fi) {
                     if !wfs.is_empty() {
                         let wire_subs = wire_faces_to_sub_faces(&wfs, &segments, self.ds, fi);
