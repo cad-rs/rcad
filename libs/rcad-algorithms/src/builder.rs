@@ -3492,16 +3492,16 @@ fn wire_faces_to_sub_faces(
     }).collect()
 }
 
-/// OCCT-aligned: Convert wires to WireFace (PerformAreas L387-606)
+/// OCCT-aligned: Classify wires into growth/outer and holes (PerformAreas L387-606).
 ///
-/// OCCT PerformAreas:
-///   1.  wire  growth(outer) / hole(inner) (L439-445)
-///   2. growth wire forms face; hole wire forms face (L575-605)
+/// OCCT creates a TopoDS_Face from each wire, then uses FClass2d to test if a
+/// sample point is inside the face's UV domain.  Growth wires (sample point IS
+/// inside) form the outer boundary; hole wires form inner boundaries.
 ///
-/// rcad adapts: classify outer/hole, group outer + holes as WireFace
-///  outer wire  WireFace
-/// OCCT-aligned:  wires  outer/hole/independent (PerformAreas)
-///     seam  wire, seam merge
+/// rcad equivalent: for each wire, compute its 3D boundary centroid and map it
+/// to UV space on the face surface.  A wire whose UV centroid is INSIDE another
+/// wire's UV polygon is a HOLE of that wire.  The wire containing all others is
+/// the GROWTH (outer).
 fn perform_areas(
     wires: &[Vec<usize>],
     segments: &[WireSegment],
@@ -3512,7 +3512,15 @@ fn perform_areas(
         return vec![];
     }
 
-    struct WireData { wire_idx: usize, boundary: Vec<DVec3>, area: f64, n_seam: usize }
+    let face_surface = &ds.faces[face_idx].surface;
+
+    // Build WireData: boundary polygon, UV polygon, sample centroid (UV)
+    struct WireData {
+        wire_idx: usize,
+        boundary: Vec<DVec3>,
+        uv_poly: Vec<DVec2>,
+        uv_centroid: Option<DVec2>,
+    }
     let mut wds: Vec<WireData> = wires.iter().enumerate().filter_map(|(wi, w)| {
         let mut b = wire_boundary_3d(w, segments, ds);
         if b.len() < 3 {
@@ -3520,53 +3528,110 @@ fn perform_areas(
                 let seg = &segments[si];
                 vec![ds.vertices[seg.start_vertex].point, ds.vertices[seg.end_vertex].point]
             }).collect();
-            verts.sort_by(|a,b| { let cx = a.x.total_cmp(&b.x); if cx != std::cmp::Ordering::Equal { return cx; } let cy = a.y.total_cmp(&b.y); if cy != std::cmp::Ordering::Equal { return cy; } a.z.total_cmp(&b.z) });
+            verts.sort_by(|a, b| {
+                let cx = a.x.total_cmp(&b.x);
+                if cx != std::cmp::Ordering::Equal { return cx; }
+                let cy = a.y.total_cmp(&b.y);
+                if cy != std::cmp::Ordering::Equal { return cy; }
+                a.z.total_cmp(&b.z)
+            });
             verts.dedup();
             if verts.len() >= 3 { b = verts; } else { return None; }
         }
-        let a = projected_area_max(&b);
-        let n_seam = w.iter().filter(|&&si| segments[si].is_seam).count();
-        Some(WireData { wire_idx: wi, boundary: b, area: a, n_seam })
+        // Map 3D boundary to UV space.  The wire pipeline currently only
+        // processes sphere faces; planar/cylindrical faces use split_face.
+        let uv_poly: Vec<DVec2> = match face_surface {
+            Surface3::Sphere(s) => b.iter().map(|p| {
+                let mut uv = s.world_to_uv(*p);
+                uv.x = uv.x.rem_euclid(std::f64::consts::TAU);
+                uv
+            }).collect(),
+            _ => return None,  // non-sphere: fall back to area-based perform_areas
+        };
+
+        // UV centroid for containment test
+        let uv_cent = if !uv_poly.is_empty() {
+            Some(uv_poly.iter().copied().sum::<DVec2>() / uv_poly.len() as f64)
+        } else { None };
+
+        Some(WireData { wire_idx: wi, boundary: b, uv_poly, uv_centroid: uv_cent })
     }).collect();
 
     if wds.is_empty() {
         return vec![];
     }
 
-    // Sort by descending area; tiebreaker: prefer wire with seam segments
-    // (seam wire = full sphere boundary, IC wire = interior triangle)
-    wds.sort_by(|a, b| {
-        let area_cmp = b.area.partial_cmp(&a.area).unwrap_or(std::cmp::Ordering::Equal);
-        if area_cmp != std::cmp::Ordering::Equal { return area_cmp; }
-        b.n_seam.cmp(&a.n_seam) // more seam segments → outer
-    });
-    let outer_wire_idx = wds[0].wire_idx;
-    let outer_boundary = wds[0].boundary.clone();
-    let rest = &wds[1..];
+    // OCCT-aligned: classify each wire via UV containment (FClass2d).
+    // A wire is GROWTH (outer) if its UV centroid is inside the UV polygon.
+    // A wire is HOLE (inner) if its UV centroid is OUTSIDE its own polygon
+    // but inside another wire's polygon.
+    // Since the wire splitter produces closed wires, a wire whose UV centroid
+    // falls outside its own UV polygon spans the full angular range (seam wire).
+    // Such a wire is always a GROWTH.
+    let n = wds.len();
+    let mut is_hole = vec![false; n];
 
-    //  valid wires
-    let mut hole_wire_idxs: Vec<usize> = Vec::new();
-    let mut indep_wire_idxs: Vec<usize> = Vec::new();
-    for wd in rest {
-        let mid = wd.boundary.iter().sum::<DVec3>() / wd.boundary.len() as f64;
-        if point_in_polygon_best(mid, &outer_boundary) {
-            hole_wire_idxs.push(wd.wire_idx);
-        } else {
-            indep_wire_idxs.push(wd.wire_idx);
+    // OCCT-aligned classification:
+    //   - Wires whose UV centroid is OUTSIDE their own UV polygon span the full
+    //     surface domain (e.g. seam wire on a sphere).  These are GROWTH (outer).
+    //   - Wires whose UV centroid is INSIDE another wire's UV polygon are HOLE.
+    //   - Wires whose centroid is inside NO other wire are independent GROWTH.
+    for i in 0..n {
+        let Some(ref uv_cent) = wds[i].uv_centroid else { continue; };
+        let self_inside = point_in_uv_polygon(*uv_cent, &wds[i].uv_poly);
+        // Check if this wire is inside any other wire's UV polygon
+        let inside_any = (0..n).filter(|&j| j != i).any(|j| {
+            point_in_uv_polygon(*uv_cent, &wds[j].uv_poly)
+        });
+        is_hole[i] = self_inside && inside_any;
+        // self_inside=false means full-wrap → always GROWTH, contains all
+    }
+
+    // Build result: GROWTH wires → outer, HOLE wires → inner of the first GROWTH
+    let mut result: Vec<WireFace> = Vec::new();
+    let growths: Vec<usize> = (0..n).filter(|&i| !is_hole[i]).collect();
+    let holes: Vec<usize> = (0..n).filter(|&i| is_hole[i]).collect();
+
+    if growths.is_empty() && !holes.is_empty() {
+        // All holes — use first wire as outer
+        result.push(WireFace {
+            outer_wire: wires[0].clone(),
+            inner_wires: wires[1..].to_vec(),
+        });
+    } else {
+        // Each GROWTH gets its own WireFace; HOLEs are inner of the first GROWTH
+        for (gi, &g_idx) in growths.iter().enumerate() {
+            let inner = if gi == 0 {
+                holes.iter().map(|&h_idx| wires[h_idx].clone()).collect()
+            } else {
+                vec![]
+            };
+            result.push(WireFace {
+                outer_wire: wires[g_idx].clone(),
+                inner_wires: inner,
+            });
         }
     }
-
-    let mut result = vec![WireFace {
-        outer_wire: wires[outer_wire_idx].clone(),
-        inner_wires: hole_wire_idxs.iter().map(|&wi| wires[wi].clone()).collect(),
-    }];
-    for &wi in &indep_wire_idxs {
-        result.push(WireFace {
-            outer_wire: wires[wi].clone(),
-            inner_wires: vec![],
-        });
-    }
     result
+}
+
+/// Test whether a UV point is inside a UV polygon using the ray casting method.
+/// Handles periodic U wrapping for values in [0, 2pi).
+fn point_in_uv_polygon(pt: DVec2, poly: &[DVec2]) -> bool {
+    if poly.len() < 3 { return false; }
+    let mut inside = false;
+    let n = poly.len();
+    for i in 0..n {
+        let j = (n + i - 1) % n;
+        let vi = poly[i];
+        let vj = poly[j];
+        if ((vi.y > pt.y) != (vj.y > pt.y)) &&
+            pt.x < (vj.x - vi.x) * (pt.y - vi.y) / (vj.y - vi.y) + vi.x
+        {
+            inside = !inside;
+        }
+    }
+    inside
 }
 
 ///  3D  XY  (Shoelace)
