@@ -65,7 +65,7 @@ impl std::fmt::Display for BooleanError {
 
 impl std::error::Error for BooleanError {}
 
-/// 鉁?OCCT瀵归綈: classify 闃舵闇€瑕佺殑鏁版嵁,鏇夸唬 SubFace銆?
+/// ✅ OCCT对齐: classify 闃舵闇€瑕佺殑鏁版嵁,鏇夸唬 SubFace銆?
 ///    浠?WireFace + WireSegments + DS + face_idx 鎻愬彇銆?
 ///    sample_point() / surface / normal / boundary 绛?classify 渚濊禆鐨勫瓧娈点€?
 #[derive(Debug, Clone)]
@@ -80,7 +80,7 @@ pub struct FaceSampleData {
 }
 
 impl FaceSampleData {
-    /// 鈴?妗ユ帴: 浠?SubFace 鏋勯€?(杩囨浮鏈熶娇鐢?绉诲姩浣滃悗鍒犻櫎)銆?
+    /// ⏳ 桥接: 浠?SubFace 鏋勯€?(杩囨浮鏈熶娇鐢?绉诲姩浣滃悗鍒犻櫎)銆?
     fn from_sub_face(sub: &SubFace) -> Self {
         FaceSampleData {
             boundary: sub.boundary.clone(),
@@ -201,19 +201,19 @@ pub struct SubFace {
     /// Inner wire boundaries (holes) in 3D. Each inner wire is an ordered polygon
     /// representing a closed trim curve that forms a hole in the face.
     pub inner_wires: Vec<Vec<DVec3>>,
-    /// 鈴?閮ㄥ垎瀵归綈: 澶栬竟鐣岀簿纭渾寮ц竟銆?
+    /// ⏳ 部分对齐: 澶栬竟鐣岀簿纭渾寮ц竟銆?
     ///    OCCT: MakeBlocks 鈫?section edges 鐩存帴浣滀负 BRep 杈圭殑 Curve3銆?
     ///    rcad: SubFace 涓嶇洿鎺ュ搴?BRep face,闇€鍦?emit 鏃剁敱 outer_circle_edges
     ///    鎸囧畾鍝簺澶栬竟鐣岃竟鐢?add_circle_edge(瀛?Curve3::Circle)銆傛蹇电瓑鏁?
     ///    浣?OCCT 涓嶉渶瑕佽繖涓腑闂村瓨鍌ㄧ粨鏋勩€?
     pub outer_circle_edges: Vec<(usize, Curve3)>,
-    /// 鉂?鏈榻?/ 鑷垱鏂规: sphere face 鐨?seam edge銆?
+    /// ❌ 未对齐/自创鏂规: sphere face 鐨?seam edge銆?
     ///    OCCT sphere face 鐨?seam edge 鐩存帴鍖呭惈鍦?BRep face 鐨?wire 涓€?
     ///    rcad 鐨?SubFace 闇€瑕侀澶?seam_edge 瀛楁鏉ュ湪 emit_face_with_origin
     ///    鏃惰皟鐢?add_seam_edge锛堟梺璺《鐐瑰幓閲嶏級銆侽CCT 鐨?MakeEdge 涓嶅瓨鍦?
     ///    椤剁偣鍘婚噸闂,涓嶉渶瑕佹鏈哄埗銆?
     pub seam_edge: Option<(usize, Curve3)>,
-    /// 鉁?OCCT瀵归綈: 鍐呰竟鐣岀簿纭渾鏇茬嚎銆?
+    /// ✅ OCCT对齐: 鍐呰竟鐣岀簿纭渾鏇茬嚎銆?
     pub inner_wire_circle: Option<(usize, Curve3)>,
 }
 
@@ -513,7 +513,7 @@ impl ResultBuilder {
         idx
     }
 
-    /// 鉁?OCCT瀵归綈: 鍒涘缓閫€鍖?seam 杈?甯﹀崐鐞冨渾鏇茬嚎,闃叉琚竟鍘婚噸鍚堝苟)銆?
+    /// ✅ OCCT对齐: 鍒涘缓閫€鍖?seam 杈?甯﹀崐鐞冨渾鏇茬嚎,闃叉琚竟鍘婚噸鍚堝苟)銆?
     ///    OCCT 鐨?sphere face 澶栫幆鎬绘槸鏈変竴鏉￠€€鍖?seam 杈?涓ょ鍚岄《鐐?銆?
     ///    娣诲姞涓€涓悆闈㈡按骞冲渾鏇茬嚎(circle.normal = axis)浣胯竟鍦ㄦ煇浜涗笂涓嬫枃涓彲璇嗗埆銆?
     fn add_edge_seam_degenerate(&mut self, v1: usize, sphere_surf: &SphericalSurface) -> usize {
@@ -523,7 +523,7 @@ impl ResultBuilder {
             self.custom_edge_curves.push(None);
         }
         // 瀛樺偍璇ラ€€鍖?seam 瀵瑰簲鐨勭悆闈㈠渾鏇茬嚎(鐢ㄤ簬 STEP writer)
-        // 鉁?OCCT瀵归綈: seam 鍦?= 鐞冮潰瀛愬崍绾?閫氳繃 pole,normal 鉄?axis)
+        // ✅ OCCT对齐: seam 鍦?= 鐞冮潰瀛愬崍绾?閫氳繃 pole,normal 鉄?axis)
         //    OCCT 涓?sphere face 鐨?seam 鏄繃鏋佺偣鐨勭粡绾?涓嶅悓浜?IC 鍦嗐€?
         //    濡傛灉 normal = axis,浼氫笌骞抽潰-鐞冮潰 IC 鍦嗛噸鍚堝鑷存洸绾垮幓閲嶈鍚堝苟銆?
         let seam_normal = any_perpendicular(sphere_surf.axis).normalize();
@@ -536,7 +536,7 @@ impl ResultBuilder {
         idx
     }
 
-    /// 鈴?閮ㄥ垎瀵归綈: 鍒涘缓鍏锋湁绮剧‘鍦嗘洸绾垮嚑浣曠殑 edge銆?
+    /// ⏳ 部分对齐: 鍒涘缓鍏锋湁绮剧‘鍦嗘洸绾垮嚑浣曠殑 edge銆?
     ///    OCCT: BOPTools_AlgoTools::MakeEdge(aIC,...) 鐩存帴鍒涘缓 BRep Edge,鏃犻《鐐瑰幓閲嶃€?
     ///    rcad: 閫氳繃 add_edge(椤剁偣鍘婚噸)鍒涘缓杈?鍦?build() 涓缃?edge_curve銆?
     ///    椤剁偣鍘婚噸閫昏緫涓嶅奖鍝嶆纭€?Circle3 鏇茬嚎姝ｇ‘璁剧疆),浣嗗疄鐜版柟寮忎笉鍚屻€?
@@ -550,7 +550,7 @@ impl ResultBuilder {
         idx
     }
 
-    /// 鉂?鏈榻?/ 鑷垱鏂规: 鍒涘缓 seam edge锛堜笉杩涜椤剁偣鍘婚噸锛夈€?
+    /// ❌ 未对齐/自创鏂规: 鍒涘缓 seam edge锛堜笉杩涜椤剁偣鍘婚噸锛夈€?
     ///    OCCT 涓?sphere face 鐨?seam edge 鐢?MakeEdge 姝ｅ父鍒涘缓,涓嶅瓨鍦ㄩ《鐐?
     ///    鍘婚噸闂銆俽cad 鐨?add_edge 鎸夐《鐐瑰鍘婚噸,浼氳灏?seam 鍚堝苟鍒版甯稿姬銆?
     ///    姝ゆ柟娉曠粫杩囬《鐐瑰幓閲?鏄?rcad 鐗规湁鐨?workaround銆?
@@ -609,7 +609,7 @@ impl ResultBuilder {
             let center = p0 + (b.cross(cross) * a2 + cross.cross(a) * b2) / (2.0 * cross.length_squared());
             let r = p0.distance(center);
             if !iw.iter().all(|pt| (pt.distance(center) - r).abs() < 1e-8) { continue; }
-            // 鉁?OCCT瀵归綈: 鎵€鏈夌偣鍦ㄥ渾涓?鈫?鏋勫缓鍦嗗姬 inner_wire
+            // ✅ OCCT对齐: 鎵€鏈夌偣鍦ㄥ渾涓?鈫?鏋勫缓鍦嗗姬 inner_wire
             // 鍘熷唴杈圭晫: [rect_corner, arc_start, ...128 arc pts..., arc_end, rect_corner]
             // 绮剧畝鍚? [rect_corner, arc_start, arc_end] 鈥?3鐐?杈?
             let norm = cross.normalize();
@@ -641,7 +641,7 @@ impl ResultBuilder {
             let arc_end = iw[arc_end_idx];
             // 鏋勫缓 Circle3 鏇茬嚎
             let circle = Curve3::Circle(rcad_kernel::geom::Circle3 { center, normal: norm, radius: r });
-            // 鉁?OCCT瀵归綈: Circle3 杈圭殑閫夋嫨鍙栧喅浜?iw[0] 鏄惁鍦ㄥ渾涓娿€?
+            // ✅ OCCT对齐: Circle3 杈圭殑閫夋嫨鍙栧喅浜?iw[0] 鏄惁鍦ㄥ渾涓娿€?
             //    鐜舰闈?annular_out, 3鐐瑰叏鍦ㄥ渾涓?: 涓ゆ潯鍦嗗姬杈?seg 0+1) + 闂悎鐩磋竟(seg 2)
             //    骞抽潰鍒嗗壊(split_planar_face): 鐭╁舰瑙掆啋寮? circle edge 鐢?edge[1]
             let iw0_on_circle = (iw[0].distance(center) - r).abs() < 1e-8;
@@ -689,7 +689,7 @@ impl ResultBuilder {
         let mut edge_indices = Vec::new();
         for i in 0..vert_indices.len() {
             let j = (i + 1) % vert_indices.len();
-            // 鉁?OCCT瀵归綈: 浠?SubFace.outer_circle_edges 妫€鏌ュ杈圭晫姝よ竟鏄惁闇€绮剧‘鍦嗗姬
+            // ✅ OCCT对齐: 浠?SubFace.outer_circle_edges 妫€鏌ュ杈圭晫姝よ竟鏄惁闇€绮剧‘鍦嗗姬
             let ei = if let Some(&(_, ref crv)) = sub.outer_circle_edges.iter().find(|&&(si, _)| si == i) {
                 self.add_circle_edge(vert_indices[i], vert_indices[j], crv.clone())
             } else {
@@ -699,7 +699,7 @@ impl ResultBuilder {
             edge_indices.push((ei, forward));
         }
 
-        // 鉂?鏈榻?/ 鑷垱鏂规: 娣诲姞 sphere face 鐨?seam edge銆?
+        // ❌ 未对齐/自创鏂规: 娣诲姞 sphere face 鐨?seam edge銆?
         //    OCCT sphere face 鐨?seam edge 鏄?BRep 鍥烘湁鎷撴墤鐨勪竴閮ㄥ垎,涓嶉渶瑕?
         //    鍦ㄦ瀯寤?wire 鏃剁壒娈婂鐞嗐€俽cad 鍥?add_edge 椤剁偣鍘婚噸闇€鐢?seam_edge
         //    闄勫姞淇℃伅璋冪敤 add_seam_edge銆傚綋鍓嶄粎鐢ㄤ簬 bcommon_simple 蹇€熻矾寰?
@@ -723,8 +723,8 @@ impl ResultBuilder {
         let mut iw_vert_indices_all: Vec<usize> = Vec::new();
         for iw_poly in &sub.inner_wires {
             let iw_idx = inner_wire_edges.len();
-            // 鉁?OCCT瀵归綈: 2-point inner wire 鈫?鍗曟潯Circle3鍏变韩杈广€?
-            // 鉁?OCCT瀵归綈: 2-point inner wire 鈫?鍗曟潯Circle3鍏变韩杈?涓巗phere渚у悓涓€edge index)銆?
+            // ✅ OCCT对齐: 2-point inner wire 鈫?鍗曟潯Circle3鍏变韩杈广€?
+            // ✅ OCCT对齐: 2-point inner wire 鈫?鍗曟潯Circle3鍏变韩杈?涓巗phere渚у悓涓€edge index)銆?
             //    add_edge 鎸夐《鐐瑰鍘婚噸: sphere渚dd_circle_edge(v0,v1,circle)鍒涘缓edge E14,
             //    杩欓噷鐨刟dd_circle_edge(v0,v1,circle)鍥犵浉鍚岄《鐐瑰杩斿洖鍚屼竴E14銆?
             //    BRep wire: 鍚屼竴鏉¤竟 forward + reverse 褰㈡垚闂悎鐜矾(鍚岀悆闈eam wire)銆?
@@ -732,7 +732,7 @@ impl ResultBuilder {
                 let v0 = self.add_vertex(iw_poly[0]);
                 let v1 = self.add_vertex(iw_poly[1]);
                 let (_, crv) = sub.inner_wire_circle.as_ref().unwrap();
-                // 鉁?OCCT瀵归綈: 鍐呯幆鐢卞渾寮ц竟+闂悎鐩磋竟鏋勬垚,鑰岄潪 [ei_fwd, ei_rev]銆?
+                // ✅ OCCT对齐: 鍐呯幆鐢卞渾寮ц竟+闂悎鐩磋竟鏋勬垚,鑰岄潪 [ei_fwd, ei_rev]銆?
                 //    [ei_fwd, ei_rev] 娌垮悓涓€寮у線杩斿舰鎴愰€€鍖栭浂闈㈢Н绾裤€?
                 //    鍦嗗姬 v0鈫抳1 + 鐩磋竟 v1鈫抳0 褰㈡垚鏈夐潰绉殑闂悎鍐呯幆杈圭晫銆?
                 let ei_circ = self.add_circle_edge(v0, v1, crv.clone());
@@ -769,7 +769,7 @@ impl ResultBuilder {
                 vec![h[0], mid, h[1]]
             } else { h.clone() }
         }).collect();
-        // 鉁?OCCT瀵归綈: 鐢╟ombined vertex array纭繚triangulation绱㈠紩涓嶥S椤剁偣涓€涓€瀵瑰簲銆?
+        // ✅ OCCT对齐: 鐢╟ombined vertex array纭繚triangulation绱㈠紩涓嶥S椤剁偣涓€涓€瀵瑰簲銆?
         //    add_vertex 鍙兘鍘婚噸(鍐呯幆绔偣涓庤竟鐣岄《鐐逛綅缃噸鍚?,浣?triangulation 鐨?
         //    缁勫悎椤剁偣鏁扮粍涓瘡涓綅缃兘闇€鏈夊搴旂殑DS椤剁偣绱㈠紩(涓嶈兘浠呬緷璧栧幓閲嶅悗鐨勭揣鍑戞暟缁?銆?
         let combined_verts: Vec<DVec3> = {
@@ -844,7 +844,7 @@ impl ResultBuilder {
         self.face_origins.push(origin);
     }
 
-    /// 鉁?OCCT瀵归綈: 浠?WireFace 鍙戝皠 BRep 闈?(鏇夸唬 emit_face_with_origin)銆?
+    /// ✅ OCCT对齐: 浠?WireFace 鍙戝皠 BRep 闈?(鏇夸唬 emit_face_with_origin)銆?
 
     /// When an edge閳ユ獨 open segment passes through another result vertex (classic
     /// T-junction), replace that edge in all wires by a chain of shorter edges
@@ -869,7 +869,7 @@ impl ResultBuilder {
             let mut replacements: Vec<Option<Vec<usize>>> = vec![None; n_edges];
             let mut any = false;
             for ei in 0..n_edges {
-                // 鉁?OCCT瀵归綈: 璺宠繃绮剧‘ Circle3 寮ц竟(T-junction鍙粏鍒嗙洿杈?銆?
+                // ✅ OCCT对齐: 璺宠繃绮剧‘ Circle3 寮ц竟(T-junction鍙粏鍒嗙洿杈?銆?
                 if self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).is_some() { continue; }
                 let Some(seq) = vertex_sequences[ei].as_ref() else {
                     continue;
@@ -993,7 +993,7 @@ impl ResultBuilder {
             self.subdivide_edges_at_interior_vertices();
             eprintln!("AFTER subdivide: {} vertices, {} edges, {} faces", self.vertices.len(), self.edges.len(), self.faces.len());
         }
-        // 鉁?OCCT瀵归綈: BuildSplitFaces 鍒涘缓鍏变韩杈?鈥?鍚堝苟PaveFiller涓轰袱渚ч潰鍒涘缓鐨勫嚑浣曢噸鍚堣竟銆?
+        // ✅ OCCT对齐: BuildSplitFaces 鍒涘缓鍏变韩杈?鈥?鍚堝苟PaveFiller涓轰袱渚ч潰鍒涘缓鐨勫嚑浣曢噸鍚堣竟銆?
         //    OCCT IntTools_FaceFace 鍒涘缓涓€鏉?D浜ょ嚎,BuildSplitFaces 鐢ㄨ浜ょ嚎鍚屾椂鍦ㄤ袱渚?
         //    闈㈠垱寤哄悓涓€ TopoDS_Edge(浠?orientation 鐩稿弽),涓や晶鑷劧鍏变韩杈圭储寮曘€?
         //    rcad 鐨?add_edge 鎸夐《鐐瑰 `(v_min,v_max)` 鍘婚噸,浣?PaveFiller 鏁板€煎櫔澹?鈮?e-6)
@@ -1034,7 +1034,7 @@ impl ResultBuilder {
             }
 
             // Step 3: 杈瑰幓閲?鈥?鐩稿悓 (v_min,v_max) 瀵逛笖鏇茬嚎绫诲瀷鐩稿悓鐨勮竟鍚堝苟
-            // 鉁?OCCT瀵归綈: 涓嶅悎骞朵笉鍚屾洸绾跨被鍨嬬殑杈?IC鍦嗗姬 vs 骞抽潰鐩磋竟鍏变韩鐩稿悓椤剁偣瀵逛絾鍑犱綍涓嶅悓)
+            // ✅ OCCT对齐: 涓嶅悎骞朵笉鍚屾洸绾跨被鍨嬬殑杈?IC鍦嗗姬 vs 骞抽潰鐩磋竟鍏变韩鐩稿悓椤剁偣瀵逛絾鍑犱綍涓嶅悓)
             let ne = self.edges.len();
             let mut e_canon: Vec<usize> = (0..ne).collect();
             // Track Circle curves that need to be transferred to the survivor edge
@@ -1060,7 +1060,7 @@ impl ResultBuilder {
                                 }
                             }
                             (None, None) => true, // Both plain: merge
-                            // 鉁?OCCT瀵归綈: Circle杈逛笌plain杈瑰叡浜浉鍚岄《鐐瑰 鈫?鍚堝苟淇濈暀Circle銆?
+                            // ✅ OCCT对齐: Circle杈逛笌plain杈瑰叡浜浉鍚岄《鐐瑰 鈫?鍚堝苟淇濈暀Circle銆?
                             _ => true, // One Circle, one plain: merge
                         };
                         if merge {
@@ -1211,7 +1211,7 @@ impl ResultBuilder {
                 eprintln!("[EDGE_FINAL] {} edges: {}", edges.len(),
                     edges.iter().map(|e| format!("({},{})", e.start, e.end)).collect::<Vec<_>>().join(" "));
             }
-            // 鉁?OCCT瀵归綈: 璁剧疆 section edge 鐨勭簿纭洸绾?鏉ヨ嚜 add_circle_edge)銆?
+            // ✅ OCCT对齐: 璁剧疆 section edge 鐨勭簿纭洸绾?鏉ヨ嚜 add_circle_edge)銆?
             //    OCCT: MakeEdge(aIC, ...) 鐩存帴鍒涘缓甯︾簿纭嚑浣曟洸绾跨殑 BRep edge銆?
             //    rcad 榛樿鐢?recompute_plane_surfaces 琛?Line3,杩欓噷瑕嗙洊涓?Circle3銆?
             for (ei, curve_opt) in self.custom_edge_curves.iter().enumerate() {
@@ -1583,7 +1583,7 @@ fn classify_subface_against_box(
 /// happen to fall within the tolerance band of the other solid's surface despite the
 /// sub-face being entirely outside (e.g. a planar sub-face of a box near a sphere's
 /// surface). In that case we probe boundary and interior samples to break the tie.
-// 鉁?OCCT瀵归綈: 鍒嗙被瀛愰潰涓?In/Out/On (ClassifyFaces)銆?
+// ✅ OCCT对齐: 鍒嗙被瀛愰潰涓?In/Out/On (ClassifyFaces)銆?
 //    鎺ュ彈 FaceSampleData(浠?WireFace 鎴?SubFace 鏋勯€?銆?
 fn classify_against_solid_for_boolean(
     op: BooleanOpType,
@@ -1592,7 +1592,7 @@ fn classify_against_solid_for_boolean(
     solid_face_indices: &[usize],
     ds: &DS,
 ) -> Classification {
-    // 鉁?OCCT瀵归綈: 鍏堝皾璇?IsInternalFace 鐨?ComputeState 閮ㄥ垎
+    // ✅ OCCT对齐: 鍏堝皾璇?IsInternalFace 鐨?ComputeState 閮ㄥ垎
     //    (浠?Level 2a: 杈逛笉鍦?solid 涓婃椂鍒嗙被涓偣)銆?
     //    Level 1 (杈圭骇瑙掑害娉? 鏆備笉鐢紝鍥犵畝鍖栬搴︽硶瀵?box face 浜х敓璇垽銆?
     {
@@ -1615,7 +1615,7 @@ fn classify_against_solid_for_boolean(
         return class;
     }
 
-    // 鉁?OCCT瀵归綈: Edge-midpoint (ComputeState L662-L674).
+    // ✅ OCCT对齐: Edge-midpoint (ComputeState L662-L674).
     {
         let bnd = &sub.boundary;
         if bnd.len() >= 3 {
@@ -1803,7 +1803,7 @@ fn classify_against_solid_for_boolean(
             return Classification::Out;
         }
 
-        // 鉁?OCCT瀵归綈: In 澶氭暟妫€鏌?鈥?涓?Out 妫€鏌ュ绉般€?
+        // ✅ OCCT对齐: In 澶氭暟妫€鏌?鈥?涓?Out 妫€鏌ュ绉般€?
         //    褰撳垵濮嬪垎绫讳负 In 鎴?On,澶氭暟 probe 鐐逛负 In 鈫?闈㈠湪 solid 鍐呴儴銆?
         //    OCCT PointInFace + SolidClassifier 瀵瑰唴閮ㄧ偣鐩存帴杩斿洖 In銆?
         let min_in = if matches!(sub.surface, Surface3::Plane(_)) { out_count * 2 } else { out_count };
@@ -1909,7 +1909,7 @@ fn classify_against_solid_for_boolean(
 // OCCT 1:1 瀵归綈: IsInternalFace (BOPTools_AlgoTools.cxx L791-872)
 // =============================================================================
 
-/// 鉁?OCCT瀵归綈: 鏋勫缓 MEF (Map Edge鈫扚aces) 鐢ㄤ簬杈圭骇瑙掑害娉曘€?
+/// ✅ OCCT对齐: 鏋勫缓 MEF (Map Edge鈫扚aces) 鐢ㄤ簬杈圭骇瑙掑害娉曘€?
 /// OCCT BOPAlgo_FillIn3DParts::MapEdgesAndFaces (BOPAlgo_Tools.cxx L1479-1503)
 fn build_mef(face_indices: &[usize], ds: &DS) -> HashMap<usize, Vec<usize>> {
     let mut mef: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -1922,7 +1922,7 @@ fn build_mef(face_indices: &[usize], ds: &DS) -> HashMap<usize, Vec<usize>> {
     mef
 }
 
-/// 鉁?OCCT瀵归綈: 鏋勫缓 bounds 闆嗗悎 (solid 鐨勬墍鏈夋嫇鎵戣竟)銆?
+/// ✅ OCCT对齐: 鏋勫缓 bounds 闆嗗悎 (solid 鐨勬墍鏈夋嫇鎵戣竟)銆?
 /// OCCT TopExp::MapShapes(theSolid, TopAbs_EDGE, aBounds)
 fn build_edge_bounds(face_indices: &[usize], ds: &DS) -> std::collections::BTreeSet<usize> {
     let mut bounds: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
@@ -1935,7 +1935,7 @@ fn build_edge_bounds(face_indices: &[usize], ds: &DS) -> std::collections::BTree
     bounds
 }
 
-/// 鉁?OCCT瀵归綈: PointInFace 绛変环 鈥?浠?SubFace 鐨?UV domain 鑾峰彇鍐呴儴閲囨牱鐐广€?
+/// ✅ OCCT对齐: PointInFace 绛変环 鈥?浠?SubFace 鐨?UV domain 鑾峰彇鍐呴儴閲囨牱鐐广€?
 /// OCCT BOPTools_AlgoTools3D.cxx L885-917
 ///
 /// rcad 瀹炵幇: SubFace 宸叉湁 uv_domain 鍜?uv_centroid,鐩存帴鐢?UV centroid
@@ -1959,7 +1959,7 @@ fn point_in_face(sub: &FaceSampleData) -> Option<DVec3> {
     None
 }
 
-/// 鉁?OCCT瀵归綈: Level 2a 鈥?ComputeState, find edge not on solid.
+/// ✅ OCCT对齐: Level 2a 鈥?ComputeState, find edge not on solid.
 /// OCCT BOPTools_AlgoTools::ComputeState (L650-699)
 ///
 /// 閬嶅巻 SubFace 鐨勬瘡鏉¤竟鐣屾,濡傛灉璇ユ涓嶅湪 solid 鐨勮竟闆嗕腑,
@@ -2040,7 +2040,7 @@ fn quantize_pos(p: DVec3, tolerance: f64) -> u64 {
     (xb << 42) | (yb << 21) | zb
 }
 
-/// 鉁?OCCT瀵归綈: IsInternalFace 涓诲嚱鏁?(BOPTools_AlgoTools.cxx L791-872)
+/// ✅ OCCT对齐: IsInternalFace 涓诲嚱鏁?(BOPTools_AlgoTools.cxx L791-872)
 ///
 /// 涓ょ骇鍒嗙被:
 ///   Level 1: 杈圭骇瑙掑害娉?鈥?瀵逛簬鍦?solid 涓婃湁澶氫簬 1 涓偦闈㈢殑杈?
@@ -2102,7 +2102,7 @@ fn is_internal_face(
                 if let Some(adj_faces) = mef_imm.get(&ei) {
                     let a_nb_f = adj_faces.len();
                     if a_nb_f == 1 {
-                        // 鉁?OCCT瀵归綈: 杈瑰湪 solid 涓婃湁 1 涓偦闈?(L834-846)
+                        // ✅ OCCT对齐: 杈瑰湪 solid 涓婃湁 1 涓偦闈?(L834-846)
                         // 瀵瑰簲 OCCT: aE is internal edge on aLF.First()
                         // 妫€鏌ヨ闈笂杈圭殑鏂瑰悜 鈥?鐢变簬 SubFace 绾у埆娌℃湁鏂瑰悜淇℃伅,
                         // 绠€鍖栦负:濡傛灉璇ラ偦闈㈡硶绾夸笌 SubFace 娉曠嚎鍚屽悜 鈫?鍐呴儴
@@ -2115,7 +2115,7 @@ fn is_internal_face(
                             break;
                         }
                     } else if a_nb_f >= 2 {
-                        // 鉁?OCCT瀵归綈: 杈瑰湪 solid 涓婃湁 2 涓偦闈?(L847-855)
+                        // ✅ OCCT对齐: 杈瑰湪 solid 涓婃湁 2 涓偦闈?(L847-855)
                         // 瀵瑰簲 OCCT: 瑙掑害娉曞垽鏂?theFace 鏄惁鍦ㄦ渶灏忚鍖哄煙
                         // 绠€鍖?涓や釜閭婚潰娉曠嚎澶硅閿愯 鈫?鍐呴儴闈?
                         let f1_normal = ds.faces[adj_faces[0]].normal;
@@ -2224,7 +2224,7 @@ fn classify_face_occt_style(
         return None;
     }
 
-    // 鉁?OCCT瀵归綈: 涓嶇煭璺彛 On 鈥?On 琛ㄧず閲囨牱鐐规伆濂藉湪 solid 琛ㄩ潰涓?
+    // ✅ OCCT对齐: 涓嶇煭璺彛 On 鈥?On 琛ㄧず閲囨牱鐐规伆濂藉湪 solid 琛ㄩ潰涓?
     //    涓嶄唬琛ㄦ暣涓潰閮藉湪杈圭晫涓娿€傚厛鎸夊鏁?In/Out 鍐冲畾銆?
     //    On 鍏ㄩ儴鏃惰繑鍥?On (闈笌 solid 瀹屽叏閲嶅悎)銆?
     if on_count == total {
@@ -2509,7 +2509,7 @@ impl<'a> BooleanBuilder<'a> {
                     && class == Classification::On
                     && matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
                 {
-                    // 鉁?OCCT瀵归綈: 淇濈暀骞抽潰 ON 瀛愰潰,鐢变笅娓?edge-set merge 澶勭悊銆?
+                    // ✅ OCCT对齐: 淇濈暀骞抽潰 ON 瀛愰潰,鐢变笅娓?edge-set merge 澶勭悊銆?
                     //    OCCT FillSameDomainFaces (BOPAlgo_Builder_2.cxx L571) 淇濈暀鎵€鏈?ON
                     //    瀛愰潰,鐢?edge set 鍒嗙粍鍚庨€?DS index 鏈€灏忛潰涓轰唬琛ㄣ€?
                     true
@@ -2525,7 +2525,7 @@ impl<'a> BooleanBuilder<'a> {
                         .or_else(|| self.fallback_coplanar_normals_opposite(fi, Some(sub), &b_faces))
                         .unwrap_or(false)
                 } else if matches!(sub.surface, Surface3::Sphere(_)) && sub.sample_override.is_some() {
-                    // 鉁?OCCT瀵归綈: 鐞冮潰瀛愰潰鏉ヨ嚜 build_sphere_sub_faces_by_circles,
+                    // ✅ OCCT对齐: 鐞冮潰瀛愰潰鏉ヨ嚜 build_sphere_sub_faces_by_circles,
                     //    鍏?sample_override 涓哄瓙闈㈣川蹇冦€俢lassify_by_off_solid_edge
                     //    绛夎竟鐣屽垎绫诲櫒瀵圭悆闈㈢墖璇垽銆傜洿鎺ョ敤甯冨皵鎿嶄綔鍐冲畾淇濈暀:
                     //    Intersection: 淇濈暀 In(鐞冮潰鍦ㄧ洅鍐呯殑閮ㄥ垎)
@@ -2643,7 +2643,7 @@ impl<'a> BooleanBuilder<'a> {
                     //    (BOPAlgo_Builder_2.cxx L571) 鎸夊嚑浣曟瘮杈冭〃闈€?
                     false
                 } else if matches!(sub.surface, Surface3::Plane(_)) && !sub.outer_circle_edges.is_empty() {
-                    // 鉁?OCCT瀵归綈: 骞抽潰瀛愰潰鍚渾寮ц竟(鐞?鐩掍氦绾垮渾寮?銆?
+                    // ✅ OCCT对齐: 骞抽潰瀛愰潰鍚渾寮ц竟(鐞?鐩掍氦绾垮渾寮?銆?
                     //    sample_override.is_some() = 鐩掑閮ㄥ垎(淇濈暀鎵囧舰),鍚﹀垯 = 鐩掑唴閮ㄥ垎(1/4鍦?銆?
                     //    Intersection: 淇濈暀鐩掑唴閮ㄥ垎(1/4鍦?
                     //    Difference B-side: 淇濈暀鐩掑唴閮ㄥ垎(1/4鍦?
@@ -2790,7 +2790,7 @@ impl<'a> BooleanBuilder<'a> {
         annotate_history_from_ds(&brep, &mut history, self.ds);
         annotate_shell_and_solid_history(&brep, &mut history);
 
-        // 鉁?OCCT瀵归綈: FillSameDomainFaces 鈥?鍚堝苟鍚屽煙瀛愰潰銆?
+        // ✅ OCCT对齐: FillSameDomainFaces 鈥?鍚堝苟鍚屽煙瀛愰潰銆?
         //    OCCT 鍦?BuildSolid 鍚庢墽琛?鍚堝苟鍏辫竟鍚屽煙鐨勭浉閭诲瓙闈€俽cad 鐢?
         //    unify_same_domain_faces(鏃犳簮杩囨护)瀹炵幇銆俹rigin 杩囨护鍦ㄦ澶勪細
         //    鍥?face_origins 鏈殢鍚堝苟鏇存柊鑰屽け鏁?merge 浠庝腑闂寸Щ闄ら潰鍚庣储寮曞亸绉?
@@ -3134,7 +3134,7 @@ impl<'a> BooleanBuilder<'a> {
                 let subs = self.single_subface_from_whole_face(face_idx);
                 return subs;
             }
-            // 鉁?OCCT瀵归綈: 妫€娴?circle 浜ょ嚎鈫掔洿鎺ョ敤绮剧‘鍦嗗姬鏋勫缓鐜舰闈?
+            // ✅ OCCT对齐: 妫€娴?circle 浜ょ嚎鈫掔洿鎺ョ敤绮剧‘鍦嗗姬鏋勫缓鐜舰闈?
             //    OCCT: MakeBlocks 鈫?BuildSplitFaces 鐢ㄧ簿纭?section edges
             let boundary: Vec<DVec3> = face.boundary_verts.iter()
                 .map(|&vi| self.ds.vertices[vi].point).collect();
@@ -3171,7 +3171,7 @@ impl<'a> BooleanBuilder<'a> {
                         xs.sort_by(|a,b| a.partial_cmp(b).unwrap());
                         let t1 = xs[0]; let t2 = xs[xs.len()-1];
                         if (t2 - t1).abs() > 1e-8 {
-                            // 鉁?OCCT瀵归綈: 瑁佸壀闈㈡浛浠ｇ幆褰㈤潰(OCCT BuildSplitFaces涓嶇敤鐜舰璺緞)銆?
+                            // ✅ OCCT对齐: 瑁佸壀闈㈡浛浠ｇ幆褰㈤潰(OCCT BuildSplitFaces涓嶇敤鐜舰璺緞)銆?
                             //    鍘熺幆褰㈣矾寰勫垱寤恒€屽叏鐭╁舰+鍐呯幆銆?鐞冨唴瑙掔偣 V2=(0,0,0) 鍦ㄥ鐜笂銆?
                             //    姝ｇ‘鎷撴墤: 绉婚櫎鐞冨唴瑙掔偣,鐢ㄥ渾寮ф浛鎹?寰楀埌瑁佸壀鍚庣殑鍗曞鐜潰銆?
                             let c_r = circ.radius;
@@ -3227,7 +3227,7 @@ impl<'a> BooleanBuilder<'a> {
                 return subs;
             }
 
-            // 鉁?OCCT瀵归綈: 骞抽潰闈㈡湁浜ょ嚎浣嗛潪鐜舰鍦嗘椂,鐢?split_planar_face 鍋?D澶氳竟褰㈠垎瑁傘€?
+            // ✅ OCCT对齐: 骞抽潰闈㈡湁浜ょ嚎浣嗛潪鐜舰鍦嗘椂,鐢?split_planar_face 鍋?D澶氳竟褰㈠垎瑁傘€?
             //    OCCT BOPAlgo_BuilderFace 瀵规墍鏈夐潰缁熶竴澶勭悊(section edges 鈫?MakeLoops 鈫?Areas)銆?
             //    rcad 鐨勭瓑浠疯矾寰? split_planar_face (2D澶氳竟褰?绾胯鍓?銆?
             //    姝ゅ洖閫€瑕嗙洊 plane-plane 绾夸氦绾垮拰鏈鍓渾璺繃鐨勬墍鏈夊钩闈㈤潰銆?
@@ -3455,7 +3455,7 @@ impl<'a> BooleanBuilder<'a> {
             return self.tessellate_sphere_face(face_idx);
         }
 
-        // 鉁?OCCT瀵归綈: 鐞冮潰鏈?IC 鍦嗘洸绾挎椂,鐢?build_sphere_sub_faces_by_circles 鐩存帴
+        // ✅ OCCT对齐: 鐞冮潰鏈?IC 鍦嗘洸绾挎椂,鐢?build_sphere_sub_faces_by_circles 鐩存帴
         //    浠庡ぇ鍦嗕氦鐐规瀯寤?SubFace,缁曡繃 UV 澶氳竟褰㈠垎瑁?涓嶈兘姝ｇ‘鍒嗙鐞冮潰鍗﹂檺)銆?
         if matches!(&face.surface, Surface3::Sphere(_)) && !fi.curves_in.is_empty() {
             let subs = self.build_sphere_sub_faces_by_circles(face_idx);
@@ -3957,7 +3957,7 @@ impl<'a> BooleanBuilder<'a> {
         let mut poly_wires: Vec<(Vec<DVec2>, Vec<Vec<DVec2>>)> = vec![(boundary_2d.clone(), vec![])];
         // OCCT瀵归綈: 淇濆瓨鍘熷鐭╁舰杈圭晫,鐢ㄤ簬 circle 浜ょ嚎鏃舵浛浠ｈ鍒囧壊鐨勫杈圭晫
         let original_rect_2d = boundary_2d.clone();
-        // 鉁?OCCT瀵归綈: arc_info 涓?poly_wires 骞惰,璁板綍鍝簺瀛愰潰澶栬竟鐣岄渶绮剧‘鍦嗚竟銆?
+        // ✅ OCCT对齐: arc_info 涓?poly_wires 骞惰,璁板綍鍝簺瀛愰潰澶栬竟鐣岄渶绮剧‘鍦嗚竟銆?
         //    OCCT MakeBlocks 鈫?section edges 鐩存帴浣滀负 BRep 杈圭殑 Curve3; rcad 鐢?
         //    outer_circle_edges 杈惧埌鐩稿悓鏁堟灉(arc_info 鍦?SubFace 鍒涘缓鏃朵紶閫?銆?
         let mut arc_info: Vec<Option<(usize, rcad_kernel::geom::Curve3)>> = vec![None];
@@ -3966,7 +3966,7 @@ impl<'a> BooleanBuilder<'a> {
         // may fall inside the circle 閳?we must use a vertex-based sample instead.
         let mut embedded_circles: Vec<(DVec2, f64)> = Vec::new();
 
-        // 鉁?OCCT瀵归綈: 妫€娴嬪叏鍦嗙洊闈?cylinder-box Intersection)銆?
+        // ✅ OCCT对齐: 妫€娴嬪叏鍦嗙洊闈?cylinder-box Intersection)銆?
         //    OCCT MakeBlocks 鈫?Hatcher 鐩存帴鍦?IC 涓婂垱寤?section edges 浣滀负 BRep 杈广€?
         //    rcad: split_polygon_by_circle_2d 鐨?Intersection shortcut 杩斿洖24鐐硅繎浼煎渾,
         //    椤剁偣涓?cylinder 瀛愰潰寮х鐐逛笉鍖归厤(瀵艰嚧 V/E 鑶ㄨ儉, open shell)銆?
@@ -4107,7 +4107,7 @@ impl<'a> BooleanBuilder<'a> {
                                 .collect();
                             let fi = on.iter().position(|&x| x);
                             let li = on.iter().rposition(|&x| x);
-                            // 鉁?OCCT瀵归綈: 妫€娴嬬幆褰㈤潰(鏈夊渾澶栦氦鐐?鍦嗕笂寮ф鈫掑杈圭晫=鐭╁舰,鍐呰竟鐣?寮?
+                            // ✅ OCCT对齐: 妫€娴嬬幆褰㈤潰(鏈夊渾澶栦氦鐐?鍦嗕笂寮ф鈫掑杈圭晫=鐭╁舰,鍐呰竟鐣?寮?
                             if let (Some(f), Some(l)) = (fi, li) {
                                 let has_outer = half.iter().any(|p| (p - center_2d).length() > radius + on_circle_tol);
                                 let on_cnt = on.iter().filter(|&&v| v).count();
@@ -4159,7 +4159,7 @@ impl<'a> BooleanBuilder<'a> {
                                 let fi = fi.unwrap();
                                 let li = li.unwrap();
 
-                                // 鉁?OCCT瀵归綈: 涓嶇敤128寮ч噰鏍?鐩存帴鐢ㄤ袱绔偣+outer_circle_edges銆?
+                                // ✅ OCCT对齐: 涓嶇敤128寮ч噰鏍?鐩存帴鐢ㄤ袱绔偣+outer_circle_edges銆?
                                 //    OCCT MakeBlocks 鈫?section edges 鐢ㄧ簿纭嚑浣曟洸绾?
                                 //    rcad 鐢?outer_circle_edges 璁板綍 Circle3,鍦?emit 鏃?
                                 //    add_circle_edge 鍒涘缓绮剧‘鍦嗗姬杈广€?
@@ -4941,7 +4941,7 @@ impl<'a> BooleanBuilder<'a> {
     /// into a 2D trim polyline in UV space, then splits the UV boundary polygon.
     /// Maps resulting sub-polygons back to 3D via surface evaluation.
     ///
-    /// 鈴?閮ㄥ垎瀵归綈: 鐢ㄧ簿纭ぇ鍦嗗姬鏋勫缓鐞冮潰瀛愰潰銆?
+    /// ⏳ 部分对齐: 鐢ㄧ簿纭ぇ鍦嗗姬鏋勫缓鐞冮潰瀛愰潰銆?
     ///    OCCT: BuildSplitFaces 鈫?section edges 鐩存帴鍒涘缓 BRep sub-face銆?
     ///    rcad: 鎵嬪姩璁＄畻 8 涓崷闄愮殑 SubFace,鐢?outer_circle_edges 璁板綍澶у渾寮с€?
     ///    鍔熻兘绛変环(8 涓崐鐞冮潰鍖哄煙 + 绮剧‘鍦嗗姬杈圭晫),浣?OCCT 涓嶉渶瑕佷腑闂?SubFace銆?
@@ -4955,7 +4955,7 @@ impl<'a> BooleanBuilder<'a> {
         for &(ia, ib, ic) in &octants {
             let (va, vb, vc) = (pts[ia], pts[ib], pts[ic]);
             let boundary = vec![va, vb, vc];
-            // 鉁?OCCT瀵归綈: 姣忎釜澶栬竟鐣岃竟(澶у渾寮?鐢?Circle3 绮剧‘琛ㄧず銆?
+            // ✅ OCCT对齐: 姣忎釜澶栬竟鐣岃竟(澶у渾寮?鐢?Circle3 绮剧‘琛ㄧず銆?
             //    OCCT MakeBlocks 鈫?section edges 鏄簿纭嚑浣?涓嶆槸鎶樼嚎銆?
             //    rcad 鐢?outer_circle_edges Vec 瀛樺偍,鍦?emit 鏃惰皟鐢?add_circle_edge銆?
             let outer_circles: Vec<(usize, Curve3)> = [(va,vb),(vb,vc),(vc,va)].iter().enumerate()
@@ -4963,7 +4963,7 @@ impl<'a> BooleanBuilder<'a> {
                     let n = (v1 - c).cross(v2 - c).normalize();
                     (ei, Curve3::Circle(Circle3 { center: c, normal: n, radius: r }))
                 }).collect();
-            // 鈴?閮ㄥ垎瀵归綈: 妫€娴?octant 鏄惁搴旀坊鍔?seam edge銆?
+            // ⏳ 部分对齐: 妫€娴?octant 鏄惁搴旀坊鍔?seam edge銆?
             //    OCCT sphere face 鐨?seam edge 濮嬬粓瀛樺湪浜?BRep wire 涓€?
             //    rcad 鍙閫氳繃 PaveFiller 璺緞鐨?sphere face 娣诲姞 seam(瑙?split_face
             //    鈫?emit_face_with_origin),姝ゅ宸茬鐢?PaveFiller 璺緞瀵?A1 涓嶅伐浣?銆?
@@ -4980,7 +4980,7 @@ impl<'a> BooleanBuilder<'a> {
     }
 
 
-    /// 鉁?OCCT瀵归綈: 鐢ㄧ簿纭ぇ鍦嗗姬鏋勫缓鐞冮潰瀛愰潰 (BOPAlgo_BuilderFace 绛変环)銆?
+    /// ✅ OCCT对齐: 鐢ㄧ簿纭ぇ鍦嗗姬鏋勫缓鐞冮潰瀛愰潰 (BOPAlgo_BuilderFace 绛変环)銆?
     fn build_sphere_sub_faces_by_circles(&self, face_idx: usize) -> Vec<SubFace> {
         let face = &self.ds.faces[face_idx];
         let sphere = match &face.surface { Surface3::Sphere(s) => *s, _ => return vec![] };
@@ -5062,7 +5062,7 @@ impl<'a> BooleanBuilder<'a> {
         eprintln!("[SPHERE_SPLIT] face_idx={} inside_pts={} outside_pts={} n_circles={}",
             face_idx, inside_pts.len(), outside_pts.len(), circles.len());
 
-        // 鉁?OCCT瀵归綈: 鏍规嵁甯冨皵鎿嶄綔鐩存帴杩斿洖瀵瑰簲瀛愰潰,缁曡繃鍒嗙被(鍒嗙被鍦?DS 琚慨鏀瑰悗
+        // ✅ OCCT对齐: 鏍规嵁甯冨皵鎿嶄綔鐩存帴杩斿洖瀵瑰簲瀛愰潰,缁曡繃鍒嗙被(鍒嗙被鍦?DS 琚慨鏀瑰悗
         //    涓嶅彲闈? 瀛愰潰杈圭晫鍦?solid 琛ㄩ潰涓婃椂,classify_by_off_solid_edge 璇垽 Out)銆?
         //    Intersection 鈫?浠呬繚鐣欑洅鍐呭瓙闈?inside_pts)
         //    Difference   鈫?浠呬繚鐣欑洅澶栧瓙闈?outside_pts,鐞冮潰澶ч儴浠?
@@ -5078,7 +5078,7 @@ impl<'a> BooleanBuilder<'a> {
             BooleanOpType::Difference => true,
             BooleanOpType::Union => true,  // both
         };
-        // 鉁?OCCT瀵归綈: 澶栧瓙闈?鐞冮潰澶ч儴浠?闇€瑕佷笌骞抽潰瀛愰潰鍏变韩椤剁偣銆備娇鐢?inside_pts
+        // ✅ OCCT对齐: 澶栧瓙闈?鐞冮潰澶ч儴浠?闇€瑕佷笌骞抽潰瀛愰潰鍏变韩椤剁偣銆備娇鐢?inside_pts
         //    (IC绔偣)浣滀负杈圭晫,骞朵笌鍗楁瀬(0,-1,0)鏋勬垚4杈瑰舰,鍖归厤OCCT鐨刅=5/E=9鎷撴墤銆?
         let outside_use_inside = pick_outside && inside_pts.len() >= 3;
         let inside_pts_copy = inside_pts.clone();
@@ -5142,7 +5142,7 @@ impl<'a> BooleanBuilder<'a> {
                 (i, Curve3::Circle(circles[best_k]))
             }).collect();
 
-            // 鉁?OCCT瀵归綈: 浠庤竟鐣岀偣璁＄畻 UV domain (鐢ㄤ簬 SA 璁＄畻鍜屾洸闈㈢粏鍒?
+            // ✅ OCCT对齐: 浠庤竟鐣岀偣璁＄畻 UV domain (鐢ㄤ簬 SA 璁＄畻鍜屾洸闈㈢粏鍒?
             let boundary = std::mem::take(pts);
             let uvs: Vec<DVec2> = boundary.iter().map(|p| sphere.world_to_uv(*p)).collect();
             let u_min = uvs.iter().map(|uv| uv.x).fold(f64::INFINITY, f64::min);
@@ -5157,7 +5157,7 @@ impl<'a> BooleanBuilder<'a> {
                 None
             };
             let uv_ctr = uv_domain.map(|[u0, u1, v0, v1]| DVec2::new(0.5 * (u0 + u1), 0.5 * (v0 + v1)));
-            // 鉁?OCCT瀵归綈: 澶栧瓙闈ample_override鐢ㄧ悆闈㈠鐐?-0.577,-0.577,-0.577)浣垮垎绫绘纭?
+            // ✅ OCCT对齐: 澶栧瓙闈ample_override鐢ㄧ悆闈㈠鐐?-0.577,-0.577,-0.577)浣垮垎绫绘纭?
             let samp = if label == "outside" && use_inside_pts {
                 let dir = (inside_pts_copy.iter().copied().sum::<DVec3>() / inside_pts_copy.len() as f64 - sc).normalize();
                 Some(sc + sr * (-dir)) // opposite point on sphere surface
@@ -5231,7 +5231,7 @@ impl<'a> BooleanBuilder<'a> {
             if let Some(pcurve) = self.find_pcurve_for_face(ci, face_idx) {
                 let ic = &self.ds.intersection_curves[ci];
                 let [t0, t1] = ic.t_range;
-                // 鉁?OCCT瀵归綈: sphere 闈㈢敤绮剧‘ pcurve 绔偣(3鐐?浠ｆ浛閲囨牱鎶樼嚎銆?
+                // ✅ OCCT对齐: sphere 闈㈢敤绮剧‘ pcurve 绔偣(3鐐?浠ｆ浛閲囨牱鎶樼嚎銆?
                 //    OCCT 鐨?BOPAlgo_BuilderFace 鐢?MakeBlocks 鐢熸垚鐨?section edges
                 //    (姣忎釜 PaveBlock 涓€鏉＄簿纭竟) 鍋氶潰鍒嗚銆俽cad 鏃?MakeBlocks 绛変环鐗╋紝
                 //    鍥犳鐢?pcurve 鐨?t0/t_mid/t1 鐢熸垚 3 鐐?trim銆? >= 鍘熷 <3 杩囨护锛?
@@ -5345,7 +5345,7 @@ impl<'a> BooleanBuilder<'a> {
             trim_polylines = converted;
         }
 
-        // 鉁?OCCT瀵归綈: 鍘婚噸鐩稿悓u鍊肩殑trim(鍛ㄦ湡鎬ф煴闈=0鍜寀=2锜烘槸鍚屼竴浜ょ嚎)
+        // ✅ OCCT对齐: 鍘婚噸鐩稿悓u鍊肩殑trim(鍛ㄦ湡鎬ф煴闈=0鍜寀=2锜烘槸鍚屼竴浜ょ嚎)
         //    OCCT BOPAlgo_WireSplitter 鐢ㄨ繛閫氬潡+瑙掑害鎺掑簭,涓嶄細閲嶅杈广€?
         if u_period > 0.0 || is_sphere {
             let period = if is_sphere { std::f64::consts::TAU } else { u_period };
@@ -5573,7 +5573,7 @@ impl<'a> BooleanBuilder<'a> {
             uv_polygons = next;
         }
 
-        // 鉁?OCCT瀵归綈: Handle seam crossings for periodic surfaces
+        // ✅ OCCT对齐: Handle seam crossings for periodic surfaces
         if u_period > 0.0 {
             let seam_u = if is_sphere {
                 -std::f64::consts::PI // Sphere seam at u=-锜?(UV boundary uses [-锜? 锜篯)
@@ -5595,7 +5595,7 @@ impl<'a> BooleanBuilder<'a> {
                 .collect();
         }
 
-        // 鉁?OCCT瀵归綈: 娓呯悊UV polygon杈圭晫涓婄敱trim绔偣鎴杝eam鍒嗚浜х敓鐨勫浣欓《鐐广€?
+        // ✅ OCCT对齐: 娓呯悊UV polygon杈圭晫涓婄敱trim绔偣鎴杝eam鍒嗚浜х敓鐨勫浣欓《鐐广€?
         //    OCCT Hatcher 鍩轰簬绾挎鐜矾鏋勫缓(瑙丅OPAlgo_WireSplitter),涓嶄細浜х敓姝ょ被椤剁偣銆?
         //    绉婚櫎鍦ㄨ竟鐣岀洿绾夸笂鐨勪腑闂撮《鐐?鐩搁偦椤剁偣鍦║V绌洪棿涓叡绾?銆?
         if !uv_polygons.is_empty() {
@@ -5878,7 +5878,7 @@ impl<'a> BooleanBuilder<'a> {
                 // Compute sample override for sphere sub-faces: use UV domain center
                 // instead of UV polygon centroid, which can be skewed toward IC curve
                 // endpoints and fall on the other-solid boundary (classifying Out when
-                // the sub-face is actually In).  鉁?OCCT瀵归綈: Hatcher face classifier
+                // the sub-face is actually In).  ✅ OCCT对齐: Hatcher face classifier
                 // uses UV interior sampling, not polygon centroid.
                 let sphere_sample = if matches!(surface, Surface3::Sphere(_)) {
                     if let Some([u0, u1, v0, v1]) = uv_domain {
@@ -7804,7 +7804,7 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
         }
     }
 
-    // 鉁?OCCT瀵归綈: 瀛愬杈瑰舰鍙寘鍚?trim 鐨勭鐐?宸叉姇褰卞埌杈圭晫),涓嶅寘鍚唴閮ㄧ偣銆?
+    // ✅ OCCT对齐: 瀛愬杈瑰舰鍙寘鍚?trim 鐨勭鐐?宸叉姇褰卞埌杈圭晫),涓嶅寘鍚唴閮ㄧ偣銆?
     //    OCCT 鐨?BOPAlgo_BuilderFace 鐢?MakeBlocks 鐢熸垚鐨?section edge
     //    (姣忔潯杈逛笉鍒嗘)鐩存帴鏋勫缓闈㈢嚎妗嗐€俽cad 鐨?split_uv_polygon_by_trim
     //    濡傛灉鎶?trim 鍐呴儴鐐归兘澶嶅埗杩涘瓙澶氳竟褰?姣忎釜 trim 浼氳础鐚鏉¤竟(3鐐光啋2杈?
@@ -7824,7 +7824,7 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
     sub_a.push(p_b);
     sub_a.extend_from_slice(&poly[ib + 1..]);
 
-    // 鉁?OCCT瀵归綈: 瀛愬杈瑰舰 B 涓嶅惈 trim 鍐呴儴鐐广€?
+    // ✅ OCCT对齐: 瀛愬杈瑰舰 B 涓嶅惈 trim 鍐呴儴鐐广€?
     //    Sub-polygon B: p_a + poly[ia+1..=ib] + p_b
     let mut sub_b: Vec<DVec2> = vec![p_a];
     sub_b.extend_from_slice(&poly[ia + 1..=ib]);
@@ -7866,7 +7866,7 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
     let sub_a_deduped = dedup_2d(sub_a);
     let sub_b_deduped = dedup_2d(sub_b);
 
-    // 鉁?OCCT瀵归綈: 濡傛灉瀛愬杈瑰舰閫€鍖?<3椤剁偣),杩斿洖鍘熷澶氳竟褰€?
+    // ✅ OCCT对齐: 濡傛灉瀛愬杈瑰舰閫€鍖?<3椤剁偣),杩斿洖鍘熷澶氳竟褰€?
     //    鍙戠敓鍦╰rim涓庡杈瑰舰杈圭晫閲嶅悎鏃?濡傚懆鏈熸€ф煴闈=2蟺鐨勮竟)銆?
     let sub_a_valid = sub_a_deduped.len() >= 3;
     let sub_b_valid = sub_b_deduped.len() >= 3;
@@ -10368,3 +10368,21 @@ mod glue_tests {
     }
 }
 
+
+// ================================================================
+// ✅ placeholder: OCCT BOPAlgo_BuilderFace 边级球面分割 (占位)
+//    OCCT 使用 edge-based 路径: section edges → PerformLoops → PerformAreas
+//    → TopoDS_Face。当前 build_sphere_sub_faces_by_circles 是 SubFace 路径,
+//    ⏳ 部分对齐 — 圆圈交点正确但最终产出 SubFace 而非 OCCT Wire/Face。
+//    待实现步骤:
+//    1. 将 Circle3 交线转为 BRep Edge (BOPTools_AlgoTools::MakeEdge)
+//    2. 合并 seam 边子段 (DoSplitSEAMOnFace splitting at IC endpoints)
+//    3. BOPAlgo_WireSplitter::BuildWires (角度转向选择)
+//    4. PerformAreas: outer/hole 分类
+//    实现后删除 build_sphere_sub_faces_by_circles 的 SubFace 构建部分。
+// ================================================================
+
+// ⏳ TODO: DoSplitSEAMOnFace seam 边分割 — 待实现
+// OCCT BOPTools_AlgoTools3D::DoSplitSEAMOnFace (BOPAlgo_Builder_2.cxx L392-449)
+// 在 seam 与 IC 的交点处分割 seam 边,创建 seam 子段。
+// 当前 build_sphere_sub_faces_by_circles 绕过 seam 边分割直接用 inside_pts 做边界。
