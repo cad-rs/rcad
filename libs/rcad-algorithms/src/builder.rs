@@ -617,6 +617,28 @@ impl ResultBuilder {
             internal_wire_edges.push(iw_edges);
         }
 
+        // OCCT-aligned: Internal wire edges
+        let mut internal_wire_edges: Vec<Vec<(usize, bool)>> = Vec::new();
+        for iw in &wf.internal_wires {
+            let mut iw_edges = Vec::new();
+            for &si in iw {
+                let seg = &segments[si];
+                let v1 = self.add_vertex(ds.vertices[seg.start_vertex].point);
+                let v2 = self.add_vertex(ds.vertices[seg.end_vertex].point);
+                let ei = match &seg.source {
+                    WireEdgeSource::IntersectionCurve(ci) => {
+                        let crv = &ds.intersection_curves[*ci].curve;
+                        if let Curve3::Circle(_) = crv { self.add_circle_edge(v1, v2, crv.clone()) }
+                        else { self.add_edge(v1, v2) }
+                    }
+                    _ => self.add_edge(v1, v2),
+                };
+                let forward = self.edges[ei].0 == v1;
+                iw_edges.push((ei, forward));
+            }
+            internal_wire_edges.push(iw_edges);
+        }
+
         // Triangulation
         let outer_boundary: Vec<DVec3> = vert_indices.iter().map(|&vi| self.vertices[vi]).collect();
         let iw_boundaries: Vec<Vec<DVec3>> = inner_wire_edges.iter().map(|iw_es| {
