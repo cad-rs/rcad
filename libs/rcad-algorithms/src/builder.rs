@@ -2694,6 +2694,10 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
         // ✅ OCCT-aligned: remap IC endpoint to boundary vertex (ShapesSD).
         let sv = remap_ic_v(ic.start_vertex);
         let ev = remap_ic_v(ic.end_vertex);
+        if std::env::var("RCAD_DEBUG_IC").is_ok() {
+            eprintln!("[IC_LOOP] fi={} ci={} raw=({},{}) remap=({},{})",
+                face_idx, ci, ic.start_vertex, ic.end_vertex, sv, ev);
+        }
         // OCCT-aligned: Skip degenerate IC (unless sphere face, where we try to infer correct vertex)
         let d2 = ds.vertices[sv].point.distance_squared(ds.vertices[ev].point);
         if sv == ev || d2 < TOLERANCE_ABS_SQ {

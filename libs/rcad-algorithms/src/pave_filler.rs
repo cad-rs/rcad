@@ -5268,6 +5268,10 @@ impl<'a> PaveFiller<'a> {
                     }
                 }
             }
+            if std::env::var("RCAD_DEBUG_IC").is_ok() {
+                let ic = &self.ds.intersection_curves[ci];
+                eprintln!("[IC_REMAP] ci={} after_replace: sv={} ev={}", ci, ic.start_vertex, ic.end_vertex);
+            }
 
             // ✅ OCCT对齐: PutBoundPaveOnCurve 对所有曲线类型执行
             //    OCCT BOPAlgo_PaveFiller_6.cxx L798-832
@@ -5358,21 +5362,30 @@ impl<'a> PaveFiller<'a> {
             }
 
             // Build split parameter list including endpoints
+            // ✅ OCCT-aligned: for circle curves, skip endpoint vertex replacement
+            //    because OCCT's PutBoundPaveOnCurve (BOPAlgo_PaveFiller_6.cxx L2222-2280)
+            //    is NOT called for circle curves — HasBounds() returns false for circles
+            //    (Geom_Circle is not Geom_BoundedCurve).  rcad's on_curve data for circle
+            //    arcs may assign the same vertex index to both t0 and t1 due to periodic
+            //    parameter ambiguity, corrupting start_vertex/end_vertex.
+            let is_circle = matches!(&snap.curve, Curve3::Circle(_));
             let mut sp: Vec<(f64, usize)> = vec![(t0, snap.sv)];
             for &(p, vi) in &on_curve {
                 if (p - t0).abs() > tol * 0.1 {
                     sp.push((p, vi));
-                } else {
-                    // At start → replace start_vertex
+                } else if !is_circle {
                     self.ds.intersection_curves[ci].start_vertex = vi;
                     sp[0].1 = vi;
                 }
             }
-            // Add end if not already at it
             if (t1 - sp.last().unwrap().0).abs() > tol * 0.1 {
                 sp.push((t1, snap.ev));
-            } else {
+            } else if !is_circle {
                 self.ds.intersection_curves[ci].end_vertex = sp.last().unwrap().1;
+            }
+            if std::env::var("RCAD_DEBUG_IC").is_ok() {
+                let ic = &self.ds.intersection_curves[ci];
+                eprintln!("[PUTBOUND] ci={} sv={} ev={} sp.len={}", ci, ic.start_vertex, ic.end_vertex, sp.len());
             }
             eprintln!("[SPLIT_PRE] ci={} on_curve={}", ci, on_curve.len());
 
