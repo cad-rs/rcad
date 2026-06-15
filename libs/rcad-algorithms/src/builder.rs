@@ -4980,7 +4980,7 @@ impl<'a> BooleanBuilder<'a> {
     }
 
 
-    /// ✅ OCCT对齐: 鐢ㄧ簿纭ぇ鍦嗗姬鏋勫缓鐞冮潰瀛愰潰 (BOPAlgo_BuilderFace 绛変环)銆?
+    /// ❌ 未对齐/自创方案: 从大圆交点构建 SubFace (rcad自创,等OCCT边级路径)。
     fn build_sphere_sub_faces_by_circles(&self, face_idx: usize) -> Vec<SubFace> {
         let face = &self.ds.faces[face_idx];
         let sphere = match &face.surface { Surface3::Sphere(s) => *s, _ => return vec![] };
@@ -5054,13 +5054,9 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         if inside_pts.len() < 3 && outside_pts.len() < 3 {
-            eprintln!("[SPHERE_SPLIT] fallback: {} circles, {} pts, {} inside, {} outside",
-                circles.len(), pts_3d.len(), inside_pts.len(), outside_pts.len());
+            // ⏳ fallback: to split_curved_face_parametric
             return self.split_curved_face_parametric(face_idx);
         }
-
-        eprintln!("[SPHERE_SPLIT] face_idx={} inside_pts={} outside_pts={} n_circles={}",
-            face_idx, inside_pts.len(), outside_pts.len(), circles.len());
 
         // ✅ OCCT对齐: 鏍规嵁甯冨皵鎿嶄綔鐩存帴杩斿洖瀵瑰簲瀛愰潰,缁曡繃鍒嗙被(鍒嗙被鍦?DS 琚慨鏀瑰悗
         //    涓嶅彲闈? 瀛愰潰杈圭晫鍦?solid 琛ㄩ潰涓婃椂,classify_by_off_solid_edge 璇垽 Out)銆?
@@ -10386,3 +10382,28 @@ mod glue_tests {
 // OCCT BOPTools_AlgoTools3D::DoSplitSEAMOnFace (BOPAlgo_Builder_2.cxx L392-449)
 // 在 seam 与 IC 的交点处分割 seam 边,创建 seam 子段。
 // 当前 build_sphere_sub_faces_by_circles 绕过 seam 边分割直接用 inside_pts 做边界。
+
+// ================================================================
+// ✅ OCCT BOPAlgo_BuilderFace 等价路径规划 (待实现)
+// ================================================================
+// OCCT 边级路径步骤:
+//   1. IntTools_FaceFace: 计算 Circle3 交线 (已由 PaveFiller 完成)
+//   2. BOPAlgo_Builder::BuildSplitFaces:
+//      a) 收集 section edges: Circle3 IC → BRep Edge (BOPTools_AlgoTools::MakeEdge)
+//      b) 收集 boundary edges: seam edge + split at IC endpoints
+//      c) 合并 seam 子段 (DoSplitSEAMOnFace, BOPAlgo_Builder_2.cxx L392-449)
+//   3. BOPAlgo_BuilderFace::Perform:
+//      a) PerformLoops: BOPAlgo_WireSplitter (角度转向选择)
+//      b) PerformAreas: outer/hole 分类 → WireFace
+//   4. TopoDS_Face: 从 WireFace 构建 (with proper surface+location)
+//
+// 当前替代路径 (❌ 待删除):
+//   build_sphere_sub_faces_by_circles: Circle3 → SubFace (rcad自创)
+//   split_curved_face_parametric: UV polygon split (非OCCT)
+//   直接 keep/discard 逻辑: 绕过 OCCT 分类
+// ================================================================
+
+// ⏳ placeholder: seam edge IC 端点收集
+// OCCT: BOPAlgo_Builder_2.cxx L392-449 DoSplitSEAMOnFace
+// 在 seam (u=0) 上收集所有 IC 端点,按 V 排序,创建 seam 子段。
+// 当前 build_sphere_sub_faces_by_circles 绕过此步骤直接用 inside_pts 做边界。
