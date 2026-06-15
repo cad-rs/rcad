@@ -2570,10 +2570,17 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
     // ================================================================
     // 1. Original boundary edges (OCCT L357-460)
     // ================================================================
+    // OCCT-aligned: orient boundary edges consistently for closed loop.
+    // OCCT TopExp_Explorer returns edges with correct orientation per face.
+    let mut prev_end: Option<usize> = None;
     for &ei in &face.boundary_edges {
         let edge = &ds.edges[ei];
-        let sv = edge.start_vertex;
-        let ev = edge.end_vertex;
+        let (sv, ev) = match prev_end {
+            Some(pe) if edge.start_vertex == pe => (edge.start_vertex, edge.end_vertex),
+            Some(pe) if edge.end_vertex == pe => (edge.end_vertex, edge.start_vertex),
+            _ => (edge.start_vertex, edge.end_vertex),
+        };
+        prev_end = Some(ev);
 
         // OCCT-aligned: seam  (L392-449)
         let is_seam = match &face.surface {
@@ -3192,12 +3199,19 @@ fn find_angle_at(smart_map: &HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize, vert
 fn select_best_outgoing<'a>(
     candidates: &[&'a EdgeInfo],
     angle_in: f64,
+    incoming_is_boundary: bool,
 ) -> Option<&'a EdgeInfo> {
     if candidates.is_empty() {
         return None;
     }
     // Special rule (OCCT): when incoming is boundary and there is exactly 1
     // internal outgoing edge, prefer it over angle-based selection.
+    if incoming_is_boundary {
+        let internal_out: Vec<&&EdgeInfo> = candidates.iter().filter(|e| e.is_inside).collect();
+        if internal_out.len() == 1 {
+            return Some(internal_out[0]);
+        }
+    }
     if candidates.len() == 1 {
         return Some(candidates[0]);
     }
@@ -3433,7 +3447,8 @@ fn walk_path_extract_wires(
             let candidates: Vec<&EdgeInfo> = if let Some(infos) = smart_map.get(&last_arrived) {
                 infos.iter().filter(|ei| !ei.passed && !ei.in_flag).collect()
             } else { return; };
-            let best = match select_best_outgoing(&candidates, angle_in) {
+            let incoming_is_boundary = !matches!(segments[last_ci].source, WireEdgeSource::IntersectionCurve(_));
+            let best = match select_best_outgoing(&candidates, angle_in, incoming_is_boundary) {
                 Some(e) => e,
                 None => return,
             };
@@ -3455,7 +3470,8 @@ fn walk_path_extract_wires(
             return;
         };
 
-        let best = match select_best_outgoing(&candidates, angle_in) {
+        let incoming_is_boundary = !matches!(segments[ci].source, WireEdgeSource::IntersectionCurve(_));
+        let best = match select_best_outgoing(&candidates, angle_in, incoming_is_boundary) {
             Some(e) => e,
             None => return,
         };
