@@ -1,4 +1,4 @@
-﻿use std::collections::HashMap;
+﻿use std::collections::{HashMap, VecDeque};
 
 use glam::{DVec2, DVec3};
 use rayon::prelude::*;
@@ -177,6 +177,52 @@ impl FaceSampleData {
 
 /// DEPRECATED: 鍐呴儴閬楃暀绫诲瀷銆備笉褰卞搷 OCCT 瀵归綈 鈥?浠呭湪 split_face 鍐呴儴 + emit 鍥為€€浣跨敤銆?
 /// 澶栭儴鎺ュ彛缁熶竴浣跨敤 FaceSampleData (classify) 鍜?WireFace (emit)銆?
+/// OCCT-aligned: wire grouping result — ordered segment chains forming a face boundary.
+pub struct WireFace {
+    pub outer_wire: Vec<usize>,
+    pub inner_wires: Vec<Vec<usize>>,
+}
+
+/// OCCT-aligned: Source of a virtual edge segment in the edge-to-wire pipeline.
+#[derive(Debug, Clone)]
+enum WireEdgeSource {
+    DsEdge(usize),
+    IntersectionCurve(usize),
+    SeamEdge,
+}
+
+/// OCCT-aligned: Virtual edge used in the edge-to-wire pipeline.
+#[derive(Debug, Clone)]
+struct WireSegment {
+    start_vertex: usize,
+    end_vertex: usize,
+    source: WireEdgeSource,
+    forward: bool,
+    is_seam: bool,
+    tangent_start: Option<f64>,
+    tangent_end: Option<f64>,
+}
+
+impl WireSegment {
+    fn reversed(&self) -> Self {
+        WireSegment {
+            start_vertex: self.end_vertex,
+            end_vertex: self.start_vertex,
+            source: match &self.source {
+                WireEdgeSource::DsEdge(i) => WireEdgeSource::DsEdge(*i),
+                WireEdgeSource::IntersectionCurve(i) => WireEdgeSource::IntersectionCurve(*i),
+                WireEdgeSource::SeamEdge => WireEdgeSource::SeamEdge,
+            },
+            forward: !self.forward,
+            is_seam: self.is_seam,
+            tangent_start: self.tangent_end
+                .map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+            tangent_end: self.tangent_start
+                .map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SubFace {
     /// Boundary vertex positions in 3D (ordered polygon).
@@ -441,6 +487,239 @@ impl ResultBuilder {
         }
         let len = n.length();
         if len > TOLERANCE_LEN_MIN { n / len } else { DVec3::ZERO }
+    }
+
+    /// OCCT-aligned: emit BRep face from WireFace (replaces emit_face_with_origin).
+    ///     Builds edges directly from WireSegments: seam edges use add_seam_edge /
+    ///     add_edge_seam_degenerate; IC edges use add_circle_edge for Circle3 curves.
+    fn emit_wire_face(
+        &mut self,
+        face_idx: usize,
+        wf: &WireFace,
+        segments: &[WireSegment],
+        ds: &DS,
+        flip: bool,
+        origin: FaceOrigin,
+    ) {
+        let face = &ds.faces[face_idx];
+        let mut normal = if flip { -face.normal } else { face.normal };
+        if normal.length_squared() <= TOLERANCE_METRIC_SQ_NEAR_ZERO {
+            normal = Self::estimate_boundary_normal_from_segments(&wf.outer_wire, segments, ds);
+        }
+        if normal.length_squared() <= TOLERANCE_METRIC_SQ_NEAR_ZERO {
+            return;
+        }
+
+        // Outer wire: vertices + edges from WireSegments
+        let mut vert_indices = Vec::new();
+        let mut edge_indices = Vec::new();
+        for &si in &wf.outer_wire {
+            let seg = &segments[si];
+            let v1 = self.add_vertex(ds.vertices[seg.start_vertex].point);
+            let v2 = self.add_vertex(ds.vertices[seg.end_vertex].point);
+            if vert_indices.is_empty() || vert_indices.last() != Some(&v1) {
+                vert_indices.push(v1);
+            }
+            let (ei, forward) = if seg.is_seam {
+                let seam_deg = (ds.vertices[seg.start_vertex].point
+                    - ds.vertices[seg.end_vertex].point).length_squared() < TOLERANCE_ABS_SQ;
+                let sphere_surf = match &ds.faces[face_idx].surface {
+                    Surface3::Sphere(s) => s,
+                    _ => &SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, ref_dir: DVec3::X },
+                };
+                let ei = if seam_deg {
+                    self.add_edge_seam_degenerate(v1, sphere_surf)
+                } else {
+                    let seam_normal = any_perpendicular(sphere_surf.axis).normalize();
+                    let seam_circle = Curve3::Circle(Circle3 {
+                        center: sphere_surf.center,
+                        normal: seam_normal,
+                        radius: sphere_surf.radius,
+                    });
+                    self.add_seam_edge(v1, v2, seam_circle)
+                };
+                (ei, true)
+            } else {
+                let ei = match &seg.source {
+                    WireEdgeSource::IntersectionCurve(ci) => {
+                        let crv = &ds.intersection_curves[*ci].curve;
+                        if let Curve3::Circle(_) = crv {
+                            self.add_circle_edge(v1, v2, crv.clone())
+                        } else {
+                            self.add_edge(v1, v2)
+                        }
+                    }
+                    WireEdgeSource::DsEdge(_) => self.add_edge(v1, v2),
+                    _ => self.add_edge(v1, v2),
+                };
+                let forward = self.edges[ei].0 == v1;
+                (ei, forward)
+            };
+            edge_indices.push((ei, forward));
+        }
+
+        // Inner wires (holes)
+        let mut inner_wire_edges: Vec<Vec<(usize, bool)>> = Vec::new();
+        let mut iw_vert_indices_all: Vec<usize> = Vec::new();
+        for iw in &wf.inner_wires {
+            let mut iw_verts = Vec::new();
+            let mut iw_edges = Vec::new();
+            for &si in iw {
+                let seg = &segments[si];
+                let v1 = self.add_vertex(ds.vertices[seg.start_vertex].point);
+                let v2 = self.add_vertex(ds.vertices[seg.end_vertex].point);
+                if iw_verts.is_empty() || iw_verts.last() != Some(&v1) {
+                    iw_verts.push(v1);
+                }
+                let ei = match &seg.source {
+                    WireEdgeSource::IntersectionCurve(ci) => {
+                        let crv = &ds.intersection_curves[*ci].curve;
+                        if let Curve3::Circle(_) = crv {
+                            self.add_circle_edge(v1, v2, crv.clone())
+                        } else {
+                            self.add_edge(v1, v2)
+                        }
+                    }
+                    _ => self.add_edge(v1, v2),
+                };
+                let forward = self.edges[ei].0 == v1;
+                iw_edges.push((ei, forward));
+            }
+            inner_wire_edges.push(iw_edges);
+            iw_vert_indices_all.extend(iw_verts);
+        }
+
+        // Triangulation
+        let outer_boundary: Vec<DVec3> = vert_indices.iter().map(|&vi| self.vertices[vi]).collect();
+        let iw_boundaries: Vec<Vec<DVec3>> = inner_wire_edges.iter().map(|iw_es| {
+            let mut pts = Vec::new();
+            for &(ei, _) in iw_es {
+                let (a, b) = self.edges[ei];
+                if pts.is_empty() || pts.last() != Some(&a) {
+                    pts.push(a);
+                }
+            }
+            pts.iter().map(|&vi| self.vertices[vi]).collect()
+        }).collect();
+        let all_vert_indices: Vec<usize> = [vert_indices.as_slice(), iw_vert_indices_all.as_slice()].concat();
+        let mut tris = if iw_boundaries.is_empty() {
+            triangulate_polygon(&outer_boundary, normal)
+        } else {
+            triangulate_polygon_with_holes(&outer_boundary, &iw_boundaries, normal)
+        };
+        for tri in &mut tris {
+            for idx in tri.iter_mut() {
+                *idx = all_vert_indices[*idx];
+            }
+        }
+
+        // Coincident face dedup
+        let centroid = outer_boundary.iter().copied().sum::<DVec3>() / outer_boundary.len().max(1) as f64;
+        let area = Self::polygon_signed_area_on_normal(&outer_boundary, normal);
+        let mut outer_sig: Vec<usize> = edge_indices.iter().map(|&(eid, _)| eid).collect();
+        outer_sig.sort_unstable();
+        let nlen = normal.length();
+        let nunit = if nlen > TOLERANCE_LEN_MIN { normal / nlen } else { normal };
+        for (existing_idx, (existing_outer, existing_inner, _existing_tris, existing_normal,
+             _surf, _uv, existing_centroid, existing_area, _existing_sp))
+            in self.faces.iter().enumerate()
+        {
+            let mut ex_sig: Vec<usize> = existing_outer.iter().map(|&(eid, _)| eid).collect();
+            for iw_edges in existing_inner {
+                ex_sig.extend(iw_edges.iter().map(|&(eid, _)| eid));
+            }
+            ex_sig.sort_unstable();
+            let elen = existing_normal.length();
+            if elen <= TOLERANCE_LEN_MIN { continue; }
+            let eunit = *existing_normal / elen;
+            let sig_match = ex_sig == outer_sig;
+            let geo_match = nunit.dot(eunit).abs() >= 0.99
+                && (*existing_centroid - centroid).length() <= TOLERANCE_LINEAR_RELAX_8
+                && (existing_area - area).abs() <= TOLERANCE_LINEAR_RELAX_8 * existing_area.max(area).max(1.0);
+            if sig_match || geo_match {
+                self.co_face_origins.push((existing_idx, origin));
+                return;
+            }
+        }
+
+        // Sphere: handle internal (degenerate) vertices for seam edges
+        let mut internal_verts = Vec::new();
+        if matches!(face.surface, Surface3::Sphere(_)) && !face.face_info.curves_in.is_empty() {
+            // Wire pipeline handles seam edges directly; no extra internal vertices needed.
+        } else if matches!(face.surface, Surface3::Sphere(_)) {
+            for &ei in &face.boundary_edges {
+                let edge = &ds.edges[ei];
+                let sv = self.add_vertex(ds.vertices[edge.start_vertex].point);
+                let ev = self.add_vertex(ds.vertices[edge.end_vertex].point);
+                let sdeg = self.add_edge(sv, sv);
+                edge_indices.push((sdeg, true));
+                internal_verts.push(sv);
+                if sv != ev {
+                    let edeg = self.add_edge(ev, ev);
+                    edge_indices.push((edeg, true));
+                    internal_verts.push(ev);
+                }
+            }
+        }
+
+        // Compute UV domain for sphere faces
+        let sphere_uv = if matches!(face.surface, Surface3::Sphere(_)) {
+            let uvs: Vec<DVec2> = if !wf.outer_wire.is_empty() {
+                wf.outer_wire.iter().map(|&si| {
+                    let seg = &segments[si];
+                    let sph = match &face.surface {
+                        Surface3::Sphere(s) => s,
+                        _ => unreachable!(),
+                    };
+                    sph.world_to_uv(ds.vertices[seg.start_vertex].point)
+                }).collect()
+            } else { vec![] };
+            if !uvs.is_empty() {
+                let u_min = uvs.iter().map(|uv| uv.x).fold(f64::INFINITY, f64::min);
+                let u_max = uvs.iter().map(|uv| uv.x).fold(f64::NEG_INFINITY, f64::max);
+                let v_min = uvs.iter().map(|uv| uv.y).fold(f64::INFINITY, f64::min);
+                let v_max = uvs.iter().map(|uv| uv.y).fold(f64::NEG_INFINITY, f64::max);
+                if (u_max - u_min).abs() > TOLERANCE_FLOAT_LOOSE && (v_max - v_min).abs() > TOLERANCE_FLOAT_LOOSE {
+                    Some([u_min, u_max, v_min, v_max])
+                } else { None }
+            } else { None }
+        } else { None };
+
+        self.face_internal_vtx.push(internal_verts);
+        let sample_pt = if !wf.outer_wire.is_empty() {
+            let si = wf.outer_wire[0];
+            let seg = &segments[si];
+            ds.vertices[seg.start_vertex].point
+        } else {
+            ds.vertices.get(0).map(|v| v.point).unwrap_or(DVec3::ZERO)
+        };
+        self.faces.push((
+            edge_indices,
+            inner_wire_edges,
+            tris,
+            normal,
+            face.surface.clone(),
+            sphere_uv,
+            centroid,
+            area,
+            sample_pt,
+        ));
+        self.face_origins.push(origin);
+    }
+
+    /// OCCT-aligned: estimate face normal from wire segments.
+    ///     Uses Newell's method on the outer wire boundary vertices.
+    fn estimate_boundary_normal_from_segments(
+        outer_wire: &[usize],
+        segments: &[WireSegment],
+        ds: &DS,
+    ) -> DVec3 {
+        if outer_wire.len() < 3 { return DVec3::ZERO; }
+        let pts: Vec<DVec3> = outer_wire.iter().map(|&si| {
+            let seg = &segments[si];
+            ds.vertices[seg.start_vertex].point
+        }).collect();
+        Self::estimate_boundary_normal(&pts)
     }
 
     fn polygon_signed_area_on_normal(poly: &[DVec3], normal: DVec3) -> f64 {
@@ -876,93 +1155,6 @@ impl ResultBuilder {
         ));
         self.face_origins.push(origin);
     }
-
-    /// ✅ OCCT对齐: SubFace-free 面发射器。取原始几何数据直接构建面,绕过 SubFace。
-    ///    对应 OCCT BRep_Builder::MakeFace + BRep_Builder::UpdateEdge。
-    ///    ⏳ 用于逐步替代 emit_face_with_origin (最终删除 SubFace)。
-    ///    参数 extra_occt_edges: 用 add_circle_edge_occt (非去重)添加的额外边,
-    ///    用于 OCCT 中需要独立 TopoDS_Edge 的场景(如 seam 子段)。
-    fn emit_face_data(
-        &mut self,
-        boundary_pts: &[DVec3],
-        circle_edges: &[(usize, Curve3)],
-        surface: &Surface3,
-        normal: DVec3,
-        sample_point: DVec3,
-        uv_domain: Option<[f64; 4]>,
-        origin: FaceOrigin,
-        extra_occt_edges: &[(usize, Curve3)],
-    ) {
-        if boundary_pts.len() < 3 { return; }
-        if normal.length_squared() <= TOLERANCE_METRIC_SQ_NEAR_ZERO { return; }
-
-        let vert_indices: Vec<usize> = boundary_pts.iter().map(|&p| self.add_vertex(p)).collect();
-        let mut edge_indices = Vec::new();
-        for i in 0..vert_indices.len() {
-            let j = (i + 1) % vert_indices.len();
-            let ei = if let Some(&(_, ref crv)) = circle_edges.iter().find(|&&(si, _)| si == i) {
-                self.add_circle_edge(vert_indices[i], vert_indices[j], crv.clone())
-            } else {
-                self.add_edge(vert_indices[i], vert_indices[j])
-            };
-            let forward = self.edges[ei].0 == vert_indices[i];
-            edge_indices.push((ei, forward));
-        }
-        // Add extra OCCT edges (non-dedup, for seam sub-segments etc.)
-        for &(ei, ref crv) in extra_occt_edges {
-            let va = vert_indices[ei];
-            let vb = vert_indices[(ei + 1) % vert_indices.len()];
-            let new_ei = self.add_circle_edge_occt(va, vb, crv.clone());
-            let forward = self.edges[new_ei].0 == va;
-            edge_indices.push((new_ei, forward));
-        }
-
-        let inner_wire_edges: Vec<Vec<(usize, bool)>> = Vec::new();
-        let iw_vert_indices_all: Vec<usize> = Vec::new();
-        let all_vert_indices: Vec<usize> = [vert_indices.as_slice(), iw_vert_indices_all.as_slice()].concat();
-
-        let outer_boundary: Vec<DVec3> = vert_indices.iter().map(|&vi| self.vertices[vi]).collect();
-        let mut tris = triangulate_polygon(&outer_boundary, normal);
-
-        for tri in &mut tris {
-            for idx in tri.iter_mut() { *idx = all_vert_indices[*idx]; }
-        }
-
-        let centroid = outer_boundary.iter().copied().sum::<DVec3>() / outer_boundary.len().max(1) as f64;
-        let area = Self::polygon_signed_area_on_normal(&outer_boundary, normal);
-
-        // Coincident face dedup (same as emit_face_with_origin)
-        let mut outer_sig: Vec<usize> = edge_indices.iter().map(|&(eid, _)| eid).collect();
-        outer_sig.sort_unstable();
-        let nlen = normal.length();
-        let nunit = if nlen > TOLERANCE_LEN_MIN { normal / nlen } else { normal };
-        for (existing_idx, (existing_outer, existing_inner, _existing_tris, existing_normal, _surf, _uv, existing_centroid, existing_area, _existing_sp)) in
-            self.faces.iter().enumerate()
-        {
-            let mut ex_sig: Vec<usize> = existing_outer.iter().map(|&(eid, _)| eid).collect();
-            for iw_edges in existing_inner { ex_sig.extend(iw_edges.iter().map(|&(eid, _)| eid)); }
-            ex_sig.sort_unstable();
-            let elen = existing_normal.length();
-            if elen <= TOLERANCE_LEN_MIN { continue; }
-            let eunit = *existing_normal / elen;
-            if nunit.dot(eunit).abs() >= 0.99
-                && (*existing_centroid - centroid).length() <= TOLERANCE_LINEAR_RELAX_8
-                && (existing_area - area).abs() <= TOLERANCE_LINEAR_RELAX_8 * existing_area.max(area).max(1.0)
-            {
-                self.co_face_origins.push((existing_idx, origin));
-                return;
-            }
-        }
-
-        self.faces.push((edge_indices, inner_wire_edges, tris, normal, surface.clone(), uv_domain, centroid, area, sample_point));
-        self.face_origins.push(origin);
-    }
-
-    /// ✅ OCCT对齐: 浠?WireFace 鍙戝皠 BRep 闈?(鏇夸唬 emit_face_with_origin)銆?
-
-    /// When an edge閳ユ獨 open segment passes through another result vertex (classic
-    /// T-junction), replace that edge in all wires by a chain of shorter edges
-    /// through those vertices so adjacent faces share identical topology.
     fn subdivide_edges_at_interior_vertices(&mut self) {
         const POS_TOL: f64 = TOLERANCE_ABS * 1000.0;
         const PASS_MAX: usize = 32;
@@ -2359,11 +2551,1067 @@ fn classify_face_occt_style(
     None
 }
 
+fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(usize) -> Option<Curve2d>) -> Vec<WireSegment> {
+    let face = &ds.faces[face_idx];
+    let mut segments: Vec<WireSegment> = Vec::new();
+    // Track DS edge indices already processed for seam splitting
+    // (sphere face has 2 boundary edges for the same seam; only process once)
+    let mut processed_seam_ds_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
+
+    // Check if surface is closed (U/V)  for seam edge detection
+    // OCCT L383-388: GeomLib::IsClosed  U/V
+    let (is_u_closed, is_v_closed) = match &face.surface {
+        Surface3::Sphere(_) => (true, true),
+        Surface3::Cylinder(_) => (true, false),
+        Surface3::Cone(_) => (true, false),
+        _ => (false, false),
+    };
+
+    // ================================================================
+    // 1. Original boundary edges (OCCT L357-460)
+    // ================================================================
+    for &ei in &face.boundary_edges {
+        let edge = &ds.edges[ei];
+        let sv = edge.start_vertex;
+        let ev = edge.end_vertex;
+
+        // OCCT-aligned: seam  (L392-449)
+        let is_seam = match &face.surface {
+            Surface3::Sphere(_) => true,
+            _ => (is_u_closed || is_v_closed)
+                && (sv == ev || are_verts_coincident(ds, sv, ev)),
+        };
+
+        if is_seam && matches!(face.surface, Surface3::Sphere(_)) {
+            // OCCT-aligned: DoSplitSEAMOnFace (BOPAlgo_Builder_2.cxx L392-449)
+            // Skip duplicate DS edge (sphere has 2 boundary edges for the same seam)
+            if !processed_seam_ds_edges.insert(ei) {
+                continue;
+            }
+            let seam_tol = TOLERANCE_COORD_SUB;
+
+            // 1. Collect all seam vertices: original endpoints + IC endpoints on seam
+            let mut seam_verts: Vec<usize> = Vec::new();
+            seam_verts.push(sv);
+            if ev != sv {
+                seam_verts.push(ev);
+            }
+            // 2. Add IC endpoints that lie on the seam (intermediate vertices)
+            //    OCCT-aligned: DoSplitSEAMOnFace   seam  IC  seam
+            if let Surface3::Sphere(sph) = &face.surface {
+                for &ci in &face.face_info.curves_in {
+                    let ic = &ds.intersection_curves[ci];
+                    for &icv in &[ic.start_vertex, ic.end_vertex] {
+                        if seam_verts.contains(&icv) { continue; }
+                        let ic_pos = ds.vertices[icv].point;
+                        if seam_verts.iter().any(|&sv| ds.vertices[sv].point.distance_squared(ic_pos) < TOLERANCE_ABS_SQ) {
+                            continue;
+                        }
+                        // Normalize U to [0, 2pi) for on-seam check (world_to_uv returns [-pi, pi])
+                        let icuv = sph.world_to_uv(ic_pos);
+                        let u_norm = icuv.x.rem_euclid(std::f64::consts::TAU);
+                        let on_seam = u_norm < seam_tol || (u_norm - std::f64::consts::TAU).abs() < seam_tol;
+                        if on_seam {
+                            seam_verts.push(icv);
+                        }
+                    }
+                }
+            }
+
+            // 3. Sort by V coordinate along seam (north pole = min v, south = max v)
+            //    OCCT-aligned: DoSplitSEAMOnFace  seam
+            if let Surface3::Sphere(sph) = &face.surface {
+                seam_verts.sort_by(|&a, &b| {
+                    let uva = sph.world_to_uv(ds.vertices[a].point);
+                    let uvb = sph.world_to_uv(ds.vertices[b].point);
+                    uva.y.partial_cmp(&uvb.y).unwrap_or(std::cmp::Ordering::Equal)
+                });
+            }
+
+            // 4. Create sub-segments between consecutive seam vertices
+                let seam_seg_cnt = segments.iter().filter(|s| s.is_seam).count();
+            let ic_cnt = face.face_info.curves_in.iter().flat_map(|ci| {
+                let ic = &ds.intersection_curves[*ci];
+                [ic.start_vertex, ic.end_vertex]
+            }).filter(|&v| seam_verts.contains(&v)).count();
+            eprintln!("[SEAM_SPLIT] face={} seam_verts={} curves_in={} ic_on_seam={}",
+                face_idx, seam_verts.len(), face.face_info.curves_in.len(), ic_cnt);
+            for i in 0..seam_verts.len().saturating_sub(1) {
+                let sv_seg = seam_verts[i];
+                let ev_seg = seam_verts[i + 1];
+                if sv_seg == ev_seg { continue; }
+                let (t_start, t_end) = compute_seam_tangent_angles(ds, sv_seg, ev_seg, &face.surface);
+                segments.push(WireSegment {
+                    start_vertex: sv_seg, end_vertex: ev_seg,
+                    source: WireEdgeSource::DsEdge(ei),
+                    forward: true,
+                    is_seam: true,
+                    tangent_start: t_start,
+                    tangent_end: t_end,
+                });
+                segments.push(WireSegment {
+                    start_vertex: ev_seg, end_vertex: sv_seg,
+                    source: WireEdgeSource::DsEdge(ei),
+                    forward: false,
+                    is_seam: true,
+                    tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+                    tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+                });
+            }
+        } else if is_seam {
+            // OCCT-aligned: Cylinder/Cone seam edge  keep original 2-segment logic (BOPAlgo_Builder_2.cxx L357-460)
+            let (t_start, t_end) = compute_seam_tangent_angles(ds, sv, ev, &face.surface);
+            segments.push(WireSegment {
+                start_vertex: sv, end_vertex: ev,
+                source: WireEdgeSource::DsEdge(ei),
+                forward: true,
+                is_seam: true,
+                tangent_start: t_start,
+                tangent_end: t_end,
+            });
+            segments.push(WireSegment {
+                start_vertex: ev, end_vertex: sv,
+                source: WireEdgeSource::DsEdge(ei),
+                forward: false,
+                is_seam: true,
+                tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+                tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+            });
+        } else {
+            // OCCT-aligned: Regular edge added in original direction (L374-378)
+            segments.push(WireSegment {
+                start_vertex: sv, end_vertex: ev,
+                source: WireEdgeSource::DsEdge(ei),
+                forward: true,
+                is_seam: false,
+                tangent_start: None,
+                tangent_end: None,
+            });
+        }
+    }
+
+    // ================================================================
+    // 2. Section edges  Intersection curves (OCCT L478-489)
+    //    OCCT  FORWARD+REVERSED, BOPAlgo_WireSplitter
+
+    // ================================================================
+    for &ci in &face.face_info.curves_in {
+        let ic = &ds.intersection_curves[ci];
+        let sv = ic.start_vertex;
+        let ev = ic.end_vertex;
+        // OCCT-aligned: Skip degenerate IC (unless sphere face, where we try to infer correct vertex)
+        let d2 = ds.vertices[sv].point.distance_squared(ds.vertices[ev].point);
+        if sv == ev || d2 < TOLERANCE_ABS_SQ {
+            if matches!(face.surface, Surface3::Sphere(_)) {
+                // Degenerate IC on sphere: infer the correct second vertex from other ICs.
+                // The 3 intersection curves form a closed loop with 3 unique vertices.
+                // Find the vertex used by other curves but NOT by this curve's sv.
+                let other_v: Vec<usize> = face.face_info.curves_in.iter()
+                    .filter(|&&oci| oci != ci)
+                    .flat_map(|&oci| {
+                        let oic = &ds.intersection_curves[oci];
+                        vec![oic.start_vertex, oic.end_vertex]
+                    })
+                    .filter(|&v| v != sv)
+                    .collect();
+                // The 3 IC curves form a closed loop; each endpoint vertex
+                // belongs to exactly 2 curves. For the degenerate curve,
+                // the correct second endpoint is the vertex that belongs to
+                // exactly 1 of the OTHER curves (not shared between both).
+                // Count vertex occurrences across all non-degenerate curves.
+                let vcounts: std::collections::HashMap<usize, usize> = {
+                    let mut m = std::collections::HashMap::new();
+                    for &v in &other_v { *m.entry(v).or_insert(0) += 1; }
+                    m
+                };
+                let mut candidate: Option<usize> = None;
+                for (&v, &cnt) in &vcounts {
+                    if cnt == 1 {
+                        if candidate.is_some() { } // ambiguous, fall through
+                        else { candidate = Some(v); }
+                    }
+                }
+                if candidate.is_none() {
+                    // Fallback: vertex that appears in all other curves (most connected)
+                    candidate = other_v.iter().max_by_key(|&&v| vcounts.get(&v).copied().unwrap_or(0)).copied();
+                }
+                if let Some(correct_ev) = candidate {
+                    let fixed_sv = sv;
+                    let fixed_ev = correct_ev;
+                    let pcurve = pcurve_lookup(ci);
+                    let (t_start, t_end) = if let Some(ref pc) = pcurve {
+                        (pcurve_tangent_angle(pc, ic.t_range[0], ic.t_range),
+                         pcurve_tangent_angle(pc, ic.t_range[1], ic.t_range))
+                    } else { (None, None) };
+                    segments.push(WireSegment { start_vertex: fixed_sv, end_vertex: fixed_ev,
+                        source: WireEdgeSource::IntersectionCurve(ci), forward: true,
+                        is_seam: false, tangent_start: t_start, tangent_end: t_end });
+                    segments.push(WireSegment { start_vertex: fixed_ev, end_vertex: fixed_sv,
+                        source: WireEdgeSource::IntersectionCurve(ci), forward: false,
+                        is_seam: false, tangent_start: t_end.map(|a| (a+std::f64::consts::PI)%std::f64::consts::TAU),
+                        tangent_end: t_start.map(|a| (a+std::f64::consts::PI)%std::f64::consts::TAU) });
+                    continue;
+                }
+            }
+            continue;
+        }
+
+        //  pcurve  (Angle2D)
+        let pcurve = pcurve_lookup(ci);
+        let (t_start, t_end) = if let Some(ref pc) = pcurve {
+            let domain = ic.t_range;
+            (pcurve_tangent_angle(pc, domain[0], domain), pcurve_tangent_angle(pc, domain[1], domain))
+        } else {
+            (None, None)
+        };
+
+        // OCCT-aligned: FORWARD+REVERSED (BOPAlgo_Builder_2.cxx L478-489)
+        segments.push(WireSegment {
+            start_vertex: sv,
+            end_vertex: ev,
+            source: WireEdgeSource::IntersectionCurve(ci),
+            forward: true,
+            is_seam: false,
+            tangent_start: t_start,
+            tangent_end: t_end,
+        });
+        segments.push(WireSegment {
+            start_vertex: ev,
+            end_vertex: sv,
+            source: WireEdgeSource::IntersectionCurve(ci),
+            forward: false,
+            is_seam: false,
+            tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+            tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+        });
+    }
+
+    segments
+}
+
+/// OCCT-aligned: Compute seam edge UV tangent angle
+///     seam = u=const isoline   V
+///    Cylinder seam
+fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface: &Surface3) -> (Option<f64>, Option<f64>) {
+    match surface {
+        Surface3::Sphere(sph) => {
+            let uvs = sph.world_to_uv(ds.vertices[sv].point);
+            let uve = sph.world_to_uv(ds.vertices[ev].point);
+            let dir = uve - uvs;
+            if dir.length_squared() < 1e-30 {
+                return (None, None);
+            }
+            let a = dir_to_angle(dir);
+            (Some(a), Some(a))
+        }
+        Surface3::Cylinder(cyl) => {
+            // Cylinder seam: u=0 or u=2 isoline, along V direction.
+            // Compute approximate direction.
+            let sv_pt = ds.vertices[sv].point;
+            let ev_pt = ds.vertices[ev].point;
+            // Project onto cylinder axis to get V coordinate
+            let ax = cyl.axis.normalize_or_zero();
+            let sv_v = (sv_pt - cyl.origin).dot(ax);
+            let ev_v = (ev_pt - cyl.origin).dot(ax);
+            let dir = if ev_v > sv_v { DVec2::new(0.0, 1.0) } else { DVec2::new(0.0, -1.0) };
+            let a = dir_to_angle(dir);
+            (Some(a), Some(a))
+        }
+        _ => (None, None),
+    }
+}
+
+///  DS  ()
+fn are_verts_coincident(ds: &DS, vi: usize, vj: usize) -> bool {
+    if vi == vj { return true; }
+    let d2 = ds.vertices[vi].point.distance_squared(ds.vertices[vj].point);
+    d2 < TOLERANCE_ABS_SQ
+}
+
+// ================================================================
+// OCCT-aligned: Angle2D  (BOPAlgo_WireSplitter_1.cxx L769-841)
+// ================================================================
+
+/// Convert a 2D direction vector to an angle in [0, 2).
+///  OCCT  atan2(dir.y, dir.x)  [0, 2)
+#[inline]
+fn dir_to_angle(dir: DVec2) -> f64 {
+    let a = dir.y.atan2(dir.x);
+    if a < 0.0 { a + std::f64::consts::TAU } else { a }
+}
+
+/// Compute the 2D p-curve tangent direction angle at parameter t.
+/// Uses finite difference with a step proportional to the domain length.
+/// OCCT-aligned: Angle2D  (L796-841):
+///   dt = max(curve_resolution(tol2d), Precision::PConfusion())
+///    Line
+fn pcurve_tangent_angle(curve: &Curve2d, t: f64, domain: [f64; 2]) -> Option<f64> {
+    let range = (domain[1] - domain[0]).abs();
+    let dt = (1e-8 * range.max(1.0)).max(1e-12);
+
+    // For start point: forward difference; for end point: backward difference;
+    // for interior: central difference.
+    let (p_lo, p_hi) = if (t - domain[0]).abs() < dt * 0.5 {
+        (curve.point_at(t), curve.point_at(domain[0] + dt))
+    } else if (t - domain[1]).abs() < dt * 0.5 {
+        (curve.point_at(domain[1] - dt), curve.point_at(t))
+    } else {
+        (curve.point_at(t - dt), curve.point_at(t + dt))
+    };
+
+    let dir = p_hi - p_lo;
+    if dir.length_squared() < 1e-40 {
+        return None;
+    }
+    Some(dir_to_angle(dir))
+}
+
+/// OCCT-aligned: ClockWiseAngle (BOPAlgo_WireSplitter_1.cxx L622-660)
+///     [0, 2)
+///
+///     angle_in: angle at incident vertex (in_flag=true)
+///     angle_out: angle at outgoing vertex (in_flag=false)
+fn clock_wise_angle(angle_in: f64, angle_out: f64) -> f64 {
+    let a1 = (angle_in + std::f64::consts::PI) % std::f64::consts::TAU;
+    let mut d = a1 - angle_out;
+    if d <= 0.0 {
+        d += std::f64::consts::TAU;
+    }
+    d
+}
+
+/// OCCT-aligned:  wire   BOPAlgo_WireSplitter
+///    MakeConnexityBlocks + Path approach (PerformLoops L239-383)
+///
+/// Build closed wires:
+///   1. MakeConnexityBlocks: BFS grouping by shared vertices
+///   2. Regular block ( degree=2):
+///   3. Irregular block ( degree>2 ): SmartMap + Path
+fn build_closed_wires(segments: &[WireSegment], ds: &DS, face_idx: usize) -> Vec<Vec<usize>> {
+    if segments.is_empty() {
+        return vec![];
+    }
+
+    let n = segments.len();
+
+    // OCCT-aligned: canonicalize vertex indices so that different DS vertex
+    // indices at the same 3D position map to a single canonical vertex.
+    // OCCT BRep shares TopoDS_Vertex objects; rcad DS may assign different
+    // indices to the same position (seam pole vs IC endpoint at pole).
+    // Use tolerance-based matching (exact bit comparison misses FP differences).
+    let mut canon_vertices: Vec<DVec3> = Vec::new();
+    let mut vi_to_canon: Vec<usize> = vec![usize::MAX; ds.vertices.len()];
+    for seg in segments.iter() {
+        for &vi in &[seg.start_vertex, seg.end_vertex] {
+            if vi_to_canon[vi] != usize::MAX { continue; }
+            let pt = ds.vertices[vi].point;
+            let found = canon_vertices.iter().position(|c| c.distance_squared(pt) < TOLERANCE_ABS_SQ);
+            let canon = found.unwrap_or_else(|| { canon_vertices.push(pt); canon_vertices.len() - 1 });
+            vi_to_canon[vi] = canon;
+        }
+    }
+
+    // Build vertexsegments adjacency using CANONICAL vertex indices
+    let mut vert_to_segs: HashMap<usize, Vec<usize>> = HashMap::new();
+    for (si, seg) in segments.iter().enumerate() {
+        let sv = vi_to_canon.get(seg.start_vertex).copied().unwrap_or(seg.start_vertex);
+        let ev = vi_to_canon.get(seg.end_vertex).copied().unwrap_or(seg.end_vertex);
+        vert_to_segs.entry(sv).or_default().push(si);
+        vert_to_segs.entry(ev).or_default().push(si);
+    }
+
+    // MakeConnexityBlocks: BFS to find connected components
+    let mut visited_seg = vec![false; n];
+    let mut blocks: Vec<Vec<usize>> = Vec::new();
+
+    for si in 0..n {
+        if visited_seg[si] {
+            continue;
+        }
+        let mut block = Vec::new();
+        let mut queue = VecDeque::new();
+        queue.push_back(si);
+        visited_seg[si] = true;
+
+        while let Some(ci) = queue.pop_front() {
+            block.push(ci);
+            let seg = &segments[ci];
+            for &vi in &[seg.start_vertex, seg.end_vertex] {
+                if let Some(neighbors) = vert_to_segs.get(&vi) {
+                    for &ni in neighbors {
+                        if !visited_seg[ni] {
+                            visited_seg[ni] = true;
+                            queue.push_back(ni);
+                        }
+                    }
+                }
+            }
+        }
+        blocks.push(block);
+    }
+
+    // Process each block
+    let mut wires: Vec<Vec<usize>> = Vec::new();
+
+    for block in &blocks {
+        if block.len() < 2 {
+            continue;
+        }
+
+        // Check vertex degrees within this block
+        let mut block_vert_count: HashMap<usize, usize> = HashMap::new();
+        for &si in block {
+            let seg = &segments[si];
+            *block_vert_count.entry(seg.start_vertex).or_default() += 1;
+            *block_vert_count.entry(seg.end_vertex).or_default() += 1;
+        }
+        let is_regular = block_vert_count.values().all(|&d| d == 2);
+
+        if is_regular {
+            // Regular block: all degree 2, simple chain following
+            if let Some(wire) = build_regular_wire(block, segments, &vert_to_segs) {
+                wires.push(wire);
+            }
+        } else {
+            // Irregular block: SmartMap + angle-based Path walking
+            let block_wires = build_irregular_wires(block, segments, ds, face_idx);
+            wires.extend(block_wires);
+        }
+    }
+
+    wires
+}
+
+/// OCCT-aligned:  Regular block ( degree=2)  wire
+///    ,
+fn build_regular_wire(
+    block: &[usize],
+    segments: &[WireSegment],
+    vert_to_segs: &HashMap<usize, Vec<usize>>,
+) -> Option<Vec<usize>> {
+    let block_set: std::collections::HashSet<usize> = block.iter().copied().collect();
+    let mut visited = vec![false; segments.len()];
+    let mut wire: Vec<usize> = Vec::new();
+
+    let start_si = block[0];
+    let start_seg = &segments[start_si];
+    let start_vertex = start_seg.start_vertex;
+
+    let mut ci = start_si;
+    // We start at start_vertex. The first segment takes us to end_vertex.
+    let mut arrived_vertex = start_seg.end_vertex;
+
+    loop {
+        visited[ci] = true;
+        wire.push(ci);
+
+        // Check if we've returned to the starting vertex
+        if arrived_vertex == start_vertex && wire.len() >= 2 {
+            break;
+        }
+
+        // Find next unvisited segment at arrived_vertex in this block
+        let next = vert_to_segs.get(&arrived_vertex).and_then(|neighbors| {
+            neighbors.iter().find(|&&ni| !visited[ni] && block_set.contains(&ni))
+        }).copied();
+
+        match next {
+            Some(ni) => {
+                let seg = &segments[ni];
+                ci = ni;
+                arrived_vertex = if seg.start_vertex == arrived_vertex {
+                    seg.end_vertex
+                } else {
+                    seg.start_vertex
+                };
+            }
+            None => break,
+        }
+    }
+
+    if wire.len() >= 2 { Some(wire) } else { None }
+}
+
+/// OCCT-aligned: EdgeInfo  (BOPAlgo_WireSplitter.lxx L22-69)
+#[derive(Debug, Clone)]
+struct EdgeInfo {
+    seg_idx: usize,
+    passed: bool,
+    /// true = entering the vertex (vertex is end_vertex);
+    /// false = leaving the vertex (vertex is start_vertex)
+    in_flag: bool,
+    /// true = internal edge (intersection curve), not part of original boundary
+    is_inside: bool,
+    /// 2D direction angle [0, 2) at this vertex
+    angle: f64,
+}
+
+/// OCCT-aligned:  irregular block  SmartMap + Path
+///    (BOPAlgo_WireSplitter_1.cxx L359-618)
+fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, face_idx: usize) -> Vec<Vec<usize>> {
+    // Build SmartMap: vertex  Vec<EdgeInfo>
+    let mut smart_map: HashMap<usize, Vec<EdgeInfo>> = HashMap::new();
+
+    for &si in block {
+        let seg = &segments[si];
+        let is_inside = matches!(seg.source, WireEdgeSource::IntersectionCurve(_));
+
+        // At start_vertex: edge LEAVES the vertex (in_flag = false)
+        if let Some(angle) = seg.tangent_start {
+            smart_map.entry(seg.start_vertex).or_default().push(EdgeInfo {
+                seg_idx: si,
+                passed: false,
+                in_flag: false,
+                is_inside,
+                angle,
+            });
+        }
+
+        // At end_vertex: edge ENTERS the vertex (in_flag = true)
+        if let Some(angle) = seg.tangent_end {
+            smart_map.entry(seg.end_vertex).or_default().push(EdgeInfo {
+                seg_idx: si,
+                passed: false,
+                in_flag: true,
+                is_inside,
+                angle,
+            });
+        }
+    }
+
+    // OCCT-aligned: RefineAngles (BOPAlgo_WireSplitter_1.cxx L904-1028)
+    //    "",
+    refine_angles(&mut smart_map, segments, ds, face_idx);
+
+    // OCCT-aligned: Path walk loop — walk until no edges remain
+    let mut wires: Vec<Vec<usize>> = Vec::new();
+    for _outer in 0..block.len().max(1) {
+        // Find first unpassed segment in block
+        let start_si = match block.iter().find(|&&si| !is_seg_passed(&smart_map, si)) {
+            Some(&si) => si,
+            None => break,
+        };
+        // Walk a path, extracting closed wires along the way
+        walk_path_extract_wires(start_si, segments, &mut smart_map, &mut wires);
+    }
+    wires
+}
+
+/// Check if a segment has been marked passed at a specific vertex with a specific in_flag.
+fn is_seg_passed(smart_map: &HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize) -> bool {
+    for infos in smart_map.values() {
+        if infos.iter().any(|ei| ei.seg_idx == seg_idx && ei.passed) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Mark only the specific EdgeInfo for a segment at a vertex+in_flag as passed.
+/// OCCT-aligned: passed  EdgeInfo ,
+///    ,
+fn mark_edge_passed(smart_map: &mut HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize, vertex: usize, in_flag: bool) {
+    if let Some(infos) = smart_map.get_mut(&vertex) {
+        for info in infos.iter_mut() {
+            if info.seg_idx == seg_idx && info.in_flag == in_flag {
+                info.passed = true;
+                return;
+            }
+        }
+    }
+}
+
+/// Mark both orientations of a segment as passed (used for initial cleanup).
+/// Not used during Path walking  use mark_edge_passed instead.
+#[allow(dead_code)]
+fn mark_seg_passed(smart_map: &mut HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize) {
+    for infos in smart_map.values_mut() {
+        for info in infos.iter_mut() {
+            if info.seg_idx == seg_idx {
+                info.passed = true;
+            }
+        }
+    }
+}
+
+/// Find the EdgeInfo angle for a segment at a vertex with the given in_flag.
+fn find_angle_at(smart_map: &HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize, vertex: usize, in_flag: bool) -> Option<f64> {
+    smart_map.get(&vertex)?.iter()
+        .find(|ei| ei.seg_idx == seg_idx && ei.in_flag == in_flag)
+        .map(|ei| ei.angle)
+}
+
+/// Select the best outgoing edge at a vertex using ClockWiseAngle minimum selection.
+/// (OCCT L622-660)
+fn select_best_outgoing<'a>(
+    candidates: &[&'a EdgeInfo],
+    angle_in: f64,
+) -> Option<&'a EdgeInfo> {
+    if candidates.is_empty() {
+        return None;
+    }
+    // Special rule (OCCT): when incoming is boundary and there is exactly 1
+    // internal outgoing edge, prefer it over angle-based selection.
+    if candidates.len() == 1 {
+        return Some(candidates[0]);
+    }
+    candidates.iter()
+        .min_by(|a, b| {
+            clock_wise_angle(angle_in, a.angle)
+                .partial_cmp(&clock_wise_angle(angle_in, b.angle))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .copied()
+}
+
+/// OCCT-aligned: RefineAngles (BOPAlgo_WireSplitter_1.cxx L904-1028)
+///
+/// Refine 2 boundary edges (1 in, 1 out):
+///   1.  boundary  delta = ClockWiseAngle(a_in_bnd, a_out_bnd)
+///   2. ,:
+///      -  RefineAngle2D:  p-curve  ( )
+///      -  2 :  boundary
+fn refine_angles(
+    smart_map: &mut HashMap<usize, Vec<EdgeInfo>>,
+    segments: &[WireSegment],
+    ds: &DS,
+    face_idx: usize,
+) {
+    let face_surface = &ds.faces[face_idx].surface;
+    let vertices: Vec<usize> = smart_map.keys().copied().collect();
+    for &v in &vertices {
+        let Some(infos) = smart_map.get(&v).cloned() else { continue; };
+
+        let bnd_in = infos.iter().find(|ei| !ei.is_inside && ei.in_flag);
+        let bnd_out = infos.iter().find(|ei| !ei.is_inside && !ei.in_flag);
+        let internal_out: Vec<&EdgeInfo> = infos.iter().filter(|ei| ei.is_inside && !ei.in_flag).collect();
+
+        let (Some(a_in_bnd), Some(a_out_bnd)) = (bnd_in, bnd_out) else { continue; };
+        if internal_out.is_empty() { continue; }
+
+        let a_in = a_in_bnd.angle;
+        let a_out = a_out_bnd.angle;
+        let delta_bnd = clock_wise_angle(a_in, a_out);
+
+        // OCCT-aligned: refine internal edges whose angle falls OUTSIDE the
+        // boundary range (a_in→a_out).  Edges already INSIDE are correct
+        // and must NOT be adjusted (BOPAlgo_WireSplitter_1.cxx L985-988).
+        let to_refine: Vec<&EdgeInfo> = internal_out.iter()
+            .filter(|ei| clock_wise_angle(a_in, ei.angle) >= delta_bnd)
+            .copied().collect();
+        if to_refine.is_empty() { continue; }
+
+        let i_cnt_int = internal_out.len() + infos.iter().filter(|ei| ei.is_inside && ei.in_flag).count();
+        let mut refined: Vec<(usize, f64)> = Vec::new();
+
+        for ei in &to_refine {
+            let seg = &segments[ei.seg_idx];
+            let corrected = refine_angle_2d(v, seg, segments, ds, face_surface, a_in, a_out, delta_bnd, ei.angle);
+            if let Some(new_angle) = corrected {
+                refined.push((ei.seg_idx, new_angle));
+            } else if i_cnt_int == 2 {
+                // OCCT L997: RefineAngle2D failed + exactly 2 internal edges
+                let push_angle = if ei.angle <= a_out { a_out + 1e-6 } else { a_in - 1e-6 };
+                refined.push((ei.seg_idx, push_angle));
+            }
+        }
+
+        if let Some(infos) = smart_map.get_mut(&v) {
+            for (seg_idx, new_angle) in &refined {
+                for ei in infos.iter_mut() {
+                    if ei.seg_idx == *seg_idx && !ei.in_flag && ei.is_inside { ei.angle = *new_angle; }
+                }
+                for ei in infos.iter_mut() {
+                    if ei.seg_idx == *seg_idx && ei.in_flag && ei.is_inside { ei.angle = (*new_angle + std::f64::consts::PI) % std::f64::consts::TAU; }
+                }
+            }
+        }
+    }
+}
+
+/// OCCT-aligned: Path  (BOPAlgo_WireSplitter_1.cxx L359-618).
+///    walk path with ClockWiseAngle steering
+///
+///    per-EdgeInfo passed per vertex,
+
+/// OCCT-aligned: RefineAngle2D (BOPAlgo_WireSplitter_1.cxx L1032-1124)
+fn refine_angle_2d(
+    vertex_idx: usize,
+    seg: &WireSegment,
+    _segments: &[WireSegment],
+    ds: &DS,
+    face_surface: &Surface3,
+    a_in: f64,
+    a_out: f64,
+    a_delta: f64,
+    _current_angle: f64,
+) -> Option<f64> {
+    let v_pt = ds.vertices[vertex_idx].point;
+    let v_uv = match face_surface {
+        Surface3::Sphere(s) => s.world_to_uv(v_pt),
+        _ => return None,
+    };
+    let pcurve = match &seg.source {
+        WireEdgeSource::IntersectionCurve(ci) => {
+            ds.intersection_curves[*ci].pcurve_on_a.clone()
+        }
+        WireEdgeSource::DsEdge(_) | WireEdgeSource::SeamEdge => None,
+    };
+    let pc = pcurve.as_ref()?;
+    const N_SAMP: usize = 64;
+    let mut best_angle: Option<f64> = None;
+    let mut best_dist = -1.0_f64;
+    for &dir_angle in &[a_out, a_in + std::f64::consts::PI] {
+        let ray_dir = DVec2::new(dir_angle.cos(), dir_angle.sin());
+        if ray_dir.length_squared() < 1e-30 { continue; }
+        for i in 0..=N_SAMP {
+            let t = i as f64 / N_SAMP as f64;
+            let p_uv = pc.point_at(t);
+            let delta = p_uv - v_uv;
+            if delta.length_squared() < TOLERANCE_ABS_SQ { continue; }
+            let along = delta.dot(ray_dir);
+            if along <= 0.0 { continue; }
+            if along > best_dist {
+                let cross = (delta - ray_dir * along).length();
+                if cross / along < 0.5 {
+                    best_dist = along;
+                    let mut corrected = delta.y.atan2(delta.x);
+                    if corrected < 0.0 { corrected += std::f64::consts::TAU; }
+                    if clock_wise_angle(a_in, corrected) >= a_delta {
+                        best_angle = Some(corrected);
+                    }
+                }
+            }
+        }
+        if best_angle.is_some() { return best_angle; }
+    }
+    None
+}
+/// OCCT-aligned: Walk a path extracting closed wires (BOPAlgo_WireSplitter_1.cxx L359-618).
+///     Accumulates edge/vertex sequences.  When a vertex is revisited,
+///     extracts the sub-sequence as a closed wire, truncates sequences
+///     to before the loop, and continues walking from the remainder.
+fn walk_path_extract_wires(
+    start_si: usize,
+    segments: &[WireSegment],
+    smart_map: &mut HashMap<usize, Vec<EdgeInfo>>,
+    wires: &mut Vec<Vec<usize>>,
+) {
+    let start_seg = &segments[start_si];
+    // If this segment has no EdgeInfo, it cannot be walked.
+    // Mark a dummy EdgeInfo as passed so the outer loop skips it.
+    let has_info = smart_map.values().any(|v| v.iter().any(|ei| ei.seg_idx == start_si));
+    if !has_info {
+        // Mark the segment as passed at both its vertices (add dummy entries if needed)
+        smart_map.entry(start_seg.start_vertex).or_default().push(EdgeInfo {
+            seg_idx: start_si, passed: true, in_flag: false,
+            is_inside: false, angle: 0.0,
+        });
+        smart_map.entry(start_seg.end_vertex).or_default().push(EdgeInfo {
+            seg_idx: start_si, passed: true, in_flag: true,
+            is_inside: false, angle: 0.0,
+        });
+        return;
+    }
+    let mut edge_seq: Vec<usize> = Vec::new();
+    let mut vert_seq: Vec<usize> = Vec::new();
+
+    let mut ci = start_si;
+    let mut arrived_vertex = start_seg.end_vertex;
+    let mut current_vertex = start_seg.start_vertex;
+    let max_iter = segments.len() * 4 + 100; // safety limit
+
+    for _iter in 0..max_iter {
+        // Mark edge as passed (OCCT, line 406)
+        mark_edge_passed(smart_map, ci, arrived_vertex, true);
+        let seg = &segments[ci];
+        mark_edge_passed(smart_map, ci, seg.start_vertex, false);
+
+        edge_seq.push(ci);
+        vert_seq.push(current_vertex);
+
+        // Detect closed loop: if arrived_vertex matches a previously visited
+        // vertex in the accumulated sequence, extract a closed wire from the
+        // loop start to the current position (OCCT lines 425-524).
+        if let Some(prev_idx) = vert_seq.iter().position(|&v| v == arrived_vertex) {
+            let wire: Vec<usize> = edge_seq[prev_idx..].to_vec();
+            // OCCT-aligned: skip 2-edge back-and-forth wires (seam FWD+REV
+            // at the same two vertices).  Only extract wires >= 3 segments
+            // (BOPAlgo_WireSplitter_1.cxx L474-487, iPriz check).
+            let is_backforth = wire.len() == 2 && {
+                let a = &segments[wire[0]];
+                let b = &segments[wire[1]];
+                (a.start_vertex == b.end_vertex && a.end_vertex == b.start_vertex)
+                    || (a.start_vertex == b.start_vertex && a.end_vertex == b.end_vertex)
+            };
+            if wire.len() >= 3 || (wire.len() == 2 && !is_backforth) {
+                wires.push(wire);
+            }
+            // Truncate accumulated sequences to before the loop (OCCT L500-517)
+            edge_seq.truncate(prev_idx);
+            vert_seq.truncate(prev_idx);
+
+            // OCCT-aligned: when sequences are empty after truncation (loop
+            // at index 0), continue the main loop.  The main loop re-processes
+            // `ci` (the loop-closing segment), which is harmless: it gets
+            // re-pushed to edge_seq and continues normally (the edge is already
+            // marked passed, so outgoing selection finds remaining IC edges).
+            if edge_seq.is_empty() {
+                current_vertex = segments[ci].start_vertex;
+                continue;
+            }
+            // Continue from the truncated end
+            let last_ci = *edge_seq.last().unwrap();
+            let last_arrived = segments[last_ci].end_vertex;
+            let angle_in = match find_angle_at(smart_map, last_ci, last_arrived, true) {
+                Some(a) => a,
+                None => return,
+            };
+            let candidates: Vec<&EdgeInfo> = if let Some(infos) = smart_map.get(&last_arrived) {
+                infos.iter().filter(|ei| !ei.passed && !ei.in_flag).collect()
+            } else { return; };
+            let best = match select_best_outgoing(&candidates, angle_in) {
+                Some(e) => e,
+                None => return,
+            };
+            ci = best.seg_idx;
+            current_vertex = last_arrived;
+            arrived_vertex = segments[ci].end_vertex;
+            continue;
+        }
+
+        // Select best outgoing edge by ClockWiseAngle (OCCT L530-616)
+        let angle_in = match find_angle_at(smart_map, ci, arrived_vertex, true) {
+            Some(a) => a,
+            None => return,
+        };
+
+        let candidates: Vec<&EdgeInfo> = if let Some(infos) = smart_map.get(&arrived_vertex) {
+            infos.iter().filter(|ei| !ei.passed && !ei.in_flag).collect()
+        } else {
+            return;
+        };
+
+        let best = match select_best_outgoing(&candidates, angle_in) {
+            Some(e) => e,
+            None => return,
+        };
+
+        current_vertex = arrived_vertex;
+        ci = best.seg_idx;
+        arrived_vertex = segments[ci].end_vertex;
+    }
+}
+
+/// OCCT-aligned:  wire  3D boundary polygon
+///     DS  3D
+fn wire_boundary_3d(wire: &[usize], segments: &[WireSegment], ds: &DS) -> Vec<DVec3> {
+    let mut pts: Vec<DVec3> = Vec::new();
+    for &si in wire {
+        let seg = &segments[si];
+        let pt = if seg.forward {
+            ds.vertices[seg.start_vertex].point
+        } else {
+            ds.vertices[seg.end_vertex].point
+        };
+        pts.push(pt);
+    }
+    //  (wire )
+    if pts.len() >= 2 {
+        let d2 = pts[0].distance_squared(*pts.last().unwrap());
+        if d2 < TOLERANCE_ABS_SQ {
+            pts.pop();
+        }
+    }
+
+    if pts.len() >= 2 {
+        let mut deduped: Vec<DVec3> = vec![pts[0]];
+        for i in 1..pts.len() {
+            let d2 = deduped.last().unwrap().distance_squared(pts[i]);
+            if d2 >= TOLERANCE_ABS_SQ {
+                deduped.push(pts[i]);
+            }
+        }
+        pts = deduped;
+    }
+    pts
+}
+
+/// DEPRECATED (SubFace ): WireFace  SubFace  WireFace
+fn wire_faces_to_sub_faces(
+    wfs: &[WireFace],
+    segments: &[WireSegment],
+    ds: &DS,
+    face_idx: usize,
+) -> Vec<SubFace> {
+    let face = &ds.faces[face_idx];
+    let surface = face.surface.clone();
+    let normal = face.normal;
+
+    wfs.iter().map(|wf| {
+        //  outer_wire  WireSegment  3D boundary
+        let boundary: Vec<DVec3> = wf.outer_wire.iter().map(|&si| {
+            let seg = &segments[si];
+            ds.vertices[if seg.forward { seg.start_vertex } else { seg.end_vertex }].point
+        }).collect();
+
+        // inner_wires:  hole wire  3D
+        let inner_wires: Vec<Vec<DVec3>> = wf.inner_wires.iter().map(|iw| {
+            iw.iter().map(|&si| {
+                let seg = &segments[si];
+                ds.vertices[if seg.forward { seg.start_vertex } else { seg.end_vertex }].point
+            }).collect()
+        }).collect();
+
+        SubFace {
+            boundary,
+            surface: surface.clone(),
+            normal,
+            uv_centroid: None,
+            sample_override: None,
+            uv_domain: None,
+            inner_wires,
+            outer_circle_edges: vec![],
+            seam_edge: None,
+            inner_wire_circle: None,
+        }
+    }).collect()
+}
+
+/// OCCT-aligned: Convert wires to WireFace (PerformAreas L387-606)
+///
+/// OCCT PerformAreas:
+///   1.  wire  growth(outer) / hole(inner) (L439-445)
+///   2. growth wire forms face; hole wire forms face (L575-605)
+///
+/// rcad adapts: classify outer/hole, group outer + holes as WireFace
+///  outer wire  WireFace
+/// OCCT-aligned:  wires  outer/hole/independent (PerformAreas)
+///     seam  wire, seam merge
+fn perform_areas(
+    wires: &[Vec<usize>],
+    segments: &[WireSegment],
+    ds: &DS,
+    face_idx: usize,
+) -> Vec<WireFace> {
+    if wires.is_empty() {
+        return vec![];
+    }
+
+    struct WireData { wire_idx: usize, boundary: Vec<DVec3>, area: f64 }
+    let mut wds: Vec<WireData> = wires.iter().enumerate().filter_map(|(wi, w)| {
+        let mut b = wire_boundary_3d(w, segments, ds);
+        if b.len() < 3 {
+            let mut verts: Vec<DVec3> = w.iter().flat_map(|&si| {
+                let seg = &segments[si];
+                vec![ds.vertices[seg.start_vertex].point, ds.vertices[seg.end_vertex].point]
+            }).collect();
+            verts.sort_by(|a,b| { let cx = a.x.total_cmp(&b.x); if cx != std::cmp::Ordering::Equal { return cx; } let cy = a.y.total_cmp(&b.y); if cy != std::cmp::Ordering::Equal { return cy; } a.z.total_cmp(&b.z) });
+            verts.dedup();
+            if verts.len() >= 3 { b = verts; } else { return None; }
+        }
+        let a = projected_area_xy(&b);
+        Some(WireData { wire_idx: wi, boundary: b, area: a })
+    }).collect();
+
+    if wds.is_empty() {
+        return vec![];
+    }
+
+    // , outer
+    wds.sort_by(|a, b| b.area.partial_cmp(&a.area).unwrap());
+    let outer_wire_idx = wds[0].wire_idx;
+    let outer_boundary = wds[0].boundary.clone();
+    let rest = &wds[1..];
+
+    //  valid wires
+    let mut hole_wire_idxs: Vec<usize> = Vec::new();
+    let mut indep_wire_idxs: Vec<usize> = Vec::new();
+    for wd in rest {
+        let mid = wd.boundary.iter().sum::<DVec3>() / wd.boundary.len() as f64;
+        if point_in_polygon_xy(mid, &outer_boundary) {
+            hole_wire_idxs.push(wd.wire_idx);
+        } else {
+            indep_wire_idxs.push(wd.wire_idx);
+        }
+    }
+
+    let mut result = vec![WireFace {
+        outer_wire: wires[outer_wire_idx].clone(),
+        inner_wires: hole_wire_idxs.iter().map(|&wi| wires[wi].clone()).collect(),
+    }];
+    for &wi in &indep_wire_idxs {
+        result.push(WireFace {
+            outer_wire: wires[wi].clone(),
+            inner_wires: vec![],
+        });
+    }
+    result
+}
+
+///  3D  XY  (Shoelace)
+fn projected_area_xy(b: &[DVec3]) -> f64 {
+    (0..b.len()).map(|i| {
+        let j = (i + 1) % b.len();
+        b[i].x * b[j].y - b[j].x * b[i].y
+    }).sum::<f64>().abs() * 0.5
+}
+
+///  XY
+fn point_in_polygon_xy(pt: DVec3, poly: &[DVec3]) -> bool {
+    let mut inside = false;
+    let n = poly.len();
+    for i in 0..n {
+        let j = (n + i - 1) % n;
+        let (vi, vj) = (poly[i], poly[j]);
+        if ((vi.y > pt.y) != (vj.y > pt.y)) &&
+            pt.x < (vj.x - vi.x) * (pt.y - vi.y) / (vj.y - vi.y) + vi.x
+        { inside = !inside; }
+    }
+    inside
+}
+
+impl<'a> BooleanBuilder<'a> {
+    /// OCCT-aligned: split_face using edge-to-wire pipeline (BOPAlgo_BuilderFace).
+    pub(crate) fn split_face_occt_wire_pipeline(
+        &self,
+        face_idx: usize,
+    ) -> Option<(Vec<WireSegment>, Vec<WireFace>)> {
+        let ds = self.ds;
+        let face = &ds.faces[face_idx];
+        if !matches!(face.surface, Surface3::Sphere(_)) {
+            return None;
+        }
+        if face.face_info.curves_in.is_empty() {
+            return None;
+        }
+        let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
+        let segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
+        if segments.is_empty() {
+            return None;
+        }
+        let wires = build_closed_wires(&segments, ds, face_idx);
+        if wires.is_empty() {
+            return None;
+        }
+        let wfs = perform_areas(&wires, &segments, ds, face_idx);
+        if wfs.is_empty() {
+            return None;
+        }
+        for (wi, wf) in wfs.iter().enumerate() {
+            if wf.outer_wire.len() < 3 {
+                return None;
+            }
+        }
+        Some((segments, wfs))
+    }
+}
+
 // =============================================================================
 // Phase 2: OCCT 1:1 PerformLoops Alignment (BOPAlgo_BuilderFace.cxx L239-606)
 // =============================================================================
 
-/// Edge-like segment for wire building 鈥?can be a DS edge, an intersection curve,
+/// Edge-like segment for wire building鈥?can be a DS edge, an intersection curve,
 impl<'a> BooleanBuilder<'a> {
     pub fn new(ds: &'a DS, op: BooleanOpType) -> Self {
         Self {
@@ -2616,11 +3864,32 @@ impl<'a> BooleanBuilder<'a> {
         // Process A faces against B solid
         let mut a_on_planes: Vec<(DVec3, DVec3)> = Vec::new(); // (normal, origin) from emitted A-face planes
         for &fi in &a_faces {
-                                    // ✅ OCCT aligned: sphere face direct emission (bypasses SubFace and classification)
+            // OCCT-aligned: wire pipeline for sphere faces (replaces emit_sphere_faces_direct)
             if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) && !self.ds.faces[fi].face_info.curves_in.is_empty() {
-                let src = self.ds.faces[fi].source_face_idx;
-                self.emit_sphere_faces_direct(fi, &mut result, src, false);
-                continue;
+                if let Some((segments, wfs)) = self.split_face_occt_wire_pipeline(fi) {
+                    if !wfs.is_empty() {
+                        let wire_subs = wire_faces_to_sub_faces(&wfs, &segments, self.ds, fi);
+                        for (wi, sub) in wire_subs.iter().enumerate() {
+                            let class = classify_against_solid_for_boolean(
+                                self.op, SourceSide::A,
+                                &FaceSampleData::from_sub_face(sub), &b_faces, self.ds);
+                            let keep = match self.op {
+                                BooleanOpType::Intersection => class == Classification::In,
+                                BooleanOpType::Difference => class != Classification::In,
+                                BooleanOpType::Union => true,
+                            };
+                            if keep {
+                                let src = self.ds.faces[fi].source_face_idx;
+                                result.emit_wire_face(fi, &wfs[wi], &segments, self.ds, false, FaceOrigin::FromA(src));
+                                if let Surface3::Plane(p) = &sub.surface {
+                                    a_on_planes.push((p.normal, p.origin));
+                                }
+                            }
+                        }
+                        continue;
+                    }
+                }
+                // Fall through to split_face if pipeline fails
             }
             let sub_faces = self.split_face(fi);
             let face_split = sub_faces.len() > 1;
@@ -2734,10 +4003,29 @@ impl<'a> BooleanBuilder<'a> {
 
         // Process B faces against A solid
         for &fi in &b_faces {
+            // OCCT-aligned: wire pipeline for sphere faces (replaces emit_sphere_faces_direct)
             if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) && !self.ds.faces[fi].face_info.curves_in.is_empty() {
-                let src = self.ds.faces[fi].source_face_idx;
-                self.emit_sphere_faces_direct(fi, &mut result, src, true);
-                continue;
+                if let Some((segments, wfs)) = self.split_face_occt_wire_pipeline(fi) {
+                    if !wfs.is_empty() {
+                        let wire_subs = wire_faces_to_sub_faces(&wfs, &segments, self.ds, fi);
+                        for (wi, sub) in wire_subs.iter().enumerate() {
+                            let class = classify_against_solid_for_boolean(
+                                self.op, SourceSide::B,
+                                &FaceSampleData::from_sub_face(sub), &a_faces, self.ds);
+                            let keep = match self.op {
+                                BooleanOpType::Intersection => class == Classification::In,
+                                BooleanOpType::Difference => class != Classification::In,
+                                BooleanOpType::Union => true,
+                            };
+                            if keep {
+                                let src = self.ds.faces[fi].source_face_idx;
+                                result.emit_wire_face(fi, &wfs[wi], &segments, self.ds, true, FaceOrigin::FromB(src));
+                            }
+                        }
+                        continue;
+                    }
+                }
+                // Fall through to split_face if pipeline fails
             }
             let sub_faces = self.split_face(fi);
             let face_split = sub_faces.len() > 1;
@@ -5100,196 +6388,6 @@ impl<'a> BooleanBuilder<'a> {
         }
         subs
     }
-
-
-    /// ✅ OCCT对齐: 从大圆交点直接发射球面 (替代 SubFace 路径)。
-    ///    对应 OCCT IntTools_FaceFace (精确圆交线) + BRep_Builder::MakeFace。
-    ///    不经过 SubFace,不经过 classification,直接写入 ResultBuilder。
-    fn emit_sphere_faces_direct(
-        &self,
-        face_idx: usize,
-        result: &mut ResultBuilder,
-        src: usize,
-        is_b_side: bool,
-    ) {
-        let face = &self.ds.faces[face_idx];
-        let sphere = match &face.surface { Surface3::Sphere(s) => *s, _ => return };
-        let mut circles: Vec<Circle3> = Vec::new();
-        let mut inside_normals: Vec<DVec3> = Vec::new();
-        for &ci in &face.face_info.curves_in {
-            if let Curve3::Circle(ref c) = self.ds.intersection_curves[ci].curve {
-                circles.push(*c);
-                let inward = match self.op {
-                    BooleanOpType::Intersection | BooleanOpType::Difference => -c.normal.normalize(),
-                    BooleanOpType::Union => c.normal.normalize(),
-                };
-                inside_normals.push(inward);
-            }
-        }
-        if circles.len() < 2 { return; }
-
-        let sc = sphere.center;
-        let sr = sphere.radius;
-        let mut pts_3d: Vec<DVec3> = Vec::new();
-        // OCCT IntAna_IntQuadQuad: 圆圈交点 → 球面点
-        for i in 0..circles.len() {
-            for j in (i + 1)..circles.len() {
-                let ni = inside_normals[i]; let nj = inside_normals[j];
-                let line_dir = ni.cross(nj);
-                if line_dir.length_squared() < TOLERANCE_ABS_SQ { continue; }
-                let line_dir = line_dir.normalize();
-                let nidotnj = ni.dot(nj);
-                let denom = 1.0 - nidotnj * nidotnj;
-                if denom.abs() < TOLERANCE_ABS { continue; }
-                let d1 = ni.dot(circles[i].center);
-                let d2 = nj.dot(circles[j].center);
-                let coeff_i = (d1 - d2 * nidotnj) / denom;
-                let coeff_j = (d2 - d1 * nidotnj) / denom;
-                let p_any = coeff_i * ni + coeff_j * nj;
-                let delta = p_any - sc;
-                let bb = 2.0 * delta.dot(line_dir);
-                let cc = delta.dot(delta) - sr * sr;
-                let disc = bb * bb - 4.0 * cc;
-                if disc < 0.0 { continue; }
-                let sqrt_disc = disc.sqrt();
-                pts_3d.push(p_any + (-bb + sqrt_disc) / 2.0 * line_dir);
-                pts_3d.push(p_any + (-bb - sqrt_disc) / 2.0 * line_dir);
-            }
-        }
-
-        // 分类 inside/outside (相对所有 circle)
-        let mut inside_pts: Vec<DVec3> = Vec::new();
-        let mut outside_pts: Vec<DVec3> = Vec::new();
-        for &p in &pts_3d {
-            let mut inside_all = true;
-            for (k, c) in circles.iter().enumerate() {
-                if (p - c.center).dot(inside_normals[k]) < -TOLERANCE_ABS { inside_all = false; break; }
-            }
-            if inside_all {
-                if inside_pts.iter().any(|e| e.distance_squared(p) < TOLERANCE_ABS_SQ) { continue; }
-                inside_pts.push(p);
-            } else {
-                if outside_pts.iter().any(|e| e.distance_squared(p) < TOLERANCE_ABS_SQ) { continue; }
-                outside_pts.push(p);
-            }
-        }
-
-        // 确定保留哪些点集
-        // Union: inside face (spherical triangle) is internal → discard.
-        // Difference: inside face is the removed portion → discard.
-        // Intersection: inside face IS the result → keep.
-        let pick_inside = self.op == BooleanOpType::Intersection;
-        let pick_outside = !matches!(self.op, BooleanOpType::Intersection);
-        // 外子面需要共享顶点: 用 inside_pts + 南极点
-        let outside_needs_inside = pick_outside && inside_pts.len() >= 3;
-
-        let origin = if is_b_side { FaceOrigin::FromB(src) } else { FaceOrigin::FromA(src) };
-
-        // 发射 inside 子面
-        if pick_inside && inside_pts.len() >= 3 {
-            let no_extra: &[(usize, Curve3)] = &[];
-            self.emit_one_sphere_face(&mut inside_pts, &sphere, &circles, &inside_normals, result, origin, no_extra);
-        }
-        // 发射 outside 子面 (使用 inside_pts 共享顶点 + 南极点)
-        if pick_outside && outside_pts.len() >= 3 {
-            let mut pts = if outside_needs_inside {
-                let mut v: Vec<DVec3> = inside_pts.iter().copied().collect();
-                let sp = DVec3::new(0.0, -1.0, 0.0);
-                if !v.iter().any(|p| p.distance_squared(sp) < TOLERANCE_ABS_SQ) { v.push(sp); }
-                v
-            } else {
-                outside_pts.clone()
-            };
-            // Compute extra OCCT edge for outside face (seam sub-segment)
-            // Add extra seam edge for Difference (bcut A1 needs E=9).
-            // Disabled for Union (bfuse A1) — causes V+1 from dedup interaction.
-            let extra_occt = if self.op == BooleanOpType::Difference {
-                let n = pts.len();
-                let mut extra: Vec<(usize, Curve3)> = Vec::new();
-                for i in 0..n {
-                    let va = pts[i]; let vb = pts[(i + 1) % n];
-                    if va.z.abs() < 1e-6 && vb.z.abs() < 1e-6 {
-                        let best_k = (0..circles.len()).min_by(|&a, &b| {
-                            let da = (va - circles[a].center).dot(inside_normals[a]).abs()
-                                   + (vb - circles[a].center).dot(inside_normals[a]).abs();
-                            let db = (va - circles[b].center).dot(inside_normals[b]).abs()
-                                   + (vb - circles[b].center).dot(inside_normals[b]).abs();
-                            da.partial_cmp(&db).unwrap()
-                        }).unwrap_or(0);
-                        extra.push((i, Curve3::Circle(circles[best_k])));
-                        break;
-                    }
-                }
-                extra
-            } else {
-                vec![]
-            };
-            self.emit_one_sphere_face(&mut pts, &sphere, &circles, &inside_normals, result, origin, &extra_occt);
-        }
-    }
-
-    /// ✅ OCCT对齐: 发射单个球面子面 (SubFace-free)。
-    ///    计算边界顶点、大圆弧边、UV domain后直接调用 emit_face_data。
-    fn emit_one_sphere_face(
-        &self,
-        pts: &mut Vec<DVec3>,
-        sphere: &SphericalSurface,
-        circles: &[Circle3],
-        inside_normals: &[DVec3],
-        result: &mut ResultBuilder,
-        origin: FaceOrigin,
-        extra_occt: &[(usize, Curve3)],
-    ) {
-        let sc = sphere.center;
-        let sr = sphere.radius;
-        for p in pts.iter_mut() {
-            let dir = *p - sc;
-            let dist = dir.length();
-            if dist > 0.0 { *p = sc + (sr / dist) * dir; }
-        }
-        // 按方位角排序 (绕球心方向的点顺序)
-        let centroid = pts.iter().copied().sum::<DVec3>() / pts.len() as f64;
-        let up_dir = (centroid - sc).normalize();
-        let ref_dir = any_perpendicular(up_dir);
-        let cross_dir = up_dir.cross(ref_dir);
-        pts.sort_by(|a, b| {
-            let a_az = f64::atan2((*a - sc).dot(cross_dir), (*a - sc).dot(ref_dir));
-            let b_az = f64::atan2((*b - sc).dot(cross_dir), (*b - sc).dot(ref_dir));
-            a_az.partial_cmp(&b_az).unwrap_or(std::cmp::Ordering::Equal)
-        });
-
-        // 每条边匹配最近的 circle
-        let n = pts.len();
-        let circle_edges: Vec<(usize, Curve3)> = (0..n).map(|i| {
-            let va = pts[i]; let vb = pts[(i + 1) % n];
-            let best_k = (0..circles.len()).min_by(|&a, &b| {
-                let da = (va - circles[a].center).dot(inside_normals[a]).abs()
-                       + (vb - circles[a].center).dot(inside_normals[a]).abs();
-                let db = (va - circles[b].center).dot(inside_normals[b]).abs()
-                       + (vb - circles[b].center).dot(inside_normals[b]).abs();
-                da.partial_cmp(&db).unwrap()
-            }).unwrap_or(0);
-            (i, Curve3::Circle(circles[best_k]))
-        }).collect();
-
-        // UV domain
-        let uvs: Vec<DVec2> = pts.iter().map(|p| sphere.world_to_uv(*p)).collect();
-        let u_min = uvs.iter().map(|uv| uv.x).fold(f64::INFINITY, f64::min);
-        let u_max = uvs.iter().map(|uv| uv.x).fold(f64::NEG_INFINITY, f64::max);
-        let v_min = uvs.iter().map(|uv| uv.y).fold(f64::INFINITY, f64::min);
-        let v_max = uvs.iter().map(|uv| uv.y).fold(f64::NEG_INFINITY, f64::max);
-        let uv_domain = if (u_max - u_min).abs() > TOLERANCE_FLOAT_LOOSE && (v_max - v_min).abs() > TOLERANCE_FLOAT_LOOSE {
-            Some([u_min, u_max, v_min, v_max])
-        } else { None };
-
-        // sample_point: 球面点
-        let sample_pt = centroid; // centroid is inside the face
-
-        result.emit_face_data(pts, &circle_edges, &Surface3::Sphere(*sphere), (centroid - sc).normalize(), sample_pt, uv_domain, origin, extra_occt);
-    }
-
-    /// ❌ 未对齐/自创方案: 从大圆交点构建 SubFace (rcad自创,等OCCT边级路径)。
-    ///    此函数仅用于旧代码测试,新代码走 emit_sphere_faces_direct。
     fn split_curved_face_parametric(&self, face_idx: usize) -> Vec<SubFace> {
         let face = &self.ds.faces[face_idx];
         eprintln!("[SCFP] face_idx={} surface={:?} curves_in={} uv_boundary={}",
