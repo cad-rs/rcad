@@ -4781,7 +4781,16 @@ impl<'a> BooleanBuilder<'a> {
             return self.tessellate_sphere_face(face_idx);
         }
 
-        // ❌ DELETED: build_sphere_sub_faces_by_circles sphere route (non-OCCT SubFace path).
+        // ✅ OCCT对齐: 球面有 IC 圆曲线时,用 build_sphere_sub_faces_by_circles 直接
+        //    从大圆交点构建 SubFace,绕过 UV 多边形分裂(不能正确分离球面卦限)。
+        if matches!(&face.surface, Surface3::Sphere(_)) && !fi.curves_in.is_empty() {
+            let subs = self.build_sphere_sub_faces_by_circles(face_idx);
+            if !subs.is_empty() {
+                return subs;
+            }
+        }
+
+        // ❌ 已删除: build_sphere_sub_faces_by_circles sphere route (旧代码)。
         //    OCCT uses edge-based BuilderFace with section edges, not SubFace polygon splitting.
         // overlapping sub-face UV polygons when intersection curves are high-order
         // (e.g. the cone–cylinder quartic for skew axes in ZK8/ZL1), causing SA
@@ -4798,8 +4807,7 @@ impl<'a> BooleanBuilder<'a> {
         // 727.5 to 922.7.
         if matches!(&face.surface, Surface3::Cone(_)) {
             if let Some(uv_bnd) = &face.uv_boundary {
-        eprintln!("SCFP_CHECK: about to match face.surface");
-                if uv_bnd.len() >= 3 {
+                        if uv_bnd.len() >= 3 {
                     let bnd_v_min = uv_bnd.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
                     let bnd_v_max = uv_bnd.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
                     let bnd_v_span = bnd_v_max - bnd_v_min;
@@ -4839,17 +4847,6 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             return self.tessellate_cone_face_2d(face_idx, 32, 32);
-        }
-
-        // ✅ OCCT对齐: 球面有 IC 圆曲线时,用 build_sphere_sub_faces_by_circles 直接
-        //    从大圆交点构建 SubFace (BOPAlgo_BuilderFace 的 section edges 路径等价)。
-        //    split_curved_face_parametric 的 UV 多边形分裂不能正确分离球面 8 卦限,
-        //    导致子面覆盖过大区域(包含盒内+盒外),分类误判为 Out。
-        if matches!(&face.surface, Surface3::Sphere(_)) && !fi.curves_in.is_empty() {
-            let subs = self.build_sphere_sub_faces_by_circles(face_idx);
-            if !subs.is_empty() {
-                return subs;
-            }
         }
 
         match &face.surface {
