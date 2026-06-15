@@ -884,17 +884,21 @@ impl BRep {
     ///   PCurves:  E0 forward  → Line2d u=0,  v: 0 → π
     ///             E0 reversed → Line2d u=2π, v: π → 0
     fn create_sphere(radius: f64) -> Self {
+        // OCCT-aligned: sphere with axis=Z, ref_dir=X (standard spherical
+        // coordinates).  This ensures section edge endpoints at (1,0,0) and
+        // (0,0,1) fall on the seam line (U=0), enabling DoSplitSEAMOnFace
+        // to split the seam at these shared vertices.  axis=Y (rcad legacy)
+        // places those endpoints at U=3pi/2 and U=pi — not on the seam.
         use geom::*;
         use std::f64::consts::PI;
 
         let r = radius;
-        // Vertices
-        let north = DVec3::new(0.0, r, 0.0);
-        let south = DVec3::new(0.0, -r, 0.0);
+        // Vertices: north pole at +Z, south pole at -Z
+        let north = DVec3::new(0.0, 0.0, r);
+        let south = DVec3::new(0.0, 0.0, -r);
         let vertices = vec![Vertex { point: north }, Vertex { point: south }];
 
-        // Edge E0: seam meridian (north→south) — Circle3 in XZ plane
-        // The seam lies at theta=0, i.e. x>0, z=0 plane.
+        // Edge E0: seam meridian (north→south) — Circle3 in plane through Z axis
         let edges = vec![Edge { start: 0, end: 1 }]; // E0
 
         // Face F0: outer_wire uses E0 twice (forward then reversed = seam)
@@ -917,19 +921,19 @@ impl BRep {
         // GeomStore
         let seam_curve = Curve3::Circle(Circle3 {
             center: DVec3::ZERO,
-            normal: DVec3::Z,
+            normal: DVec3::Y, // plane XZ (perpendicular to Y)
             radius: r,
         });
         let sphere_surf = Surface3::Sphere(SphericalSurface {
             center: DVec3::ZERO,
-            axis: DVec3::Y,
+            axis: DVec3::Z,
             radius: r,
-            ref_dir: any_perpendicular(DVec3::Y),
+            ref_dir: DVec3::X,
         });
         // PCurves for the seam edge on the sphere:
-        //   Sphere param: u = longitude [0, 2π], v = colatitude [0, π] (phi from north pole)
-        //   Forward half (north→south at u=0): Line2d origin=(0,0) dir=(0,1) extent π
-        //   Reversed half (south→north at u=2π): Line2d origin=(2π,π) dir=(0,-1) extent π
+        //   Sphere param: u = longitude [0, 2pi], v = colatitude [0, pi]
+        //   Forward half (north->south at u=0): Line2d origin=(0,0) dir=(0,1)
+        //   Reversed half (south->north at u=2pi): Line2d origin=(2pi,pi) dir=(0,-1)
         let pc_fwd = Curve2d::Line(Line2d {
             origin: glam::DVec2::new(0.0, 0.0),
             direction: glam::DVec2::new(0.0, 1.0),

@@ -2594,15 +2594,12 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             if ev != sv {
                 seam_verts.push(ev);
             }
-            // 2. Split seam at IC endpoints whose V is between the poles.
-            //    OCCT DoSplitSEAMOnFace checks U approx 0/2pi; rcad's sphere
-            //    (axis=Y) places IC endpoints off that line.  Splitting by V
-            //    achieves the same connectivity effect.
+            // 2. OCCT-aligned: add IC endpoints whose UV is on the seam line
+            //    (U approx 0 or 2pi) as intermediate seam vertices.
+            //    With axis=Z, ref_dir=X (OCCT standard), the IC endpoints at
+            //    (1,0,0) and (0,0,1) have U=0 — on the seam.
             if let Surface3::Sphere(sph) = &face.surface {
-                let sv_uv = sph.world_to_uv(ds.vertices[sv].point);
-                let ev_uv = sph.world_to_uv(ds.vertices[ev].point);
-                let v_min = sv_uv.y.min(ev_uv.y);
-                let v_max = sv_uv.y.max(ev_uv.y);
+                let seam_tol = TOLERANCE_COORD_SUB;
                 for &ci in &face.face_info.curves_in {
                     let ic = &ds.intersection_curves[ci];
                     for &icv in &[ic.start_vertex, ic.end_vertex] {
@@ -2611,8 +2608,10 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                         if seam_verts.iter().any(|&sv| ds.vertices[sv].point.distance_squared(ic_pos) < TOLERANCE_ABS_SQ) {
                             continue;
                         }
-                        let ic_uv = sph.world_to_uv(ic_pos);
-                        if ic_uv.y > v_min + 1e-8 && ic_uv.y < v_max - 1e-8 {
+                        let icuv = sph.world_to_uv(ic_pos);
+                        let u_norm = icuv.x.rem_euclid(std::f64::consts::TAU);
+                        let on_seam = u_norm < seam_tol || (u_norm - std::f64::consts::TAU).abs() < seam_tol;
+                        if on_seam {
                             seam_verts.push(icv);
                         }
                     }
@@ -3513,7 +3512,7 @@ fn perform_areas(
         return vec![];
     }
 
-    struct WireData { wire_idx: usize, boundary: Vec<DVec3>, area: f64 }
+    struct WireData { wire_idx: usize, boundary: Vec<DVec3>, area: f64, n_seam: usize }
     let mut wds: Vec<WireData> = wires.iter().enumerate().filter_map(|(wi, w)| {
         let mut b = wire_boundary_3d(w, segments, ds);
         if b.len() < 3 {
@@ -3525,16 +3524,22 @@ fn perform_areas(
             verts.dedup();
             if verts.len() >= 3 { b = verts; } else { return None; }
         }
-        let a = projected_area_xy(&b);
-        Some(WireData { wire_idx: wi, boundary: b, area: a })
+        let a = projected_area_max(&b);
+        let n_seam = w.iter().filter(|&&si| segments[si].is_seam).count();
+        Some(WireData { wire_idx: wi, boundary: b, area: a, n_seam })
     }).collect();
 
     if wds.is_empty() {
         return vec![];
     }
 
-    // , outer
-    wds.sort_by(|a, b| b.area.partial_cmp(&a.area).unwrap());
+    // Sort by descending area; tiebreaker: prefer wire with seam segments
+    // (seam wire = full sphere boundary, IC wire = interior triangle)
+    wds.sort_by(|a, b| {
+        let area_cmp = b.area.partial_cmp(&a.area).unwrap_or(std::cmp::Ordering::Equal);
+        if area_cmp != std::cmp::Ordering::Equal { return area_cmp; }
+        b.n_seam.cmp(&a.n_seam) // more seam segments → outer
+    });
     let outer_wire_idx = wds[0].wire_idx;
     let outer_boundary = wds[0].boundary.clone();
     let rest = &wds[1..];
@@ -3544,7 +3549,7 @@ fn perform_areas(
     let mut indep_wire_idxs: Vec<usize> = Vec::new();
     for wd in rest {
         let mid = wd.boundary.iter().sum::<DVec3>() / wd.boundary.len() as f64;
-        if point_in_polygon_xy(mid, &outer_boundary) {
+        if point_in_polygon_best(mid, &outer_boundary) {
             hole_wire_idxs.push(wd.wire_idx);
         } else {
             indep_wire_idxs.push(wd.wire_idx);
@@ -3565,25 +3570,59 @@ fn perform_areas(
 }
 
 ///  3D  XY  (Shoelace)
-fn projected_area_xy(b: &[DVec3]) -> f64 {
+/// Compute the absolute projected area of a 3D polygon onto the given
+/// coordinate plane (axes = (u_idx, v_idx), e.g. (0,1) for XY).
+fn projected_area_on(b: &[DVec3], u_idx: usize, v_idx: usize) -> f64 {
+    let pick = |p: DVec3, i: usize| -> f64 { match i { 0 => p.x, 1 => p.y, _ => p.z } };
     (0..b.len()).map(|i| {
         let j = (i + 1) % b.len();
-        b[i].x * b[j].y - b[j].x * b[i].y
+        pick(b[i], u_idx) * pick(b[j], v_idx) - pick(b[j], u_idx) * pick(b[i], v_idx)
     }).sum::<f64>().abs() * 0.5
 }
 
-///  XY
-fn point_in_polygon_xy(pt: DVec3, poly: &[DVec3]) -> bool {
+/// Compute the maximum projected area across XY, YZ, and XZ planes.
+/// This avoids degenerate cases where a polygon lies in one coordinate plane.
+fn projected_area_max(b: &[DVec3]) -> f64 {
+    let xy = projected_area_on(b, 0, 1);
+    let yz = projected_area_on(b, 1, 2);
+    let xz = projected_area_on(b, 0, 2);
+    xy.max(yz).max(xz)
+}
+
+/// Test whether a point projects inside a polygon on the XY plane.
+/// Falls back to YZ or XZ if the polygon is degenerate in XY.
+fn point_in_polygon_best(pt: DVec3, poly: &[DVec3]) -> bool {
+    let xy_area = projected_area_on(poly, 0, 1);
+    if xy_area > 1e-15 {
+        return point_in_polygon_xy_impl(pt, poly, 0, 1);
+    }
+    let yz_area = projected_area_on(poly, 1, 2);
+    if yz_area > 1e-15 {
+        return point_in_polygon_xy_impl(pt, poly, 1, 2);
+    }
+    point_in_polygon_xy_impl(pt, poly, 0, 2) // XZ fallback
+}
+
+/// Ray casting point-in-polygon test in the given 2D projection (u,v).
+fn point_in_polygon_xy_impl(pt: DVec3, poly: &[DVec3], u_idx: usize, v_idx: usize) -> bool {
+    let pu = |p: DVec3| -> f64 { match u_idx { 0 => p.x, 1 => p.y, _ => p.z } };
+    let pv = |p: DVec3| -> f64 { match v_idx { 0 => p.x, 1 => p.y, _ => p.z } };
     let mut inside = false;
     let n = poly.len();
     for i in 0..n {
         let j = (n + i - 1) % n;
-        let (vi, vj) = (poly[i], poly[j]);
-        if ((vi.y > pt.y) != (vj.y > pt.y)) &&
-            pt.x < (vj.x - vi.x) * (pt.y - vi.y) / (vj.y - vi.y) + vi.x
+        let vi = poly[i]; let vj = poly[j];
+        if ((pv(vi) > pv(pt)) != (pv(vj) > pv(pt))) &&
+            pu(pt) < (pu(vj) - pu(vi)) * (pv(pt) - pv(vi)) / (pv(vj) - pv(vi)) + pu(vi)
         { inside = !inside; }
     }
     inside
+}
+
+/// Legacy: XY-only projection (replaced by projected_area_max / point_in_polygon_best).
+/// Kept for callers that explicitly need XY projection.
+fn projected_area_xy(b: &[DVec3]) -> f64 {
+    projected_area_on(b, 0, 1)
 }
 
 impl<'a> BooleanBuilder<'a> {
@@ -3615,16 +3654,11 @@ impl<'a> BooleanBuilder<'a> {
         // the seam forms the outer boundary and the IC triangle is a hole.
         // Detect this: if outer_wire contains only IC (non-seam) segments and
         // the op is not Intersection, build a complement WireFace.
-        // FIXME: For Union/Difference, the wire pipeline currently produces
-        // the IC triangle region.  OCCT BuildSplitFaces + BuilderFace would
-        // produce both the IC triangle AND the complement via proper seam
-        // splitting (DoSplitSEAMOnFace).  For now, return None to fall
-        // through to split_curved_face_parametric which handles these modes.
-        // Once DoSplitSEAMOnFace equivalent is implemented (seam edge with
-        // dual pcurves), re-enable this path for all modes.
-        if self.op != BooleanOpType::Intersection {
-            return None;
-        }
+        // OCCT-aligned: sphere axis=Z places IC endpoints (1,0,0) and (0,0,1)
+        // at U=0 (on the seam).  The seam is split at these endpoints by the
+        // V-between-poles check below, giving 4 seam sub-segments.
+        // After perform_areas, the full-sphere seam wire (outer) and the IC
+        // triangle wire (inner) form the complement for Union/Difference.
         if wfs.is_empty() {
             return None;
         }
