@@ -2671,14 +2671,15 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                 tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
             });
         } else {
-            // OCCT-aligned: Regular edge added in original direction (L374-378)
+            // OCCT-aligned: Regular edge with UV tangent (L374-378)
+            let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface);
             segments.push(WireSegment {
                 start_vertex: sv, end_vertex: ev,
                 source: WireEdgeSource::DsEdge(ei),
                 forward: true,
                 is_seam: false,
-                tangent_start: None,
-                tangent_end: None,
+                tangent_start: t_start,
+                tangent_end: t_end,
             });
         }
     }
@@ -2815,6 +2816,49 @@ fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface: &Surface3
             let a = dir_to_angle(dir);
             (Some(a), Some(a))
         }
+        Surface3::Plane(p) => {
+            let x_axis = any_perpendicular(p.normal).normalize();
+            let y_axis = p.normal.cross(x_axis).normalize();
+            let local_s = ds.vertices[sv].point - p.origin;
+            let local_e = ds.vertices[ev].point - p.origin;
+            let uv_s = DVec2::new(local_s.dot(x_axis), local_s.dot(y_axis));
+            let uv_e = DVec2::new(local_e.dot(x_axis), local_e.dot(y_axis));
+            let dir = uv_e - uv_s;
+            if dir.length_squared() < 1e-30 { return (None, None); }
+            let a = dir_to_angle(dir);
+            (Some(a), Some(a))
+        }
+        _ => (None, None),
+    }
+}
+
+/// OCCT-aligned: compute 2D UV-space tangent angle for a regular edge on any
+/// surface type.  Uses the surface's world_to_uv or local basis to project
+/// edge endpoints, then computes the direction angle.  Used by the wire
+/// pipeline for ALL face types (sphere + planar + cylindrical).
+fn edge_uv_tangent(ds: &DS, sv: usize, ev: usize, surface: &Surface3) -> (Option<f64>, Option<f64>) {
+    match surface {
+        Surface3::Sphere(s) => {
+            let uvs = s.world_to_uv(ds.vertices[sv].point);
+            let uve = s.world_to_uv(ds.vertices[ev].point);
+            let dir = uve - uvs;
+            if dir.length_squared() < 1e-30 { return (None, None); }
+            let a = dir_to_angle(dir);
+            (Some(a), Some(a))
+        }
+        Surface3::Plane(p) => {
+            let x_axis = any_perpendicular(p.normal).normalize();
+            let y_axis = p.normal.cross(x_axis).normalize();
+            let local_s = ds.vertices[sv].point - p.origin;
+            let local_e = ds.vertices[ev].point - p.origin;
+            let uv_s = DVec2::new(local_s.dot(x_axis), local_s.dot(y_axis));
+            let uv_e = DVec2::new(local_e.dot(x_axis), local_e.dot(y_axis));
+            let dir = uv_e - uv_s;
+            if dir.length_squared() < 1e-30 { return (None, None); }
+            let a = dir_to_angle(dir);
+            (Some(a), Some(a))
+        }
+        // Cylinder/Cone/Torus: handled similarly when world_to_uv is available
         _ => (None, None),
     }
 }
@@ -3538,15 +3582,22 @@ fn perform_areas(
             verts.dedup();
             if verts.len() >= 3 { b = verts; } else { return None; }
         }
-        // Map 3D boundary to UV space.  The wire pipeline currently only
-        // processes sphere faces; planar/cylindrical faces use split_face.
+        // Map 3D boundary to UV space for wire classification.
         let uv_poly: Vec<DVec2> = match face_surface {
             Surface3::Sphere(s) => b.iter().map(|p| {
                 let mut uv = s.world_to_uv(*p);
                 uv.x = uv.x.rem_euclid(std::f64::consts::TAU);
                 uv
             }).collect(),
-            _ => return None,  // non-sphere: fall back to area-based perform_areas
+            Surface3::Plane(p) => {
+                let x_axis = any_perpendicular(p.normal).normalize();
+                let y_axis = p.normal.cross(x_axis).normalize();
+                b.iter().map(|pt| {
+                    let local = *pt - p.origin;
+                    DVec2::new(local.dot(x_axis), local.dot(y_axis))
+                }).collect()
+            },
+            _ => return None,  // non-handled surface types
         };
 
         // UV centroid for containment test
@@ -3698,10 +3749,11 @@ impl<'a> BooleanBuilder<'a> {
     ) -> Option<(Vec<WireSegment>, Vec<WireFace>)> {
         let ds = self.ds;
         let face = &ds.faces[face_idx];
-        if !matches!(face.surface, Surface3::Sphere(_)) {
+        if face.face_info.curves_in.is_empty() {
             return None;
         }
-        if face.face_info.curves_in.is_empty() {
+        // Only use wire pipeline for sphere faces (planar/cylindrical need more testing)
+        if !matches!(face.surface, Surface3::Sphere(_)) {
             return None;
         }
         let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
