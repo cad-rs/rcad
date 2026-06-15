@@ -2740,8 +2740,8 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     let fixed_ev = correct_ev;
                     let pcurve = pcurve_lookup(ci);
                     let (t_start, t_end) = if let Some(ref pc) = pcurve {
-                        (pcurve_tangent_angle(pc, ic.t_range[0], ic.t_range),
-                         pcurve_tangent_angle(pc, ic.t_range[1], ic.t_range))
+                        (angle_2d(pc, ic.t_range[0], ic.t_range, false),
+                         angle_2d(pc, ic.t_range[1], ic.t_range, true))
                     } else { (None, None) };
                     segments.push(WireSegment { start_vertex: fixed_sv, end_vertex: fixed_ev,
                         source: WireEdgeSource::IntersectionCurve(ci), forward: true,
@@ -2760,7 +2760,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
         let pcurve = pcurve_lookup(ci);
         let (t_start, t_end) = if let Some(ref pc) = pcurve {
             let domain = ic.t_range;
-            (pcurve_tangent_angle(pc, domain[0], domain), pcurve_tangent_angle(pc, domain[1], domain))
+            (angle_2d(pc, domain[0], domain, false), angle_2d(pc, domain[1], domain, true))
         } else {
             (None, None)
         };
@@ -2840,29 +2840,28 @@ fn dir_to_angle(dir: DVec2) -> f64 {
     if a < 0.0 { a + std::f64::consts::TAU } else { a }
 }
 
-/// Compute the 2D p-curve tangent direction angle at parameter t.
-/// Uses finite difference with a step proportional to the domain length.
-/// OCCT-aligned: Angle2D  (L796-841):
-///   dt = max(curve_resolution(tol2d), Precision::PConfusion())
-///    Line
-fn pcurve_tangent_angle(curve: &Curve2d, t: f64, domain: [f64; 2]) -> Option<f64> {
+/// OCCT-aligned Angle2D (BOPAlgo_WireSplitter_1.cxx L769-841).
+///
+/// Simplified version using fixed dt proportional to domain length.
+fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool) -> Option<f64> {
     let range = (domain[1] - domain[0]).abs();
-    let dt = (1e-8 * range.max(1.0)).max(1e-12);
+    if range < 1e-15 { return None; }
 
-    // For start point: forward difference; for end point: backward difference;
-    // for interior: central difference.
-    let (p_lo, p_hi) = if (t - domain[0]).abs() < dt * 0.5 {
-        (curve.point_at(t), curve.point_at(domain[0] + dt))
-    } else if (t - domain[1]).abs() < dt * 0.5 {
-        (curve.point_at(domain[1] - dt), curve.point_at(t))
+    // Use 1% of domain as step (fixed, no curvature adjustment)
+    let dt = (0.01 * range).max(1e-8);
+
+    let dist_to_first = (t - domain[0]).abs();
+    let dist_to_last = (t - domain[1]).abs();
+    let t1 = if dist_to_first < dist_to_last {
+        (t + dt).min(domain[1])
     } else {
-        (curve.point_at(t - dt), curve.point_at(t + dt))
+        (t - dt).max(domain[0])
     };
 
-    let dir = p_hi - p_lo;
-    if dir.length_squared() < 1e-40 {
-        return None;
-    }
+    let pv = curve.point_at(t);
+    let pv1 = curve.point_at(t1);
+    let dir = if b_is_in { pv - pv1 } else { pv1 - pv };
+    if dir.length_squared() < 1e-40 { return None; }
     Some(dir_to_angle(dir))
 }
 
@@ -3080,8 +3079,8 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, fac
     }
 
     // OCCT-aligned: RefineAngles (BOPAlgo_WireSplitter_1.cxx L904-1028)
-    //    "",
     refine_angles(&mut smart_map, segments, ds, face_idx);
+
 
     // OCCT-aligned: Path walk loop — walk until no edges remain
     let mut wires: Vec<Vec<usize>> = Vec::new();
@@ -3333,11 +3332,28 @@ fn walk_path_extract_wires(
         // Detect closed loop: if arrived_vertex matches a previously visited
         // vertex in the accumulated sequence, extract a closed wire from the
         // loop start to the current position (OCCT lines 425-524).
-        if let Some(prev_idx) = vert_seq.iter().position(|&v| v == arrived_vertex) {
+        // OCCT-aligned: for closed (boundary) vertices, skip loop detection
+        // when the current edge type differs from the preceding sequence edge.
+        // This prevents false closure at seam/IC junctions where the same 3D
+        // vertex has different UV coordinates on different edge types.
+        let loop_prev_idx = {
+            let is_boundary = smart_map.get(&arrived_vertex)
+                .map(|infos| infos.iter().any(|ei| !ei.is_inside))
+                .unwrap_or(false);
+            if is_boundary && edge_seq.len() >= 1 {
+                let cur_src = std::mem::discriminant(&segments[ci].source);
+                let prev_src = std::mem::discriminant(&segments[*edge_seq.last().unwrap()].source);
+                if cur_src != prev_src { None }
+                else { vert_seq.iter().position(|&v| v == arrived_vertex) }
+            } else {
+                vert_seq.iter().position(|&v| v == arrived_vertex)
+            }
+        };
+        if let Some(prev_idx) = loop_prev_idx {
             let wire: Vec<usize> = edge_seq[prev_idx..].to_vec();
-            // OCCT-aligned: skip 2-edge back-and-forth wires (seam FWD+REV
-            // at the same two vertices).  Only extract wires >= 3 segments
-            // (BOPAlgo_WireSplitter_1.cxx L474-487, iPriz check).
+            // OCCT-aligned: skip back-and-forth wires (seam FWD+REV or
+            // IC FWD+REV between the same two vertices).  Only extract
+            // wires >= 3 segments or 2-segment true loops (BOPAlgo_WireSplitter_1.cxx L474-487).
             let is_backforth = wire.len() == 2 && {
                 let a = &segments[wire[0]];
                 let b = &segments[wire[1]];
