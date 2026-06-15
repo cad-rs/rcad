@@ -2570,7 +2570,7 @@ impl<'a> BooleanBuilder<'a> {
         // Process A faces against B solid
         let mut a_on_planes: Vec<(DVec3, DVec3)> = Vec::new(); // (normal, origin) from emitted A-face planes
         for &fi in &a_faces {
-            // ✅ OCCT对齐: 球面直接发射(绕过 SubFace 和 classification)
+                                    // ✅ OCCT aligned: sphere face direct emission (bypasses SubFace and classification)
             if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) && !self.ds.faces[fi].face_info.curves_in.is_empty() {
                 let src = self.ds.faces[fi].source_face_idx;
                 self.emit_sphere_faces_direct(fi, &mut result, src, false);
@@ -2585,7 +2585,7 @@ impl<'a> BooleanBuilder<'a> {
                     && class == Classification::On
                     && matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
                 {
-                    // ✅ OCCT对齐: 淇濈暀骞抽潰 ON 瀛愰潰,鐢变笅娓?edge-set merge 澶勭悊銆?
+                                        // ✅ OCCT aligned: keep plane ON sub-faces for downstream edge-set merge
                     //    OCCT FillSameDomainFaces (BOPAlgo_Builder_2.cxx L571) 淇濈暀鎵€鏈?ON
                     //    瀛愰潰,鐢?edge set 鍒嗙粍鍚庨€?DS index 鏈€灏忛潰涓轰唬琛ㄣ€?
                     true
@@ -2601,7 +2601,7 @@ impl<'a> BooleanBuilder<'a> {
                         .or_else(|| self.fallback_coplanar_normals_opposite(fi, Some(sub), &b_faces))
                         .unwrap_or(false)
                 } else if matches!(sub.surface, Surface3::Sphere(_)) && sub.sample_override.is_some() {
-                    // ✅ OCCT对齐: 鐞冮潰瀛愰潰鏉ヨ嚜 build_sphere_sub_faces_by_circles,
+                                        // ✅ OCCT aligned: sphere sub-face from build_sphere_sub_faces_by_circles
                     //    鍏?sample_override 涓哄瓙闈㈣川蹇冦€俢lassify_by_off_solid_edge
                     //    绛夎竟鐣屽垎绫诲櫒瀵圭悆闈㈢墖璇垽銆傜洿鎺ョ敤甯冨皵鎿嶄綔鍐冲畾淇濈暀:
                     //    Intersection: 淇濈暀 In(鐞冮潰鍦ㄧ洅鍐呯殑閮ㄥ垎)
@@ -2671,7 +2671,7 @@ impl<'a> BooleanBuilder<'a> {
 
             // 鉂?绂佺敤: wire pipeline 瀵圭悆闈骇鐢熼敊璇?outer_wire(4鏉C娈靛惈閲嶅鏂瑰悜),
             //    UV domain 瑕嗙洊鍗婄悆(2蟺),SA 閿欒(6.283鈫掑簲涓?.571)銆傛敼鐢?
-            //    build_sphere_sub_faces_by_circles + SubFace emit銆?
+                        // build_sphere_sub_faces_by_circles + SubFace emit — disabled, use emit_sphere_faces_direct
             let wire_emit_used = false;
 
             if !wire_emit_used {
@@ -2724,7 +2724,7 @@ impl<'a> BooleanBuilder<'a> {
                     //    (BOPAlgo_Builder_2.cxx L571) 鎸夊嚑浣曟瘮杈冭〃闈€?
                     false
                 } else if matches!(sub.surface, Surface3::Plane(_)) && !sub.outer_circle_edges.is_empty() {
-                    // ✅ OCCT对齐: 骞抽潰瀛愰潰鍚渾寮ц竟(鐞?鐩掍氦绾垮渾寮?銆?
+                                        // ✅ OCCT aligned: planar face with circular arc (sphere-box intersection arc)
                     //    sample_override.is_some() = 鐩掑閮ㄥ垎(淇濈暀鎵囧舰),鍚﹀垯 = 鐩掑唴閮ㄥ垎(1/4鍦?銆?
                     //    Intersection: 淇濈暀鐩掑唴閮ㄥ垎(1/4鍦?
                     //    Difference B-side: 淇濈暀鐩掑唴閮ㄥ垎(1/4鍦?
