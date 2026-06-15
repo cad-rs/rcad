@@ -844,6 +844,76 @@ impl ResultBuilder {
         self.face_origins.push(origin);
     }
 
+    /// ✅ OCCT对齐: SubFace-free 面发射器。取原始几何数据直接构建面,绕过 SubFace。
+    ///    对应 OCCT BRep_Builder::MakeFace + BRep_Builder::UpdateEdge。
+    ///    ⏳ 用于逐步替代 emit_face_with_origin (最终删除 SubFace)。
+    fn emit_face_data(
+        &mut self,
+        boundary_pts: &[DVec3],
+        circle_edges: &[(usize, Curve3)],
+        surface: &Surface3,
+        normal: DVec3,
+        sample_point: DVec3,
+        uv_domain: Option<[f64; 4]>,
+        origin: FaceOrigin,
+    ) {
+        if boundary_pts.len() < 3 { return; }
+        if normal.length_squared() <= TOLERANCE_METRIC_SQ_NEAR_ZERO { return; }
+
+        let vert_indices: Vec<usize> = boundary_pts.iter().map(|&p| self.add_vertex(p)).collect();
+        let mut edge_indices = Vec::new();
+        for i in 0..vert_indices.len() {
+            let j = (i + 1) % vert_indices.len();
+            let ei = if let Some(&(_, ref crv)) = circle_edges.iter().find(|&&(si, _)| si == i) {
+                self.add_circle_edge(vert_indices[i], vert_indices[j], crv.clone())
+            } else {
+                self.add_edge(vert_indices[i], vert_indices[j])
+            };
+            let forward = self.edges[ei].0 == vert_indices[i];
+            edge_indices.push((ei, forward));
+        }
+
+        let inner_wire_edges: Vec<Vec<(usize, bool)>> = Vec::new();
+        let iw_vert_indices_all: Vec<usize> = Vec::new();
+        let all_vert_indices: Vec<usize> = [vert_indices.as_slice(), iw_vert_indices_all.as_slice()].concat();
+
+        let outer_boundary: Vec<DVec3> = vert_indices.iter().map(|&vi| self.vertices[vi]).collect();
+        let mut tris = triangulate_polygon(&outer_boundary, normal);
+
+        for tri in &mut tris {
+            for idx in tri.iter_mut() { *idx = all_vert_indices[*idx]; }
+        }
+
+        let centroid = outer_boundary.iter().copied().sum::<DVec3>() / outer_boundary.len().max(1) as f64;
+        let area = Self::polygon_signed_area_on_normal(&outer_boundary, normal);
+
+        // Coincident face dedup (same as emit_face_with_origin)
+        let mut outer_sig: Vec<usize> = edge_indices.iter().map(|&(eid, _)| eid).collect();
+        outer_sig.sort_unstable();
+        let nlen = normal.length();
+        let nunit = if nlen > TOLERANCE_LEN_MIN { normal / nlen } else { normal };
+        for (existing_idx, (existing_outer, existing_inner, _existing_tris, existing_normal, _surf, _uv, existing_centroid, existing_area, _existing_sp)) in
+            self.faces.iter().enumerate()
+        {
+            let mut ex_sig: Vec<usize> = existing_outer.iter().map(|&(eid, _)| eid).collect();
+            for iw_edges in existing_inner { ex_sig.extend(iw_edges.iter().map(|&(eid, _)| eid)); }
+            ex_sig.sort_unstable();
+            let elen = existing_normal.length();
+            if elen <= TOLERANCE_LEN_MIN { continue; }
+            let eunit = *existing_normal / elen;
+            if nunit.dot(eunit).abs() >= 0.99
+                && (*existing_centroid - centroid).length() <= TOLERANCE_LINEAR_RELAX_8
+                && (existing_area - area).abs() <= TOLERANCE_LINEAR_RELAX_8 * existing_area.max(area).max(1.0)
+            {
+                self.co_face_origins.push((existing_idx, origin));
+                return;
+            }
+        }
+
+        self.faces.push((edge_indices, inner_wire_edges, tris, normal, surface.clone(), uv_domain, centroid, area, sample_point));
+        self.face_origins.push(origin);
+    }
+
     /// ✅ OCCT对齐: 浠?WireFace 鍙戝皠 BRep 闈?(鏇夸唬 emit_face_with_origin)銆?
 
     /// When an edge閳ユ獨 open segment passes through another result vertex (classic
@@ -2500,6 +2570,12 @@ impl<'a> BooleanBuilder<'a> {
         // Process A faces against B solid
         let mut a_on_planes: Vec<(DVec3, DVec3)> = Vec::new(); // (normal, origin) from emitted A-face planes
         for &fi in &a_faces {
+            // ✅ OCCT对齐: 球面直接发射(绕过 SubFace 和 classification)
+            if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) && !self.ds.faces[fi].face_info.curves_in.is_empty() {
+                let src = self.ds.faces[fi].source_face_idx;
+                self.emit_sphere_faces_direct(fi, &mut result, src, false);
+                continue;
+            }
             let sub_faces = self.split_face(fi);
             let face_split = sub_faces.len() > 1;
             let mut kept_subs: Vec<SubFace> = Vec::new();
@@ -2612,6 +2688,11 @@ impl<'a> BooleanBuilder<'a> {
 
         // Process B faces against A solid
         for &fi in &b_faces {
+            if matches!(self.ds.faces[fi].surface, Surface3::Sphere(_)) && !self.ds.faces[fi].face_info.curves_in.is_empty() {
+                let src = self.ds.faces[fi].source_face_idx;
+                self.emit_sphere_faces_direct(fi, &mut result, src, true);
+                continue;
+            }
             let sub_faces = self.split_face(fi);
             let face_split = sub_faces.len() > 1;
             let mut kept_subs: Vec<(SubFace, Classification)> = Vec::new();
@@ -4980,7 +5061,165 @@ impl<'a> BooleanBuilder<'a> {
     }
 
 
+    /// ✅ OCCT对齐: 从大圆交点直接发射球面 (替代 SubFace 路径)。
+    ///    对应 OCCT IntTools_FaceFace (精确圆交线) + BRep_Builder::MakeFace。
+    ///    不经过 SubFace,不经过 classification,直接写入 ResultBuilder。
+    fn emit_sphere_faces_direct(
+        &self,
+        face_idx: usize,
+        result: &mut ResultBuilder,
+        src: usize,
+        is_b_side: bool,
+    ) {
+        let face = &self.ds.faces[face_idx];
+        let sphere = match &face.surface { Surface3::Sphere(s) => *s, _ => return };
+        let mut circles: Vec<Circle3> = Vec::new();
+        let mut inside_normals: Vec<DVec3> = Vec::new();
+        for &ci in &face.face_info.curves_in {
+            if let Curve3::Circle(ref c) = self.ds.intersection_curves[ci].curve {
+                circles.push(*c);
+                let inward = match self.op {
+                    BooleanOpType::Intersection | BooleanOpType::Difference => -c.normal.normalize(),
+                    BooleanOpType::Union => c.normal.normalize(),
+                };
+                inside_normals.push(inward);
+            }
+        }
+        if circles.len() < 2 { return; }
+
+        let sc = sphere.center;
+        let sr = sphere.radius;
+        let mut pts_3d: Vec<DVec3> = Vec::new();
+        // OCCT IntAna_IntQuadQuad: 圆圈交点 → 球面点
+        for i in 0..circles.len() {
+            for j in (i + 1)..circles.len() {
+                let ni = inside_normals[i]; let nj = inside_normals[j];
+                let line_dir = ni.cross(nj);
+                if line_dir.length_squared() < TOLERANCE_ABS_SQ { continue; }
+                let line_dir = line_dir.normalize();
+                let nidotnj = ni.dot(nj);
+                let denom = 1.0 - nidotnj * nidotnj;
+                if denom.abs() < TOLERANCE_ABS { continue; }
+                let d1 = ni.dot(circles[i].center);
+                let d2 = nj.dot(circles[j].center);
+                let coeff_i = (d1 - d2 * nidotnj) / denom;
+                let coeff_j = (d2 - d1 * nidotnj) / denom;
+                let p_any = coeff_i * ni + coeff_j * nj;
+                let delta = p_any - sc;
+                let bb = 2.0 * delta.dot(line_dir);
+                let cc = delta.dot(delta) - sr * sr;
+                let disc = bb * bb - 4.0 * cc;
+                if disc < 0.0 { continue; }
+                let sqrt_disc = disc.sqrt();
+                pts_3d.push(p_any + (-bb + sqrt_disc) / 2.0 * line_dir);
+                pts_3d.push(p_any + (-bb - sqrt_disc) / 2.0 * line_dir);
+            }
+        }
+
+        // 分类 inside/outside (相对所有 circle)
+        let mut inside_pts: Vec<DVec3> = Vec::new();
+        let mut outside_pts: Vec<DVec3> = Vec::new();
+        for &p in &pts_3d {
+            let mut inside_all = true;
+            for (k, c) in circles.iter().enumerate() {
+                if (p - c.center).dot(inside_normals[k]) < -TOLERANCE_ABS { inside_all = false; break; }
+            }
+            if inside_all {
+                if inside_pts.iter().any(|e| e.distance_squared(p) < TOLERANCE_ABS_SQ) { continue; }
+                inside_pts.push(p);
+            } else {
+                if outside_pts.iter().any(|e| e.distance_squared(p) < TOLERANCE_ABS_SQ) { continue; }
+                outside_pts.push(p);
+            }
+        }
+
+        // 确定保留哪些点集
+        let pick_inside = !matches!(self.op, BooleanOpType::Difference);
+        let pick_outside = !matches!(self.op, BooleanOpType::Intersection);
+        // 外子面需要共享顶点: 用 inside_pts + 南极点
+        let outside_needs_inside = pick_outside && inside_pts.len() >= 3;
+
+        let origin = if is_b_side { FaceOrigin::FromB(src) } else { FaceOrigin::FromA(src) };
+
+        // 发射 inside 子面
+        if pick_inside && inside_pts.len() >= 3 {
+            self.emit_one_sphere_face(&mut inside_pts, &sphere, &circles, &inside_normals, result, origin);
+        }
+        // 发射 outside 子面 (使用 inside_pts 共享顶点 + 南极点)
+        if pick_outside && outside_pts.len() >= 3 {
+            let mut pts = if outside_needs_inside {
+                let mut v: Vec<DVec3> = inside_pts.iter().copied().collect();
+                let sp = DVec3::new(0.0, -1.0, 0.0);
+                if !v.iter().any(|p| p.distance_squared(sp) < TOLERANCE_ABS_SQ) { v.push(sp); }
+                v
+            } else {
+                outside_pts.clone()
+            };
+            self.emit_one_sphere_face(&mut pts, &sphere, &circles, &inside_normals, result, origin);
+        }
+    }
+
+    /// ✅ OCCT对齐: 发射单个球面子面 (SubFace-free)。
+    ///    计算边界顶点、大圆弧边、UV domain后直接调用 emit_face_data。
+    fn emit_one_sphere_face(
+        &self,
+        pts: &mut Vec<DVec3>,
+        sphere: &SphericalSurface,
+        circles: &[Circle3],
+        inside_normals: &[DVec3],
+        result: &mut ResultBuilder,
+        origin: FaceOrigin,
+    ) {
+        let sc = sphere.center;
+        let sr = sphere.radius;
+        for p in pts.iter_mut() {
+            let dir = *p - sc;
+            let dist = dir.length();
+            if dist > 0.0 { *p = sc + (sr / dist) * dir; }
+        }
+        // 按方位角排序 (绕球心方向的点顺序)
+        let centroid = pts.iter().copied().sum::<DVec3>() / pts.len() as f64;
+        let up_dir = (centroid - sc).normalize();
+        let ref_dir = any_perpendicular(up_dir);
+        let cross_dir = up_dir.cross(ref_dir);
+        pts.sort_by(|a, b| {
+            let a_az = f64::atan2((*a - sc).dot(cross_dir), (*a - sc).dot(ref_dir));
+            let b_az = f64::atan2((*b - sc).dot(cross_dir), (*b - sc).dot(ref_dir));
+            a_az.partial_cmp(&b_az).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        // 每条边匹配最近的 circle
+        let n = pts.len();
+        let circle_edges: Vec<(usize, Curve3)> = (0..n).map(|i| {
+            let va = pts[i]; let vb = pts[(i + 1) % n];
+            let best_k = (0..circles.len()).min_by(|&a, &b| {
+                let da = (va - circles[a].center).dot(inside_normals[a]).abs()
+                       + (vb - circles[a].center).dot(inside_normals[a]).abs();
+                let db = (va - circles[b].center).dot(inside_normals[b]).abs()
+                       + (vb - circles[b].center).dot(inside_normals[b]).abs();
+                da.partial_cmp(&db).unwrap()
+            }).unwrap_or(0);
+            (i, Curve3::Circle(circles[best_k]))
+        }).collect();
+
+        // UV domain
+        let uvs: Vec<DVec2> = pts.iter().map(|p| sphere.world_to_uv(*p)).collect();
+        let u_min = uvs.iter().map(|uv| uv.x).fold(f64::INFINITY, f64::min);
+        let u_max = uvs.iter().map(|uv| uv.x).fold(f64::NEG_INFINITY, f64::max);
+        let v_min = uvs.iter().map(|uv| uv.y).fold(f64::INFINITY, f64::min);
+        let v_max = uvs.iter().map(|uv| uv.y).fold(f64::NEG_INFINITY, f64::max);
+        let uv_domain = if (u_max - u_min).abs() > TOLERANCE_FLOAT_LOOSE && (v_max - v_min).abs() > TOLERANCE_FLOAT_LOOSE {
+            Some([u_min, u_max, v_min, v_max])
+        } else { None };
+
+        // sample_point: 球面点
+        let sample_pt = centroid; // centroid is inside the face
+
+        result.emit_face_data(pts, &circle_edges, &Surface3::Sphere(*sphere), (centroid - sc).normalize(), sample_pt, uv_domain, origin);
+    }
+
     /// ❌ 未对齐/自创方案: 从大圆交点构建 SubFace (rcad自创,等OCCT边级路径)。
+    ///    此函数仅用于旧代码测试,新代码走 emit_sphere_faces_direct。
     fn build_sphere_sub_faces_by_circles(&self, face_idx: usize) -> Vec<SubFace> {
         let face = &self.ds.faces[face_idx];
         let sphere = match &face.surface { Surface3::Sphere(s) => *s, _ => return vec![] };
