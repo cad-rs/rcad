@@ -2750,19 +2750,6 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
     //    OCCT  FORWARD+REVERSED, BOPAlgo_WireSplitter
 
     // ================================================================
-    // Dedup sphere seam segments: remove direct north-south segments that
-    // bypass the IC endpoints and prevent PerformShapesToAvoid from working.
-    if matches!(face.surface, Surface3::Sphere(_)) {
-        let sphere_axis = match &face.surface { Surface3::Sphere(s) => s.axis, _ => DVec3::Z };
-        let radius = match &face.surface { Surface3::Sphere(s) => s.radius, _ => 1.0 };
-        segments.retain(|seg| {
-            if !seg.is_seam { return true; }
-            let p1 = ds.vertices[seg.start_vertex].point;
-            let p2 = ds.vertices[seg.end_vertex].point;
-            let vdiff = (p2 - p1).dot(sphere_axis).abs();
-            vdiff < radius * 1.5
-        });
-    }
     for &ci in &face.face_info.curves_in {
         let ic = &ds.intersection_curves[ci];
         // ✅ OCCT-aligned: remap IC endpoint to boundary vertex (ShapesSD).
@@ -3025,7 +3012,7 @@ fn build_closed_wires(segments: &[WireSegment], ds: &DS, face_idx: usize) -> (Ve
         for &vi in &[seg.start_vertex, seg.end_vertex] {
             if vi_to_canon[vi] != usize::MAX { continue; }
             let pt = ds.vertices[vi].point;
-            let found = canon_vertices.iter().position(|c| c.distance_squared(pt) < TOLERANCE_ABS_SQ);
+            let found = canon_vertices.iter().position(|c| c.distance_squared(pt) < TOLERANCE_ABS_SQ * 1000.0);
             let canon = found.unwrap_or_else(|| { canon_vertices.push(pt); canon_vertices.len() - 1 });
             vi_to_canon[vi] = canon;
         }
@@ -3057,7 +3044,8 @@ fn build_closed_wires(segments: &[WireSegment], ds: &DS, face_idx: usize) -> (Ve
             block.push(ci);
             let seg = &segments[ci];
             for &vi in &[seg.start_vertex, seg.end_vertex] {
-                if let Some(neighbors) = vert_to_segs.get(&vi) {
+                let cvi = vi_to_canon.get(vi).copied().unwrap_or(vi);
+                if let Some(neighbors) = vert_to_segs.get(&cvi) {
                     for &ni in neighbors {
                         if !visited_seg[ni] {
                             visited_seg[ni] = true;
@@ -3070,11 +3058,57 @@ fn build_closed_wires(segments: &[WireSegment], ds: &DS, face_idx: usize) -> (Ve
         blocks.push(block);
     }
 
+    // Merge blocks that share canonical vertices (workaround for canonical
+    // mapping precision issues that can split connected components).
+    let mut merged_blocks: Vec<Vec<usize>> = Vec::new();
+    {
+        let n = blocks.len();
+        let mut block_merged = vec![false; n];
+        // Build vertex→block index map using RAW vertex indices
+        let mut v_to_b: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+        for (bi, b) in blocks.iter().enumerate() {
+            for &si in b {
+                let seg = &segments[si];
+                v_to_b.entry(seg.start_vertex).or_default().push(bi);
+                v_to_b.entry(seg.end_vertex).or_default().push(bi);
+            }
+        }
+        for start_bi in 0..n {
+            if block_merged[start_bi] { continue; }
+            let mut queue = std::collections::VecDeque::new();
+            queue.push_back(start_bi);
+            block_merged[start_bi] = true;
+            let mut merged: Vec<usize> = Vec::new();
+            while let Some(bi) = queue.pop_front() {
+                for &si in &blocks[bi] {
+                    if !merged.contains(&si) { merged.push(si); }
+                }
+                // Find all blocks sharing ANY vertex with this block
+                for &si in &blocks[bi] {
+                    let seg = &segments[si];
+                    for &vi in &[seg.start_vertex, seg.end_vertex] {
+                        if let Some(neighbors) = v_to_b.get(&vi) {
+                            for &nbi in neighbors {
+                                if !block_merged[nbi] {
+                                    block_merged[nbi] = true;
+                                    queue.push_back(nbi);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if !merged.is_empty() {
+                merged_blocks.push(merged);
+            }
+        }
+    }
+
     // Process each block
     let mut wires: Vec<Vec<usize>> = Vec::new();
     let mut internal_wires: Vec<Vec<usize>> = Vec::new();
 
-    for block in &blocks {
+    for block in &merged_blocks {
         if block.len() < 2 {
             continue;
         }
@@ -3628,8 +3662,13 @@ fn walk_path_extract_wires(
             let is_backforth = wire.len() == 2 && {
                 let a = &segments[wire[0]];
                 let b = &segments[wire[1]];
-                (a.start_vertex == b.end_vertex && a.end_vertex == b.start_vertex)
-                    || (a.start_vertex == b.start_vertex && a.end_vertex == b.end_vertex)
+                // Allow 2-edge seam wires on closed surfaces (sphere face
+                // boundary: north->south->north forms a valid outer wire).
+                if a.is_seam && b.is_seam { false }
+                else {
+                    (a.start_vertex == b.end_vertex && a.end_vertex == b.start_vertex)
+                        || (a.start_vertex == b.start_vertex && a.end_vertex == b.end_vertex)
+                }
             };
             if wire.len() >= 3 || (wire.len() == 2 && !is_backforth) {
                 wires.push(wire);
