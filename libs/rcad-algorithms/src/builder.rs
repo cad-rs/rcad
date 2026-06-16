@@ -3334,6 +3334,14 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, fac
 
     for &si in block {
         let seg = &segments[si];
+
+        // ✅ OCCT-aligned: skip degenerate self-loop edges (BOPAlgo_WireSplitter_1.cxx
+        //    L141-143: "if (!HasCurveOnSurface(aE, myFace)) continue;").  In OCCT, a
+        //    degenerate edge (start==end) has no valid pcurve on the face (or one that
+        //    collapses to a point), so it is not added to the SmartMap.  Adding it
+        //    causes the walk to start from the self-loop and waste iterations.
+        if seg.start_vertex == seg.end_vertex { continue; }
+
         let is_inside = matches!(seg.source, WireEdgeSource::IntersectionCurve(_));
 
         // At start_vertex: edge LEAVES the vertex (in_flag = false)
