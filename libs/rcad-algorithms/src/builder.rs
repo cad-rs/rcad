@@ -3122,12 +3122,12 @@ fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface: &Surface3
                 // pole).  The seam always follows the V direction on the sphere,
                 // from north pole (V=0) toward south pole (V=pi).  Return the
                 // V-axis direction (pi/2) for outgoing, reverse for incoming.
-                return (Some(std::f64::consts::FRAC_PI_2),
-                        Some((std::f64::consts::FRAC_PI_2 + std::f64::consts::PI) % std::f64::consts::TAU));
+                let na = -std::f64::consts::FRAC_PI_2;
+                return (Some(na), Some((na + std::f64::consts::PI) % std::f64::consts::TAU));
             }
             let a = dir_to_angle(dir);
-            // tangent_end: reverse direction (incoming convention)
-            (Some(a), Some((a + std::f64::consts::PI) % std::f64::consts::TAU))
+            let na = -a;
+            (Some(na), Some((na + std::f64::consts::PI) % std::f64::consts::TAU))
         }
         Surface3::Cylinder(cyl) => {
             // Cylinder seam: u=0 or u=2 isoline, along V direction.
@@ -3140,8 +3140,8 @@ fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface: &Surface3
             let ev_v = (ev_pt - cyl.origin).dot(ax);
             let dir = if ev_v > sv_v { DVec2::new(0.0, 1.0) } else { DVec2::new(0.0, -1.0) };
             let a = dir_to_angle(dir);
-            // tangent_end: reverse direction (incoming convention)
-            (Some(a), Some((a + std::f64::consts::PI) % std::f64::consts::TAU))
+            let na = -a;
+            (Some(na), Some((na + std::f64::consts::PI) % std::f64::consts::TAU))
         }
         Surface3::Plane(p) => {
             let x_axis = any_perpendicular(p.normal).normalize();
@@ -3153,8 +3153,8 @@ fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface: &Surface3
             let dir = uv_e - uv_s;
             if dir.length_squared() < 1e-30 { return (None, None); }
             let a = dir_to_angle(dir);
-            // tangent_end: reverse direction (incoming convention)
-            (Some(a), Some((a + std::f64::consts::PI) % std::f64::consts::TAU))
+            let na = -a;
+            (Some(na), Some((na + std::f64::consts::PI) % std::f64::consts::TAU))
         }
         _ => (None, None),
     }
@@ -3178,8 +3178,8 @@ fn edge_uv_tangent(ds: &DS, sv: usize, ev: usize, surface: &Surface3) -> (Option
             let dir = uve - uvs;
             if dir.length_squared() < 1e-30 { return (None, None); }
             let a = dir_to_angle(dir);
-            // tangent_end: reverse direction (incoming convention)
-            (Some(a), Some((a + std::f64::consts::PI) % std::f64::consts::TAU))
+            let na = -a;
+            (Some(na), Some((na + std::f64::consts::PI) % std::f64::consts::TAU))
         }
         Surface3::Plane(p) => {
             let x_axis = any_perpendicular(p.normal).normalize();
@@ -3191,8 +3191,8 @@ fn edge_uv_tangent(ds: &DS, sv: usize, ev: usize, surface: &Surface3) -> (Option
             let dir = uv_e - uv_s;
             if dir.length_squared() < 1e-30 { return (None, None); }
             let a = dir_to_angle(dir);
-            // tangent_end: reverse direction (incoming convention)
-            (Some(a), Some((a + std::f64::consts::PI) % std::f64::consts::TAU))
+            let na = -a;
+            (Some(na), Some((na + std::f64::consts::PI) % std::f64::consts::TAU))
         }
         // Cylinder/Cone/Torus: handled similarly when world_to_uv is available
         _ => (None, None),
@@ -3246,11 +3246,13 @@ fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool) -> Option<
 ///     angle_out: angle at outgoing vertex (in_flag=false)
 /// ✅ OCCT-aligned: ClockWiseAngle (BOPTools_AlgoTools2D).
 ///    OCCT: Standard_Real d = aAIn - aAOut; if (d < 0.) d += 2*M_PI;
+/// ✅ OCCT-aligned: ClockWiseAngle (WireSplitter_1.cxx L621-660).
 fn clock_wise_angle(angle_in: f64, angle_out: f64) -> f64 {
-    let mut d = angle_in - angle_out;
-    if d < 0.0 {
-        d += std::f64::consts::TAU;
-    }
+    let a1 = if angle_in < 0.0 { angle_in + std::f64::consts::TAU } else { angle_in };
+    let a2 = angle_out + std::f64::consts::TAU;
+    let mut d = a2 - a1;
+    if d < 0.0 { d += std::f64::consts::TAU; }
+    if d > std::f64::consts::TAU { d -= std::f64::consts::TAU; }
     d
 }
 
@@ -3936,7 +3938,7 @@ fn refine_angle_2d(
                     best_dist = along;
                     let mut corrected = delta.y.atan2(delta.x);
                     if corrected < 0.0 { corrected += std::f64::consts::TAU; }
-                    if clock_wise_angle(a_in, corrected) >= a_delta {
+                    if clock_wise_angle(a_in, -corrected) >= a_delta {
                         best_angle = Some(corrected);
                     }
                 }
@@ -4188,7 +4190,7 @@ fn walk_path_extract_wires(
             return;
         };
 
-        if std::env::var("RCAD_DEBUG_IC").is_ok() && face_idx == 0 && matches!(face_surface, Surface3::Sphere(_)) {
+        if std::env::var("RCAD_DEBUG_IC").is_ok() {
             if candidates.is_empty() {
                 eprintln!("[WALK_NO_OUT] face={} at_v={} incoming_ci={}", face_idx, arrived_vertex, ci);
             } else {
@@ -4206,6 +4208,9 @@ fn walk_path_extract_wires(
             None => return,
         };
 
+        if std::env::var("RCAD_DEBUG_IC").is_ok() {
+            eprintln!("[CHOOSE] face={} incoming={} chosen={} to_v={}", face_idx, ci, best.seg_idx, segments[best.seg_idx].end_vertex);
+        }
         current_vertex = arrived_vertex;
         ci = best.seg_idx;
         arrived_vertex = segments[ci].end_vertex;
