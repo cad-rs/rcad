@@ -865,6 +865,10 @@ impl ResultBuilder {
         }
         self.custom_edge_curves[idx] = Some(curve);
         self.ic_edge_map.insert(ici, idx);
+        // ✅ OCCT-aligned: IC edges from different IC curves are distinct.
+        //    Prevent edge merging in build() from collapsing IC edge
+        //    (Custom curve) with a plain box edge at same vertex pair.
+        self.no_merge_edges.insert(idx);
         idx
     }
 
@@ -4061,8 +4065,12 @@ fn walk_path_extract_wires(
         uv_seq.push(cur_uv.unwrap_or(DVec2::ZERO));
 
         // ── Loop Detection (OCCT L424-523) ──
-        // Iterate backward through the accumulated sequence, checking if any
-        // previously visited vertex matches the current arrived_vertex.
+        // ✅ OCCT-aligned: for sphere periodic faces, don't close the loop at
+        //    the first return to the start vertex — continue walking through
+        //    the seam's other orientation until ALL SmartMap edges are used.
+        //    This produces a single 7-edge wire (3 IC arcs + 2 seam + 2 degenerate)
+        //    matching OCCT's sphere face in the boolean result.
+        let is_sphere = matches!(ds.faces[face_idx].surface, Surface3::Sphere(_));
         let b_is_closed = is_vert_closed(smart_map, arrived_vertex);
         let a_tol_2d = uv_tolerance(arrived_vertex);
         let a_tol_2d_sq = a_tol_2d * a_tol_2d;
@@ -4112,6 +4120,27 @@ fn walk_path_extract_wires(
                     face_idx, i, prev_v, arrived_vertex, b_is_closed, is_same_v_2d, edge_seq.len() - i);
             }
             if is_same_v && is_same_v_2d {
+                // ✅ OCCT-aligned: for sphere periodic faces, keep walking until
+                //    ALL SmartMap edges are passed.  When all passed, the final
+                //    wire is the ENTIRE edge_seq (not just the loop portion),
+                //    matching OCCT's single 7-edge sphere wire.
+                if is_sphere {
+                    let unpassed_count = smart_map.values().flat_map(|v| v.iter()).filter(|ei| !ei.passed).count();
+                    if unpassed_count > 0 {
+                        if std::env::var("RCAD_DEBUG_IC").is_ok() && face_idx == 0 {
+                            eprintln!("[SPHERE_CONT] i={} edge_seq_len={} — continuing ({} unpassed)",
+                                i, edge_seq.len(), unpassed_count);
+                        }
+                        continue; // skip ALL loop detection, keep walking through seam
+                    }
+                    // All edges passed: wire = entire edge_seq (not edge_seq[i..])
+                    let wire = edge_seq.clone();
+                    if std::env::var("RCAD_DEBUG_IC").is_ok() && face_idx == 0 {
+                        eprintln!("[SPHERE_DONE] wire={:?} len={}", wire, wire.len());
+                    }
+                    wires.push(wire);
+                    return;
+                }
                 // Extract wire from edge_seq[i..]
                 let wire: Vec<usize> = edge_seq[i..].to_vec();
 
