@@ -3282,7 +3282,11 @@ fn build_closed_wires(segments: &[WireSegment], ds: &DS, face_idx: usize) -> (Ve
         for &vi in &[seg.start_vertex, seg.end_vertex] {
             if vi_to_canon[vi] != usize::MAX { continue; }
             let pt = ds.vertices[vi].point;
-            let found = canon_vertices.iter().position(|c| c.distance_squared(pt) < TOLERANCE_ABS_SQ * 1000.0);
+            /// ✅ OCCT-aligned: tolerance-based vertex dedup.  TOLERANCE_ABS_SQ*1000
+            ///   (≈1e-11 distance^2) is too tight for IC endpoints from PaveFiller
+            ///   which may have floating-point noise up to 1e-8.  Use TOLERANCE_ABS
+            ///   * 1000 (≈1e-4 distance) matching remap_ic_v in collect_face_edge_segments.
+            let found = canon_vertices.iter().position(|c| c.distance_squared(pt) < TOLERANCE_ABS * TOLERANCE_ABS * 1_000_000.0);
             let canon = found.unwrap_or_else(|| { canon_vertices.push(pt); canon_vertices.len() - 1 });
             vi_to_canon[vi] = canon;
         }
