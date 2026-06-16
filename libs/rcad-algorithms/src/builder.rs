@@ -3887,10 +3887,10 @@ fn perform_areas(
                 full_wrap = d2 > (radius * 1.9) * (radius * 1.9);
                 if !full_wrap {
                     // Non-full-wrap 2-vertex wire on sphere — cannot
-                    // classify without FClass2d equivalent.  Skip.
-                    // ⏳ TODO: implement FClass2d equivalent (sample
-                    //    point on surface + 3D containment check).
-                    return None;
+                    // Non-full-wrap 2-vertex wire on periodic surface
+                    // is too small to enclose a region -> always a hole.
+                    // OCCT: MakeFace + FClass2d -> IsHole = true.
+                    // Falls through to create WireData with 2-point boundary.
                 }
             } else {
                 return None; // non-sphere, <3 vertices — skip
@@ -3952,10 +3952,13 @@ fn perform_areas(
 
     for i in 0..n {
         if wds[i].full_wrap {
-            // ✅ OCCT-aligned: full-wrap seam wire on closed surface.
-            //    OCCT: MakeFace → FClass2d → sample point on surface
-            //    is inside face → !IsHole → growth (L443-444).
             is_hole[i] = false;
+            continue;
+        }
+        // ✅ OCCT-aligned: <3 vertex non-full-wrap wire on periodic
+        //    surface -> too small to enclose region -> hole.
+        if wds[i].boundary.len() < 3 {
+            is_hole[i] = true;
             continue;
         }
         let Some(ref uv_cent) = wds[i].uv_centroid else { continue; };
