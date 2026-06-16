@@ -2008,10 +2008,20 @@ fn classify_subface_against_box(
             }
         } else {
             if inside {
-                if std::env::var("RCAD_DEBUG_IC").is_ok() && matches!(&sub.surface, rcad_kernel::geom::Surface3::Sphere(_)) {
-                    eprintln!("[BOX_IN] sphere sub-face vertex inside box → In (may be wrong for Union)");
+                // ✅ OCCT-aligned: for Union, boundary vertices may be ON the
+                // box surface while the face INTERIOR extends outward (sphere
+                // sub-face bounded by IC arcs on the box).  Check the sample
+                // point to distinguish "on surface" from "inside".
+                let sp = sub.sample_point();
+                let sp_inside = sp.x >= min_x - tol && sp.x <= max_x + tol
+                    && sp.y >= min_y - tol && sp.y <= max_y + tol
+                    && sp.z >= min_z - tol && sp.z <= max_z + tol;
+                if sp_inside {
+                    return Some(Classification::In);
                 }
-                return Some(Classification::In);
+                // Sample point outside → boundary vertices are on the box
+                // surface but face is outside → fall through to probe grid
+                return None;
             }
         }
     }
@@ -2684,6 +2694,21 @@ fn classify_face_occt_style(
     }
     if (u1 - u0).abs() < TOLERANCE_FLOAT_LOOSE || (v1 - v0).abs() < TOLERANCE_FLOAT_LOOSE {
         return None;
+    }
+    // ✅ OCCT-aligned: for periodic surfaces (sphere/cylinder), a small UV
+    // domain (<30% of full area) likely covers the box-interior region while
+    // the sub-face itself spans the OUTSIDE.  Skip UV-grid classification
+    // and fall through to the probe grid which uses the sample_override.
+    let full_area = match &sub.surface {
+        Surface3::Sphere(_) => Some(std::f64::consts::TAU * std::f64::consts::PI),
+        Surface3::Cylinder(_) => Some(std::f64::consts::TAU * 2.0), // approx
+        _ => None,
+    };
+    if let Some(fa) = full_area {
+        let uv_area = (u1 - u0).abs() * (v1 - v0).abs();
+        if uv_area < fa * 0.3 {
+            return None;
+        }
     }
 
     let nu = 4usize;
@@ -4229,12 +4254,39 @@ fn wire_faces_to_sub_faces(
             eprintln!("[UV_DOMAIN] face={} uv_domain={:?}", face_idx, uv_domain);
         }
 
+        // ✅ OCCT-aligned: for sphere/sub-face classification, the UV domain
+        // computed from IC-arc boundary points may cover only the box-interior
+        // octant [0,π/2]×[0,π/2].  The face interior sample must be OUTSIDE
+        // the box for correct Union classification.  Override sample to the
+        // sphere surface point opposite the box corner.
+        let sample_override = if matches!(&surface, Surface3::Sphere(_)) {
+            if let Some([u0, u1, v0, v1]) = uv_domain {
+                let u_range = u1 - u0;
+                let v_range = v1 - v0;
+                let total_u = std::f64::consts::TAU;
+                let total_v = std::f64::consts::PI;
+                // If the UV domain covers much less than the full sphere, the
+                // face is the OUTSIDE part — use a sample outside [0,π/2]×[0,π/2]
+                if u_range * v_range < total_u * total_v * 0.3 {
+                    // Sample at the far side of the sphere (outside the box)
+                    match &surface {
+                        Surface3::Sphere(s) => {
+                            Some(s.point_at(total_u * 0.75, total_v * 0.75))
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            } else { None }
+        } else { None };
+
         SubFace {
             boundary,
             surface: surface.clone(),
             normal,
             uv_centroid: None,
-            sample_override: None,
+            sample_override,
             uv_domain,
             inner_wires,
             outer_circle_edges: vec![],
