@@ -760,6 +760,14 @@ impl<'a> PaveFiller<'a> {
         //    rcad 当前仅做端点匹配(完整 PutPavesOnCurve 需参数沿曲线排序 + 分裂)。
         self.make_blocks();
 
+        // ✅ OCCT对齐: Inject IC vertices into boundary edges (PutPaveOnCurve).
+        //    After FF creates intersection curves, their vertices may lie on
+        //    boundary edges (e.g. sphere seam edge passes through IC vertex at
+        //    (1,0,0)).  OCCT's PutPaveOnCurve processes ALL curves (edges + ICs)
+        //    and injects paves from any vertex on the curve.  rcad's make_blocks
+        //    only processes IC curves, missing this reverse injection.
+        self.inject_ic_vertices_into_boundary_edges();
+
         // ✅ OCCT对齐: 清理退化 IC(start==end 位置重合)。OCCT IsValidBlockForFaces
         //    通过 mid-point 投影移除无效块,但 rcad 的 IC 端点可能在 EF 替换后重合。
         //    ⚠️ 跳过 Circle 曲线: 闭环曲线的 start==end 是自然几何属性(全圆,
@@ -5680,6 +5688,76 @@ impl<'a> PaveFiller<'a> {
 
             }
 
+        }
+    }
+
+    /// ✅ OCCT-aligned: Inject IC vertices into boundary edge pave lists.
+    ///    After FF creates intersection curves, their vertices may lie on
+    ///    boundary edges (e.g. sphere seam edge passes through IC vertex at
+    ///    (1,0,0)).  OCCT's PutPaveOnCurve processes ALL curves (edges + ICs)
+    ///    and injects paves from any vertex on the curve.  This is the reverse
+    ///    of put_bound_pave_on_curve (which injects boundary vertices into ICs).
+    fn inject_ic_vertices_into_boundary_edges(&mut self) {
+        let tol = TOLERANCE_ABS * 100.0;
+        // Collect all IC vertices (from faces that have intersection curves)
+        let mut ic_vertices: Vec<(usize, DVec3)> = Vec::new();
+        let mut seen_vi = std::collections::BTreeSet::new();
+        for fi in 0..self.ds.faces.len() {
+            let face = &self.ds.faces[fi];
+            if face.face_info.curves_in.is_empty() { continue; }
+            for &vi in &face.face_info.vertices_in {
+                if seen_vi.insert(vi) {
+                    ic_vertices.push((vi, self.ds.vertices[vi].point));
+                }
+            }
+            for &vi in &face.face_info.vertices_on {
+                if seen_vi.insert(vi) {
+                    ic_vertices.push((vi, self.ds.vertices[vi].point));
+                }
+            }
+            // Also include IC start/end vertices
+            for &ci in &face.face_info.curves_in {
+                let ic = &self.ds.intersection_curves[ci];
+                if seen_vi.insert(ic.start_vertex) {
+                    ic_vertices.push((ic.start_vertex, self.ds.vertices[ic.start_vertex].point));
+                }
+                if seen_vi.insert(ic.end_vertex) {
+                    ic_vertices.push((ic.end_vertex, self.ds.vertices[ic.end_vertex].point));
+                }
+            }
+        }
+
+        if ic_vertices.is_empty() { return; }
+
+        // For each face with ICs, check its boundary edges against IC vertices.
+        // Collect inject actions first to avoid borrow conflicts with self.ds.
+        struct InjectAction { edge_idx: usize, vi: usize, param: f64 }
+        let mut actions: Vec<InjectAction> = Vec::new();
+
+        for fi in 0..self.ds.faces.len() {
+            let face = &self.ds.faces[fi];
+            if face.face_info.curves_in.is_empty() { continue; }
+            for &ei in &face.boundary_edges {
+                if self.ds.is_edge_degenerated(ei) { continue; }
+                let edge = &self.ds.edges[ei];
+                let curve = &edge.curve;
+                let [t0, t1] = edge.t_range;
+                for &(vi, pt) in &ic_vertices {
+                    if vi == edge.start_vertex || vi == edge.end_vertex { continue; }
+                    if edge.paves.iter().any(|p| p.vertex_idx == vi) { continue; }
+                    if let Some(t) = project_vertex_to_curve(pt, curve, tol) {
+                        if t >= t0 - tol && t <= t1 + tol {
+                            actions.push(InjectAction { edge_idx: ei, vi, param: t.clamp(t0, t1) });
+                        }
+                    }
+                }
+            }
+        }
+        for action in actions {
+            self.ds.edges[action.edge_idx].paves.push(Pave {
+                vertex_idx: action.vi,
+                param: action.param,
+            });
         }
     }
 
