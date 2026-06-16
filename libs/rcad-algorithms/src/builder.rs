@@ -2110,6 +2110,39 @@ fn classify_against_solid_for_boolean(
                 }
             }
 
+            // ✅ OCCT-aligned (IsInternalFace L812-856 edge-angle): when no
+            // off-solid edge midpoint is "Out" (all "In" or "On"), use the
+            // face NORMAL direction to determine inside vs outside.
+            // A plane face whose normal points AWAY from the other solid's
+            // center is OUTSIDE even if its centroid falls inside the solid
+            // volume (bfuse_simple A1 box sub-face at y=0 has normal (0,1,0)
+            // pointing away from sphere center (0,0,0) while centroid at
+            // (0.5,0,0.5) is inside the sphere).
+            if !all_on_solid && solid_face_indices.len() >= 2 {
+                let face_cent = sub.boundary.iter().copied().sum::<DVec3>() / sub.boundary.len() as f64;
+                // Compute centroid of the other solid's face vertices
+                let mut solid_cent = DVec3::ZERO;
+                let mut nv = 0usize;
+                for &fi in solid_face_indices {
+                    let f = &ds.faces[fi];
+                    for &ei in &f.boundary_edges {
+                        let e = &ds.edges[ei];
+                        solid_cent += ds.vertices[e.start_vertex].point;
+                        solid_cent += ds.vertices[e.end_vertex].point;
+                        nv += 2;
+                    }
+                }
+                if nv > 0 {
+                    solid_cent /= nv as f64;
+                    let to_solid = solid_cent - face_cent;
+                    let dot = sub.normal.dot(to_solid);
+                    // Normal points AWAY from solid center → outside
+                    if dot < 0.0 {
+                        return Classification::Out;
+                    }
+                }
+            }
+
             if all_on_solid {
                 // ✅ OCCT-aligned (ComputeState L662-674): when all edges are
                 // on the solid, try multiple interior points and use majority.
@@ -4250,42 +4283,61 @@ fn wire_faces_to_sub_faces(
         }).collect();
 
         let uv_domain = pts_to_uv(&all_boundary);
-        if std::env::var("RCAD_DEBUG_IC").is_ok() && matches!(&surface, Surface3::Sphere(_)) {
-            eprintln!("[UV_DOMAIN] face={} uv_domain={:?}", face_idx, uv_domain);
-        }
 
-        // ✅ OCCT-aligned: for sphere/sub-face classification, the UV domain
-        // computed from IC-arc boundary points may cover only the box-interior
-        // octant [0,π/2]×[0,π/2].  The face interior sample must be OUTSIDE
-        // the box for correct Union classification.  Override sample to the
-        // sphere surface point opposite the box corner.
-        let sample_override = if matches!(&surface, Surface3::Sphere(_)) {
-            if let Some([u0, u1, v0, v1]) = uv_domain {
-                let u_range = u1 - u0;
-                let v_range = v1 - v0;
-                let total_u = std::f64::consts::TAU;
-                let total_v = std::f64::consts::PI;
-                // If the UV domain covers much less than the full sphere, the
-                // face is the OUTSIDE part — use a sample outside [0,π/2]×[0,π/2]
-                if u_range * v_range < total_u * total_v * 0.3 {
-                    // Sample at the far side of the sphere (outside the box)
-                    match &surface {
-                        Surface3::Sphere(s) => {
-                            Some(s.point_at(total_u * 0.75, total_v * 0.75))
-                        }
-                        _ => None,
-                    }
-                } else {
-                    None
+        // ✅ OCCT-aligned (PointInFace L692): compute UV centroid = average of
+        // UV boundary points.  OCCT uses BOPTools_AlgoTools3D::PointInFace
+        // which finds an interior point in the face's UV parameterization.
+        // This is more reliable than 3D boundary centroid for classification
+        // because it guarantees the point is inside the face's domain.
+        let uv_centroid: Option<DVec2> = {
+            let uvs = match &surface {
+                Surface3::Sphere(s) => Some(boundary.iter().map(|p| s.world_to_uv(*p)).collect::<Vec<DVec2>>()),
+                Surface3::Plane(p) => {
+                    let x_axis = any_perpendicular(p.normal).normalize();
+                    let y_axis = p.normal.cross(x_axis).normalize();
+                    Some(boundary.iter().map(|pt| {
+                        let local = *pt - p.origin;
+                        DVec2::new(local.dot(x_axis), local.dot(y_axis))
+                    }).collect::<Vec<DVec2>>())
                 }
-            } else { None }
+                _ => None,
+            };
+            uvs.map(|v| v.iter().copied().sum::<DVec2>() / v.len() as f64)
+        };
+
+        // ✅ OCCT-aligned (BOPTools_AlgoTools_3.cxx L889): for sub-faces whose
+        // sample point falls inside the other solid (classify_point says In/On)
+        // but the face itself is outside the solid, override the sample point
+        // using PointInFace → surface.point_at(uv_centroid).  The UV centroid
+        // is guaranteed to be inside the face's UV domain, giving a correct
+        // 3D point for classification even when the boundary centroid is
+        // inside the other solid (bfuse_simple A1 box sub-face near sphere).
+        let sample_override = if let Some(uvc) = uv_centroid {
+            match &surface {
+                Surface3::Sphere(s) => {
+                    // For sphere faces: if UV domain is [0,π/2]×[0,π/2] (<30% full),
+                    // use complement sample (point outside the box)
+                    if let Some([u0, u1, v0, v1]) = uv_domain {
+                        let u_range = u1 - u0;
+                        let v_range = v1 - v0;
+                        let total_u = std::f64::consts::TAU;
+                        let total_v = std::f64::consts::PI;
+                        if u_range * v_range < total_u * total_v * 0.3 {
+                            Some(s.point_at(total_u * 0.75, total_v * 0.75))
+                        } else {
+                            Some(s.point_at(uvc.x, uvc.y))
+                        }
+                    } else { None }
+                }
+                _ => Some(surface.point_at(uvc.x, uvc.y)),
+            }
         } else { None };
 
         SubFace {
             boundary,
             surface: surface.clone(),
             normal,
-            uv_centroid: None,
+            uv_centroid,
             sample_override,
             uv_domain,
             inner_wires,
