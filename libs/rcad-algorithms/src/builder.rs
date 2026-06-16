@@ -850,10 +850,20 @@ impl ResultBuilder {
         idx
     }
 
-    /// ✅ OCCT-aligned: create edge by IntersectionCurve index identity.
-    ///    OCCT BOPTools_AlgoTools::MakeSectEdge creates a section edge shared
-    ///    by both faces at the intersection.  rcad equivalent: map IC index →
-    ///    result edge index so both faces use the same edge for the same IC.
+    // ═══════════════════════════════════════════════════════════════
+    // ■ CRITICAL OCCT ALIGNMENT ■ IC arc edge identity
+    //   OCCT BOPTools_AlgoTools::MakeSectEdge creates section edges
+    //   shared by both intersecting faces (one TopoDS_Shape shared by
+    //   TShape identity).  rcad maps IC index → result edge index so
+    //   the same IC curve gets the same edge index in all faces.
+    //
+    //   no_merge_edges prevents the IC edge from being removed during
+    //   edge cleanup in result.build() when it shares a vertex pair
+    //   with a plain box edge but carries a Circle3 curve.
+    //
+    //   ⚠ Removing no_merge_edges causes the IC edge to be orphaned
+    //     (0 face refs) in edge cleanup → E count drops by 1 → A1 fails.
+    // ═══════════════════════════════════════════════════════════════
     fn add_ic_edge(&mut self, ici: usize, v1: usize, v2: usize, curve: Curve3) -> usize {
         if let Some(&idx) = self.ic_edge_map.get(&ici) {
             return idx;
@@ -865,9 +875,6 @@ impl ResultBuilder {
         }
         self.custom_edge_curves[idx] = Some(curve);
         self.ic_edge_map.insert(ici, idx);
-        // ✅ OCCT-aligned: IC edges from different IC curves are distinct.
-        //    Prevent edge merging in build() from collapsing IC edge
-        //    (Custom curve) with a plain box edge at same vertex pair.
         self.no_merge_edges.insert(idx);
         idx
     }
@@ -3058,6 +3065,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     let fixed_ev = correct_ev;
                     let pcurve = pcurve_lookup(ci);
                     let (t_start, t_end) = if let Some(ref pc) = pcurve {
+                        // ■ CRITICAL: negate angle_2d to match clock_wise_angle OCCT formula sign.
                         (angle_2d(pc, ic.t_range[0], ic.t_range, false).map(|a| -a),
                          angle_2d(pc, ic.t_range[1], ic.t_range, true).map(|a| -a))
                     } else { (None, None) };
@@ -3165,16 +3173,19 @@ fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface: &Surface3
     }
 }
 
-/// OCCT-aligned: compute 2D UV-space tangent angle for a regular edge on any
-/// surface type.  Uses the surface's world_to_uv or local basis to project
-/// edge endpoints, then computes the direction angle.  Used by the wire
-/// pipeline for ALL face types (sphere + planar + cylindrical).
-///
-/// OCCT-aligned: tangent_start = forward tangent at start vertex (outgoing).
-/// tangent_end = REVERSE tangent at end vertex (incoming convention matching
-/// Angle2D + aFlag=true).  Fixes the bug where both ends used the same angle,
-/// causing ClockWiseAngle to select wrong outgoing edges at multi-edge vertices
-/// (bfuse_simple A1 sphere face produced 3 wires instead of 1).
+// ═══════════════════════════════════════════════════════════════
+// ■ CRITICAL OCCT ALIGNMENT ■ UV tangent angle computation
+//   Angles are NEGATED (na = −a) to match the clock_wise_angle
+//   OCCT formula (angle_out − angle_in + 2π).  The old rcad formula
+//   (angle_in − angle_out + 2π) was inverse, so ALL angles across
+//   edge_uv_tangent, compute_seam_tangent_angles, and angle_2d (for
+//   IC arcs) must be negated consistently.
+//
+//   ⚠ If clock_wise_angle formula is changed, REVERT the negation
+//     here AND in compute_seam_tangent_angles AND angle_2d call sites.
+//     Partial negation (some functions negated, others not) will
+//     produce wrong CWA ordering → box faces fail to split at IC.
+// ═══════════════════════════════════════════════════════════════
 fn edge_uv_tangent(ds: &DS, sv: usize, ev: usize, surface: &Surface3) -> (Option<f64>, Option<f64>) {
     match surface {
         Surface3::Sphere(s) => {
@@ -3249,9 +3260,18 @@ fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool) -> Option<
 ///
 ///     angle_in: angle at incident vertex (in_flag=true)
 ///     angle_out: angle at outgoing vertex (in_flag=false)
-/// ✅ OCCT-aligned: ClockWiseAngle (BOPTools_AlgoTools2D).
-///    OCCT: Standard_Real d = aAIn - aAOut; if (d < 0.) d += 2*M_PI;
-/// ✅ OCCT-aligned: ClockWiseAngle (WireSplitter_1.cxx L621-660).
+// ═══════════════════════════════════════════════════════════════
+// ■ CRITICAL OCCT ALIGNMENT ■ ClockWiseAngle (WireSplitter_1.cxx L621-660)
+//   OCCT formula: dA = A2 − A1 where A1 = angleIn∈[0,2π), A2 = angleOut+2π
+//   rcad negates all UV tangent angles (na = −a) to match the sign
+//   convention.  For negated angles, a2 may be < a1 producing d < 0;
+//   the extra branch handles this while OCCT (angles always ∈[0,2π))
+//   never needs it.
+//
+//   ⚠ DO NOT CHANGE unless re-deriving the full angle sign convention
+//     across edge_uv_tangent, compute_seam_tangent_angles, angle_2d,
+//     refine_angle_2d, and select_best_outgoing simultaneously.
+// ═══════════════════════════════════════════════════════════════
 fn clock_wise_angle(angle_in: f64, angle_out: f64) -> f64 {
     let a1 = if angle_in < 0.0 { angle_in + std::f64::consts::TAU } else { angle_in };
     let a2 = angle_out + std::f64::consts::TAU;
@@ -4119,11 +4139,22 @@ fn walk_path_extract_wires(
                 eprintln!("[LOOP_DETECT] face={} i={} prev_v={} cv={} closed={} uv_ok={} wire_len={}",
                     face_idx, i, prev_v, arrived_vertex, b_is_closed, is_same_v_2d, edge_seq.len() - i);
             }
+            // ═══════════════════════════════════════════════════════════════
+            // ■ CRITICAL OCCT ALIGNMENT ■ Sphere periodic UV boundary
+            //   OCCT's WireSplitter traverses the seam in BOTH directions
+            //   (U=0 and U=2π) via DoSplitSEAMOnFace.  rcad emulates this by
+            //   suppressing loop detection until ALL SmartMap edges are passed.
+            //   Without this, the walk closes the loop at the FIRST return to
+            //   the start vertex (3 edges), and the remaining 5 segments form
+            //   a second wire → sphere face has 2×3 edges instead of 1×8.
+            //
+            //   When all edges are passed, the wire is the ENTIRE edge_seq
+            //   (not edge_seq[i..]), matching OCCT's single closed 8-edge wire.
+            //
+            //   ⚠ Removing or modifying this check will cause the sphere face
+            //     to split into multiple wires → E count drops to 14 → A1 fails.
+            // ═══════════════════════════════════════════════════════════════
             if is_same_v && is_same_v_2d {
-                // ✅ OCCT-aligned: for sphere periodic faces, keep walking until
-                //    ALL SmartMap edges are passed.  When all passed, the final
-                //    wire is the ENTIRE edge_seq (not just the loop portion),
-                //    matching OCCT's single 7-edge sphere wire.
                 if is_sphere {
                     let unpassed_count = smart_map.values().flat_map(|v| v.iter()).filter(|ei| !ei.passed).count();
                     if unpassed_count > 0 {
@@ -4188,11 +4219,21 @@ fn walk_path_extract_wires(
                 // Continue from the last entry in the truncated sequence
                 let last_ci = edge_seq[a_nbj - 1];
                 let last_arrived = segments[last_ci].end_vertex;
-                // ✅ OCCT-aligned: vert_seq stores the vertex at each step's END.
-                //   After truncation, vert_seq[a_nbj-1] is the start of the stale
-                //   FIRST walk.  Replace it with last_arrived (the actual start
-                //   vertex of the continuation walk) so loop detection matches
-                //   the correct continuation start vertex, not the stale first walk.
+                // ═══════════════════════════════════════════════════════════════
+                // ■ CRITICAL OCCT ALIGNMENT ■ vert_seq stale-vertex replacement
+                //   After truncation, vert_seq[a_nbj-1] holds the START vertex of
+                //   the FIRST walk's last kept edge.  The continuation walk starts
+                //   from last_arrived (the END vertex of that edge).  Without the
+                //   replacement, if the continuation returns to the first walk's
+                //   start vertex, it fires a GHOST loop at position 0, including
+                //   the stale first edge in the wire → vertex count inflates.
+                //
+                //   OCCT avoids this because aNbj = i − 1 (rcad uses a_nbj = i),
+                //   so OCCT keeps one fewer entry and returns when aNbj < 1.
+                //
+                //   ⚠ Removing this fix causes ghost wire [0,1,2,3] on box faces
+                //     that includes edge 0 from the first walk → V/edge inflation.
+                // ═══════════════════════════════════════════════════════════════
                 vert_seq[a_nbj - 1] = last_arrived;
 
                 let angle_in = match find_angle_at(smart_map, last_ci, last_arrived, true) {
