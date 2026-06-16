@@ -1564,8 +1564,14 @@ impl ResultBuilder {
                 for w in &mut f.inner_wires { w.edges.retain(|we| we.idx != usize::MAX); }
             }
             let pre_retain_count = faces.len();
-            let should_keep: Vec<bool> = faces.iter().map(|f| f.outer_wire.edges.len() >= 3).collect();
-            faces.retain(|f| f.outer_wire.edges.len() >= 3);
+            // ✅ OCCT-aligned: keep faces with inner wires even if outer<3.
+            //    Full-wrap seam wires on closed surfaces have 2-edge outers
+            //    but valid inner holes (IC triangle).  OCCT BRepBuilderAPI_
+            //    MakeFace handles this natively.
+            let should_keep: Vec<bool> = faces.iter().map(|f| {
+                f.outer_wire.edges.len() >= 3 || !f.inner_wires.is_empty()
+            }).collect();
+            faces.retain(|f| f.outer_wire.edges.len() >= 3 || !f.inner_wires.is_empty());
             let mut new_origins: Vec<FaceOrigin> = Vec::with_capacity(faces.len());
             for (i, keep) in should_keep.iter().enumerate() {
                 if *keep {
@@ -3664,14 +3670,20 @@ fn walk_path_extract_wires(
         };
         if let Some(prev_idx) = loop_prev_idx {
             let wire: Vec<usize> = edge_seq[prev_idx..].to_vec();
-            // ⏳ OCCT WireSplitter_1.cxx L474-487: currently rejects ALL
-            //    2-edge wires (vertex-pair back-forth) because the downstream
-            //    perform_areas full-wrap classification requires PaveFiller
-            //    image-edge replacement (OCCT Builder_2::myImages).  Once
-            //    boundary_edges are replaced with split image edges, the
-            //    OCCT IsSame check can be enabled:
-            //      if wire.len() >= 3 || (wire.len() == 2 && !same_source) {
-            if wire.len() >= 3 {
+            // ✅ OCCT WireSplitter_1.cxx L474-487: aBuf.First().IsSame(aBuf.Last())
+            //    Only reject 2-edge wires from the SAME TopoDS_Edge.
+            //    Different-source 2-edge wires form valid boundaries on
+            //    periodic surfaces (e.g. sphere seam + IC arc).
+            if wire.len() >= 3 || (wire.len() == 2 && {
+                let a = &segments[wire[0]];
+                let b = &segments[wire[1]];
+                !match (&a.source, &b.source) {
+                    (WireEdgeSource::DsEdge(ea), WireEdgeSource::DsEdge(eb)) => ea == eb,
+                    (WireEdgeSource::IntersectionCurve(ca),
+                     WireEdgeSource::IntersectionCurve(cb)) => ca == cb,
+                    _ => false,
+                }
+            }) {
                 wires.push(wire);
             }
             // Truncate accumulated sequences to before the loop (OCCT L500-517)
@@ -3969,16 +3981,22 @@ fn perform_areas(
             internal_wires: internal_wires.to_vec(),
         });
     } else {
+        let first_valid_gi = growths.iter().position(|&g_idx| wires[g_idx].len() >= 3);
         for (gi, &g_idx) in growths.iter().enumerate() {
             let inner = if gi == 0 {
                 holes.iter().map(|&h_idx| wires[h_idx].clone()).collect()
             } else {
                 vec![]
             };
+            let iw = if first_valid_gi.map_or(gi == 0, |v| gi == v) {
+                internal_wires.to_vec()
+            } else {
+                vec![]
+            };
             result.push(WireFace {
                 outer_wire: wires[g_idx].clone(),
                 inner_wires: inner,
-                internal_wires: if gi == 0 { internal_wires.to_vec() } else { vec![] },
+                internal_wires: iw,
             });
         }
     }
@@ -4104,13 +4122,10 @@ impl<'a> BooleanBuilder<'a> {
         if wfs.is_empty() {
             return None;
         }
-        // ⏳ OCCT-aligned: currently requires ≥3 edge outer wires because
-        //    the downstream emit_wire_face triangulation and face building
-        //    needs ≥3 boundary vertices.  Full-wrap 2-edge wires on periodic
-        //    surfaces will be supported once PaveFiller replaces boundary_edges
-        //    with image edges (OCCT Builder_2::myImages equivalent).
+        // ✅ OCCT-aligned: outer wires with ≥2 edges are valid for
+        //    periodic surfaces (OCCT MakeFace accepts any wire edge count).
         for (_wi, wf) in wfs.iter().enumerate() {
-            if wf.outer_wire.len() < 3 {
+            if wf.outer_wire.len() < 2 {
                 return None;
             }
         }
