@@ -3655,9 +3655,15 @@ fn refine_angles(
             let corrected = refine_angle_2d(v, seg, segments, ds, face_surface, a_in, a_out, delta_bnd, ei.angle);
             if let Some(new_angle) = corrected {
                 refined.push((ei.seg_idx, new_angle));
-            } else if i_cnt_int == 2 {
-                // OCCT L997: RefineAngle2D failed + exactly 2 internal edges
-                let push_angle = if ei.angle <= a_out { a_out + 1e-6 } else { a_in - 1e-6 };
+            } else {
+                // OCCT-aligned: fallback when RefineAngle2D fails.
+                // OCCT only clamps for iCntInt==2, but rcad's refine_angle_2d
+                // may fail more often.  Always clamp to just PAST the incoming
+                // boundary direction (a_in + ε) so the IC's ClockWiseAngle is
+                // near TAU (≈2π), making it the LAST choice at this vertex.
+                // Previously clamped to a_out+ε which gave CWA < boundary CWA,
+                // causing the IC to be preferred over the boundary edge.
+                let push_angle = (a_in + 1e-6) % std::f64::consts::TAU;
                 refined.push((ei.seg_idx, push_angle));
             }
         }
@@ -3870,6 +3876,22 @@ fn walk_path_extract_wires(
         current_vertex = arrived_vertex;
         ci = best.seg_idx;
         arrived_vertex = segments[ci].end_vertex;
+    }
+    // If we exit via max_iter without forming any wire, ensure all visited
+    // segments are marked passed so the outer loop doesn't retry them.
+    for &si in &edge_seq {
+        mark_all_edge_infos_passed(smart_map, si);
+    }
+}
+
+/// Mark ALL EdgeInfo entries for a segment as passed (both in_flag values).
+fn mark_all_edge_infos_passed(smart_map: &mut HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize) {
+    for infos in smart_map.values_mut() {
+        for ei in infos.iter_mut() {
+            if ei.seg_idx == seg_idx {
+                ei.passed = true;
+            }
+        }
     }
 }
 
