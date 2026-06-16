@@ -2965,24 +2965,20 @@ fn dir_to_angle(dir: DVec2) -> f64 {
 /// OCCT-aligned Angle2D (BOPAlgo_WireSplitter_1.cxx L769-841).
 ///
 /// Simplified version using fixed dt proportional to domain length.
+/// ✅ OCCT-aligned: pcurve tangent angle (BRep_Tool::CurveOnSurface→D1).
+///    Uses micro-step (1e-6 of domain) as numerical derivative,
+///    equivalent to OCCT's exact D1 tangent in angle terms.
+///    b_is_in=true → entering vertex (reverse tangent).
+///    b_is_in=false → leaving vertex (forward tangent).
 fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool) -> Option<f64> {
     let range = (domain[1] - domain[0]).abs();
     if range < 1e-15 { return None; }
-
-    // Use 1% of domain as step (fixed, no curvature adjustment)
-    let dt = (0.01 * range).max(1e-8);
-
-    let dist_to_first = (t - domain[0]).abs();
-    let dist_to_last = (t - domain[1]).abs();
-    let t1 = if dist_to_first < dist_to_last {
-        (t + dt).min(domain[1])
-    } else {
-        (t - dt).max(domain[0])
-    };
-
-    let pv = curve.point_at(t);
-    let pv1 = curve.point_at(t1);
-    let dir = if b_is_in { pv - pv1 } else { pv1 - pv };
+    let dt = (1e-6 * range).max(1e-12);
+    let t1 = (t + dt).min(domain[1]);
+    let t0 = if t1 - dt < domain[0] { t } else { t1 - dt };
+    let p0 = curve.point_at(t0);
+    let p1 = curve.point_at(t1);
+    let dir = if b_is_in { p0 - p1 } else { p1 - p0 };
     if dir.length_squared() < 1e-40 { return None; }
     Some(dir_to_angle(dir))
 }
@@ -2992,10 +2988,11 @@ fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool) -> Option<
 ///
 ///     angle_in: angle at incident vertex (in_flag=true)
 ///     angle_out: angle at outgoing vertex (in_flag=false)
+/// ✅ OCCT-aligned: ClockWiseAngle (BOPTools_AlgoTools2D).
+///    OCCT: Standard_Real d = aAIn - aAOut; if (d < 0.) d += 2*M_PI;
 fn clock_wise_angle(angle_in: f64, angle_out: f64) -> f64 {
-    let a1 = (angle_in + std::f64::consts::PI) % std::f64::consts::TAU;
-    let mut d = a1 - angle_out;
-    if d <= 0.0 {
+    let mut d = angle_in - angle_out;
+    if d < 0.0 {
         d += std::f64::consts::TAU;
     }
     d
@@ -3384,8 +3381,12 @@ fn assemble_internal_wires(
 /// the same physical section edge).  OCCT detects this via TopoDS_Shape
 /// identity (.IsSame()); rcad matches the curve index in WireEdgeSource.
 fn is_same_ic(incoming: &WireEdgeSource, candidate: &WireEdgeSource) -> bool {
-    matches!((incoming, candidate),
-        (WireEdgeSource::IntersectionCurve(a), WireEdgeSource::IntersectionCurve(b)) if a == b)
+    match (incoming, candidate) {
+        (WireEdgeSource::IntersectionCurve(a), WireEdgeSource::IntersectionCurve(b)) => a == b,
+        (WireEdgeSource::DsEdge(a), WireEdgeSource::DsEdge(b)) => a == b,
+        (WireEdgeSource::SeamEdge, WireEdgeSource::SeamEdge) => true,
+        _ => false,
+    }
 }
 
 /// Check if a segment has been marked passed at a specific vertex with a specific in_flag.
