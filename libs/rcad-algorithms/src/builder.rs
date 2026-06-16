@@ -2008,6 +2008,9 @@ fn classify_subface_against_box(
             }
         } else {
             if inside {
+                if std::env::var("RCAD_DEBUG_IC").is_ok() && matches!(&sub.surface, rcad_kernel::geom::Surface3::Sphere(_)) {
+                    eprintln!("[BOX_IN] sphere sub-face vertex inside box → In (may be wrong for Union)");
+                }
                 return Some(Classification::In);
             }
         }
@@ -2098,14 +2101,46 @@ fn classify_against_solid_for_boolean(
             }
 
             if all_on_solid {
+                // ✅ OCCT-aligned (ComputeState L662-674): when all edges are
+                // on the solid, try multiple interior points and use majority.
+                // Single UV-centroid can be misleading for curved surfaces
+                // (sphere sub-face centroid maps inside the box even though
+                // the face is outside — bfuse_simple A1).
                 if let Some(pt) = point_in_face(sub) {
                     let c = classify_point(pt, solid_face_indices, ds);
-                    if c != Classification::Out {
+                    if c == Classification::Out {
                         return c;
                     }
                 }
-                let pt = sub.sample_point();
-                return classify_point(pt, solid_face_indices, ds);
+                // Try additional interior points for robust classification
+                let mut in_count = 0u32;
+                let mut out_count = 0u32;
+                let mut on_count = 0u32;
+                // Boundary centroid (robust to UV mapping issues)
+                if !sub.boundary.is_empty() {
+                    let bc = sub.boundary.iter().copied().sum::<DVec3>() / sub.boundary.len() as f64;
+                    match classify_point(bc, solid_face_indices, ds) {
+                        Classification::In => in_count += 1,
+                        Classification::Out => out_count += 1,
+                        Classification::On => on_count += 1,
+                    }
+                }
+                // Sample point
+                let sp = sub.sample_point();
+                match classify_point(sp, solid_face_indices, ds) {
+                    Classification::In => in_count += 1,
+                    Classification::Out => out_count += 1,
+                    Classification::On => on_count += 1,
+                }
+                // On majority → return On
+                if on_count > in_count + out_count {
+                    return Classification::On;
+                }
+                // In majority → return In, Out majority → return Out
+                if in_count > out_count { return Classification::In; }
+                if out_count > in_count { return Classification::Out; }
+                // Tie → return the sample_point result (OCCT convention)
+                return classify_point(sp, solid_face_indices, ds);
             }
         }
     }
@@ -4129,14 +4164,59 @@ fn wire_faces_to_sub_faces(
     let surface = face.surface.clone();
     let normal = face.normal;
 
+    // ✅ OCCT-aligned: compute UV bounding box from boundary points for
+    //    FClass2d-style classification (classify_face_occt_style).
+    //    Without uv_domain, the UV-grid classifier is skipped and point_in_face
+    //    may give wrong results for curved surfaces (sphere sub-face centroid
+    //    maps inside the box — bfuse_simple A1).
+    let pts_to_uv = |pts: &[DVec3]| -> Option<[f64; 4]> {
+        if pts.len() < 3 { return None; }
+        let mut uvs: Vec<DVec2> = match &surface {
+            Surface3::Sphere(s) => pts.iter().map(|p| s.world_to_uv(*p)).collect(),
+            Surface3::Plane(p) => {
+                let x_axis = any_perpendicular(p.normal).normalize();
+                let y_axis = p.normal.cross(x_axis).normalize();
+                pts.iter().map(|pt| {
+                    let local = *pt - p.origin;
+                    DVec2::new(local.dot(x_axis), local.dot(y_axis))
+                }).collect()
+            }
+            _ => return None,
+        };
+        // Normalize U to [0, TAU) for periodic surfaces
+        if matches!(surface, Surface3::Sphere(_) | Surface3::Cylinder(_)) {
+            for uv in &mut uvs {
+                uv.x = uv.x.rem_euclid(std::f64::consts::TAU);
+            }
+        }
+        let u_min = uvs.iter().map(|uv| uv.x).min_by(|a,b| a.total_cmp(b))?;
+        let u_max = uvs.iter().map(|uv| uv.x).max_by(|a,b| a.total_cmp(b))?;
+        let v_min = uvs.iter().map(|uv| uv.y).min_by(|a,b| a.total_cmp(b))?;
+        let v_max = uvs.iter().map(|uv| uv.y).max_by(|a,b| a.total_cmp(b))?;
+        Some([u_min, u_max, v_min, v_max])
+    };
+
     wfs.iter().map(|wf| {
-        //  outer_wire  WireSegment  3D boundary
+        // outer_wire 3D boundary (include all vertices from all wires)
+        let all_boundary: Vec<DVec3> = {
+            let mut pts: Vec<DVec3> = wf.outer_wire.iter().map(|&si| {
+                let seg = &segments[si];
+                ds.vertices[if seg.forward { seg.start_vertex } else { seg.end_vertex }].point
+            }).collect();
+            for iw in &wf.inner_wires {
+                for &si in iw {
+                    let seg = &segments[si];
+                    pts.push(ds.vertices[if seg.forward { seg.start_vertex } else { seg.end_vertex }].point);
+                }
+            }
+            pts
+        };
         let boundary: Vec<DVec3> = wf.outer_wire.iter().map(|&si| {
             let seg = &segments[si];
             ds.vertices[if seg.forward { seg.start_vertex } else { seg.end_vertex }].point
         }).collect();
 
-        // inner_wires:  hole wire  3D
+        // inner_wires: hole wire 3D
         let inner_wires: Vec<Vec<DVec3>> = wf.inner_wires.iter().map(|iw| {
             iw.iter().map(|&si| {
                 let seg = &segments[si];
@@ -4144,13 +4224,18 @@ fn wire_faces_to_sub_faces(
             }).collect()
         }).collect();
 
+        let uv_domain = pts_to_uv(&all_boundary);
+        if std::env::var("RCAD_DEBUG_IC").is_ok() && matches!(&surface, Surface3::Sphere(_)) {
+            eprintln!("[UV_DOMAIN] face={} uv_domain={:?}", face_idx, uv_domain);
+        }
+
         SubFace {
             boundary,
             surface: surface.clone(),
             normal,
             uv_centroid: None,
             sample_override: None,
-            uv_domain: None,
+            uv_domain,
             inner_wires,
             outer_circle_edges: vec![],
             seam_edge: None,
@@ -4282,44 +4367,70 @@ fn perform_areas(
     }
 
     // ✅ OCCT-aligned: FClass2d → growth/hole classification (L439-456).
-    //    OCCT processes wires in order:
-    //    1. Fast check: IsGrowthWire — if wire shares edges with known holes → growth
-    //    2. If not determined: FClass2d::IsHole() — create face, classify sample point
-    //    3. Holes: add their edges to aMHE for subsequent IsGrowthWire checks
-    //    rcad: point_in_uv_polygon(centroid, uv_poly) for ray-casting.
+    //    OCCT processes wires in order, classifying each as growth or hole.
+    //    The FIRST wire is always growth; subsequent wires are classified
+    //    against previously identified growths via IsGrowthWire + FClass2d::IsHole().
+    //
+    //    In OCCT, FClass2d::IsHole() uses the face's sample point: if the point
+    //    is inside the original face → NOT a hole (growth), if outside → hole.
+    //    This naturally makes the LARGEST wire the outer boundary and smaller
+    //    wires the holes, because the largest wire's sample point is most likely
+    //    to be inside the original face.
+    //
+    //    To match this behavior without BRep operations, sort wires by UV area
+    //    descending so the largest wire is processed FIRST (becoming the primary
+    //    growth).  Subsequent wires whose centroids are inside a previous growth
+    //    become holes.  This prevents a small wire (e.g. the sphere's N→EF@1→EF@5
+    //    triangle) from being incorrectly classified as the outer boundary when
+    //    its UV centroid maps inside the other operand (bfuse_simple A1).
     let n = wds.len();
+    // Sort indices by UV area descending (largest first)
+    let mut sorted_indices: Vec<usize> = (0..n).collect();
+    sorted_indices.sort_by(|&a, &b| {
+        let area_a = uv_polygon_area(&wds[a].uv_poly);
+        let area_b = uv_polygon_area(&wds[b].uv_poly);
+        area_b.partial_cmp(&area_a).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // Map from sorted position back to original index
     let mut is_hole = vec![false; n];
     let mut hole_edge_set: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
-    // OCCT L428-458: process wires in order
-    for i in 0..n {
-        if wds[i].full_wrap {
-            is_hole[i] = false;
+    // Debug: show sorted wire areas
+    if std::env::var("RCAD_DEBUG_IC").is_ok() {
+        for &si in &sorted_indices {
+            let area = uv_polygon_area(&wds[si].uv_poly);
+            let cent = wds[si].uv_centroid.map(|c| format!("({:.3},{:.3})", c.x, c.y)).unwrap_or("none".into());
+            eprintln!("[AREA] wi={} area={:.6} cent={} nb={}", wds[si].wire_idx, area, cent, wds[si].boundary.len());
+        }
+    }
+
+    // OCCT L428-458: process wires in sorted order (largest first)
+    for &si in &sorted_indices {
+        if wds[si].full_wrap {
+            is_hole[si] = false;
             continue;
         }
         // OCCT L441: IsGrowthWire fast check
-        let shares_hole_edge = wires[wds[i].wire_idx].iter().any(|&si| hole_edge_set.contains(&si));
+        let shares_hole_edge = wires[wds[si].wire_idx].iter().any(|&seg_si| hole_edge_set.contains(&seg_si));
         if shares_hole_edge {
-            is_hole[i] = false; // shares edge with a hole → must be growth
+            is_hole[si] = false; // shares edge with a hole → must be growth
             continue;
         }
         // OCCT L445-446: FClass2d::IsHole() fallback
-        // Use UV polygon ray-casting to classify.
-        // <3 vertex non-full-wrap wire → hole (too small to enclose region)
-        if wds[i].boundary.len() < 3 {
-            is_hole[i] = true;
-        } else if let Some(ref uv_cent) = wds[i].uv_centroid {
-            // Check if centroid is inside any PREVIOUS non-hole wire's UV polygon.
-            // If yes → this wire is a hole relative to that growth.
-            let inside_any_prev_growth = (0..i).any(|j| {
-                !is_hole[j] && point_in_uv_polygon(*uv_cent, &wds[j].uv_poly)
-            });
-            is_hole[i] = inside_any_prev_growth;
+        if wds[si].boundary.len() < 3 {
+            is_hole[si] = true;
+        } else if let Some(ref uv_cent) = wds[si].uv_centroid {
+            // Check if centroid is inside any PREVIOUSLY PROCESSED non-hole wire's UV polygon.
+            let inside_any_prev_growth = sorted_indices.iter()
+                .take_while(|&&pj| pj != si)
+                .any(|&pj| !is_hole[pj] && point_in_uv_polygon(*uv_cent, &wds[pj].uv_poly));
+            is_hole[si] = inside_any_prev_growth;
         }
         // OCCT L456-458: if hole, add its edges to aMHE
-        if is_hole[i] {
-            for &si in &wires[wds[i].wire_idx] {
-                hole_edge_set.insert(si);
+        if is_hole[si] {
+            for &seg_si in &wires[wds[si].wire_idx] {
+                hole_edge_set.insert(seg_si);
             }
         }
     }
@@ -4375,6 +4486,17 @@ fn perform_areas(
         });
     }
     result
+}
+
+/// Compute the signed area of a UV polygon using the shoelace formula.
+/// Used for sorting wires by size — the largest wire is the outer boundary.
+fn uv_polygon_area(poly: &[DVec2]) -> f64 {
+    if poly.len() < 3 { return 0.0; }
+    let n = poly.len();
+    (0..n).map(|i| {
+        let j = (i + 1) % n;
+        poly[i].x * poly[j].y - poly[j].x * poly[i].y
+    }).sum::<f64>().abs() * 0.5
 }
 
 /// Test whether a UV point is inside a UV polygon using the ray casting method.
@@ -4776,7 +4898,11 @@ impl<'a> BooleanBuilder<'a> {
                             let keep = match self.op {
                                 BooleanOpType::Intersection => class == Classification::In,
                                 BooleanOpType::Difference => class != Classification::In,
-                                BooleanOpType::Union => true,
+                                // ✅ OCCT-aligned ClassifyFaces: for Union, remove
+                                // faces classified as "In" (internal to the other solid).
+                                // Previously used `true` (keep all), which left internal
+                                // box corner faces inside the sphere (bfuse_simple A1).
+                                BooleanOpType::Union => class != Classification::In,
                             };
                             if std::env::var("RCAD_DEBUG_IC").is_ok() {
                                 let sn = match &sub.surface { Surface3::Plane(_) => "PLANE", Surface3::Sphere(_) => "SPHERE", _ => "OTHER" };
