@@ -473,6 +473,11 @@ struct ResultBuilder {
     ///    OCCT 中每个 TopoDS_Edge 是独立实体,即使两条边连接相同顶点且有相同曲线,
     ///    它们也是不同的边(如 seam 子段与 IC 弧)。此集合阻止 build() 合并这些边。
     no_merge_edges: std::collections::HashSet<usize>,
+    /// ✅ OCCT对齐: IntersectionCurve index -> result edge index.
+    ///    Section edges (ICs) are shared by both intersecting faces (OCCT
+    ///    BOPTools_AlgoTools::MakeSectEdge).  rcad maps by IC index so
+    ///    both faces use the same result edge for the same IC curve.
+    ic_edge_map: HashMap<usize, usize>,
 }
 
 impl ResultBuilder {
@@ -546,13 +551,10 @@ impl ResultBuilder {
                 (ei, true)
             } else {
                 let ei = match &seg.source {
+                    // ✅ OCCT-aligned: IC edge identity (section edges shared).
                     WireEdgeSource::IntersectionCurve(ci) => {
                         let crv = &ds.intersection_curves[*ci].curve;
-                        if let Curve3::Circle(_) = crv {
-                            self.add_circle_edge(v1, v2, crv.clone())
-                        } else {
-                            self.add_edge(v1, v2)
-                        }
+                        self.add_ic_edge(*ci, v1, v2, crv.clone())
                     }
                     WireEdgeSource::DsEdge(_) => self.add_edge(v1, v2),
                     _ => self.add_edge(v1, v2),
@@ -577,15 +579,12 @@ impl ResultBuilder {
                     iw_verts.push(v1);
                 }
                 let ei = match &seg.source {
+                    // ✅ OCCT-aligned: IC edge identity (inner/internal wires).
                     WireEdgeSource::IntersectionCurve(ci) => {
                         let crv = &ds.intersection_curves[*ci].curve;
-                        if let Curve3::Circle(_) = crv {
-                            self.add_circle_edge(v1, v2, crv.clone())
-                        } else {
-                            self.add_edge(v1, v2)
-                        }
+                        self.add_ic_edge(*ci, v1, v2, crv.clone())
                     }
-                    _ => self.add_edge(v1, v2),
+                    WireEdgeSource::DsEdge(_) | WireEdgeSource::SeamEdge => self.add_edge(v1, v2),
                 };
                 let forward = self.edges[ei].0 == v1;
                 iw_edges.push((ei, forward));
@@ -603,15 +602,12 @@ impl ResultBuilder {
                 let v1 = self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point);
                 let v2 = self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point);
                 let ei = match &seg.source {
+                    // ✅ OCCT-aligned: IC edge identity (inner/internal wires).
                     WireEdgeSource::IntersectionCurve(ci) => {
                         let crv = &ds.intersection_curves[*ci].curve;
-                        if let Curve3::Circle(_) = crv {
-                            self.add_circle_edge(v1, v2, crv.clone())
-                        } else {
-                            self.add_edge(v1, v2)
-                        }
+                        self.add_ic_edge(*ci, v1, v2, crv.clone())
                     }
-                    _ => self.add_edge(v1, v2),
+                    WireEdgeSource::DsEdge(_) | WireEdgeSource::SeamEdge => self.add_edge(v1, v2),
                 };
                 let forward = self.edges[ei].0 == v1;
                 iw_edges.push((ei, forward));
@@ -809,6 +805,7 @@ impl ResultBuilder {
             custom_edge_curves: Vec::new(),
             face_internal_vtx: Vec::new(),
             no_merge_edges: std::collections::HashSet::new(),
+            ic_edge_map: HashMap::new(),
         }
     }
 
@@ -850,6 +847,24 @@ impl ResultBuilder {
     fn add_edge_occt(&mut self, v1: usize, v2: usize) -> usize {
         let idx = self.edges.len();
         self.edges.push((v1, v2));
+        idx
+    }
+
+    /// ✅ OCCT-aligned: create edge by IntersectionCurve index identity.
+    ///    OCCT BOPTools_AlgoTools::MakeSectEdge creates a section edge shared
+    ///    by both faces at the intersection.  rcad equivalent: map IC index →
+    ///    result edge index so both faces use the same edge for the same IC.
+    fn add_ic_edge(&mut self, ici: usize, v1: usize, v2: usize, curve: Curve3) -> usize {
+        if let Some(&idx) = self.ic_edge_map.get(&ici) {
+            return idx;
+        }
+        let idx = self.edges.len();
+        self.edges.push((v1, v2));
+        while self.custom_edge_curves.len() <= idx {
+            self.custom_edge_curves.push(None);
+        }
+        self.custom_edge_curves[idx] = Some(curve);
+        self.ic_edge_map.insert(ici, idx);
         idx
     }
 
