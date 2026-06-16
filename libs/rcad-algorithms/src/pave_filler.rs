@@ -985,6 +985,7 @@ impl<'a> PaveFiller<'a> {
 
         for &vi in &a_verts {
             for &ei in &b_edges {
+                if self.ds.is_edge_degenerated(ei) { continue; }
                 self.check_vertex_edge(vi, ei);
             }
         }
@@ -994,6 +995,7 @@ impl<'a> PaveFiller<'a> {
 
         for &vi in &b_verts {
             for &ei in &a_edges {
+                if self.ds.is_edge_degenerated(ei) { continue; }
                 self.check_vertex_edge(vi, ei);
             }
         }
@@ -1077,6 +1079,7 @@ impl<'a> PaveFiller<'a> {
 
         for &ae in &a_edges {
             for &be in &b_edges {
+                if self.ds.is_edge_degenerated(ae) || self.ds.is_edge_degenerated(be) { continue; }
                 // Skip shared edges when glue is enabled
                 if self.use_glue && shared_edge_set.contains(&(ae, be)) {
                     // Add interference for the shared edge but skip geometric intersection
@@ -1446,6 +1449,7 @@ impl<'a> PaveFiller<'a> {
         let b_faces = self.faces_of(ShapeOrigin::ShapeB);
 
         for &ei in &a_edges {
+            if self.ds.is_edge_degenerated(ei) { continue; }
             let etr = self.ds.edges[ei].t_range;
             let ranges = self.collect_paveblock_ranges(ei, etr);
             for r in &ranges {
@@ -1459,6 +1463,7 @@ impl<'a> PaveFiller<'a> {
         let a_faces = self.faces_of(ShapeOrigin::ShapeA);
 
         for &ei in &b_edges {
+            if self.ds.is_edge_degenerated(ei) { continue; }
             let etr = self.ds.edges[ei].t_range;
             let ranges = self.collect_paveblock_ranges(ei, etr);
             for r in &ranges {
@@ -1477,7 +1482,7 @@ impl<'a> PaveFiller<'a> {
         if paves.is_empty() {
             return vec![edge_t_range];
         }
-        let mut params: Vec<f64> = paves.iter().map(|p| p.param).collect();
+        let mut params: Vec<f64> = paves.iter().map(|p| p.param).filter(|p| p.is_finite()).collect();
         params.sort_by(|a, b| a.partial_cmp(b).unwrap());
         // 去重
         params.dedup_by(|a, b| (*a - *b).abs() < TOLERANCE_ABS);
@@ -1713,7 +1718,9 @@ impl<'a> PaveFiller<'a> {
             let ev = self.ds.edges[ei].end_vertex;
 
             // 按参数排序 paves
-            let mut sorted: Vec<usize> = (0..self.ds.edges[ei].paves.len()).collect();
+            let mut sorted: Vec<usize> = (0..self.ds.edges[ei].paves.len())
+                .filter(|&i| self.ds.edges[ei].paves[i].param.is_finite())
+                .collect();
             sorted.sort_by(|&a, &b| {
                 self.ds.edges[ei].paves[a].param
                     .partial_cmp(&self.ds.edges[ei].paves[b].param)

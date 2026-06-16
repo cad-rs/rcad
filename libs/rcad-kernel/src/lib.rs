@@ -884,44 +884,46 @@ impl BRep {
     ///   PCurves:  E0 forward  → Line2d u=0,  v: 0 → π
     ///             E0 reversed → Line2d u=2π, v: π → 0
     fn create_sphere(radius: f64) -> Self {
-        // OCCT-aligned: sphere with axis=Z, ref_dir=X (standard spherical
-        // coordinates).  This ensures section edge endpoints at (1,0,0) and
-        // (0,0,1) fall on the seam line (U=0), enabling DoSplitSEAMOnFace
-        // to split the seam at these shared vertices.  axis=Y (rcad legacy)
-        // places those endpoints at U=3pi/2 and U=pi — not on the seam.
+        // ✅ OCCT-aligned: BRepPrim_Sphere via BRepPrim_OneAxis::LateralWire (L604-624).
+        //    OCCT wire: TopEdge(degenerate) + EndEdge(seam FWD) + BottomEdge(degenerate) + StartEdge(seam REV)
+        //    TopEdge/BottomEdge: MakeDeginatedEdge (BRepPrim_Builder.cxx L73-78)
+        //    EndEdge/StartEdge: MakeEmptyMeridianEdge (BRepPrim_Revolution.cxx L69-79)
         use geom::*;
         use std::f64::consts::PI;
 
         let r = radius;
-        // Vertices: north pole at +Z, south pole at -Z
         let north = DVec3::new(0.0, 0.0, r);
         let south = DVec3::new(0.0, 0.0, -r);
         let vertices = vec![Vertex { point: north }, Vertex { point: south }];
 
-        // Edge E0: seam meridian (north→south) — Circle3 in plane through Z axis
-        let edges = vec![Edge { start: 0, end: 1 }]; // E0
+        let edges = vec![
+            Edge { start: 0, end: 0 }, // E0: TopEdge degenerate north pole
+            Edge { start: 0, end: 1 }, // E1: EndEdge seam (north→south)
+            Edge { start: 1, end: 1 }, // E2: BottomEdge degenerate south pole
+        ];
 
-        // Face F0: outer_wire uses E0 twice (forward then reversed = seam)
         let face = Face {
             outer_wire: Wire {
-                edges: vec![WireEdge::fwd(0), WireEdge::rev(0)],
+                edges: vec![
+                    WireEdge::fwd(0), // TopEdge
+                    WireEdge::fwd(1), // EndEdge FWD
+                    WireEdge::fwd(2), // BottomEdge
+                    WireEdge::rev(1), // StartEdge REV
+                ],
             },
             inner_wires: vec![],
-            normal: DVec3::X, // outward, approximate
+            normal: DVec3::X,
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
-                surface_idx: None,
+            surface_idx: None,
         };
         let shell = Shell { faces: vec![face] };
-        let solid = Solid {
-            shells: vec![shell],
-        };
+        let solid = Solid { shells: vec![shell] };
 
-        // GeomStore
         let seam_curve = Curve3::Circle(Circle3 {
             center: DVec3::ZERO,
-            normal: DVec3::Y, // plane XZ (perpendicular to Y)
+            normal: DVec3::Y,
             radius: r,
         });
         let sphere_surf = Surface3::Sphere(SphericalSurface {
@@ -930,10 +932,6 @@ impl BRep {
             radius: r,
             ref_dir: DVec3::X,
         });
-        // PCurves for the seam edge on the sphere:
-        //   Sphere param: u = longitude [0, 2pi], v = colatitude [0, pi]
-        //   Forward half (north->south at u=0): Line2d origin=(0,0) dir=(0,1)
-        //   Reversed half (south->north at u=2pi): Line2d origin=(2pi,pi) dir=(0,-1)
         let pc_fwd = Curve2d::Line(Line2d {
             origin: glam::DVec2::new(0.0, 0.0),
             direction: glam::DVec2::new(0.0, 1.0),
@@ -942,26 +940,23 @@ impl BRep {
             origin: glam::DVec2::new(2.0 * PI, PI),
             direction: glam::DVec2::new(0.0, -1.0),
         });
-        let geom = GeomStore { face_internal_vertices: vec![],
+        let geom = GeomStore {
+            face_internal_vertices: vec![],
             curves: vec![seam_curve],
             surfaces: vec![sphere_surf],
             curve2ds: vec![pc_fwd, pc_rev],
-            edge_curve: vec![Some(0)],   // E0 → seam_curve
-            face_surface: vec![Some(0)], // F0 → sphere_surf
-            edge_pcurves: vec![vec![
-                // E0: two pcurves (fwd and rev sides of seam)
-                PCurve {
-                    surface_idx: 0,
-                    curve2d_idx: 0,
-                },
-                PCurve {
-                    surface_idx: 0,
-                    curve2d_idx: 1,
-                },
-            ]],
-            // E0 is the half-meridian: t ∈ [0, π] on Circle3 (north→south)
-            edge_curve_range: vec![Some([0.0, PI])],
-            edge_degenerated: vec![false],
+            edge_curve: vec![None, Some(0), None],
+            face_surface: vec![Some(0)],
+            edge_pcurves: vec![
+                vec![],
+                vec![
+                    PCurve { surface_idx: 0, curve2d_idx: 0 },
+                    PCurve { surface_idx: 0, curve2d_idx: 1 },
+                ],
+                vec![],
+            ],
+            edge_curve_range: vec![None, Some([0.0, PI]), None],
+            edge_degenerated: vec![true, false, true],
             vertex_tolerance: Vec::new(),
             edge_tolerance: Vec::new(),
             face_tolerance: Vec::new(),
@@ -971,14 +966,7 @@ impl BRep {
             edge_same_range: Vec::new(),
         };
 
-        Self {
-            vertices,
-            edges,
-            solids: vec![solid],
-            geom,
-            compound: None,
-            compsolid: None,
-        }
+        Self { vertices, edges, solids: vec![solid], geom, compound: None, compsolid: None }
     }
 
     /// Creates an analytic cylinder BRep along +Y axis, centered at origin.

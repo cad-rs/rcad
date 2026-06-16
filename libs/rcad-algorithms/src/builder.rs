@@ -1,4 +1,4 @@
-﻿use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 use glam::{DVec2, DVec3};
 use rayon::prelude::*;
@@ -2746,14 +2746,28 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
         };
         prev_end = Some(ev);
 
-        // OCCT-aligned: seam  (L392-449)
-        let is_seam = match &face.surface {
+        // ✅ OCCT-aligned: degenerate edge (BOPAlgo_Builder_2.cxx L401, L408-412).
+        //    bIsDegenerated = BRep_Tool::Degenerated(aE);
+        //    if (bIsDegenerated) { aSp.Orientation(anOriE); aLE.Append(aSp); continue; }
+        //    Degenerate edges: added once with original orientation, NOT FWD+REV.
+        let is_degenerate = ds.is_edge_degenerated(ei);
+
+        // OCCT-aligned: seam (L392-449)
+        let is_seam = !is_degenerate && match &face.surface {
             Surface3::Sphere(_) => true,
             _ => (is_u_closed || is_v_closed)
                 && (sv == ev || are_verts_coincident(ds, sv, ev)),
         };
 
-        if is_seam && matches!(face.surface, Surface3::Sphere(_)) {
+        if is_degenerate {
+            // ✅ OCCT L408-412: degenerate → add once, continue
+            let tangent = compute_seam_tangent_angles(ds, sv, ev, &face.surface);
+            segments.push(WireSegment {
+                start_vertex: sv, end_vertex: ev,
+                source: WireEdgeSource::DsEdge(ei), forward: true,
+                is_seam: true, tangent_start: tangent.0, tangent_end: tangent.1,
+            });
+        } else if is_seam && matches!(face.surface, Surface3::Sphere(_)) {
             // ✅ OCCT-aligned: myImages equivalent (BOPAlgo_Builder_2.cxx L364-449).
             //    If PaveFiller split this edge (pave_blocks > 1), use pave_blocks
             //    as split image edges with correct DS vertex indices from EF pass.

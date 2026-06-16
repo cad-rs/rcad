@@ -234,6 +234,11 @@ pub struct DS {
 }
 
 impl DS {
+    /// ✅ OCCT-aligned: BRep_Tool::Degenerated(edge) equivalent.
+    pub fn is_edge_degenerated(&self, edge_idx: usize) -> bool {
+        self.edges[edge_idx].start_vertex == self.edges[edge_idx].end_vertex
+    }
+
     /// Build DS from two BReps using the default absolute tolerance.
     pub fn new(a: &BRep, b: &BRep) -> Self {
         Self::new_with_fuzzy(a, b, crate::tolerance::TOLERANCE_ABS)
