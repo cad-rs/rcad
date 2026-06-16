@@ -2066,6 +2066,9 @@ fn classify_against_solid_for_boolean(
             if class {
                 return Classification::In;
             }
+            // Edge-midpoint found outside the solid (Some(false)=Out).
+            // Return Out immediately so UV sampling cannot override it.
+            return Classification::Out;
         }
     }
 
