@@ -2110,6 +2110,38 @@ fn classify_against_solid_for_boolean(
                 }
             }
 
+               // ✅ OCCT-aligned (ComputeState L662): when all off-solid edge
+            // midpoints are "On" (on the solid surface), the face is ON the
+            // other solid's surface.  Return On so Union keeps the face
+            // (bfuse_simple A1 box sub-faces at y=0/x=0 whose centroids are
+            // inside the sphere but edges are on the sphere surface).
+            if !all_on_solid {
+                // Check if ALL off-solid edges had "On" midpoints (no "Out")
+                let mid_pt = |i: usize, j: usize| (bnd[i] + bnd[j]) * 0.5;
+                let all_on = (0..bnd.len()).filter(|&i| {
+                    let j = (i + 1) % bnd.len();
+                    let ei = ds.edges.iter().position(|e| {
+                        let k1 = quantize_pos(ds.vertices[e.start_vertex].point, tol);
+                        let k2 = quantize_pos(ds.vertices[e.end_vertex].point, tol);
+                        let kp1 = quantize_pos(bnd[i], tol);
+                        let kp2 = quantize_pos(bnd[j], tol);
+                        (kp1 == k1 && kp2 == k2) || (kp1 == k2 && kp2 == k1)
+                    });
+                    let on_solid = ei.map_or(false, |ei| edge_bounds.contains(&ei));
+                    !on_solid
+                }).all(|i| {
+                    let j = (i + 1) % bnd.len();
+                    matches!(classify_point(mid_pt(i, j), solid_face_indices, ds), Classification::On)
+                });
+                if all_on && bnd.len() >= 2 {
+                    // All off-solid edges are exactly on the other solid's surface
+                    if std::env::var("RCAD_DEBUG_IC").is_ok() {
+                        eprintln!("[CLASSIFY] all edge midpoints On → returning On");
+                    }
+                    return Classification::On;
+                }
+            }
+
             // ✅ OCCT-aligned (IsInternalFace L812-856 edge-angle): when no
             // off-solid edge midpoint is "Out" (all "In" or "On"), use the
             // face NORMAL direction to determine inside vs outside.
