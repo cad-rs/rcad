@@ -3054,8 +3054,8 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     let fixed_ev = correct_ev;
                     let pcurve = pcurve_lookup(ci);
                     let (t_start, t_end) = if let Some(ref pc) = pcurve {
-                        (angle_2d(pc, ic.t_range[0], ic.t_range, false),
-                         angle_2d(pc, ic.t_range[1], ic.t_range, true))
+                        (angle_2d(pc, ic.t_range[0], ic.t_range, false).map(|a| -a),
+                         angle_2d(pc, ic.t_range[1], ic.t_range, true).map(|a| -a))
                     } else { (None, None) };
                     segments.push(WireSegment { start_vertex: fixed_sv, end_vertex: fixed_ev,
                         source: WireEdgeSource::IntersectionCurve(ci), forward: true,
@@ -3074,7 +3074,8 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
         let pcurve = pcurve_lookup(ci);
         let (t_start, t_end) = if let Some(ref pc) = pcurve {
             let domain = ic.t_range;
-            (angle_2d(pc, domain[0], domain, false), angle_2d(pc, domain[1], domain, true))
+            (angle_2d(pc, domain[0], domain, false).map(|a| -a),
+             angle_2d(pc, domain[1], domain, true).map(|a| -a))
         } else {
             (None, None)
         };
@@ -3775,15 +3776,6 @@ fn select_best_outgoing<'a>(
             return Some(internal_out[0]);
         }
     }
-    // Symmetric: when incoming is internal (IC), prefer the single boundary
-    // outgoing edge.  Prevents IC → IC path that forms a 2-edge invalid loop
-    // from two halves of the same IC curve (bfuse_simple A1 box face).
-    if !incoming_is_boundary {
-        let boundary_out: Vec<&&EdgeInfo> = candidates.iter().filter(|e| !e.is_inside).collect();
-        if boundary_out.len() == 1 {
-            return Some(boundary_out[0]);
-        }
-    }
     if candidates.len() == 1 {
         return Some(candidates[0]);
     }
@@ -4162,9 +4154,11 @@ fn walk_path_extract_wires(
                 // Continue from the last entry in the truncated sequence
                 let last_ci = edge_seq[a_nbj - 1];
                 let last_arrived = segments[last_ci].end_vertex;
-                // Replace stale start vertex in vert_seq with true continuation
-                // start vertex.  Prevents ghost loop detection at position 0
-                // when continuation lands on the first walk's start vertex.
+                // ✅ OCCT-aligned: vert_seq stores the vertex at each step's END.
+                //   After truncation, vert_seq[a_nbj-1] is the start of the stale
+                //   FIRST walk.  Replace it with last_arrived (the actual start
+                //   vertex of the continuation walk) so loop detection matches
+                //   the correct continuation start vertex, not the stale first walk.
                 vert_seq[a_nbj - 1] = last_arrived;
 
                 let angle_in = match find_angle_at(smart_map, last_ci, last_arrived, true) {
