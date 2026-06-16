@@ -4318,226 +4318,76 @@ fn perform_areas(
         return vec![];
     }
 
-    let face_surface = &ds.faces[face_idx].surface;
-
-    // ✅ OCCT-aligned: WireData = TopoDS_Face temp face for classification.
-    //    OCCT BOPAlgo_BuilderFace::PerformAreas L432-437.
-    struct WireData {
-        wire_idx: usize,
-        boundary: Vec<DVec3>,
-        uv_poly: Vec<DVec2>,
-        uv_centroid: Option<DVec2>,
-        /// ✅ OCCT-aligned: full-wrap wire (e.g. sphere seam spanning V=0..π).
-        ///    OCCT: MakeFace w/ seam wire → FClass2d → !IsHole → growth.
-        full_wrap: bool,
-    }
+    // OCCT L432-437: build 3D boundary polygon and centroid for each wire
+    struct WireData { wire_idx: usize, boundary: Vec<DVec3>, centroid: DVec3, full_wrap: bool }
     let mut wds: Vec<WireData> = wires.iter().enumerate().filter_map(|(wi, w)| {
         let mut b = wire_boundary_3d(w, segments, ds);
         let mut full_wrap = false;
+        let mut centroid = DVec3::ZERO;
         if b.len() < 3 {
             let mut verts: Vec<DVec3> = w.iter().flat_map(|&si| {
                 let seg = &segments[si];
                 vec![ds.vertices[seg.start_vertex].point, ds.vertices[seg.end_vertex].point]
             }).collect();
             verts.sort_by(|a, b| {
-                let cx = a.x.total_cmp(&b.x);
-                if cx != std::cmp::Ordering::Equal { return cx; }
-                let cy = a.y.total_cmp(&b.y);
-                if cy != std::cmp::Ordering::Equal { return cy; }
+                let cx = a.x.total_cmp(&b.x); if cx != std::cmp::Ordering::Equal { return cx; }
+                let cy = a.y.total_cmp(&b.y); if cy != std::cmp::Ordering::Equal { return cy; }
                 a.z.total_cmp(&b.z)
             });
             verts.dedup();
-            if verts.len() >= 3 {
-                b = verts;
-            } else if matches!(face_surface, Surface3::Sphere(_)) {
-                // ✅ OCCT-aligned: check if the 2 unique vertices span the
-                //    full V range of the sphere (north pole V≈0 to south
-                //    pole V≈π).  Such a wire is the full-wrap seam — OCCT
-                //    classifies it as growth (L439-444).
-                //    Detection: distance ≈ sphere diameter (2 * radius).
-                let radius = match face_surface {
-                    Surface3::Sphere(s) => s.radius,
-                    _ => 1.0,
+            if verts.len() >= 3 { b = verts; }
+            else if matches!(&ds.faces[face_idx].surface, Surface3::Sphere(_)) {
+                let radius = match &ds.faces[face_idx].surface {
+                    Surface3::Sphere(s) => s.radius, _ => 1.0,
                 };
-                let d2 = (verts[0] - verts[1]).length_squared();
-                full_wrap = d2 > (radius * 1.9) * (radius * 1.9);
-                if !full_wrap {
-                    // Non-full-wrap 2-vertex wire on sphere — cannot
-                    // Non-full-wrap 2-vertex wire on periodic surface
-                    // is too small to enclose a region -> always a hole.
-                    // OCCT: MakeFace + FClass2d -> IsHole = true.
-                    // Falls through to create WireData with 2-point boundary.
-                }
-            } else {
-                return None; // non-sphere, <3 vertices — skip
-            }
+                full_wrap = (verts[0] - verts[1]).length_squared() > (radius * 1.9) * (radius * 1.9);
+            } else { return None; }
         }
-        // ✅ OCCT-aligned: UV polygon = face surface bounded by wire.
-        //    OCCT uses BRepBuilderAPI_MakeFace (L433-435);
-        //    rcad maps 3D boundary points to UV.
-        let uv_poly: Vec<DVec2> = if full_wrap {
-            // ✅ OCCT-aligned: full-wrap wire encloses the whole surface
-            //    domain.  UV rect = [0, TAU] × [0, PI] for sphere.
-            //    OCCT: MakeFace w/ seam wire on closed surface → face
-            //    covers entire surface → FClass2d → !IsHole → growth.
-            vec![
-                DVec2::new(0.0, 0.0),
-                DVec2::new(std::f64::consts::TAU, 0.0),
-                DVec2::new(std::f64::consts::TAU, std::f64::consts::PI),
-                DVec2::new(0.0, std::f64::consts::PI),
-            ]
-        } else {
-            match face_surface {
-                Surface3::Sphere(s) => b.iter().map(|p| {
-                    let mut uv = s.world_to_uv(*p);
-                    uv.x = uv.x.rem_euclid(std::f64::consts::TAU);
-                    uv
-                }).collect(),
-                Surface3::Plane(p) => {
-                    let x_axis = any_perpendicular(p.normal).normalize();
-                    let y_axis = p.normal.cross(x_axis).normalize();
-                    b.iter().map(|pt| {
-                        let local = *pt - p.origin;
-                        DVec2::new(local.dot(x_axis), local.dot(y_axis))
-                    }).collect()
-                },
-                _ => return None,
-            }
-        };
-
-        // ✅ OCCT-aligned: UV centroid = sample point for FClass2d.
-        //    OCCT uses the interior point of the face for classification.
-        let uv_cent = if !uv_poly.is_empty() {
-            Some(uv_poly.iter().copied().sum::<DVec2>() / uv_poly.len() as f64)
-        } else { None };
-
-        Some(WireData { wire_idx: wi, boundary: b, uv_poly, uv_centroid: uv_cent, full_wrap })
+        centroid = b.iter().copied().sum::<DVec3>() / b.len() as f64;
+        Some(WireData { wire_idx: wi, boundary: b, centroid, full_wrap })
     }).collect();
 
-    if wds.is_empty() {
-        return vec![];
-    }
+    if wds.is_empty() { return vec![]; }
 
-    // ✅ OCCT-aligned: FClass2d → growth/hole classification (L439-456).
-    //    OCCT processes wires in order, classifying each as growth or hole.
-    //    The FIRST wire is always growth; subsequent wires are classified
-    //    against previously identified growths via IsGrowthWire + FClass2d::IsHole().
-    //
-    //    In OCCT, FClass2d::IsHole() uses the face's sample point: if the point
-    //    is inside the original face → NOT a hole (growth), if outside → hole.
-    //    This naturally makes the LARGEST wire the outer boundary and smaller
-    //    wires the holes, because the largest wire's sample point is most likely
-    //    to be inside the original face.
-    //
-    //    To match this behavior without BRep operations, sort wires by UV area
-    //    descending so the largest wire is processed FIRST (becoming the primary
-    //    growth).  Subsequent wires whose centroids are inside a previous growth
-    //    become holes.  This prevents a small wire (e.g. the sphere's N→EF@1→EF@5
-    //    triangle) from being incorrectly classified as the outer boundary when
-    //    its UV centroid maps inside the other operand (bfuse_simple A1).
-    let n = wds.len();
-    // Sort indices by UV area descending (largest first)
-    let mut sorted_indices: Vec<usize> = (0..n).collect();
-    sorted_indices.sort_by(|&a, &b| {
-        let area_a = uv_polygon_area(&wds[a].uv_poly);
-        let area_b = uv_polygon_area(&wds[b].uv_poly);
-        area_b.partial_cmp(&area_a).unwrap_or(std::cmp::Ordering::Equal)
-    });
+    // OCCT L461-465: sort by 3D projected area descending (largest = primary growth)
+    let mut sorted: Vec<usize> = (0..wds.len()).collect();
+    sorted.sort_by(|&a, &b| projected_area_max(&wds[b].boundary).partial_cmp(&projected_area_max(&wds[a].boundary)).unwrap_or(std::cmp::Ordering::Equal));
 
-    // Map from sorted position back to original index
-    let mut is_hole = vec![false; n];
+    // OCCT L428-458: sequential classification with IsGrowthWire + IsHole
+    let mut is_hole = vec![false; wds.len()];
     let mut hole_edge_set: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
-    // Debug: show sorted wire areas
-    if std::env::var("RCAD_DEBUG_IC").is_ok() {
-        for &si in &sorted_indices {
-            let area = uv_polygon_area(&wds[si].uv_poly);
-            let cent = wds[si].uv_centroid.map(|c| format!("({:.3},{:.3})", c.x, c.y)).unwrap_or("none".into());
-            eprintln!("[AREA] wi={} area={:.6} cent={} nb={}", wds[si].wire_idx, area, cent, wds[si].boundary.len());
+    for &si in &sorted {
+        if wds[si].full_wrap { is_hole[si] = false; continue; }
+        if wires[wds[si].wire_idx].iter().any(|&s| hole_edge_set.contains(&s)) { is_hole[si] = false; continue; }
+        if wds[si].boundary.len() < 3 { is_hole[si] = true; }
+        else {
+            is_hole[si] = sorted.iter().take_while(|&&p| p != si).any(|&p| !is_hole[p] && point_in_polygon_best(wds[si].centroid, &wds[p].boundary));
+        }
+        if is_hole[si] { for &s in &wires[wds[si].wire_idx] { hole_edge_set.insert(s); } }
+    }
+
+    let growths: Vec<usize> = (0..wds.len()).filter(|&i| !is_hole[i]).collect();
+    let holes: Vec<usize> = (0..wds.len()).filter(|&i| is_hole[i]).collect();
+    if holes.is_empty() { return growths.iter().map(|&g| WireFace { outer_wire: wires[g].clone(), inner_wires: vec![], internal_wires: internal_wires.to_vec() }).collect(); }
+
+    // OCCT L468-555: assign holes to enclosing growths via 3D point-in-polygon
+    let mut h2g: Vec<(usize, usize)> = Vec::new();
+    for &h in &holes {
+        for &g in &growths {
+            if point_in_polygon_best(wds[h].centroid, &wds[g].boundary) { h2g.push((h, g)); break; }
         }
     }
 
-    // OCCT L428-458: process wires in sorted order (largest first)
-    for &si in &sorted_indices {
-        if wds[si].full_wrap {
-            is_hole[si] = false;
-            continue;
-        }
-        // OCCT L441: IsGrowthWire fast check
-        let shares_hole_edge = wires[wds[si].wire_idx].iter().any(|&seg_si| hole_edge_set.contains(&seg_si));
-        if shares_hole_edge {
-            is_hole[si] = false; // shares edge with a hole → must be growth
-            continue;
-        }
-        // OCCT L445-446: FClass2d::IsHole() fallback
-        if wds[si].boundary.len() < 3 {
-            is_hole[si] = true;
-        } else if let Some(ref uv_cent) = wds[si].uv_centroid {
-            // Check if centroid is inside any PREVIOUSLY PROCESSED non-hole wire's UV polygon.
-            let inside_any_prev_growth = sorted_indices.iter()
-                .take_while(|&&pj| pj != si)
-                .any(|&pj| !is_hole[pj] && point_in_uv_polygon(*uv_cent, &wds[pj].uv_poly));
-            is_hole[si] = inside_any_prev_growth;
-        }
-        // OCCT L456-458: if hole, add its edges to aMHE
-        if is_hole[si] {
-            for &seg_si in &wires[wds[si].wire_idx] {
-                hole_edge_set.insert(seg_si);
-            }
-        }
-    }
-
-    // OCCT L461-465: if no holes, all growths
-    let growth_indices: Vec<usize> = (0..n).filter(|&i| !is_hole[i]).collect();
-    let hole_indices: Vec<usize> = (0..n).filter(|&i| is_hole[i]).collect();
-
-    if hole_indices.is_empty() {
-        return growth_indices.iter().map(|&g_idx| WireFace {
-            outer_wire: wires[g_idx].clone(),
-            inner_wires: vec![],
-            internal_wires: internal_wires.to_vec(),
-        }).collect();
-    }
-
-    // OCCT L468-537: classify holes relative to growth faces via BVH + IsInside
-    // rcad: use UV centroid containment (simpler, matches BVH approach)
-    // Map each hole to its enclosing growth
-    let mut hole_to_growth: Vec<(usize, usize)> = Vec::new(); // (hole_idx, growth_idx)
-    for &h_idx in &hole_indices {
-        let Some(ref h_cent) = wds[h_idx].uv_centroid else { continue; };
-        let mut best_growth: Option<usize> = None;
-        let mut best_is_inside = false;
-        for &g_idx in &growth_indices {
-            if point_in_uv_polygon(*h_cent, &wds[g_idx].uv_poly) {
-                best_growth = Some(g_idx);
-                best_is_inside = true;
-                break; // OCCT: first growth that contains this hole
-            }
-        }
-        if let Some(g_idx) = best_growth {
-            hole_to_growth.push((h_idx, g_idx));
-        }
-    }
-
-    // OCCT L540-555: build face→holes map
-    let mut growth_to_holes: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
-    for &(h_idx, g_idx) in &hole_to_growth {
-        growth_to_holes.entry(g_idx).or_default().push(h_idx);
-    }
+    let mut g2h: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+    for &(h, g) in &h2g { g2h.entry(g).or_default().push(h); }
 
     // OCCT L584-613: add holes to growth faces
-    let mut result: Vec<WireFace> = Vec::new();
-    for &g_idx in &growth_indices {
-        let inner: Vec<Vec<usize>> = growth_to_holes.get(&g_idx)
-            .map(|holes| holes.iter().map(|&h_idx| wires[h_idx].clone()).collect())
-            .unwrap_or_default();
-        result.push(WireFace {
-            outer_wire: wires[g_idx].clone(),
-            inner_wires: inner,
-            internal_wires: internal_wires.to_vec(),
-        });
-    }
-    result
+    growths.iter().map(|&g| WireFace {
+        outer_wire: wires[g].clone(),
+        inner_wires: g2h.get(&g).map(|hs| hs.iter().map(|&h| wires[h].clone()).collect()).unwrap_or_default(),
+        internal_wires: internal_wires.to_vec(),
+    }).collect()
 }
 
 /// Compute the signed area of a UV polygon using the shoelace formula.
@@ -4570,9 +4420,7 @@ fn point_in_uv_polygon(pt: DVec2, poly: &[DVec2]) -> bool {
     inside
 }
 
-///  3D  XY  (Shoelace)
-/// Compute the absolute projected area of a 3D polygon onto the given
-/// coordinate plane (axes = (u_idx, v_idx), e.g. (0,1) for XY).
+/// Compute the projected area of a 3D polygon onto the given coordinate plane.
 fn projected_area_on(b: &[DVec3], u_idx: usize, v_idx: usize) -> f64 {
     let pick = |p: DVec3, i: usize| -> f64 { match i { 0 => p.x, 1 => p.y, _ => p.z } };
     (0..b.len()).map(|i| {
@@ -4582,7 +4430,6 @@ fn projected_area_on(b: &[DVec3], u_idx: usize, v_idx: usize) -> f64 {
 }
 
 /// Compute the maximum projected area across XY, YZ, and XZ planes.
-/// This avoids degenerate cases where a polygon lies in one coordinate plane.
 fn projected_area_max(b: &[DVec3]) -> f64 {
     let xy = projected_area_on(b, 0, 1);
     let yz = projected_area_on(b, 1, 2);
@@ -5094,7 +4941,7 @@ impl<'a> BooleanBuilder<'a> {
                             let keep = match self.op {
                                 BooleanOpType::Intersection => class == Classification::In,
                                 BooleanOpType::Difference => class != Classification::In,
-                                BooleanOpType::Union => true,
+                                BooleanOpType::Union => class != Classification::In,
                             };
                             if std::env::var("RCAD_DEBUG_IC").is_ok() {
                                 let sn = match &sub.surface { Surface3::Plane(_) => "PLANE", Surface3::Sphere(_) => "SPHERE", _ => "OTHER" };
