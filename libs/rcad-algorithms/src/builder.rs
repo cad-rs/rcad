@@ -2782,6 +2782,10 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     let ev_seg = pb.pave2.vertex_idx;
                     if sv_seg == ev_seg { continue; }
                     let (t_start, t_end) = compute_seam_tangent_angles(ds, sv_seg, ev_seg, &face.surface);
+                    if std::env::var("RCAD_DEBUG_IC").is_ok() && matches!(face.surface, Surface3::Sphere(_)) {
+                        eprintln!("[SEAM_TANG] ei={} block sv={} ev={} t_start={:?} t_end={:?}",
+                            ei, sv_seg, ev_seg, t_start, t_end);
+                    }
                     segments.push(WireSegment {
                         start_vertex: sv_seg, end_vertex: ev_seg,
                         source: WireEdgeSource::DsEdge(ei), forward: true,
@@ -2791,7 +2795,9 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                         start_vertex: ev_seg, end_vertex: sv_seg,
                         source: WireEdgeSource::DsEdge(ei), forward: false,
                         is_seam: true,
-                        tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+                        // OCCT-aligned: t_end already reversed (incoming convention).
+                        // REV outgoing from end → start uses t_end directly (no +PI).
+                        tangent_start: t_end,
                         tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
                     });
                 }
@@ -2957,6 +2963,11 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
 /// OCCT-aligned: Compute seam edge UV tangent angle
 ///     seam = u=const isoline   V
 ///    Cylinder seam
+///
+/// OCCT-aligned: tangent_start = forward tangent at start vertex (outgoing).
+/// tangent_end = REVERSE tangent at end vertex (incoming convention matching
+/// Angle2D + aFlag=true).  Previously both ends returned the same angle,
+/// causing wrong edge selection at multi-edge vertices on sphere/cylinder.
 fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface: &Surface3) -> (Option<f64>, Option<f64>) {
     match surface {
         Surface3::Sphere(sph) => {
@@ -2967,12 +2978,13 @@ fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface: &Surface3
                 // OCCT-aligned: zero-length seam sub-segment (IC endpoint at
                 // pole).  The seam always follows the V direction on the sphere,
                 // from north pole (V=0) toward south pole (V=pi).  Return the
-                // V-axis direction (pi/2) to ensure valid EdgeInfo entries.
+                // V-axis direction (pi/2) for outgoing, reverse for incoming.
                 return (Some(std::f64::consts::FRAC_PI_2),
-                        Some(std::f64::consts::FRAC_PI_2));
+                        Some((std::f64::consts::FRAC_PI_2 + std::f64::consts::PI) % std::f64::consts::TAU));
             }
             let a = dir_to_angle(dir);
-            (Some(a), Some(a))
+            // tangent_end: reverse direction (incoming convention)
+            (Some(a), Some((a + std::f64::consts::PI) % std::f64::consts::TAU))
         }
         Surface3::Cylinder(cyl) => {
             // Cylinder seam: u=0 or u=2 isoline, along V direction.
@@ -2985,7 +2997,8 @@ fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface: &Surface3
             let ev_v = (ev_pt - cyl.origin).dot(ax);
             let dir = if ev_v > sv_v { DVec2::new(0.0, 1.0) } else { DVec2::new(0.0, -1.0) };
             let a = dir_to_angle(dir);
-            (Some(a), Some(a))
+            // tangent_end: reverse direction (incoming convention)
+            (Some(a), Some((a + std::f64::consts::PI) % std::f64::consts::TAU))
         }
         Surface3::Plane(p) => {
             let x_axis = any_perpendicular(p.normal).normalize();
@@ -2997,7 +3010,8 @@ fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface: &Surface3
             let dir = uv_e - uv_s;
             if dir.length_squared() < 1e-30 { return (None, None); }
             let a = dir_to_angle(dir);
-            (Some(a), Some(a))
+            // tangent_end: reverse direction (incoming convention)
+            (Some(a), Some((a + std::f64::consts::PI) % std::f64::consts::TAU))
         }
         _ => (None, None),
     }
@@ -3007,6 +3021,12 @@ fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface: &Surface3
 /// surface type.  Uses the surface's world_to_uv or local basis to project
 /// edge endpoints, then computes the direction angle.  Used by the wire
 /// pipeline for ALL face types (sphere + planar + cylindrical).
+///
+/// OCCT-aligned: tangent_start = forward tangent at start vertex (outgoing).
+/// tangent_end = REVERSE tangent at end vertex (incoming convention matching
+/// Angle2D + aFlag=true).  Fixes the bug where both ends used the same angle,
+/// causing ClockWiseAngle to select wrong outgoing edges at multi-edge vertices
+/// (bfuse_simple A1 sphere face produced 3 wires instead of 1).
 fn edge_uv_tangent(ds: &DS, sv: usize, ev: usize, surface: &Surface3) -> (Option<f64>, Option<f64>) {
     match surface {
         Surface3::Sphere(s) => {
@@ -3015,7 +3035,8 @@ fn edge_uv_tangent(ds: &DS, sv: usize, ev: usize, surface: &Surface3) -> (Option
             let dir = uve - uvs;
             if dir.length_squared() < 1e-30 { return (None, None); }
             let a = dir_to_angle(dir);
-            (Some(a), Some(a))
+            // tangent_end: reverse direction (incoming convention)
+            (Some(a), Some((a + std::f64::consts::PI) % std::f64::consts::TAU))
         }
         Surface3::Plane(p) => {
             let x_axis = any_perpendicular(p.normal).normalize();
@@ -3027,7 +3048,8 @@ fn edge_uv_tangent(ds: &DS, sv: usize, ev: usize, surface: &Surface3) -> (Option
             let dir = uv_e - uv_s;
             if dir.length_squared() < 1e-30 { return (None, None); }
             let a = dir_to_angle(dir);
-            (Some(a), Some(a))
+            // tangent_end: reverse direction (incoming convention)
+            (Some(a), Some((a + std::f64::consts::PI) % std::f64::consts::TAU))
         }
         // Cylinder/Cone/Torus: handled similarly when world_to_uv is available
         _ => (None, None),
@@ -3553,17 +3575,24 @@ fn select_best_outgoing<'a>(
         return Some(candidates[0]);
     }
     // ✅ OCCT-aligned aE.IsSame(aEOuta) check (L544): if a candidate edge
-    // is the same physical intersection curve as the incoming edge, maximize
-    // its angle to 2PI so it is never chosen over other candidates.
-    let incoming_src = &segments[incoming_ci].source;
+    // is the same physical edge as the incoming edge, maximize its angle
+    // to 2PI so it is never chosen over other candidates.
+    // OCCT compares TopoDS_Shape identity — each split image of a seam edge
+    // is a different TopoDS_Edge (different TShape), so IsSame is false.
+    // rcad compares by SEGMENT INDEX (seg_idx), not by DS edge index,
+    // because different pave blocks of the same DS edge produce different
+    // segments (different seg_idx values).  Comparing by DS edge index
+    // would incorrectly disable all seam images from being selected as
+    // outgoing (bfuse_simple A1 sphere face: block 1 REV at EF@1 was
+    // skipped because its DsEdge matched the incoming DsEdge).
     candidates.iter()
         .min_by(|a, b| {
-            let angle_a = if is_same_ic(incoming_src, &segments[a.seg_idx].source) {
+            let angle_a = if a.seg_idx == incoming_ci {
                 std::f64::consts::TAU
             } else {
                 clock_wise_angle(angle_in, a.angle)
             };
-            let angle_b = if is_same_ic(incoming_src, &segments[b.seg_idx].source) {
+            let angle_b = if b.seg_idx == incoming_ci {
                 std::f64::consts::TAU
             } else {
                 clock_wise_angle(angle_in, b.angle)
