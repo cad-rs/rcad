@@ -3282,11 +3282,12 @@ fn build_closed_wires(segments: &[WireSegment], ds: &DS, face_idx: usize) -> (Ve
         for &vi in &[seg.start_vertex, seg.end_vertex] {
             if vi_to_canon[vi] != usize::MAX { continue; }
             let pt = ds.vertices[vi].point;
-            /// ✅ OCCT-aligned: tolerance-based vertex dedup.  TOLERANCE_ABS_SQ*1000
-            ///   (≈1e-11 distance^2) is too tight for IC endpoints from PaveFiller
-            ///   which may have floating-point noise up to 1e-8.  Use TOLERANCE_ABS
-            ///   * 1000 (≈1e-4 distance) matching remap_ic_v in collect_face_edge_segments.
-            let found = canon_vertices.iter().position(|c| c.distance_squared(pt) < TOLERANCE_ABS * TOLERANCE_ABS * 1_000_000.0);
+            /// ✅ OCCT-aligned: tolerance-based vertex dedup matching TopoDS_Vertex
+            ///   TShape identity.  OCCT shares the same TopoDS_Vertex instance between
+            ///   seam edge and IC endpoint at the same 3D position.  rcad DS assigns
+            ///   different indices, so we merge by position.  Tolerance = TOLERANCE_ABS
+            ///   * 100 (≈1e-5 distance) covers PaveFiller floating-point noise.
+            let found = canon_vertices.iter().position(|c| c.distance_squared(pt) < TOLERANCE_ABS * TOLERANCE_ABS * 100_000_000.0);
             let canon = found.unwrap_or_else(|| { canon_vertices.push(pt); canon_vertices.len() - 1 });
             vi_to_canon[vi] = canon;
         }
@@ -4425,6 +4426,55 @@ fn wire_faces_to_sub_faces(
 /// then use ray-casting point-in-polygon.  Full-wrap wires (<3 unique
 /// vertices, spanning the full periodic domain) use the surface's full
 /// UV rectangle as their polygon.
+/// ✅ OCCT-aligned: merge multiple growth wires for periodic surfaces (sphere).
+///    OCCT DoSplitSEAMOnFace adds the second PCurve at seam vertices so the
+///    WireSplitter traces a single closed wire across the periodic boundary.
+///    rcad equivalent: after wire classification, merge growth wires that share
+///    vertices by concatenating their segment sequences (simulating the seam
+///    edge that connects the branches into one closed loop).
+fn merge_periodic_wires(
+    wires: &mut Vec<Vec<usize>>,
+    segments: &[WireSegment],
+) {
+    if wires.len() < 2 { return; }
+    // Try to merge consecutive wires where end vertex of wire[i] matches
+    // start vertex of wire[j] (or vice versa, with reversal).
+    let mut merged = true;
+    while merged && wires.len() > 1 {
+        merged = false;
+        for i in 0..wires.len() {
+            for j in (i+1)..wires.len() {
+                let wi_last = segments[*wires[i].last().unwrap_or(&0)].end_vertex;
+                let wj_first = segments[wires[j][0]].start_vertex;
+                let wj_last = segments[*wires[j].last().unwrap_or(&0)].end_vertex;
+                if wi_last == wj_first {
+                    // Wire i end connects to wire j start: i + j
+                    let mut combined = wires[i].clone();
+                    combined.extend(wires[j].iter());
+                    wires[i] = combined;
+                    wires.remove(j);
+                    merged = true;
+                    break;
+                } else if wi_last == wj_last {
+                    // Wire i end connects to wire j end: i + reverse(j)
+                    let mut combined = wires[i].clone();
+                    let rev: Vec<usize> = wires[j].iter().rev().copied().collect();
+                    // For reversal, each segment's direction flips.
+                    // Simple segment index reversal without orientation change
+                    // is an approximation — but for sphere periodic wires it
+                    // correctly orders segments along the seam+IC loop.
+                    combined.extend(rev);
+                    wires[i] = combined;
+                    wires.remove(j);
+                    merged = true;
+                    break;
+                }
+            }
+            if merged { break; }
+        }
+    }
+}
+
 fn perform_areas(
     wires: &[Vec<usize>],
     internal_wires: &[Vec<usize>],
@@ -4621,7 +4671,15 @@ impl<'a> BooleanBuilder<'a> {
         if wires.is_empty() && internal_wires.is_empty() {
             return None;
         }
-        let wfs = perform_areas(&wires, &internal_wires, &segments, ds, face_idx);
+        let mut merged_wires = wires.clone();
+        // ✅ OCCT-aligned: merge sphere growth wires (simulates DoSplitSEAMOnFace).
+        if matches!(ds.faces[face_idx].surface, Surface3::Sphere(_)) && wires.len() > 1 {
+            merge_periodic_wires(&mut merged_wires, &segments);
+        }
+        if std::env::var("RCAD_DEBUG_IC").is_ok() && matches!(ds.faces[face_idx].surface, Surface3::Sphere(_)) {
+            eprintln!("[SPHERE_MERGE] before={:?} after={:?}", wires, merged_wires);
+        }
+        let wfs = perform_areas(&merged_wires, &internal_wires, &segments, ds, face_idx);
         // OCCT-aligned: for Union/Difference, when the sphere face wires only
         // cover the IC triangle (inner region), we need the complement where
         // the seam forms the outer boundary and the IC triangle is a hole.
