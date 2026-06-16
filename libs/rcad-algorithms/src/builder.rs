@@ -458,7 +458,9 @@ type FaceEntry = (
 /// vertex that lies in the segment interior so adjacent faces share edge references.
 struct ResultBuilder {
     vertices: Vec<DVec3>,
-    vertex_map: HashMap<u64, usize>, // hash of position 閳?index
+    vertex_map: HashMap<u64, usize>, // hash of position -> index
+    /// OCCT-aligned: DS vertex index -> BRep vertex index (TShape identity).
+    ds_vertex_map: HashMap<usize, usize>,
     edges: Vec<(usize, usize)>,
     faces: Vec<FaceEntry>, // (boundary vertex indices, triangles, normal, surface, uv_domain)
     face_origins: Vec<FaceOrigin>,
@@ -518,8 +520,8 @@ impl ResultBuilder {
         let mut edge_indices = Vec::new();
         for &si in &wf.outer_wire {
             let seg = &segments[si];
-            let v1 = self.add_vertex(ds.vertices[seg.start_vertex].point);
-            let v2 = self.add_vertex(ds.vertices[seg.end_vertex].point);
+            let v1 = self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point);
+            let v2 = self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point);
             if vert_indices.is_empty() || vert_indices.last() != Some(&v1) {
                 vert_indices.push(v1);
             }
@@ -569,8 +571,8 @@ impl ResultBuilder {
             let mut iw_edges = Vec::new();
             for &si in iw {
                 let seg = &segments[si];
-                let v1 = self.add_vertex(ds.vertices[seg.start_vertex].point);
-                let v2 = self.add_vertex(ds.vertices[seg.end_vertex].point);
+                let v1 = self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point);
+                let v2 = self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point);
                 if iw_verts.is_empty() || iw_verts.last() != Some(&v1) {
                     iw_verts.push(v1);
                 }
@@ -598,8 +600,8 @@ impl ResultBuilder {
             let mut iw_edges = Vec::new();
             for &si in iw {
                 let seg = &segments[si];
-                let v1 = self.add_vertex(ds.vertices[seg.start_vertex].point);
-                let v2 = self.add_vertex(ds.vertices[seg.end_vertex].point);
+                let v1 = self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point);
+                let v2 = self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point);
                 let ei = match &seg.source {
                     WireEdgeSource::IntersectionCurve(ci) => {
                         let crv = &ds.intersection_curves[*ci].curve;
@@ -623,8 +625,8 @@ impl ResultBuilder {
             let mut iw_edges = Vec::new();
             for &si in iw {
                 let seg = &segments[si];
-                let v1 = self.add_vertex(ds.vertices[seg.start_vertex].point);
-                let v2 = self.add_vertex(ds.vertices[seg.end_vertex].point);
+                let v1 = self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point);
+                let v2 = self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point);
                 let ei = match &seg.source {
                     WireEdgeSource::IntersectionCurve(ci) => {
                         let crv = &ds.intersection_curves[*ci].curve;
@@ -790,6 +792,7 @@ impl ResultBuilder {
         Self {
             vertices: Vec::new(),
             vertex_map: HashMap::new(),
+            ds_vertex_map: HashMap::new(),
             edges: Vec::new(),
             faces: Vec::new(),
             face_origins: Vec::new(),
@@ -817,6 +820,16 @@ impl ResultBuilder {
         let idx = self.vertices.len();
         self.vertices.push(point);
         self.vertex_map.insert(key, idx);
+        idx
+    }
+
+    /// ✅ OCCT-aligned: add vertex by DS index identity (TopoDS_Vertex TShape).
+    fn add_ds_vertex(&mut self, ds_vi: usize, point: DVec3) -> usize {
+        if let Some(&idx) = self.ds_vertex_map.get(&ds_vi) {
+            return idx;
+        }
+        let idx = self.add_vertex(point);
+        self.ds_vertex_map.insert(ds_vi, idx);
         idx
     }
 
@@ -2765,6 +2778,22 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                 tangent_end: t_end,
             });
         }
+    }
+
+    // ✅ OCCT-aligned: remove full-span seam segments on sphere faces.
+    // boundary_edges may contain both PaveFiller-split sub-edges and the
+    // original unsplit edge (north→south, ~2*radius). The full-span edges
+    // bypass IC endpoints and prevent PerformShapesToAvoid from detecting
+    // the south pole dead-end.
+    if matches!(face.surface, Surface3::Sphere(_)) {
+        let radius = match &face.surface { Surface3::Sphere(s) => s.radius, _ => 1.0 };
+        let full_span_sq = (radius * 1.8) * (radius * 1.8);
+        segments.retain(|seg| {
+            if !seg.is_seam { return true; }
+            let d2 = (ds.vertices[seg.end_vertex].point
+                       - ds.vertices[seg.start_vertex].point).length_squared();
+            d2 < full_span_sq
+        });
     }
 
     // ================================================================
