@@ -1560,15 +1560,13 @@ impl<'a> PaveFiller<'a> {
                 .collect()
             }
             (Curve3::Circle(circle), Surface3::Plane(plane)) => {
-                inttools::curve_surface::intersect_circle_plane_with_tol(
-                    circle,
-                    ef_range,
-                    plane,
-                    etf,
+                // Use edge start vertex as reference direction for θ=0
+                let sv = self.ds.edges[edge_idx].start_vertex;
+                let ref_dir = (self.ds.vertices[sv].point - circle.center).normalize();
+                inttools::curve_surface::intersect_circle_plane_with_ref(
+                    circle, ef_range, plane, etf, Some(ref_dir),
                 )
-                .into_iter()
-                .map(|h| (h.point, h.curve_param))
-                .collect()
+                .into_iter().map(|h| (h.point, h.curve_param)).collect()
             }
             (Curve3::Circle(circle), Surface3::Cylinder(cyl)) => {
                 inttools::curve_surface::intersect_circle_cylinder_with_tol(
@@ -1620,8 +1618,19 @@ impl<'a> PaveFiller<'a> {
                 _ => true,
             };
 
+            // ✅ OCCT-aligned: accept intersection points on face boundary
+            //    vertices. point_in_planar_face_with_tol uses ray casting
+            //    which may reject points exactly on polygon vertices.
             if !in_face {
-                continue;
+                let near_face_vert = match &face_surface {
+                    Surface3::Plane(_) => {
+                        self.ds.face_boundary_points(face_idx).iter().any(|&vp| {
+                            (vp - point).length() <= etf
+                        })
+                    }
+                    _ => false,
+                };
+                if !near_face_vert { continue; }
             }
 
             // ✅ OCCT对齐: PaveBlock 端点交点处理

@@ -2671,69 +2671,44 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
         };
 
         if is_seam && matches!(face.surface, Surface3::Sphere(_)) {
-            // OCCT-aligned: DoSplitSEAMOnFace (BOPAlgo_Builder_2.cxx L392-449)
-            // Skip duplicate DS edge (sphere has 2 boundary edges for the same seam)
+            // ✅ OCCT-aligned: myImages equivalent (BOPAlgo_Builder_2.cxx L364-449).
+            //    If PaveFiller split this edge (pave_blocks > 1), use pave_blocks
+            //    as split image edges with correct DS vertex indices from EF pass.
             if !processed_seam_ds_edges.insert(ei) {
                 continue;
             }
-            // 1. Collect seam vertices: original endpoints + IC endpoints
-            let mut seam_verts: Vec<usize> = Vec::new();
-            seam_verts.push(sv);
-            if ev != sv {
-                seam_verts.push(ev);
-            }
-            // 2. OCCT-aligned: add IC endpoints whose UV is on the seam line
-            //    (U approx 0 or 2pi) as intermediate seam vertices.
-            //    With axis=Z, ref_dir=X (OCCT standard), the IC endpoints at
-            //    (1,0,0) and (0,0,1) have U=0 — on the seam.
-            if let Surface3::Sphere(sph) = &face.surface {
-                let seam_tol = TOLERANCE_COORD_SUB;
-                for &ci in &face.face_info.curves_in {
-                    let ic = &ds.intersection_curves[ci];
-                    for &icv in &[ic.start_vertex, ic.end_vertex] {
-                        if seam_verts.contains(&icv) { continue; }
-                        let ic_pos = ds.vertices[icv].point;
-                        if seam_verts.iter().any(|&sv| ds.vertices[sv].point.distance_squared(ic_pos) < TOLERANCE_ABS_SQ) {
-                            continue;
-                        }
-                        let icuv = sph.world_to_uv(ic_pos);
-                        let u_norm = icuv.x.rem_euclid(std::f64::consts::TAU);
-                        let on_seam = u_norm < seam_tol || (u_norm - std::f64::consts::TAU).abs() < seam_tol;
-                        if on_seam {
-                            seam_verts.push(icv);
-                        }
-                    }
+            let ds_edge = &ds.edges[ei];
+            if ds_edge.pave_blocks.len() > 1 {
+                // ✅ OCCT-aligned: myImages.Find → iterate aLIE (L403-459).
+                for pb in &ds_edge.pave_blocks {
+                    let sv_seg = pb.pave1.vertex_idx;
+                    let ev_seg = pb.pave2.vertex_idx;
+                    if sv_seg == ev_seg { continue; }
+                    let (t_start, t_end) = compute_seam_tangent_angles(ds, sv_seg, ev_seg, &face.surface);
+                    segments.push(WireSegment {
+                        start_vertex: sv_seg, end_vertex: ev_seg,
+                        source: WireEdgeSource::DsEdge(ei), forward: true,
+                        is_seam: true, tangent_start: t_start, tangent_end: t_end,
+                    });
+                    segments.push(WireSegment {
+                        start_vertex: ev_seg, end_vertex: sv_seg,
+                        source: WireEdgeSource::DsEdge(ei), forward: false,
+                        is_seam: true,
+                        tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+                        tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+                    });
                 }
-            }
-
-            // 3. Sort by V coordinate along seam (north pole = min v, south = max v)
-            //    OCCT-aligned: DoSplitSEAMOnFace  seam
-            if let Surface3::Sphere(sph) = &face.surface {
-                seam_verts.sort_by(|&a, &b| {
-                    let uva = sph.world_to_uv(ds.vertices[a].point);
-                    let uvb = sph.world_to_uv(ds.vertices[b].point);
-                    uva.y.partial_cmp(&uvb.y).unwrap_or(std::cmp::Ordering::Equal)
-                });
-            }
-
-            // 4. Create sub-segments between consecutive seam vertices
-            for i in 0..seam_verts.len().saturating_sub(1) {
-                let sv_seg = seam_verts[i];
-                let ev_seg = seam_verts[i + 1];
-                if sv_seg == ev_seg { continue; }
-                let (t_start, t_end) = compute_seam_tangent_angles(ds, sv_seg, ev_seg, &face.surface);
+            } else {
+                // ⏳ No pave_blocks — edge not split by PaveFiller.
+                let (t_start, t_end) = compute_seam_tangent_angles(ds, sv, ev, &face.surface);
                 segments.push(WireSegment {
-                    start_vertex: sv_seg, end_vertex: ev_seg,
-                    source: WireEdgeSource::DsEdge(ei),
-                    forward: true,
-                    is_seam: true,
-                    tangent_start: t_start,
-                    tangent_end: t_end,
+                    start_vertex: sv, end_vertex: ev,
+                    source: WireEdgeSource::DsEdge(ei), forward: true,
+                    is_seam: true, tangent_start: t_start, tangent_end: t_end,
                 });
                 segments.push(WireSegment {
-                    start_vertex: ev_seg, end_vertex: sv_seg,
-                    source: WireEdgeSource::DsEdge(ei),
-                    forward: false,
+                    start_vertex: ev, end_vertex: sv,
+                    source: WireEdgeSource::DsEdge(ei), forward: false,
                     is_seam: true,
                     tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
                     tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
@@ -2780,26 +2755,8 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
         }
     }
 
-    // ✅ OCCT-aligned: remove full-span seam segments on sphere faces.
-    // boundary_edges may contain both PaveFiller-split sub-edges and the
-    // original unsplit edge (north→south, ~2*radius). The full-span edges
-    // bypass IC endpoints and prevent PerformShapesToAvoid from detecting
-    // the south pole dead-end.
-    if matches!(face.surface, Surface3::Sphere(_)) {
-        let radius = match &face.surface { Surface3::Sphere(s) => s.radius, _ => 1.0 };
-        let full_span_sq = (radius * 1.8) * (radius * 1.8);
-        segments.retain(|seg| {
-            if !seg.is_seam { return true; }
-            let d2 = (ds.vertices[seg.end_vertex].point
-                       - ds.vertices[seg.start_vertex].point).length_squared();
-            d2 < full_span_sq
-        });
-    }
-
     // ================================================================
-    // 2. Section edges  Intersection curves (OCCT L478-489)
-    //    OCCT  FORWARD+REVERSED, BOPAlgo_WireSplitter
-
+    // ✅ OCCT-aligned: Section edges = Intersection curves (OCCT L478-489).
     // ================================================================
     for &ci in &face.face_info.curves_in {
         let ic = &ds.intersection_curves[ci];

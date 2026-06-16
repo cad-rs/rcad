@@ -130,10 +130,24 @@ pub fn intersect_circle_plane_with_tol(
     plane: &Plane,
     geom_tol: f64,
 ) -> Vec<CurveSurfaceHit> {
+    intersect_circle_plane_with_ref(circle, t_range, plane, geom_tol, None)
+}
+
+/// Same as intersect_circle_plane_with_tol, with a known reference direction
+/// for θ=0 (e.g. from the edge's start vertex on the circle).
+pub fn intersect_circle_plane_with_ref(
+    circle: &Circle3,
+    t_range: [f64; 2],
+    plane: &Plane,
+    geom_tol: f64,
+    ref_dir: Option<DVec3>,
+) -> Vec<CurveSurfaceHit> {
     let eps = geom_tol.max(TOLERANCE_ABS);
     // Circle parametric: P(θ) = center + radius*(u*cos(θ) + v*sin(θ))
-    // where u,v are orthonormal vectors in the circle plane
-    let u = if circle.normal.x.abs() < 0.9 {
+    let u = if let Some(rd) = ref_dir {
+        // Use the edge's actual reference direction (θ=0 points to rd).
+        rd.normalize()
+    } else if circle.normal.x.abs() < 0.9 {
         circle.normal.cross(DVec3::X).normalize()
     } else {
         circle.normal.cross(DVec3::Y).normalize()
