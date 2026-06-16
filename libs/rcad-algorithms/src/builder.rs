@@ -4431,92 +4431,6 @@ fn wire_faces_to_sub_faces(
 ///    seam sub-segments and IC arcs.  rcad produces 2 wires (one IC-loop,
 ///    one seam-loop) on the same vertices but opposite directions.
 ///    This function interleaves them: seam→IC→seam→IC→seam→IC.
-fn merge_periodic_wires(
-    wires: &mut Vec<Vec<usize>>,
-    segments: &[WireSegment],
-) {
-    if wires.len() < 2 { return; }
-    // Collect all non-degenerate segment indices from all wires.
-    // Group by source type: IC arcs (IntersectionCurve) vs seam (DsEdge+is_seam).
-    let mut ic_segs: Vec<usize> = Vec::new();
-    let mut seam_segs: Vec<usize> = Vec::new();
-    for w in wires.iter() {
-        for &si in w {
-            if segments[si].start_vertex == segments[si].end_vertex { continue; }
-            match segments[si].source {
-                WireEdgeSource::IntersectionCurve(_) => ic_segs.push(si),
-                _ => seam_segs.push(si),
-            }
-        }
-    }
-    // Interleave: start from IC[0].end_vertex, find next IC or seam segment.
-    // For a sphere with 3 vertices {0,3,5}, the interleaved path is
-    // 0→3→5→0 alternating between seam and IC arcs.
-    let mut merged: Vec<usize> = Vec::new();
-    if let Some(&first) = ic_segs.first() {
-        let mut current_v = segments[first].start_vertex;
-        let ic_map: std::collections::HashMap<usize, Vec<usize>> = {
-            let mut m: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
-            for &si in &ic_segs {
-                m.entry(segments[si].start_vertex).or_default().push(si);
-            }
-            m
-        };
-        let seam_map: std::collections::HashMap<usize, Vec<usize>> = {
-            let mut m: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
-            for &si in &seam_segs {
-                m.entry(segments[si].start_vertex).or_default().push(si);
-            }
-            m
-        };
-        let mut used = vec![false; segments.len()];
-        let max_iter = ic_segs.len() + seam_segs.len() + 4;
-        for _ in 0..max_iter {
-            let start_v = current_v;
-            // Try IC segment from current_v
-            let chose_ic = ic_map.get(&current_v).and_then(|v| v.iter().find(|&&si| !used[si])).copied();
-            if let Some(si) = chose_ic {
-                used[si] = true;
-                merged.push(si);
-                current_v = segments[si].end_vertex;
-            }
-            // If a segment was taken, continue with seam from new current_v
-            if current_v != start_v {
-                if let Some(si) = seam_map.get(&current_v).and_then(|v| v.iter().find(|&&si| !used[si])).copied() {
-                    used[si] = true;
-                    merged.push(si);
-                    current_v = segments[si].end_vertex;
-                }
-            }
-            // If we didn't move, try seam first
-            if current_v == start_v {
-                if let Some(si) = seam_map.get(&current_v).and_then(|v| v.iter().find(|&&si| !used[si])).copied() {
-                    used[si] = true;
-                    merged.push(si);
-                    current_v = segments[si].end_vertex;
-                }
-                if current_v != start_v {
-                    if let Some(si) = ic_map.get(&current_v).and_then(|v| v.iter().find(|&&si| !used[si])).copied() {
-                        used[si] = true;
-                        merged.push(si);
-                        current_v = segments[si].end_vertex;
-                    }
-                }
-            }
-            // Check closed loop: back to start AND all used
-            if merged.len() >= 3 && current_v == segments[merged[0]].start_vertex {
-                let all_used = ic_segs.iter().chain(seam_segs.iter()).all(|&si| used[si]);
-                if all_used { break; }
-            }
-            if current_v == start_v { break; } // No progress → stop
-        }
-        if !merged.is_empty() {
-            wires.clear();
-            wires.push(merged);
-        }
-    }
-}
-
 fn perform_areas(
     wires: &[Vec<usize>],
     internal_wires: &[Vec<usize>],
@@ -4713,15 +4627,7 @@ impl<'a> BooleanBuilder<'a> {
         if wires.is_empty() && internal_wires.is_empty() {
             return None;
         }
-        let mut merged_wires = wires.clone();
-        // ✅ OCCT-aligned: merge sphere growth wires (simulates DoSplitSEAMOnFace).
-        if matches!(ds.faces[face_idx].surface, Surface3::Sphere(_)) && wires.len() > 1 {
-            merge_periodic_wires(&mut merged_wires, &segments);
-        }
-        if std::env::var("RCAD_DEBUG_IC").is_ok() && matches!(ds.faces[face_idx].surface, Surface3::Sphere(_)) {
-            eprintln!("[SPHERE_MERGE] before={:?} after={:?}", wires, merged_wires);
-        }
-        let wfs = perform_areas(&merged_wires, &internal_wires, &segments, ds, face_idx);
+        let wfs = perform_areas(&wires, &internal_wires, &segments, ds, face_idx);
         // OCCT-aligned: for Union/Difference, when the sphere face wires only
         // cover the IC triangle (inner region), we need the complement where
         // the seam forms the outer boundary and the IC triangle is a hole.
