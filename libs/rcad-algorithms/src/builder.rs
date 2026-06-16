@@ -3373,13 +3373,28 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, fac
     // OCCT-aligned: PerformShapesToAvoid (BOPAlgo_BuilderFace.cxx L152-235)
     let avoided = perform_shapes_to_avoid(&mut smart_map, segments);
 
-    // OCCT-aligned: Path walk loop — walk until no edges remain
+    // OCCT-aligned: Path walk loop — walk until no edges remain.
+    // Prefer BOUNDARY edges (DsEdge/SeamEdge) as starting points over IC
+    // edges, matching OCCT SplitBlock which walks from outgoing edges in
+    // the SmartMap vertex iteration (not from arbitrary block segments).
+    // Starting from an IC edge causes partial wires that miss the boundary.
     let mut wires: Vec<Vec<usize>> = Vec::new();
     for _outer in 0..block.len().max(1) {
         if std::env::var("RCAD_DEBUG_IC").is_ok() {
             for &si in block { eprintln!("[IRR_SEG] face={} si={} passed={}", face_idx, si, is_seg_passed(&smart_map, si)); }
         }
-        let start_si = match block.iter().find(|&&si| !is_seg_passed(&smart_map, si)) {
+        let start_si = match block.iter()
+            .filter(|&&si| !is_seg_passed(&smart_map, si))
+            .filter(|&&si| segments[si].start_vertex != segments[si].end_vertex)
+            .min_by(|&&a, &&b| {
+                let a_is_boundary = !matches!(segments[a].source, WireEdgeSource::IntersectionCurve(_));
+                let b_is_boundary = !matches!(segments[b].source, WireEdgeSource::IntersectionCurve(_));
+                match (a_is_boundary, b_is_boundary) {
+                    (true, false) => std::cmp::Ordering::Less,
+                    (false, true) => std::cmp::Ordering::Greater,
+                    _ => a.cmp(&b),
+                }
+            }) {
             Some(&si) => { if std::env::var("RCAD_DEBUG_IC").is_ok() { eprintln!("[IRR_WALK] face={} start_si={}", face_idx, si); } si }
             None => { if std::env::var("RCAD_DEBUG_IC").is_ok() { eprintln!("[IRR_DONE] face={} done", face_idx); } break; }
         };
@@ -3425,11 +3440,19 @@ fn perform_shapes_to_avoid(
             } else if a_nb_e == 2 {
                 let ei2 = active[1];
                 let seg2 = &segments[ei2.seg_idx];
-                let same_source = match (&seg1.source, &seg2.source) {
-                    (WireEdgeSource::DsEdge(a), WireEdgeSource::DsEdge(b)) => a == b,
+                // OCCT-aligned: IsSame check (BOPAlgo_BuilderFace.cxx L213-225).
+                // At a vertex with exactly 2 edges, they're the SAME TopoDS_Edge
+                // if they're FWD+REV of the same block: same DS edge index AND
+                // the vertex pairs are reversed (sv1==ev2 && ev1==sv2).
+                let same_block = match (&seg1.source, &seg2.source) {
+                    (WireEdgeSource::DsEdge(a), WireEdgeSource::DsEdge(b)) => {
+                        a == b
+                        && seg1.start_vertex == seg2.end_vertex
+                        && seg1.end_vertex == seg2.start_vertex
+                    }
                     _ => false,
                 };
-                if same_source && seg1.start_vertex != seg1.end_vertex {
+                if same_block && seg1.start_vertex != seg1.end_vertex {
                     b_found = true;
                     avoided_set.insert(ei1.seg_idx);
                     avoided_set.insert(ei2.seg_idx);
