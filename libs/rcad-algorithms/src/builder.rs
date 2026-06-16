@@ -619,7 +619,8 @@ impl ResultBuilder {
             internal_wire_edges.push(iw_edges);
         }
 
-        // OCCT-aligned: Internal wire edges
+        // ✅ OCCT-aligned: Internal wire edges (TopAbs_INTERNAL).
+        //    Seam edges use add_seam_edge for curve-aware unique identity.
         let mut internal_wire_edges: Vec<Vec<(usize, bool)>> = Vec::new();
         for iw in &wf.internal_wires {
             let mut iw_edges = Vec::new();
@@ -632,6 +633,14 @@ impl ResultBuilder {
                         let crv = &ds.intersection_curves[*ci].curve;
                         if let Curve3::Circle(_) = crv { self.add_circle_edge(v1, v2, crv.clone()) }
                         else { self.add_edge(v1, v2) }
+                    }
+                    WireEdgeSource::DsEdge(_) | WireEdgeSource::SeamEdge if seg.is_seam => {
+                        let s = match &ds.faces[face_idx].surface {
+                            Surface3::Sphere(sph) => sph,
+                            _ => &SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, ref_dir: DVec3::X },
+                        };
+                        let c = Curve3::Circle(Circle3 { center: s.center, normal: any_perpendicular(s.axis).normalize(), radius: s.radius });
+                        self.add_seam_edge(v1, v2, c)
                     }
                     _ => self.add_edge(v1, v2),
                 };
@@ -887,9 +896,33 @@ impl ResultBuilder {
     ///    OCCT: BOPTools_AlgoTools::MakeEdge(aIC,...) 鐩存帴鍒涘缓 BRep Edge,鏃犻《鐐瑰幓閲嶃€?
     ///    rcad: 閫氳繃 add_edge(椤剁偣鍘婚噸)鍒涘缓杈?鍦?build() 涓缃?edge_curve銆?
     ///    椤剁偣鍘婚噸閫昏緫涓嶅奖鍝嶆纭€?Circle3 鏇茬嚎姝ｇ‘璁剧疆),浣嗗疄鐜版柟寮忎笉鍚屻€?
+    /// ✅ OCCT-aligned: circle edge with curve-aware dedup.
+    ///    OCCT: TopoDS_Edge identity is per-TShape, not per vertex pair.
+    ///    Two edges sharing vertices but with different curves are distinct.
     fn add_circle_edge(&mut self, v1: usize, v2: usize, circle: Curve3) -> usize {
-        let idx = self.add_edge(v1, v2);
-        // 鎵╁睍 custom_edge_curves 鍒拌冻澶熼暱搴?
+        let key = (v1.min(v2), v1.max(v2));
+        for (i, e) in self.edges.iter().enumerate() {
+            if (e.0.min(e.1), e.0.max(e.1)) == key {
+                if let Some(ref existing) = self.custom_edge_curves.get(i).and_then(|c| c.as_ref()) {
+                    // Different curve at same vertex pair → distinct TopoDS_Edge
+                    if !curve_eq(existing, &circle) {
+                        let idx = self.add_edge_occt(v1, v2);
+                        while self.custom_edge_curves.len() <= idx {
+                            self.custom_edge_curves.push(None);
+                        }
+                        self.custom_edge_curves[idx] = Some(circle);
+                        return idx;
+                    }
+                }
+                // Same curve or no existing curve → reuse
+                while self.custom_edge_curves.len() <= i {
+                    self.custom_edge_curves.push(None);
+                }
+                self.custom_edge_curves[i] = Some(circle);
+                return i;
+            }
+        }
+        let idx = self.add_edge_occt(v1, v2);
         while self.custom_edge_curves.len() <= idx {
             self.custom_edge_curves.push(None);
         }
@@ -915,13 +948,41 @@ impl ResultBuilder {
     ///    鍘婚噸闂銆俽cad 鐨?add_edge 鎸夐《鐐瑰鍘婚噸,浼氳灏?seam 鍚堝苟鍒版甯稿姬銆?
     ///    姝ゆ柟娉曠粫杩囬《鐐瑰幓閲?鏄?rcad 鐗规湁鐨?workaround銆?
     ///    锛佷粎鍦?split_sphere_by_circles 涓敤浜?sphere 鐨?seam edge銆?
+    /// ✅ OCCT-aligned: seam edge with curve-aware dedup.
+    ///    FWD+REV of the same seam sub-edge share the same TopoDS_Edge
+    ///    (same TShape, different orientations).  Different curves at
+    ///    the same vertex pair (seam vs IC) are distinct TopoDS_Edges.
     fn add_seam_edge(&mut self, v1: usize, v2: usize, circle: Curve3) -> usize {
-        let idx = self.edges.len();
-        self.edges.push((v1, v2));
+        // Same logic as add_circle_edge: check for existing edge with same
+        // vertex pair but different curve → create new; same curve → reuse.
+        let key = (v1.min(v2), v1.max(v2));
+        for (i, e) in self.edges.iter().enumerate() {
+            if (e.0.min(e.1), e.0.max(e.1)) == key {
+                if let Some(ref existing) = self.custom_edge_curves.get(i).and_then(|c| c.as_ref()) {
+                    if !curve_eq(existing, &circle) {
+                        let idx = self.add_edge_occt(v1, v2);
+                        while self.custom_edge_curves.len() <= idx {
+                            self.custom_edge_curves.push(None);
+                        }
+                        self.custom_edge_curves[idx] = Some(circle);
+                        self.no_merge_edges.insert(idx);
+                        return idx;
+                    }
+                }
+                while self.custom_edge_curves.len() <= i {
+                    self.custom_edge_curves.push(None);
+                }
+                self.custom_edge_curves[i] = Some(circle);
+                self.no_merge_edges.insert(i);
+                return i;
+            }
+        }
+        let idx = self.add_edge_occt(v1, v2);
         while self.custom_edge_curves.len() <= idx {
             self.custom_edge_curves.push(None);
         }
         self.custom_edge_curves[idx] = Some(circle);
+        self.no_merge_edges.insert(idx);
         idx
     }
 
@@ -1629,6 +1690,22 @@ impl ResultBuilder {
         };
         eprintln!("BRep built: {} faces", brep.solids[0].shells[0].faces.len());
         (brep, history)
+    }
+}
+
+/// ✅ OCCT-aligned: compare two Curve3 for identity (same TShape).
+fn curve_eq(a: &Curve3, b: &Curve3) -> bool {
+    match (a, b) {
+        (Curve3::Circle(ca), Curve3::Circle(cb)) => {
+            (ca.center - cb.center).length_squared() < TOLERANCE_ABS_SQ
+                && (ca.normal - cb.normal).length_squared() < TOLERANCE_ABS_SQ
+                && (ca.radius - cb.radius).abs() < TOLERANCE_ABS
+        }
+        (Curve3::Line(la), Curve3::Line(lb)) => {
+            (la.origin - lb.origin).length_squared() < TOLERANCE_ABS_SQ
+                && (la.direction - lb.direction).length_squared() < TOLERANCE_ABS_SQ
+        }
+        _ => false,
     }
 }
 
