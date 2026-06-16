@@ -3707,21 +3707,14 @@ fn walk_path_extract_wires(
         };
         if let Some(prev_idx) = loop_prev_idx {
             let wire: Vec<usize> = edge_seq[prev_idx..].to_vec();
-            // OCCT-aligned: skip back-and-forth wires (seam FWD+REV or
-            // IC FWD+REV between the same two vertices).  Only extract
-            // wires >= 3 segments or 2-segment true loops (BOPAlgo_WireSplitter_1.cxx L474-487).
-            let is_backforth = wire.len() == 2 && {
-                let a = &segments[wire[0]];
-                let b = &segments[wire[1]];
-                // Allow 2-edge seam wires on closed surfaces (sphere face
-                // boundary: north->south->north forms a valid outer wire).
-                if a.is_seam && b.is_seam { false }
-                else {
-                    (a.start_vertex == b.end_vertex && a.end_vertex == b.start_vertex)
-                        || (a.start_vertex == b.start_vertex && a.end_vertex == b.end_vertex)
-                }
-            };
-            if wire.len() >= 3 || (wire.len() == 2 && !is_backforth) {
+            // ⏳ OCCT WireSplitter_1.cxx L474-487: currently rejects ALL
+            //    2-edge wires (vertex-pair back-forth) because the downstream
+            //    perform_areas full-wrap classification requires PaveFiller
+            //    image-edge replacement (OCCT Builder_2::myImages).  Once
+            //    boundary_edges are replaced with split image edges, the
+            //    OCCT IsSame check can be enabled:
+            //      if wire.len() >= 3 || (wire.len() == 2 && !same_source) {
+            if wire.len() >= 3 {
                 wires.push(wire);
             }
             // Truncate accumulated sequences to before the loop (OCCT L500-517)
@@ -3857,16 +3850,17 @@ fn wire_faces_to_sub_faces(
     }).collect()
 }
 
-/// OCCT-aligned: Classify wires into growth/outer and holes (PerformAreas L387-606).
+/// ✅ OCCT-aligned: classify wires into growth/outer and holes
+/// (BOPAlgo_BuilderFace::PerformAreas L387-606).
 ///
-/// OCCT creates a TopoDS_Face from each wire, then uses FClass2d to test if a
-/// sample point is inside the face's UV domain.  Growth wires (sample point IS
-/// inside) form the outer boundary; hole wires form inner boundaries.
+/// OCCT creates a TopoDS_Face from each wire via BRepBuilderAPI_MakeFace,
+/// then uses IntTools_FClass2d to test if a sample point is IsHole().
+/// Growth wires (sample point is NOT in a hole) form the outer boundary.
 ///
-/// rcad equivalent: for each wire, compute its 3D boundary centroid and map it
-/// to UV space on the face surface.  A wire whose UV centroid is INSIDE another
-/// wire's UV polygon is a HOLE of that wire.  The wire containing all others is
-/// the GROWTH (outer).
+/// rcad equivalent: map 3D wire boundary to UV space, build a UV polygon,
+/// then use ray-casting point-in-polygon.  Full-wrap wires (<3 unique
+/// vertices, spanning the full periodic domain) use the surface's full
+/// UV rectangle as their polygon.
 fn perform_areas(
     wires: &[Vec<usize>],
     internal_wires: &[Vec<usize>],
@@ -3880,15 +3874,20 @@ fn perform_areas(
 
     let face_surface = &ds.faces[face_idx].surface;
 
-    // Build WireData: boundary polygon, UV polygon, sample centroid (UV)
+    // ✅ OCCT-aligned: WireData = TopoDS_Face temp face for classification.
+    //    OCCT BOPAlgo_BuilderFace::PerformAreas L432-437.
     struct WireData {
         wire_idx: usize,
         boundary: Vec<DVec3>,
         uv_poly: Vec<DVec2>,
         uv_centroid: Option<DVec2>,
+        /// ✅ OCCT-aligned: full-wrap wire (e.g. sphere seam spanning V=0..π).
+        ///    OCCT: MakeFace w/ seam wire → FClass2d → !IsHole → growth.
+        full_wrap: bool,
     }
     let mut wds: Vec<WireData> = wires.iter().enumerate().filter_map(|(wi, w)| {
         let mut b = wire_boundary_3d(w, segments, ds);
+        let mut full_wrap = false;
         if b.len() < 3 {
             let mut verts: Vec<DVec3> = w.iter().flat_map(|&si| {
                 let seg = &segments[si];
@@ -3902,78 +3901,117 @@ fn perform_areas(
                 a.z.total_cmp(&b.z)
             });
             verts.dedup();
-            if verts.len() >= 3 { b = verts; } else { return None; }
+            if verts.len() >= 3 {
+                b = verts;
+            } else if matches!(face_surface, Surface3::Sphere(_)) {
+                // ✅ OCCT-aligned: check if the 2 unique vertices span the
+                //    full V range of the sphere (north pole V≈0 to south
+                //    pole V≈π).  Such a wire is the full-wrap seam — OCCT
+                //    classifies it as growth (L439-444).
+                //    Detection: distance ≈ sphere diameter (2 * radius).
+                let radius = match face_surface {
+                    Surface3::Sphere(s) => s.radius,
+                    _ => 1.0,
+                };
+                let d2 = (verts[0] - verts[1]).length_squared();
+                full_wrap = d2 > (radius * 1.9) * (radius * 1.9);
+                if !full_wrap {
+                    // Non-full-wrap 2-vertex wire on sphere — cannot
+                    // classify without FClass2d equivalent.  Skip.
+                    // ⏳ TODO: implement FClass2d equivalent (sample
+                    //    point on surface + 3D containment check).
+                    return None;
+                }
+            } else {
+                return None; // non-sphere, <3 vertices — skip
+            }
         }
-        // Map 3D boundary to UV space for wire classification.
-        let uv_poly: Vec<DVec2> = match face_surface {
-            Surface3::Sphere(s) => b.iter().map(|p| {
-                let mut uv = s.world_to_uv(*p);
-                uv.x = uv.x.rem_euclid(std::f64::consts::TAU);
-                uv
-            }).collect(),
-            Surface3::Plane(p) => {
-                let x_axis = any_perpendicular(p.normal).normalize();
-                let y_axis = p.normal.cross(x_axis).normalize();
-                b.iter().map(|pt| {
-                    let local = *pt - p.origin;
-                    DVec2::new(local.dot(x_axis), local.dot(y_axis))
-                }).collect()
-            },
-            _ => return None,  // non-handled surface types
+        // ✅ OCCT-aligned: UV polygon = face surface bounded by wire.
+        //    OCCT uses BRepBuilderAPI_MakeFace (L433-435);
+        //    rcad maps 3D boundary points to UV.
+        let uv_poly: Vec<DVec2> = if full_wrap {
+            // ✅ OCCT-aligned: full-wrap wire encloses the whole surface
+            //    domain.  UV rect = [0, TAU] × [0, PI] for sphere.
+            //    OCCT: MakeFace w/ seam wire on closed surface → face
+            //    covers entire surface → FClass2d → !IsHole → growth.
+            vec![
+                DVec2::new(0.0, 0.0),
+                DVec2::new(std::f64::consts::TAU, 0.0),
+                DVec2::new(std::f64::consts::TAU, std::f64::consts::PI),
+                DVec2::new(0.0, std::f64::consts::PI),
+            ]
+        } else {
+            match face_surface {
+                Surface3::Sphere(s) => b.iter().map(|p| {
+                    let mut uv = s.world_to_uv(*p);
+                    uv.x = uv.x.rem_euclid(std::f64::consts::TAU);
+                    uv
+                }).collect(),
+                Surface3::Plane(p) => {
+                    let x_axis = any_perpendicular(p.normal).normalize();
+                    let y_axis = p.normal.cross(x_axis).normalize();
+                    b.iter().map(|pt| {
+                        let local = *pt - p.origin;
+                        DVec2::new(local.dot(x_axis), local.dot(y_axis))
+                    }).collect()
+                },
+                _ => return None,
+            }
         };
 
-        // UV centroid for containment test
+        // ✅ OCCT-aligned: UV centroid = sample point for FClass2d.
+        //    OCCT uses the interior point of the face for classification.
         let uv_cent = if !uv_poly.is_empty() {
             Some(uv_poly.iter().copied().sum::<DVec2>() / uv_poly.len() as f64)
         } else { None };
 
-        Some(WireData { wire_idx: wi, boundary: b, uv_poly, uv_centroid: uv_cent })
+        Some(WireData { wire_idx: wi, boundary: b, uv_poly, uv_centroid: uv_cent, full_wrap })
     }).collect();
 
     if wds.is_empty() {
         return vec![];
     }
 
-    // OCCT-aligned: classify each wire via UV containment (FClass2d).
-    // A wire is GROWTH (outer) if its UV centroid is inside the UV polygon.
-    // A wire is HOLE (inner) if its UV centroid is OUTSIDE its own polygon
-    // but inside another wire's polygon.
-    // Since the wire splitter produces closed wires, a wire whose UV centroid
-    // falls outside its own UV polygon spans the full angular range (seam wire).
-    // Such a wire is always a GROWTH.
+    // ✅ OCCT-aligned: FClass2d → growth/hole classification (L439-456).
+    //    OCCT: IntTools_FClass2d::IsHole() — returns true if the face
+    //    sample point is in a "hole" of the face.
+    //    rcad: point_in_uv_polygon(centroid, uv_poly) for ray-casting.
+    //    Full-wrap wires are pre-classified as growth.
     let n = wds.len();
     let mut is_hole = vec![false; n];
 
-    // OCCT-aligned classification:
-    //   - Wires whose UV centroid is OUTSIDE their own UV polygon span the full
-    //     surface domain (e.g. seam wire on a sphere).  These are GROWTH (outer).
-    //   - Wires whose UV centroid is INSIDE another wire's UV polygon are HOLE.
-    //   - Wires whose centroid is inside NO other wire are independent GROWTH.
     for i in 0..n {
+        if wds[i].full_wrap {
+            // ✅ OCCT-aligned: full-wrap seam wire on closed surface.
+            //    OCCT: MakeFace → FClass2d → sample point on surface
+            //    is inside face → !IsHole → growth (L443-444).
+            is_hole[i] = false;
+            continue;
+        }
         let Some(ref uv_cent) = wds[i].uv_centroid else { continue; };
         let self_inside = point_in_uv_polygon(*uv_cent, &wds[i].uv_poly);
-        // Check if this wire is inside any other wire's UV polygon
         let inside_any = (0..n).filter(|&j| j != i).any(|j| {
             point_in_uv_polygon(*uv_cent, &wds[j].uv_poly)
         });
         is_hole[i] = self_inside && inside_any;
-        // self_inside=false means full-wrap → always GROWTH, contains all
     }
 
-    // Build result: GROWTH wires → outer, HOLE wires → inner of the first GROWTH
+    // ✅ OCCT-aligned: Build WireFace from growth/hole classification
+    //    (BOPAlgo_BuilderFace::PerformAreas L447-456+).
+    //    OCCT: each growth gets a new face; holes are inner wires of the
+    //    first growth (via BVH matching).
+    //    rcad: all holes are inner of the first growth.
     let mut result: Vec<WireFace> = Vec::new();
     let growths: Vec<usize> = (0..n).filter(|&i| !is_hole[i]).collect();
     let holes: Vec<usize> = (0..n).filter(|&i| is_hole[i]).collect();
 
     if growths.is_empty() && !holes.is_empty() {
-        // All holes — use first wire as outer
         result.push(WireFace {
             outer_wire: wires[0].clone(),
             inner_wires: wires[1..].to_vec(),
             internal_wires: internal_wires.to_vec(),
         });
     } else {
-        // Each GROWTH gets its own WireFace; HOLEs are inner of the first GROWTH
         for (gi, &g_idx) in growths.iter().enumerate() {
             let inner = if gi == 0 {
                 holes.iter().map(|&h_idx| wires[h_idx].clone()).collect()
@@ -4109,7 +4147,12 @@ impl<'a> BooleanBuilder<'a> {
         if wfs.is_empty() {
             return None;
         }
-        for (wi, wf) in wfs.iter().enumerate() {
+        // ⏳ OCCT-aligned: currently requires ≥3 edge outer wires because
+        //    the downstream emit_wire_face triangulation and face building
+        //    needs ≥3 boundary vertices.  Full-wrap 2-edge wires on periodic
+        //    surfaces will be supported once PaveFiller replaces boundary_edges
+        //    with image edges (OCCT Builder_2::myImages equivalent).
+        for (_wi, wf) in wfs.iter().enumerate() {
             if wf.outer_wire.len() < 3 {
                 return None;
             }
