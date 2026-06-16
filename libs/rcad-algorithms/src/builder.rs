@@ -4282,66 +4282,97 @@ fn perform_areas(
     }
 
     // ✅ OCCT-aligned: FClass2d → growth/hole classification (L439-456).
-    //    OCCT: IntTools_FClass2d::IsHole() — returns true if the face
-    //    sample point is in a "hole" of the face.
+    //    OCCT processes wires in order:
+    //    1. Fast check: IsGrowthWire — if wire shares edges with known holes → growth
+    //    2. If not determined: FClass2d::IsHole() — create face, classify sample point
+    //    3. Holes: add their edges to aMHE for subsequent IsGrowthWire checks
     //    rcad: point_in_uv_polygon(centroid, uv_poly) for ray-casting.
-    //    Full-wrap wires are pre-classified as growth.
     let n = wds.len();
     let mut is_hole = vec![false; n];
+    let mut hole_edge_set: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
+    // OCCT L428-458: process wires in order
     for i in 0..n {
         if wds[i].full_wrap {
             is_hole[i] = false;
             continue;
         }
-        // ✅ OCCT-aligned: <3 vertex non-full-wrap wire on periodic
-        //    surface -> too small to enclose region -> hole.
-        if wds[i].boundary.len() < 3 {
-            is_hole[i] = true;
+        // OCCT L441: IsGrowthWire fast check
+        let shares_hole_edge = wires[wds[i].wire_idx].iter().any(|&si| hole_edge_set.contains(&si));
+        if shares_hole_edge {
+            is_hole[i] = false; // shares edge with a hole → must be growth
             continue;
         }
-        let Some(ref uv_cent) = wds[i].uv_centroid else { continue; };
-        let self_inside = point_in_uv_polygon(*uv_cent, &wds[i].uv_poly);
-        let inside_any = (0..n).filter(|&j| j != i).any(|j| {
-            point_in_uv_polygon(*uv_cent, &wds[j].uv_poly)
-        });
-        is_hole[i] = self_inside && inside_any;
+        // OCCT L445-446: FClass2d::IsHole() fallback
+        // Use UV polygon ray-casting to classify.
+        // <3 vertex non-full-wrap wire → hole (too small to enclose region)
+        if wds[i].boundary.len() < 3 {
+            is_hole[i] = true;
+        } else if let Some(ref uv_cent) = wds[i].uv_centroid {
+            // Check if centroid is inside any PREVIOUS non-hole wire's UV polygon.
+            // If yes → this wire is a hole relative to that growth.
+            let inside_any_prev_growth = (0..i).any(|j| {
+                !is_hole[j] && point_in_uv_polygon(*uv_cent, &wds[j].uv_poly)
+            });
+            is_hole[i] = inside_any_prev_growth;
+        }
+        // OCCT L456-458: if hole, add its edges to aMHE
+        if is_hole[i] {
+            for &si in &wires[wds[i].wire_idx] {
+                hole_edge_set.insert(si);
+            }
+        }
     }
 
-    // ✅ OCCT-aligned: Build WireFace from growth/hole classification
-    //    (BOPAlgo_BuilderFace::PerformAreas L447-456+).
-    //    OCCT: each growth gets a new face; holes are inner wires of the
-    //    first growth (via BVH matching).
-    //    rcad: all holes are inner of the first growth.
-    let mut result: Vec<WireFace> = Vec::new();
-    let growths: Vec<usize> = (0..n).filter(|&i| !is_hole[i]).collect();
-    let holes: Vec<usize> = (0..n).filter(|&i| is_hole[i]).collect();
+    // OCCT L461-465: if no holes, all growths
+    let growth_indices: Vec<usize> = (0..n).filter(|&i| !is_hole[i]).collect();
+    let hole_indices: Vec<usize> = (0..n).filter(|&i| is_hole[i]).collect();
 
-    if growths.is_empty() && !holes.is_empty() {
+    if hole_indices.is_empty() {
+        return growth_indices.iter().map(|&g_idx| WireFace {
+            outer_wire: wires[g_idx].clone(),
+            inner_wires: vec![],
+            internal_wires: internal_wires.to_vec(),
+        }).collect();
+    }
+
+    // OCCT L468-537: classify holes relative to growth faces via BVH + IsInside
+    // rcad: use UV centroid containment (simpler, matches BVH approach)
+    // Map each hole to its enclosing growth
+    let mut hole_to_growth: Vec<(usize, usize)> = Vec::new(); // (hole_idx, growth_idx)
+    for &h_idx in &hole_indices {
+        let Some(ref h_cent) = wds[h_idx].uv_centroid else { continue; };
+        let mut best_growth: Option<usize> = None;
+        let mut best_is_inside = false;
+        for &g_idx in &growth_indices {
+            if point_in_uv_polygon(*h_cent, &wds[g_idx].uv_poly) {
+                best_growth = Some(g_idx);
+                best_is_inside = true;
+                break; // OCCT: first growth that contains this hole
+            }
+        }
+        if let Some(g_idx) = best_growth {
+            hole_to_growth.push((h_idx, g_idx));
+        }
+    }
+
+    // OCCT L540-555: build face→holes map
+    let mut growth_to_holes: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+    for &(h_idx, g_idx) in &hole_to_growth {
+        growth_to_holes.entry(g_idx).or_default().push(h_idx);
+    }
+
+    // OCCT L584-613: add holes to growth faces
+    let mut result: Vec<WireFace> = Vec::new();
+    for &g_idx in &growth_indices {
+        let inner: Vec<Vec<usize>> = growth_to_holes.get(&g_idx)
+            .map(|holes| holes.iter().map(|&h_idx| wires[h_idx].clone()).collect())
+            .unwrap_or_default();
         result.push(WireFace {
-            outer_wire: wires[0].clone(),
-            inner_wires: wires[1..].to_vec(),
+            outer_wire: wires[g_idx].clone(),
+            inner_wires: inner,
             internal_wires: internal_wires.to_vec(),
         });
-    } else {
-        let first_valid_gi = growths.iter().position(|&g_idx| wires[g_idx].len() >= 3);
-        for (gi, &g_idx) in growths.iter().enumerate() {
-            let inner = if gi == 0 {
-                holes.iter().map(|&h_idx| wires[h_idx].clone()).collect()
-            } else {
-                vec![]
-            };
-            let iw = if first_valid_gi.map_or(gi == 0, |v| gi == v) {
-                internal_wires.to_vec()
-            } else {
-                vec![]
-            };
-            result.push(WireFace {
-                outer_wire: wires[g_idx].clone(),
-                inner_wires: inner,
-                internal_wires: iw,
-            });
-        }
     }
     result
 }
