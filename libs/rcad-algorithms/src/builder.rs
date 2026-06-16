@@ -3775,6 +3775,15 @@ fn select_best_outgoing<'a>(
             return Some(internal_out[0]);
         }
     }
+    // Symmetric: when incoming is internal (IC), prefer the single boundary
+    // outgoing edge.  Prevents IC → IC path that forms a 2-edge invalid loop
+    // from two halves of the same IC curve (bfuse_simple A1 box face).
+    if !incoming_is_boundary {
+        let boundary_out: Vec<&&EdgeInfo> = candidates.iter().filter(|e| !e.is_inside).collect();
+        if boundary_out.len() == 1 {
+            return Some(boundary_out[0]);
+        }
+    }
     if candidates.len() == 1 {
         return Some(candidates[0]);
     }
@@ -4153,6 +4162,10 @@ fn walk_path_extract_wires(
                 // Continue from the last entry in the truncated sequence
                 let last_ci = edge_seq[a_nbj - 1];
                 let last_arrived = segments[last_ci].end_vertex;
+                // Replace stale start vertex in vert_seq with true continuation
+                // start vertex.  Prevents ghost loop detection at position 0
+                // when continuation lands on the first walk's start vertex.
+                vert_seq[a_nbj - 1] = last_arrived;
 
                 let angle_in = match find_angle_at(smart_map, last_ci, last_arrived, true) {
                     Some(a) => a,
