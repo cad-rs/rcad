@@ -807,12 +807,21 @@ impl CurveEval for Line3 {
 
 impl CurveEval for Circle3 {
     fn point_at(&self, t: f64) -> DVec3 {
-        let x_ax = any_perpendicular(self.normal);
+        // Use deterministic reference direction (same as intersect_circle_plane_with_tol)
+        let x_ax = if self.normal.x.abs() < 0.9 {
+            self.normal.cross(DVec3::X).normalize()
+        } else {
+            self.normal.cross(DVec3::Y).normalize()
+        };
         let y_ax = self.normal.cross(x_ax);
         self.center + self.radius * (t.cos() * x_ax + t.sin() * y_ax)
     }
     fn tangent_at(&self, t: f64) -> DVec3 {
-        let x_ax = any_perpendicular(self.normal);
+        let x_ax = if self.normal.x.abs() < 0.9 {
+            self.normal.cross(DVec3::X).normalize()
+        } else {
+            self.normal.cross(DVec3::Y).normalize()
+        };
         let y_ax = self.normal.cross(x_ax);
         (-t.sin() * x_ax + t.cos() * y_ax).normalize()
     }
