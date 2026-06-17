@@ -523,7 +523,8 @@ impl ResultBuilder {
         // Outer wire: vertices + edges from WireSegments
         let mut vert_indices = Vec::new();
         let mut edge_indices = Vec::new();
-        for &si in &wf.outer_wire {
+        let ow: Vec<&usize> = wf.outer_wire.iter().filter(|&&si| segments[si].start_vertex != segments[si].end_vertex).collect();
+        for &&si in &ow {
             let seg = &segments[si];
             let v1 = self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point);
             let v2 = self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point);
@@ -3304,6 +3305,22 @@ fn build_closed_wires(segments: &[WireSegment], ds: &DS, face_idx: usize) -> (Ve
     // Use tolerance-based matching (exact bit comparison misses FP differences).
     let mut canon_vertices: Vec<DVec3> = Vec::new();
     let mut vi_to_canon: Vec<usize> = vec![usize::MAX; ds.vertices.len()];
+    // OCCT-aligned: OCCT deg edges have distinct TopoDS_Vertex instances.
+    //   For pure seam+deg blocks (seam NOT split by PaveFiller), assign
+    //   distinct canonical vertices to deg edge ends for regular block.
+    let seam_is_split = segments.iter().any(|s| {
+        s.is_seam && matches!(&s.source, WireEdgeSource::DsEdge(ei)
+            if ds.edges.get(*ei).map_or(0, |e| e.pave_blocks.len()) > 1)
+    });
+    let mut deg_end_canon: HashMap<usize, usize> = HashMap::new();
+    if !seam_is_split {
+        for (si, seg) in segments.iter().enumerate() {
+            if seg.start_vertex == seg.end_vertex {
+                canon_vertices.push(ds.vertices[seg.end_vertex].point);
+                deg_end_canon.insert(si, canon_vertices.len() - 1);
+            }
+        }
+    }
     for seg in segments.iter() {
         for &vi in &[seg.start_vertex, seg.end_vertex] {
             if vi_to_canon[vi] != usize::MAX { continue; }
@@ -3323,7 +3340,8 @@ fn build_closed_wires(segments: &[WireSegment], ds: &DS, face_idx: usize) -> (Ve
     let mut vert_to_segs: HashMap<usize, Vec<usize>> = HashMap::new();
     for (si, seg) in segments.iter().enumerate() {
         let sv = vi_to_canon.get(seg.start_vertex).copied().unwrap_or(seg.start_vertex);
-        let ev = vi_to_canon.get(seg.end_vertex).copied().unwrap_or(seg.end_vertex);
+        let ev = deg_end_canon.get(&si).copied().unwrap_or_else(||
+            vi_to_canon.get(seg.end_vertex).copied().unwrap_or(seg.end_vertex));
         vert_to_segs.entry(sv).or_default().push(si);
         vert_to_segs.entry(ev).or_default().push(si);
     }
@@ -3517,7 +3535,16 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, fac
         //    degenerate edge (start==end) has no valid pcurve on the face (or one that
         //    collapses to a point), so it is not added to the SmartMap.  Adding it
         //    causes the walk to start from the self-loop and waste iterations.
-        if seg.start_vertex == seg.end_vertex { continue; }
+        // ✅ OCCT-aligned: include deg edges only for pure seam+deg blocks
+        //    (seam NOT split by PaveFiller).  For combined blocks (A1),
+        //    deg edges add vertex entries that disrupt the Path walk.
+        if seg.start_vertex == seg.end_vertex {
+            let is_split = segments.iter().any(|s| s.is_seam
+                && matches!(&s.source, WireEdgeSource::DsEdge(ei)
+                    if ds.edges.get(*ei).map_or(0, |e| e.pave_blocks.len()) > 1));
+            if !is_split && matches!(ds.faces[face_idx].surface, Surface3::Sphere(_)) { /* include */ }
+            else { continue; }
+        }
 
         let is_inside = matches!(seg.source, WireEdgeSource::IntersectionCurve(_));
 
