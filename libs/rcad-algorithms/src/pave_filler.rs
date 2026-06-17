@@ -831,6 +831,17 @@ impl<'a> PaveFiller<'a> {
         //    rcad 当前仅做端点匹配(完整 PutPavesOnCurve 需参数沿曲线排序 + 分裂)。
         self.make_blocks();
 
+        if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
+            let n_verts = self.ds.vertices.len();
+            let n_curves = self.ds.intersection_curves.len();
+            let n_faces = self.ds.faces.len();
+            eprintln!("[SPLIT] AFTER_MAKE_BLOCKS n_vertices={} n_curves={} n_faces={}", n_verts, n_curves, n_faces);
+            for fi in 0..n_faces {
+                let face = &self.ds.faces[fi];
+                eprintln!("[SPLIT]   face[{}] curves_in={} vertices_in={}", fi, face.face_info.curves_in.len(), face.face_info.vertices_in.len());
+            }
+        }
+
         // ✅ OCCT对齐: Inject IC vertices into boundary edges (PutPaveOnCurve).
         //    After FF creates intersection curves, their vertices may lie on
         //    boundary edges (e.g. sphere seam edge passes through IC vertex at
@@ -849,6 +860,12 @@ impl<'a> PaveFiller<'a> {
             let ic = &self.ds.intersection_curves[ci];
             // Skip closed curves (Circle with full-circle t_range) — start==end is natural
             if matches!(ic.curve, rcad_kernel::geom::Curve3::Circle(_)) {
+                if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
+                    let sv_pt = self.ds.vertices[ic.start_vertex].point;
+                    let ev_pt = self.ds.vertices[ic.end_vertex].point;
+                    eprintln!("[SPLIT] DEGEN_SKIP_CIRCLE ci={} sv={} ev={} sv_pos=({:.6},{:.6},{:.6}) ev_pos=({:.6},{:.6},{:.6})",
+                        ci, ic.start_vertex, ic.end_vertex, sv_pt.x, sv_pt.y, sv_pt.z, ev_pt.x, ev_pt.y, ev_pt.z);
+                }
                 continue;
             }
             let sv_pt = self.ds.vertices[ic.start_vertex].point;
@@ -857,6 +874,10 @@ impl<'a> PaveFiller<'a> {
             let ev_tol = self.ds.vertices[ic.end_vertex].geom_tol.max(self.tol());
             let degen_tol_sq = sv_tol.max(ev_tol).powi(2);
             if sv_pt.distance_squared(ev_pt) < degen_tol_sq {
+                if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
+                    eprintln!("[SPLIT] DEGEN_REMOVE ci={} sv={} ev={} sv_pos=({:.6},{:.6},{:.6}) ev_pos=({:.6},{:.6},{:.6})",
+                        ci, ic.start_vertex, ic.end_vertex, sv_pt.x, sv_pt.y, sv_pt.z, ev_pt.x, ev_pt.y, ev_pt.z);
+                }
                 for fi in 0..self.ds.faces.len() {
                     self.ds.faces[fi].face_info.curves_in.remove(&ci);
                 }
@@ -3776,6 +3797,18 @@ impl<'a> PaveFiller<'a> {
                     f2,
                 );
                 curve_indices.push(ci);
+                // ✅ OCCT对齐: 圆在 cylinder 面 V 边界上时,从 cylinder 面移除该 IC。
+                //    OCCT PerformLoops 不在面域外创建子面,但 rcad 的 BooleanBuilder 会。
+                //    Plane 面仍保留该 IC(分裂后的弧段),用于正确分割 box 面。
+                let cyl_fi = if plane_is_f1 { f2 } else { f1 };
+                let v_range = self.cylinder_face_v_range(cyl_fi, cyl);
+                let v = (circle.center - cyl.origin).dot(cyl.axis.normalize());
+                let boundary_tol = TOLERANCE_ABS * 1000.0;
+                if (v - v_range[0]).abs() < boundary_tol
+                    || (v - v_range[1]).abs() < boundary_tol
+                {
+                    self.ds.faces[cyl_fi].face_info.curves_in.remove(&ci);
+                }
             }
             PlaneCylinderResult::Ellipse(ellipse) => {
                 let pca_plane = ellipse_pcurve_on_plane(&ellipse, plane);
@@ -5519,6 +5552,12 @@ impl<'a> PaveFiller<'a> {
                 }
             }
         }
+        if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
+            eprintln!("[SPLIT_DBG] n_curves={} n_faces={} all_verts={}", n_curves, n_faces, all_verts.len());
+            for (vi, pt) in &all_verts {
+                eprintln!("[SPLIT_DBG]   all_verts[{}] = ({:.9},{:.9},{:.9})", vi, pt.x, pt.y, pt.z);
+            }
+        }
         // 注意: 面边界顶点(如球面极点)不加入 all_verts,避免 IC 端点替换
         // 误将边界顶点索引赋给 IC 端点。PutBoundPaveOnCurve 从 DS 直接读取
         // face.boundary_verts,不需要通过 all_verts。
@@ -5655,7 +5694,22 @@ impl<'a> PaveFiller<'a> {
                         }
                     }
                 }
+                if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
+                    if let Curve3::Circle(circ) = &snap.curve {
+                        eprintln!("[SPLIT_DBG] Circle ci={} center=({:.6},{:.6},{:.6}) R={} on_curve={}",
+                            ci, circ.center.x, circ.center.y, circ.center.z, circ.radius, on_curve.len());
+                        for (t, vi) in &on_curve {
+                            eprintln!("[SPLIT_DBG]   on_curve t={:.9} vi={}", t, vi);
+                        }
+                    }
+                }
                 on_curve = filter_paves_on_curves(&self.ds, ci, &on_curve);
+                if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
+                    eprintln!("[SPLIT_DBG] after filter ci={} on_curve={}", ci, on_curve.len());
+                    for (t, vi) in &on_curve {
+                        eprintln!("[SPLIT_DBG]   filtered on_curve t={:.9} vi={}", t, vi);
+                    }
+                }
                 let is_closed = matches!(&snap.curve, Curve3::Circle(_));
                 put_closing_pave_on_curve(&mut on_curve, is_closed);
             }
@@ -5676,6 +5730,10 @@ impl<'a> PaveFiller<'a> {
                     false
                 });
             }
+
+            // ✅ OCCT对齐: 按参数排序 on_curve,确保 sp 中顶点按参数递增排列。
+            //    OCCT PaveBlock::Update 从 PutPavesOnCurve 获取已排序的 Pave 列表。
+            on_curve.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
             // Build split parameter list including endpoints
             // ✅ OCCT-aligned: for circle curves, skip endpoint vertex replacement
@@ -5701,6 +5759,9 @@ impl<'a> PaveFiller<'a> {
             }
             eprintln!("[SPLIT_PRE] ci={} on_curve={}", ci, on_curve.len());
 
+            if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
+                eprintln!("[SPLIT_DBG] pre-split ci={} sp.len={} on_curve={} is_circle={}", ci, sp.len(), on_curve.len(), is_circle);
+            }
             eprintln!("[SPLIT] ci={} curve={} sp.len={}", ci, match &snap.curve { Curve3::Circle(_) => "Circle", _ => "other" }, sp.len());
             if sp.len() <= 2 { continue; } // No interior splits needed
 
@@ -5723,6 +5784,11 @@ impl<'a> PaveFiller<'a> {
             let (_, v1) = sp[1];
             self.ds.intersection_curves[act.old_ci].end_vertex = v1;
             self.ds.intersection_curves[act.old_ci].t_range = [sp[0].0, sp[1].0];
+            if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
+                let snap = &snapshots[act.old_ci];
+                eprintln!("[SPLIT] FIRST_PASS ci={} old_t=[{:.9},{:.9}] new_t=[{:.9},{:.9}] old_ev={} new_ev={}",
+                    act.old_ci, snap.t_range[0], snap.t_range[1], sp[0].0, sp[1].0, snap.ev, v1);
+            }
         }
 
         // Second pass: create new curves for remaining segments
@@ -5763,6 +5829,15 @@ impl<'a> PaveFiller<'a> {
                             curves.push(new_ci);
                         }
                     }
+                }
+                if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
+                    let ic = &self.ds.intersection_curves[new_ci];
+                    let sv_pt = self.ds.vertices[ic.start_vertex].point;
+                    let ev_pt = self.ds.vertices[ic.end_vertex].point;
+                    eprintln!("[SPLIT] NEW_CURVE ci={} old_ci={} sv={} ev={} t=[{:.9},{:.9}] sv_pos=({:.6},{:.6},{:.6}) ev_pos=({:.6},{:.6},{:.6})",
+                        new_ci, act.old_ci, ic.start_vertex, ic.end_vertex,
+                        ic.t_range[0], ic.t_range[1],
+                        sv_pt.x, sv_pt.y, sv_pt.z, ev_pt.x, ev_pt.y, ev_pt.z);
                 }
             }
         }
@@ -5807,7 +5882,12 @@ impl<'a> PaveFiller<'a> {
                     || p2.distance_squared(mid_pt) > tol_sq
 
                 {
-
+                    if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
+                        let d1 = p1.distance(mid_pt);
+                        let d2 = p2.distance(mid_pt);
+                        eprintln!("[SPLIT] IVF_REMOVE ci={} fi=[{},{}] mid_t={:.9} mid_pt=({:.6},{:.6},{:.6}) d1={:.12} d2={:.12} tol={:.12}",
+                            new_ci, fi[0], fi[1], mid_t, mid_pt.x, mid_pt.y, mid_pt.z, d1, d2, ff_tol);
+                    }
                     remove_curves.push(new_ci);
 
                 }
@@ -5822,6 +5902,10 @@ impl<'a> PaveFiller<'a> {
 
                 }
 
+            }
+
+            if std::env::var("RCAD_DEBUG_SPLIT").is_ok() && !remove_curves.is_empty() {
+                eprintln!("[SPLIT] IVF_REMOVE_CURVES removed={:?}", remove_curves);
             }
 
         }
@@ -5994,6 +6078,15 @@ impl<'a> PaveFiller<'a> {
 
             }
 
+        }
+        if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
+            let n_circle = self.ds.intersection_curves.iter().filter(|ic| matches!(ic.curve, Curve3::Circle(_))).count();
+            let n_total = self.ds.intersection_curves.len();
+            eprintln!("[SPLIT] END_MAKE_BLOCKS total_curves={} circle_curves={}", n_total, n_circle);
+            for fi in 0..self.ds.faces.len() {
+                let face = &self.ds.faces[fi];
+                eprintln!("[SPLIT]   face[{}] curves_in={} vertices_in={}", fi, face.face_info.curves_in.len(), face.face_info.vertices_in.len());
+            }
         }
     }
 
