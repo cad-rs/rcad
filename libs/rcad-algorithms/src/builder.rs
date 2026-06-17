@@ -4542,12 +4542,13 @@ fn perform_areas(
     }
 
     // OCCT L432-437: build 3D boundary polygon and centroid for each wire
-    struct WireData { wire_idx: usize, boundary: Vec<DVec3>, centroid: DVec3, full_wrap: bool }
+    struct WireData { wire_idx: usize, boundary: Vec<DVec3>, centroid: DVec3, full_wrap: bool, n_distinct: usize }
     let mut wds: Vec<WireData> = wires.iter().enumerate().filter_map(|(wi, w)| {
         let mut b = wire_boundary_3d(w, segments, ds);
         let mut full_wrap = false;
         let mut centroid = DVec3::ZERO;
-        if b.len() < 3 {
+        let b_distinct = { let mut pts = b.clone(); pts.sort_by(|a,b|{let c=a.x.total_cmp(&b.x);if c!=std::cmp::Ordering::Equal{return c}let c=a.y.total_cmp(&b.y);if c!=std::cmp::Ordering::Equal{return c}a.z.total_cmp(&b.z)});pts.dedup();pts.len()};
+        if b.len() < 3 || b_distinct < 3 {
             let mut verts: Vec<DVec3> = w.iter().flat_map(|&si| {
                 let seg = &segments[si];
                 vec![ds.vertices[seg.start_vertex].point, ds.vertices[seg.end_vertex].point]
@@ -4567,7 +4568,7 @@ fn perform_areas(
             } else { return None; }
         }
         centroid = b.iter().copied().sum::<DVec3>() / b.len() as f64;
-        Some(WireData { wire_idx: wi, boundary: b, centroid, full_wrap })
+        Some(WireData { wire_idx: wi, boundary: b, centroid, full_wrap, n_distinct: b_distinct })
     }).collect();
 
     if wds.is_empty() { return vec![]; }
@@ -4583,7 +4584,11 @@ fn perform_areas(
     for &si in &sorted {
         if wds[si].full_wrap { is_hole[si] = false; continue; }
         if wires[wds[si].wire_idx].iter().any(|&s| hole_edge_set.contains(&s)) { is_hole[si] = false; continue; }
-        if wds[si].boundary.len() < 3 { is_hole[si] = true; }
+        // ✅ OCCT-aligned: on sphere with full_wrap seam, all other wires are holes
+        if ds.faces.get(face_idx).map_or(false, |f| matches!(f.surface, Surface3::Sphere(_)))
+            && sorted.iter().any(|&p| wds[p].full_wrap && p != si)
+        { is_hole[si] = true; }
+        else if wds[si].n_distinct < 3 { is_hole[si] = true; }
         else {
             is_hole[si] = sorted.iter().take_while(|&&p| p != si).any(|&p| !is_hole[p] && point_in_polygon_best(wds[si].centroid, &wds[p].boundary));
         }
@@ -4593,6 +4598,13 @@ fn perform_areas(
     let growths: Vec<usize> = (0..wds.len()).filter(|&i| !is_hole[i]).collect();
     let holes: Vec<usize> = (0..wds.len()).filter(|&i| is_hole[i]).collect();
     if holes.is_empty() { return growths.iter().map(|&g| WireFace { outer_wire: wires[g].clone(), inner_wires: vec![], internal_wires: internal_wires.to_vec() }).collect(); }
+    // ✅ OCCT-aligned: full_wrap on sphere → holes go to it directly.
+    if ds.faces.get(face_idx).map_or(false, |f| matches!(f.surface, Surface3::Sphere(_))) {
+        if let Some(&fw) = growths.iter().find(|&&g| wds[g].full_wrap) {
+            let inner = holes.iter().map(|&h| wires[h].clone()).collect();
+            return vec![WireFace { outer_wire: wires[fw].clone(), inner_wires: inner, internal_wires: internal_wires.to_vec() }];
+        }
+    }
 
     // OCCT L468-555: assign holes to enclosing growths via 3D point-in-polygon
     let mut h2g: Vec<(usize, usize)> = Vec::new();
