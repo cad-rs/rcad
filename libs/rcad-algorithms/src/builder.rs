@@ -3114,9 +3114,6 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
         });
     }
 
-    // ✅ OCCT-aligned: filter deg self-loops — they cause block_vert_count
-    //   to overflow (4 per pole instead of 2), breaking regular block detection.
-    segments.retain(|s| s.start_vertex != s.end_vertex);
     segments
 }
 
@@ -3306,11 +3303,22 @@ fn build_closed_wires(segments: &[WireSegment], ds: &DS, face_idx: usize) -> (Ve
     // OCCT BRep shares TopoDS_Vertex objects; rcad DS may assign different
     // indices to the same position (seam pole vs IC endpoint at pole).
     // Use tolerance-based matching (exact bit comparison misses FP differences).
+    // ✅ OCCT-aligned: vi_to_canon built skipping deg edges so normal vertices
+    //   map to primary canonical. Deg end canons added AFTER with offset
+    //   positions to avoid corrupting vi_to_canon lookup.
     let mut canon_vertices: Vec<DVec3> = Vec::new();
     let mut vi_to_canon: Vec<usize> = vec![usize::MAX; ds.vertices.len()];
-    // OCCT-aligned: OCCT deg edges have distinct TopoDS_Vertex instances.
-    //   For pure seam+deg blocks (seam NOT split by PaveFiller), assign
-    //   distinct canonical vertices to deg edge ends for regular block.
+    for seg in segments.iter() {
+        if seg.start_vertex == seg.end_vertex { continue; } // skip deg
+        for &vi in &[seg.start_vertex, seg.end_vertex] {
+            if vi_to_canon[vi] != usize::MAX { continue; }
+            let pt = ds.vertices[vi].point;
+            let found = canon_vertices.iter().position(|c| c.distance_squared(pt) < TOLERANCE_ABS * TOLERANCE_ABS * 100_000_000.0);
+            let canon = found.unwrap_or_else(|| { canon_vertices.push(pt); canon_vertices.len() - 1 });
+            vi_to_canon[vi] = canon;
+        }
+    }
+    // Deg end canonical vertices with offset position, only for non-split seams.
     let seam_is_split = segments.iter().any(|s| {
         s.is_seam && matches!(&s.source, WireEdgeSource::DsEdge(ei)
             if ds.edges.get(*ei).map_or(0, |e| e.pave_blocks.len()) > 1)
@@ -3319,23 +3327,10 @@ fn build_closed_wires(segments: &[WireSegment], ds: &DS, face_idx: usize) -> (Ve
     if !seam_is_split {
         for (si, seg) in segments.iter().enumerate() {
             if seg.start_vertex == seg.end_vertex {
-                canon_vertices.push(ds.vertices[seg.end_vertex].point);
+                let pt = ds.vertices[seg.end_vertex].point + DVec3::new(0.0, 0.0, 1e-5);
+                canon_vertices.push(pt);
                 deg_end_canon.insert(si, canon_vertices.len() - 1);
             }
-        }
-    }
-    for seg in segments.iter() {
-        for &vi in &[seg.start_vertex, seg.end_vertex] {
-            if vi_to_canon[vi] != usize::MAX { continue; }
-            let pt = ds.vertices[vi].point;
-            /// ✅ OCCT-aligned: tolerance-based vertex dedup matching TopoDS_Vertex
-            ///   TShape identity.  OCCT shares the same TopoDS_Vertex instance between
-            ///   seam edge and IC endpoint at the same 3D position.  rcad DS assigns
-            ///   different indices, so we merge by position.  Tolerance = TOLERANCE_ABS
-            ///   * 100 (≈1e-5 distance) covers PaveFiller floating-point noise.
-            let found = canon_vertices.iter().position(|c| c.distance_squared(pt) < TOLERANCE_ABS * TOLERANCE_ABS * 100_000_000.0);
-            let canon = found.unwrap_or_else(|| { canon_vertices.push(pt); canon_vertices.len() - 1 });
-            vi_to_canon[vi] = canon;
         }
     }
 
@@ -3539,29 +3534,31 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, fac
         //    causes the walk to start from the self-loop and waste iterations.
         // ✅ OCCT-aligned: include deg edges only for pure seam+deg blocks
         //    (seam NOT split by PaveFiller).  For combined blocks (A1),
-        if seg.start_vertex == seg.end_vertex { continue; }
+        // ✅ OCCT-aligned: include deg in SmartMap for non-split seams.
+        //    Mark passed=true (exist for vertex degree, never traversed).
+        let is_deg = seg.start_vertex == seg.end_vertex;
+        if is_deg {
+            let is_split = segments.iter().any(|s| {
+                s.is_seam && matches!(&s.source, WireEdgeSource::DsEdge(ei)
+                    if ds.edges.get(*ei).map_or(0, |e| e.pave_blocks.len()) > 1)
+            });
+            if is_split || !matches!(ds.faces[face_idx].surface, Surface3::Sphere(_)) { continue; }
+        }
+        let mark_passed = is_deg;
 
         let is_inside = matches!(seg.source, WireEdgeSource::IntersectionCurve(_));
 
         // At start_vertex: edge LEAVES the vertex (in_flag = false)
         if let Some(angle) = seg.tangent_start {
             smart_map.entry(seg.start_vertex).or_default().push(EdgeInfo {
-                seg_idx: si,
-                passed: false,
-                in_flag: false,
-                is_inside,
-                angle,
+                seg_idx: si, passed: mark_passed, in_flag: false, is_inside, angle,
             });
         }
 
         // At end_vertex: edge ENTERS the vertex (in_flag = true)
         if let Some(angle) = seg.tangent_end {
             smart_map.entry(seg.end_vertex).or_default().push(EdgeInfo {
-                seg_idx: si,
-                passed: false,
-                in_flag: true,
-                is_inside,
-                angle,
+                seg_idx: si, passed: mark_passed, in_flag: true, is_inside, angle,
             });
         }
     }
