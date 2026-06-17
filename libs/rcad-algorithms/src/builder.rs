@@ -510,6 +510,7 @@ impl ResultBuilder {
         ds: &DS,
         flip: bool,
         origin: FaceOrigin,
+        vertex_positions: &HashMap<usize, DVec3>,
     ) {
         let face = &ds.faces[face_idx];
         let mut normal = if flip { -face.normal } else { face.normal };
@@ -526,20 +527,36 @@ impl ResultBuilder {
         let ow: Vec<&usize> = wf.outer_wire.iter().filter(|&&si| segments[si].start_vertex != segments[si].end_vertex).collect();
         for &&si in &ow {
             let seg = &segments[si];
-            let v1 = self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point);
-            let v2 = self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point);
+            // ✅ OCCT-aligned: canonical vertices use stored positions
+            let get_pos = |vi: usize| -> DVec3 {
+                vertex_positions.get(&vi).copied().unwrap_or(ds.vertices[vi].point)
+            };
+            let v1 = if seg.start_vertex < ds.vertices.len() {
+                self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point)
+            } else {
+                let p = vertex_positions[&seg.start_vertex];
+                let idx = self.vertices.len(); self.vertices.push(p); idx
+            };
+            let v2 = if seg.end_vertex < ds.vertices.len() {
+                self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point)
+            } else {
+                let p = vertex_positions[&seg.end_vertex];
+                let idx = self.vertices.len(); self.vertices.push(p); idx
+            };
             if vert_indices.is_empty() || vert_indices.last() != Some(&v1) {
                 vert_indices.push(v1);
             }
             let (ei, forward) = if seg.is_seam {
-                let seam_deg = (ds.vertices[seg.start_vertex].point
-                    - ds.vertices[seg.end_vertex].point).length_squared() < TOLERANCE_ABS_SQ;
+                let seam_deg = (get_pos(seg.start_vertex)
+                    - get_pos(seg.end_vertex)).length_squared() < TOLERANCE_ABS_SQ;
                 let sphere_surf = match &ds.faces[face_idx].surface {
                     Surface3::Sphere(s) => s,
                     _ => &SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, ref_dir: DVec3::X },
                 };
-                let ei = if seam_deg {
-                    self.add_edge_seam_degenerate(v1, sphere_surf)
+                // ✅ OCCT-aligned: canonical deg edges (vertex >= ds.vertices.len())
+                let is_canon_deg = seg.start_vertex >= ds.vertices.len() || seg.end_vertex >= ds.vertices.len();
+                let ei = if seam_deg || is_canon_deg {
+                    self.add_edge_seam_degenerate(v1, v2, sphere_surf)
                 } else {
                     let seam_normal = any_perpendicular(sphere_surf.axis).normalize();
                     let seam_circle = Curve3::Circle(Circle3 {
@@ -899,9 +916,9 @@ impl ResultBuilder {
     /// ✅ OCCT对齐: 鍒涘缓閫€鍖?seam 杈?甯﹀崐鐞冨渾鏇茬嚎,闃叉琚竟鍘婚噸鍚堝苟)銆?
     ///    OCCT 鐨?sphere face 澶栫幆鎬绘槸鏈変竴鏉￠€€鍖?seam 杈?涓ょ鍚岄《鐐?銆?
     ///    娣诲姞涓€涓悆闈㈡按骞冲渾鏇茬嚎(circle.normal = axis)浣胯竟鍦ㄦ煇浜涗笂涓嬫枃涓彲璇嗗埆銆?
-    fn add_edge_seam_degenerate(&mut self, v1: usize, sphere_surf: &SphericalSurface) -> usize {
+    fn add_edge_seam_degenerate(&mut self, v1: usize, v2: usize, sphere_surf: &SphericalSurface) -> usize {
         let idx = self.edges.len();
-        self.edges.push((v1, v1));
+        self.edges.push((v1, v2));
         while self.custom_edge_curves.len() <= idx {
             self.custom_edge_curves.push(None);
         }
@@ -3291,9 +3308,11 @@ fn clock_wise_angle(angle_in: f64, angle_out: f64) -> f64 {
 ///   1. MakeConnexityBlocks: BFS grouping by shared vertices
 ///   2. Regular block ( degree=2):
 ///   3. Irregular block ( degree>2 ): SmartMap + Path
-fn build_closed_wires(segments: &[WireSegment], ds: &DS, face_idx: usize) -> (Vec<Vec<usize>>, Vec<Vec<usize>>) {
+// Returns (wires, internal_wires, vertex_positions) where vertex_positions
+// maps canonical vertex indices (>= ds.vertices.len()) to their 3D position.
+fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_idx: usize) -> (Vec<Vec<usize>>, Vec<Vec<usize>>, HashMap<usize, DVec3>) {
     if segments.is_empty() {
-        return (vec![], vec![]);
+        return (vec![], vec![], HashMap::new());
     }
 
     let n = segments.len();
@@ -3343,8 +3362,18 @@ fn build_closed_wires(segments: &[WireSegment], ds: &DS, face_idx: usize) -> (Ve
         vert_to_segs.entry(sv).or_default().push(si);
         vert_to_segs.entry(ev).or_default().push(si);
     }
+    // ✅ OCCT-aligned: DoSplitSEAMOnFace equivalent — reroute seam_rev
+    //   through deg_end_canon vertices + remove redundant deg directions.
+    //   This makes the seam+deg block regular (1 in + 1 out per vertex).
+    let mut vertex_positions: HashMap<usize, DVec3> = HashMap::new();
+    if deg_end_canon.len() == 2 {
+        for &canon in deg_end_canon.values() {
+            vertex_positions.insert(canon, canon_vertices[canon]);
+        }
+    }
 
     // MakeConnexityBlocks: BFS to find connected components
+    let n = segments.len();
     let mut visited_seg = vec![false; n];
     let mut blocks: Vec<Vec<usize>> = Vec::new();
 
@@ -3455,7 +3484,7 @@ fn build_closed_wires(segments: &[WireSegment], ds: &DS, face_idx: usize) -> (Ve
         }
     }
 
-    (wires, internal_wires)
+    (wires, internal_wires, vertex_positions)
 }
 
 /// OCCT-aligned:  Regular block ( degree=2)  wire
@@ -4705,7 +4734,7 @@ impl<'a> BooleanBuilder<'a> {
     pub(crate) fn split_face_occt_wire_pipeline(
         &self,
         face_idx: usize,
-    ) -> Option<(Vec<WireSegment>, Vec<WireFace>)> {
+    ) -> Option<(Vec<WireSegment>, Vec<WireFace>, HashMap<usize, DVec3>)> {
         let ds = self.ds;
         let face = &ds.faces[face_idx];
         // ✅ OCCT-aligned: return None when no intersection curves — OCCT's
@@ -4718,7 +4747,7 @@ impl<'a> BooleanBuilder<'a> {
         }
         // OCCT-aligned: BuildSplitFaces works for all surface types (L357-489)
         let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
-        let segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
+        let mut segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
         if std::env::var("RCAD_DEBUG_IC").is_ok() {
             let verts: Vec<usize> = segments.iter().flat_map(|s| [s.start_vertex, s.end_vertex]).collect();
             eprintln!("[PIPELINE] fi={} segments={} verts={:?}", face_idx, segments.len(), &verts);
@@ -4726,7 +4755,7 @@ impl<'a> BooleanBuilder<'a> {
         if segments.is_empty() {
             return None;
         }
-        let (wires, internal_wires) = build_closed_wires(&segments, ds, face_idx);
+        let (wires, internal_wires, vertex_positions) = build_closed_wires(&mut segments, ds, face_idx);
         if wires.is_empty() && internal_wires.is_empty() {
             return None;
         }
@@ -4751,7 +4780,7 @@ impl<'a> BooleanBuilder<'a> {
                 return None;
             }
         }
-        Some((segments, wfs))
+        Some((segments, wfs, vertex_positions))
     }
 }
 
@@ -5014,7 +5043,7 @@ impl<'a> BooleanBuilder<'a> {
         for &fi in &a_faces {
             // OCCT-aligned: wire pipeline for all face types (BuildSplitFaces + WireSplitter)
             if !self.ds.faces[fi].face_info.curves_in.is_empty() {
-                if let Some((segments, wfs)) = self.split_face_occt_wire_pipeline(fi) {
+                if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
                     if !wfs.is_empty() {
                         let wire_subs = wire_faces_to_sub_faces(&wfs, &segments, self.ds, fi);
                         for (wi, sub) in wire_subs.iter().enumerate() {
@@ -5036,7 +5065,7 @@ impl<'a> BooleanBuilder<'a> {
                             }
                             if keep {
                                 let src = self.ds.faces[fi].source_face_idx;
-                                result.emit_wire_face(fi, &wfs[wi], &segments, self.ds, false, FaceOrigin::FromA(src));
+                                result.emit_wire_face(fi, &wfs[wi], &segments, self.ds, false, FaceOrigin::FromA(src), &vertex_positions);
                                 if let Surface3::Plane(p) = &sub.surface {
                                     a_on_planes.push((p.normal, p.origin));
                                 }
@@ -5158,7 +5187,7 @@ impl<'a> BooleanBuilder<'a> {
                 eprintln!("[B_FACE] fi={} curves_in={}", fi, self.ds.faces[fi].face_info.curves_in.len());
             }
             if !self.ds.faces[fi].face_info.curves_in.is_empty() {
-                if let Some((segments, wfs)) = self.split_face_occt_wire_pipeline(fi) {
+                if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
                     if !wfs.is_empty() {
                         let wire_subs = wire_faces_to_sub_faces(&wfs, &segments, self.ds, fi);
                         for (wi, sub) in wire_subs.iter().enumerate() {
@@ -5176,7 +5205,7 @@ impl<'a> BooleanBuilder<'a> {
                             }
                             if keep {
                                 let src = self.ds.faces[fi].source_face_idx;
-                                result.emit_wire_face(fi, &wfs[wi], &segments, self.ds, true, FaceOrigin::FromB(src));
+                                result.emit_wire_face(fi, &wfs[wi], &segments, self.ds, true, FaceOrigin::FromB(src), &vertex_positions);
                             }
                         }
                         continue;
