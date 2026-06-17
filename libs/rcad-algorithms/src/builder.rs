@@ -3114,6 +3114,9 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
         });
     }
 
+    // ✅ OCCT-aligned: filter deg self-loops — they cause block_vert_count
+    //   to overflow (4 per pole instead of 2), breaking regular block detection.
+    segments.retain(|s| s.start_vertex != s.end_vertex);
     segments
 }
 
@@ -3427,23 +3430,26 @@ fn build_closed_wires(segments: &[WireSegment], ds: &DS, face_idx: usize) -> (Ve
     let mut wires: Vec<Vec<usize>> = Vec::new();
     let mut internal_wires: Vec<Vec<usize>> = Vec::new();
 
-    for block in &merged_blocks {
-        if block.len() < 2 {
-            continue;
-        }
+    for (bi, block) in merged_blocks.iter().enumerate() {
+        if block.len() < 2 { continue; }
+        eprintln!("[BLK] fi={} bi={} n={}", face_idx, bi, block.len());
 
-        // Check vertex degrees within this block
+        // ✅ OCCT-aligned: use canonical vertices for regular block detection.
+        //   RAW DS vertex indices may differ from canonical after dedup.
         let mut block_vert_count: HashMap<usize, usize> = HashMap::new();
         for &si in block {
             let seg = &segments[si];
-            *block_vert_count.entry(seg.start_vertex).or_default() += 1;
-            *block_vert_count.entry(seg.end_vertex).or_default() += 1;
+            let sv = vi_to_canon.get(seg.start_vertex).copied().unwrap_or(seg.start_vertex);
+            let ev = deg_end_canon.get(&si).copied().unwrap_or_else(||
+                vi_to_canon.get(seg.end_vertex).copied().unwrap_or(seg.end_vertex));
+            *block_vert_count.entry(sv).or_default() += 1;
+            *block_vert_count.entry(ev).or_default() += 1;
         }
         let is_regular = block_vert_count.values().all(|&d| d == 2);
 
         if is_regular {
-            // Regular block: all degree 2, simple chain following
-            if let Some(wire) = build_regular_wire(block, segments, &vert_to_segs) {
+            eprintln!("[REG] fi={} block_sz={}", face_idx, block.len());
+            if let Some(wire) = build_regular_wire(block, segments, &vert_to_segs, &vi_to_canon, &deg_end_canon) {
                 wires.push(wire);
             }
         } else {
@@ -3463,29 +3469,29 @@ fn build_regular_wire(
     block: &[usize],
     segments: &[WireSegment],
     vert_to_segs: &HashMap<usize, Vec<usize>>,
+    vi_to_canon: &[usize],
+    deg_end_canon: &HashMap<usize, usize>,
 ) -> Option<Vec<usize>> {
+    let cs = |seg: &WireSegment| vi_to_canon.get(seg.start_vertex).copied().unwrap_or(seg.start_vertex);
+    let ce = |seg: &WireSegment| {
+        // deg_end_canon is for specific seg indices; we don't have si here, use vi_to_canon
+        vi_to_canon.get(seg.end_vertex).copied().unwrap_or(seg.end_vertex)
+    };
     let block_set: std::collections::HashSet<usize> = block.iter().copied().collect();
     let mut visited = vec![false; segments.len()];
     let mut wire: Vec<usize> = Vec::new();
 
     let start_si = block[0];
     let start_seg = &segments[start_si];
-    let start_vertex = start_seg.start_vertex;
-
+    let start_vertex = cs(start_seg);
     let mut ci = start_si;
-    // We start at start_vertex. The first segment takes us to end_vertex.
-    let mut arrived_vertex = start_seg.end_vertex;
+    let mut arrived_vertex = ce(start_seg);
 
     loop {
         visited[ci] = true;
         wire.push(ci);
+        if arrived_vertex == start_vertex && wire.len() >= 2 { break; }
 
-        // Check if we've returned to the starting vertex
-        if arrived_vertex == start_vertex && wire.len() >= 2 {
-            break;
-        }
-
-        // Find next unvisited segment at arrived_vertex in this block
         let next = vert_to_segs.get(&arrived_vertex).and_then(|neighbors| {
             neighbors.iter().find(|&&ni| !visited[ni] && block_set.contains(&ni))
         }).copied();
@@ -3494,11 +3500,7 @@ fn build_regular_wire(
             Some(ni) => {
                 let seg = &segments[ni];
                 ci = ni;
-                arrived_vertex = if seg.start_vertex == arrived_vertex {
-                    seg.end_vertex
-                } else {
-                    seg.start_vertex
-                };
+                arrived_vertex = if cs(seg) == arrived_vertex { ce(seg) } else { cs(seg) };
             }
             None => break,
         }
@@ -3537,14 +3539,7 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, fac
         //    causes the walk to start from the self-loop and waste iterations.
         // ✅ OCCT-aligned: include deg edges only for pure seam+deg blocks
         //    (seam NOT split by PaveFiller).  For combined blocks (A1),
-        //    deg edges add vertex entries that disrupt the Path walk.
-        if seg.start_vertex == seg.end_vertex {
-            let is_split = segments.iter().any(|s| s.is_seam
-                && matches!(&s.source, WireEdgeSource::DsEdge(ei)
-                    if ds.edges.get(*ei).map_or(0, |e| e.pave_blocks.len()) > 1));
-            if !is_split && matches!(ds.faces[face_idx].surface, Surface3::Sphere(_)) { /* include */ }
-            else { continue; }
-        }
+        if seg.start_vertex == seg.end_vertex { continue; }
 
         let is_inside = matches!(seg.source, WireEdgeSource::IntersectionCurve(_));
 
