@@ -8,6 +8,7 @@ use crate::bopds::pave::*;
 use crate::bvh::Bvh;
 use crate::inttools;
 use crate::tolerance::*;
+use rcad_kernel::closest_point_on_curve;
 
 // Re-export NearTangentType from bopds::ds for use in this module's public types
 pub use crate::bopds::ds::NearTangentType;
@@ -26,6 +27,9 @@ pub struct PaveFiller<'a> {
     /// Additional fuzzy tolerance for all intersection checks
     /// (analogous to OCCT BOPAlgo_Options::SetFuzzyValue).
     fuzzy_tolerance: f64,
+    /// Tolerance contribution from seam edge shift (OCCT PaveFiller_6.cxx L393-479).
+    /// Set to the shift distance when a face has been shifted to align seam edges.
+    seam_shift_tol: f64,
 }
 
 impl<'a> PaveFiller<'a> {
@@ -37,6 +41,7 @@ impl<'a> PaveFiller<'a> {
             use_glue: false,
             glue_tolerance: TOLERANCE_ABS,
             fuzzy_tolerance: 0.0,
+            seam_shift_tol: 0.0,
         }
     }
 
@@ -55,6 +60,7 @@ impl<'a> PaveFiller<'a> {
             use_glue: false,
             glue_tolerance: TOLERANCE_ABS,
             fuzzy_tolerance: 0.0,
+            seam_shift_tol: 0.0,
         }
     }
 
@@ -594,11 +600,13 @@ impl<'a> PaveFiller<'a> {
     }
 
     /// Effective tolerance for a face pair (pave fuzzy and both faces' model tolerances).
+    /// Includes seam_shift_tol when a seam edge shift is active.
     #[inline]
     fn ff_tol(&self, f1: usize, f2: usize) -> f64 {
         self.tol()
             .max(self.ds.faces[f1].geom_tol)
             .max(self.ds.faces[f2].geom_tol)
+            .max(self.seam_shift_tol)
     }
 
     /// Find the curve indices for a FaceFace interference between `f1` and `f2`.
@@ -2302,9 +2310,186 @@ impl<'a> PaveFiller<'a> {
         Some(Plane { origin, normal })
     }
 
+    // ── Seam Edge Shift (OCCT PaveFiller_6.cxx L393-479) ─────────────────
+
+    /// Check if an edge on a face is a seam edge on a periodic surface.
+    /// ✅ OCCT对齐: IsClosedFF (PaveFiller_6.cxx L106-134)
+    fn is_seam_edge(&self, edge_idx: usize, face_idx: usize) -> bool {
+        let face = &self.ds.faces[face_idx];
+        let edge = &self.ds.edges[edge_idx];
+
+        match &face.surface {
+            Surface3::Cylinder(cyl) => {
+                // Cylinder seam edge: Line3 parallel to axis
+                if let Curve3::Line(line) = &edge.curve {
+                    let dir = line.direction.normalize();
+                    let axis = cyl.axis.normalize();
+                    dir.dot(axis).abs() > 1.0 - TOLERANCE_ABS
+                } else {
+                    false
+                }
+            }
+            Surface3::Sphere(_sph) => {
+                // Sphere seam edge detection requires per-edge pcurve information
+                // to identify the u=±π parametric boundary. Deferred for future work.
+                false
+            }
+            Surface3::Torus(_tor) => {
+                // Torus seam edge detection is complex; not implemented yet.
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if a seam edge shift is needed between two faces, and return
+    /// the shift information.
+    ///
+    /// ✅ OCCT对齐: BOPAlgo_PaveFiller_6.cxx L393-479
+    fn check_seam_edge_shift(&self, f1: usize, f2: usize) -> Option<SeamEdgeShift> {
+        let s1 = &self.ds.faces[f1].surface;
+        let s2 = &self.ds.faces[f2].surface;
+
+        // Skip if both faces are Planes (seam edges only exist on periodic surfaces)
+        if matches!(s1, Surface3::Plane(_)) && matches!(s2, Surface3::Plane(_)) {
+            return None;
+        }
+
+        for &e1 in &self.ds.faces[f1].boundary_edges {
+            let is_closed1 = self.is_seam_edge(e1, f1);
+            for &e2 in &self.ds.faces[f2].boundary_edges {
+                let is_closed2 = self.is_seam_edge(e2, f2);
+                if !is_closed1 && !is_closed2 {
+                    continue;
+                }
+
+                // Look for EE interference between this edge pair
+                for inf in &self.ds.interferences {
+                    if let Interference::EdgeEdge {
+                        e1: ee1,
+                        e2: ee2,
+                        point,
+                        new_vertex,
+                        ..
+                    } = inf
+                    {
+                        if !((*ee1 == e1 && *ee2 == e2) || (*ee1 == e2 && *ee2 == e1)) {
+                            continue;
+                        }
+
+                        // Project the EE vertex point onto both edges' 3D curves
+                        // (OCCT: GeomAPI_ProjectPointOnCurve)
+                        let curve1 = &self.ds.edges[e1].curve;
+                        let curve2 = &self.ds.edges[e2].curve;
+                        let proj1 = closest_point_on_curve(curve1, *point, 64);
+                        let proj2 = closest_point_on_curve(curve2, *point, 64);
+
+                        let a_p1 = proj1.point;
+                        let a_p2 = proj2.point;
+                        let shift_dist = a_p1.distance(a_p2);
+
+                        // Check if the shift exceeds vertex tolerance
+                        let vtx_tol = self.ds.vertices[*new_vertex].geom_tol;
+                        if shift_dist > vtx_tol {
+                            // OCCT: shift the face with the closed/seam edge
+                            let shift_vector = if is_closed1 {
+                                a_p2 - a_p1 // Shift f1: move aP1 toward aP2
+                            } else {
+                                a_p1 - a_p2 // Shift f2: move aP2 toward aP1
+                            };
+
+                            return Some(SeamEdgeShift {
+                                shift_vector,
+                                shift_value: shift_dist,
+                                shifted_face: if is_closed1 { 1 } else { 2 },
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Reverse the seam edge shift on FF intersection results.
+    /// Translates curves and vertices back to the original coordinate system.
+    ///
+    /// ✅ OCCT对齐: aFaceFace.ApplyTrsf() (PaveFiller_6.cxx L560)
+    fn reverse_seam_edge_shift(&mut self, f1: usize, f2: usize, shift: &SeamEdgeShift) {
+        let inv_vec = if shift.shifted_face == 1 {
+            -shift.shift_vector
+        } else {
+            shift.shift_vector
+        };
+
+        // Collect curve indices from the FaceFace interference for this pair
+        let mut curve_indices: Vec<usize> = Vec::new();
+        for inf in &self.ds.interferences {
+            if let Interference::FaceFace {
+                f1: a,
+                f2: b,
+                curves,
+                ..
+            } = inf
+            {
+                if (*a == f1 && *b == f2) || (*a == f2 && *b == f1) {
+                    curve_indices = curves.clone();
+                    break;
+                }
+            }
+        }
+
+        // Reverse shift on each curve
+        for &ci in &curve_indices {
+            if ci >= self.ds.intersection_curves.len() {
+                continue;
+            }
+            let ic = &mut self.ds.intersection_curves[ci];
+
+            // Translate 3D curve back by inverse shift
+            ic.curve = translate_curve3(&ic.curve, inv_vec);
+
+            // Translate polyline points if any
+            for p in &mut ic.polyline {
+                *p += inv_vec;
+            }
+
+            // Translate vertex positions back
+            let sv = ic.start_vertex;
+            let ev = ic.end_vertex;
+            if sv < self.ds.vertices.len() {
+                self.ds.vertices[sv].point += inv_vec;
+            }
+            if ev < self.ds.vertices.len() {
+                self.ds.vertices[ev].point += inv_vec;
+            }
+        }
+    }
+
     fn intersect_face_face(&mut self, f1: usize, f2: usize) {
-        let s1 = self.ds.faces[f1].surface.clone();
-        let s2 = self.ds.faces[f2].surface.clone();
+        // ── Seam Edge Shift (OCCT PaveFiller_6.cxx L393-479) ──────────────
+        let shift_info = self.check_seam_edge_shift(f1, f2);
+        let old_shift_tol = self.seam_shift_tol;
+        if let Some(ref info) = shift_info {
+            self.seam_shift_tol = info.shift_value;
+        }
+
+        let s1_orig = self.ds.faces[f1].surface.clone();
+        let s2_orig = self.ds.faces[f2].surface.clone();
+
+        // Apply seam edge shift to surface clones if needed
+        let s1 = match &shift_info {
+            Some(info) if info.shifted_face == 1 => {
+                apply_shift_to_surface(&s1_orig, info.shift_vector)
+            }
+            _ => s1_orig,
+        };
+        let s2 = match &shift_info {
+            Some(info) if info.shifted_face == 2 => {
+                apply_shift_to_surface(&s2_orig, info.shift_vector)
+            }
+            _ => s2_orig,
+        };
 
         // ✅ OCCT对齐: BSpline → Plane 降级 — 用边界顶点推断平面,绕过 BSpline 控制点检测。
         let maybe_plane1 = match &s1 { Surface3::BSpline(_) | Surface3::Bezier(_) => self.demote_to_plane(f1), _ => None };
@@ -2398,6 +2583,13 @@ impl<'a> PaveFiller<'a> {
                 self.intersect_ff_by_marching(f1, f2);
             }
         }
+
+        // ── Reverse Seam Edge Shift (OCCT ApplyTrsf L560) ──────────────
+        if let Some(ref info) = shift_info {
+            self.reverse_seam_edge_shift(f1, f2, info);
+        }
+        // ── Restore seam shift tol ──────────────────────────────────────
+        self.seam_shift_tol = old_shift_tol;
 
         // ✅ OCCT对齐: ComputeTolReached3d + PrepareLines3D — post-process all
         // intersection curves for this face pair.  Runs for every path (analytic,
@@ -6127,6 +6319,136 @@ fn find_valid_range(
     if first > last { None } else { Some((first, last)) }
 
 }
+
+// ── Seam Edge Shift Struct ─────────────────────────────────────────────────
+
+/// Result of checking whether a seam edge shift is needed between two faces.
+/// ✅ OCCT对齐: BOPAlgo_PaveFiller_6.cxx L393-479
+struct SeamEdgeShift {
+    /// Translation vector to apply to one face's surface.
+    shift_vector: DVec3,
+    /// Distance of the shift (used for tolerance contribution).
+    shift_value: f64,
+    /// Which face is shifted: 1 = f1, 2 = f2.
+    shifted_face: u8,
+}
+
+// ── Free Helper Functions ───────────────────────────────────────────────────
+
+/// Apply a translation to a surface's position.
+/// The shift modifies the surface's origin (or center) so that the surface
+/// appears to move in 3D space. Surface normals and parameterization are
+/// preserved.
+///
+/// ✅ OCCT对齐: gp_Trsf.SetTranslation — moving the face before intersection
+fn apply_shift_to_surface(surface: &Surface3, shift: DVec3) -> Surface3 {
+    match *surface {
+        Surface3::Plane(p) => Surface3::Plane(Plane {
+            origin: p.origin + shift,
+            ..p
+        }),
+        Surface3::Cylinder(c) => Surface3::Cylinder(CylindricalSurface {
+            origin: c.origin + shift,
+            ..c
+        }),
+        Surface3::Sphere(s) => Surface3::Sphere(SphericalSurface {
+            center: s.center + shift,
+            ..s
+        }),
+        Surface3::Torus(t) => Surface3::Torus(ToroidalSurface {
+            center: t.center + shift,
+            ..t
+        }),
+        Surface3::Cone(c) => Surface3::Cone(ConicalSurface {
+            apex: c.apex + shift,
+            ..c
+        }),
+        Surface3::BSpline(ref bs) => {
+            let mut bs = bs.clone();
+            for row in &mut bs.control_points {
+                for cp in row {
+                    *cp += shift;
+                }
+            }
+            Surface3::BSpline(bs)
+        }
+        Surface3::Bezier(ref bz) => {
+            let mut bz = bz.clone();
+            for row in &mut bz.control_points {
+                for cp in row {
+                    *cp += shift;
+                }
+            }
+            Surface3::Bezier(bz)
+        }
+        Surface3::LinearExtrusion(ref le) => {
+            let mut le = le.clone();
+            le.direction = le.direction; // direction unchanged
+            // The profile curve's origin is not directly accessible as a field;
+            // clone without position modification for now
+            Surface3::LinearExtrusion(le)
+        }
+        ref other => other.clone(),
+    }
+}
+
+/// Translate a 3D curve by a displacement vector.
+/// All control points and origin/center positions are shifted.
+///
+/// ✅ OCCT对齐: aFaceFace.ApplyTrsf() — reversing the shift after intersection
+fn translate_curve3(curve: &Curve3, shift: DVec3) -> Curve3 {
+    match *curve {
+        Curve3::Line(l) => Curve3::Line(Line3 {
+            origin: l.origin + shift,
+            ..l
+        }),
+        Curve3::Circle(c) => Curve3::Circle(Circle3 {
+            center: c.center + shift,
+            ..c
+        }),
+        Curve3::Ellipse(e) => Curve3::Ellipse(Ellipse3 {
+            center: e.center + shift,
+            ..e
+        }),
+        Curve3::BSpline(ref bs) => {
+            let mut bs = bs.clone();
+            for cp in &mut bs.control_points {
+                *cp += shift;
+            }
+            Curve3::BSpline(bs)
+        }
+        Curve3::Bezier(ref bz) => {
+            let mut bz = bz.clone();
+            for cp in &mut bz.control_points {
+                *cp += shift;
+            }
+            Curve3::Bezier(bz)
+        }
+        Curve3::Hyperbola(h) => Curve3::Hyperbola(Hyperbola3 {
+            center: h.center + shift,
+            ..h
+        }),
+        Curve3::Parabola(p) => Curve3::Parabola(Parabola3 {
+            vertex: p.vertex + shift,
+            ..p
+        }),
+        Curve3::Offset(ref o) => {
+            let mut o = o.clone();
+            o.basis = Box::new(translate_curve3(&o.basis, shift));
+            Curve3::Offset(o)
+        }
+        Curve3::CircularHelix(ref h) => {
+            let mut h = h.clone();
+            h.origin += shift;
+            Curve3::CircularHelix(h)
+        }
+        Curve3::SineWave(ref sw) => {
+            let mut sw = sw.clone();
+            sw.origin += shift;
+            Curve3::SineWave(sw)
+        }
+    }
+}
 #[cfg(test)]
 mod phase2a_tests {
     use super::*;
@@ -6294,7 +6616,32 @@ fn intersect_line_line(
 
     let denom = a * c - b * b;
     if denom.abs() < TOLERANCE_ABS * TOLERANCE_ABS {
-        return None; // parallel — keep strict for conditioning
+        // Parallel lines. Check if they are colinear (on the same line).
+        // If colinear, compute the overlap of their ranges and return the midpoint.
+        let cross_sq = d1.cross(w0).length_squared();
+        let d1_sq = d1.length_squared();
+        if cross_sq > tol_sq * d1_sq.max(1.0) {
+            return None; // parallel but not colinear — no intersection
+        }
+        // Colinear: map l2's range into l1's parameter space.
+        // l1: P(t) = l1.origin + t * d1
+        // l2: P(s) = l2.origin + s * d2
+        // For colinear lines, d2 = +/- d1 (parallel). Map s-parameter to t:
+        // l2.origin + s * d2 = l1.origin + t * d1
+        // t = (l2.origin - l1.origin).dot(d1) / d1_sq + s * (d2.dot(d1) / d1_sq)
+        let sign = if d1.dot(d2) > 0.0 { 1.0 } else { -1.0 };
+        let origin_offset = (l2.origin - l1.origin).dot(d1) / d1_sq;
+        let t2_lo = origin_offset + r2[0] * sign;
+        let t2_hi = origin_offset + r2[1] * sign;
+        let overlap_lo = r1[0].max(t2_lo.min(t2_hi));
+        let overlap_hi = r1[1].min(t2_lo.max(t2_hi));
+        if overlap_hi <= overlap_lo + tol {
+            return None; // no overlap
+        }
+        let t_mid = (overlap_lo + overlap_hi) * 0.5;
+        let s_mid = (t_mid - origin_offset) * sign;
+        let p = l1.origin + d1 * t_mid;
+        return Some((t_mid, s_mid, p));
     }
 
     let t1 = (b * e - c * d) / denom;

@@ -17,7 +17,6 @@ pub use brep_graph::{
 pub mod bnd_lib;
 pub mod boolean;
 mod boolean_unit_octant;
-mod cylinder_box_analytic;
 mod cone_box_analytic;
 mod cylinder_sphere_analytic;
 pub mod bopds;
@@ -2700,7 +2699,7 @@ fn finalize_fast_path_result(r: BRep) -> BRep {
     //   (BRepClass3d_SolidClassifier requires exact Plane type.)
     let mut r = r;
     // ✅ OCCT对齐: CorrectTolerances (SameParameter + vertex + hierarchy).
-    rcad_kernel::tolerance::correct_tolerances(&mut r, 10);
+    rcad_kernel::tolerance::correct_tolerances(&mut r, 23);
     r
 }
 
@@ -2812,7 +2811,7 @@ fn finalize_boolean_result(r: BRep) -> BRep {
     // promote_planar_surfaces skipped — OCCT preserves original surface types
     let mut r = r;
     // ✅ OCCT对齐: CorrectTolerances (SameParameter + vertex + hierarchy).
-    rcad_kernel::tolerance::correct_tolerances(&mut r, 10);
+    rcad_kernel::tolerance::correct_tolerances(&mut r, 23);
     r
 }
 
@@ -2919,7 +2918,6 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         // MUST come AFTER box-box paths so that face-touching box fusion
         // is handled first by try_union_axis_aligned_box_box.
         try_fast_path!(boolean_unit_octant::try_union_disjoint_or_touching(a, b), "try_union_disjoint_or_touching");
-        try_fast_path!(boolean_unit_octant::try_union_cylinder_box(a, b), "try_union_cylinder_box");
         try_fast_path!(boolean_unit_octant::try_union_cone_box(a, b), "try_union_cone_box");
         try_fast_path!(boolean_unit_octant::try_union_coaxial_cone_cylinder(a, b), "try_union_coaxial_cone_cylinder");
         try_fast_path!(boolean_unit_octant::try_union_cylinder_torus(a, b), "try_union_cylinder_torus");
@@ -2955,8 +2953,6 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         try_fast_path!(boolean_unit_octant::try_difference_coaxial_cone_minus_cylinder(a, b), "try_difference_coaxial_cone_minus_cylinder");
         try_fast_path!(boolean_unit_octant::try_difference_coaxial_cylinder_minus_cone(a, b), "try_difference_coaxial_cylinder_minus_cone");
         try_fast_path!(boolean_unit_octant::try_difference_coaxial_cylinder_cylinder(a, b), "try_difference_coaxial_cylinder_cylinder");
-        try_fast_path!(boolean_unit_octant::try_difference_cylinder_box(a, b), "try_difference_cylinder_box");
-        try_fast_path!(boolean_unit_octant::try_difference_box_cylinder(a, b), "try_difference_box_cylinder");
         try_fast_path!(boolean_unit_octant::try_difference_concentric_spheres(a, b), "try_difference_concentric_spheres");
         try_fast_path!(boolean_unit_octant::try_difference_coaxial_cylinder_torus(a, b), "try_difference_coaxial_cylinder_torus");
         try_fast_path!(boolean_unit_octant::try_difference_coaxial_cylinder_sphere(a, b), "try_difference_coaxial_cylinder_sphere");
@@ -3488,7 +3484,7 @@ pub fn boolean_op_with_retry(
     // OCCT's STEP export writes the original surfaces as-is.
     // brep = promote_planar_surfaces(brep);
     // ✅ OCCT对齐: CorrectTolerances (SameParameter + vertex + hierarchy).
-    rcad_kernel::tolerance::correct_tolerances(&mut brep, 10);
+    rcad_kernel::tolerance::correct_tolerances(&mut brep, 23);
     let brep = split_disconnected_shells(brep);
     Ok(brep)
 }
@@ -3522,6 +3518,7 @@ pub fn boolean_op_with_options(
                     _ => pave_filler::PaveFiller::new(&mut ds),
                 };
                 filler.configure_glue(options.use_glue, options.glue_tolerance);
+                filler.configure_fuzzy(options.fuzzy_tol);
                 filler.perform();
                 let builder = builder::BooleanBuilder::new(&ds, op)
                     .with_glue(options.use_glue, options.glue_tolerance);
@@ -3535,6 +3532,7 @@ pub fn boolean_op_with_options(
             };
             let mut filler = pave_filler::PaveFiller::new(&mut ds);
             filler.configure_glue(options.use_glue, options.glue_tolerance);
+            filler.configure_fuzzy(options.fuzzy_tol);
             filler.perform();
             let builder = builder::BooleanBuilder::new(&ds, op)
                 .with_glue(options.use_glue, options.glue_tolerance);
