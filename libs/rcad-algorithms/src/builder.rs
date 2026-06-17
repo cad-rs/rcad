@@ -3066,8 +3066,8 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     let pcurve = pcurve_lookup(ci);
                     let (t_start, t_end) = if let Some(ref pc) = pcurve {
                         // ■ CRITICAL: negate angle_2d to match clock_wise_angle OCCT formula sign.
-                        (angle_2d(pc, ic.t_range[0], ic.t_range, false).map(|a| -a),
-                         angle_2d(pc, ic.t_range[1], ic.t_range, true).map(|a| -a))
+                        (angle_2d(pc, ic.t_range[0], ic.t_range, false),
+                         angle_2d(pc, ic.t_range[1], ic.t_range, true))
                     } else { (None, None) };
                     segments.push(WireSegment { start_vertex: fixed_sv, end_vertex: fixed_ev,
                         source: WireEdgeSource::IntersectionCurve(ci), forward: true,
@@ -3086,8 +3086,8 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
         let pcurve = pcurve_lookup(ci);
         let (t_start, t_end) = if let Some(ref pc) = pcurve {
             let domain = ic.t_range;
-            (angle_2d(pc, domain[0], domain, false).map(|a| -a),
-             angle_2d(pc, domain[1], domain, true).map(|a| -a))
+            (angle_2d(pc, domain[0], domain, false),
+             angle_2d(pc, domain[1], domain, true))
         } else {
             (None, None)
         };
@@ -3139,7 +3139,7 @@ fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface: &Surface3
                 return (Some(na), Some((na + std::f64::consts::PI) % std::f64::consts::TAU));
             }
             let a = dir_to_angle(dir);
-            let na = -a;
+            let na = a;
             (Some(na), Some((na + std::f64::consts::PI) % std::f64::consts::TAU))
         }
         Surface3::Cylinder(cyl) => {
@@ -3153,7 +3153,7 @@ fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface: &Surface3
             let ev_v = (ev_pt - cyl.origin).dot(ax);
             let dir = if ev_v > sv_v { DVec2::new(0.0, 1.0) } else { DVec2::new(0.0, -1.0) };
             let a = dir_to_angle(dir);
-            let na = -a;
+            let na = a;
             (Some(na), Some((na + std::f64::consts::PI) % std::f64::consts::TAU))
         }
         Surface3::Plane(p) => {
@@ -3166,7 +3166,7 @@ fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface: &Surface3
             let dir = uv_e - uv_s;
             if dir.length_squared() < 1e-30 { return (None, None); }
             let a = dir_to_angle(dir);
-            let na = -a;
+            let na = a;
             (Some(na), Some((na + std::f64::consts::PI) % std::f64::consts::TAU))
         }
         _ => (None, None),
@@ -3194,7 +3194,7 @@ fn edge_uv_tangent(ds: &DS, sv: usize, ev: usize, surface: &Surface3) -> (Option
             let dir = uve - uvs;
             if dir.length_squared() < 1e-30 { return (None, None); }
             let a = dir_to_angle(dir);
-            let na = -a;
+            let na = a;
             (Some(na), Some((na + std::f64::consts::PI) % std::f64::consts::TAU))
         }
         Surface3::Plane(p) => {
@@ -3207,7 +3207,7 @@ fn edge_uv_tangent(ds: &DS, sv: usize, ev: usize, surface: &Surface3) -> (Option
             let dir = uv_e - uv_s;
             if dir.length_squared() < 1e-30 { return (None, None); }
             let a = dir_to_angle(dir);
-            let na = -a;
+            let na = a;
             (Some(na), Some((na + std::f64::consts::PI) % std::f64::consts::TAU))
         }
         // Cylinder/Cone/Torus: handled similarly when world_to_uv is available
@@ -3272,12 +3272,14 @@ fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool) -> Option<
 //     across edge_uv_tangent, compute_seam_tangent_angles, angle_2d,
 //     refine_angle_2d, and select_best_outgoing simultaneously.
 // ═══════════════════════════════════════════════════════════════
+// OCCT-aligned: ClockWiseAngle (BOPAlgo_WireSplitter_1.cxx L621-660)
 fn clock_wise_angle(angle_in: f64, angle_out: f64) -> f64 {
-    let a1 = if angle_in < 0.0 { angle_in + std::f64::consts::TAU } else { angle_in };
-    let a2 = angle_out + std::f64::consts::TAU;
-    let mut d = a2 - a1;
-    if d < 0.0 { d += std::f64::consts::TAU; }
-    if d > std::f64::consts::TAU { d -= std::f64::consts::TAU; }
+    const T: f64 = std::f64::consts::TAU;
+    let ai = if angle_in >= T { angle_in - T } else { angle_in };
+    let ao = if angle_out >= T { angle_out - T } else { angle_out };
+    let mut d = ai + std::f64::consts::PI - ao;
+    if d <= 0.0 { d += T; }
+    if d > 0.0 && d <= 1e-14 { d = T; }
     d
 }
 
@@ -3968,7 +3970,7 @@ fn refine_angle_2d(
                     best_dist = along;
                     let mut corrected = delta.y.atan2(delta.x);
                     if corrected < 0.0 { corrected += std::f64::consts::TAU; }
-                    if clock_wise_angle(a_in, -corrected) >= a_delta {
+                    if clock_wise_angle(a_in, corrected) < a_delta {
                         best_angle = Some(corrected);
                     }
                 }
