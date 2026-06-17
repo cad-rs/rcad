@@ -32,6 +32,52 @@ pub struct PaveFiller<'a> {
     seam_shift_tol: f64,
 }
 
+/// ✅ OCCT对齐: Propagate IC vertices to all faces sharing boundary edges
+///    (OCCT BOPDS_FaceInfo::AppendBlock equivalent).
+///    OCCT BOPAlgo_PaveFiller propagates pave block vertices to all faces
+///    referencing the split edge. rcad's add_curve only adds vertices to the
+///    two FF-interference faces (f1, f2), but the vertex may lie on boundary
+///    edges of other faces (e.g. side-face tangent-line IC endpoints on the
+///    top face's boundary edge).
+fn propagate_ic_vertices_to_shared_faces(
+    ds: &mut DS,
+    ic_vertices: &[usize],
+    skip_faces: &[usize; 2],
+) {
+    let vtol = TOLERANCE_ABS * 1000.0; // 1e-4 geometric tolerance for on-edge check
+    let vtol_sq = vtol * vtol;
+    for fi in 0..ds.faces.len() {
+        if fi == skip_faces[0] || fi == skip_faces[1] {
+            continue;
+        }
+        for &vi in ic_vertices {
+            if ds.faces[fi].face_info.vertices_in.contains(&vi) {
+                continue;
+            }
+            let vp = ds.vertices[vi].point;
+            for &ei in &ds.faces[fi].boundary_edges {
+                let Some(edge) = ds.edges.get(ei) else { continue };
+                let a = ds.vertices[edge.start_vertex].point;
+                let b = ds.vertices[edge.end_vertex].point;
+                let ab = b - a;
+                let ab_len2 = ab.length_squared();
+                if ab_len2 < 1e-30 {
+                    continue;
+                }
+                let ap = vp - a;
+                let t = ap.dot(ab) / ab_len2;
+                if t > -0.01 && t < 1.01 {
+                    let proj = a + ab * t.clamp(0.0, 1.0);
+                    if (vp - proj).length_squared() < vtol_sq {
+                        ds.faces[fi].face_info.vertices_in.insert(vi);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl<'a> PaveFiller<'a> {
     pub fn new(ds: &'a mut DS) -> Self {
         Self {
@@ -3568,6 +3614,36 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
+    /// Compute the V range of the cylinder face along its axis, used to clip
+    /// tangent-line intersection curves to the actual face extent.
+    /// ✅ OCCT对齐: 沿柱面法向用边界顶点投影求 V 范围,替代硬编码 extent。
+    fn cylinder_face_v_range(&self, face_idx: usize, cyl: &CylindricalSurface) -> [f64; 2] {
+        let axis = cyl.axis.normalize();
+        let mut v_min = f64::INFINITY;
+        let mut v_max = f64::NEG_INFINITY;
+        for &ei in &self.ds.faces[face_idx].boundary_edges {
+            if let Some(edge) = self.ds.edges.get(ei) {
+                if let Some(v) = self.ds.vertices.get(edge.start_vertex) {
+                    let proj = (v.point - cyl.origin).dot(axis);
+                    v_min = v_min.min(proj);
+                    v_max = v_max.max(proj);
+                }
+                if let Some(v) = self.ds.vertices.get(edge.end_vertex) {
+                    let proj = (v.point - cyl.origin).dot(axis);
+                    v_min = v_min.min(proj);
+                    v_max = v_max.max(proj);
+                }
+            }
+        }
+        let r = if v_min.is_infinite() {
+            // Fallback: a generous default range
+            [-20.0, 20.0]
+        } else {
+            [v_min, v_max]
+        };
+        r
+    }
+
     // ── Plane × Cylinder analytic face-face intersection ──────────────────────
 
     fn intersect_plane_cylinder_faces(
@@ -3577,8 +3653,6 @@ impl<'a> PaveFiller<'a> {
         plane: &Plane,
         cyl: &CylindricalSurface,
     ) {
-        eprintln!("[PC] intersect_plane_cylinder_faces f1={} f2={} result={:?}",
-            f1, f2, std::mem::discriminant(&intersect_plane_cylinder(plane, cyl)));
         use inttools::pcurve_derive::{
             circle_pcurve_on_cylinder, circle_pcurve_on_plane, ellipse_pcurve_on_cylinder,
             ellipse_pcurve_on_plane, line_pcurve_on_cylinder,
@@ -3629,6 +3703,9 @@ impl<'a> PaveFiller<'a> {
             ds.faces[f1].face_info.vertices_in.insert(v_end);
             ds.faces[f2].face_info.vertices_in.insert(v_start);
             ds.faces[f2].face_info.vertices_in.insert(v_end);
+            // ✅ OCCT对齐: Propagate IC vertices to all faces sharing boundary edges
+            //    (BOPDS_FaceInfo::AppendBlock equivalent).
+            propagate_ic_vertices_to_shared_faces(ds, &[v_start, v_end], &[f1, f2]);
             curve_idx
         };
 
@@ -3640,17 +3717,21 @@ impl<'a> PaveFiller<'a> {
                 // ✅ OCCT aligned: tangent lines are also valid intersection curves,
                 //    used to split the cylinder face. OCCT IntTools_FaceFace::MakeCurve
                 //    creates BRep edges for tangent lines too.
-                let extent = 20.0_f64;
+                // Clip to the cylinder face's parametric V range along the axis
+                // so the intersection curve doesn't extend beyond the actual face.
+                let cyl_fi = if plane_is_f1 { f2 } else { f1 };
+                let v_range = self.cylinder_face_v_range(cyl_fi, cyl);
                 let (pca, pcb) = make_pcurves(
                     line_pcurve_on_plane(&line, plane),
                     line_pcurve_on_cylinder(&line, cyl),
                 );
-                let ci = add_curve(self.ds, Curve3::Line(line), [-extent, extent], pca, pcb, f1, f2);
+                let ci = add_curve(self.ds, Curve3::Line(line), v_range, pca, pcb, f1, f2);
                 curve_indices.push(ci);
             }
             PlaneCylinderResult::TwoLines(l1, l2) => {
-                // Clip each line to the face bounding-box extent
-                let extent = 20.0_f64;
+                // Clip each line to the cylinder face's parametric V range
+                let cyl_fi = if plane_is_f1 { f2 } else { f1 };
+                let v_range = self.cylinder_face_v_range(cyl_fi, cyl);
                 let (pca1, pcb1) = make_pcurves(
                     line_pcurve_on_plane(&l1, plane),
                     line_pcurve_on_cylinder(&l1, cyl),
@@ -3658,7 +3739,7 @@ impl<'a> PaveFiller<'a> {
                 let ci1 = add_curve(
                     self.ds,
                     Curve3::Line(l1),
-                    [-extent, extent],
+                    v_range,
                     pca1,
                     pcb1,
                     f1,
@@ -3671,7 +3752,7 @@ impl<'a> PaveFiller<'a> {
                 let ci2 = add_curve(
                     self.ds,
                     Curve3::Line(l2),
-                    [-extent, extent],
+                    v_range,
                     pca2,
                     pcb2,
                     f1,
@@ -3695,6 +3776,19 @@ impl<'a> PaveFiller<'a> {
                     f2,
                 );
                 curve_indices.push(ci);
+                // ✅ OCCT对齐: 圆在 cylinder 面 V 边界上时,从 cylinder 面移除该 IC。
+                //    OCCT BOPAlgo_BuilderFace::PerformLoops 不在面域外创建子面,
+                //    但 rcad 的 BooleanBuilder 会。移除 cylinder 面上的 IC 可防止
+                //    产生 cylinder stub。Plane 面仍保留该 IC,用于正确分割 box 面。
+                let cyl_fi = if plane_is_f1 { f2 } else { f1 };
+                let v_range = self.cylinder_face_v_range(cyl_fi, cyl);
+                let v = (circle.center - cyl.origin).dot(cyl.axis.normalize());
+                let boundary_tol = TOLERANCE_ABS * 1000.0;
+                if (v - v_range[0]).abs() < boundary_tol
+                    || (v - v_range[1]).abs() < boundary_tol
+                {
+                    self.ds.faces[cyl_fi].face_info.curves_in.remove(&ci);
+                }
             }
             PlaneCylinderResult::Ellipse(ellipse) => {
                 let pca_plane = ellipse_pcurve_on_plane(&ellipse, plane);
@@ -3923,6 +4017,9 @@ impl<'a> PaveFiller<'a> {
             ds.faces[f1].face_info.vertices_in.insert(v_end);
             ds.faces[f2].face_info.vertices_in.insert(v_start);
             ds.faces[f2].face_info.vertices_in.insert(v_end);
+            // ✅ OCCT对齐: Propagate IC vertices to all faces sharing boundary edges
+            //    (BOPDS_FaceInfo::AppendBlock equivalent).
+            propagate_ic_vertices_to_shared_faces(ds, &[v_start, v_end], &[f1, f2]);
             ci
         };
 
