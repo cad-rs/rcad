@@ -2884,6 +2884,33 @@ fn classify_face_occt_style(
     None
 }
 
+/// Check if a DS vertex lies on the boundary edge between sv/ev, and if so add it
+/// to split_verts with its parametric position t.
+/// ✅ OCCT-aligned: FillImagesEdges checks pave blocks per edge (global scope).
+fn check_and_add_split_vertex(
+    ds: &DS,
+    sv: usize,
+    ev: usize,
+    vi: usize,
+    p_a: DVec3,
+    ab: DVec3,
+    ab_len2: f64,
+    split_verts: &mut Vec<(usize, f64)>,
+) {
+    if vi == sv || vi == ev {
+        return;
+    }
+    let p = ds.vertices[vi].point;
+    let ap = p - p_a;
+    let t = ap.dot(ab) / ab_len2;
+    if t > 1e-8 && t < 1.0 - 1e-8 {
+        let proj = p_a + ab * t;
+        if (p - proj).length_squared() < 1e-10 {
+            split_verts.push((vi, t));
+        }
+    }
+}
+
 /// ✅ OCCT-aligned: BuildSplitFaces edge assembly (L357-489) + DoSplitSEAMOnFace (L58-227).
 fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(usize) -> Option<Curve2d>) -> Vec<WireSegment> {
     let face = &ds.faces[face_idx];
@@ -3033,24 +3060,65 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                 tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
             });
         } else {
-            // OCCT-aligned: Regular edge with UV tangent (L374-378)
-            let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface);
-            if std::env::var("RCAD_DEBUG_IC").is_ok() && matches!(face.surface, Surface3::Plane(_)) {
-                if let (Some(ts), Some(te)) = (t_start, t_end) {
-                    eprintln!("[UV_TANG] fi={} ei={} sv={} ev={} t_start={:.6} t_end={:.6}", face_idx, ei, sv, ev, ts, te);
-                    eprintln!("[UV_POS] fi={} sv_pt=({:.12},{:.12},{:.12}) ev_pt=({:.12},{:.12},{:.12})", face_idx,
-                        ds.vertices[sv].point.x, ds.vertices[sv].point.y, ds.vertices[sv].point.z,
-                        ds.vertices[ev].point.x, ds.vertices[ev].point.y, ds.vertices[ev].point.z);
+            // ✅ OCCT-aligned: split boundary edges by IC vertices (FillImagesEdges equivalent).
+            //    OCCT BOPAlgo_Builder_1.cxx L71-126: each pave_block → sub-edge (myImages).
+            //    Check current face's vertices_in AND all DS vertices for robustness.
+            let p_a = ds.vertices[sv].point;
+            let p_b = ds.vertices[ev].point;
+            let ab = p_b - p_a;
+            let ab_len2 = ab.length_squared();
+            let mut split_verts: Vec<(usize, f64)> = Vec::new();
+            if ab_len2 > 1e-12 {
+                // 1. Vertices from current face's face_info.vertices_in
+                for &vi in &face.face_info.vertices_in {
+                    check_and_add_split_vertex(ds, sv, ev, vi, p_a, ab, ab_len2, &mut split_verts);
+                }
+                // 2. All DS vertices (for robustness when propagation misses some)
+                // ✅ OCCT-aligned: FillImagesEdges iterates over ALL source edges (global scope).
+                let edge_bbox_min = p_a.min(p_b) - DVec3::splat(1e-6);
+                let edge_bbox_max = p_a.max(p_b) + DVec3::splat(1e-6);
+                for vi in 0..ds.vertices.len() {
+                    if vi == sv || vi == ev { continue; }
+                    if split_verts.iter().any(|(v, _)| *v == vi) { continue; }
+                    let p = ds.vertices[vi].point;
+                    // Quick bbox rejection for efficiency
+                    if p.x < edge_bbox_min.x || p.x > edge_bbox_max.x ||
+                       p.y < edge_bbox_min.y || p.y > edge_bbox_max.y ||
+                       p.z < edge_bbox_min.z || p.z > edge_bbox_max.z { continue; }
+                    check_and_add_split_vertex(ds, sv, ev, vi, p_a, ab, ab_len2, &mut split_verts);
                 }
             }
-            segments.push(WireSegment {
-                start_vertex: sv, end_vertex: ev,
-                source: WireEdgeSource::DsEdge(ei),
-                forward: true,
-                is_seam: false,
-                tangent_start: t_start,
-                tangent_end: t_end,
-            });
+            split_verts.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+            if split_verts.is_empty() {
+                // No split vertices — whole edge as one segment (OCCT L374-378)
+                let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface);
+                segments.push(WireSegment {
+                    start_vertex: sv, end_vertex: ev,
+                    source: WireEdgeSource::DsEdge(ei),
+                    forward: true, is_seam: false,
+                    tangent_start: t_start, tangent_end: t_end,
+                });
+            } else {
+                // ✅ OCCT-aligned: edge split by IC vertices (OCCT myImages equivalent).
+                let mut prev_v = sv;
+                for &(vi, _t) in &split_verts {
+                    let (ts, te) = edge_uv_tangent(ds, prev_v, vi, &face.surface);
+                    segments.push(WireSegment {
+                        start_vertex: prev_v, end_vertex: vi,
+                        source: WireEdgeSource::DsEdge(ei),
+                        forward: true, is_seam: false,
+                        tangent_start: ts, tangent_end: te,
+                    });
+                    prev_v = vi;
+                }
+                let (ts, te) = edge_uv_tangent(ds, prev_v, ev, &face.surface);
+                segments.push(WireSegment {
+                    start_vertex: prev_v, end_vertex: ev,
+                    source: WireEdgeSource::DsEdge(ei),
+                    forward: true, is_seam: false,
+                    tangent_start: ts, tangent_end: te,
+                });
+            }
         }
     }
 
@@ -3071,8 +3139,6 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
         if sv == ev || d2 < TOLERANCE_ABS_SQ {
             if matches!(face.surface, Surface3::Sphere(_)) {
                 // Degenerate IC on sphere: infer the correct second vertex from other ICs.
-                // The 3 intersection curves form a closed loop with 3 unique vertices.
-                // Find the vertex used by other curves but NOT by this curve's sv.
                 let other_v: Vec<usize> = face.face_info.curves_in.iter()
                     .filter(|&&oci| oci != ci)
                     .flat_map(|&oci| {
@@ -3081,11 +3147,6 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     })
                     .filter(|&v| v != sv)
                     .collect();
-                // The 3 IC curves form a closed loop; each endpoint vertex
-                // belongs to exactly 2 curves. For the degenerate curve,
-                // the correct second endpoint is the vertex that belongs to
-                // exactly 1 of the OTHER curves (not shared between both).
-                // Count vertex occurrences across all non-degenerate curves.
                 let vcounts: std::collections::HashMap<usize, usize> = {
                     let mut m = std::collections::HashMap::new();
                     for &v in &other_v { *m.entry(v).or_insert(0) += 1; }
@@ -3094,12 +3155,11 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                 let mut candidate: Option<usize> = None;
                 for (&v, &cnt) in &vcounts {
                     if cnt == 1 {
-                        if candidate.is_some() { } // ambiguous, fall through
+                        if candidate.is_some() { }
                         else { candidate = Some(v); }
                     }
                 }
                 if candidate.is_none() {
-                    // Fallback: vertex that appears in all other curves (most connected)
                     candidate = other_v.iter().max_by_key(|&&v| vcounts.get(&v).copied().unwrap_or(0)).copied();
                 }
                 if let Some(correct_ev) = candidate {
@@ -3107,7 +3167,6 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     let fixed_ev = correct_ev;
                     let pcurve = pcurve_lookup(ci);
                     let (t_start, t_end) = if let Some(ref pc) = pcurve {
-                        // ■ CRITICAL: negate angle_2d to match clock_wise_angle OCCT formula sign.
                         (angle_2d(pc, ic.t_range[0], ic.t_range, false),
                          angle_2d(pc, ic.t_range[1], ic.t_range, true))
                     } else { (None, None) };
@@ -3118,6 +3177,60 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                         source: WireEdgeSource::IntersectionCurve(ci), forward: false,
                         is_seam: false, tangent_start: t_end.map(|a| (a+std::f64::consts::PI)%std::f64::consts::TAU),
                         tangent_end: t_start.map(|a| (a+std::f64::consts::PI)%std::f64::consts::TAU) });
+                    continue;
+                }
+            }
+            // ✅ OCCT对齐: 闭合 Circle IC 在边界顶点处分裂(FillImagesEdges 等价)。
+            //    当 Circle IC(start==end)且 boundary 边已被 vertices_in 中的顶点分割时,
+            //    在 boundary 上的顶点处分裂圆为圆弧段,使 wire builder 能形成闭合环。
+            //    OCCT 在 BuildSplitFaces 中通过 myImages 获得的子边自然携带了这些顶点。
+            if let Curve3::Circle(ref circ) = ic.curve {
+                let center = circ.center;
+                let n = circ.normal.normalize();
+                let r_dir = rcad_kernel::geom::any_perpendicular(n);
+                let p_dir = n.cross(r_dir);
+                let r = circ.radius;
+                let circle_tol = 1e-8 * r.max(1.0);
+                // ✅ OCCT对齐: 收集边界上的分割顶点(来自 FillImagesEdges 的边分裂)以及在
+                //    vertices_in 中的顶点,检查哪些在 Circle IC 上。
+                //    边界分割顶点来自 side 面上的 TangentLine IC,不在当前面的 vertices_in 中。
+                let mut vertices_to_check: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+                for &vi in &face.face_info.vertices_in { vertices_to_check.insert(vi); }
+                for seg in &segments { vertices_to_check.insert(seg.start_vertex); vertices_to_check.insert(seg.end_vertex); }
+                let mut on_circle: Vec<(usize, f64)> = Vec::new();
+                for &vi in &vertices_to_check {
+                    let pt = ds.vertices[vi].point;
+                    let d = pt - center;
+                    if (d.length() - r).abs() < circle_tol {
+                        let angle = f64::atan2(d.dot(p_dir), d.dot(r_dir));
+                        on_circle.push((vi, angle));
+                    }
+                }
+                if on_circle.len() >= 2 {
+                    on_circle.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+                    let n_on = on_circle.len();
+                    for i in 0..n_on {
+                        let j = (i + 1) % n_on;
+                        let vi = on_circle[i].0;
+                        let vj = on_circle[j].0;
+                        let pcurve = pcurve_lookup(ci);
+                        let (ts_val, te_val) = if let Some(ref pc) = pcurve {
+                            (angle_2d(pc, ic.t_range[0], ic.t_range, false),
+                             angle_2d(pc, ic.t_range[1], ic.t_range, true))
+                        } else { (None, None) };
+                        segments.push(WireSegment {
+                            start_vertex: vi, end_vertex: vj,
+                            source: WireEdgeSource::IntersectionCurve(ci), forward: true,
+                            is_seam: false, tangent_start: ts_val, tangent_end: te_val,
+                        });
+                        segments.push(WireSegment {
+                            start_vertex: vj, end_vertex: vi,
+                            source: WireEdgeSource::IntersectionCurve(ci), forward: false,
+                            is_seam: false,
+                            tangent_start: te_val.map(|a| (a+std::f64::consts::PI)%std::f64::consts::TAU),
+                            tangent_end: ts_val.map(|a| (a+std::f64::consts::PI)%std::f64::consts::TAU),
+                        });
+                    }
                     continue;
                 }
             }
