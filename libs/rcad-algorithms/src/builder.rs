@@ -473,6 +473,8 @@ struct ResultBuilder {
     ///    OCCT 中每个 TopoDS_Edge 是独立实体,即使两条边连接相同顶点且有相同曲线,
     ///    它们也是不同的边(如 seam 子段与 IC 弧)。此集合阻止 build() 合并这些边。
     no_merge_edges: std::collections::HashSet<usize>,
+    /// OCCT-aligned: edge indices of degenerate seam edges (pole degeneracies).
+    deg_edge_indices: std::collections::HashSet<usize>,
     /// ✅ OCCT对齐: IntersectionCurve index -> result edge index.
     ///    Section edges (ICs) are shared by both intersecting faces (OCCT
     ///    BOPTools_AlgoTools::MakeSectEdge).  rcad maps by IC index so
@@ -591,8 +593,9 @@ impl ResultBuilder {
             let mut iw_edges = Vec::new();
             for &si in iw {
                 let seg = &segments[si];
-                let v1 = self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point);
-                let v2 = self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point);
+                let getp = |vi: usize| -> DVec3 { if vi < ds.vertices.len() { ds.vertices[vi].point } else { *vertex_positions.get(&vi).unwrap_or_else(|| vertex_positions.values().next().unwrap_or(&DVec3::ZERO)) } };
+                let v1 = if seg.start_vertex < ds.vertices.len() { self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point) } else { let p = getp(seg.start_vertex); let i = self.vertices.len(); self.vertices.push(p); i };
+                let v2 = if seg.end_vertex < ds.vertices.len() { self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point) } else { let p = getp(seg.end_vertex); let i = self.vertices.len(); self.vertices.push(p); i };
                 if iw_verts.is_empty() || iw_verts.last() != Some(&v1) {
                     iw_verts.push(v1);
                 }
@@ -617,8 +620,9 @@ impl ResultBuilder {
             let mut iw_edges = Vec::new();
             for &si in iw {
                 let seg = &segments[si];
-                let v1 = self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point);
-                let v2 = self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point);
+                let getp = |vi: usize| -> DVec3 { if vi < ds.vertices.len() { ds.vertices[vi].point } else { *vertex_positions.get(&vi).unwrap_or_else(|| vertex_positions.values().next().unwrap_or(&DVec3::ZERO)) } };
+                let v1 = if seg.start_vertex < ds.vertices.len() { self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point) } else { let p = getp(seg.start_vertex); let i = self.vertices.len(); self.vertices.push(p); i };
+                let v2 = if seg.end_vertex < ds.vertices.len() { self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point) } else { let p = getp(seg.end_vertex); let i = self.vertices.len(); self.vertices.push(p); i };
                 let ei = match &seg.source {
                     // ✅ OCCT-aligned: IC edge identity (inner/internal wires).
                     WireEdgeSource::IntersectionCurve(ci) => {
@@ -640,8 +644,9 @@ impl ResultBuilder {
             let mut iw_edges = Vec::new();
             for &si in iw {
                 let seg = &segments[si];
-                let v1 = self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point);
-                let v2 = self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point);
+                let getp = |vi: usize| -> DVec3 { if vi < ds.vertices.len() { ds.vertices[vi].point } else { *vertex_positions.get(&vi).unwrap_or_else(|| vertex_positions.values().next().unwrap_or(&DVec3::ZERO)) } };
+                let v1 = if seg.start_vertex < ds.vertices.len() { self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point) } else { let p = getp(seg.start_vertex); let i = self.vertices.len(); self.vertices.push(p); i };
+                let v2 = if seg.end_vertex < ds.vertices.len() { self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point) } else { let p = getp(seg.end_vertex); let i = self.vertices.len(); self.vertices.push(p); i };
                 let ei = match &seg.source {
                     WireEdgeSource::IntersectionCurve(ci) => {
                         let crv = &ds.intersection_curves[*ci].curve;
@@ -823,6 +828,7 @@ impl ResultBuilder {
             custom_edge_curves: Vec::new(),
             face_internal_vtx: Vec::new(),
             no_merge_edges: std::collections::HashSet::new(),
+            deg_edge_indices: std::collections::HashSet::new(),
             ic_edge_map: HashMap::new(),
         }
     }
@@ -933,6 +939,7 @@ impl ResultBuilder {
             radius: sphere_surf.radius,
         });
         self.custom_edge_curves[idx] = Some(seam_circle);
+        self.deg_edge_indices.insert(idx);
         idx
     }
 
@@ -1576,6 +1583,11 @@ impl ResultBuilder {
             }
             self.edges = new_edges;
             self.custom_edge_curves = new_curves;
+            // Remap degenerated edge indices through compression
+            let new_deg: std::collections::HashSet<usize> = self.deg_edge_indices.iter()
+                .filter_map(|&old| if old < e_remap.len() { Some(e_remap[old]) } else { None })
+                .collect();
+            self.deg_edge_indices = new_deg;
             if std::env::var("RCAD_DEBUG_MERGE").is_ok() {
                 eprintln!("[BUILD_MERGE] post: {} verts, {} edges, {} faces", self.vertices.len(), self.edges.len(), self.faces.len());
             }
@@ -1722,6 +1734,13 @@ impl ResultBuilder {
             deletion_reasons: std::collections::HashMap::new(),
         };
 
+        // OCCT-aligned: set edge_degenerated flag for degenerated seam edges
+        for &ei in &self.deg_edge_indices {
+            while geom.edge_degenerated.len() <= ei {
+                geom.edge_degenerated.push(false);
+            }
+            geom.edge_degenerated[ei] = true;
+        }
         let brep = BRep {
             vertices,
             edges,
@@ -2909,6 +2928,9 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
     // from 7), making the SmartMap connectivity wrong and preventing the
     // wire splitter from forming closed loops (fi=3 was failing).
     let mut prev_end: Option<usize> = None;
+    // ✅ OCCT-aligned: virtual vertex indices for deg edge ends (OCCT uses
+    //   distinct TopoDS_Vertex instances for deg edge start and end).
+    let mut deg_virtual_counter: usize = ds.vertices.len();
     for &ei in &face.boundary_edges {
         let edge = &ds.edges[ei];
         let (sv, ev) = match prev_end {
@@ -2933,9 +2955,13 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
 
         if is_degenerate {
             // ✅ OCCT L408-412: degenerate → add once, continue
+            //    OCCT uses distinct TopoDS_Vertex for deg edge end. rcad
+            //    assigns a virtual vertex index beyond ds.vertices.len().
             let tangent = compute_seam_tangent_angles(ds, sv, ev, &face.surface);
+            let deg_end = deg_virtual_counter;
+            deg_virtual_counter += 1;
             segments.push(WireSegment {
-                start_vertex: sv, end_vertex: ev,
+                start_vertex: sv, end_vertex: deg_end,
                 source: WireEdgeSource::DsEdge(ei), forward: true,
                 is_seam: true, tangent_start: tangent.0, tangent_end: tangent.1,
             });
@@ -3328,7 +3354,7 @@ fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_idx: usize)
     let mut canon_vertices: Vec<DVec3> = Vec::new();
     let mut vi_to_canon: Vec<usize> = vec![usize::MAX; ds.vertices.len()];
     for seg in segments.iter() {
-        if seg.start_vertex == seg.end_vertex { continue; } // skip deg
+        if seg.end_vertex >= ds.vertices.len() { continue; } // skip deg (virtual end)
         for &vi in &[seg.start_vertex, seg.end_vertex] {
             if vi_to_canon[vi] != usize::MAX { continue; }
             let pt = ds.vertices[vi].point;
@@ -3345,8 +3371,9 @@ fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_idx: usize)
     let mut deg_end_canon: HashMap<usize, usize> = HashMap::new();
     if !seam_is_split {
         for (si, seg) in segments.iter().enumerate() {
-            if seg.start_vertex == seg.end_vertex {
-                let pt = ds.vertices[seg.end_vertex].point + DVec3::new(0.0, 0.0, 1e-5);
+            // OCCT-aligned: detect deg edges by virtual end vertex (>= ds.vertices.len())
+            if seg.end_vertex >= ds.vertices.len() {
+                let pt = ds.vertices[seg.start_vertex].point;
                 canon_vertices.push(pt);
                 deg_end_canon.insert(si, canon_vertices.len() - 1);
             }
@@ -3565,7 +3592,7 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, fac
         //    (seam NOT split by PaveFiller).  For combined blocks (A1),
         // ✅ OCCT-aligned: include deg in SmartMap for non-split seams.
         //    Mark passed=true (exist for vertex degree, never traversed).
-        let is_deg = seg.start_vertex == seg.end_vertex;
+        let is_deg = seg.end_vertex >= ds.vertices.len();
         if is_deg {
             let is_split = segments.iter().any(|s| {
                 s.is_seam && matches!(&s.source, WireEdgeSource::DsEdge(ei)

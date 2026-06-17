@@ -3509,6 +3509,16 @@ pub fn merge_close_vertices(brep: &BRep, tolerance: f64) -> (BRep, usize) {
 
     let tol2 = tolerance * tolerance;
 
+    // OCCT-aligned: compute degenerate edge vertex pairs to skip merging.
+    // OCCT uses distinct TopoDS_Vertex for deg edge ends at the same point.
+    let deg_skip: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::from_iter(
+        brep.edges.iter().enumerate().filter_map(|(ei, e)| {
+            if brep.geom.edge_degenerated.get(ei).copied().unwrap_or(false) {
+                Some((e.start.min(e.end), e.start.max(e.end)))
+            } else { None }
+        })
+    );
+
     fn spatial_cell_coord(value: f64, tolerance: f64) -> i64 {
         let t = tolerance.max(f64::MIN_POSITIVE);
         let q = (value / t).floor();
@@ -3540,7 +3550,10 @@ pub fn merge_close_vertices(brep: &BRep, tolerance: f64) -> (BRep, usize) {
                             for &j in bucket {
                                 let d2 = (brep.vertices[i].point - brep.vertices[j].point).length_squared();
                                 if d2 <= tol2 {
-                                    union(&mut parent, i, j);
+                                    let key = (i.min(j), i.max(j));
+                                    if !deg_skip.contains(&key) {
+                                        union(&mut parent, i, j);
+                                    }
                                 }
                             }
                         }
@@ -3555,7 +3568,10 @@ pub fn merge_close_vertices(brep: &BRep, tolerance: f64) -> (BRep, usize) {
             for j in (i + 1)..n {
                 let d2 = (brep.vertices[i].point - brep.vertices[j].point).length_squared();
                 if d2 <= tol2 {
-                    union(&mut parent, i, j);
+                    let key = (i.min(j), i.max(j));
+                    if !deg_skip.contains(&key) {
+                        union(&mut parent, i, j);
+                    }
                 }
             }
         }
