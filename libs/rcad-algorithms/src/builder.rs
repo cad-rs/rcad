@@ -3130,12 +3130,12 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
         // ✅ OCCT-aligned: remap IC endpoint to boundary vertex (ShapesSD).
         let sv = remap_ic_v(ic.start_vertex);
         let ev = remap_ic_v(ic.end_vertex);
+        // OCCT-aligned: Skip degenerate IC (unless sphere face, where we try to infer correct vertex)
+        let d2 = ds.vertices[sv].point.distance_squared(ds.vertices[ev].point);
         if std::env::var("RCAD_DEBUG_IC").is_ok() {
             eprintln!("[IC_LOOP] fi={} ci={} raw=({},{}) remap=({},{})",
                 face_idx, ci, ic.start_vertex, ic.end_vertex, sv, ev);
         }
-        // OCCT-aligned: Skip degenerate IC (unless sphere face, where we try to infer correct vertex)
-        let d2 = ds.vertices[sv].point.distance_squared(ds.vertices[ev].point);
         if sv == ev || d2 < TOLERANCE_ABS_SQ {
             if matches!(face.surface, Surface3::Sphere(_)) {
                 // Degenerate IC on sphere: infer the correct second vertex from other ICs.
@@ -3199,6 +3199,17 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                 for seg in &segments { vertices_to_check.insert(seg.start_vertex); vertices_to_check.insert(seg.end_vertex); }
                 let mut on_circle: Vec<(usize, f64)> = Vec::new();
                 for &vi in &vertices_to_check {
+                    let pt = ds.vertices[vi].point;
+                    let d = pt - center;
+                    if (d.length() - r).abs() < circle_tol {
+                        let angle = f64::atan2(d.dot(p_dir), d.dot(r_dir));
+                        on_circle.push((vi, angle));
+                    }
+                }
+                // OCCT-aligned: scan all DS vertices for presence on the circle (global scope).
+                //    OCCT BuildSplitFaces' myImages sub-edges naturally carry all split vertices.
+                for vi in 0..ds.vertices.len() {
+                    if on_circle.iter().any(|(v, _)| *v == vi) { continue; }
                     let pt = ds.vertices[vi].point;
                     let d = pt - center;
                     if (d.length() - r).abs() < circle_tol {
