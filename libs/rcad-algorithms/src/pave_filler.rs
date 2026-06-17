@@ -23,6 +23,9 @@ pub struct PaveFiller<'a> {
     bvh_b: Option<&'a Bvh>,
     use_glue: bool,
     glue_tolerance: f64,
+    /// Additional fuzzy tolerance for all intersection checks
+    /// (analogous to OCCT BOPAlgo_Options::SetFuzzyValue).
+    fuzzy_tolerance: f64,
 }
 
 impl<'a> PaveFiller<'a> {
@@ -33,6 +36,7 @@ impl<'a> PaveFiller<'a> {
             bvh_b: None,
             use_glue: false,
             glue_tolerance: TOLERANCE_ABS,
+            fuzzy_tolerance: 0.0,
         }
     }
 
@@ -50,6 +54,7 @@ impl<'a> PaveFiller<'a> {
             bvh_b: if use_bvh { Some(bvh_b) } else { None },
             use_glue: false,
             glue_tolerance: TOLERANCE_ABS,
+            fuzzy_tolerance: 0.0,
         }
     }
 
@@ -91,6 +96,18 @@ impl<'a> PaveFiller<'a> {
         let adaptive_tol = self.compute_adaptive_glue_tolerance(base_tolerance);
         self.glue_tolerance = adaptive_tol;
         adaptive_tol
+    }
+
+    /// Configure fuzzy tolerance for all intersection checks
+    /// (analogous to OCCT BOPAlgo_Options::SetFuzzyValue).
+    pub fn configure_fuzzy(&mut self, fuzzy: f64) {
+        self.fuzzy_tolerance = fuzzy.max(0.0);
+    }
+
+    /// Effective linear tolerance combining base and fuzzy for a given base tolerance.
+    /// Analogous to OCCT `max(tol(entity), FuzzyValue)` pattern used in ComputeVV etc.
+    pub fn effective_tolerance(&self, base: f64) -> f64 {
+        base.max(self.fuzzy_tolerance)
     }
 
     /// Compute adaptive glue tolerance based on geometry characteristics.
@@ -774,7 +791,6 @@ impl<'a> PaveFiller<'a> {
         //    t_range=[0,TAU]),不是退化。OCCT BOPTools_AlgoTools::MakeEdge 对闭环
         //    曲线的两端创建不同顶点,不视为退化。rcad 因 add_vertex 去重,start 和
         //    end 顶点索引相同(同一 3D 位置),但曲线本身有效。
-        let degen_tol_sq = TOLERANCE_ABS_SQ;
         for ci in 0..self.ds.intersection_curves.len() {
             let ic = &self.ds.intersection_curves[ci];
             // Skip closed curves (Circle with full-circle t_range) — start==end is natural
@@ -783,6 +799,9 @@ impl<'a> PaveFiller<'a> {
             }
             let sv_pt = self.ds.vertices[ic.start_vertex].point;
             let ev_pt = self.ds.vertices[ic.end_vertex].point;
+            let sv_tol = self.ds.vertices[ic.start_vertex].geom_tol.max(self.tol());
+            let ev_tol = self.ds.vertices[ic.end_vertex].geom_tol.max(self.tol());
+            let degen_tol_sq = sv_tol.max(ev_tol).powi(2);
             if sv_pt.distance_squared(ev_pt) < degen_tol_sq {
                 for fi in 0..self.ds.faces.len() {
                     self.ds.faces[fi].face_info.curves_in.remove(&ci);
@@ -1492,8 +1511,9 @@ impl<'a> PaveFiller<'a> {
         }
         let mut params: Vec<f64> = paves.iter().map(|p| p.param).filter(|p| p.is_finite()).collect();
         params.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let edge_tol = self.ds.edges[edge_idx].geom_tol.max(self.tol());
         // 去重
-        params.dedup_by(|a, b| (*a - *b).abs() < TOLERANCE_ABS);
+        params.dedup_by(|a, b| (*a - *b).abs() < edge_tol);
         // 加上端点
         let mut bounds = vec![edge_t_range[0]];
         bounds.extend(params);
@@ -1501,7 +1521,7 @@ impl<'a> PaveFiller<'a> {
         // 构建范围
         let mut ranges = Vec::new();
         for w in bounds.windows(2) {
-            if w[1] - w[0] > TOLERANCE_ABS {
+            if w[1] - w[0] > edge_tol {
                 ranges.push([w[0], w[1]]);
             }
         }
@@ -1520,11 +1540,11 @@ impl<'a> PaveFiller<'a> {
             pb_range[0].max(edge_t_range[0]),
             pb_range[1].min(edge_t_range[1]),
         ];
-        if ef_range[1] - ef_range[0] <= TOLERANCE_ABS {
+        let etf = self.ef_tol(edge_idx, face_idx);
+        if ef_range[1] - ef_range[0] <= etf {
             return;
         }
         let face_surface = self.ds.faces[face_idx].surface.clone();
-        let etf = self.ef_tol(edge_idx, face_idx);
 
         // Dispatch based on curve type × surface type
         let hits: Vec<(DVec3, f64)> = match (&edge_curve, &face_surface) {
@@ -2273,7 +2293,8 @@ impl<'a> PaveFiller<'a> {
             }
         }
         // 验证所有边界点在平面容差内
-        let tol = TOLERANCE_MESH_LEGACY * 100.0; // 1e-4
+        let face_geom_tol = self.ds.faces[fi].geom_tol;
+        let tol = face_geom_tol.max(TOLERANCE_MESH_LEGACY * 10.0);
         for &vi in bnd {
             let d = (self.ds.vertices[vi].point - origin).dot(normal);
             if d.abs() > tol { return None; }
@@ -2510,7 +2531,7 @@ impl<'a> PaveFiller<'a> {
         f1: usize, f2: usize,
     ) -> Option<[f64; 2]> {
         use crate::inttools::edge_face::plane_local_basis;
-        let tol = TOLERANCE_ABS * 100.0;
+        let tol = self.ff_tol(f1, f2);
         let mut result: Option<[f64; 2]> = None;
         let [t0, t1] = [0.0, std::f64::consts::TAU];
 
@@ -5264,9 +5285,14 @@ impl<'a> PaveFiller<'a> {
             pcb: Option<Curve2d>,
         }
         let mut actions: Vec<SplitAction> = Vec::new();
-        let tol = TOLERANCE_ABS * 100.0;
+        let mut cur_tol = self.tol(); // fallback for post-loop code
 
         for ci in 0..n_curves {
+            // Use per-pair tolerance from the two faces that reference this curve
+            let fi_a = (0..n_faces).find(|&fi| face_curves[fi].contains(&ci)).unwrap_or(0);
+            let fi_b = (fi_a + 1..n_faces).find(|&fi| face_curves[fi].contains(&ci)).unwrap_or(fi_a);
+            cur_tol = self.ff_tol(fi_a, fi_b);
+            let tol = cur_tol;
             let snap = &snapshots[ci];
             let [t0, t1] = snap.t_range;
             let mut on_curve: Vec<(f64, usize)> = Vec::new();
@@ -5432,7 +5458,7 @@ impl<'a> PaveFiller<'a> {
             for k in 2..sp.len() {
                 let (p_prev, v_prev) = sp[k - 1];
                 let (p_cur, v_cur) = sp[k];
-                if (p_cur - p_prev).abs() < tol * 0.1 { continue; }
+                if (p_cur - p_prev).abs() < cur_tol * 0.1 { continue; }
                 let new_ci = self.ds.intersection_curves.len();
                 self.ds.intersection_curves.push(IntersectionCurve {
                     curve: snapshots[act.old_ci].curve.clone(),
@@ -5472,8 +5498,6 @@ impl<'a> PaveFiller<'a> {
 
         {
 
-            let tol_sq = (TOLERANCE_ABS * 100.0).powi(2);
-
             let mut remove_curves: Vec<usize> = Vec::new();
 
             for &(_old_ci, new_ci) in &new_curves_info {
@@ -5482,6 +5506,12 @@ impl<'a> PaveFiller<'a> {
 
                 let fi = find_face_idxs_for_curve(&self.ds, new_ci);
 
+                let ff_tol = if fi[0] != usize::MAX && fi[1] != usize::MAX {
+                    self.ff_tol(fi[0], fi[1])
+                } else {
+                    self.tol()
+                };
+                let tol_sq = ff_tol * ff_tol;
                 if fi[0] == usize::MAX || fi[1] == usize::MAX { continue; }
 
                 let mid_t = (ic.t_range[0] + ic.t_range[1]) * 0.5;
@@ -5525,7 +5555,7 @@ impl<'a> PaveFiller<'a> {
 
         {
 
-            let sv_tol_base = TOLERANCE_ABS;
+            let sv_tol_base = self.tol();
 
             let mut micro_curves: Vec<usize> = Vec::new();
 
@@ -5659,7 +5689,7 @@ impl<'a> PaveFiller<'a> {
 
                 for d in &dists {
 
-                    let check_dist = 100.0 * tol.max(min_dist);
+                    let check_dist = 100.0 * cur_tol.max(min_dist);
 
                     if d.sq_dist > check_dist && d.sin_angle < a_sin_angle_min {
 
@@ -5698,7 +5728,6 @@ impl<'a> PaveFiller<'a> {
     ///    and injects paves from any vertex on the curve.  This is the reverse
     ///    of put_bound_pave_on_curve (which injects boundary vertices into ICs).
     fn inject_ic_vertices_into_boundary_edges(&mut self) {
-        let tol = TOLERANCE_ABS * 100.0;
         // Collect all IC vertices (from faces that have intersection curves)
         let mut ic_vertices: Vec<(usize, DVec3)> = Vec::new();
         let mut seen_vi = std::collections::BTreeSet::new();
@@ -5742,11 +5771,12 @@ impl<'a> PaveFiller<'a> {
                 let edge = &self.ds.edges[ei];
                 let curve = &edge.curve;
                 let [t0, t1] = edge.t_range;
+                let pair_tol = self.ef_tol(ei, fi);
                 for &(vi, pt) in &ic_vertices {
                     if vi == edge.start_vertex || vi == edge.end_vertex { continue; }
                     if edge.paves.iter().any(|p| p.vertex_idx == vi) { continue; }
-                    if let Some(t) = project_vertex_to_curve(pt, curve, tol) {
-                        if t >= t0 - tol && t <= t1 + tol {
+                    if let Some(t) = project_vertex_to_curve(pt, curve, pair_tol) {
+                        if t >= t0 - pair_tol && t <= t1 + pair_tol {
                             actions.push(InjectAction { edge_idx: ei, vi, param: t.clamp(t0, t1) });
                         }
                     }
@@ -6198,7 +6228,10 @@ fn filter_paves_on_curves(
     paves: &[(f64, usize)],
 ) -> Vec<(f64, usize)> {
     let ic = &ds.intersection_curves[curve_idx];
-    let tol_sq = TOLERANCE_ABS_SQ;
+    let start_tol = ds.vertices[ic.start_vertex].geom_tol.max(ds.fuzzy_tol);
+    let end_tol = ds.vertices[ic.end_vertex].geom_tol.max(ds.fuzzy_tol);
+    let tol = start_tol.max(end_tol);
+    let tol_sq = tol * tol;
     paves.iter().filter(|&&(_, vi)| {
         let pt = ds.vertices[vi].point;
         let dist_sq = match &ic.curve {
