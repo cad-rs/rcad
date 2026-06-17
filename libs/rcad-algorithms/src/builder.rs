@@ -593,7 +593,7 @@ impl ResultBuilder {
             let mut iw_edges = Vec::new();
             for &si in iw {
                 let seg = &segments[si];
-                let getp = |vi: usize| -> DVec3 { if vi < ds.vertices.len() { ds.vertices[vi].point } else { *vertex_positions.get(&vi).unwrap_or_else(|| vertex_positions.values().next().unwrap_or(&DVec3::ZERO)) } };
+                let getp = |vi: usize| -> DVec3 { if vi < ds.vertices.len() { ds.vertices[vi].point } else { *vertex_positions.get(&vi).unwrap_or(&DVec3::ZERO) } };
                 let v1 = if seg.start_vertex < ds.vertices.len() { self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point) } else { let p = getp(seg.start_vertex); let i = self.vertices.len(); self.vertices.push(p); i };
                 let v2 = if seg.end_vertex < ds.vertices.len() { self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point) } else { let p = getp(seg.end_vertex); let i = self.vertices.len(); self.vertices.push(p); i };
                 if iw_verts.is_empty() || iw_verts.last() != Some(&v1) {
@@ -620,7 +620,7 @@ impl ResultBuilder {
             let mut iw_edges = Vec::new();
             for &si in iw {
                 let seg = &segments[si];
-                let getp = |vi: usize| -> DVec3 { if vi < ds.vertices.len() { ds.vertices[vi].point } else { *vertex_positions.get(&vi).unwrap_or_else(|| vertex_positions.values().next().unwrap_or(&DVec3::ZERO)) } };
+                let getp = |vi: usize| -> DVec3 { if vi < ds.vertices.len() { ds.vertices[vi].point } else { *vertex_positions.get(&vi).unwrap_or(&DVec3::ZERO) } };
                 let v1 = if seg.start_vertex < ds.vertices.len() { self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point) } else { let p = getp(seg.start_vertex); let i = self.vertices.len(); self.vertices.push(p); i };
                 let v2 = if seg.end_vertex < ds.vertices.len() { self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point) } else { let p = getp(seg.end_vertex); let i = self.vertices.len(); self.vertices.push(p); i };
                 let ei = match &seg.source {
@@ -644,7 +644,7 @@ impl ResultBuilder {
             let mut iw_edges = Vec::new();
             for &si in iw {
                 let seg = &segments[si];
-                let getp = |vi: usize| -> DVec3 { if vi < ds.vertices.len() { ds.vertices[vi].point } else { *vertex_positions.get(&vi).unwrap_or_else(|| vertex_positions.values().next().unwrap_or(&DVec3::ZERO)) } };
+                let getp = |vi: usize| -> DVec3 { if vi < ds.vertices.len() { ds.vertices[vi].point } else { *vertex_positions.get(&vi).unwrap_or(&DVec3::ZERO) } };
                 let v1 = if seg.start_vertex < ds.vertices.len() { self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point) } else { let p = getp(seg.start_vertex); let i = self.vertices.len(); self.vertices.push(p); i };
                 let v2 = if seg.end_vertex < ds.vertices.len() { self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point) } else { let p = getp(seg.end_vertex); let i = self.vertices.len(); self.vertices.push(p); i };
                 let ei = match &seg.source {
