@@ -536,14 +536,12 @@ impl ResultBuilder {
             let v1 = if seg.start_vertex < ds.vertices.len() {
                 self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point)
             } else {
-                let p = vertex_positions[&seg.start_vertex];
-                let idx = self.vertices.len(); self.vertices.push(p); idx
+                self.add_vertex(vertex_positions[&seg.start_vertex])
             };
             let v2 = if seg.end_vertex < ds.vertices.len() {
                 self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point)
             } else {
-                let p = vertex_positions[&seg.end_vertex];
-                let idx = self.vertices.len(); self.vertices.push(p); idx
+                self.add_vertex(vertex_positions[&seg.end_vertex])
             };
             if vert_indices.is_empty() || vert_indices.last() != Some(&v1) {
                 vert_indices.push(v1);
@@ -594,8 +592,8 @@ impl ResultBuilder {
             for &si in iw {
                 let seg = &segments[si];
                 let getp = |vi: usize| -> DVec3 { if vi < ds.vertices.len() { ds.vertices[vi].point } else { *vertex_positions.get(&vi).unwrap_or(&DVec3::ZERO) } };
-                let v1 = if seg.start_vertex < ds.vertices.len() { self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point) } else { let p = getp(seg.start_vertex); let i = self.vertices.len(); self.vertices.push(p); i };
-                let v2 = if seg.end_vertex < ds.vertices.len() { self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point) } else { let p = getp(seg.end_vertex); let i = self.vertices.len(); self.vertices.push(p); i };
+                let v1 = if seg.start_vertex < ds.vertices.len() { self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point) } else { let p = getp(seg.start_vertex); self.add_vertex(p) };
+                let v2 = if seg.end_vertex < ds.vertices.len() { self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point) } else { let p = getp(seg.end_vertex); self.add_vertex(p) };
                 if iw_verts.is_empty() || iw_verts.last() != Some(&v1) {
                     iw_verts.push(v1);
                 }
@@ -621,8 +619,8 @@ impl ResultBuilder {
             for &si in iw {
                 let seg = &segments[si];
                 let getp = |vi: usize| -> DVec3 { if vi < ds.vertices.len() { ds.vertices[vi].point } else { *vertex_positions.get(&vi).unwrap_or(&DVec3::ZERO) } };
-                let v1 = if seg.start_vertex < ds.vertices.len() { self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point) } else { let p = getp(seg.start_vertex); let i = self.vertices.len(); self.vertices.push(p); i };
-                let v2 = if seg.end_vertex < ds.vertices.len() { self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point) } else { let p = getp(seg.end_vertex); let i = self.vertices.len(); self.vertices.push(p); i };
+                let v1 = if seg.start_vertex < ds.vertices.len() { self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point) } else { let p = getp(seg.start_vertex); self.add_vertex(p) };
+                let v2 = if seg.end_vertex < ds.vertices.len() { self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point) } else { let p = getp(seg.end_vertex); self.add_vertex(p) };
                 let ei = match &seg.source {
                     // ✅ OCCT-aligned: IC edge identity (inner/internal wires).
                     WireEdgeSource::IntersectionCurve(ci) => {
@@ -645,8 +643,8 @@ impl ResultBuilder {
             for &si in iw {
                 let seg = &segments[si];
                 let getp = |vi: usize| -> DVec3 { if vi < ds.vertices.len() { ds.vertices[vi].point } else { *vertex_positions.get(&vi).unwrap_or(&DVec3::ZERO) } };
-                let v1 = if seg.start_vertex < ds.vertices.len() { self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point) } else { let p = getp(seg.start_vertex); let i = self.vertices.len(); self.vertices.push(p); i };
-                let v2 = if seg.end_vertex < ds.vertices.len() { self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point) } else { let p = getp(seg.end_vertex); let i = self.vertices.len(); self.vertices.push(p); i };
+                let v1 = if seg.start_vertex < ds.vertices.len() { self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point) } else { let p = getp(seg.start_vertex); self.add_vertex(p) };
+                let v2 = if seg.end_vertex < ds.vertices.len() { self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point) } else { let p = getp(seg.end_vertex); self.add_vertex(p) };
                 let ei = match &seg.source {
                     WireEdgeSource::IntersectionCurve(ci) => {
                         let crv = &ds.intersection_curves[*ci].curve;
