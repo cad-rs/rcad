@@ -6698,7 +6698,7 @@ impl<'a> BooleanBuilder<'a> {
                             surface: face.surface.clone(),
                             normal: face.normal,
                             uv_centroid: Some(c0_2d),
-                            sample_override: Some(center_3d + face.normal * TOLERANCE_ABS * 10.0),
+                            sample_override: Some(center_3d - face.normal * TOLERANCE_ABS * 10.0),
                             uv_domain: None,
                             inner_wires: vec![],
                             outer_circle_edges: outer_edges,
