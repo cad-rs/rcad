@@ -3660,7 +3660,7 @@ fn orient_tri(tri: [DVec3; 3], face_normal: DVec3) -> [DVec3; 3] {
 }
 
 /// Iterate over (face_flat_index, &Face) pairs across all solids/shells.
-fn face_flat_iter(brep: &BRep) -> impl Iterator<Item = (usize, &crate::topology::Face)> {
+pub fn face_flat_iter(brep: &BRep) -> impl Iterator<Item = (usize, &crate::topology::Face)> {
     brep.solids
         .iter()
         .flat_map(|s| &s.shells)

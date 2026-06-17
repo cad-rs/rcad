@@ -2452,6 +2452,7 @@ pub fn section_curves(brep: &BRep, plane: &Plane) -> Vec<SectionCurve> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tolerance::*;
     use rcad_kernel::PrimitiveSolid;
     use glam::{Vec3Swizzles, DVec2};
 

@@ -2699,11 +2699,8 @@ fn finalize_fast_path_result(r: BRep) -> BRep {
     // ✅ OCCT-aligned: promote planar BSpline -> Plane for boolean results.
     //   (BRepClass3d_SolidClassifier requires exact Plane type.)
     let mut r = r;
-    // Compute and propagate per-entity tolerances (OCCT BRepLib::SameParameter + hierarchy).
-    rcad_kernel::tolerance::resize_tolerance_arrays(&mut r);
-    rcad_kernel::brep_same_parameter(&mut r, 10);
-    rcad_kernel::compute_vertex_tolerances(&mut r);
-    rcad_kernel::tolerance::finalize_tolerance_hierarchy(&mut r);
+    // ✅ OCCT对齐: CorrectTolerances (SameParameter + vertex + hierarchy).
+    rcad_kernel::tolerance::correct_tolerances(&mut r, 10);
     r
 }
 
@@ -2814,11 +2811,8 @@ fn finalize_boolean_result(r: BRep) -> BRep {
     // can introduce slight plane offsets that break coplanarity detection.
     // promote_planar_surfaces skipped — OCCT preserves original surface types
     let mut r = r;
-    // Compute and propagate per-entity tolerances.
-    rcad_kernel::tolerance::resize_tolerance_arrays(&mut r);
-    rcad_kernel::brep_same_parameter(&mut r, 10);
-    rcad_kernel::compute_vertex_tolerances(&mut r);
-    rcad_kernel::tolerance::finalize_tolerance_hierarchy(&mut r);
+    // ✅ OCCT对齐: CorrectTolerances (SameParameter + vertex + hierarchy).
+    rcad_kernel::tolerance::correct_tolerances(&mut r, 10);
     r
 }
 
@@ -3493,11 +3487,8 @@ pub fn boolean_op_with_retry(
     // distribution vs OCCT's reference (bfuse_simple B2: 6BS+5PL → 11PL).
     // OCCT's STEP export writes the original surfaces as-is.
     // brep = promote_planar_surfaces(brep);
-    // Compute and propagate per-entity tolerances.
-    rcad_kernel::tolerance::resize_tolerance_arrays(&mut brep);
-    rcad_kernel::brep_same_parameter(&mut brep, 10);
-    rcad_kernel::compute_vertex_tolerances(&mut brep);
-    rcad_kernel::tolerance::finalize_tolerance_hierarchy(&mut brep);
+    // ✅ OCCT对齐: CorrectTolerances (SameParameter + vertex + hierarchy).
+    rcad_kernel::tolerance::correct_tolerances(&mut brep, 10);
     let brep = split_disconnected_shells(brep);
     Ok(brep)
 }

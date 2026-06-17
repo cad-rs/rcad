@@ -606,6 +606,7 @@ fn get_face_and_surface_idx(brep: &BRep, face_idx: usize) -> Option<(&rcad_kerne
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tolerance::*;
     use rcad_kernel::{PrimitiveSolid, geom::{Plane, Line3, Circle3}};
 
     // ── BoundingBox Tests ─────────────────────────────────────────────────────────

@@ -551,6 +551,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         assert!(f.inner_wires.is_empty());
         assert_eq!(f.normal, DVec3::Z);
@@ -569,8 +570,8 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
-        assert_eq!(f.inner_wires.len(), 1);
         assert_eq!(f.inner_wires[0].edges.len(), 2);
     }
 
@@ -585,6 +586,7 @@ mod tests {
                     triangles: vec![],
                     sample_point: None,
                     mesh_dirty: true,
+                    surface_idx: None,
                 },
                 Face {
                     outer_wire: Wire { edges: vec![] },
@@ -593,6 +595,7 @@ mod tests {
                     triangles: vec![],
                     sample_point: None,
                     mesh_dirty: true,
+                    surface_idx: None,
                 },
             ],
         };

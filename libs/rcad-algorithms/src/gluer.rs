@@ -1514,6 +1514,7 @@ pub fn glue_at_interface(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tolerance::*;
     use rcad_kernel::PrimitiveSolid;
     use rcad_kernel::{Wire, Face, Shell};
     use glam::DAffine3;
@@ -1633,6 +1634,7 @@ mod tests {
                     triangles: vec![],
                     sample_point: None,
                     mesh_dirty: true,
+            surface_idx: None,
                 },
             ],
         };
@@ -1645,6 +1647,7 @@ mod tests {
                     triangles: vec![],
                     sample_point: None,
                     mesh_dirty: true,
+            surface_idx: None,
                 },
             ],
         };
@@ -2036,6 +2039,7 @@ mod tests {
                     triangles: vec![],
                     sample_point: None,
                     mesh_dirty: true,
+            surface_idx: None,
                 }],
             }],
         });

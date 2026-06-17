@@ -1319,6 +1319,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         let f1 = Face {
             outer_wire: Wire {
@@ -1333,6 +1334,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         let f2 = Face {
             outer_wire: Wire {
@@ -1347,6 +1349,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
 
         BRep {

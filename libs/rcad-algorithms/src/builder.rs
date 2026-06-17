@@ -8645,7 +8645,7 @@ fn merge_subfaces_of_same_face(sub_faces: &mut Vec<SubFace>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{BooleanBuilder, BooleanOpType, SourceSide};
+    use super::{BooleanBuilder, BooleanOpType, FaceSampleData, SourceSide};
     use crate::classify::Classification;
 
     #[test]
@@ -8796,10 +8796,11 @@ mod tests {
         let b_face_indices: Vec<usize> = (ds.a_face_count..ds.faces.len()).collect();
         let mut kept = 0usize;
         for sub in &subs {
+            let sd = FaceSampleData::from_sub_face(sub);
             let class = super::classify_against_solid_for_boolean(
                 BooleanOpType::Intersection,
                 SourceSide::A,
-                sub,
+                &sd,
                 &b_face_indices,
                 &ds,
             );

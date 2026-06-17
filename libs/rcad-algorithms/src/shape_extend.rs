@@ -1120,6 +1120,7 @@ impl ShapeExplorer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tolerance::*;
     use glam::DVec3;
     use rcad_kernel::geom::{Plane, Surface3};
     use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
@@ -1147,6 +1148,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
 
         let shell = Shell { faces: vec![face] };
@@ -1553,6 +1555,7 @@ mod tests {
                 triangles: vec![],
                 sample_point: None,
                 mesh_dirty: true,
+            surface_idx: None,
             });
         }
 

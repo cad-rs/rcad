@@ -2529,6 +2529,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
 
@@ -2751,6 +2752,7 @@ mod tests {
                             triangles: vec![],
                             sample_point: None,
                             mesh_dirty: true,
+            surface_idx: None,
                         });
                     }
 
@@ -2837,6 +2839,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
 
@@ -2863,6 +2866,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
 
@@ -2890,6 +2894,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
 
@@ -3026,6 +3031,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
 

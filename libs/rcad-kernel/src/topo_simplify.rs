@@ -417,6 +417,7 @@ mod tests {
                     triangles: vec![],
                     sample_point: None,
                     mesh_dirty: true,
+                    surface_idx: None,
                 }],
             }],
         }];

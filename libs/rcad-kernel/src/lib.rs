@@ -20,6 +20,7 @@ pub mod topology;
 ///
 /// Analogous to OCCT `GProp_GProps` + `BRepGProp`.
 pub mod properties;
+pub use crate::properties::face_flat_iter;
 
 /// Topology query helpers: edge adjacency, vertex adjacency, shape counts.
 ///

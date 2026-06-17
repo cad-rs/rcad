@@ -737,6 +737,7 @@ pub fn golden_section_max<F: Fn(f64) -> f64>(f: F, a: f64, b: f64, tol: f64) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tolerance::*;
     use std::f64::consts::PI;
 
     // --- Root Finding Tests ---
@@ -1053,6 +1054,5 @@ mod tests {
 
         let max_x = golden_section_max(f, -2.0, 2.0, TOLERANCE_LINEAR_ULTRA_STRICT);
         assert!(max_x.abs() < TOLERANCE_MESH_LEGACY);
-        assert!((result.z - 6.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
     }
 }

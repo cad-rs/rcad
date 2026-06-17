@@ -674,7 +674,6 @@ fn any_perpendicular(v: DVec3) -> DVec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tolerance::*;
     use rcad_kernel::geom::{Curve3, CurveEval, SurfaceEval};
 
     // -------------------------------------------------------------------------

@@ -3210,6 +3210,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
 
@@ -3328,6 +3329,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],
@@ -3364,6 +3366,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],
@@ -3400,6 +3403,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],
@@ -3439,6 +3443,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],
@@ -3505,6 +3510,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         // Face 2: uses e4
         let face2 = Face {
@@ -3516,6 +3522,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         // Face 3: uses e4 again 鈥?this makes e4 shared by 3 faces
         let face3 = Face {
@@ -3527,6 +3534,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
 
         brep.solids.push(Solid {
@@ -3581,6 +3589,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],
@@ -3636,6 +3645,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],
@@ -3681,6 +3691,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],
@@ -3863,6 +3874,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],
@@ -3938,6 +3950,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],
@@ -4026,6 +4039,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],
@@ -4064,6 +4078,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],
@@ -4170,6 +4185,7 @@ mod tests {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
         brep.solids.push(Solid {
             shells: vec![Shell { faces: vec![face] }],

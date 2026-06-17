@@ -936,6 +936,7 @@ fn get_face_and_surface_idx(brep: &BRep, face_idx: usize) -> Option<(&rcad_kerne
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tolerance::*;
     use crate::brep_bnd::BoundingBox;
     use rcad_kernel::{PrimitiveSolid, geom::{Line3, Plane, Circle3 as GeomCircle}};
     use rcad_kernel::geom::CylindricalSurface;

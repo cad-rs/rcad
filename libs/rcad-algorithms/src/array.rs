@@ -1110,6 +1110,7 @@ fn transform_surface(surface: &Surface3, mat: &DMat4) -> Surface3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tolerance::*;
     use rcad_modeling::make_box_brep;
 
     fn make_box() -> BRep {

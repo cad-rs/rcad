@@ -694,6 +694,9 @@ pub fn vectors_parallel_adaptive(a: DVec3, b: DVec3, tol: AdaptiveTolerance) -> 
     a.cross(b).length_squared() < ang_tol * ang_tol
 }
 
+// Re-export for test module convenience (any_perpendicular is in rcad-kernel).
+pub use rcad_kernel::geom::any_perpendicular;
+
 #[cfg(test)]
 mod tests {
     use super::*;

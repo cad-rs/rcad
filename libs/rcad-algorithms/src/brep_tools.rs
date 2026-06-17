@@ -1817,6 +1817,7 @@ fn connected_face_components(brep: &BRep, face_indices: &[usize]) -> Vec<Vec<usi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tolerance::*;
     use rcad_kernel::PrimitiveSolid;
     use std::f64::consts::PI;
 

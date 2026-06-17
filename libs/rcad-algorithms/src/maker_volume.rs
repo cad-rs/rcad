@@ -248,6 +248,7 @@ mod tests {
     use rcad_kernel::{BRep, PrimitiveSolid, properties::volume};
 
     use super::*;
+    use crate::tolerance::*;
     use crate::geom_populate;
 
     fn box_at(x: f64, y: f64, z: f64, w: f64, h: f64, d: f64) -> BRep {

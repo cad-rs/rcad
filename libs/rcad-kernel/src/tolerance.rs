@@ -439,6 +439,196 @@ pub fn compute_vertex_tolerances(brep: &mut BRep) {
     }
 }
 
+/// ✅ OCCT对齐: CorrectTolerances — 统一后处理,等价于 OCCT boolean 后的
+///    BRepLib::SameParameter + 逐顶点公差计算 + 层级传播 (finalize_tolerance_hierarchy).
+///
+/// 调用顺序:
+/// 1. `resize_tolerance_arrays` — 确保所有容差数组长度正确
+/// 2. `brep_same_parameter` — 从 3D/pcurve 偏差计算边公差
+/// 3. `compute_vertex_tolerances` — 从相邻边距离计算顶点公差
+/// 4. `finalize_tolerance_hierarchy` — 传播(面→边→顶点)确保层级一致
+///
+/// # Arguments
+///
+/// * `brep` - The BRep to correct tolerances on.
+/// * `samples_per_edge` - Sample points per edge for deviation computation (min 2).
+pub fn correct_tolerances(brep: &mut BRep, samples_per_edge: usize) {
+    resize_tolerance_arrays(brep);
+    brep_same_parameter(brep, samples_per_edge);
+    compute_vertex_tolerances(brep);
+    finalize_tolerance_hierarchy(brep);
+}
+
+/// ✅ OCCT对齐: SameRange — 确保每条边的 pcurve 范围和 edge_curve_range 一致。
+///    OCCT BRepLib::SameRange 将 pcurve 的 range 调整为与 3D curve range 匹配。
+///
+/// 对每条边,如果 3D curve range 和 pcurve range 都已设置但不同,
+/// 延长 pcurve range 到覆盖 3D curve range。
+pub fn same_range(brep: &mut BRep) {
+    for ei in 0..brep.edges.len() {
+        let Some([t1, t2]) = brep.geom.edge_curve_range.get(ei).copied().flatten() else {
+            continue;
+        };
+        if (t2 - t1).abs() < 1e-15 {
+            continue;
+        }
+        let Some(pcurves) = brep.geom.edge_pcurves.get(ei) else {
+            continue;
+        };
+        for pc in pcurves {
+            let Some(pc_range) = brep.geom.curve2d_range.get(pc.curve2d_idx).copied().flatten() else {
+                continue;
+            };
+            let (pc_t1, pc_t2) = (pc_range[0], pc_range[1]);
+            let new_pc_t1 = pc_t1.min(t1);
+            let new_pc_t2 = pc_t2.max(t2);
+            if (new_pc_t1 - pc_t1).abs() > 1e-15 || (new_pc_t2 - pc_t2).abs() > 1e-15 {
+                if let Some(range) = brep.geom.curve2d_range.get_mut(pc.curve2d_idx) {
+                    *range = Some([new_pc_t1, new_pc_t2]);
+                }
+            }
+        }
+        // Mark as same range
+        while brep.geom.edge_same_range.len() <= ei {
+            brep.geom.edge_same_range.push(true);
+        }
+        brep.geom.edge_same_range[ei] = true;
+    }
+}
+
+// ── BRep_Tool 等查询函数 ─────────────────────────────────────────────────────────
+
+/// ✅ OCCT对齐: BRep_Tool::Curve(edge) — 返回边的 3D 曲线。
+pub fn edge_curve<'a>(brep: &'a BRep, ei: usize) -> Option<&'a crate::geom::Curve3> {
+    let ci = brep.geom.edge_curve.get(ei).copied().flatten()?;
+    brep.geom.curves.get(ci)
+}
+
+/// ✅ OCCT对齐: BRep_Tool::Surface(face) — 返回面的曲面。
+pub fn face_surface<'a>(brep: &'a BRep, face_flat_idx: usize) -> Option<&'a crate::geom::Surface3> {
+    let si = brep.geom.face_surface.get(face_flat_idx).copied().flatten()?;
+    brep.geom.surfaces.get(si)
+}
+
+/// ✅ OCCT对齐: BRep_Tool::PCurve(edge, face) — 返回边在面上的 pcurve。
+pub fn edge_pcurve_on_face<'a>(brep: &'a BRep, ei: usize, face_flat_idx: usize) -> Option<&'a crate::geom::Curve2d> {
+    let pcurves = brep.geom.edge_pcurves.get(ei)?;
+    let pc = pcurves.iter().find(|pc| pc.surface_idx == face_flat_idx)?;
+    let ci = pc.curve2d_idx;
+    brep.geom.curve2ds.get(ci)
+}
+
+/// ✅ OCCT对齐: BRep_Tool::Degenerated(edge) — 边是否为退化边。
+pub fn edge_is_degenerated(brep: &BRep, ei: usize) -> bool {
+    brep.geom.edge_degenerated.get(ei).copied().unwrap_or(false)
+}
+
+/// ✅ OCCT对齐: BRep_Tool::SameParameter(edge) — 边是否 same-parameter。
+pub fn edge_is_same_parameter(brep: &BRep, ei: usize) -> bool {
+    brep.geom.edge_same_parameter.get(ei).copied().unwrap_or(true)
+}
+
+/// ✅ OCCT对齐: BRep_Tool::SameRange(edge) — 边是否 same-range。
+pub fn edge_is_same_range(brep: &BRep, ei: usize) -> bool {
+    brep.geom.edge_same_range.get(ei).copied().unwrap_or(true)
+}
+
+// ── CorrectCurveOnSurface / CorrectPointOnCurve ────────────────────────────────
+
+/// ✅ OCCT对齐: BOPTools_AlgoTools::CorrectCurveOnSurface.
+///
+/// 对每条边，检查 pcurve(s) 和 3D 曲线之间的偏差。
+/// 如果偏差超出边公差，膨胀边公差以覆盖偏差量。
+/// 不修改 pcurve 曲线本身（当前实现只调公差，不调几何）。
+///
+/// 与 brep_same_parameter 的区别：
+/// - brep_same_parameter: 采样偏差 → 更新边公差
+/// - correct_curve_on_surface: 采样偏差 → 若超过边公差则膨胀
+///
+/// 效果类似，但后者是对 "已设置的公差不够" 的补正。
+///
+/// # Arguments
+///
+/// * `brep` - The BRep to correct.
+/// * `samples_per_edge` - Sample points per edge.
+pub fn correct_curve_on_surface(brep: &mut BRep, samples_per_edge: usize) {
+    let n = samples_per_edge.max(2);
+    // First pass: compute max deviation per edge (immutable borrow only).
+    let deviations: Vec<(usize, f64)> = {
+        let curves = &brep.geom.curves;
+        let surfaces = &brep.geom.surfaces;
+        let curve2ds = &brep.geom.curve2ds;
+        (0..brep.edges.len()).filter_map(|ei| {
+            let ci = brep.geom.edge_curve.get(ei).copied().flatten()?;
+            let curve = curves.get(ci)?;
+            let [t1, t2] = brep.geom.edge_curve_range.get(ei).copied().flatten()?;
+            if (t2 - t1).abs() < 1e-15 { return None; }
+            let pcurves = brep.geom.edge_pcurves.get(ei)?;
+            if pcurves.is_empty() { return None; }
+            let etol = edge_tolerance(brep, ei);
+
+            let mut max_dev = 0.0_f64;
+            for pc in pcurves {
+                let surface = surfaces.get(pc.surface_idx)?;
+                let pc_curve = curve2ds.get(pc.curve2d_idx)?;
+                for si in 0..n {
+                    let t = t1 + (t2 - t1) * si as f64 / (n - 1) as f64;
+                    let uv = pc_curve.point_at(t);
+                    let p_surf = surface.point_at(uv.x, uv.y);
+                    let p_curve = curve.point_at(t);
+                    let dev = (p_surf - p_curve).length();
+                    if dev > max_dev { max_dev = dev; }
+                }
+            }
+            if max_dev > etol { Some((ei, max_dev)) } else { None }
+        }).collect()
+    };
+    // Second pass: apply tolerance updates (mutable borrow).
+    for (ei, tol) in deviations {
+        update_edge_tolerance(brep, ei, tol);
+    }
+}
+
+/// ✅ OCCT对齐: BOPTools_AlgoTools::CorrectPointOnCurve.
+///
+/// 对每条边，检查顶点的 3D 位置到边曲线的距离。
+/// 如果距离超出顶点公差，膨胀顶点公差。
+pub fn correct_point_on_curve(brep: &mut BRep) {
+    // Collect (vi, min_dist) pairs first, then apply — avoids borrow conflicts.
+    let mut updates: Vec<(usize, f64)> = Vec::new();
+    for ei in 0..brep.edges.len() {
+        let curve = edge_curve(brep, ei).cloned();
+        let Some(ref curve) = curve else { continue; };
+        let Some([t1, t2]) = brep.geom.edge_curve_range.get(ei).copied().flatten() else { continue; };
+        if (t2 - t1).abs() < 1e-15 { continue; }
+        for &vi in &[brep.edges[ei].start, brep.edges[ei].end] {
+            let Some(vp) = brep.vertices.get(vi).map(|v| v.point) else { continue; };
+            let mut min_dist = f64::MAX;
+            for s in 0..20 {
+                let t = t1 + (t2 - t1) * s as f64 / 19.0;
+                let pt = curve.point_at(t);
+                let d = (pt - vp).length();
+                if d < min_dist { min_dist = d; }
+            }
+            let vtol = vertex_tolerance(brep, vi);
+            if min_dist > vtol && min_dist < f64::MAX {
+                updates.push((vi, min_dist));
+            }
+        }
+    }
+    for (vi, tol) in updates {
+        update_vertex_tolerance(brep, vi, tol);
+    }
+}
+
+/// ✅ OCCT对齐: 完整 PostTreat — CorrectTolerances + CorrectCurveOnSurface + CorrectPointOnCurve。
+pub fn post_treat(brep: &mut BRep, samples_per_edge: usize) {
+    correct_tolerances(brep, samples_per_edge);
+    correct_curve_on_surface(brep, samples_per_edge);
+    correct_point_on_curve(brep);
+    same_range(brep);
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -615,5 +805,34 @@ mod tests {
         finalize_tolerance_hierarchy(&mut brep);
         // Vertex 0 must still be 1e-3.
         assert!((vertex_tolerance(&brep, 0) - 1e-3).abs() < 1e-20);
+    }
+
+    #[test]
+    fn correct_tolerances_runs_without_panic() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0, height: 2.0, depth: 3.0,
+        });
+        // Should not panic on a valid box BRep.
+        correct_tolerances(&mut brep, 5);
+        // All tolerances should be at least CONFUSION after processing.
+        for vi in 0..brep.vertices.len() {
+            assert!(vertex_tolerance(&brep, vi) >= CONFUSION);
+        }
+        for ei in 0..brep.edges.len() {
+            assert!(edge_tolerance(&brep, ei) >= CONFUSION);
+        }
+    }
+
+    #[test]
+    fn same_range_sets_flag() {
+        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0, height: 1.0, depth: 1.0,
+        });
+        // Initially no same_range flag.
+        assert!(brep.geom.edge_same_range.is_empty());
+        same_range(&mut brep);
+        // After same_range, flags should be set for all edges.
+        assert_eq!(brep.geom.edge_same_range.len(), brep.edges.len());
+        assert!(brep.geom.edge_same_range.iter().all(|&f| f));
     }
 }

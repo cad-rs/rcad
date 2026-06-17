@@ -1174,6 +1174,7 @@ fn is_wire_oriented_correctly(brep: &BRep, wire: &Wire, face_normal: DVec3) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tolerance::*;
     use rcad_kernel::PrimitiveSolid;
 
     fn make_box() -> BRep {

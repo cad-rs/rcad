@@ -829,6 +829,7 @@ pub type HArray1OfInteger = HArray1<i32>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tolerance::*;
 
     // Array1 Tests
     #[test]

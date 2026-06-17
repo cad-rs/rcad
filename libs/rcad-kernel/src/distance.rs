@@ -507,6 +507,7 @@ mod tests {
             triangles: vec![[0, 1, 2], [0, 2, 3]],
             sample_point: None,
             mesh_dirty: false,
+            surface_idx: None,
         };
         BRep {
             vertices,
@@ -530,6 +531,7 @@ mod tests {
                 face_surface_range: vec![Some([-hw, hw, -hh, hh])],
                 edge_same_parameter: Vec::new(),
                 edge_same_range: Vec::new(),
+                face_internal_vertices: Vec::new(),
             },
             compound: None,
             compsolid: None,

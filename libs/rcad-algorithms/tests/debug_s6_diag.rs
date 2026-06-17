@@ -17,12 +17,11 @@ fn debug_s6_diag() {
     println!("\nResult SA: {:.6}", surface_area(&result));
 
     // Per-face via face_flat_iter
-    for (fi, face) in face_flat_iter(&result).enumerate() {
+    for (fi, (face_idx, face)) in face_flat_iter(&result).enumerate() {
         let n_edges = face.outer_wire.edges.len();
         let inner = face.inner_wires.len();
-        // Get absolute face index for geometry lookup
         // Compute area via try_analytic_face_surface_area or fallback
-        let area = estimate_face_area(&result, fi as usize);
+        let area = estimate_face_area(&result, face_idx);
         println!("  Face {fi} ({n_edges} edges, {inner} iw): area ≈ {area:.6}");
     }
 
