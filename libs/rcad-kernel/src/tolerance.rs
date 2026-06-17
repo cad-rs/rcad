@@ -39,8 +39,202 @@ pub const CONFUSION: f64 = 1e-7;
 pub const ANGULAR: f64 = 1e-12;
 
 /// Tessellation / approximation tolerance.
-/// Analogous to `Precision::Approximation()` = 1e-4 in OCCT.
-pub const APPROXIMATION: f64 = 1e-4;
+/// Analogous to `Precision::Approximation()` = 1e-6 in OCCT.
+pub const APPROXIMATION: f64 = 1e-6;
+
+/// Intersection tolerance.  Used by intersection algorithms to decide
+/// when a solution is reached.
+/// Analogous to `Precision::Intersection()` = Confusion / 100 = 1e-9.
+pub const INTERSECTION: f64 = CONFUSION * 0.01;
+
+/// Parametric-space confusion tolerance on a default curve.
+/// Analogous to `Precision::PConfusion()` = Confusion / 100 = 1e-9.
+pub const P_CONFUSION: f64 = CONFUSION * 0.01;
+
+/// Parametric-space intersection tolerance on a default curve.
+/// Analogous to `Precision::PIntersection()` = Intersection / 100 = 1e-11.
+pub const P_INTERSECTION: f64 = INTERSECTION * 0.01;
+
+/// Parametric-space approximation tolerance on a default curve.
+/// Analogous to `Precision::PApproximation()` = Approximation / 100 = 1e-8.
+pub const P_APPROXIMATION: f64 = APPROXIMATION * 0.01;
+
+// ── Geometric resolution helpers (BRepCheck::PrecCurve / PrecSurface) ────────
+
+/// Helper: return `f64::EPSILON * max_coord_magnitude`.
+/// Equivalent to OCCT `RealEpsilon() * max(|coords|)` pattern used in
+/// `BRepCheck::PrecCurve` and `BRepCheck::PrecSurface`.
+fn epsilon_of(max_coord: f64) -> f64 {
+    f64::EPSILON * max_coord.abs().max(1.0)
+}
+
+/// Equivalent to OCCT `BRepCheck::PrecCurve`.
+///
+/// Returns the floating-point resolution of a 3D curve computed from the
+/// magnitude of its defining parameters.  Used as a tolerance delta in
+/// `BRepLib_ValidateEdge::correctTolerance`.
+pub fn prec_curve(curve: &crate::geom::Curve3) -> f64 {
+    use crate::geom::Curve3;
+    match curve {
+        Curve3::Line(l) => {
+            let m = l.origin.to_array().iter().copied().fold(0.0_f64, f64::max)
+                .max(l.direction.to_array().iter().copied().fold(0.0_f64, f64::max));
+            epsilon_of(m)
+        }
+        Curve3::Circle(c) => {
+            let center_max = c.center.to_array().iter().copied().fold(0.0_f64, f64::max);
+            epsilon_of(center_max + c.radius)
+        }
+        Curve3::Ellipse(e) => {
+            let center_max = e.center.to_array().iter().copied().fold(0.0_f64, f64::max);
+            epsilon_of(center_max + e.major_radius.max(e.minor_radius))
+        }
+        Curve3::BSpline(bs) => {
+            let m = bs
+                .control_points
+                .iter()
+                .flat_map(|p| p.to_array())
+                .fold(0.0_f64, f64::max);
+            epsilon_of(m)
+        }
+        Curve3::Bezier(bz) => {
+            let m = bz
+                .control_points
+                .iter()
+                .flat_map(|p| p.to_array())
+                .fold(0.0_f64, f64::max);
+            epsilon_of(m)
+        }
+        Curve3::Offset(o) => {
+            // Recurse into the basis curve
+            prec_curve(&o.basis)
+        }
+        Curve3::Hyperbola(h) => {
+            let center_max = h.center.to_array().iter().copied().fold(0.0_f64, f64::max);
+            epsilon_of(center_max + h.semi_major.max(h.semi_minor))
+        }
+        Curve3::Parabola(p) => {
+            let m = p.vertex.to_array().iter().copied().fold(0.0_f64, f64::max);
+            epsilon_of(m + p.focal_param)
+        }
+        Curve3::CircularHelix(ch) => {
+            let m = ch.origin.to_array().iter().copied().fold(0.0_f64, f64::max);
+            epsilon_of(m + ch.radius + ch.pitch)
+        }
+        Curve3::SineWave(sw) => {
+            // SineWave3 uses `frequency`, not wavelength.  Estimate period from
+            // frequency: the curve travels amplitude * sin(freq * t) from origin.
+            let m = sw.origin.to_array().iter().copied().fold(0.0_f64, f64::max);
+            epsilon_of(m + sw.amplitude + sw.frequency.abs())
+        }
+    }
+}
+
+/// Equivalent to OCCT `BRepCheck::PrecSurface`.
+///
+/// Returns the floating-point resolution of a surface computed from the
+/// magnitude of its defining parameters.
+pub fn prec_surface(surface: &crate::geom::Surface3) -> f64 {
+    use crate::geom::Surface3;
+    match surface {
+        Surface3::Plane(p) => {
+            let m = p.origin.to_array().iter().copied().fold(0.0_f64, f64::max)
+                .max(p.normal.to_array().iter().copied().fold(0.0_f64, f64::max));
+            epsilon_of(m)
+        }
+        Surface3::Cylinder(c) => {
+            let m = c.origin.to_array().iter().copied().fold(0.0_f64, f64::max)
+                .max(c.axis.to_array().iter().copied().fold(0.0_f64, f64::max));
+            epsilon_of(m + c.radius)
+        }
+        Surface3::Sphere(s) => {
+            let m = s.center.to_array().iter().copied().fold(0.0_f64, f64::max)
+                .max(s.axis.to_array().iter().copied().fold(0.0_f64, f64::max));
+            epsilon_of(m + s.radius)
+        }
+        Surface3::Cone(cn) => {
+            let m = cn.apex.to_array().iter().copied().fold(0.0_f64, f64::max)
+                .max(cn.axis.to_array().iter().copied().fold(0.0_f64, f64::max));
+            epsilon_of(m + cn.radius + cn.half_angle_rad)
+        }
+        Surface3::Torus(t) => {
+            let m = t.center.to_array().iter().copied().fold(0.0_f64, f64::max);
+            epsilon_of(m + t.major_radius + t.minor_radius)
+        }
+        Surface3::Ellipsoid(e) => {
+            let m = e.center.to_array().iter().copied().fold(0.0_f64, f64::max);
+            epsilon_of(m + e.radius_x.max(e.radius_y).max(e.radius_z))
+        }
+        Surface3::BSpline(bs) => {
+            // Estimate from control point magnitudes (2D grid: Vec<Vec<DVec3>>)
+            let m = bs
+                .control_points
+                .iter()
+                .flat_map(|row| row.iter())
+                .flat_map(|p| p.to_array())
+                .fold(0.0_f64, f64::max);
+            epsilon_of(m)
+        }
+        Surface3::Bezier(bz) => {
+            // control_points is Vec<Vec<DVec3>> (2D grid)
+            let m = bz
+                .control_points
+                .iter()
+                .flat_map(|row| row.iter())
+                .flat_map(|p| p.to_array())
+                .fold(0.0_f64, f64::max);
+            epsilon_of(m)
+        }
+        // Fallback for the remaining analytic types: compute from primary
+        // coordinate fields via their Debug representation or simplest
+        // accessible member.
+        Surface3::Helicoid(h) => {
+            let m = h.origin.to_array().iter().copied().fold(0.0_f64, f64::max);
+            epsilon_of(m + h.pitch)
+        }
+        Surface3::Pipe(pp) => {
+            // Recurse into the spine curve
+            prec_curve(&pp.spine).max(epsilon_of(pp.radius))
+        }
+        Surface3::LinearExtrusion(le) => {
+            let m = le
+                .direction
+                .to_array()
+                .iter()
+                .copied()
+                .fold(0.0_f64, f64::max);
+            prec_curve(&le.profile).max(epsilon_of(m))
+        }
+        Surface3::Revolution(rv) => {
+            let m = rv.axis_origin.to_array().iter().copied().fold(0.0_f64, f64::max);
+            // Also consider the profile curve precision
+            prec_curve(&rv.profile).max(epsilon_of(m))
+        }
+        Surface3::Ruled(ru) => {
+            // Conservative estimate from both boundary curves
+            prec_curve(&ru.start).max(prec_curve(&ru.end))
+        }
+        Surface3::TriBezier(tb) => {
+            // Triangular net: Vec<Vec<DVec3>>
+            let m = tb
+                .control_points
+                .iter()
+                .flat_map(|row| row.iter())
+                .flat_map(|p| p.to_array())
+                .fold(0.0_f64, f64::max);
+            epsilon_of(m)
+        }
+        Surface3::Coons(co) => {
+            // Conservative: max over all four boundary curves
+            prec_curve(&co.south)
+                .max(prec_curve(&co.north))
+                .max(prec_curve(&co.west))
+                .max(prec_curve(&co.east))
+        }
+        Surface3::Offset(os) => prec_surface(&os.basis),
+        Surface3::Trimmed(tr) => prec_surface(&tr.basis),
+    }
+}
 
 // ── Per-entity tolerance queries ──────────────────────────────────────────────
 
@@ -96,6 +290,48 @@ pub fn model_tolerance(brep: &BRep) -> f64 {
         .chain(brep.geom.face_tolerance.iter())
         .copied()
         .fold(CONFUSION, f64::max)
+}
+
+/// Tolerance value used as STEP `UNCERTAINTY_MEASURE_WITH_UNIT` during export.
+///
+/// Analogous to OCCT `STEPControl_ActorWrite::UsedTolerance` with the default
+/// average-precision mode (`WritePrecisionMode == 1`):
+///
+/// 1. Compute the arithmetic mean of all stored vertex / edge / face tolerances.
+/// 2. Multiply by 1.5 (OCCT's safety margin for downstream precision).
+/// 3. Round to 2 significant digits (mimics OCCT's `Interface_MSG::Intervalled`).
+/// 4. Floor at `CONFUSION` (1e-7).
+///
+/// When no tolerances are stored at all, returns `CONFUSION` directly.
+pub fn step_export_uncertainty(brep: &BRep) -> f64 {
+    let sum: f64 = brep
+        .geom
+        .vertex_tolerance
+        .iter()
+        .chain(brep.geom.edge_tolerance.iter())
+        .chain(brep.geom.face_tolerance.iter())
+        .copied()
+        .sum();
+    let count = brep.geom.vertex_tolerance.len()
+        + brep.geom.edge_tolerance.len()
+        + brep.geom.face_tolerance.len();
+
+    if count == 0 {
+        return CONFUSION;
+    }
+
+    let avg = sum / count as f64;
+    let scaled = avg * 1.5;
+
+    if scaled <= 0.0 {
+        return CONFUSION;
+    }
+
+    // Round to 2 significant digits (equivalent to Interface_MSG::Intervalled).
+    let magnitude = 10.0_f64.powf(scaled.log10().floor());
+    let rounded = (scaled / magnitude).round() * magnitude;
+
+    rounded.max(CONFUSION)
 }
 
 /// Effective surface parameter domain [u1, u2, v1, v2] for a face.
@@ -336,52 +572,62 @@ pub fn finalize_tolerance_hierarchy(brep: &mut BRep) {
 /// are skipped.
 pub fn brep_same_parameter(brep: &mut BRep, samples_per_edge: usize) {
     let samples = samples_per_edge.max(2);
-    for ei in 0..brep.edges.len() {
-        // Get 3D curve
-        let Some(curve_idx) = brep.geom.edge_curve.get(ei).copied().flatten() else {
-            continue;
-        };
-        let Some(curve) = brep.geom.curves.get(curve_idx) else {
-            continue;
-        };
-        // Get parametric range
-        let Some([t1, t2]) = brep.geom.edge_curve_range.get(ei).copied().flatten() else {
-            continue;
-        };
-        if (t2 - t1).abs() < 1e-15 {
-            continue;
-        }
-        // Get pcurves
-        let Some(pcurves) = brep.geom.edge_pcurves.get(ei) else {
-            continue;
-        };
-        if pcurves.is_empty() {
-            continue;
-        }
-
-        let mut max_dev = 0.0_f64;
-        for pc in pcurves {
-            let Some(surface) = brep.geom.surfaces.get(pc.surface_idx) else {
-                continue;
-            };
-            let Some(pc_curve) = brep.geom.curve2ds.get(pc.curve2d_idx) else {
-                continue;
-            };
-
-            for si in 0..samples {
-                let t = t1 + (t2 - t1) * si as f64 / (samples - 1) as f64;
-                let uv = pc_curve.point_at(t);
-                let p_surface = surface.point_at(uv.x, uv.y);
-                let p_curve = curve.point_at(t);
-                let dev = (p_surface - p_curve).length();
-                if dev > max_dev {
-                    max_dev = dev;
+    // First pass: collect deviations (immutable borrow only).
+    let updates: Vec<(usize, f64)> = {
+        let curves = &brep.geom.curves;
+        let surfaces = &brep.geom.surfaces;
+        let curve2ds = &brep.geom.curve2ds;
+        (0..brep.edges.len())
+            .filter_map(|ei| {
+                let Some(curve_idx) = brep.geom.edge_curve.get(ei).copied().flatten() else {
+                    return None;
+                };
+                let curve = curves.get(curve_idx)?;
+                let [t1, t2] = brep.geom.edge_curve_range.get(ei).copied().flatten()?;
+                if (t2 - t1).abs() < 1e-15 {
+                    return None;
                 }
-            }
-        }
-
-        if max_dev > 0.0 {
-            crate::tolerance::set_edge_tolerance(brep, ei, max_dev);
+                let Some(pcurves) = brep.geom.edge_pcurves.get(ei) else {
+                    return None;
+                };
+                if pcurves.is_empty() {
+                    return None;
+                }
+                let mut max_dev = 0.0_f64;
+                for pc in pcurves {
+                    let surface = surfaces.get(pc.surface_idx)?;
+                    let pc_curve = curve2ds.get(pc.curve2d_idx)?;
+                    for si in 0..samples {
+                        let t = t1 + (t2 - t1) * si as f64 / (samples - 1) as f64;
+                        let uv = pc_curve.point_at(t);
+                        let p_surf = surface.point_at(uv.x, uv.y);
+                        let p_curve = curve.point_at(t);
+                        let dev = (p_surf - p_curve).length();
+                        if dev > max_dev {
+                            max_dev = dev;
+                        }
+                    }
+                }
+                if max_dev > 0.0 {
+                    Some((ei, max_dev))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    };
+    // Second pass: apply updates (mutable borrow).
+    for (ei, dev) in updates {
+        set_edge_tolerance(brep, ei, dev);
+        // Also propagate to adjacent vertices (OCCT CorrectVertexTolerance pattern).
+        let (v0, v1) = brep
+            .edges
+            .get(ei)
+            .map(|e| (e.start, e.end))
+            .unwrap_or((usize::MAX, usize::MAX));
+        if v0 != usize::MAX {
+            update_vertex_tolerance(brep, v0, dev);
+            update_vertex_tolerance(brep, v1, dev);
         }
     }
 }
@@ -535,84 +781,162 @@ pub fn edge_is_same_range(brep: &BRep, ei: usize) -> bool {
 
 // ── CorrectCurveOnSurface / CorrectPointOnCurve ────────────────────────────────
 
-/// ✅ OCCT对齐: BOPTools_AlgoTools::CorrectCurveOnSurface.
+/// OCCT-aligned: BOPTools_AlgoTools::CorrectCurveOnSurface.
 ///
-/// 对每条边，检查 pcurve(s) 和 3D 曲线之间的偏差。
-/// 如果偏差超出边公差，膨胀边公差以覆盖偏差量。
-/// 不修改 pcurve 曲线本身（当前实现只调公差，不调几何）。
+/// For each edge-face pair, sample deviation between the 3D curve and the
+/// pcurve projected onto the surface. If the deviation exceeds the current
+/// edge tolerance, inflate the edge tolerance to `max_dev * 1.00001` (the
+/// same 0.001 % safety factor OCCT's BRepLib_ValidateEdge uses in
+/// `UpdateTolerance`), capped at `a_max_tol` (default 1e-4).
 ///
-/// 与 brep_same_parameter 的区别：
-/// - brep_same_parameter: 采样偏差 → 更新边公差
-/// - correct_curve_on_surface: 采样偏差 → 若超过边公差则膨胀
+/// Does NOT modify the pcurve geometry itself — only the tolerance value.
 ///
-/// 效果类似，但后者是对 "已设置的公差不够" 的补正。
+/// OCCT source: BOPTools_AlgoTools_1.cxx lines 348-385 (`CorrectCurveOnSurface`)
+/// and BRepLib_ValidateEdge.cxx lines 49-64 (`UpdateTolerance`, `correctTolerance`).
 ///
-/// # Arguments
-///
-/// * `brep` - The BRep to correct.
-/// * `samples_per_edge` - Sample points per edge.
+/// NOTE: Phase 1 will add the `PrecCurve` / `PrecSurface` geometric-resolution
+/// delta (the `aToleranceDelta` term in OCCT's `correctTolerance`).
 pub fn correct_curve_on_surface(brep: &mut BRep, samples_per_edge: usize) {
+    correct_curve_on_surface_with_max(brep, samples_per_edge, 0.0001)
+}
+
+/// As `correct_curve_on_surface` with an explicit tolerance ceiling.
+pub fn correct_curve_on_surface_with_max(
+    brep: &mut BRep,
+    samples_per_edge: usize,
+    a_max_tol: f64,
+) {
     let n = samples_per_edge.max(2);
-    // First pass: compute max deviation per edge (immutable borrow only).
+    // First pass: compute corrected tolerance per edge (immutable borrow).
     let deviations: Vec<(usize, f64)> = {
         let curves = &brep.geom.curves;
         let surfaces = &brep.geom.surfaces;
         let curve2ds = &brep.geom.curve2ds;
-        (0..brep.edges.len()).filter_map(|ei| {
-            let ci = brep.geom.edge_curve.get(ei).copied().flatten()?;
-            let curve = curves.get(ci)?;
-            let [t1, t2] = brep.geom.edge_curve_range.get(ei).copied().flatten()?;
-            if (t2 - t1).abs() < 1e-15 { return None; }
-            let pcurves = brep.geom.edge_pcurves.get(ei)?;
-            if pcurves.is_empty() { return None; }
-            let etol = edge_tolerance(brep, ei);
-
-            let mut max_dev = 0.0_f64;
-            for pc in pcurves {
-                let surface = surfaces.get(pc.surface_idx)?;
-                let pc_curve = curve2ds.get(pc.curve2d_idx)?;
-                for si in 0..n {
-                    let t = t1 + (t2 - t1) * si as f64 / (n - 1) as f64;
-                    let uv = pc_curve.point_at(t);
-                    let p_surf = surface.point_at(uv.x, uv.y);
-                    let p_curve = curve.point_at(t);
-                    let dev = (p_surf - p_curve).length();
-                    if dev > max_dev { max_dev = dev; }
+        (0..brep.edges.len())
+            .filter_map(|ei| {
+                let ci = brep.geom.edge_curve.get(ei).copied().flatten()?;
+                let curve = curves.get(ci)?;
+                let [t1, t2] = brep.geom.edge_curve_range.get(ei).copied().flatten()?;
+                if (t2 - t1).abs() < 1e-15 {
+                    return None;
                 }
-            }
-            if max_dev > etol { Some((ei, max_dev)) } else { None }
-        }).collect()
+                let pcurves = brep.geom.edge_pcurves.get(ei)?;
+                if pcurves.is_empty() {
+                    return None;
+                }
+                let etol = edge_tolerance(brep, ei);
+                let curve_prec = prec_curve(curve);
+
+                let mut max_dev = 0.0_f64;
+                let mut max_surf_prec = 0.0_f64;
+                for pc in pcurves {
+                    let surface = surfaces.get(pc.surface_idx)?;
+                    let sp = prec_surface(surface);
+                    if sp > max_surf_prec {
+                        max_surf_prec = sp;
+                    }
+                    let pc_curve = curve2ds.get(pc.curve2d_idx)?;
+                    for si in 0..n {
+                        let t = t1 + (t2 - t1) * si as f64 / (n - 1) as f64;
+                        let uv = pc_curve.point_at(t);
+                        let p_surf = surface.point_at(uv.x, uv.y);
+                        let p_curve = curve.point_at(t);
+                        let dev = (p_surf - p_curve).length();
+                        if dev > max_dev {
+                            max_dev = dev;
+                        }
+                    }
+                }
+                if max_dev > etol {
+                    // OCCT BRepLib_ValidateEdge::UpdateTolerance: computed * 1.00001
+                    let corrected_raw = max_dev * 1.00001;
+                    // Add geometric-resolution delta (PrecCurve / PrecSurface)
+                    let tol_delta = curve_prec.max(max_surf_prec);
+                    let corrected = corrected_raw + tol_delta;
+                    if corrected < a_max_tol {
+                        Some((ei, corrected))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect()
     };
-    // Second pass: apply tolerance updates (mutable borrow).
+    // Second pass: apply tolerance updates and propagate edge→vertex
+    // (matching OCCT CorrectEdgeTolerance → UpdateShape → CorrectVertexTolerance).
     for (ei, tol) in deviations {
         update_edge_tolerance(brep, ei, tol);
+        // Propagate the raised edge tolerance to its adjacent vertices
+        // (OCCT CorrectVertexTolerance after each edge tolerance update).
+        let (v0, v1) = brep
+            .edges
+            .get(ei)
+            .map(|e| (e.start, e.end))
+            .unwrap_or((usize::MAX, usize::MAX));
+        if v0 != usize::MAX {
+            update_vertex_tolerance(brep, v0, tol);
+            update_vertex_tolerance(brep, v1, tol);
+        }
     }
 }
 
-/// ✅ OCCT对齐: BOPTools_AlgoTools::CorrectPointOnCurve.
+/// OCCT-aligned: BOPTools_AlgoTools::CorrectPointOnCurve (CheckEdge).
 ///
-/// 对每条边，检查顶点的 3D 位置到边曲线的距离。
-/// 如果距离超出顶点公差，膨胀顶点公差。
+/// For each edge, check vertex distance to the 3D curve. If the deviation
+/// exceeds the vertex tolerance (bumped up by edge tolerance per OCCT),
+/// inflate the vertex tolerance with a 10 % margin (dd = 0.1 * base_tol)
+/// and cap at aMaxTol (default 1e-4, matching OCCT's CorrectTolerances
+/// ceiling).
+///
+/// OCCT source: BOPTools_AlgoTools_1.cxx lines 430-517 (CheckEdge).
 pub fn correct_point_on_curve(brep: &mut BRep) {
-    // Collect (vi, min_dist) pairs first, then apply — avoids borrow conflicts.
+    correct_point_on_curve_with_max(brep, 0.0001)
+}
+
+/// As `correct_point_on_curve` but with an explicit tolerance ceiling.
+///
+/// `a_max_tol` — do not apply corrections whose new tolerance would exceed
+/// this value (OCCT default 0.0001 for `CorrectTolerances`).
+pub fn correct_point_on_curve_with_max(brep: &mut BRep, a_max_tol: f64) {
+    // Collect (vi, new_tol) pairs first to avoid borrow conflicts.
     let mut updates: Vec<(usize, f64)> = Vec::new();
     for ei in 0..brep.edges.len() {
         let curve = edge_curve(brep, ei).cloned();
         let Some(ref curve) = curve else { continue; };
-        let Some([t1, t2]) = brep.geom.edge_curve_range.get(ei).copied().flatten() else { continue; };
-        if (t2 - t1).abs() < 1e-15 { continue; }
+        let Some([t1, t2]) = brep.geom.edge_curve_range.get(ei).copied().flatten() else {
+            continue;
+        };
+        if (t2 - t1).abs() < 1e-15 {
+            continue;
+        }
+        let etol = edge_tolerance(brep, ei);
         for &vi in &[brep.edges[ei].start, brep.edges[ei].end] {
-            let Some(vp) = brep.vertices.get(vi).map(|v| v.point) else { continue; };
-            let mut min_dist = f64::MAX;
+            let Some(vp) = brep.vertices.get(vi).map(|v| v.point) else {
+                continue;
+            };
+            // Base tolerance = max(vertex_tol, edge_tol) per OCCT CheckEdge
+            let vtol = vertex_tolerance(brep, vi);
+            let base_tol = vtol.max(etol);
+            let dd = 0.1 * base_tol; // OCCT 10 % safety margin
+            let tol_sq = base_tol * base_tol;
+
+            let mut min_dist_sq = f64::MAX;
             for s in 0..20 {
                 let t = t1 + (t2 - t1) * s as f64 / 19.0;
                 let pt = curve.point_at(t);
-                let d = (pt - vp).length();
-                if d < min_dist { min_dist = d; }
+                let d2 = (pt - vp).length_squared();
+                if d2 < min_dist_sq {
+                    min_dist_sq = d2;
+                }
             }
-            let vtol = vertex_tolerance(brep, vi);
-            if min_dist > vtol && min_dist < f64::MAX {
-                updates.push((vi, min_dist));
+            if min_dist_sq.is_finite() && min_dist_sq > tol_sq {
+                let min_dist = min_dist_sq.sqrt();
+                let new_tol = min_dist + dd;
+                if new_tol < a_max_tol {
+                    updates.push((vi, new_tol));
+                }
             }
         }
     }

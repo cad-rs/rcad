@@ -119,6 +119,8 @@ struct ParsedStep {
     closed_shells: HashMap<u64, Vec<u64>>,
     open_shells: HashMap<u64, Vec<u64>>,
     manifold_solids: Vec<u64>,
+    /// BREP_WITH_VOIDS solid_id -> (outer_shell_ref, [void_shell_refs]).
+    brep_with_voids: HashMap<u64, (u64, Vec<u64>)>,
     shell_based_surface_models: Vec<Vec<u64>>,
     trimmed_curves: HashMap<u64, (u64, f64, f64)>,
     geometric_curve_sets: Vec<Vec<u64>>,
@@ -203,6 +205,7 @@ impl ParsedStep {
             closed_shells: HashMap::new(),
             open_shells: HashMap::new(),
             manifold_solids: Vec::new(),
+            brep_with_voids: HashMap::new(),
             shell_based_surface_models: Vec::new(),
             trimmed_curves: HashMap::new(),
             geometric_curve_sets: Vec::new(),
@@ -4976,6 +4979,23 @@ fn parse_entities(content: &str) -> Result<ParsedStep, StepError> {
                         parsed.manifold_solids.push(shell_ref);
                     }
                 }
+                "BREP_WITH_VOIDS" => {
+                    // BREP_WITH_VOIDS('name', #outer_shell, (#void1, #void2, ...))
+                    let parts = split_top_level(args, ',');
+                    if parts.len() >= 3 {
+                        let outer = parse_ref(parts[1]);
+                        // parts[2] is "(#void1, #void2, ...)"
+                        let void_str = parts[2].trim();
+                        let voids = if void_str.starts_with('(') && void_str.ends_with(')') {
+                            parse_ref_list(&void_str[1..void_str.len() - 1])
+                        } else {
+                            Vec::new()
+                        };
+                        if let Some(outer_ref) = outer {
+                            parsed.brep_with_voids.insert(id, (outer_ref, voids));
+                        }
+                    }
+                }
                 "SHELL_BASED_SURFACE_MODEL" => {
                     if let Some(shell_refs) = parse_ref_list_after_name(args)
                         && !shell_refs.is_empty()
@@ -5107,6 +5127,17 @@ fn build_compound_brep(parsed: &ParsedStep) -> Result<BRep, StepError> {
                         compound.add_solid(None, solid);
                     }
             }
+            // Check if this is a BREP_WITH_VOIDS (multi-shell solid)
+            else if let Some((outer, voids)) = parsed.brep_with_voids.get(&elem_ref) {
+                if let Some(mut solid) = build_solid_from_shell(parsed, *outer)? {
+                    for void_ref in voids {
+                        if let Some(void_solid) = build_solid_from_shell(parsed, *void_ref)? {
+                            solid.shells.extend(void_solid.shells);
+                        }
+                    }
+                    compound.add_solid(None, solid);
+                }
+            }
             // Check for nested compound
             else if parsed.compounds.contains_key(&elem_ref) {
                 let nested = build_nested_compound(parsed, elem_ref)?;
@@ -5141,6 +5172,15 @@ fn build_nested_compound(parsed: &ParsedStep, compound_id: u64) -> Result<rcad_k
                     && let Some(solid) = build_solid_from_shell(parsed, shell_ref)? {
                         compound.add_solid(None, solid);
                     }
+            } else if let Some((outer, voids)) = parsed.brep_with_voids.get(&elem_ref) {
+                if let Some(mut solid) = build_solid_from_shell(parsed, *outer)? {
+                    for void_ref in voids {
+                        if let Some(void_solid) = build_solid_from_shell(parsed, *void_ref)? {
+                            solid.shells.extend(void_solid.shells);
+                        }
+                    }
+                    compound.add_solid(None, solid);
+                }
             } else if parsed.compounds.contains_key(&elem_ref) {
                 let nested = build_nested_compound(parsed, elem_ref)?;
                 compound.add_compound(None, nested);
@@ -5184,6 +5224,16 @@ fn build_compsolid_from_step(parsed: &ParsedStep, compsolid_id: u64) -> Result<O
             && let Some(solid) = build_solid_from_shell(parsed, shell_ref)? {
                 compsolid.add(solid);
             }
+        else if let Some((outer, voids)) = parsed.brep_with_voids.get(&solid_ref) {
+            if let Some(mut solid) = build_solid_from_shell(parsed, *outer)? {
+                for void_ref in voids {
+                    if let Some(void_solid) = build_solid_from_shell(parsed, *void_ref)? {
+                        solid.shells.extend(void_solid.shells);
+                    }
+                }
+                compsolid.add(solid);
+            }
+        }
     }
 
     if compsolid.is_empty() {
@@ -5335,9 +5385,9 @@ fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, u
     let mut face_id_map: HashMap<u64, usize> = HashMap::new();
     let mut flat_face_idx: usize = 0;
 
-    for shell_faces in shell_face_sets {
+    for (shell_idx, shell_faces) in shell_face_sets.iter().enumerate() {
         let mut faces: Vec<Face> = Vec::new();
-        for face_id in shell_faces {
+        for &face_id in shell_faces {
             if let Some((face, surface_ref)) = build_face(
                 parsed,
                 face_id,
@@ -5366,9 +5416,44 @@ fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, u
         }
 
         if !faces.is_empty() {
+            // Track which CLOSED_SHELL entity this solid originated from.
+            // shell_face_sets entries correspond 1:1 with solids (pushed in the
+            // same order as collect_shell_faces returns them).
             solids.push(Solid {
                 shells: vec![Shell { faces }],
             });
+        }
+    }
+
+    // ── BREP_WITH_VOIDS: merge single-shell solids into multi-shell solids ──
+    // collect_shell_faces emits BREP_WITH_VOIDS groups immediately after the
+    // MANIFOLD_SOLID_BREP entries, one group per BREP_WITH_VOIDS entity.  The
+    // i-th BREP_WITH_VOIDS entry starts at solid index:
+    //   manifolds.len() + sum_{j < i} (1 + voids_j.len())
+    if !parsed.brep_with_voids.is_empty() {
+        let base = parsed.manifold_solids.len();
+        let mut offset = 0usize;
+        let mut void_group: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut sorted_voids: Vec<&u64> = parsed.brep_with_voids.keys().collect();
+        sorted_voids.sort_unstable();
+        for key in sorted_voids {
+            let (_, voids) = &parsed.brep_with_voids[key];
+            let n = 1 + voids.len();
+            if base + offset + n <= solids.len() {
+                let outer_si = base + offset;
+                for vi in (outer_si + 1)..(outer_si + n) {
+                    let void_shell = solids[vi].shells[0].clone();
+                    solids[outer_si].shells.push(void_shell);
+                    void_group.insert(vi);
+                }
+            }
+            offset += n;
+        }
+        // Remove void solids in reverse index order.
+        let mut to_remove: Vec<usize> = void_group.into_iter().collect();
+        to_remove.sort_unstable_by(|a, b| b.cmp(a));
+        for idx in to_remove {
+            solids.remove(idx);
         }
     }
 
@@ -5699,6 +5784,21 @@ fn collect_shell_faces(parsed: &ParsedStep) -> Vec<Vec<u64>> {
         for shell_id in &parsed.manifold_solids {
             if let Some(face_ids) = parsed.closed_shells.get(shell_id) {
                 shells.push(face_ids.clone());
+            }
+        }
+    }
+
+    // BREP_WITH_VOIDS: insert all shells (outer + voids) in order so that
+    // the caller can detect multi-shell groupings from parsed.brep_with_voids.
+    if !parsed.brep_with_voids.is_empty() {
+        for (_, (outer, voids)) in &parsed.brep_with_voids {
+            if let Some(face_ids) = parsed.closed_shells.get(outer) {
+                shells.push(face_ids.clone());
+            }
+            for void_ref in voids {
+                if let Some(face_ids) = parsed.closed_shells.get(void_ref) {
+                    shells.push(face_ids.clone());
+                }
             }
         }
     }
@@ -8087,7 +8187,7 @@ fn parse_conical_surface(args: &str) -> Option<(u64, f64, f64)> {
     Some((
         parse_ref(parts[1])?,
         parts[2].trim().parse::<f64>().ok()?,
-        parts[3].trim().parse::<f64>().ok()?.to_radians(),
+        parts[3].trim().parse::<f64>().ok()?,
     ))
 }
 

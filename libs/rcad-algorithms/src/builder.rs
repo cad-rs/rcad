@@ -3069,22 +3069,8 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             let ab_len2 = ab.length_squared();
             let mut split_verts: Vec<(usize, f64)> = Vec::new();
             if ab_len2 > 1e-12 {
-                // 1. Vertices from current face's face_info.vertices_in
+                // Vertices from current face's face_info.vertices_in
                 for &vi in &face.face_info.vertices_in {
-                    check_and_add_split_vertex(ds, sv, ev, vi, p_a, ab, ab_len2, &mut split_verts);
-                }
-                // 2. All DS vertices (for robustness when propagation misses some)
-                // ✅ OCCT-aligned: FillImagesEdges iterates over ALL source edges (global scope).
-                let edge_bbox_min = p_a.min(p_b) - DVec3::splat(1e-6);
-                let edge_bbox_max = p_a.max(p_b) + DVec3::splat(1e-6);
-                for vi in 0..ds.vertices.len() {
-                    if vi == sv || vi == ev { continue; }
-                    if split_verts.iter().any(|(v, _)| *v == vi) { continue; }
-                    let p = ds.vertices[vi].point;
-                    // Quick bbox rejection for efficiency
-                    if p.x < edge_bbox_min.x || p.x > edge_bbox_max.x ||
-                       p.y < edge_bbox_min.y || p.y > edge_bbox_max.y ||
-                       p.z < edge_bbox_min.z || p.z > edge_bbox_max.z { continue; }
                     check_and_add_split_vertex(ds, sv, ev, vi, p_a, ab, ab_len2, &mut split_verts);
                 }
             }
@@ -3199,17 +3185,6 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                 for seg in &segments { vertices_to_check.insert(seg.start_vertex); vertices_to_check.insert(seg.end_vertex); }
                 let mut on_circle: Vec<(usize, f64)> = Vec::new();
                 for &vi in &vertices_to_check {
-                    let pt = ds.vertices[vi].point;
-                    let d = pt - center;
-                    if (d.length() - r).abs() < circle_tol {
-                        let angle = f64::atan2(d.dot(p_dir), d.dot(r_dir));
-                        on_circle.push((vi, angle));
-                    }
-                }
-                // OCCT-aligned: scan all DS vertices for presence on the circle (global scope).
-                //    OCCT BuildSplitFaces' myImages sub-edges naturally carry all split vertices.
-                for vi in 0..ds.vertices.len() {
-                    if on_circle.iter().any(|(v, _)| *v == vi) { continue; }
                     let pt = ds.vertices[vi].point;
                     let d = pt - center;
                     if (d.length() - r).abs() < circle_tol {

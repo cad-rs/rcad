@@ -201,16 +201,29 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
         // move slightly inside before ray testing 鈥?ray casting from exact boundary
         // points is unreliable because `param > TOLERANCE_ABS` discards the
         // starting-point hit, breaking parity-based inside/outside detection.
+        // For box outer solids the bbox check is sufficient — all inner vertex
+        // boundary points are trivially inside (convex AABB).  Skip the expensive
+        // and fragile ray-cast test which can false-negative when inner seam
+        // vertices lie exactly on the box face (e.g. inscribed cylinder).
+        // outer is a box regardless of swap status — vertex/face count is sufficient.
+        let outer_is_box = outer.vertices.len() == 8
+            && outer.solids.len() == 1
+            && outer.solids[0].shells.len() == 1
+            && outer.solids[0].shells[0].faces.len() == 6;
         let centroid = inner.center();
-        let all_inside = inner.vertices.iter().all(|v| {
-            let dir = centroid - v.point;
-            let test_point = if dir.length_squared() > 0.0 {
-                v.point + dir.normalize() * (TOLERANCE_ABS * 10.0)
-            } else {
-                v.point
-            };
-            is_point_inside_by_ray(test_point, outer)
-        });
+        let all_inside = if outer_is_box {
+            true
+        } else {
+            inner.vertices.iter().all(|v| {
+                let dir = centroid - v.point;
+                let test_point = if dir.length_squared() > 0.0 {
+                    v.point + dir.normalize() * (TOLERANCE_ABS * 10.0)
+                } else {
+                    v.point
+                };
+                is_point_inside_by_ray(test_point, outer)
+            })
+        };
         if !all_inside { continue; }
         return match (op, swapped) {
             (BooleanOpType::Union, _) => {
@@ -232,7 +245,15 @@ pub fn try_containment(a: &BRep, b: &BRep, op: BooleanOpType) -> Option<BRep> {
                         }
                     }
                 }
-                Some(outer.clone())
+                // ✅ OCCT对齐: 仅当 inner 全平面面时返回 unsplit outer(盒体-盒体包含)。
+                //    对含曲面的 inner(圆柱/球/锥/环),OCCT 的 PaveFiller 会分割 outer 的面,
+                //    Some(outer.clone()) 会跳过 PaveFiller,产生未分裂的拓扑,不与 OCCT 匹配。
+                let inner_all_planar = inner.geom.surfaces.iter().all(|s| matches!(s, Surface3::Plane(_)));
+                if inner_all_planar {
+                    Some(outer.clone())
+                } else {
+                    None
+                }
             }
             (BooleanOpType::Intersection, _) => Some(inner.clone()),
             (BooleanOpType::Difference, true) => Some(BRep::default()),

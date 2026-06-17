@@ -163,6 +163,7 @@ pub use tolerance::{
     set_edge_tolerance, update_edge_tolerance,
     set_face_tolerance, update_face_tolerance,
     finalize_tolerance_hierarchy,
+    step_export_uncertainty,
 };
 pub use topo_query::{
     vertex_storage_len,
@@ -1571,13 +1572,27 @@ impl BRep {
 fn curve_bounding_box(curve: &geom::Curve3) -> Option<[DVec3; 2]> {
         match curve {
             geom::Curve3::Circle(c) => {
-                let r = DVec3::splat(c.radius);
-                Some([c.center - r, c.center + r])
+                // A circle only extends in its own plane, not in the normal
+                // direction.  For each axis i the max extent is
+                // radius * sqrt(1 - n_i^2) where n is the unit normal.
+                let n = c.normal.normalize();
+                let extent = DVec3::new(
+                    c.radius * (1.0 - n.x * n.x).sqrt(),
+                    c.radius * (1.0 - n.y * n.y).sqrt(),
+                    c.radius * (1.0 - n.z * n.z).sqrt(),
+                );
+                Some([c.center - extent, c.center + extent])
             }
             geom::Curve3::Ellipse(e) => {
+                // Same plane-restricted extent for ellipses.
+                let n = e.normal.normalize();
                 let max_r = e.major_radius.max(e.minor_radius);
-                let r = DVec3::splat(max_r);
-                Some([e.center - r, e.center + r])
+                let extent = DVec3::new(
+                    max_r * (1.0 - n.x * n.x).sqrt(),
+                    max_r * (1.0 - n.y * n.y).sqrt(),
+                    max_r * (1.0 - n.z * n.z).sqrt(),
+                );
+                Some([e.center - extent, e.center + extent])
             }
             geom::Curve3::BSpline(b) => {
                 let mut mn = DVec3::splat(f64::INFINITY);

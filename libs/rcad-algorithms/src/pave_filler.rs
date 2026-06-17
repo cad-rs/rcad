@@ -3776,19 +3776,6 @@ impl<'a> PaveFiller<'a> {
                     f2,
                 );
                 curve_indices.push(ci);
-                // ✅ OCCT对齐: 圆在 cylinder 面 V 边界上时,从 cylinder 面移除该 IC。
-                //    OCCT BOPAlgo_BuilderFace::PerformLoops 不在面域外创建子面,
-                //    但 rcad 的 BooleanBuilder 会。移除 cylinder 面上的 IC 可防止
-                //    产生 cylinder stub。Plane 面仍保留该 IC,用于正确分割 box 面。
-                let cyl_fi = if plane_is_f1 { f2 } else { f1 };
-                let v_range = self.cylinder_face_v_range(cyl_fi, cyl);
-                let v = (circle.center - cyl.origin).dot(cyl.axis.normalize());
-                let boundary_tol = TOLERANCE_ABS * 1000.0;
-                if (v - v_range[0]).abs() < boundary_tol
-                    || (v - v_range[1]).abs() < boundary_tol
-                {
-                    self.ds.faces[cyl_fi].face_info.curves_in.remove(&ci);
-                }
             }
             PlaneCylinderResult::Ellipse(ellipse) => {
                 let pca_plane = ellipse_pcurve_on_plane(&ellipse, plane);

@@ -35,8 +35,8 @@ pub enum StepProtocol {
     /// ISO 10303-242 "Managed Model Based 3D Engineering".
     Ap242,
 }
-use rcad_kernel::{BRep, BSplineCurve2, Curve2d, Curve3, CurveEval, Face, Surface3};
-use std::collections::{BTreeSet, HashMap};
+use rcad_kernel::{BRep, BSplineCurve2, Curve2d, Curve3, CurveEval, Face, Surface3, step_export_uncertainty};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Write;
 
 pub struct ExportSelection<'a> {
@@ -473,9 +473,10 @@ impl Part21Writer {
 
         let mut face_index = 0usize;
         for (solid_index, solid) in brep.solids.iter().enumerate() {
-            for (shell_index, shell) in solid.shells.iter().enumerate() {
+            // First pass: collect faces for each shell.
+            let mut shell_infos: Vec<(Vec<u64>, bool)> = Vec::new(); // (face_ids, is_closed)
+            for shell in &solid.shells {
                 let mut shell_faces = Vec::new();
-                let mut shell_exported_as_solid = false;
                 for face in &shell.faces {
                     if export_all || selected_face_set.contains(&face_index) {
                         let face_surface_idx = brep
@@ -497,22 +498,63 @@ impl Part21Writer {
                     }
                     face_index += 1;
                 }
-                if export_all && !shell_faces.is_empty() {
-                    if shell_is_closed(&shell.faces, brep) {
-                        let shell_id = self.closed_shell(
-                            &format!("closed_shell_{}_{}", solid_index, shell_index),
-                            &shell_faces,
-                        );
-                        let solid_id = self.manifold_solid_brep(
-                            &format!("solid_{}_{}", solid_index, shell_index),
-                            shell_id,
-                        );
-                        solid_items.push(solid_id);
-                        shell_exported_as_solid = true;
-                    }
+                if !shell_faces.is_empty() {
+                    let is_closed = shell_is_closed(&shell.faces, brep);
+                    shell_infos.push((shell_faces, is_closed));
                 }
-                if !shell_faces.is_empty() && !shell_exported_as_solid {
-                    shell_face_groups.push(shell_faces);
+            }
+
+            // Second pass: write topology — MANIFOLD_SOLID_BREP for
+            // single-shell solids, BREP_WITH_VOIDS for multi-shell solids
+            // (outer shell + void shells), matching OCCT's export behaviour.
+            let num_exported_solids = if export_all {
+                let closed: Vec<&Vec<u64>> = shell_infos
+                    .iter()
+                    .filter(|(_, is_closed)| *is_closed)
+                    .map(|(faces, _)| faces)
+                    .collect();
+                if closed.len() == 1 {
+                    let shell_id = self.closed_shell(
+                        &format!("closed_shell_{}_0", solid_index),
+                        closed[0],
+                    );
+                    let solid_id = self.manifold_solid_brep(
+                        &format!("solid_{}", solid_index),
+                        shell_id,
+                    );
+                    solid_items.push(solid_id);
+                } else if closed.len() > 1 {
+                    let outer_id = self.closed_shell(
+                        &format!("closed_shell_{}_0", solid_index),
+                        closed[0],
+                    );
+                    let void_ids: Vec<u64> = closed[1..]
+                        .iter()
+                        .enumerate()
+                        .map(|(i, faces)| {
+                            self.closed_shell(
+                                &format!("void_shell_{}_{}", solid_index, i),
+                                faces,
+                            )
+                        })
+                        .collect();
+                    let solid_id = self.brep_with_voids(
+                        &format!("solid_{}", solid_index),
+                        outer_id,
+                        &void_ids,
+                    );
+                    solid_items.push(solid_id);
+                }
+                closed.len()
+            } else {
+                0
+            };
+
+            // Shells that were NOT exported as MANIFOLD_SOLID_BREP / BREP_WITH_VOIDS
+            // go to the SHELL_BASED_SURFACE_MODEL path (selected-face export, open shells).
+            for (si, (faces, _is_closed)) in shell_infos.iter().enumerate() {
+                if !faces.is_empty() && si >= num_exported_solids {
+                    shell_face_groups.push(faces.clone());
                 }
             }
         }
@@ -642,7 +684,8 @@ impl Part21Writer {
         let length_unit = self.length_unit_meter();
         let angle_unit = self.plane_angle_unit_radian();
         let solid_angle_unit = self.solid_angle_unit_steradian();
-        let uncertainty = self.uncertainty_measure_with_unit_value(length_unit, 1.0e-7);
+        let write_tol = step_export_uncertainty(brep);
+        let uncertainty = self.uncertainty_measure_with_unit_value(length_unit, write_tol);
         let context = self.geometric_representation_context(
             3,
             uncertainty,
@@ -677,7 +720,7 @@ impl Part21Writer {
                 let child_axis_dir = self.direction("", [0.0, 0.0, 1.0]);
                 let child_ref_dir = self.direction("", [1.0, 0.0, 0.0]);
                 let child_axis = self.axis2_placement_3d("", child_origin, child_axis_dir, child_ref_dir);
-                let child_uncertainty = self.uncertainty_measure_with_unit_value(length_unit, 1.0e-7);
+                let child_uncertainty = self.uncertainty_measure_with_unit_value(length_unit, write_tol);
                 let child_context = self.geometric_representation_context(
                     3,
                     child_uncertainty,
@@ -698,7 +741,7 @@ impl Part21Writer {
                 let child_axis_dir = self.direction("", [0.0, 0.0, 1.0]);
                 let child_ref_dir = self.direction("", [1.0, 0.0, 0.0]);
                 let child_axis = self.axis2_placement_3d("", child_origin, child_axis_dir, child_ref_dir);
-                let child_uncertainty = self.uncertainty_measure_with_unit_value(length_unit, 1.0e-7);
+                let child_uncertainty = self.uncertainty_measure_with_unit_value(length_unit, write_tol);
                 let child_context = self.geometric_representation_context(
                     3,
                     child_uncertainty,
@@ -720,7 +763,7 @@ impl Part21Writer {
                 let child_ref_dir = self.direction("", [1.0, 0.0, 0.0]);
                 let child_axis = self.axis2_placement_3d("", child_origin, child_axis_dir, child_ref_dir);
                 let curve_set = self.geometric_curve_set("wireframe", std::slice::from_ref(edge_item));
-                let child_uncertainty = self.uncertainty_measure_with_unit_value(length_unit, 1.0e-7);
+                let child_uncertainty = self.uncertainty_measure_with_unit_value(length_unit, write_tol);
                 let child_context = self.geometric_representation_context(
                     3,
                     child_uncertainty,
@@ -744,7 +787,7 @@ impl Part21Writer {
                 let mut all_wire_items = edge_items.clone();
                 all_wire_items.extend(standalone_point_items.iter().copied());
                 let curve_set = self.geometric_curve_set("wireframe", &all_wire_items);
-                let child_uncertainty = self.uncertainty_measure_with_unit_value(length_unit, 1.0e-7);
+                let child_uncertainty = self.uncertainty_measure_with_unit_value(length_unit, write_tol);
                 let child_context = self.geometric_representation_context(
                     3,
                     child_uncertainty,
@@ -1141,6 +1184,20 @@ impl Part21Writer {
 
         let edge_loop = self.edge_loop("outer_loop", &oriented_ids);
         let mut bounds = vec![self.face_bound("outer_bound", edge_loop, true)];
+
+        // ── SplitCommonVertex ──────────────────────────────────────────────
+        // STEP requires vertices belonging to different FACE_BOUND entities
+        // (outer wire vs inner wires) to be distinct VERTEX_POINT entities.
+        // Collect outer wire vertices and clear them from the cache before
+        // processing inner wires so that shared geometric vertices produce
+        // separate VERTEX_POINT entities.  Analogous to OCCT's
+        // `ShapeFix_SplitCommonVertex`.
+        let outer_verts: HashSet<usize> = oriented_edges
+            .iter()
+            .flat_map(|e| [e.start, e.end])
+            .collect();
+        let mut all_wire_verts = outer_verts;
+
         // Inner wires (holes): for each inner wire, create an edge loop and face_bound.
         for (ii, inner_wire) in face.inner_wires.iter().enumerate() {
             let inner_oriented: Vec<OrientedEdgeExport> = inner_wire.edges.iter().filter_map(|we| {
@@ -1149,6 +1206,19 @@ impl Part21Writer {
                 Some(OrientedEdgeExport { edge_idx: we.idx, start, end, forward: we.forward })
             }).collect();
             if inner_oriented.is_empty() { continue; }
+
+            // Clear vertex_point_ids for vertices shared with any previously
+            // written wire of this face (outer or earlier inner wires) so that
+            // write_edge_curve_by_index creates unique VERTEX_POINT entities.
+            for oe in &inner_oriented {
+                if !all_wire_verts.insert(oe.start) {
+                    self.vertex_point_ids.remove(&oe.start);
+                }
+                if !all_wire_verts.insert(oe.end) {
+                    self.vertex_point_ids.remove(&oe.end);
+                }
+            }
+
             let mut inner_entries: Vec<(u64, bool)> = Vec::with_capacity(inner_oriented.len());
             for edge in &inner_oriented {
                 self.seed_edge_surface_curve_from_face_frame(
@@ -1727,12 +1797,12 @@ impl Part21Writer {
             }
             Some(Surface3::Cone(cone)) => {
                 let placement = self.axis2_from_origin_axis("cone_axis", cone.apex, cone.axis);
-                // Matches `parse_conical_surface`: numeric semi-angle is degrees before `to_radians()`.
+                // STEP semi-angle is in radians per AP214/AP242 standard.
                 self.conical_surface(
                     "face_cone",
                     placement,
                     cone.radius,
-                    cone.half_angle_rad.to_degrees(),
+                    cone.half_angle_rad,
                 )
             }
             Some(Surface3::Torus(torus)) => {
@@ -2032,21 +2102,35 @@ impl Part21Writer {
         let v1 = self.vertex_point_by_index(brep, edge.end);
         let basis_curve = self.write_edge_curve_geometry_by_index(brep, edge_idx);
 
-        // CIRCLE edges: determine whether the edge direction matches the
-        // curve's natural direction (.T.) or is opposite (.F.).  The STEP
-        // CIRCLE entity uses axis2_from_origin_axis which may pick a
-        // different ref_dir than Circle3::point_at, so the edge's stored
-        // parameter range doesn't match the STEP CIRCLE's parameterization.
-        // Compute the actual angle between start and end on the CIRCLE
-        // in the STEP CIRCLE's frame.  If the increasing-parameter arc is
-        // > π, use .F. so the reader takes the SHORT way (90°, not 270°).
+        // Determine `same_sense` for periodic edge curves (CIRCLE, ELLIPSE).
+        // The STEP CIRCLE / ELLIPSE entity uses `axis2_from_origin_axis` which
+        // picks a specific `ref_dir` that may differ from the BRep curve's
+        // internal parameterization.  We compute the counterclockwise angle
+        // from start→end on the curve's frame; if that angle exceeds π we
+        // set `same_sense = false` so the STEP reader takes the complement
+        // (shorter) arc, avoiding ambiguous parametrisation.
         let mut same_sense = true;
-        if let Some(Curve3::Circle(c)) = brep.geom.edge_curve.get(edge_idx)
-            .copied().flatten()
-            .and_then(|ci| brep.geom.curves.get(ci))
-        {
-            let canon_axis = canonicalize_axis_sign(c.normal);
-            let ref_dir = if canon_axis.z.abs() > 0.999999 {
+        let curve = brep
+            .geom
+            .edge_curve
+            .get(edge_idx)
+            .copied()
+            .flatten()
+            .and_then(|ci| brep.geom.curves.get(ci));
+        if let Some((center, axis, major_dir)) = match curve {
+            Some(Curve3::Circle(c)) => Some((c.center, c.normal, glam::DVec3::ZERO)),
+            Some(Curve3::Ellipse(e)) => Some((e.center, e.normal, e.major_dir)),
+            _ => None,
+        } {
+            let canon_axis = canonicalize_axis_sign(axis);
+            // ref_dir matches axis2_from_origin_axis (CIRCLE) /
+            // axis2_from_origin_axis_ref with major_dir (ELLIPSE).
+            let ref_dir = if major_dir.length_squared() > 1e-30 {
+                // ELLIPSE: use the stored major_dir projected onto the plane.
+                let proj = major_dir - major_dir.dot(canon_axis) * canon_axis;
+                let len = proj.length();
+                if len > 1e-15 { proj / len } else { canon_axis.cross(glam::DVec3::Y).normalize_or_zero() }
+            } else if canon_axis.z.abs() > 0.999999 {
                 glam::DVec3::X
             } else {
                 let helper = if canon_axis.y.abs() < 0.9 {
@@ -2059,8 +2143,8 @@ impl Part21Writer {
             let perp = canon_axis.cross(ref_dir);
             let start_pt = brep.vertices.get(edge.start).map(|v| v.point).unwrap_or_default();
             let end_pt = brep.vertices.get(edge.end).map(|v| v.point).unwrap_or_default();
-            let d_start = start_pt - c.center;
-            let d_end = end_pt - c.center;
+            let d_start = start_pt - center;
+            let d_end = end_pt - center;
             let theta_start = f64::atan2(d_start.dot(perp), d_start.dot(ref_dir));
             let theta_end = f64::atan2(d_end.dot(perp), d_end.dot(ref_dir));
             let theta_start = theta_start.rem_euclid(std::f64::consts::TAU);
@@ -3349,6 +3433,15 @@ impl Part21Writer {
 
     fn manifold_solid_brep(&mut self, name: &str, outer: u64) -> u64 {
         self.push(format!("MANIFOLD_SOLID_BREP('{}',#{})", name, outer))
+    }
+
+    fn brep_with_voids(&mut self, name: &str, outer: u64, voids: &[u64]) -> u64 {
+        self.push(format!(
+            "BREP_WITH_VOIDS('{}',#{},({}))",
+            name,
+            outer,
+            refs(voids),
+        ))
     }
 
     fn compound(&mut self, name: &str, elements: &[u64]) -> u64 {

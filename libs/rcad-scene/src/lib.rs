@@ -952,6 +952,7 @@ pub fn append_brep(dst: &mut BRep, src: BRep) {
                         .collect(),
                     sample_point: face.sample_point,
                     mesh_dirty: face.mesh_dirty,
+                    surface_idx: face.surface_idx,
                 });
             }
             new_shells.push(Shell { faces: new_faces });
