@@ -915,15 +915,10 @@ pub fn prepare_lines_3d(curves: &mut Vec<crate::bopds::ds::IntersectionCurve>) {
         // 1. Split closed curves
         let splits = split_closed_curve(&ic.curve, &ic.t_range);
         if let Some([r0, r1]) = splits {
-            // Create two sub-curves with half ranges
             let mut c0 = ic.clone();
             c0.t_range = r0;
-            c0.pcurve_on_a = c0.pcurve_on_a.clone();
-            c0.pcurve_on_b = c0.pcurve_on_b.clone();
             let mut c1 = ic;
             c1.t_range = r1;
-            c1.pcurve_on_a = c1.pcurve_on_a.clone();
-            c1.pcurve_on_b = c1.pcurve_on_b.clone();
             new_curves.push(c0);
             new_curves.push(c1);
         } else {

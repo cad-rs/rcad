@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use glam::{DVec2, DVec3};
 use rayon::prelude::*;
@@ -3448,6 +3448,37 @@ fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_idx: usize)
         }
     }
 
+    // OCCT-aligned: edge TShape dedup (BOPTools_AlgoTools.cxx L199-211).
+    // IC section edges appear TWICE (FWD+REV) in the segment list.
+    // The first appearance is the "primary" copy; the second is a duplicate.
+    // Duplicate edges always make a block irregular.
+    let mut seen_sources: HashSet<(u8, usize)> = HashSet::new();
+    let mut duplicate_segs: HashSet<usize> = HashSet::new();
+    for (si, seg) in segments.iter().enumerate() {
+        let variant = match &seg.source {
+            WireEdgeSource::IntersectionCurve(ci) => (1u8, *ci),
+            WireEdgeSource::DsEdge(ei) => (0u8, *ei),
+            _ => continue,
+        };
+        if !seen_sources.insert(variant) {
+            duplicate_segs.insert(si);
+        }
+    }
+
+    // OCCT-aligned: vertex degree in the DEDUPED edge set (aCMap from
+    // MapShapesAndAncestors on deduped compound).  Only non-duplicate
+    // edges count toward degree.  A vertex with degree == 2 in this map
+    // means it connects exactly 2 unique edges (not counting FWD+REV copies).
+    let mut dedup_vertex_deg: HashMap<usize, usize> = HashMap::new();
+    for (si, seg) in segments.iter().enumerate() {
+        if duplicate_segs.contains(&si) { continue; }
+        let sv = vi_to_canon.get(seg.start_vertex).copied().unwrap_or(seg.start_vertex);
+        let ev = deg_end_canon.get(&si).copied().unwrap_or_else(||
+            vi_to_canon.get(seg.end_vertex).copied().unwrap_or(seg.end_vertex));
+        *dedup_vertex_deg.entry(sv).or_insert(0) += 1;
+        *dedup_vertex_deg.entry(ev).or_insert(0) += 1;
+    }
+
     // Build vertexsegments adjacency using CANONICAL vertex indices
     let mut vert_to_segs: HashMap<usize, Vec<usize>> = HashMap::new();
     for (si, seg) in segments.iter().enumerate() {
@@ -3560,30 +3591,45 @@ fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_idx: usize)
         if block.len() < 2 { continue; }
         eprintln!("[BLK] fi={} bi={} n={}", face_idx, bi, block.len());
 
-        // ✅ OCCT-aligned: use canonical vertices for regular block detection.
-        //   RAW DS vertex indices may differ from canonical after dedup.
-        let mut block_vert_count: HashMap<usize, usize> = HashMap::new();
-        for &si in block {
-            let seg = &segments[si];
-            let sv = vi_to_canon.get(seg.start_vertex).copied().unwrap_or(seg.start_vertex);
-            let ev = deg_end_canon.get(&si).copied().unwrap_or_else(||
-                vi_to_canon.get(seg.end_vertex).copied().unwrap_or(seg.end_vertex));
-            *block_vert_count.entry(sv).or_default() += 1;
-            *block_vert_count.entry(ev).or_default() += 1;
-        }
-        let is_regular = block_vert_count.values().all(|&d| d == 2);
-        if std::env::var("RCAD_DEBUG_IC").is_ok() && face_idx >= 5 && face_idx <= 7 {
-            eprintln!("[IS_REG] fi={} bi={} is_regular={} deg_counts={:?}",
-                face_idx, bi, is_regular,
-                block_vert_count.values().collect::<Vec<_>>());
+        // ✅ OCCT-aligned: check regularity (BOPTools_AlgoTools.cxx L227-253)
+        let mut is_regular = true;
+        'regularity: {
+            for &si in block {
+                if duplicate_segs.contains(&si) {
+                    is_regular = false;
+                    break 'regularity;
+                }
+            }
+            // Check each unique canonical vertex: degree must be 2 in deduped set
+            let mut checked_verts = std::collections::HashSet::new();
+            for &si in block {
+                let seg = &segments[si];
+                for &vi in &[seg.start_vertex, seg.end_vertex] {
+                    let cvi = vi_to_canon.get(vi).copied().unwrap_or(vi);
+                    // virtual deg vertex (>= ds.vertices.len()) is a new canonical
+                    // added during deg_end_canon, so it only appears in one block
+                    // and its dedup degree is always 2 — skip the virtual check.
+                    if cvi >= ds.vertices.len() { continue; }
+                    if !checked_verts.insert(cvi) { continue; }
+                    if dedup_vertex_deg.get(&cvi).copied().unwrap_or(0) != 2 {
+                        is_regular = false;
+                        break 'regularity;
+                    }
+                }
+            }
         }
 
         if is_regular {
-            eprintln!("[REG] fi={} block_sz={}", face_idx, block.len());
+            if std::env::var("RCAD_DEBUG_IC").is_ok() {
+                eprintln!("[REGULAR_BLOCK] fi={} bi={} n_segs={}", face_idx, bi, block.len());
+            }
             if let Some(wire) = build_regular_wire(block, segments, &vert_to_segs, &vi_to_canon, &deg_end_canon) {
                 wires.push(wire);
             }
         } else {
+            if std::env::var("RCAD_DEBUG_IC").is_ok() {
+                eprintln!("[IRREGULAR_BLOCK] fi={} bi={} n_segs={}", face_idx, bi, block.len());
+            }
             // Irregular block: SmartMap + angle-based Path walking
             let (block_wires, block_internal) = build_irregular_wires(block, segments, ds, face_idx);
             wires.extend(block_wires);
@@ -4103,7 +4149,11 @@ fn refine_angles(
                 } else if cnt_int == 2 {
                     // OCCT L996-999: epsilon fallback — place just inside boundary
                     // OCCT L998: aA = (aA <= aA1) ? (aA1 + Precision::Angular()) : (aA2 - Precision::Angular());
-                    let eps = 1e-10;
+                    // OCCT Precision::Angular() = 1e-12, but rcad's partial_cmp
+                    // needs ~1e-6 to overcome float noise at tangent points where
+                    // CWA(IC) ≈ CWA(boundary). 1e-6 rad ≈ 0.000057°, still
+                    // geometrically negligible.
+                    let eps = 1e-6;
                     let new_angle = if a_ic <= a1_bnd || a_ic > a2_bnd {
                         (a1_bnd + eps) % std::f64::consts::TAU
                     } else {

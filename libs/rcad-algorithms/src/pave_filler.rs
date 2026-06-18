@@ -2123,9 +2123,14 @@ impl<'a> PaveFiller<'a> {
             }
 
             let candidates = Bvh::candidate_pairs(bvh_a, bvh_b);
+            let mut processed_pairs = std::collections::HashSet::new();
             for (fa_brep, fb_brep) in candidates {
                 if let (Some(&ai), Some(&bi)) = (a_rev.get(fa_brep), b_rev.get(fb_brep))
                     && ai != usize::MAX && bi != usize::MAX {
+                        // ✅ OCCT对齐: BVH 可能在同一面对相交叶节点时产生重复候选对,
+                        //    导致同一对 face 创建多条相同交线。在 OCCT 中 PaveFiller
+                        //    每对面只处理一次(FF 矩阵使用 BOPDS_IndexRange 标记已处理)。
+                        if !processed_pairs.insert((ai, bi)) { continue; }
                         let af = a_faces[ai];
                         let bf = b_faces[bi];
                         if self.should_skip_glued_face_pair(af, bf) {
@@ -2685,6 +2690,33 @@ impl<'a> PaveFiller<'a> {
             }
             // PrepareLines3D — split closed curves
             inttools::pcurve_derive::prepare_lines_3d(&mut self.ds.intersection_curves);
+            // ✅ OCCT对齐: PrepareLines3D 分裂闭合曲线后,新曲线端点需更新到分裂点。
+            //    OCCT 的 BRepBuilderAPI_MakeEdge 创建边时自动设置端点。
+            //    rcad 的 IntersectionCurve 需要显式更新: 对 start==end 但
+            //    t_range 非全周期的曲线(即分裂后的半圆),用 point_at 计算
+            //    正确的端点位置并创建新 DS 顶点。
+            for ci in 0..self.ds.intersection_curves.len() {
+                let needs_fix = {
+                    let ic = &self.ds.intersection_curves[ci];
+                    let half_circle = match &ic.curve {
+                        rcad_kernel::geom::Curve3::Circle(_) | rcad_kernel::geom::Curve3::Ellipse(_) => {
+                            (ic.t_range[1] - ic.t_range[0] - std::f64::consts::TAU).abs() >= TOLERANCE_ANG
+                        }
+                        _ => false,
+                    };
+                    half_circle && ic.start_vertex == ic.end_vertex
+                };
+                if needs_fix {
+                    let t0 = self.ds.intersection_curves[ci].t_range[0];
+                    let t1 = self.ds.intersection_curves[ci].t_range[1];
+                    let p_start = self.ds.intersection_curves[ci].curve.point_at(t0);
+                    let p_end = self.ds.intersection_curves[ci].curve.point_at(t1);
+                    let v_start = self.ds.add_vertex(p_start);
+                    let v_end = self.ds.add_vertex(p_end);
+                    self.ds.intersection_curves[ci].start_vertex = v_start;
+                    self.ds.intersection_curves[ci].end_vertex = v_end;
+                }
+            }
         }
     }
 
@@ -5609,8 +5641,12 @@ impl<'a> PaveFiller<'a> {
         }).collect();
 
         // Face info snapshots: which faces reference which curves
+        // ✅ OCCT对齐: face_curves 必须包含所有曲线类型(In/On/Sc),
+        //    否则子面 fi_a/fi_b 检测失败 (fallback 到 fi=0),导致
+        //    MakeBlocks 无法正确识别截面曲线所在的面。OCCT PaveFiller_6
+        //    L670-675 使用 BOPDS_FaceInfo 的 PaveBlocksSc/On/In。
         let face_curves: Vec<Vec<usize>> = (0..n_faces)
-            .map(|fi| self.ds.faces[fi].face_info.curves_in.iter().copied().collect())
+            .map(|fi| self.ds.faces[fi].face_info.all_curves())
             .collect();
 
         // ── Phase 2: Compute splits ──────────────────────────────────────
@@ -5655,35 +5691,6 @@ impl<'a> PaveFiller<'a> {
             // ✅ OCCT对齐: PutBoundPaveOnCurve 对所有曲线类型执行
             //    OCCT BOPAlgo_PaveFiller_6.cxx L798-832
             {
-                // TEMP: debug extra vertex (0,-1,0) origin
-                if cfg!(debug_assertions) {
-                    for &(evi, ept) in &all_verts {
-                        if (ept - DVec3::new(0.0, -1.0, 0.0)).length_squared() < 1e-10 {
-                            eprintln!("[PFP] VERTEX (0,-1,0) in all_verts (evi={})", evi);
-                        }
-                    }
-                    let ic_tmp = &self.ds.intersection_curves[ci];
-                    let face_ids_tmp = find_face_idxs_for_curve(&self.ds, ci);
-                    for &fi in &[face_ids_tmp[0], face_ids_tmp[1]] {
-                        if fi == usize::MAX { continue; }
-                        let f = &self.ds.faces[fi];
-                        for &vi in &f.boundary_verts {
-                            if (self.ds.vertices[vi].point - DVec3::new(0.0, -1.0, 0.0)).length_squared() < 1e-10 {
-                                eprintln!("[PFP] BOUNDARY_VERT (0,-1,0) at face={} vert={}", fi, vi);
-                            }
-                        }
-                        for &vi in &f.face_info.vertices_in {
-                            if (self.ds.vertices[vi].point - DVec3::new(0.0, -1.0, 0.0)).length_squared() < 1e-10 {
-                                eprintln!("[PFP] VERTICES_IN (0,-1,0) at face={} vert={}", fi, vi);
-                            }
-                        }
-                        for &vi in &f.face_info.vertices_on {
-                            if (self.ds.vertices[vi].point - DVec3::new(0.0, -1.0, 0.0)).length_squared() < 1e-10 {
-                                eprintln!("[PFP] VERTICES_ON (0,-1,0) at face={} vert={}", fi, vi);
-                            }
-                        }
-                    }
-                }
                 let face_idxs = find_face_idxs_for_curve(&self.ds, ci);
                 let bound_paves = put_bound_pave_on_curve(
                     &self.ds, ci, &face_idxs, tol
@@ -5698,27 +5705,31 @@ impl<'a> PaveFiller<'a> {
                 //    EF 顶点,BOPAlgo_PaveFiller::PutPavesOnCurve 处理时会将
                 //    所有在 IC 上的顶点加入 Pave 列表。
                 if let Curve3::Circle(circ) = &snap.curve {
+                    // ✅ OCCT对齐: 端点检查使用实时曲线端点(可能已被端点替换代码
+                    //    替换为 EF 顶点),而非快照端点。prepare_lines_3d 分裂后
+                    //    端点替换会将 EF 顶点设为端点,此时该顶点不应作为内部切点。
+                    let live_sv = self.ds.intersection_curves[ci].start_vertex;
+                    let live_ev = self.ds.intersection_curves[ci].end_vertex;
                     for &(evi, ept) in &all_verts {
+                        if evi == live_sv || evi == live_ev { continue; }
                         if evi == snap.sv || evi == snap.ev { continue; }
                         if on_curve.iter().any(|&(_, vi)| vi == evi) { continue; }
                         if let Some(mut t) = param_on_circle3(ept, circ, tol) {
-                            // ✅ OCCT对齐: 归一化Circle参数到曲线t_range。
-                            //    param_on_circle3返回atan2 ∈ [-π, π],但Circle
-                            //    t_range通常是[0, 2π]。负角度参数会被< t0过滤掉。
-                            //    OCCT IntTools_Curve::Project使用FindParameter
-                            //    返回自然参数域,不会跨边界。
-                            let span = t1 - t0;
-                            if span > 0.0 && t < t0 - tol * 0.1 {
-                                let k = ((t0 - t) / span).ceil();
-                                t = t + k * span;
+                            // ✅ OCCT对齐: 归一化Circle参数到曲线t_range，使用TAU
+                            //    作为周期（而非t1-t0），因为半圆曲线的t_range=[0,π]，
+                            //    用span=π归一化会导致一个全圆内的角度被错误地映射到
+                            //    另半圆内(如3π/2→π/2)。OCCT IntTools_Curve::Project
+                            //    使用FindParameter返回自然参数域[0,2π)。
+                            const TAU: f64 = std::f64::consts::TAU;
+                            if t < t0 - tol * 0.1 {
+                                let k = ((t0 - t) / TAU).ceil();
+                                t = t + k * TAU;
                             }
                             if t >= t0 - tol * 0.1 && t <= t1 + tol * 0.1 {
                                 on_curve.push((t, evi));
                             }
                         }
                     }
-                }
-                if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
                     if let Curve3::Circle(circ) = &snap.curve {
                         eprintln!("[SPLIT_DBG] Circle ci={} center=({:.6},{:.6},{:.6}) R={} on_curve={}",
                             ci, circ.center.x, circ.center.y, circ.center.z, circ.radius, on_curve.len());
@@ -5815,6 +5826,24 @@ impl<'a> PaveFiller<'a> {
             }
         }
 
+        // ✅ OCCT对齐: 将平面面上的圆曲线从 curves_sc 移到 curves_in,
+        //    匹配 OCCT PaveBlocksIn 语义 — 圆在平面面上形成内部边界,
+        //    而非截面曲线(PaveBlocksSc)。否则 wire pipeline 会将圆
+        //    弧作为截面曲线处理,导致不正确的 IC→IC 路径选择。
+        #[cfg(feature = "debug_split")]
+        eprintln!("[MKBK_PLANAR] n_actions={}", actions.len());
+        for act in &actions {
+            let is_circle = matches!(snapshots[act.old_ci].curve, Curve3::Circle(_));
+            if !is_circle { continue; }
+            for fi in 0..n_faces {
+                if !face_curves[fi].contains(&act.old_ci) { continue; }
+                if matches!(self.ds.faces[fi].surface, Surface3::Plane(_)) {
+                    self.ds.faces[fi].face_info.curves_sc.remove(&act.old_ci);
+                    self.ds.faces[fi].face_info.curves_in.insert(act.old_ci);
+                }
+            }
+        }
+
         // Second pass: create new curves for remaining segments
         let _orig_n_curves = self.ds.intersection_curves.len();
         let mut new_curves_info: Vec<(usize, usize)> = Vec::new(); // (old_ci, new_ci)
@@ -5838,9 +5867,17 @@ impl<'a> PaveFiller<'a> {
                 new_curves_info.push((act.old_ci, new_ci));
 
                 // Register endpoints in faces' vertices_in
+                let new_is_circle = matches!(snapshots[act.old_ci].curve, Curve3::Circle(_));
                 for fi in 0..n_faces {
                     if face_curves[fi].contains(&act.old_ci) {
-                        self.ds.faces[fi].face_info.curves_sc.insert(new_ci);
+                        // ✅ OCCT对齐: 平面面上的圆弧存为 curves_in (PaveBlocksIn),
+                        //    非平面面(如圆柱面)的截面曲线存为 curves_sc (PaveBlocksSc)。
+                        let on_planar = matches!(self.ds.faces[fi].surface, Surface3::Plane(_));
+                        if new_is_circle && on_planar {
+                            self.ds.faces[fi].face_info.curves_in.insert(new_ci);
+                        } else {
+                            self.ds.faces[fi].face_info.curves_sc.insert(new_ci);
+                        }
                         self.ds.faces[fi].face_info.vertices_in.insert(v_prev);
                         self.ds.faces[fi].face_info.vertices_in.insert(v_cur);
                     }
@@ -6700,11 +6737,18 @@ mod phase2a_tests {
 // ── Phase 2a: MakeBlocks candidate injection helpers ─────────────────────
 
 /// 找到引用某条交线的两个面索引
+/// Find the up-to-2 faces that reference a given intersection curve.
+/// ✅ OCCT对齐: 必须检查所有曲线类型(In/On/Sc) (OCCT BOPDS_FaceInfo 的
+///    PaveBlocksSc/In/On),否则在 MakeBlocks 之前 curves_in 为空时
+///    put_bound_pave_on_curve 无法找到面边界顶点,导致圆曲线缺少分裂顶点。
 fn find_face_idxs_for_curve(ds: &DS, ci: usize) -> [usize; 2] {
     let mut result = [usize::MAX; 2];
     let mut idx = 0;
     for (fi, face) in ds.faces.iter().enumerate() {
-        if face.face_info.curves_in.contains(&ci) {
+        if face.face_info.curves_in.contains(&ci)
+            || face.face_info.curves_on.contains(&ci)
+            || face.face_info.curves_sc.contains(&ci)
+        {
             if idx < 2 {
                 result[idx] = fi;
                 idx += 1;
