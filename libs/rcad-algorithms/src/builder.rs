@@ -5126,12 +5126,16 @@ impl<'a> BooleanBuilder<'a> {
     ) -> Option<(Vec<WireSegment>, Vec<WireFace>, HashMap<usize, DVec3>)> {
         let ds = self.ds;
         let face = &ds.faces[face_idx];
-        // ✅ OCCT-aligned: return None when no intersection curves — OCCT's
-        //    BuildSplitFaces skips faces with no intersection data at L292.
-        // ⏳ TODO: implement BuildDraftFace equivalent (BOPAlgo_Builder_2.cxx
-        //    L951-1070) — replaces original boundary edges with split images
-        //    (myImages) for faces with only On edges, avoiding tessellation.
+        // ✅ OCCT-aligned: BuildDraftFace (BOPAlgo_Builder_2.cxx L951-1070).
+        // When the face has NO intersection curves but HAS split boundary edges
+        // (PaveFiller myImages / vertices_in), build a single analytic face
+        // from the split edges instead of falling back to tessellation.
         if !face.face_info.has_any_curves() {
+            if let Some(result) = self.build_draft_face(face_idx) {
+                return Some(result);
+            }
+            // BuildDraftFace returned None (multi-connected vertex or empty
+            // segments) — fall through to None return, caller uses split_face.
             return None;
         }
         // OCCT-aligned: BuildSplitFaces works for all surface types (L357-489)
@@ -5169,6 +5173,56 @@ impl<'a> BooleanBuilder<'a> {
                 return None;
             }
         }
+        Some((segments, wfs, vertex_positions))
+    }
+
+    /// OCCT-aligned: BuildDraftFace (BOPAlgo_Builder_2.cxx L951-1070).
+    ///
+    /// For faces that have NO intersection curves but whose boundary edges may
+    /// have been split by the PaveFiller (via myImages / vertices_in), build a
+    /// single analytic face using the split boundary edges.  This avoids the
+    /// tessellation fallback (split_curved_face_parametric, tessellate_sphere_face,
+    /// etc.) that would otherwise be used for non-planar faces with only
+    /// alone-vertex / on-edge intersection data.
+    ///
+    /// Returns `None` when:
+    /// - The face has no boundary segments (empty geometry)
+    /// - Any vertex is multi-connected (>=3 edges share the same vertex),
+    ///   indicating the face may need full SmartMap-based splitting
+    /// - The wire pipeline cannot form a closed loop
+    fn build_draft_face(
+        &self,
+        face_idx: usize,
+    ) -> Option<(Vec<WireSegment>, Vec<WireFace>, HashMap<usize, DVec3>)> {
+        let ds = self.ds;
+        let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
+        let mut segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
+        if segments.is_empty() {
+            return None;
+        }
+
+        // OCCT HasMultiConnected: if a vertex connects >=3 boundary edges,
+        // the face cannot be represented as a single closed wire and needs
+        // the full SmartMap splitting path (BOPAlgo_Builder_2.cxx L1068-1074).
+        let mut vert_count: HashMap<usize, usize> = HashMap::new();
+        for seg in &segments {
+            *vert_count.entry(seg.start_vertex).or_default() += 1;
+            *vert_count.entry(seg.end_vertex).or_default() += 1;
+        }
+        if vert_count.values().any(|&c| c > 2) {
+            return None;
+        }
+
+        let (wires, internal_wires, vertex_positions) =
+            build_closed_wires(&mut segments, ds, face_idx);
+        if wires.is_empty() && internal_wires.is_empty() {
+            return None;
+        }
+        let wfs = perform_areas(&wires, &internal_wires, &segments, ds, face_idx);
+        if wfs.is_empty() {
+            return None;
+        }
+
         Some((segments, wfs, vertex_positions))
     }
 }
