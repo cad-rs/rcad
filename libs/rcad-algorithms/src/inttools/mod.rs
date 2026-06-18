@@ -19,6 +19,7 @@ pub mod sphere_cylinder;
 pub mod sphere_torus;
 pub mod torus_cone;
 pub mod torus_torus;
+pub mod fclass2d;
 pub mod vertex_ops;
 
 pub use intss::{

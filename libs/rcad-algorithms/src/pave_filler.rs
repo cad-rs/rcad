@@ -7,6 +7,7 @@ use crate::bopds::ds::{
 use crate::bopds::pave::*;
 use crate::bvh::Bvh;
 use crate::inttools;
+use crate::inttools::fclass2d::{FClass2d, State};
 use crate::tolerance::*;
 use rcad_kernel::closest_point_on_curve;
 
@@ -5540,6 +5541,29 @@ impl<'a> PaveFiller<'a> {
         // 加上 vertices_in/vertices_on (IC 分割产生的顶点 + 面内顶点)
         let mut seen: std::collections::BTreeSet<usize> =
             all_verts.iter().map(|(vi, _)| *vi).collect();
+        // OCCT-aligned: Add EE (Edge-Edge), VE (Vertex-Edge), VF (Vertex-Face)
+        // interference vertices to all_verts.
+        // OCCT PaveFiller_6.cxx: SubShapesOnIn contains all interference types.
+        for inf in &self.ds.interferences {
+            match inf {
+                Interference::EdgeEdge { new_vertex, point, .. } => {
+                    if seen.insert(*new_vertex) {
+                        all_verts.push((*new_vertex, *point));
+                    }
+                }
+                Interference::VertexEdge { vertex, .. } => {
+                    if seen.insert(*vertex) {
+                        all_verts.push((*vertex, self.ds.vertices[*vertex].point));
+                    }
+                }
+                Interference::VertexFace { vertex, .. } => {
+                    if seen.insert(*vertex) {
+                        all_verts.push((*vertex, self.ds.vertices[*vertex].point));
+                    }
+                }
+                _ => {}
+            }
+        }
         for face in &self.ds.faces {
             for &vi in &face.face_info.vertices_in {
                 if seen.insert(vi) {
@@ -5866,30 +5890,34 @@ impl<'a> PaveFiller<'a> {
                 if fi[0] == usize::MAX || fi[1] == usize::MAX { continue; }
 
                 let mid_t = (ic.t_range[0] + ic.t_range[1]) * 0.5;
-
-                let mid_pt = ic.curve.point_at(mid_t);
-
-                let s1 = &self.ds.faces[fi[0]].surface;
-
-                let s2 = &self.ds.faces[fi[1]].surface;
-
-                let (_, p1) = crate::extrema::closest_point_on_surface(s1, mid_pt);
-
-                let (_, p2) = crate::extrema::closest_point_on_surface(s2, mid_pt);
-
-                if p1.distance_squared(mid_pt) > tol_sq
-
-                    || p2.distance_squared(mid_pt) > tol_sq
-
-                {
+                // OCCT-aligned: IntTools_FClass2d 2D UV point classification
+                // replaces 3D projection distance check.
+                // OCCT Context.cxx L735-746: aPC->D0(aMidPar, aPnt2D);
+                // bFlag = IsPointInOnFace(aF, aPnt2D);
+                let face_ids = [fi[0], fi[1]];
+                let pcurves = [ic.pcurve_on_a.as_ref(), ic.pcurve_on_b.as_ref()];
+                let mut valid = true;
+                for idx in 0..2 {
+                    let fii = face_ids[idx];
+                    if fii == usize::MAX { valid = false; break; }
+                    if let Some(pc) = pcurves[idx] {
+                        let uv = pc.point_at(mid_t);
+                        let state = FClass2d::from_ds_face(&self.ds, fii).perform(uv);
+                        if state == State::Out { valid = false; break; }
+                    } else {
+                        // Fallback to 3D distance (no pcurve available)
+                        let mid_pt = ic.curve.point_at(mid_t);
+                        let surf = &self.ds.faces[fii].surface;
+                        let (_, proj) = crate::extrema::closest_point_on_surface(surf, mid_pt);
+                        let tol_sq = ff_tol * ff_tol;
+                        if proj.distance_squared(mid_pt) > tol_sq { valid = false; break; }
+                    }
+                }
+                if !valid {
                     if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
-                        let d1 = p1.distance(mid_pt);
-                        let d2 = p2.distance(mid_pt);
-                        eprintln!("[SPLIT] IVF_REMOVE ci={} fi=[{},{}] mid_t={:.9} mid_pt=({:.6},{:.6},{:.6}) d1={:.12} d2={:.12} tol={:.12}",
-                            new_ci, fi[0], fi[1], mid_t, mid_pt.x, mid_pt.y, mid_pt.z, d1, d2, ff_tol);
+                        eprintln!("[SPLIT] IVF_REMOVE ci={} fi=[{},{}] mid_t={:.9} (FClass2d)", new_ci, fi[0], fi[1], mid_t);
                     }
                     remove_curves.push(new_ci);
-
                 }
 
             }
