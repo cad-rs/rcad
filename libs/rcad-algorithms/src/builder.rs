@@ -3969,6 +3969,13 @@ fn is_same_block_fwd_rev(a: &WireSegment, b: &WireSegment) -> bool {
             && a.start_vertex == b.end_vertex
             && a.end_vertex == b.start_vertex
         }
+        // ✅ OCCT-aligned: IntersectionCurve FWD+REV share the same curve index,
+        //    representing the same physical edge in opposite orientations.
+        //    TopoDS_Shape::IsSame returns true for them, so the TAU penalty
+        //    must apply to prevent the walker from U-turning through the IC.
+        (WireEdgeSource::IntersectionCurve(ca), WireEdgeSource::IntersectionCurve(cb)) => {
+            ca == cb
+        }
         _ => false,
     }
 }
