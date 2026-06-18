@@ -3647,7 +3647,7 @@ fn build_regular_wire(
     segments: &[WireSegment],
     vert_to_segs: &HashMap<usize, Vec<usize>>,
     vi_to_canon: &[usize],
-    deg_end_canon: &HashMap<usize, usize>,
+    _deg_end_canon: &HashMap<usize, usize>,
 ) -> Option<Vec<usize>> {
     let cs = |seg: &WireSegment| vi_to_canon.get(seg.start_vertex).copied().unwrap_or(seg.start_vertex);
     let ce = |seg: &WireSegment| {
@@ -4078,13 +4078,18 @@ fn select_best_outgoing<'a>(
                     clock_wise_angle(angle_in, b.angle)
                 }
             };
-            // Tie-break: when CWA equal within EPSILON, prefer interior (IC)
-            if (angle_a - angle_b).abs() < 1e-12 {
-                let a_inside = a.is_inside;
-                let b_inside = b.is_inside;
-                a_inside.cmp(&b_inside).reverse()
+            // ✅ OCCT-aligned: strict anAngle < aMinAngle - eps comparison
+            //    (BOPAlgo_WireSplitter_1.cxx L595-599).  No IC-preference
+            //    tiebreaker: when CWA values are equal within epsilon, the
+            //    first-iterated candidate in SmartMap order wins, matching
+            //    OCCT's iteration-order-based selection.
+            const CWA_EPS: f64 = 1e-12;
+            if angle_a + CWA_EPS < angle_b {
+                std::cmp::Ordering::Less
+            } else if angle_b + CWA_EPS < angle_a {
+                std::cmp::Ordering::Greater
             } else {
-                angle_a.partial_cmp(&angle_b).unwrap_or(std::cmp::Ordering::Equal)
+                std::cmp::Ordering::Equal
             }
         })
         .copied()
