@@ -72,6 +72,9 @@ pub struct DSFace {
     pub boundary_verts: Vec<usize>,
     /// Boundary edge indices (into DS.edges) — outer wire.
     pub boundary_edges: Vec<usize>,
+    /// Inner wire edges (TopExp_Explorer iterates outer wire first, then inner wires).
+    /// Each entry is one inner wire: Vec<(edge_idx, forward_in_wire)>.
+    pub inner_boundary_edges: Vec<Vec<(usize, bool)>>,
     pub normal: DVec3,
     pub origin: ShapeOrigin,
     pub face_info: FaceInfo,
@@ -659,10 +662,23 @@ impl DS {
                         }
                     };
 
+                    // ✅ OCCT-aligned: inner wire edges (TopExp_Explorer iterates outer first, then inner).
+                    let inner_boundary_edges: Vec<Vec<(usize, bool)>> = face
+                        .inner_wires
+                        .iter()
+                        .map(|wire| {
+                            wire.edges
+                                .iter()
+                                .map(|we| (we.idx + edge_offset, we.forward))
+                                .collect()
+                        })
+                        .collect();
+
                     self.faces.push(DSFace {
                         surface,
                         boundary_verts,
                         boundary_edges,
+                        inner_boundary_edges,
                         normal: face.normal,
                         origin,
                         face_info: FaceInfo::default(),
