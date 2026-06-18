@@ -3060,50 +3060,66 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                 tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
             });
         } else {
-            // ✅ OCCT-aligned: split boundary edges by IC vertices (FillImagesEdges equivalent).
-            //    OCCT BOPAlgo_Builder_1.cxx L71-126: each pave_block → sub-edge (myImages).
-            //    Check current face's vertices_in AND all DS vertices for robustness.
-            let p_a = ds.vertices[sv].point;
-            let p_b = ds.vertices[ev].point;
-            let ab = p_b - p_a;
-            let ab_len2 = ab.length_squared();
-            let mut split_verts: Vec<(usize, f64)> = Vec::new();
-            if ab_len2 > 1e-12 {
-                // Vertices from current face's face_info.vertices_in
-                for &vi in &face.face_info.vertices_in {
-                    check_and_add_split_vertex(ds, sv, ev, vi, p_a, ab, ab_len2, &mut split_verts);
-                }
-            }
-            split_verts.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-            if split_verts.is_empty() {
-                // No split vertices — whole edge as one segment (OCCT L374-378)
-                let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface);
-                segments.push(WireSegment {
-                    start_vertex: sv, end_vertex: ev,
-                    source: WireEdgeSource::DsEdge(ei),
-                    forward: true, is_seam: false,
-                    tangent_start: t_start, tangent_end: t_end,
-                });
-            } else {
-                // ✅ OCCT-aligned: edge split by IC vertices (OCCT myImages equivalent).
-                let mut prev_v = sv;
-                for &(vi, _t) in &split_verts {
-                    let (ts, te) = edge_uv_tangent(ds, prev_v, vi, &face.surface);
+            // ✅ OCCT-aligned: use my_images sub-edges when PaveFiller split this edge,
+            //    otherwise fall back to vertices_in-based splitting.
+            if !ds.my_images.is_empty() && ei < ds.my_images.len() && ds.my_images[ei].len() >= 2 {
+                for &sub_ei in &ds.my_images[ei] {
+                    let sub_edge = &ds.edges[sub_ei];
+                    let sv_seg = sub_edge.start_vertex;
+                    let ev_seg = sub_edge.end_vertex;
+                    if sv_seg == ev_seg { continue; }
+                    let (t_start, t_end) = edge_uv_tangent(ds, sv_seg, ev_seg, &face.surface);
                     segments.push(WireSegment {
-                        start_vertex: prev_v, end_vertex: vi,
+                        start_vertex: sv_seg, end_vertex: ev_seg,
+                        source: WireEdgeSource::DsEdge(sub_ei),
+                        forward: true, is_seam: false,
+                        tangent_start: t_start, tangent_end: t_end,
+                    });
+                }
+            } else {
+                // Fallback: split boundary edges by IC vertices (FillImagesEdges equivalent).
+                let p_a = ds.vertices[sv].point;
+                let p_b = ds.vertices[ev].point;
+                let ab = p_b - p_a;
+                let ab_len2 = ab.length_squared();
+                let mut split_verts: Vec<(usize, f64)> = Vec::new();
+                if ab_len2 > 1e-12 {
+                    // Vertices from current face's face_info.vertices_in
+                    for &vi in &face.face_info.vertices_in {
+                        check_and_add_split_vertex(ds, sv, ev, vi, p_a, ab, ab_len2, &mut split_verts);
+                    }
+                }
+                split_verts.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+                if split_verts.is_empty() {
+                    // No split vertices — whole edge as one segment (OCCT L374-378)
+                    let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface);
+                    segments.push(WireSegment {
+                        start_vertex: sv, end_vertex: ev,
+                        source: WireEdgeSource::DsEdge(ei),
+                        forward: true, is_seam: false,
+                        tangent_start: t_start, tangent_end: t_end,
+                    });
+                } else {
+                    // ✅ OCCT-aligned: edge split by IC vertices (OCCT myImages equivalent).
+                    let mut prev_v = sv;
+                    for &(vi, _t) in &split_verts {
+                        let (ts, te) = edge_uv_tangent(ds, prev_v, vi, &face.surface);
+                        segments.push(WireSegment {
+                            start_vertex: prev_v, end_vertex: vi,
+                            source: WireEdgeSource::DsEdge(ei),
+                            forward: true, is_seam: false,
+                            tangent_start: ts, tangent_end: te,
+                        });
+                        prev_v = vi;
+                    }
+                    let (ts, te) = edge_uv_tangent(ds, prev_v, ev, &face.surface);
+                    segments.push(WireSegment {
+                        start_vertex: prev_v, end_vertex: ev,
                         source: WireEdgeSource::DsEdge(ei),
                         forward: true, is_seam: false,
                         tangent_start: ts, tangent_end: te,
                     });
-                    prev_v = vi;
                 }
-                let (ts, te) = edge_uv_tangent(ds, prev_v, ev, &face.surface);
-                segments.push(WireSegment {
-                    start_vertex: prev_v, end_vertex: ev,
-                    source: WireEdgeSource::DsEdge(ei),
-                    forward: true, is_seam: false,
-                    tangent_start: ts, tangent_end: te,
-                });
             }
         }
     }

@@ -6079,6 +6079,9 @@ impl<'a> PaveFiller<'a> {
             }
 
         }
+        // ✅ OCCT-aligned: Build edge images from pave blocks (FillImagesEdges)
+        self.ds.build_edge_images();
+
         if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
             let n_circle = self.ds.intersection_curves.iter().filter(|ic| matches!(ic.curve, Curve3::Circle(_))).count();
             let n_total = self.ds.intersection_curves.len();
