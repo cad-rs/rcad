@@ -880,7 +880,7 @@ impl<'a> PaveFiller<'a> {
                         ci, ic.start_vertex, ic.end_vertex, sv_pt.x, sv_pt.y, sv_pt.z, ev_pt.x, ev_pt.y, ev_pt.z);
                 }
                 for fi in 0..self.ds.faces.len() {
-                    self.ds.faces[fi].face_info.curves_in.remove(&ci);
+                    self.ds.faces[fi].face_info.curves_sc.remove(&ci);
                 }
             }
         }
@@ -2747,8 +2747,8 @@ impl<'a> PaveFiller<'a> {
                             points: vec![],
                         });
 
-                        self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
-                        self.ds.faces[f2].face_info.curves_in.insert(curve_idx);
+                        self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
+                        self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
                         self.ds.faces[f1].face_info.vertices_in.insert(v_start);
                         self.ds.faces[f1].face_info.vertices_in.insert(v_end);
                         self.ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -3024,8 +3024,8 @@ impl<'a> PaveFiller<'a> {
                     pcurve_on_b,
                 });
 
-                self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
-                self.ds.faces[f2].face_info.curves_in.insert(curve_idx);
+                self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
+                self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
                 self.ds.faces[f1].face_info.vertices_in.insert(v_start);
                 self.ds.faces[f1].face_info.vertices_in.insert(v_end);
                 self.ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -3112,8 +3112,8 @@ impl<'a> PaveFiller<'a> {
             pcurve_on_b: Some(pcurve_b),
         });
 
-        self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
-        self.ds.faces[f2].face_info.curves_in.insert(curve_idx);
+        self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
+        self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
         self.ds.faces[f1].face_info.vertices_in.insert(v_start);
         self.ds.faces[f1].face_info.vertices_in.insert(v_end);
         self.ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -3175,8 +3175,8 @@ impl<'a> PaveFiller<'a> {
                     pcurve_on_a,
                     pcurve_on_b,
                 });
-                ds.faces[f1].face_info.curves_in.insert(curve_idx);
-                ds.faces[f2].face_info.curves_in.insert(curve_idx);
+                ds.faces[f1].face_info.curves_sc.insert(curve_idx);
+                ds.faces[f2].face_info.curves_sc.insert(curve_idx);
                 ds.faces[f1].face_info.vertices_in.insert(v_start);
                 ds.faces[f1].face_info.vertices_in.insert(v_end);
                 ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -3253,8 +3253,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
                     });
                     curve_indices.push(ci);
-                    self.ds.faces[f1].face_info.curves_in.insert(ci);
-                    self.ds.faces[f2].face_info.curves_in.insert(ci);
+                    self.ds.faces[f1].face_info.curves_sc.insert(ci);
+                    self.ds.faces[f2].face_info.curves_sc.insert(ci);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_start);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_end);
                     self.ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -3327,8 +3327,8 @@ impl<'a> PaveFiller<'a> {
                     pcurve_on_a,
                     pcurve_on_b,
                 });
-                ds.faces[f1].face_info.curves_in.insert(ci);
-                ds.faces[f2].face_info.curves_in.insert(ci);
+                ds.faces[f1].face_info.curves_sc.insert(ci);
+                ds.faces[f2].face_info.curves_sc.insert(ci);
                 ds.faces[f1].face_info.vertices_in.insert(v_start);
                 ds.faces[f1].face_info.vertices_in.insert(v_end);
                 ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -3358,8 +3358,8 @@ impl<'a> PaveFiller<'a> {
                 pcurve_on_a,
                 pcurve_on_b,
             });
-            ds.faces[f1].face_info.curves_in.insert(ci);
-            ds.faces[f2].face_info.curves_in.insert(ci);
+            ds.faces[f1].face_info.curves_sc.insert(ci);
+            ds.faces[f2].face_info.curves_sc.insert(ci);
             ds.faces[f1].face_info.vertices_in.insert(v_start);
             ds.faces[f1].face_info.vertices_in.insert(v_end);
             ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -3397,8 +3397,8 @@ impl<'a> PaveFiller<'a> {
                 pcurve_on_a,
                 pcurve_on_b,
             });
-            ds.faces[f1].face_info.curves_in.insert(ci);
-            ds.faces[f2].face_info.curves_in.insert(ci);
+            ds.faces[f1].face_info.curves_sc.insert(ci);
+            ds.faces[f2].face_info.curves_sc.insert(ci);
             ds.faces[f1].face_info.vertices_in.insert(v_start);
             ds.faces[f1].face_info.vertices_in.insert(v_end);
             ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -3515,8 +3515,8 @@ impl<'a> PaveFiller<'a> {
                         polyline: pts, start_vertex: v_start, end_vertex: v_end,
                         t_range: [0.0, 1.0], pcurve_on_a: pca, pcurve_on_b: pcb,
                     });
-                    self.ds.faces[f1].face_info.curves_in.insert(ci);
-                    self.ds.faces[f2].face_info.curves_in.insert(ci);
+                    self.ds.faces[f1].face_info.curves_sc.insert(ci);
+                    self.ds.faces[f2].face_info.curves_sc.insert(ci);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_start);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_end);
                     self.ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -3616,8 +3616,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
                     });
                     curve_indices.push(ci);
-                    self.ds.faces[f1].face_info.curves_in.insert(ci);
-                    self.ds.faces[f2].face_info.curves_in.insert(ci);
+                    self.ds.faces[f1].face_info.curves_sc.insert(ci);
+                    self.ds.faces[f2].face_info.curves_sc.insert(ci);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_start);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_end);
                     self.ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -3719,8 +3719,8 @@ impl<'a> PaveFiller<'a> {
                 pcurve_on_a,
                 pcurve_on_b,
             });
-            ds.faces[f1].face_info.curves_in.insert(curve_idx);
-            ds.faces[f2].face_info.curves_in.insert(curve_idx);
+            ds.faces[f1].face_info.curves_sc.insert(curve_idx);
+            ds.faces[f2].face_info.curves_sc.insert(curve_idx);
             ds.faces[f1].face_info.vertices_in.insert(v_start);
             ds.faces[f1].face_info.vertices_in.insert(v_end);
             ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -3808,7 +3808,7 @@ impl<'a> PaveFiller<'a> {
                 if (v - v_range[0]).abs() < boundary_tol
                     || (v - v_range[1]).abs() < boundary_tol
                 {
-                    self.ds.faces[cyl_fi].face_info.curves_in.remove(&ci);
+                    self.ds.faces[cyl_fi].face_info.curves_sc.remove(&ci);
                 }
             }
             PlaneCylinderResult::Ellipse(ellipse) => {
@@ -4032,8 +4032,8 @@ impl<'a> PaveFiller<'a> {
                 pcurve_on_a,
                 pcurve_on_b,
             });
-            ds.faces[f1].face_info.curves_in.insert(ci);
-            ds.faces[f2].face_info.curves_in.insert(ci);
+            ds.faces[f1].face_info.curves_sc.insert(ci);
+            ds.faces[f2].face_info.curves_sc.insert(ci);
             ds.faces[f1].face_info.vertices_in.insert(v_start);
             ds.faces[f1].face_info.vertices_in.insert(v_end);
             ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -4272,8 +4272,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
                     });
                     curve_indices.push(ci);
-                    self.ds.faces[f1].face_info.curves_in.insert(ci);
-                    self.ds.faces[f2].face_info.curves_in.insert(ci);
+                    self.ds.faces[f1].face_info.curves_sc.insert(ci);
+                    self.ds.faces[f2].face_info.curves_sc.insert(ci);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_start);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_end);
                     self.ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -4319,8 +4319,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
                     });
                     curve_indices.push(ci);
-                    self.ds.faces[f1].face_info.curves_in.insert(ci);
-                    self.ds.faces[f2].face_info.curves_in.insert(ci);
+                    self.ds.faces[f1].face_info.curves_sc.insert(ci);
+                    self.ds.faces[f2].face_info.curves_sc.insert(ci);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_start);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_end);
                     self.ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -4354,8 +4354,8 @@ impl<'a> PaveFiller<'a> {
                     pcurve_on_a: pca,
                     pcurve_on_b: pcb,
                 });
-                self.ds.faces[f1].face_info.curves_in.insert(ci);
-                self.ds.faces[f2].face_info.curves_in.insert(ci);
+                self.ds.faces[f1].face_info.curves_sc.insert(ci);
+                self.ds.faces[f2].face_info.curves_sc.insert(ci);
                 self.ds.faces[f1].face_info.vertices_in.insert(v_start);
                 self.ds.faces[f1].face_info.vertices_in.insert(v_end);
                 self.ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -4444,8 +4444,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
                     });
                     curve_indices.push(ci);
-                    self.ds.faces[f1].face_info.curves_in.insert(ci);
-                    self.ds.faces[f2].face_info.curves_in.insert(ci);
+                    self.ds.faces[f1].face_info.curves_sc.insert(ci);
+                    self.ds.faces[f2].face_info.curves_sc.insert(ci);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_start);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_end);
                     self.ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -4479,8 +4479,8 @@ impl<'a> PaveFiller<'a> {
                     pcurve_on_a: pca,
                     pcurve_on_b: pcb,
                 });
-                self.ds.faces[f1].face_info.curves_in.insert(ci);
-                self.ds.faces[f2].face_info.curves_in.insert(ci);
+                self.ds.faces[f1].face_info.curves_sc.insert(ci);
+                self.ds.faces[f2].face_info.curves_sc.insert(ci);
                 self.ds.faces[f1].face_info.vertices_in.insert(v_start);
                 self.ds.faces[f1].face_info.vertices_in.insert(v_end);
                 self.ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -4547,8 +4547,8 @@ impl<'a> PaveFiller<'a> {
                                 pcurve_on_b: pcb.clone(),
                             });
 
-                            self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
-                            self.ds.faces[f2].face_info.curves_in.insert(curve_idx);
+                            self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
+                            self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
                             self.ds.faces[f1].face_info.vertices_in.insert(v_start);
                             self.ds.faces[f1].face_info.vertices_in.insert(v_end);
                             self.ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -4583,8 +4583,8 @@ impl<'a> PaveFiller<'a> {
                             pcurve_on_b: pcb,
                         });
 
-                        self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
-                        self.ds.faces[f2].face_info.curves_in.insert(curve_idx);
+                        self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
+                        self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
                         self.ds.faces[f1].face_info.vertices_in.insert(v_start);
                         self.ds.faces[f1].face_info.vertices_in.insert(v_end);
                         self.ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -4632,8 +4632,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: pcb,
                     });
 
-                    self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
-                    self.ds.faces[f2].face_info.curves_in.insert(curve_idx);
+                    self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
+                    self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_start);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_end);
                     self.ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -4684,8 +4684,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: pcb,
                     });
 
-                    self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
-                    self.ds.faces[f2].face_info.curves_in.insert(curve_idx);
+                    self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
+                    self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_start);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_end);
                     self.ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -4737,8 +4737,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: pcb,
                     });
 
-                    self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
-                    self.ds.faces[f2].face_info.curves_in.insert(curve_idx);
+                    self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
+                    self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_start);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_end);
                     self.ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -4874,8 +4874,8 @@ impl<'a> PaveFiller<'a> {
                     pcurve_on_a: pca,
                     pcurve_on_b: pcb,
                 });
-                self.ds.faces[f1].face_info.curves_in.insert(ci);
-                self.ds.faces[f2].face_info.curves_in.insert(ci);
+                self.ds.faces[f1].face_info.curves_sc.insert(ci);
+                self.ds.faces[f2].face_info.curves_sc.insert(ci);
                 self.ds.faces[f1].face_info.vertices_in.insert(v_start);
                 self.ds.faces[f1].face_info.vertices_in.insert(v_end);
                 self.ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -4907,8 +4907,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_a: pca,
                         pcurve_on_b: pcb,
                     });
-                    self.ds.faces[f1].face_info.curves_in.insert(ci);
-                    self.ds.faces[f2].face_info.curves_in.insert(ci);
+                    self.ds.faces[f1].face_info.curves_sc.insert(ci);
+                    self.ds.faces[f2].face_info.curves_sc.insert(ci);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_start);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_end);
                     self.ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -4954,8 +4954,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
                     });
                     curve_indices.push(ci);
-                    self.ds.faces[f1].face_info.curves_in.insert(ci);
-                    self.ds.faces[f2].face_info.curves_in.insert(ci);
+                    self.ds.faces[f1].face_info.curves_sc.insert(ci);
+                    self.ds.faces[f2].face_info.curves_sc.insert(ci);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_start);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_end);
                     self.ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -5075,8 +5075,8 @@ impl<'a> PaveFiller<'a> {
                 pcurve_on_b: pcurve_b,
             });
 
-            self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
-            self.ds.faces[f2].face_info.curves_in.insert(curve_idx);
+            self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
+            self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
             self.ds.faces[f1].face_info.vertices_in.insert(v_start);
             self.ds.faces[f1].face_info.vertices_in.insert(v_end);
             self.ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -5299,8 +5299,8 @@ impl<'a> PaveFiller<'a> {
                 pcurve_on_b: pcurve_b,
             });
 
-            self.ds.faces[f1].face_info.curves_in.insert(curve_idx);
-            self.ds.faces[f2].face_info.curves_in.insert(curve_idx);
+            self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
+            self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
             self.ds.faces[f1].face_info.vertices_in.insert(v_start);
             self.ds.faces[f1].face_info.vertices_in.insert(v_end);
             self.ds.faces[f2].face_info.vertices_in.insert(v_start);
@@ -5840,7 +5840,7 @@ impl<'a> PaveFiller<'a> {
                 // Register endpoints in faces' vertices_in
                 for fi in 0..n_faces {
                     if face_curves[fi].contains(&act.old_ci) {
-                        self.ds.faces[fi].face_info.curves_in.insert(new_ci);
+                        self.ds.faces[fi].face_info.curves_sc.insert(new_ci);
                         self.ds.faces[fi].face_info.vertices_in.insert(v_prev);
                         self.ds.faces[fi].face_info.vertices_in.insert(v_cur);
                     }
@@ -5926,7 +5926,7 @@ impl<'a> PaveFiller<'a> {
 
                 for &ci in &remove_curves {
 
-                    self.ds.faces[fi].face_info.curves_in.remove(&ci);
+                    self.ds.faces[fi].face_info.curves_sc.remove(&ci);
 
                 }
 
@@ -5991,7 +5991,7 @@ impl<'a> PaveFiller<'a> {
 
                 for &ci in &micro_curves {
 
-                    self.ds.faces[fi].face_info.curves_in.remove(&ci);
+                    self.ds.faces[fi].face_info.curves_sc.remove(&ci);
 
         // ✅ OCCT对齐: FilterPavesOnCurves — 跨曲线顶点去重
 
@@ -6095,7 +6095,7 @@ impl<'a> PaveFiller<'a> {
 
                 for &ci in &remove_curves {
 
-                    self.ds.faces[fi].face_info.curves_in.remove(&ci);
+                    self.ds.faces[fi].face_info.curves_sc.remove(&ci);
 
                 }
 

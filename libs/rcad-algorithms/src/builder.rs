@@ -2962,7 +2962,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
     // ================================================================
     // ✅ OCCT-aligned: Section edges = Intersection curves (OCCT L478-489).
     // ================================================================
-    for &ci in &face.face_info.curves_in {
+    for &ci in &face.face_info.all_curves() {
         let ic = &ds.intersection_curves[ci];
         // ✅ OCCT-aligned: remap IC endpoint to boundary vertex (ShapesSD).
         let sv = remap_ic_v(ic.start_vertex);
@@ -2976,7 +2976,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
         if sv == ev || d2 < TOLERANCE_ABS_SQ {
             if matches!(face.surface, Surface3::Sphere(_)) {
                 // Degenerate IC on sphere: infer the correct second vertex from other ICs.
-                let other_v: Vec<usize> = face.face_info.curves_in.iter()
+                let other_v: Vec<usize> = face.face_info.all_curves().iter()
                     .filter(|&&oci| oci != ci)
                     .flat_map(|&oci| {
                         let oic = &ds.intersection_curves[oci];
@@ -4771,7 +4771,7 @@ impl<'a> BooleanBuilder<'a> {
         // ⏳ TODO: implement BuildDraftFace equivalent (BOPAlgo_Builder_2.cxx
         //    L951-1070) — replaces original boundary edges with split images
         //    (myImages) for faces with only On edges, avoiding tessellation.
-        if face.face_info.curves_in.is_empty() {
+        if !face.face_info.has_any_curves() {
             return None;
         }
         // OCCT-aligned: BuildSplitFaces works for all surface types (L357-489)
@@ -5039,7 +5039,7 @@ impl<'a> BooleanBuilder<'a> {
                     rcad_kernel::geom::Surface3::Cone(_) => "Cone".to_string(),
                     _ => "Other".to_string(),
                 };
-                let cis: Vec<String> = face.face_info.curves_in.iter().map(|ci| format!("{ci}")).collect();
+                let cis: Vec<String> = face.face_info.all_curves().iter().map(|ci| format!("{ci}")).collect();
                 eprintln!("  face[{fi}] {surf_desc} curves_in=[{}] nverts={}", cis.join(","), face.boundary_verts.len());
             }
         }
@@ -5071,7 +5071,7 @@ impl<'a> BooleanBuilder<'a> {
         let mut a_on_planes: Vec<(DVec3, DVec3)> = Vec::new(); // (normal, origin) from emitted A-face planes
         for &fi in &a_faces {
             // OCCT-aligned: wire pipeline for all face types (BuildSplitFaces + WireSplitter)
-            if !self.ds.faces[fi].face_info.curves_in.is_empty() {
+            if self.ds.faces[fi].face_info.has_any_curves() {
                 if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
                     if !wfs.is_empty() {
                         let wire_subs = wire_faces_to_face_sample_data(&wfs, &segments, self.ds, fi);
@@ -5213,9 +5213,9 @@ impl<'a> BooleanBuilder<'a> {
         for &fi in &b_faces {
             // OCCT-aligned: wire pipeline for all face types (BuildSplitFaces + WireSplitter)
             if std::env::var("RCAD_DEBUG_IC").is_ok() {
-                eprintln!("[B_FACE] fi={} curves_in={}", fi, self.ds.faces[fi].face_info.curves_in.len());
+                eprintln!("[B_FACE] fi={} sc_curves={}", fi, self.ds.faces[fi].face_info.curves_sc.len());
             }
-            if !self.ds.faces[fi].face_info.curves_in.is_empty() {
+            if self.ds.faces[fi].face_info.has_any_curves() {
                 if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
                     if !wfs.is_empty() {
                         let wire_subs = wire_faces_to_face_sample_data(&wfs, &segments, self.ds, fi);
@@ -5683,7 +5683,7 @@ impl<'a> BooleanBuilder<'a> {
         const N_ALIGN: f64 = 0.04;
         let mut out = Vec::new();
         for (ci, ic) in self.ds.intersection_curves.iter().enumerate() {
-            if face.face_info.curves_in.contains(&ci) {
+            if face.face_info.all_curves().contains(&ci) {
                 continue;
             }
             let Curve3::Circle(c) = &ic.curve else {
@@ -5716,7 +5716,7 @@ impl<'a> BooleanBuilder<'a> {
     fn merged_split_curve_ids_for_planar_face(&self, face_idx: usize, plane: &Plane) -> Vec<usize> {
         let mut c: Vec<usize> = self.ds.faces[face_idx]
             .face_info
-            .curves_in
+            .all_curves()
             .iter()
             .copied()
             .collect();
@@ -5934,7 +5934,7 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        if fi.curves_in.is_empty() {
+        if !fi.has_any_curves() {
             // Closed surfaces with seam edges (sphere) may have < 3 boundary vertices,
             // causing emit_face_with_origin to drop the whole sub-face. Tessellate into
             // UV patches so each sub-face has a valid boundary polygon.
@@ -5966,7 +5966,7 @@ impl<'a> BooleanBuilder<'a> {
                     let bnd_v_max = uv_bnd.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
                     let bnd_v_span = bnd_v_max - bnd_v_min;
                     let vb_tol = (bnd_v_span * 0.01).max(TOLERANCE_ABS);
-                    let all_at_boundary = fi.curves_in.iter().all(|&ci| {
+                    let all_at_boundary = fi.all_curves().iter().all(|&ci| {
                         self.find_pcurve_for_face(ci, face_idx).is_some_and(|pcurve| {
                             let ic = &self.ds.intersection_curves[ci];
                             let [t0, t1] = ic.t_range;
@@ -6021,7 +6021,7 @@ impl<'a> BooleanBuilder<'a> {
                     // N_V=32 bounds SA error to 鈮?R路蟺路H/N_V 鈮?40000蟺/32 鈮?3930 per
                     // cylinder, well inside the 7.5 % tolerance used by bcommon_simple/I9.
                     let has_full_wrap = bnd_u_span > TOLERANCE_LEN_MIN
-                        && fi.curves_in.iter().any(|&ci| {
+                        && fi.all_curves().iter().any(|&ci| {
                             self.find_pcurve_for_face(ci, face_idx).is_some_and(|pcurve| {
                                 let ic = &self.ds.intersection_curves[ci];
                                 let [t0, t1] = ic.t_range;
@@ -6090,7 +6090,7 @@ impl<'a> BooleanBuilder<'a> {
                     // High-order curves from numeric marching (e.g., the cone鈥揷ylinder
                     // quartic in ZK8) cause the parametric splitter to produce overlapping
                     // UV polygons, inflating the surface area in the same way as cone faces.
-                    let has_complex_curve = fi.curves_in.iter().any(|&ci| {
+                    let has_complex_curve = fi.all_curves().iter().any(|&ci| {
                         self.find_pcurve_for_face(ci, face_idx).is_some_and(|pc| {
                             matches!(pc.inner(), Curve2d::BSpline(_) | Curve2d::Bezier(_))
                         })
@@ -6108,7 +6108,7 @@ impl<'a> BooleanBuilder<'a> {
         // boundary polygons.  Only sphere faces WITHOUT curves_in need tessellation (the bare
         // sphere face has 2 boundary vertices from the seam edge, which emit_face_with_origin
         // rejects as having <3 boundary points).
-        if matches!(&face.surface, Surface3::Sphere(_)) && fi.curves_in.is_empty() {
+        if matches!(&face.surface, Surface3::Sphere(_)) && !fi.has_any_curves() {
             return self.tessellate_sphere_face(face_idx);
         }
 
@@ -6132,7 +6132,7 @@ impl<'a> BooleanBuilder<'a> {
                     let bnd_v_max = uv_bnd.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
                     let bnd_v_span = bnd_v_max - bnd_v_min;
                     let vb_tol = (bnd_v_span * 0.01).max(TOLERANCE_ABS);
-                    let all_at_boundary = fi.curves_in.iter().all(|&ci| {
+                    let all_at_boundary = fi.all_curves().iter().all(|&ci| {
                         self.find_pcurve_for_face(ci, face_idx).is_some_and(|pcurve| {
                             let ic = &self.ds.intersection_curves[ci];
                             let [t0, t1] = ic.t_range;
@@ -7265,7 +7265,7 @@ impl<'a> BooleanBuilder<'a> {
     }
         // Collect all intersection polylines for this face
         let mut all_polylines: Vec<Vec<DVec3>> = Vec::new();
-        for &ci in &face.face_info.curves_in {
+        for &ci in &face.face_info.all_curves() {
             let ic = &self.ds.intersection_curves[ci];
             if ic.polyline.len() >= 2 {
                 all_polylines.push(ic.polyline.clone());
@@ -7669,7 +7669,7 @@ impl<'a> BooleanBuilder<'a> {
         let is_sphere = matches!(&surface, Surface3::Sphere(_));
         let u_period = if is_periodic_u { std::f64::consts::TAU } else if is_sphere { std::f64::consts::TAU } else { 0.0 };
 
-        for &ci in &face.face_info.curves_in {
+        for &ci in &face.face_info.all_curves() {
             if let Some(pcurve) = self.find_pcurve_for_face(ci, face_idx) {
                 let ic = &self.ds.intersection_curves[ci];
                 let [t0, t1] = ic.t_range;
@@ -8765,13 +8765,13 @@ mod tests {
         PaveFiller::new(&mut ds).perform();
         let builder = BooleanBuilder::new(&ds, BooleanOpType::Difference);
         let a0 = 0_usize;
-        assert!(!ds.faces[a0].face_info.curves_in.is_empty());
+        assert!(!ds.faces[a0].face_info.has_any_curves());
         let subs = builder.split_face(a0);
         assert!(
             subs.len() > 1,
             "unit sphere 閳?unit box should split the sphere face (got {} subfaces, {} intersection curves in DS)",
             subs.len(),
-            ds.faces[a0].face_info.curves_in.len()
+            ds.faces[a0].face_info.curves_sc.len()
         );
     }
 
@@ -8791,7 +8791,7 @@ mod tests {
         PaveFiller::new(&mut ds).perform();
 
         let sphere_fi = 0usize;
-        assert!(!ds.faces[sphere_fi].face_info.curves_in.is_empty());
+        assert!(!ds.faces[sphere_fi].face_info.has_any_curves());
 
         let builder = BooleanBuilder::new(&ds, BooleanOpType::Intersection);
         let subs = builder.split_face(sphere_fi);

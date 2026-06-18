@@ -1,3 +1,5 @@
+use rcad_kernel::geom::{Curve2d, Curve3};
+
 /// A parametric point along an edge's curve (OCCT: BOPDS_Pave).
 #[derive(Debug, Clone, Copy)]
 pub struct Pave {
@@ -17,6 +19,12 @@ pub struct PaveBlock {
     pub pave2: Pave,
     /// New edge index assigned during result building.
     pub new_edge: Option<usize>,
+    /// 3D curve of this edge segment (trimmed to [pave1.param, pave2.param]).
+    pub curve: Option<Curve3>,
+    /// 2D pcurve on face A.
+    pub pcurve_on_a: Option<Curve2d>,
+    /// 2D pcurve on face B.
+    pub pcurve_on_b: Option<Curve2d>,
 }
 
 impl PaveBlock {
@@ -26,6 +34,9 @@ impl PaveBlock {
             pave1,
             pave2,
             new_edge: None,
+            curve: None,
+            pcurve_on_a: None,
+            pcurve_on_b: None,
         }
     }
 }
