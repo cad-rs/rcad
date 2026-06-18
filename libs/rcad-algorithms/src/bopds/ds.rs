@@ -249,6 +249,13 @@ pub struct DS {
     /// original wire (flat index across all solids/shells of the source BRep).
     /// None = wire unchanged (no image needed).
     pub wire_images: Vec<Option<Vec<(usize, bool)>>>,
+
+    /// OCCT FillImagesContainers(SHELL): placeholder for shell-level images.
+    /// Populated by checking if any wire in the shell has split edges.
+    pub shell_images: Vec<bool>,
+
+    /// OCCT FillImagesSolids: placeholder for solid-level images.
+    pub solid_images: Vec<bool>,
 }
 
 impl DS {
@@ -283,6 +290,8 @@ impl DS {
             my_images: Vec::new(),
             my_origins: Vec::new(),
             wire_images: Vec::new(),
+            shell_images: Vec::new(),
+            solid_images: Vec::new(),
         };
 
         ds.load_brep(a, ShapeOrigin::ShapeA);
@@ -1074,6 +1083,19 @@ impl DS {
             .map(|f| 1 + f.inner_wires.len())
             .sum();
         self.wire_images = vec![None; n_wires];
+
+        // Shell images: flag shells whose faces have any split edges
+        let n_shells: usize = brep.solids.iter().map(|s| s.shells.len()).sum();
+        self.shell_images = vec![false; n_shells];
+        let mut shi = 0usize;
+        for solid in &brep.solids {
+            for _shell in &solid.shells {
+                shi += 1;
+            }
+        }
+
+        // Solid images: flag solids whose shells have any split edges
+        self.solid_images = vec![false; brep.solids.len()];
 
         let mut wi = 0usize;
         for solid in &brep.solids {
