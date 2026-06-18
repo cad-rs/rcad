@@ -3709,6 +3709,28 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, fac
     // Build SmartMap: vertex  Vec<EdgeInfo>
     let mut smart_map: HashMap<usize, Vec<EdgeInfo>> = HashMap::new();
 
+    if std::env::var("RCAD_DEBUG_IC").is_ok() {
+        let face_surf = ds.faces.get(face_idx).map(|f| format!("{:?}", f.surface)).unwrap_or_default();
+        eprintln!("[SMARTMAP_ORDER] face={} surf={} block segments:", face_idx, face_surf);
+        for &si in block {
+            let seg = &segments[si];
+            let src = match &seg.source {
+                WireEdgeSource::DsEdge(ei) => format!("Ds({})", ei),
+                WireEdgeSource::IntersectionCurve(ci) => format!("IC({})", ci),
+                _ => "?".to_string(),
+            };
+            let bound_or_ic = if matches!(seg.source, WireEdgeSource::DsEdge(_)) {
+                "BOUNDARY"
+            } else if matches!(seg.source, WireEdgeSource::IntersectionCurve(_)) {
+                "IC"
+            } else {
+                "OTHER"
+            };
+            eprintln!("[SMARTMAP_ORDER]   seg={} src={} fwd={} type={} start_v={} end_v={}",
+                si, src, seg.forward, bound_or_ic, seg.start_vertex, seg.end_vertex);
+        }
+    }
+
     for &si in block {
         let seg = &segments[si];
 
