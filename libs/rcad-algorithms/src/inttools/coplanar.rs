@@ -132,19 +132,6 @@ fn line_intersect_2d(p1: [f64; 2], p2: [f64; 2], p3: [f64; 2], p4: [f64; 2]) -> 
     Some([p1[0] + t * d1x, p1[1] + t * d1y])
 }
 
-/// Compute a 2D pcurve (line) for a 3D line on a plane face.
-/// The pcurve maps the 3D line to the UV parameter space of the plane.
-pub fn line_pcurve_on_plane(line: &Line3, plane: &Plane) -> Curve2d {
-    let (u_axis, v_axis) = plane_local_basis(plane);
-    let dir_2d = DVec2::new(
-        line.direction.dot(u_axis),
-        line.direction.dot(v_axis),
-    );
-    Curve2d::Line(Line2d {
-        origin: DVec2::ZERO,
-        direction: dir_2d,
-    })
-}
 
 #[cfg(test)]
 mod tests {

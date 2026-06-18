@@ -2820,8 +2820,8 @@ impl<'a> PaveFiller<'a> {
                     let len = (p_end - p_start).length();
                     let line = Line3 { origin: p_start, direction: dir };
 
-                    let pca = inttools::coplanar::line_pcurve_on_plane(&line, &plane1);
-                    let pcb = inttools::coplanar::line_pcurve_on_plane(&line, &plane2);
+                    let pca = inttools::pcurve_derive::line_pcurve_on_plane(&line, &plane1);
+                    let pcb = inttools::pcurve_derive::line_pcurve_on_plane(&line, &plane2);
 
                     let curve_idx = self.ds.intersection_curves.len();
                     self.ds.intersection_curves.push(IntersectionCurve {
