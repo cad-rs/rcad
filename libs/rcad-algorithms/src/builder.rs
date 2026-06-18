@@ -3970,13 +3970,10 @@ fn is_same_block_fwd_rev(a: &WireSegment, b: &WireSegment) -> bool {
             && a.start_vertex == b.end_vertex
             && a.end_vertex == b.start_vertex
         }
-        // ✅ OCCT-aligned: IntersectionCurve FWD+REV share the same curve index,
-        //    representing the same physical edge in opposite orientations.
-        //    TopoDS_Shape::IsSame returns true for them, so the TAU penalty
-        //    must apply to prevent the walker from U-turning through the IC.
-        (WireEdgeSource::IntersectionCurve(ca), WireEdgeSource::IntersectionCurve(cb)) => {
-            ca == cb
-        }
+        // ⏳ TODO: Add IntersectionCurve IsSame check when edge iteration order
+        //    is OCCT-aligned (collect_face_edge_segments → TopExp_Explorer order).
+        //    IC FWD+REV represent the same physical edge — IsSame returns true
+        //    in OCCT, forcing CWA=TAU.  Currently causes A1 shell to open.
         _ => false,
     }
 }
@@ -4107,18 +4104,17 @@ fn select_best_outgoing<'a>(
                     clock_wise_angle(angle_in, b.angle)
                 }
             };
-            // ✅ OCCT-aligned: strict anAngle < aMinAngle - eps comparison
-            //    (BOPAlgo_WireSplitter_1.cxx L595-599).  No IC-preference
-            //    tiebreaker: when CWA values are equal within epsilon, the
-            //    first-iterated candidate in SmartMap order wins, matching
-            //    OCCT's iteration-order-based selection.
-            const CWA_EPS: f64 = 1e-12;
-            if angle_a + CWA_EPS < angle_b {
-                std::cmp::Ordering::Less
-            } else if angle_b + CWA_EPS < angle_a {
-                std::cmp::Ordering::Greater
+            // Tie-break: when CWA equal within EPSILON, prefer interior (IC)
+            // ⏳ OCCT aligns: no IC-preference tiebreaker (iteration order).
+            //    Retaining IC preference as heuristic pending edge-set
+            //    iteration order alignment (collect_face_edge_segments vs
+            //    TopExp_Explorer order).  Without this, A1 shell opens.
+            if (angle_a - angle_b).abs() < 1e-12 {
+                let a_inside = a.is_inside;
+                let b_inside = b.is_inside;
+                a_inside.cmp(&b_inside).reverse()
             } else {
-                std::cmp::Ordering::Equal
+                angle_a.partial_cmp(&angle_b).unwrap_or(std::cmp::Ordering::Equal)
             }
         })
         .copied()
