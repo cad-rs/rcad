@@ -4021,10 +4021,11 @@ fn is_same_block_fwd_rev(a: &WireSegment, b: &WireSegment) -> bool {
             && a.start_vertex == b.end_vertex
             && a.end_vertex == b.start_vertex
         }
-        // ⏳ TODO: Add IntersectionCurve IsSame check when edge iteration order
-        //    is OCCT-aligned (collect_face_edge_segments → TopExp_Explorer order).
-        //    IC FWD+REV represent the same physical edge — IsSame returns true
-        //    in OCCT, forcing CWA=TAU.  Currently causes A1 shell to open.
+        // ✅ OCCT-aligned: IntersectionCurve FWD+REV share curve index
+        //    (TopoDS_Shape::IsSame check, WireSplitter_1.cxx L564-567).
+        (WireEdgeSource::IntersectionCurve(ca), WireEdgeSource::IntersectionCurve(cb)) => {
+            ca == cb
+        }
         _ => false,
     }
 }
@@ -4155,17 +4156,17 @@ fn select_best_outgoing<'a>(
                     clock_wise_angle(angle_in, b.angle)
                 }
             };
-            // Tie-break: when CWA equal within EPSILON, prefer interior (IC)
-            // ⏳ OCCT aligns: no IC-preference tiebreaker (iteration order).
-            //    Retaining IC preference as heuristic pending edge-set
-            //    iteration order alignment (collect_face_edge_segments vs
-            //    TopExp_Explorer order).  Without this, A1 shell opens.
-            if (angle_a - angle_b).abs() < 1e-12 {
-                let a_inside = a.is_inside;
-                let b_inside = b.is_inside;
-                a_inside.cmp(&b_inside).reverse()
+            // ✅ OCCT-aligned: strict anAngle < aMinAngle - eps comparison
+            //    (BOPAlgo_WireSplitter_1.cxx L595-599). Edge set iteration order
+            //    now matches TopExp_Explorer → first-iterated candidate in SmartMap
+            //    matches OCCT's selection when CWA values are equal.
+            const CWA_EPS: f64 = 1e-12;
+            if angle_a + CWA_EPS < angle_b {
+                std::cmp::Ordering::Less
+            } else if angle_b + CWA_EPS < angle_a {
+                std::cmp::Ordering::Greater
             } else {
-                angle_a.partial_cmp(&angle_b).unwrap_or(std::cmp::Ordering::Equal)
+                std::cmp::Ordering::Equal
             }
         })
         .copied()
