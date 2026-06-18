@@ -3986,14 +3986,33 @@ fn select_best_outgoing<'a>(
         let internal_out: Vec<&&EdgeInfo> = candidates.iter().filter(|e| e.is_inside).collect();
         if internal_out.len() == 1 {
             let incoming_seg = &segments[incoming_ci];
-            let has_same_source_boundary = candidates.iter().any(|e| {
-                if e.is_inside || e.in_flag { return false; }
+            let mut same_source_boundary: Option<usize> = None;
+            for (cix, e) in candidates.iter().enumerate() {
+                if e.is_inside || e.in_flag { continue; }
                 match (&segments[e.seg_idx].source, &incoming_seg.source) {
-                    (WireEdgeSource::DsEdge(eo), WireEdgeSource::DsEdge(ei)) => eo == ei,
-                    _ => false,
+                    (WireEdgeSource::DsEdge(eo), WireEdgeSource::DsEdge(ei)) if eo == ei => {
+                        same_source_boundary = Some(cix);
+                    }
+                    _ => {}
                 }
-            });
-            if !has_same_source_boundary {
+            }
+            if std::env::var("RCAD_DEBUG_IC").is_ok() {
+                let in_src = match &incoming_seg.source {
+                    WireEdgeSource::DsEdge(ei) => format!("Ds({})", ei),
+                    WireEdgeSource::IntersectionCurve(ci) => format!("IC({})", ci),
+                    _ => "?".to_string(),
+                };
+                eprintln!("[BD_IC] incoming_ci={} src={} has_same={:?}", incoming_ci, in_src, same_source_boundary);
+                for e in candidates.iter() {
+                    let src_s = match &segments[e.seg_idx].source {
+                        WireEdgeSource::DsEdge(ei) => format!("Ds({})", ei),
+                        WireEdgeSource::IntersectionCurve(ci) => format!("IC({})", ci),
+                        _ => "?".to_string(),
+                    };
+                    eprintln!("[BD_IC]   cand seg={} inside={} src={}", e.seg_idx, e.is_inside, src_s);
+                }
+            }
+            if same_source_boundary.is_none() {
                 return Some(internal_out[0]);
             }
         }
@@ -4017,7 +4036,17 @@ fn select_best_outgoing<'a>(
                 {
                     std::f64::consts::TAU
                 } else {
-                    clock_wise_angle(angle_in, a.angle)
+                    let raw_cwa = clock_wise_angle(angle_in, a.angle);
+                    // ✅ OCCT对齐: 边界→边界子段共享同一 DsEdge 时(边被分割),
+                    // clock_wise_angle 返回 d≈0→被提升为 TAU。但边界→边界
+                    // 应优先于边界→IC。将 CWA 设为极小正值,使其在 min_by 中获胜。
+                    if !a.is_inside && !a.in_flag {
+                        if let WireEdgeSource::DsEdge(ei) = &segments[a.seg_idx].source {
+                            if let WireEdgeSource::DsEdge(ei_in) = &incoming_seg.source {
+                                if ei == ei_in && raw_cwa > 6.0 { 1e-12 } else { raw_cwa }
+                            } else { raw_cwa }
+                        } else { raw_cwa }
+                    } else { raw_cwa }
                 }
             };
             let angle_b = {
@@ -4027,7 +4056,14 @@ fn select_best_outgoing<'a>(
                 {
                     std::f64::consts::TAU
                 } else {
-                    clock_wise_angle(angle_in, b.angle)
+                    let raw_cwa = clock_wise_angle(angle_in, b.angle);
+                    if !b.is_inside && !b.in_flag {
+                        if let WireEdgeSource::DsEdge(ei) = &segments[b.seg_idx].source {
+                            if let WireEdgeSource::DsEdge(ei_in) = &incoming_seg.source {
+                                if ei == ei_in && raw_cwa > 6.0 { 1e-12 } else { raw_cwa }
+                            } else { raw_cwa }
+                        } else { raw_cwa }
+                    } else { raw_cwa }
                 }
             };
             // Tie-break: when CWA equal within EPSILON, prefer interior (IC)
