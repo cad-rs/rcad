@@ -475,7 +475,7 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     pave_fill(&mut ds, a, b, use_bvh);
     validate_ds_invariants(&ds)?;
     let builder = builder::BooleanBuilder::new(&ds, BooleanOpType::Union);
-    let (mut result, mut history) = builder.build_with_history()?;
+    let (mut result, mut history) = match builder.build_with_history() { Ok(r) => r, Err(e) => { eprintln!("[FUSE_ERR] build error: {:?}", e); return Err(e); } };
     if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
         let mut fi = 0usize;
         for solid in &result.solids {
@@ -488,7 +488,8 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
             }
         }
     }
-    validate_union_brep_output("union: result failed checks after build", &result)?;
+    eprintln!("[FUSE_ERR] validate_after_build: starting...");
+    match validate_union_brep_output("union: result failed checks after build", &result) { Ok(()) => {}, Err(e) => { eprintln!("[FUSE_ERR] validate_after_build FAILED: {:?}", e); return Err(e); } };
     // ✅ OCCT对齐: 为所有非平面面上的边创建 pcurve,供 merge 函数的 seam edge 检测。
     //    OCCT BuildSplitFaces 创建 section edge 时同时生成 pcurve。
     //    rcad 的 add_circle_edge/add_edge 不生成,此处在上游补做。
@@ -1215,4 +1216,5 @@ fn surface_priority_for_merge(brep: &BRep, (si, shi, fi): (usize, usize, usize))
         _ => 2,
     }
 }
+
 
