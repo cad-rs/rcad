@@ -355,13 +355,20 @@ fn validate_brep_topology_indices(
         for shell in &solid.shells {
             for face in &shell.faces {
                 if check_face_normals {
-                    let n = face.normal;
-                    if !n.x.is_finite()
-                        || !n.y.is_finite()
-                        || !n.z.is_finite()
-                        || n.length_squared() <= 0.0
-                    {
-                        return Err(BooleanError::InvalidResult(msg));
+                    // ✅ OCCT-aligned: only plane faces store a meaningful normal.
+                    // Non-planar faces derive normals from surface geometry.
+                    let is_plane = face.surface_idx
+                        .and_then(|si| brep.geom.surfaces.get(si))
+                        .is_some_and(|s| matches!(s, rcad_kernel::geom::Surface3::Plane(_)));
+                    if is_plane {
+                        let n = face.normal;
+                        if !n.x.is_finite()
+                            || !n.y.is_finite()
+                            || !n.z.is_finite()
+                            || n.length_squared() <= 0.0
+                        {
+                            return Err(BooleanError::InvalidResult(msg));
+                        }
                     }
                 }
                 for we in &face.outer_wire.edges {
