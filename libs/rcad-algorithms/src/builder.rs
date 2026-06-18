@@ -65,7 +65,7 @@ impl std::fmt::Display for BooleanError {
 
 impl std::error::Error for BooleanError {}
 
-/// ✅ OCCT对齐: classify 闃舵闇€瑕佺殑鏁版嵁,鏇夸唬 SubFace銆?
+/// ✅ OCCT对齐: classify 闃舵闇€瑕佺殑鏁版嵁,鏇夸唬 FaceSampleData銆?
 ///    浠?WireFace + WireSegments + DS + face_idx 鎻愬彇銆?
 ///    sample_point() / surface / normal / boundary 绛?classify 渚濊禆鐨勫瓧娈点€?
 #[derive(Debug, Clone)]
@@ -77,24 +77,19 @@ pub struct FaceSampleData {
     pub uv_domain: Option<[f64; 4]>,
     pub uv_centroid: Option<DVec2>,
     pub sample_override: Option<DVec3>,
+    pub outer_circle_edges: Vec<(usize, Curve3)>,
+    pub seam_edge: Option<(usize, Curve3)>,
+    pub inner_wire_circle: Option<(usize, Curve3)>,
 }
 
 impl FaceSampleData {
-    /// ⏳ 桥接: 浠?SubFace 鏋勯€?(杩囨浮鏈熶娇鐢?绉诲姩浣滃悗鍒犻櫎)銆?
-    fn from_sub_face(sub: &SubFace) -> Self {
-        FaceSampleData {
-            boundary: sub.boundary.clone(),
-            surface: sub.surface.clone(),
-            normal: sub.normal,
-            inner_wires: sub.inner_wires.clone(),
-            uv_domain: sub.uv_domain,
-            uv_centroid: sub.uv_centroid,
-            sample_override: sub.sample_override,
-        }
+    /// ⏳ 桥接: 浠?FaceSampleData 鏋勯€?(杩囨浮鏈熶娇鐢?绉诲姩浣滃悗鍒犻櫎)銆?
+    fn from_sub_face(sub: &FaceSampleData) -> Self {
+        sub.clone()
     }
 
     /// Returns a point slightly INSIDE the surface (toward the interior of the solid).
-    /// 浠?SubFace::sample_point 绉绘,浣跨敤 WireFace 鐨勬暟鎹簮銆?
+    /// 浠?FaceSampleData::sample_point 绉绘,浣跨敤 WireFace 鐨勬暟鎹簮銆?
     fn sample_point(&self) -> DVec3 {
         if let Some(pt) = self.sample_override {
             return pt;
@@ -221,166 +216,6 @@ impl WireSegment {
                 .map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
             tangent_end: self.tangent_start
                 .map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SubFace {
-    /// Boundary vertex positions in 3D (ordered polygon).
-    pub boundary: Vec<DVec3>,
-    /// The surface this lies on.
-    pub surface: Surface3,
-    /// Normal direction.
-    pub normal: DVec3,
-    /// UV centroid of this sub-face's parameter-space polygon (for curved surfaces).
-    /// Used by `sample_point` to produce a geometrically representative interior point.
-    pub uv_centroid: Option<DVec2>,
-    /// Explicit override for the sample point. When set, `sample_point()` uses this
-    /// instead of computing it from the boundary centroid. Used when the centroid would
-    /// fall in a different classification region (e.g. the outer annular region around
-    /// an embedded circle, whose centroid falls inside the circle).
-    pub sample_override: Option<DVec3>,
-    /// UV domain [u0, u1, v0, v1] of this sub-face's parameter-space region.
-    /// Propagated to `GeomStore.face_surface_range` in the result BRep so that
-    /// `tessellate_curved_face` uses the correct sub-domain instead of the full
-    /// surface domain.
-    pub uv_domain: Option<[f64; 4]>,
-    /// Inner wire boundaries (holes) in 3D. Each inner wire is an ordered polygon
-    /// representing a closed trim curve that forms a hole in the face.
-    pub inner_wires: Vec<Vec<DVec3>>,
-    /// ⏳ 部分对齐: 澶栬竟鐣岀簿纭渾寮ц竟銆?
-    ///    OCCT: MakeBlocks 鈫?section edges 鐩存帴浣滀负 BRep 杈圭殑 Curve3銆?
-    ///    rcad: SubFace 涓嶇洿鎺ュ搴?BRep face,闇€鍦?emit 鏃剁敱 outer_circle_edges
-    ///    鎸囧畾鍝簺澶栬竟鐣岃竟鐢?add_circle_edge(瀛?Curve3::Circle)銆傛蹇电瓑鏁?
-    ///    浣?OCCT 涓嶉渶瑕佽繖涓腑闂村瓨鍌ㄧ粨鏋勩€?
-    pub outer_circle_edges: Vec<(usize, Curve3)>,
-    /// ❌ 未对齐/自创鏂规: sphere face 鐨?seam edge銆?
-    ///    OCCT sphere face 鐨?seam edge 鐩存帴鍖呭惈鍦?BRep face 鐨?wire 涓€?
-    ///    rcad 鐨?SubFace 闇€瑕侀澶?seam_edge 瀛楁鏉ュ湪 emit_face_with_origin
-    ///    鏃惰皟鐢?add_seam_edge锛堟梺璺《鐐瑰幓閲嶏級銆侽CCT 鐨?MakeEdge 涓嶅瓨鍦?
-    ///    椤剁偣鍘婚噸闂,涓嶉渶瑕佹鏈哄埗銆?
-    pub seam_edge: Option<(usize, Curve3)>,
-    /// ✅ OCCT对齐: 鍐呰竟鐣岀簿纭渾鏇茬嚎銆?
-    pub inner_wire_circle: Option<(usize, Curve3)>,
-}
-
-impl SubFace {
-    fn sample_point(&self) -> DVec3 {
-        // Returns a point slightly INSIDE the surface (toward the interior of the solid),
-        // so classify_point can tell whether this sub-face is inside or outside
-        // the other solid.
-        //
-        // For sphere sub-faces the outward normal points AWAY from the sphere center,
-        // so we must offset toward the center to stay inside the sphere's volume.
-        // We use the UV centroid to get a point in the middle of the spherical cap.
-        if let Some(pt) = self.sample_override {
-            return pt;
-        }
-        match &self.surface {
-            Surface3::Sphere(s) => {
-                // Use UV centroid to pick a point in the CENTER of the spherical cap
-                let surface_pt = if let Some(uv) = self.uv_centroid {
-                    s.point_at(uv.x, uv.y)
-                } else if !self.boundary.is_empty() {
-                    self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
-                } else {
-                    s.center + s.radius * DVec3::X
-                };
-                // Offset inward toward sphere center
-                let to_center = (s.center - surface_pt).normalize_or_zero();
-                let inward = if to_center.length_squared() > 0.5 {
-                    to_center
-                } else {
-                    -self.normal
-                };
-                surface_pt + inward * (TOLERANCE_ABS * 10.0)
-            }
-            Surface3::Cylinder(c) => {
-                use rcad_kernel::geom::SurfaceEval;
-                // Use UV centroid to get a precise point on the cylinder surface
-                // (3D boundary centroid can fall at the top/bottom edge outside the
-                // actual cylinder extent, producing a sample outside the other solid).
-                let surface_pt = if let Some(uv) = self.uv_centroid {
-                    c.point_at(uv.x, uv.y)
-                } else if !self.boundary.is_empty() {
-                    self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
-                } else {
-                    c.origin + c.axis.normalize() * 0.5
-                };
-                // Compute inward direction (toward cylinder axis)
-                let axis = c.axis.normalize();
-                let to_axis = c.origin + axis * (surface_pt - c.origin).dot(axis) - surface_pt;
-                let inward = to_axis.normalize_or_zero();
-                // Use inward offset so the sample is clearly inside the cylinder surface.
-                // The offset must exceed the Relaxed classification tolerance band
-                // (base_tolerance * 100 * model_scale 鈮?3.5e-5 at unit scale) to avoid
-                // misclassification as "On" a nearby face of the other solid.
-                surface_pt + inward * (TOLERANCE_ABS * 5000.0)
-            }
-            Surface3::Torus(t) => {
-                use rcad_kernel::geom::SurfaceEval;
-                // Use UV centroid for a precise point on the torus surface.
-                let surface_pt = if let Some(uv) = self.uv_centroid {
-                    t.point_at(uv.x, uv.y)
-                } else if !self.boundary.is_empty() {
-                    self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
-                } else {
-                    t.center + (t.major_radius + t.minor_radius) * DVec3::X
-                };
-                // Offset toward the tube center so the sample is inside regardless of face normal orientation.
-                let axis = t.axis.normalize_or_zero();
-                let local = surface_pt - t.center;
-                let axial = local.dot(axis);
-                let radial = local - axial * axis;
-                let inward = if radial.length_squared() > TOLERANCE_FLOAT_ULTRA {
-                    let tube_center = t.center + axial * axis + radial.normalize() * t.major_radius;
-                    (tube_center - surface_pt).normalize_or_zero()
-                } else {
-                    -self.normal
-                };
-                surface_pt + inward * (TOLERANCE_ABS * 10.0)
-            }
-            Surface3::Cone(c) => {
-                use rcad_kernel::geom::SurfaceEval;
-                // Use UV centroid for a precise point on the cone surface.
-                let surface_pt = if let Some(uv) = self.uv_centroid {
-                    c.point_at(uv.x, uv.y)
-                } else if !self.boundary.is_empty() {
-                    self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
-                } else {
-                    c.point_at(0.0, 1.0)
-                };
-                // Offset toward the cone axis so the sample is inside regardless of face normal orientation.
-                let axis = c.axis_dir();
-                let local = surface_pt - c.apex;
-                let axial = local.dot(axis);
-                let axis_pt = c.apex + axis * axial;
-                let inward = (axis_pt - surface_pt).normalize_or_zero();
-                let inward = if inward.length_squared() > 0.5 {
-                    inward
-                } else {
-                    -self.normal
-                };
-                surface_pt + inward * (TOLERANCE_ABS * 5000.0)
-            }
-            _ => {
-                // Use the true area centroid (shoelace formula) instead of the vertex
-                // average. The vertex average is biased by uneven vertex distribution 鈥?
-                // for planar faces split by a sphere-plane intersection circle, the arc
-                // points cluster near the circle boundary, pulling the vertex centroid
-                // inside the sphere even when the sub-face is geometrically outside.
-                // The area centroid always lies in the correct geometric interior.
-                let centroid = if self.boundary.len() >= 3 {
-                    planar_polygon_centroid(&self.boundary, self.normal)
-                } else if self.boundary.is_empty() {
-                    DVec3::ZERO
-                } else {
-                    self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
-                };
-                // Offset AWAY from the interior (in direction of outward normal)
-                centroid + self.normal * TOLERANCE_ABS * 10.0
-            }
         }
     }
 }
@@ -1035,12 +870,12 @@ impl ResultBuilder {
         idx
     }
 
-    /// DEPRECATED (SubFace 鍐呴儴): 鍦嗗姬鍐呰竟鐣屾娴?浠呭湪 split_planar_face 璺緞浣跨敤銆?
+    /// DEPRECATED (FaceSampleData 鍐呴儴): 鍦嗗姬鍐呰竟鐣屾娴?浠呭湪 split_planar_face 璺緞浣跨敤銆?
     ///    OCCT: MakeBlocks 鈫?BOPTools_AlgoTools::MakeEdge(aIC,...)
     ///    split_planar_face 鐢熸垚鐨勫唴杈圭晫鏈?28+鐐?绠€鍖栦负2绔偣(arc_simplify),
     ///    鐒跺悗 emit_face_with_origin 鐢?add_circle_edge 鍒涘缓绮剧‘ Circle3 杈广€?
-    /// DEPRECATED (SubFace 鍐呴儴): 鍦嗗姬澶栬竟鐣屸啋鍐呰竟鐣岃浆鎹€俉ireFace 涓嶉渶瑕佹姝ラ銆?
-    fn convert_outer_arc_to_inner_wire(&self, sub: &mut SubFace) -> Vec<(usize, usize, Curve3)> {
+    /// DEPRECATED (FaceSampleData 鍐呴儴): 鍦嗗姬澶栬竟鐣屸啋鍐呰竟鐣岃浆鎹€俉ireFace 涓嶉渶瑕佹姝ラ銆?
+    fn convert_outer_arc_to_inner_wire(&self, sub: &mut FaceSampleData) -> Vec<(usize, usize, Curve3)> {
         if sub.boundary.len() < 6 { return vec![]; }
         let bnd = &sub.boundary;
         for start in 0..bnd.len().saturating_sub(4) {
@@ -1065,7 +900,7 @@ impl ResultBuilder {
         vec![]
     }
 
-    fn find_inner_wire_circles(&mut self, sub: &mut SubFace) -> Vec<(usize, usize, Curve3)> {
+    fn find_inner_wire_circles(&mut self, sub: &mut FaceSampleData) -> Vec<(usize, usize, Curve3)> {
         let mut circles: Vec<(usize, usize, Curve3)> = Vec::new();
         for wi in (0..sub.inner_wires.len()).rev() {
             let iw = &sub.inner_wires[wi];
@@ -1131,11 +966,11 @@ impl ResultBuilder {
         circles
     }
 
-    /// DEPRECATED (SubFace 鍐呴儴): 闈?sphere 闈㈠洖閫€鍙戝皠璺緞銆?
+    /// DEPRECATED (FaceSampleData 鍐呴儴): 闈?sphere 闈㈠洖閫€鍙戝皠璺緞銆?
     ///    澶栭儴鎺ュ彛缁熶竴浣跨敤 emit_wire_face (WireFace 璺緞)銆?
     fn emit_face_with_origin(
         &mut self,
-        sub: &SubFace,
+        sub: &FaceSampleData,
         flip: bool,
         origin: FaceOrigin,
         inner_wire_circles: &[(usize, usize, Curve3)],
@@ -1159,7 +994,7 @@ impl ResultBuilder {
         let mut edge_indices = Vec::new();
         for i in 0..vert_indices.len() {
             let j = (i + 1) % vert_indices.len();
-            // ✅ OCCT对齐: 浠?SubFace.outer_circle_edges 妫€鏌ュ杈圭晫姝よ竟鏄惁闇€绮剧‘鍦嗗姬
+            // ✅ OCCT对齐: 浠?FaceSampleData.outer_circle_edges 妫€鏌ュ杈圭晫姝よ竟鏄惁闇€绮剧‘鍦嗗姬
             let ei = if let Some(&(_, ref crv)) = sub.outer_circle_edges.iter().find(|&&(si, _)| si == i) {
                 self.add_circle_edge(vert_indices[i], vert_indices[j], crv.clone())
             } else {
@@ -1312,7 +1147,7 @@ impl ResultBuilder {
             centroid,
             area,
             sub.sample_point(),
-            vec![], // internal_wire_edges - empty for legacy SubFace path
+            vec![], // internal_wire_edges - empty for legacy FaceSampleData path
         ));
         self.face_origins.push(origin);
     }
@@ -1933,8 +1768,8 @@ fn annotate_shell_and_solid_history(brep: &BRep, history: &mut BooleanHistory) {
 /// Deterministic order for merging parallel `boolean_op` face emissions into [`ResultBuilder`].
 /// Rayon `collect` order is undefined; sorting stabilizes co-face dedup and `total_surface_area`.
 fn cmp_boolean_emit_order(
-    a: &(SubFace, bool, FaceOrigin),
-    b: &(SubFace, bool, FaceOrigin),
+    a: &(FaceSampleData, bool, FaceOrigin),
+    b: &(FaceSampleData, bool, FaceOrigin),
 ) -> std::cmp::Ordering {
     
     let rank = |o: &FaceOrigin| -> (u8, usize) {
@@ -2098,11 +1933,11 @@ fn classify_subface_against_box(
 
 /// Classify a sub-face against the solid described by `solid_face_indices`.
 ///
-/// For [`BooleanOpType::Intersection`], [`SubFace::sample_point`] can land outside the
+/// For [`BooleanOpType::Intersection`], [`FaceSampleData::sample_point`] can land outside the
 /// other solid even when the trimmed patch overlaps both volumes (e.g. sphere 閳?
 /// finite cylinder: the inward offset toward the sphere center exits the cylinder
 /// slab). When the primary sample is `Out`, we probe a coarse UV grid on
-/// [`SubFace::uv_domain`] before concluding `Out`.
+/// [`FaceSampleData::uv_domain`] before concluding `Out`.
 ///
 /// Conversely, when the primary sample is `On` (within tolerance of the other solid's
 /// surface), the sub-face may be genuinely on the boundary OR the sample point may
@@ -2110,7 +1945,7 @@ fn classify_subface_against_box(
 /// sub-face being entirely outside (e.g. a planar sub-face of a box near a sphere's
 /// surface). In that case we probe boundary and interior samples to break the tie.
 // ✅ OCCT对齐: 鍒嗙被瀛愰潰涓?In/Out/On (ClassifyFaces)銆?
-//    鎺ュ彈 FaceSampleData(浠?WireFace 鎴?SubFace 鏋勯€?銆?
+//    鎺ュ彈 FaceSampleData(浠?WireFace 鎴?FaceSampleData 鏋勯€?銆?
 fn classify_against_solid_for_boolean(
     op: BooleanOpType,
     source: SourceSide,
@@ -2561,11 +2396,11 @@ fn build_edge_bounds(face_indices: &[usize], ds: &DS) -> std::collections::BTree
     bounds
 }
 
-/// ✅ OCCT对齐: PointInFace 绛変环 鈥?浠?SubFace 鐨?UV domain 鑾峰彇鍐呴儴閲囨牱鐐广€?
+/// ✅ OCCT对齐: PointInFace 绛変环 鈥?浠?FaceSampleData 鐨?UV domain 鑾峰彇鍐呴儴閲囨牱鐐广€?
 /// OCCT BOPTools_AlgoTools3D.cxx L885-917
 ///
-/// rcad 瀹炵幇: SubFace 宸叉湁 uv_domain 鍜?uv_centroid,鐩存帴鐢?UV centroid
-/// 浣滀负鍐呴儴鐐?(OCCT 鐢?Hatcher 鍋?2D point-in-face,浣?rcad 鐨?SubFace
+/// rcad 瀹炵幇: FaceSampleData 宸叉湁 uv_domain 鍜?uv_centroid,鐩存帴鐢?UV centroid
+/// 浣滀负鍐呴儴鐐?(OCCT 鐢?Hatcher 鍋?2D point-in-face,浣?rcad 鐨?FaceSampleData
 /// 鏄弬鏁板寲鍖哄煙,UV centroid 鍦ㄥ唴閮?銆?
 fn point_in_face(sub: &FaceSampleData) -> Option<DVec3> {
     // 浼樺厛鐢?uv_centroid 鈥?瀹冩槸闈㈠弬鏁扮┖闂寸殑鍑犱綍涓績
@@ -2588,7 +2423,7 @@ fn point_in_face(sub: &FaceSampleData) -> Option<DVec3> {
 /// ✅ OCCT对齐: Level 2a 鈥?ComputeState, find edge not on solid.
 /// OCCT BOPTools_AlgoTools::ComputeState (L650-699)
 ///
-/// 閬嶅巻 SubFace 鐨勬瘡鏉¤竟鐣屾,濡傛灉璇ユ涓嶅湪 solid 鐨勮竟闆嗕腑,
+/// 閬嶅巻 FaceSampleData 鐨勬瘡鏉¤竟鐣屾,濡傛灉璇ユ涓嶅湪 solid 鐨勮竟闆嗕腑,
 /// 鐢?classify_point 鍒嗙被涓偣骞惰繑鍥炵粨鏋溿€?
 ///
 /// NOTE: 浠呭鏄庣‘鐨?Out (涓嶅湪 solid 鍐? 杩斿洖 Some(false)銆?
@@ -2700,7 +2535,7 @@ fn is_internal_face(
     // ====================================================================
     let mef_imm = &mef; // 鍊熺敤
 
-    // 瀵?SubFace 鐨勬瘡鏉¤竟鐣屾,灏濊瘯鍖归厤 DS 杈?
+    // 瀵?FaceSampleData 鐨勬瘡鏉¤竟鐣屾,灏濊瘯鍖归厤 DS 杈?
     let n = sub.boundary.len();
     if n >= 3 {
         // 鍐呴儴鏍囧織: true=鑷冲皯鏈変竴鏉¤竟鏄庣‘鎸囩ず鍐呴儴
@@ -2730,8 +2565,8 @@ fn is_internal_face(
                     if a_nb_f == 1 {
                         // ✅ OCCT对齐: 杈瑰湪 solid 涓婃湁 1 涓偦闈?(L834-846)
                         // 瀵瑰簲 OCCT: aE is internal edge on aLF.First()
-                        // 妫€鏌ヨ闈笂杈圭殑鏂瑰悜 鈥?鐢变簬 SubFace 绾у埆娌℃湁鏂瑰悜淇℃伅,
-                        // 绠€鍖栦负:濡傛灉璇ラ偦闈㈡硶绾夸笌 SubFace 娉曠嚎鍚屽悜 鈫?鍐呴儴
+                        // 妫€鏌ヨ闈笂杈圭殑鏂瑰悜 鈥?鐢变簬 FaceSampleData 绾у埆娌℃湁鏂瑰悜淇℃伅,
+                        // 绠€鍖栦负:濡傛灉璇ラ偦闈㈡硶绾夸笌 FaceSampleData 娉曠嚎鍚屽悜 鈫?鍐呴儴
                         let fi = adj_faces[0];
                         let solid_normal = ds.faces[fi].normal;
                         let dot = sub.normal.dot(solid_normal);
@@ -3394,18 +3229,28 @@ fn dir_to_angle(dir: DVec2) -> f64 {
 /// OCCT-aligned Angle2D (BOPAlgo_WireSplitter_1.cxx L769-841).
 ///
 /// Simplified version using fixed dt proportional to domain length.
-/// ✅ OCCT-aligned: pcurve tangent angle (BRep_Tool::CurveOnSurface→D1).
-///    Uses micro-step (1e-6 of domain) as numerical derivative,
-///    equivalent to OCCT's exact D1 tangent in angle terms.
-///    b_is_in=true → entering vertex (reverse tangent).
-///    b_is_in=false → leaving vertex (forward tangent).
+/// ✅ OCCT-aligned: pcurve tangent angle — OCCT Angle2D
+///    (BOPAlgo_WireSplitter_1.cxx L768-840).
+///    Evaluates pcurve at vertex + micro-step via D0. Step direction
+///    = toward nearest curve end (OCCT L822-829). Step capped at 5%
+///    of domain range (OCCT L810-814).
+///    b_is_in=true → entering vertex (reverse tangent direction).
 fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool) -> Option<f64> {
-    let range = (domain[1] - domain[0]).abs();
+    let first = domain[0];
+    let last = domain[1];
+    let range = (last - first).abs();
     if range < 1e-15 { return None; }
-    let dt = (1e-6 * range).max(1e-12);
-    let t1 = (t + dt).min(domain[1]);
-    let t0 = if t1 - dt < domain[0] { t } else { t1 - dt };
-    let p0 = curve.point_at(t0);
+    // OCCT L792: dt = max(Resolution(tol2d), Precision::PConfusion())
+    // Simplified: use 1e-6 of range, capped at 5%
+    let dt_raw = (1e-6 * range).max(1e-12);
+    let dt = dt_raw.min(0.05 * range);
+    // OCCT L822-829: step toward nearest curve end
+    let t1 = if (t - first).abs() < (t - last).abs() {
+        (t + dt).min(last)
+    } else {
+        (t - dt).max(first)
+    };
+    let p0 = curve.point_at(t);
     let p1 = curve.point_at(t1);
     let dir = if b_is_in { p0 - p1 } else { p1 - p0 };
     if dir.length_squared() < 1e-40 { return None; }
@@ -3424,7 +3269,10 @@ fn clock_wise_angle(angle_in: f64, angle_out: f64) -> f64 {
     let a1n = if a1 >= TAU { a1 - TAU } else { a1 };
     let mut d = a1n - ao;
     if d <= 0.0 { d += TAU; }
-    if d <= 1e-14 { d = TAU; }
+    // OCCT L640: `if (d > 0. && d <= 1.e-14) d = aT`. Strict >0 so d=0
+    // (straight-through IC→IC at degree-4 vertex) is kept as 0 — the
+    // smallest CWA, making Path prefer the IC continuation.
+    if d > 0.0 && d <= 1e-14 { d = TAU; }
     d
 }
 
@@ -4579,13 +4427,13 @@ fn wire_boundary_3d(wire: &[usize], segments: &[WireSegment], ds: &DS) -> Vec<DV
     pts
 }
 
-/// DEPRECATED (SubFace ): WireFace  SubFace  WireFace
-fn wire_faces_to_sub_faces(
+/// DEPRECATED (FaceSampleData ): WireFace  FaceSampleData  WireFace
+fn wire_faces_to_face_sample_data(
     wfs: &[WireFace],
     segments: &[WireSegment],
     ds: &DS,
     face_idx: usize,
-) -> Vec<SubFace> {
+) -> Vec<FaceSampleData> {
     let face = &ds.faces[face_idx];
     let surface = face.surface.clone();
     let normal = face.normal;
@@ -4701,7 +4549,7 @@ fn wire_faces_to_sub_faces(
             }
         } else { None };
 
-        SubFace {
+        FaceSampleData {
             boundary,
             surface: surface.clone(),
             normal,
@@ -5038,7 +4886,7 @@ impl<'a> BooleanBuilder<'a> {
     fn fallback_coplanar_normals_opposite(
         &self,
         a_fi: usize,
-        sub_opt: Option<&SubFace>,
+        sub_opt: Option<&FaceSampleData>,
         b_faces: &[usize],
     ) -> Option<bool> {
         // Construct the A-plane from sub-face data (preferred) or face surface.
@@ -5226,7 +5074,7 @@ impl<'a> BooleanBuilder<'a> {
             if !self.ds.faces[fi].face_info.curves_in.is_empty() {
                 if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
                     if !wfs.is_empty() {
-                        let wire_subs = wire_faces_to_sub_faces(&wfs, &segments, self.ds, fi);
+                        let wire_subs = wire_faces_to_face_sample_data(&wfs, &segments, self.ds, fi);
                         for (wi, sub) in wire_subs.iter().enumerate() {
                             let class = classify_against_solid_for_boolean(
                                 self.op, SourceSide::A,
@@ -5259,7 +5107,7 @@ impl<'a> BooleanBuilder<'a> {
             }
             let sub_faces = self.split_face(fi);
             let face_split = sub_faces.len() > 1;
-            let mut kept_subs: Vec<SubFace> = Vec::new();
+            let mut kept_subs: Vec<FaceSampleData> = Vec::new();
             for (si, sub) in sub_faces.iter().enumerate() {
                 let class = classify_against_solid_for_boolean(self.op, SourceSide::A, &FaceSampleData::from_sub_face(sub), &b_faces, self.ds);
                 let keep = if self.op == BooleanOpType::Union
@@ -5342,15 +5190,15 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
 
-            // 鈴?OCCT瀵归綈: 璺宠繃 SubFace 绾у悎骞?璁?BRep 绾?unify_same_domain_faces
-            //    澶勭悊(OCCT 鏃?SubFace,濮嬬粓淇濇寔 section edges 瀛愰潰鍒嗙鐩村埌 BuildSolid)銆?
+            // 鈴?OCCT瀵归綈: 璺宠繃 FaceSampleData 绾у悎骞?璁?BRep 绾?unify_same_domain_faces
+            //    澶勭悊(OCCT 鏃?FaceSampleData,濮嬬粓淇濇寔 section edges 瀛愰潰鍒嗙鐩村埌 BuildSolid)銆?
             if kept_subs.len() > 1
                 && !matches!(kept_subs[0].surface, Surface3::Sphere(_) | Surface3::Cylinder(_))
             {
                 merge_subfaces_of_same_face(&mut kept_subs);
             }
 
-            // ❌ 非对齐: 保持 split_face() 返回的 SubFace,用 emit_face_with_origin 发出。
+            // ❌ 非对齐: 保持 split_face() 返回的 FaceSampleData,用 emit_face_with_origin 发出。
             for mut sub in kept_subs {
                 let src = self.ds.faces[fi].source_face_idx;
                 let _acircs = result.find_inner_wire_circles(&mut sub);
@@ -5370,7 +5218,7 @@ impl<'a> BooleanBuilder<'a> {
             if !self.ds.faces[fi].face_info.curves_in.is_empty() {
                 if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
                     if !wfs.is_empty() {
-                        let wire_subs = wire_faces_to_sub_faces(&wfs, &segments, self.ds, fi);
+                        let wire_subs = wire_faces_to_face_sample_data(&wfs, &segments, self.ds, fi);
                         for (wi, sub) in wire_subs.iter().enumerate() {
                             let class = classify_against_solid_for_boolean(
                                 self.op, SourceSide::B,
@@ -5396,7 +5244,7 @@ impl<'a> BooleanBuilder<'a> {
             }
             let sub_faces = self.split_face(fi);
             let face_split = sub_faces.len() > 1;
-            let mut kept_subs: Vec<(SubFace, Classification)> = Vec::new();
+            let mut kept_subs: Vec<(FaceSampleData, Classification)> = Vec::new();
             for (si, sub) in sub_faces.iter().enumerate() {
                 let class = classify_against_solid_for_boolean(self.op, SourceSide::B, &FaceSampleData::from_sub_face(sub), &a_faces, self.ds);
                 let keep = if !face_split
@@ -5537,14 +5385,14 @@ impl<'a> BooleanBuilder<'a> {
             // optimize_boolean_topology (unify_same_domain_faces).
             let is_sphere = matches!(self.ds.faces[fi].surface, Surface3::Sphere(_));
             if kept_subs.len() > 1 && !is_sphere {
-                let out_group: Vec<SubFace> = kept_subs.iter()
+                let out_group: Vec<FaceSampleData> = kept_subs.iter()
                     .filter(|(_, c)| *c != Classification::On)
                     .map(|(s, _)| s.clone()).collect();
                 let mut out_merged = out_group.clone();
                 if out_merged.len() > 1
                     && !out_merged.iter().any(|s| matches!(s.surface, Surface3::Cylinder(_)))
                 { merge_subfaces_of_same_face(&mut out_merged); }
-                let on_group: Vec<SubFace> = kept_subs.iter()
+                let on_group: Vec<FaceSampleData> = kept_subs.iter()
                     .filter(|(_, c)| *c == Classification::On)
                     .map(|(s, _)| s.clone()).collect();
                 let mut on_merged = on_group.clone();
@@ -5726,7 +5574,7 @@ impl<'a> BooleanBuilder<'a> {
             .par_iter()
             .flat_map(|&fi| {
                 let sub_faces = self.split_face(fi);
-                let mut kept: Vec<(SubFace, bool, FaceOrigin)> = sub_faces
+                let mut kept: Vec<(FaceSampleData, bool, FaceOrigin)> = sub_faces
                     .into_iter()
                     .filter_map(|sub| {
                         let class = classify_against_solid_for_boolean(self.op, SourceSide::B, &FaceSampleData::from_sub_face(&sub), &a_faces, self.ds);
@@ -5745,7 +5593,7 @@ impl<'a> BooleanBuilder<'a> {
 
                 // Merge kept sub-faces from the same original face.
                 if kept.len() > 1 {
-                    let mut subs: Vec<SubFace> = kept.iter().map(|(s, _, _)| s.clone()).collect();
+                    let mut subs: Vec<FaceSampleData> = kept.iter().map(|(s, _, _)| s.clone()).collect();
                     merge_subfaces_of_same_face(&mut subs);
                     let flip = kept[0].1;
                     let origin = kept[0].2;
@@ -5881,7 +5729,7 @@ impl<'a> BooleanBuilder<'a> {
         c
     }
 
-    fn single_subface_from_whole_face(&self, face_idx: usize) -> Vec<SubFace> {
+    fn single_subface_from_whole_face(&self, face_idx: usize) -> Vec<FaceSampleData> {
         let face = &self.ds.faces[face_idx];
         let boundary: Vec<DVec3> = face
             .boundary_verts
@@ -5899,7 +5747,7 @@ impl<'a> BooleanBuilder<'a> {
                         .iter()
                         .map(|uv| face.surface.point_at(uv.x, uv.y))
                         .collect();
-                    return vec![SubFace {
+                    return vec![FaceSampleData {
                         boundary: sampled,
                         surface: face.surface.clone(),
                         normal: face.normal,
@@ -5915,7 +5763,7 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        vec![SubFace {
+        vec![FaceSampleData {
             boundary,
             surface: face.surface.clone(),
             normal: face.normal,
@@ -5930,8 +5778,8 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     /// Split a face by intersection curves. If no intersection curves cross this
-    /// face, returns the whole face as a single SubFace.
-    fn split_face(&self, face_idx: usize) -> Vec<SubFace> {
+    /// face, returns the whole face as a single FaceSampleData.
+    fn split_face(&self, face_idx: usize) -> Vec<FaceSampleData> {
         let face = &self.ds.faces[face_idx];
         let fi = &face.face_info;
 
@@ -5950,7 +5798,7 @@ impl<'a> BooleanBuilder<'a> {
             let (u_ax, v_ax) = plane_local_basis(plane);
             let proj = |p: DVec3| -> DVec2 { let d = p - plane.origin; DVec2::new(d.dot(u_ax), d.dot(v_ax)) };
             let bnd_2d: Vec<DVec2> = boundary.iter().map(|&p| proj(p)).collect();
-            let mut annular_out: Option<Vec<SubFace>> = None;
+            let mut annular_out: Option<Vec<FaceSampleData>> = None;
             for &ci in &cids {
                 if let rcad_kernel::geom::Curve3::Circle(ref circ) = self.ds.intersection_curves[ci].curve {
                     let c2d = proj(circ.center);
@@ -5996,7 +5844,7 @@ impl<'a> BooleanBuilder<'a> {
                                 let arc_curve_outer = Curve3::Circle(*circ);
                                 let n_keep = keep.len();
                                 let mut out_subs = vec![
-                                    SubFace {
+                                    FaceSampleData {
                                         boundary: keep,
                                         surface: face.surface.clone(), normal: face.normal,
                                         uv_centroid: None, sample_override: Some(fp),
@@ -6016,7 +5864,7 @@ impl<'a> BooleanBuilder<'a> {
                                         inside[i].distance(c_center) >= c_r - 1e-8
                                             && inside[j].distance(c_center) >= c_r - 1e-8
                                     }).unwrap_or(n_inside - 1);
-                                    out_subs.push(SubFace {
+                                    out_subs.push(FaceSampleData {
                                         boundary: inside,
                                         surface: face.surface.clone(), normal: face.normal,
                                         uv_centroid: None, sample_override: None,
@@ -6342,7 +6190,7 @@ impl<'a> BooleanBuilder<'a> {
     /// with fewer than 3 vertices, so we split the sphere into a UV grid where each patch
     /// has a fine polygon boundary (sampled along the patch edges) for accurate mesh-based
     /// surface area and volume.
-    fn tessellate_sphere_face(&self, face_idx: usize) -> Vec<SubFace> {
+    fn tessellate_sphere_face(&self, face_idx: usize) -> Vec<FaceSampleData> {
         let face = &self.ds.faces[face_idx];
         let sphere = match &face.surface {
             Surface3::Sphere(s) => *s,
@@ -6393,7 +6241,7 @@ impl<'a> BooleanBuilder<'a> {
                 let centroid_pt = sphere.point_at(u_mid, v_mid);
                 let outward = (centroid_pt - sphere.center).normalize_or_zero();
 
-                subs.push(SubFace {
+                subs.push(FaceSampleData {
                     boundary,
                     surface: face.surface.clone(),
                     normal: outward,
@@ -6416,7 +6264,7 @@ impl<'a> BooleanBuilder<'a> {
     /// vertices in the DS (top and bottom along the seam), which [`emit_face_with_origin`]
     /// rejects (<3 vertices). Split the cylinder wall into azimuthal bands so each patch
     /// has a valid 3D boundary polygon.
-    fn tessellate_cylinder_face(&self, face_idx: usize) -> Vec<SubFace> {
+    fn tessellate_cylinder_face(&self, face_idx: usize) -> Vec<FaceSampleData> {
         let face = &self.ds.faces[face_idx];
         let cyl = match &face.surface {
             Surface3::Cylinder(c) => *c,
@@ -6469,7 +6317,7 @@ impl<'a> BooleanBuilder<'a> {
             let v_mid = 0.5 * (v_min + v_max);
             let sub_normal = cyl.normal_at(u_mid, v_mid);
 
-            subs.push(SubFace {
+            subs.push(FaceSampleData {
                 boundary,
                 surface: face.surface.clone(),
                 normal: sub_normal,
@@ -6496,7 +6344,7 @@ impl<'a> BooleanBuilder<'a> {
         face_idx: usize,
         n_u: usize,
         n_v: usize,
-    ) -> Vec<SubFace> {
+    ) -> Vec<FaceSampleData> {
         let face = &self.ds.faces[face_idx];
         let cyl = match &face.surface {
             Surface3::Cylinder(c) => *c,
@@ -6556,7 +6404,7 @@ impl<'a> BooleanBuilder<'a> {
                 let v_mid = 0.5 * (v0 + v1);
                 let sub_normal = cyl.normal_at(u_mid, v_mid);
 
-                subs.push(SubFace {
+                subs.push(FaceSampleData {
                     boundary,
                     surface: face.surface.clone(),
                     normal: sub_normal,
@@ -6585,7 +6433,7 @@ impl<'a> BooleanBuilder<'a> {
         subs
     }
 
-    /// Tessellate a cone face into a UV grid. Each grid cell is a [`SubFace`] with
+    /// Tessellate a cone face into a UV grid. Each grid cell is a [`FaceSampleData`] with
     /// its own sample point, so that classify_point can independently decide whether
     /// that region is inside or outside the other solid.
     ///
@@ -6599,7 +6447,7 @@ impl<'a> BooleanBuilder<'a> {
         face_idx: usize,
         n_u: usize,
         n_v: usize,
-    ) -> Vec<SubFace> {
+    ) -> Vec<FaceSampleData> {
         let face = &self.ds.faces[face_idx];
         let cone = match &face.surface {
             Surface3::Cone(c) => *c,
@@ -6658,7 +6506,7 @@ impl<'a> BooleanBuilder<'a> {
                 let v_mid = 0.5 * (v0 + v1);
                 let sub_normal = cone.normal_at(u_mid, v_mid);
 
-                subs.push(SubFace {
+                subs.push(FaceSampleData {
                     boundary,
                     surface: face.surface.clone(),
                     normal: sub_normal,
@@ -6689,7 +6537,7 @@ impl<'a> BooleanBuilder<'a> {
         face_idx: usize,
         plane: &Plane,
         split_curve_ids: &[usize],
-    ) -> Vec<SubFace> {
+    ) -> Vec<FaceSampleData> {
         let face = &self.ds.faces[face_idx];
 
         // Collect 3D boundary points
@@ -6757,7 +6605,7 @@ impl<'a> BooleanBuilder<'a> {
         let original_rect_2d = boundary_2d.clone();
         // ✅ OCCT对齐: arc_info 涓?poly_wires 骞惰,璁板綍鍝簺瀛愰潰澶栬竟鐣岄渶绮剧‘鍦嗚竟銆?
         //    OCCT MakeBlocks 鈫?section edges 鐩存帴浣滀负 BRep 杈圭殑 Curve3; rcad 鐢?
-        //    outer_circle_edges 杈惧埌鐩稿悓鏁堟灉(arc_info 鍦?SubFace 鍒涘缓鏃朵紶閫?銆?
+        //    outer_circle_edges 杈惧埌鐩稿悓鏁堟灉(arc_info 鍦?FaceSampleData 鍒涘缓鏃朵紶閫?銆?
         let mut arc_info: Vec<Option<(usize, rcad_kernel::geom::Curve3)>> = vec![None];
         // Track circles that were embedded inside polygons (center_2d, radius).
         // When such a circle is fully inside a polygon, that polygon's centroid
@@ -6849,7 +6697,7 @@ impl<'a> BooleanBuilder<'a> {
                             .collect();
                         let center_3d = lift_to_3d(c0_2d);
                         embedded_circles.push((c0_2d, r0));
-                        return vec![SubFace {
+                        return vec![FaceSampleData {
                             boundary: cap_boundary,
                             surface: face.surface.clone(),
                             normal: face.normal,
@@ -7171,7 +7019,7 @@ impl<'a> BooleanBuilder<'a> {
                         }
                     }
                 }
-                SubFace {
+                FaceSampleData {
                     boundary,
                     surface: face.surface.clone(),
                     normal: face.normal,
@@ -7407,7 +7255,7 @@ impl<'a> BooleanBuilder<'a> {
     /// Legacy approximate method: for each intersection polyline that crosses the face,
     /// we split the boundary point list into two halves at the points closest to the
     /// polyline endpoints. Kept as fallback when UV data or PCurves are unavailable.
-    fn split_curved_face_legacy(&self, face_idx: usize) -> Vec<SubFace> {
+    fn split_curved_face_legacy(&self, face_idx: usize) -> Vec<FaceSampleData> {
         let face = &self.ds.faces[face_idx];
         let surface = face.surface.clone();
         let normal = face.normal;
@@ -7442,7 +7290,7 @@ impl<'a> BooleanBuilder<'a> {
                 .iter()
                 .map(|&vi| self.ds.vertices[vi].point)
                 .collect();
-            return vec![SubFace {
+            return vec![FaceSampleData {
                 boundary,
                 surface,
                 normal,
@@ -7464,7 +7312,7 @@ impl<'a> BooleanBuilder<'a> {
             .collect();
 
         if boundary_pts.len() < 3 {
-            return vec![SubFace {
+            return vec![FaceSampleData {
                 boundary: boundary_pts,
                 surface,
                 normal,
@@ -7564,7 +7412,7 @@ impl<'a> BooleanBuilder<'a> {
         result_boundaries
             .into_iter()
             .filter(|b| b.len() >= 3)
-            .map(|boundary| SubFace {
+            .map(|boundary| FaceSampleData {
                 boundary,
                 surface: surface.clone(),
                 normal,
@@ -7741,15 +7589,15 @@ impl<'a> BooleanBuilder<'a> {
     ///
     /// ⏳ 部分对齐: 鐢ㄧ簿纭ぇ鍦嗗姬鏋勫缓鐞冮潰瀛愰潰銆?
     ///    OCCT: BuildSplitFaces 鈫?section edges 鐩存帴鍒涘缓 BRep sub-face銆?
-    ///    rcad: 鎵嬪姩璁＄畻 8 涓崷闄愮殑 SubFace,鐢?outer_circle_edges 璁板綍澶у渾寮с€?
-    ///    鍔熻兘绛変环(8 涓崐鐞冮潰鍖哄煙 + 绮剧‘鍦嗗姬杈圭晫),浣?OCCT 涓嶉渶瑕佷腑闂?SubFace銆?
-    fn split_sphere_by_circles(&self, face_idx: usize, circles: &[&rcad_kernel::geom::Circle3]) -> Vec<SubFace> {
+    ///    rcad: 鎵嬪姩璁＄畻 8 涓崷闄愮殑 FaceSampleData,鐢?outer_circle_edges 璁板綍澶у渾寮с€?
+    ///    鍔熻兘绛変环(8 涓崐鐞冮潰鍖哄煙 + 绮剧‘鍦嗗姬杈圭晫),浣?OCCT 涓嶉渶瑕佷腑闂?FaceSampleData銆?
+    fn split_sphere_by_circles(&self, face_idx: usize, circles: &[&rcad_kernel::geom::Circle3]) -> Vec<FaceSampleData> {
         let face = &self.ds.faces[face_idx];
         let sphere = match &face.surface { Surface3::Sphere(s) => *s, _ => return vec![] };
         let r = sphere.radius; let c = sphere.center;
         let pts = [c+r*DVec3::X, c-r*DVec3::X, c+r*DVec3::Y, c-r*DVec3::Y, c+r*DVec3::Z, c-r*DVec3::Z];
         let octants = [(0,2,4),(1,2,4),(0,3,4),(1,3,4),(0,2,5),(1,2,5),(0,3,5),(1,3,5)];
-        let mut subs: Vec<SubFace> = Vec::new();
+        let mut subs: Vec<FaceSampleData> = Vec::new();
         for &(ia, ib, ic) in &octants {
             let (va, vb, vc) = (pts[ia], pts[ib], pts[ic]);
             let boundary = vec![va, vb, vc];
@@ -7768,7 +7616,7 @@ impl<'a> BooleanBuilder<'a> {
             //    锛乻eam edge 浠呭湪宸插垹闄ょ殑 sphere_box_analytic.rs 蹇€熻矾寰勪腑澶勭悊杩囷紝
             //      褰撳墠 PaveFiller 閫氱敤璺緞涓嶄骇鐢?seam edge銆?
             let seam: Option<(usize, Curve3)> = None; // 鉂?閫氱敤绠￠亾涓嶄骇鐢?seam edge
-            subs.push(SubFace { boundary, surface: Surface3::Sphere(sphere),
+            subs.push(FaceSampleData { boundary, surface: Surface3::Sphere(sphere),
                 normal: (va-c).normalize(), uv_centroid: None, sample_override: None,
                 uv_domain: None, inner_wires: vec![],
                 outer_circle_edges: outer_circles, seam_edge: seam,
@@ -7776,7 +7624,7 @@ impl<'a> BooleanBuilder<'a> {
         }
         subs
     }
-    fn split_curved_face_parametric(&self, face_idx: usize) -> Vec<SubFace> {
+    fn split_curved_face_parametric(&self, face_idx: usize) -> Vec<FaceSampleData> {
         let face = &self.ds.faces[face_idx];
         eprintln!("[SCFP] face_idx={} surface={:?} curves_in={} uv_boundary={}",
             face_idx,
@@ -8489,7 +8337,7 @@ impl<'a> BooleanBuilder<'a> {
                 } else {
                     None
                 };
-                SubFace {
+                FaceSampleData {
                     boundary,
                     surface: surface.clone(),
                     normal: sub_normal,
@@ -8641,7 +8489,7 @@ impl<'a> BooleanBuilder<'a> {
 /// Two sub-faces share an edge when they have 2+ consecutive boundary vertices in common
 /// (within `TOLERANCE_MESH_LEGACY` distance). This is the sub-face analogue of
 /// `unify_one_merge_pass`'s edge-to-faces adjacency detection.
-fn find_shared_edge_between_subfaces(a: &SubFace, b: &SubFace) -> Option<(usize, usize, bool)> {
+fn find_shared_edge_between_subfaces(a: &FaceSampleData, b: &FaceSampleData) -> Option<(usize, usize, bool)> {
     let tol = TOLERANCE_MESH_LEGACY;
     let an = a.boundary.len();
     let bn = b.boundary.len();
@@ -8675,8 +8523,8 @@ fn find_shared_edge_between_subfaces(a: &SubFace, b: &SubFace) -> Option<(usize,
 /// `b`'s non-shared perimeter to the shared end vertex `ve`, then along `a`'s non-shared
 /// perimeter back to `vs`. This removes the shared edge from both boundaries while
 /// preserving all other geometry.
-/// DEPRECATED (SubFace 鍐呴儴): BRep 绾?merge 鍚庣敱 unify_same_domain_faces 鏇夸唬銆?
-fn merge_two_subfaces(a: &SubFace, b: &SubFace, ai: usize, bi: usize, forward: bool) -> SubFace {
+/// DEPRECATED (FaceSampleData 鍐呴儴): BRep 绾?merge 鍚庣敱 unify_same_domain_faces 鏇夸唬銆?
+fn merge_two_subfaces(a: &FaceSampleData, b: &FaceSampleData, ai: usize, bi: usize, forward: bool) -> FaceSampleData {
     let an = a.boundary.len();
     let bn = b.boundary.len();
     let aj = (ai + 1) % an;
@@ -8744,7 +8592,7 @@ fn merge_two_subfaces(a: &SubFace, b: &SubFace, ai: usize, bi: usize, forward: b
         (None, None) => None,
     };
 
-    SubFace {
+    FaceSampleData {
         boundary: merged_boundary,
         surface: a.surface.clone(),
         normal: a.normal,
@@ -8767,8 +8615,8 @@ fn merge_two_subfaces(a: &SubFace, b: &SubFace, ai: usize, bi: usize, forward: b
 /// boundary vertices (a shared edge) are merged 鈥?disconnected UV intervals on the same
 /// surface (e.g. two separated kept regions) will NOT be merged, preserving correct
 /// topology.
-/// DEPRECATED (SubFace 鍐呴儴): BRep 绾?merge 鍚庣敱 unify_same_domain_faces 鏇夸唬銆?
-fn merge_subfaces_of_same_face(sub_faces: &mut Vec<SubFace>) {
+/// DEPRECATED (FaceSampleData 鍐呴儴): BRep 绾?merge 鍚庣敱 unify_same_domain_faces 鏇夸唬銆?
+fn merge_subfaces_of_same_face(sub_faces: &mut Vec<FaceSampleData>) {
     loop {
         let n = sub_faces.len();
         if n < 2 {
@@ -8833,7 +8681,7 @@ mod tests {
     }
 
     /// `ShapeB` (box) face indices run immediately after the sphere: one sphere face, then 6
-    /// box faces. At least one box **plane** must split into multiple `SubFace` when the
+    /// box faces. At least one box **plane** must split into multiple `FaceSampleData` when the
     /// sphere cut is merged from `intersection_curves` (see `merged_split_curve_ids_for_planar_face`).
     #[test]
     fn sphere_box_difference_splits_some_box_plane() {
@@ -11921,12 +11769,12 @@ pub fn compute_adaptive_glue_tolerance(
 /// exactly 2 crossings of the cylinder wall on the sub-face boundary, then constructs
 /// a trimmed polygon keeping only the outside-cylinder-wall portion.
 fn try_trim_planar_subface_by_cylinder(
-    sub: &SubFace,
+    sub: &FaceSampleData,
     _plane_normal: DVec3,
     _plane_origin: DVec3,
     cylinder: &CylindricalSurface,
     keep_inside: bool, // true 鈫?keep inside-cylinder portion (Intersection), false 鈫?keep outside-cylinder portion (Difference)
-) -> Option<SubFace> {
+) -> Option<FaceSampleData> {
     let tol = TOLERANCE_MESH_LEGACY;
     let cyl_axis = cylinder.axis;
     let cyl_origin = cylinder.origin;
@@ -12043,7 +11891,7 @@ fn try_trim_planar_subface_by_cylinder(
         _plane_normal, _plane_origin, 24,
     );
 
-    Some(SubFace {
+    Some(FaceSampleData {
         boundary: result_boundary,
         surface: sub.surface.clone(),
         normal: sub.normal,
@@ -12967,7 +12815,7 @@ mod glue_tests {
 // ================================================================
 // ✅ Current state: emit_sphere_faces_direct replaces build_sphere_sub_faces_by_circles
 //    OCCT edge-based path not yet implemented. Current approach:
-//    emit_sphere_faces_direct: Circle3 intersection points → emit_face_data (SubFace-free)
+//    emit_sphere_faces_direct: Circle3 intersection points → emit_face_data (FaceSampleData-free)
 //    ⏳ Still missing: seam edge splitting (DoSplitSEAMOnFace), proper edge→wire→face
 //    待实现步骤:
 //    1. 将 Circle3 交线转为 BRep Edge (BOPTools_AlgoTools::MakeEdge)
@@ -12996,7 +12844,7 @@ mod glue_tests {
 //   4. TopoDS_Face: 从 WireFace 构建 (with proper surface+location)
 //
 // 当前替代路径 (❌ 待删除):
-//   emit_sphere_faces_direct: Circle3 → emit_face_data (替代SubFace,但非OCCT边级路径)
+//   emit_sphere_faces_direct: Circle3 → emit_face_data (替代FaceSampleData,但非OCCT边级路径)
 //   split_curved_face_parametric: UV polygon split (非OCCT)
 //   直接 keep/discard 逻辑: 绕过 OCCT 分类
 // ================================================================

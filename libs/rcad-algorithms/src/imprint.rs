@@ -19,7 +19,7 @@ use rcad_kernel::projection::closest_point_on_surface;
 use rcad_kernel::topology::*;
 
 use crate::bopds::ds::{DS, ShapeOrigin};
-use crate::builder::SubFace;
+use crate::builder::FaceSampleData;
 use crate::pave_filler::PaveFiller;
 use crate::triangulate::triangulate_polygon;
 
@@ -184,8 +184,8 @@ pub fn imprint_shape(target: &BRep, tool: &BRep) -> ImprintResult {
 }
 
 /// Split a single DS face by its intersection curves.
-/// Shared with builder logic 鈥?produces a list of SubFace.
-fn split_face_by_curves(ds: &DS, face_idx: usize) -> Vec<SubFace> {
+/// Shared with builder logic 鈥?produces a list of FaceSampleData.
+fn split_face_by_curves(ds: &DS, face_idx: usize) -> Vec<FaceSampleData> {
     let face = &ds.faces[face_idx];
     let fi = &face.face_info;
 
@@ -195,7 +195,7 @@ fn split_face_by_curves(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             .iter()
             .map(|&vi| ds.vertices[vi].point)
             .collect();
-        return vec![SubFace {
+        return vec![FaceSampleData {
             boundary,
             surface: face.surface.clone(),
             normal: face.normal,
@@ -222,7 +222,7 @@ fn split_face_by_curves(ds: &DS, face_idx: usize) -> Vec<SubFace> {
                 .iter()
                 .map(|&vi| ds.vertices[vi].point)
                 .collect();
-            vec![SubFace {
+            vec![FaceSampleData {
                 boundary,
                 surface: face.surface.clone(),
                 normal: face.normal,
@@ -238,7 +238,7 @@ fn split_face_by_curves(ds: &DS, face_idx: usize) -> Vec<SubFace> {
     }
 }
 
-fn split_planar_face_simple(ds: &DS, face_idx: usize, plane: &Plane) -> Vec<SubFace> {
+fn split_planar_face_simple(ds: &DS, face_idx: usize, plane: &Plane) -> Vec<FaceSampleData> {
     use crate::inttools::edge_face::plane_local_basis;
 
     let face = &ds.faces[face_idx];
@@ -261,7 +261,7 @@ fn split_planar_face_simple(ds: &DS, face_idx: usize, plane: &Plane) -> Vec<SubF
     }
 
     if segments.is_empty() {
-        return vec![SubFace {
+        return vec![FaceSampleData {
             boundary: boundary_3d,
             surface: face.surface.clone(),
             normal: face.normal,
@@ -302,7 +302,7 @@ fn split_planar_face_simple(ds: &DS, face_idx: usize, plane: &Plane) -> Vec<SubF
         .filter(|p| p.len() >= 3)
         .map(|poly_2d| {
             let boundary: Vec<DVec3> = poly_2d.iter().map(|&uv| unproject(uv)).collect();
-            SubFace {
+            FaceSampleData {
                 boundary,
                 surface: face.surface.clone(),
                 normal: face.normal,
@@ -611,7 +611,7 @@ fn sample_face_points(pts: &[DVec3], n: usize) -> Vec<DVec3> {
 
 // Split a curved face (Cylinder, Sphere, Cone, Torus) using parameter-space (UV) 2D clipping.
 // Falls back to legacy method when UV data or PCurves are missing.
-fn split_curved_face(ds: &DS, face_idx: usize) -> Vec<SubFace> {
+fn split_curved_face(ds: &DS, face_idx: usize) -> Vec<FaceSampleData> {
     let face = &ds.faces[face_idx];
 
     // Need UV boundary to operate in parameter space
@@ -726,7 +726,7 @@ fn split_curved_face(ds: &DS, face_idx: usize) -> Vec<SubFace> {
                     normal
                 }
             };
-            SubFace {
+            FaceSampleData {
                 boundary,
                 surface: surface.clone(),
                 normal: sub_normal,
@@ -743,7 +743,7 @@ fn split_curved_face(ds: &DS, face_idx: usize) -> Vec<SubFace> {
 }
 
 // Legacy approximate method for curved face splitting.
-fn split_curved_face_legacy(ds: &DS, face_idx: usize) -> Vec<SubFace> {
+fn split_curved_face_legacy(ds: &DS, face_idx: usize) -> Vec<FaceSampleData> {
     let face = &ds.faces[face_idx];
     let surface = face.surface.clone();
     let normal = face.normal;
@@ -774,7 +774,7 @@ fn split_curved_face_legacy(ds: &DS, face_idx: usize) -> Vec<SubFace> {
             .iter()
             .map(|&vi| ds.vertices[vi].point)
             .collect();
-        return vec![SubFace {
+        return vec![FaceSampleData {
             boundary,
             surface,
             normal,
@@ -796,7 +796,7 @@ fn split_curved_face_legacy(ds: &DS, face_idx: usize) -> Vec<SubFace> {
         .collect();
 
     if boundary_pts.len() < 3 {
-        return vec![SubFace {
+        return vec![FaceSampleData {
             boundary: boundary_pts,
             surface,
             normal,
@@ -892,7 +892,7 @@ fn split_curved_face_legacy(ds: &DS, face_idx: usize) -> Vec<SubFace> {
     result_boundaries
         .into_iter()
         .filter(|b| b.len() >= 3)
-        .map(|boundary| SubFace {
+        .map(|boundary| FaceSampleData {
             boundary,
             surface: surface.clone(),
             normal,
