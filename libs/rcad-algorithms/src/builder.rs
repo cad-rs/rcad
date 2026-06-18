@@ -173,11 +173,29 @@ impl FaceSampleData {
 /// DEPRECATED: 鍐呴儴閬楃暀绫诲瀷銆備笉褰卞搷 OCCT 瀵归綈 鈥?浠呭湪 split_face 鍐呴儴 + emit 鍥為€€浣跨敤銆?
 /// 澶栭儴鎺ュ彛缁熶竴浣跨敤 FaceSampleData (classify) 鍜?WireFace (emit)銆?
 /// OCCT-aligned: wire grouping result — ordered segment chains forming a face boundary.
+#[derive(Clone)]
 pub struct WireFace {
     pub outer_wire: Vec<usize>,
     pub inner_wires: Vec<Vec<usize>>,
     /// OCCT-aligned: Internal wires from PerformShapesToAvoid (BOPAlgo_BuilderFace.cxx L327-382).
     pub internal_wires: Vec<Vec<usize>>,
+}
+
+/// ✅ OCCT-aligned: collected sub-face result before classification.
+/// Holds either a wire-pipeline result (to emit via emit_wire_face) or
+/// a legacy split_face result (to emit via emit_face_with_origin).
+/// Used to defer classification until after all faces are split.
+#[derive(Clone)]
+enum CollectedFaceResult {
+    Wire {
+        wf: WireFace,
+        segments: Vec<WireSegment>,
+        vertex_positions: std::collections::HashMap<usize, DVec3>,
+        fi: usize,
+        flip: bool,
+        origin: FaceOrigin,
+    },
+    Legacy(FaceSampleData, bool, FaceOrigin),
 }
 
 /// OCCT-aligned: Source of a virtual edge segment in the edge-to-wire pipeline.
@@ -5067,38 +5085,32 @@ impl<'a> BooleanBuilder<'a> {
             })
             .collect();
 
+        // OCCT-aligned: collect all split results before classification.
+        // Phase 1: Split only (no classification/emission).
+        let mut collected: Vec<(CollectedFaceResult, usize)> = Vec::new();
+        // Track emitted A-face planes for coplanar B-face detection (Diff/Intersect).
+        let mut a_on_planes: Vec<(DVec3, DVec3)> = Vec::new();
+
         // Process A faces against B solid
-        let mut a_on_planes: Vec<(DVec3, DVec3)> = Vec::new(); // (normal, origin) from emitted A-face planes
         for &fi in &a_faces {
             // OCCT-aligned: wire pipeline for all face types (BuildSplitFaces + WireSplitter)
             if self.ds.faces[fi].face_info.has_any_curves() {
                 if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
                     if !wfs.is_empty() {
                         let wire_subs = wire_faces_to_face_sample_data(&wfs, &segments, self.ds, fi);
-                        for (wi, sub) in wire_subs.iter().enumerate() {
-                            let class = classify_against_solid_for_boolean(
-                                self.op, SourceSide::A,
-                                &FaceSampleData::from_sub_face(sub), &b_faces, self.ds);
-                            let keep = match self.op {
-                                BooleanOpType::Intersection => class == Classification::In,
-                                BooleanOpType::Difference => class != Classification::In,
-                                // ✅ OCCT-aligned ClassifyFaces: for Union, remove
-                                // faces classified as "In" (internal to the other solid).
-                                // Previously used `true` (keep all), which left internal
-                                // box corner faces inside the sphere (bfuse_simple A1).
-                                BooleanOpType::Union => class != Classification::In,
-                            };
-                            if std::env::var("RCAD_DEBUG_IC").is_ok() {
-                                let sn = match &sub.surface { Surface3::Plane(_) => "PLANE", Surface3::Sphere(_) => "SPHERE", _ => "OTHER" };
-                                eprintln!("[WIRE] fi={} wi={} surf={} class={:?} keep={} nb={}", fi, wi, sn, class, keep, sub.boundary.len());
-                            }
-                            if keep {
-                                let src = self.ds.faces[fi].source_face_idx;
-                                result.emit_wire_face(fi, &wfs[wi], &segments, self.ds, false, FaceOrigin::FromA(src), &vertex_positions);
-                                if let Surface3::Plane(p) = &sub.surface {
-                                    a_on_planes.push((p.normal, p.origin));
-                                }
-                            }
+                        for (wi, _sub) in wire_subs.iter().enumerate() {
+                            // Phase 1: collect only, classify deferred
+                            collected.push((
+                                CollectedFaceResult::Wire {
+                                    wf: wfs[wi].clone(),
+                                    segments: segments.clone(),
+                                    vertex_positions: vertex_positions.clone(),
+                                    fi,
+                                    flip: false,
+                                    origin: FaceOrigin::FromA(self.ds.faces[fi].source_face_idx),
+                                },
+                                fi,
+                            ));
                         }
                         continue;
                     }
@@ -5413,6 +5425,36 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
     }
+
+        // OCCT-aligned Phase 2+3: classify + emit collected wire results.
+        for (col_result, _orig_fi) in collected.drain(..) {
+            match col_result {
+                CollectedFaceResult::Wire { ref wf, ref segments, ref vertex_positions, fi, origin, .. } => {
+                    let wire_subs = wire_faces_to_face_sample_data(std::slice::from_ref(wf), segments, self.ds, fi);
+                    if let Some(sub) = wire_subs.first() {
+                        let other_faces = match origin {
+                            FaceOrigin::FromA(_) => &b_faces,
+                            _ => &a_faces,
+                        };
+                        let source = match origin {
+                            FaceOrigin::FromA(_) => SourceSide::A,
+                            _ => SourceSide::B,
+                        };
+                        let class = classify_against_solid_for_boolean(
+                            self.op, source,
+                            &FaceSampleData::from_sub_face(sub), other_faces, self.ds);
+                        let keep = match self.op {
+                            BooleanOpType::Intersection => class == Classification::In,
+                            _ => class != Classification::In,
+                        };
+                        if keep {
+                            result.emit_wire_face(fi, wf, segments, self.ds, false, origin, vertex_positions);
+                        }
+                    }
+                }
+                CollectedFaceResult::Legacy(_, _, _) => {}
+            }
+        }
 
         let (mut brep, mut history) = result.build(matches!(self.op, BooleanOpType::Union));
         if brep.solids[0].shells[0].faces.is_empty() {
