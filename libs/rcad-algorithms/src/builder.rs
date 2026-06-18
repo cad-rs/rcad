@@ -4136,53 +4136,79 @@ fn refine_angles(
 ///
 ///    per-EdgeInfo passed per vertex,
 
-/// OCCT-aligned: RefineAngle2D (BOPAlgo_WireSplitter_1.cxx L1032-1124)
+/// ✅ OCCT-aligned: RefineAngle2D (BOPAlgo_WireSplitter_1.cxx L1032-1124).
+///
+/// For an IC outgoing edge outside the boundary sweep, compute a refined
+/// angle by intersecting the edge's UV pcurve with rays along the boundary
+/// directions (aA1 = outgoing, aA2+PI = incoming opposite).  The nearest
+/// intersection point inside the sweep gives the corrected angle.
+///
+/// Supports all surface types via world_to_uv and both IntersectionCurve
+/// and DsEdge segments (DsEdge builds a UV polyline from the 3D curve).
 fn refine_angle_2d(
     vertex_idx: usize,
     seg: &WireSegment,
     _segments: &[WireSegment],
     ds: &DS,
     face_surface: &Surface3,
-    a_in: f64,
-    a_out: f64,
-    a_delta: f64,
+    a1_bnd: f64,
+    a2_bnd: f64,
+    _a_delta: f64,
     _current_angle: f64,
 ) -> Option<f64> {
     let v_pt = ds.vertices[vertex_idx].point;
-    let v_uv = match face_surface {
-        Surface3::Sphere(s) => s.world_to_uv(v_pt),
-        _ => return None,
-    };
-    let pcurve = match &seg.source {
+    let v_uv = world_to_uv(face_surface, v_pt)?;
+
+    // OCCT L1057: get pcurve of edge on face for IntersectionCurve.
+    // For DsEdge, evaluate 3D curve samples mapped to UV as fallback.
+    type UvSampler = Box<dyn Fn(f64) -> Option<DVec2>>;
+    let uv_sampler: Option<UvSampler> = match &seg.source {
         WireEdgeSource::IntersectionCurve(ci) => {
-            ds.intersection_curves[*ci].pcurve_on_a.clone()
+            let pc = ds.intersection_curves[*ci].pcurve_on_a.clone()?;
+            Some(Box::new(move |t| {
+                use rcad_kernel::geom::Curve2dEval;
+                Some(pc.point_at(t))
+            }))
         }
-        WireEdgeSource::DsEdge(_) | WireEdgeSource::SeamEdge => None,
+        WireEdgeSource::DsEdge(ei) => {
+            let edge = &ds.edges[*ei];
+            let tr = edge.t_range;
+            let curve = edge.curve.clone();
+            let surf = face_surface.clone();
+            Some(Box::new(move |t| world_to_uv(&surf, curve.point_at(t))))
+        }
+        WireEdgeSource::SeamEdge => None,
     };
-    let pc = pcurve.as_ref()?;
-    const N_SAMP: usize = 64;
+    let sampler = uv_sampler.as_ref()?;
+    // Build sampled UV polyline for the edge
+    const N_PC: usize = 64;
+    let uv_pts: Vec<DVec2> = (0..=N_PC).filter_map(|i| {
+        sampler(i as f64 / N_PC as f64)
+    }).collect();
+    if uv_pts.len() < 2 { return None; }
+
     let mut best_angle: Option<f64> = None;
-    let mut best_dist = -1.0_f64;
-    for &dir_angle in &[a_out, a_in + std::f64::consts::PI] {
+
+    // OCCT L1070: try both boundary directions (aA1, aA2+PI)
+    for &dir_angle in &[a1_bnd, a2_bnd + std::f64::consts::PI] {
         let ray_dir = DVec2::new(dir_angle.cos(), dir_angle.sin());
         if ray_dir.length_squared() < 1e-30 { continue; }
-        for i in 0..=N_SAMP {
-            let t = i as f64 / N_SAMP as f64;
-            let p_uv = pc.point_at(t);
-            let delta = p_uv - v_uv;
+
+        // Find furthest UV point along the ray direction
+        let mut best_along = -1.0_f64;
+        for p_uv in &uv_pts {
+            let delta = *p_uv - v_uv;
             if delta.length_squared() < TOLERANCE_ABS_SQ { continue; }
             let along = delta.dot(ray_dir);
-            if along <= 0.0 { continue; }
-            if along > best_dist {
-                let cross = (delta - ray_dir * along).length();
-                if cross / along < 0.5 {
-                    best_dist = along;
-                    let mut corrected = delta.y.atan2(delta.x);
-                    if corrected < 0.0 { corrected += std::f64::consts::TAU; }
-                    if clock_wise_angle(a_in, corrected) < a_delta {
-                        best_angle = Some(corrected);
-                    }
-                }
+            if along <= best_along { continue; }
+            let cross = (delta - ray_dir * along).length();
+            if cross / along >= 0.5 { continue; }
+            best_along = along;
+            let mut corrected = delta.y.atan2(delta.x);
+            if corrected < 0.0 { corrected += std::f64::consts::TAU; }
+            // OCCT L1116-1119: CWA(aA2, angle) < delta → inside sweep
+            if clock_wise_angle(a2_bnd, corrected) < clock_wise_angle(a2_bnd, a1_bnd) {
+                best_angle = Some(corrected);
             }
         }
         if best_angle.is_some() { return best_angle; }
