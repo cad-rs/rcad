@@ -3574,6 +3574,13 @@ fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_idx: usize)
         }
     }
 
+    if std::env::var("RCAD_DEBUG_IC").is_ok() && face_idx >= 5 && face_idx <= 7 {
+        eprintln!("[BLK_TRACE] fi={} n_merged_blocks={} n_total_segments={}", face_idx, merged_blocks.len(), segments.len());
+        for (bi, b) in merged_blocks.iter().enumerate() {
+            eprintln!("[BLK_TRACE]   block[{}] len={}", bi, b.len());
+        }
+    }
+
     // Process each block
     let mut wires: Vec<Vec<usize>> = Vec::new();
     let mut internal_wires: Vec<Vec<usize>> = Vec::new();
@@ -3594,6 +3601,11 @@ fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_idx: usize)
             *block_vert_count.entry(ev).or_default() += 1;
         }
         let is_regular = block_vert_count.values().all(|&d| d == 2);
+        if std::env::var("RCAD_DEBUG_IC").is_ok() && face_idx >= 5 && face_idx <= 7 {
+            eprintln!("[IS_REG] fi={} bi={} is_regular={} deg_counts={:?}",
+                face_idx, bi, is_regular,
+                block_vert_count.values().collect::<Vec<_>>());
+        }
 
         if is_regular {
             eprintln!("[REG] fi={} block_sz={}", face_idx, block.len());
@@ -3966,17 +3978,24 @@ fn select_best_outgoing<'a>(
     if candidates.is_empty() {
         return None;
     }
-    // OCCT-aligned: boundary->IC transition (WireSplitter_1.cxx L590-606).
-    // When the incoming edge is BOUNDARY and exactly 1 internal (IC)
-    // outgoing candidate exists, force the path to take that internal edge.
-    // This ensures the path crosses from the face boundary onto the
-    // intersection curve, forming a loop that includes the IC segment.
-    // Without this, the path keeps following boundary edges and never
-    // reaches the far side of the face.
+    // ✅ OCCT对齐: boundary→IC transition (WireSplitter_1.cxx L590-606).
+    // 当 incoming 是 boundary,恰好有 1 个 IC outgoing 时,强制选择 IC。
+    // 但当边界边在分割顶点处被分裂(共享相同 DsEdge 索引)时,边界→边界才是正确路径:
+    // 分割子段应保持在同一 DS 边内,而非跳转到 IC。
     if incoming_is_boundary {
         let internal_out: Vec<&&EdgeInfo> = candidates.iter().filter(|e| e.is_inside).collect();
         if internal_out.len() == 1 {
-            return Some(internal_out[0]);
+            let incoming_seg = &segments[incoming_ci];
+            let has_same_source_boundary = candidates.iter().any(|e| {
+                if e.is_inside || e.in_flag { return false; }
+                match (&segments[e.seg_idx].source, &incoming_seg.source) {
+                    (WireEdgeSource::DsEdge(eo), WireEdgeSource::DsEdge(ei)) => eo == ei,
+                    _ => false,
+                }
+            });
+            if !has_same_source_boundary {
+                return Some(internal_out[0]);
+            }
         }
     }
     if candidates.len() == 1 {
