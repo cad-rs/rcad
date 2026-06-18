@@ -3695,7 +3695,10 @@ struct EdgeInfo {
     in_flag: bool,
     /// true = internal edge (intersection curve), not part of original boundary
     is_inside: bool,
-    /// 2D direction angle [0, 2) at this vertex
+    /// true = this IC is a Circle arc (from make_blocks split);
+    /// false for TangentLine/TwoLines or boundary edges.
+    is_circle_arc: bool,
+    /// 2D direction angle [0, 2π) at this vertex
     angle: f64,
 }
 
@@ -3728,18 +3731,27 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, fac
         let mark_passed = is_deg;
 
         let is_inside = matches!(seg.source, WireEdgeSource::IntersectionCurve(_));
+        let is_circle_arc = is_inside && match &seg.source {
+            WireEdgeSource::IntersectionCurve(ci) => {
+                ds.intersection_curves.get(*ci).map_or(false, |ic| {
+                    matches!(&ic.curve, rcad_kernel::geom::Curve3::Circle(_))
+                })
+            }
+            _ => false,
+        };
+
 
         // At start_vertex: edge LEAVES the vertex (in_flag = false)
         if let Some(angle) = seg.tangent_start {
             smart_map.entry(seg.start_vertex).or_default().push(EdgeInfo {
-                seg_idx: si, passed: mark_passed, in_flag: false, is_inside, angle,
+                seg_idx: si, passed: mark_passed, in_flag: false, is_inside, is_circle_arc, angle,
             });
         }
 
         // At end_vertex: edge ENTERS the vertex (in_flag = true)
         if let Some(angle) = seg.tangent_end {
             smart_map.entry(seg.end_vertex).or_default().push(EdgeInfo {
-                seg_idx: si, passed: mark_passed, in_flag: true, is_inside, angle,
+                seg_idx: si, passed: mark_passed, in_flag: true, is_inside, is_circle_arc, angle,
             });
         }
     }
@@ -4028,7 +4040,7 @@ fn select_best_outgoing<'a>(
                     eprintln!("[BD_IC]   cand seg={} inside={} src={}", e.seg_idx, e.is_inside, src_s);
                 }
             }
-            if same_source_boundary.is_none() {
+            if same_source_boundary.is_none() || internal_out[0].is_circle_arc {
                 return Some(internal_out[0]);
             }
         }
@@ -4228,11 +4240,11 @@ fn walk_path_extract_wires(
     if !has_info {
         smart_map.entry(start_seg.start_vertex).or_default().push(EdgeInfo {
             seg_idx: start_si, passed: true, in_flag: false,
-            is_inside: false, angle: 0.0,
+            is_inside: false, is_circle_arc: false, angle: 0.0,
         });
         smart_map.entry(start_seg.end_vertex).or_default().push(EdgeInfo {
             seg_idx: start_si, passed: true, in_flag: true,
-            is_inside: false, angle: 0.0,
+            is_inside: false, is_circle_arc: false, angle: 0.0,
         });
         return;
     }
