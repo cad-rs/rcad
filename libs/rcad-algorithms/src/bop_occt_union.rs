@@ -528,11 +528,39 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     result = crate::deduplicate_edges(result);
     geom_populate::recompute_plane_surfaces(&mut result);
     validate_union_brep_output("union: result failed checks after vertex merge", &result)?;
-    // Deduplicate edges so adjacent sub-faces share edge topology.
+
+    // Second OCCT FillSameDomainFaces pass (butterfly merge).
+    // ✅ OCCT对齐: 用 edge set (BOPTools_Set) 对共面面做跨类型(Plane+BSpline)分组合并。
+    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+        let nf = result.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
+        eprintln!("[CLASSIFY] after classify: {} faces", nf);
+    }
+    let merged_count = fill_same_domain_faces_edge_set(&mut result);
+    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+        let nf = result.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
+        eprintln!("[CLASSIFY] edge-set merge: removed {} faces, remaining {}", merged_count, nf);
+    }
+    result = crate::prune_unused_topology(result);
+    result = remove_interior_faces(result);
+    result = crate::prune_unused_topology(result);
     result = crate::deduplicate_edges(result);
-    // OCCT ClassifyFaces (BuildSolid): remove interior faces classified as
-    // State_IN for the OTHER operand.  Runs BEFORE the second butterfly merge
-    // so history.face_origins (from build_with_history's internal merge) are valid.
+    result.geom.edge_degenerated.resize(result.edges.len(), false);
+    for (i, e) in result.edges.iter().enumerate() {
+        if e.start == e.end { result.geom.edge_degenerated[i] = true; }
+    }
+    // OCCT FillSameDomainFaces: edge-set grouping + surface comparison
+    // (edge-index based, handles all surface types).
+    {
+        let (merged, _cnt) = crate::occt_fill_same_domain_faces(&result);
+        result = merged;
+    }
+    // Legacy surface-index based merge (BuildSolid loop/area equivalent).
+    let (merged, _cnt) = crate::occt_merge_same_surface_faces(&result);
+    result = merged;
+
+    // ── Phase 3: OCCT BuildSolid — classify after merge ──
+    // ✅ OCCT-aligned: ClassifyFaces runs AFTER FillSameDomainFaces
+    // (BOPAlgo_BOP::BuildShape L871-906)
     {
         use rcad_kernel::geom::Surface3;
         use crate::classify::{classify_point, Classification};
@@ -556,13 +584,14 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
                             if is_plane { &b_ids } else { &a_ids }
                         }
                     };
-                    // ✅ OCCT对齐: BOPTools_AlgoTools::ComputeState for Face.
-                    // 遍历面的每条边，找到一条不在对面实体边界上的边，用其中点做分类。
-                    // OCCT 源码: BOPTools_AlgoTools.cxx L650-L674
+                    // ✅ OCCT aligned: BOPTools_AlgoTools::ComputeState for Face.
+                    // For each edge of the face, find one not on the boundary of the other
+                    // operand and classify from its midpoint.
+                    // OCCT source: BOPTools_AlgoTools.cxx L650-L674
                     let mut classify_pt = face.sample_point.unwrap_or(DVec3::ZERO);
                     let mut found_pt = face.sample_point.is_some();
                     if !found_pt {
-                        // 优先从边中点做分类（OCCT 主路径）
+                        // Prefer edge midpoint for classification (OCCT main path)
                         for we in &face.outer_wire.edges {
                             if let Some(edge) = result.edges.get(we.idx) {
                                 let p1 = result.vertices.get(edge.start).map(|v| v.point);
@@ -571,7 +600,7 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
                                     let mid = (p1 + p2) * 0.5;
                                     let cls = classify_point(mid, classify_ids, &ds);
                                     if cls != Classification::On {
-                                        // 边的中点不在对方实体边界上→可用的分类点
+                                        // Edge midpoint not on the other face boundary -> usable
                                         classify_pt = mid;
                                         found_pt = true;
                                         break;
@@ -581,7 +610,7 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
                         }
                     }
                     if !found_pt {
-                        // 所有边都在边界上→回退到顶点质心（OCCT PointInFace fallback）
+                        // All edges on the boundary -> fall back to vertex centroid
                         let mut _pts: Vec<DVec3> = Vec::new();
                         for we in &face.outer_wire.edges {
                             if let Some(edge) = result.edges.get(we.idx) {
@@ -660,34 +689,7 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
         }
     }
 
-    // Second OCCT FillSameDomainFaces pass (butterfly merge).
-    // ✅ OCCT对齐: 用 edge set (BOPTools_Set) 对共面面做跨类型(Plane+BSpline)分组合并。
-    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
-        let nf = result.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
-        eprintln!("[CLASSIFY] after classify: {} faces", nf);
-    }
-    let merged_count = fill_same_domain_faces_edge_set(&mut result);
-    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
-        let nf = result.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
-        eprintln!("[CLASSIFY] edge-set merge: removed {} faces, remaining {}", merged_count, nf);
-    }
-    result = crate::prune_unused_topology(result);
-    result = remove_interior_faces(result);
-    result = crate::prune_unused_topology(result);
-    result = crate::deduplicate_edges(result);
-    result.geom.edge_degenerated.resize(result.edges.len(), false);
-    for (i, e) in result.edges.iter().enumerate() {
-        if e.start == e.end { result.geom.edge_degenerated[i] = true; }
-    }
-    // OCCT FillSameDomainFaces: edge-set grouping + surface comparison
-    // (edge-index based, handles all surface types).
-    {
-        let (merged, _cnt) = crate::occt_fill_same_domain_faces(&result);
-        result = merged;
-    }
-    // Legacy surface-index based merge (BuildSolid loop/area equivalent).
-    let (merged, _cnt) = crate::occt_merge_same_surface_faces(&result);
-    result = merged;
+    // ── Phase 4: cleanup ──
     // compact_brep after merge removes edges/vertices that were only referenced by
     // the now-removed faces — OCCT FillSameDomainFaces does not clear the edge list,
     // but compact_brep is the RCAD equivalent of rebuilding the shape after merge.
