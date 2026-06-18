@@ -2659,6 +2659,9 @@ pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) 
     };
     filler.perform();
 
+    // ✅ OCCT-aligned: FillImagesContainers — pre-build wire edge lists
+    ds.build_container_images(a);
+
     let builder = builder::BooleanBuilder::new(&ds, op);
     let result = builder.build()?;
     boolean_postprocess_pave_result(op, a, b, result)
@@ -3227,7 +3230,18 @@ fn deduplicate_surfaces(mut brep: BRep) -> BRep {
 /// Post-process a boolean operation's BRep result: merge coplanar faces on
 /// the same plane, share edges between adjacent faces, and detect holes
 /// (inner wires) for faces with missing interior regions.
+fn count_topo(brep: &BRep, label: &str) {
+    use rcad_kernel::geom::Surface3;
+    let nf = brep.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count();
+    let ne = brep.edges.len();
+    let sphere_fe = brep.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).filter(|f| {
+        f.surface_idx.and_then(|si| brep.geom.surfaces.get(si)).is_some_and(|s| matches!(s, Surface3::Sphere(_)))
+    }).map(|f| f.outer_wire.edges.len()).next().unwrap_or(0);
+    eprintln!("[CNT] {}: {} faces, {} edges, sphere_fe={}", label, nf, ne, sphere_fe);
+}
+
 fn optimize_boolean_topology(mut brep: BRep) -> BRep {
+    count_topo(&brep, "topo-enter");
     if brep.vertices.len() < 4 { return brep; }
     // Allow fast step-only mode: skip all topology passes.
     if std::env::var("RCAD_SKIP_TOPOLOGY").is_ok() { return brep; }
@@ -3238,6 +3252,7 @@ fn optimize_boolean_topology(mut brep: BRep) -> BRep {
     let tol = tolerance::TOLERANCE_ABS.max(1e-8);
     // Pass 1: orthogonal grid-based fuse
     let (m1, _) = crate::orthogonal_face_fuse::fuse_orthogonal_coplanar_faces(&brep, tol);
+    count_topo(&m1, "topo-pass1");
     // Pass 1 can mint fresh edge records for boundaries that are geometrically
     // shared, so re-share them before same-domain adjacency walks by edge index.
     let m1 = deduplicate_edges(m1);
@@ -3247,6 +3262,7 @@ fn optimize_boolean_topology(mut brep: BRep) -> BRep {
     let m1 = deduplicate_surfaces(m1);
     // ✅ OCCT对齐: FillSameDomainFaces — edge-set分组合并同域面 (BOPAlgo_Builder_2.cxx L636-L796)
     let (m2, _) = crate::occt_fill_same_domain_faces(&m1);
+    count_topo(&m2, "topo-pass2");
     let mut brep = m2;
 
     // Pass 3: detect remaining coplanar groups with hole patterns and merge
@@ -3520,6 +3536,7 @@ pub fn boolean_op_with_options(
                 filler.configure_glue(options.use_glue, options.glue_tolerance);
                 filler.configure_fuzzy(options.fuzzy_tol);
                 filler.perform();
+                ds.build_container_images(a);
                 let builder = builder::BooleanBuilder::new(&ds, op)
                     .with_glue(options.use_glue, options.glue_tolerance);
                 builder.build_with_history()?
@@ -3534,6 +3551,7 @@ pub fn boolean_op_with_options(
             filler.configure_glue(options.use_glue, options.glue_tolerance);
             filler.configure_fuzzy(options.fuzzy_tol);
             filler.perform();
+            ds.build_container_images(a);
             let builder = builder::BooleanBuilder::new(&ds, op)
                 .with_glue(options.use_glue, options.glue_tolerance);
             builder.build_with_history()?
@@ -3559,6 +3577,7 @@ pub fn boolean_op_with_options(
                 };
                 filler.configure_glue(options.use_glue, options.glue_tolerance);
                 filler.perform();
+                ds.build_container_images(a);
                 let builder = builder::BooleanBuilder::new(&ds, op)
                     .with_glue(options.use_glue, options.glue_tolerance);
                 let r = builder.build()?;
@@ -3575,6 +3594,7 @@ pub fn boolean_op_with_options(
             let mut filler = pave_filler::PaveFiller::new(&mut ds);
             filler.configure_glue(options.use_glue, options.glue_tolerance);
             filler.perform();
+            ds.build_container_images(a);
             let builder = builder::BooleanBuilder::new(&ds, op)
                 .with_glue(options.use_glue, options.glue_tolerance);
             let r = builder.build()?;
@@ -4314,6 +4334,7 @@ pub fn boolean_op_with_history(
         _ => pave_filler::PaveFiller::new(&mut ds),
     };
     filler.perform();
+    ds.build_container_images(a);
     let builder = builder::BooleanBuilder::new(&ds, op);
     builder.build_with_history()
 }
@@ -4351,6 +4372,7 @@ pub fn boolean_op_par(
         _ => pave_filler::PaveFiller::new(&mut ds),
     };
     filler.perform();
+    ds.build_container_images(a);
     let builder = builder::BooleanBuilder::new(&ds, op);
     builder.build_with_history_par()
 }

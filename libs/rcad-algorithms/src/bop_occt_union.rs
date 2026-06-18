@@ -426,6 +426,8 @@ fn pave_fill(ds: &mut bopds::ds::DS, a: &BRep, b: &BRep, use_bvh: bool) {
         let mut filler = pave_filler::PaveFiller::new(ds);
         filler.perform();
     }
+    // ✅ OCCT-aligned: FillImagesContainers — pre-build wire edge lists
+    ds.build_container_images(a);
 }
 
 /// Sum of boundary-edge counts from [`crate::brep_check::validate_solid_closure`].

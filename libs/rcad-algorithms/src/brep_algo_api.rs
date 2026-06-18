@@ -728,6 +728,9 @@ impl<'a> BRepAlgoAPI_Common<'a> {
         };
         filler.perform();
 
+        // ✅ OCCT-aligned: FillImagesContainers — pre-build wire edge lists
+        ds.build_container_images(&a);
+
         // Build result
         let builder = BooleanBuilder::new(&ds, BooleanOpType::Intersection);
         let (brep, bool_history) = if self.options.parallel {

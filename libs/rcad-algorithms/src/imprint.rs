@@ -88,6 +88,9 @@ pub fn imprint_shape(target: &BRep, tool: &BRep) -> ImprintResult {
     let mut filler = PaveFiller::new(&mut ds);
     filler.perform();
 
+    // ✅ OCCT-aligned: FillImagesContainers — pre-build wire edge lists
+    ds.build_container_images(target);
+
     // Identify which DS faces came from target (ShapeA)
     let target_face_indices: Vec<usize> = ds
         .faces

@@ -1,6 +1,6 @@
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve2d, *};
-use rcad_kernel::{BRep, CurveEval};
+use rcad_kernel::{BRep, CurveEval, WireEdge};
 
 use super::face_info::FaceInfo;
 use super::pave::{Pave, PaveBlock};
@@ -243,6 +243,12 @@ pub struct DS {
     /// Edge origin mapping (OCCT: BOPAlgo_Builder::myOrigins).
     /// Indexed by sub-edge index, value is the original edge index.
     pub my_origins: Vec<usize>,
+
+    /// OCCT FillImagesContainers(WIRE): pre-built edge lists for wires whose
+    /// edges were split by the PaveFiller.  Each entry corresponds to one
+    /// original wire (flat index across all solids/shells of the source BRep).
+    /// None = wire unchanged (no image needed).
+    pub wire_images: Vec<Option<Vec<(usize, bool)>>>,
 }
 
 impl DS {
@@ -276,6 +282,7 @@ impl DS {
             same_domain_overlaps: Vec::new(),
             my_images: Vec::new(),
             my_origins: Vec::new(),
+            wire_images: Vec::new(),
         };
 
         ds.load_brep(a, ShapeOrigin::ShapeA);
@@ -1054,6 +1061,63 @@ impl DS {
                 self.my_origins.push(ei);
             }
         }
+    }
+
+    /// ✅ OCCT-aligned: FillImagesContainers (BOPAlgo_Builder_1.cxx L172-276).
+    /// For each original wire whose edges were split by the PaveFiller,
+    /// build a new edge list from the split sub-edges.
+    pub fn build_container_images(&mut self, brep: &BRep) {
+        // Count total wires across all solids/shells
+        let n_wires: usize = brep.solids.iter()
+            .flat_map(|s| &s.shells)
+            .flat_map(|sh| &sh.faces)
+            .map(|f| 1 + f.inner_wires.len())
+            .sum();
+        self.wire_images = vec![None; n_wires];
+
+        let mut wi = 0usize;
+        for solid in &brep.solids {
+            for shell in &solid.shells {
+                for face in &shell.faces {
+                    // Outer wire
+                    let new_outer = Self::rebuild_wire_edges(&face.outer_wire.edges, &self.my_images);
+                    if new_outer.is_some() {
+                        self.wire_images[wi] = new_outer;
+                    }
+                    wi += 1;
+
+                    // Inner wires
+                    for iw in &face.inner_wires {
+                        let new_inner = Self::rebuild_wire_edges(&iw.edges, &self.my_images);
+                        if new_inner.is_some() {
+                            self.wire_images[wi] = new_inner;
+                        }
+                        wi += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Rebuild a wire's edge list, replacing split edges with their sub-edges.
+    /// Returns None if no edge was split (wire unchanged).
+    fn rebuild_wire_edges(
+        edges: &[WireEdge],
+        my_images: &[Vec<usize>],
+    ) -> Option<Vec<(usize, bool)>> {
+        let mut new_edges = Vec::new();
+        let mut changed = false;
+        for we in edges {
+            if we.idx < my_images.len() && !my_images[we.idx].is_empty() {
+                changed = true;
+                for &sub_ei in &my_images[we.idx] {
+                    new_edges.push((sub_ei, we.forward));
+                }
+            } else {
+                new_edges.push((we.idx, we.forward));
+            }
+        }
+        if changed { Some(new_edges) } else { None }
     }
 
     /// Get the Plane surface for a face (panics if face is not a plane).
