@@ -3434,9 +3434,9 @@ fn clock_wise_angle(angle_in: f64, angle_out: f64) -> f64 {
     const T: f64 = std::f64::consts::TAU;
     let ai = if angle_in >= T { angle_in - T } else { angle_in };
     let ao = if angle_out >= T { angle_out - T } else { angle_out };
-    let mut d = ai + std::f64::consts::PI - ao;
-    if d <= 0.0 { d += T; }
-    if d > 0.0 && d <= 1e-14 { d = T; }
+    let mut d = ai - ao;
+    if d < 0.0 { d += T; }
+    if d <= 1e-14 { d = T; }
     d
 }
 
@@ -4052,17 +4052,7 @@ fn select_best_outgoing<'a>(
                 {
                     std::f64::consts::TAU
                 } else {
-                    let raw_cwa = clock_wise_angle(angle_in, a.angle);
-                    // ✅ OCCT对齐: 边界→边界子段共享同一 DsEdge 时(边被分割),
-                    // clock_wise_angle 返回 d≈0→被提升为 TAU。但边界→边界
-                    // 应优先于边界→IC。将 CWA 设为极小正值,使其在 min_by 中获胜。
-                    if !a.is_inside && !a.in_flag {
-                        if let WireEdgeSource::DsEdge(ei) = &segments[a.seg_idx].source {
-                            if let WireEdgeSource::DsEdge(ei_in) = &incoming_seg.source {
-                                if ei == ei_in && raw_cwa > 6.0 { 1e-12 } else { raw_cwa }
-                            } else { raw_cwa }
-                        } else { raw_cwa }
-                    } else { raw_cwa }
+                    clock_wise_angle(angle_in, a.angle)
                 }
             };
             let angle_b = {
@@ -4072,14 +4062,7 @@ fn select_best_outgoing<'a>(
                 {
                     std::f64::consts::TAU
                 } else {
-                    let raw_cwa = clock_wise_angle(angle_in, b.angle);
-                    if !b.is_inside && !b.in_flag {
-                        if let WireEdgeSource::DsEdge(ei) = &segments[b.seg_idx].source {
-                            if let WireEdgeSource::DsEdge(ei_in) = &incoming_seg.source {
-                                if ei == ei_in && raw_cwa > 6.0 { 1e-12 } else { raw_cwa }
-                            } else { raw_cwa }
-                        } else { raw_cwa }
-                    } else { raw_cwa }
+                    clock_wise_angle(angle_in, b.angle)
                 }
             };
             // Tie-break: when CWA equal within EPSILON, prefer interior (IC)
