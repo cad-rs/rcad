@@ -2989,7 +2989,58 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
     }
 
     // ================================================================
-    // ✅ OCCT-aligned: Section edges = Intersection curves (OCCT L478-489).
+    // ✅ OCCT-aligned: inner wire edges (BOPAlgo_Builder_2.cxx L362-384).
+    // TopExp_Explorer iterates inner wires' edges after outer wire edges.
+    // Each edge inherits its wire orientation (forward = FORWARD in wire).
+    // ================================================================
+    for (wi, inner_wire) in face.inner_boundary_edges.iter().enumerate() {
+        for &(ei, forward_in_wire) in inner_wire {
+            let edge = &ds.edges[ei];
+            let (sv, ev) = if forward_in_wire {
+                (edge.start_vertex, edge.end_vertex)
+            } else {
+                (edge.end_vertex, edge.start_vertex)
+            };
+            if sv == ev { continue; }
+            let is_degenerate = ds.is_edge_degenerated(ei);
+            if is_degenerate { continue; }
+            // Handle seam edges for periodic surfaces
+            // Defer to existing is_seam detection
+            let is_seam = match &face.surface {
+                Surface3::Sphere(_) => true,
+                _ => (is_u_closed || is_v_closed)
+                    && (sv == ev || are_verts_coincident(ds, sv, ev)),
+            };
+            if is_seam {
+                // Use existing seam handling
+                // (Seam edges from inner wires are rare; for now, add as-is)
+                let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface,
+                    Some(&edge.curve), Some(edge.t_range));
+                segments.push(WireSegment {
+                    start_vertex: sv, end_vertex: ev,
+                    source: WireEdgeSource::DsEdge(ei),
+                    forward: forward_in_wire,
+                    is_seam: true,
+                    tangent_start: t_start,
+                    tangent_end: t_end,
+                });
+            } else {
+                let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface,
+                    Some(&edge.curve), Some(edge.t_range));
+                segments.push(WireSegment {
+                    start_vertex: sv, end_vertex: ev,
+                    source: WireEdgeSource::DsEdge(ei),
+                    forward: forward_in_wire,
+                    is_seam: false,
+                    tangent_start: t_start,
+                    tangent_end: t_end,
+                });
+            }
+        }
+    }
+
+    // ================================================================
+    // Section edges = Intersection curves (OCCT L478-489).
     // ================================================================
     for &ci in &face.face_info.all_curves() {
         let ic = &ds.intersection_curves[ci];
