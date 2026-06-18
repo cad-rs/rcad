@@ -3589,7 +3589,9 @@ fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_idx: usize)
 
     for (bi, block) in merged_blocks.iter().enumerate() {
         if block.len() < 2 { continue; }
-        eprintln!("[BLK] fi={} bi={} n={}", face_idx, bi, block.len());
+        if std::env::var("RCAD_DEBUG_IC").is_ok() {
+            eprintln!("[BLK] fi={} bi={} n={}", face_idx, bi, block.len());
+        }
 
         // ✅ OCCT-aligned: check regularity (BOPTools_AlgoTools.cxx L227-253)
         let mut is_regular = true;
@@ -3640,8 +3642,7 @@ fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_idx: usize)
     (wires, internal_wires, vertex_positions)
 }
 
-/// OCCT-aligned:  Regular block ( degree=2)  wire
-///    ,
+/// OCCT-aligned: Regular block (degree=2) wire build.
 fn build_regular_wire(
     block: &[usize],
     segments: &[WireSegment],
@@ -3991,8 +3992,7 @@ fn is_seg_passed(smart_map: &HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize) -> b
 }
 
 /// Mark only the specific EdgeInfo for a segment at a vertex+in_flag as passed.
-/// OCCT-aligned: passed  EdgeInfo ,
-///    ,
+/// OCCT-aligned: find passed EdgeInfo.
 fn mark_edge_passed(smart_map: &mut HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize, vertex: usize, in_flag: bool) {
     if let Some(infos) = smart_map.get_mut(&vertex) {
         for info in infos.iter_mut() {
