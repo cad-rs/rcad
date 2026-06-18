@@ -112,7 +112,7 @@ pub fn imprint_shape(target: &BRep, tool: &BRep) -> ImprintResult {
     for &dfi in &target_face_indices {
         let sub_faces = split_face_by_curves(&ds, dfi);
 
-        let has_intersection = !ds.faces[dfi].face_info.curves_in.is_empty();
+        let has_intersection = !ds.faces[dfi].face_info.curves_sc.is_empty();
         let result_face_start = result_faces.len();
 
         for sf in sub_faces {
@@ -189,7 +189,7 @@ fn split_face_by_curves(ds: &DS, face_idx: usize) -> Vec<FaceSampleData> {
     let face = &ds.faces[face_idx];
     let fi = &face.face_info;
 
-    if fi.curves_in.is_empty() {
+    if fi.curves_sc.is_empty() {
         let boundary = face
             .boundary_verts
             .iter()
@@ -249,7 +249,7 @@ fn split_planar_face_simple(ds: &DS, face_idx: usize, plane: &Plane) -> Vec<Face
         .collect();
 
     let mut segments: Vec<(DVec3, DVec3)> = Vec::new();
-    for &ci in &face.face_info.curves_in {
+    for &ci in &face.face_info.curves_sc {
         let ic = &ds.intersection_curves[ci];
         let p0 = ds.vertices[ic.start_vertex].point;
         let p1 = ds.vertices[ic.end_vertex].point;
@@ -632,7 +632,7 @@ fn split_curved_face(ds: &DS, face_idx: usize) -> Vec<FaceSampleData> {
 
     // Collect 2D trim polylines from PCurves for each intersection curve
     let mut trim_polylines: Vec<Vec<DVec2>> = Vec::new();
-    for &ci in &face.face_info.curves_in {
+    for &ci in &face.face_info.curves_sc {
         if let Some(pcurve) = find_pcurve_for_face(ds, ci, face_idx) {
             let ic = &ds.intersection_curves[ci];
             let [t0, t1] = ic.t_range;
@@ -750,7 +750,7 @@ fn split_curved_face_legacy(ds: &DS, face_idx: usize) -> Vec<FaceSampleData> {
 
     // Collect all intersection polylines for this face
     let mut all_polylines: Vec<Vec<DVec3>> = Vec::new();
-    for &ci in &face.face_info.curves_in {
+    for &ci in &face.face_info.curves_sc {
         let ic = &ds.intersection_curves[ci];
         if ic.polyline.len() >= 2 {
             all_polylines.push(ic.polyline.clone());

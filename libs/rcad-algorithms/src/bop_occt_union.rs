@@ -198,10 +198,10 @@ fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
                 ));
             }
         }
-        for &ci in &f.face_info.curves_in {
+        for &ci in &f.face_info.curves_sc {
             if ci >= nic {
                 return Err(BooleanError::InvalidResult(
-                    "union: DS face_info.curves_in out of range",
+                    "union: DS face_info.curves_sc out of range",
                 ));
             }
         }

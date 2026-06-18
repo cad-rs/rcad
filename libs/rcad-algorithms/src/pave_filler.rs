@@ -841,11 +841,11 @@ impl<'a> PaveFiller<'a> {
             eprintln!("[SPLIT] AFTER_MAKE_BLOCKS n_vertices={} n_curves={} n_faces={}", n_verts, n_curves, n_faces);
             for fi in 0..n_faces {
                 let face = &self.ds.faces[fi];
-                eprintln!("[SPLIT]   face[{}] curves_in={} vertices_in={}", fi, face.face_info.curves_in.len(), face.face_info.vertices_in.len());
+                eprintln!("[SPLIT]   face[{}] curves_sc={} vertices_in={}", fi, face.face_info.curves_sc.len(), face.face_info.vertices_in.len());
             }
         }
 
-        // ✅ OCCT-aligned:Inject IC vertices into boundary edges (PutPaveOnCurve).
+        // ✅ OCCT-aligned: Inject IC vertices into boundary edges (PutPaveOnCurve).
         //    After FF creates intersection curves, their vertices may lie on
         //    boundary edges (e.g. sphere seam edge passes through IC vertex at
         //    (1,0,0)).  OCCT's PutPaveOnCurve processes ALL curves (edges + ICs)
@@ -5682,13 +5682,10 @@ impl<'a> PaveFiller<'a> {
             }
         }).collect();
 
-        // Face info snapshots: which faces reference which curves
-        // ✅ OCCT-aligned: face_curves must include all curve types (In/On/Sc),
-        //    otherwise sub-face fi_a/fi_b detection fails (fallback to fi=0), causing
-        //    MakeBlocks to misidentify which faces the section curves belong to.
-        //    OCCT PaveFiller_6 L670-675 uses BOPDS_FaceInfo's PaveBlocksSc/On/In.
+        // Face info snapshots: which faces reference which curves.
+        // All intersection curves are stored in curves_sc (PaveBlocksSc).
         let face_curves: Vec<Vec<usize>> = (0..n_faces)
-            .map(|fi| self.ds.faces[fi].face_info.all_curves())
+            .map(|fi| self.ds.faces[fi].face_info.curves_sc_only())
             .collect();
 
         // ── Phase 2: Compute splits ──────────────────────────────────────
@@ -5869,23 +5866,10 @@ impl<'a> PaveFiller<'a> {
             }
         }
 
-        // ✅ OCCT-aligned: move circle curves on planar faces from curves_sc to curves_in,
-        //    matching OCCT PaveBlocksIn semantics — circles on planar faces form internal boundaries,
-        //    not section curves (PaveBlocksSc). Otherwise the wire pipeline would treat circle
-        //    arcs as section curves, causing incorrect IC→IC path selection.
+        // ✅ OCCT-aligned: circle curves on planar faces stay in curves_sc (PaveBlocksSc).
+        //    No need to move them — all intersection curves are stored as curves_sc.
         #[cfg(feature = "debug_split")]
         eprintln!("[MKBK_PLANAR] n_actions={}", actions.len());
-        for act in &actions {
-            let is_circle = matches!(snapshots[act.old_ci].curve, Curve3::Circle(_));
-            if !is_circle { continue; }
-            for fi in 0..n_faces {
-                if !face_curves[fi].contains(&act.old_ci) { continue; }
-                if matches!(self.ds.faces[fi].surface, Surface3::Plane(_)) {
-                    self.ds.faces[fi].face_info.curves_sc.remove(&act.old_ci);
-                    self.ds.faces[fi].face_info.curves_in.insert(act.old_ci);
-                }
-            }
-        }
 
         // Second pass: create new curves for remaining segments
         let _orig_n_curves = self.ds.intersection_curves.len();
@@ -5913,14 +5897,8 @@ impl<'a> PaveFiller<'a> {
                 let new_is_circle = matches!(snapshots[act.old_ci].curve, Curve3::Circle(_));
                 for fi in 0..n_faces {
                     if face_curves[fi].contains(&act.old_ci) {
-                        // ✅ OCCT-aligned: circle arcs on planar faces stored as curves_in (PaveBlocksIn),
-                        //    non-planar faces (e.g. cylinder) section curves stored as curves_sc (PaveBlocksSc).
-                        let on_planar = matches!(self.ds.faces[fi].surface, Surface3::Plane(_));
-                        if new_is_circle && on_planar {
-                            self.ds.faces[fi].face_info.curves_in.insert(new_ci);
-                        } else {
-                            self.ds.faces[fi].face_info.curves_sc.insert(new_ci);
-                        }
+                        // ✅ OCCT-aligned: all section curves stored as curves_sc (PaveBlocksSc).
+                        self.ds.faces[fi].face_info.curves_sc.insert(new_ci);
                         self.ds.faces[fi].face_info.vertices_in.insert(v_prev);
                         self.ds.faces[fi].face_info.vertices_in.insert(v_cur);
                     }
@@ -6196,7 +6174,7 @@ impl<'a> PaveFiller<'a> {
             eprintln!("[SPLIT] END_MAKE_BLOCKS total_curves={} circle_curves={}", n_total, n_circle);
             for fi in 0..self.ds.faces.len() {
                 let face = &self.ds.faces[fi];
-                eprintln!("[SPLIT]   face[{}] curves_in={} vertices_in={}", fi, face.face_info.curves_in.len(), face.face_info.vertices_in.len());
+                eprintln!("[SPLIT]   face[{}] curves_sc={} vertices_in={}", fi, face.face_info.curves_sc.len(), face.face_info.vertices_in.len());
             }
         }
     }
@@ -6213,7 +6191,7 @@ impl<'a> PaveFiller<'a> {
         let mut seen_vi = std::collections::BTreeSet::new();
         for fi in 0..self.ds.faces.len() {
             let face = &self.ds.faces[fi];
-            if face.face_info.curves_in.is_empty() { continue; }
+            if face.face_info.curves_sc.is_empty() { continue; }
             for &vi in &face.face_info.vertices_in {
                 if seen_vi.insert(vi) {
                     ic_vertices.push((vi, self.ds.vertices[vi].point));
@@ -6225,7 +6203,7 @@ impl<'a> PaveFiller<'a> {
                 }
             }
             // Also include IC start/end vertices
-            for &ci in &face.face_info.curves_in {
+            for &ci in &face.face_info.curves_sc {
                 let ic = &self.ds.intersection_curves[ci];
                 if seen_vi.insert(ic.start_vertex) {
                     ic_vertices.push((ic.start_vertex, self.ds.vertices[ic.start_vertex].point));
@@ -6245,7 +6223,7 @@ impl<'a> PaveFiller<'a> {
 
         for fi in 0..self.ds.faces.len() {
             let face = &self.ds.faces[fi];
-            if face.face_info.curves_in.is_empty() { continue; }
+            if face.face_info.curves_sc.is_empty() { continue; }
             for &ei in &face.boundary_edges {
                 if self.ds.is_edge_degenerated(ei) { continue; }
                 let edge = &self.ds.edges[ei];
@@ -6780,16 +6758,13 @@ mod phase2a_tests {
 // ── Phase 2a: MakeBlocks candidate injection helpers ─────────────────────
 
 /// Find up-to-2 face indices that reference a given intersection curve.
-/// ✅ OCCT-aligned: must check all curve types (In/On/Sc) (OCCT BOPDS_FaceInfo's
-///    PaveBlocksSc/In/On); otherwise before MakeBlocks when curves_in is empty,
-///    put_bound_pave_on_curve cannot find face boundary vertices, causing missing split vertices on circle curves.
+/// ✅ OCCT-aligned: checks curves_sc (PaveBlocksSc); in OCCT this checks all
+///    PaveBlocksSc/In/On to find face boundary vertices for put_bound_pave_on_curve.
 fn find_face_idxs_for_curve(ds: &DS, ci: usize) -> [usize; 2] {
     let mut result = [usize::MAX; 2];
     let mut idx = 0;
     for (fi, face) in ds.faces.iter().enumerate() {
-        if face.face_info.curves_in.contains(&ci)
-            || face.face_info.curves_on.contains(&ci)
-            || face.face_info.curves_sc.contains(&ci)
+        if face.face_info.curves_sc.contains(&ci)
         {
             if idx < 2 {
                 result[idx] = fi;
