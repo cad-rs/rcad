@@ -4060,10 +4060,8 @@ fn refine_angles(
     ds: &DS,
     face_idx: usize,
 ) {
-    let _ = segments;
-    let _ = ds;
-    let _ = face_idx;
     let vertices: Vec<usize> = smart_map.keys().copied().collect();
+    let face_surface = &ds.faces[face_idx].surface;
     for &v in &vertices {
         let Some(infos) = smart_map.get(&v).cloned() else { continue; };
 
@@ -4082,35 +4080,50 @@ fn refine_angles(
             }
         }
 
-        if cnt_bnd != 2 { continue; } // OCCT L965-968
+        // OCCT L965-968: only vertices with exactly 2 boundary edges
+        if cnt_bnd != 2 { continue; }
 
         let a_delta = clock_wise_angle(a2_bnd, a1_bnd);
 
-        let mut refined: Vec<(usize, f64)> = Vec::new();
-        for (idx, ei) in infos.iter().enumerate() {
+        // OCCT L970-1000: refine IC outgoing angles
+        // Maps edge index → refined angle (OCCT aDMSR)
+        let mut refined_map: std::collections::HashMap<usize, f64> = std::collections::HashMap::new();
+        for ei in &infos {
             if ei.is_inside && !ei.in_flag {
-                let a_da = clock_wise_angle(a2_bnd, ei.angle);
-                if a_da >= a_delta {
-                    // IC is outside boundary sweep or covers same range
-                    // Place just inside: a1 - epsilon  (OCCT L998)
-                    // Only refine when iCntInt == 2 (degree-4 vertex with 2 IC edges)
-                    let new_angle = if cnt_int == 2 {
-                        let eps = 1e-10;
-                        if a1_bnd > eps { a1_bnd - eps }
-                        else { a1_bnd - eps + std::f64::consts::TAU }
+                let a_ic = ei.angle;
+                let a_da = clock_wise_angle(a2_bnd, a_ic);
+                if a_da < a_delta {
+                    continue; // OCCT L986-989: already inside boundary sweep
+                }
+
+                // OCCT L991: try pcurve-based refinement first
+                let b_refined = refine_angle_2d(v, &segments[ei.seg_idx], segments, ds, face_surface, a1_bnd, a2_bnd, a_delta, a_ic);
+                if let Some(refined_angle) = b_refined {
+                    refined_map.insert(ei.seg_idx, refined_angle);
+                } else if cnt_int == 2 {
+                    // OCCT L996-999: epsilon fallback — place just inside boundary
+                    // OCCT L998: aA = (aA <= aA1) ? (aA1 + Precision::Angular()) : (aA2 - Precision::Angular());
+                    let eps = 1e-10;
+                    let new_angle = if a_ic <= a1_bnd || a_ic > a2_bnd {
+                        (a1_bnd + eps) % std::f64::consts::TAU
                     } else {
-                        ei.angle
+                        (a2_bnd - eps + std::f64::consts::TAU) % std::f64::consts::TAU
                     };
-                    refined.push((idx, new_angle));
+                    refined_map.insert(ei.seg_idx, new_angle);
                 }
             }
         }
 
-        if !refined.is_empty() {
-            if let Some(infos_mut) = smart_map.get_mut(&v) {
-                for (idx, new_angle) in refined {
-                    if let Some(ei) = infos_mut.get_mut(idx) {
-                        ei.angle = new_angle;
+        if refined_map.is_empty() { continue; }
+
+        // OCCT L1008-1028: update angles in SmartMap
+        if let Some(infos_mut) = smart_map.get_mut(&v) {
+            for ei in infos_mut.iter_mut() {
+                if let Some(&new_angle) = refined_map.get(&ei.seg_idx) {
+                    ei.angle = new_angle;
+                    // OCCT L1022-1024: for incoming edges, adjust by PI
+                    if ei.in_flag {
+                        ei.angle = (new_angle + std::f64::consts::PI) % std::f64::consts::TAU;
                     }
                 }
             }
