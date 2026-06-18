@@ -5894,7 +5894,7 @@ impl<'a> PaveFiller<'a> {
                 new_curves_info.push((act.old_ci, new_ci));
 
                 // Register endpoints in faces' vertices_in
-                let new_is_circle = matches!(snapshots[act.old_ci].curve, Curve3::Circle(_));
+                let _new_is_circle = matches!(snapshots[act.old_ci].curve, Curve3::Circle(_));
                 for fi in 0..n_faces {
                     if face_curves[fi].contains(&act.old_ci) {
                         // ✅ OCCT-aligned: all section curves stored as curves_sc (PaveBlocksSc).
