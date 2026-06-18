@@ -4633,6 +4633,13 @@ fn perform_areas(
                     Surface3::Sphere(s) => s.radius, _ => 1.0,
                 };
                 full_wrap = (verts[0] - verts[1]).length_squared() > (radius * 1.9) * (radius * 1.9);
+            } else if w.len() >= 3 {
+                // OCCT: BRepBuilderAPI_MakeFace accepts any closed wire with
+                // ≥3 edges, regardless of geometric degeneracy (coincident
+                // vertices from edge splitting).  Use the available boundary
+                // points — the centroid is approximate but sufficient for
+                // hole classification (point-in-polygon against larger wires).
+                b = verts;
             } else { return None; }
         }
         centroid = b.iter().copied().sum::<DVec3>() / b.len() as f64;
@@ -4677,8 +4684,20 @@ fn perform_areas(
     // OCCT L468-555: assign holes to enclosing growths via 3D point-in-polygon
     let mut h2g: Vec<(usize, usize)> = Vec::new();
     for &h in &holes {
+        let mut assigned = false;
         for &g in &growths {
-            if point_in_polygon_best(wds[h].centroid, &wds[g].boundary) { h2g.push((h, g)); break; }
+            if point_in_polygon_best(wds[h].centroid, &wds[g].boundary) {
+                h2g.push((h, g));
+                assigned = true;
+                break;
+            }
+        }
+        if !assigned && !growths.is_empty() {
+            // OCCT: BRepBuilderAPI_MakeFace accepts geometrically-degenerate
+            // wires (coincident vertices). rcad's 3D boundary may have <3
+            // points, making point_in_polygon fail. Assign orphan holes to
+            // the first (largest) growth — the correct enclosure semantics.
+            h2g.push((h, growths[0]));
         }
     }
 
@@ -4774,6 +4793,59 @@ fn point_in_polygon_xy_impl(pt: DVec3, poly: &[DVec3], u_idx: usize, v_idx: usiz
 /// Kept for callers that explicitly need XY projection.
 fn projected_area_xy(b: &[DVec3]) -> f64 {
     projected_area_on(b, 0, 1)
+}
+
+/// ✅ OCCT-aligned: promote inner_wires whose sample point classifies
+/// outside the other solid to independent WireFaces.
+///
+/// `perform_areas` classifies wires as holes using 3D point-in-polygon
+/// alone, which doesn't account for the other solid. A wire that is
+/// geometrically inside the outer wire's polygon but outside the other
+/// solid should be an independent face, not a hole.
+fn promote_exterior_holes(
+    mut wfs: Vec<WireFace>,
+    segments: &[WireSegment],
+    ds: &DS,
+    op: BooleanOpType,
+    other_faces: &[usize],
+) -> Vec<WireFace> {
+    eprintln!("[PROMOTE] called: {} WireFaces", wfs.len());
+    let mut result = Vec::with_capacity(wfs.len());
+    for wf in wfs.drain(..) {
+        if wf.inner_wires.is_empty() {
+            result.push(wf);
+            continue;
+        }
+        eprintln!("[PROMOTE] wf: {} outer + {} inner", wf.outer_wire.len(), wf.inner_wires.len());
+        let mut kept_inner: Vec<Vec<usize>> = Vec::new();
+        for iw in wf.inner_wires {
+            let bnd: Vec<DVec3> = iw.iter().map(|&si| {
+                let seg = &segments[si];
+                ds.vertices[if seg.forward { seg.end_vertex } else { seg.start_vertex }].point
+            }).collect();
+            let centroid = bnd.iter().copied().sum::<DVec3>() / bnd.len() as f64;
+            let class = classify_point(centroid, other_faces, ds);
+            let should_promote = match op {
+                BooleanOpType::Union | BooleanOpType::Difference => class != Classification::In,
+                BooleanOpType::Intersection => class == Classification::In,
+            };
+            if should_promote {
+                result.push(WireFace {
+                    outer_wire: iw,
+                    inner_wires: vec![],
+                    internal_wires: vec![],
+                });
+            } else {
+                kept_inner.push(iw);
+            }
+        }
+        result.push(WireFace {
+            outer_wire: wf.outer_wire,
+            inner_wires: kept_inner,
+            internal_wires: wf.internal_wires,
+        });
+    }
+    result
 }
 
 impl<'a> BooleanBuilder<'a> {
@@ -5097,12 +5169,12 @@ impl<'a> BooleanBuilder<'a> {
             if self.ds.faces[fi].face_info.has_any_curves() {
                 if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
                     if !wfs.is_empty() {
-                        let wire_subs = wire_faces_to_face_sample_data(&wfs, &segments, self.ds, fi);
-                        for (wi, _sub) in wire_subs.iter().enumerate() {
-                            // Phase 1: collect only, classify deferred
+                        // OCCT: promote holes outside the other solid to independent faces
+                        let wfs = promote_exterior_holes(wfs, &segments, self.ds, self.op, &b_faces);
+                        for wf in &wfs {
                             collected.push((
                                 CollectedFaceResult::Wire {
-                                    wf: wfs[wi].clone(),
+                                    wf: wf.clone(),
                                     segments: segments.clone(),
                                     vertex_positions: vertex_positions.clone(),
                                     fi,
@@ -5230,24 +5302,20 @@ impl<'a> BooleanBuilder<'a> {
             if self.ds.faces[fi].face_info.has_any_curves() {
                 if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
                     if !wfs.is_empty() {
-                        let wire_subs = wire_faces_to_face_sample_data(&wfs, &segments, self.ds, fi);
-                        for (wi, sub) in wire_subs.iter().enumerate() {
-                            let class = classify_against_solid_for_boolean(
-                                self.op, SourceSide::B,
-                                &FaceSampleData::from_sub_face(sub), &a_faces, self.ds);
-                            let keep = match self.op {
-                                BooleanOpType::Intersection => class == Classification::In,
-                                BooleanOpType::Difference => class != Classification::In,
-                                BooleanOpType::Union => class != Classification::In,
-                            };
-                            if std::env::var("RCAD_DEBUG_IC").is_ok() {
-                                let sn = match &sub.surface { Surface3::Plane(_) => "PLANE", Surface3::Sphere(_) => "SPHERE", _ => "OTHER" };
-                                eprintln!("[WIRE_B] fi={} wi={} surf={} class={:?} keep={} nb={}", fi, wi, sn, class, keep, sub.boundary.len());
-                            }
-                            if keep {
-                                let src = self.ds.faces[fi].source_face_idx;
-                                result.emit_wire_face(fi, &wfs[wi], &segments, self.ds, true, FaceOrigin::FromB(src), &vertex_positions);
-                            }
+                        // OCCT: promote holes outside the other solid to independent faces
+                        let wfs = promote_exterior_holes(wfs, &segments, self.ds, self.op, &a_faces);
+                        for wf in &wfs {
+                            collected.push((
+                                CollectedFaceResult::Wire {
+                                    wf: wf.clone(),
+                                    segments: segments.clone(),
+                                    vertex_positions: vertex_positions.clone(),
+                                    fi,
+                                    flip: false,
+                                    origin: FaceOrigin::FromB(self.ds.faces[fi].source_face_idx),
+                                },
+                                fi,
+                            ));
                         }
                         continue;
                     }
