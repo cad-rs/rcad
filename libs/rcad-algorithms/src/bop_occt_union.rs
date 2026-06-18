@@ -541,8 +541,6 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
         eprintln!("[CLASSIFY] edge-set merge: removed {} faces, remaining {}", merged_count, nf);
     }
     result = crate::prune_unused_topology(result);
-    result = remove_interior_faces(result);
-    result = crate::prune_unused_topology(result);
     result = crate::deduplicate_edges(result);
     result.geom.edge_degenerated.resize(result.edges.len(), false);
     for (i, e) in result.edges.iter().enumerate() {
@@ -733,7 +731,8 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
             result = crate::prune_unused_topology(result);
         }
     }
-    validate_union_brep_output("union: result failed checks after same-plane merge", &result)?;
+    validate_union_brep_output("union: result after all passes", &result)?;
+    validate_solid_closure(&result)?;
     Ok(result)
 }
 
@@ -1141,95 +1140,59 @@ fn fill_same_domain_cross_group(
     merged
 }
 
-/// ✅ OCCT对齐: BuildSolid — 排除被覆盖的内部面 (OCCT BOPAlgo_BuilderSolid)
-///    OCCT ShellSplitter 从分裂面重建 shell 时,不构成外环的面被排除。
-///    rcad: 对同平面同法线的面对,如果较小面的 centroid 在较大面内 → 移除较小面。
-///    返回修改后的 BRep。
-fn remove_interior_faces(mut brep: BRep) -> BRep {
-    for si in 0..brep.solids.len() {
-        for shi in 0..brep.solids[si].shells.len() {
-            let nf = brep.solids[si].shells[shi].faces.len();
-            if nf < 2 { continue; }
 
-            // Collect planar face info
-            struct Pf { area: f64, cx: DVec3, bd: Vec<DVec3>, nm: DVec3 }
-            let mut planes: Vec<(usize, Pf)> = Vec::new();
-            for fi in 0..nf {
-                let face = &brep.solids[si].shells[shi].faces[fi];
-                let sid = face.surface_idx;
-                let Some(surf) = sid.and_then(|sid| brep.geom.surfaces.get(sid)) else { continue; };
-                let is_p = match surf { Surface3::Plane(_) => true, Surface3::BSpline(b) => rcad_kernel::geom::bspline_is_planar(b,1e-3), _ => false };
-                if !is_p { continue; }
-                let nm = match surf { Surface3::Plane(p) => p.normal, _ => face.normal };
-                let mut bd: Vec<DVec3> = Vec::new();
-                for we in &face.outer_wire.edges { if let Some(e)=brep.edges.get(we.idx) { if let Some(v)=brep.vertices.get(e.start) { bd.push(v.point); } } }
-                if bd.len() < 3 { continue; }
-                let cx = bd.iter().copied().sum::<DVec3>() / bd.len() as f64;
-                // 2D polygon area
-                let (ua, va) = {
-                    let e0 = (bd[1]-bd[0]).normalize(); let e1 = (bd[2]-bd[0]).normalize();
-                    let n = e0.cross(e1).normalize(); (e0, n.cross(e0).normalize())
-                };
-                let area: f64 = {
-                    let pts: Vec<DVec2> = bd.iter().map(|p| { let d=*p-bd[0]; DVec2::new(d.dot(ua), d.dot(va)) }).collect();
-                    let m=pts.len(); let mut a=0.0f64; let mut k=m-1;
-                    for i in 0..m { a += pts[i].x*pts[k].y - pts[k].x*pts[i].y; k=i; }
-                    (a/2.0f64).abs()
-                };
-                let _ = area;
-                planes.push((fi, Pf { area, cx, bd, nm }));
-            }
-
-            // Detect interior faces: smaller face inside larger face on same plane
-            let mut to_remove: Vec<usize> = Vec::new();
-            for i in 0..planes.len() {
-                for j in (i+1)..planes.len() {
-                    let (fi_a, ref a) = planes[i];
-                    let (fi_b, ref b) = planes[j];
-                    if a.nm.dot(b.nm) < 0.999 { continue; }
-                    // 3D-boundary-check + pip
-                    let inside = |cx: DVec3, bd: &[DVec3]| -> bool {
-                        for k in 0..bd.len() {
-                            let a = bd[k]; let b = bd[(k+1)%bd.len()];
-                            let ab = b-a; let ap = cx-a;
-                            let t = (ap.dot(ab)/(ab.dot(ab)+1e-30)).clamp(0.0,1.0);
-                            if (cx-(a+ab*t)).length() < 1e-7 { return false; }
-                        }
-                        let e0 = (bd[1]-bd[0]).normalize(); let e1 = (bd[2]-bd[0]).normalize();
-                        let n = e0.cross(e1).normalize(); if n.length_squared()<0.5 { return false; }
-                        let ua=e0; let va=n.cross(ua).normalize();
-                        let pts: Vec<DVec2> = bd.iter().map(|p| { let d=*p-bd[0]; DVec2::new(d.dot(ua),d.dot(va)) }).collect();
-                        let p2 = DVec2::new((cx-bd[0]).dot(ua), (cx-bd[0]).dot(va));
-                        let mut inside=false; let mut k=pts.len()-1;
-                        for kk in 0..pts.len() {
-                            if ((pts[kk].y>p2.y)!=(pts[k].y>p2.y))&&(p2.x<(pts[k].x-pts[kk].x)*(p2.y-pts[kk].y)/(pts[k].y-pts[kk].y)+pts[kk].x) { inside=!inside; }
-                            k=kk;
-                        }
-                        inside
-                    };
-                    let a_in_b = inside(a.cx, &b.bd);
-                    let b_in_a = inside(b.cx, &a.bd);
-                    if a_in_b && !b_in_a && a.area < b.area { to_remove.push(fi_a); }
-                    if b_in_a && !a_in_b && b.area < a.area { to_remove.push(fi_b); }
+/// Check that every edge in the result is referenced exactly twice
+/// (once from each adjacent face), forming a closed manifold shell.
+/// Returns an error listing orphan (<2 refs) and over-shared (>2 refs) edges.
+fn validate_solid_closure(brep: &BRep) -> Result<(), BooleanError> {
+    use std::collections::HashMap;
+    let mut edge_count: HashMap<usize, usize> = HashMap::new();
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for face in &shell.faces {
+                for we in &face.outer_wire.edges {
+                    *edge_count.entry(we.idx).or_insert(0) += 1;
                 }
-            }
-
-            // Remove interior faces
-            to_remove.sort_unstable_by(|a,b| b.cmp(a));
-            to_remove.dedup();
-            for &fi in &to_remove {
-                if fi >= brep.solids[si].shells[shi].faces.len() { continue; }
-                // compute flat index
-                let mut ff = 0usize;
-                for s in 0..si { for sh in &brep.solids[s].shells { ff += sh.faces.len(); } }
-                for sh in 0..shi { ff += brep.solids[si].shells[sh].faces.len(); }
-                ff += fi;
-                crate::remove_flat_face_geom_slots(&mut brep.geom, ff);
-                brep.solids[si].shells[shi].faces.remove(fi);
+                for wire in &face.inner_wires {
+                    for we in &wire.edges {
+                        *edge_count.entry(we.idx).or_insert(0) += 1;
+                    }
+                }
             }
         }
     }
-    brep
+
+    let mut orphan: Vec<usize> = Vec::new();
+    let mut over: Vec<usize> = Vec::new();
+    for (&eidx, &count) in &edge_count {
+        if count < 2 {
+            orphan.push(eidx);
+        } else if count > 2 {
+            over.push(eidx);
+        }
+    }
+
+    if orphan.is_empty() && over.is_empty() {
+        return Ok(());
+    }
+
+    orphan.sort();
+    orphan.dedup();
+    over.sort();
+    over.dedup();
+
+    let detail = if !orphan.is_empty() && !over.is_empty() {
+        format!("{} orphan edges (refs<2), {} over-shared edges (refs>2)", orphan.len(), over.len())
+    } else if !orphan.is_empty() {
+        format!("{} orphan edges (refs<2)", orphan.len())
+    } else {
+        format!("{} over-shared edges (refs>2)", over.len())
+    };
+
+    Err(BooleanError::OpenShell {
+        orphan_edges: orphan,
+        over_shared_edges: over,
+    })
 }
 
 /// 同域面合并的代表面选择优先级。
