@@ -1055,6 +1055,15 @@ impl DS {
             }
         }
     }
+
+    /// Get the Plane surface for a face (panics if face is not a plane).
+    /// Used by the PaveFiller to compute pcurves for coplanar overlap ICs.
+    pub fn face_plane(&self, fi: usize) -> Plane {
+        match &self.faces[fi].surface {
+            Surface3::Plane(p) => *p,
+            _ => panic!("DS::face_plane: face {} is not a Plane surface", fi),
+        }
+    }
 }
 
 #[cfg(test)]
