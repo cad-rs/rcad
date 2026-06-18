@@ -3412,31 +3412,19 @@ fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool) -> Option<
     Some(dir_to_angle(dir))
 }
 
-/// OCCT-aligned: ClockWiseAngle (BOPAlgo_WireSplitter_1.cxx L622-660)
-///     [0, 2)
+/// ✅ OCCT对齐: ClockWiseAngle — OCCT BOPAlgo_WireSplitter_1.cxx L621-650
 ///
 ///     angle_in: angle at incident vertex (in_flag=true)
 ///     angle_out: angle at outgoing vertex (in_flag=false)
-// ═══════════════════════════════════════════════════════════════
-// ■ CRITICAL OCCT ALIGNMENT ■ ClockWiseAngle (WireSplitter_1.cxx L621-660)
-//   OCCT formula: dA = A2 − A1 where A1 = angleIn∈[0,2π), A2 = angleOut+2π
-//   rcad negates all UV tangent angles (na = −a) to match the sign
-//   convention.  For negated angles, a2 may be < a1 producing d < 0;
-//   the extra branch handles this while OCCT (angles always ∈[0,2π))
-//   never needs it.
-//
-//   ⚠ DO NOT CHANGE unless re-deriving the full angle sign convention
-//     across edge_uv_tangent, compute_seam_tangent_angles, angle_2d,
-//     refine_angle_2d, and select_best_outgoing simultaneously.
-// ═══════════════════════════════════════════════════════════════
-// OCCT-aligned: ClockWiseAngle (BOPAlgo_WireSplitter_1.cxx L621-660)
 fn clock_wise_angle(angle_in: f64, angle_out: f64) -> f64 {
-    const T: f64 = std::f64::consts::TAU;
-    let ai = if angle_in >= T { angle_in - T } else { angle_in };
-    let ao = if angle_out >= T { angle_out - T } else { angle_out };
-    let mut d = ai - ao;
-    if d < 0.0 { d += T; }
-    if d <= 1e-14 { d = T; }
+    const TAU: f64 = std::f64::consts::TAU;
+    let ai = if angle_in >= TAU { angle_in - TAU } else { angle_in };
+    let ao = if angle_out >= TAU { angle_out - TAU } else { angle_out };
+    let a1 = ai + std::f64::consts::PI;
+    let a1n = if a1 >= TAU { a1 - TAU } else { a1 };
+    let mut d = a1n - ao;
+    if d <= 0.0 { d += TAU; }
+    if d <= 1e-14 { d = TAU; }
     d
 }
 
@@ -4089,71 +4077,74 @@ fn select_best_outgoing<'a>(
         .copied()
 }
 
-/// OCCT-aligned: RefineAngles (BOPAlgo_WireSplitter_1.cxx L904-1028)
+/// ✅ OCCT对齐: RefineAngles — OCCT BOPAlgo_WireSplitter_1.cxx L904-1028
 ///
-/// Refine 2 boundary edges (1 in, 1 out):
-///   1.  boundary  delta = ClockWiseAngle(a_in_bnd, a_out_bnd)
-///   2. ,:
-///      -  RefineAngle2D:  p-curve  ( )
-///      -  2 :  boundary
+/// For each vertex with exactly 2 boundary edges (1 in, 1 out):
+///   1. Compute boundary delta = ClockWiseAngle(a2_bnd, a1_bnd)
+///   2. For outgoing IC edges: if ClockWiseAngle(a2_bnd, a_ic) >= a_delta,
+///      the IC is OUTSIDE the boundary sweep. Refine it to a1_bnd - epsilon.
+///   3. If the IC is already inside the sweep (CWA < a_delta), leave unchanged.
+///
+/// This ensures the path walker prefers boundary->boundary over boundary->IC
+/// at degree-4 vertices.
 fn refine_angles(
     smart_map: &mut HashMap<usize, Vec<EdgeInfo>>,
     segments: &[WireSegment],
     ds: &DS,
     face_idx: usize,
 ) {
-    let face_surface = &ds.faces[face_idx].surface;
+    let _ = segments;
+    let _ = ds;
+    let _ = face_idx;
     let vertices: Vec<usize> = smart_map.keys().copied().collect();
     for &v in &vertices {
         let Some(infos) = smart_map.get(&v).cloned() else { continue; };
 
-        let bnd_in = infos.iter().find(|ei| !ei.is_inside && ei.in_flag);
-        let bnd_out = infos.iter().find(|ei| !ei.is_inside && !ei.in_flag);
-        let internal_out: Vec<&EdgeInfo> = infos.iter().filter(|ei| ei.is_inside && !ei.in_flag).collect();
+        let mut cnt_bnd = 0;
+        let mut cnt_int = 0;
+        let mut a1_bnd = 0.0; // outgoing boundary angle
+        let mut a2_bnd = 0.0; // incoming boundary angle
 
-        let (Some(a_in_bnd), Some(a_out_bnd)) = (bnd_in, bnd_out) else { continue; };
-        if internal_out.is_empty() { continue; }
-
-        let a_in = a_in_bnd.angle;
-        let a_out = a_out_bnd.angle;
-        let delta_bnd = clock_wise_angle(a_in, a_out);
-
-        // OCCT-aligned: refine internal edges whose angle falls OUTSIDE the
-        // boundary range (a_in→a_out).  Edges already INSIDE are correct
-        // and must NOT be adjusted (BOPAlgo_WireSplitter_1.cxx L985-988).
-        let to_refine: Vec<&EdgeInfo> = internal_out.iter()
-            .filter(|ei| clock_wise_angle(a_in, ei.angle) >= delta_bnd)
-            .copied().collect();
-        if to_refine.is_empty() { continue; }
-
-        let i_cnt_int = internal_out.len() + infos.iter().filter(|ei| ei.is_inside && ei.in_flag).count();
-        let mut refined: Vec<(usize, f64)> = Vec::new();
-
-        for ei in &to_refine {
-            let seg = &segments[ei.seg_idx];
-            let corrected = refine_angle_2d(v, seg, segments, ds, face_surface, a_in, a_out, delta_bnd, ei.angle);
-            if let Some(new_angle) = corrected {
-                refined.push((ei.seg_idx, new_angle));
+        for ei in &infos {
+            if !ei.is_inside {
+                cnt_bnd += 1;
+                if !ei.in_flag { a1_bnd = ei.angle; } // outgoing (in_flag=false)
+                else { a2_bnd = ei.angle; } // incoming (in_flag=true)
             } else {
-                // OCCT-aligned: fallback when RefineAngle2D fails.
-                // OCCT only clamps for iCntInt==2, but rcad's refine_angle_2d
-                // may fail more often.  Always clamp to just PAST the incoming
-                // boundary direction (a_in + ε) so the IC's ClockWiseAngle is
-                // near TAU (≈2π), making it the LAST choice at this vertex.
-                // Previously clamped to a_out+ε which gave CWA < boundary CWA,
-                // causing the IC to be preferred over the boundary edge.
-                let push_angle = (a_in + 1e-6) % std::f64::consts::TAU;
-                refined.push((ei.seg_idx, push_angle));
+                cnt_int += 1;
             }
         }
 
-        if let Some(infos) = smart_map.get_mut(&v) {
-            for (seg_idx, new_angle) in &refined {
-                for ei in infos.iter_mut() {
-                    if ei.seg_idx == *seg_idx && !ei.in_flag && ei.is_inside { ei.angle = *new_angle; }
+        if cnt_bnd != 2 { continue; } // OCCT L965-968
+
+        let a_delta = clock_wise_angle(a2_bnd, a1_bnd);
+
+        let mut refined: Vec<(usize, f64)> = Vec::new();
+        for (idx, ei) in infos.iter().enumerate() {
+            if ei.is_inside && !ei.in_flag {
+                let a_da = clock_wise_angle(a2_bnd, ei.angle);
+                if a_da >= a_delta {
+                    // IC is outside boundary sweep or covers same range
+                    // Place just inside: a1 - epsilon  (OCCT L998)
+                    // Only refine when iCntInt == 2 (degree-4 vertex with 2 IC edges)
+                    let new_angle = if cnt_int == 2 {
+                        let eps = 1e-10;
+                        if a1_bnd > eps { a1_bnd - eps }
+                        else { a1_bnd - eps + std::f64::consts::TAU }
+                    } else {
+                        ei.angle
+                    };
+                    refined.push((idx, new_angle));
                 }
-                for ei in infos.iter_mut() {
-                    if ei.seg_idx == *seg_idx && ei.in_flag && ei.is_inside { ei.angle = (*new_angle + std::f64::consts::PI) % std::f64::consts::TAU; }
+            }
+        }
+
+        if !refined.is_empty() {
+            if let Some(infos_mut) = smart_map.get_mut(&v) {
+                for (idx, new_angle) in refined {
+                    if let Some(ei) = infos_mut.get_mut(idx) {
+                        ei.angle = new_angle;
+                    }
                 }
             }
         }
