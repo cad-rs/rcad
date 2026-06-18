@@ -2802,16 +2802,54 @@ impl<'a> PaveFiller<'a> {
         let result = inttools::coplanar::analyze_coplanar_faces(&verts1, &verts2, plane);
 
         if !result.overlap.is_empty() {
-            // Record as a FaceFace interference with no curves (coplanar overlap marker)
+            // ✅ OCCT-aligned: create IC for each overlap edge (BOPAlgo_PaveFiller_6.cxx:285-622)
+            let plane1 = self.ds.face_plane(f1);
+            let plane2 = self.ds.face_plane(f2);
+
+            for overlap_poly in &result.overlap {
+                if overlap_poly.len() < 3 { continue; }
+                for i in 0..overlap_poly.len() {
+                    let j = (i + 1) % overlap_poly.len();
+                    let p_start = overlap_poly[i];
+                    let p_end = overlap_poly[j];
+                    if (p_end - p_start).length_squared() < TOLERANCE_ABS_SQ { continue; }
+
+                    let v_start = self.ds.add_vertex(p_start);
+                    let v_end = self.ds.add_vertex(p_end);
+                    let dir = (p_end - p_start).normalize();
+                    let len = (p_end - p_start).length();
+                    let line = Line3 { origin: p_start, direction: dir };
+
+                    let pca = inttools::coplanar::line_pcurve_on_plane(&line, &plane1);
+                    let pcb = inttools::coplanar::line_pcurve_on_plane(&line, &plane2);
+
+                    let curve_idx = self.ds.intersection_curves.len();
+                    self.ds.intersection_curves.push(IntersectionCurve {
+                        curve: Curve3::Line(line),
+                        polyline: vec![],
+                        start_vertex: v_start,
+                        end_vertex: v_end,
+                        t_range: [0.0, len],
+                        pcurve_on_a: Some(pca),
+                        pcurve_on_b: Some(pcb),
+                    });
+
+                    self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
+                    self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
+                    self.ds.faces[f1].face_info.vertices_in.insert(v_start);
+                    self.ds.faces[f1].face_info.vertices_in.insert(v_end);
+                    self.ds.faces[f2].face_info.vertices_in.insert(v_start);
+                    self.ds.faces[f2].face_info.vertices_in.insert(v_end);
+                }
+            }
+
+            // Keep existing same_domain_overlaps for backward compatibility
             self.ds.interferences.push(Interference::FaceFace {
                 f1,
                 f2,
                 curves: vec![],
                 points: vec![],
             });
-            // Store the pre-computed overlap polygon so the Builder can read it
-            // directly instead of re-computing from DS face boundaries.
-            // Take the first (largest) overlap region for simplicity.
             if let Some(overlap) = result.overlap.into_iter().max_by_key(|poly| poly.len()) {
                 self.ds.same_domain_overlaps.push((f1, f2, overlap));
             }
