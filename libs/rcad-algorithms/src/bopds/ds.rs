@@ -5,6 +5,7 @@ use rcad_kernel::{BRep, CurveEval};
 use super::face_info::FaceInfo;
 use super::pave::{Pave, PaveBlock};
 use crate::tolerance::*;
+use std::collections::HashMap;
 
 /// Identifies which input shape a sub-shape came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -619,13 +620,9 @@ impl DS {
                             })
                         });
 
-                    // Collect boundary vertices from wire edges
-                    let boundary_edges: Vec<usize> = face
-                        .outer_wire
-                        .edges
-                        .iter()
-                        .map(|we| we.idx + edge_offset)
-                        .collect();
+                    // ✅ OCCT-aligned: wire traversal order (TopExp_Explorer).
+                    let boundary_edges: Vec<usize> = Self::reorder_to_wire_order(
+                        &face.outer_wire.edges, &brep.edges, edge_offset);
 
                     // Trace the wire edges to get ordered boundary vertices.
                     // Wire edges are not necessarily in traversal order;
@@ -678,6 +675,43 @@ impl DS {
                 }
             }
         }
+    }
+
+    /// ✅ OCCT-aligned: reorder wire edges by traversal order (TopExp_Explorer).
+    /// TopExp_Explorer iterates a wire's edges in the order they form the
+    /// closed loop: each edge's end_vertex matches the next edge's start_vertex.
+    /// The BRep's wire.edges may not be in this order; we rebuild it by
+    /// following end -> start vertex adjacency through the edge graph.
+    fn reorder_to_wire_order(
+        wire_edges: &[rcad_kernel::topology::WireEdge],
+        brep_edges: &[rcad_kernel::topology::Edge],
+        edge_offset: usize,
+    ) -> Vec<usize> {
+        if wire_edges.len() <= 1 {
+            return wire_edges.iter().map(|we| we.idx + edge_offset).collect();
+        }
+        // Build vertex -> wire-edge-index adjacency
+        let mut adj: HashMap<usize, Vec<usize>> = HashMap::new();
+        for (i, we) in wire_edges.iter().enumerate() {
+            let e = &brep_edges[we.idx];
+            adj.entry(e.start).or_default().push(i);
+            adj.entry(e.end).or_default().push(i);
+        }
+        // Walk wire by following end -> start adjacency (start from first edge's start vertex)
+        let first = wire_edges[0].idx;
+        let mut cur = brep_edges[first].start;
+        let mut used = vec![false; wire_edges.len()];
+        let mut ordered = Vec::with_capacity(wire_edges.len());
+        for _ in 0..wire_edges.len() {
+            let next_i = adj.entry(cur).or_default().iter().copied()
+                .find(|&i| !used[i])
+                .expect("wire is not closed -- broken topology");
+            used[next_i] = true;
+            ordered.push(wire_edges[next_i].idx + edge_offset);
+            let e = &brep_edges[wire_edges[next_i].idx];
+            cur = if e.start == cur { e.end } else { e.start };
+        }
+        ordered
     }
 
     /// ✅ OCCT-aligned: find existing vertex within tolerance (PutPaveOnCurve equivalent).
