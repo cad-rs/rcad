@@ -2921,7 +2921,8 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     let sv_seg = sub_edge.start_vertex;
                     let ev_seg = sub_edge.end_vertex;
                     if sv_seg == ev_seg { continue; }
-                    let (t_start, t_end) = edge_uv_tangent(ds, sv_seg, ev_seg, &face.surface);
+                    let (t_start, t_end) = edge_uv_tangent(ds, sv_seg, ev_seg, &face.surface,
+                        Some(&sub_edge.curve), Some(sub_edge.t_range));
                     segments.push(WireSegment {
                         start_vertex: sv_seg, end_vertex: ev_seg,
                         source: WireEdgeSource::DsEdge(sub_ei),
@@ -2945,7 +2946,8 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                 split_verts.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
                 if split_verts.is_empty() {
                     // No split vertices — whole edge as one segment (OCCT L374-378)
-                    let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface);
+                    let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface,
+                        Some(&ds.edges[ei].curve), Some(ds.edges[ei].t_range));
                     segments.push(WireSegment {
                         start_vertex: sv, end_vertex: ev,
                         source: WireEdgeSource::DsEdge(ei),
@@ -2955,8 +2957,15 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                 } else {
                     // ✅ OCCT-aligned: edge split by IC vertices (OCCT myImages equivalent).
                     let mut prev_v = sv;
-                    for &(vi, _t) in &split_verts {
-                        let (ts, te) = edge_uv_tangent(ds, prev_v, vi, &face.surface);
+                    let edge_curve = &ds.edges[ei].curve;
+                    let etr = ds.edges[ei].t_range;
+                    // Map normalized position to curve parameter for sub-edge ranges.
+                    let norm_to_t = |n: f64| etr[0] + n * (etr[1] - etr[0]);
+                    let mut prev_t = norm_to_t(0.0);
+                    for &(vi, t) in &split_verts {
+                        let t_vi = norm_to_t(t);
+                        let (ts, te) = edge_uv_tangent(ds, prev_v, vi, &face.surface,
+                            Some(edge_curve), Some([prev_t, t_vi]));
                         segments.push(WireSegment {
                             start_vertex: prev_v, end_vertex: vi,
                             source: WireEdgeSource::DsEdge(ei),
@@ -2964,8 +2973,10 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                             tangent_start: ts, tangent_end: te,
                         });
                         prev_v = vi;
+                        prev_t = t_vi;
                     }
-                    let (ts, te) = edge_uv_tangent(ds, prev_v, ev, &face.surface);
+                    let (ts, te) = edge_uv_tangent(ds, prev_v, ev, &face.surface,
+                        Some(edge_curve), Some([prev_t, etr[1]]));
                     segments.push(WireSegment {
                         start_vertex: prev_v, end_vertex: ev,
                         source: WireEdgeSource::DsEdge(ei),
@@ -3196,7 +3207,26 @@ fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface: &Surface3
 //     Partial negation (some functions negated, others not) will
 //     produce wrong CWA ordering → box faces fail to split at IC.
 // ═══════════════════════════════════════════════════════════════
-fn edge_uv_tangent(ds: &DS, sv: usize, ev: usize, surface: &Surface3) -> (Option<f64>, Option<f64>) {
+/// ✅ OCCT-aligned Angle2D for DsEdge segments.
+/// Evaluates the 3D curve at a micro-step near each vertex (OCCT
+/// BOPAlgo_WireSplitter_1.cxx L768-840).  Maps both points to UV space
+/// via world_to_uv, computes the direction.  Falls back to endpoint UV
+/// difference when curve data is unavailable (plane is exact in both cases).
+fn edge_uv_tangent(
+    ds: &DS, sv: usize, ev: usize, surface: &Surface3,
+    curve: Option<&Curve3>, t_range: Option<[f64; 2]>,
+) -> (Option<f64>, Option<f64>) {
+    // When curve data is available, use micro-step (OCCT Angle2D).
+    // For plane surfaces, endpoint method is exact (linear pcurve).
+    if let (Some(curve), Some(tr)) = (curve, t_range) {
+        if !matches!(surface, Surface3::Plane(_)) {
+            let fa = edge_angle_2d(curve, tr[0], tr, surface, false);
+            let fb = edge_angle_2d(curve, tr[1], tr, surface, true);
+            return (fa, fb);
+        }
+    }
+    // Fallback: compute UV direction from endpoint UV difference.
+    // Exact for plane surfaces; good approximation for small sub-edges.
     match surface {
         Surface3::Sphere(s) => {
             let uvs = s.world_to_uv(ds.vertices[sv].point);
@@ -3220,8 +3250,79 @@ fn edge_uv_tangent(ds: &DS, sv: usize, ev: usize, surface: &Surface3) -> (Option
             let na = a;
             (Some(na), Some((na + std::f64::consts::PI) % std::f64::consts::TAU))
         }
-        // Cylinder/Cone/Torus: handled similarly when world_to_uv is available
         _ => (None, None),
+    }
+}
+
+/// ✅ OCCT-aligned: micro-step Angle2D for a 3D curve mapped to face UV.
+/// OCCT BOPAlgo_WireSplitter_1.cxx L768-840.  Evaluates the 3D curve at
+/// t and t+dt, maps to UV via world_to_uv, returns UV direction angle.
+fn edge_angle_2d(
+    curve: &Curve3, t: f64, domain: [f64; 2],
+    surface: &Surface3, b_is_in: bool,
+) -> Option<f64> {
+    let range = (domain[1] - domain[0]).abs();
+    if range < 1e-15 { return None; }
+    let dt = (1e-6 * range).max(1e-12).min(0.05 * range);
+    let t1 = if (t - domain[0]).abs() < (t - domain[1]).abs() {
+        (t + dt).min(domain[1])
+    } else {
+        (t - dt).max(domain[0])
+    };
+    let p0 = curve.point_at(t);
+    let p1 = curve.point_at(t1);
+    let uv0 = world_to_uv(surface, p0)?;
+    let uv1 = world_to_uv(surface, p1)?;
+    let dir = if b_is_in { uv0 - uv1 } else { uv1 - uv0 };
+    if dir.length_squared() < 1e-40 { return None; }
+    Some(dir_to_angle(dir))
+}
+
+/// Map a 3D point to UV space on a surface.  Returns None for unsupported
+/// surface types (currently Sphere, Plane, Cylinder, Cone, Torus supported).
+fn world_to_uv(surface: &Surface3, pt: DVec3) -> Option<DVec2> {
+    match surface {
+        Surface3::Sphere(s) => Some(s.world_to_uv(pt)),
+        Surface3::Plane(p) => {
+            let x_axis = any_perpendicular(p.normal).normalize();
+            let y_axis = p.normal.cross(x_axis).normalize();
+            let local = pt - p.origin;
+            Some(DVec2::new(local.dot(x_axis), local.dot(y_axis)))
+        }
+        Surface3::Cylinder(c) => {
+            let axis = c.axis.normalize_or_zero();
+            if axis.length_squared() < 0.5 { return None; }
+            let local = pt - c.origin;
+            let v = local.dot(axis);
+            let radial = local - axis * v;
+            let u = radial.y.atan2(radial.x);
+            let u = if u < 0.0 { u + std::f64::consts::TAU } else { u };
+            Some(DVec2::new(u, v))
+        }
+        Surface3::Cone(c) => {
+            let axis = c.axis_dir();
+            let apex_to_pt = pt - c.apex;
+            let v = apex_to_pt.dot(axis);
+            let radial = apex_to_pt - axis * v;
+            let u = radial.y.atan2(radial.x);
+            let u = if u < 0.0 { u + std::f64::consts::TAU } else { u };
+            Some(DVec2::new(u, v))
+        }
+        Surface3::Torus(t) => {
+            let axis = t.axis.normalize_or_zero();
+            if axis.length_squared() < 0.5 { return None; }
+            let local = pt - t.center;
+            let v = local.dot(axis);
+            let radial = local - axis * v;
+            let u = radial.y.atan2(radial.x);
+            let tube_dir = radial.cross(axis).normalize_or_zero();
+            let tube_local = local - radial;
+            let w = tube_local.dot(tube_dir);
+            // Simplified torus UV (OCCT uses analytic projection)
+            let u = if u < 0.0 { u + std::f64::consts::TAU } else { u };
+            Some(DVec2::new(u, w.atan2(t.minor_radius)))
+        }
+        _ => None,
     }
 }
 
@@ -4809,14 +4910,12 @@ fn promote_exterior_holes(
     op: BooleanOpType,
     other_faces: &[usize],
 ) -> Vec<WireFace> {
-    eprintln!("[PROMOTE] called: {} WireFaces", wfs.len());
     let mut result = Vec::with_capacity(wfs.len());
     for wf in wfs.drain(..) {
         if wf.inner_wires.is_empty() {
             result.push(wf);
             continue;
         }
-        eprintln!("[PROMOTE] wf: {} outer + {} inner", wf.outer_wire.len(), wf.inner_wires.len());
         let mut kept_inner: Vec<Vec<usize>> = Vec::new();
         for iw in wf.inner_wires {
             let bnd: Vec<DVec3> = iw.iter().map(|&si| {
