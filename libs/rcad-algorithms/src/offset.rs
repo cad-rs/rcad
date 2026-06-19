@@ -1194,6 +1194,7 @@ pub fn intersect_offset_cylinder_cone(
     match intersect_cylinder_cone(&offset_cyl, &offset_cone) {
         CylinderConeResult::NoIntersection => OffsetIntersectionCurve::NoIntersection,
         CylinderConeResult::CoaxialCircle(c) => OffsetIntersectionCurve::Circle(c),
+        CylinderConeResult::CoaxialTwoCircles(c1, _c2) => OffsetIntersectionCurve::Circle(c1),
         CylinderConeResult::ParallelOffsetPolyline(branches) => branches
             .into_iter()
             .next()

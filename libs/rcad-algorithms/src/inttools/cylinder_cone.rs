@@ -5,16 +5,20 @@
 //! ## Coaxial (axes coincide)
 //!
 //! When the cylinder axis and cone axis are the same line, the intersection is
-//! a **circle** at the height where the cone radius equals the cylinder radius:
+//! one or two **circles** at the height(s) where the cone radius equals the
+//! cylinder radius (one per nappe of the infinite double cone):
 //!
 //! ```text
 //! r_cone(h) = (h − h_apex) · tan(β)  where h_apex is the height of the apex
-//! r_cone(h) = r_cyl  →  h = h_apex + r_cyl / tan(β)
+//! r_cone(h) = r_cyl  →  h = h_apex ± r_cyl / tan(β)
 //! ```
 //!
-//! Returns [`CoaxialCircle`](CylinderConeResult::CoaxialCircle) if the apex is
-//! on the positive-axis side (the circle is real), or
-//! [`NoIntersection`](CylinderConeResult::NoIntersection) otherwise.
+//! Returns [`CoaxialCircle`](CylinderConeResult::CoaxialCircle) if only one
+//! nappe produces a real circle, or
+//! [`CoaxialTwoCircles`](CylinderConeResult::CoaxialTwoCircles) when both
+//! nappes intersect the cylinder.  Returns
+//! [`NoIntersection`](CylinderConeResult::NoIntersection) when the apex is
+//! on the positive-axis side (the circle is real).
 //!
 //! ## Parallel axes (non-coaxial)
 //!
@@ -45,8 +49,11 @@ use super::pcurve_derive::refine_polyline;
 pub enum CylinderConeResult {
     /// The surfaces do not intersect.
     NoIntersection,
-    /// Coaxial configuration: exactly one intersection circle.
+    /// Coaxial configuration: single intersection circle (one nappe).
     CoaxialCircle(Circle3),
+    /// Coaxial configuration: two intersection circles (one per nappe
+    /// of the double cone).  OCCT IntAna_QuadQuadGeo returns both.
+    CoaxialTwoCircles(Circle3, Circle3),
     /// Parallel-offset axes (parallel but not coaxial): intersection is one or
     /// two polylines (branches) on the cylinder surface.  Each branch runs from
     /// the near-side tangent point (h_min) to the far-side tangent point (h_max).
@@ -127,29 +134,45 @@ fn intersect_parallel_cylinder_cone(
 
     // ── Coaxial ──────────────────────────────────────────────────────────────
     if d_perp < TOLERANCE_ABS {
-        // Height of apex above cyl.origin along shared axis.
         let h_apex = (apex - cyl.origin).dot(a_cyl);
 
-        // At height h (measured from cyl.origin), cone radius = (h - h_apex)*tan_beta
-        // (only positive when h > h_apex, i.e. above the apex in axis direction).
-        // Set equal to r_cyl:  h = h_apex + r_cyl / tan_beta
         if tan_beta.abs() < TOLERANCE_FLOAT_LOOSE {
             // Degenerate cone (half_angle = 0), no lateral surface.
             return CylinderConeResult::NoIntersection;
         }
-        let h_circle = h_apex + r_cyl / tan_beta;
 
-        // The circle must be on the cone's nappe (h_circle > h_apex).
-        if h_circle <= h_apex - TOLERANCE_ABS {
-            return CylinderConeResult::NoIntersection;
+        // OCCT IntAna_QuadQuadGeo::Perform(gp_Cone, gp_Cylinder), coaxial case:
+        // the intersection is one or two circles at the height where the cone
+        // radius equals the cylinder radius.  For a double-napped infinite cone
+        // there are two solutions: one on each nappe.
+        let h_offset = r_cyl / tan_beta;
+        let h_upper = h_apex + h_offset;  // circle on the upper nappe (h > h_apex)
+        let h_lower = h_apex - h_offset;  // circle on the lower nappe (h < h_apex)
+
+        let mut first: Option<Circle3> = None;
+        let mut second: Option<Circle3> = None;
+
+        if h_upper > h_apex + TOLERANCE_ABS {
+            first = Some(Circle3 {
+                center: cyl.origin + a_cyl * h_upper,
+                normal: a_cyl,
+                radius: r_cyl,
+            });
+        }
+        if h_lower < h_apex - TOLERANCE_ABS {
+            second = Some(Circle3 {
+                center: cyl.origin + a_cyl * h_lower,
+                normal: a_cyl,
+                radius: r_cyl,
+            });
         }
 
-        let center = cyl.origin + a_cyl * h_circle;
-        return CylinderConeResult::CoaxialCircle(Circle3 {
-            center,
-            normal: a_cyl,
-            radius: r_cyl,
-        });
+        return match (first, second) {
+            (Some(c1), Some(c2)) => CylinderConeResult::CoaxialTwoCircles(c1, c2),
+            (Some(c1), None) => CylinderConeResult::CoaxialCircle(c1),
+            (None, Some(c2)) => CylinderConeResult::CoaxialCircle(c2),
+            (None, None) => CylinderConeResult::NoIntersection,
+        };
     }
 
     // ── Parallel but offset axes ──────────────────────────────────────────────
@@ -530,15 +553,15 @@ mod tests {
         let c = cyl(DVec3::ZERO, DVec3::Z, 2.0);
         let k = cone(DVec3::ZERO, DVec3::Z, 45.0);
         match intersect_cylinder_cone(&c, &k) {
-            CylinderConeResult::CoaxialCircle(circ) => {
+            CylinderConeResult::CoaxialTwoCircles(c1, _c2) => {
                 assert!(
-                    (circ.center.z - 2.0).abs() < TOLERANCE_COORD_SUB,
-                    "circle z={}, expected 2.0",
-                    circ.center.z
+                    (c1.center.z - 2.0).abs() < TOLERANCE_COORD_SUB,
+                    "first circle z={}, expected 2.0",
+                    c1.center.z
                 );
-                assert!((circ.radius - 2.0).abs() < TOLERANCE_COORD_SUB);
+                assert!((c1.radius - 2.0).abs() < TOLERANCE_COORD_SUB);
             }
-            other => panic!("expected CoaxialCircle, got {other:?}"),
+            other => panic!("expected CoaxialTwoCircles, got {other:?}"),
         }
     }
 
@@ -551,16 +574,16 @@ mod tests {
         let c = cyl(DVec3::ZERO, DVec3::Z, 1.0);
         let k = cone(DVec3::new(0.0, 0.0, 5.0), DVec3::Z, 30.0);
         match intersect_cylinder_cone(&c, &k) {
-            CylinderConeResult::CoaxialCircle(circ) => {
+            CylinderConeResult::CoaxialTwoCircles(c1, _c2) => {
                 let expected_h = 5.0 + 1.0 / (30.0_f64.to_radians().tan());
                 assert!(
-                    (circ.center.z - expected_h).abs() < TOLERANCE_COORD_SUB,
+                    (c1.center.z - expected_h).abs() < TOLERANCE_COORD_SUB,
                     "circle z={}, expected {}",
-                    circ.center.z,
+                    c1.center.z,
                     expected_h
                 );
             }
-            other => panic!("expected CoaxialCircle, got {other:?}"),
+            other => panic!("expected CoaxialTwoCircles, got {other:?}"),
         }
     }
 
@@ -675,13 +698,13 @@ mod tests {
         let c = cyl(DVec3::ZERO, DVec3::Z, 2.0);
         let k = cone(DVec3::new(1e-8, 0.0, 0.0), DVec3::Z, 45.0);
         match intersect_cylinder_cone(&c, &k) {
-            CylinderConeResult::CoaxialCircle(circ) => {
-                assert!((circ.center.z - 2.0).abs() < TOLERANCE_COORD_SUB);
+            CylinderConeResult::CoaxialTwoCircles(c1, _c2) => {
+                assert!((c1.center.z - 2.0).abs() < TOLERANCE_COORD_SUB);
             }
             CylinderConeResult::ParallelOffsetPolyline(_) => {
                 // Also acceptable if numeric noise triggers parallel-offset path.
             }
-            other => panic!("expected CoaxialCircle or ParallelOffsetPolyline, got {other:?}"),
+            other => panic!("expected CoaxialTwoCircles or ParallelOffsetPolyline, got {other:?}"),
         }
     }
 }

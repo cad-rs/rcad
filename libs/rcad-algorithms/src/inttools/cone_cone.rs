@@ -72,7 +72,25 @@ pub fn intersect_cone_cone(cone1: &ConicalSurface, cone2: &ConicalSurface) -> Co
 
     // ── Parallel axes (including coaxial) ────────────────────────────────────
     if sin_angle < TOLERANCE_ANG {
-        return intersect_parallel_cones(cone1, cone2, a1, a2);
+        let result = intersect_parallel_cones(cone1, cone2, a1, a2);
+        // OCCT Sec 2 (parallel-offset) is a stub returning None for now.
+        if !matches!(result, ConeConeResult::General) {
+            return result;
+        }
+        if let Some(r) = occt_parallel_offset_cones(cone1, cone2) {
+            return r;
+        }
+        return ConeConeResult::General;
+    }
+
+    // ── OCCT Sec 3: Coincident apices (IntAna_QuadQuadGeo case 3) ──────────
+    if let Some(result) = occt_coincident_apex_cones(cone1, cone2) {
+        return result;
+    }
+
+    // ── OCCT Sec 4: Common generatrix (IntAna_QuadQuadGeo case 4) ──────────
+    if let Some(result) = occt_common_generatrix_cones(cone1, cone2) {
+        return result;
     }
 
     // ── Skew axes (analytic quartic solver) ──────────────────────────────────
@@ -380,7 +398,155 @@ fn intersect_parallel_cones(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tests
+// OCCT IntAna_QuadQuadGeo Sec 2-4: stub analytic cases (documentation only)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// OCCT reference: IntAna_QuadQuadGeo::Perform(gp_Cone, gp_Cone) at
+//   $OCCT_SRC/src/IntAna/IntAna_QuadQuadGeo.cxx
+//
+// The full cone-cone intersection classifies into 5 cases:
+//   1. Coaxial (handled above in intersect_parallel_cones)
+//   2. Parallel-offset -- parallel axes, distinct centre lines
+//   3. Coincident apices -- same apex, distinct non-parallel axes
+//   4. Common generatrix -- one generator shared by both cones
+//   5. General skew -- quartic space curve (handled by skew solver above)
+//
+// Cases 2-4 are documented below but return None so the caller falls through
+// to numeric marching.
+
+/// OCCT Sec 2: Parallel-offset cones (non-coaxial, parallel axes).
+///
+/// When the two cone axes are parallel but not coincident, the intersection is
+/// a quartic space curve. OCCT (IntAna_QuadQuadGeo, case 2) solves this
+/// analytically by reducing the problem to the plane perpendicular to the axes.
+///
+/// ## Setup
+///
+/// Let both axes be parallel to `a`.  Project both cones onto a plane
+/// perpendicular to `a` -- each cone appears as a circle whose radius varies
+/// linearly with axial height h.  Cone i has centre offset vector c_i in the
+/// projection plane and radius r_i(h) = |h - h_apex_i| * tan(beta_i).
+///
+/// At height h the two projected circles intersect when
+///
+///   |r_1(h) - r_2(h)|  <=  d_perp  <=  r_1(h) + r_2(h)          (1)
+///
+/// where d_perp = |c_1 - c_2| is the fixed axis separation.  For each h in
+/// the overlap interval, the angular parameter phi on cone 1 satisfies
+///
+///   cos(phi) = (r_1^2 + d_perp^2 - r_2^2) / (2 * r_1 * d_perp)   (2)
+///
+/// yielding two space points per h (one at +/- phi).
+///
+/// ## OCCT quartic formulation
+///
+/// OCCT eliminates phi by squaring (2) and substituting the linear expressions
+/// for r_1(h), r_2(h).  After simplification this yields a quartic in h.  The
+/// real roots are the axial heights where the intersection topology changes
+/// (tangent transitions).  Between consecutive roots the curve is a single
+/// smooth branch parametrised by h.
+///
+/// ## TODO
+///
+/// Implement the analytic quartic solve.  For now returns `None` so the
+/// caller falls through to numeric marching.
+fn occt_parallel_offset_cones(
+    _cone1: &ConicalSurface,
+    _cone2: &ConicalSurface,
+) -> Option<ConeConeResult> {
+    None
+}
+
+/// OCCT Sec 3: Coincident apices (same apex, distinct non-parallel axes).
+///
+/// When both cone apices coincide at point O but the axes a_1, a_2 are not
+/// parallel, the intersection consists of lines (generators) through O.
+/// OCCT (IntAna_QuadQuadGeo, case 3) solves this by finding directions v
+/// that satisfy both cone equations simultaneously.
+///
+/// ## Derivation
+///
+/// For a unit direction v (|v| = 1), v lies on cone i iff
+///
+///   |v . a_i| = cos(beta_i)
+///
+/// Choosing both signs gives four sign pairs (s_1, s_2) with s_i in {+1, -1}:
+///
+///   v . a_1 = s_1 * cos(beta_1)
+///   v . a_2 = s_2 * cos(beta_2)
+///
+/// For each pair, the two linear equations define a line (intersection of two
+/// planes).  The direction of this line is a_1 x a_2.  A particular solution
+/// in the a_1-a_2 plane is:
+///
+///   v_p = p * a_1 + q * a_2
+///
+/// with
+///
+///   q = (s_2*cos(beta_2) - s_1*cos(beta_1)*(a_1.a_2)) / (1 - (a_1.a_2)^2)
+///   p = s_1*cos(beta_1) - q*(a_1.a_2)
+///
+/// Every point on the line is v = v_p + t*(a_1 x a_2).  The unit-norm constraint
+/// gives one or two real values of t:
+///
+///   t = +/- sqrt((1 - |v_p|^2) / |a_1 x a_2|^2)
+///
+/// when |v_p| <= 1.  Each valid t yields an intersection line through O.
+///
+/// Up to 8 directions (4 sign pairs x 2 t values) can be found; opposite
+/// directions represent the same line and are deduplicated.  The remaining
+/// distinct lines are the intersection generators.
+///
+/// ## TODO
+///
+/// Implement the full coincident-apex solve.  Returns `None` for now.
+fn occt_coincident_apex_cones(
+    _cone1: &ConicalSurface,
+    _cone2: &ConicalSurface,
+) -> Option<ConeConeResult> {
+    None
+}
+
+/// OCCT Sec 4: Common generatrix (one generator shared by both cones).
+///
+/// When two cones share a single generator line, OCCT (IntAna_QuadQuadGeo,
+/// case 4) detects this by checking whether the vector connecting the two
+/// apices forms the correct angle with both axes.
+///
+/// ## Detection
+///
+/// Let O_1, O_2 be the apices and a_1, a_2 the axis directions.  The connecting
+/// vector Delta = O_2 - O_1 is a generatrix of cone 1 if
+///
+///   |Delta . a_1| = cos(beta_1) * |Delta|
+///
+/// and of cone 2 if
+///
+///   |Delta . a_2| = cos(beta_2) * |Delta|
+///
+/// If both hold, the line through O_1 and O_2 lies on both cones and is the
+/// common generatrix.  The full intersection is this line plus a cubic
+/// remainder curve (the quartic factorises with a linear term).
+///
+/// ## OCCT handling
+///
+/// OCCT checks all four sign combinations (+/- cos for each cone) before
+/// falling through to the general quartic solver.  When a common generatrix
+/// is found, the quartic is deflated to a cubic by factoring out the line.
+///
+/// ## TODO
+///
+/// Implement common-generatrix detection and deflation.  Returns `None`
+/// for now.
+fn occt_common_generatrix_cones(
+    _cone1: &ConicalSurface,
+    _cone2: &ConicalSurface,
+) -> Option<ConeConeResult> {
+    None
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fuzzy-tolerance wrapper & Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Compute cone-cone intersection with fuzzy tolerance for near-coaxial cases.

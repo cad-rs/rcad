@@ -2,6 +2,7 @@ use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve2d, *};
 use rcad_kernel::{BRep, CurveEval, WireEdge};
 
+use super::common_block::CommonBlock;
 use super::face_info::FaceInfo;
 use super::pave::{Pave, PaveBlock};
 use crate::tolerance::*;
@@ -236,6 +237,11 @@ pub struct DS {
     /// Populated during PaveFiller's coplanar analysis, consumed by Builder.
     pub same_domain_overlaps: Vec<(usize, usize, Vec<DVec3>)>,
 
+    /// Common blocks grouping geometrically coincident PaveBlocks
+    /// (OCCT: BOPDS_CommonBlock). Populated by the PaveFiller
+    /// (`ForceInterfEE`) and consumed by the Builder (`FillSameDomainFaces`).
+    pub common_blocks: Vec<CommonBlock>,
+
     /// Edge image mapping (OCCT: BOPAlgo_Builder::myImages).
     /// Indexed by original edge index, each entry lists sub-edge indices
     /// created by `build_edge_images()`.
@@ -256,6 +262,10 @@ pub struct DS {
 
     /// OCCT FillImagesSolids: placeholder for solid-level images.
     pub solid_images: Vec<bool>,
+
+    /// Global PaveBlock array (OCCT: BOPDS_DS::myPaveBlocks).
+    /// Indices in FaceInfo::pave_blocks_on / pave_blocks_in refer to this array.
+    pub pave_blocks: Vec<PaveBlock>,
 }
 
 impl DS {
@@ -287,11 +297,13 @@ impl DS {
             shared_topology: SharedTopologyInfo::default(),
             extreme_geometry: ExtremeGeometryInfo::default(),
             same_domain_overlaps: Vec::new(),
+            common_blocks: Vec::new(),
             my_images: Vec::new(),
             my_origins: Vec::new(),
             wire_images: Vec::new(),
             shell_images: Vec::new(),
             solid_images: Vec::new(),
+            pave_blocks: Vec::new(),
         };
 
         ds.load_brep(a, ShapeOrigin::ShapeA);
@@ -1166,6 +1178,63 @@ impl DS {
         match &self.faces[fi].surface {
             Surface3::Plane(p) => *p,
             _ => panic!("DS::face_plane: face {} is not a Plane surface", fi),
+        }
+    }
+
+    /// ✅ OCCT-aligned: BOPDS_DS::RefineFaceInfoOn.
+    ///
+    /// Removes PaveBlocks from the On set that are degenerate
+    /// (pave1.vertex_idx == pave2.vertex_idx — start and end vertices are the
+    /// same, so the PaveBlock has zero length and does not contribute to face
+    /// splitting).
+    pub fn refine_face_info_on(&mut self, fi: usize) {
+        let pave_blocks = &self.pave_blocks;
+        let info = &mut self.faces[fi].face_info;
+        info.pave_blocks_on.retain(|&pb_idx| {
+            pave_blocks.get(pb_idx).map_or(false, |pb| {
+                pb.pave1.vertex_idx != pb.pave2.vertex_idx
+            })
+        });
+    }
+
+    /// ✅ OCCT-aligned: BOPDS_DS::RefineFaceInfoIn.
+    ///
+    /// Removes PaveBlocks from the In set that ALSO appear in the On set.
+    /// A PaveBlock is considered "the same" if it has the same original edge
+    /// index and the same start/end vertices (matching OCCT's IsPaveBlockOn
+    /// check of OriginalEdge + Pave1.IsEqual + Pave2.IsEqual).
+    ///
+    /// The On classification takes priority — a PaveBlock classified as On
+    /// does not need to also be classified as In.
+    pub fn refine_face_info_in(&mut self, fi: usize) {
+        let pave_blocks = &self.pave_blocks;
+        let on_set = self.faces[fi].face_info.pave_blocks_on.clone();
+        let info = &mut self.faces[fi].face_info;
+        info.pave_blocks_in.retain(|&pb_idx| {
+            let pb = match pave_blocks.get(pb_idx) {
+                Some(pb) => pb,
+                None => return false,
+            };
+            // Keep only if NOT in On (same edge index + pave bounds)
+            !on_set.iter().any(|&on_idx| {
+                pave_blocks.get(on_idx).map_or(false, |on_pb| {
+                    on_pb.original_edge == pb.original_edge
+                        && on_pb.pave1.vertex_idx == pb.pave1.vertex_idx
+                        && on_pb.pave2.vertex_idx == pb.pave2.vertex_idx
+                })
+            })
+        });
+    }
+
+    /// ✅ OCCT-aligned: batch refine for all faces.
+    ///
+    /// Calls `refine_face_info_on` and `refine_face_info_in` for every face
+    /// in the DS.  This should be called after all interferences have been
+    /// computed and before face splitting.
+    pub fn refine_all_face_info(&mut self) {
+        for fi in 0..self.faces.len() {
+            self.refine_face_info_on(fi);
+            self.refine_face_info_in(fi);
         }
     }
 }

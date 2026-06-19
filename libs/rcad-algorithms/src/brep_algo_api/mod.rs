@@ -29,6 +29,10 @@
 // Allow OCCT-style naming conventions (e.g., BRepAlgoAPI_Common)
 #![allow(non_camel_case_types)]
 
+pub mod argument_analyzer;
+pub mod builder_operation;
+pub mod section;
+
 use rcad_kernel::BRep;
 use std::collections::HashMap;
 

@@ -1,9 +1,35 @@
 //! Build solids from reusable split cells.
 //!
-//! This is a lightweight baseline analogous to OCCT `BOPAlgo_MakerVolume`:
-//! callers register pre-split cell solids and then assemble a final solid from
-//! a region mask, an explicit cell index list, or a [`CellExpr`] boolean
-//! expression.
+//! # OCCT Reference — BOPAlgo_MakerVolume
+//!
+//! This module provides functionality analogous to OCCT `BOPAlgo_MakerVolume`
+//! (`BOPAlgo_MakerVolume.cxx` / `BOPAlgo_MakerVolume.hxx`).
+//!
+//! ## OCCT Pipeline
+//!
+//! 1. **`CollectFaces()`** — Collects all input faces from the argument shapes.
+//! 2. **`MakeBox()`** — Creates a bounding box around all collected faces.
+//! 3. **`BuildSolids()`** — Uses `BOPAlgo_BuilderSolid` to compute 3D regions
+//!    from the space between the box and the collected faces.
+//! 4. **`RemoveBox()`** — Removes the box from each solid to yield the result.
+//! 5. **`FillInternalShapes()`** — Detects and fills internal voids in the result.
+//!
+//! ## RCAD Approach (this file)
+//!
+//! RCAD does **not** use the bounding-box/BuilderSolid pipeline. Instead it works
+//! with **pre-split cell solids** and fuses them with `general_fuse`:
+//!
+//! | Step | OCCT BOPAlgo_MakerVolume | RCAD MakerVolume |
+//! |------|--------------------------|------------------|
+//! | Input | `CollectFaces`: flattens shapes into face set | Pre-split cell solids from caller |
+//! | Partitioning | `MakeBox`: bounding box around everything | No bounding box |
+//! | Solid building | `BOPAlgo_BuilderSolid` on box-faces | `general_fuse` pairwise |
+//! | Box removal | `RemoveBox`: subtracts box from result | Not applicable |
+//! | Internal voids | `FillInternalShapes` | Not implemented |
+//!
+//! Despite these differences, the **interface is equivalent**: callers register
+//! pre-split cell solids and then assemble a final solid from a region mask, an
+//! explicit cell index list, or a [`CellExpr`] boolean expression.
 
 use std::collections::HashSet;
 
@@ -106,6 +132,11 @@ impl MakerVolume {
     }
 
     /// Build a solid from all registered cells.
+    ///
+    /// ✅ OCCT-aligned: Equivalent to `BOPAlgo_MakerVolume::Perform()` /
+    /// `BOPAlgo_MakerVolume::Build()` — the top-level entry point that assembles
+    /// all input cells into a single solid. OCCT uses `BOPAlgo_BuilderSolid`
+    /// internally; RCAD uses `general_fuse`.
     pub fn build_all(&self) -> Result<BRep, MakerVolumeError> {
         let indices: Vec<usize> = (0..self.cells.len()).collect();
         self.build_from_indices(&indices)
@@ -127,6 +158,12 @@ impl MakerVolume {
     }
 
     /// Build a solid from an explicit cell index list.
+    ///
+    /// ✅ OCCT-aligned: Conceptually equivalent to
+    /// `BOPAlgo_MakerVolume::BuildSolids()`. Both select a subset of cells/solids
+    /// and fuse them into a single solid. OCCT builds a bounding box and uses
+    /// `BOPAlgo_BuilderSolid` to extract 3D regions; RCAD performs pairwise
+    /// `general_fuse` of the selected cells.
     pub fn build_from_indices(&self, indices: &[usize]) -> Result<BRep, MakerVolumeError> {
         let parts = self.selected_cells(indices)?;
         Ok(general_fuse(&parts)?)

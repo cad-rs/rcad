@@ -740,6 +740,28 @@ pub fn retry_policy_to_robust_options(
 
 /// Perform a boolean operation with a retry policy and receive a diagnostic report.
 ///
+/// ## OCCT alignment
+///
+/// The core boolean logic (DS + PaveFiller + BooleanBuilder) invoked by this
+/// function's inner pipeline (`boolean_op_robust` → `boolean_op_with_options`)
+/// follows the OCCT BRepAlgoAPI pipeline:
+///
+/// - **BRepAlgoAPI_Common::Build()** (BRepAlgoAPI.cxx) for `BooleanOpType::Intersection`
+/// - **BRepAlgoAPI_Fuse::Build()** (BRepAlgoAPI.cxx) for `BooleanOpType::Union`
+/// - **BRepAlgoAPI_Cut::Build()** (BRepAlgoAPI.cxx) for `BooleanOpType::Difference`
+///
+/// Each OCCT operation calls `BOPAlgo_BOP::Perform()` which runs:
+/// 1. ✅ `BOPAlgo_PaveFiller::Perform()` — EE/EF/FF intersection detection
+/// 2. ✅ `BOPAlgo_Builder::Build()` — face splitting + result assembly
+///
+/// ## rcad-specific enhancement
+///
+/// **`RetryPolicy`** and the retry ladder (`BooleanRobustOptions::fuzzy_retry_ladder`)
+/// are **rcad-specific** — OCCT's `BRepAlgoAPI` does not implement retry logic.
+/// OCCT relies on a single pass with deterministic tolerances (`Precision::Confusion()`).
+/// The retry mechanism here handles edge cases where the initial tolerance fails
+/// due to near-degenerate geometry, by gradually increasing the fuzzy tolerance.
+///
 /// This wraps [`crate::boolean_op_robust`] with the high-level [`RetryPolicy`],
 /// returning a [`BooleanDiagnosticReport`] that provides detailed per-attempt
 /// diagnostics. Use this when you need observable retry data or want to customise

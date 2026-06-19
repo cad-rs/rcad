@@ -1,3 +1,8 @@
+pub mod builder_solid;
+pub mod checker_si;
+pub mod common_block;
 pub mod ds;
 pub mod face_info;
 pub mod pave;
+pub mod shell_splitter;
+pub mod tools;

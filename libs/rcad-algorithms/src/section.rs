@@ -1498,6 +1498,9 @@ fn convert_surface_curve(
             }
         }
         SurfaceCurve::Point(_) => (SectionCurveType::Polyline(vec![]), None, false),
+        SurfaceCurve::BSplineCurve(b) => {
+            (SectionCurveType::BSpline((**b).clone()), None, false)
+        }
         SurfaceCurve::Polyline(pts) => {
             let is_closed = pts.len() > 2
                 && pts_close_eps(pts[0], *pts.last().unwrap(), polyline_close_eps);

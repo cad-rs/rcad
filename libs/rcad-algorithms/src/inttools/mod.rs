@@ -1,5 +1,6 @@
 pub mod cone_cone;
 pub mod coplanar;
+pub mod curve_range;
 pub mod curve_surface;
 pub mod cylinder_cone;
 pub mod cylinder_cylinder;
@@ -19,12 +20,16 @@ pub mod sphere_cylinder;
 pub mod sphere_torus;
 pub mod torus_cone;
 pub mod torus_torus;
+pub mod ellipse_intersection;
 pub mod fclass2d;
+pub mod hyperbola_intersection;
+pub mod parabola_intersection;
 pub mod vertex_ops;
 
 pub use intss::{
-    SurfaceCurve, SurfaceIntersectionResult, SurfaceSurfaceIntersection, intersect_surfaces,
-    intersect_surfaces_with_density, intersect_surfaces_with_density_tol, intersect_surfaces_with_tolerance,
+    SurfaceCurve, SurfaceIntersectionResult, SurfaceSurfaceIntersection, convert_polylines_to_bsplines,
+    intersect_surfaces, intersect_surfaces_with_density, intersect_surfaces_with_density_tol,
+    intersect_surfaces_with_tolerance, polyline_to_bspline,
 };
 pub use extreme_geometry::{
     AspectRatioAdaptiveTolerance, DegenerateGeometryHandler, DegenerateType,

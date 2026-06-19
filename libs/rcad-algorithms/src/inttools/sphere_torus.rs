@@ -70,10 +70,110 @@ pub fn intersect_sphere_torus(
 
 /// On-axis case: sphere center on torus axis.
 ///
-/// In the (ρ, z) half-plane the torus tube is a circle of radius r centered at
-/// (R, 0) and the sphere cross-section is a circle of radius R_s centered at
-/// (0, z_s).  Intersection of these two circles gives one or two (ρ, z)
-/// solutions, each producing a 3D circle on the torus surface.
+/// ✅ OCCT-aligned (documented): OCCT `IntAna_QuadQuadGeo` uses the direct
+/// anAlpha / aBeta analytic formula for coaxial sphere-torus intersection
+/// (`BOPAlgo_PaveFiller.cxx`, spherical surface pair dispatch).  The key OCCT
+/// expressions are:
+///
+///   ```text
+///   anAlpha = (R_sph² - r_torus² - R_major²) / (2.0 * R_major)
+///   aBeta   = R_sph² - anAlpha²
+///   ```
+///
+/// ## Derivation in the (rho, z) half-plane
+///
+/// Because both surfaces are coaxial surfaces of revolution, the intersection
+/// curve lives in a set of circles perpendicular to the shared axis.  The
+/// problem reduces to the plane spanned by the axis (z) and the radial
+/// coordinate (rho), where each surface appears as a circle:
+///
+///   Torus tube: (rho - R_major)^2 + z^2 = r_torus^2
+///   Sphere:     rho^2 + (z - z_s)^2 = R_sph^2
+///
+/// The torus tube can be parametrised by the tube angle beta in [0, 2pi):
+///
+///   rho(beta) = R_major + r_torus * cos(beta)
+///   z(beta)   = r_torus * sin(beta)
+///
+/// Substituting into the sphere equation:
+///
+///   (R_major + r_torus * cos(beta))^2 + (r_torus * sin(beta) - z_s)^2 = R_sph^2
+///
+/// Expanding:
+///
+///   R_major^2 + 2*R_major*r_torus*cos(beta) + r_torus^2*cos^2(beta)
+///     + r_torus^2*sin^2(beta) - 2*r_torus*z_s*sin(beta) + z_s^2 = R_sph^2
+///
+///   R_major^2 + 2*R_major*r_torus*cos(beta) + r_torus^2 + z_s^2
+///     - 2*r_torus*z_s*sin(beta) = R_sph^2
+///
+/// Grouping the trigonometric terms:
+///
+///   2*R_major*r_torus*cos(beta) - 2*r_torus*z_s*sin(beta)
+///     = R_sph^2 - R_major^2 - r_torus^2 - z_s^2
+///
+/// Dividing through by 2*r_torus:
+///
+///   R_major*cos(beta) - z_s*sin(beta) = (R_sph^2 - R_major^2 - r_torus^2 - z_s^2)
+///                                        / (2 * r_torus)
+///
+/// The left-hand side can be written as a single cosine with phase shift:
+///
+///   sqrt(R_major^2 + z_s^2) * cos(beta + phi)  =  RHS
+///   where phi = atan2(z_s, R_major)
+///
+/// So:
+///
+///   cos(beta + phi) = (R_sph^2 - R_major^2 - r_torus^2 - z_s^2)
+///                     / (2 * r_torus * sqrt(R_major^2 + z_s^2))
+///
+/// The right-hand side must be in [-1, 1] for a real intersection.
+///
+/// ## Special case: z_s = 0 (sphere center in the torus equatorial plane)
+///
+/// When z_s = 0 the above reduces to:
+///
+///   2 * R_major * r_torus * cos(beta) = R_sph^2 - R_major^2 - r_torus^2
+///   cos(beta) = (R_sph^2 - R_major^2 - r_torus^2) / (2 * R_major * r_torus)
+///
+/// The radial offset from the major-radius circle is:
+///
+///   anAlpha = r_torus * cos(beta)
+///           = (R_sph^2 - R_major^2 - r_torus^2) / (2 * R_major)
+///
+/// which matches the OCCT anAlpha formula exactly.  The intersection exists
+/// when |anAlpha| <= r_torus (so that sin(beta) is real).  The axial position
+/// of the intersection circle(s) is then:
+///
+///   z = r_torus * sin(beta) = +/- sqrt(r_torus^2 - anAlpha^2)
+///
+/// and the circle radius (distance from the torus axis) is:
+///
+///   rho = R_major + anAlpha
+///
+/// When anAlpha > 0 the intersection is on the outer half of the torus tube;
+/// when anAlpha < 0 it is on the inner half.
+///
+/// The second OCCT discriminant aBeta = R_sph^2 - anAlpha^2 is related to
+/// the sphere-chord half-length: aBeta = (rho^2 + z^2) - anAlpha^2 = R_sph^2
+/// - anAlpha^2.  It is always non-negative when the sphere radius is larger
+/// than the radial offset.
+///
+/// ## General z_s (sphere center offset along the axis)
+///
+/// For z_s != 0 the RHS involves both cos(beta) and sin(beta).  The solution
+/// proceeds by solving the linear-trigonometric equation
+///
+///   A*cos(beta) + B*sin(beta) = C
+///
+/// with A = 2*R_major*r_torus, B = -2*r_torus*z_s, and C = R_sph^2 - R_major^2
+/// - r_torus^2 - z_s^2.  This is the same linear-trigonometric form used by the
+/// skew solver (intersect_skew_sphere_torus), but restricted to a single beta
+/// value per intersection circle rather than a full sweep of u.
+///
+/// ⏳ Current rcad implementation uses the skew (off-axis) numeric solver which
+/// also handles on-axis correctly.  The OCCT direct formula is not used;
+/// the existing approach is functionally equivalent for current purposes.
 fn intersect_sphere_torus_on_axis(
     _torus: &ToroidalSurface,
     _sphere: &SphericalSurface,

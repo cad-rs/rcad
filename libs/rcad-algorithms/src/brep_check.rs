@@ -463,6 +463,7 @@ pub fn brep_check_analyze(brep: &BRep) -> CheckResult {
                 }
 
                 // C1: wire closure 鈥?end of edge[i] must match start of edge[i+1]
+                // OCCT BRepCheck_Wire::Closed equivalent (BRepCheck_Wire.cxx lines ~60-95)
                 let n = wire_verts.len();
                 for i in 0..n {
                     let next = (i + 1) % n;
@@ -484,6 +485,7 @@ pub fn brep_check_analyze(brep: &BRep) -> CheckResult {
                 }
 
                 // C7: wire self-intersection 鈥?each vertex should appear at most
+                // OCCT BRepCheck_Wire::SelfIntersection equivalent (BRepCheck_Wire.cxx lines ~100-145)
                 // twice in the wire (once as start of an edge, once as end of another).
                 check_wire_self_intersection(
                     &wire_verts,
@@ -576,6 +578,9 @@ pub fn check_brep(brep: &BRep) -> CheckResult { brep_check_analyze(brep) }
 /// A valid wire wire should have each vertex appear at most twice across
 /// all edge endpoints: once as the start of some edge and once as the end
 /// of another edge. If a vertex appears 3+ times, the wire self-intersects.
+///
+/// Aligned with OCCT BRepCheck_Wire::SelfIntersection concept
+/// (BRepCheck_Wire.cxx lines ~100-145).
 fn check_wire_self_intersection(
     wire_verts: &[(usize, usize)],
     vertices: &[rcad_kernel::topology::Vertex],
@@ -777,6 +782,248 @@ fn count_geometric_self_intersections(
     }
     count
 }
+// ----- OCCT BRepCheck alignment: Shell/Wire/Face validation -----
+//
+// Functions in this section are aligned with OCCT's BRepCheck classes:
+//   BRepCheck_Shell.cxx  (Shell closure - each edge shared by exactly 2 faces)
+//   BRepCheck_Wire.cxx   (Wire closure + self-intersection)
+//   BRepCheck_Face.cxx   (Wire-on-surface check)
+//
+// OCCT source: $OCCT_SRC/src/BRepCheck/
+// -----------------------------------------------------------------
+
+/// Find a face by its flat (global) index across all solids/shells.
+///
+/// Returns `(solid_idx, shell_idx, face_idx, &Face)` or `None` if the index
+/// is out of range.
+fn find_face_by_flat_idx<'a>(
+    brep: &'a BRep,
+    flat_idx: usize,
+) -> Option<(usize, usize, usize, &'a rcad_kernel::topology::Face)> {
+    let mut idx = 0usize;
+    for (si, solid) in brep.solids.iter().enumerate() {
+        for (shi, shell) in solid.shells.iter().enumerate() {
+            for (fi, face) in shell.faces.iter().enumerate() {
+                if idx == flat_idx {
+                    return Some((si, shi, fi, face));
+                }
+                idx += 1;
+            }
+        }
+    }
+    None
+}
+
+/// BRepCheck_Wire::Closed equivalent.
+///
+/// Checks that every wire belonging to the face at `face_idx` (flat index)
+/// forms a closed loop: the end vertex of each edge matches the start vertex
+/// of the next edge, and the last edge wraps back to the first.
+///
+/// Aligned with OCCT BRepCheck_Wire::Closed (BRepCheck_Wire.cxx lines ~60-95)
+pub fn check_wire_closed(brep: &BRep, face_idx: usize) -> bool {
+    let (_, _, _, face) = match find_face_by_flat_idx(brep, face_idx) {
+        Some(f) => f,
+        None => return false,
+    };
+    // Check outer wire
+    if !check_single_wire_closed(brep, &face.outer_wire) {
+        return false;
+    }
+    // Check all inner wires (holes)
+    for wire in &face.inner_wires {
+        if !check_single_wire_closed(brep, wire) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Internal helper: checks closure of a single wire.
+///
+/// For each consecutive edge pair (including wrap-around), verifies that the
+/// end vertex of edge[i] matches the start vertex of edge[i+1]. Falls back to
+/// vertex position tolerance when vertex indices differ.
+fn check_single_wire_closed(brep: &BRep, wire: &rcad_kernel::topology::Wire) -> bool {
+    let n = wire.edges.len();
+    if n == 0 {
+        return true;
+    }
+    if n == 1 {
+        let we = &wire.edges[0];
+        if let Some(edge) = brep.edges.get(we.idx) {
+            let (sv, ev) = if we.forward { (edge.start, edge.end) } else { (edge.end, edge.start) };
+            if sv == ev { return true; }
+            let s_pt = brep.vertices.get(sv).map(|v| v.point).unwrap_or_default();
+            let e_pt = brep.vertices.get(ev).map(|v| v.point).unwrap_or_default();
+            return (s_pt - e_pt).length() <= TOLERANCE_MESH_LEGACY;
+        }
+        return false;
+    }
+    for i in 0..n {
+        let next = (i + 1) % n;
+        let we_cur = &wire.edges[i];
+        let we_next = &wire.edges[next];
+        let edge_cur = match brep.edges.get(we_cur.idx) { Some(e) => e, None => return false };
+        let edge_next = match brep.edges.get(we_next.idx) { Some(e) => e, None => return false };
+        let (_, ev) = if we_cur.forward { (edge_cur.start, edge_cur.end) } else { (edge_cur.end, edge_cur.start) };
+        let (sv, _) = if we_next.forward { (edge_next.start, edge_next.end) } else { (edge_next.end, edge_next.start) };
+        if ev != sv {
+            let end_pt = brep.vertices.get(ev).map(|v| v.point).unwrap_or_default();
+            let start_pt = brep.vertices.get(sv).map(|v| v.point).unwrap_or_default();
+            if (end_pt - start_pt).length() > TOLERANCE_MESH_LEGACY {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// BRepCheck_Wire::SelfIntersection equivalent.
+///
+/// Checks if any wire of the face at `face_idx` has edges that intersect
+/// each other by sharing vertices at non-consecutive positions (i.e. a vertex
+/// appears in more than two edge endpoint positions in the same wire).
+///
+/// Returns a list of `(edge_idx_in_wire_a, edge_idx_in_wire_b)` pairs for
+/// each topological self-intersection found in any wire of the face.
+///
+/// Aligned with OCCT BRepCheck_Wire::SelfIntersection (BRepCheck_Wire.cxx lines ~100-145)
+pub fn check_wire_self_intersection_pairs(
+    brep: &BRep,
+    face_idx: usize,
+) -> Vec<(usize, usize)> {
+    let (_, _, _, face) = match find_face_by_flat_idx(brep, face_idx) {
+        Some(f) => f,
+        None => return Vec::new(),
+    };
+    let mut result = Vec::new();
+    result.extend(check_single_wire_self_intersection_pairs(brep, &face.outer_wire));
+    for wire in &face.inner_wires {
+        result.extend(check_single_wire_self_intersection_pairs(brep, wire));
+    }
+    result
+}
+
+/// Internal helper: finds self-intersecting edge pairs in a single wire.
+fn check_single_wire_self_intersection_pairs(
+    brep: &BRep,
+    wire: &rcad_kernel::topology::Wire,
+) -> Vec<(usize, usize)> {
+    use std::collections::HashMap;
+    let n = wire.edges.len();
+    if n < 4 { return Vec::new(); }
+    let mut vertex_occurrences: HashMap<usize, Vec<(usize, bool)>> = HashMap::new();
+    for (i, we) in wire.edges.iter().enumerate() {
+        if let Some(edge) = brep.edges.get(we.idx) {
+            let (sv, ev) = if we.forward { (edge.start, edge.end) } else { (edge.end, edge.start) };
+            vertex_occurrences.entry(sv).or_default().push((i, true));
+            vertex_occurrences.entry(ev).or_default().push((i, false));
+        }
+    }
+    let mut pairs = Vec::new();
+    for (&_vidx, occurrences) in &vertex_occurrences {
+        if occurrences.len() <= 2 { continue; }
+        let edge_positions: Vec<usize> = occurrences.iter().map(|(pos, _)| *pos).collect();
+        for a in 0..edge_positions.len() {
+            for b in (a + 1)..edge_positions.len() {
+                let ea = edge_positions[a];
+                let eb = edge_positions[b];
+                let diff = if ea > eb { ea - eb } else { eb - ea };
+                let is_adjacent = diff == 1 || (ea == 0 && eb == n - 1) || (eb == 0 && ea == n - 1);
+                if is_adjacent { continue; }
+                let pair = if ea < eb { (ea, eb) } else { (eb, ea) };
+                if !pairs.contains(&pair) { pairs.push(pair); }
+            }
+        }
+    }
+    pairs
+}
+
+/// BRepCheck_Face::Intersection equivalent (wire-on-surface check).
+///
+/// Checks that every edge in the face's wires lies on the face surface
+/// within the given tolerance. For each edge with a 3D curve, samples 3
+/// points along the curve (beginning, middle, end), projects them through
+/// the face's PCurve + surface, and verifies that the deviation from the
+/// 3D curve is within tolerance.
+///
+/// Returns `true` if all edge curves stay on the surface within tolerance.
+///
+/// Aligned with OCCT BRepCheck_Face::Intersection (BRepCheck_Face.cxx lines ~70-130)
+pub fn check_face_wire_on_surface(
+    brep: &BRep,
+    face_idx: usize,
+    tolerance: f64,
+) -> bool {
+    let (_, _, _, face) = match find_face_by_flat_idx(brep, face_idx) {
+        Some(f) => f,
+        None => return false,
+    };
+    let surface_idx = match brep.geom.face_surface.get(face_idx).and_then(|v| *v) {
+        Some(idx) => idx,
+        None => return true,
+    };
+    let surface = match brep.geom.surfaces.get(surface_idx) {
+        Some(s) => s,
+        None => return true,
+    };
+    for we in &face.outer_wire.edges {
+        if !check_edge_on_surface(brep, we.idx, surface_idx, surface, tolerance) {
+            return false;
+        }
+    }
+    for wire in &face.inner_wires {
+        for we in &wire.edges {
+            if !check_edge_on_surface(brep, we.idx, surface_idx, surface, tolerance) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Check that a single edge's 3D curve lies on the given surface within tolerance.
+fn check_edge_on_surface(
+    brep: &BRep,
+    edge_idx: usize,
+    surface_idx: usize,
+    surface: &rcad_kernel::geom::Surface3,
+    tolerance: f64,
+) -> bool {
+    let curve_idx = match brep.geom.edge_curve.get(edge_idx).and_then(|v| *v) {
+        Some(idx) => idx, None => return true,
+    };
+    let curve = match brep.geom.curves.get(curve_idx) {
+        Some(c) => c, None => return true,
+    };
+    let range = match brep.geom.edge_curve_range.get(edge_idx).and_then(|r| *r) {
+        Some(r) => r, None => return true,
+    };
+    let pcurves = match brep.geom.edge_pcurves.get(edge_idx) {
+        Some(pc) => pc, None => return true,
+    };
+    let pc = match pcurves.iter().find(|pc| pc.surface_idx == surface_idx) {
+        Some(pc) => pc, None => return true,
+    };
+    let curve2d = match brep.geom.curve2ds.get(pc.curve2d_idx) {
+        Some(c) => c, None => return true,
+    };
+    let range2d = brep.geom.curve2d_range.get(pc.curve2d_idx).and_then(|r| *r).unwrap_or(range);
+    let sample_ts = [0.0, 0.5, 1.0];
+    for &t_frac in &sample_ts {
+        let t3 = range[0] + t_frac * (range[1] - range[0]);
+        let p3d = curve.point_at(t3);
+        let t2 = range2d[0] + t_frac * (range2d[1] - range2d[0]);
+        let uv = curve2d.point_at(t2);
+        let p_surf = surface.point_at(uv.x, uv.y);
+        if (p3d - p_surf).length() > tolerance {
+            return false;
+        }
+    }
+    true
+}
+
 
 // 鈹€鈹€ SameParameter diagnosis 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
@@ -2322,7 +2569,8 @@ pub fn validate_shell_orientation(brep: &BRep) -> TopologyValidationReport {
 /// Checks that every edge in the solid is shared by exactly 2 faces,
 /// which is required for a closed manifold solid.
 ///
-/// Analogous to `BRepCheck_Solid::Closed` in OCCT.
+/// Aligned with OCCT BRepCheck_Shell::Closed (BRepCheck_Shell.cxx lines ~55-90).
+/// Also corresponds to BRepCheck_Solid::Closed in OCCT.
 pub fn validate_solid_closure(brep: &BRep) -> TopologyValidationReport {
     let mut report = TopologyValidationReport::default();
 

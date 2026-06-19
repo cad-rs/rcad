@@ -706,6 +706,8 @@ pub fn project_surface_on_surface(
             SurfaceCurve::Hyperbola(h) => Some(Curve3::Hyperbola(h)),
             // For polylines, fit a B-spline
             SurfaceCurve::Polyline(pts) => fit_points_to_bspline(&pts),
+            // BSpline already fitted — pass through
+            SurfaceCurve::BSplineCurve(b) => Some(Curve3::BSpline(*b)),
             // Skip point intersections
             SurfaceCurve::Point(_) => None,
         }

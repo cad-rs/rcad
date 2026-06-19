@@ -76,12 +76,17 @@ pub struct GapOverlapReport {
 
 /// Imprint the boundary of `tool` onto the faces of `target`.
 ///
-/// This runs the PaveFiller intersection pass between the two BReps, then splits
-/// each target face by the intersection curves recorded in its `FaceInfo`.
-/// No boolean classification is performed 鈥?all faces of `target` are preserved,
-/// but split where the tool boundary crosses them.
+/// This splits each target face by the intersection curves, keeping all
+/// sub-faces of the Object (ShapeA). No boolean classification filtering
+/// is applied - every sub-face of ShapeA is preserved, split wherever the
+/// tool boundary crosses it.
 ///
-/// Analogy: OCCT `BRepAlgoAPI_Splitter` (lightweight variant 鈥?keeps all target faces).
+/// OCCT reference: BOPAlgo_Splitter / BRepAlgoAPI_Splitter (lightweight variant).
+/// OCCT BOPAlgo_Splitter::BuildResult filters to keep only split parts of the
+/// Object (ShapeA) using myImages/myOrigins maps. rcad's `imprint_shape` produces
+/// the same ShapeA-only result by processing only target (ShapeA) faces without
+/// emitting any Tool (ShapeB) faces. For the full BooleanBuilder pipeline
+/// equivalent see `crate::splitter::split_shape_occt_aligned`.
 pub fn imprint_shape(target: &BRep, tool: &BRep) -> ImprintResult {
     // Run PaveFiller to compute intersections
     let mut ds = DS::new(target, tool);

@@ -30,6 +30,7 @@ fn curve_label(c: &SurfaceIntersectionResult) -> &'static str {
         SurfaceCurve::Polyline(_) => "Polyline",
         SurfaceCurve::Parabola(_) => "Parabola",
         SurfaceCurve::Hyperbola(_) => "Hyperbola",
+        SurfaceCurve::BSplineCurve(_) => "BSpline",
     }
 }
 

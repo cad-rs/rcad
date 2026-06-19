@@ -32,6 +32,7 @@ pub mod brep_tools;
 pub mod brep_top_adaptor;
 pub mod bspline_edit;
 pub mod builder;
+pub mod builder_face;
 pub mod bvh;
 pub mod classify;
 pub mod defeature;
@@ -110,6 +111,7 @@ pub mod pave_filler;
 pub mod point_cloud;
 pub mod projection;
 pub mod section;
+pub mod splitter;
 pub mod sweep;
 pub mod tcol_std;
 pub mod thicken;
@@ -507,6 +509,7 @@ pub use builder::{
     compute_adaptive_glue_tolerance,
     detect_glue_faces,
 };
+pub use builder_face::BuilderFace;
 pub use cells_builder::{CellExpr, CellsBuilder, CellsBuilderError};
 pub use chamfer::{
     ChamferError, ChamferMode, ChamferParams, ChamferResult, ChamferWarning,
@@ -3105,6 +3108,22 @@ fn split_disconnected_shells(mut brep: BRep) -> BRep {
 /// STEP output uses analytic plane entities matching OCCT reference topology.
 /// The PaveFiller already does this during intersection, but the BooleanBuilder
 /// may create new BSpline surfaces during result assembly.
+///
+/// ✅ OCCT-aligned: mirrors `ShapeCustom::BSplineToPolynomial` for the
+/// planar (degree-1 polynomial) case.
+///
+/// OCCT reference: ShapeCustom.cxx L232-296 (BSplineToPolynomial).
+///   `ShapeCustom::BSplineToPolynomial` converts a BSpline surface back to
+///   an analytic polynomial surface when the control-point configuration
+///   satisfies polynomial criteria (for plane: all control points are
+///   coplanar within tolerance).  The OCCT implementation calls
+///   `ShapeCustom::BSplineToPolynomial::IsPlanar` then constructs a `Plane`.
+///
+/// In rcad, `bspline_is_planar()`  checks coplanarity of control points via
+/// plane-fitting (covariance -> PCA -> plane-distance residual).  This
+/// matches OCCT's `IsPlanar` logic (ShapeCustom_BSplineToPolynomial.cxx
+/// L56-103).  `bspline_to_plane()` builds the `Plane` from the fitted
+/// normal + centroid.
 pub(crate) fn promote_planar_surfaces(mut brep: BRep) -> BRep {
     use rcad_kernel::geom::bspline_is_planar;
     for surf in &mut brep.geom.surfaces {

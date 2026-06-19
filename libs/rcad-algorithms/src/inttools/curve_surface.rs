@@ -1,4 +1,4 @@
-use glam::DVec3;
+use glam::{DMat3, DVec2, DVec3};
 use rcad_kernel::geom::*;
 
 use crate::tolerance::*;
@@ -430,6 +430,114 @@ fn solve_quadratic_hits(
         }
     }
     hits
+}
+
+/// Newton-Raphson refinement for curve-surface intersection.
+///
+/// Solves the 3x3 system F(t,u,v) = C(t) - S(u,v) = 0:
+///   J * [delta_t, delta_u, delta_v]^T = -F
+///
+/// where the Jacobian is:
+///   J = [dC/dt, -dS/du, -dS/dv]
+///
+/// Finite differences are used for the Jacobian since not all curve/surface
+/// types provide analytic derivatives through the `CurveEval`/`SurfaceEval`
+/// traits.
+///
+/// Returns the refined (t, uv) or None if the solver diverges or fails
+/// to converge within `max_iter` iterations.
+///
+/// ✅ OCCT-aligned: matches IntCurveSurface_TheExactHInter refinement stage.
+pub fn newton_refine_curve_surface(
+    curve: &Curve3,
+    t: f64,
+    surface: &Surface3,
+    uv: DVec2,
+    max_iter: usize,
+    tol: f64,
+) -> Option<(f64, DVec2)> {
+    use rcad_kernel::geom::SurfaceEval;
+    use rcad_kernel::CurveEval;
+
+    let eps = tol.max(TOLERANCE_ABS);
+    // Finite difference step: large enough for stable numerical differentiation
+    // across all geometry scales, small enough for accurate Jacobians.
+    // sqrt(machine_epsilon * typical_scale) ≈ 1e-5
+    let h = TOLERANCE_TOL_SCALE_MICRO.max(eps.sqrt());
+
+    // State vector: (t, u, v)
+    let mut state = DVec3::new(t, uv.x, uv.y);
+
+    for _iter in 0..max_iter {
+        let t_cur = state.x;
+        let u_cur = state.y;
+        let v_cur = state.z;
+
+        // Evaluate F(t,u,v) = C(t) - S(u,v)
+        let ct = curve.point_at(t_cur);
+        let suv = surface.point_at(u_cur, v_cur);
+        let f = ct - suv;
+
+        // Check convergence: |C(t) - S(u,v)| < tol
+        if f.length_squared() < eps * eps {
+            return Some((t_cur, DVec2::new(u_cur, v_cur)));
+        }
+
+        // --- Finite-difference Jacobian ---
+
+        // dC/dt ≈ (C(t+h) - C(t-h)) / (2h)
+        let ct_plus = curve.point_at(t_cur + h);
+        let ct_minus = curve.point_at(t_cur - h);
+        let dcdt = (ct_plus - ct_minus) / (2.0 * h);
+
+        // dS/du ≈ (S(u+h, v) - S(u-h, v)) / (2h)
+        let suv_u_plus = surface.point_at(u_cur + h, v_cur);
+        let suv_u_minus = surface.point_at(u_cur - h, v_cur);
+        let dsdu = (suv_u_plus - suv_u_minus) / (2.0 * h);
+
+        // dS/dv ≈ (S(u, v+h) - S(u, v-h)) / (2h)
+        let suv_v_plus = surface.point_at(u_cur, v_cur + h);
+        let suv_v_minus = surface.point_at(u_cur, v_cur - h);
+        let dsdv = (suv_v_plus - suv_v_minus) / (2.0 * h);
+
+        // Jacobian: J = [dC/dt, -dS/du, -dS/dv]
+        let j = DMat3::from_cols(dcdt, -dsdu, -dsdv);
+
+        // Solve J * delta = -F
+        let inv_j = crate::inverse_3x3(j)?;
+        let delta = inv_j * (-f);
+
+        // Abort on divergence (NaN or Inf in the correction)
+        if !delta.is_finite() {
+            return None;
+        }
+
+        state += delta;
+
+        // Early exit when the correction is negligible
+        let min_delta = (eps * 0.01).max(TOLERANCE_LINEAR_ULTRA_STRICT);
+        if delta.length_squared() < min_delta * min_delta {
+            let t_final = state.x;
+            let u_final = state.y;
+            let v_final = state.z;
+            if (curve.point_at(t_final) - surface.point_at(u_final, v_final)).length_squared()
+                < eps * eps
+            {
+                return Some((t_final, DVec2::new(u_final, v_final)));
+            }
+            return None;
+        }
+    }
+
+    // Final convergence check after exhausting max_iter
+    let t_final = state.x;
+    let u_final = state.y;
+    let v_final = state.z;
+    if (curve.point_at(t_final) - surface.point_at(u_final, v_final)).length_squared() < eps * eps {
+        Some((t_final, DVec2::new(u_final, v_final)))
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]

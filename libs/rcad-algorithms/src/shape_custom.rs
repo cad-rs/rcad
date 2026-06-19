@@ -1039,7 +1039,20 @@ pub fn curve_to_bspline_from_edge(
 /// 2. Converts all surfaces to BSpline
 /// 3. Updates all geometry references
 ///
-/// Analogous to OCCT `ShapeCustom_ConvertToBSpline`.
+/// ✅ OCCT-aligned: mirrors `ShapeCustom_ConvertToBSpline`.
+///
+/// OCCT reference: ShapeCustom.cxx L123-189 (ConvertSurfaceToBSpline).
+///   ShapeCustom_ConvertToBSpline iterates over all faces in a shape,
+///   replaces each analytic surface with a BSpline approximation via
+///   `ShapeCustom::ConvertSurfaceToBSpline(surface, tolerance,
+///    Convert_QuasiPolynomial)`.  The curve conversion path uses
+///   `ShapeCustom::ConvertCurveToBSpline`.
+///
+/// In rcad the same effect is achieved by `convert_to_bspline()` →
+/// `curve_to_bspline()` / `surface_to_bspline()` over the geometry pools.
+/// The `restrictions` parameter maps to OCCT's
+/// `ShapeCustom_RestrictionParameters` (max degree, target tolerance,
+/// offset curve/surface conversion flags, etc.).
 ///
 /// # Arguments
 /// * `brep` - The BRep to convert

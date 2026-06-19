@@ -46,8 +46,13 @@
 //!
 //! # OCCT Equivalent
 //!
-//! This module provides functionality similar to OCCT's `BRepFeat_Gluer`:
-//! - Automatic detection of coincident faces
+//! This module provides functionality similar to OCCT's `BRepFeat_Gluer`
+//! (`BRepFeat_Gluer.cxx` / `BRepFeat_Gluer.hxx`):
+//! - `Gluer::bind_faces()` — OCCT `BRepFeat_Gluer::Bind(F1, F2)` (explicit face binding)
+//! - `Gluer::bind_edges()` — OCCT `BRepFeat_Gluer::Bind(E1, E2)` (explicit edge binding)
+//! - `Gluer::add()` — OCCT `BRepFeat_Gluer::Add()`
+//! - `Gluer::perform()` — OCCT `BRepFeat_Gluer::Perform()` + `BRepFeat_Gluer::Build()`
+//! - Automatic detection of coincident faces (in addition to explicit bindings)
 //! - Merging of shared edges and vertices
 //! - History tracking for parametric editing
 //! - Multi-shape support via builder pattern
@@ -261,6 +266,14 @@ pub struct Gluer {
     options: GluerOptions,
     /// Pre-detected interface information (optional, for performance).
     precomputed_interfaces: Option<Vec<InterfaceInfo>>,
+    /// Explicit face bindings (OCCT BRepFeat_Gluer::Bind equivalent).
+    /// Pairs of (face_in_first_shape, face_in_second_shape) that are explicitly
+    /// marked as glued. These override supplement auto-detection for those pairs.
+    explicit_face_binds: Vec<(usize, usize)>,
+    /// Explicit edge bindings (OCCT BRepFeat_Gluer::Bind equivalent).
+    /// Pairs of (edge_in_first_shape, edge_in_second_shape) that are explicitly
+    /// marked as glued.
+    explicit_edge_binds: Vec<(usize, usize)>,
 }
 
 impl Default for Gluer {
@@ -276,6 +289,8 @@ impl Gluer {
             shapes: Vec::new(),
             options: GluerOptions::default(),
             precomputed_interfaces: None,
+            explicit_face_binds: Vec::new(),
+            explicit_edge_binds: Vec::new(),
         }
     }
 
@@ -308,6 +323,36 @@ impl Gluer {
             let interfaces = self.detect_all_interfaces();
             self.precomputed_interfaces = Some(interfaces);
         }
+        self
+    }
+
+    /// Explicitly bind a face from the first shape to a face from the second shape.
+    ///
+    /// ✅ OCCT-aligned: Corresponds to `BRepFeat_Gluer::Bind(F1, F2)`.
+    /// Tells the gluer that these two faces are coincident and should be merged,
+    /// bypassing (or supplementing) auto-detection.
+    ///
+    /// # Arguments
+    ///
+    /// * `face_in_first` — Face index in the first shape (shape[0]).
+    /// * `face_in_second` — Face index in the second shape (shape[1]).
+    pub fn bind_faces(mut self, face_in_first: usize, face_in_second: usize) -> Self {
+        self.explicit_face_binds.push((face_in_first, face_in_second));
+        self
+    }
+
+    /// Explicitly bind an edge from the first shape to an edge from the second shape.
+    ///
+    /// ✅ OCCT-aligned: Corresponds to `BRepFeat_Gluer::Bind(E1, E2)`.
+    /// Tells the gluer that these two edges are coincident and should be merged,
+    /// bypassing (or supplementing) auto-detection.
+    ///
+    /// # Arguments
+    ///
+    /// * `edge_in_first` — Edge index in the first shape (shape[0]).
+    /// * `edge_in_second` — Edge index in the second shape (shape[1]).
+    pub fn bind_edges(mut self, edge_in_first: usize, edge_in_second: usize) -> Self {
+        self.explicit_edge_binds.push((edge_in_first, edge_in_second));
         self
     }
 
@@ -365,8 +410,34 @@ impl Gluer {
         }
 
         // Use precomputed interfaces if available
-        let interfaces = self.precomputed_interfaces.clone()
+        let mut interfaces = self.precomputed_interfaces.clone()
             .unwrap_or_else(|| self.detect_all_interfaces());
+
+        // Merge explicit bindings (OCCT BRepFeat_Gluer::Bind) into the first
+        // interface pair (shape[0] <-> shape[1]). Explicitly bound pairs are added
+        // alongside auto-detected ones; duplicates are skipped.
+        if !self.explicit_face_binds.is_empty() || !self.explicit_edge_binds.is_empty() {
+            if let Some(first) = interfaces.first_mut() {
+                for &(f1, f2) in &self.explicit_face_binds {
+                    if !first.face_pairs.contains(&(f1, f2)) {
+                        first.face_pairs.push((f1, f2));
+                    }
+                }
+                for &(e1, e2) in &self.explicit_edge_binds {
+                    if !first.edge_pairs.contains(&(e1, e2)) {
+                        first.edge_pairs.push((e1, e2));
+                    }
+                }
+            } else {
+                // No auto-detected interface, but explicit bindings were set
+                interfaces.push(InterfaceInfo {
+                    face_pairs: self.explicit_face_binds.clone(),
+                    edge_pairs: self.explicit_edge_binds.clone(),
+                    vertex_pairs: Vec::new(),
+                    normals_consistent: true,
+                });
+            }
+        }
 
         // Perform incremental gluing
         let mut result = self.shapes[0].clone();
