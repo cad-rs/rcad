@@ -126,6 +126,9 @@ fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
         }
         let [t0, t1] = e.t_range;
         if !(t0.is_finite() && t1.is_finite()) {
+            // Degenerate edges (start==end) on periodic surfaces like sphere
+            // poles may have NaN t_range (zero 3D length). Skip t_range check.
+            if e.start_vertex == e.end_vertex { continue; }
             return Err(BooleanError::NumericalFailure(
                 "union: DS edge t_range non-finite",
             ));
@@ -488,7 +491,6 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
             }
         }
     }
-    eprintln!("[FUSE_ERR] validate_after_build: starting...");
     match validate_union_brep_output("union: result failed checks after build", &result) { Ok(()) => {}, Err(e) => { eprintln!("[FUSE_ERR] validate_after_build FAILED: {:?}", e); return Err(e); } };
     // ✅ OCCT对齐: 为所有非平面面上的边创建 pcurve,供 merge 函数的 seam edge 检测。
     //    OCCT BuildSplitFaces 创建 section edge 时同时生成 pcurve。
@@ -539,6 +541,12 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     geom_populate::recompute_plane_surfaces(&mut result);
     validate_union_brep_output("union: result failed checks after vertex merge", &result)?;
 
+    // ✅ OCCT-aligned: per-face cylinder -> BSpline conversion BEFORE
+    //    surface-based merge passes.  Must run before fill_same_domain_faces
+    //    and occt_merge_same_surface_faces so each sub-face gets a unique
+    //    BSpline surface that prevents incorrect surface-index based merge.
+    result = crate::convert_cylinder_sub_faces(result);
+
     // Second OCCT FillSameDomainFaces pass (butterfly merge).
     // ✅ OCCT对齐: 用 edge set (BOPTools_Set) 对共面面做跨类型(Plane+BSpline)分组合并。
     if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
@@ -566,8 +574,13 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     let (merged, _cnt) = crate::occt_merge_same_surface_faces(&result);
     result = merged;
 
-    // ✅ OCCT-aligned: per-face cylinder -> BSpline conversion before classify.
-    result = crate::convert_cylinder_sub_faces(result);
+    // Promote planar BSpline -> Plane AFTER all merge passes, so that
+    // per-face BSpline surfaces from convert_cylinder_sub_faces are
+    // converted to Plane for the final output without interfering with
+    // surface-index based merge passes (each unique BSpline index prevents
+    // incorrect merging; promote only after merge decisions are final).
+    result = if std::env::var("RCAD_SKIP_PROMOTE").is_ok() { result } else { crate::promote_planar_surfaces(result) };
+    result = crate::deduplicate_edges(result);
 
     // ── Phase 3: OCCT BuildSolid — classify after merge ──
     // ✅ OCCT-aligned: ClassifyFaces runs AFTER FillSameDomainFaces

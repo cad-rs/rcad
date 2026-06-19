@@ -2933,7 +2933,6 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         try_fast_path!(boolean_unit_octant::try_union_cylinder_torus(a, b), "try_union_cylinder_torus");
         try_fast_path!(boolean_unit_octant::try_union_coaxial_cones(a, b), "try_union_coaxial_cones");
         try_fast_path!(boolean_unit_octant::try_union_offset_cones(a, b), "try_union_offset_cones");
-        try_fast_path!(boolean_unit_octant::try_union_fill_box_cavity(a, b), "try_union_fill_box_cavity");
         return bop_occt_union::fuse(a, b);
     }
 
@@ -3007,27 +3006,51 @@ fn split_disconnected_shells(mut brep: BRep) -> BRep {
     eprintln!("[SPLIT_SHELLS] called with {} solids", brep.solids.len());
     use rcad_kernel::topology::{Shell, Solid};
     use std::collections::{HashMap, HashSet};
+    use glam::DVec3;
     let n_solids = brep.solids.len();
     // Process each solid's first shell (boolean results have one shell).
     for si in (0..n_solids).rev() {
         if brep.solids[si].shells.len() != 1 { continue; }
         let nf = brep.solids[si].shells[0].faces.len();
         if nf < 2 { continue; }
-        // Build face adjacency via shared edges (same vertex index pairs).
+        // Build face adjacency via shared edges.
+        // Primary: vertex-index based (edge.start/edge.end).
+        // Fallback: vertex-position based (quantized coordinates) to handle
+        // cases where the Builder's result.build() remapping or vertex
+        // merge creates different edge indices for the same geometric edge
+        // (e.g. sphere face vs box face in bfuse_simple A1).
+        let vpos: Vec<DVec3> = brep.vertices.iter().map(|v| v.point).collect();
         let mut adj: Vec<Vec<usize>> = vec![Vec::new(); nf];
         {
             let faces = &brep.solids[si].shells[0].faces;
             let mut e2f: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
+            // Position-based adjacency with 1e-5 quantization
+            let inv = 1.0 / 1e-5;
+            let q = |p: DVec3| -> (i64, i64, i64) {
+                ((p.x * inv).round() as i64, (p.y * inv).round() as i64, (p.z * inv).round() as i64)
+            };
+            let mut pos2f: HashMap<((i64,i64,i64), (i64,i64,i64)), Vec<usize>> = HashMap::new();
             for (fi, face) in faces.iter().enumerate() {
-                let mut seen = HashSet::new();
+                let mut seen_idx = HashSet::new();
+                let mut seen_pos = HashSet::new();
                 let mut add_wire_edges = |wire: &rcad_kernel::topology::Wire| {
                     for we in &wire.edges {
                         if let Some(edge) = brep.edges.get(we.idx) {
-                            let key = if edge.start < edge.end {
+                            // Index-based key (original)
+                            let idx_key = if edge.start < edge.end {
                                 (edge.start, edge.end)
                             } else { (edge.end, edge.start) };
-                            if seen.insert(key) {
-                                e2f.entry(key).or_default().push(fi);
+                            if seen_idx.insert(idx_key) {
+                                e2f.entry(idx_key).or_default().push(fi);
+                            }
+                            // Position-based key (geometric fallback)
+                            if edge.start < vpos.len() && edge.end < vpos.len() {
+                                let qs = q(vpos[edge.start]);
+                                let qe = q(vpos[edge.end]);
+                                let pos_key = if qs < qe { (qs, qe) } else { (qe, qs) };
+                                if seen_pos.insert(pos_key) {
+                                    pos2f.entry(pos_key).or_default().push(fi);
+                                }
                             }
                         }
                     }
@@ -3037,7 +3060,8 @@ fn split_disconnected_shells(mut brep: BRep) -> BRep {
                     add_wire_edges(inner_wire);
                 }
             }
-            for (_, flist) in &e2f {
+            // Combine adjacency from both maps
+            for flist in e2f.values().chain(pos2f.values()) {
                 for i in 0..flist.len() {
                     for j in (i + 1)..flist.len() {
                         let a = flist[i]; let b = flist[j];
@@ -5955,7 +5979,7 @@ pub fn unify_same_domain_faces_with_origins(
 ///
 /// ✅ OCCT对齐: edge-set grouping (BOPTools_Set) + surface-type comparison.
 pub fn occt_fill_same_domain_faces(brep: &BRep) -> (BRep, usize) {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::{BTreeSet, HashMap, HashSet};
     use rcad_kernel::geom::Surface3;
 
     if brep.solids.is_empty() {
@@ -5990,12 +6014,55 @@ pub fn occt_fill_same_domain_faces(brep: &BRep) -> (BRep, usize) {
                 .collect();
 
             // ── Phase 2: Group by edge set ────────────────────────────────────
-            let mut groups: HashMap<Vec<usize>, Vec<usize>> = HashMap::new();
-            for fi in 0..nf {
-                if face_edges[fi].is_empty() {
-                    continue;
+            // OCCT BOPTools_Set: group faces by geometric edge identity.
+            // Each edge is identified by (curve_type, vertex_positions).
+            // This matches OCCT TopoDS_Shape::IsEqual which compares edges by
+            // their TShape identity (curve type + geometry combined).
+            let vpos: Vec<glam::DVec3> = out.vertices.iter().map(|v| v.point).collect();
+            let inv = 1.0 / 1e-5;
+            let q = |p: glam::DVec3| -> (i64, i64, i64) {
+                ((p.x * inv).round() as i64, (p.y * inv).round() as i64, (p.z * inv).round() as i64)
+            };
+            // Encode curve type as int: 0=Line, 1=Circle, 2=Ellipse, 3=BSpline, 4=Other
+            let curve_type_id = |ci: Option<usize>| -> i64 {
+                match ci.and_then(|ci| out.geom.curves.get(ci)) {
+                    Some(rcad_kernel::geom::Curve3::Line(_)) => 0,
+                    Some(rcad_kernel::geom::Curve3::Circle(_)) => 1,
+                    Some(rcad_kernel::geom::Curve3::Ellipse(_)) => 2,
+                    Some(rcad_kernel::geom::Curve3::BSpline(_)) => 3,
+                    _ => 4,
                 }
-                groups.entry(face_edges[fi].clone()).or_default().push(fi);
+            };
+            // Build geometric edge keys: (qs_x, qs_y, qs_z, qe_x, qe_y, qe_z, curve_type)
+            let face_geo_keys: Vec<BTreeSet<(i64,i64,i64,i64,i64,i64,i64)>> = (0..nf)
+                .map(|fi| {
+                    let face = &out.solids[si].shells[shi].faces[fi];
+                    let mut keys = BTreeSet::new();
+                    let add_wire = |edges: &[rcad_kernel::topology::WireEdge], keys: &mut BTreeSet<_>| {
+                        for we in edges {
+                            if let Some(e) = out.edges.get(we.idx) {
+                                if e.start < vpos.len() && e.end < vpos.len() {
+                                    let qs = q(vpos[e.start]);
+                                    let qe = q(vpos[e.end]);
+                                    let ct = curve_type_id(out.geom.edge_curve.get(we.idx).copied().flatten());
+                                    let curve_key = ct;
+                                    let (p1, p2) = if qs < qe { (qs, qe) } else { (qe, qs) };
+                                    keys.insert((p1.0, p1.1, p1.2, p2.0, p2.1, p2.2, curve_key));
+                                }
+                            }
+                        }
+                    };
+                    add_wire(&face.outer_wire.edges, &mut keys);
+                    for iw in &face.inner_wires {
+                        add_wire(&iw.edges, &mut keys);
+                    }
+                    keys
+                })
+                .collect();
+            let mut groups: HashMap<BTreeSet<(i64,i64,i64,i64,i64,i64,i64)>, Vec<usize>> = HashMap::new();
+            for fi in 0..nf {
+                if face_edges[fi].is_empty() { continue; }
+                groups.entry(face_geo_keys[fi].clone()).or_default().push(fi);
             }
 
             // ── Phase 3-5: merge tracking ────────────────────────────────────

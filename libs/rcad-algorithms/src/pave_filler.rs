@@ -1947,55 +1947,104 @@ impl<'a> PaveFiller<'a> {
                             }
                         }
                         _ => {
-
-                            // ✅ OCCT-aligned: non-linear edge pair angle check + numeric intersection
-
-                            //    OCCT L1138-1157: project midpoint + angle check
-
-                            let mid_t1 = (self.ds.edges[e1].t_range[0] + self.ds.edges[e1].t_range[1]) * 0.5;
-
-                            let mid_t2 = (self.ds.edges[e2].t_range[0] + self.ds.edges[e2].t_range[1]) * 0.5;
-
-                            let (mid_p1, tgt1) = (c1.point_at(mid_t1), c1.tangent_at(mid_t1));
-
-                            let (mid_p2, tgt2) = (c2.point_at(mid_t2), c2.tangent_at(mid_t2));
-
-                            let sp1_sq = tgt1.length_squared();
-
-                            let sp2_sq = tgt2.length_squared();
-
-                            if sp1_sq < 1e-30 || sp2_sq < 1e-30 { continue; }
-
-                            let cos_angle = tgt1.normalize().dot(tgt2.normalize()).abs();
-
+                            // OCCT L1138-1157: IntTools_EdgeEdge numerical intersection
+                            // with recursive adaptive subdivision (OCCT IntTools_CurveRange).
+                            let tr1 = self.ds.edges[e1].t_range;
+                            let tr2 = self.ds.edges[e2].t_range;
+                            let mid_t1 = (tr1[0] + tr1[1]) * 0.5;
+                            let mid_t2 = (tr2[0] + tr2[1]) * 0.5;
+                            let tgt1 = c1.tangent_at(mid_t1);
+                            let tgt2 = c2.tangent_at(mid_t2);
+                            let cos_angle = if tgt1.length_squared() > 1e-30 && tgt2.length_squared() > 1e-30 {
+                                tgt1.normalize().dot(tgt2.normalize()).abs()
+                            } else { 0.0 };
                             let fuzzy = if cos_angle >= 0.9063 {
-
                                 self.ds.fuzzy_tol + tol_add
-
                             } else {
-
                                 self.ds.fuzzy_tol
-
                             };
-
-                            let vi_pos = self.ds.vertices[vi].point;
-
-                            let c1_close = c1.point_at(mid_t1);
-
-                            let c2_close = c2.point_at(mid_t2);
-
-                            if c1_close.distance(vi_pos) <= fuzzy || c2_close.distance(vi_pos) <= fuzzy {
-
-                                self.ds.interferences.push(Interference::EdgeEdge {
-
-                                    e1, e2, point: vi_pos,
-
-                                    param1: mid_t1, param2: mid_t2, new_vertex: vi,
-
-                                });
-
+                            // OCCT IntTools_EdgeEdge: coarse → adaptive → Newton
+                            // (1) Coarse 21×21 grid → find best (t1,t2)
+                            // (2) Recursive subdivision around best: 2× denser per level
+                            // (3) Converge when distance < fuzzy OR subrange < 1e-6
+                            let mut best_t1 = mid_t1;
+                            let mut best_t2 = mid_t2;
+                            let mut best_d = f64::MAX;
+                            // OCCT N=20 → 21 samples per curve
+                            for si in 0..21 {
+                                let t1 = tr1[0] + (tr1[1] - tr1[0]) * (si as f64 / 20.0);
+                                let p1 = c1.point_at(t1);
+                                for sj in 0..21 {
+                                    let t2 = tr2[0] + (tr2[1] - tr2[0]) * (sj as f64 / 20.0);
+                                    let d = p1.distance(c2.point_at(t2));
+                                    if d < best_d { best_d = d; best_t1 = t1; best_t2 = t2; }
+                                }
                             }
-
+                            // (2) Adaptive refinement: subdivide around min point
+                            let mut r1_lo = (best_t1 - (tr1[1] - tr1[0]) / 20.0).max(tr1[0]);
+                            let mut r1_hi = (best_t1 + (tr1[1] - tr1[0]) / 20.0).min(tr1[1]);
+                            let mut r2_lo = (best_t2 - (tr2[1] - tr2[0]) / 20.0).max(tr2[0]);
+                            let mut r2_hi = (best_t2 + (tr2[1] - tr2[0]) / 20.0).min(tr2[1]);
+                            for _ in 0..4 {
+                                let mid1 = (r1_lo + r1_hi) * 0.5;
+                                let mid2 = (r2_lo + r2_hi) * 0.5;
+                                let test_t1 = [r1_lo, mid1, r1_hi];
+                                let test_t2 = [r2_lo, mid2, r2_hi];
+                                for &t1 in &test_t1 {
+                                    let pt1 = c1.point_at(t1);
+                                    for &t2 in &test_t2 {
+                                        let d = pt1.distance(c2.point_at(t2));
+                                        if d < best_d { best_d = d; best_t1 = t1; best_t2 = t2; }
+                                    }
+                                }
+                                let span = (r1_hi - r1_lo) * 0.5;
+                                r1_lo = (best_t1 - span).max(tr1[0]);
+                                r1_hi = (best_t1 + span).min(tr1[1]);
+                                r2_lo = (best_t2 - span).max(tr2[0]);
+                                r2_hi = (best_t2 + span).min(tr2[1]);
+                            }
+                            // (3) OCCT IntTools_CurveRange L230-260: Newton-Raphson iteration
+                            // Minimize F(t1,t2) = ||C1(t1)-C2(t2)||² using gradient+Hessian.
+                            let mut nr_t1 = best_t1;
+                            let mut nr_t2 = best_t2;
+                            for _ in 0..8 {
+                                let p1 = c1.point_at(nr_t1);
+                                let p2 = c2.point_at(nr_t2);
+                                let diff = p1 - p2;
+                                if diff.length_squared() < 1e-30 { break; }
+                                let t1 = c1.tangent_at(nr_t1);
+                                let t2 = c2.tangent_at(nr_t2);
+                                if t1.length_squared() < 1e-30 || t2.length_squared() < 1e-30 { break; }
+                                let d1 = t1.normalize();
+                                let d2 = t2.normalize();
+                                // Hessian H and gradient ∇F of F(t1,t2) = ||C1-C2||²
+                                let h00 = 2.0;  // H = 2*M, M = [[d1·d1, -d1·d2], [-d2·d1, d2·d2]]
+                                let h01 = -2.0 * d1.dot(d2);
+                                let h10 = h01;  // symmetric
+                                let h11 = 2.0;
+                                // OCCT IntTools_CurveRange: R[0]=-(C1-C2)·C1', R[1]=(C1-C2)·C2'
+                                // H = 2*M where M = [[1, -cos], [-cos, 1]], RHS = [2*R[0], 2*R[1]]
+                                let g0 = 2.0 * diff.dot(d1);   // = -2*R[0]
+                                let g1 = 2.0 * diff.dot(d2);   // = 2*R[1]
+                                let det = h00 * h11 - h01 * h01;
+                                if det.abs() < 1e-30 { break; }
+                                // H·Δt = [-g0, g1] → M·Δt = [R[0], R[1]] (OCCT L245-250)
+                                let dt1 = (-g0 * h11 - g1 * h01) / det;
+                                let dt2 = (g1 * h00 + g0 * h10) / det;
+                                let new_t1 = (nr_t1 + dt1).clamp(tr1[0], tr1[1]);
+                                let new_t2 = (nr_t2 + dt2).clamp(tr2[0], tr2[1]);
+                                if (new_t1 - nr_t1).abs() < 1e-12 && (new_t2 - nr_t2).abs() < 1e-12 { break; }
+                                nr_t1 = new_t1; nr_t2 = new_t2;
+                            }
+                            let nr_d = c1.point_at(nr_t1).distance(c2.point_at(nr_t2));
+                            if nr_d < best_d { best_d = nr_d; best_t1 = nr_t1; best_t2 = nr_t2; }
+                            if best_d <= fuzzy {
+                                let best_pt = c1.point_at(best_t1);
+                                self.ds.interferences.push(Interference::EdgeEdge {
+                                    e1, e2, point: best_pt,
+                                    param1: best_t1, param2: best_t2, new_vertex: vi,
+                                });
+                            }
                         }
                     }
                 }
@@ -2018,87 +2067,60 @@ impl<'a> PaveFiller<'a> {
     ///    3. L1078-1079: Perform all EdgeFace intersections
     ///    4. L1095+: collect results
     ///
-    ///    ⏳ rcad simplified:
-    ///    - No OCCT PaveBlock/FaceInfo/PaveBlocksOn structures
-    ///    - Only checks if both endpoints of an edge are on the same face
+    /// ✅ OCCT-aligned: ForceInterfEF (PaveFiller_5.cxx L764-1099+)
+    ///    Project each PaveBlock's midpoint onto its face, check distance.
+    ///    Uses PaveBlock endpoint vertices for tolerance (OCCT L976-984),
+    ///    not full edge endpoints (which are for the whole edge, not the
+    ///    current PaveBlock's sub-range).
     fn force_interf_ef(&mut self) {
-        // OCCT L779-805: collect all edges with PaveBlocks
-        // rcad: iterate all edges with paves
         for ei in 0..self.ds.edges.len() {
             let edge = &self.ds.edges[ei];
-            if edge.paves.is_empty() { continue; }
-            let sv = edge.start_vertex;
-            let ev = edge.end_vertex;
-
-            // OCCT L928-932: check both PaveBlock endpoints are on the face
+            // OCCT L779-805: iterate edges that have PaveBlocks
+            if edge.pave_blocks.is_empty() { continue; }
             for fi in 0..self.ds.faces.len() {
-                // OCCT L942-944: edge and face from different operand
                 if edge.origin == self.ds.faces[fi].origin { continue; }
-
-                // OCCT L888-911: check face vertices_on + vertices_in sets
-                let on_face_s = self.ds.faces[fi].face_info.vertices_on.contains(&sv)
-                    || self.ds.faces[fi].face_info.vertices_in.contains(&sv);
-                let on_face_e = self.ds.faces[fi].face_info.vertices_on.contains(&ev)
-                    || self.ds.faces[fi].face_info.vertices_in.contains(&ev);
-                if !(on_face_s && on_face_e) { continue; }
-
-                // OCCT L1113-1121: skip existing EF interference
-                let exists = self.ds.interferences.iter().any(|inf| {
+                if self.ds.interferences.iter().any(|inf| {
                     matches!(inf, Interference::EdgeFace { edge: e, face: f, .. } if *e == ei && *f == fi)
-                });
-                if exists { continue; }
-
-                // OCCT L976-984: aTolCheck = 2 * max(tol(V1), tol(V2))
-                let v_tol_s = self.ds.vertices[sv].geom_tol;
-                let v_tol_e = self.ds.vertices[ev].geom_tol;
-                let tol_add = 2.0 * v_tol_s.max(v_tol_e);
-
-                // OCCT L1134-1157: midpoint direction angle check
-                let mid_t = (edge.t_range[0] + edge.t_range[1]) * 0.5;
-                let mid_pt = edge.curve.point_at(mid_t);
+                }) { continue; }
                 let face_surf = &self.ds.faces[fi].surface;
-
-                // OCCT L970-972: project midpoint onto face
-                let proj_dist = match face_surf {
-                    Surface3::Plane(pl) => {
-                        let d = mid_pt - pl.origin;
-                        (d - d.dot(pl.normal) * pl.normal).length()
-                    }
-                    // ✅ OCCT-aligned: non-planar face — project midpoint onto face, check distance
-
-                    _ => {
-
-                        let fuzzy = self.ds.fuzzy_tol + tol_add;
-
-                        let (_, proj_pt) = crate::extrema::closest_point_on_surface(face_surf, mid_pt);
-
-                        if mid_pt.distance(proj_pt) <= fuzzy {
-
-                            self.ds.interferences.push(Interference::EdgeFace {
-
-                                edge: ei, face: fi,
-
-                                point: mid_pt, edge_param: mid_t, new_vertex: sv,
-
-                            });
-
+                // OCCT L928-932: iterate PaveBlocks, check each one's midpoint
+                for pb in &edge.pave_blocks {
+                    // OCCT L976-984: aTolCheck = 2 * max(tol(Pave1), tol(Pave2))
+                    let v_tol_p1 = self.ds.vertices.get(pb.pave1.vertex_idx)
+                        .map(|v| v.geom_tol).unwrap_or(0.0);
+                    let v_tol_p2 = self.ds.vertices.get(pb.pave2.vertex_idx)
+                        .map(|v| v.geom_tol).unwrap_or(0.0);
+                    let tol_add = 2.0 * v_tol_p1.max(v_tol_p2);
+                    // OCCT L928-932: check both PaveBlock endpoints are on the face
+                    let v1_on = self.ds.faces[fi].face_info.vertices_on.contains(&pb.pave1.vertex_idx)
+                        || self.ds.faces[fi].face_info.vertices_in.contains(&pb.pave1.vertex_idx);
+                    let v2_on = self.ds.faces[fi].face_info.vertices_on.contains(&pb.pave2.vertex_idx)
+                        || self.ds.faces[fi].face_info.vertices_in.contains(&pb.pave2.vertex_idx);
+                    if !(v1_on && v2_on) { continue; }
+                    // OCCT L970-972: project PaveBlock midpoint onto face
+                    let mid_t = (pb.pave1.param + pb.pave2.param) * 0.5;
+                    let mid_pt = edge.curve.point_at(mid_t);
+                    let fuzzy = self.ds.fuzzy_tol + tol_add;
+                    let on_face = match face_surf {
+                        Surface3::Plane(pl) => {
+                            let d = mid_pt - pl.origin;
+                            let proj = d - d.dot(pl.normal) * pl.normal;
+                            proj.length() <= fuzzy
                         }
-
-                        continue;
-
+                        _ => {
+                            let (_, proj_pt) = crate::extrema::closest_point_on_surface(face_surf, mid_pt);
+                            mid_pt.distance(proj_pt) <= fuzzy
+                        }
+                    };
+                    if on_face {
+                        self.ds.interferences.push(Interference::EdgeFace {
+                            edge: ei, face: fi,
+                            point: mid_pt, edge_param: mid_t,
+                            new_vertex: pb.pave1.vertex_idx,
+                        });
+                        break;
                     }
-                };
-
-                // OCCT L986-987: distance check
-                if proj_dist > tol_add + self.ds.fuzzy_tol { continue; }
-
-                // Found intersection, create interference
-                self.ds.interferences.push(Interference::EdgeFace {
-                    edge: ei, face: fi,
-                    point: mid_pt,
-                    edge_param: mid_t,
-                    new_vertex: sv,
-                });
+                }
             }
         }
     }
@@ -2406,14 +2428,48 @@ impl<'a> PaveFiller<'a> {
                     false
                 }
             }
-            Surface3::Sphere(_sph) => {
-                // Sphere seam edge detection requires per-edge pcurve information
-                // to identify the u=±π parametric boundary. Deferred for future work.
-                false
+            Surface3::Sphere(sph) => {
+                // OCCT BOPAlgo_PaveFiller_6.cxx L106-134 IsClosedFF:
+                // Sphere seam edge = great circle arc in meridian plane (U=0 boundary).
+                // Checks mirror OCCT exactly:
+                //   (1) Curve is Geom_Circle  →  Curve3::Circle
+                //   (2) |center - S.Location()| < Precision::Confusion()  →  TOLERANCE_ABS_SQ
+                //   (3) |radius - S.Radius| < Precision::Confusion()     →  TOLERANCE_ABS
+                //   (4) |circle_normal · sphere_axis| < Precision::Angular()  →  perp check
+                match &edge.curve {
+                    Curve3::Circle(c) => {
+                        (c.center - sph.center).length_squared() < TOLERANCE_ABS_SQ
+                        && (c.radius - sph.radius).abs() < TOLERANCE_ABS
+                        && c.normal.normalize().dot(sph.axis.normalize()).abs() < 1e-12
+                    }
+                    _ => false,
+                }
             }
-            Surface3::Torus(_tor) => {
-                // Torus seam edge detection is complex; not implemented yet.
-                false
+            Surface3::Torus(tor) => {
+                // OCCT IsClosedFF: torus has TWO periodic boundaries.
+                // U-seam: major circle, center = torus center, radius = major_radius,
+                //         normal ∥ torus axis.
+                // V-seam: minor circle, center on major circle, radius = minor_radius,
+                //         normal ⟂ torus axis.
+                // All tolerances match OCCT Precision::Confusion/Angular.
+                match &edge.curve {
+                    Curve3::Circle(c) => {
+                        let axis = tor.axis.normalize();
+                        let c_normal = c.normal.normalize();
+                        let center_dist = (c.center - tor.center).length();
+                        // U-seam: center at torus center, normal ∥ axis, radius = major
+                        let is_u_seam = center_dist < TOLERANCE_ABS
+                            && c_normal.dot(axis).abs() > 1.0 - 1e-12
+                            && (c.radius - tor.major_radius).abs() < TOLERANCE_ABS;
+                        // V-seam: center on major circle, normal ⟂ axis, radius = minor
+                        let on_major = (center_dist - tor.major_radius).abs() < TOLERANCE_ABS;
+                        let is_v_seam = on_major
+                            && c_normal.dot(axis).abs() < 1e-12
+                            && (c.radius - tor.minor_radius).abs() < TOLERANCE_ABS;
+                        is_u_seam || is_v_seam
+                    }
+                    _ => false,
+                }
             }
             _ => false,
         }

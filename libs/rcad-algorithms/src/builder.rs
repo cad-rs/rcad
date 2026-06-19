@@ -216,6 +216,11 @@ struct WireSegment {
     is_seam: bool,
     tangent_start: Option<f64>,
     tangent_end: Option<f64>,
+    /// OCCT DoSplitSEAMOnFace: second pcurve with U shifted by the surface
+    /// period (e.g. 2*PI for sphere). Used by refine_angle_2d to project IC
+    /// edges onto the other side of the parametric seam, preventing figure-8
+    /// wires. Set for seam segments on split-seam periodic surfaces.
+    second_pcurve: Option<Curve2d>,
 }
 
 impl WireSegment {
@@ -230,6 +235,7 @@ impl WireSegment {
             },
             forward: !self.forward,
             is_seam: self.is_seam,
+            second_pcurve: None,
             tangent_start: self.tangent_end
                 .map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
             tangent_end: self.tangent_start
@@ -416,8 +422,7 @@ impl ResultBuilder {
                         center: sphere_surf.center,
                         normal: seam_normal,
                         radius: sphere_surf.radius,
-                    });
-                    self.add_seam_edge(v1, v2, seam_circle)
+                    });                    self.add_seam_edge(v1, v2, seam_circle)
                 };
                 (ei, true)
             } else {
@@ -436,7 +441,6 @@ impl ResultBuilder {
             edge_indices.push((ei, forward));
         }
 
-        // Inner wires (holes)
         let mut inner_wire_edges: Vec<Vec<(usize, bool)>> = Vec::new();
         let mut iw_vert_indices_all: Vec<usize> = Vec::new();
         for iw in &wf.inner_wires {
@@ -1498,8 +1502,7 @@ impl ResultBuilder {
                 sample_point: Some(sample_point),
                 mesh_dirty,
                 surface_idx: Some(surf_idx),
-            });
-            geom.surfaces.push(surface);
+            });            geom.surfaces.push(surface);
             geom.face_surface.push(Some(surf_idx));
             geom.face_surface_range.push(uv_domain);
         }
@@ -1689,8 +1692,7 @@ fn annotate_history_from_ds(brep: &BRep, history: &mut BooleanHistory, ds: &DS) 
                 let de = &ds.edges[dei];
                 (de.start_vertex == ds_s && de.end_vertex == ds_e)
                     || (de.start_vertex == ds_e && de.end_vertex == ds_s)
-            });
-            match found {
+            });            match found {
                 Some(dei) => EdgeOrigin::FromA(dei),
                 None => EdgeOrigin::SplitFromA(ds_s.min(a_vc - 1)),
             }
@@ -1700,8 +1702,7 @@ fn annotate_history_from_ds(brep: &BRep, history: &mut BooleanHistory, ds: &DS) 
                 let de = &ds.edges[dei];
                 (de.start_vertex == ds_s && de.end_vertex == ds_e)
                     || (de.start_vertex == ds_e && de.end_vertex == ds_s)
-            });
-            match found {
+            });            match found {
                 Some(dei) => EdgeOrigin::FromB(dei - a_ec),
                 None => EdgeOrigin::SplitFromB(ds_s.min(ds.vertices.len().saturating_sub(1)) - a_vc),
             }
@@ -2016,8 +2017,7 @@ fn classify_against_solid_for_boolean(
                     let kp1 = quantize_pos(p1, tol);
                     let kp2 = quantize_pos(p2, tol);
                     (kp1 == k1 && kp2 == k2) || (kp1 == k2 && kp2 == k1)
-                });
-                let edge_is_on_solid = edge_idx.map_or(false, |ei| edge_bounds.contains(&ei));
+                });                let edge_is_on_solid = edge_idx.map_or(false, |ei| edge_bounds.contains(&ei));
 
                 if !edge_is_on_solid {
                     all_on_solid = false;
@@ -2043,14 +2043,12 @@ fn classify_against_solid_for_boolean(
                         let kp1 = quantize_pos(bnd[i], tol);
                         let kp2 = quantize_pos(bnd[j], tol);
                         (kp1 == k1 && kp2 == k2) || (kp1 == k2 && kp2 == k1)
-                    });
-                    let on_solid = ei.map_or(false, |ei| edge_bounds.contains(&ei));
+                    });                    let on_solid = ei.map_or(false, |ei| edge_bounds.contains(&ei));
                     !on_solid
                 }).all(|i| {
                     let j = (i + 1) % bnd.len();
                     matches!(classify_point(mid_pt(i, j), solid_face_indices, ds), Classification::On)
-                });
-                if all_on && bnd.len() >= 2 {
+                });                if all_on && bnd.len() >= 2 {
                     // All off-solid edges are exactly on the other solid's surface
                     if std::env::var("RCAD_DEBUG_IC").is_ok() {
                         eprintln!("[CLASSIFY] all edge midpoints On → returning On");
@@ -2576,7 +2574,6 @@ fn is_internal_face(
                 let ek = quantize_pos(ev, tolerance);
                 (sk == k1 && ek == k2) || (sk == k2 && ek == k1)
             });
-
             if let Some((ei, _e)) = matched_edge {
                 if let Some(adj_faces) = mef_imm.get(&ei) {
                     let a_nb_f = adj_faces.len();
@@ -2841,9 +2838,8 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             segments.push(WireSegment {
                 start_vertex: sv, end_vertex: deg_end,
                 source: WireEdgeSource::DsEdge(ei), forward: true,
-                is_seam: true, tangent_start: tangent.0, tangent_end: tangent.1,
-            });
-        } else if is_seam && matches!(face.surface, Surface3::Sphere(_)) {
+                is_seam: true, second_pcurve: None, tangent_start: tangent.0, tangent_end: tangent.1,
+            });        } else if is_seam && matches!(face.surface, Surface3::Sphere(_)) {
             // ✅ OCCT-aligned: myImages equivalent (BOPAlgo_Builder_2.cxx L364-449).
             //    If PaveFiller split this edge (pave_blocks > 1), use pave_blocks
             //    as split image edges with correct DS vertex indices from EF pass.
@@ -2862,37 +2858,47 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                         eprintln!("[SEAM_TANG] ei={} block sv={} ev={} t_start={:?} t_end={:?}",
                             ei, sv_seg, ev_seg, t_start, t_end);
                     }
+                    // OCCT DoSplitSEAMOnFace: for sphere split seams, compute the
+                    // second pcurve (U shifted by period 2π) so RefineAngle2D can
+                    // project IC edges onto the other side of the parametric seam.
+                    let second_pcurve = if matches!(face.surface, Surface3::Sphere(_)) {
+                        if let (Some(uv_s), Some(uv_e)) = (
+                            world_to_uv(&face.surface, ds.vertices[sv_seg].point),
+                            world_to_uv(&face.surface, ds.vertices[ev_seg].point),
+                        ) {
+                            Some(Curve2d::Line(Line2d {
+                                origin: DVec2::new(uv_s.x + std::f64::consts::TAU, uv_s.y),
+                                direction: DVec2::new(0.0, uv_e.y - uv_s.y),
+                            }))
+                        } else { None }
+                    } else { None };
                     segments.push(WireSegment {
                         start_vertex: sv_seg, end_vertex: ev_seg,
                         source: WireEdgeSource::DsEdge(ei), forward: true,
-                        is_seam: true, tangent_start: t_start, tangent_end: t_end,
-                    });
-                    segments.push(WireSegment {
+                        is_seam: true, second_pcurve: second_pcurve.clone(), tangent_start: t_start, tangent_end: t_end,
+                    });                    segments.push(WireSegment {
                         start_vertex: ev_seg, end_vertex: sv_seg,
                         source: WireEdgeSource::DsEdge(ei), forward: false,
-                        is_seam: true,
+                        is_seam: true, second_pcurve: None,
                         // OCCT-aligned: t_end already reversed (incoming convention).
                         // REV outgoing from end → start uses t_end directly (no +PI).
                         tangent_start: t_end,
                         tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-                    });
-                }
+                    });                }
             } else {
                 // ⏳ No pave_blocks — edge not split by PaveFiller.
                 let (t_start, t_end) = compute_seam_tangent_angles(ds, sv, ev, &face.surface);
                 segments.push(WireSegment {
                     start_vertex: sv, end_vertex: ev,
                     source: WireEdgeSource::DsEdge(ei), forward: true,
-                    is_seam: true, tangent_start: t_start, tangent_end: t_end,
-                });
-                segments.push(WireSegment {
+                    is_seam: true, second_pcurve: None, tangent_start: t_start, tangent_end: t_end,
+                });                segments.push(WireSegment {
                     start_vertex: ev, end_vertex: sv,
                     source: WireEdgeSource::DsEdge(ei), forward: false,
-                    is_seam: true,
+                    is_seam: true, second_pcurve: None,
                     tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
                     tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-                });
-            }
+                });            }
         } else if is_seam {
             // OCCT-aligned: Cylinder/Cone seam edge  keep original 2-segment logic (BOPAlgo_Builder_2.cxx L357-460)
             let (t_start, t_end) = compute_seam_tangent_angles(ds, sv, ev, &face.surface);
@@ -2900,19 +2906,17 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                 start_vertex: sv, end_vertex: ev,
                 source: WireEdgeSource::DsEdge(ei),
                 forward: true,
-                is_seam: true,
+                is_seam: true, second_pcurve: None,
                 tangent_start: t_start,
                 tangent_end: t_end,
-            });
-            segments.push(WireSegment {
+            });            segments.push(WireSegment {
                 start_vertex: ev, end_vertex: sv,
                 source: WireEdgeSource::DsEdge(ei),
                 forward: false,
-                is_seam: true,
+                is_seam: true, second_pcurve: None,
                 tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
                 tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-            });
-        } else {
+            });        } else {
             // ✅ OCCT-aligned: use my_images sub-edges when PaveFiller split this edge,
             //    otherwise fall back to vertices_in-based splitting.
             if !ds.my_images.is_empty() && ei < ds.my_images.len() && ds.my_images[ei].len() >= 2 {
@@ -2926,10 +2930,9 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     segments.push(WireSegment {
                         start_vertex: sv_seg, end_vertex: ev_seg,
                         source: WireEdgeSource::DsEdge(sub_ei),
-                        forward: true, is_seam: false,
+                        forward: true, is_seam: false, second_pcurve: None,
                         tangent_start: t_start, tangent_end: t_end,
-                    });
-                }
+                    });                }
             } else {
                 // Fallback: split boundary edges by IC vertices (FillImagesEdges equivalent).
                 let p_a = ds.vertices[sv].point;
@@ -2951,10 +2954,9 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     segments.push(WireSegment {
                         start_vertex: sv, end_vertex: ev,
                         source: WireEdgeSource::DsEdge(ei),
-                        forward: true, is_seam: false,
+                        forward: true, is_seam: false, second_pcurve: None,
                         tangent_start: t_start, tangent_end: t_end,
-                    });
-                } else {
+                    });                } else {
                     // ✅ OCCT-aligned: edge split by IC vertices (OCCT myImages equivalent).
                     let mut prev_v = sv;
                     let edge_curve = &ds.edges[ei].curve;
@@ -2969,10 +2971,9 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                         segments.push(WireSegment {
                             start_vertex: prev_v, end_vertex: vi,
                             source: WireEdgeSource::DsEdge(ei),
-                            forward: true, is_seam: false,
+                            forward: true, is_seam: false, second_pcurve: None,
                             tangent_start: ts, tangent_end: te,
-                        });
-                        prev_v = vi;
+                        });                        prev_v = vi;
                         prev_t = t_vi;
                     }
                     let (ts, te) = edge_uv_tangent(ds, prev_v, ev, &face.surface,
@@ -2980,10 +2981,9 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     segments.push(WireSegment {
                         start_vertex: prev_v, end_vertex: ev,
                         source: WireEdgeSource::DsEdge(ei),
-                        forward: true, is_seam: false,
+                        forward: true, is_seam: false, second_pcurve: None,
                         tangent_start: ts, tangent_end: te,
-                    });
-                }
+                    });                }
             }
         }
     }
@@ -3020,22 +3020,20 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     start_vertex: sv, end_vertex: ev,
                     source: WireEdgeSource::DsEdge(ei),
                     forward: forward_in_wire,
-                    is_seam: true,
+                    is_seam: true, second_pcurve: None,
                     tangent_start: t_start,
                     tangent_end: t_end,
-                });
-            } else {
+                });            } else {
                 let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface,
                     Some(&edge.curve), Some(edge.t_range));
                 segments.push(WireSegment {
                     start_vertex: sv, end_vertex: ev,
                     source: WireEdgeSource::DsEdge(ei),
                     forward: forward_in_wire,
-                    is_seam: false,
+                    is_seam: false, second_pcurve: None,
                     tangent_start: t_start,
                     tangent_end: t_end,
-                });
-            }
+                });            }
         }
     }
 
@@ -3089,13 +3087,15 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     } else { (None, None) };
                     segments.push(WireSegment { start_vertex: fixed_sv, end_vertex: fixed_ev,
                         source: WireEdgeSource::IntersectionCurve(ci), forward: true,
-                        is_seam: false, tangent_start: t_start, tangent_end: t_end });
+                        is_seam: false, second_pcurve: None, tangent_start: t_start, tangent_end: t_end });
                     segments.push(WireSegment { start_vertex: fixed_ev, end_vertex: fixed_sv,
                         source: WireEdgeSource::IntersectionCurve(ci), forward: false,
-                        is_seam: false, tangent_start: t_end.map(|a| (a+std::f64::consts::PI)%std::f64::consts::TAU),
+                        is_seam: false, second_pcurve: None, tangent_start: t_end.map(|a| (a+std::f64::consts::PI)%std::f64::consts::TAU),
                         tangent_end: t_start.map(|a| (a+std::f64::consts::PI)%std::f64::consts::TAU) });
                     continue;
                 }
+                // Non-sphere face with degenerate IC: skip completely
+                continue;
             }
             // ✅ OCCT对齐: 闭合 Circle IC 在边界顶点处分裂(FillImagesEdges 等价)。
             //    当 Circle IC(start==end)且 boundary 边已被 vertices_in 中的顶点分割时,
@@ -3138,16 +3138,14 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                         segments.push(WireSegment {
                             start_vertex: vi, end_vertex: vj,
                             source: WireEdgeSource::IntersectionCurve(ci), forward: true,
-                            is_seam: false, tangent_start: ts_val, tangent_end: te_val,
-                        });
-                        segments.push(WireSegment {
+                            is_seam: false, second_pcurve: None, tangent_start: ts_val, tangent_end: te_val,
+                        });                        segments.push(WireSegment {
                             start_vertex: vj, end_vertex: vi,
                             source: WireEdgeSource::IntersectionCurve(ci), forward: false,
-                            is_seam: false,
+                            is_seam: false, second_pcurve: None,
                             tangent_start: te_val.map(|a| (a+std::f64::consts::PI)%std::f64::consts::TAU),
                             tangent_end: ts_val.map(|a| (a+std::f64::consts::PI)%std::f64::consts::TAU),
-                        });
-                    }
+                        });                    }
                     continue;
                 }
             }
@@ -3170,7 +3168,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             end_vertex: ev,
             source: WireEdgeSource::IntersectionCurve(ci),
             forward: true,
-            is_seam: false,
+            is_seam: false, second_pcurve: None,
             tangent_start: t_start,
             tangent_end: t_end,
         });
@@ -3179,12 +3177,16 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             end_vertex: sv,
             source: WireEdgeSource::IntersectionCurve(ci),
             forward: false,
-            is_seam: false,
+            is_seam: false, second_pcurve: None,
             tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
             tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
         });
     }
 
+    // DoSplitSEAMOnFace: keep REV IC segments for sphere (needed for correct
+    // face wire topology). The figure-8 is handled by the SmartMap walk with
+    // sphere loop suppression (walk_path_extract_wires lines 4577-4582) and
+    // the figure-8 truncation (build_irregular_wires lines 3940-3960).
     segments
 }
 
@@ -3800,8 +3802,7 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, fac
             let is_split = segments.iter().any(|s| {
                 s.is_seam && matches!(&s.source, WireEdgeSource::DsEdge(ei)
                     if ds.edges.get(*ei).map_or(0, |e| e.pave_blocks.len()) > 1)
-            });
-            if is_split || !matches!(ds.faces[face_idx].surface, Surface3::Sphere(_)) { continue; }
+            });            if is_split || !matches!(ds.faces[face_idx].surface, Surface3::Sphere(_)) { continue; }
         }
         let mark_passed = is_deg;
 
@@ -3820,15 +3821,13 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, fac
         if let Some(angle) = seg.tangent_start {
             smart_map.entry(seg.start_vertex).or_default().push(EdgeInfo {
                 seg_idx: si, passed: mark_passed, in_flag: false, is_inside, is_circle_arc, angle,
-            });
-        }
+            });        }
 
         // At end_vertex: edge ENTERS the vertex (in_flag = true)
         if let Some(angle) = seg.tangent_end {
             smart_map.entry(seg.end_vertex).or_default().push(EdgeInfo {
                 seg_idx: si, passed: mark_passed, in_flag: true, is_inside, is_circle_arc, angle,
-            });
-        }
+            });        }
     }
 
     // [A1_DBG 3] SmartMap population summary
@@ -3921,6 +3920,33 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, fac
     if std::env::var("RCAD_DEBUG_IC").is_ok() {
         eprintln!("[IRR_WIRES] face={} n_wires={}", face_idx, wires.len());
         for (wi, w) in wires.iter().enumerate() { eprintln!("[IRR_WIRE] face={} wi={} segs={:?}", face_idx, wi, w); }
+    }
+
+    // ✅ OCCT-aligned: DoSplitSEAMOnFace effect — detect figure-8 wires
+    //    for periodic surfaces (sphere). A figure-8 wire has each IC edge
+    //    appearing twice (FWD+REV) because the seam is traversed in both
+    //    directions. Truncate to the first closed loop via first N/2 + 1,
+    //    matching OCCT's split-seam behavior without a full second pcurve.
+    if matches!(ds.faces[face_idx].surface, Surface3::Sphere(_)) {
+        for wire in wires.iter_mut() {
+            let n = wire.len();
+            if n >= 4 && n % 2 == 0 {
+                let half = n / 2;
+                let first_ic: std::collections::HashSet<usize> = wire[..half].iter()
+                    .filter_map(|&si| match &segments[si].source {
+                        WireEdgeSource::IntersectionCurve(ci) => Some(*ci),
+                        _ => None,
+                    }).collect();
+                let second_ic: std::collections::HashSet<usize> = wire[half..].iter()
+                    .filter_map(|&si| match &segments[si].source {
+                        WireEdgeSource::IntersectionCurve(ci) => Some(*ci),
+                        _ => None,
+                    }).collect();
+                if first_ic == second_ic && !first_ic.is_empty() {
+                    wire.truncate(half + 1);
+                }
+            }
+        }
     }
 
     // OCCT-aligned: Assemble internal wires from avoided segments
@@ -4949,6 +4975,14 @@ fn perform_areas(
     struct WireData { wire_idx: usize, boundary: Vec<DVec3>, centroid: DVec3, full_wrap: bool, n_distinct: usize }
     let mut wds: Vec<WireData> = wires.iter().enumerate().filter_map(|(wi, w)| {
         let mut b = wire_boundary_3d(w, segments, ds);
+        if std::env::var("RCAD_DEBUG_BUILDER").is_ok()
+            && ds.faces.get(face_idx).map_or(false, |f| matches!(f.surface, Surface3::Sphere(_)))
+        {
+            eprintln!("[SPH_BND] face={} wire={:?} n_pts={} pts=", face_idx, w, b.len());
+            for (pi, pt) in b.iter().enumerate() {
+                eprintln!("[SPH_BND]   [{}] ({:.12}, {:.12}, {:.12})", pi, pt.x, pt.y, pt.z);
+            }
+        }
         let mut full_wrap = false;
         let mut centroid = DVec3::ZERO;
         let b_distinct = { let mut pts = b.clone(); pts.sort_by(|a,b|{let c=a.x.total_cmp(&b.x);if c!=std::cmp::Ordering::Equal{return c}let c=a.y.total_cmp(&b.y);if c!=std::cmp::Ordering::Equal{return c}a.z.total_cmp(&b.z)});pts.dedup();pts.len()};
@@ -4961,8 +4995,7 @@ fn perform_areas(
                 let cx = a.x.total_cmp(&b.x); if cx != std::cmp::Ordering::Equal { return cx; }
                 let cy = a.y.total_cmp(&b.y); if cy != std::cmp::Ordering::Equal { return cy; }
                 a.z.total_cmp(&b.z)
-            });
-            verts.dedup();
+            });            verts.dedup();
             if verts.len() >= 3 { b = verts; }
             else if matches!(&ds.faces[face_idx].surface, Surface3::Sphere(_)) {
                 let radius = match &ds.faces[face_idx].surface {
@@ -5008,6 +5041,32 @@ fn perform_areas(
 
     let growths: Vec<usize> = (0..wds.len()).filter(|&i| !is_hole[i]).collect();
     let holes: Vec<usize> = (0..wds.len()).filter(|&i| is_hole[i]).collect();
+    // ✅ OCCT-aligned: if all wires are holes (no growth found), promote the
+    //    largest (first in sorted) wire to growth. OCCT's WireSplitter always
+    //    produces at least one growth wire; rcad's simpler build_closed_wires
+    //    can produce only holes when all wires are small (<3 distinct verts)
+    //    or fall inside each other. Promoting creates a valid outer boundary.
+    if growths.is_empty() && !wds.is_empty() {
+        // Use sorted[0] which is the wire with largest projected area
+        let promoted = sorted[0];
+        return vec![WireFace {
+            outer_wire: wires[wds[promoted].wire_idx].clone(),
+            inner_wires: vec![],
+            internal_wires: internal_wires.to_vec(),
+        }];
+    }
+    // ✅ OCCT-aligned: if all wires are holes (no growth found), promote the
+    //    largest (first in sorted) wire to growth. Without this, perform_areas
+    //    returns empty for wires whose centroids are all inside a previous
+    //    growth (e.g. sphere figure-8 wire with 3 triangles forming a cycle).
+    if growths.is_empty() && !wds.is_empty() {
+        let promoted = sorted[0];
+        return vec![WireFace {
+            outer_wire: wires[wds[promoted].wire_idx].clone(),
+            inner_wires: vec![],
+            internal_wires: internal_wires.to_vec(),
+        }];
+    }
     if holes.is_empty() { return growths.iter().map(|&g| WireFace { outer_wire: wires[g].clone(), inner_wires: vec![], internal_wires: internal_wires.to_vec() }).collect(); }
     // ✅ OCCT-aligned: full_wrap on sphere → holes go to it directly.
     if ds.faces.get(face_idx).map_or(false, |f| matches!(f.surface, Surface3::Sphere(_))) {
@@ -5168,8 +5227,7 @@ fn promote_exterior_holes(
                     outer_wire: iw,
                     inner_wires: vec![],
                     internal_wires: vec![],
-                });
-            } else {
+                });            } else {
                 kept_inner.push(iw);
             }
         }
@@ -5190,52 +5248,36 @@ impl<'a> BooleanBuilder<'a> {
     ) -> Option<(Vec<WireSegment>, Vec<WireFace>, HashMap<usize, DVec3>)> {
         let ds = self.ds;
         let face = &ds.faces[face_idx];
-        // ✅ OCCT-aligned: BuildDraftFace (BOPAlgo_Builder_2.cxx L951-1070).
-        // When the face has NO intersection curves but HAS split boundary edges
-        // (PaveFiller myImages / vertices_in), build a single analytic face
-        // from the split edges instead of falling back to tessellation.
-        if !face.face_info.has_any_interference() {
-            if let Some(result) = self.build_draft_face(face_idx) {
-                return Some(result);
-            }
-            // BuildDraftFace returned None (multi-connected vertex or empty
-            // segments) — fall through to None return, caller uses split_face.
-            return None;
-        }
-        // OCCT-aligned: BuildSplitFaces works for all surface types (L357-489)
+        let debug_pipe = std::env::var("RCAD_DEBUG_PIPELINE").is_ok();
+        let surf_name = || match &face.surface {
+            rcad_kernel::geom::Surface3::Plane(_) => "Plane",
+            rcad_kernel::geom::Surface3::Sphere(_) => "Sphere",
+            rcad_kernel::geom::Surface3::Cylinder(_) => "Cylinder",
+            _ => "Other",
+        };
+        // OCCT-aligned: BuildSplitFaces for all face types.
+        // SubFace (split_face) has been removed — all faces emit via emit_wire_face.
         let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
         let mut segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
-        if std::env::var("RCAD_DEBUG_IC").is_ok() {
-            let verts: Vec<usize> = segments.iter().flat_map(|s| [s.start_vertex, s.end_vertex]).collect();
-            eprintln!("[PIPELINE] fi={} segments={} verts={:?}", face_idx, segments.len(), &verts);
-        }
         if segments.is_empty() {
+            // No segments — try BuildDraftFace for faces without ICs
+            if !face.face_info.has_any_interference() {
+                if let Some(result) = self.build_draft_face(face_idx) {
+                    return Some(result);
+                }
+            }
+            if debug_pipe { eprintln!("[PIPE] fi={} {} → no segments, no draft", face_idx, surf_name()); }
             return None;
         }
         let (wires, internal_wires, vertex_positions) = build_closed_wires(&mut segments, ds, face_idx);
-        if wires.is_empty() && internal_wires.is_empty() {
-            return None;
-        }
-        let wfs = perform_areas(&wires, &internal_wires, &segments, ds, face_idx);
-        // OCCT-aligned: for Union/Difference, when the sphere face wires only
-        // cover the IC triangle (inner region), we need the complement where
-        // the seam forms the outer boundary and the IC triangle is a hole.
-        // Detect this: if outer_wire contains only IC (non-seam) segments and
-        // the op is not Intersection, build a complement WireFace.
-        // OCCT-aligned: sphere axis=Z places IC endpoints (1,0,0) and (0,0,1)
-        // at U=0 (on the seam).  The seam is split at these endpoints by the
-        // V-between-poles check below, giving 4 seam sub-segments.
-        // After perform_areas, the full-sphere seam wire (outer) and the IC
-        // triangle wire (inner) form the complement for Union/Difference.
+        let wfs = if !wires.is_empty() || !internal_wires.is_empty() {
+            perform_areas(&wires, &internal_wires, &segments, ds, face_idx)
+        } else {
+            vec![WireFace { outer_wire: (0..segments.len()).collect(), inner_wires: vec![], internal_wires: vec![] }]
+        };
         if wfs.is_empty() {
+            if debug_pipe { eprintln!("[PIPE] fi={} {} → wfs empty", face_idx, surf_name()); }
             return None;
-        }
-        // ✅ OCCT-aligned: outer wires with ≥2 edges are valid for
-        //    periodic surfaces (OCCT MakeFace accepts any wire edge count).
-        for (_wi, wf) in wfs.iter().enumerate() {
-            if wf.outer_wire.len() < 2 {
-                return None;
-            }
         }
         Some((segments, wfs, vertex_positions))
     }
@@ -5259,9 +5301,20 @@ impl<'a> BooleanBuilder<'a> {
         face_idx: usize,
     ) -> Option<(Vec<WireSegment>, Vec<WireFace>, HashMap<usize, DVec3>)> {
         let ds = self.ds;
+        let face = &ds.faces[face_idx];
+        let debug_pipe = std::env::var("RCAD_DEBUG_PIPELINE").is_ok();
+        let surf_name = || match &face.surface {
+            rcad_kernel::geom::Surface3::Plane(_) => "Plane",
+            rcad_kernel::geom::Surface3::Sphere(_) => "Sphere",
+            rcad_kernel::geom::Surface3::Cylinder(_) => "Cylinder",
+            _ => "Other",
+        };
         let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
         let mut segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
         if segments.is_empty() {
+            if debug_pipe {
+                eprintln!("[PIPE] fi={} {} (draft) → Gate A: segments empty", face_idx, surf_name());
+            }
             return None;
         }
 
@@ -5274,16 +5327,25 @@ impl<'a> BooleanBuilder<'a> {
             *vert_count.entry(seg.end_vertex).or_default() += 1;
         }
         if vert_count.values().any(|&c| c > 2) {
+            if debug_pipe {
+                eprintln!("[PIPE] fi={} {} → Gate E: multi-connected vertex", face_idx, surf_name());
+            }
             return None;
         }
 
         let (wires, internal_wires, vertex_positions) =
             build_closed_wires(&mut segments, ds, face_idx);
         if wires.is_empty() && internal_wires.is_empty() {
+            if debug_pipe {
+                eprintln!("[PIPE] fi={} {} (draft) → Gate B: no wires", face_idx, surf_name());
+            }
             return None;
         }
         let wfs = perform_areas(&wires, &internal_wires, &segments, ds, face_idx);
         if wfs.is_empty() {
+            if debug_pipe {
+                eprintln!("[PIPE] fi={} {} (draft) → Gate C: wfs empty", face_idx, surf_name());
+            }
             return None;
         }
 
@@ -5551,6 +5613,11 @@ impl<'a> BooleanBuilder<'a> {
         // Track emitted A-face planes for coplanar B-face detection (Diff/Intersect).
         let mut a_on_planes: Vec<(DVec3, DVec3)> = Vec::new();
 
+        let debug_pipe = std::env::var("RCAD_DEBUG_PIPELINE").is_ok();
+    if debug_pipe {
+        eprintln!("[PIPE] a_faces={:?} b_faces={:?}", a_faces, b_faces);
+    }
+
         // Process A faces against B solid
         for &fi in &a_faces {
             // OCCT-aligned: wire pipeline for all face types (BuildSplitFaces + WireSplitter)
@@ -5575,8 +5642,12 @@ impl<'a> BooleanBuilder<'a> {
                         continue;
                     }
                 }
-                // Fall through to split_face if pipeline fails
+                // Fall through — split_face removed, skip face
             }
+            if debug_pipe && self.ds.faces[fi].face_info.has_any_interference() {
+                eprintln!("[PIPE] fi={} → WireSplitter returned None (skipping)", fi);
+            }
+            // SubFace fallback: split_face for faces where WireSplitter failed
             let sub_faces = self.split_face(fi);
             let face_split = sub_faces.len() > 1;
             let mut kept_subs: Vec<FaceSampleData> = Vec::new();
@@ -5681,14 +5752,10 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        // Process B faces against A solid
+        // Process B faces against A solid — ALL faces through WireSplitter path.
+        // SubFace (split_face) is REMOVED.
         for &fi in &b_faces {
-            // OCCT-aligned: wire pipeline for all face types (BuildSplitFaces + WireSplitter)
-            if std::env::var("RCAD_DEBUG_IC").is_ok() {
-                eprintln!("[B_FACE] fi={} sc_curves={}", fi, self.ds.faces[fi].face_info.curves_sc.len());
-            }
-            if self.ds.faces[fi].face_info.has_any_interference() {
-                if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
+            if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
                     if !wfs.is_empty() {
                         // OCCT: promote holes outside the other solid to independent faces
                         let wfs = promote_exterior_holes(wfs, &segments, self.ds, self.op, &a_faces);
@@ -5708,8 +5775,11 @@ impl<'a> BooleanBuilder<'a> {
                         continue;
                     }
                 }
-                // Fall through to split_face if pipeline fails
+                // Fall through — split_face removed, skip face
+            if debug_pipe && self.ds.faces[fi].face_info.has_any_interference() {
+                eprintln!("[PIPE] fi={} → WireSplitter returned None (skipping B-side)", fi);
             }
+            // SubFace fallback: split_face for faces where WireSplitter failed
             let sub_faces = self.split_face(fi);
             let face_split = sub_faces.len() > 1;
             let mut kept_subs: Vec<(FaceSampleData, Classification)> = Vec::new();
@@ -5785,8 +5855,7 @@ impl<'a> BooleanBuilder<'a> {
                                 let d_a = ao.dot(*an);
                                 let d_b = bp.origin.dot(bn);
                                 (d_a - d_b).abs() < 1e-6
-                            });
-                            if coplanar {
+                            });                            if coplanar {
                                 continue;
                             }
                         }
@@ -5806,8 +5875,7 @@ impl<'a> BooleanBuilder<'a> {
                                 let d_a = ao.dot(*an);
                                 let d_b = bp.origin.dot(bn);
                                 (d_a - d_b).abs() < 1e-6
-                            });
-                            if already_covered {
+                            });                            if already_covered {
                                 continue;
                             }
                         }
@@ -5913,6 +5981,16 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         let (mut brep, mut history) = result.build(matches!(self.op, BooleanOpType::Union));
+        // Check vertex count right after build (RCAD_DEBUG_SPHERE=1)
+        if std::env::var("RCAD_DEBUG_SPHERE").is_ok() {
+            let nv = brep.vertices.len();
+            let n_e_unique: usize = brep.solids.iter()
+                .flat_map(|s| &s.shells).flat_map(|sh| &sh.faces)
+                .flat_map(|f| f.outer_wire.edges.iter().chain(f.inner_wires.iter().flat_map(|w| &w.edges)))
+                .map(|we| we.idx).collect::<std::collections::BTreeSet<_>>().len();
+            eprintln!("[SPH_BUILD] nv={} n_edges={} n_faces={}", nv, n_e_unique,
+                brep.solids.iter().flat_map(|s| &s.shells).map(|sh| sh.faces.len()).sum::<usize>());
+        }
         if brep.solids[0].shells[0].faces.is_empty() {
             if matches!(self.op, BooleanOpType::Intersection | BooleanOpType::Difference) {
                 return Ok((BRep::default(), BooleanHistory::default()));
@@ -5930,14 +6008,24 @@ impl<'a> BooleanBuilder<'a> {
         //    鍥?face_origins 鏈殢鍚堝苟鏇存柊鑰屽け鏁?merge 浠庝腑闂寸Щ闄ら潰鍚庣储寮曞亸绉?
         //    truncate 涓嶈兘姝ｇ‘绉婚櫎瀵瑰簲 origin)銆?
         // (removed unify_same_domain_faces for OCCT alignment)
-            // Vertex dedup after face merge: merged faces may reference different vertex
-            // indices for the same 3D position (leftover from pre-merge face vertices).
+            // ✅ OCCT-aligned: merge vertices that differ only by numerical noise
+            // (< 1e-5) between the WireSplitter path (add_ds_vertex) and the
+            // SubFace path (add_vertex). Both paths resolve the same 3D position
+            // but may create different vertex indices due to intersection noise.
+            // Tolerance 1e-3 merges virtual deg-edge vertices with their canonical
+            // counterparts. build_draft_face creates wire segments that reference
+            // virtual vertex indices (>= ds.vertices.len()) for degenerate edges;
+            // add_vertex for these may create positions that differ from the
+            // canonical vertex by > 1e-4 but < 1e-3.
             let (deduped, _) = crate::brep_repair::merge_close_vertices(
                 &brep, crate::tolerance::TOLERANCE_ABS * 10000.0
             );
             brep = deduped;
             brep = crate::prune_unused_topology(brep);
             brep = crate::deduplicate_edges(brep);
+            if std::env::var("RCAD_DEBUG_SPHERE").is_ok() {
+                eprintln!("[SPH_MERGE] nv={}", brep.vertices.len());
+            }
 
         if std::env::var("RCAD_DEBUG_FACE_ORIGINS").is_ok() {
             for (fi, face) in brep.solids[0].shells[0].faces.iter().enumerate() {
@@ -6369,8 +6457,7 @@ impl<'a> BooleanBuilder<'a> {
                                         uv_domain: None, inner_wires: vec![],
                                         outer_circle_edges: vec![(inside_arc_pos, arc_curve_inner)],
                                         seam_edge: None, inner_wire_circle: None,
-                                    });
-                                }
+                                    });                                }
                                 annular_out = Some(out_subs);
                                 break;
                             }
@@ -6503,8 +6590,7 @@ impl<'a> BooleanBuilder<'a> {
                             // Vertical lines are always interior cut curves, not boundary curves.
                             false
                         })
-                    });
-                    if all_at_boundary {
+                    });                    if all_at_boundary {
                         let subs = self.tessellate_cylinder_face(face_idx);
                         return subs;
                     }
@@ -6569,17 +6655,14 @@ impl<'a> BooleanBuilder<'a> {
                                 let all_at_v_bnd = uvs.iter().all(|p| {
                                     (p.y - bnd_v_min).abs() < vb_tol
                                         || (p.y - bnd_v_max).abs() < vb_tol
-                                });
-                                // Also exclude phantom curves entirely outside the face V range
+                                });                                // Also exclude phantom curves entirely outside the face V range
                                 // (generated by infinite-surface intersection, e.g. cylinder 脳
                                 // box-bottom at z=0 producing a circle at V < face V_min).
                                 let all_outside_v = uvs.iter().all(|p| {
                                     p.y < bnd_v_min - vb_tol || p.y > bnd_v_max + vb_tol
-                                });
-                                !all_at_v_bnd && !all_outside_v
+                                });                                !all_at_v_bnd && !all_outside_v
                             })
-                        });
-                    if has_full_wrap {
+                        });                    if has_full_wrap {
                         return self.tessellate_cylinder_face_2d(face_idx, 32, 32);
                     }
 
@@ -6592,8 +6675,7 @@ impl<'a> BooleanBuilder<'a> {
                         self.find_pcurve_for_face(ci, face_idx).is_some_and(|pc| {
                             matches!(pc.inner(), Curve2d::BSpline(_) | Curve2d::Bezier(_))
                         })
-                    });
-                    if has_complex_curve {
+                    });                    if has_complex_curve {
                         return self.tessellate_cylinder_face_2d(face_idx, 32, 32);
                     }
                 }
@@ -6658,8 +6740,7 @@ impl<'a> BooleanBuilder<'a> {
                             let at_v_bot = (v_min_f - bnd_v_min).abs() <= vb_tol;
                             at_v_top || at_v_bot
                         })
-                    });
-                    if all_at_boundary {
+                    });                    if all_at_boundary {
                         return self.single_subface_from_whole_face(face_idx);
                     }
                 }
@@ -6750,8 +6831,7 @@ impl<'a> BooleanBuilder<'a> {
                     outer_circle_edges: vec![],
                     seam_edge: None,
             inner_wire_circle: None,
-                });
-            }
+                });            }
         }
         subs
     }
@@ -6826,8 +6906,7 @@ impl<'a> BooleanBuilder<'a> {
                 outer_circle_edges: vec![],
                 seam_edge: None,
             inner_wire_circle: None,
-            });
-        }
+            });        }
         subs
     }
 
@@ -6925,8 +7004,7 @@ impl<'a> BooleanBuilder<'a> {
                     outer_circle_edges: vec![],
                     seam_edge: None,
             inner_wire_circle: None,
-                });
-            }
+                });            }
         }
         subs
     }
@@ -7015,8 +7093,7 @@ impl<'a> BooleanBuilder<'a> {
                     outer_circle_edges: vec![],
                     seam_edge: None,
             inner_wire_circle: None,
-                });
-            }
+                });            }
         }
         subs
     }
@@ -7185,8 +7262,7 @@ impl<'a> BooleanBuilder<'a> {
                         (a - c0_2d).to_angle()
                             .partial_cmp(&(b - c0_2d).to_angle())
                             .unwrap_or(std::cmp::Ordering::Equal)
-                    });
-                    verts_2d.dedup_by(|a, b| (*a - *b).length() < TOLERANCE_ABS * 1000.0);
+                    });                    verts_2d.dedup_by(|a, b| (*a - *b).length() < TOLERANCE_ABS * 1000.0);
                     if verts_2d.len() >= 3 {
                         let cap_boundary: Vec<DVec3> = verts_2d.iter()
                             .map(|&uv| lift_to_3d(uv)).collect();
@@ -7313,8 +7389,7 @@ impl<'a> BooleanBuilder<'a> {
                                 replaced.extend_from_slice(&half[li..]);
                                 replaced.dedup_by(|a, b| {
                                     (*a - *b).length_squared() < on_circle_tol * on_circle_tol
-                                });
-                                next.push((replaced, all_wires));
+                                });                                next.push((replaced, all_wires));
                                 next_arc.push(Some((fi, rcad_kernel::geom::Curve3::Circle(circle.clone()))));
                             } else {
                                 next.push((half, all_wires));
@@ -7483,8 +7558,7 @@ impl<'a> BooleanBuilder<'a> {
                     }).collect();
                     let centroid_in_hole = hole_circles.iter().any(|&&(c, r)| {
                         (centroid_2d - c).length() < r
-                    });
-                    if centroid_in_hole && !boundary.is_empty() {
+                    });                    if centroid_in_hole && !boundary.is_empty() {
                         // Find the first boundary vertex outside every hole circle.
                         // boundary[0] can be on a circle boundary (crossing point), so
                         // use the OUTSIDE_TOL margin to exclude on-circle vertices.
@@ -7507,8 +7581,7 @@ impl<'a> BooleanBuilder<'a> {
                             planar_polygon_centroid(&boundary, face.normal)
                         } else { boundary.iter().copied().sum::<DVec3>() / boundary.len() as f64 };
                         c3d + face.normal * crate::tolerance::TOLERANCE_ABS * 10.0
-                    });
-                    eprintln!("SPLIT_POLY nverts={} centroid2d=({:.4},{:.4}) sample_override={} sample=({:.4},{:.4},{:.4})",
+                    });                    eprintln!("SPLIT_POLY nverts={} centroid2d=({:.4},{:.4}) sample_override={} sample=({:.4},{:.4},{:.4})",
                         poly_2d.len(), centroid_2d.x, centroid_2d.y,
                         sample_override.is_some(), samp.x, samp.y, samp.z);
                     if poly_2d.len() <= 15 {
@@ -8394,8 +8467,7 @@ impl<'a> BooleanBuilder<'a> {
                     let a_is_latitude = (a_v_max - a_v_min) <= TOLERANCE_COORD_SUB;
                     let b_is_latitude = (b_v_max - b_v_min) <= TOLERANCE_COORD_SUB;
                     a_is_latitude.cmp(&b_is_latitude)
-                });
-            }
+                });            }
         }
 
         // For Cone surfaces: clip trim polyline v-coordinates to the face's
@@ -8937,8 +9009,7 @@ impl<'a> BooleanBuilder<'a> {
             return Err(BooleanError::OpenShell {
                 orphan_edges,
                 over_shared_edges,
-            });
-        }
+            });        }
 
         Ok(())
     }
@@ -10443,8 +10514,7 @@ pub fn split_uv_polygon_at_seam(uv_polygon: &[DVec2], period: f64) -> Vec<Vec<DV
                 edge_idx: i,
                 intersection: DVec2::new(seam_u, intersection_v),
                 is_low_to_high,
-            });
-        }
+            });        }
     }
 
     if crossings.is_empty() {
@@ -12079,8 +12149,7 @@ pub fn detect_glue_faces(
                     face_b: idx_b,
                     match_quality,
                     shared_area: area_a.min(*area_b),
-                });
-            }
+                });            }
         }
     }
 
