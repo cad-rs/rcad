@@ -3831,11 +3831,48 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, fac
         }
     }
 
+    // [A1_DBG 3] SmartMap population summary
+    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() && face_idx == 0 {
+        let is_sphere = matches!(ds.faces[face_idx].surface, Surface3::Sphere(_));
+        eprintln!("[A1_DBG 3] SmartMap populated: face={}, is_sphere={}, num_vertices={}",
+            face_idx, is_sphere, smart_map.len());
+        let mut verts: Vec<usize> = smart_map.keys().copied().collect();
+        verts.sort();
+        for v in verts {
+            let infos = &smart_map[&v];
+            eprintln!("[A1_DBG 3]   v={}: {} entries — {:?}",
+                v, infos.len(),
+                infos.iter().map(|ei| (ei.seg_idx, ei.passed, ei.in_flag)).collect::<Vec<_>>());
+        }
+    }
+
     // OCCT-aligned: RefineAngles (BOPAlgo_WireSplitter_1.cxx L904-1028)
     refine_angles(&mut smart_map, segments, ds, face_idx);
 
     // OCCT-aligned: PerformShapesToAvoid (BOPAlgo_BuilderFace.cxx L152-235)
     let avoided = perform_shapes_to_avoid(&mut smart_map, segments);
+
+    // [A1_DBG 4] After PerformShapesToAvoid: what was removed
+    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() && face_idx == 0 {
+        let is_sphere = matches!(ds.faces[face_idx].surface, Surface3::Sphere(_));
+        if !avoided.is_empty() {
+            eprintln!("[A1_DBG 4] ShapesToAvoid removed: face={}, is_sphere={}, avoided={:?}",
+                face_idx, is_sphere, avoided);
+            for &seg_idx in &avoided {
+                let seg = &segments[seg_idx];
+                let src_str = match &seg.source {
+                    WireEdgeSource::DsEdge(ei) => format!("DsEdge({})", ei),
+                    WireEdgeSource::IntersectionCurve(ci) => format!("IC({})", ci),
+                    WireEdgeSource::SeamEdge => "Seam".to_string(),
+                };
+                eprintln!("[A1_DBG 4]   removed seg={}: src={}, fwd={}, start_v={}, end_v={}",
+                    seg_idx, src_str, seg.forward, seg.start_vertex, seg.end_vertex);
+            }
+        } else {
+            eprintln!("[A1_DBG 4] ShapesToAvoid removed nothing: face={}, is_sphere={}",
+                face_idx, is_sphere);
+        }
+    }
 
     // ✅ OCCT-aligned: SplitBlock (BOPAlgo_WireSplitter_1.cxx L331-358).
     //    For each vertex in the SmartMap, iterate outgoing unpassed EdgeInfo
@@ -4525,6 +4562,17 @@ fn walk_path_extract_wires(
             // ═══════════════════════════════════════════════════════════════
             if is_same_v && is_same_v_2d {
                 if is_sphere {
+                    // [A1_DBG 1] BEFORE suppression check: edge_seq state
+                    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() && face_idx == 0 {
+                        let all_edge_indices: Vec<usize> = edge_seq.iter().copied().collect();
+                        let smart_map_state: Vec<(usize, Vec<(usize, bool, bool)>)> = smart_map.iter().map(|(v, infos)| {
+                            (*v, infos.iter().map(|ei| (ei.seg_idx, ei.passed, ei.in_flag)).collect())
+                        }).collect();
+                        eprintln!("[A1_DBG 1] BEFORE sphere check: i={}, edge_seq_len={}, edge_seq={:?}, unpassed={}, smart_map={:?}",
+                            i, edge_seq.len(), all_edge_indices,
+                            smart_map.values().flat_map(|v| v.iter()).filter(|ei| !ei.passed).count(),
+                            smart_map_state);
+                    }
                     let unpassed_count = smart_map.values().flat_map(|v| v.iter()).filter(|ei| !ei.passed).count();
                     if unpassed_count > 0 {
                         if std::env::var("RCAD_DEBUG_IC").is_ok() && face_idx == 0 {
@@ -4537,6 +4585,22 @@ fn walk_path_extract_wires(
                     let wire = edge_seq.clone();
                     if std::env::var("RCAD_DEBUG_IC").is_ok() && face_idx == 0 {
                         eprintln!("[SPHERE_DONE] wire={:?} len={}", wire, wire.len());
+                    }
+                    // [A1_DBG 2] AFTER all-passed: final wire edges with source info
+                    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() && face_idx == 0 {
+                        let is_sphere_surf = matches!(ds.faces[face_idx].surface, Surface3::Sphere(_));
+                        eprintln!("[A1_DBG 2] AFTER sphere all-passed: face={}, wire_len={}, is_sphere={}",
+                            face_idx, wire.len(), is_sphere_surf);
+                        for (pos, &seg_idx) in wire.iter().enumerate() {
+                            let seg = &segments[seg_idx];
+                            let src_str = match &seg.source {
+                                WireEdgeSource::DsEdge(ei) => format!("DsEdge({})", ei),
+                                WireEdgeSource::IntersectionCurve(ci) => format!("IC({})", ci),
+                                WireEdgeSource::SeamEdge => "Seam".to_string(),
+                            };
+                            eprintln!("[A1_DBG 2]   wire[{}]: seg={}, src={}, fwd={}, start_v={}, end_v={}",
+                                pos, seg_idx, src_str, seg.forward, seg.start_vertex, seg.end_vertex);
+                        }
                     }
                     wires.push(wire);
                     return;

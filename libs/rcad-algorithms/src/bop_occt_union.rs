@@ -566,6 +566,9 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, B
     let (merged, _cnt) = crate::occt_merge_same_surface_faces(&result);
     result = merged;
 
+    // ✅ OCCT-aligned: per-face cylinder -> BSpline conversion before classify.
+    result = crate::convert_cylinder_sub_faces(result);
+
     // ── Phase 3: OCCT BuildSolid — classify after merge ──
     // ✅ OCCT-aligned: ClassifyFaces runs AFTER FillSameDomainFaces
     // (BOPAlgo_BOP::BuildShape L871-906)

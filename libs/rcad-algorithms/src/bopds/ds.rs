@@ -1087,15 +1087,24 @@ impl DS {
         // Shell images: flag shells whose faces have any split edges
         let n_shells: usize = brep.solids.iter().map(|s| s.shells.len()).sum();
         self.shell_images = vec![false; n_shells];
+        self.solid_images = vec![false; brep.solids.len()];
+
         let mut shi = 0usize;
-        for solid in &brep.solids {
-            for _shell in &solid.shells {
+        for (si, solid) in brep.solids.iter().enumerate() {
+            for shell in &solid.shells {
+                let shell_has_split = shell.faces.iter().any(|face| {
+                    Self::wire_has_split_edges(&face.outer_wire.edges, &self.my_images)
+                        || face.inner_wires.iter().any(|iw| {
+                            Self::wire_has_split_edges(&iw.edges, &self.my_images)
+                        })
+                });
+                self.shell_images[shi] = shell_has_split;
+                if shell_has_split {
+                    self.solid_images[si] = true;
+                }
                 shi += 1;
             }
         }
-
-        // Solid images: flag solids whose shells have any split edges
-        self.solid_images = vec![false; brep.solids.len()];
 
         let mut wi = 0usize;
         for solid in &brep.solids {
@@ -1140,6 +1149,15 @@ impl DS {
             }
         }
         if changed { Some(new_edges) } else { None }
+    }
+
+    /// Check if any edge in a wire has been split by the PaveFiller.
+    /// Used by `build_container_images` for shell/solid image computation.
+    fn wire_has_split_edges(
+        edges: &[WireEdge],
+        my_images: &[Vec<usize>],
+    ) -> bool {
+        edges.iter().any(|we| we.idx < my_images.len() && !my_images[we.idx].is_empty())
     }
 
     /// Get the Plane surface for a face (panics if face is not a plane).

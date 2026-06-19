@@ -730,6 +730,7 @@ impl<'a> BRepAlgoAPI_Common<'a> {
 
         // ✅ OCCT-aligned: FillImagesContainers — pre-build wire edge lists
         ds.build_container_images(&a);
+        ds.build_container_images(&b);
 
         // Build result
         let builder = BooleanBuilder::new(&ds, BooleanOpType::Intersection);
@@ -916,6 +917,10 @@ impl<'a> BRepAlgoAPI_Fuse<'a> {
             };
             filler.perform();
 
+            // ✅ OCCT-aligned: FillImagesContainers — pre-build wire edge lists
+            ds.build_container_images(&a);
+            ds.build_container_images(&b);
+
             let builder = BooleanBuilder::new(&ds, BooleanOpType::Union);
             if self.options.parallel {
                 builder.build_with_history_par()?
@@ -1084,6 +1089,10 @@ impl<'a> BRepAlgoAPI_Cut<'a> {
             _ => PaveFiller::new(&mut ds),
         };
         filler.perform();
+
+        // ✅ OCCT-aligned: FillImagesContainers — pre-build wire edge lists
+        ds.build_container_images(&a);
+        ds.build_container_images(&b);
 
         let builder = BooleanBuilder::new(&ds, BooleanOpType::Difference);
         let (brep, bool_history) = if self.options.parallel {
@@ -1260,6 +1269,10 @@ impl<'a> BRepAlgoAPI_Section<'a> {
             _ => PaveFiller::new(&mut ds),
         };
         filler.perform();
+
+        // ✅ OCCT-aligned: FillImagesContainers — pre-build wire edge lists
+        ds.build_container_images(&a);
+        ds.build_container_images(&b);
 
         // Extract intersection curves from DS
         let result = self.build_section_from_ds(&ds);

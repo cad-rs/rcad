@@ -2798,6 +2798,13 @@ fn finalize_boolean_result(r: BRep) -> BRep {
     let r = deduplicate_edges(r);
     // Topology optimization: merge coplanar faces, share edges, detect holes.
     let r = optimize_boolean_topology(r);
+    // Convert cylinder sub-faces to per-face BSpline surfaces.
+    // This allows promote_planar_surfaces to detect planar strips
+    // (cylinder wall segments between tangent generator lines) and
+    // convert them to Plane surfaces.
+    //
+    // OCCT ref: ShapeCustom_ConvertToBSpline + ShapeCustom_SweptToElementary
+    let r = convert_cylinder_sub_faces(r);
     // ✅ OCCT-aligned: promote planar BSpline -> Plane. OCCT's nurbsconvert creates
     //   planar BSpline surfaces, but boolean results use Plane surfaces
     //   (BRepClass3d_SolidClassifier requires exact Plane type).
@@ -3085,6 +3092,103 @@ pub(crate) fn promote_planar_surfaces(mut brep: BRep) -> BRep {
             }
         }
     }
+    brep
+}
+
+/// Convert cylinder sub-faces to per-face BSpline surfaces.
+///
+/// For faces whose surface type is Cylinder and have a face_surface_range
+/// (parametric trim domain), this creates a new BSpline surface that covers
+/// exactly the face's parametric range. This allows promote_planar_surfaces
+/// to then detect planar strips and convert them to Plane.
+///
+/// OCCT ref: ShapeCustom_ConvertToBSpline converts per-face surfaces from
+/// analytic to BSpline, then ShapeCustom_SweptToElementary detects planar strips.
+pub(crate) fn convert_cylinder_sub_faces(mut brep: BRep) -> BRep {
+    use rcad_kernel::geom::{Surface3, SurfaceEval, BSplineSurface};
+    use glam::DVec3;
+
+    // Inline clamped knot builder (mirrors `build_uniform_knots` in nurbs_convert.rs)
+    fn clamped_knots(n_ctrl: usize, degree: usize) -> Vec<f64> {
+        let n_segments = n_ctrl - degree;
+        let mut knots = vec![0.0f64; degree + 1];
+        for i in 1..n_segments {
+            knots.push(i as f64 / n_segments as f64);
+        }
+        knots.extend(vec![1.0f64; degree + 1]);
+        knots
+    }
+
+    let n_cyl_faces: usize = brep.geom.face_surface.iter()
+        .filter_map(|&si| si)
+        .filter(|&si| matches!(brep.geom.surfaces.get(si), Some(Surface3::Cylinder(_))))
+        .count();
+    if n_cyl_faces == 0 { return brep; }
+
+    // Collect (flat_idx, old_surface_idx, new_bspline_surface) triples
+    let mut replacements: Vec<(usize, usize, Surface3)> = Vec::new();
+    let mut flat_idx = 0usize;
+
+    for solid in &brep.solids {
+        for shell in &solid.shells {
+            for _face in &shell.faces {
+                if let Some(si) = brep.geom.face_surface.get(flat_idx).copied().flatten() {
+                    if let Some(Surface3::Cylinder(cyl)) = brep.geom.surfaces.get(si) {
+                        if let Some([u0, u1, v0, v1]) = brep.geom.face_surface_range.get(flat_idx).copied().flatten() {
+                            // Normalize angular range — OCCT handles both [0,2pi] and custom ranges
+                            let du = u1 - u0;
+                            let dv = v1 - v0;
+                            if du.abs() < 1e-12 || dv.abs() < 1e-12 { flat_idx += 1; continue; }
+
+                            // Sample the cylinder surface over the face's parametric domain.
+                            // Use n_u samples to capture curvature in u-direction,
+                            // linear (2 samples) in v-direction.
+                            let n_u = 8usize.max((du.abs() / (std::f64::consts::PI / 8.0)).ceil() as usize);
+                            let n_v = 2usize;
+
+                            let mut ctrl: Vec<Vec<DVec3>> = Vec::new();
+                            let mut w: Vec<Vec<f64>> = Vec::new();
+                            for i in 0..n_u {
+                                let u = u0 + du * i as f64 / (n_u - 1).max(1) as f64;
+                                let mut row = Vec::new();
+                                let mut wrow = Vec::new();
+                                for j in 0..n_v {
+                                    let v = v0 + dv * j as f64 / (n_v - 1).max(1) as f64;
+                                    row.push(cyl.point_at(u, v));
+                                    wrow.push(1.0);
+                                }
+                                ctrl.push(row);
+                                w.push(wrow);
+                            }
+
+                            let bspline = BSplineSurface {
+                                degree_u: 2.min(n_u - 1),
+                                degree_v: 1,
+                                knots_u: clamped_knots(n_u, 2.min(n_u - 1)),
+                                knots_v: clamped_knots(n_v, 1),
+                                control_points: ctrl,
+                                weights: w,
+                            };
+
+                            replacements.push((flat_idx, si, Surface3::BSpline(bspline)));
+                        }
+                    }
+                }
+                flat_idx += 1;
+            }
+        }
+    }
+
+    // Apply replacements: add new surfaces and remap face_surface entries
+    for (flat_idx, _old_si, new_surface) in &replacements {
+        brep.geom.surfaces.push(new_surface.clone());
+        brep.geom.face_surface[*flat_idx] = Some(brep.geom.surfaces.len() - 1);
+    }
+
+    if !replacements.is_empty() && std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+        eprintln!("[CYL_TO_BSPLINE] converted {} cylinder sub-faces to per-face BSpline", replacements.len());
+    }
+
     brep
 }
 
