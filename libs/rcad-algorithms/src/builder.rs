@@ -4028,6 +4028,28 @@ fn select_best_outgoing<'a>(
             }
         }
     }
+    // ✅ OCCT-aligned: on sphere faces, when incoming is an IC edge and
+    //    there are outgoing IC edges, prefer IC over seam edges.  OCCT's
+    //    SmartMap walking traverses the intersection boundary first, then
+    //    the seam separately — this produces 2 wires for a periodic surface.
+    //    Without this preference, the seam edge's angle can be smaller than
+    //    the IC edge's angle, causing the walk to traverse the seam first,
+    //    consuming all edges in one pass (bfuse_simple A1 sphere face).
+    if !incoming_is_boundary {
+        let internal_out: Vec<&&EdgeInfo> = candidates.iter().filter(|e| e.is_inside).collect();
+        if !internal_out.is_empty() {
+            // Prefer IC edges (is_inside=true) over boundary/seam edges
+            if internal_out.len() == 1 {
+                return Some(internal_out[0]);
+            }
+            // Multiple IC candidates: select by angle among IC only
+            return internal_out.iter().min_by(|a, b| {
+                let aa = clock_wise_angle(angle_in, a.angle);
+                let ab = clock_wise_angle(angle_in, b.angle);
+                aa.partial_cmp(&ab).unwrap_or(std::cmp::Ordering::Equal)
+            }).copied().copied();
+        }
+    }
     if candidates.len() == 1 {
         return Some(candidates[0]);
     }
