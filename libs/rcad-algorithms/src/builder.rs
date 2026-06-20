@@ -4948,7 +4948,24 @@ pub(crate) fn perform_areas(
             internal_wires: internal_wires.to_vec(),
         }];
     }
-    if holes.is_empty() { return growths.iter().map(|&g| WireFace { outer_wire: wires[g].clone(), inner_wires: vec![], internal_wires: internal_wires.to_vec() }).collect(); }
+    if holes.is_empty() {
+        // ✅ OCCT-aligned: for periodic surfaces (sphere), a single closed wire
+        // splits the surface into TWO regions.  OCCT BOPAlgo_BuilderFace::PerformAreas
+        // produces two faces: one for each side of the wire.  The complement face has
+        // the original boundary as a hole (inner wire).
+        if growths.len() == 1 && ds.faces.get(face_idx).map_or(false, |f| {
+            matches!(f.surface, Surface3::Sphere(_))
+        }) {
+            let boundary = wires[growths[0]].clone();
+            return vec![
+                // The closed loop itself — one side of the split
+                WireFace { outer_wire: boundary.clone(), inner_wires: vec![], internal_wires: internal_wires.to_vec() },
+                // The complement — same wire as a hole (the loop is the hole boundary)
+                WireFace { outer_wire: boundary.clone(), inner_wires: vec![boundary], internal_wires: vec![] },
+            ];
+        }
+        return growths.iter().map(|&g| WireFace { outer_wire: wires[g].clone(), inner_wires: vec![], internal_wires: internal_wires.to_vec() }).collect();
+    }
     // ✅ OCCT-aligned: full_wrap on sphere → holes go to it directly.
     if ds.faces.get(face_idx).map_or(false, |f| matches!(f.surface, Surface3::Sphere(_))) {
         if let Some(&fw) = growths.iter().find(|&&g| wds[g].full_wrap) {

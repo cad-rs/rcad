@@ -8250,7 +8250,14 @@ mod tests {
         make_box_brep, make_cone_brep, make_cylinder_brep, make_sphere_brep, make_torus_brep,
     };
 
-    fn box_at(x: f64, y: f64, z: f64, w: f64, h: f64, d: f64) -> BRep {
+    
+    /// Test fill_images_vertices with empty DS
+    fn test_fill_images_vertices_empty() {
+        let ds = crate::bopds::ds::DS::new_with_tol(1e-7);
+        let img = fill_images_vertices(&ds);
+        assert!(img.is_empty() || img.values().all(|v| !v.is_empty()));
+    }
+fn box_at(x: f64, y: f64, z: f64, w: f64, h: f64, d: f64) -> BRep {
         let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
             width: w,
             height: h,
