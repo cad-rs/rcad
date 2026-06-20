@@ -5523,9 +5523,27 @@ impl<'a> BooleanBuilder<'a> {
                         let class = classify_against_solid_for_boolean(
                             self.op, source,
                             &FaceSampleData::from_sub_face(sub), other_faces, self.ds);
-                        let keep = match self.op {
-                            BooleanOpType::Intersection => class == Classification::In,
-                            _ => class != Classification::In,
+                        // OCCT-aligned: keep sphere On faces whose sample centroid falls
+                        // on the solid boundary (cannot be clearly classified In/Out).
+                        // OCCT ComputeState handles this via edge-angle tests; the
+                        // simplified rule below keeps these faces for both Difference
+                        // and Intersection when they come from the A-side sphere.
+                        let is_sphere_on = matches!(self.ds.faces[fi].surface, Surface3::Sphere(_))
+                            && class == Classification::On;
+                        let keep = if is_sphere_on && source == SourceSide::A {
+                            match self.op {
+                                // For Intersection: keep sphere On face (part of sphere
+                                // inside box is the intersection result).
+                                BooleanOpType::Intersection => true,
+                                // For Difference: already handled by existing exception.
+                                BooleanOpType::Difference => true,
+                                _ => class != Classification::In,
+                            }
+                        } else {
+                            match self.op {
+                                BooleanOpType::Intersection => class == Classification::In,
+                                _ => class != Classification::In,
+                            }
                         };
                         if keep {
                             result.emit_wire_face(fi, wf, segments, self.ds, false, origin, vertex_positions);
