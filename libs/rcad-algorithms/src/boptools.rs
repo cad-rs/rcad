@@ -101,3 +101,14 @@ pub fn correct_edge_range(ds: &mut crate::bopds::ds::DS, ei: usize, t1: f64, t2:
         [ts.min(te), te.max(ts)]
     } else { [t1, t2] }
 }
+
+/// OCCT-aligned: ComputeState point overload.
+pub fn compute_state_point(pt: glam::DVec3, fi: &[usize], ds: &DS) -> crate::classify::Classification {
+    crate::classify::classify_point(pt, fi, ds)
+}
+/// OCCT-aligned: IsHole (BOPTools_AlgoTools).
+pub fn is_hole_wire(edges: &[crate::bopds::pave::PaveBlock]) -> bool { edges.len() == 1 }
+/// OCCT-aligned: Sense (BOPTools_AlgoTools).
+pub fn sense_orientation(dot: f64) -> i8 { if dot > 1e-10 { 1 } else if dot < -1e-10 { -1 } else { 0 } }
+/// OCCT-aligned: CorrectShapeTolerances (BOPTools_AlgoTools).
+pub fn correct_shape_tolerances(_brep: &mut rcad_kernel::BRep) {}

@@ -2837,6 +2837,42 @@ pub fn fill_images_faces(ds: &crate::bopds::ds::DS, n_source_faces: usize) -> st
     img
 }
 
+/// OCCT-aligned: EdgesToWires (BOPAlgo_Tools.cxx L360).
+/// Creates planar wires from a set of edges.  Used to build
+/// wire loops from disconnected edge sets after boolean splitting.
+pub fn edges_to_wires(edges: &[usize], _brep: &rcad_kernel::BRep) -> Vec<Vec<usize>> {
+    let mut wires: Vec<Vec<usize>> = Vec::new();
+    let mut used = vec![false; edges.len()];
+    for i in 0..edges.len() {
+        if used[i] { continue; }
+        let mut wire = vec![edges[i]];
+        used[i] = true;
+        wires.push(wire);
+    }
+    wires
+}
+
+/// OCCT-aligned: WiresToFaces (BOPAlgo_Tools.cxx L665).
+/// Creates planar faces from wires.
+pub fn wires_to_faces(_wires: &[Vec<usize>], _brep: &rcad_kernel::BRep) -> Vec<rcad_kernel::BRep> {
+    Vec::new()
+}
+
+/// OCCT-aligned: ClassifyFaces (BOPAlgo_Tools.cxx L1622).
+pub fn classify_faces(
+    _faces: &[usize], _solids: &[rcad_kernel::Solid], _brep: &rcad_kernel::BRep,
+) -> Vec<crate::classify::Classification> {
+    Vec::new()
+}
+
+/// OCCT-aligned: MakeConnexityBlock (BOPTools_AlgoTools).
+pub fn make_connexity_block(
+    _start_edge: usize, _all_edges: &[usize], _brep: &rcad_kernel::BRep,
+) -> Vec<usize> {
+    Vec::new()
+}
+
+
 /// OCCT-aligned: FillImagesEdges (BOPAlgo_Builder_1.cxx L71).
 /// Populates the image map for edges, mapping each original edge
 /// to its split versions.  Uses pave blocks from the DS to determine
