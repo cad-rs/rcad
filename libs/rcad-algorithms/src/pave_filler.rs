@@ -940,9 +940,11 @@ impl<'a> PaveFiller<'a> {
         //    2. L4269: RemovePaveBlocks(aMicroEdges) removes from DS
         //    rcad: before build_split_edges, remove zero-length segments in paves.
         self.correct_tolerance_of_se();
+        self.process_existing_pave_blocks();
         self.remove_micro_edges();
 
         self.build_split_edges();
+        self.fill_shrunk_data();
 
         // ✅ OCCT-aligned: BOPAlgo_Tools::PerformCommonBlocks — group coincident
         //    PaveBlocks (from different faces/edges) into CommonBlocks after all
