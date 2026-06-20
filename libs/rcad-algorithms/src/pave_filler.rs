@@ -830,6 +830,9 @@ impl<'a> PaveFiller<'a> {
             self.force_interf_ve();
         }
 
+        // OCCT-aligned: RefineFaceInfoIn — remove On-overlapping In pave blocks.
+        self.ds.refine_all_face_info();
+
         if !skip_ff {
             self.perform_ff();
 
@@ -883,6 +886,8 @@ impl<'a> PaveFiller<'a> {
         //    original shape have been intersected with each other.
         //    OCCT uses AddWarning — non-fatal, the operation continues.
         if let Err(msg) = self.check_self_interference() {
+        // OCCT-aligned: ReleasePaveBlocks — free unused pave block memory.
+        self.ds.pave_blocks.clear();
             eprintln!("[PAVEFILLER] {}", msg);
         }
 
@@ -941,6 +946,8 @@ impl<'a> PaveFiller<'a> {
         //    rcad: before build_split_edges, remove zero-length segments in paves.
         self.correct_tolerance_of_se();
         self.process_existing_pave_blocks();
+        // OCCT-aligned: RefineFaceInfoOn after MakeBlocks.
+        self.ds.refine_all_face_info();
         self.remove_micro_edges();
 
         self.build_split_edges();
