@@ -795,6 +795,8 @@ impl<'a> PaveFiller<'a> {
             // ✅ OCCT-aligned: RepeatIntersection (PaveFiller.cxx L296-299)
             //    After EF, before FF, re-run VV/VE/VF for vertices with increased tolerance.
             //    OCCT processes both EE and EF survivors (myIncreasedSS).
+            self.ds.update_pave_blocks_with_sd_vertices();
+            self.update_interfs_with_sd_vertices();
             let all_survivors: Vec<usize> = {
                 let mut v = ee_survivors.clone();
                 v.extend(&ef_survivors);
@@ -856,7 +858,9 @@ impl<'a> PaveFiller<'a> {
         //    and updates face_info.curves_sc + vertices_in from curve endpoints.
         //    ⏳ rcad: simplified; full OCCT PostTreatFF also handles SD vertices.
         self.post_treat_ff();
+        self.update_blocks_with_shared_vertices();
         self.put_se_in_other_faces();
+        self.make_pcurves();
         self.process_de();
         self.fill_shrunk_data();
         self.put_paves_on_curve();
