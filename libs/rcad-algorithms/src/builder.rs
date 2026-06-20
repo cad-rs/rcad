@@ -2665,7 +2665,25 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             segments.push(WireSegment {
                 start_vertex: sv, end_vertex: sv,
                 source: WireEdgeSource::DsEdge(ei), forward: true,
-                is_seam: true, second_pcurve: deg_pcurve, tangent_start: tangent.0, tangent_end: tangent.1,
+                is_seam: true, second_pcurve: deg_pcurve.clone(), tangent_start: tangent.0, tangent_end: tangent.1,
+            });
+            // ✅ OCCT-aligned: second WES entry for REVERSED orientation (BRep_Tool.cxx
+            //   L354-361: REVERSED → PCurve2).  The reversed segment has forward=false,
+            //   giving a reversed pcurve (origin swapped).  SmartMap sees the FWD+REV
+            //   pair as two distinct out-edges at the pole, enabling both walk directions.
+            let deg_pcurve_rev = match &deg_pcurve {
+                Some(Curve2d::Line(l)) => Some(Curve2d::Line(Line2d {
+                    origin: l.origin + l.direction,
+                    direction: -l.direction,
+                })),
+                _ => None,
+            };
+            segments.push(WireSegment {
+                start_vertex: sv, end_vertex: sv,
+                source: WireEdgeSource::DsEdge(ei), forward: false,
+                is_seam: true, second_pcurve: deg_pcurve_rev,
+                tangent_start: tangent.1.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+                tangent_end: tangent.0.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
             });        } else if is_seam && matches!(face.surface, Surface3::Sphere(_)) {
             // ✅ OCCT-aligned: myImages equivalent (BOPAlgo_Builder_2.cxx L364-449).
             //    If PaveFiller split this edge (pave_blocks > 1), use pave_blocks
@@ -3481,6 +3499,10 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
     let mut duplicate_segs: HashSet<usize> = HashSet::new();
     for (si, seg) in segments.iter().enumerate() {
         if avoided.contains(&si) { continue; } // OCCT: avoided edges not in WireSplitter input
+        // ✅ OCCT-aligned: degenerate self-loop seam edges (sphere pole) appear twice in
+        //   the WES (FORWARD+REVERSED) like any closed edge — not duplicates.  OCCT's
+        //   bIsClosed guard (L148: !bIsClosed) preserves the second entry in aMS.
+        if seg.is_seam && seg.start_vertex == seg.end_vertex { continue; }
         let variant = match &seg.source {
             WireEdgeSource::IntersectionCurve(ci) => (1u8, *ci),
             WireEdgeSource::DsEdge(ei) => (0u8, *ei),
@@ -3786,11 +3808,13 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, fac
 
         // OCCT SplitBlock L154-172: seam (closed) edges get BOTH forward
         // and reverse entries (L429-452); IC/boundary edges get 1 entry.
-        // OUT at start vertex: forward segs and seam reverse segs.
-        let add_out = seg.forward || seg.is_seam;
-        // IN at end vertex: only forward segs (reverse's IN is for the
-        // other vertex, which is covered by forward's OUT at that vertex).
-        let add_in = seg.forward;
+        // ✅ OCCT-aligned: SplitBlock L154-172 every edge's two vertices each get
+        //   one SmartMap entry: first vertex FORWARD→InFlag=false (OUT), second
+        //   vertex REVERSED→InFlag=true (IN).  ALL edges contribute exactly one
+        //   OUT at start_vertex and one IN at end_vertex, matching OCCT's
+        //   orientation-based per-vertex InFlag assignment.
+        let add_out = true;
+        let add_in = true;
 
         if add_out {
             if let Some(angle) = seg.tangent_start {
@@ -4629,10 +4653,15 @@ fn walk_path_extract_wires(
                 //   degenerated edge.
                 if segment.start_vertex == segment.end_vertex {
                     // ✅ OCCT-aligned: sphere degenerated edge's pcurve is a Line at
-                    //   V=V_pole spanning U=0→2π, stored in second_pcurve.  Coord2d
-                    //   evaluates it for both SmartMap entries: at_start (native U=0)
-                    //   and at_end (shifted U=2π), matching OCCT per-edge pcurve
-                    //   (WireSplitter_1.cxx L663-674, BRep_Tool.cxx L354-361).
+                    //   V=V_pole spanning U=0→2π, stored in second_pcurve.  The OUT
+                    //   (at_start) gives the shifted side (U=2π) so the IN (at_end)
+                    //   lands at U=0, matching the forward seam's arrival U at the
+                    //   pole.  This ensures aPb=0 passes the 2D candidate filter
+                    //   against other edges (all at U=0 via world_to_uv at the pole).
+                    // ✅ OCCT-aligned: FWD deg (forward=true) → at_start → PCurve (U=0);
+                    //   REV deg (forward=false) → at_start → PCurve2 (U=2π) via the
+                    //   reversed pcurve; vertex_uv for forward=false picks l.origin
+                    //   which maps to the shifted side.  (BRep_Tool.cxx L354-361)
                     match &segment.second_pcurve {
                         Some(Curve2d::Line(l)) => {
                             Some(if at_start { l.origin } else { l.origin + l.direction })
@@ -4640,8 +4669,8 @@ fn walk_path_extract_wires(
                         _ => {
                             let uv = world_to_uv(face_surface, ds.vertices[vi].point)
                                 .unwrap_or(DVec2::ZERO);
-                            Some(if at_start { DVec2::new(std::f64::consts::TAU, uv.y) }
-                                     else { DVec2::new(0.0, uv.y) })
+                            Some(if at_start { DVec2::new(0.0, uv.y) }
+                                     else { DVec2::new(std::f64::consts::TAU, uv.y) })
                         }
                     }
                 } else {
@@ -4923,12 +4952,28 @@ fn walk_path_extract_wires(
 
         // OCCT L551-555: no way to go → error, return
         if i_cnt == 0 {
+            if std::env::var("RCAD_DEBUG_IC").is_ok() && matches!(ds.faces[face_idx].surface, Surface3::Sphere(_)) {
+                eprintln!("[NO_OUT] sphere fi={} at_v={} ci={} edge_seq.len={} max_iter={}",
+                    face_idx, arrived_vertex, ci, edge_seq.len(), max_iter);
+                // Dump all EdgeInfo at this vertex to see why no OUT candidates
+                if let Some(infos) = smart_map.get(&arrived_vertex) {
+                    for ei in infos {
+                        eprintln!("[NO_OUT]   seg={} passed={} in={} inside={}",
+                            ei.seg_idx, ei.passed, ei.in_flag, ei.is_inside);
+                    }
+                }
+            }
             return;
         }
 
         // OCCT L557-562: the one and only way to go out
         if i_cnt == 1 {
             let best = raw_candidates[0];
+            if std::env::var("RCAD_DEBUG_IC").is_ok() && matches!(ds.faces[face_idx].surface, Surface3::Sphere(_)) {
+                let cuv = vertex_uv(arrived_vertex, &segments[best.seg_idx], true).unwrap_or(DVec2::ZERO);
+                eprintln!("[SINGLE] sphere fi={} at_v={} single_ci={} to_v={} cand_UV=({:.6},{:.6})",
+                    face_idx, arrived_vertex, best.seg_idx, segments[best.seg_idx].end_vertex, cuv.x, cuv.y);
+            }
             current_vertex = arrived_vertex;
             ci = best.seg_idx;
             arrived_vertex = segments[ci].end_vertex;
@@ -4942,6 +4987,9 @@ fn walk_path_extract_wires(
         // parametric side (e.g. U≈0 vs U≈2π) are rejected.
         let b_is_closed = is_vert_closed(smart_map, arrived_vertex);
         let a_pb = vertex_uv(arrived_vertex, &segments[ci], false).unwrap_or(DVec2::ZERO);
+        // Save raw candidate data for diagnostic before the filter consumes the vec.
+        let raw_cand_count = raw_candidates.len();
+        let raw_cand_snap: Vec<(usize, bool)> = raw_candidates.iter().map(|ei| (ei.seg_idx, ei.passed)).collect();
         let candidates: Vec<&EdgeInfo> = if b_is_closed {
             let a_tol_2d_sq = {
                 let tol = uv_tolerance(arrived_vertex);
@@ -4961,6 +5009,19 @@ fn walk_path_extract_wires(
 
         // OCCT L582: if 2D distance filtered all candidates, return
         if candidates.is_empty() {
+            if std::env::var("RCAD_DEBUG_IC").is_ok() && matches!(ds.faces[face_idx].surface, Surface3::Sphere(_)) {
+                let tol_sq = { let t = uv_tolerance(arrived_vertex); t*t };
+                eprintln!("[CAND_FILTER] sphere fi={}: {} raw filtered at v={} ci={}",
+                    face_idx, raw_cand_count, arrived_vertex, ci);
+                eprintln!("[CAND_FILTER] a_pb=({:.6},{:.6}) b_is_closed={} tol2={:.3e}",
+                    a_pb.x, a_pb.y, b_is_closed, tol_sq);
+                for &(si, _) in &raw_cand_snap {
+                    let cuv = vertex_uv(arrived_vertex, &segments[si], true).unwrap_or(DVec2::ZERO);
+                    let d2 = cuv.distance_squared(a_pb);
+                    eprintln!("[CAND_FILTER]   seg={} UV=({:.6},{:.6}) d2={:.3e}",
+                        si, cuv.x, cuv.y, d2);
+                }
+            }
             return;
         }
 
