@@ -3590,8 +3590,14 @@ impl<'a> PaveFiller<'a> {
         };
 
         // ✅ OCCT-aligned: BSpline → Plane demotion — infer plane from boundary vertices, bypassing BSpline control point detection.
+        //    When demoting, also update the DS surface so that subsequent operations
+        //    (e.g. handle_coplanar_faces calling face_plane()) use the correct Plane
+        //    surface instead of panicking on the unpromoted BSpline.
+        //    OCCT BOPAlgo_PaveFiller never stores BSpline surfaces for planar geometry.
         let maybe_plane1 = match &s1 { Surface3::BSpline(_) | Surface3::Bezier(_) => self.demote_to_plane(f1), _ => None };
         let maybe_plane2 = match &s2 { Surface3::BSpline(_) | Surface3::Bezier(_) => self.demote_to_plane(f2), _ => None };
+        if let Some(pl) = maybe_plane1 { self.ds.faces[f1].surface = Surface3::Plane(pl); }
+        if let Some(pl) = maybe_plane2 { self.ds.faces[f2].surface = Surface3::Plane(pl); }
         let s1 = maybe_plane1.map_or(s1, |pl| Surface3::Plane(pl));
         let s2 = maybe_plane2.map_or(s2, |pl| Surface3::Plane(pl));
 
