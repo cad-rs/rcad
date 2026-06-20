@@ -4587,14 +4587,42 @@ fn walk_path_extract_wires(
                 //   U circle at Vpole — exactly matching OCCT's pcurve for a sphere
                 //   degenerated edge.
                 if segment.start_vertex == segment.end_vertex && segment.forward {
-                    // Degenerate pole edge: spans full U circle at pole V.
+                    // ✅ OCCT-aligned: degenerate pole edge's pcurve spans from the
+                    //   adjacent IC's endpoint U to the seam U (0 or TAU).  Scan the
+                    //   face's ICs to find which one connects to this pole vertex.
                     let uv_base = world_to_uv(face_surface, ds.vertices[vi].point)
                         .unwrap_or(DVec2::ZERO);
-                    let period = std::f64::consts::TAU;
+                    let pole_pt = ds.vertices[vi].point;
+                    let tol_sq = TOLERANCE_ABS_SQ * 1_000_000.0;
+                    let ic_u_opt = ds.faces.get(face_idx).and_then(|f| {
+                        f.face_info.curves_sc_only().iter().find_map(|&ci| {
+                            let ic = &ds.intersection_curves[ci];
+                            // Check if either IC endpoint is at this pole vertex.
+                            let at_start = ds.vertices[ic.start_vertex].point.distance_squared(pole_pt) <= tol_sq;
+                            let at_end = ds.vertices[ic.end_vertex].point.distance_squared(pole_pt) <= tol_sq;
+                            if !at_start && !at_end { return None; }
+                            let t = if at_start { ic.t_range[0] } else { ic.t_range[1] };
+                            let pc = ic.pcurve_on_a.as_ref().or(ic.pcurve_on_b.as_ref())?;
+                            Some(pc.point_at(t))
+                        })
+                    });
+                    let (seam_u, deg_end_u) = match ic_u_opt {
+                        Some(ic_uv) => {
+                            // Deg edge: at_start = IC endpoint U, at_end = seam opposite side.
+                            // Seam is at U=0; the shifted side is U=TAU.
+                            let is_on_native_side = ic_uv.x >= -0.01 && ic_uv.x <= std::f64::consts::PI + 0.01;
+                            let end_u = if is_on_native_side { 0.0 } else { std::f64::consts::TAU };
+                            (ic_uv.x, end_u)
+                        }
+                        None => {
+                            // No IC found at pole: fallback to full span.
+                            (0.0, std::f64::consts::TAU)
+                        }
+                    };
                     Some(if at_start {
-                        DVec2::new(period, uv_base.y)  // shifted-side U (match OCCT DEB)
+                        DVec2::new(deg_end_u, uv_base.y)  // toward seam side
                     } else {
-                        DVec2::new(0.0, uv_base.y)     // native U
+                        DVec2::new(seam_u, uv_base.y)     // from IC side (arrival)
                     })
                 } else {
                     match (segment.forward, &segment.second_pcurve) {
