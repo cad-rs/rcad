@@ -3175,6 +3175,7 @@ impl<'a> PaveFiller<'a> {
                             t_range: [t_min, t_max],
                             pcurve_on_a: Some(pca),
                             pcurve_on_b: Some(pcb),
+                            geom_tol: crate::tolerance::TOLERANCE_ABS,
                         });
 
                         self.ds.interferences.push(Interference::FaceFace {
@@ -3233,6 +3234,7 @@ impl<'a> PaveFiller<'a> {
                         t_range: [0.0, len],
                         pcurve_on_a: Some(pca),
                         pcurve_on_b: Some(pcb),
+                        geom_tol: crate::tolerance::TOLERANCE_ABS,
                     });
 
                     self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -3497,6 +3499,7 @@ impl<'a> PaveFiller<'a> {
                     t_range: [effective_t0, effective_t1],
                     pcurve_on_a,
                     pcurve_on_b,
+                    geom_tol: crate::tolerance::TOLERANCE_ABS,
                 });
 
                 self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -3585,6 +3588,7 @@ impl<'a> PaveFiller<'a> {
             t_range: [0.0, TAU],
             pcurve_on_a: Some(pcurve_a),
             pcurve_on_b: Some(pcurve_b),
+            geom_tol: crate::tolerance::TOLERANCE_ABS,
         });
 
         self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -3649,6 +3653,7 @@ impl<'a> PaveFiller<'a> {
                     t_range: [0.0, TAU],
                     pcurve_on_a,
                     pcurve_on_b,
+                    geom_tol: crate::tolerance::TOLERANCE_ABS,
                 });
                 ds.faces[f1].face_info.curves_sc.insert(curve_idx);
                 ds.faces[f2].face_info.curves_sc.insert(curve_idx);
@@ -3726,6 +3731,7 @@ impl<'a> PaveFiller<'a> {
                         t_range: [0.0, 1.0],
                         pcurve_on_a: polyline_pcurve_by_projection(&branch, &s1),
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
+                        geom_tol: crate::tolerance::TOLERANCE_ABS,
                     });
                     curve_indices.push(ci);
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
@@ -3801,6 +3807,7 @@ impl<'a> PaveFiller<'a> {
                     t_range: [0.0, TAU],
                     pcurve_on_a,
                     pcurve_on_b,
+                    geom_tol: crate::tolerance::TOLERANCE_ABS,
                 });
                 ds.faces[f1].face_info.curves_sc.insert(ci);
                 ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -3832,6 +3839,7 @@ impl<'a> PaveFiller<'a> {
                 t_range,
                 pcurve_on_a,
                 pcurve_on_b,
+                geom_tol: crate::tolerance::TOLERANCE_ABS,
             });
             ds.faces[f1].face_info.curves_sc.insert(ci);
             ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -3871,6 +3879,7 @@ impl<'a> PaveFiller<'a> {
                 t_range: [0.0, TAU],
                 pcurve_on_a,
                 pcurve_on_b,
+                geom_tol: crate::tolerance::TOLERANCE_ABS,
             });
             ds.faces[f1].face_info.curves_sc.insert(ci);
             ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -3989,6 +3998,7 @@ impl<'a> PaveFiller<'a> {
                         }),
                         polyline: pts, start_vertex: v_start, end_vertex: v_end,
                         t_range: [0.0, 1.0], pcurve_on_a: pca, pcurve_on_b: pcb,
+                        geom_tol: crate::tolerance::TOLERANCE_ABS,
                     });
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
                     self.ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -4089,6 +4099,7 @@ impl<'a> PaveFiller<'a> {
                         t_range: [0.0, 1.0],
                         pcurve_on_a: polyline_pcurve_by_projection(&branch, &s1),
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
+                        geom_tol: crate::tolerance::TOLERANCE_ABS,
                     });
                     curve_indices.push(ci);
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
@@ -4193,6 +4204,7 @@ impl<'a> PaveFiller<'a> {
                 t_range,
                 pcurve_on_a,
                 pcurve_on_b,
+                geom_tol: crate::tolerance::TOLERANCE_ABS,
             });
             ds.faces[f1].face_info.curves_sc.insert(curve_idx);
             ds.faces[f2].face_info.curves_sc.insert(curve_idx);
@@ -4506,6 +4518,7 @@ impl<'a> PaveFiller<'a> {
                 t_range,
                 pcurve_on_a,
                 pcurve_on_b,
+                geom_tol: crate::tolerance::TOLERANCE_ABS,
             });
             ds.faces[f1].face_info.curves_sc.insert(ci);
             ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -4745,6 +4758,7 @@ impl<'a> PaveFiller<'a> {
                         t_range: [0.0, 1.0],
                         pcurve_on_a: polyline_pcurve_by_projection(&branch, &s1),
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
+                        geom_tol: crate::tolerance::TOLERANCE_ABS,
                     });
                     curve_indices.push(ci);
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
@@ -4792,6 +4806,7 @@ impl<'a> PaveFiller<'a> {
                         t_range: [0.0, 1.0],
                         pcurve_on_a: polyline_pcurve_by_projection(&branch, &s1),
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
+                        geom_tol: crate::tolerance::TOLERANCE_ABS,
                     });
                     curve_indices.push(ci);
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
@@ -4828,6 +4843,7 @@ impl<'a> PaveFiller<'a> {
                     t_range: [0.0, TAU],
                     pcurve_on_a: pca,
                     pcurve_on_b: pcb,
+                    geom_tol: crate::tolerance::TOLERANCE_ABS,
                 });
                 self.ds.faces[f1].face_info.curves_sc.insert(ci);
                 self.ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -4863,6 +4879,7 @@ impl<'a> PaveFiller<'a> {
                         t_range: [0.0, TAU],
                         pcurve_on_a: pca,
                         pcurve_on_b: pcb,
+                        geom_tol: crate::tolerance::TOLERANCE_ABS,
                     });
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
                     self.ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -4953,6 +4970,7 @@ impl<'a> PaveFiller<'a> {
                         t_range: [0.0, 1.0],
                         pcurve_on_a: polyline_pcurve_by_projection(&branch, &s1),
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
+                        geom_tol: crate::tolerance::TOLERANCE_ABS,
                     });
                     curve_indices.push(ci);
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
@@ -4989,6 +5007,7 @@ impl<'a> PaveFiller<'a> {
                     t_range: [0.0, TAU],
                     pcurve_on_a: pca,
                     pcurve_on_b: pcb,
+                    geom_tol: crate::tolerance::TOLERANCE_ABS,
                 });
                 self.ds.faces[f1].face_info.curves_sc.insert(ci);
                 self.ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -5056,6 +5075,7 @@ impl<'a> PaveFiller<'a> {
                                 t_range: [t0, t1],
                                 pcurve_on_a: pca.clone(),
                                 pcurve_on_b: pcb.clone(),
+                                geom_tol: crate::tolerance::TOLERANCE_ABS,
                             });
 
                             self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -5092,6 +5112,7 @@ impl<'a> PaveFiller<'a> {
                             t_range: [0.0, std::f64::consts::TAU],
                             pcurve_on_a: pca,
                             pcurve_on_b: pcb,
+                            geom_tol: crate::tolerance::TOLERANCE_ABS,
                         });
 
                         self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -5141,6 +5162,7 @@ impl<'a> PaveFiller<'a> {
                         t_range: [0.0, arc_len.max(TOLERANCE_LINEAR_ULTRA_STRICT)],
                         pcurve_on_a: pca,
                         pcurve_on_b: pcb,
+                        geom_tol: crate::tolerance::TOLERANCE_ABS,
                     });
 
                     self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -5193,6 +5215,7 @@ impl<'a> PaveFiller<'a> {
                         t_range: [0.0, std::f64::consts::TAU],
                         pcurve_on_a: pca,
                         pcurve_on_b: pcb,
+                        geom_tol: crate::tolerance::TOLERANCE_ABS,
                     });
 
                     self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -5246,6 +5269,7 @@ impl<'a> PaveFiller<'a> {
                         t_range: [-extent, extent],
                         pcurve_on_a: pca,
                         pcurve_on_b: pcb,
+                        geom_tol: crate::tolerance::TOLERANCE_ABS,
                     });
 
                     self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -5302,6 +5326,7 @@ impl<'a> PaveFiller<'a> {
                         t_range: [0.0, arc_len.max(TOLERANCE_LINEAR_ULTRA_STRICT)],
                         pcurve_on_a: pca,
                         pcurve_on_b: pcb,
+                        geom_tol: crate::tolerance::TOLERANCE_ABS,
                     });
 
                     self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -5440,6 +5465,7 @@ impl<'a> PaveFiller<'a> {
                     t_range: [0.0, TAU],
                     pcurve_on_a: pca,
                     pcurve_on_b: pcb,
+                    geom_tol: crate::tolerance::TOLERANCE_ABS,
                 });
                 self.ds.faces[f1].face_info.curves_sc.insert(ci);
                 self.ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -5473,6 +5499,7 @@ impl<'a> PaveFiller<'a> {
                         t_range: [0.0, TAU],
                         pcurve_on_a: pca,
                         pcurve_on_b: pcb,
+                        geom_tol: crate::tolerance::TOLERANCE_ABS,
                     });
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
                     self.ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -5519,6 +5546,7 @@ impl<'a> PaveFiller<'a> {
                         t_range: [0.0, 1.0],
                         pcurve_on_a: polyline_pcurve_by_projection(&branch, &s1),
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
+                        geom_tol: crate::tolerance::TOLERANCE_ABS,
                     });
                     curve_indices.push(ci);
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
@@ -5640,6 +5668,7 @@ impl<'a> PaveFiller<'a> {
                 t_range: [0.0, arc_len.max(TOLERANCE_LINEAR_ULTRA_STRICT)],
                 pcurve_on_a: pcurve_a,
                 pcurve_on_b: pcurve_b,
+                geom_tol: crate::tolerance::TOLERANCE_ABS,
             });
 
             self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -5865,6 +5894,7 @@ impl<'a> PaveFiller<'a> {
                 t_range,
                 pcurve_on_a: pcurve_a,
                 pcurve_on_b: pcurve_b,
+                geom_tol: crate::tolerance::TOLERANCE_ABS,
             });
 
             self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -6391,6 +6421,7 @@ impl<'a> PaveFiller<'a> {
                     t_range: [p_prev, p_cur],
                     pcurve_on_a: act.pca.clone(),
                     pcurve_on_b: act.pcb.clone(),
+                    geom_tol: crate::tolerance::TOLERANCE_ABS,
                 });
                 new_curves_info.push((act.old_ci, new_ci));
 

@@ -856,7 +856,7 @@ pub(crate) fn fuse_with_history_par_bvh(
     pave_fill(&mut ds, a, b, use_bvh);
     validate_ds_invariants(&ds)?;
     let builder = builder::BooleanBuilder::new(&ds, BooleanOpType::Union);
-    let (brep, hist) = builder.build_with_history_par()?;
+    let (brep, hist) = builder.build_with_history()?;
     validate_union_brep_output("union: result failed checks after build (history par)", &brep)?;
     Ok((brep, hist))
 }

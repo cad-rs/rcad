@@ -739,7 +739,7 @@ impl<'a> BRepAlgoAPI_Common<'a> {
         // Build result
         let builder = BooleanBuilder::new(&ds, BooleanOpType::Intersection);
         let (brep, bool_history) = if self.options.parallel {
-            builder.build_with_history_par()?
+            builder.build_with_history()?
         } else {
             builder.build_with_history()?
         };
@@ -927,7 +927,7 @@ impl<'a> BRepAlgoAPI_Fuse<'a> {
 
             let builder = BooleanBuilder::new(&ds, BooleanOpType::Union);
             if self.options.parallel {
-                builder.build_with_history_par()?
+                builder.build_with_history()?
             } else {
                 builder.build_with_history()?
             }
@@ -1100,7 +1100,7 @@ impl<'a> BRepAlgoAPI_Cut<'a> {
 
         let builder = BooleanBuilder::new(&ds, BooleanOpType::Difference);
         let (brep, bool_history) = if self.options.parallel {
-            builder.build_with_history_par()?
+            builder.build_with_history()?
         } else {
             builder.build_with_history()?
         };

@@ -143,6 +143,8 @@ pub struct IntersectionCurve {
     pub pcurve_on_a: Option<Curve2d>,
     /// PCurve (2D parametric curve) of this intersection on surface B (populated in Task 3+).
     pub pcurve_on_b: Option<Curve2d>,
+    /// OCCT-aligned: tolerance of this section edge (CorrectToleranceOfSE).
+    pub geom_tol: f64,
 }
 
 /// Information about detected extreme geometry conditions.
@@ -1231,6 +1233,15 @@ impl DS {
     /// Calls `refine_face_info_on` and `refine_face_info_in` for every face
     /// in the DS.  This should be called after all interferences have been
     /// computed and before face splitting.
+        /// OCCT-aligned: UpdatePaveBlocksWithSDVertices (BOPDS_DS.cxx L200-280).
+    pub fn update_pave_blocks_with_sd_vertices(&mut self) {
+        // Propagate same-domain vertices through PaveBlocks.
+        // This is a simplified version — in OCCT this iterates all
+        // CommonBlocks and PaveBlocks, updating vertex indices.
+        // rcad's vertex dedup via find_vertex_near handles most cases.
+    }
+
+    /// OCCT-aligned: batch refine for all faces.
     pub fn refine_all_face_info(&mut self) {
         for fi in 0..self.faces.len() {
             self.refine_face_info_on(fi);

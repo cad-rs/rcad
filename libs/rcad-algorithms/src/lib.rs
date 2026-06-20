@@ -4521,7 +4521,7 @@ pub fn boolean_op_par(
     filler.perform();
     ds.build_container_images(a);
     let builder = builder::BooleanBuilder::new(&ds, op);
-    builder.build_with_history_par()
+    builder.build_with_history()
 }
 
 /// Check if any solid in the BRep has at least one face (deep check across all solids).

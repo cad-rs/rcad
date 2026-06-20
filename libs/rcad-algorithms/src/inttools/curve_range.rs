@@ -62,60 +62,49 @@ fn curve_resolution(curve: &Curve3, t: f64, tol: f64) -> f64 {
 /// # Returns
 /// * `Some([t_start, t_end])` - Valid shrunk range where t_start < t_end
 /// * `None` - Micro-edge; the entire range is covered by tolerance spheres
-pub fn shrunk_range(
-    curve: &Curve3,
-    t_range: [f64; 2],
-    v1_tol: f64,
-    v2_tol: f64,
-    edge_tol: f64,
-) -> Option<[f64; 2]> {
-    let [t1, t2] = t_range;
+use glam::DVec3;
 
-    // Step 1: Check for degenerate range
-    // OCCT IntTools_ShrunkRange L117-120:
-    //   if (myT2 - myT1 < aPDTol) return;  // aPDTol = Precision::PConfusion() = 1e-12
-    if (t2 - t1).abs() < 1e-12 {
-        return None;
+/// Step along curve, return first parameter outside tolerance sphere.
+fn find_nearest_valid_point(curve: &Curve3, t_start: f64, t_end: f64, center: DVec3, tol: f64, step: f64) -> Option<f64> {
+    let tol_sq = tol * tol;
+    let mut t = t_start;
+    let dir = if t_end > t_start { 1.0 } else { -1.0 };
+    while (t - t_start).signum() == (t_end - t_start).signum() {
+        if (curve.point_at(t) - center).length_squared() >= tol_sq {
+            let mut lo = if dir > 0.0 { t - step } else { t + step };
+            let mut hi = t;
+            for _ in 0..12 { let mid = (lo+hi)*0.5;
+                if (curve.point_at(mid)-center).length_squared() >= tol_sq { hi = mid; } else { lo = mid; } }
+            return Some(hi);
+        }
+        t += step * dir;
     }
-
-    // Step 2: Adjust vertex tolerances
-    // OCCT IntTools_ShrunkRange L129-142:
-    //   if (aTolV < aTolE) aTolV = aTolE;
-    //   aTolV += aDTol;  // aDTol = Precision::Confusion() = 1e-7
-    let confusion = 1e-7; // Precision::Confusion()
-    let a_tol_v1 = v1_tol.max(edge_tol) + confusion;
-    let a_tol_v2 = v2_tol.max(edge_tol) + confusion;
-
-    // Step 3: Compute curve resolution at each endpoint
-    // OCCT BRepLib_1.cxx L61:
-    //   aStep = theCurve.Resolution(theTol) * 1.01;
-    // Use curve_resolution (tol / tangent_speed) at the endpoint parameters.
-    // This approximates the minimal parameter step needed to move a_tol_V distance
-    // along the curve at the vertex location.
-    let res1 = curve_resolution(curve, t1, a_tol_v1);
-    let res2 = curve_resolution(curve, t2, a_tol_v2);
-
-    // Step 4: Compute shrunk range [ts1, ts2]
-    // OCCT BRepLib::FindValidRange returns theFirst/theLast via stepping + bisection.
-    // Here we use the first-order approximation:
-    //   ts1 = t1 + resolution_at_t1
-    //   ts2 = t2 - resolution_at_t2
-    let ts1 = t1 + res1;
-    let ts2 = t2 - res2;
-
-    // Step 5: Validate the shrunk range
-    // OCCT BRepLib::FindValidRange L251-254:
-    //   if (theFirst > theLast) → not valid (overlapping tolerance spheres)
-    // OCCT IntTools_ShrunkRange L152-155:
-    //   if ((myTS2 - myTS1) < aPDTol) → micro edge
-    if ts1 >= ts2 || (ts2 - ts1) < 1e-12 {
-        return None;
-    }
-
-    Some([ts1, ts2])
+    None
 }
 
-#[cfg(test)]
+pub fn shrunk_range(
+    curve: &Curve3, t_range: [f64; 2], v1_tol: f64, v2_tol: f64, edge_tol: f64,
+) -> Option<[f64; 2]> {
+    let [t1, t2] = t_range;
+    if (t2 - t1).abs() < 1e-12 { return None; }
+    let confusion = 1e-7;
+    let a_tol_v1 = v1_tol.max(edge_tol) + confusion;
+    let a_tol_v2 = v2_tol.max(edge_tol) + confusion;
+    let step1 = curve_resolution(curve, t1, a_tol_v1) * 0.1;
+    let step2 = curve_resolution(curve, t2, a_tol_v2) * 0.1;
+    let p1 = curve.point_at(t1);
+    let p2 = curve.point_at(t2);
+    let ts1 = find_nearest_valid_point(curve, t1, t2, p1, a_tol_v1, step1);
+    let ts2 = find_nearest_valid_point(curve, t2, t1, p2, a_tol_v2, step2);
+    let (the_first, the_last) = match (ts1, ts2) {
+        (Some(f), Some(l)) => (f, l), (Some(f), None) => (f, t2),
+        (None, Some(l)) => (t1, l), (None, None) => return None,
+    };
+    if the_first >= the_last || (the_last - the_first) < 1e-12 { return None; }
+    Some([the_first, the_last])
+}
+
+#[cfg(test)]#[cfg(test)]
 mod tests {
     use super::*;
     use glam::DVec3;

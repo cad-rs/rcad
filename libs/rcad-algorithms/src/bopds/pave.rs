@@ -25,6 +25,10 @@ pub struct PaveBlock {
     pub pcurve_on_a: Option<Curve2d>,
     /// 2D pcurve on face B.
     pub pcurve_on_b: Option<Curve2d>,
+    /// OCCT-aligned: shrunk range from IntTools_ShrunkRange.
+    pub shrunk_range: Option<[f64; 2]>,
+    /// OCCT-aligned: whether this PaveBlock can be split.
+    pub is_splittable: bool,
 }
 
 impl PaveBlock {
@@ -37,6 +41,8 @@ impl PaveBlock {
             curve: None,
             pcurve_on_a: None,
             pcurve_on_b: None,
+            shrunk_range: None,
+            is_splittable: false,
         }
     }
 }
