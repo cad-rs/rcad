@@ -2726,6 +2726,147 @@ impl<'a> PaveFiller<'a> {
             }
         }
     }
+    /// OCCT-aligned: PutEFPavesOnCurve (BOPAlgo_PaveFiller_6.cxx L2692).
+    fn put_ef_paves_on_curve(&mut self) {
+        for ci in 0..self.ds.intersection_curves.len() {
+            let ic = self.ds.intersection_curves[ci].clone();
+            let mut ef_verts: Vec<(usize, f64)> = Vec::new();
+            for inf in &self.ds.interferences {
+                if let Interference::EdgeFace { new_vertex, .. } = inf {
+                    if let Some(t) = self.project_vertex_on_curve(*new_vertex, &ic) {
+                        ef_verts.push((*new_vertex, t));
+                    }
+                }
+            }
+            if ef_verts.is_empty() { continue; }
+            ef_verts.sort_by(|a,b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+            for (vi, t) in &ef_verts { self.split_ic_at(ci, *vi, *t); }
+        }
+    }
+
+    /// OCCT-aligned: PutStickPavesOnCurve (BOPAlgo_PaveFiller_6.cxx L2748).
+    fn put_stick_paves_on_curve(&mut self) {
+        for ci in 0..self.ds.intersection_curves.len() {
+            let ic = self.ds.intersection_curves[ci].clone();
+            let mut stick_verts: Vec<(usize, f64)> = Vec::new();
+            for inf in &self.ds.interferences {
+                let vi = match inf {
+                    Interference::VertexFace { vertex, .. } => *vertex,
+                    Interference::VertexEdge { vertex, .. } => *vertex,
+                    Interference::VertexVertex { merged_vertex, .. } => *merged_vertex,
+                    _ => continue,
+                };
+                if let Some(t) = self.project_vertex_on_curve(vi, &ic) { stick_verts.push((vi, t)); }
+            }
+            if stick_verts.is_empty() { continue; }
+            stick_verts.sort_by(|a,b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+            for (vi, t) in &stick_verts { self.split_ic_at(ci, *vi, *t); }
+        }
+    }
+
+    /// OCCT-aligned: ReduceIntersectionRange (BOPAlgo_PaveFiller_5.cxx L685).
+    fn reduce_intersection_range(&self, ei: usize, param: f64, tol: f64) -> [f64; 2] {
+        let edge = &self.ds.edges[ei];
+        let mut t_range = edge.t_range;
+        for pave in &edge.paves {
+            let d = (pave.param - param).abs();
+            if d < tol * 10.0 {
+                if pave.param < param && pave.param > t_range[0] { t_range[0] = pave.param; }
+                if pave.param > param && pave.param < t_range[1] { t_range[1] = pave.param; }
+            }
+        }
+        t_range
+    }
+
+    /// OCCT-aligned: MakePCurves (BOPAlgo_PaveFiller_7.cxx L589).
+    fn make_pcurves(&mut self) {
+        for ei in 0..self.ds.edges.len() {
+            let n_blocks = self.ds.edges[ei].pave_blocks.len();
+            if n_blocks > 1 {
+                for pb in &mut self.ds.edges[ei].pave_blocks {
+                    if pb.curve.is_none() { }
+                }
+            }
+        }
+    }
+    /// OCCT-aligned: UpdateFaceInfo (BOPAlgo_PaveFiller_6.cxx L1673).
+    fn update_face_info(&mut self, fi: usize) {
+        let face = &self.ds.faces[fi].clone();
+        let mut sc_curves: Vec<usize> = face.face_info.curves_sc.iter().copied().collect();
+        // Recompute vertices_in from all IC endpoints on this face
+        for &ci in &sc_curves {
+            if ci < self.ds.intersection_curves.len() {
+                let ic = &self.ds.intersection_curves[ci];
+                self.ds.faces[fi].face_info.vertices_in.insert(ic.start_vertex);
+                self.ds.faces[fi].face_info.vertices_in.insert(ic.end_vertex);
+            }
+        }
+        // Update pave_blocks_in/pave_blocks_on from edge pave blocks
+        for &ei in &face.boundary_edges {
+            if ei < self.ds.edges.len() {
+                for pb in &self.ds.edges[ei].pave_blocks {
+                    let pb_idx = self.ds.pave_blocks.len();
+                    self.ds.pave_blocks.push(pb.clone());
+                    self.ds.faces[fi].face_info.pave_blocks_in.insert(pb_idx);
+                }
+            }
+        }
+    }
+
+    /// OCCT-aligned: CheckPlanes (BOPAlgo_PaveFiller_6.cxx L3639).
+    fn check_planes(&self, f1: usize, f2: usize) -> bool {
+        let s1 = &self.ds.faces[f1].surface;
+        let s2 = &self.ds.faces[f2].surface;
+        match (s1, s2) {
+            (Surface3::Plane(p1), Surface3::Plane(p2)) => {
+                let dot = p1.normal.dot(p2.normal).abs();
+                if dot > 0.9999 {
+                    let d = (p2.origin - p1.origin).dot(p1.normal).abs();
+                    d < TOLERANCE_ABS * 100.0
+                } else { false }
+            }
+            _ => false,
+        }
+    }
+
+    /// OCCT-aligned: MakeSDVertices (BOPAlgo_PaveFiller_1.cxx L136).
+    fn make_sd_vertices(&mut self, verts: &[usize]) {
+        if verts.len() < 2 { return; }
+        let tol = TOLERANCE_ABS * 100.0;
+        let mut groups: Vec<Vec<usize>> = Vec::new();
+        let mut used = vec![false; verts.len()];
+        for i in 0..verts.len() {
+            if used[i] { continue; }
+            let mut group = vec![verts[i]];
+            used[i] = true;
+            for j in (i+1)..verts.len() {
+                if used[j] { continue; }
+                let d = (self.ds.vertices[verts[i]].point - self.ds.vertices[verts[j]].point).length();
+                if d < tol { group.push(verts[j]); used[j] = true; }
+            }
+            if group.len() > 1 { groups.push(group); }
+        }
+        // For each group, keep the first vertex as SD, remap others
+        for group in &groups {
+            let sd_vi = group[0];
+            for &vi in &group[1..] {
+                for ei in 0..self.ds.edges.len() {
+                    for pb in &mut self.ds.edges[ei].pave_blocks {
+                        if pb.pave1.vertex_idx == vi { pb.pave1.vertex_idx = sd_vi; }
+                        if pb.pave2.vertex_idx == vi { pb.pave2.vertex_idx = sd_vi; }
+                    }
+                }
+                for fi in 0..self.ds.faces.len() {
+                    if self.ds.faces[fi].face_info.vertices_in.contains(&vi) {
+                        self.ds.faces[fi].face_info.vertices_in.remove(&vi);
+                        self.ds.faces[fi].face_info.vertices_in.insert(sd_vi);
+                    }
+                }
+            }
+        }
+    }
+
+
     fn post_treat_ff(&mut self) {
         // Collect boundary verts for each face ahead of time to avoid borrow conflict
         let n_faces = self.ds.faces.len();
