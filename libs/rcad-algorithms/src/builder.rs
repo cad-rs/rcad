@@ -5525,6 +5525,30 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 }
             }
+            // ✅ OCCT-aligned: draft face fallback (FillIn3DParts equivalent).
+            //    Faces without intersection curves cannot be split; emit as whole.
+            if !self.ds.faces[fi].face_info.has_any_interference() {
+                let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, fi);
+                let segments = collect_face_edge_segments(self.ds, fi, &pcurve_lookup);
+                if !segments.is_empty() {
+                    let wf = WireFace {
+                        outer_wire: (0..segments.len()).collect(),
+                        inner_wires: vec![],
+                        internal_wires: vec![],
+                    };
+                    collected.push((
+                        CollectedFaceResult::Wire {
+                            wf,
+                            segments,
+                            vertex_positions: std::collections::HashMap::new(),
+                            fi,
+                            flip: false,
+                            origin: FaceOrigin::FromA(self.ds.faces[fi].source_face_idx),
+                        },
+                        fi,
+                    ));
+                }
+            }
             if debug_pipe && self.ds.faces[fi].face_info.has_any_interference() {
                 eprintln!("[PIPE] fi={} → WireSplitter returned None (skipping)", fi);
             }
@@ -5552,6 +5576,29 @@ impl<'a> BooleanBuilder<'a> {
                         continue;
                     }
                 }
+            // ✅ OCCT-aligned: B-side draft face fallback.
+            if !self.ds.faces[fi].face_info.has_any_interference() {
+                let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, fi);
+                let segments = collect_face_edge_segments(self.ds, fi, &pcurve_lookup);
+                if !segments.is_empty() {
+                    let wf = WireFace {
+                        outer_wire: (0..segments.len()).collect(),
+                        inner_wires: vec![],
+                        internal_wires: vec![],
+                    };
+                    collected.push((
+                        CollectedFaceResult::Wire {
+                            wf,
+                            segments,
+                            vertex_positions: std::collections::HashMap::new(),
+                            fi,
+                            flip: false,
+                            origin: FaceOrigin::FromB(self.ds.faces[fi].source_face_idx),
+                        },
+                        fi,
+                    ));
+                }
+            }
             if debug_pipe && self.ds.faces[fi].face_info.has_any_interference() {
                 eprintln!("[PIPE] fi={} → WireSplitter returned None (skipping B-side)", fi);
             }
