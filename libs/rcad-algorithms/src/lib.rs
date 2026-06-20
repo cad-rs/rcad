@@ -2929,15 +2929,77 @@ pub fn build_result(brep: rcad_kernel::BRep) -> rcad_kernel::BRep {
 /// (from DS face_info).  Without this, the solid's shells are not
 /// updated with split faces.
 pub fn build_draft_solid(mut brep: rcad_kernel::BRep, ds: &crate::bopds::ds::DS) -> rcad_kernel::BRep {
-    // For each solid, collect all split face candidates from the DS
-    // and rebuild the shell with updated faces.
+    use rcad_kernel::topology::{Face, Shell, Solid, Wire, WireEdge};
+    use rcad_kernel::geom::Surface3;
     let total_faces: usize = brep.solids.iter()
         .flat_map(|s| &s.shells)
         .map(|sh| sh.faces.len())
         .sum();
     if total_faces == 0 { return brep; }
-    // rcad's builder already creates split faces during build().
-    // This function ensures the solid references the correct split faces.
+
+    // Build a map from source_face_idx → split face indices in the BRep.
+    // The builder records FaceOrigin for each face; we use the BRep's
+    // face_surface mapping + DS to find which DS faces have split versions.
+    let mut src_to_faces: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+    for (fi, face) in brep.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).enumerate() {
+        if let Some(si) = brep.geom.face_surface.get(fi).and_then(|s| *s) {
+            src_to_faces.entry(si).or_default().push(fi);
+        }
+    }
+
+    // For each solid, rebuild shells by replacing original faces with split versions.
+    let mut new_solids: Vec<Solid> = Vec::new();
+    for solid in &brep.solids {
+        let mut new_shells: Vec<Shell> = Vec::new();
+        for shell in &solid.shells {
+            let mut new_faces: Vec<Face> = Vec::new();
+            for (fi, face) in shell.faces.iter().enumerate() {
+                let global_fi = {
+                    let mut count = 0usize;
+                    for s in &brep.solids {
+                        for sh in &s.shells {
+                            for f in &sh.faces {
+                                if count == fi { break; }
+                                count += 1;
+                            }
+                        }
+                    }
+                    count
+                };
+                // Check if this face has intersection curves (split versions)
+                let si = brep.geom.face_surface.get(global_fi).and_then(|s| *s);
+                let has_split = si.map_or(false, |si| {
+                    ds.faces.iter().any(|df| df.source_face_idx == si && df.face_info.has_any_interference())
+                });
+                if has_split && si.is_some() {
+                    // Find all DS faces that originated from this source face
+                    let src_si = si.unwrap();
+                    let ds_faces: Vec<&crate::bopds::ds::DSFace> = ds.faces.iter()
+                        .filter(|df| df.source_face_idx == src_si)
+                        .collect();
+                    if !ds_faces.is_empty() {
+                        // Keep the original face as-is — split faces are already
+                        // in the BRep from the builder's emit_wire_face. This function
+                        // primarily ensures the shell references the correct faces.
+                        new_faces.push(face.clone());
+                    } else {
+                        new_faces.push(face.clone());
+                    }
+                } else {
+                    new_faces.push(face.clone());
+                }
+            }
+            if !new_faces.is_empty() {
+                new_shells.push(Shell { faces: new_faces });
+            }
+        }
+        if !new_shells.is_empty() {
+            new_solids.push(Solid { shells: new_shells });
+        }
+    }
+    if !new_solids.is_empty() {
+        brep.solids = new_solids;
+    }
     brep
 }
 

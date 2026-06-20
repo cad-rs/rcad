@@ -5499,13 +5499,63 @@ impl<'a> BooleanBuilder<'a> {
         eprintln!("[PIPE] a_faces={:?} b_faces={:?}", a_faces, b_faces);
     }
 
+
         // Process A faces against B solid
-// SubFace removed: A-face SubFace
+        for &fi in &a_faces {
+            // OCCT-aligned: wire pipeline for all face types (BuildSplitFaces + WireSplitter)
+            if self.ds.faces[fi].face_info.has_any_interference() {
+                if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
+                    if !wfs.is_empty() {
+                        // OCCT: promote holes outside the other solid to independent faces
+                        let wfs = promote_exterior_holes(wfs, &segments, self.ds, self.op, &b_faces);
+                        for wf in &wfs {
+                            collected.push((
+                                CollectedFaceResult::Wire {
+                                    wf: wf.clone(),
+                                    segments: segments.clone(),
+                                    vertex_positions: vertex_positions.clone(),
+                                    fi,
+                                    flip: false,
+                                    origin: FaceOrigin::FromA(self.ds.faces[fi].source_face_idx),
+                                },
+                                fi,
+                            ));
+                        }
+                        continue;
+                    }
+                }
+            }
+            if debug_pipe && self.ds.faces[fi].face_info.has_any_interference() {
+                eprintln!("[PIPE] fi={} → WireSplitter returned None (skipping)", fi);
+            }
+        }
 
         // Process B faces against A solid — ALL faces through WireSplitter path.
-        // SubFace (split_face) is REMOVED.
-// SubFace removed: B-face SubFace
-
+        for &fi in &b_faces {
+            if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
+                    if !wfs.is_empty() {
+                        // OCCT: promote holes outside the other solid to independent faces
+                        let wfs = promote_exterior_holes(wfs, &segments, self.ds, self.op, &a_faces);
+                        for wf in &wfs {
+                            collected.push((
+                                CollectedFaceResult::Wire {
+                                    wf: wf.clone(),
+                                    segments: segments.clone(),
+                                    vertex_positions: vertex_positions.clone(),
+                                    fi,
+                                    flip: false,
+                                    origin: FaceOrigin::FromB(self.ds.faces[fi].source_face_idx),
+                                },
+                                fi,
+                            ));
+                        }
+                        continue;
+                    }
+                }
+            if debug_pipe && self.ds.faces[fi].face_info.has_any_interference() {
+                eprintln!("[PIPE] fi={} → WireSplitter returned None (skipping B-side)", fi);
+            }
+        }
         // OCCT-aligned Phase 2+3: classify + emit collected wire results.
         for (col_result, _orig_fi) in collected.drain(..) {
             match col_result {
