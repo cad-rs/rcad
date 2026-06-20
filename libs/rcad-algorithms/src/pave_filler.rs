@@ -2409,6 +2409,196 @@ impl<'a> PaveFiller<'a> {
     ///    OCCT PaveFiller_6.cxx ~L509-592: PostTreatFF also handles SD vertices
     ///    and updates face info for all faces involved in FF intersection.
     ///    ⏳ rcad: simplified, does not handle SD vertices.
+
+    /// OCCT-aligned: PutSEInOtherFaces (BOPAlgo_PaveFiller_8.cxx L650-900).
+    fn put_se_in_other_faces(&mut self) {
+        let n_faces = self.ds.faces.len();
+        let ics = self.ds.intersection_curves.clone();
+        let mut ic_creators: Vec<Vec<usize>> = vec![Vec::new(); ics.len()];
+        for inf in &self.ds.interferences {
+            if let Interference::FaceFace { f1, f2, curves, .. } = inf {
+                for &ci in curves { if ci < ic_creators.len() { ic_creators[ci].push(*f1); ic_creators[ci].push(*f2); } }
+            }
+        }
+        for (ci, ic) in ics.iter().enumerate() {
+            let creators = &ic_creators[ci];
+            if creators.is_empty() { continue; }
+            let mid_t = (ic.t_range[0] + ic.t_range[1]) * 0.5;
+            let params = if (ic.t_range[1] - ic.t_range[0]).abs() < TOLERANCE_ABS { vec![mid_t] }
+            else { vec![ic.t_range[0]*0.9+ic.t_range[1]*0.1, mid_t, ic.t_range[0]*0.1+ic.t_range[1]*0.9] };
+            for fi in 0..n_faces {
+                if creators.contains(&fi) { continue; }
+                if !self.ds.faces[fi].face_info.has_any_interference() { continue; }
+                let on_face = params.iter().any(|&t| {
+                    use rcad_kernel::geom::CurveEval;
+                    let pt = ic.curve.point_at(t);
+                    let tol = self.ds.faces[fi].geom_tol.max(TOLERANCE_ABS);
+                    self.point_on_face(pt, fi, tol)
+                });
+                if on_face {
+                    self.ds.faces[fi].face_info.curves_sc.insert(ci);
+                    self.ds.faces[fi].face_info.vertices_in.insert(ic.start_vertex);
+                    self.ds.faces[fi].face_info.vertices_in.insert(ic.end_vertex);
+                }
+            }
+        }
+    }
+
+    fn point_on_face(&self, pt: DVec3, fi: usize, tol: f64) -> bool {
+        use rcad_kernel::geom::{SurfaceEval, Surface3};
+        let face = &self.ds.faces[fi];
+        match &face.surface {
+            Surface3::Plane(p) => (pt - p.origin).dot(p.normal).abs() <= tol,
+            Surface3::Sphere(s) => ((pt - s.center).length() - s.radius).abs() <= tol,
+            Surface3::Cylinder(c) => { let v = pt - c.origin; let radial = v - c.axis.normalize() * v.dot(c.axis.normalize()); (radial.length() - c.radius).abs() <= tol }
+            Surface3::Cone(c) => { let v = pt - c.apex; let a = c.axis_dir(); let pj = v.dot(a); (v - a*pj).length(); false }
+            _ => false,
+        }
+    }
+
+    /// OCCT-aligned: ProcessDE (BOPAlgo_PaveFiller_9.cxx L100-250).
+    fn process_de(&mut self) {
+        let mut fv: Vec<Vec<usize>> = vec![Vec::new(); self.ds.faces.len()];
+        for fi in 0..self.ds.faces.len() {
+            let f = &self.ds.faces[fi];
+            if !matches!(f.surface, Surface3::Sphere(_) | Surface3::Cylinder(_) | Surface3::Cone(_)) { continue; }
+            let mut vs = Vec::new();
+            for &ei in &f.boundary_edges {
+                if ei >= self.ds.edges.len() { continue; }
+                let e = &self.ds.edges[ei];
+                if e.start_vertex == e.end_vertex { vs.push(e.start_vertex); }
+                else {
+                    let d = (self.ds.vertices[e.start_vertex].point - self.ds.vertices[e.end_vertex].point).length();
+                    if d < TOLERANCE_ABS*100.0 { vs.push(e.start_vertex); vs.push(e.end_vertex); }
+                }
+            }
+            if let Surface3::Sphere(sp) = &f.surface {
+                let tl = f.geom_tol.max(TOLERANCE_ABS);
+                for pp in [sp.center + sp.axis * sp.radius, sp.center - sp.axis * sp.radius] {
+                    if let Some(vi) = self.ds.find_vertex_near(pp, tl) { vs.push(vi); }
+                }
+            }
+            fv[fi] = vs;
+        }
+        for (fi, vs) in fv.iter().enumerate() { for &vi in vs { self.ds.faces[fi].face_info.vertices_in.insert(vi); } }
+    }
+
+    /// OCCT-aligned: FillShrunkData (BOPAlgo_PaveFiller_9.cxx L65-150).
+    fn fill_shrunk_data(&mut self) {
+        let ec: Vec<Curve3> = self.ds.edges.iter().map(|e| e.curve.clone()).collect();
+        let et: Vec<f64> = self.ds.edges.iter().map(|e| e.geom_tol).collect();
+        let cf = TOLERANCE_ABS;
+        for ei in 0..self.ds.edges.len() {
+            for pb in &mut self.ds.edges[ei].pave_blocks {
+                let v1 = self.ds.vertices[pb.pave1.vertex_idx].geom_tol;
+                let v2 = self.ds.vertices[pb.pave2.vertex_idx].geom_tol;
+                if let Some(sr) = crate::inttools::curve_range::shrunk_range(&ec[ei], [pb.pave1.param, pb.pave2.param], v1, v2, et[ei]) {
+                    pb.shrunk_range = Some(sr); pb.is_splittable = (sr[1]-sr[0]) > 2.0*et[ei] + 2.0*cf;
+                } else { pb.shrunk_range = None; pb.is_splittable = false; }
+            }
+        }
+        for pb in &mut self.ds.pave_blocks {
+            if pb.original_edge >= self.ds.edges.len() { continue; }
+            let v1 = self.ds.vertices[pb.pave1.vertex_idx].geom_tol;
+            let v2 = self.ds.vertices[pb.pave2.vertex_idx].geom_tol;
+            if let Some(sr) = crate::inttools::curve_range::shrunk_range(&ec[pb.original_edge], [pb.pave1.param, pb.pave2.param], v1, v2, et[pb.original_edge]) {
+                pb.shrunk_range = Some(sr); pb.is_splittable = (sr[1]-sr[0]) > 2.0*et[pb.original_edge] + 2.0*cf;
+            } else { pb.shrunk_range = None; pb.is_splittable = false; }
+        }
+    }
+
+    /// OCCT-aligned: ExistingPaveBlock (BOPAlgo_PaveFiller_6.cxx).
+    fn existing_pave_block(&self, ei: usize, vi: usize) -> bool {
+        for pb in &self.ds.edges[ei].pave_blocks {
+            if pb.pave1.vertex_idx == vi || pb.pave2.vertex_idx == vi { return true; }
+        }
+        false
+    }
+
+    /// OCCT-aligned: PutPavesOnCurve (BOPAlgo_PaveFiller_6.cxx L2372-2430).
+    fn put_paves_on_curve(&mut self) {
+        for ci in 0..self.ds.intersection_curves.len() {
+            let ic = self.ds.intersection_curves[ci].clone();
+            let mut voc: Vec<(usize, f64)> = Vec::new();
+            for inf in &self.ds.interferences {
+                let vi = match inf {
+                    Interference::EdgeFace { new_vertex, .. } => *new_vertex,
+                    Interference::EdgeEdge { new_vertex, .. } => *new_vertex,
+                    Interference::VertexFace { vertex, .. } => *vertex,
+                    Interference::VertexEdge { vertex, .. } => *vertex,
+                    _ => continue,
+                };
+                if let Some(t) = self.project_vertex_on_curve(vi, &ic) { voc.push((vi, t)); }
+            }
+            if voc.is_empty() { continue; }
+            voc.sort_by(|a,b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+            let tl = ic.geom_tol.max(TOLERANCE_ABS);
+            voc.dedup_by(|a,b| (a.1-b.1).abs() < tl*100.0);
+            for (vi, t) in &voc { self.split_ic_at(ci, *vi, *t); }
+        }
+    }
+
+    fn project_vertex_on_curve(&self, vi: usize, ic: &IntersectionCurve) -> Option<f64> {
+        use rcad_kernel::geom::CurveEval;
+        let vp = self.ds.vertices[vi].point;
+        let tl = ic.geom_tol.max(TOLERANCE_ABS);
+        match &ic.curve {
+            Curve3::Line(l) => { let v = vp - l.origin; let t = v.dot(l.direction);
+                if (v - l.direction*t).length() <= tl { Some(t.clamp(ic.t_range[0], ic.t_range[1])) } else { None } }
+            Curve3::Circle(c) => {
+                let v = vp - c.center;
+                if (v.length() - c.radius).abs() > tl { return None; }
+                let nm = c.normal.normalize();
+                if v.dot(nm).abs() > tl { return None; }
+                let xa = any_perpendicular(nm).normalize();
+                let ya = nm.cross(xa);
+                let ang = v.dot(xa).atan2(v.dot(ya));
+                Some(ang.rem_euclid(std::f64::consts::TAU).clamp(ic.t_range[0], ic.t_range[1]))
+            }
+            _ => {
+                for i in 0..20 {
+                    let t = ic.t_range[0] + (ic.t_range[1]-ic.t_range[0])*i as f64/20.0;
+                    if (ic.curve.point_at(t)-vp).length() <= tl { return Some(t); }
+                }
+                None
+            }
+        }
+    }
+
+    fn split_ic_at(&mut self, ci: usize, vi: usize, t: f64) {
+        let ic = &self.ds.intersection_curves[ci];
+        let tl = ic.geom_tol.max(TOLERANCE_ABS);
+        let ds = &self.ds;
+        let svp = ds.vertices[ic.start_vertex].point;
+        let evp = ds.vertices[ic.end_vertex].point;
+        let vp = ds.vertices[vi].point;
+        if (vp-svp).length() < tl || (vp-evp).length() < tl {
+            for inf in &self.ds.interferences.clone() {
+                if let Interference::FaceFace { f1, f2, curves, .. } = inf {
+                    if curves.contains(&ci) { self.ds.faces[*f1].face_info.vertices_in.insert(vi); self.ds.faces[*f2].face_info.vertices_in.insert(vi); }
+                }
+            }
+            return;
+        }
+        let nci = self.ds.intersection_curves.len();
+        self.ds.intersection_curves.push(IntersectionCurve {
+            curve: ic.curve.clone(), polyline: vec![], start_vertex: vi, end_vertex: ic.end_vertex,
+            t_range: [t, ic.t_range[1]], pcurve_on_a: ic.pcurve_on_a.clone(), pcurve_on_b: ic.pcurve_on_b.clone(),
+            geom_tol: ic.geom_tol,
+        });
+        self.ds.intersection_curves[ci].end_vertex = vi;
+        self.ds.intersection_curves[ci].t_range[1] = t;
+        for inf in &self.ds.interferences.clone() {
+            if let Interference::FaceFace { f1, f2, curves, .. } = inf {
+                if curves.contains(&ci) {
+                    self.ds.faces[*f1].face_info.curves_sc.insert(nci);
+                    self.ds.faces[*f2].face_info.curves_sc.insert(nci);
+                    self.ds.faces[*f1].face_info.vertices_in.insert(vi);
+                    self.ds.faces[*f2].face_info.vertices_in.insert(vi);
+                }
+            }
+        }
+    }
     fn post_treat_ff(&mut self) {
         // Collect boundary verts for each face ahead of time to avoid borrow conflict
         let n_faces = self.ds.faces.len();
