@@ -2942,6 +2942,51 @@ impl<'a> PaveFiller<'a> {
         }
         pnts
     }
+    /// OCCT-aligned: TreatVerticesEE (BOPAlgo_PaveFiller_4.cxx L305).
+    fn treat_vertices_ee(&mut self) {
+        let mut to_merge: Vec<(usize, usize)> = Vec::new();
+        for inf in &self.ds.interferences {
+            if let Interference::EdgeEdge { new_vertex, e1, e2, .. } = inf {
+                let vi = *new_vertex;
+                if vi >= self.ds.vertices.len() { continue; }
+                let v_pt = self.ds.vertices[vi].point;
+                for inf2 in &self.ds.interferences {
+                    if let Interference::EdgeEdge { new_vertex: vi2, .. } = inf2 {
+                        if *vi2 != vi && *vi2 < self.ds.vertices.len() {
+                            let d = (v_pt - self.ds.vertices[*vi2].point).length();
+                            if d < TOLERANCE_ABS * 100.0 {
+                                to_merge.push((vi, *vi2));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for (keep, remove) in &to_merge {
+            for ei in 0..self.ds.edges.len() {
+                for pb in &mut self.ds.edges[ei].pave_blocks {
+                    if pb.pave1.vertex_idx == *remove { pb.pave1.vertex_idx = *keep; }
+                    if pb.pave2.vertex_idx == *remove { pb.pave2.vertex_idx = *keep; }
+                }
+            }
+        }
+    }
+
+    /// OCCT-aligned: CheckFacePaves (BOPAlgo_PaveFiller_5.cxx L596).
+    fn check_face_paves(&self, fi: usize, vi: usize) -> bool {
+        let face = &self.ds.faces[fi];
+        let tol = face.geom_tol.max(TOLERANCE_ABS);
+        for &ei in &face.boundary_edges {
+            if ei >= self.ds.edges.len() { continue; }
+            for pb in &self.ds.edges[ei].pave_blocks {
+                if pb.pave1.vertex_idx == vi || pb.pave2.vertex_idx == vi {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// OCCT-aligned: GetFullShapeMap (BOPAlgo_PaveFiller_6.cxx L2909).
     fn get_full_shape_map(&self, fi: usize) -> Vec<usize> {
         let mut indices: Vec<usize> = Vec::new();

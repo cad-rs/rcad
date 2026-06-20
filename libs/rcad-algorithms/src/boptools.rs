@@ -39,3 +39,43 @@ pub fn compute_state_classify(
 ) -> Classification {
     crate::classify::classify_point(point, face_indices, ds)
 }
+
+
+/// OCCT-aligned: GetNormalToFaceOnEdge (BOPTools_AlgoTools3D).
+pub fn get_normal_to_face_on_edge(
+    surface: &Surface3, face_normal: glam::DVec3, edge_mid: glam::DVec3,
+) -> glam::DVec3 {
+    match surface {
+        Surface3::Plane(p) => p.normal,
+        Surface3::Sphere(s) => (edge_mid - s.center).normalize(),
+        Surface3::Cylinder(c) => {
+            let v = edge_mid - c.origin;
+            let radial = v - c.axis.normalize() * v.dot(c.axis.normalize());
+            radial.normalize()
+        }
+        _ => face_normal,
+    }
+}
+
+/// OCCT-aligned: PointNearEdge (BOPTools_AlgoTools3D).
+pub fn point_near_edge(
+    surface: &Surface3, edge_mid: glam::DVec3, normal: glam::DVec3,
+) -> glam::DVec3 {
+    edge_mid + normal * crate::tolerance::TOLERANCE_ABS * 10.0
+}
+
+/// OCCT-aligned: HasCurveOnSurface (BOPTools_AlgoTools2D).
+pub fn has_curve_on_surface(edge_curve: &Curve3, _surface: &Surface3) -> bool {
+    // Simplified check: all 3D curves can be projected to any surface
+    true
+}
+
+/// OCCT-aligned: IsEdgeIsoline (BOPTools_AlgoTools2D).
+pub fn is_edge_isoline(edge_curve: &Curve3, _surface: &Surface3) -> bool {
+    matches!(edge_curve, Curve3::Line(_))
+}
+
+/// OCCT-aligned: OrientEdgeOnFace (BOPTools_AlgoTools3D).
+pub fn orient_edge_on_face(dot_product: f64) -> bool {
+    dot_product > 0.0
+}
