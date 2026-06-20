@@ -3989,6 +3989,10 @@ fn is_same_block_fwd_rev(a: &WireSegment, b: &WireSegment) -> bool {
         (WireEdgeSource::IntersectionCurve(ca), WireEdgeSource::IntersectionCurve(cb)) => {
             ca == cb
         }
+        // ✅ OCCT-aligned: SeamEdge FWD+REV (same seam, opposite directions).
+        (WireEdgeSource::SeamEdge, WireEdgeSource::SeamEdge) => {
+            a.is_seam && b.is_seam && a.forward != b.forward
+        }
         _ => false,
     }
 }
@@ -4559,7 +4563,13 @@ fn walk_path_extract_wires(
                 // OCCT BRep_Tool::Parameter(aV, aE, aF): vertex parameter on
                 // edge's pcurve.  vi == ic.start_vertex → t_range[0];
                 // vi == ic.end_vertex → t_range[1].
-                let t = if vi == ic.start_vertex { ic.t_range[0] }
+                // ⚠ OCCT-aligned: compare by 3D position, not index.  rcad's DS
+                //   assigns different vertex indices to the same 3D point (remap_ic_v),
+                //   so vi == ic.start_vertex fails silently for remapped vertices.
+                //   Use geometric distance at remap_ic_v's tolerance.
+                let vi_at_pole = ds.vertices[vi].point;
+                let t = if ds.vertices[ic.start_vertex].point.distance_squared(vi_at_pole)
+                    <= TOLERANCE_ABS_SQ * 1_000_000.0 { ic.t_range[0] }
                         else { ic.t_range[1] };
                 Some(pc.point_at(t))
             }
@@ -4667,6 +4677,7 @@ fn walk_path_extract_wires(
             let same_edge = match (&segments[edge_seq[0]].source, &segments[ci].source) {
                 (WireEdgeSource::DsEdge(ea), WireEdgeSource::DsEdge(eb)) => ea == eb,
                 (WireEdgeSource::IntersectionCurve(ca), WireEdgeSource::IntersectionCurve(cb)) => ca == cb,
+                (WireEdgeSource::SeamEdge, WireEdgeSource::SeamEdge) => true,
                 _ => false,
             };
             if ci == edge_seq[0] || same_edge {
@@ -4827,7 +4838,10 @@ fn walk_path_extract_wires(
                         cand_uv.distance_squared(a_pb) < a_tol_2d_sq
                     }).collect()
                 } else { raw_candidates };
-                let incoming_is_boundary = !matches!(segments[last_ci].source, WireEdgeSource::IntersectionCurve(_));
+                // ✅ OCCT-aligned L533: isBoundary = !anEdgeInfo->IsInside().
+                let incoming_is_boundary = smart_map.get(&last_arrived)
+                    .and_then(|infos| infos.iter().find(|ei| ei.seg_idx == last_ci && ei.in_flag))
+                    .map_or(true, |ei| !ei.is_inside);
                 let best = match select_best_outgoing(&candidates, angle_in, incoming_is_boundary, segments, last_ci) {
                     Some(e) => e,
                     None => return,
@@ -4914,7 +4928,10 @@ fn walk_path_extract_wires(
             }
         }
 
-        let incoming_is_boundary = !matches!(segments[ci].source, WireEdgeSource::IntersectionCurve(_));
+        // ✅ OCCT-aligned L533: isBoundary = !anEdgeInfo->IsInside().
+        let incoming_is_boundary = smart_map.get(&arrived_vertex)
+            .and_then(|infos| infos.iter().find(|ei| ei.seg_idx == ci && ei.in_flag))
+            .map_or(true, |ei| !ei.is_inside);
         let best = match select_best_outgoing(&candidates, angle_in, incoming_is_boundary, segments, ci) {
             Some(e) => e,
             None => return,
