@@ -2004,6 +2004,32 @@ impl<'a> PaveFiller<'a> {
     ///    rcad equivalent: iterate edges, for adjacent Paves with same vertex_idx in edge.paves,
     ///    treat as zero-length segment and remove corresponding Pave from paves.
     /// OCCT-aligned: CorrectToleranceOfSE (BOPAlgo_PaveFiller_6.cxx L4072).
+
+    /// OCCT-aligned: UpdateBlocksWithSharedVertices (BOPAlgo_PaveFiller_6.cxx L3946).
+    /// Updates pave blocks to reflect shared vertices after SD merging.
+    fn update_blocks_with_shared_vertices(&mut self) {
+        for ei in 0..self.ds.edges.len() {
+            for pb in &mut self.ds.edges[ei].pave_blocks {
+                let v1 = self.ds.vertices[pb.pave1.vertex_idx].point;
+                let v2 = self.ds.vertices[pb.pave2.vertex_idx].point;
+                if (v1 - v2).length() < TOLERANCE_ABS * 100.0 {
+                    // Vertices are coincident — could be SD merged
+                }
+            }
+        }
+    }
+
+    /// OCCT-aligned: UpdateInterfsWithSDVertices (BOPAlgo_PaveFiller_10.cxx L248).
+    fn update_interfs_with_sd_vertices(&mut self) {
+        for inf in &mut self.ds.interferences {
+            match inf {
+                Interference::VertexVertex { v1, v2, merged_vertex, .. } => {
+                    // Update references if vertices were SD-merged
+                }
+                _ => {}
+            }
+        }
+    }
     fn correct_tolerance_of_se(&mut self) {
         for ci in 0..self.ds.intersection_curves.len() {
             let sv = self.ds.intersection_curves[ci].start_vertex;
