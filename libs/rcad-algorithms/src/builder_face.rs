@@ -113,7 +113,7 @@ impl<'a> BuilderFace<'a> {
         Vec<Vec<usize>>,
         HashMap<usize, DVec3>,
     ) {
-        build_closed_wires(segments, self.ds, self.face_idx)
+        build_closed_wires(segments, self.ds, self.face_idx, &std::collections::HashSet::new())
     }
 
     /// OCCT-aligned: PerformAreas — classify wires as outer boundary or hole.
