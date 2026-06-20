@@ -2458,7 +2458,7 @@ fn classify_face_occt_style(
         }
     }
 
-    let nu = 4usize;
+    let (nu, nv) = if matches!(sub.surface, Surface3::Sphere(_) | Surface3::Cylinder(_)) { let uv_area = (u1 - u0).abs() * (v1 - v0).abs(); let full_area = match &sub.surface { Surface3::Sphere(_) => std::f64::consts::TAU * std::f64::consts::PI, Surface3::Cylinder(_) => std::f64::consts::TAU * 2.0, _ => 1.0, }; let ratio = uv_area / full_area; if ratio < 0.05 { (12, 12) } else if ratio < 0.3 { (8, 8) } else { (6, 6) } } else { (4, 4) };
     let nv = 4usize;
     let mut in_count = 0u32;
     let mut out_count = 0u32;

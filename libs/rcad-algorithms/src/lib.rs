@@ -2790,6 +2790,29 @@ fn preserve_full_circle_hole_cylinder_topology(brep: &BRep) -> bool {
         && single_edge_inner_wires >= 1
 }
 
+/// OCCT-aligned: PostTreat — result validation (BOPAlgo_Builder_1.cxx L60-300).
+fn post_treat_boolean(brep: &BRep) {
+    let mut issues: Vec<String> = Vec::new();
+    for (si, solid) in brep.solids.iter().enumerate() {
+        for (shi, shell) in solid.shells.iter().enumerate() {
+            for (fi, face) in shell.faces.iter().enumerate() {
+                if face.outer_wire.edges.len() < 3 && face.inner_wires.is_empty() {
+                    issues.push(format!("Solid[{}] Shell[{}] Face[{}]: <3 edges", si, shi, fi));
+                }
+                for we in &face.outer_wire.edges {
+                    if let Some(edge) = brep.edges.get(we.idx) {
+                        if let (Some(v1), Some(v2)) = (brep.vertices.get(edge.start), brep.vertices.get(edge.end)) {
+                            if (v1.point - v2.point).length() < TOLERANCE_ABS * 10.0 {
+                                issues.push(format!("Solid[{}] Shell[{}] Edge[{}]: micro-edge", si, shi, we.idx));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if !issues.is_empty() { eprintln!("[POST_TREAT] {} issue(s):", issues.len()); }
+}
 fn finalize_boolean_result(r: BRep) -> BRep {
     // Sew close vertices so edge-adjacent patches share endpoints for
     // deduplicate_edges and unify_same_domain_faces (same as fast path).
@@ -2825,6 +2848,8 @@ fn finalize_boolean_result(r: BRep) -> BRep {
     let mut r = r;
     // ✅ OCCT对齐: CorrectTolerances (SameParameter + vertex + hierarchy).
     rcad_kernel::tolerance::correct_tolerances(&mut r, 23);
+    // OCCT-aligned: PostTreat validation.
+    post_treat_boolean(&r);
     r
 }
 
@@ -3648,7 +3673,6 @@ pub fn boolean_op_with_retry(
     // brep = promote_planar_surfaces(brep);
     // ✅ OCCT对齐: CorrectTolerances (SameParameter + vertex + hierarchy).
     rcad_kernel::tolerance::correct_tolerances(&mut brep, 23);
-    let brep = split_disconnected_shells(brep);
     Ok(brep)
 }
 
