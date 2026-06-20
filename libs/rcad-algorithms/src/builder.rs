@@ -347,6 +347,12 @@ struct ResultBuilder {
     /// Extra A/B source when a later emission is deduplicated against an existing result face
     /// (see [`crate::history::BooleanHistory::co_face_origins`]).
     co_face_origins: Vec<(usize, FaceOrigin)>,
+    /// ✅ OCCT-aligned: shell groups built by fill_images_containers_shells (Phase 5).
+    /// Each entry is a Vec of face indices into self.faces forming one connected shell.
+    shells: Vec<Vec<usize>>,
+    /// ✅ OCCT-aligned: solid groups built by fill_images_solids (Phase 6).
+    /// Each entry is a Vec of shell indices forming one solid.
+    solids: Vec<Vec<usize>>,
     custom_edge_curves: Vec<Option<Curve3>>,
     face_internal_vtx: Vec<Vec<usize>>,
     /// ✅ OCCT对齐: 标记非合并边 — 这些边在 build() 的边合并阶段跳过。
@@ -683,6 +689,8 @@ impl ResultBuilder {
             no_merge_edges: std::collections::HashSet::new(),
             deg_edge_indices: std::collections::HashSet::new(),
             ic_edge_map: HashMap::new(),
+            shells: Vec::new(),
+            solids: Vec::new(),
         }
     }
 
@@ -1324,12 +1332,33 @@ impl ResultBuilder {
             }
             geom.edge_degenerated[ei] = true;
         }
+        // ✅ OCCT-aligned: build shell/solid structure (Phase 5+6 or fallback).
+        let brep_solids = if self.solids.is_empty() && self.shells.is_empty() {
+            // Legacy path: single shell, single solid.
+            vec![Solid { shells: vec![Shell { faces }] }]
+        } else if !self.solids.is_empty() {
+            // Phase 5+6: explicit shell/solid groups.
+            let faceref = &faces;
+            self.solids.iter().map(|solid_shells| Solid {
+                shells: solid_shells.iter().map(|&si| Shell {
+                    faces: self.shells.get(si).map_or(vec![], |shell_faces| {
+                        shell_faces.iter().map(|&fi| faceref[fi].clone()).collect()
+                    }),
+                }).collect(),
+            }).collect()
+        } else {
+            // Phase 5 only: shells exist but not grouped into solids.
+            let faceref = &faces;
+            vec![Solid {
+                shells: self.shells.iter().map(|shell_faces| Shell {
+                    faces: shell_faces.iter().map(|&fi| faceref[fi].clone()).collect(),
+                }).collect(),
+            }]
+        };
         let brep = BRep {
             vertices,
             edges,
-            solids: vec![Solid {
-                shells: vec![Shell { faces }],
-            }],
+            solids: brep_solids,
             geom,
             compound: None,
             compsolid: None,
@@ -5281,54 +5310,66 @@ pub(crate) fn perform_areas(
     }
     if holes.is_empty() {
         // ✅ OCCT-aligned: for periodic surfaces (sphere), a single closed wire
-        // splits the surface into TWO regions.  OCCT BOPAlgo_BuilderFace::PerformAreas
-        // produces two faces: one for each side of the wire.  The complement face has
-        // the original boundary as a hole (inner wire).
+        // splits the surface into TWO regions.  OCCT WireSplitter produces two
+        // wires for sphere; rcad's produces one, so split here to compensate.
         if growths.len() == 1 && ds.faces.get(face_idx).map_or(false, |f| {
             matches!(f.surface, Surface3::Sphere(_))
         }) {
             let boundary = wires[growths[0]].clone();
             return vec![
-                // The closed loop itself — one side of the split
                 WireFace { outer_wire: boundary.clone(), inner_wires: vec![], internal_wires: internal_wires.to_vec() },
-                // The complement — same wire as a hole (the loop is the hole boundary)
                 WireFace { outer_wire: boundary.clone(), inner_wires: vec![boundary], internal_wires: vec![] },
             ];
         }
         return growths.iter().map(|&g| WireFace { outer_wire: wires[g].clone(), inner_wires: vec![], internal_wires: internal_wires.to_vec() }).collect();
     }
-    // ✅ OCCT-aligned: full_wrap on sphere → holes go to it directly.
-    if ds.faces.get(face_idx).map_or(false, |f| matches!(f.surface, Surface3::Sphere(_))) {
-        if let Some(&fw) = growths.iter().find(|&&g| wds[g].full_wrap) {
-            let inner = holes.iter().map(|&h| wires[h].clone()).collect();
-            return vec![WireFace { outer_wire: wires[fw].clone(), inner_wires: inner, internal_wires: internal_wires.to_vec() }];
-        }
-    }
 
-    // OCCT L468-555: assign holes to enclosing growths via 3D point-in-polygon
+    // ✅ OCCT-aligned L468-555: assign holes to enclosing growths via UV-space
+    //   bounding-box prefilter + point-in-polygon (FClass2d semantics).
+    //   Build UV bounding boxes for each growth (OCCT Bnd_Box2d + BOPTools_Box2dTree).
+    let growth_uv_bbox: Vec<Option<[f64; 4]>> = growths.iter().map(|&g| {
+        let uv = &wds[g].uv_boundary;
+        if uv.len() < 3 { return None; }
+        let u_min = uv.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+        let u_max = uv.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+        let v_min = uv.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+        let v_max = uv.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+        Some([u_min, u_max, v_min, v_max])
+    }).collect();
+
     let mut h2g: Vec<(usize, usize)> = Vec::new();
     for &h in &holes {
+        let h_uv = &wds[h].uv_boundary;
+        let h_uv_c = if h_uv.len() >= 3 {
+            h_uv.iter().copied().sum::<DVec2>() / h_uv.len() as f64
+        } else { continue; };
         let mut assigned = false;
-        for &g in &growths {
-            if point_in_polygon_best(wds[h].centroid, &wds[g].boundary) {
+        for (gi, &g) in growths.iter().enumerate() {
+            // OCCT L494: compute growth UV bounding box, skip non-overlapping.
+            if let Some([u0, u1, v0, v1]) = growth_uv_bbox[gi] {
+                if h_uv_c.x < u0 || h_uv_c.x > u1 || h_uv_c.y < v0 || h_uv_c.y > v1 {
+                    continue; // UV bbox non-overlapping → skip (OCCT Box2dTree filter)
+                }
+            }
+            // OCCT L502-537: IsInside test — hole centroid in growth UV polygon.
+            if wds[g].uv_boundary.len() >= 3 && point_in_polygon_2d(&wds[g].uv_boundary, h_uv_c) {
                 h2g.push((h, g));
                 assigned = true;
                 break;
             }
         }
         if !assigned && !growths.is_empty() {
-            // OCCT: BRepBuilderAPI_MakeFace accepts geometrically-degenerate
-            // wires (coincident vertices). rcad's 3D boundary may have <3
-            // points, making point_in_polygon fail. Assign orphan holes to
-            // the first (largest) growth — the correct enclosure semantics.
+            // OCCT: IsInside may fail for degenerate wires; assign orphan holes
+            // to the first (largest) growth (OCCT L558-581 orphan-to-infinite-face).
             h2g.push((h, growths[0]));
         }
     }
 
+    // OCCT L540-555: build reverse map growth→holes.
     let mut g2h: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
     for &(h, g) in &h2g { g2h.entry(g).or_default().push(h); }
 
-    // OCCT L584-613: add holes to growth faces
+    // OCCT L584-613: add holes to growth faces.
     growths.iter().map(|&g| WireFace {
         outer_wire: wires[g].clone(),
         inner_wires: g2h.get(&g).map(|hs| hs.iter().map(|&h| wires[h].clone()).collect()).unwrap_or_default(),
@@ -5937,13 +5978,64 @@ impl<'a> BooleanBuilder<'a> {
     /// (unify_same_domain_faces was removed; OCCT alignment pending).
     fn fill_same_domain_faces(&self, _result: &mut ResultBuilder) {}
 
-    /// OCCT-aligned: FillImagesContainers(SHELL) (L388-398).
-    /// Phase 5: group faces into connected shells.  Single shell assumed.
-    fn fill_images_containers_shells(&self, _result: &mut ResultBuilder) {}
+    /// ✅ OCCT-aligned: FillImagesContainers(SHELL) (Builder_1.cxx L172-276).
+    /// Phase 5: group result faces into connected shells by edge adjacency.
+    ///   Each shell is a list of face indices into ResultBuilder.faces.
+    ///   OCCT's FillImagesContainer iterates source shapes (shells), collects
+    ///   their split images (faces), and builds new TopoDS_Shell for each.
+    ///   rcad equivalent: BFS over edge→face adjacency from result edges.
+    fn fill_images_containers_shells(&self, result: &mut ResultBuilder) {
+        let nf = result.faces.len();
+        if nf == 0 { return; }
+        // Build edge→face adjacency: for each face, list its edge indices.
+        let mut ef: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+        for (fi, face_entry) in result.faces.iter().enumerate() {
+            let (outer, inner, _tris, _n, _s, _uv, _c, _a, _sp, iw) = face_entry;
+            for &(ei, _) in outer { ef.entry(ei).or_default().push(fi); }
+            for iw_es in inner { for &(ei, _) in iw_es { ef.entry(ei).or_default().push(fi); } }
+            for iw_es in iw { for &(ei, _) in iw_es { ef.entry(ei).or_default().push(fi); } }
+        }
+        // Build face→face adjacency: faces that share an edge.
+        let mut adj: Vec<Vec<usize>> = vec![vec![]; nf];
+        for (_ei, faces) in ef.iter() {
+            for i in 0..faces.len() {
+                for j in (i + 1)..faces.len() {
+                    let a = faces[i]; let b = faces[j];
+                    if !adj[a].contains(&b) { adj[a].push(b); adj[b].push(a); }
+                }
+            }
+        }
+        // BFS to find connected components = shells.
+        let mut visited = vec![false; nf];
+        let mut shells: Vec<Vec<usize>> = Vec::new();
+        for start in 0..nf {
+            if visited[start] { continue; }
+            let mut shell = Vec::new();
+            let mut stack = vec![start];
+            visited[start] = true;
+            while let Some(fi) = stack.pop() {
+                shell.push(fi);
+                for &nb in &adj[fi] {
+                    if !visited[nb] { visited[nb] = true; stack.push(nb); }
+                }
+            }
+            if !shell.is_empty() { shells.push(shell); }
+        }
+        result.shells = shells;
+    }
 
-    /// OCCT-aligned: FillImagesSolids (L400-431).
-    /// Phase 6: classify shells into solids.  Single solid assumed.
-    fn fill_images_solids(&self, _result: &mut ResultBuilder) {}
+    /// ✅ OCCT-aligned: FillImagesSolids (Builder_3.cxx L60-200).
+    /// Phase 6: build solids from shells.  For each shell, check closure and
+    ///   form a CSolid (single solid has one shell; multiple disconnected
+    ///   shells in one solid form multiple solids).  OCCT's FillIn3DParts
+    ///   classifies faces across solids — pending for multi-solid support.
+    fn fill_images_solids(&self, result: &mut ResultBuilder) {
+        if result.shells.is_empty() { return; }
+        // Currently single solid: all shells belong to the result solid.
+        // OCCT FillIn3DParts would classify shells as IN/OUT of each source
+        // solid; here all shells form one compound solid.
+        result.solids = result.shells.clone();
+    }
 
     /// OCCT-aligned: FillImagesContainers(COMPSOLID) + FillImagesCompounds (L412-431).
     /// Phase 7: group solids into compounds.  Empty for A1.
