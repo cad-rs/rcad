@@ -2018,6 +2018,7 @@ impl<'a> PaveFiller<'a> {
     ///
     /// Without ProcessExistingPaveBlocks, section edges near face boundaries create
     /// duplicate PaveBlocks that corrupt face splitting.
+
     fn process_existing_pave_blocks(&mut self) {
         let mut to_remove: Vec<usize> = Vec::new();
 

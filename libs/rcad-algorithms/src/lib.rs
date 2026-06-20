@@ -2827,6 +2827,16 @@ pub fn fill_images_vertices(ds: &crate::bopds::ds::DS) -> std::collections::Hash
     }
     img
 }
+/// OCCT-aligned: FillImagesFaces (BOPAlgo_Builder_2.cxx L215).
+pub fn fill_images_faces(ds: &crate::bopds::ds::DS, n_source_faces: usize) -> std::collections::HashMap<usize, Vec<usize>> {
+    let mut img: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+    for (fi, face) in ds.faces.iter().enumerate() {
+        let src = face.source_face_idx;
+        img.entry(src).or_default().push(fi);
+    }
+    img
+}
+
 /// OCCT-aligned: FillImagesEdges (BOPAlgo_Builder_1.cxx L71).
 /// Populates the image map for edges, mapping each original edge
 /// to its split versions.  Uses pave blocks from the DS to determine
