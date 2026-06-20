@@ -5179,7 +5179,7 @@ pub(crate) fn perform_areas(
     }
 
     // OCCT L432-437: build 3D boundary polygon and centroid for each wire
-    struct WireData { wire_idx: usize, boundary: Vec<DVec3>, centroid: DVec3, full_wrap: bool, n_distinct: usize }
+    struct WireData { wire_idx: usize, boundary: Vec<DVec3>, uv_boundary: Vec<DVec2>, centroid: DVec3, full_wrap: bool, n_distinct: usize }
     let mut wds: Vec<WireData> = wires.iter().enumerate().filter_map(|(wi, w)| {
         let mut b = wire_boundary_3d(w, segments, ds);
         if std::env::var("RCAD_DEBUG_BUILDER").is_ok()
@@ -5219,7 +5219,13 @@ pub(crate) fn perform_areas(
             } else { return None; }
         }
         centroid = b.iter().copied().sum::<DVec3>() / b.len() as f64;
-        Some(WireData { wire_idx: wi, boundary: b, centroid, full_wrap, n_distinct: b_distinct })
+        // ✅ OCCT-aligned: compute UV boundary for FClass2d-style classification.
+        let fsurf = &ds.faces[face_idx].surface;
+        let uv_bnd: Vec<DVec2> = b.iter().filter_map(|p| world_to_uv(fsurf, *p)).collect();
+        let uv_boundary = if matches!(fsurf, Surface3::Sphere(_) | Surface3::Cylinder(_) | Surface3::Cone(_)) {
+            uv_bnd.iter().map(|uv| DVec2::new(uv.x.rem_euclid(std::f64::consts::TAU), uv.y)).collect()
+        } else { uv_bnd };
+        Some(WireData { wire_idx: wi, boundary: b, uv_boundary, centroid, full_wrap, n_distinct: b_distinct })
     }).collect();
 
     if wds.is_empty() { return vec![]; }
@@ -5241,7 +5247,18 @@ pub(crate) fn perform_areas(
         { is_hole[si] = true; }
         else if wds[si].n_distinct < 3 { is_hole[si] = true; }
         else {
-            is_hole[si] = sorted.iter().take_while(|&&p| p != si).any(|&p| !is_hole[p] && point_in_polygon_best(wds[si].centroid, &wds[p].boundary));
+            // ✅ OCCT-aligned: use UV-space classification for non-planar surfaces
+            //   (FClass2d equivalent).  Planar surfaces keep 3D ray-casting for speed.
+            let is_periodic = matches!(ds.faces[face_idx].surface, Surface3::Sphere(_)
+                | Surface3::Cylinder(_) | Surface3::Cone(_));
+            is_hole[si] = sorted.iter().take_while(|&&q| q != si).any(|&q| {
+                !is_hole[q] && if is_periodic && wds[si].uv_boundary.len() >= 3 && wds[q].uv_boundary.len() >= 3 {
+                    let uv_c = wds[si].uv_boundary.iter().copied().sum::<DVec2>() / wds[si].uv_boundary.len() as f64;
+                    point_in_polygon_2d(&wds[q].uv_boundary, uv_c)
+                } else {
+                    point_in_polygon_best(wds[si].centroid, &wds[q].boundary)
+                }
+            });
         }
         if is_hole[si] { for &s in &wires[wds[si].wire_idx] { hole_edge_set.insert(s); } }
     }
@@ -5255,18 +5272,6 @@ pub(crate) fn perform_areas(
     //    or fall inside each other. Promoting creates a valid outer boundary.
     if growths.is_empty() && !wds.is_empty() {
         // Use sorted[0] which is the wire with largest projected area
-        let promoted = sorted[0];
-        return vec![WireFace {
-            outer_wire: wires[wds[promoted].wire_idx].clone(),
-            inner_wires: vec![],
-            internal_wires: internal_wires.to_vec(),
-        }];
-    }
-    // ✅ OCCT-aligned: if all wires are holes (no growth found), promote the
-    //    largest (first in sorted) wire to growth. Without this, perform_areas
-    //    returns empty for wires whose centroids are all inside a previous
-    //    growth (e.g. sphere figure-8 wire with 3 triangles forming a cycle).
-    if growths.is_empty() && !wds.is_empty() {
         let promoted = sorted[0];
         return vec![WireFace {
             outer_wire: wires[wds[promoted].wire_idx].clone(),
