@@ -2155,6 +2155,24 @@ fn classify_against_solid_for_boolean(
 
 /// ✅ OCCT对齐: 鏋勫缓 MEF (Map Edge鈫扚aces) 鐢ㄤ簬杈圭骇瑙掑害娉曘€?
 /// OCCT BOPAlgo_FillIn3DParts::MapEdgesAndFaces (BOPAlgo_Tools.cxx L1479-1503)
+/// OCCT-aligned: IsTangentFace (BOPTools_AlgoTools).
+/// Checks if two faces are tangent (parallel normals + close distance).
+pub fn is_tangent_face(fi_a: usize, fi_b: usize, ds: &crate::bopds::ds::DS, angle_tol: f64, dist_tol: f64) -> bool {
+    let face_a = &ds.faces[fi_a];
+    let face_b = &ds.faces[fi_b];
+    let n_dot = face_a.normal.dot(face_b.normal).abs();
+    if n_dot < angle_tol.cos() { return false; }
+    let sample_a = if !face_a.boundary_verts.is_empty() {
+        ds.vertices[face_a.boundary_verts[0]].point
+    } else { return false; };
+    let dist = match &face_b.surface {
+        rcad_kernel::geom::Surface3::Plane(p) => (sample_a - p.origin).dot(p.normal).abs(),
+        rcad_kernel::geom::Surface3::Sphere(s) => ((sample_a - s.center).length() - s.radius).abs(),
+        _ => return false,
+    };
+    dist < dist_tol
+}
+
 fn build_mef(face_indices: &[usize], ds: &DS) -> HashMap<usize, Vec<usize>> {
     let mut mef: HashMap<usize, Vec<usize>> = HashMap::new();
     for &fi in face_indices {
