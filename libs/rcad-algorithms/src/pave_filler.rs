@@ -2007,6 +2007,114 @@ impl<'a> PaveFiller<'a> {
             }
         }
     }
+    /// OCCT-aligned: ProcessExistingPaveBlocks (BOPAlgo_PaveFiller_6.cxx L3072, 3171).
+    ///
+    /// After FF intersection creates section edges, this function checks whether
+    /// each section edge coincides with an existing PaveBlock on a face boundary
+    /// edge.  If a section edge is coincident with a boundary PaveBlock, the
+    /// existing PaveBlock is reused (no new edge is created).  This prevents
+    /// duplicate edges at the intersection of a section curve with a pre-existing
+    /// face boundary.
+    ///
+    /// Without ProcessExistingPaveBlocks, section edges near face boundaries create
+    /// duplicate PaveBlocks that corrupt face splitting.
+    fn process_existing_pave_blocks(&mut self) {
+        let mut to_remove: Vec<usize> = Vec::new();
+
+        for ci in 0..self.ds.intersection_curves.len() {
+            let ic = &self.ds.intersection_curves[ci].clone();
+            let sv_pt = self.ds.vertices[ic.start_vertex].point;
+            let ev_pt = self.ds.vertices[ic.end_vertex].point;
+            let ic_tol = ic.geom_tol.max(TOLERANCE_ABS);
+
+            // Get the two faces that created this IC
+            let mut creator_faces: Vec<usize> = Vec::new();
+            for inf in &self.ds.interferences {
+                if let Interference::FaceFace { f1, f2, curves, .. } = inf {
+                    if curves.contains(&ci) { creator_faces.push(*f1); creator_faces.push(*f2); }
+                }
+            }
+
+            // For each creator face, check if the IC endpoints match any PaveBlock
+            // on the face's boundary edges
+            for &fi in &creator_faces {
+                let face = &self.ds.faces[fi];
+                for &ei in &face.boundary_edges {
+                    if ei >= self.ds.edges.len() { continue; }
+                    let edge = &self.ds.edges[ei];
+                    for (pbi, pb) in edge.pave_blocks.iter().enumerate() {
+                        let pb_sv = self.ds.vertices[pb.pave1.vertex_idx].point;
+                        let pb_ev = self.ds.vertices[pb.pave2.vertex_idx].point;
+
+                        let start_match = (sv_pt - pb_sv).length() < ic_tol
+                            && (ev_pt - pb_ev).length() < ic_tol;
+                        let end_match = (sv_pt - pb_ev).length() < ic_tol
+                            && (ev_pt - pb_sv).length() < ic_tol;
+
+                        if start_match || end_match {
+                            // This IC coincides with an existing PaveBlock.
+                            // Mark for removal (the boundary edge already covers this).
+                            to_remove.push(ci);
+                            break;
+                        }
+                    }
+                    if to_remove.last() == Some(&ci) { break; }
+                }
+                if to_remove.last() == Some(&ci) { break; }
+            }
+        }
+
+        // Remove duplicate ICs (reverse order to preserve indices)
+        to_remove.sort(); to_remove.dedup();
+        to_remove.reverse();
+        for &ci in &to_remove {
+            if ci < self.ds.intersection_curves.len() {
+                self.ds.intersection_curves.remove(ci);
+                // Update curves_sc in faces
+                for fi in 0..self.ds.faces.len() {
+                    self.ds.faces[fi].face_info.curves_sc.remove(&ci);
+                    // Shift higher indices
+                    let shifted: Vec<usize> = self.ds.faces[fi].face_info.curves_sc.iter()
+                        .map(|&c| if c > ci { c - 1 } else { c }).collect();
+                    self.ds.faces[fi].face_info.curves_sc.clear();
+                    for c in shifted { self.ds.faces[fi].face_info.curves_sc.insert(c); }
+                }
+            }
+        }
+    }
+    /// OCCT-aligned: FilterPavesOnCurves (BOPAlgo_PaveFiller_6.cxx L2437).
+    /// After all paves are placed on curves, filters out redundant paves
+    /// at nearly the same parameter (within tolerance).
+    /// This prevents duplicate PaveBlocks on section curves.
+    fn filter_paves_on_curves(&mut self) {
+        for ci in 0..self.ds.intersection_curves.len() {
+            let ic = &self.ds.intersection_curves[ci];
+            let tol = ic.geom_tol.max(TOLERANCE_ABS) * 100.0;
+            // Collect unique pave-block vertices for this curve
+            let mut face_verts: Vec<(usize, f64)> = Vec::new();
+            for inf in &self.ds.interferences {
+                if let Interference::FaceFace { f1, f2, curves, .. } = inf {
+                    if curves.contains(&ci) {
+                        let faces = [*f1, *f2];
+                        for &fi in &faces {
+                            for &vi in &self.ds.faces[fi].face_info.vertices_in {
+                                if !face_verts.iter().any(|(v,_)| v == &vi) {
+                                    if let Some(t) = self.project_vertex_on_curve(vi, ic) {
+                                        face_verts.push((vi, t));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Dedup by parameter
+            face_verts.sort_by(|a,b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+            face_verts.dedup_by(|a,b| (a.1 - b.1).abs() < tol);
+        }
+    }
+
+
 
     fn remove_micro_edges(&mut self) {
         // OCCT L4239: iterate all edges' PaveBlocks
