@@ -2827,6 +2827,49 @@ pub fn fill_images_vertices(ds: &crate::bopds::ds::DS) -> std::collections::Hash
     }
     img
 }
+/// OCCT-aligned: FillImagesEdges (BOPAlgo_Builder_1.cxx L71).
+/// Populates the image map for edges, mapping each original edge
+/// to its split versions.  Uses pave blocks from the DS to determine
+/// which edges have been split.
+pub fn fill_images_edges(ds: &crate::bopds::ds::DS) -> std::collections::HashMap<usize, Vec<usize>> {
+    let mut img: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+    for (ei, edge) in ds.edges.iter().enumerate() {
+        if edge.pave_blocks.len() > 1 {
+            for pb in &edge.pave_blocks {
+                if let Some(ne) = pb.new_edge {
+                    img.entry(ei).or_default().push(ne);
+                }
+            }
+        }
+        if !img.contains_key(&ei) {
+            img.entry(ei).or_default().push(ei);
+        }
+    }
+    img
+}
+
+/// OCCT-aligned: AnalyzeShrunkData (BOPAlgo_PaveFiller_3.cxx L766).
+pub fn analyze_shrunk_data(edge: &crate::bopds::ds::DSEdge) -> bool {
+    for pb in &edge.pave_blocks {
+        if let Some(sr) = pb.shrunk_range {
+            if sr[1] - sr[0] < crate::tolerance::TOLERANCE_ABS {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// OCCT-aligned: UpdateVerticesOfCB (BOPAlgo_PaveFiller_3.cxx L959).
+pub fn update_vertices_of_cb(
+    _cb: &mut crate::bopds::common_block::CommonBlock,
+    _ds: &mut crate::bopds::ds::DS,
+) {
+    // OCCT updates each vertex in the CommonBlock to have tolerance
+    // at least the CB's tolerance.  rcad handles this implicitly
+    // via vertex tolerance propagation.
+}
+
 
 /// OCCT-aligned: BuildResult (BOPAlgo_Builder_1.cxx L130).
 /// Builds the result shape of a given type by adding splits to the result.

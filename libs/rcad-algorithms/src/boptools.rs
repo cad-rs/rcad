@@ -79,3 +79,25 @@ pub fn is_edge_isoline(edge_curve: &Curve3, _surface: &Surface3) -> bool {
 pub fn orient_edge_on_face(dot_product: f64) -> bool {
     dot_product > 0.0
 }
+
+/// OCCT-aligned: MakeEdge (BOPTools_AlgoTools).
+pub fn make_ds_edge(
+    ds: &mut crate::bopds::ds::DS, v1: usize, v2: usize, curve: rcad_kernel::geom::Curve3, t_range: [f64; 2],
+) -> usize {
+    let ei = ds.edges.len();
+    ds.edges.push(crate::bopds::ds::DSEdge {
+        start_vertex: v1, end_vertex: v2, curve, t_range,
+        origin: crate::bopds::ds::ShapeOrigin::ShapeA,
+        geom_tol: crate::tolerance::TOLERANCE_ABS,
+        paves: Vec::new(), pave_blocks: Vec::new(),
+    });
+    ei
+}
+/// OCCT-aligned: CorrectEdgeRange (BOPTools_AlgoTools).
+pub fn correct_edge_range(ds: &mut crate::bopds::ds::DS, ei: usize, t1: f64, t2: f64) -> [f64; 2] {
+    if ei < ds.edges.len() {
+        let ts = t1.max(ds.edges[ei].t_range[0]);
+        let te = t2.min(ds.edges[ei].t_range[1]);
+        [ts.min(te), te.max(ts)]
+    } else { [t1, t2] }
+}
