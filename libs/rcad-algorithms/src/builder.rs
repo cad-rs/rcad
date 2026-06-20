@@ -2618,13 +2618,27 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             // ✅ OCCT L408-412: degenerate → add once, continue
             //    Both endpoints are the SAME pole vertex (bIsClosed=true in OCCT).
             //    The SmartMap sees two entries (out+in) at this vertex, making the
-            //    deg edge a self-loop that the walk traverses to bridge the U seam
-            //    (e.g. from IC1's U=π/2 to the seam's U=0 at the north pole).
+            //    deg edge a self-loop that the walk traverses to bridge the U seam.
+            // ✅ OCCT: sphere degenerated edge's pcurve is a Line at V=V_pole spanning
+            //    U=0→2π (BRep_Tool::CurveOnSurface picks PCurve or PCurve2 by
+            //    orientation).  Store the full-span line as second_pcurve so
+            //    Coord2d evaluates it for both at_start (native U=0) and at_end
+            //    (shifted U=2π).
+            let deg_pcurve = match &face.surface {
+                Surface3::Sphere(_) => {
+                    let uv = world_to_uv(&face.surface, ds.vertices[sv].point);
+                    uv.map(|uv| Curve2d::Line(Line2d {
+                        origin: DVec2::new(0.0, uv.y),
+                        direction: DVec2::new(std::f64::consts::TAU, 0.0),
+                    }))
+                }
+                _ => None,
+            };
             let tangent = compute_seam_tangent_angles(ds, sv, ev, &face.surface);
             segments.push(WireSegment {
                 start_vertex: sv, end_vertex: sv,
                 source: WireEdgeSource::DsEdge(ei), forward: true,
-                is_seam: true, second_pcurve: None, tangent_start: tangent.0, tangent_end: tangent.1,
+                is_seam: true, second_pcurve: deg_pcurve, tangent_start: tangent.0, tangent_end: tangent.1,
             });        } else if is_seam && matches!(face.surface, Surface3::Sphere(_)) {
             // ✅ OCCT-aligned: myImages equivalent (BOPAlgo_Builder_2.cxx L364-449).
             //    If PaveFiller split this edge (pave_blocks > 1), use pave_blocks
@@ -4586,16 +4600,23 @@ fn walk_path_extract_wires(
                 //   the "out" end to (2π, Vpole) at the "in" end, spanning the full
                 //   U circle at Vpole — exactly matching OCCT's pcurve for a sphere
                 //   degenerated edge.
-                if segment.start_vertex == segment.end_vertex && segment.forward {
-                    // Degenerate pole edge: spans full U circle at pole V.
-                    let uv_base = world_to_uv(face_surface, ds.vertices[vi].point)
-                        .unwrap_or(DVec2::ZERO);
-                    let period = std::f64::consts::TAU;
-                    Some(if at_start {
-                        DVec2::new(period, uv_base.y)  // shifted-side U (match OCCT DEB)
-                    } else {
-                        DVec2::new(0.0, uv_base.y)     // native U
-                    })
+                if segment.start_vertex == segment.end_vertex {
+                    // ✅ OCCT-aligned: sphere degenerated edge's pcurve is a Line at
+                    //   V=V_pole spanning U=0→2π, stored in second_pcurve.  Coord2d
+                    //   evaluates it for both SmartMap entries: at_start (native U=0)
+                    //   and at_end (shifted U=2π), matching OCCT per-edge pcurve
+                    //   (WireSplitter_1.cxx L663-674, BRep_Tool.cxx L354-361).
+                    match &segment.second_pcurve {
+                        Some(Curve2d::Line(l)) => {
+                            Some(if at_start { l.origin } else { l.origin + l.direction })
+                        }
+                        _ => {
+                            let uv = world_to_uv(face_surface, ds.vertices[vi].point)
+                                .unwrap_or(DVec2::ZERO);
+                            Some(if at_start { DVec2::new(std::f64::consts::TAU, uv.y) }
+                                     else { DVec2::new(0.0, uv.y) })
+                        }
+                    }
                 } else {
                     match (segment.forward, &segment.second_pcurve) {
                         (false, Some(Curve2d::Line(l))) => {
