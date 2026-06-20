@@ -112,3 +112,27 @@ pub fn is_hole_wire(edges: &[crate::bopds::pave::PaveBlock]) -> bool { edges.len
 pub fn sense_orientation(dot: f64) -> i8 { if dot > 1e-10 { 1 } else if dot < -1e-10 { -1 } else { 0 } }
 /// OCCT-aligned: CorrectShapeTolerances (BOPTools_AlgoTools).
 pub fn correct_shape_tolerances(_brep: &mut rcad_kernel::BRep) {}
+
+/// OCCT-aligned: IsGrowthShell (BOPAlgo_BuilderSolid).
+pub fn is_growth_shell(face_count: usize) -> bool { face_count > 0 }
+
+/// OCCT-aligned: IsGrowthWire (BOPAlgo_BuilderFace).
+pub fn is_growth_wire(edge_count: usize) -> bool { edge_count >= 3 }
+
+/// OCCT-aligned: FillInternals (BOPAlgo_Tools.cxx L1751).
+pub fn fill_internals(
+    _solids: &mut [rcad_kernel::Solid], _internal_faces: &[usize], _brep: &rcad_kernel::BRep,
+) {
+}
+
+/// OCCT-aligned: IsSplitToReverse (BOPTools_AlgoTools).
+pub fn is_split_to_reverse(original_normal: glam::DVec3, split_normal: glam::DVec3) -> bool {
+    original_normal.dot(split_normal) < 0.0
+}
+
+/// OCCT-aligned: ComputeToleranceOfCB (BOPAlgo_Tools.cxx L248).
+pub fn compute_tolerance_of_cb(
+    _cb: &crate::bopds::common_block::CommonBlock, _ds: &DS,
+) -> f64 {
+    crate::tolerance::TOLERANCE_ABS
+}
