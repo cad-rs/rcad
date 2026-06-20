@@ -2942,6 +2942,44 @@ impl<'a> PaveFiller<'a> {
         }
         pnts
     }
+    /// OCCT-aligned: GetFullShapeMap (BOPAlgo_PaveFiller_6.cxx L2909).
+    fn get_full_shape_map(&self, fi: usize) -> Vec<usize> {
+        let mut indices: Vec<usize> = Vec::new();
+        indices.push(fi);
+        for &ei in &self.ds.faces[fi].boundary_edges { indices.push(ei); }
+        for &vi in &self.ds.faces[fi].boundary_verts { indices.push(vi); }
+        indices
+    }
+
+    /// OCCT-aligned: RemoveUsedVertices (BOPAlgo_PaveFiller_6.cxx L2928).
+    fn remove_used_vertices(&self, verts: &mut Vec<usize>, used: &std::collections::BTreeSet<usize>) {
+        verts.retain(|v| !used.contains(v));
+    }
+
+    /// OCCT-aligned: CorrectRange (BOPTools_AlgoTools).
+    fn correct_t_range(&self, ei: usize, t_start: f64, t_end: f64) -> [f64; 2] {
+        let edge = &self.ds.edges[ei];
+        let mut ts = t_start.max(edge.t_range[0]);
+        let mut te = t_end.min(edge.t_range[1]);
+        if te < ts { std::mem::swap(&mut ts, &mut te); }
+        [ts, te]
+    }
+
+    /// OCCT-aligned: IsBlockInOnFace (BOPTools_AlgoTools).
+    fn is_block_in_on_face(&self, ei: usize, pbi: usize, fi: usize) -> bool {
+        if ei >= self.ds.edges.len() { return false; }
+        if fi >= self.ds.faces.len() { return false; }
+        let pb = &self.ds.edges[ei].pave_blocks[pbi];
+        let mid_param = (pb.pave1.param + pb.pave2.param) * 0.5;
+        let mid_pt = self.ds.edges[ei].curve.point_at(mid_param);
+        let face = &self.ds.faces[fi];
+        let tol = face.geom_tol.max(TOLERANCE_ABS);
+        match &face.surface {
+            Surface3::Plane(p) => (mid_pt - p.origin).dot(p.normal).abs() <= tol,
+            _ => false,
+        }
+    }
+
 
 
 
