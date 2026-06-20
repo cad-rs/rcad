@@ -131,23 +131,19 @@ pub fn circle_pcurve_on_sphere(circle: &Circle3, sphere: &SphericalSurface) -> C
     let ax = sphere.axis.normalize_or_zero();
     let n = circle.normal.normalize_or_zero();
 
-    // ✅ OCCT对齐: 检测交线是否为大圆(过球心) → 等 u 线
     let is_great = (circle.center - sphere.center).length_squared() < TOLERANCE_ABS_SQ;
     if is_great {
-        // 大圆: 计算 u = atan2(n·(axis×ref), n·ref) 得经线位置
+        // Great circle: U = const meridian, V varies 0→π.
         let ref_dir = sphere.ref_dir.normalize_or_zero();
         let u_dir = ax.cross(ref_dir).normalize_or_zero();
         let u_angle = f64::atan2(n.dot(u_dir), n.dot(ref_dir));
-        // 大圆从 v=0 到 v=π
         Curve2d::Line(Line2d {
             origin: DVec2::new(u_angle, 0.0),
             direction: DVec2::new(0.0, 1.0),
         })
     } else {
-        // ✅ OCCT对齐: 非大圆(纬线) → 等 v 线
         let d = (circle.center - sphere.center).dot(ax);
         let phi = (d / sphere.radius).clamp(-1.0, 1.0).acos();
-        // 从 u = -π 到 u = +π, 固定 v = φ
         Curve2d::Line(Line2d {
             origin: DVec2::new(-std::f64::consts::PI, phi),
             direction: DVec2::new(1.0, 0.0),

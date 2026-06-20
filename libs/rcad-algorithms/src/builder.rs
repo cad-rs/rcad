@@ -2644,53 +2644,75 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                         eprintln!("[SEAM_TANG] ei={} block sv={} ev={} t_start={:?} t_end={:?}",
                             ei, sv_seg, ev_seg, t_start, t_end);
                     }
-                    // OCCT DoSplitSEAMOnFace: for sphere split seams, compute the
-                    // second pcurve (U shifted by period 2π) so RefineAngle2D can
-                    // project IC edges onto the other side of the parametric seam.
-                    let second_pcurve = if matches!(face.surface, Surface3::Sphere(_)) {
-                        if let (Some(uv_s), Some(uv_e)) = (
-                            world_to_uv(&face.surface, ds.vertices[sv_seg].point),
-                            world_to_uv(&face.surface, ds.vertices[ev_seg].point),
-                        ) {
-                            Some(Curve2d::Line(Line2d {
-                                origin: DVec2::new(uv_s.x + std::f64::consts::TAU, uv_s.y),
-                                direction: DVec2::new(0.0, uv_e.y - uv_s.y),
-                            }))
+                    // OCCT-aligned DoSplitSEAMOnFace (BOPTools_AlgoTools3D.cxx L58-232):
+                    // For split seam sub-edges on periodic surfaces, create a second
+                    // pcurve (shifted by the surface period) when the sub-edge's
+                    // midpoint UV lies within surface resolution of the U (or V)
+                    // boundary.  This ensures RefineAngle2D can project IC edges
+                    // onto the correct side of the parametric seam.
+                    let second_pcurve = {
+                        let (is_periodic, period, u_min, u_max) = match &face.surface {
+                            Surface3::Sphere(sph) => {
+                                (true, std::f64::consts::TAU, 0.0, std::f64::consts::TAU)
+                            }
+                            Surface3::Cylinder(cyl) => {
+                                (true, std::f64::consts::TAU, 0.0, std::f64::consts::TAU)
+                            }
+                            _ => (false, 0.0, 0.0, 0.0),
+                        };
+                        if is_periodic {
+                            // OCCT L152-153: get UV at sub-edge midpoint
+                            let mid_3d = (ds.vertices[sv_seg].point + ds.vertices[ev_seg].point) * 0.5;
+                            let uv_mid_opt = world_to_uv(&face.surface, mid_3d);
+
+                            // OCCT L162-164: surface U resolution at edge tolerance
+                            let edge_tol = ds.edges[ei].geom_tol.max(TOLERANCE_ABS);
+                            let dU = match &face.surface {
+                                Surface3::Sphere(sph) => edge_tol / sph.radius.max(1e-15),
+                                Surface3::Cylinder(cyl) => edge_tol / cyl.radius.max(1e-15),
+                                _ => TOLERANCE_ABS,
+                            };
+
+                            if let Some(uv_mid) = uv_mid_opt {
+                                // OCCT L166-178: check boundary proximity
+                                let shift_u = if (uv_mid.x - u_min).abs() < dU {
+                                    Some(period)       // near Umin → +period (bIsLeft=true)
+                                } else if (uv_mid.x - u_max).abs() < dU {
+                                    Some(-period)      // near Umax → -period (bIsLeft=false)
+                                } else {
+                                    None
+                                };
+
+                                shift_u.and_then(|du| {
+                                    let uv_s = world_to_uv(&face.surface, ds.vertices[sv_seg].point)?;
+                                    let uv_e = world_to_uv(&face.surface, ds.vertices[ev_seg].point)?;
+                                    Some(Curve2d::Line(Line2d {
+                                        origin: DVec2::new(uv_s.x + du, uv_s.y),
+                                        direction: DVec2::new(0.0, uv_e.y - uv_s.y),
+                                    }))
+                                })
+                            } else { None }
                         } else { None }
-                    } else { None };
+                    };
                     segments.push(WireSegment {
                         start_vertex: sv_seg, end_vertex: ev_seg,
                         source: WireEdgeSource::DsEdge(ei), forward: true,
                         is_seam: true, second_pcurve: second_pcurve.clone(), tangent_start: t_start, tangent_end: t_end,
-                    });                    segments.push(WireSegment {
+                    });
+                    // Reverse direction: compute angles independently from
+                    // ev_seg→sv_seg direction, matching OCCT Angle2D for the
+                    // opposite traversal of the seam sub-edge.
+                    let (t_start_rev, t_end_rev) = compute_seam_tangent_angles(ds, ev_seg, sv_seg, &face.surface);
+                    segments.push(WireSegment {
                         start_vertex: ev_seg, end_vertex: sv_seg,
                         source: WireEdgeSource::DsEdge(ei), forward: false,
                         is_seam: true, second_pcurve: None,
-                        // OCCT-aligned: t_end already reversed (incoming convention).
-                        // REV outgoing from end → start uses t_end directly (no +PI).
-                        tangent_start: t_end,
-                        tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+                        tangent_start: t_start_rev, tangent_end: t_end_rev,
                     });
-                    // OCCT DoSplitSEAMOnFace: add an extra WireSegment pair for the
-                    // second pcurve (U+2π) so the SmartMap has dual entries at seam
-                    // vertices. This lets the walker traverse the seam twice — once
-                    // per pcurve — producing two separate wires instead of a figure-8.
-                    if let Some(ref pc2) = second_pcurve {
-                        let (t_start_2nd, t_end_2nd) = compute_seam_tangent_angles(ds, sv_seg, ev_seg, &face.surface);
-                        segments.push(WireSegment {
-                            start_vertex: sv_seg, end_vertex: ev_seg,
-                            source: WireEdgeSource::SeamEdge, forward: true,
-                            is_seam: true, second_pcurve: None,
-                            tangent_start: t_start_2nd, tangent_end: t_end_2nd,
-                        });
-                        segments.push(WireSegment {
-                            start_vertex: ev_seg, end_vertex: sv_seg,
-                            source: WireEdgeSource::SeamEdge, forward: false,
-                            is_seam: true, second_pcurve: None,
-                            tangent_start: t_end_2nd,
-                            tangent_end: t_start_2nd.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-                        });
-                    }
+                    // OCCT DoSplitSEAMOnFace: second_pcurve is carried on the DsEdge
+                    // segment above so RefineAngle2D can compute both pcurve angles.
+                    // OCCT does NOT create separate SeamEdge segments — that would
+                    // duplicate SmartMap entries and cause broken wire walks.
                 }
             } else {
                 // ⏳ No pave_blocks — edge not split by PaveFiller.
@@ -2699,13 +2721,16 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     start_vertex: sv, end_vertex: ev,
                     source: WireEdgeSource::DsEdge(ei), forward: true,
                     is_seam: true, second_pcurve: None, tangent_start: t_start, tangent_end: t_end,
-                });                segments.push(WireSegment {
+                });
+                // Reverse direction: compute angles independently.
+                let (t_start_rev, t_end_rev) = compute_seam_tangent_angles(ds, ev, sv, &face.surface);
+                segments.push(WireSegment {
                     start_vertex: ev, end_vertex: sv,
                     source: WireEdgeSource::DsEdge(ei), forward: false,
                     is_seam: true, second_pcurve: None,
-                    tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-                    tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-                });            }
+                    tangent_start: t_start_rev, tangent_end: t_end_rev,
+                });
+            }
         } else if is_seam {
             // OCCT-aligned: Cylinder/Cone seam edge  keep original 2-segment logic (BOPAlgo_Builder_2.cxx L357-460)
             let (t_start, t_end) = compute_seam_tangent_angles(ds, sv, ev, &face.surface);
@@ -3031,45 +3056,60 @@ fn compute_ic_second_pcurve(
     }
 }
 
-/// OCCT-aligned: Compute seam edge UV tangent angle
-///     seam = u=const isoline   V
-///    Cylinder seam
+/// OCCT-aligned: Angle2D for seam edges (BOPAlgo_WireSplitter_1.cxx L768-840).
 ///
-/// OCCT-aligned: tangent_start = forward tangent at start vertex (outgoing).
-/// tangent_end = REVERSE tangent at end vertex (incoming convention matching
-/// Angle2D + aFlag=true).  Previously both ends returned the same angle,
-/// causing wrong edge selection at multi-edge vertices on sphere/cylinder.
+/// OCCT takes the edge's pcurve via BRep_Tool::CurveOnSurface, the vertex
+/// parameter via BRep_Tool::Parameter, and calls Angle2D(aV, aE, aF, aGAS, bIsIN).
+/// rcad equivalent: construct a Line pcurve along the surface isoline at the
+/// parametric seam, then call angle_2d (which mirrors OCCT's dt/tol/step logic).
+/// Returns (tangent_start, tangent_end) where both are the pcurve direction.
 fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface: &Surface3) -> (Option<f64>, Option<f64>) {
     match surface {
         Surface3::Sphere(sph) => {
+            // Construct pcurve: constant-U Line at the seam U.
+            // The vertex UV gives the U coordinate (should be 0 for the primary
+            // seam, shifted by ±TAU for the second_pcurve side).
             let uvs = sph.world_to_uv(ds.vertices[sv].point);
             let uve = sph.world_to_uv(ds.vertices[ev].point);
-            let dir = uve - uvs;
-            if dir.length_squared() < 1e-30 {
-                // OCCT-aligned: zero-length seam sub-segment (IC endpoint at
-                // pole).  The seam always follows the V direction on the sphere,
-                // from north pole (V=0) toward south pole (V=pi).  Return the
-                // V-axis direction (pi/2) for outgoing, reverse for incoming.
+            if uve.y == uvs.y && uve.x == uvs.x {
+                // Zero-length: vertex at pole.  Seam follows V-direction.
                 let na = -std::f64::consts::FRAC_PI_2;
-                return (Some(na), Some((na + std::f64::consts::PI) % std::f64::consts::TAU));
+                return (Some(na), Some(na));
             }
-            let a = dir_to_angle(dir);
-            let na = a;
-            (Some(na), Some((na + std::f64::consts::PI) % std::f64::consts::TAU))
+            // Pcurve: Line from (U, v_start) to (U, v_end) along V-axis.
+            // Use the U of the start vertex (seam sub-edge follows U=const).
+            let uv_start = uvs;
+            let uv_end = uve;
+            // The pcurve is V-varying at constant U.  Use the AVERAGE U so
+            // the pcurve is centred between the two vertex UVs.
+            let u_const = uv_start.x;
+            let v0 = uv_start.y.min(uv_end.y);
+            let v1 = uv_start.y.max(uv_end.y);
+            let span = v1 - v0;
+            if span < 1e-30 { return (None, None); }
+            let pcurve = Curve2d::Line(Line2d {
+                origin: DVec2::new(u_const, v0),
+                direction: DVec2::new(0.0, span),
+            });
+            // Use the V coordinate as the parameter on the pcurve.
+            // For OUT at sv: t = uv_start's V (relative to v0).
+            let t_start_v = uv_start.y - v0;
+            // For IN at ev: t = uv_end's V (relative to v0).
+            let t_end_v = uv_end.y - v0;
+            let domain = [0.0, span];
+            let t_start = angle_2d(&pcurve, t_start_v, domain, false);
+            let t_end = angle_2d(&pcurve, t_end_v, domain, true);
+            (t_start, t_end)
         }
         Surface3::Cylinder(cyl) => {
-            // Cylinder seam: u=0 or u=2 isoline, along V direction.
-            // Compute approximate direction.
             let sv_pt = ds.vertices[sv].point;
             let ev_pt = ds.vertices[ev].point;
-            // Project onto cylinder axis to get V coordinate
             let ax = cyl.axis.normalize_or_zero();
             let sv_v = (sv_pt - cyl.origin).dot(ax);
             let ev_v = (ev_pt - cyl.origin).dot(ax);
             let dir = if ev_v > sv_v { DVec2::new(0.0, 1.0) } else { DVec2::new(0.0, -1.0) };
             let a = dir_to_angle(dir);
-            let na = a;
-            (Some(na), Some((na + std::f64::consts::PI) % std::f64::consts::TAU))
+            (Some(a), Some(a))
         }
         Surface3::Plane(p) => {
             let x_axis = any_perpendicular(p.normal).normalize();
@@ -3081,8 +3121,7 @@ fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface: &Surface3
             let dir = uv_e - uv_s;
             if dir.length_squared() < 1e-30 { return (None, None); }
             let a = dir_to_angle(dir);
-            let na = a;
-            (Some(na), Some((na + std::f64::consts::PI) % std::f64::consts::TAU))
+            (Some(a), Some(a))
         }
         _ => (None, None),
     }
@@ -3658,17 +3697,28 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, fac
         };
 
 
-        // At start_vertex: edge LEAVES the vertex (in_flag = false)
-        if let Some(angle) = seg.tangent_start {
-            smart_map.entry(seg.start_vertex).or_default().push(EdgeInfo {
-                seg_idx: si, passed: mark_passed, in_flag: false, is_inside, is_circle_arc, angle,
-            });        }
+        // OCCT SplitBlock L154-172: seam (closed) edges get BOTH forward
+        // and reverse entries (L429-452); IC/boundary edges get 1 entry.
+        // OUT at start vertex: forward segs and seam reverse segs.
+        let add_out = seg.forward || seg.is_seam;
+        // IN at end vertex: only forward segs (reverse's IN is for the
+        // other vertex, which is covered by forward's OUT at that vertex).
+        let add_in = seg.forward;
 
-        // At end_vertex: edge ENTERS the vertex (in_flag = true)
-        if let Some(angle) = seg.tangent_end {
-            smart_map.entry(seg.end_vertex).or_default().push(EdgeInfo {
-                seg_idx: si, passed: mark_passed, in_flag: true, is_inside, is_circle_arc, angle,
-            });        }
+        if add_out {
+            if let Some(angle) = seg.tangent_start {
+                smart_map.entry(seg.start_vertex).or_default().push(EdgeInfo {
+                    seg_idx: si, passed: mark_passed, in_flag: false, is_inside, is_circle_arc, angle,
+                });
+            }
+        }
+        if add_in {
+            if let Some(angle) = seg.tangent_end {
+                smart_map.entry(seg.end_vertex).or_default().push(EdgeInfo {
+                    seg_idx: si, passed: mark_passed, in_flag: true, is_inside, is_circle_arc, angle,
+                });
+            }
+        }
     }
 
     // [A1_DBG 3] SmartMap population summary
@@ -3842,16 +3892,10 @@ fn perform_shapes_to_avoid(
         }
         if !b_found { break; }
     }
+    // OCCT: shapesToAvoid prevents start elements but edges remain
+    // traversable in WireSplitter. Mark passed instead of removing.
     for &seg_idx in &avoided_set {
-        let seg = &segments[seg_idx];
-        if let Some(infos) = smart_map.get_mut(&seg.start_vertex) {
-            infos.retain(|ei| ei.seg_idx != seg_idx);
-            if infos.is_empty() { smart_map.remove(&seg.start_vertex); }
-        }
-        if let Some(infos) = smart_map.get_mut(&seg.end_vertex) {
-            infos.retain(|ei| ei.seg_idx != seg_idx);
-            if infos.is_empty() { smart_map.remove(&seg.end_vertex); }
-        }
+        mark_all_edge_infos_passed(smart_map, seg_idx);
     }
     avoided_set.into_iter().collect()
 }
@@ -3944,8 +3988,36 @@ fn is_seg_passed(smart_map: &HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize) -> b
     false
 }
 
+/// Mark the specific EdgeInfo AND its opposite-direction counterpart
+/// (same physical edge, opposite in_flag) at the given vertex as passed.
+/// OCCT has 1 entry per edge per vertex; rcad creates 2 (FWD+REV) that
+/// must be treated as one physical edge.
+fn mark_edge_passed_both_dirs(
+    smart_map: &mut HashMap<usize, Vec<EdgeInfo>>,
+    seg_idx: usize,
+    vertex: usize,
+    in_flag: bool,
+    segments: &[WireSegment],
+) {
+    let Some(infos) = smart_map.get_mut(&vertex) else { return };
+    let physical_key = match &segments[seg_idx].source {
+        WireEdgeSource::DsEdge(ei) => (*ei, true),
+        WireEdgeSource::IntersectionCurve(ci) => (*ci, false),
+        WireEdgeSource::SeamEdge => return,
+    };
+    for info in infos.iter_mut() {
+        let matches_physical = match (&segments[info.seg_idx].source, physical_key) {
+            (WireEdgeSource::DsEdge(ei), (pe, true)) => *ei == pe,
+            (WireEdgeSource::IntersectionCurve(ci), (pc, false)) => *ci == pc,
+            _ => false,
+        };
+        if matches_physical {
+            info.passed = true;
+        }
+    }
+}
+
 /// Mark only the specific EdgeInfo for a segment at a vertex+in_flag as passed.
-/// OCCT-aligned: find passed EdgeInfo.
 fn mark_edge_passed(smart_map: &mut HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize, vertex: usize, in_flag: bool) {
     if let Some(infos) = smart_map.get_mut(&vertex) {
         for info in infos.iter_mut() {
@@ -3989,113 +4061,34 @@ fn select_best_outgoing<'a>(
     if candidates.is_empty() {
         return None;
     }
-    // ✅ OCCT对齐: boundary→IC transition (WireSplitter_1.cxx L590-606).
-    // 当 incoming 是 boundary,恰好有 1 个 IC outgoing 时,强制选择 IC。
-    // 但当边界边在分割顶点处被分裂(共享相同 DsEdge 索引)时,边界→边界才是正确路径:
-    // 分割子段应保持在同一 DS 边内,而非跳转到 IC。
-    if incoming_is_boundary {
-        let internal_out: Vec<&&EdgeInfo> = candidates.iter().filter(|e| e.is_inside).collect();
-        if internal_out.len() == 1 {
-            let incoming_seg = &segments[incoming_ci];
-            let mut same_source_boundary: Option<usize> = None;
-            for (cix, e) in candidates.iter().enumerate() {
-                if e.is_inside || e.in_flag { continue; }
-                match (&segments[e.seg_idx].source, &incoming_seg.source) {
-                    (WireEdgeSource::DsEdge(eo), WireEdgeSource::DsEdge(ei)) if eo == ei => {
-                        same_source_boundary = Some(cix);
-                    }
-                    _ => {}
-                }
-            }
-            if std::env::var("RCAD_DEBUG_IC").is_ok() {
-                let in_src = match &incoming_seg.source {
-                    WireEdgeSource::DsEdge(ei) => format!("Ds({})", ei),
-                    WireEdgeSource::IntersectionCurve(ci) => format!("IC({})", ci),
-                    _ => "?".to_string(),
-                };
-                eprintln!("[BD_IC] incoming_ci={} src={} has_same={:?}", incoming_ci, in_src, same_source_boundary);
-                for e in candidates.iter() {
-                    let src_s = match &segments[e.seg_idx].source {
-                        WireEdgeSource::DsEdge(ei) => format!("Ds({})", ei),
-                        WireEdgeSource::IntersectionCurve(ci) => format!("IC({})", ci),
-                        _ => "?".to_string(),
-                    };
-                    eprintln!("[BD_IC]   cand seg={} inside={} src={}", e.seg_idx, e.is_inside, src_s);
-                }
-            }
-            if same_source_boundary.is_none() || internal_out[0].is_circle_arc {
-                return Some(internal_out[0]);
-            }
-        }
-    }
-    // ✅ OCCT-aligned: on sphere faces, when incoming is an IC edge and
-    //    there are outgoing IC edges, prefer IC over seam edges.  OCCT's
-    //    SmartMap walking traverses the intersection boundary first, then
-    //    the seam separately — this produces 2 wires for a periodic surface.
-    //    Without this preference, the seam edge's angle can be smaller than
-    //    the IC edge's angle, causing the walk to traverse the seam first,
-    //    consuming all edges in one pass (bfuse_simple A1 sphere face).
-    if !incoming_is_boundary {
-        let internal_out: Vec<&&EdgeInfo> = candidates.iter().filter(|e| e.is_inside).collect();
-        if !internal_out.is_empty() {
-            // Prefer IC edges (is_inside=true) over boundary/seam edges
-            if internal_out.len() == 1 {
-                return Some(internal_out[0]);
-            }
-            // Multiple IC candidates: select by angle among IC only
-            return internal_out.iter().min_by(|a, b| {
-                let aa = clock_wise_angle(angle_in, a.angle);
-                let ab = clock_wise_angle(angle_in, b.angle);
-                aa.partial_cmp(&ab).unwrap_or(std::cmp::Ordering::Equal)
-            }).copied().copied();
-        }
-    }
-    if candidates.len() == 1 {
-        return Some(candidates[0]);
-    }
-    // ✅ OCCT-aligned aE.IsSame(aEOuta) check (L544): if a candidate edge
-    // is the same physical edge as the incoming edge, maximize its angle
-    // to 2PI so it is never chosen over other candidates.
-    // OCCT compares TopoDS_Shape identity: FWD+REV of the same block
-    // share the same TShape, so IsSame returns true.  rcad: check if
-    // candidate is DsEdge from same index AND reversed vertex pair.
     let incoming_seg = &segments[incoming_ci];
-    candidates.iter()
-        .min_by(|a, b| {
-            let angle_a = {
-                let seg = &segments[a.seg_idx];
-                if a.seg_idx == incoming_ci
-                    || is_same_block_fwd_rev(incoming_seg, seg)
-                {
-                    std::f64::consts::TAU
-                } else {
-                    clock_wise_angle(angle_in, a.angle)
-                }
-            };
-            let angle_b = {
-                let seg = &segments[b.seg_idx];
-                if b.seg_idx == incoming_ci
-                    || is_same_block_fwd_rev(incoming_seg, seg)
-                {
-                    std::f64::consts::TAU
-                } else {
-                    clock_wise_angle(angle_in, b.angle)
-                }
-            };
-            // ✅ OCCT-aligned: strict anAngle < aMinAngle - eps comparison
-            //    (BOPAlgo_WireSplitter_1.cxx L595-599). Edge set iteration order
-            //    now matches TopExp_Explorer → first-iterated candidate in SmartMap
-            //    matches OCCT's selection when CWA values are equal.
-            const CWA_EPS: f64 = 1e-12;
-            if angle_a + CWA_EPS < angle_b {
-                std::cmp::Ordering::Less
-            } else if angle_b + CWA_EPS < angle_a {
-                std::cmp::Ordering::Greater
-            } else {
-                std::cmp::Ordering::Equal
-            }
-        })
-        .copied()
+    let a_two_pi = std::f64::consts::TAU;
+    let eps = 1e-14; // OCCT: eps = Epsilon(1.)
+    let mut a_min_angle = 100.0;
+    let mut a_nb_ways_inside: i32 = 0;
+    let mut p_only_way_in: Option<&EdgeInfo> = None;
+    let mut p_edge_info: Option<&EdgeInfo> = None;
+    for an_ei in candidates {
+        let a_angle = if an_ei.seg_idx == incoming_ci
+            || is_same_block_fwd_rev(incoming_seg, &segments[an_ei.seg_idx])
+        {
+            a_two_pi // OCCT L564-567: aE.IsSame(aEOuta) -> aTwoPI
+        } else {
+            clock_wise_angle(angle_in, an_ei.angle) // OCCT L585-586
+        };
+        if incoming_is_boundary && an_ei.is_inside {
+            a_nb_ways_inside += 1; // OCCT L589-593
+            p_only_way_in = Some(an_ei);
+        }
+        if a_angle < a_min_angle - eps {
+            a_min_angle = a_angle; // OCCT L595-599
+            p_edge_info = Some(an_ei);
+        }
+    }
+    if a_nb_ways_inside == 1 {
+        p_edge_info = p_only_way_in; // OCCT L602-604
+    }
+    p_edge_info
 }
 
 /// ✅ OCCT对齐: RefineAngles — OCCT BOPAlgo_WireSplitter_1.cxx L904-1028
@@ -4194,6 +4187,173 @@ fn refine_angles(
 ///
 ///    per-EdgeInfo passed per vertex,
 
+/// Get the parameter range [t_min, t_max] of a Curve2d.
+/// For Trimmed: uses its stored t_min/t_max.
+/// For Line: returns [0.0, 1.0] (segment from origin to origin+direction).
+/// For Circle: returns [0.0, 2π].
+/// For other types: returns [0.0, 1.0].
+fn pc_parameter_range(curve: &Curve2d) -> (f64, f64) {
+    match curve {
+        Curve2d::Trimmed(tc) => (tc.t_min, tc.t_max),
+        Curve2d::Circle(_) => (0.0, std::f64::consts::TAU),
+        _ => (0.0, 1.0),
+    }
+}
+
+/// OCCT-aligned: intersect a 2D ray with a 2D curve.
+/// Returns (param_on_curve, param_on_ray) for all intersections within range.
+/// OCCT ref: Geom2dInt_GInter (BOPAlgo_WireSplitter_1.cxx L1080)
+fn intersect_ray_curve_2d(
+    ray_origin: DVec2,
+    ray_dir: DVec2,
+    curve: &Curve2d,
+    t_min: f64,
+    t_max: f64,
+) -> Vec<(f64, f64)> {
+    // Unwrap Trimmed to base curve (the trim range is already t_min/t_max)
+    let (base, tr_shift) = match curve {
+        Curve2d::Trimmed(tc) => (&*tc.curve, tc.t_min),
+        _ => (curve, 0.0),
+    };
+    match base {
+        Curve2d::Line(line) => {
+            // Ray:  P = O + s*d, s >= 0
+            // Line: P = L0 + t*Ld
+            // Solve: O + s*d = L0 + t*Ld
+            //        [dx  -Ldx] [s]   [L0x-Ox]
+            //        [dy  -Ldy] [t] = [L0y-Oy]
+            let a = ray_dir.x;
+            let b = -line.direction.x;
+            let c = ray_dir.y;
+            let d = -line.direction.y;
+            let rhs_x = line.origin.x - ray_origin.x;
+            let rhs_y = line.origin.y - ray_origin.y;
+            let det = a * d - b * c;
+            if det.abs() < 1e-15 {
+                return vec![];
+            }
+            let t_on_ray = (d * rhs_x - b * rhs_y) / det;
+            let t_on_curve = (a * rhs_y - c * rhs_x) / det + tr_shift;
+            if t_on_ray >= 0.0 && t_on_curve >= t_min && t_on_curve <= t_max {
+                vec![(t_on_curve, t_on_ray)]
+            } else {
+                vec![]
+            }
+        }
+        Curve2d::Circle(circle) => {
+            // Ray:  P = O + s*d, s >= 0
+            // Circle: |P - C| = r
+            // |O + s*d - C|^2 = r^2
+            // a*s^2 + b*s + c = 0, where:
+            let oc = ray_origin - circle.center;
+            let a_coeff = ray_dir.dot(ray_dir);
+            let b_coeff = 2.0 * ray_dir.dot(oc);
+            let c_coeff = oc.dot(oc) - circle.radius * circle.radius;
+            let disc = b_coeff * b_coeff - 4.0 * a_coeff * c_coeff;
+            if disc < 0.0 {
+                return vec![];
+            }
+            let sqrt_disc = disc.sqrt();
+            let s1 = (-b_coeff - sqrt_disc) / (2.0 * a_coeff);
+            let s2 = (-b_coeff + sqrt_disc) / (2.0 * a_coeff);
+            let mut result = Vec::new();
+            for &s in &[s1, s2] {
+                if s >= 0.0 {
+                    let p = ray_origin + s * ray_dir;
+                    let mut t = (p.y - circle.center.y).atan2(p.x - circle.center.x);
+                    if t < 0.0 {
+                        t += std::f64::consts::TAU;
+                    }
+                    let t_full = t + tr_shift;
+                    if t_full >= t_min && t_full <= t_max {
+                        result.push((t_full, s));
+                    }
+                }
+            }
+            result
+        }
+        // OCCT Geom2dInt_GInter handles all curve types analytically.
+        // For non-circle/line curves, fall back to sampling-based search.
+        _ => {
+            const N_SEG: usize = 256;
+            let mut best_t: Option<(f64, f64)> = None;
+            for i in 0..N_SEG {
+                let t = t_min + (t_max - t_min) * (i as f64) / (N_SEG as f64);
+                let p = curve.point_at(t);
+                let delta = p - ray_origin;
+                let s = delta.dot(ray_dir);
+                if s < 0.0 { continue; }
+                let cross = (delta - ray_dir * s).length();
+                if cross > 1e-8 { continue; }
+                let is_closer = best_t.map_or(true, |(_, best_s)| s < best_s);
+                if is_closer {
+                    best_t = Some((t, s));
+                }
+            }
+            if let Some((t, s)) = best_t {
+                vec![(t, s)]
+            } else {
+                vec![]
+            }
+        }
+    }
+}
+
+/// OCCT-aligned: project a UV point onto a curve to find the nearest parameter.
+/// OCCT ref: BRep_Tool::Parameter (returns the parameter of a vertex on an edge's curve).
+fn project_uv_to_curve(
+    uv: DVec2,
+    curve: &Curve2d,
+    t_min: f64,
+    t_max: f64,
+) -> Option<f64> {
+    let (base, tr_shift) = match curve {
+        Curve2d::Trimmed(tc) => (&*tc.curve, tc.t_min),
+        _ => (curve, 0.0),
+    };
+    match base {
+        Curve2d::Line(line) => {
+            // Project UV onto line: t = dot(UV - L0, Ld) / |Ld|^2
+            let dir = line.direction;
+            let denom = dir.dot(dir);
+            if denom < 1e-30 { return None; }
+            let t = (uv - line.origin).dot(dir) / denom;
+            let t_clamped = t.clamp(t_min - tr_shift, t_max - tr_shift);
+            Some(t_clamped + tr_shift)
+        }
+        Curve2d::Circle(circle) => {
+            let mut t = (uv.y - circle.center.y).atan2(uv.x - circle.center.x);
+            if t < 0.0 { t += std::f64::consts::TAU; }
+            // Normalize to [t_min, t_min + period) by wrapping
+            let period = std::f64::consts::TAU;
+            let t_norm = if t < t_min {
+                t + period * ((t_min - t) / period).ceil()
+            } else if t > t_max {
+                t - period * ((t - t_max) / period).floor()
+            } else {
+                t
+            };
+            let t_clamped = t_norm.clamp(t_min, t_max);
+            Some(t_clamped + tr_shift)
+        }
+        _ => {
+            // Fallback: discrete search for nearest parameter
+            const N_SEG: usize = 256;
+            let mut best_t = t_min;
+            let mut best_d2 = (curve.point_at(t_min) - uv).length_squared();
+            for i in 1..=N_SEG {
+                let t = t_min + (t_max - t_min) * (i as f64) / (N_SEG as f64);
+                let d2 = (curve.point_at(t) - uv).length_squared();
+                if d2 < best_d2 {
+                    best_d2 = d2;
+                    best_t = t;
+                }
+            }
+            Some(best_t)
+        }
+    }
+}
+
 /// ✅ OCCT-aligned: RefineAngle2D (BOPAlgo_WireSplitter_1.cxx L1032-1124).
 ///
 /// For an IC outgoing edge outside the boundary sweep, compute a refined
@@ -4201,8 +4361,15 @@ fn refine_angles(
 /// directions (aA1 = outgoing, aA2+PI = incoming opposite).  The nearest
 /// intersection point inside the sweep gives the corrected angle.
 ///
-/// Supports all surface types via world_to_uv and both IntersectionCurve
-/// and DsEdge segments (DsEdge builds a UV polyline from the 3D curve).
+/// OCCT algorithm:
+///   1. Get edge pcurve and vertex parameter (L1057-1061)
+///   2. Determine "other end" parameter direction (L1063)
+///   3. For each boundary direction aA1, aA2+M_PI (L1070):
+///      a. Create ray from vertex UV
+///      b. Intersect ray with edge pcurve (L1080)
+///      c. Find furthest intersection within MaxDT of vertex param (L1095)
+///      d. Sample curve slightly before intersection (L1110)
+///      e. Compute angle and check CWA < aDelta (L1115-1121)
 fn refine_angle_2d(
     vertex_idx: usize,
     seg: &WireSegment,
@@ -4217,97 +4384,92 @@ fn refine_angle_2d(
     let v_pt = ds.vertices[vertex_idx].point;
     let v_uv = world_to_uv(face_surface, v_pt)?;
 
-    // OCCT DoSplitSEAMOnFace: build list of (UV_sampler, delta_u) pairs.
-    // The delta_u shifts the vertex UV by the surface period for second
-    // pcurve samplers so the ray-projection delta uses consistent U coords.
-    type UvSampler = Box<dyn Fn(f64) -> Option<DVec2>>;
-    let mut samplers: Vec<(UvSampler, f64)> = Vec::new();
-
-    match &seg.source {
+    // OCCT L1057-1068: get pcurve and range
+    let (curve2d, t_min, t_max): (Curve2d, f64, f64) = match &seg.source {
         WireEdgeSource::IntersectionCurve(ci) => {
-            // Primary pcurve from intersection data
-            if let Some(pc) = ds.intersection_curves[*ci].pcurve_on_a.clone() {
-                samplers.push((Box::new(move |t| {
-                    use rcad_kernel::geom::Curve2dEval;
-                    Some(pc.point_at(t))
-                }), 0.0));
-            }
-            // DoSplitSEAMOnFace overload 2: second pcurve on IC edge.
-            if let Some(ref pc2) = seg.second_pcurve {
-                let pc2 = pc2.clone();
-                samplers.push((Box::new(move |t| {
-                    use rcad_kernel::geom::Curve2dEval;
-                    Some(pc2.point_at(t))
-                }), std::f64::consts::TAU));
+            let ic = &ds.intersection_curves[*ci];
+            if let Some(ref pc) = ic.pcurve_on_a {
+                let (t_a, t_b) = pc_parameter_range(pc);
+                (pc.clone(), t_a, t_b)
+            } else if let Some(ref pc) = ic.pcurve_on_b {
+                let (t_a, t_b) = pc_parameter_range(pc);
+                (pc.clone(), t_a, t_b)
+            } else {
+                // Fallback: construct Line from vertex UVs
+                let uv_s = world_to_uv(face_surface, ds.vertices[seg.start_vertex].point)?;
+                let uv_e = world_to_uv(face_surface, ds.vertices[seg.end_vertex].point)?;
+                let dir = uv_e - uv_s;
+                if dir.length_squared() < 1e-30 { return None; }
+                (Curve2d::Line(Line2d { origin: uv_s, direction: dir }), 0.0, 1.0)
             }
         }
         WireEdgeSource::DsEdge(ei) => {
-            let edge = &ds.edges[*ei];
-            let curve = edge.curve.clone();
-            let surf = face_surface.clone();
-            samplers.push((Box::new(move |t| world_to_uv(&surf, curve.point_at(t))), 0.0));
-            // DoSplitSEAMOnFace: second pcurve for seam sub-edges
-            if let Some(ref pc2) = seg.second_pcurve {
-                let pc2 = pc2.clone();
-                samplers.push((Box::new(move |t| {
-                    use rcad_kernel::geom::Curve2dEval;
-                    Some(pc2.point_at(t))
-                }), std::f64::consts::TAU));
-            }
+            // Build a Line pcurve from vertex UVs for original edges
+            let uv_s = world_to_uv(face_surface, ds.vertices[seg.start_vertex].point)?;
+            let uv_e = world_to_uv(face_surface, ds.vertices[seg.end_vertex].point)?;
+            let dir = uv_e - uv_s;
+            if dir.length_squared() < 1e-30 { return None; }
+            (Curve2d::Line(Line2d { origin: uv_s, direction: dir }), 0.0, 1.0)
         }
         WireEdgeSource::SeamEdge => {
-            // DoSplitSEAMOnFace overload 1: seam edge UV along constant U.
-            let suv = world_to_uv(face_surface, ds.vertices[seg.start_vertex].point)?;
-            let euv = world_to_uv(face_surface, ds.vertices[seg.end_vertex].point)?;
-            samplers.push((Box::new(move |t| Some(DVec2::new(
-                suv.x + (euv.x - suv.x) * t,
-                suv.y + (euv.y - suv.y) * t,
-            ))), 0.0));
-            // Second pcurve on seam edge (U+2π side)
-            if let Some(ref pc2) = seg.second_pcurve {
-                let pc2 = pc2.clone();
-                samplers.push((Box::new(move |t| {
-                    use rcad_kernel::geom::Curve2dEval;
-                    Some(pc2.point_at(t))
-                }), std::f64::consts::TAU));
+            let uv_s = world_to_uv(face_surface, ds.vertices[seg.start_vertex].point)?;
+            let uv_e = world_to_uv(face_surface, ds.vertices[seg.end_vertex].point)?;
+            let dir = uv_e - uv_s;
+            if dir.length_squared() < 1e-30 { return None; }
+            (Curve2d::Line(Line2d { origin: uv_s, direction: dir }), 0.0, 1.0)
+        }
+    };
+
+    // OCCT L1060-1061: get vertex parameter on curve and vertex UV
+    let t_v = project_uv_to_curve(v_uv, &curve2d, t_min, t_max)?;
+
+    // OCCT L1063-1065: determine "other end" direction and MaxDT
+    let t_op = if (t_v - t_min).abs() < (t_v - t_max).abs() { t_max } else { t_min };
+    let max_dt = 0.3 * (t_max - t_min);
+    let a_tol_int = 1e-10;
+    let a_cf = 0.01;
+
+    // OCCT L1070: try both boundary directions (aA1, aA2+M_PI)
+    let a_delta = clock_wise_angle(a2_bnd, a1_bnd);
+    for i in 0..2 {
+        let a_ai = if i == 0 { a1_bnd } else { a2_bnd + std::f64::consts::PI };
+        let ray_dir = DVec2::new(a_ai.cos(), a_ai.sin());
+        if ray_dir.length_squared() < 1e-30 { continue; }
+
+        // OCCT L1080: find ray-curve intersection
+        let hits = intersect_ray_curve_2d(v_uv, ray_dir, &curve2d, t_min, t_max);
+        if hits.is_empty() { continue; }
+
+        // OCCT L1086-1100: among intersection points, find the one with
+        // max param_on_ray and |param_on_curve - t_v| < MaxDT
+        let mut best: Option<(f64, f64)> = None; // (t_on_curve, t_on_ray)
+        for &(t_c, t_r) in &hits {
+            let is_better = match best {
+                Some((_, best_r)) => t_r > best_r,
+                None => true,
+            };
+            if is_better && (t_c - t_v).abs() < max_dt {
+                best = Some((t_c, t_r));
             }
         }
-    }
 
-    if samplers.is_empty() { return None; }
+        if let Some((t_1max, _t_2max)) = best {
+            // OCCT L1104-1108: skip if intersection is at far end
+            let dt = t_op - t_1max;
+            if dt.abs() < a_tol_int { continue; }
 
-    // Try each (sampler, delta_u) pair. For the primary sampler delta_u=0.
-    // For second-pcurve samplers the vertex UV is shifted by the surface
-    // period so the ray-projection delta uses consistent U coordinates.
-    const N_PC: usize = 64;
-    for (sampler, delta_u) in &samplers {
-        let v_uv_eff = DVec2::new(v_uv.x + delta_u, v_uv.y);
-        let uv_pts: Vec<DVec2> = (0..=N_PC).filter_map(|i| {
-            sampler(i as f64 / N_PC as f64)
-        }).collect();
-        if uv_pts.len() < 2 { continue; }
+            // OCCT L1110-1113: sample curve slightly before intersection
+            let t_sample = t_1max + a_cf * dt;
+            let p_sample = curve2d.point_at(t_sample);
+            let dir = p_sample - v_uv;
+            if dir.length_squared() < 1e-30 { continue; }
 
-        // OCCT L1070: try both boundary directions (aA1, aA2+PI)
-        for &dir_angle in &[a1_bnd, a2_bnd + std::f64::consts::PI] {
-            let ray_dir = DVec2::new(dir_angle.cos(), dir_angle.sin());
-            if ray_dir.length_squared() < 1e-30 { continue; }
-
-            // Find furthest UV point along the ray direction
-            let mut best_along = -1.0_f64;
-            for p_uv in &uv_pts {
-                let delta = *p_uv - v_uv_eff;
-                if delta.length_squared() < TOLERANCE_ABS_SQ { continue; }
-                let along = delta.dot(ray_dir);
-                if along <= best_along { continue; }
-                let cross = (delta - ray_dir * along).length();
-                if cross / along >= 0.5 { continue; }
-                best_along = along;
-                let mut corrected = delta.y.atan2(delta.x);
-                if corrected < 0.0 { corrected += std::f64::consts::TAU; }
-                // OCCT L1116-1119: CWA(aA2, angle) < delta → inside sweep
-                if clock_wise_angle(a2_bnd, corrected) < clock_wise_angle(a2_bnd, a1_bnd) {
-                    return Some(corrected);
-                }
+            // OCCT L1115-1121: compute angle and check if inside boundary wedge
+            let a_angle = dir.y.atan2(dir.x);
+            let a_angle = if a_angle < 0.0 { a_angle + std::f64::consts::TAU } else { a_angle };
+            let a_da = clock_wise_angle(a2_bnd, a_angle);
+            if a_da < a_delta {
+                return Some(a_angle);
             }
         }
     }
@@ -4368,13 +4530,44 @@ fn walk_path_extract_wires(
         })
     };
 
-    // Get UV coordinate of a vertex on a segment at a given end (start or end of segment).
+    // OCCT-aligned: Coord2d (BOPAlgo_WireSplitter_1.cxx L663-674).
+    // Gets UV of a vertex on a specific edge by evaluating the edge's pcurve
+    // at the vertex parameter.  Different edges at the same 3D vertex can
+    // return DIFFERENT UVs if their pcurves are on different sides of the
+    // parametric seam (e.g. U=0 vs U=2π on a sphere).
     let vertex_uv = |vi: usize, segment: &WireSegment, at_start: bool| -> Option<DVec2> {
+        // Use pcurve-based UV when available (OCCT Coord2d path)
+        let pc_uv = match &segment.source {
+            WireEdgeSource::IntersectionCurve(ci) => {
+                let ic = &ds.intersection_curves[*ci];
+                let pc = ic.pcurve_on_a.as_ref().or(ic.pcurve_on_b.as_ref())?;
+                // OCCT BRep_Tool::Parameter(aV, aE, aF): vertex parameter on
+                // edge's pcurve.  vi == ic.start_vertex → t_range[0];
+                // vi == ic.end_vertex → t_range[1].
+                let t = if vi == ic.start_vertex { ic.t_range[0] }
+                        else { ic.t_range[1] };
+                Some(pc.point_at(t))
+            }
+            WireEdgeSource::DsEdge(ei) if segment.is_seam => {
+                // OCCT Coord2d: uses edge's pcurve.  For seam edges use
+                // geometric world_to_uv for consistent loop closure.
+                // IC pcurve UVs differ from seam UVs at the same 3D point,
+                // preventing premature loop closure with IC edges.
+                // The 2D filter tolerance (from vertex geom_tol) is wide
+                // enough to keep IC candidates during walk.
+                world_to_uv(face_surface, ds.vertices[vi].point)
+            }
+            _ => None,
+        };
+        if let Some(uv) = pc_uv {
+            return Some(uv);
+        }
+
+        // Fallback: geometric world_to_uv (same for all edges at a vertex)
         let v_pt = ds.vertices[vi].point;
         match face_surface {
             Surface3::Sphere(s) => Some(s.world_to_uv(v_pt)),
             Surface3::Cylinder(c) => {
-                // Cylinder: V along axis, U around circumference
                 let ax = c.axis.normalize_or_zero();
                 let v = (v_pt - c.origin).dot(ax);
                 let to_axis = v_pt - (c.origin + ax * v);
@@ -4391,23 +4584,57 @@ fn walk_path_extract_wires(
         }
     };
 
-    // Compute 2D tolerance for UV distance check at a vertex.
-    // OCCT L421: aTol2D = 2. * Tolerance2D(aVb, aGAS)
-    let uv_tolerance = |vi: usize| -> f64 {
-        let pt = ds.vertices[vi].point;
+    // OCCT Tolerance2D/UTolerance2D/VTolerance2D (BOPAlgo_WireSplitter_1.cxx L859-901).
+    let vtol = |vi: usize| -> f64 {
+        ds.vertices[vi].geom_tol.max(TOLERANCE_ABS)
+    };
+    let u_resolution = |vt: f64| -> f64 {
         match face_surface {
-            Surface3::Sphere(s) => {
-                let uv = s.world_to_uv(pt);
-                // Resolution at vertex: small epsilon relative to sphere size
-                let du = s.radius * 1e-6;
-                let dv = s.radius * 1e-6;
-                (du + dv) * 2.0
-            }
-            _ => TOLERANCE_ABS * 1000.0,
+            Surface3::Sphere(s) => vt / s.radius.max(1e-15),
+            Surface3::Cylinder(c) => vt / c.radius.max(1e-15),
+            Surface3::Cone(_) => vt * 1e-3,
+            Surface3::Torus(t) => vt / t.major_radius.max(1e-15),
+            _ => vt,
         }
     };
+    let v_resolution = |vt: f64| -> f64 {
+        match face_surface {
+            Surface3::Sphere(s) => vt / s.radius.max(1e-15),
+            Surface3::Cylinder(_) => vt,
+            Surface3::Cone(_) => vt,
+            Surface3::Torus(t) => vt / t.minor_radius.max(1e-15),
+            _ => vt,
+        }
+    };
+    // OCCT L859-881: Tolerance2D → max(UResolution, VResolution, tolV3D)
+    let tolerance_2d = |vi: usize| -> f64 {
+        let vt = vtol(vi);
+        let mut t2d = u_resolution(vt).max(v_resolution(vt)).max(vt);
+        if matches!(face_surface, Surface3::BSpline(_) | Surface3::Bezier(_)) { t2d *= 1.1; }
+        t2d
+    };
+    // OCCT L885-891: UTolerance2D = UResolution(aTolV3D)
+    let u_tolerance_2d = |vi: usize| -> f64 { u_resolution(vtol(vi)) };
+    // OCCT L895-901: VTolerance2D = VResolution(aTolV3D)
+    let v_tolerance_2d = |vi: usize| -> f64 { v_resolution(vtol(vi)) };
+    // OCCT L421: aTol2D = 2. * Tolerance2D(aVb, aGAS)
+    let uv_tolerance = |vi: usize| -> f64 { 2.0 * tolerance_2d(vi) };
 
     for _iter in 0..max_iter {
+        // OCCT L394-403: do not escape through edge from which you enter.
+        // If edge_seq has exactly 1 entry and the current outgoing edge
+        // is the same physical edge, return (walked a closed edge).
+        if edge_seq.len() == 1 {
+            let same_edge = match (&segments[edge_seq[0]].source, &segments[ci].source) {
+                (WireEdgeSource::DsEdge(ea), WireEdgeSource::DsEdge(eb)) => ea == eb,
+                (WireEdgeSource::IntersectionCurve(ca), WireEdgeSource::IntersectionCurve(cb)) => ca == cb,
+                _ => false,
+            };
+            if ci == edge_seq[0] || same_edge {
+                return;
+            }
+        }
+
         // Mark edge as passed (OCCT L405)
         mark_edge_passed(smart_map, ci, arrived_vertex, true);
         let seg = &segments[ci];
@@ -4443,25 +4670,26 @@ fn walk_path_extract_wires(
 
             if is_same_v {
                 if b_is_closed {
-                    // OCCT L451-466: 2D distance check for closed/degenerate vertices
+                    // OCCT L451-466: 2D distance check for closed/degenerate vertices.
+                    // OCCT compares aPaPrev (recorded start UV of edge i) with
+                    // aPb (Coord2d of current end vertex on current edge).
                     let a_d2 = {
                         let cur_end_uv = vertex_uv(arrived_vertex, &segments[ci], false)
                             .unwrap_or(DVec2::ZERO);
-                        let prev_src_uv = vertex_uv(prev_v, &segments[prev_si], false)
-                            .unwrap_or(DVec2::ZERO);
-                        prev_src_uv.distance_squared(cur_end_uv)
+                        // Use the recorded start UV (aPaPrev), not re-computed.
+                        // OCCT: aPaPrev was stored via Coord2d at edge i's start.
+                        prev_uv.distance_squared(cur_end_uv)
                     };
                     is_same_v_2d = a_d2 < a_tol_2d_sq;
                     if is_same_v_2d {
                         // Check UV component difference (OCCT L457-465)
+                        // L459-460: aTolU = 2.*UTolerance2D, aTolV = 2.*VTolerance2D
                         let cur_end_uv = vertex_uv(arrived_vertex, &segments[ci], false)
                             .unwrap_or(DVec2::ZERO);
-                        let prev_src_uv = vertex_uv(prev_v, &segments[prev_si], false)
-                            .unwrap_or(DVec2::ZERO);
-                        let u_dist = (prev_src_uv.x - cur_end_uv.x).abs();
-                        let v_dist = (prev_src_uv.y - cur_end_uv.y).abs();
-                        let a_tol_u = a_tol_2d;
-                        let a_tol_v = a_tol_2d;
+                        let u_dist = (prev_uv.x - cur_end_uv.x).abs();
+                        let v_dist = (prev_uv.y - cur_end_uv.y).abs();
+                        let a_tol_u = 2.0 * u_tolerance_2d(arrived_vertex);
+                        let a_tol_v = 2.0 * v_tolerance_2d(arrived_vertex);
                         if u_dist > a_tol_u || v_dist > a_tol_v {
                             is_same_v_2d = false;
                         }
@@ -4474,66 +4702,7 @@ fn walk_path_extract_wires(
                 eprintln!("[LOOP_DETECT] face={} i={} prev_v={} cv={} closed={} uv_ok={} wire_len={}",
                     face_idx, i, prev_v, arrived_vertex, b_is_closed, is_same_v_2d, edge_seq.len() - i);
             }
-            // ═══════════════════════════════════════════════════════════════
-            // ■ CRITICAL OCCT ALIGNMENT ■ Sphere periodic UV boundary
-            //   OCCT's WireSplitter traverses the seam in BOTH directions
-            //   (U=0 and U=2π) via DoSplitSEAMOnFace.  rcad emulates this by
-            //   suppressing loop detection until ALL SmartMap edges are passed.
-            //   Without this, the walk closes the loop at the FIRST return to
-            //   the start vertex (3 edges), and the remaining 5 segments form
-            //   a second wire → sphere face has 2×3 edges instead of 1×8.
-            //
-            //   When all edges are passed, the wire is the ENTIRE edge_seq
-            //   (not edge_seq[i..]), matching OCCT's single closed 8-edge wire.
-            //
-            //   ⚠ Removing or modifying this check will cause the sphere face
-            //     to split into multiple wires → E count drops to 14 → A1 fails.
-            // ═══════════════════════════════════════════════════════════════
             if is_same_v && is_same_v_2d {
-                if is_sphere {
-                    // [A1_DBG 1] BEFORE suppression check: edge_seq state
-                    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() && face_idx == 0 {
-                        let all_edge_indices: Vec<usize> = edge_seq.iter().copied().collect();
-                        let smart_map_state: Vec<(usize, Vec<(usize, bool, bool)>)> = smart_map.iter().map(|(v, infos)| {
-                            (*v, infos.iter().map(|ei| (ei.seg_idx, ei.passed, ei.in_flag)).collect())
-                        }).collect();
-                        eprintln!("[A1_DBG 1] BEFORE sphere check: i={}, edge_seq_len={}, edge_seq={:?}, unpassed={}, smart_map={:?}",
-                            i, edge_seq.len(), all_edge_indices,
-                            smart_map.values().flat_map(|v| v.iter()).filter(|ei| !ei.passed).count(),
-                            smart_map_state);
-                    }
-                    let unpassed_count = smart_map.values().flat_map(|v| v.iter()).filter(|ei| !ei.passed).count();
-                    if unpassed_count > 0 {
-                        if std::env::var("RCAD_DEBUG_IC").is_ok() && face_idx == 0 {
-                            eprintln!("[SPHERE_CONT] i={} edge_seq_len={} — continuing ({} unpassed)",
-                                i, edge_seq.len(), unpassed_count);
-                        }
-                        continue; // skip ALL loop detection, keep walking through seam
-                    }
-                    // All edges passed: wire = entire edge_seq (not edge_seq[i..])
-                    let wire = edge_seq.clone();
-                    if std::env::var("RCAD_DEBUG_IC").is_ok() && face_idx == 0 {
-                        eprintln!("[SPHERE_DONE] wire={:?} len={}", wire, wire.len());
-                    }
-                    // [A1_DBG 2] AFTER all-passed: final wire edges with source info
-                    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() && face_idx == 0 {
-                        let is_sphere_surf = matches!(ds.faces[face_idx].surface, Surface3::Sphere(_));
-                        eprintln!("[A1_DBG 2] AFTER sphere all-passed: face={}, wire_len={}, is_sphere={}",
-                            face_idx, wire.len(), is_sphere_surf);
-                        for (pos, &seg_idx) in wire.iter().enumerate() {
-                            let seg = &segments[seg_idx];
-                            let src_str = match &seg.source {
-                                WireEdgeSource::DsEdge(ei) => format!("DsEdge({})", ei),
-                                WireEdgeSource::IntersectionCurve(ci) => format!("IC({})", ci),
-                                WireEdgeSource::SeamEdge => "Seam".to_string(),
-                            };
-                            eprintln!("[A1_DBG 2]   wire[{}]: seg={}, src={}, fwd={}, start_v={}, end_v={}",
-                                pos, seg_idx, src_str, seg.forward, seg.start_vertex, seg.end_vertex);
-                        }
-                    }
-                    wires.push(wire);
-                    return;
-                }
                 // Extract wire from edge_seq[i..]
                 let wire: Vec<usize> = edge_seq[i..].to_vec();
 
@@ -4563,8 +4732,13 @@ fn walk_path_extract_wires(
                     }
                 }
 
-                // OCCT L488-521: Truncate sequences to before the loop
-                let a_nbj = i; // number of entries to KEEP (before the loop)
+                // OCCT L488: aNbj = i - 1; if aNbj < 1 → return
+                // rcad 0-based: keep entries [0..i-1), i.e. i entries before wire.
+                // OCCT 1-based: keep entries [1..aNbj], where aNbj = i-1.
+                // Difference: rcad keeps edge at position i-1 (the one before
+                // loop closure), OCCT does NOT.  Use i.saturating_sub(1) to
+                // match OCCT's count.
+                let a_nbj = i.saturating_sub(1);
                 if a_nbj == 0 {
                     edge_seq.clear();
                     vert_seq.clear();
@@ -4628,11 +4802,57 @@ fn walk_path_extract_wires(
             None => return,
         };
 
-        let candidates: Vec<&EdgeInfo> = if let Some(infos) = smart_map.get(&arrived_vertex) {
+        let raw_candidates: Vec<&EdgeInfo> = if let Some(infos) = smart_map.get(&arrived_vertex) {
             infos.iter().filter(|ei| !ei.passed && !ei.in_flag).collect()
         } else {
             return;
         };
+
+        // OCCT L531: iCnt = NbWaysOut(aLEInfo)
+        let i_cnt = raw_candidates.len();
+
+        // OCCT L551-555: no way to go → error, return
+        if i_cnt == 0 {
+            return;
+        }
+
+        // OCCT L557-562: the one and only way to go out
+        if i_cnt == 1 {
+            let best = raw_candidates[0];
+            current_vertex = arrived_vertex;
+            ci = best.seg_idx;
+            arrived_vertex = segments[ci].end_vertex;
+            continue;
+        }
+
+        // OCCT L571-582: for closed vertices (seam/degenerate), filter candidates
+        // by 2D UV distance.  The UV of the arrived vertex on the current edge
+        // (aPb = Coord2d(aVb, aEOuta, myFace)) is compared to the UV of each
+        // candidate edge's forward vertex (Coord2dVf).  Candidates on the wrong
+        // parametric side (e.g. U≈0 vs U≈2π) are rejected.
+        let b_is_closed = is_vert_closed(smart_map, arrived_vertex);
+        let a_pb = vertex_uv(arrived_vertex, &segments[ci], false).unwrap_or(DVec2::ZERO);
+        let candidates: Vec<&EdgeInfo> = if b_is_closed {
+            let a_tol_2d_sq = {
+                let tol = uv_tolerance(arrived_vertex);
+                tol * tol
+            };
+            raw_candidates.into_iter().filter(|ei| {
+                // OCCT L573-575: aP2Dx = Coord2dVf(aE, myFace);
+                // Forward vertex UV (arrived_vertex is the start of this outgoing edge)
+                let cand_uv = vertex_uv(arrived_vertex, &segments[ei.seg_idx], true)
+                    .unwrap_or(DVec2::ZERO);
+                let a_d2 = cand_uv.distance_squared(a_pb);
+                a_d2 < a_tol_2d_sq
+            }).collect()
+        } else {
+            raw_candidates
+        };
+
+        // OCCT L582: if 2D distance filtered all candidates, return
+        if candidates.is_empty() {
+            return;
+        }
 
         if std::env::var("RCAD_DEBUG_IC").is_ok() {
             if candidates.is_empty() {
