@@ -310,6 +310,27 @@ type FaceEntry = (
     Vec<Vec<(usize, bool)>>,   // internal wire edges (TopAbs_INTERNAL)
 );
 
+/// ✅ OCCT-aligned: intermediate result of the LOW-D phase (V+E+W creation)
+/// in the dimension-by-dimension pipeline.  Carries the data needed for
+/// HIGH-D face assembly from build_face_edges_and_wires to
+/// build_face_from_wire_edges, matching OCCT's separation of edge/wire
+/// construction from face triangulation/assembly.
+struct FaceWireEdges {
+    outer_edges: Vec<(usize, bool)>,
+    inner_wires_edges: Vec<Vec<(usize, bool)>>,
+    internal_wire_edges: Vec<Vec<(usize, bool)>>,
+    normal: DVec3,
+    surface: Surface3,
+    sphere_uv: Option<[f64; 4]>,
+    centroid: DVec3,
+    area: f64,
+    sample_pt: DVec3,
+    outer_boundary: Vec<DVec3>,
+    iw_boundaries: Vec<Vec<DVec3>>,
+    all_vert_indices: Vec<usize>,
+    outer_sig: Vec<usize>,
+}
+
 /// Builds result BRep, deduplicating vertices and edges.
 ///
 /// **Open shells (union):** T-junctions can leave a long edge with no matching partner. After all
@@ -467,29 +488,6 @@ impl ResultBuilder {
             }
             inner_wire_edges.push(iw_edges);
             iw_vert_indices_all.extend(iw_verts);
-        }
-
-        // OCCT-aligned: Internal wire edges (TopAbs_INTERNAL from PerformShapesToAvoid)
-        let mut internal_wire_edges: Vec<Vec<(usize, bool)>> = Vec::new();
-        for iw in &wf.internal_wires {
-            let mut iw_edges = Vec::new();
-            for &si in iw {
-                let seg = &segments[si];
-                let getp = |vi: usize| -> DVec3 { if vi < ds.vertices.len() { ds.vertices[vi].point } else { *vertex_positions.get(&vi).unwrap_or(&DVec3::ZERO) } };
-                let v1 = if seg.start_vertex < ds.vertices.len() { self.add_ds_vertex(seg.start_vertex, ds.vertices[seg.start_vertex].point) } else { let p = getp(seg.start_vertex); self.add_vertex(p) };
-                let v2 = if seg.end_vertex < ds.vertices.len() { self.add_ds_vertex(seg.end_vertex, ds.vertices[seg.end_vertex].point) } else { let p = getp(seg.end_vertex); self.add_vertex(p) };
-                let ei = match &seg.source {
-                    // ✅ OCCT-aligned: IC edge identity (inner/internal wires).
-                    WireEdgeSource::IntersectionCurve(ci) => {
-                        let crv = &ds.intersection_curves[*ci].curve;
-                        self.add_ic_edge(*ci, v1, v2, crv.clone())
-                    }
-                    WireEdgeSource::DsEdge(_) | WireEdgeSource::SeamEdge => self.add_edge(v1, v2),
-                };
-                let forward = self.edges[ei].0 == v1;
-                iw_edges.push((ei, forward));
-            }
-            internal_wire_edges.push(iw_edges);
         }
 
         // ✅ OCCT-aligned: Internal wire edges (TopAbs_INTERNAL).
@@ -5800,6 +5798,176 @@ impl<'a> BooleanBuilder<'a> {
         Ok(brep)
     }
 
+    // ====================================================================
+    // ✅ OCCT-aligned: dimension-by-dimension pipeline (PerformInternal1)
+    //   BOPAlgo_Builder.cxx L310-440
+    // ====================================================================
+
+    /// OCCT-aligned: FillImagesVertices + FillImagesEdges (L338-356).
+    /// Phase 1: split all faces, collecting WireFace results.
+    fn fill_images_vertices_and_edges(
+        &self,
+        a_faces: &[usize],
+        b_faces: &[usize],
+        b_cylinders: &[CylindricalSurface],
+        a_cylinders: &[CylindricalSurface],
+    ) -> (Vec<(CollectedFaceResult, usize)>, Vec<(DVec3, DVec3)>) {
+        let mut collected: Vec<(CollectedFaceResult, usize)> = Vec::new();
+        let mut a_on_planes: Vec<(DVec3, DVec3)> = Vec::new();
+        let debug_pipe = std::env::var("RCAD_DEBUG_PIPELINE").is_ok();
+
+        // Process A faces
+        for &fi in a_faces {
+            if self.ds.faces[fi].face_info.has_any_interference() {
+                if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
+                    if !wfs.is_empty() {
+                        let wfs = promote_exterior_holes(wfs, &segments, self.ds, self.op, b_faces);
+                        for wf in &wfs {
+                            collected.push((CollectedFaceResult::Wire {
+                                wf: wf.clone(), segments: segments.clone(),
+                                vertex_positions: vertex_positions.clone(), fi, flip: false,
+                                origin: FaceOrigin::FromA(self.ds.faces[fi].source_face_idx),
+                            }, fi));
+                        }
+                        continue;
+                    }
+                }
+            }
+            if !self.ds.faces[fi].face_info.has_any_interference() {
+                let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, fi);
+                let segments = collect_face_edge_segments(self.ds, fi, &pcurve_lookup);
+                if !segments.is_empty() {
+                    let wf = WireFace {
+                        outer_wire: (0..segments.len()).collect(), inner_wires: vec![], internal_wires: vec![],
+                    };
+                    collected.push((CollectedFaceResult::Wire {
+                        wf, segments,
+                        vertex_positions: std::collections::HashMap::new(), fi, flip: false,
+                        origin: FaceOrigin::FromA(self.ds.faces[fi].source_face_idx),
+                    }, fi));
+                }
+            }
+        }
+
+        // Process B faces
+        for &fi in b_faces {
+            if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
+                if !wfs.is_empty() {
+                    let wfs = promote_exterior_holes(wfs, &segments, self.ds, self.op, a_faces);
+                    for wf in &wfs {
+                        collected.push((CollectedFaceResult::Wire {
+                            wf: wf.clone(), segments: segments.clone(),
+                            vertex_positions: vertex_positions.clone(), fi, flip: false,
+                            origin: FaceOrigin::FromB(self.ds.faces[fi].source_face_idx),
+                        }, fi));
+                    }
+                    continue;
+                }
+            }
+            if !self.ds.faces[fi].face_info.has_any_interference() {
+                let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, fi);
+                let segments = collect_face_edge_segments(self.ds, fi, &pcurve_lookup);
+                if !segments.is_empty() {
+                    let wf = WireFace {
+                        outer_wire: (0..segments.len()).collect(), inner_wires: vec![], internal_wires: vec![],
+                    };
+                    collected.push((CollectedFaceResult::Wire {
+                        wf, segments,
+                        vertex_positions: std::collections::HashMap::new(), fi, flip: false,
+                        origin: FaceOrigin::FromB(self.ds.faces[fi].source_face_idx),
+                    }, fi));
+                }
+            }
+        }
+        (collected, a_on_planes)
+    }
+
+    /// OCCT-aligned: FillImagesContainers(WIRE) (L362-369).
+    /// Phase 2: Wires are already encoded in WireFace from Phase 1; pass through.
+    fn fill_images_containers_wires(
+        &self,
+        collected: Vec<(CollectedFaceResult, usize)>,
+        _a_faces: &[usize],
+        _b_faces: &[usize],
+    ) -> Vec<(CollectedFaceResult, usize)> {
+        collected
+    }
+
+    /// OCCT-aligned: FillImagesFaces (L376-386).
+    /// Phase 3a: classify collected WireFaces → BuildSplitFaces
+    /// Phase 3b: emit kept faces via build_face_edges_and_wires / emit_wire_face
+    fn fill_images_faces(
+        &self,
+        result: &mut ResultBuilder,
+        collected: Vec<(CollectedFaceResult, usize)>,
+        a_faces: &[usize],
+        b_faces: &[usize],
+    ) {
+        for (col_result, _orig_fi) in collected {
+            if let CollectedFaceResult::Wire { ref wf, ref segments, ref vertex_positions, fi, origin, .. } = col_result {
+                let wire_subs = wire_faces_to_face_sample_data(std::slice::from_ref(wf), segments, self.ds, fi);
+                if let Some(sub) = wire_subs.first() {
+                    let other_faces = match origin {
+                        FaceOrigin::FromA(_) => b_faces,
+                        _ => a_faces,
+                    };
+                    let source = match origin {
+                        FaceOrigin::FromA(_) => SourceSide::A,
+                        _ => SourceSide::B,
+                    };
+                    let class = classify_against_solid_for_boolean(
+                        self.op, source,
+                        &FaceSampleData::from_sub_face(sub), other_faces, self.ds);
+                    let keep = self.classification_keep_policy(source, class, fi);
+                    if keep {
+                        result.emit_wire_face(fi, wf, segments, self.ds, false, origin, vertex_positions);
+                    }
+                }
+            }
+        }
+    }
+
+    /// OCCT-aligned: FillSameDomainFaces (Builder_2.cxx L223).
+    /// Phase 4: merge co-planar same-domain faces.  Currently empty
+    /// (unify_same_domain_faces was removed; OCCT alignment pending).
+    fn fill_same_domain_faces(&self, _result: &mut ResultBuilder) {}
+
+    /// OCCT-aligned: FillImagesContainers(SHELL) (L388-398).
+    /// Phase 5: group faces into connected shells.  Single shell assumed.
+    fn fill_images_containers_shells(&self, _result: &mut ResultBuilder) {}
+
+    /// OCCT-aligned: FillImagesSolids (L400-431).
+    /// Phase 6: classify shells into solids.  Single solid assumed.
+    fn fill_images_solids(&self, _result: &mut ResultBuilder) {}
+
+    /// OCCT-aligned: FillImagesContainers(COMPSOLID) + FillImagesCompounds (L412-431).
+    /// Phase 7: group solids into compounds.  Empty for A1.
+    fn fill_images_compounds(&self, _result: &mut ResultBuilder) {}
+
+    /// Retrieve the EdgeInfo.is_inside status for the incoming edge at the given vertex.
+    fn incoming_edge_is_inside(&self, smart_map: &HashMap<usize, Vec<EdgeInfo>>, vertex: usize, seg_idx: usize) -> bool {
+        smart_map.get(&vertex)
+            .and_then(|infos| infos.iter().find(|ei| ei.seg_idx == seg_idx && ei.in_flag))
+            .map_or(false, |ei| ei.is_inside)
+    }
+
+    /// OCCT-aligned: face keep/discard policy (ComputeState → FillIn3DParts equivalent).
+    fn classification_keep_policy(&self, source: SourceSide, class: Classification, fi: usize) -> bool {
+        let is_sphere_on = matches!(self.ds.faces[fi].surface, Surface3::Sphere(_))
+            && class == Classification::On;
+        if is_sphere_on && source == SourceSide::A {
+            match self.op {
+                BooleanOpType::Intersection | BooleanOpType::Difference => true,
+                _ => class != Classification::In,
+            }
+        } else {
+            match self.op {
+                BooleanOpType::Intersection => class == Classification::In,
+                _ => class != Classification::In,
+            }
+        }
+    }
+
     pub fn build_with_history(&self) -> Result<(BRep, BooleanHistory), BooleanError> {
         let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
         let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
@@ -5861,168 +6029,22 @@ impl<'a> BooleanBuilder<'a> {
             })
             .collect();
 
-        // OCCT-aligned: collect all split results before classification.
-        // Phase 1: Split only (no classification/emission).
-        let mut collected: Vec<(CollectedFaceResult, usize)> = Vec::new();
-        // Track emitted A-face planes for coplanar B-face detection (Diff/Intersect).
-        let mut a_on_planes: Vec<(DVec3, DVec3)> = Vec::new();
-
-        let debug_pipe = std::env::var("RCAD_DEBUG_PIPELINE").is_ok();
-    if debug_pipe {
-        eprintln!("[PIPE] a_faces={:?} b_faces={:?}", a_faces, b_faces);
-    }
-
-
-        // Process A faces against B solid
-        for &fi in &a_faces {
-            // OCCT-aligned: wire pipeline for all face types (BuildSplitFaces + WireSplitter)
-            if self.ds.faces[fi].face_info.has_any_interference() {
-                if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
-                    if !wfs.is_empty() {
-                        // OCCT: promote holes outside the other solid to independent faces
-                        let wfs = promote_exterior_holes(wfs, &segments, self.ds, self.op, &b_faces);
-                        for wf in &wfs {
-                            collected.push((
-                                CollectedFaceResult::Wire {
-                                    wf: wf.clone(),
-                                    segments: segments.clone(),
-                                    vertex_positions: vertex_positions.clone(),
-                                    fi,
-                                    flip: false,
-                                    origin: FaceOrigin::FromA(self.ds.faces[fi].source_face_idx),
-                                },
-                                fi,
-                            ));
-                        }
-                        continue;
-                    }
-                }
-            }
-            // ✅ OCCT-aligned: draft face fallback (FillIn3DParts equivalent).
-            //    Faces without intersection curves cannot be split; emit as whole.
-            if !self.ds.faces[fi].face_info.has_any_interference() {
-                let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, fi);
-                let segments = collect_face_edge_segments(self.ds, fi, &pcurve_lookup);
-                if !segments.is_empty() {
-                    let wf = WireFace {
-                        outer_wire: (0..segments.len()).collect(),
-                        inner_wires: vec![],
-                        internal_wires: vec![],
-                    };
-                    collected.push((
-                        CollectedFaceResult::Wire {
-                            wf,
-                            segments,
-                            vertex_positions: std::collections::HashMap::new(),
-                            fi,
-                            flip: false,
-                            origin: FaceOrigin::FromA(self.ds.faces[fi].source_face_idx),
-                        },
-                        fi,
-                    ));
-                }
-            }
-            if debug_pipe && self.ds.faces[fi].face_info.has_any_interference() {
-                eprintln!("[PIPE] fi={} → WireSplitter returned None (skipping)", fi);
-            }
-        }
-
-        // Process B faces against A solid — ALL faces through WireSplitter path.
-        for &fi in &b_faces {
-            if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
-                    if !wfs.is_empty() {
-                        // OCCT: promote holes outside the other solid to independent faces
-                        let wfs = promote_exterior_holes(wfs, &segments, self.ds, self.op, &a_faces);
-                        for wf in &wfs {
-                            collected.push((
-                                CollectedFaceResult::Wire {
-                                    wf: wf.clone(),
-                                    segments: segments.clone(),
-                                    vertex_positions: vertex_positions.clone(),
-                                    fi,
-                                    flip: false,
-                                    origin: FaceOrigin::FromB(self.ds.faces[fi].source_face_idx),
-                                },
-                                fi,
-                            ));
-                        }
-                        continue;
-                    }
-                }
-            // ✅ OCCT-aligned: B-side draft face fallback.
-            if !self.ds.faces[fi].face_info.has_any_interference() {
-                let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, fi);
-                let segments = collect_face_edge_segments(self.ds, fi, &pcurve_lookup);
-                if !segments.is_empty() {
-                    let wf = WireFace {
-                        outer_wire: (0..segments.len()).collect(),
-                        inner_wires: vec![],
-                        internal_wires: vec![],
-                    };
-                    collected.push((
-                        CollectedFaceResult::Wire {
-                            wf,
-                            segments,
-                            vertex_positions: std::collections::HashMap::new(),
-                            fi,
-                            flip: false,
-                            origin: FaceOrigin::FromB(self.ds.faces[fi].source_face_idx),
-                        },
-                        fi,
-                    ));
-                }
-            }
-            if debug_pipe && self.ds.faces[fi].face_info.has_any_interference() {
-                eprintln!("[PIPE] fi={} → WireSplitter returned None (skipping B-side)", fi);
-            }
-        }
-        // OCCT-aligned Phase 2+3: classify + emit collected wire results.
-        for (col_result, _orig_fi) in collected.drain(..) {
-            match col_result {
-                CollectedFaceResult::Wire { ref wf, ref segments, ref vertex_positions, fi, origin, .. } => {
-                    let wire_subs = wire_faces_to_face_sample_data(std::slice::from_ref(wf), segments, self.ds, fi);
-                    if let Some(sub) = wire_subs.first() {
-                        let other_faces = match origin {
-                            FaceOrigin::FromA(_) => &b_faces,
-                            _ => &a_faces,
-                        };
-                        let source = match origin {
-                            FaceOrigin::FromA(_) => SourceSide::A,
-                            _ => SourceSide::B,
-                        };
-                        let class = classify_against_solid_for_boolean(
-                            self.op, source,
-                            &FaceSampleData::from_sub_face(sub), other_faces, self.ds);
-                        // OCCT-aligned: keep sphere On faces whose sample centroid falls
-                        // on the solid boundary (cannot be clearly classified In/Out).
-                        // OCCT ComputeState handles this via edge-angle tests; the
-                        // simplified rule below keeps these faces for both Difference
-                        // and Intersection when they come from the A-side sphere.
-                        let is_sphere_on = matches!(self.ds.faces[fi].surface, Surface3::Sphere(_))
-                            && class == Classification::On;
-                        let keep = if is_sphere_on && source == SourceSide::A {
-                            match self.op {
-                                // For Intersection: keep sphere On face (part of sphere
-                                // inside box is the intersection result).
-                                BooleanOpType::Intersection => true,
-                                // For Difference: already handled by existing exception.
-                                BooleanOpType::Difference => true,
-                                _ => class != Classification::In,
-                            }
-                        } else {
-                            match self.op {
-                                BooleanOpType::Intersection => class == Classification::In,
-                                _ => class != Classification::In,
-                            }
-                        };
-                        if keep {
-                            result.emit_wire_face(fi, wf, segments, self.ds, false, origin, vertex_positions);
-                        }
-                    }
-                }
-                CollectedFaceResult::Legacy(_, _, _) => {}
-            }
-        }
+        // ✅ OCCT-aligned: dimension-by-dimension pipeline (PerformInternal1).
+        // Phase 1: FillImagesVertices + FillImagesEdges — split all faces.
+        let (mut collected, _a_on_planes) = self.fill_images_vertices_and_edges(
+            &a_faces, &b_faces, &b_cylinders, &a_cylinders);
+        // Phase 2: FillImagesContainers(WIRE) — wires pass-through.
+        collected = self.fill_images_containers_wires(collected, &a_faces, &b_faces);
+        // Phase 3: FillImagesFaces — classify + emit.
+        self.fill_images_faces(&mut result, collected, &a_faces, &b_faces);
+        // Phase 4: FillSameDomainFaces — co-planar merge (empty, pending alignment).
+        self.fill_same_domain_faces(&mut result);
+        // Phase 5: FillImagesContainers(SHELL) — shell grouping (single shell).
+        self.fill_images_containers_shells(&mut result);
+        // Phase 6: FillImagesSolids — solid assembly (single solid).
+        self.fill_images_solids(&mut result);
+        // Phase 7: FillImagesCompounds — compound grouping (empty).
+        self.fill_images_compounds(&mut result);
 
         let (mut brep, mut history) = result.build(matches!(self.op, BooleanOpType::Union));
         // Check vertex count right after build (RCAD_DEBUG_SPHERE=1)
