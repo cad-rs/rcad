@@ -2670,6 +2670,20 @@ impl<'a> PaveFiller<'a> {
         use rcad_kernel::geom::CurveEval;
         let vp = self.ds.vertices[vi].point;
         let tl = ic.geom_tol.max(TOLERANCE_ABS);
+        // OCCT-aligned: first try with base tolerance
+        let result = self.project_vertex_on_curve_with_tol(vi, ic, tl);
+        if result.is_some() { return result; }
+        // OCCT-aligned: try with ExtendedTolerance (OCCT PaveFiller_6.cxx L2542)
+        let ext_tol = self.extended_tolerance_occt(vi);
+        if ext_tol > tl {
+            self.project_vertex_on_curve_with_tol(vi, ic, ext_tol)
+        } else { None }
+    }
+
+    /// Core projection logic with explicit tolerance.
+    fn project_vertex_on_curve_with_tol(&self, vi: usize, ic: &IntersectionCurve, tl: f64) -> Option<f64> {
+        use rcad_kernel::geom::CurveEval;
+        let vp = self.ds.vertices[vi].point;
         match &ic.curve {
             Curve3::Line(l) => { let v = vp - l.origin; let t = v.dot(l.direction);
                 if (v - l.direction*t).length() <= tl { Some(t.clamp(ic.t_range[0], ic.t_range[1])) } else { None } }
@@ -2924,14 +2938,42 @@ impl<'a> PaveFiller<'a> {
         self.project_vertex_on_curve(vi, ic)
     }
 
+
     /// OCCT-aligned: ExtendedTolerance (BOPAlgo_PaveFiller_6.cxx L2542).
-    /// Widens tolerance for EE/EF-created vertices so they properly
-    /// interfere with curves.
-    fn extended_tolerance(&self, vi: usize) -> f64 {
-        if vi < self.ds.vertices.len() {
-            self.ds.vertices[vi].geom_tol.max(TOLERANCE_ABS) * 10.0
-        } else { TOLERANCE_ABS * 100.0 }
+    /// When a new vertex is created by EE/EF intersection, the vertex's
+    /// tolerance may need to be extended to cover the edges' endpoints.
+    fn extended_tolerance_occt(&self, vi: usize) -> f64 {
+        let base_tol = if vi < self.ds.vertices.len() {
+            self.ds.vertices[vi].geom_tol
+        } else { TOLERANCE_ABS };
+        let mut max_tol = base_tol;
+
+        // For newly created vertices, check EE/EF interferences
+        for inf in &self.ds.interferences {
+            let (ei, param) = match inf {
+                Interference::EdgeEdge { e1, param1, new_vertex, .. } if *new_vertex == vi => {
+                    (*e1, *param1)
+                }
+                Interference::EdgeFace { edge, edge_param, new_vertex, .. } if *new_vertex == vi => {
+                    (*edge, *edge_param)
+                }
+                _ => continue,
+            };
+            // Compute distance from vertex to edge endpoints at the parameter
+            if ei < self.ds.edges.len() {
+                if let Some(pt) = {
+                    use rcad_kernel::geom::CurveEval;
+                    Some(self.ds.edges[ei].curve.point_at(param))
+                } {
+                    let v_pt = self.ds.vertices[vi].point;
+                    let d = (v_pt - pt).length();
+                    if d > max_tol { max_tol = d; }
+                }
+            }
+        }
+        max_tol * 2.0  // Safety factor matching OCCT's approach
     }
+
 
     /// OCCT-aligned: GetEFPnts (BOPAlgo_PaveFiller_6.cxx L2608).
     fn get_ef_pnts(&self, ei: usize) -> Vec<(usize, f64)> {
