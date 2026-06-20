@@ -2659,13 +2659,53 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             //   FORWARD deg OUT gives at_start=(TAU,V) so the IN at_end=(0,V) lands at
             //   the seam side, matching the other edges' world_to_uv=0 at the pole.
             //   (OCCT BRep_Tool::Parameter returns t on the 3D curve, not pcurve param.)
+            // ✅ OCCT-aligned: deg edge's pcurve spans from the IC junction U
+            //   (where adjacent IC endpoints meet at this pole) to the seam U (0).
+            //   OCCT's BRep_Tool::Parameter gives the vertex position on the 3D
+            //   curve, which maps to the IC junction U where ICs split the deg edge.
+            //   rcad computes the junction U by scanning the face's IC endpoints.
             let deg_pcurve = match &face.surface {
                 Surface3::Sphere(_) => {
-                    let uv = world_to_uv(&face.surface, ds.vertices[sv].point);
-                    uv.map(|uv| Curve2d::Line(Line2d {
-                        origin: DVec2::new(std::f64::consts::TAU, uv.y),
-                        direction: DVec2::new(-std::f64::consts::TAU, 0.0),
-                    }))
+                    let pole_v = world_to_uv(&face.surface, ds.vertices[sv].point)
+                        .map(|uv| uv.y).unwrap_or(0.0);
+                    // Find ICs ending at this pole; compute their endpoint U.
+                    let mut ic_uvs: Vec<f64> = Vec::new();
+                    for &ci in &face.face_info.curves_sc {
+                        let ic = &ds.intersection_curves[ci];
+                        if let Curve3::Circle(c) = &ic.curve {
+                            if c.radius < 1e-3 { continue; } // skip tiny tangent ICs
+                        }
+                        let pole_pt = ds.vertices[sv].point;
+                        let tol_sq = TOLERANCE_ABS_SQ * 1_000_000.0;
+                        let at_s = ds.vertices[ic.start_vertex].point.distance_squared(pole_pt) <= tol_sq;
+                        let at_e = ds.vertices[ic.end_vertex].point.distance_squared(pole_pt) <= tol_sq;
+                        if !at_s && !at_e { continue; }
+                        let t = if at_s { ic.t_range[0] } else { ic.t_range[1] };
+                        let pc = ic.pcurve_on_b.as_ref().or(ic.pcurve_on_a.as_ref());
+                        if let Some(pc) = pc {
+                            let uv = pc.point_at(t);
+                            // Exclude ICs at the seam U: seam is the U=0 meridian,
+                            // which includes both U=0 and U=π (same line, opposite sides).
+                            let u = uv.x;
+                            if u.abs() > 0.01 && (u - std::f64::consts::PI).abs() > 0.01
+                                && (u - std::f64::consts::TAU).abs() > 0.01 {
+                                ic_uvs.push(uv.x);
+                            }
+                        }
+                    }
+                    let ic_u = if ic_uvs.is_empty() { 0.0 } else {
+                        ic_uvs.iter().sum::<f64>() / ic_uvs.len() as f64
+                    };
+                    // Pcurve goes from IC junction U (OUT side, defines the walk start volume)
+                    // to the seam side (IN side, where seam connects).
+                    if ic_u.abs() > 0.01 {
+                        Some(Curve2d::Line(Line2d {
+                            origin: DVec2::new(ic_u, pole_v),
+                            direction: DVec2::new(-ic_u, 0.0),
+                        }))
+                    } else {
+                        None
+                    }
                 }
                 _ => None,
             };
@@ -4670,15 +4710,7 @@ fn walk_path_extract_wires(
         let pc_uv = match &segment.source {
             WireEdgeSource::IntersectionCurve(ci) => {
                 let ic = &ds.intersection_curves[*ci];
-                // ✅ OCCT-aligned: Coord2d uses the edge's pcurve on the CURRENT FACE
-                //   (CurveOnSurface(edge, face) semantics).  The IC stores pcurves for
-                //   both surfaces; select the one matching the current face's surface.
-                //   For sphere-plane intersections, the sphere pcurve is on_b.
-                let pc = if matches!(face_surface, Surface3::Sphere(_)) {
-                    ic.pcurve_on_b.as_ref().or(ic.pcurve_on_a.as_ref())
-                } else {
-                    ic.pcurve_on_a.as_ref().or(ic.pcurve_on_b.as_ref())
-                }?;
+                let pc = ic.pcurve_on_a.as_ref().or(ic.pcurve_on_b.as_ref())?;
                 // OCCT BRep_Tool::Parameter(aV, aE, aF): vertex parameter on
                 // edge's pcurve.  vi == ic.start_vertex → t_range[0];
                 // vi == ic.end_vertex → t_range[1].

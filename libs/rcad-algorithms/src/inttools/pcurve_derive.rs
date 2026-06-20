@@ -133,16 +133,14 @@ pub fn circle_pcurve_on_sphere(circle: &Circle3, sphere: &SphericalSurface) -> C
 
     let is_great = (circle.center - sphere.center).length_squared() < TOLERANCE_ABS_SQ;
     if is_great {
-        // ✅ OCCT-aligned: for great circles, the pcurve is a vertical line at
-        //   constant U (meridian).  OCCT samples the 3D curve at non-degenerate
-        //   parameter values and maps to UV via the surface, naturally avoiding
-        //   the pole's degenerate U coordinate.  Sample a point in the circle's
-        //   plane using a direction perpendicular to its normal (any point not
-        //   at the degenerate pole gives the correct meridian U).
-        let perp = any_perpendicular(n).normalize();
-        let sample_3d = circle.center + circle.radius * perp;
-        let sample_uv = sphere.world_to_uv(sample_3d);
-        let u_angle = sample_uv.x;
+        // (equivalent of BRep_Tool::CurveOnSurface for the sphere-plane case)
+        let perp = any_perpendicular(n);
+        let p1 = circle.center + circle.radius * perp.normalize();
+        let uv1 = sphere.world_to_uv(p1);
+        let u_angle = if uv1.x.abs() < 1e-12 || (uv1.x - std::f64::consts::TAU).abs() < 1e-12 {
+            let p2 = circle.center + circle.radius * n.cross(perp).normalize();
+            sphere.world_to_uv(p2).x
+        } else { uv1.x };
         Curve2d::Line(Line2d {
             origin: DVec2::new(u_angle, 0.0),
             direction: DVec2::new(0.0, 1.0),
