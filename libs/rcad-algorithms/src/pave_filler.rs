@@ -2865,6 +2865,84 @@ impl<'a> PaveFiller<'a> {
             }
         }
     }
+    /// OCCT-aligned: GetStickVertices (BOPAlgo_PaveFiller_6.cxx L2847).
+    fn get_stick_vertices(&self, fi: usize) -> Vec<usize> {
+        let mut verts: Vec<usize> = Vec::new();
+        for inf in &self.ds.interferences {
+            match inf {
+                Interference::VertexVertex { v1, v2, .. } => {
+                    if self.vertex_on_face(*v1, fi) { verts.push(*v1); }
+                    if self.vertex_on_face(*v2, fi) { verts.push(*v2); }
+                }
+                Interference::VertexEdge { vertex, .. } => {
+                    if self.vertex_on_face(*vertex, fi) { verts.push(*vertex); }
+                }
+                Interference::VertexFace { vertex, face } => {
+                    if *face == fi { verts.push(*vertex); }
+                }
+                _ => {}
+            }
+        }
+        verts.sort(); verts.dedup();
+        verts
+    }
+
+    fn vertex_on_face(&self, vi: usize, fi: usize) -> bool {
+        if vi >= self.ds.vertices.len() || fi >= self.ds.faces.len() { return false; }
+        let face = &self.ds.faces[fi];
+        let tol = face.geom_tol.max(TOLERANCE_ABS);
+        for &bvi in &face.boundary_verts {
+            if bvi == vi { return true; }
+        }
+        self.ds.faces[fi].face_info.vertices_in.contains(&vi)
+    }
+
+    /// OCCT-aligned: IsExistingVertex (BOPAlgo_PaveFiller_6.cxx L1950).
+    fn is_existing_vertex(&self, ci: usize, param: f64) -> bool {
+        let ic = &self.ds.intersection_curves[ci];
+        let tol = ic.geom_tol.max(TOLERANCE_ABS) * 100.0;
+        for inf in &self.ds.interferences {
+            if let Interference::FaceFace { curves, .. } = inf {
+                if curves.contains(&ci) { continue; }
+            }
+        }
+        // Check if any vertex already exists at this parameter
+        for fi in 0..self.ds.faces.len() {
+            for &vi in &self.ds.faces[fi].face_info.vertices_in {
+                if let Some(t) = self.project_vertex_on_curve(vi, ic) {
+                    if (t - param).abs() < tol { return true; }
+                }
+            }
+        }
+        false
+    }
+
+    /// OCCT-aligned: EstimatePaveOnCurve (BOPAlgo_PaveFiller_6.cxx L4056).
+    fn estimate_pave_on_curve(&self, ci: usize, vi: usize) -> Option<f64> {
+        let ic = &self.ds.intersection_curves[ci];
+        self.project_vertex_on_curve(vi, ic)
+    }
+
+    /// OCCT-aligned: ExtendedTolerance (BOPAlgo_PaveFiller_6.cxx L2542).
+    /// Widens tolerance for EE/EF-created vertices so they properly
+    /// interfere with curves.
+    fn extended_tolerance(&self, vi: usize) -> f64 {
+        if vi < self.ds.vertices.len() {
+            self.ds.vertices[vi].geom_tol.max(TOLERANCE_ABS) * 10.0
+        } else { TOLERANCE_ABS * 100.0 }
+    }
+
+    /// OCCT-aligned: GetEFPnts (BOPAlgo_PaveFiller_6.cxx L2608).
+    fn get_ef_pnts(&self, ei: usize) -> Vec<(usize, f64)> {
+        let mut pnts: Vec<(usize, f64)> = Vec::new();
+        for inf in &self.ds.interferences {
+            if let Interference::EdgeFace { edge, edge_param, new_vertex, .. } = inf {
+                if *edge == ei { pnts.push((*new_vertex, *edge_param)); }
+            }
+        }
+        pnts
+    }
+
 
 
     fn post_treat_ff(&mut self) {
