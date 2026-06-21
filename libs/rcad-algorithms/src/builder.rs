@@ -6351,18 +6351,20 @@ impl<'a> BooleanBuilder<'a> {
             // OCCT L247-271: rebuild wire from edge images.
             //   Iterate edges; if edge has images, use the first image;
             //   otherwise use the original edge.  Build new wire container.
-            for &ei in &edges {
-                let my_imgs = self.my_images.borrow(); let img = my_imgs.get(&ei);
-                match img {
-                    Some(split_list) => {
-                        // OCCT L261-271: add each split edge image, with reverse check.
-                        for &new_ei in split_list {
-                            self.my_images.borrow_mut().entry(wi).or_default().push(new_ei);
+            {
+                let has_img: std::collections::HashMap<usize, Vec<usize>> =
+                    edges.iter().filter_map(|&ei| {
+                        self.my_images.borrow().get(&ei).map(|v| (ei, v.clone()))
+                    }).collect();
+                let mut wi_imgs = self.my_images.borrow_mut();
+                for &ei in &edges {
+                    let entry = wi_imgs.entry(wi).or_default();
+                    if let Some(imgs) = has_img.get(&ei) {
+                        for &new_ei in imgs {
+                            entry.push(new_ei);
                         }
-                    }
-                    None => {
-                        // OCCT L255-257: no splits → add original edge to wire image.
-                        self.my_images.borrow_mut().entry(wi).or_default().push(ei);
+                    } else {
+                        entry.push(ei);
                     }
                 }
             }
@@ -6376,17 +6378,19 @@ impl<'a> BooleanBuilder<'a> {
                     self.my_images.borrow_mut().entry(iwi).or_default().push(iwi);
                     continue;
                 }
+                let has_img: std::collections::HashMap<usize, Vec<usize>> =
+                    iw.iter().filter_map(|&ei| {
+                        self.my_images.borrow().get(&ei).map(|v| (ei, v.clone()))
+                    }).collect();
+                let mut iwi_imgs = self.my_images.borrow_mut();
                 for &ei in &iw {
-                    let my_imgs = self.my_images.borrow(); let img = my_imgs.get(&ei);
-                    match img {
-                        Some(split_list) => {
-                            for &new_ei in split_list {
-                                self.my_images.borrow_mut().entry(iwi).or_default().push(new_ei);
-                            }
+                    let entry = iwi_imgs.entry(iwi).or_default();
+                    if let Some(imgs) = has_img.get(&ei) {
+                        for &new_ei in imgs {
+                            entry.push(new_ei);
                         }
-                        None => {
-                            self.my_images.borrow_mut().entry(iwi).or_default().push(ei);
-                        }
+                    } else {
+                        entry.push(ei);
                     }
                 }
             }
