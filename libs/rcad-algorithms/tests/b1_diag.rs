@@ -27,7 +27,7 @@ fn b1_diag() {
         let f = &ds.faces[fi];
         let pts: Vec<DVec3> = f.boundary_verts.iter().map(|&vi| ds.vertices[vi].point).collect();
         let normal = f.normal;
-        let cis: Vec<String> = f.face_info.curves_in.iter().map(|c| format!("{}", c)).collect();
+        let cis: Vec<String> = f.face_info.curves_sc.iter().map(|c| format!("{}", c)).collect();
         eprintln!("  A[{}]: n=({:.0},{:.0},{:.0}) curves=[{}] boundary={:?}",
             fi, normal.x, normal.y, normal.z, cis.join(","), 
             pts.iter().map(|p| format!("({:.1},{:.1},{:.1})", p.x, p.y, p.z)).collect::<Vec<_>>());

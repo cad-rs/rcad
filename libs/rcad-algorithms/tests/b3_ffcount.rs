@@ -34,7 +34,7 @@ fn b3_ff_list() {
         eprintln!("  A[{}]: x=[{:.1},{:.1}] y=[{:.1},{:.1}] z=[{:.1},{:.1}] n=({:.0},{:.0},{:.0}) curves={:?}",
             fi, xr.0, xr.1, yr.0, yr.1, zr.0, zr.1,
             normal.x, normal.y, normal.z,
-            f.face_info.curves_in.iter().collect::<Vec<_>>());
+            f.face_info.curves_sc.iter().collect::<Vec<_>>());
     }
 
     eprintln!("\nB3 FF pairs with curves:");

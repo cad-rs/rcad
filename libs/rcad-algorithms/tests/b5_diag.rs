@@ -22,8 +22,8 @@ fn b5_ff_check() {
     let mut filler = PaveFiller::new(&mut ds);
     filler.perform();
 
-    eprintln!("A-face[0] curves_in: {:?}", ds.faces[0].face_info.curves_in.iter().collect::<Vec<_>>());
-    eprintln!("A-face[4] curves_in: {:?}", ds.faces[4].face_info.curves_in.iter().collect::<Vec<_>>());
+    eprintln!("A-face[0] curves_sc: {:?}", ds.faces[0].face_info.curves_sc.iter().collect::<Vec<_>>());
+    eprintln!("A-face[4] curves_sc: {:?}", ds.faces[4].face_info.curves_sc.iter().collect::<Vec<_>>());
 
     for inf in &ds.interferences {
         match inf {

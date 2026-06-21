@@ -41,13 +41,13 @@ fn analyze_ds(ds: &DS) {
             ShapeOrigin::ShapeB => "B",
         };
         let surf = surf_type_str(&face.surface);
-        println!("  Face[{fi}] ({origin}) {surf}: curves_in={}, verts_in={}, bnd_verts={}",
-            face.face_info.curves_in.len(),
+        println!("  Face[{fi}] ({origin}) {surf}: curves_sc={}, verts_in={}, bnd_verts={}",
+            face.face_info.curves_sc.len(),
             face.face_info.vertices_in.len(),
             face.boundary_verts.len());
-        for &ci in &face.face_info.curves_in {
+        for &ci in &face.face_info.curves_sc {
             let ic = &ds.intersection_curves[ci];
-            println!("      curves_in: IC[{ci}] {} polyline_len={}", curve_type_str(&ic.curve), ic.polyline.len());
+            println!("      curves_sc: IC[{ci}] {} polyline_len={}", curve_type_str(&ic.curve), ic.polyline.len());
         }
     }
 }
@@ -101,7 +101,7 @@ fn debug_zo9() {
                 println!("    Boundary points ({})", uv_bnd.len());
             }
             // Print pcurve samples for each intersection curve
-            for &ci in &face.face_info.curves_in {
+            for &ci in &face.face_info.curves_sc {
                 let ic = &ds.intersection_curves[ci];
                 let [t0, t1] = ic.t_range;
                 // Cylinder is ShapeB, use pcurve_on_b
@@ -125,10 +125,10 @@ fn debug_zo9() {
         if face.origin == ShapeOrigin::ShapeA {
             if let rcad_kernel::geom::Surface3::Plane(p) = &face.surface {
                 let d = p.normal.dot(p.origin);
-                println!("  Face[{fi}] (A) Plane: d={:.6}, normal=({:.2},{:.2},{:.2}) origin=({:.2},{:.2},{:.2}) curves_in={}",
+                println!("  Face[{fi}] (A) Plane: d={:.6}, normal=({:.2},{:.2},{:.2}) origin=({:.2},{:.2},{:.2}) curves_sc={}",
                     d, p.normal.x, p.normal.y, p.normal.z,
                     p.origin.x, p.origin.y, p.origin.z,
-                    face.face_info.curves_in.len());
+                    face.face_info.curves_sc.len());
             }
         }
     }

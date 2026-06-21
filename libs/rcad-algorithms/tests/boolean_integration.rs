@@ -83,13 +83,13 @@ fn overlapping_boxes_union_ds_has_curves_on_a_plus_x_face() {
 
     let max_curves = plus_x
         .iter()
-        .map(|(_, f)| f.face_info.curves_in.len())
+        .map(|(_, f)| f.face_info.curves_sc.len())
         .max()
         .unwrap_or(0);
 
     assert!(
         max_curves > 0,
-        "B penetrates the interior of A's +X face — DS must register intersection curves so the boolean builder can split that face; got max curves_in={max_curves}"
+        "B penetrates the interior of A's +X face — DS must register intersection curves so the boolean builder can split that face; got max curves_sc={max_curves}"
     );
 }
 

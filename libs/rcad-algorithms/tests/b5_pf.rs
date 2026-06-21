@@ -50,8 +50,8 @@ fn b5_pf_check() {
         }
     }
     
-    // Check curves_in for each A-face
+    // Check curves_sc for each A-face
     for fi in 0..ds.a_face_count {
-        eprintln!("  A-face[{}] curves_in={:?}", fi, ds.faces[fi].face_info.curves_in.iter().collect::<Vec<_>>());
+        eprintln!("  A-face[{}] curves_sc={:?}", fi, ds.faces[fi].face_info.curves_sc.iter().collect::<Vec<_>>());
     }
 }

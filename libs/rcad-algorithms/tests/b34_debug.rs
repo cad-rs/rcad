@@ -25,7 +25,7 @@ fn check_grid(label: &str, b2: (f64,f64,f64,f64,f64,f64)) {
     for fi in 0..ds.a_face_count {
         let f = &ds.faces[fi];
         let nv = f.boundary_verts.len();
-        let cis: Vec<String> = f.face_info.curves_in.iter().map(|c| format!("{}", c)).collect();
+        let cis: Vec<String> = f.face_info.curves_sc.iter().map(|c| format!("{}", c)).collect();
         eprintln!("  A-face[{}] src={} nv={} curves=[{}]", fi, f.source_face_idx, nv, cis.join(","));
     }
 }

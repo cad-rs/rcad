@@ -8117,7 +8117,9 @@ mod tests {
     
     /// Test fill_images_vertices with empty DS
     fn test_fill_images_vertices_empty() {
-        let ds = crate::bopds::ds::DS::new_with_tol(1e-7);
+        let a = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let b = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let ds = crate::bopds::ds::DS::new_with_fuzzy(&a, &b, 1e-7);
         let img = fill_images_vertices(&ds);
         assert!(img.is_empty() || img.values().all(|v| !v.is_empty()));
     }
