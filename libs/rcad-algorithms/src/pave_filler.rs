@@ -7,6 +7,7 @@ use crate::bopds::ds::{
 use crate::bopds::pave::*;
 use crate::bvh::Bvh;
 use crate::inttools;
+use crate::inttools::context::Context as IntToolsContext;
 use crate::inttools::fclass2d::{FClass2d, State};
 use crate::tolerance::*;
 use rcad_kernel::closest_point_on_curve;
@@ -31,6 +32,14 @@ pub struct PaveFiller<'a> {
     /// Tolerance contribution from seam edge shift (OCCT PaveFiller_6.cxx L393-479).
     /// Set to the shift distance when a face has been shifted to align seam edges.
     seam_shift_tol: f64,
+    /// ✅ OCCT-aligned: RunParallel flag (BOPAlgo_Algo::myRunParallel).
+    run_parallel: bool,
+    /// ✅ OCCT-aligned: Non-destructive mode flag (BOPAlgo_PaveFiller::myNonDestructive).
+    non_destructive: bool,
+    /// ✅ OCCT-aligned: UseOBB flag (BOPAlgo_Algo::myUseOBB).
+    use_obb: bool,
+    /// ✅ OCCT-aligned: IntTools_Context with FClass2d cache (PaveFiller::Init L203).
+    context: IntToolsContext,
 }
 
 /// ✅ OCCT-aligned:Propagate IC vertices to all faces sharing boundary edges
@@ -81,6 +90,8 @@ fn propagate_ic_vertices_to_shared_faces(
 
 impl<'a> PaveFiller<'a> {
     pub fn new(ds: &'a mut DS) -> Self {
+        let n_faces = ds.faces.len();
+        let context = IntToolsContext::new(n_faces, TOLERANCE_ABS * 100.0);
         Self {
             ds,
             bvh_a: None,
@@ -89,6 +100,15 @@ impl<'a> PaveFiller<'a> {
             glue_tolerance: TOLERANCE_ABS,
             fuzzy_tolerance: 0.0,
             seam_shift_tol: 0.0,
+            // ✅ OCCT-aligned: RunParallel (default false)
+            run_parallel: false,
+            // ✅ OCCT-aligned: NonDestructive (default false)
+            non_destructive: false,
+            // ✅ OCCT-aligned: UseOBB (default false)
+            use_obb: false,
+            // ✅ OCCT-aligned: IntTools_Context with FClass2d cache
+            // OCCT PaveFiller.cxx L203: myContext = new IntTools_Context
+            context,
         }
     }
 
@@ -100,6 +120,7 @@ impl<'a> PaveFiller<'a> {
     pub fn with_bvh(ds: &'a mut DS, bvh_a: &'a Bvh, bvh_b: &'a Bvh) -> Self {
         let total_faces = ds.faces.len();
         let use_bvh = total_faces >= BVH_THRESHOLD;
+        let context = IntToolsContext::new(total_faces, TOLERANCE_ABS * 100.0);
         Self {
             ds,
             bvh_a: if use_bvh { Some(bvh_a) } else { None },
@@ -108,6 +129,14 @@ impl<'a> PaveFiller<'a> {
             glue_tolerance: TOLERANCE_ABS,
             fuzzy_tolerance: 0.0,
             seam_shift_tol: 0.0,
+            // ✅ OCCT-aligned: RunParallel (default false)
+            run_parallel: false,
+            // ✅ OCCT-aligned: NonDestructive (default false)
+            non_destructive: false,
+            // ✅ OCCT-aligned: UseOBB (default false)
+            use_obb: false,
+            // ✅ OCCT-aligned: IntTools_Context with FClass2d cache
+            context,
         }
     }
 
@@ -155,6 +184,30 @@ impl<'a> PaveFiller<'a> {
     /// (analogous to OCCT BOPAlgo_Options::SetFuzzyValue).
     pub fn configure_fuzzy(&mut self, fuzzy: f64) {
         self.fuzzy_tolerance = fuzzy.max(0.0);
+    }
+
+    /// ✅ OCCT-aligned: SetRunParallel (BOPAlgo_Algo::SetRunParallel).
+    pub fn set_run_parallel(&mut self, parallel: bool) {
+        self.run_parallel = parallel;
+    }
+
+    /// ✅ OCCT-aligned: SetNonDestructive (BOPAlgo_PaveFiller::SetNonDestructive).
+    pub fn set_non_destructive(&mut self, nd: bool) {
+        self.non_destructive = nd;
+    }
+
+    /// ✅ OCCT-aligned: SetNonDestructive auto-detect (PaveFiller::Init L212).
+    ///    Scans arguments for locked sub-shapes; rcad does not have locked shapes,
+    ///    so this is a no-op kept for form alignment.
+    pub fn set_non_destructive_auto(&mut self) {
+        // OCCT: checks if any argument has a locked sub-shape.
+        // rcad does not support locked shapes.
+        self.non_destructive = false;
+    }
+
+    /// ✅ OCCT-aligned: SetUseOBB (BOPAlgo_Algo::SetUseOBB).
+    pub fn set_use_obb(&mut self, use_obb: bool) {
+        self.use_obb = use_obb;
     }
 
     /// Effective linear tolerance combining base and fuzzy for a given base tolerance.

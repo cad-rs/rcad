@@ -2655,20 +2655,24 @@ pub(crate) fn boolean_postprocess_pave_result(
 /// difference branches (e.g. cylinder − loft frustum after `cone ∩ cylinder`).
 pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
     let mut ds = bopds::ds::DS::new(a, b);
+    let fuzzy_tol = ds.fuzzy_tol;
 
     let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
     let mut filler = match (&bvh_a, &bvh_b) {
         (Some(ba), Some(bb)) => pave_filler::PaveFiller::with_bvh(&mut ds, ba, bb),
         _ => pave_filler::PaveFiller::new(&mut ds),
     };
+    filler.set_run_parallel(false);
+    filler.configure_fuzzy(fuzzy_tol);
+    filler.set_non_destructive(false);
+    filler.configure_glue(false, TOLERANCE_ABS);
+    filler.set_use_obb(false);
     filler.perform();
 
-    // ✅ OCCT-aligned: FillImagesContainers — pre-build wire edge lists
-    ds.build_container_images(a);
-
     let builder = builder::BooleanBuilder::new(&ds, op);
-    let result = builder.build()?;
-    boolean_postprocess_pave_result(op, a, b, result)
+    let (result, _history) = builder.build_with_history()?;
+    // ✅ OCCT-align: no post-processing — the Builder pipeline produces the final result.
+    Ok(result)
 }
 
 /// Perform a boolean operation on two BReps.
@@ -3075,89 +3079,37 @@ fn finalize_boolean_result(r: BRep) -> BRep {
 /// - 两个极点处的退化边（start==end）
 /// - 将 seam 回路插入面的 outer_wire
 pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
-    // Fast-path: identical operands (union/intersection → either operand, difference → empty).
-    if let Some(r) = boolean_unit_octant::try_identical_operands(a, b, op) {
-        return Ok(r);
-    }
+    // ✅ OCCT-aligned: ALL operations go through the unified PaveFiller + BooleanBuilder pipeline.
+    // OCCT BOPAlgo_BOP::Perform (BOPAlgo_BOP.cxx L364-409) has no fast-path shortcuts —
+    // all cases pass through the same PaveFiller → Builder chain.
 
-    // Handle empty inputs gracefully instead of returning EmptyInput.
-    // OCCT passes empty shapes through booleans, returning the expected identity.
-    let a_empty = !has_any_face(a);
-    let b_empty = !has_any_face(b);
-    if a_empty && b_empty {
-        return Ok(BRep::default());
-    }
-    if a_empty {
-        return match op {
-            BooleanOpType::Union => Ok(b.clone()),
-            BooleanOpType::Intersection => Ok(BRep::default()),
-            BooleanOpType::Difference => Ok(BRep::default()),
-        };
-    }
-    if b_empty {
-        // For Union with an empty B, A is normally the identity. But if A has
-        // internal faces (SA > bbox SA), returning A directly includes those
-        // faces and inflates the result. Fall through to union-specific fast
-        // paths (e.g. try_union_fill_box_cavity) which can produce a clean result.
-        if matches!(op, BooleanOpType::Union) {
-            let sa = crate::brep_algo::total_surface_area(a);
-            if let Some(bb) = a.bounding_box() {
-                let [amin, amax] = bb;
-                let (bw, bh, bd) = (amax.x - amin.x, amax.y - amin.y, amax.z - amin.z);
-                let bbox_sa = 2.0 * (bw * bh + bw * bd + bh * bd);
-                if sa > bbox_sa * 1.01 {
-                    // Fall through to union fast paths — don't return a.clone() here.
-                } else {
-                    return Ok(a.clone());
-                }
-            } else {
-                return Ok(a.clone());
-            }
-        } else {
-            return match op {
-                BooleanOpType::Intersection => Ok(BRep::default()),
-                BooleanOpType::Difference => Ok(a.clone()),
-                BooleanOpType::Union => unreachable!(),
-            };
-        }
-    }
+    // OCCT L395: pPF = new BOPAlgo_PaveFiller(aAllocator);
+    let mut ds = bopds::ds::DS::new(a, b);
+    let fuzzy_tol = ds.fuzzy_tol;
 
-    // Fast-path: containment (one solid fully inside another).
-    if let Some(r) = boolean_unit_octant::try_containment(a, b, op) {
-        if std::env::var("RCAD_DEBUG_FAST_PATH").is_ok() { eprintln!("[DBG_BOOL_OP] try_containment returned Some ({} edges)", r.edges.len()); }
-        return Ok(r);
-    }
-
-    // ✅ OCCT-aligned: Union goes through PaveFiller + BooleanBuilder.
-    //   OCCT has NO fast-path shortcuts — all cases go through the full pipeline.
-    if matches!(op, BooleanOpType::Union) {
-        return bop_occt_union::fuse(a, b);
-    }
-
-    // ✅ OCCT-aligned: Intersection goes through PaveFiller + BooleanBuilder.
-    //   OCCT has NO fast-path shortcuts — all cases go through the full pipeline.
-    if matches!(op, BooleanOpType::Difference) && boolean_difference_empty_coincident(a, b) {
-        return Ok(BRep::default());
-    }
-
-    let r = match boolean_op_pave_fill_build(op, a, b) {
-        Ok(r) => r,
-        Err(_) => {
-            // Retry with robust infrastructure on failure. The conservative
-            // default tries escalating fuzzy tolerances, glue mode, and
-            // make-connected passes — recovering many numerical-instability
-            // and degenerate-topology cases that the single-shot path misses.
-            let options = BooleanRobustOptions::default();
-            let (r, _report) = boolean_op_robust(op, a, b, options)?;
-            r
-        }
+    // rcad: optional BVH acceleration (OCCT uses BOPDS_Iterator box tree instead).
+    let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
+    let mut filler = match (&bvh_a, &bvh_b) {
+        (Some(ba), Some(bb)) => pave_filler::PaveFiller::with_bvh(&mut ds, ba, bb),
+        _ => pave_filler::PaveFiller::new(&mut ds),
     };
-    // Sew close vertices before finalize so edge-adjacent patches share endpoints.
-    // Without this the PaveFiller's vertex-position noise (>1e-6) prevents
-    // deduplicate_edges from merging edges, which blocks unify_same_domain_faces
-    // from merging faces — the root cause of 2× over-splitting in Difference ops.
-    let (r, _) = crate::brep_repair::merge_close_vertices(&r, crate::tolerance::TOLERANCE_ABS * 64.0);
-    Ok(finalize_boolean_result(r))
+
+    // OCCT L396-403: configure PaveFiller before Perform
+    filler.set_run_parallel(false);
+    filler.configure_fuzzy(fuzzy_tol);
+    filler.set_non_destructive(false);
+    filler.configure_glue(false, TOLERANCE_ABS);
+    filler.set_use_obb(false);
+
+    // OCCT L405: pPF->Perform()
+    filler.perform();
+
+    // OCCT L408: PerformInternal1 → Builder pipeline
+    let builder = builder::BooleanBuilder::new(&ds, op);
+    let (result, _history) = builder.build_with_history()?;
+
+    // OCCT does not perform any post-processing of the result BRep after the Builder.
+    Ok(result)
 }
 
 /// Split disconnected face sets into separate shells (multi-body results).
