@@ -827,7 +827,32 @@ impl<'a> PaveFiller<'a> {
                     }
                 }
             }
-            _ => {}
+            _ => {
+                // ✅ OCCT-aligned: general curve projection (IntTools_Context:
+                //   GeomAPI_ProjectPointOnCurve for arbitrary curve types).
+                //   rcad: coarse 21-sample grid to find closest approach.
+                let te = self.ve_tol(vi, ei);
+                let mut best_t = edge.t_range[0];
+                let mut best_d = f64::MAX;
+                for si in 0..21 {
+                    let t = edge.t_range[0] + (edge.t_range[1] - edge.t_range[0]) * (si as f64 / 20.0);
+                    let d = edge.curve.point_at(t).distance(point);
+                    if d < best_d { best_d = d; best_t = t; }
+                }
+                // OCCT: if distance ≤ tolerance, vertex is on the edge
+                if best_d <= te {
+                    let param = edge.t_range[0] + (edge.t_range[1] - edge.t_range[0]) * best_t;
+                    self.ds.interferences.push(Interference::VertexEdge {
+                        vertex: vi,
+                        edge: ei,
+                        param,
+                    });
+                    self.ds.edges[ei].paves.push(Pave {
+                        vertex_idx: vi,
+                        param,
+                    });
+                }
+            }
         }
     }
 
@@ -936,12 +961,15 @@ impl<'a> PaveFiller<'a> {
 
     // ─── Pass 4: Vertex-Face ───────────────────────────────────────────
 
-    /// ✅ OCCT-aligned: TreatNewVertices — merge nearby new vertices created by EE/EF passes.
-    ///    OCCT PaveFiller_3.cxx L687-718 (TreatNewVertices)
-    ///    → BOPAlgo_Tools::IntersectVertices (BOPAlgo_Tools.cxx L1098-1161)
-    ///
-    /// Returns survivors (vertex indices with increased tolerance after merge) for RepeatIntersection.
-    /// ✅ OCCT PaveFiller.cxx L375-387: myIncreasedSS → anExtraInterfMap
+    /// ✅ OCCT-aligned: TreatNewVertices (PaveFiller_3.cxx L692-723) +
+    ///                  PerformNewVertices (PaveFiller_5.cxx L570-650).
+    ///   OCCT algorithm (TreatNewVertices L698-723):
+    ///     L700-707: collect vertices + tolerances from theMVCPB → aVerts
+    ///     L710-711: BOPAlgo_Tools::IntersectVertices(aVerts, fuzzy) → aChains
+    ///     L714-722: for each chain, MakeVertex → add to myImages
+    ///   rcad: O(n²) distance grouping + SD vertex merge + interference update.
+    ///   ⏳ rcad: no IntersectVertices BVH (O(n²) is fine for model sizes).
+    ///   Returns survivors for RepeatIntersection's myIncreasedSS.
     fn treat_new_vertices(&mut self) -> Vec<usize> {
         // ── Phase 1: Collect new vertices ─────────────────────────────────
         // ✅ OCCT L696-702: build aVerts (vertex → tolerance map)
