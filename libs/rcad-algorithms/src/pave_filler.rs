@@ -7259,7 +7259,7 @@ impl<'a> PaveFiller<'a> {
                     if fii == usize::MAX { valid = false; break; }
                     if let Some(pc) = pcurves[idx] {
                         let uv = pc.point_at(mid_t);
-                        let state = FClass2d::from_ds_face(&self.ds, fii).perform(uv);
+                        let state = FClass2d::from_ds_face(&self.ds, fii).perform_point(uv);
                         if state == State::Out { valid = false; break; }
                     } else {
                         // Fallback to 3D distance (no pcurve available)
