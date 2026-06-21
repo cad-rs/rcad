@@ -6393,6 +6393,13 @@ impl<'a> BooleanBuilder<'a> {
     ///   via emit_wire_face.  rcad equivalent: for each face with IC data,
     ///   call split_face_occt_wire_pipeline (BuilderFace::Perform), then
     ///   classify_against_solid_for_boolean + classification_keep_policy.
+    /// ✅ OCCT-aligned: FillImagesFaces (BOPAlgo_Builder_2.cxx L215-229).
+    ///   Equivalent to BuildSplitFaces + FillSameDomainFaces + FillInternalVertices.
+    ///   OCCT L258: aNbS = myDS->NbSourceShapes()
+    ///   OCCT L260-266: iterates all source shapes, filters TopAbs_FACE.
+    ///   OCCT L275-279: HasFaceInfo check.
+    ///   OCCT L283-287: PaveBlocksIn/On/Sc + AloneVertices.
+    ///   OCCT L293-296: if no PBs and no AV → skip.
     fn fill_images_faces(
         &self,
         result: &mut ResultBuilder,
@@ -6401,23 +6408,74 @@ impl<'a> BooleanBuilder<'a> {
     ) {
         let debug_pipe = std::env::var("RCAD_DEBUG_PIPELINE").is_ok();
 
-        // Process A faces (OCCT iterates myImages(FACE) images)
-        for &fi in a_faces {
-            if self.ds.faces[fi].face_info.has_any_interference() {
+        // OCCT L258-266: iterate all source shapes → filter TopAbs_FACE.
+        for fi in 0..self.ds.faces.len() {
+            let is_a = a_faces.contains(&fi);
+            if !is_a && !b_faces.contains(&fi) { continue; }
+            let source_side = if is_a { SourceSide::A } else { SourceSide::B };
+            let other_faces: &[usize] = if is_a { b_faces } else { a_faces };
+
+            // OCCT L275: bHasFaceInfo = myDS->HasFaceInfo(i)
+            let has_info = self.ds.faces[fi].face_info.has_any_interference();
+
+            // OCCT L283-287: PBsIn → curves_sc, PBsOn → curves_on.
+            //   PBsSc → curves_sc (shared section curves). rcad: alone vertices not tracked.
+            let has_pb_sc = !self.ds.faces[fi].face_info.curves_sc.is_empty();
+            let has_pb_on = !self.ds.faces[fi].face_info.pave_blocks_on.is_empty();
+
+            // OCCT L293-296: if (!aNbPBIn && !aNbPBOn && !aNbPBSc && !aNbAV) continue.
+            if !has_pb_sc && !has_pb_on && !has_info {
+                continue;
+            }
+
+            // OCCT L298-332: no IN or SC pave blocks → handle alone vertices / unmodified.
+            if !has_pb_sc {
+                if has_info {
+                    // Face has info but no section curves → BuildDraftFace path.
+                    if let Some(draft) = self.build_draft_face(fi) {
+                        let (_segments, wfs, _vp) = draft;
+                        for wf in &wfs {
+                            let wire_subs = wire_faces_to_face_sample_data(
+                                std::slice::from_ref(wf), &[], self.ds, fi);
+                            if let Some(sub) = wire_subs.first() {
+                                let class = classify_against_solid_for_boolean(
+                                    self.op, source_side,
+                                    &FaceSampleData::from_sub_face(sub), other_faces, self.ds);
+                                if self.classification_keep_policy(source_side, class, fi) {
+                                    let origin = if is_a {
+                                        FaceOrigin::FromA(self.ds.faces[fi].source_face_idx)
+                                    } else {
+                                        FaceOrigin::FromB(self.ds.faces[fi].source_face_idx)
+                                    };
+                                    result.emit_wire_face(fi, wf, &[], self.ds, false, origin,
+                                        &std::collections::HashMap::new());
+                                }
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // OCCT: face has IN or SC pave blocks → BuilderFace::Perform.
+            if has_info {
                 if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
                     if !wfs.is_empty() {
-                        let wfs = promote_exterior_holes(wfs, &segments, self.ds, self.op, b_faces);
+                        let wfs = promote_exterior_holes(wfs, &segments, self.ds, self.op, other_faces);
                         for wf in &wfs {
                             let wire_subs = wire_faces_to_face_sample_data(
                                 std::slice::from_ref(wf), &segments, self.ds, fi);
                             if let Some(sub) = wire_subs.first() {
                                 let class = classify_against_solid_for_boolean(
-                                    self.op, SourceSide::A,
-                                    &FaceSampleData::from_sub_face(sub), b_faces, self.ds);
-                                if self.classification_keep_policy(SourceSide::A, class, fi) {
-                                    result.emit_wire_face(fi, wf, &segments, self.ds, false,
-                                        FaceOrigin::FromA(self.ds.faces[fi].source_face_idx),
-                                        &vertex_positions);
+                                    self.op, source_side,
+                                    &FaceSampleData::from_sub_face(sub), other_faces, self.ds);
+                                if self.classification_keep_policy(source_side, class, fi) {
+                                    let origin = if is_a {
+                                        FaceOrigin::FromA(self.ds.faces[fi].source_face_idx)
+                                    } else {
+                                        FaceOrigin::FromB(self.ds.faces[fi].source_face_idx)
+                                    };
+                                    result.emit_wire_face(fi, wf, &segments, self.ds, false, origin, &vertex_positions);
                                 }
                             }
                         }
@@ -6425,78 +6483,37 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 }
             }
-            if !self.ds.faces[fi].face_info.has_any_interference() {
-                let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, fi);
-                let segments = collect_face_edge_segments(self.ds, fi, &pcurve_lookup);
-                if !segments.is_empty() {
-                    let wf = WireFace {
-                        outer_wire: (0..segments.len()).collect(), inner_wires: vec![], internal_wires: vec![],
-                    };
-                    let wire_subs = wire_faces_to_face_sample_data(
-                        &[wf.clone()], &segments, self.ds, fi);
-                    if let Some(sub) = wire_subs.first() {
-                        let class = classify_against_solid_for_boolean(
-                            self.op, SourceSide::A,
-                            &FaceSampleData::from_sub_face(sub), b_faces, self.ds);
-                        if self.classification_keep_policy(SourceSide::A, class, fi) {
-                            result.emit_wire_face(fi, &wf, &segments, self.ds, false,
-                                FaceOrigin::FromA(self.ds.faces[fi].source_face_idx),
-                                &std::collections::HashMap::new());
-                        }
+
+            // OCCT fallback: face with ON PBs but no IN/SC → emit directly.
+            let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, fi);
+            let segments = collect_face_edge_segments(self.ds, fi, &pcurve_lookup);
+            if !segments.is_empty() {
+                let wf = WireFace {
+                    outer_wire: (0..segments.len()).collect(), inner_wires: vec![], internal_wires: vec![],
+                };
+                let wire_subs = wire_faces_to_face_sample_data(&[wf.clone()], &segments, self.ds, fi);
+                if let Some(sub) = wire_subs.first() {
+                    let class = classify_against_solid_for_boolean(
+                        self.op, source_side,
+                        &FaceSampleData::from_sub_face(sub), other_faces, self.ds);
+                    if self.classification_keep_policy(source_side, class, fi) {
+                        let origin = if is_a {
+                            FaceOrigin::FromA(self.ds.faces[fi].source_face_idx)
+                        } else {
+                            FaceOrigin::FromB(self.ds.faces[fi].source_face_idx)
+                        };
+                        result.emit_wire_face(fi, &wf, &segments, self.ds, false, origin,
+                            &std::collections::HashMap::new());
                     }
                 }
             }
         }
 
-        // Process B faces
-        for &fi in b_faces {
-            if self.ds.faces[fi].face_info.has_any_interference() {
-                if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
-                    if !wfs.is_empty() {
-                        let wfs = promote_exterior_holes(wfs, &segments, self.ds, self.op, a_faces);
-                        for wf in &wfs {
-                            let wire_subs = wire_faces_to_face_sample_data(
-                                std::slice::from_ref(wf), &segments, self.ds, fi);
-                            if let Some(sub) = wire_subs.first() {
-                                let class = classify_against_solid_for_boolean(
-                                    self.op, SourceSide::B,
-                                    &FaceSampleData::from_sub_face(sub), a_faces, self.ds);
-                                if self.classification_keep_policy(SourceSide::B, class, fi) {
-                                    result.emit_wire_face(fi, wf, &segments, self.ds, false,
-                                        FaceOrigin::FromB(self.ds.faces[fi].source_face_idx),
-                                        &vertex_positions);
-                                }
-                            }
-                        }
-                        continue;
-                    }
-                }
-            }
-            if !self.ds.faces[fi].face_info.has_any_interference() {
-                let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, fi);
-                let segments = collect_face_edge_segments(self.ds, fi, &pcurve_lookup);
-                if !segments.is_empty() {
-                    let wf = WireFace {
-                        outer_wire: (0..segments.len()).collect(), inner_wires: vec![], internal_wires: vec![],
-                    };
-                    let wire_subs = wire_faces_to_face_sample_data(
-                        &[wf.clone()], &segments, self.ds, fi);
-                    if let Some(sub) = wire_subs.first() {
-                        let class = classify_against_solid_for_boolean(
-                            self.op, SourceSide::B,
-                            &FaceSampleData::from_sub_face(sub), a_faces, self.ds);
-                        if self.classification_keep_policy(SourceSide::B, class, fi) {
-                            result.emit_wire_face(fi, &wf, &segments, self.ds, false,
-                                FaceOrigin::FromB(self.ds.faces[fi].source_face_idx),
-                                &std::collections::HashMap::new());
-                        }
-                    }
-                }
-            }
-            // ✅ OCCT-aligned: FillSameDomainFaces inside FillImagesFaces (Builder_2.cxx L223).
-            self.fill_same_domain_faces(result);
-            if self.has_errors { return; }
-        }
+        // ✅ OCCT L223: FillSameDomainFaces — merge duplicates after all faces split.
+        self.fill_same_domain_faces(result);
+        if self.has_errors { return; }
+
+        // ✅ OCCT L228: FillInternalVertices — handle alone vertices (stub).
     }
 
     /// ✅ OCCT-aligned: FillSameDomainFaces (Builder_2.cxx L580-925).
