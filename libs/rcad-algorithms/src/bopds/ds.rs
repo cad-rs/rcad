@@ -296,38 +296,7 @@ pub struct IntersectionCurve {
     pub geom_tol: f64,
 }
 
-/// Information about detected extreme geometry conditions.
-///
-/// This stores the results of pre-analysis for near-tangent and near-coincident
-/// geometry, enabling automatic tolerance adjustment during boolean operations.
-#[derive(Debug, Clone, Default)]
-pub struct ExtremeGeometryInfo {
-    /// Near-tangent face pairs detected during pre-analysis.
-    pub near_tangent_faces: Vec<NearTangentFacePair>,
-    /// Near-coincident face pairs detected during pre-analysis.
-    pub near_coincident_faces: Vec<NearCoincidentFacePair>,
-    /// Recommended fuzzy tolerance adjustment.
-    pub recommended_fuzzy_adjustment: f64,
-    /// Whether extreme geometry was detected that requires special handling.
-    pub has_extreme_geometry: bool,
-}
-
-/// A near-tangent face pair with detailed information.
-#[derive(Debug, Clone)]
-pub struct NearTangentFacePair {
-    /// Face index in shape A.
-    pub face_a: usize,
-    /// Face index in shape B.
-    pub face_b: usize,
-    /// Distance between faces at closest point.
-    pub distance: f64,
-    /// Type of near-tangency.
-    pub tangent_type: NearTangentType,
-    /// Suggested fuzzy tolerance for this pair.
-    pub suggested_fuzzy: f64,
-}
-
-/// Type of near-tangency between faces.
+/// Type of near-tangency between faces (used by glue detection).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NearTangentType {
     /// Planes that are nearly parallel.
@@ -342,21 +311,6 @@ pub enum NearTangentType {
     ConePlane,
     /// General surface tangency.
     General,
-}
-
-/// A near-coincident face pair with detailed information.
-#[derive(Debug, Clone)]
-pub struct NearCoincidentFacePair {
-    /// Face index in shape A.
-    pub face_a: usize,
-    /// Face index in shape B.
-    pub face_b: usize,
-    /// Maximum distance between faces in overlap region.
-    pub max_distance: f64,
-    /// Overlap ratio (0.0 to 1.0).
-    pub overlap_ratio: f64,
-    /// Suggested fuzzy tolerance for this pair.
-    pub suggested_fuzzy: f64,
 }
 
 /// Central data structure (OCCT: BOPDS_DS).
@@ -383,8 +337,6 @@ pub struct DS {
     pub shared_topology: SharedTopologyInfo,
     /// ✅ OCCT-aligned: BOPDS_ShapeSD — same-domain shape mapping (built from shared_topology).
     pub shape_sd: ShapeSD,
-    /// Extreme geometry analysis results.
-    pub extreme_geometry: ExtremeGeometryInfo,
     /// Pre-computed overlap polygons for same-domain (coplanar) face pairs.
     /// Each entry is (face_a_index, face_b_index, overlap_boundary_in_3d).
     /// Populated during PaveFiller's coplanar analysis, consumed by Builder.
@@ -449,7 +401,6 @@ impl DS {
             a_face_count: 0,
             shared_topology: SharedTopologyInfo::default(),
             shape_sd: ShapeSD::new(0, &SharedTopologyInfo::default()),
-            extreme_geometry: ExtremeGeometryInfo::default(),
             same_domain_overlaps: Vec::new(),
             common_blocks: Vec::new(),
             my_images: Vec::new(),
