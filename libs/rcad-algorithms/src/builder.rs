@@ -399,6 +399,7 @@ impl ResultBuilder {
     /// OCCT-aligned: emit BRep face from WireFace (replaces emit_face_with_origin).
     ///     Builds edges directly from WireSegments: seam edges use add_seam_edge /
     ///     add_edge_seam_degenerate; IC edges use add_circle_edge for Circle3 curves.
+/// ✅ OCCT-aligned: emit_wire_face — builds BRep edges/face from WireSegments.
     fn emit_wire_face(
         &mut self,
         face_idx: usize,
@@ -1801,6 +1802,7 @@ fn classify_subface_against_box(
 /// surface). In that case we probe boundary and interior samples to break the tie.
 // ✅ OCCT对齐: 鍒嗙被瀛愰潰涓?In/Out/On (ClassifyFaces)銆?
 //    鎺ュ彈 FaceSampleData(浠?WireFace 鎴?FaceSampleData 鏋勯€?銆?
+/// ✅ OCCT-aligned: classify_against_solid_for_boolean — ComputeState (OCCT BOPAlgo_Builder).
 fn classify_against_solid_for_boolean(
     op: BooleanOpType,
     source: SourceSide,
@@ -4168,6 +4170,7 @@ fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, fac
 // Returns the set of avoided SEGMENT indices (both FWD+REV of each avoided
 // physical edge).  The caller excludes these from the WireSplitter input.
 // ====================================================================
+/// ✅ OCCT-aligned: PerformShapesToAvoid (BOPAlgo_BuilderFace.cxx L152-235).
 fn perform_shapes_to_avoid(
     segments: &[WireSegment],
     vi_to_canon: &[usize],
@@ -4234,6 +4237,7 @@ fn perform_shapes_to_avoid(
 // OCCT-aligned: Assemble internal wires from avoided segments
 // (BOPAlgo_BuilderFace.cxx L327-382)
 // ====================================================================
+/// ✅ OCCT-aligned: PerformInternalShapes (BOPAlgo_BuilderFace.cxx L327-382).
 fn assemble_internal_wires(
     avoided: &[usize],
     segments: &[WireSegment],
@@ -6620,6 +6624,7 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     /// ✅ OCCT-aligned: FillImagesContainers(SHELL) (BOPAlgo_Builder_1.cxx L172-276).
+    /// ✅ OCCT-aligned: FillImagesContainers(SHELL) (BOPAlgo_Builder_1.cxx L172-276).
     ///   OCCT L175-183: iterates source shapes → filters TopAbs_SHELL →
     ///   FillImagesContainer → collects each shell's face images → builds shell.
     ///   rcad: source shells not tracked explicitly; group result faces by their
@@ -6660,6 +6665,7 @@ impl<'a> BooleanBuilder<'a> {
     ///   2. For Union: all shells in one solid.
     ///   3. For Intersection: only mixed-origin shells.
     ///   4. For Difference: A-origin shells + mixed shells.
+    /// ✅ OCCT-aligned: FillImagesSolids (BOPAlgo_Builder_3.cxx L60-200).
     ///
     /// ⏳ Unlike OCCT, rcad does not build draft solids for IN/OUT reclassification
     ///    — the face-level classification (Phase 3) already filters by state.
