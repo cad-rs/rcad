@@ -222,6 +222,10 @@ pub(crate) struct WireSegment {
     /// wires. Set for seam segments on split-seam periodic surfaces.
     second_pcurve: Option<Curve2d>,
     first_pcurve: Option<Curve2d>,
+    /// ✅ OCCT-aligned: vertex parameters on the pcurve (BRep_Tool::Parameter,
+    ///   WireSplitter_1.cxx L669). t_range[0] = start_vertex param,
+    ///   t_range[1] = end_vertex param.  vertex_uv evaluates pc.point_at(t).
+    t_range: [f64; 2],
 }
 
 impl WireSegment {
@@ -237,6 +241,7 @@ impl WireSegment {
             forward: !self.forward,
             is_seam: self.is_seam,
             second_pcurve: None, first_pcurve: None,
+            t_range: [self.t_range[1], self.t_range[0]],
             tangent_start: self.tangent_end
                 .map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
             tangent_end: self.tangent_start
@@ -2713,7 +2718,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             segments.push(WireSegment {
                 start_vertex: sv, end_vertex: sv,
                 source: WireEdgeSource::DsEdge(ei), forward: true,
-                is_seam: true, second_pcurve: deg_pcurve.clone(), first_pcurve: None, tangent_start: tangent.0, tangent_end: tangent.1,
+                is_seam: true, second_pcurve: deg_pcurve.clone(), first_pcurve: None, t_range: [0.0, 1.0], tangent_start: tangent.0, tangent_end: tangent.1,
             });
             // ✅ OCCT-aligned: second WES entry for REVERSED orientation (BRep_Tool.cxx
             //   L354-361: REVERSED → PCurve2).  The reversed segment has forward=false,
@@ -2729,7 +2734,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             segments.push(WireSegment {
                 start_vertex: sv, end_vertex: sv,
                 source: WireEdgeSource::DsEdge(ei), forward: false,
-                is_seam: true, second_pcurve: deg_pcurve_rev, first_pcurve: None,
+                is_seam: true, second_pcurve: deg_pcurve_rev, first_pcurve: None, t_range: [0.0, 1.0],
                 tangent_start: tangent.1.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
                 tangent_end: tangent.0.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
             });        } else if is_seam && matches!(face.surface, Surface3::Sphere(_)) {
@@ -2809,7 +2814,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     segments.push(WireSegment {
                         start_vertex: sv_seg, end_vertex: ev_seg,
                         source: WireEdgeSource::DsEdge(ei), forward: true,
-                        is_seam: true, second_pcurve: second_pcurve.clone(), first_pcurve, tangent_start: t_start, tangent_end: t_end,
+                        is_seam: true, second_pcurve: second_pcurve.clone(), first_pcurve, t_range: [0.0, 1.0], tangent_start: t_start, tangent_end: t_end,
                     });
                     // Reverse direction: compute angles independently from
                     // ev_seg→sv_seg direction, matching OCCT Angle2D for the
@@ -2830,7 +2835,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     segments.push(WireSegment {
                         start_vertex: ev_seg, end_vertex: sv_seg,
                         source: WireEdgeSource::DsEdge(ei), forward: false,
-                        is_seam: true, second_pcurve: second_pcurve_rev, first_pcurve: None,
+                        is_seam: true, second_pcurve: second_pcurve_rev, first_pcurve: None, t_range: [0.0, 1.0],
                         tangent_start: t_start_rev, tangent_end: t_end_rev,
                     });
                     // OCCT DoSplitSEAMOnFace: second_pcurve is carried on the DsEdge
@@ -2844,14 +2849,14 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                 segments.push(WireSegment {
                     start_vertex: sv, end_vertex: ev,
                     source: WireEdgeSource::DsEdge(ei), forward: true,
-                    is_seam: true, second_pcurve: None, first_pcurve: None, tangent_start: t_start, tangent_end: t_end,
+                    is_seam: true, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0], tangent_start: t_start, tangent_end: t_end,
                 });
                 // Reverse direction: compute angles independently.
                 let (t_start_rev, t_end_rev) = compute_seam_tangent_angles(ds, ev, sv, &face.surface);
                 segments.push(WireSegment {
                     start_vertex: ev, end_vertex: sv,
                     source: WireEdgeSource::DsEdge(ei), forward: false,
-                    is_seam: true, second_pcurve: None, first_pcurve: None,
+                    is_seam: true, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0],
                     tangent_start: t_start_rev, tangent_end: t_end_rev,
                 });
             }
@@ -2862,14 +2867,14 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                 start_vertex: sv, end_vertex: ev,
                 source: WireEdgeSource::DsEdge(ei),
                 forward: true,
-                is_seam: true, second_pcurve: None, first_pcurve: None,
+                is_seam: true, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0],
                 tangent_start: t_start,
                 tangent_end: t_end,
             });            segments.push(WireSegment {
                 start_vertex: ev, end_vertex: sv,
                 source: WireEdgeSource::DsEdge(ei),
                 forward: false,
-                is_seam: true, second_pcurve: None, first_pcurve: None,
+                is_seam: true, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0],
                 tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
                 tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
             });        } else {
@@ -2886,7 +2891,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     segments.push(WireSegment {
                         start_vertex: sv_seg, end_vertex: ev_seg,
                         source: WireEdgeSource::DsEdge(sub_ei),
-                        forward: true, is_seam: false, second_pcurve: None, first_pcurve: None,
+                        forward: true, is_seam: false, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0],
                         tangent_start: t_start, tangent_end: t_end,
                     });                }
             } else {
@@ -2910,7 +2915,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     segments.push(WireSegment {
                         start_vertex: sv, end_vertex: ev,
                         source: WireEdgeSource::DsEdge(ei),
-                        forward: true, is_seam: false, second_pcurve: None, first_pcurve: None,
+                        forward: true, is_seam: false, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0],
                         tangent_start: t_start, tangent_end: t_end,
                     });                } else {
                     // ✅ OCCT-aligned: edge split by IC vertices (OCCT myImages equivalent).
@@ -2927,7 +2932,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                         segments.push(WireSegment {
                             start_vertex: prev_v, end_vertex: vi,
                             source: WireEdgeSource::DsEdge(ei),
-                            forward: true, is_seam: false, second_pcurve: None, first_pcurve: None,
+                            forward: true, is_seam: false, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0],
                             tangent_start: ts, tangent_end: te,
                         });                        prev_v = vi;
                         prev_t = t_vi;
@@ -2937,7 +2942,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     segments.push(WireSegment {
                         start_vertex: prev_v, end_vertex: ev,
                         source: WireEdgeSource::DsEdge(ei),
-                        forward: true, is_seam: false, second_pcurve: None, first_pcurve: None,
+                        forward: true, is_seam: false, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0],
                         tangent_start: ts, tangent_end: te,
                     });                }
             }
@@ -2976,7 +2981,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     start_vertex: sv, end_vertex: ev,
                     source: WireEdgeSource::DsEdge(ei),
                     forward: forward_in_wire,
-                    is_seam: true, second_pcurve: None, first_pcurve: None,
+                    is_seam: true, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0],
                     tangent_start: t_start,
                     tangent_end: t_end,
                 });            } else {
@@ -2986,7 +2991,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     start_vertex: sv, end_vertex: ev,
                     source: WireEdgeSource::DsEdge(ei),
                     forward: forward_in_wire,
-                    is_seam: false, second_pcurve: None, first_pcurve: None,
+                    is_seam: false, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0],
                     tangent_start: t_start,
                     tangent_end: t_end,
                 });            }
@@ -3045,10 +3050,10 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                         &face.surface, ds, fixed_sv, fixed_ev);
                     segments.push(WireSegment { start_vertex: fixed_sv, end_vertex: fixed_ev,
                         source: WireEdgeSource::IntersectionCurve(ci), forward: true,
-                        is_seam: false, second_pcurve: ic_second_pcurve, first_pcurve: None, tangent_start: t_start, tangent_end: t_end });
+                        is_seam: false, second_pcurve: ic_second_pcurve, first_pcurve: None, t_range: [0.0, 1.0], tangent_start: t_start, tangent_end: t_end });
                     segments.push(WireSegment { start_vertex: fixed_ev, end_vertex: fixed_sv,
                         source: WireEdgeSource::IntersectionCurve(ci), forward: false,
-                        is_seam: false, second_pcurve: None, first_pcurve: None, tangent_start: t_end.map(|a| (a+std::f64::consts::PI)%std::f64::consts::TAU),
+                        is_seam: false, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0], tangent_start: t_end.map(|a| (a+std::f64::consts::PI)%std::f64::consts::TAU),
                         tangent_end: t_start.map(|a| (a+std::f64::consts::PI)%std::f64::consts::TAU) });
                     continue;
                 }
@@ -3098,11 +3103,11 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                         segments.push(WireSegment {
                             start_vertex: vi, end_vertex: vj,
                             source: WireEdgeSource::IntersectionCurve(ci), forward: true,
-                            is_seam: false, second_pcurve: arc_second, first_pcurve: None, tangent_start: ts_val, tangent_end: te_val,
+                            is_seam: false, second_pcurve: arc_second, first_pcurve: None, t_range: [0.0, 1.0], tangent_start: ts_val, tangent_end: te_val,
                         });                        segments.push(WireSegment {
                             start_vertex: vj, end_vertex: vi,
                             source: WireEdgeSource::IntersectionCurve(ci), forward: false,
-                            is_seam: false, second_pcurve: None, first_pcurve: None,
+                            is_seam: false, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0],
                             tangent_start: te_val.map(|a| (a+std::f64::consts::PI)%std::f64::consts::TAU),
                             tangent_end: ts_val.map(|a| (a+std::f64::consts::PI)%std::f64::consts::TAU),
                         });                    }
@@ -3129,7 +3134,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             end_vertex: ev,
             source: WireEdgeSource::IntersectionCurve(ci),
             forward: true,
-            is_seam: false, second_pcurve: gen_ic_second, first_pcurve: None,
+            is_seam: false, second_pcurve: gen_ic_second, first_pcurve: None, t_range: [0.0, 1.0],
             tangent_start: t_start,
             tangent_end: t_end,
         });
@@ -3138,7 +3143,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             end_vertex: sv,
             source: WireEdgeSource::IntersectionCurve(ci),
             forward: false,
-            is_seam: false, second_pcurve: None, first_pcurve: None,
+            is_seam: false, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0],
             tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
             tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
         });
@@ -4744,21 +4749,26 @@ fn walk_path_extract_wires(
                 //   Self-loop deg edges store a full-span line in second_pcurve.
                 if segment.start_vertex == segment.end_vertex {
                     match &segment.second_pcurve {
-                        Some(Curve2d::Line(l)) =>
-                            Some(if at_start { l.origin } else { l.origin + l.direction }),
+                        Some(Curve2d::Line(l)) => {
+                            let t = if at_start { segment.t_range[0] } else { segment.t_range[1] };
+                            Some(l.point_at(t))
+                        }
                         _ => world_to_uv(face_surface, ds.vertices[vi].point),
                     }
                 } else if segment.forward {
                     match (&segment.first_pcurve, &segment.second_pcurve) {
-                        (Some(Curve2d::Line(l)), _) =>
-                            Some(if at_start { l.origin } else { l.origin + l.direction }),
+                        (Some(Curve2d::Line(l)), _) => {
+                            let t = if at_start { segment.t_range[0] } else { segment.t_range[1] };
+                            Some(l.point_at(t))
+                        }
                         _ => world_to_uv(face_surface, ds.vertices[vi].point),
                     }
                 } else {
-                    // REVERSED → PCurve2 (second_pcurve)
                     match &segment.second_pcurve {
-                        Some(Curve2d::Line(l)) =>
-                            Some(if at_start { l.origin } else { l.origin + l.direction }),
+                        Some(Curve2d::Line(l)) => {
+                            let t = if at_start { segment.t_range[0] } else { segment.t_range[1] };
+                            Some(l.point_at(t))
+                        }
                         _ => world_to_uv(face_surface, ds.vertices[vi].point),
                     }
                 }
