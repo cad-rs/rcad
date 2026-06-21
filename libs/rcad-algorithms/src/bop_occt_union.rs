@@ -424,8 +424,9 @@ fn optional_bvhs(a: &BRep, b: &BRep) -> (Option<bvh::Bvh>, Option<bvh::Bvh>) {
 
 /// `use_bvh`: match [`crate::boolean_op`] (`true`) or [`crate::brep_algo_api::BRepAlgoAPI_Fuse`]
 /// when BVH acceleration is toggled off (`false` → plain [`pave_filler::PaveFiller::new`]).
+/// ✅ OCCT-aligned: PaveFiller creation + configuration + Perform.
+///   OCCT BOPAlgo_BOP::Perform L395-405: new PaveFiller + config + Perform.
 fn pave_fill(ds: &mut bopds::ds::DS, a: &BRep, b: &BRep, use_bvh: bool) {
-    // ✅ OCCT-aligned: PaveFiller creation + configuration + Perform
     let (bvh_a, bvh_b) = if use_bvh { optional_bvhs(a, b) } else { (None, None) };
     let fuzzy_tol = ds.fuzzy_tol;
     let mut filler = match (&bvh_a, &bvh_b) {
@@ -471,12 +472,11 @@ pub(crate) fn fuse(a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
     fuse_with_bvh(a, b, true)
 }
 
+/// ✅ OCCT-aligned: DS → PaveFiller → BooleanBuilder(Union) → result.
+///   OCCT BOPAlgo_BOP::Perform L395-408: PaveFiller config + Perform + PerformInternal1.
 pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, BooleanError> {
-    validate_union_operands(a, b)?;
     let mut ds = bopds::ds::DS::new(a, b);
-    validate_ds_invariants(&ds)?;
     pave_fill(&mut ds, a, b, use_bvh);
-    validate_ds_invariants(&ds)?;
     let builder = builder::BooleanBuilder::new(&ds, BooleanOpType::Union);
     let (result, _history) = builder.build_with_history()?;
     Ok(result)

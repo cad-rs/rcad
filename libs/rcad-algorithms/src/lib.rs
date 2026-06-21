@@ -3078,11 +3078,9 @@ fn finalize_boolean_result(r: BRep) -> BRep {
 /// - seam 边: 从南极到北极的半圆弧（Circle3）
 /// - 两个极点处的退化边（start==end）
 /// - 将 seam 回路插入面的 outer_wire
+/// ✅ OCCT-aligned: BOPAlgo_BOP::Perform (BOPAlgo_BOP.cxx L364-409).
+///   No fast-paths — all operations through unified PaveFiller + BooleanBuilder pipeline.
 pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
-    // ✅ OCCT-aligned: ALL operations go through the unified PaveFiller + BooleanBuilder pipeline.
-    // OCCT BOPAlgo_BOP::Perform (BOPAlgo_BOP.cxx L364-409) has no fast-path shortcuts —
-    // all cases pass through the same PaveFiller → Builder chain.
-
     // OCCT L395: pPF = new BOPAlgo_PaveFiller(aAllocator);
     let mut ds = bopds::ds::DS::new(a, b);
     let fuzzy_tol = ds.fuzzy_tol;

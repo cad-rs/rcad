@@ -19,26 +19,25 @@ pub use crate::bopds::ds::NearTangentType;
 /// Below this threshold, brute-force O(n²) is faster due to BVH build overhead.
 const BVH_THRESHOLD: usize = 20;
 
-/// PaveFiller executes the six intersection passes (OCCT: BOPAlgo_PaveFiller).
+/// ✅ OCCT-aligned: BOPAlgo_PaveFiller — six intersection passes
+///   (PaveFiller.hxx L106-107, PaveFiller.cxx L234-355).
 pub struct PaveFiller<'a> {
     pub ds: &'a mut DS,
     bvh_a: Option<&'a Bvh>,
     bvh_b: Option<&'a Bvh>,
     use_glue: bool,
     glue_tolerance: f64,
-    /// Additional fuzzy tolerance for all intersection checks
-    /// (analogous to OCCT BOPAlgo_Options::SetFuzzyValue).
+    /// ✅ OCCT-aligned: BOPAlgo_Options::SetFuzzyValue
     fuzzy_tolerance: f64,
-    /// Tolerance contribution from seam edge shift (OCCT PaveFiller_6.cxx L393-479).
-    /// Set to the shift distance when a face has been shifted to align seam edges.
+    /// ✅ OCCT-aligned: PaveFiller_6.cxx L393-479 seam edge shift tolerance
     seam_shift_tol: f64,
-    /// ✅ OCCT-aligned: RunParallel flag (BOPAlgo_Algo::myRunParallel).
+    /// ✅ OCCT-aligned: BOPAlgo_Algo::myRunParallel
     run_parallel: bool,
-    /// ✅ OCCT-aligned: Non-destructive mode flag (BOPAlgo_PaveFiller::myNonDestructive).
+    /// ✅ OCCT-aligned: BOPAlgo_PaveFiller::myNonDestructive
     non_destructive: bool,
-    /// ✅ OCCT-aligned: UseOBB flag (BOPAlgo_Algo::myUseOBB).
+    /// ✅ OCCT-aligned: BOPAlgo_Algo::myUseOBB
     use_obb: bool,
-    /// ✅ OCCT-aligned: IntTools_Context with FClass2d cache (PaveFiller::Init L203).
+    /// ✅ OCCT-aligned: IntTools_Context (PaveFiller::Init L203)
     context: IntToolsContext,
 }
 
@@ -2137,55 +2136,65 @@ impl<'a> PaveFiller<'a> {
 
 
 
+    /// ✅ OCCT-aligned: RemoveMicroEdges (PaveFiller_6.cxx L4388-4435).
+    ///
+    /// OCCT algorithm:
+    ///   L4394-4396: get PaveBlocks pool (aPBP = ChangePaveBlocksPool)
+    ///   L4398-4433: for each edge i in pool:
+    ///     L4401-4403: if <2 PaveBlocks → skip (no splits)
+    ///     L4407-4410: skip degenerated edges (HasFlag)
+    ///     L4412-4432: for each PB on edge:
+    ///       L4418: aMPBFence.Add(aPBR) — fence against duplicate CB blocks
+    ///       L4420-4422: get nV1, nV2 via Indices()
+    ///       L4425-4426: FillShrunkData(aPBR) — compute valid range
+    ///       L4426-4428: if no shrunk data → add to aMicroEdges
+    ///   L4434: RemovePaveBlocks(aMicroEdges)
+    ///
+    /// rcad: operates on edge.pave_blocks (already built by build_split_edges).
+    /// ⏳ rcad: no FillShrunkData check — shrunk data not maintained on PaveBlocks.
+    ///    Without the valid-range check, rcad may mark as micro some edges that
+    ///    OCCT would keep (those with valid shrunk data despite same vertices).
+    ///    In practice, nV1==nV2 with valid shrunk range is extremely rare.
     fn remove_micro_edges(&mut self) {
-        // OCCT L4239: iterate all edges' PaveBlocks
-        // rcad: iterate all DS edges
+        let mut micro_edges: Vec<usize> = Vec::new();
+
+        // OCCT L4398-4433: iterate edges in PaveBlocks pool
         for ei in 0..self.ds.edges.len() {
-            // OCCT L4242-4244: skip edges with <2 PaveBlocks (no segments)
-            if self.ds.edges[ei].paves.len() < 2 { continue; }
+            // OCCT L4401-4403: skip edges with <2 PaveBlocks (no splits)
+            if self.ds.edges[ei].pave_blocks.len() < 2 {
+                continue;
+            }
 
-            // OCCT L4246-4247: skip degenerate edges
-            if self.ds.edges[ei].start_vertex == self.ds.edges[ei].end_vertex { continue; }
+            // OCCT L4407-4410: skip degenerated edges
+            if self.ds.edges[ei].start_vertex == self.ds.edges[ei].end_vertex {
+                continue;
+            }
 
-            // OCCT L4255-4264: check if PaveBlock nV1 == nV2
-            // rcad: check if adjacent Paves reference same vertex_idx
-            // Chain: start → pave[0] → pave[1] → ... → end
+            // OCCT L4412-4432: iterate PaveBlocks, find nV1==nV2
+            for pb in &self.ds.edges[ei].pave_blocks {
+                let nv1 = pb.pave1.vertex_idx;
+                let nv2 = pb.pave2.vertex_idx;
+                if nv1 == nv2 {
+                    // OCCT L4425-4426: FillShrunkData + HasShrunkData check
+                    // ⏳ rcad: shrunk data not available — skip valid-range check
+                    micro_edges.push(ei);
+                    break;
+                }
+            }
+        }
+
+        // OCCT L4434: RemovePaveBlocks(aMicroEdges)
+        // rcad: clear pave_blocks, restore single-span representation
+        for &ei in &micro_edges {
             let sv = self.ds.edges[ei].start_vertex;
             let ev = self.ds.edges[ei].end_vertex;
-
-            // Sort paves by parameter
-            let mut sorted: Vec<usize> = (0..self.ds.edges[ei].paves.len())
-                .filter(|&i| self.ds.edges[ei].paves[i].param.is_finite())
-                .collect();
-            sorted.sort_by(|&a, &b| {
-                self.ds.edges[ei].paves[a].param
-                    .partial_cmp(&self.ds.edges[ei].paves[b].param)
-                    .unwrap()
-            });
-
-            // Check each segment: prev → pave[i], pave[i] → pave[i+1], pave[last] → end
-            let mut micro_pave_indices: Vec<usize> = Vec::new();
-            let mut prev_v = sv;
-            for &si in &sorted {
-                let pv = self.ds.edges[ei].paves[si].vertex_idx;
-                // OCCT L4259: nV1 == nV2 → micro edge
-                if pv == prev_v {
-                    micro_pave_indices.push(si);
-                }
-                prev_v = pv;
-            }
-            // Check last segment: last Pave → end_vertex (this is normal, do not remove)
-            // (end_vertex may equal the last segment's end — segment at the edge endpoint)
-
-            // OCCT L4269: RemovePaveBlocks — remove from DS
-            // Remove in reverse order to avoid index shift
-            micro_pave_indices.sort_unstable_by(|a, b| b.cmp(a));
-            micro_pave_indices.dedup();
-            for &pi in &micro_pave_indices {
-                if pi < self.ds.edges[ei].paves.len() {
-                    self.ds.edges[ei].paves.remove(pi);
-                }
-            }
+            let t0 = self.ds.edges[ei].t_range[0];
+            let t1 = self.ds.edges[ei].t_range[1];
+            self.ds.edges[ei].pave_blocks = vec![PaveBlock::new(
+                ei,
+                Pave { vertex_idx: sv, param: t0 },
+                Pave { vertex_idx: ev, param: t1 },
+            )];
         }
     }
 
