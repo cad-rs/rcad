@@ -880,7 +880,7 @@ impl DS {
     /// ✅ OCCT-aligned: compute pcurve for a boundary edge on its face surface.
     ///   Mirrors BRep_Tool::CurveOnSurface for boundary edges.
     /// Returns (pcurve, pcurve_span_length) where pcurve has normalized direction.
-    fn compute_edge_pcurve(curve: &Curve3, surface: &Surface3) -> Option<(Curve2d, f64)> {
+    pub(crate) fn compute_edge_pcurve(curve: &Curve3, surface: &Surface3) -> Option<(Curve2d, f64)> {
         match (surface, curve) {
             (Surface3::Plane(p), Curve3::Line(l)) => {
                 let u_axis = any_perpendicular(p.normal).normalize();

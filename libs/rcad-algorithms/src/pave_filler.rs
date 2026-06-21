@@ -2514,17 +2514,55 @@ impl<'a> PaveFiller<'a> {
         t_range
     }
 
-    /// OCCT-aligned: MakePCurves (BOPAlgo_PaveFiller_7.cxx L589).
-    /// ✅ OCCT-aligned: MakePCurves (PaveFiller_7.cxx L589-~750).
-    ///   ❌ rcad: currently a no-op. OCCT iterates FaceInfo pool and builds pcurves
-    ///   for split edges on each face (via PaveBlocksIn/PaveBlocksOn → BOPAlgo_MPC).
-    ///   rcad's IntersectionCurve stores pcurve_on_a/pcurve_on_b but these are not
-    ///   propagated to DSEdge.face_reps for split edges. This means split edges
-    ///   lack pcurves that the WireSplitter needs for UV evaluation.
-    ///   TODO: iterate face_info.curves_sc → map to edge PaveBlocks → copy IC pcurves
-    ///   to edge.face_reps as DSRepOnFace entries.
+    /// ✅ OCCT-aligned: BOPAlgo_PaveFiller::MakePCurves (PaveFiller_7.cxx L589-750).
+    ///   Builds pcurves for PaveBlocks on each face by projecting edge 3D curves
+    ///   onto face surface UV domains.
     fn make_pcurves(&mut self) {
-        // No-op: rcad relies on DS::build_face_reps pcurves + IC pcurves directly.
+        use crate::bopds::ds::DSRepOnFace;
+
+        // Pre-collect (pb_idx, ei) pairs for all faces to avoid borrow conflicts
+        let mut pcurves_to_add: Vec<(usize, usize, Curve2d, f64, f64)> = Vec::new();
+
+        // OCCT L606: for each face in the FaceInfo pool
+        for fi in 0..self.ds.faces.len() {
+            let face_surface = self.ds.faces[fi].surface.clone();
+
+            // OCCT L618-631: PaveBlocksIn + L633-699: PaveBlocksOn
+            let pb_indices: Vec<usize> = self.ds.faces[fi].face_info.pave_blocks_in
+                .iter()
+                .chain(self.ds.faces[fi].face_info.pave_blocks_on.iter())
+                .copied()
+                .collect();
+
+            for &pb_idx in &pb_indices {
+                // OCCT L624: nE = aPB->Edge()
+                if pb_idx >= self.ds.pave_blocks.len() { continue; }
+                let ei = self.ds.pave_blocks[pb_idx].original_edge;
+                if ei >= self.ds.edges.len() { continue; }
+
+                // OCCT L641: check if pcurve already exists (HasCurveOnSurface)
+                if self.ds.edges[ei].face_reps.iter().any(|r| r.face_idx == fi) { continue; }
+
+                // Compute pcurve: project edge 3D curve onto face surface
+                let edge_curve = &self.ds.edges[ei].curve;
+                if let Some((pcurve, len)) = DS::compute_edge_pcurve(edge_curve, &face_surface) {
+                    pcurves_to_add.push((ei, fi, pcurve, self.ds.edges[ei].t_range[0], self.ds.edges[ei].t_range[1]));
+                    let _ = len; // length may be unused
+                }
+            }
+        }
+
+        // Apply all collected pcurves
+        for (ei, fi, pcurve, t0, t1) in pcurves_to_add {
+            self.ds.edges[ei].face_reps.push(DSRepOnFace {
+                face_idx: fi,
+                pcurve,
+                pcurve2: None,
+                pcurve_range: [t0, t1],
+                start_param: t0,
+                end_param: t1,
+            });
+        }
     }
     /// OCCT-aligned: UpdateFaceInfo (BOPAlgo_PaveFiller_6.cxx L1673).
     fn update_face_info(&mut self, fi: usize) {
