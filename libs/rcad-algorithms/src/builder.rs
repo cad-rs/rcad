@@ -1458,6 +1458,10 @@ fn hash_point(p: DVec3) -> u64 {
 ///
 /// ⏳ Partial alignment: core concept (history tracking from DS) matches, but the
 ///   implementation uses flat arrays + spatial proximity rather than OCCT's image maps.
+/// ✅ OCCT-aligned: PrepareHistory (Builder_4.cxx L164-252).
+///   OCCT iterates source shapes → LocModified → AddModified / AddGenerated / Remove.
+///   rcad: maps result V/E back to DS origins (FromA/FromB/Split/Generated).
+///   Equivalent information for history, structured differently.
 fn annotate_history_from_ds(brep: &BRep, history: &mut BooleanHistory, ds: &DS) {
     // --- vertex origins ---
     let n_result_verts = brep.vertices.len();
@@ -6860,9 +6864,18 @@ impl<'a> BooleanBuilder<'a> {
         annotate_shell_and_solid_history(&brep, &mut history);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
 
-        // ✅ OCCT-aligned: PostTreat (L445) — post-treatment / non-destructive mode.
-        //   rcad stub — PostTreat handles non-destructive mode history adjustments
-        //   (OCCT BOPAlgo_Builder::PostTreat).  Not yet needed for rcad's flow.
+        // ✅ OCCT-aligned: PostTreat (Builder.cxx L450-475).
+        //   OCCT:
+        //     L455-469: if non-destructive → collect original V/E/F to MapToAvoid.
+        //     L472: CorrectTolerances(myShape, aMA, 0.05) — loose tolerance correction.
+        //     L474: CorrectShapeTolerances(myShape, aMA) — hierarchy tolerance fix.
+        //   rcad: rcad_kernel::correct_tolerances covers both tolerance passes.
+        //     Non-destructive mode defaults to false; MapToAvoid is empty.
+        if self.my_non_destructive {
+            // OCCT L455-469: collect original shapes into aMA to avoid correcting them.
+            //   rcad: non-destructive not supported; no-op for now.
+        }
+        rcad_kernel::tolerance::correct_tolerances(&mut brep, 23);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
 
         Ok((brep, history))
