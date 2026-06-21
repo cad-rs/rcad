@@ -10859,38 +10859,20 @@ mod tests {
         }
     }
 
-<<<<<<< Updated upstream
     // -----------------------------------------------------------
     // PaveFiller alignment tests (replacing extreme-geometry tests)
     // -----------------------------------------------------------
 
-    /// Test that perform() runs without panic and produces intersection data
+    /// Test that perform() produces intersection data and non-micro PaveBlocks
     #[test]
     fn test_perform_basic() {
-=======
-    // ============================================================
-    // PaveFiller Structure Tests
-    // ============================================================
-
-    /// Test that the PaveFiller perform order matches OCCT PerformInternal.
-    /// The post-FF steps must run in the exact OCCT order:
-    ///   PostTreatFF → UpdateBlocksWithSharedVertices → RefineFaceInfoIn →
-    ///   build_split_edges → UpdatePaveBlocksWithSDVertices → make_blocks →
-    ///   CheckSelfInterference → UpdateInterfsWithSDVertices → ReleasePaveBlocks →
-    ///   RefineFaceInfoOn → remove_micro_edges → make_pcurves → process_de
-    #[test]
-    fn test_perform_ff_post_order() {
->>>>>>> Stashed changes
         let a = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
         let b = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
         let mut ds = DS::new(&a, &b);
         let mut filler = PaveFiller::new(&mut ds);
         filler.perform();
-<<<<<<< Updated upstream
-        // perform should not panic and should produce some intersection data
         assert!(!ds.interferences.is_empty() || !ds.intersection_curves.is_empty(),
             "perform() should produce intersection data");
-=======
         // After perform, the DS should have been processed through all phases.
         // At minimum, intersection curves from FF are present.
         // ds.intersection_curves should have entries for interfering face pairs.
@@ -10977,40 +10959,22 @@ mod tests {
     /// Test that process_de sets edge flags for degenerated edges.
     #[test]
     fn test_process_de_sets_flags() {
-
-        // Fuzzy tolerance should be adjusted or remain the same
-        assert!(
-            adjusted_fuzzy >= original_fuzzy,
-            "Adjusted fuzzy tolerance should be at least the original"
-        );
-
-        // If extreme geometry is detected, verify the results
-        if filler.ds.extreme_geometry.has_extreme_geometry {
-            // Should have near-tangent face pairs if detected
-            for pair in &filler.ds.extreme_geometry.near_tangent_faces {
-                assert!(pair.distance >= 0.0, "Distance should be non-negative");
-                assert!(
-                    matches!(
-                        pair.tangent_type,
-                        NearTangentType::CylinderPlane
-                            | NearTangentType::General
-                            | NearTangentType::PlaneParallel
-                    ),
-                    "Tangent type should be valid"
-                );
-                assert!(
-                    pair.suggested_fuzzy > 0.0,
-                    "Suggested fuzzy should be positive"
-                );
+        let a = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let b = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 0.5 });
+        let mut ds = DS::new(&a, &b);
+        let mut filler = PaveFiller::new(&mut ds);
+        filler.perform();
+        let sphere_fi = (ds.a_face_count..ds.faces.len())
+            .find(|&fi| matches!(ds.faces[fi].surface, Surface3::Sphere(_)))
+            .unwrap_or(usize::MAX);
+        if sphere_fi < ds.faces.len() {
+            for &ei in &ds.faces[sphere_fi].boundary_edges {
+                if ds.is_edge_degenerated(ei) {
+                    assert!(ds.edge_has_flag(ei),
+                        "sphere degen edge[{}] should have flag set", ei);
+                }
             }
         }
-
-        // The function should run without panic and produce valid results
-        assert!(
-            ds.extreme_geometry.recommended_fuzzy_adjustment >= 0.0,
-            "Recommended fuzzy adjustment should be non-negative"
-        );
->>>>>>> Stashed changes
-    }
+}
 
 }

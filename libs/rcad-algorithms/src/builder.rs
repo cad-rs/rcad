@@ -1839,6 +1839,7 @@ fn classify_against_solid_for_boolean(
     }
     let cent = bnd.iter().copied().sum::<DVec3>() / bnd.len() as f64;
     classify_point(cent, solid_face_indices, ds)
+}
 
 // =============================================================================
 // OCCT 1:1 瀵归綈: IsInternalFace (BOPTools_AlgoTools.cxx L791-872)
