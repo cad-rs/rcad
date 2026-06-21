@@ -2867,22 +2867,7 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
         }
     }
 
-    // OCCT-aligned: vertex degree in the DEDUPED edge set (aCMap from
-    // MapShapesAndAncestors on deduped compound).  Only non-duplicate
-    // edges count toward degree.  A vertex with degree == 2 in this map
-    // means it connects exactly 2 unique edges (not counting FWD+REV copies).
-    let mut dedup_vertex_deg: HashMap<usize, usize> = HashMap::new();
-    for (si, seg) in segments.iter().enumerate() {
-        if avoided.contains(&si) { continue; } // OCCT: avoided edges not in WireSplitter input
-        if duplicate_segs.contains(&si) { continue; }
-        let sv = vi_to_canon.get(seg.start_vertex).copied().unwrap_or(seg.start_vertex);
-        let ev = deg_end_canon.get(&si).copied().unwrap_or_else(||
-            vi_to_canon.get(seg.end_vertex).copied().unwrap_or(seg.end_vertex));
-        *dedup_vertex_deg.entry(sv).or_insert(0) += 1;
-        *dedup_vertex_deg.entry(ev).or_insert(0) += 1;
-    }
-
-    // Build vertexsegments adjacency using CANONICAL vertex indices
+    // Build vertex→segments adjacency using CANONICAL vertex indices
     let mut vert_to_segs: HashMap<usize, Vec<usize>> = HashMap::new();
     for (si, seg) in segments.iter().enumerate() {
         if avoided.contains(&si) { continue; } // OCCT: avoided edges get no adjacency (not in aWES)
@@ -2998,31 +2983,54 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
             eprintln!("[BLK] fi={} bi={} n={}", face_idx, bi, block.len());
         }
 
-        // ✅ OCCT-aligned: check regularity (BOPTools_AlgoTools.cxx L227-253)
+        // ✅ OCCT-aligned: check regularity (WireSplitter_1.cxx L222-280).
+        //    Step 1 (L222-260): each vertex must have exactly 1 IN and 1 OUT
+        //    by SmartMap count (OCCT counts by InFlag per vertex).
+        //    Step 2 (L261-280): no duplicate edges (edge TShape coincidence).
         let mut is_regular = true;
-        'regularity: {
+        if block.iter().any(|&si| duplicate_segs.contains(&si)) {
+            is_regular = false;
+        } else {
+            // Build per-vertex IN/OUT counts matching OCCT SmartMap logic
+            // (WireSplitter_1.cxx L154-220): FORWARD/closed → OUT at start_vertex,
+            // second vertex always REVERSED → IN at end_vertex.
+            // REVERSED closed edges additionally get OUT at end + IN at start.
+            let mut vert_in_out: std::collections::HashMap<usize, (usize, usize)> =
+                std::collections::HashMap::new();
             for &si in block {
-                if duplicate_segs.contains(&si) {
-                    is_regular = false;
-                    break 'regularity;
+                let seg = &segments[si];
+                let cvs = vi_to_canon.get(seg.start_vertex).copied().unwrap_or(seg.start_vertex);
+                let cve = vi_to_canon.get(seg.end_vertex).copied().unwrap_or(seg.end_vertex);
+                // OCCT L159-163: FORWARD → OUT (InFlag=false) at first vertex.
+                //   bIsClosed closed edges get both directions (FWD+REV entries),
+                //   so both OUT at their first vertex.
+                if seg.forward || seg.is_seam {
+                    vert_in_out.entry(cvs).or_insert((0, 0)).1 += 1;
+                }
+                // OCCT L167-172: second vertex always REVERSED → IN (InFlag=true).
+                vert_in_out.entry(cve).or_insert((0, 0)).0 += 1;
+                // OCCT L163-165: REVERSED copy of a closed edge provides the
+                //   complementary OUT at its first vertex (original end) and
+                //   IN at its second vertex (original start).
+                if seg.is_seam && !seg.forward {
+                    vert_in_out.entry(cve).or_insert((0, 0)).1 += 1;
+                    vert_in_out.entry(cvs).or_insert((0, 0)).0 += 1;
                 }
             }
-            // Check each unique canonical vertex: degree must be 2 in deduped set
-            let mut checked_verts = std::collections::HashSet::new();
             for &si in block {
                 let seg = &segments[si];
                 for &vi in &[seg.start_vertex, seg.end_vertex] {
                     let cvi = vi_to_canon.get(vi).copied().unwrap_or(vi);
-                    // virtual deg vertex (>= ds.vertices.len()) is a new canonical
-                    // added during deg_end_canon, so it only appears in one block
-                    // and its dedup degree is always 2 — skip the virtual check.
+                    // Virtual deg vertex (>= ds.vertices.len()): these are
+                    // self-loop vertices that intrinsically have 1 IN + 1 OUT.
                     if cvi >= ds.vertices.len() { continue; }
-                    if !checked_verts.insert(cvi) { continue; }
-                    if dedup_vertex_deg.get(&cvi).copied().unwrap_or(0) != 2 {
+                    let (in_cnt, out_cnt) = vert_in_out.get(&cvi).copied().unwrap_or((0, 0));
+                    if in_cnt != 1 || out_cnt != 1 {
                         is_regular = false;
-                        break 'regularity;
+                        break;
                     }
                 }
+                if !is_regular { break; }
             }
         }
 
