@@ -15,6 +15,42 @@ pub enum ShapeOrigin {
     ShapeB,
 }
 
+/// ✅ OCCT-aligned: BOPDS_PassKey — sorted (index1, index2) pair key.
+/// OCCT BOPDS_PassKey.hxx — wraps two integers with index1 <= index2.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PassKey {
+    pub i1: usize,
+    pub i2: usize,
+}
+
+impl PassKey {
+    pub fn new(a: usize, b: usize) -> Self {
+        if a <= b { PassKey { i1: a, i2: b } } else { PassKey { i1: b, i2: a } }
+    }
+}
+
+/// ✅ OCCT-aligned: lightweight pair iterator over shape indices.
+/// OCCT BOPDS_Iterator::Prepare — produces sorted (i,j) pairs for a range.
+/// Phase 1: linear O(n²) like current rcad loops.
+/// Phase 2: BVH-based culling matching OCCT's BOPDS_IteratorSI.
+pub struct PairIterator {
+    i: usize, j: usize, n: usize,
+    done: bool,
+}
+
+impl PairIterator {
+    pub fn new(count: usize) -> Self {
+        PairIterator { i: 0, j: 1, n: count, done: count < 2 }
+    }
+    pub fn more(&self) -> bool { !self.done }
+    pub fn value(&self) -> PassKey { PassKey { i1: self.i, i2: self.j } }
+    pub fn next(&mut self) {
+        self.j += 1;
+        if self.j >= self.n { self.i += 1; self.j = self.i + 1; }
+        if self.i >= self.n - 1 { self.done = true; }
+    }
+}
+
 /// ✅ OCCT-aligned: BOPDS_ShapeSD — same-domain shape mappings.
 /// Wraps SharedTopologyInfo data with OCCT-style IsSubShape/HasSource queries.
 /// OCCT BOPDS_ShapeSD.hxx, BOPDS_ShapeSD.cxx
