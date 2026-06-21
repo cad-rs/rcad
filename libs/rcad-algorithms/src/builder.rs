@@ -4617,30 +4617,33 @@ pub(crate) fn perform_areas(
     let mut hole_edge_set: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
     for &si in &sorted {
-        if wires[wds[si].wire_idx].iter().any(|&s| hole_edge_set.contains(&s)) { is_hole[si] = false; continue; }
-        if wds[si].n_distinct < 3 { is_hole[si] = true; }
+        // OCCT L441: IsGrowthWire fast check — if wire shares edges with known
+        // hole edges (MHE), it is the GROWTH containing the hole (not a hole
+        // itself).  Enables alternating growth→hole→growth→hole nesting.
+        if wires[wds[si].wire_idx].iter().any(|&s| hole_edge_set.contains(&s)) { is_hole[si] = false; }
+        else if wds[si].n_distinct < 3 { is_hole[si] = true; }
         else {
-            // ✅ OCCT-aligned: IntTools_FClass2d-based classification (BuilderFace.cxx L444-447).
-            //   OCCT creates a CSLib_Class2d from the growth wire's UV boundary and uses
-            //   SiDans() to classify the candidate wire's centroid UV.  This replaces the
-            //   mixed UV/3D approach with uniform UV-space classification via CSLibClass2d
-            //   for ALL surface types, matching OCCT's PerformAreas flow.
-            is_hole[si] = sorted.iter().take_while(|&&q| q != si).any(|&q| {
-                if is_hole[q] { return false; }
-                let uv_growth = &wds[q].uv_boundary;
-                let uv_candidate = &wds[si].uv_boundary;
-                if uv_growth.len() < 3 || uv_candidate.len() < 3 { return false; }
-                let uv_c = uv_candidate.iter().copied().sum::<DVec2>() / uv_candidate.len() as f64;
-                let mut u_min = f64::INFINITY; let mut u_max = f64::NEG_INFINITY;
-                let mut v_min = f64::INFINITY; let mut v_max = f64::NEG_INFINITY;
-                for p in uv_growth {
-                    u_min = u_min.min(p.x); u_max = u_max.max(p.x);
-                    v_min = v_min.min(p.y); v_max = v_max.max(p.y);
-                }
+            // ✅ OCCT-aligned: FClass2d::IsHole (BuilderFace.cxx L444-447).
+            //   OCCT creates a temporary TopoDS_Face from the wire + surface,
+            //   constructs IntTools_FClass2d, calls IsHole().  The test: a point
+            //   far OUTSIDE the UV bounding box is tested against the wire's UV
+            //   polygon via CSLib_Class2d.SiDans.  CCW (outer) → outside point
+            //   is Out → growth (IsHole=false).  CW (hole) → outside point is
+            //   Inside → hole (IsHole=true).
+            let uv_b = &wds[si].uv_boundary;
+            if uv_b.len() >= 3 {
+                let umin = uv_b.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+                let umax = uv_b.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+                let vmin = uv_b.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+                let vmax = uv_b.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
                 let tol = TOLERANCE_ABS * 100.0;
-                let classifier = CSLibClass2d::new(uv_growth, tol, tol, u_min, v_min, u_max, v_max);
-                classifier.si_dans(uv_c) == CSLibResult::Inside
-            });
+                let classifier = CSLibClass2d::new(uv_b, tol, tol, umin, vmin, umax, vmax);
+                let (ru, rv) = ((umax - umin).max(1.0), (vmax - vmin).max(1.0));
+                let outside_pt = DVec2::new(umin - ru, vmin - rv);
+                is_hole[si] = classifier.si_dans(outside_pt) == CSLibResult::Inside;
+            } else {
+                is_hole[si] = true;
+            }
         }
         if is_hole[si] { for &s in &wires[wds[si].wire_idx] { hole_edge_set.insert(s); } }
     }
