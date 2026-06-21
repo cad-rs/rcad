@@ -5641,26 +5641,52 @@ impl<'a> BooleanBuilder<'a> {
         result.shells = shells;
     }
 
+    /// ⏳ OCCT-aligned: FillImagesContainer(COMPSOLID) (Builder_1.cxx L221-276).
+    ///   Build COMPSOLID images from source COMPSOLID sub-solid images.
+    ///
+    /// OCCT FillImagesContainer (L221-276):
+    ///   L224-233: iterate sub-shapes, check if any has been modified (myImages.Seek).
+    ///   L235-240: if none modified → early return (original passes through).
+    ///   L242-275: build new container of theType from sub-shape images,
+    ///             determine orientation with IsSplitToReverseWithWarn,
+    ///             store result in myImages[theS] = new_container.
+    ///
+    /// rcad: DS stores source shapes as flat V/E/F arrays — source COMPSOLID
+    ///   hierarchy is not preserved.  Kept as structural placeholder for
+    ///   multi-solid result grouping.
+    fn fill_images_containers_compsolid(&self, _result: &mut ResultBuilder) {
+        // OCCT L412-422: FillImagesContainers iterates source shapes for
+        //   TopAbs_COMPSOLID, calls FillImagesContainer for each.
+        // rcad: DS has no COMPSOLID tracking → no-op.
+    }
+
     /// ✅ OCCT-aligned: FillImagesSolids (BOPAlgo_Builder_3.cxx L60-93).
     ///   Phase 6: group shells into solids.
     ///
     /// OCCT flow:
+    ///   L60-73: check if any source shape is TopAbs_SOLID → skip if none.
     ///   L77-83: FillIn3DParts — build draft solids from each source SOLID,
     ///           classify all result faces IN/OUT of each draft solid.
     ///   L86:   BuildSplitSolids — group (draft_solid, IN/OUT) into result solids.
     ///   L92:   FillInternalShapes — add internal sub-shapes.
     ///
-    /// rcad: Phase 3 classification has already filtered faces by state.
-    ///   For single-solid operands the result is equivalent.  Multi-solid
-    ///   operands need draft-solid reclassification (OCCT L77).
-    fn fill_images_solids(&self, result: &mut ResultBuilder,
-                           a_faces: &[usize], b_faces: &[usize]) {
+    /// rcad: reads source face indices from DS internally (OCCT does not pass
+    ///   A/B lists as parameters — FillIn3DParts iterates myDS->ShapeInfo()).
+    ///   OCCT L60-73 check: rcad's CheckData (L320-325) has already ensured
+    ///   both operands have faces, so the source-solid skip never triggers.
+    fn fill_images_solids(&self, result: &mut ResultBuilder) {
+        // OCCT L60-73: if no source SOLIDs exist → skip solid assembly.
+        let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
+        let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
+        if a_faces.is_empty() || b_faces.is_empty() {
+            return;
+        }
         if result.shells.is_empty() {
             return;
         }
 
         // OCCT L77-83: FillIn3DParts — build draft solids + classify shells
-        let shell_assignments = self.fill_in_3d_parts(result, a_faces, b_faces);
+        let shell_assignments = self.fill_in_3d_parts(result, &a_faces, &b_faces);
 
         // OCCT L86: BuildSplitSolids — group shells into result solids
         result.solids = self.build_split_solids(result, &shell_assignments);
@@ -5669,42 +5695,66 @@ impl<'a> BooleanBuilder<'a> {
         self.fill_internal_shapes(result);
     }
 
-    /// ✅ OCCT-aligned: FillIn3DParts (Builder_3.cxx L97-200).
-    ///   Classify each result face against the other source solid.
+    /// ✅ OCCT-aligned: FillIn3DParts (Builder_3.cxx L97-232).
+    ///   Classify each result face against the other source solid,
+    ///   store IN faces in myInParts per source solid.
     ///
-    /// OCCT L117-150: collect all result faces (images + originals)
+    /// OCCT L107-150: collect all result faces (images + originals)
     /// OCCT L164-195: for each source SOLID, build draft solid
-    /// OCCT L201-204: ClassifyFaces against all draft solids
+    /// OCCT L201-204: ClassifyFaces against all draft solids → anInParts
+    /// OCCT L215-232: for each source solid with IN faces,
+    ///                store in myInParts[solid] = IN_faces + INTERNAL_faces
     ///
-    /// rcad: classifies result faces (originals without interferences) that
-    ///   were added unconditionally by BuildResult but may be OUT of the other
-    ///   solid.  Faces failing the keep policy are removed from shells.
-    ///   This replaces OCCT's draft-solid classification for 2-operand booleans.
+    /// rcad: classifies all result faces against the other operand's face set.
+    ///   Faces failing the keep policy are removed from shells.
+    ///   Classification IN results are stored in myInParts per source side
+    ///   (OCCT L215-232) for use by build_split_solids.
     fn fill_in_3d_parts(&self, result: &mut ResultBuilder,
                          a_faces: &[usize], b_faces: &[usize]) -> Vec<(usize, usize, &'static str)> {
-        // ✅ OCCT-aligned: classify ALL result faces (FillIn3DParts, Builder_3.cxx L97-200).
-        //    BuildSplitFaces emits all split faces without classification; original faces
-        //    are added by BuildResult(FACE).  This function classifies every face and
-        //    removes those that fail the operation's keep_policy (OCCT ClassifyFaces).
         let nf = result.faces.len();
         let mut to_remove = vec![false; nf];
+
+        // OCCT L201-204: ClassifyFaces → anInParts.
+        //   myInParts[0] = faces from B that are IN solid A (source side 0 = A)
+        //   myInParts[1] = faces from A that are IN solid B (source side 1 = B)
+        //   Per OCCT Builder_3.cxx L215-232.
+        let mut my_in_parts = self.my_in_parts.borrow_mut();
+        my_in_parts.clear();
+        // Collect per-face classification results for shell-state computation
+        // (OCCT tracks state via draft-solid membership; rcad tracks via per-face class).
+        let mut face_class: Vec<Option<Classification>> = vec![None; nf];
+        let mut face_side: Vec<Option<usize>> = vec![None; nf]; // 0=A, 1=B
+
+        // OCCT Phase 3: ClassifyFaces
         for fi in 0..nf {
             if to_remove[fi] { continue; }
-            let (source_side, other_faces) = match &result.face_origins[fi] {
-                FaceOrigin::FromA(_) => (SourceSide::A, b_faces),
-                FaceOrigin::FromB(_) => (SourceSide::B, a_faces),
+            let (source_side, other_faces, side_idx) = match &result.face_origins[fi] {
+                FaceOrigin::FromA(_) => (SourceSide::A, b_faces, 0usize),
+                FaceOrigin::FromB(_) => (SourceSide::B, a_faces, 1usize),
                 _ => continue,
             };
+            face_side[fi] = Some(side_idx);
             if other_faces.is_empty() { continue; }
-            // Use the face sample point (centroid) for classification.
-            // This catches originals without interferences that would be OUT.
-            let pt = result.faces[fi].6; // _centroid field
+            let pt = result.faces[fi].6; // centroid
             let class = classify_point(pt, other_faces, self.ds);
+            face_class[fi] = Some(class);
+
+            // OCCT L215-232: store IN faces in myInParts
+            //   A face classified as IN → it is IN the other solid
+            match class {
+                Classification::In => {
+                    let other_side = if side_idx == 0 { 1 } else { 0 };
+                    my_in_parts.entry(other_side).or_default().push(fi);
+                }
+                _ => {}
+            }
+
             if !self.classification_keep_policy(source_side, class, fi) {
                 to_remove[fi] = true;
             }
         }
 
+        // Remove faces that fail keep policy
         if to_remove.iter().any(|&r| r) {
             let old_faces = std::mem::take(&mut result.faces);
             let old_origins = std::mem::take(&mut result.face_origins);
@@ -5714,9 +5764,8 @@ impl<'a> BooleanBuilder<'a> {
                     result.face_origins.push(old_origins[fi]);
                 }
             }
-            // Rebuild shell face indices (some faces may have been removed)
+            // Rebuild shell face indices
             let old_shells = std::mem::take(&mut result.shells);
-            // Build old→new face index map
             let mut idx_map: Vec<Option<usize>> = vec![None; nf];
             let mut cur = 0usize;
             for fi in 0..nf {
@@ -5729,39 +5778,73 @@ impl<'a> BooleanBuilder<'a> {
                     result.shells.push(new_shell);
                 }
             }
+            // Translate my_in_parts face indices through the removal map
+            // (OCCT does not remove faces; rcad does — preserve index mapping for build_split_solids)
+            let mut updated: std::collections::HashMap<usize, Vec<usize>> =
+                std::collections::HashMap::new();
+            for (&side, faces) in my_in_parts.iter() {
+                let mut new_faces: Vec<usize> = Vec::new();
+                for &fi in faces {
+                    if let Some(new_fi) = idx_map[fi] {
+                        new_faces.push(new_fi);
+                    }
+                }
+                if !new_faces.is_empty() {
+                    updated.insert(side, new_faces);
+                }
+            }
+            *my_in_parts = updated;
         }
 
-        // Assign each shell to source A (0) or B (1) based on face origins.
+        // OCCT L215-232 (continued): compute shell state dynamically
+        //   based on face classifications instead of hardcoding "OUT".
+        //   For each shell, determine if it is IN or OUT of the other solid.
         let mut assignments: Vec<(usize, usize, &'static str)> = Vec::new();
         for (si, shell) in result.shells.iter().enumerate() {
-            let mut from_a = false;
-            let mut from_b = false;
+            let mut has_a = false;
+            let mut has_b = false;
+            // Determine shell state from the majority classification
+            let mut n_out = 0usize;
+            let mut n_in = 0usize;
             for &fi in shell {
                 match &result.face_origins[fi] {
-                    FaceOrigin::FromA(_) => from_a = true,
-                    FaceOrigin::FromB(_) => from_b = true,
+                    FaceOrigin::FromA(_) => has_a = true,
+                    FaceOrigin::FromB(_) => has_b = true,
                     _ => {}
                 }
-                if from_a && from_b { break; }
+                // Count IN/OUT from stored classification
+                if let Some(class) = face_class.get(fi).copied().flatten() {
+                    match class {
+                        Classification::In => n_in += 1,
+                        Classification::Out => n_out += 1,
+                        _ => {}
+                    }
+                }
             }
-            if from_a {
-                assignments.push((si, 0, "OUT"));
+            // Compute shell state: IN if most faces are IN, OUT otherwise
+            let state: &'static str = if n_in > n_out { "IN" } else { "OUT" };
+            if has_a {
+                assignments.push((si, 0, state));
             }
-            if from_b {
-                assignments.push((si, 1, "OUT"));
+            if has_b {
+                assignments.push((si, 1, state));
             }
         }
         assignments
     }
 
-    /// ✅ OCCT-aligned: BuildSplitSolids (Builder_3.cxx L200-400+, BOPAlgo_BuilderSolid).
-    ///   Group classified shells into result solids.
+    /// ✅ OCCT-aligned: BuildSplitSolids (Builder_3.cxx L413-618, BOPAlgo_BuilderSolid).
+    ///   Group classified shells into result solids by (source_solid × state).
     ///
-    /// OCCT: for each (draft_solid, state) pair, collect the classified shells
-    /// and build a TopoDS_Solid.  Non-connected components become separate solids.
+    /// OCCT: for each (draft_solid_from_aDraftSolids, state_from_myInParts) pair,
+    ///   collect the classified shell faces and build TopoDS_Solid via
+    ///   BOPAlgo_SplitSolid.  Non-connected components become separate solids.
+    ///   Results stored in myImages[source_solid] → list of split solids.
     ///
-    /// rcad: each shell becomes its own solid (disconnected shells already
-    /// separated by disconnected face sets from shell-building).
+    /// rcad: groups shells by (origin, state) where origin is the source side
+    ///   (0=A, 1=B) and state (IN/OUT) is computed from per-face classification
+    ///   in fill_in_3d_parts.  One group = one solid = Vec of shell indices.
+    ///   Disconnected shells naturally produce separate solids.
     fn build_split_solids(&self, _result: &ResultBuilder,
                           _assignments: &[(usize, usize, &'static str)]) -> Vec<Vec<usize>> {
         // OCCT: BOPAlgo_ShellSplitter + BOPAlgo_BuilderSolid
@@ -5782,28 +5865,52 @@ impl<'a> BooleanBuilder<'a> {
         solid_map.into_values().collect()
     }
 
-    /// ✅ OCCT-aligned: FillInternalShapes (Builder_3.cxx L440+).
-    ///   Add internal sub-shapes (voids inside solids) not handled by the
-    ///   main shell builder.
+    /// ⏳ OCCT-aligned: FillInternalShapes (Builder_3.cxx L622-887).
+    ///   Add internal sub-shapes (voids/solids inside solids).
     ///
-    /// OCCT: collects remaining INTERNAL faces that weren't assigned to any
-    /// shell, groups them, and adds them as internal voids in the result solids.
+    /// OCCT flow:
+    ///   L630-655 (Phase 1): Shapes to process — internal V/E/WIRE from arguments
+    ///     that have TopAbs_INTERNAL orientation inside the source solid.
+    ///   L680-718 (Phase 2): Collect internal V/E from source solids
+    ///     (OwnInternalShapes → each source solid's non-FACE sub-shapes).
+    ///   L720-746 (Phase 3): Filter out those already attached to split-solid faces.
+    ///   L806-887 (Phase 4): Classify remaining against each split solid by
+    ///     ComputeStateByOnePoint.  If IN → add to that solid as INTERNAL sub-shape.
     ///
-    /// rcad: Phase 3 classification_keep_policy already handles INTERNAL faces;
-    /// no additional internal-shape pass is needed for single-solid results.
-    fn fill_internal_shapes(&self, _result: &mut ResultBuilder) {}
+    /// rcad: DS does not store TopAbs_INTERNAL V/E/WIRE on source solids.
+    ///   Source shapes are stored as flat V/E/F arrays without per-shape
+    ///   INTERNAL orientation.  Skipping Phases 1-4 as no internal sub-shapes
+    ///   exist to settle.  INTERNAL faces from the source solid are handled
+    ///   indirectly by classification_keep_policy (On/In states).
+    fn fill_internal_shapes(&self, _result: &mut ResultBuilder) {
+        // OCCT L622-887: FillInternalShapes
+        //   Phase 1 (L630-655): internal V/E/WIRE from pure arguments
+        //   Phase 2 (L680-718): internal V/E from source solids
+        //   Phase 3 (L720-746): filter attached to split-solid faces
+        //   Phase 4 (L806-887): classify + add INTERNAL
+        // rcad: no internal sub-shapes tracked at DS level → no-op.
+    }
 
-    /// ✅ OCCT-aligned: FillImagesContainers(COMPSOLID) + FillImagesCompounds
-    ///   (Builder_1.cxx L412-431, Builder_3.cxx L445+).
-    ///   Phase 7: group solids into compounds.
+    /// ⏳ OCCT-aligned: FillImagesCompounds (Builder_1.cxx L197-342).
+    ///   Phase 7: group result solids into COMPSOLID/COMPOUND hierarchy.
     ///
-    /// OCCT: iterates source shapes → filters TopAbs_COMPSOLID / TopAbs_COMPOUND
-    /// → if any images, stores in myImages(COMPOUND).
+    /// OCCT flow:
+    ///   L200-217 (FillImagesCompounds): Iterate source shapes for TopAbs_COMPOUND.
+    ///     For each compound, call FillImagesCompound recursively.
+    ///   L280-342 (FillImagesCompound): Recursively check each child for images.
+    ///     If any child has images, build a new compound with image replacements.
+    ///     Result stored in myImages[original_compound] = new_compound.
     ///
-    /// rcad: no COMPSOLID/COMPOUND support in output BRep.  Compounds containing
-    /// multiple solids are flattened by split_disconnected_shells.  Kept as
-    /// a no-op with OCCT structure for form alignment.
-    fn fill_images_compounds(&self, _result: &mut ResultBuilder) {}
+    /// rcad: DS stores source shapes as flat V/E/F arrays — source compound
+    ///   hierarchy is not preserved.  The result BRep can contain a compound
+    ///   field (BRep.compound: Option<Compound>) but fill_images_compounds is
+    ///   not wired to populate it.  COMPSOLID/COMPOUND structure would require
+    ///   source-hierarchy tracking in the DS.
+    fn fill_images_compounds(&self, _result: &mut ResultBuilder) {
+        // OCCT L200-217: FillImagesCompounds iterates mySourceShapes for TopAbs_COMPOUND
+        // OCCT L280-342: FillImagesCompound recurses into child compounds
+        // rcad: no DS-level compound tracking → structure preserved as placeholder.
+    }
 
     /// Retrieve the EdgeInfo.is_inside status for the incoming edge at the given vertex.
     fn incoming_edge_is_inside(&self, smart_map: &HashMap<usize, Vec<EdgeInfo>>, vertex: usize, seg_idx: usize) -> bool {
@@ -5910,12 +6017,14 @@ impl<'a> BooleanBuilder<'a> {
         result.build_result("SHELL");
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 5: FillImagesSolids (L400-410) → BuildResult(SOLID) (L406-410).
-        self.fill_images_solids(&mut result, &a_faces, &b_faces);
+        //   OCCT L400-410: FillImagesSolids does not take face lists — reads from myDS.
+        self.fill_images_solids(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         result.build_result("SOLID");
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 6: FillImagesContainers(COMPSOLID) (L412-422) → BuildResult(COMPSOLID) (L418-422).
-        if self.has_errors { return Err(BooleanError::DegenerateResult); }
+        //   rcad: no COMPSOLID in DS → structural stub (L412-422: FillImagesContainers).
+        self.fill_images_containers_compsolid(&mut result);
         result.build_result("COMPSOLID");
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 7: FillImagesCompounds (L425-435) → BuildResult(COMPOUND) (L431-435).
