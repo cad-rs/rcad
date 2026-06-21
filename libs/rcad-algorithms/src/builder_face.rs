@@ -27,6 +27,8 @@ use crate::bopds::ds::DS;
 use crate::builder::{
     BooleanBuilder, WireFace, WireSegment, build_closed_wires, perform_areas,
 };
+use crate::inttools::context::Context;
+use crate::tolerance::TOLERANCE_ABS;
 
 /// OCCT-aligned: BOPAlgo_BuilderFace — splits a single face into sub-faces.
 ///
@@ -135,7 +137,8 @@ impl<'a> BuilderFace<'a> {
         internal_wires: &[Vec<usize>],
         segments: &[WireSegment],
     ) -> Vec<WireFace> {
-        perform_areas(wires, internal_wires, segments, self.ds, self.face_idx)
+        let mut ctx = Context::new(self.ds.faces.len(), TOLERANCE_ABS * 100.0);
+        perform_areas(wires, internal_wires, segments, self.ds, &mut ctx, self.face_idx)
     }
 
     // ── Accessors ──────────────────────────────────────────────────────────

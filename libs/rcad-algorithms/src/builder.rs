@@ -11,6 +11,8 @@ use crate::classify::{Classification, classify_point};
 use crate::history::{
     BooleanHistory, EdgeOrigin, FaceOrigin, HistoryTracker, ShellOrigin, SolidOrigin, VertexOrigin,
 };
+use std::cell::RefCell;
+use crate::inttools::context::Context;
 use crate::inttools::edge_face::plane_local_basis;
 use crate::tolerance::*;
 use crate::triangulate::{triangulate_polygon, triangulate_polygon_with_holes};
@@ -1619,6 +1621,7 @@ pub struct BooleanBuilder<'a> {
     op: BooleanOpType,
     use_glue: bool,
     glue_tolerance: f64,
+    context: RefCell<Context>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -5378,6 +5381,7 @@ pub(crate) fn perform_areas(
     internal_wires: &[Vec<usize>],
     segments: &[WireSegment],
     ds: &DS,
+    _context: &mut Context,
     face_idx: usize,
 ) -> Vec<WireFace> {
     if wires.is_empty() {
@@ -5746,7 +5750,7 @@ impl<'a> BooleanBuilder<'a> {
 
         // Step 3 — PerformAreas (BuilderFace.cxx L387): classify wires into faces.
         let wfs = if !wires.is_empty() || !internal_wires.is_empty() {
-            perform_areas(&wires, &internal_wires, &segments, ds, face_idx)
+            perform_areas(&wires, &internal_wires, &segments, ds, &mut *self.context.borrow_mut(), face_idx)
         } else {
             vec![WireFace { outer_wire: (0..segments.len()).collect(), inner_wires: vec![], internal_wires: vec![] }]
         };
@@ -5816,7 +5820,7 @@ impl<'a> BooleanBuilder<'a> {
             }
             return None;
         }
-        let wfs = perform_areas(&wires, &internal_wires, &segments, ds, face_idx);
+        let wfs = perform_areas(&wires, &internal_wires, &segments, ds, &mut *self.context.borrow_mut(), face_idx);
         if wfs.is_empty() {
             if debug_pipe {
                 eprintln!("[PIPE] fi={} {} (draft) → Gate C: wfs empty", face_idx, surf_name());
@@ -5835,12 +5839,8 @@ impl<'a> BooleanBuilder<'a> {
 /// Edge-like segment for wire building鈥?can be a DS edge, an intersection curve,
 impl<'a> BooleanBuilder<'a> {
     pub fn new(ds: &'a DS, op: BooleanOpType) -> Self {
-        Self {
-            ds,
-            op,
-            use_glue: false,
-            glue_tolerance: TOLERANCE_ABS,
-        }
+        let context = RefCell::new(Context::new(ds.faces.len(), TOLERANCE_ABS * 100.0));
+        Self { ds, op, use_glue: false, glue_tolerance: TOLERANCE_ABS, context }
     }
 
     pub fn with_glue(mut self, enable: bool, tolerance: f64) -> Self {
