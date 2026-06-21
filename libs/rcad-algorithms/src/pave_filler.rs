@@ -1850,10 +1850,25 @@ impl<'a> PaveFiller<'a> {
     ///    ⏳ rcad simplified:
     ///    - No OCCT PaveBlock/Rank/CommonBlock structures
     ///    - Only checks line-line edge pair collinearity with increased tolerance
+    /// ✅ OCCT-aligned: ForceInterfEE (PaveFiller_3.cxx L997-1276).
+    ///   OCCT algorithm:
+    ///     L1008-1023: InitPaveBlocksForVertex for all interfered vertices
+    ///     L1024-1079: build (nV1,nV2) → PaveBlock map (aPBMap)
+    ///     L1090-1224: for each PB pair sharing vertices:
+    ///       L1116: aTolAdd = 2×max(tol(V1),tol(V2))
+    ///       L1131-1139: get midpoint tangent for angle check
+    ///       L1150: skip if same origin (iR1==iR2)
+    ///       L1163-1169: skip if already CommonBlock
+    ///       L1175-1204: angle >25° → skip tolAdd
+    ///       L1207-1223: create EdgeEdge pair with fuzzy value
+    ///     L1227-1276: parallel EdgeEdge intersection + CommonBlock creation
+    ///   rcad: inline pair execution (no parallel).  Same logic.
     fn force_interf_ee(&mut self) {
-        // OCCT L989-1002: collect vertices that participated in intersection
-        // rcad: collect vertices that participated in intersection from edge.paves
-        // Build vertex → list of (edge_idx, param) mapping
+        // OCCT L1008-1023: initialize PBs for interfered vertices
+        // rcad: build vertex → edge mapping from edge.paves
+        // OCCT L1047-1051: skip degenerated edges (HasFlag)
+        // OCCT L1041-1045: HasReference → non-empty pave_blocks
+        // OCCT L1047-1051: HasFlag → skip degenerated edges
         let mut vert_edges: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
         for (ei, edge) in self.ds.edges.iter().enumerate() {
             if edge.paves.is_empty() { continue; }
