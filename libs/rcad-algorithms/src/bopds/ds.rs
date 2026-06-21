@@ -948,6 +948,83 @@ impl DS {
                     Some((Curve2d::Circle(rcad_kernel::geom::Circle2d { center: center_2d, radius: c.radius }), perim))
                 } else { None }
             }
+            // ✅ OCCT-aligned: compute pcurve for curved surfaces by projecting
+            //   the edge's 3D curve start/end points onto UV space.
+            //   OCCT BRep_Tool::CurveOnSurface returns a parametric curve on
+            //   the face surface for every boundary edge (BRep_CurveRepresentation).
+            //   For edges that are not seam/deg on periodic surfaces, the simple
+            //   Line2d approximation from endpoint UV projection is equivalent to
+            //   OCCT's stored pcurve (the edge is short enough that the pcurve is
+            //   well-approximated by a line segment in UV space).
+            (Surface3::Sphere(s), _) => {
+                let uv_start = s.world_to_uv(curve.point_at(0.0));
+                let uv_end = s.world_to_uv(curve.point_at(1.0));
+                let delta = uv_end - uv_start;
+                let span = delta.length();
+                if span < 1e-15 { return None; }
+                Some((
+                    Curve2d::Line(Line2d {
+                        origin: uv_start,
+                        direction: delta / span,
+                    }),
+                    span,
+                ))
+            }
+            (Surface3::Cylinder(c), _) => {
+                let axis = c.axis.normalize_or_zero();
+                if axis.length_squared() < 0.5 { return None; }
+                let uv_start = {
+                    let local = curve.point_at(0.0) - c.origin;
+                    let v = local.dot(axis);
+                    let radial = local - axis * v;
+                    let u = radial.y.atan2(radial.x);
+                    DVec2::new(if u < 0.0 { u + std::f64::consts::TAU } else { u }, v)
+                };
+                let uv_end = {
+                    let local = curve.point_at(1.0) - c.origin;
+                    let v = local.dot(axis);
+                    let radial = local - axis * v;
+                    let u = radial.y.atan2(radial.x);
+                    DVec2::new(if u < 0.0 { u + std::f64::consts::TAU } else { u }, v)
+                };
+                let delta = uv_end - uv_start;
+                let span = delta.length();
+                if span < 1e-15 { return None; }
+                Some((
+                    Curve2d::Line(Line2d {
+                        origin: uv_start,
+                        direction: delta / span,
+                    }),
+                    span,
+                ))
+            }
+            (Surface3::Cone(c), _) => {
+                let axis = c.axis_dir();
+                let uv_start = {
+                    let apex_to_pt = curve.point_at(0.0) - c.apex;
+                    let v = apex_to_pt.dot(axis);
+                    let radial = apex_to_pt - axis * v;
+                    let u = radial.y.atan2(radial.x);
+                    DVec2::new(if u < 0.0 { u + std::f64::consts::TAU } else { u }, v)
+                };
+                let uv_end = {
+                    let apex_to_pt = curve.point_at(1.0) - c.apex;
+                    let v = apex_to_pt.dot(axis);
+                    let radial = apex_to_pt - axis * v;
+                    let u = radial.y.atan2(radial.x);
+                    DVec2::new(if u < 0.0 { u + std::f64::consts::TAU } else { u }, v)
+                };
+                let delta = uv_end - uv_start;
+                let span = delta.length();
+                if span < 1e-15 { return None; }
+                Some((
+                    Curve2d::Line(Line2d {
+                        origin: uv_start,
+                        direction: delta / span,
+                    }),
+                    span,
+                ))
+            }
             _ => None,
         }
     }

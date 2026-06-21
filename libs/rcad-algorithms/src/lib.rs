@@ -2673,18 +2673,7 @@ pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) 
 
 /// Perform a boolean operation on two BReps.
 ///
-/// Both BReps must have populated GeomStore (call
-/// `geom_populate::populate_box_geom` first for box primitives).
-macro_rules! try_fast_path {
-    ($e:expr, $n:expr) => {{
-        if let Some(r) = $e {
-            if std::env::var("RCAD_DEBUG_FAST_PATH").is_ok() {
-                eprintln!("FAST_PATH: {}", $n);
-            }
-            return Ok(finalize_fast_path_result(r));
-        }
-    }};
-}
+/// (removed try_fast_path macro — OCCT has no fast-path shortcuts)
 
 fn finalize_fast_path_result(r: BRep) -> BRep {
     let (r, _) = crate::brep_repair::merge_close_vertices(&r, crate::tolerance::TOLERANCE_ABS * 64.0);
@@ -3139,91 +3128,16 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, Boolean
         return Ok(r);
     }
 
+    // ✅ OCCT-aligned: Union goes through PaveFiller + BooleanBuilder.
+    //   OCCT has NO fast-path shortcuts — all cases go through the full pipeline.
     if matches!(op, BooleanOpType::Union) {
-        // Fast-path: bbox-disjoint → just combine without Pave-Filler.
-        try_fast_path!(boolean_unit_octant::try_union_disjoint(a, b), "try_union_disjoint");
-        // Axis-aligned box-box: touching/gap → compound, overlap → Pave-Filler.
-        try_fast_path!(boolean_unit_octant::try_union_axis_aligned_box_box(a, b), "try_union_axis_aligned_box_box");
-        // Rotated box-box via slab decomposition.  The result is validated against
-        // a tight upper-bound SA(A)+SA(B)-SA(I)  where I = A∩B: if the slab
-        // decomposition left internal faces, the SA exceeds this bound and we fall
-        // through to the general fuse path (bopfuse_simple C3 is one such case).
-        if let Some(r) = boolean_unit_octant::try_union_box_general(a, b) {
-            if std::env::var("RCAD_DEBUG_FAST_PATH").is_ok() { eprintln!("FAST_PATH: try_union_box_general"); }
-            let sum_sa = total_surface_area(a) + total_surface_area(b);
-            let r_sa = total_surface_area(&r);
-            let mut ok = false;
-            let mut expected_union = sum_sa;
-            if let Some(inter) = boolean_unit_octant::try_intersection_box_general(a, b) {
-                let inter_sa = total_surface_area(&inter);
-                expected_union = sum_sa - inter_sa;
-                // Allow 15% inflation from internal faces — the slab decomposition
-                // often has small double-counted faces that sew_slabs_into_solid
-                // doesn't fully eliminate for rotated box decompositions. This
-                // matches the OCCT checkprops tolerance (15%), so a result passing
-                // this check will also pass the OCCT surface-area assertion.
-                ok = r_sa <= expected_union * 1.15 + 1e-6;
-            } else {
-                ok = r_sa <= sum_sa + 1e-6;
-            }
-            if ok {
-                return Ok(r);
-            }
-            // Fall through to fuse below (the slab result was too inflated).
-        }
-        // Last resort for non-overlapping shapes with touching bboxes
-        // (e.g. sphere-box where bboxes touch but shapes don't overlap).
-        // MUST come AFTER box-box paths so that face-touching box fusion
-        // is handled first by try_union_axis_aligned_box_box.
-        try_fast_path!(boolean_unit_octant::try_union_disjoint_or_touching(a, b), "try_union_disjoint_or_touching");
-        try_fast_path!(boolean_unit_octant::try_union_cone_box(a, b), "try_union_cone_box");
-        try_fast_path!(boolean_unit_octant::try_union_coaxial_cone_cylinder(a, b), "try_union_coaxial_cone_cylinder");
-        try_fast_path!(boolean_unit_octant::try_union_cylinder_torus(a, b), "try_union_cylinder_torus");
-        try_fast_path!(boolean_unit_octant::try_union_coaxial_cones(a, b), "try_union_coaxial_cones");
-        try_fast_path!(boolean_unit_octant::try_union_offset_cones(a, b), "try_union_offset_cones");
         return bop_occt_union::fuse(a, b);
     }
 
-    if matches!(op, BooleanOpType::Intersection) {
-        // Fast-path: axis-aligned box-box intersection via AABB overlap.
-        // Avoids Pave-Filler coplanar-face classification errors for partial
-        // overlaps (bcommon_simple_c1 — SA=3 vs expected 2.5).
-        try_fast_path!(boolean_unit_octant::try_intersection_box_box(a, b), "try_intersection_box_box");
-        // Fast-path: general box-box intersection (rotated boxes) via half-spaces.
-        // The raw convex polyhedron already has the intended planar face split (kept for now).
-        try_fast_path!(boolean_unit_octant::try_intersection_concentric_spheres(a, b), "try_intersection_concentric_spheres");
-        try_fast_path!(boolean_unit_octant::try_intersection_coaxial_cone_cylinder(a, b), "try_intersection_coaxial_cone_cylinder");
-        try_fast_path!(boolean_unit_octant::try_intersection_coaxial_cylinder_cylinder(a, b), "try_intersection_coaxial_cylinder_cylinder");
-        // along Z and X axes). OCCT has no equivalent — pure rcad optimization.
-        try_fast_path!(boolean_unit_octant::try_intersection_cylinder_cylinder_perpendicular(a, b), "try_intersection_cylinder_cylinder_perpendicular");
-        try_fast_path!(boolean_unit_octant::try_intersection_coaxial_cylinder_sphere(a, b), "try_intersection_coaxial_cylinder_sphere");
-        try_fast_path!(boolean_unit_octant::try_intersection_coaxial_cylinder_torus(a, b), "try_intersection_coaxial_cylinder_torus");
-    }
-
+    // ✅ OCCT-aligned: Intersection goes through PaveFiller + BooleanBuilder.
+    //   OCCT has NO fast-path shortcuts — all cases go through the full pipeline.
     if matches!(op, BooleanOpType::Difference) && boolean_difference_empty_coincident(a, b) {
         return Ok(BRep::default());
-    }
-
-    if matches!(op, BooleanOpType::Difference) {
-        try_fast_path!(boolean_unit_octant::try_difference_box_box(a, b), "try_difference_box_box");
-        try_fast_path!(boolean_unit_octant::try_difference_box_general(a, b), "try_difference_box_general");
-        try_fast_path!(boolean_unit_octant::try_difference_coaxial_cone_minus_cylinder(a, b), "try_difference_coaxial_cone_minus_cylinder");
-        try_fast_path!(boolean_unit_octant::try_difference_coaxial_cylinder_minus_cone(a, b), "try_difference_coaxial_cylinder_minus_cone");
-        try_fast_path!(boolean_unit_octant::try_difference_coaxial_cylinder_cylinder(a, b), "try_difference_coaxial_cylinder_cylinder");
-        try_fast_path!(boolean_unit_octant::try_difference_concentric_spheres(a, b), "try_difference_concentric_spheres");
-        try_fast_path!(boolean_unit_octant::try_difference_coaxial_cylinder_torus(a, b), "try_difference_coaxial_cylinder_torus");
-        try_fast_path!(boolean_unit_octant::try_difference_coaxial_cylinder_sphere(a, b), "try_difference_coaxial_cylinder_sphere");
-        try_fast_path!(boolean_unit_octant::try_difference_box_cone(a, b), "try_difference_box_cone");
-        try_fast_path!(boolean_unit_octant::try_difference_cone_box(a, b), "try_difference_cone_box");
-        try_fast_path!(boolean_unit_octant::try_difference_coaxial_cone_minus_cone(a, b), "try_difference_coaxial_cone_minus_cone");
-        // Fallback: when a is a box and b has cylindrical holes (inner wires),
-        // redirect to box ∩ cylinder.  The Pave-Filler cannot correctly process
-        // BReps with inner-wire topology (e.g. the M3 test pattern).
-        try_fast_path!(boolean_unit_octant::try_difference_box_minus_brep_with_hole(a, b), "try_difference_box_minus_brep_with_hole");
-        // Fast-path: bbox-disjoint Difference → return A unchanged.
-        // Avoids PaveFiller overhead for multi-step chains where the tool
-        // doesn't overlap the workpiece (bcut_simple J/K/L cases).
-        try_fast_path!(boolean_unit_octant::try_difference_disjoint(a, b), "try_difference_disjoint");
     }
 
     let r = match boolean_op_pave_fill_build(op, a, b) {
