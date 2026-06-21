@@ -482,19 +482,13 @@ impl<'a> PaveFiller<'a> {
             //    OCCT PaveFiller_5.cxx L570: PerformNewVertices(aMVCPB, ..., false)
             let ef_survivors = self.treat_new_vertices();
 
-            // ✅ OCCT-aligned: RepeatIntersection (PaveFiller.cxx L296-299)
+            // ✅ OCCT-aligned: RepeatIntersection (PaveFiller.cxx L296-299, L359-420).
             //    After EF, before FF, re-run VV/VE/VF for vertices with increased tolerance.
-            //    OCCT processes both EE and EF survivors (myIncreasedSS).
+            //    OCCT reads from myIncreasedSS (populated by TreatNewVertices).
+            //    rcad: ds.increased_ss is populated by treat_new_vertices above.
             self.ds.update_pave_blocks_with_sd_vertices();
             self.update_interfs_with_sd_vertices();
-            let all_survivors: Vec<usize> = {
-                let mut v = ee_survivors.clone();
-                v.extend(&ef_survivors);
-                v.sort_unstable(); v.dedup(); v
-            };
-            if !all_survivors.is_empty() {
-                self.repeat_intersection(&all_survivors);
-            }
+            self.repeat_intersection();
         }
 
         // ✅ OCCT-aligned: ForceInterfEE (PaveFiller_3.cxx L978-1276)
@@ -1067,34 +1061,30 @@ impl<'a> PaveFiller<'a> {
                 }
             }
         }
-        // ✅ OCCT PaveFiller.cxx L375-387: return survivors (vertices with increased tolerance, equivalent to myIncreasedSS)
+        // ✅ OCCT L372-388: myIncreasedSS — vertices with increased tolerance
         let survivors: Vec<usize> = groups.iter()
             .filter(|(_, members)| members.len() >= 2)
             .map(|(_, members)| *members.iter().min().unwrap())
             .collect();
+        self.ds.increased_ss.extend(survivors.iter().copied());
         survivors
     }
 
-    /// ✅ OCCT-aligned: RepeatIntersection (PaveFiller.cxx L296-299, L363-414)
-    ///    After EF, before FF, re-run VV/VE/VF for vertices with increased tolerance.
-    ///    OCCT algorithm:
-    ///      1. L369-388: iterate all source shapes, find vertices with increased tolerance → anExtraInterfMap
-    ///      2. L394: myIterator->IntersectExt(anExtraInterfMap) — update iterator
-    ///      3. L398-413: re-execute PerformVV → PerformVE → PerformVF
-    ///    rcad: for survivors, re-check VV/VE/VF and deduplicate against existing interferences.
-    ///    ⏳ difference: OCCT uses Iterator auto-dedup, rcad uses BTreeSet manual dedup.
-    fn repeat_intersection(&mut self, extra_vertices: &[usize]) {
-        // ✅ OCCT L390-391: if (anExtraInterfMap.IsEmpty()) return;
-        if extra_vertices.is_empty() { return; }
-
-        // Collect vertices needing re-check (may now match other geometry after tolerance increase)
-        let mut candidates: Vec<usize> = extra_vertices.to_vec();
-        candidates.sort_unstable();
-        candidates.dedup();
+    /// ✅ OCCT-aligned: RepeatIntersection (PaveFiller.cxx L296-299, L359-420).
+    ///   OCCT algorithm:
+    ///     L361-389: iterate source shapes, find vertices in myIncreasedSS → anExtraInterfMap
+    ///     L394: myIterator->IntersectExt(anExtraInterfMap) — update iterator for new pairs
+    ///     L398-413: PerformVV → PerformVE → PerformVF
+    ///   rcad: reads from ds.increased_ss (populated by treat_new_vertices), re-runs
+    ///   VV/VE/VF with BTreeSet dedup against existing interferences.
+    fn repeat_intersection(&mut self) {
+        // OCCT L372-388: read vertices with increased tolerance from myIncreasedSS
+        if self.ds.increased_ss.is_empty() { return; }
+        let candidates: Vec<usize> = self.ds.increased_ss.iter().copied().collect();
 
         // Build set of existing interferences for dedup
         // ✅ OCCT L398-413: PerformVV → PerformVE → PerformVF
-        //    ⏳ OCCT uses IntersectExt to control iterator, rcad uses BTreeSet for dedup
+        //    OCCT L394: IntersectExt filters the iterator; rcad uses BTreeSet for dedup
         use std::collections::BTreeSet;
         let mut ve_done: BTreeSet<(usize, usize)> = BTreeSet::new();
         let mut vf_done: BTreeSet<(usize, usize)> = BTreeSet::new();

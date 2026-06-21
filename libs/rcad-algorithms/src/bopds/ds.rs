@@ -378,6 +378,10 @@ pub struct DS {
     pub pave_blocks: Vec<PaveBlock>,
     /// ✅ OCCT-aligned: BOPDS_ShapeInfo flags (per-edge, keyed by edge index).
     pub edge_flags: EdgeFlagMap,
+    /// ✅ OCCT-aligned: myIncreasedSS — vertices whose tolerance was increased
+    ///   during intersection processing.  Read by RepeatIntersection to determine
+    ///   which vertices need VV/VE/VF re-checks.
+    pub increased_ss: std::collections::HashSet<usize>,
 }
 
 impl DS {
@@ -434,6 +438,7 @@ impl DS {
             solid_images: Vec::new(),
             pave_blocks: Vec::new(),
             edge_flags: EdgeFlagMap::new(),
+            increased_ss: std::collections::HashSet::new(),
         };
 
         ds.load_brep(a, ShapeOrigin::ShapeA);
