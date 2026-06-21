@@ -5604,7 +5604,22 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: FillImagesContainers(SHELL) (BOPAlgo_Builder_1.cxx L172-276).
+    /// ✅ OCCT-aligned: FillImagesContainers (Builder.cxx L363-422).
+    ///   Unified dispatch matching OCCT's FillImagesContainers(TopAbs_ShapeEnum).
+    ///
+    /// OCCT: single function called with WIRE, SHELL, or COMPSOLID type.
+    ///   Iterates source shapes, filters by type, calls FillImagesContainer.
+    ///   rcad: dispatches to type-specific implementations.
+    fn fill_images_containers(&self, shape_type: &str, result: &mut ResultBuilder) {
+        match shape_type {
+            "WIRE" => self.fill_images_containers_wires(),
+            "SHELL" => self.fill_images_containers_shells(result),
+            "COMPSOLID" => self.fill_images_containers_compsolid(result),
+            _ => {}
+        }
+    }
+
+    /// ✅ OCCT-aligned: FillImagesContainer(SHELL) (BOPAlgo_Builder_1.cxx L221-276).
     ///   OCCT L175-183: iterates source shapes → filters TopAbs_SHELL →
     ///   FillImagesContainer(aC, SHELL) for each.
     ///   OCCT L221-276: FillImagesContainer:
@@ -5975,7 +5990,7 @@ impl<'a> BooleanBuilder<'a> {
         result.build_edges(&split_edges, self.ds);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 2: FillImagesContainers(WIRE) (L362-369) → BuildResult(WIRE) (L370-374).
-        self.fill_images_containers_wires();
+        self.fill_images_containers("WIRE", &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         result.build_result("WIRE");
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
@@ -6012,7 +6027,7 @@ impl<'a> BooleanBuilder<'a> {
         }
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 4: FillImagesContainers(SHELL) (L388-398) → BuildResult(SHELL) (L394-398).
-        self.fill_images_containers_shells(&mut result);
+        self.fill_images_containers("SHELL", &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         result.build_result("SHELL");
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
@@ -6024,7 +6039,7 @@ impl<'a> BooleanBuilder<'a> {
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 6: FillImagesContainers(COMPSOLID) (L412-422) → BuildResult(COMPSOLID) (L418-422).
         //   rcad: no COMPSOLID in DS → structural stub (L412-422: FillImagesContainers).
-        self.fill_images_containers_compsolid(&mut result);
+        self.fill_images_containers("COMPSOLID", &mut result);
         result.build_result("COMPSOLID");
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 7: FillImagesCompounds (L425-435) → BuildResult(COMPOUND) (L431-435).
