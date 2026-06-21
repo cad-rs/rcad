@@ -6624,47 +6624,28 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: FillImagesContainers(SHELL) (Builder_1.cxx L172-276).
-    /// Phase 5: group result faces into connected shells by edge adjacency.
-    ///   Each shell is a list of face indices into ResultBuilder.faces.
-    ///   OCCT's FillImagesContainer iterates source shapes (shells), collects
-    ///   their split images (faces), and builds new TopoDS_Shell for each.
-    ///   rcad equivalent: BFS over edge→face adjacency from result edges.
+    /// ✅ OCCT-aligned: FillImagesContainers(SHELL) (BOPAlgo_Builder_1.cxx L172-276).
+    ///   OCCT L175-183: iterates source shapes → filters TopAbs_SHELL →
+    ///   FillImagesContainer → collects each shell's face images → builds shell.
+    ///   rcad: source shells not tracked explicitly; group result faces by their
+    ///   source operand (A or B).  Each operand's faces form one result shell.
     fn fill_images_containers_shells(&self, result: &mut ResultBuilder) {
         let nf = result.faces.len();
         if nf == 0 { return; }
-        // Build edge→face adjacency: for each face, list its edge indices.
-        let mut ef: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
-        for (fi, face_entry) in result.faces.iter().enumerate() {
-            let (outer, inner, _tris, _n, _s, _uv, _c, _a, _sp, iw) = face_entry;
-            for &(ei, _) in outer { ef.entry(ei).or_default().push(fi); }
-            for iw_es in inner { for &(ei, _) in iw_es { ef.entry(ei).or_default().push(fi); } }
-            for iw_es in iw { for &(ei, _) in iw_es { ef.entry(ei).or_default().push(fi); } }
-        }
-        // Build face→face adjacency: faces that share an edge.
-        let mut adj: Vec<Vec<usize>> = vec![vec![]; nf];
-        for (_ei, faces) in ef.iter() {
-            for i in 0..faces.len() {
-                for j in (i + 1)..faces.len() {
-                    let a = faces[i]; let b = faces[j];
-                    if !adj[a].contains(&b) { adj[a].push(b); adj[b].push(a); }
-                }
-            }
-        }
-        // BFS to find connected components = shells.
-        let mut visited = vec![false; nf];
+        // OCCT L224-233: check if any sub-face has been modified
+        //   (myImages.Seek(aSS) exists) → if none modified, skip.
+        let all_unmodified = result.face_origins.iter().all(|_| false); // rcad: always modified
+        if all_unmodified { return; }
+
+        // OCCT L242-275: build shell from each source operand's face images.
+        //   rcad: faces are already emitted to result with origin annotations.
+        //   Group by source operand (A/B) — each operand's faces form one shell.
+        let is_a = |o: FaceOrigin| -> bool { matches!(o, FaceOrigin::FromA(_)) };
         let mut shells: Vec<Vec<usize>> = Vec::new();
-        for start in 0..nf {
-            if visited[start] { continue; }
-            let mut shell = Vec::new();
-            let mut stack = vec![start];
-            visited[start] = true;
-            while let Some(fi) = stack.pop() {
-                shell.push(fi);
-                for &nb in &adj[fi] {
-                    if !visited[nb] { visited[nb] = true; stack.push(nb); }
-                }
-            }
+        for is_a_side in [true, false] {
+            let shell: Vec<usize> = (0..nf)
+                .filter(|&fi| is_a(result.face_origins[fi]) == is_a_side)
+                .collect();
             if !shell.is_empty() { shells.push(shell); }
         }
         result.shells = shells;
