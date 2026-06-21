@@ -351,6 +351,8 @@ struct ResultBuilder {
     /// OCCT-aligned: DS vertex index -> BRep vertex index (TShape identity).
     ds_vertex_map: HashMap<usize, usize>,
     edges: Vec<(usize, usize)>,
+    /// OCCT-aligned: true after build_edges() — skips merge in build().
+    edges_built: bool,
     faces: Vec<FaceEntry>, // (boundary vertex indices, triangles, normal, surface, uv_domain)
     face_origins: Vec<FaceOrigin>,
     /// Extra A/B source when a later emission is deduplicated against an existing result face
@@ -691,6 +693,7 @@ impl ResultBuilder {
             vertex_map: HashMap::new(),
             ds_vertex_map: HashMap::new(),
             edges: Vec::new(),
+            edges_built: false,
             faces: Vec::new(),
             face_origins: Vec::new(),
             co_face_origins: Vec::new(),
@@ -742,6 +745,7 @@ impl ResultBuilder {
                 self.deg_edge_indices.insert(ei);
             }
         }
+        self.edges_built = true;
     }
 
     /// ✅ OCCT-aligned: BuildResult(FACE) — build faces from accumulated face data.
@@ -1133,7 +1137,10 @@ impl ResultBuilder {
         //
         //    OCCT 婧愮爜: BOPTools_AlgoTools.cxx L662-L674 (MakeEdge for section edges)
         //    rcad 绛変环瀹炵幇: 姝ゅ鍑犱綍绾ч《鐐?杈瑰悎骞?鑷垱,浣嗚涔夌瓑浠?
-        {
+        // ✅ OCCT-aligned: incremental build — build_edges() was already called
+        // at the EDGE phase, so the vertex/edge merge is skipped here.
+        // The merge is only needed when running build() standalone (no incremental).
+        if !self.edges_built {
             let merge_tol_sq = TOLERANCE_ABS_SQ * 4096.0; // (64*TOLERANCE_ABS)虏 鈮?4e-11
             if std::env::var("RCAD_DEBUG_MERGE").is_ok() {
                 eprintln!("[BUILD_MERGE] pre: {} verts, {} edges, {} faces", self.vertices.len(), self.edges.len(), self.faces.len());
