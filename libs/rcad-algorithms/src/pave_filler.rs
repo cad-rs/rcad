@@ -1789,8 +1789,8 @@ impl<'a> PaveFiller<'a> {
                 continue;
             }
 
-            // OCCT L4407-4410: skip degenerated edges
-            if self.ds.edges[ei].start_vertex == self.ds.edges[ei].end_vertex {
+            // OCCT L4407-4410: skip degenerated edges (HasFlag)
+            if self.ds.is_edge_degenerated(ei) {
                 continue;
             }
 
@@ -2245,21 +2245,29 @@ impl<'a> PaveFiller<'a> {
     ///   rcad's approach is simpler and sufficient for periodic-surface vertex handling.
     fn process_de(&mut self) {
         let mut fv: Vec<Vec<usize>> = vec![Vec::new(); self.ds.faces.len()];
+        let mut degen_flags: Vec<(usize, usize)> = Vec::new();
         for fi in 0..self.ds.faces.len() {
-            let f = &self.ds.faces[fi];
-            if !matches!(f.surface, Surface3::Sphere(_) | Surface3::Cylinder(_) | Surface3::Cone(_)) { continue; }
+            let is_periodic = matches!(self.ds.faces[fi].surface,
+                Surface3::Sphere(_) | Surface3::Cylinder(_) | Surface3::Cone(_));
+            if !is_periodic { continue; }
             let mut vs = Vec::new();
-            for &ei in &f.boundary_edges {
+            let boundary_edges: Vec<usize> = self.ds.faces[fi].boundary_edges.clone();
+            for &ei in &boundary_edges {
                 if ei >= self.ds.edges.len() { continue; }
                 let e = &self.ds.edges[ei];
-                if e.start_vertex == e.end_vertex { vs.push(e.start_vertex); }
-                else {
+                if e.start_vertex == e.end_vertex {
+                    degen_flags.push((ei, fi + 1));
+                    vs.push(e.start_vertex);
+                } else {
                     let d = (self.ds.vertices[e.start_vertex].point - self.ds.vertices[e.end_vertex].point).length();
-                    if d < TOLERANCE_ABS*100.0 { vs.push(e.start_vertex); vs.push(e.end_vertex); }
+                    if d < TOLERANCE_ABS*100.0 {
+                        degen_flags.push((ei, fi + 1));
+                        vs.push(e.start_vertex); vs.push(e.end_vertex);
+                    }
                 }
             }
-            if let Surface3::Sphere(sp) = &f.surface {
-                let tl = f.geom_tol.max(TOLERANCE_ABS);
+            if let Surface3::Sphere(sp) = &self.ds.faces[fi].surface.clone() {
+                let tl = self.ds.faces[fi].geom_tol.max(TOLERANCE_ABS);
                 for pp in [sp.center + sp.axis * sp.radius, sp.center - sp.axis * sp.radius] {
                     if let Some(vi) = self.ds.find_vertex_near(pp, tl) { vs.push(vi); }
                 }
@@ -2267,6 +2275,7 @@ impl<'a> PaveFiller<'a> {
             fv[fi] = vs;
         }
         for (fi, vs) in fv.iter().enumerate() { for &vi in vs { self.ds.faces[fi].face_info.vertices_in.insert(vi); } }
+        for (ei, flag_val) in degen_flags { self.ds.set_edge_flag(ei, flag_val); }
     }
 
     /// OCCT-aligned: FillShrunkData (BOPAlgo_PaveFiller_9.cxx L65-150).

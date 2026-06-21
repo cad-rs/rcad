@@ -209,6 +209,11 @@ pub struct DSEdge {
     pub face_reps: Vec<DSRepOnFace>,
 }
 
+/// Per-edge integer flags (OCCT: BOPDS_ShapeInfo::Flag).
+/// Key = edge index, value = flag (0 = no flag, face_idx+1 for degenerated edges).
+/// Stored as a separate map to avoid bloating every DSEdge with an optional field.
+pub type EdgeFlagMap = std::collections::HashMap<usize, usize>;
+
 /// A face in the DS pool with surface reference.
 #[derive(Debug, Clone)]
 pub struct DSFace {
@@ -371,12 +376,31 @@ pub struct DS {
     /// Global PaveBlock array (OCCT: BOPDS_DS::myPaveBlocks).
     /// Indices in FaceInfo::pave_blocks_on / pave_blocks_in refer to this array.
     pub pave_blocks: Vec<PaveBlock>,
+    /// ✅ OCCT-aligned: BOPDS_ShapeInfo flags (per-edge, keyed by edge index).
+    pub edge_flags: EdgeFlagMap,
 }
 
 impl DS {
+    /// ✅ OCCT-aligned: BOPDS_ShapeInfo::HasFlag / Flag.
+    ///   Returns the flag value for an edge, or 0 if no flag set.
+    pub fn edge_flag(&self, edge_idx: usize) -> usize {
+        self.edge_flags.get(&edge_idx).copied().unwrap_or(0)
+    }
+
+    /// ✅ OCCT-aligned: BOPDS_ShapeInfo::HasFlag(int&) — returns true with flag value.
+    pub fn edge_has_flag(&self, edge_idx: usize) -> bool {
+        self.edge_flags.contains_key(&edge_idx)
+    }
+
+    /// ✅ OCCT-aligned: BOPDS_ShapeInfo::SetFlag.
+    pub fn set_edge_flag(&mut self, edge_idx: usize, flag: usize) {
+        self.edge_flags.insert(edge_idx, flag);
+    }
+
     /// ✅ OCCT-aligned: BRep_Tool::Degenerated(edge) equivalent.
     pub fn is_edge_degenerated(&self, edge_idx: usize) -> bool {
-        self.edges[edge_idx].start_vertex == self.edges[edge_idx].end_vertex
+        self.edge_has_flag(edge_idx)
+            || self.edges[edge_idx].start_vertex == self.edges[edge_idx].end_vertex
     }
 
     /// Build DS from two BReps using the default absolute tolerance.
@@ -409,6 +433,7 @@ impl DS {
             shell_images: Vec::new(),
             solid_images: Vec::new(),
             pave_blocks: Vec::new(),
+            edge_flags: EdgeFlagMap::new(),
         };
 
         ds.load_brep(a, ShapeOrigin::ShapeA);
