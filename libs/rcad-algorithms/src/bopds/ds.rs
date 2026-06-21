@@ -23,6 +23,24 @@ pub struct PassKey {
     pub i2: usize,
 }
 
+/// ✅ BOPTools_ConnexityBlock — connected component with IsRegular flag.
+/// OCCT BOPTools_ConnexityBlock.hxx
+#[derive(Debug, Clone)]
+pub struct ConnexityBlock {
+    pub shapes: Vec<usize>,
+    pub is_regular: bool,
+    pub loops: Vec<Vec<usize>>,
+}
+
+impl ConnexityBlock {
+    pub fn new() -> Self { ConnexityBlock { shapes: Vec::new(), is_regular: false, loops: Vec::new() } }
+    pub fn is_regular(&self) -> bool { self.is_regular }
+    pub fn set_regular(&mut self, r: bool) { self.is_regular = r; }
+    pub fn shapes(&self) -> &[usize] { &self.shapes }
+    pub fn add_shape(&mut self, s: usize) { self.shapes.push(s); }
+    pub fn loops(&self) -> &[Vec<usize>] { &self.loops }
+}
+
 impl PassKey {
     pub fn new(a: usize, b: usize) -> Self {
         if a <= b { PassKey { i1: a, i2: b } } else { PassKey { i1: b, i2: a } }
@@ -191,6 +209,11 @@ pub struct DSFace {
     pub geom_tol: f64,
     /// UV-space boundary polygon on this face's surface (populated in Task 3+).
     pub uv_boundary: Option<Vec<DVec2>>,
+    /// ✅ OCCT-aligned: natural_restriction — true when the face surface has
+    ///   natural boundaries (full untrimmed sphere, cylinder, cone, etc.).
+    ///   BRep_Tool::NaturalRestriction in OCCT, used by BuilderFace::PerformAreas
+    ///   to decide whether an empty wire produces the whole surface face.
+    pub natural_restriction: bool,
 }
 
 /// Record of an intersection between two sub-shapes.
@@ -826,6 +849,7 @@ impl DS {
                         source_face_idx: face_idx,
                         geom_tol: rcad_kernel::face_tolerance(brep, face_idx),
                         uv_boundary: None,
+                        natural_restriction: true,
                     });
 
                     face_idx += 1;
