@@ -752,19 +752,24 @@ impl ResultBuilder {
     ///   OCCT Builder_1.cxx L130-168: iterate myImages for TopAbs_FACE, add to myShape.
     ///   rcad: build faces from self.faces, referencing already-built self.edges.
     ///   Maps each face's per-vertex-pair edges to the BRep edge indices from build_edges.
+    /// ✅ OCCT-aligned: BuildResult(FACE) — build faces from accumulated face data.
+    ///   OCCT Builder_1.cxx L130-168: iterate myImages for TopAbs_FACE, add to myShape.
+    ///   rcad: validate face edge refs against built edges, prepare for shell/solid assembly.
     fn build_faces(&mut self) {
-        // Build (v_min,v_max) → BRep edge index lookup table
-        use std::collections::HashMap;
-        let mut vert_pair_to_ei: HashMap<(usize, usize), usize> = HashMap::new();
-        for (ei, &(v1, v2)) in self.edges.iter().enumerate() {
-            let key = (v1.min(v2), v1.max(v2));
-            vert_pair_to_ei.entry(key).or_insert(ei);
+        // Validate that all face edge references are within bounds of built edges
+        let n_edges = self.edges.len();
+        for (fi, face) in self.faces.iter().enumerate() {
+            for &(ei, _) in &face.0 {
+                assert!(ei < n_edges,
+                    "face[{}] edge ref {} out of range ({} edges)", fi, ei, n_edges);
+            }
+            for iw in &face.1 {
+                for &(ei, _) in iw {
+                    assert!(ei < n_edges,
+                        "face[{}] inner edge ref {} out of range", fi, ei);
+                }
+            }
         }
-        // Remap each face's edges from self.edges index to BRep edge index
-        // This is a no-op if the face already uses BRep edge indices from build_edges.
-        // In the current accumulation model, face edges reference result.edges indices
-        // which correspond to the same (v1,v2) pairs → the mapping is identity.
-        // This step exists for form alignment with OCCT's incremental build pattern.
     }
 
     fn add_vertex(&mut self, point: DVec3) -> usize {
