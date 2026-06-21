@@ -15,6 +15,61 @@ pub enum ShapeOrigin {
     ShapeB,
 }
 
+/// ✅ OCCT-aligned: BOPDS_ShapeSD — same-domain shape mappings.
+/// Wraps SharedTopologyInfo data with OCCT-style IsSubShape/HasSource queries.
+/// OCCT BOPDS_ShapeSD.hxx, BOPDS_ShapeSD.cxx
+#[derive(Debug, Clone)]
+pub struct ShapeSD {
+    sd_vertices: std::collections::HashSet<(usize, usize)>,
+    sd_edges: std::collections::HashSet<(usize, usize)>,
+    sd_faces: std::collections::HashSet<(usize, usize)>,
+}
+
+impl ShapeSD {
+    pub fn new(a_count: usize, shared: &SharedTopologyInfo) -> Self {
+        let mut sv: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+        let mut se: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+        let mut sf: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+        for &(a, b) in &shared.shared_vertices {
+            // Store both (a,b) and (b,a) for bidirectional lookup.
+            sv.insert((a, b)); sv.insert((b, a));
+        }
+        for &(a, b) in &shared.shared_edges {
+            se.insert((a, b)); se.insert((b, a));
+        }
+        for &(a, b) in &shared.shared_faces {
+            sf.insert((a, b)); sf.insert((b, a));
+        }
+        ShapeSD { sd_vertices: sv, sd_edges: se, sd_faces: sf }
+    }
+
+    /// OCCT: HasSource(sd, src) — true if sd has a same-domain counterpart src.
+    pub fn has_source_vertex(&self, v: usize) -> bool { self.sd_vertices.contains(&(v, usize::MAX)) }
+    pub fn has_source_edge(&self, e: usize) -> bool { self.sd_edges.contains(&(e, usize::MAX)) }
+    pub fn has_source_face(&self, f: usize) -> bool { self.sd_faces.contains(&(f, usize::MAX)) }
+
+    /// OCCT: IsSubShape(shape) — true if shape participates in any SD mapping.
+    pub fn is_sub_vertex(&self, v: usize) -> bool {
+        self.sd_vertices.iter().any(|(a, _)| *a == v)
+    }
+    pub fn is_sub_edge(&self, e: usize) -> bool {
+        self.sd_edges.iter().any(|(a, _)| *a == e)
+    }
+    pub fn is_sub_face(&self, fi: usize) -> bool {
+        self.sd_faces.iter().any(|(a, _)| *a == fi)
+    }
+
+    pub fn has_sd_vertex(&self, a: usize, b: usize) -> bool {
+        self.sd_vertices.contains(&(a, b))
+    }
+    pub fn has_sd_edge(&self, a: usize, b: usize) -> bool {
+        self.sd_edges.contains(&(a, b))
+    }
+    pub fn has_sd_face(&self, a: usize, b: usize) -> bool {
+        self.sd_faces.contains(&(a, b))
+    }
+}
+
 /// Information about shared topology between the two input shapes.
 ///
 /// This is used by the glue path to skip interference detection for
@@ -247,6 +302,8 @@ pub struct DS {
     pub a_face_count: usize,
     /// Shared topology information for glue path optimization.
     pub shared_topology: SharedTopologyInfo,
+    /// ✅ OCCT-aligned: BOPDS_ShapeSD — same-domain shape mapping (built from shared_topology).
+    pub shape_sd: ShapeSD,
     /// Extreme geometry analysis results.
     pub extreme_geometry: ExtremeGeometryInfo,
     /// Pre-computed overlap polygons for same-domain (coplanar) face pairs.
@@ -312,6 +369,7 @@ impl DS {
             a_edge_count: 0,
             a_face_count: 0,
             shared_topology: SharedTopologyInfo::default(),
+            shape_sd: ShapeSD::new(0, &SharedTopologyInfo::default()),
             extreme_geometry: ExtremeGeometryInfo::default(),
             same_domain_overlaps: Vec::new(),
             common_blocks: Vec::new(),
