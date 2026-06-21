@@ -238,25 +238,24 @@ impl<'a> PaveFiller<'a> {
         let mut near_coincident_faces = Vec::new();
         let mut max_suggested_fuzzy = base_tol;
 
-        // Iterate over all face pairs from different shapes
-        for f1_idx in 0..self.ds.a_face_count {
-            for f2_idx in self.ds.a_face_count..self.ds.faces.len() {
-                let pair_base = self.ff_tol(f1_idx, f2_idx);
-                let tangent_threshold = pair_base * 100.0;
-                let coincident_threshold = pair_base * 10.0;
-
-                // Check for near-tangency
-                if let Some(info) = self.check_near_tangent_enhanced(f1_idx, f2_idx, tangent_threshold) {
-                    max_suggested_fuzzy = max_suggested_fuzzy.max(info.suggested_fuzzy);
-                    near_tangent_faces.push(info);
-                }
-
-                // Check for near-coincidence
-                if let Some(info) = self.check_near_coincident_enhanced(f1_idx, f2_idx, coincident_threshold) {
-                    max_suggested_fuzzy = max_suggested_fuzzy.max(info.suggested_fuzzy);
-                    near_coincident_faces.push(info);
-                }
+        // ✅ OCCT-aligned: BOPDS_Iterator cross-group face pair iteration.
+        let a_fcount = self.ds.a_face_count;
+        let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.faces.len());
+        while fit.more() {
+            let pk = fit.value();
+            let f1_idx = pk.i1; let f2_idx = pk.i2;
+            let pair_base = self.ff_tol(f1_idx, f2_idx);
+            let tangent_threshold = pair_base * 100.0;
+            let coincident_threshold = pair_base * 10.0;
+            if let Some(info) = self.check_near_tangent_enhanced(f1_idx, f2_idx, tangent_threshold) {
+                max_suggested_fuzzy = max_suggested_fuzzy.max(info.suggested_fuzzy);
+                near_tangent_faces.push(info);
             }
+            if let Some(info) = self.check_near_coincident_enhanced(f1_idx, f2_idx, coincident_threshold) {
+                max_suggested_fuzzy = max_suggested_fuzzy.max(info.suggested_fuzzy);
+                near_coincident_faces.push(info);
+            }
+            fit.next();
         }
 
         // Store results in DS
@@ -3249,15 +3248,17 @@ impl<'a> PaveFiller<'a> {
                     }
             }
         } else {
-            // Brute-force: all A-face × B-face pairs
-            for &af in &a_faces {
-                for &bf in &b_faces {
-                    if self.should_skip_glued_face_pair(af, bf) {
-                        continue;
-                    }
+            // ✅ OCCT-aligned: BOPDS_Iterator cross-group face pair iteration.
+            let a_fcount = self.ds.a_face_count;
+            let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.faces.len());
+            while fit.more() {
+                let pk = fit.value();
+                let af = pk.i1; let bf = pk.i2;
+                if !self.should_skip_glued_face_pair(af, bf) {
                     eprintln!("[FF] perform_ff: af={} bf={}", af, bf);
                     self.intersect_face_face(af, bf);
                 }
+                fit.next();
             }
         }
     }
@@ -8884,13 +8885,14 @@ impl<'a> PaveFiller<'a> {
         let mut overlaps = Vec::new();
 
         // Iterate over all face pairs from different shapes
-        for f1_idx in 0..self.ds.a_face_count {
-            for f2_idx in self.ds.a_face_count..self.ds.faces.len() {
-                let tol = self.ff_tol(f1_idx, f2_idx);
-                if let Some(overlap) = self.check_partial_overlap(f1_idx, f2_idx, tol) {
-                    overlaps.push(overlap);
-                }
-            }
+        let a_fcount = self.ds.a_face_count;
+        let mut pit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.faces.len());
+        while pit.more() {
+            let pk = pit.value();
+            let f1_idx = pk.i1; let f2_idx = pk.i2;
+            let tol = self.ff_tol(f1_idx, f2_idx);
+            if let Some(overlap) = self.check_partial_overlap(f1_idx, f2_idx, tol) { overlaps.push(overlap); }
+            pit.next();
         }
 
         overlaps
@@ -9001,14 +9003,14 @@ impl<'a> PaveFiller<'a> {
         let mut overlaps = Vec::new();
 
         // Iterate over all edge pairs from different shapes
-        for e1_idx in 0..self.ds.a_edge_count {
-            for e2_idx in self.ds.a_edge_count..self.ds.edges.len() {
-                let tol = self.ee_tol(e1_idx, e2_idx);
-                if let Some(overlap) = self.detect_edge_overlap(e1_idx, e2_idx, tol)
-                    && overlap.overlap_type != EdgeOverlapType::None {
-                        overlaps.push(overlap);
-                    }
-            }
+        let a_ecount = self.ds.a_edge_count;
+        let mut eit = crate::bopds::ds::PairIterator::prepare_ab(a_ecount, self.ds.edges.len());
+        while eit.more() {
+            let pk = eit.value();
+            let e1_idx = pk.i1; let e2_idx = pk.i2;
+            let tol = self.ee_tol(e1_idx, e2_idx);
+            if let Some(overlap) = self.detect_edge_overlap(e1_idx, e2_idx, tol) && overlap.overlap_type != EdgeOverlapType::None { overlaps.push(overlap); }
+            eit.next();
         }
 
         overlaps
@@ -9599,13 +9601,14 @@ impl<'a> PaveFiller<'a> {
     pub fn detect_all_edge_containments(&self) -> Vec<EdgeContainmentResult> {
         let mut containments = Vec::new();
 
-        for e1_idx in 0..self.ds.a_edge_count {
-            for e2_idx in self.ds.a_edge_count..self.ds.edges.len() {
-                let tol = self.ee_tol(e1_idx, e2_idx);
-                if let Some(containment) = self.detect_edge_containment(e1_idx, e2_idx, tol) {
-                    containments.push(containment);
-                }
-            }
+        let a_ecount = self.ds.a_edge_count;
+        let mut eit = crate::bopds::ds::PairIterator::prepare_ab(a_ecount, self.ds.edges.len());
+        while eit.more() {
+            let pk = eit.value();
+            let e1_idx = pk.i1; let e2_idx = pk.i2;
+            let tol = self.ee_tol(e1_idx, e2_idx);
+            if let Some(containment) = self.detect_edge_containment(e1_idx, e2_idx, tol) { containments.push(containment); }
+            eit.next();
         }
 
         containments
@@ -9626,13 +9629,14 @@ impl<'a> PaveFiller<'a> {
         let mut tangent_faces = Vec::new();
 
         // Iterate over all face pairs from different shapes
-        for f1_idx in 0..self.ds.a_face_count {
-            for f2_idx in self.ds.a_face_count..self.ds.faces.len() {
-                let tangent_threshold = self.ff_tol(f1_idx, f2_idx) * 100.0;
-                if let Some(info) = self.check_near_tangent_faces(f1_idx, f2_idx, tangent_threshold) {
-                    tangent_faces.push(info);
-                }
-            }
+        let a_fcount = self.ds.a_face_count;
+        let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.faces.len());
+        while fit.more() {
+            let pk = fit.value();
+            let f1_idx = pk.i1; let f2_idx = pk.i2;
+            let tangent_threshold = self.ff_tol(f1_idx, f2_idx) * 100.0;
+            if let Some(info) = self.check_near_tangent_faces(f1_idx, f2_idx, tangent_threshold) { tangent_faces.push(info); }
+            fit.next();
         }
 
         tangent_faces
@@ -9894,13 +9898,14 @@ impl<'a> PaveFiller<'a> {
     pub fn handle_near_coincident_faces(&self) -> Vec<NearCoincidentFaceInfo> {
         let mut coincident_faces = Vec::new();
 
-        for f1_idx in 0..self.ds.a_face_count {
-            for f2_idx in self.ds.a_face_count..self.ds.faces.len() {
-                let coincident_threshold = self.ff_tol(f1_idx, f2_idx) * 10.0;
-                if let Some(info) = self.check_near_coincident_faces(f1_idx, f2_idx, coincident_threshold) {
-                    coincident_faces.push(info);
-                }
-            }
+        let a_fcount = self.ds.a_face_count;
+        let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.faces.len());
+        while fit.more() {
+            let pk = fit.value();
+            let f1_idx = pk.i1; let f2_idx = pk.i2;
+            let coincident_threshold = self.ff_tol(f1_idx, f2_idx) * 10.0;
+            if let Some(info) = self.check_near_coincident_faces(f1_idx, f2_idx, coincident_threshold) { coincident_faces.push(info); }
+            fit.next();
         }
 
         coincident_faces
