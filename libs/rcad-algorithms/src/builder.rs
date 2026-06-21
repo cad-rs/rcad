@@ -5442,7 +5442,13 @@ impl<'a> BooleanBuilder<'a> {
 
             // Outer wire (OCCT: TopoDS_Iterator on wire → sub-edges)
             let edges: Vec<usize> = self.ds.faces[fi].boundary_edges.clone();
-            let has_split = edges.iter().any(|&ei| self.my_images.borrow().contains_key(&ei));
+            // ✅ OCCT-aligned L228-229: modified only if myImages[aE] exists AND
+            //   (list size != 1 OR the single image != aE itself).
+            let has_split = edges.iter().any(|&ei| {
+                self.my_images.borrow().get(&ei).map_or(false, |imgs| {
+                    imgs.len() != 1 || imgs[0] != ei
+                })
+            });
             let wi = next_wi;
             next_wi += 1;
             if !has_split {
@@ -5474,7 +5480,11 @@ impl<'a> BooleanBuilder<'a> {
             // Inner wires: same as outer, each gets its own wire index
             for iw_edges in &self.ds.faces[fi].inner_boundary_edges {
                 let iw: Vec<usize> = iw_edges.iter().map(|(ei, _)| *ei).collect();
-                let iw_has_split = iw.iter().any(|&ei| self.my_images.borrow().contains_key(&ei));
+                let iw_has_split = iw.iter().any(|&ei| {
+                    self.my_images.borrow().get(&ei).map_or(false, |imgs| {
+                        imgs.len() != 1 || imgs[0] != ei
+                    })
+                });
                 let iwi = next_wi;
                 next_wi += 1;
                 if !iw_has_split {
