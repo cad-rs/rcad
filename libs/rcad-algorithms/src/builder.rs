@@ -5983,29 +5983,38 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     /// ✅ OCCT-aligned: FillImagesContainers(SHELL) (BOPAlgo_Builder_1.cxx L172-276).
-    /// ✅ OCCT-aligned: FillImagesContainers(SHELL) (BOPAlgo_Builder_1.cxx L172-276).
     ///   OCCT L175-183: iterates source shapes → filters TopAbs_SHELL →
-    ///   FillImagesContainer → collects each shell's face images → builds shell.
-    ///   rcad: source shells not tracked explicitly; group result faces by their
-    ///   source operand (A or B).  Each operand's faces form one result shell.
+    ///   FillImagesContainer(aC, SHELL) for each.
+    ///   OCCT L221-276: FillImagesContainer:
+    ///     L224-233: check if any SHell sub-shape modified (myImages.Seek).
+    ///     L235-240: if none modified → skip (return).
+    ///     L242-275: build new container from sub-shape images, store in myImages.
+    ///   rcad: group result faces by source operand (A/B) into shells.
+    ///   ⏳ rcad: source shell boundaries not tracked at DS level (only
+    ///     FaceOrigin::FromA(source_face_idx) is available).  For single-shell
+    ///     operands, A/B grouping is equivalent.  Multi-shell operands need
+    ///     source-shell mapping from the source BRep.
     fn fill_images_containers_shells(&self, result: &mut ResultBuilder) {
         let nf = result.faces.len();
         if nf == 0 { return; }
+
         // OCCT L224-233: check if any sub-face has been modified
-        //   (myImages.Seek(aSS) exists) → if none modified, skip.
-        let all_unmodified = result.face_origins.iter().all(|_| false); // rcad: always modified
-        if all_unmodified { return; }
+        //     (if no modifications, skip shell building entirely).
+        //   rcad: faces are always modified (rcad emits classified sub-faces).
+        //   OCCT would return early via L235-240; rcad always proceeds.
 
         // OCCT L242-275: build shell from each source operand's face images.
-        //   rcad: faces are already emitted to result with origin annotations.
-        //   Group by source operand (A/B) — each operand's faces form one shell.
+        //   OCCT iterates source SHELL shapes (via FillImagesContainer).
+        //   rcad: source shells not tracked explicitly → group by A/B origin.
         let is_a = |o: FaceOrigin| -> bool { matches!(o, FaceOrigin::FromA(_)) };
         let mut shells: Vec<Vec<usize>> = Vec::new();
         for is_a_side in [true, false] {
-            let shell: Vec<usize> = (0..nf)
+            let shell_faces: Vec<usize> = (0..nf)
                 .filter(|&fi| is_a(result.face_origins[fi]) == is_a_side)
                 .collect();
-            if !shell.is_empty() { shells.push(shell); }
+            if !shell_faces.is_empty() {
+                shells.push(shell_faces);
+            }
         }
         result.shells = shells;
     }
