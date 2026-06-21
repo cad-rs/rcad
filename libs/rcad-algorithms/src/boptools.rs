@@ -21,7 +21,7 @@ pub fn make_sect_edge(ds: &mut DS, ci: usize, v1: usize, v2: usize) -> usize {
         origin: crate::bopds::ds::ShapeOrigin::ShapeA,
         geom_tol: ic.geom_tol,
         paves: Vec::new(),
-        pave_blocks: Vec::new(),
+        pave_blocks: Vec::new(), face_reps: Vec::new(),
     });
     ei
 }
@@ -89,7 +89,7 @@ pub fn make_ds_edge(
         start_vertex: v1, end_vertex: v2, curve, t_range,
         origin: crate::bopds::ds::ShapeOrigin::ShapeA,
         geom_tol: crate::tolerance::TOLERANCE_ABS,
-        paves: Vec::new(), pave_blocks: Vec::new(),
+        paves: Vec::new(), pave_blocks: Vec::new(), face_reps: Vec::new(),
     });
     ei
 }

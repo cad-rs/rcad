@@ -12,7 +12,6 @@ use crate::history::{
     BooleanHistory, EdgeOrigin, FaceOrigin, HistoryTracker, ShellOrigin, SolidOrigin, VertexOrigin,
 };
 use crate::inttools::edge_face::plane_local_basis;
-use crate::inttools::pcurve_derive::{circle_pcurve_on_plane, fallback_pcurve_by_projection, line_pcurve_on_plane};
 use crate::tolerance::*;
 use crate::triangulate::{triangulate_polygon, triangulate_polygon_with_holes};
 
@@ -2582,20 +2581,6 @@ fn check_and_add_split_vertex(
 }
 
 /// ✅ OCCT-aligned: BuildSplitFaces edge assembly (L357-489) + DoSplitSEAMOnFace (L58-227).
-/// Compute the pcurve of a boundary edge on the given face surface.
-/// Equivalent to OCCT BRep_Tool::CurveOnSurface(edge, face).
-fn compute_boundary_pcurve(curve: &Curve3, surface: &Surface3) -> Option<(Curve2d, [f64; 2])> {
-    match (surface, curve) {
-        (Surface3::Plane(p), Curve3::Line(l)) => {
-            Some((line_pcurve_on_plane(l, p), [0.0, 1.0]))
-        }
-        (Surface3::Plane(p), Curve3::Circle(c)) => {
-            Some((circle_pcurve_on_plane(c, p), [0.0, 1.0]))
-        }
-        _ => None,  // non-planar boundary edges handled by seam/edge-specific paths
-    }
-}
-
 fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(usize) -> Option<Curve2d>) -> Vec<WireSegment> {
     let face = &ds.faces[face_idx];
     let mut segments: Vec<WireSegment> = Vec::new();
@@ -2907,13 +2892,13 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     if sv_seg == ev_seg { continue; }
                     let (t_start, t_end) = edge_uv_tangent(ds, sv_seg, ev_seg, &face.surface,
                         Some(&sub_edge.curve), Some(sub_edge.t_range));
-                    let bpcurve = compute_boundary_pcurve(&sub_edge.curve, &face.surface);
+                    let rep = ds.edge_on_face(sub_ei, face_idx);
                     segments.push(WireSegment {
                         start_vertex: sv_seg, end_vertex: ev_seg,
                         source: WireEdgeSource::DsEdge(sub_ei),
                         forward: true, is_seam: false, second_pcurve: None,
-                        first_pcurve: bpcurve.as_ref().map(|(pc, _)| pc.clone()),
-                        t_range: bpcurve.as_ref().map(|(_, r)| *r).unwrap_or([0.0, 1.0]),
+                        first_pcurve: rep.map(|r| r.pcurve.clone()),
+                        t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
                         tangent_start: t_start, tangent_end: t_end,
                     });                }
             } else {
@@ -2934,13 +2919,13 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     // No split vertices — whole edge as one segment (OCCT L374-378)
                     let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface,
                         Some(&ds.edges[ei].curve), Some(ds.edges[ei].t_range));
-                    let bpcurve = compute_boundary_pcurve(&ds.edges[ei].curve, &face.surface);
+                    let rep = ds.edge_on_face(ei, face_idx);
                     segments.push(WireSegment {
                         start_vertex: sv, end_vertex: ev,
                         source: WireEdgeSource::DsEdge(ei),
                         forward: true, is_seam: false, second_pcurve: None,
-                        first_pcurve: bpcurve.as_ref().map(|(pc, _)| pc.clone()),
-                        t_range: bpcurve.as_ref().map(|(_, r)| *r).unwrap_or([0.0, 1.0]),
+                        first_pcurve: rep.map(|r| r.pcurve.clone()),
+                        t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
                         tangent_start: t_start, tangent_end: t_end,
                     });                } else {
                     // ✅ OCCT-aligned: edge split by IC vertices (OCCT myImages equivalent).

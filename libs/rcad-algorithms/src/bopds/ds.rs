@@ -1,6 +1,6 @@
 use glam::{DVec2, DVec3};
-use rcad_kernel::geom::{Curve2d, *};
-use rcad_kernel::{BRep, CurveEval, WireEdge};
+use rcad_kernel::geom::{Curve2d, Curve3, Line2d, Line3, Plane, Surface3, any_perpendicular};
+use rcad_kernel::{BRep, CurveEval, SurfaceEval, WireEdge};
 
 use super::common_block::CommonBlock;
 use super::face_info::FaceInfo;
@@ -47,6 +47,18 @@ pub struct DSVertex {
     pub geom_tol: f64,
 }
 
+/// ✅ OCCT-aligned: edge's pcurve on one face (BRep_CurveRepresentation equivalent).
+/// Mirrors OCCT's BRep_TEdge per-face pcurve storage with PCurve/PCurve2.
+#[derive(Debug, Clone)]
+pub struct DSRepOnFace {
+    pub face_idx: usize,
+    pub pcurve: Curve2d,
+    pub pcurve2: Option<Curve2d>,
+    pub pcurve_range: [f64; 2],
+    pub start_param: f64,
+    pub end_param: f64,
+}
+
 /// An edge in the DS pool with curve reference.
 #[derive(Debug, Clone)]
 pub struct DSEdge {
@@ -63,6 +75,9 @@ pub struct DSEdge {
     pub paves: Vec<Pave>,
     /// After `build_split_edges`, the edge is represented by these sub-segments.
     pub pave_blocks: Vec<PaveBlock>,
+    /// ✅ OCCT-aligned: per-face pcurve representations (BRep_CurveRepresentation).
+    ///   Populated by DS::build_face_reps() after edges and faces are loaded.
+    pub face_reps: Vec<DSRepOnFace>,
 }
 
 /// A face in the DS pool with surface reference.
@@ -314,6 +329,7 @@ impl DS {
         ds.a_face_count = ds.faces.len();
         ds.load_brep(b, ShapeOrigin::ShapeB);
         ds.compute_uv_boundaries();
+        ds.build_face_reps();
 
         ds
     }
@@ -622,6 +638,7 @@ impl DS {
                 geom_tol: rcad_kernel::edge_tolerance(brep, i),
                 paves: Vec::new(),
                 pave_blocks: Vec::new(),
+            face_reps: Vec::new(),
             });
         }
 
@@ -765,6 +782,71 @@ impl DS {
     /// curve, then places the EXISTING vertex index on the curve's pave block,
     /// ensuring the section edge reuses the same TopoDS_Vertex.  This tolerance-
     /// based scan achieves the same sharing for rcad's flat vertex array.
+    /// ✅ OCCT-aligned: access edge's pcurve representation on a specific face.
+    ///   Returns None when no representation exists for this (edge, face) pair.
+    pub fn edge_on_face(&self, edge_idx: usize, face_idx: usize) -> Option<&DSRepOnFace> {
+        self.edges.get(edge_idx)?.face_reps.iter().find(|r| r.face_idx == face_idx)
+    }
+
+    /// ✅ OCCT-aligned: compute pcurve for a boundary edge on its face surface.
+    ///   Mirrors BRep_Tool::CurveOnSurface for boundary edges.
+    /// Returns (pcurve, pcurve_span_length) where pcurve has normalized direction.
+    fn compute_edge_pcurve(curve: &Curve3, surface: &Surface3) -> Option<(Curve2d, f64)> {
+        match (surface, curve) {
+            (Surface3::Plane(p), Curve3::Line(l)) => {
+                let u_axis = any_perpendicular(p.normal).normalize();
+                let v_axis = p.normal.cross(u_axis).normalize();
+                let diff = l.origin - p.origin;
+                let origin = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));
+                let dir = DVec2::new(l.direction.dot(u_axis), l.direction.dot(v_axis));
+                let len = dir.length();
+                if len > 1e-15 {
+                    Some((Curve2d::Line(Line2d { origin, direction: dir / len }), len))
+                } else { None }
+            }
+            (Surface3::Plane(p), Curve3::Circle(c)) => {
+                let u_axis = any_perpendicular(p.normal).normalize();
+                let v_axis = p.normal.cross(u_axis).normalize();
+                let diff = c.center - p.origin;
+                let center_2d = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));
+                let normal_dot = c.normal.dot(p.normal).abs();
+                if (normal_dot - 1.0).abs() < 1e-6 {
+                    let perim = std::f64::consts::TAU * c.radius;
+                    Some((Curve2d::Circle(rcad_kernel::geom::Circle2d { center: center_2d, radius: c.radius }), perim))
+                } else { None }
+            }
+            _ => None,
+        }
+    }
+
+    /// ✅ OCCT-aligned: build per-face pcurve representations for all boundary edges.
+    ///   Called after edges and faces are loaded (end of DS construction).
+    pub fn build_face_reps(&mut self) {
+        // For each face, iterate its boundary edges and create DSRepOnFace entries.
+        for fi in 0..self.faces.len() {
+            let surface = self.faces[fi].surface.clone();
+            // Collect all edge indices from outer and inner wires.
+            let mut all_ei: Vec<usize> = self.faces[fi].boundary_edges.clone();
+            for w in &self.faces[fi].inner_boundary_edges {
+                all_ei.extend(w.iter().map(|&(ei, _)| ei));
+            }
+            for &ei in &all_ei {
+                if self.edge_on_face(ei, fi).is_some() { continue; } // already computed
+                let Some(edge) = self.edges.get_mut(ei) else { continue; };
+                if let Some((pcurve, span)) = Self::compute_edge_pcurve(&edge.curve, &surface) {
+                    edge.face_reps.push(DSRepOnFace {
+                        face_idx: fi,
+                        pcurve,
+                        pcurve2: None,
+                        pcurve_range: [0.0, span],
+                        start_param: 0.0,
+                        end_param: span,
+                    });
+                }
+            }
+        }
+    }
+
     pub fn find_vertex_near(&self, point: DVec3, tol: f64) -> Option<usize> {
         let tol2 = tol * tol;
         self.vertices.iter().position(|v| (v.point - point).length_squared() <= tol2)
@@ -1079,6 +1161,7 @@ impl DS {
                     geom_tol: data.geom_tol,
                     paves: Vec::new(),
                     pave_blocks: Vec::new(),
+            face_reps: Vec::new(),
                 });
                 self.my_images[ei].push(sub_ei);
                 self.my_origins.push(ei);
