@@ -1,3 +1,4 @@
+pub mod box2d_tree;
 pub mod builder_solid;
 pub mod checker_si;
 pub mod common_block;
