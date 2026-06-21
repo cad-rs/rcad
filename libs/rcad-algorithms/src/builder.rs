@@ -1645,6 +1645,16 @@ pub struct BooleanBuilder<'a> {
     //   Stored here because DS is immutable (rcad uses &'a DS); their indices start
     //   at ds.edges.len() and are referenced by my_images(EDGE) / my_origins(EDGE).
     split_edges: std::cell::RefCell<Vec<crate::bopds::ds::DSEdge>>,
+    // ✅ OCCT-aligned: myInParts — source solid index → list of its IN face indices
+    //   (BOPAlgo_Builder.hxx L502).  Populated during FillImagesFaces, used by
+    //   FillIn3DParts / BuildDraftSolid for solid assembly.
+    my_in_parts: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
+    // ✅ OCCT-aligned: myNonDestructive (BOPAlgo_Builder.hxx L503).
+    //   Safe processing — avoids modifying input shapes. Used in PostTreat.
+    my_non_destructive: bool,
+    // ✅ OCCT-aligned: myCheckInverted (BOPAlgo_Builder.hxx L505).
+    //   Enables/disables inverted-solid check on input shapes.
+    my_check_inverted: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6032,6 +6042,9 @@ impl<'a> BooleanBuilder<'a> {
             my_origins: std::cell::RefCell::new(std::collections::HashMap::new()),
             my_shapes_sd: std::cell::RefCell::new(std::collections::HashMap::new()),
             split_edges: std::cell::RefCell::new(Vec::new()),
+            my_in_parts: std::cell::RefCell::new(std::collections::HashMap::new()),
+            my_non_destructive: false,
+            my_check_inverted: false,
         }
     }
 
