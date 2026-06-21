@@ -1641,6 +1641,10 @@ pub struct BooleanBuilder<'a> {
     my_origins: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
     // ✅ OCCT-aligned: myShapesSD — source shape index → same-domain shape index.
     my_shapes_sd: std::cell::RefCell<std::collections::HashMap<usize, usize>>,
+    // ✅ OCCT-aligned: split edges created by FillImagesEdges (PaveBlock → new DSEdge).
+    //   Stored here because DS is immutable (rcad uses &'a DS); their indices start
+    //   at ds.edges.len() and are referenced by my_images(EDGE) / my_origins(EDGE).
+    split_edges: std::cell::RefCell<Vec<crate::bopds::ds::DSEdge>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6027,6 +6031,7 @@ impl<'a> BooleanBuilder<'a> {
             my_images: std::cell::RefCell::new(std::collections::HashMap::new()),
             my_origins: std::cell::RefCell::new(std::collections::HashMap::new()),
             my_shapes_sd: std::cell::RefCell::new(std::collections::HashMap::new()),
+            split_edges: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -6259,9 +6264,31 @@ impl<'a> BooleanBuilder<'a> {
                 // OCCT L100-101: aPBR = myDS->RealPaveBlock(aPB)
                 //   rcad: PaveBlock is the real block (SD resolution done in PaveFiller).
                 // OCCT L103: nSpR = aPBR->Edge()  (split edge index)
-                //   rcad: assign new edge index sequentially.
                 let new_ei = next_new_ei;
                 next_new_ei += 1;
+
+                // Create a real DSEdge for this split (OCCT creates a new DS edge per PaveBlock).
+                let t1 = pb.pave1.param;
+                let t2 = pb.pave2.param;
+                let (t_start, t_end) = if t1 < t2 { (t1, t2) } else { (t2, t1) };
+                let split_curve = pb.curve.clone().unwrap_or_else(|| {
+                    // Fallback: trim the original edge's curve to the pave range.
+                    let curve = edge.curve.clone();
+                    // OCCT: IntTools_ShrunkRange trims the 3D curve; rcad approximation.
+                    curve
+                });
+                let split_edge = crate::bopds::ds::DSEdge {
+                    start_vertex: pb.pave1.vertex_idx,
+                    end_vertex: pb.pave2.vertex_idx,
+                    curve: split_curve,
+                    t_range: [t_start, t_end],
+                    origin: edge.origin,
+                    geom_tol: edge.geom_tol,
+                    paves: vec![pb.pave1, pb.pave2],
+                    pave_blocks: vec![pb.clone()],
+                    face_reps: vec![],
+                };
+                self.split_edges.borrow_mut().push(split_edge);
 
                 if debug_pipe {
                     eprintln!("[PIPE] Edge[{ei}] → new_ei={new_ei} pb=({:.4},{:.4})",
@@ -6281,13 +6308,71 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     /// ✅ OCCT-aligned: FillImagesContainers(WIRE) (BOPAlgo_Builder_1.cxx L172-193).
-    ///   Forms wires from edge images. rcad stub — wire formation is handled
-    ///   inside split_face_occt_wire_pipeline (Phase 3), not as a separate step.
+    ///   OCCT: iterates source shapes → filters TopAbs_WIRE → FillImagesContainer
+    ///   → builds wire images from edge images.  rcad: wires are implicit in face
+    ///   boundary_edges.  For each source wire, check if any edge has split images;
+    ///   if so rebuild the wire from split edges and store in myImages(WIRE).
     fn fill_images_containers_wires(&self) {
-        // OCCT L175-192: iterates source shapes → filters by TopAbs_WIRE →
-        //   FillImagesContainer(aC, TopAbs_WIRE) → builds wire images.
-        //   rcad: wire formation happens inside BuilderFace::PerformLoops,
-        //   called from split_face_occt_wire_pipeline in Phase 3.
+        let mut next_wi = self.ds.faces.len(); // wire indices start after face indices
+        // OCCT L175-183: iterate source shapes, filter TopAbs_WIRE
+        for fi in 0..self.ds.faces.len() {
+            // OCCT L224-233: check if any sub-edge has been modified
+            //   (myImages.Seek(aE) exists && != aE itself)
+
+            // Outer wire (OCCT: TopoDS_Iterator on wire → sub-edges)
+            let edges: Vec<usize> = self.ds.faces[fi].boundary_edges.clone();
+            let has_split = edges.iter().any(|&ei| self.my_images.borrow().contains_key(&ei));
+            let wi = next_wi;
+            next_wi += 1;
+            if !has_split {
+                // OCCT L236-240: no modification → no new image needed.
+                //   myImages.Bound(theS, List{aS}) — wire passes through unchanged.
+                self.my_images.borrow_mut().entry(wi).or_default().push(wi);
+                continue;
+            }
+            // OCCT L247-271: rebuild wire from edge images.
+            //   Iterate edges; if edge has images, use the first image;
+            //   otherwise use the original edge.  Build new wire container.
+            for &ei in &edges {
+                let my_imgs = self.my_images.borrow(); let img = my_imgs.get(&ei);
+                match img {
+                    Some(split_list) => {
+                        // OCCT L261-271: add each split edge image, with reverse check.
+                        for &new_ei in split_list {
+                            self.my_images.borrow_mut().entry(wi).or_default().push(new_ei);
+                        }
+                    }
+                    None => {
+                        // OCCT L255-257: no splits → add original edge to wire image.
+                        self.my_images.borrow_mut().entry(wi).or_default().push(ei);
+                    }
+                }
+            }
+            // Inner wires: same as outer, each gets its own wire index
+            for iw_edges in &self.ds.faces[fi].inner_boundary_edges {
+                let iw: Vec<usize> = iw_edges.iter().map(|(ei, _)| *ei).collect();
+                let iw_has_split = iw.iter().any(|&ei| self.my_images.borrow().contains_key(&ei));
+                let iwi = next_wi;
+                next_wi += 1;
+                if !iw_has_split {
+                    self.my_images.borrow_mut().entry(iwi).or_default().push(iwi);
+                    continue;
+                }
+                for &ei in &iw {
+                    let my_imgs = self.my_images.borrow(); let img = my_imgs.get(&ei);
+                    match img {
+                        Some(split_list) => {
+                            for &new_ei in split_list {
+                                self.my_images.borrow_mut().entry(iwi).or_default().push(new_ei);
+                            }
+                        }
+                        None => {
+                            self.my_images.borrow_mut().entry(iwi).or_default().push(ei);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// ✅ OCCT-aligned: FillImagesFaces (BOPAlgo_Builder_1.cxx L376-386).
