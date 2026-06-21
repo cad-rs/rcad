@@ -933,15 +933,12 @@ impl ResultBuilder {
     }
 
 
-    /// ❌ 未对齐/自创鏂规: 鍒涘缓 seam edge锛堜笉杩涜椤剁偣鍘婚噸锛夈€?
-    ///    OCCT 涓?sphere face 鐨?seam edge 鐢?MakeEdge 姝ｅ父鍒涘缓,涓嶅瓨鍦ㄩ《鐐?
-    ///    鍘婚噸闂銆俽cad 鐨?add_edge 鎸夐《鐐瑰鍘婚噸,浼氳灏?seam 鍚堝苟鍒版甯稿姬銆?
-    ///    姝ゆ柟娉曠粫杩囬《鐐瑰幓閲?鏄?rcad 鐗规湁鐨?workaround銆?
-    ///    锛佷粎鍦?split_sphere_by_circles 涓敤浜?sphere 鐨?seam edge銆?
-    /// ✅ OCCT-aligned: seam edge with curve-aware dedup.
-    ///    FWD+REV of the same seam sub-edge share the same TopoDS_Edge
-    ///    (same TShape, different orientations).  Different curves at
-    ///    the same vertex pair (seam vs IC) are distinct TopoDS_Edges.
+    /// ✅ OCCT-aligned: MakeEdge for seam edges (BRep_Builder::MakeEdge pattern).
+    ///    OCCT: BRep_Builder::MakeEdge creates a TopoDS_Edge with the 3D curve.
+    ///    Seam edges and IC arcs at the same vertex pair are distinct TopoDS_Edges
+    ///    (different TShapes).  rcad: same vertex pair + same curve → reuse (shared
+    ///    TShape); same vertex pair + different curve → create new via add_edge_occt
+    ///    (distinct TShape).  This matches OCCT's per-TShape edge identity.
     fn add_seam_edge(&mut self, v1: usize, v2: usize, circle: Curve3) -> usize {
         // Same logic as add_circle_edge: check for existing edge with same
         // vertex pair but different curve → create new; same curve → reuse.
