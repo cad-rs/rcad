@@ -6415,10 +6415,21 @@ impl<'a> BooleanBuilder<'a> {
     /// ✅ OCCT-aligned: face keep/discard policy (ComputeState → FillIn3DParts equivalent).
     ///   OCCT does NOT have a surface-type special case — ComputeState propagates
     ///   ON→IN/OUT based on face orientation + solid side, not surface type.
-    fn classification_keep_policy(&self, _source: SourceSide, class: Classification, _fi: usize) -> bool {
+    /// ✅ OCCT-aligned: BOPAlgo_Builder::FillImagesFaces — face keep policy.
+    ///   OCCT: after ComputeState returns IN/OUT/ON for a face against the other solid:
+    ///     FUSE: keep OUT + ON
+    ///     COMMON: keep IN + ON
+    ///     CUT A-B:
+    ///       face from A → keep if OUT or ON (A outside B)
+    ///       face from B → keep if IN or ON (B inside A, the cut surface)
+    fn classification_keep_policy(&self, source: SourceSide, class: Classification, _fi: usize) -> bool {
         match self.op {
-            BooleanOpType::Intersection => class == Classification::In,
-            _ => class != Classification::In,
+            BooleanOpType::Intersection => class == Classification::In || class == Classification::On,
+            BooleanOpType::Difference => match source {
+                SourceSide::A => class != Classification::In,
+                SourceSide::B => class == Classification::In || class == Classification::On,
+            },
+            BooleanOpType::Union => class != Classification::In,
         }
     }
 
