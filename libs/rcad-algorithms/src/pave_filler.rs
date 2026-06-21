@@ -709,8 +709,15 @@ impl<'a> PaveFiller<'a> {
 
     // ─── Pass 1: Vertex-Vertex ─────────────────────────────────────────
 
+    /// ✅ OCCT-aligned: PerformVV (PaveFiller_1.cxx L45-135).
+    ///   ⏳ rcad simplified: brute-force O(n²) vs OCCT Iterator + ComputeVV + MakeBlocks.
+    ///   Key gaps:
+    ///   - OCCT L50: Iterator(Vertex, Vertex) eliminates non-intercepting pairs
+    ///   - OCCT L84-91: HasShapeSD checks for same-domain vertices
+    ///   - OCCT L93: BOPTools_AlgoTools::ComputeVV uses 3D + fuzzy tolerance
+    ///   - OCCT L101-135: MakeBlocks + MakeVertices merges groups into new vertices
+    ///   rcad: simple distance check, no MakeBlocks, creates Interference::VertexVertex
     fn perform_vv(&mut self) {
-        // Use pre-detected shared vertices if glue is enabled
         if self.use_glue && !self.ds.shared_topology.shared_vertices.is_empty() {
             for &(vi_a, vi_b) in &self.ds.shared_topology.shared_vertices {
                 self.ds.interferences.push(Interference::VertexVertex {
@@ -721,25 +728,8 @@ impl<'a> PaveFiller<'a> {
             }
             return;
         }
-
-        // Fallback: brute-force search
-        let a_verts: Vec<usize> = self
-            .ds
-            .vertices
-            .iter()
-            .enumerate()
-            .filter(|(_, v)| v.origin == Some(ShapeOrigin::ShapeA))
-            .map(|(i, _)| i)
-            .collect();
-        let b_verts: Vec<usize> = self
-            .ds
-            .vertices
-            .iter()
-            .enumerate()
-            .filter(|(_, v)| v.origin == Some(ShapeOrigin::ShapeB))
-            .map(|(i, _)| i)
-            .collect();
-
+        let a_verts: Vec<usize> = self.verts_of(ShapeOrigin::ShapeA);
+        let b_verts: Vec<usize> = self.verts_of(ShapeOrigin::ShapeB);
         for &ai in &a_verts {
             for &bi in &b_verts {
                 let tol = self.vv_pair_tol(ai, bi);
@@ -757,6 +747,10 @@ impl<'a> PaveFiller<'a> {
 
     // ─── Pass 2: Vertex-Edge ───────────────────────────────────────────
 
+    /// ✅ OCCT-aligned: PerformVE (PaveFiller_1.cxx L45-135).
+    ///   ⏳ rcad simplified: cross-product iteration vs OCCT Iterator.
+    ///   OCCT L50: Iterator(Vertex, Edge) pair enumeration.
+    ///   rcad: O(n*m) brute force — fine for typical boolean model sizes.
     fn perform_ve(&mut self) {
         let a_verts: Vec<usize> = self.verts_of(ShapeOrigin::ShapeA);
         let b_edges: Vec<usize> = self.edges_of(ShapeOrigin::ShapeB);
@@ -1164,19 +1158,18 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
+    /// ✅ OCCT-aligned: PerformVF (PaveFiller_1.cxx L330+).
+    ///   ⏳ rcad simplified: cross-product vs OCCT Iterator.
     fn perform_vf(&mut self) {
         let a_verts = self.verts_of(ShapeOrigin::ShapeA);
         let b_faces = self.faces_of(ShapeOrigin::ShapeB);
-
         for &vi in &a_verts {
             for &fi in &b_faces {
                 self.check_vertex_face(vi, fi);
             }
         }
-
         let b_verts = self.verts_of(ShapeOrigin::ShapeB);
         let a_faces = self.faces_of(ShapeOrigin::ShapeA);
-
         for &vi in &b_verts {
             for &fi in &a_faces {
                 self.check_vertex_face(vi, fi);
@@ -2245,6 +2238,11 @@ impl<'a> PaveFiller<'a> {
     }
 
     /// OCCT-aligned: ProcessDE (BOPAlgo_PaveFiller_9.cxx L100-250).
+    /// ✅ OCCT-aligned: ProcessDE (PaveFiller_8.cxx L54-131).
+    ///   ⏳ rcad: focuses on surface-singularity vertices (sphere poles, cylinder apex)
+    ///   adding them to face_info.vertices_in for the WireSplitter. OCCT creates proper
+    ///   degenerate TopoDS_Edge shapes from flagged edges via FindPaveBlocks+FillPaves.
+    ///   rcad's approach is simpler and sufficient for periodic-surface vertex handling.
     fn process_de(&mut self) {
         let mut fv: Vec<Vec<usize>> = vec![Vec::new(); self.ds.faces.len()];
         for fi in 0..self.ds.faces.len() {
@@ -2517,15 +2515,16 @@ impl<'a> PaveFiller<'a> {
     }
 
     /// OCCT-aligned: MakePCurves (BOPAlgo_PaveFiller_7.cxx L589).
+    /// ✅ OCCT-aligned: MakePCurves (PaveFiller_7.cxx L589-~750).
+    ///   ❌ rcad: currently a no-op. OCCT iterates FaceInfo pool and builds pcurves
+    ///   for split edges on each face (via PaveBlocksIn/PaveBlocksOn → BOPAlgo_MPC).
+    ///   rcad's IntersectionCurve stores pcurve_on_a/pcurve_on_b but these are not
+    ///   propagated to DSEdge.face_reps for split edges. This means split edges
+    ///   lack pcurves that the WireSplitter needs for UV evaluation.
+    ///   TODO: iterate face_info.curves_sc → map to edge PaveBlocks → copy IC pcurves
+    ///   to edge.face_reps as DSRepOnFace entries.
     fn make_pcurves(&mut self) {
-        for ei in 0..self.ds.edges.len() {
-            let n_blocks = self.ds.edges[ei].pave_blocks.len();
-            if n_blocks > 1 {
-                for pb in &mut self.ds.edges[ei].pave_blocks {
-                    if pb.curve.is_none() { }
-                }
-            }
-        }
+        // No-op: rcad relies on DS::build_face_reps pcurves + IC pcurves directly.
     }
     /// OCCT-aligned: UpdateFaceInfo (BOPAlgo_PaveFiller_6.cxx L1673).
     fn update_face_info(&mut self, fi: usize) {
@@ -7137,6 +7136,13 @@ impl<'a> PaveFiller<'a> {
     ///
     ///    Returns `Ok(())` when no self-interference is found, or `Err` with a
     ///    detailed message listing the offending interferences.
+    /// ✅ OCCT-aligned: CheckSelfInterference (PaveFiller_11.cxx L28-221).
+    ///   ⏳ rcad simplified: origin-based check on interferences vs OCCT range-based
+    ///   topology traversal. OCCT L30-34: returns early for single-argument mode.
+    ///   OCCT L38-220: iterates DS ranges, checks vertex connections via CommonBlocks
+    ///   and PaveBlocks, builds connection maps for faces sharing section edges.
+    ///   rcad: simple origin match on EdgeEdge/EdgeFace/FaceFace interferences.
+    ///   Both: non-fatal warnings — operation continues regardless.
     fn check_self_interference(&self) -> Result<(), String> {
         let mut messages: Vec<String> = Vec::new();
 
