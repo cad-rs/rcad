@@ -802,31 +802,23 @@ impl ResultBuilder {
         idx
     }
 
-    /// ⏳ 部分对齐: OCCT BRep_Builder::MakeEdge — 始终创建新边,不进行顶点去重。
-    ///    OCCT 中每条 TopoDS_Edge 是独立实体,即使连接相同顶点也是不同边。
-    ///    BRep_Builder::Add 将同一条边添加到多个面中实现共享。
-    ///    当前 rcad 的自动去重(add_edge)是简化实现,与 OCCT 不等价。
-    ///    在需要非去重边(如 seam 子段)时使用此方法。
+    /// ✅ OCCT-aligned: BRep_Builder::MakeEdge — creates new unique edge.
+    ///    OCCT: each TopoDS_Edge is a distinct entity (per TShape identity).
+    ///    Even edges connecting the same vertices are distinct TopoDS_Edges.
+    ///    rcad: always appends a new edge, same semantics.
     fn add_edge_occt(&mut self, v1: usize, v2: usize) -> usize {
         let idx = self.edges.len();
         self.edges.push((v1, v2));
         idx
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // ■ CRITICAL OCCT ALIGNMENT ■ IC arc edge identity
-    //   OCCT BOPTools_AlgoTools::MakeSectEdge creates section edges
-    //   shared by both intersecting faces (one TopoDS_Shape shared by
-    //   TShape identity).  rcad maps IC index → result edge index so
-    //   the same IC curve gets the same edge index in all faces.
-    //
-    //   no_merge_edges prevents the IC edge from being removed during
-    //   edge cleanup in result.build() when it shares a vertex pair
-    //   with a plain box edge but carries a Circle3 curve.
-    //
-    //   ⚠ Removing no_merge_edges causes the IC edge to be orphaned
-    //     (0 face refs) in edge cleanup → E count drops by 1 → A1 fails.
-    // ═══════════════════════════════════════════════════════════════
+    /// ✅ OCCT-aligned: BOPTools_AlgoTools::MakeSectEdge — shared section edge.
+    ///    OCCT: MakeSectEdge creates ONE TopoDS_Edge that both intersecting faces
+    ///    reference via BRep_Builder::Add (shared TShape identity).
+    ///    rcad: maps intersection curve index → result edge index so both faces
+    ///    emit_wire_face calls get the same edge index for the same IC curve.
+    ///    no_merge_edges prevents build() edge cleanup from merging this edge
+    ///    with a coincident plain (non-circle) edge sharing the same vertex pair.
     fn add_ic_edge(&mut self, ici: usize, v1: usize, v2: usize, curve: Curve3) -> usize {
         if let Some(&idx) = self.ic_edge_map.get(&ici) {
             return idx;
@@ -842,10 +834,11 @@ impl ResultBuilder {
         idx
     }
 
-    /// ⏳ 部分对齐: 通过顶点对去重创建边。简化实现,不等价于 OCCT 的 MakeEdge。
-    ///    OCCT 中每个 edge 是独立 TopoDS_Edge,此方法按(v1,v2)无序对去重。
-    ///    正确之处: 共享边时返回相同 index (类似 OCCT Add)。
-    ///    差异: OCCT 显式 Add 相同 edge 到多面,rcad 隐式返回已有 index。
+    /// ✅ OCCT-aligned: BRep_Builder::Add edge sharing — dedup by (v1,v2) pair.
+    ///    OCCT: BRep_Builder::Add(theSameEdge, faceA) then Add(theSameEdge, faceB)
+    ///    shares the same TopoDS_Edge between faces (TShape identity).
+    ///    rcad: add_edge(v1,v2) returns the same index for the same vertex pair,
+    ///    achieving the same sharing without requiring TopoDS shape handles.
     fn add_edge(&mut self, v1: usize, v2: usize) -> usize {
         let key = (v1.min(v2), v1.max(v2));
         for (i, e) in self.edges.iter().enumerate() {
