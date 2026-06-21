@@ -2045,47 +2045,77 @@ impl<'a> PaveFiller<'a> {
     ///    Uses PaveBlock endpoint vertices for tolerance (OCCT L976-984),
     ///    not full edge endpoints (which are for the whole edge, not the
     ///    current PaveBlock's sub-range).
+    /// ✅ OCCT-aligned: ForceInterfEF (PaveFiller_5.cxx L772-~1099).
+    ///   OCCT algorithm:
+    ///     L787-821: collect all PaveBlocks with HasReference → RealPaveBlock
+    ///     L848-870: build BVH tree of PBs (BOPTools_BoxTree)
+    ///     L882-965: for each face, collect face vertices (On+In+Sc+PB endpoints)
+    ///       → check if candidate PB's vertices are in the face's vertex set
+    ///     L966-1054: for matched PBs, create EdgeFace intersection pairs
+    ///   rcad: brute-force edge×face iteration with OCCT vertex-set check.
+    ///   ⏳ rcad: no BVH tree (O(n²) is fine for typical model sizes).
     fn force_interf_ef(&mut self) {
+        // OCCT L787-821: collect all PBs (skip edges without PBs or degenerated)
         for ei in 0..self.ds.edges.len() {
             let edge = &self.ds.edges[ei];
-            // OCCT L779-805: iterate edges that have PaveBlocks
             if edge.pave_blocks.is_empty() { continue; }
+            // OCCT L804-808: skip degenerated edges
+            if self.ds.is_edge_degenerated(ei) { continue; }
+
             for fi in 0..self.ds.faces.len() {
+                // OCCT L1150: skip same-origin pairs
                 if edge.origin == self.ds.faces[fi].origin { continue; }
+
+                // OCCT L953-955: skip PBs already in face's On/In/Sc sets
                 if self.ds.interferences.iter().any(|inf| {
                     matches!(inf, Interference::EdgeFace { edge: e, face: f, .. } if *e == ei && *f == fi)
                 }) { continue; }
-                let face_surf = &self.ds.faces[fi].surface;
-                // OCCT L928-932: iterate PaveBlocks, check each one's midpoint
+
+                let face = &self.ds.faces[fi];
+
+                // OCCT L915-924: collect ALL face vertices (VerticesOn + VerticesIn +
+                //   VerticesSc).  rcad: vertices_on + vertices_in + curves_sc endpoints.
+                let mut face_verts = face.face_info.vertices_on.clone();
+                face_verts.extend(&face.face_info.vertices_in);
+                // OCCT VerticesSc: section-curve vertices from FF intersection.
+                for &ci in &face.face_info.curves_sc {
+                    if ci < self.ds.intersection_curves.len() {
+                        let ic = &self.ds.intersection_curves[ci];
+                        face_verts.insert(ic.start_vertex);
+                        face_verts.insert(ic.end_vertex);
+                    }
+                }
+
+                // OCCT L958-964: check if PB's vertices are in the face's vertex set
                 for pb in &edge.pave_blocks {
-                    // OCCT L976-984: aTolCheck = 2 * max(tol(Pave1), tol(Pave2))
-                    let v_tol_p1 = self.ds.vertices.get(pb.pave1.vertex_idx)
-                        .map(|v| v.geom_tol).unwrap_or(0.0);
-                    let v_tol_p2 = self.ds.vertices.get(pb.pave2.vertex_idx)
-                        .map(|v| v.geom_tol).unwrap_or(0.0);
-                    let tol_add = 2.0 * v_tol_p1.max(v_tol_p2);
-                    // OCCT L928-932: check both PaveBlock endpoints are on the face
-                    let v1_on = self.ds.faces[fi].face_info.vertices_on.contains(&pb.pave1.vertex_idx)
-                        || self.ds.faces[fi].face_info.vertices_in.contains(&pb.pave1.vertex_idx);
-                    let v2_on = self.ds.faces[fi].face_info.vertices_on.contains(&pb.pave2.vertex_idx)
-                        || self.ds.faces[fi].face_info.vertices_in.contains(&pb.pave2.vertex_idx);
-                    if !(v1_on && v2_on) { continue; }
-                    // OCCT L970-972: project PaveBlock midpoint onto face
+                    if !face_verts.contains(&pb.pave1.vertex_idx)
+                        || !face_verts.contains(&pb.pave2.vertex_idx)
+                    {
+                        continue;
+                    }
+
+                    // OCCT L970-976: tolerance add = 2 * max(tol(V1), tol(V2))
+                    let v_tol = pb.pave1.vertex_idx.max(pb.pave2.vertex_idx);
+                    let v_tol = self.ds.vertices.get(v_tol).map(|v| v.geom_tol).unwrap_or(0.0);
+                    let fuzzy = self.ds.fuzzy_tol + 2.0 * v_tol;
+
+                    // OCCT L982-1000: project PB midpoint onto face surface
                     let mid_t = (pb.pave1.param + pb.pave2.param) * 0.5;
                     let mid_pt = edge.curve.point_at(mid_t);
-                    let fuzzy = self.ds.fuzzy_tol + tol_add;
-                    let on_face = match face_surf {
+                    let on_face = match &face.surface {
                         Surface3::Plane(pl) => {
                             let d = mid_pt - pl.origin;
                             let proj = d - d.dot(pl.normal) * pl.normal;
                             proj.length() <= fuzzy
                         }
                         _ => {
-                            let (_, proj_pt) = crate::extrema::closest_point_on_surface(face_surf, mid_pt);
+                            let (_, proj_pt) = crate::extrema::closest_point_on_surface(&face.surface, mid_pt);
                             mid_pt.distance(proj_pt) <= fuzzy
                         }
                     };
+
                     if on_face {
+                        // OCCT L1007-1025: create EdgeFace interference
                         self.ds.interferences.push(Interference::EdgeFace {
                             edge: ei, face: fi,
                             point: mid_pt, edge_param: mid_t,
