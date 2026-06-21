@@ -2144,7 +2144,15 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                         })
                     })
                 }
-                _ => None,
+                // ✅ OCCT-aligned: generic fallback for any surface (Plane, BSpline, etc.)
+                //   Projects the endpoint to UV space.  The degenerate edge spans from
+                //   its IC junction U back toward the seam U=0 at the boundary V.
+                _ => world_to_uv(&face.surface, ds.vertices[sv].point).map(|uv| {
+                    Curve2d::Line(Line2d {
+                        origin: DVec2::new(0.0, uv.y),
+                        direction: DVec2::new(std::f64::consts::TAU, 0.0),
+                    })
+                }),
             };
             let tangent = compute_seam_tangent_angles(ds, sv, ev, &face.surface);
             segments.push(WireSegment {
