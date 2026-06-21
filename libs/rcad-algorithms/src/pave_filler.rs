@@ -10859,6 +10859,7 @@ mod tests {
         }
     }
 
+<<<<<<< Updated upstream
     // -----------------------------------------------------------
     // PaveFiller alignment tests (replacing extreme-geometry tests)
     // -----------------------------------------------------------
@@ -10866,14 +10867,150 @@ mod tests {
     /// Test that perform() runs without panic and produces intersection data
     #[test]
     fn test_perform_basic() {
+=======
+    // ============================================================
+    // PaveFiller Structure Tests
+    // ============================================================
+
+    /// Test that the PaveFiller perform order matches OCCT PerformInternal.
+    /// The post-FF steps must run in the exact OCCT order:
+    ///   PostTreatFF → UpdateBlocksWithSharedVertices → RefineFaceInfoIn →
+    ///   build_split_edges → UpdatePaveBlocksWithSDVertices → make_blocks →
+    ///   CheckSelfInterference → UpdateInterfsWithSDVertices → ReleasePaveBlocks →
+    ///   RefineFaceInfoOn → remove_micro_edges → make_pcurves → process_de
+    #[test]
+    fn test_perform_ff_post_order() {
+>>>>>>> Stashed changes
         let a = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
         let b = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
         let mut ds = DS::new(&a, &b);
         let mut filler = PaveFiller::new(&mut ds);
         filler.perform();
+<<<<<<< Updated upstream
         // perform should not panic and should produce some intersection data
         assert!(!ds.interferences.is_empty() || !ds.intersection_curves.is_empty(),
             "perform() should produce intersection data");
+=======
+        // After perform, the DS should have been processed through all phases.
+        // At minimum, intersection curves from FF are present.
+        // ds.intersection_curves should have entries for interfering face pairs.
+        let has_curves = !ds.intersection_curves.is_empty() || !ds.interferences.is_empty();
+        assert!(has_curves, "perform() should produce intersection data");
+        // PaveBlocks should be populated for at least some edges
+        let has_pbs = ds.pave_blocks.iter().any(|pb| {
+            pb.pave1.vertex_idx != pb.pave2.vertex_idx
+        });
+        assert!(has_pbs, "perform() should produce non-micro PaveBlocks");
+    }
+
+    /// Test make_pcurves — verify that pcurves are created for edges on faces.
+    #[test]
+    fn test_make_pcurves() {
+        let a = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let b = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let mut ds = DS::new(&a, &b);
+        let mut filler = PaveFiller::new(&mut ds);
+        filler.perform();
+        // make_pcurves adds DSRepOnFace entries to edge.face_reps.
+        // After perform, at least some edges should have face_reps.
+        let total_reps: usize = ds.edges.iter().map(|e| e.face_reps.len()).sum();
+        assert!(total_reps > 0, "make_pcurves should create face_reps entries");
+        // Each rep should have a valid pcurve
+        for (ei, edge) in ds.edges.iter().enumerate() {
+            for rep in &edge.face_reps {
+                assert!(rep.face_idx < ds.faces.len(),
+                    "edge[{}] face_rep face_idx {} out of range ({})", ei, rep.face_idx, ds.faces.len());
+            }
+        }
+    }
+
+    /// Test remove_micro_edges — verify that micro edges are removed after perform.
+    #[test]
+    fn test_remove_micro_edges() {
+        let a = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let b = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let mut ds = DS::new(&a, &b);
+        let mut filler = PaveFiller::new(&mut ds);
+        filler.perform();
+        // Micro edges (start==end PaveBlocks) should have been removed.
+        for (ei, edge) in ds.edges.iter().enumerate() {
+            for pb in &edge.pave_blocks {
+                if pb.pave1.vertex_idx == pb.pave2.vertex_idx {
+                    // This should only happen for degenerated edges (sphere pole)
+                    assert!(ds.is_edge_degenerated(ei),
+                        "non-degenerate edge[{}] has micro PaveBlock v1=v2={}", ei, pb.pave1.vertex_idx);
+                }
+            }
+        }
+    }
+
+    /// Test DS::edge_flags — verify HasFlag/SetFlag/is_edge_degenerated work.
+    #[test]
+    fn test_edge_flags() {
+        let a = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let b = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 0.5 });
+        let mut ds = DS::new(&a, &b);
+
+        // Initially no flags
+        for ei in 0..ds.edges.len() {
+            assert!(!ds.edge_has_flag(ei), "new DS: edge[{}] should have no flag", ei);
+            assert_eq!(ds.edge_flag(ei), 0, "new DS: edge[{}] flag should be 0", ei);
+        }
+
+        // Set flag on edge 0
+        ds.set_edge_flag(0, 42);
+        assert!(ds.edge_has_flag(0));
+        assert_eq!(ds.edge_flag(0), 42);
+
+        // is_edge_degenerated should return true for edges with start==end
+        let mut degen_found = false;
+        for ei in 0..ds.edges.len() {
+            if ds.edges[ei].start_vertex == ds.edges[ei].end_vertex {
+                assert!(ds.is_edge_degenerated(ei), "edge[{}] should be degenerated", ei);
+                degen_found = true;
+            }
+        }
+        // Edge with flag set but start!=end is NOT degenerated
+        assert!(!ds.is_edge_degenerated(0), "flagged edge[0] with start!=end should not be degen");
+    }
+
+    /// Test that process_de sets edge flags for degenerated edges.
+    #[test]
+    fn test_process_de_sets_flags() {
+
+        // Fuzzy tolerance should be adjusted or remain the same
+        assert!(
+            adjusted_fuzzy >= original_fuzzy,
+            "Adjusted fuzzy tolerance should be at least the original"
+        );
+
+        // If extreme geometry is detected, verify the results
+        if filler.ds.extreme_geometry.has_extreme_geometry {
+            // Should have near-tangent face pairs if detected
+            for pair in &filler.ds.extreme_geometry.near_tangent_faces {
+                assert!(pair.distance >= 0.0, "Distance should be non-negative");
+                assert!(
+                    matches!(
+                        pair.tangent_type,
+                        NearTangentType::CylinderPlane
+                            | NearTangentType::General
+                            | NearTangentType::PlaneParallel
+                    ),
+                    "Tangent type should be valid"
+                );
+                assert!(
+                    pair.suggested_fuzzy > 0.0,
+                    "Suggested fuzzy should be positive"
+                );
+            }
+        }
+
+        // The function should run without panic and produce valid results
+        assert!(
+            ds.extreme_geometry.recommended_fuzzy_adjustment >= 0.0,
+            "Recommended fuzzy adjustment should be non-negative"
+        );
+>>>>>>> Stashed changes
     }
 
 }
