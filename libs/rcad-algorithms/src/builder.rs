@@ -2134,6 +2134,16 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                         })
                     })
                 }
+                // ✅ OCCT-aligned: Torus deg edge pcurve — spans U=0→TAU at the
+                //   V boundary (matching OCCT BRep_Tool::CurveOnSurface for Torus).
+                Surface3::Torus(_) => {
+                    world_to_uv(&face.surface, ds.vertices[sv].point).map(|uv| {
+                        Curve2d::Line(Line2d {
+                            origin: DVec2::new(0.0, uv.y),
+                            direction: DVec2::new(std::f64::consts::TAU, 0.0),
+                        })
+                    })
+                }
                 _ => None,
             };
             let tangent = compute_seam_tangent_angles(ds, sv, ev, &face.surface);
