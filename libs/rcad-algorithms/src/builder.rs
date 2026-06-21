@@ -772,6 +772,43 @@ impl ResultBuilder {
         }
     }
 
+    /// ✅ OCCT-aligned: BuildResult(FACE) — add unmodified source face.
+    ///   OCCT Builder_1.cxx L146-152: no myImages → add original TopoDS_Face.
+    ///   rcad: create FaceEntry from DS boundary_edges with consistent orientation.
+    fn build_original_face(&mut self, ds: &DS, fi: usize, origin: FaceOrigin) {
+        let face = &ds.faces[fi];
+        let mut edge_indices: Vec<(usize, bool)> = Vec::new();
+        let mut prev_end: Option<usize> = None;
+        for &ei in &face.boundary_edges {
+            if ei >= ds.edges.len() { continue; }
+            let e = &ds.edges[ei];
+            let (sv, ev) = match prev_end {
+                Some(pe) if e.start_vertex == pe => (e.start_vertex, e.end_vertex),
+                Some(pe) if e.end_vertex == pe => (e.end_vertex, e.start_vertex),
+                _ => (e.start_vertex, e.end_vertex),
+            };
+            let brep_sv = self.add_ds_vertex(sv, ds.vertices[sv].point);
+            let brep_ev = self.add_ds_vertex(ev, ds.vertices[ev].point);
+            let bei = self.add_edge(brep_sv, brep_ev);
+            let fwd = (self.edges[bei].0, self.edges[bei].1) == (brep_sv, brep_ev);
+            edge_indices.push((bei, fwd));
+            prev_end = Some(ev);
+        }
+        if edge_indices.len() < 3 { return; }
+        let normal = face.normal;
+        let surface = face.surface.clone();
+        let centroid = edge_indices.iter()
+            .filter_map(|&(ei, fwd)| {
+                let e = self.edges.get(ei)?;
+                self.vertices.get(if fwd { e.1 } else { e.0 }).copied()
+            })
+            .sum::<DVec3>() / edge_indices.len() as f64;
+        self.faces.push((
+            edge_indices, vec![], vec![], normal, surface, None, centroid, 0.0, centroid, vec![],
+        ));
+        self.face_origins.push(origin);
+    }
+
     fn add_vertex(&mut self, point: DVec3) -> usize {
         let key = hash_point(point);
         if let Some(&idx) = self.vertex_map.get(&key) {
@@ -6242,6 +6279,40 @@ impl<'a> BooleanBuilder<'a> {
         self.fill_images_faces(&mut result, &a_faces, &b_faces);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         result.build_result("FACE");
+        if self.has_errors { return Err(BooleanError::DegenerateResult); }
+        // ✅ OCCT-aligned: BuildResult(FACE) — add unmodified source faces.
+        //   OCCT L146-152: if no myImages for a face, add original TopoDS_Face.
+        {
+            let mut emitted_a: std::collections::HashSet<usize> = std::collections::HashSet::new();
+            let mut emitted_b: std::collections::HashSet<usize> = std::collections::HashSet::new();
+            for origin in &result.face_origins {
+                match origin {
+                    FaceOrigin::FromA(fi) => { emitted_a.insert(*fi); }
+                    FaceOrigin::FromB(fi) => { emitted_b.insert(*fi); }
+                    _ => {}
+                }
+            }
+            // ⚠ OCCT: BuildResult adds the original TopoDS_Face regardless of surface type.
+            //   rcad: limited to Plane faces — curved surfaces (Cylinder/Sphere/Cone/Torus)
+            //   have seam/deg edges that require the WireSplitter's complex segment handling
+            //   (collect_face_edge_segments → emit_wire_face).  For now, only Plane faces
+            //   have simple boundaries that can be emitted directly via build_original_face.
+            use rcad_kernel::geom::Surface3;
+            for &fi in &a_faces {
+                if !emitted_a.contains(&self.ds.faces[fi].source_face_idx)
+                    && matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
+                {
+                    result.build_original_face(self.ds, fi, FaceOrigin::FromA(self.ds.faces[fi].source_face_idx));
+                }
+            }
+            for &fi in &b_faces {
+                if !emitted_b.contains(&self.ds.faces[fi].source_face_idx)
+                    && matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
+                {
+                    result.build_original_face(self.ds, fi, FaceOrigin::FromB(self.ds.faces[fi].source_face_idx));
+                }
+            }
+        }
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 4: FillImagesContainers(SHELL) (L388-398) → BuildResult(SHELL) (L394-398).
         self.fill_images_containers_shells(&mut result);
