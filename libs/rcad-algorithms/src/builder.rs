@@ -5555,6 +5555,17 @@ impl<'a> BooleanBuilder<'a> {
             //   L332+:    has IN/SC PBs → full BuilderFace::Perform (split_face_occt_wire_pipeline).
             //   No fallback: if BuilderFace fails, the face produces no images.
             if !has_pb_sc {
+                // ✅ OCCT-aligned L307-320: check if any wire has been modified
+                //    (myImages.IsBound on each wire).  If no modified wire, no
+                //    internals, and no alone vertices → skip (original passes through).
+                let has_modified = self.ds.faces[fi].boundary_edges.iter().any(|&ei| {
+                    self.my_images.borrow().get(&ei).map_or(false, |imgs| {
+                        imgs.len() != 1 || imgs[0] != ei
+                    })
+                });
+                if !has_modified && !has_pb_on {
+                    continue;
+                }
                 if has_info {
                     if let Some(draft) = self.build_draft_face(fi) {
                         let (_segments, wfs, _vp) = draft;
