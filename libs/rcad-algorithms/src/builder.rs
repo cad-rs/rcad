@@ -3051,6 +3051,10 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     let mut prev_v = sv;
                     let edge_curve = &ds.edges[ei].curve;
                     let etr = ds.edges[ei].t_range;
+                    // ✅ OCCT-aligned: sub-segments inherit pcurve from original edge.
+                    let seg_rep = ds.edge_on_face(ei, face_idx);
+                    let seg_first_pcurve = seg_rep.map(|r| r.pcurve.clone());
+                    let seg_range = seg_rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]);
                     // Map normalized position to curve parameter for sub-edge ranges.
                     let norm_to_t = |n: f64| etr[0] + n * (etr[1] - etr[0]);
                     let mut prev_t = norm_to_t(0.0);
@@ -3061,7 +3065,8 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                         segments.push(WireSegment {
                             start_vertex: prev_v, end_vertex: vi,
                             source: WireEdgeSource::DsEdge(ei),
-                            forward: true, is_seam: false, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0],
+                            forward: true, is_seam: false, second_pcurve: None,
+                            first_pcurve: seg_first_pcurve.clone(), t_range: seg_range,
                             tangent_start: ts, tangent_end: te,
                         });                        prev_v = vi;
                         prev_t = t_vi;
@@ -3071,7 +3076,8 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     segments.push(WireSegment {
                         start_vertex: prev_v, end_vertex: ev,
                         source: WireEdgeSource::DsEdge(ei),
-                        forward: true, is_seam: false, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0],
+                        forward: true, is_seam: false, second_pcurve: None,
+                        first_pcurve: seg_first_pcurve.clone(), t_range: seg_range,
                         tangent_start: ts, tangent_end: te,
                     });                }
             }
@@ -6308,7 +6314,9 @@ impl<'a> BooleanBuilder<'a> {
                     geom_tol: edge.geom_tol,
                     paves: vec![pb.pave1, pb.pave2],
                     pave_blocks: vec![pb.clone()],
-                    face_reps: vec![],
+                    // ✅ OCCT-aligned: pcurves carry over from original edge (TopoDS_Edge
+                    // contains BRep_CurveRepresentation; rcad copies DSEdge.face_reps).
+                    face_reps: edge.face_reps.clone(),
                 };
                 self.split_edges.borrow_mut().push(split_edge);
 
