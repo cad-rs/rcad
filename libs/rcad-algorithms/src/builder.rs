@@ -5385,7 +5385,6 @@ impl<'a> BooleanBuilder<'a> {
         for fi in 0..self.ds.faces.len() {
             let is_a = a_faces.contains(&fi);
             if !is_a && !b_faces.contains(&fi) { continue; }
-            let source_side = if is_a { SourceSide::A } else { SourceSide::B };
             let other_faces: &[usize] = if is_a { b_faces } else { a_faces };
 
             // OCCT L275: bHasFaceInfo = myDS->HasFaceInfo(i)
@@ -5417,26 +5416,21 @@ impl<'a> BooleanBuilder<'a> {
                 if !has_modified && !has_pb_on {
                     continue;
                 }
+                // ✅ OCCT-aligned: BuildSplitFaces emits ALL split faces without
+                //    classification (Builder_2.cxx L344-365).  Classification is
+                //    deferred to FillIn3DParts (fill_in_3d_parts below) matching
+                //    OCCT's Pipeline (Builder_3.cxx L97-200).
                 if has_info {
                     if let Some(draft) = self.build_draft_face(fi) {
                         let (_segments, wfs, _vp) = draft;
                         for wf in &wfs {
-                            let wire_subs = wire_faces_to_face_sample_data(
-                                std::slice::from_ref(wf), &[], self.ds, fi);
-                            if let Some(sub) = wire_subs.first() {
-                                let class = classify_against_solid_for_boolean(
-                                    self.op, source_side,
-                                    &FaceSampleData::from_sub_face(sub), other_faces, self.ds);
-                                if self.classification_keep_policy(source_side, class, fi) {
-                                    let origin = if is_a {
-                                        FaceOrigin::FromA(self.ds.faces[fi].source_face_idx)
-                                    } else {
-                                        FaceOrigin::FromB(self.ds.faces[fi].source_face_idx)
-                                    };
-                                    result.emit_wire_face(fi, wf, &[], self.ds, false, origin,
-                                        &std::collections::HashMap::new());
-                                }
-                            }
+                            let origin = if is_a {
+                                FaceOrigin::FromA(self.ds.faces[fi].source_face_idx)
+                            } else {
+                                FaceOrigin::FromB(self.ds.faces[fi].source_face_idx)
+                            };
+                            result.emit_wire_face(fi, wf, &[], self.ds, false, origin,
+                                &std::collections::HashMap::new());
                         }
                     }
                 }
@@ -5448,21 +5442,12 @@ impl<'a> BooleanBuilder<'a> {
                 if !wfs.is_empty() {
                     let wfs = promote_exterior_holes(wfs, &segments, self.ds, self.op, other_faces);
                     for wf in &wfs {
-                        let wire_subs = wire_faces_to_face_sample_data(
-                            std::slice::from_ref(wf), &segments, self.ds, fi);
-                        if let Some(sub) = wire_subs.first() {
-                            let class = classify_against_solid_for_boolean(
-                                self.op, source_side,
-                                &FaceSampleData::from_sub_face(sub), other_faces, self.ds);
-                            if self.classification_keep_policy(source_side, class, fi) {
-                                let origin = if is_a {
-                                    FaceOrigin::FromA(self.ds.faces[fi].source_face_idx)
-                                } else {
-                                    FaceOrigin::FromB(self.ds.faces[fi].source_face_idx)
-                                };
-                                result.emit_wire_face(fi, wf, &segments, self.ds, false, origin, &vertex_positions);
-                            }
-                        }
+                        let origin = if is_a {
+                            FaceOrigin::FromA(self.ds.faces[fi].source_face_idx)
+                        } else {
+                            FaceOrigin::FromB(self.ds.faces[fi].source_face_idx)
+                        };
+                        result.emit_wire_face(fi, wf, &segments, self.ds, false, origin, &vertex_positions);
                     }
                 }
             }
@@ -5697,9 +5682,10 @@ impl<'a> BooleanBuilder<'a> {
     ///   This replaces OCCT's draft-solid classification for 2-operand booleans.
     fn fill_in_3d_parts(&self, result: &mut ResultBuilder,
                          a_faces: &[usize], b_faces: &[usize]) -> Vec<(usize, usize, &'static str)> {
-        // OCCT L117-150: classify ALL result faces that were added via BuildResult
-        // (originals without interferences).  Faces already processed by Phase 3
-        // (split_face_occt_wire_pipeline) were classified at emit time.
+        // ✅ OCCT-aligned: classify ALL result faces (FillIn3DParts, Builder_3.cxx L97-200).
+        //    BuildSplitFaces emits all split faces without classification; original faces
+        //    are added by BuildResult(FACE).  This function classifies every face and
+        //    removes those that fail the operation's keep_policy (OCCT ClassifyFaces).
         let nf = result.faces.len();
         let mut to_remove = vec![false; nf];
         for fi in 0..nf {
