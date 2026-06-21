@@ -1222,8 +1222,12 @@ impl<'a> PaveFiller<'a> {
                 self.ds.faces[fi].face_info.vertices_on.insert(vi);
             }
         } else {
-            // For curved surfaces, use closest-point projection to check if
-            // the vertex lies on the surface within tolerance.
+            // For curved surfaces, project vertex onto surface to check if
+            // it lies on the face within tolerance.
+            // ✅ OCCT-aligned: IntTools_FClass2d::Perform for point IN/ON classification.
+            //   rcad: closest-point projection (surface distance).  ⏳ No UV boundary
+            //   containment check (IntTools_FClass2d would use face's uv_boundary for
+            //   2D point-in-face test via FClass2d_Classifier).
             let surface = face.surface.clone();
             if !matches!(surface, Surface3::Plane(_)) {
                 let proj =
@@ -1233,14 +1237,15 @@ impl<'a> PaveFiller<'a> {
                         vertex: vi,
                         face: fi,
                     });
-                }
+                    self.ds.faces[fi].face_info.vertices_on.insert(vi);
             }
         }
     }
+}
 
-    // ─── Pass 5: Edge-Face ─────────────────────────────────────────────
+// ─── Pass 5: Edge-Face ─────────────────────────────────────────────
 
-    /// ✅ OCCT-aligned: EF iterate PaveBlock sub-ranges (PerformEF L246-304)
+/// ✅ OCCT-aligned: EF iterate PaveBlock sub-ranges (PerformEF L246-304)
     ///    Build sub-ranges dynamically from edge.paves, without writing to edge.pave_blocks,
     ///    to avoid side-effect regressions.
     fn perform_ef(&mut self) {
