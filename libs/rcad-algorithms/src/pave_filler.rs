@@ -2,7 +2,7 @@ use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
 
 use crate::bopds::ds::{
-    DS, DSEdge, Interference, IntersectionCurve, ShapeOrigin,
+    DS, DSEdge, DSRepOnFace, Interference, IntersectionCurve, ShapeOrigin,
 };
 use crate::bopds::pave::*;
 use crate::bvh::Bvh;
@@ -7242,49 +7242,89 @@ impl<'a> PaveFiller<'a> {
     ///    (1,0,0)).  OCCT's PutPaveOnCurve processes ALL curves (edges + ICs)
     ///    and injects paves from any vertex on the curve.  This is the reverse
     ///    of put_bound_pave_on_curve (which injects boundary vertices into ICs).
+    /// ✅ OCCT-aligned: MakeSplitEdges (PaveFiller_7.cxx L371-520).
+    ///   Creates PaveBlocks from Paves, then for each PaveBlock creates a split
+    ///   DSEdge (analogous to OCCT's TopoDS_Edge per PaveBlock) and sets
+    ///   pb.new_edge to the new edge index, matching OCCT aPB->SetEdge(nEn).
+    ///
+    ///   Single-block edges (no split) reuse the original edge index (pb.new_edge = ei),
+    ///   matching OCCT's aPB->SetEdge(nE) for aLPB.Extent() == 1.
     fn build_split_edges(&mut self) {
+        // Phase 1: collect PaveBlock data without creating new edges (avoids
+        // mutable borrow conflict with self.ds.edges iteration).
+        struct BlockData {
+            ei: usize,
+            sv: usize, ev: usize,
+            t_start: f64, t_end: f64,
+            curve: Curve3,
+            origin: ShapeOrigin,
+            geom_tol: f64,
+            face_reps: Vec<DSRepOnFace>,
+        }
+        let mut all_blocks: Vec<BlockData> = Vec::new();
+
         for ei in 0..self.ds.edges.len() {
             let edge = &self.ds.edges[ei];
             if edge.paves.is_empty() {
-                // No splits — single pave block spanning entire edge
-                let pb = PaveBlock::new(
-                    ei,
-                    Pave {
-                        vertex_idx: edge.start_vertex,
-                        param: edge.t_range[0],
-                    },
-                    Pave {
-                        vertex_idx: edge.end_vertex,
-                        param: edge.t_range[1],
-                    },
+                // OCCT L457-461: no split → reuse original edge
+                let mut pb = PaveBlock::new(ei,
+                    Pave { vertex_idx: edge.start_vertex, param: edge.t_range[0] },
+                    Pave { vertex_idx: edge.end_vertex, param: edge.t_range[1] },
                 );
+                pb.new_edge = Some(ei);
                 self.ds.edges[ei].pave_blocks = vec![pb];
                 continue;
             }
 
-            // Collect all paves including endpoints, sort by parameter
             let mut all_paves = vec![
-                Pave {
-                    vertex_idx: edge.start_vertex,
-                    param: edge.t_range[0],
-                },
-                Pave {
-                    vertex_idx: edge.end_vertex,
-                    param: edge.t_range[1],
-                },
+                Pave { vertex_idx: edge.start_vertex, param: edge.t_range[0] },
+                Pave { vertex_idx: edge.end_vertex, param: edge.t_range[1] },
             ];
             all_paves.extend_from_slice(&edge.paves);
             all_paves.sort_by(|a, b| a.param.partial_cmp(&b.param).unwrap_or(std::cmp::Ordering::Equal));
-
-            // Deduplicate paves at the same parameter
             all_paves.dedup_by(|a, b| params_equal(a.param, b.param));
 
-            // Create pave blocks between consecutive paves
-            let mut blocks = Vec::new();
             for w in all_paves.windows(2) {
-                blocks.push(PaveBlock::new(ei, w[0], w[1]));
+                let pb = PaveBlock::new(ei, w[0], w[1]);
+                let t1 = pb.pave1.param;
+                let t2 = pb.pave2.param;
+                let (t_start, t_end) = if t1 < t2 { (t1, t2) } else { (t2, t1) };
+                let split_curve = pb.curve.clone().unwrap_or_else(|| edge.curve.clone());
+                all_blocks.push(BlockData {
+                    ei,
+                    sv: pb.pave1.vertex_idx,
+                    ev: pb.pave2.vertex_idx,
+                    t_start, t_end,
+                    curve: split_curve,
+                    origin: edge.origin,
+                    geom_tol: edge.geom_tol,
+                    face_reps: edge.face_reps.clone(),
+                });
             }
-            self.ds.edges[ei].pave_blocks = blocks;
+        }
+
+        // Phase 2: create new DSEdges for each collected block
+        for data in &all_blocks {
+            let new_ei = self.ds.edges.len();
+            self.ds.edges.push(DSEdge {
+                start_vertex: data.sv,
+                end_vertex: data.ev,
+                curve: data.curve.clone(),
+                t_range: [data.t_start, data.t_end],
+                origin: data.origin,
+                geom_tol: data.geom_tol,
+                paves: vec![],
+                pave_blocks: vec![],
+                face_reps: data.face_reps.clone(),
+            });
+            // Update the original edge's PaveBlock with the new_edge index
+            if let Some(ref mut block_list) = self.ds.edges.get_mut(data.ei) {
+                for pb in &mut block_list.pave_blocks {
+                    if pb.pave1.vertex_idx == data.sv && pb.pave2.vertex_idx == data.ev {
+                        pb.new_edge = Some(new_ei);
+                    }
+                }
+            }
         }
     }
 

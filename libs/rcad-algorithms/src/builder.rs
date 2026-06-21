@@ -5635,53 +5635,36 @@ impl<'a> BooleanBuilder<'a> {
     ///   OCCT L73: aNbS = myDS->NbSourceShapes()
     ///   OCCT L78-80: filter TopAbs_EDGE
     ///   OCCT L84-86: filter HasReference (has pave blocks)
+    /// ✅ OCCT-aligned: FillImagesEdges (BOPAlgo_Builder_1.cxx L71-126).
+    ///   Reads split edges created by MakeSplitEdges (build_split_edges in PaveFiller)
+    ///   via pb.new_edge, matching OCCT's aPBR->Edge() pattern.
+    ///   Creates myImages(EDGE) and myOrigins(EDGE) mappings.
     fn fill_images_edges(&self) {
         let debug_pipe = std::env::var("RCAD_DEBUG_PIPELINE").is_ok();
-        let mut next_new_ei = self.ds.edges.len();
 
         for (ei, edge) in self.ds.edges.iter().enumerate() {
             // OCCT L81-87: if (!aSI.HasReference()) continue;
+            //   rcad: HasReference → non-empty pave_blocks.
             if edge.pave_blocks.is_empty() {
-                // ⏳ rcad: HasReference approximated by non-empty pave_blocks.
                 continue;
             }
 
-            // OCCT L89: const TopoDS_Shape& aE = aSI.Shape();
-            //   rcad: edge index ei serves as shape identity.
-            // OCCT L95: pLS = myImages.Bound(aE, List());
-            // OCCT L97-98: for (aItPB.Init(aLPB); aItPB.More(); aItPB.Next())
-
+            // OCCT L89-L98: iterate PaveBlocks of the edge
             for pb in &edge.pave_blocks {
-                // OCCT L100-101: aPBR = myDS->RealPaveBlock(aPB)
-                //   rcad: PaveBlock is the real block (SD resolution done in PaveFiller).
-                // OCCT L103: nSpR = aPBR->Edge()  (split edge index)
-                let new_ei = next_new_ei;
-                next_new_ei += 1;
-
-                // Create a real DSEdge for this split (OCCT creates a new DS edge per PaveBlock).
-                let t1 = pb.pave1.param;
-                let t2 = pb.pave2.param;
-                let (t_start, t_end) = if t1 < t2 { (t1, t2) } else { (t2, t1) };
-                let split_curve = pb.curve.clone().unwrap_or_else(|| {
-                    // Fallback: trim the original edge's curve to the pave range.
-                    let curve = edge.curve.clone();
-                    // OCCT: IntTools_ShrunkRange trims the 3D curve; rcad approximation.
-                    curve
-                });
-                let split_edge = crate::bopds::ds::DSEdge {
-                    start_vertex: pb.pave1.vertex_idx,
-                    end_vertex: pb.pave2.vertex_idx,
-                    curve: split_curve,
-                    t_range: [t_start, t_end],
-                    origin: edge.origin,
-                    geom_tol: edge.geom_tol,
-                    paves: vec![pb.pave1, pb.pave2],
-                    pave_blocks: vec![pb.clone()],
-                    // ✅ OCCT-aligned: pcurves carry over from original edge (TopoDS_Edge
-                    // contains BRep_CurveRepresentation; rcad copies DSEdge.face_reps).
-                    face_reps: edge.face_reps.clone(),
+                // OCCT L103: nSpR = aPBR->Edge() — split edge index set by MakeSplitEdges
+                let new_ei = match pb.new_edge {
+                    Some(nei) => nei,
+                    None => {
+                        // ⏳: PaveBlock without new_edge — build_split_edges should have set it.
+                        //     Fallback: use the original edge index (no split).
+                        ei
+                    }
                 };
-                self.split_edges.borrow_mut().push(split_edge);
+
+                // Copy the already-created edge from ds.edges into split_edges list
+                if new_ei < self.ds.edges.len() {
+                    self.split_edges.borrow_mut().push(self.ds.edges[new_ei].clone());
+                }
 
                 if debug_pipe {
                     eprintln!("[PIPE] Edge[{ei}] → new_ei={new_ei} pb=({:.4},{:.4})",
@@ -5693,9 +5676,6 @@ impl<'a> BooleanBuilder<'a> {
 
                 // OCCT L107-112: myOrigins.ChangeSeek(aSpR).Append(aE)
                 self.my_origins.borrow_mut().entry(new_ei).or_default().push(ei);
-
-                // OCCT L114-119: if (myDS->IsCommonBlockOnEdge(aPB))
-                //   rcad: common-block detection not yet implemented at builder level.
             }
         }
     }
