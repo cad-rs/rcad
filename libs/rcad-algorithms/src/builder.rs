@@ -2123,6 +2123,17 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                         direction: DVec2::new(-ic_u, 0.0),
                     }))
                 }
+                // ✅ OCCT-aligned: for non-Sphere periodic surfaces (Cylinder, Cone),
+                //   compute deg edge pcurve from endpoint UV projection.  The edge
+                //   spans from the seam U=0 to U=TAU at the boundary V value.
+                Surface3::Cylinder(_) | Surface3::Cone(_) => {
+                    world_to_uv(&face.surface, ds.vertices[sv].point).map(|uv| {
+                        Curve2d::Line(Line2d {
+                            origin: DVec2::new(0.0, uv.y),
+                            direction: DVec2::new(std::f64::consts::TAU, 0.0),
+                        })
+                    })
+                }
                 _ => None,
             };
             let tangent = compute_seam_tangent_angles(ds, sv, ev, &face.surface);
