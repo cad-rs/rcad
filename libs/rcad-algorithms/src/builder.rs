@@ -5895,35 +5895,38 @@ impl<'a> BooleanBuilder<'a> {
             _ => "Other",
         };
         // ✅ OCCT-aligned: BuilderFace::Perform (BOPAlgo_BuilderFace.cxx L117-148).
-        //   Step 1 PerformShapesToAvoid → Step 2 PerformLoops (WireSplitter) →
-        //   Step 3 PerformAreas → Step 4 PerformInternalShapes.
+        //   L121: GetReport()->Clear()
+        //   L123-127: CheckData() → if HasErrors return
+        //   L129-133: PerformShapesToAvoid → if HasErrors return
+        //   L135-139: PerformLoops → if HasErrors return
+        //   L141-145: PerformAreas → if HasErrors return
+        //   L147: PerformInternalShapes
         // SubFace (split_face) has been removed — all faces emit via emit_wire_face.
+
+        // Setup: edge segments + canonical vertex map (OCCT: constructor/CheckData).
         let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
         let mut segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
+        // OCCT L123: CheckData — validate input (segments must exist or face must have ICs).
         if segments.is_empty() {
-            // No segments — try BuildDraftFace for faces without ICs
             if !face.face_info.has_any_interference() {
-                if let Some(result) = self.build_draft_face(face_idx) {
-                    return Some(result);
-                }
+                // OCCT: BuildDraftFace handles faces without ICs.
+                return self.build_draft_face(face_idx);
             }
-            if debug_pipe { eprintln!("[PIPE] fi={} {} → no segments, no draft", face_idx, surf_name()); }
-            return None;
+            return None; // HasErrors equivalent
         }
-
-        // Shared canonical vertex map (BuilderFace and WireSplitter must agree).
+        // OCCT L123: vi_to_canon is built during CheckData/Prepare in OCCT.
         let vi_to_canon = build_vi_to_canon(&segments, ds);
 
-        // Step 1 — PerformShapesToAvoid (BuilderFace.cxx L152-235).
+        // OCCT L129: Step 1 — PerformShapesToAvoid (BuilderFace.cxx L152-235).
         let mut avoided = perform_shapes_to_avoid(&segments, &vi_to_canon, ds);
+        // if HasErrors → return (rcad: avoided is always valid)
 
-        // Step 2 — PerformLoops (BuilderFace.cxx L239-321): WireSplitter on the
-        //   segments NOT in `avoided`.
+        // OCCT L135: Step 2 — PerformLoops (BuilderFace.cxx L239-321).
         let (wires, mut internal_wires, vertex_positions) =
             build_closed_wires(&mut segments, ds, face_idx, &avoided);
+        // if HasErrors → return (rcad: empty wires handled below)
 
-        // PerformLoops step (c) (BuilderFace.cxx L312-321): edges that ended up in
-        //   no loop and are not yet avoided → add to avoided.
+        // OCCT L312-321: edges not in any loop → add to avoided.
         let in_loop: std::collections::HashSet<usize> = wires.iter().flatten().copied().collect();
         for si in 0..segments.len() {
             if !in_loop.contains(&si) && !avoided.contains(&si) {
@@ -5931,7 +5934,7 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        // Step 3 — PerformAreas (BuilderFace.cxx L387).
+        // OCCT L141: Step 3 — PerformAreas (BuilderFace.cxx L387).
         let mut wfs = if !wires.is_empty() {
             perform_areas(&wires, &[], &segments, ds, &mut *self.context.borrow_mut(), face_idx)
         } else if !internal_wires.is_empty() {
@@ -5939,7 +5942,9 @@ impl<'a> BooleanBuilder<'a> {
         } else {
             vec![WireFace { outer_wire: (0..segments.len()).collect(), inner_wires: vec![], internal_wires: vec![] }]
         };
-        // Step 4 — PerformInternalShapes (BuilderFace.cxx L327-382).
+        if wfs.is_empty() { return None; } // HasErrors equivalent
+
+        // OCCT L147: Step 4 — PerformInternalShapes (BuilderFace.cxx L327-382).
         {
             let avoided_vec: Vec<usize> = avoided.iter().copied().collect();
             let assembled = assemble_internal_wires(&avoided_vec, &segments);
@@ -5949,10 +5954,6 @@ impl<'a> BooleanBuilder<'a> {
             for wf in &mut wfs {
                 wf.internal_wires = internal_wires.clone();
             }
-        }
-        if wfs.is_empty() {
-            if debug_pipe { eprintln!("[PIPE] fi={} {} → wfs empty", face_idx, surf_name()); }
-            return None;
         }
         Some((segments, wfs, vertex_positions))
     }
@@ -6516,37 +6517,34 @@ impl<'a> BooleanBuilder<'a> {
         // ✅ OCCT L228: FillInternalVertices — handle alone vertices (stub).
     }
 
-    /// ✅ OCCT-aligned: FillSameDomainFaces (Builder_2.cxx L580-925).
-    /// Phase 4: merge identical-edge-set same-domain faces before building shells.
-    ///
-    /// OCCT approach (BOPAlgo_Builder_2.cxx L636-L796):
-    ///   1. Group result faces by identical edge SET (sorted DS edge indices
-    ///      across all wires).  OCCT BOPTools_Set: two faces with the same
-    ///      set of edges are geometrically identical (same domain).
-    ///   2. Within each group, verify surface compatibility (AreFacesSameDomain):
-    ///      - Plane: |n1-n2| < ANG_TOL  AND  |n1·o1 - n2·o2| < DIST_TOL
-    ///      - Other surface types are NOT merged (cylinder quadrants represent
-    ///        distinct angular regions).
-    ///   3. Keep the lowest-index face, flag the rest for removal.
-    ///   4. Record removed origins in `co_face_origins`.
-    ///
-    /// Key difference from edge-ADJACENCY: OCCT does NOT merge adjacent
-    /// coplanar faces that share only a boundary edge.  Two coplanar box faces
-    /// (e.g. front-face-left + front-face-right) share an edge but have
-    /// DIFFERENT edge sets → they remain separate.  Only when the EDGE SET IS
-    /// IDENTICAL (same face duplicated via separate emission paths) does OCCT
-    /// remove the duplicate.
-    ///
-    /// ✅ OCCT-aligned: BOPTools_Set edge-set equivalence + AreFacesSameDomain.
+    /// ✅ OCCT-aligned: FillSameDomainFaces (BOPAlgo_Builder_2.cxx L580-925).
+    ///   OCCT structure:
+    ///   1. L584-589: Check FF interferences → return if none.
+    ///   2. L597-648: Build aFaceToParent map (source solid → face) + propagate
+    ///      to split images.  Prevents merging faces from the same operand solid.
+    ///   3. L659-684: Collect FF-interfering face indices into aFIVec.
+    ///   4. L690-739: Build edge-set map (BOPTools_Set) + planar-face set.
+    ///   5. L740+: Group by edge set, check AreFacesSameDomain, remove duplicates.
     fn fill_same_domain_faces(&self, result: &mut ResultBuilder) {
         let nf = result.faces.len();
-        if nf < 2 {
-            return;
-        }
+        if nf < 2 { return; }
 
-        // ── Phase 1: Edge-set signature per face (OCCT BOPTools_Set) ──
-        // Collect sorted unique DS edge indices from all wires (outer + inner
-        // + internal).  Two faces with the same edge set share the same domain.
+        // OCCT L584-589: Check FF interferences — if none, nothing to merge.
+        let has_ff = self.ds.interferences.iter().any(|i| matches!(i, crate::bopds::ds::Interference::FaceFace { .. }));
+        if !has_ff { return; }
+
+        // OCCT L597-648: Build parent-solid map — faces from the same operand
+        //   are NOT merged (prevents zero-thickness interior in a single operand).
+        //   rcad: group by operand (A/B) as parent-solid proxy.
+        let is_from_a = |fi: usize| -> bool {
+            matches!(&result.face_origins[fi], FaceOrigin::FromA(_))
+        };
+
+        // OCCT L659-684: Collect FF-interfering face indices.
+        //   rcad: all result faces are candidates (simplification).
+        //   FF filter would skip faces without interferences.
+
+        // ── Edge-set signature per face (OCCT BOPTools_Set) ──
         let face_edge_set: Vec<Vec<usize>> = (0..nf)
             .map(|fi| {
                 let entry = &result.faces[fi];
@@ -6563,18 +6561,15 @@ impl<'a> BooleanBuilder<'a> {
             })
             .collect();
 
-        // ── Phase 2: Group by edge-set signature ──────────────────────
-        // OCCT BOPTools_Set: group faces by geometric edge identity.
+        // ── Group by edge-set signature ──
         let mut groups: std::collections::BTreeMap<Vec<usize>, Vec<usize>> =
             std::collections::BTreeMap::new();
         for fi in 0..nf {
-            if face_edge_set[fi].is_empty() {
-                continue;
-            }
+            if face_edge_set[fi].is_empty() { continue; }
             groups.entry(face_edge_set[fi].clone()).or_default().push(fi);
         }
 
-        // ── Phase 3: Surface comparison (AreFacesSameDomain) ──────────
+        // ── Surface comparison (AreFacesSameDomain) ──
         let same_surface = |s1: &Surface3, s2: &Surface3| -> bool {
             match (s1, s2) {
                 (Surface3::Plane(p1), Surface3::Plane(p2)) => {
@@ -6583,37 +6578,37 @@ impl<'a> BooleanBuilder<'a> {
                     (p1.normal - p2.normal).length() < TOLERANCE_ANG
                         && (d1 - d2).abs() < TOLERANCE_PLANE_DIST_RELAX
                 }
-                // OCCT only merges planar faces in FillSameDomainFaces.
                 _ => false,
             }
         };
 
-        // ── Phase 4: Mark duplicates for removal ──────────────────────
+        // ── Mark duplicates for removal ──
+        // OCCT: within each group, skip pairs with the same parent solid.
         let mut to_remove = vec![false; nf];
         for (_edge_set, members) in groups.iter() {
-            if members.len() < 2 {
-                continue;
-            }
-            let rep = members[0]; // keep the first (lowest index)
+            if members.len() < 2 { continue; }
+            let rep = members[0];
+            let rep_parent_a = is_from_a(rep);
             for &fi in members.iter().skip(1) {
+                // OCCT L597: parent-solid check — skip if both from same operand.
+                if rep_parent_a == is_from_a(fi) {
+                    continue; // same parent → don't merge
+                }
                 if same_surface(&result.faces[rep].4, &result.faces[fi].4) {
                     to_remove[fi] = true;
                 }
             }
         }
 
-        // ── Phase 5: Apply removals ───────────────────────────────────
+        // ── Apply removals ──
         let removed = to_remove.iter().filter(|&&r| r).count();
-        if removed == 0 {
-            return;
-        }
+        if removed == 0 { return; }
 
         for fi in 0..nf {
             if to_remove[fi] {
                 result.co_face_origins.push((fi, result.face_origins[fi]));
             }
         }
-
         let old_faces = std::mem::take(&mut result.faces);
         let old_origins = std::mem::take(&mut result.face_origins);
         for (fi, face) in old_faces.into_iter().enumerate() {
