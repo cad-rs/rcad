@@ -11285,40 +11285,15 @@ pub fn get_edge_on_face(edge_idx: usize, face_idx: usize, ds: &DS) -> bool {
 // ✅ Current state: emit_sphere_faces_direct replaces build_sphere_sub_faces_by_circles
 //    OCCT edge-based path not yet implemented. Current approach:
 //    emit_sphere_faces_direct: Circle3 intersection points → emit_face_data (FaceSampleData-free)
-//    ⏳ Still missing: seam edge splitting (DoSplitSEAMOnFace), proper edge→wire→face
-//    待实现步骤:
-//    1. 将 Circle3 交线转为 BRep Edge (BOPTools_AlgoTools::MakeEdge)
-//    2. 合并 seam 边子段 (DoSplitSEAMOnFace splitting at IC endpoints)
-//    3. BOPAlgo_WireSplitter::BuildWires (角度转向选择)
-//    4. PerformAreas: outer/hole 分类
+//    ✅ DoSplitSEAMOnFace 已实现 (collect_face_edge_segments L2196-2282)
+//    ✅ SmartMap/Path walk 已实现 (build_closed_wires L3312-3617)
+//    ✅ PerformAreas 已实现 (perform_areas)
+//    当前仍使用 emit_sphere_faces_direct 作为球面发射路径,替代 OCCT 的
+//    BuildSplitFaces → BuilderFace::Perform 边级路径。(架构差异: 球面分割)
 // ================================================================
 
-// ⏳ TODO: DoSplitSEAMOnFace seam 边分割 — 待实现
-// OCCT BOPTools_AlgoTools3D::DoSplitSEAMOnFace (BOPAlgo_Builder_2.cxx L392-449)
-// 在 seam 与 IC 的交点处分割 seam 边,创建 seam 子段。
-// 当前 emit_sphere_faces_direct 绕过 seam 边分割直接用 inside_pts 做边界。
-
-// ================================================================
-// ✅ OCCT BOPAlgo_BuilderFace 等价路径规划 (待实现)
-// ================================================================
-// OCCT 边级路径步骤:
-//   1. IntTools_FaceFace: 计算 Circle3 交线 (已由 PaveFiller 完成)
-//   2. BOPAlgo_Builder::BuildSplitFaces:
-//      a) 收集 section edges: Circle3 IC → BRep Edge (BOPTools_AlgoTools::MakeEdge)
-//      b) 收集 boundary edges: seam edge + split at IC endpoints
-//      c) 合并 seam 子段 (DoSplitSEAMOnFace, BOPAlgo_Builder_2.cxx L392-449)
-//   3. BOPAlgo_BuilderFace::Perform:
-//      a) PerformLoops: BOPAlgo_WireSplitter (角度转向选择)
-//      b) PerformAreas: outer/hole 分类 → WireFace
-//   4. TopoDS_Face: 从 WireFace 构建 (with proper surface+location)
-//
-// 当前替代路径 (❌ 待删除):
-//   emit_sphere_faces_direct: Circle3 → emit_face_data (替代FaceSampleData,但非OCCT边级路径)
-//   split_curved_face_parametric: UV polygon split (非OCCT)
-//   直接 keep/discard 逻辑: 绕过 OCCT 分类
-// ================================================================
-
-// ⏳ placeholder: seam edge IC 端点收集
-// OCCT: BOPAlgo_Builder_2.cxx L392-449 DoSplitSEAMOnFace
-// 在 seam (u=0) 上收集所有 IC 端点,按 V 排序,创建 seam 子段。
-// 当前 build_sphere_sub_faces_by_circles 绕过此步骤直接用 inside_pts 做边界。
+// ✅ DoSplitSEAMOnFace — 已实现 (collect_face_edge_segments L2196-2282)
+// OCCT BOPTools_AlgoTools3D::DoSplitSEAMOnFace (BOPTools_AlgoTools3D.cxx L58-232)
+// 在 seam 与 IC 的交点处分割 seam 边,创建 seam 子段,带 shifted pcurve。
+// rcad: collect_face_edge_segments 在 seam 子段上计算 second_pcurve,
+// 通过 midpoint UV 靠近 U=0 或 U=TAU 来判断偏移方向。
