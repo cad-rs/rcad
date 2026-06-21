@@ -2983,71 +2983,81 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
             eprintln!("[BLK] fi={} bi={} n={}", face_idx, bi, block.len());
         }
 
-        // ✅ OCCT-aligned: check regularity (WireSplitter_1.cxx L222-280).
-        //    Step 1 (L222-260): each vertex must have exactly 1 IN and 1 OUT
-        //    by SmartMap count (OCCT counts by InFlag per vertex).
-        //    Step 2 (L261-280): no duplicate edges (edge TShape coincidence).
-        let mut is_regular = true;
-        if block.iter().any(|&si| duplicate_segs.contains(&si)) {
-            is_regular = false;
-        } else {
-            // Build per-vertex IN/OUT counts matching OCCT SmartMap logic
-            // (WireSplitter_1.cxx L154-220): FORWARD/closed → OUT at start_vertex,
-            // second vertex always REVERSED → IN at end_vertex.
-            // REVERSED closed edges additionally get OUT at end + IN at start.
-            let mut vert_in_out: std::collections::HashMap<usize, (usize, usize)> =
-                std::collections::HashMap::new();
-            for &si in block {
-                let seg = &segments[si];
-                let cvs = vi_to_canon.get(seg.start_vertex).copied().unwrap_or(seg.start_vertex);
-                let cve = vi_to_canon.get(seg.end_vertex).copied().unwrap_or(seg.end_vertex);
-                // OCCT L159-163: FORWARD → OUT (InFlag=false) at first vertex.
-                //   bIsClosed closed edges get both directions (FWD+REV entries),
-                //   so both OUT at their first vertex.
-                if seg.forward || seg.is_seam {
-                    vert_in_out.entry(cvs).or_insert((0, 0)).1 += 1;
+        // ✅ OCCT-aligned: Build SmartMap (WireSplitter_1.cxx L154-220).
+        //    Always built first, used for BOTH regularity check and Path walk.
+        let mut smart_map: HashMap<usize, Vec<EdgeInfo>> = HashMap::new();
+        for &si in block {
+            let seg = &segments[si];
+            let is_inside = matches!(seg.source, WireEdgeSource::IntersectionCurve(_));
+            let is_circle_arc = is_inside && match &seg.source {
+                WireEdgeSource::IntersectionCurve(ci) => {
+                    ds.intersection_curves.get(*ci).map_or(false, |ic| {
+                        matches!(&ic.curve, rcad_kernel::geom::Curve3::Circle(_))
+                    })
                 }
-                // OCCT L167-172: second vertex always REVERSED → IN (InFlag=true).
-                vert_in_out.entry(cve).or_insert((0, 0)).0 += 1;
-                // OCCT L163-165: REVERSED copy of a closed edge provides the
-                //   complementary OUT at its first vertex (original end) and
-                //   IN at its second vertex (original start).
-                if seg.is_seam && !seg.forward {
-                    vert_in_out.entry(cve).or_insert((0, 0)).1 += 1;
-                    vert_in_out.entry(cvs).or_insert((0, 0)).0 += 1;
+                _ => false,
+            };
+            let is_closed = seg.is_seam;
+            let add_out = seg.forward || is_closed;
+            if add_out {
+                if let Some(angle) = seg.tangent_start {
+                    smart_map.entry(seg.start_vertex).or_default().push(EdgeInfo {
+                        seg_idx: si, passed: false, in_flag: false, is_inside, is_circle_arc, angle,
+                    });
                 }
             }
-            for &si in block {
-                let seg = &segments[si];
-                for &vi in &[seg.start_vertex, seg.end_vertex] {
-                    let cvi = vi_to_canon.get(vi).copied().unwrap_or(vi);
-                    // Virtual deg vertex (>= ds.vertices.len()): these are
-                    // self-loop vertices that intrinsically have 1 IN + 1 OUT.
-                    if cvi >= ds.vertices.len() { continue; }
-                    let (in_cnt, out_cnt) = vert_in_out.get(&cvi).copied().unwrap_or((0, 0));
-                    if in_cnt != 1 || out_cnt != 1 {
-                        is_regular = false;
-                        break;
-                    }
+            // OCCT L167-172: second vertex always REVERSED → InFlag=true
+            if let Some(angle) = seg.tangent_end {
+                smart_map.entry(seg.end_vertex).or_default().push(EdgeInfo {
+                    seg_idx: si, passed: false, in_flag: true, is_inside, is_circle_arc, angle,
+                });
+            }
+        }
+
+        // ✅ OCCT-aligned: regularity check (L222-280) from SmartMap IN/OUT.
+        //   Step 1 (L222-260): each vertex 1 IN + 1 OUT. Step 2 (L261-280):
+        //   no duplicate edges.
+        let mut is_regular = !block.iter().any(|&si| duplicate_segs.contains(&si));
+        if is_regular {
+            for (_, infos) in &smart_map {
+                let in_cnt = infos.iter().filter(|ei| ei.in_flag).count();
+                let out_cnt = infos.iter().filter(|ei| !ei.in_flag).count();
+                if in_cnt != 1 || out_cnt != 1 {
+                    is_regular = false;
+                    break;
                 }
-                if !is_regular { break; }
             }
         }
 
         if is_regular {
-            if std::env::var("RCAD_DEBUG_IC").is_ok() {
-                eprintln!("[REGULAR_BLOCK] fi={} bi={} n_segs={}", face_idx, bi, block.len());
-            }
+            // OCCT L282-290: MakeWire — extract simple wire (no angles needed).
             if let Some(wire) = build_regular_wire(block, segments, &vert_to_segs, &vi_to_canon, &deg_end_canon) {
                 wires.push(wire);
             }
         } else {
-            if std::env::var("RCAD_DEBUG_IC").is_ok() {
-                eprintln!("[IRREGULAR_BLOCK] fi={} bi={} n_segs={}", face_idx, bi, block.len());
+            // OCCT L292-358: RefineAngles (L327) → Path walk (L331-358).
+            refine_angles(&mut smart_map, segments, ds, face_idx);
+            // Path walk: iterate all unpassed OUT entries in SmartMap.
+            let mut start_candidates: Vec<(usize, usize)> = Vec::new();
+            for (&v, infos) in &smart_map {
+                for ei in infos {
+                    if !ei.passed && !ei.in_flag
+                        && ei.seg_idx < segments.len()
+                        && (segments[ei.seg_idx].start_vertex != segments[ei.seg_idx].end_vertex
+                            || segments[ei.seg_idx].is_seam)
+                    {
+                        start_candidates.push((v, ei.seg_idx));
+                    }
+                }
             }
-            // Irregular block: SmartMap + angle-based Path walking (pure SplitBlock)
-            let block_wires = build_irregular_wires(block, segments, ds, face_idx);
-            wires.extend(block_wires);
+            let mut candidate_idx = 0;
+            while candidate_idx < start_candidates.len() {
+                let (_v, start_si) = start_candidates[candidate_idx];
+                if !is_seg_passed(&smart_map, start_si) {
+                    walk_path_extract_wires(start_si, segments, &mut smart_map, &mut wires, ds, face_idx);
+                }
+                candidate_idx += 1;
+            }
         }
     }
 
@@ -3116,177 +3126,7 @@ struct EdgeInfo {
     angle: f64,
 }
 
-/// OCCT-aligned:  irregular block  SmartMap + Path
-///    (BOPAlgo_WireSplitter_1.cxx L359-618)
-fn build_irregular_wires(block: &[usize], segments: &[WireSegment], ds: &DS, face_idx: usize) -> Vec<Vec<usize>> {
-    // Build SmartMap: vertex  Vec<EdgeInfo>
-    let mut smart_map: HashMap<usize, Vec<EdgeInfo>> = HashMap::new();
-
-    if std::env::var("RCAD_DEBUG_IC").is_ok() {
-        let face_surf = ds.faces.get(face_idx).map(|f| format!("{:?}", f.surface)).unwrap_or_default();
-        eprintln!("[SMARTMAP_ORDER] face={} surf={} block segments:", face_idx, face_surf);
-        for &si in block {
-            let seg = &segments[si];
-            let src = match &seg.source {
-                WireEdgeSource::DsEdge(ei) => format!("Ds({})", ei),
-                WireEdgeSource::IntersectionCurve(ci) => format!("IC({})", ci),
-                _ => "?".to_string(),
-            };
-            let bound_or_ic = if matches!(seg.source, WireEdgeSource::DsEdge(_)) {
-                "BOUNDARY"
-            } else if matches!(seg.source, WireEdgeSource::IntersectionCurve(_)) {
-                "IC"
-            } else {
-                "OTHER"
-            };
-            eprintln!("[SMARTMAP_ORDER]   seg={} src={} fwd={} type={} start_v={} end_v={}",
-                si, src, seg.forward, bound_or_ic, seg.start_vertex, seg.end_vertex);
-        }
-    }
-
-    for &si in block {
-        let seg = &segments[si];
-
-        // ✅ OCCT-aligned: degenerate edges on periodic surfaces (sphere/cylinder)
-        //    DO have pcurves and participate in walk.  BRep_Tool::Degenerated(aE) is
-        //    false at SmartMap level; HasCurveOnSurface passes for these edges.
-        //    The walk uses their pcurve UV (a horizontal line at V=±π/2 spanning U)
-        //    to bridge the U seam at the pole, so include them as real walk members.
-        //    The virtual end vertex (>= ds.vertices.len()) keeps them walkable without
-        //    collapsing to a single point in the SmartMap.
-        let is_deg = seg.end_vertex >= ds.vertices.len();
-        let mark_passed = false;
-
-        let is_inside = matches!(seg.source, WireEdgeSource::IntersectionCurve(_));
-        let is_circle_arc = is_inside && match &seg.source {
-            WireEdgeSource::IntersectionCurve(ci) => {
-                ds.intersection_curves.get(*ci).map_or(false, |ic| {
-                    matches!(&ic.curve, rcad_kernel::geom::Curve3::Circle(_))
-                })
-            }
-            _ => false,
-        };
-
-
-        // OCCT SplitBlock L154-172: seam (closed) edges get BOTH forward
-        // and reverse entries (L429-452); IC/boundary edges get 1 entry.
-        // ✅ OCCT-aligned: SplitBlock L154-172 every vertex gets one SmartMap entry
-        //   with InFlag determined by the vertex's orientation (FORWARD→false=OUT,
-        //   REVERSED→true=IN).  OCCT's WES contains each edge only once (FORWARD).
-        //   Non-closed edges (IC, boundary) appear once → only the FWD segment
-        //   contributes OUT (at first vertex).  Closed edges (seam, deg) appear
-        //   TWICE (FWD+REV), so both get OUT at their first vertex.
-        //   Every segment gets IN at end_vertex (matches OCCT's second vertex).
-        let is_closed = seg.is_seam;
-        let add_out = seg.forward || is_closed;  // OUT for FWD, or all closed/seam
-        let add_in = true;  // OCCT: second vertex always REVERSED → InFlag=true
-
-        if add_out {
-            if let Some(angle) = seg.tangent_start {
-                smart_map.entry(seg.start_vertex).or_default().push(EdgeInfo {
-                    seg_idx: si, passed: mark_passed, in_flag: false, is_inside, is_circle_arc, angle,
-                });
-            }
-        }
-        if add_in {
-            if let Some(angle) = seg.tangent_end {
-                smart_map.entry(seg.end_vertex).or_default().push(EdgeInfo {
-                    seg_idx: si, passed: mark_passed, in_flag: true, is_inside, is_circle_arc, angle,
-                });
-            }
-        }
-    }
-
-    // [A1_DBG 3] SmartMap population summary
-    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() && face_idx == 0 {
-        let is_sphere = matches!(ds.faces[face_idx].surface, Surface3::Sphere(_));
-        eprintln!("[A1_DBG 3] SmartMap populated: face={}, is_sphere={}, num_vertices={}",
-            face_idx, is_sphere, smart_map.len());
-        let mut verts: Vec<usize> = smart_map.keys().copied().collect();
-        verts.sort();
-        for v in verts {
-            let infos = &smart_map[&v];
-            eprintln!("[A1_DBG 3]   v={}: {} entries — {:?}",
-                v, infos.len(),
-                infos.iter().map(|ei| (ei.seg_idx, ei.passed, ei.in_flag)).collect::<Vec<_>>());
-        }
-    }
-
-    // OCCT-aligned: RefineAngles (BOPAlgo_WireSplitter_1.cxx L904-1028)
-    refine_angles(&mut smart_map, segments, ds, face_idx);
-
-    // ✅ OCCT-aligned: SplitBlock (BOPAlgo_WireSplitter_1.cxx L331-358).
-    //    For each vertex in the SmartMap, iterate outgoing unpassed EdgeInfo
-    //    entries and call Path to walk a closed wire.  After each walk, the
-    //    visited edges are marked passed, and subsequent walks pick up the
-    //    remaining edges at the same or other vertices.
-    let mut wires: Vec<Vec<usize>> = Vec::new();
-    // Collect all (vertex, seg_idx) pairs for outgoing unpassed edges.
-    // Iterate the SmartMap in a fixed order to avoid borrow conflicts.
-    let mut start_candidates: Vec<(usize, usize)> = Vec::new();
-    let mut verts: Vec<usize> = smart_map.keys().copied().collect();
-    verts.sort_unstable();
-    for &v in &verts {
-        if let Some(infos) = smart_map.get(&v) {
-            for ei in infos {
-                if !ei.passed && !ei.in_flag
-                    && ei.seg_idx < segments.len()
-                    && (segments[ei.seg_idx].start_vertex != segments[ei.seg_idx].end_vertex
-                        || segments[ei.seg_idx].is_seam)  // ✅ OCCT: degenerate self-loop (seam) is a valid walk start
-                {
-                    start_candidates.push((v, ei.seg_idx));
-                }
-            }
-        }
-    }
-    if std::env::var("RCAD_DEBUG_IC").is_ok() && matches!(ds.faces[face_idx].surface, Surface3::Sphere(_)) {
-        let passed_str: Vec<String> = start_candidates.iter().map(|(v, si)| {
-            format!("(v{} si={} pass={})", v, si, is_seg_passed(&smart_map, *si))
-        }).collect();
-        eprintln!("[STARTS] face={} n_cand={}: {}", face_idx, start_candidates.len(), passed_str.join(" "));
-    }
-    if std::env::var("RCAD_DEBUG_IC").is_ok() && matches!(ds.faces[face_idx].surface, Surface3::Sphere(_)) {
-        eprintln!("[ITER] face={} n_cand={}", face_idx, start_candidates.len());
-    }
-    let mut candidate_idx = 0;
-    while candidate_idx < start_candidates.len() {
-        let (_v, start_si) = start_candidates[candidate_idx];
-        let is_already_passed = is_seg_passed(&smart_map, start_si);
-        if std::env::var("RCAD_DEBUG_IC").is_ok() {
-            eprintln!("[ITER]   fi={} idx={} si={} passed={}", face_idx, candidate_idx, start_si, is_already_passed);
-            if start_si == 12 && is_already_passed && matches!(ds.faces[face_idx].surface, Surface3::Sphere(_)) {
-                eprintln!("[IC12_PASS] si=12 is passed! Dumping EdgeInfo:");
-                for (v, infos) in smart_map.iter() {
-                    for ei in infos {
-                        if ei.seg_idx == 12 {
-                            eprintln!("[IC12_PASS]   v={} seg={} passed={} in={}", v, ei.seg_idx, ei.passed, ei.in_flag);
-                        }
-                    }
-                }
-            }
-        }
-        if !is_already_passed {
-            let nw_before = wires.len();
-            walk_path_extract_wires(start_si, segments, &mut smart_map, &mut wires, ds, face_idx);
-            if std::env::var("RCAD_DEBUG_IC").is_ok() && wires.len() == nw_before {
-                eprintln!("[IRR_FAIL] face={} start_si={} no new wires", face_idx, start_si);
-            }
-        }
-        candidate_idx += 1;
-    }
-    if std::env::var("RCAD_DEBUG_IC").is_ok() {
-        eprintln!("[IRR_DONE] face={} done", face_idx);
-    }
-    if std::env::var("RCAD_DEBUG_IC").is_ok() {
-        eprintln!("[IRR_WIRES] face={} n_wires={}", face_idx, wires.len());
-        for (wi, w) in wires.iter().enumerate() { eprintln!("[IRR_WIRE] face={} wi={} segs={:?}", face_idx, wi, w); }
-    }
-
-    // Pure SplitBlock: return the walked wires. PerformShapesToAvoid and
-    // internal-wire assembly are BuilderFace-level steps, done by the caller
-    // (split_face_occt_wire_pipeline), matching OCCT BuilderFace::Perform.
-    wires
-}
+// (SmartMap + Path moved into build_closed_wires — OCCT L154-358)
 
 // ====================================================================
 // ✅ OCCT-aligned: PerformShapesToAvoid (BOPAlgo_BuilderFace.cxx L152-235)
