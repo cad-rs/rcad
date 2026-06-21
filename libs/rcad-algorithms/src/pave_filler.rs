@@ -775,14 +775,15 @@ impl<'a> PaveFiller<'a> {
 
     fn check_vertex_edge(&mut self, vi: usize, ei: usize) {
         let point = self.ds.vertices[vi].point;
-        let edge = &self.ds.edges[ei];
-        match &edge.curve {
+        let edge_curve = self.ds.edges[ei].curve.clone();
+        let t_range = self.ds.edges[ei].t_range;
+        let te = self.ve_tol(vi, ei);
+        match &edge_curve {
             Curve3::Line(line) => {
-                let te = self.ve_tol(vi, ei);
                 if let Some(t) = inttools::vertex_ops::vertex_on_line_with_tol(
                     point,
                     line,
-                    edge.t_range,
+                    t_range,
                     te,
                 ) {
                     self.ds.interferences.push(Interference::VertexEdge {
@@ -800,7 +801,6 @@ impl<'a> PaveFiller<'a> {
                 // Check if point lies on the circle arc
                 let v = point - circle.center;
                 let dist = v.length();
-                let te = self.ve_tol(vi, ei);
                 if (dist - circle.radius).abs() < te {
                     let on_plane = v.dot(circle.normal).abs() < te;
                     if on_plane {
@@ -812,17 +812,21 @@ impl<'a> PaveFiller<'a> {
                         };
                         let w = circle.normal.cross(u);
                         let theta = w.dot(v).atan2(u.dot(v));
-                        let t_range = edge.t_range;
                         if theta >= t_range[0] - te && theta <= t_range[1] + te {
-                            self.ds.interferences.push(Interference::VertexEdge {
-                                vertex: vi,
-                                edge: ei,
-                                param: theta,
-                            });
-                            self.ds.edges[ei].paves.push(Pave {
-                                vertex_idx: vi,
-                                param: theta,
-                            });
+                            // ✅ OCCT-aligned: only create VE interference if the vertex is
+                            // within tolerance of the edge's 3D curve at the computed param.
+                            let on_edge_3d = edge_curve.point_at(theta).distance(point) <= te;
+                            if on_edge_3d {
+                                self.ds.interferences.push(Interference::VertexEdge {
+                                    vertex: vi,
+                                    edge: ei,
+                                    param: theta,
+                                });
+                                self.ds.edges[ei].paves.push(Pave {
+                                    vertex_idx: vi,
+                                    param: theta,
+                                });
+                            }
                         }
                     }
                 }
@@ -831,25 +835,22 @@ impl<'a> PaveFiller<'a> {
                 // ✅ OCCT-aligned: general curve projection (IntTools_Context:
                 //   GeomAPI_ProjectPointOnCurve for arbitrary curve types).
                 //   rcad: coarse 21-sample grid to find closest approach.
-                let te = self.ve_tol(vi, ei);
-                let mut best_t = edge.t_range[0];
+                let mut best_t = t_range[0];
                 let mut best_d = f64::MAX;
                 for si in 0..21 {
-                    let t = edge.t_range[0] + (edge.t_range[1] - edge.t_range[0]) * (si as f64 / 20.0);
-                    let d = edge.curve.point_at(t).distance(point);
+                    let t = t_range[0] + (t_range[1] - t_range[0]) * (si as f64 / 20.0);
+                    let d = edge_curve.point_at(t).distance(point);
                     if d < best_d { best_d = d; best_t = t; }
                 }
-                // OCCT: if distance ≤ tolerance, vertex is on the edge
                 if best_d <= te {
-                    let param = edge.t_range[0] + (edge.t_range[1] - edge.t_range[0]) * best_t;
                     self.ds.interferences.push(Interference::VertexEdge {
                         vertex: vi,
                         edge: ei,
-                        param,
+                        param: best_t,
                     });
                     self.ds.edges[ei].paves.push(Pave {
                         vertex_idx: vi,
-                        param,
+                        param: best_t,
                     });
                 }
             }
@@ -1222,25 +1223,28 @@ impl<'a> PaveFiller<'a> {
                 self.ds.faces[fi].face_info.vertices_on.insert(vi);
             }
         } else {
-            // For curved surfaces, project vertex onto surface to check if
-            // it lies on the face within tolerance.
             // ✅ OCCT-aligned: IntTools_FClass2d::Perform for point IN/ON classification.
-            //   rcad: closest-point projection (surface distance).  ⏳ No UV boundary
-            //   containment check (IntTools_FClass2d would use face's uv_boundary for
-            //   2D point-in-face test via FClass2d_Classifier).
+            //   Project vertex onto curved surface → UV → FClass2d UV containment check.
             let surface = face.surface.clone();
             if !matches!(surface, Surface3::Plane(_)) {
                 let proj =
                     rcad_kernel::projection::closest_point_on_surface(&surface, point, 16);
                 if proj.distance < tf {
-                    self.ds.interferences.push(Interference::VertexFace {
-                        vertex: vi,
-                        face: fi,
-                    });
-                    self.ds.faces[fi].face_info.vertices_on.insert(vi);
+                    let uv = DVec2::new(proj.params.0, proj.params.1);
+                    let inside = {
+                        let fclass = FClass2d::new(self.ds, fi, tf);
+                        fclass.perform(uv, false) != State::Out
+                    };
+                    if inside {
+                        self.ds.interferences.push(Interference::VertexFace {
+                            vertex: vi,
+                            face: fi,
+                        });
+                        self.ds.faces[fi].face_info.vertices_on.insert(vi);
+                    }
+                }
             }
         }
-    }
 }
 
 // ─── Pass 5: Edge-Face ─────────────────────────────────────────────
@@ -7340,8 +7344,15 @@ impl<'a> PaveFiller<'a> {
             face_reps: Vec<DSRepOnFace>,
         }
         let mut all_blocks: Vec<BlockData> = Vec::new();
+        let n_orig_edges = self.ds.edges.len();
 
-        for ei in 0..self.ds.edges.len() {
+        // ⏳ OCCT-aligned: MakeSplitEdges (PaveFiller_7.cxx) only creates split
+        //    edges and sets PaveBlock->Edge() (pb.new_edge).  rcad also initializes
+        //    pave_blocks on source edges here so downstream FillImagesEdges can
+        //    read pb.new_edge.  my_images / my_origins are NOT populated here —
+        //    that is FillImagesEdges' responsibility (build_edge_images in ds.rs).
+
+        for ei in 0..n_orig_edges {
             let edge = &self.ds.edges[ei];
             if edge.paves.is_empty() {
                 // OCCT L457-461: no split → reuse original edge
@@ -7381,7 +7392,12 @@ impl<'a> PaveFiller<'a> {
             }
         }
 
-        // Phase 2: create new DSEdges for each collected block
+        // Phase 2: create new DSEdges for each collected block + set pave_blocks
+        // on source edges (MakeSplitEdges).  my_images / my_origins are NOT
+        // populated here — that is FillImagesEdges' job (build_edge_images in ds.rs).
+        let mut edge_pbs: std::collections::HashMap<usize, Vec<(usize, usize, f64, f64, usize)>> =
+            std::collections::HashMap::new();
+
         for data in &all_blocks {
             let new_ei = self.ds.edges.len();
             self.ds.edges.push(DSEdge {
@@ -7395,14 +7411,25 @@ impl<'a> PaveFiller<'a> {
                 pave_blocks: vec![],
                 face_reps: data.face_reps.clone(),
             });
-            // Update the original edge's PaveBlock with the new_edge index
-            if let Some(ref mut block_list) = self.ds.edges.get_mut(data.ei) {
-                for pb in &mut block_list.pave_blocks {
-                    if pb.pave1.vertex_idx == data.sv && pb.pave2.vertex_idx == data.ev {
-                        pb.new_edge = Some(new_ei);
-                    }
-                }
-            }
+
+            // Track for pave_blocks assignment on source edge
+            edge_pbs.entry(data.ei).or_default().push((
+                data.sv, data.ev, data.t_start, data.t_end, new_ei,
+            ));
+        }
+
+        // ✅ OCCT-aligned: Set pave_blocks on source edges that were split,
+        //    so Builder::fill_images_edges can read pb.new_edge.
+        for (ei, blocks) in &edge_pbs {
+            let pbs: Vec<PaveBlock> = blocks.iter().map(|&(sv, ev, t_start, t_end, new_ei)| {
+                let mut pb = PaveBlock::new(*ei,
+                    Pave { vertex_idx: sv, param: t_start },
+                    Pave { vertex_idx: ev, param: t_end },
+                );
+                pb.new_edge = Some(new_ei);
+                pb
+            }).collect();
+            self.ds.edges[*ei].pave_blocks = pbs;
         }
     }
 
@@ -8212,7 +8239,10 @@ fn intersect_line_circle(
         // Line pierces the circle plane at one point.
         let t = -wn / dn;
         let p = o + d * t;
-        if (p - c).length_squared() <= r_sq + tol * (r + 1.0) {
+        // ✅ OCCT-aligned: check distance to circle circumference, not inside-circle.
+        // (p - c).length_squared <= r_sq allows points at the circle CENTER (false positive).
+        let dist = (p - c).length();
+        if (dist - r).abs() <= tol {
             results.push((t, circle_param(p, circle), p));
         }
     } else if wn.abs() <= tol {

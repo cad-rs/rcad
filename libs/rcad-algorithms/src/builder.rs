@@ -340,19 +340,15 @@ struct FaceWireEdges {
     outer_sig: Vec<usize>,
 }
 
-/// Builds result BRep, deduplicating vertices and edges.
+/// Builds result BRep from accumulated DS face data.
 ///
-/// **Open shells (union):** T-junctions can leave a long edge with no matching partner. After all
-/// faces are emitted, [`subdivide_edges_at_interior_vertices`] splits such edges at any result
-/// vertex that lies in the segment interior so adjacent faces share edge references.
+/// OCCT-aligned: pure conversion — BuildResult does no dedup/merge/cull.
 struct ResultBuilder {
     vertices: Vec<DVec3>,
     vertex_map: HashMap<u64, usize>, // hash of position -> index
     /// OCCT-aligned: DS vertex index -> BRep vertex index (TShape identity).
     ds_vertex_map: HashMap<usize, usize>,
     edges: Vec<(usize, usize)>,
-    /// OCCT-aligned: true after build_edges() — skips merge in build().
-    edges_built: bool,
     faces: Vec<FaceEntry>, // (boundary vertex indices, triangles, normal, surface, uv_domain)
     face_origins: Vec<FaceOrigin>,
     /// Extra A/B source when a later emission is deduplicated against an existing result face
@@ -366,10 +362,8 @@ struct ResultBuilder {
     solids: Vec<Vec<usize>>,
     custom_edge_curves: Vec<Option<Curve3>>,
     face_internal_vtx: Vec<Vec<usize>>,
-    /// ✅ OCCT对齐: 标记非合并边 — 这些边在 build() 的边合并阶段跳过。
-    ///    OCCT 中每个 TopoDS_Edge 是独立实体,即使两条边连接相同顶点且有相同曲线,
-    ///    它们也是不同的边(如 seam 子段与 IC 弧)。此集合阻止 build() 合并这些边。
-    no_merge_edges: std::collections::HashSet<usize>,
+    /// OCCT-aligned: edges are inherently unique by index (no merge step).
+    ///    This replaces the deleted no_merge_edges guard from the removed merge block.
     /// OCCT-aligned: edge indices of degenerate seam edges (pole degeneracies).
     deg_edge_indices: std::collections::HashSet<usize>,
     /// ✅ OCCT对齐: IntersectionCurve index -> result edge index.
@@ -693,13 +687,11 @@ impl ResultBuilder {
             vertex_map: HashMap::new(),
             ds_vertex_map: HashMap::new(),
             edges: Vec::new(),
-            edges_built: false,
             faces: Vec::new(),
             face_origins: Vec::new(),
             co_face_origins: Vec::new(),
             custom_edge_curves: Vec::new(),
             face_internal_vtx: Vec::new(),
-            no_merge_edges: std::collections::HashSet::new(),
             deg_edge_indices: std::collections::HashSet::new(),
             ic_edge_map: HashMap::new(),
             shells: Vec::new(),
@@ -745,7 +737,6 @@ impl ResultBuilder {
                 self.deg_edge_indices.insert(ei);
             }
         }
-        self.edges_built = true;
     }
 
     /// ✅ OCCT-aligned: BuildResult(FACE) — build faces from accumulated face data.
@@ -773,10 +764,14 @@ impl ResultBuilder {
     }
 
     /// ✅ OCCT-aligned: BuildResult(FACE) — add unmodified source face.
-    ///   OCCT Builder_1.cxx L146-152: no myImages → add original TopoDS_Face.
-    ///   rcad: create FaceEntry from DS boundary_edges with consistent orientation.
+    /// ✅ OCCT-aligned: BuildResult(FACE) — add original source face (Builder_1.cxx L146-152).
+    ///   OCCT adds the original TopoDS_Face regardless of surface type.
+    ///   rcad: builds FaceEntry from DS boundary_edges + inner_boundary_edges.
+    ///   Handles all surface types (Plane, Cylinder, Sphere, Cone, Torus).
     fn build_original_face(&mut self, ds: &DS, fi: usize, origin: FaceOrigin) {
         let face = &ds.faces[fi];
+
+        // --- Outer wire from boundary_edges ---
         let mut edge_indices: Vec<(usize, bool)> = Vec::new();
         let mut prev_end: Option<usize> = None;
         for &ei in &face.boundary_edges {
@@ -795,6 +790,30 @@ impl ResultBuilder {
             prev_end = Some(ev);
         }
         if edge_indices.len() < 3 { return; }
+
+        // --- Inner wires (holes) from inner_boundary_edges ---
+        let mut inner_wires: Vec<Vec<(usize, bool)>> = Vec::new();
+        for iw_edges in &face.inner_boundary_edges {
+            let mut wire: Vec<(usize, bool)> = Vec::new();
+            for &(ei, forward_in_ds) in iw_edges {
+                if ei >= ds.edges.len() { continue; }
+                let e = &ds.edges[ei];
+                let (sv, ev) = if forward_in_ds {
+                    (e.start_vertex, e.end_vertex)
+                } else {
+                    (e.end_vertex, e.start_vertex)
+                };
+                let brep_sv = self.add_ds_vertex(sv, ds.vertices[sv].point);
+                let brep_ev = self.add_ds_vertex(ev, ds.vertices[ev].point);
+                let bei = self.add_edge(brep_sv, brep_ev);
+                let fwd = (self.edges[bei].0, self.edges[bei].1) == (brep_sv, brep_ev);
+                wire.push((bei, fwd));
+            }
+            if wire.len() >= 2 {
+                inner_wires.push(wire);
+            }
+        }
+
         let normal = face.normal;
         let surface = face.surface.clone();
         let centroid = edge_indices.iter()
@@ -804,7 +823,7 @@ impl ResultBuilder {
             })
             .sum::<DVec3>() / edge_indices.len() as f64;
         self.faces.push((
-            edge_indices, vec![], vec![], normal, surface, None, centroid, 0.0, centroid, vec![],
+            edge_indices, inner_wires, vec![], normal, surface, None, centroid, 0.0, centroid, vec![],
         ));
         self.face_origins.push(origin);
     }
@@ -854,8 +873,7 @@ impl ResultBuilder {
     ///    reference via BRep_Builder::Add (shared TShape identity).
     ///    rcad: maps intersection curve index → result edge index so both faces
     ///    emit_wire_face calls get the same edge index for the same IC curve.
-    ///    no_merge_edges prevents build() edge cleanup from merging this edge
-    ///    with a coincident plain (non-circle) edge sharing the same vertex pair.
+    ///    OCCT: each TopoDS_Edge is a distinct handle — no post-hoc merge needed.
     fn add_ic_edge(&mut self, ici: usize, v1: usize, v2: usize, curve: Curve3) -> usize {
         if let Some(&idx) = self.ic_edge_map.get(&ici) {
             return idx;
@@ -867,7 +885,7 @@ impl ResultBuilder {
         }
         self.custom_edge_curves[idx] = Some(curve);
         self.ic_edge_map.insert(ici, idx);
-        self.no_merge_edges.insert(idx);
+        // no_merge_edges removed — edges are inherently unique by index
         idx
     }
 
@@ -958,7 +976,7 @@ impl ResultBuilder {
             self.custom_edge_curves.push(None);
         }
         self.custom_edge_curves[idx] = Some(circle);
-        self.no_merge_edges.insert(idx);
+        // no_merge_edges removed — edges are inherently unique by index
         idx
     }
 
@@ -982,7 +1000,7 @@ impl ResultBuilder {
                             self.custom_edge_curves.push(None);
                         }
                         self.custom_edge_curves[idx] = Some(circle);
-                        self.no_merge_edges.insert(idx);
+                        // no_merge_edges removed — edges are inherently unique by index
                         return idx;
                     }
                 }
@@ -990,7 +1008,6 @@ impl ResultBuilder {
                     self.custom_edge_curves.push(None);
                 }
                 self.custom_edge_curves[i] = Some(circle);
-                self.no_merge_edges.insert(i);
                 return i;
             }
         }
@@ -999,7 +1016,7 @@ impl ResultBuilder {
             self.custom_edge_curves.push(None);
         }
         self.custom_edge_curves[idx] = Some(circle);
-        self.no_merge_edges.insert(idx);
+        // no_merge_edges removed — edges are inherently unique by index
         idx
     }
 
@@ -1012,287 +1029,11 @@ impl ResultBuilder {
 
 // SubFace removed: find_inner
 
-    /// DEPRECATED (FaceSampleData 鍐呴儴): 闈?sphere 闈㈠洖閫€鍙戝皠璺緞銆?
-    ///    澶栭儴鎺ュ彛缁熶竴浣跨敤 emit_wire_face (WireFace 璺緞)銆?
-// SubFace removed: emit_face
-    fn subdivide_edges_at_interior_vertices(&mut self) {
-        const POS_TOL: f64 = TOLERANCE_ABS * 1000.0;
-        const PASS_MAX: usize = 32;
 
-        for _ in 0..PASS_MAX {
-            let n_edges = self.edges.len();
-            let mut vertex_sequences: Vec<Option<Vec<usize>>> = vec![None; n_edges];
-
-            for ei in 0..n_edges {
-                vertex_sequences[ei] = Self::edge_interior_vertex_sequence(
-                    ei,
-                    &self.vertices,
-                    &self.edges,
-                    POS_TOL,
-                );
-            }
-
-            let mut replacements: Vec<Option<Vec<usize>>> = vec![None; n_edges];
-            let mut any = false;
-            for ei in 0..n_edges {
-                // ✅ OCCT对齐: 璺宠繃绮剧‘ Circle3 寮ц竟(T-junction鍙粏鍒嗙洿杈?銆?
-                if self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).is_some() { continue; }
-                let Some(seq) = vertex_sequences[ei].as_ref() else {
-                    continue;
-                };
-                if seq.len() < 3 {
-                    continue;
-                }
-                let mut chain = Vec::with_capacity(seq.len().saturating_sub(1));
-                for w in seq.windows(2) {
-                    if points_coincide(self.vertices[w[0]], self.vertices[w[1]]) {
-                        continue;
-                    }
-                    chain.push(self.add_edge(w[0], w[1]));
-                }
-                if chain.len() <= 1 {
-                    continue;
-                }
-                replacements[ei] = Some(chain);
-                any = true;
-            }
-
-            if !any {
-                break;
-            }
-
-            for (outer, inner, _, _, _, _, _, _, _, _) in &mut self.faces {
-                *outer = Self::replace_edge_ids_in_wire(outer, &replacements);
-                for iw in inner.iter_mut() {
-                    *iw = Self::replace_edge_ids_in_wire(iw, &replacements);
-                }
-            }
-        }
-    }
-
-    fn edge_interior_vertex_sequence(
-        ei: usize,
-        vertices: &[DVec3],
-        edges: &[(usize, usize)],
-        pos_tol: f64,
-    ) -> Option<Vec<usize>> {
-        let (va, vb) = edges.get(ei).copied()?;
-        if va == vb {
-            return None;
-        }
-        let pa = vertices[va];
-        let pb = vertices[vb];
-        let ab = pb - pa;
-        let l2 = ab.length_squared();
-        if l2 < TOLERANCE_LEN_SQ_DIV_SAFE {
-            return None;
-        }
-        // Avoid splitting very short edges (curved intersections, near-degenerate trims);
-        // T-junction repair targets long seam segments on planar unions.
-        if ab.length() < TOLERANCE_ABS * 10_000.0 {
-            return None;
-        }
-        let mut interior: Vec<usize> = Vec::new();
-        for (k, &pk) in vertices.iter().enumerate() {
-            if k == va || k == vb {
-                continue;
-            }
-            let t = (pk - pa).dot(ab) / l2;
-            if t <= TOLERANCE_LINEAR_ULTRA_STRICT || t >= 1.0 - TOLERANCE_LINEAR_ULTRA_STRICT {
-                continue;
-            }
-            let proj = pa + ab * t;
-            if (pk - proj).length() <= pos_tol {
-                interior.push(k);
-            }
-        }
-        if interior.is_empty() {
-            return None;
-        }
-        interior.sort_by(|&i, &j| {
-            let ti = (vertices[i] - pa).dot(ab) / l2;
-            let tj = (vertices[j] - pa).dot(ab) / l2;
-            ti.total_cmp(&tj)
-        });
-        interior.dedup_by(|a, b| points_coincide(vertices[*a], vertices[*b]));
-
-        let mut seq: Vec<usize> = vec![va];
-        for &vk in &interior {
-            if Some(&vk) == seq.last() {
-                continue;
-            }
-            if let Some(&last) = seq.last()
-                && points_coincide(vertices[vk], vertices[last]) {
-                    continue;
-                }
-            seq.push(vk);
-        }
-        if seq.last().copied() != Some(vb) {
-            if let Some(&last) = seq.last()
-                && points_coincide(vertices[vb], vertices[last]) {
-                    seq.pop();
-                }
-            seq.push(vb);
-        }
-        if seq.len() < 3 {
-            return None;
-        }
-        Some(seq)
-    }
-
-    fn replace_edge_ids_in_wire(wire: &[(usize, bool)], rep: &[Option<Vec<usize>>]) -> Vec<(usize, bool)> {
-        let mut out = Vec::with_capacity(wire.len() * 2);
-        for &(eid, fwd) in wire {
-            if let Some(chain) = rep.get(eid).and_then(|r| r.as_ref()) {
-                out.extend(chain.iter().map(|&new_eid| (new_eid, fwd)));
-            } else {
-                out.push((eid, fwd));
-            }
-        }
-        out
-    }
-
-    fn build(mut self, subdivide_t_junction_seams: bool) -> (BRep, BooleanHistory) {
+    fn build(mut self) -> (BRep, BooleanHistory) {
         eprintln!("ResultBuilder::build: {} vertices, {} edges, {} faces", self.vertices.len(), self.edges.len(), self.faces.len());
-
-        if subdivide_t_junction_seams {
-            self.subdivide_edges_at_interior_vertices();
-            eprintln!("AFTER subdivide: {} vertices, {} edges, {} faces", self.vertices.len(), self.edges.len(), self.faces.len());
-        }
-        // ✅ OCCT对齐: BuildSplitFaces 鍒涘缓鍏变韩杈?鈥?鍚堝苟PaveFiller涓轰袱渚ч潰鍒涘缓鐨勫嚑浣曢噸鍚堣竟銆?
-        //    OCCT IntTools_FaceFace 鍒涘缓涓€鏉?D浜ょ嚎,BuildSplitFaces 鐢ㄨ浜ょ嚎鍚屾椂鍦ㄤ袱渚?
-        //    闈㈠垱寤哄悓涓€ TopoDS_Edge(浠?orientation 鐩稿弽),涓や晶鑷劧鍏变韩杈圭储寮曘€?
-        //    rcad 鐨?add_edge 鎸夐《鐐瑰 `(v_min,v_max)` 鍘婚噸,浣?PaveFiller 鏁板€煎櫔澹?鈮?e-6)
-        //    浣夸袱渚х殑 add_vertex 鍒涘缓涓嶅悓 vertex index,瀵艰嚧 add_edge(v_a1,v_a2) 鈮?
-        //    add_edge(v_b1,v_b2),涓や晶涓嶅叡浜?edge index銆傛澶勫厛鍚堝苟閲嶅悎椤剁偣(relaxed
-        //    tolerance),鍐嶆寜椤剁偣瀵瑰悎骞惰竟,绛変环浜?OCCT 鐨勩€屼竴鏉′氦绾?鈫?涓€涓?Edge銆嶃€?
-        //
-        //    OCCT 婧愮爜: BOPTools_AlgoTools.cxx L662-L674 (MakeEdge for section edges)
-        //    rcad 绛変环瀹炵幇: 姝ゅ鍑犱綍绾ч《鐐?杈瑰悎骞?鑷垱,浣嗚涔夌瓑浠?
-        // ✅ OCCT-aligned: incremental build — build_edges() was already called
-        // at the EDGE phase, so the vertex/edge merge is skipped here.
-        // The merge is only needed when running build() standalone (no incremental).
-        if !self.edges_built {
-            let merge_tol_sq = TOLERANCE_ABS_SQ * 4096.0; // (64*TOLERANCE_ABS)虏 鈮?4e-11
-            if std::env::var("RCAD_DEBUG_MERGE").is_ok() {
-                eprintln!("[BUILD_MERGE] pre: {} verts, {} edges, {} faces", self.vertices.len(), self.edges.len(), self.faces.len());
-            }
-
-            // Step 1: 椤剁偣鍚堝苟 鈥?鎸変綅缃垎缁?鏄犲皠鍒版渶灏?index
-            let nv = self.vertices.len();
-            let mut v_canon: Vec<usize> = (0..nv).collect();
-            for i in 0..nv {
-                for j in (i+1)..nv {
-                    if (self.vertices[i] - self.vertices[j]).length_squared() < merge_tol_sq {
-                        let c = v_canon[i].min(v_canon[j]);
-                        v_canon[i] = c;
-                        v_canon[j] = c;
-                    }
-                }
-            }
-            for i in 0..nv {
-                let mut r = v_canon[i];
-                while r != v_canon[r] { r = v_canon[r]; }
-                v_canon[i] = r;
-            }
-
-            // Step 2: 鏇存柊 edge 椤剁偣 index
-            for e in self.edges.iter_mut() {
-                e.0 = v_canon[e.0];
-                e.1 = v_canon[e.1];
-            }
-
-            // Step 3: 杈瑰幓閲?鈥?鐩稿悓 (v_min,v_max) 瀵逛笖鏇茬嚎绫诲瀷鐩稿悓鐨勮竟鍚堝苟
-            // ✅ OCCT对齐: 涓嶅悎骞朵笉鍚屾洸绾跨被鍨嬬殑杈?IC鍦嗗姬 vs 骞抽潰鐩磋竟鍏变韩鐩稿悓椤剁偣瀵逛絾鍑犱綍涓嶅悓)
-            let ne = self.edges.len();
-            let mut e_canon: Vec<usize> = (0..ne).collect();
-            // Track Circle curves that need to be transferred to the survivor edge
-            // when merging a plain edge (survivor) with a Circle edge (collapsed).
-            let mut circle_transfer: Vec<(usize, Curve3)> = Vec::new();
-            for i in 0..ne {
-                if e_canon[i] != i { continue; }
-                if self.no_merge_edges.contains(&i) { continue; }
-                let (a1, a2) = (self.edges[i].0.min(self.edges[i].1), self.edges[i].0.max(self.edges[i].1));
-                for j in (i+1)..ne {
-                    if self.no_merge_edges.contains(&j) { continue; }
-                    let (b1, b2) = (self.edges[j].0.min(self.edges[j].1), self.edges[j].0.max(self.edges[j].1));
-                    if a1 == b1 && a2 == b2 {
-                        let ci = self.custom_edge_curves.get(i).and_then(|opt| opt.clone());
-                        let cj = self.custom_edge_curves.get(j).and_then(|opt| opt.clone());
-                        let merge = match (&ci, &cj) {
-                            (Some(circ_i), Some(circ_j)) => {
-                                use rcad_kernel::geom::Curve3;
-                                match (circ_i, circ_j) {
-                                    (Curve3::Circle(ci_c), Curve3::Circle(cj_c)) =>
-                                        (ci_c.center - cj_c.center).length_squared() < 1e-12
-                                        && (ci_c.radius - cj_c.radius).abs() < 1e-12
-                                        && (ci_c.normal.normalize() - cj_c.normal.normalize()).length_squared() < 1e-12,
-                                    _ => false,
-                                }
-                            }
-                            (None, None) => true, // Both plain: merge
-                            // ✅ OCCT对齐: Circle杈逛笌plain杈瑰叡浜浉鍚岄《鐐瑰 鈫?鍚堝苟淇濈暀Circle銆?
-                            _ => true, // One Circle, one plain: merge
-                        };
-                        if merge {
-                            e_canon[j] = i;
-                            // Transfer Circle curve to survivor if needed
-                            if ci.is_none() {
-                                if let Some(circ) = cj {
-                                    circle_transfer.push((i, circ));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            // Apply Circle curve transfers to survivor edges
-            for (surv, circ) in &circle_transfer {
-                while self.custom_edge_curves.len() <= *surv {
-                    self.custom_edge_curves.push(None);
-                }
-                self.custom_edge_curves[*surv] = Some(circ.clone());
-            }
-
-            // Step 4: 鏇存柊 face 涓墍鏈?edge 寮曠敤
-            for f in self.faces.iter_mut() {
-                for we in f.0.iter_mut() { we.0 = e_canon[we.0]; }
-                for iw in f.1.iter_mut() {
-                    for we in iw.iter_mut() { we.0 = e_canon[we.0]; }
-                }
-            }
-
-            // Step 5: 鍘嬬缉杈规暟缁?鈥?绉婚櫎閲嶅杈?淇濇寔 curve 鏁版嵁鍚屾
-            let mut new_edges: Vec<(usize, usize)> = Vec::new();
-            let mut new_curves: Vec<Option<Curve3>> = Vec::new();
-            let mut e_remap: Vec<usize> = (0..ne).collect();
-            for i in 0..ne {
-                if e_canon[i] == i {
-                    e_remap[i] = new_edges.len();
-                    new_edges.push(self.edges[i]);
-                    new_curves.push(self.custom_edge_curves.get(i).cloned().unwrap_or(None));
-                } else {
-                    e_remap[i] = e_remap[e_canon[i]];
-                }
-            }
-            for f in self.faces.iter_mut() {
-                for we in f.0.iter_mut() { we.0 = e_remap[we.0]; }
-                for iw in f.1.iter_mut() {
-                    for we in iw.iter_mut() { we.0 = e_remap[we.0]; }
-                }
-            }
-            self.edges = new_edges;
-            self.custom_edge_curves = new_curves;
-            // Remap degenerated edge indices through compression
-            let new_deg: std::collections::HashSet<usize> = self.deg_edge_indices.iter()
-                .filter_map(|&old| if old < e_remap.len() { Some(e_remap[old]) } else { None })
-                .collect();
-            self.deg_edge_indices = new_deg;
-            if std::env::var("RCAD_DEBUG_MERGE").is_ok() {
-                eprintln!("[BUILD_MERGE] post: {} verts, {} edges, {} faces", self.vertices.len(), self.edges.len(), self.faces.len());
-            }
-        }
-
+        // ✅ OCCT-aligned: build() is a pure conversion (BuildResult, Builder_1.cxx L130-168).
+        // OCCT does NO vertex/edge merge, NO orphan edge removal, NO face culling.
         let vertices = self
             .vertices
             .into_iter()
@@ -1353,69 +1094,27 @@ impl ResultBuilder {
         }
         geom.face_internal_vertices = self.face_internal_vtx;
 
-        // Remove edges referenced by only 1 face (leftover from ON-face removal
-        // in Union, where touching-face boundary edges become orphaned).
+        // ✅ OCCT-aligned: set section edge curves from custom_edge_curves.
+        //    OCCT BuildResult (Builder_1.cxx L130-168) does NOT:
+        //      - remove orphan edges (every edge created by MakeSplitEdges is valid)
+        //      - cull faces with <3 outer edges (BuilderFace produces valid wires)
+        //      - check face outer-wire edge count
+        //    OCCT simply iterates argument shapes of matching type and adds their
+        //    images to myShape.  No post-processing needed because the DS ensures
+        //    correct topology.
+        //    rcad: custom_edge_curves store Circle3/BSpline curves for section edges.
+        //    OCCT: MakeEdge(aIC, ...) creates BRep edge with exact analytic curve.
+        //    rcad defaults to recompute_plane_surfaces (Line3), override here.
         if !edges.is_empty() {
-            let mut edge_refs = vec![0usize; edges.len()];
-            for f in &faces {
-                for we in &f.outer_wire.edges { if we.idx < edge_refs.len() { edge_refs[we.idx] += 1; } }
-                for w in &f.inner_wires { for we in &w.edges { if we.idx < edge_refs.len() { edge_refs[we.idx] += 1; } } }
-            }
-            let mut edge_keep: Vec<rcad_kernel::Edge> = Vec::new();
-            let mut edge_remap: Vec<usize> = (0..edges.len()).collect();
-            for ei in 0..edges.len() {
-                if edge_refs[ei] >= 1 {
-                    edge_remap[ei] = edge_keep.len();
-                    edge_keep.push(edges[ei].clone());
-                } else {
-                    edge_remap[ei] = usize::MAX;
-                }
-            }
-            for f in &mut faces {
-                for we in &mut f.outer_wire.edges { we.idx = edge_remap[we.idx]; }
-                for w in &mut f.inner_wires { for we in &mut w.edges { we.idx = edge_remap[we.idx]; } }
-            }
-            for f in &mut faces {
-                f.outer_wire.edges.retain(|we| we.idx != usize::MAX);
-                for w in &mut f.inner_wires { w.edges.retain(|we| we.idx != usize::MAX); }
-            }
-            let pre_retain_count = faces.len();
-            // ✅ OCCT-aligned: keep faces with inner wires even if outer<3.
-            //    Full-wrap seam wires on closed surfaces have 2-edge outers
-            //    but valid inner holes (IC triangle).  OCCT BRepBuilderAPI_
-            //    MakeFace handles this natively.
-            let should_keep: Vec<bool> = faces.iter().map(|f| {
-                f.outer_wire.edges.len() >= 3 || !f.inner_wires.is_empty()
-            }).collect();
-            faces.retain(|f| f.outer_wire.edges.len() >= 3 || !f.inner_wires.is_empty());
-            let mut new_origins: Vec<FaceOrigin> = Vec::with_capacity(faces.len());
-            for (i, keep) in should_keep.iter().enumerate() {
-                if *keep {
-                    if let Some(o) = self.face_origins.get(i) {
-                        new_origins.push(*o);
-                    }
-                }
-            }
-            self.face_origins = new_origins;
-            edges = edge_keep;
-            if std::env::var("RCAD_DEBUG_IC").is_ok() {
-                eprintln!("[EDGE_FINAL] {} edges: {}", edges.len(),
-                    edges.iter().map(|e| format!("({},{})", e.start, e.end)).collect::<Vec<_>>().join(" "));
-            }
-            // ✅ OCCT对齐: 璁剧疆 section edge 鐨勭簿纭洸绾?鏉ヨ嚜 add_circle_edge)銆?
-            //    OCCT: MakeEdge(aIC, ...) 鐩存帴鍒涘缓甯︾簿纭嚑浣曟洸绾跨殑 BRep edge銆?
-            //    rcad 榛樿鐢?recompute_plane_surfaces 琛?Line3,杩欓噷瑕嗙洊涓?Circle3銆?
             for (ei, curve_opt) in self.custom_edge_curves.iter().enumerate() {
+                if ei >= edges.len() { break; }
                 if let Some(crv) = curve_opt {
-                    let new_ei = edge_remap[ei];
-                    if new_ei != usize::MAX {
-                        let curve_idx = geom.curves.len();
-                        geom.curves.push(crv.clone());
-                        while geom.edge_curve.len() <= new_ei {
-                            geom.edge_curve.push(None);
-                        }
-                        geom.edge_curve[new_ei] = Some(curve_idx);
+                    while geom.edge_curve.len() <= ei {
+                        geom.edge_curve.push(None);
                     }
+                    let curve_idx = geom.curves.len();
+                    geom.curves.push(crv.clone());
+                    geom.edge_curve[ei] = Some(curve_idx);
                 }
             }
         }
@@ -2432,9 +2131,12 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                 tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
                 tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
             });        } else {
-            // ✅ OCCT-aligned: use my_images sub-edges when PaveFiller split this edge,
-            //    otherwise fall back to vertices_in-based splitting.
-            if !ds.my_images.is_empty() && ei < ds.my_images.len() && ds.my_images[ei].len() >= 2 {
+            // ✅ OCCT-aligned: use my_images sub-edges when available (populated
+            //    by build_split_edges in PaveFiller).  Handles both split edges
+            //    (my_images[ei] = [sub1, sub2, ...]) and un-split edges
+            //    (my_images[ei] = [ei]).  Falls back to vertices_in-based splitting
+            //    only when my_images is not populated (defensive).
+            if !ds.my_images.is_empty() && ei < ds.my_images.len() && !ds.my_images[ei].is_empty() {
                 for &sub_ei in &ds.my_images[ei] {
                     let sub_edge = &ds.edges[sub_ei];
                     let sv_seg = sub_edge.start_vertex;
@@ -2617,10 +2319,6 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     segments.push(WireSegment { start_vertex: fixed_sv, end_vertex: fixed_ev,
                         source: WireEdgeSource::IntersectionCurve(ci), forward: true,
                         is_seam: false, second_pcurve: ic_second_pcurve, first_pcurve: None, t_range: [0.0, 1.0], tangent_start: t_start, tangent_end: t_end });
-                    segments.push(WireSegment { start_vertex: fixed_ev, end_vertex: fixed_sv,
-                        source: WireEdgeSource::IntersectionCurve(ci), forward: false,
-                        is_seam: false, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0], tangent_start: t_end.map(|a| (a+std::f64::consts::PI)%std::f64::consts::TAU),
-                        tangent_end: t_start.map(|a| (a+std::f64::consts::PI)%std::f64::consts::TAU) });
                     continue;
                 }
                 // Non-sphere face with degenerate IC: skip completely
@@ -2670,12 +2368,6 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                             start_vertex: vi, end_vertex: vj,
                             source: WireEdgeSource::IntersectionCurve(ci), forward: true,
                             is_seam: false, second_pcurve: arc_second, first_pcurve: None, t_range: [0.0, 1.0], tangent_start: ts_val, tangent_end: te_val,
-                        });                        segments.push(WireSegment {
-                            start_vertex: vj, end_vertex: vi,
-                            source: WireEdgeSource::IntersectionCurve(ci), forward: false,
-                            is_seam: false, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0],
-                            tangent_start: te_val.map(|a| (a+std::f64::consts::PI)%std::f64::consts::TAU),
-                            tangent_end: ts_val.map(|a| (a+std::f64::consts::PI)%std::f64::consts::TAU),
                         });                    }
                     continue;
                 }
@@ -2693,7 +2385,9 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             (None, None)
         };
 
-        // OCCT-aligned: FORWARD+REVERSED (BOPAlgo_Builder_2.cxx L478-489)
+        // ✅ OCCT-aligned: IC edges go into WES once (FORWARD orientation).
+        // OCCT BOPAlgo_Builder_2.cxx L478-489: each non-closed edge added once.
+        // Closed edges (seam on periodic surfaces) get FWD+REV via separate seam logic.
         let gen_ic_second = compute_ic_second_pcurve(&face.surface, ds, sv, ev);
         segments.push(WireSegment {
             start_vertex: sv,
@@ -2704,21 +2398,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             tangent_start: t_start,
             tangent_end: t_end,
         });
-        segments.push(WireSegment {
-            start_vertex: ev,
-            end_vertex: sv,
-            source: WireEdgeSource::IntersectionCurve(ci),
-            forward: false,
-            is_seam: false, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0],
-            tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-            tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-        });
     }
-
-    // DoSplitSEAMOnFace: keep REV IC segments for sphere (needed for correct
-    // face wire topology). The figure-8 is handled by the SmartMap walk with
-    // sphere loop suppression (walk_path_extract_wires lines 4577-4582) and
-    // the figure-8 truncation (build_irregular_wires lines 3940-3960).
     segments
 }
 
@@ -5860,10 +5540,12 @@ impl<'a> BooleanBuilder<'a> {
                 continue;
             }
 
-            // OCCT L298-332: no IN or SC pave blocks → handle alone vertices / unmodified.
+            // ✅ OCCT-aligned: BuildSplitFaces (Builder_2.cxx L298-374).
+            //   L298-332: no IN/SC PBs → BuildDraftFace for ON PBs / alone vertices.
+            //   L332+:    has IN/SC PBs → full BuilderFace::Perform (split_face_occt_wire_pipeline).
+            //   No fallback: if BuilderFace fails, the face produces no images.
             if !has_pb_sc {
                 if has_info {
-                    // Face has info but no section curves → BuildDraftFace path.
                     if let Some(draft) = self.build_draft_face(fi) {
                         let (_segments, wfs, _vp) = draft;
                         for wf in &wfs {
@@ -5889,53 +5571,26 @@ impl<'a> BooleanBuilder<'a> {
                 continue;
             }
 
-            // OCCT: face has IN or SC pave blocks → BuilderFace::Perform.
-            if has_info {
-                if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
-                    if !wfs.is_empty() {
-                        let wfs = promote_exterior_holes(wfs, &segments, self.ds, self.op, other_faces);
-                        for wf in &wfs {
-                            let wire_subs = wire_faces_to_face_sample_data(
-                                std::slice::from_ref(wf), &segments, self.ds, fi);
-                            if let Some(sub) = wire_subs.first() {
-                                let class = classify_against_solid_for_boolean(
-                                    self.op, source_side,
-                                    &FaceSampleData::from_sub_face(sub), other_faces, self.ds);
-                                if self.classification_keep_policy(source_side, class, fi) {
-                                    let origin = if is_a {
-                                        FaceOrigin::FromA(self.ds.faces[fi].source_face_idx)
-                                    } else {
-                                        FaceOrigin::FromB(self.ds.faces[fi].source_face_idx)
-                                    };
-                                    result.emit_wire_face(fi, wf, &segments, self.ds, false, origin, &vertex_positions);
-                                }
+            // Has IN or SC pave blocks → full BuilderFace::Perform.
+            if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
+                if !wfs.is_empty() {
+                    let wfs = promote_exterior_holes(wfs, &segments, self.ds, self.op, other_faces);
+                    for wf in &wfs {
+                        let wire_subs = wire_faces_to_face_sample_data(
+                            std::slice::from_ref(wf), &segments, self.ds, fi);
+                        if let Some(sub) = wire_subs.first() {
+                            let class = classify_against_solid_for_boolean(
+                                self.op, source_side,
+                                &FaceSampleData::from_sub_face(sub), other_faces, self.ds);
+                            if self.classification_keep_policy(source_side, class, fi) {
+                                let origin = if is_a {
+                                    FaceOrigin::FromA(self.ds.faces[fi].source_face_idx)
+                                } else {
+                                    FaceOrigin::FromB(self.ds.faces[fi].source_face_idx)
+                                };
+                                result.emit_wire_face(fi, wf, &segments, self.ds, false, origin, &vertex_positions);
                             }
                         }
-                        continue;
-                    }
-                }
-            }
-
-            // OCCT fallback: face with ON PBs but no IN/SC → emit directly.
-            let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, fi);
-            let segments = collect_face_edge_segments(self.ds, fi, &pcurve_lookup);
-            if !segments.is_empty() {
-                let wf = WireFace {
-                    outer_wire: (0..segments.len()).collect(), inner_wires: vec![], internal_wires: vec![],
-                };
-                let wire_subs = wire_faces_to_face_sample_data(&[wf.clone()], &segments, self.ds, fi);
-                if let Some(sub) = wire_subs.first() {
-                    let class = classify_against_solid_for_boolean(
-                        self.op, source_side,
-                        &FaceSampleData::from_sub_face(sub), other_faces, self.ds);
-                    if self.classification_keep_policy(source_side, class, fi) {
-                        let origin = if is_a {
-                            FaceOrigin::FromA(self.ds.faces[fi].source_face_idx)
-                        } else {
-                            FaceOrigin::FromB(self.ds.faces[fi].source_face_idx)
-                        };
-                        result.emit_wire_face(fi, &wf, &segments, self.ds, false, origin,
-                            &std::collections::HashMap::new());
                     }
                 }
             }
@@ -5975,16 +5630,19 @@ impl<'a> BooleanBuilder<'a> {
         //   rcad: all result faces are candidates (simplification).
         //   FF filter would skip faces without interferences.
 
-        // ── Edge-set signature per face (OCCT BOPTools_Set) ──
+        // ── Edge-set signature per face (OCCT BOPTools_Set ──
+        // OCCT L689-741: BOPTools_Set uses edge identity WITH orientation
+        // (TopoDS_Edge handles encode orientation).  rcad encodes orientation
+        // as ei*2+forward so opposite-facing edges produce different sets.
         let face_edge_set: Vec<Vec<usize>> = (0..nf)
             .map(|fi| {
                 let entry = &result.faces[fi];
-                let mut edges: Vec<usize> = entry.0.iter().map(|&(ei, _)| ei).collect();
+                let mut edges: Vec<usize> = entry.0.iter().map(|&(ei, fwd)| ei * 2 + (fwd as usize)).collect();
                 for iw_es in &entry.1 {
-                    edges.extend(iw_es.iter().map(|&(ei, _)| ei));
+                    edges.extend(iw_es.iter().map(|&(ei, fwd)| ei * 2 + (fwd as usize)));
                 }
                 for iw_es in &entry.9 {
-                    edges.extend(iw_es.iter().map(|&(ei, _)| ei));
+                    edges.extend(iw_es.iter().map(|&(ei, fwd)| ei * 2 + (fwd as usize)));
                 }
                 edges.sort_unstable();
                 edges.dedup();
@@ -6000,33 +5658,72 @@ impl<'a> BooleanBuilder<'a> {
             groups.entry(face_edge_set[fi].clone()).or_default().push(fi);
         }
 
-        // ── Surface comparison (AreFacesSameDomain) ──
+        // ── Surface comparison (AreFacesSameDomain) — OCCT L795-816 ──
+        // OCCT checks all surface types through GeomAdaptor_Surface.
+        // rcad: direct Surface3 comparison for analytic types.
         let same_surface = |s1: &Surface3, s2: &Surface3| -> bool {
+            let axis_parallel = |a: DVec3, b: DVec3| {
+                let la = a.length();
+                let lb = b.length();
+                if la <= TOLERANCE_ABS || lb <= TOLERANCE_ABS {
+                    return false;
+                }
+                (a / la).dot(b / lb).abs() >= 1.0 - TOLERANCE_ANG
+            };
             match (s1, s2) {
                 (Surface3::Plane(p1), Surface3::Plane(p2)) => {
                     let d1 = p1.normal.dot(p1.origin.into());
                     let d2 = p2.normal.dot(p2.origin.into());
-                    (p1.normal - p2.normal).length() < TOLERANCE_ANG
+                    axis_parallel(p1.normal, p2.normal)
                         && (d1 - d2).abs() < TOLERANCE_PLANE_DIST_RELAX
+                }
+                (Surface3::Cylinder(c1), Surface3::Cylinder(c2)) => {
+                    axis_parallel(c1.axis, c2.axis)
+                        && (c1.radius - c2.radius).abs() < TOLERANCE_ABS
+                        && (c2.origin - c1.origin).cross(c1.axis.normalize_or_zero()).length() < TOLERANCE_ABS * 100.0
+                }
+                (Surface3::Sphere(s1), Surface3::Sphere(s2)) => {
+                    (s1.center - s2.center).length() < TOLERANCE_ABS * 100.0
+                        && (s1.radius - s2.radius).abs() < TOLERANCE_ABS
+                }
+                (Surface3::Cone(c1), Surface3::Cone(c2)) => {
+                    axis_parallel(c1.axis, c2.axis)
+                        && (c1.apex_point() - c2.apex_point()).length() < TOLERANCE_ABS * 100.0
+                        && (c1.half_angle_rad - c2.half_angle_rad).abs() < TOLERANCE_ANG
+                }
+                (Surface3::Torus(t1), Surface3::Torus(t2)) => {
+                    axis_parallel(t1.axis, t2.axis)
+                        && (t1.center - t2.center).length() < TOLERANCE_ABS * 100.0
+                        && (t1.major_radius - t2.major_radius).abs() < TOLERANCE_ABS
+                        && (t1.minor_radius - t2.minor_radius).abs() < TOLERANCE_ABS
                 }
                 _ => false,
             }
         };
 
         // ── Mark duplicates for removal ──
-        // OCCT: within each group, skip pairs with the same parent solid.
+        // OCCT L763-792: all-pairs check within each edge-set group,
+        // skipping pairs with the same parent solid (aFaceToParent).
+        // OCCT uses aVPSB (parallel AreFacesSameDomain) for non-planar pairs;
+        // rcad checks same_surface synchronously for all surface types.
         let mut to_remove = vec![false; nf];
         for (_edge_set, members) in groups.iter() {
             if members.len() < 2 { continue; }
-            let rep = members[0];
-            let rep_parent_a = is_from_a(rep);
-            for &fi in members.iter().skip(1) {
-                // OCCT L597: parent-solid check — skip if both from same operand.
-                if rep_parent_a == is_from_a(fi) {
-                    continue; // same parent → don't merge
-                }
-                if same_surface(&result.faces[rep].4, &result.faces[fi].4) {
-                    to_remove[fi] = true;
+            // Collect survivors (not yet marked for removal)
+            let survivors: Vec<usize> = members.iter().filter(|&&fi| !to_remove[fi]).copied().collect();
+            for i in 0..survivors.len() {
+                for j in (i + 1)..survivors.len() {
+                    let fi = survivors[i];
+                    let fj = survivors[j];
+                    // OCCT L776-778: skip same-parent pairs.
+                    if is_from_a(fi) == is_from_a(fj) {
+                        continue;
+                    }
+                    if same_surface(&result.faces[fi].4, &result.faces[fj].4) {
+                        // OCCT: face with smaller DS index survives.
+                        // rcad: higher-index face is removed.
+                        to_remove[fj] = true;
+                    }
                 }
             }
         }
@@ -6099,13 +5796,14 @@ impl<'a> BooleanBuilder<'a> {
     /// rcad: Phase 3 classification has already filtered faces by state.
     ///   For single-solid operands the result is equivalent.  Multi-solid
     ///   operands need draft-solid reclassification (OCCT L77).
-    fn fill_images_solids(&self, result: &mut ResultBuilder) {
+    fn fill_images_solids(&self, result: &mut ResultBuilder,
+                           a_faces: &[usize], b_faces: &[usize]) {
         if result.shells.is_empty() {
             return;
         }
 
         // OCCT L77-83: FillIn3DParts — build draft solids + classify shells
-        let shell_assignments = self.fill_in_3d_parts(result);
+        let shell_assignments = self.fill_in_3d_parts(result, a_faces, b_faces);
 
         // OCCT L86: BuildSplitSolids — group shells into result solids
         result.solids = self.build_split_solids(result, &shell_assignments);
@@ -6115,25 +5813,66 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     /// ✅ OCCT-aligned: FillIn3DParts (Builder_3.cxx L97-200).
-    ///   Classify each result shell by which source solid(s) it belongs to.
+    ///   Classify each result face against the other source solid.
     ///
     /// OCCT L117-150: collect all result faces (images + originals)
     /// OCCT L164-195: for each source SOLID, build draft solid
     /// OCCT L201-204: ClassifyFaces against all draft solids
     ///
-    /// rcad: face-level classification (Phase 3) already filters by state.
-    ///   Each shell is assigned to the source solid it originated from.
-    ///   Returns a map: (shell_idx, source_solid_idx) → IN/OUT state.
-    fn fill_in_3d_parts(&self, result: &ResultBuilder) -> Vec<(usize, usize, &'static str)> {
-        // OCCT L117-150: collect all result faces from myImages
-        //   rcad: result.shells already contains the classified face indices.
-        //   No need to rebuild from myImages.
+    /// rcad: classifies result faces (originals without interferences) that
+    ///   were added unconditionally by BuildResult but may be OUT of the other
+    ///   solid.  Faces failing the keep policy are removed from shells.
+    ///   This replaces OCCT's draft-solid classification for 2-operand booleans.
+    fn fill_in_3d_parts(&self, result: &mut ResultBuilder,
+                         a_faces: &[usize], b_faces: &[usize]) -> Vec<(usize, usize, &'static str)> {
+        // OCCT L117-150: classify ALL result faces that were added via BuildResult
+        // (originals without interferences).  Faces already processed by Phase 3
+        // (split_face_occt_wire_pipeline) were classified at emit time.
+        let nf = result.faces.len();
+        let mut to_remove = vec![false; nf];
+        for fi in 0..nf {
+            if to_remove[fi] { continue; }
+            let (source_side, other_faces) = match &result.face_origins[fi] {
+                FaceOrigin::FromA(_) => (SourceSide::A, b_faces),
+                FaceOrigin::FromB(_) => (SourceSide::B, a_faces),
+                _ => continue,
+            };
+            if other_faces.is_empty() { continue; }
+            // Use the face sample point (centroid) for classification.
+            // This catches originals without interferences that would be OUT.
+            let pt = result.faces[fi].6; // _centroid field
+            let class = classify_point(pt, other_faces, self.ds);
+            if !self.classification_keep_policy(source_side, class, fi) {
+                to_remove[fi] = true;
+            }
+        }
 
-        // OCCT L164-195: for each source SOLID, build draft solid
-        //   rcad: Phase 3 classification (classify_against_solid_for_boolean)
-        //   already determined IN/OUT per face.  Since operands are single-solid,
-        //   draft solid building is elided.
-        //
+        if to_remove.iter().any(|&r| r) {
+            let old_faces = std::mem::take(&mut result.faces);
+            let old_origins = std::mem::take(&mut result.face_origins);
+            for (fi, face) in old_faces.into_iter().enumerate() {
+                if !to_remove[fi] {
+                    result.faces.push(face);
+                    result.face_origins.push(old_origins[fi]);
+                }
+            }
+            // Rebuild shell face indices (some faces may have been removed)
+            let old_shells = std::mem::take(&mut result.shells);
+            // Build old→new face index map
+            let mut idx_map: Vec<Option<usize>> = vec![None; nf];
+            let mut cur = 0usize;
+            for fi in 0..nf {
+                if !to_remove[fi] { idx_map[fi] = Some(cur); cur += 1; }
+            }
+            for shell in &old_shells {
+                let new_shell: Vec<usize> = shell.iter()
+                    .filter_map(|&fi| idx_map[fi]).collect();
+                if !new_shell.is_empty() {
+                    result.shells.push(new_shell);
+                }
+            }
+        }
+
         // Assign each shell to source A (0) or B (1) based on face origins.
         let mut assignments: Vec<(usize, usize, &'static str)> = Vec::new();
         for (si, shell) in result.shells.iter().enumerate() {
@@ -6148,7 +5887,7 @@ impl<'a> BooleanBuilder<'a> {
                 if from_a && from_b { break; }
             }
             if from_a {
-                assignments.push((si, 0, "OUT")); // IN/OUT determined by Phase 3
+                assignments.push((si, 0, "OUT"));
             }
             if from_b {
                 assignments.push((si, 1, "OUT"));
@@ -6292,23 +6031,16 @@ impl<'a> BooleanBuilder<'a> {
                     _ => {}
                 }
             }
-            // ⚠ OCCT: BuildResult adds the original TopoDS_Face regardless of surface type.
-            //   rcad: limited to Plane faces — curved surfaces (Cylinder/Sphere/Cone/Torus)
-            //   have seam/deg edges that require the WireSplitter's complex segment handling
-            //   (collect_face_edge_segments → emit_wire_face).  For now, only Plane faces
-            //   have simple boundaries that can be emitted directly via build_original_face.
-            use rcad_kernel::geom::Surface3;
+            // ✅ OCCT-aligned: BuildResult adds original face unconditionally
+            // (Builder_1.cxx L146-152).  FillIn3DParts classifies all result faces
+            // and drops OUT faces in a later step (fill_in_3d_parts below).
             for &fi in &a_faces {
-                if !emitted_a.contains(&self.ds.faces[fi].source_face_idx)
-                    && matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
-                {
+                if !emitted_a.contains(&self.ds.faces[fi].source_face_idx) {
                     result.build_original_face(self.ds, fi, FaceOrigin::FromA(self.ds.faces[fi].source_face_idx));
                 }
             }
             for &fi in &b_faces {
-                if !emitted_b.contains(&self.ds.faces[fi].source_face_idx)
-                    && matches!(self.ds.faces[fi].surface, Surface3::Plane(_))
-                {
+                if !emitted_b.contains(&self.ds.faces[fi].source_face_idx) {
                     result.build_original_face(self.ds, fi, FaceOrigin::FromB(self.ds.faces[fi].source_face_idx));
                 }
             }
@@ -6320,7 +6052,7 @@ impl<'a> BooleanBuilder<'a> {
         result.build_result("SHELL");
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 5: FillImagesSolids (L400-410) → BuildResult(SOLID) (L406-410).
-        self.fill_images_solids(&mut result);
+        self.fill_images_solids(&mut result, &a_faces, &b_faces);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         result.build_result("SOLID");
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
@@ -6334,7 +6066,7 @@ impl<'a> BooleanBuilder<'a> {
         result.build_result("COMPOUND");
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
 
-        let (mut brep, mut history) = result.build(matches!(self.op, BooleanOpType::Union));
+        let (mut brep, mut history) = result.build();
 
         // ✅ OCCT-aligned: PrepareHistory (L438-442) — annotate edge/vertex/shell provenance.
         annotate_history_from_ds(&brep, &mut history, self.ds);

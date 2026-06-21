@@ -2548,53 +2548,15 @@ fn intersection_result_is_degenerate_sliver(result: &BRep) -> bool {
 /// Plane recompute and planar-intersection cleanup after [`builder::BooleanBuilder::build`],
 /// matching [`boolean_op_pave_fill_build`].
 pub(crate) fn boolean_postprocess_pave_result(
-    op: BooleanOpType,
-    a: &BRep,
-    b: &BRep,
-    mut result: BRep,
+    _op: BooleanOpType,
+    _a: &BRep,
+    _b: &BRep,
+    result: BRep,
 ) -> Result<BRep, BooleanError> {
-    geom_populate::recompute_plane_surfaces(&mut result);
-    if matches!(op, BooleanOpType::Intersection)
-        && !(brep_is_world_axis_aligned_plane_solid(a) && brep_is_world_axis_aligned_plane_solid(b))
-    {
-        // Clip overlapping coplanar faces FIRST, before the removal passes below.
-        // `handle_coplanar_faces` in PaveFiller does not create split curves, so both
-        // un-split faces survive `build_with_history` and inflate SA.  This pass clips
-        // them to their 2D overlap polygon (Sutherland–Hodgman), which the subsequent
-        // removal passes can then deduplicate correctly.
-        // Extended from pure-plane-only to all Intersection: the clip functions handle
-        // non-axis-aligned faces by skipping them, so curved-surface cases (e.g. cylinder ∩
-        // cube) benefit from coplanar cleanup without affecting curved surfaces.
-        let (next, _cc) = orthogonal_face_fuse::clip_coplanar_overlap_for_intersection(
-            &result, a, b,
-            tolerance::TOLERANCE_ABS,
-        );
-        result = next;
-        let (next, _rm) =
-            orthogonal_face_fuse::remove_axis_coplanar_redundant_child_faces(&result, tolerance::TOLERANCE_ABS);
-        result = next;
-        let (next, _sp) = orthogonal_face_fuse::remove_spurious_intersection_face_preserving_volume(
-            &result,
-            tolerance::TOLERANCE_LINEAR_ULTRA_STRICT,
-        );
-        result = next;
-    }
-    if matches!(op, BooleanOpType::Intersection)
-        && brep_is_pure_plane_solid(a)
-        && brep_is_pure_plane_solid(b)
-        && intersection_planar_sliver_should_be_empty(&result, a, b)
-    {
-        return Ok(BRep::default());
-    }
-    // Broader check: if the result has only planar faces and all vertices are
-    // co-planar (zero thickness), the solids only touch at a face without
-    // volumetric overlap — return empty.  This catches e.g. coaxial cylinders
-    // or adjoining boxes that just meet at a face (OCCT i2, i5).
-    if matches!(op, BooleanOpType::Intersection)
-        && intersection_result_is_degenerate_sliver(&result)
-    {
-        return Ok(BRep::default());
-    }
+    // rcad-specific post-processing removed: recompute_plane_surfaces, coplanar clipping,
+    // redundant face removal, spurious face removal, and degenerate sliver detection.
+    // OCCT does not perform any post-processing after the Builder.
+    // If these were needed, the root cause is in the Builder/PaveFiller pipeline.
     if !result.solids.is_empty() && !result.solids[0].shells.is_empty() {
         eprintln!("Post-process result: {} faces", result.solids[0].shells[0].faces.len());
         if std::env::var("RCAD_DEBUG_RESULT_FACES").is_ok() {

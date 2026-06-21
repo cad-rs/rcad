@@ -1310,8 +1310,10 @@ impl DS {
 
     /// ✅ OCCT-aligned: Build edge images from pave blocks (BOPAlgo_Builder::FillImagesEdges).
     ///
-    /// For edges that were split by PaveFiller (pave_blocks.len() > 1), create sub-edges
-    /// in `self.edges` and populate `my_images` / `my_origins` mappings.
+    /// Reads `pb.new_edge` from each source edge's PaveBlocks to populate
+    /// `my_images` / `my_origins` mappings.  Sub-edges are already created by
+    /// `build_split_edges` (PaveFiller::MakeSplitEdges) — this function only
+    /// constructs the mapping table, it does NOT create new edges.
     ///
     /// This must be called after `build_split_edges()` (end of `make_blocks`).
     pub fn build_edge_images(&mut self) {
@@ -1319,48 +1321,14 @@ impl DS {
         self.my_images = vec![Vec::new(); n_edges];
         self.my_origins = Vec::new();
 
-        // Pre-collect edge data to avoid borrow conflict with self.edges.push
-        struct EdgeData {
-            curve: Curve3,
-            origin: ShapeOrigin,
-            geom_tol: f64,
-            blocks: Vec<(usize, usize, f64, f64)>, // (sv, ev, t_start, t_end)
-        }
-        let edge_data: Vec<EdgeData> = self.edges.iter().map(|e| {
-            let blocks = e.pave_blocks.iter()
-                .filter(|pb| pb.pave1.vertex_idx != pb.pave2.vertex_idx)
-                .map(|pb| {
-                    (pb.pave1.vertex_idx, pb.pave2.vertex_idx, pb.pave1.param, pb.pave2.param)
-                })
-                .collect();
-            EdgeData {
-                curve: e.curve.clone(),
-                origin: e.origin,
-                geom_tol: e.geom_tol,
-                blocks,
-            }
-        }).collect();
-
         for ei in 0..n_edges {
-            if edge_data[ei].blocks.is_empty() {
-                continue;
-            }
-            let data = &edge_data[ei];
-            for &(sv, ev, t_start, t_end) in &data.blocks {
-                let sub_ei = self.edges.len();
-                self.edges.push(DSEdge {
-                    start_vertex: sv,
-                    end_vertex: ev,
-                    curve: data.curve.clone(),
-                    t_range: [t_start, t_end],
-                    origin: data.origin,
-                    geom_tol: data.geom_tol,
-                    paves: Vec::new(),
-                    pave_blocks: Vec::new(),
-            face_reps: Vec::new(),
-                });
-                self.my_images[ei].push(sub_ei);
-                self.my_origins.push(ei);
+            let edge = &self.edges[ei];
+            for pb in &edge.pave_blocks {
+                let sub_ei = pb.new_edge.unwrap_or(ei);
+                if sub_ei < self.edges.len() {
+                    self.my_images[ei].push(sub_ei);
+                    self.my_origins.push(ei);
+                }
             }
         }
     }
