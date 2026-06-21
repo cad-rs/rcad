@@ -1203,8 +1203,8 @@ impl<'a> PaveFiller<'a> {
     // ─── Pass 3: Edge-Edge ─────────────────────────────────────────────
 
     fn perform_ee(&mut self) {
-        let a_edges: Vec<usize> = self.edges_of(ShapeOrigin::ShapeA);
-        let b_edges: Vec<usize> = self.edges_of(ShapeOrigin::ShapeB);
+        // ✅ OCCT-aligned: BOPDS_Iterator cross-group pair iteration.
+        let a_count = self.ds.a_edge_count;
 
         // Build a set of shared edge pairs for fast lookup when glue is enabled
         let shared_edge_set: std::collections::HashSet<(usize, usize)> = if self.use_glue {
@@ -1218,24 +1218,24 @@ impl<'a> PaveFiller<'a> {
             std::collections::HashSet::new()
         };
 
-        for &ae in &a_edges {
-            for &be in &b_edges {
-                if self.ds.is_edge_degenerated(ae) || self.ds.is_edge_degenerated(be) { continue; }
-                // Skip shared edges when glue is enabled
+        let mut it = crate::bopds::ds::PairIterator::prepare_ab(a_count, self.ds.edges.len());
+        while it.more() {
+            let pk = it.value();
+            let ae = pk.i1; let be = pk.i2;
+            if !self.ds.is_edge_degenerated(ae) && !self.ds.is_edge_degenerated(be) {
                 if self.use_glue && shared_edge_set.contains(&(ae, be)) {
-                    // Add interference for the shared edge but skip geometric intersection
                     self.ds.interferences.push(Interference::EdgeEdge {
-                        e1: ae,
-                        e2: be,
+                        e1: ae, e2: be,
                         point: self.ds.vertices[self.ds.edges[ae].start_vertex].point,
                         param1: self.ds.edges[ae].t_range[0],
                         param2: self.ds.edges[be].t_range[0],
                         new_vertex: self.ds.edges[ae].start_vertex,
                     });
-                    continue;
+                } else {
+                    self.check_edge_edge(ae, be);
                 }
-                self.check_edge_edge(ae, be);
             }
+            it.next();
         }
     }
 

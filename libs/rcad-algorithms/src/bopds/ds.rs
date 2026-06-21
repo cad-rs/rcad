@@ -48,24 +48,39 @@ impl PassKey {
 }
 
 /// ✅ OCCT-aligned: lightweight pair iterator over shape indices.
-/// OCCT BOPDS_Iterator::Prepare — produces sorted (i,j) pairs for a range.
-/// Phase 1: linear O(n²) like current rcad loops.
-/// Phase 2: BVH-based culling matching OCCT's BOPDS_IteratorSI.
+/// OCCT BOPDS_Iterator — produces sorted (i,j) pairs, optionally cross-group (A×B).
 pub struct PairIterator {
-    i: usize, j: usize, n: usize,
-    done: bool,
+    i: usize, j: usize, a_end: usize, b_end: usize, done: bool,
+    cross: bool,  // true = cross-group (A×B), false = all pairs (0..n)
 }
 
 impl PairIterator {
+    /// OCCT: BOPDS_Iterator — iterate all pairs over [0, count).
     pub fn new(count: usize) -> Self {
-        PairIterator { i: 0, j: 1, n: count, done: count < 2 }
+        PairIterator { i: 0, j: 1, a_end: count, b_end: count, done: count < 2, cross: false }
     }
+
+    /// OCCT: BOPDS_Iterator::Prepare — iterate cross-group pairs A[end_a] × B[end_b..].
+    /// For rcad: A = [0, a_end), B = [a_end, b_end).
+    /// This matches the PaveFiller's A×B cross-shape pair iteration pattern.
+    pub fn prepare_ab(a_end: usize, b_end: usize) -> Self {
+        let has_pairs = a_end > 0 && b_end > a_end;
+        PairIterator { i: 0, j: a_end, a_end, b_end, done: !has_pairs, cross: true }
+    }
+
     pub fn more(&self) -> bool { !self.done }
     pub fn value(&self) -> PassKey { PassKey { i1: self.i, i2: self.j } }
+
     pub fn next(&mut self) {
-        self.j += 1;
-        if self.j >= self.n { self.i += 1; self.j = self.i + 1; }
-        if self.i >= self.n - 1 { self.done = true; }
+        if self.cross {
+            self.j += 1;
+            if self.j >= self.b_end { self.i += 1; self.j = self.a_end; }
+            if self.i >= self.a_end { self.done = true; }
+        } else {
+            self.j += 1;
+            if self.j >= self.b_end { self.i += 1; self.j = self.i + 1; }
+            if self.i >= self.b_end - 1 || self.i >= self.a_end { self.done = true; }
+        }
     }
 }
 
