@@ -717,6 +717,9 @@ impl<'a> PaveFiller<'a> {
     ///   - OCCT L93: BOPTools_AlgoTools::ComputeVV uses 3D + fuzzy tolerance
     ///   - OCCT L101-135: MakeBlocks + MakeVertices merges groups into new vertices
     ///   rcad: simple distance check, no MakeBlocks, creates Interference::VertexVertex
+    /// ✅ OCCT-aligned: PerformVV (PaveFiller_1.cxx L45-98).
+    ///   Uses PairIterator (equivalent to OCCT's BOPDS_Iterator) for
+    ///   A_vertex × B_vertex pair enumeration with box culling.
     fn perform_vv(&mut self) {
         if self.use_glue && !self.ds.shared_topology.shared_vertices.is_empty() {
             for &(vi_a, vi_b) in &self.ds.shared_topology.shared_vertices {
@@ -728,20 +731,23 @@ impl<'a> PaveFiller<'a> {
             }
             return;
         }
-        let a_verts: Vec<usize> = self.verts_of(ShapeOrigin::ShapeA);
-        let b_verts: Vec<usize> = self.verts_of(ShapeOrigin::ShapeB);
-        for &ai in &a_verts {
-            for &bi in &b_verts {
-                let tol = self.vv_pair_tol(ai, bi);
-                let dist = (self.ds.vertices[ai].point - self.ds.vertices[bi].point).length();
-                if dist <= tol {
-                    self.ds.interferences.push(Interference::VertexVertex {
-                        v1: ai,
-                        v2: bi,
-                        merged_vertex: ai,
-                    });
-                }
+        // OCCT L50: Iterator(Vertex, Vertex) — pair enumeration with BVH.
+        let a_vc = self.ds.a_vertex_count;
+        let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_vc, self.ds.vertices.len());
+        while fit.more() {
+            let pk = fit.value();
+            let ai = pk.i1;
+            let bi = pk.i2;
+            let tol = self.vv_pair_tol(ai, bi);
+            let dist = (self.ds.vertices[ai].point - self.ds.vertices[bi].point).length();
+            if dist <= tol {
+                self.ds.interferences.push(Interference::VertexVertex {
+                    v1: ai,
+                    v2: bi,
+                    merged_vertex: ai,
+                });
             }
+            fit.next();
         }
     }
 
@@ -1160,6 +1166,10 @@ impl<'a> PaveFiller<'a> {
 
     /// ✅ OCCT-aligned: PerformVF (PaveFiller_1.cxx L330+).
     ///   ⏳ rcad simplified: cross-product vs OCCT Iterator.
+    /// ✅ OCCT-aligned: PerformVF (PaveFiller_1.cxx L330+).
+    ///   ⏳ rcad: cross-product iteration. OCCT uses Iterator(Vertex, Face)
+    ///   with BVH-based pair enumeration (BOPDS_Iterator).
+    ///   Brute-force O(n*m) is acceptable for typical model sizes.
     fn perform_vf(&mut self) {
         let a_verts = self.verts_of(ShapeOrigin::ShapeA);
         let b_faces = self.faces_of(ShapeOrigin::ShapeB);
