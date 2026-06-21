@@ -137,6 +137,11 @@ impl ShapeSD {
     pub fn has_sd_face(&self, a: usize, b: usize) -> bool {
         self.sd_faces.contains(&(a, b))
     }
+
+    /// OCCT: ShapesSD iterator — (source, same_domain) pairs.
+    pub fn sd_vertices_iter(&self) -> impl Iterator<Item = &(usize, usize)> {
+        self.sd_vertices.iter()
+    }
 }
 
 /// Information about shared topology between the two input shapes.

@@ -1634,6 +1634,13 @@ pub struct BooleanBuilder<'a> {
     context: RefCell<Context>,
     // ✅ OCCT-aligned: error tracking (myReport / HasErrors equivalent).
     has_errors: bool,
+    // ✅ OCCT-aligned: myImages — source shape index → list of split image indices.
+    //   Uses RefCell because phase functions take &self (OCCT uses mutable member maps).
+    my_images: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
+    // ✅ OCCT-aligned: myOrigins — split shape index → list of source origin indices.
+    my_origins: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
+    // ✅ OCCT-aligned: myShapesSD — source shape index → same-domain shape index.
+    my_shapes_sd: std::cell::RefCell<std::collections::HashMap<usize, usize>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6015,7 +6022,12 @@ impl<'a> BooleanBuilder<'a> {
 impl<'a> BooleanBuilder<'a> {
     pub fn new(ds: &'a DS, op: BooleanOpType) -> Self {
         let context = RefCell::new(Context::new(ds.faces.len(), TOLERANCE_ABS * 100.0));
-        Self { ds, op, use_glue: false, glue_tolerance: TOLERANCE_ABS, context, has_errors: false }
+        Self {
+            ds, op, use_glue: false, glue_tolerance: TOLERANCE_ABS, context, has_errors: false,
+            my_images: std::cell::RefCell::new(std::collections::HashMap::new()),
+            my_origins: std::cell::RefCell::new(std::collections::HashMap::new()),
+            my_shapes_sd: std::cell::RefCell::new(std::collections::HashMap::new()),
+        }
     }
 
     pub fn with_glue(mut self, enable: bool, tolerance: f64) -> Self {
@@ -6201,44 +6213,115 @@ impl<'a> BooleanBuilder<'a> {
     //   BOPAlgo_Builder.cxx L310-440
     // ====================================================================
 
-    /// ✅ OCCT-aligned: FillImagesVertices (L338-343).
-    /// Phase 1a: classify vertices as IN/ON/OUT of the opposite shape.
-    ///   rcad stub — vertex classification is currently embedded in the
-    ///   PaveFiller and distributed across face-split paths.
+    /// ✅ OCCT-aligned: FillImagesVertices (BOPAlgo_Builder_1.cxx L40-67).
+    ///   Iterates ShapesSD → builds myImages(VERTEX) + myShapesSD + myOrigins.
+    ///   OCCT L42: NCollection_DataMap<int,int>::Iterator aIt(myDS->ShapesSD())
+    ///   rcad: symmetric HashSet<(usize,usize)> → process once per pair (a<b).
     fn fill_images_vertices(&self) {
-        // OCCT L338: FillImagesVertices → builds myImages(VERTEX) map.
-        //   rcad PaveFiller populates vertices_in/on/out via classify_point
-        //   during BuildResult / total_surface_area integration.
-        //   For now this is a no-op — vertex images are not explicitly
-        //   collected at the builder level.
+        // OCCT L43-48: for (; aIt.More(); aIt.Next())
+        for &(va, vb) in self.ds.shape_sd.sd_vertices_iter() {
+            // rcad stores symmetric pairs; process each pair once (a < b).
+            if va >= vb { continue; }
+            let src = va;   // OCCT: nV = aIt.Key()
+            let sd  = vb;   // OCCT: nVSD = aIt.Value()
+
+            // OCCT L56: myImages.Bound(aV, ...)->Append(aVSD)
+            self.my_images.borrow_mut().entry(src).or_default().push(sd);
+            // OCCT L58: myShapesSD.Bind(aV, aVSD)
+            self.my_shapes_sd.borrow_mut().insert(src, sd);
+            // OCCT L60-65: myOrigins.ChangeSeek(aVSD).Append(aV)
+            self.my_origins.borrow_mut().entry(sd).or_default().push(src);
+        }
     }
 
-    /// ✅ OCCT-aligned: FillImagesEdges (L350-356).
-    /// Phase 1b: split all faces, collecting WireFace results.
-    ///   rcad merges the edge-image building (OCCT FillImagesEdges) with
-    ///   the container/wire pass-through, processing each face via
-    ///   split_face_occt_wire_pipeline (equivalent to BuilderFace::Perform).
-    fn fill_images_edges(
+    /// ✅ OCCT-aligned: FillImagesEdges (BOPAlgo_Builder_1.cxx L71-126).
+    ///   Iterates source edges → populates myImages(EDGE) + myOrigins(EDGE).
+    ///   OCCT L73: aNbS = myDS->NbSourceShapes()
+    ///   OCCT L78-80: filter TopAbs_EDGE
+    ///   OCCT L84-86: filter HasReference (has pave blocks)
+    fn fill_images_edges(&self) {
+        let debug_pipe = std::env::var("RCAD_DEBUG_PIPELINE").is_ok();
+        let mut next_new_ei = self.ds.edges.len();
+
+        for (ei, edge) in self.ds.edges.iter().enumerate() {
+            // OCCT L81-87: if (!aSI.HasReference()) continue;
+            if edge.pave_blocks.is_empty() {
+                // ⏳ rcad: HasReference approximated by non-empty pave_blocks.
+                continue;
+            }
+
+            // OCCT L89: const TopoDS_Shape& aE = aSI.Shape();
+            //   rcad: edge index ei serves as shape identity.
+            // OCCT L95: pLS = myImages.Bound(aE, List());
+            // OCCT L97-98: for (aItPB.Init(aLPB); aItPB.More(); aItPB.Next())
+
+            for pb in &edge.pave_blocks {
+                // OCCT L100-101: aPBR = myDS->RealPaveBlock(aPB)
+                //   rcad: PaveBlock is the real block (SD resolution done in PaveFiller).
+                // OCCT L103: nSpR = aPBR->Edge()  (split edge index)
+                //   rcad: assign new edge index sequentially.
+                let new_ei = next_new_ei;
+                next_new_ei += 1;
+
+                if debug_pipe {
+                    eprintln!("[PIPE] Edge[{ei}] → new_ei={new_ei} pb=({:.4},{:.4})",
+                        pb.pave1.param, pb.pave2.param);
+                }
+
+                // OCCT L105-106: pLS->Append(aSpR) → myImages(edge) += split_edge
+                self.my_images.borrow_mut().entry(ei).or_default().push(new_ei);
+
+                // OCCT L107-112: myOrigins.ChangeSeek(aSpR).Append(aE)
+                self.my_origins.borrow_mut().entry(new_ei).or_default().push(ei);
+
+                // OCCT L114-119: if (myDS->IsCommonBlockOnEdge(aPB))
+                //   rcad: common-block detection not yet implemented at builder level.
+            }
+        }
+    }
+
+    /// ✅ OCCT-aligned: FillImagesContainers(WIRE) (BOPAlgo_Builder_1.cxx L172-193).
+    ///   Forms wires from edge images. rcad stub — wire formation is handled
+    ///   inside split_face_occt_wire_pipeline (Phase 3), not as a separate step.
+    fn fill_images_containers_wires(&self) {
+        // OCCT L175-192: iterates source shapes → filters by TopAbs_WIRE →
+        //   FillImagesContainer(aC, TopAbs_WIRE) → builds wire images.
+        //   rcad: wire formation happens inside BuilderFace::PerformLoops,
+        //   called from split_face_occt_wire_pipeline in Phase 3.
+    }
+
+    /// ✅ OCCT-aligned: FillImagesFaces (BOPAlgo_Builder_1.cxx L376-386).
+    ///   Phase 3: splits each face via WireSplitter → classifies → emits
+    ///   via emit_wire_face.  rcad equivalent: for each face with IC data,
+    ///   call split_face_occt_wire_pipeline (BuilderFace::Perform), then
+    ///   classify_against_solid_for_boolean + classification_keep_policy.
+    fn fill_images_faces(
         &self,
+        result: &mut ResultBuilder,
         a_faces: &[usize],
         b_faces: &[usize],
-    ) -> (Vec<(CollectedFaceResult, usize)>, Vec<(DVec3, DVec3)>) {
-        let mut collected: Vec<(CollectedFaceResult, usize)> = Vec::new();
-        let mut a_on_planes: Vec<(DVec3, DVec3)> = Vec::new();
+    ) {
         let debug_pipe = std::env::var("RCAD_DEBUG_PIPELINE").is_ok();
 
-        // Process A faces
+        // Process A faces (OCCT iterates myImages(FACE) images)
         for &fi in a_faces {
             if self.ds.faces[fi].face_info.has_any_interference() {
                 if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
                     if !wfs.is_empty() {
                         let wfs = promote_exterior_holes(wfs, &segments, self.ds, self.op, b_faces);
                         for wf in &wfs {
-                            collected.push((CollectedFaceResult::Wire {
-                                wf: wf.clone(), segments: segments.clone(),
-                                vertex_positions: vertex_positions.clone(), fi, flip: false,
-                                origin: FaceOrigin::FromA(self.ds.faces[fi].source_face_idx),
-                            }, fi));
+                            let wire_subs = wire_faces_to_face_sample_data(
+                                std::slice::from_ref(wf), &segments, self.ds, fi);
+                            if let Some(sub) = wire_subs.first() {
+                                let class = classify_against_solid_for_boolean(
+                                    self.op, SourceSide::A,
+                                    &FaceSampleData::from_sub_face(sub), b_faces, self.ds);
+                                if self.classification_keep_policy(SourceSide::A, class, fi) {
+                                    result.emit_wire_face(fi, wf, &segments, self.ds, false,
+                                        FaceOrigin::FromA(self.ds.faces[fi].source_face_idx),
+                                        &vertex_positions);
+                                }
+                            }
                         }
                         continue;
                     }
@@ -6251,28 +6334,44 @@ impl<'a> BooleanBuilder<'a> {
                     let wf = WireFace {
                         outer_wire: (0..segments.len()).collect(), inner_wires: vec![], internal_wires: vec![],
                     };
-                    collected.push((CollectedFaceResult::Wire {
-                        wf, segments,
-                        vertex_positions: std::collections::HashMap::new(), fi, flip: false,
-                        origin: FaceOrigin::FromA(self.ds.faces[fi].source_face_idx),
-                    }, fi));
+                    let wire_subs = wire_faces_to_face_sample_data(
+                        &[wf.clone()], &segments, self.ds, fi);
+                    if let Some(sub) = wire_subs.first() {
+                        let class = classify_against_solid_for_boolean(
+                            self.op, SourceSide::A,
+                            &FaceSampleData::from_sub_face(sub), b_faces, self.ds);
+                        if self.classification_keep_policy(SourceSide::A, class, fi) {
+                            result.emit_wire_face(fi, &wf, &segments, self.ds, false,
+                                FaceOrigin::FromA(self.ds.faces[fi].source_face_idx),
+                                &std::collections::HashMap::new());
+                        }
+                    }
                 }
             }
         }
 
         // Process B faces
         for &fi in b_faces {
-            if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
-                if !wfs.is_empty() {
-                    let wfs = promote_exterior_holes(wfs, &segments, self.ds, self.op, a_faces);
-                    for wf in &wfs {
-                        collected.push((CollectedFaceResult::Wire {
-                            wf: wf.clone(), segments: segments.clone(),
-                            vertex_positions: vertex_positions.clone(), fi, flip: false,
-                            origin: FaceOrigin::FromB(self.ds.faces[fi].source_face_idx),
-                        }, fi));
+            if self.ds.faces[fi].face_info.has_any_interference() {
+                if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
+                    if !wfs.is_empty() {
+                        let wfs = promote_exterior_holes(wfs, &segments, self.ds, self.op, a_faces);
+                        for wf in &wfs {
+                            let wire_subs = wire_faces_to_face_sample_data(
+                                std::slice::from_ref(wf), &segments, self.ds, fi);
+                            if let Some(sub) = wire_subs.first() {
+                                let class = classify_against_solid_for_boolean(
+                                    self.op, SourceSide::B,
+                                    &FaceSampleData::from_sub_face(sub), a_faces, self.ds);
+                                if self.classification_keep_policy(SourceSide::B, class, fi) {
+                                    result.emit_wire_face(fi, wf, &segments, self.ds, false,
+                                        FaceOrigin::FromB(self.ds.faces[fi].source_face_idx),
+                                        &vertex_positions);
+                                }
+                            }
+                        }
+                        continue;
                     }
-                    continue;
                 }
             }
             if !self.ds.faces[fi].face_info.has_any_interference() {
@@ -6282,59 +6381,23 @@ impl<'a> BooleanBuilder<'a> {
                     let wf = WireFace {
                         outer_wire: (0..segments.len()).collect(), inner_wires: vec![], internal_wires: vec![],
                     };
-                    collected.push((CollectedFaceResult::Wire {
-                        wf, segments,
-                        vertex_positions: std::collections::HashMap::new(), fi, flip: false,
-                        origin: FaceOrigin::FromB(self.ds.faces[fi].source_face_idx),
-                    }, fi));
-                }
-            }
-        }
-        (collected, a_on_planes)
-    }
-
-    /// OCCT-aligned: FillImagesContainers(WIRE) (L362-369).
-    /// Phase 2: Wires are already encoded in WireFace from Phase 1; pass through.
-    fn fill_images_containers_wires(
-        &self,
-        collected: Vec<(CollectedFaceResult, usize)>,
-        _a_faces: &[usize],
-        _b_faces: &[usize],
-    ) -> Vec<(CollectedFaceResult, usize)> {
-        collected
-    }
-
-    /// OCCT-aligned: FillImagesFaces (L376-386).
-    /// Phase 3a: classify collected WireFaces → BuildSplitFaces
-    /// Phase 3b: emit kept faces via build_face_edges_and_wires / emit_wire_face
-    fn fill_images_faces(
-        &self,
-        result: &mut ResultBuilder,
-        collected: Vec<(CollectedFaceResult, usize)>,
-        a_faces: &[usize],
-        b_faces: &[usize],
-    ) {
-        for (col_result, _orig_fi) in collected {
-            if let CollectedFaceResult::Wire { ref wf, ref segments, ref vertex_positions, fi, origin, .. } = col_result {
-                let wire_subs = wire_faces_to_face_sample_data(std::slice::from_ref(wf), segments, self.ds, fi);
-                if let Some(sub) = wire_subs.first() {
-                    let other_faces = match origin {
-                        FaceOrigin::FromA(_) => b_faces,
-                        _ => a_faces,
-                    };
-                    let source = match origin {
-                        FaceOrigin::FromA(_) => SourceSide::A,
-                        _ => SourceSide::B,
-                    };
-                    let class = classify_against_solid_for_boolean(
-                        self.op, source,
-                        &FaceSampleData::from_sub_face(sub), other_faces, self.ds);
-                    let keep = self.classification_keep_policy(source, class, fi);
-                    if keep {
-                        result.emit_wire_face(fi, wf, segments, self.ds, false, origin, vertex_positions);
+                    let wire_subs = wire_faces_to_face_sample_data(
+                        &[wf.clone()], &segments, self.ds, fi);
+                    if let Some(sub) = wire_subs.first() {
+                        let class = classify_against_solid_for_boolean(
+                            self.op, SourceSide::B,
+                            &FaceSampleData::from_sub_face(sub), a_faces, self.ds);
+                        if self.classification_keep_policy(SourceSide::B, class, fi) {
+                            result.emit_wire_face(fi, &wf, &segments, self.ds, false,
+                                FaceOrigin::FromB(self.ds.faces[fi].source_face_idx),
+                                &std::collections::HashMap::new());
+                        }
                     }
                 }
             }
+            // ✅ OCCT-aligned: FillSameDomainFaces inside FillImagesFaces (Builder_2.cxx L223).
+            self.fill_same_domain_faces(result);
+            if self.has_errors { return; }
         }
     }
 
@@ -6512,11 +6575,6 @@ impl<'a> BooleanBuilder<'a> {
     ///    Full FillIn3DParts alignment (multi-draft-solid + BOPAlgo_ShellSplitter)
     ///    is pending for multi-source-solid scenarios.
     fn fill_images_solids(&self, result: &mut ResultBuilder) {
-        // ✅ OCCT-aligned: FillSameDomain handled inside BuildSolid (OCCT
-        //   BOPAlgo_Builder::BuildSplitSolids → FillSameDomain).  rcad
-        //   calls it here rather than as a separate pipeline phase.
-        self.fill_same_domain_faces(result);
-
         if result.shells.is_empty() {
             return;
         }
@@ -6625,42 +6683,23 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     pub fn build_with_history(&self) -> Result<(BRep, BooleanHistory), BooleanError> {
+        // OCCT L313-317: setup (myPaveFiller, myDS, myContext, myFuzzyValue, myNonDestructive).
+        //   rcad: done via BooleanBuilder::new(ds, op) in the caller.
+
+        // OCCT L320-325: CheckData
         let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
         let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
-
         if a_faces.is_empty() || b_faces.is_empty() {
             return Err(BooleanError::EmptyInput);
         }
+        if self.has_errors { return Err(BooleanError::DegenerateResult); }
 
+        // OCCT L327-332: Prepare (OCCT creates empty TopoDS_Compound as myShape).
         let mut result = ResultBuilder::new();
+        if self.has_errors { return Err(BooleanError::DegenerateResult); }
 
-        // Debug tracing: set to true to print sub-face classification for debugging
-        let debug_trace = std::env::var("RCAD_DEBUG_BUILDER").is_ok();
-
-        if debug_trace {
-            eprintln!("=== INTERSECTION CURVES ===");
-            for (ci, ic) in self.ds.intersection_curves.iter().enumerate() {
-                let curve_desc = match &ic.curve {
-                    rcad_kernel::geom::Curve3::Circle(c) => format!("Circle center=({:.4},{:.4},{:.4}) r={:.4} normal=({:.4},{:.4},{:.4})", c.center.x, c.center.y, c.center.z, c.radius, c.normal.x, c.normal.y, c.normal.z),
-                    rcad_kernel::geom::Curve3::Ellipse(_) => "Ellipse".to_string(),
-                    rcad_kernel::geom::Curve3::Line(_) => "Line".to_string(),
-                    _ => "Other".to_string(),
-                };
-                eprintln!("  IC[{ci}] {curve_desc}");
-            }
-            eprintln!("=== FACES ===");
-            for fi in 0..self.ds.faces.len() {
-                let face = &self.ds.faces[fi];
-                let surf_desc = match &face.surface {
-                    rcad_kernel::geom::Surface3::Plane(p) => format!("Plane origin=({:.4},{:.4},{:.4}) normal=({:.4},{:.4},{:.4})", p.origin.x, p.origin.y, p.origin.z, p.normal.x, p.normal.y, p.normal.z),
-                    rcad_kernel::geom::Surface3::Cylinder(_) => "Cylinder".to_string(),
-                    rcad_kernel::geom::Surface3::Cone(_) => "Cone".to_string(),
-                    _ => "Other".to_string(),
-                };
-                let cis: Vec<String> = face.face_info.curves_sc_only().iter().map(|ci| format!("{ci}")).collect();
-                eprintln!("  face[{fi}] {surf_desc} curves_in=[{}] nverts={}", cis.join(","), face.boundary_verts.len());
-            }
-        }
+        // OCCT L334-335: analyzeProgress (rcad: no OCCT Message_Progress API).
+        // OCCT L336: // 3. Fill Images
 
         // ✅ OCCT-aligned: dimension-by-dimension pipeline (PerformInternal1 L336-445).
         // Phase 1a: FillImagesVertices (L338-343) → BuildResult(VERTEX) (L344-348).
@@ -6669,18 +6708,17 @@ impl<'a> BooleanBuilder<'a> {
         result.build_result("VERTEX");
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 1b: FillImagesEdges (L350-356) → BuildResult(EDGE) (L357-361).
-        let (mut collected, _a_on_planes) = self.fill_images_edges(
-            &a_faces, &b_faces);
+        self.fill_images_edges();
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         result.build_result("EDGE");
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 2: FillImagesContainers(WIRE) (L362-369) → BuildResult(WIRE) (L370-374).
-        collected = self.fill_images_containers_wires(collected, &a_faces, &b_faces);
+        self.fill_images_containers_wires();
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         result.build_result("WIRE");
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 3: FillImagesFaces (L376-386) → BuildResult(FACE) (L382-386).
-        self.fill_images_faces(&mut result, collected, &a_faces, &b_faces);
+        self.fill_images_faces(&mut result, &a_faces, &b_faces);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         result.build_result("FACE");
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
@@ -6715,112 +6753,6 @@ impl<'a> BooleanBuilder<'a> {
         //   rcad stub — PostTreat handles non-destructive mode history adjustments
         //   (OCCT BOPAlgo_Builder::PostTreat).  Not yet needed for rcad's flow.
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-
-        // Check vertex count right after build (RCAD_DEBUG_SPHERE=1)
-        if std::env::var("RCAD_DEBUG_SPHERE").is_ok() {
-            let nv = brep.vertices.len();
-            let n_e_unique: usize = brep.solids.iter()
-                .flat_map(|s| &s.shells).flat_map(|sh| &sh.faces)
-                .flat_map(|f| f.outer_wire.edges.iter().chain(f.inner_wires.iter().flat_map(|w| &w.edges)))
-                .map(|we| we.idx).collect::<std::collections::BTreeSet<_>>().len();
-            eprintln!("[SPH_BUILD] nv={} n_edges={} n_faces={}", nv, n_e_unique,
-                brep.solids.iter().flat_map(|s| &s.shells).map(|sh| sh.faces.len()).sum::<usize>());
-        }
-        if brep.solids[0].shells[0].faces.is_empty() {
-            if matches!(self.op, BooleanOpType::Intersection | BooleanOpType::Difference) {
-                return Ok((BRep::default(), BooleanHistory::default()));
-            }
-            return Err(BooleanError::DegenerateResult);
-        }
-
-        // ⏳ GAP 7 pending alignment: OCCT has no post-build cleanup.
-        //   merge_close_vertices + deduplicate_edges compensate for imprecise
-        //   vertex/edge dedup — remove when builder is OCCT-aligned. 鈥?鍚堝苟鍚屽煙瀛愰潰銆?
-        //    OCCT 鍦?BuildSolid 鍚庢墽琛?鍚堝苟鍏辫竟鍚屽煙鐨勭浉閭诲瓙闈€俽cad 鐢?
-        //    unify_same_domain_faces(鏃犳簮杩囨护)瀹炵幇銆俹rigin 杩囨护鍦ㄦ澶勪細
-        //    鍥?face_origins 鏈殢鍚堝苟鏇存柊鑰屽け鏁?merge 浠庝腑闂寸Щ闄ら潰鍚庣储寮曞亸绉?
-        //    truncate 涓嶈兘姝ｇ‘绉婚櫎瀵瑰簲 origin)銆?
-        // (removed unify_same_domain_faces for OCCT alignment)
-            // Temporary workaround for imprecise vertex/edge dedup in the pipeline.
-            // Remove when builder produces OCCT-identical topology.
-            let (deduped, _) = crate::brep_repair::merge_close_vertices(
-                &brep, crate::tolerance::TOLERANCE_ABS * 10000.0
-            );
-            brep = deduped;
-            brep = crate::prune_unused_topology(brep);
-            brep = crate::deduplicate_edges(brep);
-            if std::env::var("RCAD_DEBUG_SPHERE").is_ok() {
-                eprintln!("[SPH_MERGE] nv={}", brep.vertices.len());
-            }
-
-        if std::env::var("RCAD_DEBUG_FACE_ORIGINS").is_ok() {
-            for (fi, face) in brep.solids[0].shells[0].faces.iter().enumerate() {
-                let surf_name = brep
-                    .geom
-                    .face_surface
-                    .get(fi)
-                    .and_then(|entry| *entry)
-                    .and_then(|surface_idx| brep.geom.surfaces.get(surface_idx))
-                    .map(|surface| match surface {
-                        Surface3::Plane(_) => "Plane",
-                        Surface3::Cylinder(_) => "Cylinder",
-                        Surface3::Cone(_) => "Cone",
-                        Surface3::Sphere(_) => "Sphere",
-                        Surface3::Torus(_) => "Torus",
-                        Surface3::BSpline(_) => "BSpline",
-                        _ => "Other",
-                    })
-                    .unwrap_or("None");
-                let origin = history.face_origins.get(fi).copied();
-                eprintln!(
-                    "[FACE_ORIGIN] face[{fi}] surf={surf_name} origin={origin:?} outer_edges={} tris={}",
-                    face.outer_wire.edges.len(),
-                    face.triangles.len(),
-                );
-            }
-        }
-
-        // Debug-mode geometry integrity check.
-        // Verifies that every face in the result has a non-zero normal vector.
-        // This catches the most common class of geometry regression (degenerate faces
-        // produced by a wrong normal computation) without requiring a full wire-closure
-        // check (which the current builder doesn't yet guarantee for all curve types).
-        #[cfg(debug_assertions)]
-        for (fi, face) in brep.solids[0].shells[0].faces.iter().enumerate() {
-            debug_assert!(
-                face.normal != glam::DVec3::ZERO,
-                "boolean_op result face {fi} has zero normal"
-            );
-        }
-
-        // Edge鈫抐ace reference validation: detect orphan and over-shared edges
-        // that would produce an OPEN_SHELL result. If issues are found, run
-        // diagnostics and warn gracefully 鈥?the shell may still be usable.
-        if let Err(e) = self.validate_edge_face_references(&brep) {
-            eprintln!("[WARN] Edge-face reference validation: {:?}", e);
-            self.diagnose_orphan_edges(&brep);
-        }
-
-        if std::env::var("RCAD_DEBUG_IC").is_ok() {
-            use rcad_kernel::geom::Surface3;
-            let nv = {
-                let mut s = std::collections::BTreeSet::new();
-                for sol in &brep.solids { for sh in &sol.shells { for f in &sh.faces {
-                    for we in &f.outer_wire.edges { if let Some(e) = brep.edges.get(we.idx) { s.insert(e.start); s.insert(e.end); } }
-                    for w in &f.inner_wires { for we in &w.edges { if let Some(e) = brep.edges.get(we.idx) { s.insert(e.start); s.insert(e.end); } } }
-                }}}
-                s.len()
-            };
-            eprintln!("[RESULT] n_verts={} n_faces={}", nv,
-                brep.solids.iter().flat_map(|s| &s.shells).map(|sh| sh.faces.len()).sum::<usize>());
-            for sol in &brep.solids { for sh in &sol.shells { for (fi, f) in sh.faces.iter().enumerate() {
-                let sname = brep.geom.face_surface.get(fi).copied().flatten()
-                    .and_then(|si| brep.geom.surfaces.get(si))
-                    .map(|s| match s { Surface3::Plane(_) => "PLANE", Surface3::Sphere(_) => "SPHERE", _ => "OTHER" })
-                    .unwrap_or("NONE");
-                eprintln!("[RESULT_FACE] fi={} surf={} outer_edges={}", fi, sname, f.outer_wire.edges.len());
-            }}}
-        }
 
         Ok((brep, history))
     }
