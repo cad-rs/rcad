@@ -7831,7 +7831,7 @@ impl<'a> PaveFiller<'a> {
             ];
             all_paves.extend_from_slice(&edge.paves);
             all_paves.sort_by(|a, b| a.param.partial_cmp(&b.param).unwrap_or(std::cmp::Ordering::Equal));
-            all_paves.dedup_by(|a, b| params_equal(a.param, b.param));
+            all_paves.dedup_by(|a, b| params_equal(a.param, b.param) && a.vertex_idx == b.vertex_idx);
 
             for w in all_paves.windows(2) {
                 let pb = PaveBlock::new(ei, w[0], w[1]);
@@ -7946,7 +7946,6 @@ fn param_on_circle3(pt: DVec3, circle: &Circle3, tol: f64) -> Option<f64> {
     let r = circle.radius;
     let center = circle.center;
     let normal = circle.normal;
-    // ✅ OCCT-aligned: point must be on the circle's plane (Geom_Circle::Value natural requirement)
     let local = pt - center;
     if local.dot(normal).abs() > tol {
         return None;
@@ -7955,8 +7954,12 @@ fn param_on_circle3(pt: DVec3, circle: &Circle3, tol: f64) -> Option<f64> {
     if (dist_to_center - r).abs() > tol {
         return None;
     }
-    let ref_dir = any_perpendicular(normal);
-    let u = ref_dir.normalize();
+    // Use same basis as Circle3::point_at for consistency.
+    let u = if normal.x.abs() < 0.9 {
+        normal.cross(DVec3::X).normalize()
+    } else {
+        normal.cross(DVec3::Y).normalize()
+    };
     let v = normal.cross(u);
     let x = local.dot(u);
     let y = local.dot(v);
