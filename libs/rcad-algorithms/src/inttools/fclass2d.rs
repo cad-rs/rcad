@@ -112,6 +112,33 @@ impl CSLibClass2d {
         if px < 0.0 || px > 1.0 || py < 0.0 || py > 1.0 {
             return CSLibResult::Outside;
         }
+
+        // OCCT: check if point is within tolerance of any polygon edge → Uncertain.
+        //   tol_u/tol_v are chordal deviations (FlecheU/FlecheV) that define the
+        //   accuracy of the polygon approximation.  If the point is within this
+        //   distance of an edge, it's too close to call In/Out.
+        let tol_u_norm = self.tol_u / ru;
+        let tol_v_norm = self.tol_v / rv;
+        let max_tol = tol_u_norm.max(tol_v_norm).max(1e-12);
+        for i in 0..self.n {
+            let xi = self.xs[i]; let yi = self.ys[i];
+            let xj = self.xs[(i + 1) % self.n]; let yj = self.ys[(i + 1) % self.n];
+            // Distance from (px,py) to segment (xi,yi)-(xj,yj)
+            let dx = xj - xi;
+            let dy = yj - yi;
+            let len2 = dx * dx + dy * dy;
+            if len2 < 1e-30 { continue; }
+            let t = ((px - xi) * dx + (py - yi) * dy) / len2;
+            let t_clamped = t.clamp(0.0, 1.0);
+            let near_x = xi + t_clamped * dx;
+            let near_y = yi + t_clamped * dy;
+            let dist = ((px - near_x) * (px - near_x) + (py - near_y) * (py - near_y)).sqrt();
+            if dist <= max_tol {
+                return CSLibResult::Uncertain;
+            }
+        }
+
+        // OCCT: winding number for In/Out classification.
         let mut w = 0i32;
         for i in 0..self.n {
             let xi = self.xs[i]; let yi = self.ys[i];
@@ -158,12 +185,33 @@ impl FClass2d {
             umin = umin.min(p.x); umax = umax.max(p.x);
             vmin = vmin.min(p.y); vmax = vmax.max(p.y);
         }
+        // OCCT L346-364: compute chordal error (FlecheU/FlecheV) from polygon samples.
+        //   The chordal error is the maximum distance between a sample point and the
+        //   chord connecting its neighbors.  Passed to CSLib_Class2d as boundary tolerance.
+        let compute_chordal = |pts: &[DVec2]| -> (f64, f64) {
+            if pts.len() < 3 { return (tol_uv, tol_uv); }
+            let mut fu = 0.0_f64; let mut fv = 0.0_f64;
+            for i in 1..pts.len() - 1 {
+                let a = pts[i - 1]; let b = pts[i]; let c = pts[i + 1];
+                // Project b onto chord ac
+                let ac = c - a;
+                let len2 = ac.dot(ac);
+                if len2 < 1e-30 { continue; }
+                let t = ((b - a).dot(ac) / len2).clamp(0.0, 1.0);
+                let proj = a + ac * t;
+                let du = (b.x - proj.x).abs();
+                let dv = (b.y - proj.y).abs();
+                if du > fu { fu = du; }
+                if dv > fv { fv = dv; }
+            }
+            (fu.max(tol_uv), fv.max(tol_uv))
+        };
+
         if outer_pts.len() >= 3 {
+            let (fleche_u, fleche_v) = compute_chordal(&outer_pts);
             // OCCT: TabOrien derived from polygon winding (CCW=FORWARD=true, CW=REVERSED=false).
-            //   In OCCT's CSLib_Class2d, the sign of the winding number determines orientation.
-            //   rcad: use signed area of UV polygon.
             let outer_ccw = polygon_is_ccw(&outer_pts);
-            tab_class.push(CSLibClass2d::new(&outer_pts, tol_u, tol_v, umin, vmin, umax, vmax));
+            tab_class.push(CSLibClass2d::new(&outer_pts, fleche_u, fleche_v, umin, vmin, umax, vmax));
             tab_orien.push(outer_ccw);
         }
 
@@ -179,9 +227,9 @@ impl FClass2d {
                 umin = umin.min(p.x); umax = umax.max(p.x);
                 vmin = vmin.min(p.y); vmax = vmax.max(p.y);
             }
-            // OCCT: inner wire orientation from polygon winding.
+            let (fleche_u, fleche_v) = compute_chordal(&iw_pts);
             let iw_ccw = polygon_is_ccw(&iw_pts);
-            tab_class.push(CSLibClass2d::new(&iw_pts, tol_u, tol_v, i_umin, i_vmin, i_umax, i_vmax));
+            tab_class.push(CSLibClass2d::new(&iw_pts, fleche_u, fleche_v, i_umin, i_vmin, i_umax, i_vmax));
             tab_orien.push(iw_ccw);
         }
 
