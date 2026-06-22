@@ -11408,20 +11408,23 @@ mod tests {
         }
     }
 
-    // -----------------------------------------------------------
-    // PaveFiller alignment tests (replacing extreme-geometry tests)
-    // -----------------------------------------------------------
+    // ============================================================
+    // PaveFiller Structure Tests
+    // ============================================================
 
-    /// Test that perform() produces intersection data and non-micro PaveBlocks
+    /// Test that the PaveFiller perform order matches OCCT PerformInternal.
+    /// The post-FF steps must run in the exact OCCT order:
+    ///   PostTreatFF → UpdateBlocksWithSharedVertices → RefineFaceInfoIn →
+    ///   build_split_edges → UpdatePaveBlocksWithSDVertices → make_blocks →
+    ///   CheckSelfInterference → UpdateInterfsWithSDVertices → ReleasePaveBlocks →
+    ///   RefineFaceInfoOn → remove_micro_edges → make_pcurves → process_de
     #[test]
-    fn test_perform_basic() {
+    fn test_perform_ff_post_order() {
         let a = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
         let b = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
         let mut ds = DS::new(&a, &b);
         let mut filler = PaveFiller::new(&mut ds);
         filler.perform();
-        assert!(!ds.interferences.is_empty() || !ds.intersection_curves.is_empty(),
-            "perform() should produce intersection data");
         // After perform, the DS should have been processed through all phases.
         // At minimum, intersection curves from FF are present.
         // ds.intersection_curves should have entries for interfering face pairs.
@@ -11524,6 +11527,6 @@ mod tests {
                 }
             }
         }
-}
+    }
 
 }

@@ -847,6 +847,31 @@ impl ResultBuilder {
         idx
     }
 
+    /// Geometric edge key for OCCT-aligned edge-set matching (BOPTools_Set analog).
+    /// Returns a hash of the two quantized vertex positions, sorted for direction
+    /// independence, so geometrically identical edges from different operands
+    /// produce the same key regardless of traversal direction or edge index.
+    fn edge_geo_key(&self, ei: usize) -> u64 {
+        let (v1, v2) = self.edges[ei];
+        let p1 = self.vertices[v1];
+        let p2 = self.vertices[v2];
+        // Quantize to 1e-4 grid (building-level tolerance, per OCCT Precision)
+        let q = |v: f64| (v / 1e-4).round() as i64;
+        let k1 = (q(p1.x), q(p1.y), q(p1.z));
+        let k2 = (q(p2.x), q(p2.y), q(p2.z));
+        // Sort for direction independence
+        let (ka, kb) = if k1 < k2 { (k1, k2) } else { (k2, k1) };
+        // FNV-1a hash of the two quantized tuples
+        let mut h: u64 = 14695981039346656037;
+        h ^= ka.0 as u64; h = h.wrapping_mul(1099511628211);
+        h ^= ka.1 as u64; h = h.wrapping_mul(1099511628211);
+        h ^= ka.2 as u64; h = h.wrapping_mul(1099511628211);
+        h ^= kb.0 as u64; h = h.wrapping_mul(1099511628211);
+        h ^= kb.1 as u64; h = h.wrapping_mul(1099511628211);
+        h ^= kb.2 as u64; h = h.wrapping_mul(1099511628211);
+        h
+    }
+
     /// ✅ OCCT-aligned: BRep_Builder::MakeEdge — creates new unique edge.
     ///    OCCT: each TopoDS_Edge is a distinct entity (per TShape identity).
     ///    Even edges connecting the same vertices are distinct TopoDS_Edges.
@@ -5626,26 +5651,35 @@ impl<'a> BooleanBuilder<'a> {
 
         // ── Edge-set signature per face (OCCT BOPTools_Set ──
         // OCCT L689-741: BOPTools_Set uses edge identity WITH orientation
-        // (TopoDS_Edge handles encode orientation).  rcad encodes orientation
-        // as ei*2+forward so opposite-facing edges produce different sets.
-        let face_edge_set: Vec<Vec<usize>> = (0..nf)
+        // (TopoDS_Edge handles encode orientation).  rcad uses geometric
+        // edge matching: the quantized positions of the two endpoint vertices
+        // (sorted for direction independence).  This makes geometrically
+        // identical edges from A and B share the same key even when their
+        // edge indices differ (OCCT alignment, see handover 2026-06-22).
+        let face_edge_set: Vec<Vec<u64>> = (0..nf)
             .map(|fi| {
                 let entry = &result.faces[fi];
-                let mut edges: Vec<usize> = entry.0.iter().map(|&(ei, fwd)| ei * 2 + (fwd as usize)).collect();
+                let collect_geo_keys = |edges: &[(usize, bool)]| -> Vec<u64> {
+                    edges.iter()
+                        .filter(|(ei, _)| !result.deg_edge_indices.contains(ei))
+                        .map(|&(ei, _)| result.edge_geo_key(ei))
+                        .collect()
+                };
+                let mut keys: Vec<u64> = collect_geo_keys(&entry.0);
                 for iw_es in &entry.1 {
-                    edges.extend(iw_es.iter().map(|&(ei, fwd)| ei * 2 + (fwd as usize)));
+                    keys.extend(collect_geo_keys(iw_es));
                 }
                 for iw_es in &entry.9 {
-                    edges.extend(iw_es.iter().map(|&(ei, fwd)| ei * 2 + (fwd as usize)));
+                    keys.extend(collect_geo_keys(iw_es));
                 }
-                edges.sort_unstable();
-                edges.dedup();
-                edges
+                keys.sort_unstable();
+                keys.dedup();
+                keys
             })
             .collect();
 
         // ── Group by edge-set signature ──
-        let mut groups: std::collections::BTreeMap<Vec<usize>, Vec<usize>> =
+        let mut groups: std::collections::BTreeMap<Vec<u64>, Vec<usize>> =
             std::collections::BTreeMap::new();
         for fi in 0..nf {
             if face_edge_set[fi].is_empty() { continue; }
