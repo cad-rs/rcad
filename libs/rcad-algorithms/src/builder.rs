@@ -699,22 +699,6 @@ impl ResultBuilder {
         }
     }
 
-    /// ✅ OCCT-aligned: BuildResult(TopAbs_ShapeEnum) — incremental build.
-    ///   OCCT BOPAlgo_Builder::BuildResult (Builder_1.cxx L130-168) adds shapes
-    ///   of the given type to the result compound after each FillImages step.
-    ///   rcad: build BRep edges/faces/shells/solids incrementally.
-    fn build_result(&mut self, shape_type: &str) {
-        match shape_type {
-            "VERTEX" | "WIRE" | "COMPSOLID" | "COMPOUND" => {
-                // OCCT: BuildResult(VERTEX) adds split vertex images to myShape.
-                // rcad: vertices are created implicitly when edges/faces reference them.
-                // OCCT: BuildResult(WIRE/COMPSOLID/COMPOUND) handled by FillImagesContainers.
-                // rcad: wires/compsolids/compounds are implicit in the BRep structure.
-            }
-            _ => {}
-        }
-    }
-
     /// ✅ OCCT-aligned: BuildResult(EDGE) — build edges from split_edges.
     ///   OCCT Builder_1.cxx L130-168: iterate myImages for TopAbs_EDGE, add to myShape.
     ///   rcad: build edges from the BooleanBuilder's split_edges into self.edges.
@@ -5955,6 +5939,75 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
+    /// ✅ OCCT-aligned: BuildResult (Builder_1.cxx L130-168).
+    ///   Add result shapes of the given type after each FillImages step.
+    ///
+    /// OCCT: BuildResult(TopAbs_ShapeEnum) iterates myArguments for shapes of
+    ///   theType.  If myImages.IsBound(aS) → adds image splits (with fence);
+    ///   if no images → adds original aS (with fence).  rcad: shapes are
+    ///   index-based, not TopoDS TShape identity; the fence is implicit in
+    ///   the result's arrays.
+    fn build_result(&self, shape_type: &str, result: &mut ResultBuilder) {
+        // OCCT L131: aMFence — prevents duplicate TShape addition.
+        //   rcad: vertices/edges/faces are stored in unique-indexed arrays.
+        match shape_type {
+            "VERTEX" | "WIRE" | "SHELL" | "SOLID" | "COMPSOLID" | "COMPOUND" => {
+                // OCCT L137-165: add split images or originals to myShape.
+                //   rcad for VERTEX: vertices are created implicitly by edges/faces.
+                //   rcad for WIRE: wires are part of Face structure (inner_wires).
+                //   rcad for SHELL/SOLID/COMPSOLID/COMPOUND: handled by the
+                //     FillImagesContainers / FillImagesSolids / FillImagesCompounds
+                //     pipeline steps.  Final conversion in ResultBuilder::build().
+            }
+            "EDGE" => {
+                // OCCT L130-168 (TopAbs_EDGE): iterate myArguments(TopAbs_EDGE),
+                //   for each: if myImages.IsBound(aE) → add splits; else add aE.
+                //   rcad: split edges created by FillImagesEdges are stored in
+                //   self.split_edges.  build_edges converts them to BRep edges.
+                let split_edges: Vec<_> = self.split_edges.borrow().clone();
+                result.build_edges(&split_edges, self.ds);
+            }
+            "FACE" => {
+                // OCCT L130-168 (TopAbs_FACE): iterate myArguments(TopAbs_FACE),
+                //   for each: if myImages.IsBound(aF) → add image faces (from
+                //   fill_images_faces); else add the original aF (no split).
+                //   rcad: build_faces validates edge refs.  build_original_face
+                //   adds unmodified source faces (OCCT L146-152: no images → original).
+                result.build_faces();
+                // OCCT L146-152: add original faces without images.
+                let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
+                let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
+                let mut emitted_a: std::collections::HashSet<usize> =
+                    std::collections::HashSet::new();
+                let mut emitted_b: std::collections::HashSet<usize> =
+                    std::collections::HashSet::new();
+                for origin in &result.face_origins {
+                    match origin {
+                        FaceOrigin::FromA(fi) => { emitted_a.insert(*fi); }
+                        FaceOrigin::FromB(fi) => { emitted_b.insert(*fi); }
+                        _ => {}
+                    }
+                }
+                for &fi in &a_faces {
+                    if !emitted_a.contains(&self.ds.faces[fi].source_face_idx) {
+                        result.build_original_face(self.ds, fi,
+                            FaceOrigin::FromA(self.ds.faces[fi].source_face_idx));
+                    }
+                }
+                for &fi in &b_faces {
+                    if !emitted_b.contains(&self.ds.faces[fi].source_face_idx) {
+                        result.build_original_face(self.ds, fi,
+                            FaceOrigin::FromB(self.ds.faces[fi].source_face_idx));
+                    }
+                }
+            }
+            _ => {
+                // OCCT L168: default — no shapes to add for unrecognized types.
+                //   rcad: all known types handled above; wildcard covers unexpected strings.
+            }
+        }
+    }
+
     pub fn build_with_history(&self) -> Result<(BRep, BooleanHistory), BooleanError> {
         // OCCT L313-317: setup (myPaveFiller, myDS, myContext, myFuzzyValue, myNonDestructive).
         //   rcad: done via BooleanBuilder::new(ds, op) in the caller.
@@ -5978,74 +6031,46 @@ impl<'a> BooleanBuilder<'a> {
         // Phase 1a: FillImagesVertices (L338-343) → BuildResult(VERTEX) (L344-348).
         self.fill_images_vertices();
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        result.build_result("VERTEX");
+        self.build_result("VERTEX", &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 1b: FillImagesEdges (L350-356) → BuildResult(EDGE) (L357-361).
+        //   OCCT L130-168: BuildResult(EDGE) adds split edge images to myShape.
+        //   rcad: build_edges (called inside build_result) converts split_edges
+        //   to BRep edge indices — equivalent to adding TopoDS_Edge to myShape.
         self.fill_images_edges();
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // ✅ OCCT-aligned: BuildResult(EDGE) — build edges from split_edges.
-        //    OCCT adds the split TopoDS_Edge shapes to myShape (Builder_1.cxx L130-168).
-        //    rcad: build BRep edges from split_edges with DS vertex positions.
-        let split_edges: Vec<_> = self.split_edges.borrow().clone();
-        result.build_edges(&split_edges, self.ds);
+        self.build_result("EDGE", &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 2: FillImagesContainers(WIRE) (L362-369) → BuildResult(WIRE) (L370-374).
         self.fill_images_containers("WIRE", &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        result.build_result("WIRE");
+        self.build_result("WIRE", &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 3: FillImagesFaces (L376-386) → BuildResult(FACE) (L382-386).
+        //   OCCT L146-152: BuildResult(FACE) adds original faces without images.
+        //   rcad: build_result("FACE") calls build_faces (validate) + adds originals.
         self.fill_images_faces(&mut result, &a_faces, &b_faces);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        result.build_result("FACE");
-        if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // ✅ OCCT-aligned: BuildResult(FACE) — add unmodified source faces.
-        //   OCCT L146-152: if no myImages for a face, add original TopoDS_Face.
-        {
-            let mut emitted_a: std::collections::HashSet<usize> = std::collections::HashSet::new();
-            let mut emitted_b: std::collections::HashSet<usize> = std::collections::HashSet::new();
-            for origin in &result.face_origins {
-                match origin {
-                    FaceOrigin::FromA(fi) => { emitted_a.insert(*fi); }
-                    FaceOrigin::FromB(fi) => { emitted_b.insert(*fi); }
-                    _ => {}
-                }
-            }
-            // ✅ OCCT-aligned: BuildResult adds original face unconditionally
-            // (Builder_1.cxx L146-152).  FillIn3DParts classifies all result faces
-            // and drops OUT faces in a later step (fill_in_3d_parts below).
-            for &fi in &a_faces {
-                if !emitted_a.contains(&self.ds.faces[fi].source_face_idx) {
-                    result.build_original_face(self.ds, fi, FaceOrigin::FromA(self.ds.faces[fi].source_face_idx));
-                }
-            }
-            for &fi in &b_faces {
-                if !emitted_b.contains(&self.ds.faces[fi].source_face_idx) {
-                    result.build_original_face(self.ds, fi, FaceOrigin::FromB(self.ds.faces[fi].source_face_idx));
-                }
-            }
-        }
+        self.build_result("FACE", &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 4: FillImagesContainers(SHELL) (L388-398) → BuildResult(SHELL) (L394-398).
         self.fill_images_containers("SHELL", &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        result.build_result("SHELL");
+        self.build_result("SHELL", &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 5: FillImagesSolids (L400-410) → BuildResult(SOLID) (L406-410).
-        //   OCCT L400-410: FillImagesSolids does not take face lists — reads from myDS.
         self.fill_images_solids(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        result.build_result("SOLID");
+        self.build_result("SOLID", &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 6: FillImagesContainers(COMPSOLID) (L412-422) → BuildResult(COMPSOLID) (L418-422).
-        //   rcad: no COMPSOLID in DS → structural stub (L412-422: FillImagesContainers).
         self.fill_images_containers("COMPSOLID", &mut result);
-        result.build_result("COMPSOLID");
+        self.build_result("COMPSOLID", &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 7: FillImagesCompounds (L425-435) → BuildResult(COMPOUND) (L431-435).
         self.fill_images_compounds(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        result.build_result("COMPOUND");
+        self.build_result("COMPOUND", &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
 
         let (mut brep, mut history) = result.build();
