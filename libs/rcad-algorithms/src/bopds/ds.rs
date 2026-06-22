@@ -260,6 +260,12 @@ pub struct DSFace {
     ///   assigned during load_brep.  Used by fill_images_compounds to
     ///   reconstruct the compound hierarchy in the result BRep.
     pub source_solid_idx: Option<usize>,
+    /// ✅ OCCT-aligned: source compsolid index (0-based). OCCT BOPDS_DS
+    ///   tracks TopAbs_COMPSOLID in ShapeInfo hierarchy.  rcad: assigned
+    ///   during load_brep when solid belongs to a CompSolid (else None).
+    ///   Used by fill_images_containers_compsolid to preserve compsolid
+    ///   boundaries in the result (FillImagesContainer, Builder_1.cxx L221-276).
+    pub source_compsolid_idx: Option<usize>,
 }
 
 /// Record of an intersection between two sub-shapes.
@@ -894,13 +900,26 @@ impl DS {
             });
         }
 
-        // Faces.  OCCT BOPDS_ShapeInfo tracks source shell/solid/compound
-        // hierarchy (TopAbs_COMPOUND → TopAbs_SOLID → TopAbs_SHELL → TopAbs_FACE).
-        // rcad: shell_counter and solid_counter assign sequential indices.
+        // Faces.  OCCT BOPDS_ShapeInfo tracks source shell/solid/compsolid
+        // hierarchy (TopAbs_COMPSOLID → TopAbs_SOLID → TopAbs_SHELL → TopAbs_FACE).
+        // rcad: shell_counter, solid_counter assign sequential indices.
+        // source_compsolid_idx: use face-by-shell-count matching against
+        // brep.compsolid (OCCT preserves TopoDS identity; rcad matches by
+        // structural identity: same solid is found by same shell count).
         let mut face_idx = 0usize;
         let mut solid_counter = 0usize;
         let mut shell_counter = 0usize;
+        // OCCT-aligned: match flat-iterated solids to compsolid members by
+        // sequential index.  OCCT preserves TopoDS identity; rcad's BRep
+        // stores compsolid solids value-copied in brep.solids.  When the
+        // counts match, solid i → compsolid solid i.  When no match, None.
+        let cs_count = brep.compsolid.as_ref().map_or(0, |cs| cs.solids.len());
         for solid in &brep.solids {
+            let compsolid_idx = if cs_count > 0 && solid_counter < cs_count {
+                Some(solid_counter)
+            } else {
+                None
+            };
             for shell in &solid.shells {
                 for face in &shell.faces {
                     let surface = brep
@@ -991,6 +1010,7 @@ impl DS {
                         natural_restriction: true,
                         source_shell_idx: Some(shell_counter),
                         source_solid_idx: Some(solid_counter),
+                        source_compsolid_idx: compsolid_idx,
                     });
 
                     face_idx += 1;

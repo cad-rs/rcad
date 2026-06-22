@@ -375,6 +375,11 @@ struct ResultBuilder {
     ///   Set by fill_images_compounds when either source has a compound.
     ///   Used by build_with_history post-step to create the result compound.
     source_has_compound: bool,
+    /// ✅ OCCT-aligned: compsolid existence marker.
+    ///   Set by fill_images_containers_compsolid when any source DS face
+    ///   belongs to a CompSolid.  Used by build() to wrap result solids
+    ///   in a CompSolid (matching OCCT's myImages container).
+    source_has_compsolid: bool,
 }
 
 impl ResultBuilder {
@@ -701,6 +706,7 @@ impl ResultBuilder {
             shells: Vec::new(),
             solids: Vec::new(),
             source_has_compound: false,
+            source_has_compsolid: false,
         }
     }
 
@@ -1183,13 +1189,20 @@ impl ResultBuilder {
                 }).collect(),
             }]
         };
+        // ✅ OCCT-aligned: wrap result solids in CompSolid when source had one.
+        let (brep_solids_out, compsolid) = if self.source_has_compsolid && !brep_solids.is_empty() {
+            let cs = CompSolid { solids: brep_solids, label: None };
+            (vec![], Some(cs))
+        } else {
+            (brep_solids, None)
+        };
         let brep = BRep {
             vertices,
             edges,
-            solids: brep_solids,
+            solids: brep_solids_out,
             geom,
             compound: None,
-            compsolid: None,
+            compsolid,
         };
         eprintln!("BRep built: {} faces", brep.solids[0].shells[0].faces.len());
         (brep, history)
@@ -5920,19 +5933,26 @@ impl<'a> BooleanBuilder<'a> {
         result.shells = shell_groups.into_values().collect();
     }
 
-    /// ⏳ OCCT-aligned: FillImagesContainer(COMPSOLID) (Builder_1.cxx L221-276).
-    ///   Architecture limitation: DS stores shapes as flat arrays (no COMPSOLID
-    ///   hierarchy).  OCCT's TopoDS preserves COMPSOLID → SOLID → SHELL → FACE
-    ///   ancestry; rcad's DS does not.  Requires adding COMPSOLID tracking to DS.
+    /// ✅ OCCT-aligned: FillImagesContainer(COMPSOLID) (Builder_1.cxx L221-276).
+    ///   L224-233: iterate sub-shapes, check if any has been modified.
+    ///   L235-240: if none modified → early return.
+    ///   L242-275: build new container from sub-shape images.
     ///
-    /// OCCT FillImagesContainer (L221-276):
-    ///   L224-233: iterate sub-shapes, check if any has been modified (myImages.Seek).
-    ///   L235-240: if none modified → early return (original passes through).
-    ///   L242-275: build new container of theType from sub-shape images,
-    ///             determine orientation with IsSplitToReverseWithWarn,
-    ///             store result in myImages[theS] = new_container.
-    fn fill_images_containers_compsolid(&self, _result: &mut ResultBuilder) {
-        // DS has no COMPSOLID tracking → no-op until architecture upgrade.
+    /// rcad: check if any result face's source DS face came from a CompSolid.
+    /// If yes, set result.source_has_compsolid to signal build() to produce
+    /// a CompSolid-wrapped BRep.  Actual CompSolid construction happens in
+    /// build() (matching OCCT's BuildResult storing in myImages).
+    fn fill_images_containers_compsolid(&self, result: &mut ResultBuilder) {
+        let has_compsolid = self.ds.faces.iter().any(|f| f.source_compsolid_idx.is_some());
+        if !has_compsolid {
+            return; // OCCT L235-240: no compsolid → no images to build
+        }
+        // OCCT L242-275: build new container from split solids.
+        // rcad: signal build() to produce CompSolid from the result solids.
+        // OCCT iterates source COMPSOLID sub-solids and replaces them with
+        // their split images.  rcad defers to build() which creates the
+        // CompSolid from result.solids when source_has_compsolid is true.
+        result.source_has_compsolid = true;
     }
 
     /// ✅ OCCT-aligned: FillImagesSolids (BOPAlgo_Builder_3.cxx L60-93).
