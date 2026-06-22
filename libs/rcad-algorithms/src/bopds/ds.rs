@@ -435,6 +435,80 @@ impl DS {
             || self.edges[edge_idx].start_vertex == self.edges[edge_idx].end_vertex
     }
 
+    // ----- OCCT HasInterf / HasSubShape equivalents -----
+
+    /// ✅ OCCT-aligned: HasSubShape(nV, nE) — check if vertex is a sub-shape of edge.
+    ///   Returns true when vertex nV is an endpoint of edge nE.
+    pub fn edge_has_vertex(&self, nV: usize, nE: usize) -> bool {
+        self.edges.get(nE).map_or(false, |e| e.start_vertex == nV || e.end_vertex == nV)
+    }
+
+    /// ✅ OCCT-aligned: myDS->HasInterf(nV, nE) — checks VE interference exists.
+    pub fn has_interf_ve(&self, vi: usize, ei: usize) -> bool {
+        self.interferences.iter().any(|interf| {
+            matches!(interf, Interference::VertexEdge { vertex, edge, .. }
+                if *vertex == vi && *edge == ei)
+        })
+    }
+
+    /// ✅ OCCT-aligned: myDS->HasInterf(nE1, nE2) — checks EE interference exists.
+    pub fn has_interf_ee(&self, e1: usize, e2: usize) -> bool {
+        self.interferences.iter().any(|interf| {
+            matches!(interf, Interference::EdgeEdge { e1: a, e2: b, .. }
+                if (*a == e1 && *b == e2) || (*a == e2 && *b == e1))
+        })
+    }
+
+    /// ✅ OCCT-aligned: myDS->HasInterf(nV, nF) — checks VF interference exists.
+    pub fn has_interf_vf(&self, vi: usize, fi: usize) -> bool {
+        self.interferences.iter().any(|interf| {
+            matches!(interf, Interference::VertexFace { vertex, face, .. }
+                if *vertex == vi && *face == fi)
+        })
+    }
+
+    /// ✅ OCCT-aligned: myDS->HasInterf(nE, nF) — checks EF interference exists.
+    pub fn has_interf_ef(&self, ei: usize, fi: usize) -> bool {
+        self.interferences.iter().any(|interf| {
+            matches!(interf, Interference::EdgeFace { edge, face, .. }
+                if *edge == ei && *face == fi)
+        })
+    }
+
+    /// ✅ OCCT-aligned: myDS->HasInterf(nF1, nF2) — checks FF interference exists.
+    pub fn has_interf_ff(&self, f1: usize, f2: usize) -> bool {
+        self.interferences.iter().any(|interf| {
+            matches!(interf, Interference::FaceFace { f1: a, f2: b, .. }
+                if (*a == f1 && *b == f2) || (*a == f2 && *b == f1))
+        })
+    }
+
+    /// ✅ OCCT-aligned: myDS->HasInterfShapeSubShapes(nV, nE) — checks if
+    ///   vertex already has interference with any sub-shape (face) of the edge.
+    ///   In OCCT, edges belong to faces; rcad doesn't track edge→face ancestry
+    ///   directly — this is a best-effort check using available face data.
+    pub fn has_interf_ve_via_faces(&self, vi: usize, ei: usize) -> bool {
+        // Check if the vertex has interference with any face that references this edge
+        self.interferences.iter().any(|interf| {
+            match interf {
+                Interference::VertexFace { vertex, face } if *vertex == vi => {
+                    self.faces.get(*face).map_or(false, |f| {
+                        f.boundary_edges.contains(&ei)
+                            || f.inner_boundary_edges.iter().any(|iw| iw.iter().any(|&(e, _)| e == ei))
+                    })
+                }
+                Interference::EdgeFace { edge, face, .. } if *edge == ei => {
+                    // Already have EF with this face; check if same vertex also has VF
+                    self.interferences.iter().any(|interf2| {
+                        matches!(interf2, Interference::VertexFace { vertex, face: f }
+                            if *vertex == vi && *f == *face)
+                    })
+                }
+                _ => false,
+            }
+        })
+    }
+
     /// Build DS from two BReps using the default absolute tolerance.
     pub fn new(a: &BRep, b: &BRep) -> Self {
         Self::new_with_fuzzy(a, b, crate::tolerance::TOLERANCE_ABS)

@@ -752,11 +752,28 @@ impl<'a> PaveFiller<'a> {
     ///   OCCT L50: Iterator(Vertex, Edge) pair enumeration.
     ///   rcad: O(n*m) brute force — fine for typical boolean model sizes.
     fn perform_ve(&mut self) {
+        // OCCT PaveFiller_2.cxx L143-206: FillShrunkData + BVH pair iteration
+        //   with HasSubShape / HasFlag / HasInterf / HasInterfShapeSubShapes skips.
+        self.fill_shrunk_data(); // OCCT L143: FillShrunkData(VERTEX, EDGE)
         let a_verts: Vec<usize> = self.verts_of(ShapeOrigin::ShapeA);
         let b_edges: Vec<usize> = self.edges_of(ShapeOrigin::ShapeB);
 
+        // OCCT L141: FillShrunkData(TopAbs_VERTEX, TopAbs_EDGE) — rcad: skipped,
+        //   shrink data is computed on-the-fly in check_vertex_edge via ve_tol().
+        //
+        // OCCT L145: myIterator->Initialize(VERTEX, EDGE) — BVH pair iteration.
+        //   rcad: manual O(n²) loop (see PairIterator in perform_ee for BVH pattern).
+
         for &vi in &a_verts {
             for &ei in &b_edges {
+                // OCCT L166-168: aSIE.HasSubShape(nV) — skip if vertex is edge endpoint
+                if self.ds.edge_has_vertex(vi, ei) { continue; }
+                // OCCT L171-173: aSIE.HasFlag() — skip if edge has flag
+                if self.ds.edge_has_flag(ei) { continue; }
+                // OCCT L176-178: myDS->HasInterf(nV, nE) — skip if already interfered
+                if self.ds.has_interf_ve(vi, ei) { continue; }
+                // OCCT L181-183: myDS->HasInterfShapeSubShapes(nV, nE)
+                if self.ds.has_interf_ve_via_faces(vi, ei) { continue; }
                 if self.ds.is_edge_degenerated(ei) { continue; }
                 self.check_vertex_edge(vi, ei);
             }
@@ -767,6 +784,10 @@ impl<'a> PaveFiller<'a> {
 
         for &vi in &b_verts {
             for &ei in &a_edges {
+                if self.ds.edge_has_vertex(vi, ei) { continue; }
+                if self.ds.edge_has_flag(ei) { continue; }
+                if self.ds.has_interf_ve(vi, ei) { continue; }
+                if self.ds.has_interf_ve_via_faces(vi, ei) { continue; }
                 if self.ds.is_edge_degenerated(ei) { continue; }
                 self.check_vertex_edge(vi, ei);
             }
@@ -860,7 +881,9 @@ impl<'a> PaveFiller<'a> {
     // ─── Pass 3: Edge-Edge ─────────────────────────────────────────────
 
     fn perform_ee(&mut self) {
-        // ✅ OCCT-aligned: BOPDS_Iterator cross-group pair iteration.
+        // OCCT PaveFiller_3.cxx L145-240: FillShrunkData + BVH pair iteration
+        //   with HasFlag / PaveBlock emptiness / GetPBBox skip conditions.
+        self.fill_shrunk_data(); // OCCT L147: FillShrunkData(EDGE, EDGE)
         let a_count = self.ds.a_edge_count;
 
         // Build a set of shared edge pairs for fast lookup when glue is enabled
@@ -875,22 +898,43 @@ impl<'a> PaveFiller<'a> {
             std::collections::HashSet::new()
         };
 
+        // OCCT L145-149: FillShrunkData + BVH iterator init.
+        //   rcad: PairIterator for cross-group pairs (A-edges × B-edges).
         let mut it = crate::bopds::ds::PairIterator::prepare_ab(a_count, self.ds.edges.len());
         while it.more() {
             let pk = it.value();
             let ae = pk.i1; let be = pk.i2;
-            if !self.ds.is_edge_degenerated(ae) && !self.ds.is_edge_degenerated(be) {
-                if self.use_glue && shared_edge_set.contains(&(ae, be)) {
-                    self.ds.interferences.push(Interference::EdgeEdge {
-                        e1: ae, e2: be,
-                        point: self.ds.vertices[self.ds.edges[ae].start_vertex].point,
-                        param1: self.ds.edges[ae].t_range[0],
-                        param2: self.ds.edges[be].t_range[0],
-                        new_vertex: self.ds.edges[ae].start_vertex,
-                    });
-                } else {
-                    self.check_edge_edge(ae, be);
-                }
+
+            // OCCT L189-198: aSIE.HasFlag() — skip flagged edges
+            if self.ds.edge_has_flag(ae) || self.ds.edge_has_flag(be) {
+                it.next(); continue;
+            }
+
+            // OCCT L200-210: PaveBlocks empty → skip
+            if self.ds.edges[ae].pave_blocks.is_empty()
+                || self.ds.edges[be].pave_blocks.is_empty() {
+                it.next(); continue;
+            }
+
+            // OCCT L176-178: myDS->HasInterf(nE1, nE2) — skip if already processed
+            if self.ds.has_interf_ee(ae, be) {
+                it.next(); continue;
+            }
+
+            if self.ds.is_edge_degenerated(ae) || self.ds.is_edge_degenerated(be) {
+                it.next(); continue;
+            }
+
+            if self.use_glue && shared_edge_set.contains(&(ae, be)) {
+                self.ds.interferences.push(Interference::EdgeEdge {
+                    e1: ae, e2: be,
+                    point: self.ds.vertices[self.ds.edges[ae].start_vertex].point,
+                    param1: self.ds.edges[ae].t_range[0],
+                    param2: self.ds.edges[be].t_range[0],
+                    new_vertex: self.ds.edges[ae].start_vertex,
+                });
+            } else {
+                self.check_edge_edge(ae, be);
             }
             it.next();
         }
@@ -1190,10 +1234,15 @@ impl<'a> PaveFiller<'a> {
     ///   with BVH-based pair enumeration (BOPDS_Iterator).
     ///   Brute-force O(n*m) is acceptable for typical model sizes.
     fn perform_vf(&mut self) {
+        // OCCT PaveFiller_4.cxx: FillShrunkData + BVH pair iteration
+        //   with HasInterf skip condition.
+        self.fill_shrunk_data(); // OCCT: FillShrunkData(VERTEX, FACE)
         let a_verts = self.verts_of(ShapeOrigin::ShapeA);
         let b_faces = self.faces_of(ShapeOrigin::ShapeB);
         for &vi in &a_verts {
             for &fi in &b_faces {
+                // OCCT: myDS->HasInterf(nV, nF) — skip if already interfered
+                if self.ds.has_interf_vf(vi, fi) { continue; }
                 self.check_vertex_face(vi, fi);
             }
         }
@@ -1201,6 +1250,7 @@ impl<'a> PaveFiller<'a> {
         let a_faces = self.faces_of(ShapeOrigin::ShapeA);
         for &vi in &b_verts {
             for &fi in &a_faces {
+                if self.ds.has_interf_vf(vi, fi) { continue; }
                 self.check_vertex_face(vi, fi);
             }
         }
@@ -1253,15 +1303,22 @@ impl<'a> PaveFiller<'a> {
     ///    Build sub-ranges dynamically from edge.paves, without writing to edge.pave_blocks,
     ///    to avoid side-effect regressions.
     fn perform_ef(&mut self) {
+        // OCCT PaveFiller_5.cxx L165+: FillShrunkData + BVH pair iteration
+        //   with HasFlag / HasInterf skip conditions.
+        self.fill_shrunk_data(); // OCCT L165: FillShrunkData(EDGE, FACE)
         let a_edges = self.edges_of(ShapeOrigin::ShapeA);
         let b_faces = self.faces_of(ShapeOrigin::ShapeB);
 
         for &ei in &a_edges {
+            // OCCT: aSIE.HasFlag() — skip flagged edges
+            if self.ds.edge_has_flag(ei) { continue; }
             if self.ds.is_edge_degenerated(ei) { continue; }
             let etr = self.ds.edges[ei].t_range;
             let ranges = self.collect_paveblock_ranges(ei, etr);
             for r in &ranges {
                 for &fi in &b_faces {
+                    // OCCT: myDS->HasInterf(nE, nF) — skip if already interfered
+                    if self.ds.has_interf_ef(ei, fi) { continue; }
                     self.intersect_edge_face_range(ei, fi, r);
                 }
             }
@@ -1271,11 +1328,13 @@ impl<'a> PaveFiller<'a> {
         let a_faces = self.faces_of(ShapeOrigin::ShapeA);
 
         for &ei in &b_edges {
+            if self.ds.edge_has_flag(ei) { continue; }
             if self.ds.is_edge_degenerated(ei) { continue; }
             let etr = self.ds.edges[ei].t_range;
             let ranges = self.collect_paveblock_ranges(ei, etr);
             for r in &ranges {
                 for &fi in &a_faces {
+                    if self.ds.has_interf_ef(ei, fi) { continue; }
                     self.intersect_edge_face_range(ei, fi, r);
                 }
             }
