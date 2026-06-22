@@ -435,6 +435,32 @@ impl DS {
             || self.edges[edge_idx].start_vertex == self.edges[edge_idx].end_vertex
     }
 
+    // ----- OCCT BOPDS_DS data layer methods -----
+
+    /// ✅ OCCT-aligned: BOPDS_DS::IsNewShape (L228-233).
+    ///   Returns true if the shape index was appended during intersection
+    ///   (not part of the original source shapes).  In rcad, vertices
+    ///   with `origin: None` are intersection-created (new shapes).
+    ///   Edges with `origin: None` carry the same semantics.
+    pub fn is_new_vertex(&self, vi: usize) -> bool {
+        self.vertices.get(vi).map_or(true, |v| v.origin.is_none())
+    }
+
+    /// ✅ OCCT-aligned: BOPDS_DS::Rank (L214-226).
+    ///   Returns the rank (operand index 0=A, 1=B) of a shape.
+    ///   0 for shapes from operand A, 1 for operand B.
+    pub fn rank(&self, vi: usize) -> usize {
+        if vi < self.a_vertex_count { 0 } else { 1 }
+    }
+
+    /// ✅ OCCT-aligned: BOPDS_DS::Range (L207-212).
+    ///   Returns the index range [start, end) for shapes of given type.
+    ///   rcad: returns [0, a_vertex_count) for A, [a_vertex_count, end) for B.
+    pub fn range(&self, is_a: bool) -> (usize, usize) {
+        if is_a { (0, self.a_vertex_count) }
+        else { (self.a_vertex_count, self.vertices.len()) }
+    }
+
     // ----- OCCT HasInterf / HasSubShape equivalents -----
 
     /// ✅ OCCT-aligned: HasSubShape(nV, nE) — check if vertex is a sub-shape of edge.
