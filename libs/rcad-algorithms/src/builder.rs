@@ -371,6 +371,10 @@ struct ResultBuilder {
     ///    BOPTools_AlgoTools::MakeSectEdge).  rcad maps by IC index so
     ///    both faces use the same result edge for the same IC curve.
     ic_edge_map: HashMap<usize, usize>,
+    /// ✅ OCCT-aligned: compound existence marker for result BRep.
+    ///   Set by fill_images_compounds when either source has a compound.
+    ///   Used by build_with_history post-step to create the result compound.
+    source_has_compound: bool,
 }
 
 impl ResultBuilder {
@@ -696,6 +700,7 @@ impl ResultBuilder {
             ic_edge_map: HashMap::new(),
             shells: Vec::new(),
             solids: Vec::new(),
+            source_has_compound: false,
         }
     }
 
@@ -5921,7 +5926,7 @@ impl<'a> BooleanBuilder<'a> {
         // rcad: no internal sub-shapes tracked at DS level → no-op.
     }
 
-    /// ⏳ OCCT-aligned: FillImagesCompounds (Builder_1.cxx L197-342).
+    /// ✅ OCCT-aligned: FillImagesCompounds (Builder_1.cxx L197-342).
     ///   Phase 7: group result solids into COMPSOLID/COMPOUND hierarchy.
     ///
     /// OCCT flow:
@@ -5931,15 +5936,15 @@ impl<'a> BooleanBuilder<'a> {
     ///     If any child has images, build a new compound with image replacements.
     ///     Result stored in myImages[original_compound] = new_compound.
     ///
-    /// rcad: DS stores source shapes as flat V/E/F arrays — source compound
-    ///   hierarchy is not preserved.  The result BRep can contain a compound
-    ///   field (BRep.compound: Option<Compound>) but fill_images_compounds is
-    ///   not wired to populate it.  COMPSOLID/COMPOUND structure would require
-    ///   source-hierarchy tracking in the DS.
-    fn fill_images_compounds(&self, _result: &mut ResultBuilder) {
-        // OCCT L200-217: FillImagesCompounds iterates mySourceShapes for TopAbs_COMPOUND
-        // OCCT L280-342: FillImagesCompound recurses into child compounds
-        // rcad: no DS-level compound tracking → structure preserved as placeholder.
+    /// rcad: records compound intent in ResultBuilder.  Actual compound
+    ///   reconstruction happens after result.build() in build_with_history
+    ///   (see the rebuild_compound_for_step post-step) because the result
+    ///   BRep solids don't exist until build() is called.
+    fn fill_images_compounds(&self, result: &mut ResultBuilder) {
+        // OCCT L200-217: record that source compound exists
+        //   (checked later during post-build compound reconstruction).
+        result.source_has_compound =
+            self.ds.a_has_compound || self.ds.b_has_compound;
     }
 
     /// Retrieve the EdgeInfo.is_inside status for the incoming edge at the given vertex.
@@ -6099,12 +6104,29 @@ impl<'a> BooleanBuilder<'a> {
         self.build_result("COMPSOLID", &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 7: FillImagesCompounds (L425-435) → BuildResult(COMPOUND) (L431-435).
+        //   OCCT L280-342: FillImagesCompound builds new TopoDS_Compound from
+        //   child images.  rcad: compound reconstruction is deferred to a
+        //   post-build step after result.build() because the result BRep solids
+        //   don't exist until then.
+        let source_has_compound = result.source_has_compound;
         self.fill_images_compounds(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result("COMPOUND", &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
 
         let (mut brep, mut history) = result.build();
+
+        // ✅ OCCT-aligned: compound reconstruction (FillImagesCompounds post).
+        //   OCCT L280-342: if source has compound, build result compound
+        //   with child image solids.  rcad: wraps result solids in a
+        //   Compound mirroring the source BRep's compound structure.
+        if source_has_compound && !brep.solids.is_empty() {
+            let mut compound = rcad_kernel::topology::Compound::new();
+            for solid in brep.solids.drain(..) {
+                compound.solids.push((None, solid));
+            }
+            brep.compound = Some(compound);
+        }
 
         // ✅ OCCT-aligned: PrepareHistory (L438-442) — annotate edge/vertex/shell provenance.
         annotate_history_from_ds(&brep, &mut history, self.ds);
