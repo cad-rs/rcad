@@ -496,33 +496,24 @@ fn classify_point_convex_planar(
     ds: &DS,
     tol: AdaptiveTolerance,
 ) -> Option<Classification> {
+    use crate::inttools::fclass2d::{FClass2d, State as F2dState};
     let flat_tol = tol.tolerance(ToleranceLevel::Normal);
     let mut on_any = false;
 
     for &fi in solid_face_indices {
         let face = &ds.faces[fi];
 
-        // Get plane for projection (for both Plane and planar BSpline)
-        let (plane, bnd_2d) = match &face.surface {
-            Surface3::Plane(p) => {
-                let bnd = build_face_boundary_2d(face, ds, p);
-                (p.clone(), bnd)
-            }
+        // Get plane for projection
+        let plane = match &face.surface {
+            Surface3::Plane(p) => Some(p.clone()),
             Surface3::BSpline(bsp) => {
-                if let Some(n) = bspline_planar_normal(bsp) {
-                    let p = Plane { origin: bsp.control_points[0][0], normal: n };
-                    let bnd = build_face_boundary_2d(face, ds, &p);
-                    (p, bnd)
-                } else {
-                    return None; // Non-planar BSpline — fall back to ray casting
-                }
+                bspline_planar_normal(bsp).map(|n| Plane { origin: bsp.control_points[0][0], normal: n })
             }
-            _ => return None, // Non-planar surface — fall back to ray casting
+            _ => return None,
         };
-
-        if bnd_2d.len() < 3 {
-            continue;
-        }
+        let Some(plane) = plane else {
+            return None;
+        };
 
         // Project the 3D point to the face plane
         let (u_axis, v_axis) = crate::inttools::edge_face::plane_local_basis(&plane);
@@ -532,49 +523,27 @@ fn classify_point_convex_planar(
         // OCCT BRepClass3d_SolidClassifier: check signed distance from the
         // face plane.  For a convex solid with outward-pointing normals, a
         // point with signed_distance > flat_tol is OUTSIDE this face → outside
-        // the solid.
+        // the solid.  (rcad extension: 2D FClass2d check for points ON the plane.)
         let n_sign = (point - plane.origin).dot(plane.normal);
         if n_sign > flat_tol {
             return Some(Classification::Out);
         }
-        // When |signed_distance| ≤ flat_tol, the point is ON the face plane
-        // (within tolerance).  Record this so we can detect the On case.
+        // When |signed_distance| ≤ flat_tol, the point is ON or behind the face plane.
+        // Use FClass2d (which reads DS pcurves including ICs) for precise 2D
+        // classification against the trimmed face boundary.
+        // OCCT BRepClass3d_SClassifier::Perform does the same via UB-tree selector.
         let on_face_plane = n_sign.abs() <= flat_tol;
-
-        // Classify 2D point against face boundary polygon using ray casting
-        let mut inside = false;
-        let mut on_boundary = false;
-        let n = bnd_2d.len();
-        let mut j = n - 1;
-        for i in 0..n {
-            let (xi, yi) = (bnd_2d[i].x, bnd_2d[i].y);
-            let (xj, yj) = (bnd_2d[j].x, bnd_2d[j].y);
-
-            // Check if point is ON an edge
-            let edge_len = ((xj - xi).powi(2) + (yj - yi).powi(2)).sqrt();
-            if edge_len > 1e-15 {
-                let t = ((p2d.x - xi) * (xj - xi) + (p2d.y - yi) * (yj - yi)) / edge_len;
-                let t_clamped = t.clamp(0.0, edge_len);
-                let closest_x = xi + (xj - xi) * t_clamped / edge_len;
-                let closest_y = yi + (yj - yi) * t_clamped / edge_len;
-                if (p2d.x - closest_x).abs() <= flat_tol && (p2d.y - closest_y).abs() <= flat_tol {
-                    on_boundary = true;
-                    break;
-                }
-            }
-
-            // Ray casting (even-odd rule)
-            if ((yi > p2d.y) != (yj > p2d.y))
-                && (p2d.x < (xj - xi) * (p2d.y - yi) / (yj - yi) + xi)
-            {
-                inside = !inside;
-            }
-            j = i;
-        }
+        // ✅ OCCT-aligned: use FClass2d for 2D point classification against
+        //   the face's trimmed boundary (including intersection curve edges).
+        let uv_tol = tol.tolerance(ToleranceLevel::Strict).max(1e-12);
+        let f2d = FClass2d::new(ds, fi, uv_tol);
+        let f2d_state = f2d.perform_point(p2d);
+        let inside = f2d_state == F2dState::In;
+        let on_boundary = f2d_state == F2dState::On;
 
         if on_face_plane && inside {
-            on_any = true; // Point is ON this face (within tolerance)
-            continue; // Check other faces — need all to be On or In
+            on_any = true;
+            continue;
         }
 
         if on_boundary {
@@ -587,11 +556,11 @@ fn classify_point_convex_planar(
         }
     }
 
-    // Point projects inside (or on) ALL face boundaries → inside or on
     Some(if on_any { Classification::On } else { Classification::In })
 }
 
 /// Build a 2D boundary polygon for a face, projected to the given plane.
+/// (rcad legacy — replaced by FClass2d in classify_point_convex_planar.)
 fn build_face_boundary_2d(face: &DSFace, ds: &DS, plane: &Plane) -> Vec<DVec2> {
     let (u_axis, v_axis) = crate::inttools::edge_face::plane_local_basis(plane);
     face.boundary_verts.iter()
