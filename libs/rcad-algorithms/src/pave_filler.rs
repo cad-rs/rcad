@@ -559,6 +559,10 @@ impl<'a> PaveFiller<'a> {
             self.ds.refine_face_info_in(fi);
         }
 
+        // OCCT-aligned: PutBoundPaveOnCurve — inject IC endpoints onto boundary edges before MakeSplitEdges
+        //   so that build_split_edges splits boundary edges at IC intersection points.
+        self.project_ic_to_boundary_edges();
+
         // ✅ OCCT-aligned: MakeSplitEdges — create split edges from PaveBlocks (PerformInternal L322).
         self.build_split_edges();
 
@@ -3354,6 +3358,41 @@ impl<'a> PaveFiller<'a> {
     /// Creates shared (same-domain) vertices for coplanar face overlap boundaries.
     /// Ensures each polygon vertex of a same-domain overlap is registered as a shared
     /// vertex in both faces' face_info.vertices_in.
+    /// OCCT-aligned: PutBoundPaveOnCurve — inject IC endpoints onto boundary edges
+    ///   before MakeSplitEdges (PaveFiller_6.cxx L2308-2368).
+    ///   rcad: projects IC endpoint onto each boundary edge curve; only adds pave
+    ///   when the point-to-curve distance at the projected parameter is within TOLERANCE_ABS.
+    fn project_ic_to_boundary_edges(&mut self) {
+        for ci in 0..self.ds.intersection_curves.len() {
+            let ic_sv = self.ds.intersection_curves[ci].start_vertex;
+            let ic_ev = self.ds.intersection_curves[ci].end_vertex;
+            for &vi in &[ic_sv, ic_ev] {
+                if vi >= self.ds.vertices.len() { continue; }
+                let pt = self.ds.vertices[vi].point;
+                for inf in &self.ds.interferences.clone() {
+                    if let Interference::FaceFace { f1, f2, curves, .. } = inf {
+                        if curves.contains(&ci) {
+                            for &fi in &[*f1, *f2] {
+                                if fi >= self.ds.faces.len() { continue; }
+                                for &ei in &self.ds.faces[fi].boundary_edges.clone() {
+                                    if ei >= self.ds.edges.len() { continue; }
+                                    let edge = &self.ds.edges[ei];
+                                    // Project vertex onto edge curve, then verify distance at projected param.
+                                    if let Some(t) = project_vertex_to_curve(pt, &edge.curve, TOLERANCE_ABS) {
+                                        let on_curve_pt = edge.curve.point_at(t);
+                                        if on_curve_pt.distance(pt) < TOLERANCE_ABS {
+                                            self.ds.edges[ei].paves.push(Pave { vertex_idx: vi, param: t });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn make_sd_vertices_ff(&mut self) {
         let overlaps = self.ds.same_domain_overlaps.clone();
         for (f1, f2, polygon) in &overlaps {
