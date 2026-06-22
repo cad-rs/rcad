@@ -427,16 +427,7 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
 
     let tol = AdaptiveTolerance::from_scale(ds.model_scale());
 
-    // ═══ OCCT Step 1 (L207): bounding box rejection ═══
-    //   OCCT uses SolidExplorer.Reject(P) with the solid's master AABB.
-    //   rcad: convex planar fast-path handles the common case; the
-    //   internal fallback does per-face normal-based rejection.
-    //   (rcad extension) convex planar signed-distance fast path.
-    if let Some(class) = classify_point_convex_planar(point, &sorted, ds, tol) {
-        return class;
-    }
-
-    // ═══ OCCT Step 2 (L218-230): vertex/edge proximity ═══
+    // ═══ OCCT Step 1: vertex/edge proximity ═══
     //   OCCT uses UB-tree + MapEV.  rcad: per-edge/per-vertex distance check.
     //   (rcad extension) analytic primitive checks before edge proximity.
     let on_surface_tol = relaxed_tol_for_solid_face_set(ds, tol, &sorted, 0.0);
@@ -444,16 +435,12 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
         return class;
     }
 
-    // ═══ OCCT Step 3 (L236+): ray intersection with face ═══
-    //   OCCT: fire single ray, find nearest face intersection, determine
-    //   In/Out from face transition (FORWARD=In, REVERSED=Out).
+    // ═══ OCCT Step 2: ray intersection with face ═══
+    //   OCCT BRepClass3d_SClassifier: fire single ray, find nearest face
+    //   intersection, determine In/Out from face transition (FORWARD=In,
+    //   REVERSED=Out).  No convex-planar fast path — that was an rcad
+    //   invention that assumed outward normals (wrong for inward normals).
     //   (rcad extension) multi-ray voting for robustness against edge grazing.
-    debug!(
-        "classify_point: scale={:.3e}, adaptive_tol={:.3e}, faces={}",
-        ds.model_scale(),
-        tol.tolerance(ToleranceLevel::Normal),
-        sorted.len(),
-    );
     classify_point_internal(point, &sorted, ds, tol, 0.0)
 }
 
@@ -732,13 +719,19 @@ fn ray_cast_classify_point_on_face(
             if is_near_polygon_boundary(&hit, &face_verts, plane, boundary_tol) {
                 return RayFaceResult::Faulty; // grazes boundary → faulty
             }
-            if inttools::edge_face::point_in_planar_face_with_tol(
+            if !inttools::edge_face::point_in_planar_face_with_tol(
                 hit, plane, &face_verts, boundary_tol,
             ) {
-                // OCCT transition: FORWARD face → In (ray exits solid)
-                RayFaceResult::In
+                return RayFaceResult::Faulty; // hit outside face bounds
+            }
+            // OCCT transition: ray enters solid when denom < 0 (ray opposite
+            // to outward normal), exits when denom > 0 (ray along normal).
+            // If ray enters: point was OUTSIDE before intersection.
+            // If ray exits:  point was INSIDE before intersection.
+            if denom < 0.0 {
+                RayFaceResult::Out  // ray enters solid → point was Out
             } else {
-                RayFaceResult::Faulty // hit outside face bounds
+                RayFaceResult::In   // ray exits solid → point was In
             }
         }
         Surface3::Sphere(s) => {
@@ -768,7 +761,16 @@ fn ray_cast_classify_point_on_face(
                 }
             }
             if found {
-                RayFaceResult::In
+                // OCCT transition: ray_enter check.  For sphere, outward
+                // normal = (hit - center).normalize().  ray_dir·normal < 0
+                // means entering → point was Out; > 0 means exiting → In.
+                let hit = point + ray_dir * nearest;
+                let n = (hit - s.center).normalize_or_zero();
+                if ray_dir.dot(n) < 0.0 {
+                    RayFaceResult::Out
+                } else {
+                    RayFaceResult::In
+                }
             } else {
                 RayFaceResult::Faulty
             }

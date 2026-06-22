@@ -1980,7 +1980,7 @@ fn numeric_intss_impl(
             let b = idx(i, j + 1);
             let da = dist[a];
             let db = dist[b];
-            // Zero crossing: signed distance changes sign (OCCT-aligned for Plane).
+            // Zero crossing: signed distance changes sign.
             // Without signed distance, fall back to near/far threshold change.
             let zero_cross = da.is_finite() && db.is_finite() && da * db < 0.0;
             if zero_cross || (da < threshold) != (db < threshold) {
@@ -1995,7 +1995,7 @@ fn numeric_intss_impl(
                 };
                 crossing_pts.push(edge_crossing(a, b, t));
             } else if da.abs() > threshold && db.abs() > threshold {
-                // Grazing band: trough along the chord, both endpoints “outside”.
+                // Grazing band: trough along the chord, both endpoints "outside".
                 let (t, dmin) =
                     min_approx_dist_on_segment(pts[a], pts[b], &approx_dist_to_s2);
                 if dmin <= threshold {
@@ -2058,6 +2058,53 @@ fn numeric_intss_impl(
                             crossing_pts.push(refine_crossing(pm.lerp(pts[b], t2), uvs[a].lerp(uvs[b], 0.5 + 0.5 * t2)));
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // OCCT-aligned: IntStart_SearchInside / IntPatch_TheSearchInside —
+    // scan all grid points, run UV-constrained Newton-Raphson on F(u,v)=0.
+    // Catches intersection points that grid-edge crossing misses (e.g. when
+    // ALL signed distances are on one side of the surface).
+    //
+    // OCCT reference: IntStart_SearchInside.gxx lines 117-262.
+    // For each sample point, creates a UV search box [uv±du/2, uv±dv/2]
+    // (~Binf/Bsup in OCCT), runs math_FunctionSetRoot, checks |F| <= Tol.
+    {
+        let mut near_zero_pts: Vec<DVec3> = Vec::new();
+        // UV grid cell half-size for the OCCT-aligned search box
+        let half_du = du * 0.5;
+        let half_dv = dv * 0.5;
+        for i in 0..nn {
+            for j in 0..nn {
+                let k = idx(i, j);
+                let d = dist[k];
+                if !d.is_finite() {
+                    continue;
+                }
+                let uv = uvs[k];
+                // OCCT-aligned: search box = [uv ± du/2, uv ± dv/2] clamped to domain
+                let u0 = (uv.x - half_du).max(u1_0);
+                let u1_b = (uv.x + half_du).min(u1_1);
+                let v0 = (uv.y - half_dv).max(v1_0);
+                let v1_b = (uv.y + half_dv).min(v1_1);
+                if u0 >= u1_b || v0 >= v1_b {
+                    continue;
+                }
+                if let Some((p, _, _)) =
+                    refine_uv_intersection_bounded(s1, s2, uv.x, uv.y, u0, u1_b, v0, v1_b, threshold)
+                {
+                    near_zero_pts.push(p);
+                }
+            }
+        }
+        // Dedup near-zero points against existing crossing points
+        if !near_zero_pts.is_empty() {
+            let dedup_sq = threshold * threshold;
+            for p in near_zero_pts {
+                if !crossing_pts.iter().any(|cp| (cp - p).length_squared() < dedup_sq) {
+                    crossing_pts.push(p);
                 }
             }
         }
@@ -2381,6 +2428,72 @@ fn refine_uv_intersection(
 
         u += du;
         v += dv;
+    }
+
+    None
+}
+
+/// OCCT-aligned: IntStart_SearchInside — constrained Newton-Raphson on F(u,v)=0
+/// within UV bounds [u0, u1]×[v0, v1] (matching OCCT's Binf/Bsup box).
+/// After convergence, checks |F(u,v)| <= func_tol.
+fn refine_uv_intersection_bounded(
+    s1: &Surface3,
+    s2: &Surface3,
+    u: f64,
+    v: f64,
+    u0: f64,
+    u1: f64,
+    v0: f64,
+    v1: f64,
+    func_tol: f64,
+) -> Option<(DVec3, f64, f64)> {
+    let func_tol = func_tol.abs().max(TOLERANCE_ABS);
+    let eps = 1e-6;
+    let max_iter = 20;
+    let mut u = u.clamp(u0, u1);
+    let mut v = v.clamp(v0, v1);
+
+    for _ in 0..max_iter {
+        let p = s1.point_at(u, v);
+        if !p.is_finite() {
+            break;
+        }
+        let f = surface_implicit(s2, p);
+
+        if f.abs() < func_tol {
+            return Some((p, u, v));
+        }
+
+        let pu = s1.point_at((u + eps).min(u1), v);
+        let pv = s1.point_at(u, (v + eps).min(v1));
+        let fu = if pu.is_finite() { surface_implicit(s2, pu) } else { f };
+        let fv = if pv.is_finite() { surface_implicit(s2, pv) } else { f };
+
+        let df_du = (fu - f) / eps;
+        let df_dv = (fv - f) / eps;
+        let grad2 = df_du * df_du + df_dv * df_dv;
+
+        if grad2 < 1e-30 {
+            break;
+        }
+
+        let du = -f * df_du / grad2;
+        let dv = -f * df_dv / grad2;
+
+        if du.abs() < 1e-10 && dv.abs() < 1e-10 {
+            let pf = s1.point_at(u, v);
+            let ff = if pf.is_finite() { surface_implicit(s2, pf) } else { f };
+            if ff.abs() < func_tol {
+                return Some((pf, u, v));
+            }
+            break;
+        }
+
+        u += du;
+        v += dv;
+        // OCCT-aligned: clamp to search box (Binf/Bsup)
+        u = u.clamp(u0, u1);
+        v = v.clamp(v0, v1);
     }
 
     None

@@ -890,6 +890,13 @@ impl ResultBuilder {
     ///    OCCT: each TopoDS_Edge is a distinct handle — no post-hoc merge needed.
     fn add_ic_edge(&mut self, ici: usize, v1: usize, v2: usize, curve: Curve3) -> usize {
         if let Some(&idx) = self.ic_edge_map.get(&ici) {
+            // OCCT-aligned: the edge must have same vertices for both faces.
+            // If remap_ic_v produced different vertices for the same IC on
+            // different faces, log a warning (indicates remap inconsistency).
+            let existing = self.edges[idx];
+            if (existing.0 != v1 || existing.1 != v2) && (existing.0 != v2 || existing.1 != v1) {
+                eprintln!("[IC_VTX] ci={} existing=({}, {}) called=({}, {})", ici, existing.0, existing.1, v1, v2);
+            }
             return idx;
         }
         let idx = self.edges.len();
@@ -5700,6 +5707,11 @@ impl<'a> BooleanBuilder<'a> {
         // ── Surface comparison (AreFacesSameDomain) — OCCT L795-816 ──
         // OCCT checks all surface types through GeomAdaptor_Surface.
         // rcad: direct Surface3 comparison for analytic types.
+        // OCCT-aligned: BOPTools_AlgoTools::AreFacesSameDomain
+        // (BOPTools_AlgoTools.cxx L1131-1197).  Two faces are same domain if a
+        // 3D point from the interior of one face is valid (inside + within tolerance)
+        // for the other face.  This works for ANY surface type pair including
+        // BSpline↔Plane — the comparison is geometric, not by surface type tag.
         let same_surface = |s1: &Surface3, s2: &Surface3| -> bool {
             let axis_parallel = |a: DVec3, b: DVec3| {
                 let la = a.length();
@@ -5735,6 +5747,32 @@ impl<'a> BooleanBuilder<'a> {
                         && (t1.center - t2.center).length() < TOLERANCE_ABS * 100.0
                         && (t1.major_radius - t2.major_radius).abs() < TOLERANCE_ABS
                         && (t1.minor_radius - t2.minor_radius).abs() < TOLERANCE_ABS
+                }
+                // BSpline↔Plane: detect geometrically planar BSpline surfaces
+                (Surface3::BSpline(bsp), Surface3::Plane(pl))
+                | (Surface3::Plane(pl), Surface3::BSpline(bsp)) => {
+                    if !bspline_is_planar(bsp, TOLERANCE_PLANE_DIST_RELAX) {
+                        return false;
+                    }
+                    let bp = bspline_to_plane(bsp);
+                    let d1 = pl.normal.dot(pl.origin.into());
+                    let d2 = bp.normal.dot(bp.origin.into());
+                    axis_parallel(pl.normal, bp.normal)
+                        && (d1 - d2).abs() < TOLERANCE_PLANE_DIST_RELAX
+                }
+                // BSpline↔BSpline: both planar on the same plane
+                (Surface3::BSpline(b1), Surface3::BSpline(b2)) => {
+                    if !bspline_is_planar(b1, TOLERANCE_PLANE_DIST_RELAX)
+                        || !bspline_is_planar(b2, TOLERANCE_PLANE_DIST_RELAX)
+                    {
+                        return false;
+                    }
+                    let p1 = bspline_to_plane(b1);
+                    let p2 = bspline_to_plane(b2);
+                    let d1 = p1.normal.dot(p1.origin.into());
+                    let d2 = p2.normal.dot(p2.origin.into());
+                    axis_parallel(p1.normal, p2.normal)
+                        && (d1 - d2).abs() < TOLERANCE_PLANE_DIST_RELAX
                 }
                 _ => false,
             }
@@ -6019,6 +6057,7 @@ impl<'a> BooleanBuilder<'a> {
             //   surface UV midpoint, guaranteed to be ON the surface.
             let pt = result.faces[fi].8; // sample_point (on-surface)
             let class = classify_point(pt, other_faces, self.ds);
+            eprintln!("[CLASSIFY] fi={} origin={:?} pt=({:.4},{:.4},{:.4}) class={:?}", fi, result.face_origins[fi], pt.x, pt.y, pt.z, class);
             face_class[fi] = Some(class);
 
             // OCCT L215-232: store IN faces in myInParts
@@ -6130,25 +6169,43 @@ impl<'a> BooleanBuilder<'a> {
     ///   BOPAlgo_BuilderSolid which groups faces into closed shells by
     ///   edge adjacency (non-connected components → separate solids).
     ///   Stores solid-level mapping in my_solid_images / my_solid_origins.
-    fn build_split_solids(&self, result: &ResultBuilder,
+    fn build_split_solids(&self, result: &mut ResultBuilder,
                           assignments: &[(usize, usize, &'static str)]) -> Vec<Vec<usize>> {
         use std::collections::{BTreeMap, VecDeque, HashSet};
-        // OCCT L449-475: group shells by (source, state) into candidate solids.
-        let mut solid_map: BTreeMap<(usize, &'static str), Vec<usize>> = BTreeMap::new();
-        for &(si, origin, state) in assignments {
-            solid_map.entry((origin, state)).or_default().push(si);
-        }
-
-        // OCCT L477-528: BOPAlgo_BuilderSolid rebuilds solids from face sets.
-        //   rcad: face-connectivity BFS per solid group + disconnect splitting.
-        let mut solid_images = self.my_solid_images.borrow_mut();
-        let mut solid_origins = self.my_solid_origins.borrow_mut();
-        solid_images.clear();
-        solid_origins.clear();
 
         let mut result_solids: Vec<Vec<usize>> = Vec::new();
-        for ((origin, _state), shells) in solid_map {
-            // Collect all face indices for this (origin, state) group.
+        // Group by state only — OCCT BOPAlgo_BuilderSolid does not split by origin.
+        let mut state_shells: BTreeMap<&'static str, Vec<usize>> = BTreeMap::new();
+        for (si, _origin, state) in assignments {
+            state_shells.entry(state).or_default().push(*si);
+        }
+        eprintln!("[BFS] state_shells: {:#?}, result.shells: {:#?}", state_shells, result.shells);
+        for (si, shell) in result.shells.iter().enumerate() {
+            eprintln!("[BFS] shell[{}] faces={:?}", si, shell);
+        }
+
+        // Clone data for borrow-safe closure (result is &mut below).
+        let r_vertices = result.vertices.clone();
+        let r_edges = result.edges.clone();
+        let r_faces: Vec<_> = result.faces.iter().map(|f| (
+            f.0.clone(), f.1.clone(), f.9.clone()
+        )).collect();
+        let rv_len = r_vertices.len();
+        let canon_vert = |vi: usize, verts: &[DVec3]| -> usize {
+            if vi >= rv_len { return vi; }
+            let pt = verts[vi];
+            let inv_tol = 1.0 / (crate::tolerance::TOLERANCE_ABS * 100.0);
+            let q = |v: f64| (v * inv_tol).round() as i64;
+            let key = (q(pt.x), q(pt.y), q(pt.z));
+            (0..=vi).rev().find(|&j| {
+                let p = verts[j];
+                let qj = ((p.x * inv_tol).round() as i64, (p.y * inv_tol).round() as i64, (p.z * inv_tol).round() as i64);
+                qj == key
+            }).unwrap_or(vi)
+        };
+
+        for (_state, shells) in state_shells {
+            // Collect all face indices for this state group.
             let mut group_faces: Vec<usize> = Vec::new();
             for &si in &shells {
                 if si < result.shells.len() {
@@ -6169,32 +6226,31 @@ impl<'a> BooleanBuilder<'a> {
             // Geometric edge map: (canonical_v1, canonical_v2) → face indices
             //   where canonical vertices are min of edge endpoint positions.
             let mut geo_edge_to_faces: BTreeMap<(usize, usize), Vec<usize>> = BTreeMap::new();
-            let vert_positions: Vec<DVec3> = (0..result.vertices.len())
-                .map(|vi| result.vertices[vi]).collect();
-            let canon_vert = |vi: usize| -> usize {
-                if vi >= result.vertices.len() { return vi; }
-                let pt = result.vertices[vi];
-                // Quantize to tolerance grid for stable identity
+            // Pre-extract vertices for borrow-safe closure (result is &mut)
+            let rv: Vec<DVec3> = result.vertices.clone();
+            let rv_len = rv.len();
+            let canon_vert = |vi: usize, verts: &[DVec3]| -> usize {
+                if vi >= rv_len { return vi; }
+                let pt = verts[vi];
                 let inv_tol = 1.0 / (crate::tolerance::TOLERANCE_ABS * 100.0);
                 let q = |v: f64| (v * inv_tol).round() as i64;
                 let key = (q(pt.x), q(pt.y), q(pt.z));
-                // Return the smallest index with the same quantized position
                 (0..=vi).rev().find(|&j| {
-                    let p = result.vertices[j];
+                    let p = verts[j];
                     let qj = ((p.x * inv_tol).round() as i64, (p.y * inv_tol).round() as i64, (p.z * inv_tol).round() as i64);
                     qj == key
                 }).unwrap_or(vi)
             };
             for &fi in &group_faces {
-                if fi >= result.faces.len() { continue; }
-                let outer = &result.faces[fi].0;
+                if fi >= r_faces.len() { continue; }
+                let outer = &r_faces[fi].0;
                 for &(ei, _) in outer {
                     edge_to_faces.entry(ei).or_default().push(fi);
                     // Also register geometric edge for cross-source connectivity
-                    if ei < result.edges.len() {
-                        let (sv, ev) = result.edges[ei];
-                        let cs = canon_vert(sv);
-                        let ce = canon_vert(ev);
+                    if ei < r_edges.len() {
+                        let (sv, ev) = r_edges[ei];
+                        let cs = canon_vert(sv, &r_vertices);
+                        let ce = canon_vert(ev, &r_vertices);
                         let key = if cs <= ce { (cs, ce) } else { (ce, cs) };
                         geo_edge_to_faces.entry(key).or_default().push(fi);
                     }
@@ -6219,9 +6275,9 @@ impl<'a> BooleanBuilder<'a> {
 
                 while let Some(fi) = queue.pop_front() {
                     // Get all edges of this face
-                    let edges = if fi < result.faces.len() {
-                        let outer: Vec<usize> = result.faces[fi].0.iter().map(|&(ei, _)| ei).collect();
-                        let inner: Vec<usize> = result.faces[fi].1.iter()
+                    let edges = if fi < r_faces.len() {
+                        let outer: Vec<usize> = r_faces[fi].0.iter().map(|&(ei, _)| ei).collect();
+                        let inner: Vec<usize> = r_faces[fi].1.iter()
                             .flat_map(|iw| iw.iter().map(|&(ei, _)| ei)).collect();
                         [outer, inner].concat()
                     } else {
@@ -6237,7 +6293,7 @@ impl<'a> BooleanBuilder<'a> {
                         // Exact edge index match (same DS edge)
                         if let Some(adj_faces) = edge_to_faces.get(&ei) {
                             for &adj_fi in adj_faces {
-                                if adj_fi < result.faces.len() && visited.insert(adj_fi) {
+                                if adj_fi < r_faces.len() && visited.insert(adj_fi) {
                                     remaining.remove(&adj_fi);
                                     queue.push_back(adj_fi);
                                     component.push(adj_fi);
@@ -6245,10 +6301,10 @@ impl<'a> BooleanBuilder<'a> {
                             }
                         }
                         // Geometric match (same quantized endpoints)
-                        if ei < result.edges.len() {
-                            let (sv, ev) = result.edges[ei];
-                            let cs = canon_vert(sv);
-                            let ce = canon_vert(ev);
+                        if ei < r_edges.len() {
+                            let (sv, ev) = r_edges[ei];
+                            let cs = canon_vert(sv, &r_vertices);
+                            let ce = canon_vert(ev, &r_vertices);
                             let gkey = if cs <= ce { (cs, ce) } else { (ce, cs) };
                             if let Some(geo_faces) = geo_edge_to_faces.get(&gkey) {
                                 for &adj_fi in geo_faces {
@@ -6264,27 +6320,12 @@ impl<'a> BooleanBuilder<'a> {
                 }
 
                 if component.len() >= 3 {
-                    // Found a valid connected component → find which original
-                    // shells contain these faces, use those shell indices for
-                    // the new solid (BOPAlgo_BuilderSolid groups faces into
-                    // closed shells; rcad shells are already closed).
-                    let comp_set: HashSet<usize> = component.iter().copied().collect();
-                    let mut comp_shells: Vec<usize> = Vec::new();
-                    for (local_si, &si) in shells.iter().enumerate() {
-                        if si < result.shells.len() {
-                            let has_face = result.shells[si].iter()
-                                .any(|&fi| comp_set.contains(&fi));
-                            if has_face {
-                                comp_shells.push(si);
-                            }
-                        }
-                    }
-                    if !comp_shells.is_empty() {
-                        let si = result_solids.len();
-                        result_solids.push(comp_shells);
-                        solid_images.entry(origin).or_default().push(si);
-                        solid_origins.entry(si).or_default().push(origin);
-                    }
+                    eprintln!("[BFS_COMP] component size={} faces={:?}", component.len(), component);
+                    // OCCT BOPAlgo_BuilderSolid: edge-connected faces form ONE
+                    // shell per component.  Push a consolidated shell.
+                    let csi = result.shells.len();
+                    result.shells.push(component.clone());
+                    result_solids.push(vec![csi]);
                 }
             }
         }
