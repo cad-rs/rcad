@@ -1426,6 +1426,15 @@ pub struct BooleanBuilder<'a> {
     //   (BOPAlgo_Builder.hxx L502).  Populated during FillImagesFaces, used by
     //   FillIn3DParts / BuildDraftSolid for solid assembly.
     my_in_parts: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
+    // ✅ OCCT-aligned: solid-level image tracking (BOPAlgo_Builder.hxx L498 myImages).
+    //   OCCT BuildSplitSolids stores split solids in myImages[source_solid].
+    //   rcad: maps source side (0=A, 1=B) → result solid indices from
+    //   build_split_solids.  Used by annotate_shell_and_solid_history and
+    //   for OCCT-form history tracking.
+    my_solid_images: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
+    // ✅ OCCT-aligned: solid-level origin tracking (BOPAlgo_Builder.hxx L500 myOrigins).
+    //   Reverse map: result solid index → list of source sides.
+    my_solid_origins: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
     // ✅ OCCT-aligned: myNonDestructive (BOPAlgo_Builder.hxx L503).
     //   Safe processing — avoids modifying input shapes. Used in PostTreat.
     my_non_destructive: bool,
@@ -5004,6 +5013,8 @@ impl<'a> BooleanBuilder<'a> {
             my_shapes_sd: std::cell::RefCell::new(std::collections::HashMap::new()),
             split_edges: std::cell::RefCell::new(Vec::new()),
             my_in_parts: std::cell::RefCell::new(std::collections::HashMap::new()),
+            my_solid_images: std::cell::RefCell::new(std::collections::HashMap::new()),
+            my_solid_origins: std::cell::RefCell::new(std::collections::HashMap::new()),
             my_non_destructive: false,
             my_check_inverted: false,
         }
@@ -5849,30 +5860,39 @@ impl<'a> BooleanBuilder<'a> {
     /// OCCT: for each (draft_solid_from_aDraftSolids, state_from_myInParts) pair,
     ///   collect the classified shell faces and build TopoDS_Solid via
     ///   BOPAlgo_SplitSolid.  Non-connected components become separate solids.
-    ///   Results stored in myImages[source_solid] → list of split solids.
+    ///   Results stored in myImages[source_solid] → list of split solids
+    ///   (L545-618) and myOrigins[split_solid] → source solid.
     ///
     /// rcad: groups shells by (origin, state) where origin is the source side
     ///   (0=A, 1=B) and state (IN/OUT) is computed from per-face classification
     ///   in fill_in_3d_parts.  One group = one solid = Vec of shell indices.
-    ///   Disconnected shells naturally produce separate solids.
+    ///   Stores solid-level mapping in my_solid_images / my_solid_origins
+    ///   matching OCCT myImages[solid] / myOrigins[solid] pattern.
     fn build_split_solids(&self, _result: &ResultBuilder,
                           _assignments: &[(usize, usize, &'static str)]) -> Vec<Vec<usize>> {
-        // OCCT: BOPAlgo_ShellSplitter + BOPAlgo_BuilderSolid
-        //   → for each (origin, state) group, build actual TopoDS_Solid.
-        //
-        // rcad: one solid per shell.  OCCT does the same for single-disconnected-
-        // shell cases (the common boolean case).  Multi-shell grouping by
-        // (origin, state) covers multi-solid results.
-        //
-        // Map each shell to a solid: shells with the same (origin, state) group
-        // together.  For single-source shapes A and B, each source produces at
-        // most one solid.
         use std::collections::BTreeMap;
         let mut solid_map: BTreeMap<(usize, &'static str), Vec<usize>> = BTreeMap::new();
         for &(si, origin, state) in _assignments {
             solid_map.entry((origin, state)).or_default().push(si);
         }
-        solid_map.into_values().collect()
+
+        // OCCT L545-618: store split solids in myImages[source_solid] and
+        // myOrigins[split_solid].  rcad: store per-source-side solid indexing.
+        let mut solid_images = self.my_solid_images.borrow_mut();
+        let mut solid_origins = self.my_solid_origins.borrow_mut();
+        solid_images.clear();
+        solid_origins.clear();
+
+        let mut result_solids: Vec<Vec<usize>> = Vec::with_capacity(solid_map.len());
+        for ((origin, _state), shells) in solid_map {
+            let si = result_solids.len();
+            result_solids.push(shells);
+            // my_solid_images: source side (0=A, 1=B) → result solid index
+            solid_images.entry(origin).or_default().push(si);
+            // my_solid_origins: result solid index → source side
+            solid_origins.entry(si).or_default().push(origin);
+        }
+        result_solids
     }
 
     /// ⏳ OCCT-aligned: FillInternalShapes (Builder_3.cxx L622-887).
