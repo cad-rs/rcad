@@ -68,7 +68,7 @@ impl std::fmt::Display for BooleanError {
 
 impl std::error::Error for BooleanError {}
 
-/// ✅ OCCT对齐: classify 闃舵闇€瑕佺殑鏁版嵁,鏇夸唬 FaceSampleData銆?
+/// ✅ OCCT-aligned: classify 闃舵闇€瑕佺殑鏁版嵁,鏇夸唬 FaceSampleData銆?
 ///    浠?WireFace + WireSegments + DS + face_idx 鎻愬彇銆?
 ///    sample_point() / surface / normal / boundary 绛?classify 渚濊禆鐨勫瓧娈点€?
 #[derive(Debug, Clone)]
@@ -366,7 +366,7 @@ struct ResultBuilder {
     ///    This replaces the deleted no_merge_edges guard from the removed merge block.
     /// OCCT-aligned: edge indices of degenerate seam edges (pole degeneracies).
     deg_edge_indices: std::collections::HashSet<usize>,
-    /// ✅ OCCT对齐: IntersectionCurve index -> result edge index.
+    /// ✅ OCCT-aligned: IntersectionCurve index -> result edge index.
     ///    Section edges (ICs) are shared by both intersecting faces (OCCT
     ///    BOPTools_AlgoTools::MakeSectEdge).  rcad maps by IC index so
     ///    both faces use the same result edge for the same IC curve.
@@ -927,7 +927,7 @@ impl ResultBuilder {
         idx
     }
 
-    /// ✅ OCCT对齐: 鍒涘缓閫€鍖?seam 杈?甯﹀崐鐞冨渾鏇茬嚎,闃叉琚竟鍘婚噸鍚堝苟)銆?
+    /// ✅ OCCT-aligned: 鍒涘缓閫€鍖?seam 杈?甯﹀崐鐞冨渾鏇茬嚎,闃叉琚竟鍘婚噸鍚堝苟)銆?
     ///    OCCT 鐨?sphere face 澶栫幆鎬绘槸鏈変竴鏉￠€€鍖?seam 杈?涓ょ鍚岄《鐐?銆?
     ///    娣诲姞涓€涓悆闈㈡按骞冲渾鏇茬嚎(circle.normal = axis)浣胯竟鍦ㄦ煇浜涗笂涓嬫枃涓彲璇嗗埆銆?
     fn add_edge_seam_degenerate(&mut self, v1: usize, v2: usize, sphere_surf: &SphericalSurface) -> usize {
@@ -937,7 +937,7 @@ impl ResultBuilder {
             self.custom_edge_curves.push(None);
         }
         // 瀛樺偍璇ラ€€鍖?seam 瀵瑰簲鐨勭悆闈㈠渾鏇茬嚎(鐢ㄤ簬 STEP writer)
-        // ✅ OCCT对齐: seam 鍦?= 鐞冮潰瀛愬崍绾?閫氳繃 pole,normal 鉄?axis)
+        // ✅ OCCT-aligned: seam 鍦?= 鐞冮潰瀛愬崍绾?閫氳繃 pole,normal 鉄?axis)
         //    OCCT 涓?sphere face 鐨?seam 鏄繃鏋佺偣鐨勭粡绾?涓嶅悓浜?IC 鍦嗐€?
         //    濡傛灉 normal = axis,浼氫笌骞抽潰-鐞冮潰 IC 鍦嗛噸鍚堝鑷存洸绾垮幓閲嶈鍚堝苟銆?
         let seam_normal = any_perpendicular(sphere_surf.axis).normalize();
@@ -988,7 +988,7 @@ impl ResultBuilder {
         self.custom_edge_curves[idx] = Some(circle);
         idx
     }
-    /// ✅ OCCT对齐: BOPTools_AlgoTools::MakeEdge 等价 -- 始终创建新边,不进行顶点去重。
+    /// ✅ OCCT-aligned: BOPTools_AlgoTools::MakeEdge 等价 -- 始终创建新边,不进行顶点去重。
     ///    使用 add_edge_occt,确保不被其他面的边合并。
     ///    适用于 seam 子段与 IC 弧在 OCCT 中是不同的 TopoDS_Edge。
     fn add_circle_edge_occt(&mut self, v1: usize, v2: usize, circle: Curve3) -> usize {
@@ -1630,7 +1630,7 @@ fn classify_subface_against_box(
 /// happen to fall within the tolerance band of the other solid's surface despite the
 /// sub-face being entirely outside (e.g. a planar sub-face of a box near a sphere's
 /// surface). In that case we probe boundary and interior samples to break the tie.
-// ✅ OCCT对齐: 鍒嗙被瀛愰潰涓?In/Out/On (ClassifyFaces)銆?
+// ✅ OCCT-aligned: 鍒嗙被瀛愰潰涓?In/Out/On (ClassifyFaces)銆?
 //    鎺ュ彈 FaceSampleData(浠?WireFace 鎴?FaceSampleData 鏋勯€?銆?
 /// ✅ OCCT-aligned: classify_against_solid_for_boolean — ComputeState (OCCT BOPAlgo_Builder).
 /// OCCT-aligned: BOPTools_AlgoTools::ComputeState (cxx L660-714).
@@ -1671,7 +1671,7 @@ fn classify_against_solid_for_boolean(
 // OCCT 1:1 瀵归綈: IsInternalFace (BOPTools_AlgoTools.cxx L791-872)
 // =============================================================================
 
-/// ✅ OCCT对齐: 鏋勫缓 MEF (Map Edge鈫扚aces) 鐢ㄤ簬杈圭骇瑙掑害娉曘€?
+/// ✅ OCCT-aligned: 鏋勫缓 MEF (Map Edge鈫扚aces) 鐢ㄤ簬杈圭骇瑙掑害娉曘€?
 /// OCCT BOPAlgo_FillIn3DParts::MapEdgesAndFaces (BOPAlgo_Tools.cxx L1479-1503)
 /// OCCT-aligned: IsTangentFace (BOPTools_AlgoTools).
 /// Checks if two faces are tangent (parallel normals + close distance).
@@ -1702,7 +1702,7 @@ fn build_edge_bounds(face_indices: &[usize], ds: &DS) -> std::collections::BTree
     bounds
 }
 
-/// ✅ OCCT对齐: PointInFace 绛変环 鈥?浠?FaceSampleData 鐨?UV domain 鑾峰彇鍐呴儴閲囨牱鐐广€?
+/// ✅ OCCT-aligned: PointInFace 绛変环 鈥?浠?FaceSampleData 鐨?UV domain 鑾峰彇鍐呴儴閲囨牱鐐广€?
 /// OCCT BOPTools_AlgoTools3D.cxx L885-917
 ///
 /// rcad 瀹炵幇: FaceSampleData 宸叉湁 uv_domain 鍜?uv_centroid,鐩存帴鐢?UV centroid
@@ -1723,7 +1723,7 @@ fn quantize_pos(p: DVec3, tolerance: f64) -> u64 {
     (xb << 42) | (yb << 21) | zb
 }
 
-/// ✅ OCCT对齐: IsInternalFace 涓诲嚱鏁?(BOPTools_AlgoTools.cxx L791-872)
+/// ✅ OCCT-aligned: IsInternalFace 涓诲嚱鏁?(BOPTools_AlgoTools.cxx L791-872)
 ///
 /// 涓ょ骇鍒嗙被:
 ///   Level 1: 杈圭骇瑙掑害娉?鈥?瀵逛簬鍦?solid 涓婃湁澶氫簬 1 涓偦闈㈢殑杈?
@@ -2386,7 +2386,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                 // Non-sphere face with degenerate IC: skip completely
                 continue;
             }
-            // ✅ OCCT对齐: 闭合 Circle IC 在边界顶点处分裂(FillImagesEdges 等价)。
+            // ✅ OCCT-aligned: 闭合 Circle IC 在边界顶点处分裂(FillImagesEdges 等价)。
             //    当 Circle IC(start==end)且 boundary 边已被 vertices_in 中的顶点分割时,
             //    在 boundary 上的顶点处分裂圆为圆弧段,使 wire builder 能形成闭合环。
             //    OCCT 在 BuildSplitFaces 中通过 myImages 获得的子边自然携带了这些顶点。
@@ -2397,7 +2397,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                 let p_dir = n.cross(r_dir);
                 let r = circ.radius;
                 let circle_tol = 1e-8 * r.max(1.0);
-                // ✅ OCCT对齐: 收集边界上的分割顶点(来自 FillImagesEdges 的边分裂)以及在
+                // ✅ OCCT-aligned: 收集边界上的分割顶点(来自 FillImagesEdges 的边分裂)以及在
                 //    vertices_in 中的顶点,检查哪些在 Circle IC 上。
                 //    边界分割顶点来自 side 面上的 TangentLine IC,不在当前面的 vertices_in 中。
                 let mut vertices_to_check: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
@@ -2807,7 +2807,7 @@ fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool) -> Option<
     Some(dir_to_angle(dir))
 }
 
-/// ✅ OCCT对齐: ClockWiseAngle — OCCT BOPAlgo_WireSplitter_1.cxx L621-650
+/// ✅ OCCT-aligned: ClockWiseAngle — OCCT BOPAlgo_WireSplitter_1.cxx L621-650
 ///
 ///     angle_in: angle at incident vertex (in_flag=true)
 ///     angle_out: angle at outgoing vertex (in_flag=false)
@@ -3521,7 +3521,7 @@ fn select_best_outgoing<'a>(
     p_edge_info
 }
 
-/// ✅ OCCT对齐: RefineAngles — OCCT BOPAlgo_WireSplitter_1.cxx L904-1028
+/// ✅ OCCT-aligned: RefineAngles — OCCT BOPAlgo_WireSplitter_1.cxx L904-1028
 ///
 /// For each vertex with exactly 2 boundary edges (1 in, 1 out):
 ///   1. Compute boundary delta = ClockWiseAngle(a2_bnd, a1_bnd)
@@ -5921,7 +5921,9 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     /// ⏳ OCCT-aligned: FillImagesContainer(COMPSOLID) (Builder_1.cxx L221-276).
-    ///   Build COMPSOLID images from source COMPSOLID sub-solid images.
+    ///   Architecture limitation: DS stores shapes as flat arrays (no COMPSOLID
+    ///   hierarchy).  OCCT's TopoDS preserves COMPSOLID → SOLID → SHELL → FACE
+    ///   ancestry; rcad's DS does not.  Requires adding COMPSOLID tracking to DS.
     ///
     /// OCCT FillImagesContainer (L221-276):
     ///   L224-233: iterate sub-shapes, check if any has been modified (myImages.Seek).
@@ -5929,14 +5931,8 @@ impl<'a> BooleanBuilder<'a> {
     ///   L242-275: build new container of theType from sub-shape images,
     ///             determine orientation with IsSplitToReverseWithWarn,
     ///             store result in myImages[theS] = new_container.
-    ///
-    /// rcad: DS stores source shapes as flat V/E/F arrays — source COMPSOLID
-    ///   hierarchy is not preserved.  Kept as structural placeholder for
-    ///   multi-solid result grouping.
     fn fill_images_containers_compsolid(&self, _result: &mut ResultBuilder) {
-        // OCCT L412-422: FillImagesContainers iterates source shapes for
-        //   TopAbs_COMPSOLID, calls FillImagesContainer for each.
-        // rcad: DS has no COMPSOLID tracking → no-op.
+        // DS has no COMPSOLID tracking → no-op until architecture upgrade.
     }
 
     /// ✅ OCCT-aligned: FillImagesSolids (BOPAlgo_Builder_3.cxx L60-93).
@@ -9138,7 +9134,7 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
         }
     }
 
-    // ✅ OCCT对齐: 瀛愬杈瑰舰鍙寘鍚?trim 鐨勭鐐?宸叉姇褰卞埌杈圭晫),涓嶅寘鍚唴閮ㄧ偣銆?
+    // ✅ OCCT-aligned: 瀛愬杈瑰舰鍙寘鍚?trim 鐨勭鐐?宸叉姇褰卞埌杈圭晫),涓嶅寘鍚唴閮ㄧ偣銆?
     //    OCCT 鐨?BOPAlgo_BuilderFace 鐢?MakeBlocks 鐢熸垚鐨?section edge
     //    (姣忔潯杈逛笉鍒嗘)鐩存帴鏋勫缓闈㈢嚎妗嗐€俽cad 鐨?split_uv_polygon_by_trim
     //    濡傛灉鎶?trim 鍐呴儴鐐归兘澶嶅埗杩涘瓙澶氳竟褰?姣忎釜 trim 浼氳础鐚鏉¤竟(3鐐光啋2杈?
@@ -9158,7 +9154,7 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
     sub_a.push(p_b);
     sub_a.extend_from_slice(&poly[ib + 1..]);
 
-    // ✅ OCCT对齐: 瀛愬杈瑰舰 B 涓嶅惈 trim 鍐呴儴鐐广€?
+    // ✅ OCCT-aligned: 瀛愬杈瑰舰 B 涓嶅惈 trim 鍐呴儴鐐广€?
     //    Sub-polygon B: p_a + poly[ia+1..=ib] + p_b
     let mut sub_b: Vec<DVec2> = vec![p_a];
     sub_b.extend_from_slice(&poly[ia + 1..=ib]);
@@ -9200,7 +9196,7 @@ fn split_uv_polygon_by_trim(poly: &[DVec2], trim: &[DVec2]) -> Vec<Vec<DVec2>> {
     let sub_a_deduped = dedup_2d(sub_a);
     let sub_b_deduped = dedup_2d(sub_b);
 
-    // ✅ OCCT对齐: 濡傛灉瀛愬杈瑰舰閫€鍖?<3椤剁偣),杩斿洖鍘熷澶氳竟褰€?
+    // ✅ OCCT-aligned: 濡傛灉瀛愬杈瑰舰閫€鍖?<3椤剁偣),杩斿洖鍘熷澶氳竟褰€?
     //    鍙戠敓鍦╰rim涓庡杈瑰舰杈圭晫閲嶅悎鏃?濡傚懆鏈熸€ф煴闈=2蟺鐨勮竟)銆?
     let sub_a_valid = sub_a_deduped.len() >= 3;
     let sub_b_valid = sub_b_deduped.len() >= 3;
