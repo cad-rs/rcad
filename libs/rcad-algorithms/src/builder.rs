@@ -5610,11 +5610,9 @@ impl<'a> BooleanBuilder<'a> {
     ///     L224-233: check if any SHell sub-shape modified (myImages.Seek).
     ///     L235-240: if none modified → skip (return).
     ///     L242-275: build new container from sub-shape images, store in myImages.
-    ///   rcad: group result faces by source operand (A/B) into shells.
-    ///   ⏳ rcad: source shell boundaries not tracked at DS level (only
-    ///     FaceOrigin::FromA(source_face_idx) is available).  For single-shell
-    ///     operands, A/B grouping is equivalent.  Multi-shell operands need
-    ///     source-shell mapping from the source BRep.
+    ///   rcad: groups result faces by (source_origin, source_shell) to match
+    ///   OCCT's per-source-shell container preservation.  The source_shell_idx
+    ///   is recorded in DSFace during load_brep.
     fn fill_images_containers_shells(&self, result: &mut ResultBuilder) {
         let nf = result.faces.len();
         if nf == 0 { return; }
@@ -5626,18 +5624,31 @@ impl<'a> BooleanBuilder<'a> {
 
         // OCCT L242-275: build shell from each source operand's face images.
         //   OCCT iterates source SHELL shapes (via FillImagesContainer).
-        //   rcad: source shells not tracked explicitly → group by A/B origin.
-        let is_a = |o: FaceOrigin| -> bool { matches!(o, FaceOrigin::FromA(_)) };
-        let mut shells: Vec<Vec<usize>> = Vec::new();
-        for is_a_side in [true, false] {
-            let shell_faces: Vec<usize> = (0..nf)
-                .filter(|&fi| is_a(result.face_origins[fi]) == is_a_side)
-                .collect();
-            if !shell_faces.is_empty() {
-                shells.push(shell_faces);
+        //   rcad: group by (is_a, source_shell) preserving source shell boundaries.
+        //   Build (is_a, source_face_idx) → source_shell_idx map from DS.
+        use std::collections::HashMap;
+        let mut face_to_shell: HashMap<(bool, usize), usize> = HashMap::new();
+        for f in &self.ds.faces {
+            if let Some(si) = f.source_shell_idx {
+                let is_a = matches!(f.origin, ShapeOrigin::ShapeA);
+                face_to_shell.insert((is_a, f.source_face_idx), si);
             }
         }
-        result.shells = shells;
+
+        // Group result faces by (is_a, source_shell).  BTreeMap for deterministic
+        // order: (true, shell_0), (true, shell_1), ..., (false, shell_0), ...
+        let mut shell_groups: std::collections::BTreeMap<(bool, usize), Vec<usize>> =
+            std::collections::BTreeMap::new();
+        for fi in 0..nf {
+            let (is_a, src_fi) = match &result.face_origins[fi] {
+                FaceOrigin::FromA(sfi) => (true, *sfi),
+                FaceOrigin::FromB(sfi) => (false, *sfi),
+                _ => continue,
+            };
+            let shell_key = face_to_shell.get(&(is_a, src_fi)).copied().unwrap_or(0);
+            shell_groups.entry((is_a, shell_key)).or_default().push(fi);
+        }
+        result.shells = shell_groups.into_values().collect();
     }
 
     /// ⏳ OCCT-aligned: FillImagesContainer(COMPSOLID) (Builder_1.cxx L221-276).

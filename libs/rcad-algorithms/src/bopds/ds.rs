@@ -239,6 +239,14 @@ pub struct DSFace {
     ///   BRep_Tool::NaturalRestriction in OCCT, used by BuilderFace::PerformAreas
     ///   to decide whether an empty wire produces the whole surface face.
     pub natural_restriction: bool,
+    /// ✅ OCCT-aligned: source shell index within the source BRep.
+    ///   OCCT: BOPDS_ShapeInfo tracks TopAbs_SHELL hierarchy; each source face
+    ///   knows which shell it belongs to via its ShapeInfo parent pointer.
+    ///   rcad: shell index (0-based, counting all shells across all solids in
+    ///   the source BRep) assigned during load_brep.  Used by
+    ///   fill_images_containers_shells to group result faces by source shell
+    ///   boundary (OCCT FillImagesContainer preserves source shell structure).
+    pub source_shell_idx: Option<usize>,
 }
 
 /// Record of an intersection between two sub-shapes.
@@ -760,8 +768,11 @@ impl DS {
             });
         }
 
-        // Faces
+        // Faces.  OCCT BOPDS_ShapeInfo tracks source shell hierarchy
+        // (TopAbs_SHELL → TopAbs_FACE).  rcad: shell_counter assigns a
+        // sequential index per shell for source-shell grouping.
         let mut face_idx = 0usize;
+        let mut shell_counter = 0usize;
         for solid in &brep.solids {
             for shell in &solid.shells {
                 for face in &shell.faces {
@@ -851,10 +862,12 @@ impl DS {
                         geom_tol: rcad_kernel::face_tolerance(brep, face_idx),
                         uv_boundary: None,
                         natural_restriction: true,
+                        source_shell_idx: Some(shell_counter),
                     });
 
                     face_idx += 1;
                 }
+                shell_counter += 1;
             }
         }
     }
