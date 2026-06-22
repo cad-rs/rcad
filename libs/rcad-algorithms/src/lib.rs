@@ -3701,15 +3701,12 @@ pub fn boolean_op_with_retry(
         )
         .map(|(brep, _report)| brep)?
     };
-    // OCCT-aligned: merge_close_vertices + deduplicate_edges + prune
-    //   BRepLib::BuildCurves3d 在 OCCT 中重建边时会合并共享顶点和重复边。
-    //   merge_close_vertices 等价于 TopExp::MapShapes 后按容差合并重合顶点。
-    //   deduplicate_edges 等价于 BRep_Builder::MakeEdge 在相同顶点对上复用已有边。
-    let (mut brep, _) = crate::brep_repair::merge_close_vertices(
-        &brep, crate::tolerance::TOLERANCE_ABS * 64.0);
-    brep = deduplicate_edges(brep);
-    brep = crate::prune_unused_topology(brep);
-    brep = deduplicate_edges(brep);
+    // ✅ OCCT-aligned: PostTreat does NOT merge_close_vertices, deduplicate_edges,
+    //   or prune_unused_topology — OCCT's BRep_Builder produces topology with
+    //   shared TopoDS TShape identity (no duplicates).  rcad's builder generates
+    //   unique index-based edges/vertices; the extra steps have been removed
+    //   to match OCCT's PostTreat (Builder.cxx L450-475).
+    let mut brep = brep;
     // Skip BSPLINE→PLANE promotion — OCCT preserves the original surface type
     // of each operand face (a NURBS-converted box keeps BSpline surfaces even
     // though they are geometrically planar).  promote_planar_surfaces would
