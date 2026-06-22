@@ -29,6 +29,9 @@ pub struct PaveBlock {
     pub shrunk_range: Option<[f64; 2]>,
     /// OCCT-aligned: whether this PaveBlock can be split.
     pub is_splittable: bool,
+    /// ✅ OCCT-aligned: index of the CommonBlock this PaveBlock belongs to,
+    ///   or None if not on any CommonBlock (BOPDS_PaveBlock::myCommonBlock).
+    pub common_block_idx: Option<usize>,
 }
 
 impl PaveBlock {
@@ -43,6 +46,7 @@ impl PaveBlock {
             pcurve_on_b: None,
             shrunk_range: None,
             is_splittable: false,
+            common_block_idx: None,
         }
     }
 }

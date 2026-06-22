@@ -3304,7 +3304,13 @@ impl<'a> PaveFiller<'a> {
 
 
     fn post_treat_ff(&mut self) {
-        // Collect boundary verts for each face ahead of time to avoid borrow conflict
+        // OCCT PaveFiller_6.cxx L1165-1397: PostTreatFF handles VertsUnused,
+        // MSCPB processing, missing-curve recomputation via sub-PaveFiller, and
+        // PreparePostTreatFF.  rcad distributes these across:
+        //   - post_treat_ff (here): register curves_sc + vertices_in from FF curves
+        //   - make_sd_vertices_ff (below): SD vertex creation
+        //   - refine_face_info_in/on (DS): face info refinement
+        //   - make_blocks / remove_micro_edges (elsewhere): PB/micro-edge handling
         let n_faces = self.ds.faces.len();
         let mut face_boundary_verts: Vec<Vec<usize>> = Vec::with_capacity(n_faces);
         for fi in 0..n_faces {
@@ -3402,7 +3408,6 @@ impl<'a> PaveFiller<'a> {
                         if self.should_skip_glued_face_pair(af, bf) {
                             continue;
                         }
-                        eprintln!("[FF] perform_ff: af={} bf={}", af, bf);
                         self.intersect_face_face(af, bf);
                     }
             }
@@ -7019,10 +7024,8 @@ impl<'a> PaveFiller<'a> {
     ///
     /// Phase 2a: full boundary vertex injection (PutBoundPaveOnCurve) using
     ///           param_on_line3/param_on_circle3/project_vertex_to_curve.
-    fn make_blocks(&mut self) {
-        let n_ef = self.ds.interferences.iter().filter(|inf| matches!(inf, Interference::EdgeFace { .. })).count();
-        eprintln!("[MKBLK] n_ef={}", n_ef);
-        // ── Phase 1: Collect data ────────────────────────────────────────
+         fn make_blocks(&mut self) {
+        // Phase 1: Collect data ────────────────────────────────────────
         let n_curves = self.ds.intersection_curves.len();
         let n_faces = self.ds.faces.len();
 

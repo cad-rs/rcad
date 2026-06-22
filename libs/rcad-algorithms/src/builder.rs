@@ -4749,15 +4749,11 @@ pub(crate) fn perform_areas(
 
     if wds.is_empty() { return vec![]; }
 
-    // OCCT L461-465: sort by 3D projected area descending (largest = primary growth)
-    let mut sorted: Vec<usize> = (0..wds.len()).collect();
-    sorted.sort_by(|&a, &b| projected_area_max(&wds[b].boundary).partial_cmp(&projected_area_max(&wds[a].boundary)).unwrap_or(std::cmp::Ordering::Equal));
-
     // OCCT L428-458: sequential classification with IsGrowthWire + IsHole
     let mut is_hole = vec![false; wds.len()];
     let mut hole_edge_set: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
-    for &si in &sorted {
+    for si in 0..wds.len() {
         // OCCT L441: IsGrowthWire fast check — if wire shares edges with known
         // hole edges (MHE), it is the GROWTH containing the hole (not a hole
         // itself).  Enables alternating growth→hole→growth→hole nesting.
@@ -4795,9 +4791,8 @@ pub(crate) fn perform_areas(
     // all-holes fallback below is a SAFETY net for degraded WireSplitter
     // output (should not trigger after coordination alignment).
     if growths.is_empty() && !wds.is_empty() {
-        let promoted = sorted[0];
         return vec![WireFace {
-            outer_wire: wires[wds[promoted].wire_idx].clone(),
+            outer_wire: wires[wds[0].wire_idx].clone(),
             inner_wires: vec![],
             internal_wires: internal_wires.to_vec(),
         }];
@@ -5362,8 +5357,6 @@ impl<'a> BooleanBuilder<'a> {
     ///   via pb.new_edge, matching OCCT's aPBR->Edge() pattern.
     ///   Creates myImages(EDGE) and myOrigins(EDGE) mappings.
     fn fill_images_edges(&self) {
-        let debug_pipe = std::env::var("RCAD_DEBUG_PIPELINE").is_ok();
-
         for (ei, edge) in self.ds.edges.iter().enumerate() {
             // OCCT L81-87: if (!aSI.HasReference()) continue;
             //   rcad: HasReference → non-empty pave_blocks.
@@ -5388,16 +5381,16 @@ impl<'a> BooleanBuilder<'a> {
                     self.split_edges.borrow_mut().push(self.ds.edges[new_ei].clone());
                 }
 
-                if debug_pipe {
-                    eprintln!("[PIPE] Edge[{ei}] → new_ei={new_ei} pb=({:.4},{:.4})",
-                        pb.pave1.param, pb.pave2.param);
-                }
-
-                // OCCT L105-106: pLS->Append(aSpR) → myImages(edge) += split_edge
+                // OCCT L105-106: pLS->Append(aSpR) -> myImages(edge) += split_edge
                 self.my_images.borrow_mut().entry(ei).or_default().push(new_ei);
 
                 // OCCT L107-112: myOrigins.ChangeSeek(aSpR).Append(aE)
                 self.my_origins.borrow_mut().entry(new_ei).or_default().push(ei);
+
+                // OCCT L114-119: IsCommonBlockOnEdge -> myShapesSD.Bind(aSp, aSpR)
+                if pb.common_block_idx.is_some() {
+                    self.my_shapes_sd.borrow_mut().insert(ei, new_ei);
+                }
             }
         }
     }

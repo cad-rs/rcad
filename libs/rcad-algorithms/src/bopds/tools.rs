@@ -36,12 +36,15 @@ pub fn perform_common_blocks(ds: &mut DS) {
     // ── Phase 1: Populate global PaveBlock array ────────────────────────
     // Map (edge_idx, local_pb_idx) → global PaveBlock index.
     let mut edge_local_to_global: HashMap<(usize, usize), usize> = HashMap::new();
+    // Reverse map: global_pb_idx → (edge_idx, local_pb_idx).
+    let mut global_to_edge_local: HashMap<usize, (usize, usize)> = HashMap::new();
 
     for (ei, edge) in ds.edges.iter().enumerate() {
         for local_i in 0..edge.pave_blocks.len() {
             let global_i = ds.pave_blocks.len();
             ds.pave_blocks.push(edge.pave_blocks[local_i].clone());
             edge_local_to_global.insert((ei, local_i), global_i);
+            global_to_edge_local.insert(global_i, (ei, local_i));
         }
     }
 
@@ -118,6 +121,18 @@ pub fn perform_common_blocks(ds: &mut DS) {
         ds.common_blocks.push(cb);
         let tol = compute_tolerance_of_cb(ds, cb_idx);
         ds.common_blocks[cb_idx].set_tolerance(tol);
+
+        // Mark local PaveBlocks as belonging to this CommonBlock.
+        // ✅ OCCT-aligned: BOPDS_PaveBlock::myCommonBlock (L103-108 in ds.cxx).
+        for &(global_pb, _) in entries {
+            if let Some(&(ei, local_i)) = global_to_edge_local.get(&global_pb) {
+                if let Some(local_pb) = ds.edges.get_mut(ei)
+                    .and_then(|e| e.pave_blocks.get_mut(local_i))
+                {
+                    local_pb.common_block_idx = Some(cb_idx);
+                }
+            }
+        }
     }
 }
 
