@@ -625,64 +625,106 @@ impl<'a> PaveFiller<'a> {
         DsBvh::build(indices, aabbs)
     }
 
-    /// VE intersection using BVH pair culling (OCCT BOPDS_Iterator).
+    /// VE intersection using BVH pair culling + parallel processing.
+    /// OCCT: BOPTools_Parallel::Perform(aVVE) dispatches independent VE tasks.
+    /// rcad: Rayon par_iter over candidate pairs, filtered through skip conditions.
     fn perform_ve_bvh(&mut self, bvh_verts: &crate::bvh::DsBvh, bvh_edges: &crate::bvh::DsBvh) {
+        use rayon::prelude::*;
         self.fill_shrunk_data();
         let pairs = crate::bvh::DsBvh::candidate_pairs(bvh_verts, bvh_edges);
-        for &(vi, ei) in &pairs {
-            if self.ds.edge_has_vertex(vi, ei) { continue; }
-            if self.ds.edge_has_flag(ei) { continue; }
-            if self.ds.has_interf_ve(vi, ei) { continue; }
-            if self.ds.has_interf_ve_via_faces(vi, ei) { continue; }
-            if self.ds.is_edge_degenerated(ei) { continue; }
+        // Pre-collect skip conditions into a read-only filter.
+        let ds = &self.ds;
+        let filtered: Vec<(usize, usize)> = pairs.par_iter()
+            .filter(|&(vi, ei)| {
+                !ds.edge_has_vertex(*vi, *ei) && !ds.edge_has_flag(*ei)
+                    && !ds.has_interf_ve(*vi, *ei) && !ds.has_interf_ve_via_faces(*vi, *ei)
+                    && !ds.is_edge_degenerated(*ei)
+            })
+            .copied()
+            .collect();
+        for &(vi, ei) in &filtered {
             self.check_vertex_edge(vi, ei);
         }
     }
 
-    /// EE intersection using BVH pair culling.
+    /// EE intersection using BVH pair culling + parallel PaveBlock range processing.
+    /// OCCT: BOPTools_Parallel over EE pairs with per-PaveBlock GetPBBox.
     fn perform_ee_bvh(&mut self, bvh_edges_a: &crate::bvh::DsBvh, bvh_edges_b: &crate::bvh::DsBvh) {
+        use rayon::prelude::*;
         self.fill_shrunk_data();
         let pairs = crate::bvh::DsBvh::candidate_pairs(bvh_edges_a, bvh_edges_b);
-        for &(ae, be) in &pairs {
-            if self.ds.edge_has_flag(ae) || self.ds.edge_has_flag(be) { continue; }
-            if self.ds.has_interf_ee(ae, be) { continue; }
-            if self.ds.is_edge_degenerated(ae) || self.ds.is_edge_degenerated(be) { continue; }
-
-            let ranges_a = self.collect_paveblock_ranges(ae, self.ds.edges[ae].t_range);
-            let ranges_b = self.collect_paveblock_ranges(be, self.ds.edges[be].t_range);
-            if ranges_a.is_empty() || ranges_b.is_empty() { continue; }
-
-            for ra in &ranges_a {
-                for rb in &ranges_b {
-                    self.check_edge_edge_range(ae, be, *ra, *rb);
-                }
-            }
+        // Filter + collect PaveBlock ranges in parallel.
+        let ds = &self.ds;
+        let blocks: Vec<(usize, usize, [f64; 2], [f64; 2])> = pairs.par_iter()
+            .filter(|&(ae, be)| {
+                !ds.edge_has_flag(*ae) && !ds.edge_has_flag(*be)
+                    && !ds.has_interf_ee(*ae, *be)
+                    && !ds.is_edge_degenerated(*ae) && !ds.is_edge_degenerated(*be)
+            })
+            .flat_map(|&(ae, be)| {
+                let ra = Self::collect_paveblock_ranges_static(ds, ae, ds.edges[ae].t_range);
+                let rb = Self::collect_paveblock_ranges_static(ds, be, ds.edges[be].t_range);
+                let mut v = Vec::new();
+                for &r1 in &ra { for &r2 in &rb { v.push((ae, be, r1, r2)); } }
+                v
+            })
+            .collect();
+        for &(ae, be, r1, r2) in &blocks {
+            self.check_edge_edge_range(ae, be, r1, r2);
         }
     }
 
-    /// VF intersection using BVH pair culling.
+    /// Read-only version of collect_paveblock_ranges for parallel use.
+    fn collect_paveblock_ranges_static(ds: &DS, edge_idx: usize, edge_t_range: [f64; 2]) -> Vec<[f64; 2]> {
+        let paves = &ds.edges[edge_idx].paves;
+        if paves.is_empty() { return vec![edge_t_range]; }
+        let mut params: Vec<f64> = paves.iter().map(|p| p.param).filter(|p| p.is_finite()).collect();
+        params.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        params.dedup();
+        let tol = ds.edges[edge_idx].geom_tol.max(crate::tolerance::TOLERANCE_ABS);
+        let mut ranges = Vec::new();
+        let mut prev = edge_t_range[0];
+        for &p in &params {
+            if (p - prev).abs() > tol { ranges.push([prev, p]); }
+            prev = p;
+        }
+        if (edge_t_range[1] - prev).abs() > tol { ranges.push([prev, edge_t_range[1]]); }
+        ranges
+    }
+
+    /// VF intersection using BVH pair culling + parallel processing.
     fn perform_vf_bvh(&mut self, bvh_verts: &crate::bvh::DsBvh, bvh_faces: &crate::bvh::DsBvh) {
+        use rayon::prelude::*;
         self.fill_shrunk_data();
         let pairs = crate::bvh::DsBvh::candidate_pairs(bvh_verts, bvh_faces);
-        for &(vi, fi) in &pairs {
-            if self.ds.has_interf_vf(vi, fi) { continue; }
+        let ds = &self.ds;
+        let filtered: Vec<(usize, usize)> = pairs.par_iter()
+            .filter(|&(vi, fi)| !ds.has_interf_vf(*vi, *fi))
+            .copied()
+            .collect();
+        for &(vi, fi) in &filtered {
             self.check_vertex_face(vi, fi);
         }
     }
 
-    /// EF intersection using BVH pair culling.
+    /// EF intersection using BVH pair culling + parallel PaveBlock range processing.
     fn perform_ef_bvh(&mut self, bvh_edges: &crate::bvh::DsBvh, bvh_faces: &crate::bvh::DsBvh) {
+        use rayon::prelude::*;
         self.fill_shrunk_data();
         let pairs = crate::bvh::DsBvh::candidate_pairs(bvh_edges, bvh_faces);
-        for &(ei, fi) in &pairs {
-            if self.ds.edge_has_flag(ei) { continue; }
-            if self.ds.is_edge_degenerated(ei) { continue; }
-            if self.ds.has_interf_ef(ei, fi) { continue; }
-            let etr = self.ds.edges[ei].t_range;
-            let ranges = self.collect_paveblock_ranges(ei, etr);
-            for r in &ranges {
-                self.intersect_edge_face_range(ei, fi, r);
-            }
+        let ds = &self.ds;
+        let blocks: Vec<(usize, usize, [f64; 2])> = pairs.par_iter()
+            .filter(|&(ei, fi)| {
+                !ds.edge_has_flag(*ei) && !ds.is_edge_degenerated(*ei)
+                    && !ds.has_interf_ef(*ei, *fi)
+            })
+            .flat_map(|&(ei, fi)| {
+                let r = Self::collect_paveblock_ranges_static(ds, ei, ds.edges[ei].t_range);
+                r.into_iter().map(move |range| (ei, fi, range)).collect::<Vec<_>>()
+            })
+            .collect();
+        for &(ei, fi, r) in &blocks {
+            self.intersect_edge_face_range(ei, fi, &r);
         }
     }
 
