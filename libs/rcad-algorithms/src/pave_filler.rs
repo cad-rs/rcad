@@ -588,16 +588,14 @@ impl<'a> PaveFiller<'a> {
     /// `is_a`: true for ShapeA, false for ShapeB.  `is_edge`: true for edges.
     fn build_ds_bvh(&self, is_a: bool, is_edge: bool) -> crate::bvh::DsBvh {
         use crate::bvh::{Aabb, DsBvh};
-        let count = if is_a { self.ds.a_vertex_count } else { self.ds.vertices.len() };
-        let start = if is_a { 0 } else { self.ds.a_vertex_count };
-        let end = if is_edge {
-            if is_a { self.ds.a_edge_count } else { self.ds.edges.len() }
-        } else { count };
-        let ds_start = if is_edge {
-            if is_a { 0 } else { self.ds.a_edge_count }
-        } else { start };
-
-        let n = end - start;
+        let (ds_start, end) = if is_edge {
+            if is_a { (0, self.ds.a_edge_count) }
+            else { (self.ds.a_edge_count, self.ds.edges.len()) }
+        } else {
+            if is_a { (0, self.ds.a_vertex_count) }
+            else { (self.ds.a_vertex_count, self.ds.vertices.len()) }
+        };
+        let n = end - ds_start;
         let mut indices = Vec::with_capacity(n);
         let mut aabbs = Vec::with_capacity(n);
 

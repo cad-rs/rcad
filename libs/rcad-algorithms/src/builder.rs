@@ -3234,7 +3234,7 @@ fn assemble_internal_wires(
         let seg = &segments[si];
         seg.first_pcurve.as_ref().map(|pc| {
             let t_mid = (seg.t_range[0] + seg.t_range[1]) * 0.5;
-            pc.eval(t_mid)
+            pc.point_at(t_mid)
         })
     }).collect();
 
@@ -3246,7 +3246,7 @@ fn assemble_internal_wires(
         let outer_uv: Vec<DVec2> = wf.outer_wire.iter().filter_map(|&si| {
             if si >= segments.len() { return None; }
             let seg = &segments[si];
-            seg.first_pcurve.as_ref().map(|pc| pc.eval(seg.t_range[0]))
+            seg.first_pcurve.as_ref().map(|pc| pc.point_at(seg.t_range[0]))
         }).collect();
         if outer_uv.len() < 3 { continue; }
 
@@ -3255,15 +3255,15 @@ fn assemble_internal_wires(
             iw.iter().filter_map(|&si| {
                 if si >= segments.len() { return None; }
                 let seg = &segments[si];
-                seg.first_pcurve.as_ref().map(|pc| pc.eval(seg.t_range[0]))
+                seg.first_pcurve.as_ref().map(|pc| pc.point_at(seg.t_range[0]))
             }).collect()
         }).filter(|poly: &Vec<DVec2>| poly.len() >= 3).collect();
 
         // OCCT L704-716: select edges inside this face via 2D ray casting.
         for (ai, &si) in avoided.iter().enumerate() {
             let Some(uv_mid) = seg_uv[ai] else { continue; };
-            if !point_in_polygon_2d(uv_mid, &outer_uv) { continue; }
-            let in_hole = hole_uvs.iter().any(|hole| point_in_polygon_2d(uv_mid, hole));
+            if !point_in_polygon_2d(&outer_uv, uv_mid) { continue; }
+            let in_hole = hole_uvs.iter().any(|hole| point_in_polygon_2d(hole, uv_mid));
             if in_hole { continue; }
             face_internal[fi].push(si);
         }
@@ -3309,41 +3309,6 @@ fn assemble_internal_wires(
     per_face_wires
 }
 
-/// 2D point-in-polygon via ray casting (winding number approach).
-/// Returns true when `pt` is strictly inside the polygon `poly`.
-fn point_in_polygon_2d(pt: DVec2, poly: &[DVec2]) -> bool {
-    let mut inside = false;
-    let n = poly.len();
-    for i in 0..n {
-        let (j, k) = (poly[i], poly[(i + 1) % n]);
-        // Check if a horizontal ray from `pt` crosses the segment (j → k).
-        let crosses = ((j.y > pt.y) != (k.y > pt.y))
-            && (pt.x < (k.x - j.x) * (pt.y - j.y) / (k.y - j.y) + j.x);
-        if crosses {
-            inside = !inside;
-        }
-    }
-    inside
-}
-
-/// OCCT-aligned: aE.IsSame(aEOuta) for flat vertex arrays.
-/// Returns true when both edges are IntersectionCurve segments from the
-/// same intersection curve index (i.e., FORWARD and REVERSED halves of
-/// the same physical section edge).  OCCT detects this via TopoDS_Shape
-/// identity (.IsSame()); rcad matches the curve index in WireEdgeSource.
-fn is_same_ic(incoming: &WireEdgeSource, candidate: &WireEdgeSource) -> bool {
-    match (incoming, candidate) {
-        (WireEdgeSource::IntersectionCurve(a), WireEdgeSource::IntersectionCurve(b)) => a == b,
-        (WireEdgeSource::DsEdge(a), WireEdgeSource::DsEdge(b)) => a == b,
-        (WireEdgeSource::SeamEdge, WireEdgeSource::SeamEdge) => true,
-        _ => false,
-    }
-}
-
-/// OCCT-aligned: check if two WireSegments are FWD+REV of the same block.
-/// Returns true when both are from the same DsEdge and have reversed
-/// vertex pairs (sv1==ev2 && ev1==sv2), meaning they're the same
-/// physical TopoDS_Edge with opposite orientations.
 fn is_same_block_fwd_rev(a: &WireSegment, b: &WireSegment) -> bool {
     match (&a.source, &b.source) {
         (WireEdgeSource::DsEdge(ea), WireEdgeSource::DsEdge(eb)) => {
@@ -6301,6 +6266,7 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     /// ✅ OCCT-aligned: FillInternalShapes (Builder_3.cxx L622-887).
+    fn fill_internal_shapes(&self, result: &mut ResultBuilder) {
         // OCCT Phase 1+2 (L630-718): Collect internal V/E from DS.
         //   Phase 1: arguments (rcad: source solids loaded as DS arrays).
         //   Phase 2: OwnInternalShapes (rcad: is_internal flag on DS V/E).
