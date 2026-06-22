@@ -657,6 +657,149 @@ impl BvhStats {
     }
 }
 
+// ============================================================================
+// DS-level BVH for spatial acceleration in PaveFiller (VE, EE, VF, EF)
+// ============================================================================
+
+/// A simplified BVH over DS entities (vertices or edges) for pair culling.
+///
+/// OCCT `BOPDS_Iterator` builds BVH trees over all DS sub-shapes to
+/// avoid O(n²) pair enumeration.  `DsBvh` provides the same culling
+/// for arbitrary DS arrays by computing AABBs from the entity geometry.
+///
+/// Building:
+/// ```
+/// let bvh = DsBvh::build(&aabbs);
+/// let pairs = DsBvh::candidate_pairs(&bvh_a, &bvh_b);
+/// ```
+pub struct DsBvh {
+    nodes: Vec<BvhNode>,
+    indices: Vec<usize>,
+    aabbs: Vec<Aabb>,
+}
+
+impl DsBvh {
+    /// Build a BVH from a list of entity AABBs.
+    /// `indices` and `aabbs` must have the same length.
+    pub fn build(indices: Vec<usize>, aabbs: Vec<Aabb>) -> Self {
+        let n = indices.len();
+        let mut order: Vec<usize> = (0..n).collect();
+        let mut nodes = Vec::new();
+        let mut sorted_indices = Vec::with_capacity(n);
+        let mut sorted_aabbs = Vec::with_capacity(n);
+
+        if n > 0 {
+            Self::build_rec(&mut order, &aabbs, 0, n, &mut nodes,
+                           &mut sorted_indices, &mut sorted_aabbs, 0);
+        }
+
+        Self { nodes, indices: sorted_indices, aabbs: sorted_aabbs }
+    }
+
+    fn build_rec(
+        order: &mut [usize],
+        aabbs: &[Aabb],
+        start: usize,
+        end: usize,
+        nodes: &mut Vec<BvhNode>,
+        out_indices: &mut Vec<usize>,
+        out_aabbs: &mut Vec<Aabb>,
+        depth: usize,
+    ) -> usize {
+        let mut node_aabb = Aabb::empty();
+        for &oi in &order[start..end] {
+            node_aabb.expand_aabb(&aabbs[oi]);
+        }
+
+        let count = end - start;
+        if count <= 4 {
+            // Leaf node
+            let idx = nodes.len();
+            let leaf_start = out_indices.len();
+            for &oi in &order[start..end] {
+                out_indices.push(oi);
+                out_aabbs.push(aabbs[oi]);
+            }
+            nodes.push(BvhNode::Leaf {
+                aabb: node_aabb,
+                start: leaf_start,
+                end: out_indices.len(),
+            });
+            return idx;
+        }
+
+        // Median split along the largest axis
+        let axis = {
+            let size = node_aabb.max - node_aabb.min;
+            if size.x >= size.y && size.x >= size.z { 0 }
+            else if size.y >= size.z { 1 }
+            else { 2 }
+        };
+
+        order[start..end].sort_by(|&a, &b| {
+            let ca = &aabbs[a];
+            let cb = &aabbs[b];
+            let va = [ca.min.x + ca.max.x, ca.min.y + ca.max.y, ca.min.z + ca.max.z][axis];
+            let vb = [cb.min.x + cb.max.x, cb.min.y + cb.max.y, cb.min.z + cb.max.z][axis];
+            va.partial_cmp(&vb).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let mid = start + count / 2;
+        let left = Self::build_rec(order, aabbs, start, mid, nodes, out_indices, out_aabbs, depth + 1);
+        let right = Self::build_rec(order, aabbs, mid, end, nodes, out_indices, out_aabbs, depth + 1);
+
+        let idx = nodes.len();
+        nodes.push(BvhNode::Internal { aabb: node_aabb, left, right });
+        idx
+    }
+
+    /// Candidate entity pairs between two DS BVHs whose AABBs overlap.
+    /// Returns (index_into_bvh_a, index_into_bvh_b) pairs.
+    pub fn candidate_pairs(bvh_a: &DsBvh, bvh_b: &DsBvh) -> Vec<(usize, usize)> {
+        let mut pairs = Vec::new();
+        if bvh_a.nodes.is_empty() || bvh_b.nodes.is_empty() {
+            return pairs;
+        }
+        Self::candidate_pairs_node(bvh_a, 0, bvh_b, 0, &mut pairs);
+        pairs
+    }
+
+    fn candidate_pairs_node(
+        bvh_a: &DsBvh, node_a: usize,
+        bvh_b: &DsBvh, node_b: usize,
+        pairs: &mut Vec<(usize, usize)>,
+    ) {
+        let na = &bvh_a.nodes[node_a];
+        let nb = &bvh_b.nodes[node_b];
+
+        if !na.aabb().intersects(nb.aabb()) {
+            return;
+        }
+
+        match (na, nb) {
+            (BvhNode::Leaf { start: sa, end: ea, .. }, BvhNode::Leaf { start: sb, end: eb, .. }) => {
+                for ia in *sa..*ea {
+                    for ib in *sb..*eb {
+                        let ia_idx = bvh_a.indices[ia];
+                        let ib_idx = bvh_b.indices[ib];
+                        if bvh_a.aabbs[ia].intersects(&bvh_b.aabbs[ib]) {
+                            pairs.push((ia_idx, ib_idx));
+                        }
+                    }
+                }
+            }
+            (BvhNode::Internal { left: la, right: ra, .. }, _) => {
+                Self::candidate_pairs_node(bvh_a, *la, bvh_b, node_b, pairs);
+                Self::candidate_pairs_node(bvh_a, *ra, bvh_b, node_b, pairs);
+            }
+            (_, BvhNode::Internal { left: lb, right: rb, .. }) => {
+                Self::candidate_pairs_node(bvh_a, node_a, bvh_b, *lb, pairs);
+                Self::candidate_pairs_node(bvh_a, node_a, bvh_b, *rb, pairs);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

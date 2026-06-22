@@ -454,14 +454,24 @@ impl<'a> PaveFiller<'a> {
 
         self.perform_vv();
 
+        // OCCT L145: BOPDS_Iterator builds BVH trees for all shape types.
+        //   rcad: build DS-level BVHs for VE/EE/VF/EF pair culling.
+        let bvh_verts_a = self.build_ds_bvh(true, false);
+        let bvh_verts_b = self.build_ds_bvh(false, false);
+        let bvh_edges_a = self.build_ds_bvh(true, true);
+        let bvh_edges_b = self.build_ds_bvh(false, true);
+        // Face BVHs are built from the same index ranges as the face BVH trees.
+        let bvh_faces_a = self.build_ds_bvh_face(true);
+        let bvh_faces_b = self.build_ds_bvh_face(false);
+
         if !skip_ve {
-            self.perform_ve();
+            self.perform_ve_bvh(&bvh_verts_a, &bvh_edges_b);
         }
         // ✅ OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L266)
         self.ds.update_pave_blocks_with_sd_vertices();
 
         let ee_survivors: Vec<usize> = if !skip_ee {
-            self.perform_ee();
+            self.perform_ee_bvh(&bvh_edges_a, &bvh_edges_b);
             // ✅ OCCT-aligned: TreatNewVertices — merge new vertices created by EE intersection.
             //    OCCT PaveFiller_5.cxx L570: PerformNewVertices(aMVCPB, ..., false)
             let survivors = self.treat_new_vertices();
@@ -471,13 +481,15 @@ impl<'a> PaveFiller<'a> {
         } else { vec![] };
 
         if !skip_vf {
-            self.perform_vf();
+            self.perform_vf_bvh(&bvh_verts_a, &bvh_faces_b);
+            self.perform_vf_bvh(&bvh_verts_b, &bvh_faces_a);
         }
         // ✅ OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L280)
         self.ds.update_pave_blocks_with_sd_vertices();
 
         if !skip_ef {
-            self.perform_ef();
+            self.perform_ef_bvh(&bvh_edges_a, &bvh_faces_b);
+            self.perform_ef_bvh(&bvh_edges_b, &bvh_faces_a);
             // ✅ OCCT-aligned: TreatNewVertices — merge new vertices created by EF intersection.
             //    OCCT PaveFiller_5.cxx L570: PerformNewVertices(aMVCPB, ..., false)
             let ef_survivors = self.treat_new_vertices();
@@ -568,6 +580,139 @@ impl<'a> PaveFiller<'a> {
 
         // ✅ OCCT-aligned: ProcessDE — after MakePCurves (PerformInternal L350)
         self.process_de();
+    }
+
+    // ===== BVH-based pair enumeration (OCCT BOPDS_Iterator) =====
+
+    /// Build a DS-level BVH for one operand's vertices or edges.
+    /// `is_a`: true for ShapeA, false for ShapeB.  `is_edge`: true for edges.
+    fn build_ds_bvh(&self, is_a: bool, is_edge: bool) -> crate::bvh::DsBvh {
+        use crate::bvh::{Aabb, DsBvh};
+        let count = if is_a { self.ds.a_vertex_count } else { self.ds.vertices.len() };
+        let start = if is_a { 0 } else { self.ds.a_vertex_count };
+        let end = if is_edge {
+            if is_a { self.ds.a_edge_count } else { self.ds.edges.len() }
+        } else { count };
+        let ds_start = if is_edge {
+            if is_a { 0 } else { self.ds.a_edge_count }
+        } else { start };
+
+        let n = end - start;
+        let mut indices = Vec::with_capacity(n);
+        let mut aabbs = Vec::with_capacity(n);
+
+        for local_i in 0..n {
+            let ds_i = ds_start + local_i;
+            indices.push(ds_i);
+            let aabb = if is_edge {
+                let e = &self.ds.edges[ds_i];
+                let pts = [self.ds.vertices[e.start_vertex].point,
+                           self.ds.vertices[e.end_vertex].point];
+                let mut a = Aabb::empty();
+                for &p in &pts { a.expand_point(p); }
+                // Expand for edge tolerance
+                let tol = e.geom_tol.max(1e-7);
+                a.min -= DVec3::splat(tol);
+                a.max += DVec3::splat(tol);
+                a
+            } else {
+                let pt = self.ds.vertices[ds_i].point;
+                let tol = self.ds.vertices[ds_i].geom_tol.max(1e-7);
+                Aabb { min: pt - DVec3::splat(tol), max: pt + DVec3::splat(tol) }
+            };
+            aabbs.push(aabb);
+        }
+        DsBvh::build(indices, aabbs)
+    }
+
+    /// VE intersection using BVH pair culling (OCCT BOPDS_Iterator).
+    fn perform_ve_bvh(&mut self, bvh_verts: &crate::bvh::DsBvh, bvh_edges: &crate::bvh::DsBvh) {
+        self.fill_shrunk_data();
+        let pairs = crate::bvh::DsBvh::candidate_pairs(bvh_verts, bvh_edges);
+        for &(vi, ei) in &pairs {
+            if self.ds.edge_has_vertex(vi, ei) { continue; }
+            if self.ds.edge_has_flag(ei) { continue; }
+            if self.ds.has_interf_ve(vi, ei) { continue; }
+            if self.ds.has_interf_ve_via_faces(vi, ei) { continue; }
+            if self.ds.is_edge_degenerated(ei) { continue; }
+            self.check_vertex_edge(vi, ei);
+        }
+    }
+
+    /// EE intersection using BVH pair culling.
+    fn perform_ee_bvh(&mut self, bvh_edges_a: &crate::bvh::DsBvh, bvh_edges_b: &crate::bvh::DsBvh) {
+        self.fill_shrunk_data();
+        let pairs = crate::bvh::DsBvh::candidate_pairs(bvh_edges_a, bvh_edges_b);
+        for &(ae, be) in &pairs {
+            if self.ds.edge_has_flag(ae) || self.ds.edge_has_flag(be) { continue; }
+            if self.ds.has_interf_ee(ae, be) { continue; }
+            if self.ds.is_edge_degenerated(ae) || self.ds.is_edge_degenerated(be) { continue; }
+
+            let ranges_a = self.collect_paveblock_ranges(ae, self.ds.edges[ae].t_range);
+            let ranges_b = self.collect_paveblock_ranges(be, self.ds.edges[be].t_range);
+            if ranges_a.is_empty() || ranges_b.is_empty() { continue; }
+
+            for ra in &ranges_a {
+                for rb in &ranges_b {
+                    self.check_edge_edge_range(ae, be, *ra, *rb);
+                }
+            }
+        }
+    }
+
+    /// VF intersection using BVH pair culling.
+    fn perform_vf_bvh(&mut self, bvh_verts: &crate::bvh::DsBvh, bvh_faces: &crate::bvh::DsBvh) {
+        self.fill_shrunk_data();
+        let pairs = crate::bvh::DsBvh::candidate_pairs(bvh_verts, bvh_faces);
+        for &(vi, fi) in &pairs {
+            if self.ds.has_interf_vf(vi, fi) { continue; }
+            self.check_vertex_face(vi, fi);
+        }
+    }
+
+    /// EF intersection using BVH pair culling.
+    fn perform_ef_bvh(&mut self, bvh_edges: &crate::bvh::DsBvh, bvh_faces: &crate::bvh::DsBvh) {
+        self.fill_shrunk_data();
+        let pairs = crate::bvh::DsBvh::candidate_pairs(bvh_edges, bvh_faces);
+        for &(ei, fi) in &pairs {
+            if self.ds.edge_has_flag(ei) { continue; }
+            if self.ds.is_edge_degenerated(ei) { continue; }
+            if self.ds.has_interf_ef(ei, fi) { continue; }
+            let etr = self.ds.edges[ei].t_range;
+            let ranges = self.collect_paveblock_ranges(ei, etr);
+            for r in &ranges {
+                self.intersect_edge_face_range(ei, fi, r);
+            }
+        }
+    }
+
+    /// Build a DS-level face BVH for one operand.
+    fn build_ds_bvh_face(&self, is_a: bool) -> crate::bvh::DsBvh {
+        use crate::bvh::{Aabb, DsBvh};
+        let (start, end) = if is_a {
+            (0, self.ds.a_face_count)
+        } else {
+            (self.ds.a_face_count, self.ds.faces.len())
+        };
+        let n = end - start;
+        let mut indices = Vec::with_capacity(n);
+        let mut aabbs = Vec::with_capacity(n);
+        for local_i in 0..n {
+            let fi = start + local_i;
+            indices.push(fi);
+            let f = &self.ds.faces[fi];
+            let mut aabb = Aabb::empty();
+            for &vi in &f.boundary_verts {
+                if vi < self.ds.vertices.len() {
+                    aabb.expand_point(self.ds.vertices[vi].point);
+                }
+            }
+            let tol = f.geom_tol.max(1e-7);
+            aabb.min -= DVec3::splat(tol);
+            aabb.max += DVec3::splat(tol);
+            aabbs.push(aabb);
+        }
+        DsBvh::build(indices, aabbs)
     }
 
     /// Determine if Vertex-Edge pass can be skipped.
