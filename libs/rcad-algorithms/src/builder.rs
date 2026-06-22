@@ -5507,11 +5507,12 @@ impl<'a> BooleanBuilder<'a> {
 
             // OCCT L283-287: PBsIn → curves_sc, PBsOn → curves_on.
             //   PBsSc → curves_sc (shared section curves). rcad: alone vertices not tracked.
+            let has_pb_in = !self.ds.faces[fi].face_info.pave_blocks_in.is_empty();
             let has_pb_sc = !self.ds.faces[fi].face_info.curves_sc.is_empty();
             let has_pb_on = !self.ds.faces[fi].face_info.pave_blocks_on.is_empty();
 
             // OCCT L293-296: if (!aNbPBIn && !aNbPBOn && !aNbPBSc && !aNbAV) continue.
-            if !has_pb_sc && !has_pb_on && !has_info {
+            if !has_pb_in && !has_pb_sc && !has_pb_on && !has_info {
                 continue;
             }
 
@@ -5519,23 +5520,22 @@ impl<'a> BooleanBuilder<'a> {
             //   L298-332: no IN/SC PBs → BuildDraftFace for ON PBs / alone vertices.
             //   L332+:    has IN/SC PBs → full BuilderFace::Perform (split_face_occt_wire_pipeline).
             //   No fallback: if BuilderFace fails, the face produces no images.
-            if !has_pb_sc {
-                // ✅ OCCT-aligned L307-320: check if any wire has been modified
-                //    (myImages.IsBound on each wire).  If no modified wire, no
-                //    internals, and no alone vertices → skip (original passes through).
+            if !has_pb_in && !has_pb_sc {
+                // OCCT L309-334: check for INTERNAL edges in wires.
+                //   If hasInternals -> fall through to full BuilderFace.
+                let has_internals = self.ds.faces[fi].boundary_edges.iter().any(|&ei| {
+                    self.ds.edges.get(ei).map_or(false, |e| e.is_internal)
+                });
                 let has_modified = self.ds.faces[fi].boundary_edges.iter().any(|&ei| {
                     self.my_images.borrow().get(&ei).map_or(false, |imgs| {
                         imgs.len() != 1 || imgs[0] != ei
                     })
                 });
-                if !has_modified && !has_pb_on {
+                if !has_internals && !has_modified && !has_pb_on {
                     continue;
                 }
-                // ✅ OCCT-aligned: BuildSplitFaces emits ALL split faces without
-                //    classification (Builder_2.cxx L344-365).  Classification is
-                //    deferred to FillIn3DParts (fill_in_3d_parts below) matching
-                //    OCCT's Pipeline (Builder_3.cxx L97-200).
-                if has_info {
+                // OCCT L336-350: if no internals -> BuildDraftFace.
+                if !has_internals && has_info {
                     if let Some(draft) = self.build_draft_face(fi) {
                         let (_segments, wfs, _vp) = draft;
                         for wf in &wfs {
