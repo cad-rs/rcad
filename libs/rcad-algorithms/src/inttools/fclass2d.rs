@@ -90,6 +90,12 @@ pub struct CSLibClass2d {
     n: usize,
     tol_u: f64, tol_v: f64,
     pub umin: f64, pub vmin: f64, pub umax: f64, pub vmax: f64,
+    /// ✅ OCCT-aligned: tangent direction at each vertex (aD1Prev/aD1Next).
+    ///   Normalized (dx, dy) for C0 continuity detection.  Empty when n < 2.
+    ///   OCCT stores first derivatives of pcurves at edge junctions; rcad
+    ///   approximates via polygon tangent: normalize([i+1] - [i-1]).
+    tan_xs: Vec<f64>,
+    tan_ys: Vec<f64>,
 }
 
 impl CSLibClass2d {
@@ -100,7 +106,27 @@ impl CSLibClass2d {
         let xs: Vec<f64> = points.iter().map(|p| (p.x - umin) / range_u).collect();
         let ys: Vec<f64> = points.iter().map(|p| (p.y - vmin) / range_v).collect();
         let n = xs.len();
-        CSLibClass2d { xs, ys, n, tol_u, tol_v, umin, vmin, umax, vmax }
+        // OCCT L383-409: compute tangent direction at each vertex.
+        //   Approximated as normalized direction of the chord through neighbors.
+        let mut tan_xs = Vec::with_capacity(n);
+        let mut tan_ys = Vec::with_capacity(n);
+        if n >= 2 {
+            for i in 0..n {
+                let prev = if i > 0 { i - 1 } else { n - 1 };
+                let next = (i + 1) % n;
+                let dx = xs[next] - xs[prev];
+                let dy = ys[next] - ys[prev];
+                let len = (dx * dx + dy * dy).sqrt();
+                if len > 1e-15 {
+                    tan_xs.push(dx / len);
+                    tan_ys.push(dy / len);
+                } else {
+                    tan_xs.push(0.0);
+                    tan_ys.push(0.0);
+                }
+            }
+        }
+        CSLibClass2d { xs, ys, n, tol_u, tol_v, umin, vmin, umax, vmax, tan_xs, tan_ys }
     }
 
     pub fn si_dans(&self, uv: DVec2) -> CSLibResult {
@@ -113,16 +139,29 @@ impl CSLibClass2d {
             return CSLibResult::Outside;
         }
 
-        // OCCT: check if point is within tolerance of any polygon edge → Uncertain.
-        //   tol_u/tol_v are chordal deviations (FlecheU/FlecheV) that define the
-        //   accuracy of the polygon approximation.  If the point is within this
-        //   distance of an edge, it's too close to call In/Out.
+        // OCCT L273-275, L383-409: check if point is within tolerance of any
+        //   polygon edge → Uncertain.  tol_u/tol_v are chordal deviations
+        //   (FlecheU/FlecheV).  At vertices with C0 continuity (tangent edges),
+        //   skip the Uncertain check — the point is ON a smooth boundary edge.
         let tol_u_norm = self.tol_u / ru;
         let tol_v_norm = self.tol_v / rv;
         let max_tol = tol_u_norm.max(tol_v_norm).max(1e-12);
         for i in 0..self.n {
             let xi = self.xs[i]; let yi = self.ys[i];
             let xj = self.xs[(i + 1) % self.n]; let yj = self.ys[(i + 1) % self.n];
+
+            // OCCT: at vertex i, check if incoming/outgoing tangents are aligned
+            //   (C0 continuous).  If smooth, skip the Uncertain check for this edge.
+            if i < self.tan_xs.len() && self.tan_xs.len() > 1 {
+                let ni = (i + 1) % self.n;
+                let tx_in = self.tan_xs[i]; let ty_in = self.tan_ys[i];
+                let tx_out = self.tan_xs[ni]; let ty_out = self.tan_ys[ni];
+                let dot = tx_in * tx_out + ty_in * ty_out;
+                if dot > 0.999 {
+                    continue; // C0 continuous → skip Uncertain check
+                }
+            }
+
             // Distance from (px,py) to segment (xi,yi)-(xj,yj)
             let dx = xj - xi;
             let dy = yj - yi;
