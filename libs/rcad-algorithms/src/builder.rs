@@ -5774,6 +5774,10 @@ impl<'a> BooleanBuilder<'a> {
         // OCCT L86: BuildSplitSolids — group shells into result solids
         result.solids = self.build_split_solids(result, &shell_assignments);
 
+        // OCCT BuilderSolid::PerformAreas (L397-576): shell-level void detection.
+        //   Classify IN-state shells as holes of OUT-state solids.
+        self.detect_internal_voids(result, &shell_assignments);
+
         // OCCT L92: FillInternalShapes — internal sub-shapes
         self.fill_internal_shapes(result);
     }
@@ -6113,7 +6117,106 @@ impl<'a> BooleanBuilder<'a> {
     ///   solids' DS face sets via classify_point.  If IN → the shape is
     ///   recorded on result.face_internal_vtx for the solid's first face
     ///   (OCCT adds it to the TopoDS_Solid as INTERNAL sub-shape).
-    fn fill_internal_shapes(&self, result: &mut ResultBuilder) {
+
+    /// ✅ OCCT-aligned: BuilderSolid::PerformAreas void detection (L397-576).
+    ///   Detect IN-state shells (holes) that are inside OUT-state solids (growths)
+    ///   and add them as internal voids.  OCCT IsGrowthShell/IsHole + IsInside
+    ///   classify each shell against candidate solids; rcad uses classify_point
+    ///   with the IN-shell centroid against the OUT-solid's DS face set.
+    fn detect_internal_voids(&self, result: &mut ResultBuilder,
+                              assignments: &[(usize, usize, &'static str)]) {
+        // OCCT L420-441: classify each shell as Growth or Hole.
+        //   rcad: state ("IN"/"OUT") from fill_in_3d_parts corresponds to
+        //   Growth (OUT = outer boundary) vs Hole (IN = internal void).
+        //   Build IN/OUT solid lists from shell states.
+        let mut solid_is_in: Vec<bool> = vec![false; result.solids.len()];
+        for (si, solid_shells) in result.solids.iter().enumerate() {
+            if let Some(&first_sh) = solid_shells.first() {
+                if let Some(&(_sh_i, _origin, state)) = assignments.iter().find(|&&(si, _, _)| si == first_sh) {
+                    solid_is_in[si] = state == "IN";
+                }
+            }
+        }
+
+        // Separate IN solids (potential holes) from OUT solids (potential growths).
+        let in_solid_indices: Vec<usize> = (0..result.solids.len())
+            .filter(|&si| solid_is_in[si]).collect();
+        let out_solid_indices: Vec<usize> = (0..result.solids.len())
+            .filter(|&si| !solid_is_in[si]).collect();
+
+        if in_solid_indices.is_empty() || out_solid_indices.is_empty() {
+            return; // OCCT L444-457: no holes → nothing to classify
+        }
+
+        // OCCT L460-530: classify each hole shell against each candidate solid
+        //   via IsInside (BVH-accelerated).  rcad: classify_point with centroid.
+        let mut in_to_out: Vec<(usize, usize)> = Vec::new(); // (in_si, out_si)
+
+        // Pre-build DS face index sets for each OUT solid (OCCT builds boxes + BVH).
+        let mut out_ds_face_sets: Vec<Vec<usize>> = Vec::new();
+        for &out_si in &out_solid_indices {
+            let mut ds_faces: Vec<usize> = Vec::new();
+            for &sh in &result.solids[out_si] {
+                if let Some(shell) = result.shells.get(sh) {
+                    for &fi in shell {
+                        if let Some(origin) = result.face_origins.get(fi) {
+                            let ds_fi = match origin {
+                                FaceOrigin::FromA(sfi) => self.ds.faces.iter().position(|f|
+                                    f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
+                                FaceOrigin::FromB(sfi) => self.ds.faces.iter().position(|f|
+                                    f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi),
+                                _ => None,
+                            };
+                            if let Some(dfi) = ds_fi { ds_faces.push(dfi); }
+                        }
+                    }
+                }
+            }
+            ds_faces.sort_unstable();
+            ds_faces.dedup();
+            out_ds_face_sets.push(ds_faces);
+        }
+
+        for (i, &in_si) in in_solid_indices.iter().enumerate() {
+            // OCCT L422-427: classify hole — IsGrowthShell/IsHole.
+            //   rcad: centroid of IN solid's first face as test point.
+            let centroid = result.solids[in_si].first()
+                .and_then(|&sh| result.shells.get(sh))
+                .and_then(|shell| shell.first())
+                .map(|&fi| {
+                    // FaceEntry.6 is the centroid field
+                    if fi < result.faces.len() { result.faces[fi].6 } else { DVec3::ZERO }
+                })
+                .unwrap_or(DVec3::ZERO);
+
+            // OCCT L484-529: check IsInside(hole_shell, candidate_solid, context).
+            for (j, &out_si) in out_solid_indices.iter().enumerate() {
+                if out_ds_face_sets[j].is_empty() { continue; }
+                let class = classify_point(centroid, &out_ds_face_sets[j], self.ds);
+                if class == Classification::In || class == Classification::On {
+                    in_to_out.push((in_si, out_si));
+                    break; // OCCT selects the outermost containing solid
+                }
+            }
+        }
+
+        // OCCT L550-576: Add Holes to Solids (add void shells to containing solids).
+        let mut removed = vec![false; result.solids.len()];
+        for &(in_si, out_si) in &in_to_out {
+            let void_shells = result.solids[in_si].clone();
+            result.solids[out_si].extend(void_shells);
+            removed[in_si] = true;
+        }
+
+        // Remove merged IN solids, preserve order.
+        let mut new_solids: Vec<Vec<usize>> = Vec::with_capacity(result.solids.len());
+        for (si, solid) in result.solids.drain(..).enumerate() {
+            if !removed[si] { new_solids.push(solid); }
+        }
+        result.solids = new_solids;
+    }
+
+    /// ✅ OCCT-aligned: FillInternalShapes (Builder_3.cxx L622-887).
         // OCCT Phase 1+2 (L630-718): Collect internal V/E from DS.
         //   Phase 1: arguments (rcad: source solids loaded as DS arrays).
         //   Phase 2: OwnInternalShapes (rcad: is_internal flag on DS V/E).
