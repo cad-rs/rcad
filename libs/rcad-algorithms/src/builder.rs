@@ -2506,7 +2506,7 @@ fn compute_ic_second_pcurve(
     }
 }
 
-/// OCCT-aligned: Angle2D for seam edges (BOPAlgo_WireSplitter_1.cxx L768-840).
+/// ✅ OCCT-aligned: Angle2D for seam edges (BOPAlgo_WireSplitter_1.cxx L768-840).
 ///
 /// OCCT takes the edge's pcurve via BRep_Tool::CurveOnSurface, the vertex
 /// parameter via BRep_Tool::Parameter, and calls Angle2D(aV, aE, aF, aGAS, bIsIN).
@@ -3154,7 +3154,7 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
     (wires, internal_wires, vertex_positions)
 }
 
-/// OCCT-aligned: Regular block (degree=2) wire build.
+/// ✅ OCCT-aligned: Regular block (degree=2) wire build.
 fn build_regular_wire(
     block: &[usize],
     segments: &[WireSegment],
@@ -3645,7 +3645,7 @@ fn pc_parameter_range(curve: &Curve2d) -> (f64, f64) {
 
 /// OCCT-aligned: intersect a 2D ray with a 2D curve.
 /// Returns (param_on_curve, param_on_ray) for all intersections within range.
-/// OCCT ref: Geom2dInt_GInter (BOPAlgo_WireSplitter_1.cxx L1080)
+/// ✅ OCCT-aligned: Geom2dInt_GInter (BOPAlgo_WireSplitter_1.cxx L1080)
 fn intersect_ray_curve_2d(
     ray_origin: DVec2,
     ray_dir: DVec2,
@@ -3742,7 +3742,7 @@ fn intersect_ray_curve_2d(
     }
 }
 
-/// OCCT-aligned: project a UV point onto a curve to find the nearest parameter.
+/// ✅ OCCT-aligned: project a UV point onto a curve to find the nearest parameter.
 /// OCCT ref: BRep_Tool::Parameter (returns the parameter of a vertex on an edge's curve).
 fn project_uv_to_curve(
     uv: DVec2,
@@ -3943,7 +3943,7 @@ fn refine_angle_2d(
     }
     None
 }
-/// OCCT-aligned: Walk a path extracting closed wires (BOPAlgo_WireSplitter_1.cxx L359-618).
+/// ✅ OCCT-aligned: Walk a path extracting closed wires (BOPAlgo_WireSplitter_1.cxx L359-618).
 ///
 /// Key differences from the previous implementation:
 /// 1. Tracks UV coordinates of each visited vertex (aCoordVa).
@@ -4495,7 +4495,7 @@ fn mark_all_edge_infos_passed(smart_map: &mut HashMap<usize, Vec<EdgeInfo>>, seg
     }
 }
 
-/// OCCT-aligned:  wire  3D boundary polygon
+/// ✅ OCCT-aligned: wire 3D boundary polygon
 ///     DS  3D
 fn wire_boundary_3d(wire: &[usize], segments: &[WireSegment], ds: &DS) -> Vec<DVec3> {
     let mut pts: Vec<DVec3> = Vec::new();
