@@ -2642,8 +2642,8 @@ pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) 
 /// (removed try_fast_path macro — OCCT has no fast-path shortcuts)
 
 fn finalize_fast_path_result(r: BRep) -> BRep {
-    let (r, _) = crate::brep_repair::merge_close_vertices(&r, crate::tolerance::TOLERANCE_ABS * 64.0);
-    let r = deduplicate_edges(r);
+    // ✅ OCCT-aligned: no merge_close_vertices or deduplicate_edges.
+    //   OCCT's BRep_Builder produces shared TopoDS TShape identity.
     let closure = crate::brep_check::validate_solid_closure(&r);
     let has_open_closure = closure.issues.iter().any(|issue| {
         matches!(issue, crate::CheckIssue::SolidNotClosed { .. })
@@ -2989,14 +2989,8 @@ pub fn fill_internal_shapes(
 
 
 fn finalize_boolean_result(r: BRep) -> BRep {
-    // Sew close vertices so edge-adjacent patches share endpoints for
-    // deduplicate_edges and unify_same_domain_faces (same as fast path).
-    let (r, _) = crate::brep_repair::merge_close_vertices(&r, crate::tolerance::TOLERANCE_ABS * 64.0);
-    // Edge deduplication BEFORE topology optimization so that face adjacency
-    // detection in unify_same_domain_faces works correctly (it uses edge INDEX
-    // to find adjacent faces; the PaveFiller creates duplicate edges at the
-    // same geometric boundary).
-    let r = deduplicate_edges(r);
+    // ✅ OCCT-aligned: no merge_close_vertices or deduplicate_edges.
+    //   OCCT creates shared TopoDS TShape identity via BRep_Builder.
     // Topology optimization: merge coplanar faces, share edges, detect holes.
     let r = optimize_boolean_topology(r);
     // Convert cylinder sub-faces to per-face BSpline surfaces.
