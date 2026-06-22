@@ -900,6 +900,9 @@ impl<'a> PaveFiller<'a> {
 
         // OCCT L145-149: FillShrunkData + BVH iterator init.
         //   rcad: PairIterator for cross-group pairs (A-edges × B-edges).
+        //   For PaveBlock-level precision (OCCT L200-232), iterate sub-ranges
+        //   of each edge defined by existing paves (from VE or prior intersections).
+        //   Each sub-range = one logical PaveBlock.
         let mut it = crate::bopds::ds::PairIterator::prepare_ab(a_count, self.ds.edges.len());
         while it.more() {
             let pk = it.value();
@@ -907,12 +910,6 @@ impl<'a> PaveFiller<'a> {
 
             // OCCT L189-198: aSIE.HasFlag() — skip flagged edges
             if self.ds.edge_has_flag(ae) || self.ds.edge_has_flag(be) {
-                it.next(); continue;
-            }
-
-            // OCCT L200-210: PaveBlocks empty → skip
-            if self.ds.edges[ae].pave_blocks.is_empty()
-                || self.ds.edges[be].pave_blocks.is_empty() {
                 it.next(); continue;
             }
 
@@ -925,18 +922,104 @@ impl<'a> PaveFiller<'a> {
                 it.next(); continue;
             }
 
+            // OCCT L200-232: PaveBlock-level sub-ranges (GetPBBox iterates over
+            //   PaveBlocks of each edge).  rcad: build sub-ranges from existing
+            //   paves to limit intersection to relevant sub-segments.
+            let ranges_a = self.collect_paveblock_ranges(ae, self.ds.edges[ae].t_range);
+            let ranges_b = self.collect_paveblock_ranges(be, self.ds.edges[be].t_range);
+
+            if ranges_a.is_empty() || ranges_b.is_empty() {
+                it.next(); continue;
+            }
+
             if self.use_glue && shared_edge_set.contains(&(ae, be)) {
-                self.ds.interferences.push(Interference::EdgeEdge {
-                    e1: ae, e2: be,
-                    point: self.ds.vertices[self.ds.edges[ae].start_vertex].point,
-                    param1: self.ds.edges[ae].t_range[0],
-                    param2: self.ds.edges[be].t_range[0],
-                    new_vertex: self.ds.edges[ae].start_vertex,
-                });
+                // Glue: use first pave point as shared vertex
+                let pv = self.ds.edges[ae].start_vertex;
+                if !self.ds.has_interf_ee(ae, be) {
+                    self.ds.interferences.push(Interference::EdgeEdge {
+                        e1: ae, e2: be,
+                        point: self.ds.vertices[pv].point,
+                        param1: self.ds.edges[ae].t_range[0],
+                        param2: self.ds.edges[be].t_range[0],
+                        new_vertex: pv,
+                    });
+                }
             } else {
-                self.check_edge_edge(ae, be);
+                // OCCT L215-240: iterate PaveBlock pairs + GetPBBox + intersect
+                for ra in &ranges_a {
+                    for rb in &ranges_b {
+                        self.check_edge_edge_range(ae, be, *ra, *rb);
+                    }
+                }
             }
             it.next();
+        }
+    }
+
+    /// ✅ OCCT-aligned: EE intersection over PaveBlock sub-ranges.
+    ///   OCCT PaveFiller_3.cxx L215-240: iterate PaveBlock pairs with
+    ///   GetPBBox range check, restrict intersection to shrunk sub-ranges.
+    ///   rcad: uses collect_paveblock_ranges + shrunk_range for each sub-range,
+    ///   matching OCCT's per-PaveBlock shrunk range.
+    fn check_edge_edge_range(&mut self, e1: usize, e2: usize,
+                              range1: [f64; 2], range2: [f64; 2]) {
+        let edge1 = &self.ds.edges[e1];
+        let edge2 = &self.ds.edges[e2];
+        let tol = self.ee_tol(e1, e2);
+
+        // OCCT L215-232: GetPBBox extracts shrunk range for each PaveBlock.
+        //   rcad: compute shrunk_range from edge geom_tol (vertex tolerances
+        //   at sub-range boundaries are approximated by edge_tol for interior
+        //   pave points — matching OCCT's per-PaveBlock tolerance approach).
+        let sr1 = crate::inttools::curve_range::shrunk_range(
+            &edge1.curve, range1, edge1.geom_tol, edge1.geom_tol, edge1.geom_tol);
+        let sr2 = crate::inttools::curve_range::shrunk_range(
+            &edge2.curve, range2, edge2.geom_tol, edge2.geom_tol, edge2.geom_tol);
+        let (sr1, sr2) = match (sr1, sr2) {
+            (Some(s1), Some(s2)) => (s1, s2),
+            _ => return, // OCCT L226-228: no shrunk data → non-splittable
+        };
+
+        // Compute intersections restricted to shrunk sub-ranges.
+        let hits: Vec<(f64, f64, DVec3)> = match (&edge1.curve, &edge2.curve) {
+            (Curve3::Line(l1), Curve3::Line(l2)) => {
+                intersect_line_line(l1, sr1, l2, sr2, tol)
+                    .into_iter().map(|(t1, t2, p)| (t1, t2, p)).collect()
+            }
+            (Curve3::Line(l), Curve3::Circle(c)) => intersect_line_circle(l, c, tol)
+                .into_iter()
+                .filter(|(t_line, t_circle, _)| {
+                    in_range(*t_line, sr1, tol) && in_range(*t_circle, sr2, tol)
+                })
+                .map(|(t_line, t_circle, p)| (t_line, t_circle, p))
+                .collect(),
+            (Curve3::Circle(c), Curve3::Line(l)) => intersect_line_circle(l, c, tol)
+                .into_iter()
+                .filter(|(t_line, t_circle, _)| {
+                    in_range(*t_line, sr2, tol) && in_range(*t_circle, sr1, tol)
+                })
+                .map(|(t_line, t_circle, p)| (t_circle, t_line, p))
+                .collect(),
+            (Curve3::Circle(c1), Curve3::Circle(c2)) => intersect_circle_circle(c1, c2, tol)
+                .into_iter()
+                .filter_map(|p| {
+                    let t1 = circle_param(p, c1);
+                    let t2 = circle_param(p, c2);
+                    if in_range(t1, sr1, tol) && in_range(t2, sr2, tol) {
+                        Some((t1, t2, p))
+                    } else { None }
+                })
+                .collect(),
+            _ => vec![],
+        };
+
+        for (t1, t2, point) in hits {
+            let new_v = self.ds.add_vertex(point);
+            self.ds.interferences.push(Interference::EdgeEdge {
+                e1, e2, point, param1: t1, param2: t2, new_vertex: new_v,
+            });
+            self.ds.edges[e1].paves.push(Pave { vertex_idx: new_v, param: t1 });
+            self.ds.edges[e2].paves.push(Pave { vertex_idx: new_v, param: t2 });
         }
     }
 
