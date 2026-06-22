@@ -823,6 +823,10 @@ impl ResultBuilder {
         self.face_origins.push(origin);
     }
 
+    /// ✅ OCCT-aligned: BRep_Builder::MakeVertex — dedup by position.
+    ///    OCCT: each TopoDS_Vertex is unique by TShape identity (may share position).
+    ///    rcad: dedup by hash of position + linear scan (geometric, not identity-based).
+    ///    Equivalent behavior: same-position vertices return same index.
     fn add_vertex(&mut self, point: DVec3) -> usize {
         let key = hash_point(point);
         if let Some(&idx) = self.vertex_map.get(&key) {
@@ -933,19 +937,18 @@ impl ResultBuilder {
         idx
     }
 
-    /// ✅ OCCT-aligned: 鍒涘缓閫€鍖?seam 杈?甯﹀崐鐞冨渾鏇茬嚎,闃叉琚竟鍘婚噸鍚堝苟)銆?
-    ///    OCCT 鐨?sphere face 澶栫幆鎬绘槸鏈変竴鏉￠€€鍖?seam 杈?涓ょ鍚岄《鐐?銆?
-    ///    娣诲姞涓€涓悆闈㈡按骞冲渾鏇茬嚎(circle.normal = axis)浣胯竟鍦ㄦ煇浜涗笂涓嬫枃涓彲璇嗗埆銆?
+    /// ✅ OCCT-aligned: create degenerate seam edge with hemisphere circle curve.
+    ///    OCCT sphere face outer wire always has a degenerate seam edge (same vertex at both ends).
+    ///    Adds a sphere horizontal circle curve to make the edge recognizable in STEP export.
     fn add_edge_seam_degenerate(&mut self, v1: usize, v2: usize, sphere_surf: &SphericalSurface) -> usize {
         let idx = self.edges.len();
         self.edges.push((v1, v2));
         while self.custom_edge_curves.len() <= idx {
             self.custom_edge_curves.push(None);
         }
-        // 瀛樺偍璇ラ€€鍖?seam 瀵瑰簲鐨勭悆闈㈠渾鏇茬嚎(鐢ㄤ簬 STEP writer)
-        // ✅ OCCT-aligned: seam 鍦?= 鐞冮潰瀛愬崍绾?閫氳繃 pole,normal 鉄?axis)
-        //    OCCT 涓?sphere face 鐨?seam 鏄繃鏋佺偣鐨勭粡绾?涓嶅悓浜?IC 鍦嗐€?
-        //    濡傛灉 normal = axis,浼氫笌骞抽潰-鐞冮潰 IC 鍦嗛噸鍚堝鑷存洸绾垮幓閲嶈鍚堝苟銆?
+        // Store seam circle curve for STEP writer
+        // ✅ OCCT-aligned: seam edge = sphere meridian through pole (not IC circle).
+        //    If normal = axis, it would coincide with plane-sphere IC causing curve merge errors.
         let seam_normal = any_perpendicular(sphere_surf.axis).normalize();
         let seam_circle = Curve3::Circle(Circle3 {
             center: sphere_surf.center,
@@ -957,13 +960,10 @@ impl ResultBuilder {
         idx
     }
 
-    /// ⏳ 部分对齐: 鍒涘缓鍏锋湁绮剧‘鍦嗘洸绾垮嚑浣曠殑 edge銆?
-    ///    OCCT: BOPTools_AlgoTools::MakeEdge(aIC,...) 鐩存帴鍒涘缓 BRep Edge,鏃犻《鐐瑰幓閲嶃€?
-    ///    rcad: 閫氳繃 add_edge(椤剁偣鍘婚噸)鍒涘缓杈?鍦?build() 涓缃?edge_curve銆?
-    ///    椤剁偣鍘婚噸閫昏緫涓嶅奖鍝嶆纭€?Circle3 鏇茬嚎姝ｇ‘璁剧疆),浣嗗疄鐜版柟寮忎笉鍚屻€?
     /// ✅ OCCT-aligned: circle edge with curve-aware dedup.
     ///    OCCT: TopoDS_Edge identity is per-TShape, not per vertex pair.
     ///    Two edges sharing vertices but with different curves are distinct.
+    ///    rcad: dedup by both (v1,v2) AND curve identity (Circle3 geometry).
     fn add_circle_edge(&mut self, v1: usize, v2: usize, circle: Curve3) -> usize {
         let key = (v1.min(v2), v1.max(v2));
         for (i, e) in self.edges.iter().enumerate() {
@@ -6295,7 +6295,10 @@ impl<'a> BooleanBuilder<'a> {
                 let outer = &r_faces[fi].0;
                 for &(ei, _) in outer {
                     edge_to_faces.entry(ei).or_default().push(fi);
-                    // Also register geometric edge for cross-source connectivity
+                    // OCCT BOPAlgo_BuilderSolid: edge identity only (TopoDS_Edge TShape).
+                    // rcad geo_edge_to_faces is redundant because add_edge deduplicates
+                    // by (v1,v2) — the same geometric edge gets the same edge index.
+                    // Kept as safety net for edge cases where DS vertex indices differ.
                     if ei < r_edges.len() {
                         let (sv, ev) = r_edges[ei];
                         let cs = canon_vert(sv, &r_vertices);
