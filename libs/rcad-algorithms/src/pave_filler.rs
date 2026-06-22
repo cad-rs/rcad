@@ -17,7 +17,7 @@ use rcad_kernel::closest_point_on_curve;
 ///   GeomParam = ts1!=ts2     → ImpPrmIntersection (analytic-parametric)
 ///   ParamParam = ts1==ts2==0 → PrmPrmIntersection (parametric-parametric)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SurfaceCategory { GeomGeom, GeomParam, ParamParam }
+enum SurfaceCategory { GeomGeom, ParamParam }
 
 fn classify_surface_type(surf: &Surface3) -> SurfaceCategory {
     match surf {
@@ -3623,37 +3623,6 @@ impl<'a> PaveFiller<'a> {
         !shared.is_empty()
     }
 
-    /// ✅ OCCT-aligned: demote face to Plane — no BSpline detection, construct plane
-    ///    using face.normal and boundary_verts directly. Analogous to OCCT
-    ///    ShapeCustom_SweptToElementive which identifies planar BSpline surfaces;
-    ///    rcad infers from face boundary instead.
-    fn demote_to_plane(&self, fi: usize) -> Option<Plane> {
-        let face = &self.ds.faces[fi];
-        let bnd = &face.boundary_verts;
-        if bnd.len() < 3 { return None; }
-        // Take first 3 non-collinear boundary points to compute normal
-        let origin = self.ds.vertices[bnd[0]].point;
-        let mut normal = face.normal; // default to face.normal
-        for i in 1..bnd.len()-1 {
-            let d1 = self.ds.vertices[bnd[i]].point - origin;
-            let d2 = self.ds.vertices[bnd[i+1]].point - origin;
-            let n = d1.cross(d2);
-            if n.length_squared() > TOLERANCE_ABS_SQ {
-                normal = if n.dot(face.normal) > 0.0 { n.normalize() } else { -n.normalize() };
-                break;
-            }
-        }
-        // Verify all boundary points are within plane tolerance
-        let face_geom_tol = self.ds.faces[fi].geom_tol;
-        let tol = face_geom_tol.max(TOLERANCE_MESH_LEGACY * 10.0);
-        for &vi in bnd {
-            let d = (self.ds.vertices[vi].point - origin).dot(normal);
-            if d.abs() > tol { return None; }
-        }
-        Some(Plane { origin, normal })
-    }
-
-    // ── Seam Edge Shift (OCCT PaveFiller_6.cxx L393-479) ─────────────────
 
     /// Check if an edge on a face is a seam edge on a periodic surface.
     /// ✅ OCCT-aligned:IsClosedFF (PaveFiller_6.cxx L106-134)
@@ -3883,17 +3852,9 @@ impl<'a> PaveFiller<'a> {
             _ => s2_orig,
         };
 
-        // ✅ OCCT-aligned: BSpline → Plane demotion — infer plane from boundary vertices, bypassing BSpline control point detection.
-        //    When demoting, also update the DS surface so that subsequent operations
-        //    (e.g. handle_coplanar_faces calling face_plane()) use the correct Plane
-        //    surface instead of panicking on the unpromoted BSpline.
-        //    OCCT BOPAlgo_PaveFiller never stores BSpline surfaces for planar geometry.
-        let maybe_plane1 = match &s1 { Surface3::BSpline(_) | Surface3::Bezier(_) => self.demote_to_plane(f1), _ => None };
-        let maybe_plane2 = match &s2 { Surface3::BSpline(_) | Surface3::Bezier(_) => self.demote_to_plane(f2), _ => None };
-        if let Some(pl) = maybe_plane1 { self.ds.faces[f1].surface = Surface3::Plane(pl); }
-        if let Some(pl) = maybe_plane2 { self.ds.faces[f2].surface = Surface3::Plane(pl); }
-        let s1 = maybe_plane1.map_or(s1, |pl| Surface3::Plane(pl));
-        let s2 = maybe_plane2.map_or(s2, |pl| Surface3::Plane(pl));
+        // OCCT IntPatch_Intersection does NOT demote BSpline surfaces.
+        // BSpline stays as Parametric (ts=0); Plane stays as Geom (ts=1).
+        // The (ts1 != ts2) condition triggers ImpPrmIntersection path (marching).
 
         // ═══ OCCT IntPatch_Intersection 3-category dispatch ═══
         //   OCCT IntPatch_Intersection.cxx L1298-1339 classifies surface pairs:
@@ -3972,21 +3933,12 @@ impl<'a> PaveFiller<'a> {
                 }
             }
             // ── Geom-Param: one analytic, one parametric ──
-            //   OCCT ImpPrmIntersection handles this category.
-            //   rcad: BSpline/Bezier × Plane → try demote_to_plane, else marching.
-            (SurfaceCategory::GeomParam, SurfaceCategory::ParamParam)
-            | (SurfaceCategory::ParamParam, SurfaceCategory::GeomParam) => {
-                let plane = if matches!(&s1, Surface3::Plane(_)) {
-                    match &s1 { Surface3::Plane(p) => *p, _ => unreachable!() }
-                } else {
-                    match &s2 { Surface3::Plane(p) => *p, _ => unreachable!() }
-                };
-                let bsp_fi = if matches!(&self.ds.faces[f1].surface, Surface3::BSpline(_) | Surface3::Bezier(_)) { f1 } else { f2 };
-                if let Some(p2) = self.demote_to_plane(bsp_fi) {
-                    self.intersect_plane_plane_faces(f1, f2, &plane, &p2);
-                } else {
-                    self.intersect_ff_by_marching(f1, f2);
-                }
+            //   OCCT ImpPrmIntersection handles this category (IntPatch_Intersection.cxx L1326-1330).
+            //   ts1 != ts2: one analytic (GeomGeom) + one parametric (ParamParam).
+            //   rcad: directly use marching — no demotion, no plane-plane redirect.
+            (SurfaceCategory::GeomGeom, SurfaceCategory::ParamParam)
+            | (SurfaceCategory::ParamParam, SurfaceCategory::GeomGeom) => {
+                self.intersect_ff_by_marching(f1, f2);
             }
             _ => {
                 // General case: numerical marching
@@ -6568,8 +6520,19 @@ impl<'a> PaveFiller<'a> {
 
         let mut curve_indices = Vec::new();
         for sir in &result.curves {
-            let mut chain = match &sir.curve_3d {
-                crate::inttools::intss::SurfaceCurve::Polyline(pts) => pts.clone(),
+            let (mut chain, approx_curve) = match &sir.curve_3d {
+                crate::inttools::intss::SurfaceCurve::Polyline(pts) => (pts.clone(), None),
+                crate::inttools::intss::SurfaceCurve::BSplineCurve(bs) => {
+                    // Sample BSpline back to polyline for face-boundary snapping
+                    let n = 64usize;
+                    let pts: Vec<DVec3> = (0..=n)
+                        .map(|i| {
+                            let t = i as f64 / n as f64;
+                            bs.point_at(t)
+                        })
+                        .collect();
+                    (pts, Some(Curve3::BSpline((**bs).clone())))
+                }
                 _ => continue,
             };
             if chain.len() < 2 {
@@ -6594,14 +6557,14 @@ impl<'a> PaveFiller<'a> {
 
             let curve_idx = self.ds.intersection_curves.len();
             self.ds.intersection_curves.push(IntersectionCurve {
-                curve: Curve3::Line(Line3 {
+                curve: approx_curve.unwrap_or(Curve3::Line(Line3 {
                     origin: chain[0],
                     direction: if dir.length_squared() > 0.5 {
                         dir
                     } else {
                         DVec3::X
                     },
-                }),
+                })),
                 polyline: chain,
                 start_vertex: v_start,
                 end_vertex: v_end,
@@ -6634,24 +6597,11 @@ impl<'a> PaveFiller<'a> {
     fn intersect_ff_by_marching(&mut self, f1: usize, f2: usize) {
         use inttools::marching::{adaptive_sampling_density, MarchingConfig};
 
-        let mut s1 = self.ds.faces[f1].surface.clone();
-        let mut s2 = self.ds.faces[f2].surface.clone();
+        let s1 = self.ds.faces[f1].surface.clone();
+        let s2 = self.ds.faces[f2].surface.clone();
 
-        // ✅ OCCT-aligned: BSpline → Plane demotion — infer plane from boundary vertices
-        let maybe_plane1 = match &s1 { Surface3::BSpline(_) | Surface3::Bezier(_) => self.demote_to_plane(f1), _ => None };
-        let maybe_plane2 = match &s2 { Surface3::BSpline(_) | Surface3::Bezier(_) => self.demote_to_plane(f2), _ => None };
-        if let Some(pl) = maybe_plane1 { s1 = Surface3::Plane(pl); }
-        if let Some(pl) = maybe_plane2 { s2 = Surface3::Plane(pl); }
-
-        // If both demoted to Plane, redirect to the analytic plane-plane intersection
-        if matches!(&s1, Surface3::Plane(_)) && matches!(&s2, Surface3::Plane(_)) {
-            if let (Surface3::Plane(p1), Surface3::Plane(p2)) = (&s1, &s2) {
-                self.intersect_plane_plane_faces(f1, f2, p1, p2);
-                return;
-            }
-        }
-
-        // ✅ OCCT-aligned: use sign-change grid marching for any non-Plane surface (IntTools_FaceFace)
+        // OCCT-aligned: use sign-change grid marching (IntTools_FaceFace / IntPatch_ImpPrmIntersection).
+        // No BSpline demotion — BSpline surfaces stay as parametric (ts=0) and use UV grid marching.
         let any_curved = !matches!(&s1, Surface3::Plane(_)) || !matches!(&s2, Surface3::Plane(_));
         if any_curved {
             if std::env::var("RCAD_DEBUG_IC").is_ok() {
@@ -6664,6 +6614,34 @@ impl<'a> PaveFiller<'a> {
                     Surface3::Cylinder(cy) => cy.radius,
                     Surface3::Cone(co) => co.radius.max(0.5),
                     Surface3::Torus(to) => to.major_radius.max(to.minor_radius),
+                    Surface3::BSpline(bsp) => {
+                        if bsp.control_points.is_empty() {
+                            1.0
+                        } else {
+                            let mut mn = DVec3::splat(f64::INFINITY);
+                            let mut mx = DVec3::splat(f64::NEG_INFINITY);
+                            for row in &bsp.control_points {
+                                for p in row {
+                                    mn = mn.min(*p); mx = mx.max(*p);
+                                }
+                            }
+                            (mx - mn).length().max(0.5) * 0.5
+                        }
+                    }
+                    Surface3::Bezier(bez) => {
+                        if bez.control_points.is_empty() {
+                            1.0
+                        } else {
+                            let mut mn = DVec3::splat(f64::INFINITY);
+                            let mut mx = DVec3::splat(f64::NEG_INFINITY);
+                            for row in &bez.control_points {
+                                for p in row {
+                                    mn = mn.min(*p); mx = mx.max(*p);
+                                }
+                            }
+                            (mx - mn).length().max(0.5) * 0.5
+                        }
+                    }
                     _ => 1.0,
                 }
             };
@@ -6819,15 +6797,23 @@ impl<'a> PaveFiller<'a> {
                 &curve.points, &s1, &s2, f1, f2, &t_range,
             );
 
+            // OCCT-aligned: approximate marching polyline to BSpline (MakeCurve / GeomInt_IntSS::MakeBSpline)
+            let approx_curve = if curve.points.len() >= 4 {
+                crate::inttools::intss::polyline_to_bspline(&curve.points, TOLERANCE_TOL_SCALE_MICRO)
+                    .filter(|c| matches!(c, Curve3::BSpline(_)))
+            } else {
+                None
+            };
+
             self.ds.intersection_curves.push(IntersectionCurve {
-                curve: Curve3::Line(Line3 {
+                curve: approx_curve.unwrap_or(Curve3::Line(Line3 {
                     origin: curve.points[0],
                     direction: if dir.length_squared() > 0.5 {
                         dir
                     } else {
                         DVec3::X
                     },
-                }),
+                })),
                 polyline: curve.points.clone(),
                 start_vertex: v_start,
                 end_vertex: v_end,
@@ -7167,33 +7153,20 @@ impl<'a> PaveFiller<'a> {
                 if fi[0] == usize::MAX || fi[1] == usize::MAX { continue; }
                 let mid_t = (ic.t_range[0] + ic.t_range[1]) * 0.5;
                 let pcurves = [ic.pcurve_on_a.as_ref(), ic.pcurve_on_b.as_ref()];
+                // OCCT-aligned: IsValidBlockForFaces uses 3D distance to ensure the
+                //   curve midpoint is within tolerance of BOTH faces (L740-746).
+                //   rcad uses 3D projection for ALL surfaces (not just fallback),
+                //   avoiding pcurve misalignment issues from BSpline->Plane demotion.
+                let mid_pt = ic.curve.point_at(mid_t);
                 let mut valid = true;
                 for idx in 0..2 {
                     let fii = fi[idx];
-                    if let Some(pc) = pcurves[idx] {
-                        let uv = pc.point_at(mid_t);
-                        let state = FClass2d::from_ds_face(&self.ds, fii).perform_point(uv);
-                        if state == State::Out { valid = false; break; }
-                    } else {
-                        let mid_pt = ic.curve.point_at(mid_t);
-                        let surf = &self.ds.faces[fii].surface;
-                        let (_, proj) = crate::extrema::closest_point_on_surface(surf, mid_pt);
-                        let tol_sq = self.ff_tol(fi[0], fi[1]).max(TOLERANCE_ABS);
-                        let tol_sq = tol_sq * tol_sq;
-                        if proj.distance_squared(mid_pt) > tol_sq { valid = false; break; }
-                    }
+                    let surf = &self.ds.faces[fii].surface;
+                    let (_, proj) = crate::extrema::closest_point_on_surface(surf, mid_pt);
+                    let tol = self.ff_tol(fi[0], fi[1]).max(TOLERANCE_ABS);
+                    if proj.distance(mid_pt) > tol { valid = false; break; }
                 }
                 if !valid {
-                    // Architecture gap: IsValidBlockForFaces with FClass2d is too strict for
-                    // demoted Plane-Plane pairs.  OCCT's IsPointInOnFace uses uv classification
-                    // with face tolerance expansion.  rcad's FClass2d performs a strict In/Out
-                    // test that rejects ICs whose midpoint UV falls near the face boundary.
-                    // This removes ALL ICs for some plane-plane cases (B3), preventing
-                    // proper face splitting and producing 2 separate solids instead of 1 union.
-                    // TODO: align FClass2d face-in check tolerance with OCCT IsPointInOnFace.
-                    //
-                    // Workaround: only remove if the curve's PEERS (other curves between same
-                    // face pair) are also invalid. A single valid curve keeps the pair alive.
                     if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
                         eprintln!("[SPLIT] IVF_REMOVE_ORIG ci={} fi=[{},{}] mid_t={:.9}", ci, fi[0], fi[1], mid_t);
                     }

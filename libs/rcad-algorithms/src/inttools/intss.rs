@@ -26,7 +26,7 @@
 //!
 //! Analogous to OCCT `GeomAPI_IntSS`.
 
-use glam::DVec3;
+use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{
     BSplineCurve3, Circle3, ConicalSurface, Curve2d, Curve3, CylindricalSurface, Ellipse3,
     Hyperbola3, Line3, Parabola3, Plane, SphericalSurface, Surface3, CurveEval, SurfaceEval,
@@ -37,7 +37,7 @@ use crate::inttools::{
     cylinder_cone::{CylinderConeResult, intersect_cylinder_cone},
     cylinder_cylinder::{CylinderCylinderResult, intersect_cylinder_cylinder_with_tolerance, sample_perpendicular_offset_curves},
     cylinder_torus::CylinderTorusResult as CylinderTorusResultAlias,
-    marching::project_onto_intersection_tol,
+    marching::{project_onto_intersection_tol, surface_implicit},
     pcurve_derive::{
         circle_pcurve_on_cone, circle_pcurve_on_cylinder, circle_pcurve_on_plane,
         circle_pcurve_on_sphere, ellipse_pcurve_on_cone, ellipse_pcurve_on_plane,
@@ -1848,9 +1848,20 @@ fn numeric_intss_impl(
     // (direct `intersect_surfaces` calls without domain overrides) the
     // original nn-distance is used to avoid altering sign-change patterns for
     // large default domains.
+    //
+    // ✅ OCCT-aligned: Implicit signed distance for Plane (IntSurf_Quadric / gp_Pln),
+    // matching IntPatch_ImpPrmIntersection which uses F(P) = n·(P - origin) as the
+    // signed-distance function.  Signed values enable zero-crossing detection when
+    // the grid passes through the plane, rather than relying on threshold proximity.
     let approx_dist_to_s2 = |p: DVec3| -> f64 {
         if !p.is_finite() {
             return f64::INFINITY;
+        }
+
+        // Explicit signed distance for Plane.  Returned directly — does not fall
+        // through to nn_d or proj distance so the sign is preserved for the grid.
+        if let Surface3::Plane(pl) = s2 {
+            return pl.normal.dot(p - pl.origin);
         }
 
         // Analytic unsigned distance for Cone and Cylinder surfaces (O(1), exact).
@@ -1924,6 +1935,7 @@ fn numeric_intss_impl(
     let nn = n + 1; // grid has (n+1) × (n+1) nodes
     let mut dist: Vec<f64> = Vec::with_capacity(nn * nn);
     let mut pts: Vec<DVec3> = Vec::with_capacity(nn * nn);
+    let mut uvs: Vec<DVec2> = Vec::with_capacity(nn * nn); // UV for UV-space Newton refinement
     for i in 0..nn {
         for j in 0..nn {
             let u = u1_0 + (u1_1 - u1_0) * i as f64 / n as f64;
@@ -1932,10 +1944,12 @@ fn numeric_intss_impl(
             if !p.is_finite() {
                 pts.push(DVec3::ZERO);
                 dist.push(f64::INFINITY);
+                uvs.push(DVec2::ZERO);
                 continue;
             }
             pts.push(p);
             dist.push(approx_dist_to_s2(p));
+            uvs.push(DVec2::new(u, v));
         }
     }
 
@@ -1944,6 +1958,21 @@ fn numeric_intss_impl(
     // Find sign-change edges and interpolate crossing points
     let mut crossing_pts: Vec<DVec3> = Vec::new();
 
+    // Helper: refine a 3D crossing point using UV-space Newton (OCCT IntPatch_TheSearchInside).
+    // For grid-edge crossings, UV is interpolated from the edge's UV coordinates.
+    let refine_crossing = |p3: DVec3, uv: DVec2| -> DVec3 {
+        let refined = refine_uv_intersection(s1, s2, uv.x, uv.y, threshold);
+        refined.map_or(p3, |r| r.0)
+    };
+
+    // Extract crossing point from grid edge indices + UV interpolation + UV Newton
+    let edge_crossing = |a: usize, b: usize, t: f64| -> DVec3 {
+        let t = t.clamp(0.0, 1.0);
+        let p3 = pts[a].lerp(pts[b], t);
+        let uv = uvs[a].lerp(uvs[b], t);
+        refine_crossing(p3, uv)
+    };
+
     // Horizontal edges: (i,j) — (i, j+1)
     for i in 0..nn {
         for j in 0..n {
@@ -1951,33 +1980,41 @@ fn numeric_intss_impl(
             let b = idx(i, j + 1);
             let da = dist[a];
             let db = dist[b];
-            // Sign change: one below threshold, other above (or vice versa)
-            if (da < threshold) != (db < threshold) {
+            // Zero crossing: signed distance changes sign (OCCT-aligned for Plane).
+            // Without signed distance, fall back to near/far threshold change.
+            let zero_cross = da.is_finite() && db.is_finite() && da * db < 0.0;
+            if zero_cross || (da < threshold) != (db < threshold) {
                 let t = if (da - db).abs() < TOLERANCE_FLOAT_DEDUP {
                     0.5
+                } else if zero_cross {
+                    // Zero crossing: interpolate to d=0 (the true intersection)
+                    da / (da - db)
                 } else {
+                    // Near/far boundary: interpolate to threshold
                     (threshold - da) / (db - da)
                 };
-                let t = t.clamp(0.0, 1.0);
-                crossing_pts.push(pts[a].lerp(pts[b], t));
-            } else if da > threshold && db > threshold {
+                crossing_pts.push(edge_crossing(a, b, t));
+            } else if da.abs() > threshold && db.abs() > threshold {
                 // Grazing band: trough along the chord, both endpoints “outside”.
                 let (t, dmin) =
                     min_approx_dist_on_segment(pts[a], pts[b], &approx_dist_to_s2);
                 if dmin <= threshold {
-                    crossing_pts.push(pts[a].lerp(pts[b], t));
+                    crossing_pts.push(edge_crossing(a, b, t));
                 }
-            } else if da <= threshold && db <= threshold {
-                let pm = pts[a].lerp(pts[b], 0.5);
-                let dm = approx_dist_to_s2(pm);
-                if dm > threshold {
-                    let (t1, d1) = min_approx_dist_on_segment(pts[a], pm, &approx_dist_to_s2);
-                    if d1 <= threshold {
-                        crossing_pts.push(pts[a].lerp(pm, t1));
-                    }
-                    let (t2, d2) = min_approx_dist_on_segment(pm, pts[b], &approx_dist_to_s2);
-                    if d2 <= threshold {
-                        crossing_pts.push(pm.lerp(pts[b], t2));
+            } else if da.abs() <= threshold && db.abs() <= threshold {
+                // Both near the surface.  If signs differ, zero_cross already caught it.
+                if da * db >= 0.0 {
+                    let pm = pts[a].lerp(pts[b], 0.5);
+                    let dm = approx_dist_to_s2(pm);
+                    if dm.abs() > threshold {
+                        let (t1, d1) = min_approx_dist_on_segment(pts[a], pm, &approx_dist_to_s2);
+                        if d1 <= threshold {
+                            crossing_pts.push(refine_crossing(pts[a].lerp(pm, t1), uvs[a].lerp(uvs[b], 0.5 * t1)));
+                        }
+                        let (t2, d2) = min_approx_dist_on_segment(pm, pts[b], &approx_dist_to_s2);
+                        if d2 <= threshold {
+                            crossing_pts.push(refine_crossing(pm.lerp(pts[b], t2), uvs[a].lerp(uvs[b], 0.5 + 0.5 * t2)));
+                        }
                     }
                 }
             }
@@ -1991,31 +2028,35 @@ fn numeric_intss_impl(
             let b = idx(i + 1, j);
             let da = dist[a];
             let db = dist[b];
-            if (da < threshold) != (db < threshold) {
+            let zero_cross = da.is_finite() && db.is_finite() && da * db < 0.0;
+            if zero_cross || (da < threshold) != (db < threshold) {
                 let t = if (da - db).abs() < TOLERANCE_FLOAT_DEDUP {
                     0.5
+                } else if zero_cross {
+                    da / (da - db)
                 } else {
                     (threshold - da) / (db - da)
                 };
-                let t = t.clamp(0.0, 1.0);
-                crossing_pts.push(pts[a].lerp(pts[b], t));
-            } else if da > threshold && db > threshold {
+                crossing_pts.push(edge_crossing(a, b, t));
+            } else if da.abs() > threshold && db.abs() > threshold {
                 let (t, dmin) =
                     min_approx_dist_on_segment(pts[a], pts[b], &approx_dist_to_s2);
                 if dmin <= threshold {
-                    crossing_pts.push(pts[a].lerp(pts[b], t));
+                    crossing_pts.push(edge_crossing(a, b, t));
                 }
-            } else if da <= threshold && db <= threshold {
-                let pm = pts[a].lerp(pts[b], 0.5);
-                let dm = approx_dist_to_s2(pm);
-                if dm > threshold {
-                    let (t1, d1) = min_approx_dist_on_segment(pts[a], pm, &approx_dist_to_s2);
-                    if d1 <= threshold {
-                        crossing_pts.push(pts[a].lerp(pm, t1));
-                    }
-                    let (t2, d2) = min_approx_dist_on_segment(pm, pts[b], &approx_dist_to_s2);
-                    if d2 <= threshold {
-                        crossing_pts.push(pm.lerp(pts[b], t2));
+            } else if da.abs() <= threshold && db.abs() <= threshold {
+                if da * db >= 0.0 {
+                    let pm = pts[a].lerp(pts[b], 0.5);
+                    let dm = approx_dist_to_s2(pm);
+                    if dm.abs() > threshold {
+                        let (t1, d1) = min_approx_dist_on_segment(pts[a], pm, &approx_dist_to_s2);
+                        if d1 <= threshold {
+                            crossing_pts.push(refine_crossing(pts[a].lerp(pm, t1), uvs[a].lerp(uvs[b], 0.5 * t1)));
+                        }
+                        let (t2, d2) = min_approx_dist_on_segment(pm, pts[b], &approx_dist_to_s2);
+                        if d2 <= threshold {
+                            crossing_pts.push(refine_crossing(pm.lerp(pts[b], t2), uvs[a].lerp(uvs[b], 0.5 + 0.5 * t2)));
+                        }
                     }
                 }
             }
@@ -2271,6 +2312,78 @@ fn greedy_order_points(pts: Vec<DVec3>, gap_floor: f64) -> Vec<Vec<DVec3>> {
     }
 
     chains
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// OCCT-aligned UV-space Newton-Raphson refinement (IntPatch_TheSearchInside)
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// OCCT-aligned: UV-space Newton-Raphson refinement of an intersection point.
+///
+/// Given an initial guess `(u, v)` on `s1`, find `(u', v')` where
+/// F(u',v') ≈ 0, where F(u,v) = signed_distance(s2, s1.point_at(u,v)).
+///
+/// OCCT equivalent: `IntPatch_TheSurfFunction::Value` + `math_FunctionSetRoot`
+/// in `IntStart_SearchInside::Perform` (IntStart_SearchInside.gxx L211).
+/// OCCT uses analytic gradients; rcad uses finite differences for generality
+/// across all surface types (Surface3 does not expose partial derivatives).
+fn refine_uv_intersection(
+    s1: &Surface3,
+    s2: &Surface3,
+    u: f64,
+    v: f64,
+    tol: f64,
+) -> Option<(DVec3, f64, f64)> {
+    let tol = tol.abs().max(TOLERANCE_ABS);
+    let eps = 1e-6; // finite-difference step in UV
+    let max_iter = 20;
+    let mut u = u;
+    let mut v = v;
+
+    for _ in 0..max_iter {
+        let p = s1.point_at(u, v);
+        if !p.is_finite() {
+            break;
+        }
+        let f = surface_implicit(s2, p);
+
+        if f.abs() < tol {
+            return Some((p, u, v));
+        }
+
+        // Finite-difference Jacobian: dF/du, dF/dv
+        let pu = s1.point_at(u + eps, v);
+        let pv = s1.point_at(u, v + eps);
+        let fu = if pu.is_finite() { surface_implicit(s2, pu) } else { f };
+        let fv = if pv.is_finite() { surface_implicit(s2, pv) } else { f };
+
+        let df_du = (fu - f) / eps;
+        let df_dv = (fv - f) / eps;
+        let grad2 = df_du * df_du + df_dv * df_dv;
+
+        if grad2 < 1e-30 {
+            break;
+        }
+
+        // Gauss-Newton step: (u,v) += -F * ∇F / ||∇F||²
+        let du = -f * df_du / grad2;
+        let dv = -f * df_dv / grad2;
+
+        if du.abs() < 1e-10 && dv.abs() < 1e-10 {
+            // Converged to machine precision
+            let pf = s1.point_at(u, v);
+            let ff = if pf.is_finite() { surface_implicit(s2, pf) } else { f };
+            if ff.abs() < tol {
+                return Some((pf, u, v));
+            }
+            break;
+        }
+
+        u += du;
+        v += dv;
+    }
+
+    None
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

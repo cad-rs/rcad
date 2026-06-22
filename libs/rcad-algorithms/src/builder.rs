@@ -2687,6 +2687,17 @@ fn world_to_uv(surface: &Surface3, pt: DVec3) -> Option<DVec2> {
             let u = if u < 0.0 { u + std::f64::consts::TAU } else { u };
             Some(DVec2::new(u, w.atan2(t.minor_radius)))
         }
+        // OCCT-aligned: numerical projection for BSpline/Bezier surfaces
+        // (GeomAPI_ProjectPointOnSurf / Extrema_ExtPS).  Used by perform_areas
+        // for hole-detection via UV boundary classification.
+        Surface3::BSpline(_) | Surface3::Bezier(_) | Surface3::TriBezier(_) => {
+            let proj = rcad_kernel::projection::closest_point_on_surface(surface, pt, 16);
+            if proj.distance.is_finite() {
+                Some(DVec2::new(proj.params.0, proj.params.1))
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }
