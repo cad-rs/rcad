@@ -7184,6 +7184,16 @@ impl<'a> PaveFiller<'a> {
                     }
                 }
                 if !valid {
+                    // Architecture gap: IsValidBlockForFaces with FClass2d is too strict for
+                    // demoted Plane-Plane pairs.  OCCT's IsPointInOnFace uses uv classification
+                    // with face tolerance expansion.  rcad's FClass2d performs a strict In/Out
+                    // test that rejects ICs whose midpoint UV falls near the face boundary.
+                    // This removes ALL ICs for some plane-plane cases (B3), preventing
+                    // proper face splitting and producing 2 separate solids instead of 1 union.
+                    // TODO: align FClass2d face-in check tolerance with OCCT IsPointInOnFace.
+                    //
+                    // Workaround: only remove if the curve's PEERS (other curves between same
+                    // face pair) are also invalid. A single valid curve keeps the pair alive.
                     if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
                         eprintln!("[SPLIT] IVF_REMOVE_ORIG ci={} fi=[{},{}] mid_t={:.9}", ci, fi[0], fi[1], mid_t);
                     }
@@ -7193,6 +7203,16 @@ impl<'a> PaveFiller<'a> {
             for &(ci, fia, fib) in &remove_curve_info {
                 self.ds.faces[fia].face_info.curves_sc.remove(&ci);
                 self.ds.faces[fib].face_info.curves_sc.remove(&ci);
+                // Architecture: clean up vertices_in when their parent curve is removed.
+                //   OCCT stores interference data per FF pair; removing the curve also
+                //   removes its associated vertices.  rcad stores vertices_in separately
+                //   from curves_sc, so both must be cleaned together.
+                let sv = self.ds.intersection_curves[ci].start_vertex;
+                let ev = self.ds.intersection_curves[ci].end_vertex;
+                for &fi in &[fia, fib] {
+                    self.ds.faces[fi].face_info.vertices_in.remove(&sv);
+                    self.ds.faces[fi].face_info.vertices_in.remove(&ev);
+                }
                 for inf in &mut self.ds.interferences {
                     if let Interference::FaceFace { curves, .. } = inf {
                         curves.retain(|&c| c != ci);
