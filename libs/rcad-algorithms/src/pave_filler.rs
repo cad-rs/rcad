@@ -1425,31 +1425,27 @@ impl<'a> PaveFiller<'a> {
                     }
                 }
                 for inf in &mut self.ds.interferences {
+                    match inf {
                         Interference::EdgeEdge { new_vertex, .. } => {
-                            if *new_vertex == vi { *new_vertex = survivor; }
+                            if *new_vertex == old_vi { *new_vertex = new_vi; }
                         }
                         Interference::EdgeFace { new_vertex, .. } => {
-                            if *new_vertex == vi { *new_vertex = survivor; }
+                            if *new_vertex == old_vi { *new_vertex = new_vi; }
                         }
                         _ => {}
                     }
                 }
                 for face in &mut self.ds.faces {
-                    if face.face_info.vertices_on.remove(&vi) {
-                        face.face_info.vertices_on.insert(survivor);
+                    if face.face_info.vertices_on.remove(&old_vi) {
+                        face.face_info.vertices_on.insert(new_vi);
                     }
-                    if face.face_info.vertices_in.remove(&vi) {
-                        face.face_info.vertices_in.insert(survivor);
+                    if face.face_info.vertices_in.remove(&old_vi) {
+                        face.face_info.vertices_in.insert(new_vi);
                     }
                 }
             }
+            survivors.push(new_vi);
         }
-        // ✅ OCCT L372-388: myIncreasedSS — vertices with increased tolerance
-        let survivors: Vec<usize> = groups.iter()
-            .filter(|(_, members)| members.len() >= 2)
-            .map(|(_, members)| *members.iter().min().unwrap())
-            .collect();
-        self.ds.increased_ss.extend(survivors.iter().copied());
         survivors
     }
 
