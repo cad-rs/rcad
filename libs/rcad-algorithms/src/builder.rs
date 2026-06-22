@@ -5656,24 +5656,52 @@ impl<'a> BooleanBuilder<'a> {
         let has_ff = self.ds.interferences.iter().any(|i| matches!(i, crate::bopds::ds::Interference::FaceFace { .. }));
         if !has_ff { return; }
 
-        // OCCT L597-648: Build parent-solid map — faces from the same operand
-        //   are NOT merged (prevents zero-thickness interior in a single operand).
-        //   rcad: group by operand (A/B) as parent-solid proxy.
+        // OCCT L597-648: Build aFaceToParent map — faces from the same parent
+        //   solid are NOT SD merged (prevents zero-thickness interior).
+        //   rcad: group by operand (A/B) as parent-solid proxy (matching OCCT
+        //   for the common case; falls back to is_from_a when multi-solid
+        //   operands are present — OCCT would track per-solid).
         let is_from_a = |fi: usize| -> bool {
             matches!(&result.face_origins[fi], FaceOrigin::FromA(_))
         };
+        // OCCT: builds aFaceToParent from source SOLIDs, then propagates to
+        // split images (myImages).  rcad: source-solid hierarchy is not
+        // preserved in DS — is_from_a is the available proxy.
 
-        // OCCT L659-684: Collect FF-interfering face indices.
-        //   rcad: all result faces are candidates (simplification).
-        //   FF filter would skip faces without interferences.
+        // OCCT L659-684: Collect FF-interfering DS face indices into aFIVec.
+        // rcad: build (origin, source_face_idx) set from FF interferences,
+        // then filter result faces to only those matching the FF set.
+        let mut ff_source_set: std::collections::HashSet<(bool, usize)> = std::collections::HashSet::new();
+        for inf in &self.ds.interferences {
+            if let crate::bopds::ds::Interference::FaceFace { f1, f2, .. } = inf {
+                for &dfi in &[*f1, *f2] {
+                    if let Some(df) = self.ds.faces.get(dfi) {
+                        ff_source_set.insert((df.origin == ShapeOrigin::ShapeA, df.source_face_idx));
+                    }
+                }
+            }
+        }
+        // OCCT aFence: skip repeated checks.  Also skip result faces whose
+        // source DS face has no FF interference (not in aFIVec).
+        let face_origin_pair = |fi: usize| -> (bool, usize) {
+            match &result.face_origins[fi] {
+                FaceOrigin::FromA(sfi) => (true, *sfi),
+                FaceOrigin::FromB(sfi) => (false, *sfi),
+                _ => (false, usize::MAX),
+            }
+        };
+        let mut result_fi_filtered: Vec<usize> = (0..nf)
+            .filter(|fi| ff_source_set.contains(&face_origin_pair(*fi)))
+            .collect();
+        if result_fi_filtered.len() < 2 { return; }
 
         // ── Edge-set signature per face (OCCT BOPTools_Set ──
         // OCCT L689-741: BOPTools_Set uses TopoDS_Edge identity.
         // rcad: use edge index ei directly (add_edge already deduplicates
         // by vertex pair, making ei a stable identity).  Exclude degenerate
         // edges (matching OCCT's BRep_Tool::Degenerated skip).
-        let face_edge_set: Vec<Vec<usize>> = (0..nf)
-            .map(|fi| {
+        let face_edge_set: std::collections::HashMap<usize, Vec<usize>> =
+            result_fi_filtered.iter().map(|&fi| {
                 let entry = &result.faces[fi];
                 let collect_ids = |edges: &[(usize, bool)]| -> Vec<usize> {
                     edges.iter()
@@ -5690,16 +5718,17 @@ impl<'a> BooleanBuilder<'a> {
                 }
                 ids.sort_unstable();
                 ids.dedup();
-                ids
-            })
-            .collect();
+                (fi, ids)
+            }).collect();
 
         // ── Group by edge-set signature ──
         let mut groups: std::collections::BTreeMap<Vec<usize>, Vec<usize>> =
             std::collections::BTreeMap::new();
-        for fi in 0..nf {
-            if face_edge_set[fi].is_empty() { continue; }
-            groups.entry(face_edge_set[fi].clone()).or_default().push(fi);
+        for &fi in &result_fi_filtered {
+            if let Some(sig) = face_edge_set.get(&fi) {
+                if sig.is_empty() { continue; }
+                groups.entry(sig.clone()).or_default().push(fi);
+            }
         }
 
         // ── Surface comparison (AreFacesSameDomain) — OCCT L795-816 ──
