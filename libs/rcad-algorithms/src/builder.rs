@@ -5941,7 +5941,20 @@ impl<'a> BooleanBuilder<'a> {
         let mut face_class: Vec<Option<Classification>> = vec![None; nf];
         let mut face_side: Vec<Option<usize>> = vec![None; nf]; // 0=A, 1=B
 
-        // OCCT Phase 3: ClassifyFaces
+        // ═══ OCCT Phase 3: ClassifyFaces (BOPAlgo_Tools.cxx L1334-1450) ═══
+        //   OCCT: for each face, use BRepClass3d_SolidClassifier with a point
+        //   ON the face surface (parametric midpoint).  rcad: use face
+        //   sample_point (index 8) which is computed from the face boundary
+        //   and guaranteed to be on the surface.
+        //
+        //   OCCT additionally:
+        //   1. Skips faces whose AABB doesn't overlap the solid's AABB
+        //      (aSelector BVH culling, L1345-1354)
+        //   2. Skips self-shapes (faces that are sub-shapes of the solid,
+        //      L1366-1368 — rcad handles this by classifying A-faces
+        //      against B-faces and vice versa)
+        //   3. Groups connected faces into blocks for batch classification
+        //      (L1396-1405 — rcad classifies per-face, equivalent result)
         for fi in 0..nf {
             if to_remove[fi] { continue; }
             let (source_side, other_faces, side_idx) = match &result.face_origins[fi] {
@@ -5951,7 +5964,15 @@ impl<'a> BooleanBuilder<'a> {
             };
             face_side[fi] = Some(side_idx);
             if other_faces.is_empty() { continue; }
-            let pt = result.faces[fi].6; // centroid
+
+            // OCCT L1345-1354: BVH-based AABB overlap check (optional culling).
+            //   rcad: no AABB culling — classify all candidate faces.
+
+            // OCCT BRepClass3d_SolidClassifier: use a point ON the face surface.
+            //   rcad: use face sample_point (index 8) instead of centroid (index 6).
+            //   The sample_point is computed during emit_wire_face from the face's
+            //   surface UV midpoint, guaranteed to be ON the surface.
+            let pt = result.faces[fi].8; // sample_point (on-surface)
             let class = classify_point(pt, other_faces, self.ds);
             face_class[fi] = Some(class);
 
