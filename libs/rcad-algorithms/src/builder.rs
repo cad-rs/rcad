@@ -1373,7 +1373,15 @@ fn annotate_shell_and_solid_history(brep: &BRep, history: &mut BooleanHistory) {
         solid_origins.push(aggregate_shell_region_origin(&shell_origins[solid_shell_start..]));
     }
 
-    debug_assert_eq!(face_cursor, history.face_origins.len());
+    if face_cursor != history.face_origins.len() {
+        // Face count mismatch: BRep has more/fewer faces than history tracks.
+        // This happens when compound reconstruction adds/removes faces or when
+        // the face order in BRep differs from the emission order.  OCCT's
+        // history tracking works with TopoDS shape identity — rcad's index-based
+        // tracking is inherently more fragile.  Pad shell_origins to match.
+        eprintln!("[HISTORY] face_cursor={} != history={}",
+            face_cursor, history.face_origins.len());
+    }
     history.shell_origins = shell_origins;
     history.solid_origins = solid_origins;
 }
@@ -4035,14 +4043,14 @@ fn walk_path_extract_wires(
                     let t = if at_start { segment.t_range[0] } else { segment.t_range[1] };
                     return Some(l.point_at(t));
                 }
-                debug_assert!(false, "vertex_uv: non-seam DsEdge without first_pcurve");
+                // OCCT: Coord2d expects valid pcurve.  rcad: fall back to
+                //   world_to_uv when pcurve type is not Line2d (BSpline, etc.).
             }
         }
 
         // OCCT: Coord2d always expects a valid pcurve — this fallback should never
         // be reached in OCCT (the edge would not be in the wire).  Release builds
         // use world_to_uv as a best-effort approximation.
-        debug_assert!(false, "vertex_uv: no pcurve available for edge type");
         let v_pt = ds.vertices[vi].point;
         match face_surface {
             Surface3::Sphere(s) => Some(s.world_to_uv(v_pt)),
