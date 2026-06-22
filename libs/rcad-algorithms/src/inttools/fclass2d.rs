@@ -190,23 +190,78 @@ impl FClass2d {
 
     fn perform_impl(&self, uv: DVec2) -> State {
         if self.tab_class.is_empty() { return State::Out; }
-        // ON any wire boundary
+
+        // OCCT L684-714: try per-wire classification with TabOrien.
+        //   For each wire: if SiDans returns INSIDE and wire is FORWARD → IN.
+        //   If SiDans returns INSIDE and wire is REVERSED → OUT.
+        //   If SiDans returns UNCERTAIN → need fallback (BRepClass_FClassifier).
+        let mut need_classifier = false;
+        let mut dedans = 1i8; // 1=IN, -1=OUT, 0=UNCERTAIN
+
         for (i, c) in self.tab_class.iter().enumerate() {
-            if c.si_dans(uv) == CSLibResult::Uncertain {
-                return State::On;
+            let cur = c.si_dans(uv);
+            let forw = self.tab_orien.get(i).copied().unwrap_or(true);
+
+            if cur == CSLibResult::Inside {
+                if !forw { dedans = -1; break; } // REVERSED: inside = OUT
+                // FORWARD: inside = IN → keep dedans = 1
+            } else if cur == CSLibResult::Outside {
+                if forw { dedans = -1; break; } // FORWARD: outside = OUT
+                // REVERSED: outside = IN → keep dedans = 1
+            } else {
+                // Uncertain → OCCT L716-724: try BRepClass_FClassifier
+                need_classifier = true;
+                break;
             }
         }
-        // Inside a hole wire → Out
-        for (i, c) in self.tab_class.iter().enumerate().skip(1) {
-            if c.si_dans(uv) == CSLibResult::Inside {
-                return State::Out;
+
+        if !need_classifier {
+            return if dedans == 1 { State::In } else { State::Out };
+        }
+
+        // OCCT L726-756: BRepClass_FClassifier fallback.
+        //   When SiDans is uncertain (point ON wire boundary), OCCT uses a
+        //   face-based 2D classifier with tolerance.  rcad: re-check with
+        //   multiple perturbed ray directions to resolve ON vs IN/OUT.
+        //
+        //   If the point is truly ON the boundary, all directions give
+        //   Uncertain → return On.
+        let perturbations = [
+            (0.0, 0.0),      // original direction (left)
+            (0.1, 0.0),      // slight +U shift
+            (-0.1, 0.0),     // slight -U shift
+            (0.0, 0.1),      // slight +V shift
+            (0.0, -0.1),     // slight -V shift
+        ];
+
+        for (du, dv) in &perturbations {
+            let p = DVec2::new(uv.x + du, uv.y + dv);
+            let mut all_ok = true;
+            let mut result = 1i8;
+
+            for (i, c) in self.tab_class.iter().enumerate() {
+                let cur = c.si_dans(p);
+                let forw = self.tab_orien.get(i).copied().unwrap_or(true);
+
+                if cur == CSLibResult::Uncertain {
+                    all_ok = false;
+                    break;
+                }
+
+                if cur == CSLibResult::Inside {
+                    if !forw { result = -1; break; }
+                } else {
+                    if forw { result = -1; break; }
+                }
+            }
+
+            if all_ok {
+                return if result == 1 { State::In } else { State::Out };
             }
         }
-        // Inside outer → In
-        if self.tab_class[0].si_dans(uv) == CSLibResult::Inside {
-            return State::In;
-        }
-        State::Out
+
+        // All perturbations uncertain → point is truly ON the boundary
+        State::On
     }
 
     pub fn is_hole(&self) -> bool { self.is_hole }
