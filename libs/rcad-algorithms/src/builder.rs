@@ -2113,19 +2113,43 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             }
         } else if is_seam {
             // OCCT-aligned: Cylinder/Cone seam edge  keep original 2-segment logic (BOPAlgo_Builder_2.cxx L357-460)
+            //   Set first_pcurve/second_pcurve for vertex_uv to map seam vertex
+            //   positions to correct UV coordinates.  FORWARD → first_pcurve at
+            //   the seam U (0), REVERSED → second_pcurve at U=period (2π).
             let (t_start, t_end) = compute_seam_tangent_angles(ds, sv, ev, &face.surface);
+            let uv_a = world_to_uv(&face.surface, ds.vertices[sv].point);
+            let uv_b = world_to_uv(&face.surface, ds.vertices[ev].point);
+            let (pcurve_opt, second_pcurve_opt) = match (uv_a, uv_b) {
+                (Some(ua), Some(ub)) => {
+                    let p0 = DVec2::new(ua.x, ua.y);
+                    let p1 = DVec2::new(ub.x, ub.y);
+                    let dir = p1 - p0;
+                    let first = Curve2d::Line(Line2d { origin: p0, direction: dir });
+                    // For periodic surfaces, second pcurve is shifted by period in U
+                    let is_periodic = matches!(face.surface,
+                        Surface3::Cylinder(_) | Surface3::Sphere(_));
+                    let second = if is_periodic {
+                        let period = std::f64::consts::TAU;
+                        Curve2d::Line(Line2d { origin: p0 + DVec2::new(period, 0.0), direction: dir })
+                    } else {
+                        first.clone()
+                    };
+                    (Some(first), Some(second))
+                }
+                _ => (None, None),
+            };
             segments.push(WireSegment {
                 start_vertex: sv, end_vertex: ev,
                 source: WireEdgeSource::DsEdge(ei),
                 forward: true,
-                is_seam: true, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0],
+                is_seam: true, second_pcurve: None, first_pcurve: pcurve_opt, t_range: [0.0, 1.0],
                 tangent_start: t_start,
                 tangent_end: t_end,
             });            segments.push(WireSegment {
                 start_vertex: ev, end_vertex: sv,
                 source: WireEdgeSource::DsEdge(ei),
                 forward: false,
-                is_seam: true, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0],
+                is_seam: true, second_pcurve: second_pcurve_opt, first_pcurve: None, t_range: [0.0, 1.0],
                 tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
                 tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
             });        } else {
@@ -3985,13 +4009,15 @@ fn walk_path_extract_wires(
                         }
                     }
                 } else {
+                    // OCCT-aligned: for REVERSED seam traversal, use second_pcurve
+                    //   (shifted pcurve).  Fall back to world_to_uv when unavailable
+                    //   (e.g. degenerated seam edge at sphere pole).
                     match &segment.second_pcurve {
                         Some(Curve2d::Line(l)) => {
                             let t = if at_start { segment.t_range[0] } else { segment.t_range[1] };
                             Some(l.point_at(t))
                         }
                         _ => {
-                            debug_assert!(false, "vertex_uv: REVERSED seam without second_pcurve");
                             world_to_uv(face_surface, ds.vertices[vi].point)
                         }
                     }
