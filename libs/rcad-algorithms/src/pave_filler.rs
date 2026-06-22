@@ -12,6 +12,21 @@ use crate::inttools::fclass2d::{FClass2d, State};
 use crate::tolerance::*;
 use rcad_kernel::closest_point_on_curve;
 
+/// ✅ OCCT-aligned: IntPatch_Intersection surface category (L1264-1294).
+///   GeomGeom  = ts1==ts2==1 → ImpImpIntersection (analytic-analytic)
+///   GeomParam = ts1!=ts2     → ImpPrmIntersection (analytic-parametric)
+///   ParamParam = ts1==ts2==0 → PrmPrmIntersection (parametric-parametric)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SurfaceCategory { GeomGeom, GeomParam, ParamParam }
+
+fn classify_surface_type(surf: &Surface3) -> SurfaceCategory {
+    match surf {
+        Surface3::Plane(_) | Surface3::Cylinder(_) | Surface3::Sphere(_)
+        | Surface3::Cone(_) | Surface3::Torus(_) => SurfaceCategory::GeomGeom,
+        _ => SurfaceCategory::ParamParam,
+    }
+}
+
 // Re-export NearTangentType from bopds::ds for use in this module's public types
 pub use crate::bopds::ds::NearTangentType;
 
@@ -3880,75 +3895,87 @@ impl<'a> PaveFiller<'a> {
         let s1 = maybe_plane1.map_or(s1, |pl| Surface3::Plane(pl));
         let s2 = maybe_plane2.map_or(s2, |pl| Surface3::Plane(pl));
 
-        match (&s1, &s2) {
-            (Surface3::Plane(p1), Surface3::Plane(p2)) => {
-                self.intersect_plane_plane_faces(f1, f2, p1, p2);
+        // ═══ OCCT IntPatch_Intersection 3-category dispatch ═══
+        //   OCCT IntPatch_Intersection.cxx L1298-1339 classifies surface pairs:
+        //   - ts1 == ts2 == 1 : Geom-Geom (both analytic) → ImpImpIntersection
+        //   - ts1 != ts2      : Geom-Param (one analytic, one parametric) → ImpPrmIntersection
+        //   - ts1 == ts2 == 0 : Param-Param (both parametric) → PrmPrmIntersection
+        let (cat1, cat2) = (classify_surface_type(&s1), classify_surface_type(&s2));
+        match (cat1, cat2) {
+            // ── Geom-Geom: both analytic surfaces ──
+            //   OCCT ImpImpIntersection handles all analytic-analytic pairs.
+            //   rcad dispatches to specialized functions per combination.
+            (SurfaceCategory::GeomGeom, SurfaceCategory::GeomGeom) => {
+                match (&s1, &s2) {
+                    (Surface3::Plane(p1), Surface3::Plane(p2)) => {
+                        self.intersect_plane_plane_faces(f1, f2, p1, p2);
+                    }
+                    (Surface3::Plane(pl), Surface3::Sphere(sph))
+                    | (Surface3::Sphere(sph), Surface3::Plane(pl)) => {
+                        self.intersect_plane_sphere_faces(f1, f2, pl, sph);
+                    }
+                    (Surface3::Plane(pl), Surface3::Cylinder(cyl))
+                    | (Surface3::Cylinder(cyl), Surface3::Plane(pl)) => {
+                        self.intersect_plane_cylinder_faces(f1, f2, pl, cyl);
+                    }
+                    (Surface3::Sphere(sph1), Surface3::Sphere(sph2)) => {
+                        let (sph1, sph2) = (*sph1, *sph2);
+                        self.intersect_sphere_sphere_faces(f1, f2, &sph1, &sph2);
+                    }
+                    (Surface3::Sphere(sph), Surface3::Cylinder(cyl))
+                    | (Surface3::Cylinder(cyl), Surface3::Sphere(sph)) => {
+                        let (sph, cyl) = (*sph, *cyl);
+                        self.intersect_sphere_cylinder_faces(f1, f2, &sph, &cyl);
+                    }
+                    (Surface3::Cylinder(c1), Surface3::Cylinder(c2)) => {
+                        let (c1, c2) = (*c1, *c2);
+                        self.intersect_cylinder_cylinder_faces(f1, f2, &c1, &c2);
+                    }
+                    (Surface3::Plane(pl), Surface3::Cone(cone))
+                    | (Surface3::Cone(cone), Surface3::Plane(pl)) => {
+                        self.intersect_plane_cone_faces(f1, f2, pl, cone);
+                    }
+                    (Surface3::Cylinder(cyl), Surface3::Cone(cone))
+                    | (Surface3::Cone(cone), Surface3::Cylinder(cyl)) => {
+                        let (cyl, cone) = (*cyl, *cone);
+                        self.intersect_cylinder_cone_faces(f1, f2, &cyl, &cone);
+                    }
+                    (Surface3::Cone(cone1), Surface3::Cone(cone2)) => {
+                        let (cone1, cone2) = (*cone1, *cone2);
+                        self.intersect_cone_cone_faces(f1, f2, &cone1, &cone2);
+                    }
+                    (Surface3::Plane(pl), Surface3::Torus(tor))
+                    | (Surface3::Torus(tor), Surface3::Plane(pl)) => {
+                        self.intersect_torus_plane_faces(f1, f2, tor, pl);
+                    }
+                    (Surface3::Sphere(sph), Surface3::Torus(tor))
+                    | (Surface3::Torus(tor), Surface3::Sphere(sph)) => {
+                        self.intersect_torus_sphere_faces(f1, f2, tor, sph);
+                    }
+                    (Surface3::Cylinder(cyl), Surface3::Torus(tor))
+                    | (Surface3::Torus(tor), Surface3::Cylinder(cyl)) => {
+                        self.intersect_torus_cylinder_faces(f1, f2, tor, cyl);
+                    }
+                    (Surface3::Cone(cone), Surface3::Torus(tor))
+                    | (Surface3::Torus(tor), Surface3::Cone(cone)) => {
+                        self.intersect_torus_cone_faces(f1, f2, tor, cone);
+                    }
+                    (Surface3::Torus(tor1), Surface3::Torus(tor2)) => {
+                        self.intersect_torus_torus_faces(f1, f2, tor1, tor2);
+                    }
+                    (Surface3::Sphere(sph), Surface3::Cone(cone))
+                    | (Surface3::Cone(cone), Surface3::Sphere(sph)) => {
+                        let (sph, cone) = (*sph, *cone);
+                        self.intersect_sphere_cone_faces(f1, f2, &sph, &cone);
+                    }
+                    _ => {}
+                }
             }
-            (Surface3::Plane(pl), Surface3::Sphere(sph))
-            | (Surface3::Sphere(sph), Surface3::Plane(pl)) => {
-                self.intersect_plane_sphere_faces(f1, f2, pl, sph);
-            }
-            (Surface3::Plane(pl), Surface3::Cylinder(cyl))
-            | (Surface3::Cylinder(cyl), Surface3::Plane(pl)) => {
-                self.intersect_plane_cylinder_faces(f1, f2, pl, cyl);
-            }
-            (Surface3::Sphere(sph1), Surface3::Sphere(sph2)) => {
-                let (sph1, sph2) = (*sph1, *sph2);
-                self.intersect_sphere_sphere_faces(f1, f2, &sph1, &sph2);
-            }
-            (Surface3::Sphere(sph), Surface3::Cylinder(cyl))
-            | (Surface3::Cylinder(cyl), Surface3::Sphere(sph)) => {
-                let (sph, cyl) = (*sph, *cyl);
-                self.intersect_sphere_cylinder_faces(f1, f2, &sph, &cyl);
-            }
-            (Surface3::Cylinder(c1), Surface3::Cylinder(c2)) => {
-                let (c1, c2) = (*c1, *c2);
-                self.intersect_cylinder_cylinder_faces(f1, f2, &c1, &c2);
-            }
-            (Surface3::Plane(pl), Surface3::Cone(cone))
-            | (Surface3::Cone(cone), Surface3::Plane(pl)) => {
-                self.intersect_plane_cone_faces(f1, f2, pl, cone);
-            }
-            (Surface3::Cylinder(cyl), Surface3::Cone(cone))
-            | (Surface3::Cone(cone), Surface3::Cylinder(cyl)) => {
-                let (cyl, cone) = (*cyl, *cone);
-                self.intersect_cylinder_cone_faces(f1, f2, &cyl, &cone);
-            }
-            (Surface3::Cone(cone1), Surface3::Cone(cone2)) => {
-                let (cone1, cone2) = (*cone1, *cone2);
-                self.intersect_cone_cone_faces(f1, f2, &cone1, &cone2);
-            }
-            // ── Torus × * ─────────────────────────────────────────────────
-            (Surface3::Plane(pl), Surface3::Torus(tor))
-            | (Surface3::Torus(tor), Surface3::Plane(pl)) => {
-                self.intersect_torus_plane_faces(f1, f2, tor, pl);
-            }
-            (Surface3::Sphere(sph), Surface3::Torus(tor))
-            | (Surface3::Torus(tor), Surface3::Sphere(sph)) => {
-                self.intersect_torus_sphere_faces(f1, f2, tor, sph);
-            }
-            (Surface3::Cylinder(cyl), Surface3::Torus(tor))
-            | (Surface3::Torus(tor), Surface3::Cylinder(cyl)) => {
-                self.intersect_torus_cylinder_faces(f1, f2, tor, cyl);
-            }
-            (Surface3::Cone(cone), Surface3::Torus(tor))
-            | (Surface3::Torus(tor), Surface3::Cone(cone)) => {
-                self.intersect_torus_cone_faces(f1, f2, tor, cone);
-            }
-            (Surface3::Torus(tor1), Surface3::Torus(tor2)) => {
-                self.intersect_torus_torus_faces(f1, f2, tor1, tor2);
-            }
-            // ── Sphere × Cone ────────────────────────────────────────────
-            (Surface3::Sphere(sph), Surface3::Cone(cone))
-            | (Surface3::Cone(cone), Surface3::Sphere(sph)) => {
-                let (sph, cone) = (*sph, *cone);
-                self.intersect_sphere_cone_faces(f1, f2, &sph, &cone);
-            }
-            // ✅ OCCT-aligned: BSpline/Bezier × Plane — attempt demote_to_plane first, then use plane-plane intersection
-            (Surface3::BSpline(_), Surface3::Plane(_))
-            | (Surface3::Plane(_), Surface3::BSpline(_))
-            | (Surface3::Bezier(_), Surface3::Plane(_))
-            | (Surface3::Plane(_), Surface3::Bezier(_)) => {
+            // ── Geom-Param: one analytic, one parametric ──
+            //   OCCT ImpPrmIntersection handles this category.
+            //   rcad: BSpline/Bezier × Plane → try demote_to_plane, else marching.
+            (SurfaceCategory::GeomParam, SurfaceCategory::ParamParam)
+            | (SurfaceCategory::ParamParam, SurfaceCategory::GeomParam) => {
                 let plane = if matches!(&s1, Surface3::Plane(_)) {
                     match &s1 { Surface3::Plane(p) => *p, _ => unreachable!() }
                 } else {
