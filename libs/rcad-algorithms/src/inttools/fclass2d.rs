@@ -159,8 +159,12 @@ impl FClass2d {
             vmin = vmin.min(p.y); vmax = vmax.max(p.y);
         }
         if outer_pts.len() >= 3 {
+            // OCCT: TabOrien derived from polygon winding (CCW=FORWARD=true, CW=REVERSED=false).
+            //   In OCCT's CSLib_Class2d, the sign of the winding number determines orientation.
+            //   rcad: use signed area of UV polygon.
+            let outer_ccw = polygon_is_ccw(&outer_pts);
             tab_class.push(CSLibClass2d::new(&outer_pts, tol_u, tol_v, umin, vmin, umax, vmax));
-            tab_orien.push(true);
+            tab_orien.push(outer_ccw);
         }
 
         // Inner wires (holes)
@@ -175,8 +179,10 @@ impl FClass2d {
                 umin = umin.min(p.x); umax = umax.max(p.x);
                 vmin = vmin.min(p.y); vmax = vmax.max(p.y);
             }
+            // OCCT: inner wire orientation from polygon winding.
+            let iw_ccw = polygon_is_ccw(&iw_pts);
             tab_class.push(CSLibClass2d::new(&iw_pts, tol_u, tol_v, i_umin, i_vmin, i_umax, i_vmax));
-            tab_orien.push(false);
+            tab_orien.push(iw_ccw);
         }
 
         let is_hole = if !tab_class.is_empty() {
@@ -352,4 +358,16 @@ impl FClass2d {
     pub fn from_ds_face(ds: &DS, fi: usize) -> Self {
         FClass2d::new(ds, fi, TOLERANCE_ABS * 100.0)
     }
+}
+
+/// OCCT-aligned: detect polygon winding direction (signed area).
+///   Positive area = counter-clockwise (FORWARD).  Used to set TabOrien.
+fn polygon_is_ccw(poly: &[DVec2]) -> bool {
+    let mut area = 0.0;
+    let n = poly.len();
+    for i in 0..n {
+        let j = (i + 1) % n;
+        area += poly[i].x * poly[j].y - poly[j].x * poly[i].y;
+    }
+    area > 0.0
 }
