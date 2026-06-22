@@ -727,6 +727,9 @@ impl<'a> PaveFiller<'a> {
     }
 
     /// Build a DS-level face BVH for one operand.
+    /// OCCT BRepBndLib::Add computes face AABB conservatively using surface type.
+    /// rcad: for curved surfaces (sphere/cylinder/cone), expand AABB beyond
+    /// boundary vertices to ensure FF candidate pairs are not incorrectly culled.
     fn build_ds_bvh_face(&self, is_a: bool) -> crate::bvh::DsBvh {
         use crate::bvh::{Aabb, DsBvh};
         let (start, end) = if is_a {
@@ -742,10 +745,21 @@ impl<'a> PaveFiller<'a> {
             indices.push(fi);
             let f = &self.ds.faces[fi];
             let mut aabb = Aabb::empty();
+            // Boundary vertices
             for &vi in &f.boundary_verts {
                 if vi < self.ds.vertices.len() {
                     aabb.expand_point(self.ds.vertices[vi].point);
                 }
+            }
+            // OCCT BndLib_AddSurface: expand AABB for curved surfaces.
+            //   Sphere: full sphere AABB = center ± radius (face boundary
+            //   vertices only cover a patch, not the whole sphere volume).
+            //   Cylinder/Cone: boundary vertices already span the full
+            //   parametric extent — no extra expansion needed.
+            if let Surface3::Sphere(s) = &f.surface {
+                let r = s.radius.abs();
+                aabb.expand_point(s.center + DVec3::splat(r));
+                aabb.expand_point(s.center - DVec3::splat(r));
             }
             let tol = f.geom_tol.max(1e-7);
             aabb.min -= DVec3::splat(tol);
