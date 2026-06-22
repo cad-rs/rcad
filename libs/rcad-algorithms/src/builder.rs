@@ -3205,45 +3205,125 @@ fn perform_shapes_to_avoid(
 // (BOPAlgo_BuilderFace.cxx L327-382)
 // ====================================================================
 /// ✅ OCCT-aligned: PerformInternalShapes (BOPAlgo_BuilderFace.cxx L327-382).
+/// ✅ OCCT-aligned: BuilderFace::PerformInternalShapes (L618-735).
+///   Classify avoided (internal) edges against each result WireFace,
+///   assemble edges that fall INSIDE the face into per-face internal wires.
+///
+/// OCCT flow:
+///   L642-663: Build BVH tree of 2D UV boxes for each edge
+///   L674-716: For each result face, use BVH + IsInside → select internal edges
+///   L718-735: MakeInternalWires (vertex-degree-based wire assembly) + add to face
+///
+/// rcad: for each WireFace, build 2D outer boundary polygon from segment pcurves,
+///   classify each avoided segment's UV midpoint via 2D ray casting (point-in-polygon).
+///   Segments inside the outer boundary (but not inside a hole) → assemble into
+///   internal wires for that face.  Returns per-face internal wire segment groups:
+///   `Vec<Vec<Vec<usize>>>` — outer index = WireFace index, inner = internal wires
+///   for that face, each wire = Vec of segment indices.
 fn assemble_internal_wires(
     avoided: &[usize],
     segments: &[WireSegment],
-) -> Vec<Vec<usize>> {
-    if avoided.is_empty() { return vec![]; }
-    let mut v_to_segs: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
-    for &si in avoided {
-        let seg = &segments[si];
-        v_to_segs.entry(seg.start_vertex).or_default().push(si);
-        v_to_segs.entry(seg.end_vertex).or_default().push(si);
+    wfs: &[WireFace],
+) -> Vec<Vec<Vec<usize>>> {
+    if avoided.is_empty() || wfs.is_empty() {
+        return vec![vec![]; wfs.len()];
     }
-    let n = segments.len();
-    let mut added = vec![false; n];
-    let mut internal_wires: Vec<Vec<usize>> = Vec::new();
-    for &start_si in avoided {
-        if added[start_si] { continue; }
-        let mut wire: Vec<usize> = Vec::new();
-        let mut queue = std::collections::VecDeque::new();
-        queue.push_back(start_si);
-        added[start_si] = true;
-        while let Some(si) = queue.pop_front() {
-            wire.push(si);
+
+    // OCCT L642-663: Precompute 2D UV midpoint for each avoided segment.
+    let seg_uv: Vec<Option<DVec2>> = avoided.iter().map(|&si| {
+        let seg = &segments[si];
+        seg.first_pcurve.as_ref().map(|pc| {
+            let t_mid = (seg.t_range[0] + seg.t_range[1]) * 0.5;
+            pc.eval(t_mid)
+        })
+    }).collect();
+
+    // OCCT L674-716: For each WireFace, classify avoided segments via IsInside.
+    let mut face_internal: Vec<Vec<usize>> = vec![Vec::new(); wfs.len()];
+
+    for (fi, wf) in wfs.iter().enumerate() {
+        // Build 2D outer boundary polygon from outer wire segments' pcurves.
+        let outer_uv: Vec<DVec2> = wf.outer_wire.iter().filter_map(|&si| {
+            if si >= segments.len() { return None; }
             let seg = &segments[si];
-            for &vtx in &[seg.start_vertex, seg.end_vertex] {
-                if let Some(neighbors) = v_to_segs.get(&vtx) {
-                    for &ni in neighbors {
-                        if !added[ni] {
-                            added[ni] = true;
-                            queue.push_back(ni);
+            seg.first_pcurve.as_ref().map(|pc| pc.eval(seg.t_range[0]))
+        }).collect();
+        if outer_uv.len() < 3 { continue; }
+
+        // Build 2D hole polygons for inner wires (to exclude segments inside holes).
+        let hole_uvs: Vec<Vec<DVec2>> = wf.inner_wires.iter().map(|iw| {
+            iw.iter().filter_map(|&si| {
+                if si >= segments.len() { return None; }
+                let seg = &segments[si];
+                seg.first_pcurve.as_ref().map(|pc| pc.eval(seg.t_range[0]))
+            }).collect()
+        }).filter(|poly: &Vec<DVec2>| poly.len() >= 3).collect();
+
+        // OCCT L704-716: select edges inside this face via 2D ray casting.
+        for (ai, &si) in avoided.iter().enumerate() {
+            let Some(uv_mid) = seg_uv[ai] else { continue; };
+            if !point_in_polygon_2d(uv_mid, &outer_uv) { continue; }
+            let in_hole = hole_uvs.iter().any(|hole| point_in_polygon_2d(uv_mid, hole));
+            if in_hole { continue; }
+            face_internal[fi].push(si);
+        }
+    }
+
+    // OCCT L724-725: MakeInternalWires — per-face BFS assembly.
+    let mut per_face_wires: Vec<Vec<Vec<usize>>> = vec![Vec::new(); wfs.len()];
+    for (fi, assigned) in face_internal.iter().enumerate() {
+        if assigned.is_empty() { continue; }
+        let mut v_to_segs: std::collections::HashMap<usize, Vec<usize>> =
+            std::collections::HashMap::new();
+        for &si in assigned {
+            let seg = &segments[si];
+            v_to_segs.entry(seg.start_vertex).or_default().push(si);
+            v_to_segs.entry(seg.end_vertex).or_default().push(si);
+        }
+        let mut added = vec![false; segments.len()];
+        for &start_si in assigned {
+            if added[start_si] { continue; }
+            let mut wire: Vec<usize> = Vec::new();
+            let mut queue = std::collections::VecDeque::new();
+            queue.push_back(start_si);
+            added[start_si] = true;
+            while let Some(si) = queue.pop_front() {
+                wire.push(si);
+                let seg = &segments[si];
+                for &vtx in &[seg.start_vertex, seg.end_vertex] {
+                    if let Some(neighbors) = v_to_segs.get(&vtx) {
+                        for &ni in neighbors {
+                            if !added[ni] {
+                                added[ni] = true;
+                                queue.push_back(ni);
+                            }
                         }
                     }
                 }
             }
-        }
-        if !wire.is_empty() {
-            internal_wires.push(wire);
+            if !wire.is_empty() {
+                per_face_wires[fi].push(wire);
+            }
         }
     }
-    internal_wires
+    per_face_wires
+}
+
+/// 2D point-in-polygon via ray casting (winding number approach).
+/// Returns true when `pt` is strictly inside the polygon `poly`.
+fn point_in_polygon_2d(pt: DVec2, poly: &[DVec2]) -> bool {
+    let mut inside = false;
+    let n = poly.len();
+    for i in 0..n {
+        let (j, k) = (poly[i], poly[(i + 1) % n]);
+        // Check if a horizontal ray from `pt` crosses the segment (j → k).
+        let crosses = ((j.y > pt.y) != (k.y > pt.y))
+            && (pt.x < (k.x - j.x) * (pt.y - j.y) / (k.y - j.y) + j.x);
+        if crosses {
+            inside = !inside;
+        }
+    }
+    inside
 }
 
 /// OCCT-aligned: aE.IsSame(aEOuta) for flat vertex arrays.
@@ -4918,15 +4998,19 @@ impl<'a> BooleanBuilder<'a> {
         };
         if wfs.is_empty() { return None; } // HasErrors equivalent
 
-        // OCCT L147: Step 4 — PerformInternalShapes (BuilderFace.cxx L327-382).
+        // OCCT L147: Step 4 — PerformInternalShapes (BuilderFace.cxx L618-735).
         {
             let avoided_vec: Vec<usize> = avoided.iter().copied().collect();
-            let assembled = assemble_internal_wires(&avoided_vec, &segments);
-            internal_wires.extend(assembled);
-        }
-        if !internal_wires.is_empty() {
-            for wf in &mut wfs {
-                wf.internal_wires = internal_wires.clone();
+            // OCCT L676-733: per-face IsInside + MakeInternalWires + Add to face.
+            let per_face_wires = assemble_internal_wires(&avoided_vec, &segments, &wfs);
+            for (fi, face_wires) in per_face_wires.iter().enumerate() {
+                if fi < wfs.len() && !face_wires.is_empty() {
+                    // OCCT L728-733: BRep_Builder().Add(aF, aWI) — in rcad, store
+                    // the internal wires on the WireFace for emit_wire_face to handle.
+                    for wire in face_wires {
+                        wfs[fi].internal_wires.push(wire.clone());
+                    }
+                }
             }
         }
         Some((segments, wfs, vertex_positions))
