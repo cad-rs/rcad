@@ -698,10 +698,27 @@ pub fn compute_vertex_tolerances(brep: &mut BRep) {
 ///
 /// * `brep` - The BRep to correct tolerances on.
 /// * `samples_per_edge` - Sample points per edge for deviation computation (min 2).
+/// ✅ OCCT-aligned: CorrectTolerances + CorrectShapeTolerances
+///   (BOPTools_AlgoTools_1.cxx L309-317, L389-420).
+///
+/// OCCT flow:
+///   1. CorrectPointOnCurve (L315) → brep_same_parameter + compute_vertex_tolerances
+///   2. CorrectCurveOnSurface (L316) → same_range (pcurve range alignment)
+///   3. CorrectShapeTolerances (L389) → finalize_tolerance_hierarchy
+///
+/// rcad: same_range adjusts pcurve ranges to match 3D curve range,
+///   equivalent to OCCT's CorrectCurveOnSurface range adjustment.
+///   (OCCT also adjusts pcurve shape via re-projection, which is
+///    not needed in rcad because DS::build_face_reps computes
+///    precise pcurves during pipeline construction.)
 pub fn correct_tolerances(brep: &mut BRep, samples_per_edge: usize) {
     resize_tolerance_arrays(brep);
+    // OCCT L315: CorrectPointOnCurve
     brep_same_parameter(brep, samples_per_edge);
     compute_vertex_tolerances(brep);
+    // OCCT L316: CorrectCurveOnSurface (range alignment)
+    same_range(brep);
+    // OCCT L408+: CorrectShapeTolerances
     finalize_tolerance_hierarchy(brep);
 }
 
