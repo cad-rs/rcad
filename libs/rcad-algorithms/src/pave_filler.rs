@@ -7152,6 +7152,58 @@ impl<'a> PaveFiller<'a> {
             .map(|fi| self.ds.faces[fi].face_info.curves_sc_only())
             .collect();
 
+        // ── OCCT-aligned: IsValidBlockForFaces on ALL original curves ──
+        //   OCCT PaveFiller_6.cxx L906-918 checks EACH PaveBlock (not just split
+        //   curves) with IsValidBlockForFaces.  rcad was only checking new (split)
+        //   curves, allowing spurious plane-plane ICs to survive.  After BSpline→
+        //   Plane demotion, every plane pair with non-parallel normals creates an
+        //   IC even for face pairs that don't actually overlap in 3D, causing the
+        //   excessive edge count in bfuse_simple B3 (539 vs 28 ref).
+        {
+            let mut remove_curve_info: Vec<(usize, usize, usize)> = Vec::new(); // (ci, fi_a, fi_b)
+            for ci in 0..n_curves {
+                let ic = &self.ds.intersection_curves[ci];
+                let fi = find_face_idxs_for_curve(&self.ds, ci);
+                if fi[0] == usize::MAX || fi[1] == usize::MAX { continue; }
+                let mid_t = (ic.t_range[0] + ic.t_range[1]) * 0.5;
+                let pcurves = [ic.pcurve_on_a.as_ref(), ic.pcurve_on_b.as_ref()];
+                let mut valid = true;
+                for idx in 0..2 {
+                    let fii = fi[idx];
+                    if let Some(pc) = pcurves[idx] {
+                        let uv = pc.point_at(mid_t);
+                        let state = FClass2d::from_ds_face(&self.ds, fii).perform_point(uv);
+                        if state == State::Out { valid = false; break; }
+                    } else {
+                        let mid_pt = ic.curve.point_at(mid_t);
+                        let surf = &self.ds.faces[fii].surface;
+                        let (_, proj) = crate::extrema::closest_point_on_surface(surf, mid_pt);
+                        let tol_sq = self.ff_tol(fi[0], fi[1]).max(TOLERANCE_ABS);
+                        let tol_sq = tol_sq * tol_sq;
+                        if proj.distance_squared(mid_pt) > tol_sq { valid = false; break; }
+                    }
+                }
+                if !valid {
+                    if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
+                        eprintln!("[SPLIT] IVF_REMOVE_ORIG ci={} fi=[{},{}] mid_t={:.9}", ci, fi[0], fi[1], mid_t);
+                    }
+                    remove_curve_info.push((ci, fi[0], fi[1]));
+                }
+            }
+            for &(ci, fia, fib) in &remove_curve_info {
+                self.ds.faces[fia].face_info.curves_sc.remove(&ci);
+                self.ds.faces[fib].face_info.curves_sc.remove(&ci);
+                for inf in &mut self.ds.interferences {
+                    if let Interference::FaceFace { curves, .. } = inf {
+                        curves.retain(|&c| c != ci);
+                    }
+                }
+            }
+            if std::env::var("RCAD_DEBUG_SPLIT").is_ok() && !remove_curve_info.is_empty() {
+                eprintln!("[SPLIT] IVF_REMOVE_ORIG_CURVES removed={:?}", remove_curve_info.iter().map(|(c,_,_)| c).collect::<Vec<_>>());
+            }
+        }
+
         // ── Phase 2: Compute splits ──────────────────────────────────────
         #[derive(Clone)]
         struct SplitAction {
@@ -8378,11 +8430,10 @@ fn put_bound_pave_on_curve(
 }
 
 /// OCCT-aligned: PutPaveOnCurve (BOPAlgo_PaveFiller_6.cxx L833-900)
-///    After PutBoundPaveOnCurve injects face boundary vertices, this step
-///    projects ALL vertices from the two face infos (vertices_in, vertices_on)
-///    onto this intersection curve. This ensures every curve is properly split
-///    at every intersection point, including EF/EE/VE/VF interference vertices
-///    that lie on the curve interior.
+///    OCCT: EF vertices first (theMVEF), then ON/IN vertices (theMVOnIn) with
+///    BBox filtering (aBoxC.IsOut(aBoxV), L2409) and IsNewShape check (L2413-2415).
+///    This prevents projecting too many vertices onto each IC, which would cause
+///    excessive edge splitting (bfuse_simple B3: 539 edges -> 28 ref).
 fn put_pave_on_curve_full(
     ds: &DS,
     curve_idx: usize,
@@ -8393,10 +8444,25 @@ fn put_pave_on_curve_full(
     let [t0, t1] = ic.t_range;
     let mut paves: Vec<(f64, usize)> = Vec::new();
 
+    // OCCT-aligned: compute curve bounding box for vertex filtering (L2409: aBoxC.IsOut(aBoxV)).
+    let curve_bbox = curve_bounding_box_simple(&ic.curve, tol);
+
+    // OCCT-aligned: collect EF (Edge-Face) vertex set for priority and skip logic.
+    //   PutPavesOnCurve L2386-2401: EF vertices processed first; ON/IN vertices
+    //   that are already EF are skipped.
+    let ef_vertices: std::collections::HashSet<usize> = ds.interferences.iter()
+        .filter_map(|inf| {
+            if let Interference::EdgeFace { new_vertex, .. } = inf {
+                Some(*new_vertex)
+            } else { None }
+        })
+        .collect();
+
     for &fi in face_idxs.iter().filter(|&&fi| fi != usize::MAX) {
         let face = &ds.faces[fi];
-        // vertices_in: vertices from FF intersection inside the face
-        for &vi in &face.face_info.vertices_in {
+
+        // OCCT L2386-2392: EF vertices first
+        for &vi in &face.face_info.vertices_on {
             if vi == ic.start_vertex || vi == ic.end_vertex { continue; }
             if paves.iter().any(|&(_, v)| v == vi) { continue; }
             let pt = ds.vertices[vi].point;
@@ -8406,10 +8472,32 @@ fn put_pave_on_curve_full(
                 }
             }
         }
-        // vertices_on: vertices from EF intersection on the face boundary
-        for &vi in &face.face_info.vertices_on {
+
+        // OCCT L2394-2420: ON/IN vertices with BBox + IsNewShape filtering
+        for &vi in &face.face_info.vertices_in {
             if vi == ic.start_vertex || vi == ic.end_vertex { continue; }
+            // OCCT L2399-2401: skip ON/IN vertices already in EF set
+            if ef_vertices.contains(&vi) { continue; }
             if paves.iter().any(|&(_, v)| v == vi) { continue; }
+
+            // OCCT L2404-2412: BBox filtering
+            if let Some([c_min, c_max]) = curve_bbox {
+                let v_pt = ds.vertices[vi].point;
+                let v_tol = ds.vertices[vi].geom_tol.max(tol);
+                let v_min = v_pt - DVec3::splat(v_tol);
+                let v_max = v_pt + DVec3::splat(v_tol);
+                if v_max.x < c_min.x || v_min.x > c_max.x ||
+                   v_max.y < c_min.y || v_min.y > c_max.y ||
+                   v_max.z < c_min.z || v_min.z > c_max.z {
+                    continue;
+                }
+            }
+
+            // OCCT L2413-2415: IsNewShape filter - skip non-new vertices
+            if !ds.is_new_vertex(vi) {
+                continue;
+            }
+
             let pt = ds.vertices[vi].point;
             if let Some(t) = project_vertex_to_curve(pt, &ic.curve, tol) {
                 if t >= t0 - tol && t <= t1 + tol {
@@ -8428,6 +8516,57 @@ fn put_pave_on_curve_full(
     put_closing_pave_on_curve(&mut paves, matches!(&ic.curve, Curve3::Circle(_)));
 
     paves
+}
+
+/// Compute a bounding box for a curve, expanded by tolerance.
+/// Used for OCCT-aligned vertex filtering in PutPavesOnCurve (L2409).
+fn curve_bounding_box_simple(curve: &Curve3, tol: f64) -> Option<[DVec3; 2]> {
+    let bbox = match curve {
+        Curve3::Line(_) => {
+            // Lines are infinite; use unit-length box centered at origin.
+            Some([DVec3::splat(-1.0), DVec3::splat(1.0)])
+        }
+        Curve3::Circle(c) => {
+            let n = c.normal.normalize();
+            let extent = DVec3::new(
+                c.radius * (1.0 - n.x * n.x).sqrt(),
+                c.radius * (1.0 - n.y * n.y).sqrt(),
+                c.radius * (1.0 - n.z * n.z).sqrt(),
+            );
+            Some([c.center - extent, c.center + extent])
+        }
+        Curve3::Ellipse(e) => {
+            let n = e.normal.normalize();
+            let max_r = e.major_radius.max(e.minor_radius);
+            let extent = DVec3::new(
+                max_r * (1.0 - n.x * n.x).sqrt(),
+                max_r * (1.0 - n.y * n.y).sqrt(),
+                max_r * (1.0 - n.z * n.z).sqrt(),
+            );
+            Some([e.center - extent, e.center + extent])
+        }
+        Curve3::BSpline(b) => {
+            let mut mn = DVec3::splat(f64::INFINITY);
+            let mut mx = DVec3::splat(f64::NEG_INFINITY);
+            for &p in &b.control_points {
+                mn = mn.min(p);
+                mx = mx.max(p);
+            }
+            if mn.is_finite() { Some([mn, mx]) } else { None }
+        }
+        Curve3::Bezier(b) => {
+            let mut mn = DVec3::splat(f64::INFINITY);
+            let mut mx = DVec3::splat(f64::NEG_INFINITY);
+            for &p in &b.control_points {
+                mn = mn.min(p);
+                mx = mx.max(p);
+            }
+            if mn.is_finite() { Some([mn, mx]) } else { None }
+        }
+        _ => None,
+    };
+    // Expand by tolerance (OCCT: aBox.Enlarge(aBoxExpandValue))
+    bbox.map(|[mn, mx]| [mn - DVec3::splat(tol), mx + DVec3::splat(tol)])
 }
 
 /// Clean up incorrectly matched Paves (OCCT L796 FilterPavesOnCurves).
