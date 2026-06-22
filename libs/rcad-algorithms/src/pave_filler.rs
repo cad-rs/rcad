@@ -3044,6 +3044,8 @@ impl<'a> PaveFiller<'a> {
     }
 
     fn perform_ff(&mut self) {
+        // OCCT PaveFiller_6.cxx: FillShrunkData + BVH pair iteration
+        self.fill_shrunk_data(); // OCCT: FillShrunkData(FACE, FACE)
         let a_faces = self.faces_of(ShapeOrigin::ShapeA);
         let b_faces = self.faces_of(ShapeOrigin::ShapeB);
 
@@ -3090,8 +3092,9 @@ impl<'a> PaveFiller<'a> {
             while fit.more() {
                 let pk = fit.value();
                 let af = pk.i1; let bf = pk.i2;
+                // OCCT: myDS->HasInterf(nF1, nF2) — skip if already interfered
+                if self.ds.has_interf_ff(af, bf) { fit.next(); continue; }
                 if !self.should_skip_glued_face_pair(af, bf) {
-                    eprintln!("[FF] perform_ff: af={} bf={}", af, bf);
                     self.intersect_face_face(af, bf);
                 }
                 fit.next();
