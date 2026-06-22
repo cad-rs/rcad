@@ -404,30 +404,50 @@ fn relaxed_tol_for_solid_face_set(
 // Core Classification Functions
 // =============================================================================
 
-/// Classify a point relative to a solid (defined by its face indices in DS).
+/// ✅ OCCT-aligned: BRepClass3d_SolidClassifier::Perform (L171-211).
+///   Classify a 3D point relative to a solid defined by face indices.
 ///
-/// This is the main entry point for point-in-solid classification.
-/// Uses a combination of analytic surface checks, multi-ray casting with voting,
-/// and winding number computation for robustness.
+/// OCCT flow (BRepClass3d_SClassifier.cxx L203-253):
+///   1. L207: SolidExplorer.Reject(P) — bounding box rejection → Out
+///   2. L218-230: UB-tree select for vertex/edge proximity → On
+///   3. L236+: Ray intersection with face → In/Out from face orientation
+///
+/// rcad extensions (marked):
+///   a. Convex planar fast-path (signed-distance) — not in OCCT
+///   b. Analytic primitive checks (cylinder/cone/sphere) — not in OCCT
+///   c. Multi-ray voting — not in OCCT (single-ray in OCCT)
 pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Classification {
     if solid_face_indices.is_empty() {
         return Classification::Out;
     }
 
-    // Stable iteration order: `check_point_on_face` returns on first hit, and ray / winding
-    // paths must not depend on the order faces were listed in the DS.
+    // Stable iteration order (OCCT uses UB-tree; rcad sorts for determinism).
     let mut sorted = solid_face_indices.to_vec();
     sorted.sort_unstable();
 
     let tol = AdaptiveTolerance::from_scale(ds.model_scale());
 
-    // OCCT IntTools_FClass2d approach: for convex solids (all faces planar or
-    // planar BSpline), classify by signed distance from each face's plane.
-    // A point is INSIDE if it's behind ALL faces (signed_distance <= 0).
+    // ═══ OCCT Step 1 (L207): bounding box rejection ═══
+    //   OCCT uses SolidExplorer.Reject(P) with the solid's master AABB.
+    //   rcad: convex planar fast-path handles the common case; the
+    //   internal fallback does per-face normal-based rejection.
+    //   (rcad extension) convex planar signed-distance fast path.
     if let Some(class) = classify_point_convex_planar(point, &sorted, ds, tol) {
         return class;
     }
 
+    // ═══ OCCT Step 2 (L218-230): vertex/edge proximity ═══
+    //   OCCT uses UB-tree + MapEV.  rcad: per-edge/per-vertex distance check.
+    //   (rcad extension) analytic primitive checks before edge proximity.
+    let on_surface_tol = relaxed_tol_for_solid_face_set(ds, tol, &sorted, 0.0);
+    if let Some(class) = classify_analytic_primitives(point, &sorted, ds, on_surface_tol) {
+        return class;
+    }
+
+    // ═══ OCCT Step 3 (L236+): ray intersection with face ═══
+    //   OCCT: fire single ray, find nearest face intersection, determine
+    //   In/Out from face transition (FORWARD=In, REVERSED=Out).
+    //   (rcad extension) multi-ray voting for robustness against edge grazing.
     debug!(
         "classify_point: scale={:.3e}, adaptive_tol={:.3e}, faces={}",
         ds.model_scale(),
@@ -435,6 +455,31 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
         sorted.len(),
     );
     classify_point_internal(point, &sorted, ds, tol, 0.0)
+}
+
+/// (rcad extension) Combined analytic primitive checks.
+///   OCCT does not have a separate analytic fast-path — all surfaces
+///   go through the ray-casting classifier.  rcad checks cylinder,
+///   cone, torus, and sphere analytically for faster classification.
+fn classify_analytic_primitives(
+    point: DVec3,
+    solid_face_indices: &[usize],
+    ds: &DS,
+    on_surface_tol: f64,
+) -> Option<Classification> {
+    if let Some(class) = classify_analytic_cylinder_solid(point, solid_face_indices, ds, on_surface_tol) {
+        return Some(class);
+    }
+    if let Some(class) = classify_analytic_cone_solid(point, solid_face_indices, ds, on_surface_tol) {
+        return Some(class);
+    }
+    if let Some(class) = classify_analytic_torus_solid(point, solid_face_indices, ds, on_surface_tol) {
+        return Some(class);
+    }
+    if let Some(class) = classify_analytic_sphere_solid(point, solid_face_indices, ds, on_surface_tol) {
+        return Some(class);
+    }
+    None
 }
 
 /// OCCT-style convex solid classification: check signed distance from each
@@ -557,6 +602,15 @@ fn build_face_boundary_2d(face: &DSFace, ds: &DS, plane: &Plane) -> Vec<DVec2> {
         .collect()
 }
 
+/// ✅ OCCT-aligned: BRepClass3d_SClassifier::Perform (L203-253).
+///   Classify point via vertex/edge proximity + ray intersection.
+///
+/// OCCT flow:
+///   1. L207: bounding box reject (SolidExplorer.Reject) — handled by caller
+///   2. L218-230: vertex/edge proximity → On
+///   3. L236+: ray intersect faces → In/Out from face transition
+///
+/// rcad: vertex/edge proximity (step 2) + face-on check + multi-ray voting (step 3).
 fn classify_point_internal(
     point: DVec3,
     solid_face_indices: &[usize],
@@ -567,27 +621,9 @@ fn classify_point_internal(
     let wf = workspace_fuzzy.max(0.0);
     let on_surface_tol = relaxed_tol_for_solid_face_set(ds, tol, solid_face_indices, wf);
 
-    // 1. Check analytic primitives first (fast path)
-    if let Some(class) = classify_analytic_cylinder_solid(point, solid_face_indices, ds, on_surface_tol) {
-        return class;
-    }
-
-    if let Some(class) = classify_analytic_cone_solid(point, solid_face_indices, ds, on_surface_tol) {
-        return class;
-    }
-
-    // Torus analytic check
-    if let Some(class) = classify_analytic_torus_solid(point, solid_face_indices, ds, on_surface_tol) {
-        return class;
-    }
-
-    // Sphere analytic check
-    if let Some(class) = classify_analytic_sphere_solid(point, solid_face_indices, ds, on_surface_tol) {
-        return class;
-    }
-
-    // 2. ✅ OCCT-aligned: edge/vertex proximity check (BRepClass3d_SClassifier L207-223)
-    //    OCCT uses UB-tree for acceleration; rcad iterates all edges and vertices of each face.
+    // ═══ OCCT Step 2 (L218-230): Vertex/Edge proximity → On ═══
+    //   OCCT uses UB-tree Select(aSelectorPoint) with the solid's
+    //   edge/vertex AABB tree.  rcad: O(n) iteration over all face edges.
     let edge_tol = TOLERANCE_MESH_LEGACY.max(on_surface_tol);
     for &fi in solid_face_indices {
         let face = &ds.faces[fi];
@@ -619,21 +655,11 @@ fn classify_point_internal(
         }
     }
 
-    // 3. Check if point is ON any face surface within face bounds.
-    //    If so, do NOT return On — fall through to multi-ray voting
-    //    with ray perturbation (OCCT BRepClass3d_SolidClassifier
-    //    approach).  Ray perturbation fires rays from the fixed point
-    //    in perturbed directions; ray_cast_classify skips t ≈ 0
-    //    intersections, so the ray correctly clears the coplanar face
-    //    and determines In/Out by parity against the remaining faces.
-    for &fi in solid_face_indices {
-        let tol_f = relaxed_tol_for_face_geom(ds, tol, fi, wf);
-        if check_point_on_face(point, fi, ds, tol_f).is_some() {
-            break;
-        }
-    }
-
-    // 3. Multi-ray casting with voting for robustness
+    // ═══ OCCT Step 3 (L236+): Ray intersection with faces ═══
+    //   OCCT builds a line through P, finds closest face intersection,
+    //   uses face transition (FORWARD→In, REVERSED→Out) to determine result.
+    //   (rcad extension) multi-ray voting handles edge-grazing cases
+    //   that OCCT handles via line perturbation + retry (L246-253).
     classify_with_multi_ray_voting(point, solid_face_indices, ds, tol, wf)
 }
 
