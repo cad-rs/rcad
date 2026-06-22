@@ -7478,6 +7478,10 @@ impl<'a> PaveFiller<'a> {
     ///   Single-block edges (no split) reuse the original edge index (pb.new_edge = ei),
     ///   matching OCCT's aPB->SetEdge(nE) for aLPB.Extent() == 1.
     fn build_split_edges(&mut self) {
+        // OCCT L392: UpdateCommonBlocksWithSDVertices — before creating split edges,
+        //   ensure CommonBlocks reference correct (SD-deduplicated) vertex indices.
+        self.ds.update_common_blocks_with_sd_vertices();
+
         // Phase 1: collect PaveBlock data without creating new edges (avoids
         // mutable borrow conflict with self.ds.edges iteration).
         struct BlockData {

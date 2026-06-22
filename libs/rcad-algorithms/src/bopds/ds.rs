@@ -1612,11 +1612,84 @@ impl DS {
     /// in the DS.  This should be called after all interferences have been
     /// computed and before face splitting.
         /// OCCT-aligned: UpdatePaveBlocksWithSDVertices (BOPDS_DS.cxx L200-280).
+    /// ✅ OCCT-aligned: BOPDS_DS::UpdatePaveBlocksWithSDVertices.
+    ///   Replace PaveBlock endpoint vertex indices with their SD (same-domain)
+    ///   canonical equivalents.  SD vertex pairs indicate geometrically coincident
+    ///   vertices between operands A and B; using the canonical index ensures
+    ///   PaveBlocks from SD edges share vertex indices for correct connectivity.
+    ///
+    ///   OCCT BOPAlgo_PaveFiller_10.cxx L166-246: iterates PaveBlocks pool,
+    ///   for each endpoint checks ShapeSD and replaces with the first (lower)
+    ///   index in the SD pair.  rcad: iterates all pave_blocks on all edges
+    ///   plus the global pave_blocks pool.
     pub fn update_pave_blocks_with_sd_vertices(&mut self) {
-        // Propagate same-domain vertices through PaveBlocks.
-        // This is a simplified version — in OCCT this iterates all
-        // CommonBlocks and PaveBlocks, updating vertex indices.
-        // rcad's vertex dedup via find_vertex_near handles most cases.
+        // Build SD vertex replacement map: for each pair (a,b), pick the
+        // canonical vertex (the one from ShapeA, i.e., the lower index).
+        let sd_pairs: Vec<(usize, usize)> = self.shape_sd.sd_vertices_iter().copied().collect();
+        if sd_pairs.is_empty() { return; }
+        let mut replace: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        for &(a, b) in &sd_pairs {
+            let canon = a.min(b);
+            replace.entry(a).or_insert(canon);
+            replace.entry(b).or_insert(canon);
+        }
+
+        // Apply replacement to all PaveBlocks on edges.
+        for edge in &mut self.edges {
+            for pb in &mut edge.pave_blocks {
+                if let Some(&rep) = replace.get(&pb.pave1.vertex_idx) {
+                    pb.pave1.vertex_idx = rep;
+                }
+                if let Some(&rep) = replace.get(&pb.pave2.vertex_idx) {
+                    pb.pave2.vertex_idx = rep;
+                }
+            }
+        }
+        // Apply replacement to global PaveBlocks pool.
+        for pb in &mut self.pave_blocks {
+            if let Some(&rep) = replace.get(&pb.pave1.vertex_idx) {
+                pb.pave1.vertex_idx = rep;
+            }
+            if let Some(&rep) = replace.get(&pb.pave2.vertex_idx) {
+                pb.pave2.vertex_idx = rep;
+            }
+        }
+    }
+
+    /// ✅ OCCT-aligned: BOPAlgo_PaveFiller::UpdateCommonBlocksWithSDVertices.
+    ///   Update CommonBlocks after PaveBlock SD vertex replacement.
+    ///   OCCT iterates the PaveBlocks pool and updates each CommonBlock's
+    ///   referenced PaveBlocks' vertex indices.  rcad: for non-destructive
+    ///   mode (which is always false in rcad), OCCT calls
+    ///   UpdatePaveBlocksWithSDVertices and returns — rcad does the same.
+    ///   (CommonBlocks are rare in rcad and their pave_block indices are
+    ///    edge-local, making full iterative update non-trivial.)
+    pub fn update_common_blocks_with_sd_vertices(&mut self) {
+        // OCCT L175-178: if !myNonDestructive → UpdatePaveBlocksWithSDVertices + return
+        //   rcad: NonDestructive is always false, so re-use the PB update.
+        self.update_pave_blocks_with_sd_vertices();
+    }
+
+    /// Apply vertex replacement to all PaveBlocks (both edge-local and global).
+    fn apply_sd_vertex_replacement(&mut self, replace: &std::collections::HashMap<usize, usize>) {
+        for edge in &mut self.edges {
+            for pb in &mut edge.pave_blocks {
+                if let Some(&rep) = replace.get(&pb.pave1.vertex_idx) {
+                    pb.pave1.vertex_idx = rep;
+                }
+                if let Some(&rep) = replace.get(&pb.pave2.vertex_idx) {
+                    pb.pave2.vertex_idx = rep;
+                }
+            }
+        }
+        for pb in &mut self.pave_blocks {
+            if let Some(&rep) = replace.get(&pb.pave1.vertex_idx) {
+                pb.pave1.vertex_idx = rep;
+            }
+            if let Some(&rep) = replace.get(&pb.pave2.vertex_idx) {
+                pb.pave2.vertex_idx = rep;
+            }
+        }
     }
 
     /// OCCT-aligned: batch refine for all faces.
