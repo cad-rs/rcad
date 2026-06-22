@@ -6096,12 +6096,42 @@ impl<'a> BooleanBuilder<'a> {
             // OCCT BOPAlgo_BuilderSolid::Perform: connectivity analysis.
             //   Build edge→face adjacency from the result faces' edge lists.
             //   Two faces are connected if they share at least one edge index.
+            //   Also build geometric edge map to connect faces whose edges
+            //   share the same endpoints but have different DS edge indices
+            //   (OCCT shares TopoDS TShape; rcad uses unique edge indices).
             let mut edge_to_faces: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+            // Geometric edge map: (canonical_v1, canonical_v2) → face indices
+            //   where canonical vertices are min of edge endpoint positions.
+            let mut geo_edge_to_faces: BTreeMap<(usize, usize), Vec<usize>> = BTreeMap::new();
+            let vert_positions: Vec<DVec3> = (0..result.vertices.len())
+                .map(|vi| result.vertices[vi]).collect();
+            let canon_vert = |vi: usize| -> usize {
+                if vi >= result.vertices.len() { return vi; }
+                let pt = result.vertices[vi];
+                // Quantize to tolerance grid for stable identity
+                let inv_tol = 1.0 / (crate::tolerance::TOLERANCE_ABS * 100.0);
+                let q = |v: f64| (v * inv_tol).round() as i64;
+                let key = (q(pt.x), q(pt.y), q(pt.z));
+                // Return the smallest index with the same quantized position
+                (0..=vi).rev().find(|&j| {
+                    let p = result.vertices[j];
+                    let qj = ((p.x * inv_tol).round() as i64, (p.y * inv_tol).round() as i64, (p.z * inv_tol).round() as i64);
+                    qj == key
+                }).unwrap_or(vi)
+            };
             for &fi in &group_faces {
                 if fi >= result.faces.len() { continue; }
                 let outer = &result.faces[fi].0;
                 for &(ei, _) in outer {
                     edge_to_faces.entry(ei).or_default().push(fi);
+                    // Also register geometric edge for cross-source connectivity
+                    if ei < result.edges.len() {
+                        let (sv, ev) = result.edges[ei];
+                        let cs = canon_vert(sv);
+                        let ce = canon_vert(ev);
+                        let key = if cs <= ce { (cs, ce) } else { (ce, cs) };
+                        geo_edge_to_faces.entry(key).or_default().push(fi);
+                    }
                 }
             }
 
@@ -6133,13 +6163,34 @@ impl<'a> BooleanBuilder<'a> {
                     };
 
                     // Traverse to adjacent faces through shared edges
+                    //   Uses both DS edge index identity (edge_to_faces) and
+                    //   geometric coincidence (geo_edge_to_faces) to handle
+                    //   cross-source connectivity (different DS edge indices
+                    //   for the same geometric edge).
                     for &ei in &edges {
+                        // Exact edge index match (same DS edge)
                         if let Some(adj_faces) = edge_to_faces.get(&ei) {
                             for &adj_fi in adj_faces {
                                 if adj_fi < result.faces.len() && visited.insert(adj_fi) {
                                     remaining.remove(&adj_fi);
                                     queue.push_back(adj_fi);
                                     component.push(adj_fi);
+                                }
+                            }
+                        }
+                        // Geometric match (same quantized endpoints)
+                        if ei < result.edges.len() {
+                            let (sv, ev) = result.edges[ei];
+                            let cs = canon_vert(sv);
+                            let ce = canon_vert(ev);
+                            let gkey = if cs <= ce { (cs, ce) } else { (ce, cs) };
+                            if let Some(geo_faces) = geo_edge_to_faces.get(&gkey) {
+                                for &adj_fi in geo_faces {
+                                    if adj_fi < result.faces.len() && visited.insert(adj_fi) {
+                                        remaining.remove(&adj_fi);
+                                        queue.push_back(adj_fi);
+                                        component.push(adj_fi);
+                                    }
                                 }
                             }
                         }
