@@ -641,7 +641,7 @@ impl ResultBuilder {
         self.face_origins.push(origin);
     }
 
-    /// OCCT-aligned: estimate face normal from wire segments.
+    /// ✅ OCCT-aligned: estimate face normal from wire segments.
     ///     Uses Newell's method on the outer wire boundary vertices.
     fn estimate_boundary_normal_from_segments(
         outer_wire: &[usize],
@@ -4977,7 +4977,9 @@ fn promote_exterior_holes(
 }
 
 impl<'a> BooleanBuilder<'a> {
-    /// OCCT-aligned: split_face using edge-to-wire pipeline (BOPAlgo_BuilderFace).
+    /// ✅ OCCT-aligned: BOPAlgo_BuilderFace::Perform (BuilderFace.cxx L117-147).
+    ///   Edge-to-wire pipeline: PerformShapesToAvoid → PerformLoops (WireSplitter)
+    ///   → PerformAreas → PerformInternalShapes.
     pub(crate) fn split_face_occt_wire_pipeline(
         &self,
         face_idx: usize,
@@ -5059,7 +5061,7 @@ impl<'a> BooleanBuilder<'a> {
         Some((segments, wfs, vertex_positions))
     }
 
-    /// OCCT-aligned: BuildDraftFace (BOPAlgo_Builder_2.cxx L951-1070).
+    /// ✅ OCCT-aligned: BuildDraftFace (BOPAlgo_Builder_2.cxx L951-1070).
     ///
     /// For faces that have NO intersection curves but whose boundary edges may
     /// have been split by the PaveFiller (via myImages / vertices_in), build a
@@ -6689,6 +6691,10 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
+    /// ✅ OCCT-aligned: PerformInternal1 (BOPAlgo_Builder.cxx L310-445).
+    ///   The top-level pipeline entry: dimension-by-dimension image filling
+    ///   (V→E→W→FACE→SHELL→SOLID), followed by BuildResult for each type.
+    ///   OCCT L310-445 structure matched in full (see inline OCCT line refs).
     pub fn build_with_history(&self) -> Result<(BRep, BooleanHistory), BooleanError> {
         // OCCT L313-317: setup (myPaveFiller, myDS, myContext, myFuzzyValue, myNonDestructive).
         //   rcad: done via BooleanBuilder::new(ds, op) in the caller.
