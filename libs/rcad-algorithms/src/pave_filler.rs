@@ -1297,11 +1297,21 @@ impl<'a> PaveFiller<'a> {
     ///   rcad: O(n²) distance grouping + SD vertex merge + interference update.
     ///   ⏳ rcad: no IntersectVertices BVH (O(n²) is fine for model sizes).
     ///   Returns survivors for RepeatIntersection's myIncreasedSS.
+    /// ✅ OCCT-aligned: TreatNewVertices + PerformNewVertices
+    ///   (BOPAlgo_PaveFiller_3.cxx L594-688, BOPAlgo_Tools.cxx L1119-1204).
+    ///
+    /// OCCT flow:
+    ///   1. Collect new vertices from interference data
+    ///   2. IntersectVertices: BVH + FillMap + MakeBlocks → connected chains
+    ///   3. PerformNewVertices: create new TopoDS_Vertex for each chain,
+    ///      update interference references, split PaveBlocks at extra paves
+    ///   4. IntersectVE (extra pave splitting) — called at end
+    ///
+    /// rcad: DsBvh-based pair culling (matching OCCT BVH), FillMap/MakeBlocks
+    ///   via union-find (equivalent to OCCT MakeBlocks), new DS vertex creation
+    ///   (matching OCCT BRep_Builder::MakeVertex), interference ref update.
     fn treat_new_vertices(&mut self) -> Vec<usize> {
-        // ── Phase 1: Collect new vertices ─────────────────────────────────
-        // ✅ OCCT L696-702: build aVerts (vertex → tolerance map)
-        //    ⏳ difference: OCCT reads vertices and tolerances from theMVCPB (CoupleOfPaveBlocks),
-        //    rcad reads from interference records, different data source but semantically equivalent.
+        // ── Phase 1: Collect new vertices (OCCT L696-702) ───────────────
         #[derive(Clone, Copy)]
         struct NewVertInfo { idx: usize, pos: DVec3, tol: f64 }
         let mut new_verts: Vec<NewVertInfo> = Vec::new();
@@ -1313,27 +1323,40 @@ impl<'a> PaveFiller<'a> {
                 _ => continue,
             };
             if seen.insert(vi) {
-                // ✅ OCCT L1126: tolerance = max(BRep_Tool::Tolerance(aV), theVertices(i))
                 let v_tol = self.ds.vertices[vi].geom_tol.max(self.ds.fuzzy_tol);
                 new_verts.push(NewVertInfo { idx: vi, pos: pt, tol: v_tol });
             }
         }
         if new_verts.len() < 2 { return vec![]; }
 
-        // ── Phase 2: IntersectVertices — find mutually close vertices ─────
-        // ✅ OCCT BOPAlgo_Tools::IntersectVertices (BOPAlgo_Tools.cxx L1098-1161)
-        //
-        // OCCT L1116-1117: aTolAdd = theFuzzyValue / 2.
+        // ── Phase 2: IntersectVertices (BOPAlgo_Tools.cxx L1119-1204) ───
+        //   OCCT L1135: aTolAdd = theFuzzyValue / 2.
         let gap = self.ds.fuzzy_tol / 2.0;
-        // OCCT L1119-1137: build BVH tree
-        //   Bnd_Box: Add(vertex position)
-        //   SetGap(aTol + aTolAdd)  aTol = max(BRep_Tool::Tolerance(aV), theVertices(i))
-        // ⏳ rcad: O(n²) distance check in place of BVH. Equivalent when vertex count is small.
-        //
-        // OCCT L1155-1158: FillMap(id1, id2, aMILI)
-        // OCCT L1161-1162: MakeBlocks(aMILI, aBlocks)
-        // rcad Union-Find equivalent for connectivity grouping
-        let mut parent: Vec<usize> = (0..self.ds.vertices.len()).collect();
+
+        // OCCT L1137-1157: build BVH tree of vertex bounding boxes.
+        //   rcad: use DsBvh with AABBs expanded by tolerance + gap.
+        use crate::bvh::{Aabb, DsBvh};
+        let nv = new_verts.len();
+        let mut bvh_indices: Vec<usize> = Vec::with_capacity(nv);
+        let mut bvh_aabbs: Vec<Aabb> = Vec::with_capacity(nv);
+        for i in 0..nv {
+            let v = &new_verts[i];
+            bvh_indices.push(i);
+            let half = v.tol + gap;
+            bvh_aabbs.push(Aabb {
+                min: v.pos - DVec3::splat(half),
+                max: v.pos + DVec3::splat(half),
+            });
+        }
+        let bvh = DsBvh::build(bvh_indices, bvh_aabbs);
+
+        // OCCT L1159-1165: BVH pair selection + L1175-1178: FillMap
+        //   rcad: DsBvh::candidate_pairs gives overlapping AABB pairs.
+        let pairs = DsBvh::candidate_pairs(&bvh, &bvh);
+
+        // OCCT L1167-1179: FillMap + L1181-1182: MakeBlocks
+        //   rcad: union-find for connected component grouping (same result).
+        let mut parent: Vec<usize> = (0..nv).collect();
         fn vfind(parent: &mut [usize], x: usize) -> usize {
             if parent[x] != x { parent[x] = vfind(parent, parent[x]); }
             parent[x]
@@ -1343,60 +1366,65 @@ impl<'a> PaveFiller<'a> {
             let rb = vfind(parent, b);
             if ra != rb { parent[ra] = rb; }
         }
-        for i in 0..new_verts.len() {
-            let vi = &new_verts[i];
-            for j in (i + 1)..new_verts.len() {
-                let vj = &new_verts[j];
-                // ✅ OCCT L1126-1134: BVH bounding box interference condition = distance ≤ gap + vi.tol + vj.tol
-                let merge_tol = vi.tol + vj.tol + gap;
-                if (vi.pos - vj.pos).length() <= merge_tol {
-                    vunion(&mut parent, vi.idx, vj.idx);
-                }
+        for &(ia, ib) in &pairs {
+            let vi = &new_verts[ia];
+            let vj = &new_verts[ib];
+            let merge_tol = vi.tol + vj.tol + gap;
+            if (vi.pos - vj.pos).length() <= merge_tol {
+                vunion(&mut parent, ia, ib);
             }
         }
 
-        // ── Phase 3: Build connectivity groups ──────────────────────────
-        // ✅ OCCT L709-717: process each chain
+        // OCCT L1184-1194: build chains from blocks.
+        //   rcad: group by root.
         let mut groups: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
-        for nv in &new_verts {
-            let root = vfind(&mut parent, nv.idx);
-            groups.entry(root).or_default().push(nv.idx);
+        for i in 0..nv {
+            let root = vfind(&mut parent, i);
+            groups.entry(root).or_default().push(new_verts[i].idx);
         }
+        // OCCT L1196-1203: add non-interfered vertices as single-element chains.
+        //   rcad: they're already in groups as single-element groups.
 
-        // ── Phase 4: Merge each group ──────────────────────────────────
-        // ❌ OCCT L714-717: BRepLib::BoundingVertex(aLVSD, aVNew) computes bounding box
-        //    center to create a new vertex. rcad: pick min DS index as survivor, no new vertex.
-        //    Functionally equivalent (same merge result) but different implementation.
-        // ✅ OCCT L112-118 (UpdateVertex): survivor takes max tolerance after merge.
+        // ── Phase 3: MakeVertex for each chain (OCCT L714-717) ──────────
+        //   OCCT BOPTools_AlgoTools::MakeVertex:
+        //     Single element → reuse the vertex.
+        //     Multiple elements → BRepLib::BoundingVertex computes center + tolerance.
+        //     Creates new TopoDS_Vertex via BRep_Builder::MakeVertex.
+        //   rcad: create new DS vertex for each multi-vertex group,
+        //     update all interferences/paves to point to the new vertex.
+        let mut survivors: Vec<usize> = Vec::new();
         for (_root, members) in &groups {
-            if members.len() < 2 { continue; }
-            let survivor = *members.iter().min().unwrap();
+            if members.len() < 2 {
+                // OCCT L1793-1795: single vertex → reuse as-is
+                survivors.push(members[0]);
+                continue;
+            }
 
-            // ✅ OCCT UpdateVertex: increase survivor tolerance for subsequent VV/VE/VF
-            for &vi in members {
-                if vi == survivor {
-                    // ✅ OCCT L112-118: update survivor tolerance to the max in merge group
-                    let max_tol = members.iter()
-                        .map(|&m| self.ds.vertices[m].geom_tol)
-                        .max_by(|a, b| a.partial_cmp(b).unwrap())
-                        .unwrap_or(self.ds.fuzzy_tol);
-                    if self.ds.vertices[survivor].geom_tol < max_tol {
-                        self.ds.vertices[survivor].geom_tol = max_tol;
-                        // OCCT: myIncreasedSS.Add(nV) — marks this vertex's tolerance as increased
-                        // rcad: returns survivor indices, caller decides whether to trigger RepeatIntersection
-                    }
-                    continue;
-                }
+            // OCCT L1797-1804: BRepLib::BoundingVertex computes center + tolerance.
+            //   rcad: compute centroid of all member vertex positions.
+            let centroid = members.iter()
+                .map(|&vi| self.ds.vertices[vi].point)
+                .sum::<DVec3>() / members.len() as f64;
+            let max_tol = members.iter()
+                .map(|&vi| self.ds.vertices[vi].geom_tol)
+                .max_by(|a, b| a.partial_cmp(b).unwrap())
+                .unwrap_or(self.ds.fuzzy_tol);
 
-                // ✅ OCCT L638-648: aInt->SetIndexNew(iV) — update interference vertex index
-                // ⏳ rcad: iterate all interferences and edge paves, replace indices
+            // OCCT BRep_Builder::MakeVertex: create new vertex at centroid.
+            let new_vi = self.ds.add_vertex(centroid);
+            self.ds.vertices[new_vi].geom_tol = max_tol;
+            // OCCT: myIncreasedSS.Add(nV) — mark tolerance as increased.
+            self.ds.increased_ss.insert(new_vi);
+
+            // OCCT L638-648: aInt->SetIndexNew(iV) — update interference refs.
+            for &old_vi in members {
+                if old_vi == new_vi { continue; }
                 for edge in &mut self.ds.edges {
                     for pave in &mut edge.paves {
-                        if pave.vertex_idx == vi { pave.vertex_idx = survivor; }
+                        if pave.vertex_idx == old_vi { pave.vertex_idx = new_vi; }
                     }
                 }
                 for inf in &mut self.ds.interferences {
-                    match inf {
                         Interference::EdgeEdge { new_vertex, .. } => {
                             if *new_vertex == vi { *new_vertex = survivor; }
                         }
