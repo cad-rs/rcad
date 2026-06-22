@@ -611,6 +611,30 @@ fn classify_point_internal(
         }
     }
 
+    // ═══ OCCT Step 2b (L207-216): Face surface proximity → On ═══
+    //   OCCT SolidExplorer::Reject checks point-on-face via projection.
+    //   If |F(u,v)| < on_surface_tol and UV inside face boundary → On.
+    //   Without this, points ON a face plane are misclassified by ray
+    //   casting as In/Out instead of On, removing boundary faces.
+    for &fi in solid_face_indices {
+        let face = &ds.faces[fi];
+        let on_surf = match &face.surface {
+            Surface3::Plane(pl) => {
+                let d = (point - pl.origin).dot(pl.normal);
+                if d.abs() < on_surface_tol {
+                    let face_verts = ds.face_boundary_points(fi);
+                    face_verts.len() >= 3
+                        && inttools::edge_face::point_in_planar_face_with_tol(
+                            point, pl, &face_verts, on_surface_tol)
+                } else { false }
+            }
+            _ => false,
+        };
+        if on_surf {
+            return Classification::On;
+        }
+    }
+
     // ═══ OCCT Step 3 (L236+): Ray intersection with faces ═══
     //   OCCT builds a line through P via SolidExplorer::Segment (L261),
     //   finds closest face intersection (L300-399), and determines In/Out
