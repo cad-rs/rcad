@@ -1057,9 +1057,13 @@ impl ResultBuilder {
 // SubFace removed: find_inner
 
 
+    /// ✅ OCCT-aligned: BuildResult — pure conversion from ResultBuilder arrays to BRep.
+    ///   OCCT BuildResult (Builder_1.cxx L130-168) iterates myImages and adds shapes
+    ///   to myShape.  rcad converts internal arrays (vertices, edges, faces) to BRep
+    ///   topology (Vertex, Edge, Face).  Both do NO merge/cull/post-processing.
     fn build(mut self) -> (BRep, BooleanHistory) {
         eprintln!("ResultBuilder::build: {} vertices, {} edges, {} faces", self.vertices.len(), self.edges.len(), self.faces.len());
-        // ✅ OCCT-aligned: build() is a pure conversion (BuildResult, Builder_1.cxx L130-168).
+        // ✅ OCCT-aligned: pure conversion (BuildResult, Builder_1.cxx L130-168).
         // OCCT does NO vertex/edge merge, NO orphan edge removal, NO face culling.
         let vertices = self
             .vertices
@@ -1399,6 +1403,9 @@ fn aggregate_shell_region_origin(shell_origins: &[ShellOrigin]) -> SolidOrigin {
     }
 }
 
+/// ✅ OCCT-aligned: PrepareHistory shell/solid provenance (Builder_4.cxx L164-252).
+///   OCCT iterates source shapes → LocModified → AddModified/AddGenerated/Remove.
+///   rcad: aggregates per-face origins to shell/solid level via face_region → shell → solid.
 fn annotate_shell_and_solid_history(brep: &BRep, history: &mut BooleanHistory) {
     let mut face_cursor = 0;
     let mut shell_origins = Vec::new();
@@ -6972,6 +6979,9 @@ impl<'a> BooleanBuilder<'a> {
     /// [`Self::merged_split_curve_ids_for_planar_face`]).
 // SubFace removed: split_planar
 
+    /// ✅ OCCT-aligned: DS face iterator by origin.
+    ///   OCCT: iterates myDS->ShapeInfo() filtering by TopAbs_FACE + source solid.
+    ///   rcad: DS stores faces flat with ShapeOrigin (A/B) for operand discrimination.
     fn faces_of(&self, origin: ShapeOrigin) -> Vec<usize> {
         let mut v: Vec<usize> = self
             .ds
