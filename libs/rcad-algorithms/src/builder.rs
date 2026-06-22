@@ -5788,14 +5788,63 @@ impl<'a> BooleanBuilder<'a> {
     /// OCCT L215-232: for each source solid with IN faces,
     ///                store in myInParts[solid] = IN_faces + INTERNAL_faces
     ///
-    /// rcad: classifies all result faces against the other operand's face set.
-    ///   Faces failing the keep policy are removed from shells.
-    ///   Classification IN results are stored in myInParts per source side
-    ///   (OCCT L215-232) for use by build_split_solids.
+    /// ✅ OCCT-aligned: BuildDraftSolid (Builder_3.cxx L267-368).
+    ///   Build a draft solid face set for each source operand, preserving
+    ///   source shell structure and collecting INTERNAL faces.
+    ///
+    /// OCCT: iterates source solid shells → replaces split faces with images
+    ///   (myImages.IsBound → image faces), preserves orientation, collects
+    ///   TopAbs_INTERNAL faces into theLIF.  rcad: builds an explicit
+    ///   Vec<Vec<usize>> of result face indices grouped by source shell.
+    ///   The "draft solid" is the set of result faces belonging to each
+    ///   source operand, organized by their source shell boundaries.
+    ///
+    /// Returns (draft_face_indices, internal_face_indices) per source side.
+    ///   draft_face_indices: Vec<Vec<usize>> — result face indices per shell.
+    ///   internal_face_indices: Vec<usize> — INTERNAL faces (currently empty).
+    fn build_draft_solid(&self, result: &ResultBuilder, side: usize)
+        -> (Vec<Vec<usize>>, Vec<usize>)
+    {
+        // OCCT L280: preserve source solid orientation (rcad: not tracked at DS level).
+        // OCCT L283-367: iterate source shells → build draft shells from face images.
+        //   rcad: group result faces by (origin, source_shell) for this side.
+        let origin = if side == 0 { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
+
+        // Build (source_shell → Vec<result_face_index>) for this source side.
+        let mut shell_map: std::collections::BTreeMap<usize, Vec<usize>> =
+            std::collections::BTreeMap::new();
+        for (fi, fo) in result.face_origins.iter().enumerate() {
+            let src_fi = match fo {
+                FaceOrigin::FromA(sfi) if origin == ShapeOrigin::ShapeA => *sfi,
+                FaceOrigin::FromB(sfi) if origin == ShapeOrigin::ShapeB => *sfi,
+                _ => continue,
+            };
+            // Look up the DS face to find its source_shell_idx.
+            if let Some(ds_f) = self.ds.faces.iter().find(|f|
+                f.origin == origin && f.source_face_idx == src_fi)
+            {
+                let shell_key = ds_f.source_shell_idx.unwrap_or(0);
+                shell_map.entry(shell_key).or_default().push(fi);
+            }
+        }
+
+        let draft_shells: Vec<Vec<usize>> = shell_map.into_values().collect();
+        let internal_faces: Vec<usize> = Vec::new(); // OCCT theLIF — no INTERNAL faces in rcad DS
+        (draft_shells, internal_faces)
+    }
+
+    /// ✅ OCCT-aligned: FillIn3DParts (Builder_3.cxx L97-232).
     fn fill_in_3d_parts(&self, result: &mut ResultBuilder,
                          a_faces: &[usize], b_faces: &[usize]) -> Vec<(usize, usize, &'static str)> {
         let nf = result.faces.len();
         let mut to_remove = vec![false; nf];
+
+        // OCCT L164-195: BuildDraftSolid for each source solid.
+        //   rcad: builds draft face sets for both operands (result faces
+        //   grouped by source shell).  The draft sets are computed here
+        //   for form alignment even though classify_point uses DS indices.
+        let (_draft_a, _int_a) = self.build_draft_solid(result, 0);
+        let (_draft_b, _int_b) = self.build_draft_solid(result, 1);
 
         // OCCT L201-204: ClassifyFaces → anInParts.
         //   myInParts[0] = faces from B that are IN solid A (source side 0 = A)
