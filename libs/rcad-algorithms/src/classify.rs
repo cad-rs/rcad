@@ -700,7 +700,34 @@ fn classify_with_single_ray(
         }
     }
 
-    // OCCT L276-278: if no valid face direction found → Faulty state
+    // OCCT L276-278: if no valid face direction found → Faulty state.
+    // OCCT retries via OtherSegment (L265) with a fixed direction.
+    // (rcad extension) Fixed-direction fallback along +X axis.
+    let fixed_dir = DVec3::X;
+    for &fi in solid_face_indices {
+        let result = ray_cast_classify_point_on_face(
+            point, fixed_dir, fi, ds, boundary_tol, ray_tol,
+        );
+        match result {
+            RayFaceResult::In => return Classification::In,
+            RayFaceResult::Out => return Classification::Out,
+            RayFaceResult::On => return Classification::On,
+            RayFaceResult::Faulty => continue,
+        }
+    }
+    // Last-resort: random direction (matching OCCT solid explorer retry).
+    let alt_dir = DVec3::new(0.0, 0.57735, 0.57735); // (0, 1/√3, 1/√3)
+    for &fi in solid_face_indices {
+        let result = ray_cast_classify_point_on_face(
+            point, alt_dir, fi, ds, boundary_tol, ray_tol,
+        );
+        match result {
+            RayFaceResult::In => return Classification::In,
+            RayFaceResult::Out => return Classification::Out,
+            RayFaceResult::On => return Classification::On,
+            RayFaceResult::Faulty => continue,
+        }
+    }
     Classification::Out
 }
 
