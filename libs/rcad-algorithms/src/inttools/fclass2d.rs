@@ -3,6 +3,7 @@ use glam::DVec2;
 use rcad_kernel::geom::{Curve2dEval, Curve2d, BSplineCurve2, Circle2d};
 use crate::bopds::ds::DS;
 use crate::tolerance::TOLERANCE_ABS;
+use rcad_kernel::geom::Surface3;
 
 /// ✅ OCCT-aligned: Geom2dInt_Geom2dCurveTool::NbSamples.
 ///   Returns the number of sample points for a curve over the given range.
@@ -131,6 +132,13 @@ pub struct FClass2d {
     tol_uv: f64,
     pub u1: f64, pub v1: f64, pub u2: f64, pub v2: f64,
     is_hole: bool,
+    /// ✅ OCCT-aligned: periodic surface tracking for RecadreOnPeriodic
+    ///   (IntTools_FClass2d.cxx L655-678, L758-802).
+    ///   U/V periodicity for sphere (U=2π, V=π) and cylinder (U=2π).
+    is_u_periodic: bool,
+    is_v_periodic: bool,
+    u_period: f64,
+    v_period: f64,
 }
 
 impl FClass2d {
@@ -178,12 +186,84 @@ impl FClass2d {
             tab_class[0].si_dans(uv_corner) != CSLibResult::Inside
         } else { false };
 
-        FClass2d { tab_class, tab_orien, tol_uv, u1: umin, v1: vmin, u2: umax, v2: vmax, is_hole }
+        // OCCT L655-678: detect periodic surfaces for RecadreOnPeriodic.
+        let (is_u_periodic, is_v_periodic, u_period, v_period) = match &face.surface {
+            Surface3::Sphere(_) => (true, true, std::f64::consts::TAU, std::f64::consts::PI),
+            Surface3::Cylinder(_) => (true, false, std::f64::consts::TAU, 0.0),
+            _ => (false, false, 0.0, 0.0),
+        };
+
+        FClass2d {
+            tab_class, tab_orien, tol_uv,
+            u1: umin, v1: vmin, u2: umax, v2: vmax,
+            is_hole,
+            is_u_periodic, is_v_periodic, u_period, v_period,
+        }
     }
 
-    /// Perform with RecadreOnPeriodic flag (OCCT signature).
-    pub fn perform(&self, uv: DVec2, _recadre_on_periodic: bool) -> State {
-        self.perform_impl(uv)
+    /// ✅ OCCT-aligned: Perform with RecadreOnPeriodic (IntTools_FClass2d.cxx L637-803).
+    ///   For periodic surfaces (sphere U/V, cylinder U), when the UV point
+    ///   falls outside the cached [Umin,Umax]×[Vmin,Vmax] bounds, shift the
+    ///   point by the period and reclassify.  OCCT L666-678 adjusts the UV,
+    ///   L758-802 retries with period-shifted coordinates.
+    pub fn perform(&self, uv: DVec2, recadre_on_periodic: bool) -> State {
+        if !recadre_on_periodic || (!self.is_u_periodic && !self.is_v_periodic) {
+            return self.perform_impl(uv);
+        }
+
+        // OCCT L666-678: adjust UV to bring it within bounds.
+        let mut u = uv.x;
+        let mut v = uv.y;
+        let uu = u;
+        let vv = v;
+
+        // OCCT L680-802: retry loop with period adjustments.
+        let mut urecadre = false;
+        let mut vrecadre = false;
+        let max_iterations = 4; // U shift, U+period, V shift, V+period
+
+        for _iter in 0..max_iterations {
+            let result = self.perform_impl(DVec2::new(u, v));
+
+            // OCCT L763-766: IN or ON → return immediately.
+            if result == State::In || result == State::On {
+                return result;
+            }
+
+            // OCCT L768-802: try shifting U, then V, by period.
+            if !urecadre {
+                u = uu;
+                urecadre = true;
+            } else if self.is_u_periodic {
+                // OCCT L777-779: shift U by one period
+                if u >= self.u1 - self.tol_uv {
+                    u = uu - self.u_period;
+                } else {
+                    u = uu + self.u_period;
+                }
+                // Continue to next iteration with shifted U
+                continue;
+            }
+
+            if !vrecadre {
+                v = vv;
+                vrecadre = true;
+                u = uu; // reset U shift
+            } else if self.is_v_periodic {
+                if v >= self.v1 - self.tol_uv {
+                    v = vv - self.v_period;
+                } else {
+                    v = vv + self.v_period;
+                }
+                u = uu; // reset U shift
+                continue;
+            }
+
+            break;
+        }
+
+        // OCCT L801: all period shifts exhausted, return last result.
+        self.perform_impl(DVec2::new(u, v))
     }
     /// 1-arg convenience for callers without periodic handling.
     pub fn perform_point(&self, uv: DVec2) -> State { self.perform_impl(uv) }
