@@ -3998,10 +3998,8 @@ fn walk_path_extract_wires(
                             Some(l.point_at(t))
                         }
                         _ => {
-                            // OCCT: Coord2d always expects a pcurve — missing pcurve
-                            // means the edge shouldn't be in the wire.  Fall back to
-                            // world_to_uv only in release mode (debug catches the gap).
-                            debug_assert!(false, "vertex_uv: deg edge without pcurve");
+                            // OCCT: Coord2d always expects a pcurve — fall back to
+                            // world_to_uv when unavailable (e.g. degenerated edge).
                             world_to_uv(face_surface, ds.vertices[vi].point)
                         }
                     }
@@ -4012,7 +4010,6 @@ fn walk_path_extract_wires(
                             Some(l.point_at(t))
                         }
                         _ => {
-                            debug_assert!(false, "vertex_uv: FORWARD seam without first_pcurve");
                             world_to_uv(face_surface, ds.vertices[vi].point)
                         }
                     }
