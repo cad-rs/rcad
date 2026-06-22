@@ -5001,13 +5001,6 @@ impl<'a> BooleanBuilder<'a> {
     ) -> Option<(Vec<WireSegment>, Vec<WireFace>, HashMap<usize, DVec3>)> {
         let ds = self.ds;
         let face = &ds.faces[face_idx];
-        let debug_pipe = std::env::var("RCAD_DEBUG_PIPELINE").is_ok();
-        let surf_name = || match &face.surface {
-            rcad_kernel::geom::Surface3::Plane(_) => "Plane",
-            rcad_kernel::geom::Surface3::Sphere(_) => "Sphere",
-            rcad_kernel::geom::Surface3::Cylinder(_) => "Cylinder",
-            _ => "Other",
-        };
         // ✅ OCCT-aligned: BuilderFace::Perform (BOPAlgo_BuilderFace.cxx L117-148).
         //   L121: GetReport()->Clear()
         //   L123-127: CheckData() → if HasErrors return
@@ -5096,19 +5089,9 @@ impl<'a> BooleanBuilder<'a> {
     ) -> Option<(Vec<WireSegment>, Vec<WireFace>, HashMap<usize, DVec3>)> {
         let ds = self.ds;
         let face = &ds.faces[face_idx];
-        let debug_pipe = std::env::var("RCAD_DEBUG_PIPELINE").is_ok();
-        let surf_name = || match &face.surface {
-            rcad_kernel::geom::Surface3::Plane(_) => "Plane",
-            rcad_kernel::geom::Surface3::Sphere(_) => "Sphere",
-            rcad_kernel::geom::Surface3::Cylinder(_) => "Cylinder",
-            _ => "Other",
-        };
         let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
         let mut segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
         if segments.is_empty() {
-            if debug_pipe {
-                eprintln!("[PIPE] fi={} {} (draft) → Gate A: segments empty", face_idx, surf_name());
-            }
             return None;
         }
 
@@ -5121,25 +5104,16 @@ impl<'a> BooleanBuilder<'a> {
             *vert_count.entry(seg.end_vertex).or_default() += 1;
         }
         if vert_count.values().any(|&c| c > 2) {
-            if debug_pipe {
-                eprintln!("[PIPE] fi={} {} → Gate E: multi-connected vertex", face_idx, surf_name());
-            }
             return None;
         }
 
         let (wires, internal_wires, vertex_positions) =
             build_closed_wires(&mut segments, ds, face_idx, &std::collections::HashSet::new());
         if wires.is_empty() && internal_wires.is_empty() {
-            if debug_pipe {
-                eprintln!("[PIPE] fi={} {} (draft) → Gate B: no wires", face_idx, surf_name());
-            }
             return None;
         }
         let wfs = perform_areas(&wires, &internal_wires, &segments, ds, &mut *self.context.borrow_mut(), face_idx);
         if wfs.is_empty() {
-            if debug_pipe {
-                eprintln!("[PIPE] fi={} {} (draft) → Gate C: wfs empty", face_idx, surf_name());
-            }
             return None;
         }
 
@@ -5521,7 +5495,6 @@ impl<'a> BooleanBuilder<'a> {
         a_faces: &[usize],
         b_faces: &[usize],
     ) {
-        let debug_pipe = std::env::var("RCAD_DEBUG_PIPELINE").is_ok();
 
         // OCCT L258-266: iterate all source shapes → filter TopAbs_FACE.
         for fi in 0..self.ds.faces.len() {

@@ -4017,14 +4017,11 @@ impl<'a> PaveFiller<'a> {
     fn intersect_plane_plane_faces(&mut self, f1: usize, f2: usize, p1: &Plane, p2: &Plane) {
         use inttools::pcurve_derive::line_pcurve_on_plane;
 
-        let debug_ff = (f1 == 4 && f2 == 8) || (f1 == 0 && f2 == 9);
 
         match inttools::plane_plane::intersect_plane_plane(p1, p2) {
             inttools::plane_plane::PlanePlaneResult::Parallel => {
-                if debug_ff { eprintln!("[PF_DBG]   PARALLEL"); }
             }
             inttools::plane_plane::PlanePlaneResult::Coincident => {
-                if debug_ff { eprintln!("[PF_DBG]   COINCIDENT"); }
                 self.handle_coplanar_faces(f1, f2, p1);
             }
             inttools::plane_plane::PlanePlaneResult::Line(line) => {
@@ -4315,10 +4312,6 @@ impl<'a> PaveFiller<'a> {
                 let (effective_t0, effective_t1) = (clipped[0], clipped[1]);
 
                 // ✅ OCCT-aligned: skip degenerate circle inflated from tangent point (OCCT IntPatch_Point handles single-point contact)
-                if std::env::var("RCAD_DEBUG_IC").is_ok() && circle.radius < 1e-4 {
-                    eprintln!("[IC_SMALL] face[{f1}]×[{f2}] radius={:.12} clipped=({:.6},{:.6}) center=({:.6},{:.6},{:.6})",
-                        circle.radius, clipped[0], clipped[1], circle.center.x, circle.center.y, circle.center.z);
-                }
                 if circle.radius <= TOLERANCE_MESH_LEGACY + TOLERANCE_ABS {
                     return;
                 }
@@ -4326,8 +4319,6 @@ impl<'a> PaveFiller<'a> {
                 //    IsValidBlockForFaces removes invalid blocks; rcad pre-filters when generating ICs.
                 let valid_arc = clipped_range.map(|r| r[1] - r[0]).unwrap_or(0.0);
                 if valid_arc <= TOLERANCE_ABS {
-                    eprintln!("[IC_SKIP] face[{f1}]×[{f2}] degenerate arc len={:.12} radius={:.12} center=({:.6},{:.6},{:.6})",
-                        valid_arc, circle.radius, circle.center.x, circle.center.y, circle.center.z);
                     return;
                 }
 
@@ -4349,11 +4340,6 @@ impl<'a> PaveFiller<'a> {
                 let (u_ax_p, v_ax_p) = crate::inttools::edge_face::plane_local_basis(plane);
                 let p_start = circle.center + circle.radius * (effective_t0.cos() * u_ax_p + effective_t0.sin() * v_ax_p);
                 let p_end = circle.center + circle.radius * (effective_t1.cos() * u_ax_p + effective_t1.sin() * v_ax_p);
-                if std::env::var("RCAD_DEBUG_IC").is_ok() {
-                    eprintln!("[IC_CREATE] f[{f1}]×[{f2}] t=[{:.6},{:.6}] r={:.6} p_start=({:.6},{:.6},{:.6}) p_end=({:.6},{:.6},{:.6})",
-                        effective_t0, effective_t1, circle.radius,
-                        p_start.x, p_start.y, p_start.z, p_end.x, p_end.y, p_end.z);
-                }
                 if p_start.distance_squared(p_end) < TOLERANCE_ABS_SQ {
                     return;
                 }
@@ -4379,12 +4365,6 @@ impl<'a> PaveFiller<'a> {
                 }
                 if v_end < self.ds.vertices.len() {
                     self.ds.vertices[v_end].geom_tol = self.ds.vertices[v_end].geom_tol.max(parent_tol);
-                }
-                if std::env::var("RCAD_DEBUG_IC").is_ok() {
-                    eprintln!("[IC_VERTICES] f1={} f2={} t_range=[{:.6},{:.6}] v_start={} pt=({:.6},{:.6},{:.6}) v_end={} pt=({:.6},{:.6},{:.6})",
-                        f1, f2, effective_t0, effective_t1,
-                        v_start, p_start.x, p_start.y, p_start.z,
-                        v_end, p_end.x, p_end.y, p_end.z);
                 }
 
                 let curve_idx = self.ds.intersection_curves.len();
@@ -6609,10 +6589,6 @@ impl<'a> PaveFiller<'a> {
         // No BSpline demotion — BSpline surfaces stay as parametric (ts=0) and use UV grid marching.
         let any_curved = !matches!(&s1, Surface3::Plane(_)) || !matches!(&s2, Surface3::Plane(_));
         if any_curved {
-            if std::env::var("RCAD_DEBUG_IC").is_ok() {
-                eprintln!("[MARCH] f1={} f2={} s1={:?} s2={:?}", f1, f2,
-                    std::mem::discriminant(&s1), std::mem::discriminant(&s2));
-            }
             let char_len = |s: &Surface3| -> f64 {
                 match s {
                     Surface3::Sphere(sp) => sp.radius,
@@ -6889,9 +6865,6 @@ impl<'a> PaveFiller<'a> {
         // ✅ OCCT-aligned:reApprox — fallback with looser validation.
         // Skip the self-intersection check (is_curve_valid_2d) since polyline
         // pcurves from marching can have V-folds that are geometrically correct.
-        if std::env::var("RCAD_DEBUG_IC").is_ok() {
-            eprintln!("[REAPPROX] f1={} f2={} re-validating with loose check", f1, f2);
-        }
         let valid_a2 = pca.as_ref().map_or(false, |pc| {
             inttools::pcurve_derive::check_pcurve_in_face(pc, *t_range, uv_bounds1, u_per1, None)
         });
