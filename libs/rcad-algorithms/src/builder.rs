@@ -5868,34 +5868,118 @@ impl<'a> BooleanBuilder<'a> {
     ///   Results stored in myImages[source_solid] → list of split solids
     ///   (L545-618) and myOrigins[split_solid] → source solid.
     ///
-    /// rcad: groups shells by (origin, state) where origin is the source side
-    ///   (0=A, 1=B) and state (IN/OUT) is computed from per-face classification
-    ///   in fill_in_3d_parts.  One group = one solid = Vec of shell indices.
-    ///   Stores solid-level mapping in my_solid_images / my_solid_origins
-    ///   matching OCCT myImages[solid] / myOrigins[solid] pattern.
-    fn build_split_solids(&self, _result: &ResultBuilder,
-                          _assignments: &[(usize, usize, &'static str)]) -> Vec<Vec<usize>> {
-        use std::collections::BTreeMap;
+    /// rcad: groups shells by (origin, state), then runs face-connectivity
+    ///   analysis (BFS over shared edges) to detect disconnected components.
+    ///   Each connected face set becomes one solid.  This matches OCCT's
+    ///   BOPAlgo_BuilderSolid which groups faces into closed shells by
+    ///   edge adjacency (non-connected components → separate solids).
+    ///   Stores solid-level mapping in my_solid_images / my_solid_origins.
+    fn build_split_solids(&self, result: &ResultBuilder,
+                          assignments: &[(usize, usize, &'static str)]) -> Vec<Vec<usize>> {
+        use std::collections::{BTreeMap, VecDeque, HashSet};
+        // OCCT L449-475: group shells by (source, state) into candidate solids.
         let mut solid_map: BTreeMap<(usize, &'static str), Vec<usize>> = BTreeMap::new();
-        for &(si, origin, state) in _assignments {
+        for &(si, origin, state) in assignments {
             solid_map.entry((origin, state)).or_default().push(si);
         }
 
-        // OCCT L545-618: store split solids in myImages[source_solid] and
-        // myOrigins[split_solid].  rcad: store per-source-side solid indexing.
+        // OCCT L477-528: BOPAlgo_BuilderSolid rebuilds solids from face sets.
+        //   rcad: face-connectivity BFS per solid group + disconnect splitting.
         let mut solid_images = self.my_solid_images.borrow_mut();
         let mut solid_origins = self.my_solid_origins.borrow_mut();
         solid_images.clear();
         solid_origins.clear();
 
-        let mut result_solids: Vec<Vec<usize>> = Vec::with_capacity(solid_map.len());
+        let mut result_solids: Vec<Vec<usize>> = Vec::new();
         for ((origin, _state), shells) in solid_map {
-            let si = result_solids.len();
-            result_solids.push(shells);
-            // my_solid_images: source side (0=A, 1=B) → result solid index
-            solid_images.entry(origin).or_default().push(si);
-            // my_solid_origins: result solid index → source side
-            solid_origins.entry(si).or_default().push(origin);
+            // Collect all face indices for this (origin, state) group.
+            let mut group_faces: Vec<usize> = Vec::new();
+            for &si in &shells {
+                if si < result.shells.len() {
+                    group_faces.extend(&result.shells[si]);
+                }
+            }
+            if group_faces.is_empty() {
+                continue;
+            }
+
+            // OCCT BOPAlgo_BuilderSolid::Perform: connectivity analysis.
+            //   Build edge→face adjacency from the result faces' edge lists.
+            //   Two faces are connected if they share at least one edge index.
+            let mut edge_to_faces: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+            for &fi in &group_faces {
+                if fi >= result.faces.len() { continue; }
+                let outer = &result.faces[fi].0;
+                for &(ei, _) in outer {
+                    edge_to_faces.entry(ei).or_default().push(fi);
+                }
+            }
+
+            // BFS over faces: start from unvisited face, traverse connected
+            // faces via shared edges, collect one connected component per BFS.
+            let mut visited: HashSet<usize> = HashSet::new();
+            let group_set: HashSet<usize> = group_faces.iter().copied().collect();
+            let mut remaining: HashSet<usize> = group_set.clone();
+
+            while !remaining.is_empty() {
+                // Start BFS from an arbitrary remaining face.
+                let start = *remaining.iter().next().unwrap();
+                let mut component: Vec<usize> = Vec::new();
+                let mut queue: VecDeque<usize> = VecDeque::new();
+                visited.insert(start);
+                queue.push_back(start);
+                remaining.remove(&start);
+                component.push(start);
+
+                while let Some(fi) = queue.pop_front() {
+                    // Get all edges of this face
+                    let edges = if fi < result.faces.len() {
+                        let outer: Vec<usize> = result.faces[fi].0.iter().map(|&(ei, _)| ei).collect();
+                        let inner: Vec<usize> = result.faces[fi].1.iter()
+                            .flat_map(|iw| iw.iter().map(|&(ei, _)| ei)).collect();
+                        [outer, inner].concat()
+                    } else {
+                        continue;
+                    };
+
+                    // Traverse to adjacent faces through shared edges
+                    for &ei in &edges {
+                        if let Some(adj_faces) = edge_to_faces.get(&ei) {
+                            for &adj_fi in adj_faces {
+                                if adj_fi < result.faces.len() && visited.insert(adj_fi) {
+                                    remaining.remove(&adj_fi);
+                                    queue.push_back(adj_fi);
+                                    component.push(adj_fi);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if component.len() >= 3 {
+                    // Found a valid connected component → find which original
+                    // shells contain these faces, use those shell indices for
+                    // the new solid (BOPAlgo_BuilderSolid groups faces into
+                    // closed shells; rcad shells are already closed).
+                    let comp_set: HashSet<usize> = component.iter().copied().collect();
+                    let mut comp_shells: Vec<usize> = Vec::new();
+                    for (local_si, &si) in shells.iter().enumerate() {
+                        if si < result.shells.len() {
+                            let has_face = result.shells[si].iter()
+                                .any(|&fi| comp_set.contains(&fi));
+                            if has_face {
+                                comp_shells.push(si);
+                            }
+                        }
+                    }
+                    if !comp_shells.is_empty() {
+                        let si = result_solids.len();
+                        result_solids.push(comp_shells);
+                        solid_images.entry(origin).or_default().push(si);
+                        solid_origins.entry(si).or_default().push(origin);
+                    }
+                }
+            }
         }
         result_solids
     }
