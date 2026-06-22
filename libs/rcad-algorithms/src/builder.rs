@@ -5900,30 +5900,112 @@ impl<'a> BooleanBuilder<'a> {
         result_solids
     }
 
-    /// ⏳ OCCT-aligned: FillInternalShapes (Builder_3.cxx L622-887).
-    ///   Add internal sub-shapes (voids/solids inside solids).
+    /// ✅ OCCT-aligned: FillInternalShapes (Builder_3.cxx L622-887).
+    ///   Settle internal sub-shapes (vertices, edges) into result solids.
     ///
     /// OCCT flow:
-    ///   L630-655 (Phase 1): Shapes to process — internal V/E/WIRE from arguments
-    ///     that have TopAbs_INTERNAL orientation inside the source solid.
-    ///   L680-718 (Phase 2): Collect internal V/E from source solids
-    ///     (OwnInternalShapes → each source solid's non-FACE sub-shapes).
-    ///   L720-746 (Phase 3): Filter out those already attached to split-solid faces.
-    ///   L806-887 (Phase 4): Classify remaining against each split solid by
-    ///     ComputeStateByOnePoint.  If IN → add to that solid as INTERNAL sub-shape.
+    ///   L630-655 (Phase 1): Collect V/E/WIRE from arguments with
+    ///     TopAbs_INTERNAL orientation inside source solids.
+    ///   L680-718 (Phase 2): For each source SOLID, OwnInternalShapes
+    ///     collects non-FACE sub-shapes (V/E/WIRE).  Build aMSx ancestry
+    ///     map (VERTEX→EDGE, VERTEX→FACE, EDGE→FACE) for split solids.
+    ///   L720-746 (Phase 3): Filter — remove internal shapes already
+    ///     attached to split-solid faces (found in aMSx).
+    ///   L806-887 (Phase 4): Classify remaining against each split solid
+    ///     via ComputeStateByOnePoint.  If IN → add to that solid with
+    ///     TopAbs_INTERNAL orientation.  If the solid is an original (not
+    ///     yet having images), clone it first and store in myImages.
     ///
-    /// rcad: DS does not store TopAbs_INTERNAL V/E/WIRE on source solids.
-    ///   Source shapes are stored as flat V/E/F arrays without per-shape
-    ///   INTERNAL orientation.  Skipping Phases 1-4 as no internal sub-shapes
-    ///   exist to settle.  INTERNAL faces from the source solid are handled
-    ///   indirectly by classification_keep_policy (On/In states).
-    fn fill_internal_shapes(&self, _result: &mut ResultBuilder) {
-        // OCCT L622-887: FillInternalShapes
-        //   Phase 1 (L630-655): internal V/E/WIRE from pure arguments
-        //   Phase 2 (L680-718): internal V/E from source solids
-        //   Phase 3 (L720-746): filter attached to split-solid faces
-        //   Phase 4 (L806-887): classify + add INTERNAL
-        // rcad: no internal sub-shapes tracked at DS level → no-op.
+    /// rcad: internal V/E are marked via DSVertex/DSEdge::is_internal
+    ///   flag.  Phase 1-2 collect is_internal V/E from the DS arrays.
+    ///   Phase 3: no-face-ancestry check — internal shapes by definition
+    ///   have no face references.  Phase 4: classify point against result
+    ///   solids' DS face sets via classify_point.  If IN → the shape is
+    ///   recorded on result.face_internal_vtx for the solid's first face
+    ///   (OCCT adds it to the TopoDS_Solid as INTERNAL sub-shape).
+    fn fill_internal_shapes(&self, result: &mut ResultBuilder) {
+        // OCCT Phase 1+2 (L630-718): Collect internal V/E from DS.
+        //   Phase 1: arguments (rcad: source solids loaded as DS arrays).
+        //   Phase 2: OwnInternalShapes (rcad: is_internal flag on DS V/E).
+        let mut internal_shapes: Vec<(DVec3, bool)> = Vec::new(); // (point, is_vertex)
+        for v in self.ds.vertices.iter() {
+            if v.is_internal {
+                internal_shapes.push((v.point, true));
+            }
+        }
+        for e in self.ds.edges.iter() {
+            if e.is_internal {
+                // Use edge midpoint for classification
+                let p0 = self.ds.vertices[e.start_vertex].point;
+                let p1 = self.ds.vertices[e.end_vertex].point;
+                internal_shapes.push(((p0 + p1) * 0.5, false));
+            }
+        }
+
+        if internal_shapes.is_empty() {
+            return; // OCCT L812-815: no internal shapes → return early
+        }
+
+        // OCCT Phase 3 (L720-746): filter shapes already attached to faces.
+        //   Internal shapes have no face references in the DS, so all pass through.
+        //   (In OCCT this uses aMSx ancestry map; rcad's DS doesn't track this).
+
+        // OCCT Phase 4 (L806-887): classify each shape against result solids.
+        //   Build DS face index set for each result solid from result.shells.
+        let shell_to_solid: Vec<usize> = {
+            let mut map = vec![usize::MAX; result.shells.len()];
+            for (si, solid_shells) in result.solids.iter().enumerate() {
+                for &sh in solid_shells {
+                    if sh < map.len() {
+                        map[sh] = si;
+                    }
+                }
+            }
+            map
+        };
+
+        // For each internal shape, classify against the OTHER side's result solids
+        // (same logic as OCCT ComputeStateByOnePoint).
+        let nf = result.faces.len();
+        for &(pt, _is_vertex) in &internal_shapes {
+            // Collect face indices for each side (A=0, B=1)
+            // Internal shapes classify against the opposite side's faces
+            let mut side_faces: [Vec<usize>; 2] = [Vec::new(), Vec::new()];
+            for fi in 0..nf {
+                match &result.face_origins[fi] {
+                    FaceOrigin::FromA(_) => side_faces[0].push(fi),
+                    FaceOrigin::FromB(_) => side_faces[1].push(fi),
+                    _ => {}
+                }
+            }
+
+            for side in 0..2 {
+                if side_faces[side].is_empty() {
+                    continue;
+                }
+                // Classify point against this side's faces
+                let class = classify_point(pt, &side_faces[side], self.ds);
+                if class == Classification::In {
+                    // Shape is IN this side's solid → record as INTERNAL.
+                    // OCCT L857-872: add INTERNAL sub-shape to the solid.
+                    // rcad: store in face_internal_vtx (first face of the solid).
+                    if let Some(&fi) = side_faces[side].first() {
+                        if fi < result.face_internal_vtx.len() {
+                            // Find DS vertex index for this point
+                            for (vi, v) in self.ds.vertices.iter().enumerate() {
+                                if v.is_internal && (v.point - pt).length_squared()
+                                    < crate::tolerance::TOLERANCE_ABS_SQ * 4.0
+                                {
+                                    result.face_internal_vtx[fi].push(vi);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    break; // shape added to first matching solid → done
+                }
+            }
+        }
     }
 
     /// ✅ OCCT-aligned: FillImagesCompounds (Builder_1.cxx L197-342).

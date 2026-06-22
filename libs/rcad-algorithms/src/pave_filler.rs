@@ -2438,6 +2438,7 @@ impl<'a> PaveFiller<'a> {
                                     let vi = self.ds.vertices.len();
                                     self.ds.vertices.push(crate::bopds::ds::DSVertex {
                                         point: pt, geom_tol: TOLERANCE_ABS, origin: None,
+                                        is_internal: false,
                                     });
                                     vi
                                 });
@@ -7410,6 +7411,7 @@ impl<'a> PaveFiller<'a> {
                 paves: vec![],
                 pave_blocks: vec![],
                 face_reps: data.face_reps.clone(),
+                is_internal: false,
             });
 
             // Track for pave_blocks assignment on source edge

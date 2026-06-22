@@ -363,6 +363,7 @@ mod tests {
                 },
             )],
             face_reps: vec![],
+            is_internal: false,
         });
 
         let old_global_len = ds.pave_blocks.len();

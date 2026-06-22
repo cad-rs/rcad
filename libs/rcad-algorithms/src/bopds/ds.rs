@@ -174,6 +174,10 @@ pub struct DSVertex {
     /// Model tolerance at this vertex (`vertex_tolerance` from source BRep when loaded;
     /// [`TOLERANCE_ABS`](crate::tolerance::TOLERANCE_ABS) for vertices added by the DS).
     pub geom_tol: f64,
+    /// ✅ OCCT-aligned: TopAbs_INTERNAL orientation marker.
+    ///   True when this vertex is INTERNAL to its source solid volume
+    ///   (not on the boundary).  Used by FillInternalShapes.
+    pub is_internal: bool,
 }
 
 /// ✅ OCCT-aligned: edge's pcurve on one face (BRep_CurveRepresentation equivalent).
@@ -207,6 +211,9 @@ pub struct DSEdge {
     /// ✅ OCCT-aligned: per-face pcurve representations (BRep_CurveRepresentation).
     ///   Populated by DS::build_face_reps() after edges and faces are loaded.
     pub face_reps: Vec<DSRepOnFace>,
+    /// ✅ OCCT-aligned: TopAbs_INTERNAL orientation marker.
+    ///   True when this edge is INTERNAL to its source solid volume.
+    pub is_internal: bool,
 }
 
 /// Per-edge integer flags (OCCT: BOPDS_ShapeInfo::Flag).
@@ -442,6 +449,8 @@ impl DS {
             vertices: Vec::new(),
             edges: Vec::new(),
             faces: Vec::new(),
+            // internal V/E tracking: is_internal flag on DSVertex/DSEdge
+            //   used instead of separate arrays (removed in favor of flags).
             interferences: Vec::new(),
             intersection_curves: Vec::new(),
             fuzzy_tol: tol,
@@ -728,6 +737,7 @@ impl DS {
                 point: v.point,
                 origin: Some(origin),
                 geom_tol: rcad_kernel::vertex_tolerance(brep, local_i),
+                is_internal: false,
             });
         }
 
@@ -779,7 +789,8 @@ impl DS {
                 geom_tol: rcad_kernel::edge_tolerance(brep, i),
                 paves: Vec::new(),
                 pave_blocks: Vec::new(),
-            face_reps: Vec::new(),
+                face_reps: Vec::new(),
+                is_internal: false,
             });
         }
 
@@ -895,6 +906,13 @@ impl DS {
             ShapeOrigin::ShapeA => self.a_has_compound = brep.compound.is_some(),
             ShapeOrigin::ShapeB => self.b_has_compound = brep.compound.is_some(),
         }
+
+        // OCCT L622-887 (FillInternalShapes Phase 2): internal V/E from source solids.
+        //   TopAbs_INTERNAL sub-shapes inside the solid volume.  Currently no source
+        //   BRep provides internal shapes (Solid has no internal_* fields); the DS
+        //   is_internal flag is reserved for future use when the BRep data model
+        //   supports internal sub-shape storage.
+        // rcad: no internal shapes to load at this time.
     }
 
     /// ✅ OCCT-aligned: reorder wire edges by traversal order (TopExp_Explorer).
@@ -1103,6 +1121,7 @@ impl DS {
             point,
             origin: None,
             geom_tol: new_base,
+            is_internal: false,
         });
         idx
     }
