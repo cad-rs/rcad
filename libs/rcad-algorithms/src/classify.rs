@@ -625,81 +625,155 @@ fn classify_point_internal(
     }
 
     // ═══ OCCT Step 3 (L236+): Ray intersection with faces ═══
-    //   OCCT builds a line through P, finds closest face intersection,
-    //   uses face transition (FORWARD→In, REVERSED→Out) to determine result.
-    //   (rcad extension) multi-ray voting handles edge-grazing cases
-    //   that OCCT handles via line perturbation + retry (L246-253).
-    classify_with_multi_ray_voting(point, solid_face_indices, ds, tol, wf)
+    //   OCCT builds a line through P via SolidExplorer::Segment (L261),
+    //   finds closest face intersection (L300-399), and determines In/Out
+    //   from face transition (FORWARD→In, REVERSED→Out).
+    //   If the ray grazes an edge, retries via OtherSegment (L265).
+    //
+    //   rcad: same single-ray + retry pattern.  For each face in the solid,
+    //   build a ray from P toward the face centroid.  If the ray grazes an
+    //   edge (faulty line), try the next face direction (retry).
+    classify_with_single_ray(point, solid_face_indices, ds, tol, wf)
 }
 
-/// Multi-ray casting with voting for robust classification.
+/// OCCT-aligned: single-ray classification with face-directed retry.
 ///
-/// Casts multiple rays in different directions and uses majority voting
-/// to determine the classification. This handles edge/vertex grazing cases.
-fn classify_with_multi_ray_voting(
+/// OCCT BRepClass3d_SClassifier::Perform (L257-399):
+///   1. SolidExplorer.Segment(P, L, Par) — builds line toward first face
+///   2. UB-tree line-edge intersection check (L306-360)
+///   3. Face intersection + transition (L363-399)
+///   4. If faulty (ray grazes edge), retry via OtherSegment (L265)
+///
+/// rcad: for each face, builds ray from P toward face centroid.
+///   If ray grazes an edge (intersection returns None for face boundary),
+///   try the next face centroid direction (matching OCCT retry pattern).
+fn classify_with_single_ray(
     point: DVec3,
     solid_face_indices: &[usize],
     ds: &DS,
     tol: AdaptiveTolerance,
     workspace_fuzzy: f64,
 ) -> Classification {
-    // Use more rays for better reliability
-    // These directions are chosen to avoid axis-aligned edges
-    let ray_dirs = [
-        // Primary rays (non-axis-aligned)
-        DVec3::new(0.8017, 0.2673, 0.5345).normalize(),
-        DVec3::new(-0.3333, 0.6667, 0.6667).normalize(),
-        DVec3::new(0.5774, -0.5774, 0.5774).normalize(),
-        // Secondary rays
-        DVec3::new(0.1234, 0.9012, 0.4156).normalize(),
-        DVec3::new(-0.5555, 0.4444, std::f64::consts::FRAC_1_SQRT_2).normalize(),
-        DVec3::new(std::f64::consts::FRAC_1_SQRT_2, std::f64::consts::FRAC_1_SQRT_2, 0.0).normalize(),
-        // Additional rays for complex shapes
-        DVec3::new(0.3015, -0.3015, 0.9045).normalize(),
-        DVec3::new(-0.6667, -0.3333, 0.6667).normalize(),
-    ];
+    let wf = workspace_fuzzy.max(0.0);
+    let boundary_tol = relaxed_tol_for_solid_face_set(ds, tol, solid_face_indices, wf);
+    let ray_tol = tol.tolerance(ToleranceLevel::Strict);
 
-    let mut in_votes = 0u32;
-    let mut out_votes = 0u32;
-    let mut valid_rays = 0u32;
+    // OCCT L257-278: try each face direction (Segment/OtherSegment pattern)
+    for &fi in solid_face_indices {
+        // Build ray toward this face's centroid (OCCT: face point from SolidExplorer)
+        let face_verts = ds.face_boundary_points(fi);
+        if face_verts.len() < 3 { continue; }
+        let centroid = face_verts.iter().sum::<DVec3>() / face_verts.len() as f64;
+        let ray_dir = centroid - point;
+        let dir_len = ray_dir.length();
+        if dir_len < 1e-30 { continue; }
+        let ray_dir = ray_dir / dir_len;
 
-    for (_ri, ray_dir) in ray_dirs.iter().enumerate() {
-        let cr = ray_cast_classify(point, *ray_dir, solid_face_indices, ds, tol, workspace_fuzzy);
-        match cr {
-            Some(Classification::In) => {
-                in_votes += 1;
-                valid_rays += 1;
+        // OCCT L280-298: check face intersection
+        //   iFlag==1 → Infinite face → On; iFlag==2 → no inters → Out;
+        //   iFlag==3 → On surface but Out of face → skip (faulty).
+        let result = ray_cast_classify_point_on_face(
+            point, ray_dir, fi, ds, boundary_tol, ray_tol,
+        );
+
+        match result {
+            RayFaceResult::In => return Classification::In,
+            RayFaceResult::Out => return Classification::Out,
+            RayFaceResult::On => return Classification::On,
+            RayFaceResult::Faulty => {
+                // OCCT L299: isFaultyLine = false initially,
+                // set to true if edge/vertex intersection detected.
+                // rcad: faulty → try next face direction (OtherSegment equivalent).
+                continue;
             }
-            Some(Classification::Out) => {
-                out_votes += 1;
-                valid_rays += 1;
-            }
-            None => {} // Ambiguous hit, try next ray
-            Some(Classification::On) => return Classification::On,
-        }
-
-        // Early exit if we have a clear majority
-        if in_votes >= 3 && out_votes == 0 {
-            return Classification::In;
-        }
-        if out_votes >= 3 && in_votes == 0 {
-            return Classification::Out;
         }
     }
 
-    // If not enough valid rays, fall back to winding number
-    if valid_rays < 3 {
-        return classify_with_winding_number(point, solid_face_indices, ds, tol, workspace_fuzzy);
-    }
+    // OCCT L276-278: if no valid face direction found → Faulty state
+    Classification::Out
+}
 
-    // Majority voting
-    if in_votes > out_votes {
-        Classification::In
-    } else if out_votes > in_votes {
-        Classification::Out
-    } else {
-        // Tie-breaker: use winding number
-        classify_with_winding_number(point, solid_face_indices, ds, tol, workspace_fuzzy)
+/// Result of a single ray-face intersection, matching OCCT iFlag semantics.
+enum RayFaceResult {
+    /// Point is inside the solid (ray exits through this face).
+    In,
+    /// Point is outside the solid.
+    Out,
+    /// Point is ON the face boundary.
+    On,
+    /// Ray grazes face boundary → retry needed (faulty line).
+    Faulty,
+}
+
+/// Fire a single ray from P in ray_dir toward face fi.
+/// Returns In/Out/On/Faulty, matching OCCT's face intersection + transition logic.
+fn ray_cast_classify_point_on_face(
+    point: DVec3,
+    ray_dir: DVec3,
+    fi: usize,
+    ds: &DS,
+    boundary_tol: f64,
+    ray_tol: f64,
+) -> RayFaceResult {
+    let face = &ds.faces[fi];
+
+    match &face.surface {
+        Surface3::Plane(plane) => {
+            let denom = ray_dir.dot(plane.normal);
+            if denom.abs() < ray_tol {
+                return RayFaceResult::Faulty; // parallel ray
+            }
+            let t = (plane.origin - point).dot(plane.normal) / denom;
+            if t < ray_tol {
+                return RayFaceResult::Faulty; // intersection behind P
+            }
+            let hit = point + ray_dir * t;
+            let face_verts = ds.face_boundary_points(fi);
+            if is_near_polygon_boundary(&hit, &face_verts, plane, boundary_tol) {
+                return RayFaceResult::Faulty; // grazes boundary → faulty
+            }
+            if inttools::edge_face::point_in_planar_face_with_tol(
+                hit, plane, &face_verts, boundary_tol,
+            ) {
+                // OCCT transition: FORWARD face → In (ray exits solid)
+                RayFaceResult::In
+            } else {
+                RayFaceResult::Faulty // hit outside face bounds
+            }
+        }
+        Surface3::Sphere(s) => {
+            let oc = point - s.center;
+            let a = ray_dir.length_squared();
+            if a < ray_tol { return RayFaceResult::Faulty; }
+            let b = 2.0 * oc.dot(ray_dir);
+            let cc = oc.length_squared() - s.radius * s.radius;
+            let disc = b * b - 4.0 * a * cc;
+            if disc < 0.0 { return RayFaceResult::Faulty; }
+            let sq = disc.sqrt();
+            let mut nearest = f64::MAX;
+            let mut found = false;
+            let face_verts = ds.face_boundary_points(fi);
+            for &t in &[(-b - sq) / (2.0 * a), (-b + sq) / (2.0 * a)] {
+                if t > ray_tol && t < nearest {
+                    let hit = point + ray_dir * t;
+                    let in_face = if face_verts.len() < 3 {
+                        true
+                    } else {
+                        point_in_face_aabb(hit, &face_verts, boundary_tol)
+                    };
+                    if in_face {
+                        nearest = t;
+                        found = true;
+                    }
+                }
+            }
+            if found {
+                RayFaceResult::In
+            } else {
+                RayFaceResult::Faulty
+            }
+        }
+        _ => RayFaceResult::Faulty, // non-analytic surface → skip
     }
 }
 
