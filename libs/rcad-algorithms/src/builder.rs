@@ -5668,36 +5668,34 @@ impl<'a> BooleanBuilder<'a> {
         //   FF filter would skip faces without interferences.
 
         // ── Edge-set signature per face (OCCT BOPTools_Set ──
-        // OCCT L689-741: BOPTools_Set uses edge identity WITH orientation
-        // (TopoDS_Edge handles encode orientation).  rcad uses geometric
-        // edge matching: the quantized positions of the two endpoint vertices
-        // (sorted for direction independence).  This makes geometrically
-        // identical edges from A and B share the same key even when their
-        // edge indices differ (OCCT alignment, see handover 2026-06-22).
-        let face_edge_set: Vec<Vec<u64>> = (0..nf)
+        // OCCT L689-741: BOPTools_Set uses TopoDS_Edge identity.
+        // rcad: use edge index ei directly (add_edge already deduplicates
+        // by vertex pair, making ei a stable identity).  Exclude degenerate
+        // edges (matching OCCT's BRep_Tool::Degenerated skip).
+        let face_edge_set: Vec<Vec<usize>> = (0..nf)
             .map(|fi| {
                 let entry = &result.faces[fi];
-                let collect_geo_keys = |edges: &[(usize, bool)]| -> Vec<u64> {
+                let collect_ids = |edges: &[(usize, bool)]| -> Vec<usize> {
                     edges.iter()
                         .filter(|(ei, _)| !result.deg_edge_indices.contains(ei))
-                        .map(|&(ei, _)| result.edge_geo_key(ei))
+                        .map(|&(ei, _)| ei)
                         .collect()
                 };
-                let mut keys: Vec<u64> = collect_geo_keys(&entry.0);
+                let mut ids: Vec<usize> = collect_ids(&entry.0);
                 for iw_es in &entry.1 {
-                    keys.extend(collect_geo_keys(iw_es));
+                    ids.extend(collect_ids(iw_es));
                 }
                 for iw_es in &entry.9 {
-                    keys.extend(collect_geo_keys(iw_es));
+                    ids.extend(collect_ids(iw_es));
                 }
-                keys.sort_unstable();
-                keys.dedup();
-                keys
+                ids.sort_unstable();
+                ids.dedup();
+                ids
             })
             .collect();
 
         // ── Group by edge-set signature ──
-        let mut groups: std::collections::BTreeMap<Vec<u64>, Vec<usize>> =
+        let mut groups: std::collections::BTreeMap<Vec<usize>, Vec<usize>> =
             std::collections::BTreeMap::new();
         for fi in 0..nf {
             if face_edge_set[fi].is_empty() { continue; }
