@@ -2876,6 +2876,10 @@ fn physical_edge_id(seg: &WireSegment, vi_to_canon: &[usize], ds: &DS) -> (u8, u
     (tag, idx, lo, hi)
 }
 
+/// ✅ OCCT-aligned: WireSplitter / PerformLoops (BOPAlgo_WireSplitter).
+///   OCCT BOPAlgo_WireSplitter organizes edges into ordered closed wires
+///   by tracing 2D pcurves.  rcad: SmartMap-based edge-to-wire assembly
+///   using canonical vertex indices and canonicalized edge connectivity.
 pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_idx: usize, avoided: &std::collections::HashSet<usize>) -> (Vec<Vec<usize>>, Vec<Vec<usize>>, HashMap<usize, DVec3>) {
     if segments.is_empty() {
         return (vec![], vec![], HashMap::new());
