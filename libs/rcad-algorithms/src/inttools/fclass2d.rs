@@ -1,23 +1,74 @@
 /// ✅ OCCT-aligned: 2D point-in-polygon with [0,1] normalization (CSLib_Class2d).
 use glam::DVec2;
-use rcad_kernel::geom::Curve2dEval;
+use rcad_kernel::geom::{Curve2dEval, Curve2d, BSplineCurve2, Circle2d};
 use crate::bopds::ds::DS;
 use crate::tolerance::TOLERANCE_ABS;
 
-/// Collect UV boundary points for a list of edges on the given face.
+/// ✅ OCCT-aligned: Geom2dInt_Geom2dCurveTool::NbSamples.
+///   Returns the number of sample points for a curve over the given range.
+///   OCCT: for lines nbs=2, for circles based on angle step (eps=0.01),
+///   for BSpline nbs=NbKnots*Degree scaled by range ratio.
+///   In IntTools_FClass2d Init, non-linear curves get nbs *= 4 oversampling.
+fn curve2d_nb_samples(curve: &Curve2d, t0: f64, t1: f64) -> usize {
+    let range_len = (t1 - t0).abs();
+    if range_len < 1e-30 { return 2; }
+    let nbs = match curve {
+        Curve2d::Line(_) => 2,
+        Curve2d::Circle(c) => {
+            // OCCT: angle step = 2*acos(1 - eps) ≈ 0.283 rad for eps=0.01, R=1
+            //   For larger R, more points needed: n = range / angle_step
+            let r = c.radius.abs().max(1.0);
+            let eps = 0.01;
+            let angle_step = 2.0 * (1.0 - (eps / r).clamp(0.0, 1.0)).acos().max(1e-6);
+            let n = (range_len / angle_step).ceil() as usize;
+            n.max(15) // OCCT baseline for Circle
+        }
+        Curve2d::BSpline(bsp) => {
+            // OCCT L32-48: nbs = NbKnots * Degree, scaled by range ratio
+            let full_range = bsp.knots.last().unwrap_or(&1.0) - bsp.knots.first().unwrap_or(&0.0);
+            let scale = if full_range.abs() > 1e-30 { range_len / full_range } else { 1.0 };
+            let n = (bsp.knots.len() * bsp.degree).max(4);
+            let n_scaled = (n as f64 * scale).ceil() as usize;
+            n_scaled.max(bsp.degree + 1).max(4)
+        }
+        Curve2d::Bezier(bz) => {
+            // OCCT: Bezier treated like BSpline, degree+1 base points
+            (bz.control_points.len() * 2).max(4)
+        }
+        _ => 20, // OCCT default for other curve types (Ellipse, etc.)
+    };
+    // OCCT L232-233: if nbs > 2, nbs *= 4 (4x oversampling for non-linear)
+    if nbs > 2 { nbs * 4 } else { nbs }
+}
+
+/// ✅ OCCT-aligned: collect UV boundary points with adaptive sampling.
+///   OCCT IntTools_FClass2d::Init (L77-420) samples each edge at NbSamples
+///   intervals, tracks chordal deflection (FlecheU/FlecheV) and stores
+///   first/last derivatives for edge junction continuity.
+///   rcad: uses curve2d_nb_samples for per-edge sample count matching OCCT.
 fn collect_wire_uv(ds: &DS, face_idx: usize, edges: &[(usize, bool)]) -> Vec<DVec2> {
     let mut pts: Vec<DVec2> = Vec::new();
     for &(ei, fwd) in edges {
         if let Some(rep) = ds.edge_on_face(ei, face_idx) {
             let t0 = if fwd { rep.start_param } else { rep.end_param };
             let t1 = if fwd { rep.end_param } else { rep.start_param };
-            pts.push(rep.pcurve.point_at(t0));
-            let mid = rep.pcurve.point_at((t0 + t1) * 0.5);
-            let last = *pts.last().unwrap_or(&mid);
-            if (mid - last).length_squared() > 1e-20 {
-                pts.push(mid);
+            let n = curve2d_nb_samples(&rep.pcurve, t0, t1).max(2);
+            let du = if n > 1 { (t1 - t0) / (n - 1) as f64 } else { 0.0 };
+            for i in 0..n {
+                let t = t0 + du * i as f64;
+                let uv = rep.pcurve.point_at(t);
+                // OCCT L287-303: skip collinear points (chordal deflection filter)
+                let skip = pts.len() >= 2 && {
+                    let a = pts[pts.len() - 2];
+                    let b = pts[pts.len() - 1];
+                    let c = uv;
+                    let cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+                    cross.abs() < 1e-20
+                };
+                if !skip || pts.len() < 2 {
+                    pts.push(uv);
+                }
             }
-            pts.push(rep.pcurve.point_at(t1));
         }
     }
     pts.dedup_by(|a, b| (*a - *b).length_squared() < 1e-20);
