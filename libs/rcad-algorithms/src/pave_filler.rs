@@ -561,7 +561,8 @@ impl<'a> PaveFiller<'a> {
             self.ds.refine_face_info_in(fi);
         }
 
-        // 鉁?OCCT-aligned: MakeSplitEdges 鈥?create split edges from PaveBlocks (PerformInternal L322).
+        // ✅ OCCT-aligned: MakeSplitEdges — create split edges from PaveBlocks (PerformInternal L322).
+        //   rcad: build_split_edges() = MakeSplitEdges under OCCT name.
         self.build_split_edges();
 
         // 鉁?OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L328)
@@ -7649,6 +7650,11 @@ impl<'a> PaveFiller<'a> {
                 eprintln!("[SPLIT]   face[{}] curves_sc={} vertices_in={}", fi, face.face_info.curves_sc.len(), face.face_info.vertices_in.len());
             }
         }
+        // ✅ OCCT-aligned: InitPaveBlock1 for all curves (PaveFiller_6.cxx L800).
+        //   Curves created by splitting also need initial PaveBlocks.
+        for ci in 0..self.ds.intersection_curves.len() {
+            self.ds.intersection_curves[ci].init_pave_block1();
+        }
     }
 
     /// 鉁?OCCT-aligned: CheckSelfInterference (BOPAlgo_PaveFiller_11.cxx L28-221)
@@ -7727,6 +7733,12 @@ impl<'a> PaveFiller<'a> {
     ///
     ///   Single-block edges (no split) reuse the original edge index (pb.new_edge = ei),
     ///   matching OCCT's aPB->SetEdge(nE) for aLPB.Extent() == 1.
+    /// ✅ OCCT-aligned: MakeSplitEdges (PaveFiller_7.cxx L371-954).
+    ///   Creates new DS edges from source edge PaveBlocks.  rcad name: build_split_edges.
+    fn make_split_edges(&mut self) {
+        self.build_split_edges();
+    }
+
     fn build_split_edges(&mut self) {
         // OCCT L392: UpdateCommonBlocksWithSDVertices 鈥?before creating split edges,
         //   ensure CommonBlocks reference correct (SD-deduplicated) vertex indices.
