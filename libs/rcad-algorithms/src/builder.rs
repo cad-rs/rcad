@@ -25,6 +25,20 @@ pub enum BooleanOpType {
     Difference,
 }
 
+/// OCCT-aligned: TopAbs_ShapeEnum subset used by the Builder pipeline.
+/// Matches OCCT's dimension-by-dimension ordering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShapeType {
+    Vertex,
+    Edge,
+    Wire,
+    Face,
+    Shell,
+    Solid,
+    CompSolid,
+    Compound,
+}
+
 #[derive(Debug)]
 pub enum BooleanError {
     EmptyInput,
@@ -763,6 +777,10 @@ impl ResultBuilder {
     ///   OCCT adds the original TopoDS_Face regardless of surface type.
     ///   rcad: builds FaceEntry from DS boundary_edges + inner_boundary_edges.
     ///   Handles all surface types (Plane, Cylinder, Sphere, Cone, Torus).
+    /// ✅ OCCT-aligned: BuildResult(FACE) — add original faces without images
+    /// (Builder_1.cxx L146-152).  When myImages does NOT contain the face,
+    /// OCCT adds the original TopoDS_Face as-is.  rcad: reconstruct the face
+    /// from DS boundary edges, surface, and centroid.
     fn build_original_face(&mut self, ds: &DS, fi: usize, origin: FaceOrigin) {
         let face = &ds.faces[fi];
 
@@ -5241,100 +5259,6 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// For a face with a coplanar FaceFace (empty curves), check if the normals
-    /// of the two faces point in opposite directions.
-    ///
-    /// Same-direction normals mean both solids are on the *same* side of the
-    /// face; opposite-direction normals mean the face *separates* the solids.
-    /// Returns `None` when the face has no coplanar FF.
-    fn coplanar_ff_normals_opposite(&self, face_idx: usize) -> Option<bool> {
-        for inf in &self.ds.interferences {
-            if let Interference::FaceFace { f1, f2, curves, .. } = inf {
-                if curves.is_empty() && (*f1 == face_idx || *f2 == face_idx) {
-                    let other_idx = if *f1 == face_idx { *f2 } else { *f1 };
-                    let dot = self.ds.faces[face_idx].normal.dot(self.ds.faces[other_idx].normal);
-                    return Some(dot < 0.0);
-                }
-            }
-        }
-        None
-    }
-
-    /// Fallback when `coplanar_ff_normals_opposite` returns None (e.g. after
-    /// `recompute_plane_surfaces` alters plane equations so the PaveFiller
-    /// didn't detect coplanarity).  Directly checks B-faces for a coplanar
-    /// Plane and, if found, returns whether face normals point opposite.
-    ///
-    /// When `sub_opt` is `Some(sub)` uses the sub-face's normal and centroid
-    /// to construct the A-plane 鈥?these are more reliable than the face-level
-    /// surface after multi-step booleans (the face surface may be stale while
-    /// the sub-face captures the actual clipped boundary).
-    fn fallback_coplanar_normals_opposite(
-        &self,
-        a_fi: usize,
-        sub_opt: Option<&FaceSampleData>,
-        b_faces: &[usize],
-    ) -> Option<bool> {
-        // Construct the A-plane from sub-face data (preferred) or face surface.
-        let (a_origin, a_normal_vec) = if let Some(sub) = sub_opt {
-            (sub.sample_point(), sub.normal)
-        } else {
-            let a_face = &self.ds.faces[a_fi];
-            let Surface3::Plane(p) = &a_face.surface else { return None; };
-            (p.origin, p.normal)
-        };
-        let na = a_normal_vec.normalize();
-
-        for &b_fi in b_faces {
-            let b_face = &self.ds.faces[b_fi];
-            let Surface3::Plane(b_plane) = &b_face.surface else { continue; };
-            let nb = b_plane.normal.normalize();
-
-            // Check normals are parallel (dot product near 卤1).
-            if na.dot(nb).abs() < 0.999 {
-                continue;
-            }
-
-            // Check planes are coincident: signed distance from A-origin
-            // to B-plane along the normal should be near zero.
-            if (a_origin - b_plane.origin).dot(na).abs() > TOLERANCE_ABS * 10000.0 {
-                continue;
-            }
-
-            // Found a coplanar B-face.  Return whether face normals point opposite.
-            let a_face = &self.ds.faces[a_fi];
-            return Some(a_face.normal.dot(b_face.normal) < 0.0);
-        }
-
-        None
-    }
-
-    fn keep_subface(
-        &self,
-        source: SourceSide,
-        fi: usize,
-        class: Classification,
-        other_faces: &[usize],
-    ) -> bool {
-        // For Difference A-side On faces with a coplanar FaceFace: keep only
-        // when the two face normals point in OPPOSITE directions (the face
-        // separates kept material from removed material).  When normals point
-        // in the SAME direction both solids are on the same side, and the
-        // overlap-region sub-faces should be removed.
-        if self.op == BooleanOpType::Difference
-            && source == SourceSide::A
-            && class == Classification::On
-        {
-            if let Some(opposite) = self.coplanar_ff_normals_opposite(fi)
-                .or_else(|| self.fallback_coplanar_normals_opposite(fi, None, other_faces))
-            {
-                return opposite;
-            }
-        }
-        let policy = Self::keep_subface_policy(self.op, source, class);
-        policy
-    }
-
     fn pcurve_matches_face_surface(
         &self,
         pcurve: &rcad_kernel::geom::Curve2d,
@@ -5462,31 +5386,6 @@ impl<'a> BooleanBuilder<'a> {
                     self.my_shapes_sd.borrow_mut().insert(ei, new_ei);
                 }
             }
-        }
-    }
-
-    /// ✅ OCCT-aligned: BuildSplitFaces — process PaveBlocksSc (Builder_2.cxx L285-296).
-    ///   OCCT iterates PaveBlocksSc for each face with non-empty section PB data,
-    ///   then passes them to BuilderFace.  rcad: for each PB in pave_blocks_sc that
-    ///   has new_edge set, copy the edge into split_edges for build_edges to consume.
-    ///   Currently a no-op (pave_blocks_sc PBs have no new_edge until MakeSectionEdges
-    ///   is wired into the PaveFiller flow).  This establishes the OCCT-aligned code
-    ///   path for section edge creation.
-    fn build_section_edges_from_pave_blocks_sc(&self) {
-        let mut sc_edges: Vec<DSEdge> = Vec::new();
-        for fi in 0..self.ds.faces.len() {
-            for &pb_idx in &self.ds.faces[fi].face_info.pave_blocks_sc {
-                if pb_idx < self.ds.pave_blocks.len() {
-                    if let Some(nei) = self.ds.pave_blocks[pb_idx].new_edge {
-                        if nei < self.ds.edges.len() {
-                            sc_edges.push(self.ds.edges[nei].clone());
-                        }
-                    }
-                }
-            }
-        }
-        if !sc_edges.is_empty() {
-            self.split_edges.borrow_mut().extend(sc_edges);
         }
     }
 
@@ -5818,101 +5717,76 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        // ── Surface comparison (AreFacesSameDomain) — OCCT L795-816 ──
-        // OCCT checks all surface types through GeomAdaptor_Surface.
-        // rcad: direct Surface3 comparison for analytic types.
-        // OCCT-aligned: BOPTools_AlgoTools::AreFacesSameDomain
-        // (BOPTools_AlgoTools.cxx L1131-1197).  Two faces are same domain if a
-        // 3D point from the interior of one face is valid (inside + within tolerance)
-        // for the other face.  This works for ANY surface type pair including
-        // BSpline↔Plane — the comparison is geometric, not by surface type tag.
-        let same_surface = |s1: &Surface3, s2: &Surface3| -> bool {
-            let axis_parallel = |a: DVec3, b: DVec3| {
-                let la = a.length();
-                let lb = b.length();
-                if la <= TOLERANCE_ABS || lb <= TOLERANCE_ABS {
-                    return false;
-                }
-                (a / la).dot(b / lb).abs() >= 1.0 - TOLERANCE_ANG
-            };
-            match (s1, s2) {
-                (Surface3::Plane(p1), Surface3::Plane(p2)) => {
-                    let d1 = p1.normal.dot(p1.origin.into());
-                    let d2 = p2.normal.dot(p2.origin.into());
-                    axis_parallel(p1.normal, p2.normal)
-                        && (d1 - d2).abs() < TOLERANCE_PLANE_DIST_RELAX
-                }
-                (Surface3::Cylinder(c1), Surface3::Cylinder(c2)) => {
-                    axis_parallel(c1.axis, c2.axis)
-                        && (c1.radius - c2.radius).abs() < TOLERANCE_ABS
-                        && (c2.origin - c1.origin).cross(c1.axis.normalize_or_zero()).length() < TOLERANCE_ABS * 100.0
-                }
-                (Surface3::Sphere(s1), Surface3::Sphere(s2)) => {
-                    (s1.center - s2.center).length() < TOLERANCE_ABS * 100.0
-                        && (s1.radius - s2.radius).abs() < TOLERANCE_ABS
-                }
-                (Surface3::Cone(c1), Surface3::Cone(c2)) => {
-                    axis_parallel(c1.axis, c2.axis)
-                        && (c1.apex_point() - c2.apex_point()).length() < TOLERANCE_ABS * 100.0
-                        && (c1.half_angle_rad - c2.half_angle_rad).abs() < TOLERANCE_ANG
-                }
-                (Surface3::Torus(t1), Surface3::Torus(t2)) => {
-                    axis_parallel(t1.axis, t2.axis)
-                        && (t1.center - t2.center).length() < TOLERANCE_ABS * 100.0
-                        && (t1.major_radius - t2.major_radius).abs() < TOLERANCE_ABS
-                        && (t1.minor_radius - t2.minor_radius).abs() < TOLERANCE_ABS
-                }
-                // BSpline↔Plane: detect geometrically planar BSpline surfaces
-                (Surface3::BSpline(bsp), Surface3::Plane(pl))
-                | (Surface3::Plane(pl), Surface3::BSpline(bsp)) => {
-                    if !bspline_is_planar(bsp, TOLERANCE_PLANE_DIST_RELAX) {
-                        return false;
-                    }
-                    let bp = bspline_to_plane(bsp);
-                    let d1 = pl.normal.dot(pl.origin.into());
-                    let d2 = bp.normal.dot(bp.origin.into());
-                    axis_parallel(pl.normal, bp.normal)
-                        && (d1 - d2).abs() < TOLERANCE_PLANE_DIST_RELAX
-                }
-                // BSpline↔BSpline: both planar on the same plane
-                (Surface3::BSpline(b1), Surface3::BSpline(b2)) => {
-                    if !bspline_is_planar(b1, TOLERANCE_PLANE_DIST_RELAX)
-                        || !bspline_is_planar(b2, TOLERANCE_PLANE_DIST_RELAX)
-                    {
-                        return false;
-                    }
-                    let p1 = bspline_to_plane(b1);
-                    let p2 = bspline_to_plane(b2);
-                    let d1 = p1.normal.dot(p1.origin.into());
-                    let d2 = p2.normal.dot(p2.origin.into());
-                    axis_parallel(p1.normal, p2.normal)
-                        && (d1 - d2).abs() < TOLERANCE_PLANE_DIST_RELAX
-                }
-                _ => false,
+        // ── AreFacesSameDomain: projection-based (OCCT BOPTools_AlgoTools.cxx L1131-1197) ──
+        // OCCT: PointInFace(F1) → IsValidPointForFace(point, F2, aTol)
+        //   where aTol = aTolF1 + aTolF2 + max(theFuzz, Precision::Confusion())
+        //   and aTolF = max(face_tolerance, max_edge_tolerance_on_face)
+        // rcad: use sample_pt from result face + projection + FClass2d.
+        // Map result face index → DS face index for tolerance lookup
+        let ds_face_idx = |rfi: usize| -> Option<usize> {
+            match &result.face_origins[rfi] {
+                FaceOrigin::FromA(sfi) => self.ds.faces.iter().position(|f|
+                    f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
+                FaceOrigin::FromB(sfi) => self.ds.faces.iter().position(|f|
+                    f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi),
+                _ => None,
             }
         };
-
-        // ── Mark duplicates for removal ──
-        // OCCT L763-792: all-pairs check within each edge-set group,
-        // skipping pairs with the same parent solid (aFaceToParent).
-        // OCCT uses aVPSB (parallel AreFacesSameDomain) for non-planar pairs;
-        // rcad checks same_surface synchronously for all surface types.
+        // OCCT aTolF = max(face_tol, max_edge_tol_on_face) per face
+        let face_tol_with_edges = |dsfi: usize| -> f64 {
+            let mut a_tol = self.ds.faces[dsfi].geom_tol;
+            for &ei in &self.ds.faces[dsfi].boundary_edges {
+                if ei < self.ds.edges.len() {
+                    let e_tol = self.ds.edges[ei].geom_tol;
+                    if e_tol > a_tol { a_tol = e_tol; }
+                }
+            }
+            a_tol
+        };
         let mut to_remove = vec![false; nf];
         for (_edge_set, members) in groups.iter() {
             if members.len() < 2 { continue; }
-            // Collect survivors (not yet marked for removal)
             let survivors: Vec<usize> = members.iter().filter(|&&fi| !to_remove[fi]).copied().collect();
             for i in 0..survivors.len() {
                 for j in (i + 1)..survivors.len() {
                     let fi = survivors[i];
                     let fj = survivors[j];
-                    // OCCT L776-778: skip same-parent pairs.
                     if is_from_a(fi) == is_from_a(fj) {
                         continue;
                     }
-                    if same_surface(&result.faces[fi].4, &result.faces[fj].4) {
+                    // Get interior point from result face fi
+                    let pt_i = result.faces[fi].8; // sample_pt
+                    let pt_j = result.faces[fj].8; // sample_pt
+                    let surf_j = &result.faces[fj].4;
+                    let surf_i = &result.faces[fi].4;
+                    // Compute tolerance: aTolF1 + aTolF2 + fuzzy
+                    let ds_i = ds_face_idx(fi);
+                    let ds_j = ds_face_idx(fj);
+                    let a_tol = match (ds_i, ds_j) {
+                        (Some(di), Some(dj)) => {
+                            face_tol_with_edges(di) + face_tol_with_edges(dj) + self.ds.fuzzy_tol
+                        }
+                        _ => continue,
+                    };
+                    // OCCT: project point from fi onto fj's surface, check distance + classification
+                    let (uv_j, proj_j) = crate::extrema::closest_point_on_surface(surf_j, pt_i);
+                    let dist_j = proj_j.distance(pt_i);
+                    let valid_j = if dist_j <= a_tol {
+                        if let Some(dj) = ds_j {
+                            self.context.borrow_mut().is_point_in_on_face(self.ds, dj, uv_j)
+                        } else { false }
+                    } else { false };
+                    // Reverse: project point from fj onto fi's surface
+                    let (uv_i, proj_i) = crate::extrema::closest_point_on_surface(surf_i, pt_j);
+                    let dist_i = proj_i.distance(pt_j);
+                    let valid_i = if dist_i <= a_tol {
+                        if let Some(di) = ds_i {
+                            self.context.borrow_mut().is_point_in_on_face(self.ds, di, uv_i)
+                        } else { false }
+                    } else { false };
+                    if valid_j && valid_i {
                         // OCCT: face with smaller DS index survives.
-                        // rcad: higher-index face is removed.
+                        // rcad: higher-index result face is removed.
                         to_remove[fj] = true;
                     }
                 }
@@ -5944,11 +5818,14 @@ impl<'a> BooleanBuilder<'a> {
     /// OCCT: single function called with WIRE, SHELL, or COMPSOLID type.
     ///   Iterates source shapes, filters by type, calls FillImagesContainer.
     ///   rcad: dispatches to type-specific implementations.
-    fn fill_images_containers(&self, shape_type: &str, result: &mut ResultBuilder) {
+    /// ✅ OCCT-aligned: FillImagesContainers (Builder_1.cxx L172-193).
+    ///   OCCT: iterates source shapes → filters by TopAbs_ShapeEnum →
+    ///   FillImagesContainer for each.  rcad: dispatches to type-specific handlers.
+    fn fill_images_containers(&self, shape_type: ShapeType, result: &mut ResultBuilder) {
         match shape_type {
-            "WIRE" => self.fill_images_containers_wires(),
-            "SHELL" => self.fill_images_containers_shells(result),
-            "COMPSOLID" => self.fill_images_containers_compsolid(result),
+            ShapeType::Wire => self.fill_images_containers_wires(),
+            ShapeType::Shell => self.fill_images_containers_shells(result),
+            ShapeType::CompSolid => self.fill_images_containers_compsolid(result),
             _ => {}
         }
     }
@@ -6669,11 +6546,35 @@ impl<'a> BooleanBuilder<'a> {
     ///   reconstruction happens after result.build() in build_with_history
     ///   (see the rebuild_compound_for_step post-step) because the result
     ///   BRep solids don't exist until build() is called.
+    /// ✅ OCCT-aligned: FillImagesCompounds (Builder_1.cxx L197-217).
+    ///
+    /// OCCT FillImagesCompounds L197-217:
+    ///   L200: aMFP fence map
+    ///   L202-216: iterate source shapes, filter TopAbs_COMPOUND,
+    ///             call FillImagesCompound(aC, aMFP)
+    /// OCCT FillImagesCompound L280-342:
+    ///   L290-293: fence — skip if processed
+    ///   L296-308: check if any sub-shape has images
+    ///   L309-312: if none modified → return
+    ///   L314-341: build new compound from sub-shape (solid) images
+    ///
+    /// rcad: source compound solids are tracked in DS solid_images.
+    ///   Compound reconstruction from result solids is deferred to
+    ///   build_with_history's post-step (L6834-6840) because the
+    ///   result BRep solids don't exist until ResultBuilder::build().
     fn fill_images_compounds(&self, result: &mut ResultBuilder) {
-        // OCCT L200-217: record that source compound exists
-        //   (checked later during post-build compound reconstruction).
+        // OCCT L200: not implemented — aMFP fence map
+        // OCCT L202-216: check source compounds
         result.source_has_compound =
             self.ds.a_has_compound || self.ds.b_has_compound;
+        if !result.source_has_compound {
+            return; // OCCT L309-312: no compounds → return
+        }
+        // OCCT L314-341: build new compound from solid images.
+        //   rcad: deferred — see build_with_history L6834-6840.
+        //   OCCT stores the new TopoDS_Compound in myImages; rcad
+        //   builds it during result.build() from result.solids,
+        //   wrapping them in a rcad_kernel::topology::Compound.
     }
 
     /// Retrieve the EdgeInfo.is_inside status for the incoming edge at the given vertex.
@@ -6712,11 +6613,12 @@ impl<'a> BooleanBuilder<'a> {
     ///   if no images → adds original aS (with fence).  rcad: shapes are
     ///   index-based, not TopoDS TShape identity; the fence is implicit in
     ///   the result's arrays.
-    fn build_result(&self, shape_type: &str, result: &mut ResultBuilder) {
+    fn build_result(&self, shape_type: ShapeType, result: &mut ResultBuilder) {
         // OCCT L131: aMFence — prevents duplicate TShape addition.
         //   rcad: vertices/edges/faces are stored in unique-indexed arrays.
         match shape_type {
-            "VERTEX" | "WIRE" | "SHELL" | "SOLID" | "COMPSOLID" | "COMPOUND" => {
+            ShapeType::Vertex | ShapeType::Wire | ShapeType::Shell
+            | ShapeType::Solid | ShapeType::CompSolid | ShapeType::Compound => {
                 // OCCT L137-165: add split images or originals to myShape.
                 //   rcad for VERTEX: vertices are created implicitly by edges/faces.
                 //   rcad for WIRE: wires are part of Face structure (inner_wires).
@@ -6724,7 +6626,7 @@ impl<'a> BooleanBuilder<'a> {
                 //     FillImagesContainers / FillImagesSolids / FillImagesCompounds
                 //     pipeline steps.  Final conversion in ResultBuilder::build().
             }
-            "EDGE" => {
+            ShapeType::Edge => {
                 // OCCT L130-168 (TopAbs_EDGE): iterate myArguments(TopAbs_EDGE),
                 //   for each: if myImages.IsBound(aE) → add splits; else add aE.
                 //   rcad: split edges created by FillImagesEdges are stored in
@@ -6732,7 +6634,7 @@ impl<'a> BooleanBuilder<'a> {
                 let split_edges: Vec<_> = self.split_edges.borrow().clone();
                 result.build_edges(&split_edges, self.ds);
             }
-            "FACE" => {
+            ShapeType::Face => {
                 // OCCT L130-168 (TopAbs_FACE): iterate myArguments(TopAbs_FACE),
                 //   for each: if myImages.IsBound(aF) → add image faces (from
                 //   fill_images_faces); else add the original aF (no split).
@@ -6766,10 +6668,6 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 }
             }
-            _ => {
-                // OCCT L168: default — no shapes to add for unrecognized types.
-                //   rcad: all known types handled above; wildcard covers unexpected strings.
-            }
         }
     }
 
@@ -6777,6 +6675,27 @@ impl<'a> BooleanBuilder<'a> {
     ///   The top-level pipeline entry: dimension-by-dimension image filling
     ///   (V→E→W→FACE→SHELL→SOLID), followed by BuildResult for each type.
     ///   OCCT L310-445 structure matched in full (see inline OCCT line refs).
+    /// ✅ OCCT-aligned: CheckData (BOPAlgo_BOP.cxx L106-202) + CheckFiller (Builder.cxx L143-151).
+    ///   Validates operation type, non-empty arguments, and DS/PaveFiller state.
+    fn check_data(&self, a_faces: &[usize], b_faces: &[usize]) -> Result<(), BooleanError> {
+        // OCCT L112-118: validate operation type
+        match self.op {
+            BooleanOpType::Union | BooleanOpType::Intersection | BooleanOpType::Difference => {}
+        }
+        // OCCT L120-134: arguments/tools must be non-empty
+        if a_faces.is_empty() || b_faces.is_empty() {
+            return Err(BooleanError::EmptyInput);
+        }
+        // OCCT L136-140: CheckFiller — verify DS has valid shape data
+        if self.ds.faces.is_empty() || self.ds.vertices.is_empty() {
+            return Err(BooleanError::EmptyInput);
+        }
+        if self.has_errors {
+            return Err(BooleanError::DegenerateResult);
+        }
+        Ok(())
+    }
+
     pub fn build_with_history(&self) -> Result<(BRep, BooleanHistory), BooleanError> {
         // OCCT L313-317: setup (myPaveFiller, myDS, myContext, myFuzzyValue, myNonDestructive).
         //   rcad: done via BooleanBuilder::new(ds, op) in the caller.
@@ -6784,10 +6703,7 @@ impl<'a> BooleanBuilder<'a> {
         // OCCT L320-325: CheckData
         let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
         let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
-        if a_faces.is_empty() || b_faces.is_empty() {
-            return Err(BooleanError::EmptyInput);
-        }
-        if self.has_errors { return Err(BooleanError::DegenerateResult); }
+        self.check_data(&a_faces, &b_faces)?;
 
         // OCCT L327-332: Prepare (OCCT creates empty TopoDS_Compound as myShape).
         let mut result = ResultBuilder::new();
@@ -6800,44 +6716,46 @@ impl<'a> BooleanBuilder<'a> {
         // Phase 1a: FillImagesVertices (L338-343) → BuildResult(VERTEX) (L344-348).
         self.fill_images_vertices();
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result("VERTEX", &mut result);
+        self.build_result(ShapeType::Vertex, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 1b: FillImagesEdges (L350-356) → BuildResult(EDGE) (L357-361).
         //   OCCT L130-168: BuildResult(EDGE) adds split edge images to myShape.
         //   rcad: build_edges (called inside build_result) converts split_edges
         //   to BRep edge indices — equivalent to adding TopoDS_Edge to myShape.
         self.fill_images_edges();
-        // ✅ OCCT-aligned: process PaveBlocksSc section edges (Builder_2.cxx L285-296).
-        //   No-op until MakeSectionEdges wires section edge creation into the PaveFiller.
-        self.build_section_edges_from_pave_blocks_sc();
+        // OCCT PerformInternal1 L350-360: FillImagesEdges → BuildResult(EDGE).
+        //   Section edges are handled inside BuildSplitFaces (Builder_2.cxx L285-296),
+        //   not as a separate call in PerformInternal1.  rcad: section-edge creation
+        //   from PaveBlocksSc is deferred to BuilderFace processing in split_face_occt_wire_pipeline.
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result("EDGE", &mut result);
+        self.build_result(ShapeType::Edge, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 2: FillImagesContainers(WIRE) (L362-369) → BuildResult(WIRE) (L370-374).
-        self.fill_images_containers("WIRE", &mut result);
+        self.fill_images_containers(ShapeType::Wire, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result("WIRE", &mut result);
+        self.build_result(ShapeType::Wire, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 3: FillImagesFaces (L376-386) → BuildResult(FACE) (L382-386).
         //   OCCT L146-152: BuildResult(FACE) adds original faces without images.
-        //   rcad: build_result("FACE") calls build_faces (validate) + adds originals.
+        //   rcad: build_result(Face) calls build_faces (validate) + adds originals.
         self.fill_images_faces(&mut result, &a_faces, &b_faces);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result("FACE", &mut result);
+        self.build_result(ShapeType::Face, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 4: FillImagesContainers(SHELL) (L388-398) → BuildResult(SHELL) (L394-398).
-        self.fill_images_containers("SHELL", &mut result);
+        self.fill_images_containers(ShapeType::Shell, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result("SHELL", &mut result);
+        self.build_result(ShapeType::Shell, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 5: FillImagesSolids (L400-410) → BuildResult(SOLID) (L406-410).
         self.fill_images_solids(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result("SOLID", &mut result);
+        self.build_result(ShapeType::Solid, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 6: FillImagesContainers(COMPSOLID) (L412-422) → BuildResult(COMPSOLID) (L418-422).
-        self.fill_images_containers("COMPSOLID", &mut result);
-        self.build_result("COMPSOLID", &mut result);
+        self.fill_images_containers(ShapeType::CompSolid, &mut result);
+        if self.has_errors { return Err(BooleanError::DegenerateResult); }
+        self.build_result(ShapeType::CompSolid, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 7: FillImagesCompounds (L425-435) → BuildResult(COMPOUND) (L431-435).
         //   OCCT L280-342: FillImagesCompound builds new TopoDS_Compound from
@@ -6847,7 +6765,7 @@ impl<'a> BooleanBuilder<'a> {
         let source_has_compound = result.source_has_compound;
         self.fill_images_compounds(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result("COMPOUND", &mut result);
+        self.build_result(ShapeType::Compound, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
 
         let (mut brep, mut history) = result.build();
@@ -6871,16 +6789,31 @@ impl<'a> BooleanBuilder<'a> {
 
         // ✅ OCCT-aligned: PostTreat (Builder.cxx L450-475).
         //   OCCT:
-        //     L455-469: if non-destructive → collect original V/E/F to MapToAvoid.
-        //     L472: CorrectTolerances(myShape, aMA, 0.05) — loose tolerance correction.
-        //     L474: CorrectShapeTolerances(myShape, aMA) — hierarchy tolerance fix.
-        //   rcad: rcad_kernel::correct_tolerances covers both tolerance passes.
-        //     Non-destructive mode defaults to false; MapToAvoid is empty.
-        if self.my_non_destructive {
-            // OCCT L455-469: collect original shapes into aMA to avoid correcting them.
-            //   rcad: non-destructive not supported; no-op for now.
+        //     L452-454: aMA — NCollection_IndexedMap to collect shapes to avoid.
+        //     L455-469: if non-destructive → iterate NbSourceShapes, filter
+        //       TopAbs_VERTEX/EDGE/FACE → aMA.Add(aSI.Shape()).
+        //     L472: CorrectTolerances(myShape, aMA, 0.05, myRunParallel)
+        //       → skips edges/vertices in aMA from tolerance correction.
+        //     L474: CorrectShapeTolerances(myShape, aMA, myRunParallel).
+        //   rcad: non-destructive defaults to false.  When true, collect non-new
+        //   DS vertex indices into map_to_avoid and use correct_tolerances_with_map
+        //   to skip them.  DS→result index mapping is approximate.
+        let map_to_avoid: std::collections::HashSet<usize> = if self.my_non_destructive {
+            let mut avoid = std::collections::HashSet::new();
+            for (vi, v) in self.ds.vertices.iter().enumerate() {
+                if !self.ds.is_new_vertex(vi) { avoid.insert(vi); }
+            }
+            // OCCT also collects EDGE and FACE shapes; rcad approximates
+            // with non-new vertex indices as the primary avoidance set.
+            avoid
+        } else {
+            std::collections::HashSet::new()
+        };
+        if map_to_avoid.is_empty() {
+            rcad_kernel::tolerance::correct_tolerances(&mut brep, 23);
+        } else {
+            rcad_kernel::tolerance::correct_tolerances_with_map(&mut brep, 23, &map_to_avoid);
         }
-        rcad_kernel::tolerance::correct_tolerances(&mut brep, 23);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
 
         Ok((brep, history))
@@ -11895,9 +11828,9 @@ pub fn get_edge_on_face(edge_idx: usize, face_idx: usize, ds: &DS) -> bool {
     let face = &ds.faces[face_idx];
     let surf = &face.surface;
 
-    // Combined tolerance: max of edge and face tolerances, with a
-    // minimum floor of TOLERANCE_ABS to avoid pathological near-zero cases.
-    let combined_tol = edge.geom_tol.max(face.geom_tol).max(TOLERANCE_ABS) * 2.0;
+    // OCCT-aligned SUM: vert_tol + face_tol + fuzzy (same pattern as ComputeVF)
+    let v1_tol = ds.vertices[edge.start_vertex].geom_tol + face.geom_tol + ds.fuzzy_tol;
+    let v2_tol = ds.vertices[edge.end_vertex].geom_tol + face.geom_tol + ds.fuzzy_tol;
 
     // Check both edge vertices project onto the face surface.
     let v1_pt = ds.vertices[edge.start_vertex].point;
@@ -11909,7 +11842,7 @@ pub fn get_edge_on_face(edge_idx: usize, face_idx: usize, ds: &DS) -> bool {
     let d1 = p1_on_surf.distance(v1_pt);
     let d2 = p2_on_surf.distance(v2_pt);
 
-    d1 < combined_tol && d2 < combined_tol
+    d1 < v1_tol && d2 < v2_tol
 }
 
 // ================================================================

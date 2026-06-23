@@ -571,6 +571,14 @@ pub fn finalize_tolerance_hierarchy(brep: &mut BRep) {
 /// Edges without a 3D curve, without pcurves, or without a parametric range
 /// are skipped.
 pub fn brep_same_parameter(brep: &mut BRep, samples_per_edge: usize) {
+    brep_same_parameter_impl(brep, samples_per_edge, &std::collections::HashSet::new())
+}
+
+fn brep_same_parameter_impl(
+    brep: &mut BRep,
+    samples_per_edge: usize,
+    map_to_avoid: &std::collections::HashSet<usize>,
+) {
     let samples = samples_per_edge.max(2);
     // First pass: collect deviations (immutable borrow only).
     let updates: Vec<(usize, f64)> = {
@@ -579,6 +587,8 @@ pub fn brep_same_parameter(brep: &mut BRep, samples_per_edge: usize) {
         let curve2ds = &brep.geom.curve2ds;
         (0..brep.edges.len())
             .filter_map(|ei| {
+                // OCCT: skip edges in MapToAvoid (non-destructive mode)
+                if map_to_avoid.contains(&ei) { return None; }
                 let Some(curve_idx) = brep.geom.edge_curve.get(ei).copied().flatten() else {
                     return None;
                 };
@@ -640,9 +650,15 @@ pub fn brep_same_parameter(brep: &mut BRep, samples_per_edge: usize) {
 ///
 /// Edges without 3D curves fall back to half the edge length as a heuristic.
 pub fn compute_vertex_tolerances(brep: &mut BRep) {
+    compute_vertex_tolerances_impl(brep, &std::collections::HashSet::new())
+}
+
+fn compute_vertex_tolerances_impl(brep: &mut BRep, map_to_avoid: &std::collections::HashSet<usize>) {
     use crate::topo_query::vertex_adjacent_edges;
 
     for vi in 0..brep.vertices.len() {
+        // OCCT: skip vertices in MapToAvoid (non-destructive mode)
+        if map_to_avoid.contains(&vi) { continue; }
         let v_pos = brep.vertices[vi].point;
         let adj_edges = vertex_adjacent_edges(brep, vi);
         if adj_edges.is_empty() {
@@ -719,6 +735,21 @@ pub fn correct_tolerances(brep: &mut BRep, samples_per_edge: usize) {
     // OCCT L316: CorrectCurveOnSurface (range alignment)
     same_range(brep);
     // OCCT L408+: CorrectShapeTolerances
+    finalize_tolerance_hierarchy(brep);
+}
+
+/// Like [`correct_tolerances`] but accepts a MapToAvoid set of edge/vertex indices
+/// whose tolerances should not be modified (non-destructive mode).
+/// OCCT-aligned: BOPTools_AlgoTools::CorrectTolerances(shape, aMA, 0.05).
+pub fn correct_tolerances_with_map(
+    brep: &mut BRep,
+    samples_per_edge: usize,
+    map_to_avoid: &std::collections::HashSet<usize>,
+) {
+    resize_tolerance_arrays(brep);
+    brep_same_parameter_impl(brep, samples_per_edge, map_to_avoid);
+    compute_vertex_tolerances_impl(brep, map_to_avoid);
+    same_range(brep);
     finalize_tolerance_hierarchy(brep);
 }
 

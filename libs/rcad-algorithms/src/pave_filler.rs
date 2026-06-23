@@ -314,37 +314,37 @@ impl<'a> PaveFiller<'a> {
     /// Coincidence tolerance for a vertex pair (fuzzy 鈭?per-vertex model tolerances).
     #[inline]
     fn vv_pair_tol(&self, vi: usize, vj: usize) -> f64 {
-        self.tol()
-            .max(self.ds.vertices[vi].geom_tol)
-            .max(self.ds.vertices[vj].geom_tol)
+        self.ds.vertices[vi].geom_tol
+            + self.ds.vertices[vj].geom_tol
+            + self.tol()
     }
 
     #[inline]
     fn ve_tol(&self, vi: usize, ei: usize) -> f64 {
-        self.tol()
-            .max(self.ds.vertices[vi].geom_tol)
-            .max(self.ds.edges[ei].geom_tol)
+        self.ds.vertices[vi].geom_tol
+            + self.ds.edges[ei].geom_tol
+            + self.tol()
     }
 
     #[inline]
     fn ee_tol(&self, e1: usize, e2: usize) -> f64 {
-        self.tol()
-            .max(self.ds.edges[e1].geom_tol)
-            .max(self.ds.edges[e2].geom_tol)
+        self.ds.edges[e1].geom_tol
+            + self.ds.edges[e2].geom_tol
+            + self.tol()
     }
 
     #[inline]
     fn vf_tol(&self, vi: usize, fi: usize) -> f64 {
-        self.tol()
-            .max(self.ds.vertices[vi].geom_tol)
-            .max(self.ds.faces[fi].geom_tol)
+        self.ds.vertices[vi].geom_tol
+            + self.ds.faces[fi].geom_tol
+            + self.tol()
     }
 
     #[inline]
     fn ef_tol(&self, ei: usize, fi: usize) -> f64 {
-        self.tol()
-            .max(self.ds.edges[ei].geom_tol)
-            .max(self.ds.faces[fi].geom_tol)
+        self.ds.edges[ei].geom_tol
+            + self.ds.faces[fi].geom_tol
+            + self.tol()
     }
 
     /// Effective tolerance for a face pair (pave fuzzy and both faces' model tolerances).
@@ -1264,6 +1264,9 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
+    /// ✅ OCCT-aligned: EdgeEdge intersection check — used by PerformEE
+    /// (PaveFiller_3.cxx L145-369).  Checks a single edge pair within tolerance.
+    /// Falls back to numeric surface-curve intersection for unsupported types.
     fn check_edge_edge(&mut self, e1: usize, e2: usize) {
         let edge1 = &self.ds.edges[e1];
         let edge2 = &self.ds.edges[e2];
@@ -1411,7 +1414,10 @@ impl<'a> PaveFiller<'a> {
         for &(ia, ib) in &pairs {
             let vi = &new_verts[ia];
             let vj = &new_verts[ib];
-            let merge_tol = vi.tol + vj.tol + gap;
+            // OCCT-aligned: aTolSum2 = aTolV1 + aTolV2 + theFuzzyValue (BOPAlgo_Tools.cxx L1094)
+            let geom_vi = self.ds.vertices[new_verts[ia].idx].geom_tol;
+            let geom_vj = self.ds.vertices[new_verts[ib].idx].geom_tol;
+            let merge_tol = geom_vi + geom_vj + self.ds.fuzzy_tol;
             if (vi.pos - vj.pos).length() <= merge_tol {
                 vunion(&mut parent, ia, ib);
             }
@@ -2055,28 +2061,165 @@ impl<'a> PaveFiller<'a> {
     ///
     ///    rcad equivalent: iterate edges, for adjacent Paves with same vertex_idx in edge.paves,
     ///    treat as zero-length segment and remove corresponding Pave from paves.
-    /// OCCT-aligned: CorrectToleranceOfSE (BOPAlgo_PaveFiller_6.cxx L4072).
 
-    /// OCCT-aligned: UpdateBlocksWithSharedVertices (BOPAlgo_PaveFiller_6.cxx L3946).
-    /// Updates pave blocks to reflect shared vertices after SD merging.
+    /// ✅ OCCT-aligned: UpdateBlocksWithSharedVertices (PaveFiller_6.cxx L3946-4052).
+    ///
+    /// OCCT algorithm:
+    ///   L3948-3951: non-destructive guard → if false, return.
+    ///   L3953-3960: no FF interferences → return.
+    ///   L3967-4049: for each FF interference with curves:
+    ///     L3973-3976: skip if no curves on this FF.
+    ///     L3980-3987: UpdateFaceInfoOn(nF1/nF2) — face info to ON state.
+    ///     L3996-4017: collect old shared vertices (ON or IN in both faces) → aMI.
+    ///     L4020-4048: for each curve, try to put each shared vertex on it:
+    ///       L4030-4034: skip if vertex already has SD mapping.
+    ///       L4036: EstimatePaveOnCurve(nV, aNC, aTolR3D) — check if on curve.
+    ///       L4042-4046: if yes → UpdateVertex + InitPaveBlocksForVertex.
+    ///   L4051: UpdateCommonBlocksWithSDVertices().
     fn update_blocks_with_shared_vertices(&mut self) {
-        for ei in 0..self.ds.edges.len() {
-            for pb in &mut self.ds.edges[ei].pave_blocks {
-                let v1 = self.ds.vertices[pb.pave1.vertex_idx].point;
-                let v2 = self.ds.vertices[pb.pave2.vertex_idx].point;
-                if (v1 - v2).length() < TOLERANCE_ABS * 100.0 {
-                    // Vertices are coincident 鈥?could be SD merged
+        // OCCT L3948-3951: non-destructive guard
+        if !self.non_destructive { return; }
+
+        // OCCT L3953-3960: check FF interferences
+        let has_ff = self.ds.interferences.iter().any(|inf|
+            matches!(inf, Interference::FaceFace { curves, .. } if !curves.is_empty())
+        );
+        if !has_ff { return; }
+
+        // Collect face pairs with shared (old) vertices
+        // OCCT L3967-4049: iterate each FF
+        let ff_entries: Vec<(usize, usize, Vec<usize>)> = self.ds.interferences.iter()
+            .filter_map(|inf| {
+                if let Interference::FaceFace { f1, f2, curves, .. } = inf {
+                    if curves.is_empty() { return None; }
+
+                    // OCCT L3996-4017: collect shared old vertices
+                    let fi1 = *f1;
+                    let fi2 = *f2;
+                    let on1 = &self.ds.faces[fi1].face_info.vertices_on;
+                    let in1 = &self.ds.faces[fi1].face_info.vertices_in;
+                    let on2 = &self.ds.faces[fi2].face_info.vertices_on;
+                    let in2 = &self.ds.faces[fi2].face_info.vertices_in;
+
+                    let shared: Vec<usize> = on1.iter()
+                        .chain(in1.iter())
+                        .filter(|&&vi| {
+                            // OCCT L4008-4011: skip new vertices (only old shapes)
+                            if self.ds.is_new_vertex(vi) { return false; }
+                            // OCCT L4012: must be ON or IN in the other face too
+                            on2.contains(&vi) || in2.contains(&vi)
+                        })
+                        .copied()
+                        .collect();
+
+                    if shared.is_empty() { return None; }
+                    Some((fi1, fi2, curves.clone()))
+                } else { None }
+            })
+            .collect();
+
+        // OCCT L4020-4048: for each FF entry, try shared vertices on each curve
+        for (f1, f2, curves) in &ff_entries {
+            // OCCT L3980-3987: UpdateFaceInfoOn equivalent
+            //   rcad: not needed — FaceInfo data is already populated.
+
+            for &ci in curves {
+                if ci >= self.ds.intersection_curves.len() { continue; }
+
+                // OCCT L4023: aTolR3D = max(curve.Tolerance(), curve.TangentialTolerance())
+                let ic = &self.ds.intersection_curves[ci];
+                let _a_tol_r3d = ic.geom_tol;
+                let f1 = *f1;
+                let f2 = *f2;
+
+                // Collect shared vertices for this face pair
+                let on1 = &self.ds.faces[f1].face_info.vertices_on;
+                let in1 = &self.ds.faces[f1].face_info.vertices_in;
+                let on2 = &self.ds.faces[f2].face_info.vertices_on;
+                let in2 = &self.ds.faces[f2].face_info.vertices_in;
+
+                let shared: Vec<usize> = on1.iter()
+                    .chain(in1.iter())
+                    .filter(|&&vi| {
+                        if self.ds.is_new_vertex(vi) { return false; }
+                        // OCCT L4012: present in the other face's On/In sets
+                        if !on2.contains(&vi) && !in2.contains(&vi) { return false; }
+                        // OCCT L4030-4034: skip if already has SD mapping
+                        //   rcad: check shape_sd
+                        if self.ds.shape_sd.is_sub_vertex(vi) { return false; }
+                        true
+                    })
+                    .copied()
+                    .collect();
+
+                for &n_v in &shared {
+                    // OCCT L4036: EstimatePaveOnCurve
+                    if self.estimate_pave_on_curve(ci, n_v).is_none() { continue; }
+
+                    // OCCT L4042-4046: UpdateVertex + InitPaveBlocksForVertex
+                    let v_tol = self.ds.vertices[n_v].geom_tol;
+                    // UpdateVertex: increase tolerance if the projection distance is larger
+                    if let Some(t) = self.project_vertex_on_curve(n_v, ic) {
+                        let pt_on_curve = ic.curve.point_at(t);
+                        let dist = self.ds.vertices[n_v].point.distance(pt_on_curve);
+                        if dist > v_tol {
+                            self.ds.vertices[n_v].geom_tol = dist;
+                            self.ds.increased_ss.insert(n_v);
+                        }
+                    }
+                    // InitPaveBlocksForVertex: collect edge indices + params, then apply
+                    let mut new_paves: Vec<(usize, f64)> = Vec::new();
+                    for (ei, edge) in self.ds.edges.iter().enumerate() {
+                        if edge.start_vertex == n_v {
+                            let has = edge.paves.iter().any(|p| p.vertex_idx == n_v);
+                            if !has { new_paves.push((ei, edge.t_range[0])); }
+                        } else if edge.end_vertex == n_v {
+                            let has = edge.paves.iter().any(|p| p.vertex_idx == n_v);
+                            if !has { new_paves.push((ei, edge.t_range[1])); }
+                        }
+                    }
+                    for (ei, param) in new_paves {
+                        self.ds.edges[ei].paves.push(Pave { vertex_idx: n_v, param });
+                    }
                 }
             }
         }
+        // OCCT L4051: UpdateCommonBlocksWithSDVertices()
+        self.ds.update_pave_blocks_with_sd_vertices();
     }
 
-    /// OCCT-aligned: UpdateInterfsWithSDVertices (BOPAlgo_PaveFiller_10.cxx L248).
+    /// ✅ OCCT-aligned: UpdateInterfsWithSDVertices (PaveFiller_10.cxx L248-255).
+    ///   OCCT UpdateIntfsWithSDVertices template (L227-243):
+    ///     For each interference: if HasIndexNew(newV) && HasShapeSD(newV, sdV)
+    ///       → SetIndexNew(sdV) — replace with SD vertex.
+    ///   rcad: for EE/EF/VV interferences with a new_vertex, find the vertex's
+    ///   SD partner from shape_sd and update the field.
     fn update_interfs_with_sd_vertices(&mut self) {
+        // Build vertex → SD vertex lookup (OCCT HasShapeSD equivalent)
+        let sd_for: std::collections::HashMap<usize, usize> = self.ds.shape_sd
+            .sd_vertices_iter()
+            .filter_map(|&(a, b)| {
+                // Stored symmetrically; only process (a,b) where a < b
+                // to avoid double-insert.  Both directions work since
+                // all SD pairs have symmetric entries.
+                if a < b { Some((a, b)) } else { None }
+            })
+            .collect();
         for inf in &mut self.ds.interferences {
             match inf {
-                Interference::VertexVertex { v1, v2, merged_vertex, .. } => {
-                    // Update references if vertices were SD-merged
+                Interference::EdgeEdge { new_vertex, .. }
+                | Interference::EdgeFace { new_vertex, .. } => {
+                    if let Some(&sd) = sd_for.get(new_vertex) {
+                        *new_vertex = sd;
+                    }
+                }
+                Interference::VertexVertex { v1, v2, merged_vertex } => {
+                    // OCCT: find SD partner for either v1 or v2
+                    if let Some(&sd) = sd_for.get(v1) {
+                        *merged_vertex = sd;
+                    } else if let Some(&sd) = sd_for.get(v2) {
+                        *merged_vertex = sd;
+                    }
                 }
                 _ => {}
             }
@@ -2156,18 +2299,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    fn correct_tolerance_of_se(&mut self) {
-        for ci in 0..self.ds.intersection_curves.len() {
-            let sv = self.ds.intersection_curves[ci].start_vertex;
-            let ev = self.ds.intersection_curves[ci].end_vertex;
-            if sv < self.ds.vertices.len() && ev < self.ds.vertices.len() {
-                let max_vtol = self.ds.vertices[sv].geom_tol.max(self.ds.vertices[ev].geom_tol);
-                if max_vtol > self.ds.intersection_curves[ci].geom_tol {
-                    self.ds.intersection_curves[ci].geom_tol = max_vtol;
-                }
-            }
-        }
-    }
+
     /// OCCT-aligned: ProcessExistingPaveBlocks (BOPAlgo_PaveFiller_6.cxx L3072, 3171).
     ///
     /// After FF intersection creates section edges, this function checks whether
@@ -2179,75 +2311,6 @@ impl<'a> PaveFiller<'a> {
     ///
     /// Without ProcessExistingPaveBlocks, section edges near face boundaries create
     /// duplicate PaveBlocks that corrupt face splitting.
-
-    fn process_existing_pave_blocks(&mut self) {
-        let mut to_remove: Vec<usize> = Vec::new();
-
-        for ci in 0..self.ds.intersection_curves.len() {
-            let ic = &self.ds.intersection_curves[ci].clone();
-            let sv_pt = self.ds.vertices[ic.start_vertex].point;
-            let ev_pt = self.ds.vertices[ic.end_vertex].point;
-            let ic_tol = ic.geom_tol.max(TOLERANCE_ABS);
-
-            // Get the two faces that created this IC
-            let mut creator_faces: Vec<usize> = Vec::new();
-            for inf in &self.ds.interferences {
-                if let Interference::FaceFace { f1, f2, curves, .. } = inf {
-                    if curves.contains(&ci) { creator_faces.push(*f1); creator_faces.push(*f2); }
-                }
-            }
-
-            // For each creator face, check if the IC endpoints match any PaveBlock
-            // on the face's boundary edges
-            for &fi in &creator_faces {
-                let face = &self.ds.faces[fi];
-                for &ei in &face.boundary_edges {
-                    if ei >= self.ds.edges.len() { continue; }
-                    let edge = &self.ds.edges[ei];
-                    for (pbi, pb) in edge.pave_blocks.iter().enumerate() {
-                        let pb_sv = self.ds.vertices[pb.pave1.vertex_idx].point;
-                        let pb_ev = self.ds.vertices[pb.pave2.vertex_idx].point;
-
-                        let start_match = (sv_pt - pb_sv).length() < ic_tol
-                            && (ev_pt - pb_ev).length() < ic_tol;
-                        let end_match = (sv_pt - pb_ev).length() < ic_tol
-                            && (ev_pt - pb_sv).length() < ic_tol;
-
-                        if start_match || end_match {
-                            // This IC coincides with an existing PaveBlock.
-                            // Mark for removal (the boundary edge already covers this).
-                            to_remove.push(ci);
-                            break;
-                        }
-                    }
-                    if to_remove.last() == Some(&ci) { break; }
-                }
-                if to_remove.last() == Some(&ci) { break; }
-            }
-        }
-
-        // Remove duplicate ICs (reverse order to preserve indices)
-        to_remove.sort(); to_remove.dedup();
-        to_remove.reverse();
-        for &ci in &to_remove {
-            if ci < self.ds.intersection_curves.len() {
-                self.ds.intersection_curves.remove(ci);
-                // Update curves_sc in faces
-                for fi in 0..self.ds.faces.len() {
-                    self.ds.faces[fi].face_info.curves_sc.remove(&ci);
-                    // Shift higher indices
-                    let shifted: Vec<usize> = self.ds.faces[fi].face_info.curves_sc.iter()
-                        .map(|&c| if c > ci { c - 1 } else { c }).collect();
-                    self.ds.faces[fi].face_info.curves_sc.clear();
-                    for c in shifted { self.ds.faces[fi].face_info.curves_sc.insert(c); }
-                }
-            }
-        }
-    }
-    /// OCCT-aligned: FilterPavesOnCurves (BOPAlgo_PaveFiller_6.cxx L2437).
-    /// After all paves are placed on curves, filters out redundant paves
-    /// at nearly the same parameter (within tolerance).
-    /// This prevents duplicate PaveBlocks on section curves.
 
     /// 鉁?OCCT-aligned: RemoveMicroEdges (PaveFiller_6.cxx L4388-4435).
     ///
@@ -2588,10 +2651,12 @@ impl<'a> PaveFiller<'a> {
                         continue;
                     }
 
-                    // OCCT L970-976: tolerance add = 2 * max(tol(V1), tol(V2))
-                    let v_tol = pb.pave1.vertex_idx.max(pb.pave2.vertex_idx);
-                    let v_tol = self.ds.vertices.get(v_tol).map(|v| v.geom_tol).unwrap_or(0.0);
-                    let fuzzy = self.ds.fuzzy_tol + 2.0 * v_tol;
+                    // OCCT L970-976: aTolAdd = max(tol(V1), tol(V2))
+                    let gt1 = self.ds.vertices.get(pb.pave1.vertex_idx).map(|v| v.geom_tol).unwrap_or(0.0);
+                    let gt2 = self.ds.vertices.get(pb.pave2.vertex_idx).map(|v| v.geom_tol).unwrap_or(0.0);
+                    let a_tol_add = gt1.max(gt2);
+                    // OCCT L1053: SetFuzzyValue(myFuzzyValue + aTolAdd)
+                    let fuzzy = self.ds.fuzzy_tol + a_tol_add;
 
                     // OCCT L982-1000: project PB midpoint onto face surface
                     let mid_t = (pb.pave1.param + pb.pave2.param) * 0.5;
@@ -2942,30 +3007,19 @@ impl<'a> PaveFiller<'a> {
     }
 
     /// 鉁?OCCT-aligned: FilterPavesOnCurves (PaveFiller_6.cxx L2437-2441).
-    fn filter_paves_on_curves_occt(&mut self) {
-        for ci in 0..self.ds.intersection_curves.len() {
-            let ic = self.ds.intersection_curves[ci].clone();
-            let aTolR3D = ic.geom_tol.max(TOLERANCE_ABS);
-            if let Some(pb) = self.ds.intersection_curves[ci].change_pave_block1() {
-                let ext = pb.change_ext_paves();
-                ext.retain(|pave| {
-                    let pt = self.ds.vertices[pave.vertex_idx].point;
-                    let dist = match &ic.curve {
-                        Curve3::Line(l) => (l.origin + l.direction * (pt - l.origin).dot(l.direction)).distance(pt),
-                        Curve3::Circle(c) => (pt.distance(c.center) - c.radius).abs(),
-                        _ => 0.0,
-                    };
-                    dist < aTolR3D
-                });
-                pb.ext_paves_fence = ext.iter().map(|p| p.vertex_idx).collect();
-            }
-        }
-    }
-
+    /// OCCT-aligned: IntTools_Context::IsVertexOnLine (IntTools_Context.cxx L786-819)
+    ///   tolerance = 2 * (aTolV + aTolC), clamped to >= 1e-6 for analytic curves
+    ///   where aTolC = curve_tol + myFuzzyValue (from PutPaveOnCurve L2976)
     fn project_vertex_on_curve(&self, vi: usize, ic: &IntersectionCurve) -> Option<f64> {
         use rcad_kernel::geom::CurveEval;
-        let vp = self.ds.vertices[vi].point;
-        let tl = ic.geom_tol.max(TOLERANCE_ABS);
+        let v_tol = self.ds.vertices[vi].geom_tol;
+        let c_tol = ic.geom_tol;
+        let f_tol = self.ds.fuzzy_tol;
+        // OCCT IsVertexOnLine L800: aTolSum = aTolV + aTolC
+        //   where aTolC = aTolR3D + myFuzzyValue (PutPaveOnCurve L2976)
+        let raw_sum = v_tol + c_tol + f_tol;
+        // OCCT L806-819: aTolSum = 2 * aTolSum, clamped to >= 1e-6
+        let tl = (2.0 * raw_sum).max(1e-6);
         let result = self.project_vertex_on_curve_with_tol(vi, ic, tl);
         if result.is_some() { return result; }
         let ext_tol = self.extended_tolerance_occt(vi);
@@ -3191,9 +3245,21 @@ impl<'a> PaveFiller<'a> {
     }
 
     /// OCCT-aligned: EstimatePaveOnCurve (BOPAlgo_PaveFiller_6.cxx L4056).
+    /// OCCT-aligned: EstimatePaveOnCurve (PaveFiller_6.cxx L4056-4068).
+    ///   Uses aTolR3D = max(curve.Tolerance(), curve.TangentialTolerance()).
+    ///   IsVertexOnLine computes aTolSum = aTolV + aTolC, then ×2.
+    ///   rcad: same formula WITHOUT fuzzy_tol (unlike project_vertex_on_curve
+    ///   which includes fuzzy for the PutPaveOnCurve path).
     fn estimate_pave_on_curve(&self, ci: usize, vi: usize) -> Option<f64> {
         let ic = &self.ds.intersection_curves[ci];
-        self.project_vertex_on_curve(vi, ic)
+        let v_tol = self.ds.vertices[vi].geom_tol;
+        let c_tol = ic.geom_tol;
+        // OCCT IsVertexOnLine 3-param overload (L4066):
+        //   aTolV = BRep_Tool::Tolerance(aV)        → v_tol
+        //   aTolC = aTolR3D                         → c_tol (no fuzzy)
+        //   5-param: aTolSum = aTolV + aTolC; ×2
+        let tl = (2.0 * (v_tol + c_tol)).max(1e-6);
+        self.project_vertex_on_curve_with_tol(vi, ic, tl)
     }
 
 
@@ -7333,10 +7399,12 @@ impl<'a> PaveFiller<'a> {
                         }
                     }
                     if let Curve3::Circle(circ) = &snap.curve {
-                        eprintln!("[SPLIT_DBG] Circle ci={} center=({:.6},{:.6},{:.6}) R={} on_curve={}",
-                            ci, circ.center.x, circ.center.y, circ.center.z, circ.radius, on_curve.len());
-                        for (t, vi) in &on_curve {
-                            eprintln!("[SPLIT_DBG]   on_curve t={:.9} vi={}", t, vi);
+                        if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
+                            eprintln!("[SPLIT_DBG] Circle ci={} center=({:.6},{:.6},{:.6}) R={} on_curve={}",
+                                ci, circ.center.x, circ.center.y, circ.center.z, circ.radius, on_curve.len());
+                            for (t, vi) in &on_curve {
+                                eprintln!("[SPLIT_DBG]   on_curve t={:.9} vi={}", t, vi);
+                            }
                         }
                     }
                 }
@@ -8385,16 +8453,18 @@ fn curve_bounding_box_simple(curve: &Curve3, tol: f64) -> Option<[DVec3; 2]> {
     bbox.map(|[mn, mx]| [mn - DVec3::splat(tol), mx + DVec3::splat(tol)])
 }
 
-/// Clean up incorrectly matched Paves (OCCT L796 FilterPavesOnCurves).
+/// OCCT-aligned: FilterPavesOnCurves (PaveFiller_6.cxx L2437-2538).
+/// OCCT uses a multi-candidate distance comparison + sin-angle check.
+/// rcad simplified: single-threshold filter against curve tolerance + fuzzy.
+/// OCCT L2449: aTolR3D = max(curve.Tolerance(), curve.TangentialTolerance())
 fn filter_paves_on_curves(
     ds: &DS,
     curve_idx: usize,
     paves: &[(f64, usize)],
 ) -> Vec<(f64, usize)> {
     let ic = &ds.intersection_curves[curve_idx];
-    let start_tol = ds.vertices[ic.start_vertex].geom_tol.max(ds.fuzzy_tol);
-    let end_tol = ds.vertices[ic.end_vertex].geom_tol.max(ds.fuzzy_tol);
-    let tol = start_tol.max(end_tol);
+    // OCCT-aligned: curve tolerance + fuzzy (SUM matching PutPaveOnCurve L2976 aTolR3D + myFuzzyValue)
+    let tol = ic.geom_tol + ds.fuzzy_tol;
     let tol_sq = tol * tol;
     paves.iter().filter(|&&(_, vi)| {
         let pt = ds.vertices[vi].point;

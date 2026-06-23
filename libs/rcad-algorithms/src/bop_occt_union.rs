@@ -443,28 +443,6 @@ fn pave_fill(ds: &mut bopds::ds::DS, a: &BRep, b: &BRep, use_bvh: bool) {
 
 /// Sum of boundary-edge counts from [`crate::brep_check::validate_solid_closure`].
 /// Larger means a **less** closed manifold shell.
-fn solid_closure_boundary_penalty(brep: &BRep) -> usize {
-    let r = crate::brep_check::validate_solid_closure(brep);
-    r.issues
-        .iter()
-        .filter_map(|i| match i {
-            crate::brep_check::CheckIssue::SolidNotClosed {
-                boundary_edge_count,
-                ..
-            } => Some(*boundary_edge_count),
-            _ => None,
-        })
-        .sum()
-}
-
-fn shell_face_total(brep: &BRep) -> usize {
-    brep.solids
-        .iter()
-        .flat_map(|s| &s.shells)
-        .flat_map(|sh| &sh.faces)
-        .count()
-}
-
 /// Union: DS → PaveFiller → BooleanBuilder(Union) → recompute plane surfaces.
 ///
 /// Uses BVH when both operands have faces, matching [`crate::boolean_op`].

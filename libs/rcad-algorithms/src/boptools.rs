@@ -67,12 +67,11 @@ pub fn point_near_edge(
 }
 
 /// ✅ OCCT-aligned: AdjustPCurveOnFace (BOPTools_AlgoTools2D.cxx L223-243).
-///   Adjust a pcurve to ensure its midpoint falls within the face's UV bounds,
-///   handling periodic U/V surfaces by noting the adjustment needed.
-///   OCCT modifies the Geom2d_Curve directly; rcad returns the UV shift so
-///   callers can apply it to their curve representation.
-///   Returns `(du, dv)` — the UV shift needed to bring the pcurve midpoint
-///   into the face's UV domain.  (0,0) means no adjustment needed.
+/// ⏳ OCCT-aligned: AdjustPCurveOnFace (BOPTools_AlgoTools2D.cxx L223-243).
+///   OCCT evaluates the pcurve midpoint and shifts by the surface period
+///   when the midpoint falls outside the face's UV domain.  rcad: pcurve
+///   adjustment happens in the caller; this function identifies whether a
+///   shift is needed but always returns (0,0) — caller must evaluate.
 pub fn adjust_pcurve_on_face(
     t_range: [f64; 2],
     uv_domain: Option<[f64; 4]>,
@@ -106,9 +105,10 @@ pub fn adjust_pcurve_on_face(
     (du, dv)
 }
 
-/// OCCT-aligned: HasCurveOnSurface (BOPTools_AlgoTools2D).
-pub fn has_curve_on_surface(edge_curve: &Curve3, _surface: &Surface3) -> bool {
-    // Simplified check: all 3D curves can be projected to any surface
+/// ⏳ OCCT-aligned: HasCurveOnSurface (BOPTools_AlgoTools2D).
+///   OCCT checks if the edge has a pcurve for the given face's surface index.
+///   rcad: simplified — all edges with 3D curves can be projected; returns true.
+pub fn has_curve_on_surface(_edge_curve: &Curve3, _surface: &Surface3) -> bool {
     true
 }
 
@@ -153,7 +153,10 @@ pub fn compute_state_point(pt: glam::DVec3, fi: &[usize], ds: &DS) -> crate::cla
 pub fn is_hole_wire(edges: &[crate::bopds::pave::PaveBlock]) -> bool { edges.len() == 1 }
 /// OCCT-aligned: Sense (BOPTools_AlgoTools).
 pub fn sense_orientation(dot: f64) -> i8 { if dot > 1e-10 { 1 } else if dot < -1e-10 { -1 } else { 0 } }
-/// OCCT-aligned: CorrectShapeTolerances (BOPTools_AlgoTools).
+/// ⏳ OCCT-aligned: CorrectShapeTolerances (BOPTools_AlgoTools).
+///   OCCT propagates edge tolerances up to vertices and faces (hierarchy).
+///   rcad: deferred to rcad_kernel::tolerance::finalize_tolerance_hierarchy
+///   which runs inside correct_tolerances.  Standalone call is a no-op.
 pub fn correct_shape_tolerances(_brep: &mut rcad_kernel::BRep) {}
 
 /// OCCT-aligned: IsGrowthShell (BOPAlgo_BuilderSolid).
@@ -253,7 +256,10 @@ pub fn is_split_to_reverse(original_normal: glam::DVec3, split_normal: glam::DVe
     original_normal.dot(split_normal) < 0.0
 }
 
-/// OCCT-aligned: ComputeToleranceOfCB (BOPAlgo_Tools.cxx L248).
+/// ⏳ OCCT-aligned: ComputeToleranceOfCB (BOPAlgo_Tools.cxx L248).
+///   OCCT computes max geometric deviation from the CommonBlock's curve
+///   to the surfaces of all faces sharing the block.  rcad: CommonBlocks
+///   are rare (edge-local); tolerance falls back to TOLERANCE_ABS.
 pub fn compute_tolerance_of_cb(
     _cb: &crate::bopds::common_block::CommonBlock, _ds: &DS,
 ) -> f64 {
