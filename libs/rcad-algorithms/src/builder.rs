@@ -6235,10 +6235,6 @@ impl<'a> BooleanBuilder<'a> {
         for (si, _origin, state) in assignments {
             state_shells.entry(state).or_default().push(*si);
         }
-        eprintln!("[BFS] state_shells: {:#?}, result.shells: {:#?}", state_shells, result.shells);
-        for (si, shell) in result.shells.iter().enumerate() {
-            eprintln!("[BFS] shell[{}] faces={:?}", si, shell);
-        }
 
         // Clone data for borrow-safe closure (result is &mut below).
         let r_vertices = result.vertices.clone();
@@ -6379,7 +6375,6 @@ impl<'a> BooleanBuilder<'a> {
                 }
 
                 if component.len() >= 3 {
-                    eprintln!("[BFS_COMP] component size={} faces={:?}", component.len(), component);
                     // OCCT BOPAlgo_BuilderSolid: edge-connected faces form ONE
                     // shell per component.  Push a consolidated shell.
                     let csi = result.shells.len();
