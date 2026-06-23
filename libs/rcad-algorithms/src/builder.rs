@@ -2383,8 +2383,42 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
         });
     }
 
-    // Section edges = Intersection curves (OCCT L478-489).
+    // Section edges = Intersection curves (OCCT BOPAlgo_Builder_2.cxx L285-296, L478-489).
     // ================================================================
+    // ✅ OCCT-aligned: first process PaveBlocksSc — each PB has a pre-built edge
+    //   (aPB->Edge() in OCCT, pb.new_edge in rcad).
+    //   Currently no-op (pave_blocks_sc PBs have new_edge=None until MakeSectionEdges
+    //   is wired into the PaveFiller).  When wired, each curve processed via PBs will
+    //   be skipped in the curves_sc fallback below.
+    for &pb_idx in &face.face_info.pave_blocks_sc {
+        if pb_idx >= ds.pave_blocks.len() { continue; }
+        let pb = &ds.pave_blocks[pb_idx];
+        let Some(nei) = pb.new_edge else { continue; };
+        if nei >= ds.edges.len() { continue; }
+        let edge = &ds.edges[nei];
+        if edge.start_vertex == edge.end_vertex { continue; }
+        // OCCT L484-494: FWD + REV orientations for each section edge PB.
+        let (t_fwd_s, t_fwd_e) = edge_uv_tangent(ds, edge.start_vertex, edge.end_vertex,
+            &face.surface, Some(&edge.curve), Some(edge.t_range));
+        segments.push(WireSegment {
+            start_vertex: edge.start_vertex, end_vertex: edge.end_vertex,
+            source: WireEdgeSource::DsEdge(nei), forward: true,
+            is_seam: false, second_pcurve: None, first_pcurve: None,
+            t_range: edge.t_range,
+            tangent_start: t_fwd_s, tangent_end: t_fwd_e,
+        });
+        segments.push(WireSegment {
+            start_vertex: edge.end_vertex, end_vertex: edge.start_vertex,
+            source: WireEdgeSource::DsEdge(nei), forward: false,
+            is_seam: false, second_pcurve: None, first_pcurve: None,
+            t_range: edge.t_range,
+            tangent_start: t_fwd_e, tangent_end: t_fwd_s,
+        });
+    }
+
+    // ✅ OCCT-aligned: curves_sc fallback for curves without PB-processed section edges
+    //   (Builder_2.cxx L478-489).  When MakeSectionEdges is wired in the PaveFiller,
+    //   curves with PB section edges will be skipped here.
     for &ci in &face.face_info.curves_sc_only() {
         let ic = &ds.intersection_curves[ci];
         // ✅ OCCT-aligned: remap IC endpoint to boundary vertex (ShapesSD).

@@ -1305,6 +1305,25 @@ impl DS {
         idx
     }
 
+    // ----- OCCT-aligned: CommonBlock accessors (BOPDS_DS.hxx L186-193) -----
+
+    /// ✅ OCCT-aligned: BOPDS_DS::IsCommonBlock (hxx:188).
+    ///   Returns true if the PaveBlock belongs to a CommonBlock.
+    pub fn is_common_block(&self, pb: &PaveBlock) -> bool {
+        pb.common_block_idx.is_some()
+    }
+
+    /// ✅ OCCT-aligned: BOPDS_DS::CommonBlock (hxx:192-193).
+    ///   Returns a reference to the CommonBlock for a PaveBlock.
+    pub fn common_block(&self, pb: &PaveBlock) -> Option<&CommonBlock> {
+        pb.common_block_idx.and_then(|idx| self.common_blocks.get(idx))
+    }
+
+    /// ✅ OCCT-aligned: BOPDS_DS::CommonBlock (hxx:192-193) — mutable.
+    pub fn common_block_mut(&mut self, pb: &PaveBlock) -> Option<&mut CommonBlock> {
+        pb.common_block_idx.and_then(|idx| self.common_blocks.get_mut(idx))
+    }
+
     /// Collect 3D boundary points for a face.
     ///
     /// When the topological wire produces a degenerate polygon (< 3 unique points),
