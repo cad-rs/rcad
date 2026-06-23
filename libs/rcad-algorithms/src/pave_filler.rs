@@ -728,7 +728,8 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// EF intersection using BVH pair culling + parallel PaveBlock range processing.
+    /// ✅ OCCT-aligned: PerformEF (PaveFiller_5.cxx L165-314).
+    ///   BVH pair culling + per-PB iteration with ON-face skip.
     fn perform_ef_bvh(&mut self, bvh_edges: &crate::bvh::DsBvh, bvh_faces: &crate::bvh::DsBvh) {
         use rayon::prelude::*;
         self.fill_shrunk_data();
@@ -740,8 +741,26 @@ impl<'a> PaveFiller<'a> {
                     && !ds.has_interf_ef(*ei, *fi)
             })
             .flat_map(|&(ei, fi)| {
-                let r = Self::collect_paveblock_ranges_static(ds, ei, ds.edges[ei].t_range);
-                r.into_iter().map(move |range| (ei, fi, range)).collect::<Vec<_>>()
+                // ✅ OCCT-aligned: iterate edge's PaveBlocks (L246-248: ChangePaveBlocks(nE)).
+                //   Skip PBs already in face's PaveBlocksOn (L257-260: aMPBF.Contains(aPBR)).
+                let face_pbon: Vec<usize> = ds.faces[fi].face_info.pave_blocks_on.iter().copied().collect();
+                let mut results = Vec::new();
+                for pb_idx in 0..ds.edges[ei].pave_blocks.len() {
+                    // OCCT L256: RealPaveBlock — resolve CommonBlock to real PB
+                    let pb = &ds.edges[ei].pave_blocks[pb_idx];
+                    let real_original = pb.original_edge;
+                    // OCCT L257-260: skip if this edge is already in face's PaveBlocksOn
+                    if face_pbon.contains(&real_original) { continue; }
+                    let aT1 = pb.pave1.param;
+                    let aT2 = pb.pave2.param;
+                    let range = [aT1.min(aT2), aT1.max(aT2)];
+                    results.push((ei, fi, range));
+                }
+                if results.is_empty() {
+                    // Fallback: no PBs → use full edge range (OCCT L240: aLPB outer iteration)
+                    let r = Self::collect_paveblock_ranges_static(ds, ei, ds.edges[ei].t_range);
+                    r.into_iter().map(move |range| (ei, fi, range)).collect::<Vec<_>>()
+                } else { results }
             })
             .collect();
         for &(ei, fi, r) in &blocks {
