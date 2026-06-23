@@ -311,6 +311,7 @@ pub enum Interference {
 }
 
 /// An intersection curve from F-F intersection, bounded by vertices.
+/// ✅ OCCT-aligned: BOPDS_Curve (hxx:31-119).
 #[derive(Debug, Clone)]
 pub struct IntersectionCurve {
     pub curve: Curve3,
@@ -326,6 +327,36 @@ pub struct IntersectionCurve {
     pub pcurve_on_b: Option<Curve2d>,
     /// OCCT-aligned: tolerance of this section edge (CorrectToleranceOfSE).
     pub geom_tol: f64,
+    /// ✅ OCCT-aligned: BOPDS_Curve::myPaveBlocks (hxx:115).
+    ///   Sub-segments of this intersection curve, created by splitting at paves.
+    pub pave_blocks: Vec<PaveBlock>,
+}
+
+impl IntersectionCurve {
+    /// ✅ OCCT-aligned: BOPDS_Curve::InitPaveBlock1 (lxx:85-92).
+    ///   Creates an initial PaveBlock if the list is empty.
+    pub fn init_pave_block1(&mut self) {
+        if self.pave_blocks.is_empty() {
+            self.pave_blocks.push(PaveBlock::new_curve_block());
+        }
+    }
+
+    /// ✅ OCCT-aligned: BOPDS_Curve::PaveBlocks (lxx:71-74).
+    pub fn pave_blocks(&self) -> &[PaveBlock] {
+        &self.pave_blocks
+    }
+
+    /// ✅ OCCT-aligned: BOPDS_Curve::ChangePaveBlocks (lxx:78-81).
+    pub fn change_pave_blocks(&mut self) -> &mut Vec<PaveBlock> {
+        &mut self.pave_blocks
+    }
+
+    /// ✅ OCCT-aligned: BOPDS_Curve::ChangePaveBlock1 (lxx:96-100).
+    ///   Returns a mutable reference to the first PaveBlock.
+    ///   OCCT: returns handle<PaveBlock>& to first element in myPaveBlocks list.
+    pub fn change_pave_block1(&mut self) -> Option<&mut PaveBlock> {
+        self.pave_blocks.first_mut()
+    }
 }
 
 /// Type of near-tangency between faces (used by glue detection).
@@ -465,6 +496,26 @@ impl DS {
     pub fn range(&self, is_a: bool) -> (usize, usize) {
         if is_a { (0, self.a_vertex_count) }
         else { (self.a_vertex_count, self.vertices.len()) }
+    }
+
+    // ----- OCCT-aligned: PaveBlock pool accessors (BOPDS_DS.hxx L156-177) -----
+
+    /// ✅ OCCT-aligned: BOPDS_DS::HasPaveBlocks (hxx:162-164).
+    ///   Returns true if the edge with the given index has PaveBlocks.
+    pub fn has_pave_blocks(&self, edge_idx: usize) -> bool {
+        self.edges.get(edge_idx).map_or(false, |e| !e.pave_blocks.is_empty())
+    }
+
+    /// ✅ OCCT-aligned: BOPDS_DS::ChangePaveBlocks (hxx:172-174).
+    ///   Returns a mutable reference to the PaveBlocks list for an edge.
+    pub fn change_pave_blocks(&mut self, edge_idx: usize) -> &mut Vec<PaveBlock> {
+        &mut self.edges[edge_idx].pave_blocks
+    }
+
+    /// ✅ OCCT-aligned: BOPDS_DS::PaveBlocks (hxx:167-169).
+    ///   Returns a reference to the PaveBlocks list for an edge.
+    pub fn pave_blocks(&self, edge_idx: usize) -> &[PaveBlock] {
+        &self.edges[edge_idx].pave_blocks
     }
 
     // ----- OCCT HasInterf / HasSubShape equivalents -----
@@ -1243,6 +1294,14 @@ impl DS {
             geom_tol: new_base,
             is_internal: false,
         });
+        idx
+    }
+
+    /// ✅ OCCT-aligned: Append a PaveBlock to the global pool (BOPDS_DS::ChangePaveBlocksPool).
+    ///   Returns the index in the global pool.
+    pub fn allocate_pave_block(&mut self, pb: PaveBlock) -> usize {
+        let idx = self.pave_blocks.len();
+        self.pave_blocks.push(pb);
         idx
     }
 

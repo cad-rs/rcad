@@ -5429,6 +5429,31 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
+    /// ✅ OCCT-aligned: BuildSplitFaces — process PaveBlocksSc (Builder_2.cxx L285-296).
+    ///   OCCT iterates PaveBlocksSc for each face with non-empty section PB data,
+    ///   then passes them to BuilderFace.  rcad: for each PB in pave_blocks_sc that
+    ///   has new_edge set, copy the edge into split_edges for build_edges to consume.
+    ///   Currently a no-op (pave_blocks_sc PBs have no new_edge until MakeSectionEdges
+    ///   is wired into the PaveFiller flow).  This establishes the OCCT-aligned code
+    ///   path for section edge creation.
+    fn build_section_edges_from_pave_blocks_sc(&self) {
+        let mut sc_edges: Vec<DSEdge> = Vec::new();
+        for fi in 0..self.ds.faces.len() {
+            for &pb_idx in &self.ds.faces[fi].face_info.pave_blocks_sc {
+                if pb_idx < self.ds.pave_blocks.len() {
+                    if let Some(nei) = self.ds.pave_blocks[pb_idx].new_edge {
+                        if nei < self.ds.edges.len() {
+                            sc_edges.push(self.ds.edges[nei].clone());
+                        }
+                    }
+                }
+            }
+        }
+        if !sc_edges.is_empty() {
+            self.split_edges.borrow_mut().extend(sc_edges);
+        }
+    }
+
     /// ✅ OCCT-aligned: FillImagesContainers(WIRE) (BOPAlgo_Builder_1.cxx L172-193).
     ///   OCCT: iterates source shapes → filters TopAbs_WIRE → FillImagesContainer
     ///   → builds wire images from edge images.  rcad: wires are implicit in face
@@ -6746,6 +6771,9 @@ impl<'a> BooleanBuilder<'a> {
         //   rcad: build_edges (called inside build_result) converts split_edges
         //   to BRep edge indices — equivalent to adding TopoDS_Edge to myShape.
         self.fill_images_edges();
+        // ✅ OCCT-aligned: process PaveBlocksSc section edges (Builder_2.cxx L285-296).
+        //   No-op until MakeSectionEdges wires section edge creation into the PaveFiller.
+        self.build_section_edges_from_pave_blocks_sc();
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result("EDGE", &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }

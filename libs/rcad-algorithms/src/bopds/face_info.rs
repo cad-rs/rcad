@@ -11,7 +11,11 @@ pub struct FaceInfo {
     pub pave_blocks_on: BTreeSet<usize>,
     /// Indices of PaveBlocks that lie IN this face (from E-F intersection).
     pub pave_blocks_in: BTreeSet<usize>,
-    /// OCCT PaveBlocksSc: IntersectionCurve indices from FF intersection.
+    /// ✅ OCCT-aligned: BOPDS_FaceInfo::PaveBlocksSc (hxx:115-117).
+    ///   Section curve PaveBlock indices (sub-segments of intersection curves).
+    ///   Populated by post_treat_ff from each curve's pave_blocks via update().
+    pub pave_blocks_sc: BTreeSet<usize>,
+    /// IntersectionCurve indices from FF intersection.
     pub curves_sc: BTreeSet<usize>,
     /// Vertex indices that lie ON this face.
     pub vertices_on: BTreeSet<usize>,
@@ -26,6 +30,7 @@ impl FaceInfo {
     pub fn has_any_interference(&self) -> bool {
         !self.pave_blocks_in.is_empty()
             || !self.pave_blocks_on.is_empty()
+            || !self.pave_blocks_sc.is_empty()
             || !self.curves_sc.is_empty()
     }
 

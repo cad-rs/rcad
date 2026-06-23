@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
 
@@ -12,10 +14,10 @@ use crate::inttools::fclass2d::{FClass2d, State};
 use crate::tolerance::*;
 use rcad_kernel::closest_point_on_curve;
 
-/// ✅ OCCT-aligned: IntPatch_Intersection surface category (L1264-1294).
-///   GeomGeom  = ts1==ts2==1 → ImpImpIntersection (analytic-analytic)
-///   GeomParam = ts1!=ts2     → ImpPrmIntersection (analytic-parametric)
-///   ParamParam = ts1==ts2==0 → PrmPrmIntersection (parametric-parametric)
+/// 鉁?OCCT-aligned: IntPatch_Intersection surface category (L1264-1294).
+///   GeomGeom  = ts1==ts2==1 鈫?ImpImpIntersection (analytic-analytic)
+///   GeomParam = ts1!=ts2     鈫?ImpPrmIntersection (analytic-parametric)
+///   ParamParam = ts1==ts2==0 鈫?PrmPrmIntersection (parametric-parametric)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SurfaceCategory { GeomGeom, ParamParam }
 
@@ -31,10 +33,10 @@ fn classify_surface_type(surf: &Surface3) -> SurfaceCategory {
 pub use crate::bopds::ds::NearTangentType;
 
 /// Minimum total face count before BVH acceleration is used.
-/// Below this threshold, brute-force O(n²) is faster due to BVH build overhead.
+/// Below this threshold, brute-force O(n虏) is faster due to BVH build overhead.
 const BVH_THRESHOLD: usize = 20;
 
-/// ✅ OCCT-aligned: BOPAlgo_PaveFiller — six intersection passes
+/// 鉁?OCCT-aligned: BOPAlgo_PaveFiller 鈥?six intersection passes
 ///   (PaveFiller.hxx L106-107, PaveFiller.cxx L234-355).
 pub struct PaveFiller<'a> {
     pub ds: &'a mut DS,
@@ -42,21 +44,21 @@ pub struct PaveFiller<'a> {
     bvh_b: Option<&'a Bvh>,
     use_glue: bool,
     glue_tolerance: f64,
-    /// ✅ OCCT-aligned: BOPAlgo_Options::SetFuzzyValue
+    /// 鉁?OCCT-aligned: BOPAlgo_Options::SetFuzzyValue
     fuzzy_tolerance: f64,
-    /// ✅ OCCT-aligned: PaveFiller_6.cxx L393-479 seam edge shift tolerance
+    /// 鉁?OCCT-aligned: PaveFiller_6.cxx L393-479 seam edge shift tolerance
     seam_shift_tol: f64,
-    /// ✅ OCCT-aligned: BOPAlgo_Algo::myRunParallel
+    /// 鉁?OCCT-aligned: BOPAlgo_Algo::myRunParallel
     run_parallel: bool,
-    /// ✅ OCCT-aligned: BOPAlgo_PaveFiller::myNonDestructive
+    /// 鉁?OCCT-aligned: BOPAlgo_PaveFiller::myNonDestructive
     non_destructive: bool,
-    /// ✅ OCCT-aligned: BOPAlgo_Algo::myUseOBB
+    /// 鉁?OCCT-aligned: BOPAlgo_Algo::myUseOBB
     use_obb: bool,
-    /// ✅ OCCT-aligned: IntTools_Context (PaveFiller::Init L203)
+    /// 鉁?OCCT-aligned: IntTools_Context (PaveFiller::Init L203)
     context: IntToolsContext,
 }
 
-/// ✅ OCCT-aligned:Propagate IC vertices to all faces sharing boundary edges
+/// 鉁?OCCT-aligned:Propagate IC vertices to all faces sharing boundary edges
 ///    (OCCT BOPDS_FaceInfo::AppendBlock equivalent).
 ///    OCCT BOPAlgo_PaveFiller propagates pave block vertices to all faces
 ///    referencing the split edge. rcad's add_curve only adds vertices to the
@@ -114,13 +116,13 @@ impl<'a> PaveFiller<'a> {
             glue_tolerance: TOLERANCE_ABS,
             fuzzy_tolerance: 0.0,
             seam_shift_tol: 0.0,
-            // ✅ OCCT-aligned: RunParallel (default false)
+            // 鉁?OCCT-aligned: RunParallel (default false)
             run_parallel: false,
-            // ✅ OCCT-aligned: NonDestructive (default false)
+            // 鉁?OCCT-aligned: NonDestructive (default false)
             non_destructive: false,
-            // ✅ OCCT-aligned: UseOBB (default false)
+            // 鉁?OCCT-aligned: UseOBB (default false)
             use_obb: false,
-            // ✅ OCCT-aligned: IntTools_Context with FClass2d cache
+            // 鉁?OCCT-aligned: IntTools_Context with FClass2d cache
             // OCCT PaveFiller.cxx L203: myContext = new IntTools_Context
             context,
         }
@@ -143,13 +145,13 @@ impl<'a> PaveFiller<'a> {
             glue_tolerance: TOLERANCE_ABS,
             fuzzy_tolerance: 0.0,
             seam_shift_tol: 0.0,
-            // ✅ OCCT-aligned: RunParallel (default false)
+            // 鉁?OCCT-aligned: RunParallel (default false)
             run_parallel: false,
-            // ✅ OCCT-aligned: NonDestructive (default false)
+            // 鉁?OCCT-aligned: NonDestructive (default false)
             non_destructive: false,
-            // ✅ OCCT-aligned: UseOBB (default false)
+            // 鉁?OCCT-aligned: UseOBB (default false)
             use_obb: false,
-            // ✅ OCCT-aligned: IntTools_Context with FClass2d cache
+            // 鉁?OCCT-aligned: IntTools_Context with FClass2d cache
             context,
         }
     }
@@ -200,17 +202,17 @@ impl<'a> PaveFiller<'a> {
         self.fuzzy_tolerance = fuzzy.max(0.0);
     }
 
-    /// ✅ OCCT-aligned: SetRunParallel (BOPAlgo_Algo::SetRunParallel).
+    /// 鉁?OCCT-aligned: SetRunParallel (BOPAlgo_Algo::SetRunParallel).
     pub fn set_run_parallel(&mut self, parallel: bool) {
         self.run_parallel = parallel;
     }
 
-    /// ✅ OCCT-aligned: SetNonDestructive (BOPAlgo_PaveFiller::SetNonDestructive).
+    /// 鉁?OCCT-aligned: SetNonDestructive (BOPAlgo_PaveFiller::SetNonDestructive).
     pub fn set_non_destructive(&mut self, nd: bool) {
         self.non_destructive = nd;
     }
 
-    /// ✅ OCCT-aligned: SetNonDestructive auto-detect (PaveFiller::Init L212).
+    /// 鉁?OCCT-aligned: SetNonDestructive auto-detect (PaveFiller::Init L212).
     ///    Scans arguments for locked sub-shapes; rcad does not have locked shapes,
     ///    so this is a no-op kept for form alignment.
     pub fn set_non_destructive_auto(&mut self) {
@@ -219,7 +221,7 @@ impl<'a> PaveFiller<'a> {
         self.non_destructive = false;
     }
 
-    /// ✅ OCCT-aligned: SetUseOBB (BOPAlgo_Algo::SetUseOBB).
+    /// 鉁?OCCT-aligned: SetUseOBB (BOPAlgo_Algo::SetUseOBB).
     pub fn set_use_obb(&mut self, use_obb: bool) {
         self.use_obb = use_obb;
     }
@@ -298,18 +300,18 @@ impl<'a> PaveFiller<'a> {
     ///
     /// # Returns
     /// The adjusted fuzzy tolerance (may be the same as input if no adjustment needed).
-    // (Extreme geometry detection removed — rcad invention.
+    // (Extreme geometry detection removed 鈥?rcad invention.
     //  OCCT Prepare builds pcurves on planar faces; rcad DS::build_face_reps subsumes this.)
 
     /// Effective tolerance for coincidence tests in all passes.
     ///
-    /// Returns the DS `fuzzy_tol` (already clamped to ≥ `TOLERANCE_ABS`).
+    /// Returns the DS `fuzzy_tol` (already clamped to 鈮?`TOLERANCE_ABS`).
     #[inline]
     fn tol(&self) -> f64 {
         self.ds.fuzzy_tol
     }
 
-    /// Coincidence tolerance for a vertex pair (fuzzy ∩ per-vertex model tolerances).
+    /// Coincidence tolerance for a vertex pair (fuzzy 鈭?per-vertex model tolerances).
     #[inline]
     fn vv_pair_tol(&self, vi: usize, vj: usize) -> f64 {
         self.tol()
@@ -453,7 +455,7 @@ impl<'a> PaveFiller<'a> {
 
     /// Execute all intersection passes.
     pub fn perform(&mut self) {
-        // ✅ OCCT-aligned: no extreme-geometry pre-analysis — OCCT Prepare builds
+        // 鉁?OCCT-aligned: no extreme-geometry pre-analysis 鈥?OCCT Prepare builds
         //    pcurves on planar faces; rcad does this in DS::build_face_reps.
         // Detect shared topology before interference passes when glue is enabled
         if self.use_glue {
@@ -482,15 +484,15 @@ impl<'a> PaveFiller<'a> {
         if !skip_ve {
             self.perform_ve_bvh(&bvh_verts_a, &bvh_edges_b);
         }
-        // ✅ OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L266)
+        // 鉁?OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L266)
         self.ds.update_pave_blocks_with_sd_vertices();
 
         let ee_survivors: Vec<usize> = if !skip_ee {
             self.perform_ee_bvh(&bvh_edges_a, &bvh_edges_b);
-            // ✅ OCCT-aligned: TreatNewVertices — merge new vertices created by EE intersection.
+            // 鉁?OCCT-aligned: TreatNewVertices 鈥?merge new vertices created by EE intersection.
             //    OCCT PaveFiller_5.cxx L570: PerformNewVertices(aMVCPB, ..., false)
             let survivors = self.treat_new_vertices();
-            // ✅ OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L273)
+            // 鉁?OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L273)
             self.ds.update_pave_blocks_with_sd_vertices();
             survivors
         } else { vec![] };
@@ -499,17 +501,17 @@ impl<'a> PaveFiller<'a> {
             self.perform_vf_bvh(&bvh_verts_a, &bvh_faces_b);
             self.perform_vf_bvh(&bvh_verts_b, &bvh_faces_a);
         }
-        // ✅ OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L280)
+        // 鉁?OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L280)
         self.ds.update_pave_blocks_with_sd_vertices();
 
         if !skip_ef {
             self.perform_ef_bvh(&bvh_edges_a, &bvh_faces_b);
             self.perform_ef_bvh(&bvh_edges_b, &bvh_faces_a);
-            // ✅ OCCT-aligned: TreatNewVertices — merge new vertices created by EF intersection.
+            // 鉁?OCCT-aligned: TreatNewVertices 鈥?merge new vertices created by EF intersection.
             //    OCCT PaveFiller_5.cxx L570: PerformNewVertices(aMVCPB, ..., false)
             let ef_survivors = self.treat_new_vertices();
 
-            // ✅ OCCT-aligned: RepeatIntersection (PaveFiller.cxx L296-299, L359-420).
+            // 鉁?OCCT-aligned: RepeatIntersection (PaveFiller.cxx L296-299, L359-420).
             //    After EF, before FF, re-run VV/VE/VF for vertices with increased tolerance.
             //    OCCT reads from myIncreasedSS (populated by TreatNewVertices).
             //    rcad: ds.increased_ss is populated by treat_new_vertices above.
@@ -518,19 +520,19 @@ impl<'a> PaveFiller<'a> {
             self.repeat_intersection();
         }
 
-        // ✅ OCCT-aligned: ForceInterfEE (PaveFiller_3.cxx L978-1276)
-        //    OCCT L302: ForceInterfEE — after RepeatIntersection, force intersection
+        // 鉁?OCCT-aligned: ForceInterfEE (PaveFiller_3.cxx L978-1276)
+        //    OCCT L302: ForceInterfEE 鈥?after RepeatIntersection, force intersection
         //    of edge pairs sharing a vertex with increased tolerance, detecting
         //    collinear/coincident edges (common block).
-        //    ⏳ rcad: simplified, only checks line-line edge pairs sharing a pave vertex.
+        //    鈴?rcad: simplified, only checks line-line edge pairs sharing a pave vertex.
         if !skip_ee {
             self.force_interf_ee();
         }
 
-        // ✅ OCCT-aligned: ForceInterfEF (PaveFiller_5.cxx L764-1099+)
-        //    OCCT L309: ForceInterfEF — after ForceInterfEE, force intersection of
+        // 鉁?OCCT-aligned: ForceInterfEF (PaveFiller_5.cxx L764-1099+)
+        //    OCCT L309: ForceInterfEF 鈥?after ForceInterfEE, force intersection of
         //    edges whose both endpoints are on a face with increased tolerance.
-        //    ⏳ rcad: simplified, only checks edge-face pairs where both endpoints are on the face.
+        //    鈴?rcad: simplified, only checks edge-face pairs where both endpoints are on the face.
         if !skip_ef {
             self.force_interf_ef();
         }
@@ -538,62 +540,62 @@ impl<'a> PaveFiller<'a> {
         if !skip_ff {
             self.perform_ff();
 
-            // ✅ OCCT-aligned: MakeSDVerticesFF (PaveFiller_6.cxx L1113)
+            // 鉁?OCCT-aligned: MakeSDVerticesFF (PaveFiller_6.cxx L1113)
             //    After FF, create shared SD vertices for same-domain (coplanar) face
             //    overlap boundaries so that overlap polygon vertices are shared between
             //    both faces and registered in face_info.vertices_in.
             self.make_sd_vertices_ff();
         }
 
-        // ✅ OCCT-aligned: PostTreatFF (PaveFiller_6.cxx)
+        // 鉁?OCCT-aligned: PostTreatFF (PaveFiller_6.cxx)
         //    Reconcile FF interference data with face info. Iterates all FF interferences
         //    and updates face_info.curves_sc + vertices_in from curve endpoints.
         self.post_treat_ff();
 
-        // ✅ OCCT-aligned: UpdateBlocksWithSharedVertices (PerformInternal L318)
+        // 鉁?OCCT-aligned: UpdateBlocksWithSharedVertices (PerformInternal L318)
         self.update_blocks_with_shared_vertices();
 
-        // ✅ OCCT-aligned: RefineFaceInfoIn — before MakeSplitEdges, remove
+        // 鉁?OCCT-aligned: RefineFaceInfoIn 鈥?before MakeSplitEdges, remove
         //    On-overlapping In pave blocks (PerformInternal L320, BOPDS_DS::RefineFaceInfoIn).
         for fi in 0..self.ds.faces.len() {
             self.ds.refine_face_info_in(fi);
         }
 
-        // ✅ OCCT-aligned: MakeSplitEdges — create split edges from PaveBlocks (PerformInternal L322).
+        // 鉁?OCCT-aligned: MakeSplitEdges 鈥?create split edges from PaveBlocks (PerformInternal L322).
         self.build_split_edges();
 
-        // ✅ OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L328)
+        // 鉁?OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L328)
         self.ds.update_pave_blocks_with_sd_vertices();
 
-        // ✅ OCCT-aligned: MakeBlocks — inject EF/EE vertices onto FF curves (PerformInternal L330)
+        // 鉁?OCCT-aligned: MakeBlocks 鈥?inject EF/EE vertices onto FF curves (PerformInternal L330)
         self.make_blocks();
 
-        // ✅ OCCT-aligned: CheckSelfInterference (PerformInternal L336, BOPAlgo_PaveFiller_11.cxx L28-221)
-        //    OCCT uses AddWarning — non-fatal, the operation continues.
+        // 鉁?OCCT-aligned: CheckSelfInterference (PerformInternal L336, BOPAlgo_PaveFiller_11.cxx L28-221)
+        //    OCCT uses AddWarning 鈥?non-fatal, the operation continues.
         if let Err(msg) = self.check_self_interference() {
             eprintln!("[PAVEFILLER] {}", msg);
         }
 
-        // ✅ OCCT-aligned: UpdateInterfsWithSDVertices (PerformInternal L338)
+        // 鉁?OCCT-aligned: UpdateInterfsWithSDVertices (PerformInternal L338)
         self.update_interfs_with_sd_vertices();
 
-        // ✅ OCCT-aligned: ReleasePaveBlocks — free unused pave block memory (PerformInternal L339).
+        // 鉁?OCCT-aligned: ReleasePaveBlocks 鈥?free unused pave block memory (PerformInternal L339).
         self.ds.pave_blocks.clear();
 
-        // ✅ OCCT-aligned: RefineFaceInfoOn — after ReleasePaveBlocks, remove
+        // 鉁?OCCT-aligned: RefineFaceInfoOn 鈥?after ReleasePaveBlocks, remove
         //    zero-length On pave blocks (PerformInternal L340, BOPDS_DS::RefineFaceInfoOn).
         for fi in 0..self.ds.faces.len() {
             self.ds.refine_face_info_on(fi);
         }
 
-        // ✅ OCCT-aligned: RemoveMicroEdges — after MakeBlocks, before MakePCurves
+        // 鉁?OCCT-aligned: RemoveMicroEdges 鈥?after MakeBlocks, before MakePCurves
         //    (PerformInternal L342, PaveFiller_6.cxx L4229-4270).
         self.remove_micro_edges();
 
-        // ✅ OCCT-aligned: MakePCurves — after RemoveMicroEdges (PerformInternal L344)
+        // 鉁?OCCT-aligned: MakePCurves 鈥?after RemoveMicroEdges (PerformInternal L344)
         self.make_pcurves();
 
-        // ✅ OCCT-aligned: ProcessDE — after MakePCurves (PerformInternal L350)
+        // 鉁?OCCT-aligned: ProcessDE 鈥?after MakePCurves (PerformInternal L350)
         self.process_de();
     }
 
@@ -767,10 +769,10 @@ impl<'a> PaveFiller<'a> {
                 }
             }
             // OCCT BndLib_AddSurface: expand AABB for curved surfaces.
-            //   Sphere: full sphere AABB = center ± radius (face boundary
+            //   Sphere: full sphere AABB = center 卤 radius (face boundary
             //   vertices only cover a patch, not the whole sphere volume).
             //   Cylinder/Cone: boundary vertices already span the full
-            //   parametric extent — no extra expansion needed.
+            //   parametric extent 鈥?no extra expansion needed.
             if let Surface3::Sphere(s) = &f.surface {
                 let r = s.radius.abs();
                 aabb.expand_point(s.center + DVec3::splat(r));
@@ -915,19 +917,19 @@ impl<'a> PaveFiller<'a> {
         skip_set
     }
 
-    // ─── Pass 1: Vertex-Vertex ─────────────────────────────────────────
+    // 鈹€鈹€鈹€ Pass 1: Vertex-Vertex 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-    /// ✅ OCCT-aligned: PerformVV (PaveFiller_1.cxx L45-135).
-    ///   ⏳ rcad simplified: brute-force O(n²) vs OCCT Iterator + ComputeVV + MakeBlocks.
+    /// 鉁?OCCT-aligned: PerformVV (PaveFiller_1.cxx L45-135).
+    ///   鈴?rcad simplified: brute-force O(n虏) vs OCCT Iterator + ComputeVV + MakeBlocks.
     ///   Key gaps:
     ///   - OCCT L50: Iterator(Vertex, Vertex) eliminates non-intercepting pairs
     ///   - OCCT L84-91: HasShapeSD checks for same-domain vertices
     ///   - OCCT L93: BOPTools_AlgoTools::ComputeVV uses 3D + fuzzy tolerance
     ///   - OCCT L101-135: MakeBlocks + MakeVertices merges groups into new vertices
     ///   rcad: simple distance check, no MakeBlocks, creates Interference::VertexVertex
-    /// ✅ OCCT-aligned: PerformVV (PaveFiller_1.cxx L45-98).
+    /// 鉁?OCCT-aligned: PerformVV (PaveFiller_1.cxx L45-98).
     ///   Uses PairIterator (equivalent to OCCT's BOPDS_Iterator) for
-    ///   A_vertex × B_vertex pair enumeration with box culling.
+    ///   A_vertex 脳 B_vertex pair enumeration with box culling.
     fn perform_vv(&mut self) {
         if self.use_glue && !self.ds.shared_topology.shared_vertices.is_empty() {
             for &(vi_a, vi_b) in &self.ds.shared_topology.shared_vertices {
@@ -939,7 +941,7 @@ impl<'a> PaveFiller<'a> {
             }
             return;
         }
-        // OCCT L50: Iterator(Vertex, Vertex) — pair enumeration with BVH.
+        // OCCT L50: Iterator(Vertex, Vertex) 鈥?pair enumeration with BVH.
         let a_vc = self.ds.a_vertex_count;
         let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_vc, self.ds.vertices.len());
         while fit.more() {
@@ -959,12 +961,12 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    // ─── Pass 2: Vertex-Edge ───────────────────────────────────────────
+    // 鈹€鈹€鈹€ Pass 2: Vertex-Edge 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-    /// ✅ OCCT-aligned: PerformVE (PaveFiller_1.cxx L45-135).
-    ///   ⏳ rcad simplified: cross-product iteration vs OCCT Iterator.
+    /// 鉁?OCCT-aligned: PerformVE (PaveFiller_1.cxx L45-135).
+    ///   鈴?rcad simplified: cross-product iteration vs OCCT Iterator.
     ///   OCCT L50: Iterator(Vertex, Edge) pair enumeration.
-    ///   rcad: O(n*m) brute force — fine for typical boolean model sizes.
+    ///   rcad: O(n*m) brute force 鈥?fine for typical boolean model sizes.
     fn perform_ve(&mut self) {
         // OCCT PaveFiller_2.cxx L143-206: FillShrunkData + BVH pair iteration
         //   with HasSubShape / HasFlag / HasInterf / HasInterfShapeSubShapes skips.
@@ -972,19 +974,19 @@ impl<'a> PaveFiller<'a> {
         let a_verts: Vec<usize> = self.verts_of(ShapeOrigin::ShapeA);
         let b_edges: Vec<usize> = self.edges_of(ShapeOrigin::ShapeB);
 
-        // OCCT L141: FillShrunkData(TopAbs_VERTEX, TopAbs_EDGE) — rcad: skipped,
+        // OCCT L141: FillShrunkData(TopAbs_VERTEX, TopAbs_EDGE) 鈥?rcad: skipped,
         //   shrink data is computed on-the-fly in check_vertex_edge via ve_tol().
         //
-        // OCCT L145: myIterator->Initialize(VERTEX, EDGE) — BVH pair iteration.
-        //   rcad: manual O(n²) loop (see PairIterator in perform_ee for BVH pattern).
+        // OCCT L145: myIterator->Initialize(VERTEX, EDGE) 鈥?BVH pair iteration.
+        //   rcad: manual O(n虏) loop (see PairIterator in perform_ee for BVH pattern).
 
         for &vi in &a_verts {
             for &ei in &b_edges {
-                // OCCT L166-168: aSIE.HasSubShape(nV) — skip if vertex is edge endpoint
+                // OCCT L166-168: aSIE.HasSubShape(nV) 鈥?skip if vertex is edge endpoint
                 if self.ds.edge_has_vertex(vi, ei) { continue; }
-                // OCCT L171-173: aSIE.HasFlag() — skip if edge has flag
+                // OCCT L171-173: aSIE.HasFlag() 鈥?skip if edge has flag
                 if self.ds.edge_has_flag(ei) { continue; }
-                // OCCT L176-178: myDS->HasInterf(nV, nE) — skip if already interfered
+                // OCCT L176-178: myDS->HasInterf(nV, nE) 鈥?skip if already interfered
                 if self.ds.has_interf_ve(vi, ei) { continue; }
                 // OCCT L181-183: myDS->HasInterfShapeSubShapes(nV, nE)
                 if self.ds.has_interf_ve_via_faces(vi, ei) { continue; }
@@ -1048,7 +1050,7 @@ impl<'a> PaveFiller<'a> {
                         let w = circle.normal.cross(u);
                         let theta = w.dot(v).atan2(u.dot(v));
                         if theta >= t_range[0] - te && theta <= t_range[1] + te {
-                            // ✅ OCCT-aligned: only create VE interference if the vertex is
+                            // 鉁?OCCT-aligned: only create VE interference if the vertex is
                             // within tolerance of the edge's 3D curve at the computed param.
                             let on_edge_3d = edge_curve.point_at(theta).distance(point) <= te;
                             if on_edge_3d {
@@ -1067,7 +1069,7 @@ impl<'a> PaveFiller<'a> {
                 }
             }
             _ => {
-                // ✅ OCCT-aligned: general curve projection (IntTools_Context:
+                // 鉁?OCCT-aligned: general curve projection (IntTools_Context:
                 //   GeomAPI_ProjectPointOnCurve for arbitrary curve types).
                 //   rcad: coarse 21-sample grid to find closest approach.
                 let mut best_t = t_range[0];
@@ -1092,7 +1094,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    // ─── Pass 3: Edge-Edge ─────────────────────────────────────────────
+    // 鈹€鈹€鈹€ Pass 3: Edge-Edge 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     fn perform_ee(&mut self) {
         // OCCT PaveFiller_3.cxx L145-240: FillShrunkData + BVH pair iteration
@@ -1113,7 +1115,7 @@ impl<'a> PaveFiller<'a> {
         };
 
         // OCCT L145-149: FillShrunkData + BVH iterator init.
-        //   rcad: PairIterator for cross-group pairs (A-edges × B-edges).
+        //   rcad: PairIterator for cross-group pairs (A-edges 脳 B-edges).
         //   For PaveBlock-level precision (OCCT L200-232), iterate sub-ranges
         //   of each edge defined by existing paves (from VE or prior intersections).
         //   Each sub-range = one logical PaveBlock.
@@ -1122,12 +1124,12 @@ impl<'a> PaveFiller<'a> {
             let pk = it.value();
             let ae = pk.i1; let be = pk.i2;
 
-            // OCCT L189-198: aSIE.HasFlag() — skip flagged edges
+            // OCCT L189-198: aSIE.HasFlag() 鈥?skip flagged edges
             if self.ds.edge_has_flag(ae) || self.ds.edge_has_flag(be) {
                 it.next(); continue;
             }
 
-            // OCCT L176-178: myDS->HasInterf(nE1, nE2) — skip if already processed
+            // OCCT L176-178: myDS->HasInterf(nE1, nE2) 鈥?skip if already processed
             if self.ds.has_interf_ee(ae, be) {
                 it.next(); continue;
             }
@@ -1170,7 +1172,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: EE intersection over PaveBlock sub-ranges.
+    /// 鉁?OCCT-aligned: EE intersection over PaveBlock sub-ranges.
     ///   OCCT PaveFiller_3.cxx L215-240: iterate PaveBlock pairs with
     ///   GetPBBox range check, restrict intersection to shrunk sub-ranges.
     ///   rcad: uses collect_paveblock_ranges + shrunk_range for each sub-range,
@@ -1184,14 +1186,14 @@ impl<'a> PaveFiller<'a> {
         // OCCT L215-232: GetPBBox extracts shrunk range for each PaveBlock.
         //   rcad: compute shrunk_range from edge geom_tol (vertex tolerances
         //   at sub-range boundaries are approximated by edge_tol for interior
-        //   pave points — matching OCCT's per-PaveBlock tolerance approach).
+        //   pave points 鈥?matching OCCT's per-PaveBlock tolerance approach).
         let sr1 = crate::inttools::curve_range::shrunk_range(
             &edge1.curve, range1, edge1.geom_tol, edge1.geom_tol, edge1.geom_tol);
         let sr2 = crate::inttools::curve_range::shrunk_range(
             &edge2.curve, range2, edge2.geom_tol, edge2.geom_tol, edge2.geom_tol);
         let (sr1, sr2) = match (sr1, sr2) {
             (Some(s1), Some(s2)) => (s1, s2),
-            _ => return, // OCCT L226-228: no shrunk data → non-splittable
+            _ => return, // OCCT L226-228: no shrunk data 鈫?non-splittable
         };
 
         // Compute intersections restricted to shrunk sub-ranges.
@@ -1301,32 +1303,32 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    // ─── Pass 4: Vertex-Face ───────────────────────────────────────────
+    // 鈹€鈹€鈹€ Pass 4: Vertex-Face 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-    /// ✅ OCCT-aligned: TreatNewVertices (PaveFiller_3.cxx L692-723) +
+    /// 鉁?OCCT-aligned: TreatNewVertices (PaveFiller_3.cxx L692-723) +
     ///                  PerformNewVertices (PaveFiller_5.cxx L570-650).
     ///   OCCT algorithm (TreatNewVertices L698-723):
-    ///     L700-707: collect vertices + tolerances from theMVCPB → aVerts
-    ///     L710-711: BOPAlgo_Tools::IntersectVertices(aVerts, fuzzy) → aChains
-    ///     L714-722: for each chain, MakeVertex → add to myImages
-    ///   rcad: O(n²) distance grouping + SD vertex merge + interference update.
-    ///   ⏳ rcad: no IntersectVertices BVH (O(n²) is fine for model sizes).
+    ///     L700-707: collect vertices + tolerances from theMVCPB 鈫?aVerts
+    ///     L710-711: BOPAlgo_Tools::IntersectVertices(aVerts, fuzzy) 鈫?aChains
+    ///     L714-722: for each chain, MakeVertex 鈫?add to myImages
+    ///   rcad: O(n虏) distance grouping + SD vertex merge + interference update.
+    ///   鈴?rcad: no IntersectVertices BVH (O(n虏) is fine for model sizes).
     ///   Returns survivors for RepeatIntersection's myIncreasedSS.
-    /// ✅ OCCT-aligned: TreatNewVertices + PerformNewVertices
+    /// 鉁?OCCT-aligned: TreatNewVertices + PerformNewVertices
     ///   (BOPAlgo_PaveFiller_3.cxx L594-688, BOPAlgo_Tools.cxx L1119-1204).
     ///
     /// OCCT flow:
     ///   1. Collect new vertices from interference data
-    ///   2. IntersectVertices: BVH + FillMap + MakeBlocks → connected chains
+    ///   2. IntersectVertices: BVH + FillMap + MakeBlocks 鈫?connected chains
     ///   3. PerformNewVertices: create new TopoDS_Vertex for each chain,
     ///      update interference references, split PaveBlocks at extra paves
-    ///   4. IntersectVE (extra pave splitting) — called at end
+    ///   4. IntersectVE (extra pave splitting) 鈥?called at end
     ///
     /// rcad: DsBvh-based pair culling (matching OCCT BVH), FillMap/MakeBlocks
     ///   via union-find (equivalent to OCCT MakeBlocks), new DS vertex creation
     ///   (matching OCCT BRep_Builder::MakeVertex), interference ref update.
     fn treat_new_vertices(&mut self) -> Vec<usize> {
-        // ── Phase 1: Collect new vertices (OCCT L696-702) ───────────────
+        // 鈹€鈹€ Phase 1: Collect new vertices (OCCT L696-702) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         #[derive(Clone, Copy)]
         struct NewVertInfo { idx: usize, pos: DVec3, tol: f64 }
         let mut new_verts: Vec<NewVertInfo> = Vec::new();
@@ -1344,7 +1346,7 @@ impl<'a> PaveFiller<'a> {
         }
         if new_verts.len() < 2 { return vec![]; }
 
-        // ── Phase 2: IntersectVertices (BOPAlgo_Tools.cxx L1119-1204) ───
+        // 鈹€鈹€ Phase 2: IntersectVertices (BOPAlgo_Tools.cxx L1119-1204) 鈹€鈹€鈹€
         //   OCCT L1135: aTolAdd = theFuzzyValue / 2.
         let gap = self.ds.fuzzy_tol / 2.0;
 
@@ -1400,17 +1402,17 @@ impl<'a> PaveFiller<'a> {
         // OCCT L1196-1203: add non-interfered vertices as single-element chains.
         //   rcad: they're already in groups as single-element groups.
 
-        // ── Phase 3: MakeVertex for each chain (OCCT L714-717) ──────────
+        // 鈹€鈹€ Phase 3: MakeVertex for each chain (OCCT L714-717) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         //   OCCT BOPTools_AlgoTools::MakeVertex:
-        //     Single element → reuse the vertex.
-        //     Multiple elements → BRepLib::BoundingVertex computes center + tolerance.
+        //     Single element 鈫?reuse the vertex.
+        //     Multiple elements 鈫?BRepLib::BoundingVertex computes center + tolerance.
         //     Creates new TopoDS_Vertex via BRep_Builder::MakeVertex.
         //   rcad: create new DS vertex for each multi-vertex group,
         //     update all interferences/paves to point to the new vertex.
         let mut survivors: Vec<usize> = Vec::new();
         for (_root, members) in &groups {
             if members.len() < 2 {
-                // OCCT L1793-1795: single vertex → reuse as-is
+                // OCCT L1793-1795: single vertex 鈫?reuse as-is
                 survivors.push(members[0]);
                 continue;
             }
@@ -1428,10 +1430,10 @@ impl<'a> PaveFiller<'a> {
             // OCCT BRep_Builder::MakeVertex: create new vertex at centroid.
             let new_vi = self.ds.add_vertex(centroid);
             self.ds.vertices[new_vi].geom_tol = max_tol;
-            // OCCT: myIncreasedSS.Add(nV) — mark tolerance as increased.
+            // OCCT: myIncreasedSS.Add(nV) 鈥?mark tolerance as increased.
             self.ds.increased_ss.insert(new_vi);
 
-            // OCCT L638-648: aInt->SetIndexNew(iV) — update interference refs.
+            // OCCT L638-648: aInt->SetIndexNew(iV) 鈥?update interference refs.
             for &old_vi in members {
                 if old_vi == new_vi { continue; }
                 for edge in &mut self.ds.edges {
@@ -1464,11 +1466,11 @@ impl<'a> PaveFiller<'a> {
         survivors
     }
 
-    /// ✅ OCCT-aligned: RepeatIntersection (PaveFiller.cxx L296-299, L359-420).
+    /// 鉁?OCCT-aligned: RepeatIntersection (PaveFiller.cxx L296-299, L359-420).
     ///   OCCT algorithm:
-    ///     L361-389: iterate source shapes, find vertices in myIncreasedSS → anExtraInterfMap
-    ///     L394: myIterator->IntersectExt(anExtraInterfMap) — update iterator for new pairs
-    ///     L398-413: PerformVV → PerformVE → PerformVF
+    ///     L361-389: iterate source shapes, find vertices in myIncreasedSS 鈫?anExtraInterfMap
+    ///     L394: myIterator->IntersectExt(anExtraInterfMap) 鈥?update iterator for new pairs
+    ///     L398-413: PerformVV 鈫?PerformVE 鈫?PerformVF
     ///   rcad: reads from ds.increased_ss (populated by treat_new_vertices), re-runs
     ///   VV/VE/VF with BTreeSet dedup against existing interferences.
     fn repeat_intersection(&mut self) {
@@ -1477,7 +1479,7 @@ impl<'a> PaveFiller<'a> {
         let candidates: Vec<usize> = self.ds.increased_ss.iter().copied().collect();
 
         // Build set of existing interferences for dedup
-        // ✅ OCCT L398-413: PerformVV → PerformVE → PerformVF
+        // 鉁?OCCT L398-413: PerformVV 鈫?PerformVE 鈫?PerformVF
         //    OCCT L394: IntersectExt filters the iterator; rcad uses BTreeSet for dedup
         use std::collections::BTreeSet;
         let mut ve_done: BTreeSet<(usize, usize)> = BTreeSet::new();
@@ -1490,8 +1492,8 @@ impl<'a> PaveFiller<'a> {
             }
         }
 
-        // ── VV: check survivors against vertices on the other side ──────
-        // ✅ OCCT L398: PerformVV(aPS.Next())
+        // 鈹€鈹€ VV: check survivors against vertices on the other side 鈹€鈹€鈹€鈹€鈹€鈹€
+        // 鉁?OCCT L398: PerformVV(aPS.Next())
         //    VV safe: if pair already in interferences, add_vertex will dedup
         for &vi in &candidates {
             let vi_origin = self.ds.vertices[vi].origin;
@@ -1517,8 +1519,8 @@ impl<'a> PaveFiller<'a> {
             }
         }
 
-        // ── VE: check survivors against edges on the other side ──────
-        // ✅ OCCT L403: PerformVE(aPS.Next())
+        // 鈹€鈹€ VE: check survivors against edges on the other side 鈹€鈹€鈹€鈹€鈹€鈹€
+        // 鉁?OCCT L403: PerformVE(aPS.Next())
         for &vi in &candidates {
             let vi_origin = self.ds.vertices[vi].origin;
             let other_edges: Vec<usize> = match vi_origin {
@@ -1532,8 +1534,8 @@ impl<'a> PaveFiller<'a> {
             }
         }
 
-        // ── VF: check survivors against faces on the other side ──────
-        // ✅ OCCT L408: PerformVF(aPS.Next())
+        // 鈹€鈹€ VF: check survivors against faces on the other side 鈹€鈹€鈹€鈹€鈹€鈹€
+        // 鉁?OCCT L408: PerformVF(aPS.Next())
         for &vi in &candidates {
             let vi_origin = self.ds.vertices[vi].origin;
             let other_faces: Vec<usize> = match vi_origin {
@@ -1548,10 +1550,10 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: PerformVF (PaveFiller_1.cxx L330+).
-    ///   ⏳ rcad simplified: cross-product vs OCCT Iterator.
-    /// ✅ OCCT-aligned: PerformVF (PaveFiller_1.cxx L330+).
-    ///   ⏳ rcad: cross-product iteration. OCCT uses Iterator(Vertex, Face)
+    /// 鉁?OCCT-aligned: PerformVF (PaveFiller_1.cxx L330+).
+    ///   鈴?rcad simplified: cross-product vs OCCT Iterator.
+    /// 鉁?OCCT-aligned: PerformVF (PaveFiller_1.cxx L330+).
+    ///   鈴?rcad: cross-product iteration. OCCT uses Iterator(Vertex, Face)
     ///   with BVH-based pair enumeration (BOPDS_Iterator).
     ///   Brute-force O(n*m) is acceptable for typical model sizes.
     fn perform_vf(&mut self) {
@@ -1562,7 +1564,7 @@ impl<'a> PaveFiller<'a> {
         let b_faces = self.faces_of(ShapeOrigin::ShapeB);
         for &vi in &a_verts {
             for &fi in &b_faces {
-                // OCCT: myDS->HasInterf(nV, nF) — skip if already interfered
+                // OCCT: myDS->HasInterf(nV, nF) 鈥?skip if already interfered
                 if self.ds.has_interf_vf(vi, fi) { continue; }
                 self.check_vertex_face(vi, fi);
             }
@@ -1594,8 +1596,8 @@ impl<'a> PaveFiller<'a> {
                 self.ds.faces[fi].face_info.vertices_on.insert(vi);
             }
         } else {
-            // ✅ OCCT-aligned: IntTools_FClass2d::Perform for point IN/ON classification.
-            //   Project vertex onto curved surface → UV → FClass2d UV containment check.
+            // 鉁?OCCT-aligned: IntTools_FClass2d::Perform for point IN/ON classification.
+            //   Project vertex onto curved surface 鈫?UV 鈫?FClass2d UV containment check.
             let surface = face.surface.clone();
             if !matches!(surface, Surface3::Plane(_)) {
                 let proj =
@@ -1618,9 +1620,9 @@ impl<'a> PaveFiller<'a> {
         }
 }
 
-// ─── Pass 5: Edge-Face ─────────────────────────────────────────────
+// 鈹€鈹€鈹€ Pass 5: Edge-Face 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-/// ✅ OCCT-aligned: EF iterate PaveBlock sub-ranges (PerformEF L246-304)
+/// 鉁?OCCT-aligned: EF iterate PaveBlock sub-ranges (PerformEF L246-304)
     ///    Build sub-ranges dynamically from edge.paves, without writing to edge.pave_blocks,
     ///    to avoid side-effect regressions.
     fn perform_ef(&mut self) {
@@ -1631,14 +1633,14 @@ impl<'a> PaveFiller<'a> {
         let b_faces = self.faces_of(ShapeOrigin::ShapeB);
 
         for &ei in &a_edges {
-            // OCCT: aSIE.HasFlag() — skip flagged edges
+            // OCCT: aSIE.HasFlag() 鈥?skip flagged edges
             if self.ds.edge_has_flag(ei) { continue; }
             if self.ds.is_edge_degenerated(ei) { continue; }
             let etr = self.ds.edges[ei].t_range;
             let ranges = self.collect_paveblock_ranges(ei, etr);
             for r in &ranges {
                 for &fi in &b_faces {
-                    // OCCT: myDS->HasInterf(nE, nF) — skip if already interfered
+                    // OCCT: myDS->HasInterf(nE, nF) 鈥?skip if already interfered
                     if self.ds.has_interf_ef(ei, fi) { continue; }
                     self.intersect_edge_face_range(ei, fi, r);
                 }
@@ -1662,9 +1664,9 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: build PaveBlock parameter range list from edge.paves
+    /// 鉁?OCCT-aligned: build PaveBlock parameter range list from edge.paves
     ///    (OCCT MakeSplitEdges: split edge into PaveBlocks at Paves)
-    ///    No side effects — does not write to edge.pave_blocks.
+    ///    No side effects 鈥?does not write to edge.pave_blocks.
     fn collect_paveblock_ranges(&self, edge_idx: usize, edge_t_range: [f64; 2]) -> Vec<[f64; 2]> {
         let paves = &self.ds.edges[edge_idx].paves;
         if paves.is_empty() {
@@ -1689,9 +1691,9 @@ impl<'a> PaveFiller<'a> {
         ranges
     }
 
-    /// ✅ OCCT-aligned: perform EF intersection within a given parameter range (PaveBlock level)
+    /// 鉁?OCCT-aligned: perform EF intersection within a given parameter range (PaveBlock level)
     ///    Uses PaveBlock range instead of full edge t_range.
-    ///    Endpoint intersections are not skipped — they are already Pave vertices.
+    ///    Endpoint intersections are not skipped 鈥?they are already Pave vertices.
     fn intersect_edge_face_range(&mut self, edge_idx: usize, face_idx: usize, pb_range: &[f64; 2]) {
         let edge_curve = self.ds.edges[edge_idx].curve.clone();
         let edge_t_range = self.ds.edges[edge_idx].t_range;
@@ -1707,7 +1709,7 @@ impl<'a> PaveFiller<'a> {
         }
         let face_surface = self.ds.faces[face_idx].surface.clone();
 
-        // Dispatch based on curve type × surface type
+        // Dispatch based on curve type 脳 surface type
         let hits: Vec<(DVec3, f64)> = match (&edge_curve, &face_surface) {
             (Curve3::Line(line), Surface3::Plane(plane)) => {
                 inttools::edge_face::intersect_line_plane_with_tol(
@@ -1754,7 +1756,7 @@ impl<'a> PaveFiller<'a> {
                 .collect()
             }
             (Curve3::Circle(circle), Surface3::Plane(plane)) => {
-                // Use edge start vertex as reference direction for θ=0
+                // Use edge start vertex as reference direction for 胃=0
                 let sv = self.ds.edges[edge_idx].start_vertex;
                 let ref_dir = (self.ds.vertices[sv].point - circle.center).normalize();
                 inttools::curve_surface::intersect_circle_plane_with_ref(
@@ -1796,7 +1798,7 @@ impl<'a> PaveFiller<'a> {
                 .collect()
             }
             (Curve3::Ellipse(ellipse), Surface3::Plane(plane)) => {
-                // ✅ OCCT-aligned: IntAna_IntConicQuad Ellipse × Plane
+                // 鉁?OCCT-aligned: IntAna_IntConicQuad Ellipse 脳 Plane
                 inttools::ellipse_intersection::intersect_ellipse_plane_with_tol(
                     ellipse,
                     ef_range,
@@ -1808,7 +1810,7 @@ impl<'a> PaveFiller<'a> {
                 .collect()
             }
             (Curve3::Ellipse(ellipse), Surface3::Cylinder(cyl)) => {
-                // ⏳ Partially aligned: numeric fallback, same as OCCT for rare cases
+                // 鈴?Partially aligned: numeric fallback, same as OCCT for rare cases
                 inttools::ellipse_intersection::intersect_ellipse_cylinder_with_tol(
                     ellipse,
                     ef_range,
@@ -1842,7 +1844,7 @@ impl<'a> PaveFiller<'a> {
                 .collect()
             }
             (Curve3::Parabola(parabola), Surface3::Plane(plane)) => {
-                // ✅ OCCT-aligned: IntAna_IntConicQuad Parabola × Plane
+                // 鉁?OCCT-aligned: IntAna_IntConicQuad Parabola 脳 Plane
                 inttools::parabola_intersection::intersect_parabola_plane_with_tol(
                     parabola,
                     ef_range,
@@ -1854,7 +1856,7 @@ impl<'a> PaveFiller<'a> {
                 .collect()
             }
             (Curve3::Parabola(parabola), Surface3::Cylinder(cyl)) => {
-                // ⏳ Partially aligned: numeric fallback
+                // 鈴?Partially aligned: numeric fallback
                 inttools::parabola_intersection::intersect_parabola_cylinder_with_tol(
                     parabola,
                     ef_range,
@@ -1888,7 +1890,7 @@ impl<'a> PaveFiller<'a> {
                 .collect()
             }
             (Curve3::Hyperbola(hyperbola), Surface3::Plane(plane)) => {
-                // ✅ OCCT-aligned: IntAna_IntConicQuad Hyperbola × Plane
+                // 鉁?OCCT-aligned: IntAna_IntConicQuad Hyperbola 脳 Plane
                 inttools::hyperbola_intersection::intersect_hyperbola_plane_with_tol(
                     hyperbola,
                     ef_range,
@@ -1900,7 +1902,7 @@ impl<'a> PaveFiller<'a> {
                 .collect()
             }
             (Curve3::Hyperbola(hyperbola), Surface3::Cylinder(cyl)) => {
-                // ⏳ Partially aligned: numeric fallback
+                // 鈴?Partially aligned: numeric fallback
                 inttools::hyperbola_intersection::intersect_hyperbola_cylinder_with_tol(
                     hyperbola,
                     ef_range,
@@ -1935,7 +1937,7 @@ impl<'a> PaveFiller<'a> {
             }
             _ => {
                 // Numeric fallback: sample the curve, find sign changes of the
-                // surface implicit function. Works for any Curve3 × Surface3 pair.
+                // surface implicit function. Works for any Curve3 脳 Surface3 pair.
                 intersect_edge_face_numeric(&edge_curve, &face_surface, ef_range, etf)
             }
         };
@@ -1950,7 +1952,7 @@ impl<'a> PaveFiller<'a> {
                 _ => true,
             };
 
-            // ✅ OCCT-aligned: accept intersection points on face boundary
+            // 鉁?OCCT-aligned: accept intersection points on face boundary
             //    vertices. point_in_planar_face_with_tol uses ray casting
             //    which may reject points exactly on polygon vertices.
             if !in_face {
@@ -1965,7 +1967,7 @@ impl<'a> PaveFiller<'a> {
                 if !near_face_vert { continue; }
             }
 
-            // ✅ OCCT-aligned: PaveBlock endpoint intersection handling
+            // 鉁?OCCT-aligned: PaveBlock endpoint intersection handling
             //    OCCT L262 SetRange: PaveBlock endpoints are already Pave vertices.
             //    rcad: if intersection is at an edge endpoint, don't create a new vertex
             //    but register the existing vertex in vertices_on for later MakeBlocks.
@@ -1974,7 +1976,7 @@ impl<'a> PaveFiller<'a> {
             let tol = etf
                 .max(self.ds.vertices[sv].geom_tol)
                 .max(self.ds.vertices[ev].geom_tol);
-            // 1. 3D position check — original edge endpoints
+            // 1. 3D position check 鈥?original edge endpoints
             let at_sv = (point - self.ds.vertices[sv].point).length() <= tol;
             let at_ev = (point - self.ds.vertices[ev].point).length() <= tol;
             if at_sv || at_ev {
@@ -1983,7 +1985,7 @@ impl<'a> PaveFiller<'a> {
                 self.ds.faces[face_idx].face_info.vertices_on.insert(existing_v);
                 continue;
             }
-            // 2. Parameter skip (PaveBlock internal endpoints) — PaveBlock endpoints are already Paves
+            // 2. Parameter skip (PaveBlock internal endpoints) 鈥?PaveBlock endpoints are already Paves
             let at_pb_start = (edge_param - pb_range[0]).abs() <= tol;
             let at_pb_end = (edge_param - pb_range[1]).abs() <= tol;
             if at_pb_start || at_pb_end {
@@ -2008,9 +2010,9 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    // ─── Pass 6: Face-Face ─────────────────────────────────────────────
+    // 鈹€鈹€鈹€ Pass 6: Face-Face 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-    /// ✅ OCCT-aligned: check if EE interference already exists (OCCT L1123-1128: skip existing CommonBlock)
+    /// 鉁?OCCT-aligned: check if EE interference already exists (OCCT L1123-1128: skip existing CommonBlock)
     fn has_ee_interf(&self, e1: usize, e2: usize) -> bool {
         self.ds.interferences.iter().any(|inf| {
             matches!(inf, Interference::EdgeEdge { e1: a, e2: b, .. }
@@ -2018,12 +2020,12 @@ impl<'a> PaveFiller<'a> {
         })
     }
 
-    /// ✅ OCCT-aligned: RemoveMicroEdges (PaveFiller_6.cxx L4229-4270)
+    /// 鉁?OCCT-aligned: RemoveMicroEdges (PaveFiller_6.cxx L4229-4270)
     ///    Remove zero-length PaveBlocks (micro edges) where start==end.
     ///
     ///    OCCT algorithm:
     ///    1. L4239-4244: iterate all edges' PaveBlocks, skip <2 blocks or degenerate
-    ///    2. L4255-4264: for RealPaveBlock, if nV1==nV2 with no valid ShrunkData → micro edge
+    ///    2. L4255-4264: for RealPaveBlock, if nV1==nV2 with no valid ShrunkData 鈫?micro edge
     ///    3. L4269: RemovePaveBlocks(aMicroEdges) removes from DS
     ///
     ///    rcad equivalent: iterate edges, for adjacent Paves with same vertex_idx in edge.paves,
@@ -2038,7 +2040,7 @@ impl<'a> PaveFiller<'a> {
                 let v1 = self.ds.vertices[pb.pave1.vertex_idx].point;
                 let v2 = self.ds.vertices[pb.pave2.vertex_idx].point;
                 if (v1 - v2).length() < TOLERANCE_ABS * 100.0 {
-                    // Vertices are coincident — could be SD merged
+                    // Vertices are coincident 鈥?could be SD merged
                 }
             }
         }
@@ -2147,52 +2149,23 @@ impl<'a> PaveFiller<'a> {
     /// After all paves are placed on curves, filters out redundant paves
     /// at nearly the same parameter (within tolerance).
     /// This prevents duplicate PaveBlocks on section curves.
-    fn filter_paves_on_curves(&mut self) {
-        for ci in 0..self.ds.intersection_curves.len() {
-            let ic = &self.ds.intersection_curves[ci];
-            let tol = ic.geom_tol.max(TOLERANCE_ABS) * 100.0;
-            // Collect unique pave-block vertices for this curve
-            let mut face_verts: Vec<(usize, f64)> = Vec::new();
-            for inf in &self.ds.interferences {
-                if let Interference::FaceFace { f1, f2, curves, .. } = inf {
-                    if curves.contains(&ci) {
-                        let faces = [*f1, *f2];
-                        for &fi in &faces {
-                            for &vi in &self.ds.faces[fi].face_info.vertices_in {
-                                if !face_verts.iter().any(|(v,_)| v == &vi) {
-                                    if let Some(t) = self.project_vertex_on_curve(vi, ic) {
-                                        face_verts.push((vi, t));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            // Dedup by parameter
-            face_verts.sort_by(|a,b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-            face_verts.dedup_by(|a,b| (a.1 - b.1).abs() < tol);
-        }
-    }
 
-
-
-    /// ✅ OCCT-aligned: RemoveMicroEdges (PaveFiller_6.cxx L4388-4435).
+    /// 鉁?OCCT-aligned: RemoveMicroEdges (PaveFiller_6.cxx L4388-4435).
     ///
     /// OCCT algorithm:
     ///   L4394-4396: get PaveBlocks pool (aPBP = ChangePaveBlocksPool)
     ///   L4398-4433: for each edge i in pool:
-    ///     L4401-4403: if <2 PaveBlocks → skip (no splits)
+    ///     L4401-4403: if <2 PaveBlocks 鈫?skip (no splits)
     ///     L4407-4410: skip degenerated edges (HasFlag)
     ///     L4412-4432: for each PB on edge:
-    ///       L4418: aMPBFence.Add(aPBR) — fence against duplicate CB blocks
+    ///       L4418: aMPBFence.Add(aPBR) 鈥?fence against duplicate CB blocks
     ///       L4420-4422: get nV1, nV2 via Indices()
-    ///       L4425-4426: FillShrunkData(aPBR) — compute valid range
-    ///       L4426-4428: if no shrunk data → add to aMicroEdges
+    ///       L4425-4426: FillShrunkData(aPBR) 鈥?compute valid range
+    ///       L4426-4428: if no shrunk data 鈫?add to aMicroEdges
     ///   L4434: RemovePaveBlocks(aMicroEdges)
     ///
     /// rcad: operates on edge.pave_blocks (already built by build_split_edges).
-    /// ⏳ rcad: no FillShrunkData check — shrunk data not maintained on PaveBlocks.
+    /// 鈴?rcad: no FillShrunkData check 鈥?shrunk data not maintained on PaveBlocks.
     ///    Without the valid-range check, rcad may mark as micro some edges that
     ///    OCCT would keep (those with valid shrunk data despite same vertices).
     ///    In practice, nV1==nV2 with valid shrunk range is extremely rare.
@@ -2217,7 +2190,7 @@ impl<'a> PaveFiller<'a> {
                 let nv2 = pb.pave2.vertex_idx;
                 if nv1 == nv2 {
                     // OCCT L4425-4426: FillShrunkData + HasShrunkData check
-                    // ⏳ rcad: shrunk data not available — skip valid-range check
+                    // 鈴?rcad: shrunk data not available 鈥?skip valid-range check
                     micro_edges.push(ei);
                     break;
                 }
@@ -2239,43 +2212,43 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: ForceInterfEE (PaveFiller_3.cxx L978-1276)
+    /// 鉁?OCCT-aligned: ForceInterfEE (PaveFiller_3.cxx L978-1276)
     ///    After RepeatIntersection, force intersection of edge pairs sharing a vertex
     ///    (via paves) with increased tolerance to detect collinear/coincident edges.
     ///
     ///    OCCT algorithm (L978-1276):
     ///    1. L989-1002: initialize PaveBlocks for all vertices that participated in intersection
-    ///    2. L1003-1049: build (nV1,nV2) → PaveBlock list mapping
+    ///    2. L1003-1049: build (nV1,nV2) 鈫?PaveBlock list mapping
     ///    3. L1060-1177: for PaveBlock pairs sharing a vertex:
     ///       a. L1077-1083: aTolAdd = 2 * max(tol(V1), tol(V2))
     ///       b. L1097-1102: get edge midpoint, check edge direction vector
-    ///       c. L1134-1157: angle check: >25° then skip addTol
+    ///       c. L1134-1157: angle check: >25掳 then skip addTol
     ///       d. L1160-1175: set FuzzyValue = myFuzzyValue + aTolAdd
     ///    4. L1198-1199: Perform all EdgeEdge intersections
     ///    5. L1208-1275: create CommonBlock for TopAbs_EDGE results
     ///
-    ///    ⏳ rcad simplified:
+    ///    鈴?rcad simplified:
     ///    - No OCCT PaveBlock/Rank/CommonBlock structures
     ///    - Only checks line-line edge pair collinearity with increased tolerance
-    /// ✅ OCCT-aligned: ForceInterfEE (PaveFiller_3.cxx L997-1276).
+    /// 鉁?OCCT-aligned: ForceInterfEE (PaveFiller_3.cxx L997-1276).
     ///   OCCT algorithm:
     ///     L1008-1023: InitPaveBlocksForVertex for all interfered vertices
-    ///     L1024-1079: build (nV1,nV2) → PaveBlock map (aPBMap)
+    ///     L1024-1079: build (nV1,nV2) 鈫?PaveBlock map (aPBMap)
     ///     L1090-1224: for each PB pair sharing vertices:
-    ///       L1116: aTolAdd = 2×max(tol(V1),tol(V2))
+    ///       L1116: aTolAdd = 2脳max(tol(V1),tol(V2))
     ///       L1131-1139: get midpoint tangent for angle check
     ///       L1150: skip if same origin (iR1==iR2)
     ///       L1163-1169: skip if already CommonBlock
-    ///       L1175-1204: angle >25° → skip tolAdd
+    ///       L1175-1204: angle >25掳 鈫?skip tolAdd
     ///       L1207-1223: create EdgeEdge pair with fuzzy value
     ///     L1227-1276: parallel EdgeEdge intersection + CommonBlock creation
     ///   rcad: inline pair execution (no parallel).  Same logic.
     fn force_interf_ee(&mut self) {
         // OCCT L1008-1023: initialize PBs for interfered vertices
-        // rcad: build vertex → edge mapping from edge.paves
+        // rcad: build vertex 鈫?edge mapping from edge.paves
         // OCCT L1047-1051: skip degenerated edges (HasFlag)
-        // OCCT L1041-1045: HasReference → non-empty pave_blocks
-        // OCCT L1047-1051: HasFlag → skip degenerated edges
+        // OCCT L1041-1045: HasReference 鈫?non-empty pave_blocks
+        // OCCT L1047-1051: HasFlag 鈫?skip degenerated edges
         let mut vert_edges: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
         for (ei, edge) in self.ds.edges.iter().enumerate() {
             if edge.paves.is_empty() { continue; }
@@ -2312,7 +2285,7 @@ impl<'a> PaveFiller<'a> {
                             let d1 = l1.direction;
                             let d2 = l2.direction;
                             let cos_angle = d1.dot(d2).abs();
-                            // OCCT L1155: angle > 25° → cos < 0.9063 → skip addTol
+                            // OCCT L1155: angle > 25掳 鈫?cos < 0.9063 鈫?skip addTol
                             let fuzzy = if cos_angle >= 0.9063 {
                                 self.ds.fuzzy_tol + tol_add
                             } else {
@@ -2331,7 +2304,7 @@ impl<'a> PaveFiller<'a> {
                             }
                         }
                         (Curve3::Circle(circ), Curve3::Circle(_)) => {
-                            // ⏳ circle-circle coincidence detection simplified: uses normal tolerance
+                            // 鈴?circle-circle coincidence detection simplified: uses normal tolerance
                             // intersect_circle_circle returns Vec<DVec3>
                             let fuzzy = self.ds.fuzzy_tol + tol_add;
                             let cp_hits = intersect_circle_circle(circ, circ, fuzzy);
@@ -2358,14 +2331,14 @@ impl<'a> PaveFiller<'a> {
                             } else {
                                 self.ds.fuzzy_tol
                             };
-                            // OCCT IntTools_EdgeEdge: coarse → adaptive → Newton
-                            // (1) Coarse 21×21 grid → find best (t1,t2)
-                            // (2) Recursive subdivision around best: 2× denser per level
+                            // OCCT IntTools_EdgeEdge: coarse 鈫?adaptive 鈫?Newton
+                            // (1) Coarse 21脳21 grid 鈫?find best (t1,t2)
+                            // (2) Recursive subdivision around best: 2脳 denser per level
                             // (3) Converge when distance < fuzzy OR subrange < 1e-6
                             let mut best_t1 = mid_t1;
                             let mut best_t2 = mid_t2;
                             let mut best_d = f64::MAX;
-                            // OCCT N=20 → 21 samples per curve
+                            // OCCT N=20 鈫?21 samples per curve
                             for si in 0..21 {
                                 let t1 = tr1[0] + (tr1[1] - tr1[0]) * (si as f64 / 20.0);
                                 let p1 = c1.point_at(t1);
@@ -2399,7 +2372,7 @@ impl<'a> PaveFiller<'a> {
                                 r2_hi = (best_t2 + span).min(tr2[1]);
                             }
                             // (3) OCCT IntTools_CurveRange L230-260: Newton-Raphson iteration
-                            // Minimize F(t1,t2) = ||C1(t1)-C2(t2)||² using gradient+Hessian.
+                            // Minimize F(t1,t2) = ||C1(t1)-C2(t2)||虏 using gradient+Hessian.
                             let mut nr_t1 = best_t1;
                             let mut nr_t2 = best_t2;
                             for _ in 0..8 {
@@ -2412,18 +2385,18 @@ impl<'a> PaveFiller<'a> {
                                 if t1.length_squared() < 1e-30 || t2.length_squared() < 1e-30 { break; }
                                 let d1 = t1.normalize();
                                 let d2 = t2.normalize();
-                                // Hessian H and gradient ∇F of F(t1,t2) = ||C1-C2||²
-                                let h00 = 2.0;  // H = 2*M, M = [[d1·d1, -d1·d2], [-d2·d1, d2·d2]]
+                                // Hessian H and gradient 鈭嘑 of F(t1,t2) = ||C1-C2||虏
+                                let h00 = 2.0;  // H = 2*M, M = [[d1路d1, -d1路d2], [-d2路d1, d2路d2]]
                                 let h01 = -2.0 * d1.dot(d2);
                                 let h10 = h01;  // symmetric
                                 let h11 = 2.0;
-                                // OCCT IntTools_CurveRange: R[0]=-(C1-C2)·C1', R[1]=(C1-C2)·C2'
+                                // OCCT IntTools_CurveRange: R[0]=-(C1-C2)路C1', R[1]=(C1-C2)路C2'
                                 // H = 2*M where M = [[1, -cos], [-cos, 1]], RHS = [2*R[0], 2*R[1]]
                                 let g0 = 2.0 * diff.dot(d1);   // = -2*R[0]
                                 let g1 = 2.0 * diff.dot(d2);   // = 2*R[1]
                                 let det = h00 * h11 - h01 * h01;
                                 if det.abs() < 1e-30 { break; }
-                                // H·Δt = [-g0, g1] → M·Δt = [R[0], R[1]] (OCCT L245-250)
+                                // H路螖t = [-g0, g1] 鈫?M路螖t = [R[0], R[1]] (OCCT L245-250)
                                 let dt1 = (-g0 * h11 - g1 * h01) / det;
                                 let dt2 = (g1 * h00 + g0 * h10) / det;
                                 let new_t1 = (nr_t1 + dt1).clamp(tr1[0], tr1[1]);
@@ -2447,7 +2420,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: ForceInterfEF (PaveFiller_5.cxx L764-1099+)
+    /// 鉁?OCCT-aligned: ForceInterfEF (PaveFiller_5.cxx L764-1099+)
     ///    After ForceInterfEE, check if edges with both endpoints on a face lie on
     ///    that face using increased tolerance.
     ///
@@ -2457,25 +2430,25 @@ impl<'a> PaveFiller<'a> {
     ///       a. L888-911: collect all vertices on the face
     ///       b. L928-932: check both PaveBlock endpoints are on the face
     ///       c. L956-986: midpoint projection + angle check
-    ///       d. L1008-1035: aTolAdd = max(endpoint→face distance)
+    ///       d. L1008-1035: aTolAdd = max(endpoint鈫抐ace distance)
     ///       e. L1053: FuzzyValue = myFuzzyValue + aTolAdd
     ///    3. L1078-1079: Perform all EdgeFace intersections
     ///    4. L1095+: collect results
     ///
-    /// ✅ OCCT-aligned: ForceInterfEF (PaveFiller_5.cxx L764-1099+)
+    /// 鉁?OCCT-aligned: ForceInterfEF (PaveFiller_5.cxx L764-1099+)
     ///    Project each PaveBlock's midpoint onto its face, check distance.
     ///    Uses PaveBlock endpoint vertices for tolerance (OCCT L976-984),
     ///    not full edge endpoints (which are for the whole edge, not the
     ///    current PaveBlock's sub-range).
-    /// ✅ OCCT-aligned: ForceInterfEF (PaveFiller_5.cxx L772-~1099).
+    /// 鉁?OCCT-aligned: ForceInterfEF (PaveFiller_5.cxx L772-~1099).
     ///   OCCT algorithm:
-    ///     L787-821: collect all PaveBlocks with HasReference → RealPaveBlock
+    ///     L787-821: collect all PaveBlocks with HasReference 鈫?RealPaveBlock
     ///     L848-870: build BVH tree of PBs (BOPTools_BoxTree)
     ///     L882-965: for each face, collect face vertices (On+In+Sc+PB endpoints)
-    ///       → check if candidate PB's vertices are in the face's vertex set
+    ///       鈫?check if candidate PB's vertices are in the face's vertex set
     ///     L966-1054: for matched PBs, create EdgeFace intersection pairs
-    ///   rcad: brute-force edge×face iteration with OCCT vertex-set check.
-    ///   ⏳ rcad: no BVH tree (O(n²) is fine for typical model sizes).
+    ///   rcad: brute-force edge脳face iteration with OCCT vertex-set check.
+    ///   鈴?rcad: no BVH tree (O(n虏) is fine for typical model sizes).
     fn force_interf_ef(&mut self) {
         // OCCT L787-821: collect all PBs (skip edges without PBs or degenerated)
         for ei in 0..self.ds.edges.len() {
@@ -2550,7 +2523,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: ForceInterfVE (PaveFiller_3.cxx, EE/EF force pass extended to VE)
+    /// 鉁?OCCT-aligned: ForceInterfVE (PaveFiller_3.cxx, EE/EF force pass extended to VE)
     ///    After ForceInterfEF, vertices on a face with increased tolerance may now be
     ///    within tolerance of boundary edges of that face. Check each face's vertices_in
     ///    and vertices_on against all boundary edges of that face.
@@ -2560,7 +2533,7 @@ impl<'a> PaveFiller<'a> {
     ///    2. For each vertex, check against all boundary edges of the same face
     ///    3. If vertex and edge have different origins and VE distance < tolerance, create VE interference
     ///
-    ///    ⏳ rcad: simplified, delegates to existing check_vertex_edge helper.
+    ///    鈴?rcad: simplified, delegates to existing check_vertex_edge helper.
     fn force_interf_ve(&mut self) {
         // Build set of existing VE interferences for dedup
         let mut ve_done: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
@@ -2608,7 +2581,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: ForceInterfVF (PaveFiller_4.cxx, VF force pass)
+    /// 鉁?OCCT-aligned: ForceInterfVF (PaveFiller_4.cxx, VF force pass)
     ///    After all main passes (EF/FF), vertices whose tolerance was increased may now
     ///    be within tolerance of opposite-shape faces. Check all vertices against all
     ///    opposite-shape faces.
@@ -2618,7 +2591,7 @@ impl<'a> PaveFiller<'a> {
     ///    2. If vertex-face distance < vertex_tolerance + face_tolerance, create VF interference
     ///    3. Insert vertex into face_info.vertices_on
     ///
-    ///    ⏳ rcad: simplified, delegates to existing check_vertex_face helper.
+    ///    鈴?rcad: simplified, delegates to existing check_vertex_face helper.
     fn force_interf_vf(&mut self) {
         // Build set of existing VF interferences for dedup
         let mut vf_done: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
@@ -2643,7 +2616,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: PostTreatFF (PaveFiller_6.cxx, simplified stub)
+    /// 鉁?OCCT-aligned: PostTreatFF (PaveFiller_6.cxx, simplified stub)
     ///    After FF, reconcile FF interference data with face info:
     ///    1. Iterate all FF interferences
     ///    2. For each FF with non-empty curves, update face_info.curves_sc
@@ -2651,7 +2624,7 @@ impl<'a> PaveFiller<'a> {
     ///
     ///    OCCT PaveFiller_6.cxx ~L509-592: PostTreatFF also handles SD vertices
     ///    and updates face info for all faces involved in FF intersection.
-    ///    ⏳ rcad: simplified, does not handle SD vertices.
+    ///    鈴?rcad: simplified, does not handle SD vertices.
 
     /// OCCT-aligned: PutSEInOtherFaces (BOPAlgo_PaveFiller_8.cxx L650-900).
     fn put_se_in_other_faces(&mut self) {
@@ -2700,8 +2673,8 @@ impl<'a> PaveFiller<'a> {
     }
 
     /// OCCT-aligned: ProcessDE (BOPAlgo_PaveFiller_9.cxx L100-250).
-    /// ✅ OCCT-aligned: ProcessDE (PaveFiller_8.cxx L54-131).
-    ///   ⏳ rcad: focuses on surface-singularity vertices (sphere poles, cylinder apex)
+    /// 鉁?OCCT-aligned: ProcessDE (PaveFiller_8.cxx L54-131).
+    ///   鈴?rcad: focuses on surface-singularity vertices (sphere poles, cylinder apex)
     ///   adding them to face_info.vertices_in for the WireSplitter. OCCT creates proper
     ///   degenerate TopoDS_Edge shapes from flagged edges via FindPaveBlocks+FillPaves.
     ///   rcad's approach is simpler and sufficient for periodic-surface vertex handling.
@@ -2833,25 +2806,60 @@ impl<'a> PaveFiller<'a> {
     }
 
     /// OCCT-aligned: PutPavesOnCurve (BOPAlgo_PaveFiller_6.cxx L2372-2430).
-    fn put_paves_on_curve(&mut self) {
+    /// 鉁?OCCT-aligned: PutPaveOnCurve (PaveFiller_6.cxx L833-900).
+    fn put_pave_on_curve(&mut self, nV: usize, curve_idx: usize) -> Option<f64> {
+        let t = self.project_vertex_on_curve(nV, &self.ds.intersection_curves[curve_idx])?;
+        if let Some(pb) = self.ds.intersection_curves[curve_idx].change_pave_block1() {
+            pb.append_ext_pave(Pave { vertex_idx: nV, param: t });
+        }
+        Some(t)
+    }
+
+    /// 鉁?OCCT-aligned: PutPavesOnCurve (PaveFiller_6.cxx L2372-2421).
+    fn put_paves_on_curve(&mut self, curve_idx: usize) {
+        let ic = self.ds.intersection_curves[curve_idx].clone();
+        let aBoxC = curve_bounding_box_simple(&ic.curve, ic.geom_tol.max(TOLERANCE_ABS));
+        let aTolR3D = ic.geom_tol;
+        let ef_vertices: Vec<usize> = self.ds.interferences.iter()
+            .filter_map(|inf| {
+                if let Interference::EdgeFace { new_vertex, .. } = inf { Some(*new_vertex) } else { None }
+            }).collect();
+        let ef_set: HashSet<usize> = ef_vertices.iter().copied().collect();
+        let in_vertices: Vec<usize> = (0..self.ds.faces.len())
+            .flat_map(|fi| self.ds.faces[fi].face_info.vertices_in.iter().copied()).collect();
+        for &vi in &ef_vertices { self.put_pave_on_curve(vi, curve_idx); }
+        for &vi in &in_vertices {
+            if ef_set.contains(&vi) { continue; }
+            if let Some([c_min, c_max]) = aBoxC {
+                let v_pt = self.ds.vertices[vi].point;
+                let v_tol = self.ds.vertices[vi].geom_tol.max(aTolR3D);
+                let v_min = v_pt - DVec3::splat(v_tol);
+                let v_max = v_pt + DVec3::splat(v_tol);
+                if v_max.x < c_min.x || v_min.x > c_max.x || v_max.y < c_min.y || v_min.y > c_max.y || v_max.z < c_min.z || v_min.z > c_max.z { continue; }
+            }
+            if !self.ds.is_new_vertex(vi) { continue; }
+            self.put_pave_on_curve(vi, curve_idx);
+        }
+    }
+
+    /// 鉁?OCCT-aligned: FilterPavesOnCurves (PaveFiller_6.cxx L2437-2441).
+    fn filter_paves_on_curves_occt(&mut self) {
         for ci in 0..self.ds.intersection_curves.len() {
             let ic = self.ds.intersection_curves[ci].clone();
-            let mut voc: Vec<(usize, f64)> = Vec::new();
-            for inf in &self.ds.interferences {
-                let vi = match inf {
-                    Interference::EdgeFace { new_vertex, .. } => *new_vertex,
-                    Interference::EdgeEdge { new_vertex, .. } => *new_vertex,
-                    Interference::VertexFace { vertex, .. } => *vertex,
-                    Interference::VertexEdge { vertex, .. } => *vertex,
-                    _ => continue,
-                };
-                if let Some(t) = self.project_vertex_on_curve(vi, &ic) { voc.push((vi, t)); }
+            let aTolR3D = ic.geom_tol.max(TOLERANCE_ABS);
+            if let Some(pb) = self.ds.intersection_curves[ci].change_pave_block1() {
+                let ext = pb.change_ext_paves();
+                ext.retain(|pave| {
+                    let pt = self.ds.vertices[pave.vertex_idx].point;
+                    let dist = match &ic.curve {
+                        Curve3::Line(l) => (l.origin + l.direction * (pt - l.origin).dot(l.direction)).distance(pt),
+                        Curve3::Circle(c) => (pt.distance(c.center) - c.radius).abs(),
+                        _ => 0.0,
+                    };
+                    dist < aTolR3D
+                });
+                pb.ext_paves_fence = ext.iter().map(|p| p.vertex_idx).collect();
             }
-            if voc.is_empty() { continue; }
-            voc.sort_by(|a,b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-            let tl = ic.geom_tol.max(TOLERANCE_ABS);
-            voc.dedup_by(|a,b| (a.1-b.1).abs() < tl*100.0);
-            for (vi, t) in &voc { self.split_ic_at(ci, *vi, *t); }
         }
     }
 
@@ -2859,17 +2867,12 @@ impl<'a> PaveFiller<'a> {
         use rcad_kernel::geom::CurveEval;
         let vp = self.ds.vertices[vi].point;
         let tl = ic.geom_tol.max(TOLERANCE_ABS);
-        // OCCT-aligned: first try with base tolerance
         let result = self.project_vertex_on_curve_with_tol(vi, ic, tl);
         if result.is_some() { return result; }
-        // OCCT-aligned: try with ExtendedTolerance (OCCT PaveFiller_6.cxx L2542)
         let ext_tol = self.extended_tolerance_occt(vi);
-        if ext_tol > tl {
-            self.project_vertex_on_curve_with_tol(vi, ic, ext_tol)
-        } else { None }
+        if ext_tol > tl { self.project_vertex_on_curve_with_tol(vi, ic, ext_tol) } else { None }
     }
 
-    /// Core projection logic with explicit tolerance.
     fn project_vertex_on_curve_with_tol(&self, vi: usize, ic: &IntersectionCurve, tl: f64) -> Option<f64> {
         use rcad_kernel::geom::CurveEval;
         let vp = self.ds.vertices[vi].point;
@@ -2878,17 +2881,13 @@ impl<'a> PaveFiller<'a> {
                 if (v - l.direction*t).length() <= tl { Some(t.clamp(ic.t_range[0], ic.t_range[1])) } else { None } }
             Curve3::Circle(c) => {
                 let v = vp - c.center;
-                // OCCT-aligned: cap tolerance to circle radius * 1e-4 to prevent
-                // extended_tolerance_occt (which can be 1+ units for box corners)
-                // from incorrectly accepting interior points as "on" the circle.
                 let tl_cap = tl.min(c.radius.max(1e-7) * 1e-4);
                 if (v.length() - c.radius).abs() > tl_cap { return None; }
                 let nm = c.normal.normalize();
                 if v.dot(nm).abs() > tl_cap { return None; }
                 let xa = any_perpendicular(nm).normalize();
                 let ya = nm.cross(xa);
-                let ang = v.dot(xa).atan2(v.dot(ya));
-                Some(ang.rem_euclid(std::f64::consts::TAU).clamp(ic.t_range[0], ic.t_range[1]))
+                Some(v.dot(xa).atan2(v.dot(ya)).rem_euclid(std::f64::consts::TAU).clamp(ic.t_range[0], ic.t_range[1]))
             }
             _ => {
                 for i in 0..20 {
@@ -2897,78 +2896,6 @@ impl<'a> PaveFiller<'a> {
                 }
                 None
             }
-        }
-    }
-
-    fn split_ic_at(&mut self, ci: usize, vi: usize, t: f64) {
-        let ic = &self.ds.intersection_curves[ci];
-        let tl = ic.geom_tol.max(TOLERANCE_ABS);
-        let ds = &self.ds;
-        let svp = ds.vertices[ic.start_vertex].point;
-        let evp = ds.vertices[ic.end_vertex].point;
-        let vp = ds.vertices[vi].point;
-        if (vp-svp).length() < tl || (vp-evp).length() < tl {
-            for inf in &self.ds.interferences.clone() {
-                if let Interference::FaceFace { f1, f2, curves, .. } = inf {
-                    if curves.contains(&ci) { self.ds.faces[*f1].face_info.vertices_in.insert(vi); self.ds.faces[*f2].face_info.vertices_in.insert(vi); }
-                }
-            }
-            return;
-        }
-        let nci = self.ds.intersection_curves.len();
-        self.ds.intersection_curves.push(IntersectionCurve {
-            curve: ic.curve.clone(), polyline: vec![], start_vertex: vi, end_vertex: ic.end_vertex,
-            t_range: [t, ic.t_range[1]], pcurve_on_a: ic.pcurve_on_a.clone(), pcurve_on_b: ic.pcurve_on_b.clone(),
-            geom_tol: ic.geom_tol,
-        });
-        self.ds.intersection_curves[ci].end_vertex = vi;
-        self.ds.intersection_curves[ci].t_range[1] = t;
-        for inf in &self.ds.interferences.clone() {
-            if let Interference::FaceFace { f1, f2, curves, .. } = inf {
-                if curves.contains(&ci) {
-                    self.ds.faces[*f1].face_info.curves_sc.insert(nci);
-                    self.ds.faces[*f2].face_info.curves_sc.insert(nci);
-                    self.ds.faces[*f1].face_info.vertices_in.insert(vi);
-                    self.ds.faces[*f2].face_info.vertices_in.insert(vi);
-                }
-            }
-        }
-    }
-    /// OCCT-aligned: PutEFPavesOnCurve (BOPAlgo_PaveFiller_6.cxx L2692).
-    fn put_ef_paves_on_curve(&mut self) {
-        for ci in 0..self.ds.intersection_curves.len() {
-            let ic = self.ds.intersection_curves[ci].clone();
-            let mut ef_verts: Vec<(usize, f64)> = Vec::new();
-            for inf in &self.ds.interferences {
-                if let Interference::EdgeFace { new_vertex, .. } = inf {
-                    if let Some(t) = self.project_vertex_on_curve(*new_vertex, &ic) {
-                        ef_verts.push((*new_vertex, t));
-                    }
-                }
-            }
-            if ef_verts.is_empty() { continue; }
-            ef_verts.sort_by(|a,b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-            for (vi, t) in &ef_verts { self.split_ic_at(ci, *vi, *t); }
-        }
-    }
-
-    /// OCCT-aligned: PutStickPavesOnCurve (BOPAlgo_PaveFiller_6.cxx L2748).
-    fn put_stick_paves_on_curve(&mut self) {
-        for ci in 0..self.ds.intersection_curves.len() {
-            let ic = self.ds.intersection_curves[ci].clone();
-            let mut stick_verts: Vec<(usize, f64)> = Vec::new();
-            for inf in &self.ds.interferences {
-                let vi = match inf {
-                    Interference::VertexFace { vertex, .. } => *vertex,
-                    Interference::VertexEdge { vertex, .. } => *vertex,
-                    Interference::VertexVertex { merged_vertex, .. } => *merged_vertex,
-                    _ => continue,
-                };
-                if let Some(t) = self.project_vertex_on_curve(vi, &ic) { stick_verts.push((vi, t)); }
-            }
-            if stick_verts.is_empty() { continue; }
-            stick_verts.sort_by(|a,b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-            for (vi, t) in &stick_verts { self.split_ic_at(ci, *vi, *t); }
         }
     }
 
@@ -2986,7 +2913,7 @@ impl<'a> PaveFiller<'a> {
         t_range
     }
 
-    /// ✅ OCCT-aligned: BOPAlgo_PaveFiller::MakePCurves (PaveFiller_7.cxx L589-750).
+    /// 鉁?OCCT-aligned: BOPAlgo_PaveFiller::MakePCurves (PaveFiller_7.cxx L589-750).
     ///   Builds pcurves for PaveBlocks on each face by projecting edge 3D curves
     ///   onto face surface UV domains.
     fn make_pcurves(&mut self) {
@@ -3325,20 +3252,36 @@ impl<'a> PaveFiller<'a> {
                     self.ds.faces[*f1].face_info.curves_sc.insert(ci);
                     self.ds.faces[*f2].face_info.curves_sc.insert(ci);
 
-                    // Update vertices_in from curve endpoints
+                    // ✅ OCCT-aligned: register section edge PaveBlocks into FaceInfo::PaveBlocksSc
+                    //   (PaveFiller_6.cxx L1700-1734).
                     if ci < self.ds.intersection_curves.len() {
+                        // Extract all data before mutating self.ds (avoid borrow conflicts)
                         let ic = &self.ds.intersection_curves[ci];
-                        self.ds.faces[*f1].face_info.vertices_in.insert(ic.start_vertex);
-                        self.ds.faces[*f1].face_info.vertices_in.insert(ic.end_vertex);
-                        self.ds.faces[*f2].face_info.vertices_in.insert(ic.start_vertex);
-                        self.ds.faces[*f2].face_info.vertices_in.insert(ic.end_vertex);
+                        let sv = ic.start_vertex;
+                        let ev = ic.end_vertex;
+                        let sc_pbs: Vec<PaveBlock> = ic.pave_blocks.iter()
+                            .filter(|pb| pb.new_edge.is_some())
+                            .cloned().collect();
+                        let pb_count = sc_pbs.len();
+                        drop(ic); // release immutable borrow before mutable access
+
+                        for pb in sc_pbs {
+                            let g_pb_idx = self.ds.allocate_pave_block(pb);
+                            self.ds.faces[*f1].face_info.pave_blocks_sc.insert(g_pb_idx);
+                            self.ds.faces[*f2].face_info.pave_blocks_sc.insert(g_pb_idx);
+                        }
+
+                        self.ds.faces[*f1].face_info.vertices_in.insert(sv);
+                        self.ds.faces[*f1].face_info.vertices_in.insert(ev);
+                        self.ds.faces[*f2].face_info.vertices_in.insert(sv);
+                        self.ds.faces[*f2].face_info.vertices_in.insert(ev);
 
                         // Also register curve endpoints as vertices_on if they match
                         // boundary vertices of either face
                         for &fi in &[*f1, *f2] {
                             if fi < face_boundary_verts.len() {
                                 for &bvi in &face_boundary_verts[fi] {
-                                    if bvi == ic.start_vertex || bvi == ic.end_vertex {
+                                    if bvi == sv || bvi == ev {
                                         self.ds.faces[fi].face_info.vertices_on.insert(bvi);
                                     }
                                 }
@@ -3350,7 +3293,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: MakeSDVerticesFF (BOPAlgo_PaveFiller_6.cxx L1139-1161)
+    /// 鉁?OCCT-aligned: MakeSDVerticesFF (BOPAlgo_PaveFiller_6.cxx L1139-1161)
     /// Creates shared (same-domain) vertices for coplanar face overlap boundaries.
     /// Ensures each polygon vertex of a same-domain overlap is registered as a shared
     /// vertex in both faces' face_info.vertices_in.
@@ -3381,7 +3324,7 @@ impl<'a> PaveFiller<'a> {
         }
 
         if let (Some(bvh_a), Some(bvh_b)) = (self.bvh_a, self.bvh_b) {
-            // Build reverse maps: BRep face index → position in a_faces/b_faces
+            // Build reverse maps: BRep face index 鈫?position in a_faces/b_faces
             let a_max_idx = a_faces.iter().map(|&dsi| self.ds.faces[dsi].source_face_idx).max().unwrap_or(0);
             let b_max_idx = b_faces.iter().map(|&dsi| self.ds.faces[dsi].source_face_idx).max().unwrap_or(0);
             let mut a_rev = vec![usize::MAX; a_max_idx + 1];
@@ -3398,7 +3341,7 @@ impl<'a> PaveFiller<'a> {
             for (fa_brep, fb_brep) in candidates {
                 if let (Some(&ai), Some(&bi)) = (a_rev.get(fa_brep), b_rev.get(fb_brep))
                     && ai != usize::MAX && bi != usize::MAX {
-                        // ✅ OCCT-aligned: BVH may produce duplicate candidate pairs when a face appears
+                        // 鉁?OCCT-aligned: BVH may produce duplicate candidate pairs when a face appears
                         //    in multiple intersecting leaf nodes, causing duplicate intersection curves.
                         //    OCCT PaveFiller processes each face pair once (FF matrix uses BOPDS_IndexRange
                         //    to mark pairs as already processed).
@@ -3412,13 +3355,13 @@ impl<'a> PaveFiller<'a> {
                     }
             }
         } else {
-            // ✅ OCCT-aligned: BOPDS_Iterator cross-group face pair iteration.
+            // 鉁?OCCT-aligned: BOPDS_Iterator cross-group face pair iteration.
             let a_fcount = self.ds.a_face_count;
             let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.faces.len());
             while fit.more() {
                 let pk = fit.value();
                 let af = pk.i1; let bf = pk.i2;
-                // OCCT: myDS->HasInterf(nF1, nF2) — skip if already interfered
+                // OCCT: myDS->HasInterf(nF1, nF2) 鈥?skip if already interfered
                 if self.ds.has_interf_ff(af, bf) { fit.next(); continue; }
                 if !self.should_skip_glued_face_pair(af, bf) {
                     self.intersect_face_face(af, bf);
@@ -3630,7 +3573,7 @@ impl<'a> PaveFiller<'a> {
 
 
     /// Check if an edge on a face is a seam edge on a periodic surface.
-    /// ✅ OCCT-aligned:IsClosedFF (PaveFiller_6.cxx L106-134)
+    /// 鉁?OCCT-aligned:IsClosedFF (PaveFiller_6.cxx L106-134)
     fn is_seam_edge(&self, edge_idx: usize, face_idx: usize) -> bool {
         let face = &self.ds.faces[face_idx];
         let edge = &self.ds.edges[edge_idx];
@@ -3650,10 +3593,10 @@ impl<'a> PaveFiller<'a> {
                 // OCCT BOPAlgo_PaveFiller_6.cxx L106-134 IsClosedFF:
                 // Sphere seam edge = great circle arc in meridian plane (U=0 boundary).
                 // Checks mirror OCCT exactly:
-                //   (1) Curve is Geom_Circle  →  Curve3::Circle
-                //   (2) |center - S.Location()| < Precision::Confusion()  →  TOLERANCE_ABS_SQ
-                //   (3) |radius - S.Radius| < Precision::Confusion()     →  TOLERANCE_ABS
-                //   (4) |circle_normal · sphere_axis| < Precision::Angular()  →  perp check
+                //   (1) Curve is Geom_Circle  鈫? Curve3::Circle
+                //   (2) |center - S.Location()| < Precision::Confusion()  鈫? TOLERANCE_ABS_SQ
+                //   (3) |radius - S.Radius| < Precision::Confusion()     鈫? TOLERANCE_ABS
+                //   (4) |circle_normal 路 sphere_axis| < Precision::Angular()  鈫? perp check
                 match &edge.curve {
                     Curve3::Circle(c) => {
                         (c.center - sph.center).length_squared() < TOLERANCE_ABS_SQ
@@ -3666,20 +3609,20 @@ impl<'a> PaveFiller<'a> {
             Surface3::Torus(tor) => {
                 // OCCT IsClosedFF: torus has TWO periodic boundaries.
                 // U-seam: major circle, center = torus center, radius = major_radius,
-                //         normal ∥ torus axis.
+                //         normal 鈭?torus axis.
                 // V-seam: minor circle, center on major circle, radius = minor_radius,
-                //         normal ⟂ torus axis.
+                //         normal 鉄?torus axis.
                 // All tolerances match OCCT Precision::Confusion/Angular.
                 match &edge.curve {
                     Curve3::Circle(c) => {
                         let axis = tor.axis.normalize();
                         let c_normal = c.normal.normalize();
                         let center_dist = (c.center - tor.center).length();
-                        // U-seam: center at torus center, normal ∥ axis, radius = major
+                        // U-seam: center at torus center, normal 鈭?axis, radius = major
                         let is_u_seam = center_dist < TOLERANCE_ABS
                             && c_normal.dot(axis).abs() > 1.0 - 1e-12
                             && (c.radius - tor.major_radius).abs() < TOLERANCE_ABS;
-                        // V-seam: center on major circle, normal ⟂ axis, radius = minor
+                        // V-seam: center on major circle, normal 鉄?axis, radius = minor
                         let on_major = (center_dist - tor.major_radius).abs() < TOLERANCE_ABS;
                         let is_v_seam = on_major
                             && c_normal.dot(axis).abs() < 1e-12
@@ -3696,7 +3639,7 @@ impl<'a> PaveFiller<'a> {
     /// Check if a seam edge shift is needed between two faces, and return
     /// the shift information.
     ///
-    /// ✅ OCCT-aligned:BOPAlgo_PaveFiller_6.cxx L393-479
+    /// 鉁?OCCT-aligned:BOPAlgo_PaveFiller_6.cxx L393-479
     fn check_seam_edge_shift(&self, f1: usize, f2: usize) -> Option<SeamEdgeShift> {
         let s1 = &self.ds.faces[f1].surface;
         let s2 = &self.ds.faces[f2].surface;
@@ -3741,7 +3684,7 @@ impl<'a> PaveFiller<'a> {
 
                         // OCCT-aligned: the seam edge shift is a SMALL tolerance
                         // correction, not a geometric transformation.  Verify both
-                        // projections are close to the EE vertex — if either is
+                        // projections are close to the EE vertex 鈥?if either is
                         // far, the vertex is not near both edges and shifting would
                         // be invalid (e.g. sphere center jumps by 1 unit).
                         let vtx_pt = *point;
@@ -3780,7 +3723,7 @@ impl<'a> PaveFiller<'a> {
     /// Reverse the seam edge shift on FF intersection results.
     /// Translates curves and vertices back to the original coordinate system.
     ///
-    /// ✅ OCCT-aligned:aFaceFace.ApplyTrsf() (PaveFiller_6.cxx L560)
+    /// 鉁?OCCT-aligned:aFaceFace.ApplyTrsf() (PaveFiller_6.cxx L560)
     fn reverse_seam_edge_shift(&mut self, f1: usize, f2: usize, shift: &SeamEdgeShift) {
         let inv_vec = if shift.shifted_face == 1 {
             -shift.shift_vector
@@ -3833,7 +3776,7 @@ impl<'a> PaveFiller<'a> {
     }
 
     fn intersect_face_face(&mut self, f1: usize, f2: usize) {
-        // ── Seam Edge Shift (OCCT PaveFiller_6.cxx L393-479) ──────────────
+        // 鈹€鈹€ Seam Edge Shift (OCCT PaveFiller_6.cxx L393-479) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         let shift_info = self.check_seam_edge_shift(f1, f2);
         let old_shift_tol = self.seam_shift_tol;
         if let Some(ref info) = shift_info {
@@ -3861,14 +3804,14 @@ impl<'a> PaveFiller<'a> {
         // BSpline stays as Parametric (ts=0); Plane stays as Geom (ts=1).
         // The (ts1 != ts2) condition triggers ImpPrmIntersection path (marching).
 
-        // ═══ OCCT IntPatch_Intersection 3-category dispatch ═══
+        // 鈺愨晲鈺?OCCT IntPatch_Intersection 3-category dispatch 鈺愨晲鈺?
         //   OCCT IntPatch_Intersection.cxx L1298-1339 classifies surface pairs:
-        //   - ts1 == ts2 == 1 : Geom-Geom (both analytic) → ImpImpIntersection
-        //   - ts1 != ts2      : Geom-Param (one analytic, one parametric) → ImpPrmIntersection
-        //   - ts1 == ts2 == 0 : Param-Param (both parametric) → PrmPrmIntersection
+        //   - ts1 == ts2 == 1 : Geom-Geom (both analytic) 鈫?ImpImpIntersection
+        //   - ts1 != ts2      : Geom-Param (one analytic, one parametric) 鈫?ImpPrmIntersection
+        //   - ts1 == ts2 == 0 : Param-Param (both parametric) 鈫?PrmPrmIntersection
         let (cat1, cat2) = (classify_surface_type(&s1), classify_surface_type(&s2));
         match (cat1, cat2) {
-            // ── Geom-Geom: both analytic surfaces ──
+            // 鈹€鈹€ Geom-Geom: both analytic surfaces 鈹€鈹€
             //   OCCT ImpImpIntersection handles all analytic-analytic pairs.
             //   rcad dispatches to specialized functions per combination.
             (SurfaceCategory::GeomGeom, SurfaceCategory::GeomGeom) => {
@@ -3937,10 +3880,10 @@ impl<'a> PaveFiller<'a> {
                     _ => {}
                 }
             }
-            // ── Geom-Param: one analytic, one parametric ──
+            // 鈹€鈹€ Geom-Param: one analytic, one parametric 鈹€鈹€
             //   OCCT ImpPrmIntersection handles this category (IntPatch_Intersection.cxx L1326-1330).
             //   ts1 != ts2: one analytic (GeomGeom) + one parametric (ParamParam).
-            //   rcad: directly use marching — no demotion, no plane-plane redirect.
+            //   rcad: directly use marching 鈥?no demotion, no plane-plane redirect.
             (SurfaceCategory::GeomGeom, SurfaceCategory::ParamParam)
             | (SurfaceCategory::ParamParam, SurfaceCategory::GeomGeom) => {
                 self.intersect_ff_by_marching(f1, f2);
@@ -3951,14 +3894,14 @@ impl<'a> PaveFiller<'a> {
             }
         }
 
-        // ── Reverse Seam Edge Shift (OCCT ApplyTrsf L560) ──────────────
+        // 鈹€鈹€ Reverse Seam Edge Shift (OCCT ApplyTrsf L560) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         if let Some(ref info) = shift_info {
             self.reverse_seam_edge_shift(f1, f2, info);
         }
-        // ── Restore seam shift tol ──────────────────────────────────────
+        // 鈹€鈹€ Restore seam shift tol 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         self.seam_shift_tol = old_shift_tol;
 
-        // ✅ OCCT-aligned:ComputeTolReached3d + PrepareLines3D — post-process all
+        // 鉁?OCCT-aligned:ComputeTolReached3d + PrepareLines3D 鈥?post-process all
         // intersection curves for this face pair.  Runs for every path (analytic,
         // numeric_intss, marching) to ensure consistent curve tolerance and
         // closed-curve splitting.
@@ -3982,9 +3925,9 @@ impl<'a> PaveFiller<'a> {
                     self.ds.vertices[ev].geom_tol = self.ds.vertices[ev].geom_tol.max(vt);
                 }
             }
-            // PrepareLines3D — split closed curves
+            // PrepareLines3D 鈥?split closed curves
             inttools::pcurve_derive::prepare_lines_3d(&mut self.ds.intersection_curves);
-            // ✅ OCCT-aligned: After PrepareLines3D splits closed curves, new curve endpoints
+            // 鉁?OCCT-aligned: After PrepareLines3D splits closed curves, new curve endpoints
             //    must be updated to the split points. OCCT's BRepBuilderAPI_MakeEdge auto-sets
             //    endpoints when creating edges. rcad's IntersectionCurve requires explicit update:
             //    for start==end but non-full-period t_range (i.e. split half-circle), compute
@@ -4010,6 +3953,11 @@ impl<'a> PaveFiller<'a> {
                     self.ds.intersection_curves[ci].start_vertex = v_start;
                     self.ds.intersection_curves[ci].end_vertex = v_end;
                 }
+            }
+            // ✅ OCCT-aligned: InitPaveBlock1 for all curves (PaveFiller_6.cxx L800).
+            //   Creates an initial PaveBlock on each curve for ext_pave tracking.
+            for ci in 0..self.ds.intersection_curves.len() {
+                self.ds.intersection_curves[ci].init_pave_block1();
             }
         }
     }
@@ -4038,8 +3986,8 @@ impl<'a> PaveFiller<'a> {
                     for &(t2_min, t2_max) in &ranges2 {
                         let t_min = t1_min.max(t2_min);
                         let t_max = t1_max.min(t2_max);
-                        // Keep strict: overlap length along the intersection line is parametric, not V–V
-                        // coincidence — tying this to `fuzzy_tol` can change sphere–box trims and area.
+                        // Keep strict: overlap length along the intersection line is parametric, not V鈥揤
+                        // coincidence 鈥?tying this to `fuzzy_tol` can change sphere鈥揵ox trims and area.
                         if t_max - t_min < TOLERANCE_ABS {
                             continue;
                         }
@@ -4062,6 +4010,7 @@ impl<'a> PaveFiller<'a> {
                             pcurve_on_a: Some(pca),
                             pcurve_on_b: Some(pcb),
                             geom_tol: crate::tolerance::TOLERANCE_ABS,
+                        pave_blocks: Vec::new(),
                         });
 
                         self.ds.interferences.push(Interference::FaceFace {
@@ -4090,7 +4039,7 @@ impl<'a> PaveFiller<'a> {
         let result = inttools::coplanar::analyze_coplanar_faces(&verts1, &verts2, plane);
 
         if !result.overlap.is_empty() {
-            // ✅ OCCT-aligned: create IC for each overlap edge (BOPAlgo_PaveFiller_6.cxx:285-622)
+            // 鉁?OCCT-aligned: create IC for each overlap edge (BOPAlgo_PaveFiller_6.cxx:285-622)
             let plane1 = self.ds.face_plane(f1);
             let plane2 = self.ds.face_plane(f2);
 
@@ -4121,6 +4070,7 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_a: Some(pca),
                         pcurve_on_b: Some(pcb),
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
+                    pave_blocks: Vec::new(),
                     });
 
                     self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -4145,9 +4095,9 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    // ── Plane × Sphere analytic face-face intersection ─────────────────────────
+    // 鈹€鈹€ Plane 脳 Sphere analytic face-face intersection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-    /// ✅ OCCT-aligned: clip Circle3 to polygon boundaries of given planar faces
+    /// 鉁?OCCT-aligned: clip Circle3 to polygon boundaries of given planar faces
     ///    returns [t_min, t_max] valid range; None=full circle, Some([0,0])=empty
     fn clip_circle_to_faces(
         &self, circle: &rcad_kernel::geom::Circle3,
@@ -4201,9 +4151,9 @@ impl<'a> PaveFiller<'a> {
                 continue;
             }
             tc.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            // ✅ OCCT-aligned: deduplicate nearby angles (same intersection detected by adjacent edges)
+            // 鉁?OCCT-aligned: deduplicate nearby angles (same intersection detected by adjacent edges)
             tc.dedup_by(|a, b| (*a - *b).abs() < TOLERANCE_ABS * 1000.0);
-            // ✅ OCCT-aligned: select candidate arc via midpoint face-in test (IntTools_FaceFace.cxx L1084-1101)
+            // 鉁?OCCT-aligned: select candidate arc via midpoint face-in test (IntTools_FaceFace.cxx L1084-1101)
             //    OCCT splits the full circle into 18 samples and uses dom->Classify() to test
             //    whether each UV is inside the face. rcad tests candidate arc midpoints in 2D polygon.
             let mut best: Option<[f64;2]> = None;
@@ -4243,7 +4193,7 @@ impl<'a> PaveFiller<'a> {
         result
     }
 
-    /// ✅ OCCT-aligned: find existing vertex in face boundary / vertices_in / vertices_on
+    /// 鉁?OCCT-aligned: find existing vertex in face boundary / vertices_in / vertices_on
     fn intersect_plane_sphere_faces(
         &mut self,
         f1: usize,
@@ -4278,9 +4228,9 @@ impl<'a> PaveFiller<'a> {
                 }
             }
             PlaneSphereResult::Circle(circle) => {
-                // Great circles through the sphere's poles (plane ⟂ sphere axis)
+                // Great circles through the sphere's poles (plane 鉄?sphere axis)
                 // map to TWO vertical meridians in sphere UV space. We must create
-                // two separate IntersectionCurves — one per UV branch — because
+                // two separate IntersectionCurves 鈥?one per UV branch 鈥?because
                 // a single BSpline pcurve cannot span the atan2-wrap discontinuity.
                 let is_great = (circle.center - sphere.center).length_squared() < TOLERANCE_ABS_SQ;
                 let axis_dot_normal = sphere
@@ -4290,11 +4240,11 @@ impl<'a> PaveFiller<'a> {
                     .abs();
                 let _passes_poles = is_great && axis_dot_normal < TOLERANCE_ABS;
 
-                // ✅ OCCT-aligned: all plane-sphere ICs go through clip_circle_to_faces unified path.
-                //    add_great_circle_curves is disabled — double-half-arc branches are rcad's own design,
+                // 鉁?OCCT-aligned: all plane-sphere ICs go through clip_circle_to_faces unified path.
+                //    add_great_circle_curves is disabled 鈥?double-half-arc branches are rcad's own design,
                 //    OCCT IntTools_FaceFace clips ICs directly using PutBoundPaveOnCurve.
 
-                // ✅ OCCT-aligned: clip Circle3 to planar face polygon boundaries
+                // 鉁?OCCT-aligned: clip Circle3 to planar face polygon boundaries
                 //    OCCT IntTools_Curve limits range to face boundary at creation time.
                 //    rcad: project Circle3 onto plane face 2D polygon,
                 //    intersect to get valid parameter range within the face, use its endpoints
@@ -4304,18 +4254,18 @@ impl<'a> PaveFiller<'a> {
                     Some(r) => r,
                     None => return, // No valid arc within face boundaries
                 };
-                // ✅ OCCT-aligned: skip degenerate arc (tangent point contact). OCCT IntPatch_Point handles single-point contact,
+                // 鉁?OCCT-aligned: skip degenerate arc (tangent point contact). OCCT IntPatch_Point handles single-point contact,
                 //    IntTools_FaceFace does not create PaveBlocks for degenerate intersection curves.
                 if clipped[1] - clipped[0] <= TOLERANCE_ABS {
                     return;
                 }
                 let (effective_t0, effective_t1) = (clipped[0], clipped[1]);
 
-                // ✅ OCCT-aligned: skip degenerate circle inflated from tangent point (OCCT IntPatch_Point handles single-point contact)
+                // 鉁?OCCT-aligned: skip degenerate circle inflated from tangent point (OCCT IntPatch_Point handles single-point contact)
                 if circle.radius <= TOLERANCE_MESH_LEGACY + TOLERANCE_ABS {
                     return;
                 }
-                // ⏳ OCCT-aligned: skip degenerate arc after clipping (point contact). OCCT MakeBlocks
+                // 鈴?OCCT-aligned: skip degenerate arc after clipping (point contact). OCCT MakeBlocks
                 //    IsValidBlockForFaces removes invalid blocks; rcad pre-filters when generating ICs.
                 let valid_arc = clipped_range.map(|r| r[1] - r[0]).unwrap_or(0.0);
                 if valid_arc <= TOLERANCE_ABS {
@@ -4334,7 +4284,7 @@ impl<'a> PaveFiller<'a> {
                     (Some(pcurve_sphere), Some(pcurve_plane))
                 };
 
-                // ✅ OCCT-aligned: IC endpoints use plane_local_basis (consistent with clip_circle_to_faces)
+                // 鉁?OCCT-aligned: IC endpoints use plane_local_basis (consistent with clip_circle_to_faces)
                 //    circle.point_at uses Circle3.normal's any_perpendicular axis,
                 //    which may be opposite to plane_local_basis direction, flipping endpoint positions.
                 let (u_ax_p, v_ax_p) = crate::inttools::edge_face::plane_local_basis(plane);
@@ -4343,7 +4293,7 @@ impl<'a> PaveFiller<'a> {
                 if p_start.distance_squared(p_end) < TOLERANCE_ABS_SQ {
                     return;
                 }
-                // ✅ OCCT-aligned: try to reuse existing DS vertex (PutPaveOnCurve).
+                // 鉁?OCCT-aligned: try to reuse existing DS vertex (PutPaveOnCurve).
                 //    OCCT's IsVertexOnLine detects boundary vertices ON the curve and
                 //    places their DS index into the pave block, so the section edge
                 //    shares the same TopoDS_Vertex as the boundary edge.  rcad: find
@@ -4377,6 +4327,7 @@ impl<'a> PaveFiller<'a> {
                     pcurve_on_a,
                     pcurve_on_b,
                     geom_tol: crate::tolerance::TOLERANCE_ABS,
+                pave_blocks: Vec::new(),
                 });
 
                 self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -4397,7 +4348,7 @@ impl<'a> PaveFiller<'a> {
     }
 
 
-    // ── Sphere × Sphere analytic face-face intersection ───────────────────────
+    // 鈹€鈹€ Sphere 脳 Sphere analytic face-face intersection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     fn intersect_sphere_sphere_faces(
         &mut self,
@@ -4466,6 +4417,7 @@ impl<'a> PaveFiller<'a> {
             pcurve_on_a: Some(pcurve_a),
             pcurve_on_b: Some(pcurve_b),
             geom_tol: crate::tolerance::TOLERANCE_ABS,
+        pave_blocks: Vec::new(),
         });
 
         self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -4483,7 +4435,7 @@ impl<'a> PaveFiller<'a> {
         });
     }
 
-    // ── Sphere × Cylinder analytic face-face intersection ─────────────────────
+    // 鈹€鈹€ Sphere 脳 Cylinder analytic face-face intersection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     fn intersect_sphere_cylinder_faces(
         &mut self,
@@ -4531,6 +4483,7 @@ impl<'a> PaveFiller<'a> {
                     pcurve_on_a,
                     pcurve_on_b,
                     geom_tol: crate::tolerance::TOLERANCE_ABS,
+                pave_blocks: Vec::new(),
                 });
                 ds.faces[f1].face_info.curves_sc.insert(curve_idx);
                 ds.faces[f2].face_info.curves_sc.insert(curve_idx);
@@ -4543,7 +4496,7 @@ impl<'a> PaveFiller<'a> {
 
         // Closure to compute pcurves for one intersection circle.
         // The intersection circle is always a latitude line on the sphere
-        // (φ = acos((h − h_c) / R)), so `circle_pcurve_on_sphere` is exact
+        // (蠁 = acos((h 鈭?h_c) / R)), so `circle_pcurve_on_sphere` is exact
         // here regardless of whether the sphere and cylinder axes are parallel.
         let make_circle_pcurves = |circle: &Circle3| -> (Option<Curve2d>, Option<Curve2d>) {
             let pcurve_sph = circle_pcurve_on_sphere(circle, sphere);
@@ -4609,6 +4562,7 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_a: polyline_pcurve_by_projection(&branch, &s1),
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
+                    pave_blocks: Vec::new(),
                     });
                     curve_indices.push(ci);
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
@@ -4630,7 +4584,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    // ── Cylinder × Cylinder analytic face-face intersection ──────────────────
+    // 鈹€鈹€ Cylinder 脳 Cylinder analytic face-face intersection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     fn intersect_cylinder_cylinder_faces(
         &mut self,
@@ -4685,6 +4639,7 @@ impl<'a> PaveFiller<'a> {
                     pcurve_on_a,
                     pcurve_on_b,
                     geom_tol: crate::tolerance::TOLERANCE_ABS,
+                pave_blocks: Vec::new(),
                 });
                 ds.faces[f1].face_info.curves_sc.insert(ci);
                 ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -4717,6 +4672,7 @@ impl<'a> PaveFiller<'a> {
                 pcurve_on_a,
                 pcurve_on_b,
                 geom_tol: crate::tolerance::TOLERANCE_ABS,
+            pave_blocks: Vec::new(),
             });
             ds.faces[f1].face_info.curves_sc.insert(ci);
             ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -4757,6 +4713,7 @@ impl<'a> PaveFiller<'a> {
                 pcurve_on_a,
                 pcurve_on_b,
                 geom_tol: crate::tolerance::TOLERANCE_ABS,
+            pave_blocks: Vec::new(),
             });
             ds.faces[f1].face_info.curves_sc.insert(ci);
             ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -4788,14 +4745,14 @@ impl<'a> PaveFiller<'a> {
             } => {
                 // Perpendicular cylinders with offset (non-intersecting) axes.
                 // Parametrization on cyl1's surface:
-                //   P(θ) = O1 + v(θ)*a1 + R1*(cos(θ)*U1 + sin(θ)*V1)
-                //   v(θ) = dz ± √(R2² - (R1·cos(θ) - dx)²)
+                //   P(胃) = O1 + v(胃)*a1 + R1*(cos(胃)*U1 + sin(胃)*V1)
+                //   v(胃) = dz 卤 鈭?R2虏 - (R1路cos(胃) - dx)虏)
                 //
-                // Two closed-loop intersection curves per face, one per θ interval:
-                //   Loop 1 (θ∈[t_low, t_high]): forward branch+  back branch-
-                //   Loop 2 (θ∈[τ-t_high, τ-t_low]): forward branch+  back branch-
+                // Two closed-loop intersection curves per face, one per 胃 interval:
+                //   Loop 1 (胃鈭圼t_low, t_high]): forward branch+  back branch-
+                //   Loop 2 (胃鈭圼蟿-t_high, 蟿-t_low]): forward branch+  back branch-
                 // Each loop is a single IntersectionCurve whose start/end vertex
-                // coincide (same 3D tangent point) — the boolean builder sees a
+                // coincide (same 3D tangent point) 鈥?the boolean builder sees a
                 // single closed trim boundary per loop.
                 let a1 = off_cyl1.axis.normalize();
                 let a2 = off_cyl2.axis.normalize();
@@ -4813,7 +4770,7 @@ impl<'a> PaveFiller<'a> {
                 let u1 = if conn_len < 1e-12 {
                     // Axes intersect (zero or near-zero offset along the
                     // connecting vector).  Pick any direction perpendicular to
-                    // a1 — a1 × a2 works since the axes are perpendicular.
+                    // a1 鈥?a1 脳 a2 works since the axes are perpendicular.
                     a1.cross(a2).normalize()
                 } else {
                     conn / conn_len
@@ -4836,7 +4793,7 @@ impl<'a> PaveFiller<'a> {
                     let n_pts = n_per * 2 + 1; // forward + backward (share the turn-around point)
                     let mut pts: Vec<DVec3> = Vec::with_capacity(n_pts);
 
-                    // Forward: branch = +1, θ = t_start → t_end
+                    // Forward: branch = +1, 胃 = t_start 鈫?t_end
                     for i in 0..=n_per {
                         let theta = t_start + (t_end - t_start) * i as f64 / n_per as f64;
                         let (ct, st) = (theta.cos(), theta.sin());
@@ -4845,7 +4802,7 @@ impl<'a> PaveFiller<'a> {
                         let v_z = dz + disc; // branch sign +1
                         pts.push(off_cyl1.origin + v_z * a1 + r1 * (ct * u1 + st * v1));
                     }
-                    // Backward: branch = -1, θ = t_end → t_start (reversed)
+                    // Backward: branch = -1, 胃 = t_end 鈫?t_start (reversed)
                     for i in 1..=n_per {
                         let theta = t_end - (t_end - t_start) * i as f64 / n_per as f64;
                         let (ct, st) = (theta.cos(), theta.sin());
@@ -4864,7 +4821,7 @@ impl<'a> PaveFiller<'a> {
                     };
 
                     // add_vertex dedup: pts[0] and pts[pts.len()-1] are the same
-                    // tangent point (θ=t_start, disc=0, both branches coincide).
+                    // tangent point (胃=t_start, disc=0, both branches coincide).
                     let v_start = self.ds.add_vertex(pts[0]);
                     let v_end = self.ds.add_vertex(pts[pts.len() - 1]);
                     let ci = self.ds.intersection_curves.len();
@@ -4876,6 +4833,7 @@ impl<'a> PaveFiller<'a> {
                         polyline: pts, start_vertex: v_start, end_vertex: v_end,
                         t_range: [0.0, 1.0], pcurve_on_a: pca, pcurve_on_b: pcb,
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
+                    pave_blocks: Vec::new(),
                     });
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
                     self.ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -4977,6 +4935,7 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_a: polyline_pcurve_by_projection(&branch, &s1),
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
+                    pave_blocks: Vec::new(),
                     });
                     curve_indices.push(ci);
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
@@ -5001,7 +4960,7 @@ impl<'a> PaveFiller<'a> {
 
     /// Compute the V range of the cylinder face along its axis, used to clip
     /// tangent-line intersection curves to the actual face extent.
-    /// ✅ OCCT-aligned: project boundary vertices along cylinder axis for V-range, replaces hardcoded extent.
+    /// 鉁?OCCT-aligned: project boundary vertices along cylinder axis for V-range, replaces hardcoded extent.
     fn cylinder_face_v_range(&self, face_idx: usize, cyl: &CylindricalSurface) -> [f64; 2] {
         let axis = cyl.axis.normalize();
         let mut v_min = f64::INFINITY;
@@ -5029,7 +4988,7 @@ impl<'a> PaveFiller<'a> {
         r
     }
 
-    // ── Plane × Cylinder analytic face-face intersection ──────────────────────
+    // 鈹€鈹€ Plane 脳 Cylinder analytic face-face intersection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     fn intersect_plane_cylinder_faces(
         &mut self,
@@ -5082,6 +5041,7 @@ impl<'a> PaveFiller<'a> {
                 pcurve_on_a,
                 pcurve_on_b,
                 geom_tol: crate::tolerance::TOLERANCE_ABS,
+            pave_blocks: Vec::new(),
             });
             ds.faces[f1].face_info.curves_sc.insert(curve_idx);
             ds.faces[f2].face_info.curves_sc.insert(curve_idx);
@@ -5089,7 +5049,7 @@ impl<'a> PaveFiller<'a> {
             ds.faces[f1].face_info.vertices_in.insert(v_end);
             ds.faces[f2].face_info.vertices_in.insert(v_start);
             ds.faces[f2].face_info.vertices_in.insert(v_end);
-            // ✅ OCCT-aligned:Propagate IC vertices to all faces sharing boundary edges
+            // 鉁?OCCT-aligned:Propagate IC vertices to all faces sharing boundary edges
             //    (BOPDS_FaceInfo::AppendBlock equivalent).
             propagate_ic_vertices_to_shared_faces(ds, &[v_start, v_end], &[f1, f2]);
             curve_idx
@@ -5100,7 +5060,7 @@ impl<'a> PaveFiller<'a> {
         match result {
             PlaneCylinderResult::NoIntersection => return,
             PlaneCylinderResult::TangentLine(line) => {
-                // ✅ OCCT aligned: tangent lines are also valid intersection curves,
+                // 鉁?OCCT aligned: tangent lines are also valid intersection curves,
                 //    used to split the cylinder face. OCCT IntTools_FaceFace::MakeCurve
                 //    creates BRep edges for tangent lines too.
                 // Clip to the cylinder face's parametric V range along the axis
@@ -5162,7 +5122,7 @@ impl<'a> PaveFiller<'a> {
                     f2,
                 );
                 curve_indices.push(ci);
-                // ✅ OCCT-aligned: when circle lies on cylinder V-boundary, remove IC from cylinder face.
+                // 鉁?OCCT-aligned: when circle lies on cylinder V-boundary, remove IC from cylinder face.
                 //    OCCT PerformLoops does not create sub-faces outside face domain, but rcad's BooleanBuilder does.
                 //    Plane face retains the IC (split arc segments) for correct box face splitting.
                 let cyl_fi = if plane_is_f1 { f2 } else { f1 };
@@ -5227,7 +5187,7 @@ impl<'a> PaveFiller<'a> {
         let s1 = &face1.surface;
         let s2 = &face2.surface;
 
-        // UV from 3D point on a surface, normalising u ∈ [0, 2π].
+        // UV from 3D point on a surface, normalising u 鈭?[0, 2蟺].
         let uv_on_surface = |surface: &Surface3, p: DVec3| -> DVec2 {
             match surface {
                 Surface3::Cone(cone) => {
@@ -5300,7 +5260,7 @@ impl<'a> PaveFiller<'a> {
                 .unwrap_or(std::cmp::Ordering::Equal)
         })?;
 
-        // ── binary-search refinement of both endpoints ──
+        // 鈹€鈹€ binary-search refinement of both endpoints 鈹€鈹€
         // Start: between sample (si-1, outside) and sample (si, inside).
         let refined_start = if si > 0 {
             let t_out = t0 + step * (si - 1) as f64;
@@ -5345,7 +5305,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    // ── Plane × Cone analytic face-face intersection ──────────────────────────
+    // 鈹€鈹€ Plane 脳 Cone analytic face-face intersection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     fn intersect_plane_cone_faces(
         &mut self,
@@ -5396,6 +5356,7 @@ impl<'a> PaveFiller<'a> {
                 pcurve_on_a,
                 pcurve_on_b,
                 geom_tol: crate::tolerance::TOLERANCE_ABS,
+            pave_blocks: Vec::new(),
             });
             ds.faces[f1].face_info.curves_sc.insert(ci);
             ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -5403,7 +5364,7 @@ impl<'a> PaveFiller<'a> {
             ds.faces[f1].face_info.vertices_in.insert(v_end);
             ds.faces[f2].face_info.vertices_in.insert(v_start);
             ds.faces[f2].face_info.vertices_in.insert(v_end);
-            // ✅ OCCT-aligned:Propagate IC vertices to all faces sharing boundary edges
+            // 鉁?OCCT-aligned:Propagate IC vertices to all faces sharing boundary edges
             //    (BOPDS_FaceInfo::AppendBlock equivalent).
             propagate_ic_vertices_to_shared_faces(ds, &[v_start, v_end], &[f1, f2]);
             ci
@@ -5577,7 +5538,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    // ── Cylinder × Cone analytic face-face intersection ───────────────────────
+    // 鈹€鈹€ Cylinder 脳 Cone analytic face-face intersection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     fn intersect_cylinder_cone_faces(
         &mut self,
@@ -5636,6 +5597,7 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_a: polyline_pcurve_by_projection(&branch, &s1),
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
+                    pave_blocks: Vec::new(),
                     });
                     curve_indices.push(ci);
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
@@ -5684,6 +5646,7 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_a: polyline_pcurve_by_projection(&branch, &s1),
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
+                    pave_blocks: Vec::new(),
                     });
                     curve_indices.push(ci);
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
@@ -5721,6 +5684,7 @@ impl<'a> PaveFiller<'a> {
                     pcurve_on_a: pca,
                     pcurve_on_b: pcb,
                     geom_tol: crate::tolerance::TOLERANCE_ABS,
+                pave_blocks: Vec::new(),
                 });
                 self.ds.faces[f1].face_info.curves_sc.insert(ci);
                 self.ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -5757,6 +5721,7 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_a: pca,
                         pcurve_on_b: pcb,
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
+                    pave_blocks: Vec::new(),
                     });
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
                     self.ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -5776,7 +5741,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    // ── Cone × Cone analytic face-face intersection ────────────────────────────
+    // 鈹€鈹€ Cone 脳 Cone analytic face-face intersection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     fn intersect_cone_cone_faces(
         &mut self,
@@ -5812,7 +5777,7 @@ impl<'a> PaveFiller<'a> {
             }
 
             ConeConeResult::CoaxialPoint(_pt) => {
-                // Single shared apex — a point contact, not a curve.
+                // Single shared apex 鈥?a point contact, not a curve.
             }
 
             ConeConeResult::General => {
@@ -5848,6 +5813,7 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_a: polyline_pcurve_by_projection(&branch, &s1),
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
+                    pave_blocks: Vec::new(),
                     });
                     curve_indices.push(ci);
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
@@ -5885,6 +5851,7 @@ impl<'a> PaveFiller<'a> {
                     pcurve_on_a: pca,
                     pcurve_on_b: pcb,
                     geom_tol: crate::tolerance::TOLERANCE_ABS,
+                pave_blocks: Vec::new(),
                 });
                 self.ds.faces[f1].face_info.curves_sc.insert(ci);
                 self.ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -5903,7 +5870,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    // ── Torus intersection helpers ─────────────────────────────────────────────
+    // 鈹€鈹€ Torus intersection helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     /// Generic helper: call `intersect_surfaces` and wire all results into the DS.
     /// `torus_is_f1` controls pcurve ordering.
@@ -5926,7 +5893,7 @@ impl<'a> PaveFiller<'a> {
         for sir in &result.curves {
             match &sir.curve_3d {
                 SurfaceCurve::Circle(circle) => {
-                    // Only split into half-circles for torus×cylinder intersections where the
+                    // Only split into half-circles for torus脳cylinder intersections where the
                     // full circle spans 100% of cylinder U (triggers has_full_wrap fallback).
                     // For other surface types the full circle is simpler and more robust.
                     // Note: s1 is always Torus by calling convention, s2 is the other surface.
@@ -5953,6 +5920,7 @@ impl<'a> PaveFiller<'a> {
                                 pcurve_on_a: pca.clone(),
                                 pcurve_on_b: pcb.clone(),
                                 geom_tol: crate::tolerance::TOLERANCE_ABS,
+                            pave_blocks: Vec::new(),
                             });
 
                             self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -5990,6 +5958,7 @@ impl<'a> PaveFiller<'a> {
                             pcurve_on_a: pca,
                             pcurve_on_b: pcb,
                             geom_tol: crate::tolerance::TOLERANCE_ABS,
+                        pave_blocks: Vec::new(),
                         });
 
                         self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -6040,6 +6009,7 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_a: pca,
                         pcurve_on_b: pcb,
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
+                    pave_blocks: Vec::new(),
                     });
 
                     self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -6093,6 +6063,7 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_a: pca,
                         pcurve_on_b: pcb,
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
+                    pave_blocks: Vec::new(),
                     });
 
                     self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -6147,6 +6118,7 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_a: pca,
                         pcurve_on_b: pcb,
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
+                    pave_blocks: Vec::new(),
                     });
 
                     self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -6204,6 +6176,7 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_a: pca,
                         pcurve_on_b: pcb,
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
+                    pave_blocks: Vec::new(),
                     });
 
                     self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -6343,6 +6316,7 @@ impl<'a> PaveFiller<'a> {
                     pcurve_on_a: pca,
                     pcurve_on_b: pcb,
                     geom_tol: crate::tolerance::TOLERANCE_ABS,
+                pave_blocks: Vec::new(),
                 });
                 self.ds.faces[f1].face_info.curves_sc.insert(ci);
                 self.ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -6377,6 +6351,7 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_a: pca,
                         pcurve_on_b: pcb,
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
+                    pave_blocks: Vec::new(),
                     });
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
                     self.ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -6424,6 +6399,7 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_a: polyline_pcurve_by_projection(&branch, &s1),
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
+                    pave_blocks: Vec::new(),
                     });
                     curve_indices.push(ci);
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
@@ -6442,7 +6418,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// For curved×curved face pairs, use numeric_intss_with_density (sign-change
+    /// For curved脳curved face pairs, use numeric_intss_with_density (sign-change
     /// edge marching) which returns ordered polylines without the closure/drift
     /// issues of the gradient marcher.
     fn intersect_ff_by_numeric_intss(
@@ -6557,6 +6533,7 @@ impl<'a> PaveFiller<'a> {
                 pcurve_on_a: pcurve_a,
                 pcurve_on_b: pcurve_b,
                 geom_tol: crate::tolerance::TOLERANCE_ABS,
+            pave_blocks: Vec::new(),
             });
 
             self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -6586,7 +6563,7 @@ impl<'a> PaveFiller<'a> {
         let s2 = self.ds.faces[f2].surface.clone();
 
         // OCCT-aligned: use sign-change grid marching (IntTools_FaceFace / IntPatch_ImpPrmIntersection).
-        // No BSpline demotion — BSpline surfaces stay as parametric (ts=0) and use UV grid marching.
+        // No BSpline demotion 鈥?BSpline surfaces stay as parametric (ts=0) and use UV grid marching.
         let any_curved = !matches!(&s1, Surface3::Plane(_)) || !matches!(&s2, Surface3::Plane(_));
         if any_curved {
             let char_len = |s: &Surface3| -> f64 {
@@ -6772,7 +6749,7 @@ impl<'a> PaveFiller<'a> {
             let dir = (curve.points[curve.points.len() - 1] - curve.points[0]).normalize_or_zero();
             let t_range = [0.0, arc_len.max(TOLERANCE_LINEAR_ULTRA_STRICT)];
 
-            // ✅ OCCT-aligned:reApprox — validate pcurves; retry with loose tolerance
+            // 鉁?OCCT-aligned:reApprox 鈥?validate pcurves; retry with loose tolerance
             // if validation fails.
             let (pcurve_a, pcurve_b) = self.make_marching_pcurves_with_reapprox(
                 &curve.points, &s1, &s2, f1, f2, &t_range,
@@ -6802,6 +6779,7 @@ impl<'a> PaveFiller<'a> {
                 pcurve_on_a: pcurve_a,
                 pcurve_on_b: pcurve_b,
                 geom_tol: crate::tolerance::TOLERANCE_ABS,
+            pave_blocks: Vec::new(),
             });
 
             self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -6824,7 +6802,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned:reApprox — create pcurves for a marched curve with validation loop.
+    /// 鉁?OCCT-aligned:reApprox 鈥?create pcurves for a marched curve with validation loop.
     ///
     /// First attempt: project polyline onto both surfaces with default tolerance.
     /// If `is_curve_valid_2d` or `check_pcurve_in_face` fails, retry with
@@ -6862,7 +6840,7 @@ impl<'a> PaveFiller<'a> {
             return (pca, pcb);
         }
 
-        // ✅ OCCT-aligned:reApprox — fallback with looser validation.
+        // 鉁?OCCT-aligned:reApprox 鈥?fallback with looser validation.
         // Skip the self-intersection check (is_curve_valid_2d) since polyline
         // pcurves from marching can have V-folds that are geometrically correct.
         let valid_a2 = pca.as_ref().map_or(false, |pc| {
@@ -6875,7 +6853,7 @@ impl<'a> PaveFiller<'a> {
             return (pca, pcb);
         }
 
-        // Final fallback: return pcurves even if invalid — the builder handles
+        // Final fallback: return pcurves even if invalid 鈥?the builder handles
         // out-of-face pcurves via its own boundary clipping.
         (pca, pcb)
     }
@@ -6895,7 +6873,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// Like `generate_surface_samples` but returns a structured `n_u × n_v` grid
+    /// Like `generate_surface_samples` but returns a structured `n_u 脳 n_v` grid
     /// (row-major) so callers can use grid-aware adjacency for seed detection.
     fn generate_surface_samples_grid(
         &self,
@@ -6908,7 +6886,7 @@ impl<'a> PaveFiller<'a> {
                 // u = azimuth index (0..n_u), v = height index (0..n_v)
                 // sample_cylinder returns row = height, col = azimuth,
                 // so transpose to row = azimuth, col = height for grid indexing.
-                // Rebuild in (n_u azimuth) × (n_v height) order.
+                // Rebuild in (n_u azimuth) 脳 (n_v height) order.
                 let height_range = [-20.0_f64, 20.0_f64];
                 let u_ax = if cyl.axis.x.abs() < 0.9 {
                     cyl.axis.cross(DVec3::X).normalize()
@@ -7006,15 +6984,15 @@ impl<'a> PaveFiller<'a> {
         size1.min(size2) * 0.1
     }
 
-    // ─── MakeBlocks: inject EF/EE vertices onto FF curves (OCCT PaveFiller_6 L647+) ──
+    // 鈹€鈹€鈹€ MakeBlocks: inject EF/EE vertices onto FF curves (OCCT PaveFiller_6 L647+) 鈹€鈹€
 
-    /// ✅ OCCT-aligned: MakeBlocks — PutPavesOnCurve places existing vertices on FF curves
+    /// 鉁?OCCT-aligned: MakeBlocks 鈥?PutPavesOnCurve places existing vertices on FF curves
     ///    (BOPAlgo_PaveFiller_6 L700-833)
     ///
     /// OCCT logic:
     ///   1. Collect ON/IN vertices from both faces (myDS->SubShapesOnIn) (L752)
     ///   2. PutPavesOnCurve: check if each vertex lies on FF curve, record parameter (L789-791)
-    ///   3. Sort by parameter, split curve at vertices → PaveBlocks
+    ///   3. Sort by parameter, split curve at vertices 鈫?PaveBlocks
     ///
     /// rcad implementation:
     ///   For each Circle3 FF IC, check if EF Pave vertices lie on the curve.
@@ -7025,11 +7003,11 @@ impl<'a> PaveFiller<'a> {
     /// Phase 2a: full boundary vertex injection (PutBoundPaveOnCurve) using
     ///           param_on_line3/param_on_circle3/project_vertex_to_curve.
          fn make_blocks(&mut self) {
-        // Phase 1: Collect data ────────────────────────────────────────
+        // Phase 1: Collect data 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         let n_curves = self.ds.intersection_curves.len();
         let n_faces = self.ds.faces.len();
 
-        // ✅ OCCT-aligned: collect EF candidate vertices (EdgeFace interferences).
+        // 鉁?OCCT-aligned: collect EF candidate vertices (EdgeFace interferences).
         //    These are the vertices the IC endpoints should share (edge-face intersections).
         let mut all_verts: Vec<(usize, DVec3)> = self.ds.interferences.iter()
             .filter_map(|inf| {
@@ -7114,10 +7092,10 @@ impl<'a> PaveFiller<'a> {
             .map(|fi| self.ds.faces[fi].face_info.curves_sc_only())
             .collect();
 
-        // ── OCCT-aligned: IsValidBlockForFaces on ALL original curves ──
+        // 鈹€鈹€ OCCT-aligned: IsValidBlockForFaces on ALL original curves 鈹€鈹€
         //   OCCT PaveFiller_6.cxx L906-918 checks EACH PaveBlock (not just split
         //   curves) with IsValidBlockForFaces.  rcad was only checking new (split)
-        //   curves, allowing spurious plane-plane ICs to survive.  After BSpline→
+        //   curves, allowing spurious plane-plane ICs to survive.  After BSpline鈫?
         //   Plane demotion, every plane pair with non-parallel normals creates an
         //   IC even for face pairs that don't actually overlap in 3D, causing the
         //   excessive edge count in bfuse_simple B3 (539 vs 28 ref).
@@ -7173,7 +7151,7 @@ impl<'a> PaveFiller<'a> {
             }
         }
 
-        // ── Phase 2: Compute splits ──────────────────────────────────────
+        // 鈹€鈹€ Phase 2: Compute splits 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         #[derive(Clone)]
         struct SplitAction {
             old_ci: usize,
@@ -7196,7 +7174,7 @@ impl<'a> PaveFiller<'a> {
             let [t0, t1] = snap.t_range;
             let mut on_curve: Vec<(f64, usize)> = Vec::new();
 
-            // ✅ OCCT-aligned: endpoint replacement (3D position match) executed uniformly for all curve types
+            // 鉁?OCCT-aligned: endpoint replacement (3D position match) executed uniformly for all curve types
             for &(evi, ept) in &all_verts {
                 if evi == snap.sv || evi == snap.ev { continue; }
                 if ept.distance_squared(snap.sv_pos) < tol * tol {
@@ -7212,7 +7190,7 @@ impl<'a> PaveFiller<'a> {
                 }
             }
 
-            // ✅ OCCT-aligned: PutBoundPaveOnCurve executed for all curve types
+            // 鉁?OCCT-aligned: PutBoundPaveOnCurve executed for all curve types
             //    OCCT BOPAlgo_PaveFiller_6.cxx L798-832
             {
                 let face_idxs = find_face_idxs_for_curve(&self.ds, ci);
@@ -7220,16 +7198,16 @@ impl<'a> PaveFiller<'a> {
                     &self.ds, ci, &face_idxs, tol
                 );
                 on_curve.extend(bound_paves);
-                // ✅ OCCT-aligned: for Circle curves, inject EF vertices as Pave vertices.
+                // 鉁?OCCT-aligned: for Circle curves, inject EF vertices as Pave vertices.
                 //    OCCT PutBoundPaveOnCurve matches vertices via face edge pcurves,
                 //    rcad's bound_paves only handles face.boundary_verts,
                 //    not including EF vertices (edge-face intersections). EF vertices lie on the
                 //    circle (cylinder edge-cylinder face intersection) and come from the other
-                //    shape's edges — they should split the Circle curve.
+                //    shape's edges 鈥?they should split the Circle curve.
                 //    OCCT PaveFiller_6.cxx L752: SubShapesOnIn collects EF vertices,
                 //    BOPAlgo_PaveFiller::PutPavesOnCurve adds all vertices on the IC to the Pave list.
                 if let Curve3::Circle(circ) = &snap.curve {
-                    // ✅ OCCT-aligned: endpoint check uses live curve endpoints (may have been
+                    // 鉁?OCCT-aligned: endpoint check uses live curve endpoints (may have been
                     //    replaced by EF vertices via endpoint replacement code), not snapshot endpoints.
                     //    After prepare_lines_3d split, endpoint replacement sets EF vertices as
                     //    endpoints; these vertices should NOT be treated as interior split points.
@@ -7240,10 +7218,10 @@ impl<'a> PaveFiller<'a> {
                         if evi == snap.sv || evi == snap.ev { continue; }
                         if on_curve.iter().any(|&(_, vi)| vi == evi) { continue; }
                         if let Some(mut t) = param_on_circle3(ept, circ, tol) {
-                            // ✅ OCCT-aligned: normalize Circle parameter to curve t_range using TAU
+                            // 鉁?OCCT-aligned: normalize Circle parameter to curve t_range using TAU
                             //    as period (not t1-t0), because semi-circle t_range=[0,pi].
                             //    Using span=pi normalization would incorrectly map a full-circle
-                            //    angle to the other half (e.g. 3pi/2 → pi/2). OCCT IntTools_Curve::Project
+                            //    angle to the other half (e.g. 3pi/2 鈫?pi/2). OCCT IntTools_Curve::Project
                             //    uses FindParameter returning natural domain [0,2pi).
                             const TAU: f64 = std::f64::consts::TAU;
                             if t < t0 - tol * 0.1 {
@@ -7281,7 +7259,7 @@ impl<'a> PaveFiller<'a> {
                 put_closing_pave_on_curve(&mut on_curve, is_closed);
             }
 
-            // ✅ OCCT-aligned: FilterPavesOnCurves post-filter — remove vertices not in any face boundary or EF
+            // 鉁?OCCT-aligned: FilterPavesOnCurves post-filter 鈥?remove vertices not in any face boundary or EF
             if on_curve.len() >= 2 {
                 let face_ids = find_face_idxs_for_curve(&self.ds, ci);
                 on_curve.retain(|&(_, vi)| {
@@ -7298,14 +7276,14 @@ impl<'a> PaveFiller<'a> {
                 });
             }
 
-            // ✅ OCCT-aligned: sort on_curve by parameter, ensuring vertices in sp are in increasing parameter order.
+            // 鉁?OCCT-aligned: sort on_curve by parameter, ensuring vertices in sp are in increasing parameter order.
             //    OCCT PaveBlock::Update gets sorted Pave list from PutPavesOnCurve.
             on_curve.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
             // Build split parameter list including endpoints
-            // ✅ OCCT-aligned: for circle curves, skip endpoint vertex replacement
+            // 鉁?OCCT-aligned: for circle curves, skip endpoint vertex replacement
             //    because OCCT's PutBoundPaveOnCurve (BOPAlgo_PaveFiller_6.cxx L2222-2280)
-            //    is NOT called for circle curves — HasBounds() returns false for circles
+            //    is NOT called for circle curves 鈥?HasBounds() returns false for circles
             //    (Geom_Circle is not Geom_BoundedCurve).  rcad's on_curve data for circle
             //    arcs may assign the same vertex index to both t0 and t1 due to periodic
             //    parameter ambiguity, corrupting start_vertex/end_vertex.
@@ -7344,7 +7322,7 @@ impl<'a> PaveFiller<'a> {
 
         if actions.is_empty() { return; }
 
-        // ── Phase 3: Apply splits ────────────────────────────────────────
+        // 鈹€鈹€ Phase 3: Apply splits 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         // First pass: shrink each original curve to its first segment
         for act in &actions {
             let sp = &act.split_verts;
@@ -7358,8 +7336,8 @@ impl<'a> PaveFiller<'a> {
             }
         }
 
-        // ✅ OCCT-aligned: circle curves on planar faces stay in curves_sc (PaveBlocksSc).
-        //    No need to move them — all intersection curves are stored as curves_sc.
+        // 鉁?OCCT-aligned: circle curves on planar faces stay in curves_sc (PaveBlocksSc).
+        //    No need to move them 鈥?all intersection curves are stored as curves_sc.
         #[cfg(feature = "debug_split")]
         eprintln!("[MKBK_PLANAR] n_actions={}", actions.len());
 
@@ -7383,6 +7361,7 @@ impl<'a> PaveFiller<'a> {
                     pcurve_on_a: act.pca.clone(),
                     pcurve_on_b: act.pcb.clone(),
                     geom_tol: crate::tolerance::TOLERANCE_ABS,
+                pave_blocks: Vec::new(),
                 });
                 new_curves_info.push((act.old_ci, new_ci));
 
@@ -7390,7 +7369,7 @@ impl<'a> PaveFiller<'a> {
                 let _new_is_circle = matches!(snapshots[act.old_ci].curve, Curve3::Circle(_));
                 for fi in 0..n_faces {
                     if face_curves[fi].contains(&act.old_ci) {
-                        // ✅ OCCT-aligned: all section curves stored as curves_sc (PaveBlocksSc).
+                        // 鉁?OCCT-aligned: all section curves stored as curves_sc (PaveBlocksSc).
                         self.ds.faces[fi].face_info.curves_sc.insert(new_ci);
                         self.ds.faces[fi].face_info.vertices_in.insert(v_prev);
                         self.ds.faces[fi].face_info.vertices_in.insert(v_cur);
@@ -7416,7 +7395,7 @@ impl<'a> PaveFiller<'a> {
                 }
             }
         }
-        // ✅ OCCT-aligned: IsValidBlockForFaces — validate new curve segment on both faces
+        // 鉁?OCCT-aligned: IsValidBlockForFaces 鈥?validate new curve segment on both faces
 
         //    OCCT L892-896: sample curve segment midpoint, project onto both faces; invalid if distance exceeds tol.
 
@@ -7488,7 +7467,7 @@ impl<'a> PaveFiller<'a> {
             }
 
         }
-        // ✅ OCCT-aligned: ShrunkData — compute valid (shrunk) parameter range for each new curve
+        // 鉁?OCCT-aligned: ShrunkData 鈥?compute valid (shrunk) parameter range for each new curve
 
         //    OCCT L910-938: FindValidRange excludes segments covered by vertex tolerance spheres.
 
@@ -7544,7 +7523,7 @@ impl<'a> PaveFiller<'a> {
 
                     self.ds.faces[fi].face_info.curves_sc.remove(&ci);
 
-        // ✅ OCCT-aligned: FilterPavesOnCurves — cross-curve vertex deduplication
+        // 鉁?OCCT-aligned: FilterPavesOnCurves 鈥?cross-curve vertex deduplication
 
         //    OCCT L796, L2349-2443: for a vertex on multiple curves, keep the best matching curve.
 
@@ -7658,7 +7637,7 @@ impl<'a> PaveFiller<'a> {
             }
 
         }
-        // ✅ OCCT-aligned: Build edge images from pave blocks (FillImagesEdges)
+        // 鉁?OCCT-aligned: Build edge images from pave blocks (FillImagesEdges)
         self.ds.build_edge_images();
 
         if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
@@ -7672,7 +7651,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: CheckSelfInterference (BOPAlgo_PaveFiller_11.cxx L28-221)
+    /// 鉁?OCCT-aligned: CheckSelfInterference (BOPAlgo_PaveFiller_11.cxx L28-221)
     ///    Iterates all interferences and validates that no edge-edge or edge-face
     ///    interference exists between sub-shapes of the SAME input shape.
     ///
@@ -7682,13 +7661,13 @@ impl<'a> PaveFiller<'a> {
     ///
     ///    Returns `Ok(())` when no self-interference is found, or `Err` with a
     ///    detailed message listing the offending interferences.
-    /// ✅ OCCT-aligned: CheckSelfInterference (PaveFiller_11.cxx L28-221).
-    ///   ⏳ rcad simplified: origin-based check on interferences vs OCCT range-based
+    /// 鉁?OCCT-aligned: CheckSelfInterference (PaveFiller_11.cxx L28-221).
+    ///   鈴?rcad simplified: origin-based check on interferences vs OCCT range-based
     ///   topology traversal. OCCT L30-34: returns early for single-argument mode.
     ///   OCCT L38-220: iterates DS ranges, checks vertex connections via CommonBlocks
     ///   and PaveBlocks, builds connection maps for faces sharing section edges.
     ///   rcad: simple origin match on EdgeEdge/EdgeFace/FaceFace interferences.
-    ///   Both: non-fatal warnings — operation continues regardless.
+    ///   Both: non-fatal warnings 鈥?operation continues regardless.
     fn check_self_interference(&self) -> Result<(), String> {
         let mut messages: Vec<String> = Vec::new();
 
@@ -7735,13 +7714,13 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: Inject IC vertices into boundary edge pave lists.
+    /// 鉁?OCCT-aligned: Inject IC vertices into boundary edge pave lists.
     ///    After FF creates intersection curves, their vertices may lie on
     ///    boundary edges (e.g. sphere seam edge passes through IC vertex at
     ///    (1,0,0)).  OCCT's PutPaveOnCurve processes ALL curves (edges + ICs)
     ///    and injects paves from any vertex on the curve.  This is the reverse
     ///    of put_bound_pave_on_curve (which injects boundary vertices into ICs).
-    /// ✅ OCCT-aligned: MakeSplitEdges (PaveFiller_7.cxx L371-520).
+    /// 鉁?OCCT-aligned: MakeSplitEdges (PaveFiller_7.cxx L371-520).
     ///   Creates PaveBlocks from Paves, then for each PaveBlock creates a split
     ///   DSEdge (analogous to OCCT's TopoDS_Edge per PaveBlock) and sets
     ///   pb.new_edge to the new edge index, matching OCCT aPB->SetEdge(nEn).
@@ -7749,7 +7728,7 @@ impl<'a> PaveFiller<'a> {
     ///   Single-block edges (no split) reuse the original edge index (pb.new_edge = ei),
     ///   matching OCCT's aPB->SetEdge(nE) for aLPB.Extent() == 1.
     fn build_split_edges(&mut self) {
-        // OCCT L392: UpdateCommonBlocksWithSDVertices — before creating split edges,
+        // OCCT L392: UpdateCommonBlocksWithSDVertices 鈥?before creating split edges,
         //   ensure CommonBlocks reference correct (SD-deduplicated) vertex indices.
         self.ds.update_common_blocks_with_sd_vertices();
 
@@ -7767,16 +7746,16 @@ impl<'a> PaveFiller<'a> {
         let mut all_blocks: Vec<BlockData> = Vec::new();
         let n_orig_edges = self.ds.edges.len();
 
-        // ⏳ OCCT-aligned: MakeSplitEdges (PaveFiller_7.cxx) only creates split
+        // 鈴?OCCT-aligned: MakeSplitEdges (PaveFiller_7.cxx) only creates split
         //    edges and sets PaveBlock->Edge() (pb.new_edge).  rcad also initializes
         //    pave_blocks on source edges here so downstream FillImagesEdges can
-        //    read pb.new_edge.  my_images / my_origins are NOT populated here —
+        //    read pb.new_edge.  my_images / my_origins are NOT populated here 鈥?
         //    that is FillImagesEdges' responsibility (build_edge_images in ds.rs).
 
         for ei in 0..n_orig_edges {
             let edge = &self.ds.edges[ei];
             if edge.paves.is_empty() {
-                // OCCT L457-461: no split → reuse original edge
+                // OCCT L457-461: no split 鈫?reuse original edge
                 let mut pb = PaveBlock::new(ei,
                     Pave { vertex_idx: edge.start_vertex, param: edge.t_range[0] },
                     Pave { vertex_idx: edge.end_vertex, param: edge.t_range[1] },
@@ -7815,7 +7794,7 @@ impl<'a> PaveFiller<'a> {
 
         // Phase 2: create new DSEdges for each collected block + set pave_blocks
         // on source edges (MakeSplitEdges).  my_images / my_origins are NOT
-        // populated here — that is FillImagesEdges' job (build_edge_images in ds.rs).
+        // populated here 鈥?that is FillImagesEdges' job (build_edge_images in ds.rs).
         let mut edge_pbs: std::collections::HashMap<usize, Vec<(usize, usize, f64, f64, usize)>> =
             std::collections::HashMap::new();
 
@@ -7840,7 +7819,7 @@ impl<'a> PaveFiller<'a> {
             ));
         }
 
-        // ✅ OCCT-aligned: Set pave_blocks on source edges that were split,
+        // 鉁?OCCT-aligned: Set pave_blocks on source edges that were split,
         //    so Builder::fill_images_edges can read pb.new_edge.
         for (ei, blocks) in &edge_pbs {
             let pbs: Vec<PaveBlock> = blocks.iter().map(|&(sv, ev, t_start, t_end, new_ei)| {
@@ -7855,7 +7834,7 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    // ─── Helpers ───────────────────────────────────────────────────────
+    // 鈹€鈹€鈹€ Helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     fn verts_of(&self, origin: ShapeOrigin) -> Vec<usize> {
         self.ds
@@ -7888,10 +7867,10 @@ impl<'a> PaveFiller<'a> {
     }
 }
 
-// ── Phase 2a helpers: vertex → curve parameter projection ────────────────
+// 鈹€鈹€ Phase 2a helpers: vertex 鈫?curve parameter projection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Compute parameter t of a vertex on Line3.
-/// Line3: P(t) = origin + t * direction (t ∈ ℝ)
+/// Line3: P(t) = origin + t * direction (t 鈭?鈩?
 fn param_on_line3(pt: DVec3, line: &Line3, tol: f64) -> Option<f64> {
     let dir = line.direction;
     let to_pt = pt - line.origin;
@@ -7902,12 +7881,12 @@ fn param_on_line3(pt: DVec3, line: &Line3, tol: f64) -> Option<f64> {
 }
 
 /// Compute parameter t (angle, radians) of a vertex on Circle3.
-/// Circle3: P(t) = center + r·(cos(t)·u + sin(t)·v), t ∈ [0, 2π)
+/// Circle3: P(t) = center + r路(cos(t)路u + sin(t)路v), t 鈭?[0, 2蟺)
 fn param_on_circle3(pt: DVec3, circle: &Circle3, tol: f64) -> Option<f64> {
     let r = circle.radius;
     let center = circle.center;
     let normal = circle.normal;
-    // ✅ OCCT-aligned: point must be on the circle's plane (Geom_Circle::Value natural requirement)
+    // 鉁?OCCT-aligned: point must be on the circle's plane (Geom_Circle::Value natural requirement)
     let local = pt - center;
     if local.dot(normal).abs() > tol {
         return None;
@@ -7925,7 +7904,7 @@ fn param_on_circle3(pt: DVec3, circle: &Circle3, tol: f64) -> Option<f64> {
 }
 
 /// Project a vertex onto a curve, returning parameter t (if the vertex lies on the curve).
-/// ✅ OCCT-aligned: supports Line3/Circle3/Ellipse3, BSpline uses numeric projection.
+/// 鉁?OCCT-aligned: supports Line3/Circle3/Ellipse3, BSpline uses numeric projection.
 ///    OCCT GeomLib::Parameter uses Newton's method for all curve types.
 fn project_vertex_to_curve(pt: DVec3, curve: &Curve3, tol: f64) -> Option<f64> {
     match curve {
@@ -7936,7 +7915,7 @@ fn project_vertex_to_curve(pt: DVec3, curve: &Curve3, tol: f64) -> Option<f64> {
     }
 }
 
-/// Ellipse3 parameter projection: P(t)=center+major_r*cos(t)*u+minor_r*sin(t)*v, t∈[0,2π)
+/// Ellipse3 parameter projection: P(t)=center+major_r*cos(t)*u+minor_r*sin(t)*v, t鈭圼0,2蟺)
 /// Sample 64 points to find nearest, Newton refinement.
 fn param_on_ellipse3(pt: DVec3, ellipse: &Ellipse3, tol: f64) -> Option<f64> {
     use rcad_kernel::geom::CurveEval;
@@ -7953,7 +7932,7 @@ fn param_on_ellipse3(pt: DVec3, ellipse: &Ellipse3, tol: f64) -> Option<f64> {
         if d < best_dist { best_dist = d; best_t = t; }
     }
     if best_dist.sqrt() > tol * 100.0 { return None; }
-    // Newton: f(t) = (C(t)-P)·C'(t)=0
+    // Newton: f(t) = (C(t)-P)路C'(t)=0
     for _ in 0..6 {
         let (ct, st) = (best_t.cos(), best_t.sin());
         let c = ellipse.center + ellipse.major_radius * ct * ellipse.major_dir
@@ -8007,7 +7986,7 @@ fn param_on_curve3_numeric(pt: DVec3, curve: &Curve3, tol: f64) -> Option<f64> {
 }
 
 
-// ── FindValidRange / ShrunkData helper functions ──
+// 鈹€鈹€ FindValidRange / ShrunkData helper functions 鈹€鈹€
 // OCCT references:
 //   IntTools_ShrunkRange::Perform()  IntTools_ShrunkRange.cxx L107-191
 //   BRepLib::FindValidRange          BRepLib_1.cxx L173-258
@@ -8033,16 +8012,16 @@ fn curve_resolution(curve: &Curve3, t: f64, tol: f64) -> f64 {
 
 
 
-/// ✅ OCCT-aligned (core logic): findNearestValidPoint (BRepLib_1.cxx L31-148)
+/// 鉁?OCCT-aligned (core logic): findNearestValidPoint (BRepLib_1.cxx L31-148)
 /// Step along the curve from one end until outside the vertex tolerance sphere,
 /// then binary-search to refine the exit parameter.
 ///
 /// OCCT differences:
-/// 1. OCCT uses `theCurve.Resolution(theTol) * 1.01` (L61) — rcad omits the `* 1.01`.
+/// 1. OCCT uses `theCurve.Resolution(theTol) * 1.01` (L61) 鈥?rcad omits the `* 1.01`.
 /// 2. OCCT has BSpline/Bezier specific handling (aD1Mag threshold, L70-81) to
-///    accelerate through near-singular derivative regions — rcad does not implement this.
-/// 3. OCCT checks `aP.SquareDistance(theVertPnt) > aSqTol` as the exit condition — rcad matches.
-/// 4. OCCT mid-point refinement exits when `aDelta <= theEps` — rcad matches.
+///    accelerate through near-singular derivative regions 鈥?rcad does not implement this.
+/// 3. OCCT checks `aP.SquareDistance(theVertPnt) > aSqTol` as the exit condition 鈥?rcad matches.
+/// 4. OCCT mid-point refinement exits when `aDelta <= theEps` 鈥?rcad matches.
 
 fn find_nearest_valid_point(
 
@@ -8106,7 +8085,7 @@ fn find_nearest_valid_point(
 
 
 
-/// ✅ OCCT-aligned (core logic): BRepLib::FindValidRange (BRepLib_1.cxx L173-258)
+/// 鉁?OCCT-aligned (core logic): BRepLib::FindValidRange (BRepLib_1.cxx L173-258)
 /// Compute the valid (shrunk) range of curve segment [t0, t1] excluding endpoint tolerance spheres.
 /// Returns (first, last); returns None if fully covered by tolerance spheres (micro edge).
 ///
@@ -8115,12 +8094,12 @@ fn find_nearest_valid_point(
 ///    OCCT: anEps = max(curve.Resolution(theTolE) * 0.1, Epsilon(aMaxPar), Precision::PConfusion())
 ///    rcad: eps = curve_resolution(curve, mid, 1e-7).max(abs_max * 1e-12).max(1e-12)
 ///    - OCCT uses `theTolE * 0.1` in Resolution; rcad uses hardcoded `1e-7`.
-///    - OCCT uses `Epsilon(aMaxPar) ≈ aMaxPar * 2.2e-16`; rcad uses `abs_max * 1e-12`.
+///    - OCCT uses `Epsilon(aMaxPar) 鈮?aMaxPar * 2.2e-16`; rcad uses `abs_max * 1e-12`.
 /// 2. INFINITE PARAM (L204-228): OCCT handles infinite parameters for unbounded curves
-///    (lines) via Precision::IsInfinite check — rcad does not, using is_infinite() directly.
+///    (lines) via Precision::IsInfinite check 鈥?rcad does not, using is_infinite() directly.
 /// 3. Shrunk range check (L221, L244):
-///    OCCT: theParV2 - theFirst < anEps → return false
-///    rcad: (t1 - f).abs() < eps → return None
+///    OCCT: theParV2 - theFirst < anEps 鈫?return false
+///    rcad: (t1 - f).abs() < eps 鈫?return None
 ///    OCCT checks directionally (t2 - first); rcad checks absolute (t1 - f).
 
 fn find_valid_range(
@@ -8171,10 +8150,10 @@ fn find_valid_range(
 
 }
 
-// ── Seam Edge Shift Struct ─────────────────────────────────────────────────
+// 鈹€鈹€ Seam Edge Shift Struct 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Result of checking whether a seam edge shift is needed between two faces.
-/// ✅ OCCT-aligned:BOPAlgo_PaveFiller_6.cxx L393-479
+/// 鉁?OCCT-aligned:BOPAlgo_PaveFiller_6.cxx L393-479
 struct SeamEdgeShift {
     /// Translation vector to apply to one face's surface.
     shift_vector: DVec3,
@@ -8184,14 +8163,14 @@ struct SeamEdgeShift {
     shifted_face: u8,
 }
 
-// ── Free Helper Functions ───────────────────────────────────────────────────
+// 鈹€鈹€ Free Helper Functions 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Apply a translation to a surface's position.
 /// The shift modifies the surface's origin (or center) so that the surface
 /// appears to move in 3D space. Surface normals and parameterization are
 /// preserved.
 ///
-/// ✅ OCCT-aligned:gp_Trsf.SetTranslation — moving the face before intersection
+/// 鉁?OCCT-aligned:gp_Trsf.SetTranslation 鈥?moving the face before intersection
 fn apply_shift_to_surface(surface: &Surface3, shift: DVec3) -> Surface3 {
     match *surface {
         Surface3::Plane(p) => Surface3::Plane(Plane {
@@ -8246,7 +8225,7 @@ fn apply_shift_to_surface(surface: &Surface3, shift: DVec3) -> Surface3 {
 /// Translate a 3D curve by a displacement vector.
 /// All control points and origin/center positions are shifted.
 ///
-/// ✅ OCCT-aligned:aFaceFace.ApplyTrsf() — reversing the shift after intersection
+/// 鉁?OCCT-aligned:aFaceFace.ApplyTrsf() 鈥?reversing the shift after intersection
 fn translate_curve3(curve: &Curve3, shift: DVec3) -> Curve3 {
     match *curve {
         Curve3::Line(l) => Curve3::Line(Line3 {
@@ -8322,17 +8301,17 @@ mod phase2a_tests {
     #[test]
     fn test_param_on_circle3() {
         let circle = Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 1.0 };
-        // Point (1,0,0) → angle 0
+        // Point (1,0,0) 鈫?angle 0
         let pt = DVec3::new(1.0, 0.0, 0.0);
         let t = param_on_circle3(pt, &circle, 1e-6).unwrap();
         assert!(t < 1e-6 || (t - 2.0 * PI).abs() < 1e-6,
-            "expected ~0 or 2π, got {}", t);
+            "expected ~0 or 2蟺, got {}", t);
 
-        // Point (0,1,0) → angle π/2
+        // Point (0,1,0) 鈫?angle 蟺/2
         let pt2 = DVec3::new(0.0, 1.0, 0.0);
         let t2 = param_on_circle3(pt2, &circle, 1e-6).unwrap();
         assert!((t2 - FRAC_PI_2).abs() < 1e-6,
-            "expected π/2, got {}", t2);
+            "expected 蟺/2, got {}", t2);
 
         // Point not on the circle
         let off = DVec3::new(2.0, 0.0, 0.0);
@@ -8340,10 +8319,10 @@ mod phase2a_tests {
     }
 }
 
-// ── Phase 2a: MakeBlocks candidate injection helpers ─────────────────────
+// 鈹€鈹€ Phase 2a: MakeBlocks candidate injection helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Find up-to-2 face indices that reference a given intersection curve.
-/// ✅ OCCT-aligned: checks curves_sc (PaveBlocksSc); in OCCT this checks all
+/// 鉁?OCCT-aligned: checks curves_sc (PaveBlocksSc); in OCCT this checks all
 ///    PaveBlocksSc/In/On to find face boundary vertices for put_bound_pave_on_curve.
 fn find_face_idxs_for_curve(ds: &DS, ci: usize) -> [usize; 2] {
     let mut result = [usize::MAX; 2];
@@ -8373,7 +8352,7 @@ fn put_bound_pave_on_curve(
 
     for &fi in face_idxs.iter().filter(|&&fi| fi != usize::MAX) {
         let face = &ds.faces[fi];
-        // ✅ OCCT-aligned: PutBoundPaveOnCurve (BOPAlgo_PaveFiller_6.cxx L798-832)
+        // 鉁?OCCT-aligned: PutBoundPaveOnCurve (BOPAlgo_PaveFiller_6.cxx L798-832)
         //    OCCT gets vertex parameters via face edge pcurves, only handling vertices on edges.
         //    Boundary vertices only affect IC splitting when they coincide with IC endpoints
         //    (i.e. different vertex indices pointing to the same 3D position). Otherwise,
@@ -8567,9 +8546,9 @@ fn filter_paves_on_curves(
     }).copied().collect()
 }
 
-/// ✅ OCCT-aligned: PutClosingPaveOnCurve (L828-833)
-///    Only replace the last vertex when the curve spans a full closed period (parameter diff ≈ 2π or full curve range).
-///    Arc segments (parameter diff < π) are not replaced, to avoid incorrectly changing arc endpoints to start points.
+/// 鉁?OCCT-aligned: PutClosingPaveOnCurve (L828-833)
+///    Only replace the last vertex when the curve spans a full closed period (parameter diff 鈮?2蟺 or full curve range).
+///    Arc segments (parameter diff < 蟺) are not replaced, to avoid incorrectly changing arc endpoints to start points.
 fn put_closing_pave_on_curve(
     paves: &mut Vec<(f64, usize)>,
     is_closed: bool,
@@ -8579,7 +8558,7 @@ fn put_closing_pave_on_curve(
         let first_t = paves[0].0;
         let last_t = paves[paves.len() - 1].0;
         let span = last_t - first_t;
-        // Only replace if the curve spans at least one full period (≈ 2π for circles)
+        // Only replace if the curve spans at least one full period (鈮?2蟺 for circles)
         if (span - std::f64::consts::TAU).abs() < 0.1 {
             let first_vi = paves[0].1;
             let last_idx = paves.len() - 1;
@@ -8616,7 +8595,7 @@ fn intersect_line_line(
         let cross_sq = d1.cross(w0).length_squared();
         let d1_sq = d1.length_squared();
         if cross_sq > tol_sq * d1_sq.max(1.0) {
-            return None; // parallel but not colinear — no intersection
+            return None; // parallel but not colinear 鈥?no intersection
         }
         // Colinear: map l2's range into l1's parameter space.
         // l1: P(t) = l1.origin + t * d1
@@ -8657,7 +8636,7 @@ fn intersect_line_line(
     Some((t1, t2, (p1 + p2) * 0.5))
 }
 
-// ── Sampling helpers for marching seed-point generation ──────────────────────
+// 鈹€鈹€ Sampling helpers for marching seed-point generation 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Sample a flat plane (infinite) over a 2D square of side `half_extent*2`
 /// centred at `plane.origin`.
@@ -8712,7 +8691,7 @@ fn sample_circle_arc(circle: &Circle3, t_start: f64, t_end: f64, n: usize) -> Ve
         .collect()
 }
 
-/// Compute the angular parameter of `point` on `circle` in [0, 2π).
+/// Compute the angular parameter of `point` on `circle` in [0, 2蟺).
 fn circle_param(point: DVec3, circle: &Circle3) -> f64 {
     let u = rcad_kernel::any_perpendicular(circle.normal);
     let v = circle.normal.cross(u);
@@ -8739,7 +8718,7 @@ fn intersect_line_circle(
     let r = circle.radius;
     let r_sq = r * r;
 
-    // Planarity constraint: every point on the circle satisfies (P - c)·n = 0.
+    // Planarity constraint: every point on the circle satisfies (P - c)路n = 0.
     let dn = d.dot(n);
     let w = o - c;
     let wn = w.dot(n);
@@ -8748,14 +8727,14 @@ fn intersect_line_circle(
         // Line pierces the circle plane at one point.
         let t = -wn / dn;
         let p = o + d * t;
-        // ✅ OCCT-aligned: check distance to circle circumference, not inside-circle.
+        // 鉁?OCCT-aligned: check distance to circle circumference, not inside-circle.
         // (p - c).length_squared <= r_sq allows points at the circle CENTER (false positive).
         let dist = (p - c).length();
         if (dist - r).abs() <= tol {
             results.push((t, circle_param(p, circle), p));
         }
     } else if wn.abs() <= tol {
-        // Line lies in the circle plane — solve 2D line-circle.
+        // Line lies in the circle plane 鈥?solve 2D line-circle.
         let t_closest = -w.dot(d);
         let perp_dist_sq = ((o + d * t_closest) - c).length_squared();
 
@@ -8783,7 +8762,7 @@ fn intersect_coplanar_circles(c1: &Circle3, c2: &Circle3, tol: f64) -> Vec<DVec3
     let r1 = c1.radius;
     let r2 = c2.radius;
 
-    // Disjoint or concentric → no isolated intersection points
+    // Disjoint or concentric 鈫?no isolated intersection points
     if d > r1 + r2 + tol || d < (r1 - r2).abs() - tol || d < tol {
         return vec![];
     }
@@ -8821,7 +8800,7 @@ fn intersect_circle_circle(
     let cross = n1.cross(n2);
     let cross_len_sq = cross.length_squared();
 
-    // Parallel/coincident planes → coplanar circle-circle case
+    // Parallel/coincident planes 鈫?coplanar circle-circle case
     if cross_len_sq < TOLERANCE_ANG * TOLERANCE_ANG {
         let offset = (c2.center - c1.center).dot(n1).abs();
         if offset > tol {
@@ -8833,7 +8812,7 @@ fn intersect_circle_circle(
     // Planes intersect in a line L along the cross-product direction.
     let line_dir = cross / cross_len_sq.sqrt();
     let b = n1.dot(n2);
-    let denom = 1.0 - b * b; // sin²θ > 0 (not parallel)
+    let denom = 1.0 - b * b; // sin虏胃 > 0 (not parallel)
     let h1 = c1.center.dot(n1);
     let h2 = c2.center.dot(n2);
     let alpha = (h1 - h2 * b) / denom;
@@ -8890,8 +8869,8 @@ fn point_in_sphere_face(pt: DVec3, boundary_verts: &[DVec3], _ds: &DS) -> bool {
         return false;
     }
     // OCCT-style single-seam sphere: only two pole vertices. An axis-aligned hull of those
-    // poles rejects almost every real point on the sphere (e.g. equator vs poles on ±Y),
-    // so plane–sphere tangent handling never records `FaceFace` points and downstream
+    // poles rejects almost every real point on the sphere (e.g. equator vs poles on 卤Y),
+    // so plane鈥搒phere tangent handling never records `FaceFace` points and downstream
     // trimming misses imprint geometry (see OCCT `bcommon_simple/A4`).
     if boundary_verts.len() == 2 {
         let a = boundary_verts[0];
@@ -8937,8 +8916,8 @@ fn sample_surface_generic(surface: &Surface3, n_u: usize, n_v: usize) -> Vec<DVe
 /// Numeric edge-face intersection: sample the curve, find sign changes of the
 /// surface implicit function, then refine via bisection.
 ///
-/// Used as fallback for unsupported curve×surface combinations (Ellipse,
-/// Hyperbola, Parabola, BSpline, Bezier, OffsetCurve × any surface).
+/// Used as fallback for unsupported curve脳surface combinations (Ellipse,
+/// Hyperbola, Parabola, BSpline, Bezier, OffsetCurve 脳 any surface).
 fn intersect_edge_face_numeric(
     curve: &Curve3,
     surface: &Surface3,
@@ -8980,7 +8959,7 @@ fn intersect_edge_face_numeric(
         if va * vb > 0.0 {
             continue;
         }
-        // Bisection refinement (Stage 1 — coarse detection)
+        // Bisection refinement (Stage 1 鈥?coarse detection)
         let mut ta = t0 + (t1 - t0) * i as f64 / N_SAMPLES as f64;
         let mut tb = t0 + (t1 - t0) * (i + 1) as f64 / N_SAMPLES as f64;
         let mut fa = va;
@@ -9017,9 +8996,9 @@ fn intersect_edge_face_numeric(
         }
     }
 
-    // Stage 2 — Newton refinement: polish each bisection result
-    // ✅ OCCT-aligned: IntCurveSurface_TheExactHInter two-stage approach
-    //   coarse sign-change detection → Newton-Raphson refinement.
+    // Stage 2 鈥?Newton refinement: polish each bisection result
+    // 鉁?OCCT-aligned: IntCurveSurface_TheExactHInter two-stage approach
+    //   coarse sign-change detection 鈫?Newton-Raphson refinement.
     for (point, t) in hits.iter_mut() {
         let initial_t = *t;
         let initial_point = *point;
@@ -9038,7 +9017,7 @@ fn intersect_edge_face_numeric(
                 eps,
             )
         {
-            // ✅ OCCT-aligned validation (Stage 3):
+            // 鉁?OCCT-aligned validation (Stage 3):
             //   1. t within the curve's parametric range
             if refined_t < t_range[0] - eps || refined_t > t_range[1] + eps {
                 continue; // Keep bisection result
@@ -9063,7 +9042,7 @@ fn intersect_edge_face_numeric(
                 continue; // Keep bisection result
             }
 
-            // Newton refinement passed all checks — replace the hit
+            // Newton refinement passed all checks 鈥?replace the hit
             *t = refined_t;
             *point = refined_point;
         }
@@ -9626,7 +9605,7 @@ impl<'a> PaveFiller<'a> {
         // For point p on l2 at parameter s: p = l2.origin + s * d2
         // We need to find t such that: l1.origin + t * d1 = l2.origin + s * d2
         // t = (l2.origin - l1.origin) . d1 + s * (d2 . d1)
-        // Since d2 . d1 = ±1 (same or opposite direction), we have:
+        // Since d2 . d1 = 卤1 (same or opposite direction), we have:
         // t = offset + s * sign
 
         let offset = (l2.origin - l1.origin).dot(d1);
@@ -9653,7 +9632,7 @@ impl<'a> PaveFiller<'a> {
         range2: [f64; 2],
         tol: f64,
     ) -> ParamOverlap {
-        // For circles, parameters are angles [0, 2π]
+        // For circles, parameters are angles [0, 2蟺]
         // Since we already verified circles are the same, we just compare angle ranges
         // But we need to handle periodicity
 
@@ -9663,7 +9642,7 @@ impl<'a> PaveFiller<'a> {
         let normal_dot = c1.normal.normalize_or_zero().dot(c2.normal.normalize_or_zero());
         let same_orientation = normal_dot >= 0.0;
 
-        // Normalize ranges to [0, 2π]
+        // Normalize ranges to [0, 2蟺]
         let r1 = self.normalize_angle_range(range1, period);
         let r2 = self.normalize_angle_range(range2, period);
 
@@ -9982,7 +9961,7 @@ impl<'a> PaveFiller<'a> {
     /// A vector of `NearTangentFaceInfo` describing detected near-tangent face pairs.
     ///
     /// # Tolerance
-    /// Per face pair, uses `max(fuzzy_tol, both faces' geom_tol) × 100` as the tangent distance scale.
+    /// Per face pair, uses `max(fuzzy_tol, both faces' geom_tol) 脳 100` as the tangent distance scale.
     pub fn handle_near_tangent_faces(&self) -> Vec<NearTangentFaceInfo> {
         let mut tangent_faces = Vec::new();
 
@@ -11522,10 +11501,10 @@ mod tests {
 
     /// Test that the PaveFiller perform order matches OCCT PerformInternal.
     /// The post-FF steps must run in the exact OCCT order:
-    ///   PostTreatFF → UpdateBlocksWithSharedVertices → RefineFaceInfoIn →
-    ///   build_split_edges → UpdatePaveBlocksWithSDVertices → make_blocks →
-    ///   CheckSelfInterference → UpdateInterfsWithSDVertices → ReleasePaveBlocks →
-    ///   RefineFaceInfoOn → remove_micro_edges → make_pcurves → process_de
+    ///   PostTreatFF 鈫?UpdateBlocksWithSharedVertices 鈫?RefineFaceInfoIn 鈫?
+    ///   build_split_edges 鈫?UpdatePaveBlocksWithSDVertices 鈫?make_blocks 鈫?
+    ///   CheckSelfInterference 鈫?UpdateInterfsWithSDVertices 鈫?ReleasePaveBlocks 鈫?
+    ///   RefineFaceInfoOn 鈫?remove_micro_edges 鈫?make_pcurves 鈫?process_de
     #[test]
     fn test_perform_ff_post_order() {
         let a = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
@@ -11545,7 +11524,7 @@ mod tests {
         assert!(has_pbs, "perform() should produce non-micro PaveBlocks");
     }
 
-    /// Test make_pcurves — verify that pcurves are created for edges on faces.
+    /// Test make_pcurves 鈥?verify that pcurves are created for edges on faces.
     #[test]
     fn test_make_pcurves() {
         let a = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
@@ -11566,7 +11545,7 @@ mod tests {
         }
     }
 
-    /// Test remove_micro_edges — verify that micro edges are removed after perform.
+    /// Test remove_micro_edges 鈥?verify that micro edges are removed after perform.
     #[test]
     fn test_remove_micro_edges() {
         let a = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
@@ -11586,7 +11565,7 @@ mod tests {
         }
     }
 
-    /// Test DS::edge_flags — verify HasFlag/SetFlag/is_edge_degenerated work.
+    /// Test DS::edge_flags 鈥?verify HasFlag/SetFlag/is_edge_degenerated work.
     #[test]
     fn test_edge_flags() {
         let a = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
@@ -11638,3 +11617,4 @@ mod tests {
     }
 
 }
+
