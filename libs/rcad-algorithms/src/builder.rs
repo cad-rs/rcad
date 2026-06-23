@@ -2417,8 +2417,10 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
     }
 
     // ✅ OCCT-aligned: curves_sc fallback for curves without PB-processed section edges
-    //   (Builder_2.cxx L478-489).  When MakeSectionEdges is wired in the PaveFiller,
-    //   curves with PB section edges will be skipped here.
+    //   (Builder_2.cxx L478-489).  When PaveBlocksSc is populated by MakeSectionEdges
+    //   in the PaveFiller, curves_sc is skipped entirely (PBs carry the section edges).
+    let has_section_pbs = !face.face_info.pave_blocks_sc.is_empty();
+    if !has_section_pbs {
     for &ci in &face.face_info.curves_sc_only() {
         let ic = &ds.intersection_curves[ci];
         // ✅ OCCT-aligned: remap IC endpoint to boundary vertex (ShapesSD).
@@ -2549,6 +2551,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             tangent_end: t_end,
         });
     }
+    } // end if !has_section_pbs
     segments
 }
 
