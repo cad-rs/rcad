@@ -5441,11 +5441,15 @@ impl<'a> BooleanBuilder<'a> {
                 let new_ei = match pb.new_edge {
                     Some(nei) => nei,
                     None => {
-                        // ⏳: PaveBlock without new_edge — build_split_edges should have set it.
-                        //     Fallback: use the original edge index (no split).
-                        ei
+                        continue;
                     }
                 };
+
+                // ✅ OCCT-aligned: skip PBs where new_edge == original_edge (un-split edge).
+                //   OCCT FillImagesEdges only processes edges that have been split into
+                //   new sub-edges.  rcad's build_split_edges creates identity PBs for
+                //   every source edge; these should NOT create entries in split_edges.
+                if new_ei == ei { continue; }
 
                 // Copy the already-created edge from ds.edges into split_edges list
                 if new_ei < self.ds.edges.len() {
