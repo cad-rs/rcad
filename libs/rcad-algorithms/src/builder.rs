@@ -5429,8 +5429,9 @@ impl<'a> BooleanBuilder<'a> {
     ///   Creates myImages(EDGE) and myOrigins(EDGE) mappings.
     fn fill_images_edges(&self) {
         for (ei, edge) in self.ds.edges.iter().enumerate() {
-            // OCCT L81-87: if (!aSI.HasReference()) continue;
-            //   rcad: HasReference → non-empty pave_blocks.
+            // ✅ OCCT-aligned: HasReference check (non-empty pave_blocks = edge was split).
+            //   Un-split edges have empty pave_blocks (build_split_edges creates no
+            //   identity PBs) and pass through BuildResult unchanged (OCCT L137-165).
             if edge.pave_blocks.is_empty() {
                 continue;
             }
@@ -5444,12 +5445,6 @@ impl<'a> BooleanBuilder<'a> {
                         continue;
                     }
                 };
-
-                // ✅ OCCT-aligned: skip PBs where new_edge == original_edge (un-split edge).
-                //   OCCT FillImagesEdges only processes edges that have been split into
-                //   new sub-edges.  rcad's build_split_edges creates identity PBs for
-                //   every source edge; these should NOT create entries in split_edges.
-                if new_ei == ei { continue; }
 
                 // Copy the already-created edge from ds.edges into split_edges list
                 if new_ei < self.ds.edges.len() {

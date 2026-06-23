@@ -7607,13 +7607,10 @@ impl<'a> PaveFiller<'a> {
         for ei in 0..n_orig_edges {
             let edge = &self.ds.edges[ei];
             if edge.paves.is_empty() {
-                // OCCT L457-461: no split 鈫?reuse original edge
-                let mut pb = PaveBlock::new(ei,
-                    Pave { vertex_idx: edge.start_vertex, param: edge.t_range[0] },
-                    Pave { vertex_idx: edge.end_vertex, param: edge.t_range[1] },
-                );
-                pb.new_edge = Some(ei);
-                self.ds.edges[ei].pave_blocks = vec![pb];
+                // ✅ OCCT-aligned: no split → edge stays as-is (no PaveBlock created).
+                //   OCCT FillImagesEdges requires HasReference (non-empty pave_blocks)
+                //   to create split images.  Empty pave_blocks = un-split edge =
+                //   passes through BuildResult unchanged.
                 continue;
             }
 
