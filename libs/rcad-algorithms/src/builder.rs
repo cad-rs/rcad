@@ -2349,6 +2349,40 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
     }
 
     // ================================================================
+    // IN edge PBs (OCCT BOPAlgo_Builder_2.cxx L467-480).
+    // Each IN PaveBlock contributes its split edge as FWD+REV.
+    let boundary_set: std::collections::HashSet<usize> =
+        face.boundary_edges.iter().copied().collect();
+    let mut pb_dedup: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for &pb_idx in &face.face_info.pave_blocks_in {
+        if pb_idx >= ds.pave_blocks.len() { continue; }
+        let pb = &ds.pave_blocks[pb_idx];
+        if boundary_set.contains(&pb.original_edge) { continue; }
+        if !pb_dedup.insert(pb.original_edge) { continue; }
+        let ei = pb.new_edge.unwrap_or(pb.original_edge);
+        if ei >= ds.edges.len() { continue; }
+        let edge = &ds.edges[ei];
+        let face_surf = &ds.faces[face_idx].surface;
+        let t_start = edge_angle_2d(&edge.curve, edge.t_range[0], edge.t_range, face_surf, false);
+        let t_end = edge_angle_2d(&edge.curve, edge.t_range[1], edge.t_range, face_surf, true);
+        // OCCT: aLE.Append(aSp) with FORWARD orientation.
+        segments.push(WireSegment {
+            start_vertex: edge.start_vertex, end_vertex: edge.end_vertex,
+            source: WireEdgeSource::DsEdge(ei), forward: true,
+            is_seam: false, second_pcurve: None, first_pcurve: None,
+            t_range: edge.t_range,
+            tangent_start: t_start, tangent_end: t_end,
+        });
+        // OCCT: aLE.Append(aSp) with REVERSED orientation.
+        segments.push(WireSegment {
+            start_vertex: edge.end_vertex, end_vertex: edge.start_vertex,
+            source: WireEdgeSource::DsEdge(ei), forward: false,
+            is_seam: false, second_pcurve: None, first_pcurve: None,
+            t_range: edge.t_range,
+            tangent_start: t_end, tangent_end: t_start,
+        });
+    }
+
     // Section edges = Intersection curves (OCCT L478-489).
     // ================================================================
     for &ci in &face.face_info.curves_sc_only() {
