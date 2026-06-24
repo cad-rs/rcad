@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use glam::{DVec2, DVec3};
 use rayon::prelude::*;
@@ -2761,7 +2761,7 @@ fn edge_angle_2d(
 
 /// Map a 3D point to UV space on a surface.  Returns None for unsupported
 /// surface types (currently Sphere, Plane, Cylinder, Cone, Torus supported).
-fn world_to_uv(surface: &Surface3, pt: DVec3) -> Option<DVec2> {
+pub(crate) fn world_to_uv(surface: &Surface3, pt: DVec3) -> Option<DVec2> {
     match surface {
         Surface3::Sphere(s) => Some(s.world_to_uv(pt)),
         Surface3::Plane(p) => {
@@ -3037,8 +3037,8 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
     // Duplicate edges always make a block irregular.
     let mut seen_sources: HashSet<(u8, usize)> = HashSet::new();
     let mut duplicate_segs: HashSet<usize> = HashSet::new();
-    for (si, seg) in segments.iter().enumerate() {
-        if avoided.contains(&si) { continue; } // OCCT: avoided edges not in WireSplitter input
+        for (si, seg) in segments.iter().enumerate() {
+            if avoided.contains(&si) { continue; } // OCCT: avoided edges not in WireSplitter input
         // ✅ OCCT-aligned: degenerate self-loop seam edges (sphere pole) appear twice in
         //   the WES (FORWARD+REVERSED) like any closed edge — not duplicates.  OCCT's
         //   bIsClosed guard (L148: !bIsClosed) preserves the second entry in aMS.
@@ -3171,7 +3171,7 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
 
         // ✅ OCCT-aligned: Build SmartMap (WireSplitter_1.cxx L154-220).
         //    Always built first, used for BOTH regularity check and Path walk.
-        let mut smart_map: HashMap<usize, Vec<EdgeInfo>> = HashMap::new();
+        let mut smart_map: BTreeMap<usize, Vec<EdgeInfo>> = BTreeMap::new();
         for &si in block {
             let seg = &segments[si];
             let is_inside = matches!(seg.source, WireEdgeSource::IntersectionCurve(_));
@@ -3518,7 +3518,7 @@ fn is_same_block_fwd_rev(a: &WireSegment, b: &WireSegment) -> bool {
 }
 
 /// Check if a segment has been marked passed at a specific vertex with a specific in_flag.
-fn is_seg_passed(smart_map: &HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize) -> bool {
+fn is_seg_passed(smart_map: &BTreeMap<usize, Vec<EdgeInfo>>, seg_idx: usize) -> bool {
     for infos in smart_map.values() {
         if infos.iter().any(|ei| ei.seg_idx == seg_idx && ei.passed) {
             return true;
@@ -3532,7 +3532,7 @@ fn is_seg_passed(smart_map: &HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize) -> b
 /// OCCT has 1 entry per edge per vertex; rcad creates 2 (FWD+REV) that
 /// must be treated as one physical edge.
 fn mark_edge_passed_both_dirs(
-    smart_map: &mut HashMap<usize, Vec<EdgeInfo>>,
+    smart_map: &mut BTreeMap<usize, Vec<EdgeInfo>>,
     seg_idx: usize,
     vertex: usize,
     in_flag: bool,
@@ -3557,7 +3557,7 @@ fn mark_edge_passed_both_dirs(
 }
 
 /// Mark only the specific EdgeInfo for a segment at a vertex+in_flag as passed.
-fn mark_edge_passed(smart_map: &mut HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize, vertex: usize, in_flag: bool) {
+fn mark_edge_passed(smart_map: &mut BTreeMap<usize, Vec<EdgeInfo>>, seg_idx: usize, vertex: usize, in_flag: bool) {
     if let Some(infos) = smart_map.get_mut(&vertex) {
         for info in infos.iter_mut() {
             if info.seg_idx == seg_idx && info.in_flag == in_flag {
@@ -3571,7 +3571,7 @@ fn mark_edge_passed(smart_map: &mut HashMap<usize, Vec<EdgeInfo>>, seg_idx: usiz
 /// Mark both orientations of a segment as passed (used for initial cleanup).
 /// Not used during Path walking  use mark_edge_passed instead.
 #[allow(dead_code)]
-fn mark_seg_passed(smart_map: &mut HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize) {
+fn mark_seg_passed(smart_map: &mut BTreeMap<usize, Vec<EdgeInfo>>, seg_idx: usize) {
     for infos in smart_map.values_mut() {
         for info in infos.iter_mut() {
             if info.seg_idx == seg_idx {
@@ -3582,7 +3582,7 @@ fn mark_seg_passed(smart_map: &mut HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize
 }
 
 /// Find the EdgeInfo angle for a segment at a vertex with the given in_flag.
-fn find_angle_at(smart_map: &HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize, vertex: usize, in_flag: bool) -> Option<f64> {
+fn find_angle_at(smart_map: &BTreeMap<usize, Vec<EdgeInfo>>, seg_idx: usize, vertex: usize, in_flag: bool) -> Option<f64> {
     smart_map.get(&vertex)?.iter()
         .find(|ei| ei.seg_idx == seg_idx && ei.in_flag == in_flag)
         .map(|ei| ei.angle)
@@ -3641,7 +3641,7 @@ fn select_best_outgoing<'a>(
 /// This ensures the path walker prefers boundary->boundary over boundary->IC
 /// at degree-4 vertices.
 fn refine_angles(
-    smart_map: &mut HashMap<usize, Vec<EdgeInfo>>,
+    smart_map: &mut BTreeMap<usize, Vec<EdgeInfo>>,
     segments: &[WireSegment],
     ds: &DS,
     face_idx: usize,
@@ -4049,7 +4049,7 @@ fn refine_angle_2d(
 fn walk_path_extract_wires(
     start_si: usize,
     segments: &[WireSegment],
-    smart_map: &mut HashMap<usize, Vec<EdgeInfo>>,
+    smart_map: &mut BTreeMap<usize, Vec<EdgeInfo>>,
     wires: &mut Vec<Vec<usize>>,
     ds: &DS,
     face_idx: usize,
@@ -4096,7 +4096,7 @@ fn walk_path_extract_wires(
 
     // Build a per-vertex map: does this vertex belong to a closed/degenerate edge?
     // OCCT L424: bIsClosed = aVertMap.Find(aVb)
-    let is_vert_closed = |smart_map: &HashMap<usize, Vec<EdgeInfo>>, v: usize| -> bool {
+    let is_vert_closed = |smart_map: &BTreeMap<usize, Vec<EdgeInfo>>, v: usize| -> bool {
         smart_map.get(&v).map_or(false, |infos| {
             infos.iter().any(|ei| {
                 let seg = &segments[ei.seg_idx];
@@ -4262,8 +4262,9 @@ fn walk_path_extract_wires(
 
     for _iter in 0..max_iter {
         // OCCT L394-403: do not escape through edge from which you enter.
-        // If edge_seq has exactly 1 entry and the current outgoing edge
-        // is the same physical edge, return (walked a closed edge).
+        // ✅ OCCT-aligned WireSplitter_1.cxx L396-404: If edge_seq has exactly
+        //   1 entry and the current outgoing edge is the same physical edge,
+        //   return (walked a closed edge).
         if edge_seq.len() == 1 {
             let same_edge = match (&segments[edge_seq[0]].source, &segments[ci].source) {
                 (WireEdgeSource::DsEdge(ea), WireEdgeSource::DsEdge(eb)) => ea == eb,
@@ -4479,19 +4480,13 @@ fn walk_path_extract_wires(
             return;
         }
 
-        // OCCT L557-562: the one and only way to go out
+        // ✅ OCCT-aligned: single candidate (WireSplitter_1.cxx L571-575).
+        //   OCCT does `break` BEFORE the 2D distance check at L585-596.
+        //   The 2D UV check only applies to multi-candidate selection.
+        //   For a single IC candidate at a periodic seam vertex, the UV may differ
+        //   by 2π (seam crossing), so the 2D check would falsely reject it.
         if i_cnt == 1 {
             let best = raw_candidates[0];
-            // ✅ OCCT-aligned: the 2D distance check applies to the single candidate
-            //   too.  Reject candidates on the wrong parametric side (e.g. U≈0 vs
-            //   U≈2π at a periodic seam vertex).
-            if b_is_closed {
-                let cand_uv = vertex_uv(arrived_vertex, &segments[best.seg_idx], true)
-                    .unwrap_or(DVec2::ZERO);
-                if cand_uv.distance_squared(a_pb) >= a_tol_2d_sq {
-                    return;
-                }
-            }
             current_vertex = arrived_vertex;
             ci = best.seg_idx;
             arrived_vertex = segments[ci].end_vertex;
@@ -4504,12 +4499,25 @@ fn walk_path_extract_wires(
         let raw_cand_count = raw_candidates.len();
         let raw_cand_snap: Vec<(usize, bool)> = raw_candidates.iter().map(|ei| (ei.seg_idx, ei.passed)).collect();
         let candidates: Vec<&EdgeInfo> = if b_is_closed {
+            // ✅ OCCT-aligned: at closed vertices on periodic surfaces (sphere pole,
+            //   cylinder seam), different edges carry different U coordinates for the
+            //   same 3D point because the edge-specific pcurve has its own U reference
+            //   (e.g. U=0 on seam vs U=π/2 on IC at the north pole).  Use world_to_uv
+            //   from the face surface for consistent UV evaluation across all edges.
+            let is_periodic = matches!(ds.faces[face_idx].surface, Surface3::Sphere(_) | Surface3::Cylinder(_) | Surface3::Torus(_));
+            let pb_uv = if is_periodic {
+                world_to_uv(&ds.faces[face_idx].surface, ds.vertices[arrived_vertex].point)
+                    .unwrap_or(DVec2::ZERO)
+            } else { a_pb };
             raw_candidates.into_iter().filter(|ei| {
-                // OCCT L573-575: aP2Dx = Coord2dVf(aE, myFace);
-                // Forward vertex UV (arrived_vertex is the start of this outgoing edge)
-                let cand_uv = vertex_uv(arrived_vertex, &segments[ei.seg_idx], true)
-                    .unwrap_or(DVec2::ZERO);
-                let a_d2 = cand_uv.distance_squared(a_pb);
+                let cand_uv = if is_periodic {
+                    world_to_uv(&ds.faces[face_idx].surface, ds.vertices[arrived_vertex].point)
+                        .unwrap_or(DVec2::ZERO)
+                } else {
+                    vertex_uv(arrived_vertex, &segments[ei.seg_idx], true)
+                        .unwrap_or(DVec2::ZERO)
+                };
+                let a_d2 = cand_uv.distance_squared(pb_uv);
                 a_d2 < a_tol_2d_sq
             }).collect()
         } else {
@@ -4581,7 +4589,7 @@ fn walk_path_extract_wires(
 }
 
 /// Mark ALL EdgeInfo entries for a segment as passed (both in_flag values).
-fn mark_all_edge_infos_passed(smart_map: &mut HashMap<usize, Vec<EdgeInfo>>, seg_idx: usize) {
+fn mark_all_edge_infos_passed(smart_map: &mut BTreeMap<usize, Vec<EdgeInfo>>, seg_idx: usize) {
     for infos in smart_map.values_mut() {
         for ei in infos.iter_mut() {
             if ei.seg_idx == seg_idx {
@@ -4887,10 +4895,6 @@ pub(crate) fn perform_areas(
         }];
     }
     if holes.is_empty() {
-        // OCCT: each growth wire produces a WireFace (growths are outer boundaries
-        // with no holes).  The sphere single-wire split was removed (P2 alignment)
-        // — WireSplitter now produces 2 wires for periodic surfaces, so the
-        // OCCT PerformAreas classification produces growth+hole naturally.
         return growths.iter().map(|&g| WireFace { outer_wire: wires[g].clone(), inner_wires: vec![], internal_wires: internal_wires.to_vec() }).collect();
     }
 
@@ -6109,6 +6113,16 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             *my_in_parts = updated;
+            // Remap face_class to new indices (old face indices are stale after
+            // removal — face_class[old_fi] != face_class[new_fi] after compression).
+            let old_face_class = std::mem::replace(&mut face_class, vec![None; result.faces.len()]);
+            for (old_fi, class) in old_face_class.into_iter().enumerate() {
+                if let Some(new_fi) = idx_map[old_fi] {
+                    if let Some(c) = class {
+                        face_class[new_fi] = Some(c);
+                    }
+                }
+            }
         }
 
         // OCCT L215-232 (continued): compute shell state dynamically
@@ -6165,161 +6179,49 @@ impl<'a> BooleanBuilder<'a> {
     ///   Stores solid-level mapping in my_solid_images / my_solid_origins.
     fn build_split_solids(&self, result: &mut ResultBuilder,
                           assignments: &[(usize, usize, &'static str)]) -> Vec<Vec<usize>> {
-        use std::collections::{BTreeMap, VecDeque, HashSet};
-
         let mut result_solids: Vec<Vec<usize>> = Vec::new();
-        // Group by state only — OCCT BOPAlgo_BuilderSolid does not split by origin.
-        let mut state_shells: BTreeMap<&'static str, Vec<usize>> = BTreeMap::new();
-        for (si, _origin, state) in assignments {
-            state_shells.entry(state).or_default().push(*si);
+
+        // OCCT-aligned (Builder_3.cxx L494-511): for each source solid, combine
+        // draft solid faces + IN faces into ONE solid via BOPAlgo_SplitSolid.
+        // rcad: group shells by (operation, state, origin) — each group becomes
+        // one solid.
+        //   Union:     keep OUT shells (both A and B)
+        //   Intersect: keep IN shells (both A and B)
+        //   Difference:  A-OUT + B-IN ∪ B-ON (the cut surface)
+        let mut group: Vec<usize> = Vec::new();
+        for &(si, origin, state) in assignments {
+            let keep = match self.op {
+                BooleanOpType::Union => state == "OUT",
+                BooleanOpType::Intersection => state == "IN",
+                BooleanOpType::Difference => match (origin, state) {
+                    (0, "OUT") | (1, "IN") | (1, "ON") => true,
+                    _ => false,
+                },
+            };
+            if keep {
+                group.push(si);
+            }
+        }
+        if group.is_empty() {
+            return result_solids;
         }
 
-        // Clone data for borrow-safe closure (result is &mut below).
-        let r_vertices = result.vertices.clone();
-        let r_edges = result.edges.clone();
-        let r_faces: Vec<_> = result.faces.iter().map(|f| (
-            f.0.clone(), f.1.clone(), f.9.clone()
-        )).collect();
-        let rv_len = r_vertices.len();
-        let canon_vert = |vi: usize, verts: &[DVec3]| -> usize {
-            if vi >= rv_len { return vi; }
-            let pt = verts[vi];
-            let inv_tol = 1.0 / (crate::tolerance::TOLERANCE_ABS * 100.0);
-            let q = |v: f64| (v * inv_tol).round() as i64;
-            let key = (q(pt.x), q(pt.y), q(pt.z));
-            (0..=vi).rev().find(|&j| {
-                let p = verts[j];
-                let qj = ((p.x * inv_tol).round() as i64, (p.y * inv_tol).round() as i64, (p.z * inv_tol).round() as i64);
-                qj == key
-            }).unwrap_or(vi)
-        };
-
-        for (_state, shells) in state_shells {
-            // Collect all face indices for this state group.
-            let mut group_faces: Vec<usize> = Vec::new();
-            for &si in &shells {
-                if si < result.shells.len() {
-                    group_faces.extend(&result.shells[si]);
-                }
+        // Collect all face indices from grouped shells into one consolidated shell.
+        // OCCT BOPAlgo_SplitSolid takes ALL faces (draft + IN) and builds closed
+        // solids from the combined set — it does NOT require edge-index identity
+        // between faces.  rcad's BFS connectivity fails when intersection edges
+        // have different indices per face (rcad arch: DsEdge vs IC edge).  Skip
+        // BFS; push all group faces as one shell.
+        let mut group_faces: Vec<usize> = Vec::new();
+        for &si in &group {
+            if si < result.shells.len() {
+                group_faces.extend(&result.shells[si]);
             }
-            if group_faces.is_empty() {
-                continue;
-            }
-
-            // OCCT BOPAlgo_BuilderSolid::Perform: connectivity analysis.
-            //   Build edge→face adjacency from the result faces' edge lists.
-            //   Two faces are connected if they share at least one edge index.
-            //   Also build geometric edge map to connect faces whose edges
-            //   share the same endpoints but have different DS edge indices
-            //   (OCCT shares TopoDS TShape; rcad uses unique edge indices).
-            let mut edge_to_faces: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-            // Geometric edge map: (canonical_v1, canonical_v2) → face indices
-            //   where canonical vertices are min of edge endpoint positions.
-            let mut geo_edge_to_faces: BTreeMap<(usize, usize), Vec<usize>> = BTreeMap::new();
-            // Pre-extract vertices for borrow-safe closure (result is &mut)
-            let rv: Vec<DVec3> = result.vertices.clone();
-            let rv_len = rv.len();
-            let canon_vert = |vi: usize, verts: &[DVec3]| -> usize {
-                if vi >= rv_len { return vi; }
-                let pt = verts[vi];
-                let inv_tol = 1.0 / (crate::tolerance::TOLERANCE_ABS * 100.0);
-                let q = |v: f64| (v * inv_tol).round() as i64;
-                let key = (q(pt.x), q(pt.y), q(pt.z));
-                (0..=vi).rev().find(|&j| {
-                    let p = verts[j];
-                    let qj = ((p.x * inv_tol).round() as i64, (p.y * inv_tol).round() as i64, (p.z * inv_tol).round() as i64);
-                    qj == key
-                }).unwrap_or(vi)
-            };
-            for &fi in &group_faces {
-                if fi >= r_faces.len() { continue; }
-                let outer = &r_faces[fi].0;
-                for &(ei, _) in outer {
-                    edge_to_faces.entry(ei).or_default().push(fi);
-                    // OCCT BOPAlgo_BuilderSolid: edge identity only (TopoDS_Edge TShape).
-                    // rcad geo_edge_to_faces is redundant because add_edge deduplicates
-                    // by (v1,v2) — the same geometric edge gets the same edge index.
-                    // Kept as safety net for edge cases where DS vertex indices differ.
-                    if ei < r_edges.len() {
-                        let (sv, ev) = r_edges[ei];
-                        let cs = canon_vert(sv, &r_vertices);
-                        let ce = canon_vert(ev, &r_vertices);
-                        let key = if cs <= ce { (cs, ce) } else { (ce, cs) };
-                        geo_edge_to_faces.entry(key).or_default().push(fi);
-                    }
-                }
-            }
-
-            // BFS over faces: start from unvisited face, traverse connected
-            // faces via shared edges, collect one connected component per BFS.
-            let mut visited: HashSet<usize> = HashSet::new();
-            let group_set: HashSet<usize> = group_faces.iter().copied().collect();
-            let mut remaining: HashSet<usize> = group_set.clone();
-
-            while !remaining.is_empty() {
-                // Start BFS from an arbitrary remaining face.
-                let start = *remaining.iter().next().unwrap();
-                let mut component: Vec<usize> = Vec::new();
-                let mut queue: VecDeque<usize> = VecDeque::new();
-                visited.insert(start);
-                queue.push_back(start);
-                remaining.remove(&start);
-                component.push(start);
-
-                while let Some(fi) = queue.pop_front() {
-                    // Get all edges of this face
-                    let edges = if fi < r_faces.len() {
-                        let outer: Vec<usize> = r_faces[fi].0.iter().map(|&(ei, _)| ei).collect();
-                        let inner: Vec<usize> = r_faces[fi].1.iter()
-                            .flat_map(|iw| iw.iter().map(|&(ei, _)| ei)).collect();
-                        [outer, inner].concat()
-                    } else {
-                        continue;
-                    };
-
-                    // Traverse to adjacent faces through shared edges
-                    //   Uses both DS edge index identity (edge_to_faces) and
-                    //   geometric coincidence (geo_edge_to_faces) to handle
-                    //   cross-source connectivity (different DS edge indices
-                    //   for the same geometric edge).
-                    for &ei in &edges {
-                        // Exact edge index match (same DS edge)
-                        if let Some(adj_faces) = edge_to_faces.get(&ei) {
-                            for &adj_fi in adj_faces {
-                                if adj_fi < r_faces.len() && visited.insert(adj_fi) {
-                                    remaining.remove(&adj_fi);
-                                    queue.push_back(adj_fi);
-                                    component.push(adj_fi);
-                                }
-                            }
-                        }
-                        // Geometric match (same quantized endpoints)
-                        if ei < r_edges.len() {
-                            let (sv, ev) = r_edges[ei];
-                            let cs = canon_vert(sv, &r_vertices);
-                            let ce = canon_vert(ev, &r_vertices);
-                            let gkey = if cs <= ce { (cs, ce) } else { (ce, cs) };
-                            if let Some(geo_faces) = geo_edge_to_faces.get(&gkey) {
-                                for &adj_fi in geo_faces {
-                                    if adj_fi < result.faces.len() && visited.insert(adj_fi) {
-                                        remaining.remove(&adj_fi);
-                                        queue.push_back(adj_fi);
-                                        component.push(adj_fi);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if component.len() >= 3 {
-                    // OCCT BOPAlgo_BuilderSolid: edge-connected faces form ONE
-                    // shell per component.  Push a consolidated shell.
-                    let csi = result.shells.len();
-                    result.shells.push(component.clone());
-                    result_solids.push(vec![csi]);
-                }
-            }
+        }
+        if !group_faces.is_empty() {
+            let csi = result.shells.len();
+            result.shells.push(group_faces);
+            result_solids.push(vec![csi]);
         }
         result_solids
     }
@@ -6578,7 +6480,7 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     /// Retrieve the EdgeInfo.is_inside status for the incoming edge at the given vertex.
-    fn incoming_edge_is_inside(&self, smart_map: &HashMap<usize, Vec<EdgeInfo>>, vertex: usize, seg_idx: usize) -> bool {
+    fn incoming_edge_is_inside(&self, smart_map: &BTreeMap<usize, Vec<EdgeInfo>>, vertex: usize, seg_idx: usize) -> bool {
         smart_map.get(&vertex)
             .and_then(|infos| infos.iter().find(|ei| ei.seg_idx == seg_idx && ei.in_flag))
             .map_or(false, |ei| ei.is_inside)

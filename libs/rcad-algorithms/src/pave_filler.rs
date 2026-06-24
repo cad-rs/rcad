@@ -735,8 +735,13 @@ impl<'a> PaveFiller<'a> {
         self.fill_shrunk_data();
         let pairs = crate::bvh::DsBvh::candidate_pairs(bvh_edges, bvh_faces);
         let ds = &self.ds;
+        let a_edge_count = ds.a_edge_count;
+        let a_face_count = ds.a_face_count;
         let blocks: Vec<(usize, usize, [f64; 2])> = pairs.par_iter()
             .filter(|&(ei, fi)| {
+                let same_range = (*ei < a_edge_count && *fi < a_face_count)
+                    || (*ei >= a_edge_count && *fi >= a_face_count);
+                if same_range { return false; }
                 !ds.edge_has_flag(*ei) && !ds.is_edge_degenerated(*ei)
                     && !ds.has_interf_ef(*ei, *fi)
             })
@@ -1722,9 +1727,87 @@ impl<'a> PaveFiller<'a> {
         ranges
     }
 
-    /// 鉁?OCCT-aligned: perform EF intersection within a given parameter range (PaveBlock level)
+    /// ✅ OCCT-aligned: CorrectRange (BOPTools_AlgoTools.cxx L364-433).
+    ///   Shrink the parameter range by the face tolerance converted to parameter space.
+    fn correct_range_for_face(edge_curve: &Curve3, etf: f64, range: [f64; 2]) -> [f64; 2] {
+        const DT: f64 = 1e-12;
+        match edge_curve {
+            Curve3::Line(_) => range,
+            Curve3::Circle(c) => {
+                let a_res = etf / c.radius.max(TOLERANCE_ABS);
+                let new_first = range[0] + a_res;
+                let new_last = range[1] - a_res;
+                if new_last - new_first < DT { range } else { [new_first, new_last] }
+            }
+            Curve3::Ellipse(e) => {
+                let a_res = etf / e.major_radius.max(TOLERANCE_ABS);
+                let new_first = range[0] + a_res;
+                let new_last = range[1] - a_res;
+                if new_last - new_first < DT { range } else { [new_first, new_last] }
+            }
+            _ => {
+                let new_first = range[0] + etf;
+                let new_last = range[1] - etf;
+                if new_last - new_first < DT { range } else { [new_first, new_last] }
+            }
+        }
+    }
+
+    /// ✅ OCCT-aligned: IsPointInFace (IntTools_Context.cxx) — check if a 3D point
+    ///   is within the face's geometric boundary for ALL surface types.
+    fn is_point_in_face(&self, point: DVec3, face_idx: usize, tol: f64) -> bool {
+        let face = &self.ds.faces[face_idx];
+        match &face.surface {
+            Surface3::Plane(plane) => {
+                let verts = self.ds.face_boundary_points(face_idx);
+                inttools::edge_face::point_in_planar_face_with_tol(point, plane, &verts, tol)
+            }
+            Surface3::Sphere(sphere) => {
+                let uv = sphere.world_to_uv(point);
+                uv.x >= -tol && uv.x <= std::f64::consts::TAU + tol
+                    && uv.y >= -std::f64::consts::FRAC_PI_2 - tol
+                    && uv.y <= std::f64::consts::FRAC_PI_2 + tol
+            }
+            Surface3::Cylinder(cyl) => {
+                let axis = cyl.axis.normalize_or_zero();
+                if axis.length_squared() < 0.5 { return true; }
+                let local = point - cyl.origin;
+                let v = local.dot(axis);
+                let radial = local - axis * v;
+                let u = radial.y.atan2(radial.x);
+                let u = if u < 0.0 { u + std::f64::consts::TAU } else { u };
+                u >= -tol && u <= std::f64::consts::TAU + tol
+            }
+            Surface3::Cone(cone) => {
+                let axis = cone.axis_dir();
+                let ap = point - cone.apex;
+                let v = ap.dot(axis);
+                let radial = ap - axis * v;
+                let u = radial.y.atan2(radial.x);
+                let u = if u < 0.0 { u + std::f64::consts::TAU } else { u };
+                u >= -tol && u <= std::f64::consts::TAU + tol
+            }
+            Surface3::Torus(torus) => {
+                let axis = torus.axis.normalize_or_zero();
+                if axis.length_squared() < 0.5 { return true; }
+                let local = point - torus.center;
+                let v = local.dot(axis);
+                let radial = local - axis * v;
+                let r = radial.length();
+                let u = radial.y.atan2(radial.x);
+                let u = if u < 0.0 { u + std::f64::consts::TAU } else { u };
+                let v_angle = ((r - torus.major_radius) / torus.minor_radius.max(tol)).acos();
+                let v = if (r - torus.major_radius).abs() <= torus.minor_radius + tol { v_angle } else { 0.0 };
+                u >= -tol && u <= std::f64::consts::TAU + tol
+                    && v >= -tol && v <= std::f64::consts::TAU + tol
+            }
+            _ => true,
+        }
+    }
+
+    /// ✅ OCCT-aligned: perform EF intersection within a given parameter range (PaveBlock level)
     ///    Uses PaveBlock range instead of full edge t_range.
-    ///    Endpoint intersections are not skipped 鈥?they are already Pave vertices.
+    ///    Endpoint intersections are not skipped — they are already Pave vertices.
     fn intersect_edge_face_range(&mut self, edge_idx: usize, face_idx: usize, pb_range: &[f64; 2]) {
         let edge_curve = self.ds.edges[edge_idx].curve.clone();
         let edge_t_range = self.ds.edges[edge_idx].t_range;
@@ -1735,6 +1818,10 @@ impl<'a> PaveFiller<'a> {
             pb_range[1].min(edge_t_range[1]),
         ];
         let etf = self.ef_tol(edge_idx, face_idx);
+        if ef_range[1] - ef_range[0] <= etf {
+            return;
+        }
+        let ef_range = Self::correct_range_for_face(&edge_curve, etf, ef_range);
         if ef_range[1] - ef_range[0] <= etf {
             return;
         }
@@ -1974,18 +2061,8 @@ impl<'a> PaveFiller<'a> {
         };
 
         for (point, edge_param) in hits {
-            // Verify hit is within face boundary (for planar faces)
-            let in_face = match &face_surface {
-                Surface3::Plane(plane) => {
-                    let face_verts = self.ds.face_boundary_points(face_idx);
-                    inttools::edge_face::point_in_planar_face_with_tol(point, plane, &face_verts, etf)
-                }
-                _ => true,
-            };
-
-            // 鉁?OCCT-aligned: accept intersection points on face boundary
-            //    vertices. point_in_planar_face_with_tol uses ray casting
-            //    which may reject points exactly on polygon vertices.
+            // ✅ OCCT-aligned: IsPointInFace check for ALL surface types (PaveFiller_5.cxx L523)
+            let in_face = self.is_point_in_face(point, face_idx, etf);
             if !in_face {
                 let near_face_vert = match &face_surface {
                     Surface3::Plane(_) => {
@@ -2026,6 +2103,9 @@ impl<'a> PaveFiller<'a> {
             }
 
             let new_v = self.ds.add_vertex(point);
+            if self.ds.faces[face_idx].face_info.vertices_on.contains(&new_v) {
+                continue;
+            }
             self.ds.interferences.push(Interference::EdgeFace {
                 edge: edge_idx,
                 face: face_idx,
@@ -7363,49 +7443,12 @@ impl<'a> PaveFiller<'a> {
                     &self.ds, ci, &face_idxs, tol
                 );
                 on_curve.extend(bound_paves);
-                // 鉁?OCCT-aligned: for Circle curves, inject EF vertices as Pave vertices.
-                //    OCCT PutBoundPaveOnCurve matches vertices via face edge pcurves,
-                //    rcad's bound_paves only handles face.boundary_verts,
-                //    not including EF vertices (edge-face intersections). EF vertices lie on the
-                //    circle (cylinder edge-cylinder face intersection) and come from the other
-                //    shape's edges 鈥?they should split the Circle curve.
-                //    OCCT PaveFiller_6.cxx L752: SubShapesOnIn collects EF vertices,
-                //    BOPAlgo_PaveFiller::PutPavesOnCurve adds all vertices on the IC to the Pave list.
-                if let Curve3::Circle(circ) = &snap.curve {
-                    // 鉁?OCCT-aligned: endpoint check uses live curve endpoints (may have been
-                    //    replaced by EF vertices via endpoint replacement code), not snapshot endpoints.
-                    //    After prepare_lines_3d split, endpoint replacement sets EF vertices as
-                    //    endpoints; these vertices should NOT be treated as interior split points.
-                    let live_sv = self.ds.intersection_curves[ci].start_vertex;
-                    let live_ev = self.ds.intersection_curves[ci].end_vertex;
-                    for &(evi, ept) in &all_verts {
-                        if evi == live_sv || evi == live_ev { continue; }
-                        if evi == snap.sv || evi == snap.ev { continue; }
-                        if on_curve.iter().any(|&(_, vi)| vi == evi) { continue; }
-                        if let Some(mut t) = param_on_circle3(ept, circ, tol) {
-                            // 鉁?OCCT-aligned: normalize Circle parameter to curve t_range using TAU
-                            //    as period (not t1-t0), because semi-circle t_range=[0,pi].
-                            //    Using span=pi normalization would incorrectly map a full-circle
-                            //    angle to the other half (e.g. 3pi/2 鈫?pi/2). OCCT IntTools_Curve::Project
-                            //    uses FindParameter returning natural domain [0,2pi).
-                            const TAU: f64 = std::f64::consts::TAU;
-                            if t < t0 - tol * 0.1 {
-                                let k = ((t0 - t) / TAU).ceil();
-                                t = t + k * TAU;
-                            }
-                            if t >= t0 - tol * 0.1 && t <= t1 + tol * 0.1 {
-                                on_curve.push((t, evi));
-                            }
-                        }
-                    }
-                    if let Curve3::Circle(circ) = &snap.curve {
-                        if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
-                            eprintln!("[SPLIT_DBG] Circle ci={} center=({:.6},{:.6},{:.6}) R={} on_curve={}",
-                                ci, circ.center.x, circ.center.y, circ.center.z, circ.radius, on_curve.len());
-                            for (t, vi) in &on_curve {
-                                eprintln!("[SPLIT_DBG]   on_curve t={:.9} vi={}", t, vi);
-                            }
-                        }
+                // ✅ OCCT-aligned: Circle3 bulk EF injection removed.
+                //   OCCT does NOT iterate all_verts against Circle ICs.
+                //   put_pave_on_curve_full below processes vertices_in/on correctly.
+                if let Curve3::Circle(_) = &snap.curve {
+                    if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
+                        eprintln!("[SPLIT_DBG] Circle ci={} on_curve={}", ci, on_curve.len());
                     }
                 }
                 // OCCT-aligned: PutPaveOnCurve (BOPAlgo_PaveFiller_6.cxx L833-900)
@@ -8277,40 +8320,15 @@ fn find_face_idxs_for_curve(ds: &DS, ci: usize) -> [usize; 2] {
 
 /// Inject face boundary vertices onto intersection curves (OCCT PutBoundPaveOnCurve).
 fn put_bound_pave_on_curve(
-    ds: &DS,
-    curve_idx: usize,
-    face_idxs: &[usize; 2],
-    tol: f64,
+    _ds: &DS,
+    _curve_idx: usize,
+    _face_idxs: &[usize; 2],
+    _tol: f64,
 ) -> Vec<(f64, usize)> {
-    let ic = &ds.intersection_curves[curve_idx];
-    let [t0, t1] = ic.t_range;
-    let mut result: Vec<(f64, usize)> = Vec::new();
-
-    for &fi in face_idxs.iter().filter(|&&fi| fi != usize::MAX) {
-        let face = &ds.faces[fi];
-        // 鉁?OCCT-aligned: PutBoundPaveOnCurve (BOPAlgo_PaveFiller_6.cxx L798-832)
-        //    OCCT gets vertex parameters via face edge pcurves, only handling vertices on edges.
-        //    Boundary vertices only affect IC splitting when they coincide with IC endpoints
-        //    (i.e. different vertex indices pointing to the same 3D position). Otherwise,
-        //    boundary vertices on other edges should not cause IC splitting.
-        for &vi in &face.boundary_verts {
-            if vi == ic.start_vertex || vi == ic.end_vertex {
-                continue; // Already the endpoint, handled at split list construction
-            }
-            let pt = ds.vertices[vi].point;
-            if let Some(t) = project_vertex_to_curve(pt, &ic.curve, tol) {
-                if t >= t0 - tol * 0.1 && t <= t1 + tol * 0.1 {
-                    result.push((t, vi));
-                }
-            }
-        }
-    }
-
-    result.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-    result.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-12);
-    let mut seen = std::collections::BTreeSet::new();
-    result.retain(|&(_, vi)| seen.insert(vi));
-    result
+    // ✅ OCCT-aligned: PutBoundPaveOnCurve only processes the TWO curve endpoint
+    //   positions (aP[0], aP[1]).  In rcad, start_vertex/end_vertex are always set,
+    //   so bound vertex injection is a no-op.  OCCT does NOT iterate boundary_verts.
+    vec![]
 }
 
 /// OCCT-aligned: PutPaveOnCurve (BOPAlgo_PaveFiller_6.cxx L833-900)

@@ -678,7 +678,13 @@ fn ray_cast_classify_point_on_face(
             for &t in &[(-b - sq) / (2.0 * a), (-b + sq) / (2.0 * a)] {
                 if t > ray_tol && t < nearest {
                     let hit = point + ray_dir * t;
-                    let in_face = if face_verts.len() < 3 {
+                    // OCCT-aligned: UV-space containment (IntTools_FClass2d) instead
+                    // of 3D AABB.  For periodic surfaces (sphere, cylinder), 3D
+                    // boundary-vertex AABB may under-represent the face extent.
+                    let in_face = if let Some(ref uv_bnd) = ds.faces[fi].uv_boundary {
+                        let uv = s.world_to_uv(hit);
+                        uv_bnd.len() >= 3 && point_in_uv_polygon(uv, uv_bnd)
+                    } else if face_verts.len() < 3 {
                         true
                     } else {
                         point_in_face_aabb(hit, &face_verts, boundary_tol)
