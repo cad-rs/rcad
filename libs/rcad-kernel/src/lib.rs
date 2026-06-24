@@ -1928,6 +1928,41 @@ impl BRep {
             xf_surface(s, mat);
         }
 
+        // ✅ OCCT-aligned: reconstruct sphere seam curve normals from
+        //   transformed axis/ref_dir.  xf_curve transforms the Circle3
+        //   normal as a generic vector, but the correct seam normal
+        //   is axis × ref_dir — recompute it from the sphere surface.
+        {
+            // Collect (curve_index, new_normal) pairs to avoid borrow conflict
+            let mut seam_updates: Vec<(usize, glam::DVec3)> = Vec::new();
+            for surface in &self.geom.surfaces {
+                if let Surface3::Sphere(sph) = surface {
+                    let seam_normal = sph.axis.cross(sph.ref_dir).normalize_or_zero();
+                    if seam_normal.length_squared() <= 0.5 { continue; }
+                    for (ei, er) in self.geom.edge_curve_range.iter().enumerate() {
+                        if let Some([t0, t1]) = er {
+                            if (t1 - t0 - std::f64::consts::PI).abs() > 0.001 { continue; }
+                            if let Some(ci) = self.geom.edge_curve.get(ei).copied().flatten() {
+                                if ci < self.geom.curves.len() {
+                                    if let Curve3::Circle(ref c3) = self.geom.curves[ci] {
+                                        if (c3.center - sph.center).length_squared() > 1e-10 { continue; }
+                                        seam_updates.push((ci, seam_normal));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            for (ci, new_normal) in seam_updates {
+                if let Some(crv) = self.geom.curves.get_mut(ci) {
+                    if let Curve3::Circle(c3) = crv {
+                        c3.normal = new_normal;
+                    }
+                }
+            }
+        }
+
         // ── Face normals ──────────────────────────────────────────────────
         for solid in &mut self.solids {
             for shell in &mut solid.shells {
