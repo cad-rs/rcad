@@ -2434,9 +2434,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
         });
     }
 
-    // ✅ OCCT-aligned: curves_sc fallback for curves without PB-processed section edges
-    //   (Builder_2.cxx L478-489).  When PaveBlocksSc is populated by MakeSectionEdges
-    //   in the PaveFiller, curves_sc is skipped entirely (PBs carry the section edges).
+        // OCCT-aligned: Section edges (Builder_2.cxx L483-494).
     let has_section_pbs = !face.face_info.pave_blocks_sc.is_empty();
     if !has_section_pbs {
     for &ci in &face.face_info.curves_sc_only() {
@@ -2569,7 +2567,7 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             tangent_end: t_end,
         });
     }
-    } // end if !has_section_pbs
+    } // end if curves_sc
     segments
 }
 
@@ -5550,9 +5548,9 @@ impl<'a> BooleanBuilder<'a> {
                 continue;
             }
 
-            // Has IN or SC pave blocks → full BuilderFace::Perform.
-            if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
-                if !wfs.is_empty() {
+        // Has IN or SC pave blocks → full BuilderFace::Perform.
+        if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
+            if !wfs.is_empty() {
                     let wfs = promote_exterior_holes(wfs, &segments, self.ds, self.op, other_faces);
                     for wf in &wfs {
                         let origin = if is_a {

@@ -4454,7 +4454,8 @@ impl<'a> PaveFiller<'a> {
         // Determine which face carries the plane (for correct pcurve_on_a/b assignment)
         let plane_is_f1 = matches!(self.ds.faces[f1].surface, Surface3::Plane(_));
 
-        match intersect_plane_sphere(plane, sphere) {
+        let ps_result = intersect_plane_sphere(plane, sphere);
+        match ps_result {
             PlaneSphereResult::NoIntersection => {}
             PlaneSphereResult::TangentPoint(pt) => {
                 let verts1 = self.ds.face_boundary_points(f1);
@@ -4473,7 +4474,7 @@ impl<'a> PaveFiller<'a> {
                 }
             }
             PlaneSphereResult::Circle(circle) => {
-                // Great circles through the sphere's poles (plane 鉄?sphere axis)
+                // 鉁?OCCT-aligned: clip Circle3 to planar face polygon boundaries
                 // map to TWO vertical meridians in sphere UV space. We must create
                 // two separate IntersectionCurves 鈥?one per UV branch 鈥?because
                 // a single BSpline pcurve cannot span the atan2-wrap discontinuity.
@@ -4497,25 +4498,14 @@ impl<'a> PaveFiller<'a> {
                 let clipped_range = self.clip_circle_to_faces(&circle, f1, f2);
                 let clipped = match clipped_range {
                     Some(r) => r,
-                    None => return, // No valid arc within face boundaries
+                    None => { return; }
                 };
-                // 鉁?OCCT-aligned: skip degenerate arc (tangent point contact). OCCT IntPatch_Point handles single-point contact,
-                //    IntTools_FaceFace does not create PaveBlocks for degenerate intersection curves.
-                if clipped[1] - clipped[0] <= TOLERANCE_ABS {
-                    return;
-                }
+                if clipped[1] - clipped[0] <= TOLERANCE_ABS { return; }
                 let (effective_t0, effective_t1) = (clipped[0], clipped[1]);
 
-                // 鉁?OCCT-aligned: skip degenerate circle inflated from tangent point (OCCT IntPatch_Point handles single-point contact)
-                if circle.radius <= TOLERANCE_MESH_LEGACY + TOLERANCE_ABS {
-                    return;
-                }
-                // 鈴?OCCT-aligned: skip degenerate arc after clipping (point contact). OCCT MakeBlocks
-                //    IsValidBlockForFaces removes invalid blocks; rcad pre-filters when generating ICs.
+                if circle.radius <= TOLERANCE_MESH_LEGACY + TOLERANCE_ABS { return; }
                 let valid_arc = clipped_range.map(|r| r[1] - r[0]).unwrap_or(0.0);
-                if valid_arc <= TOLERANCE_ABS {
-                    return;
-                }
+                if valid_arc <= TOLERANCE_ABS { return; }
 
                 let pcurve_plane = circle_pcurve_on_plane(&circle, plane);
                 let pcurve_sphere = fallback_pcurve_by_projection(
@@ -4535,9 +4525,7 @@ impl<'a> PaveFiller<'a> {
                 let (u_ax_p, v_ax_p) = crate::inttools::edge_face::plane_local_basis(plane);
                 let p_start = circle.center + circle.radius * (effective_t0.cos() * u_ax_p + effective_t0.sin() * v_ax_p);
                 let p_end = circle.center + circle.radius * (effective_t1.cos() * u_ax_p + effective_t1.sin() * v_ax_p);
-                if p_start.distance_squared(p_end) < TOLERANCE_ABS_SQ {
-                    return;
-                }
+                if p_start.distance_squared(p_end) < TOLERANCE_ABS_SQ { return; }
                 // 鉁?OCCT-aligned: try to reuse existing DS vertex (PutPaveOnCurve).
                 //    OCCT's IsVertexOnLine detects boundary vertices ON the curve and
                 //    places their DS index into the pave block, so the section edge
@@ -6155,7 +6143,8 @@ impl<'a> PaveFiller<'a> {
                             let v_start = self.ds.add_vertex(pts[0]);
                             let v_end = self.ds.add_vertex(pts[pts.len() - 1]);
 
-                            let curve_idx = self.ds.intersection_curves.len();
+                let curve_idx = self.ds.intersection_curves.len();
+                eprintln!("[IC] CREATE ci={} f1={} f2={} sv={} ev={}", curve_idx, f1, f2, v_start, v_end);
                             self.ds.intersection_curves.push(IntersectionCurve {
                                 curve: Curve3::Circle(*circle),
                                 polyline: vec![],
