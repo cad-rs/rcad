@@ -48,6 +48,7 @@ impl<'a> super::PaveFiller<'a> {
         }
         DsBvh::build(indices, aabbs)
     }
+    /// OCCT PaveFiller_2.cxx L141-206: PerformVE
     pub(crate) fn perform_ve_bvh(&mut self, bvh_verts: &crate::bvh::DsBvh, bvh_edges: &crate::bvh::DsBvh) {
         use rayon::prelude::*;
         self.fill_shrunk_data();
@@ -114,6 +115,7 @@ impl<'a> super::PaveFiller<'a> {
         if (edge_t_range[1] - prev).abs() > tol { ranges.push([prev, edge_t_range[1]]); }
         ranges
     }
+    /// OCCT PaveFiller_4.cxx: PerformVF (FillShrunkData + BVH pair iteration)
     pub(crate) fn perform_vf_bvh(&mut self, bvh_verts: &crate::bvh::DsBvh, bvh_faces: &crate::bvh::DsBvh) {
         use rayon::prelude::*;
         self.fill_shrunk_data();
@@ -127,6 +129,7 @@ impl<'a> super::PaveFiller<'a> {
             self.check_vertex_face(vi, fi);
         }
     }
+    /// OCCT PaveFiller_5.cxx L165-300: PerformEF
     pub(crate) fn perform_ef_bvh(&mut self, bvh_edges: &crate::bvh::DsBvh, bvh_faces: &crate::bvh::DsBvh) {
         use rayon::prelude::*;
         self.fill_shrunk_data();
@@ -643,6 +646,7 @@ impl<'a> super::PaveFiller<'a> {
             });
         }
     }
+    /// OCCT PaveFiller L575-590: TreatNewVertices (merge EE/EF new vertices)
     pub(crate) fn treat_new_vertices(&mut self) -> Vec<usize> {
         // 鈹€鈹€ Phase 1: Collect new vertices (OCCT L696-702) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         #[derive(Clone, Copy)]
@@ -784,6 +788,7 @@ impl<'a> super::PaveFiller<'a> {
         }
         survivors
     }
+    /// OCCT PaveFiller_5.cxx L359-420: RepeatIntersection
     pub(crate) fn repeat_intersection(&mut self) {
         // OCCT L372-388: read vertices with increased tolerance from myIncreasedSS
         if self.ds.increased_ss.is_empty() { return; }
