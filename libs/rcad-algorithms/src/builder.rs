@@ -2193,20 +2193,10 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     is_seam: true, second_pcurve: sec.clone(), first_pcurve: first_pc,
                     t_range: [0.0, 1.0], tangent_start: ts, tangent_end: te,
                 });
-                let (ts_r, te_r) = compute_seam_tangent_angles(ds, ev, sv, &face.surface);
-                let sec_rev = match &sec {
-                    Some(Curve2d::Line(l)) => Some(Curve2d::Line(Line2d {
-                        origin: l.origin + l.direction,
-                        direction: -l.direction,
-                    })),
-                    _ => None,
-                };
-                segments.push(WireSegment {
-                    start_vertex: ev, end_vertex: sv,
-                    source: WireEdgeSource::DsEdge(ei), forward: false,
-                    is_seam: true, second_pcurve: sec_rev, first_pcurve: None,
-                    t_range: [0.0, 1.0], tangent_start: ts_r, tangent_end: te_r,
-                });
+                // OCCT-aligned: only FORWARD WireSegment for periodic seam edges.
+                //   OCCT does NOT create a separate REVERSED WES entry — the WireSplitter
+                //   handles reversal through orientation.  rcad's REV segment duplicated
+                //   SmartMap entries, causing extra walk paths → 2 wires on sphere face.
             }
         } else if is_seam {
             // OCCT-aligned: Cylinder/Cone seam edge  keep original 2-segment logic (BOPAlgo_Builder_2.cxx L357-460)
