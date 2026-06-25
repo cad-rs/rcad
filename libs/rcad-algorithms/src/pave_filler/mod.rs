@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+﻿use std::collections::HashSet;
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
@@ -13,6 +13,8 @@ use crate::inttools::context::Context as IntToolsContext;
 use crate::inttools::fclass2d::{FClass2d, State};
 use crate::tolerance::*;
 use rcad_kernel::closest_point_on_curve;
+pub mod helpers;
+use self::helpers::*;
 
 /// �?OCCT-aligned: IntPatch_Intersection surface category (L1264-1294).
 ///   GeomGeom  = ts1==ts2==1 �?ImpImpIntersection (analytic-analytic)
@@ -38,6 +40,7 @@ const BVH_THRESHOLD: usize = 20;
 
 /// �?OCCT-aligned: BOPAlgo_PaveFiller �?six intersection passes
 ///   (PaveFiller.hxx L106-107, PaveFiller.cxx L234-355).
+mod glue;
 pub struct PaveFiller<'a> {
     pub ds: &'a mut DS,
     bvh_a: Option<&'a Bvh>,
@@ -128,11 +131,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// Create a PaveFiller with optional BVH acceleration for face-face intersection.
-    ///
-    /// `bvh_a` and `bvh_b` must be built from the same BReps that were used to
-    /// construct the DS. Face indices in the BVHs map directly to DS face indices
-    /// (A faces come first, then B faces).
     pub fn with_bvh(ds: &'a mut DS, bvh_a: &'a Bvh, bvh_b: &'a Bvh) -> Self {
         let total_faces = ds.faces.len();
         let use_bvh = total_faces >= BVH_THRESHOLD;
@@ -156,27 +154,11 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// Configure shared-face glue detection for the face-face pass.
     pub fn configure_glue(&mut self, enable: bool, tolerance: f64) {
         self.use_glue = enable;
         self.glue_tolerance = tolerance.max(TOLERANCE_ABS);
     }
 
-    /// Configure glue with adaptive tolerance based on input geometry.
-    ///
-    /// This function analyzes the input shapes and computes an appropriate
-    /// glue tolerance based on geometry characteristics such as:
-    /// - Minimum feature size
-    /// - Face area distribution
-    /// - Edge length distribution
-    ///
-    /// # Arguments
-    /// * `enable` - Whether to enable glue detection.
-    /// * `base_tolerance` - Base tolerance to start with.
-    /// * `adaptive` - Whether to use adaptive tolerance adjustment.
-    ///
-    /// # Returns
-    /// The computed adaptive glue tolerance.
     pub fn configure_glue_adaptive(&mut self, enable: bool, base_tolerance: f64, adaptive: bool) -> f64 {
         if !enable {
             self.use_glue = false;
@@ -196,43 +178,32 @@ impl<'a> PaveFiller<'a> {
         adaptive_tol
     }
 
-    /// Configure fuzzy tolerance for all intersection checks
-    /// (analogous to OCCT BOPAlgo_Options::SetFuzzyValue).
     pub fn configure_fuzzy(&mut self, fuzzy: f64) {
         self.fuzzy_tolerance = fuzzy.max(0.0);
     }
 
-    /// �?OCCT-aligned: SetRunParallel (BOPAlgo_Algo::SetRunParallel).
     pub fn set_run_parallel(&mut self, parallel: bool) {
         self.run_parallel = parallel;
     }
 
-    /// �?OCCT-aligned: SetNonDestructive (BOPAlgo_PaveFiller::SetNonDestructive).
     pub fn set_non_destructive(&mut self, nd: bool) {
         self.non_destructive = nd;
     }
 
-    /// �?OCCT-aligned: SetNonDestructive auto-detect (PaveFiller::Init L212).
-    ///    Scans arguments for locked sub-shapes; rcad does not have locked shapes,
-    ///    so this is a no-op kept for form alignment.
     pub fn set_non_destructive_auto(&mut self) {
         // OCCT: checks if any argument has a locked sub-shape.
         // rcad does not support locked shapes.
         self.non_destructive = false;
     }
 
-    /// �?OCCT-aligned: SetUseOBB (BOPAlgo_Algo::SetUseOBB).
     pub fn set_use_obb(&mut self, use_obb: bool) {
         self.use_obb = use_obb;
     }
 
-    /// Effective linear tolerance combining base and fuzzy for a given base tolerance.
-    /// Analogous to OCCT `max(tol(entity), FuzzyValue)` pattern used in ComputeVV etc.
     pub fn effective_tolerance(&self, base: f64) -> f64 {
         base.max(self.fuzzy_tolerance)
     }
 
-    /// Compute adaptive glue tolerance based on geometry characteristics.
     fn compute_adaptive_glue_tolerance(&self, base_tolerance: f64) -> f64 {
         let mut min_feature_size = f64::INFINITY;
         let mut min_edge_length = f64::INFINITY;
@@ -288,30 +259,14 @@ impl<'a> PaveFiller<'a> {
         adaptive_tol.max(TOLERANCE_ABS)
     }
 
-    /// Detect and handle extreme geometry conditions before intersection passes.
-    ///
-    /// This method analyzes the input shapes for near-tangent and near-coincident
-    /// geometry that may cause numerical instability during boolean operations.
-    /// When detected, it automatically adjusts the fuzzy tolerance to ensure
-    /// robust intersection computation.
-    ///
-    /// Near-tangent / near-coincident distance scales use **`ff_tol` per face pair**
-    /// (`max(fuzzy_tol, both faces' geom_tol)`), matching glue and pave coincidence logic.
-    ///
-    /// # Returns
-    /// The adjusted fuzzy tolerance (may be the same as input if no adjustment needed).
     // (Extreme geometry detection removed �?rcad invention.
     //  OCCT Prepare builds pcurves on planar faces; rcad DS::build_face_reps subsumes this.)
 
-    /// Effective tolerance for coincidence tests in all passes.
-    ///
-    /// Returns the DS `fuzzy_tol` (already clamped to �?`TOLERANCE_ABS`).
     #[inline]
     fn tol(&self) -> f64 {
         self.ds.fuzzy_tol
     }
 
-    /// Coincidence tolerance for a vertex pair (fuzzy �?per-vertex model tolerances).
     #[inline]
     fn vv_pair_tol(&self, vi: usize, vj: usize) -> f64 {
         self.ds.vertices[vi].geom_tol
@@ -347,8 +302,6 @@ impl<'a> PaveFiller<'a> {
             + self.tol()
     }
 
-    /// Effective tolerance for a face pair (pave fuzzy and both faces' model tolerances).
-    /// Includes seam_shift_tol when a seam edge shift is active.
     #[inline]
     fn ff_tol(&self, f1: usize, f2: usize) -> f64 {
         self.tol()
@@ -357,7 +310,6 @@ impl<'a> PaveFiller<'a> {
             .max(self.seam_shift_tol)
     }
 
-    /// Find the curve indices for a FaceFace interference between `f1` and `f2`.
     fn find_face_face_curve_indices(&self, f1: usize, f2: usize) -> Option<Vec<usize>> {
         for inf in &self.ds.interferences {
             if let Interference::FaceFace { f1: a, f2: b, curves, .. } = inf {
@@ -453,7 +405,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// Execute all intersection passes.
     pub fn perform(&mut self) {
         // �?OCCT-aligned: no extreme-geometry pre-analysis �?OCCT Prepare builds
         //    pcurves on planar faces; rcad does this in DS::build_face_reps.
@@ -602,8 +553,6 @@ impl<'a> PaveFiller<'a> {
 
     // ===== BVH-based pair enumeration (OCCT BOPDS_Iterator) =====
 
-    /// Build a DS-level BVH for one operand's vertices or edges.
-    /// `is_a`: true for ShapeA, false for ShapeB.  `is_edge`: true for edges.
     fn build_ds_bvh(&self, is_a: bool, is_edge: bool) -> crate::bvh::DsBvh {
         use crate::bvh::{Aabb, DsBvh};
         let (ds_start, end) = if is_edge {
@@ -641,9 +590,6 @@ impl<'a> PaveFiller<'a> {
         DsBvh::build(indices, aabbs)
     }
 
-    /// VE intersection using BVH pair culling + parallel processing.
-    /// OCCT: BOPTools_Parallel::Perform(aVVE) dispatches independent VE tasks.
-    /// rcad: Rayon par_iter over candidate pairs, filtered through skip conditions.
     fn perform_ve_bvh(&mut self, bvh_verts: &crate::bvh::DsBvh, bvh_edges: &crate::bvh::DsBvh) {
         use rayon::prelude::*;
         self.fill_shrunk_data();
@@ -663,8 +609,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// EE intersection using BVH pair culling + parallel PaveBlock range processing.
-    /// OCCT: BOPTools_Parallel over EE pairs with per-PaveBlock GetPBBox.
     fn perform_ee_bvh(&mut self, bvh_edges_a: &crate::bvh::DsBvh, bvh_edges_b: &crate::bvh::DsBvh) {
         use rayon::prelude::*;
         self.fill_shrunk_data();
@@ -690,7 +634,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// Read-only version of collect_paveblock_ranges for parallel use.
     fn collect_paveblock_ranges_static(ds: &DS, edge_idx: usize, edge_t_range: [f64; 2]) -> Vec<[f64; 2]> {
         let paves = &ds.edges[edge_idx].paves;
         if paves.is_empty() { return vec![edge_t_range]; }
@@ -708,7 +651,6 @@ impl<'a> PaveFiller<'a> {
         ranges
     }
 
-    /// VF intersection using BVH pair culling + parallel processing.
     fn perform_vf_bvh(&mut self, bvh_verts: &crate::bvh::DsBvh, bvh_faces: &crate::bvh::DsBvh) {
         use rayon::prelude::*;
         self.fill_shrunk_data();
@@ -723,8 +665,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// �?OCCT-aligned: PerformEF (PaveFiller_5.cxx L165-314).
-    ///   BVH pair culling + per-PB iteration with ON-face skip.
     fn perform_ef_bvh(&mut self, bvh_edges: &crate::bvh::DsBvh, bvh_faces: &crate::bvh::DsBvh) {
         use rayon::prelude::*;
         self.fill_shrunk_data();
@@ -768,10 +708,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// Build a DS-level face BVH for one operand.
-    /// OCCT BRepBndLib::Add computes face AABB conservatively using surface type.
-    /// rcad: for curved surfaces (sphere/cylinder/cone), expand AABB beyond
-    /// boundary vertices to ensure FF candidate pairs are not incorrectly culled.
     fn build_ds_bvh_face(&self, is_a: bool) -> crate::bvh::DsBvh {
         use crate::bvh::{Aabb, DsBvh};
         let (start, end) = if is_a {
@@ -811,10 +747,6 @@ impl<'a> PaveFiller<'a> {
         DsBvh::build(indices, aabbs)
     }
 
-    /// Determine if Vertex-Edge pass can be skipped.
-    ///
-    /// Returns true when all shared vertices are connected to shared edges,
-    /// meaning no additional V-E intersections are needed.
     fn should_skip_ve_pass(&self) -> bool {
         if !self.use_glue {
             return false;
@@ -842,10 +774,6 @@ impl<'a> PaveFiller<'a> {
         a_verts == matched_a && !a_verts.is_empty()
     }
 
-    /// Determine if Edge-Edge pass can be skipped.
-    ///
-    /// Returns true when all shared edges are detected, meaning no additional
-    /// E-E intersections are needed.
     fn should_skip_ee_pass(&self) -> bool {
         if !self.use_glue {
             return false;
@@ -872,7 +800,6 @@ impl<'a> PaveFiller<'a> {
         a_edges == matched_a && !a_edges.is_empty()
     }
 
-    /// Determine if Vertex-Face pass can be skipped.
     fn should_skip_vf_pass(&self) -> bool {
         if !self.use_glue {
             return false;
@@ -884,7 +811,6 @@ impl<'a> PaveFiller<'a> {
                 == self.ds.a_face_count * (self.ds.faces.len() - self.ds.a_face_count)
     }
 
-    /// Determine if Edge-Face pass can be skipped.
     fn should_skip_ef_pass(&self) -> bool {
         if !self.use_glue {
             return false;
@@ -896,10 +822,6 @@ impl<'a> PaveFiller<'a> {
                 == self.ds.a_face_count * (self.ds.faces.len() - self.ds.a_face_count)
     }
 
-    /// Determine if Face-Face pass can be skipped.
-    ///
-    /// Returns true when all faces have been detected as fully glued,
-    /// meaning no F-F intersections are needed.
     fn should_skip_ff_pass(&self) -> bool {
         if !self.use_glue {
             return false;
@@ -910,13 +832,6 @@ impl<'a> PaveFiller<'a> {
         self.ds.shared_topology.fully_glued_faces.len() == total_face_pairs && total_face_pairs > 0
     }
 
-    /// Skip redundant interferences based on pre-detected shared topology.
-    ///
-    /// This function identifies interference computations that can be skipped
-    /// because the involved sub-shapes are already known to share topology.
-    ///
-    /// # Returns
-    /// A set of (subshape_a, subshape_b, interference_type) pairs that can be skipped.
     pub fn skip_redundant_interferences(&self) -> std::collections::HashSet<(usize, usize, u8)> {
         let mut skip_set = std::collections::HashSet::new();
 
@@ -944,17 +859,6 @@ impl<'a> PaveFiller<'a> {
 
     // 鈹€鈹€鈹€ Pass 1: Vertex-Vertex 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-    /// �?OCCT-aligned: PerformVV (PaveFiller_1.cxx L45-135).
-    ///   �?rcad simplified: brute-force O(n�? vs OCCT Iterator + ComputeVV + MakeBlocks.
-    ///   Key gaps:
-    ///   - OCCT L50: Iterator(Vertex, Vertex) eliminates non-intercepting pairs
-    ///   - OCCT L84-91: HasShapeSD checks for same-domain vertices
-    ///   - OCCT L93: BOPTools_AlgoTools::ComputeVV uses 3D + fuzzy tolerance
-    ///   - OCCT L101-135: MakeBlocks + MakeVertices merges groups into new vertices
-    ///   rcad: simple distance check, no MakeBlocks, creates Interference::VertexVertex
-    /// �?OCCT-aligned: PerformVV (PaveFiller_1.cxx L45-98).
-    ///   Uses PairIterator (equivalent to OCCT's BOPDS_Iterator) for
-    ///   A_vertex �?B_vertex pair enumeration with box culling.
     fn perform_vv(&mut self) {
         if self.use_glue && !self.ds.shared_topology.shared_vertices.is_empty() {
             for &(vi_a, vi_b) in &self.ds.shared_topology.shared_vertices {
@@ -988,10 +892,6 @@ impl<'a> PaveFiller<'a> {
 
     // 鈹€鈹€鈹€ Pass 2: Vertex-Edge 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-    /// �?OCCT-aligned: PerformVE (PaveFiller_1.cxx L45-135).
-    ///   �?rcad simplified: cross-product iteration vs OCCT Iterator.
-    ///   OCCT L50: Iterator(Vertex, Edge) pair enumeration.
-    ///   rcad: O(n*m) brute force �?fine for typical boolean model sizes.
     fn perform_ve(&mut self) {
         // OCCT PaveFiller_2.cxx L143-206: FillShrunkData + BVH pair iteration
         //   with HasSubShape / HasFlag / HasInterf / HasInterfShapeSubShapes skips.
@@ -1197,11 +1097,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// �?OCCT-aligned: EE intersection over PaveBlock sub-ranges.
-    ///   OCCT PaveFiller_3.cxx L215-240: iterate PaveBlock pairs with
-    ///   GetPBBox range check, restrict intersection to shrunk sub-ranges.
-    ///   rcad: uses collect_paveblock_ranges + shrunk_range for each sub-range,
-    ///   matching OCCT's per-PaveBlock shrunk range.
     fn check_edge_edge_range(&mut self, e1: usize, e2: usize,
                               range1: [f64; 2], range2: [f64; 2]) {
         let edge1 = &self.ds.edges[e1];
@@ -1264,9 +1159,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// �?OCCT-aligned: EdgeEdge intersection check �?used by PerformEE
-    /// (PaveFiller_3.cxx L145-369).  Checks a single edge pair within tolerance.
-    /// Falls back to numeric surface-curve intersection for unsupported types.
     fn check_edge_edge(&mut self, e1: usize, e2: usize) {
         let edge1 = &self.ds.edges[e1];
         let edge2 = &self.ds.edges[e2];
@@ -1333,28 +1225,6 @@ impl<'a> PaveFiller<'a> {
 
     // 鈹€鈹€鈹€ Pass 4: Vertex-Face 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-    /// �?OCCT-aligned: TreatNewVertices (PaveFiller_3.cxx L692-723) +
-    ///                  PerformNewVertices (PaveFiller_5.cxx L570-650).
-    ///   OCCT algorithm (TreatNewVertices L698-723):
-    ///     L700-707: collect vertices + tolerances from theMVCPB �?aVerts
-    ///     L710-711: BOPAlgo_Tools::IntersectVertices(aVerts, fuzzy) �?aChains
-    ///     L714-722: for each chain, MakeVertex �?add to myImages
-    ///   rcad: O(n�? distance grouping + SD vertex merge + interference update.
-    ///   �?rcad: no IntersectVertices BVH (O(n�? is fine for model sizes).
-    ///   Returns survivors for RepeatIntersection's myIncreasedSS.
-    /// �?OCCT-aligned: TreatNewVertices + PerformNewVertices
-    ///   (BOPAlgo_PaveFiller_3.cxx L594-688, BOPAlgo_Tools.cxx L1119-1204).
-    ///
-    /// OCCT flow:
-    ///   1. Collect new vertices from interference data
-    ///   2. IntersectVertices: BVH + FillMap + MakeBlocks �?connected chains
-    ///   3. PerformNewVertices: create new TopoDS_Vertex for each chain,
-    ///      update interference references, split PaveBlocks at extra paves
-    ///   4. IntersectVE (extra pave splitting) �?called at end
-    ///
-    /// rcad: DsBvh-based pair culling (matching OCCT BVH), FillMap/MakeBlocks
-    ///   via union-find (equivalent to OCCT MakeBlocks), new DS vertex creation
-    ///   (matching OCCT BRep_Builder::MakeVertex), interference ref update.
     fn treat_new_vertices(&mut self) -> Vec<usize> {
         // 鈹€鈹€ Phase 1: Collect new vertices (OCCT L696-702) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         #[derive(Clone, Copy)]
@@ -1497,13 +1367,6 @@ impl<'a> PaveFiller<'a> {
         survivors
     }
 
-    /// �?OCCT-aligned: RepeatIntersection (PaveFiller.cxx L296-299, L359-420).
-    ///   OCCT algorithm:
-    ///     L361-389: iterate source shapes, find vertices in myIncreasedSS �?anExtraInterfMap
-    ///     L394: myIterator->IntersectExt(anExtraInterfMap) �?update iterator for new pairs
-    ///     L398-413: PerformVV �?PerformVE �?PerformVF
-    ///   rcad: reads from ds.increased_ss (populated by treat_new_vertices), re-runs
-    ///   VV/VE/VF with BTreeSet dedup against existing interferences.
     fn repeat_intersection(&mut self) {
         // OCCT L372-388: read vertices with increased tolerance from myIncreasedSS
         if self.ds.increased_ss.is_empty() { return; }
@@ -1581,12 +1444,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// �?OCCT-aligned: PerformVF (PaveFiller_1.cxx L330+).
-    ///   �?rcad simplified: cross-product vs OCCT Iterator.
-    /// �?OCCT-aligned: PerformVF (PaveFiller_1.cxx L330+).
-    ///   �?rcad: cross-product iteration. OCCT uses Iterator(Vertex, Face)
-    ///   with BVH-based pair enumeration (BOPDS_Iterator).
-    ///   Brute-force O(n*m) is acceptable for typical model sizes.
     fn perform_vf(&mut self) {
         // OCCT PaveFiller_4.cxx: FillShrunkData + BVH pair iteration
         //   with HasInterf skip condition.
@@ -1653,9 +1510,6 @@ impl<'a> PaveFiller<'a> {
 
 // 鈹€鈹€鈹€ Pass 5: Edge-Face 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-/// �?OCCT-aligned: EF iterate PaveBlock sub-ranges (PerformEF L246-304)
-    ///    Build sub-ranges dynamically from edge.paves, without writing to edge.pave_blocks,
-    ///    to avoid side-effect regressions.
     fn perform_ef(&mut self) {
         // OCCT PaveFiller_5.cxx L165+: FillShrunkData + BVH pair iteration
         //   with HasFlag / HasInterf skip conditions.
@@ -1695,9 +1549,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// �?OCCT-aligned: build PaveBlock parameter range list from edge.paves
-    ///    (OCCT MakeSplitEdges: split edge into PaveBlocks at Paves)
-    ///    No side effects �?does not write to edge.pave_blocks.
     fn collect_paveblock_ranges(&self, edge_idx: usize, edge_t_range: [f64; 2]) -> Vec<[f64; 2]> {
         let paves = &self.ds.edges[edge_idx].paves;
         if paves.is_empty() {
@@ -1722,8 +1573,6 @@ impl<'a> PaveFiller<'a> {
         ranges
     }
 
-    /// �?OCCT-aligned: CorrectRange (BOPTools_AlgoTools.cxx L364-433).
-    ///   Shrink the parameter range by the face tolerance converted to parameter space.
     fn correct_range_for_face(edge_curve: &Curve3, etf: f64, range: [f64; 2]) -> [f64; 2] {
         const DT: f64 = 1e-12;
         match edge_curve {
@@ -1748,8 +1597,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// �?OCCT-aligned: IsPointInFace (IntTools_Context.cxx) �?check if a 3D point
-    ///   is within the face's geometric boundary for ALL surface types.
     fn is_point_in_face(&self, point: DVec3, face_idx: usize, tol: f64) -> bool {
         let face = &self.ds.faces[face_idx];
         match &face.surface {
@@ -1800,9 +1647,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// �?OCCT-aligned: perform EF intersection within a given parameter range (PaveBlock level)
-    ///    Uses PaveBlock range instead of full edge t_range.
-    ///    Endpoint intersections are not skipped �?they are already Pave vertices.
     fn intersect_edge_face_range(&mut self, edge_idx: usize, face_idx: usize, pb_range: &[f64; 2]) {
         let edge_curve = self.ds.edges[edge_idx].curve.clone();
         let edge_t_range = self.ds.edges[edge_idx].t_range;
@@ -2118,7 +1962,6 @@ impl<'a> PaveFiller<'a> {
 
     // 鈹€鈹€鈹€ Pass 6: Face-Face 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-    /// �?OCCT-aligned: check if EE interference already exists (OCCT L1123-1128: skip existing CommonBlock)
     fn has_ee_interf(&self, e1: usize, e2: usize) -> bool {
         self.ds.interferences.iter().any(|inf| {
             matches!(inf, Interference::EdgeEdge { e1: a, e2: b, .. }
@@ -2126,31 +1969,6 @@ impl<'a> PaveFiller<'a> {
         })
     }
 
-    /// �?OCCT-aligned: RemoveMicroEdges (PaveFiller_6.cxx L4229-4270)
-    ///    Remove zero-length PaveBlocks (micro edges) where start==end.
-    ///
-    ///    OCCT algorithm:
-    ///    1. L4239-4244: iterate all edges' PaveBlocks, skip <2 blocks or degenerate
-    ///    2. L4255-4264: for RealPaveBlock, if nV1==nV2 with no valid ShrunkData �?micro edge
-    ///    3. L4269: RemovePaveBlocks(aMicroEdges) removes from DS
-    ///
-    ///    rcad equivalent: iterate edges, for adjacent Paves with same vertex_idx in edge.paves,
-    ///    treat as zero-length segment and remove corresponding Pave from paves.
-
-    /// �?OCCT-aligned: UpdateBlocksWithSharedVertices (PaveFiller_6.cxx L3946-4052).
-    ///
-    /// OCCT algorithm:
-    ///   L3948-3951: non-destructive guard �?if false, return.
-    ///   L3953-3960: no FF interferences �?return.
-    ///   L3967-4049: for each FF interference with curves:
-    ///     L3973-3976: skip if no curves on this FF.
-    ///     L3980-3987: UpdateFaceInfoOn(nF1/nF2) �?face info to ON state.
-    ///     L3996-4017: collect old shared vertices (ON or IN in both faces) �?aMI.
-    ///     L4020-4048: for each curve, try to put each shared vertex on it:
-    ///       L4030-4034: skip if vertex already has SD mapping.
-    ///       L4036: EstimatePaveOnCurve(nV, aNC, aTolR3D) �?check if on curve.
-    ///       L4042-4046: if yes �?UpdateVertex + InitPaveBlocksForVertex.
-    ///   L4051: UpdateCommonBlocksWithSDVertices().
     fn update_blocks_with_shared_vertices(&mut self) {
         // OCCT L3948-3951: non-destructive guard
         if !self.non_destructive { return; }
@@ -2263,12 +2081,6 @@ impl<'a> PaveFiller<'a> {
         self.ds.update_pave_blocks_with_sd_vertices();
     }
 
-    /// �?OCCT-aligned: UpdateInterfsWithSDVertices (PaveFiller_10.cxx L248-255).
-    ///   OCCT UpdateIntfsWithSDVertices template (L227-243):
-    ///     For each interference: if HasIndexNew(newV) && HasShapeSD(newV, sdV)
-    ///       �?SetIndexNew(sdV) �?replace with SD vertex.
-    ///   rcad: for EE/EF/VV interferences with a new_vertex, find the vertex's
-    ///   SD partner from shape_sd and update the field.
     fn update_interfs_with_sd_vertices(&mut self) {
         // Build vertex �?SD vertex lookup (OCCT HasShapeSD equivalent)
         let sd_for: std::collections::HashMap<usize, usize> = self.ds.shape_sd
@@ -2300,10 +2112,6 @@ impl<'a> PaveFiller<'a> {
             }
         }
     }
-    /// �?OCCT-aligned: MakeSectionEdges from curve PaveBlocks (PaveFiller_6.cxx L882-980).
-    ///   For each curve, calls update() on its first PaveBlock to split using ext_paves,
-    ///   creates DSEdges for each sub-PB, and registers them in pave_blocks_sc.
-    ///   When no ext_paves exist (current state), update() returns empty �?no-op.
     fn make_section_edges_from_curve_pbs(&mut self) {
         let n_edges_before = self.ds.edges.len();
         // Collect section edge data per curve to avoid borrow conflicts
@@ -2429,38 +2237,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-
-    /// OCCT-aligned: ProcessExistingPaveBlocks (BOPAlgo_PaveFiller_6.cxx L3072, 3171).
-    ///
-    /// After FF intersection creates section edges, this function checks whether
-    /// each section edge coincides with an existing PaveBlock on a face boundary
-    /// edge.  If a section edge is coincident with a boundary PaveBlock, the
-    /// existing PaveBlock is reused (no new edge is created).  This prevents
-    /// duplicate edges at the intersection of a section curve with a pre-existing
-    /// face boundary.
-    ///
-    /// Without ProcessExistingPaveBlocks, section edges near face boundaries create
-    /// duplicate PaveBlocks that corrupt face splitting.
-
-    /// �?OCCT-aligned: RemoveMicroEdges (PaveFiller_6.cxx L4388-4435).
-    ///
-    /// OCCT algorithm:
-    ///   L4394-4396: get PaveBlocks pool (aPBP = ChangePaveBlocksPool)
-    ///   L4398-4433: for each edge i in pool:
-    ///     L4401-4403: if <2 PaveBlocks �?skip (no splits)
-    ///     L4407-4410: skip degenerated edges (HasFlag)
-    ///     L4412-4432: for each PB on edge:
-    ///       L4418: aMPBFence.Add(aPBR) �?fence against duplicate CB blocks
-    ///       L4420-4422: get nV1, nV2 via Indices()
-    ///       L4425-4426: FillShrunkData(aPBR) �?compute valid range
-    ///       L4426-4428: if no shrunk data �?add to aMicroEdges
-    ///   L4434: RemovePaveBlocks(aMicroEdges)
-    ///
-    /// rcad: operates on edge.pave_blocks (already built by build_split_edges).
-    /// �?rcad: no FillShrunkData check �?shrunk data not maintained on PaveBlocks.
-    ///    Without the valid-range check, rcad may mark as micro some edges that
-    ///    OCCT would keep (those with valid shrunk data despite same vertices).
-    ///    In practice, nV1==nV2 with valid shrunk range is extremely rare.
     fn remove_micro_edges(&mut self) {
         let mut micro_edges: Vec<usize> = Vec::new();
 
@@ -2504,37 +2280,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// �?OCCT-aligned: ForceInterfEE (PaveFiller_3.cxx L978-1276)
-    ///    After RepeatIntersection, force intersection of edge pairs sharing a vertex
-    ///    (via paves) with increased tolerance to detect collinear/coincident edges.
-    ///
-    ///    OCCT algorithm (L978-1276):
-    ///    1. L989-1002: initialize PaveBlocks for all vertices that participated in intersection
-    ///    2. L1003-1049: build (nV1,nV2) �?PaveBlock list mapping
-    ///    3. L1060-1177: for PaveBlock pairs sharing a vertex:
-    ///       a. L1077-1083: aTolAdd = 2 * max(tol(V1), tol(V2))
-    ///       b. L1097-1102: get edge midpoint, check edge direction vector
-    ///       c. L1134-1157: angle check: >25�?then skip addTol
-    ///       d. L1160-1175: set FuzzyValue = myFuzzyValue + aTolAdd
-    ///    4. L1198-1199: Perform all EdgeEdge intersections
-    ///    5. L1208-1275: create CommonBlock for TopAbs_EDGE results
-    ///
-    ///    �?rcad simplified:
-    ///    - No OCCT PaveBlock/Rank/CommonBlock structures
-    ///    - Only checks line-line edge pair collinearity with increased tolerance
-    /// �?OCCT-aligned: ForceInterfEE (PaveFiller_3.cxx L997-1276).
-    ///   OCCT algorithm:
-    ///     L1008-1023: InitPaveBlocksForVertex for all interfered vertices
-    ///     L1024-1079: build (nV1,nV2) �?PaveBlock map (aPBMap)
-    ///     L1090-1224: for each PB pair sharing vertices:
-    ///       L1116: aTolAdd = 2脳max(tol(V1),tol(V2))
-    ///       L1131-1139: get midpoint tangent for angle check
-    ///       L1150: skip if same origin (iR1==iR2)
-    ///       L1163-1169: skip if already CommonBlock
-    ///       L1175-1204: angle >25�?�?skip tolAdd
-    ///       L1207-1223: create EdgeEdge pair with fuzzy value
-    ///     L1227-1276: parallel EdgeEdge intersection + CommonBlock creation
-    ///   rcad: inline pair execution (no parallel).  Same logic.
     fn force_interf_ee(&mut self) {
         // OCCT L1008-1023: initialize PBs for interfered vertices
         // rcad: build vertex �?edge mapping from edge.paves
@@ -2712,35 +2457,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// �?OCCT-aligned: ForceInterfEF (PaveFiller_5.cxx L764-1099+)
-    ///    After ForceInterfEE, check if edges with both endpoints on a face lie on
-    ///    that face using increased tolerance.
-    ///
-    ///    OCCT algorithm (L815-1099+):
-    ///    1. L825-854: build PaveBlock BVH tree
-    ///    2. L863-1057: for each face, find PaveBlocks sharing a vertex:
-    ///       a. L888-911: collect all vertices on the face
-    ///       b. L928-932: check both PaveBlock endpoints are on the face
-    ///       c. L956-986: midpoint projection + angle check
-    ///       d. L1008-1035: aTolAdd = max(endpoint鈫抐ace distance)
-    ///       e. L1053: FuzzyValue = myFuzzyValue + aTolAdd
-    ///    3. L1078-1079: Perform all EdgeFace intersections
-    ///    4. L1095+: collect results
-    ///
-    /// �?OCCT-aligned: ForceInterfEF (PaveFiller_5.cxx L764-1099+)
-    ///    Project each PaveBlock's midpoint onto its face, check distance.
-    ///    Uses PaveBlock endpoint vertices for tolerance (OCCT L976-984),
-    ///    not full edge endpoints (which are for the whole edge, not the
-    ///    current PaveBlock's sub-range).
-    /// �?OCCT-aligned: ForceInterfEF (PaveFiller_5.cxx L772-~1099).
-    ///   OCCT algorithm:
-    ///     L787-821: collect all PaveBlocks with HasReference �?RealPaveBlock
-    ///     L848-870: build BVH tree of PBs (BOPTools_BoxTree)
-    ///     L882-965: for each face, collect face vertices (On+In+Sc+PB endpoints)
-    ///       �?check if candidate PB's vertices are in the face's vertex set
-    ///     L966-1054: for matched PBs, create EdgeFace intersection pairs
-    ///   rcad: brute-force edge脳face iteration with OCCT vertex-set check.
-    ///   �?rcad: no BVH tree (O(n�? is fine for typical model sizes).
     fn force_interf_ef(&mut self) {
         // OCCT L787-821: collect all PBs (skip edges without PBs or degenerated)
         for ei in 0..self.ds.edges.len() {
@@ -2817,17 +2533,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// �?OCCT-aligned: ForceInterfVE (PaveFiller_3.cxx, EE/EF force pass extended to VE)
-    ///    After ForceInterfEF, vertices on a face with increased tolerance may now be
-    ///    within tolerance of boundary edges of that face. Check each face's vertices_in
-    ///    and vertices_on against all boundary edges of that face.
-    ///
-    ///    OCCT algorithm (PaveFiller_3.cxx ~L978-1276, VE portion):
-    ///    1. Collect vertices_on + vertices_in for each face
-    ///    2. For each vertex, check against all boundary edges of the same face
-    ///    3. If vertex and edge have different origins and VE distance < tolerance, create VE interference
-    ///
-    ///    �?rcad: simplified, delegates to existing check_vertex_edge helper.
     fn force_interf_ve(&mut self) {
         // Build set of existing VE interferences for dedup
         let mut ve_done: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
@@ -2875,17 +2580,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// �?OCCT-aligned: ForceInterfVF (PaveFiller_4.cxx, VF force pass)
-    ///    After all main passes (EF/FF), vertices whose tolerance was increased may now
-    ///    be within tolerance of opposite-shape faces. Check all vertices against all
-    ///    opposite-shape faces.
-    ///
-    ///    OCCT algorithm (PaveFiller_4.cxx ~L1313-1387):
-    ///    1. For each vertex, check against faces of the opposite shape
-    ///    2. If vertex-face distance < vertex_tolerance + face_tolerance, create VF interference
-    ///    3. Insert vertex into face_info.vertices_on
-    ///
-    ///    �?rcad: simplified, delegates to existing check_vertex_face helper.
     fn force_interf_vf(&mut self) {
         // Build set of existing VF interferences for dedup
         let mut vf_done: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
@@ -2910,17 +2604,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// �?OCCT-aligned: PostTreatFF (PaveFiller_6.cxx, simplified stub)
-    ///    After FF, reconcile FF interference data with face info:
-    ///    1. Iterate all FF interferences
-    ///    2. For each FF with non-empty curves, update face_info.curves_sc
-    ///    3. Update face_info.vertices_in from curve endpoints
-    ///
-    ///    OCCT PaveFiller_6.cxx ~L509-592: PostTreatFF also handles SD vertices
-    ///    and updates face info for all faces involved in FF intersection.
-    ///    �?rcad: simplified, does not handle SD vertices.
-
-    /// OCCT-aligned: PutSEInOtherFaces (BOPAlgo_PaveFiller_8.cxx L650-900).
     fn put_se_in_other_faces(&mut self) {
         let n_faces = self.ds.faces.len();
         let ics = self.ds.intersection_curves.clone();
@@ -2966,12 +2649,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// OCCT-aligned: ProcessDE (BOPAlgo_PaveFiller_9.cxx L100-250).
-    /// �?OCCT-aligned: ProcessDE (PaveFiller_8.cxx L54-131).
-    ///   �?rcad: focuses on surface-singularity vertices (sphere poles, cylinder apex)
-    ///   adding them to face_info.vertices_in for the WireSplitter. OCCT creates proper
-    ///   degenerate TopoDS_Edge shapes from flagged edges via FindPaveBlocks+FillPaves.
-    ///   rcad's approach is simpler and sufficient for periodic-surface vertex handling.
     fn process_de(&mut self) {
         let mut fv: Vec<Vec<usize>> = vec![Vec::new(); self.ds.faces.len()];
         let mut degen_flags: Vec<(usize, usize)> = Vec::new();
@@ -3007,7 +2684,6 @@ impl<'a> PaveFiller<'a> {
         for (ei, flag_val) in degen_flags { self.ds.set_edge_flag(ei, flag_val); }
     }
 
-    /// OCCT-aligned: FillShrunkData (BOPAlgo_PaveFiller_9.cxx L65-150).
     fn fill_shrunk_data(&mut self) {
         let ec: Vec<Curve3> = self.ds.edges.iter().map(|e| e.curve.clone()).collect();
         let et: Vec<f64> = self.ds.edges.iter().map(|e| e.geom_tol).collect();
@@ -3031,7 +2707,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// OCCT-aligned: ExistingPaveBlock (BOPAlgo_PaveFiller_6.cxx).
     fn existing_pave_block(&self, ei: usize, vi: usize) -> bool {
         for pb in &self.ds.edges[ei].pave_blocks {
             if pb.pave1.vertex_idx == vi || pb.pave2.vertex_idx == vi { return true; }
@@ -3039,7 +2714,6 @@ impl<'a> PaveFiller<'a> {
         false
     }
 
-    /// OCCT-aligned: split ICs at the parametric seam of periodic surfaces.
     fn split_ics_at_periodic_boundary(&mut self) {
         let n_curves = self.ds.intersection_curves.len();
         let mut curve_faces = std::collections::HashMap::new();
@@ -3099,8 +2773,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// OCCT-aligned: PutPavesOnCurve (BOPAlgo_PaveFiller_6.cxx L2372-2430).
-    /// �?OCCT-aligned: PutPaveOnCurve (PaveFiller_6.cxx L833-900).
     fn put_pave_on_curve(&mut self, nV: usize, curve_idx: usize) -> Option<f64> {
         let t = self.project_vertex_on_curve(nV, &self.ds.intersection_curves[curve_idx])?;
         let a_tol_r3d = self.ds.intersection_curves[curve_idx].geom_tol;
@@ -3117,7 +2789,6 @@ impl<'a> PaveFiller<'a> {
         Some(t)
     }
 
-    /// �?OCCT-aligned: PutPavesOnCurve (PaveFiller_6.cxx L2372-2421).
     fn put_paves_on_curve(&mut self, curve_idx: usize) {
         let ic = self.ds.intersection_curves[curve_idx].clone();
         let aBoxC = curve_bounding_box_simple(&ic.curve, ic.geom_tol.max(TOLERANCE_ABS));
@@ -3144,10 +2815,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// �?OCCT-aligned: FilterPavesOnCurves (PaveFiller_6.cxx L2437-2441).
-    /// OCCT-aligned: IntTools_Context::IsVertexOnLine (IntTools_Context.cxx L786-819)
-    ///   tolerance = 2 * (aTolV + aTolC), clamped to >= 1e-6 for analytic curves
-    ///   where aTolC = curve_tol + myFuzzyValue (from PutPaveOnCurve L2976)
     fn project_vertex_on_curve(&self, vi: usize, ic: &IntersectionCurve) -> Option<f64> {
         use rcad_kernel::geom::CurveEval;
         let v_tol = self.ds.vertices[vi].geom_tol;
@@ -3190,7 +2857,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// OCCT-aligned: ReduceIntersectionRange (BOPAlgo_PaveFiller_5.cxx L685).
     fn reduce_intersection_range(&self, ei: usize, param: f64, tol: f64) -> [f64; 2] {
         let edge = &self.ds.edges[ei];
         let mut t_range = edge.t_range;
@@ -3204,9 +2870,6 @@ impl<'a> PaveFiller<'a> {
         t_range
     }
 
-    /// �?OCCT-aligned: BOPAlgo_PaveFiller::MakePCurves (PaveFiller_7.cxx L589-750).
-    ///   Builds pcurves for PaveBlocks on each face by projecting edge 3D curves
-    ///   onto face surface UV domains.
     fn make_pcurves(&mut self) {
         use crate::bopds::ds::DSRepOnFace;
 
@@ -3254,7 +2917,6 @@ impl<'a> PaveFiller<'a> {
             });
         }
     }
-    /// OCCT-aligned: UpdateFaceInfo (BOPAlgo_PaveFiller_6.cxx L1673).
     fn update_face_info(&mut self, fi: usize) {
         let face = &self.ds.faces[fi].clone();
         let mut sc_curves: Vec<usize> = face.face_info.curves_sc.iter().copied().collect();
@@ -3278,7 +2940,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// OCCT-aligned: CheckPlanes (BOPAlgo_PaveFiller_6.cxx L3639).
     fn check_planes(&self, f1: usize, f2: usize) -> bool {
         let s1 = &self.ds.faces[f1].surface;
         let s2 = &self.ds.faces[f2].surface;
@@ -3294,7 +2955,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// OCCT-aligned: MakeSDVertices (BOPAlgo_PaveFiller_1.cxx L136).
     fn make_sd_vertices(&mut self, verts: &[usize]) {
         if verts.len() < 2 { return; }
         let tol = TOLERANCE_ABS * 100.0;
@@ -3330,7 +2990,6 @@ impl<'a> PaveFiller<'a> {
             }
         }
     }
-    /// OCCT-aligned: GetStickVertices (BOPAlgo_PaveFiller_6.cxx L2847).
     fn get_stick_vertices(&self, fi: usize) -> Vec<usize> {
         let mut verts: Vec<usize> = Vec::new();
         for inf in &self.ds.interferences {
@@ -3362,7 +3021,6 @@ impl<'a> PaveFiller<'a> {
         self.ds.faces[fi].face_info.vertices_in.contains(&vi)
     }
 
-    /// OCCT-aligned: IsExistingVertex (BOPAlgo_PaveFiller_6.cxx L1950).
     fn is_existing_vertex(&self, ci: usize, param: f64) -> bool {
         let ic = &self.ds.intersection_curves[ci];
         let tol = ic.geom_tol.max(TOLERANCE_ABS) * 100.0;
@@ -3382,12 +3040,6 @@ impl<'a> PaveFiller<'a> {
         false
     }
 
-    /// OCCT-aligned: EstimatePaveOnCurve (BOPAlgo_PaveFiller_6.cxx L4056).
-    /// OCCT-aligned: EstimatePaveOnCurve (PaveFiller_6.cxx L4056-4068).
-    ///   Uses aTolR3D = max(curve.Tolerance(), curve.TangentialTolerance()).
-    ///   IsVertexOnLine computes aTolSum = aTolV + aTolC, then ×2.
-    ///   rcad: same formula WITHOUT fuzzy_tol (unlike project_vertex_on_curve
-    ///   which includes fuzzy for the PutPaveOnCurve path).
     fn estimate_pave_on_curve(&self, ci: usize, vi: usize) -> Option<f64> {
         let ic = &self.ds.intersection_curves[ci];
         let v_tol = self.ds.vertices[vi].geom_tol;
@@ -3400,10 +3052,6 @@ impl<'a> PaveFiller<'a> {
         self.project_vertex_on_curve_with_tol(vi, ic, tl)
     }
 
-
-    /// OCCT-aligned: ExtendedTolerance (BOPAlgo_PaveFiller_6.cxx L2542).
-    /// When a new vertex is created by EE/EF intersection, the vertex's
-    /// tolerance may need to be extended to cover the edges' endpoints.
     fn extended_tolerance_occt(&self, vi: usize) -> f64 {
         let base_tol = if vi < self.ds.vertices.len() {
             self.ds.vertices[vi].geom_tol
@@ -3436,8 +3084,6 @@ impl<'a> PaveFiller<'a> {
         max_tol * 2.0  // Safety factor matching OCCT's approach
     }
 
-
-    /// OCCT-aligned: GetEFPnts (BOPAlgo_PaveFiller_6.cxx L2608).
     fn get_ef_pnts(&self, ei: usize) -> Vec<(usize, f64)> {
         let mut pnts: Vec<(usize, f64)> = Vec::new();
         for inf in &self.ds.interferences {
@@ -3447,7 +3093,6 @@ impl<'a> PaveFiller<'a> {
         }
         pnts
     }
-    /// OCCT-aligned: TreatVerticesEE (BOPAlgo_PaveFiller_4.cxx L305).
     fn treat_vertices_ee(&mut self) {
         let mut to_merge: Vec<(usize, usize)> = Vec::new();
         for inf in &self.ds.interferences {
@@ -3477,7 +3122,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// OCCT-aligned: CheckFacePaves (BOPAlgo_PaveFiller_5.cxx L596).
     fn check_face_paves(&self, fi: usize, vi: usize) -> bool {
         let face = &self.ds.faces[fi];
         let tol = face.geom_tol.max(TOLERANCE_ABS);
@@ -3492,7 +3136,6 @@ impl<'a> PaveFiller<'a> {
         false
     }
 
-    /// OCCT-aligned: GetFullShapeMap (BOPAlgo_PaveFiller_6.cxx L2909).
     fn get_full_shape_map(&self, fi: usize) -> Vec<usize> {
         let mut indices: Vec<usize> = Vec::new();
         indices.push(fi);
@@ -3501,12 +3144,10 @@ impl<'a> PaveFiller<'a> {
         indices
     }
 
-    /// OCCT-aligned: RemoveUsedVertices (BOPAlgo_PaveFiller_6.cxx L2928).
     fn remove_used_vertices(&self, verts: &mut Vec<usize>, used: &std::collections::BTreeSet<usize>) {
         verts.retain(|v| !used.contains(v));
     }
 
-    /// OCCT-aligned: CorrectRange (BOPTools_AlgoTools).
     fn correct_t_range(&self, ei: usize, t_start: f64, t_end: f64) -> [f64; 2] {
         let edge = &self.ds.edges[ei];
         let mut ts = t_start.max(edge.t_range[0]);
@@ -3515,7 +3156,6 @@ impl<'a> PaveFiller<'a> {
         [ts, te]
     }
 
-    /// OCCT-aligned: IsBlockInOnFace (BOPTools_AlgoTools).
     fn is_block_in_on_face(&self, ei: usize, pbi: usize, fi: usize) -> bool {
         if ei >= self.ds.edges.len() { return false; }
         if fi >= self.ds.faces.len() { return false; }
@@ -3529,9 +3169,6 @@ impl<'a> PaveFiller<'a> {
             _ => false,
         }
     }
-
-
-
 
     fn post_treat_ff(&mut self) {
         // OCCT PaveFiller_6.cxx L1165-1397: PostTreatFF handles VertsUnused,
@@ -3596,10 +3233,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// �?OCCT-aligned: MakeSDVerticesFF (BOPAlgo_PaveFiller_6.cxx L1139-1161)
-    /// Creates shared (same-domain) vertices for coplanar face overlap boundaries.
-    /// Ensures each polygon vertex of a same-domain overlap is registered as a shared
-    /// vertex in both faces' face_info.vertices_in.
     fn make_sd_vertices_ff(&mut self) {
         let overlaps = self.ds.same_domain_overlaps.clone();
         for (f1, f2, polygon) in &overlaps {
@@ -3707,176 +3340,6 @@ impl<'a> PaveFiller<'a> {
         self.boundaries_fully_overlap(f1, f2)
     }
 
-    fn surfaces_glue_compatible(&self, s1: &Surface3, s2: &Surface3) -> bool {
-        let tol = self.glue_tolerance;
-        let axis_parallel = |a: DVec3, b: DVec3| {
-            let la = a.length();
-            let lb = b.length();
-            if la <= TOLERANCE_ABS || lb <= TOLERANCE_ABS {
-                return false;
-            }
-            (a / la).dot(b / lb).abs() >= 0.999
-        };
-        match (s1, s2) {
-            (Surface3::Plane(p1), Surface3::Plane(p2)) => {
-                if !axis_parallel(p1.normal, p2.normal) {
-                    return false;
-                }
-                let n = p1.normal.normalize_or_zero();
-                (p2.origin - p1.origin).dot(n).abs() <= tol * 2.0
-            }
-            (Surface3::Sphere(s1), Surface3::Sphere(s2)) => {
-                (s1.center - s2.center).length() <= tol * 2.0
-                    && (s1.radius - s2.radius).abs() <= tol
-            }
-            (Surface3::Cylinder(c1), Surface3::Cylinder(c2)) => {
-                if !axis_parallel(c1.axis, c2.axis) {
-                    return false;
-                }
-                let a = c1.axis.normalize_or_zero();
-                (c2.origin - c1.origin).cross(a).length() <= tol * 2.0
-                    && (c1.radius - c2.radius).abs() <= tol
-            }
-            (Surface3::Cone(c1), Surface3::Cone(c2)) => {
-                axis_parallel(c1.axis, c2.axis)
-                    && (c1.apex - c2.apex).length() <= tol * 2.0
-                    && (c1.radius - c2.radius).abs() <= tol
-                    && (c1.half_angle_rad - c2.half_angle_rad).abs() <= tol
-            }
-            (Surface3::Torus(t1), Surface3::Torus(t2)) => {
-                axis_parallel(t1.axis, t2.axis)
-                    && (t1.center - t2.center).length() <= tol * 2.0
-                    && (t1.major_radius - t2.major_radius).abs() <= tol
-                    && (t1.minor_radius - t2.minor_radius).abs() <= tol
-            }
-            _ => false,
-        }
-    }
-
-    fn boundaries_fully_overlap(&self, f1: usize, f2: usize) -> bool {
-        let pts1 = self.ds.face_boundary_points(f1);
-        let pts2 = self.ds.face_boundary_points(f2);
-        if pts1.len() < 3 || pts2.len() < 3 || pts1.len() != pts2.len() {
-            return false;
-        }
-        let tol = self.glue_tolerance;
-        let mut used = vec![false; pts2.len()];
-        for p1 in &pts1 {
-            let mut found = false;
-            for (j, p2) in pts2.iter().enumerate() {
-                if used[j] {
-                    continue;
-                }
-                if (*p1 - *p2).length() <= tol {
-                    used[j] = true;
-                    found = true;
-                    break;
-                }
-            }
-            if !found {
-                return false;
-            }
-        }
-        true
-    }
-
-    /// Detect partially shared edges between two faces (for enhanced glue detection).
-    /// Returns a list of (edge_idx_in_f1, edge_idx_in_f2) pairs for shared edges.
-    fn detect_shared_edges_between_faces(&self, f1: usize, f2: usize) -> Vec<(usize, usize)> {
-        let tol = self.glue_tolerance;
-        let mut shared_edges = Vec::new();
-
-        let edges1: Vec<usize> = self.ds.faces[f1].boundary_edges.to_vec();
-        let edges2: Vec<usize> = self.ds.faces[f2].boundary_edges.to_vec();
-
-        for &e1 in &edges1 {
-            for &e2 in &edges2 {
-                // Use the new edge overlap detection
-                if let Some(overlap) = self.detect_edge_overlap(e1, e2, tol) {
-                    // Only consider edges that have at least partial overlap
-                    if overlap.overlap_type != EdgeOverlapType::None
-                        && overlap.overlap_ratio_a > 0.01
-                        && overlap.max_distance < tol * 10.0
-                    {
-                        shared_edges.push((e1, e2));
-                        break; // Each edge in f1 matches at most one in f2
-                    }
-                }
-            }
-        }
-
-        shared_edges
-    }
-
-    /// Check if two edges have compatible curves (same geometry, possibly reversed direction).
-    fn edges_curve_compatible(&self, e1: usize, e2: usize, tol: f64) -> bool {
-        let edge1 = match self.ds.edges.get(e1) {
-            Some(e) => e,
-            None => return false,
-        };
-        let edge2 = match self.ds.edges.get(e2) {
-            Some(e) => e,
-            None => return false,
-        };
-
-        match (&edge1.curve, &edge2.curve) {
-            (Curve3::Line(l1), Curve3::Line(l2)) => {
-                // Check if lines are parallel (or anti-parallel)
-                let d1 = l1.direction.normalize_or_zero();
-                let d2 = l2.direction.normalize_or_zero();
-                if d1.dot(d2).abs() < 0.999 {
-                    return false;
-                }
-                // Check if origins are on the same line
-                let v = l2.origin - l1.origin;
-                let perp = v - d1 * v.dot(d1);
-                perp.length() <= tol
-            }
-            (Curve3::Circle(c1), Curve3::Circle(c2)) => {
-                // Check if circles are the same
-                (c1.center - c2.center).length() <= tol
-                    && c1.normal.dot(c2.normal).abs() >= 0.999
-                    && (c1.radius - c2.radius).abs() <= tol
-            }
-            (Curve3::Ellipse(e1), Curve3::Ellipse(e2)) => {
-                // Simplified ellipse compatibility check
-                (e1.center - e2.center).length() <= tol
-                    && e1.normal.dot(e2.normal).abs() >= 0.999
-                    && (e1.major_radius - e2.major_radius).abs() <= tol
-                    && (e1.minor_radius - e2.minor_radius).abs() <= tol
-            }
-            // For other curve types, return false (conservative)
-            _ => false,
-        }
-    }
-
-    /// Check if two faces have partial glue (share some edges but not full boundary).
-    fn has_partial_glue(&self, f1: usize, f2: usize) -> bool {
-        if !self.use_glue {
-            return false;
-        }
-
-        let face1 = &self.ds.faces[f1];
-        let face2 = &self.ds.faces[f2];
-
-        // Faces must come from different original shapes
-        if face1.origin == face2.origin {
-            return false;
-        }
-
-        // Surfaces must be glue-compatible
-        if !self.surfaces_glue_compatible(&face1.surface, &face2.surface) {
-            return false;
-        }
-
-        // Check for shared edges
-        let shared = self.detect_shared_edges_between_faces(f1, f2);
-        !shared.is_empty()
-    }
-
-
-    /// Check if an edge on a face is a seam edge on a periodic surface.
-    /// �?OCCT-aligned:IsClosedFF (PaveFiller_6.cxx L106-134)
     fn is_seam_edge(&self, edge_idx: usize, face_idx: usize) -> bool {
         let face = &self.ds.faces[face_idx];
         let edge = &self.ds.edges[edge_idx];
@@ -3939,10 +3402,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// Check if a seam edge shift is needed between two faces, and return
-    /// the shift information.
-    ///
-    /// �?OCCT-aligned:BOPAlgo_PaveFiller_6.cxx L393-479
     fn check_seam_edge_shift(&self, f1: usize, f2: usize) -> Option<SeamEdgeShift> {
         let s1 = &self.ds.faces[f1].surface;
         let s2 = &self.ds.faces[f2].surface;
@@ -4023,10 +3482,6 @@ impl<'a> PaveFiller<'a> {
         None
     }
 
-    /// Reverse the seam edge shift on FF intersection results.
-    /// Translates curves and vertices back to the original coordinate system.
-    ///
-    /// �?OCCT-aligned:aFaceFace.ApplyTrsf() (PaveFiller_6.cxx L560)
     fn reverse_seam_edge_shift(&mut self, f1: usize, f2: usize, shift: &SeamEdgeShift) {
         let inv_vec = if shift.shifted_face == 1 {
             -shift.shift_vector
@@ -4268,7 +3723,6 @@ impl<'a> PaveFiller<'a> {
     fn intersect_plane_plane_faces(&mut self, f1: usize, f2: usize, p1: &Plane, p2: &Plane) {
         use inttools::pcurve_derive::line_pcurve_on_plane;
 
-
         match inttools::plane_plane::intersect_plane_plane(p1, p2) {
             inttools::plane_plane::PlanePlaneResult::Parallel => {
             }
@@ -4400,8 +3854,6 @@ impl<'a> PaveFiller<'a> {
 
     // 鈹€鈹€ Plane �?Sphere analytic face-face intersection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-    /// �?OCCT-aligned: clip Circle3 to polygon boundaries of given planar faces
-    ///    returns [t_min, t_max] valid range; None=full circle, Some([0,0])=empty
     fn clip_circle_to_faces(
         &self, circle: &rcad_kernel::geom::Circle3,
         f1: usize, f2: usize,
@@ -4496,7 +3948,6 @@ impl<'a> PaveFiller<'a> {
         result
     }
 
-    /// �?OCCT-aligned: find existing vertex in face boundary / vertices_in / vertices_on
     fn intersect_plane_sphere_faces(
         &mut self,
         f1: usize,
@@ -4637,7 +4088,6 @@ impl<'a> PaveFiller<'a> {
             }
         }
     }
-
 
     // 鈹€鈹€ Sphere �?Sphere analytic face-face intersection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
@@ -5249,9 +4699,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// Compute the V range of the cylinder face along its axis, used to clip
-    /// tangent-line intersection curves to the actual face extent.
-    /// �?OCCT-aligned: project boundary vertices along cylinder axis for V-range, replaces hardcoded extent.
     fn cylinder_face_v_range(&self, face_idx: usize, cyl: &CylindricalSurface) -> [f64; 2] {
         let axis = cyl.axis.normalize();
         let mut v_min = f64::INFINITY;
@@ -5453,11 +4900,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// Find the parameter range of `curve` that lies within both faces' UV
-    /// boundaries.  Coarse-samples over `search_range`, picks the longest
-    /// contiguous segment, then binary-searches each endpoint to sub-step
-    /// precision so the returned range corresponds to curve-on-face-boundary.
-    /// Returns `None` when no valid segment is found.
     fn trim_curve_to_faces(
         ds: &DS,
         curve: &Curve3,
@@ -6163,8 +5605,6 @@ impl<'a> PaveFiller<'a> {
 
     // 鈹€鈹€ Torus intersection helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-    /// Generic helper: call `intersect_surfaces` and wire all results into the DS.
-    /// `torus_is_f1` controls pcurve ordering.
     fn register_torus_intersection(
         &mut self,
         f1: usize,
@@ -6710,9 +6150,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// For curved脳curved face pairs, use numeric_intss_with_density (sign-change
-    /// edge marching) which returns ordered polylines without the closure/drift
-    /// issues of the gradient marcher.
     fn intersect_ff_by_numeric_intss(
         &mut self,
         f1: usize,
@@ -7094,11 +6531,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// �?OCCT-aligned:reApprox �?create pcurves for a marched curve with validation loop.
-    ///
-    /// First attempt: project polyline onto both surfaces with default tolerance.
-    /// If `is_curve_valid_2d` or `check_pcurve_in_face` fails, retry with
-    /// looser validation (skip self-intersection check which may flag V-folds).
     fn make_marching_pcurves_with_reapprox(
         &self,
         points: &[DVec3],
@@ -7165,8 +6597,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// Like `generate_surface_samples` but returns a structured `n_u �?n_v` grid
-    /// (row-major) so callers can use grid-aware adjacency for seed detection.
     fn generate_surface_samples_grid(
         &self,
         surface: &Surface3,
@@ -7278,22 +6708,6 @@ impl<'a> PaveFiller<'a> {
 
     // 鈹€鈹€鈹€ MakeBlocks: inject EF/EE vertices onto FF curves (OCCT PaveFiller_6 L647+) 鈹€鈹€
 
-    /// �?OCCT-aligned: MakeBlocks �?PutPavesOnCurve places existing vertices on FF curves
-    ///    (BOPAlgo_PaveFiller_6 L700-833)
-    ///
-    /// OCCT logic:
-    ///   1. Collect ON/IN vertices from both faces (myDS->SubShapesOnIn) (L752)
-    ///   2. PutPavesOnCurve: check if each vertex lies on FF curve, record parameter (L789-791)
-    ///   3. Sort by parameter, split curve at vertices �?PaveBlocks
-    ///
-    /// rcad implementation:
-    ///   For each Circle3 FF IC, check if EF Pave vertices lie on the curve.
-    ///   Endpoint match: replace curve start/end_vertex with EF vertex index.
-    ///   Internal point: split curve into segments, each sharing EF vertex at endpoints.
-    ///   Line3: endpoint replacement only.
-    ///
-    /// Phase 2a: full boundary vertex injection (PutBoundPaveOnCurve) using
-    ///           param_on_line3/param_on_circle3/project_vertex_to_curve.
          fn make_blocks(&mut self) {
         // �?OCCT L652-655: GlueOff guard — MakeBlocks should be skipped for GlueFull/GluePartial
         if self.use_glue {
@@ -7388,19 +6802,11 @@ impl<'a> PaveFiller<'a> {
             .map(|fi| self.ds.faces[fi].face_info.curves_sc_only())
             .collect();
 
-
-
-
-
-
-
         // 鈹€鈹€ Phase 2: Compute splits 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         #[derive(Clone)]
         struct SplitAction {
             old_ci: usize,
-            /// EF vertex indices to share (in parameter order)
             split_verts: Vec<(f64, usize)>,
-            /// PCurves from original curve
             pca: Option<Curve2d>,
             pcb: Option<Curve2d>,
         }
@@ -7640,23 +7046,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// �?OCCT-aligned: CheckSelfInterference (BOPAlgo_PaveFiller_11.cxx L28-221)
-    ///    Iterates all interferences and validates that no edge-edge or edge-face
-    ///    interference exists between sub-shapes of the SAME input shape.
-    ///
-    ///    Self-interference indicates invalid input geometry (self-intersecting
-    ///    faces/edges). Face-Face self-interference is non-fatal (it can occur
-    ///    legitimately in some cases).
-    ///
-    ///    Returns `Ok(())` when no self-interference is found, or `Err` with a
-    ///    detailed message listing the offending interferences.
-    /// �?OCCT-aligned: CheckSelfInterference (PaveFiller_11.cxx L28-221).
-    ///   �?rcad simplified: origin-based check on interferences vs OCCT range-based
-    ///   topology traversal. OCCT L30-34: returns early for single-argument mode.
-    ///   OCCT L38-220: iterates DS ranges, checks vertex connections via CommonBlocks
-    ///   and PaveBlocks, builds connection maps for faces sharing section edges.
-    ///   rcad: simple origin match on EdgeEdge/EdgeFace/FaceFace interferences.
-    ///   Both: non-fatal warnings �?operation continues regardless.
     fn check_self_interference(&self) -> Result<(), String> {
         let mut messages: Vec<String> = Vec::new();
 
@@ -7703,21 +7092,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    /// �?OCCT-aligned: Inject IC vertices into boundary edge pave lists.
-    ///    After FF creates intersection curves, their vertices may lie on
-    ///    boundary edges (e.g. sphere seam edge passes through IC vertex at
-    ///    (1,0,0)).  OCCT's PutPaveOnCurve processes ALL curves (edges + ICs)
-    ///    and injects paves from any vertex on the curve.  This is the reverse
-    ///    of put_bound_pave_on_curve (which injects boundary vertices into ICs).
-    /// �?OCCT-aligned: MakeSplitEdges (PaveFiller_7.cxx L371-520).
-    ///   Creates PaveBlocks from Paves, then for each PaveBlock creates a split
-    ///   DSEdge (analogous to OCCT's TopoDS_Edge per PaveBlock) and sets
-    ///   pb.new_edge to the new edge index, matching OCCT aPB->SetEdge(nEn).
-    ///
-    ///   Single-block edges (no split) reuse the original edge index (pb.new_edge = ei),
-    ///   matching OCCT's aPB->SetEdge(nE) for aLPB.Extent() == 1.
-    /// �?OCCT-aligned: MakeSplitEdges (PaveFiller_7.cxx L371-954).
-    ///   Creates new DS edges from source edge PaveBlocks.  rcad name: build_split_edges.
     fn make_split_edges(&mut self) {
         self.build_split_edges();
     }
@@ -7861,8 +7235,6 @@ impl<'a> PaveFiller<'a> {
 
 // 鈹€鈹€ Phase 2a helpers: vertex �?curve parameter projection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-/// Compute parameter t of a vertex on Line3.
-/// Line3: P(t) = origin + t * direction (t �?�?
 fn param_on_line3(pt: DVec3, line: &Line3, tol: f64) -> Option<f64> {
     let dir = line.direction;
     let to_pt = pt - line.origin;
@@ -7872,8 +7244,6 @@ fn param_on_line3(pt: DVec3, line: &Line3, tol: f64) -> Option<f64> {
     if dist > tol { None } else { Some(t) }
 }
 
-/// Compute parameter t (angle, radians) of a vertex on Circle3.
-/// Circle3: P(t) = center + r�?cos(t)路u + sin(t)路v), t �?[0, 2�?
 fn param_on_circle3(pt: DVec3, circle: &Circle3, tol: f64) -> Option<f64> {
     let r = circle.radius;
     let center = circle.center;
@@ -7895,9 +7265,6 @@ fn param_on_circle3(pt: DVec3, circle: &Circle3, tol: f64) -> Option<f64> {
     Some(y.atan2(x))
 }
 
-/// Project a vertex onto a curve, returning parameter t (if the vertex lies on the curve).
-/// �?OCCT-aligned: supports Line3/Circle3/Ellipse3, BSpline uses numeric projection.
-///    OCCT GeomLib::Parameter uses Newton's method for all curve types.
 fn project_vertex_to_curve(pt: DVec3, curve: &Curve3, tol: f64) -> Option<f64> {
     match curve {
         Curve3::Line(line) => param_on_line3(pt, line, tol),
@@ -7907,8 +7274,6 @@ fn project_vertex_to_curve(pt: DVec3, curve: &Curve3, tol: f64) -> Option<f64> {
     }
 }
 
-/// Ellipse3 parameter projection: P(t)=center+major_r*cos(t)*u+minor_r*sin(t)*v, t鈭圼0,2�?
-/// Sample 64 points to find nearest, Newton refinement.
 fn param_on_ellipse3(pt: DVec3, ellipse: &Ellipse3, tol: f64) -> Option<f64> {
     use rcad_kernel::geom::CurveEval;
     let local = pt - ellipse.center;
@@ -7944,7 +7309,6 @@ fn param_on_ellipse3(pt: DVec3, ellipse: &Ellipse3, tol: f64) -> Option<f64> {
     if ellipse.point_at(best_t).distance(pt) > tol { None } else { Some(best_t) }
 }
 
-/// General numeric parameter projection (BSpline etc): sample 128 points, Newton refinement.
 fn param_on_curve3_numeric(pt: DVec3, curve: &Curve3, tol: f64) -> Option<f64> {
     use rcad_kernel::geom::CurveEval;
     let (t0, t1) = match curve {
@@ -7977,19 +7341,11 @@ fn param_on_curve3_numeric(pt: DVec3, curve: &Curve3, tol: f64) -> Option<f64> {
     if curve.point_at(best_t).distance(pt) > tol { None } else { Some(best_t) }
 }
 
-
 // 鈹€鈹€ FindValidRange / ShrunkData helper functions 鈹€鈹€
 // OCCT references:
 //   IntTools_ShrunkRange::Perform()  IntTools_ShrunkRange.cxx L107-191
 //   BRepLib::FindValidRange          BRepLib_1.cxx L173-258
 //   findNearestValidPoint            BRepLib_1.cxx L31-148
-
-
-
-/// Curve parameter step: parameter increment needed to move tol distance along curve.
-/// OCCT: Adaptor3d_Curve::Resolution(theTol) (BRepLib_1.cxx L61, IntTools_ShrunkRange.cxx L162)
-/// Note: rcad uses `tol` directly in the formula (tol / speed), while OCCT also
-/// applies `* 1.01` in findNearestValidPoint (L61).
 
 fn curve_resolution(curve: &Curve3, t: f64, tol: f64) -> f64 {
 
@@ -7999,21 +7355,7 @@ fn curve_resolution(curve: &Curve3, t: f64, tol: f64) -> f64 {
 
     if speed < 1e-15 { tol } else { tol / speed }
 
-
 }
-
-
-
-/// �?OCCT-aligned (core logic): findNearestValidPoint (BRepLib_1.cxx L31-148)
-/// Step along the curve from one end until outside the vertex tolerance sphere,
-/// then binary-search to refine the exit parameter.
-///
-/// OCCT differences:
-/// 1. OCCT uses `theCurve.Resolution(theTol) * 1.01` (L61) �?rcad omits the `* 1.01`.
-/// 2. OCCT has BSpline/Bezier specific handling (aD1Mag threshold, L70-81) to
-///    accelerate through near-singular derivative regions �?rcad does not implement this.
-/// 3. OCCT checks `aP.SquareDistance(theVertPnt) > aSqTol` as the exit condition �?rcad matches.
-/// 4. OCCT mid-point refinement exits when `aDelta <= theEps` �?rcad matches.
 
 fn find_nearest_valid_point(
 
@@ -8075,25 +7417,6 @@ fn find_nearest_valid_point(
 
 }
 
-
-
-/// �?OCCT-aligned (core logic): BRepLib::FindValidRange (BRepLib_1.cxx L173-258)
-/// Compute the valid (shrunk) range of curve segment [t0, t1] excluding endpoint tolerance spheres.
-/// Returns (first, last); returns None if fully covered by tolerance spheres (micro edge).
-///
-/// OCCT differences in `find_valid_range`:
-/// 1. EPSILON (L201):
-///    OCCT: anEps = max(curve.Resolution(theTolE) * 0.1, Epsilon(aMaxPar), Precision::PConfusion())
-///    rcad: eps = curve_resolution(curve, mid, 1e-7).max(abs_max * 1e-12).max(1e-12)
-///    - OCCT uses `theTolE * 0.1` in Resolution; rcad uses hardcoded `1e-7`.
-///    - OCCT uses `Epsilon(aMaxPar) �?aMaxPar * 2.2e-16`; rcad uses `abs_max * 1e-12`.
-/// 2. INFINITE PARAM (L204-228): OCCT handles infinite parameters for unbounded curves
-///    (lines) via Precision::IsInfinite check �?rcad does not, using is_infinite() directly.
-/// 3. Shrunk range check (L221, L244):
-///    OCCT: theParV2 - theFirst < anEps �?return false
-///    rcad: (t1 - f).abs() < eps �?return None
-///    OCCT checks directionally (t2 - first); rcad checks absolute (t1 - f).
-
 fn find_valid_range(
 
     curve: &Curve3, t0: f64, t1: f64,
@@ -8144,25 +7467,14 @@ fn find_valid_range(
 
 // 鈹€鈹€ Seam Edge Shift Struct 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-/// Result of checking whether a seam edge shift is needed between two faces.
-/// �?OCCT-aligned:BOPAlgo_PaveFiller_6.cxx L393-479
 struct SeamEdgeShift {
-    /// Translation vector to apply to one face's surface.
     shift_vector: DVec3,
-    /// Distance of the shift (used for tolerance contribution).
     shift_value: f64,
-    /// Which face is shifted: 1 = f1, 2 = f2.
     shifted_face: u8,
 }
 
 // 鈹€鈹€ Free Helper Functions 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-/// Apply a translation to a surface's position.
-/// The shift modifies the surface's origin (or center) so that the surface
-/// appears to move in 3D space. Surface normals and parameterization are
-/// preserved.
-///
-/// �?OCCT-aligned:gp_Trsf.SetTranslation �?moving the face before intersection
 fn apply_shift_to_surface(surface: &Surface3, shift: DVec3) -> Surface3 {
     match *surface {
         Surface3::Plane(p) => Surface3::Plane(Plane {
@@ -8214,10 +7526,6 @@ fn apply_shift_to_surface(surface: &Surface3, shift: DVec3) -> Surface3 {
     }
 }
 
-/// Translate a 3D curve by a displacement vector.
-/// All control points and origin/center positions are shifted.
-///
-/// �?OCCT-aligned:aFaceFace.ApplyTrsf() �?reversing the shift after intersection
 fn translate_curve3(curve: &Curve3, shift: DVec3) -> Curve3 {
     match *curve {
         Curve3::Line(l) => Curve3::Line(Line3 {
@@ -8313,9 +7621,6 @@ mod phase2a_tests {
 
 // 鈹€鈹€ Phase 2a: MakeBlocks candidate injection helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-/// Find up-to-2 face indices that reference a given intersection curve.
-/// �?OCCT-aligned: checks curves_sc (PaveBlocksSc); in OCCT this checks all
-///    PaveBlocksSc/In/On to find face boundary vertices for put_bound_pave_on_curve.
 fn find_face_idxs_for_curve(ds: &DS, ci: usize) -> [usize; 2] {
     let mut result = [usize::MAX; 2];
     let mut idx = 0;
@@ -8331,7 +7636,6 @@ fn find_face_idxs_for_curve(ds: &DS, ci: usize) -> [usize; 2] {
     result
 }
 
-/// Inject face boundary vertices onto intersection curves (OCCT PutBoundPaveOnCurve).
 fn put_bound_pave_on_curve(
     _ds: &DS,
     _curve_idx: usize,
@@ -8344,11 +7648,6 @@ fn put_bound_pave_on_curve(
     vec![]
 }
 
-/// OCCT-aligned: PutPaveOnCurve (BOPAlgo_PaveFiller_6.cxx L833-900)
-///    OCCT: EF vertices first (theMVEF), then ON/IN vertices (theMVOnIn) with
-///    BBox filtering (aBoxC.IsOut(aBoxV), L2409) and IsNewShape check (L2413-2415).
-///    This prevents projecting too many vertices onto each IC, which would cause
-///    excessive edge splitting (bfuse_simple B3: 539 edges -> 28 ref).
 fn put_pave_on_curve_full(
     ds: &DS,
     curve_idx: usize,
@@ -8438,8 +7737,6 @@ fn put_pave_on_curve_full(
     paves
 }
 
-/// Compute a bounding box for a curve, expanded by tolerance.
-/// Used for OCCT-aligned vertex filtering in PutPavesOnCurve (L2409).
 fn curve_bounding_box_simple(curve: &Curve3, tol: f64) -> Option<[DVec3; 2]> {
     let bbox = match curve {
         Curve3::Line(_) => {
@@ -8489,10 +7786,6 @@ fn curve_bounding_box_simple(curve: &Curve3, tol: f64) -> Option<[DVec3; 2]> {
     bbox.map(|[mn, mx]| [mn - DVec3::splat(tol), mx + DVec3::splat(tol)])
 }
 
-/// OCCT-aligned: FilterPavesOnCurves (PaveFiller_6.cxx L2437-2538).
-/// OCCT uses a multi-candidate distance comparison + sin-angle check.
-/// rcad simplified: single-threshold filter against curve tolerance + fuzzy.
-/// OCCT L2449: aTolR3D = max(curve.Tolerance(), curve.TangentialTolerance())
 fn filter_paves_on_curves(
     ds: &DS,
     curve_idx: usize,
@@ -8520,9 +7813,6 @@ fn filter_paves_on_curves(
     }).copied().collect()
 }
 
-/// �?OCCT-aligned: PutClosingPaveOnCurve (L828-833)
-///    Only replace the last vertex when the curve spans a full closed period (parameter diff �?2�?or full curve range).
-///    Arc segments (parameter diff < �? are not replaced, to avoid incorrectly changing arc endpoints to start points.
 fn put_closing_pave_on_curve(
     paves: &mut Vec<(f64, usize)>,
     is_closed: bool,
@@ -8541,8 +7831,6 @@ fn put_closing_pave_on_curve(
     }
 }
 
-/// Intersect two bounded line segments in 3D. Returns (t1, t2, point) if they
-/// cross within tolerance.
 fn intersect_line_line(
     l1: &Line3,
     r1: [f64; 2],
@@ -8612,8 +7900,6 @@ fn intersect_line_line(
 
 // 鈹€鈹€ Sampling helpers for marching seed-point generation 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-/// Sample a flat plane (infinite) over a 2D square of side `half_extent*2`
-/// centred at `plane.origin`.
 fn sample_plane(plane: &Plane, half_extent: f64, n: usize) -> Vec<DVec3> {
     let u = rcad_kernel::any_perpendicular(plane.normal);
     let v = plane.normal.cross(u);
@@ -8628,7 +7914,6 @@ fn sample_plane(plane: &Plane, half_extent: f64, n: usize) -> Vec<DVec3> {
     pts
 }
 
-/// Sample a cone surface between heights `h_min` and `h_max` along its axis.
 fn sample_cone(
     cone: &ConicalSurface,
     h_min: f64,
@@ -8652,7 +7937,6 @@ fn sample_cone(
     pts
 }
 
-/// Sample `n` points on a circular arc from `t_start` to `t_end`.
 fn sample_circle_arc(circle: &Circle3, t_start: f64, t_end: f64, n: usize) -> Vec<DVec3> {
     use rcad_kernel::CurveEval;
     use rcad_kernel::geom::Curve3;
@@ -8665,7 +7949,6 @@ fn sample_circle_arc(circle: &Circle3, t_start: f64, t_end: f64, n: usize) -> Ve
         .collect()
 }
 
-/// Compute the angular parameter of `point` on `circle` in [0, 2�?.
 fn circle_param(point: DVec3, circle: &Circle3) -> f64 {
     let u = rcad_kernel::any_perpendicular(circle.normal);
     let v = circle.normal.cross(u);
@@ -8677,8 +7960,6 @@ fn circle_param(point: DVec3, circle: &Circle3) -> f64 {
     theta
 }
 
-/// Intersect a 3D line with a 3D circle.
-/// Returns `(t_on_line, t_on_circle, point)` for each intersection found.
 fn intersect_line_circle(
     line: &Line3,
     circle: &Circle3,
@@ -8729,7 +8010,6 @@ fn intersect_line_circle(
     results
 }
 
-/// Intersect two coplanar 3D circles (their planes are parallel/coincident).
 fn intersect_coplanar_circles(c1: &Circle3, c2: &Circle3, tol: f64) -> Vec<DVec3> {
     let d_vec = c2.center - c1.center;
     let d = d_vec.length();
@@ -8762,8 +8042,6 @@ fn intersect_coplanar_circles(c1: &Circle3, c2: &Circle3, tol: f64) -> Vec<DVec3
     }
 }
 
-/// Intersect two 3D circles that may lie in different planes.
-/// Returns up to 2 intersection points.
 fn intersect_circle_circle(
     c1: &Circle3,
     c2: &Circle3,
@@ -8832,7 +8110,6 @@ fn intersect_circle_circle(
     results
 }
 
-/// Check if a parameter `t` falls within `range` (inclusive, with tolerance).
 fn in_range(t: f64, range: [f64; 2], tol: f64) -> bool {
     let lo = range[0].min(range[1]) - tol;
     let hi = range[0].max(range[1]) + tol;
@@ -8868,8 +8145,6 @@ fn point_in_sphere_face(pt: DVec3, boundary_verts: &[DVec3], _ds: &DS) -> bool {
     cx.contains(&pt.x) && cy.contains(&pt.y) && cz.contains(&pt.z)
 }
 
-/// Generic UV-grid sampling for any surface type via `SurfaceEval::default_domain()`.
-/// Works for BSpline, Bezier, Offset, Revolution, Trimmed, LinearExtrusion.
 fn sample_surface_generic(surface: &Surface3, n_u: usize, n_v: usize) -> Vec<DVec3> {
     use rcad_kernel::geom::SurfaceEval;
     let [u0, u1, v0, v1] = surface.default_domain();
@@ -8887,11 +8162,6 @@ fn sample_surface_generic(surface: &Surface3, n_u: usize, n_v: usize) -> Vec<DVe
     pts
 }
 
-/// Numeric edge-face intersection: sample the curve, find sign changes of the
-/// surface implicit function, then refine via bisection.
-///
-/// Used as fallback for unsupported curve脳surface combinations (Ellipse,
-/// Hyperbola, Parabola, BSpline, Bezier, OffsetCurve �?any surface).
 fn intersect_edge_face_numeric(
     curve: &Curve3,
     surface: &Surface3,
@@ -9025,1627 +8295,13 @@ fn intersect_edge_face_numeric(
     hits
 }
 
-/// Result of partial face overlap analysis.
-#[derive(Debug, Clone)]
-pub struct PartialOverlapInfo {
-    /// Face index in shape A.
-    pub face_a: usize,
-    /// Face index in shape B.
-    pub face_b: usize,
-    /// Estimated overlap ratio (0.0 to 1.0).
-    pub overlap_ratio: f64,
-    /// Overlap type.
-    pub overlap_type: PartialOverlapType,
-}
-
-/// Type of partial overlap between faces.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PartialOverlapType {
-    /// Faces are coplanar with partial boundary overlap.
-    CoplanarBoundary,
-    /// Faces share an edge partially.
-    EdgeOverlap,
-    /// One face is contained within another.
-    Contained,
-}
-
-/// Result of edge overlap detection between two edges.
-#[derive(Debug, Clone)]
-pub struct EdgeOverlapResult {
-    /// Edge index in shape A.
-    pub edge_a: usize,
-    /// Edge index in shape B.
-    pub edge_b: usize,
-    /// Type of overlap detected.
-    pub overlap_type: EdgeOverlapType,
-    /// Overlap ratio for the first edge (0.0 to 1.0).
-    pub overlap_ratio_a: f64,
-    /// Overlap ratio for the second edge (0.0 to 1.0).
-    pub overlap_ratio_b: f64,
-    /// Parameter range of overlap on edge A [t_start, t_end].
-    pub param_range_a: Option<[f64; 2]>,
-    /// Parameter range of overlap on edge B [t_start, t_end].
-    pub param_range_b: Option<[f64; 2]>,
-    /// Maximum distance between edges in the overlap region.
-    pub max_distance: f64,
-}
-
-/// Type of overlap between two edges.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EdgeOverlapType {
-    /// No overlap - edges are on different curves or don't intersect.
-    None,
-    /// Partial overlap - edges share part of their parameter range.
-    Partial,
-    /// Full overlap - one edge completely overlaps the other.
-    Full,
-    /// Edge A is contained within edge B's parameter range.
-    AContainedInB,
-    /// Edge B is contained within edge A's parameter range.
-    BContainedInA,
-}
-
-/// Result of edge containment detection.
-#[derive(Debug, Clone)]
-pub struct EdgeContainmentResult {
-    /// Edge index that is contained.
-    pub contained_edge: usize,
-    /// Edge index that contains.
-    pub containing_edge: usize,
-    /// Containment ratio (how much of the contained edge is inside).
-    pub containment_ratio: f64,
-    /// Whether the containment is exact within tolerance.
-    pub is_exact: bool,
-}
-
-/// Parameter overlap result for two parameter ranges.
-#[derive(Debug, Clone, Copy)]
-pub struct ParamOverlap {
-    /// Overlap type.
-    pub overlap_type: ParamOverlapType,
-    /// Overlap range [min, max] if any overlap exists.
-    pub overlap_range: Option<[f64; 2]>,
-    /// Ratio of first range that overlaps.
-    pub ratio_a: f64,
-    /// Ratio of second range that overlaps.
-    pub ratio_b: f64,
-}
-
-/// Type of parameter range overlap.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ParamOverlapType {
-    /// No overlap.
-    None,
-    /// Partial overlap - ranges partially intersect.
-    Partial,
-    /// Range A contains range B entirely.
-    AContainsB,
-    /// Range B contains range A entirely.
-    BContainsA,
-    /// Exact match - ranges are identical.
-    Exact,
-}
-
-/// Result of near-tangent face detection.
-#[derive(Debug, Clone)]
-pub struct NearTangentFaceInfo {
-    /// Face index in shape A.
-    pub face_a: usize,
-    /// Face index in shape B.
-    pub face_b: usize,
-    /// Distance between faces at closest point.
-    pub distance: f64,
-    /// Type of tangency.
-    pub tangent_type: NearTangentType,
-    /// Whether the faces should be merged.
-    pub should_merge: bool,
-}
-
-/// Result of near-coincident face detection.
-#[derive(Debug, Clone)]
-pub struct NearCoincidentFaceInfo {
-    /// Face index in shape A.
-    pub face_a: usize,
-    /// Face index in shape B.
-    pub face_b: usize,
-    /// Maximum distance between faces in overlap region.
-    pub max_distance: f64,
-    /// Area of overlap region (approximate).
-    pub overlap_area: f64,
-    /// Whether faces should be merged.
-    pub should_merge: bool,
-}
-
-/// Result of micro-gap detection.
-#[derive(Debug, Clone)]
-pub struct MicroGapInfo {
-    /// Edge index on shape A.
-    pub edge_a: usize,
-    /// Edge index on shape B.
-    pub edge_b: usize,
-    /// Gap distance.
-    pub gap_distance: f64,
-    /// Whether the gap can be bridged.
-    pub can_bridge: bool,
-}
-
-/// Result of coincident edge detection.
-#[derive(Debug, Clone)]
-pub struct CoincidentEdgeInfo {
-    /// Edge index in shape A.
-    pub edge_a: usize,
-    /// Edge index in shape B.
-    pub edge_b: usize,
-    /// Maximum distance between edges.
-    pub max_distance: f64,
-    /// Overlap ratio (0.0 to 1.0).
-    pub overlap_ratio: f64,
-    /// Whether edges should be merged.
-    pub should_merge: bool,
-}
-
 impl<'a> PaveFiller<'a> {
-    /// Detect partial overlaps between faces for Glue mode.
-    ///
-    /// This method identifies face pairs where the boundaries partially overlap,
-    /// as opposed to `should_skip_glued_face_pair` which only detects complete overlaps.
-    ///
-    /// # Returns
-    /// A vector of `PartialOverlapInfo` describing the detected partial overlaps.
-    pub fn detect_partial_glue_overlaps(&self) -> Vec<PartialOverlapInfo> {
-        let mut overlaps = Vec::new();
-
-        // Iterate over all face pairs from different shapes
-        let a_fcount = self.ds.a_face_count;
-        let mut pit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.faces.len());
-        while pit.more() {
-            let pk = pit.value();
-            let f1_idx = pk.i1; let f2_idx = pk.i2;
-            let tol = self.ff_tol(f1_idx, f2_idx);
-            if let Some(overlap) = self.check_partial_overlap(f1_idx, f2_idx, tol) { overlaps.push(overlap); }
-            pit.next();
-        }
-
-        overlaps
-    }
-
-    fn check_partial_overlap(
-        &self,
-        f1_idx: usize,
-        f2_idx: usize,
-        tol: f64,
-    ) -> Option<PartialOverlapInfo> {
-        // First check if surfaces are compatible for overlap
-        let face1 = &self.ds.faces[f1_idx];
-        let face2 = &self.ds.faces[f2_idx];
-
-        // Skip if same origin
-        if face1.origin == face2.origin {
-            return None;
-        }
-
-        // Check surface compatibility
-        if !self.surfaces_glue_compatible(&face1.surface, &face2.surface) {
-            return None;
-        }
-
-        // Get boundary points for both faces
-        let pts1 = self.sampled_face_boundary_points(f1_idx, 8);
-        let pts2 = self.sampled_face_boundary_points(f2_idx, 8);
-
-        if pts1.is_empty() || pts2.is_empty() {
-            return None;
-        }
-
-        // Compute overlap ratio by counting points near the other face's boundary
-        let overlap_ratio = self.compute_boundary_overlap_ratio(&pts1, &pts2, tol);
-
-        // Check for edge overlap between faces
-        let shared_edges = self.detect_shared_edges_between_faces(f1_idx, f2_idx);
-        let has_edge_overlap = !shared_edges.is_empty();
-
-        // Check for edge containment
-        let mut has_containment = false;
-        for &(e1, e2) in &shared_edges {
-            if let Some(containment) = self.detect_edge_containment(e1, e2, tol)
-                && containment.is_exact {
-                    has_containment = true;
-                    break;
-                }
-        }
-
-        // Determine overlap type
-        let overlap_type = if has_containment {
-            PartialOverlapType::Contained
-        } else if has_edge_overlap {
-            PartialOverlapType::EdgeOverlap
-        } else {
-            PartialOverlapType::CoplanarBoundary
-        };
-
-        // Partial overlap: some but not complete
-        if overlap_ratio > 0.1 && overlap_ratio < 0.99 {
-            return Some(PartialOverlapInfo {
-                face_a: f1_idx,
-                face_b: f2_idx,
-                overlap_ratio,
-                overlap_type,
-            });
-        }
-
-        None
-    }
-
-    fn compute_boundary_overlap_ratio(&self, pts1: &[DVec3], pts2: &[DVec3], tol: f64) -> f64 {
-        let proximity_tol = tol * 100.0; // More lenient for overlap detection
-
-        // Count points from pts1 that are near pts2
-        let in_2 = pts1
-            .iter()
-            .filter(|p| pts2.iter().any(|b| (*b - **p).length() < proximity_tol))
-            .count();
-
-        // Count points from pts2 that are near pts1
-        let in_1 = pts2
-            .iter()
-            .filter(|p| pts1.iter().any(|b| (*b - **p).length() < proximity_tol))
-            .count();
-
-        let total = pts1.len() + pts2.len();
-        if total == 0 {
-            return 0.0;
-        }
-
-        (in_2 + in_1) as f64 / total as f64
-    }
 
     // ============================================================
     // Edge Overlap Detection
     // ============================================================
 
-    /// Detect edge overlap between all edge pairs from different shapes.
-    ///
-    /// This function identifies pairs of edges that partially or fully overlap,
-    /// which is important for glue mode and shared topology detection.
-    ///
-    /// # Returns
-    /// A vector of `EdgeOverlapResult` describing detected edge overlaps.
-    pub fn detect_edge_overlaps(&self) -> Vec<EdgeOverlapResult> {
-        let mut overlaps = Vec::new();
-
-        // Iterate over all edge pairs from different shapes
-        let a_ecount = self.ds.a_edge_count;
-        let mut eit = crate::bopds::ds::PairIterator::prepare_ab(a_ecount, self.ds.edges.len());
-        while eit.more() {
-            let pk = eit.value();
-            let e1_idx = pk.i1; let e2_idx = pk.i2;
-            let tol = self.ee_tol(e1_idx, e2_idx);
-            if let Some(overlap) = self.detect_edge_overlap(e1_idx, e2_idx, tol) && overlap.overlap_type != EdgeOverlapType::None { overlaps.push(overlap); }
-            eit.next();
-        }
-
-        overlaps
-    }
-
-    /// Detect overlap between two specific edges.
-    ///
-    /// # Arguments
-    /// * `e1_idx` - Index of the first edge.
-    /// * `e2_idx` - Index of the second edge.
-    /// * `tol` - Tolerance for geometric comparisons.
-    ///
-    /// # Returns
-    /// `Some(EdgeOverlapResult)` if the edges can be compared, `None` if invalid indices.
-    pub fn detect_edge_overlap(&self, e1_idx: usize, e2_idx: usize, tol: f64) -> Option<EdgeOverlapResult> {
-        let edge1 = self.ds.edges.get(e1_idx)?;
-        let edge2 = self.ds.edges.get(e2_idx)?;
-
-        // First check if the curves are compatible (same supporting curve)
-        let curve_match = self.curves_are_collinear(&edge1.curve, &edge2.curve, tol);
-        if !curve_match {
-            return Some(EdgeOverlapResult {
-                edge_a: e1_idx,
-                edge_b: e2_idx,
-                overlap_type: EdgeOverlapType::None,
-                overlap_ratio_a: 0.0,
-                overlap_ratio_b: 0.0,
-                param_range_a: None,
-                param_range_b: None,
-                max_distance: f64::INFINITY,
-            });
-        }
-
-        // Compute parameter range overlap in a common parameter space
-        let param_overlap = self.compute_param_overlap_for_edges(edge1, edge2, tol);
-
-        // Sample points to compute max distance in overlap region
-        let max_distance = if param_overlap.overlap_range.is_some() {
-            self.compute_max_edge_distance_in_range(edge1, edge2, &param_overlap, tol)
-        } else {
-            f64::INFINITY
-        };
-
-        let overlap_type = match param_overlap.overlap_type {
-            ParamOverlapType::None => EdgeOverlapType::None,
-            ParamOverlapType::Partial => EdgeOverlapType::Partial,
-            ParamOverlapType::AContainsB => EdgeOverlapType::BContainedInA,
-            ParamOverlapType::BContainsA => EdgeOverlapType::AContainedInB,
-            ParamOverlapType::Exact => EdgeOverlapType::Full,
-        };
-
-        Some(EdgeOverlapResult {
-            edge_a: e1_idx,
-            edge_b: e2_idx,
-            overlap_type,
-            overlap_ratio_a: param_overlap.ratio_a,
-            overlap_ratio_b: param_overlap.ratio_b,
-            param_range_a: param_overlap.overlap_range,
-            param_range_b: param_overlap.overlap_range,
-            max_distance,
-        })
-    }
-
-    /// Check if two curves are collinear (share the same supporting curve).
-    ///
-    /// This is a fundamental check for edge overlap detection.
-    /// Two curves are collinear if they represent the same geometric curve,
-    /// possibly with different parameter ranges.
-    pub fn curves_are_collinear(&self, c1: &Curve3, c2: &Curve3, tol: f64) -> bool {
-        match (c1, c2) {
-            (Curve3::Line(l1), Curve3::Line(l2)) => self.lines_are_collinear(l1, l2, tol),
-            (Curve3::Circle(c1), Curve3::Circle(c2)) => self.circles_are_collinear(c1, c2, tol),
-            (Curve3::Ellipse(e1), Curve3::Ellipse(e2)) => self.ellipses_are_collinear(e1, e2, tol),
-            (Curve3::BSpline(b1), Curve3::BSpline(b2)) => self.bsplines_are_collinear(b1, b2, tol),
-            (Curve3::Bezier(b1), Curve3::Bezier(b2)) => self.beziers_are_collinear(b1, b2, tol),
-            // Mixed types could potentially represent the same curve
-            // For simplicity, we return false for mixed types
-            _ => false,
-        }
-    }
-
-    /// Check if two lines are collinear.
-    fn lines_are_collinear(&self, l1: &Line3, l2: &Line3, tol: f64) -> bool {
-        let d1 = l1.direction.normalize_or_zero();
-        let d2 = l2.direction.normalize_or_zero();
-
-        // Check if directions are parallel (or anti-parallel)
-        let dot = d1.dot(d2);
-        if dot.abs() < 0.999999 {
-            return false;
-        }
-
-        // Check if origins are on the same line
-        // l2.origin should lie on l1's line
-        let v = l2.origin - l1.origin;
-        let perp = v - d1 * v.dot(d1);
-        perp.length() <= tol * 2.0
-    }
-
-    /// Check if two circles are collinear (coincident circles).
-    fn circles_are_collinear(&self, c1: &Circle3, c2: &Circle3, tol: f64) -> bool {
-        // Centers must be the same
-        let center_dist = (c1.center - c2.center).length();
-        if center_dist > tol {
-            return false;
-        }
-
-        // Normals must be parallel (or anti-parallel)
-        let normal_dot = c1.normal.normalize_or_zero().dot(c2.normal.normalize_or_zero());
-        if normal_dot.abs() < 0.999999 {
-            return false;
-        }
-
-        // Radii must be equal
-        (c1.radius - c2.radius).abs() <= tol
-    }
-
-    /// Check if two ellipses are collinear.
-    fn ellipses_are_collinear(&self, e1: &Ellipse3, e2: &Ellipse3, tol: f64) -> bool {
-        // Centers must be the same
-        let center_dist = (e1.center - e2.center).length();
-        if center_dist > tol {
-            return false;
-        }
-
-        // Normals must be parallel
-        let normal_dot = e1.normal.normalize_or_zero().dot(e2.normal.normalize_or_zero());
-        if normal_dot.abs() < 0.999999 {
-            return false;
-        }
-
-        // Major directions must be parallel (or anti-parallel if normal is flipped)
-        let major_dot = e1.major_dir.normalize_or_zero().dot(e2.major_dir.normalize_or_zero());
-        if major_dot.abs() < 0.999999 {
-            return false;
-        }
-
-        // Radii must be equal
-        (e1.major_radius - e2.major_radius).abs() <= tol
-            && (e1.minor_radius - e2.minor_radius).abs() <= tol
-    }
-
-    /// Check if two BSpline curves are collinear.
-    ///
-    /// This is a conservative check that compares control points and structure.
-    /// For exact equivalence, we would need to compare the curves point-by-point.
-    fn bsplines_are_collinear(&self, b1: &BSplineCurve3, b2: &BSplineCurve3, tol: f64) -> bool {
-        // Degrees must match
-        if b1.degree != b2.degree {
-            return false;
-        }
-
-        // Knot vectors should have similar structure
-        if b1.knots.len() != b2.knots.len() {
-            return false;
-        }
-
-        // Control points should match (allowing for reparameterization)
-        if b1.control_points.len() != b2.control_points.len() {
-            return false;
-        }
-
-        // Compare control points with tolerance
-        for (p1, p2) in b1.control_points.iter().zip(b2.control_points.iter()) {
-            if (*p1 - *p2).length() > tol {
-                return false;
-            }
-        }
-
-        // Compare weights if rational
-        for (w1, w2) in b1.weights.iter().zip(b2.weights.iter()) {
-            if (w1 - w2).abs() > tol {
-                return false;
-            }
-        }
-
-        true
-    }
-
-    /// Check if two Bezier curves are collinear.
-    fn beziers_are_collinear(&self, b1: &BezierCurve3, b2: &BezierCurve3, tol: f64) -> bool {
-        // Control point counts must match
-        if b1.control_points.len() != b2.control_points.len() {
-            return false;
-        }
-
-        // Compare control points
-        for (p1, p2) in b1.control_points.iter().zip(b2.control_points.iter()) {
-            if (*p1 - *p2).length() > tol {
-                return false;
-            }
-        }
-
-        // Compare weights
-        for (w1, w2) in b1.weights.iter().zip(b2.weights.iter()) {
-            if (w1 - w2).abs() > tol {
-                return false;
-            }
-        }
-
-        true
-    }
-
-    /// Compute parameter range overlap between two edges on the same curve.
-    ///
-    /// This function maps the parameter ranges of both edges to a common parameter
-    /// space and computes their overlap.
-    fn compute_param_overlap_for_edges(&self, edge1: &DSEdge, edge2: &DSEdge, tol: f64) -> ParamOverlap {
-        // For collinear edges, we need to map both parameter ranges to a common space
-        // The approach depends on the curve type
-
-        match (&edge1.curve, &edge2.curve) {
-            (Curve3::Line(l1), Curve3::Line(l2)) => {
-                self.compute_line_param_overlap(l1, edge1.t_range, l2, edge2.t_range, tol)
-            }
-            (Curve3::Circle(c1), Curve3::Circle(c2)) => {
-                self.compute_circle_param_overlap(c1, edge1.t_range, c2, edge2.t_range, tol)
-            }
-            (Curve3::Ellipse(e1), Curve3::Ellipse(e2)) => {
-                self.compute_ellipse_param_overlap(e1, edge1.t_range, e2, edge2.t_range, tol)
-            }
-            (Curve3::BSpline(b1), Curve3::BSpline(b2)) => {
-                self.compute_bspline_param_overlap(b1, edge1.t_range, b2, edge2.t_range, tol)
-            }
-            (Curve3::Bezier(b1), Curve3::Bezier(b2)) => {
-                self.compute_bezier_param_overlap(b1, edge1.t_range, b2, edge2.t_range, tol)
-            }
-            _ => ParamOverlap {
-                overlap_type: ParamOverlapType::None,
-                overlap_range: None,
-                ratio_a: 0.0,
-                ratio_b: 0.0,
-            },
-        }
-    }
-
-    /// Compute parameter overlap for two line segments.
-    fn compute_line_param_overlap(
-        &self,
-        l1: &Line3,
-        range1: [f64; 2],
-        l2: &Line3,
-        range2: [f64; 2],
-        tol: f64,
-    ) -> ParamOverlap {
-        let d1 = l1.direction.normalize_or_zero();
-        let d2 = l2.direction.normalize_or_zero();
-
-        // Determine if directions are same or opposite
-        let dot = d1.dot(d2);
-        let same_direction = dot >= 0.0;
-
-        // Project l2's origin onto l1's parameter space
-        // l1: P(t) = l1.origin + t * d1
-        // For point p on l2 at parameter s: p = l2.origin + s * d2
-        // We need to find t such that: l1.origin + t * d1 = l2.origin + s * d2
-        // t = (l2.origin - l1.origin) . d1 + s * (d2 . d1)
-        // Since d2 . d1 = �? (same or opposite direction), we have:
-        // t = offset + s * sign
-
-        let offset = (l2.origin - l1.origin).dot(d1);
-        let sign = if same_direction { 1.0 } else { -1.0 };
-
-        // Convert range2 to l1's parameter space
-        let range2_on_1 = if same_direction {
-            [offset + range2[0] * sign, offset + range2[1] * sign]
-        } else {
-            // Reverse the range when direction is opposite
-            [offset + range2[1] * sign, offset + range2[0] * sign]
-        };
-
-        // Now compute overlap between range1 and range2_on_1
-        self.compute_interval_overlap(range1, range2_on_1, tol)
-    }
-
-    /// Compute parameter overlap for two circular arc segments.
-    fn compute_circle_param_overlap(
-        &self,
-        c1: &Circle3,
-        range1: [f64; 2],
-        c2: &Circle3,
-        range2: [f64; 2],
-        tol: f64,
-    ) -> ParamOverlap {
-        // For circles, parameters are angles [0, 2蟺]
-        // Since we already verified circles are the same, we just compare angle ranges
-        // But we need to handle periodicity
-
-        let period = 2.0 * std::f64::consts::PI;
-
-        // Check if circles have the same orientation
-        let normal_dot = c1.normal.normalize_or_zero().dot(c2.normal.normalize_or_zero());
-        let same_orientation = normal_dot >= 0.0;
-
-        // Normalize ranges to [0, 2蟺]
-        let r1 = self.normalize_angle_range(range1, period);
-        let r2 = self.normalize_angle_range(range2, period);
-
-        // Handle periodic overlap
-        if same_orientation {
-            self.compute_periodic_interval_overlap(r1, r2, period, tol)
-        } else {
-            // Flip the range for opposite orientation
-            let r2_flipped = [period - r2[1], period - r2[0]];
-            self.compute_periodic_interval_overlap(r1, r2_flipped, period, tol)
-        }
-    }
-
-    /// Compute parameter overlap for two ellipse segments.
-    fn compute_ellipse_param_overlap(
-        &self,
-        e1: &Ellipse3,
-        range1: [f64; 2],
-        e2: &Ellipse3,
-        range2: [f64; 2],
-        tol: f64,
-    ) -> ParamOverlap {
-        let period = 2.0 * std::f64::consts::PI;
-
-        // Check if ellipses have the same orientation
-        let normal_dot = e1.normal.normalize_or_zero().dot(e2.normal.normalize_or_zero());
-        let same_orientation = normal_dot >= 0.0;
-
-        let r1 = self.normalize_angle_range(range1, period);
-        let r2 = self.normalize_angle_range(range2, period);
-
-        if same_orientation {
-            self.compute_periodic_interval_overlap(r1, r2, period, tol)
-        } else {
-            let r2_flipped = [period - r2[1], period - r2[0]];
-            self.compute_periodic_interval_overlap(r1, r2_flipped, period, tol)
-        }
-    }
-
-    /// Compute parameter overlap for two BSpline curve segments.
-    fn compute_bspline_param_overlap(
-        &self,
-        _b1: &BSplineCurve3,
-        range1: [f64; 2],
-        _b2: &BSplineCurve3,
-        range2: [f64; 2],
-        tol: f64,
-    ) -> ParamOverlap {
-        // For BSplines that have been verified as collinear,
-        // we assume the same parameterization and compare ranges directly
-        self.compute_interval_overlap(range1, range2, tol)
-    }
-
-    /// Compute parameter overlap for two Bezier curve segments.
-    fn compute_bezier_param_overlap(
-        &self,
-        _b1: &BezierCurve3,
-        range1: [f64; 2],
-        _b2: &BezierCurve3,
-        range2: [f64; 2],
-        tol: f64,
-    ) -> ParamOverlap {
-        // Bezier curves have domain [0, 1]
-        self.compute_interval_overlap(range1, range2, tol)
-    }
-
-    /// Compute overlap between two parameter intervals [a1, a2] and [b1, b2].
-    fn compute_interval_overlap(&self, a: [f64; 2], b: [f64; 2], tol: f64) -> ParamOverlap {
-        let a_len = (a[1] - a[0]).abs();
-        let b_len = (b[1] - b[0]).abs();
-
-        if a_len < tol || b_len < tol {
-            // Degenerate interval
-            return ParamOverlap {
-                overlap_type: ParamOverlapType::None,
-                overlap_range: None,
-                ratio_a: 0.0,
-                ratio_b: 0.0,
-            };
-        }
-
-        // Compute overlap range
-        let overlap_start = a[0].max(b[0]);
-        let overlap_end = a[1].min(b[1]);
-
-        if overlap_start >= overlap_end - tol {
-            // No overlap
-            return ParamOverlap {
-                overlap_type: ParamOverlapType::None,
-                overlap_range: None,
-                ratio_a: 0.0,
-                ratio_b: 0.0,
-            };
-        }
-
-        let overlap_len = overlap_end - overlap_start;
-        let ratio_a = overlap_len / a_len;
-        let ratio_b = overlap_len / b_len;
-
-        // Determine overlap type
-        let overlap_type = if ratio_a >= 0.999999 && ratio_b >= 0.999999 {
-            ParamOverlapType::Exact
-        } else if ratio_a >= 0.999999 {
-            ParamOverlapType::BContainsA
-        } else if ratio_b >= 0.999999 {
-            ParamOverlapType::AContainsB
-        } else {
-            ParamOverlapType::Partial
-        };
-
-        ParamOverlap {
-            overlap_type,
-            overlap_range: Some([overlap_start, overlap_end]),
-            ratio_a,
-            ratio_b,
-        }
-    }
-
-    /// Compute overlap between two parameter intervals on a periodic domain.
-    fn compute_periodic_interval_overlap(
-        &self,
-        a: [f64; 2],
-        b: [f64; 2],
-        period: f64,
-        tol: f64,
-    ) -> ParamOverlap {
-        // Handle wraparound for interval a
-        let a_wraps = a[1] > a[0] + period / 2.0 || a[1] < a[0];
-        let b_wraps = b[1] > b[0] + period / 2.0 || b[1] < b[0];
-
-        // Simple case: neither wraps
-        if !a_wraps && !b_wraps {
-            return self.compute_interval_overlap(a, b, tol);
-        }
-
-        // For wrapping intervals, we need to handle periodicity
-        // Unwrap both intervals to a continuous representation
-        let a_unwrapped = if a_wraps {
-            vec![[a[0], period], [0.0, a[1]]]
-        } else {
-            vec![a]
-        };
-
-        let b_unwrapped = if b_wraps {
-            vec![[b[0], period], [0.0, b[1]]]
-        } else {
-            vec![b]
-        };
-
-        // Compute overlap for each combination
-        let mut total_overlap_len = 0.0;
-        let mut overlap_ranges = Vec::new();
-
-        for a_seg in &a_unwrapped {
-            for b_seg in &b_unwrapped {
-                let overlap = self.compute_interval_overlap(*a_seg, *b_seg, tol);
-                if let Some(range) = overlap.overlap_range {
-                    total_overlap_len += range[1] - range[0];
-                    overlap_ranges.push(range);
-                }
-            }
-        }
-
-        let a_len = a_unwrapped.iter().map(|s| s[1] - s[0]).sum::<f64>();
-        let b_len = b_unwrapped.iter().map(|s| s[1] - s[0]).sum::<f64>();
-
-        if total_overlap_len < tol {
-            return ParamOverlap {
-                overlap_type: ParamOverlapType::None,
-                overlap_range: None,
-                ratio_a: 0.0,
-                ratio_b: 0.0,
-            };
-        }
-
-        let ratio_a = total_overlap_len / a_len;
-        let ratio_b = total_overlap_len / b_len;
-
-        let overlap_type = if ratio_a >= 0.999999 && ratio_b >= 0.999999 {
-            ParamOverlapType::Exact
-        } else if ratio_a >= 0.999999 {
-            ParamOverlapType::BContainsA
-        } else if ratio_b >= 0.999999 {
-            ParamOverlapType::AContainsB
-        } else {
-            ParamOverlapType::Partial
-        };
-
-        // Return the first overlap range (simplified for periodic case)
-        ParamOverlap {
-            overlap_type,
-            overlap_range: overlap_ranges.first().copied(),
-            ratio_a,
-            ratio_b,
-        }
-    }
-
-    /// Normalize an angle range to [0, period].
-    fn normalize_angle_range(&self, range: [f64; 2], period: f64) -> [f64; 2] {
-        let mut r1 = range[0] % period;
-        let mut r2 = range[1] % period;
-
-        if r1 < 0.0 {
-            r1 += period;
-        }
-        if r2 < 0.0 {
-            r2 += period;
-        }
-
-        [r1, r2]
-    }
-
-    /// Compute maximum distance between two edges in their overlap region.
-    fn compute_max_edge_distance_in_range(
-        &self,
-        edge1: &DSEdge,
-        edge2: &DSEdge,
-        param_overlap: &ParamOverlap,
-        _tol: f64,
-    ) -> f64 {
-        let overlap_range = match param_overlap.overlap_range {
-            Some(r) => r,
-            None => return f64::INFINITY,
-        };
-
-        // Sample points in the overlap region
-        let num_samples = 10;
-        let mut max_dist = 0.0_f64;
-
-        for i in 0..=num_samples {
-            let t = overlap_range[0] + (overlap_range[1] - overlap_range[0]) * i as f64 / num_samples as f64;
-
-            let p1 = edge1.curve.point_at(t);
-
-            // Find corresponding point on edge2
-            // For now, use simple distance check
-            let t2_start = edge2.t_range[0];
-            let t2_end = edge2.t_range[1];
-
-            // Sample edge2 and find closest point
-            let mut min_dist = f64::INFINITY;
-            for j in 0..=num_samples {
-                let t2 = t2_start + (t2_end - t2_start) * j as f64 / num_samples as f64;
-                let p2 = edge2.curve.point_at(t2);
-                let dist = (p1 - p2).length();
-                min_dist = min_dist.min(dist);
-            }
-
-            max_dist = max_dist.max(min_dist);
-        }
-
-        max_dist
-    }
-
-    /// Detect if one edge is contained within another.
-    ///
-    /// # Arguments
-    /// * `e1_idx` - Index of the first edge.
-    /// * `e2_idx` - Index of the second edge.
-    /// * `tol` - Tolerance for geometric comparisons.
-    ///
-    /// # Returns
-    /// `Some(EdgeContainmentResult)` if containment is detected, `None` otherwise.
-    pub fn detect_edge_containment(
-        &self,
-        e1_idx: usize,
-        e2_idx: usize,
-        tol: f64,
-    ) -> Option<EdgeContainmentResult> {
-        let overlap = self.detect_edge_overlap(e1_idx, e2_idx, tol)?;
-
-        match overlap.overlap_type {
-            EdgeOverlapType::AContainedInB => Some(EdgeContainmentResult {
-                contained_edge: e1_idx,
-                containing_edge: e2_idx,
-                containment_ratio: overlap.overlap_ratio_a,
-                is_exact: overlap.overlap_ratio_a >= 0.999999,
-            }),
-            EdgeOverlapType::BContainedInA => Some(EdgeContainmentResult {
-                contained_edge: e2_idx,
-                containing_edge: e1_idx,
-                containment_ratio: overlap.overlap_ratio_b,
-                is_exact: overlap.overlap_ratio_b >= 0.999999,
-            }),
-            _ => None,
-        }
-    }
-
-    /// Detect edge containment between all edge pairs from different shapes.
-    ///
-    /// # Returns
-    /// A vector of `EdgeContainmentResult` describing detected containments.
-    pub fn detect_all_edge_containments(&self) -> Vec<EdgeContainmentResult> {
-        let mut containments = Vec::new();
-
-        let a_ecount = self.ds.a_edge_count;
-        let mut eit = crate::bopds::ds::PairIterator::prepare_ab(a_ecount, self.ds.edges.len());
-        while eit.more() {
-            let pk = eit.value();
-            let e1_idx = pk.i1; let e2_idx = pk.i2;
-            let tol = self.ee_tol(e1_idx, e2_idx);
-            if let Some(containment) = self.detect_edge_containment(e1_idx, e2_idx, tol) { containments.push(containment); }
-            eit.next();
-        }
-
-        containments
-    }
-
-    /// Detect and handle near-tangent faces.
-    ///
-    /// This function identifies face pairs that are nearly tangent (within tolerance)
-    /// and decides whether they should be merged or kept separate. Tangent faces
-    /// often cause numerical instability in boolean operations.
-    ///
-    /// # Returns
-    /// A vector of `NearTangentFaceInfo` describing detected near-tangent face pairs.
-    ///
-    /// # Tolerance
-    /// Per face pair, uses `max(fuzzy_tol, both faces' geom_tol) �?100` as the tangent distance scale.
-    pub fn handle_near_tangent_faces(&self) -> Vec<NearTangentFaceInfo> {
-        let mut tangent_faces = Vec::new();
-
-        // Iterate over all face pairs from different shapes
-        let a_fcount = self.ds.a_face_count;
-        let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.faces.len());
-        while fit.more() {
-            let pk = fit.value();
-            let f1_idx = pk.i1; let f2_idx = pk.i2;
-            let tangent_threshold = self.ff_tol(f1_idx, f2_idx) * 100.0;
-            if let Some(info) = self.check_near_tangent_faces(f1_idx, f2_idx, tangent_threshold) { tangent_faces.push(info); }
-            fit.next();
-        }
-
-        tangent_faces
-    }
-
-    /// Check if two faces are nearly tangent.
-    fn check_near_tangent_faces(
-        &self,
-        f1_idx: usize,
-        f2_idx: usize,
-        tangent_threshold: f64,
-    ) -> Option<NearTangentFaceInfo> {
-        let face1 = &self.ds.faces[f1_idx];
-        let face2 = &self.ds.faces[f2_idx];
-
-        // Skip if same origin
-        if face1.origin == face2.origin {
-            return None;
-        }
-
-        // Check for near-tangency based on surface types
-        match (&face1.surface, &face2.surface) {
-            (Surface3::Plane(p1), Surface3::Plane(p2)) => {
-                self.check_plane_plane_tangent(f1_idx, f2_idx, p1, p2, tangent_threshold)
-            }
-            (Surface3::Plane(pl), Surface3::Cylinder(cyl))
-            | (Surface3::Cylinder(cyl), Surface3::Plane(pl)) => {
-                self.check_plane_cylinder_tangent(f1_idx, f2_idx, pl, cyl, tangent_threshold)
-            }
-            (Surface3::Plane(pl), Surface3::Sphere(sph))
-            | (Surface3::Sphere(sph), Surface3::Plane(pl)) => {
-                self.check_plane_sphere_tangent(f1_idx, f2_idx, pl, sph, tangent_threshold)
-            }
-            (Surface3::Cylinder(c1), Surface3::Cylinder(c2)) => {
-                self.check_cylinder_cylinder_tangent(f1_idx, f2_idx, c1, c2, tangent_threshold)
-            }
-            _ => None, // General case not implemented
-        }
-    }
-
-    /// Check if two planes are nearly parallel (tangent).
-    fn check_plane_plane_tangent(
-        &self,
-        f1_idx: usize,
-        f2_idx: usize,
-        p1: &Plane,
-        p2: &Plane,
-        tangent_threshold: f64,
-    ) -> Option<NearTangentFaceInfo> {
-        // Check if normals are nearly parallel (or anti-parallel)
-        let n1 = p1.normal.normalize_or_zero();
-        let n2 = p2.normal.normalize_or_zero();
-        let dot = n1.dot(n2).abs();
-
-        if dot < 0.9999 {
-            return None; // Not nearly parallel
-        }
-
-        // Compute distance between planes
-        let distance = (p2.origin - p1.origin).dot(n1).abs();
-
-        if distance > tangent_threshold {
-            return None; // Too far apart
-        }
-
-        // Check if faces overlap in XY projection
-        let pts1 = self.ds.face_boundary_points(f1_idx);
-        let pts2 = self.ds.face_boundary_points(f2_idx);
-
-        if !self.faces_boundaries_overlap(&pts1, &pts2, tangent_threshold) {
-            return None;
-        }
-
-        Some(NearTangentFaceInfo {
-            face_a: f1_idx,
-            face_b: f2_idx,
-            distance,
-            tangent_type: NearTangentType::PlaneParallel,
-            should_merge: distance < tangent_threshold * 0.1,
-        })
-    }
-
-    /// Check if a plane and cylinder are nearly tangent.
-    fn check_plane_cylinder_tangent(
-        &self,
-        f1_idx: usize,
-        f2_idx: usize,
-        plane: &Plane,
-        cyl: &CylindricalSurface,
-        tangent_threshold: f64,
-    ) -> Option<NearTangentFaceInfo> {
-        // A plane is tangent to a cylinder if:
-        // 1. Plane normal is perpendicular to cylinder axis
-        // 2. Distance from cylinder axis to plane equals radius
-
-        let axis = cyl.axis.normalize_or_zero();
-        let normal = plane.normal.normalize_or_zero();
-
-        // Check perpendicularity
-        let axis_normal_dot = axis.dot(normal).abs();
-        if axis_normal_dot > 0.01 {
-            return None; // Not perpendicular
-        }
-
-        // Compute distance from cylinder axis to plane
-        let axis_point = cyl.origin;
-        let dist_to_plane = (axis_point - plane.origin).dot(normal).abs();
-        let radius_dist = (dist_to_plane - cyl.radius).abs();
-
-        if radius_dist > tangent_threshold {
-            return None; // Not tangent
-        }
-
-        Some(NearTangentFaceInfo {
-            face_a: f1_idx,
-            face_b: f2_idx,
-            distance: radius_dist,
-            tangent_type: NearTangentType::CylinderPlane,
-            should_merge: radius_dist < tangent_threshold * 0.1,
-        })
-    }
-
-    /// Check if a plane and sphere are nearly tangent.
-    fn check_plane_sphere_tangent(
-        &self,
-        f1_idx: usize,
-        f2_idx: usize,
-        plane: &Plane,
-        sph: &SphericalSurface,
-        tangent_threshold: f64,
-    ) -> Option<NearTangentFaceInfo> {
-        // A plane is tangent to a sphere if distance from center to plane equals radius
-        let normal = plane.normal.normalize_or_zero();
-        let dist_to_plane = (sph.center - plane.origin).dot(normal).abs();
-        let radius_dist = (dist_to_plane - sph.radius).abs();
-
-        if radius_dist > tangent_threshold {
-            return None; // Not tangent
-        }
-
-        // Check if tangent point is within face boundaries
-        let tangent_point = sph.center - normal * sph.radius * dist_to_plane.signum();
-        let pts1 = self.ds.face_boundary_points(f1_idx);
-        let pts2 = self.ds.face_boundary_points(f2_idx);
-
-        // Simple bounding box check for tangent point
-        if !self.point_near_boundary(&tangent_point, &pts1, tangent_threshold * 10.0)
-            && !self.point_near_boundary(&tangent_point, &pts2, tangent_threshold * 10.0)
-        {
-            return None;
-        }
-
-        Some(NearTangentFaceInfo {
-            face_a: f1_idx,
-            face_b: f2_idx,
-            distance: radius_dist,
-            tangent_type: NearTangentType::SpherePlane,
-            should_merge: radius_dist < tangent_threshold * 0.1,
-        })
-    }
-
-    /// Check if two cylinders are nearly tangent.
-    fn check_cylinder_cylinder_tangent(
-        &self,
-        f1_idx: usize,
-        f2_idx: usize,
-        c1: &CylindricalSurface,
-        c2: &CylindricalSurface,
-        tangent_threshold: f64,
-    ) -> Option<NearTangentFaceInfo> {
-        // Check if cylinders have parallel axes
-        let a1 = c1.axis.normalize_or_zero();
-        let a2 = c2.axis.normalize_or_zero();
-
-        if a1.dot(a2).abs() < 0.999 {
-            return None; // Axes not parallel
-        }
-
-        // Compute distance between axes
-        let v = c2.origin - c1.origin;
-        let perp = v - a1 * v.dot(a1);
-        let axis_distance = perp.length();
-
-        // Check if tangent (distance equals sum or difference of radii)
-        let dist_to_sum = (axis_distance - (c1.radius + c2.radius)).abs();
-        let dist_to_diff = (axis_distance - (c1.radius - c2.radius).abs()).abs();
-        let min_dist = dist_to_sum.min(dist_to_diff);
-
-        if min_dist > tangent_threshold {
-            return None; // Not tangent
-        }
-
-        Some(NearTangentFaceInfo {
-            face_a: f1_idx,
-            face_b: f2_idx,
-            distance: min_dist,
-            tangent_type: NearTangentType::CylinderCylinder,
-            should_merge: min_dist < tangent_threshold * 0.1,
-        })
-    }
-
-    /// Check if two face boundaries overlap in their planar projections.
-    fn faces_boundaries_overlap(&self, pts1: &[DVec3], pts2: &[DVec3], tol: f64) -> bool {
-        if pts1.is_empty() || pts2.is_empty() {
-            return false;
-        }
-
-        // Simple bounding box overlap check
-        let mut min1 = DVec3::splat(f64::INFINITY);
-        let mut max1 = DVec3::splat(f64::NEG_INFINITY);
-        let mut min2 = DVec3::splat(f64::INFINITY);
-        let mut max2 = DVec3::splat(f64::NEG_INFINITY);
-
-        for p in pts1 {
-            min1 = min1.min(*p);
-            max1 = max1.max(*p);
-        }
-        for p in pts2 {
-            min2 = min2.min(*p);
-            max2 = max2.max(*p);
-        }
-
-        // Check if bounding boxes overlap in all dimensions
-        for i in 0..3 {
-            if max1[i] + tol < min2[i] || max2[i] + tol < min1[i] {
-                return false;
-            }
-        }
-
-        true
-    }
-
-    /// Check if a point is near a boundary.
-    fn point_near_boundary(&self, point: &DVec3, boundary: &[DVec3], tol: f64) -> bool {
-        // Check bounding box first
-        let mut min_pt = DVec3::splat(f64::INFINITY);
-        let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
-        for p in boundary {
-            min_pt = min_pt.min(*p);
-            max_pt = max_pt.max(*p);
-        }
-
-        for i in 0..3 {
-            if point[i] < min_pt[i] - tol || point[i] > max_pt[i] + tol {
-                return false;
-            }
-        }
-
-        true
-    }
-
-    /// Detect and handle near-coincident faces.
-    ///
-    /// This function identifies face pairs that are nearly coincident (overlapping)
-    /// and decides whether they should be merged or marked as shared.
-    ///
-    /// # Returns
-    /// A vector of `NearCoincidentFaceInfo` describing detected near-coincident face pairs.
-    pub fn handle_near_coincident_faces(&self) -> Vec<NearCoincidentFaceInfo> {
-        let mut coincident_faces = Vec::new();
-
-        let a_fcount = self.ds.a_face_count;
-        let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.faces.len());
-        while fit.more() {
-            let pk = fit.value();
-            let f1_idx = pk.i1; let f2_idx = pk.i2;
-            let coincident_threshold = self.ff_tol(f1_idx, f2_idx) * 10.0;
-            if let Some(info) = self.check_near_coincident_faces(f1_idx, f2_idx, coincident_threshold) { coincident_faces.push(info); }
-            fit.next();
-        }
-
-        coincident_faces
-    }
-
-    /// Check if two faces are nearly coincident.
-    fn check_near_coincident_faces(
-        &self,
-        f1_idx: usize,
-        f2_idx: usize,
-        coincident_threshold: f64,
-    ) -> Option<NearCoincidentFaceInfo> {
-        let face1 = &self.ds.faces[f1_idx];
-        let face2 = &self.ds.faces[f2_idx];
-
-        // Skip if same origin
-        if face1.origin == face2.origin {
-            return None;
-        }
-
-        // Check surface compatibility
-        if !self.surfaces_glue_compatible(&face1.surface, &face2.surface) {
-            return None;
-        }
-
-        // Get boundary points
-        let pts1 = self.ds.face_boundary_points(f1_idx);
-        let pts2 = self.ds.face_boundary_points(f2_idx);
-
-        // Sample interior points
-        let interior1 = self.sample_face_interior(f1_idx, 4);
-        let interior2 = self.sample_face_interior(f2_idx, 4);
-
-        // Check distances
-        let mut max_distance = 0.0_f64;
-        let mut overlap_count = 0;
-        let total_points = interior1.len() + interior2.len();
-
-        if total_points == 0 {
-            return None;
-        }
-
-        // Check interior points of face1 against face2 surface
-        for p in &interior1 {
-            let dist = self.point_to_surface_distance(*p, &face2.surface);
-            if dist < coincident_threshold {
-                overlap_count += 1;
-            }
-            max_distance = max_distance.max(dist);
-        }
-
-        // Check interior points of face2 against face1 surface
-        for p in &interior2 {
-            let dist = self.point_to_surface_distance(*p, &face1.surface);
-            if dist < coincident_threshold {
-                overlap_count += 1;
-            }
-            max_distance = max_distance.max(dist);
-        }
-
-        // If most points are within threshold, consider faces coincident
-        let overlap_ratio = overlap_count as f64 / total_points as f64;
-        if overlap_ratio < 0.5 {
-            return None;
-        }
-
-        // Compute approximate overlap area
-        let overlap_area = self.compute_approximate_overlap_area(&pts1, &pts2);
-
-        Some(NearCoincidentFaceInfo {
-            face_a: f1_idx,
-            face_b: f2_idx,
-            max_distance,
-            overlap_area,
-            should_merge: max_distance < coincident_threshold * 0.1,
-        })
-    }
-
-    /// Sample interior points on a face.
-    fn sample_face_interior(&self, face_idx: usize, samples_per_dim: usize) -> Vec<DVec3> {
-        let _face = &self.ds.faces[face_idx];
-        let boundary = self.ds.face_boundary_points(face_idx);
-
-        if boundary.len() < 3 {
-            return Vec::new();
-        }
-
-        // Compute centroid
-        let centroid: DVec3 = boundary.iter().sum::<DVec3>() / boundary.len() as f64;
-
-        // Sample points along lines from centroid to boundary midpoints
-        let mut interior_points = Vec::new();
-
-        for i in 0..boundary.len() {
-            let p1 = boundary[i];
-            let p2 = boundary[(i + 1) % boundary.len()];
-            let mid = (p1 + p2) * 0.5;
-
-            for j in 1..=samples_per_dim {
-                let t = j as f64 / (samples_per_dim + 1) as f64;
-                let sample = centroid + (mid - centroid) * t;
-                interior_points.push(sample);
-            }
-        }
-
-        interior_points
-    }
-
-    /// Compute distance from a point to a surface.
-    fn point_to_surface_distance(&self, point: DVec3, surface: &Surface3) -> f64 {
-        match surface {
-            Surface3::Plane(p) => {
-                let normal = p.normal.normalize_or_zero();
-                (point - p.origin).dot(normal).abs()
-            }
-            Surface3::Sphere(s) => {
-                let dist_to_center = (point - s.center).length();
-                (dist_to_center - s.radius).abs()
-            }
-            Surface3::Cylinder(c) => {
-                let axis = c.axis.normalize_or_zero();
-                let v = point - c.origin;
-                let axial = v.dot(axis);
-                let radial = v - axis * axial;
-                (radial.length() - c.radius).abs()
-            }
-            Surface3::Cone(cone) => {
-                // Simplified: distance to cone surface
-                let axis = cone.axis_dir();
-                let v = point - cone.apex;
-                let axial = v.dot(axis);
-                let radial = (v - axis * axial).length();
-                let expected_radius = axial * cone.half_angle_rad.tan();
-                (radial - expected_radius).abs()
-            }
-            Surface3::Torus(t) => {
-                // Simplified: distance to torus surface
-                let axis = t.axis.normalize_or_zero();
-                let v = point - t.center;
-                let axial = v.dot(axis);
-                let in_plane = v - axis * axial;
-                let in_plane_dist = in_plane.length();
-                let tube_center_dist = (in_plane_dist - t.major_radius).abs();
-                let tube_dist = (tube_center_dist * tube_center_dist + axial * axial).sqrt();
-                (tube_dist - t.minor_radius).abs()
-            }
-            _ => {
-                // For other surfaces, use projection
-                let proj = rcad_kernel::projection::closest_point_on_surface(surface, point, 16);
-                proj.distance
-            }
-        }
-    }
-
-    /// Compute approximate overlap area between two face boundaries.
-    fn compute_approximate_overlap_area(&self, pts1: &[DVec3], pts2: &[DVec3]) -> f64 {
-        // Compute area of each face
-        let area1 = self.compute_polygon_area(pts1);
-        let area2 = self.compute_polygon_area(pts2);
-
-        // Return the smaller area as an approximation of overlap
-        area1.min(area2)
-    }
-
-    /// Compute approximate area of a polygon.
-    fn compute_polygon_area(&self, pts: &[DVec3]) -> f64 {
-        if pts.len() < 3 {
-            return 0.0;
-        }
-
-        // Find best-fit plane and compute 2D area
-        let centroid: DVec3 = pts.iter().sum::<DVec3>() / pts.len() as f64;
-
-        // Use Newell's method to find normal
-        let mut normal = DVec3::ZERO;
-        for i in 0..pts.len() {
-            let p1 = pts[i];
-            let p2 = pts[(i + 1) % pts.len()];
-            normal.x += (p1.y - p2.y) * (p1.z + p2.z);
-            normal.y += (p1.z - p2.z) * (p1.x + p2.x);
-            normal.z += (p1.x - p2.x) * (p1.y + p2.y);
-        }
-        let normal = normal.normalize_or_zero();
-
-        // Project to 2D and compute area
-        let (u_dir, v_dir) = if normal.x.abs() > 0.9 {
-            (DVec3::Y, DVec3::Z)
-        } else {
-            (DVec3::X, DVec3::Y)
-        };
-
-        let mut area = 0.0;
-        for i in 0..pts.len() {
-            let p1 = pts[i] - centroid;
-            let p2 = pts[(i + 1) % pts.len()] - centroid;
-            let u1 = p1.dot(u_dir);
-            let v1 = p1.dot(v_dir);
-            let u2 = p2.dot(u_dir);
-            let v2 = p2.dot(v_dir);
-            area += u1 * v2 - u2 * v1 ;
-        }
-
-        area.abs() * 0.5
-    }
-
-    /// Detect and handle micro-gaps between faces.
-    ///
-    /// This function identifies small gaps between faces that can cause
-    /// boolean operation failures and attempts to bridge them using
-    /// fuzzy tolerance.
-    ///
-    /// # Returns
-    /// A vector of `MicroGapInfo` describing detected micro-gaps.
-    pub fn handle_micro_gaps(&self) -> Vec<MicroGapInfo> {
-        let mut gaps = Vec::new();
-
-        // Check edge-to-edge gaps
-        let a_edges: Vec<usize> = self.ds.edges
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| e.origin == ShapeOrigin::ShapeA)
-            .map(|(i, _)| i)
-            .collect();
-
-        let b_edges: Vec<usize> = self.ds.edges
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| e.origin == ShapeOrigin::ShapeB)
-            .map(|(i, _)| i)
-            .collect();
-
-        for &ea in &a_edges {
-            for &eb in &b_edges {
-                let ee = self.ee_tol(ea, eb);
-                let gap_threshold = ee * 1000.0;
-                if let Some(gap) = self.check_micro_gap(ea, eb, gap_threshold, ee) {
-                    gaps.push(gap);
-                }
-            }
-        }
-
-        gaps
-    }
-
-    /// Check if there's a micro-gap between two edges.
-    fn check_micro_gap(&self, e1: usize, e2: usize, gap_threshold: f64, coincident_tol: f64) -> Option<MicroGapInfo> {
-        let _edge1 = &self.ds.edges[e1];
-        let _edge2 = &self.ds.edges[e2];
-
-        // Sample points along both edges
-        let pts1 = self.sample_edge_points(e1, 8);
-        let pts2 = self.sample_edge_points(e2, 8);
-
-        if pts1.is_empty() || pts2.is_empty() {
-            return None;
-        }
-
-        // Find minimum distance between edges
-        let mut min_gap = f64::INFINITY;
-        for p1 in &pts1 {
-            for p2 in &pts2 {
-                let dist = (*p1 - *p2).length();
-                min_gap = min_gap.min(dist);
-            }
-        }
-
-        // Check if it's a micro-gap (within threshold but not coincident)
-        if min_gap <= coincident_tol {
-            return None; // Already coincident
-        }
-        if min_gap > gap_threshold {
-            return None; // Too large for micro-gap handling
-        }
-
-        // Check if edges are approximately parallel
-        let parallel = self.edges_approximately_parallel(e1, e2, 0.1);
-
-        Some(MicroGapInfo {
-            edge_a: e1,
-            edge_b: e2,
-            gap_distance: min_gap,
-            can_bridge: min_gap < gap_threshold && parallel,
-        })
-    }
-
-    /// Sample points along an edge.
-    fn sample_edge_points(&self, edge_idx: usize, n_samples: usize) -> Vec<DVec3> {
-        let edge = &self.ds.edges[edge_idx];
-        let [t0, t1] = edge.t_range;
-
-        (0..n_samples)
-            .map(|i| {
-                let t = t0 + (t1 - t0) * i as f64 / (n_samples - 1).max(1) as f64;
-                edge.curve.point_at(t)
-            })
-            .filter(|p| p.is_finite())
-            .collect()
-    }
-
-    /// Check if two edges are approximately parallel.
-    fn edges_approximately_parallel(&self, e1: usize, e2: usize, angle_tol: f64) -> bool {
-        let edge1 = &self.ds.edges[e1];
-        let edge2 = &self.ds.edges[e2];
-
-        // Get edge directions
-        let dir1 = match &edge1.curve {
-            Curve3::Line(l) => l.direction.normalize_or_zero(),
-            Curve3::Circle(_) | Curve3::Ellipse(_) => {
-                // For curved edges, check tangent at midpoint
-                let t = (edge1.t_range[0] + edge1.t_range[1]) * 0.5;
-                let tangent = edge1.curve.tangent_at(t);
-                tangent.normalize_or_zero()
-            }
-            _ => return false,
-        };
-
-        let dir2 = match &edge2.curve {
-            Curve3::Line(l) => l.direction.normalize_or_zero(),
-            Curve3::Circle(_) | Curve3::Ellipse(_) => {
-                let t = (edge2.t_range[0] + edge2.t_range[1]) * 0.5;
-                let tangent = edge2.curve.tangent_at(t);
-                tangent.normalize_or_zero()
-            }
-            _ => return false,
-        };
-
-        // Check parallelism
-        let cross = dir1.cross(dir2);
-        let sin_angle = cross.length();
-
-        sin_angle < angle_tol
-    }
-
-    /// Detect and handle nearly coincident edges.
-    ///
-    /// This function identifies edge pairs that are nearly coincident and
-    /// decides whether they should be merged or marked as shared.
-    ///
-    /// # Returns
-    /// A vector of `CoincidentEdgeInfo` describing detected coincident edge pairs.
-    pub fn handle_coincident_edges(&self) -> Vec<CoincidentEdgeInfo> {
-        let mut coincident_edges = Vec::new();
-
-        let a_edges: Vec<usize> = self.ds.edges
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| e.origin == ShapeOrigin::ShapeA)
-            .map(|(i, _)| i)
-            .collect();
-
-        let b_edges: Vec<usize> = self.ds.edges
-            .iter()
-            .enumerate()
-            .filter(|(_, e)| e.origin == ShapeOrigin::ShapeB)
-            .map(|(i, _)| i)
-            .collect();
-
-        for &ea in &a_edges {
-            for &eb in &b_edges {
-                let coincident_threshold = self.ee_tol(ea, eb) * 10.0;
-                if let Some(info) = self.check_coincident_edges(ea, eb, coincident_threshold) {
-                    coincident_edges.push(info);
-                }
-            }
-        }
-
-        coincident_edges
-    }
-
-    /// Check if two edges are nearly coincident.
-    fn check_coincident_edges(
-        &self,
-        e1: usize,
-        e2: usize,
-        coincident_threshold: f64,
-    ) -> Option<CoincidentEdgeInfo> {
-        let edge1 = &self.ds.edges[e1];
-        let edge2 = &self.ds.edges[e2];
-
-        // Skip if same origin
-        if edge1.origin == edge2.origin {
-            return None;
-        }
-
-        // Check if curves are compatible
-        if !self.edges_curve_compatible(e1, e2, coincident_threshold) {
-            return None;
-        }
-
-        // Sample points and check distances
-        let pts1 = self.sample_edge_points(e1, 16);
-        let pts2 = self.sample_edge_points(e2, 16);
-
-        if pts1.is_empty() || pts2.is_empty() {
-            return None;
-        }
-
-        // Compute maximum distance and overlap ratio
-        let mut max_distance = 0.0_f64;
-        let mut close_count = 0;
-
-        for p1 in &pts1 {
-            let min_dist = pts2
-                .iter()
-                .map(|p2| (*p1 - *p2).length())
-                .fold(f64::INFINITY, f64::min);
-            max_distance = max_distance.max(min_dist);
-            if min_dist < coincident_threshold {
-                close_count += 1;
-            }
-        }
-
-        if max_distance > coincident_threshold {
-            return None;
-        }
-
-        let overlap_ratio = close_count as f64 / pts1.len() as f64;
-
-        Some(CoincidentEdgeInfo {
-            edge_a: e1,
-            edge_b: e2,
-            max_distance,
-            overlap_ratio,
-            should_merge: max_distance < coincident_threshold * 0.1 && overlap_ratio > 0.9,
-        })
-    }
-}
-
-
+} // close impl
 mod tests {
     use super::*;
     use rcad_kernel::{BRep, PrimitiveSolid};

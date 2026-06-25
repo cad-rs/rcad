@@ -39,6 +39,8 @@ impl ConnexityBlock {
     pub fn shapes(&self) -> &[usize] { &self.shapes }
     pub fn add_shape(&mut self, s: usize) { self.shapes.push(s); }
     pub fn loops(&self) -> &[Vec<usize>] { &self.loops }
+    pub fn change_shapes(&mut self) -> &mut Vec<usize> { &mut self.shapes }
+    pub fn change_loops(&mut self) -> &mut Vec<Vec<usize>> { &mut self.loops }
 }
 
 impl PassKey {

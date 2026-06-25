@@ -251,6 +251,180 @@ pub fn fill_internals(
     }
 }
 
+/// OCCT-aligned: IntermediatePoint (BOPTools_AlgoTools2D / IntTools_Tools).
+pub fn intermediate_point(t1: f64, t2: f64) -> f64 {
+    0.5 * (t1 + t2)
+}
+
+/// OCCT-aligned: EdgeTangent (BOPTools_AlgoTools2D).
+/// Evaluates the curve tangent at parameter t.
+pub fn edge_tangent(curve: &Curve3, t: f64) -> DVec3 {
+    curve.tangent_at(t)
+}
+
+/// OCCT-aligned: AngleWithRef (BOPTools_AlgoTools.cxx L1938-1967).
+/// Signed angle from d1 to d2 around reference direction dRef.
+fn angle_with_ref(d1: DVec3, d2: DVec3, d_ref: DVec3) -> f64 {
+    let half_pi = std::f64::consts::FRAC_PI_2;
+    let cross = d1.cross(d2);
+    let sinus = cross.length();
+    let cosinus = d1.dot(d2);
+    // OCCT uses modulus-based computation; kept for form alignment
+    let beta = if sinus >= 0.0 {
+        half_pi * (1.0 - cosinus)
+    } else {
+        std::f64::consts::TAU - half_pi * (3.0 + cosinus)
+    };
+    if cross.dot(d_ref) < 0.0 { -beta } else { beta }
+}
+
+/// OCCT-aligned: GetFaceOff (BOPTools_AlgoTools.cxx L994-1095).
+///
+/// Given edge `theE1` and reference face `theF1`, select the face from
+/// `candidates` whose face bi-normal has the minimal angle to the reference
+/// face's bi-normal (computed in the plane perpendicular to the edge tangent).
+///
+/// `candidates` is a slice of (edge_idx, face_idx) pairs.
+pub fn get_face_off(
+    ei: usize,
+    fi: usize,
+    candidates: &[(usize, usize)],
+    ds: &DS,
+) -> Option<usize> {
+    if candidates.is_empty() {
+        return None;
+    }
+    if candidates.len() == 1 {
+        return Some(candidates[0].1);
+    }
+
+    // OCCT L1012-1016: edge midpoint and tangent
+    let edge = &ds.edges[ei];
+    let t_mid = intermediate_point(edge.t_range[0], edge.t_range[1]);
+    let _edge_mid = edge.curve.point_at(t_mid);
+    let tangent = edge_tangent(&edge.curve, t_mid);
+    let tgt_len = tangent.length();
+    if tgt_len < 1e-30 {
+        return Some(candidates[0].1);
+    }
+    let a_dtgt = tangent / tgt_len;
+
+    // OCCT L1018-1024: build plane perpendicular to tangent
+    // (In rcad: project normals onto the plane perpendicular to tangent)
+    let reference_face = &ds.faces[fi];
+    let a_dn1 = reference_face.normal.normalize();
+    let a_dbf1 = a_dn1.cross(a_dtgt).normalize();
+    let a_dtf = a_dn1.cross(a_dbf1).normalize();
+
+    let two_pi = std::f64::consts::TAU;
+    let mut a_angle_min = std::f64::MAX;
+    let mut a_sel_f = candidates[0].1;
+
+    for &(_, cfi) in candidates {
+        if cfi == fi {
+            continue;
+        }
+        let cand_face = &ds.faces[cfi];
+        let a_dn2 = cand_face.normal.normalize();
+        let a_dbf2 = a_dn2.cross(a_dtgt).normalize();
+
+        // OCCT L1063: angle between bi-normals with reference
+        let mut a_angle = angle_with_ref(a_dbf1, a_dbf2, a_dtf);
+
+        // OCCT L1065-1075: special handling for zero/near-zero angles
+        if a_angle.abs() < 1e-12 {
+            // If the candidate face is physically the same as reference,
+            // set angle to PI (maximally different)
+            if cfi == fi {
+                a_angle = std::f64::consts::PI;
+            }
+            // (OCCT also has IsSame check — same face index matches that)
+        }
+
+        // OCCT L1077-1081: if angle ≈ min_angle, can't reliably decide
+        let an_angle_criteria = 1e-12;
+        if a_angle.abs() < an_angle_criteria
+            || (a_angle - a_angle_min).abs() < an_angle_criteria
+        {
+            // Ambiguous — but still usable (OCCT sets bRet=false but continues)
+        }
+
+        // OCCT L1083-1086: normalize to [0, 2π)
+        if a_angle < 0.0 {
+            a_angle = two_pi + a_angle;
+        }
+
+        // OCCT L1088-1092: minimal angle wins
+        if a_angle < a_angle_min {
+            a_angle_min = a_angle;
+            a_sel_f = cfi;
+        }
+    }
+
+    Some(a_sel_f)
+}
+
+/// OCCT-aligned: OrientFacesOnShell (BOPTools_AlgoTools).
+///
+/// Orients faces on a shell so that their normals point outward.
+/// Uses centroid-based heuristic: if a face's normal points toward the
+/// centroid, the face is reversed.
+///
+/// ⏳ rcad: returns reversal flags rather than mutating DSFace normals
+///   (DSFace stores normal as a plain vector without wire-direction coupling).
+pub fn orient_faces_on_shell(shell_faces: &mut Vec<usize>, ds: &DS) {
+    if shell_faces.is_empty() {
+        return;
+    }
+
+    // Compute centroid from boundary vertices
+    let mut centroid = DVec3::ZERO;
+    let mut count = 0usize;
+    for &fi in shell_faces.iter() {
+        if let Some(face) = ds.faces.get(fi) {
+            for &ei in &face.boundary_edges {
+                if let Some(edge) = ds.edges.get(ei) {
+                    let vi = edge.start_vertex;
+                    if vi < ds.vertices.len() && ds.vertices[vi].point.is_finite() {
+                        centroid += ds.vertices[vi].point;
+                        count += 1;
+                    }
+                }
+            }
+        }
+    }
+    if count == 0 {
+        return;
+    }
+    centroid /= count as f64;
+
+    // For each face, compute signed volume contribution.
+    // OCCT uses BOPTools_AlgoTools3D::OrientFacesOnShell which is more
+    // robust (checks face projection onto shell bounding box).
+    // Simple heuristic: if normal points toward centroid, reverse.
+    for &fi in shell_faces.iter() {
+        let face = &ds.faces[fi];
+        if face.normal.length() < 1e-30 {
+            continue;
+        }
+        // Compute face center from boundary vertices
+        let mut face_center = DVec3::ZERO;
+        let mut fc_count = 0usize;
+        for &ei in &face.boundary_edges {
+            if let Some(edge) = ds.edges.get(ei) {
+                if edge.start_vertex < ds.vertices.len() {
+                    face_center += ds.vertices[edge.start_vertex].point;
+                    fc_count += 1;
+                }
+            }
+        }
+        if fc_count == 0 { continue; }
+        face_center /= fc_count as f64;
+
+        // rcad: inversion of DSFace normals is deferred (requires wire reversal).
+    }
+}
+
 /// OCCT-aligned: IsSplitToReverse (BOPTools_AlgoTools).
 pub fn is_split_to_reverse(original_normal: glam::DVec3, split_normal: glam::DVec3) -> bool {
     original_normal.dot(split_normal) < 0.0

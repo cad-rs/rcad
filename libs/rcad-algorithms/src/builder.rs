@@ -6,6 +6,7 @@ use rcad_kernel::BRep;
 use rcad_kernel::geom::{Curve2dEval, SurfaceEval, *};
 use rcad_kernel::topology::*;
 
+use crate::bopds::builder_solid::BuilderSolid;
 use crate::bopds::ds::*;
 use crate::classify::{Classification, classify_point};
 use crate::history::{
@@ -1198,32 +1199,14 @@ impl<'a> BooleanBuilder<'a> {
         assignments
     }
 
-    /// ✅ OCCT-aligned: BuildSplitSolids (Builder_3.cxx L413-618, BOPAlgo_BuilderSolid).
-    ///   Group classified shells into result solids by (source_solid × state).
-    ///
-    /// OCCT: for each (draft_solid_from_aDraftSolids, state_from_myInParts) pair,
-    ///   collect the classified shell faces and build TopoDS_Solid via
-    ///   BOPAlgo_SplitSolid.  Non-connected components become separate solids.
-    ///   Results stored in myImages[source_solid] → list of split solids
-    ///   (L545-618) and myOrigins[split_solid] → source solid.
-    ///
-    /// rcad: groups shells by (origin, state), then runs face-connectivity
-    ///   analysis (BFS over shared edges) to detect disconnected components.
-    ///   Each connected face set becomes one solid.  This matches OCCT's
-    ///   BOPAlgo_BuilderSolid which groups faces into closed shells by
-    ///   edge adjacency (non-connected components → separate solids).
-    ///   Stores solid-level mapping in my_solid_images / my_solid_origins.
+    /// ✅ OCCT-aligned: BuildSplitSolids (Builder_3.cxx L413-618).
+    ///   Uses BuilderSolid (= OCCT BOPAlgo_SplitSolid/BOPAlgo_BuilderSolid)
+    ///   to build closed solids from the classified face set.
     fn build_split_solids(&self, result: &mut ResultBuilder,
                           assignments: &[(usize, usize, &'static str)]) -> Vec<Vec<usize>> {
         let mut result_solids: Vec<Vec<usize>> = Vec::new();
 
-        // OCCT-aligned (Builder_3.cxx L494-511): for each source solid, combine
-        // draft solid faces + IN faces into ONE solid via BOPAlgo_SplitSolid.
-        // rcad: group shells by (operation, state, origin) — each group becomes
-        // one solid.
-        //   Union:     keep OUT shells (both A and B)
-        //   Intersect: keep IN shells (both A and B)
-        //   Difference:  A-OUT + B-IN ∪ B-ON (the cut surface)
+        // Group shells by (operation, state, origin) — OCCT L494-511
         let mut group: Vec<usize> = Vec::new();
         for &(si, origin, state) in assignments {
             let keep = match self.op {
@@ -1234,31 +1217,73 @@ impl<'a> BooleanBuilder<'a> {
                     _ => false,
                 },
             };
-            if keep {
-                group.push(si);
-            }
+            if keep { group.push(si); }
         }
-        if group.is_empty() {
-            return result_solids;
-        }
+        if group.is_empty() { return result_solids; }
 
-        // Collect all face indices from grouped shells into one consolidated shell.
-        // OCCT BOPAlgo_SplitSolid takes ALL faces (draft + IN) and builds closed
-        // solids from the combined set — it does NOT require edge-index identity
-        // between faces.  rcad's BFS connectivity fails when intersection edges
-        // have different indices per face (rcad arch: DsEdge vs IC edge).  Skip
-        // BFS; push all group faces as one shell.
-        let mut group_faces: Vec<usize> = Vec::new();
+        // Collect result face indices from grouped shells
+        let mut result_fis: Vec<usize> = Vec::new();
         for &si in &group {
             if si < result.shells.len() {
-                group_faces.extend(&result.shells[si]);
+                result_fis.extend(&result.shells[si]);
             }
         }
-        if !group_faces.is_empty() {
+        if result_fis.is_empty() { return result_solids; }
+
+        // Build result-fi → DS-fi mapping
+        let mut result_to_ds: Vec<Option<usize>> = vec![None; result.faces.len()];
+        for (rfi, origin) in result.face_origins.iter().enumerate() {
+            let (origin_val, src_fi) = match origin {
+                FaceOrigin::FromA(sfi) => (ShapeOrigin::ShapeA, *sfi),
+                FaceOrigin::FromB(sfi) => (ShapeOrigin::ShapeB, *sfi),
+                _ => continue,
+            };
+            result_to_ds[rfi] = self.ds.faces.iter().position(|f|
+                f.origin == origin_val && f.source_face_idx == src_fi);
+        }
+
+        // Collect unique DS face indices for BuilderSolid
+        let mut ds_fis: Vec<usize> = result_fis.iter()
+            .filter_map(|&rfi| result_to_ds.get(rfi).copied().flatten())
+            .collect();
+        ds_fis.sort_unstable();
+        ds_fis.dedup();
+
+        // Build reverse map: DS-fi → Vec<result-fi>
+        use std::collections::HashMap;
+        let mut ds_to_result: HashMap<usize, Vec<usize>> = HashMap::new();
+        for &rfi in &result_fis {
+            if let Some(ds_fi) = result_to_ds.get(rfi).copied().flatten() {
+                ds_to_result.entry(ds_fi).or_default().push(rfi);
+            }
+        }
+
+        // OCCT L513-518: use BuilderSolid
+        let mut bs = BuilderSolid::new();
+        bs.set_shapes(&ds_fis);
+        bs.perform(&self.ds);
+
+        // OCCT L539-617: register each area as a solid
+        for area_ds_fis in bs.areas() {
+            let mut area_rfis: Vec<usize> = Vec::new();
+            for &ds_fi in area_ds_fis {
+                if let Some(rfis) = ds_to_result.get(&ds_fi) {
+                    area_rfis.extend(rfis);
+                }
+            }
+            if area_rfis.is_empty() { continue; }
             let csi = result.shells.len();
-            result.shells.push(group_faces);
+            result.shells.push(area_rfis);
             result_solids.push(vec![csi]);
         }
+
+        // Fallback: if BuilderSolid produced no areas
+        if result_solids.is_empty() {
+            let csi = result.shells.len();
+            result.shells.push(result_fis);
+            result_solids.push(vec![csi]);
+        }
+
         result_solids
     }
 
