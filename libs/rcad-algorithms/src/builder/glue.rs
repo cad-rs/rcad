@@ -792,6 +792,9 @@ mod glue_tests {
     use rcad_kernel::PrimitiveSolid;
     use rcad_kernel::geom::{SphericalSurface, CylindricalSurface, ConicalSurface, ToroidalSurface};
     use glam::DAffine3;
+    use glam::DVec2;
+    use crate::builder::split_polygon::split_uv_polygon_at_seam;
+    use crate::builder::split_polygon2::split_uv_polygon_torus_double;
 
     fn unit_box() -> BRep {
         BRep::from_primitive(PrimitiveSolid::Box {
@@ -1501,7 +1504,7 @@ mod glue_tests {
         use crate::BooleanOpType;
         use crate::RetryPolicy;
         use std::collections::HashMap;
-use glam::DVec3;
+        use glam::DVec3;
         use rcad_modeling::make_cylinder_brep;
 
         // OCCT ZD3 geometry:
