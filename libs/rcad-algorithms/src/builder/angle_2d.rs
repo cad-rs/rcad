@@ -4,7 +4,12 @@
 //   clock_wise_angle: ✓ matches OCCT formula a1n - ao, epsilon guard
 //
 //   Angle2D: ✓ Tolerance2D + Resolution aligned (surface-aware)
-//   Differences: vertex tolerance uses default 1e-5 (OCCT BRep_Tool::Tolerance per-vertex)
+//   Architectural gap: vertex parameter t is provided by caller via domain array
+//     OCCT uses BRep_Tool::Parameter(aV, anEdge, myFace) — TopoDS stores
+//     per-vertex-per-edge parameter in its shape/vertex/edge data model.
+//     rcad DS lacks this per-vertex-on-edge parameter table.  Fix requires
+//     adding a `param_on_edge: HashMap<(usize,usize), f64>` to DS or
+//     storing the parameter in WireSegment/PaveBlock directly.
 
 use glam::DVec2;
 use rcad_kernel::geom::*;
