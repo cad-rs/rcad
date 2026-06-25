@@ -6464,7 +6464,8 @@ fn curve2d_default_range(curve: &Curve2d) -> [f64; 2] {
         Curve2d::ArchimedeanSpiral(_) | Curve2d::LogarithmicSpiral(_) => {
             [0.0, 4.0 * std::f64::consts::PI]
         }
-        Curve2d::SineWave(_) | Curve2d::BSpline(_) | Curve2d::Bezier(_) => [0.0, 1.0],
+        Curve2d::SineWave(_) | Curve2d::BSpline(_) | Curve2d::Bezier(_)
+        | Curve2d::Parabola(_) | Curve2d::Hyperbola(_) => [0.0, 1.0],
     }
 }
 
