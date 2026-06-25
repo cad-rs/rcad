@@ -17,6 +17,14 @@ pub fn curve2d_d1(curve: &Curve2d, t: f64) -> DVec2 {
             let minor = DVec2::new(-e.major_dir.y, e.major_dir.x);
             e.major_dir * (-e.major_radius * t.sin()) + minor * (e.minor_radius * t.cos())
         }
+        Curve2d::Parabola(p) => {
+            let perp = DVec2::new(-p.axis_dir.y, p.axis_dir.x);
+            (t / p.focal_param) * p.axis_dir + perp
+        }
+        Curve2d::Hyperbola(h) => {
+            let minor = DVec2::new(-h.major_dir.y, h.major_dir.x);
+            h.semi_major * t.sinh() * h.major_dir + h.semi_minor * t.cosh() * minor
+        }
         Curve2d::BSpline(b) => b.derivative_at(t),
         Curve2d::Bezier(b) => { let eps = 1e-7; (b.point_at(t + eps) - b.point_at(t - eps)) / (2.0 * eps) }
         Curve2d::Trimmed(tc) => curve2d_d1(&tc.curve, t),
@@ -28,17 +36,16 @@ pub fn curve2d_d2(curve: &Curve2d, t: f64) -> DVec2 {
     match curve {
         Curve2d::Line(_) => DVec2::ZERO,
         Curve2d::Circle(c) => c.radius * DVec2::new(-t.cos(), -t.sin()),
-                Curve2d::Parabola(p) => {
-            let d1 = DVec2::new(p.axis_dir.x / p.focal_param, p.axis_dir.y / p.focal_param);
-            d1
-        }
-        Curve2d::Hyperbola(c) => {
-            let minor = DVec2::new(-c.major_dir.y, c.major_dir.x);
-            c.semi_major * t.cosh() * c.major_dir + c.semi_minor * t.sinh() * minor
-        }
         Curve2d::Ellipse(e) => {
             let minor = DVec2::new(-e.major_dir.y, e.major_dir.x);
             e.major_dir * (-e.major_radius * t.cos()) + minor * (-e.minor_radius * t.sin())
+        }
+        Curve2d::Parabola(p) => {
+            (1.0 / p.focal_param) * p.axis_dir
+        }
+        Curve2d::Hyperbola(h) => {
+            let minor = DVec2::new(-h.major_dir.y, h.major_dir.x);
+            h.semi_major * t.cosh() * h.major_dir + h.semi_minor * t.sinh() * minor
         }
         _ => { let eps = 1e-7; (curve.point_at(t + eps) - 2.0 * curve.point_at(t) + curve.point_at(t - eps)) / (eps * eps) }
     }
@@ -57,7 +64,7 @@ pub fn curve2d_lprop_curvature(d1: DVec2, d2: DVec2, tol_sq: f64) -> f64 {
 
 pub fn curve2d_resolution(curve: &Curve2d, r_uv: f64) -> f64 {
     match curve {
-        Curve2d::Line(_) => r_uv,
+        Curve2d::Line(l) => r_uv / l.direction.length().max(1e-30),
         Curve2d::Circle(c) => {
             let r = c.radius;
             if r > r_uv / 2.0 { 2.0 * (r_uv / (2.0 * r)).asin() } else { std::f64::consts::TAU }
