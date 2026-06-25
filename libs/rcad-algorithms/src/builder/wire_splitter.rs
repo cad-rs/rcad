@@ -349,8 +349,8 @@ fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool, surface: &
 
 /// ✅ OCCT-aligned: ClockWiseAngle — OCCT BOPAlgo_WireSplitter_1.cxx L621-650
 ///
-///     angle_in: angle at incident vertex (in_flag=true)
-///     angle_out: angle at outgoing vertex (in_flag=false)
+/// - angle_in: angle at incident vertex (in_flag=true)
+/// - angle_out: angle at outgoing vertex (in_flag=false)
 fn clock_wise_angle(angle_in: f64, angle_out: f64) -> f64 {
     const TAU: f64 = std::f64::consts::TAU;
     let ai = if angle_in >= TAU { angle_in - TAU } else { angle_in };
