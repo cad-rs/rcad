@@ -885,23 +885,30 @@ impl DS {
     }
 
     fn load_brep(&mut self, brep: &BRep, origin: ShapeOrigin) {
-        let vert_offset = self.vertices.len();
         let edge_offset = self.edges.len();
 
-        // Vertices
+        // OCCT-aligned: share vertices at same 3D position between operands.
+        let mut local_to_ds: Vec<usize> = Vec::with_capacity(brep.vertices.len());
         for (local_i, v) in brep.vertices.iter().enumerate() {
-            self.vertices.push(DSVertex {
-                point: v.point,
-                origin: Some(origin),
-                geom_tol: rcad_kernel::vertex_tolerance(brep, local_i),
-                is_internal: false,
-            });
+            let tol = rcad_kernel::vertex_tolerance(brep, local_i).max(TOLERANCE_ABS);
+            if let Some(existing) = self.find_vertex_near(v.point, tol) {
+                local_to_ds.push(existing);
+            } else {
+                let vi = self.vertices.len();
+                self.vertices.push(DSVertex {
+                    point: v.point,
+                    origin: Some(origin),
+                    geom_tol: rcad_kernel::vertex_tolerance(brep, local_i),
+                    is_internal: false,
+                });
+                local_to_ds.push(vi);
+            }
         }
 
         // Edges
         for (i, edge) in brep.edges.iter().enumerate() {
-            let start = edge.start + vert_offset;
-            let end = edge.end + vert_offset;
+            let start = local_to_ds[edge.start];
+            let end = local_to_ds[edge.end];
 
             let curve = brep
                 .geom
@@ -1009,7 +1016,7 @@ impl DS {
                             Vec::new()
                         } else if edges_in_wire.len() == 1 {
                             let e = &brep.edges[edges_in_wire[0].idx];
-                            vec![e.start + vert_offset, e.end + vert_offset]
+                            vec![local_to_ds[e.start], local_to_ds[e.end]]
                         } else {
                             // For each consecutive pair of wire edges, find the
                             // shared vertex → the other vertex of the first edge
@@ -1029,7 +1036,7 @@ impl DS {
 
                                 // The non-shared vertex of e is the boundary vertex
                                 let non_shared = if shared == e.start { e.end } else { e.start };
-                                verts.push(non_shared + vert_offset);
+                                verts.push(local_to_ds[non_shared]);
                             }
                             verts
                         }
