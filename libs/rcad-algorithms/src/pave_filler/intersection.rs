@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+﻿use std::collections::HashSet;
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, Surface3};
@@ -100,6 +100,7 @@ impl<'a> super::PaveFiller<'a> {
             self.check_edge_edge_range(ae, be, r1, r2);
         }
     }
+    /// OCCT: PaveBlock range extraction (GetPBBox equivalent)
     pub(crate) fn collect_paveblock_ranges_static(ds: &DS, edge_idx: usize, edge_t_range: [f64; 2]) -> Vec<[f64; 2]> {
         let paves = &ds.edges[edge_idx].paves;
         if paves.is_empty() { return vec![edge_t_range]; }
@@ -173,6 +174,7 @@ impl<'a> super::PaveFiller<'a> {
             self.intersect_edge_face_range(ei, fi, &r);
         }
     }
+    /// OCCT BOPDS_Iterator: face BVH construction
     pub(crate) fn build_ds_bvh_face(&self, is_a: bool) -> crate::bvh::DsBvh {
         use crate::bvh::{Aabb, DsBvh};
         let (start, end) = if is_a {
@@ -211,6 +213,7 @@ impl<'a> super::PaveFiller<'a> {
         }
         DsBvh::build(indices, aabbs)
     }
+    /// rcad glue-mode acceleration (no OCCT equivalent)
     pub(crate) fn should_skip_ve_pass(&self) -> bool {
         if !self.use_glue {
             return false;
@@ -237,6 +240,7 @@ impl<'a> super::PaveFiller<'a> {
 
         a_verts == matched_a && !a_verts.is_empty()
     }
+    /// rcad glue-mode acceleration (no OCCT equivalent)
     pub(crate) fn should_skip_ee_pass(&self) -> bool {
         if !self.use_glue {
             return false;
@@ -262,6 +266,7 @@ impl<'a> super::PaveFiller<'a> {
 
         a_edges == matched_a && !a_edges.is_empty()
     }
+    /// rcad glue-mode acceleration (no OCCT equivalent)
     pub(crate) fn should_skip_vf_pass(&self) -> bool {
         if !self.use_glue {
             return false;
@@ -272,6 +277,7 @@ impl<'a> super::PaveFiller<'a> {
             && self.ds.shared_topology.fully_glued_faces.len()
                 == self.ds.a_face_count * (self.ds.faces.len() - self.ds.a_face_count)
     }
+    /// rcad glue-mode acceleration (no OCCT equivalent)
     pub(crate) fn should_skip_ef_pass(&self) -> bool {
         if !self.use_glue {
             return false;
@@ -282,6 +288,7 @@ impl<'a> super::PaveFiller<'a> {
             && self.ds.shared_topology.fully_glued_faces.len()
                 == self.ds.a_face_count * (self.ds.faces.len() - self.ds.a_face_count)
     }
+    /// rcad glue-mode acceleration (no OCCT equivalent)
     pub(crate) fn should_skip_ff_pass(&self) -> bool {
         if !self.use_glue {
             return false;
@@ -322,6 +329,7 @@ impl<'a> super::PaveFiller<'a> {
             fit.next();
         }
     }
+    /// OCCT PaveFiller_2.cxx L141-206: PerformVE
     pub(crate) fn perform_ve(&mut self) {
         // OCCT PaveFiller_2.cxx L143-206: FillShrunkData + BVH pair iteration
         //   with HasSubShape / HasFlag / HasInterf / HasInterfShapeSubShapes skips.
@@ -364,6 +372,7 @@ impl<'a> super::PaveFiller<'a> {
             }
         }
     }
+    /// OCCT PaveFiller_2.cxx L104-121: ComputeVE
     pub(crate) fn check_vertex_edge(&mut self, vi: usize, ei: usize) {
         let point = self.ds.vertices[vi].point;
         let edge_curve = self.ds.edges[ei].curve.clone();
@@ -447,6 +456,7 @@ impl<'a> super::PaveFiller<'a> {
             }
         }
     }
+    /// OCCT PaveFiller_3.cxx L145-244: PerformEE
     pub(crate) fn perform_ee(&mut self) {
         // OCCT PaveFiller_3.cxx L145-240: FillShrunkData + BVH pair iteration
         //   with HasFlag / PaveBlock emptiness / GetPBBox skip conditions.
@@ -523,6 +533,7 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
     // OCCT PaveFiller_3.cxx L215-296: GetPBBox + IntersectCurves + AddInterf
+    /// OCCT PaveFiller_3.cxx L580-640: CheckEdgeEdge
     pub(crate) fn check_edge_edge_range(&mut self, e1: usize, e2: usize,
                               range1: [f64; 2], range2: [f64; 2]) {
         let edge1 = &self.ds.edges[e1];
@@ -585,6 +596,7 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
     // OCCT PaveFiller_3.cxx L580-640: CheckEdgeEdge + common block creation
+    /// OCCT PaveFiller_3.cxx L580-640: CheckEdgeEdge
     pub(crate) fn check_edge_edge(&mut self, e1: usize, e2: usize) {
         let edge1 = &self.ds.edges[e1];
         let edge2 = &self.ds.edges[e2];
@@ -867,6 +879,7 @@ impl<'a> super::PaveFiller<'a> {
             }
         }
     }
+    /// OCCT PaveFiller_4.cxx: PerformVF
     pub(crate) fn perform_vf(&mut self) {
         // OCCT PaveFiller_4.cxx: FillShrunkData + BVH pair iteration
         //   with HasInterf skip condition.
@@ -930,6 +943,7 @@ impl<'a> super::PaveFiller<'a> {
             }
         }
 }
+    /// OCCT PaveFiller_5.cxx L165-300: PerformEF
     pub(crate) fn perform_ef(&mut self) {
         // OCCT PaveFiller_5.cxx L165+: FillShrunkData + BVH pair iteration
         //   with HasFlag / HasInterf skip conditions.
@@ -968,6 +982,7 @@ impl<'a> super::PaveFiller<'a> {
             }
         }
     }
+    /// OCCT PaveFiller_3.cxx L222-228: GetPBBox (PaveBlock range)
     pub(crate) fn collect_paveblock_ranges(&self, edge_idx: usize, edge_t_range: [f64; 2]) -> Vec<[f64; 2]> {
         let paves = &self.ds.edges[edge_idx].paves;
         if paves.is_empty() {
@@ -991,6 +1006,7 @@ impl<'a> super::PaveFiller<'a> {
         }
         ranges
     }
+    /// OCCT: shrunk range correction for face tolerance
     pub(crate) fn correct_range_for_face(edge_curve: &Curve3, etf: f64, range: [f64; 2]) -> [f64; 2] {
         const DT: f64 = 1e-12;
         match edge_curve {
@@ -1014,6 +1030,7 @@ impl<'a> super::PaveFiller<'a> {
             }
         }
     }
+    /// OCCT IntTools_FClass2d: point-in-face check
     pub(crate) fn is_point_in_face(&self, point: DVec3, face_idx: usize, tol: f64) -> bool {
         let face = &self.ds.faces[face_idx];
         match &face.surface {
@@ -1063,6 +1080,7 @@ impl<'a> super::PaveFiller<'a> {
             _ => true,
         }
     }
+    /// OCCT PaveFiller_5.cxx L340-480: IntersectEdgeFace
     pub(crate) fn intersect_edge_face_range(&mut self, edge_idx: usize, face_idx: usize, pb_range: &[f64; 2]) {
         let edge_curve = self.ds.edges[edge_idx].curve.clone();
         let edge_t_range = self.ds.edges[edge_idx].t_range;
@@ -1375,6 +1393,7 @@ impl<'a> super::PaveFiller<'a> {
             });
         }
     }
+    /// OCCT HasInterf: skip already-processed pairs
     pub fn skip_redundant_interferences(&self) -> std::collections::HashSet<(usize, usize, u8)> {
         let mut skip_set = std::collections::HashSet::new();
 
@@ -1400,6 +1419,7 @@ impl<'a> super::PaveFiller<'a> {
         skip_set
     }
 
+    /// OCCT myDS->HasInterf: check existing EE interference
     pub(crate) fn has_ee_interf(&self, e1: usize, e2: usize) -> bool {
         self.ds.interferences.iter().any(|inf| {
             matches!(inf, Interference::EdgeEdge { e1: a, e2: b, .. }
