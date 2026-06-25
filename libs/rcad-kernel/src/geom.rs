@@ -604,10 +604,41 @@ pub struct Circle2d {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Ellipse2d {
     pub center: Point2,
-    /// Normalized major-axis direction in (u, v) space.
     pub major_dir: Vec2,
     pub major_radius: f64,
     pub minor_radius: f64,
+}
+
+/// A 2D parabola in parameter space.
+///
+/// OCCT-aligned: gp_Parab2d. Parameterization in local frame:
+///   X(t) = t²/(2*p), Y(t) = t
+/// where p = focal_param (distance from focus to directrix).
+/// Default domain: (-inf, +inf).
+/// The parabola is positioned by `origin` (apex), `axis_dir` (symmetry axis),
+/// and `focal_param > 0`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Parabola2d {
+    pub origin: Point2,
+    /// Normalized axis direction (from apex toward focus).
+    pub axis_dir: Vec2,
+    /// Focal parameter p (> 0). The focus is at distance p/2 from apex along axis_dir.
+    pub focal_param: f64,
+}
+
+/// A 2D hyperbola branch in parameter space.
+///
+/// OCCT-aligned: gp_Hypr2d. The branch on the positive side of the major axis.
+/// Implicit: X²/a² - Y²/b² = 1 in local frame.
+/// Parametric:  X(t) = a*cosh(t), Y(t) = b*sinh(t)
+/// Default domain: (-inf, +inf).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Hyperbola2d {
+    pub center: Point2,
+    /// Normalized major-axis direction.
+    pub major_dir: Vec2,
+    pub semi_major: f64,  // a (transverse semi-axis, > 0)
+    pub semi_minor: f64,  // b (conjugate semi-axis, > 0)
 }
 
 /// A 2D involute of a base circle in parameter space.
@@ -724,6 +755,8 @@ pub enum Curve2d {
     Line(Line2d),
     Circle(Circle2d),
     Ellipse(Ellipse2d),
+    Parabola(Parabola2d),
+    Hyperbola(Hyperbola2d),
     CircleInvolute(CircleInvolute2d),
     ArchimedeanSpiral(ArchimedeanSpiral2d),
     LogarithmicSpiral(LogarithmicSpiral2d),
@@ -1920,11 +1953,22 @@ impl Curve2dEval for Circle2d {
 
 impl Curve2dEval for Ellipse2d {
     fn point_at(&self, t: f64) -> DVec2 {
-        // minor_dir = rotate major_dir by 90° counter-clockwise
-        let minor_dir = DVec2::new(-self.major_dir.y, self.major_dir.x);
-        self.center
-            + self.major_dir * (self.major_radius * t.cos())
-            + minor_dir * (self.minor_radius * t.sin())
+        let minor = DVec2::new(-self.major_dir.y, self.major_dir.x);
+        self.center + self.major_dir * (self.major_radius * t.cos()) + minor * (self.minor_radius * t.sin())
+    }
+}
+
+impl Curve2dEval for Parabola2d {
+    fn point_at(&self, t: f64) -> DVec2 {
+        let perp = DVec2::new(-self.axis_dir.y, self.axis_dir.x);
+        self.origin + (t * t / (2.0 * self.focal_param)) * self.axis_dir + t * perp
+    }
+}
+
+impl Curve2dEval for Hyperbola2d {
+    fn point_at(&self, t: f64) -> DVec2 {
+        let minor = DVec2::new(-self.major_dir.y, self.major_dir.x);
+        self.center + self.semi_major * t.cosh() * self.major_dir + self.semi_minor * t.sinh() * minor
     }
 }
 
@@ -1984,6 +2028,8 @@ impl Curve2dEval for Curve2d {
             Curve2d::Circle(c) => c.point_at(t),
             Curve2d::Ellipse(c) => c.point_at(t),
             Curve2d::CircleInvolute(c) => c.point_at(t),
+            Curve2d::Parabola(c) => c.point_at(t),
+            Curve2d::Hyperbola(c) => c.point_at(t),
             Curve2d::ArchimedeanSpiral(c) => c.point_at(t),
             Curve2d::LogarithmicSpiral(c) => c.point_at(t),
             Curve2d::SineWave(c) => c.point_at(t),

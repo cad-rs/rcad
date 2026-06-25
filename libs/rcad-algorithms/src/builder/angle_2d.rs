@@ -13,10 +13,12 @@ use rcad_kernel::geom::*;
 use super::curve_tools::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CurveGeomType { Line, Circle, Ellipse, Other }
+pub enum CurveGeomType { Line, Circle, Ellipse, Parabola, Hyperbola, Other }
 
 pub fn curve_geom_type(curve: &Curve2d) -> CurveGeomType {
-    match curve { Curve2d::Line(_) => CurveGeomType::Line, Curve2d::Circle(_) => CurveGeomType::Circle, Curve2d::Ellipse(_) => CurveGeomType::Ellipse, _ => CurveGeomType::Other }
+    match curve { Curve2d::Line(_) => CurveGeomType::Line, Curve2d::Circle(_) => CurveGeomType::Circle, Curve2d::Ellipse(_) => CurveGeomType::Ellipse,
+    Curve2d::Parabola(_) => CurveGeomType::Parabola,
+    Curve2d::Hyperbola(_) => CurveGeomType::Hyperbola, _ => CurveGeomType::Other }
 }
 
 pub fn dir_to_angle(dir: DVec2) -> f64 {

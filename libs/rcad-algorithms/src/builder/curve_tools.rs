@@ -28,6 +28,14 @@ pub fn curve2d_d2(curve: &Curve2d, t: f64) -> DVec2 {
     match curve {
         Curve2d::Line(_) => DVec2::ZERO,
         Curve2d::Circle(c) => c.radius * DVec2::new(-t.cos(), -t.sin()),
+                Curve2d::Parabola(p) => {
+            let d1 = DVec2::new(p.axis_dir.x / p.focal_param, p.axis_dir.y / p.focal_param);
+            d1
+        }
+        Curve2d::Hyperbola(c) => {
+            let minor = DVec2::new(-c.major_dir.y, c.major_dir.x);
+            c.semi_major * t.cosh() * c.major_dir + c.semi_minor * t.sinh() * minor
+        }
         Curve2d::Ellipse(e) => {
             let minor = DVec2::new(-e.major_dir.y, e.major_dir.x);
             e.major_dir * (-e.major_radius * t.cos()) + minor * (-e.minor_radius * t.sin())

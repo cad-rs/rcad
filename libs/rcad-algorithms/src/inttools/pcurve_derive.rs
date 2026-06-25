@@ -704,7 +704,9 @@ pub fn is_curve_valid_2d(curve: &Curve2d) -> bool {
         | Curve2d::CircleInvolute(_)
         | Curve2d::ArchimedeanSpiral(_)
         | Curve2d::LogarithmicSpiral(_)
-        | Curve2d::SineWave(_) => true,
+        | Curve2d::SineWave(_)
+        | Curve2d::Parabola(_)
+        | Curve2d::Hyperbola(_) => true,
         // BSpline/Bezier: check polyline self-intersection
         Curve2d::BSpline(_) | Curve2d::Bezier(_) => {
             let pts = (0..100)

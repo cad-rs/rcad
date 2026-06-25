@@ -919,6 +919,8 @@ impl Curve2dDomain for Curve2d {
             Curve2d::CircleInvolute(_) => [0.0, 2.0 * PI],
             Curve2d::ArchimedeanSpiral(_) | Curve2d::LogarithmicSpiral(_) => [0.0, 10.0],
             Curve2d::SineWave(_) => [f64::NEG_INFINITY, f64::INFINITY],
+            Curve2d::Parabola(_) => [f64::NEG_INFINITY, f64::INFINITY],
+            Curve2d::Hyperbola(_) => [f64::NEG_INFINITY, f64::INFINITY],
             Curve2d::BSpline(bspline) => {
                 let d = bspline.degree;
                 let n = bspline.knots.len();

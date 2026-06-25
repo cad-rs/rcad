@@ -10016,6 +10016,7 @@ fn extend_pcurve_to_boundary(
                     t_max: tc.t_max,
                 }))
         }
+        Curve2d::Parabola(_) | Curve2d::Hyperbola(_) => None,
     }
 }
 
@@ -10205,6 +10206,7 @@ fn wrap_pcurve_to_domain(
             let _ = range;
             None
         }
+        Curve2d::Parabola(_) | Curve2d::Hyperbola(_) => None,
     }
 }
 

@@ -7,7 +7,9 @@ use super::intres2d::*;
 pub enum G2dCurveType { Line, Circle, Ellipse, Parabola, Hyperbola, Other }
 
 pub fn geom2d_curve_type(curve: &Curve2d) -> G2dCurveType {
-    match curve { Curve2d::Line(_) => G2dCurveType::Line, Curve2d::Circle(_) => G2dCurveType::Circle, Curve2d::Ellipse(_) => G2dCurveType::Ellipse, _ => G2dCurveType::Other }
+    match curve { Curve2d::Line(_) => G2dCurveType::Line, Curve2d::Circle(_) => G2dCurveType::Circle, Curve2d::Ellipse(_) => G2dCurveType::Ellipse,
+    Curve2d::Parabola(_) => G2dCurveType::Parabola,
+    Curve2d::Hyperbola(_) => G2dCurveType::Hyperbola, _ => G2dCurveType::Other }
 }
 
 pub fn intersect_curves_2d_ginter(c1: &Curve2d, d1: &IntRes2dDomain, c2: &Curve2d, d2: &IntRes2dDomain, tol_conf: f64, _tol: f64) -> Vec<(f64, f64)> {

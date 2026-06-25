@@ -1176,6 +1176,8 @@ fn curve2d_domain(curve: &Curve2d) -> [f64; 2] {
         Curve2d::ArchimedeanSpiral(_) => [0.0, 6.0 * PI], // ~3 turns
         Curve2d::LogarithmicSpiral(_) => [0.0, 4.0 * PI], // ~2 turns
         Curve2d::SineWave(_) => [-10.0, 10.0],
+        Curve2d::Parabola(_) => [-1e4, 1e4],
+        Curve2d::Hyperbola(_) => [-1e4, 1e4],
         Curve2d::BSpline(bspline) => {
             let n = bspline.knots.len();
             if n < 2 {
