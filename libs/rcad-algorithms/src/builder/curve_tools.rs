@@ -1,6 +1,14 @@
+// OCCT-aligned: ElCLib derivative functions for 2D elementary curves
+//   (ElCLib.hxx: LineD1/D2, CircleD1/D2, EllipseD1/D2).
+//   curve2d_resolution approximates Geom2dAdaptor::Resolution.
+//   curve2d_lprop_curvature matches ElCLib::Curvature formula |d1×d2|/|d1|³.
+
 use glam::DVec2;
 use rcad_kernel::geom::*;
 
+/// OCCT-aligned: ElCLib::D1 — first derivative of a 2D curve.
+/// OCCT ElCLib.hxx dispatches to LineD1(lin, U, P, V), CircleD1(circ, U, P, V),
+/// EllipseD1(elips, U, majR, minR, P, V). rcad: matches OCCT formulas exactly.
 pub fn curve2d_d1(curve: &Curve2d, t: f64) -> DVec2 {
     match curve {
         Curve2d::Line(l) => l.direction,
