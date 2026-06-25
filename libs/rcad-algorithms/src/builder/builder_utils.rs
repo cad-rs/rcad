@@ -1310,7 +1310,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                         &face.surface, ds, fixed_sv, fixed_ev);
                     segments.push(WireSegment { start_vertex: fixed_sv, end_vertex: fixed_ev,
                         source: WireEdgeSource::IntersectionCurve(ci), forward: true,
-                        is_seam: false, second_pcurve: ic_second_pcurve, first_pcurve: None, t_range: [0.0, 1.0], tangent_start: t_start, tangent_end: t_end });
+                        is_seam: false, second_pcurve: ic_second_pcurve, first_pcurve: None, t_range: [ic.t_range[0], ic.t_range[1]], tangent_start: t_start, tangent_end: t_end });
                     continue;
                 }
                 // Non-sphere face with degenerate IC: skip completely
@@ -1359,7 +1359,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                         segments.push(WireSegment {
                             start_vertex: vi, end_vertex: vj,
                             source: WireEdgeSource::IntersectionCurve(ci), forward: true,
-                            is_seam: false, second_pcurve: arc_second, first_pcurve: None, t_range: [0.0, 1.0], tangent_start: ts_val, tangent_end: te_val,
+                            is_seam: false, second_pcurve: arc_second, first_pcurve: None, t_range: [on_circle[i].1, on_circle[j].1], tangent_start: ts_val, tangent_end: te_val,
                         });                    }
                     continue;
                 }
@@ -1386,7 +1386,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
             end_vertex: ev,
             source: WireEdgeSource::IntersectionCurve(ci),
             forward: true,
-            is_seam: false, second_pcurve: gen_ic_second, first_pcurve: None, t_range: [0.0, 1.0],
+            is_seam: false, second_pcurve: gen_ic_second, first_pcurve: None, t_range: [ic.t_range[0], ic.t_range[1]],
             tangent_start: t_start,
             tangent_end: t_end,
         });
