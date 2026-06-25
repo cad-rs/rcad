@@ -1081,6 +1081,9 @@ impl ResultBuilder {
     ///   topology (Vertex, Edge, Face).  Both do NO merge/cull/post-processing.
     fn build(mut self) -> (BRep, BooleanHistory) {
         eprintln!("ResultBuilder::build: {} vertices, {} edges, {} faces", self.vertices.len(), self.edges.len(), self.faces.len());
+        for (vi, p) in self.vertices.iter().enumerate() {
+            eprintln!("  V[{}] = ({:.12}, {:.12}, {:.12})", vi, p.x, p.y, p.z);
+        }
         // ✅ OCCT-aligned: pure conversion (BuildResult, Builder_1.cxx L130-168).
         // OCCT does NO vertex/edge merge, NO orphan edge removal, NO face culling.
         let vertices = self
@@ -1807,17 +1810,29 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
 
     // ✅ OCCT-aligned: boundary vertex position map (ShapesSD equivalent).
     //    OCCT's DS shares TopoDS_Vertex between shapes at same position.
-    //    rcad loads each shape's vertices independently, so sphere and box
-    //    have different DS indices for vertices at identical positions.
-    //    This remaps IC endpoint vertices to the face's boundary vertex.
-    let bv_positions: Vec<(DVec3, usize)> = face.boundary_edges.iter().flat_map(|&ei| {
-        let e = &ds.edges[ei];
-        [(ds.vertices[e.start_vertex].point, e.start_vertex), (ds.vertices[e.end_vertex].point, e.end_vertex)]
+    //    rcad loads each shape's vertices independently, so the sphere north
+    //    pole and a box corner at the same 3D position have different DS indices.
+    //    This remaps ALL IC endpoint vertices to a GLOBAL canonical vertex per
+    //    position, using ALL faces' boundary vertices (not just the current face),
+    //    so section edges use the same canonical vertex regardless of which face
+    //    processes them.
+    let bv_positions: Vec<(DVec3, usize)> = (0..ds.faces.len()).flat_map(|fi| {
+        ds.faces[fi].boundary_edges.iter().flat_map(|&ei| {
+            let e = &ds.edges[ei];
+            [(ds.vertices[e.start_vertex].point, e.start_vertex),
+             (ds.vertices[e.end_vertex].point, e.end_vertex)]
+        })
     }).collect();
     let remap_ic_v = |v: usize| -> usize {
         let p = ds.vertices[v].point;
         let tol = crate::tolerance::TOLERANCE_ABS * 1000.0;
-        bv_positions.iter().find(|(bp, _)| (bp - p).length_squared() <= tol * tol).map(|&(_, bv)| bv).unwrap_or(v)
+        // Pick the canonical vertex with the MINIMUM index (earliest-loaded shape,
+        // typically from operand A) to ensure consistency across all faces.
+        bv_positions.iter()
+            .filter(|(bp, _)| (bp - p).length_squared() <= tol * tol)
+            .map(|&(_, bv)| bv)
+            .min()
+            .unwrap_or(v)
     };
 
     // Check if surface is closed (U/V)  for seam edge detection
@@ -2124,15 +2139,19 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             } else {
                 // ✅ OCCT-aligned DoSplitSEAMOnFace: compute pcurves for unsplit
                 //    seam edge on periodic surfaces (BOPTools_AlgoTools3D.cxx L58-232).
-                //    Without these pcurves, vertex_uv at the pole falls through to
-                //    world_to_uv which returns U=0 for all edges, causing premature
-                //    loop-closure.
-                let (is_periodic, period, u_min, u_max) = match &face.surface {
-                    Surface3::Sphere(_) => (true, std::f64::consts::TAU, 0.0, std::f64::consts::TAU),
-                    Surface3::Cylinder(_) => (true, std::f64::consts::TAU, 0.0, std::f64::consts::TAU),
-                    _ => (false, 0.0, 0.0, 0.0),
+                //    Split the seam at IC endpoints whose UV lies on the seam (U ≈ 0 or 2π).
+                //    Without splitting, IC endpoints on the seam (e.g. sphere equator at
+                //    U=0) are invisible to the SmartMap → wrong wire building.
+                let (is_periodic, period, u_min, u_max, seam_tol) = match &face.surface {
+                    Surface3::Sphere(_) => (true, std::f64::consts::TAU, 0.0, std::f64::consts::TAU, 1e-6),
+                    Surface3::Cylinder(_) => (true, std::f64::consts::TAU, 0.0, std::f64::consts::TAU, 1e-6),
+                    _ => (false, 0.0, 0.0, 0.0, 0.0),
                 };
-                let second_pcurve = if is_periodic {
+                // ✅ OCCT-aligned DoSplitSEAMOnFace (BOPTools_AlgoTools3D.cxx L58-232):
+                //   Creates the second pcurve (shifted by period) for the seam edge.
+                //   Does NOT split the seam at IC endpoints — IC endpoint connectivity
+                //   on the seam is handled by the WireSplitter itself.
+                let sec = if is_periodic {
                     let mid_3d = (ds.vertices[sv].point + ds.vertices[ev].point) * 0.5;
                     let uv_mid_opt = world_to_uv(&face.surface, mid_3d);
                     let edge_tol = ds.edges[ei].geom_tol.max(TOLERANCE_ABS);
@@ -2150,32 +2169,32 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                             None
                         };
                         shift_u.and_then(|du| {
-                            let uv_s = world_to_uv(&face.surface, ds.vertices[sv].point)?;
-                            let uv_e = world_to_uv(&face.surface, ds.vertices[ev].point)?;
+                            let uv_sv = world_to_uv(&face.surface, ds.vertices[sv].point)?;
+                            let uv_ev = world_to_uv(&face.surface, ds.vertices[ev].point)?;
                             Some(Curve2d::Line(Line2d {
-                                origin: DVec2::new(uv_s.x + du, uv_s.y),
-                                direction: DVec2::new(0.0, uv_e.y - uv_s.y),
+                                origin: DVec2::new(uv_sv.x + du, uv_sv.y),
+                                direction: DVec2::new(0.0, uv_ev.y - uv_sv.y),
                             }))
                         })
                     } else { None }
                 } else { None };
-                let first_pcurve: Option<Curve2d> = world_to_uv(&face.surface, ds.vertices[sv].point).and_then(|uv_s| {
-                    world_to_uv(&face.surface, ds.vertices[ev].point).map(|uv_e| {
+                let first_pc: Option<Curve2d> = world_to_uv(&face.surface, ds.vertices[sv].point).and_then(|uv_sv| {
+                    world_to_uv(&face.surface, ds.vertices[ev].point).map(|uv_ev| {
                         Curve2d::Line(Line2d {
-                            origin: DVec2::new(uv_s.x, uv_s.y),
-                            direction: DVec2::new(0.0, uv_e.y - uv_s.y),
+                            origin: DVec2::new(uv_sv.x, uv_sv.y),
+                            direction: DVec2::new(0.0, uv_ev.y - uv_sv.y),
                         })
                     })
                 });
-                let (t_start, t_end) = compute_seam_tangent_angles(ds, sv, ev, &face.surface);
+                let (ts, te) = compute_seam_tangent_angles(ds, sv, ev, &face.surface);
                 segments.push(WireSegment {
                     start_vertex: sv, end_vertex: ev,
                     source: WireEdgeSource::DsEdge(ei), forward: true,
-                    is_seam: true, second_pcurve: second_pcurve.clone(), first_pcurve, t_range: [0.0, 1.0], tangent_start: t_start, tangent_end: t_end,
+                    is_seam: true, second_pcurve: sec.clone(), first_pcurve: first_pc,
+                    t_range: [0.0, 1.0], tangent_start: ts, tangent_end: te,
                 });
-                // Reverse direction: compute angles independently.
-                let (t_start_rev, t_end_rev) = compute_seam_tangent_angles(ds, ev, sv, &face.surface);
-                let second_pcurve_rev = match &second_pcurve {
+                let (ts_r, te_r) = compute_seam_tangent_angles(ds, ev, sv, &face.surface);
+                let sec_rev = match &sec {
                     Some(Curve2d::Line(l)) => Some(Curve2d::Line(Line2d {
                         origin: l.origin + l.direction,
                         direction: -l.direction,
@@ -2185,8 +2204,8 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                 segments.push(WireSegment {
                     start_vertex: ev, end_vertex: sv,
                     source: WireEdgeSource::DsEdge(ei), forward: false,
-                    is_seam: true, second_pcurve: second_pcurve_rev, first_pcurve: None, t_range: [0.0, 1.0],
-                    tangent_start: t_start_rev, tangent_end: t_end_rev,
+                    is_seam: true, second_pcurve: sec_rev, first_pcurve: None,
+                    t_range: [0.0, 1.0], tangent_start: ts_r, tangent_end: te_r,
                 });
             }
         } else if is_seam {
@@ -2264,6 +2283,45 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
                     // Vertices from current face's face_info.vertices_in
                     for &vi in &face.face_info.vertices_in {
                         check_and_add_split_vertex(ds, sv, ev, vi, p_a, ab, ab_len2, &mut split_verts);
+                    }
+                    // OCCT-aligned DoSplitSEAMOnFace: split seam edges at IC endpoints
+                    // whose UV lies on the seam (U ≈ 0 or 2π).  For a sphere seam edge
+                    // between two poles (V varies along U=0), an IC endpoint at U=0 on
+                    // the equator (V=π/2) splits the seam into two sub-edges.
+                    let is_periodic_seam = is_seam && matches!(face.surface,
+                        Surface3::Sphere(_) | Surface3::Cylinder(_) | Surface3::Torus(_));
+                    if is_periodic_seam {
+                        let uv_s = world_to_uv(&face.surface, ds.vertices[sv].point);
+                        let uv_e = world_to_uv(&face.surface, ds.vertices[ev].point);
+                        if let (Some(uva), Some(uvb)) = (uv_s, uv_e) {
+                            let seam_tol = 1e-6;
+                            let on_seam_u = |u: f64| -> bool {
+                                u.abs() < seam_tol || (u - std::f64::consts::TAU).abs() < seam_tol
+                            };
+                            let v_range = [uva.y, uvb.y];
+                            let v_min = v_range[0].min(v_range[1]);
+                            let v_max = v_range[0].max(v_range[1]);
+                            let v_span = v_max - v_min;
+                            if v_span > 1e-15 {
+                                for &ci in &face.face_info.curves_sc_only() {
+                                    let ic = &ds.intersection_curves[ci];
+                                    for &ep in &[ic.start_vertex, ic.end_vertex] {
+                                        if ep == sv || ep == ev { continue; }
+                                        if split_verts.iter().any(|(v, _)| *v == ep) { continue; }
+                                        if let Some(uv_ep) = world_to_uv(&face.surface, ds.vertices[ep].point) {
+                                            if on_seam_u(uv_ep.x) && uv_ep.y >= v_min - seam_tol
+                                                && uv_ep.y <= v_max + seam_tol
+                                            {
+                                                let t = (uv_ep.y - v_min) / v_span;
+                                                if t > 1e-8 && t < 1.0 - 1e-8 {
+                                                    split_verts.push((ep, t));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 split_verts.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
@@ -2403,11 +2461,9 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
 
     // Section edges = Intersection curves (OCCT BOPAlgo_Builder_2.cxx L285-296, L478-489).
     // ================================================================
-    // ✅ OCCT-aligned: first process PaveBlocksSc — each PB has a pre-built edge
-    //   (aPB->Edge() in OCCT, pb.new_edge in rcad).
-    //   Currently no-op (pave_blocks_sc PBs have new_edge=None until MakeSectionEdges
-    //   is wired into the PaveFiller).  When wired, each curve processed via PBs will
-    //   be skipped in the curves_sc fallback below.
+    // OCCT-aligned: Process PaveBlocksSc — each PB has a pre-built edge with
+    //   valid aPB->Edge().  rcad PBs may not have new_edge set; in that case
+    //   the curves_sc fallback below handles them.
     for &pb_idx in &face.face_info.pave_blocks_sc {
         if pb_idx >= ds.pave_blocks.len() { continue; }
         let pb = &ds.pave_blocks[pb_idx];
@@ -2416,17 +2472,20 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
         let edge = &ds.edges[nei];
         if edge.start_vertex == edge.end_vertex { continue; }
         // OCCT L484-494: FWD + REV orientations for each section edge PB.
-        let (t_fwd_s, t_fwd_e) = edge_uv_tangent(ds, edge.start_vertex, edge.end_vertex,
+        // OCCT-aligned: remap IC endpoint to boundary vertex (ShapesSD equivalent).
+        let sv_remap = remap_ic_v(edge.start_vertex);
+        let ev_remap = remap_ic_v(edge.end_vertex);
+        let (t_fwd_s, t_fwd_e) = edge_uv_tangent(ds, sv_remap, ev_remap,
             &face.surface, Some(&edge.curve), Some(edge.t_range));
         segments.push(WireSegment {
-            start_vertex: edge.start_vertex, end_vertex: edge.end_vertex,
+            start_vertex: sv_remap, end_vertex: ev_remap,
             source: WireEdgeSource::DsEdge(nei), forward: true,
             is_seam: false, second_pcurve: None, first_pcurve: None,
             t_range: edge.t_range,
             tangent_start: t_fwd_s, tangent_end: t_fwd_e,
         });
         segments.push(WireSegment {
-            start_vertex: edge.end_vertex, end_vertex: edge.start_vertex,
+            start_vertex: ev_remap, end_vertex: sv_remap,
             source: WireEdgeSource::DsEdge(nei), forward: false,
             is_seam: false, second_pcurve: None, first_pcurve: None,
             t_range: edge.t_range,
@@ -2435,8 +2494,9 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
     }
 
         // OCCT-aligned: Section edges (Builder_2.cxx L483-494).
-    let has_section_pbs = !face.face_info.pave_blocks_sc.is_empty();
-    if !has_section_pbs {
+        // Always process curves_sc — OCCT always builds section edges from
+        // PaveBlocksSc, but rcad may not have them wired yet, so curves_sc
+        // provides the source of truth for intersection curve segments.
     for &ci in &face.face_info.curves_sc_only() {
         let ic = &ds.intersection_curves[ci];
         // ✅ OCCT-aligned: remap IC endpoint to boundary vertex (ShapesSD).
@@ -2567,7 +2627,6 @@ fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(
             tangent_end: t_end,
         });
     }
-    } // end if curves_sc
     segments
 }
 
@@ -2742,7 +2801,45 @@ fn edge_angle_2d(
 ) -> Option<f64> {
     let range = (domain[1] - domain[0]).abs();
     if range < 1e-15 { return None; }
-    let dt = (1e-6 * range).max(1e-12).min(0.05 * range);
+    // OCCT-aligned: compute dt = max(Resolution(tol2d), Precision::PConfusion())
+    //   (WireSplitter_1.cxx L800-821).  tol2d = 2 * Tolerance2D, where
+    //   Tolerance2D = max(UResolution(tolV3D), VResolution(tolV3D)).
+    //   For each surface type: U/VResolution(tol) = tol / surface scale.
+    //   use aTol = 1e-5 as typical vertex tolerance (Precision::Confusion)
+    let a_tol_v3d = 1e-5_f64;
+    let a_tol_2d = 2.0_f64 * match surface {
+        Surface3::Sphere(s) => a_tol_v3d / s.radius.max(1e-15),
+        Surface3::Cylinder(c) => a_tol_v3d / c.radius.max(1e-15),
+        Surface3::Cone(c) => a_tol_v3d / c.radius.max(1e-15),
+        Surface3::Torus(t) => a_tol_v3d / t.major_radius.max(1e-15),
+        _ => a_tol_v3d, // Plane: UV in 3D units → Resolution = tol
+    }.max(a_tol_v3d); // OCCT L885-887: max with tol_v3d
+    let mut dt = a_tol_2d.max(1e-7); // max with Precision::PConfusion
+    // OCCT L808-821: curvature-aware adjustment for non-linear curves
+    let eps = (1e-6 * range).max(1e-10);
+    let tp = (t + eps).min(domain[1]);
+    let tm = (t - eps).max(domain[0]);
+    let p_p = curve.point_at(tp);
+    let p_m = curve.point_at(tm);
+    let d1 = p_p - p_m;
+    let speed = d1.length();
+    if speed > 1e-30 {
+        let d1_n = d1 / speed;
+        let d2 = p_p - 2.0 * curve.point_at(t) + p_m;
+        let curvature = d1_n.cross(d2).length() / (speed * speed);
+        if curvature > 1e-30 {
+            let r_curv = 1.0 / curvature;
+            let cos_phi = r_curv / (r_curv + a_tol_2d);
+            if cos_phi < 1.0 {
+                dt = dt.max(cos_phi.acos().max(1e-7));
+            }
+        }
+    }
+    // OCCT L824-834: clamp dt to 5% of range, floor at 5e-5
+    let a_tx = 0.05 * range;
+    let a_tx = if a_tx < 5e-5_f64 { (5e-5_f64).min(range * 0.5) } else { a_tx };
+    if dt > a_tx { dt = a_tx; }
+    // OCCT L822-829: step toward nearest curve end
     let t1 = if (t - domain[0]).abs() < (t - domain[1]).abs() {
         (t + dt).min(domain[1])
     } else {
@@ -2849,29 +2946,24 @@ fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool) -> Option<
     let last = domain[1];
     let range = (last - first).abs();
     if range < 1e-15 { return None; }
-    // ✅ OCCT-aligned L792: dt = max(Resolution(tol2d), Precision::PConfusion())
-    //   Precision::PConfusion() ≈ 1e-7.  Resolution depends on curve type:
-    //   - Line: |dC/dt| = |direction|, Resolution ≈ tol / |direction|
-    //   - Circle: |dC/dt| = radius, Resolution ≈ tol / radius
-    //   - BSpline/Ellipse/other: use range-based fallback
-    const PCONF: f64 = 1e-7;
-    let tol_scale = match curve {
-        Curve2d::Circle(c) => c.radius.max(1e-15),
-        Curve2d::Ellipse(e) => (e.major_radius + e.minor_radius) / 2.0,
-        _ => range.max(1e-15) / 1e6, // fallback: 1e-6 of range
-    };
-    let dt_res = PCONF / tol_scale;
-    let mut dt = dt_res.max(PCONF);
+    // OCCT-aligned L792: dt = max(Resolution(tol2d), Precision::PConfusion())
+    //   Resolution parameter delta ≈ tol2d / |dC/dt|.  tol2d = 1e-5 (typical).
+    const A_TOL_2D: f64 = 1e-5_f64;
+    let mut dt = match curve {
+        Curve2d::Circle(c) => A_TOL_2D / c.radius.max(1e-15),
+        Curve2d::Ellipse(e) => A_TOL_2D / (e.major_radius + e.minor_radius).max(1e-15) * 2.0,
+        Curve2d::Line(l) => {
+            let speed = l.direction.length();
+            if speed < 1e-30 { A_TOL_2D } else { A_TOL_2D / speed }
+        }
+        _ => A_TOL_2D, // BSpline/Bezier: use tol2d directly
+    }.max(1e-7); // max with Precision::PConfusion
     // OCCT L800-821: curvature-aware adjustment for non-linear curves.
-    //   For a curve with radius of curvature R, dt must be large enough
-    //   to sample a meaningful direction change:
-    //     dt = max(dt, acos(R / (R + tol2d)))
-    //   where tol2d is the 2D tolerance at the vertex.
+    //   dt = max(dt, acos(R / (R + tol2d))) where R = radius of curvature.
     let radius_of_curv = match curve {
         Curve2d::Circle(c) => Some(c.radius.max(1e-15)),
         Curve2d::Ellipse(e) => Some((e.major_radius + e.minor_radius) / 2.0),
         Curve2d::BSpline(_) | Curve2d::Bezier(_) | Curve2d::Trimmed(_) => {
-            // Numerical curvature at parameter t — finite-difference approximation.
             let eps = (1e-6 * range).max(1e-10);
             let tp = (t + eps).min(last);
             let tm = (t - eps).max(first);
@@ -2891,9 +2983,9 @@ fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool) -> Option<
         _ => None,
     };
     if let Some(r_curv) = radius_of_curv {
-        let cos_phi: f64 = r_curv / (r_curv + PCONF);
+        let cos_phi: f64 = r_curv / (r_curv + A_TOL_2D);
         if cos_phi < 1.0 {
-            let curv_dt = cos_phi.acos().max(PCONF);
+            let curv_dt = cos_phi.acos().max(1e-7);
             dt = dt.max(curv_dt);
         }
     }
@@ -3687,11 +3779,8 @@ fn refine_angles(
                 } else if cnt_int == 2 {
                     // OCCT L996-999: epsilon fallback — place just inside boundary
                     // OCCT L998: aA = (aA <= aA1) ? (aA1 + Precision::Angular()) : (aA2 - Precision::Angular());
-                    // OCCT Precision::Angular() = 1e-12, but rcad's partial_cmp
-                    // needs ~1e-6 to overcome float noise at tangent points where
-                    // CWA(IC) ≈ CWA(boundary). 1e-6 rad ≈ 0.000057°, still
-                    // geometrically negligible.
-                    let eps = 1e-6;
+                    // Precision::Angular() = 1e-12 (OCCT L1030: Precision::Angular())
+                    let eps = 1e-12;
                     let new_angle = if a_ic <= a1_bnd || a_ic > a2_bnd {
                         (a1_bnd + eps) % std::f64::consts::TAU
                     } else {
@@ -4371,9 +4460,9 @@ fn walk_path_extract_wires(
                     }
                 }
 
-                // OCCT L488: aNbj = i - 1 (both 1-based, wire edges at indices i..aNb).
-                // ✅ OCCT-aligned: keep edges 0..i-2 (rcad 0-based) = 1..i-1 (OCCT 1-based).
-                let a_nbj = i.saturating_sub(1);
+                // OCCT L488: aNbj = i - 1 (1-based).  rcad i is 0-based = OCCT i.
+                //   OCCT keeps (i-1) edges → rcad keeps i edges (indices 0..i-1).
+                let a_nbj = i;
                 if a_nbj == 0 {
                     edge_seq.clear();
                     vert_seq.clear();
@@ -4794,6 +4883,27 @@ pub(crate) fn perform_areas(
 ) -> Vec<WireFace> {
     if wires.is_empty() {
         return vec![];
+    }
+
+    // DEBUG: dump all wires for this face
+    if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
+        let surf_type = match &ds.faces[face_idx].surface {
+            Surface3::Plane(_) => "Plane",
+            Surface3::Sphere(_) => "Sphere",
+            _ => "Other",
+        };
+        eprintln!("[PERF_AREAS] fi={} surf={} n_wires={}", face_idx, surf_type, wires.len());
+        for (wi, w) in wires.iter().enumerate() {
+            let segs: Vec<String> = w.iter().map(|&si| {
+                let seg = &segments[si];
+                match &seg.source {
+                    WireEdgeSource::DsEdge(ei) => format!("Ds({})", ei),
+                    WireEdgeSource::IntersectionCurve(ci) => format!("IC({})", ci),
+                    WireEdgeSource::SeamEdge => "Seam".to_string(),
+                }
+            }).collect();
+            eprintln!("[PERF_AREAS]   wire[{}] n_seg={} segs=[{}]", wi, w.len(), segs.join(","));
+        }
     }
 
     // OCCT L432-437: build 3D boundary polygon and centroid for each wire
