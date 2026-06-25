@@ -66,11 +66,17 @@ impl<'a> super::PaveFiller<'a> {
             self.check_vertex_edge(vi, ei);
         }
     }
+    // OCCT PaveFiller_3.cxx L145-244: PerformEE
     pub(crate) fn perform_ee_bvh(&mut self, bvh_edges_a: &crate::bvh::DsBvh, bvh_edges_b: &crate::bvh::DsBvh) {
         use rayon::prelude::*;
+        // OCCT L147: FillShrunkData(TopAbs_EDGE, TopAbs_EDGE)
         self.fill_shrunk_data();
+        // OCCT L149: myIterator->Initialize(EDGE, EDGE) — rcad: BVH candidate_pairs
         let pairs = crate::bvh::DsBvh::candidate_pairs(bvh_edges_a, bvh_edges_b);
-        // Filter + collect PaveBlock ranges in parallel.
+        // OCCT L152-155: if (!iSize) return — rcad: empty pairs returns early.
+        // Filter pairs with OCCT L189-210 conditions:
+        //   L190-198: HasFlag → skip; L200-210: PaveBlocks empty → skip
+        //   L176-178: HasInterf → skip; L406-408: Degenerated → skip
         let ds = &self.ds;
         let blocks: Vec<(usize, usize, [f64; 2], [f64; 2])> = pairs.par_iter()
             .filter(|&(ae, be)| {
@@ -79,6 +85,7 @@ impl<'a> super::PaveFiller<'a> {
                     && !ds.is_edge_degenerated(*ae) && !ds.is_edge_degenerated(*be)
             })
             .flat_map(|&(ae, be)| {
+                // OCCT L200-232: iterate PaveBlocks per edge (GetPBBox)
                 let ra = Self::collect_paveblock_ranges_static(ds, ae, ds.edges[ae].t_range);
                 let rb = Self::collect_paveblock_ranges_static(ds, be, ds.edges[be].t_range);
                 let mut v = Vec::new();
@@ -86,6 +93,7 @@ impl<'a> super::PaveFiller<'a> {
                 v
             })
             .collect();
+        // OCCT L244+: BOPTools_AlgoTools::IntersectCurves for each pair
         for &(ae, be, r1, r2) in &blocks {
             self.check_edge_edge_range(ae, be, r1, r2);
         }
@@ -509,6 +517,7 @@ impl<'a> super::PaveFiller<'a> {
             it.next();
         }
     }
+    // OCCT PaveFiller_3.cxx L215-296: GetPBBox + IntersectCurves + AddInterf
     pub(crate) fn check_edge_edge_range(&mut self, e1: usize, e2: usize,
                               range1: [f64; 2], range2: [f64; 2]) {
         let edge1 = &self.ds.edges[e1];
@@ -570,6 +579,7 @@ impl<'a> super::PaveFiller<'a> {
             self.ds.edges[e2].paves.push(Pave { vertex_idx: new_v, param: t2 });
         }
     }
+    // OCCT PaveFiller_3.cxx L580-640: CheckEdgeEdge + common block creation
     pub(crate) fn check_edge_edge(&mut self, e1: usize, e2: usize) {
         let edge1 = &self.ds.edges[e1];
         let edge2 = &self.ds.edges[e2];
