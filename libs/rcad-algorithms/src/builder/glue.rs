@@ -794,7 +794,10 @@ mod glue_tests {
     use glam::DAffine3;
     use glam::DVec2;
     use crate::builder::split_polygon::split_uv_polygon_at_seam;
-    use crate::builder::split_polygon2::split_uv_polygon_torus_double;
+    use crate::builder::split_polygon::split_uv_polygon_torus_double;
+    use crate::builder::split_polygon::handle_degenerate_uv_polygon;
+    use crate::builder::split_polygon::split_edge_at_periodic_seam;
+    use crate::builder::split_polygon2::split_polygon_2d_by_line;
 
     fn unit_box() -> BRep {
         BRep::from_primitive(PrimitiveSolid::Box {
@@ -1307,7 +1310,7 @@ mod glue_tests {
 
         // Each segment should have start and end UV
         for (i, seg) in segments.iter().enumerate() {
-            assert_eq!(seg.len(), 2, "Segment {} should have 2 points", i);
+            assert_eq!(seg.len() as usize, 2, "Segment {} should have 2 points", i);
         }
 
         // First segment should end at seam
@@ -1449,6 +1452,7 @@ mod glue_tests {
 
         // All points should be on sphere surface
         for pt in &result {
+            let pt: &DVec3 = pt;
             let dist = pt.length();
             assert!(
                 (dist - sphere.radius).abs() < 0.001,
@@ -1471,7 +1475,7 @@ mod glue_tests {
             DVec2::new(-1.0, 0.0),
             DVec2::new(0.0, -1.0),
         ];
-        let out = super::split_polygon_2d_by_line(&poly, DVec2::new(0.0, 0.0), DVec2::new(1.0, 0.0));
+        let out: Vec<Vec<DVec2>> = split_polygon_2d_by_line(&poly, DVec2::new(0.0, 0.0), DVec2::new(1.0, 0.0));
         assert!(out.len() >= 2, "diamond split by diagonal should produce 2+ polygons, got {}", out.len());
         // Each sub-polygon should be non-degenerate
         for (i, p) in out.iter().enumerate() {
@@ -1491,7 +1495,7 @@ mod glue_tests {
             DVec2::new(0.0, 2.0),
         ];
         // Vertical line x=1.2 鈥?does not pass through any vertex
-        let out = super::split_polygon_2d_by_line(&poly, DVec2::new(1.2, 0.0), DVec2::new(0.0, 1.0));
+        let out = split_polygon_2d_by_line(&poly, DVec2::new(1.2, 0.0), DVec2::new(0.0, 1.0));
         assert!(out.len() >= 2, "square split by offset line should produce 2+ polygons, got {}", out.len());
     }
 
