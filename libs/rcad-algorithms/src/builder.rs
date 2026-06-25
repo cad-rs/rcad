@@ -3870,9 +3870,12 @@ fn pc_parameter_range(curve: &Curve2d) -> (f64, f64) {
     }
 }
 
-/// OCCT-aligned: intersect a 2D ray with a 2D curve.
-/// Returns (param_on_curve, param_on_ray) for all intersections within range.
-/// ✅ OCCT-aligned: Geom2dInt_GInter (BOPAlgo_WireSplitter_1.cxx L1080)
+/// OCCT-aligned: Geom2dInt_GInter — intersect a ray with a 2D curve.
+/// Returns (param_on_curve, param_on_ray) for all intersections within [t_min, t_max].
+///
+/// OCCT dispatch (IntCurve_IntCurveCurveGen.gxx L247-815):
+///   Line × Line/Circle/Ellipse → IntConicConic (analytic)
+///   Line × BSpline/Bezier/other → TheIntConicCurveOfGInter (projection+Newton)
 fn intersect_ray_curve_2d(
     ray_origin: DVec2,
     ray_dir: DVec2,
@@ -3880,91 +3883,137 @@ fn intersect_ray_curve_2d(
     t_min: f64,
     t_max: f64,
 ) -> Vec<(f64, f64)> {
-    // Unwrap Trimmed to base curve (the trim range is already t_min/t_max)
     let (base, tr_shift) = match curve {
         Curve2d::Trimmed(tc) => (&*tc.curve, tc.t_min),
         _ => (curve, 0.0),
     };
+    let t_min_a = t_min - tr_shift;
+    let t_max_a = t_max - tr_shift;
     match base {
         Curve2d::Line(line) => {
-            // Ray:  P = O + s*d, s >= 0
-            // Line: P = L0 + t*Ld
-            // Solve: O + s*d = L0 + t*Ld
-            //        [dx  -Ldx] [s]   [L0x-Ox]
-            //        [dy  -Ldy] [t] = [L0y-Oy]
             let a = ray_dir.x;
             let b = -line.direction.x;
             let c = ray_dir.y;
             let d = -line.direction.y;
+            let det = a * d - b * c;
+            if det.abs() < 1e-15 { return vec![]; }
             let rhs_x = line.origin.x - ray_origin.x;
             let rhs_y = line.origin.y - ray_origin.y;
-            let det = a * d - b * c;
-            if det.abs() < 1e-15 {
-                return vec![];
-            }
-            let t_on_ray = (d * rhs_x - b * rhs_y) / det;
-            let t_on_curve = (a * rhs_y - c * rhs_x) / det + tr_shift;
-            if t_on_ray >= 0.0 && t_on_curve >= t_min && t_on_curve <= t_max {
-                vec![(t_on_curve, t_on_ray)]
-            } else {
-                vec![]
-            }
+            let s = (d * rhs_x - b * rhs_y) / det;
+            let t = (a * rhs_y - c * rhs_x) / det;
+            if s >= 0.0 && t >= t_min_a && t <= t_max_a {
+                vec![(t + tr_shift, s)]
+            } else { vec![] }
         }
         Curve2d::Circle(circle) => {
-            // Ray:  P = O + s*d, s >= 0
-            // Circle: |P - C| = r
-            // |O + s*d - C|^2 = r^2
-            // a*s^2 + b*s + c = 0, where:
             let oc = ray_origin - circle.center;
-            let a_coeff = ray_dir.dot(ray_dir);
-            let b_coeff = 2.0 * ray_dir.dot(oc);
-            let c_coeff = oc.dot(oc) - circle.radius * circle.radius;
-            let disc = b_coeff * b_coeff - 4.0 * a_coeff * c_coeff;
-            if disc < 0.0 {
-                return vec![];
-            }
+            let a_c = ray_dir.dot(ray_dir);
+            let b_c = 2.0 * ray_dir.dot(oc);
+            let c_c = oc.dot(oc) - circle.radius * circle.radius;
+            let disc = b_c * b_c - 4.0 * a_c * c_c;
+            if disc < 0.0 { return vec![]; }
             let sqrt_disc = disc.sqrt();
-            let s1 = (-b_coeff - sqrt_disc) / (2.0 * a_coeff);
-            let s2 = (-b_coeff + sqrt_disc) / (2.0 * a_coeff);
             let mut result = Vec::new();
-            for &s in &[s1, s2] {
+            for &s in &[(-b_c - sqrt_disc) / (2.0 * a_c), (-b_c + sqrt_disc) / (2.0 * a_c)] {
                 if s >= 0.0 {
                     let p = ray_origin + s * ray_dir;
                     let mut t = (p.y - circle.center.y).atan2(p.x - circle.center.x);
-                    if t < 0.0 {
-                        t += std::f64::consts::TAU;
-                    }
-                    let t_full = t + tr_shift;
-                    if t_full >= t_min && t_full <= t_max {
-                        result.push((t_full, s));
+                    if t < 0.0 { t += std::f64::consts::TAU; }
+                    if t >= t_min_a && t <= t_max_a {
+                        result.push((t + tr_shift, s));
                     }
                 }
             }
             result
         }
-        // OCCT Geom2dInt_GInter handles all curve types analytically.
-        // For non-circle/line curves, fall back to sampling-based search.
-        _ => {
-            const N_SEG: usize = 256;
-            let mut best_t: Option<(f64, f64)> = None;
-            for i in 0..N_SEG {
-                let t = t_min + (t_max - t_min) * (i as f64) / (N_SEG as f64);
-                let p = curve.point_at(t);
-                let delta = p - ray_origin;
-                let s = delta.dot(ray_dir);
-                if s < 0.0 { continue; }
-                let cross = (delta - ray_dir * s).length();
-                if cross > 1e-8 { continue; }
-                let is_closer = best_t.map_or(true, |(_, best_s)| s < best_s);
-                if is_closer {
-                    best_t = Some((t, s));
+        Curve2d::Ellipse(ellipse) => {
+            // Ray: P = O + s*D, s >= 0
+            // Ellipse: ((P-C)·u/a)^2 + ((P-C)·v/b)^2 = 1
+            let u = ellipse.major_dir;
+            let v = DVec2::new(-u.y, u.x);
+            let a_e = ellipse.major_radius;
+            let b_e = ellipse.minor_radius;
+            let oc = ray_origin - ellipse.center;
+            let du = ray_dir.dot(u) / a_e;
+            let dv = ray_dir.dot(v) / b_e;
+            let ou = oc.dot(u) / a_e;
+            let ov = oc.dot(v) / b_e;
+            let a_c = du * du + dv * dv;
+            let b_c = 2.0 * (du * ou + dv * ov);
+            let c_c = ou * ou + ov * ov - 1.0;
+            let disc = b_c * b_c - 4.0 * a_c * c_c;
+            if disc < 0.0 { return vec![]; }
+            let sqrt_disc = disc.sqrt();
+            let mut result = Vec::new();
+            for &s in &[(-b_c - sqrt_disc) / (2.0 * a_c), (-b_c + sqrt_disc) / (2.0 * a_c)] {
+                if s >= 0.0 {
+                    let p = ray_origin + s * ray_dir;
+                    let dp = p - ellipse.center;
+                    let mut t = dp.y.atan2(dp.x);
+                    if t < 0.0 { t += std::f64::consts::TAU; }
+                    if t >= t_min_a && t <= t_max_a {
+                        result.push((t + tr_shift, s));
+                    }
                 }
             }
-            if let Some((t, s)) = best_t {
-                vec![(t, s)]
-            } else {
-                vec![]
+            result
+        }
+        // OCCT TheIntConicCurveOfGInter / TheIntPCurvePCurveOfGInter:
+        //   For non-conic curves, sample curve → find nearest point to ray → Newton refine.
+        _ => {
+            const N_SEG: usize = 256;
+            let ray_len2 = ray_dir.length_squared();
+            if ray_len2 < 1e-30 { return vec![]; }
+            let ray_d = ray_dir / ray_len2.sqrt();
+            let mut candidates: Vec<(f64, f64)> = Vec::new();
+            for i in 0..=N_SEG {
+                let t = t_min_a + (t_max_a - t_min_a) * (i as f64) / (N_SEG as f64);
+                let p = curve.point_at(t + tr_shift);
+                let delta = p - ray_origin;
+                let s = delta.dot(ray_d);
+                if s < 0.0 { continue; }
+                let perp = (delta - ray_d * s).length_squared();
+                if perp < 1e-10 {
+                    let is_dup = candidates.last().map_or(false, |&(lt, _)| (t - lt).abs() < 1e-9 * (t_max_a - t_min_a + 1.0));
+                    if !is_dup { candidates.push((t, s)); }
+                }
             }
+            if !candidates.is_empty() { return candidates.into_iter().map(|(t, s)| (t + tr_shift, s)).collect(); }
+            let mut best: Option<(f64, f64, f64)> = None;
+            for i in 0..=N_SEG {
+                let t = t_min_a + (t_max_a - t_min_a) * (i as f64) / (N_SEG as f64);
+                let p = curve.point_at(t + tr_shift);
+                let delta = p - ray_origin;
+                let s = delta.dot(ray_d);
+                if s < 0.0 { continue; }
+                let perp = (delta - ray_d * s).length();
+                if best.map_or(true, |(bp, _, _)| perp < bp) {
+                    best = Some((perp, t, s));
+                }
+            }
+            if let Some((perp, t0, s0)) = best {
+                if perp > 1e-4 { return vec![]; }
+                let eps_der = 1e-7;
+                let mut t = t0;
+                for _ in 0..20 {
+                    let p = curve.point_at(t + tr_shift);
+                    let p_hi = curve.point_at((t + eps_der).clamp(t_min_a, t_max_a) + tr_shift);
+                    let p_lo = curve.point_at((t - eps_der).clamp(t_min_a, t_max_a) + tr_shift);
+                    let der = (p_hi - p_lo) / (2.0 * eps_der);
+                    let dp = p - ray_origin;
+                    let f = dp.x * ray_d.y - dp.y * ray_d.x;
+                    let df = der.x * ray_d.y - der.y * ray_d.x;
+                    if df.abs() < 1e-15 { break; }
+                    let dt = -f / df;
+                    t = (t + dt).clamp(t_min_a, t_max_a);
+                    if dt.abs() < 1e-12 {
+                        let s = (curve.point_at(t + tr_shift) - ray_origin).dot(ray_d);
+                        if s >= 0.0 { return vec![(t + tr_shift, s)]; }
+                        break;
+                    }
+                }
+            }
+            vec![]
         }
     }
 }
