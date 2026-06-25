@@ -18,6 +18,11 @@ use crate::inttools::fclass2d::{CSLibClass2d, CSLibResult};
 use crate::tolerance::*;
 use crate::triangulate::{triangulate_polygon, triangulate_polygon_with_holes};
 
+mod angle_2d;
+mod curve_tools;
+mod intres2d;
+mod intersection;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BooleanOpType {
     Union,
