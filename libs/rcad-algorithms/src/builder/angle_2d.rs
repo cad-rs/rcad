@@ -1,16 +1,49 @@
 // OCCT-aligned: Angle2D, dir_to_angle (-> Angle(gp_Dir2d)), ClockWiseAngle
 //   WireSplitter_1.cxx L768-840 (Angle2D), L621-650 (ClockWiseAngle)
 //
-// Key OCCT differences (architectural, non-blocking):
-//   - tol2d hardcoded to 1e-5 (OCCT uses Tolerance2D which is surface-type-aware)
-//   - vertex parameter from domain array (OCCT uses BRep_Tool::Parameter — TopoDS storage)
-//   - Resolution from curve2d_resolution (OCCT uses Geom2dAdaptor_Curve::Resolution)
-//
 //   clock_wise_angle: ✓ matches OCCT formula a1n - ao, epsilon guard
+//
+//   Angle2D: ✓ Tolerance2D + Resolution aligned (surface-aware)
+//   Differences: vertex tolerance uses default 1e-5 (OCCT BRep_Tool::Tolerance per-vertex)
 
 use glam::DVec2;
 use rcad_kernel::geom::*;
 use super::curve_tools::*;
+
+/// OCCT-aligned: Tolerance2D — BOPAlgo_WireSplitter_1.cxx L859-881
+///   aTol2D = max(UResolution(aTolV3D), VResolution(aTolV3D), aTolV3D)
+///   For BSpline surface: multiplied by 1.1
+pub(crate) fn tolerance_2d(vt: f64, surface: &Surface3) -> f64 {
+    let u_res = u_resolution(vt, surface);
+    let v_res = v_resolution(vt, surface);
+    let mut t2d = u_res.max(v_res).max(vt);
+    if matches!(surface, Surface3::BSpline(_) | Surface3::Bezier(_) | Surface3::TriBezier(_)) {
+        t2d *= 1.1;
+    }
+    t2d
+}
+
+/// OCCT-aligned: BRepAdaptor_Surface::UResolution
+fn u_resolution(vt: f64, surface: &Surface3) -> f64 {
+    match surface {
+        Surface3::Sphere(s) => vt / s.radius.max(1e-15),
+        Surface3::Cylinder(c) => vt / c.radius.max(1e-15),
+        Surface3::Cone(_) => vt * 1e-3,
+        Surface3::Torus(t) => vt / t.major_radius.max(1e-15),
+        _ => vt,
+    }
+}
+
+/// OCCT-aligned: BRepAdaptor_Surface::VResolution
+fn v_resolution(vt: f64, surface: &Surface3) -> f64 {
+    match surface {
+        Surface3::Sphere(s) => vt / s.radius.max(1e-15),
+        Surface3::Cylinder(_) => vt,
+        Surface3::Cone(_) => vt,
+        Surface3::Torus(t) => vt / t.minor_radius.max(1e-15),
+        _ => vt,
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CurveGeomType { Line, Circle, Ellipse, Parabola, Hyperbola, Other }
@@ -26,19 +59,20 @@ pub fn dir_to_angle(dir: DVec2) -> f64 {
     if a < 0.0 { a + std::f64::consts::TAU } else { a }
 }
 
-pub fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool) -> Option<f64> {
+pub fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool, surface: &Surface3) -> Option<f64> {
     let first = domain[0]; let last = domain[1];
     let range = (last - first).abs();
     if range < 1e-15 { return None; }
-    let tol2d = 1e-5;
-    let mut dt = curve2d_resolution(curve, tol2d).max(1e-7);
+    let a_tol_v3d = 1e-5_f64;
+    let a_tol_2d = 2.0 * tolerance_2d(a_tol_v3d, surface);
+    let mut dt = curve2d_resolution(curve, a_tol_2d).max(1e-7);
     let typ = curve_geom_type(curve);
     if typ != CurveGeomType::Line {
         let d1 = curve2d_d1(curve, t); let d2 = curve2d_d2(curve, t);
         if d1.length_squared() > 1e-14 {
             let r = curve2d_lprop_curvature(d1, d2, 1e-14);
             if r > 1e-7 {
-                let r_curv = 1.0 / r; let cosphi = r_curv / (r_curv + tol2d);
+                let r_curv = 1.0 / r; let cosphi = r_curv / (r_curv + a_tol_2d);
                 if cosphi < 1.0 { dt = dt.max(cosphi.acos()); }
             }
         }

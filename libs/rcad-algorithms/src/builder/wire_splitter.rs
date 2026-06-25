@@ -49,8 +49,8 @@ pub(crate) fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface
             // For IN at ev: t = uv_end's V (relative to v0).
             let t_end_v = uv_end.y - v0;
             let domain = [0.0, span];
-            let t_start = angle_2d(&pcurve, t_start_v, domain, false);
-            let t_end = angle_2d(&pcurve, t_end_v, domain, true);
+            let t_start = angle_2d(&pcurve, t_start_v, domain, false, surface);
+            let t_end = angle_2d(&pcurve, t_end_v, domain, true, surface);
             (t_start, t_end)
         }
         Surface3::Cylinder(cyl) => {
@@ -284,29 +284,23 @@ fn dir_to_angle(dir: DVec2) -> f64 {
 /// Simplified version using fixed dt proportional to domain length.
 /// ✅ OCCT-aligned: pcurve tangent angle — OCCT Angle2D
 ///    (BOPAlgo_WireSplitter_1.cxx L768-840).
-///    Evaluates pcurve at vertex + micro-step via D0. Step direction
-///    = toward nearest curve end (OCCT L822-829). Step capped at 5%
-///    of domain range (OCCT L810-814).
-///    b_is_in=true → entering vertex (reverse tangent direction).
-fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool) -> Option<f64> {
+///    Uses surface-aware Tolerance2D + Resolution + curvature dt.
+fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool, surface: &Surface3) -> Option<f64> {
     let first = domain[0];
     let last = domain[1];
     let range = (last - first).abs();
     if range < 1e-15 { return None; }
-    // OCCT-aligned L792: dt = max(Resolution(tol2d), Precision::PConfusion())
-    //   Resolution parameter delta ≈ tol2d / |dC/dt|.  tol2d = 1e-5 (typical).
-    const A_TOL_2D: f64 = 1e-5_f64;
+    let a_tol_v3d = 1e-5_f64;
+    let a_tol_2d = 2.0 * super::angle_2d::tolerance_2d(a_tol_v3d, surface);
     let mut dt = match curve {
-        Curve2d::Circle(c) => A_TOL_2D / c.radius.max(1e-15),
-        Curve2d::Ellipse(e) => A_TOL_2D / (e.major_radius + e.minor_radius).max(1e-15) * 2.0,
+        Curve2d::Circle(c) => a_tol_2d / c.radius.max(1e-15),
+        Curve2d::Ellipse(e) => a_tol_2d / (e.major_radius + e.minor_radius).max(1e-15) * 2.0,
         Curve2d::Line(l) => {
             let speed = l.direction.length();
-            if speed < 1e-30 { A_TOL_2D } else { A_TOL_2D / speed }
+            if speed < 1e-30 { a_tol_2d } else { a_tol_2d / speed }
         }
-        _ => A_TOL_2D, // BSpline/Bezier: use tol2d directly
-    }.max(1e-7); // max with Precision::PConfusion
-    // OCCT L800-821: curvature-aware adjustment for non-linear curves.
-    //   dt = max(dt, acos(R / (R + tol2d))) where R = radius of curvature.
+        _ => a_tol_2d,
+    }.max(1e-7);
     let radius_of_curv = match curve {
         Curve2d::Circle(c) => Some(c.radius.max(1e-15)),
         Curve2d::Ellipse(e) => Some((e.major_radius + e.minor_radius) / 2.0),
@@ -330,7 +324,7 @@ fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool) -> Option<
         _ => None,
     };
     if let Some(r_curv) = radius_of_curv {
-        let cos_phi: f64 = r_curv / (r_curv + A_TOL_2D);
+        let cos_phi: f64 = r_curv / (r_curv + a_tol_2d);
         if cos_phi < 1.0 {
             let curv_dt = cos_phi.acos().max(1e-7);
             dt = dt.max(curv_dt);
@@ -686,7 +680,7 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
                         }
                     }
                 };
-                ei.angle = angle_2d(&curve, t_v, curve_domain, ei.in_flag)
+                ei.angle = angle_2d(&curve, t_v, curve_domain, ei.in_flag, &ds.faces[face_idx].surface)
                     .unwrap_or(0.0);
             }
         }
