@@ -3876,7 +3876,7 @@ fn pc_parameter_range(curve: &Curve2d) -> (f64, f64) {
 /// OCCT dispatch (IntCurve_IntCurveCurveGen.gxx L247-815):
 ///   Line × Line/Circle/Ellipse → IntConicConic (analytic)
 ///   Line × BSpline/Bezier/other → TheIntConicCurveOfGInter (projection+Newton)
-fn intersect_ray_curve_2d(
+pub(crate) fn intersect_ray_curve_2d(
     ray_origin: DVec2,
     ray_dir: DVec2,
     curve: &Curve2d,
@@ -3924,6 +3924,14 @@ fn intersect_ray_curve_2d(
                     }
                 }
             }
+            // Dedup: if tangent (double root), the last two entries are identical
+            if result.len() >= 2 {
+                let (t1, _) = result[result.len() - 1];
+                let (t2, _) = result[result.len() - 2];
+                if (t1 - t2).abs() < 1e-12_f64 {
+                    result.pop();
+                }
+            }
             result
         }
         Curve2d::Ellipse(ellipse) => {
@@ -3954,6 +3962,14 @@ fn intersect_ray_curve_2d(
                     if t >= t_min_a && t <= t_max_a {
                         result.push((t + tr_shift, s));
                     }
+                }
+            }
+            // Dedup: if tangent (double root)
+            if result.len() >= 2 {
+                let (t1, _) = result[result.len() - 1];
+                let (t2, _) = result[result.len() - 2];
+                if (t1 - t2).abs() < 1e-12_f64 {
+                    result.pop();
                 }
             }
             result

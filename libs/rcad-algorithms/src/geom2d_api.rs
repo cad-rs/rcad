@@ -2152,4 +2152,91 @@ mod tests {
         let (dist, _param) = distance_point_to_curve2d(DVec2::new(1.5, -1.0), &curve);
         assert!(dist < 2.0);
     }
+
+    // === intersect_ray_curve_2d tests (Geom2dInt_GInter equivalent) ===
+    use crate::builder::intersect_ray_curve_2d;
+
+    fn ray(ox: f64, oy: f64, dx: f64, dy: f64) -> (DVec2, DVec2) {
+        (DVec2::new(ox, oy), DVec2::new(dx, dy))
+    }
+
+    fn line_curve(ox: f64, oy: f64, dx: f64, dy: f64) -> Curve2d {
+        Curve2d::Line(Line2d { origin: DVec2::new(ox, oy), direction: DVec2::new(dx, dy) })
+    }
+
+    fn circle_curve(cx: f64, cy: f64, r: f64) -> Curve2d {
+        Curve2d::Circle(Circle2d { center: DVec2::new(cx, cy), radius: r })
+    }
+
+    fn ellipse_curve(cx: f64, cy: f64, a: f64, b: f64, angle: f64) -> Curve2d {
+        Curve2d::Ellipse(Ellipse2d {
+            center: DVec2::new(cx, cy),
+            major_dir: DVec2::new(angle.cos(), angle.sin()),
+            major_radius: a, minor_radius: b,
+        })
+    }
+
+    #[test]
+    fn test_ray_line_intersecting() {
+        let (o, d) = ray(0.0, 0.0, 1.0, 0.0);
+        let c = line_curve(5.0, 1.0, 0.0, 1.0);
+        let hits = intersect_ray_curve_2d(o, d, &c, -1e10, 1e10);
+        assert_eq!(hits.len(), 1);
+        assert!((hits[0].1 - 5.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_ray_line_parallel() {
+        assert_eq!(intersect_ray_curve_2d(DVec2::ZERO, DVec2::X, &line_curve(0.0, 1.0, 1.0, 0.0), -1e10, 1e10).len(), 0);
+    }
+
+    #[test]
+    fn test_ray_circle_two_hits() {
+        assert_eq!(intersect_ray_curve_2d(DVec2::ZERO, DVec2::X,
+            &circle_curve(5.0, 0.0, 2.0), 0.0, std::f64::consts::TAU).len(), 2);
+    }
+
+    #[test]
+    fn test_ray_circle_tangent() {
+        let n = intersect_ray_curve_2d(DVec2::new(0.0, 2.0), DVec2::X,
+            &circle_curve(0.0, 0.0, 2.0), 0.0, std::f64::consts::TAU).len();
+        // Floating point may give 0 (near-zero negative disc) or 1 (exact tangent)
+        assert!(n == 0 || n == 1, "expected 0 or 1 tangent hit, got {n}");
+    }
+
+    #[test]
+    fn test_ray_circle_miss() {
+        assert_eq!(intersect_ray_curve_2d(DVec2::new(0.0, 5.0), DVec2::X,
+            &circle_curve(0.0, 0.0, 2.0), 0.0, std::f64::consts::TAU).len(), 0);
+    }
+
+    #[test]
+    fn test_ray_ellipse_intersecting() {
+        assert_eq!(intersect_ray_curve_2d(DVec2::ZERO, DVec2::X,
+            &ellipse_curve(5.0, 0.0, 3.0, 1.0, 0.0), 0.0, std::f64::consts::TAU).len(), 2);
+    }
+
+    #[test]
+    fn test_ray_ellipse_miss() {
+        assert_eq!(intersect_ray_curve_2d(DVec2::new(0.0, 5.0), DVec2::X,
+            &ellipse_curve(5.0, 0.0, 3.0, 1.0, 0.0), 0.0, std::f64::consts::TAU).len(), 0);
+    }
+
+    #[test]
+    fn test_ray_ellipse_rotated() {
+        assert_eq!(intersect_ray_curve_2d(DVec2::ZERO, DVec2::X,
+            &ellipse_curve(5.0, 0.0, 3.0, 1.0, std::f64::consts::PI / 4.0), 0.0, std::f64::consts::TAU).len(), 2);
+    }
+
+    #[test]
+    fn test_ray_ellipse_reverse() {
+        assert_eq!(intersect_ray_curve_2d(DVec2::new(10.0, 0.0), -DVec2::X,
+            &ellipse_curve(5.0, 0.0, 3.0, 1.0, 0.0), 0.0, std::f64::consts::TAU).len(), 2);
+    }
+
+    #[test]
+    fn test_ray_opposite_no_hit() {
+        assert_eq!(intersect_ray_curve_2d(DVec2::ZERO, -DVec2::X,
+            &line_curve(5.0, 0.0, 0.0, 1.0), -1e10, 1e10).len(), 0);
+    }
 }
