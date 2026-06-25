@@ -12,6 +12,7 @@ use crate::pave_filler::helpers::*;
 use crate::tolerance::*;
 
 impl<'a> super::PaveFiller<'a> {
+    /// OCCT PaveFiller L145: BOPDS_Iterator — BVH pair enumeration
     pub(crate) fn build_ds_bvh(&self, is_a: bool, is_edge: bool) -> crate::bvh::DsBvh {
         use crate::bvh::{Aabb, DsBvh};
         let (ds_start, end) = if is_edge {
@@ -290,6 +291,7 @@ impl<'a> super::PaveFiller<'a> {
         let total_face_pairs = self.ds.a_face_count * (self.ds.faces.len() - self.ds.a_face_count);
         self.ds.shared_topology.fully_glued_faces.len() == total_face_pairs && total_face_pairs > 0
     }
+    /// OCCT PaveFiller_2.cxx L254: PerformVV (FillShrunkData + BVH pair iteration)
     pub(crate) fn perform_vv(&mut self) {
         if self.use_glue && !self.ds.shared_topology.shared_vertices.is_empty() {
             for &(vi_a, vi_b) in &self.ds.shared_topology.shared_vertices {
@@ -887,6 +889,7 @@ impl<'a> super::PaveFiller<'a> {
             }
         }
     }
+    /// OCCT PaveFiller_4.cxx: CheckVertexFace
     pub(crate) fn check_vertex_face(&mut self, vi: usize, fi: usize) {
         let point = self.ds.vertices[vi].point;
         let face = &self.ds.faces[fi];
