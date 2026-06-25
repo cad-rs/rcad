@@ -4007,10 +4007,11 @@ fn refine_angle_2d(
     _a_delta: f64,
     _current_angle: f64,
 ) -> Option<f64> {
-    let v_pt = ds.vertices[vertex_idx].point;
-    let v_uv = world_to_uv(face_surface, v_pt)?;
-
-    // OCCT L1057-1068: get pcurve and range
+    // OCCT L1057-1061: use vertex parameter on edge's pcurve (BRep_Tool::Parameter).
+    //   rcad does NOT store per-vertex-on-edge parameters, but for IC arcs we can
+    //   use the pcurve endpoint UV directly instead of re-projecting 3D→UV via
+    //   world_to_uv (which gives wrong UV at periodic surface singularities).
+    // OCCT L1062-1068: get pcurve and range
     let (curve2d, t_min, t_max): (Curve2d, f64, f64) = match &seg.source {
         WireEdgeSource::IntersectionCurve(ci) => {
             let ic = &ds.intersection_curves[*ci];
@@ -4071,7 +4072,17 @@ fn refine_angle_2d(
         }
     };
 
-    // OCCT L1060-1061: get vertex parameter on curve and vertex UV
+    // OCCT L1060-1061: get vertex parameter on curve and vertex UV.
+    //   OCCT uses BRep_Tool::Parameter(aV, aE, myFace) — stored pcurve param.
+    //   rcad: use pcurve endpoint UV for IC arcs (avoids world_to_uv singularities
+    //   at sphere poles).  Fall back to world_to_uv for other edge types.
+    let v_uv = match &seg.source {
+        WireEdgeSource::IntersectionCurve(_) => {
+            let t_vert = if vertex_idx == seg.start_vertex { t_min } else { t_max };
+            curve2d.point_at(t_vert)
+        }
+        _ => world_to_uv(face_surface, ds.vertices[vertex_idx].point)?,
+    };
     let t_v = project_uv_to_curve(v_uv, &curve2d, t_min, t_max)?;
 
     // OCCT L1063-1065: determine "other end" direction and MaxDT
