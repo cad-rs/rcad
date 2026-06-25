@@ -3252,8 +3252,21 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
         // ✅ OCCT-aligned: Build SmartMap (WireSplitter_1.cxx L154-220).
         //    Always built first, used for BOTH regularity check and Path walk.
         let mut smart_map: BTreeMap<usize, Vec<EdgeInfo>> = BTreeMap::new();
+        // OCCT L131: aVertMap — per-vertex closed edge flag (built inline)
+        let mut vert_map: HashMap<usize, bool> = HashMap::new();
         for &si in block {
             let seg = &segments[si];
+            // OCCT L142-144: skip edges without CurveOnSurface on the face
+            let has_pcurve = match &seg.source {
+                WireEdgeSource::IntersectionCurve(ci) => {
+                    ds.intersection_curves.get(*ci).map_or(false, |ic| {
+                        ic.pcurve_on_a.is_some() || ic.pcurve_on_b.is_some()
+                    })
+                }
+                _ => seg.first_pcurve.is_some() || seg.second_pcurve.is_some(),
+            };
+            if !has_pcurve { continue; }
+
             let is_inside = matches!(seg.source, WireEdgeSource::IntersectionCurve(_));
             let is_circle_arc = is_inside && match &seg.source {
                 WireEdgeSource::IntersectionCurve(ci) => {
@@ -3263,20 +3276,61 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
                 }
                 _ => false,
             };
-            let is_closed = seg.is_seam;
-            let add_out = seg.forward || is_closed;
-            if add_out {
-                if let Some(angle) = seg.tangent_start {
-                    smart_map.entry(seg.start_vertex).or_default().push(EdgeInfo {
-                        seg_idx: si, passed: false, in_flag: false, is_inside, is_circle_arc, angle,
-                    });
-                }
-            }
-            // OCCT L167-172: second vertex always REVERSED → InFlag=true
-            if let Some(angle) = seg.tangent_end {
-                smart_map.entry(seg.end_vertex).or_default().push(EdgeInfo {
-                    seg_idx: si, passed: false, in_flag: true, is_inside, is_circle_arc, angle,
-                });
+
+            // OCCT L147: bIsClosed = Degenerated(aE) || IsClosed(aE, myFace)
+            let b_is_closed = seg.start_vertex == seg.end_vertex
+                || (seg.is_seam && !matches!(&seg.source, WireEdgeSource::DsEdge(ei)
+                    if ds.edges.get(*ei).map_or(false, |e| e.pave_blocks.len() > 1)));
+
+            // OCCT L167-172: ONE EdgeInfo per vertex, in_flag from vertex orientation.
+            // OCCT TopoDS_Edge: first vertex → FORWARD (out), second → REVERSED (in).
+            // rcad fwd seg (forward=true): start=FORWARD→out, end=REVERSED→in.
+            // rcad rev seg (forward=false): start=REVERSED→in, end=FORWARD→out.
+            let sv_in = !seg.forward;
+            smart_map.entry(seg.start_vertex).or_default().push(EdgeInfo {
+                seg_idx: si, passed: false, in_flag: sv_in, is_inside, is_circle_arc, angle: 0.0,
+            });
+            let ev_in = seg.forward;
+            smart_map.entry(seg.end_vertex).or_default().push(EdgeInfo {
+                seg_idx: si, passed: false, in_flag: ev_in, is_inside, is_circle_arc, angle: 0.0,
+            });
+
+            // OCCT L184-194: aVertMap — bind bIsClosed per vertex
+            let e_sv = vert_map.entry(seg.start_vertex).or_default();
+            *e_sv = *e_sv || b_is_closed;
+            let e_ev = vert_map.entry(seg.end_vertex).or_default();
+            *e_ev = *e_ev || b_is_closed;
+        }
+
+        // OCCT L298-319: compute angles for ALL EdgeInfo entries using Angle2D.
+        // OCCT L316: aAngle = Angle2D(aVV, aE, myFace, aBAS, bIsIN, theContext)
+        for (&v, infos) in smart_map.iter_mut() {
+            for ei in infos.iter_mut() {
+                let seg = &segments[ei.seg_idx];
+                // Determine vertex parameter and pcurve (BRep_Tool::Parameter equivalent)
+                let t_v = if v == seg.start_vertex { seg.t_range[0] } else { seg.t_range[1] };
+                let domain = seg.t_range;
+                let (curve, curve_domain) = match &seg.source {
+                    WireEdgeSource::IntersectionCurve(ci) => {
+                        let ic = &ds.intersection_curves[*ci];
+                        if let Some(ref pc) = ic.pcurve_on_a {
+                            let (ta, tb) = pc_parameter_range(pc);
+                            (pc.clone(), [ta, tb])
+                        } else if let Some(ref pc) = ic.pcurve_on_b {
+                            let (ta, tb) = pc_parameter_range(pc);
+                            (pc.clone(), [ta, tb])
+                        } else { continue; }
+                    }
+                    _ => {
+                        let pc = seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref());
+                        match pc {
+                            Some(pc) => (pc.clone(), domain),
+                            None => continue,
+                        }
+                    }
+                };
+                ei.angle = angle_2d(&curve, t_v, curve_domain, ei.in_flag)
+                    .unwrap_or(0.0);
             }
         }
 
@@ -4173,9 +4227,11 @@ fn walk_path_extract_wires(
     let two_pi = std::f64::consts::TAU;
 
     // OCCT: aLS (edge sequence), aVertVa (vertex sequence), aCoordVa (UV coordinates)
+    // OCCT L389: anInfoSeq (EdgeInfo pointer sequence for isBoundary tracking)
     let mut edge_seq: Vec<usize> = Vec::new();
     let mut vert_seq: Vec<usize> = Vec::new();
     let mut uv_seq: Vec<DVec2> = Vec::new();
+    let mut info_seq: Vec<usize> = Vec::new();
 
     let mut ci = start_si;
     let mut arrived_vertex = start_seg.end_vertex;
@@ -4366,7 +4422,7 @@ fn walk_path_extract_wires(
         }
 
         // Mark edge as passed (OCCT L405)
-        mark_edge_passed(smart_map, ci, arrived_vertex, true);
+        // Mark edge as passed (OCCT L405: anEdgeInfo->SetPassed(true))
         let seg = &segments[ci];
         mark_edge_passed(smart_map, ci, seg.start_vertex, false);
 
@@ -4375,18 +4431,29 @@ fn walk_path_extract_wires(
         // Record UV coordinate of the edge's start (equivalent to OCCT aPa = Coord2d(aVa, aEOuta, myFace))
         let cur_uv = vertex_uv(current_vertex, seg, true);
         uv_seq.push(cur_uv.unwrap_or(DVec2::ZERO));
+        // OCCT L409: anInfoSeq.Append(anEdgeInfo)
+        info_seq.push(ci);
 
         // ── Loop Detection (OCCT L424-523) ──
         let b_is_closed = is_vert_closed(smart_map, arrived_vertex);
         let a_tol_2d = uv_tolerance(arrived_vertex);
         let a_tol_2d_sq = a_tol_2d * a_tol_2d;
+        // OCCT L418: aPb = Coord2d(aVb, aEOuta, myFace) — computed once before loop
+        let a_pb = vertex_uv(arrived_vertex, &segments[ci], false).unwrap_or(DVec2::ZERO);
 
         let mut loop_prev_idx: Option<usize> = None;
+        let mut b_has_edge = false; // OCCT L440
         let a_nb = edge_seq.len();
         for i in (0..a_nb).rev() {
             let prev_v = vert_seq[i];
             let prev_uv = uv_seq[i];
             let prev_si = edge_seq[i];
+
+            // OCCT L449-458: bHasEdge — skip degenerate-only wires
+            if !b_has_edge {
+                b_has_edge = segments[prev_si].start_vertex != segments[prev_si].end_vertex;
+                if !b_has_edge { continue; }
+            }
 
             // OCCT L447: anIsSameV = aVPrev.IsSame(aVb)
             let is_same_v = prev_v == arrived_vertex;
@@ -4397,21 +4464,13 @@ fn walk_path_extract_wires(
                     // OCCT L451-466: 2D distance check for closed/degenerate vertices.
                     // OCCT compares aPaPrev (recorded start UV of edge i) with
                     // aPb (Coord2d of current end vertex on current edge).
-                    let a_d2 = {
-                        let cur_end_uv = vertex_uv(arrived_vertex, &segments[ci], false)
-                            .unwrap_or(DVec2::ZERO);
-                        // Use the recorded start UV (aPaPrev), not re-computed.
-                        // OCCT: aPaPrev was stored via Coord2d at edge i's start.
-                        prev_uv.distance_squared(cur_end_uv)
-                    };
+                    let a_d2 = prev_uv.distance_squared(a_pb);
                     is_same_v_2d = a_d2 < a_tol_2d_sq;
                     if is_same_v_2d {
                         // Check UV component difference (OCCT L457-465)
                         // L459-460: aTolU = 2.*UTolerance2D, aTolV = 2.*VTolerance2D
-                        let cur_end_uv = vertex_uv(arrived_vertex, &segments[ci], false)
-                            .unwrap_or(DVec2::ZERO);
-                        let u_dist = (prev_uv.x - cur_end_uv.x).abs();
-                        let v_dist = (prev_uv.y - cur_end_uv.y).abs();
+                        let u_dist = (prev_uv.x - a_pb.x).abs();
+                        let v_dist = (prev_uv.y - a_pb.y).abs();
                         let a_tol_u = 2.0 * u_tolerance_2d(arrived_vertex);
                         let a_tol_v = 2.0 * v_tolerance_2d(arrived_vertex);
                         if u_dist > a_tol_u || v_dist > a_tol_v {
@@ -4429,11 +4488,6 @@ fn walk_path_extract_wires(
             if is_same_v && is_same_v_2d {
                 // Extract wire from edge_seq[i..]
                 let wire: Vec<usize> = edge_seq[i..].to_vec();
-
-                // ✅ OCCT-aligned L437-445: do not create wire from degenerated edges only.
-                if wire.iter().all(|&si| segments[si].start_vertex == segments[si].end_vertex) {
-                    continue;
-                }
 
                 // OCCT L474-480: skip 2-edge wires where both edges are the same
                 let mut is_valid = true;
@@ -4473,29 +4527,16 @@ fn walk_path_extract_wires(
                 }
 
                 // Keep first a_nbj entries, truncate the rest
+                // OCCT L517: aVb = aVertVa(i) — save continuation vertex from ORIGINAL sequence
+                let continue_vertex = vert_seq[i];
                 edge_seq.truncate(a_nbj);
                 vert_seq.truncate(a_nbj);
                 uv_seq.truncate(a_nbj);
+                info_seq.truncate(a_nbj);
 
                 // Continue from the last entry in the truncated sequence
-                let last_ci = edge_seq[a_nbj - 1];
-                let last_arrived = segments[last_ci].end_vertex;
-                // ═══════════════════════════════════════════════════════════════
-                // ■ CRITICAL OCCT ALIGNMENT ■ vert_seq stale-vertex replacement
-                //   After truncation, vert_seq[a_nbj-1] holds the START vertex of
-                //   the FIRST walk's last kept edge.  The continuation walk starts
-                //   from last_arrived (the END vertex of that edge).  Without the
-                //   replacement, if the continuation returns to the first walk's
-                //   start vertex, it fires a GHOST loop at position 0, including
-                //   the stale first edge in the wire → vertex count inflates.
-                //
-                //   OCCT avoids this because aNbj = i − 1 (rcad uses a_nbj = i),
-                //   so OCCT keeps one fewer entry and returns when aNbj < 1.
-                //
-                //   ⚠ Removing this fix causes ghost wire [0,1,2,3] on box faces
-                //     that includes edge 0 from the first walk → V/edge inflation.
-                // ═══════════════════════════════════════════════════════════════
-                vert_seq[a_nbj - 1] = last_arrived;
+                let last_ci = *info_seq.last().unwrap(); // OCCT: anEdgeInfo = anInfoSeq.Last()
+                let last_arrived = continue_vertex; // OCCT: aVb = aVertVa(i)
 
                 let angle_in = match find_angle_at(smart_map, last_ci, last_arrived, true) {
                     Some(a) => a,
@@ -4519,9 +4560,7 @@ fn walk_path_extract_wires(
                     }).collect()
                 } else { raw_candidates };
                 // ✅ OCCT-aligned L533: isBoundary = !anEdgeInfo->IsInside().
-                let incoming_is_boundary = smart_map.get(&last_arrived)
-                    .and_then(|infos| infos.iter().find(|ei| ei.seg_idx == last_ci && ei.in_flag))
-                    .map_or(true, |ei| !ei.is_inside);
+                let incoming_is_boundary = !matches!(segments[last_ci].source, WireEdgeSource::IntersectionCurve(_));
                 let best = match select_best_outgoing(&candidates, angle_in, incoming_is_boundary, segments, last_ci) {
                     Some(e) => e,
                     None => return,
@@ -4655,9 +4694,8 @@ fn walk_path_extract_wires(
         }
 
         // ✅ OCCT-aligned L533: isBoundary = !anEdgeInfo->IsInside().
-        let incoming_is_boundary = smart_map.get(&arrived_vertex)
-            .and_then(|infos| infos.iter().find(|ei| ei.seg_idx == ci && ei.in_flag))
-            .map_or(true, |ei| !ei.is_inside);
+        // ✅ OCCT-aligned L533: isBoundary = !anEdgeInfo->IsInside().
+        let incoming_is_boundary = !matches!(segments[ci].source, WireEdgeSource::IntersectionCurve(_));
         let best = match select_best_outgoing(&candidates, angle_in, incoming_is_boundary, segments, ci) {
             Some(e) => e,
             None => return,
