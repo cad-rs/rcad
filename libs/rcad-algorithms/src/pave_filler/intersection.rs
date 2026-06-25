@@ -1,4 +1,4 @@
-﻿use std::collections::HashSet;
+use std::collections::HashSet;
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, Surface3};
@@ -68,7 +68,7 @@ impl<'a> super::PaveFiller<'a> {
             self.check_vertex_edge(vi, ei);
         }
     }
-    // OCCT PaveFiller_3.cxx L145-244: PerformEE
+    /// OCCT PaveFiller_3.cxx L145-244: PerformEE
     pub(crate) fn perform_ee_bvh(&mut self, bvh_edges_a: &crate::bvh::DsBvh, bvh_edges_b: &crate::bvh::DsBvh) {
         use rayon::prelude::*;
         // OCCT L147: FillShrunkData(TopAbs_EDGE, TopAbs_EDGE)
