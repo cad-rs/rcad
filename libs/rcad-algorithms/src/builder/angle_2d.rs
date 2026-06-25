@@ -1,3 +1,13 @@
+// OCCT-aligned: Angle2D, dir_to_angle (-> Angle(gp_Dir2d)), ClockWiseAngle
+//   WireSplitter_1.cxx L768-840 (Angle2D), L621-650 (ClockWiseAngle)
+//
+// Key OCCT differences (architectural, non-blocking):
+//   - tol2d hardcoded to 1e-5 (OCCT uses Tolerance2D which is surface-type-aware)
+//   - vertex parameter from domain array (OCCT uses BRep_Tool::Parameter — TopoDS storage)
+//   - Resolution from curve2d_resolution (OCCT uses Geom2dAdaptor_Curve::Resolution)
+//
+//   clock_wise_angle: ✓ matches OCCT formula a1n - ao, epsilon guard
+
 use glam::DVec2;
 use rcad_kernel::geom::*;
 use super::curve_tools::*;
