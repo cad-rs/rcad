@@ -230,6 +230,13 @@ pub struct DSWire {
     pub edges: Vec<usize>,
 }
 
+/// A shell in the DS pool — first-class entity matching OCCT TopoDS_Shell.
+#[derive(Debug, Clone)]
+pub struct DSShell {
+    /// Face indices forming this shell (into DS.faces).
+    pub faces: Vec<usize>,
+}
+
 /// A face in the DS pool with surface reference.
 #[derive(Debug, Clone)]
 pub struct DSFace {
@@ -395,6 +402,7 @@ pub struct DS {
     pub vertices: Vec<DSVertex>,
     pub edges: Vec<DSEdge>,
     pub wires: Vec<DSWire>,
+    pub shells: Vec<DSShell>,
     pub faces: Vec<DSFace>,
     pub interferences: Vec<Interference>,
     pub intersection_curves: Vec<IntersectionCurve>,
@@ -620,6 +628,7 @@ impl DS {
             vertices: Vec::new(),
             edges: Vec::new(),
             wires: Vec::new(),
+            shells: Vec::new(),
             faces: Vec::new(),
             // internal V/E tracking: is_internal flag on DSVertex/DSEdge
             //   used instead of separate arrays (removed in favor of flags).
@@ -994,6 +1003,7 @@ impl DS {
                 None
             };
             for shell in &solid.shells {
+                let prev_face_count = self.faces.len(); // track DSShell face range
                 for face in &shell.faces {
                     let surface = brep
                         .geom
@@ -1109,6 +1119,11 @@ impl DS {
                     });
 
                     face_idx += 1;
+                }
+                // ✅ OCCT-aligned: create DSShell tracking which DS faces belong to each shell.
+                let shell_face_idxs: Vec<usize> = (prev_face_count..self.faces.len()).collect();
+                if !shell_face_idxs.is_empty() {
+                    self.shells.push(DSShell { faces: shell_face_idxs });
                 }
                 shell_counter += 1;
             }
