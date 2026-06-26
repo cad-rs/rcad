@@ -554,31 +554,33 @@ impl<'a> PaveFiller<'a> {
             //    overlap boundaries so that overlap polygon vertices are shared between
             //    both faces and registered in face_info.vertices_in.
             self.make_sd_vertices_ff();
+
+            // ✅ OCCT-aligned: init default PB on each IC.
+            //   OCCT PerformFF calls BOPDS_Curve::InitPaveBlock1 for each curve.
+            for ci in 0..self.ds.intersection_curves.len() {
+                self.ds.intersection_curves[ci].init_pave_block1();
+            }
         }
 
-        // �?OCCT-aligned: PostTreatFF (PaveFiller_6.cxx)
-        //    Reconcile FF interference data with face info. Iterates all FF interferences
-        //    and updates face_info.curves_sc + vertices_in from curve endpoints.
-        self.post_treat_ff();
-
-        // �?OCCT-aligned: UpdateBlocksWithSharedVertices (PerformInternal L318)
+        // ✅ OCCT L318: UpdateBlocksWithSharedVertices
         self.update_blocks_with_shared_vertices();
 
-        // �?OCCT-aligned: RefineFaceInfoIn �?before MakeSplitEdges, remove
-        //    On-overlapping In pave blocks (PerformInternal L320, BOPDS_DS::RefineFaceInfoIn).
+        // ✅ OCCT L320: RefineFaceInfoIn
         for fi in 0..self.ds.faces.len() {
             self.ds.refine_face_info_in(fi);
         }
 
-        // �?OCCT-aligned: MakeSplitEdges �?create split edges from PaveBlocks (PerformInternal L322).
-        //   rcad: build_split_edges() = MakeSplitEdges under OCCT name.
+        // ✅ OCCT L322: MakeSplitEdges
         self.build_split_edges();
 
-        // �?OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L328)
+        // ✅ OCCT L328: UpdatePaveBlocksWithSDVertices
         self.ds.update_pave_blocks_with_sd_vertices();
 
-        // �?OCCT-aligned: MakeBlocks �?inject EF/EE vertices onto FF curves (PerformInternal L330)
+        // ✅ OCCT L330: MakeBlocks
         self.make_blocks();
+
+        // ✅ OCCT-aligned: PostTreatFF after MakeBlocks so section edges exist.
+        self.post_treat_ff();
 
         // �?OCCT-aligned: CheckSelfInterference (PerformInternal L336, BOPAlgo_PaveFiller_11.cxx L28-221)
         //    OCCT uses AddWarning �?non-fatal, the operation continues.
@@ -1874,24 +1876,12 @@ impl<'a> PaveFiller<'a> {
                     self.ds.faces[*f1].face_info.curves_sc.insert(ci);
                     self.ds.faces[*f2].face_info.curves_sc.insert(ci);
 
-                    // �?OCCT-aligned: register section edge PaveBlocks into FaceInfo::PaveBlocksSc
-                    //   (PaveFiller_6.cxx L1700-1734).
+                    // Section edges + PaveBlocksSc registered by make_section_edges_from_curve_pbs
+                    // (called inside make_blocks).  Here we only register curves_sc, vertices_in, vertices_on.
                     if ci < self.ds.intersection_curves.len() {
-                        // Extract all data before mutating self.ds (avoid borrow conflicts)
                         let ic = &self.ds.intersection_curves[ci];
                         let sv = ic.start_vertex;
                         let ev = ic.end_vertex;
-                        let sc_pbs: Vec<PaveBlock> = ic.pave_blocks.iter()
-                            .filter(|pb| pb.new_edge.is_some())
-                            .cloned().collect();
-                        let pb_count = sc_pbs.len();
-                        drop(ic); // release immutable borrow before mutable access
-
-                        for pb in sc_pbs {
-                            let g_pb_idx = self.ds.allocate_pave_block(pb);
-                            self.ds.faces[*f1].face_info.pave_blocks_sc.insert(g_pb_idx);
-                            self.ds.faces[*f2].face_info.pave_blocks_sc.insert(g_pb_idx);
-                        }
 
                         self.ds.faces[*f1].face_info.vertices_in.insert(sv);
                         self.ds.faces[*f1].face_info.vertices_in.insert(ev);
@@ -1928,6 +1918,89 @@ impl<'a> PaveFiller<'a> {
                 self.ds.faces[*f1].face_info.vertices_in.insert(v_idx);
                 self.ds.faces[*f2].face_info.vertices_in.insert(v_idx);
             }
+        }
+    }
+
+    /// ✅ OCCT-aligned: create section edges for intersecton curves lacking PaveBlocks.
+    ///   OCCT PerformFF creates DSEdges for each intersecton curve PB immediately
+    ///   (via BOPDS_Curve::InitPaveBlock1 + SetEdge).  rcad defers; this step
+    ///   creates the missing section edge + PB so post_treat_ff can register PaveBlocksSc.
+    fn init_ic_pave_blocks(&mut self) {
+        let ic_indices: Vec<usize> = (0..self.ds.intersection_curves.len()).collect();
+        for &ci in &ic_indices {
+            let ic = &self.ds.intersection_curves[ci];
+            if !ic.pave_blocks.is_empty() { continue; }
+            let sv = ic.start_vertex;
+            let ev = ic.end_vertex;
+            let t_range = ic.t_range;
+            let curve = ic.curve.clone();
+            let pca = ic.pcurve_on_a.clone();
+            let pcb = ic.pcurve_on_b.clone();
+            let geom_tol = ic.geom_tol;
+
+            // Pick a face index for each of the two intersecting faces
+            // from the FF interference that references this IC.
+            let mut f1 = usize::MAX;
+            let mut f2 = usize::MAX;
+            for inf in &self.ds.interferences {
+                if let Interference::FaceFace { f1: a, f2: b, curves, .. } = inf {
+                    if curves.contains(&ci) {
+                        f1 = *a;
+                        f2 = *b;
+                        break;
+                    }
+                }
+            }
+
+            let new_ei = self.ds.edges.len();
+            let mut face_reps = Vec::new();
+            if f1 != usize::MAX {
+                if let Some(ref pc) = pca {
+                    face_reps.push(DSRepOnFace {
+                        face_idx: f1,
+                        pcurve: pc.clone(),
+                        pcurve2: None,
+                        pcurve_range: t_range,
+                        start_param: t_range[0],
+                        end_param: t_range[1],
+                    });
+                }
+            }
+            if f2 != usize::MAX {
+                if let Some(ref pc) = pcb {
+                    face_reps.push(DSRepOnFace {
+                        face_idx: f2,
+                        pcurve: pc.clone(),
+                        pcurve2: None,
+                        pcurve_range: t_range,
+                        start_param: t_range[0],
+                        end_param: t_range[1],
+                    });
+                }
+            }
+
+            self.ds.edges.push(DSEdge {
+                start_vertex: sv,
+                end_vertex: ev,
+                curve: curve.clone(),
+                t_range,
+                origin: ShapeOrigin::ShapeA,
+                geom_tol,
+                paves: vec![],
+                pave_blocks: vec![],
+                face_reps,
+                is_internal: false,
+            });
+
+            let mut pb = PaveBlock::new(NO_EDGE,
+                Pave { vertex_idx: sv, param: t_range[0] },
+                Pave { vertex_idx: ev, param: t_range[1] },
+            );
+            pb.curve = Some(curve);
+            pb.new_edge = Some(new_ei);
+            pb.pcurve_on_a = pca;
+            pb.pcurve_on_b = pcb;
+            self.ds.intersection_curves[ci].pave_blocks.push(pb);
         }
     }
 
