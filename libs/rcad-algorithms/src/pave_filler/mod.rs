@@ -1,4 +1,4 @@
-﻿use std::collections::HashSet;
+use std::collections::HashSet;
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
@@ -5813,10 +5813,11 @@ impl<'a> PaveFiller<'a> {
         for ei in 0..n_orig_edges {
             let edge = &self.ds.edges[ei];
             if edge.paves.is_empty() {
-                // �?OCCT-aligned: no split �?edge stays as-is (no PaveBlock created).
-                //   OCCT FillImagesEdges requires HasReference (non-empty pave_blocks)
-                //   to create split images.  Empty pave_blocks = un-split edge =
-                //   passes through BuildResult unchanged.
+                continue;
+            }
+
+            // OCCT L408-414: skip degenerated edges (HasFlag).
+            if self.ds.is_edge_degenerated(ei) {
                 continue;
             }
 
@@ -5828,8 +5829,26 @@ impl<'a> PaveFiller<'a> {
             all_paves.sort_by(|a, b| a.param.partial_cmp(&b.param).unwrap_or(std::cmp::Ordering::Equal));
             all_paves.dedup_by(|a, b| params_equal(a.param, b.param));
 
+            // OCCT L406-421: CommonBlock dedup — skip PBs whose CommonBlock was already processed.
+            let mut processed_common_blocks: std::collections::HashSet<usize> = std::collections::HashSet::new();
+
             for w in all_paves.windows(2) {
                 let pb = PaveBlock::new(ei, w[0], w[1]);
+
+                // OCCT L416-421: skip PaveBlock whose CommonBlock already processed.
+                if let Some(cb_idx) = pb.common_block_idx {
+                    if !processed_common_blocks.insert(cb_idx) {
+                        continue;
+                    }
+                }
+
+                // OCCT L425-430: skip if no new vertices (both vertices are from source shapes).
+                if !self.ds.is_new_vertex(pb.pave1.vertex_idx)
+                    && !self.ds.is_new_vertex(pb.pave2.vertex_idx)
+                {
+                    continue;
+                }
+
                 let t1 = pb.pave1.param;
                 let t2 = pb.pave2.param;
                 let (t_start, t_end) = if t1 < t2 { (t1, t2) } else { (t2, t1) };
