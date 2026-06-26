@@ -16,27 +16,16 @@ use super::angle_2d::{dir_to_angle, angle_2d, clock_wise_angle};
 /// rcad equivalent: construct a Line pcurve along the surface isoline at the
 /// parametric seam, then call angle_2d (which mirrors OCCT's dt/tol/step logic).
 /// Returns (tangent_start, tangent_end) where both are the pcurve direction.
-pub(crate) fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface: &Surface3) -> (Option<f64>, Option<f64>) {
+pub(crate) fn compute_seam_tangent_angles(ds: &DS, ei: usize, sv: usize, ev: usize, surface: &Surface3) -> (Option<f64>, Option<f64>) {
     match surface {
         Surface3::Sphere(sph) => {
-            // Construct pcurve: constant-U Line at the seam U.
-            // The vertex UV gives the U coordinate (should be 0 for the primary
-            // seam, shifted by ±TAU for the second_pcurve side).
             let uvs = sph.world_to_uv(ds.vertices[sv].point);
             let uve = sph.world_to_uv(ds.vertices[ev].point);
             if uve.y == uvs.y && uve.x == uvs.x {
-                // Zero-length: vertex at pole.  The degenerated edge's pcurve is
-                // horizontal (U varies at V=0), not vertical.  Tangent direction
-                // is along the U axis, opposite to the pcurve direction (-TAU,0).
-                // This avoids CWA degeneracy with seam edges (which follow V).
                 return (Some(std::f64::consts::PI), Some(std::f64::consts::PI));
             }
-            // Pcurve: Line from (U, v_start) to (U, v_end) along V-axis.
-            // Use the U of the start vertex (seam sub-edge follows U=const).
             let uv_start = uvs;
             let uv_end = uve;
-            // The pcurve is V-varying at constant U.  Use the AVERAGE U so
-            // the pcurve is centred between the two vertex UVs.
             let u_const = uv_start.x;
             let v0 = uv_start.y.min(uv_end.y);
             let v1 = uv_start.y.max(uv_end.y);
@@ -46,22 +35,24 @@ pub(crate) fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface
                 origin: DVec2::new(u_const, v0),
                 direction: DVec2::new(0.0, span),
             });
-            // Use the V coordinate as the parameter on the pcurve.
-            // For OUT at sv: t = uv_start's V (relative to v0).
-            let t_start_v = uv_start.y - v0;
-            // For IN at ev: t = uv_end's V (relative to v0).
-            let t_end_v = uv_end.y - v0;
+            // ✅ OCCT-aligned: BRep_Tool::Parameter — use DSEdge.vertex_params.
+            let sv_param = ds.edges[ei].vertex_param(sv).unwrap_or(uv_start.y);
+            let ev_param = ds.edges[ei].vertex_param(ev).unwrap_or(uv_end.y);
+            let t_start_v = sv_param - v0;
+            let t_end_v = ev_param - v0;
             let domain = [0.0, span];
             let t_start = angle_2d(&pcurve, t_start_v, domain, false, surface, ds.vertices[sv].geom_tol, None);
             let t_end = angle_2d(&pcurve, t_end_v, domain, true, surface, ds.vertices[ev].geom_tol, None);
             (t_start, t_end)
         }
         Surface3::Cylinder(cyl) => {
-            let sv_pt = ds.vertices[sv].point;
-            let ev_pt = ds.vertices[ev].point;
-            let ax = cyl.axis.normalize_or_zero();
-            let sv_v = (sv_pt - cyl.origin).dot(ax);
-            let ev_v = (ev_pt - cyl.origin).dot(ax);
+            // ✅ OCCT-aligned: BRep_Tool::Parameter — use DSEdge.vertex_params.
+            let sv_v = ds.edges[ei].vertex_param(sv).unwrap_or_else(|| {
+                (ds.vertices[sv].point - cyl.origin).dot(cyl.axis.normalize_or_zero())
+            });
+            let ev_v = ds.edges[ei].vertex_param(ev).unwrap_or_else(|| {
+                (ds.vertices[ev].point - cyl.origin).dot(cyl.axis.normalize_or_zero())
+            });
             let dir = if ev_v > sv_v { DVec2::new(0.0, 1.0) } else { DVec2::new(0.0, -1.0) };
             let a = dir_to_angle(dir);
             (Some(a), Some(a))

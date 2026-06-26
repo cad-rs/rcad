@@ -771,7 +771,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                     })
                 }),
             };
-            let tangent = compute_seam_tangent_angles(ds, sv, ev, &face.surface);
+            let tangent = compute_seam_tangent_angles(ds, ei, sv, ev, &face.surface);
             segments.push(WireSegment {
                 start_vertex: sv, end_vertex: sv,
                 source: WireEdgeSource::DsEdge(ei), forward: true,
@@ -834,7 +834,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                     let sv_seg = pb.pave1.vertex_idx;
                     let ev_seg = pb.pave2.vertex_idx;
                     if sv_seg == ev_seg { continue; }
-                    let (t_start, t_end) = compute_seam_tangent_angles(ds, sv_seg, ev_seg, &face.surface);
+                    let (t_start, t_end) = compute_seam_tangent_angles(ds, ei, sv_seg, ev_seg, &face.surface);
                     if std::env::var("RCAD_DEBUG_IC").is_ok() && matches!(face.surface, Surface3::Sphere(_)) {
                         eprintln!("[SEAM_TANG] ei={} block sv={} ev={} t_start={:?} t_end={:?}",
                             ei, sv_seg, ev_seg, t_start, t_end);
@@ -902,7 +902,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                     // Reverse direction: compute angles independently from
                     // ev_seg→sv_seg direction, matching OCCT Angle2D for the
                     // opposite traversal of the seam sub-edge.
-                    let (t_start_rev, t_end_rev) = compute_seam_tangent_angles(ds, ev_seg, sv_seg, &face.surface);
+                    let (t_start_rev, t_end_rev) = compute_seam_tangent_angles(ds, ei, ev_seg, sv_seg, &face.surface);
                     // ✅ OCCT-aligned: CurveOnSurface (BRep_Tool.cxx L354-361) returns
                     //   PCurve2 for the REVERSED orientation of a closed-surface edge.
                     //   The reverse seam segment therefore carries the shifted pcurve
@@ -976,7 +976,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                         })
                     })
                 });
-                let (ts, te) = compute_seam_tangent_angles(ds, sv, ev, &face.surface);
+                let (ts, te) = compute_seam_tangent_angles(ds, ei, sv, ev, &face.surface);
                 segments.push(WireSegment {
                     start_vertex: sv, end_vertex: ev,
                     source: WireEdgeSource::DsEdge(ei), forward: true,
@@ -993,7 +993,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
             //   Set first_pcurve/second_pcurve for vertex_uv to map seam vertex
             //   positions to correct UV coordinates.  FORWARD → first_pcurve at
             //   the seam U (0), REVERSED → second_pcurve at U=period (2π).
-            let (t_start, t_end) = compute_seam_tangent_angles(ds, sv, ev, &face.surface);
+            let (t_start, t_end) = compute_seam_tangent_angles(ds, ei, sv, ev, &face.surface);
             let uv_a = world_to_uv(&face.surface, ds.vertices[sv].point);
             let uv_b = world_to_uv(&face.surface, ds.vertices[ev].point);
             let (pcurve_opt, second_pcurve_opt) = match (uv_a, uv_b) {
