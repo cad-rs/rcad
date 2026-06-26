@@ -3,8 +3,9 @@
 //! These functions provide edge/face classification and p-curve utilities
 //! used by the boolean pipeline.
 
+use glam::DVec2;
 use glam::DVec3;
-use rcad_kernel::geom::{Curve3, Surface3, CurveEval};
+use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Circle2d, Surface3};
 use crate::bopds::ds::DS;
 use crate::classify::Classification;
 
@@ -66,50 +67,93 @@ pub fn point_near_edge(
     edge_mid + normal * crate::tolerance::TOLERANCE_ABS * 10.0
 }
 
-/// ✅ OCCT-aligned: AdjustPCurveOnFace (BOPTools_AlgoTools2D.cxx L223-243).
-/// ⏳ OCCT-aligned: AdjustPCurveOnFace (BOPTools_AlgoTools2D.cxx L223-243).
+/// ✅ OCCT-aligned: AdjustPCurveOnFace (BOPTools_AlgoTools2D.cxx L223-400).
 ///   OCCT evaluates the pcurve midpoint and shifts by the surface period
-///   when the midpoint falls outside the face's UV domain.  rcad: pcurve
-///   adjustment happens in the caller; this function identifies whether a
-///   shift is needed but always returns (0,0) — caller must evaluate.
+///   when the midpoint falls outside the face's UV domain.
+///   Returns the adjusted pcurve if a shift was needed, or None.
 pub fn adjust_pcurve_on_face(
+    pcurve: &rcad_kernel::geom::Curve2d,
     t_range: [f64; 2],
     uv_domain: Option<[f64; 4]>,
     surface: &rcad_kernel::geom::Surface3,
-) -> (f64, f64) {
-    let Some([umin, vmin, umax, vmax]) = uv_domain else { return (0.0, 0.0); };
-    if (umax - umin).abs() < 1e-10 || (vmax - vmin).abs() < 1e-10 { return (0.0, 0.0); }
+) -> Option<rcad_kernel::geom::Curve2d> {
+    let [umin, vmin, umax, vmax] = uv_domain?;
+    if (umax - umin).abs() < 1e-10 || (vmax - vmin).abs() < 1e-10 { return None; }
 
-    // Detect periodic surfaces
-    let is_u_periodic = matches!(surface, rcad_kernel::geom::Surface3::Cylinder(_)
-        | rcad_kernel::geom::Surface3::Sphere(_));
-    let is_v_periodic = matches!(surface, rcad_kernel::geom::Surface3::Sphere(_));
+    let a_delta = 1e-7;
+    let a_t = 0.5 * (t_range[0] + t_range[1]);
+    let p = pcurve.point_at(a_t);
+    let (mut u2, mut v2) = (p.x, p.y);
 
-    let tol = 1e-7;
     let mut du = 0.0;
     let mut dv = 0.0;
 
-    // OCCT L281-308: if periodic and midpoint outside bounds, compute shift.
-    //   The actual pcurve samples are not available at this level; the caller
-    //   must apply the returned shift to their pcurve data.
+    let is_u_periodic = matches!(surface, Surface3::Cylinder(_) | Surface3::Sphere(_));
+    let is_v_periodic = matches!(surface, Surface3::Sphere(_));
+    let u_period = std::f64::consts::TAU;
+    let v_period = std::f64::consts::PI;
+
     if is_u_periodic {
-        let period = 2.0 * std::f64::consts::PI;
-        // Note: the actual shift depends on the pcurve value, which the caller
-        // evaluates.  rcad returns the shift direction; caller applies it.
-        // Default: no shift (caller must check their pcurve midpoint).
-        du = 0.0;
+        if (u2 - umin).abs() < a_delta { u2 = umin; }
+        else if (u2 - umin - u_period).abs() < a_delta { u2 = umin + u_period; }
+        // Compute shift if u2 is outside [umin, umax]
+        if umax - umin < u_period {
+            let mincond = u2 < umin - a_delta;
+            let maxcond = u2 > umax + a_delta;
+            if mincond { du = u_period; }
+            else if maxcond { du = -u_period; }
+        }
     }
+
     if is_v_periodic {
-        dv = 0.0;
+        let mincond = v2 < vmin - a_delta;
+        let maxcond = v2 > vmax + a_delta;
+        if mincond { dv = v_period; }
+        else if maxcond { dv = -v_period; }
+        if vmax - vmin < v_period && dv != 0.0 {
+            let vm = v2;
+            let vr = v2 + dv;
+            let vmid = 0.5 * (vmin + vmax);
+            if (vm - vmid).abs() < (vr - vmid).abs() { dv = 0.0; }
+        }
     }
-    (du, dv)
+
+    if du != 0.0 || dv != 0.0 {
+        let shift = DVec2::new(du, dv);
+        let adjusted = match pcurve {
+            rcad_kernel::geom::Curve2d::Line(l) =>
+                rcad_kernel::geom::Curve2d::Line(rcad_kernel::geom::Line2d {
+                    origin: l.origin + shift,
+                    direction: l.direction,
+                }),
+            rcad_kernel::geom::Curve2d::Circle(c) =>
+                rcad_kernel::geom::Curve2d::Circle(rcad_kernel::geom::Circle2d {
+                    center: c.center + shift,
+                    radius: c.radius,
+                }),
+            rcad_kernel::geom::Curve2d::BSpline(b) => {
+                let mut b = b.clone();
+                for p in &mut b.control_points { *p += shift; }
+                rcad_kernel::geom::Curve2d::BSpline(b)
+            }
+            rcad_kernel::geom::Curve2d::Bezier(bz) => {
+                let mut bz = bz.clone();
+                for p in &mut bz.control_points { *p += shift; }
+                rcad_kernel::geom::Curve2d::Bezier(bz)
+            }
+            _ => return None,
+        };
+        Some(adjusted)
+    } else {
+        None
+    }
 }
 
-/// ⏳ OCCT-aligned: HasCurveOnSurface (BOPTools_AlgoTools2D).
-///   OCCT checks if the edge has a pcurve for the given face's surface index.
-///   rcad: simplified — all edges with 3D curves can be projected; returns true.
-pub fn has_curve_on_surface(_edge_curve: &Curve3, _surface: &Surface3) -> bool {
-    true
+/// ✅ OCCT-aligned: HasCurveOnSurface (BOPTools_AlgoTools2D).
+///   OCCT checks if the edge has a pcurve for the given face's surface.
+///   rcad: check if edge has face_reps for the given face_idx.
+pub fn has_curve_on_surface(edge: &crate::bopds::ds::DSEdge, face_idx: usize) -> bool {
+    edge.face_reps.iter().any(|r| r.face_idx == face_idx)
 }
 
 /// OCCT-aligned: IsEdgeIsoline (BOPTools_AlgoTools2D).
@@ -153,11 +197,12 @@ pub fn compute_state_point(pt: glam::DVec3, fi: &[usize], ds: &DS) -> crate::cla
 pub fn is_hole_wire(edges: &[crate::bopds::pave::PaveBlock]) -> bool { edges.len() == 1 }
 /// OCCT-aligned: Sense (BOPTools_AlgoTools).
 pub fn sense_orientation(dot: f64) -> i8 { if dot > 1e-10 { 1 } else if dot < -1e-10 { -1 } else { 0 } }
-/// ⏳ OCCT-aligned: CorrectShapeTolerances (BOPTools_AlgoTools).
+/// ✅ OCCT-aligned: CorrectShapeTolerances (BOPTools_AlgoTools_1.cxx L389-423).
 ///   OCCT propagates edge tolerances up to vertices and faces (hierarchy).
-///   rcad: deferred to rcad_kernel::tolerance::finalize_tolerance_hierarchy
-///   which runs inside correct_tolerances.  Standalone call is a no-op.
-pub fn correct_shape_tolerances(_brep: &mut rcad_kernel::BRep) {}
+///   rcad: delegates to rcad_kernel::tolerance::finalize_tolerance_hierarchy.
+pub fn correct_shape_tolerances(brep: &mut rcad_kernel::BRep) {
+    crate::tolerance::finalize_tolerance_hierarchy(brep);
+}
 
 /// OCCT-aligned: IsGrowthShell (BOPAlgo_BuilderSolid).
 pub fn is_growth_shell(face_count: usize) -> bool { face_count > 0 }
