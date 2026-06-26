@@ -1470,9 +1470,8 @@ impl<'a> BooleanBuilder<'a> {
     fn fill_images_compounds(&self, result: &mut ResultBuilder) {
         // OCCT L200: not implemented — aMFP fence map
         // OCCT L202-216: check source compounds
-        result.source_has_compound =
-            self.ds.a_has_compound || self.ds.b_has_compound;
-        if !result.source_has_compound {
+        let has_compound = self.ds.a_has_compound || self.ds.b_has_compound;
+        if !has_compound {
             return; // OCCT L309-312: no compounds → return
         }
         // OCCT L314-341: build new compound from solid images.
@@ -1711,7 +1710,6 @@ impl<'a> BooleanBuilder<'a> {
         self.build_result(ShapeType::CompSolid, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 7: FillImagesCompounds (L425-435) → BuildResult(COMPOUND) (L431-435).
-        let source_has_compound = result.source_has_compound;
         self.fill_images_compounds(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result(ShapeType::Compound, &mut result, &mut t_brep);
@@ -1725,7 +1723,7 @@ impl<'a> BooleanBuilder<'a> {
         //   OCCT L280-342: if source has compound, build result compound
         //   with child image solids.  rcad: wraps result solids in a
         //   Compound mirroring the source BRep's compound structure.
-        if source_has_compound && !brep.solids.is_empty() {
+        if (self.ds.a_has_compound || self.ds.b_has_compound) && !brep.solids.is_empty() {
             let mut compound = rcad_kernel::topology::Compound::new();
             for solid in brep.solids.drain(..) {
                 compound.solids.push((None, solid));
