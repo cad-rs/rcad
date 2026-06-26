@@ -99,8 +99,8 @@ pub(crate) fn edge_uv_tangent(
     // For plane surfaces, endpoint method is exact (linear pcurve).
     if let (Some(curve), Some(tr)) = (curve, t_range) {
         if !matches!(surface, Surface3::Plane(_)) {
-            let fa = edge_angle_2d(curve, tr[0], tr, surface, false);
-            let fb = edge_angle_2d(curve, tr[1], tr, surface, true);
+            let fa = edge_angle_2d(curve, tr[0], tr, surface, false, ds.vertices[sv].geom_tol);
+            let fb = edge_angle_2d(curve, tr[1], tr, surface, true, ds.vertices[ev].geom_tol);
             return (fa, fb);
         }
     }
@@ -138,24 +138,15 @@ pub(crate) fn edge_uv_tangent(
 /// t and t+dt, maps to UV via world_to_uv, returns UV direction angle.
 pub(crate) fn edge_angle_2d(
     curve: &Curve3, t: f64, domain: [f64; 2],
-    surface: &Surface3, b_is_in: bool,
+    surface: &Surface3, b_is_in: bool, geom_tol: f64,
 ) -> Option<f64> {
     let range = (domain[1] - domain[0]).abs();
     if range < 1e-15 { return None; }
-    // OCCT-aligned: compute dt = max(Resolution(tol2d), Precision::PConfusion())
-    //   (WireSplitter_1.cxx L800-821).  tol2d = 2 * Tolerance2D, where
-    //   Tolerance2D = max(UResolution(tolV3D), VResolution(tolV3D)).
-    //   For each surface type: U/VResolution(tol) = tol / surface scale.
-    //   use aTol = 1e-5 as typical vertex tolerance (Precision::Confusion)
-    let a_tol_v3d = 1e-5_f64;
-    let a_tol_2d = 2.0_f64 * match surface {
-        Surface3::Sphere(s) => a_tol_v3d / s.radius.max(1e-15),
-        Surface3::Cylinder(c) => a_tol_v3d / c.radius.max(1e-15),
-        Surface3::Cone(c) => a_tol_v3d / c.radius.max(1e-15),
-        Surface3::Torus(t) => a_tol_v3d / t.major_radius.max(1e-15),
-        _ => a_tol_v3d, // Plane: UV in 3D units → Resolution = tol
-    }.max(a_tol_v3d); // OCCT L885-887: max with tol_v3d
-    let mut dt = a_tol_2d.max(1e-7); // max with Precision::PConfusion
+    // OCCT-aligned: Angle2D via 3D curve → UV mapping (WireSplitter_1.cxx L768-854).
+    //   Unlike angle_2d.rs which takes a pcurve (Curve2d), this function evaluates
+    //   the 3D curve and maps to UV via world_to_uv, then computes the UV tangent.
+    let a_tol_2d = 2.0 * super::angle_2d::tolerance_2d(geom_tol, surface, None);
+    let mut dt = a_tol_2d.max(1e-9); // OCCT L806: max with Precision::PConfusion (1e-9)
     // OCCT L808-821: curvature-aware adjustment for non-linear curves
     let eps = (1e-6 * range).max(1e-10);
     let tp = (t + eps).min(domain[1]);
@@ -172,7 +163,7 @@ pub(crate) fn edge_angle_2d(
             let r_curv = 1.0 / curvature;
             let cos_phi = r_curv / (r_curv + a_tol_2d);
             if cos_phi < 1.0 {
-                dt = dt.max(cos_phi.acos().max(1e-7));
+                dt = dt.max(cos_phi.acos().max(1e-9));
             }
         }
     }

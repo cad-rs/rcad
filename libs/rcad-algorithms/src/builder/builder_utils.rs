@@ -1219,8 +1219,8 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
         if ei >= ds.edges.len() { continue; }
         let edge = &ds.edges[ei];
         let face_surf = &ds.faces[face_idx].surface;
-        let t_start = edge_angle_2d(&edge.curve, edge.t_range[0], edge.t_range, face_surf, false);
-        let t_end = edge_angle_2d(&edge.curve, edge.t_range[1], edge.t_range, face_surf, true);
+        let t_start = edge_angle_2d(&edge.curve, edge.t_range[0], edge.t_range, face_surf, false, ds.vertices[edge.start_vertex].geom_tol);
+        let t_end = edge_angle_2d(&edge.curve, edge.t_range[1], edge.t_range, face_surf, true, ds.vertices[edge.end_vertex].geom_tol);
         // OCCT: aLE.Append(aSp) with FORWARD orientation.
         segments.push(WireSegment {
             start_vertex: edge.start_vertex, end_vertex: edge.end_vertex,
