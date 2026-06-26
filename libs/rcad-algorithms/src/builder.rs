@@ -928,11 +928,8 @@ impl<'a> BooleanBuilder<'a> {
         let shell_assignments = self.fill_in_3d_parts(result, &a_faces, &b_faces);
 
         // OCCT L86: BuildSplitSolids — group shells into result solids
-        result.solids = self.build_split_solids(result, &shell_assignments);
-
-        // OCCT BuilderSolid::PerformAreas (L397-576): shell-level void detection.
-        //   Classify IN-state shells as holes of OUT-state solids.
-        self.detect_internal_voids(result, &shell_assignments);
+        //   (includes OCCT BuilderSolid::PerformAreas void detection internally).
+        self.build_split_solids(result, &shell_assignments);
 
         // OCCT L92: FillInternalShapes — internal sub-shapes
         self.fill_internal_shapes(result);
@@ -1165,8 +1162,11 @@ impl<'a> BooleanBuilder<'a> {
     //   one solid.  The aligned BuilderSolid module (bopds::builder_solid) is
     //   available for standalone use but not called from the hot path because
     //   the DS-level face indices don't preserve result-shell connectivity.
+    /// ✅ OCCT-aligned: BuildSplitSolids (Builder_3.cxx L413-569).
+    ///   Group classified shells into result solids.
+    ///   Includes BuilderSolid::PerformAreas void detection internally.
     fn build_split_solids(&self, result: &mut ResultBuilder,
-                          assignments: &[(usize, usize, &'static str)]) -> Vec<Vec<usize>> {
+                          assignments: &[(usize, usize, &'static str)]) {
         let mut result_solids: Vec<Vec<usize>> = Vec::new();
 
         let mut group: Vec<usize> = Vec::new();
@@ -1181,20 +1181,23 @@ impl<'a> BooleanBuilder<'a> {
             };
             if keep { group.push(si); }
         }
-        if group.is_empty() { return result_solids; }
-
-        let mut group_faces: Vec<usize> = Vec::new();
-        for &si in &group {
-            if si < result.shells.len() {
-                group_faces.extend(&result.shells[si]);
+        if !group.is_empty() {
+            let mut group_faces: Vec<usize> = Vec::new();
+            for &si in &group {
+                if si < result.shells.len() {
+                    group_faces.extend(&result.shells[si]);
+                }
+            }
+            if !group_faces.is_empty() {
+                let csi = result.shells.len();
+                result.shells.push(group_faces);
+                result_solids.push(vec![csi]);
             }
         }
-        if !group_faces.is_empty() {
-            let csi = result.shells.len();
-            result.shells.push(group_faces);
-            result_solids.push(vec![csi]);
-        }
-        result_solids
+        result.solids = result_solids;
+
+        // OCCT BuilderSolid::PerformAreas (L397-576): shell-level void detection.
+        self.detect_internal_voids(result, assignments);
     }
 
     /// ✅ OCCT-aligned: FillInternalShapes (Builder_3.cxx L622-887).
