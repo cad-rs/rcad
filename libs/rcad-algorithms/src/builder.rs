@@ -20,6 +20,7 @@ use crate::triangulate::{triangulate_polygon, triangulate_polygon_with_holes};
 
 mod angle_2d;
 mod curve_tools;
+mod debug_utils;
 mod intres2d;
 mod intersection;
 mod types;
