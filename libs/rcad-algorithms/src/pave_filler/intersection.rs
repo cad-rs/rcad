@@ -937,7 +937,9 @@ impl<'a> super::PaveFiller<'a> {
                             vertex: vi,
                             face: fi,
                         });
-                        self.ds.faces[fi].face_info.vertices_on.insert(vi);
+                        // OCCT-aligned: PerformVF L295-297 — all successfully classified
+                        // VF vertices go to VerticesIn.
+                        self.ds.faces[fi].face_info.vertices_in.insert(vi);
                     }
                 }
             }

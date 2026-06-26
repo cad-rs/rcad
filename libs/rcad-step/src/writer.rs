@@ -1100,8 +1100,16 @@ impl Part21Writer {
         // Detect seam edges: same edge_idx appearing multiple times
         let seam_edge_indices = detect_seam_edge_indices(face);
 
+        // Separate degenerate edges (self-loop, start==end) from normal edges.
+        // OCCT writes degenerate edges as FACE_BOUND + VERTEX_LOOP instead of
+        // EDGE_CURVE, so skip them from the edge loop to avoid breaking shell closure.
+        let mut degen_verts: Vec<usize> = Vec::new();
         let mut edge_entries: Vec<(usize, usize, usize, u64, bool)> = Vec::new();
         for edge in &oriented_edges {
+            if edge.start == edge.end {
+                degen_verts.push(edge.start);
+                continue;
+            }
             let edge_curve = if seam_edge_indices.contains(&edge.edge_idx) {
                 // Write a proper SEAM_CURVE (or SURFACE_CURVE with 2+ pcurves)
                 // for any edge that appears multiple times in the same face wire.
@@ -1184,6 +1192,14 @@ impl Part21Writer {
 
         let edge_loop = self.edge_loop("outer_loop", &oriented_ids);
         let mut bounds = vec![self.face_bound("outer_bound", edge_loop, true)];
+
+        // OCCT-aligned: degenerate edges (self-loops) are written as FACE_BOUND
+        // with VERTEX_LOOP, not as EDGE_CURVE, to keep shell closure intact.
+        for &dvi in &degen_verts {
+            let vp = self.vertex_point_by_index(brep, dvi);
+            let vl = self.vertex_loop("degen_loop", vp);
+            bounds.push(self.face_bound("degen_bound", vl, true));
+        }
 
         // ── SplitCommonVertex ──────────────────────────────────────────────
         // STEP requires vertices belonging to different FACE_BOUND entities
@@ -3385,6 +3401,10 @@ impl Part21Writer {
 
     fn edge_loop(&mut self, name: &str, oriented_edges: &[u64]) -> u64 {
         self.push(format!("EDGE_LOOP('{}',({}))", name, refs(oriented_edges)))
+    }
+
+    fn vertex_loop(&mut self, name: &str, vertex_point: u64) -> u64 {
+        self.push(format!("VERTEX_LOOP('{}',#{})", name, vertex_point))
     }
 
     fn face_outer_bound(&mut self, name: &str, edge_loop: u64, orientation: bool) -> u64 {

@@ -463,13 +463,15 @@ impl<'a> BooleanBuilder<'a> {
 
             // OCCT L89-L98: iterate PaveBlocks of the edge
             for pb in &edge.pave_blocks {
-                // OCCT L103: nSpR = aPBR->Edge() — split edge index set by MakeSplitEdges
-                let new_ei = match pb.new_edge {
-                    Some(nei) => nei,
-                    None => {
-                        continue;
-                    }
-                };
+                // OCCT L103: nSpR = aPBR->Edge() — split edge index set by MakeSplitEdges.
+            //   OCCT L101: aPBR = RealPaveBlock(aPB) — resolve CommonBlock to real PB.
+            let new_ei = if let Some(rei) = self.ds.real_pave_block_edge(ei, pb) {
+                rei
+            } else if let Some(nei) = pb.new_edge {
+                nei
+            } else {
+                continue;
+            };
 
                 // OCCT L105-106: pLS->Append(aSpR) -> myImages(edge) += split_edge
                 self.my_images.borrow_mut().entry(ei).or_default().push(new_ei);
@@ -675,7 +677,10 @@ impl<'a> BooleanBuilder<'a> {
             let Some(ds_fi) = ds_fi_opt else { continue };
             if *ds_fi >= self.ds.faces.len() { continue; }
             // OCCT L959-960: get alone vertices from DS.
-            let alone: &std::collections::BTreeSet<usize> = &self.ds.faces[*ds_fi].face_info.vertices_on;
+            //   OCCT AloneVertices: VerticesIn + VerticesSc, excluding vertices that
+            //   are endpoints of PaveBlocksIn/PaveBlocksSc (BOPDS_DS.cxx L1028-1062).
+            //   rcad incorrectly used vertices_on; OCCT uses vertices_in.
+            let alone: &std::collections::BTreeSet<usize> = &self.ds.faces[*ds_fi].face_info.vertices_in;
             if alone.is_empty() { continue; }
 
             // OCCT L970-978: for each alone vertex, classify via IntTools_FClass2d.

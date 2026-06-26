@@ -1383,6 +1383,18 @@ impl DS {
         pb.common_block_idx.and_then(|idx| self.common_blocks.get_mut(idx))
     }
 
+    /// ✅ OCCT-aligned: BOPDS_DS::RealPaveBlock (BOPDS_DS.cxx L658-663).
+    ///   If the PaveBlock belongs to a CommonBlock, returns the edge index of
+    ///   the first PaveBlock in that block (the "real" edge). Otherwise returns
+    ///   the given PaveBlock's new_edge.
+    pub fn real_pave_block_edge(&self, edge_idx: usize, pb: &PaveBlock) -> Option<usize> {
+        let cb = self.common_block(pb)?;
+        let first_pb_idx = cb.pave_blocks().first()?.0;
+        self.edges.get(edge_idx)
+            .and_then(|e| e.pave_blocks.get(first_pb_idx))
+            .and_then(|pbr| pbr.new_edge)
+    }
+
     /// Collect 3D boundary points for a face.
     ///
     /// When the topological wire produces a degenerate polygon (< 3 unique points),
