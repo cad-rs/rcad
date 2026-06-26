@@ -119,60 +119,171 @@ fn intersect_conic_conic(c1: &Curve2d, typ1: G2dCurveType, c2: &Curve2d, typ2: G
     else { intersect_curve_curve(c1, c2, t1_min, t1_max, t2_min, t2_max, 1e-7) }
 }
 
+/// OCCT-aligned: IntCurve_IntConicConic::Perform(Circle, DC, Ellipse, DE)
+///   (IntCurve_IntConicConic.cxx L439-482).
+///   Implicit circle (IConicTool) × Parametric ellipse (PConic):
+///   solve |P(t) - C_center|² - R² = 0 via sampling + Newton.
+///   OCCT L453-480: ensure both domains are closed (period 2π).
 fn intersect_circle_ellipse(circle: &Curve2d, ell: &Curve2d, tc_min: f64, tc_max: f64, te_min: f64, te_max: f64) -> Vec<(f64, f64)> {
     let Curve2d::Circle(c) = circle else { return vec![] }; let Curve2d::Ellipse(e) = ell else { return vec![] };
     let minor = DVec2::new(-e.major_dir.y, e.major_dir.x);
-    let tr = te_max - te_min; if tr < 1e-15 { return vec![]; }
-    let mut cand = Vec::new();
-    for i in 0..=128 {
-        let t = te_min + tr*(i as f64)/128.0;
-        let p = e.center + e.major_dir*(e.major_radius*t.cos()) + minor*(e.minor_radius*t.sin());
-        let v = p - c.center; let f = v.length_squared() - c.radius*c.radius;
-        if i > 0 { let t2 = te_min + tr*((i-1)as f64)/128.0;
-            let p2 = e.center + e.major_dir*(e.major_radius*t2.cos()) + minor*(e.minor_radius*t2.sin());
-            let f2 = (p2 - c.center).length_squared() - c.radius*c.radius;
-            if f == 0.0 || f*f2 < 0.0 { cand.push(t); }
+    // OCCT L456-457, 460, 472-473: ensure closed domains with period 2π
+    let te_range = te_max - te_min;
+    let tc_range = tc_max - tc_min;
+    if te_range < 1e-15 || tc_range < 1e-15 { return vec![]; }
+    let te_period = std::f64::consts::TAU;
+    let tc_period = std::f64::consts::TAU;
+    // Normalize domain spans to the [t_min, t_min + period] pattern
+    let te_effective_start = te_min;
+    let te_effective_end = te_min + te_period;
+    let tc_effective_start = tc_min;
+    let tc_effective_end = tc_min + tc_period;
+    // Sampling on the parametric curve (ellipse's parameter t)
+    let n_samples: usize = 256;
+    let mut candidates: Vec<f64> = Vec::new();
+    for i in 0..=n_samples {
+        let t = te_effective_start + te_period * (i as f64 / n_samples as f64);
+        let p = e.center + e.major_dir * (e.major_radius * t.cos()) + minor * (e.minor_radius * t.sin());
+        let f_val = (p - c.center).length_squared() - c.radius * c.radius;
+        if i > 0 {
+            let t_prev = te_effective_start + te_period * ((i - 1) as f64 / n_samples as f64);
+            let p_prev = e.center + e.major_dir * (e.major_radius * t_prev.cos()) + minor * (e.minor_radius * t_prev.sin());
+            let f_prev = (p_prev - c.center).length_squared() - c.radius * c.radius;
+            // Sign change or zero at sample point
+            if f_val == 0.0 || (f_val * f_prev < 0.0) {
+                candidates.push(t);
+            }
         }
-        if f.abs() < 1e-8 { let dup = cand.last().map_or(false, |&lt| (t-lt).abs() < 1e-9*tr); if !dup { cand.push(t); } }
+        if f_val.abs() < 1e-10 {
+            let is_dup = candidates.last().map_or(false, |&lt| (t - lt).abs() < 1e-9 * te_period);
+            if !is_dup { candidates.push(t); }
+        }
     }
-    let mut res = Vec::new();
-    for &t0 in &cand {
-        let mut t = t0.clamp(te_min, te_max);
+    // Refine each candidate with Newton
+    let mut results: Vec<(f64, f64)> = Vec::new();
+    for &t0 in &candidates {
+        let mut t = t0;
+        let mut converged = false;
         for _ in 0..20 {
-            let p = e.center + e.major_dir*(e.major_radius*t.cos()) + minor*(e.minor_radius*t.sin());
-            let dp = p - c.center; let f = dp.length_squared() - c.radius*c.radius;
-            if f.abs() < 1e-14 {
-                let mut tc = (p.y - c.center.y).atan2(p.x - c.center.x); if tc < 0.0 { tc += std::f64::consts::TAU; }
-                if tc >= tc_min-1e-10 && tc <= tc_max+1e-10 && t >= te_min-1e-10 && t <= te_max+1e-10 {
-                    let dup = res.last().map_or(false, |&(lt,_): &(f64,f64)| (t-lt).abs() < 1e-9*tr); if !dup { res.push((tc, t)); }
+            let p = e.center + e.major_dir * (e.major_radius * t.cos()) + minor * (e.minor_radius * t.sin());
+            let dp = p - c.center;
+            let f_val = dp.length_squared() - c.radius * c.radius;
+            if f_val.abs() < 1e-14 {
+                // Circle parameter from point angle
+                let mut tc = (p.y - c.center.y).atan2(p.x - c.center.x);
+                if tc < 0.0 { tc += std::f64::consts::TAU; }
+                // Map result into caller's domain range
+                let tc_mapped = if tc < tc_min { tc + tc_period * ((tc_min - tc) / tc_period).ceil() } else { tc };
+                if tc_mapped >= tc_min - 1e-10 && tc_mapped <= tc_max + 1e-10
+                    && t >= te_min - 1e-10 && t <= te_max + 1e-10
+                {
+                    let is_dup = results.last().map_or(false, |&(lt, _)| (t - lt).abs() < 1e-9 * te_period);
+                    if !is_dup { results.push((tc_mapped, t)); }
+                }
+                converged = true;
+                break;
+            }
+            let der = e.major_dir * (-e.major_radius * t.sin()) + minor * (e.minor_radius * t.cos());
+            let df = 2.0 * dp.dot(der);
+            if df.abs() < 1e-15 { break; }
+            t = t - f_val / df;
+        }
+        if !converged {
+            // Fallback: accept candidate with approximate params
+            let tc_approx = {
+                let p = e.center + e.major_dir * (e.major_radius * t0.cos()) + minor * (e.minor_radius * t0.sin());
+                let mut tc = (p.y - c.center.y).atan2(p.x - c.center.x);
+                if tc < 0.0 { tc += std::f64::consts::TAU; }
+                tc
+            };
+            if tc_approx >= tc_min - 1e-8 && tc_approx <= tc_max + 1e-8
+                && t0 >= te_min - 1e-8 && t0 <= te_max + 1e-8
+            {
+                let is_dup = results.last().map_or(false, |&(lt, _)| (t0 - lt).abs() < 1e-8 * te_period);
+                if !is_dup { results.push((tc_approx, t0)); }
+            }
+        }
+    }
+    dedup(results)
+}
+
+/// OCCT-aligned: IntCurve_IntConicConic::Perform(Ellipse, DE1, Ellipse, DE2)
+///   (IntCurve_IntConicConic.cxx L915-958).
+///   Implicit ellipse1 × Parametric ellipse2: solve implicit form along parametric curve.
+///   Domain closure: non-closed domains get period 2π.
+fn intersect_ellipse_ellipse(c1: &Curve2d, c2: &Curve2d, t1_min: f64, t1_max: f64, t2_min: f64, t2_max: f64) -> Vec<(f64, f64)> {
+    let Curve2d::Ellipse(e1) = c1 else { return vec![] }; let Curve2d::Ellipse(e2) = c2 else { return vec![] };
+    let m1 = DVec2::new(-e1.major_dir.y, e1.major_dir.x);
+    let m2 = DVec2::new(-e2.major_dir.y, e2.major_dir.x);
+    if (t1_max - t1_min) < 1e-15 || (t2_max - t2_min) < 1e-15 { return vec![]; }
+    let period = std::f64::consts::TAU;
+    // OCCT L929-956: ensure both domains are closed (period 2π)
+    let t1_start = t1_min;
+    let t2_start = t2_min;
+    // Implicit form of ellipse1: test if a point lies on ellipse1.
+    // In ellipse1's local frame (major_dir, m1):
+    //   local.x = (P - center)・major_dir,  local.y = (P - center)・m1
+    //   implicit: (local.x / major_radius)² + (local.y / minor_radius)² - 1 = 0
+    let implicit_fn = |pt: DVec2| -> f64 {
+        let d = pt - e1.center;
+        let lx = d.dot(e1.major_dir) / e1.major_radius;
+        let ly = d.dot(m1) / e1.minor_radius;
+        lx * lx + ly * ly - 1.0
+    };
+    // Parametric form of ellipse2: P(t) = center + a*cos(t)*dir + b*sin(t)*minor
+    let n_samples: usize = 256;
+    let mut candidates: Vec<f64> = Vec::new();
+    for i in 0..=n_samples {
+        let t = t2_start + period * (i as f64 / n_samples as f64);
+        let p = e2.center + e2.major_dir * (e2.major_radius * t.cos()) + m2 * (e2.minor_radius * t.sin());
+        let f_val = implicit_fn(p);
+        if i > 0 {
+            let t_prev = t2_start + period * ((i - 1) as f64 / n_samples as f64);
+            let p_prev = e2.center + e2.major_dir * (e2.major_radius * t_prev.cos()) + m2 * (e2.minor_radius * t_prev.sin());
+            let f_prev = implicit_fn(p_prev);
+            if f_val == 0.0 || f_val * f_prev < 0.0 {
+                candidates.push(t);
+            }
+        }
+        if f_val.abs() < 1e-10 {
+            let is_dup = candidates.last().map_or(false, |&lt| (t - lt).abs() < 1e-9 * period);
+            if !is_dup { candidates.push(t); }
+        }
+    }
+    // Newton refinement
+    let mut results: Vec<(f64, f64)> = Vec::new();
+    for &t0 in &candidates {
+        let mut t = t0;
+        for _ in 0..20 {
+            let p = e2.center + e2.major_dir * (e2.major_radius * t.cos()) + m2 * (e2.minor_radius * t.sin());
+            let f_val = implicit_fn(p);
+            if f_val.abs() < 1e-14 {
+                let d = p - e1.center;
+                let mut t1 = d.y.atan2(d.x);
+                if t1 < 0.0 { t1 += std::f64::consts::TAU; }
+                let t1_mapped = if t1 < t1_min { t1 + period * ((t1_min - t1) / period).ceil() } else { t1 };
+                if t1_mapped >= t1_min - 1e-10 && t1_mapped <= t1_max + 1e-10
+                    && t >= t2_min - 1e-10 && t <= t2_max + 1e-10
+                {
+                    let is_dup = results.last().map_or(false, |&(lt, _)| (t - lt).abs() < 1e-9 * period);
+                    if !is_dup { results.push((t1_mapped, t)); }
                 }
                 break;
             }
-            let der = e.major_dir*(-e.major_radius*t.sin()) + minor*(e.minor_radius*t.cos());
-            let df = 2.0*dp.dot(der); if df.abs() < 1e-15 { break; }
-            t = (t - f/df).clamp(te_min, te_max); if f.abs() < 1e-14 { break; }
+            let der = e2.major_dir * (-e2.major_radius * t.sin()) + m2 * (e2.minor_radius * t.cos());
+            // Derivative of implicit function along parametric curve:
+            // d/dt f(P(t)) = ∇f(P) · P'(t)
+            // ∇f = 2*(lx/a², ly/b²) in local frame → transformed to world
+            let d = p - e1.center;
+            let lx = d.dot(e1.major_dir) / e1.major_radius;
+            let ly = d.dot(m1) / e1.minor_radius;
+            let grad = 2.0 * (e1.major_dir * (lx / e1.major_radius) + m1 * (ly / e1.minor_radius));
+            let df = grad.dot(der);
+            if df.abs() < 1e-15 { break; }
+            t = t - f_val / df;
         }
     }
-    dedup(res)
-}
-
-fn intersect_ellipse_ellipse(c1: &Curve2d, c2: &Curve2d, t1_min: f64, t1_max: f64, t2_min: f64, t2_max: f64) -> Vec<(f64, f64)> {
-    let Curve2d::Ellipse(e1) = c1 else { return vec![] }; let Curve2d::Ellipse(e2) = c2 else { return vec![] };
-    let m1 = DVec2::new(-e1.major_dir.y, e1.major_dir.x); let m2 = DVec2::new(-e2.major_dir.y, e2.major_dir.x);
-    let r1 = t1_max - t1_min; if r1 < 1e-15 { return vec![]; }
-    let mut res = Vec::new();
-    for i in 0..=128 {
-        let t1 = t1_min + r1*(i as f64)/128.0;
-        let p1 = e1.center + e1.major_dir*(e1.major_radius*t1.cos()) + m1*(e1.minor_radius*t1.sin());
-        let r2 = t2_max - t2_min; if r2 < 1e-15 { continue; }
-        let mut bd2 = f64::INFINITY; let mut bt2 = t2_min;
-        for j in 0..=256 { let t2 = t2_min + r2*(j as f64)/256.0;
-            let p2 = e2.center + e2.major_dir*(e2.major_radius*t2.cos()) + m2*(e2.minor_radius*t2.sin());
-            let d2 = p1.distance_squared(p2); if d2 < bd2 { bd2 = d2; bt2 = t2; }
-        }
-        if bd2 < 1e-8 && res.last().map_or(true, |&(lt,_):&(f64,f64)| (t1-lt).abs() > 1e-9*r1) { res.push((t1, bt2)); }
-    }
-    res
+    dedup(results)
 }
 
 fn intersect_conic_curve(conic: &Curve2d, _typ: G2dCurveType, curve: &Curve2d, _tc_min: f64, _tc_max: f64, t_min: f64, t_max: f64, _tol: f64) -> Vec<(f64, f64)> {
