@@ -911,17 +911,20 @@ impl<'a> BooleanBuilder<'a> {
     ///   OCCT L60-73 check: rcad's CheckData (L320-325) has already ensured
     ///   both operands have faces, so the source-solid skip never triggers.
     fn fill_images_solids(&self, result: &mut ResultBuilder) {
-        // OCCT L60-73: if no source SOLIDs exist → skip solid assembly.
-        let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
-        let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
-        if a_faces.is_empty() || b_faces.is_empty() {
+        // OCCT L62-74: check if any source shape is TopAbs_SOLID → skip if none.
+        //   rcad: check if any DS face belongs to a source solid (source_solid_idx set).
+        let has_solid = self.ds.faces.iter().any(|f| f.source_solid_idx.is_some());
+        if !has_solid {
             return;
         }
+        // OCCT L71-73: also skip if no shells were built.
         if result.shells.is_empty() {
             return;
         }
 
         // OCCT L77-83: FillIn3DParts — build draft solids + classify shells
+        let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
+        let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
         let shell_assignments = self.fill_in_3d_parts(result, &a_faces, &b_faces);
 
         // OCCT L86: BuildSplitSolids — group shells into result solids
