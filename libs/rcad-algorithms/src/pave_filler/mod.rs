@@ -549,6 +549,14 @@ impl<'a> PaveFiller<'a> {
         if !skip_ff {
             self.perform_ff();
 
+            // ✅ OCCT-aligned: InitPaveBlock1 for each IC (BOPDS_Curve::InitPaveBlock1
+            //   is called during PerformFF in OCCT).  rcad ICs are created with empty
+            //   pave_blocks; this gives them the default PB needed by
+            //   make_section_edges_from_curve_pbs (inside make_blocks).
+            for ci in 0..self.ds.intersection_curves.len() {
+                self.ds.intersection_curves[ci].init_pave_block1();
+            }
+
             // �?OCCT-aligned: MakeSDVerticesFF (PaveFiller_6.cxx L1113)
             //    After FF, create shared SD vertices for same-domain (coplanar) face
             //    overlap boundaries so that overlap polygon vertices are shared between
@@ -588,13 +596,15 @@ impl<'a> PaveFiller<'a> {
             eprintln!("[PAVEFILLER] {}", msg);
         }
 
-        // �?OCCT-aligned: UpdateInterfsWithSDVertices (PerformInternal L338)
+        // ✅ OCCT-aligned: UpdateInterfsWithSDVertices (PerformInternal L338)
         self.update_interfs_with_sd_vertices();
 
-        // �?OCCT-aligned: ReleasePaveBlocks �?free unused pave block memory (PerformInternal L339).
-        self.ds.pave_blocks.clear();
+        // ✅ OCCT-aligned: ReleasePaveBlocks — OCCT frees UNUSED PBs but keeps
+        //   those referenced by PaveBlocksSc (needed by builder's collect_face_edge_segments).
+        //   rcad: PBs remain in pool (PaveBlocksSc indices stay valid).
+        //   Clearing the pool here would invalidate PaveBlocksSc indices.
 
-        // �?OCCT-aligned: RefineFaceInfoOn �?after ReleasePaveBlocks, remove
+        // ✅ OCCT-aligned: RefineFaceInfoOn — after ReleasePaveBlocks, remove
         //    zero-length On pave blocks (PerformInternal L340, BOPDS_DS::RefineFaceInfoOn).
         for fi in 0..self.ds.faces.len() {
             self.ds.refine_face_info_on(fi);
