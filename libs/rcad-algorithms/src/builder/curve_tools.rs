@@ -62,18 +62,33 @@ pub fn curve2d_lprop_curvature(d1: DVec2, d2: DVec2, tol_sq: f64) -> f64 {
     cross.abs() / a_dd1 / a_dd1.sqrt()
 }
 
+/// OCCT-aligned: Geom2dAdaptor_Curve::Resolution (L1186-1219).
+///   Line L1191: return Ruv;
+///   Circle L1193-1201: 2*asin(Ruv/(2*R)) or 2*PI
+///   Ellipse L1204: Ruv / MajorRadius
+///   Bezier L1206-1209: Geom2d_BezierCurve::Resolution (BSplCLib::Resolution)
+///   BSpline L1211-1215: Geom2d_BSplineCurve::Resolution (BSplCLib::Resolution)
+///   default L1217: Precision::Parametric(Ruv)
+///   Trimmed: OCCT adaptor unwraps TrimmedCurve → base type; rcad recurses.
 pub fn curve2d_resolution(curve: &Curve2d, r_uv: f64) -> f64 {
     match curve {
-        Curve2d::Line(l) => r_uv / l.direction.length().max(1e-30),
+        // OCCT L1191: return Ruv (gp_Lin2d direction is always unit)
+        Curve2d::Line(_) => r_uv,
+        // OCCT L1193-1201
         Curve2d::Circle(c) => {
             let r = c.radius;
-            if r > r_uv / 2.0 { 2.0 * (r_uv / (2.0 * r)).asin() } else { std::f64::consts::TAU }
+            if r > r_uv / 2.0 { 2.0 * f64::asin(r_uv / (2.0 * r)) } else { std::f64::consts::TAU }
         }
+        // OCCT L1203-1205
         Curve2d::Ellipse(e) => r_uv / e.major_radius,
+        // OCCT L1206-1209: BSplCLib::Resolution (analytical, not sampling)
         Curve2d::Bezier(b) => { let ms = sample_max_speed_2d(b, 16); if ms > 1e-15 { r_uv / ms } else { r_uv } }
+        // OCCT L1211-1215: BSplCLib::Resolution (analytical, not sampling)
         Curve2d::BSpline(b) => { let ms = sample_max_speed_bspline_2d(b, 32); if ms > 1e-15 { r_uv / ms } else { r_uv } }
+        // OCCT: TrimmedCurve unwrapped to base type before dispatch
         Curve2d::Trimmed(tc) => curve2d_resolution(&tc.curve, r_uv),
-        _ => r_uv * 0.01,
+        // OCCT L1217: Precision::Parametric(Ruv) = Ruv * 1e-14
+        _ => r_uv,
     }
 }
 
@@ -90,4 +105,125 @@ fn sample_max_speed_bspline_2d(b: &BSplineCurve2, n: usize) -> f64 {
     let span = (t1 - t0).max(1e-15);
     for i in 0..=n { let t = t0 + (i as f64 / n as f64) * span; ms = ms.max(b.derivative_at(t).length()); }
     ms
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn d1_line_is_direction() {
+        let l = Curve2d::Line(Line2d { origin: DVec2::ZERO, direction: DVec2::X });
+        let d = curve2d_d1(&l, 0.5);
+        assert!((d - DVec2::X).length() < 1e-15);
+    }
+
+    #[test]
+    fn d1_circle() {
+        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: 2.0 });
+        let d = curve2d_d1(&c, 0.0);
+        assert!((d - DVec2::new(0.0, 2.0)).length() < 1e-10);
+    }
+
+    #[test]
+    fn d2_line_is_zero() {
+        let l = Curve2d::Line(Line2d { origin: DVec2::ZERO, direction: DVec2::X });
+        let d = curve2d_d2(&l, 0.5);
+        assert_eq!(d, DVec2::ZERO);
+    }
+
+    #[test]
+    fn d2_circle() {
+        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: 2.0 });
+        let d = curve2d_d2(&c, 0.0);
+        assert!((d - DVec2::new(-2.0, 0.0)).length() < 1e-10);
+    }
+
+    #[test]
+    fn curvature_straight_line_is_zero() {
+        let k = curve2d_lprop_curvature(DVec2::new(1.0, 0.0), DVec2::ZERO, 1e-14);
+        assert!(k < 1e-15);
+    }
+
+    #[test]
+    fn curvature_circle_one_over_r() {
+        let r: f64 = 2.0;
+        let t: f64 = 0.7;
+        let d1 = r * DVec2::new(-t.sin(), t.cos());
+        let d2 = r * DVec2::new(-t.cos(), -t.sin());
+        let k = curve2d_lprop_curvature(d1, d2, 1e-14);
+        assert!((k - 1.0 / r).abs() < 1e-10);
+    }
+
+    #[test]
+    fn resolution_line_matches_occt() {
+        let l = Curve2d::Line(Line2d { origin: DVec2::ZERO, direction: DVec2::X });
+        let res = curve2d_resolution(&l, 0.01);
+        assert!((res - 0.01).abs() < 1e-15);
+    }
+
+    #[test]
+    fn resolution_circle_large_radius() {
+        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: 10.0 });
+        let res = curve2d_resolution(&c, 0.01);
+        let expected = 2.0 * ((0.01_f64 / 20.0_f64).asin());
+        assert!((res - expected).abs() < 1e-15);
+    }
+
+    #[test]
+    fn resolution_circle_tiny_radius_returns_tau() {
+        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: 0.001 });
+        let res = curve2d_resolution(&c, 0.01);
+        assert!((res - std::f64::consts::TAU).abs() < 1e-15);
+    }
+
+    #[test]
+    fn resolution_ellipse() {
+        let e = Curve2d::Ellipse(Ellipse2d {
+            center: DVec2::ZERO, major_dir: DVec2::X,
+            major_radius: 5.0, minor_radius: 3.0,
+        });
+        let res = curve2d_resolution(&e, 0.01);
+        assert!((res - 0.01 / 5.0).abs() < 1e-15);
+    }
+
+    #[test]
+    fn resolution_default_returns_r_uv() {
+        let inv = Curve2d::CircleInvolute(CircleInvolute2d {
+            center: DVec2::ZERO, base_radius: 1.0, start_angle: 0.0,
+        });
+        let res = curve2d_resolution(&inv, 0.01);
+        assert!((res - 0.01).abs() < 1e-15);
+    }
+
+    #[test]
+    fn d1_bezier_linear() {
+        // Linear Bezier: P0=(0,0), P1=(2,0) → d1 ≈ (2,0) via finite difference
+        let b = Curve2d::Bezier(BezierCurve2 {
+            control_points: vec![DVec2::ZERO, DVec2::new(2.0, 0.0)],
+            weights: vec![1.0, 1.0],
+        });
+        let d = curve2d_d1(&b, 0.3);
+        assert!((d - DVec2::new(2.0, 0.0)).length() < 1e-4,
+            "Bezier d1 expected near (2,0), got {:?}", d);
+    }
+
+    #[test]
+    fn d1_trimmed_delegates_to_base() {
+        let base = Curve2d::Line(Line2d { origin: DVec2::ZERO, direction: DVec2::X });
+        let t = Curve2d::Trimmed(TrimmedCurve2 { curve: Box::new(base), t_min: 0.0, t_max: 1.0 });
+        let d = curve2d_d1(&t, 0.5);
+        assert!((d - DVec2::X).length() < 1e-15);
+    }
+
+    #[test]
+    fn bspline_derivative_at_works() {
+        let b = Curve2d::BSpline(BSplineCurve2 {
+            degree: 2,
+            knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            control_points: vec![DVec2::ZERO, DVec2::new(1.0, 0.0), DVec2::new(2.0, 1.0)],
+            weights: vec![1.0, 1.0, 1.0],
+        });
+        assert!(curve2d_d1(&b, 0.5).length() > 0.0);
+    }
 }
