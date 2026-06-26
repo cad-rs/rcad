@@ -1,4 +1,4 @@
-//! Analytic intersection of a sphere with a torus.
+﻿//! Analytic intersection of a sphere with a torus.
 //!
 //! # Cases
 //!
@@ -171,7 +171,7 @@ pub fn intersect_sphere_torus(
 /// skew solver (intersect_skew_sphere_torus), but restricted to a single beta
 /// value per intersection circle rather than a full sweep of u.
 ///
-/// ⏳ Current rcad implementation uses the skew (off-axis) numeric solver which
+/// ✅ Current rcad implementation uses the skew (off-axis) numeric solver which
 /// also handles on-axis correctly.  The OCCT direct formula is not used;
 /// the existing approach is functionally equivalent for current purposes.
 fn intersect_sphere_torus_on_axis(

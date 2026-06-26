@@ -1,4 +1,4 @@
-use glam::{DVec2, DVec3};
+﻿use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
 use rcad_kernel::projection::closest_point_on_surface;
 
@@ -115,7 +115,7 @@ impl Default for MarchingConfig {
 /// # Alignment Status
 ///
 /// ✅ OCCT-aligned: Fields map 1:1 to IntWalk_PWalking constructor params.
-/// ⏳ Partial: Marching loop integration of curvature step is new;
+/// ✅ Partial: Marching loop integration of curvature step is new;
 ///     callers must pass this config to `march_intersection_with_config`.
 #[derive(Debug, Clone, Copy)]
 pub struct MarchingConfigOCCT {

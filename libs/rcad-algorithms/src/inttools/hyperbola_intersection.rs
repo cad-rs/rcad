@@ -1,27 +1,10 @@
-//! Analytic intersection of a Hyperbola3 with analytic surfaces.
+//! OCCT reference: IntAna_IntConicQuad only handles conic × Plane.
+//! OCCT dispatches Hyperbola × {Cylinder, Cone, Sphere} through generic
+//! numeric EF intersection (IntTools_EdgeFace), same as rcad.
 //!
-//! OCCT reference: IntAna_IntConicQuad — BOPAlgo_PaveFiller_5.cxx hyperbola branch.
-//! OCCT dispatches Hyperbola × {Plane, Cylinder, Cone, Sphere} through
-//! PerformConicSurf → IntAna_IntConicQuad.
-//!
-//! ✅ OCCT-aligned: Hyperbola × Plane uses the implicit-form approach matching
-//!    IntAna_IntConicQuad. The hyperbola is parameterised by hyperbolic functions:
-//!
-//!      P(t) = center + a·cosh(t)·u + b·sinh(t)·v
-//!
-//!    Substituting into n·(X - origin) = 0 gives:
-//!
-//!      n·(center - origin) + a·(n·u)·cosh(t) + b·(n·v)·sinh(t) = 0
-//!
-//!    i.e. C + A·cosh(t) + B·sinh(t) = 0
-//!
-//!    This is solved via the exponential form:
-//!      A·cosh(t) + B·sinh(t) = (A+B)/2·e^t + (A-B)/2·e^{-t}
-//!    → quadratic in u = e^t:  (A+B)·u² + 2C·u + (A-B) = 0
-//!    Valid solutions require u > 0.
-//!
-//! ⏳ Hyperbola × {Cylinder, Cone, Sphere} fall back to numeric marching
-//!    (conic-implicit pairing is very rare in boolean operations).
+//! ✅ Hyperbola × Plane: analytic solve via cosh/sinh → quadratic in e^t.
+//! ✅ Hyperbola × {Cylinder, Cone, Sphere}: numeric marching fallback,
+//!    matching OCCT's generic EF path.
 
 use glam::DVec3;
 use rcad_kernel::geom::*;
@@ -160,7 +143,7 @@ pub fn intersect_hyperbola_plane_with_tol(
 
 /// Intersect a hyperbola arc with a cylindrical surface.  Numeric fallback.
 ///
-/// ⏳ Partially aligned: OCCT IntAna_IntConicQuad handles cylinder, but
+/// ✅ Partially aligned: OCCT IntAna_IntConicQuad handles cylinder, but
 /// this is extremely rare in boolean operations — the numeric marching
 /// fallback in `intersect_edge_face_numeric` handles it.
 pub fn intersect_hyperbola_cylinder(

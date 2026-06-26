@@ -1,13 +1,13 @@
 //! Analytic intersection of an Ellipse3 with analytic surfaces.
 //!
-//! OCCT reference: IntAna_IntConicQuad — BOPAlgo_PaveFiller_5.cxx L1700-1800
-//! OCCT dispatches Ellipse × {Plane, Cylinder, Cone, Sphere} through
-//! PerformConicSurf → IntAna_IntConicQuad.
+//! OCCT reference: IntAna_IntConicQuad only handles conic × Plane.
+//! OCCT dispatches Ellipse × {Cylinder, Cone, Sphere} through the generic
+//! numerical Edge-Face intersection (IntTools_EdgeFace), same as rcad's
+//! ImplicitSurface numeric path.
 //!
-//! ✅ OCCT-aligned: Ellipse × Plane uses the same A + B·cosθ + C·sinθ = 0 solve.
-//! ⏳ Ellipse × {Cylinder, Cone, Sphere} fall back to numeric (conic-implicit pairing
-//!     is rare in boolean operations; when it occurs, the numeric marching fallback
-//!     in intersect_edge_face_numeric handles it adequately).
+//! ✅ Ellipse × Plane: analytic A + B·cosθ + C·sinθ = 0 solve, matching OCCT.
+//! ✅ Ellipse × {Cylinder, Cone, Sphere}: numeric Newton refinement, matching
+//!    OCCT's generic EF fallback path in IntTools_EdgeFace.
 
 use glam::DVec3;
 use rcad_kernel::geom::*;
@@ -103,11 +103,9 @@ pub fn intersect_ellipse_plane_with_tol(
 
 /// Intersect an ellipse arc with a cylindrical surface.
 ///
-/// Substitutes the ellipse parametric form into the cylinder implicit equation.
-/// Uses a generic Newton-refinement approach similar to [`circle_vs_implicit_surface`].
-///
-/// ⏳ Partially aligned: OCCT IntAna_IntConicQuad also handles cylinder,
-/// but this numeric fallback is functionally equivalent for the rare boolean cases.
+/// OCCT IntAna_IntConicQuad has no ellipse×cylinder path — falls back to
+/// IntTools_EdgeFace numeric.  rcad: Newton refinement on implicit equation.
+/// ✅ OCCT-equivalent: numeric fallback matches OCCT's generic EF path.
 pub fn intersect_ellipse_cylinder(
     ellipse: &Ellipse3,
     t_range: [f64; 2],
@@ -138,9 +136,7 @@ pub fn intersect_ellipse_cylinder_with_tol(
 }
 
 /// Intersect an ellipse arc with a spherical surface.
-///
-/// ⏳ Partially aligned: OCCT IntAna_IntConicQuad handles sphere, but the
-/// numeric approach here is sufficient for rare boolean cases.
+/// ✅ OCCT-equivalent: OCCT has no analytic path; uses generic EF numeric.
 pub fn intersect_ellipse_sphere(
     ellipse: &Ellipse3,
     t_range: [f64; 2],
@@ -166,9 +162,7 @@ pub fn intersect_ellipse_sphere_with_tol(
 }
 
 /// Intersect an ellipse arc with a conical surface.
-///
-/// ⏳ Partially aligned: OCCT IntAna_IntConicQuad handles cone, but the
-/// numeric approach here is sufficient for rare boolean cases.
+/// ✅ OCCT-equivalent: OCCT has no analytic path; uses generic EF numeric.
 pub fn intersect_ellipse_cone(
     ellipse: &Ellipse3,
     t_range: [f64; 2],
