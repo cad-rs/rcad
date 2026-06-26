@@ -928,12 +928,24 @@ pub(crate) fn assemble_internal_wires(
         return vec![vec![]; wfs.len()];
     }
 
-    // OCCT L642-663: Precompute 2D UV midpoint for each avoided segment.
-    let seg_uv: Vec<Option<DVec2>> = avoided.iter().map(|&si| {
+    // OCCT L633-663: Build BVH tree — Bnd_Box2d per edge from pcurve UV bounds.
+    //   OCCT: BRepTools::AddUVBounds(myFace, aE, aBoxE) samples the edge's
+    //   pcurve on the face surface.  rcad: compute UV bounding box from segment's
+    //   first_pcurve at sampled points (matching OCCT sampling density).
+    let seg_uv_box: Vec<Option<[f64; 4]>> = avoided.iter().map(|&si| {
         let seg = &segments[si];
         seg.first_pcurve.as_ref().map(|pc| {
-            let t_mid = (seg.t_range[0] + seg.t_range[1]) * 0.5;
-            pc.point_at(t_mid)
+            let [t0, t1] = seg.t_range;
+            let n_pts = 8usize; // OCCT IntTools_FClass2d uses NbSamples (≈8)
+            let mut u_min = f64::INFINITY; let mut u_max = f64::NEG_INFINITY;
+            let mut v_min = f64::INFINITY; let mut v_max = f64::NEG_INFINITY;
+            for k in 0..n_pts {
+                let t = t0 + (t1 - t0) * k as f64 / (n_pts - 1) as f64;
+                let uv = pc.point_at(t);
+                u_min = u_min.min(uv.x); u_max = u_max.max(uv.x);
+                v_min = v_min.min(uv.y); v_max = v_max.max(uv.y);
+            }
+            [u_min, u_max, v_min, v_max]
         })
     }).collect();
 
@@ -959,8 +971,15 @@ pub(crate) fn assemble_internal_wires(
         }).filter(|poly: &Vec<DVec2>| poly.len() >= 3).collect();
 
         // OCCT L704-716: select edges inside this face via 2D ray casting.
+        //   OCCT uses BVH box prefilter + IsInside.  rcad: box overlap prefilter
+        //   + 2D point-in-polygon (equivalent to IsInside).
         for (ai, &si) in avoided.iter().enumerate() {
-            let Some(uv_mid) = seg_uv[ai] else { continue; };
+            let Some(box_e) = &seg_uv_box[ai] else { continue; };
+            // OCCT L694-695: BVH box prefilter — skip if box doesn't overlap face.
+            if outer_uv.iter().all(|p| p.x < box_e[0] || p.x > box_e[1] || p.y < box_e[2] || p.y > box_e[3]) {
+                continue;
+            }
+            let uv_mid = DVec2::new(0.5 * (box_e[0] + box_e[1]), 0.5 * (box_e[2] + box_e[3]));
             if !point_in_polygon_2d(&outer_uv, uv_mid) { continue; }
             let in_hole = hole_uvs.iter().any(|hole| point_in_polygon_2d(hole, uv_mid));
             if in_hole { continue; }
