@@ -28,7 +28,9 @@ pub(crate) struct ResultBuilder {
     pub(crate) deg_edge_indices: HashSet<usize>,
     pub(crate) ic_edge_map: HashMap<usize, usize>,
     pub(crate) source_has_compound: bool,
-    pub(crate) source_has_compsolid: bool,
+    /// CompSolid solid groups — each entry is solid indices forming one CompSolid.
+    /// Populated immediately by fill_images_containers_compsolid.
+    pub(crate) compsolid_groups: Vec<Vec<usize>>,
 }
 
 impl ResultBuilder {
@@ -355,7 +357,7 @@ impl ResultBuilder {
             shells: Vec::new(),
             solids: Vec::new(),
             source_has_compound: false,
-            source_has_compsolid: false,
+            compsolid_groups: Vec::new(),
         }
     }
 
@@ -776,6 +778,24 @@ impl ResultBuilder {
             // Legacy path: single shell, single solid
             let shell = t.add_tshell(face_refs);
             t.add_tsolid(vec![shell]);
+        } else if !self.compsolid_groups.is_empty() {
+            // OCCT-aligned: CompSolid wraps multiple solids sharing boundary faces.
+            for cs_group in &self.compsolid_groups {
+                let mut solid_refs = Vec::new();
+                for &si in cs_group {
+                    if si >= self.solids.len() { continue; }
+                    let shell_refs: Vec<ShapeRef> = self.solids[si].iter().map(|&shi| {
+                        let sf = self.shells.get(shi).map_or(vec![], |sf| {
+                            sf.iter().map(|&fi| face_refs.get(fi).copied().unwrap_or(ShapeRef::new(fi))).collect()
+                        });
+                        t.add_tshell(sf)
+                    }).collect();
+                    solid_refs.push(t.add_tsolid(shell_refs));
+                }
+                if !solid_refs.is_empty() {
+                    t.add_tcompsolid(solid_refs);
+                }
+            }
         } else if !self.solids.is_empty() {
             for solid_shells in &self.solids {
                 let shell_refs: Vec<ShapeRef> = solid_shells.iter().map(|&si| {
@@ -946,7 +966,7 @@ impl ResultBuilder {
             }]
         };
         // ✅ OCCT-aligned: wrap result solids in CompSolid when source had one.
-        let (brep_solids_out, compsolid) = if self.source_has_compsolid && !brep_solids.is_empty() {
+        let (brep_solids_out, compsolid) = if !self.compsolid_groups.is_empty() && !brep_solids.is_empty() {
             let cs = CompSolid { solids: brep_solids, label: None };
             (vec![], Some(cs))
         } else {

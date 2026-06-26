@@ -879,21 +879,50 @@ impl<'a> BooleanBuilder<'a> {
     ///   L235-240: if none modified → early return.
     ///   L242-275: build new container from sub-shape images.
     ///
-    /// rcad: check if any result face's source DS face came from a CompSolid.
-    /// If yes, set result.source_has_compsolid to signal build() to produce
-    /// a CompSolid-wrapped BRep.  Actual CompSolid construction happens in
-    /// build() (matching OCCT's BuildResult storing in myImages).
+    /// rcad: iterate DS faces → find those from CompSolids → group result solids
+    /// by their source compsolid → store in result.compsolid_groups.
     fn fill_images_containers_compsolid(&self, result: &mut ResultBuilder) {
+        // OCCT L224-233: check if any sub-shape has been modified.
         let has_compsolid = self.ds.faces.iter().any(|f| f.source_compsolid_idx.is_some());
         if !has_compsolid {
-            return; // OCCT L235-240: no compsolid → no images to build
+            return; // OCCT L235-240: early return
         }
-        // OCCT L242-275: build new container from split solids.
-        // rcad: signal build() to produce CompSolid from the result solids.
-        // OCCT iterates source COMPSOLID sub-solids and replaces them with
-        // their split images.  rcad defers to build() which creates the
-        // CompSolid from result.solids when source_has_compsolid is true.
-        result.source_has_compsolid = true;
+
+        // OCCT L242-275: build CompSolid from sub-solid images.
+        // Group result solids by their source compsolid index.
+        // For each result solid, find its origin DS faces to determine compsolid.
+        let mut solid_to_cs: Vec<Option<usize>> = vec![None; result.solids.len()];
+        for (si, solid_shells) in result.solids.iter().enumerate() {
+            for &shi in solid_shells {
+                if shi >= result.shells.len() { continue; }
+                for &rfi in &result.shells[shi] {
+                    if rfi >= result.face_origins.len() { continue; }
+                    let ds_fi = match &result.face_origins[rfi] {
+                        FaceOrigin::FromA(sfi) => self.ds.faces.iter().position(|f|
+                            f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
+                        FaceOrigin::FromB(sfi) => self.ds.faces.iter().position(|f|
+                            f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi),
+                        _ => None,
+                    };
+                    if let Some(dfi) = ds_fi {
+                        if let Some(csi) = self.ds.faces[dfi].source_compsolid_idx {
+                            solid_to_cs[si] = Some(csi);
+                            break; // found compsolid for this solid
+                        }
+                    }
+                }
+                if solid_to_cs[si].is_some() { break; }
+            }
+        }
+
+        // Group solid indices by compsolid index.
+        let mut cs_groups: std::collections::BTreeMap<usize, Vec<usize>> = std::collections::BTreeMap::new();
+        for (si, cs_opt) in solid_to_cs.iter().enumerate() {
+            if let Some(csi) = cs_opt {
+                cs_groups.entry(*csi).or_default().push(si);
+            }
+        }
+        result.compsolid_groups = cs_groups.into_values().collect();
     }
 
     /// ✅ OCCT-aligned: FillImagesSolids (BOPAlgo_Builder_3.cxx L60-93).

@@ -157,6 +157,12 @@ impl BRep {
         ShapeRef::new(index)
     }
 
+    pub fn add_tcompsolid(&mut self, solids: Vec<ShapeRef>) -> ShapeRef {
+        let index = self.tshapes.len();
+        self.tshapes.push(Arc::new(TShape::CompSolid(solids)));
+        ShapeRef::new(index)
+    }
+
     pub fn vertex(&self, r: ShapeRef) -> &TVertexData {
         match &*self.tshapes[r.index] {
             TShape::Vertex(v) => v,
