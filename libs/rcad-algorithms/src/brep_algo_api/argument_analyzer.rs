@@ -1067,9 +1067,8 @@ impl ArgumentAnalyzer {
     /// produce unreliable results. This test requires geometric intersection
     /// analysis and is non-trivial.
     ///
-    /// ❌ Not implemented: OCCT uses BOPTools_AlgoTools::IsTangentFace /
-    ///    BOPTools_AlgoTools::IsTangentEdge. This is a complex geometric
-    ///    check involving surface normals at intersection points.
+    /// ✅ OCCT-aligned: TestTangent (BOPAlgo_ArgumentAnalyzer.cxx L676-679).
+    ///   OCCT implementation is also empty (not implemented).
     fn test_tangent(&mut self) {
         // OCCT ref: Full implementation uses BOPTools_AlgoTools tangent detection.
         // This is a stub that records a single Unknown result (no fault).
@@ -1263,8 +1262,12 @@ impl ArgumentAnalyzer {
     /// along shared edges. C0 (positional continuity only) may cause
     /// problems for boolean operations.
     ///
-    /// ❌ Not fully implemented: OCCT uses BRepAdaptor_Curve on shared edges
-    /// to compute tangent deviation between adjacent faces.
+    /// ❌ Not fully implemented: OCCT uses Geom_Curve::Continuity() to check
+    ///   if each edge's underlying curve is C0 (positional only), which can
+    ///   cause boolean instability.  rcad Curve3 has no Continuity property;
+    ///   analytic curves (Line3, Circle3) are C2+, BSpline curves with
+    ///   repeated knots could be C0 but knot multiplicity is not tracked.
+    ///   ⏳ Track knot multiplicity on BSpline curves for continuity detection.
     fn test_continuity(&mut self) {
         // OCCT ref: Full implementation inspects each edge shared by
         // two faces and evaluates the angle between the face normals
