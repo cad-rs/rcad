@@ -3,7 +3,7 @@
 //
 //   clock_wise_angle: ✓ matches OCCT formula a1n - ao, epsilon guard
 //
-//   Angle2D: ✓ Tolerance2D + Resolution aligned (surface-aware)
+//   tolerance_2d: ✓ 1.1x multiplier only for BSpline (OCCT L889-892)
 //   Architectural gap: vertex parameter t is provided by caller via domain array
 //     OCCT uses BRep_Tool::Parameter(aV, anEdge, myFace) — TopoDS stores
 //     per-vertex-per-edge parameter in its shape/vertex/edge data model.
@@ -22,7 +22,7 @@ pub(crate) fn tolerance_2d(vt: f64, surface: &Surface3) -> f64 {
     let u_res = u_resolution(vt, surface);
     let v_res = v_resolution(vt, surface);
     let mut t2d = u_res.max(v_res).max(vt);
-    if matches!(surface, Surface3::BSpline(_) | Surface3::Bezier(_) | Surface3::TriBezier(_)) {
+    if matches!(surface, Surface3::BSpline(_)) {
         t2d *= 1.1;
     }
     t2d
