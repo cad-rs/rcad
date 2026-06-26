@@ -223,6 +223,13 @@ pub struct DSEdge {
 /// Stored as a separate map to avoid bloating every DSEdge with an optional field.
 pub type EdgeFlagMap = std::collections::HashMap<usize, usize>;
 
+/// A wire in the DS pool — first-class entity matching OCCT TopoDS_Wire.
+#[derive(Debug, Clone)]
+pub struct DSWire {
+    /// Edge indices in traversal order (into DS.edges).
+    pub edges: Vec<usize>,
+}
+
 /// A face in the DS pool with surface reference.
 #[derive(Debug, Clone)]
 pub struct DSFace {
@@ -234,6 +241,10 @@ pub struct DSFace {
     /// Inner wire edges (TopExp_Explorer iterates outer wire first, then inner wires).
     /// Each entry is one inner wire: Vec<(edge_idx, forward_in_wire)>.
     pub inner_boundary_edges: Vec<Vec<(usize, bool)>>,
+    /// Outer wire index into DS.wires (OCCT TopAbs_WIRE reference).
+    pub outer_wire_idx: Option<usize>,
+    /// Inner wire indices into DS.wires.
+    pub inner_wire_idxs: Vec<usize>,
     pub normal: DVec3,
     pub origin: ShapeOrigin,
     pub face_info: FaceInfo,
@@ -383,6 +394,7 @@ pub enum NearTangentType {
 pub struct DS {
     pub vertices: Vec<DSVertex>,
     pub edges: Vec<DSEdge>,
+    pub wires: Vec<DSWire>,
     pub faces: Vec<DSFace>,
     pub interferences: Vec<Interference>,
     pub intersection_curves: Vec<IntersectionCurve>,
@@ -607,6 +619,7 @@ impl DS {
         let mut ds = DS {
             vertices: Vec::new(),
             edges: Vec::new(),
+            wires: Vec::new(),
             faces: Vec::new(),
             // internal V/E tracking: is_internal flag on DSVertex/DSEdge
             //   used instead of separate arrays (removed in favor of flags).
@@ -1044,6 +1057,10 @@ impl DS {
                         }
                     };
 
+                    // ✅ OCCT-aligned: create DSWire for outer wire (first-class TopAbs_WIRE).
+                    let outer_wire_idx = Some(self.wires.len());
+                    self.wires.push(DSWire { edges: boundary_edges.clone() });
+
                     // ✅ OCCT-aligned: inner wire edges (TopExp_Explorer iterates outer first, then inner).
                     let inner_boundary_edges: Vec<Vec<(usize, bool)>> = face
                         .inner_wires
@@ -1056,11 +1073,29 @@ impl DS {
                         })
                         .collect();
 
+                    // ✅ OCCT-aligned: create DSWire for each inner wire.
+                    let inner_wire_idxs: Vec<usize> = (0..face.inner_wires.len())
+                        .map(|_| {
+                            let wi = self.wires.len();
+                            self.wires.push(DSWire { edges: Vec::new() });
+                            wi
+                        })
+                        .collect();
+                    for (ii, wire) in face.inner_wires.iter().enumerate() {
+                        self.wires[inner_wire_idxs[ii]].edges = wire
+                            .edges
+                            .iter()
+                            .map(|we| we.idx + edge_offset)
+                            .collect();
+                    }
+
                     self.faces.push(DSFace {
                         surface,
                         boundary_verts,
                         boundary_edges,
                         inner_boundary_edges,
+                        outer_wire_idx,
+                        inner_wire_idxs,
                         normal: face.normal,
                         origin,
                         face_info: FaceInfo::default(),

@@ -73,6 +73,7 @@ pub mod annotation;
 /// Precision constants and per-entity tolerance query helpers.
 ///
 /// Analogous to OCCT `Precision` class and `BRep_Tool::Tolerance`.
+pub mod topods;
 pub mod tolerance;
 
 /// Curve fitting: B-spline interpolation and approximation through point sets.
@@ -280,21 +281,14 @@ pub struct BRep {
     pub solids: Vec<Solid>,
     #[serde(default)]
     pub geom: GeomStore,
-    /// Optional compound container for multi-shape assemblies.
-    ///
-    /// When set, this BRep represents a compound shape. The `solids` field
-    /// contains flattened solids for backward compatibility.
     #[serde(default)]
     pub compound: Option<topology::Compound>,
-    /// Optional CompSolid container for connected multi-region solids.
     #[serde(default)]
     pub compsolid: Option<topology::CompSolid>,
 }
 
 impl Default for BRep {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
 impl BRep {
@@ -307,6 +301,124 @@ impl BRep {
             compound: None,
             compsolid: None,
         }
+    }
+
+    /// Convert to TopoDS-aligned representation.
+    pub fn to_topods(&self) -> topods::BRep {
+        let mut t = topods::BRep::new();
+        // Copy geometry stores
+        t.curves = self.geom.curves.clone();
+        t.surfaces = self.geom.surfaces.clone();
+        t.curve2ds = self.geom.curve2ds.clone();
+        // Vertex mapping: old index -> new ShapeRef
+        let mut v_map: Vec<topods::ShapeRef> = Vec::with_capacity(self.vertices.len());
+        for v in &self.vertices {
+            let sr = t.add_tvertex(v.point);
+            v_map.push(sr);
+        }
+        // Edge mapping: old index -> new ShapeRef
+        let mut e_map: Vec<topods::ShapeRef> = Vec::with_capacity(self.edges.len());
+        for (i, e) in self.edges.iter().enumerate() {
+            let first = v_map[e.start];
+            let last = v_map[e.end];
+            let curve = self.geom.edge_curve.get(i).copied().flatten();
+            let range = self.geom.edge_curve_range.get(i).copied().flatten().unwrap_or([0.0, 0.0]);
+            let sr = t.add_tedge(curve, first, last, range);
+            e_map.push(sr);
+        }
+        // Solids -> shells -> faces -> wires
+        for solid in &self.solids {
+            let mut shell_refs = Vec::new();
+            for shell in &solid.shells {
+                let mut face_refs = Vec::new();
+                for face in &shell.faces {
+                    let outer_wire = Self::wire_to_topods(&mut t, &e_map, &face.outer_wire);
+                    let inner_wires: Vec<topods::ShapeRef> = face.inner_wires.iter()
+                        .map(|w| Self::wire_to_topods(&mut t, &e_map, w)).collect();
+                    let sr = t.add_tface(face.surface_idx, outer_wire, inner_wires, face.sample_point);
+                    face_refs.push(sr);
+                }
+                shell_refs.push(t.add_tshell(face_refs));
+            }
+            t.add_tsolid(shell_refs);
+        }
+        t
+    }
+
+    fn wire_to_topods(t: &mut topods::BRep, e_map: &[topods::ShapeRef], wire: &topology::Wire) -> topods::ShapeRef {
+        use topods::Orientation;
+        let edges: Vec<topods::ShapeRef> = wire.edges.iter().map(|we| {
+            let orient = if we.forward { Orientation::Forward } else { Orientation::Reversed };
+            topods::ShapeRef::with_orientation(e_map[we.idx].index, orient)
+        }).collect();
+        t.add_twire(edges)
+    }
+
+    /// Build from TopoDS-aligned representation (simplified — reconstructs flat arrays).
+    pub fn from_topods(t: &topods::BRep) -> Self {
+        let mut brep = BRep::new();
+        let mut v_map: Vec<usize> = Vec::new();
+        let mut e_map: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        for (ti, ts) in t.tshapes.iter().enumerate() {
+            match &**ts {
+                topods::TShape::Vertex(vd) => {
+                    v_map.push(brep.vertices.len());
+                    brep.vertices.push(Vertex { point: vd.point });
+                }
+                topods::TShape::Edge(ed) => {
+                    let fi = brep.edges.len(); // flat edge index
+                    e_map.insert(ti, fi);       // topods tshape index -> flat index
+                    let vi = v_map.get(ed.first.index).copied().unwrap_or(0);
+                    let vj = v_map.get(ed.last.index).copied().unwrap_or(0);
+                    brep.edges.push(Edge { start: vi, end: vj });
+                    brep.geom.edge_curve.push(ed.curve);
+                    brep.geom.edge_curve_range.push(Some(ed.range));
+                }
+                _ => {}
+            }
+        }
+        // Rebuild solids from topods solids
+        for ts in &t.tshapes {
+            if let topods::TShape::Solid(sd) = &**ts {
+                let mut shells = Vec::new();
+                for shell_sr in &sd.shells {
+                    if let topods::TShape::Shell(shd) = &*t.tshapes[shell_sr.index] {
+                        let mut faces = Vec::new();
+                        for face_sr in &shd.faces {
+                            if let topods::TShape::Face(fd) = &*t.tshapes[face_sr.index] {
+                                let outer_wire = Self::wire_from_topods(t, &e_map, &fd.outer_wire);
+                                let inner_wires: Vec<topology::Wire> = fd.inner_wires.iter()
+                                    .map(|sr| Self::wire_from_topods(t, &e_map, sr)).collect();
+                                faces.push(topology::Face {
+                                    outer_wire,
+                                    inner_wires,
+                                    normal: DVec3::Z,
+                                    triangles: Vec::new(),
+                                    sample_point: fd.sample_point,
+                                    mesh_dirty: true,
+                                    surface_idx: fd.surface,
+                                });
+                            }
+                        }
+                        shells.push(topology::Shell { faces });
+                    }
+                }
+                brep.solids.push(topology::Solid { shells });
+            }
+        }
+        brep.geom.curves = t.curves.clone();
+        brep.geom.surfaces = t.surfaces.clone();
+        brep.geom.curve2ds = t.curve2ds.clone();
+        brep
+    }
+
+    fn wire_from_topods(t: &topods::BRep, e_map: &std::collections::HashMap<usize, usize>, sr: &topods::ShapeRef) -> topology::Wire {
+        let wd = t.wire(*sr);
+        let edges: Vec<WireEdge> = wd.edges.iter().map(|e_sr| {
+            let idx = e_map.get(&e_sr.index).copied().unwrap_or(e_sr.index);
+            WireEdge { idx, forward: e_sr.orientation == topods::Orientation::Forward }
+        }).collect();
+        topology::Wire { edges }
     }
 
     /// Create a BRep representing a compound of shapes.

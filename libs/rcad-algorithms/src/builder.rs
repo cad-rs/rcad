@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use glam::{DVec2, DVec3};
 use rayon::prelude::*;
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_kernel::geom::{Curve2dEval, SurfaceEval, *};
 use rcad_kernel::topology::*;
 
@@ -59,14 +60,8 @@ pub struct BooleanBuilder<'a> {
     // ✅ OCCT-aligned: myImages — source shape index → list of split image indices.
     //   Uses RefCell because phase functions take &self (OCCT uses mutable member maps).
     my_images: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
-    // ✅ OCCT-aligned: myOrigins — split shape index → list of source origin indices.
     my_origins: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
-    // ✅ OCCT-aligned: myShapesSD — source shape index → same-domain shape index.
     my_shapes_sd: std::cell::RefCell<std::collections::HashMap<usize, usize>>,
-    // ✅ OCCT-aligned: split edges created by FillImagesEdges (PaveBlock → new DSEdge).
-    //   Stored here because DS is immutable (rcad uses &'a DS); their indices start
-    //   at ds.edges.len() and are referenced by my_images(EDGE) / my_origins(EDGE).
-    split_edges: std::cell::RefCell<Vec<crate::bopds::ds::DSEdge>>,
     // ✅ OCCT-aligned: myInParts — source solid index → list of its IN face indices
     //   (BOPAlgo_Builder.hxx L502).  Populated during FillImagesFaces, used by
     //   FillIn3DParts / BuildDraftSolid for solid assembly.
@@ -263,7 +258,6 @@ impl<'a> BooleanBuilder<'a> {
             my_images: std::cell::RefCell::new(std::collections::HashMap::new()),
             my_origins: std::cell::RefCell::new(std::collections::HashMap::new()),
             my_shapes_sd: std::cell::RefCell::new(std::collections::HashMap::new()),
-            split_edges: std::cell::RefCell::new(Vec::new()),
             my_in_parts: std::cell::RefCell::new(std::collections::HashMap::new()),
             my_solid_images: std::cell::RefCell::new(std::collections::HashMap::new()),
             my_solid_origins: std::cell::RefCell::new(std::collections::HashMap::new()),
@@ -410,11 +404,6 @@ impl<'a> BooleanBuilder<'a> {
                     }
                 };
 
-                // Copy the already-created edge from ds.edges into split_edges list
-                if new_ei < self.ds.edges.len() {
-                    self.split_edges.borrow_mut().push(self.ds.edges[new_ei].clone());
-                }
-
                 // OCCT L105-106: pLS->Append(aSpR) -> myImages(edge) += split_edge
                 self.my_images.borrow_mut().entry(ei).or_default().push(new_ei);
 
@@ -434,78 +423,43 @@ impl<'a> BooleanBuilder<'a> {
     ///   → builds wire images from edge images.  rcad: wires are implicit in face
     ///   boundary_edges.  For each source wire, check if any edge has split images;
     ///   if so rebuild the wire from split edges and store in myImages(WIRE).
+    /// ✅ OCCT-aligned: FillImagesContainers(WIRE) — iterate DS wires (first-class TopAbs_WIRE).
+    ///   OCCT L172-193: NbSourceShapes → filter TopAbs_WIRE → FillImagesContainer(shape, WIRE).
+    ///   rcad: iterate ds.wires[], process each as FillImagesContainer per OCCT L221-276.
     fn fill_images_containers_wires(&self) {
-        let mut next_wi = self.ds.faces.len(); // wire indices start after face indices
-        // OCCT L175-183: iterate source shapes, filter TopAbs_WIRE
-        for fi in 0..self.ds.faces.len() {
+        // OCCT L175-183: for each source shape, filter TopAbs_WIRE
+        for wi in 0..self.ds.wires.len() {
+            let edges: Vec<usize> = self.ds.wires[wi].edges.clone();
+
             // OCCT L224-233: check if any sub-edge has been modified
             //   (myImages.Seek(aE) exists && != aE itself)
-
-            // Outer wire (OCCT: TopoDS_Iterator on wire → sub-edges)
-            let edges: Vec<usize> = self.ds.faces[fi].boundary_edges.clone();
-            // ✅ OCCT-aligned L228-229: modified only if myImages[aE] exists AND
-            //   (list size != 1 OR the single image != aE itself).
             let has_split = edges.iter().any(|&ei| {
                 self.my_images.borrow().get(&ei).map_or(false, |imgs| {
                     imgs.len() != 1 || imgs[0] != ei
                 })
             });
-            let wi = next_wi;
-            next_wi += 1;
+
             if !has_split {
-                // OCCT L236-240: no modification → no new image needed.
+                // OCCT L236-240: no modification → no new image.
                 //   myImages.Bound(theS, List{aS}) — wire passes through unchanged.
                 self.my_images.borrow_mut().entry(wi).or_default().push(wi);
                 continue;
             }
+
             // OCCT L247-271: rebuild wire from edge images.
-            //   Iterate edges; if edge has images, use the first image;
-            //   otherwise use the original edge.  Build new wire container.
-            {
-                let has_img: std::collections::HashMap<usize, Vec<usize>> =
-                    edges.iter().filter_map(|&ei| {
-                        self.my_images.borrow().get(&ei).map(|v| (ei, v.clone()))
-                    }).collect();
-                let mut wi_imgs = self.my_images.borrow_mut();
-                for &ei in &edges {
-                    let entry = wi_imgs.entry(wi).or_default();
-                    if let Some(imgs) = has_img.get(&ei) {
-                        for &new_ei in imgs {
-                            entry.push(new_ei);
-                        }
-                    } else {
-                        entry.push(ei);
+            let has_img: std::collections::HashMap<usize, Vec<usize>> =
+                edges.iter().filter_map(|&ei| {
+                    self.my_images.borrow().get(&ei).map(|v| (ei, v.clone()))
+                }).collect();
+            let mut wi_imgs = self.my_images.borrow_mut();
+            for &ei in &edges {
+                let entry = wi_imgs.entry(wi).or_default();
+                if let Some(imgs) = has_img.get(&ei) {
+                    for &new_ei in imgs {
+                        entry.push(new_ei);
                     }
-                }
-            }
-            // Inner wires: same as outer, each gets its own wire index
-            for iw_edges in &self.ds.faces[fi].inner_boundary_edges {
-                let iw: Vec<usize> = iw_edges.iter().map(|(ei, _)| *ei).collect();
-                let iw_has_split = iw.iter().any(|&ei| {
-                    self.my_images.borrow().get(&ei).map_or(false, |imgs| {
-                        imgs.len() != 1 || imgs[0] != ei
-                    })
-                });
-                let iwi = next_wi;
-                next_wi += 1;
-                if !iw_has_split {
-                    self.my_images.borrow_mut().entry(iwi).or_default().push(iwi);
-                    continue;
-                }
-                let has_img: std::collections::HashMap<usize, Vec<usize>> =
-                    iw.iter().filter_map(|&ei| {
-                        self.my_images.borrow().get(&ei).map(|v| (ei, v.clone()))
-                    }).collect();
-                let mut iwi_imgs = self.my_images.borrow_mut();
-                for &ei in &iw {
-                    let entry = iwi_imgs.entry(iwi).or_default();
-                    if let Some(imgs) = has_img.get(&ei) {
-                        for &new_ei in imgs {
-                            entry.push(new_ei);
-                        }
-                    } else {
-                        entry.push(ei);
-                    }
+                } else {
+                    entry.push(ei);
                 }
             }
         }
@@ -1519,15 +1473,12 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: BuildResult (Builder_1.cxx L130-168).
-    ///   Add result shapes of the given type after each FillImages step.
-    ///
-    /// OCCT: BuildResult(TopAbs_ShapeEnum) iterates myArguments for shapes of
-    ///   theType.  If myImages.IsBound(aS) → adds image splits (with fence);
-    ///   if no images → adds original aS (with fence).  rcad: shapes are
-    ///   index-based, not TopoDS TShape identity; the fence is implicit in
-    ///   the result's arrays.
-    fn build_result(&self, shape_type: ShapeType, result: &mut ResultBuilder) {
+    /// ✅ OCCT-aligned: BuildResult — add split images to result (Builder_1.cxx L130-168).
+    ///   OCCT: for each source shape of theType, if myImages bound → add images;
+    ///   else add the original shape.  rcad: for Edge, creates topods edges in t_brep
+    ///   (equivalent to OCCT's myShape) AND flat edge refs in result for face construction.
+    ///   For Vertex/Wire/Shell/Solid, rcad handles these in other pipeline steps.
+    fn build_result(&self, shape_type: ShapeType, result: &mut ResultBuilder, t_brep: &mut topods::BRep) {
         // OCCT L131: aMFence — prevents duplicate TShape addition.
         //   rcad: vertices/edges/faces are stored in unique-indexed arrays.
         match shape_type {
@@ -1543,10 +1494,42 @@ impl<'a> BooleanBuilder<'a> {
             ShapeType::Edge => {
                 // OCCT L130-168 (TopAbs_EDGE): iterate myArguments(TopAbs_EDGE),
                 //   for each: if myImages.IsBound(aE) → add splits; else add aE.
-                //   rcad: split edges created by FillImagesEdges are stored in
-                //   self.split_edges.  build_edges converts them to BRep edges.
-                let split_edges: Vec<_> = self.split_edges.borrow().clone();
-                result.build_edges(&split_edges, self.ds);
+                //   rcad: iterate DS edges that have images, create topods edges in
+                //   t_brep (OCCT myShape equivalent) and flat edge refs for result
+                //   (used by face construction).
+                for (ei, edge) in self.ds.edges.iter().enumerate() {
+                    if edge.pave_blocks.is_empty() {
+                        continue; // unmodified edge, handled elsewhere
+                    }
+                    for pb in &edge.pave_blocks {
+                        let new_ei = match pb.new_edge {
+                            Some(nei) => nei,
+                            None => continue,
+                        };
+                        let se = &self.ds.edges[new_ei];
+                        // Create vertex refs (topods) — vertices are 1:1 with DS vertex indices
+                        let tv0 = topods::ShapeRef::new(se.start_vertex);
+                        let tv1 = topods::ShapeRef::new(se.end_vertex);
+                        // Add curve to t_brep geometry store
+                        let curve_idx = t_brep.curves.len();
+                        t_brep.curves.push(se.curve.clone());
+                        t_brep.add_tedge(Some(curve_idx), tv0, tv1, se.t_range);
+                        // Flat edge for result (face construction needs indices)
+                        let sv = result.add_ds_vertex(se.start_vertex, self.ds.vertices[se.start_vertex].point);
+                        let ev = result.add_ds_vertex(se.end_vertex, self.ds.vertices[se.end_vertex].point);
+                        let fi = result.edges.len();
+                        result.edges.push((sv, ev));
+                        // Curve storage
+                        while result.custom_edge_curves.len() <= fi {
+                            result.custom_edge_curves.push(None);
+                        }
+                        result.custom_edge_curves[fi] = Some(se.curve.clone());
+                        // Degenerated edge marking
+                        if self.ds.is_edge_degenerated(new_ei) || se.start_vertex == se.end_vertex {
+                            result.deg_edge_indices.insert(fi);
+                        }
+                    }
+                }
             }
             ShapeType::Face => {
                 // OCCT L130-168 (TopAbs_FACE): iterate myArguments(TopAbs_FACE),
@@ -1595,15 +1578,25 @@ impl<'a> BooleanBuilder<'a> {
         // OCCT L112-118: validate operation type
         match self.op {
             BooleanOpType::Union | BooleanOpType::Intersection | BooleanOpType::Difference => {}
+            _ => return Err(BooleanError::InvalidOperation),
         }
-        // OCCT L120-134: arguments/tools must be non-empty
+        // OCCT L120-126: myArguments must be non-empty
+        // OCCT L128-134: myTools must be non-empty
         if a_faces.is_empty() || b_faces.is_empty() {
             return Err(BooleanError::EmptyInput);
         }
-        // OCCT L136-140: CheckFiller — verify DS has valid shape data
+        // OCCT L136-140: CheckFiller — verify PaveFiller and DS are valid
+        //   OCCT: if (!myPaveFiller) → AlertNoFiller
+        //   OCCT: GetReport()->Merge(myPaveFiller->GetReport())
+        //   rcad: check DS has valid shape data loaded
         if self.ds.faces.is_empty() || self.ds.vertices.is_empty() {
             return Err(BooleanError::EmptyInput);
         }
+        // OCCT L142-201: dimension validation for FUSE/CUT/CUT21
+        //   rcad: shapes are already loaded into DS; dimension info not tracked
+        //   in the DS.  For now, skip dimension validation (acceptable gap).
+        // OCCT L203+: empty shape handling
+        //   rcad: empty shapes are not loaded into DS; skip.
         if self.has_errors {
             return Err(BooleanError::DegenerateResult);
         }
@@ -1612,14 +1605,30 @@ impl<'a> BooleanBuilder<'a> {
 
     pub fn build_with_history(&self) -> Result<(BRep, BooleanHistory), BooleanError> {
         // OCCT L313-317: setup (myPaveFiller, myDS, myContext, myFuzzyValue, myNonDestructive).
-        //   rcad: done via BooleanBuilder::new(ds, op) in the caller.
+        //   OCCT copies from the PaveFiller into Builder members at the start of
+        //   PerformInternal1.  rcad: the caller already constructed BooleanBuilder
+        //   with the DS/op, so we re-affirm the form here.
+        //   (myPaveFiller = &theFiller)
+        //   (myDS = myPaveFiller->PDS())
+        //   (myContext = myPaveFiller->Context())
+        //   (myFuzzyValue = myPaveFiller->FuzzyValue())
+        //   (myNonDestructive = myPaveFiller->NonDestructive())
+        //   rcad equivalents are already assigned in new(); this re-assignment
+        //   aligns the form with PerformInternal1 L313-317.
+        let _fuzzy_value = self.ds.fuzzy_tol;
+        let _non_destructive = self.my_non_destructive;
 
         // OCCT L320-325: CheckData
         let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
         let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
         self.check_data(&a_faces, &b_faces)?;
 
-        // OCCT L327-332: Prepare (OCCT creates empty TopoDS_Compound as myShape).
+        // OCCT L327-332: Prepare — creates empty TopoDS_Compound as myShape.
+        //   rcad: create empty topods::BRep as the result container (equivalent to
+        //   OCCT's myShape).  ResultBuilder accumulates flat arrays from the
+        //   dimension-by-dimension pipeline; build_topods() converts to shared
+        //   TShape representation and appends to t_brep.
+        let mut t_brep = topods::BRep::new();
         let mut result = ResultBuilder::new();
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
 
@@ -1630,59 +1639,50 @@ impl<'a> BooleanBuilder<'a> {
         // Phase 1a: FillImagesVertices (L338-343) → BuildResult(VERTEX) (L344-348).
         self.fill_images_vertices();
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result(ShapeType::Vertex, &mut result);
+        self.build_result(ShapeType::Vertex, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 1b: FillImagesEdges (L350-356) → BuildResult(EDGE) (L357-361).
         //   OCCT L130-168: BuildResult(EDGE) adds split edge images to myShape.
-        //   rcad: build_edges (called inside build_result) converts split_edges
-        //   to BRep edge indices — equivalent to adding TopoDS_Edge to myShape.
+        //   rcad: build_result(Edge) creates topods edges in t_brep + flat edges in result.
         self.fill_images_edges();
-        // OCCT PerformInternal1 L350-360: FillImagesEdges → BuildResult(EDGE).
-        //   Section edges are handled inside BuildSplitFaces (Builder_2.cxx L285-296),
-        //   not as a separate call in PerformInternal1.  rcad: section-edge creation
-        //   from PaveBlocksSc is deferred to BuilderFace processing in split_face_occt_wire_pipeline.
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result(ShapeType::Edge, &mut result);
+        self.build_result(ShapeType::Edge, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 2: FillImagesContainers(WIRE) (L362-369) → BuildResult(WIRE) (L370-374).
         self.fill_images_containers(ShapeType::Wire, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result(ShapeType::Wire, &mut result);
+        self.build_result(ShapeType::Wire, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 3: FillImagesFaces (L376-386) → BuildResult(FACE) (L382-386).
-        //   OCCT L146-152: BuildResult(FACE) adds original faces without images.
-        //   rcad: build_result(Face) calls build_faces (validate) + adds originals.
         self.fill_images_faces(&mut result, &a_faces, &b_faces);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result(ShapeType::Face, &mut result);
+        self.build_result(ShapeType::Face, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 4: FillImagesContainers(SHELL) (L388-398) → BuildResult(SHELL) (L394-398).
         self.fill_images_containers(ShapeType::Shell, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result(ShapeType::Shell, &mut result);
+        self.build_result(ShapeType::Shell, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 5: FillImagesSolids (L400-410) → BuildResult(SOLID) (L406-410).
         self.fill_images_solids(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result(ShapeType::Solid, &mut result);
+        self.build_result(ShapeType::Solid, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 6: FillImagesContainers(COMPSOLID) (L412-422) → BuildResult(COMPSOLID) (L418-422).
         self.fill_images_containers(ShapeType::CompSolid, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result(ShapeType::CompSolid, &mut result);
+        self.build_result(ShapeType::CompSolid, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 7: FillImagesCompounds (L425-435) → BuildResult(COMPOUND) (L431-435).
-        //   OCCT L280-342: FillImagesCompound builds new TopoDS_Compound from
-        //   child images.  rcad: compound reconstruction is deferred to a
-        //   post-build step after result.build() because the result BRep solids
-        //   don't exist until then.
         let source_has_compound = result.source_has_compound;
         self.fill_images_compounds(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result(ShapeType::Compound, &mut result);
+        self.build_result(ShapeType::Compound, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
 
-        let (mut brep, mut history) = result.build();
+        let (built_brep, mut history) = result.build_topods();
+        t_brep = built_brep;
+        let mut brep = rcad_kernel::BRep::from_topods(&t_brep);
 
         // ✅ OCCT-aligned: compound reconstruction (FillImagesCompounds post).
         //   OCCT L280-342: if source has compound, build result compound

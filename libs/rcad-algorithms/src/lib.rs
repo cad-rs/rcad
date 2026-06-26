@@ -1567,6 +1567,7 @@ pub fn boolean_retry_fuzzy_values(initial: f64, ladder: &[f64]) -> Vec<f64> {
 /// Classify boolean execution failures for adaptive retry policies.
 pub fn classify_boolean_retry(err: &BooleanError) -> BooleanRetryClass {
     match err {
+        BooleanError::InvalidOperation => BooleanRetryClass::FatalInput,
         BooleanError::EmptyInput => BooleanRetryClass::FatalInput,
         BooleanError::MissingGeometry(_) => BooleanRetryClass::IncompleteData,
         BooleanError::DegenerateResult => BooleanRetryClass::DegenerateTopology,
@@ -1585,6 +1586,7 @@ pub fn classify_boolean_retry(err: &BooleanError) -> BooleanRetryClass {
 /// enabling targeted recovery strategies for each failure mode.
 pub fn classify_boolean_failure(err: &BooleanError) -> BooleanFailureClass {
     match err {
+        BooleanError::InvalidOperation => BooleanFailureClass::InvalidInput,
         BooleanError::EmptyInput => BooleanFailureClass::InvalidInput,
         BooleanError::MissingGeometry(_) => BooleanFailureClass::InvalidInput,
         BooleanError::DegenerateResult => BooleanFailureClass::DegenerateTopology,

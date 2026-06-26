@@ -495,20 +495,8 @@ fn classify_point_internal(
     //   Without this, points ON a face plane are misclassified by ray
     //   casting as In/Out instead of On, removing boundary faces.
     for &fi in solid_face_indices {
-        let face = &ds.faces[fi];
-        let on_surf = match &face.surface {
-            Surface3::Plane(pl) => {
-                let d = (point - pl.origin).dot(pl.normal);
-                if d.abs() < on_surface_tol {
-                    let face_verts = ds.face_boundary_points(fi);
-                    face_verts.len() >= 3
-                        && inttools::edge_face::point_in_planar_face_with_tol(
-                            point, pl, &face_verts, on_surface_tol)
-                } else { false }
-            }
-            _ => false,
-        };
-        if on_surf {
+        let fc = classify_point_on_face(point, fi, ds, on_surface_tol);
+        if matches!(fc, FaceClassification::OnSurface | FaceClassification::Inside) {
             return Classification::On;
         }
     }
@@ -1197,12 +1185,7 @@ fn project_point_to_surface_uv(point: DVec3, surface: &Surface3) -> glam::DVec2 
             let d = point - plane.origin;
             glam::DVec2::new(d.dot(u_axis), d.dot(v_axis))
         }
-        Surface3::Sphere(s) => {
-            let v = point - s.center;
-            let theta = v.z.atan2((v.x * v.x + v.y * v.y).sqrt());
-            let phi = v.y.atan2(v.x);
-            glam::DVec2::new(phi, theta)
-        }
+        Surface3::Sphere(s) => s.world_to_uv(point),
         Surface3::Cylinder(c) => {
             let axis = c.axis.normalize();
             let v = point - c.origin;
@@ -1224,6 +1207,7 @@ fn point_in_uv_polygon(point: glam::DVec2, polygon: &[glam::DVec2]) -> bool {
         return false;
     }
 
+    let eps = 1e-12;
     let mut inside = false;
     let n = polygon.len();
 
@@ -1235,7 +1219,7 @@ fn point_in_uv_polygon(point: glam::DVec2, polygon: &[glam::DVec2]) -> bool {
         let yj = polygon[j].y;
 
         if ((yi > point.y) != (yj > point.y))
-            && (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi)
+            && (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi + eps)
         {
             inside = !inside;
         }

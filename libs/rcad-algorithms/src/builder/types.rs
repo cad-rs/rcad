@@ -29,6 +29,8 @@ pub enum ShapeType {
 
 #[derive(Debug)]
 pub enum BooleanError {
+    /// Operation type is not valid for the boolean operation.
+    InvalidOperation,
     EmptyInput,
     MissingGeometry(&'static str),
     DegenerateResult,
@@ -52,6 +54,7 @@ pub enum BooleanError {
 impl std::fmt::Display for BooleanError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::InvalidOperation => write!(f, "invalid operation"),
             Self::EmptyInput => write!(f, "empty input"),
             Self::MissingGeometry(msg) => write!(f, "missing geometry: {msg}"),
             Self::DegenerateResult => write!(f, "degenerate result"),
