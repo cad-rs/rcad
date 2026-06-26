@@ -1255,19 +1255,24 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
         // OCCT-aligned: remap IC endpoint to boundary vertex (ShapesSD equivalent).
         let sv_remap = remap_ic_v(edge.start_vertex);
         let ev_remap = remap_ic_v(edge.end_vertex);
+        // ✅ OCCT-aligned: propagate pcurve from DSEdge face_reps to WireSegment.
+        // OCCT BRep_Tool::CurveOnSurface(aE, myFace) returns the pcurve stored
+        // on the edge; rcad stores it in edge.face_reps (populated by
+        // make_section_edges_from_curve_pbs). Required by SmartMap has_pcurve check.
+        let sec_pcurve = edge.face_reps.iter().find(|r| r.face_idx == face_idx).map(|r| r.pcurve.clone());
         let (t_fwd_s, t_fwd_e) = edge_uv_tangent(ds, sv_remap, ev_remap,
             &face.surface, Some(&edge.curve), Some(edge.t_range));
         segments.push(WireSegment {
             start_vertex: sv_remap, end_vertex: ev_remap,
             source: WireEdgeSource::DsEdge(nei), forward: true,
-            is_seam: false, second_pcurve: None, first_pcurve: None,
+            is_seam: false, second_pcurve: None, first_pcurve: sec_pcurve.clone(),
             t_range: edge.t_range,
             tangent_start: t_fwd_s, tangent_end: t_fwd_e,
         });
         segments.push(WireSegment {
             start_vertex: ev_remap, end_vertex: sv_remap,
             source: WireEdgeSource::DsEdge(nei), forward: false,
-            is_seam: false, second_pcurve: None, first_pcurve: None,
+            is_seam: false, second_pcurve: None, first_pcurve: sec_pcurve,
             t_range: edge.t_range,
             tangent_start: t_fwd_e, tangent_end: t_fwd_s,
         });

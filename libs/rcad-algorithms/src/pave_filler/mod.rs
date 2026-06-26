@@ -881,6 +881,26 @@ impl<'a> PaveFiller<'a> {
                 }
                 // Create new DSEdge for this sub-PB
                 let new_ei = self.ds.edges.len();
+                // OCCT-aligned: propagate pcurves from IC to section DSEdge face_reps.
+                let mut sec_face_reps = Vec::new();
+                if let Some(ref pca) = ic.pcurve_on_a {
+                    sec_face_reps.push(DSRepOnFace {
+                        face_idx: face_ids[0],
+                        pcurve: pca.clone(),
+                        pcurve2: None,
+                        pcurve_range: [aT1, aT2],
+                        start_param: aT1, end_param: aT2,
+                    });
+                }
+                if let Some(ref pcb) = ic.pcurve_on_b {
+                    sec_face_reps.push(DSRepOnFace {
+                        face_idx: face_ids[1],
+                        pcurve: pcb.clone(),
+                        pcurve2: None,
+                        pcurve_range: [aT1, aT2],
+                        start_param: aT1, end_param: aT2,
+                    });
+                }
                 self.ds.edges.push(DSEdge {
                     start_vertex: nV1, end_vertex: nV2,
                     curve: ic.curve.clone(),
@@ -889,7 +909,7 @@ impl<'a> PaveFiller<'a> {
                     geom_tol: ic.geom_tol,
                     paves: Vec::new(),
                     pave_blocks: Vec::new(),
-                    face_reps: Vec::new(),
+                    face_reps: sec_face_reps,
                     is_internal: false,
                 });
                 sub_pb.new_edge = Some(new_ei);
