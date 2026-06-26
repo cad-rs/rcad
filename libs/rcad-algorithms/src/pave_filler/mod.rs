@@ -562,12 +562,6 @@ impl<'a> PaveFiller<'a> {
             //    overlap boundaries so that overlap polygon vertices are shared between
             //    both faces and registered in face_info.vertices_in.
             self.make_sd_vertices_ff();
-
-            // ✅ OCCT-aligned: init default PB on each IC.
-            //   OCCT PerformFF calls BOPDS_Curve::InitPaveBlock1 for each curve.
-            for ci in 0..self.ds.intersection_curves.len() {
-                self.ds.intersection_curves[ci].init_pave_block1();
-            }
         }
 
         // ✅ OCCT L318: UpdateBlocksWithSharedVertices
