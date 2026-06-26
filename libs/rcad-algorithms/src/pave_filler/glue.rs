@@ -6,6 +6,7 @@ use crate::bopds::ds::{DSEdge, ShapeOrigin};
 use crate::tolerance::*;
 
 impl<'a> super::PaveFiller<'a> {
+    /// OCCT BOPTools_AlgoTools: check surface compatibility for glue
     pub(crate) fn surfaces_glue_compatible(&self, s1: &Surface3, s2: &Surface3) -> bool {
         let tol = self.glue_tolerance;
         let axis_parallel = |a: DVec3, b: DVec3| {
@@ -52,6 +53,7 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
 
+    /// OCCT BOPTools_AlgoTools: full boundary overlap check
     pub(crate) fn boundaries_fully_overlap(&self, f1: usize, f2: usize) -> bool {
         let pts1 = self.ds.face_boundary_points(f1);
         let pts2 = self.ds.face_boundary_points(f2);
@@ -79,6 +81,7 @@ impl<'a> super::PaveFiller<'a> {
         true
     }
 
+    /// OCCT: find shared edges between faces
     pub(crate) fn detect_shared_edges_between_faces(&self, f1: usize, f2: usize) -> Vec<(usize, usize)> {
         let tol = self.glue_tolerance;
         let mut shared_edges = Vec::new();
@@ -105,6 +108,7 @@ impl<'a> super::PaveFiller<'a> {
         shared_edges
     }
 
+    /// OCCT BOPTools_AlgoTools: curve compatibility
     pub(crate) fn edges_curve_compatible(&self, e1: usize, e2: usize, tol: f64) -> bool {
         let edge1 = match self.ds.edges.get(e1) {
             Some(e) => e,
@@ -146,6 +150,7 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
 
+    /// OCCT: check partial glue overlap
     pub(crate) fn has_partial_glue(&self, f1: usize, f2: usize) -> bool {
         if !self.use_glue {
             return false;
@@ -169,6 +174,7 @@ impl<'a> super::PaveFiller<'a> {
         !shared.is_empty()
     }
 
+    /// OCCT: detect partial overlaps
     pub(crate) fn detect_partial_glue_overlaps(&self) -> Vec<PartialOverlapInfo> {
         let mut overlaps = Vec::new();
 
@@ -186,6 +192,7 @@ impl<'a> super::PaveFiller<'a> {
         overlaps
     }
 
+    /// OCCT: check partial overlap between faces
     pub(crate) fn check_partial_overlap(
         &self,
         f1_idx: usize,
@@ -253,6 +260,7 @@ impl<'a> super::PaveFiller<'a> {
         None
     }
 
+    /// OCCT: compute boundary overlap ratio
     pub(crate) fn compute_boundary_overlap_ratio(&self, pts1: &[DVec3], pts2: &[DVec3], tol: f64) -> f64 {
         let proximity_tol = tol * 100.0; // More lenient for overlap detection
 
@@ -276,6 +284,8 @@ impl<'a> super::PaveFiller<'a> {
         (in_2 + in_1) as f64 / total as f64
     }
 
+    /// OCCT PaveFiller_11: detect edge overlaps
+    /// OCCT PaveFiller_11: detect edge overlap between two edges
     pub(crate) fn detect_edge_overlaps(&self) -> Vec<EdgeOverlapResult> {
         let mut overlaps = Vec::new();
 
@@ -293,6 +303,7 @@ impl<'a> super::PaveFiller<'a> {
         overlaps
     }
 
+    /// OCCT PaveFiller_11: detect edge overlap between two edges
     pub(crate) fn detect_edge_overlap(&self, e1_idx: usize, e2_idx: usize, tol: f64) -> Option<EdgeOverlapResult> {
         let edge1 = self.ds.edges.get(e1_idx)?;
         let edge2 = self.ds.edges.get(e2_idx)?;
@@ -342,6 +353,7 @@ impl<'a> super::PaveFiller<'a> {
         })
     }
 
+    /// OCCT BOPTools_AlgoTools: curve collinearity check
     pub(crate) fn curves_are_collinear(&self, c1: &Curve3, c2: &Curve3, tol: f64) -> bool {
         match (c1, c2) {
             (Curve3::Line(l1), Curve3::Line(l2)) => self.lines_are_collinear(l1, l2, tol),
@@ -355,6 +367,7 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
 
+    /// OCCT BOPTools_AlgoTools: line collinearity
     pub(crate) fn lines_are_collinear(&self, l1: &Line3, l2: &Line3, tol: f64) -> bool {
         let d1 = l1.direction.normalize_or_zero();
         let d2 = l2.direction.normalize_or_zero();
@@ -372,6 +385,7 @@ impl<'a> super::PaveFiller<'a> {
         perp.length() <= tol * 2.0
     }
 
+    /// OCCT BOPTools_AlgoTools: circle collinearity
     pub(crate) fn circles_are_collinear(&self, c1: &Circle3, c2: &Circle3, tol: f64) -> bool {
         // Centers must be the same
         let center_dist = (c1.center - c2.center).length();
@@ -389,6 +403,7 @@ impl<'a> super::PaveFiller<'a> {
         (c1.radius - c2.radius).abs() <= tol
     }
 
+    /// OCCT BOPTools_AlgoTools: ellipse collinearity
     pub(crate) fn ellipses_are_collinear(&self, e1: &Ellipse3, e2: &Ellipse3, tol: f64) -> bool {
         // Centers must be the same
         let center_dist = (e1.center - e2.center).length();
@@ -413,6 +428,7 @@ impl<'a> super::PaveFiller<'a> {
             && (e1.minor_radius - e2.minor_radius).abs() <= tol
     }
 
+    /// OCCT BOPTools_AlgoTools: BSpline collinearity
     pub(crate) fn bsplines_are_collinear(&self, b1: &BSplineCurve3, b2: &BSplineCurve3, tol: f64) -> bool {
         // Degrees must match
         if b1.degree != b2.degree {
@@ -446,6 +462,7 @@ impl<'a> super::PaveFiller<'a> {
         true
     }
 
+    /// OCCT BOPTools_AlgoTools: Bezier collinearity
     pub(crate) fn beziers_are_collinear(&self, b1: &BezierCurve3, b2: &BezierCurve3, tol: f64) -> bool {
         // Control point counts must match
         if b1.control_points.len() != b2.control_points.len() {
@@ -469,6 +486,7 @@ impl<'a> super::PaveFiller<'a> {
         true
     }
 
+    /// OCCT: parameter overlap computation
     pub(crate) fn compute_param_overlap_for_edges(&self, edge1: &DSEdge, edge2: &DSEdge, tol: f64) -> ParamOverlap {
         // For collinear edges, we need to map both parameter ranges to a common space
         // The approach depends on the curve type
@@ -498,6 +516,7 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
 
+    /// OCCT BOPTools_AlgoTools: line param overlap
     pub(crate) fn compute_line_param_overlap(
         &self,
         l1: &Line3,
@@ -536,6 +555,7 @@ impl<'a> super::PaveFiller<'a> {
         self.compute_interval_overlap(range1, range2_on_1, tol)
     }
 
+    /// OCCT: circle param overlap
     pub(crate) fn compute_circle_param_overlap(
         &self,
         c1: &Circle3,
@@ -568,6 +588,7 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
 
+    /// OCCT: ellipse param overlap
     pub(crate) fn compute_ellipse_param_overlap(
         &self,
         e1: &Ellipse3,
@@ -593,6 +614,7 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
 
+    /// OCCT: BSpline param overlap
     pub(crate) fn compute_bspline_param_overlap(
         &self,
         _b1: &BSplineCurve3,
@@ -606,6 +628,7 @@ impl<'a> super::PaveFiller<'a> {
         self.compute_interval_overlap(range1, range2, tol)
     }
 
+    /// OCCT: Bezier param overlap
     pub(crate) fn compute_bezier_param_overlap(
         &self,
         _b1: &BezierCurve3,
@@ -618,6 +641,7 @@ impl<'a> super::PaveFiller<'a> {
         self.compute_interval_overlap(range1, range2, tol)
     }
 
+    /// OCCT BOPTools_AlgoTools: interval overlap
     pub(crate) fn compute_interval_overlap(&self, a: [f64; 2], b: [f64; 2], tol: f64) -> ParamOverlap {
         let a_len = (a[1] - a[0]).abs();
         let b_len = (b[1] - b[0]).abs();
@@ -669,6 +693,7 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
 
+    /// OCCT: periodic interval overlap
     pub(crate) fn compute_periodic_interval_overlap(
         &self,
         a: [f64; 2],
@@ -747,6 +772,7 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
 
+    /// OCCT: normalize angle to [0, period)
     pub(crate) fn normalize_angle_range(&self, range: [f64; 2], period: f64) -> [f64; 2] {
         let mut r1 = range[0] % period;
         let mut r2 = range[1] % period;
@@ -761,6 +787,7 @@ impl<'a> super::PaveFiller<'a> {
         [r1, r2]
     }
 
+    /// OCCT: max edge distance in range
     pub(crate) fn compute_max_edge_distance_in_range(
         &self,
         edge1: &DSEdge,
@@ -802,6 +829,7 @@ impl<'a> super::PaveFiller<'a> {
         max_dist
     }
 
+    /// OCCT: detect edge containment
     pub(crate) fn detect_edge_containment(
         &self,
         e1_idx: usize,
@@ -827,6 +855,7 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
 
+    /// OCCT: detect all edge containments
     pub(crate) fn detect_all_edge_containments(&self) -> Vec<EdgeContainmentResult> {
         let mut containments = Vec::new();
 
@@ -843,6 +872,7 @@ impl<'a> super::PaveFiller<'a> {
         containments
     }
 
+    /// OCCT: handle near-tangent faces
     pub(crate) fn handle_near_tangent_faces(&self) -> Vec<NearTangentFaceInfo> {
         let mut tangent_faces = Vec::new();
 
@@ -860,6 +890,7 @@ impl<'a> super::PaveFiller<'a> {
         tangent_faces
     }
 
+    /// OCCT: check near-tangent faces
     pub(crate) fn check_near_tangent_faces(
         &self,
         f1_idx: usize,
@@ -894,6 +925,7 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
 
+    /// OCCT: plane-plane tangent check
     pub(crate) fn check_plane_plane_tangent(
         &self,
         f1_idx: usize,
@@ -935,6 +967,7 @@ impl<'a> super::PaveFiller<'a> {
         })
     }
 
+    /// OCCT: plane-cylinder tangent check
     pub(crate) fn check_plane_cylinder_tangent(
         &self,
         f1_idx: usize,
@@ -974,6 +1007,7 @@ impl<'a> super::PaveFiller<'a> {
         })
     }
 
+    /// OCCT: plane-sphere tangent check
     pub(crate) fn check_plane_sphere_tangent(
         &self,
         f1_idx: usize,
@@ -1012,6 +1046,7 @@ impl<'a> super::PaveFiller<'a> {
         })
     }
 
+    /// OCCT: cylinder-cylinder tangent check
     pub(crate) fn check_cylinder_cylinder_tangent(
         &self,
         f1_idx: usize,
@@ -1051,6 +1086,7 @@ impl<'a> super::PaveFiller<'a> {
         })
     }
 
+    /// OCCT: face boundary overlap test
     pub(crate) fn faces_boundaries_overlap(&self, pts1: &[DVec3], pts2: &[DVec3], tol: f64) -> bool {
         if pts1.is_empty() || pts2.is_empty() {
             return false;
@@ -1081,6 +1117,7 @@ impl<'a> super::PaveFiller<'a> {
         true
     }
 
+    /// OCCT: point near boundary test
     pub(crate) fn point_near_boundary(&self, point: &DVec3, boundary: &[DVec3], tol: f64) -> bool {
         // Check bounding box first
         let mut min_pt = DVec3::splat(f64::INFINITY);
@@ -1099,6 +1136,7 @@ impl<'a> super::PaveFiller<'a> {
         true
     }
 
+    /// OCCT: handle near-coincident faces
     pub(crate) fn handle_near_coincident_faces(&self) -> Vec<NearCoincidentFaceInfo> {
         let mut coincident_faces = Vec::new();
 
@@ -1115,6 +1153,7 @@ impl<'a> super::PaveFiller<'a> {
         coincident_faces
     }
 
+    /// OCCT: check near-coincident faces
     pub(crate) fn check_near_coincident_faces(
         &self,
         f1_idx: usize,
@@ -1187,6 +1226,7 @@ impl<'a> super::PaveFiller<'a> {
         })
     }
 
+    /// OCCT: sample face interior points
     pub(crate) fn sample_face_interior(&self, face_idx: usize, samples_per_dim: usize) -> Vec<DVec3> {
         let _face = &self.ds.faces[face_idx];
         let boundary = self.ds.face_boundary_points(face_idx);
@@ -1216,6 +1256,7 @@ impl<'a> super::PaveFiller<'a> {
         interior_points
     }
 
+    /// OCCT: distance from point to surface
     pub(crate) fn point_to_surface_distance(&self, point: DVec3, surface: &Surface3) -> f64 {
         match surface {
             Surface3::Plane(p) => {
@@ -1261,6 +1302,7 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
 
+    /// OCCT: approximate overlap area
     pub(crate) fn compute_approximate_overlap_area(&self, pts1: &[DVec3], pts2: &[DVec3]) -> f64 {
         // Compute area of each face
         let area1 = self.compute_polygon_area(pts1);
@@ -1270,6 +1312,7 @@ impl<'a> super::PaveFiller<'a> {
         area1.min(area2)
     }
 
+    /// OCCT: polygon area using Newell's method
     pub(crate) fn compute_polygon_area(&self, pts: &[DVec3]) -> f64 {
         if pts.len() < 3 {
             return 0.0;
@@ -1310,6 +1353,7 @@ impl<'a> super::PaveFiller<'a> {
         area.abs() * 0.5
     }
 
+    /// OCCT: handle micro gaps between edges
     pub(crate) fn handle_micro_gaps(&self) -> Vec<MicroGapInfo> {
         let mut gaps = Vec::new();
 
@@ -1341,6 +1385,7 @@ impl<'a> super::PaveFiller<'a> {
         gaps
     }
 
+    /// OCCT: check micro gap between two edges
     pub(crate) fn check_micro_gap(&self, e1: usize, e2: usize, gap_threshold: f64, coincident_tol: f64) -> Option<MicroGapInfo> {
         let _edge1 = &self.ds.edges[e1];
         let _edge2 = &self.ds.edges[e2];
@@ -1381,6 +1426,7 @@ impl<'a> super::PaveFiller<'a> {
         })
     }
 
+    /// OCCT: sample points along edge
     pub(crate) fn sample_edge_points(&self, edge_idx: usize, n_samples: usize) -> Vec<DVec3> {
         let edge = &self.ds.edges[edge_idx];
         let [t0, t1] = edge.t_range;
@@ -1394,6 +1440,7 @@ impl<'a> super::PaveFiller<'a> {
             .collect()
     }
 
+    /// OCCT: check if edges are approximately parallel
     pub(crate) fn edges_approximately_parallel(&self, e1: usize, e2: usize, angle_tol: f64) -> bool {
         let edge1 = &self.ds.edges[e1];
         let edge2 = &self.ds.edges[e2];
@@ -1427,6 +1474,7 @@ impl<'a> super::PaveFiller<'a> {
         sin_angle < angle_tol
     }
 
+    /// OCCT: handle coincident edges
     pub(crate) fn handle_coincident_edges(&self) -> Vec<CoincidentEdgeInfo> {
         let mut coincident_edges = Vec::new();
 
@@ -1456,6 +1504,7 @@ impl<'a> super::PaveFiller<'a> {
         coincident_edges
     }
 
+    /// OCCT: check coincident edges between shapes
     pub(crate) fn check_coincident_edges(
         &self,
         e1: usize,
