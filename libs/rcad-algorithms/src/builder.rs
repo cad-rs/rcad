@@ -1827,11 +1827,20 @@ impl<'a> BooleanBuilder<'a> {
         //   to skip them.  DS→result index mapping is approximate.
         let map_to_avoid: std::collections::HashSet<usize> = if self.my_non_destructive {
             let mut avoid = std::collections::HashSet::new();
+            // OCCT L455-469: collect source VERTEX, EDGE, FACE shapes into aMA.
             for (vi, v) in self.ds.vertices.iter().enumerate() {
-                if !self.ds.is_new_vertex(vi) { avoid.insert(vi); }
+                if v.origin.is_some() { avoid.insert(vi); }
             }
-            // OCCT also collects EDGE and FACE shapes; rcad approximates
-            // with non-new vertex indices as the primary avoidance set.
+            for (ei, e) in self.ds.edges.iter().enumerate() {
+                if matches!(e.origin, ShapeOrigin::ShapeA | ShapeOrigin::ShapeB) {
+                    avoid.insert(ei);
+                }
+            }
+            for (fi, f) in self.ds.faces.iter().enumerate() {
+                if matches!(f.origin, ShapeOrigin::ShapeA | ShapeOrigin::ShapeB) {
+                    avoid.insert(fi);
+                }
+            }
             avoid
         } else {
             std::collections::HashSet::new()
