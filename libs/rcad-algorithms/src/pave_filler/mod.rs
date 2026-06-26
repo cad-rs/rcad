@@ -260,8 +260,53 @@ impl<'a> PaveFiller<'a> {
         adaptive_tol.max(TOLERANCE_ABS)
     }
 
-    // (Extreme geometry detection removed �?rcad invention.
-    //  OCCT Prepare builds pcurves on planar faces; rcad DS::build_face_reps subsumes this.)
+    /// ✅ OCCT-aligned: Prepare (PaveFiller_7.cxx L850-929).
+    ///   Build 2D pcurves for edges on planar faces.
+    ///   OCCT: iterate all V/E, E/E, E/F pairs to find planar faces, collect edge-face pairs,
+    ///   compute pcurves in parallel, update edges.  rcad: DS::build_face_reps already computes
+    ///   pcurves for all face types; this step ensures planar-face pcurves exist for any
+    ///   edges that build_face_reps may have missed (non-boundary or intersection-relevant).
+    fn prepare(&mut self) {
+        let mut planar_faces: Vec<usize> = Vec::new();
+        for (fi, f) in self.ds.faces.iter().enumerate() {
+            if matches!(f.surface, Surface3::Plane(_)) {
+                planar_faces.push(fi);
+            }
+        }
+        if planar_faces.is_empty() { return; }
+
+        let surf: Vec<Surface3> = planar_faces.iter().map(|&fi| self.ds.faces[fi].surface.clone()).collect();
+
+        // Collect all edge indices from each planar face's boundary
+        let mut face_edges: Vec<Vec<usize>> = Vec::with_capacity(planar_faces.len());
+        for (pos, &fi) in planar_faces.iter().enumerate() {
+            let f = &self.ds.faces[fi];
+            let mut eids: Vec<usize> = f.boundary_edges.clone();
+            for w in &f.inner_boundary_edges {
+                eids.extend(w.iter().map(|&(ei, _)| ei));
+            }
+            face_edges.push(eids);
+        }
+
+        // Compute pcurves for edge-face pairs that don't already have one
+        for (pos, &fi) in planar_faces.iter().enumerate() {
+            for &ei in &face_edges[pos] {
+                if self.ds.edge_on_face(ei, fi).is_some() { continue; }
+                let Some(edge) = self.ds.edges.get_mut(ei) else { continue; };
+                if let Some((pcurve, span)) = DS::compute_edge_pcurve(&edge.curve, &surf[pos]) {
+                    edge.face_reps.push(DSRepOnFace {
+                        face_idx: fi,
+                        pcurve,
+                        pcurve2: None,
+                        pcurve_range: [0.0, span],
+                        start_param: 0.0,
+                        end_param: span,
+                    });
+                }
+            }
+        }
+    }
+
 
     #[inline]
     fn tol(&self) -> f64 {
@@ -413,12 +458,14 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
+    // ✅ OCCT L248 Prepare: build pcurves on planar faces
     // OCCT L234-355 PerformInternal: Init->Prepare->VV->VE->EE->VF->EF->
     //   RepeatInt->ForceEE->ForceEF->FF->UpdBlk->RefFI->MkSEdges->MkBlks->
     //   ChkSI->RefFO->RmvME->MkPCurves->ProcDE
     pub fn perform(&mut self) {
-        // �?OCCT-aligned: no extreme-geometry pre-analysis �?OCCT Prepare builds
-        //    pcurves on planar faces; rcad does this in DS::build_face_reps.
+        // ✅ OCCT L248: Prepare — build pcurves on planar faces.
+        self.prepare();
+
         // Detect shared topology before interference passes when glue is enabled
         if self.use_glue {
             self.ds.detect_shared_topology(self.glue_tolerance);
