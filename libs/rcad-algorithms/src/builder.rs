@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use indexmap::IndexMap;
 
 use glam::{DVec2, DVec3};
 use rayon::prelude::*;
@@ -112,7 +113,7 @@ pub(crate) use wire_splitter::{
 pub(crate) use wire_path::{
     perform_areas, intersect_ray_curve_2d,
     wire_faces_to_face_sample_data, promote_exterior_holes,
-    wire_boundary_3d, refine_angles, pc_parameter_range,
+    refine_angles, pc_parameter_range,
     walk_path_extract_wires,
 };
 
@@ -1638,7 +1639,7 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     /// Retrieve the EdgeInfo.is_inside status for the incoming edge at the given vertex.
-    fn incoming_edge_is_inside(&self, smart_map: &BTreeMap<usize, Vec<EdgeInfo>>, vertex: usize, seg_idx: usize) -> bool {
+    fn incoming_edge_is_inside(&self, smart_map: &IndexMap<usize, Vec<EdgeInfo>>, vertex: usize, seg_idx: usize) -> bool {
         smart_map.get(&vertex)
             .and_then(|infos| infos.iter().find(|ei| ei.seg_idx == seg_idx && ei.in_flag))
             .map_or(false, |ei| ei.is_inside)

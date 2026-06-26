@@ -10,7 +10,7 @@ use rcad_kernel::geom::Surface3;
 ///   OCCT: for lines nbs=2, for circles based on angle step (eps=0.01),
 ///   for BSpline nbs=NbKnots*Degree scaled by range ratio.
 ///   In IntTools_FClass2d Init, non-linear curves get nbs *= 4 oversampling.
-fn curve2d_nb_samples(curve: &Curve2d, t0: f64, t1: f64) -> usize {
+pub(crate) fn curve2d_nb_samples(curve: &Curve2d, t0: f64, t1: f64) -> usize {
     let range_len = (t1 - t0).abs();
     if range_len < 1e-30 { return 2; }
     let nbs = match curve {
@@ -141,9 +141,12 @@ impl CSLibClass2d {
         let rv = if (self.vmax - self.vmin).abs() > 1e-30 { self.vmax - self.vmin } else { 1.0 };
         let px = (uv.x - self.umin) / ru;
         let py = (uv.y - self.vmin) / rv;
-        if px < 0.0 || px > 1.0 || py < 0.0 || py > 1.0 {
-            return CSLibResult::Outside;
-        }
+
+        // OCCT: no early exit on bounding box — points outside the normalized
+        // box may still be Inside (CW polygon), so winding number is always
+        // computed.  The old early exit (px<0||px>1||py<0||py>1→Outside)
+        // broke CW/hole detection because the test point (umin-ru, vmin-rv)
+        // normalizes to px <= -1 and never reaches the winding number loop.
 
         // OCCT L273-275, L383-409: check if point is within tolerance of any
         //   polygon edge → Uncertain.  tol_u/tol_v are chordal deviations

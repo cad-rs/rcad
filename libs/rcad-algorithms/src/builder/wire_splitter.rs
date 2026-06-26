@@ -1,4 +1,5 @@
-use std::collections::{HashMap, HashSet, BTreeMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
+use indexmap::IndexMap;
 use glam::DVec2; use glam::DVec3;
 use rcad_kernel::geom::*;
 use crate::bopds::ds::*; use crate::tolerance::*;
@@ -554,10 +555,18 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
         }
     }
 
-    if std::env::var("RCAD_DEBUG_IC").is_ok() && face_idx >= 5 && face_idx <= 7 {
+    if std::env::var("RCAD_DEBUG_IC").is_ok() {
         eprintln!("[BLK_TRACE] fi={} n_merged_blocks={} n_total_segments={}", face_idx, merged_blocks.len(), segments.len());
         for (bi, b) in merged_blocks.iter().enumerate() {
-            eprintln!("[BLK_TRACE]   block[{}] len={}", bi, b.len());
+            let seg_desc: Vec<String> = b.iter().map(|&si| {
+                let seg = &segments[si];
+                match &seg.source {
+                    WireEdgeSource::DsEdge(ei) => format!("Ds({})", ei),
+                    WireEdgeSource::IntersectionCurve(ci) => format!("IC({})", ci),
+                    WireEdgeSource::SeamEdge => "Seam".to_string(),
+                }
+            }).collect();
+            eprintln!("[BLK_TRACE]   block[{}] len={} segs=[{}]", bi, b.len(), seg_desc.join(","));
         }
     }
 
@@ -573,7 +582,7 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
 
         // ✅ OCCT-aligned: Build SmartMap (WireSplitter_1.cxx L154-220).
         //    Always built first, used for BOTH regularity check and Path walk.
-        let mut smart_map: BTreeMap<usize, Vec<EdgeInfo>> = BTreeMap::new();
+        let mut smart_map: IndexMap<usize, Vec<EdgeInfo>> = IndexMap::new();
         // OCCT L131: aVertMap — per-vertex closed edge flag (built inline)
         let mut vert_map: HashMap<usize, bool> = HashMap::new();
         for &si in block {
@@ -628,11 +637,11 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
 
         // OCCT L298-319: compute angles for ALL EdgeInfo entries using Angle2D.
         // OCCT L316: aAngle = Angle2D(aVV, aE, myFace, aBAS, bIsIN, theContext)
-        for (&v, infos) in smart_map.iter_mut() {
+        for (v, infos) in smart_map.iter_mut() {
             for ei in infos.iter_mut() {
                 let seg = &segments[ei.seg_idx];
                 // Determine vertex parameter and pcurve (BRep_Tool::Parameter equivalent)
-                let t_v = if v == seg.start_vertex { seg.t_range[0] } else { seg.t_range[1] };
+                let t_v = if *v == seg.start_vertex { seg.t_range[0] } else { seg.t_range[1] };
                 let domain = seg.t_range;
                 let (curve, curve_domain) = match &seg.source {
                     WireEdgeSource::IntersectionCurve(ci) => {
@@ -681,6 +690,10 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
         } else {
             // OCCT L292-358: SplitBlock — refine angles + path walk for irregular blocks.
             split_block(block, segments, &mut smart_map, ds, face_idx, &mut wires);
+            if std::env::var("RCAD_DEBUG_IC").is_ok() {
+                eprintln!("[BLK_WIRES] fi={} bi={} n_wires_in_block={}", face_idx, bi,
+                    wires.iter().filter(|w| w.iter().any(|&si| block.contains(&si))).count());
+            }
         }
     }
 
@@ -734,7 +747,7 @@ pub(crate) fn make_connexity_blocks(
 pub(crate) fn split_block(
     block: &[usize],
     segments: &[WireSegment],
-    smart_map: &mut BTreeMap<usize, Vec<EdgeInfo>>,
+    smart_map: &mut IndexMap<usize, Vec<EdgeInfo>>,
     ds: &DS,
     face_idx: usize,
     wires: &mut Vec<Vec<usize>>,
@@ -743,26 +756,20 @@ pub(crate) fn split_block(
     refine_angles(smart_map, segments, ds, face_idx);
     dbg_smartmap!("split_block", face_idx, smart_map);
 
-    // OCCT L331-358: Path walk — iterate all unpassed OUT entries.
-    let mut start_candidates: Vec<(usize, usize)> = Vec::new();
-    for (&v, infos) in smart_map.iter() {
-        for ei in infos {
+    // OCCT L331-358: Path walk — iterate all vertices by insertion order,
+    //   for each unpassed OUT entry start a new Path walk.
+    let order_keys: Vec<usize> = smart_map.keys().copied().collect();
+    for &v in &order_keys {
+        let Some(infos) = smart_map.get(&v).cloned() else { continue; };
+        for ei in &infos {
             if !ei.passed && !ei.in_flag
                 && ei.seg_idx < segments.len()
                 && (segments[ei.seg_idx].start_vertex != segments[ei.seg_idx].end_vertex
                     || segments[ei.seg_idx].is_seam)
             {
-                start_candidates.push((v, ei.seg_idx));
+                walk_path_extract_wires(ei.seg_idx, segments, smart_map, wires, ds, face_idx);
             }
         }
-    }
-    let mut candidate_idx = 0;
-    while candidate_idx < start_candidates.len() {
-        let (_v, start_si) = start_candidates[candidate_idx];
-        if !is_seg_passed(smart_map, start_si) {
-            walk_path_extract_wires(start_si, segments, smart_map, wires, ds, face_idx);
-        }
-        candidate_idx += 1;
     }
 }
 
@@ -1079,7 +1086,7 @@ pub(crate) fn is_same_block_fwd_rev(a: &WireSegment, b: &WireSegment) -> bool {
 }
 
 /// Check if a segment has been marked passed at a specific vertex with a specific in_flag.
-pub(crate) fn is_seg_passed(smart_map: &BTreeMap<usize, Vec<EdgeInfo>>, seg_idx: usize) -> bool {
+pub(crate) fn is_seg_passed(smart_map: &IndexMap<usize, Vec<EdgeInfo>>, seg_idx: usize) -> bool {
     for infos in smart_map.values() {
         if infos.iter().any(|ei| ei.seg_idx == seg_idx && ei.passed) {
             return true;
@@ -1093,7 +1100,7 @@ pub(crate) fn is_seg_passed(smart_map: &BTreeMap<usize, Vec<EdgeInfo>>, seg_idx:
 /// OCCT has 1 entry per edge per vertex; rcad creates 2 (FWD+REV) that
 /// must be treated as one physical edge.
 pub(crate) fn mark_edge_passed_both_dirs(
-    smart_map: &mut BTreeMap<usize, Vec<EdgeInfo>>,
+    smart_map: &mut IndexMap<usize, Vec<EdgeInfo>>,
     seg_idx: usize,
     vertex: usize,
     in_flag: bool,
@@ -1118,7 +1125,7 @@ pub(crate) fn mark_edge_passed_both_dirs(
 }
 
 /// Mark only the specific EdgeInfo for a segment at a vertex+in_flag as passed.
-pub(crate) fn mark_edge_passed(smart_map: &mut BTreeMap<usize, Vec<EdgeInfo>>, seg_idx: usize, vertex: usize, in_flag: bool) {
+pub(crate) fn mark_edge_passed(smart_map: &mut IndexMap<usize, Vec<EdgeInfo>>, seg_idx: usize, vertex: usize, in_flag: bool) {
     if let Some(infos) = smart_map.get_mut(&vertex) {
         for info in infos.iter_mut() {
             if info.seg_idx == seg_idx && info.in_flag == in_flag {
@@ -1132,7 +1139,7 @@ pub(crate) fn mark_edge_passed(smart_map: &mut BTreeMap<usize, Vec<EdgeInfo>>, s
 /// Mark both orientations of a segment as passed (used for initial cleanup).
 /// Not used during Path walking  use mark_edge_passed instead.
 #[allow(dead_code)]
-pub(crate) fn mark_seg_passed(smart_map: &mut BTreeMap<usize, Vec<EdgeInfo>>, seg_idx: usize) {
+pub(crate) fn mark_seg_passed(smart_map: &mut IndexMap<usize, Vec<EdgeInfo>>, seg_idx: usize) {
     for infos in smart_map.values_mut() {
         for info in infos.iter_mut() {
             if info.seg_idx == seg_idx {
@@ -1143,7 +1150,7 @@ pub(crate) fn mark_seg_passed(smart_map: &mut BTreeMap<usize, Vec<EdgeInfo>>, se
 }
 
 /// Find the EdgeInfo angle for a segment at a vertex with the given in_flag.
-pub(crate) fn find_angle_at(smart_map: &BTreeMap<usize, Vec<EdgeInfo>>, seg_idx: usize, vertex: usize, in_flag: bool) -> Option<f64> {
+pub(crate) fn find_angle_at(smart_map: &IndexMap<usize, Vec<EdgeInfo>>, seg_idx: usize, vertex: usize, in_flag: bool) -> Option<f64> {
     smart_map.get(&vertex)?.iter()
         .find(|ei| ei.seg_idx == seg_idx && ei.in_flag == in_flag)
         .map(|ei| ei.angle)

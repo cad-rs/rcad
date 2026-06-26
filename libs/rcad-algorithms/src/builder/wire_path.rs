@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
+use indexmap::IndexMap;
 use glam::DVec2; use glam::DVec3;
 use rcad_kernel::geom::*;
 use crate::bopds::ds::*; use crate::tolerance::*;
@@ -11,13 +12,13 @@ use super::wire_splitter::{
 use crate::builder::point_in_polygon_2d;
 use crate::classify::{Classification, classify_point};
 use crate::inttools::context::Context;
-use crate::inttools::fclass2d::{CSLibClass2d, CSLibResult};
+use crate::inttools::fclass2d::{CSLibClass2d, CSLibResult, curve2d_nb_samples};
 use super::types::FaceSampleData;
 use super::types::BooleanOpType;
 
 
 pub(crate) fn refine_angles(
-    smart_map: &mut BTreeMap<usize, Vec<EdgeInfo>>,
+    smart_map: &mut IndexMap<usize, Vec<EdgeInfo>>,
     segments: &[WireSegment],
     ds: &DS,
     face_idx: usize,
@@ -498,7 +499,7 @@ pub(crate) fn refine_angle_2d(
 pub(crate) fn walk_path_extract_wires(
     start_si: usize,
     segments: &[WireSegment],
-    smart_map: &mut BTreeMap<usize, Vec<EdgeInfo>>,
+    smart_map: &mut IndexMap<usize, Vec<EdgeInfo>>,
     wires: &mut Vec<Vec<usize>>,
     ds: &DS,
     face_idx: usize,
@@ -547,7 +548,7 @@ pub(crate) fn walk_path_extract_wires(
 
     // Build a per-vertex map: does this vertex belong to a closed/degenerate edge?
     // OCCT L424: bIsClosed = aVertMap.Find(aVb)
-    let is_vert_closed = |smart_map: &BTreeMap<usize, Vec<EdgeInfo>>, v: usize| -> bool {
+    let is_vert_closed = |smart_map: &IndexMap<usize, Vec<EdgeInfo>>, v: usize| -> bool {
         smart_map.get(&v).map_or(false, |infos| {
             infos.iter().any(|ei| {
                 let seg = &segments[ei.seg_idx];
@@ -1022,7 +1023,7 @@ pub(crate) fn walk_path_extract_wires(
 }
 
 /// Mark ALL EdgeInfo entries for a segment as passed (both in_flag values).
-pub(crate) fn mark_all_edge_infos_passed(smart_map: &mut BTreeMap<usize, Vec<EdgeInfo>>, seg_idx: usize) {
+pub(crate) fn mark_all_edge_infos_passed(smart_map: &mut IndexMap<usize, Vec<EdgeInfo>>, seg_idx: usize) {
     for infos in smart_map.values_mut() {
         for ei in infos.iter_mut() {
             if ei.seg_idx == seg_idx {
@@ -1034,38 +1035,6 @@ pub(crate) fn mark_all_edge_infos_passed(smart_map: &mut BTreeMap<usize, Vec<Edg
 
 /// ✅ OCCT-aligned: wire 3D boundary polygon
 ///     DS  3D
-pub(crate) fn wire_boundary_3d(wire: &[usize], segments: &[WireSegment], ds: &DS) -> Vec<DVec3> {
-    let mut pts: Vec<DVec3> = Vec::new();
-    for &si in wire {
-        let seg = &segments[si];
-        let pt = if seg.forward {
-            ds.vertices[seg.start_vertex].point
-        } else {
-            ds.vertices[seg.end_vertex].point
-        };
-        pts.push(pt);
-    }
-    //  (wire )
-    if pts.len() >= 2 {
-        let d2 = pts[0].distance_squared(*pts.last().unwrap());
-        if d2 < TOLERANCE_ABS_SQ {
-            pts.pop();
-        }
-    }
-
-    if pts.len() >= 2 {
-        let mut deduped: Vec<DVec3> = vec![pts[0]];
-        for i in 1..pts.len() {
-            let d2 = deduped.last().unwrap().distance_squared(pts[i]);
-            if d2 >= TOLERANCE_ABS_SQ {
-                deduped.push(pts[i]);
-            }
-        }
-        pts = deduped;
-    }
-    pts
-}
-
 /// DEPRECATED (FaceSampleData ): WireFace  FaceSampleData  WireFace
 pub(crate) fn wire_faces_to_face_sample_data(
     wfs: &[WireFace],
@@ -1255,48 +1224,109 @@ pub(crate) fn perform_areas(
     // OCCT L432-437: build 3D boundary polygon and centroid for each wire
     // OCCT L401-402: if no wires and natural_restriction, the whole face is used.
     // WireData.full_wrap removed — it was a rcad invention (see P2).
-    struct WireData { wire_idx: usize, boundary: Vec<DVec3>, uv_boundary: Vec<DVec2>, centroid: DVec3, n_distinct: usize }
+    struct WireData { wire_idx: usize, uv_boundary: Vec<DVec2>, n_distinct: usize }
     let mut wds: Vec<WireData> = wires.iter().enumerate().filter_map(|(wi, w)| {
-        let mut b = wire_boundary_3d(w, segments, ds);
-        if std::env::var("RCAD_DEBUG_BUILDER").is_ok()
-            && ds.faces.get(face_idx).map_or(false, |f| matches!(f.surface, Surface3::Sphere(_)))
-        {
-            eprintln!("[SPH_BND] face={} wire={:?} n_pts={} pts=", face_idx, w, b.len());
-            for (pi, pt) in b.iter().enumerate() {
-                eprintln!("[SPH_BND]   [{}] ({:.12}, {:.12}, {:.12})", pi, pt.x, pt.y, pt.z);
+        let fsurf = &ds.faces[face_idx].surface;
+        // ✅ OCCT-aligned: collect UV polygon by sampling each edge's pcurve
+        //   at NbSamples points (OCCT IntTools_FClass2d Init L291-312).
+        //   Convert each segment to (edge_idx, forward) pairs for DsEdge segments,
+        //   fall back to world_to_uv for IC/SeamEdge segments.
+        let mut uv_bnd: Vec<DVec2> = Vec::new();
+        for &si in w {
+            let seg = &segments[si];
+            let forward = seg.forward;
+            match &seg.source {
+                WireEdgeSource::DsEdge(ei) => {
+                    // Sample the DS edge's face pcurve at NbSamples points
+                    if let Some(rep) = ds.edge_on_face(*ei, face_idx) {
+                        let t0 = if forward { rep.start_param } else { rep.end_param };
+                        let t1 = if forward { rep.end_param } else { rep.start_param };
+                        let n = curve2d_nb_samples(&rep.pcurve, t0, t1).max(2);
+                        let du = if n > 1 { (t1 - t0) / (n - 1) as f64 } else { 0.0 };
+                        for i in 0..n {
+                            let t = t0 + du * i as f64;
+                            uv_bnd.push(rep.pcurve.point_at(t));
+                        }
+                    }
+                }
+                WireEdgeSource::IntersectionCurve(ci) => {
+                    if let Some(ic) = ds.intersection_curves.get(*ci) {
+                        if let Some(pc) = ic.pcurve_on_a.as_ref().or(ic.pcurve_on_b.as_ref()) {
+                            let t0 = seg.t_range[0];
+                            let t1 = seg.t_range[1];
+                            let n = curve2d_nb_samples(pc, t0, t1).max(2);
+                            let du = if n > 1 { (t1 - t0) / (n - 1) as f64 } else { 0.0 };
+                            for i in 0..n {
+                                let t = t0 + du * i as f64;
+                                uv_bnd.push(pc.point_at(t));
+                            }
+                        }
+                    }
+                }
+                WireEdgeSource::SeamEdge => {
+                    // Use first_pcurve or second_pcurve for seam edges
+                    if let Some(pc) = seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()) {
+                        let t0 = seg.t_range[0];
+                        let t1 = seg.t_range[1];
+                        let n = curve2d_nb_samples(pc, t0, t1).max(2);
+                        let du = if n > 1 { (t1 - t0) / (n - 1) as f64 } else { 0.0 };
+                        for i in 0..n {
+                            let t = t0 + du * i as f64;
+                            uv_bnd.push(pc.point_at(t));
+                        }
+                    }
+                }
+            }
+            // Fallback for missing pcurve: add start_vertex UV
+            if let Some(uv) = world_to_uv(fsurf, ds.vertices[seg.start_vertex].point) {
+                uv_bnd.push(uv);
             }
         }
-        let mut centroid = DVec3::ZERO;
-        let b_distinct = { let mut pts = b.clone(); pts.sort_by(|a,b|{let c=a.x.total_cmp(&b.x);if c!=std::cmp::Ordering::Equal{return c}let c=a.y.total_cmp(&b.y);if c!=std::cmp::Ordering::Equal{return c}a.z.total_cmp(&b.z)});pts.dedup();pts.len()};
-        if b.len() < 3 || b_distinct < 3 {
-            let mut verts: Vec<DVec3> = w.iter().flat_map(|&si| {
+        // OCCT-aligned: collinear point filter (chordal deflection).
+        uv_bnd.dedup_by(|a, b| (*a - *b).length_squared() < 1e-20);
+        let n_distinct = { let mut pts = uv_bnd.clone(); pts.sort_by(|a,b|a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y))); pts.dedup(); pts.len() };
+        if uv_bnd.len() < 3 || n_distinct < 3 {
+            // OCCT: fallback to vertex-only polygon
+            let mut pts: Vec<DVec2> = w.iter().filter_map(|&si| {
                 let seg = &segments[si];
-                vec![ds.vertices[seg.start_vertex].point, ds.vertices[seg.end_vertex].point]
+                world_to_uv(fsurf, ds.vertices[seg.start_vertex].point)
             }).collect();
-            verts.sort_by(|a, b| {
-                let cx = a.x.total_cmp(&b.x); if cx != std::cmp::Ordering::Equal { return cx; }
-                let cy = a.y.total_cmp(&b.y); if cy != std::cmp::Ordering::Equal { return cy; }
-                a.z.total_cmp(&b.z)
-            });            verts.dedup();
-            if verts.len() >= 3 { b = verts; }
-            else if w.len() >= 3 {
-                // OCCT: BRepBuilderAPI_MakeFace accepts any closed wire with
-                // ≥3 edges, regardless of geometric degeneracy (coincident
-                // vertices from edge splitting).  Use the available boundary
-                // points — the centroid is approximate but sufficient for
-                // hole classification (point-in-polygon against larger wires).
-                b = verts;
-            } else { return None; }
+            pts.sort_by(|a,b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+            pts.dedup();
+            uv_bnd = pts;
+            if uv_bnd.len() < 3 && w.len() >= 3 {
+                let all: Vec<DVec2> = w.iter().flat_map(|&si| {
+                    let seg = &segments[si];
+                    [world_to_uv(fsurf, ds.vertices[seg.start_vertex].point),
+                     world_to_uv(fsurf, ds.vertices[seg.end_vertex].point)]
+                }).flatten().collect();
+                if all.len() >= 3 { uv_bnd = all; }
+                else { return None; }
+            } else if uv_bnd.len() < 3 { return None; }
         }
-        centroid = b.iter().copied().sum::<DVec3>() / b.len() as f64;
-        // ✅ OCCT-aligned: compute UV boundary for FClass2d-style classification.
-        let fsurf = &ds.faces[face_idx].surface;
-        let uv_bnd: Vec<DVec2> = b.iter().filter_map(|p| world_to_uv(fsurf, *p)).collect();
-        let uv_boundary = if matches!(fsurf, Surface3::Sphere(_) | Surface3::Cylinder(_) | Surface3::Cone(_)) {
-            uv_bnd.iter().map(|uv| DVec2::new(uv.x.rem_euclid(std::f64::consts::TAU), uv.y)).collect()
-        } else { uv_bnd };
-        Some(WireData { wire_idx: wi, boundary: b, uv_boundary, centroid, n_distinct: b_distinct })
+        if matches!(fsurf, Surface3::Sphere(_) | Surface3::Cylinder(_) | Surface3::Cone(_)) {
+            uv_bnd = uv_bnd.iter().map(|uv| DVec2::new(uv.x.rem_euclid(std::f64::consts::TAU), uv.y)).collect();
+        }
+        Some(WireData { wire_idx: wi, uv_boundary: uv_bnd.clone(), n_distinct })
     }).collect();
+
+    if std::env::var("RCAD_DEBUG_IC").is_ok() {
+        for (wi, wd) in wds.iter().enumerate() {
+            // Compute signed area to determine winding (positive = CCW, negative = CW)
+            let area: f64 = wd.uv_boundary.windows(2).map(|pair| {
+                pair[0].x * pair[1].y - pair[1].x * pair[0].y
+            }).sum::<f64>() + {
+                let n = wd.uv_boundary.len();
+                if n >= 2 { wd.uv_boundary[n-1].x * wd.uv_boundary[0].y - wd.uv_boundary[0].x * wd.uv_boundary[n-1].y } else { 0.0 }
+            } * 0.5;
+            let winding = if area > 0.0 { "CCW" } else if area < 0.0 { "CW" } else { "DEGEN" };
+            eprintln!("[UV_POLY] fi={} wire={} n_pts={} signed_area={:.12e} winding={}",
+                face_idx, wi, wd.uv_boundary.len(), area, winding);
+            for (pi, uv) in wd.uv_boundary.iter().enumerate() {
+                eprintln!("[UV_POLY]   [{}] uv=({:.12e}, {:.12e})", pi, uv.x, uv.y);
+            }
+        }
+    }
 
     if wds.is_empty() { return vec![]; }
 
@@ -1311,24 +1341,20 @@ pub(crate) fn perform_areas(
         if wires[wds[si].wire_idx].iter().any(|&s| hole_edge_set.contains(&s)) { is_hole[si] = false; }
         else if wds[si].n_distinct < 3 { is_hole[si] = true; }
         else {
-            // ✅ OCCT-aligned: FClass2d::IsHole (BuilderFace.cxx L444-447).
-            //   OCCT creates a temporary TopoDS_Face from the wire + surface,
-            //   constructs IntTools_FClass2d, calls IsHole().  The test: a point
-            //   far OUTSIDE the UV bounding box is tested against the wire's UV
-            //   polygon via CSLib_Class2d.SiDans.  CCW (outer) → outside point
-            //   is Out → growth (IsHole=false).  CW (hole) → outside point is
-            //   Inside → hole (IsHole=true).
+            // ✅ OCCT-aligned: IsHole check via UV polygon signed area.
+            //   OCCT IntTools_FClass2d derives myIsHole from the face's parametric
+            //   area: negative (CW) → hole, positive (CCW) → growth.  Compute the
+            //   signed area of the UV boundary directly — equivalent to OCCT's area
+            //   check (BRep_Tool::NaturalRestriction + IntTools_FClass2d Init L626-640).
             let uv_b = &wds[si].uv_boundary;
             if uv_b.len() >= 3 {
-                let umin = uv_b.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-                let umax = uv_b.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
-                let vmin = uv_b.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
-                let vmax = uv_b.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
-                let tol = TOLERANCE_ABS * 100.0;
-                let classifier = CSLibClass2d::new(uv_b, tol, tol, umin, vmin, umax, vmax);
-                let (ru, rv) = ((umax - umin).max(1.0), (vmax - vmin).max(1.0));
-                let outside_pt = DVec2::new(umin - ru, vmin - rv);
-                is_hole[si] = classifier.si_dans(outside_pt) == CSLibResult::Inside;
+                let area: f64 = uv_b.windows(2).map(|pair| {
+                    pair[0].x * pair[1].y - pair[1].x * pair[0].y
+                }).sum::<f64>() + {
+                    let n = uv_b.len();
+                    uv_b[n-1].x * uv_b[0].y - uv_b[0].x * uv_b[n-1].y
+                } * 0.5;
+                is_hole[si] = area < 0.0;
             } else {
                 is_hole[si] = true;
             }
