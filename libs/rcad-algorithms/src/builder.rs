@@ -1764,6 +1764,13 @@ impl<'a> BooleanBuilder<'a> {
         Ok(())
     }
 
+    /// ✅ OCCT-aligned: Prepare (BOPAlgo_Builder.cxx L327-332).
+    ///   Creates the empty result container (myShape in OCCT, topods::BRep in rcad)
+    ///   and the ResultBuilder that accumulates flat arrays during the pipeline.
+    fn prepare(&self) -> (topods::BRep, ResultBuilder) {
+        (topods::BRep::new(), ResultBuilder::new())
+    }
+
     pub fn build_with_history(&self) -> Result<(BRep, BooleanHistory), BooleanError> {
         // OCCT L313-317: setup (myPaveFiller, myDS, myContext, myFuzzyValue, myNonDestructive).
         //   OCCT copies from the PaveFiller into Builder members at the start of
@@ -1785,12 +1792,7 @@ impl<'a> BooleanBuilder<'a> {
         self.check_data(&a_faces, &b_faces)?;
 
         // OCCT L327-332: Prepare — creates empty TopoDS_Compound as myShape.
-        //   rcad: create empty topods::BRep as the result container (equivalent to
-        //   OCCT's myShape).  ResultBuilder accumulates flat arrays from the
-        //   dimension-by-dimension pipeline; build_topods() converts to shared
-        //   TShape representation and appends to t_brep.
-        let mut t_brep = topods::BRep::new();
-        let mut result = ResultBuilder::new();
+        let (mut t_brep, mut result) = self.prepare();
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
 
         // OCCT L334-335: analyzeProgress (rcad: no OCCT Message_Progress API).
@@ -1817,9 +1819,6 @@ impl<'a> BooleanBuilder<'a> {
         // Phase 3: FillImagesFaces (L376-386) → BuildResult(FACE) (L382-386).
         self.fill_images_faces(&mut result, &a_faces, &b_faces);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // ✅ OCCT-aligned: create topods vertices/edges/faces in t_brep now,
-        //   so that later shell/solid phases can reference them by ShapeRef.
-        result.build_topods_faces(&mut t_brep);
         self.build_result(ShapeType::Face, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 4: FillImagesContainers(SHELL) (L388-398) → BuildResult(SHELL) (L394-398).
@@ -1830,6 +1829,9 @@ impl<'a> BooleanBuilder<'a> {
         // Phase 5: FillImagesSolids (L400-410) → BuildResult(SOLID) (L406-410).
         self.fill_images_solids(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
+        // ✅ OCCT-aligned: build topods V/E/W/F from final face set after all
+        //   solid-level mutations (PerformShapesToAvoid, FillIn3DParts).
+        result.build_topods_faces(&mut t_brep);
         self.build_result(ShapeType::Solid, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 6: FillImagesContainers(COMPSOLID) (L412-422) → BuildResult(COMPSOLID) (L418-422).
