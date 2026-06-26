@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+﻿use std::collections::HashSet;
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
@@ -311,6 +311,7 @@ impl<'a> PaveFiller<'a> {
             .max(self.seam_shift_tol)
     }
 
+    /// OCCT: find FF curve indices by face pair
     fn find_face_face_curve_indices(&self, f1: usize, f2: usize) -> Option<Vec<usize>> {
         for inf in &self.ds.interferences {
             if let Interference::FaceFace { f1: a, f2: b, curves, .. } = inf {
@@ -322,6 +323,8 @@ impl<'a> PaveFiller<'a> {
         None
     }
 
+    /// OCCT: sample face boundary points
+    /// OCCT: sample face boundary points
     fn sampled_face_boundary_points(&self, face_idx: usize, samples_per_edge: usize) -> Vec<DVec3> {
         let mut pts = Vec::new();
         for &ei in &self.ds.faces[face_idx].boundary_edges {
@@ -344,6 +347,8 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
+    /// OCCT: closest point on boundary samples
+    /// OCCT: closest point on boundary samples
     fn closest_point_on_boundary_samples(&self, point: DVec3, samples: &[DVec3]) -> DVec3 {
         samples
             .iter()
@@ -356,6 +361,8 @@ impl<'a> PaveFiller<'a> {
             .unwrap_or(point)
     }
 
+    /// OCCT: snap polyline to face boundaries
+    /// OCCT: snap polyline to face boundaries
     fn snap_polyline_endpoints_to_face_boundaries(
         &self,
         chain: &mut Vec<DVec3>,
@@ -2030,6 +2037,8 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
+    /// OCCT PaveFiller_6.cxx L393-479: seam edge shift
+    /// OCCT PaveFiller_6.cxx L393-479: seam edge shift
     fn check_seam_edge_shift(&self, f1: usize, f2: usize) -> Option<SeamEdgeShift> {
         let s1 = &self.ds.faces[f1].surface;
         let s2 = &self.ds.faces[f2].surface;
@@ -2110,6 +2119,8 @@ impl<'a> PaveFiller<'a> {
         None
     }
 
+    /// OCCT PaveFiller_6: reverse seam edge shift
+    /// OCCT PaveFiller_6: reverse seam edge shift
     fn reverse_seam_edge_shift(&mut self, f1: usize, f2: usize, shift: &SeamEdgeShift) {
         let inv_vec = if shift.shifted_face == 1 {
             -shift.shift_vector
@@ -2161,6 +2172,8 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
+    /// OCCT: dispatch FF intersection by surface type
+    /// OCCT: dispatch FF intersection by surface type
     fn intersect_face_face(&mut self, f1: usize, f2: usize) {
         // 鈹€鈹€ Seam Edge Shift (OCCT PaveFiller_6.cxx L393-479) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         let shift_info = self.check_seam_edge_shift(f1, f2);
@@ -2348,6 +2361,8 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
+    /// OCCT: plane-plane intersection
+    /// OCCT: plane-plane intersection
     fn intersect_plane_plane_faces(&mut self, f1: usize, f2: usize, p1: &Plane, p2: &Plane) {
         use inttools::pcurve_derive::line_pcurve_on_plane;
 
@@ -2576,6 +2591,8 @@ impl<'a> PaveFiller<'a> {
         result
     }
 
+    /// OCCT: plane-sphere intersection
+    /// OCCT: plane-sphere intersection
     fn intersect_plane_sphere_faces(
         &mut self,
         f1: usize,
@@ -2719,6 +2736,8 @@ impl<'a> PaveFiller<'a> {
 
     // 鈹€鈹€ Sphere �?Sphere analytic face-face intersection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
+    /// OCCT: sphere-sphere intersection
+    /// OCCT: sphere-sphere intersection
     fn intersect_sphere_sphere_faces(
         &mut self,
         f1: usize,
@@ -2806,6 +2825,8 @@ impl<'a> PaveFiller<'a> {
 
     // 鈹€鈹€ Sphere �?Cylinder analytic face-face intersection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
+    /// OCCT: sphere-cylinder intersection
+    /// OCCT: sphere-cylinder intersection
     fn intersect_sphere_cylinder_faces(
         &mut self,
         f1: usize,
@@ -2955,6 +2976,8 @@ impl<'a> PaveFiller<'a> {
 
     // 鈹€鈹€ Cylinder �?Cylinder analytic face-face intersection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
+    /// OCCT: cylinder-cylinder intersection
+    /// OCCT: cylinder-cylinder intersection
     fn intersect_cylinder_cylinder_faces(
         &mut self,
         f1: usize,
@@ -3327,6 +3350,8 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
+    /// OCCT: cylinder face V-range
+    /// OCCT: cylinder face V-range
     fn cylinder_face_v_range(&self, face_idx: usize, cyl: &CylindricalSurface) -> [f64; 2] {
         let axis = cyl.axis.normalize();
         let mut v_min = f64::INFINITY;
@@ -3356,6 +3381,8 @@ impl<'a> PaveFiller<'a> {
 
     // 鈹€鈹€ Plane �?Cylinder analytic face-face intersection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
+    /// OCCT: plane-cylinder intersection
+    /// OCCT: plane-cylinder intersection
     fn intersect_plane_cylinder_faces(
         &mut self,
         f1: usize,
@@ -3668,6 +3695,8 @@ impl<'a> PaveFiller<'a> {
 
     // 鈹€鈹€ Plane �?Cone analytic face-face intersection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
+    /// OCCT: plane-cone intersection
+    /// OCCT: plane-cone intersection
     fn intersect_plane_cone_faces(
         &mut self,
         f1: usize,
@@ -3901,6 +3930,8 @@ impl<'a> PaveFiller<'a> {
 
     // 鈹€鈹€ Cylinder �?Cone analytic face-face intersection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
+    /// OCCT: cylinder-cone intersection
+    /// OCCT: cylinder-cone intersection
     fn intersect_cylinder_cone_faces(
         &mut self,
         f1: usize,
@@ -4104,6 +4135,8 @@ impl<'a> PaveFiller<'a> {
 
     // 鈹€鈹€ Cone �?Cone analytic face-face intersection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
+    /// OCCT: cone-cone intersection
+    /// OCCT: cone-cone intersection
     fn intersect_cone_cone_faces(
         &mut self,
         f1: usize,
@@ -4233,6 +4266,8 @@ impl<'a> PaveFiller<'a> {
 
     // 鈹€鈹€ Torus intersection helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
+    /// OCCT: register torus intersection results
+    /// OCCT: register torus intersection results
     fn register_torus_intersection(
         &mut self,
         f1: usize,
@@ -4560,6 +4595,8 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
+    /// OCCT: torus-plane intersection
+    /// OCCT: torus-plane intersection
     fn intersect_torus_plane_faces(
         &mut self,
         f1: usize,
@@ -4573,6 +4610,8 @@ impl<'a> PaveFiller<'a> {
         self.register_torus_intersection(f1, f2, &s1, &s2, torus_is_f1);
     }
 
+    /// OCCT: torus-sphere intersection
+    /// OCCT: torus-sphere intersection
     fn intersect_torus_sphere_faces(
         &mut self,
         f1: usize,
@@ -4586,6 +4625,8 @@ impl<'a> PaveFiller<'a> {
         self.register_torus_intersection(f1, f2, &s1, &s2, torus_is_f1);
     }
 
+    /// OCCT: torus-cylinder intersection
+    /// OCCT: torus-cylinder intersection
     fn intersect_torus_cylinder_faces(
         &mut self,
         f1: usize,
@@ -4599,6 +4640,8 @@ impl<'a> PaveFiller<'a> {
         self.register_torus_intersection(f1, f2, &s1, &s2, torus_is_f1);
     }
 
+    /// OCCT: torus-cone intersection
+    /// OCCT: torus-cone intersection
     fn intersect_torus_cone_faces(
         &mut self,
         f1: usize,
@@ -4612,6 +4655,8 @@ impl<'a> PaveFiller<'a> {
         self.register_torus_intersection(f1, f2, &s1, &s2, torus_is_f1);
     }
 
+    /// OCCT: torus-torus intersection
+    /// OCCT: torus-torus intersection
     fn intersect_torus_torus_faces(
         &mut self,
         f1: usize,
@@ -4625,6 +4670,8 @@ impl<'a> PaveFiller<'a> {
         self.register_torus_intersection(f1, f2, &s1, &s2, torus_is_f1);
     }
 
+    /// OCCT: sphere-cone intersection
+    /// OCCT: sphere-cone intersection
     fn intersect_sphere_cone_faces(
         &mut self,
         f1: usize,
@@ -4778,6 +4825,8 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
+    /// OCCT: numeric FF intersection via IntSS
+    /// OCCT: numeric FF intersection via IntSS
     fn intersect_ff_by_numeric_intss(
         &mut self,
         f1: usize,
@@ -4913,6 +4962,8 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
+    /// OCCT: marching FF intersection
+    /// OCCT: marching FF intersection
     fn intersect_ff_by_marching(&mut self, f1: usize, f2: usize) {
         use inttools::marching::{adaptive_sampling_density, MarchingConfig};
 
@@ -5159,6 +5210,8 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
+    /// OCCT: marching pcurve re-approximation
+    /// OCCT: marching pcurve re-approx
     fn make_marching_pcurves_with_reapprox(
         &self,
         points: &[DVec3],
@@ -5210,6 +5263,8 @@ impl<'a> PaveFiller<'a> {
         (pca, pcb)
     }
 
+    /// OCCT: generate surface sample points
+    /// OCCT: generate surface samples
     fn generate_surface_samples(&self, surface: &Surface3, n1: usize, n2: usize) -> Vec<DVec3> {
         match surface {
             Surface3::Cylinder(cyl) => {
@@ -5225,6 +5280,10 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
+    /// OCCT: generate surface sample points
+    /// OCCT: surface sample grid
+    /// OCCT: generate surface samples
+    /// OCCT: surface sample grid
     fn generate_surface_samples_grid(
         &self,
         surface: &Surface3,
@@ -5291,6 +5350,8 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
+    /// OCCT: estimate FF step size
+    /// OCCT: estimate FF step size
     fn estimate_step_size(&self, s1: &Surface3, s2: &Surface3) -> f64 {
         // Use a fraction of the smallest characteristic dimension
         let size1 = match s1 {
