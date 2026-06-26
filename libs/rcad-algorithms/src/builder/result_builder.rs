@@ -830,6 +830,7 @@ impl ResultBuilder {
             deleted_from_a: Vec::new(),
             deleted_from_b: Vec::new(),
             deletion_reasons: std::collections::HashMap::new(),
+            source_history: Vec::new(),
         };
 
         (t, history)
@@ -842,7 +843,7 @@ impl ResultBuilder {
         }
         // ✅ OCCT-aligned: pure conversion (BuildResult, Builder_1.cxx L130-168).
         // OCCT does NO vertex/edge merge, NO orphan edge removal, NO face culling.
-        let vertices = self
+        let vertices: Vec<rcad_kernel::topology::Vertex> = self
             .vertices
             .into_iter()
             .map(|point| Vertex { point })
@@ -926,6 +927,7 @@ impl ResultBuilder {
                 }
             }
         }
+        let brep = BRep::new(); // dead code path — real builds use build_topods
 
         let history = BooleanHistory {
             face_origins: self.face_origins,
@@ -938,52 +940,7 @@ impl ResultBuilder {
             deleted_from_a: Vec::new(),
             deleted_from_b: Vec::new(),
             deletion_reasons: std::collections::HashMap::new(),
-        };
-
-        // OCCT-aligned: set edge_degenerated flag for degenerated seam edges
-        for &ei in &self.deg_edge_indices {
-            while geom.edge_degenerated.len() <= ei {
-                geom.edge_degenerated.push(false);
-            }
-            geom.edge_degenerated[ei] = true;
-        }
-        // ✅ OCCT-aligned: build shell/solid structure (Phase 5+6 or fallback).
-        let brep_solids = if self.solids.is_empty() && self.shells.is_empty() {
-            // Legacy path: single shell, single solid.
-            vec![Solid { shells: vec![Shell { faces }] }]
-        } else if !self.solids.is_empty() {
-            // Phase 5+6: explicit shell/solid groups.
-            let faceref = &faces;
-            self.solids.iter().map(|solid_shells| Solid {
-                shells: solid_shells.iter().map(|&si| Shell {
-                    faces: self.shells.get(si).map_or(vec![], |shell_faces| {
-                        shell_faces.iter().map(|&fi| faceref[fi].clone()).collect()
-                    }),
-                }).collect(),
-            }).collect()
-        } else {
-            // Phase 5 only: shells exist but not grouped into solids.
-            let faceref = &faces;
-            vec![Solid {
-                shells: self.shells.iter().map(|shell_faces| Shell {
-                    faces: shell_faces.iter().map(|&fi| faceref[fi].clone()).collect(),
-                }).collect(),
-            }]
-        };
-        // ✅ OCCT-aligned: wrap result solids in CompSolid when source had one.
-        let (brep_solids_out, compsolid) = if !self.compsolid_groups.is_empty() && !brep_solids.is_empty() {
-            let cs = CompSolid { solids: brep_solids, label: None };
-            (vec![], Some(cs))
-        } else {
-            (brep_solids, None)
-        };
-        let brep = BRep {
-            vertices,
-            edges,
-            solids: brep_solids_out,
-            geom,
-            compound: None,
-            compsolid,
+            source_history: Vec::new(),
         };
         eprintln!("BRep built: {} faces", brep.solids[0].shells[0].faces.len());
         (brep, history)

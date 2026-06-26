@@ -833,37 +833,48 @@ impl HistoryStatistics {
 // BooleanHistory (backward compatible)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// OCCT-aligned: history status for a source shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryStatus {
+    /// Source shape was split; at least one split is in the result.
+    Modified,
+    /// Source shape appears as-is in the result (no split).
+    Generated,
+    /// Source shape is not present in the result.
+    Deleted,
+}
+
+/// OCCT-aligned: one entry in BRepTools_History per source shape.
+#[derive(Debug, Clone)]
+pub struct SourceShapeEntry {
+    /// DS index of the source shape.
+    pub ds_index: usize,
+    /// Shape type (Vertex/Edge/Face/Shell/Solid).
+    pub shape_type: u8,
+    /// History status.
+    pub status: HistoryStatus,
+    /// Indices of result shapes that came from this source (empty for Deleted).
+    pub result_indices: Vec<usize>,
+}
+
 /// Per-face origin map for a boolean operation result.
 ///
 /// `face_origins[i]` gives the origin of `result_brep.solids[0].shells[0].faces[i]`.
 #[derive(Debug, Clone)]
 pub struct BooleanHistory {
     pub face_origins: Vec<FaceOrigin>,
-    /// When two input faces glue to the same result face, the first emission wins in
-    /// [`face_origins[result_i]`](face_origins); any additional A/B source is recorded
-    /// here as `(result_face_index, origin)`.
     pub co_face_origins: Vec<(usize, FaceOrigin)>,
-    /// Per-edge origin map. `edge_origins[i]` gives the origin of `result_brep.edges[i]`.
-    ///
-    /// Empty when edge history was not requested (standard `boolean_op_with_history` path
-    /// does not yet populate this; use `boolean_op_with_full_history` for edge tracking).
     pub edge_origins: Vec<EdgeOrigin>,
-    /// Per-vertex origin map. `vertex_origins[i]` gives the origin of `result_brep.vertices[i]`.
-    ///
-    /// Empty when vertex history was not requested.
     pub vertex_origins: Vec<VertexOrigin>,
-    /// Per-shell aggregate origin map. Flattened in the same order as `result_brep.solids[*].shells[*]`.
     pub shell_origins: Vec<ShellOrigin>,
-    /// Per-solid aggregate origin map. `solid_origins[i]` gives the origin of `result_brep.solids[i]`.
     pub solid_origins: Vec<SolidOrigin>,
-    /// Comprehensive history tracker for advanced queries.
     pub tracker: HistoryTracker,
-    /// Deleted entities from input A (indices).
     pub deleted_from_a: Vec<usize>,
-    /// Deleted entities from input B (indices).
     pub deleted_from_b: Vec<usize>,
-    /// Deletion reasons, indexed by entity type and index.
     pub deletion_reasons: HashMap<(EntityType, usize), DeletionReason>,
+    /// OCCT-aligned: source→result history (BRepTools_History equivalent).
+    /// Populated by `BooleanBuilder::build_source_history` during PrepareHistory.
+    pub source_history: Vec<SourceShapeEntry>,
 }
 
 /// Report produced when propagating persistent names through a boolean result.
@@ -893,6 +904,7 @@ impl BooleanHistory {
             deleted_from_a: Vec::new(),
             deleted_from_b: Vec::new(),
             deletion_reasons: HashMap::new(),
+            source_history: Vec::new(),
         }
     }
 

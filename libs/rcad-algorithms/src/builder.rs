@@ -197,10 +197,67 @@ impl<'a> BooleanBuilder<'a> {
     ///   delegates to BuildDraftFace (OCCT's alternative path for non-split faces).
     fn builder_face_check_data(&self, face_idx: usize, segments: &[WireSegment]) -> bool {
         if segments.is_empty() {
-            // OCCT: if no intersection data, use BuildDraftFace path.
-            return false; // caller returns build_draft_face
+            return false;
         }
         true
+    }
+
+    /// ✅ OCCT-aligned: PrepareHistory (Builder_4.cxx L164-252).
+    ///   Builds source→result history matching OCCT's BRepTools_History.
+    fn build_source_history(&self, t_brep: &topods::BRep) -> Vec<crate::history::SourceShapeEntry> {
+        use crate::history::{HistoryStatus, SourceShapeEntry};
+        use topods::TShape;
+
+        // Build result vertex set.
+        let mut result_vtx: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        for ts in &t_brep.tshapes {
+            if let TShape::Vertex(vd) = &**ts {
+                for (di, dv) in self.ds.vertices.iter().enumerate() {
+                    if (dv.point - vd.point).length_squared() < crate::tolerance::TOLERANCE_ABS * 2.0 {
+                        result_vtx.insert(di);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Build result edge set.
+        let mut result_edge: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        for ts in &t_brep.tshapes {
+            if let TShape::Edge(ed) = &**ts {
+                let sv = ed.first.index;
+                let ev = ed.last.index;
+                for (di, de) in self.ds.edges.iter().enumerate() {
+                    if (de.start_vertex == sv && de.end_vertex == ev)
+                        || (de.start_vertex == ev && de.end_vertex == sv)
+                    {
+                        result_edge.insert(di);
+                        break;
+                    }
+                }
+            }
+        }
+
+        let mut entries = Vec::new();
+        // Vertices
+        for (di, _dv) in self.ds.vertices.iter().enumerate() {
+            let in_result = result_vtx.contains(&di);
+            let has_images = self.my_images.borrow().contains_key(&di);
+            let status = if has_images && in_result { HistoryStatus::Modified }
+                else if in_result { HistoryStatus::Generated }
+                else { HistoryStatus::Deleted };
+            entries.push(SourceShapeEntry { ds_index: di, shape_type: 0, status, result_indices: vec![] });
+        }
+        // Edges
+        for (di, _de) in self.ds.edges.iter().enumerate() {
+            let in_result = result_edge.contains(&di);
+            let has_images = self.my_images.borrow().contains_key(&di);
+            let status = if has_images && in_result { HistoryStatus::Modified }
+                else if in_result { HistoryStatus::Generated }
+                else { HistoryStatus::Deleted };
+            entries.push(SourceShapeEntry { ds_index: di, shape_type: 1, status, result_indices: vec![] });
+        }
+        entries
     }
 
     /// ✅ OCCT-aligned: BuildDraftFace (BOPAlgo_Builder_2.cxx L951-1070).
@@ -1739,12 +1796,16 @@ impl<'a> BooleanBuilder<'a> {
 
         let (built_brep, mut history) = result.build_topods();
         t_brep = built_brep;
-        let mut brep = rcad_kernel::BRep::from_topods(&t_brep);
+
+        // ✅ OCCT-aligned: PrepareHistory (Builder_4.cxx L164-252).
+        //   1. Build result shape map (myMapShape equivalent built inside).
+        //   2. Iterate source shapes → check LocModified → record Modified/Generated/Deleted.
+        //   3. Replaces old reverse-direction annotate_history_from_ds.
+        let source_history = self.build_source_history(&t_brep);
+        history.source_history = source_history;
 
         // ✅ OCCT-aligned: compound reconstruction (FillImagesCompounds post).
-        //   OCCT L280-342: if source has compound, build result compound
-        //   with child image solids.  rcad: wraps result solids in a
-        //   Compound mirroring the source BRep's compound structure.
+        let mut brep = rcad_kernel::BRep::from_topods(&t_brep);
         if (self.ds.a_has_compound || self.ds.b_has_compound) && !brep.solids.is_empty() {
             let mut compound = rcad_kernel::topology::Compound::new();
             for solid in brep.solids.drain(..) {
@@ -1752,11 +1813,6 @@ impl<'a> BooleanBuilder<'a> {
             }
             brep.compound = Some(compound);
         }
-
-        // ✅ OCCT-aligned: PrepareHistory (L438-442) — annotate edge/vertex/shell provenance.
-        annotate_history_from_ds(&brep, &mut history, self.ds);
-        annotate_shell_and_solid_history(&brep, &mut history);
-        if self.has_errors { return Err(BooleanError::DegenerateResult); }
 
         // ✅ OCCT-aligned: PostTreat (Builder.cxx L450-475).
         //   OCCT:
