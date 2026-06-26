@@ -1197,3 +1197,135 @@ pub(crate) fn select_best_outgoing<'a>(
     }
     p_edge_info
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bopds::ds::DS;
+    use rcad_kernel::geom::Plane;
+    use rcad_modeling::make_box_brep;
+    use std::collections::{HashMap, HashSet};
+
+    #[test]
+    fn are_verts_coincident_same_index() {
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let b = make_box_brep(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let ds = DS::new(&a, &b);
+        if ds.vertices.len() < 16 { return; }
+        assert!(are_verts_coincident(&ds, 0, 0));
+    }
+
+    #[test]
+    fn are_verts_coincident_distant() {
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let b = make_box_brep(DVec3::new(10.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let ds = DS::new(&a, &b);
+        if ds.vertices.len() < 16 { return; }
+        assert!(!are_verts_coincident(&ds, 0, ds.a_vertex_count));
+    }
+
+    #[test]
+    fn world_to_uv_plane() {
+        let plane = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
+        let surface = Surface3::Plane(plane);
+        let uv = world_to_uv(&surface, DVec3::new(2.0, 3.0, 0.0));
+        assert!(uv.is_some());
+    }
+
+    #[test]
+    fn world_to_uv_plane_origin() {
+        let plane = Plane { origin: DVec3::new(1.0, 2.0, 3.0), normal: DVec3::Z };
+        let surface = Surface3::Plane(plane);
+        let uv = world_to_uv(&surface, DVec3::new(1.0, 2.0, 3.0));
+        assert!(uv.is_some());
+        let uv = uv.unwrap();
+        assert!(uv.length_squared() < 1e-20, "origin should map to (0,0)");
+    }
+
+    #[test]
+    fn is_same_block_fwd_rev_true_for_same_edge() {
+        let seg_a = WireSegment {
+            start_vertex: 0, end_vertex: 1,
+            source: WireEdgeSource::DsEdge(5),
+            forward: true, is_seam: false,
+            tangent_start: None, tangent_end: None,
+            second_pcurve: None, first_pcurve: None,
+            t_range: [0.0, 1.0],
+        };
+        let seg_b = WireSegment {
+            start_vertex: 1, end_vertex: 0,
+            source: WireEdgeSource::DsEdge(5),
+            forward: false, is_seam: false,
+            tangent_start: None, tangent_end: None,
+            second_pcurve: None, first_pcurve: None,
+            t_range: [1.0, 0.0],
+        };
+        assert!(is_same_block_fwd_rev(&seg_a, &seg_b));
+    }
+
+    #[test]
+    fn is_same_block_fwd_rev_false_for_different_edge() {
+        let seg_a = WireSegment {
+            start_vertex: 0, end_vertex: 1,
+            source: WireEdgeSource::DsEdge(5),
+            forward: true, is_seam: false,
+            tangent_start: None, tangent_end: None,
+            second_pcurve: None, first_pcurve: None,
+            t_range: [0.0, 1.0],
+        };
+        let seg_b = WireSegment {
+            start_vertex: 1, end_vertex: 0,
+            source: WireEdgeSource::DsEdge(7),
+            forward: false, is_seam: false,
+            tangent_start: None, tangent_end: None,
+            second_pcurve: None, first_pcurve: None,
+            t_range: [1.0, 0.0],
+        };
+        assert!(!is_same_block_fwd_rev(&seg_a, &seg_b));
+    }
+
+    #[test]
+    fn build_vi_to_canon_empty() {
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let b = make_box_brep(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let ds = DS::new(&a, &b);
+        let canon = build_vi_to_canon(&[], &ds);
+        // Returns vec of usize::MAX for all DS vertices, not empty
+        assert!(canon.iter().all(|&c| c == usize::MAX),
+            "all canonical indices should be unset for empty segments");
+    }
+
+    #[test]
+    fn build_closed_wires_empty_input() {
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let b = make_box_brep(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
+        let ds = DS::new(&a, &b);
+        let avoided = HashSet::new();
+        let mut segments = Vec::new();
+        let (outer, inner, vpos) = build_closed_wires(&mut segments, &ds, 0, &avoided);
+        assert!(outer.is_empty());
+        assert!(inner.is_empty());
+        assert!(vpos.is_empty());
+    }
+
+    #[test]
+    fn mark_seg_passed_then_is_passed() {
+        let mut sm: IndexMap<usize, Vec<EdgeInfo>> = IndexMap::new();
+        sm.entry(0).or_default().push(EdgeInfo {
+            seg_idx: 5, passed: false, in_flag: true,
+            is_inside: false, is_circle_arc: false, angle: 1.0,
+        });
+        assert!(!is_seg_passed(&sm, 5));
+        mark_seg_passed(&mut sm, 5);
+        assert!(is_seg_passed(&sm, 5));
+    }
+
+    #[test]
+    fn edge_info_debug_display() {
+        let ei = EdgeInfo {
+            seg_idx: 5, passed: false, in_flag: true,
+            is_inside: false, is_circle_arc: false, angle: 0.0,
+        };
+        let _ = format!("{:?}", ei);
+    }
+}
