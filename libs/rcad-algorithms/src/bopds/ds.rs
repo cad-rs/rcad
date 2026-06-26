@@ -216,6 +216,16 @@ pub struct DSEdge {
     /// ✅ OCCT-aligned: TopAbs_INTERNAL orientation marker.
     ///   True when this edge is INTERNAL to its source solid volume.
     pub is_internal: bool,
+    /// ✅ OCCT-aligned: BRep_Tool::Parameter(aV, aE) — per-vertex parameter on this edge's curve.
+    ///   Populated during DS loading; for intersection/section edges, set to t_range bounds.
+    pub     vertex_params: std::collections::HashMap<usize, f64>,
+}
+
+impl DSEdge {
+    /// ✅ OCCT-aligned: BRep_Tool::Parameter(aV, this edge) equivalent.
+    pub fn vertex_param(&self, v: usize) -> Option<f64> {
+        self.vertex_params.get(&v).copied()
+    }
 }
 
 /// Per-edge integer flags (OCCT: BOPDS_ShapeInfo::Flag).
@@ -979,6 +989,12 @@ impl DS {
                 pave_blocks: Vec::new(),
                 face_reps: Vec::new(),
                 is_internal: false,
+                vertex_params: {
+                    let mut vp = std::collections::HashMap::new();
+                    vp.insert(start, t_range[0]);
+                    vp.insert(end, t_range[1]);
+                    vp
+                },
             });
         }
 
@@ -1958,6 +1974,48 @@ mod tests {
         assert!(ds.vertices[8].origin == Some(ShapeOrigin::ShapeB));
         assert!(ds.edges[0].origin == ShapeOrigin::ShapeA);
         assert!(ds.edges[12].origin == ShapeOrigin::ShapeB);
+
+        // OCCT-aligned: BRep_Tool::Parameter — vertex_params must be populated
+        for (ei, e) in ds.edges.iter().enumerate() {
+            assert!(e.vertex_params.contains_key(&e.start_vertex),
+                "edge {} missing start_vertex {} param", ei, e.start_vertex);
+            assert!(e.vertex_params.contains_key(&e.end_vertex),
+                "edge {} missing end_vertex {} param", ei, e.end_vertex);
+            let sv_p = e.vertex_params.get(&e.start_vertex).copied();
+            let ev_p = e.vertex_params.get(&e.end_vertex).copied();
+            assert!((sv_p.unwrap() - e.t_range[0]).abs() < 1e-15,
+                "edge {} start_vertex param mismatch", ei);
+            assert!((ev_p.unwrap() - e.t_range[1]).abs() < 1e-15,
+                "edge {} end_vertex param mismatch", ei);
+        }
+        // vertex_param() convenience method
+        assert!(ds.edges[0].vertex_param(ds.edges[0].start_vertex).is_some());
+        assert!(ds.edges[0].vertex_param(ds.edges[0].end_vertex).is_some());
+        assert!(ds.edges[0].vertex_param(999).is_none());
+    }
+
+    #[test]
+    fn ds_vertex_params_populated() {
+        let mut a = BRep::from_primitive(PrimitiveSolid::Box {
+            width: 1.0, height: 1.0, depth: 1.0,
+        });
+        populate_box_geom(&mut a);
+        let b = a.clone();
+        let ds = DS::new(&a, &b);
+        for (ei, e) in ds.edges.iter().enumerate() {
+            assert!(e.vertex_params.contains_key(&e.start_vertex),
+                "edge {} missing start_vertex {} param", ei, e.start_vertex);
+            assert!(e.vertex_params.contains_key(&e.end_vertex),
+                "edge {} missing end_vertex {} param", ei, e.end_vertex);
+            let sv_p = e.vertex_params.get(&e.start_vertex).copied();
+            let ev_p = e.vertex_params.get(&e.end_vertex).copied();
+            assert!((sv_p.unwrap() - e.t_range[0]).abs() < 1e-15,
+                "edge {} start_vertex param mismatch", ei);
+            assert!((ev_p.unwrap() - e.t_range[1]).abs() < 1e-15,
+                "edge {} end_vertex param mismatch", ei);
+        }
+        assert!(ds.edges[0].vertex_param(ds.edges[0].start_vertex).is_some());
+        assert!(ds.edges[0].vertex_param(999).is_none());
     }
 
     #[test]

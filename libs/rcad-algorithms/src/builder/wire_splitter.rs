@@ -7,6 +7,7 @@ use crate::dbg_smartmap;
 use super::types::{WireSegment, WireEdgeSource, WireFace};
 use super::wire_path::{pc_parameter_range, refine_angles, walk_path_extract_wires};
 use crate::builder::point_in_polygon_2d;
+use super::angle_2d::{dir_to_angle, angle_2d, clock_wise_angle};
 
 /// ✅ OCCT-aligned: Angle2D for seam edges (BOPAlgo_WireSplitter_1.cxx L768-840).
 ///
@@ -51,8 +52,8 @@ pub(crate) fn compute_seam_tangent_angles(ds: &DS, sv: usize, ev: usize, surface
             // For IN at ev: t = uv_end's V (relative to v0).
             let t_end_v = uv_end.y - v0;
             let domain = [0.0, span];
-            let t_start = angle_2d(&pcurve, t_start_v, domain, false, surface);
-            let t_end = angle_2d(&pcurve, t_end_v, domain, true, surface);
+            let t_start = angle_2d(&pcurve, t_start_v, domain, false, surface, ds.vertices[sv].geom_tol, None);
+            let t_end = angle_2d(&pcurve, t_end_v, domain, true, surface, ds.vertices[ev].geom_tol, None);
             (t_start, t_end)
         }
         Surface3::Cylinder(cyl) => {
@@ -276,98 +277,6 @@ pub(crate) fn are_verts_coincident(ds: &DS, vi: usize, vj: usize) -> bool {
 /// Convert a 2D direction vector to an angle in [0, 2).
 ///  OCCT  atan2(dir.y, dir.x)  [0, 2)
 #[inline]
-fn dir_to_angle(dir: DVec2) -> f64 {
-    let a = dir.y.atan2(dir.x);
-    if a < 0.0 { a + std::f64::consts::TAU } else { a }
-}
-
-/// OCCT-aligned Angle2D (BOPAlgo_WireSplitter_1.cxx L769-841).
-///
-/// Simplified version using fixed dt proportional to domain length.
-/// ✅ OCCT-aligned: pcurve tangent angle — OCCT Angle2D
-///    (BOPAlgo_WireSplitter_1.cxx L768-840).
-///    Uses surface-aware Tolerance2D + Resolution + curvature dt.
-fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool, surface: &Surface3) -> Option<f64> {
-    let first = domain[0];
-    let last = domain[1];
-    let range = (last - first).abs();
-    if range < 1e-15 { return None; }
-    let a_tol_v3d = 1e-5_f64;
-    let a_tol_2d = 2.0 * super::angle_2d::tolerance_2d(a_tol_v3d, surface);
-    let mut dt = match curve {
-        Curve2d::Circle(c) => a_tol_2d / c.radius.max(1e-15),
-        Curve2d::Ellipse(e) => a_tol_2d / (e.major_radius + e.minor_radius).max(1e-15) * 2.0,
-        Curve2d::Line(l) => {
-            let speed = l.direction.length();
-            if speed < 1e-30 { a_tol_2d } else { a_tol_2d / speed }
-        }
-        _ => a_tol_2d,
-    }.max(1e-7);
-    let radius_of_curv = match curve {
-        Curve2d::Circle(c) => Some(c.radius.max(1e-15)),
-        Curve2d::Ellipse(e) => Some((e.major_radius + e.minor_radius) / 2.0),
-        Curve2d::BSpline(_) | Curve2d::Bezier(_) | Curve2d::Trimmed(_) => {
-            let eps = (1e-6 * range).max(1e-10);
-            let tp = (t + eps).min(last);
-            let tm = (t - eps).max(first);
-            let p_p = curve.point_at(tp);
-            let p_m = curve.point_at(tm);
-            let d1 = p_p - p_m;
-            let speed = d1.length();
-            if speed < 1e-30 { None }
-            else {
-                let d1_n = d1 / speed;
-                let d2 = p_p - 2.0 * curve.point_at(t) + p_m;
-                let cross = d1_n.x * d2.y - d1_n.y * d2.x;
-                let curvature = cross.abs() / (speed * speed);
-                if curvature > 1e-30 { Some(1.0 / curvature) } else { None }
-            }
-        }
-        _ => None,
-    };
-    if let Some(r_curv) = radius_of_curv {
-        let cos_phi: f64 = r_curv / (r_curv + a_tol_2d);
-        if cos_phi < 1.0 {
-            let curv_dt = cos_phi.acos().max(1e-7);
-            dt = dt.max(curv_dt);
-        }
-    }
-    // OCCT L824-834: clamp dt to 5% of range, with min 5e-5 floor
-    let max_dt = 0.05 * range;
-    let a_tx = if max_dt < 5e-5_f64 { (5e-5_f64).min(range / 2.0) } else { max_dt };
-    if dt > a_tx { dt = a_tx; }
-    // OCCT L822-829: step toward nearest curve end
-    let t1 = if (t - first).abs() < (t - last).abs() {
-        (t + dt).min(last)
-    } else {
-        (t - dt).max(first)
-    };
-    let p0 = curve.point_at(t);
-    let p1 = curve.point_at(t1);
-    let dir = if b_is_in { p0 - p1 } else { p1 - p0 };
-    if dir.length_squared() < 1e-40 { return None; }
-    Some(dir_to_angle(dir))
-}
-
-/// ✅ OCCT-aligned: ClockWiseAngle — OCCT BOPAlgo_WireSplitter_1.cxx L621-650
-///
-/// - angle_in: angle at incident vertex (in_flag=true)
-/// - angle_out: angle at outgoing vertex (in_flag=false)
-fn clock_wise_angle(angle_in: f64, angle_out: f64) -> f64 {
-    const TAU: f64 = std::f64::consts::TAU;
-    let ai = if angle_in >= TAU { angle_in - TAU } else { angle_in };
-    let ao = if angle_out >= TAU { angle_out - TAU } else { angle_out };
-    let a1 = ai + std::f64::consts::PI;
-    let a1n = if a1 >= TAU { a1 - TAU } else { a1 };
-    let mut d = a1n - ao;
-    if d <= 0.0 { d += TAU; }
-    // OCCT L640: `if (d > 0. && d <= 1.e-14) d = aT`. Strict >0 so d=0
-    // (straight-through IC→IC at degree-4 vertex) is kept as 0 — the
-    // smallest CWA, making Path prefer the IC continuation.
-    if d > 0.0 && d <= 1e-14 { d = TAU; }
-    d
-}
-
 /// OCCT-aligned:  wire   BOPAlgo_WireSplitter
 ///    MakeConnexityBlocks + Path approach (PerformLoops L239-383)
 ///
@@ -662,7 +571,7 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
                         }
                     }
                 };
-                ei.angle = angle_2d(&curve, t_v, curve_domain, ei.in_flag, &ds.faces[face_idx].surface)
+                ei.angle = angle_2d(&curve, t_v, curve_domain, ei.in_flag, &ds.faces[face_idx].surface, ds.vertices[*v].geom_tol, None)
                     .unwrap_or(0.0);
             }
         }

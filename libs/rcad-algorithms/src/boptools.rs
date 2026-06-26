@@ -25,6 +25,12 @@ pub fn make_sect_edge(ds: &mut DS, ci: usize, v1: usize, v2: usize) -> usize {
         paves: Vec::new(),
         pave_blocks: Vec::new(), face_reps: Vec::new(),
         is_internal: false,
+        vertex_params: {
+            let mut vp = std::collections::HashMap::new();
+            vp.insert(v1, ic.t_range[0]);
+            vp.insert(v2, ic.t_range[1]);
+            vp
+        },
     });
     ei
 }
@@ -177,6 +183,12 @@ pub fn make_ds_edge(
         geom_tol: crate::tolerance::TOLERANCE_ABS,
         paves: Vec::new(), pave_blocks: Vec::new(), face_reps: Vec::new(),
         is_internal: false,
+        vertex_params: {
+            let mut vp = std::collections::HashMap::new();
+            vp.insert(v1, t_range[0]);
+            vp.insert(v2, t_range[1]);
+            vp
+        },
     });
     ei
 }

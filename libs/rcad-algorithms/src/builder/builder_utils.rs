@@ -1324,8 +1324,8 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                     let fixed_ev = correct_ev;
                     let pcurve = pcurve_lookup(ci);
                     let (t_start, t_end) = if let Some(ref pc) = pcurve {
-                        (angle_2d(pc, ic.t_range[0], ic.t_range, false, &face.surface),
-                         angle_2d(pc, ic.t_range[1], ic.t_range, true, &face.surface))
+                        (angle_2d(pc, ic.t_range[0], ic.t_range, false, &face.surface, ds.vertices[fixed_sv].geom_tol, None),
+                         angle_2d(pc, ic.t_range[1], ic.t_range, true, &face.surface, ds.vertices[correct_ev].geom_tol, None))
                     } else { (None, None) };
                     let ic_second_pcurve = compute_ic_second_pcurve(
                         &face.surface, ds, fixed_sv, fixed_ev);
@@ -1372,8 +1372,8 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                         let vj = on_circle[j].0;
                         let pcurve = pcurve_lookup(ci);
                         let (ts_val, te_val) = if let Some(ref pc) = pcurve {
-                            (angle_2d(pc, ic.t_range[0], ic.t_range, false, &face.surface),
-                             angle_2d(pc, ic.t_range[1], ic.t_range, true, &face.surface))
+                            (angle_2d(pc, ic.t_range[0], ic.t_range, false, &face.surface, ds.vertices[vi].geom_tol, None),
+                             angle_2d(pc, ic.t_range[1], ic.t_range, true, &face.surface, ds.vertices[vj].geom_tol, None))
                         } else { (None, None) };
                         let arc_second = compute_ic_second_pcurve(
                             &face.surface, ds, vi, vj);
@@ -1392,8 +1392,8 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
         let pcurve = pcurve_lookup(ci);
         let (t_start, t_end) = if let Some(ref pc) = pcurve {
             let domain = ic.t_range;
-            (angle_2d(pc, domain[0], domain, false, &face.surface),
-             angle_2d(pc, domain[1], domain, true, &face.surface))
+            (angle_2d(pc, domain[0], domain, false, &face.surface, ds.vertices[sv].geom_tol, None),
+             angle_2d(pc, domain[1], domain, true, &face.surface, ds.vertices[ev].geom_tol, None))
         } else {
             (None, None)
         };

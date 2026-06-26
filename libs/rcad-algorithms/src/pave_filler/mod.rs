@@ -911,6 +911,12 @@ impl<'a> PaveFiller<'a> {
                     pave_blocks: Vec::new(),
                     face_reps: sec_face_reps,
                     is_internal: false,
+                    vertex_params: {
+                        let mut vp = std::collections::HashMap::new();
+                        vp.insert(nV1, aT1);
+                        vp.insert(nV2, aT2);
+                        vp
+                    },
                 });
                 sub_pb.new_edge = Some(new_ei);
                 sub_with_edge.push(sub_pb);
@@ -2014,6 +2020,12 @@ impl<'a> PaveFiller<'a> {
                 pave_blocks: vec![],
                 face_reps,
                 is_internal: false,
+                vertex_params: {
+                    let mut vp = std::collections::HashMap::new();
+                    vp.insert(sv, t_range[0]);
+                    vp.insert(ev, t_range[1]);
+                    vp
+                },
             });
 
             let mut pb = PaveBlock::new(NO_EDGE,
@@ -6029,6 +6041,12 @@ impl<'a> PaveFiller<'a> {
                 pave_blocks: vec![],
                 face_reps: data.face_reps.clone(),
                 is_internal: false,
+                vertex_params: {
+                    let mut vp = std::collections::HashMap::new();
+                    vp.insert(data.sv, data.t_start);
+                    vp.insert(data.ev, data.t_end);
+                    vp
+                },
             });
 
             // Track for pave_blocks assignment on source edge

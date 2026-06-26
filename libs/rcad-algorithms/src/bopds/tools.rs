@@ -379,6 +379,12 @@ mod tests {
             )],
             face_reps: vec![],
             is_internal: false,
+            vertex_params: {
+                let mut vp = std::collections::HashMap::new();
+                vp.insert(vi0, 0.0);
+                vp.insert(vi1, 1.0);
+                vp
+            },
         });
 
         let old_global_len = ds.pave_blocks.len();
