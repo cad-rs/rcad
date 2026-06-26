@@ -1242,8 +1242,8 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
     // Section edges = Intersection curves (OCCT BOPAlgo_Builder_2.cxx L285-296, L478-489).
     // ================================================================
     // OCCT-aligned: Process PaveBlocksSc — each PB has a pre-built edge with
-    //   valid aPB->Edge().  rcad PBs may not have new_edge set; in that case
-    //   the curves_sc fallback below handles them.
+    //   valid aPB->Edge().  This is the PRIMARY path for section edges.
+    let had_pb_sc = !face.face_info.pave_blocks_sc.is_empty();
     for &pb_idx in &face.face_info.pave_blocks_sc {
         if pb_idx >= ds.pave_blocks.len() { continue; }
         let pb = &ds.pave_blocks[pb_idx];
@@ -1273,10 +1273,10 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
         });
     }
 
-        // OCCT-aligned: Section edges (Builder_2.cxx L483-494).
-        // Always process curves_sc — OCCT always builds section edges from
-        // PaveBlocksSc, but rcad may not have them wired yet, so curves_sc
-        // provides the source of truth for intersection curve segments.
+    // OCCT-aligned: curves_sc fallback — only when PaveBlocksSc had no valid PBs.
+    //   OCCT only builds section edges from PaveBlocksSc.  rcad may miss PBs in
+    //   edge cases (no init_pave_block1), so curves_sc provides a recovery path.
+    if !had_pb_sc {
     for &ci in &face.face_info.curves_sc_only() {
         let ic = &ds.intersection_curves[ci];
         // ✅ OCCT-aligned: remap IC endpoint to boundary vertex (ShapesSD).
@@ -1407,6 +1407,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
             tangent_end: t_end,
         });
     }
+    } // end if !had_pb_sc (curves_sc fallback — only when PaveBlocksSc had no valid PBs)
     segments
 }
 
