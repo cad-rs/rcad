@@ -477,13 +477,35 @@ impl<'a> BooleanBuilder<'a> {
     ///   OCCT L275-279: HasFaceInfo check.
     ///   OCCT L283-287: PaveBlocksIn/On/Sc + AloneVertices.
     ///   OCCT L293-296: if no PBs and no AV → skip.
+    /// ✅ OCCT-aligned: FillImagesFaces (Builder_2.cxx L215-229).
+    ///   Calls BuildSplitFaces → FillSameDomainFaces → FillInternalVertices.
     fn fill_images_faces(
         &self,
         result: &mut ResultBuilder,
         a_faces: &[usize],
         b_faces: &[usize],
     ) {
+        self.build_split_faces(result, a_faces, b_faces);
 
+        // ✅ OCCT L223: FillSameDomainFaces — merge duplicates after all faces split.
+        self.fill_same_domain_faces(result);
+        if self.has_errors { return; }
+
+        // ✅ OCCT L228: FillInternalVertices — settle alone vertices as INTERNAL sub-shapes.
+        self.fill_internal_vertices(result);
+    }
+
+    /// ✅ OCCT-aligned: BuildSplitFaces (Builder_2.cxx L233-374).
+    ///   Iterates source faces → splits each along intersection curves.
+    ///   For faces with IN/SC PBs: full BuilderFace::Perform (split_face_occt_wire_pipeline).
+    ///   For ON-only faces: BuildDraftFace.
+    ///   Faces with no interferences → skipped (no images).
+    fn build_split_faces(
+        &self,
+        result: &mut ResultBuilder,
+        a_faces: &[usize],
+        b_faces: &[usize],
+    ) {
         // OCCT L258-266: iterate all source shapes → filter TopAbs_FACE.
         for fi in 0..self.ds.faces.len() {
             let is_a = a_faces.contains(&fi);
@@ -494,7 +516,6 @@ impl<'a> BooleanBuilder<'a> {
             let has_info = self.ds.faces[fi].face_info.has_any_interference();
 
             // OCCT L283-287: PBsIn → curves_sc, PBsOn → curves_on.
-            //   PBsSc → curves_sc (shared section curves). rcad: alone vertices not tracked.
             let has_pb_in = !self.ds.faces[fi].face_info.pave_blocks_in.is_empty();
             let has_pb_sc = !self.ds.faces[fi].face_info.curves_sc.is_empty();
             let has_pb_on = !self.ds.faces[fi].face_info.pave_blocks_on.is_empty();
@@ -504,13 +525,9 @@ impl<'a> BooleanBuilder<'a> {
                 continue;
             }
 
-            // ✅ OCCT-aligned: BuildSplitFaces (Builder_2.cxx L298-374).
-            //   L298-332: no IN/SC PBs → BuildDraftFace for ON PBs / alone vertices.
-            //   L332+:    has IN/SC PBs → full BuilderFace::Perform (split_face_occt_wire_pipeline).
-            //   No fallback: if BuilderFace fails, the face produces no images.
+            // OCCT L298-332: no IN/SC PBs → BuildDraftFace for ON PBs / alone vertices.
+            // OCCT L332+:    has IN/SC PBs → full BuilderFace::Perform.
             if !has_pb_in && !has_pb_sc {
-                // OCCT L309-334: check for INTERNAL edges in wires.
-                //   If hasInternals -> fall through to full BuilderFace.
                 let has_internals = self.ds.faces[fi].boundary_edges.iter().any(|&ei| {
                     self.ds.edges.get(ei).map_or(false, |e| e.is_internal)
                 });
@@ -522,7 +539,7 @@ impl<'a> BooleanBuilder<'a> {
                 if !has_internals && !has_modified && !has_pb_on {
                     continue;
                 }
-                // OCCT L336-350: if no internals -> BuildDraftFace.
+                // OCCT L336-350: if no internals → BuildDraftFace.
                 if !has_internals && has_info {
                     if let Some(draft) = self.build_draft_face(fi) {
                         let (_segments, wfs, _vp) = draft;
@@ -540,9 +557,9 @@ impl<'a> BooleanBuilder<'a> {
                 continue;
             }
 
-        // Has IN or SC pave blocks → full BuilderFace::Perform.
-        if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
-            if !wfs.is_empty() {
+            // Has IN or SC pave blocks → full BuilderFace::Perform.
+            if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
+                if !wfs.is_empty() {
                     let wfs = promote_exterior_holes(wfs, &segments, self.ds, self.op, other_faces);
                     for wf in &wfs {
                         let origin = if is_a {
@@ -555,13 +572,6 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
         }
-
-        // ✅ OCCT L223: FillSameDomainFaces — merge duplicates after all faces split.
-        self.fill_same_domain_faces(result);
-        if self.has_errors { return; }
-
-        // ✅ OCCT L228: FillInternalVertices — settle alone vertices as INTERNAL sub-shapes.
-        self.fill_internal_vertices(result);
     }
 
     /// ✅ OCCT-aligned: FillInternalVertices (Builder_2.cxx L929-1008).
