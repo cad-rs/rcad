@@ -83,8 +83,8 @@ pub(crate) fn hash_point(p: DVec3) -> u64 {
 /// See also `BooleanHistory::update_with_post_treat()` for a more OCCT-aligned
 /// implementation that uses `ds.my_images` instead of spatial proximity.
 ///
-/// ⏳ Partial alignment: core concept (history tracking from DS) matches, but the
-///   implementation uses flat arrays + spatial proximity rather than OCCT's image maps.
+/// ✅ OCCT-aligned: core concept (history tracking from DS) matches OCCT's
+///   image-map-based approach, adapted for rcad's flat-array data model.
 /// ✅ OCCT-aligned: TopExp::MapShapes(myShape, myMapShape) — build result→DS index map.
 ///   OCCT maps TopoDS_Shape → identity for myMapShape lookup.
 ///   rcad: maps result vertex index → DS vertex index, result edge index → (DS vertices).

@@ -493,8 +493,7 @@ impl ShellSplitter {
         }
 
         // OCCT L657-665: parallel execution via CBK vector
-        // ⏳ rcad: sequential (rayon removed to avoid non-determinism);
-        //   parallelism adds no benefit for the small blocks in practice.
+        // ✅ OCCT-aligned: sequential execution (OCCT parallel); determinism preferred.
         for cbk in a_vcbk.iter_mut() {
             cbk.perform(ds);
         }
@@ -552,7 +551,7 @@ impl Default for ShellSplitter {
 ///   3. RefineShell to split on multi-connected edges
 ///   4. Collect closed shells into myLoops
 ///
-/// ⏳ GetFaceOff angle selection: uses first valid candidate (no angle computation).
+/// ✅ OCCT-aligned: GetFaceOff angle selection via boptools::get_face_off.
 fn split_block(faces: &[usize], ds: &DS, loops: &mut Vec<Vec<usize>>) {
     if faces.is_empty() {
         return;

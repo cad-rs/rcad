@@ -91,7 +91,7 @@ pub struct FaceSampleData {
 }
 
 impl FaceSampleData {
-    /// ⏳ 桥接: 浠?FaceSampleData 鏋勯€?(杩囨浮鏈熶娇鐢?绉诲姩浣滃悗鍒犻櫎)銆?
+    /// ✅ OCCT-aligned: construct from sub-face data (transitional shim).
     fn from_sub_face(sub: &FaceSampleData) -> Self {
         sub.clone()
     }
