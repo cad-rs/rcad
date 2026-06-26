@@ -549,8 +549,17 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
         for (v, infos) in smart_map.iter_mut() {
             for ei in infos.iter_mut() {
                 let seg = &segments[ei.seg_idx];
-                // Determine vertex parameter and pcurve (BRep_Tool::Parameter equivalent)
-                let t_v = if *v == seg.start_vertex { seg.t_range[0] } else { seg.t_range[1] };
+                // ✅ OCCT-aligned: BRep_Tool::Parameter(aV, aE) — use vertex_params for DSEdges.
+                let t_v = match &seg.source {
+                    WireEdgeSource::DsEdge(ei) => {
+                        ds.edges[*ei].vertex_param(*v).unwrap_or_else(|| {
+                            if *v == seg.start_vertex { seg.t_range[0] } else { seg.t_range[1] }
+                        })
+                    }
+                    _ => {
+                        if *v == seg.start_vertex { seg.t_range[0] } else { seg.t_range[1] }
+                    }
+                };
                 let domain = seg.t_range;
                 let (curve, curve_domain) = match &seg.source {
                     WireEdgeSource::IntersectionCurve(ci) => {
