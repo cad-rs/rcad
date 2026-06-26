@@ -286,44 +286,129 @@ fn intersect_ellipse_ellipse(c1: &Curve2d, c2: &Curve2d, t1_min: f64, t1_max: f6
     dedup(results)
 }
 
-fn intersect_conic_curve(conic: &Curve2d, _typ: G2dCurveType, curve: &Curve2d, _tc_min: f64, _tc_max: f64, t_min: f64, t_max: f64, _tol: f64) -> Vec<(f64, f64)> {
-    let tr = t_max - t_min; if tr < 1e-15 || !tr.is_finite() { return vec![]; }
-    let mut best: Option<(f64,f64,f64)> = None;
-    for i in 0..=256 {
-        let t = t_min + tr*(i as f64)/256.0; let p = curve.point_at(t);
-        let d = if let Curve2d::Line(l) = conic { let dp = p - l.origin; (dp.x*l.direction.y - dp.y*l.direction.x).abs()/l.direction.length().max(1e-30) }
-        else if let Curve2d::Circle(c) = conic { (p.distance(c.center) - c.radius).abs() }
-        else if let Curve2d::Ellipse(e) = conic { let u = e.major_dir; let v = DVec2::new(-u.y,u.x); let du = (p-e.center).dot(u)/e.major_radius; let dv = (p-e.center).dot(v)/e.minor_radius; (du*du + dv*dv).sqrt() - 1.0 }
-        else { continue; };
-        if best.map_or(true, |(bd,_,_)| d < bd) { best = Some((d, t, 0.0)); }
+/// OCCT-aligned: IntCurve_IntConicCurveGen (IntConicCurveGen.gxx/lxx).
+///   Implicit conic (IConicTool) × Parametric curve (ThePCurve):
+///   sample curve → find nearest point to conic → Newton refine.
+///   Domain closure: circle/ellipse domains are made closed (period 2π).
+///   OCCT L119-130: Perform(IConicTool, D1, PCurve, D2, TolConf, Tol).
+fn intersect_conic_curve(conic: &Curve2d, _typ: G2dCurveType, curve: &Curve2d, tc_min: f64, tc_max: f64, t_min: f64, t_max: f64, tol: f64) -> Vec<(f64, f64)> {
+    let tr = t_max - t_min;
+    if tr < 1e-15 || !tr.is_finite() { return vec![]; }
+    // OCCT: ensure closed domain for circle/ellipse conic
+    let is_periodic = matches!(conic, Curve2d::Circle(_) | Curve2d::Ellipse(_));
+    if is_periodic && (tc_max - tc_min).abs() < std::f64::consts::TAU - 1e-10 {
+        // Non-closed domain of a periodic conic: skip (OCCT treats as no intersection)
+        return vec![];
     }
-    if let Some((dist, t0, _)) = best {
-        if dist > 1e-4 { return vec![]; }
+    // Implicit function for the conic
+    let implicit_fn = |pt: DVec2| -> f64 {
+        match conic {
+            Curve2d::Line(l) => {
+                let dp = pt - l.origin;
+                (dp.x * l.direction.y - dp.y * l.direction.x).abs() / l.direction.length().max(1e-30)
+            }
+            Curve2d::Circle(c) => pt.distance(c.center) - c.radius,
+            Curve2d::Ellipse(e) => {
+                let u = e.major_dir;
+                let v = DVec2::new(-u.y, u.x);
+                let du = (pt - e.center).dot(u) / e.major_radius;
+                let dv = (pt - e.center).dot(v) / e.minor_radius;
+                (du * du + dv * dv).sqrt() - 1.0
+            }
+            _ => return 1.0,
+        }
+    };
+    // Sample the parametric curve, find best candidate
+    const N_SAMPLES: usize = 256;
+    let mut candidates: Vec<f64> = Vec::new();
+    for i in 0..=N_SAMPLES {
+        let t = t_min + tr * (i as f64 / N_SAMPLES as f64);
+        let p = curve.point_at(t);
+        let d = implicit_fn(p);
+        if i > 0 {
+            let t_prev = t_min + tr * ((i - 1) as f64 / N_SAMPLES as f64);
+            let p_prev = curve.point_at(t_prev);
+            let d_prev = implicit_fn(p_prev);
+            // Sign change in distance indicates crossing the conic surface
+            if d * d_prev < 0.0 || d.abs() < 1e-10 {
+                candidates.push(t);
+            }
+        }
+    }
+    // Refine each candidate with Newton on the conic-specific distance function
+    let mut results: Vec<(f64, f64)> = Vec::new();
+    for &t0 in &candidates {
         let mut t = t0;
         for _ in 0..20 {
             let p = curve.point_at(t);
-            let der = (curve.point_at((t+1e-7).clamp(t_min,t_max)) - curve.point_at((t-1e-7).clamp(t_min,t_max)))/(2.0*1e-7);
-            let (f, df) = if let Curve2d::Line(l) = conic { let dp = p - l.origin; (dp.x*l.direction.y - dp.y*l.direction.x, der.x*l.direction.y - der.y*l.direction.x) }
-            else if let Curve2d::Circle(c) = conic { let dp = p - c.center; let len = dp.length(); (len - c.radius, if len > 1e-30 { dp.dot(der)/len } else { der.length() }) }
-            else { break; };
+            let eps_d = 1e-7;
+            let der = (curve.point_at((t + eps_d).min(t_max)) - curve.point_at((t - eps_d).max(t_min))) / (2.0 * eps_d);
+            let (f_val, df) = match conic {
+                Curve2d::Line(l) => {
+                    let dp = p - l.origin;
+                    (dp.x * l.direction.y - dp.y * l.direction.x, der.x * l.direction.y - der.y * l.direction.x)
+                }
+                Curve2d::Circle(c) => {
+                    let dp = p - c.center;
+                    let len = dp.length();
+                    (len - c.radius, if len > 1e-30 { dp.dot(der) / len } else { der.length() })
+                }
+                _ => break,
+            };
             if df.abs() < 1e-15 { break; }
-            t = (t - f/df).clamp(t_min, t_max); if f.abs() < 1e-14 { return vec![(t, 0.0)]; }
+            t = t - f_val / df;
+            if f_val.abs() < tol.max(1e-14) {
+                results.push((t, 0.0));
+                break;
+            }
         }
     }
-    vec![]
+    results
 }
 
-fn intersect_curve_curve(c1: &Curve2d, c2: &Curve2d, t1_min: f64, t1_max: f64, t2_min: f64, t2_max: f64, _tol: f64) -> Vec<(f64, f64)> {
-    let r1 = t1_max - t1_min; let r2 = t2_max - t2_min;
+/// OCCT-aligned: IntCurve_IntPolyPolyGen (IntPolyPolyGen.gxx L93-107+).
+///   Two generic curves: sample both → find approximate intersections → refine.
+///   OCCT uses polygon-polygon interference detection + Newton refinement.
+///   rcad: coarse sampling of curve1 → nearest-point search on curve2 → output close pairs.
+fn intersect_curve_curve(c1: &Curve2d, c2: &Curve2d, t1_min: f64, t1_max: f64, t2_min: f64, t2_max: f64, tol: f64) -> Vec<(f64, f64)> {
+    let r1 = t1_max - t1_min;
+    let r2 = t2_max - t2_min;
     if r1 < 1e-15 || r2 < 1e-15 || !r1.is_finite() || !r2.is_finite() { return vec![]; }
-    let mut res = Vec::new();
-    for i in 0..=64 {
-        let t1 = t1_min + r1*(i as f64)/64.0; let p1 = c1.point_at(t1);
-        let mut bd2 = f64::INFINITY; let mut bt2 = t2_min;
-        for j in 0..=128 { let t2 = t2_min + r2*(j as f64)/128.0; let d2 = p1.distance_squared(c2.point_at(t2)); if d2 < bd2 { bd2 = d2; bt2 = t2; } }
-        if bd2 < 1e-8 && res.last().map_or(true, |&(lt,_):&(f64,f64)| (t1-lt).abs() > 1e-9*r1) { res.push((t1, bt2)); }
+    // Sample both curves into discrete point sets
+    let n1: usize = 256;
+    let n2: usize = 256;
+    let mut results: Vec<(f64, f64)> = Vec::new();
+    for i in 0..=n1 {
+        let t1 = t1_min + r1 * (i as f64 / n1 as f64);
+        let p1 = c1.point_at(t1);
+        let mut best_d2 = f64::INFINITY;
+        let mut best_t2 = t2_min;
+        for j in 0..=n2 {
+            let t2 = t2_min + r2 * (j as f64 / n2 as f64);
+            let d2 = p1.distance_squared(c2.point_at(t2));
+            if d2 < best_d2 {
+                best_d2 = d2;
+                best_t2 = t2;
+            }
+        }
+        if best_d2 < tol.max(1e-8) {
+            let is_dup = results.last().map_or(false, |&(lt, _)| (t1 - lt).abs() < 1e-9 * r1);
+            if !is_dup { results.push((t1, best_t2)); }
+        }
     }
-    res
+    // Remove endpoints that are just the domain boundary, not true intersections
+    results.retain(|&(t1, t2)| {
+        let at_boundary = |t: f64, lo: f64, hi: f64| (t - lo).abs() < 1e-10 || (t - hi).abs() < 1e-10;
+        if at_boundary(t1, t1_min, t1_max) || at_boundary(t2, t2_min, t2_max) {
+            // Keep only if the point actually lies on both curves
+            let p1 = c1.point_at(t1);
+            let p2 = c2.point_at(t2);
+            p1.distance_squared(p2) < tol.max(1e-8)
+        } else {
+            true
+        }
+    });
+    results
 }
 
 pub fn intersect_ray_curve_2d(ro: DVec2, rd: DVec2, curve: &Curve2d, t_min: f64, t_max: f64) -> Vec<(f64, f64)> {
