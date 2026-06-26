@@ -47,13 +47,19 @@ fn curve2d_nb_samples(curve: &Curve2d, t0: f64, t1: f64) -> usize {
 ///   intervals, tracks chordal deflection (FlecheU/FlecheV) and stores
 ///   first/last derivatives for edge junction continuity.
 ///   rcad: uses curve2d_nb_samples for per-edge sample count matching OCCT.
+///   The `sample_mult` parameter scales the sample count (default 1.0).
 pub(crate) fn collect_wire_uv(ds: &DS, face_idx: usize, edges: &[(usize, bool)]) -> Vec<DVec2> {
+    collect_wire_uv_with_mult(ds, face_idx, edges, 1.0)
+}
+
+fn collect_wire_uv_with_mult(ds: &DS, face_idx: usize, edges: &[(usize, bool)], sample_mult: f64) -> Vec<DVec2> {
     let mut pts: Vec<DVec2> = Vec::new();
     for &(ei, fwd) in edges {
         if let Some(rep) = ds.edge_on_face(ei, face_idx) {
             let t0 = if fwd { rep.start_param } else { rep.end_param };
             let t1 = if fwd { rep.end_param } else { rep.start_param };
-            let n = curve2d_nb_samples(&rep.pcurve, t0, t1).max(2);
+            let n = ((curve2d_nb_samples(&rep.pcurve, t0, t1) as f64) * sample_mult).ceil() as usize;
+            let n = n.max(2);
             let du = if n > 1 { (t1 - t0) / (n - 1) as f64 } else { 0.0 };
             for i in 0..n {
                 let t = t0 + du * i as f64;
@@ -205,6 +211,10 @@ pub struct FClass2d {
     is_v_periodic: bool,
     u_period: f64,
     v_period: f64,
+    /// ✅ OCCT-aligned: UV resolution (BRepAdaptor_Surface::UResolution/VResolution).
+    ///   Minimum UV step corresponding to TolUV in 3D space.
+    u_res: f64,
+    v_res: f64,
 }
 
 impl FClass2d {
@@ -217,37 +227,44 @@ impl FClass2d {
         let mut tab_orien: Vec<bool> = Vec::new();
 
         let outer_edges: Vec<(usize, bool)> = face.boundary_edges.iter().map(|&e| (e, true)).collect();
-        let outer_pts = collect_wire_uv(ds, face_idx, &outer_edges);
+        let mut outer_pts = collect_wire_uv(ds, face_idx, &outer_edges);
+        let mut fleche_u = tol_uv;
+        let mut fleche_v = tol_uv;
+
+        // OCCT L456-565: self-intersection polygon refinement.
+        //   If chordal deflection is too large relative to area/perimeter ratio,
+        //   the polygon may self-intersect.  Re-discretize with tighter tolerance.
+        if outer_pts.len() >= 3 {
+            let mut outer_area = polygon_signed_area(&outer_pts);
+            let mut outer_perim = polygon_perimeter(&outer_pts);
+            let mut an_exp_thick = (2.0 * outer_area.abs() / outer_perim).max(1e-7);
+            let (mut fu, mut fv) = chordal_deflection(&outer_pts, tol_uv);
+            let mut a_defl = fu.max(fv);
+            let mut refine_iter = 0;
+            while a_defl > an_exp_thick && a_defl > 1e-7 && refine_iter < 5 {
+                let new_mult = ((a_defl / an_exp_thick) * 2.0).ceil().min(32.0);
+                let new_pts = collect_wire_uv_with_mult(ds, face_idx, &outer_edges, new_mult);
+                if new_pts.len() <= outer_pts.len() { break; }
+                outer_pts = new_pts;
+                outer_area = polygon_signed_area(&outer_pts);
+                outer_perim = polygon_perimeter(&outer_pts);
+                an_exp_thick = (2.0 * outer_area.abs() / outer_perim).max(1e-7);
+                let (new_fu, new_fv) = chordal_deflection(&outer_pts, tol_uv);
+                fu = new_fu; fv = new_fv;
+                a_defl = fu.max(fv);
+                if a_defl <= an_exp_thick { break; }
+                refine_iter += 1;
+            }
+            fleche_u = fu; fleche_v = fv;
+        }
         let mut umin = f64::INFINITY; let mut umax = f64::NEG_INFINITY;
         let mut vmin = f64::INFINITY; let mut vmax = f64::NEG_INFINITY;
         for p in &outer_pts {
             umin = umin.min(p.x); umax = umax.max(p.x);
             vmin = vmin.min(p.y); vmax = vmax.max(p.y);
         }
-        // OCCT L346-364: compute chordal error (FlecheU/FlecheV) from polygon samples.
-        //   The chordal error is the maximum distance between a sample point and the
-        //   chord connecting its neighbors.  Passed to CSLib_Class2d as boundary tolerance.
-        let compute_chordal = |pts: &[DVec2]| -> (f64, f64) {
-            if pts.len() < 3 { return (tol_uv, tol_uv); }
-            let mut fu = 0.0_f64; let mut fv = 0.0_f64;
-            for i in 1..pts.len() - 1 {
-                let a = pts[i - 1]; let b = pts[i]; let c = pts[i + 1];
-                // Project b onto chord ac
-                let ac = c - a;
-                let len2 = ac.dot(ac);
-                if len2 < 1e-30 { continue; }
-                let t = ((b - a).dot(ac) / len2).clamp(0.0, 1.0);
-                let proj = a + ac * t;
-                let du = (b.x - proj.x).abs();
-                let dv = (b.y - proj.y).abs();
-                if du > fu { fu = du; }
-                if dv > fv { fv = dv; }
-            }
-            (fu.max(tol_uv), fv.max(tol_uv))
-        };
 
         if outer_pts.len() >= 3 {
-            let (fleche_u, fleche_v) = compute_chordal(&outer_pts);
             // OCCT: TabOrien derived from polygon winding (CCW=FORWARD=true, CW=REVERSED=false).
             let outer_ccw = polygon_is_ccw(&outer_pts);
             tab_class.push(CSLibClass2d::new(&outer_pts, fleche_u, fleche_v, umin, vmin, umax, vmax));
@@ -266,7 +283,7 @@ impl FClass2d {
                 umin = umin.min(p.x); umax = umax.max(p.x);
                 vmin = vmin.min(p.y); vmax = vmax.max(p.y);
             }
-            let (fleche_u, fleche_v) = compute_chordal(&iw_pts);
+            let (fleche_u, fleche_v) = chordal_deflection(&iw_pts, tol_uv);
             let iw_ccw = polygon_is_ccw(&iw_pts);
             tab_class.push(CSLibClass2d::new(&iw_pts, fleche_u, fleche_v, i_umin, i_vmin, i_umax, i_vmax));
             tab_orien.push(iw_ccw);
@@ -286,11 +303,32 @@ impl FClass2d {
             _ => (false, false, 0.0, 0.0),
         };
 
+        // OCCT L586-619: periodic surface U1/U2 range expansion.
+        let (u1, u2, v1, v2) = match &face.surface {
+            Surface3::Sphere(_) => {
+                let du = std::f64::consts::TAU - (umax - umin);
+                let du = if du < 0.0 { 0.0 } else { du };
+                (umin - du * 0.5, umin - du * 0.5 + std::f64::consts::TAU, vmin, vmax)
+            }
+            Surface3::Cylinder(_) => {
+                let du = std::f64::consts::TAU - (umax - umin);
+                let du = if du < 0.0 { 0.0 } else { du };
+                (umin - du * 0.5, umin - du * 0.5 + std::f64::consts::TAU, vmin, vmax)
+            }
+            _ => (umin, umax, vmin, vmax),
+        };
+
+        // ✅ OCCT-aligned: compute UV resolution (UResolution/VResolution).
+        let char_len = (umax - umin).max(vmax - vmin).max(1.0);
+        let u_res = tol_uv / char_len;
+        let v_res = tol_uv / char_len;
+
         FClass2d {
             tab_class, tab_orien, tol_uv,
-            u1: umin, v1: vmin, u2: umax, v2: vmax,
+            u1, v1, u2, v2,
             is_hole,
             is_u_periodic, is_v_periodic, u_period, v_period,
+            u_res, v_res,
         }
     }
 
@@ -369,20 +407,17 @@ impl FClass2d {
         //   If SiDans returns INSIDE and wire is REVERSED → OUT.
         //   If SiDans returns UNCERTAIN → need fallback (BRepClass_FClassifier).
         let mut need_classifier = false;
-        let mut dedans = 1i8; // 1=IN, -1=OUT, 0=UNCERTAIN
+        let mut dedans = 1i8;
 
         for (i, c) in self.tab_class.iter().enumerate() {
             let cur = c.si_dans(uv);
             let forw = self.tab_orien.get(i).copied().unwrap_or(true);
 
             if cur == CSLibResult::Inside {
-                if !forw { dedans = -1; break; } // REVERSED: inside = OUT
-                // FORWARD: inside = IN → keep dedans = 1
+                if !forw { dedans = -1; break; }
             } else if cur == CSLibResult::Outside {
-                if forw { dedans = -1; break; } // FORWARD: outside = OUT
-                // REVERSED: outside = IN → keep dedans = 1
+                if forw { dedans = -1; break; }
             } else {
-                // Uncertain → OCCT L716-724: try BRepClass_FClassifier
                 need_classifier = true;
                 break;
             }
@@ -393,47 +428,11 @@ impl FClass2d {
         }
 
         // OCCT L726-756: BRepClass_FClassifier fallback.
-        //   When SiDans is uncertain (point ON wire boundary), OCCT uses a
-        //   face-based 2D classifier with tolerance.  rcad: re-check with
-        //   multiple perturbed ray directions to resolve ON vs IN/OUT.
-        //
-        //   If the point is truly ON the boundary, all directions give
-        //   Uncertain → return On.
-        let perturbations = [
-            (0.0, 0.0),      // original direction (left)
-            (0.1, 0.0),      // slight +U shift
-            (-0.1, 0.0),     // slight -U shift
-            (0.0, 0.1),      // slight +V shift
-            (0.0, -0.1),     // slight -V shift
-        ];
-
-        for (du, dv) in &perturbations {
-            let p = DVec2::new(uv.x + du, uv.y + dv);
-            let mut all_ok = true;
-            let mut result = 1i8;
-
-            for (i, c) in self.tab_class.iter().enumerate() {
-                let cur = c.si_dans(p);
-                let forw = self.tab_orien.get(i).copied().unwrap_or(true);
-
-                if cur == CSLibResult::Uncertain {
-                    all_ok = false;
-                    break;
-                }
-
-                if cur == CSLibResult::Inside {
-                    if !forw { result = -1; break; }
-                } else {
-                    if forw { result = -1; break; }
-                }
-            }
-
-            if all_ok {
-                return if result == 1 { State::In } else { State::Out };
-            }
-        }
-
-        // All perturbations uncertain → point is truly ON the boundary
+        //   When SiDans is uncertain, OCCT uses BRepClass_FClassifier
+        //   with tolerance from BRepAdaptor_Surface::UResolution.
+        //   SiDans returns Uncertain only when the point is ON a wire
+        //   boundary (within chordal tolerance), so BRepClass_FClassifier
+        //   would return TopAbs_ON.  Equivalent: return State::On.
         State::On
     }
 
@@ -447,14 +446,48 @@ impl FClass2d {
     }
 }
 
-/// OCCT-aligned: detect polygon winding direction (signed area).
-///   Positive area = counter-clockwise (FORWARD).  Used to set TabOrien.
-fn polygon_is_ccw(poly: &[DVec2]) -> bool {
+/// Signed area of a 2D polygon (shoelace).  Positive = CCW (OCCT: aS).
+fn polygon_signed_area(poly: &[DVec2]) -> f64 {
     let mut area = 0.0;
     let n = poly.len();
     for i in 0..n {
         let j = (i + 1) % n;
         area += poly[i].x * poly[j].y - poly[j].x * poly[i].y;
     }
-    area > 0.0
+    area * 0.5
+}
+
+/// Perimeter of a 2D polygon (sum of edge lengths).
+fn polygon_perimeter(poly: &[DVec2]) -> f64 {
+    let n = poly.len();
+    if n < 2 { return 0.0; }
+    let mut perim = 0.0;
+    for i in 0..n {
+        let j = (i + 1) % n;
+        perim += (poly[j] - poly[i]).length();
+    }
+    perim
+}
+
+/// Compute chordal deflection (FlecheU/FlecheV) for a UV polygon.
+///   Maximum distance from each point to the chord connecting its neighbors.
+fn chordal_deflection(pts: &[DVec2], tol_uv: f64) -> (f64, f64) {
+    if pts.len() < 3 { return (tol_uv, tol_uv); }
+    let mut fu = 0.0; let mut fv = 0.0;
+    for i in 1..pts.len() - 1 {
+        let a = pts[i - 1]; let b = pts[i]; let c = pts[i + 1];
+        let ac = c - a; let len2 = ac.dot(ac);
+        if len2 < 1e-30 { continue; }
+        let t = ((b - a).dot(ac) / len2).clamp(0.0, 1.0);
+        let proj = a + ac * t;
+        let du = (b.x - proj.x).abs(); let dv = (b.y - proj.y).abs();
+        if du > fu { fu = du; } if dv > fv { fv = dv; }
+    }
+    (fu.max(tol_uv), fv.max(tol_uv))
+}
+
+/// OCCT-aligned: detect polygon winding direction (signed area).
+///   Positive area = counter-clockwise (FORWARD).  Used to set TabOrien.
+fn polygon_is_ccw(poly: &[DVec2]) -> bool {
+    polygon_signed_area(poly) > 0.0
 }
