@@ -1228,4 +1228,31 @@ mod tests {
         };
         let _ = format!("{:?}", ei);
     }
+
+    #[test]
+    fn edge_angle_2d_none_for_zero_range() {
+        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let p = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let a = edge_angle_2d(&line, 0.5, [0.0, 0.0], &p, false, 1e-5);
+        assert!(a.is_none());
+    }
+
+    #[test]
+    fn edge_angle_2d_line_on_plane() {
+        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let p = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let a = edge_angle_2d(&line, 0.5, [0.0, 1.0], &p, false, 1e-5);
+        assert!(a.is_some());
+    }
+
+    #[test]
+    fn edge_angle_2d_is_in_flips() {
+        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let p = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let a_out = edge_angle_2d(&line, 0.9, [0.0, 1.0], &p, false, 1e-5).unwrap();
+        let a_in = edge_angle_2d(&line, 0.9, [0.0, 1.0], &p, true, 1e-5).unwrap();
+        let diff = (a_out - a_in).abs();
+        assert!((diff - std::f64::consts::PI).abs() < 0.01,
+            "expected ~PI between in/out, got {}", diff);
+    }
 }
