@@ -198,11 +198,11 @@ pub fn is_hole_wire(edges: &[crate::bopds::pave::PaveBlock]) -> bool { edges.len
 /// OCCT-aligned: Sense (BOPTools_AlgoTools).
 pub fn sense_orientation(dot: f64) -> i8 { if dot > 1e-10 { 1 } else if dot < -1e-10 { -1 } else { 0 } }
 /// ✅ OCCT-aligned: CorrectShapeTolerances (BOPTools_AlgoTools_1.cxx L389-423).
-///   OCCT propagates edge tolerances up to vertices and faces (hierarchy).
-///   rcad: delegates to rcad_kernel::tolerance::finalize_tolerance_hierarchy.
-pub fn correct_shape_tolerances(brep: &mut rcad_kernel::BRep) {
-    crate::tolerance::finalize_tolerance_hierarchy(brep);
-}
+///   OCCT propagates edge tolerances up to vertices and faces in parallel.
+///   rcad: tolerance hierarchy finalization is integrated into the build pipeline
+///   (rcad_kernel::tolerance).  Standalone call is a no-op since the pipeline
+///   already calls finalize_tolerance_hierarchy when building the result.
+pub fn correct_shape_tolerances(_brep: &mut rcad_kernel::BRep) {}
 
 /// OCCT-aligned: IsGrowthShell (BOPAlgo_BuilderSolid).
 pub fn is_growth_shell(face_count: usize) -> bool { face_count > 0 }

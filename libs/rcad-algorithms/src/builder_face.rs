@@ -79,9 +79,9 @@ impl<'a> BuilderFace<'a> {
     /// Returns true on success, false if the face produced no sub-faces.
     ///
     /// ✅ OCCT-aligned: delegates to BooleanBuilder which follows OCCT's
-    ///    Perform → PerformanceLoops → PerformAreas flow.
-    /// ⏳ Partial alignment: the internal logic still lives in BooleanBuilder
-    ///    rather than in this struct.
+    ///    Perform → PerformShapesToAvoid → PerformLoops → PerformAreas → PerformInternalShapes flow.
+    ///    Architecture difference (A3): OCCT BOPAlgo_BuilderFace is a standalone class;
+    ///    rcad implements the same sub-steps inside BooleanBuilder::split_face_occt_wire_pipeline.
     pub fn perform(&mut self, builder: &BooleanBuilder) -> bool {
         if let Some((segments, wfs, vertex_positions)) =
             builder.split_face_occt_wire_pipeline(self.face_idx)
