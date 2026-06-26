@@ -21,6 +21,9 @@ pub struct FaceInfo {
     pub vertices_on: BTreeSet<usize>,
     /// Vertex indices that lie IN this face (from F-F intersection).
     pub vertices_in: BTreeSet<usize>,
+    /// ✅ OCCT-aligned: BOPDS_FaceInfo::VerticesSc (hxx:122-123).
+    ///   Vertex indices from section curves (FF intersection).
+    pub vertices_sc: BTreeSet<usize>,
 }
 
 impl FaceInfo {

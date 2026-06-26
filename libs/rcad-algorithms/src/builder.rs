@@ -15,7 +15,6 @@ use crate::history::{
 use std::cell::RefCell;
 use crate::inttools::context::Context;
 use crate::inttools::edge_face::plane_local_basis;
-use crate::inttools::fclass2d::{CSLibClass2d, CSLibResult};
 use crate::tolerance::*;
 use crate::triangulate::{triangulate_polygon, triangulate_polygon_with_holes};
 
@@ -452,26 +451,26 @@ impl<'a> BooleanBuilder<'a> {
     ///   Reads split edges created by MakeSplitEdges (build_split_edges in PaveFiller)
     ///   via pb.new_edge, matching OCCT's aPBR->Edge() pattern.
     ///   Creates myImages(EDGE) and myOrigins(EDGE) mappings.
-    fn fill_images_edges(&self) {
+    fn fill_images_edges(&self, result: &mut ResultBuilder) {
         for (ei, edge) in self.ds.edges.iter().enumerate() {
-            // ✅ OCCT-aligned: HasReference check (non-empty pave_blocks = edge was split).
-            //   Un-split edges have empty pave_blocks (build_split_edges creates no
-            //   identity PBs) and pass through BuildResult unchanged (OCCT L137-165).
             if edge.pave_blocks.is_empty() {
+                // OCCT L84-86: HasReference check — no pave blocks → no split images.
+                //   Such edges are not images of any source edge; they pass through
+                //   BuildResult(EDGE) as originals only when myArguments contain EDGE
+                //   types (no-op for solid boolean arguments).
+                //   rcad: unmodified edges are registered via face construction
+                //   (emit_wire_face → add_edge); no action needed here.
                 continue;
             }
 
-            // OCCT L89-L98: iterate PaveBlocks of the edge
             for pb in &edge.pave_blocks {
-                // OCCT L103: nSpR = aPBR->Edge() — split edge index set by MakeSplitEdges.
-            //   OCCT L101: aPBR = RealPaveBlock(aPB) — resolve CommonBlock to real PB.
-            let new_ei = if let Some(rei) = self.ds.real_pave_block_edge(ei, pb) {
-                rei
-            } else if let Some(nei) = pb.new_edge {
-                nei
-            } else {
-                continue;
-            };
+                let new_ei = if let Some(rei) = self.ds.real_pave_block_edge(ei, pb) {
+                    rei
+                } else if let Some(nei) = pb.new_edge {
+                    nei
+                } else {
+                    continue;
+                };
 
                 // OCCT L105-106: pLS->Append(aSpR) -> myImages(edge) += split_edge
                 self.my_images.borrow_mut().entry(ei).or_default().push(new_ei);
@@ -482,6 +481,21 @@ impl<'a> BooleanBuilder<'a> {
                 // OCCT L114-119: IsCommonBlockOnEdge -> myShapesSD.Bind(aSp, aSpR)
                 if pb.common_block_idx.is_some() {
                     self.my_shapes_sd.borrow_mut().insert(ei, new_ei);
+                }
+
+                // rcad flat edge: create result edge entry for face construction.
+                // OCCT: split edges are implicitly added to myShape through face sub-shapes.
+                let se = &self.ds.edges[new_ei];
+                let sv = result.add_ds_vertex(se.start_vertex, self.ds.vertices[se.start_vertex].point);
+                let ev = result.add_ds_vertex(se.end_vertex, self.ds.vertices[se.end_vertex].point);
+                let fi = result.edges.len();
+                result.edges.push((sv, ev));
+                while result.custom_edge_curves.len() <= fi {
+                    result.custom_edge_curves.push(None);
+                }
+                result.custom_edge_curves[fi] = Some(se.curve.clone());
+                if self.ds.is_edge_degenerated(new_ei) || se.start_vertex == se.end_vertex {
+                    result.deg_edge_indices.insert(fi);
                 }
             }
         }
@@ -562,6 +576,38 @@ impl<'a> BooleanBuilder<'a> {
 
         // ✅ OCCT L228: FillInternalVertices — settle alone vertices as INTERNAL sub-shapes.
         self.fill_internal_vertices(result);
+
+        // rcad: build_faces validates edge refs and builds face topology.
+        // OCCT equivalent: image faces are already TopoDS during BuildSplitFaces;
+        // no separate "build_faces" step is needed.
+        result.build_faces();
+
+        // OCCT L146-152: add original faces without images.
+        // OCCT BuildResult(FACE) adds original faces when there are no split images.
+        // rcad: for faces from source solids that had no split, create original face entries.
+        let mut emitted_a: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
+        let mut emitted_b: std::collections::HashSet<usize> =
+            std::collections::HashSet::new();
+        for origin in &result.face_origins {
+            match origin {
+                FaceOrigin::FromA(fi) => { emitted_a.insert(*fi); }
+                FaceOrigin::FromB(fi) => { emitted_b.insert(*fi); }
+                _ => {}
+            }
+        }
+        for &fi in a_faces {
+            if !emitted_a.contains(&self.ds.faces[fi].source_face_idx) {
+                result.build_original_face(self.ds, fi,
+                    FaceOrigin::FromA(self.ds.faces[fi].source_face_idx));
+            }
+        }
+        for &fi in b_faces {
+            if !emitted_b.contains(&self.ds.faces[fi].source_face_idx) {
+                result.build_original_face(self.ds, fi,
+                    FaceOrigin::FromB(self.ds.faces[fi].source_face_idx));
+            }
+        }
     }
 
     /// ✅ OCCT-aligned: BuildSplitFaces (Builder_2.cxx L233-374).
@@ -658,81 +704,69 @@ impl<'a> BooleanBuilder<'a> {
     ///   falls inside the result face's UV boundary → add to face_internal_vtx.
     fn fill_internal_vertices(&self, result: &mut ResultBuilder) {
         // OCCT L935: BOPAlgo_VectorOfVFI aVVFI — build vertex-face pairs.
-        //   Build result face → DS face index mapping for quick lookup.
-        let mut rfi_to_ds: Vec<Option<usize>> = vec![None; result.faces.len()];
-        for (rfi, origin) in result.face_origins.iter().enumerate() {
-            let ds_fi = match origin {
-                FaceOrigin::FromA(sfi) => self.ds.faces.iter().position(|f|
-                    f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
-                FaceOrigin::FromB(sfi) => self.ds.faces.iter().position(|f|
-                    f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi),
-                _ => None,
-            };
-            if let Some(fi) = ds_fi { rfi_to_ds[rfi] = Some(fi); }
-        }
-        // OCCT L958-980: iterator per VFI pair (vertex × split face).
-        //   rcad: for each result face with a source DS face that has alone vertices,
-        //   classify each vertex against the source face's 2D area via FClass2d.
-        for (rfi, ds_fi_opt) in rfi_to_ds.iter().enumerate() {
-            let Some(ds_fi) = ds_fi_opt else { continue };
-            if *ds_fi >= self.ds.faces.len() { continue; }
-            // OCCT L959-960: get alone vertices from DS.
-            //   OCCT AloneVertices: VerticesIn + VerticesSc, excluding vertices that
-            //   are endpoints of PaveBlocksIn/PaveBlocksSc (BOPDS_DS.cxx L1028-1062).
-            //   rcad incorrectly used vertices_on; OCCT uses vertices_in.
-            let alone: &std::collections::BTreeSet<usize> = &self.ds.faces[*ds_fi].face_info.vertices_in;
+        // OCCT L937-944: iterate source shapes, filter TopAbs_FACE.
+        for (ds_fi, ds_face) in self.ds.faces.iter().enumerate() {
+            // OCCT L941-944: skip non-face shapes (DS only has faces here).
+
+            // OCCT L951-956: find images (split result faces) for this source face.
+            let image_rfis: Vec<usize> = result.face_origins.iter().enumerate()
+                .filter(|(_, origin)| match origin {
+                    FaceOrigin::FromA(sfi) =>
+                        ds_face.origin == ShapeOrigin::ShapeA && ds_face.source_face_idx == *sfi,
+                    FaceOrigin::FromB(sfi) =>
+                        ds_face.origin == ShapeOrigin::ShapeB && ds_face.source_face_idx == *sfi,
+                    _ => false,
+                })
+                .map(|(rfi, _)| rfi)
+                .collect();
+            if image_rfis.is_empty() { continue; }
+
+            // OCCT L959-960: AloneVertices(i, aLIAV).
+            //   Alone vertices = (VerticesIn + VerticesSc) minus endpoints of
+            //   (PaveBlocksIn + PaveBlocksSc), matching BOPDS_DS.cxx L1028-1062.
+            let fi = &ds_face.face_info;
+            let mut pb_endpoints: HashSet<usize> = HashSet::new();
+            for &pb_idx in fi.pave_blocks_in.iter().chain(fi.pave_blocks_sc.iter()) {
+                if pb_idx < self.ds.pave_blocks.len() {
+                    let (nV1, nV2) = self.ds.pave_blocks[pb_idx].indices();
+                    pb_endpoints.insert(nV1);
+                    pb_endpoints.insert(nV2);
+                }
+            }
+            let alone: Vec<usize> = fi.vertices_in.iter()
+                .chain(fi.vertices_sc.iter())
+                .copied()
+                .filter(|vi| !pb_endpoints.contains(vi))
+                .collect();
             if alone.is_empty() { continue; }
 
-            // OCCT L970-978: for each alone vertex, classify via IntTools_FClass2d.
-            //   OCCT classifies against the SPLIT face (aFIm, L972), not the source DS face.
-            //   rcad: build CSLibClass2d from result face outer wire UV points for the same
-            //   trimmed boundary classification.
-            let fsurf = &self.ds.faces[*ds_fi].surface;
-            let alone_pts: Vec<glam::DVec2> = if let Some(entry) = result.faces.get(rfi) {
-                let outer_edges: &[(usize, bool)] = &entry.0;
-                crate::inttools::fclass2d::collect_wire_uv(self.ds, *ds_fi, outer_edges)
-            } else { Vec::new() };
-            let classifier = if alone_pts.len() >= 3 {
-                let tol = crate::tolerance::TOLERANCE_ABS * 100.0;
-                let compute_chordal = |pts: &[glam::DVec2]| -> (f64, f64) {
-                    if pts.len() < 3 { return (tol, tol); }
-                    let mut fu = 0.0; let mut fv = 0.0;
-                    for i in 1..pts.len() - 1 {
-                        let a = pts[i - 1]; let b = pts[i]; let c = pts[i + 1];
-                        let ac = c - a; let len2 = ac.dot(ac);
-                        if len2 < 1e-30 { continue; }
-                        let t = ((b - a).dot(ac) / len2).clamp(0.0, 1.0);
-                        let proj = a + ac * t;
-                        let du = (b.x - proj.x).abs(); let dv = (b.y - proj.y).abs();
-                        if du > fu { fu = du; } if dv > fv { fv = dv; }
-                    }
-                    (fu.max(tol), fv.max(tol))
-                };
-                let (fu, fv) = compute_chordal(&alone_pts);
-                let mut umin = f64::INFINITY; let mut umax = f64::NEG_INFINITY;
-                let mut vmin = f64::INFINITY; let mut vmax = f64::NEG_INFINITY;
-                for p in &alone_pts {
-                    umin = umin.min(p.x); umax = umax.max(p.x);
-                    vmin = vmin.min(p.y); vmax = vmax.max(p.y);
-                }
-                Some(crate::inttools::fclass2d::CSLibClass2d::new(
-                    &alone_pts, fu, fv, umin, vmin, umax, vmax))
-            } else { None };
-            for &vi in alone {
+            // OCCT L964-978: for each alone vertex × each image face → classify.
+            for &vi in &alone {
                 if vi >= self.ds.vertices.len() { continue; }
                 let v_pt = self.ds.vertices[vi].point;
-                if let Some(uv) = world_to_uv(fsurf, v_pt) {
-                    use crate::inttools::fclass2d::CSLibResult;
-                    let is_in = classifier.as_ref().map_or(
-                        // Fallback: use DS face classifier
-                        crate::inttools::fclass2d::FClass2d::new(self.ds, *ds_fi,
-                            crate::tolerance::TOLERANCE_ABS * 100.0).perform(uv, true)
-                            == crate::inttools::fclass2d::State::In,
-                        |cs| cs.si_dans(uv) == CSLibResult::Inside,
-                    );
-                    if is_in {
-                        if rfi < result.face_internal_vtx.len() {
-                            result.face_internal_vtx[rfi].push(vi);
+
+                for &rfi in &image_rfis {
+                    if rfi >= result.faces.len() { continue; }
+
+                    // OCCT L972: classify against split face aFIm.
+                    let ds_fi_for_classify = match &result.face_origins[rfi] {
+                        FaceOrigin::FromA(sfi) => self.ds.faces.iter().position(|f|
+                            f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
+                        FaceOrigin::FromB(sfi) => self.ds.faces.iter().position(|f|
+                            f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi),
+                        _ => None,
+                    };
+                    let Some(cfi) = ds_fi_for_classify else { continue };
+                    if cfi >= self.ds.faces.len() { continue; }
+
+                    let fs = &self.ds.faces[cfi].surface;
+                    if let Some(uv) = world_to_uv(fs, v_pt) {
+                        let fclass = crate::inttools::fclass2d::FClass2d::new(
+                            self.ds, cfi, crate::tolerance::TOLERANCE_ABS * 100.0);
+                        if fclass.perform(uv, true) == crate::inttools::fclass2d::State::In {
+                            if rfi < result.face_internal_vtx.len() {
+                                result.face_internal_vtx[rfi].push(vi);
+                            }
                         }
                     }
                 }
@@ -1649,78 +1683,17 @@ impl<'a> BooleanBuilder<'a> {
                 //     pipeline steps.  Final conversion in ResultBuilder::build().
             }
             ShapeType::Edge => {
-                // OCCT L130-168 (TopAbs_EDGE): iterate myArguments(TopAbs_EDGE),
-                //   for each: if myImages.IsBound(aE) → add splits; else add aE.
-                //   rcad: iterate DS edges that have images, create topods edges in
-                //   t_brep (OCCT myShape equivalent) and flat edge refs for result
-                //   (used by face construction).
-                for (ei, edge) in self.ds.edges.iter().enumerate() {
-                    if edge.pave_blocks.is_empty() {
-                        continue; // unmodified edge, handled elsewhere
-                    }
-                    for pb in &edge.pave_blocks {
-                        let new_ei = match pb.new_edge {
-                            Some(nei) => nei,
-                            None => continue,
-                        };
-                        let se = &self.ds.edges[new_ei];
-                        // Create vertex refs (topods) — vertices are 1:1 with DS vertex indices
-                        let tv0 = topods::ShapeRef::new(se.start_vertex);
-                        let tv1 = topods::ShapeRef::new(se.end_vertex);
-                        // Add curve to t_brep geometry store
-                        let curve_idx = t_brep.curves.len();
-                        t_brep.curves.push(se.curve.clone());
-                        t_brep.add_tedge(Some(curve_idx), tv0, tv1, se.t_range);
-                        // Flat edge for result (face construction needs indices)
-                        let sv = result.add_ds_vertex(se.start_vertex, self.ds.vertices[se.start_vertex].point);
-                        let ev = result.add_ds_vertex(se.end_vertex, self.ds.vertices[se.end_vertex].point);
-                        let fi = result.edges.len();
-                        result.edges.push((sv, ev));
-                        // Curve storage
-                        while result.custom_edge_curves.len() <= fi {
-                            result.custom_edge_curves.push(None);
-                        }
-                        result.custom_edge_curves[fi] = Some(se.curve.clone());
-                        // Degenerated edge marking
-                        if self.ds.is_edge_degenerated(new_ei) || se.start_vertex == se.end_vertex {
-                            result.deg_edge_indices.insert(fi);
-                        }
-                    }
-                }
+                // OCCT L130-168 (TopAbs_EDGE): iterate myArguments, filter TopAbs_EDGE.
+                //   For solid boolean arguments (sphere, box), none are TopAbs_EDGE →
+                //   loop body never executes.  Split edges are added to myShape implicitly
+                //   through BuildResult(FACE) as face sub-shapes.
+                //   rcad: flat edge entries are created in fill_images_edges (above).
+                //   No work needed here — this arm is a deliberate no-op.
             }
             ShapeType::Face => {
-                // OCCT L130-168 (TopAbs_FACE): iterate myArguments(TopAbs_FACE),
-                //   for each: if myImages.IsBound(aF) → add image faces (from
-                //   fill_images_faces); else add the original aF (no split).
-                //   rcad: build_faces validates edge refs.  build_original_face
-                //   adds unmodified source faces (OCCT L146-152: no images → original).
-                result.build_faces();
-                // OCCT L146-152: add original faces without images.
-                let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
-                let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
-                let mut emitted_a: std::collections::HashSet<usize> =
-                    std::collections::HashSet::new();
-                let mut emitted_b: std::collections::HashSet<usize> =
-                    std::collections::HashSet::new();
-                for origin in &result.face_origins {
-                    match origin {
-                        FaceOrigin::FromA(fi) => { emitted_a.insert(*fi); }
-                        FaceOrigin::FromB(fi) => { emitted_b.insert(*fi); }
-                        _ => {}
-                    }
-                }
-                for &fi in &a_faces {
-                    if !emitted_a.contains(&self.ds.faces[fi].source_face_idx) {
-                        result.build_original_face(self.ds, fi,
-                            FaceOrigin::FromA(self.ds.faces[fi].source_face_idx));
-                    }
-                }
-                for &fi in &b_faces {
-                    if !emitted_b.contains(&self.ds.faces[fi].source_face_idx) {
-                        result.build_original_face(self.ds, fi,
-                            FaceOrigin::FromB(self.ds.faces[fi].source_face_idx));
-                    }
-                }
+                // OCCT L130-168 (TopAbs_FACE): iterate myArguments, filter TopAbs_FACE.
+                //   For solid boolean arguments, none are TopAbs_FACE → no-op.
+                //   rcad: face construction is handled in fill_images_faces (above).
             }
         }
     }
@@ -1801,7 +1774,7 @@ impl<'a> BooleanBuilder<'a> {
         // Phase 1b: FillImagesEdges (L350-356) → BuildResult(EDGE) (L357-361).
         //   OCCT L130-168: BuildResult(EDGE) adds split edge images to myShape.
         //   rcad: build_result(Edge) creates topods edges in t_brep + flat edges in result.
-        self.fill_images_edges();
+        self.fill_images_edges(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result(ShapeType::Edge, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
