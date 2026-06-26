@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet, BTreeMap, VecDeque};
 use glam::DVec2; use glam::DVec3;
 use rcad_kernel::geom::*;
 use crate::bopds::ds::*; use crate::tolerance::*;
+use crate::dbg_smartmap;
 use super::types::{WireSegment, WireEdgeSource, WireFace};
 use super::wire_path::{pc_parameter_range, refine_angles, walk_path_extract_wires};
 use crate::builder::point_in_polygon_2d;
@@ -605,13 +606,15 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
 
             // OCCT L167-172: ONE EdgeInfo per vertex, in_flag from vertex orientation.
             // OCCT TopoDS_Edge: first vertex → FORWARD (out), second → REVERSED (in).
-            // rcad fwd seg (forward=true): start=FORWARD→out, end=REVERSED→in.
-            // rcad rev seg (forward=false): start=REVERSED→in, end=FORWARD→out.
-            let sv_in = !seg.forward;
+            // rcad: regardless of forward flag, start_vertex is geometrically where the
+            // edge begins (OUT) and end_vertex is where it ends (IN).  Using forward flag
+            // would create imbalanced IN/OUT for FWD+REV section edge pairs (v5 got 2 OUT,
+            // v3 got 2 IN), breaking Path walking at irregular vertices.
+            let sv_in = false;  // start_vertex → FORWARD/out
             smart_map.entry(seg.start_vertex).or_default().push(EdgeInfo {
                 seg_idx: si, passed: false, in_flag: sv_in, is_inside, is_circle_arc, angle: 0.0,
             });
-            let ev_in = seg.forward;
+            let ev_in = true;   // end_vertex → REVERSED/in
             smart_map.entry(seg.end_vertex).or_default().push(EdgeInfo {
                 seg_idx: si, passed: false, in_flag: ev_in, is_inside, is_circle_arc, angle: 0.0,
             });
@@ -738,6 +741,7 @@ pub(crate) fn split_block(
 ) {
     // OCCT L327: RefineAngles — compute turning angles at each vertex.
     refine_angles(smart_map, segments, ds, face_idx);
+    dbg_smartmap!("split_block", face_idx, smart_map);
 
     // OCCT L331-358: Path walk — iterate all unpassed OUT entries.
     let mut start_candidates: Vec<(usize, usize)> = Vec::new();
