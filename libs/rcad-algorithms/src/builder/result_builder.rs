@@ -725,6 +725,7 @@ impl ResultBuilder {
         let mut face_refs: Vec<ShapeRef> = Vec::with_capacity(self.faces.len());
 
         // 4. Faces — build wires, then face TShapes
+        let mut flat_fi = 0usize;
         for (edge_indices, inner_wire_edges, _triangles, _normal, surface, _uv_domain, _centroid, _area, sample_point, internal_wire_edges) in self.faces {
             // Build outer wire
             let outer_edges: Vec<ShapeRef> = edge_indices.iter().map(|&(idx, forward)| {
@@ -770,8 +771,12 @@ impl ResultBuilder {
 
             let surf_idx = t.surfaces.len();
             t.surfaces.push(surface);
-            let face_sr = t.add_tface(Some(surf_idx), outer_wire, inner_wires, Some(sample_point), _uv_domain);
+            let internal_vtx: Vec<topods::ShapeRef> = self.face_internal_vtx.get(flat_fi).map_or(vec![], |v| {
+                v.iter().map(|&vi| topods::ShapeRef::new(vi)).collect()
+            });
+            let face_sr = t.add_tface(Some(surf_idx), outer_wire, inner_wires, Some(sample_point), _uv_domain, internal_vtx);
             face_refs.push(face_sr);
+            flat_fi += 1;
         }
 
         if self.solids.is_empty() && self.shells.is_empty() {

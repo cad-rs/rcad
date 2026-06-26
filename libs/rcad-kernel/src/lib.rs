@@ -327,6 +327,7 @@ impl BRep {
             e_map.push(sr);
         }
         // Solids -> shells -> faces -> wires
+        let mut flat_fi = 0usize;
         for solid in &self.solids {
             let mut shell_refs = Vec::new();
             for shell in &solid.shells {
@@ -335,8 +336,12 @@ impl BRep {
                     let outer_wire = Self::wire_to_topods(&mut t, &e_map, &face.outer_wire);
                     let inner_wires: Vec<topods::ShapeRef> = face.inner_wires.iter()
                         .map(|w| Self::wire_to_topods(&mut t, &e_map, w)).collect();
-                    let sr = t.add_tface(face.surface_idx, outer_wire, inner_wires, face.sample_point, None);
+                    let internal_vtx: Vec<topods::ShapeRef> = self.geom.face_internal_vertices.get(flat_fi)
+                        .map(|v| v.iter().map(|&vi| topods::ShapeRef::new(vi)).collect())
+                        .unwrap_or_default();
+                    let sr = t.add_tface(face.surface_idx, outer_wire, inner_wires, face.sample_point, None, internal_vtx);
                     face_refs.push(sr);
+                    flat_fi += 1;
                 }
                 shell_refs.push(t.add_tshell(face_refs));
             }
@@ -422,6 +427,14 @@ impl BRep {
                                     brep.geom.face_surface_range.push(None);
                                 }
                                 brep.geom.face_surface_range[flat_fi] = fd.uv_domain;
+                                // OCCT: BRep_Builder.Add(aF, aV) — INTERNAL vertices.
+                                let internal_vtx: Vec<usize> = fd.internal_vertices.iter()
+                                    .filter_map(|sr| v_map.get(sr.index).copied())
+                                    .collect();
+                                while brep.geom.face_internal_vertices.len() <= flat_fi {
+                                    brep.geom.face_internal_vertices.push(Vec::new());
+                                }
+                                brep.geom.face_internal_vertices[flat_fi] = internal_vtx;
                                 flat_fi += 1;
                             }
                         }

@@ -598,7 +598,8 @@ impl<'a> BooleanBuilder<'a> {
     ///   classify alone vertices from its source DS face.  If the vertex
     ///   falls inside the result face's UV boundary → add to face_internal_vtx.
     fn fill_internal_vertices(&self, result: &mut ResultBuilder) {
-        // Build result face → DS face index mapping for quick lookup.
+        // OCCT L935: BOPAlgo_VectorOfVFI aVVFI — build vertex-face pairs.
+        //   Build result face → DS face index mapping for quick lookup.
         let mut rfi_to_ds: Vec<Option<usize>> = vec![None; result.faces.len()];
         for (rfi, origin) in result.face_origins.iter().enumerate() {
             let ds_fi = match origin {
@@ -608,32 +609,32 @@ impl<'a> BooleanBuilder<'a> {
                     f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi),
                 _ => None,
             };
-            if let Some(fi) = ds_fi {
-                rfi_to_ds[rfi] = Some(fi);
-            }
+            if let Some(fi) = ds_fi { rfi_to_ds[rfi] = Some(fi); }
         }
-
-        // For each result face, check its source DS face for alone vertices.
+        // OCCT L958-980: iterator per VFI pair (vertex × split face).
+        //   rcad: for each result face with a source DS face that has alone vertices,
+        //   classify each vertex against the source face's 2D area via FClass2d.
         for (rfi, ds_fi_opt) in rfi_to_ds.iter().enumerate() {
             let Some(ds_fi) = ds_fi_opt else { continue };
             if *ds_fi >= self.ds.faces.len() { continue; }
+            // OCCT L959-960: get alone vertices from DS.
             let alone: &std::collections::BTreeSet<usize> = &self.ds.faces[*ds_fi].face_info.vertices_on;
             if alone.is_empty() { continue; }
 
-            // Get the result face's UV domain for vertex-in-face classification.
-            let uv_domain = result.faces[rfi].5;
+            // OCCT L970-978: for each alone vertex, classify via IntTools_FClass2d.
+            let mut fclass2d = crate::inttools::fclass2d::FClass2d::new(self.ds, *ds_fi, crate::tolerance::TOLERANCE_ABS * 100.0);
+            let fsurf = &self.ds.faces[*ds_fi].surface;
             for &vi in alone {
                 if vi >= self.ds.vertices.len() { continue; }
-                // OCCT BOPAlgo_VFI: classify vertex against split face via
-                // IntTools_FClass2d.  rcad: vertex ON face surface + within
-                // UV boundary → add as INTERNAL to the face.
-                if let Some(_domain) = uv_domain {
-                    // Check if vertex falls within the face's UV bounds on its surface.
-                    // For planar faces this is a 2D point-in-polygon test against the
-                    // face boundary; for curved faces it's a UV rectangle check.
-                    // rcad: store in face_internal_vtx for further classification.
-                    if rfi < result.face_internal_vtx.len() {
-                        result.face_internal_vtx[rfi].push(vi);
+                let v_pt = self.ds.vertices[vi].point;
+                // Project vertex to face UV and classify.
+                if let Some(uv) = world_to_uv(fsurf, v_pt) {
+                    use crate::inttools::fclass2d::State;
+                    // OCCT L1001-1007: if IsInternal → BRep_Builder.Add(aF, aV)
+                    if fclass2d.perform(uv, true) == State::In {
+                        if rfi < result.face_internal_vtx.len() {
+                            result.face_internal_vtx[rfi].push(vi);
+                        }
                     }
                 }
             }
@@ -658,15 +659,26 @@ impl<'a> BooleanBuilder<'a> {
 
         // OCCT L597-648: Build aFaceToParent map — faces from the same parent
         //   solid are NOT SD merged (prevents zero-thickness interior).
-        //   rcad: group by operand (A/B) as parent-solid proxy (matching OCCT
-        //   for the common case; falls back to is_from_a when multi-solid
-        //   operands are present — OCCT would track per-solid).
-        let is_from_a = |fi: usize| -> bool {
-            matches!(&result.face_origins[fi], FaceOrigin::FromA(_))
+        //   OCCT: iterate NbSourceShapes → filter TopAbs_SOLID → TopExp_Explorer
+        //   collect sub-faces → aFaceToParent.Bind(aF, aSolid) → propagate to images.
+        //   rcad: use DSFace.source_solid_idx as parent-solid identity.  Result faces
+        //   with the same (operand, source_solid_idx) share a parent and are NOT merged.
+        let face_parent = |fi: usize| -> Option<(bool, usize)> {
+            let origin = match &result.face_origins[fi] {
+                FaceOrigin::FromA(_) => ShapeOrigin::ShapeA,
+                FaceOrigin::FromB(_) => ShapeOrigin::ShapeB,
+                _ => return None,
+            };
+            let ds_fi = self.ds.faces.iter().position(|f| {
+                f.origin == origin && f.source_face_idx == match &result.face_origins[fi] {
+                    FaceOrigin::FromA(sfi) => *sfi,
+                    FaceOrigin::FromB(sfi) => *sfi,
+                    _ => unreachable!(),
+                }
+            })?;
+            let solid_idx = self.ds.faces.get(ds_fi)?.source_solid_idx?;
+            Some((origin == ShapeOrigin::ShapeA, solid_idx))
         };
-        // OCCT: builds aFaceToParent from source SOLIDs, then propagates to
-        // split images (myImages).  rcad: source-solid hierarchy is not
-        // preserved in DS — is_from_a is the available proxy.
 
         // OCCT L659-684: Collect FF-interfering DS face indices into aFIVec.
         // rcad: build (origin, source_face_idx) set from FF interferences,
@@ -765,7 +777,7 @@ impl<'a> BooleanBuilder<'a> {
                 for j in (i + 1)..survivors.len() {
                     let fi = survivors[i];
                     let fj = survivors[j];
-                    if is_from_a(fi) == is_from_a(fj) {
+                    if face_parent(fi) == face_parent(fj) {
                         continue;
                     }
                     // Get interior point from result face fi
