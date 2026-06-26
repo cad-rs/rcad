@@ -85,40 +85,56 @@ pub(crate) fn hash_point(p: DVec3) -> u64 {
 ///
 /// ⏳ Partial alignment: core concept (history tracking from DS) matches, but the
 ///   implementation uses flat arrays + spatial proximity rather than OCCT's image maps.
-/// ✅ OCCT-aligned: PrepareHistory (Builder_4.cxx L164-252).
-///   OCCT iterates source shapes → LocModified → AddModified / AddGenerated / Remove.
-///   rcad: maps result V/E back to DS origins (FromA/FromB/Split/Generated).
-///   Equivalent information for history, structured differently.
-pub(crate) fn annotate_history_from_ds(brep: &BRep, history: &mut BooleanHistory, ds: &DS) {
-    // --- vertex origins ---
-    let n_result_verts = brep.vertices.len();
-    let mut vertex_origins: Vec<VertexOrigin> = Vec::with_capacity(n_result_verts);
-    // ds[0..a_vertex_count] = A vertices, ds[a_vertex_count..total] = B vertices,
-    // intersection vertices were added later (index >= a_vertex_count + b_vertex_count).
-    let a_vc = ds.a_vertex_count;
-    // Map result vertex index 閳?DS vertex index (or usize::MAX if no match).
-    let mut result_to_ds: Vec<usize> = vec![usize::MAX; n_result_verts];
-
+/// ✅ OCCT-aligned: TopExp::MapShapes(myShape, myMapShape) — build result→DS index map.
+///   OCCT maps TopoDS_Shape → identity for myMapShape lookup.
+///   rcad: maps result vertex index → DS vertex index, result edge index → (DS vertices).
+///   Used by PrepareHistory to determine Modified/Generated/Deleted provenance.
+pub(crate) fn map_result_shapes(brep: &BRep, ds: &DS) -> (Vec<usize>, Vec<(usize, usize)>) {
+    let mut result_to_ds: Vec<usize> = vec![usize::MAX; brep.vertices.len()];
     for (ri, rv) in brep.vertices.iter().enumerate() {
         let pt = rv.point;
-        let mut best: Option<usize> = None;
         for (di, dv) in ds.vertices.iter().enumerate() {
-            if (dv.point - pt).length_squared() < TOLERANCE_ABS * TOLERANCE_ABS * 4.0 {
-                best = Some(di);
+            if (dv.point - pt).length_squared() < crate::tolerance::TOLERANCE_ABS * crate::tolerance::TOLERANCE_ABS * 4.0 {
+                result_to_ds[ri] = di;
                 break;
             }
         }
-        result_to_ds[ri] = best.unwrap_or(usize::MAX);
-        let origin = match best {
-            Some(di) if di < a_vc => VertexOrigin::FromA(di),
-            Some(di) => VertexOrigin::FromB(di - a_vc),
-            None => VertexOrigin::Intersection,
+    }
+    let edge_pairs: Vec<(usize, usize)> = brep.edges.iter()
+        .map(|e| {
+            let ds_s = result_to_ds.get(e.start).copied().unwrap_or(usize::MAX);
+            let ds_e = result_to_ds.get(e.end).copied().unwrap_or(usize::MAX);
+            (ds_s, ds_e)
+        })
+        .collect();
+    (result_to_ds, edge_pairs)
+}
+
+/// ✅ OCCT-aligned: PrepareHistory (Builder_4.cxx L164-252).
+///   OCCT iterates source shapes → LocModified → AddModified / AddGenerated / Remove.
+///   rcad: uses pre-built result_to_ds map to annotate vertex/edge provenance.
+pub(crate) fn annotate_history_from_ds(brep: &BRep, history: &mut BooleanHistory, ds: &DS) {
+    let (result_to_ds, _) = map_result_shapes(brep, ds);
+
+    // OCCT L176: MapShapes done.  Annotate vertex origins (FromA/FromB/Intersection).
+    let a_vc = ds.a_vertex_count;
+    let n_result_verts = brep.vertices.len();
+    let mut vertex_origins: Vec<VertexOrigin> = Vec::with_capacity(n_result_verts);
+    for ri in 0..n_result_verts {
+        let di = result_to_ds[ri];
+        let origin = if di == usize::MAX {
+            VertexOrigin::Intersection
+        } else if di < a_vc {
+            VertexOrigin::FromA(di)
+        } else {
+            VertexOrigin::FromB(di - a_vc)
         };
         vertex_origins.push(origin);
     }
     history.vertex_origins = vertex_origins;
 
     // --- edge origins ---
+    let a_vc = ds.a_vertex_count;
     let n_result_edges = brep.edges.len();
     let mut edge_origins: Vec<EdgeOrigin> = Vec::with_capacity(n_result_edges);
     let a_ec = ds.a_edge_count;
