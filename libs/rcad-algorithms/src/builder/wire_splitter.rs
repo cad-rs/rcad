@@ -805,13 +805,20 @@ pub(crate) struct EdgeInfo {
 // physical edge).  The caller excludes these from the WireSplitter input.
 // ====================================================================
 /// ✅ OCCT-aligned: PerformShapesToAvoid (BOPAlgo_BuilderFace.cxx L152-235).
-pub(crate) fn perform_shapes_to_avoid(
+/// Physical edge identifier — groups WireSegments that belong to the same
+/// source DS edge (or intersection curve).  OCCT-aligned: TopoDS_Edge identity.
+pub(crate) type Pid = (u8, usize, usize, usize);
+
+/// Build PID→segment and PID→endpoint maps from WireSegments.
+/// OCCT: segments grouped by their TopoDS_Edge identity.
+pub(crate) fn build_pid_maps(
     segments: &[WireSegment],
     vi_to_canon: &[usize],
     ds: &DS,
-) -> std::collections::HashSet<usize> {
-    // Physical edge id -> (its two canonical endpoints, member segment indices).
-    type Pid = (u8, usize, usize, usize);
+) -> (
+    std::collections::HashMap<Pid, Vec<usize>>,       // pid → segment indices
+    std::collections::HashMap<Pid, (usize, usize)>,   // pid → (canon_start, canon_end)
+) {
     let mut pid_segs: std::collections::HashMap<Pid, Vec<usize>> = std::collections::HashMap::new();
     let mut pid_endpoints: std::collections::HashMap<Pid, (usize, usize)> = std::collections::HashMap::new();
     let canon = |v: usize| -> usize {
@@ -822,6 +829,33 @@ pub(crate) fn perform_shapes_to_avoid(
         pid_segs.entry(pid).or_default().push(si);
         pid_endpoints.entry(pid).or_insert_with(|| (canon(seg.start_vertex), canon(seg.end_vertex)));
     }
+    (pid_segs, pid_endpoints)
+}
+
+/// Expand avoided PIDs to segment indices.  Called by split_face_occt_wire_pipeline
+/// (OCCT: PerformLoops checks myShapesToAvoid.Contains, rcad needs segment indices).
+pub(crate) fn expand_avoided_pids(
+    avoided_pids: &std::collections::HashSet<Pid>,
+    pid_segs: &std::collections::HashMap<Pid, Vec<usize>>,
+) -> std::collections::HashSet<usize> {
+    let mut segs = std::collections::HashSet::new();
+    for pid in avoided_pids {
+        if let Some(slist) = pid_segs.get(pid) {
+            for &si in slist { segs.insert(si); }
+        }
+    }
+    segs
+}
+
+/// ✅ OCCT-aligned: PerformShapesToAvoid (BOPAlgo_BuilderFace.cxx L152-235).
+/// Returns the set of physical edge PIDs to avoid (OCCT: myShapesToAvoid)
+/// AND the pid→segment map for the caller to expand PIDs to segment indices.
+pub(crate) fn perform_shapes_to_avoid(
+    segments: &[WireSegment],
+    vi_to_canon: &[usize],
+    ds: &DS,
+) -> (std::collections::HashSet<Pid>, std::collections::HashMap<Pid, Vec<usize>>) {
+    let (pid_segs, pid_endpoints) = build_pid_maps(segments, vi_to_canon, ds);
 
     let is_degenerate = |pid: &Pid| -> bool {
         // Degenerate edge: virtual end vertex (b == usize::MAX in physical_edge_id).
@@ -839,8 +873,13 @@ pub(crate) fn perform_shapes_to_avoid(
             if a != usize::MAX { anc.entry(a).or_default().push(pid); }
             if b != usize::MAX { anc.entry(b).or_default().push(pid); }
         }
-        for ids in anc.values() {
+        for (&canon_vi, ids) in &anc {
             let a_nb_e = ids.len();
+            // OCCT L204-207: INTERNAL vertices → skip (vertex inside face,
+            //   not on boundary — dangling edges at internal vertices are valid).
+            if canon_vi < ds.vertices.len() && ds.vertices[canon_vi].is_internal {
+                continue;
+            }
             if a_nb_e == 1 {
                 // OCCT L198-210: dangling edge → avoid (skip degenerate).
                 let pid = ids[0];
@@ -857,14 +896,7 @@ pub(crate) fn perform_shapes_to_avoid(
         if !b_found { break; }
     }
 
-    // Expand avoided physical edges to segment indices (both FWD+REV).
-    let mut avoided_segs: std::collections::HashSet<usize> = std::collections::HashSet::new();
-    for pid in &avoided_pids {
-        if let Some(segs) = pid_segs.get(pid) {
-            for &si in segs { avoided_segs.insert(si); }
-        }
-    }
-    avoided_segs
+    (avoided_pids, pid_segs)
 }
 
 // ====================================================================

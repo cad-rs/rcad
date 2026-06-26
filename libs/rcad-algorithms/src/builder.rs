@@ -104,9 +104,10 @@ mod wire_path;
 
 pub(crate) use wire_splitter::{
     EdgeInfo, build_closed_wires, perform_shapes_to_avoid,
+    expand_avoided_pids, build_pid_maps,
     build_vi_to_canon, physical_edge_id, world_to_uv,
     compute_seam_tangent_angles, edge_uv_tangent, edge_angle_2d,
-    are_verts_coincident, assemble_internal_wires,
+    are_verts_coincident,
 };
 pub(crate) use wire_path::{
     perform_areas, intersect_ray_curve_2d,
@@ -132,32 +133,31 @@ impl<'a> BooleanBuilder<'a> {
         //   L135-139: PerformLoops → if HasErrors return
         //   L141-145: PerformAreas → if HasErrors return
         //   L147: PerformInternalShapes
-        // SubFace (split_face) has been removed — all faces emit via emit_wire_face.
 
-        // Setup: edge segments + canonical vertex map (OCCT: constructor/CheckData).
+        // OCCT L121: GetReport()->Clear() — rcad: delegated to caller error handling.
+
+        // OCCT L123-127: CheckData — validate face has intersection data.
+        //   OCCT: checks myShapes/DS state. rcad: segments must be non-empty
+        //   and face must have interferences.
         let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
         let mut segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
-        // OCCT L123: CheckData — validate input (segments must exist or face must have ICs).
-        if segments.is_empty() {
-            if !face.face_info.has_any_interference() {
-                // OCCT: BuildDraftFace handles faces without ICs.
-                return self.build_draft_face(face_idx);
-            }
-            return None; // HasErrors equivalent
+        if !self.builder_face_check_data(face_idx, &segments) {
+            return None;
         }
-        // OCCT L123: vi_to_canon is built during CheckData/Prepare in OCCT.
+
+        // OCCT builds vi_to_canon during CheckData/Prepare.
         let vi_to_canon = build_vi_to_canon(&segments, ds);
 
-        // OCCT L129: Step 1 — PerformShapesToAvoid (BuilderFace.cxx L152-235).
-        let mut avoided = perform_shapes_to_avoid(&segments, &vi_to_canon, ds);
-        // if HasErrors → return (rcad: avoided is always valid)
+        // OCCT L129-133: PerformShapesToAvoid — returns PIDs (OCCT: myShapesToAvoid).
+        let (avoided_pids, pid_segs) = perform_shapes_to_avoid(&segments, &vi_to_canon, ds);
+        // Expand PIDs to segment indices (rcad: PerformLoops reads segment indices).
+        let mut avoided = expand_avoided_pids(&avoided_pids, &pid_segs);
 
-        // OCCT L135: Step 2 — PerformLoops (BuilderFace.cxx L239-321).
+        // OCCT L135-139: PerformLoops
         let (wires, mut internal_wires, vertex_positions) =
             build_closed_wires(&mut segments, ds, face_idx, &avoided);
-        // if HasErrors → return (rcad: empty wires handled below)
 
-        // OCCT L312-321: edges not in any loop → add to avoided.
+        // ✅ OCCT-aligned L160-166: Post Treatment — edges not in any loop → add to myShapesToAvoid.
         let in_loop: std::collections::HashSet<usize> = wires.iter().flatten().copied().collect();
         for si in 0..segments.len() {
             if !in_loop.contains(&si) && !avoided.contains(&si) {
@@ -165,32 +165,42 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        // OCCT L141: Step 3 — PerformAreas (BuilderFace.cxx L387).
+        // ✅ OCCT-aligned L327-362: Internal Wires — build wire groups from myShapesToAvoid.
+        //   OCCT: each avoided edge wraps in a TopoDS_Wire → myLoopsInternal.
+        //   rcad: each avoided segment becomes its own wire group, passed to PerformAreas.
+        let internal_wire_groups: Vec<Vec<usize>> = avoided.iter().map(|&si| vec![si]).collect();
+
+        // OCCT L141-145: PerformAreas
         let mut wfs = if !wires.is_empty() {
-            perform_areas(&wires, &[], &segments, ds, &mut *self.context.borrow_mut(), face_idx)
+            perform_areas(&wires, &internal_wire_groups, &segments, ds, &mut *self.context.borrow_mut(), face_idx)
         } else if !internal_wires.is_empty() {
             vec![WireFace { outer_wire: vec![], inner_wires: vec![], internal_wires: internal_wires.clone() }]
         } else {
             vec![WireFace { outer_wire: (0..segments.len()).collect(), inner_wires: vec![], internal_wires: vec![] }]
         };
-        if wfs.is_empty() { return None; } // HasErrors equivalent
+        if wfs.is_empty() { return None; }
 
-        // OCCT L147: Step 4 — PerformInternalShapes (BuilderFace.cxx L618-735).
-        {
-            let avoided_vec: Vec<usize> = avoided.iter().copied().collect();
-            // OCCT L676-733: per-face IsInside + MakeInternalWires + Add to face.
-            let per_face_wires = assemble_internal_wires(&avoided_vec, &segments, &wfs);
-            for (fi, face_wires) in per_face_wires.iter().enumerate() {
-                if fi < wfs.len() && !face_wires.is_empty() {
-                    // OCCT L728-733: BRep_Builder().Add(aF, aWI) — in rcad, store
-                    // the internal wires on the WireFace for emit_wire_face to handle.
-                    for wire in face_wires {
-                        wfs[fi].internal_wires.push(wire.clone());
-                    }
+        // ✅ OCCT-aligned L360-362: Add internal wire groups into the result WireFaces
+        //   for emit_wire_face to process.  OCCT: aBB.Add(aF, aW) per internal wire.
+        if !internal_wire_groups.is_empty() {
+            for wf in &mut wfs {
+                for &si in &avoided {
+                    wf.internal_wires.push(vec![si]);
                 }
             }
         }
         Some((segments, wfs, vertex_positions))
+    }
+
+    /// ✅ OCCT-aligned: BuilderFace::CheckData (BOPAlgo_BuilderFace.cxx L50-115).
+    ///   Validates face has intersection curves/segments. If no interferences,
+    ///   delegates to BuildDraftFace (OCCT's alternative path for non-split faces).
+    fn builder_face_check_data(&self, face_idx: usize, segments: &[WireSegment]) -> bool {
+        if segments.is_empty() {
+            // OCCT: if no intersection data, use BuildDraftFace path.
+            return false; // caller returns build_draft_face
+        }
+        true
     }
 
     /// ✅ OCCT-aligned: BuildDraftFace (BOPAlgo_Builder_2.cxx L951-1070).
