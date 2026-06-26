@@ -684,16 +684,53 @@ impl<'a> BooleanBuilder<'a> {
             if alone.is_empty() { continue; }
 
             // OCCT L970-978: for each alone vertex, classify via IntTools_FClass2d.
-            let mut fclass2d = crate::inttools::fclass2d::FClass2d::new(self.ds, *ds_fi, crate::tolerance::TOLERANCE_ABS * 100.0);
+            //   OCCT classifies against the SPLIT face (aFIm, L972), not the source DS face.
+            //   rcad: build CSLibClass2d from result face outer wire UV points for the same
+            //   trimmed boundary classification.
             let fsurf = &self.ds.faces[*ds_fi].surface;
+            let alone_pts: Vec<glam::DVec2> = if let Some(entry) = result.faces.get(rfi) {
+                let outer_edges: &[(usize, bool)] = &entry.0;
+                crate::inttools::fclass2d::collect_wire_uv(self.ds, *ds_fi, outer_edges)
+            } else { Vec::new() };
+            let classifier = if alone_pts.len() >= 3 {
+                let tol = crate::tolerance::TOLERANCE_ABS * 100.0;
+                let compute_chordal = |pts: &[glam::DVec2]| -> (f64, f64) {
+                    if pts.len() < 3 { return (tol, tol); }
+                    let mut fu = 0.0; let mut fv = 0.0;
+                    for i in 1..pts.len() - 1 {
+                        let a = pts[i - 1]; let b = pts[i]; let c = pts[i + 1];
+                        let ac = c - a; let len2 = ac.dot(ac);
+                        if len2 < 1e-30 { continue; }
+                        let t = ((b - a).dot(ac) / len2).clamp(0.0, 1.0);
+                        let proj = a + ac * t;
+                        let du = (b.x - proj.x).abs(); let dv = (b.y - proj.y).abs();
+                        if du > fu { fu = du; } if dv > fv { fv = dv; }
+                    }
+                    (fu.max(tol), fv.max(tol))
+                };
+                let (fu, fv) = compute_chordal(&alone_pts);
+                let mut umin = f64::INFINITY; let mut umax = f64::NEG_INFINITY;
+                let mut vmin = f64::INFINITY; let mut vmax = f64::NEG_INFINITY;
+                for p in &alone_pts {
+                    umin = umin.min(p.x); umax = umax.max(p.x);
+                    vmin = vmin.min(p.y); vmax = vmax.max(p.y);
+                }
+                Some(crate::inttools::fclass2d::CSLibClass2d::new(
+                    &alone_pts, fu, fv, umin, vmin, umax, vmax))
+            } else { None };
             for &vi in alone {
                 if vi >= self.ds.vertices.len() { continue; }
                 let v_pt = self.ds.vertices[vi].point;
-                // Project vertex to face UV and classify.
                 if let Some(uv) = world_to_uv(fsurf, v_pt) {
-                    use crate::inttools::fclass2d::State;
-                    // OCCT L1001-1007: if IsInternal → BRep_Builder.Add(aF, aV)
-                    if fclass2d.perform(uv, true) == State::In {
+                    use crate::inttools::fclass2d::CSLibResult;
+                    let is_in = classifier.as_ref().map_or(
+                        // Fallback: use DS face classifier
+                        crate::inttools::fclass2d::FClass2d::new(self.ds, *ds_fi,
+                            crate::tolerance::TOLERANCE_ABS * 100.0).perform(uv, true)
+                            == crate::inttools::fclass2d::State::In,
+                        |cs| cs.si_dans(uv) == CSLibResult::Inside,
+                    );
+                    if is_in {
                         if rfi < result.face_internal_vtx.len() {
                             result.face_internal_vtx[rfi].push(vi);
                         }

@@ -47,7 +47,7 @@ fn curve2d_nb_samples(curve: &Curve2d, t0: f64, t1: f64) -> usize {
 ///   intervals, tracks chordal deflection (FlecheU/FlecheV) and stores
 ///   first/last derivatives for edge junction continuity.
 ///   rcad: uses curve2d_nb_samples for per-edge sample count matching OCCT.
-fn collect_wire_uv(ds: &DS, face_idx: usize, edges: &[(usize, bool)]) -> Vec<DVec2> {
+pub(crate) fn collect_wire_uv(ds: &DS, face_idx: usize, edges: &[(usize, bool)]) -> Vec<DVec2> {
     let mut pts: Vec<DVec2> = Vec::new();
     for &(ei, fwd) in edges {
         if let Some(rep) = ds.edge_on_face(ei, face_idx) {
