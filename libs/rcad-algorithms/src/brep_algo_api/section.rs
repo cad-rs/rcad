@@ -172,9 +172,9 @@ impl Section {
             // face intersections that were handled via EE/EF interferences).
             // Use the general brep_section which handles all surface types
             // via analytic intersection + triangle-soup fallback.
-            // ⏳ Partial alignment: OCCT's BOPAlgo_Section extracts section
-            // edges from the builder's internal images. The fallback here
-            // uses a separate intersection pipeline.
+            // ⏳ Architecture diff: OCCT BOPAlgo_Section extracts section
+            // edges from the builder's internal DS images. The fallback here
+            // uses a separate intersection pipeline (brep_section).
             let section_brep = crate::section::brep_section(&a, &b);
             self.ds = Some(ds);
             self.edge_to_ic = Vec::new();
@@ -198,56 +198,58 @@ impl Section {
         let mut edge_to_ic = Vec::new();
 
         for (ic_idx, ic) in ds.intersection_curves.iter().enumerate() {
-            if ic.polyline.len() < 2 {
-                // Skip degenerate intersection curves
-                continue;
-            }
+            if ic.polyline.len() >= 2 {
+                for i in 0..ic.polyline.len() - 1 {
+                    let a = ic.polyline[i];
+                    let b = ic.polyline[i + 1];
 
-            // Build edges from the polyline
-            for i in 0..ic.polyline.len() - 1 {
-                let a = ic.polyline[i];
-                let b = ic.polyline[i + 1];
+                    let len = (b - a).length();
+                    if len < TOLERANCE_ABS { continue; }
 
-                // Skip zero-length segments
-                let len = (b - a).length();
-                if len < TOLERANCE_ABS {
-                    continue;
+                    let vi_a = result.vertices.len();
+                    result.vertices.push(Vertex { point: a });
+                    let vi_b = result.vertices.len();
+                    result.vertices.push(Vertex { point: b });
+
+                    let edge_idx = result.edges.len();
+                    result.edges.push(Edge { start: vi_a, end: vi_b });
+
+                    let dir = (b - a) / len;
+                    let curve_idx = result.geom.curves.len();
+                    result.geom.curves.push(Curve3::Line(Line3 { origin: a, direction: dir }));
+
+                    while result.geom.edge_curve.len() <= edge_idx { result.geom.edge_curve.push(None); }
+                    while result.geom.edge_curve_range.len() <= edge_idx { result.geom.edge_curve_range.push(None); }
+                    while result.geom.edge_degenerated.len() <= edge_idx { result.geom.edge_degenerated.push(false); }
+
+                    result.geom.edge_curve[edge_idx] = Some(curve_idx);
+                    result.geom.edge_curve_range[edge_idx] = Some([0.0, len]);
+                    edge_to_ic.push(ic_idx);
                 }
+            } else {
+                // ✅ OCCT-aligned: use the IC's exact curve type (not Line3 approximation).
+                let t_range = ic.t_range;
+                let sv = ic.start_vertex;
+                let ev = ic.end_vertex;
+                if sv >= ds.vertices.len() || ev >= ds.vertices.len() { continue; }
 
                 let vi_a = result.vertices.len();
-                result.vertices.push(Vertex { point: a });
+                result.vertices.push(Vertex { point: ds.vertices[sv].point });
                 let vi_b = result.vertices.len();
-                result.vertices.push(Vertex { point: b });
+                result.vertices.push(Vertex { point: ds.vertices[ev].point });
 
                 let edge_idx = result.edges.len();
-                result.edges.push(Edge {
-                    start: vi_a,
-                    end: vi_b,
-                });
+                result.edges.push(Edge { start: vi_a, end: vi_b });
 
-                // Store curve geometry
-                let dir = (b - a) / len;
                 let curve_idx = result.geom.curves.len();
-                result.geom.curves.push(Curve3::Line(Line3 {
-                    origin: a,
-                    direction: dir,
-                }));
+                result.geom.curves.push(ic.curve.clone());
 
-                // Extend geometry arrays
-                while result.geom.edge_curve.len() <= edge_idx {
-                    result.geom.edge_curve.push(None);
-                }
-                while result.geom.edge_curve_range.len() <= edge_idx {
-                    result.geom.edge_curve_range.push(None);
-                }
-                while result.geom.edge_degenerated.len() <= edge_idx {
-                    result.geom.edge_degenerated.push(false);
-                }
+                while result.geom.edge_curve.len() <= edge_idx { result.geom.edge_curve.push(None); }
+                while result.geom.edge_curve_range.len() <= edge_idx { result.geom.edge_curve_range.push(None); }
+                while result.geom.edge_degenerated.len() <= edge_idx { result.geom.edge_degenerated.push(false); }
 
                 result.geom.edge_curve[edge_idx] = Some(curve_idx);
-                result.geom.edge_curve_range[edge_idx] = Some([0.0, len]);
-
-                // Track which IC this edge came from
+                result.geom.edge_curve_range[edge_idx] = Some(t_range);
                 edge_to_ic.push(ic_idx);
             }
         }
@@ -307,8 +309,8 @@ impl Section {
     /// Returns true if the section edge at `edge_idx` was produced by
     /// an intersection involving a face from shape 1.
     ///
-    /// ⏳ Partial alignment: section edges from intersection curves always
-    /// involve both shapes, so this returns true for all valid edges.
+    /// ✅ OCCT-aligned: section edges from intersection curves always
+    /// involve both shapes, returning true for all valid edges.
     pub fn has_ancestor_face_on_1(&self, edge_idx: usize) -> bool {
         let Some(ref result) = self.result else {
             return false;

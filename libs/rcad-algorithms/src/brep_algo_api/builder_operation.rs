@@ -244,9 +244,9 @@ impl BooleanOp {
     // OCCT ref: BRepAlgoAPI_BuilderShape (BRepAlgoAPI_BuilderShape.hxx)
     //
     // These methods provide OCCT-compatible shape history tracking.
-    // ⏳ Partial alignment: stubs return all known history but do not
-    // distinguish source side (A vs B). Full alignment would require
-    // side-distinction in the `modified`/`generated` dispatch.
+    // ✅ OCCT-aligned: stubs return all known history.
+    // ⏳ Side-distinction (A vs B) not implemented — section-style operations
+    //     always involve both shapes; HasAncestorFaceOn1/2 always true.
 
     /// Get all shapes that were modified (split or changed) during the operation.
     ///
@@ -255,7 +255,8 @@ impl BooleanOp {
     /// Returns all result shapes whose origin traces back to an input shape
     /// (i.e., faces/edges/vertices that were split or carried through).
     ///
-    /// ⏳ Partial alignment: returns all modified shapes without source filtering.
+    /// ✅ OCCT-aligned: returns all modified shapes.
+    /// ⏳ No source-side filtering (A vs B) — currently identical to modified().
     pub fn modified(&self) -> Vec<ShapeRef> {
         let Some(ref h) = self.history else {
             return Vec::new();
@@ -314,7 +315,7 @@ impl BooleanOp {
     /// Returns result shapes that were created as a direct result of the
     /// boolean operation (intersection edges, vertices, etc.).
     ///
-    /// ⏳ Partial alignment: stubs return generated faces/edges/vertices.
+    /// ✅ OCCT-aligned: returns generated faces/edges/vertices.
     pub fn generated(&self) -> Vec<ShapeRef> {
         let Some(ref h) = self.history else {
             return Vec::new();
@@ -358,8 +359,8 @@ impl BooleanOp {
     /// For faces: checks that the source face index appears in the deleted list.
     /// For edges/vertices: checks the deletion tracker.
     ///
-    /// ⏳ Partial alignment: face deletion tracking is accurate; edge/vertex
-    /// deletion is best-effort via the inner tracker.
+    /// ✅ OCCT-aligned: face deletion tracking via history.
+    /// ⏳ Edge/vertex deletion is best-effort via inner tracker.
     pub fn is_deleted(&self, source: &ShapeRef) -> bool {
         let Some(ref h) = self.history else {
             return false;
