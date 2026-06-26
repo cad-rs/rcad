@@ -676,29 +676,8 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
                 wires.push(wire);
             }
         } else {
-            // OCCT L292-358: RefineAngles (L327) → Path walk (L331-358).
-            refine_angles(&mut smart_map, segments, ds, face_idx);
-            // Path walk: iterate all unpassed OUT entries in SmartMap.
-            let mut start_candidates: Vec<(usize, usize)> = Vec::new();
-            for (&v, infos) in &smart_map {
-                for ei in infos {
-                    if !ei.passed && !ei.in_flag
-                        && ei.seg_idx < segments.len()
-                        && (segments[ei.seg_idx].start_vertex != segments[ei.seg_idx].end_vertex
-                            || segments[ei.seg_idx].is_seam)
-                    {
-                        start_candidates.push((v, ei.seg_idx));
-                    }
-                }
-            }
-            let mut candidate_idx = 0;
-            while candidate_idx < start_candidates.len() {
-                let (_v, start_si) = start_candidates[candidate_idx];
-                if !is_seg_passed(&smart_map, start_si) {
-                    walk_path_extract_wires(start_si, segments, &mut smart_map, &mut wires, ds, face_idx);
-                }
-                candidate_idx += 1;
-            }
+            // OCCT L292-358: SplitBlock — refine angles + path walk for irregular blocks.
+            split_block(block, segments, &mut smart_map, ds, face_idx, &mut wires);
         }
     }
 
@@ -742,6 +721,45 @@ pub(crate) fn make_connexity_blocks(
         blocks.push(block);
     }
     blocks
+}
+
+/// ✅ OCCT-aligned: SplitBlock (BOPAlgo_WireSplitter.cxx L292-358).
+///   Handles irregular blocks (vertices with degree > 2) by refining edge
+///   angles at multi-connected vertices, then walking paths through the
+///   SmartMap to extract closed wires.  OCCT parallelizes per block;
+///   rcad runs sequentially with the same angle + path logic.
+pub(crate) fn split_block(
+    block: &[usize],
+    segments: &[WireSegment],
+    smart_map: &mut BTreeMap<usize, Vec<EdgeInfo>>,
+    ds: &DS,
+    face_idx: usize,
+    wires: &mut Vec<Vec<usize>>,
+) {
+    // OCCT L327: RefineAngles — compute turning angles at each vertex.
+    refine_angles(smart_map, segments, ds, face_idx);
+
+    // OCCT L331-358: Path walk — iterate all unpassed OUT entries.
+    let mut start_candidates: Vec<(usize, usize)> = Vec::new();
+    for (&v, infos) in smart_map.iter() {
+        for ei in infos {
+            if !ei.passed && !ei.in_flag
+                && ei.seg_idx < segments.len()
+                && (segments[ei.seg_idx].start_vertex != segments[ei.seg_idx].end_vertex
+                    || segments[ei.seg_idx].is_seam)
+            {
+                start_candidates.push((v, ei.seg_idx));
+            }
+        }
+    }
+    let mut candidate_idx = 0;
+    while candidate_idx < start_candidates.len() {
+        let (_v, start_si) = start_candidates[candidate_idx];
+        if !is_seg_passed(smart_map, start_si) {
+            walk_path_extract_wires(start_si, segments, smart_map, wires, ds, face_idx);
+        }
+        candidate_idx += 1;
+    }
 }
 
 /// ✅ OCCT-aligned: Regular block (degree=2) wire build.
