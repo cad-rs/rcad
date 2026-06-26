@@ -366,6 +366,21 @@ impl BRep {
                     brep.vertices.push(Vertex { point: vd.point });
                 }
                 topods::TShape::Edge(ed) => {
+                    let fi = brep.edges.len();
+                    e_map.insert(ti, fi);
+                    let vi = v_map.get(ed.first.index).copied().unwrap_or_else(|| {
+                        eprintln!("WARN: from_topods edge[{}] first vertex idx {} >= v_map.len()={}", ti, ed.first.index, v_map.len());
+                        0
+                    });
+                    let vj = v_map.get(ed.last.index).copied().unwrap_or_else(|| {
+                        eprintln!("WARN: from_topods edge[{}] last vertex idx {} >= v_map.len()={}", ti, ed.last.index, v_map.len());
+                        0
+                    });
+                    brep.edges.push(Edge { start: vi, end: vj });
+                    brep.geom.edge_curve.push(ed.curve);
+                    brep.geom.edge_curve_range.push(Some(ed.range));
+                }
+                topods::TShape::Edge(ed) => {
                     let fi = brep.edges.len(); // flat edge index
                     e_map.insert(ti, fi);       // topods tshape index -> flat index
                     let vi = v_map.get(ed.first.index).copied().unwrap_or(0);
@@ -425,7 +440,10 @@ impl BRep {
     fn wire_from_topods(t: &topods::BRep, e_map: &std::collections::HashMap<usize, usize>, sr: &topods::ShapeRef) -> topology::Wire {
         let wd = t.wire(*sr);
         let edges: Vec<WireEdge> = wd.edges.iter().map(|e_sr| {
-            let idx = e_map.get(&e_sr.index).copied().unwrap_or(e_sr.index);
+            let idx = e_map.get(&e_sr.index).copied().unwrap_or_else(|| {
+                eprintln!("WARN: wire_from_topods: edge idx {} not in e_map ({} edges)", e_sr.index, e_map.len());
+                e_sr.index
+            });
             WireEdge { idx, forward: e_sr.orientation == topods::Orientation::Forward }
         }).collect();
         topology::Wire { edges }

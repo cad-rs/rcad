@@ -507,4 +507,37 @@ mod tests {
         // Same TShape for the edge, different orientation on the reference
         assert!(Arc::ptr_eq(&brep.tshapes[e0.index], &brep.tshapes[e0_rev.index]));
     }
+
+    #[test]
+    fn test_to_topods_roundtrip_sa() {
+        // Build a simple box BRep, convert to topods and back, check SA
+        let mut orig = crate::BRep::new();
+        // 8 vertices of a unit cube
+        let v: Vec<_> = [
+            [0.0,0.0,0.0],[1.0,0.0,0.0],[1.0,1.0,0.0],[0.0,1.0,0.0],
+            [0.0,0.0,1.0],[1.0,0.0,1.0],[1.0,1.0,1.0],[0.0,1.0,1.0],
+        ].iter().map(|&p| orig.vertices.push(crate::topology::Vertex { point: DVec3::new(p[0],p[1],p[2]) })).collect::<Vec<_>>();
+        // Simple box with 6 faces, 12 edges
+        let face_vert_idxs: [[usize;4]; 6] = [
+            [0,1,2,3],[4,5,6,7],[0,1,5,4],[2,3,7,6],[0,3,7,4],[1,2,6,5],
+        ];
+        for &fv in &face_vert_idxs {
+            for j in 0..4 {
+                let a = fv[j]; let b = fv[(j+1)%4];
+                // Check if edge already exists
+                let exists = orig.edges.iter().position(|e| (e.start==a&&e.end==b)||(e.start==b&&e.end==a));
+                if exists.is_none() {
+                    orig.edges.push(crate::topology::Edge { start: a, end: b });
+                }
+            }
+        }
+        // Convert to topods and back
+        let t = orig.to_topods();
+        let back = crate::BRep::from_topods(&t);
+        assert_eq!(back.vertices.len(), 8, "vertex count");
+        assert_eq!(back.edges.len(), 12, "edge count");
+        // Check surface area (unit cube SA = 6.0)
+        let sa = crate::surface_area(&back);
+        assert!((sa - 6.0).abs() < 0.01, "unit cube SA: expected 6.0, got {}", sa);
+    }
 }

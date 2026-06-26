@@ -706,32 +706,17 @@ impl ResultBuilder {
 
         // 2. Edges (reference vertices by their TShape index)
         let mut e_map: Vec<ShapeRef> = Vec::with_capacity(self.edges.len());
-        for &(start, end) in &self.edges {
+        for (ei, &(start, end)) in self.edges.iter().enumerate() {
             let first = ShapeRef::new(start);
             let last = ShapeRef::new(end);
-            let sr = t.add_tedge(None, first, last, [0.0, 1.0]);
+            // Store curve if available (needed by surface area sampler)
+            let curve_idx = self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
+                let ci = t.curves.len();
+                t.curves.push(crv.clone());
+                ci
+            });
+            let sr = t.add_tedge(curve_idx, first, last, [0.0, 1.0]);
             e_map.push(sr);
-        }
-
-        // 3. Custom edge curves
-        for (ei, curve_opt) in self.custom_edge_curves.iter().enumerate() {
-            if let Some(crv) = curve_opt {
-                if ei < e_map.len() {
-                    // Store curve in t.curves; edge already exists — update curve reference
-                    let ci = t.curves.len();
-                    t.curves.push(crv.clone());
-                    // Update the edge's curve index via TShape mutable access
-                    if let Some(ts) = t.tshapes.get(e_map[ei].index) {
-                        // We need to modify the TShape's curve field. Since it's behind Arc,
-                        // this requires making the TShape mutable. For now, store curve ref
-                        // separately and we'll fix the edge data during the build.
-                        // Actually, let's rebuild the edge with a curve reference.
-                        // This is a limitation of the Arc-based model — to mutate a TShape
-                        // we need make_mut() or similar.
-                        let _ci = ci;
-                    }
-                }
-            }
         }
 
         // Map from old flat face index to face ShapeRef
