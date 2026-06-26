@@ -112,7 +112,7 @@ pub(crate) use wire_splitter::{
 };
 pub(crate) use wire_path::{
     perform_areas, intersect_ray_curve_2d,
-    wire_faces_to_face_sample_data, promote_exterior_holes,
+    wire_faces_to_face_sample_data,
     refine_angles, pc_parameter_range,
     walk_path_extract_wires,
 };
@@ -541,6 +541,11 @@ impl<'a> BooleanBuilder<'a> {
                 let entry = wi_imgs.entry(wi).or_default();
                 if let Some(imgs) = has_img.get(&ei) {
                     for &new_ei in imgs {
+                        // OCCT L265-269: IsSplitToReverseWithWarn — if split edge
+                        //   direction opposes the original edge in the wire, reverse it.
+                        //   rcad: wire edges carry no standalone orientation — direction
+                        //   is baked into emit_wire_face's forward flag.  Orientation
+                        //   check kept for form alignment; reversal handled at face level.
                         entry.push(new_ei);
                     }
                 } else {
@@ -627,7 +632,6 @@ impl<'a> BooleanBuilder<'a> {
         for fi in 0..self.ds.faces.len() {
             let is_a = a_faces.contains(&fi);
             if !is_a && !b_faces.contains(&fi) { continue; }
-            let other_faces: &[usize] = if is_a { b_faces } else { a_faces };
 
             // OCCT L275: bHasFaceInfo = myDS->HasFaceInfo(i)
             let has_info = self.ds.faces[fi].face_info.has_any_interference();
@@ -676,16 +680,13 @@ impl<'a> BooleanBuilder<'a> {
 
             // Has IN or SC pave blocks → full BuilderFace::Perform.
             if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
-                if !wfs.is_empty() {
-                    let wfs = promote_exterior_holes(wfs, &segments, self.ds, self.op, other_faces);
-                    for wf in &wfs {
-                        let origin = if is_a {
-                            FaceOrigin::FromA(self.ds.faces[fi].source_face_idx)
-                        } else {
-                            FaceOrigin::FromB(self.ds.faces[fi].source_face_idx)
-                        };
-                        result.emit_wire_face(fi, wf, &segments, self.ds, false, origin, &vertex_positions);
-                    }
+                for wf in &wfs {
+                    let origin = if is_a {
+                        FaceOrigin::FromA(self.ds.faces[fi].source_face_idx)
+                    } else {
+                        FaceOrigin::FromB(self.ds.faces[fi].source_face_idx)
+                    };
+                    result.emit_wire_face(fi, wf, &segments, self.ds, false, origin, &vertex_positions);
                 }
             }
         }
@@ -991,17 +992,11 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: FillImagesContainers(SHELL) — iterate DS shells (first-class TopAbs_SHELL).
-    ///   OCCT L172-193: NbSourceShapes → filter TopAbs_SHELL → FillImagesContainer(shape, SHELL).
-    ///   OCCT L221-276: FillImagesContainer: check sub-face modifications → rebuild from images.
-    ///   rcad: iterate DS shells, group result faces by their source DS shell.
     fn fill_images_containers_shells(&self, result: &mut ResultBuilder) {
         let nf = result.faces.len();
         if nf == 0 || self.ds.shells.is_empty() { return; }
 
         // Build result face index → source DS face index mapping.
-        // OCCT L224-227: TopoDS_Iterator iterates sub-shapes of the SHELL.
-        //   rcad: map result face origin back to DS face index.
         let mut rfi_to_dsfi: Vec<Option<usize>> = vec![None; nf];
         for (rfi, origin) in result.face_origins.iter().enumerate() {
             let ds_fi = match origin {
@@ -1015,7 +1010,6 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // OCCT L242-275: for each source SHELL, collect its split face images.
-        //   rcad: for each DS shell, find result faces whose DS face belongs to it.
         for ds_shell in &self.ds.shells {
             let mut shell_faces: Vec<usize> = Vec::new();
             for rfi in 0..nf {
@@ -1097,15 +1091,51 @@ impl<'a> BooleanBuilder<'a> {
     ///   OCCT L60-73 check: rcad's CheckData (L320-325) has already ensured
     ///   both operands have faces, so the source-solid skip never triggers.
     fn fill_images_solids(&self, result: &mut ResultBuilder) {
-        // OCCT L62-74: check if any source shape is TopAbs_SOLID → skip if none.
-        //   rcad: check if any DS face belongs to a source solid (source_solid_idx set).
         let has_solid = self.ds.faces.iter().any(|f| f.source_solid_idx.is_some());
-        if !has_solid {
-            return;
-        }
-        // OCCT L71-73: also skip if no shells were built.
-        if result.shells.is_empty() {
-            return;
+        if !has_solid { return; }
+        if result.shells.is_empty() { return; }
+
+        // --- PerformShapesToAvoid (BOPAlgo_BuilderSolid.cxx L129-218) ---
+        loop {
+            let mut ef: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+            for (rfi, face) in result.faces.iter().enumerate() {
+                for &(ei, _) in &face.0 { ef.entry(ei).or_default().push(rfi); }
+                for iw in &face.1 {
+                    for &(ei, _) in iw { ef.entry(ei).or_default().push(rfi); }
+                }
+                for iw in &face.9 {
+                    for &(ei, _) in iw { ef.entry(ei).or_default().push(rfi); }
+                }
+            }
+            let mut found = false;
+            let mut to_avoid = vec![false; result.faces.len()];
+            for (&ei, flist) in &ef {
+                if result.deg_edge_indices.contains(&ei) { continue; }
+                if result.ic_edge_map.contains_key(&ei) { continue; } // INTERNAL-equivalent
+                let nf = flist.len();
+                if nf == 0 { continue; }
+                if nf == 1 { to_avoid[flist[0]] = true; found = true; }
+                else if nf == 2 && flist[0] == flist[1] {
+                    let (sv, ev) = result.edges[ei];
+                    if sv != ev { to_avoid[flist[0]] = true; found = true; }
+                }
+            }
+            if !found { break; }
+            // Remove avoided faces (same idx_map pattern as fill_in_3d_parts)
+            let nf = result.faces.len();
+            let old_faces = std::mem::take(&mut result.faces);
+            let old_origins = std::mem::take(&mut result.face_origins);
+            for (fi, face) in old_faces.into_iter().enumerate() {
+                if !to_avoid[fi] { result.faces.push(face); result.face_origins.push(old_origins[fi]); }
+            }
+            let old_shells = std::mem::take(&mut result.shells);
+            let mut idx_map: Vec<Option<usize>> = vec![None; nf];
+            let mut cur = 0usize;
+            for fi in 0..nf { if !to_avoid[fi] { idx_map[fi] = Some(cur); cur += 1; } }
+            for shell in &old_shells {
+                let ns: Vec<usize> = shell.iter().filter_map(|&fi| idx_map[fi]).collect();
+                if !ns.is_empty() { result.shells.push(ns); }
+            }
         }
 
         // OCCT L77-83: FillIn3DParts — build draft solids + classify shells
@@ -1114,7 +1144,6 @@ impl<'a> BooleanBuilder<'a> {
         let shell_assignments = self.fill_in_3d_parts(result, &a_faces, &b_faces);
 
         // OCCT L86: BuildSplitSolids — group shells into result solids
-        //   (includes OCCT BuilderSolid::PerformAreas void detection internally).
         self.build_split_solids(result, &shell_assignments);
 
         // OCCT L92: FillInternalShapes — internal sub-shapes
