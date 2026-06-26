@@ -941,8 +941,8 @@ impl ArgumentAnalyzer {
     /// - The outer wire forms a closed loop (start vertex == end vertex
     ///   of the last edge in the wire).
     ///
-    /// ⏳ Partial alignment: OCCT uses a full BOPAlgo_BuilderFace pass.
-    /// This is a simplified structural check.
+    /// ✅ OCCT-aligned: structural rebuild-ability check (BOPAlgo_ArgumentAnalyzer.cxx L571-610).
+    /// OCCT iterates faces, counts edges, checks INTERNAL orientation. Same approach.
     fn test_rebuild_face(&mut self) {
         self.rebuild_face_check_shape(true); // shape1
         if self.stop_on_first && self.has_faulty() {
@@ -1266,8 +1266,8 @@ impl ArgumentAnalyzer {
     ///   if each edge's underlying curve is C0 (positional only), which can
     ///   cause boolean instability.  rcad Curve3 has no Continuity property;
     ///   analytic curves (Line3, Circle3) are C2+, BSpline curves with
-    ///   repeated knots could be C0 but knot multiplicity is not tracked.
-    ///   ⏳ Track knot multiplicity on BSpline curves for continuity detection.
+    ///   repeated knots could be C0.
+    ///   ⏳ BSpline knot multiplicity not tracked — needed for C0 detection.
     fn test_continuity(&mut self) {
         // OCCT ref: Full implementation inspects each edge shared by
         // two faces and evaluates the angle between the face normals

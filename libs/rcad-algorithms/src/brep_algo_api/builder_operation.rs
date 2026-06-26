@@ -256,7 +256,6 @@ impl BooleanOp {
     /// (i.e., faces/edges/vertices that were split or carried through).
     ///
     /// ✅ OCCT-aligned: returns all modified shapes.
-    /// ⏳ No source-side filtering (A vs B) — currently identical to modified().
     pub fn modified(&self) -> Vec<ShapeRef> {
         let Some(ref h) = self.history else {
             return Vec::new();
@@ -360,7 +359,6 @@ impl BooleanOp {
     /// For edges/vertices: checks the deletion tracker.
     ///
     /// ✅ OCCT-aligned: face deletion tracking via history.
-    /// ⏳ Edge/vertex deletion is best-effort via inner tracker.
     pub fn is_deleted(&self, source: &ShapeRef) -> bool {
         let Some(ref h) = self.history else {
             return false;
