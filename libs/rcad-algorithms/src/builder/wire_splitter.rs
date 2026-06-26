@@ -505,37 +505,7 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
     }
 
     // MakeConnexityBlocks: BFS to find connected components
-    let n = segments.len();
-    let mut visited_seg = vec![false; n];
-    let mut blocks: Vec<Vec<usize>> = Vec::new();
-
-    for si in 0..n {
-        if visited_seg[si] {
-            continue;
-        }
-        if avoided.contains(&si) { continue; } // OCCT: avoided edges not seeded into blocks
-        let mut block = Vec::new();
-        let mut queue = VecDeque::new();
-        queue.push_back(si);
-        visited_seg[si] = true;
-
-        while let Some(ci) = queue.pop_front() {
-            block.push(ci);
-            let seg = &segments[ci];
-            for &vi in &[seg.start_vertex, seg.end_vertex] {
-                let cvi = vi_to_canon.get(vi).copied().unwrap_or(vi);
-                if let Some(neighbors) = vert_to_segs.get(&cvi) {
-                    for &ni in neighbors {
-                        if !visited_seg[ni] {
-                            visited_seg[ni] = true;
-                            queue.push_back(ni);
-                        }
-                    }
-                }
-            }
-        }
-        blocks.push(block);
-    }
+    let blocks = make_connexity_blocks(segments, &avoided, &vi_to_canon, &vert_to_segs, n);
 
     // Merge blocks that share canonical vertices (workaround for canonical
     // mapping precision issues that can split connected components).
@@ -733,6 +703,45 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
     }
 
     (wires, internal_wires, vertex_positions)
+}
+
+/// ✅ OCCT-aligned: BOPTools_AlgoTools::MakeConnexityBlocks(start_elements, VERTEX, EDGE).
+///   Groups segments into connected components (blocks) by shared vertices.
+///   Each block is a subset of segments that form a connected sub-graph.
+pub(crate) fn make_connexity_blocks(
+    segments: &[WireSegment],
+    avoided: &std::collections::HashSet<usize>,
+    vi_to_canon: &[usize],
+    vert_to_segs: &HashMap<usize, Vec<usize>>,
+    n: usize,
+) -> Vec<Vec<usize>> {
+    let mut visited_seg = vec![false; n];
+    let mut blocks: Vec<Vec<usize>> = Vec::new();
+    for si in 0..n {
+        if visited_seg[si] { continue; }
+        if avoided.contains(&si) { continue; }
+        let mut block = Vec::new();
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(si);
+        visited_seg[si] = true;
+        while let Some(ci) = queue.pop_front() {
+            block.push(ci);
+            let seg = &segments[ci];
+            for &vi in &[seg.start_vertex, seg.end_vertex] {
+                let cvi = vi_to_canon.get(vi).copied().unwrap_or(vi);
+                if let Some(neighbors) = vert_to_segs.get(&cvi) {
+                    for &ni in neighbors {
+                        if !visited_seg[ni] {
+                            visited_seg[ni] = true;
+                            queue.push_back(ni);
+                        }
+                    }
+                }
+            }
+        }
+        blocks.push(block);
+    }
+    blocks
 }
 
 /// ✅ OCCT-aligned: Regular block (degree=2) wire build.
