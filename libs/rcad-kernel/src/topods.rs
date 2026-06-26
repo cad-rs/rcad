@@ -87,6 +87,9 @@ pub struct TFaceData {
     pub outer_wire: ShapeRef,
     pub inner_wires: Vec<ShapeRef>,
     pub sample_point: Option<DVec3>,
+    /// UV domain [umin, umax, vmin, vmax] — used by surface area calculation.
+    /// Corresponds to BRep's face_surface_range in the flat representation.
+    pub uv_domain: Option<[f64; 4]>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,9 +139,9 @@ impl BRep {
         ShapeRef::new(index)
     }
 
-    pub fn add_tface(&mut self, surface: Option<usize>, outer_wire: ShapeRef, inner_wires: Vec<ShapeRef>, sample_point: Option<DVec3>) -> ShapeRef {
+    pub fn add_tface(&mut self, surface: Option<usize>, outer_wire: ShapeRef, inner_wires: Vec<ShapeRef>, sample_point: Option<DVec3>, uv_domain: Option<[f64; 4]>) -> ShapeRef {
         let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Face(TFaceData { surface, outer_wire, inner_wires, sample_point })));
+        self.tshapes.push(Arc::new(TShape::Face(TFaceData { surface, outer_wire, inner_wires, sample_point, uv_domain })));
         ShapeRef::new(index)
     }
 
@@ -274,7 +277,7 @@ impl BRepBuilder {
         let mut face_refs = Vec::new();
         for (i, face_edges) in edge_for_face.into_iter().enumerate() {
             let wire = brep.add_twire(face_edges);
-            let face = brep.add_tface(None, wire, vec![], None);
+            let face = brep.add_tface(None, wire, vec![], None, None);
             let face_ref = ShapeRef::new(face.index);
 
             // Outer normal: orient face based on the face index
@@ -410,7 +413,7 @@ mod tests {
         let e1 = brep.add_tedge(None, v[1], v[2], [0.0, 1.0]);
         let e2 = brep.add_tedge(None, v[2], v[3], [0.0, 1.0]);
         let wire = brep.add_twire(vec![e0, e1, e2]);
-        let face = brep.add_tface(None, wire, vec![], None);
+        let face = brep.add_tface(None, wire, vec![], None, None);
         let fd = brep.face(face);
         assert_eq!(brep.tshapes.len(), 9); // 4V + 3E + 1W + 1F
         assert!(fd.inner_wires.is_empty());
@@ -429,7 +432,7 @@ mod tests {
         let w = brep.add_twire(vec![e]);
         assert_eq!(brep.tshapes[w.index].shape_type(), ShapeType::Wire);
 
-        let f = brep.add_tface(None, w, vec![], None);
+        let f = brep.add_tface(None, w, vec![], None, None);
         assert_eq!(brep.tshapes[f.index].shape_type(), ShapeType::Face);
 
         let sh = brep.add_tshell(vec![f]);

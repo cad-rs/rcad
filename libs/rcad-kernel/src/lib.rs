@@ -335,7 +335,7 @@ impl BRep {
                     let outer_wire = Self::wire_to_topods(&mut t, &e_map, &face.outer_wire);
                     let inner_wires: Vec<topods::ShapeRef> = face.inner_wires.iter()
                         .map(|w| Self::wire_to_topods(&mut t, &e_map, w)).collect();
-                    let sr = t.add_tface(face.surface_idx, outer_wire, inner_wires, face.sample_point);
+                    let sr = t.add_tface(face.surface_idx, outer_wire, inner_wires, face.sample_point, None);
                     face_refs.push(sr);
                 }
                 shell_refs.push(t.add_tshell(face_refs));
@@ -377,7 +377,8 @@ impl BRep {
                 _ => {}
             }
         }
-        // Rebuild solids from topods solids
+        // Rebuild solids from topods solids + populate geom stores
+        let mut flat_fi = 0usize;
         for ts in &t.tshapes {
             if let topods::TShape::Solid(sd) = &**ts {
                 let mut shells = Vec::new();
@@ -398,6 +399,15 @@ impl BRep {
                                     mesh_dirty: true,
                                     surface_idx: fd.surface,
                                 });
+                                while brep.geom.face_surface.len() <= flat_fi {
+                                    brep.geom.face_surface.push(None);
+                                }
+                                brep.geom.face_surface[flat_fi] = fd.surface;
+                                while brep.geom.face_surface_range.len() <= flat_fi {
+                                    brep.geom.face_surface_range.push(None);
+                                }
+                                brep.geom.face_surface_range[flat_fi] = fd.uv_domain;
+                                flat_fi += 1;
                             }
                         }
                         shells.push(topology::Shell { faces });

@@ -783,7 +783,7 @@ impl ResultBuilder {
 
             let surf_idx = t.surfaces.len();
             t.surfaces.push(surface);
-            let face_sr = t.add_tface(Some(surf_idx), outer_wire, inner_wires, Some(sample_point));
+            let face_sr = t.add_tface(Some(surf_idx), outer_wire, inner_wires, Some(sample_point), _uv_domain);
             face_refs.push(face_sr);
         }
 
