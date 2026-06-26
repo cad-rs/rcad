@@ -21,16 +21,22 @@ pub(crate) struct ResultBuilder {
     pub(crate) faces: Vec<FaceEntry>,
     pub(crate) face_origins: Vec<FaceOrigin>,
     pub(crate) co_face_origins: Vec<(usize, FaceOrigin)>,
-    pub(crate) shells: Vec<Vec<usize>>,
-    pub(crate) solids: Vec<Vec<usize>>,
+    pub(crate) tmp_shells: Vec<Vec<usize>>,
+    pub(crate) tmp_solids: Vec<Vec<usize>>,
     pub(crate) custom_edge_curves: Vec<Option<Curve3>>,
     pub(crate) face_internal_vtx: Vec<Vec<usize>>,
     pub(crate) deg_edge_indices: HashSet<usize>,
     pub(crate) ic_edge_map: HashMap<usize, usize>,
     pub(crate) source_has_compound: bool,
-    /// CompSolid solid groups — each entry is solid indices forming one CompSolid.
-    /// Populated immediately by fill_images_containers_compsolid.
-    pub(crate) compsolid_groups: Vec<Vec<usize>>,
+    pub(crate) tmp_compsolid_groups: Vec<Vec<usize>>,
+    /// Final topods shell references (populated by build_topods from tmp_shells).
+    pub(crate) shells: Vec<topods::ShapeRef>,
+    /// Final topods solid references (populated by build_topods from tmp_solids).
+    pub(crate) solids: Vec<topods::ShapeRef>,
+    /// Final topods compsolid references (populated by build_topods from tmp_compsolid_groups).
+    pub(crate) compsolid_groups: Vec<topods::ShapeRef>,
+    /// Topods face ShapeRefs (populated by build_topods_faces after fill_images_faces).
+    pub(crate) face_refs: Vec<topods::ShapeRef>,
 }
 
 impl ResultBuilder {
@@ -354,10 +360,14 @@ impl ResultBuilder {
             face_internal_vtx: Vec::new(),
             deg_edge_indices: std::collections::HashSet::new(),
             ic_edge_map: HashMap::new(),
+            tmp_shells: Vec::new(),
+            tmp_solids: Vec::new(),
+            source_has_compound: false,
+            tmp_compsolid_groups: Vec::new(),
             shells: Vec::new(),
             solids: Vec::new(),
-            source_has_compound: false,
             compsolid_groups: Vec::new(),
+            face_refs: Vec::new(),
         }
     }
 
@@ -455,10 +465,6 @@ impl ResultBuilder {
         self.face_origins.push(origin);
     }
 
-    /// ✅ OCCT-aligned: BRep_Builder::MakeVertex — dedup by position.
-    ///    OCCT: each TopoDS_Vertex is unique by TShape identity (may share position).
-    ///    rcad: dedup by hash of position + linear scan (geometric, not identity-based).
-    ///    Equivalent behavior: same-position vertices return same index.
     pub(crate) fn add_vertex(&mut self, point: DVec3) -> usize {
         let key = hash_point(point);
         if let Some(&idx) = self.vertex_map.get(&key) {
@@ -689,80 +695,62 @@ impl ResultBuilder {
 // SubFace removed: find_inner
 
 
-    /// ✅ OCCT-aligned: BuildResult — pure conversion from ResultBuilder arrays to BRep.
-    ///   OCCT BuildResult (Builder_1.cxx L130-168) iterates myImages and adds shapes
-    ///   to myShape.  rcad converts internal arrays (vertices, edges, faces) to BRep
-    ///   topology (Vertex, Edge, Face).  Both do NO merge/cull/post-processing.
+    /// ✅ OCCT-aligned: BuildResult(FACE) — create topods vertices, edges, wires, faces
+    ///   in t_brep from the flat arrays.  Called after fill_images_faces so that
+    ///   later BuildResult(SHELL) / BuildResult(SOLID) can reference these ShapeRefs.
+    ///   OCCT: BuildResult(FACE) (Builder_1.cxx L130-168) adds face images to myShape.
+    ///   rcad: previously deferred to build_topods; now aligned to happen per-phase.
+    pub(crate) fn build_topods_faces(&mut self, t: &mut topods::BRep) {
+        use topods::{Orientation, ShapeRef};
 
-    /// Build result as a TopoDS-aligned BRep with shared TShape references.
-    /// Each vertex/edge is a unique TShape; edges reference vertices via ShapeRef with Orientation.
-    pub(crate) fn build_topods(mut self) -> (topods::BRep, BooleanHistory) {
-        use topods::{Orientation, ShapeRef, TShape, TVertexData, TEdgeData, TWireData, TFaceData, TShellData, TSolidData};
-        use std::sync::Arc;
-        let mut t = topods::BRep::new();
-
-        // 1. Vertices (each becomes a TShape::Vertex)
+        // 1. Vertices → TShape::Vertex
         for v in &self.vertices {
             t.add_tvertex(*v);
         }
 
-        // 2. Edges (reference vertices by their TShape index)
+        // 2. Edges → TShape::Edge
         let mut e_map: Vec<ShapeRef> = Vec::with_capacity(self.edges.len());
         for (ei, &(start, end)) in self.edges.iter().enumerate() {
             let first = ShapeRef::new(start);
             let last = ShapeRef::new(end);
-            // Store curve if available (needed by surface area sampler)
             let curve_idx = self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
                 let ci = t.curves.len();
                 t.curves.push(crv.clone());
                 ci
             });
-            let sr = t.add_tedge(curve_idx, first, last, [0.0, 1.0]);
-            e_map.push(sr);
+            e_map.push(t.add_tedge(curve_idx, first, last, [0.0, 1.0]));
         }
 
-        // Map from old flat face index to face ShapeRef
-        let mut face_refs: Vec<ShapeRef> = Vec::with_capacity(self.faces.len());
-
-        // 4. Faces — build wires, then face TShapes
+        // 3. Faces → TShape::Face (with wires)
+        self.face_refs.clear();
         let mut flat_fi = 0usize;
-        for (edge_indices, inner_wire_edges, _triangles, _normal, surface, _uv_domain, _centroid, _area, sample_point, internal_wire_edges) in self.faces {
-            // Build outer wire
+        for (edge_indices, inner_wire_edges, _triangles, _normal, surface, _uv_domain, _centroid, _area, sample_point, internal_wire_edges) in &self.faces {
+            // Outer wire
             let outer_edges: Vec<ShapeRef> = edge_indices.iter().map(|&(idx, forward)| {
                 let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
-                if idx < e_map.len() {
-                    ShapeRef::with_orientation(e_map[idx].index, orient)
-                } else {
-                    ShapeRef::with_orientation(idx, orient)
-                }
+                if idx < e_map.len() { ShapeRef::with_orientation(e_map[idx].index, orient) }
+                else { ShapeRef::with_orientation(idx, orient) }
             }).collect();
             let outer_wire = t.add_twire(outer_edges);
 
-            // Build inner wires
+            // Inner wires
             let mut inner_wires = Vec::new();
             for wire_idxs in inner_wire_edges {
                 let iw_edges: Vec<ShapeRef> = wire_idxs.iter().map(|&(idx, forward)| {
                     let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
-                    if idx < e_map.len() {
-                        ShapeRef::with_orientation(e_map[idx].index, orient)
-                    } else {
-                        ShapeRef::with_orientation(idx, orient)
-                    }
+                    if idx < e_map.len() { ShapeRef::with_orientation(e_map[idx].index, orient) }
+                    else { ShapeRef::with_orientation(idx, orient) }
                 }).collect();
                 if !iw_edges.is_empty() {
                     inner_wires.push(t.add_twire(iw_edges));
                 }
             }
-
-            // Add internal wire edges as inner wires
+            // Internal wire edges
             for iw_edges in internal_wire_edges {
                 let iw: Vec<ShapeRef> = iw_edges.iter().map(|&(idx, forward)| {
                     let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
-                    if idx < e_map.len() {
-                        ShapeRef::with_orientation(e_map[idx].index, orient)
-                    } else {
-                        ShapeRef::with_orientation(idx, orient)
-                    }
+                    if idx < e_map.len() { ShapeRef::with_orientation(e_map[idx].index, orient) }
+                    else { ShapeRef::with_orientation(idx, orient) }
                 }).collect();
                 if iw.len() >= 2 {
                     inner_wires.push(t.add_twire(iw));
@@ -770,58 +758,69 @@ impl ResultBuilder {
             }
 
             let surf_idx = t.surfaces.len();
-            t.surfaces.push(surface);
-            let internal_vtx: Vec<topods::ShapeRef> = self.face_internal_vtx.get(flat_fi).map_or(vec![], |v| {
-                v.iter().map(|&vi| topods::ShapeRef::new(vi)).collect()
-            });
-            let face_sr = t.add_tface(Some(surf_idx), outer_wire, inner_wires, Some(sample_point), _uv_domain, internal_vtx);
-            face_refs.push(face_sr);
+            t.surfaces.push(surface.clone());
+            let internal_vtx: Vec<ShapeRef> = self.face_internal_vtx.get(flat_fi)
+                .map_or(vec![], |v| v.iter().map(|&vi| ShapeRef::new(vi)).collect());
+            self.face_refs.push(t.add_tface(Some(surf_idx), outer_wire, inner_wires, Some(*sample_point), *_uv_domain, internal_vtx));
             flat_fi += 1;
         }
+    }
 
-        if self.solids.is_empty() && self.shells.is_empty() {
-            // Legacy path: single shell, single solid
-            let shell = t.add_tshell(face_refs);
-            t.add_tsolid(vec![shell]);
-        } else if !self.compsolid_groups.is_empty() {
-            // OCCT-aligned: CompSolid wraps multiple solids sharing boundary faces.
-            for cs_group in &self.compsolid_groups {
-                let mut solid_refs = Vec::new();
-                for &si in cs_group {
-                    if si >= self.solids.len() { continue; }
-                    let shell_refs: Vec<ShapeRef> = self.solids[si].iter().map(|&shi| {
-                        let sf = self.shells.get(shi).map_or(vec![], |sf| {
-                            sf.iter().map(|&fi| face_refs.get(fi).copied().unwrap_or(ShapeRef::new(fi))).collect()
-                        });
-                        t.add_tshell(sf)
-                    }).collect();
-                    solid_refs.push(t.add_tsolid(shell_refs));
-                }
-                if !solid_refs.is_empty() {
-                    t.add_tcompsolid(solid_refs);
-                }
+    /// ✅ OCCT-aligned: BuildResult(SHELL/SOLID/COMPSOLID) — assemble shells, solids,
+    ///   and compsolids from the already-created topods faces (build_topods_faces).
+    ///   Vertices/edges/wires/faces are already in t_brep; this method only does
+    ///   the container-level assembly.
+    pub(crate) fn build_topods(&mut self, t: &mut topods::BRep) -> BooleanHistory {
+        use topods::ShapeRef;
+
+        // Vertices, edges, faces already created by build_topods_faces.
+        // 4. Shells — convert tmp_shells to topods TShape::Shell
+        let tmp_shells = std::mem::take(&mut self.tmp_shells);
+        for shell_faces in &tmp_shells {
+            let sf: Vec<ShapeRef> = shell_faces.iter()
+                .filter_map(|&fi| self.face_refs.get(fi).copied())
+                .collect();
+            if !sf.is_empty() {
+                self.shells.push(t.add_tshell(sf));
             }
-        } else if !self.solids.is_empty() {
-            for solid_shells in &self.solids {
-                let shell_refs: Vec<ShapeRef> = solid_shells.iter().map(|&si| {
-                    let shell_faces = self.shells.get(si).map_or(vec![], |sf| {
-                        sf.iter().map(|&fi| face_refs.get(fi).copied().unwrap_or(ShapeRef::new(fi))).collect()
-                    });
-                    t.add_tshell(shell_faces)
-                }).collect();
-                t.add_tsolid(shell_refs);
+        }
+
+        // 5. Solids — convert tmp_solids to topods TShape::Solid
+        let tmp_solids = std::mem::take(&mut self.tmp_solids);
+        if tmp_solids.is_empty() && self.shells.is_empty() {
+            let shell = t.add_tshell(std::mem::take(&mut self.face_refs));
+            t.add_tsolid(vec![shell]);
+        } else if !tmp_solids.is_empty() {
+            for solid_shells in &tmp_solids {
+                let shell_refs: Vec<ShapeRef> = solid_shells.iter()
+                    .filter_map(|&si| self.shells.get(si).copied())
+                    .collect();
+                if !shell_refs.is_empty() {
+                    let solid_sr = t.add_tsolid(shell_refs);
+                    self.solids.push(solid_sr);
+                }
             }
         } else {
-            let shell_refs: Vec<ShapeRef> = self.shells.iter().map(|shell_faces| {
-                let sfr: Vec<ShapeRef> = shell_faces.iter().map(|&fi| face_refs.get(fi).copied().unwrap_or(ShapeRef::new(fi))).collect();
-                t.add_tshell(sfr)
-            }).collect();
+            let shell_refs: Vec<ShapeRef> = self.shells.clone();
             t.add_tsolid(shell_refs);
         }
 
-        let history = BooleanHistory {
-            face_origins: self.face_origins,
-            co_face_origins: self.co_face_origins,
+        // 6. CompSolids — convert tmp_compsolid_groups to topods TShape::CompSolid
+        let tmp_cs_groups = std::mem::take(&mut self.tmp_compsolid_groups);
+        if !tmp_cs_groups.is_empty() {
+            for cs_group in &tmp_cs_groups {
+                let solid_refs: Vec<ShapeRef> = cs_group.iter()
+                    .filter_map(|&si| self.solids.get(si).copied())
+                    .collect();
+                if !solid_refs.is_empty() {
+                    self.compsolid_groups.push(t.add_tcompsolid(solid_refs));
+                }
+            }
+        }
+
+        BooleanHistory {
+            face_origins: std::mem::take(&mut self.face_origins),
+            co_face_origins: std::mem::take(&mut self.co_face_origins),
             edge_origins: Vec::new(),
             vertex_origins: Vec::new(),
             shell_origins: Vec::new(),
@@ -831,9 +830,7 @@ impl ResultBuilder {
             deleted_from_b: Vec::new(),
             deletion_reasons: std::collections::HashMap::new(),
             source_history: Vec::new(),
-        };
-
-        (t, history)
+        }
     }
 
     pub(crate) fn build(mut self) -> (BRep, BooleanHistory) {
@@ -944,5 +941,586 @@ impl ResultBuilder {
         };
         eprintln!("BRep built: {} faces", brep.solids[0].shells[0].faces.len());
         (brep, history)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: create a simple ResultBuilder with 4 vertices, 4 edges forming a square,
+    /// 1 planar face, and optionally populated tmp_shells / tmp_solids.
+    fn make_test_builder(with_shells: bool, with_solids: bool) -> ResultBuilder {
+        let mut rb = ResultBuilder::new();
+        // 4 vertices: square at z=0
+        let v0 = rb.add_vertex(DVec3::new(0.0, 0.0, 0.0));
+        let v1 = rb.add_vertex(DVec3::new(1.0, 0.0, 0.0));
+        let v2 = rb.add_vertex(DVec3::new(1.0, 1.0, 0.0));
+        let v3 = rb.add_vertex(DVec3::new(0.0, 1.0, 0.0));
+        // 4 edges: square perimeter (outer wire)
+        let e0 = rb.add_edge_occt(v0, v1);
+        let e1 = rb.add_edge_occt(v1, v2);
+        let e2 = rb.add_edge_occt(v2, v3);
+        let e3 = rb.add_edge_occt(v3, v0);
+        // 1 planar face
+        let outer = vec![(e0, true), (e1, true), (e2, true), (e3, true)];
+        let centroid = DVec3::new(0.5, 0.5, 0.0);
+        rb.faces.push((
+            outer,
+            vec![],                    // inner wires
+            vec![],
+            DVec3::Z,
+            Surface3::Plane(rcad_kernel::geom::Plane {
+                origin: DVec3::ZERO,
+                normal: DVec3::Z,
+            }),
+            None,
+            centroid,
+            1.0,
+            centroid,
+            vec![],
+        ));
+        rb.face_origins.push(FaceOrigin::FromA(0));
+        if with_shells {
+            rb.tmp_shells.push(vec![0]); // shell 0 contains face 0
+        }
+        if with_solids {
+            rb.tmp_solids.push(vec![0]); // solid 0 contains shell 0
+        }
+        rb
+    }
+
+    #[test]
+    fn build_topods_legacy_fallback() {
+        // empty tmp_shells + empty tmp_solids → legacy path:
+        //   one shell from all faces, one solid wrapping that shell.
+        let mut rb = make_test_builder(false, false);
+        let mut t = topods::BRep::new();
+        rb.build_topods_faces(&mut t);
+        let _history = rb.build_topods(&mut t);
+
+        // tshapes: 4 vertices + 4 edges + 2 wires + 1 face + 1 shell + 1 solid
+        assert!(t.tshapes.len() >= 12, "expected >= 12 tshapes, got {}", t.tshapes.len());
+
+        // Verify Solid exists and references the shell
+        let solid_count = t.tshapes.iter().filter(|ts| matches!(&***ts, topods::TShape::Solid(_))).count();
+        assert_eq!(solid_count, 1, "legacy path should produce exactly 1 solid");
+
+        // The result BRep (via from_topods) should have 1 solid
+        let brep = rcad_kernel::BRep::from_topods(&t);
+        assert_eq!(brep.solids.len(), 1);
+        assert_eq!(brep.solids[0].shells.len(), 1);
+        assert_eq!(brep.solids[0].shells[0].faces.len(), 1);
+    }
+
+    #[test]
+    fn build_topods_with_shells_and_solids() {
+        // tmp_shells and tmp_solids populated → normal path
+        let mut rb = make_test_builder(true, true);
+        let mut t = topods::BRep::new();
+        rb.build_topods_faces(&mut t);
+        let _history = rb.build_topods(&mut t);
+
+        assert_eq!(rb.shells.len(), 1, "should have 1 shell ShapeRef");
+        assert_eq!(rb.solids.len(), 1, "should have 1 solid ShapeRef");
+        assert!(rb.compsolid_groups.is_empty());
+
+        // Verify the topods BRep contains the right structure
+        let brep = rcad_kernel::BRep::from_topods(&t);
+        assert_eq!(brep.solids.len(), 1);
+        assert_eq!(brep.solids[0].shells.len(), 1);
+        assert_eq!(brep.solids[0].shells[0].faces.len(), 1);
+    }
+
+    #[test]
+    fn build_topods_compsolid() {
+        // Create two tmp_shells (each containing face 0) and two tmp_solids,
+        // then group solids into one compsolid.
+        let mut rb = make_test_builder(false, false);
+        // Add second face so two shells can reference different faces
+        let v0 = rb.add_vertex(DVec3::new(2.0, 0.0, 0.0));
+        let v1 = rb.add_vertex(DVec3::new(3.0, 0.0, 0.0));
+        let v2 = rb.add_vertex(DVec3::new(3.0, 1.0, 0.0));
+        let v3 = rb.add_vertex(DVec3::new(2.0, 1.0, 0.0));
+        let e0 = rb.add_edge_occt(v0, v1);
+        let e1 = rb.add_edge_occt(v1, v2);
+        let e2 = rb.add_edge_occt(v2, v3);
+        let e3 = rb.add_edge_occt(v3, v0);
+        let outer2 = vec![(e0, true), (e1, true), (e2, true), (e3, true)];
+        let c2 = DVec3::new(2.5, 0.5, 0.0);
+        rb.faces.push((
+            outer2, vec![], vec![], DVec3::Z,
+            Surface3::Plane(rcad_kernel::geom::Plane { origin: DVec3::ZERO, normal: DVec3::Z }),
+            None, c2, 1.0, c2, vec![],
+        ));
+        rb.face_origins.push(FaceOrigin::FromA(1));
+
+        rb.tmp_shells.push(vec![0]); // shell 0 = face 0
+        rb.tmp_shells.push(vec![1]); // shell 1 = face 1
+        rb.tmp_solids.push(vec![0]); // solid 0 = shell 0
+        rb.tmp_solids.push(vec![1]); // solid 1 = shell 1
+        rb.tmp_compsolid_groups.push(vec![0, 1]); // compsolid = {solid 0, solid 1}
+
+        let mut t = topods::BRep::new();
+        rb.build_topods_faces(&mut t);
+        let _history = rb.build_topods(&mut t);
+
+        assert_eq!(rb.shells.len(), 2);
+        assert_eq!(rb.solids.len(), 2);
+        assert_eq!(rb.compsolid_groups.len(), 1);
+
+        let brep = rcad_kernel::BRep::from_topods(&t);
+        assert_eq!(brep.solids.len(), 2);
+    }
+
+    #[test]
+    fn build_topods_vertex_edge_identity() {
+        // Ensure the ShapeRefs for shells/solids correctly reference their
+        // sub-entities in the topods BRep.
+        let mut rb = make_test_builder(true, true);
+        let mut t = topods::BRep::new();
+        rb.build_topods_faces(&mut t);
+        let _history = rb.build_topods(&mut t);
+
+        let shell_sr = rb.shells[0];
+        let solid_sr = rb.solids[0];
+
+        // Shell should exist in tshapes
+        match &*t.tshapes[shell_sr.index] {
+            topods::TShape::Shell(sh) => {
+                assert_eq!(sh.faces.len(), 1, "shell should have 1 face");
+            }
+            _ => panic!("shell ShapeRef should point to a TShape::Shell"),
+        }
+
+        // Solid should reference the shell
+        match &*t.tshapes[solid_sr.index] {
+            topods::TShape::Solid(sd) => {
+                assert_eq!(sd.shells.len(), 1, "solid should have 1 shell");
+                assert_eq!(sd.shells[0].index, shell_sr.index,
+                    "solid's shell ref should point to the same shell");
+            }
+            _ => panic!("solid ShapeRef should point to a TShape::Solid"),
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // Integration tests: full conversion pipeline (BRep ↔ topods ↔ from_topods)
+    // These catch regressions in the vertex/edge/face/wire mapping
+    // and shell/solid grouping logic during future form-alignment work.
+    // ══════════════════════════════════════════════════════════════
+
+    /// Helper: build a ResultBuilder from a known BRep by converting it to topods,
+    /// then extracting vertex/edge/face data into ResultBuilder format for
+    /// round-trip testing.
+    fn builder_from_brep(brep: &rcad_kernel::BRep) -> (ResultBuilder, topods::BRep) {
+        let t_in = brep.to_topods();
+        let mut rb = ResultBuilder::new();
+
+        // Walk TShape pool in order: vertices first, then edges, then faces
+        // (same order build_topods emits them)
+        let mut v_map: Vec<usize> = Vec::new(); // tshape index → RB vertex index
+        let mut e_map: Vec<Option<usize>> = Vec::new(); // tshape index → RB edge index
+        for (ti, ts) in t_in.tshapes.iter().enumerate() {
+            match &**ts {
+                topods::TShape::Vertex(vd) => {
+                    let vi = rb.add_vertex(vd.point);
+                    while v_map.len() <= ti { v_map.push(0); }
+                    v_map[ti] = vi;
+                }
+                topods::TShape::Edge(ed) => {
+                    let v1 = v_map[ed.first.index];
+                    let v2 = v_map[ed.last.index];
+                    let ei = rb.add_edge(v1, v2);
+                    while e_map.len() <= ti { e_map.push(None); }
+                    e_map[ti] = Some(ei);
+                    // Store curve if present
+                    if let Some(ci) = ed.curve {
+                        let crv = t_in.curves[ci].clone();
+                        while rb.custom_edge_curves.len() <= ei {
+                            rb.custom_edge_curves.push(None);
+                        }
+                        rb.custom_edge_curves[ei] = Some(crv);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Now collect faces: iterate tshapes looking for Solid entries
+        let mut shell_to_rb: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        for (ti, ts) in t_in.tshapes.iter().enumerate() {
+            if let topods::TShape::Solid(sd) = &**ts {
+                for shell_sr in &sd.shells {
+                    if let topods::TShape::Shell(shd) = &*t_in.tshapes[shell_sr.index] {
+                        let mut shell_face_indices: Vec<usize> = Vec::new();
+                        for face_sr in &shd.faces {
+                            if let topods::TShape::Face(fd) = &*t_in.tshapes[face_sr.index] {
+                                let outer: Vec<(usize, bool)> = t_in.wire(fd.outer_wire).edges.iter().map(|e_sr| {
+                                    let ei = e_map.get(e_sr.index).copied().flatten().unwrap_or(e_sr.index);
+                                    (ei, e_sr.orientation.is_forward())
+                                }).collect();
+                                let inner: Vec<Vec<(usize, bool)>> = fd.inner_wires.iter().map(|w_sr| {
+                                    let wd = t_in.wire(*w_sr);
+                                    wd.edges.iter().map(|e_sr| {
+                                        let ei = e_map.get(e_sr.index).copied().flatten().unwrap_or(e_sr.index);
+                                        (ei, e_sr.orientation.is_forward())
+                                    }).collect()
+                                }).collect();
+                                let surf = fd.surface.map(|si| t_in.surfaces[si].clone())
+                                    .unwrap_or(Surface3::Plane(rcad_kernel::geom::Plane {
+                                        origin: DVec3::ZERO, normal: DVec3::Z,
+                                    }));
+                                let sample = fd.sample_point.unwrap_or(DVec3::ZERO);
+                                rb.faces.push((
+                                    outer, inner, vec![], DVec3::Z, surf,
+                                    fd.uv_domain, sample, 1.0, sample, vec![],
+                                ));
+                                rb.face_origins.push(FaceOrigin::FromA(0));
+                                shell_face_indices.push(rb.faces.len() - 1);
+                            }
+                        }
+                        if !shell_face_indices.is_empty() {
+                            rb.tmp_shells.push(shell_face_indices);
+                            shell_to_rb.insert(shell_sr.index, rb.tmp_shells.len() - 1);
+                        }
+                    }
+                }
+                // Map solid's shell refs to tmp_shells indices
+                let solid_shell_indices: Vec<usize> = sd.shells.iter()
+                    .filter_map(|sr| shell_to_rb.get(&sr.index).copied())
+                    .collect();
+                if !solid_shell_indices.is_empty() {
+                    rb.tmp_solids.push(solid_shell_indices);
+                }
+            }
+        }
+
+        (rb, t_in)
+    }
+
+    /// Round-trip: BRep → to_topods → builder_from_brep → build_topods → from_topods
+    /// The final BRep must have the same face/edge/vertex counts.
+    #[test]
+    fn round_trip_single_solid_preserves_topology() {
+        let orig = rcad_modeling::make_box_brep(
+            DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0,
+        ).unwrap();
+
+        let (mut rb, _t_in) = builder_from_brep(&orig);
+        let mut t = topods::BRep::new();
+        rb.build_topods_faces(&mut t);
+        let _history = rb.build_topods(&mut t);
+        let rebuilt = rcad_kernel::BRep::from_topods(&t);
+
+        assert_eq!(rebuilt.solids.len(), orig.solids.len(),
+            "solid count mismatch");
+        let ns = |b: &rcad_kernel::BRep| -> usize {
+            b.solids.iter().flat_map(|s| &s.shells).count()
+        };
+        let nf = |b: &rcad_kernel::BRep| -> usize {
+            b.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count()
+        };
+        assert_eq!(ns(&rebuilt), ns(&orig), "shell count mismatch");
+        assert_eq!(nf(&rebuilt), nf(&orig), "face count mismatch");
+    }
+
+    /// Round-trip with two solids sharing a face (adjacent boxes).
+    /// Verifies that shared-edge identity is preserved across conversion.
+    #[test]
+    fn round_trip_two_solids_shared_edges() {
+        let a = rcad_modeling::make_box_brep(
+            DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0,
+        ).unwrap();
+        let b = rcad_modeling::make_box_brep(
+            DVec3::new(1.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0,
+        ).unwrap();
+        let t_orig = merge_two_breps_into_topods(&a, &b);
+
+        // Round-trip: topods → builder → topods
+        let mut t_in = t_orig;
+        let (mut rb, _) = builder_from_topods(&t_in);
+
+        let mut t_out = topods::BRep::new();
+        rb.build_topods_faces(&mut t_out);
+        let _history = rb.build_topods(&mut t_out);
+        let rebuilt = rcad_kernel::BRep::from_topods(&t_out);
+
+        assert_eq!(rebuilt.solids.len(), 2, "should have 2 solids");
+        // Each solid should have 1 shell with 6 faces (box)
+        for solid in &rebuilt.solids {
+            assert_eq!(solid.shells.len(), 1);
+            assert_eq!(solid.shells[0].faces.len(), 6,
+                "each box has 6 faces");
+        }
+    }
+
+    /// Square face with a triangular hole (inner wire).
+    /// The inner wire must survive the round-trip.
+    #[test]
+    fn round_trip_face_with_inner_wire() {
+        let mut rb = ResultBuilder::new();
+        // Outer square: 4 vertices
+        let o0 = rb.add_vertex(DVec3::new(0.0, 0.0, 0.0));
+        let o1 = rb.add_vertex(DVec3::new(3.0, 0.0, 0.0));
+        let o2 = rb.add_vertex(DVec3::new(3.0, 3.0, 0.0));
+        let o3 = rb.add_vertex(DVec3::new(0.0, 3.0, 0.0));
+        let oe0 = rb.add_edge_occt(o0, o1);
+        let oe1 = rb.add_edge_occt(o1, o2);
+        let oe2 = rb.add_edge_occt(o2, o3);
+        let oe3 = rb.add_edge_occt(o3, o0);
+        // Inner triangle: 3 vertices
+        let i0 = rb.add_vertex(DVec3::new(1.0, 1.0, 0.0));
+        let i1 = rb.add_vertex(DVec3::new(2.0, 1.0, 0.0));
+        let i2 = rb.add_vertex(DVec3::new(1.5, 2.0, 0.0));
+        let ie0 = rb.add_edge_occt(i0, i1);
+        let ie1 = rb.add_edge_occt(i1, i2);
+        let ie2 = rb.add_edge_occt(i2, i0);
+
+        let outer = vec![(oe0, true), (oe1, true), (oe2, true), (oe3, true)];
+        let inner = vec![vec![(ie0, true), (ie1, true), (ie2, true)]];
+        let c = DVec3::new(1.5, 1.5, 0.0);
+        rb.faces.push((
+            outer, inner, vec![], DVec3::Z,
+            Surface3::Plane(rcad_kernel::geom::Plane { origin: DVec3::ZERO, normal: DVec3::Z }),
+            None, c, 1.0, c, vec![],
+        ));
+        rb.face_origins.push(FaceOrigin::FromA(0));
+
+        let mut t = topods::BRep::new();
+        rb.build_topods_faces(&mut t);
+        let _history = rb.build_topods(&mut t);
+        let rebuilt = rcad_kernel::BRep::from_topods(&t);
+
+        assert_eq!(rebuilt.solids.len(), 1);
+        let face = &rebuilt.solids[0].shells[0].faces[0];
+        assert_eq!(face.inner_wires.len(), 1,
+            "should have 1 inner wire (triangle hole)");
+        assert_eq!(face.inner_wires[0].edges.len(), 3,
+            "inner triangle has 3 edges");
+        assert_eq!(face.outer_wire.edges.len(), 4,
+            "outer square has 4 edges");
+    }
+
+    /// Direct topods → builder → topods round-trip without going through BRep.
+    /// Verifies that build_topods correctly reconstructs shells and solids
+    /// given only tmp_shells/tmp_solids populated from any source.
+    #[test]
+    fn direct_topods_round_trip_preserves_tshape_count() {
+        let box_brep = rcad_modeling::make_box_brep(
+            DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0,
+        ).unwrap();
+        let t0 = box_brep.to_topods();
+        // Collect face/edge/vertex info from t0
+        let (mut rb, _) = builder_from_topods(&t0);
+
+        let mut t1 = topods::BRep::new();
+        rb.build_topods_faces(&mut t1);
+        let _history = rb.build_topods(&mut t1);
+
+        // Same number of Vertex/Edge/Face/Shell/Solid TShapes
+        let count_by_type = |t: &topods::BRep| -> (usize, usize, usize, usize, usize) {
+            let (mut v, mut e, mut f, mut sh, mut so) = (0, 0, 0, 0, 0);
+            for ts in &t.tshapes {
+                match &**ts {
+                    topods::TShape::Vertex(_) => v += 1,
+                    topods::TShape::Edge(_) => e += 1,
+                    topods::TShape::Face(_) => f += 1,
+                    topods::TShape::Shell(_) => sh += 1,
+                    topods::TShape::Solid(_) => so += 1,
+                    _ => {}
+                }
+            }
+            (v, e, f, sh, so)
+        };
+        assert_eq!(count_by_type(&t0), count_by_type(&t1),
+            "TShape type counts must match after round-trip");
+    }
+
+    /// Internal wire edges (TopAbs_INTERNAL) survive conversion.
+    #[test]
+    fn round_trip_internal_wire_edges() {
+        let mut rb = ResultBuilder::new();
+        let v0 = rb.add_vertex(DVec3::new(0.0, 0.0, 0.0));
+        let v1 = rb.add_vertex(DVec3::new(1.0, 0.0, 0.0));
+        let v2 = rb.add_vertex(DVec3::new(1.0, 1.0, 0.0));
+        let v3 = rb.add_vertex(DVec3::new(0.0, 1.0, 0.0));
+        let e0 = rb.add_edge_occt(v0, v1);
+        let e1 = rb.add_edge_occt(v1, v2);
+        let e2 = rb.add_edge_occt(v2, v3);
+        let e3 = rb.add_edge_occt(v3, v0);
+        // Internal edge: a seam line inside the face (needs >= 2 edges for a valid wire)
+        let vi0 = rb.add_vertex(DVec3::new(0.2, 0.2, 0.0));
+        let vi1 = rb.add_vertex(DVec3::new(0.5, 0.8, 0.0));
+        let vi2 = rb.add_vertex(DVec3::new(0.8, 0.2, 0.0));
+        let ei0 = rb.add_edge(vi0, vi1);
+        let ei1 = rb.add_edge(vi1, vi2);
+        let internal_edges = vec![vec![(ei0, true), (ei1, true)]];
+
+        let outer = vec![(e0, true), (e1, true), (e2, true), (e3, true)];
+        let c = DVec3::new(0.5, 0.5, 0.0);
+        rb.faces.push((
+            outer, vec![], vec![], DVec3::Z,
+            Surface3::Plane(rcad_kernel::geom::Plane { origin: DVec3::ZERO, normal: DVec3::Z }),
+            None, c, 1.0, c, internal_edges,
+        ));
+        rb.face_origins.push(FaceOrigin::FromA(0));
+
+        let mut t = topods::BRep::new();
+        rb.build_topods_faces(&mut t);
+        let _history = rb.build_topods(&mut t);
+        let rebuilt = rcad_kernel::BRep::from_topods(&t);
+
+        assert_eq!(rebuilt.solids.len(), 1);
+        let face = &rebuilt.solids[0].shells[0].faces[0];
+        // Internal wire edges become inner wires in the rebuilt BRep
+        let total_inner_edges: usize = face.inner_wires.iter()
+            .map(|w| w.edges.len()).sum();
+        assert_eq!(total_inner_edges, 2,
+            "internal seam edges should survive round-trip");
+    }
+
+    /// merge two BReps into one topods::BRep by concatenating their vertices/edges/faces
+    /// after re-indexing, creating separate solids.
+    fn merge_two_breps_into_topods(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> topods::BRep {
+        use topods::{Orientation, ShapeRef};
+        let mut t = topods::BRep::new();
+        t.curves = a.geom.curves.clone();
+        t.curves.extend(b.geom.curves.clone());
+        t.surfaces = a.geom.surfaces.clone();
+        t.surfaces.extend(b.geom.surfaces.clone());
+
+        // Helper to add all vertices/edges/faces/shells from one BRep into t,
+        // returning (shell_sr) for that solid.
+        fn push_brep_solid(t: &mut topods::BRep, brep: &rcad_kernel::BRep) -> ShapeRef {
+            let mut v_map: Vec<ShapeRef> = Vec::new();
+            for v in &brep.vertices {
+                v_map.push(t.add_tvertex(v.point));
+            }
+            let mut e_map: Vec<ShapeRef> = Vec::new();
+            for (ei, e) in brep.edges.iter().enumerate() {
+                let first = v_map[e.start];
+                let last = v_map[e.end];
+                let curve = brep.geom.edge_curve.get(ei).copied().flatten();
+                let range = brep.geom.edge_curve_range.get(ei).copied().flatten().unwrap_or([0.0, 0.0]);
+                e_map.push(t.add_tedge(curve, first, last, range));
+            }
+            let mut face_refs = Vec::new();
+            let mut fi = 0usize;
+            for solid in &brep.solids {
+                for shell in &solid.shells {
+                    for face in &shell.faces {
+                        let outer_edges: Vec<ShapeRef> = face.outer_wire.edges.iter().map(|we| {
+                            let orient = if we.forward { Orientation::Forward } else { Orientation::Reversed };
+                            ShapeRef::with_orientation(e_map[we.idx].index, orient)
+                        }).collect();
+                        let outer_wire = t.add_twire(outer_edges);
+                        let inner_wires: Vec<ShapeRef> = face.inner_wires.iter().map(|w| {
+                            let iwe: Vec<ShapeRef> = w.edges.iter().map(|we| {
+                                let orient = if we.forward { Orientation::Forward } else { Orientation::Reversed };
+                                ShapeRef::with_orientation(e_map[we.idx].index, orient)
+                            }).collect();
+                            t.add_twire(iwe)
+                        }).collect();
+                        let internal_vtx: Vec<ShapeRef> = brep.geom.face_internal_vertices
+                            .get(fi)
+                            .map(|v| v.iter().map(|&vi| ShapeRef::new(vi)).collect())
+                            .unwrap_or_default();
+                        face_refs.push(t.add_tface(
+                            face.surface_idx, outer_wire, inner_wires,
+                            face.sample_point, None, internal_vtx,
+                        ));
+                        fi += 1;
+                    }
+                }
+            }
+            let shell = t.add_tshell(face_refs);
+            t.add_tsolid(vec![shell])
+        }
+
+        push_brep_solid(&mut t, a);
+        push_brep_solid(&mut t, b);
+        t
+    }
+
+    /// Extract a ResultBuilder from an existing topods::BRep (inverse of build_topods).
+    /// Reads all TShape entries and populates ResultBuilder fields accordingly.
+    fn builder_from_topods(t: &topods::BRep) -> (ResultBuilder, topods::BRep) {
+        let mut rb = ResultBuilder::new();
+        let mut v_map: Vec<usize> = Vec::new();
+        let mut e_map: Vec<Option<usize>> = Vec::new();
+
+        for (ti, ts) in t.tshapes.iter().enumerate() {
+            match &**ts {
+                topods::TShape::Vertex(vd) => {
+                    let vi = rb.add_vertex(vd.point);
+                    while v_map.len() <= ti { v_map.push(0); }
+                    v_map[ti] = vi;
+                }
+                topods::TShape::Edge(ed) => {
+                    let v1 = v_map[ed.first.index];
+                    let v2 = v_map[ed.last.index];
+                    let ei = rb.add_edge(v1, v2);
+                    while e_map.len() <= ti { e_map.push(None); }
+                    e_map[ti] = Some(ei);
+                    if let Some(ci) = ed.curve {
+                        let crv = t.curves[ci].clone();
+                        while rb.custom_edge_curves.len() <= ei {
+                            rb.custom_edge_curves.push(None);
+                        }
+                        rb.custom_edge_curves[ei] = Some(crv);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let mut shell_to_rb: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        for (ti, ts) in t.tshapes.iter().enumerate() {
+            if let topods::TShape::Solid(sd) = &**ts {
+                for shell_sr in &sd.shells {
+                    if let topods::TShape::Shell(shd) = &*t.tshapes[shell_sr.index] {
+                        let mut shell_faces: Vec<usize> = Vec::new();
+                        for face_sr in &shd.faces {
+                            if let topods::TShape::Face(fd) = &*t.tshapes[face_sr.index] {
+                                let outer: Vec<(usize, bool)> = t.wire(fd.outer_wire).edges.iter().map(|e_sr| {
+                                    let ei = e_map.get(e_sr.index).copied().flatten().unwrap_or(e_sr.index);
+                                    (ei, e_sr.orientation.is_forward())
+                                }).collect();
+                                let inner: Vec<Vec<(usize, bool)>> = fd.inner_wires.iter().map(|w_sr| {
+                                    t.wire(*w_sr).edges.iter().map(|e_sr| {
+                                        let ei = e_map.get(e_sr.index).copied().flatten().unwrap_or(e_sr.index);
+                                        (ei, e_sr.orientation.is_forward())
+                                    }).collect()
+                                }).collect();
+                                let surf = fd.surface.map(|si| t.surfaces[si].clone())
+                                    .unwrap_or(Surface3::Plane(rcad_kernel::geom::Plane {
+                                        origin: DVec3::ZERO, normal: DVec3::Z,
+                                    }));
+                                let sample = fd.sample_point.unwrap_or(DVec3::ZERO);
+                                rb.faces.push((
+                                    outer, inner, vec![], DVec3::Z, surf,
+                                    fd.uv_domain, sample, 1.0, sample, vec![],
+                                ));
+                                rb.face_origins.push(FaceOrigin::FromA(0));
+                                shell_faces.push(rb.faces.len() - 1);
+                            }
+                        }
+                        if !shell_faces.is_empty() {
+                            rb.tmp_shells.push(shell_faces);
+                            shell_to_rb.insert(shell_sr.index, rb.tmp_shells.len() - 1);
+                        }
+                    }
+                }
+                let solid_shell_indices: Vec<usize> = sd.shells.iter()
+                    .filter_map(|sr| shell_to_rb.get(&sr.index).copied())
+                    .collect();
+                if !solid_shell_indices.is_empty() {
+                    rb.tmp_solids.push(solid_shell_indices);
+                }
+            }
+        }
+
+        (rb, t.clone())
     }
 }

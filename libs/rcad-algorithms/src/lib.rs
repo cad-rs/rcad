@@ -11397,6 +11397,7 @@ fn box_at(x: f64, y: f64, z: f64, w: f64, h: f64, d: f64) -> BRep {
             deleted_from_a: vec![],
             deleted_from_b: vec![],
             deletion_reasons: std::collections::HashMap::new(),
+            source_history: Vec::new(),
         };
 
         let seeds = make_connected_seed_edges_from_boolean_history(&brep, &history);
@@ -11464,6 +11465,7 @@ fn box_at(x: f64, y: f64, z: f64, w: f64, h: f64, d: f64) -> BRep {
             deleted_from_a: vec![],
             deleted_from_b: vec![],
             deletion_reasons: std::collections::HashMap::new(),
+            source_history: Vec::new(),
         };
 
         let (seed_edges, history_count, heuristic_count, source) = select_scoped_seed_edges(
@@ -11549,6 +11551,7 @@ fn box_at(x: f64, y: f64, z: f64, w: f64, h: f64, d: f64) -> BRep {
             deleted_from_a: vec![],
             deleted_from_b: vec![],
             deletion_reasons: std::collections::HashMap::new(),
+            source_history: Vec::new(),
         };
 
         let (seed_edges, history_count, _heuristic_count, source) = select_scoped_seed_edges(
@@ -11631,6 +11634,7 @@ fn box_at(x: f64, y: f64, z: f64, w: f64, h: f64, d: f64) -> BRep {
             deleted_from_a: vec![],
             deleted_from_b: vec![],
             deletion_reasons: std::collections::HashMap::new(),
+            source_history: Vec::new(),
         };
 
         let (seed_edges, history_count, _heuristic_count, source) = select_scoped_seed_edges(

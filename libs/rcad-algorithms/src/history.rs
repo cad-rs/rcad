@@ -2223,6 +2223,7 @@ mod tests {
             deleted_from_a: vec![],
             deleted_from_b: vec![],
             deletion_reasons: HashMap::new(),
+            source_history: Vec::new(),
         };
 
         let mut names_a = PersistentNamingHooks::new();
@@ -2269,9 +2270,8 @@ mod tests {
             deleted_from_a: vec![],
             deleted_from_b: vec![],
             deletion_reasons: HashMap::new(),
-        };
-
-        let mut names_a = PersistentNamingHooks::new();
+            source_history: Vec::new(),
+        };        let mut names_a = PersistentNamingHooks::new();
         names_a.bind("shared_face", TopoEntityRef::Face(0));
         let mut names_b = PersistentNamingHooks::new();
         names_b.bind("shared_face", TopoEntityRef::Face(0));

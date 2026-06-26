@@ -1020,7 +1020,7 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             if !shell_faces.is_empty() {
-                result.shells.push(shell_faces);
+                result.tmp_shells.push(shell_faces);
             }
         }
     }
@@ -1031,7 +1031,7 @@ impl<'a> BooleanBuilder<'a> {
     ///   L242-275: build new container from sub-shape images.
     ///
     /// rcad: iterate DS faces → find those from CompSolids → group result solids
-    /// by their source compsolid → store in result.compsolid_groups.
+    /// by their source compsolid → store in result.tmp_compsolid_groups.
     fn fill_images_containers_compsolid(&self, result: &mut ResultBuilder) {
         // OCCT L224-233: check if any sub-shape has been modified.
         let has_compsolid = self.ds.faces.iter().any(|f| f.source_compsolid_idx.is_some());
@@ -1042,11 +1042,11 @@ impl<'a> BooleanBuilder<'a> {
         // OCCT L242-275: build CompSolid from sub-solid images.
         // Group result solids by their source compsolid index.
         // For each result solid, find its origin DS faces to determine compsolid.
-        let mut solid_to_cs: Vec<Option<usize>> = vec![None; result.solids.len()];
-        for (si, solid_shells) in result.solids.iter().enumerate() {
+        let mut solid_to_cs: Vec<Option<usize>> = vec![None; result.tmp_solids.len()];
+        for (si, solid_shells) in result.tmp_solids.iter().enumerate() {
             for &shi in solid_shells {
-                if shi >= result.shells.len() { continue; }
-                for &rfi in &result.shells[shi] {
+                if shi >= result.tmp_shells.len() { continue; }
+                for &rfi in &result.tmp_shells[shi] {
                     if rfi >= result.face_origins.len() { continue; }
                     let ds_fi = match &result.face_origins[rfi] {
                         FaceOrigin::FromA(sfi) => self.ds.faces.iter().position(|f|
@@ -1073,7 +1073,7 @@ impl<'a> BooleanBuilder<'a> {
                 cs_groups.entry(*csi).or_default().push(si);
             }
         }
-        result.compsolid_groups = cs_groups.into_values().collect();
+        result.tmp_compsolid_groups = cs_groups.into_values().collect();
     }
 
     /// ✅ OCCT-aligned: FillImagesSolids (BOPAlgo_Builder_3.cxx L60-93).
@@ -1093,7 +1093,7 @@ impl<'a> BooleanBuilder<'a> {
     fn fill_images_solids(&self, result: &mut ResultBuilder) {
         let has_solid = self.ds.faces.iter().any(|f| f.source_solid_idx.is_some());
         if !has_solid { return; }
-        if result.shells.is_empty() { return; }
+        if result.tmp_shells.is_empty() { return; }
 
         // --- PerformShapesToAvoid (BOPAlgo_BuilderSolid.cxx L129-218) ---
         loop {
@@ -1128,13 +1128,13 @@ impl<'a> BooleanBuilder<'a> {
             for (fi, face) in old_faces.into_iter().enumerate() {
                 if !to_avoid[fi] { result.faces.push(face); result.face_origins.push(old_origins[fi]); }
             }
-            let old_shells = std::mem::take(&mut result.shells);
+            let old_shells = std::mem::take(&mut result.tmp_shells);
             let mut idx_map: Vec<Option<usize>> = vec![None; nf];
             let mut cur = 0usize;
             for fi in 0..nf { if !to_avoid[fi] { idx_map[fi] = Some(cur); cur += 1; } }
             for shell in &old_shells {
                 let ns: Vec<usize> = shell.iter().filter_map(|&fi| idx_map[fi]).collect();
-                if !ns.is_empty() { result.shells.push(ns); }
+                if !ns.is_empty() { result.tmp_shells.push(ns); }
             }
         }
 
@@ -1291,7 +1291,7 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             // Rebuild shell face indices
-            let old_shells = std::mem::take(&mut result.shells);
+            let old_shells = std::mem::take(&mut result.tmp_shells);
             let mut idx_map: Vec<Option<usize>> = vec![None; nf];
             let mut cur = 0usize;
             for fi in 0..nf {
@@ -1301,7 +1301,7 @@ impl<'a> BooleanBuilder<'a> {
                 let new_shell: Vec<usize> = shell.iter()
                     .filter_map(|&fi| idx_map[fi]).collect();
                 if !new_shell.is_empty() {
-                    result.shells.push(new_shell);
+                    result.tmp_shells.push(new_shell);
                 }
             }
             // Translate my_in_parts face indices through the removal map
@@ -1336,7 +1336,7 @@ impl<'a> BooleanBuilder<'a> {
         //   based on face classifications instead of hardcoding "OUT".
         //   For each shell, determine if it is IN or OUT of the other solid.
         let mut assignments: Vec<(usize, usize, &'static str)> = Vec::new();
-        for (si, shell) in result.shells.iter().enumerate() {
+        for (si, shell) in result.tmp_shells.iter().enumerate() {
             let mut has_a = false;
             let mut has_b = false;
             // Determine shell state from the majority classification
@@ -1399,17 +1399,17 @@ impl<'a> BooleanBuilder<'a> {
         if !group.is_empty() {
             let mut group_faces: Vec<usize> = Vec::new();
             for &si in &group {
-                if si < result.shells.len() {
-                    group_faces.extend(&result.shells[si]);
+                if si < result.tmp_shells.len() {
+                    group_faces.extend(&result.tmp_shells[si]);
                 }
             }
             if !group_faces.is_empty() {
-                let csi = result.shells.len();
-                result.shells.push(group_faces);
+                let csi = result.tmp_shells.len();
+                result.tmp_shells.push(group_faces);
                 result_solids.push(vec![csi]);
             }
         }
-        result.solids = result_solids;
+        result.tmp_solids = result_solids;
 
         // OCCT BuilderSolid::PerformAreas (L397-576): shell-level void detection.
         self.detect_internal_voids(result, assignments);
@@ -1450,8 +1450,8 @@ impl<'a> BooleanBuilder<'a> {
         //   rcad: state ("IN"/"OUT") from fill_in_3d_parts corresponds to
         //   Growth (OUT = outer boundary) vs Hole (IN = internal void).
         //   Build IN/OUT solid lists from shell states.
-        let mut solid_is_in: Vec<bool> = vec![false; result.solids.len()];
-        for (si, solid_shells) in result.solids.iter().enumerate() {
+        let mut solid_is_in: Vec<bool> = vec![false; result.tmp_solids.len()];
+        for (si, solid_shells) in result.tmp_solids.iter().enumerate() {
             if let Some(&first_sh) = solid_shells.first() {
                 if let Some(&(_sh_i, _origin, state)) = assignments.iter().find(|&&(si, _, _)| si == first_sh) {
                     solid_is_in[si] = state == "IN";
@@ -1460,9 +1460,9 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // Separate IN solids (potential holes) from OUT solids (potential growths).
-        let in_solid_indices: Vec<usize> = (0..result.solids.len())
+        let in_solid_indices: Vec<usize> = (0..result.tmp_solids.len())
             .filter(|&si| solid_is_in[si]).collect();
-        let out_solid_indices: Vec<usize> = (0..result.solids.len())
+        let out_solid_indices: Vec<usize> = (0..result.tmp_solids.len())
             .filter(|&si| !solid_is_in[si]).collect();
 
         if in_solid_indices.is_empty() || out_solid_indices.is_empty() {
@@ -1477,8 +1477,8 @@ impl<'a> BooleanBuilder<'a> {
         let mut out_ds_face_sets: Vec<Vec<usize>> = Vec::new();
         for &out_si in &out_solid_indices {
             let mut ds_faces: Vec<usize> = Vec::new();
-            for &sh in &result.solids[out_si] {
-                if let Some(shell) = result.shells.get(sh) {
+            for &sh in &result.tmp_solids[out_si] {
+                if let Some(shell) = result.tmp_shells.get(sh) {
                     for &fi in shell {
                         if let Some(origin) = result.face_origins.get(fi) {
                             let ds_fi = match origin {
@@ -1501,8 +1501,8 @@ impl<'a> BooleanBuilder<'a> {
         for (i, &in_si) in in_solid_indices.iter().enumerate() {
             // OCCT L422-427: classify hole — IsGrowthShell/IsHole.
             //   rcad: centroid of IN solid's first face as test point.
-            let centroid = result.solids[in_si].first()
-                .and_then(|&sh| result.shells.get(sh))
+            let centroid = result.tmp_solids[in_si].first()
+                .and_then(|&sh| result.tmp_shells.get(sh))
                 .and_then(|shell| shell.first())
                 .map(|&fi| {
                     // FaceEntry.6 is the centroid field
@@ -1522,19 +1522,19 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // OCCT L550-576: Add Holes to Solids (add void shells to containing solids).
-        let mut removed = vec![false; result.solids.len()];
+        let mut removed = vec![false; result.tmp_solids.len()];
         for &(in_si, out_si) in &in_to_out {
-            let void_shells = result.solids[in_si].clone();
-            result.solids[out_si].extend(void_shells);
+            let void_shells = result.tmp_solids[in_si].clone();
+            result.tmp_solids[out_si].extend(void_shells);
             removed[in_si] = true;
         }
 
         // Remove merged IN solids, preserve order.
-        let mut new_solids: Vec<Vec<usize>> = Vec::with_capacity(result.solids.len());
-        for (si, solid) in result.solids.drain(..).enumerate() {
+        let mut new_solids: Vec<Vec<usize>> = Vec::with_capacity(result.tmp_solids.len());
+        for (si, solid) in result.tmp_solids.drain(..).enumerate() {
             if !removed[si] { new_solids.push(solid); }
         }
-        result.solids = new_solids;
+        result.tmp_solids = new_solids;
     }
 
     /// ✅ OCCT-aligned: FillInternalShapes (Builder_3.cxx L622-887).
@@ -1566,10 +1566,10 @@ impl<'a> BooleanBuilder<'a> {
         //   (In OCCT this uses aMSx ancestry map; rcad's DS doesn't track this).
 
         // OCCT Phase 4 (L806-887): classify each shape against result solids.
-        //   Build DS face index set for each result solid from result.shells.
+        //   Build DS face index set for each result solid from result.tmp_shells.
         let shell_to_solid: Vec<usize> = {
-            let mut map = vec![usize::MAX; result.shells.len()];
-            for (si, solid_shells) in result.solids.iter().enumerate() {
+            let mut map = vec![usize::MAX; result.tmp_shells.len()];
+            for (si, solid_shells) in result.tmp_solids.iter().enumerate() {
                 for &sh in solid_shells {
                     if sh < map.len() {
                         map[sh] = si;
@@ -1663,7 +1663,7 @@ impl<'a> BooleanBuilder<'a> {
         // OCCT L314-341: build new compound from solid images.
         //   rcad: deferred — see build_with_history L6834-6840.
         //   OCCT stores the new TopoDS_Compound in myImages; rcad
-        //   builds it during result.build() from result.solids,
+        //   builds it during result.build() from result.tmp_solids,
         //   wrapping them in a rcad_kernel::topology::Compound.
     }
 
@@ -1817,6 +1817,9 @@ impl<'a> BooleanBuilder<'a> {
         // Phase 3: FillImagesFaces (L376-386) → BuildResult(FACE) (L382-386).
         self.fill_images_faces(&mut result, &a_faces, &b_faces);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
+        // ✅ OCCT-aligned: create topods vertices/edges/faces in t_brep now,
+        //   so that later shell/solid phases can reference them by ShapeRef.
+        result.build_topods_faces(&mut t_brep);
         self.build_result(ShapeType::Face, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 4: FillImagesContainers(SHELL) (L388-398) → BuildResult(SHELL) (L394-398).
@@ -1840,8 +1843,7 @@ impl<'a> BooleanBuilder<'a> {
         self.build_result(ShapeType::Compound, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
 
-        let (built_brep, mut history) = result.build_topods();
-        t_brep = built_brep;
+        let mut history = result.build_topods(&mut t_brep);
 
         // ✅ OCCT-aligned: PrepareHistory (Builder_4.cxx L164-252).
         //   1. Build result shape map (myMapShape equivalent built inside).
