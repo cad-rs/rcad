@@ -231,6 +231,58 @@ impl BRep {
         let root = bld.root.expect("cube should have root solid");
         (brep, root)
     }
+
+    // -----------------------------------------------------------------------
+    // Mutable accessors (OCCT BRep_Builder pattern — mutate after creation)
+    // -----------------------------------------------------------------------
+
+    /// Mutate a vertex's data (panics if vertex index is out of range or Arc is shared).
+    pub fn vertex_mut(&mut self, r: ShapeRef) -> &mut TVertexData {
+        match Arc::get_mut(&mut self.tshapes[r.index]).expect("vertex_mut: Arc still shared") {
+            TShape::Vertex(v) => v,
+            _ => panic!("vertex_mut: ShapeRef {} is not a Vertex", r.index),
+        }
+    }
+
+    /// Mutate an edge's data.
+    pub fn edge_mut(&mut self, r: ShapeRef) -> &mut TEdgeData {
+        match Arc::get_mut(&mut self.tshapes[r.index]).expect("edge_mut: Arc still shared") {
+            TShape::Edge(e) => e,
+            _ => panic!("edge_mut: ShapeRef {} is not an Edge", r.index),
+        }
+    }
+
+    /// Mutate a wire's data.
+    pub fn wire_mut(&mut self, r: ShapeRef) -> &mut TWireData {
+        match Arc::get_mut(&mut self.tshapes[r.index]).expect("wire_mut: Arc still shared") {
+            TShape::Wire(w) => w,
+            _ => panic!("wire_mut: ShapeRef {} is not a Wire", r.index),
+        }
+    }
+
+    /// Mutate a face's data.
+    pub fn face_mut(&mut self, r: ShapeRef) -> &mut TFaceData {
+        match Arc::get_mut(&mut self.tshapes[r.index]).expect("face_mut: Arc still shared") {
+            TShape::Face(f) => f,
+            _ => panic!("face_mut: ShapeRef {} is not a Face", r.index),
+        }
+    }
+
+    /// Mutate a shell's data.
+    pub fn shell_mut(&mut self, r: ShapeRef) -> &mut TShellData {
+        match Arc::get_mut(&mut self.tshapes[r.index]).expect("shell_mut: Arc still shared") {
+            TShape::Shell(s) => s,
+            _ => panic!("shell_mut: ShapeRef {} is not a Shell", r.index),
+        }
+    }
+
+    /// Mutate a solid's data.
+    pub fn solid_mut(&mut self, r: ShapeRef) -> &mut TSolidData {
+        match Arc::get_mut(&mut self.tshapes[r.index]).expect("solid_mut: Arc still shared") {
+            TShape::Solid(s) => s,
+            _ => panic!("solid_mut: ShapeRef {} is not a Solid", r.index),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -417,6 +469,124 @@ impl BRepBuilder {
         // Build solid from the shell
         let solid = brep.add_tsolid(vec![shell]);
         self.root = Some(solid);
+    }
+
+    // -----------------------------------------------------------------------
+    // Extended BRepBuilder API — OCCT BRep_Builder equivalent
+    // -----------------------------------------------------------------------
+
+    /// Add a vertex with tolerance.
+    pub fn add_vertex(&mut self, brep: &mut BRep, pt: DVec3, tol: f64) -> ShapeRef {
+        let r = brep.add_tvertex(pt);
+        brep.vertex_mut(r).tolerance = tol;
+        r
+    }
+
+    /// Update vertex tolerance (max with existing).
+    pub fn update_vertex_tolerance(&mut self, brep: &mut BRep, v: ShapeRef, tol: f64) {
+        let vd = brep.vertex_mut(v);
+        vd.tolerance = vd.tolerance.max(tol);
+    }
+
+    /// Add an edge with curve, vertices, and range.
+    pub fn add_edge(&mut self, brep: &mut BRep,
+        curve: Option<usize>, v1: ShapeRef, v2: ShapeRef, range: [f64; 2]) -> ShapeRef {
+        brep.add_tedge(curve, v1, v2, range)
+    }
+
+    /// Add a pcurve to an edge for a specific face.
+    pub fn add_pcurve(&mut self, brep: &mut BRep,
+        edge: ShapeRef, face: ShapeRef, pc: Curve2d, t1: f64, t2: f64) {
+        brep.edge_mut(edge).pcurves.insert(face.index, (pc, t1, t2));
+    }
+
+    /// Set vertex parameter on an edge's pcurve.
+    pub fn set_vertex_param(&mut self, brep: &mut BRep,
+        edge: ShapeRef, vertex: ShapeRef, param: f64) {
+        brep.edge_mut(edge).vertex_params.insert(vertex.index, param);
+    }
+
+    /// Set degenerated flag on an edge.
+    pub fn set_edge_degenerated(&mut self, brep: &mut BRep, edge: ShapeRef, flag: bool) {
+        brep.edge_mut(edge).degenerated = flag;
+    }
+
+    /// Make a wire (empty container).
+    pub fn make_wire(&mut self, brep: &mut BRep) -> ShapeRef {
+        brep.add_twire(vec![])
+    }
+
+    /// Add an edge to a wire.
+    pub fn add_to_wire(&mut self, brep: &mut BRep, wire: ShapeRef, edge: ShapeRef) {
+        let wd = brep.wire_mut(wire);
+        wd.edges.push(edge);
+    }
+
+    /// Build a wire from edges.
+    pub fn build_wire(&mut self, brep: &mut BRep, edges: Vec<ShapeRef>) -> ShapeRef {
+        brep.add_twire(edges)
+    }
+
+    /// Make a face from a surface and outer wire.
+    pub fn make_face(&mut self, brep: &mut BRep,
+        surface: Option<usize>, outer_wire: ShapeRef) -> ShapeRef {
+        brep.add_tface(surface, outer_wire, vec![], None, None, vec![])
+    }
+
+    /// Add an inner wire to a face.
+    pub fn add_to_face(&mut self, brep: &mut BRep, face: ShapeRef, inner_wire: ShapeRef) {
+        let fd = brep.face_mut(face);
+        fd.inner_wires.push(inner_wire);
+    }
+
+    /// Add an internal vertex to a face.
+    pub fn add_internal_vertex(&mut self, brep: &mut BRep, face: ShapeRef, v: ShapeRef) {
+        let fd = brep.face_mut(face);
+        fd.internal_vertices.push(v);
+    }
+
+    /// Add an edge with section-curve semantics (MakeSectEdge equivalent).
+    /// Creates an edge with pcurves for both faces.
+    pub fn add_section_edge(&mut self, brep: &mut BRep,
+        curve: Option<usize>, v1: ShapeRef, v2: ShapeRef, range: [f64; 2],
+        pc_a: Option<&Curve2d>, face_a: Option<ShapeRef>,
+        pc_b: Option<&Curve2d>, face_b: Option<ShapeRef>,
+    ) -> ShapeRef {
+        let e = brep.add_tedge(curve, v1, v2, range);
+        if let (Some(pc), Some(fa)) = (pc_a, face_a) {
+            let (t1, t2) = pc_parameter_range(pc);
+            brep.edge_mut(e).pcurves.insert(fa.index, (pc.clone(), t1, t2));
+        }
+        if let (Some(pc), Some(fb)) = (pc_b, face_b) {
+            let (t1, t2) = pc_parameter_range(pc);
+            brep.edge_mut(e).pcurves.insert(fb.index, (pc.clone(), t1, t2));
+        }
+        e
+    }
+
+    /// Make a shell (empty container).
+    pub fn make_shell(&mut self, brep: &mut BRep) -> ShapeRef {
+        brep.add_tshell(vec![])
+    }
+
+    /// Add a face to a shell.
+    pub fn add_to_shell(&mut self, brep: &mut BRep, shell: ShapeRef, face: ShapeRef) {
+        let sd = brep.shell_mut(shell);
+        sd.faces.push(face);
+    }
+
+    /// Make a solid from shells.
+    pub fn make_solid(&mut self, brep: &mut BRep, shells: Vec<ShapeRef>) -> ShapeRef {
+        brep.add_tsolid(shells)
+    }
+}
+
+/// Get the parameter range for a Curve2d (Trimmed → stored range, Circle → [0, 2π]).
+fn pc_parameter_range(curve: &Curve2d) -> (f64, f64) {
+    match curve {
+        Curve2d::Trimmed(tc) => (tc.t_min, tc.t_max),
+        Curve2d::Circle(_) => (0.0, std::f64::consts::TAU),
+        _ => (0.0, 1.0),
     }
 }
 

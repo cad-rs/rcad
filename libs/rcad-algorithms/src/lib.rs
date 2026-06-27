@@ -38,6 +38,7 @@ pub mod bvh;
 pub mod classify;
 pub mod defeature;
 pub mod draft;
+pub mod ds_to_brep;
 pub mod features;
 pub mod geom_convert;
 pub mod geom_lib;
