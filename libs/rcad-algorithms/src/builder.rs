@@ -88,7 +88,7 @@ pub struct BooleanBuilder<'a> {
     ///   Populated after check_data in build_with_history via ds_to_brep().
     ///   Wrapped in RefCell because build_with_history takes &self.
     ///   This is topods::BRep (not the legacy rcad_kernel::BRep).
-    brep: std::cell::RefCell<Option<rcad_kernel::topods::BRep>>,
+    brep: std::cell::RefCell<Option<(rcad_kernel::topods::BRep, Vec<rcad_kernel::topods::ShapeRef>)>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,8 +213,8 @@ impl<'a> BooleanBuilder<'a> {
         let ds = self.ds;
         // Get BRep from the cached conversion (built during build_with_history)
         let brep_borrow = self.brep.borrow();
-        let br: &rcad_kernel::topods::BRep = match brep_borrow.as_ref() {
-            Some(b) => b,
+        let (br, face_refs): &(rcad_kernel::topods::BRep, Vec<rcad_kernel::topods::ShapeRef>) = match brep_borrow.as_ref() {
+            Some(v) => v,
             None => return, // ds_to_brep not yet called
         };
 
@@ -222,17 +222,16 @@ impl<'a> BooleanBuilder<'a> {
         let segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
         if !self.builder_face_check_data(face_idx, &segments) { return; }
 
-        let segments_topo = crate::builder::builder_utils_topo_ds::segments_to_topo_ds(&segments, ds, face_idx);
+        let segments_topo = crate::builder::builder_utils_topo_ds::segments_to_topo_ds(&segments, ds, face_idx, &face_refs[..]);
         drop(segments);
 
         let tool: &dyn rcad_kernel::topods::BRepTool = br;
-        let face_surface = &ds.faces[face_idx].surface;
 
         let (avoided_pids, pid_segs) = crate::builder::wire_splitter::perform_shapes_to_avoid_topo_ds(
             &segments_topo, tool);
         let mut avoided = crate::builder::wire_splitter::expand_avoided_pids(&avoided_pids, &pid_segs);
         let wires = crate::builder::wire_path_topo_ds::build_closed_wires_topoDS(
-            &segments_topo, &avoided, tool, face_surface);
+            &segments_topo, &avoided, tool);
 
         let in_loop: HashSet<usize> = wires.iter().flatten().copied().collect();
         for si in 0..segments_topo.len() {
@@ -265,7 +264,7 @@ impl<'a> BooleanBuilder<'a> {
             .enumerate().map(|(ci, ic)| (ci, ic.curve.clone())).collect();
         for wf in &wfs {
             result.emit_wire_face_topods(face_idx, wf, &segments_topo, tool, &ic_curves, false, origin,
-                &HashMap::new(), face_surface);
+                &HashMap::new(), face_refs[face_idx]);
         }
     }
 
@@ -1859,7 +1858,8 @@ impl<'a> BooleanBuilder<'a> {
         self.check_data(&a_faces, &b_faces)?;
 
         // ✅ OCCT-aligned: convert DS to BRep for BRepTool-based pipeline.
-        *self.brep.borrow_mut() = Some(crate::ds_to_brep::ds_to_brep(self.ds));
+        let (brep_built, face_refs) = crate::ds_to_brep::ds_to_brep(self.ds);
+        *self.brep.borrow_mut() = Some((brep_built, face_refs));
 
         // OCCT L327-332: Prepare — creates empty TopoDS_Compound as myShape.
         let (mut t_brep, mut result) = self.prepare();

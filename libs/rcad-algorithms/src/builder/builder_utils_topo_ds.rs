@@ -12,10 +12,9 @@ pub(crate) fn segments_to_topo_ds(
     segments: &[WireSegment],
     _ds: &DS,
     face_idx: usize,
+    face_refs: &[ShapeRef],
 ) -> Vec<WireSegmentTopoDS> {
-    // Note: The ShapeRef for the face is NOT used for BRepTool queries
-    // (face data is passed directly via face_idx).  Using 0 as placeholder.
-    let face_ref = ShapeRef::new(0);
+    let face_ref = face_refs[face_idx];
     let e_base = _ds.vertices.len();
     let ic_base = e_base + _ds.edges.len();
     segments.iter().map(|seg| {
