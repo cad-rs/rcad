@@ -1242,10 +1242,10 @@ impl<'a> BooleanBuilder<'a> {
     ///   A/B lists as parameters — FillIn3DParts iterates myDS->ShapeInfo()).
     ///   OCCT L60-73 check: rcad's CheckData (L320-325) has already ensured
     ///   both operands have faces, so the source-solid skip never triggers.
-    fn fill_images_solids(&self, result: &mut ResultBuilder) {
+    fn fill_images_solids(&self, result: &mut ResultBuilder, saved_shells: Vec<Vec<usize>>) {
         let has_solid = self.ds.faces.iter().any(|f| f.source_solid_idx.is_some());
         if !has_solid { return; }
-        if result.tmp_shells.is_empty() { return; }
+        if saved_shells.is_empty() { return; }
 
         // --- PerformShapesToAvoid (BOPAlgo_BuilderSolid.cxx L129-218) ---
         // Use BuilderSolid for this step, operating on DS face indices.
@@ -1295,7 +1295,7 @@ impl<'a> BooleanBuilder<'a> {
         // OCCT L77-83: FillIn3DParts — build draft solids + classify shells
         let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
         let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
-        let shell_assignments = self.fill_in_3d_parts(result, &a_faces, &b_faces);
+        let shell_assignments = self.fill_in_3d_parts(result, &a_faces, &b_faces, &saved_shells);
 
         // OCCT L86: BuildSplitSolids — group shells into result solids
         self.build_split_solids(result, &shell_assignments);
@@ -1361,7 +1361,8 @@ impl<'a> BooleanBuilder<'a> {
 
     /// OCCT-aligned: FillIn3DParts (Builder_3.cxx L97-263).
     fn fill_in_3d_parts(&self, result: &mut ResultBuilder,
-                         a_faces: &[usize], b_faces: &[usize]) -> Vec<(usize, usize, &'static str)> {
+                         a_faces: &[usize], b_faces: &[usize],
+                         saved_shells: &[Vec<usize>]) -> Vec<(usize, usize, &'static str)> {
         // OCCT L105: Find all faces that are IN solids
 
         // OCCT L114: aLFaces — all result faces (images + originals)
@@ -1387,6 +1388,9 @@ impl<'a> BooleanBuilder<'a> {
 
             let pt = result.faces[fi].8;
             let class = classify_point(pt, other_faces, self.ds);
+            if class == Classification::In {
+                eprintln!("DEBUG classify: fi={} origin={:?} pt=({:.6},{:.6},{:.6}) class=In", fi, origin, pt.x, pt.y, pt.z);
+            }
 
             if class == Classification::In {
                 let other_side = if side_idx == 0 { 1 } else { 0 };
@@ -1395,8 +1399,10 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         // OCCT L210-262: Analyze results of classification
+
+        // OCCT L210-262: Analyze results of classification
         let mut assignments: Vec<(usize, usize, &'static str)> = Vec::new();
-        for (si, shell) in result.tmp_shells.iter().enumerate() {
+        for (si, shell) in saved_shells.iter().enumerate() {
             let mut side: Option<usize> = None;
             for &fi in shell {
                 match &result.face_origins[fi] {
@@ -1457,7 +1463,7 @@ impl<'a> BooleanBuilder<'a> {
             }
 
             // OCCT L241: theDraftSolids.Bind(aSolid, aSDraft) — done via assignments
-            let state = if n_in > 0 { "IN" } else { "OUT" };
+            let state: &'static str = if n_in > 0 { "IN" } else { "OUT" };
             assignments.push((si, s, state));
 
             // OCCT L243-261: myInParts[source] = IN_faces + INTERNAL_faces
@@ -1473,6 +1479,7 @@ impl<'a> BooleanBuilder<'a> {
         }
         assignments
     }
+
     fn build_split_solids(&self, result: &mut ResultBuilder,
                           assignments: &[(usize, usize, &'static str)]) {
         let mut result_solids: Vec<Vec<usize>> = Vec::new();
@@ -1975,7 +1982,11 @@ impl<'a> BooleanBuilder<'a> {
         self.build_result(ShapeType::Shell, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 5: FillImagesSolids (L400-410) → BuildResult(SOLID) (L406-410).
-        self.fill_images_solids(&mut result);
+        //   NOTE: build_result(Shell) consumed tmp_shells, but fill_images_solids
+        //   still needs shell groupings.  Save a copy before it's consumed.
+        //   (OCCT builds shells from face images during FillImagesSolids.)
+        let saved_shells = result.tmp_shells.clone();
+        self.fill_images_solids(&mut result, saved_shells);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result(ShapeType::Solid, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }

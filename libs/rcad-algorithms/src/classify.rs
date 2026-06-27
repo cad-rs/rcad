@@ -583,7 +583,7 @@ fn try_classify_along_ray(
 ) -> Option<Classification> {
     // OCCT L363-399: for each face, find nearest intersection along this ray
     let mut nearest_t = f64::MAX;
-    let mut has_valid = false;
+    let mut nearest_result: Option<Classification> = None;
 
     for &fi in solid_face_indices {
         let result = ray_cast_classify_point_on_face(
@@ -591,35 +591,23 @@ fn try_classify_along_ray(
         );
         match result {
             RayFaceResult::On => return Some(Classification::On),
-            RayFaceResult::In(t) | RayFaceResult::Out(t) => {
-                // OCCT L446-483: Intersector3d.WParameter(i) < parmin
+            RayFaceResult::In(t) => {
                 if t >= -ray_tol && t < nearest_t {
                     nearest_t = t;
-                    has_valid = true;
+                    nearest_result = Some(Classification::In);
+                }
+            }
+            RayFaceResult::Out(t) => {
+                if t >= -ray_tol && t < nearest_t {
+                    nearest_t = t;
+                    nearest_result = Some(Classification::Out);
                 }
             }
             RayFaceResult::Faulty => {}
         }
     }
 
-    if !has_valid { return None; }
-
-    // Re-run to find which face gives the nearest intersection
-    for &fi in solid_face_indices {
-        let result = ray_cast_classify_point_on_face(
-            point, ray_dir, fi, ds, boundary_tol, ray_tol,
-        );
-        match result {
-            RayFaceResult::In(t) if (t - nearest_t).abs() < ray_tol => {
-                return Some(Classification::In);
-            }
-            RayFaceResult::Out(t) if (t - nearest_t).abs() < ray_tol => {
-                return Some(Classification::Out);
-            }
-            _ => {}
-        }
-    }
-    None
+    nearest_result
 }
 
 /// Result of a single ray-face intersection, matching OCCT iFlag semantics.
