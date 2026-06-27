@@ -1508,7 +1508,8 @@ pub(crate) fn point_in_polygon_xy_impl(pt: DVec3, poly: &[DVec3], u_idx: usize, 
 /// Legacy: XY-only projection (replaced by projected_area_max / point_in_polygon_best).
 /// Kept for callers that explicitly need XY projection.
 pub(crate) fn projected_area_xy(b: &[DVec3]) -> f64 {
-    projected_area_on(b, 0, 1)
+    let u_idx = 0; let v_idx = 1;
+    projected_area_on(b, u_idx, v_idx)
 }
 
 /// ✅ OCCT-aligned: promote inner_wires whose sample point classifies
