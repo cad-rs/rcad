@@ -25,12 +25,14 @@ mod debug_utils;
 mod intres2d;
 mod intersection;
 mod types;
+mod ds_as_brep;
 
 pub use types::{
     BooleanOpType, BooleanError, FaceSampleData,
 };
 pub(crate) use types::{
     ShapeType, WireFace, WireSegment, WireEdgeSource,
+    WireSegmentTopoDS, WireEdgeSourceTopoDS,
     FaceWireEdges, FaceEntry, CollectedFaceResult,
 };
 
@@ -102,8 +104,9 @@ pub(crate) enum SourceSide {
 
 mod wire_splitter;
 mod wire_path;
+mod wire_path_topo_ds;
 mod edge_builders;
-
+mod builder_utils_topo_ds;
 pub(crate) use wire_splitter::{
     EdgeInfo, build_closed_wires, perform_shapes_to_avoid,
     expand_avoided_pids, build_pid_maps,
