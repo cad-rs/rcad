@@ -551,6 +551,7 @@ impl<'a> BooleanBuilder<'a> {
     ///   via pb.new_edge, matching OCCT's aPBR->Edge() pattern.
     ///   Creates myImages(EDGE) and myOrigins(EDGE) mappings.
     fn fill_images_edges(&self, result: &mut ResultBuilder) {
+        let e_base = self.ds.vertices.len();
         for (ei, edge) in self.ds.edges.iter().enumerate() {
             if edge.pave_blocks.is_empty() {
                 // OCCT L84-86: HasReference check — no pave blocks → no split images.
@@ -571,7 +572,6 @@ impl<'a> BooleanBuilder<'a> {
                     continue;
                 };
 
-                let e_base = self.ds.vertices.len();
                 // OCCT L105-106: pLS->Append(aSpR) -> myImages(edge) += split_edge
                 self.my_images.borrow_mut().entry(rcad_kernel::topods::ShapeRef::new(e_base + ei)).or_default().push(rcad_kernel::topods::ShapeRef::new(e_base + new_ei));
 
