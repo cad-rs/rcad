@@ -8,11 +8,13 @@ use glam::DVec2;
 use rcad_kernel::geom::Curve2dEval;
 use rcad_kernel::topods::{BRepTool, ShapeRef};
 use crate::tolerance::*;
-use super::types::{WireSegmentTopoDS, WireEdgeSourceTopoDS};
+use super::types::{WireSegmentTopoDS, WireEdgeSourceTopoDS, WireFace};
 use super::wire_splitter::{
     EdgeInfo, mark_edge_passed,
     find_angle_at, select_best_outgoing,
 };
+use crate::inttools::fclass2d::curve2d_nb_samples;
+use super::point_in_polygon_2d;
 
 /// Walk a path extracting closed wires using BRepTool-based data access.
 ///
@@ -399,4 +401,112 @@ fn make_connexity_blocks_topoDS(
         blocks.push(block);
     }
     blocks
+}
+
+/// TopoDS-based perform_areas — classifies wires as growth/hole using UV polygon area.
+///
+/// Uses WireSegmentTopoDS pcurves and BRepTool for surface queries.
+/// Returns the same Vec<WireFace> (index-based) for backward compatibility.
+pub(crate) fn perform_areas_topo_ds(
+    wires: &[Vec<usize>],
+    internal_wires: &[Vec<usize>],
+    segments: &[WireSegmentTopoDS],
+    tool: &dyn BRepTool,
+    face_idx: usize,
+) -> Vec<WireFace> {
+    if wires.is_empty() { return vec![]; }
+
+    struct WireData { wire_idx: usize, uv_boundary: Vec<DVec2>, n_distinct: usize }
+
+    let mut wds: Vec<WireData> = wires.iter().enumerate().filter_map(|(wi, w)| {
+        let mut uv_bnd: Vec<DVec2> = Vec::new();
+        for &si in w {
+            let seg = &segments[si];
+            // Use pcurve from segment data (populated by collect_face_edge_segments)
+            let pc_opt = if matches!(seg.source, WireEdgeSourceTopoDS::IntersectionCurve(_)) {
+                seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref())
+            } else {
+                // Try BRepTool pcurve, fall back to segment's own pcurve
+                tool.curve_on_surface(seg.edge, seg.face)
+                    .map(|(pc, _, _)| pc)
+                    .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()))
+            };
+            if let Some(pc) = pc_opt {
+                let t0 = seg.t_range[0];
+                let t1 = seg.t_range[1];
+                let n = curve2d_nb_samples(pc, t0, t1).max(2);
+                let du = if n > 1 { (t1 - t0) / (n - 1) as f64 } else { 0.0 };
+                for i in 0..n {
+                    uv_bnd.push(pc.point_at(t0 + du * i as f64));
+                }
+            }
+        }
+        uv_bnd.dedup_by(|a, b| (*a - *b).length_squared() < 1e-20);
+        let n_distinct = { let mut pts = uv_bnd.clone(); pts.sort_by(|a,b|a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y))); pts.dedup(); pts.len() };
+        if uv_bnd.len() < 3 || n_distinct < 3 { return None; }
+        Some(WireData { wire_idx: wi, uv_boundary: uv_bnd, n_distinct })
+    }).collect();
+
+    if wds.is_empty() { return vec![]; }
+
+    // Classify holes vs growths via UV signed area
+    let mut is_hole = vec![false; wds.len()];
+    for si in 0..wds.len() {
+        let uv_b = &wds[si].uv_boundary;
+        if uv_b.len() >= 3 {
+            let area: f64 = uv_b.windows(2).map(|pair| {
+                pair[0].x * pair[1].y - pair[1].x * pair[0].y
+            }).sum::<f64>() + {
+                let n = uv_b.len();
+                uv_b[n-1].x * uv_b[0].y - uv_b[0].x * uv_b[n-1].y
+            } * 0.5;
+            is_hole[si] = area < 0.0;
+        } else { is_hole[si] = true; }
+    }
+
+    let growths: Vec<usize> = (0..wds.len()).filter(|&i| !is_hole[i]).collect();
+    let holes: Vec<usize> = (0..wds.len()).filter(|&i| is_hole[i]).collect();
+
+    if growths.is_empty() && !wds.is_empty() {
+        return vec![WireFace { outer_wire: wires[wds[0].wire_idx].clone(), inner_wires: vec![], internal_wires: internal_wires.to_vec() }];
+    }
+    if holes.is_empty() {
+        return growths.iter().map(|&g| WireFace { outer_wire: wires[g].clone(), inner_wires: vec![], internal_wires: internal_wires.to_vec() }).collect();
+    }
+
+    // Assign holes to enclosing growths via UV point-in-polygon
+    let growth_uv_bbox: Vec<Option<[f64; 4]>> = growths.iter().map(|&g| {
+        let uv = &wds[g].uv_boundary;
+        if uv.len() < 3 { return None; }
+        let u_min = uv.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+        let u_max = uv.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+        let v_min = uv.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+        let v_max = uv.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+        Some([u_min, u_max, v_min, v_max])
+    }).collect();
+
+    let mut h2g: Vec<(usize, usize)> = Vec::new();
+    for &h in &holes {
+        let h_uv = &wds[h].uv_boundary;
+        let h_uv_c = if h_uv.len() >= 3 { h_uv.iter().copied().sum::<DVec2>() / h_uv.len() as f64 } else { continue; };
+        let mut assigned = false;
+        for (gi, &g) in growths.iter().enumerate() {
+            if let Some([u0, u1, v0, v1]) = growth_uv_bbox[gi] {
+                if h_uv_c.x < u0 || h_uv_c.x > u1 || h_uv_c.y < v0 || h_uv_c.y > v1 { continue; }
+            }
+            if wds[g].uv_boundary.len() >= 3 && point_in_polygon_2d(&wds[g].uv_boundary, h_uv_c) {
+                h2g.push((h, g)); assigned = true; break;
+            }
+        }
+        if !assigned && !growths.is_empty() { h2g.push((h, growths[0])); }
+    }
+
+    let mut g2h: HashMap<usize, Vec<usize>> = HashMap::new();
+    for &(h, g) in &h2g { g2h.entry(g).or_default().push(h); }
+
+    growths.iter().map(|&g| WireFace {
+        outer_wire: wires[g].clone(),
+        inner_wires: g2h.get(&g).map(|hs| hs.iter().map(|&h| wires[h].clone()).collect()).unwrap_or_default(),
+        internal_wires: internal_wires.to_vec(),
+    }).collect()
 }

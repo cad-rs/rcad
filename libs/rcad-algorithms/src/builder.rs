@@ -234,7 +234,7 @@ impl<'a> BooleanBuilder<'a> {
         let internal_wire_groups: Vec<Vec<usize>> = avoided.iter().map(|&si| vec![si]).collect();
 
         let mut wfs = if !wires.is_empty() {
-            perform_areas(&wires, &internal_wire_groups, &segments, ds, &mut *self.context.borrow_mut(), face_idx)
+            crate::builder::wire_path_topo_ds::perform_areas_topo_ds(&wires, &internal_wire_groups, &segments_topo, &adaptor, face_idx)
         } else if !avoided.is_empty() {
             vec![WireFace { outer_wire: vec![], inner_wires: vec![], internal_wires: segments.iter().enumerate().filter(|(si, _)| avoided.contains(si)).map(|(si, _)| vec![si]).collect() }]
         } else {
