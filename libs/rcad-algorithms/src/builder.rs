@@ -197,6 +197,61 @@ impl<'a> BooleanBuilder<'a> {
         Some((segments, wfs, vertex_positions))
     }
 
+    /// ✅ OCCT-aligned: TopoDS-based BuildFace pipeline.
+    ///   Uses segments_to_topo_ds + DSAsBRep + build_closed_wires_topoDS
+    ///   for the wire splitting step.
+    pub(crate) fn split_face_occt_wire_pipeline_topo_ds(
+        &self,
+        face_idx: usize,
+    ) -> Option<(Vec<WireSegment>, Vec<WireFace>, HashMap<usize, DVec3>)> {
+        let ds = self.ds;
+        let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
+        let mut segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
+        if !self.builder_face_check_data(face_idx, &segments) {
+            return None;
+        }
+
+        let vi_to_canon = build_vi_to_canon(&segments, ds);
+
+        let (avoided_pids, pid_segs) = perform_shapes_to_avoid(&segments, &vi_to_canon, ds);
+        let mut avoided = expand_avoided_pids(&avoided_pids, &pid_segs);
+
+        // Convert to TopoDS types for the wire splitter
+        let segments_topo = crate::builder::builder_utils_topo_ds::segments_to_topo_ds(&segments, ds, face_idx);
+        let adaptor = crate::builder::ds_as_brep::DSAsBRep::new(ds, face_idx);
+
+        let wires = crate::builder::wire_path_topo_ds::build_closed_wires_topoDS(
+            &segments_topo, &avoided, &adaptor);
+
+        // Post Treatment — edges not in any loop → add to avoided
+        let in_loop: HashSet<usize> = wires.iter().flatten().copied().collect();
+        for si in 0..segments.len() {
+            if !in_loop.contains(&si) && !avoided.contains(&si) {
+                avoided.insert(si);
+            }
+        }
+
+        let internal_wire_groups: Vec<Vec<usize>> = avoided.iter().map(|&si| vec![si]).collect();
+
+        let mut wfs = if !wires.is_empty() {
+            perform_areas(&wires, &internal_wire_groups, &segments, ds, &mut *self.context.borrow_mut(), face_idx)
+        } else if !avoided.is_empty() {
+            vec![WireFace { outer_wire: vec![], inner_wires: vec![], internal_wires: segments.iter().enumerate().filter(|(si, _)| avoided.contains(si)).map(|(si, _)| vec![si]).collect() }]
+        } else {
+            vec![WireFace { outer_wire: (0..segments.len()).collect(), inner_wires: vec![], internal_wires: vec![] }]
+        };
+        if wfs.is_empty() { return None; }
+
+        if !internal_wire_groups.is_empty() {
+            for wf in &mut wfs {
+                for &si in &avoided {
+                    wf.internal_wires.push(vec![si]);
+                }
+            }
+        }
+        Some((segments, wfs, HashMap::new()))
+    }
+
     /// ✅ OCCT-aligned: BuilderFace::CheckData (BOPAlgo_BuilderFace.cxx L50-115).
     ///   Validates face has intersection curves/segments. If no interferences,
     ///   delegates to BuildDraftFace (OCCT's alternative path for non-split faces).
