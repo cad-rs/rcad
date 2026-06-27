@@ -102,6 +102,7 @@ pub(crate) enum SourceSide {
 
 mod wire_splitter;
 mod wire_path;
+mod edge_builders;
 
 pub(crate) use wire_splitter::{
     EdgeInfo, build_closed_wires, perform_shapes_to_avoid,
