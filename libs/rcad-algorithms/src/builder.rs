@@ -1924,7 +1924,8 @@ impl<'a> BooleanBuilder<'a> {
         self.check_data(&a_faces, &b_faces)?;
 
         // ✅ OCCT-aligned: convert DS to BRep for BRepTool-based pipeline.
-        //   If already pre-populated (A3 dual-write via PaveFiller), skip conversion.
+        // A3 completes: BRep is pre-populated by PaveFiller::export_to_brep.
+        // If somehow not set (legacy path), build from DS as fallback.
         if self.brep.borrow().is_none() {
             let (brep_built, face_refs, ic_edge_map) = crate::ds_to_brep::ds_to_brep(self.ds);
             *self.brep.borrow_mut() = Some((brep_built, face_refs, ic_edge_map));

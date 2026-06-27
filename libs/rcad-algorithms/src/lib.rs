@@ -3100,16 +3100,24 @@ pub fn boolean_op_with_options(
                 } else {
                     bopds::ds::DS::new(a, b)
                 };
-                let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
-                let mut filler = match (&bvh_a, &bvh_b) {
-                    (Some(ba), Some(bb)) => pave_filler::PaveFiller::with_bvh(&mut ds, ba, bb),
-                    _ => pave_filler::PaveFiller::new(&mut ds),
+                let mut brep = rcad_kernel::topods::BRep::new();
+                let (face_refs, ic_edge_map) = {
+                    let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
+                    let mut filler = match (&bvh_a, &bvh_b) {
+                        (Some(ba), Some(bb)) => pave_filler::PaveFiller::with_bvh_and_brep(&mut ds, ba, bb, &mut brep),
+                        _ => {
+                            let mut f = pave_filler::PaveFiller::new(&mut ds);
+                            f.brep = Some(&mut brep);
+                            f
+                        }
+                    };
+                    filler.configure_glue(options.use_glue, options.glue_tolerance);
+                    filler.configure_fuzzy(options.fuzzy_tol);
+                    filler.perform();
+                    (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
                 };
-                filler.configure_glue(options.use_glue, options.glue_tolerance);
-                filler.configure_fuzzy(options.fuzzy_tol);
-                filler.perform();
                 ds.build_container_images(a);
-                let builder = builder::BooleanBuilder::new(&ds, op)
+                let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map)
                     .with_glue(options.use_glue, options.glue_tolerance);
                 builder.build_with_history()?
             }
@@ -3119,12 +3127,17 @@ pub fn boolean_op_with_options(
             } else {
                 bopds::ds::DS::new(a, b)
             };
-            let mut filler = pave_filler::PaveFiller::new(&mut ds);
-            filler.configure_glue(options.use_glue, options.glue_tolerance);
-            filler.configure_fuzzy(options.fuzzy_tol);
-            filler.perform();
+            let mut brep = rcad_kernel::topods::BRep::new();
+            let (face_refs, ic_edge_map) = {
+                let mut filler = pave_filler::PaveFiller::new(&mut ds);
+                filler.brep = Some(&mut brep);
+                filler.configure_glue(options.use_glue, options.glue_tolerance);
+                filler.configure_fuzzy(options.fuzzy_tol);
+                filler.perform();
+                (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
+            };
             ds.build_container_images(a);
-            let builder = builder::BooleanBuilder::new(&ds, op)
+            let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map)
                 .with_glue(options.use_glue, options.glue_tolerance);
             builder.build_with_history()?
         };
@@ -3142,15 +3155,23 @@ pub fn boolean_op_with_options(
         let result = if options.use_bvh {
             if options.fuzzy_tol > 0.0 || options.use_glue {
                 let mut ds = bopds::ds::DS::new_with_fuzzy(a, b, options.fuzzy_tol);
-                let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
-                let mut filler = match (&bvh_a, &bvh_b) {
-                    (Some(ba), Some(bb)) => pave_filler::PaveFiller::with_bvh(&mut ds, ba, bb),
-                    _ => pave_filler::PaveFiller::new(&mut ds),
+                let mut brep = rcad_kernel::topods::BRep::new();
+                let (face_refs, ic_edge_map) = {
+                    let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
+                    let mut filler = match (&bvh_a, &bvh_b) {
+                        (Some(ba), Some(bb)) => pave_filler::PaveFiller::with_bvh_and_brep(&mut ds, ba, bb, &mut brep),
+                        _ => {
+                            let mut f = pave_filler::PaveFiller::new(&mut ds);
+                            f.brep = Some(&mut brep);
+                            f
+                        }
+                    };
+                    filler.configure_glue(options.use_glue, options.glue_tolerance);
+                    filler.perform();
+                    (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
                 };
-                filler.configure_glue(options.use_glue, options.glue_tolerance);
-                filler.perform();
                 ds.build_container_images(a);
-                let builder = builder::BooleanBuilder::new(&ds, op)
+                let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map)
                     .with_glue(options.use_glue, options.glue_tolerance);
                 let r = builder.build()?;
                 boolean_postprocess_pave_result(op, a, b, r)?
@@ -3163,11 +3184,16 @@ pub fn boolean_op_with_options(
             } else {
                 bopds::ds::DS::new(a, b)
             };
-            let mut filler = pave_filler::PaveFiller::new(&mut ds);
-            filler.configure_glue(options.use_glue, options.glue_tolerance);
-            filler.perform();
+            let mut brep = rcad_kernel::topods::BRep::new();
+            let (face_refs, ic_edge_map) = {
+                let mut filler = pave_filler::PaveFiller::new(&mut ds);
+                filler.brep = Some(&mut brep);
+                filler.configure_glue(options.use_glue, options.glue_tolerance);
+                filler.perform();
+                (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
+            };
             ds.build_container_images(a);
-            let builder = builder::BooleanBuilder::new(&ds, op)
+            let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map)
                 .with_glue(options.use_glue, options.glue_tolerance);
             let r = builder.build()?;
             boolean_postprocess_pave_result(op, a, b, r)?
