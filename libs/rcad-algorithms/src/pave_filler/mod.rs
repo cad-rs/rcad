@@ -5833,11 +5833,13 @@ impl<'a> PaveFiller<'a> {
             }
 
             // OCCT-aligned: For each vertex, keep the best-matching curve, remove ext paves from others
-            //   (aPBD.PB->RemoveExtPave(nV))
+            //   (aPBD.PB->RemoveExtPave(nV)). OCCT L2527-2535: update vertex tolerance.
             for (n_v, dists) in &vert_pbs {
 
                 let min_dist = dists.iter().map(|d| d.sq_dist).min_by(|a,b| a.partial_cmp(b).unwrap()).unwrap_or(0.0);
 
+                let mut is_removed = false;
+                let mut max_dist_kept = -1.0;
                 for d in dists {
 
                     let check_dist = 100.0 * cur_tol.max(min_dist);
@@ -5846,10 +5848,20 @@ impl<'a> PaveFiller<'a> {
 
                         if let Some(pb) = self.ds.intersection_curves[d.ci].change_pave_block1() {
                             pb.remove_ext_pave(d.n_v);
+                            is_removed = true;
                         }
 
+                    } else if d.sq_dist > max_dist_kept {
+                        max_dist_kept = d.sq_dist;
                     }
 
+                }
+
+                // OCCT L2527-2535: update vertex tolerance to cover max kept distance
+                if is_removed && max_dist_kept > 0.0 {
+                    let v = &mut self.ds.vertices[*n_v];
+                    let real_tol = v.geom_tol.max(max_dist_kept.sqrt() + crate::tolerance::TOLERANCE_ABS);
+                    v.geom_tol = real_tol;
                 }
 
             }
