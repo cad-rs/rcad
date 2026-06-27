@@ -48,3 +48,34 @@ pub(crate) fn segments_to_topo_ds(
         }
     }).collect()
 }
+
+/// Convert WireSegmentTopoDS back to WireSegment (for emit_wire_face compatibility).
+pub(crate) fn topo_ds_to_segments(
+    topo: &[WireSegmentTopoDS],
+) -> Vec<WireSegment> {
+    topo.iter().map(|s| {
+        let src = match &s.source {
+            WireEdgeSourceTopoDS::DsEdge(e) => WireEdgeSource::DsEdge(e.index),
+            WireEdgeSourceTopoDS::IntersectionCurve(c) => WireEdgeSource::IntersectionCurve(c.index),
+            WireEdgeSourceTopoDS::SeamEdge => WireEdgeSource::SeamEdge,
+        };
+        let ori = match s.orientation {
+            rcad_kernel::topods::Orientation::Forward => WireOrientation::Forward,
+            rcad_kernel::topods::Orientation::Reversed => WireOrientation::Reversed,
+            rcad_kernel::topods::Orientation::Internal => WireOrientation::Internal,
+            rcad_kernel::topods::Orientation::External => WireOrientation::External,
+        };
+        WireSegment {
+            start_vertex: s.start_vertex.index,
+            end_vertex: s.end_vertex.index,
+            source: src,
+            orientation: ori,
+            is_seam: s.is_seam,
+            tangent_start: s.tangent_start,
+            tangent_end: s.tangent_end,
+            first_pcurve: s.first_pcurve.clone(),
+            second_pcurve: s.second_pcurve.clone(),
+            t_range: s.t_range,
+        }
+    }).collect()
+}

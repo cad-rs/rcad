@@ -206,16 +206,15 @@ impl<'a> BooleanBuilder<'a> {
     ) -> Option<(Vec<WireSegment>, Vec<WireFace>, HashMap<usize, DVec3>)> {
         let ds = self.ds;
         let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
-        let mut segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
-        if !self.builder_face_check_data(face_idx, &segments) {
-            return None;
-        }
+        let segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
+        if !self.builder_face_check_data(face_idx, &segments) { return None; }
 
-        // Convert to TopoDS types early for BRepTool-based processing
+        // Convert to topoDS once; all downstream logic uses BRepTool
         let segments_topo = crate::builder::builder_utils_topo_ds::segments_to_topo_ds(&segments, ds, face_idx);
         let adaptor = crate::builder::ds_as_brep::DSAsBRep::new(ds, face_idx);
+        // Drop original segments — only topoDS used from here on
+        drop(segments);
 
-        // BRepTool-based PerformShapesToAvoid (no DS dependency in core logic)
         let (avoided_pids, pid_segs) = crate::builder::wire_splitter::perform_shapes_to_avoid_topo_ds(
             &segments_topo, &adaptor);
         let mut avoided = crate::builder::wire_splitter::expand_avoided_pids(&avoided_pids, &pid_segs);
@@ -223,12 +222,10 @@ impl<'a> BooleanBuilder<'a> {
         let wires = crate::builder::wire_path_topo_ds::build_closed_wires_topoDS(
             &segments_topo, &avoided, &adaptor);
 
-        // Post Treatment — edges not in any loop → add to avoided
+        // Post Treatment
         let in_loop: HashSet<usize> = wires.iter().flatten().copied().collect();
-        for si in 0..segments.len() {
-            if !in_loop.contains(&si) && !avoided.contains(&si) {
-                avoided.insert(si);
-            }
+        for si in 0..segments_topo.len() {
+            if !in_loop.contains(&si) && !avoided.contains(&si) { avoided.insert(si); }
         }
 
         let internal_wire_groups: Vec<Vec<usize>> = avoided.iter().map(|&si| vec![si]).collect();
@@ -236,20 +233,20 @@ impl<'a> BooleanBuilder<'a> {
         let mut wfs = if !wires.is_empty() {
             crate::builder::wire_path_topo_ds::perform_areas_topo_ds(&wires, &internal_wire_groups, &segments_topo, &adaptor, face_idx)
         } else if !avoided.is_empty() {
-            vec![WireFace { outer_wire: vec![], inner_wires: vec![], internal_wires: segments.iter().enumerate().filter(|(si, _)| avoided.contains(si)).map(|(si, _)| vec![si]).collect() }]
+            vec![WireFace { outer_wire: vec![], inner_wires: vec![], internal_wires: segments_topo.iter().enumerate().filter(|(si, _)| avoided.contains(si)).map(|(si, _)| vec![si]).collect() }]
         } else {
-            vec![WireFace { outer_wire: (0..segments.len()).collect(), inner_wires: vec![], internal_wires: vec![] }]
+            vec![WireFace { outer_wire: (0..segments_topo.len()).collect(), inner_wires: vec![], internal_wires: vec![] }]
         };
         if wfs.is_empty() { return None; }
 
         if !internal_wire_groups.is_empty() {
             for wf in &mut wfs {
-                for &si in &avoided {
-                    wf.internal_wires.push(vec![si]);
-                }
+                for &si in &avoided { wf.internal_wires.push(vec![si]); }
             }
         }
-        Some((segments, wfs, HashMap::new()))
+        // Convert topoDS segments back to WireSegment for emit_wire_face compatibility
+        let result_segments = crate::builder::builder_utils_topo_ds::topo_ds_to_segments(&segments_topo);
+        Some((result_segments, wfs, HashMap::new()))
     }
 
     /// ✅ OCCT-aligned: BuilderFace::CheckData (BOPAlgo_BuilderFace.cxx L50-115).
