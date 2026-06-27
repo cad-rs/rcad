@@ -2628,10 +2628,8 @@ pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) 
     let mut ds = bopds::ds::DS::new(a, b);
     let fuzzy_tol = ds.fuzzy_tol;
 
-    // ✅ OCCT-aligned: create BRep for direct PaveFiller output (A3 dual-write).
     let mut brep = rcad_kernel::topods::BRep::new();
     let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
-    // Scope the filler so brep can be accessed afterward.
     let (face_refs, ic_edge_map) = {
         let mut filler = match (&bvh_a, &bvh_b) {
             (Some(ba), Some(bb)) => pave_filler::PaveFiller::with_bvh_and_brep(&mut ds, ba, bb, &mut brep),
@@ -2647,18 +2645,13 @@ pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) 
         filler.configure_glue(false, TOLERANCE_ABS);
         filler.set_use_obb(false);
         filler.perform();
-        // brep now populated by PaveFiller::export_to_brep
         (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
     };
-    // filler is dropped here, brep is accessible again
 
-    let builder = builder::BooleanBuilder::new(&ds, op);
-    builder.set_brep_with_mappings(brep, face_refs, ic_edge_map);
+    let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
     let (result, _history) = builder.build_with_history()?;
     Ok(result)
 }
-
-/// Perform a boolean operation on two BReps.
 ///
 /// (removed try_fast_path macro — OCCT has no fast-path shortcuts)
 
@@ -3907,34 +3900,31 @@ pub fn boolean_op_with_history(
     }
 
     let mut ds = bopds::ds::DS::new(a, b);
+    let fuzzy_tol = ds.fuzzy_tol;
+    let mut brep = rcad_kernel::topods::BRep::new();
     let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
-    let mut filler = match (&bvh_a, &bvh_b) {
-        (Some(a), Some(b)) => pave_filler::PaveFiller::with_bvh(&mut ds, a, b),
-        _ => pave_filler::PaveFiller::new(&mut ds),
+    let (face_refs, ic_edge_map) = {
+        let mut filler = match (&bvh_a, &bvh_b) {
+            (Some(ba), Some(bb)) => pave_filler::PaveFiller::with_bvh_and_brep(&mut ds, ba, bb, &mut brep),
+            _ => {
+                let mut f = pave_filler::PaveFiller::new(&mut ds);
+                f.brep = Some(&mut brep);
+                f
+            }
+        };
+        filler.set_run_parallel(false);
+        filler.configure_fuzzy(fuzzy_tol);
+        filler.set_non_destructive(false);
+        filler.configure_glue(false, TOLERANCE_ABS);
+        filler.set_use_obb(false);
+        filler.perform();
+        (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
     };
-    filler.perform();
     ds.build_container_images(a);
-    let builder = builder::BooleanBuilder::new(&ds, op);
+    let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
     builder.build_with_history()
 }
 
-/// Parallel version of [`boolean_op_with_history`].
-///
-/// Uses Rayon to process faces in parallel during the classification phase.
-/// This can provide significant speedup (2-4x) for large models with many faces.
-/// For small models (< 20 faces), the serial version may be faster due to
-/// thread overhead.
-///
-/// # Example
-/// ```rust,no_run
-/// use rcad_algorithms::{boolean_op_par, BooleanOpType, history::BooleanHistory};
-/// use rcad_kernel::BRep;
-///
-/// fn parallel_union(a: &BRep, b: &BRep) -> BRep {
-///     let (brep, _history) = boolean_op_par(BooleanOpType::Union, a, b).unwrap();
-///     brep
-/// }
-/// ```
 pub fn boolean_op_par(
     op: BooleanOpType,
     a: &BRep,
@@ -3945,14 +3935,27 @@ pub fn boolean_op_par(
     }
 
     let mut ds = bopds::ds::DS::new(a, b);
+    let fuzzy_tol = ds.fuzzy_tol;
+    let mut brep = rcad_kernel::topods::BRep::new();
     let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
-    let mut filler = match (&bvh_a, &bvh_b) {
-        (Some(a), Some(b)) => pave_filler::PaveFiller::with_bvh(&mut ds, a, b),
-        _ => pave_filler::PaveFiller::new(&mut ds),
+    let (face_refs, ic_edge_map) = {
+        let mut filler = match (&bvh_a, &bvh_b) {
+            (Some(ba), Some(bb)) => pave_filler::PaveFiller::with_bvh_and_brep(&mut ds, ba, bb, &mut brep),
+            _ => {
+                let mut f = pave_filler::PaveFiller::new(&mut ds);
+                f.brep = Some(&mut brep);
+                f
+            }
+        };
+        filler.set_run_parallel(true);
+        filler.configure_fuzzy(fuzzy_tol);
+        filler.set_non_destructive(false);
+        filler.configure_glue(false, TOLERANCE_ABS);
+        filler.set_use_obb(false);
+        filler.perform();
+        (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
     };
-    filler.perform();
-    ds.build_container_images(a);
-    let builder = builder::BooleanBuilder::new(&ds, op);
+    let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
     builder.build_with_history()
 }
 

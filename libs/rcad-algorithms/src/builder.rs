@@ -421,6 +421,16 @@ impl<'a> BooleanBuilder<'a> {
         *self.brep.borrow_mut() = Some((brep, face_refs, ic_edge_map));
     }
 
+    /// Create builder with a pre-built BRep (A3 dual-write, skips ds_to_brep).
+    pub fn with_brep(ds: &'a DS, op: BooleanOpType, brep: rcad_kernel::topods::BRep,
+        face_refs: Vec<rcad_kernel::topods::ShapeRef>,
+        ic_edge_map: Vec<Option<rcad_kernel::topods::ShapeRef>>) -> Self
+    {
+        let builder = Self::new(ds, op);
+        builder.set_brep_with_mappings(brep, face_refs, ic_edge_map);
+        builder
+    }
+
     pub fn with_glue(mut self, enable: bool, tolerance: f64) -> Self {
         self.use_glue = enable;
         self.glue_tolerance = tolerance.max(TOLERANCE_ABS);
