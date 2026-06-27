@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use indexmap::IndexMap;
 use glam::DVec2;
-use rcad_kernel::geom::Curve2dEval;
+use rcad_kernel::geom::{Curve2d, Curve2dEval};
 use rcad_kernel::topods::{BRepTool, ShapeRef};
 use crate::tolerance::*;
 use super::types::{WireSegmentTopoDS, WireEdgeSourceTopoDS, WireFace};
@@ -329,12 +329,15 @@ pub(crate) fn build_closed_wires_topoDS(
     wires
 }
 
-/// Build SmartMap for TopoDS segments.
+/// Build SmartMap for TopoDS segments with angle computation.
 fn build_smart_map_topoDS(
     block: &[usize],
     segments: &[WireSegmentTopoDS],
     tool: &dyn BRepTool,
 ) -> IndexMap<usize, Vec<EdgeInfo>> {
+    use super::angle_2d::angle_2d;
+    use super::wire_path::pc_parameter_range;
+
     let mut smart_map: IndexMap<usize, Vec<EdgeInfo>> = IndexMap::new();
     for &si in block {
         let seg = &segments[si];
@@ -351,6 +354,48 @@ fn build_smart_map_topoDS(
         smart_map.entry(seg.end_vertex.index).or_default().push(EdgeInfo {
             seg_idx: si, passed: false, in_flag: true, is_inside, is_circle_arc, angle: 0.0,
         });
+    }
+
+    // Compute angles using BRepTool (OCCT Angle2D equivalent).
+    let face_ref = if !block.is_empty() { segments[block[0]].face } else { return smart_map; };
+    let face_surface = tool.face_surface(face_ref);
+    for (v, infos) in smart_map.iter_mut() {
+        let v_ref = ShapeRef::new(*v);
+        let geom_tol = tool.vertex_tolerance(v_ref);
+        for ei in infos.iter_mut() {
+            let seg = &segments[ei.seg_idx];
+            let t_v = tool.parameter_on_edge(v_ref, seg.edge, seg.face)
+                .unwrap_or_else(|| {
+                    if *v == seg.start_vertex.index { seg.t_range[0] } else { seg.t_range[1] }
+                });
+            let domain = seg.t_range;
+            let (curve, curve_domain): (&Curve2d, [f64; 2]) = match &seg.source {
+                WireEdgeSourceTopoDS::IntersectionCurve(_) => {
+                    // Use segment's own pcurve (populated by collect_face_edge_segments)
+                    match seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()) {
+                        Some(pc) => {
+                            let (ta, tb) = pc_parameter_range(pc);
+                            (pc, [ta, tb])
+                        }
+                        None => continue,
+                    }
+                }
+                _ => {
+                    // Try BRepTool pcurve, fall back to segment's own pcurve
+                    let pc = tool.curve_on_surface(seg.edge, seg.face)
+                        .map(|(pc, _, _)| pc)
+                        .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
+                    match pc {
+                        Some(pc) => (pc, domain),
+                        None => continue,
+                    }
+                }
+            };
+            if let Some(ref surf) = face_surface {
+                ei.angle = angle_2d(curve, t_v, curve_domain, ei.in_flag, surf, geom_tol, None)
+                    .unwrap_or(0.0);
+            }
+        }
     }
     smart_map
 }
