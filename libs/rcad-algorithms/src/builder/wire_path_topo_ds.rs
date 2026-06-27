@@ -1,4 +1,4 @@
-/// ✅ OCCT-aligned: TopoDS-based walk_path_extract_wires using BRepTool.
+﻿/// ✅ OCCT-aligned: TopoDS-based walk_path_extract_wires using BRepTool.
 ///
 /// Phase 2 migration target: parallel implementation of walk_path_extract_wires
 /// that uses WireSegmentTopoDS + BRepTool instead of WireSegment + DS + face_idx.
@@ -523,10 +523,11 @@ fn make_connexity_blocks_topoDS(
     blocks
 }
 
-/// TopoDS-based perform_areas — classifies wires as growth/hole using UV polygon area.
+/// TopoDS-based perform_areas — classifies wires as growth/hole.
 ///
-/// Uses WireSegmentTopoDS pcurves and BRepTool for surface queries.
-/// Returns the same Vec<WireFace> (index-based) for backward compatibility.
+/// ✅ OCCT-aligned: BOPAlgo_BuilderFace::PerformAreas (L420-499).
+///   Uses IsGrowthWire fast pre-check + IsHole classification via UV signed area.
+///   Returns Vec<WireFace> for backward compatibility with emit_wire_face_topods.
 pub(crate) fn perform_areas_topo_ds(
     wires: &[Vec<usize>],
     internal_wires: &[Vec<usize>],
@@ -536,21 +537,91 @@ pub(crate) fn perform_areas_topo_ds(
 ) -> Vec<WireFace> {
     if wires.is_empty() { return vec![]; }
 
-    struct WireData { wire_idx: usize, uv_boundary: Vec<DVec2>, n_distinct: usize }
+    // OCCT L420-423: aMHE — map of hole face edges for quick growth check.
+    let mut a_mhe: HashSet<ShapeRef> = HashSet::new();
 
-    let mut wds: Vec<WireData> = wires.iter().enumerate().filter_map(|(wi, w)| {
+    // OCCT L425-458: classify each wire as growth or hole.
+    let mut a_new_faces: Vec<Vec<usize>> = Vec::new(); // growth wires
+    let mut a_hole_faces: Vec<Vec<usize>> = Vec::new(); // hole wires
+
+    for w in wires {
+        // OCCT L437-439: MakeFace from wire (rcad: we work with segment indices).
+        // OCCT L441: IsGrowthWire(aWire, aMHE) — fast check.
+        let b_is_growth = if !a_mhe.is_empty() {
+            w.iter().any(|&si| {
+                if let Some(seg) = segments.get(si) {
+                    a_mhe.contains(&seg.edge)
+                } else { false }
+            })
+        } else { false };
+
+        let b_is_growth = if b_is_growth {
+            true
+        } else {
+            // OCCT L444-446: run classification via IsHole().
+            // rcad: UV signed area (equivalent: CW = hole, CCW = growth).
+            let mut uv_boundary: Vec<DVec2> = Vec::new();
+            for &si in w {
+                let seg = &segments[si];
+                let pc_opt = if matches!(seg.source, WireEdgeSourceTopoDS::IntersectionCurve(_)) {
+                    seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref())
+                } else {
+                    tool.curve_on_surface(seg.edge, seg.face)
+                        .map(|(pc, _, _)| pc)
+                        .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()))
+                };
+                if let Some(pc) = pc_opt {
+                    let t0 = seg.t_range[0];
+                    let t1 = seg.t_range[1];
+                    let n = curve2d_nb_samples(pc, t0, t1).max(2);
+                    let du = if n > 1 { (t1 - t0) / (n - 1) as f64 } else { 0.0 };
+                    for i in 0..n {
+                        uv_boundary.push(pc.point_at(t0 + du * i as f64));
+                    }
+                }
+            }
+            uv_boundary.dedup_by(|a, b| (*a - *b).length_squared() < 1e-20);
+            if uv_boundary.len() < 3 { continue; }
+            // OCCT IsHole(): signed area < 0 means CW = hole.
+            let area: f64 = uv_boundary.windows(2).map(|pair| {
+                pair[0].x * pair[1].y - pair[1].x * pair[0].y
+            }).sum::<f64>() + {
+                let n = uv_boundary.len();
+                uv_boundary[n-1].x * uv_boundary[0].y - uv_boundary[0].x * uv_boundary[n-1].y
+            } * 0.5;
+            area >= 0.0 // IsHole() = area < 0 → growth = !IsHole = area >= 0
+        };
+
+        // OCCT L449-458: save face.
+        if b_is_growth {
+            a_new_faces.push(w.clone());
+        } else {
+            a_hole_faces.push(w.clone());
+            // OCCT L457: TopExp::MapShapes(aWire, TopAbs_EDGE, aMHE)
+            for &si in w {
+                if let Some(seg) = segments.get(si) {
+                    a_mhe.insert(seg.edge);
+                }
+            }
+        }
+    }
+
+    // OCCT L461-466: no holes → all wires are growths.
+    if a_hole_faces.is_empty() {
+        return a_new_faces.iter().map(|w| WireFace {
+            outer_wire: w.clone(), inner_wires: vec![], internal_wires: internal_wires.to_vec(),
+        }).collect();
+    }
+
+    // OCCT L470-484: prepare bounding boxes for hole faces.
+    // rcad: compute UV bounding boxes for hole wires.
+    let mut hole_uv_boxes: Vec<Option<[f64; 4]>> = a_hole_faces.iter().map(|w| {
         let mut uv_bnd: Vec<DVec2> = Vec::new();
         for &si in w {
             let seg = &segments[si];
-            // Use pcurve from segment data (populated by collect_face_edge_segments)
-            let pc_opt = if matches!(seg.source, WireEdgeSourceTopoDS::IntersectionCurve(_)) {
-                seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref())
-            } else {
-                // Try BRepTool pcurve, fall back to segment's own pcurve
-                tool.curve_on_surface(seg.edge, seg.face)
-                    .map(|(pc, _, _)| pc)
-                    .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()))
-            };
+            let pc_opt = tool.curve_on_surface(seg.edge, seg.face)
+                .map(|(pc, _, _)| pc)
+                .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
             if let Some(pc) = pc_opt {
                 let t0 = seg.t_range[0];
                 let t1 = seg.t_range[1];
@@ -561,72 +632,68 @@ pub(crate) fn perform_areas_topo_ds(
                 }
             }
         }
-        uv_bnd.dedup_by(|a, b| (*a - *b).length_squared() < 1e-20);
-        let n_distinct = { let mut pts = uv_bnd.clone(); pts.sort_by(|a,b|a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y))); pts.dedup(); pts.len() };
-        if uv_bnd.len() < 3 || n_distinct < 3 { return None; }
-        Some(WireData { wire_idx: wi, uv_boundary: uv_bnd, n_distinct })
-    }).collect();
-
-    if wds.is_empty() { return vec![]; }
-
-    // Classify holes vs growths via UV signed area
-    let mut is_hole = vec![false; wds.len()];
-    for si in 0..wds.len() {
-        let uv_b = &wds[si].uv_boundary;
-        if uv_b.len() >= 3 {
-            let area: f64 = uv_b.windows(2).map(|pair| {
-                pair[0].x * pair[1].y - pair[1].x * pair[0].y
-            }).sum::<f64>() + {
-                let n = uv_b.len();
-                uv_b[n-1].x * uv_b[0].y - uv_b[0].x * uv_b[n-1].y
-            } * 0.5;
-            is_hole[si] = area < 0.0;
-        } else { is_hole[si] = true; }
-    }
-
-    let growths: Vec<usize> = (0..wds.len()).filter(|&i| !is_hole[i]).collect();
-    let holes: Vec<usize> = (0..wds.len()).filter(|&i| is_hole[i]).collect();
-
-    if growths.is_empty() && !wds.is_empty() {
-        return vec![WireFace { outer_wire: wires[wds[0].wire_idx].clone(), inner_wires: vec![], internal_wires: internal_wires.to_vec() }];
-    }
-    if holes.is_empty() {
-        return growths.iter().map(|&g| WireFace { outer_wire: wires[g].clone(), inner_wires: vec![], internal_wires: internal_wires.to_vec() }).collect();
-    }
-
-    // Assign holes to enclosing growths via UV point-in-polygon
-    let growth_uv_bbox: Vec<Option<[f64; 4]>> = growths.iter().map(|&g| {
-        let uv = &wds[g].uv_boundary;
-        if uv.len() < 3 { return None; }
-        let u_min = uv.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
-        let u_max = uv.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
-        let v_min = uv.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
-        let v_max = uv.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
+        if uv_bnd.len() < 3 { return None; }
+        let u_min = uv_bnd.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
+        let u_max = uv_bnd.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
+        let v_min = uv_bnd.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
+        let v_max = uv_bnd.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max);
         Some([u_min, u_max, v_min, v_max])
     }).collect();
 
+    // OCCT L486-491: assign holes to enclosing growth faces.
+    // rcad: for each hole, find the smallest-enclosing growth via point-in-polygon.
     let mut h2g: Vec<(usize, usize)> = Vec::new();
-    for &h in &holes {
-        let h_uv = &wds[h].uv_boundary;
-        let h_uv_c = if h_uv.len() >= 3 { h_uv.iter().copied().sum::<DVec2>() / h_uv.len() as f64 } else { continue; };
-        let mut assigned = false;
-        for (gi, &g) in growths.iter().enumerate() {
-            if let Some([u0, u1, v0, v1]) = growth_uv_bbox[gi] {
-                if h_uv_c.x < u0 || h_uv_c.x > u1 || h_uv_c.y < v0 || h_uv_c.y > v1 { continue; }
+    for (hi, h_wire) in a_hole_faces.iter().enumerate() {
+        let h_uv = {
+            let mut uv_bnd: Vec<DVec2> = Vec::new();
+            for &si in h_wire {
+                let seg = &segments[si];
+                let pc_opt = tool.curve_on_surface(seg.edge, seg.face)
+                    .map(|(pc, _, _)| pc)
+                    .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
+                if let Some(pc) = pc_opt {
+                    let t0 = seg.t_range[0];
+                    let t1 = seg.t_range[1];
+                    let n = curve2d_nb_samples(pc, t0, t1).max(2);
+                    let du = if n > 1 { (t1 - t0) / (n - 1) as f64 } else { 0.0 };
+                    for i in 0..n {
+                        uv_bnd.push(pc.point_at(t0 + du * i as f64));
+                    }
+                }
             }
-            if wds[g].uv_boundary.len() >= 3 && point_in_polygon_2d(&wds[g].uv_boundary, h_uv_c) {
-                h2g.push((h, g)); assigned = true; break;
+            uv_bnd
+        };
+        if h_uv.len() < 3 { continue; }
+        let h_center = h_uv.iter().copied().sum::<DVec2>() / h_uv.len() as f64;
+
+        let mut assigned = false;
+        for (gi, g_wire) in a_new_faces.iter().enumerate() {
+            if let Some(ref uv_box) = hole_uv_boxes.get(hi).copied().flatten() {
+                if h_center.x < uv_box[0] || h_center.x > uv_box[1] || h_center.y < uv_box[2] || h_center.y > uv_box[3] { continue; }
+            }
+            // Build growth UV boundary for containment test
+            let g_uv: Vec<DVec2> = g_wire.iter().filter_map(|&si| {
+                let seg = &segments[si];
+                let pc_opt = tool.curve_on_surface(seg.edge, seg.face)
+                    .map(|(pc, _, _)| pc)
+                    .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
+                pc_opt.map(|pc| pc.point_at(seg.t_range[0]))
+            }).collect();
+            if g_uv.len() >= 3 && point_in_polygon_2d(&g_uv, h_center) {
+                h2g.push((hi, gi)); assigned = true; break;
             }
         }
-        if !assigned && !growths.is_empty() { h2g.push((h, growths[0])); }
+        if !assigned && !a_new_faces.is_empty() { h2g.push((hi, 0)); }
     }
 
+    // Build growth → holes map
     let mut g2h: HashMap<usize, Vec<usize>> = HashMap::new();
     for &(h, g) in &h2g { g2h.entry(g).or_default().push(h); }
 
-    growths.iter().map(|&g| WireFace {
-        outer_wire: wires[g].clone(),
-        inner_wires: g2h.get(&g).map(|hs| hs.iter().map(|&h| wires[h].clone()).collect()).unwrap_or_default(),
+    // Build result WireFaces
+    a_new_faces.iter().enumerate().map(|(gi, w)| WireFace {
+        outer_wire: w.clone(),
+        inner_wires: g2h.get(&gi).map(|hs| hs.iter().map(|&h| a_hole_faces[h].clone()).collect()).unwrap_or_default(),
         internal_wires: internal_wires.to_vec(),
     }).collect()
 }
