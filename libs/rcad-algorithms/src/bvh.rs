@@ -798,6 +798,33 @@ impl DsBvh {
             }
         }
     }
+
+    /// Query all items whose AABB overlaps the query AABB.
+    /// Returns the entity indices (into the original `indices` array).
+    pub fn query_aabb(&self, query: &Aabb) -> Vec<usize> {
+        if self.nodes.is_empty() { return vec![]; }
+        let mut results = Vec::new();
+        self.query_aabb_node(0, query, &mut results);
+        results
+    }
+
+    fn query_aabb_node(&self, node_idx: usize, query: &Aabb, results: &mut Vec<usize>) {
+        let node = &self.nodes[node_idx];
+        if !node.aabb().intersects(query) { return; }
+        match node {
+            BvhNode::Leaf { start, end, .. } => {
+                for i in *start..*end {
+                    if self.aabbs[i].intersects(query) {
+                        results.push(self.indices[i]);
+                    }
+                }
+            }
+            BvhNode::Internal { left, right, .. } => {
+                self.query_aabb_node(*left, query, results);
+                self.query_aabb_node(*right, query, results);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

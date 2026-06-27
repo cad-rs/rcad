@@ -445,29 +445,50 @@ fn classify_point_internal(
     let ray_tol = tol.tolerance(ToleranceLevel::Strict);
     let edge_tol = TOLERANCE_MESH_LEGACY.max(boundary_tol);
 
-    // OCCT L218-230: Vertex/Edge proximity -> On
+    // Build edge BVH (OCCT L214-215: aTree + aMapEV from SolidExplorer)
+    let mut edge_aabbs: Vec<(usize, Aabb)> = Vec::new();
+    let mut seen_edges = std::collections::HashSet::new();
     for &fi in solid_face_indices {
-        let face = &ds.faces[fi];
-        for &ei in &face.boundary_edges {
+        for &ei in &ds.faces[fi].boundary_edges {
+            if !seen_edges.insert(ei) { continue; }
             if let Some(edge) = ds.edges.get(ei) {
                 let sv = ds.vertices[edge.start_vertex].point;
                 let ev = ds.vertices[edge.end_vertex].point;
-                let seg = ev - sv;
-                let seg_len_sq = seg.length_squared();
-                if seg_len_sq < TOLERANCE_LEN_MIN * TOLERANCE_LEN_MIN {
-                    if point.distance_squared(sv) < edge_tol * edge_tol {
-                        return Classification::On;
-                    }
-                    continue;
-                }
-                let t = ((point - sv).dot(seg) / seg_len_sq).clamp(0.0, 1.0);
-                let closest = sv + t * seg;
-                if point.distance_squared(closest) < edge_tol * edge_tol {
-                    return Classification::On;
-                }
+                let aabb = Aabb::from_points(&[sv, ev]);
+                edge_aabbs.push((ei, aabb));
             }
         }
-        for &vi in &face.boundary_verts {
+    }
+    let edge_indices: Vec<usize> = edge_aabbs.iter().map(|(ei, _)| *ei).collect();
+    let aabbs: Vec<Aabb> = edge_aabbs.iter().map(|(_, a)| *a).collect();
+    let edge_tree = crate::bvh::DsBvh::build(edge_indices.clone(), aabbs);
+
+    // OCCT L218-230: Vertex/Edge proximity via UB-tree -> On
+    let query_aabb = Aabb {
+        min: point - DVec3::splat(edge_tol),
+        max: point + DVec3::splat(edge_tol),
+    };
+    for &ei in &edge_tree.query_aabb(&query_aabb) {
+        if let Some(edge) = ds.edges.get(ei) {
+            let sv = ds.vertices[edge.start_vertex].point;
+            let ev = ds.vertices[edge.end_vertex].point;
+            let seg = ev - sv;
+            let seg_len_sq = seg.length_squared();
+            if seg_len_sq < TOLERANCE_LEN_MIN * TOLERANCE_LEN_MIN {
+                if point.distance_squared(sv) < edge_tol * edge_tol {
+                    return Classification::On;
+                }
+                continue;
+            }
+            let t = ((point - sv).dot(seg) / seg_len_sq).clamp(0.0, 1.0);
+            let closest = sv + t * seg;
+            if point.distance_squared(closest) < edge_tol * edge_tol {
+                return Classification::On;
+            }
+        }
+    }
+    for &fi in solid_face_indices {
+        for &vi in &ds.faces[fi].boundary_verts {
             if let Some(v) = ds.vertices.get(vi) {
                 if point.distance_squared(v.point) < edge_tol * edge_tol {
                     return Classification::On;
@@ -487,7 +508,6 @@ fn classify_point_internal(
     // Build direction list (OCCT L257-278: Segment + OtherSegment)
     struct RayDir { dir: DVec3, _is_segment: bool }
     let mut dirs: Vec<RayDir> = Vec::new();
-    // Segment: toward face centroids
     for &fi in solid_face_indices {
         let face_verts = ds.face_boundary_points(fi);
         if face_verts.len() < 3 { continue; }
@@ -498,34 +518,34 @@ fn classify_point_internal(
             dirs.push(RayDir { dir: ray_dir / dir_len, _is_segment: true });
         }
     }
-    // OtherSegment: fixed directions
     for &d in &[DVec3::X, DVec3::Y, DVec3::Z, -DVec3::X, -DVec3::Y, -DVec3::Z] {
         dirs.push(RayDir { dir: d, _is_segment: false });
     }
 
     // OCCT L257-500: main while(isFaultyLine) loop
-    let mut _is_faulty = true;
+    let mut is_faulty = true;
     let mut dir_idx = 0usize;
 
-    while _is_faulty && dir_idx < dirs.len() {
+    while is_faulty && dir_idx < dirs.len() {
         let rd = &dirs[dir_idx];
         dir_idx += 1;
-        _is_faulty = false;
+        is_faulty = false;
 
-        // OCCT L299-306: check line-edge proximity
+        // OCCT L306-360: line-edge proximity via UB-tree
+        let line_ext = edge_tol * 100.0;
+        let line_aabb = Aabb {
+            min: point - DVec3::splat(line_ext),
+            max: point + DVec3::splat(line_ext),
+        };
         let mut near_edge = false;
-        for &fi in solid_face_indices {
-            for &ei in &ds.faces[fi].boundary_edges {
-                if let Some(edge) = ds.edges.get(ei) {
-                    let sv = ds.vertices[edge.start_vertex].point;
-                    let ev = ds.vertices[edge.end_vertex].point;
-                    let to_ray = (sv - point).cross(rd.dir).length();
-                    if to_ray < ray_tol * 10.0 { near_edge = true; break; }
-                }
+        for &ei in &edge_tree.query_aabb(&line_aabb) {
+            if let Some(edge) = ds.edges.get(ei) {
+                let sv = ds.vertices[edge.start_vertex].point;
+                let to_ray = (sv - point).cross(rd.dir).length();
+                if to_ray < edge_tol * 10.0 { near_edge = true; break; }
             }
-            if near_edge { break; }
         }
-        if near_edge { _is_faulty = true; continue; }
+        if near_edge { is_faulty = true; continue; }
 
         // OCCT L363-493: for each face -> nearest intersection -> In/Out from transition
         let mut nearest_t = f64::MAX;
@@ -552,16 +572,12 @@ fn classify_point_internal(
 
         if let Some(class) = nearest_result { return class; }
 
-        // No valid intersection -> retry
-        _is_faulty = true;
+        is_faulty = true;
     }
 
     Classification::Out
 }
 
-// keep: pub fn classify_point
-/// Result of a single ray-face intersection, matching OCCT iFlag semantics.
-/// The f64 parameter is the ray parameter t (distance along ray at intersection).
 enum RayFaceResult {
     /// Point is inside the solid (ray exits through this face).
     In(f64),

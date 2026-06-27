@@ -1979,13 +1979,12 @@ impl<'a> BooleanBuilder<'a> {
         // Phase 4: FillImagesContainers(SHELL) (L388-398) → BuildResult(SHELL) (L394-398).
         self.fill_images_containers(ShapeType::Shell, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
+        // NOTE: save shells BEFORE build_result consumes them (OCCT builds
+        // shells from face images during FillImagesSolids, not before).
+        let saved_shells = result.tmp_shells.clone();
         self.build_result(ShapeType::Shell, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 5: FillImagesSolids (L400-410) → BuildResult(SOLID) (L406-410).
-        //   NOTE: build_result(Shell) consumed tmp_shells, but fill_images_solids
-        //   still needs shell groupings.  Save a copy before it's consumed.
-        //   (OCCT builds shells from face images during FillImagesSolids.)
-        let saved_shells = result.tmp_shells.clone();
         self.fill_images_solids(&mut result, saved_shells);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result(ShapeType::Solid, &mut result, &mut t_brep);
