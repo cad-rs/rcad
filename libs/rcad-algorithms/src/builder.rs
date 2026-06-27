@@ -1163,32 +1163,34 @@ impl<'a> BooleanBuilder<'a> {
         if result.tmp_shells.is_empty() { return; }
 
         // --- PerformShapesToAvoid (BOPAlgo_BuilderSolid.cxx L129-218) ---
-        loop {
-            let mut ef: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
-            for (rfi, face) in result.faces.iter().enumerate() {
-                for &(ei, _) in &face.0 { ef.entry(ei).or_default().push(rfi); }
-                for iw in &face.1 {
-                    for &(ei, _) in iw { ef.entry(ei).or_default().push(rfi); }
+        // Use BuilderSolid for this step, operating on DS face indices.
+        let ds_face_of_result: Vec<Option<usize>> = (0..result.faces.len()).map(|rfi| {
+            match result.face_origins.get(rfi) {
+                Some(FaceOrigin::FromA(sfi)) => {
+                    self.ds.faces.iter().position(|f| f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi)
                 }
-                for iw in &face.9 {
-                    for &(ei, _) in iw { ef.entry(ei).or_default().push(rfi); }
+                Some(FaceOrigin::FromB(sfi)) => {
+                    self.ds.faces.iter().position(|f| f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi)
+                }
+                _ => None,
+            }
+        }).collect();
+        let ds_faces_of_result: Vec<usize> = ds_face_of_result.iter().filter_map(|&x| x).collect();
+
+        let mut builder_solid = crate::bopds::builder_solid::BuilderSolid::new();
+        builder_solid.set_shapes(&ds_faces_of_result);
+        builder_solid.perform(&self.ds);
+
+        let mut to_avoid = vec![false; result.faces.len()];
+        for (rfi, ds_fi_opt) in ds_face_of_result.iter().enumerate() {
+            if let Some(ds_fi) = ds_fi_opt {
+                if builder_solid.myShapesToAvoid.contains(ds_fi) {
+                    to_avoid[rfi] = true;
                 }
             }
-            let mut found = false;
-            let mut to_avoid = vec![false; result.faces.len()];
-            for (&ei, flist) in &ef {
-                if result.deg_edge_indices.contains(&ei) { continue; }
-                if result.ic_edge_map.contains_key(&ei) { continue; } // INTERNAL-equivalent
-                let nf = flist.len();
-                if nf == 0 { continue; }
-                if nf == 1 { to_avoid[flist[0]] = true; found = true; }
-                else if nf == 2 && flist[0] == flist[1] {
-                    let (sv, ev) = result.edges[ei];
-                    if sv != ev { to_avoid[flist[0]] = true; found = true; }
-                }
-            }
-            if !found { break; }
-            // Remove avoided faces (same idx_map pattern as fill_in_3d_parts)
+        }
+        let has_avoided = to_avoid.iter().any(|&a| a);
+        if has_avoided {
             let nf = result.faces.len();
             let old_faces = std::mem::take(&mut result.faces);
             let old_origins = std::mem::take(&mut result.face_origins);

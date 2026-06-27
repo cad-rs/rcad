@@ -68,7 +68,7 @@ pub struct BuilderSolid {
     /// OCCT: myShapes — list of input face indices (TopoDS_Face).
     myShapes: Vec<usize>,
     /// OCCT: myShapesToAvoid — faces excluded from shell building.
-    myShapesToAvoid: BTreeSet<usize>,
+    pub(crate) myShapesToAvoid: BTreeSet<usize>,
     /// OCCT: myLoops — closed shells from PerformLoops (list of TopoDS_Shell).
     myLoops: Vec<Vec<usize>>,
     /// OCCT: myLoopsInternal — shells from "to-avoid" faces (internal shells).
