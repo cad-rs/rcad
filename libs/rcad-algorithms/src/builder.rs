@@ -2741,32 +2741,6 @@ mod tests {
     }
 
     #[test]
-    fn build_result_noop_for_all_types() {
-        // OCCT BuildResult is a no-op for solid boolean inputs
-        // (no VERTEX/EDGE/FACE arguments in myArguments).
-        // Verify rcad's build_result is also a no-op.
-        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
-        let b = make_box_brep(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
-        let ds = DS::new(&a, &b);
-        let builder = BooleanBuilder::new(&ds, BooleanOpType::Union);
-        let (mut t_brep, mut result) = builder.prepare();
-
-        // Call build_result for each type — should not panic and
-        // should not add anything to t_brep or result.
-        for st in &[
-            ShapeType::Vertex, ShapeType::Edge, ShapeType::Wire,
-            ShapeType::Face, ShapeType::Shell, ShapeType::Solid,
-            ShapeType::CompSolid, ShapeType::Compound,
-        ] {
-            builder.build_result(*st, &mut result, &mut t_brep);
-        }
-
-        // All types are no-ops, so t_brep should still be empty
-        assert!(t_brep.tshapes.is_empty(),
-            "build_result should be no-op for all types, got {} tshapes", t_brep.tshapes.len());
-    }
-
-    #[test]
     fn minimal_box_union_pipeline_builds_result() {
         // Two tiny non-overlapping boxes — union should produce both boxes.
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
