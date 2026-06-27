@@ -548,6 +548,29 @@ impl DS {
         &mut self.edges[edge_idx].pave_blocks
     }
 
+    /// ✅ OCCT-aligned: BOPDS_DS::InitPaveBlocks (cxx L437-501).
+    ///   Creates the initial PaveBlock for a source edge, covering the full
+    ///   parametric range [t_range[0], t_range[1]]. For closed edges (seam
+    ///   edges where start == end), the PB is initialized with two paves at
+    ///   different parameters using the same vertex.
+    pub fn init_pave_blocks_for_edge(&mut self, edge_idx: usize) {
+        if edge_idx >= self.edges.len() { return; }
+        let (sv, ev, tr0, tr1) = {
+            let e = &self.edges[edge_idx];
+            (e.start_vertex, e.end_vertex, e.t_range[0], e.t_range[1])
+        };
+        if sv >= self.vertices.len() { return; }
+        if ev >= self.vertices.len() { return; }
+        let pv1 = Pave { vertex_idx: sv, param: tr0 };
+        let pv2 = Pave { vertex_idx: ev, param: tr1 };
+        let mut pb = PaveBlock::new(edge_idx, pv1, pv2);
+        // OCCT L479-483: closed edges — add the second endpoint with reversed direction
+        if sv == ev {
+            pb.ext_paves.push(Pave { vertex_idx: sv, param: tr1 });
+        }
+        self.edges[edge_idx].pave_blocks = vec![pb];
+    }
+
     /// ✅ OCCT-aligned: BOPDS_DS::PaveBlocks (hxx:167-169).
     ///   Returns a reference to the PaveBlocks list for an edge.
     pub fn pave_blocks(&self, edge_idx: usize) -> &[PaveBlock] {
@@ -1001,6 +1024,7 @@ impl DS {
                     vp
                 },
             });
+            self.init_pave_blocks_for_edge(self.edges.len() - 1);
         }
 
         // Faces.  OCCT BOPDS_ShapeInfo tracks source shell/solid/compsolid

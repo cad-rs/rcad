@@ -61,6 +61,9 @@ impl<'a> super::PaveFiller<'a> {
                 !ds.edge_has_vertex(*vi, *ei) && !ds.edge_has_flag(*ei)
                     && !ds.has_interf_ve(*vi, *ei) && !ds.has_interf_ve_via_faces(*vi, *ei)
                     && !ds.is_edge_degenerated(*ei)
+                    // OCCT L186-197: PaveBlocks not empty + first PB is splittable
+                    && !ds.edges[*ei].pave_blocks.is_empty()
+                    && ds.edges[*ei].pave_blocks[0].is_splittable
             })
             .copied()
             .collect();
@@ -354,15 +357,18 @@ impl<'a> super::PaveFiller<'a> {
 
         for &vi in &a_verts {
             for &ei in &b_edges {
-                // OCCT L166-168: aSIE.HasSubShape(nV) �?skip if vertex is edge endpoint
+                // OCCT L166-168: aSIE.HasSubShape(nV) skip if vertex is edge endpoint
                 if self.ds.edge_has_vertex(vi, ei) { continue; }
-                // OCCT L171-173: aSIE.HasFlag() �?skip if edge has flag
+                // OCCT L171-173: aSIE.HasFlag() skip if edge has flag
                 if self.ds.edge_has_flag(ei) { continue; }
-                // OCCT L176-178: myDS->HasInterf(nV, nE) �?skip if already interfered
+                // OCCT L176-178: myDS->HasInterf(nV, nE) skip if already interfered
                 if self.ds.has_interf_ve(vi, ei) { continue; }
                 // OCCT L181-183: myDS->HasInterfShapeSubShapes(nV, nE)
                 if self.ds.has_interf_ve_via_faces(vi, ei) { continue; }
                 if self.ds.is_edge_degenerated(ei) { continue; }
+                // OCCT L186-197: PaveBlocks not empty + first PB is splittable
+                if self.ds.edges[ei].pave_blocks.is_empty() { continue; }
+                if !self.ds.edges[ei].pave_blocks[0].is_splittable { continue; }
                 self.check_vertex_edge(vi, ei);
             }
         }
@@ -377,6 +383,9 @@ impl<'a> super::PaveFiller<'a> {
                 if self.ds.has_interf_ve(vi, ei) { continue; }
                 if self.ds.has_interf_ve_via_faces(vi, ei) { continue; }
                 if self.ds.is_edge_degenerated(ei) { continue; }
+                // OCCT L186-197: PaveBlocks not empty + first PB is splittable
+                if self.ds.edges[ei].pave_blocks.is_empty() { continue; }
+                if !self.ds.edges[ei].pave_blocks[0].is_splittable { continue; }
                 self.check_vertex_edge(vi, ei);
             }
         }
@@ -596,6 +605,34 @@ impl<'a> super::PaveFiller<'a> {
         };
 
         for (t1, t2, point) in hits {
+            // OCCT PaveFiller_3.cxx L468-510: proximity check
+            // If the new vertex is too close (within 10x tolerance) to any existing
+            // PaveBlock endpoint on either edge, skip creating this new vertex.
+            let mut skip_hit = false;
+            for pb in &self.ds.edges[e1].pave_blocks {
+                for &v_idx in &[pb.pave1.vertex_idx, pb.pave2.vertex_idx] {
+                    if v_idx >= self.ds.vertices.len() { continue; }
+                    let dv = point - self.ds.vertices[v_idx].point;
+                    let d2 = dv.length_squared();
+                    let dt2 = 100.0 * (tol + self.ds.vertices[v_idx].geom_tol).powi(2);
+                    if d2 < dt2 { skip_hit = true; break; }
+                }
+                if skip_hit { break; }
+            }
+            if !skip_hit {
+                for pb in &self.ds.edges[e2].pave_blocks {
+                    for &v_idx in &[pb.pave1.vertex_idx, pb.pave2.vertex_idx] {
+                        if v_idx >= self.ds.vertices.len() { continue; }
+                        let dv = point - self.ds.vertices[v_idx].point;
+                        let d2 = dv.length_squared();
+                        let dt2 = 100.0 * (tol + self.ds.vertices[v_idx].geom_tol).powi(2);
+                        if d2 < dt2 { skip_hit = true; break; }
+                    }
+                    if skip_hit { break; }
+                }
+            }
+            if skip_hit { continue; }
+
             let new_v = self.ds.add_vertex(point);
             self.ds.interferences.push(Interference::EdgeEdge {
                 e1, e2, point, param1: t1, param2: t2, new_vertex: new_v,

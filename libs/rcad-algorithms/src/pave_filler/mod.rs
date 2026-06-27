@@ -532,6 +532,9 @@ impl<'a> PaveFiller<'a> {
 
         if !skip_ve {
             self.perform_ve_bvh(&bvh_verts_a, &bvh_edges_b);
+            // OCCT: Iterator covers ALL V-E pairs; rcad BVH needs explicit
+            //   second call for B-verts x A-edges (HasSubShape filters same-shape pairs).
+            self.perform_ve_bvh(&bvh_verts_b, &bvh_edges_a);
         }
         // �?OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L266)
         self.ds.update_pave_blocks_with_sd_vertices();
