@@ -185,18 +185,19 @@ impl BooleanOp {
         let bvh_b = Bvh::build(&b);
 
         // ✅ OCCT-aligned: Run PaveFiller (BOPAlgo_PaveFiller::Perform)
-        // This computes all EE, EF, FF intersections between the two shapes.
-        let mut filler = PaveFiller::with_bvh(&mut ds, &bvh_a, &bvh_b);
-        filler.perform();
+        let mut brep = rcad_kernel::topods::BRep::new();
+        let (face_refs, ic_edge_map) = {
+            let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep);
+            filler.perform();
+            (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
+        };
 
         // ✅ OCCT-aligned: FillImagesContainers — build wire/shell images
-        // OCCT ref: BOPAlgo_Builder::FillImagesContainers
         ds.build_container_images(&a);
         ds.build_container_images(&b);
 
-        // ✅ OCCT-aligned: Build result (BOPAlgo_Builder::Build)
-        // BOPAlgo_Builder::Build → BuildResult → loop over faces
-        let builder = BooleanBuilder::new(&ds, self.op_type);
+        // ✅ OCCT-aligned: Build result
+        let builder = BooleanBuilder::with_brep(&ds, self.op_type, brep, face_refs, ic_edge_map);
         let (brep, bool_history) = builder.build_with_history()?;
 
         self.history = Some(bool_history);

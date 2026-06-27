@@ -726,18 +726,26 @@ impl<'a> BRepAlgoAPI_Common<'a> {
         let bvh_a = if self.options.use_bvh { Some(bvh::Bvh::build(&a)) } else { None };
         let bvh_b = if self.options.use_bvh { Some(bvh::Bvh::build(&b)) } else { None };
 
-        let mut filler = match (&bvh_a, &bvh_b) {
-            (Some(ba), Some(bb)) => PaveFiller::with_bvh(&mut ds, ba, bb),
-            _ => PaveFiller::new(&mut ds),
+        let mut brep = rcad_kernel::topods::BRep::new();
+        let (face_refs, ic_edge_map) = {
+            let mut filler = match (&bvh_a, &bvh_b) {
+                (Some(ba), Some(bb)) => PaveFiller::with_bvh_and_brep(&mut ds, ba, bb, &mut brep),
+                _ => {
+                    let mut f = PaveFiller::new(&mut ds);
+                    f.brep = Some(&mut brep);
+                    f
+                }
+            };
+            filler.perform();
+            (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
         };
-        filler.perform();
 
         // ✅ OCCT-aligned: FillImagesContainers — pre-build wire edge lists
         ds.build_container_images(&a);
         ds.build_container_images(&b);
 
         // Build result
-        let builder = BooleanBuilder::new(&ds, BooleanOpType::Intersection);
+        let builder = BooleanBuilder::with_brep(&ds, BooleanOpType::Intersection, brep, face_refs, ic_edge_map);
         let (brep, bool_history) = if self.options.parallel {
             builder.build_with_history()?
         } else {
@@ -915,17 +923,25 @@ impl<'a> BRepAlgoAPI_Fuse<'a> {
                 None
             };
 
-            let mut filler = match (&bvh_a, &bvh_b) {
-                (Some(ba), Some(bb)) => PaveFiller::with_bvh(&mut ds, ba, bb),
-                _ => PaveFiller::new(&mut ds),
+            let mut brep = rcad_kernel::topods::BRep::new();
+            let (face_refs, ic_edge_map) = {
+                let mut filler = match (&bvh_a, &bvh_b) {
+                    (Some(ba), Some(bb)) => PaveFiller::with_bvh_and_brep(&mut ds, ba, bb, &mut brep),
+                    _ => {
+                        let mut f = PaveFiller::new(&mut ds);
+                        f.brep = Some(&mut brep);
+                        f
+                    }
+                };
+                filler.perform();
+                (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
             };
-            filler.perform();
 
             // ✅ OCCT-aligned: FillImagesContainers — pre-build wire edge lists
             ds.build_container_images(&a);
             ds.build_container_images(&b);
 
-            let builder = BooleanBuilder::new(&ds, BooleanOpType::Union);
+            let builder = BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
             if self.options.parallel {
                 builder.build_with_history()?
             } else {
@@ -1088,17 +1104,25 @@ impl<'a> BRepAlgoAPI_Cut<'a> {
         let bvh_a = if self.options.use_bvh { Some(bvh::Bvh::build(&a)) } else { None };
         let bvh_b = if self.options.use_bvh { Some(bvh::Bvh::build(&b)) } else { None };
 
-        let mut filler = match (&bvh_a, &bvh_b) {
-            (Some(ba), Some(bb)) => PaveFiller::with_bvh(&mut ds, ba, bb),
-            _ => PaveFiller::new(&mut ds),
+        let mut t_brep = rcad_kernel::topods::BRep::new();
+        let (face_refs, ic_edge_map) = {
+            let mut filler = match (&bvh_a, &bvh_b) {
+                (Some(ba), Some(bb)) => PaveFiller::with_bvh_and_brep(&mut ds, ba, bb, &mut t_brep),
+                _ => {
+                    let mut f = PaveFiller::new(&mut ds);
+                    f.brep = Some(&mut t_brep);
+                    f
+                }
+            };
+            filler.perform();
+            (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
         };
-        filler.perform();
 
         // ✅ OCCT-aligned: FillImagesContainers — pre-build wire edge lists
         ds.build_container_images(&a);
         ds.build_container_images(&b);
 
-        let builder = BooleanBuilder::new(&ds, BooleanOpType::Difference);
+        let builder = BooleanBuilder::with_brep(&ds, BooleanOpType::Difference, t_brep, face_refs, ic_edge_map);
         let (brep, bool_history) = if self.options.parallel {
             builder.build_with_history()?
         } else {

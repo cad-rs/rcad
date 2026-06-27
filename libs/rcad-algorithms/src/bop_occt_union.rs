@@ -426,12 +426,18 @@ fn optional_bvhs(a: &BRep, b: &BRep) -> (Option<bvh::Bvh>, Option<bvh::Bvh>) {
 /// when BVH acceleration is toggled off (`false` → plain [`pave_filler::PaveFiller::new`]).
 /// ✅ OCCT-aligned: PaveFiller creation + configuration + Perform.
 ///   OCCT BOPAlgo_BOP::Perform L395-405: new PaveFiller + config + Perform.
-fn pave_fill(ds: &mut bopds::ds::DS, a: &BRep, b: &BRep, use_bvh: bool) {
+fn pave_fill(ds: &mut bopds::ds::DS, a: &BRep, b: &BRep, use_bvh: bool,
+    brep: &mut rcad_kernel::topods::BRep) -> (Vec<rcad_kernel::topods::ShapeRef>, Vec<Option<rcad_kernel::topods::ShapeRef>>)
+{
     let (bvh_a, bvh_b) = if use_bvh { optional_bvhs(a, b) } else { (None, None) };
     let fuzzy_tol = ds.fuzzy_tol;
     let mut filler = match (&bvh_a, &bvh_b) {
-        (Some(ba), Some(bb)) => pave_filler::PaveFiller::with_bvh(ds, ba, bb),
-        _ => pave_filler::PaveFiller::new(ds),
+        (Some(ba), Some(bb)) => pave_filler::PaveFiller::with_bvh_and_brep(ds, ba, bb, brep),
+        _ => {
+            let mut f = pave_filler::PaveFiller::new(ds);
+            f.brep = Some(brep);
+            f
+        }
     };
     filler.set_run_parallel(false);
     filler.configure_fuzzy(fuzzy_tol);
@@ -439,6 +445,7 @@ fn pave_fill(ds: &mut bopds::ds::DS, a: &BRep, b: &BRep, use_bvh: bool) {
     filler.configure_glue(false, TOLERANCE_ABS);
     filler.set_use_obb(false);
     filler.perform();
+    (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
 }
 
 /// Sum of boundary-edge counts from [`crate::brep_check::validate_solid_closure`].
@@ -454,8 +461,9 @@ pub(crate) fn fuse(a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
 ///   OCCT BOPAlgo_BOP::Perform L395-408: PaveFiller config + Perform + PerformInternal1.
 pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, BooleanError> {
     let mut ds = bopds::ds::DS::new(a, b);
-    pave_fill(&mut ds, a, b, use_bvh);
-    let builder = builder::BooleanBuilder::new(&ds, BooleanOpType::Union);
+    let mut brep = rcad_kernel::topods::BRep::new();
+    let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, use_bvh, &mut brep);
+    let builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
     let (result, _history) = builder.build_with_history()?;
     Ok(result)
 }
@@ -530,12 +538,13 @@ pub(crate) fn fuse_with_history_bvh(
     validate_union_operands(a, b)?;
     let mut ds = bopds::ds::DS::new(a, b);
     validate_ds_invariants(&ds)?;
-    pave_fill(&mut ds, a, b, use_bvh);
+    let mut brep = rcad_kernel::topods::BRep::new();
+    let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, use_bvh, &mut brep);
     validate_ds_invariants(&ds)?;
-    let builder = builder::BooleanBuilder::new(&ds, BooleanOpType::Union);
-    let (brep, hist) = builder.build_with_history()?;
-    validate_union_brep_output("union: result failed checks after build (history)", &brep)?;
-    Ok((brep, hist))
+    let builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
+    let (result_brep, hist) = builder.build_with_history()?;
+    validate_union_brep_output("union: result failed checks after build (history)", &result_brep)?;
+    Ok((result_brep, hist))
 }
 
 /// Parallel classification path; same OCCT phase structure as [`fuse_with_history`].
@@ -551,12 +560,13 @@ pub(crate) fn fuse_with_history_par_bvh(
     validate_union_operands(a, b)?;
     let mut ds = bopds::ds::DS::new(a, b);
     validate_ds_invariants(&ds)?;
-    pave_fill(&mut ds, a, b, use_bvh);
+    let mut brep = rcad_kernel::topods::BRep::new();
+    let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, use_bvh, &mut brep);
     validate_ds_invariants(&ds)?;
-    let builder = builder::BooleanBuilder::new(&ds, BooleanOpType::Union);
-    let (brep, hist) = builder.build_with_history()?;
-    validate_union_brep_output("union: result failed checks after build (history par)", &brep)?;
-    Ok((brep, hist))
+    let builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
+    let (result_brep, hist) = builder.build_with_history()?;
+    validate_union_brep_output("union: result failed checks after build (history par)", &result_brep)?;
+    Ok((result_brep, hist))
 }
 
 /// ✅ OCCT对齐: 按 edge set (BOPTools_Set) 对共面面做同域合并。
