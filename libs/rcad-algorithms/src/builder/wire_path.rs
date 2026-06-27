@@ -10,7 +10,7 @@ use super::wire_splitter::{
     find_angle_at, select_best_outgoing, are_verts_coincident,
 };
 use crate::builder::point_in_polygon_2d;
-use crate::classify::{Classification, classify_point};
+// use crate::classify::{Classification, classify_point};
 use crate::inttools::context::Context;
 use crate::inttools::fclass2d::{CSLibClass2d, CSLibResult, curve2d_nb_samples};
 use super::types::FaceSampleData;
@@ -1508,56 +1508,5 @@ pub(crate) fn point_in_polygon_xy_impl(pt: DVec3, poly: &[DVec3], u_idx: usize, 
 /// Legacy: XY-only projection (replaced by projected_area_max / point_in_polygon_best).
 /// Kept for callers that explicitly need XY projection.
 pub(crate) fn projected_area_xy(b: &[DVec3]) -> f64 {
-    let u_idx = 0; let v_idx = 1;
-    projected_area_on(b, u_idx, v_idx)
-}
-
-/// ✅ OCCT-aligned: promote inner_wires whose sample point classifies
-/// outside the other solid to independent WireFaces.
-///
-/// `perform_areas` classifies wires as holes using 3D point-in-polygon
-/// alone, which doesn't account for the other solid. A wire that is
-/// geometrically inside the outer wire's polygon but outside the other
-/// solid should be an independent face, not a hole.
-pub(crate) fn promote_exterior_holes(
-    mut wfs: Vec<WireFace>,
-    segments: &[WireSegment],
-    ds: &DS,
-    op: BooleanOpType,
-    other_faces: &[usize],
-) -> Vec<WireFace> {
-    let mut result = Vec::with_capacity(wfs.len());
-    for wf in wfs.drain(..) {
-        if wf.inner_wires.is_empty() {
-            result.push(wf);
-            continue;
-        }
-        let mut kept_inner: Vec<Vec<usize>> = Vec::new();
-        for iw in wf.inner_wires {
-            let bnd: Vec<DVec3> = iw.iter().map(|&si| {
-                let seg = &segments[si];
-                ds.vertices[if seg.orientation == WireOrientation::Forward { seg.end_vertex } else { seg.start_vertex }].point
-            }).collect();
-            let centroid = bnd.iter().copied().sum::<DVec3>() / bnd.len() as f64;
-            let class = classify_point(centroid, other_faces, ds);
-            let should_promote = match op {
-                BooleanOpType::Union | BooleanOpType::Difference => class != Classification::In,
-                BooleanOpType::Intersection => class == Classification::In,
-            };
-            if should_promote {
-                result.push(WireFace {
-                    outer_wire: iw,
-                    inner_wires: vec![],
-                    internal_wires: vec![],
-                });            } else {
-                kept_inner.push(iw);
-            }
-        }
-        result.push(WireFace {
-            outer_wire: wf.outer_wire,
-            inner_wires: kept_inner,
-            internal_wires: wf.internal_wires,
-        });
-    }
-    result
+    projected_area_on(b, 0, 1)
 }
