@@ -1094,6 +1094,100 @@ pub(crate) fn select_best_outgoing<'a>(
     p_edge_info
 }
 
+// ---------------------------------------------------------------------------
+// TopoDS-based perform_shapes_to_avoid — BRepTool variant
+// ---------------------------------------------------------------------------
+
+/// Physical edge identity for WireSegmentTopoDS (BRepTool variant).
+pub(crate) fn physical_edge_id_topo_ds(seg: &super::types::WireSegmentTopoDS) -> (u8, usize, usize, usize) {
+    let (tag, idx) = match &seg.source {
+        super::types::WireEdgeSourceTopoDS::DsEdge(e) => (0u8, e.index),
+        super::types::WireEdgeSourceTopoDS::IntersectionCurve(c) => (1u8, c.index),
+        super::types::WireEdgeSourceTopoDS::SeamEdge => (2u8, 0),
+    };
+    let a = seg.start_vertex.index;
+    let b = seg.end_vertex.index;
+    let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+    (tag, idx, lo, hi)
+}
+
+/// Build PID maps for WireSegmentTopoDS (BRepTool variant).
+pub(crate) fn build_pid_maps_topo_ds(
+    segments: &[super::types::WireSegmentTopoDS],
+) -> (
+    std::collections::HashMap<Pid, Vec<usize>>,
+    std::collections::HashMap<Pid, (usize, usize)>,
+) {
+    let mut pid_segs: std::collections::HashMap<Pid, Vec<usize>> = std::collections::HashMap::new();
+    let mut pid_endpoints: std::collections::HashMap<Pid, (usize, usize)> = std::collections::HashMap::new();
+    for (si, seg) in segments.iter().enumerate() {
+        let pid = physical_edge_id_topo_ds(seg);
+        pid_segs.entry(pid).or_default().push(si);
+        pid_endpoints.entry(pid).or_insert_with(|| (seg.start_vertex.index, seg.end_vertex.index));
+    }
+    (pid_segs, pid_endpoints)
+}
+
+/// ✅ OCCT-aligned: PerformShapesToAvoid for WireSegmentTopoDS.
+///   Same logic as perform_shapes_to_avoid but uses BRepTool data instead of DS.
+///   Returns avoided PIDs and pid→segment map.
+pub(crate) fn perform_shapes_to_avoid_topo_ds(
+    segments: &[super::types::WireSegmentTopoDS],
+    tool: &dyn rcad_kernel::topods::BRepTool,
+) -> (std::collections::HashSet<Pid>, std::collections::HashMap<Pid, Vec<usize>>) {
+    let (pid_segs, pid_endpoints) = build_pid_maps_topo_ds(segments);
+
+    let is_degenerate = |pid: &Pid| -> bool {
+        let (_tag, idx, a, b) = *pid;
+        // DsEdge: check via BRepTool
+        if a == b { return true; } // self-loop
+        if _tag == 0 {
+            tool.is_edge_degenerated(rcad_kernel::topods::ShapeRef::new(idx))
+        } else {
+            false
+        }
+    };
+
+    let mut avoided_pids: std::collections::HashSet<Pid> = std::collections::HashSet::new();
+
+    // OCCT L176-180: collect all vertices with degree == 1
+    let mut vtx_deg: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    for (_, &(a, b)) in &pid_endpoints {
+        *vtx_deg.entry(a).or_default() += 1;
+        *vtx_deg.entry(b).or_default() += 1;
+    }
+
+    // OCCT L198-210: repeatedly avoid dangling edges (degree 1)
+    // and OCCT L211-227: avoid self-coincident edges (a==b, non-degenerate)
+    loop {
+        let mut b_found = false;
+        let mut degree_one: std::collections::HashSet<Pid> = std::collections::HashSet::new();
+        for (pid, &(a, b)) in &pid_endpoints {
+            if avoided_pids.contains(pid) { continue; }
+            if is_degenerate(pid) { continue; }
+            // OCCT L198-210: degree 1 at either endpoint
+            if vtx_deg.get(&a).copied().unwrap_or(0) == 1
+                || vtx_deg.get(&b).copied().unwrap_or(0) == 1
+            {
+                degree_one.insert(*pid);
+            }
+            // OCCT L211-227: a==b self-coincident (non-closed loop)
+            if a == b { degree_one.insert(*pid); }
+        }
+        for pid in degree_one {
+            if avoided_pids.insert(pid) {
+                let (_, _, a, b) = pid;
+                if let Some(d) = vtx_deg.get_mut(&a) { *d = d.saturating_sub(1); }
+                if let Some(d) = vtx_deg.get_mut(&b) { *d = d.saturating_sub(1); }
+                b_found = true;
+            }
+        }
+        if !b_found { break; }
+    }
+
+    (avoided_pids, pid_segs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -211,14 +211,14 @@ impl<'a> BooleanBuilder<'a> {
             return None;
         }
 
-        let vi_to_canon = build_vi_to_canon(&segments, ds);
-
-        let (avoided_pids, pid_segs) = perform_shapes_to_avoid(&segments, &vi_to_canon, ds);
-        let mut avoided = expand_avoided_pids(&avoided_pids, &pid_segs);
-
-        // Convert to TopoDS types for the wire splitter
+        // Convert to TopoDS types early for BRepTool-based processing
         let segments_topo = crate::builder::builder_utils_topo_ds::segments_to_topo_ds(&segments, ds, face_idx);
         let adaptor = crate::builder::ds_as_brep::DSAsBRep::new(ds, face_idx);
+
+        // BRepTool-based PerformShapesToAvoid (no DS dependency in core logic)
+        let (avoided_pids, pid_segs) = crate::builder::wire_splitter::perform_shapes_to_avoid_topo_ds(
+            &segments_topo, &adaptor);
+        let mut avoided = crate::builder::wire_splitter::expand_avoided_pids(&avoided_pids, &pid_segs);
 
         let wires = crate::builder::wire_path_topo_ds::build_closed_wires_topoDS(
             &segments_topo, &avoided, &adaptor);
