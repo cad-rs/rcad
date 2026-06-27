@@ -1757,11 +1757,40 @@ impl<'a> PaveFiller<'a> {
             for &pb_idx in &pb_indices {
                 // OCCT L624: nE = aPB->Edge()
                 if pb_idx >= self.ds.pave_blocks.len() { continue; }
-                let ei = self.ds.pave_blocks[pb_idx].original_edge;
+                let pb = &self.ds.pave_blocks[pb_idx];
+                let ei = pb.original_edge;
                 if ei >= self.ds.edges.len() { continue; }
 
                 // OCCT L641: check if pcurve already exists (HasCurveOnSurface)
                 if self.ds.edges[ei].face_reps.iter().any(|r| r.face_idx == fi) { continue; }
+
+                // OCCT L649-699: CommonBlock optimization — if another PB in the same
+                // CommonBlock already has a pcurve on this face, copy it instead of computing.
+                if let Some(cb_idx) = pb.common_block_idx {
+                    if cb_idx < self.ds.common_blocks.len() {
+                        let cb = &self.ds.common_blocks[cb_idx];
+                        let cb_pbs = cb.pave_blocks();
+                        if cb_pbs.len() >= 2 {
+                            let mut copied = false;
+                            for &(other_pb_idx, _other_fi) in cb_pbs {
+                                if other_pb_idx == pb_idx { continue; }
+                                if other_pb_idx >= self.ds.pave_blocks.len() { continue; }
+                                let other_ei = self.ds.pave_blocks[other_pb_idx].original_edge;
+                                if other_ei >= self.ds.edges.len() { continue; }
+                                if let Some(rep) = self.ds.edges[other_ei].face_reps.iter()
+                                    .find(|r| r.face_idx == fi)
+                                {
+                                    pcurves_to_add.push((ei, fi, rep.pcurve.clone(),
+                                        self.ds.edges[ei].t_range[0],
+                                        self.ds.edges[ei].t_range[1]));
+                                    copied = true;
+                                    break;
+                                }
+                            }
+                            if copied { continue; }
+                        }
+                    }
+                }
 
                 // Compute pcurve: project edge 3D curve onto face surface
                 let edge_curve = &self.ds.edges[ei].curve;
