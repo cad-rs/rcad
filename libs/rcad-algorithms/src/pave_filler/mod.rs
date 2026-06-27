@@ -6596,6 +6596,27 @@ fn put_pave_on_curve_full(
         })
         .collect();
 
+    // OCCT L2394-2420: ON/IN vertices with BBox + IsNewShape filtering.
+    // Compute common vertices (shared by both faces) — they skip BBox + IsNewShape per OCCT L2404.
+    let common_verts: HashSet<usize> = {
+        let mut cv: HashSet<usize> = HashSet::new();
+        if face_idxs[0] != usize::MAX && face_idxs[1] != usize::MAX {
+            let f0 = &ds.faces[face_idxs[0]];
+            let f1 = &ds.faces[face_idxs[1]];
+            for &vi in &f0.face_info.vertices_on {
+                if f1.face_info.vertices_on.contains(&vi) || f1.face_info.vertices_in.contains(&vi) {
+                    cv.insert(vi);
+                }
+            }
+            for &vi in &f0.face_info.vertices_in {
+                if f1.face_info.vertices_on.contains(&vi) || f1.face_info.vertices_in.contains(&vi) {
+                    cv.insert(vi);
+                }
+            }
+        }
+        cv
+    };
+
     for &fi in face_idxs.iter().filter(|&&fi| fi != usize::MAX) {
         let face = &ds.faces[fi];
 
@@ -6612,29 +6633,49 @@ fn put_pave_on_curve_full(
             }
         }
 
-        // OCCT L2394-2420: ON/IN vertices with BBox + IsNewShape filtering
+        // OCCT L2394-2420: ON/IN vertices with BBox + IsNewShape filtering.
+        // OCCT L2404: common vertices (theMVCommon) skip BBox + IsNewShape checks.
+        let mut common_verts: HashSet<usize> = HashSet::new();
+        let (fi_a, fi_b) = if face_idxs[0] != usize::MAX && face_idxs[1] != usize::MAX {
+            (face_idxs[0], face_idxs[1])
+        } else { continue; };
+        for &vi in &ds.faces[fi_a].face_info.vertices_on {
+            if ds.faces[fi_b].face_info.vertices_on.contains(&vi)
+                || ds.faces[fi_b].face_info.vertices_in.contains(&vi) {
+                common_verts.insert(vi);
+            }
+        }
+        for &vi in &ds.faces[fi_a].face_info.vertices_in {
+            if ds.faces[fi_b].face_info.vertices_on.contains(&vi)
+                || ds.faces[fi_b].face_info.vertices_in.contains(&vi) {
+                common_verts.insert(vi);
+            }
+        }
         for &vi in &face.face_info.vertices_in {
             if vi == ic.start_vertex || vi == ic.end_vertex { continue; }
             // OCCT L2399-2401: skip ON/IN vertices already in EF set
             if ef_vertices.contains(&vi) { continue; }
             if paves.iter().any(|&(_, v)| v == vi) { continue; }
 
-            // OCCT L2404-2412: BBox filtering
-            if let Some([c_min, c_max]) = curve_bbox {
-                let v_pt = ds.vertices[vi].point;
-                let v_tol = ds.vertices[vi].geom_tol.max(a_tol_r3d);
-                let v_min = v_pt - DVec3::splat(v_tol);
-                let v_max = v_pt + DVec3::splat(v_tol);
-                if v_max.x < c_min.x || v_min.x > c_max.x ||
-                   v_max.y < c_min.y || v_min.y > c_max.y ||
-                   v_max.z < c_min.z || v_min.z > c_max.z {
+            let is_common = common_verts.contains(&vi);
+            if !is_common {
+                // OCCT L2404-2412: BBox filtering (skipped for common vertices)
+                if let Some([c_min, c_max]) = curve_bbox {
+                    let v_pt = ds.vertices[vi].point;
+                    let v_tol = ds.vertices[vi].geom_tol.max(a_tol_r3d);
+                    let v_min = v_pt - DVec3::splat(v_tol);
+                    let v_max = v_pt + DVec3::splat(v_tol);
+                    if v_max.x < c_min.x || v_min.x > c_max.x ||
+                       v_max.y < c_min.y || v_min.y > c_max.y ||
+                       v_max.z < c_min.z || v_min.z > c_max.z {
+                        continue;
+                    }
+                }
+
+                // OCCT L2413-2415: IsNewShape filter — skip non-new vertices
+                if !ds.is_new_vertex(vi) {
                     continue;
                 }
-            }
-
-            // OCCT L2413-2415: IsNewShape filter - skip non-new vertices
-            if !ds.is_new_vertex(vi) {
-                continue;
             }
 
             let pt = ds.vertices[vi].point;
