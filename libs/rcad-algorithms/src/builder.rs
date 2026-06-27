@@ -1825,23 +1825,28 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             ShapeType::Solid => {
-                // ✅ OCCT-aligned: BuildResult(SOLID) — assemble solids from shells.
+                // OCCT-aligned: BuildResult(SOLID) (Builder_1.cxx L130-167).
+                //   OCCT: for each source SOLID, if myImages has images → add images,
+                //   else → add the original solid.  No fallback.
+                //   rcad: tmp_solids contains shell-index groups from build_split_solids.
                 let tmp_solids = std::mem::take(&mut result.tmp_solids);
-                if tmp_solids.is_empty() && result.shells.is_empty() {
-                    let shell = t.add_tshell(std::mem::take(&mut result.face_refs));
-                    t.add_tsolid(vec![shell]);
-                } else if !tmp_solids.is_empty() {
+                if !tmp_solids.is_empty() {
+                    // OCCT L154-165: add images of the argument shape into result
+                    let new_shells = std::mem::take(&mut result.tmp_shells);
                     for solid_shells in &tmp_solids {
                         let shell_refs: Vec<topods::ShapeRef> = solid_shells.iter()
-                            .filter_map(|&si| result.shells.get(si).copied())
+                            .filter_map(|&si| new_shells.get(si))
+                            .map(|shell_faces| {
+                                let sf: Vec<topods::ShapeRef> = shell_faces.iter()
+                                    .filter_map(|&fi| result.face_refs.get(fi).copied())
+                                    .collect();
+                                t.add_tshell(sf)
+                            })
                             .collect();
                         if !shell_refs.is_empty() {
                             result.solids.push(t.add_tsolid(shell_refs));
                         }
                     }
-                } else {
-                    let shell_refs: Vec<topods::ShapeRef> = result.shells.clone();
-                    t.add_tsolid(shell_refs);
                 }
             }
             ShapeType::CompSolid => {
