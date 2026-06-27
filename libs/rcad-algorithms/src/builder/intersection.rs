@@ -474,3 +474,99 @@ fn dedup(v: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
     let (t1,_) = v[v.len()-1]; let (t2,_) = v[v.len()-2];
     if (t1-t2).abs() < 1e-12 { v[..v.len()-1].to_vec() } else { v }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn line_line_intersection() {
+        let l1 = Curve2d::Line(Line2d { origin: DVec2::ZERO, direction: DVec2::X });
+        let l2 = Curve2d::Line(Line2d { origin: DVec2::new(0.5, 0.0), direction: DVec2::Y });
+        let r = intersect_line_line(&l1, &l2, 0.0, 1.0, 0.0, 1.0);
+        assert_eq!(r.len(), 1);
+        assert!((r[0].0 - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn line_circle_two_intersections() {
+        let l = Curve2d::Line(Line2d { origin: DVec2::new(-1.0, 0.0), direction: DVec2::new(2.0, 0.0) });
+        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: 1.0 });
+        let r = intersect_line_conic(&l, &c, G2dCurveType::Circle, f64::NEG_INFINITY, f64::INFINITY, 0.0, std::f64::consts::TAU);
+        assert_eq!(r.len(), 2);
+    }
+
+    #[test]
+    fn circle_circle_two_intersections() {
+        let c1 = Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: 1.0 });
+        let c2 = Curve2d::Circle(Circle2d { center: DVec2::new(1.0, 0.0), radius: 1.0 });
+        let r = intersect_circle_circle(&c1, &c2, 0.0, std::f64::consts::TAU, 0.0, std::f64::consts::TAU);
+        assert_eq!(r.len(), 2);
+    }
+
+    #[test]
+    fn circle_ellipse_intersection() {
+        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: 2.0 });
+        let e = Curve2d::Ellipse(Ellipse2d {
+            center: DVec2::new(1.0, 0.0), major_dir: DVec2::X,
+            major_radius: 2.0, minor_radius: 1.0,
+        });
+        let r = intersect_circle_ellipse(&c, &e, 0.0, std::f64::consts::TAU, 0.0, std::f64::consts::TAU);
+        assert!(!r.is_empty(), "circle and ellipse should intersect");
+    }
+
+    #[test]
+    fn ellipse_ellipse_intersection() {
+        let e1 = Curve2d::Ellipse(Ellipse2d {
+            center: DVec2::ZERO, major_dir: DVec2::X,
+            major_radius: 2.0, minor_radius: 1.0,
+        });
+        let e2 = Curve2d::Ellipse(Ellipse2d {
+            center: DVec2::new(2.0, 0.0), major_dir: DVec2::X,
+            major_radius: 2.0, minor_radius: 1.0,
+        });
+        let r = intersect_ellipse_ellipse(&e1, &e2, 0.0, std::f64::consts::TAU, 0.0, std::f64::consts::TAU);
+        assert!(!r.is_empty(), "ellipses should intersect");
+    }
+
+    #[test]
+    fn line_bspline_intersection() {
+        let l = Curve2d::Line(Line2d { origin: DVec2::new(-1.0, 0.0), direction: DVec2::new(3.0, 0.0) });
+        let b = Curve2d::BSpline(BSplineCurve2 {
+            degree: 2,
+            knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            control_points: vec![DVec2::new(0.0, -1.0), DVec2::new(0.5, 1.0), DVec2::new(1.0, -1.0)],
+            weights: vec![1.0, 1.0, 1.0],
+        });
+        let r = intersect_conic_curve(&l, G2dCurveType::Line, &b, f64::NEG_INFINITY, f64::INFINITY, 0.0, 1.0, 1e-7);
+        assert!(!r.is_empty(), "line should intersect BSpline");
+    }
+
+    #[test]
+    fn no_intersection_for_disjoint_circles() {
+        let c1 = Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: 1.0 });
+        let c2 = Curve2d::Circle(Circle2d { center: DVec2::new(10.0, 0.0), radius: 1.0 });
+        let r = intersect_circle_circle(&c1, &c2, 0.0, std::f64::consts::TAU, 0.0, std::f64::consts::TAU);
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn icoinic_tool_line() {
+        let l = Curve2d::Line(Line2d { origin: DVec2::ZERO, direction: DVec2::X });
+        let tool = IConicTool::new(&l);
+        // Point on the line (y=0)
+        assert!(tool.value(DVec2::new(5.0, 0.0)).abs() < 1e-15);
+        // Point off the line
+        assert!(tool.value(DVec2::new(0.0, 1.0)).abs() > 0.0);
+    }
+
+    #[test]
+    fn icoinic_tool_circle() {
+        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: 2.0 });
+        let tool = IConicTool::new(&c);
+        // Point on the circle
+        assert!(tool.value(DVec2::new(2.0, 0.0)).abs() < 1e-15);
+        // Center → value = -R²
+        assert!((tool.value(DVec2::ZERO) - (-4.0)).abs() < 1e-15);
+    }
+}
