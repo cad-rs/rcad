@@ -532,6 +532,11 @@ fn classify_point_internal(
         is_faulty = false;
 
         // OCCT L306-360: line-edge proximity via UB-tree
+        //   OCCT L306: aTree.Select(aSelectorLine) -> edge/vertex hits
+        //   L310-326: for each vertex/edge hit, compute NearFaultPar
+        //   L328-360: for each edge, use mapEF to get two adjacent faces,
+        //     compute transition via GetTransi(f1,f2,EE,param,L,tran)
+        //     if valid -> Trans(parmin, tran, myState) -> In/Out
         let line_ext = edge_tol * 100.0;
         let line_aabb = Aabb {
             min: point - DVec3::splat(line_ext),
@@ -542,7 +547,35 @@ fn classify_point_internal(
             if let Some(edge) = ds.edges.get(ei) {
                 let sv = ds.vertices[edge.start_vertex].point;
                 let to_ray = (sv - point).cross(rd.dir).length();
-                if to_ray < edge_tol * 10.0 { near_edge = true; break; }
+                if to_ray < edge_tol * 10.0 {
+                    near_edge = true;
+                    // OCCT L334: GetTransi(f1, f2, EE, param, L, tran)
+                    //   rcad: use mapEF to find the two faces sharing this edge.
+                    //   Compute whether ray enters (In) or exits (Out) at the edge
+                    //   based on face normal orientation relative to ray direction.
+                    if let Some(faces) = _map_ef.get(&ei) {
+                        if faces.len() >= 2 {
+                            let f1 = faces[0];
+                            let f2 = faces[1];
+                            let n1 = &ds.faces[f1].normal;
+                            let n2 = &ds.faces[f2].normal;
+                            // OCCT transition: if ray aligns with n1 (dot > 0) and
+                            // opposes n2 (dot < 0), or vice versa, we have a crossing.
+                            let d1 = rd.dir.dot(*n1);
+                            let d2 = rd.dir.dot(*n2);
+                            if d1.abs() > ray_tol && d2.abs() > ray_tol {
+                                // d1 < 0 means entering face1, d2 > 0 means exiting face2
+                                // The sign change determines In or Out
+                                if d1 < 0.0 && d2 > 0.0 {
+                                    return Classification::Out; // entering solids
+                                } else if d1 > 0.0 && d2 < 0.0 {
+                                    return Classification::In; // exiting solids
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
             }
         }
         if near_edge { is_faulty = true; continue; }
