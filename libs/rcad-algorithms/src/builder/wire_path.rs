@@ -421,18 +421,30 @@ pub(crate) fn refine_angle_2d(
         }
     };
 
-    // OCCT L1060-1061: get vertex parameter on curve and vertex UV.
-    //   OCCT uses BRep_Tool::Parameter(aV, aE, myFace) — stored pcurve param.
-    //   rcad: use pcurve endpoint UV for IC arcs (avoids world_to_uv singularities
-    //   at sphere poles).  Fall back to world_to_uv for other edge types.
-    let v_uv = match &seg.source {
-        WireEdgeSource::IntersectionCurve(_) => {
-            let t_vert = if vertex_idx == seg.start_vertex { t_min } else { t_max };
-            curve2d.point_at(t_vert)
+    // ✅ OCCT-aligned L1060-1061: BRep_Tool::Parameter(aV, aE, myFace).
+    //   For DSEdge/SeamEdge: use DSEdge.vertex_params directly.
+    //   For IntersectionCurve: vertex param = curve endpoint (t_min or t_max).
+    let t_v = match &seg.source {
+        WireEdgeSource::DsEdge(ei) => {
+            ds.edges[*ei].vertex_param(vertex_idx)
+                .unwrap_or_else(|| {
+                    if vertex_idx == seg.start_vertex { t_min } else { t_max }
+                })
         }
-        _ => world_to_uv(face_surface, ds.vertices[vertex_idx].point)?,
+        WireEdgeSource::SeamEdge | WireEdgeSource::IntersectionCurve(_) => {
+            if vertex_idx == seg.start_vertex { t_min } else { t_max }
+        }
     };
-    let t_v = project_uv_to_curve(v_uv, &curve2d, t_min, t_max)?;
+
+    // ✅ OCCT L1060: also compute vertex UV for ray origin (aGAC1.D0(aTV, aPV)).
+    let v_uv = match &seg.source {
+        WireEdgeSource::DsEdge(_) | WireEdgeSource::SeamEdge => {
+            world_to_uv(face_surface, ds.vertices[vertex_idx].point)
+        }
+        WireEdgeSource::IntersectionCurve(_) => {
+            Some(curve2d.point_at(t_v))
+        }
+    }.unwrap_or(DVec2::ZERO);
 
     // OCCT L1063-1065: determine "other end" direction and MaxDT
     let t_op = if (t_v - t_min).abs() < (t_v - t_max).abs() { t_max } else { t_min };
