@@ -1062,13 +1062,11 @@ pub(crate) fn select_best_outgoing<'a>(
     candidates: &[&'a EdgeInfo],
     angle_in: f64,
     incoming_is_boundary: bool,
-    segments: &[WireSegment],
     incoming_ci: usize,
 ) -> Option<&'a EdgeInfo> {
     if candidates.is_empty() {
         return None;
     }
-    let incoming_seg = &segments[incoming_ci];
     let a_two_pi = std::f64::consts::TAU;
     let eps = std::f64::EPSILON; // OCCT: eps = Epsilon(1.)
     let mut a_min_angle = 100.0;
@@ -1076,9 +1074,7 @@ pub(crate) fn select_best_outgoing<'a>(
     let mut p_only_way_in: Option<&EdgeInfo> = None;
     let mut p_edge_info: Option<&EdgeInfo> = None;
     for an_ei in candidates {
-        let a_angle = if an_ei.seg_idx == incoming_ci
-            || is_same_block_fwd_rev(incoming_seg, &segments[an_ei.seg_idx])
-        {
+        let a_angle = if an_ei.seg_idx == incoming_ci {
             a_two_pi // OCCT L564-567: aE.IsSame(aEOuta) -> aTwoPI
         } else {
             clock_wise_angle(angle_in, an_ei.angle) // OCCT L585-586

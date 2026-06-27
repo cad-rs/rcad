@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use glam::DVec2;
 use glam::DVec3;
 use rcad_kernel::geom::*;
+use rcad_kernel::topods::{Orientation, ShapeRef};
 use crate::tolerance::*;
 use crate::history::{FaceOrigin, ShellOrigin, SolidOrigin};
 use crate::bopds::ds::*;
@@ -274,7 +275,7 @@ impl WireSegment {
 /// Compute the true area centroid of a planar polygon in 3D by projecting onto
 /// the plane's 2D orthonormal basis and using the shoelace formula.
 /// Guaranteed to lie inside a convex polygon and close to the interior of a
-/// concave polygon 閳?unlike the boundary-vertex centroid which can be arbitrarily
+/// concave polygon, unlike the boundary-vertex centroid which can be arbitrarily
 /// biased by uneven vertex distribution along the boundary.
 fn planar_polygon_centroid(boundary: &[DVec3], normal: DVec3) -> DVec3 {
     if boundary.len() < 3 {
@@ -285,7 +286,6 @@ fn planar_polygon_centroid(boundary: &[DVec3], normal: DVec3) -> DVec3 {
         };
     }
 
-    // Build orthonormal basis for the plane
     let n = normal.normalize();
     let ref_vec = if n.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
     let u = n.cross(ref_vec).normalize();
@@ -294,9 +294,6 @@ fn planar_polygon_centroid(boundary: &[DVec3], normal: DVec3) -> DVec3 {
     let origin = boundary[0];
     let count = boundary.len();
 
-    // Shoelace formula in 2D: 2*area = 鍗?x_i璺痽_{i+1} - x_{i+1}璺痽_i)
-    // Centroid: C_x = (1/(6A)) 鍗?x_i + x_{i+1})(x_i璺痽_{i+1} - x_{i+1}璺痽_i)
-    //            C_y = (1/(6A)) 鍗?y_i + y_{i+1})(x_i璺痽_{i+1} - x_{i+1}璺痽_i)
     let mut area2 = 0.0_f64;
     let mut cx6 = 0.0_f64;
     let mut cy6 = 0.0_f64;
@@ -314,12 +311,9 @@ fn planar_polygon_centroid(boundary: &[DVec3], normal: DVec3) -> DVec3 {
     }
 
     if area2.abs() < 1e-30 {
-        // Degenerate polygon 閳?fall back to boundary centroid
         return boundary.iter().copied().sum::<DVec3>() / count as f64;
     }
 
-    // Signed area = area2 / 2. The centroid formula uses 6鑴砤rea (unsigned), so
-    // we divide by 3鑴砤rea2 (sign cancels: cx6 / (6 * area2/2) = cx6 / (3 * area2)).
     let inv = 1.0 / (3.0 * area2);
     origin + u * (cx6 * inv) + v * (cy6 * inv)
 }
@@ -356,4 +350,33 @@ pub(crate) struct FaceWireEdges {
     iw_boundaries: Vec<Vec<DVec3>>,
     all_vert_indices: Vec<usize>,
     outer_sig: Vec<usize>,
+}
+
+/// OCCT-aligned: Source of a virtual edge segment, TopoDS variant.
+#[derive(Debug, Clone)]
+pub(crate) enum WireEdgeSourceTopoDS {
+    DsEdge(ShapeRef),
+    IntersectionCurve(ShapeRef),
+    SeamEdge,
+}
+
+/// OCCT-aligned: Virtual edge using ShapeRef handles instead of usize indices.
+/// Designed to carry the same information as WireSegment but with TopoDS handles
+/// readable through BRepTool queries.
+#[derive(Debug, Clone)]
+pub(crate) struct WireSegmentTopoDS {
+    pub(crate) edge: ShapeRef,
+    pub(crate) face: ShapeRef,
+    pub(crate) start_vertex: ShapeRef,
+    pub(crate) end_vertex: ShapeRef,
+    pub(crate) source: WireEdgeSourceTopoDS,
+    pub(crate) orientation: Orientation,
+    pub(crate) is_seam: bool,
+    pub(crate) tangent_start: Option<f64>,
+    pub(crate) tangent_end: Option<f64>,
+    pub(crate) first_pcurve: Option<Curve2d>,
+    pub(crate) second_pcurve: Option<Curve2d>,
+    /// ✅ OCCT-aligned: vertex parameters on the pcurve (BRep_Tool::Parameter).
+    ///   t_range[0] = start_vertex param, t_range[1] = end_vertex param.
+    pub(crate) t_range: [f64; 2],
 }

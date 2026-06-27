@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
-use crate::geom::{Curve3, Surface3};
+use crate::geom::{Curve2d, Curve3, Surface3};
 
 /// OCCT TopAbs_Orientation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -66,6 +66,9 @@ pub enum TShape {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TVertexData {
     pub point: DVec3,
+    /// BRep_Tool::Tolerance(aV) equivalent — vertex tolerance.
+    #[serde(default)]
+    pub tolerance: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +77,17 @@ pub struct TEdgeData {
     pub first: ShapeRef,
     pub last: ShapeRef,
     pub range: [f64; 2],
+    /// BRep_Tool::Degenerated(aE) equivalent.
+    #[serde(default)]
+    pub degenerated: bool,
+    /// Per-face pcurves: face ShapeRef index → (curve2d, t_first, t_last).
+    /// OCCT: BRep_Tool::CurveOnSurface(aE, aF) → Handle(Geom2d_Curve).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub pcurves: HashMap<usize, (Curve2d, f64, f64)>,
+    /// Per-vertex parameter on this edge: vertex ShapeRef index → param.
+    /// OCCT: BRep_Tool::Parameter(aV, aE, aF).
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub vertex_params: HashMap<usize, f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +105,9 @@ pub struct TFaceData {
     pub uv_domain: Option<[f64; 4]>,
     /// INTERNAL vertices (OCCT: TopAbs_INTERNAL sub-shapes, BRep_Builder.Add(aF, aV)).
     pub internal_vertices: Vec<ShapeRef>,
+    /// BRep_Tool::Tolerance(aF) equivalent.
+    #[serde(default)]
+    pub tolerance: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,13 +141,13 @@ impl BRep {
 
     pub fn add_tvertex(&mut self, point: DVec3) -> ShapeRef {
         let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Vertex(TVertexData { point })));
+        self.tshapes.push(Arc::new(TShape::Vertex(TVertexData { point, tolerance: 0.0 })));
         ShapeRef::new(index)
     }
 
     pub fn add_tedge(&mut self, curve: Option<usize>, first: ShapeRef, last: ShapeRef, range: [f64; 2]) -> ShapeRef {
         let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Edge(TEdgeData { curve, first, last, range })));
+        self.tshapes.push(Arc::new(TShape::Edge(TEdgeData { curve, first, last, range, degenerated: false, pcurves: HashMap::new(), vertex_params: HashMap::new() })));
         ShapeRef::new(index)
     }
 
@@ -142,7 +159,7 @@ impl BRep {
 
     pub fn add_tface(&mut self, surface: Option<usize>, outer_wire: ShapeRef, inner_wires: Vec<ShapeRef>, sample_point: Option<DVec3>, uv_domain: Option<[f64; 4]>, internal_vertices: Vec<ShapeRef>) -> ShapeRef {
         let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Face(TFaceData { surface, outer_wire, inner_wires, sample_point, uv_domain, internal_vertices })));
+        self.tshapes.push(Arc::new(TShape::Face(TFaceData { surface, outer_wire, inner_wires, sample_point, uv_domain, internal_vertices, tolerance: 0.0 })));
         ShapeRef::new(index)
     }
 
@@ -213,6 +230,86 @@ impl BRep {
         bld.build_unit_cube(&mut brep);
         let root = bld.root.expect("cube should have root solid");
         (brep, root)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// BRepTool trait — OCCT BRep_Tool free-function equivalents
+// ---------------------------------------------------------------------------
+
+/// OCCT BRep_Tool equivalent: parameter/tolerance/pcurve queries on a BRep.
+///
+/// In OCCT these are free functions (`BRep_Tool::Parameter(aV, aE, aF)` etc.).
+/// Here they are methods on a `BRepTool` trait so the boolean pipeline can
+/// be generic over the data source (real BRep or DS adaptor).
+pub trait BRepTool {
+    /// BRep_Tool::Tolerance(aV) — 3D tolerance of a vertex.
+    fn vertex_tolerance(&self, v: ShapeRef) -> f64;
+    /// BRep_Tool::Degenerated(aE).
+    fn is_edge_degenerated(&self, e: ShapeRef) -> bool;
+    /// BRep_Tool::Parameter(aV, aE, aF) — vertex parameter on edge's pcurve.
+    fn parameter_on_edge(&self, vertex: ShapeRef, edge: ShapeRef, face: ShapeRef) -> Option<f64>;
+    /// BRep_Tool::CurveOnSurface(aE, aF) — pcurve of edge on face.
+    fn curve_on_surface(&self, edge: ShapeRef, face: ShapeRef) -> Option<&(Curve2d, f64, f64)>;
+    /// UResolution: parameter tolerance in U direction (OCCT: BRepAdaptor_Surface::UResolution).
+    fn u_resolution(&self, face: ShapeRef, tol3d: f64) -> f64;
+    /// VResolution: parameter tolerance in V direction.
+    fn v_resolution(&self, face: ShapeRef, tol3d: f64) -> f64;
+}
+
+impl BRepTool for BRep {
+    fn vertex_tolerance(&self, v: ShapeRef) -> f64 {
+        self.vertex(v).tolerance
+    }
+
+    fn is_edge_degenerated(&self, e: ShapeRef) -> bool {
+        self.edge(e).degenerated
+    }
+
+    fn parameter_on_edge(&self, vertex: ShapeRef, edge: ShapeRef, _face: ShapeRef) -> Option<f64> {
+        self.edge(edge).vertex_params.get(&vertex.index).copied()
+    }
+
+    fn curve_on_surface(&self, edge: ShapeRef, face: ShapeRef) -> Option<&(Curve2d, f64, f64)> {
+        self.edge(edge).pcurves.get(&face.index)
+    }
+
+    fn u_resolution(&self, face: ShapeRef, tol3d: f64) -> f64 {
+        let surf_idx = match self.face(face).surface {
+            Some(si) => si,
+            None => return tol3d,
+        };
+        u_resolution_for_surface(&self.surfaces[surf_idx], tol3d)
+    }
+
+    fn v_resolution(&self, face: ShapeRef, tol3d: f64) -> f64 {
+        let surf_idx = match self.face(face).surface {
+            Some(si) => si,
+            None => return tol3d,
+        };
+        v_resolution_for_surface(&self.surfaces[surf_idx], tol3d)
+    }
+}
+
+/// Surface-aware UResolution (OCCT: BRepAdaptor_Surface::UResolution).
+fn u_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
+    match surf {
+        Surface3::Sphere(s) => tol3d / s.radius.max(1e-15),
+        Surface3::Cylinder(c) => tol3d / c.radius.max(1e-15),
+        Surface3::Cone(_) => tol3d * 1e-3,
+        Surface3::Torus(t) => tol3d / t.major_radius.max(1e-15),
+        _ => tol3d,
+    }
+}
+
+/// Surface-aware VResolution (OCCT: BRepAdaptor_Surface::VResolution).
+fn v_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
+    match surf {
+        Surface3::Sphere(s) => tol3d / s.radius.max(1e-15),
+        Surface3::Cylinder(_) => tol3d,
+        Surface3::Cone(_) => tol3d,
+        Surface3::Torus(t) => tol3d / t.minor_radius.max(1e-15),
+        _ => tol3d,
     }
 }
 
