@@ -15,6 +15,7 @@ use crate::inttools::context::Context;
 use crate::inttools::fclass2d::{CSLibClass2d, CSLibResult, curve2d_nb_samples};
 use super::types::FaceSampleData;
 use super::types::BooleanOpType;
+use super::intres2d::IntRes2dDomain;
 
 
 pub(crate) fn refine_angles(
@@ -436,7 +437,7 @@ pub(crate) fn refine_angle_2d(
         }
     };
 
-    // ✅ OCCT L1060: also compute vertex UV for ray origin (aGAC1.D0(aTV, aPV)).
+    // ✅ OCCT L1060: vertex UV for ray origin (aGAC1.D0(aTV, aPV)).
     let v_uv = match &seg.source {
         WireEdgeSource::DsEdge(_) | WireEdgeSource::SeamEdge => {
             world_to_uv(face_surface, ds.vertices[vertex_idx].point)
@@ -446,26 +447,38 @@ pub(crate) fn refine_angle_2d(
         }
     }.unwrap_or(DVec2::ZERO);
 
-    // OCCT L1063-1065: determine "other end" direction and MaxDT
+    // ✅ OCCT L1063-1065: determine "other end" direction and MaxDT
     let t_op = if (t_v - t_min).abs() < (t_v - t_max).abs() { t_max } else { t_min };
     let max_dt = 0.3 * (t_max - t_min);
     let a_tol_int = 1e-10;
     let a_cf = 0.01;
 
-    // OCCT L1070: try both boundary directions (aA1, aA2+M_PI)
+    // ✅ OCCT L1080-1082: create IntRes2dDomain for the curve (aDomain1).
+    let p1 = curve2d.point_at(t_min);
+    let p2 = curve2d.point_at(t_max);
+    let mut domain_curve = IntRes2dDomain::new();
+    domain_curve.set_values_bounded(p1, t_min, a_tol_int, p2, t_max, a_tol_int);
+
+    // ✅ OCCT L1070: try both boundary directions (aA1, aA2+M_PI)
     let a_delta = clock_wise_angle(a2_bnd, a1_bnd);
     for i in 0..2 {
         let a_ai = if i == 0 { a1_bnd } else { a2_bnd + std::f64::consts::PI };
         let ray_dir = DVec2::new(a_ai.cos(), a_ai.sin());
         if ray_dir.length_squared() < 1e-30 { continue; }
 
-        // OCCT L1080: find ray-curve intersection
-        let hits = intersect_ray_curve_2d(v_uv, ray_dir, &curve2d, t_min, t_max);
+        // ✅ OCCT L1084-1094: create ray line + call Geom2dInt_GInter.
+        let ray_line = Curve2d::Line(Line2d { origin: v_uv, direction: ray_dir });
+        let mut domain_ray = IntRes2dDomain::new();  // infinite domain (no bounds)
+        // OCCT uses Geom2dInt_GInter::Perform with two domains.
+        let hits = crate::builder::intersection::intersect_curves_2d_ginter(
+            &curve2d, &domain_curve, &ray_line, &domain_ray, a_tol_int, a_tol_int);
+        // hits: (param_on_curve, param_on_ray) — swap to (t_on_curve, t_on_ray)
+        let hits: Vec<(f64, f64)> = hits.into_iter().map(|(tc, tr)| (tr, tc)).collect();
+
         if hits.is_empty() { continue; }
 
-        // OCCT L1086-1100: among intersection points, find the one with
-        // max param_on_ray and |param_on_curve - t_v| < MaxDT
-        let mut best: Option<(f64, f64)> = None; // (t_on_curve, t_on_ray)
+        // ✅ OCCT L1100-1114: find best intersection (max param_on_ray, within MaxDT)
+        let mut best: Option<(f64, f64)> = None;
         for &(t_c, t_r) in &hits {
             let is_better = match best {
                 Some((_, best_r)) => t_r > best_r,
