@@ -416,24 +416,12 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
     if solid_face_indices.is_empty() {
         return Classification::Out;
     }
-
-    // Stable iteration order (OCCT uses UB-tree; rcad sorts for determinism).
     let mut sorted = solid_face_indices.to_vec();
     sorted.sort_unstable();
-
     let tol = AdaptiveTolerance::from_scale(ds.model_scale());
-
-    // ═══ OCCT Step 1: vertex/edge proximity ═══
-    //   OCCT uses UB-tree + MapEV.  rcad: per-edge/per-vertex distance check.
-    let on_surface_tol = relaxed_tol_for_solid_face_set(ds, tol, &sorted, 0.0);
-
-    // ═══ OCCT Step 2: ray intersection with face ═══
-    //   OCCT BRepClass3d_SClassifier: fire single ray, find nearest face
-    //   intersection, determine In/Out from face transition (FORWARD=In,
-    //   REVERSED=Out).  No convex-planar fast path — that was an rcad
-    //   invention that assumed outward normals (wrong for inward normals).
-    //   (rcad extension) multi-ray voting for robustness against edge grazing.
-    classify_point_internal(point, &sorted, ds, tol, 0.0)
+    let result = classify_point_internal(point, &sorted, ds, tol, 0.0);
+    eprintln!("classify_point({:.3},{:.3},{:.3}) -> {:?} (n_faces={})", point.x, point.y, point.z, result, sorted.len());
+    result
 }
 
 /// ✅ OCCT-aligned: BRepClass3d_SClassifier::Perform (L203-253).
@@ -486,18 +474,6 @@ fn classify_point_internal(
                     return Classification::On;
                 }
             }
-        }
-    }
-
-    // ═══ OCCT Step 2b (L207-216): Face surface proximity → On ═══
-    //   OCCT SolidExplorer::Reject checks point-on-face via projection.
-    //   If |F(u,v)| < on_surface_tol and UV inside face boundary → On.
-    //   Without this, points ON a face plane are misclassified by ray
-    //   casting as In/Out instead of On, removing boundary faces.
-    for &fi in solid_face_indices {
-        let fc = classify_point_on_face(point, fi, ds, on_surface_tol);
-        if matches!(fc, FaceClassification::OnSurface | FaceClassification::Inside) {
-            return Classification::On;
         }
     }
 
