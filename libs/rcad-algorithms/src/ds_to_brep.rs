@@ -8,8 +8,8 @@ use rcad_kernel::geom::*;
 use rcad_kernel::topods::*;
 
 /// Convert the entire DS into a BRep shape hierarchy.
-/// Returns (BRep, Vec<ShapeRef>) where the Vec maps DS face_idx -> BRep face ShapeRef.
-pub fn ds_to_brep(ds: &crate::bopds::ds::DS) -> (BRep, Vec<ShapeRef>) {
+/// Returns (BRep, Vec<ShapeRef> /*face_refs by ds_face_idx*/, Vec<Option<ShapeRef>> /*ic_edge_map: ci -> BRep edge ShapeRef*/).
+pub fn ds_to_brep(ds: &crate::bopds::ds::DS) -> (BRep, Vec<ShapeRef>, Vec<Option<ShapeRef>>) {
     let mut br = BRep::new();
 
     // Step 1: collect surfaces from faces (dedup by identity)
@@ -55,14 +55,20 @@ pub fn ds_to_brep(ds: &crate::bopds::ds::DS) -> (BRep, Vec<ShapeRef>) {
         ed.vertex_params = edge.vertex_params.clone();
     }
 
-    // Step 5: intersection curves -> section edges (keyed by DS face_idx, rekeyed in Step 7)
+    // Step 5: intersection curves -> section edges.
+    // Skip ICs already converted to DSEdges by make_section_edges_from_curve_pbs (A2 dedup).
+    // Track actual TEdge ShapeRef for each non-converted IC (used in Step 7 rekey).
+    let mut ic_edge_refs: Vec<Option<ShapeRef>> = vec![None; ds.intersection_curves.len()];
     for (ci, ic) in ds.intersection_curves.iter().enumerate() {
+        if ci < ds.section_edge_refs.len() && !ds.section_edge_refs[ci].is_empty() {
+            continue; // already represented as DSEdges in step 4
+        }
         let curve_idx = find_or_add_curve3(&mut br, &ic.curve);
         let sv = ShapeRef::new(ic.start_vertex);
         let ev = ShapeRef::with_orientation(ic.end_vertex, Orientation::Reversed);
         let e = br.add_tedge(Some(curve_idx), sv, ev, ic.t_range);
+        ic_edge_refs[ci] = Some(e);
         let ed = br.edge_mut(e);
-        // Find the two faces for this IC to use correct DS face_idx keys
         let face_idxs = find_face_idxs_for_curve(ds, ci);
         if let Some(ref pc) = ic.pcurve_on_a {
             if face_idxs[0] != usize::MAX {
@@ -102,7 +108,6 @@ pub fn ds_to_brep(ds: &crate::bopds::ds::DS) -> (BRep, Vec<ShapeRef>) {
     }
 
     // Step 7: rekey pcurves — replace DS face_idx keys with BRep face TShape indices
-    // DS edges
     for (ei, _edge) in ds.edges.iter().enumerate() {
         let e_ref = ShapeRef::new(e_base + ei);
         let ed = br.edge_mut(e_ref);
@@ -119,9 +124,12 @@ pub fn ds_to_brep(ds: &crate::bopds::ds::DS) -> (BRep, Vec<ShapeRef>) {
             }
         }
     }
-    // IC edges
+    // IC edges that were NOT converted to DSEdges also need rekey
     for (ci, _ic) in ds.intersection_curves.iter().enumerate() {
-        let e_ref = ShapeRef::new(ic_base + ci);
+        let e_ref = match ic_edge_refs.get(ci).copied().flatten() {
+            Some(r) => r,
+            None => continue, // converted IC, no TEdge created
+        };
         let ed = br.edge_mut(e_ref);
         let old_pcurves = std::mem::take(&mut ed.pcurves);
         for (ds_fi, pc) in old_pcurves {
@@ -138,7 +146,21 @@ pub fn ds_to_brep(ds: &crate::bopds::ds::DS) -> (BRep, Vec<ShapeRef>) {
         br.add_tshell(faces);
     }
 
-    (br, face_refs)
+    // Build ic_edge_map: for each DS IC ci, the BRep edge ShapeRef (either DSEdge or IC TEdge).
+    let mut ic_edge_map: Vec<Option<ShapeRef>> = Vec::with_capacity(ds.intersection_curves.len());
+    for ci in 0..ds.intersection_curves.len() {
+        // Converted IC -> DSEdge ShapeRef
+        if let Some(refs) = ds.section_edge_refs.get(ci) {
+            if let Some(&ei) = refs.first() {
+                ic_edge_map.push(Some(ShapeRef::new(e_base + ei)));
+                continue;
+            }
+        }
+        // Non-converted IC -> IC TEdge ShapeRef (stored during step 5)
+        ic_edge_map.push(ic_edge_refs[ci]);
+    }
+
+    (br, face_refs, ic_edge_map)
 }
 
 /// Find which two DS faces are connected by an intersection curve.

@@ -802,6 +802,8 @@ impl<'a> PaveFiller<'a> {
     }
     fn make_section_edges_from_curve_pbs(&mut self) {
         let n_edges_before = self.ds.edges.len();
+        // Initialize section_edge_refs (used by ds_to_brep for IC -> DSEdge mapping)
+        self.ds.section_edge_refs = vec![Vec::new(); self.ds.intersection_curves.len()];
         // Collect section edge data per curve to avoid borrow conflicts
         struct SECurve { curve_idx: usize, sv: usize, ev: usize, curve: Curve3, geom_tol: f64, t_range: [f64; 2], pbs: Vec<PaveBlock> }
         let mut se_data: Vec<SECurve> = Vec::new();
@@ -919,6 +921,7 @@ impl<'a> PaveFiller<'a> {
                     },
                 });
                 sub_pb.new_edge = Some(new_ei);
+                self.ds.section_edge_refs[ci].push(new_ei);
                 sub_with_edge.push(sub_pb);
             }
 

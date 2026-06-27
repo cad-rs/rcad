@@ -88,7 +88,7 @@ pub struct BooleanBuilder<'a> {
     ///   Populated after check_data in build_with_history via ds_to_brep().
     ///   Wrapped in RefCell because build_with_history takes &self.
     ///   This is topods::BRep (not the legacy rcad_kernel::BRep).
-    brep: std::cell::RefCell<Option<(rcad_kernel::topods::BRep, Vec<rcad_kernel::topods::ShapeRef>)>>,
+    brep: std::cell::RefCell<Option<(rcad_kernel::topods::BRep, Vec<rcad_kernel::topods::ShapeRef>, Vec<Option<rcad_kernel::topods::ShapeRef>>)>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,7 +213,7 @@ impl<'a> BooleanBuilder<'a> {
         let ds = self.ds;
         // Get BRep from the cached conversion (built during build_with_history)
         let brep_borrow = self.brep.borrow();
-        let (br, face_refs): &(rcad_kernel::topods::BRep, Vec<rcad_kernel::topods::ShapeRef>) = match brep_borrow.as_ref() {
+        let (br, face_refs, _ic_edge_map): &(rcad_kernel::topods::BRep, Vec<rcad_kernel::topods::ShapeRef>, Vec<Option<rcad_kernel::topods::ShapeRef>>) = match brep_borrow.as_ref() {
             Some(v) => v,
             None => return, // ds_to_brep not yet called
         };
@@ -222,7 +222,7 @@ impl<'a> BooleanBuilder<'a> {
         let segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
         if !self.builder_face_check_data(face_idx, &segments) { return; }
 
-        let segments_topo = crate::builder::builder_utils_topo_ds::segments_to_topo_ds(&segments, ds, face_idx, &face_refs[..]);
+        let segments_topo = crate::builder::builder_utils_topo_ds::segments_to_topo_ds(&segments, ds, face_idx, &face_refs[..], &_ic_edge_map[..]);
         drop(segments);
 
         let tool: &dyn rcad_kernel::topods::BRepTool = br;
@@ -1858,8 +1858,8 @@ impl<'a> BooleanBuilder<'a> {
         self.check_data(&a_faces, &b_faces)?;
 
         // ✅ OCCT-aligned: convert DS to BRep for BRepTool-based pipeline.
-        let (brep_built, face_refs) = crate::ds_to_brep::ds_to_brep(self.ds);
-        *self.brep.borrow_mut() = Some((brep_built, face_refs));
+        let (brep_built, face_refs, ic_edge_map) = crate::ds_to_brep::ds_to_brep(self.ds);
+        *self.brep.borrow_mut() = Some((brep_built, face_refs, ic_edge_map));
 
         // OCCT L327-332: Prepare — creates empty TopoDS_Compound as myShape.
         let (mut t_brep, mut result) = self.prepare();

@@ -13,17 +13,23 @@ pub(crate) fn segments_to_topo_ds(
     _ds: &DS,
     face_idx: usize,
     face_refs: &[ShapeRef],
+    ic_edge_map: &[Option<ShapeRef>],
 ) -> Vec<WireSegmentTopoDS> {
     let face_ref = face_refs[face_idx];
     let e_base = _ds.vertices.len();
-    let ic_base = e_base + _ds.edges.len();
     segments.iter().map(|seg| {
         let (edge_ref, source) = match &seg.source {
             WireEdgeSource::DsEdge(ei) => {
                 (ShapeRef::new(e_base + *ei), WireEdgeSourceTopoDS::DsEdge(ShapeRef::new(e_base + *ei)))
             }
             WireEdgeSource::IntersectionCurve(ci) => {
-                (ShapeRef::new(ic_base + *ci), WireEdgeSourceTopoDS::IntersectionCurve(ShapeRef::new(ic_base + *ci)))
+                if let Some(Some(edge_ref)) = ic_edge_map.get(*ci) {
+                    // IC mapped to DSEdge or retained IC TEdge (A2 dedup)
+                    (*edge_ref, WireEdgeSourceTopoDS::IntersectionCurve(*edge_ref))
+                } else {
+                    // Fallback: should not happen
+                    (ShapeRef::new(0), WireEdgeSourceTopoDS::IntersectionCurve(ShapeRef::new(0)))
+                }
             }
             WireEdgeSource::SeamEdge => {
                 (ShapeRef::new(0), WireEdgeSourceTopoDS::SeamEdge)

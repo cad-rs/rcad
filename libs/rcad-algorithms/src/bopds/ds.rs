@@ -416,6 +416,10 @@ pub struct DS {
     pub faces: Vec<DSFace>,
     pub interferences: Vec<Interference>,
     pub intersection_curves: Vec<IntersectionCurve>,
+    /// Mapping: intersection curve index -> DSEdge indices created by make_section_edges_from_curve_pbs.
+    /// Populated during PaveFiller::make_section_edges_from_curve_pbs.
+    /// Used by ds_to_brep to skip ICs already converted to DSEdges (Step 2, A2).
+    pub section_edge_refs: Vec<Vec<usize>>,
     /// Fuzzy tolerance used during interference detection.
     ///
     /// Vertices/edges within this distance are considered coincident.
@@ -644,6 +648,7 @@ impl DS {
             //   used instead of separate arrays (removed in favor of flags).
             interferences: Vec::new(),
             intersection_curves: Vec::new(),
+            section_edge_refs: Vec::new(),
             fuzzy_tol: tol,
             a_vertex_count: 0,
             a_edge_count: 0,
