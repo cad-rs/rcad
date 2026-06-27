@@ -11,30 +11,36 @@ use rcad_kernel::topods::*;
 /// Returns (BRep, Vec<ShapeRef> /*face_refs by ds_face_idx*/, Vec<Option<ShapeRef>> /*ic_edge_map: ci -> BRep edge ShapeRef*/).
 pub fn ds_to_brep(ds: &crate::bopds::ds::DS) -> (BRep, Vec<ShapeRef>, Vec<Option<ShapeRef>>) {
     let mut br = BRep::new();
+    let (face_refs, ic_edge_map) = populate_brep(ds, &mut br);
+    (br, face_refs, ic_edge_map)
+}
+
+/// Core conversion: populate a BRep from DS data. Shared by ds_to_brep and export_to_brep.
+fn populate_brep(ds: &crate::bopds::ds::DS, br: &mut BRep) -> (Vec<ShapeRef>, Vec<Option<ShapeRef>>) {
 
     // Step 1: collect surfaces from faces (dedup by identity)
     let mut surf_to_idx: Vec<Option<usize>> = vec![None; ds.faces.len()];
     for (fi, face) in ds.faces.iter().enumerate() {
-        let si = find_or_add_surface(&mut br, &face.surface);
+        let si = find_or_add_surface(br, &face.surface);
         surf_to_idx[fi] = Some(si);
     }
 
     // Step 2: collect 3D curves from edges (dedup by identity)
     let mut edge_curve_idx: Vec<Option<usize>> = vec![None; ds.edges.len()];
     for (ei, edge) in ds.edges.iter().enumerate() {
-        let ci = find_or_add_curve3(&mut br, &edge.curve);
+        let ci = find_or_add_curve3(br, &edge.curve);
         edge_curve_idx[ei] = Some(ci);
     }
+
+    let v_count = ds.vertices.len();
+    let e_base = v_count;
+    let ic_base = e_base + ds.edges.len();
 
     // Step 3: vertices
     for v in &ds.vertices {
         let r = br.add_tvertex(v.point);
         br.vertex_mut(r).tolerance = v.geom_tol.max(crate::tolerance::TOLERANCE_ABS);
     }
-
-    let v_count = ds.vertices.len();
-    let e_base = v_count;
-    let ic_base = e_base + ds.edges.len();
 
     // Step 4: edges with pcurves (keyed by DS face_idx — will be rekeyed in Step 7)
     for (ei, edge) in ds.edges.iter().enumerate() {
@@ -63,7 +69,7 @@ pub fn ds_to_brep(ds: &crate::bopds::ds::DS) -> (BRep, Vec<ShapeRef>, Vec<Option
         if ci < ds.section_edge_refs.len() && !ds.section_edge_refs[ci].is_empty() {
             continue; // already represented as DSEdges in step 4
         }
-        let curve_idx = find_or_add_curve3(&mut br, &ic.curve);
+        let curve_idx = find_or_add_curve3(br, &ic.curve);
         let sv = ShapeRef::new(ic.start_vertex);
         let ev = ShapeRef::with_orientation(ic.end_vertex, Orientation::Reversed);
         let e = br.add_tedge(Some(curve_idx), sv, ev, ic.t_range);
@@ -160,7 +166,13 @@ pub fn ds_to_brep(ds: &crate::bopds::ds::DS) -> (BRep, Vec<ShapeRef>, Vec<Option
         ic_edge_map.push(ic_edge_refs[ci]);
     }
 
-    (br, face_refs, ic_edge_map)
+    (face_refs, ic_edge_map)
+}
+
+/// Populate an existing BRep from DS data (A3 dual-write).
+/// Returns (face_refs by ds_face_idx, ic_edge_map: ci -> BRep edge ShapeRef).
+pub fn export_to_brep(ds: &crate::bopds::ds::DS, br: &mut BRep) -> (Vec<ShapeRef>, Vec<Option<ShapeRef>>) {
+    populate_brep(ds, br)
 }
 
 /// Find which two DS faces are connected by an intersection curve.

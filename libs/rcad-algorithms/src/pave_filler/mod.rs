@@ -44,6 +44,13 @@ mod glue;
 mod intersection;
 pub struct PaveFiller<'a> {
     pub ds: &'a mut DS,
+    /// Optional BRep for direct output (dual-write mode). When set, PaveFiller
+    /// populates the BRep on completion, eliminating the need for ds_to_brep.
+    pub brep: Option<&'a mut rcad_kernel::topods::BRep>,
+    /// Output: face_refs by ds_face_idx (populated by export_to_brep).
+    pub face_refs: Vec<rcad_kernel::topods::ShapeRef>,
+    /// Output: ic_edge_map: ci -> BRep edge ShapeRef (populated by export_to_brep).
+    pub ic_edge_map: Vec<Option<rcad_kernel::topods::ShapeRef>>,
     bvh_a: Option<&'a Bvh>,
     bvh_b: Option<&'a Bvh>,
     use_glue: bool,
@@ -114,30 +121,63 @@ impl<'a> PaveFiller<'a> {
         let context = IntToolsContext::new(n_faces, TOLERANCE_ABS * 100.0);
         Self {
             ds,
+            brep: None,
+            face_refs: Vec::new(),
+            ic_edge_map: Vec::new(),
             bvh_a: None,
             bvh_b: None,
             use_glue: false,
             glue_tolerance: TOLERANCE_ABS,
             fuzzy_tolerance: 0.0,
             seam_shift_tol: 0.0,
-            // �?OCCT-aligned: RunParallel (default false)
+            // ??OCCT-aligned: RunParallel (default false)
             run_parallel: false,
-            // �?OCCT-aligned: NonDestructive (default false)
+            // ??OCCT-aligned: NonDestructive (default false)
             non_destructive: false,
-            // �?OCCT-aligned: UseOBB (default false)
+            // ??OCCT-aligned: UseOBB (default false)
             use_obb: false,
-            // �?OCCT-aligned: IntTools_Context with FClass2d cache
+            // ??OCCT-aligned: IntTools_Context with FClass2d cache
             // OCCT PaveFiller.cxx L203: myContext = new IntTools_Context
             context,
         }
     }
 
+    /// Create PaveFiller with BVH acceleration and optional BRep output.
+    pub fn with_bvh_and_brep(ds: &'a mut DS, bvh_a: &'a Bvh, bvh_b: &'a Bvh, brep: &'a mut rcad_kernel::topods::BRep) -> Self {
+        let total_faces = ds.faces.len();
+        let use_bvh = total_faces >= BVH_THRESHOLD;
+        let context = IntToolsContext::new(total_faces, TOLERANCE_ABS * 100.0);
+        Self {
+            ds,
+            brep: Some(brep),
+            face_refs: Vec::new(),
+            ic_edge_map: Vec::new(),
+            bvh_a: if use_bvh { Some(bvh_a) } else { None },
+            bvh_b: if use_bvh { Some(bvh_b) } else { None },
+            use_glue: false,
+            glue_tolerance: TOLERANCE_ABS,
+            fuzzy_tolerance: 0.0,
+            seam_shift_tol: 0.0,
+            // ??OCCT-aligned: RunParallel (default false)
+            run_parallel: false,
+            // ??OCCT-aligned: NonDestructive (default false)
+            non_destructive: false,
+            // ??OCCT-aligned: UseOBB (default false)
+            use_obb: false,
+            context,
+        }
+    }
+
+    /// Create PaveFiller with BVH acceleration.
     pub fn with_bvh(ds: &'a mut DS, bvh_a: &'a Bvh, bvh_b: &'a Bvh) -> Self {
         let total_faces = ds.faces.len();
         let use_bvh = total_faces >= BVH_THRESHOLD;
         let context = IntToolsContext::new(total_faces, TOLERANCE_ABS * 100.0);
         Self {
             ds,
+            brep: None,
+            face_refs: Vec::new(),
+            ic_edge_map: Vec::new(),
             bvh_a: if use_bvh { Some(bvh_a) } else { None },
             bvh_b: if use_bvh { Some(bvh_b) } else { None },
             use_glue: false,
@@ -611,8 +651,15 @@ impl<'a> PaveFiller<'a> {
         // �?OCCT-aligned: MakePCurves �?after RemoveMicroEdges (PerformInternal L344)
         self.make_pcurves();
 
-        // �?OCCT-aligned: ProcessDE �?after MakePCurves (PerformInternal L350)
+        // ? OCCT-aligned: ProcessDE — after MakePCurves (PerformInternal L350)
         self.process_de();
+
+        // Export to BRep if direct output is enabled (A3 dual-write).
+        if let Some(ref mut brep) = self.brep {
+            let (face_refs, ic_edge_map) = crate::ds_to_brep::export_to_brep(&self.ds, brep);
+            self.face_refs = face_refs;
+            self.ic_edge_map = ic_edge_map;
+        }
     }
 
     // ===== BVH-based pair enumeration (OCCT BOPDS_Iterator) =====

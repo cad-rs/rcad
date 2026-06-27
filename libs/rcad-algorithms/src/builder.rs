@@ -412,6 +412,15 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
+    /// Pre-populate the BRep from a pre-built one (A3 dual-write via PaveFiller).
+    /// Takes face_refs and ic_edge_map from export_to_brep.
+    pub fn set_brep_with_mappings(&self, brep: rcad_kernel::topods::BRep,
+        face_refs: Vec<rcad_kernel::topods::ShapeRef>,
+        ic_edge_map: Vec<Option<rcad_kernel::topods::ShapeRef>>)
+    {
+        *self.brep.borrow_mut() = Some((brep, face_refs, ic_edge_map));
+    }
+
     pub fn with_glue(mut self, enable: bool, tolerance: f64) -> Self {
         self.use_glue = enable;
         self.glue_tolerance = tolerance.max(TOLERANCE_ABS);
@@ -1905,8 +1914,11 @@ impl<'a> BooleanBuilder<'a> {
         self.check_data(&a_faces, &b_faces)?;
 
         // ✅ OCCT-aligned: convert DS to BRep for BRepTool-based pipeline.
-        let (brep_built, face_refs, ic_edge_map) = crate::ds_to_brep::ds_to_brep(self.ds);
-        *self.brep.borrow_mut() = Some((brep_built, face_refs, ic_edge_map));
+        //   If already pre-populated (A3 dual-write via PaveFiller), skip conversion.
+        if self.brep.borrow().is_none() {
+            let (brep_built, face_refs, ic_edge_map) = crate::ds_to_brep::ds_to_brep(self.ds);
+            *self.brep.borrow_mut() = Some((brep_built, face_refs, ic_edge_map));
+        }
 
         // OCCT L327-332: Prepare — creates empty TopoDS_Compound as myShape.
         let (mut t_brep, mut result) = self.prepare();
