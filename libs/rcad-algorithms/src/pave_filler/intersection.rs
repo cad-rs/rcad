@@ -124,7 +124,16 @@ impl<'a> super::PaveFiller<'a> {
         let pairs = crate::bvh::DsBvh::candidate_pairs(bvh_verts, bvh_faces);
         let ds = &self.ds;
         let filtered: Vec<(usize, usize)> = pairs.par_iter()
-            .filter(|&(vi, fi)| !ds.has_interf_vf(*vi, *fi))
+            .filter(|&(vi, fi)| {
+                // OCCT L189: IsSubShape — skip if vertex is sub-shape of face
+                //   rcad: no direct equivalent, but has_interf_vf covers already-interfered.
+                // OCCT L194: HasInterf(nV, nF) — skip if already interfered
+                if ds.has_interf_vf(*vi, *fi) { return false; }
+                // OCCT L200: HasInterfShapeSubShapes(nV, nF) — skip if vertex's edge
+                //   already has EF/VE interference with this face.
+                if ds.has_interf_ve_via_faces(*vi, *fi) { return false; }
+                true
+            })
             .copied()
             .collect();
         for &(vi, fi) in &filtered {
@@ -888,8 +897,9 @@ impl<'a> super::PaveFiller<'a> {
         let b_faces = self.faces_of(ShapeOrigin::ShapeB);
         for &vi in &a_verts {
             for &fi in &b_faces {
-                // OCCT: myDS->HasInterf(nV, nF) �?skip if already interfered
+                // OCCT L189+L194+L200: skip IsSubShape / HasInterf / HasInterfShapeSubShapes
                 if self.ds.has_interf_vf(vi, fi) { continue; }
+                if self.ds.has_interf_ve_via_faces(vi, fi) { continue; }
                 self.check_vertex_face(vi, fi);
             }
         }
@@ -898,10 +908,12 @@ impl<'a> super::PaveFiller<'a> {
         for &vi in &b_verts {
             for &fi in &a_faces {
                 if self.ds.has_interf_vf(vi, fi) { continue; }
+                if self.ds.has_interf_ve_via_faces(vi, fi) { continue; }
                 self.check_vertex_face(vi, fi);
             }
         }
     }
+
     /// OCCT PaveFiller_4.cxx: CheckVertexFace
     pub(crate) fn check_vertex_face(&mut self, vi: usize, fi: usize) {
         let point = self.ds.vertices[vi].point;
@@ -920,25 +932,28 @@ impl<'a> super::PaveFiller<'a> {
                 self.ds.faces[fi].face_info.vertices_on.insert(vi);
             }
         } else {
-            // �?OCCT-aligned: IntTools_FClass2d::Perform for point IN/ON classification.
-            //   Project vertex onto curved surface �?UV �?FClass2d UV containment check.
+            // OCCT-aligned: IntTools_Context::ComputeVF (L546-591).
+            //   Project vertex onto curved surface → check distance → FClass2d UV containment.
             let surface = face.surface.clone();
             if !matches!(surface, Surface3::Plane(_)) {
                 let proj =
                     rcad_kernel::projection::closest_point_on_surface(&surface, point, 16);
-                if proj.distance < tf {
+                let a_tol_v = self.ds.vertices[vi].geom_tol;
+                let a_tol_f = face.geom_tol;
+                let a_tol_sum = a_tol_v + a_tol_f + self.ds.fuzzy_tol.max(tf);
+                if proj.distance <= a_tol_sum {
                     let uv = DVec2::new(proj.params.0, proj.params.1);
+                    // OCCT L608: IsPointInFace — excludes ON (returns false for On).
                     let inside = {
                         let fclass = FClass2d::new(self.ds, fi, tf);
-                        fclass.perform(uv, false) != State::Out
+                        fclass.perform(uv, false) == State::In
                     };
                     if inside {
                         self.ds.interferences.push(Interference::VertexFace {
                             vertex: vi,
                             face: fi,
                         });
-                        // OCCT-aligned: PerformVF L295-297 — all successfully classified
-                        // VF vertices go to VerticesIn.
+                        // OCCT L295-297: all In-classified VF vertices go to VerticesIn.
                         self.ds.faces[fi].face_info.vertices_in.insert(vi);
                     }
                 }
