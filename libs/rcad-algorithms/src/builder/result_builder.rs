@@ -32,6 +32,9 @@ pub(crate) struct ResultBuilder {
     /// OCCT-aligned: per-source side tracking for solids (0=ShapeA/Args, 1=ShapeB/Tools).
     ///   Parallel to tmp_solids: solid_side_origin[i] = side that produced tmp_solids[i].
     pub(crate) solid_side_origin: Vec<usize>,
+    /// OCCT-aligned: compound groups (FillImagesCompound output).
+    ///   Each entry is a Vec of solid indices (into result.solids) forming one compound.
+    pub(crate) compound_groups: Vec<Vec<usize>>,
     /// Final topods shell references (populated by build_topods from tmp_shells).
     pub(crate) shells: Vec<topods::ShapeRef>,
     /// Final topods solid references (populated by build_topods from tmp_solids).
@@ -630,6 +633,7 @@ impl ResultBuilder {
             source_has_compound: false,
             tmp_compsolid_groups: Vec::new(),
             solid_side_origin: Vec::new(),
+            compound_groups: Vec::new(),
             shells: Vec::new(),
             solids: Vec::new(),
             compsolid_groups: Vec::new(),

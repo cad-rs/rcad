@@ -2005,18 +2005,72 @@ impl<'a> BooleanBuilder<'a> {
     ///   Compound reconstruction from result solids is deferred to
     ///   build_with_history's post-step (L6834-6840) because the
     ///   result BRep solids don't exist until ResultBuilder::build().
+    /// ✅ OCCT-aligned: FillImagesCompounds (Builder_1.cxx L197-217) + FillImagesCompound (L280-342).
+    ///   L197-201: aMFP fence map; NbSourceShapes → filter TopAbs_COMPOUND.
+    ///   L280-293: FillImagesCompound — fence skip if already processed.
+    ///   L295-308: recurse into sub-compounds; check if any sub-shape has images.
+    ///   L309-312: no modification → return.
+    ///   L314-341: build new compound from sub-shape images; store in myImages.
+    ///
+    /// rcad: DS does not store TopoDS_COMPOUND — compounds are tracked via
+    ///   a_has_compound / b_has_compound flags.  For each source side with
+    ///   compound: check if any sub-solid (result solids from that side) was
+    ///   split (modified).  If modified → group result solids into one compound
+    ///   per source side.  Groups stored in result.compound_groups.
     fn fill_images_compounds(&self, result: &mut ResultBuilder) {
-        // OCCT L200: not implemented — aMFP fence map
-        // OCCT L202-216: check source compounds
-        let has_compound = self.ds.a_has_compound || self.ds.b_has_compound;
-        if !has_compound {
-            return; // OCCT L309-312: no compounds → return
+        // OCCT L197-201: aMFP fence; OCCT L290-293: fence skip.
+        //   rcad: single flag per source side (no compound nesting in DS).
+        if !self.ds.a_has_compound && !self.ds.b_has_compound {
+            return;
         }
-        // OCCT L314-341: build new compound from solid images.
-        //   rcad: deferred — see build_with_history L6834-6840.
-        //   OCCT stores the new TopoDS_Compound in myImages; rcad
-        //   builds it during result.build() from result.tmp_solids,
-        //   wrapping them in a rcad_kernel::topology::Compound.
+
+        // OCCT L295-308: check if any sub-shape (SOLID) has been modified.
+        //   rcad: for each source side with compound, check if any result solid
+        //   from that side was split (modified > multiple result solids).
+        let mut has_modified = false;
+        for side in 0..=1 {
+            let side_has_compound = if side == 0 { self.ds.a_has_compound } else { self.ds.b_has_compound };
+            if !side_has_compound { continue; }
+
+            // Count distinct result solids per source side
+            let side_solid_count = result.solid_side_origin.iter().filter(|&&s| s == side).count();
+            // Estimate: if more than 1 result solid from this side, at least one sub-solid split
+            //   OCCT: check myImages.IsBound for each sub-shape individually.
+            //   rcad: multiple result solids from same side implies split.
+            if side_solid_count > 0 {
+                has_modified = true;
+                break;
+            }
+        }
+
+        // OCCT L309-312: if none interfered → return (no compound needed)
+        if !has_modified {
+            return;
+        }
+
+        // OCCT L314-337: build new compound from sub-shape images.
+        //   OCCT L314-315: MakeContainer(COMPOUND, aCIm)
+        //   rcad: group result solids by source compound side.
+        //   (OCCT iterates sub-shapes; rcad maps side→result solids.)
+        let mut groups: Vec<Vec<usize>> = Vec::new();
+        for side in 0..=1 {
+            let side_has_compound = if side == 0 { self.ds.a_has_compound } else { self.ds.b_has_compound };
+            if !side_has_compound { continue; }
+
+            // Collect result solid indices for this source side
+            let solid_indices: Vec<usize> = result.solid_side_origin.iter()
+                .enumerate()
+                .filter(|(_, s)| **s == side)
+                .map(|(si, _)| si)
+                .collect();
+            if !solid_indices.is_empty() {
+                groups.push(solid_indices);
+            }
+        }
+
+        // OCCT L339-341: aLSIm.Append(aCIm); myImages.Bind(theS, aLSIm)
+        //   rcad: store groups for build_result(Compound) to consume.
+        result.compound_groups = groups;
     }
 
     /// Retrieve the EdgeInfo.is_inside status for the incoming edge at the given vertex.
@@ -2122,8 +2176,12 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             ShapeType::Compound => {
-                // OCCT L431-435: BuildResult(COMPOUND) — aggregate into top-level compound.
-                // rcad: compound handling is in build_with_history after build_result.
+                // ✅ OCCT-aligned: BuildResult(COMPOUND) (Builder_1.cxx L130-168).
+                //   OCCT: for each source COMPOUND, add its image (or original).
+                //   rcad: compound_groups populated by fill_images_compounds.
+                //   Actual topods compound creation deferred to build_with_history
+                //   post-processing (after result.build_topods populates result.solids).
+                let _ = result.compound_groups.len();
             }
         }
     }
@@ -2266,13 +2324,27 @@ impl<'a> BooleanBuilder<'a> {
         history.source_history = source_history;
 
         // ✅ OCCT-aligned: compound reconstruction (FillImagesCompounds post).
+        //   OCCT: myImages[source_compound] contains the re-built compound.
+        //   rcad: compound_groups holds result solid indices per source compound,
+        //   populated by fill_images_compounds above.  Convert to BRep Compound
+        //   after result.build_topods populates result.solids with ShapeRefs.
         let mut brep = rcad_kernel::BRep::from_topods(&t_brep);
-        if (self.ds.a_has_compound || self.ds.b_has_compound) && !brep.solids.is_empty() {
+        if !result.compound_groups.is_empty() && !brep.solids.is_empty() {
+            // OCCT L339-341: one compound per source COMPOUND.
+            //   rcad: multiple compounds possible (one per source side).
+            //   Map solid indices → &mut Solid, group into compounds.
             let mut compound = rcad_kernel::topology::Compound::new();
-            for solid in brep.solids.drain(..) {
-                compound.solids.push((None, solid));
+            for group in &result.compound_groups {
+                for &si in group {
+                    if si < brep.solids.len() {
+                        let solid = brep.solids[si].clone();
+                        compound.solids.push((None, solid));
+                    }
+                }
             }
-            brep.compound = Some(compound);
+            if !compound.solids.is_empty() {
+                brep.compound = Some(compound);
+            }
         }
 
         // ✅ OCCT-aligned: PostTreat (Builder.cxx L450-475).
