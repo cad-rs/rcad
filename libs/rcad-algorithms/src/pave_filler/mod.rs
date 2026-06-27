@@ -621,21 +621,15 @@ impl<'a> PaveFiller<'a> {
         // ✅ OCCT L330: MakeBlocks
         self.make_blocks();
 
-        // ✅ OCCT-aligned: PostTreatFF after MakeBlocks so section edges exist.
-        self.post_treat_ff();
-
-        // �?OCCT-aligned: CheckSelfInterference (PerformInternal L336, BOPAlgo_PaveFiller_11.cxx L28-221)
-        //    OCCT uses AddWarning �?non-fatal, the operation continues.
-        if let Err(msg) = self.check_self_interference() {
-            eprintln!("[PAVEFILLER] {}", msg);
-        }
+        // ✅ OCCT L336: CheckSelfInterference (BOPAlgo_PaveFiller_11.cxx L28-221).
+        //    OCCT uses AddWarning — non-fatal, the operation continues.
+        let _ = self.check_self_interference();
 
         // ✅ OCCT-aligned: UpdateInterfsWithSDVertices (PerformInternal L338)
         self.update_interfs_with_sd_vertices();
 
-        // ✅ OCCT-aligned: ReleasePaveBlocks — OCCT frees UNUSED PBs but keeps
-        //   those referenced by PaveBlocksSc (needed by builder's collect_face_edge_segments).
-        //   rcad: PBs remain in pool (PaveBlocksSc indices stay valid).
+        // ✅ OCCT-aligned: ReleasePaveBlocks (PerformInternal L339) — OCCT frees
+        //   UNUSED PBs.  rcad: PBs remain in pool (PaveBlocksSc indices stay valid).
         //   Clearing the pool here would invalidate PaveBlocksSc indices.
 
         // ✅ OCCT-aligned: RefineFaceInfoOn — after ReleasePaveBlocks, remove
@@ -651,8 +645,7 @@ impl<'a> PaveFiller<'a> {
         // �?OCCT-aligned: MakePCurves �?after RemoveMicroEdges (PerformInternal L344)
         self.make_pcurves();
 
-        self.detect_degenerate_edges();
-        // ? OCCT-aligned: ProcessDE — after MakePCurves (PerformInternal L350)
+        // ✅ OCCT-aligned: ProcessDE — after MakePCurves (PerformInternal L350)
         self.process_de();
 
         // Export to BRep if direct output is enabled (A3 dual-write).
@@ -1432,7 +1425,12 @@ impl<'a> PaveFiller<'a> {
 
     /// Detect degenerate edges on periodic surfaces and set edge flags.
     /// Renamed from process_de to avoid confusion with OCCT's ProcessDE.
-    fn detect_degenerate_edges(&mut self) {
+    /// ✅ OCCT-aligned: ProcessDE (BOPAlgo_PaveFiller_8.cxx L54-131).
+    ///   Detects and processes degenerated edges on periodic surfaces.
+    ///   For each flagged edge on a face: finds PBs passing through the degenerate vertex,
+    ///   and registers the edge as split by setting up its PBs for make_section_edges.
+    fn process_de(&mut self) {
+        // Detect degenerate edges on periodic surfaces
         let mut fv: Vec<Vec<usize>> = vec![Vec::new(); self.ds.faces.len()];
         let mut degen_flags: Vec<(usize, usize)> = Vec::new();
         for fi in 0..self.ds.faces.len() {
@@ -1465,13 +1463,8 @@ impl<'a> PaveFiller<'a> {
         }
         for (fi, vs) in fv.iter().enumerate() { for &vi in vs { self.ds.faces[fi].face_info.vertices_in.insert(vi); } }
         for (ei, flag_val) in degen_flags { self.ds.set_edge_flag(ei, flag_val); }
-    }
 
-    /// ✅ OCCT-aligned: ProcessDE (BOPAlgo_PaveFiller_8.cxx L54-131).
-    ///   Processes degenerated edges flagged by detect_degenerate_edges.
-    ///   For each flagged edge on a face: finds PBs passing through the degenerate vertex,
-    ///   and registers the edge as split by setting up its PBs for make_section_edges.
-    fn process_de(&mut self) {
+        // Process flagged degenerate edges
         let degen_edges: Vec<(usize, usize)> = self.ds.edge_flags.iter()
             .filter_map(|(&ei, &flag)| {
                 if flag == 0 { return None; }
@@ -2096,57 +2089,6 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    fn post_treat_ff(&mut self) {
-        // OCCT PaveFiller_6.cxx L1165-1397: PostTreatFF handles VertsUnused,
-        // MSCPB processing, missing-curve recomputation via sub-PaveFiller, and
-        // PreparePostTreatFF.  rcad distributes these across:
-        //   - post_treat_ff (here): register curves_sc + vertices_in from FF curves
-        //   - make_sd_vertices_ff (below): SD vertex creation
-        //   - refine_face_info_in/on (DS): face info refinement
-        //   - make_blocks / remove_micro_edges (elsewhere): PB/micro-edge handling
-        let n_faces = self.ds.faces.len();
-        let mut face_boundary_verts: Vec<Vec<usize>> = Vec::with_capacity(n_faces);
-        for fi in 0..n_faces {
-            face_boundary_verts.push(self.ds.faces[fi].boundary_verts.clone());
-        }
-
-        for inf in &self.ds.interferences.clone() {
-            if let Interference::FaceFace { f1, f2, curves, .. } = inf {
-                if curves.is_empty() { continue; }
-
-                for &ci in curves {
-                    self.ds.faces[*f1].face_info.curves_sc.insert(ci);
-                    self.ds.faces[*f2].face_info.curves_sc.insert(ci);
-
-                    // Section edges + PaveBlocksSc registered by make_section_edges_from_curve_pbs
-                    // (called inside make_blocks).  Here we only register curves_sc, vertices_in, vertices_on.
-                    if ci < self.ds.intersection_curves.len() {
-                        let ic = &self.ds.intersection_curves[ci];
-                        let sv = ic.start_vertex;
-                        let ev = ic.end_vertex;
-
-                        self.ds.faces[*f1].face_info.vertices_in.insert(sv);
-                        self.ds.faces[*f1].face_info.vertices_in.insert(ev);
-                        self.ds.faces[*f2].face_info.vertices_in.insert(sv);
-                        self.ds.faces[*f2].face_info.vertices_in.insert(ev);
-
-                        // Also register curve endpoints as vertices_on if they match
-                        // boundary vertices of either face
-                        for &fi in &[*f1, *f2] {
-                            if fi < face_boundary_verts.len() {
-                                for &bvi in &face_boundary_verts[fi] {
-                                    if bvi == sv || bvi == ev {
-                                        self.ds.faces[fi].face_info.vertices_on.insert(bvi);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     fn make_sd_vertices_ff(&mut self) {
         let overlaps = self.ds.same_domain_overlaps.clone();
         for (f1, f2, polygon) in &overlaps {
@@ -2719,6 +2661,32 @@ impl<'a> PaveFiller<'a> {
                     let v_end = self.ds.add_vertex(p_end);
                     self.ds.intersection_curves[ci].start_vertex = v_start;
                     self.ds.intersection_curves[ci].end_vertex = v_end;
+                }
+            }
+            // �?OCCT-aligned: Register curves_sc and vertices_in for this face pair
+            // (PostTreatFF equivalent in OCCT PaveFiller_6.cxx L1165-1397).
+            self.ds.faces[f1].face_info.curves_sc.extend(&ff_curves);
+            self.ds.faces[f2].face_info.curves_sc.extend(&ff_curves);
+            for &ci in &ff_curves {
+                if ci < self.ds.intersection_curves.len() {
+                    let ic = &self.ds.intersection_curves[ci];
+                    self.ds.faces[f1].face_info.vertices_in.insert(ic.start_vertex);
+                    self.ds.faces[f1].face_info.vertices_in.insert(ic.end_vertex);
+                    self.ds.faces[f2].face_info.vertices_in.insert(ic.start_vertex);
+                    self.ds.faces[f2].face_info.vertices_in.insert(ic.end_vertex);
+                    // Register curve endpoints as vertices_on if they match face boundary vertices
+                    let bv1 = self.ds.faces[f1].boundary_verts.clone();
+                    let bv2 = self.ds.faces[f2].boundary_verts.clone();
+                    for &bvi in &bv1 {
+                        if bvi == ic.start_vertex || bvi == ic.end_vertex {
+                            self.ds.faces[f1].face_info.vertices_on.insert(bvi);
+                        }
+                    }
+                    for &bvi in &bv2 {
+                        if bvi == ic.start_vertex || bvi == ic.end_vertex {
+                            self.ds.faces[f2].face_info.vertices_on.insert(bvi);
+                        }
+                    }
                 }
             }
             // �?OCCT-aligned: InitPaveBlock1 for all curves (PaveFiller_6.cxx L800).

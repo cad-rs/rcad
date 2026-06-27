@@ -1081,33 +1081,96 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
+    /// OCCT-aligned: FillImagesContainer(SHELL) (Builder_1.cxx L221-276).
+    ///   L224-240: check if any sub-shape has been modified
+    ///   L242-275: build new container from sub-shape images
     fn fill_images_containers_shells(&self, result: &mut ResultBuilder) {
-        let nf = result.faces.len();
-        if nf == 0 || self.ds.shells.is_empty() { return; }
+        // OCCT L221: theS is the source SHELL, theType = SHELL
+        //   In rcad: iterate DS shells (each shell is a "container" of faces)
 
-        // Build result face index → source DS face index mapping.
-        let mut rfi_to_dsfi: Vec<Option<usize>> = vec![None; nf];
-        for (rfi, origin) in result.face_origins.iter().enumerate() {
-            let ds_fi = match origin {
-                FaceOrigin::FromA(sfi) => self.ds.faces.iter().position(|f|
-                    f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
-                FaceOrigin::FromB(sfi) => self.ds.faces.iter().position(|f|
-                    f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi),
-                _ => None,
-            };
-            if let Some(fi) = ds_fi { rfi_to_dsfi[rfi] = Some(fi); }
-        }
-
-        // OCCT L242-275: for each source SHELL, collect its split face images.
+        // OCCT L224-233: check if any sub-shape has been modified
+        //   For each FACE sub-shape of the shell: check myImages[face]
+        //   In rcad: check if the DS face has more than one result face (split)
         for ds_shell in &self.ds.shells {
+            // OCCT L224: TopoDS_Iterator aIt(theS)
+            let mut modified = false;
+
+            // OCCT L225-233: iterate sub-shapes, check for images
+            for &dsfi in &ds_shell.faces {
+                // OCCT L228: pLFIm = myImages.Seek(aSS)
+                //   In rcad: count result faces for this DS face
+                let count = result.face_origins.iter().filter(|origin| {
+                    match origin {
+                        FaceOrigin::FromA(sfi) => {
+                            self.ds.faces[dsfi].origin == crate::bopds::ds::ShapeOrigin::ShapeA
+                                && self.ds.faces[dsfi].source_face_idx == *sfi
+                        }
+                        FaceOrigin::FromB(sfi) => {
+                            self.ds.faces[dsfi].origin == crate::bopds::ds::ShapeOrigin::ShapeB
+                                && self.ds.faces[dsfi].source_face_idx == *sfi
+                        }
+                        _ => false,
+                    }
+                }).count();
+
+                // OCCT L229: if images exist AND (extent != 1 || first != original) → modified
+                if count > 1 || (count == 1 && !result.face_origins.iter().any(|origin| {
+                    match origin {
+                        FaceOrigin::FromA(sfi) => {
+                            self.ds.faces[dsfi].origin == crate::bopds::ds::ShapeOrigin::ShapeA
+                                && self.ds.faces[dsfi].source_face_idx == *sfi
+                        }
+                        FaceOrigin::FromB(sfi) => {
+                            self.ds.faces[dsfi].origin == crate::bopds::ds::ShapeOrigin::ShapeB
+                                && self.ds.faces[dsfi].source_face_idx == *sfi
+                        }
+                        _ => false,
+                    }
+                })) {
+                    modified = true;
+                    break;
+                }
+            }
+
+            // OCCT L235-240: if no modification → no new container needed
+            if !modified {
+                // OCCT: return without creating new container.
+                //   rcad: the original shell faces are already in result.faces;
+                //   skipping means they won't be grouped into a new shell,
+                //   which is correct for unmodified shells.
+                continue;
+            }
+
+            // OCCT L242-275: Build new container from sub-shape images
             let mut shell_faces: Vec<usize> = Vec::new();
-            for rfi in 0..nf {
-                if let Some(dsfi) = rfi_to_dsfi[rfi] {
-                    if ds_shell.faces.contains(&dsfi) {
+            for &dsfi in &ds_shell.faces {
+                // OCCT L251: pLSSIm = myImages.Seek(aSS)
+                let result_faces: Vec<usize> = result.face_origins.iter().enumerate()
+                    .filter(|(_, origin)| {
+                        match origin {
+                            FaceOrigin::FromA(sfi) => {
+                                self.ds.faces[dsfi].origin == crate::bopds::ds::ShapeOrigin::ShapeA
+                                    && self.ds.faces[dsfi].source_face_idx == *sfi
+                            }
+                            FaceOrigin::FromB(sfi) => {
+                                self.ds.faces[dsfi].origin == crate::bopds::ds::ShapeOrigin::ShapeB
+                                    && self.ds.faces[dsfi].source_face_idx == *sfi
+                            }
+                            _ => false,
+                        }
+                    })
+                    .map(|(fi, _)| fi)
+                    .collect();
+
+                // OCCT L253-258: no images → add original sub-shape
+                // OCCT L261-271: has images → add all image sub-shapes
+                for &rfi in &result_faces {
+                    if !shell_faces.contains(&rfi) {
                         shell_faces.push(rfi);
                     }
                 }
             }
+
             if !shell_faces.is_empty() {
                 result.tmp_shells.push(shell_faces);
             }
@@ -1296,181 +1359,120 @@ impl<'a> BooleanBuilder<'a> {
         (draft_shells, internal_faces)
     }
 
-    /// ✅ OCCT-aligned: FillIn3DParts (Builder_3.cxx L97-232).
+    /// OCCT-aligned: FillIn3DParts (Builder_3.cxx L97-263).
     fn fill_in_3d_parts(&self, result: &mut ResultBuilder,
                          a_faces: &[usize], b_faces: &[usize]) -> Vec<(usize, usize, &'static str)> {
-        let nf = result.faces.len();
-        let mut to_remove = vec![false; nf];
+        // OCCT L105: Find all faces that are IN solids
+
+        // OCCT L114: aLFaces — all result faces (images + originals)
+        //   In OCCT, faces with images get split images added; originals get added directly.
+        //   In rcad, result.faces already contains both split and original faces.
 
         // OCCT L164-195: BuildDraftSolid for each source solid.
-        //   rcad: builds draft face sets for both operands (result faces
-        //   grouped by source shell).  The draft sets are computed here
-        //   for form alignment even though classify_point uses DS indices.
+        //   rcad: builds draft face sets for both operands grouped by source shell.
         let (_draft_a, _int_a) = self.build_draft_solid(result, 0);
         let (_draft_b, _int_b) = self.build_draft_solid(result, 1);
 
-        // OCCT L201-204: ClassifyFaces → anInParts.
-        //   myInParts[0] = faces from B that are IN solid A (source side 0 = A)
-        //   myInParts[1] = faces from A that are IN solid B (source side 1 = B)
-        //   Per OCCT Builder_3.cxx L215-232.
+        // OCCT L197-208: ClassifyFaces → anInParts.
         let mut my_in_parts = self.my_in_parts.borrow_mut();
         my_in_parts.clear();
-        // Collect per-face classification results for shell-state computation
-        // (OCCT tracks state via draft-solid membership; rcad tracks via per-face class).
-        let mut face_class: Vec<Option<Classification>> = vec![None; nf];
-        let mut face_side: Vec<Option<usize>> = vec![None; nf]; // 0=A, 1=B
 
-        // ═══ OCCT Phase 3: ClassifyFaces (BOPAlgo_Tools.cxx L1334-1450) ═══
-        //   OCCT: for each face, use BRepClass3d_SolidClassifier with a point
-        //   ON the face surface (parametric midpoint).  rcad: use face
-        //   sample_point (index 8) which is computed from the face boundary
-        //   and guaranteed to be on the surface.
-        //
-        //   OCCT additionally:
-        //   1. Skips faces whose AABB doesn't overlap the solid's AABB
-        //      (aSelector BVH culling, L1345-1354)
-        //   2. Skips self-shapes (faces that are sub-shapes of the solid,
-        //      L1366-1368 — rcad handles this by classifying A-faces
-        //      against B-faces and vice versa)
-        //   3. Groups connected faces into blocks for batch classification
-        //      (L1396-1405 — rcad classifies per-face, equivalent result)
-        for fi in 0..nf {
-            if to_remove[fi] { continue; }
-            let (source_side, other_faces, side_idx) = match &result.face_origins[fi] {
-                FaceOrigin::FromA(_) => (SourceSide::A, b_faces, 0usize),
-                FaceOrigin::FromB(_) => (SourceSide::B, a_faces, 1usize),
+        for (fi, origin) in result.face_origins.iter().enumerate() {
+            let (other_faces, side_idx) = match origin {
+                FaceOrigin::FromA(_) => (b_faces, 0usize),
+                FaceOrigin::FromB(_) => (a_faces, 1usize),
                 _ => continue,
             };
-            face_side[fi] = Some(side_idx);
             if other_faces.is_empty() { continue; }
 
-            // OCCT L1345-1354: BVH-based AABB overlap check (optional culling).
-            //   rcad: no AABB culling — classify all candidate faces.
-
-            // OCCT BRepClass3d_SolidClassifier: use a point ON the face surface.
-            //   rcad: use face sample_point (index 8) instead of centroid (index 6).
-            //   The sample_point is computed during emit_wire_face from the face's
-            //   surface UV midpoint, guaranteed to be ON the surface.
-            let pt = result.faces[fi].8; // sample_point (on-surface)
+            let pt = result.faces[fi].8;
             let class = classify_point(pt, other_faces, self.ds);
-            eprintln!("[CLASSIFY] fi={} origin={:?} pt=({:.4},{:.4},{:.4}) class={:?}", fi, result.face_origins[fi], pt.x, pt.y, pt.z, class);
-            face_class[fi] = Some(class);
 
-            // OCCT L215-232: store IN faces in myInParts
-            //   A face classified as IN → it is IN the other solid
-            match class {
-                Classification::In => {
-                    let other_side = if side_idx == 0 { 1 } else { 0 };
-                    my_in_parts.entry(other_side).or_default().push(fi);
-                }
-                _ => {}
-            }
-
-            if !self.classification_keep_policy(source_side, class, fi) {
-                to_remove[fi] = true;
+            if class == Classification::In {
+                let other_side = if side_idx == 0 { 1 } else { 0 };
+                my_in_parts.entry(other_side).or_default().push(fi);
             }
         }
 
-        // Remove faces that fail keep policy
-        if to_remove.iter().any(|&r| r) {
-            let old_faces = std::mem::take(&mut result.faces);
-            let old_origins = std::mem::take(&mut result.face_origins);
-            for (fi, face) in old_faces.into_iter().enumerate() {
-                if !to_remove[fi] {
-                    result.faces.push(face);
-                    result.face_origins.push(old_origins[fi]);
-                }
-            }
-            // Rebuild shell face indices
-            let old_shells = std::mem::take(&mut result.tmp_shells);
-            let mut idx_map: Vec<Option<usize>> = vec![None; nf];
-            let mut cur = 0usize;
-            for fi in 0..nf {
-                if !to_remove[fi] { idx_map[fi] = Some(cur); cur += 1; }
-            }
-            for shell in &old_shells {
-                let new_shell: Vec<usize> = shell.iter()
-                    .filter_map(|&fi| idx_map[fi]).collect();
-                if !new_shell.is_empty() {
-                    result.tmp_shells.push(new_shell);
-                }
-            }
-            // Translate my_in_parts face indices through the removal map
-            // (OCCT does not remove faces; rcad does — preserve index mapping for build_split_solids)
-            let mut updated: std::collections::HashMap<usize, Vec<usize>> =
-                std::collections::HashMap::new();
-            for (&side, faces) in my_in_parts.iter() {
-                let mut new_faces: Vec<usize> = Vec::new();
-                for &fi in faces {
-                    if let Some(new_fi) = idx_map[fi] {
-                        new_faces.push(new_fi);
-                    }
-                }
-                if !new_faces.is_empty() {
-                    updated.insert(side, new_faces);
-                }
-            }
-            *my_in_parts = updated;
-            // Remap face_class to new indices (old face indices are stale after
-            // removal — face_class[old_fi] != face_class[new_fi] after compression).
-            let old_face_class = std::mem::replace(&mut face_class, vec![None; result.faces.len()]);
-            for (old_fi, class) in old_face_class.into_iter().enumerate() {
-                if let Some(new_fi) = idx_map[old_fi] {
-                    if let Some(c) = class {
-                        face_class[new_fi] = Some(c);
-                    }
-                }
-            }
-        }
-
-        // OCCT L215-232 (continued): compute shell state dynamically
-        //   based on face classifications instead of hardcoding "OUT".
-        //   For each shell, determine if it is IN or OUT of the other solid.
+        // OCCT L210-262: Analyze results of classification
         let mut assignments: Vec<(usize, usize, &'static str)> = Vec::new();
         for (si, shell) in result.tmp_shells.iter().enumerate() {
-            let mut has_a = false;
-            let mut has_b = false;
-            // Determine shell state from the majority classification
-            let mut n_out = 0usize;
-            let mut n_in = 0usize;
+            let mut side: Option<usize> = None;
             for &fi in shell {
                 match &result.face_origins[fi] {
-                    FaceOrigin::FromA(_) => has_a = true,
-                    FaceOrigin::FromB(_) => has_b = true,
+                    FaceOrigin::FromA(_) => side = Some(0),
+                    FaceOrigin::FromB(_) => side = Some(1),
                     _ => {}
                 }
-                // Count IN/OUT from stored classification
-                if let Some(class) = face_class.get(fi).copied().flatten() {
-                    match class {
-                        Classification::In => n_in += 1,
-                        Classification::Out => n_out += 1,
-                        _ => {}
+            }
+            let Some(s) = side else { continue };
+
+            // OCCT L220: aLInFaces = IN faces for this draft solid
+            let in_faces: Vec<usize> = result.face_origins.iter().enumerate()
+                .filter(|(fi, _)| my_in_parts.get(&(if s == 0 { 1 } else { 0 }))
+                    .map_or(false, |v| v.contains(fi)))
+                .map(|(fi, _)| fi)
+                .collect();
+
+            // OCCT L223: aNbIN
+            let n_in = in_faces.len();
+
+            // OCCT L225-238: if no IN faces and no shell images → skip
+            if n_in == 0 {
+                let mut has_image = false;
+                for &fi in shell {
+                    if let Some(origin) = result.face_origins.get(fi) {
+                        let e_base = self.ds.vertices.len();
+                        match origin {
+                            FaceOrigin::FromA(sfi) => {
+                                if let Some(dfi) = self.ds.faces.iter().position(|f|
+                                    f.origin == crate::bopds::ds::ShapeOrigin::ShapeA && f.source_face_idx == *sfi)
+                                {
+                                    for &ei in &self.ds.faces[dfi].boundary_edges {
+                                        let e_ref = rcad_kernel::topods::ShapeRef::new(e_base + ei);
+                                        if self.my_images.borrow().contains_key(&e_ref) {
+                                            has_image = true; break;
+                                        }
+                                    }
+                                }
+                            }
+                            FaceOrigin::FromB(sfi) => {
+                                if let Some(dfi) = self.ds.faces.iter().position(|f|
+                                    f.origin == crate::bopds::ds::ShapeOrigin::ShapeB && f.source_face_idx == *sfi)
+                                {
+                                    for &ei in &self.ds.faces[dfi].boundary_edges {
+                                        let e_ref = rcad_kernel::topods::ShapeRef::new(e_base + ei);
+                                        if self.my_images.borrow().contains_key(&e_ref) {
+                                            has_image = true; break;
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                        if has_image { break; }
                     }
                 }
+                if !has_image { continue; }
             }
-            // Compute shell state: IN if most faces are IN, OUT otherwise
-            let state: &'static str = if n_in > n_out { "IN" } else { "OUT" };
-            if has_a {
-                assignments.push((si, 0, state));
-            }
-            if has_b {
-                assignments.push((si, 1, state));
+
+            // OCCT L241: theDraftSolids.Bind(aSolid, aSDraft) — done via assignments
+            let state = if n_in > 0 { "IN" } else { "OUT" };
+            assignments.push((si, s, state));
+
+            // OCCT L243-261: myInParts[source] = IN_faces + INTERNAL_faces
+            //   Store IN faces for this shell's side
+            if n_in > 0 {
+                let existing = my_in_parts.entry(if s == 0 { 1 } else { 0 }).or_default();
+                for &fi in &in_faces {
+                    if !existing.contains(&fi) {
+                        existing.push(fi);
+                    }
+                }
             }
         }
         assignments
     }
-
-    // OCCT L413-618: BuildSplitSolids — group classified shells into solids.
-    //   OCCT does NOT re-split topology.  It combines draft solid faces + IN
-    //   faces into BOPAlgo_SplitSolid which builds closed TopoDS_Solid from
-    //   the face set, preserving source shell connectivity.
-    //   rcad: groups shells by (operation, state, origin) — each group becomes
-    //   one solid.  The aligned BuilderSolid module (bopds::builder_solid) is
-    //   available for standalone use but not called from the hot path because
-    //   the DS-level face indices don't preserve result-shell connectivity.
-    /// ✅ OCCT-aligned: BuildSplitSolids (Builder_3.cxx L413-569).
-    ///   Group classified shells into result solids.
-    ///   Includes BuilderSolid::PerformAreas void detection internally.
     fn build_split_solids(&self, result: &mut ResultBuilder,
                           assignments: &[(usize, usize, &'static str)]) {
         let mut result_solids: Vec<Vec<usize>> = Vec::new();
@@ -2053,151 +2055,6 @@ impl<'a> BooleanBuilder<'a> {
     ///
     /// - Small models (< 20 faces): May be slower due to thread overhead
     /// - Large models (> 100 faces): Typically 2-4x faster on multi-core systems
-// SubFace removed: build_with_history_par
-
-    /// When PaveFiller does not link a plane閳ユ悞phere circle to every affected box face, merge in
-    /// any coplanar `Curve3::Circle` from `intersection_curves` that overlaps the face 2D AABB.
-    fn extra_coplanar_circle_curves_for_plane_face(
-        &self,
-        face_idx: usize,
-        plane: &Plane,
-    ) -> Vec<usize> {
-        let n = plane.normal.normalize_or_zero();
-        if n.length_squared() < TOLERANCE_METRIC_SQ_NEAR_ZERO {
-            return vec![];
-        }
-        let face = &self.ds.faces[face_idx];
-        let (u_axis, v_axis) = plane_local_basis(plane);
-        let project_to_2d = |p: DVec3| -> DVec2 {
-            let d = p - plane.origin;
-            DVec2::new(d.dot(u_axis), d.dot(v_axis))
-        };
-        if face.boundary_verts.is_empty() {
-            return vec![];
-        }
-        let mut umin = f64::INFINITY;
-        let mut umax = f64::NEG_INFINITY;
-        let mut vmin = f64::INFINITY;
-        let mut vmax = f64::NEG_INFINITY;
-        for &vi in &face.boundary_verts {
-            let q = project_to_2d(self.ds.vertices[vi].point);
-            umin = umin.min(q.x);
-            umax = umax.max(q.x);
-            vmin = vmin.min(q.y);
-            vmax = vmax.max(q.y);
-        }
-        const MARGIN: f64 = TOLERANCE_ADAPTIVE_MAX;
-        umin -= MARGIN;
-        umax += MARGIN;
-        vmin -= MARGIN;
-        vmax += MARGIN;
-        // Circle lies in a plane with normal parallel to this plane, and (center on plane)
-        const PL_D: f64 = TOLERANCE_ADAPTIVE_MAX;
-        const N_ALIGN: f64 = 0.04;
-        let mut out = Vec::new();
-        for (ci, ic) in self.ds.intersection_curves.iter().enumerate() {
-            if face.face_info.curves_sc_only().contains(&ci) {
-                continue;
-            }
-            let Curve3::Circle(c) = &ic.curve else {
-                continue;
-            };
-            let nc = c.normal.normalize_or_zero();
-            if nc.length_squared() < TOLERANCE_METRIC_SQ_NEAR_ZERO {
-                continue;
-            }
-            if (nc.dot(n).abs() - 1.0).abs() > N_ALIGN {
-                continue;
-            }
-            if ((DVec3::from(c.center) - plane.origin).dot(n)).abs() > PL_D {
-                continue;
-            }
-            let c2d = project_to_2d(DVec3::from(c.center));
-            let r = c.radius;
-            if c2d.x + r < umin
-                || c2d.x - r > umax
-                || c2d.y + r < vmin
-                || c2d.y - r > vmax
-            {
-                continue;
-            }
-            out.push(ci);
-        }
-        out
-    }
-
-    fn merged_split_curve_ids_for_planar_face(&self, face_idx: usize, plane: &Plane) -> Vec<usize> {
-        let mut c: Vec<usize> = self.ds.faces[face_idx]
-            .face_info
-            .curves_sc_only()
-            .iter()
-            .copied()
-            .collect();
-        for e in self.extra_coplanar_circle_curves_for_plane_face(face_idx, plane) {
-            if !c.contains(&e) {
-                c.push(e);
-            }
-        }
-        c.sort_unstable();
-        c
-    }
-
-// SubFace removed: single_subface
-
-    /// Split a face by intersection curves. If no intersection curves cross this
-    /// face, returns the whole face as a single FaceSampleData.
-// SubFace removed: split_face
-
-    /// Tessellate a sphere face with no intersection curves into UV patches.
-    ///
-    /// The sphere's single face with a seam edge has only 2 boundary vertices in the DS
-    /// (north and south poles along the seam). [`emit_face_with_origin`] rejects boundaries
-    /// with fewer than 3 vertices, so we split the sphere into a UV grid where each patch
-    /// has a fine polygon boundary (sampled along the patch edges) for accurate mesh-based
-    /// surface area and volume.
-// SubFace removed: tess_sphere
-
-    /// Tessellate a cylinder wall face with no intersection curves into UV patches.
-    ///
-    /// Like the sphere, a cylinder's single face with a seam edge has only 2 boundary
-    /// vertices in the DS (top and bottom along the seam), which [`emit_face_with_origin`]
-    /// rejects (<3 vertices). Split the cylinder wall into azimuthal bands so each patch
-    /// has a valid 3D boundary polygon.
-// SubFace removed: tess_cyl
-
-    /// Tessellate a cylinder face into an N_U 脳 N_V 2D grid of rectangular patches.
-    ///
-    /// Used for cylinder鈥揷ylinder intersections (e.g. Steinmetz) where full-wrap
-    /// intersection curves prevent the parametric UV-polygon splitting from working.
-    /// Each patch's sample point (boundary centroid 鈮?surface center) is classified
-    /// independently against the other solid, correctly selecting the Steinmetz lobes.
-// SubFace removed: tess_cyl_2d
-
-    /// Tessellate a cone face into a UV grid. Each grid cell is a [`FaceSampleData`] with
-    /// its own sample point, so that classify_point can independently decide whether
-    /// that region is inside or outside the other solid.
-    ///
-    /// This replaces [`split_curved_face_parametric`] for cone faces because the UV
-    /// splitter can produce overlapping sub-face polygons when intersection curves are
-    /// high-order (e.g. the cone鈥揷ylinder quartic from skew axes in ZK8/ZL1), leading
-    /// to SA double-counting.  The grid approach guarantees each UV region is covered
-    /// by exactly one sub-face whose sample point correctly represents the region.
-// SubFace removed: tess_cone_2d
-
-    /// Split a planar face by intersection line segments.
-    ///
-    /// Algorithm:
-    /// 1. Project boundary + intersection segment endpoints to 2D
-    /// 2. Find where intersection segment endpoints lie on boundary edges
-    /// 3. Insert intersection points into boundary at correct positions
-    /// 4. Walk augmented boundary to extract sub-polygons on each side
-    /// `split_curve_ids` is `face_info.curves_in` plus any merged coplanar circles (see
-    /// [`Self::merged_split_curve_ids_for_planar_face`]).
-// SubFace removed: split_planar
-
-    /// ✅ OCCT-aligned: DS face iterator by origin.
-    ///   OCCT: iterates myDS->ShapeInfo() filtering by TopAbs_FACE + source solid.
-    ///   rcad: DS stores faces flat with ShapeOrigin (A/B) for operand discrimination.
     fn faces_of(&self, origin: ShapeOrigin) -> Vec<usize> {
         let mut v: Vec<usize> = self
             .ds
@@ -2415,7 +2272,6 @@ impl<'a> BooleanBuilder<'a> {
     /// Legacy approximate method: for each intersection polyline that crosses the face,
     /// we split the boundary point list into two halves at the points closest to the
     /// polyline endpoints. Kept as fallback when UV data or PCurves are unavailable.
-// SubFace removed: split_curved_legacy
 
     /// Unwrap a UV polyline's U coordinate to remove seam jumps.
     /// For periodic surfaces (cylinder, cone, torus), consecutive points whose
@@ -2581,8 +2437,6 @@ impl<'a> BooleanBuilder<'a> {
     ///    OCCT: BuildSplitFaces 鈫?section edges 鐩存帴鍒涘缓 BRep sub-face銆?
     ///    rcad: 鎵嬪姩璁＄畻 8 涓崷闄愮殑 FaceSampleData,鐢?outer_circle_edges 璁板綍澶у渾寮с€?
     ///    鍔熻兘绛変环(8 涓崐鐞冮潰鍖哄煙 + 绮剧‘鍦嗗姬杈圭晫),浣?OCCT 涓嶉渶瑕佷腑闂?FaceSampleData銆?
-// SubFace removed: split_sphere
-// SubFace removed: split_curved_param
 
     /// Find the PCurve (2D parametric curve) for the given intersection curve
     /// as it lies on the given face. Searches FaceFace interferences to determine
