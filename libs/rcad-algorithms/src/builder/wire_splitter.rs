@@ -1129,18 +1129,18 @@ pub(crate) fn build_pid_maps_topo_ds(
 }
 
 /// ✅ OCCT-aligned: PerformShapesToAvoid for WireSegmentTopoDS.
-///   Same logic as perform_shapes_to_avoid but uses BRepTool data instead of DS.
+///   Builds vertex→Pid adjacency map from segments (OCCT: TopExp::MapShapesAndAncestors),
+///   then removes dangling edges (valence 1) and self-coincident edges in a fixed-point loop.
 ///   Returns avoided PIDs and pid→segment map.
 pub(crate) fn perform_shapes_to_avoid_topo_ds(
     segments: &[super::types::WireSegmentTopoDS],
     tool: &dyn rcad_kernel::topods::BRepTool,
 ) -> (std::collections::HashSet<Pid>, std::collections::HashMap<Pid, Vec<usize>>) {
-    let (pid_segs, pid_endpoints) = build_pid_maps_topo_ds(segments);
+    let (pid_segs, _) = build_pid_maps_topo_ds(segments);
 
     let is_degenerate = |pid: &Pid| -> bool {
         let (_tag, idx, a, b) = *pid;
-        // DsEdge: check via BRepTool
-        if a == b { return true; } // self-loop
+        if a == b { return true; }
         if _tag == 0 {
             tool.is_edge_degenerated(rcad_kernel::topods::ShapeRef::new(idx))
         } else {
@@ -1148,41 +1148,53 @@ pub(crate) fn perform_shapes_to_avoid_topo_ds(
         }
     };
 
-    let mut avoided_pids: std::collections::HashSet<Pid> = std::collections::HashSet::new();
-
-    // OCCT L176-180: collect all vertices with degree == 1
-    let mut vtx_deg: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-    for (_, &(a, b)) in &pid_endpoints {
-        *vtx_deg.entry(a).or_default() += 1;
-        *vtx_deg.entry(b).or_default() += 1;
+    // OCCT L152-156: aMVE — MapShapesAndAncestors(VERTEX, EDGE).
+    // vertex → Vec<Pid> built directly from segments (collapses FWD/REV of same edge).
+    let mut a_mve: std::collections::HashMap<usize, Vec<Pid>> = std::collections::HashMap::new();
+    for (si, seg) in segments.iter().enumerate() {
+        let pid = physical_edge_id_topo_ds(seg);
+        a_mve.entry(seg.start_vertex.index).or_default().push(pid);
+        a_mve.entry(seg.end_vertex.index).or_default().push(pid);
     }
 
-    // OCCT L198-210: repeatedly avoid dangling edges (degree 1)
-    // and OCCT L211-227: avoid self-coincident edges (a==b, non-degenerate)
+    let mut avoided_pids: std::collections::HashSet<Pid> = std::collections::HashSet::new();
+
+    // OCCT L182-228: fixed-point loop — avoid dangling edges (valence 1) and
+    // self-coincident edges, updating aMVE after each avoidance.
     loop {
         let mut b_found = false;
-        let mut degree_one: std::collections::HashSet<Pid> = std::collections::HashSet::new();
-        for (pid, &(a, b)) in &pid_endpoints {
-            if avoided_pids.contains(pid) { continue; }
-            if is_degenerate(pid) { continue; }
-            // OCCT L198-210: degree 1 at either endpoint
-            if vtx_deg.get(&a).copied().unwrap_or(0) == 1
-                || vtx_deg.get(&b).copied().unwrap_or(0) == 1
-            {
-                degree_one.insert(*pid);
-            }
-            // OCCT L211-227: a==b self-coincident (non-closed loop)
-            if a == b { degree_one.insert(*pid); }
-        }
-        for pid in degree_one {
-            if avoided_pids.insert(pid) {
-                let (_, _, a, b) = pid;
-                if let Some(d) = vtx_deg.get_mut(&a) { *d = d.saturating_sub(1); }
-                if let Some(d) = vtx_deg.get_mut(&b) { *d = d.saturating_sub(1); }
-                b_found = true;
+        for (&v, pids) in &a_mve {
+            // OCCT L204-207: INTERNAL vertices → skip
+            // (rcad: no internal vertex data in topoDS variant, skip check)
+            let a_nb_e = pids.len();
+            if a_nb_e == 1 {
+                // OCCT L198-210: dangling edge → avoid
+                let pid = pids[0];
+                if is_degenerate(&pid) { continue; }
+                if avoided_pids.insert(pid) { b_found = true; }
+            } else if a_nb_e >= 2 {
+                // OCCT L211-227: check for same edge appearing twice at this vertex
+                for i in 0..a_nb_e {
+                    for j in (i+1)..a_nb_e {
+                        if pids[i] == pids[j] {
+                            let pid = pids[i];
+                            let (_, _, a, b) = pid;
+                            if a == b { continue; } // OCCT L219-222: self-loop → keep
+                            if avoided_pids.insert(pid) { b_found = true; }
+                        }
+                    }
+                }
             }
         }
         if !b_found { break; }
+        // OCCT L230: rebuild aMVE without avoided edges
+        a_mve.clear();
+        for (si, seg) in segments.iter().enumerate() {
+            let pid = physical_edge_id_topo_ds(seg);
+            if avoided_pids.contains(&pid) { continue; }
+            a_mve.entry(seg.start_vertex.index).or_default().push(pid);
+            a_mve.entry(seg.end_vertex.index).or_default().push(pid);
+        }
     }
 
     (avoided_pids, pid_segs)
