@@ -1579,6 +1579,93 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
+    /// ✅ OCCT-aligned: PutStickPavesOnCurve (PaveFiller_6.cxx L2748-2842).
+    ///   For curves without assigned endpoint vertices, finds VV/VE "stick" vertices
+    ///   near the unbound endpoint and assigns them via put_pave_on_curve.
+    fn put_stick_paves_on_curve(&mut self, ci: usize, face_idxs: &[usize; 2]) {
+        // Clone IC data to avoid borrow conflict with change_pave_block1
+        let (start_vertex, end_vertex, t_range, curve, geom_tol) = {
+            let ic = &self.ds.intersection_curves[ci];
+            (ic.start_vertex, ic.end_vertex, ic.t_range, ic.curve.clone(), ic.geom_tol)
+        };
+        // OCCT L2759-2766: check if both endpoints already have assigned vertices
+        if start_vertex < self.ds.vertices.len() && end_vertex < self.ds.vertices.len() {
+            return; // both ends already bound
+        }
+        let a_tol_r3d = geom_tol.max(self.tol());
+        let a_dt2 = 2e-7;
+        let a_d_sc_pr = 5e-9;
+        let a_t = t_range;
+        let a_p = [curve.point_at(a_t[0]), curve.point_at(a_t[1])];
+
+        let mut stick_verts: Vec<usize> = Vec::new();
+        for &fi in face_idxs.iter().filter(|&&f| f != usize::MAX) {
+            stick_verts.extend(self.get_stick_vertices(fi));
+        }
+        stick_verts.sort(); stick_verts.dedup();
+
+        let used_verts: HashSet<usize> = self.ds.intersection_curves.iter()
+            .flat_map(|ic2| [ic2.start_vertex, ic2.end_vertex])
+            .filter(|&v| v < self.ds.vertices.len())
+            .collect();
+        stick_verts.retain(|v| !used_verts.contains(v));
+
+        if stick_verts.is_empty() { return; }
+
+        let surf0 = if face_idxs[0] != usize::MAX { Some(self.ds.faces[face_idxs[0]].surface.clone()) } else { None };
+        let surf1 = if face_idxs[1] != usize::MAX { Some(self.ds.faces[face_idxs[1]].surface.clone()) } else { None };
+
+        for &n_v in &stick_verts {
+            let v_pt = self.ds.vertices[n_v].point;
+            for m in 0..2 {
+                let is_start = (m == 0 && start_vertex >= self.ds.vertices.len())
+                    || (m == 1 && end_vertex >= self.ds.vertices.len());
+                if !is_start { continue; }
+                let d2 = a_p[m].distance_squared(v_pt);
+                if d2 > a_dt2 { continue; }
+
+                let mut normals_ok = true;
+                if let (Some(ref s0), Some(ref s1)) = (surf0.as_ref(), surf1.as_ref()) {
+                    let n0 = Self::estimate_surface_normal(s0, a_p[m]);
+                    let n1 = Self::estimate_surface_normal(s1, a_p[m]);
+                    let mut sc_pr = n0.dot(n1);
+                    if sc_pr < 0.0 { sc_pr = -sc_pr; }
+                    sc_pr = 1.0 - sc_pr;
+                    if sc_pr > a_d_sc_pr { normals_ok = false; }
+                }
+
+                if normals_ok {
+                    let a_ptol = a_tol_r3d.max(self.ds.vertices[n_v].geom_tol);
+                    if let Some(pb) = self.ds.intersection_curves[ci].change_pave_block1() {
+                        let mut n_v_used = 0;
+                        if !pb.contains_parameter(a_t[m], a_ptol, &mut n_v_used) {
+                            pb.append_ext_pave(Pave { vertex_idx: n_v, param: a_t[m] });
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Estimate surface normal at a 3D point (for PutStickPavesOnCurve normal check).
+    fn estimate_surface_normal(surf: &Surface3, pt: DVec3) -> DVec3 {
+        match surf {
+            Surface3::Plane(p) => p.normal,
+            Surface3::Sphere(s) => (pt - s.center).normalize_or_zero(),
+            Surface3::Cylinder(c) => {
+                let axis = c.axis.normalize_or_zero();
+                let radial = pt - c.origin - axis * (pt - c.origin).dot(axis);
+                radial.normalize_or_zero()
+            }
+            _ => {
+                // Fallback: approximate via closest point projection
+                let (_, proj) = crate::extrema::closest_point_on_surface(surf, pt);
+                (pt - proj).normalize_or_zero()
+            }
+        }
+    }
+
     fn project_vertex_on_curve(&self, vi: usize, ic: &IntersectionCurve) -> Option<f64> {
         use rcad_kernel::geom::CurveEval;
         let v_tol = self.ds.vertices[vi].geom_tol;
@@ -5866,6 +5953,15 @@ impl<'a> PaveFiller<'a> {
 
             }
 
+        }
+
+        // ✅ OCCT-aligned: PutStickPavesOnCurve (PaveFiller_6.cxx L821, L2748-2842).
+        //   For curves without assigned endpoint vertices, find stick vertices near
+        //   the unbound endpoint and assign via put_pave_on_curve.
+        for ci in 0..self.ds.intersection_curves.len() {
+            let face_idxs = find_face_idxs_for_curve(&self.ds, ci);
+            if face_idxs[0] == usize::MAX || face_idxs[1] == usize::MAX { continue; }
+            self.put_stick_paves_on_curve(ci, &face_idxs);
         }
 
         // �?OCCT-aligned: PutBoundPaveOnCurve after FilterPavesOnCurves
