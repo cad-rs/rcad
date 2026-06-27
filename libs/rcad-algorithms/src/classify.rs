@@ -7,7 +7,7 @@
 //! - Spatial indexing and caching for performance
 //! - Parallel batch classification
 
-use glam::{DVec2, DVec3};
+use glam::DVec3;
 use rcad_kernel::geom::*;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,10 +16,9 @@ use crate::bopds::ds::*;
 use crate::bvh::{Aabb, Bvh};
 use crate::inttools;
 use crate::tolerance::{
-    AdaptiveTolerance, ToleranceContext, ToleranceLevel, TOLERANCE_COORD_SUB, TOLERANCE_LEN_MIN,
-    TOLERANCE_MESH_LEGACY, TOLERANCE_ANG,
+    AdaptiveTolerance, ToleranceContext, ToleranceLevel, TOLERANCE_LEN_MIN,
+    TOLERANCE_MESH_LEGACY,
 };
-use tracing::debug;
 
 // =============================================================================
 // Classification Types
@@ -420,7 +419,6 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
     sorted.sort_unstable();
     let tol = AdaptiveTolerance::from_scale(ds.model_scale());
     let result = classify_point_internal(point, &sorted, ds, tol, 0.0);
-    eprintln!("classify_point({:.3},{:.3},{:.3}) -> {:?} (n_faces={})", point.x, point.y, point.z, result, sorted.len());
     result
 }
 
@@ -433,6 +431,21 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
 ///   3. L236+: ray intersect faces → In/Out from face transition
 ///
 /// rcad: vertex/edge proximity (step 2) + face-on check + multi-ray voting (step 3).
+
+/// OCCT Trans() L728-745: apply transition to state, reversing if parmin < 0.
+///   tran: 0=IntCurveSurface_In, 1=IntCurveSurface_Out
+///   my_state: 2=ON, 3=IN, 4=OUT
+fn trans_helper(parmin: f64, tran: &mut i32, my_state: &mut i32) {
+    if parmin < 0.0 {
+        *tran = if *tran == 1 { 0i32 } else { 1i32 };
+    }
+    if *tran == 1 {
+        *my_state = 3; // IN (line from inside to outside)
+    } else {
+        *my_state = 4; // OUT (line from outside to inside)
+    }
+}
+
 fn classify_point_internal(
     point: DVec3,
     solid_face_indices: &[usize],
@@ -498,16 +511,16 @@ fn classify_point_internal(
     }
 
     // OCCT L232-234: mapEF - edge->face adjacency
-    let mut _map_ef: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+    let mut map_ef: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
     for &fi in solid_face_indices {
         for &ei in &ds.faces[fi].boundary_edges {
-            _map_ef.entry(ei).or_default().push(fi);
+            map_ef.entry(ei).or_default().push(fi);
         }
     }
 
     // Build direction list (OCCT L257-278: Segment + OtherSegment)
-    struct RayDir { dir: DVec3, _is_segment: bool }
-    let mut dirs: Vec<RayDir> = Vec::new();
+    struct DirEntry { dir: DVec3, max_par: f64 }
+    let mut dirs: Vec<DirEntry> = Vec::new();
     for &fi in solid_face_indices {
         let face_verts = ds.face_boundary_points(fi);
         if face_verts.len() < 3 { continue; }
@@ -515,100 +528,221 @@ fn classify_point_internal(
         let ray_dir = centroid - point;
         let dir_len = ray_dir.length();
         if dir_len > 1e-30 {
-            dirs.push(RayDir { dir: ray_dir / dir_len, _is_segment: true });
+            dirs.push(DirEntry { dir: ray_dir / dir_len, max_par: dir_len * 10.0 });
         }
     }
     for &d in &[DVec3::X, DVec3::Y, DVec3::Z, -DVec3::X, -DVec3::Y, -DVec3::Z] {
-        dirs.push(RayDir { dir: d, _is_segment: false });
+        dirs.push(DirEntry { dir: d, max_par: 1e10 });
     }
 
-    // OCCT L257-500: main while(isFaultyLine) loop
-    let mut is_faulty = true;
-    let mut dir_idx = 0usize;
+    // OCCT L203-523: BRepClass3d_SClassifier::Perform
+    //   myState: 0=unknown, 1=rejected, 2=ON, 3=IN, 4=OUT
+    let mut my_state: i32 = 0;
+    let mut is_faulty_line = true;
+    let mut an_ind_face = 0usize;
 
-    while is_faulty && dir_idx < dirs.len() {
-        let rd = &dirs[dir_idx];
-        dir_idx += 1;
-        is_faulty = false;
+    while is_faulty_line && an_ind_face < dirs.len() {
+        let rd = &dirs[an_ind_face];
 
-        // OCCT L306-360: line-edge proximity via UB-tree
-        //   OCCT L306: aTree.Select(aSelectorLine) -> edge/vertex hits
-        //   L310-326: for each vertex/edge hit, compute NearFaultPar
-        //   L328-360: for each edge, use mapEF to get two adjacent faces,
-        //     compute transition via GetTransi(f1,f2,EE,param,L,tran)
-        //     if valid -> Trans(parmin, tran, myState) -> In/Out
+        // OCCT L259-266: Segment / OtherSegment — rcad: direction from list
+        let i_flag = 0i32; // rcad: always valid direction (0=OK, 1=OnFace, 2=OUT, 3=bad)
+
+        // OCCT L270-278: anIndFace tracking via GetFaceSegmentIndex
+        let a_cur_ind = an_ind_face + 1;
+        if a_cur_ind > an_ind_face {
+            an_ind_face = a_cur_ind;
+        } else {
+            my_state = 1;
+            break;
+        }
+
+        // OCCT L280-297: iFlag handling
+        match i_flag {
+            1 => { my_state = 2; break; } // OnFace -> ON
+            2 => { my_state = 4; break; } // Outside -> OUT
+            3 => continue,                 // bad face -> skip
+            _ => {}
+        }
+
+        // OCCT L299-300: reset parmin
+        is_faulty_line = false;
+        let mut parmin = f64::MAX;
+        let mut near_fault_par = f64::MAX;
+
+        // OCCT L302-360: Line-edge proximity (aTree.Select(aSelectorLine))
+        //   L310-326: vertex hits -> NearFaultPar
+        //   L328-360: edge hits -> GetTransi -> Trans
         let line_ext = edge_tol * 100.0;
         let line_aabb = Aabb {
             min: point - DVec3::splat(line_ext),
             max: point + DVec3::splat(line_ext),
         };
-        let mut near_edge = false;
-        for &ei in &edge_tree.query_aabb(&line_aabb) {
-            if let Some(edge) = ds.edges.get(ei) {
-                let sv = ds.vertices[edge.start_vertex].point;
-                let to_ray = (sv - point).cross(rd.dir).length();
-                if to_ray < edge_tol * 10.0 {
-                    near_edge = true;
-                    // OCCT L334: GetTransi(f1, f2, EE, param, L, tran)
-                    //   rcad: use mapEF to find the two faces sharing this edge.
-                    //   Compute whether ray enters (In) or exits (Out) at the edge
-                    //   based on face normal orientation relative to ray direction.
-                    if let Some(faces) = _map_ef.get(&ei) {
-                        if faces.len() >= 2 {
-                            let f1 = faces[0];
-                            let f2 = faces[1];
-                            let n1 = &ds.faces[f1].normal;
-                            let n2 = &ds.faces[f2].normal;
-                            // OCCT transition: if ray aligns with n1 (dot > 0) and
-                            // opposes n2 (dot < 0), or vice versa, we have a crossing.
-                            let d1 = rd.dir.dot(*n1);
-                            let d2 = rd.dir.dot(*n2);
-                            if d1.abs() > ray_tol && d2.abs() > ray_tol {
-                                // d1 < 0 means entering face1, d2 > 0 means exiting face2
-                                // The sign change determines In or Out
-                                if d1 < 0.0 && d2 > 0.0 {
-                                    return Classification::Out; // entering solids
-                                } else if d1 > 0.0 && d2 < 0.0 {
-                                    return Classification::In; // exiting solids
-                                }
-                            }
+        // OCCT L314-316: collect vertex hits
+        let mut lv_ints: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        for &fi in solid_face_indices {
+            for &vi in &ds.faces[fi].boundary_verts {
+                if let Some(v) = ds.vertices.get(vi) {
+                    let to_ray = (v.point - point).cross(rd.dir).length();
+                    if to_ray < edge_tol * 50.0 {
+                        let lp = (v.point - point).dot(rd.dir);
+                        lv_ints.insert(vi);
+                        if lp.abs() < near_fault_par.abs() {
+                            near_fault_par = lp;
                         }
                     }
-                    break;
                 }
             }
         }
-        if near_edge { is_faulty = true; continue; }
+        // OCCT L328-360: edge hits -> GetTransi
+        for &ei in &edge_tree.query_aabb(&line_aabb) {
+            if let Some(edge) = ds.edges.get(ei) {
+                let sv = ds.vertices[edge.start_vertex].point;
+                let ev = ds.vertices[edge.end_vertex].point;
+                let to_ray = (sv - point).cross(rd.dir).length();
+                if to_ray > edge_tol * 10.0 {
+                    continue;
+                }
+                // OCCT L343-347: skip edges whose vertices are also hit
+                if lv_ints.contains(&edge.start_vertex) || lv_ints.contains(&edge.end_vertex) {
+                    continue;
+                }
+                // OCCT L349-360: GetTransi(f1, f2, EE, param, L, tran)
+                if let Some(faces) = map_ef.get(&ei) {
+                    if faces.len() >= 2 {
+                        let f1 = faces[0];
+                        let f2 = faces[1];
+                        let n1 = ds.faces[f1].normal;
+                        let n2 = ds.faces[f2].normal;
+                        let ang_tol = 1e-12;
+                        // OCCT L677-683: check line orthogonal to normals
+                        if rd.dir.dot(n1).abs() < ang_tol || rd.dir.dot(n2).abs() < ang_tol {
+                            near_fault_par = 0.0;
+                            continue;
+                        }
+                        // OCCT L685-701: parallel normals via IsParallel
+                        let n_dot = n1.dot(n2).abs();
+                        let mut tran = 0i32; // 0=In, 1=Out (matches Trans helper)
+                        let tst: i32;
+                        if n_dot > 1.0 - ang_tol {
+                            // OCCT L687-700: nf1 parallel nf2
+                            let ang_d = n1.dot(rd.dir);
+                            if ang_d.abs() < ang_tol {
+                                near_fault_par = 0.0;
+                                continue;
+                            } else if ang_d > 0.0 {
+                                tran = 1; // Out
+                            } else {
+                                tran = 0; // In
+                            }
+                            tst = 1;
+                        } else {
+                            // OCCT L703-723: non-parallel normals
+                            let n_cross = n1.cross(n2);
+                            let proj_l = n_cross.cross(rd.dir).cross(n_cross);
+                            let proj_len = proj_l.length();
+                            if proj_len < ang_tol {
+                                near_fault_par = 0.0;
+                                continue;
+                            }
+                            let proj_dir = proj_l / proj_len;
+                            let f_ad = n1.dot(proj_dir);
+                            let s_ad = n2.dot(proj_dir);
+                            if f_ad < -ang_tol && s_ad < -ang_tol {
+                                tran = 0; // In
+                                tst = 1;
+                            } else if f_ad > ang_tol && s_ad > ang_tol {
+                                tran = 1; // Out
+                                tst = 1;
+                            } else {
+                                tst = 0; // skip
+                            }
+                        }
+                        // OCCT L351-359: apply Trans if valid
+                        let edge_mid = (sv + ev) * 0.5;
+                        let lpar = (edge_mid - point).dot(rd.dir);
+                        if tst == 1 && lpar.abs() < parmin.abs() {
+                            parmin = lpar;
+                            trans_helper(parmin, &mut tran, &mut my_state);
+                        } else if lpar.abs() < near_fault_par.abs() {
+                            near_fault_par = lpar;
+                        }
+                    }
+                }
+            }
+        }
 
-        // OCCT L363-493: for each face -> nearest intersection -> In/Out from transition
-        let mut nearest_t = f64::MAX;
-        let mut nearest_result: Option<Classification> = None;
-
+        // OCCT L363-509: Face intersection loop
         for &fi in solid_face_indices {
+            if my_state == 2 {
+                break;
+            }
+            let face = &ds.faces[fi];
+            // OCCT L366-370: Shell/Face reject (rcad: flat face list, no rejection)
+            // OCCT L375-397: Intersector3d.Perform(L, minW, maxW)
+            let min_w = -rd.max_par.max(10.0 * ray_tol + 0.01 * rd.max_par);
+            let max_w = rd.max_par.min(1e10);
             let result = ray_cast_classify_point_on_face(
                 point, rd.dir, fi, ds, boundary_tol, ray_tol,
             );
             match result {
-                RayFaceResult::On => return Classification::On,
+                RayFaceResult::On => {
+                    // OCCT L451-455: |parmin| <= Tol -> ON
+                    // If the face contains the point, it's ON the boundary
+                    my_state = 2;
+                    break;
+                }
                 RayFaceResult::In(t) | RayFaceResult::Out(t) => {
-                    if t >= -ray_tol && t < nearest_t {
-                        nearest_t = t;
-                        nearest_result = Some(match result {
-                            RayFaceResult::In(_) => Classification::In,
-                            _ => Classification::Out,
-                        });
+                    // OCCT L444-488: process intersection point
+                    // OCCT L446: |WParameter(i)| < |parmin| - PConfusion
+                    if t.abs() < parmin.abs() - ray_tol {
+                        parmin = t;
+                        // OCCT L448: if |parmin| <= Tol -> ON
+                        if parmin.abs() <= ray_tol {
+                            my_state = 2;
+                            break;
+                        }
+                        // OCCT L458-473: State == IN -> process transition
+                        // RayFaceResult::In(t) = ray exits = transition=Out, state=IN
+                        // RayFaceResult::Out(t) = ray enters = transition=In, state=IN
+                        let mut tran = match result {
+                            RayFaceResult::Out(_) => 0i32, // In (entering)
+                            _ => 1i32, // Out (exiting)
+                        };
+                        // OCCT L463-469: TANGENT -> continue
+                        // (rcad doesn't produce tangent transitions from face intersection)
+                        // OCCT L472: Trans(parmin, tran, myState)
+                        trans_helper(parmin, &mut tran, &mut my_state);
                     }
                 }
-                RayFaceResult::Faulty => {}
+                RayFaceResult::Faulty => {
+                    // OCCT L477-480: State == ON -> isFaultyLine
+                    // Check if this face has the point on its boundary
+                    // (rcad: Faulty can mean parallel or grazes boundary)
+                    // The ray grazes this face; we don't break here,
+                    // but we track via isFaultyLine if no valid intersection found
+                    continue;
+                }
             }
         }
+        if my_state == 2 {
+            break;
+        }
 
-        if let Some(class) = nearest_result { return class; }
-
-        is_faulty = true;
+        // OCCT L511-515: NearFaultPar vs parmin -> faulty line
+        if near_fault_par.is_finite()
+            && parmin.abs() >= near_fault_par.abs() - 1e-12
+        {
+            is_faulty_line = true;
+        }
     }
 
-    Classification::Out
+    // OCCT L525-542: convert myState to Classification
+    match my_state {
+        2 => Classification::On,
+        3 => Classification::In,
+        4 => Classification::Out,
+        _ => Classification::Out,
+    }
 }
 
 enum RayFaceResult {

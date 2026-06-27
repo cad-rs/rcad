@@ -29,6 +29,9 @@ pub(crate) struct ResultBuilder {
     pub(crate) ic_edge_map: HashMap<usize, usize>,
     pub(crate) source_has_compound: bool,
     pub(crate) tmp_compsolid_groups: Vec<Vec<usize>>,
+    /// OCCT-aligned: per-source side tracking for solids (0=ShapeA/Args, 1=ShapeB/Tools).
+    ///   Parallel to tmp_solids: solid_side_origin[i] = side that produced tmp_solids[i].
+    pub(crate) solid_side_origin: Vec<usize>,
     /// Final topods shell references (populated by build_topods from tmp_shells).
     pub(crate) shells: Vec<topods::ShapeRef>,
     /// Final topods solid references (populated by build_topods from tmp_solids).
@@ -626,6 +629,7 @@ impl ResultBuilder {
             tmp_solids: Vec::new(),
             source_has_compound: false,
             tmp_compsolid_groups: Vec::new(),
+            solid_side_origin: Vec::new(),
             shells: Vec::new(),
             solids: Vec::new(),
             compsolid_groups: Vec::new(),

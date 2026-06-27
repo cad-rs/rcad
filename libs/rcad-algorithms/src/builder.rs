@@ -1389,16 +1389,10 @@ impl<'a> BooleanBuilder<'a> {
             let pt = result.faces[fi].8;
             let class = classify_point(pt, other_faces, self.ds);
             if class == Classification::In {
-                eprintln!("DEBUG classify: fi={} origin={:?} pt=({:.6},{:.6},{:.6}) class=In", fi, origin, pt.x, pt.y, pt.z);
-            }
-
-            if class == Classification::In {
                 let other_side = if side_idx == 0 { 1 } else { 0 };
                 my_in_parts.entry(other_side).or_default().push(fi);
             }
         }
-
-        // OCCT L210-262: Analyze results of classification
 
         // OCCT L210-262: Analyze results of classification
         let mut assignments: Vec<(usize, usize, &'static str)> = Vec::new();
@@ -1480,39 +1474,219 @@ impl<'a> BooleanBuilder<'a> {
         assignments
     }
 
+    /// OCCT-aligned: BuildSplitSolids (Builder_3.cxx L413-618).
+    ///   For each source side with IN faces:
+    ///     - Build full face set (draft faces + IN faces in both orientations)
+    ///     - Run BuilderSolid::perform() → areas
+    ///     - Store ALL areas in result.tmp_solids (no boolean filter — BuildRC handles that)
+    ///   Without IN faces: store shells directly (no boolean filter).
     fn build_split_solids(&self, result: &mut ResultBuilder,
                           assignments: &[(usize, usize, &'static str)]) {
-        let mut result_solids: Vec<Vec<usize>> = Vec::new();
+        let my_in_parts = self.my_in_parts.borrow();
+        let has_in_faces = !my_in_parts.is_empty();
 
-        let mut group: Vec<usize> = Vec::new();
-        for &(si, origin, state) in assignments {
-            let keep = match self.op {
-                BooleanOpType::Union => state == "OUT",
-                BooleanOpType::Intersection => state == "IN",
-                BooleanOpType::Difference => match (origin, state) {
-                    (0, "OUT") | (1, "IN") | (1, "ON") => true,
-                    _ => false,
-                },
+        // Helper: map result face index → DS face index
+        let result_to_ds = |rfi: usize, expected_origin: ShapeOrigin| -> Option<usize> {
+            let fo = result.face_origins.get(rfi)?;
+            let sfi = match (expected_origin, fo) {
+                (ShapeOrigin::ShapeA, FaceOrigin::FromA(sfi)) => *sfi,
+                (ShapeOrigin::ShapeB, FaceOrigin::FromB(sfi)) => *sfi,
+                _ => return None,
             };
-            if keep { group.push(si); }
-        }
-        if !group.is_empty() {
-            let mut group_faces: Vec<usize> = Vec::new();
-            for &si in &group {
-                if si < result.tmp_shells.len() {
-                    group_faces.extend(&result.tmp_shells[si]);
+            self.ds.faces.iter().position(|f| f.origin == expected_origin && f.source_face_idx == sfi)
+        };
+        // Inverse: DS face index → result face index
+        let ds_to_result = |dfi: usize| -> Option<usize> {
+            let dsf = self.ds.faces.get(dfi)?;
+            result.face_origins.iter().position(|fo| match (dsf.origin, fo) {
+                (ShapeOrigin::ShapeA, FaceOrigin::FromA(sfi)) => dsf.source_face_idx == *sfi,
+                (ShapeOrigin::ShapeB, FaceOrigin::FromB(sfi)) => dsf.source_face_idx == *sfi,
+                _ => false,
+            })
+        };
+
+        let mut result_solids: Vec<Vec<usize>> = Vec::new();
+        let mut seen_ds_sets: Vec<std::collections::BTreeSet<usize>> = Vec::new();
+
+        // Phase 1: BuilderSolid path for sides WITH IN faces
+        for side in 0..=1 {
+            let origin = if side == 0 { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
+            let _other_origin = if side == 0 { ShapeOrigin::ShapeB } else { ShapeOrigin::ShapeA };
+
+            let side_result_faces: Vec<usize> = result.face_origins.iter().enumerate()
+                .filter(|(_, fo)| match (side, fo) {
+                    (0, FaceOrigin::FromA(_)) => true,
+                    (1, FaceOrigin::FromB(_)) => true,
+                    _ => false,
+                })
+                .map(|(fi, _)| fi)
+                .collect();
+            if side_result_faces.is_empty() { continue; }
+
+            let in_faces_this: Vec<usize> = my_in_parts.get(&side)
+                .cloned()
+                .unwrap_or_default();
+
+            if !has_in_faces || in_faces_this.is_empty() {
+                continue;
+            }
+
+            // OCCT L491-511: Fill Shell Faces Set + internal faces in both orientations
+            let mut ds_face_set: Vec<usize> = Vec::new();
+            for &rfi in &side_result_faces {
+                if let Some(dfi) = result_to_ds(rfi, origin) {
+                    ds_face_set.push(dfi);
                 }
             }
-            if !group_faces.is_empty() {
+            for &rfi in &in_faces_this {
+                if let Some(dfi) = result_to_ds(rfi, _other_origin) {
+                    ds_face_set.push(dfi);
+                    ds_face_set.push(dfi);
+                }
+            }
+            ds_face_set.sort_unstable();
+            ds_face_set.dedup();
+            if ds_face_set.is_empty() { continue; }
+
+            // OCCT L513-517: BOPAlgo_SplitSolid (≡ BuilderSolid)
+            let mut bs = crate::bopds::builder_solid::BuilderSolid::new();
+            bs.set_shapes(&ds_face_set);
+            bs.perform(&self.ds);
+
+            // OCCT L539-542 + L579-617: map areas → result solids + BOPTools_Set dedup
+            for area_ds in bs.areas() {
+                let ds_set: std::collections::BTreeSet<usize> = area_ds.iter().copied().collect();
+                if seen_ds_sets.iter().any(|s| s == &ds_set) {
+                    continue;
+                }
+                seen_ds_sets.push(ds_set);
+
+                let mut result_faces: Vec<usize> = Vec::new();
+                let mut mapped: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+                for &dfi in area_ds {
+                    if let Some(rfi) = ds_to_result(dfi) {
+                        if mapped.insert(rfi) {
+                            result_faces.push(rfi);
+                        }
+                    }
+                }
+                if result_faces.is_empty() { continue; }
+
+                // Store ALL areas — BuildRC applies boolean filtering later
                 let csi = result.tmp_shells.len();
-                result.tmp_shells.push(group_faces);
+                result.tmp_shells.push(result_faces);
                 result_solids.push(vec![csi]);
+                result.solid_side_origin.push(side);
             }
         }
+
+        // Phase 2: source sides WITHOUT IN faces — one solid per source side
+        for s in 0..=1 {
+            let mut side_shells: Vec<usize> = Vec::new();
+            for &(si, _origin, _state) in assignments {
+                let sid = _origin;
+                if sid != s { continue; }
+                let in_faces_this: Vec<usize> = my_in_parts.get(&sid).cloned().unwrap_or_default();
+                if has_in_faces && !in_faces_this.is_empty() {
+                    continue;
+                }
+                side_shells.push(si);
+            }
+            if !side_shells.is_empty() {
+                let mut group_faces: Vec<usize> = Vec::new();
+                for &si in &side_shells {
+                    if si < result.tmp_shells.len() {
+                        group_faces.extend(&result.tmp_shells[si]);
+                    }
+                }
+                if !group_faces.is_empty() {
+                    let csi = result.tmp_shells.len();
+                    result.tmp_shells.push(group_faces);
+                    result_solids.push(vec![csi]);
+                    result.solid_side_origin.push(s);
+                }
+            }
+        }
+
         result.tmp_solids = result_solids;
 
         // OCCT BuilderSolid::PerformAreas (L397-576): shell-level void detection.
         self.detect_internal_voids(result, assignments);
+    }
+
+    /// OCCT-aligned: BuildRC (BOPAlgo_BOP.cxx L583-867, SOLID filtering part).
+    ///   Filter result.tmp_solids by boolean operation type using args/tools face-set
+    ///   comparison (BOPTools_Set):
+    ///     1. Split solids by source side (solid_side_origin) into args and tools groups
+    ///     2. For each args solid, build its DS face set and check if any tools solid
+    ///        has the same face set (intersection region)
+    ///     3. FUSE: keep all; COMMON: keep only solids with matching face set in tools;
+    ///        CUT: keep only solids WITHOUT matching face set in tools
+    fn build_rc(&self, result: &mut ResultBuilder) {
+        let solids = std::mem::take(&mut result.tmp_solids);
+        let sides = std::mem::take(&mut result.solid_side_origin);
+        if sides.len() != solids.len() { return; }
+
+        // Build DS face set (BOPTools_Set equivalent) for each solid
+        let solid_ds_face_sets: Vec<std::collections::BTreeSet<usize>> = solids.iter().map(|solid_shells| {
+            let mut ds_set: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+            for &si in solid_shells {
+                if let Some(shell_faces) = result.tmp_shells.get(si) {
+                    for &fi in shell_faces {
+                        if let Some(origin) = result.face_origins.get(fi) {
+                            let (exp_origin, sfi) = match origin {
+                                FaceOrigin::FromA(sfi) => (ShapeOrigin::ShapeA, *sfi),
+                                FaceOrigin::FromB(sfi) => (ShapeOrigin::ShapeB, *sfi),
+                                _ => continue,
+                            };
+                            if let Some(dfi) = self.ds.faces.iter().position(|f|
+                                f.origin == exp_origin && f.source_face_idx == sfi)
+                            {
+                                ds_set.insert(dfi);
+                            }
+                        }
+                    }
+                }
+            }
+            ds_set
+        }).collect();
+
+        // Split into args (side=0) and tools (side=1) groups
+        let mut args_face_sets: Vec<&std::collections::BTreeSet<usize>> = Vec::new();
+        let mut tools_face_sets: Vec<&std::collections::BTreeSet<usize>> = Vec::new();
+        for (i, &side) in sides.iter().enumerate() {
+            if side == 0 {
+                args_face_sets.push(&solid_ds_face_sets[i]);
+            } else {
+                tools_face_sets.push(&solid_ds_face_sets[i]);
+            }
+        }
+
+        let mut kept_solids: Vec<Vec<usize>> = Vec::new();
+
+        match self.op {
+            BooleanOpType::Union => {
+                // OCCT L594-608: FUSE — keep all
+                kept_solids = solids;
+            }
+            BooleanOpType::Intersection => {
+                // OCCT L724-783: COMMON — keep args solids whose face set also exists in tools
+                for (i, args_fs) in args_face_sets.iter().enumerate() {
+                    if tools_face_sets.iter().any(|tfs| tfs == args_fs) {
+                        kept_solids.push(solids[i].clone());
+                    }
+                }
+            }
+            BooleanOpType::Difference => {
+                // OCCT L724-783: CUT (A-B) — keep args solids NOT in tools
+                for (i, args_fs) in args_face_sets.iter().enumerate() {
+                    if !tools_face_sets.iter().any(|tfs| tfs == args_fs) {
+                        kept_solids.push(solids[i].clone());
+                    }
+                }
+            }
+        }
+        result.tmp_solids = kept_solids;
     }
 
     /// ✅ OCCT-aligned: FillInternalShapes (Builder_3.cxx L622-887).
@@ -1984,8 +2158,11 @@ impl<'a> BooleanBuilder<'a> {
         let saved_shells = result.tmp_shells.clone();
         self.build_result(ShapeType::Shell, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // Phase 5: FillImagesSolids (L400-410) → BuildResult(SOLID) (L406-410).
+        // Phase 5: FillImagesSolids (L400-410) → BuildRC (L563-564) → BuildResult(SOLID) (L406-410).
         self.fill_images_solids(&mut result, saved_shells);
+        if self.has_errors { return Err(BooleanError::DegenerateResult); }
+        // OCCT L563-564: BuildShape → BuildRC applies boolean operation filtering
+        self.build_rc(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result(ShapeType::Solid, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
