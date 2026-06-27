@@ -441,12 +441,11 @@ fn classify_point_internal(
     workspace_fuzzy: f64,
 ) -> Classification {
     let wf = workspace_fuzzy.max(0.0);
-    let on_surface_tol = relaxed_tol_for_solid_face_set(ds, tol, solid_face_indices, wf);
+    let boundary_tol = relaxed_tol_for_solid_face_set(ds, tol, solid_face_indices, wf);
+    let ray_tol = tol.tolerance(ToleranceLevel::Strict);
+    let edge_tol = TOLERANCE_MESH_LEGACY.max(boundary_tol);
 
-    // ═══ OCCT Step 2 (L218-230): Vertex/Edge proximity → On ═══
-    //   OCCT uses UB-tree Select(aSelectorPoint) with the solid's
-    //   edge/vertex AABB tree.  rcad: O(n) iteration over all face edges.
-    let edge_tol = TOLERANCE_MESH_LEGACY.max(on_surface_tol);
+    // OCCT L218-230: Vertex/Edge proximity -> On
     for &fi in solid_face_indices {
         let face = &ds.faces[fi];
         for &ei in &face.boundary_edges {
@@ -477,115 +476,90 @@ fn classify_point_internal(
         }
     }
 
-    // ═══ OCCT Step 3 (L236+): Ray intersection with faces ═══
-    //   OCCT builds a line through P via SolidExplorer::Segment (L261),
-    //   finds closest face intersection (L300-399), and determines In/Out
-    //   from face transition (FORWARD→In, REVERSED→Out).
-    //   If the ray grazes an edge, retries via OtherSegment (L265).
-    //
-    //   rcad: same single-ray + retry pattern.  For each face in the solid,
-    //   build a ray from P toward the face centroid.  If the ray grazes an
-    //   edge (faulty line), try the next face direction (retry).
-    classify_with_single_ray(point, solid_face_indices, ds, tol, wf)
-}
+    // OCCT L232-234: mapEF - edge->face adjacency
+    let mut _map_ef: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+    for &fi in solid_face_indices {
+        for &ei in &ds.faces[fi].boundary_edges {
+            _map_ef.entry(ei).or_default().push(fi);
+        }
+    }
 
-/// OCCT-aligned: single-ray classification with face-directed retry.
-///
-/// OCCT BRepClass3d_SClassifier::Perform (L257-399):
-///   1. SolidExplorer.Segment(P, L, Par) — builds line toward first face
-///   2. UB-tree line-edge intersection check (L306-360)
-///   3. Face intersection + transition (L363-399)
-///   4. If faulty (ray grazes edge), retry via OtherSegment (L265)
-///
-/// rcad: for each face, builds ray from P toward face centroid.
-///   If ray grazes an edge (intersection returns None for face boundary),
-///   try the next face centroid direction (matching OCCT retry pattern).
-fn classify_with_single_ray(
-    point: DVec3,
-    solid_face_indices: &[usize],
-    ds: &DS,
-    tol: AdaptiveTolerance,
-    workspace_fuzzy: f64,
-) -> Classification {
-    let wf = workspace_fuzzy.max(0.0);
-    let boundary_tol = relaxed_tol_for_solid_face_set(ds, tol, solid_face_indices, wf);
-    let ray_tol = tol.tolerance(ToleranceLevel::Strict);
-
-    // Try each face direction (OCCT L257-278: Segment/OtherSegment pattern)
-    // For each ray direction, check ALL faces and find nearest intersection
-    // (OCCT L363-399: Intersector3d.Perform for each face → find nearest parmin).
-    let mut test_dirs: Vec<DVec3> = Vec::new();
-
-    // OCCT L259-266: Segment(P) → ray toward face; OtherSegment(P) → alternate
+    // Build direction list (OCCT L257-278: Segment + OtherSegment)
+    struct RayDir { dir: DVec3, _is_segment: bool }
+    let mut dirs: Vec<RayDir> = Vec::new();
+    // Segment: toward face centroids
     for &fi in solid_face_indices {
         let face_verts = ds.face_boundary_points(fi);
         if face_verts.len() < 3 { continue; }
         let centroid = face_verts.iter().sum::<DVec3>() / face_verts.len() as f64;
         let ray_dir = centroid - point;
         let dir_len = ray_dir.length();
-        if dir_len < 1e-30 { continue; }
-        test_dirs.push(ray_dir / dir_len);
-    }
-
-    // OCCT L257-278: try each direction; if faulty → try next (OtherSegment)
-    for ray_dir in &test_dirs {
-        if let Some(class) = try_classify_along_ray(point, *ray_dir, solid_face_indices,
-                                                      ds, boundary_tol, ray_tol) {
-            return class;
+        if dir_len > 1e-30 {
+            dirs.push(RayDir { dir: ray_dir / dir_len, _is_segment: true });
         }
     }
-
-    // OCCT L265: OtherSegment(P) → fixed/alternate directions
-    for &dir in &[DVec3::X, DVec3::Y, DVec3::Z,
-                  -DVec3::X, -DVec3::Y, -DVec3::Z,
-                  DVec3::new(0.0, 0.57735, 0.57735)] {
-        if let Some(class) = try_classify_along_ray(point, dir, solid_face_indices,
-                                                      ds, boundary_tol, ray_tol) {
-            return class;
-        }
+    // OtherSegment: fixed directions
+    for &d in &[DVec3::X, DVec3::Y, DVec3::Z, -DVec3::X, -DVec3::Y, -DVec3::Z] {
+        dirs.push(RayDir { dir: d, _is_segment: false });
     }
+
+    // OCCT L257-500: main while(isFaultyLine) loop
+    let mut _is_faulty = true;
+    let mut dir_idx = 0usize;
+
+    while _is_faulty && dir_idx < dirs.len() {
+        let rd = &dirs[dir_idx];
+        dir_idx += 1;
+        _is_faulty = false;
+
+        // OCCT L299-306: check line-edge proximity
+        let mut near_edge = false;
+        for &fi in solid_face_indices {
+            for &ei in &ds.faces[fi].boundary_edges {
+                if let Some(edge) = ds.edges.get(ei) {
+                    let sv = ds.vertices[edge.start_vertex].point;
+                    let ev = ds.vertices[edge.end_vertex].point;
+                    let to_ray = (sv - point).cross(rd.dir).length();
+                    if to_ray < ray_tol * 10.0 { near_edge = true; break; }
+                }
+            }
+            if near_edge { break; }
+        }
+        if near_edge { _is_faulty = true; continue; }
+
+        // OCCT L363-493: for each face -> nearest intersection -> In/Out from transition
+        let mut nearest_t = f64::MAX;
+        let mut nearest_result: Option<Classification> = None;
+
+        for &fi in solid_face_indices {
+            let result = ray_cast_classify_point_on_face(
+                point, rd.dir, fi, ds, boundary_tol, ray_tol,
+            );
+            match result {
+                RayFaceResult::On => return Classification::On,
+                RayFaceResult::In(t) | RayFaceResult::Out(t) => {
+                    if t >= -ray_tol && t < nearest_t {
+                        nearest_t = t;
+                        nearest_result = Some(match result {
+                            RayFaceResult::In(_) => Classification::In,
+                            _ => Classification::Out,
+                        });
+                    }
+                }
+                RayFaceResult::Faulty => {}
+            }
+        }
+
+        if let Some(class) = nearest_result { return class; }
+
+        // No valid intersection -> retry
+        _is_faulty = true;
+    }
+
     Classification::Out
 }
 
-/// OCCT L306-493: fire ray, find nearest face intersection, determine In/Out.
-/// Returns None if no valid intersection found (all faces return Faulty).
-fn try_classify_along_ray(
-    point: DVec3,
-    ray_dir: DVec3,
-    solid_face_indices: &[usize],
-    ds: &DS,
-    boundary_tol: f64,
-    ray_tol: f64,
-) -> Option<Classification> {
-    // OCCT L363-399: for each face, find nearest intersection along this ray
-    let mut nearest_t = f64::MAX;
-    let mut nearest_result: Option<Classification> = None;
-
-    for &fi in solid_face_indices {
-        let result = ray_cast_classify_point_on_face(
-            point, ray_dir, fi, ds, boundary_tol, ray_tol,
-        );
-        match result {
-            RayFaceResult::On => return Some(Classification::On),
-            RayFaceResult::In(t) => {
-                if t >= -ray_tol && t < nearest_t {
-                    nearest_t = t;
-                    nearest_result = Some(Classification::In);
-                }
-            }
-            RayFaceResult::Out(t) => {
-                if t >= -ray_tol && t < nearest_t {
-                    nearest_t = t;
-                    nearest_result = Some(Classification::Out);
-                }
-            }
-            RayFaceResult::Faulty => {}
-        }
-    }
-
-    nearest_result
-}
-
+// keep: pub fn classify_point
 /// Result of a single ray-face intersection, matching OCCT iFlag semantics.
 /// The f64 parameter is the ray parameter t (distance along ray at intersection).
 enum RayFaceResult {
