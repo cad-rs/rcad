@@ -301,6 +301,8 @@ pub trait BRepTool {
     fn vertex_tolerance(&self, v: ShapeRef) -> f64;
     /// BRep_Tool::Degenerated(aE).
     fn is_edge_degenerated(&self, e: ShapeRef) -> bool;
+    /// TopExp: given one vertex of an edge, return the other vertex.
+    fn edge_other_vertex(&self, edge: ShapeRef, v: ShapeRef) -> ShapeRef;
     /// BRep_Tool::Parameter(aV, aE, aF) — vertex parameter on edge's pcurve.
     fn parameter_on_edge(&self, vertex: ShapeRef, edge: ShapeRef, face: ShapeRef) -> Option<f64>;
     /// BRep_Tool::CurveOnSurface(aE, aF) — pcurve of edge on face.
@@ -324,6 +326,11 @@ impl BRepTool for BRep {
 
     fn is_edge_degenerated(&self, e: ShapeRef) -> bool {
         self.edge(e).degenerated
+    }
+
+    fn edge_other_vertex(&self, edge: ShapeRef, v: ShapeRef) -> ShapeRef {
+        let ed = self.edge(edge);
+        if ed.first.index == v.index { ed.last } else { ed.first }
     }
 
     fn parameter_on_edge(&self, vertex: ShapeRef, edge: ShapeRef, _face: ShapeRef) -> Option<f64> {
@@ -357,7 +364,7 @@ impl BRepTool for BRep {
 }
 
 /// Surface-aware UResolution (OCCT: BRepAdaptor_Surface::UResolution).
-fn u_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
+pub fn u_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
     match surf {
         Surface3::Sphere(s) => tol3d / s.radius.max(1e-15),
         Surface3::Cylinder(c) => tol3d / c.radius.max(1e-15),
@@ -368,7 +375,7 @@ fn u_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
 }
 
 /// Surface-aware VResolution (OCCT: BRepAdaptor_Surface::VResolution).
-fn v_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
+pub fn v_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
     match surf {
         Surface3::Sphere(s) => tol3d / s.radius.max(1e-15),
         Surface3::Cylinder(_) => tol3d,

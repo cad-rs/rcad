@@ -13,14 +13,18 @@ pub(crate) fn segments_to_topo_ds(
     _ds: &DS,
     face_idx: usize,
 ) -> Vec<WireSegmentTopoDS> {
-    let face_ref = ShapeRef::new(face_idx);
+    // Note: The ShapeRef for the face is NOT used for BRepTool queries
+    // (face data is passed directly via face_idx).  Using 0 as placeholder.
+    let face_ref = ShapeRef::new(0);
+    let e_base = _ds.vertices.len();
+    let ic_base = e_base + _ds.edges.len();
     segments.iter().map(|seg| {
         let (edge_ref, source) = match &seg.source {
             WireEdgeSource::DsEdge(ei) => {
-                (ShapeRef::new(*ei), WireEdgeSourceTopoDS::DsEdge(ShapeRef::new(*ei)))
+                (ShapeRef::new(e_base + *ei), WireEdgeSourceTopoDS::DsEdge(ShapeRef::new(e_base + *ei)))
             }
             WireEdgeSource::IntersectionCurve(ci) => {
-                (ShapeRef::new(*ci), WireEdgeSourceTopoDS::IntersectionCurve(ShapeRef::new(*ci)))
+                (ShapeRef::new(ic_base + *ci), WireEdgeSourceTopoDS::IntersectionCurve(ShapeRef::new(ic_base + *ci)))
             }
             WireEdgeSource::SeamEdge => {
                 (ShapeRef::new(0), WireEdgeSourceTopoDS::SeamEdge)

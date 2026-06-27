@@ -5,8 +5,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use indexmap::IndexMap;
 use glam::DVec2;
-use rcad_kernel::geom::{Curve2d, Curve2dEval};
-use rcad_kernel::topods::{BRepTool, ShapeRef};
+use rcad_kernel::geom::{Curve2d, Curve2dEval, Surface3, Curve3};
+use rcad_kernel::topods::{BRepTool, Orientation, ShapeRef};
 use crate::tolerance::*;
 use super::types::{WireSegmentTopoDS, WireEdgeSourceTopoDS, WireFace};
 use super::wire_splitter::{
@@ -16,16 +16,100 @@ use super::wire_splitter::{
 use crate::inttools::fclass2d::curve2d_nb_samples;
 use super::point_in_polygon_2d;
 
+// ---------------------------------------------------------------------------
+// TopoDS-native EdgeInfo — no seg_idx, holds edge+face directly (OCCT aligned)
+// ---------------------------------------------------------------------------
+
+/// OCCT-aligned: EdgeInfo for TopoDS-native path.
+/// Holds the edge and face directly instead of indexing into a WireSegment array.
+#[derive(Debug, Clone)]
+pub(crate) struct EdgeInfoTopoDS {
+    pub(crate) edge: ShapeRef,
+    pub(crate) face: ShapeRef,
+    pub(crate) passed: bool,
+    pub(crate) in_flag: bool,
+    pub(crate) is_inside: bool,
+    pub(crate) angle: f64,
+}
+
+/// Mark an EdgeInfoTopoDS entry as passed at a given vertex.
+pub(crate) fn mark_edge_passed_topo(
+    smart_map: &mut IndexMap<usize, Vec<EdgeInfoTopoDS>>,
+    edge: ShapeRef,
+    vertex: usize,
+    in_flag: bool,
+) {
+    if let Some(infos) = smart_map.get_mut(&vertex) {
+        for info in infos.iter_mut() {
+            if info.edge.index == edge.index && info.in_flag == in_flag {
+                info.passed = true;
+                return;
+            }
+        }
+    }
+}
+
+/// Find the angle for an edge at a vertex (TopoDS variant).
+pub(crate) fn find_angle_at_topo(
+    smart_map: &IndexMap<usize, Vec<EdgeInfoTopoDS>>,
+    edge: ShapeRef,
+    vertex: usize,
+    in_flag: bool,
+) -> Option<f64> {
+    smart_map.get(&vertex)?.iter()
+        .find(|ei| ei.edge.index == edge.index && ei.in_flag == in_flag)
+        .map(|ei| ei.angle)
+}
+
+/// Select best outgoing edge from candidates (TopoDS variant).
+pub(crate) fn select_best_outgoing_topo<'a>(
+    candidates: &[&'a EdgeInfoTopoDS],
+    angle_in: f64,
+    incoming_is_boundary: bool,
+    incoming_edge: ShapeRef,
+) -> Option<&'a EdgeInfoTopoDS> {
+    if candidates.is_empty() { return None; }
+    let a_two_pi = std::f64::consts::TAU;
+    let eps = std::f64::EPSILON;
+    let mut a_min_angle = 100.0;
+    let mut a_nb_ways_inside: i32 = 0;
+    let mut p_only_way_in: Option<&EdgeInfoTopoDS> = None;
+    let mut p_edge_info: Option<&EdgeInfoTopoDS> = None;
+    for an_ei in candidates {
+        let a_angle = if an_ei.edge.index == incoming_edge.index {
+            a_two_pi
+        } else {
+            super::angle_2d::clock_wise_angle(angle_in, an_ei.angle)
+        };
+        if incoming_is_boundary && an_ei.is_inside {
+            a_nb_ways_inside += 1;
+            p_only_way_in = Some(an_ei);
+        }
+        if a_angle < a_min_angle - eps {
+            a_min_angle = a_angle;
+            p_edge_info = Some(an_ei);
+        }
+    }
+    if a_nb_ways_inside == 1 { p_edge_info = p_only_way_in; }
+    p_edge_info
+}
+
 /// Walk a path extracting closed wires using BRepTool-based data access.
 ///
 /// Analogous to walk_path_extract_wires but uses ShapeRef handles and BRepTool
-/// queries instead of DS indices + world_to_uv fallbacks.
+/// queries for edge/vertex data. Surface data (tolerances) must be pre-computed
+/// and passed via compute_params.
+pub(crate) struct WalkParams {
+    pub(crate) u_res: fn(f64) -> f64,
+    pub(crate) v_res: fn(f64) -> f64,
+}
 pub(crate) fn walk_path_extract_wires_topoDS(
     start_si: usize,
     segments: &[WireSegmentTopoDS],
     smart_map: &mut IndexMap<usize, Vec<EdgeInfo>>,
     wires: &mut Vec<Vec<usize>>,
     tool: &dyn BRepTool,
+    face_surface: &Surface3,
 ) {
     let start_seg = &segments[start_si];
     // If this segment has no EdgeInfo, it cannot be walked.
@@ -76,18 +160,20 @@ pub(crate) fn walk_path_extract_wires_topoDS(
         None
     };
 
-    // OCCT Tolerance2D/UTolerance2D/VTolerance2D using BRepTool
+    // OCCT Tolerance2D/UTolerance2D/VTolerance2D using direct surface computation
     let vtol = |vi: usize| -> f64 {
         tool.vertex_tolerance(ShapeRef::new(vi)).max(TOLERANCE_ABS)
     };
-    let u_resolution = |vt: f64| -> f64 { tool.u_resolution(ShapeRef::new(0), vt) };
-    let v_resolution = |vt: f64| -> f64 { tool.v_resolution(ShapeRef::new(0), vt) };
+    // Use face surface resolution functions directly instead of BRepTool queries
+    // (the tool's face_surface/u_resolution require valid face ShapeRefs).
+    let u_res_fn = rcad_kernel::topods::u_resolution_for_surface;
+    let v_res_fn = rcad_kernel::topods::v_resolution_for_surface;
     let tolerance_2d = |vi: usize| -> f64 {
         let vt = vtol(vi);
-        u_resolution(vt).max(v_resolution(vt)).max(vt)
+        u_res_fn(&face_surface, vt).max(v_res_fn(&face_surface, vt)).max(vt)
     };
-    let u_tolerance_2d = |vi: usize| -> f64 { u_resolution(vtol(vi)) };
-    let v_tolerance_2d = |vi: usize| -> f64 { v_resolution(vtol(vi)) };
+    let u_tolerance_2d = |vi: usize| -> f64 { u_res_fn(&face_surface, vtol(vi)) };
+    let v_tolerance_2d = |vi: usize| -> f64 { v_res_fn(&face_surface, vtol(vi)) };
     let uv_tolerance = |vi: usize| -> f64 { 2.0 * tolerance_2d(vi) };
 
     let mut edge_seq: Vec<usize> = Vec::new();
@@ -257,6 +343,7 @@ pub(crate) fn split_block_topoDS(
     smart_map: &mut IndexMap<usize, Vec<EdgeInfo>>,
     wires: &mut Vec<Vec<usize>>,
     tool: &dyn BRepTool,
+    face_surface: &Surface3,
 ) {
     // OCCT L327: RefineAngles.  rcad: use topoDS-based angle refinement (currently skipped, uses pre-computed angles).
     // OCCT L331-358: Path walk
@@ -269,7 +356,7 @@ pub(crate) fn split_block_topoDS(
                 && (segments[ei.seg_idx].start_vertex.index != segments[ei.seg_idx].end_vertex.index
                     || segments[ei.seg_idx].is_seam)
             {
-                walk_path_extract_wires_topoDS(ei.seg_idx, segments, smart_map, wires, tool);
+                walk_path_extract_wires_topoDS(ei.seg_idx, segments, smart_map, wires, tool, face_surface);
             }
         }
     }
@@ -282,6 +369,7 @@ pub(crate) fn build_closed_wires_topoDS(
     segments: &[WireSegmentTopoDS],
     avoided: &HashSet<usize>,
     tool: &dyn BRepTool,
+    face_surface: &Surface3,
 ) -> Vec<Vec<usize>> {
     if segments.is_empty() { return vec![]; }
 
@@ -302,7 +390,7 @@ pub(crate) fn build_closed_wires_topoDS(
         if block.len() < 2 { continue; }
 
         // Build SmartMap
-        let smart_map = build_smart_map_topoDS(block, segments, tool);
+        let smart_map = build_smart_map_topoDS(block, segments, tool, face_surface);
         if smart_map.is_empty() { continue; }
 
         // Check regularity
@@ -323,7 +411,7 @@ pub(crate) fn build_closed_wires_topoDS(
             }
         } else {
             // Irregular: split via path walk
-            split_block_topoDS(block, segments, &mut (smart_map.clone()), &mut wires, tool);
+            split_block_topoDS(block, segments, &mut (smart_map.clone()), &mut wires, tool, face_surface);
         }
     }
     wires
@@ -334,6 +422,7 @@ fn build_smart_map_topoDS(
     block: &[usize],
     segments: &[WireSegmentTopoDS],
     tool: &dyn BRepTool,
+    face_surface: &Surface3,
 ) -> IndexMap<usize, Vec<EdgeInfo>> {
     use super::angle_2d::angle_2d;
     use super::wire_path::pc_parameter_range;
@@ -357,8 +446,6 @@ fn build_smart_map_topoDS(
     }
 
     // Compute angles using BRepTool (OCCT Angle2D equivalent).
-    let face_ref = if !block.is_empty() { segments[block[0]].face } else { return smart_map; };
-    let face_surface = tool.face_surface(face_ref);
     for (v, infos) in smart_map.iter_mut() {
         let v_ref = ShapeRef::new(*v);
         let geom_tol = tool.vertex_tolerance(v_ref);
@@ -391,10 +478,8 @@ fn build_smart_map_topoDS(
                     }
                 }
             };
-            if let Some(ref surf) = face_surface {
-                ei.angle = angle_2d(curve, t_v, curve_domain, ei.in_flag, surf, geom_tol, None)
-                    .unwrap_or(0.0);
-            }
+            ei.angle = angle_2d(curve, t_v, curve_domain, ei.in_flag, face_surface, geom_tol, None)
+                .unwrap_or(0.0);
         }
     }
     smart_map

@@ -63,6 +63,16 @@ impl BRepTool for DSAsBRep<'_> {
         self.ds.is_edge_degenerated(e.index)
     }
 
+    fn edge_other_vertex(&self, edge: ShapeRef, v: ShapeRef) -> ShapeRef {
+        if let Some(e) = self.ds.edges.get(edge.index) {
+            if e.start_vertex == v.index {
+                ShapeRef::new(e.end_vertex)
+            } else {
+                ShapeRef::new(e.start_vertex)
+            }
+        } else { v }
+    }
+
     fn parameter_on_edge(&self, vertex: ShapeRef, edge: ShapeRef, _face: ShapeRef) -> Option<f64> {
         self.vertex_param_cache.get(&edge.index)
             .and_then(|vpm| vpm.get(&vertex.index).copied())

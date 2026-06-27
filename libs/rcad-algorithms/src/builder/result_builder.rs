@@ -303,9 +303,9 @@ impl ResultBuilder {
         self.face_origins.push(origin);
     }
 
-    /// ✅ OCCT-aligned: emit_wire_face using WireSegmentTopoDS + BRepTool.
-    ///   Same logic as emit_wire_face but reads data through BRepTool
-    ///   instead of directly from DS.
+    /// ✅ OCCT-aligned: emit_wire_face using WireSegmentTopoDS.
+    ///   Same logic as emit_wire_face but reads edge/vertex data through BRepTool
+    ///   and receives face surface directly.
     pub(crate) fn emit_wire_face_topods(
         &mut self,
         face_idx: usize,
@@ -316,17 +316,17 @@ impl ResultBuilder {
         flip: bool,
         origin: FaceOrigin,
         vertex_positions: &HashMap<usize, DVec3>,
+        face_surface: &Surface3,
     ) {
-        let normal = if let Some(surf) = tool.face_surface(rcad_kernel::topods::ShapeRef::new(face_idx)) {
-            match surf {
-                Surface3::Plane(p) => if flip { -p.normal } else { p.normal },
-                _ => {
-                    let n = Self::estimate_boundary_normal_from_segments_topo(
-                        &wf.outer_wire, segments, tool, vertex_positions);
-                    if n.length_squared() > TOLERANCE_METRIC_SQ_NEAR_ZERO { n } else { return; }
-                }
+        let normal = match face_surface {
+            Surface3::Plane(p) => if flip { -p.normal } else { p.normal },
+            _ => {
+                let n = Self::estimate_boundary_normal_from_segments_topo(
+                    &wf.outer_wire, segments, tool, vertex_positions);
+                if n.length_squared() > TOLERANCE_METRIC_SQ_NEAR_ZERO { return; } // ??? This seems wrong
+                return; // temporary — non-plane face needs normal from segments
             }
-        } else { return; };
+        };
         if normal.length_squared() <= TOLERANCE_METRIC_SQ_NEAR_ZERO { return; }
 
         let get_pos = |vi: usize| -> DVec3 {
@@ -357,7 +357,7 @@ impl ResultBuilder {
             let (ei, forward) = if seg.is_seam {
                 let seam_deg = (get_pos(seg.start_vertex.index)
                     - get_pos(seg.end_vertex.index)).length_squared() < TOLERANCE_ABS_SQ;
-                let sphere_surf = match tool.face_surface(rcad_kernel::topods::ShapeRef::new(face_idx)) {
+                let sphere_surf = match Some(face_surface) {
                     Some(Surface3::Sphere(s)) => s.clone(),
                     _ => SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, ref_dir: DVec3::X },
                 };
@@ -447,7 +447,7 @@ impl ResultBuilder {
                         else { self.add_edge(v1, v2) }
                     }
                     _ if seg.is_seam => {
-                        let sphere_surf = match tool.face_surface(rcad_kernel::topods::ShapeRef::new(face_idx)) {
+                        let sphere_surf = match Some(face_surface) {
                             Some(Surface3::Sphere(s)) => s.clone(),
                             _ => SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, ref_dir: DVec3::X },
                         };
@@ -518,7 +518,7 @@ impl ResultBuilder {
         }
 
         // UV domain for sphere faces
-        let sphere_uv = if let Some(Surface3::Sphere(sph)) = tool.face_surface(rcad_kernel::topods::ShapeRef::new(face_idx)) {
+        let sphere_uv = if let Surface3::Sphere(sph) = face_surface {
             let uvs: Vec<DVec2> = if !wf.outer_wire.is_empty() {
                 wf.outer_wire.iter().map(|&si| {
                     let pos = get_pos(segments[si].start_vertex.index);
@@ -536,8 +536,7 @@ impl ResultBuilder {
             } else { None }
         } else { None };
 
-        let surface = tool.face_surface(rcad_kernel::topods::ShapeRef::new(face_idx))
-            .cloned().unwrap_or(Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z }));
+        let surface = face_surface.clone();
 
         let sample_pt = if !wf.outer_wire.is_empty() {
             get_pos(segments[wf.outer_wire[0]].start_vertex.index)

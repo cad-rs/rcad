@@ -70,38 +70,8 @@ pub fn ds_to_brep(ds: &crate::bopds::ds::DS) -> BRep {
         ed.degenerated = false;
     }
 
-    // Step 6: build wires and faces from DS topology
-    for (fi, face) in ds.faces.iter().enumerate() {
-        // Build outer wire from boundary_edges
-        let mut wire_edges: Vec<ShapeRef> = Vec::new();
-        for &ei in &face.boundary_edges {
-            // Determine orientation: forward if edge's start_vertex matches the wire chain
-            wire_edges.push(ShapeRef::new(ei));
-        }
-        let outer_wire = br.add_twire(wire_edges);
-
-        // Build inner wires
-        let mut inner_wires: Vec<ShapeRef> = Vec::new();
-        for iw in &face.inner_boundary_edges {
-            let iw_edges: Vec<ShapeRef> = iw.iter().map(|(ei, _)| ShapeRef::new(*ei)).collect();
-            inner_wires.push(br.add_twire(iw_edges));
-        }
-
-        let surface = surf_to_idx[fi];
-        let internal_vertices: Vec<ShapeRef> = face.face_info.vertices_in.iter()
-            .map(|&vi| ShapeRef::new(vi)).collect();
-
-        br.add_tface(surface, outer_wire, inner_wires, None, None, internal_vertices);
-    }
-
-    // Step 7: build shells from DS.shells
-    for (_shi, shell) in ds.shells.iter().enumerate() {
-        let mut faces: Vec<ShapeRef> = Vec::new();
-        for &fi in &shell.faces {
-            faces.push(ShapeRef::new(fi));
-        }
-        br.add_tshell(faces);
-    }
+    // Step 6: surfaces for faces (store in BRep.surfaces for BRepTool queries)
+    // No face/wire/shell TShapes needed — pipeline works with edge+vertex data via BRepTool.
 
     br
 }

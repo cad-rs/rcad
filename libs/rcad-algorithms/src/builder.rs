@@ -225,14 +225,14 @@ impl<'a> BooleanBuilder<'a> {
         let segments_topo = crate::builder::builder_utils_topo_ds::segments_to_topo_ds(&segments, ds, face_idx);
         drop(segments);
 
-        // Use BRep as the BRepTool source (replaces DSAsBRep)
         let tool: &dyn rcad_kernel::topods::BRepTool = br;
+        let face_surface = &ds.faces[face_idx].surface;
 
         let (avoided_pids, pid_segs) = crate::builder::wire_splitter::perform_shapes_to_avoid_topo_ds(
             &segments_topo, tool);
         let mut avoided = crate::builder::wire_splitter::expand_avoided_pids(&avoided_pids, &pid_segs);
         let wires = crate::builder::wire_path_topo_ds::build_closed_wires_topoDS(
-            &segments_topo, &avoided, tool);
+            &segments_topo, &avoided, tool, face_surface);
 
         let in_loop: HashSet<usize> = wires.iter().flatten().copied().collect();
         for si in 0..segments_topo.len() {
@@ -265,7 +265,7 @@ impl<'a> BooleanBuilder<'a> {
             .enumerate().map(|(ci, ic)| (ci, ic.curve.clone())).collect();
         for wf in &wfs {
             result.emit_wire_face_topods(face_idx, wf, &segments_topo, tool, &ic_curves, false, origin,
-                &HashMap::new());
+                &HashMap::new(), face_surface);
         }
     }
 
