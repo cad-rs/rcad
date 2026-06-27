@@ -1,21 +1,17 @@
 /// Convert a DS (DataSource) into a topods BRep.
 ///
-/// This is the transitional bridge between the index-based DS data model
-/// and the TopoDS-style BRep shape hierarchy.  PaveFiller writes to DS;
-/// `ds_to_brep` converts the result into a BRep so downstream pipeline
-/// stages can use BRepTool queries instead of direct DS access.
+/// PaveFiller writes to DS; this module exports the DS data to BRep
+/// so the downstream pipeline can use BRepTool queries.
 use rcad_kernel::geom::*;
 use rcad_kernel::topods::*;
 
-/// Convert the entire DS into a BRep shape hierarchy.
-/// Returns (BRep, Vec<ShapeRef> /*face_refs by ds_face_idx*/, Vec<Option<ShapeRef>> /*ic_edge_map: ci -> BRep edge ShapeRef*/).
-pub fn ds_to_brep(ds: &crate::bopds::ds::DS) -> (BRep, Vec<ShapeRef>, Vec<Option<ShapeRef>>) {
-    let mut br = BRep::new();
-    let (face_refs, ic_edge_map) = populate_brep(ds, &mut br);
-    (br, face_refs, ic_edge_map)
+/// Populate a BRep from DS data (A3 dual-write).
+/// Returns (face_refs by ds_face_idx, ic_edge_map: ci -> BRep edge ShapeRef).
+pub fn export_to_brep(ds: &crate::bopds::ds::DS, br: &mut BRep) -> (Vec<ShapeRef>, Vec<Option<ShapeRef>>) {
+    populate_brep(ds, br)
 }
 
-/// Core conversion: populate a BRep from DS data. Shared by ds_to_brep and export_to_brep.
+/// Core conversion: populate a BRep from DS data.
 fn populate_brep(ds: &crate::bopds::ds::DS, br: &mut BRep) -> (Vec<ShapeRef>, Vec<Option<ShapeRef>>) {
 
     // Step 1: collect surfaces from faces (dedup by identity)
@@ -167,12 +163,6 @@ fn populate_brep(ds: &crate::bopds::ds::DS, br: &mut BRep) -> (Vec<ShapeRef>, Ve
     }
 
     (face_refs, ic_edge_map)
-}
-
-/// Populate an existing BRep from DS data (A3 dual-write).
-/// Returns (face_refs by ds_face_idx, ic_edge_map: ci -> BRep edge ShapeRef).
-pub fn export_to_brep(ds: &crate::bopds::ds::DS, br: &mut BRep) -> (Vec<ShapeRef>, Vec<Option<ShapeRef>>) {
-    populate_brep(ds, br)
 }
 
 /// Find which two DS faces are connected by an intersection curve.
