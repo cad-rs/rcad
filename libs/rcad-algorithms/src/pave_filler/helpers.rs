@@ -419,8 +419,7 @@ mod phase2a_tests {
 // ---- Phase 2a: MakeBlocks candidate injection helpers ----
 
 /// Find up-to-2 face indices that reference a given intersection curve.
-/// OCCT-aligned: checks curves_sc (PaveBlocksSc); in OCCT this checks all
-///    PaveBlocksSc/In/On to find face boundary vertices for put_bound_pave_on_curve.
+/// OCCT-aligned: checks curves_sc (PaveBlocksSc).
 pub(crate) fn find_face_idxs_for_curve(ds: &DS, ci: usize) -> [usize; 2] {
     let mut result = [usize::MAX; 2];
     let mut idx = 0;
@@ -434,19 +433,6 @@ pub(crate) fn find_face_idxs_for_curve(ds: &DS, ci: usize) -> [usize; 2] {
         }
     }
     result
-}
-
-/// Inject face boundary vertices onto intersection curves (OCCT PutBoundPaveOnCurve).
-pub(crate) fn put_bound_pave_on_curve(
-    _ds: &DS,
-    _curve_idx: usize,
-    _face_idxs: &[usize; 2],
-    _tol: f64,
-) -> Vec<(f64, usize)> {
-    // OCCT-aligned: PutBoundPaveOnCurve only processes the TWO curve endpoint
-    //   positions (aP[0], aP[1]).  In rcad, start_vertex/end_vertex are always set,
-    //   so bound vertex injection is a no-op.  OCCT does NOT iterate boundary_verts.
-    vec![]
 }
 
 /// OCCT-aligned: PutPaveOnCurve (BOPAlgo_PaveFiller_6.cxx L833-900)

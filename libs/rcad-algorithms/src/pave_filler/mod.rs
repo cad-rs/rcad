@@ -2833,99 +2833,6 @@ impl<'a> PaveFiller<'a> {
 
     // 鈹€鈹€ Plane �?Sphere analytic face-face intersection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-    fn clip_circle_to_faces(
-        &self, circle: &rcad_kernel::geom::Circle3,
-        f1: usize, f2: usize,
-    ) -> Option<[f64; 2]> {
-        use crate::inttools::edge_face::plane_local_basis;
-        let tol = self.ff_tol(f1, f2);
-        let mut result: Option<[f64; 2]> = None;
-        let [t0, t1] = [0.0, std::f64::consts::TAU];
-
-        for &fi in &[f1, f2] {
-            let Surface3::Plane(plane) = &self.ds.faces[fi].surface else { continue };
-            let bnd = self.ds.face_boundary_points(fi);
-            if bnd.len() < 3 { continue; }
-            let (u_ax, v_ax) = plane_local_basis(plane);
-            let to2 = |pt: DVec3| -> DVec2 {
-                let d = pt - plane.origin; DVec2::new(d.dot(u_ax), d.dot(v_ax))
-            };
-            let c2d = to2(DVec3::from(circle.center));
-            let b2d: Vec<DVec2> = bnd.iter().map(|&pt| to2(pt)).collect();
-            let mut tc: Vec<f64> = Vec::new();
-            for k in 0..b2d.len() {
-                let l = (k + 1) % b2d.len();
-                let a = b2d[k]; let b = b2d[l];
-                let ab = b - a; let ac = a - c2d;
-                let qa = ab.dot(ab); let qb = 2.0 * ab.dot(ac);
-                let qc = ac.dot(ac) - circle.radius * circle.radius;
-                let disc = qb * qb - 4.0 * qa * qc;
-                if disc < 0.0 { continue; }
-                for &sign in &[-1.0_f64, 1.0_f64] {
-                    let t = (-qb + sign * disc.sqrt()) / (2.0 * qa);
-                    if t >= -1e-12 && t <= 1.0 + 1e-12 {
-                        let pt2 = a + t.clamp(0.0, 1.0) * ab;
-                        let ang = (pt2 - c2d).to_angle();
-                        let mut a2 = ang;
-                        if a2 < t0 { a2 += std::f64::consts::TAU; }
-                        while a2 > t0 + std::f64::consts::TAU - 1e-12 { a2 -= std::f64::consts::TAU; }
-                        if a2 >= t0 && a2 <= t1 { tc.push(a2); }
-                    }
-                }
-            }
-            if tc.is_empty() {
-                let mut inside = false; let mut j = b2d.len() - 1;
-                for i in 0..b2d.len() {
-                    if ((b2d[i].y > c2d.y) != (b2d[j].y > c2d.y))
-                        && (c2d.x < (b2d[j].x - b2d[i].x) * (c2d.y - b2d[i].y) / (b2d[j].y - b2d[i].y) + b2d[i].x)
-                    { inside = !inside; }
-                    j = i;
-                }
-                if !inside { return Some([0.0, 0.0]); }
-                continue;
-            }
-            tc.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            // �?OCCT-aligned: deduplicate nearby angles (same intersection detected by adjacent edges)
-            tc.dedup_by(|a, b| (*a - *b).abs() < TOLERANCE_ABS * 1000.0);
-            // �?OCCT-aligned: select candidate arc via midpoint face-in test (IntTools_FaceFace.cxx L1084-1101)
-            //    OCCT splits the full circle into 18 samples and uses dom->Classify() to test
-            //    whether each UV is inside the face. rcad tests candidate arc midpoints in 2D polygon.
-            let mut best: Option<[f64;2]> = None;
-            for i in 0..tc.len() {
-                let j = (i + 1) % tc.len();
-                let a_start = tc[i];
-                let a_end = if j == 0 { tc[j] + std::f64::consts::TAU } else { tc[j] };
-                let a_len = a_end - a_start;
-                if a_len <= tol { continue; }
-                let mid_angle = (a_start + a_end) * 0.5;
-                let mid_3d = circle.center + circle.radius * (mid_angle.cos() * u_ax + mid_angle.sin() * v_ax);
-                let mid_2d = to2(mid_3d);
-                let mut inside = false;
-                {
-                    let mut k = b2d.len() - 1;
-                    for i2 in 0..b2d.len() {
-                        if ((b2d[i2].y > mid_2d.y) != (b2d[k].y > mid_2d.y))
-                            && (mid_2d.x < (b2d[k].x - b2d[i2].x) * (mid_2d.y - b2d[i2].y) / (b2d[k].y - b2d[i2].y) + b2d[i2].x)
-                        { inside = !inside; }
-                        k = i2;
-                    }
-                }
-                if !inside { continue; }
-                let ws = a_start % std::f64::consts::TAU;
-                let we = tc[j];
-                best = Some(if ws <= we { [ws, we] } else { [ws, std::f64::consts::TAU] });
-                break;
-            }
-            let nr = match best { Some(r) => r, None => continue, };
-            if nr[1] - nr[0] > tol {
-                result = Some(match result {
-                    Some(prev) => [prev[0].max(nr[0]), prev[1].min(nr[1])],
-                    None => nr,
-                });
-            }
-        }
-        result
-    }
 
     /// OCCT: plane-sphere intersection
     /// OCCT: plane-sphere intersection
@@ -2964,38 +2871,11 @@ impl<'a> PaveFiller<'a> {
                 }
             }
             PlaneSphereResult::Circle(circle) => {
-                // �?OCCT-aligned: clip Circle3 to planar face polygon boundaries
-                // map to TWO vertical meridians in sphere UV space. We must create
-                // two separate IntersectionCurves �?one per UV branch �?because
-                // a single BSpline pcurve cannot span the atan2-wrap discontinuity.
-                let is_great = (circle.center - sphere.center).length_squared() < TOLERANCE_ABS_SQ;
-                let axis_dot_normal = sphere
-                    .axis
-                    .normalize()
-                    .dot(plane.normal.normalize())
-                    .abs();
-                let _passes_poles = is_great && axis_dot_normal < TOLERANCE_ABS;
-
-                // �?OCCT-aligned: all plane-sphere ICs go through clip_circle_to_faces unified path.
-                //    add_great_circle_curves is disabled �?double-half-arc branches are rcad's own design,
-                //    OCCT IntTools_FaceFace clips ICs directly using PutBoundPaveOnCurve.
-
-                // �?OCCT-aligned: clip Circle3 to planar face polygon boundaries
-                //    OCCT IntTools_Curve limits range to face boundary at creation time.
-                //    rcad: project Circle3 onto plane face 2D polygon,
-                //    intersect to get valid parameter range within the face, use its endpoints
-                //    as start/end vertices of the curve.
-                let clipped_range = self.clip_circle_to_faces(&circle, f1, f2);
-                let clipped = match clipped_range {
-                    Some(r) => r,
-                    None => { return; }
-                };
-                if clipped[1] - clipped[0] <= TOLERANCE_ABS { return; }
-                let (effective_t0, effective_t1) = (clipped[0], clipped[1]);
-
+                // OCCT IntTools_FaceFace stores the full analytic curve without
+                // pre-clipping to face boundaries.  OCCT PaveFiller clips via
+                // PutBoundPaveOnCurve during MakeBlocks.
                 if circle.radius <= TOLERANCE_MESH_LEGACY + TOLERANCE_ABS { return; }
-                let valid_arc = clipped_range.map(|r| r[1] - r[0]).unwrap_or(0.0);
-                if valid_arc <= TOLERANCE_ABS { return; }
+                let (effective_t0, effective_t1) = (0.0, std::f64::consts::TAU);
 
                 let pcurve_plane = circle_pcurve_on_plane(&circle, plane);
                 let pcurve_sphere = fallback_pcurve_by_projection(
@@ -3009,24 +2889,21 @@ impl<'a> PaveFiller<'a> {
                     (Some(pcurve_sphere), Some(pcurve_plane))
                 };
 
-                // �?OCCT-aligned: IC endpoints use plane_local_basis (consistent with clip_circle_to_faces)
-                //    circle.point_at uses Circle3.normal's any_perpendicular axis,
-                //    which may be opposite to plane_local_basis direction, flipping endpoint positions.
                 let (u_ax_p, v_ax_p) = crate::inttools::edge_face::plane_local_basis(plane);
                 let p_start = circle.center + circle.radius * (effective_t0.cos() * u_ax_p + effective_t0.sin() * v_ax_p);
                 let p_end = circle.center + circle.radius * (effective_t1.cos() * u_ax_p + effective_t1.sin() * v_ax_p);
-                if p_start.distance_squared(p_end) < TOLERANCE_ABS_SQ { return; }
-                // �?OCCT-aligned: try to reuse existing DS vertex (PutPaveOnCurve).
-                //    OCCT's IsVertexOnLine detects boundary vertices ON the curve and
-                //    places their DS index into the pave block, so the section edge
-                //    shares the same TopoDS_Vertex as the boundary edge.  rcad: find
-                //    existing vertex within tolerance; only create new if none found.
-                //    The tolerance TOLERANCE_ABS*1000 (1e-4) covers intersection noise.
                 const IC_VERTEX_MERGE_TOL: f64 = crate::tolerance::TOLERANCE_ABS * 1000.0;
-                let v_start = self.ds.find_vertex_near(p_start, IC_VERTEX_MERGE_TOL)
-                    .unwrap_or_else(|| self.ds.add_vertex(p_start));
-                let v_end = self.ds.find_vertex_near(p_end, IC_VERTEX_MERGE_TOL)
-                    .unwrap_or_else(|| self.ds.add_vertex(p_end));
+                let is_closed = p_start.distance_squared(p_end) < TOLERANCE_ABS_SQ;
+                let (v_start, v_end) = if is_closed {
+                    let v = self.ds.find_vertex_near(p_start, IC_VERTEX_MERGE_TOL)
+                        .unwrap_or_else(|| self.ds.add_vertex(p_start));
+                    (v, v)
+                } else {
+                    (self.ds.find_vertex_near(p_start, IC_VERTEX_MERGE_TOL)
+                        .unwrap_or_else(|| self.ds.add_vertex(p_start)),
+                     self.ds.find_vertex_near(p_end, IC_VERTEX_MERGE_TOL)
+                        .unwrap_or_else(|| self.ds.add_vertex(p_end)))
+                };
                 // OCCT-aligned: inherit tolerance from parent faces (BRep_Tool::Tolerance).
                 // OCCT vertices on edges carry source edge/face tolerances (typically 1e-4 to 1e-6);
                 // rcad defaults to TOLERANCE_ABS (1e-7) which is too tight for pcurve comparison.
@@ -5896,106 +5773,55 @@ impl<'a> PaveFiller<'a> {
         //   curve's PB to produce sub-PBs (OCCT PaveFiller_6.cxx L882-980).
         //   Sub-PBs that are too short (no valid range) will be excluded there.
 
-        // �?OCCT-aligned: FilterPavesOnCurves �?cross-curve vertex deduplication
-        //   OCCT L796, L2349-2443: for a vertex on multiple curves, keep the best matching curve.
+        // ✅ OCCT-aligned: FilterPavesOnCurves (PaveFiller_6.cxx L2437-2538).
+        //   Collect all ext_paves from all ICs.  For vertices on multiple ICs,
+        //   keep only the best-matching curve's ext_pave, remove from others.
         {
-            let a_sin_angle_min: f64 = 0.5;
-            let mut vert_curves: std::collections::HashMap<usize, Vec<(usize, bool)>> = std::collections::HashMap::new();
-            let all_curve_ids: Vec<usize> = (0..self.ds.intersection_curves.len()).collect();
-
-            for &ci in &all_curve_ids {
-
-                let ic = &self.ds.intersection_curves[ci];
-
-                vert_curves.entry(ic.start_vertex).or_default().push((ci, true));
-
-                if ic.start_vertex != ic.end_vertex {
-
-                    vert_curves.entry(ic.end_vertex).or_default().push((ci, false));
-
-                }
-
-            }
-
-            // 2. Only process vertices appearing on multiple curves
-
-            // OCCT-aligned: PaveBlockDist { ci, n_v, sq_dist, sin_angle }
-            struct PaveBlockDist {
-                ci: usize,
-                n_v: usize,
-                sq_dist: f64,
-                sin_angle: f64,
-            }
+            struct PaveBlockDist { ci: usize, nV: usize, sq_dist: f64, sin_angle: f64 }
+            let eps = f64::EPSILON;
+            let sin_angle_min = 0.5;
             let mut vert_pbs: std::collections::HashMap<usize, Vec<PaveBlockDist>> = std::collections::HashMap::new();
-
-            for (n_v, curves) in &vert_curves {
-
-                if curves.len() < 2 { continue; }
-
-                for &(ci, is_start) in curves {
-
-                    let ic = &self.ds.intersection_curves[ci];
-
-                    let par = if is_start { ic.t_range[0] } else { ic.t_range[1] };
-
-                    let pt = self.ds.vertices[*n_v].point;
-
-                    let curve_pt = ic.curve.point_at(par);
-
-                    let tangent = ic.curve.tangent_at(par);
-
-                    let to_curve = curve_pt - pt;
-
-                    let sq_dist = to_curve.length_squared();
-
-                    let speed_sq = tangent.length_squared();
-
-                    let sin_angle = if sq_dist > 1e-30 && speed_sq > 1e-30 {
-
-                        (to_curve.cross(tangent).length_squared() / (sq_dist * speed_sq)).sqrt()
-
-                    } else { 0.0 };
-
-                    vert_pbs.entry(*n_v).or_default().push(PaveBlockDist { ci, n_v: *n_v, sq_dist, sin_angle });
-
+            for ci in 0..self.ds.intersection_curves.len() {
+                let ic = &self.ds.intersection_curves[ci];
+                let tol_r3d = ic.geom_tol.max(1e-12);
+                if let Some(pb) = ic.pave_blocks.first() {
+                    for pave in &pb.ext_paves {
+                        let nV = pave.vertex_idx;
+                        let par = pave.param;
+                        let pt = self.ds.vertices[nV].point;
+                        let curve_pt = ic.curve.point_at(par);
+                        let tangent = ic.curve.tangent_at(par);
+                        let proj_vec = curve_pt - pt;
+                        let sq_dist = proj_vec.length_squared();
+                        let speed_sq = tangent.length_squared();
+                        let sin_angle = if sq_dist > eps && speed_sq > eps {
+                            (proj_vec.cross(tangent).length_squared() / (sq_dist * speed_sq)).sqrt()
+                        } else { 0.0 };
+                        vert_pbs.entry(nV).or_default().push(PaveBlockDist { ci, nV, sq_dist, sin_angle });
+                    }
                 }
-
             }
-
-            // OCCT-aligned: For each vertex, keep the best-matching curve, remove ext paves from others
-            //   (aPBD.PB->RemoveExtPave(nV)). OCCT L2527-2535: update vertex tolerance.
-            for (n_v, dists) in &vert_pbs {
-
-                let min_dist = dists.iter().map(|d| d.sq_dist).min_by(|a,b| a.partial_cmp(b).unwrap()).unwrap_or(0.0);
-
+            for (nV, list) in &vert_pbs {
+                if list.len() < 2 { continue; }
+                let min_dist = list.iter().map(|d| d.sq_dist).min_by(|a,b| a.partial_cmp(&b).unwrap()).unwrap_or(0.0);
                 let mut is_removed = false;
                 let mut max_dist_kept = -1.0;
-                for d in dists {
-
+                for d in list {
                     let check_dist = 100.0 * cur_tol.max(min_dist);
-
-                    if d.sq_dist > check_dist && d.sin_angle < a_sin_angle_min {
-
+                    if d.sq_dist > check_dist && d.sin_angle < sin_angle_min {
                         if let Some(pb) = self.ds.intersection_curves[d.ci].change_pave_block1() {
-                            pb.remove_ext_pave(d.n_v);
+                            pb.remove_ext_pave(d.nV);
                             is_removed = true;
                         }
-
                     } else if d.sq_dist > max_dist_kept {
                         max_dist_kept = d.sq_dist;
                     }
-
                 }
-
-                // OCCT L2527-2535: update vertex tolerance to cover max kept distance
                 if is_removed && max_dist_kept > 0.0 {
-                    let v = &mut self.ds.vertices[*n_v];
-                    let real_tol = v.geom_tol.max(max_dist_kept.sqrt() + crate::tolerance::TOLERANCE_ABS);
-                    v.geom_tol = real_tol;
+                    let real_tol = self.ds.vertices[*nV].geom_tol.max(max_dist_kept.sqrt() + crate::tolerance::TOLERANCE_ABS);
+                    self.ds.vertices[*nV].geom_tol = real_tol;
                 }
-
             }
-
         }
 
         // ✅ OCCT-aligned: PutStickPavesOnCurve (PaveFiller_6.cxx L821, L2748-2842).
@@ -6772,18 +6598,6 @@ fn find_face_idxs_for_curve(ds: &DS, ci: usize) -> [usize; 2] {
     result
 }
 
-fn put_bound_pave_on_curve(
-    _ds: &DS,
-    _curve_idx: usize,
-    _face_idxs: &[usize; 2],
-    _tol: f64,
-) -> Vec<(f64, usize)> {
-    // �?OCCT-aligned: PutBoundPaveOnCurve only processes the TWO curve endpoint
-    //   positions (aP[0], aP[1]).  In rcad, start_vertex/end_vertex are always set,
-    //   so bound vertex injection is a no-op.  OCCT does NOT iterate boundary_verts.
-    vec![]
-}
-
 fn put_pave_on_curve_full(
     ds: &DS,
     curve_idx: usize,
@@ -6833,72 +6647,61 @@ fn put_pave_on_curve_full(
         cv
     };
 
+    // OCCT-aligned: build combined vertex sets (theMVOnIn, theMVEF) from both faces,
+    //   matching OCCT PutPavesOnCurve's pre-computed parameters.  Processing per-face
+    //   would project the same vertex onto the curve twice, creating duplicate ext_paves.
+    let mut mv_ef: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut mv_on_in: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for &fi in face_idxs.iter().filter(|&&fi| fi != usize::MAX) {
         let face = &ds.faces[fi];
-
-        // OCCT L2386-2392: EF vertices first — only vertices belonging to this FF pair
         for &vi in &face.face_info.vertices_on {
-            if !ef_vertices.contains(&vi) { continue; } // OCCT GetStickVertices: skip non-pair EF
-            if vi == ic.start_vertex || vi == ic.end_vertex { continue; }
-            if paves.iter().any(|&(_, v)| v == vi) { continue; }
-            let pt = ds.vertices[vi].point;
-            if let Some(t) = project_vertex_to_curve(pt, &ic.curve, a_tol_r3d) {
-                if t >= t0 - a_tol_r3d && t <= t1 + a_tol_r3d {
-                    paves.push((t, vi));
-                }
-            }
-        }
-
-        // OCCT L2394-2420: ON/IN vertices with BBox + IsNewShape filtering.
-        // OCCT L2404: common vertices (theMVCommon) skip BBox + IsNewShape checks.
-        let mut common_verts: HashSet<usize> = HashSet::new();
-        let (fi_a, fi_b) = if face_idxs[0] != usize::MAX && face_idxs[1] != usize::MAX {
-            (face_idxs[0], face_idxs[1])
-        } else { continue; };
-        for &vi in &ds.faces[fi_a].face_info.vertices_on {
-            if ds.faces[fi_b].face_info.vertices_on.contains(&vi)
-                || ds.faces[fi_b].face_info.vertices_in.contains(&vi) {
-                common_verts.insert(vi);
-            }
-        }
-        for &vi in &ds.faces[fi_a].face_info.vertices_in {
-            if ds.faces[fi_b].face_info.vertices_on.contains(&vi)
-                || ds.faces[fi_b].face_info.vertices_in.contains(&vi) {
-                common_verts.insert(vi);
-            }
+            if ef_vertices.contains(&vi) { mv_ef.insert(vi); }
+            else { mv_on_in.insert(vi); }
         }
         for &vi in &face.face_info.vertices_in {
-            if vi == ic.start_vertex || vi == ic.end_vertex { continue; }
-            // OCCT L2399-2401: skip ON/IN vertices already in EF set
-            if ef_vertices.contains(&vi) { continue; }
-            if paves.iter().any(|&(_, v)| v == vi) { continue; }
-
-            let is_common = common_verts.contains(&vi);
-            if !is_common {
-                // OCCT L2404-2412: BBox filtering (skipped for common vertices)
-                if let Some([c_min, c_max]) = curve_bbox {
-                    let v_pt = ds.vertices[vi].point;
-                    let v_tol = ds.vertices[vi].geom_tol.max(a_tol_r3d);
-                    let v_min = v_pt - DVec3::splat(v_tol);
-                    let v_max = v_pt + DVec3::splat(v_tol);
-                    if v_max.x < c_min.x || v_min.x > c_max.x ||
-                       v_max.y < c_min.y || v_min.y > c_max.y ||
-                       v_max.z < c_min.z || v_min.z > c_max.z {
-                        continue;
-                    }
-                }
-
-                // OCCT L2413-2415: IsNewShape filter — skip non-new vertices
-                if !ds.is_new_vertex(vi) {
+            if ef_vertices.contains(&vi) { mv_ef.insert(vi); }
+            else { mv_on_in.insert(vi); }
+        }
+    }
+    // OCCT L2386-2392: EF vertices first
+    for &nV in &mv_ef {
+        if nV == ic.start_vertex || nV == ic.end_vertex { continue; }
+        if paves.iter().any(|&(_, v)| v == nV) { continue; }
+        let pt = ds.vertices[nV].point;
+        if let Some(t) = project_vertex_to_curve(pt, &ic.curve, a_tol_r3d) {
+            if t >= t0 - a_tol_r3d && t <= t1 + a_tol_r3d {
+                paves.push((t, nV));
+            }
+        }
+    }
+    // OCCT L2394-2420: ON/IN vertices
+    for &nV in &mv_on_in {
+        if mv_ef.contains(&nV) { continue; } // OCCT L2399-2401: skip EF duplicates
+        if nV == ic.start_vertex || nV == ic.end_vertex { continue; }
+        if paves.iter().any(|&(_, v)| v == nV) { continue; }
+        let is_common = common_verts.contains(&nV);
+        if !is_common {
+            // OCCT L2404-2412: BBox filtering (skipped for common vertices)
+            if let Some([c_min, c_max]) = curve_bbox {
+                let v_pt = ds.vertices[nV].point;
+                let v_tol = ds.vertices[nV].geom_tol.max(a_tol_r3d);
+                let v_min = v_pt - DVec3::splat(v_tol);
+                let v_max = v_pt + DVec3::splat(v_tol);
+                if v_max.x < c_min.x || v_min.x > c_max.x ||
+                   v_max.y < c_min.y || v_min.y > c_max.y ||
+                   v_max.z < c_min.z || v_min.z > c_max.z {
                     continue;
                 }
             }
-
-            let pt = ds.vertices[vi].point;
-            if let Some(t) = project_vertex_to_curve(pt, &ic.curve, a_tol_r3d) {
-                if t >= t0 - a_tol_r3d && t <= t1 + a_tol_r3d {
-                    paves.push((t, vi));
-                }
+            // OCCT L2413-2415: IsNewShape filter — skip non-new vertices
+            if !ds.is_new_vertex(nV) {
+                continue;
+            }
+        }
+        let pt = ds.vertices[nV].point;
+        if let Some(t) = project_vertex_to_curve(pt, &ic.curve, a_tol_r3d) {
+            if t >= t0 - a_tol_r3d && t <= t1 + a_tol_r3d {
+                paves.push((t, nV));
             }
         }
     }
