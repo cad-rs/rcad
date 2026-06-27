@@ -38,7 +38,7 @@ pub mod bvh;
 pub mod classify;
 pub mod defeature;
 pub mod draft;
-pub mod ds_to_brep;
+pub mod ds_to_brep; // DS → BRep export (used by PaveFiller A3 dual-write)
 pub mod features;
 pub mod geom_convert;
 pub mod geom_lib;
