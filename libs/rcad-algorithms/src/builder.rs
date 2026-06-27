@@ -1766,31 +1766,73 @@ impl<'a> BooleanBuilder<'a> {
     ///   else add the original shape.  rcad: for Edge, creates topods edges in t_brep
     ///   (equivalent to OCCT's myShape) AND flat edge refs in result for face construction.
     ///   For Vertex/Wire/Shell/Solid, rcad handles these in other pipeline steps.
-    fn build_result(&self, shape_type: ShapeType, result: &mut ResultBuilder, t_brep: &mut topods::BRep) {
+    fn build_result(&self, shape_type: ShapeType, result: &mut ResultBuilder, t: &mut topods::BRep) {
         // OCCT L131: aMFence — prevents duplicate TShape addition.
         //   rcad: vertices/edges/faces are stored in unique-indexed arrays.
         match shape_type {
-            ShapeType::Vertex | ShapeType::Wire | ShapeType::Shell
-            | ShapeType::Solid | ShapeType::CompSolid | ShapeType::Compound => {
-                // OCCT L137-165: add split images or originals to myShape.
-                //   rcad for VERTEX: vertices are created implicitly by edges/faces.
-                //   rcad for WIRE: wires are part of Face structure (inner_wires).
-                //   rcad for SHELL/SOLID/COMPSOLID/COMPOUND: handled by the
-                //     FillImagesContainers / FillImagesSolids / FillImagesCompounds
-                //     pipeline steps.  Final conversion in ResultBuilder::build().
+            ShapeType::Vertex => {
+                // OCCT L137-165 (TopAbs_VERTEX): add split vertex images to myShape.
+                // Already handled by build_topods_faces as part of Face construction.
             }
             ShapeType::Edge => {
-                // OCCT L130-168 (TopAbs_EDGE): iterate myArguments, filter TopAbs_EDGE.
-                //   For solid boolean arguments (sphere, box), none are TopAbs_EDGE →
-                //   loop body never executes.  Split edges are added to myShape implicitly
-                //   through BuildResult(FACE) as face sub-shapes.
-                //   rcad: flat edge entries are created in fill_images_edges (above).
-                //   No work needed here — this arm is a deliberate no-op.
+                // OCCT L130-168 (TopAbs_EDGE): add split edge images to myShape.
+                // Already handled by build_topods_faces as part of Face construction.
+            }
+            ShapeType::Wire => {
+                // OCCT L130-168: wires are part of Face structure (inner/outer).
+                // Already handled by build_topods_faces.
             }
             ShapeType::Face => {
-                // OCCT L130-168 (TopAbs_FACE): iterate myArguments, filter TopAbs_FACE.
-                //   For solid boolean arguments, none are TopAbs_FACE → no-op.
-                //   rcad: face construction is handled in fill_images_faces (above).
+                // ✅ OCCT-aligned: BuildResult(FACE) — create topods V/E/F TShapes.
+                result.build_topods_faces(t);
+            }
+            ShapeType::Shell => {
+                // ✅ OCCT-aligned: BuildResult(SHELL) — assemble shells from face images.
+                let tmp_shells = std::mem::take(&mut result.tmp_shells);
+                for shell_faces in &tmp_shells {
+                    let sf: Vec<topods::ShapeRef> = shell_faces.iter()
+                        .filter_map(|&fi| result.face_refs.get(fi).copied())
+                        .collect();
+                    if !sf.is_empty() {
+                        result.shells.push(t.add_tshell(sf));
+                    }
+                }
+            }
+            ShapeType::Solid => {
+                // ✅ OCCT-aligned: BuildResult(SOLID) — assemble solids from shells.
+                let tmp_solids = std::mem::take(&mut result.tmp_solids);
+                if tmp_solids.is_empty() && result.shells.is_empty() {
+                    let shell = t.add_tshell(std::mem::take(&mut result.face_refs));
+                    t.add_tsolid(vec![shell]);
+                } else if !tmp_solids.is_empty() {
+                    for solid_shells in &tmp_solids {
+                        let shell_refs: Vec<topods::ShapeRef> = solid_shells.iter()
+                            .filter_map(|&si| result.shells.get(si).copied())
+                            .collect();
+                        if !shell_refs.is_empty() {
+                            result.solids.push(t.add_tsolid(shell_refs));
+                        }
+                    }
+                } else {
+                    let shell_refs: Vec<topods::ShapeRef> = result.shells.clone();
+                    t.add_tsolid(shell_refs);
+                }
+            }
+            ShapeType::CompSolid => {
+                // ✅ OCCT-aligned: BuildResult(COMPSOLID) — aggregate solids.
+                let tmp_cs_groups = std::mem::take(&mut result.tmp_compsolid_groups);
+                for cs_group in &tmp_cs_groups {
+                    let solid_refs: Vec<topods::ShapeRef> = cs_group.iter()
+                        .filter_map(|&si| result.solids.get(si).copied())
+                        .collect();
+                    if !solid_refs.is_empty() {
+                        result.compsolid_groups.push(t.add_tcompsolid(solid_refs));
+                    }
+                }
+            }
+            ShapeType::Compound => {
+                // OCCT L431-435: BuildResult(COMPOUND) — aggregate into top-level compound.
+                // rcad: compound handling is in build_with_history after build_result.
             }
         }
     }
@@ -1899,9 +1941,6 @@ impl<'a> BooleanBuilder<'a> {
         // Phase 5: FillImagesSolids (L400-410) → BuildResult(SOLID) (L406-410).
         self.fill_images_solids(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // ✅ OCCT-aligned: build topods V/E/W/F from final face set after all
-        //   solid-level mutations (PerformShapesToAvoid, FillIn3DParts).
-        result.build_topods_faces(&mut t_brep);
         self.build_result(ShapeType::Solid, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 6: FillImagesContainers(COMPSOLID) (L412-422) → BuildResult(COMPSOLID) (L418-422).

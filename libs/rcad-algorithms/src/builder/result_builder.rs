@@ -1028,56 +1028,16 @@ impl ResultBuilder {
         }
     }
 
-    /// ✅ OCCT-aligned: BuildResult(SHELL/SOLID/COMPSOLID) — assemble shells, solids,
-    ///   and compsolids from the already-created topods faces (build_topods_faces).
-    ///   Vertices/edges/wires/faces are already in t_brep; this method only does
-    ///   the container-level assembly.
+    /// ✅ OCCT-aligned: Final assembly — return history.
+    ///   Per-dimension BuildResult calls (Face/Shell/Solid/CompSolid) have already
+    ///   created the corresponding topods TShapes in t_brep. This method returns
+    ///   the BooleanHistory from the accumulated result data.
     pub(crate) fn build_topods(&mut self, t: &mut topods::BRep) -> BooleanHistory {
-        use topods::ShapeRef;
-
-        // Vertices, edges, faces already created by build_topods_faces.
-        // 4. Shells — convert tmp_shells to topods TShape::Shell
-        let tmp_shells = std::mem::take(&mut self.tmp_shells);
-        for shell_faces in &tmp_shells {
-            let sf: Vec<ShapeRef> = shell_faces.iter()
-                .filter_map(|&fi| self.face_refs.get(fi).copied())
-                .collect();
-            if !sf.is_empty() {
-                self.shells.push(t.add_tshell(sf));
-            }
-        }
-
-        // 5. Solids — convert tmp_solids to topods TShape::Solid
-        let tmp_solids = std::mem::take(&mut self.tmp_solids);
-        if tmp_solids.is_empty() && self.shells.is_empty() {
+        // Fallback: if no solids were created by BuildResult but faces exist,
+        // create a default shell + solid (OCCT: defaults to single shell/solid).
+        if self.shells.is_empty() && !self.face_refs.is_empty() {
             let shell = t.add_tshell(std::mem::take(&mut self.face_refs));
             t.add_tsolid(vec![shell]);
-        } else if !tmp_solids.is_empty() {
-            for solid_shells in &tmp_solids {
-                let shell_refs: Vec<ShapeRef> = solid_shells.iter()
-                    .filter_map(|&si| self.shells.get(si).copied())
-                    .collect();
-                if !shell_refs.is_empty() {
-                    let solid_sr = t.add_tsolid(shell_refs);
-                    self.solids.push(solid_sr);
-                }
-            }
-        } else {
-            let shell_refs: Vec<ShapeRef> = self.shells.clone();
-            t.add_tsolid(shell_refs);
-        }
-
-        // 6. CompSolids — convert tmp_compsolid_groups to topods TShape::CompSolid
-        let tmp_cs_groups = std::mem::take(&mut self.tmp_compsolid_groups);
-        if !tmp_cs_groups.is_empty() {
-            for cs_group in &tmp_cs_groups {
-                let solid_refs: Vec<ShapeRef> = cs_group.iter()
-                    .filter_map(|&si| self.solids.get(si).copied())
-                    .collect();
-                if !solid_refs.is_empty() {
-                    self.compsolid_groups.push(t.add_tcompsolid(solid_refs));
-                }
-            }
         }
 
         BooleanHistory {
