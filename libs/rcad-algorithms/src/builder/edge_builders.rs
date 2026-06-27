@@ -6,7 +6,10 @@ use crate::builder::types::{WireSegment, WireEdgeSource, WireOrientation};
 use super::wire_splitter::{world_to_uv, edge_uv_tangent, compute_seam_tangent_angles};
 
 /// ✅ OCCT-aligned: degenerate edge segments (BOPAlgo_Builder_2.cxx L408-412).
-pub fn build_degenerate_edge_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face: &DSFace, face_idx: usize) -> Vec<WireSegment> {
+///   OCCT uses distinct TopoDS_Vertex instances for deg edge start/end.
+///   rcad: creates virtual vertex indices (deg_virtual_counter) to match.
+///   FWD segment uses (sv, virtual_v), REV uses (virtual_v, sv).
+pub fn build_degenerate_edge_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face: &DSFace, face_idx: usize, deg_virtual_counter: &mut usize) -> Vec<WireSegment> {
     let deg_pcurve = match &face.surface {
         Surface3::Sphere(_) => {
             let pole_v = world_to_uv(&face.surface, ds.vertices[sv].point)
@@ -42,8 +45,13 @@ pub fn build_degenerate_edge_segments(ds: &DS, ei: usize, sv: usize, ev: usize, 
         }),
     };
     let tangent = compute_seam_tangent_angles(ds, ei, sv, ev, &face.surface);
+    let virt_sv = *deg_virtual_counter;
+    *deg_virtual_counter += 1;
+    let virt_ev = *deg_virtual_counter;
+    *deg_virtual_counter += 1;
+    // ✅ OCCT-aligned: FWD segment uses (pole, virtual) → distinct from seam edge's pole vertex.
     let fwd = WireSegment {
-        start_vertex: sv, end_vertex: sv,
+        start_vertex: sv, end_vertex: virt_sv,
         source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Forward,
         is_seam: true, second_pcurve: deg_pcurve.clone(), first_pcurve: None, t_range: [0.0, 1.0],
         tangent_start: tangent.0, tangent_end: tangent.1,
@@ -60,7 +68,7 @@ pub fn build_degenerate_edge_segments(ds: &DS, ei: usize, sv: usize, ev: usize, 
         _ => None,
     };
     let rev = WireSegment {
-        start_vertex: sv, end_vertex: sv,
+        start_vertex: virt_ev, end_vertex: sv,
         source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Reversed,
         is_seam: true, second_pcurve: deg_pcurve_rev, first_pcurve: None, t_range: [0.0, 1.0],
         tangent_start: Some(std::f64::consts::PI), tangent_end: Some(std::f64::consts::PI),
