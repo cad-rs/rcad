@@ -4,7 +4,7 @@ use rcad_kernel::geom::*; use rcad_kernel::BRep;
 use rcad_kernel::topods;
 use crate::history::{BooleanHistory, EdgeOrigin, FaceOrigin, HistoryTracker, ShellOrigin, SolidOrigin, VertexOrigin};
 use crate::bopds::ds::*; use crate::tolerance::*;
-use crate::builder::types::{WireFace, WireSegment, WireEdgeSource, FaceEntry, FaceSampleData};
+use crate::builder::types::{WireFace, WireSegment, WireEdgeSource, WireSegmentTopoDS, WireEdgeSourceTopoDS, FaceEntry, FaceSampleData};
 use crate::builder::SourceSide;
 use crate::builder::{hash_point, curve_eq};
 use crate::triangulate::{triangulate_polygon, triangulate_polygon_with_holes};
@@ -303,8 +303,271 @@ impl ResultBuilder {
         self.face_origins.push(origin);
     }
 
-    /// ✅ OCCT-aligned: estimate face normal from wire segments.
-    ///     Uses Newell's method on the outer wire boundary vertices.
+    /// ✅ OCCT-aligned: emit_wire_face using WireSegmentTopoDS + BRepTool.
+    ///   Same logic as emit_wire_face but reads data through BRepTool
+    ///   instead of directly from DS.
+    pub(crate) fn emit_wire_face_topods(
+        &mut self,
+        face_idx: usize,
+        wf: &WireFace,
+        segments: &[WireSegmentTopoDS],
+        tool: &dyn rcad_kernel::topods::BRepTool,
+        ic_curves: &HashMap<usize, Curve3>,
+        flip: bool,
+        origin: FaceOrigin,
+        vertex_positions: &HashMap<usize, DVec3>,
+    ) {
+        let normal = if let Some(surf) = tool.face_surface(rcad_kernel::topods::ShapeRef::new(face_idx)) {
+            match surf {
+                Surface3::Plane(p) => if flip { -p.normal } else { p.normal },
+                _ => {
+                    let n = Self::estimate_boundary_normal_from_segments_topo(
+                        &wf.outer_wire, segments, tool, vertex_positions);
+                    if n.length_squared() > TOLERANCE_METRIC_SQ_NEAR_ZERO { n } else { return; }
+                }
+            }
+        } else { return; };
+        if normal.length_squared() <= TOLERANCE_METRIC_SQ_NEAR_ZERO { return; }
+
+        let get_pos = |vi: usize| -> DVec3 {
+            vertex_positions.get(&vi).copied()
+                .unwrap_or_else(|| tool.vertex_position(rcad_kernel::topods::ShapeRef::new(vi)))
+        };
+
+        let mut vert_indices = Vec::new();
+        let mut edge_indices = Vec::new();
+        let ow: Vec<&usize> = wf.outer_wire.iter()
+            .filter(|&&si| segments[si].start_vertex.index != segments[si].end_vertex.index)
+            .collect();
+        for &&si in &ow {
+            let seg = &segments[si];
+            let v1 = if vertex_positions.contains_key(&seg.start_vertex.index) {
+                self.add_vertex(vertex_positions[&seg.start_vertex.index])
+            } else {
+                self.add_ds_vertex(seg.start_vertex.index, get_pos(seg.start_vertex.index))
+            };
+            let v2 = if vertex_positions.contains_key(&seg.end_vertex.index) {
+                self.add_vertex(vertex_positions[&seg.end_vertex.index])
+            } else {
+                self.add_ds_vertex(seg.end_vertex.index, get_pos(seg.end_vertex.index))
+            };
+            if vert_indices.is_empty() || vert_indices.last() != Some(&v1) {
+                vert_indices.push(v1);
+            }
+            let (ei, forward) = if seg.is_seam {
+                let seam_deg = (get_pos(seg.start_vertex.index)
+                    - get_pos(seg.end_vertex.index)).length_squared() < TOLERANCE_ABS_SQ;
+                let sphere_surf = match tool.face_surface(rcad_kernel::topods::ShapeRef::new(face_idx)) {
+                    Some(Surface3::Sphere(s)) => s.clone(),
+                    _ => SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, ref_dir: DVec3::X },
+                };
+                let is_canon_deg = vertex_positions.contains_key(&seg.start_vertex.index)
+                    || vertex_positions.contains_key(&seg.end_vertex.index);
+                let ei = if seam_deg || is_canon_deg {
+                    self.add_edge_seam_degenerate(v1, v2, &sphere_surf)
+                } else {
+                    let seam_normal = any_perpendicular(sphere_surf.axis).normalize();
+                    let seam_circle = Curve3::Circle(Circle3 {
+                        center: sphere_surf.center, normal: seam_normal, radius: sphere_surf.radius,
+                    });
+                    self.add_seam_edge(v1, v2, seam_circle)
+                };
+                (ei, true)
+            } else {
+                let ei = match &seg.source {
+                    super::types::WireEdgeSourceTopoDS::IntersectionCurve(ci) => {
+                        let crv = ic_curves.get(&ci.index)
+                            .cloned().unwrap_or(Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X }));
+                        self.add_ic_edge(ci.index, v1, v2, crv)
+                    }
+                    _ => self.add_edge(v1, v2),
+                };
+                let forward = self.edges[ei].0 == v1;
+                (ei, forward)
+            };
+            edge_indices.push((ei, forward));
+        }
+
+        let mut inner_wire_edges: Vec<Vec<(usize, bool)>> = Vec::new();
+        let mut iw_vert_indices_all: Vec<usize> = Vec::new();
+        for iw in &wf.inner_wires {
+            let mut iw_verts = Vec::new();
+            let mut iw_edges = Vec::new();
+            for &si in iw {
+                let seg = &segments[si];
+                let v1 = if vertex_positions.contains_key(&seg.start_vertex.index) {
+                    self.add_vertex(vertex_positions[&seg.start_vertex.index])
+                } else {
+                    self.add_ds_vertex(seg.start_vertex.index, get_pos(seg.start_vertex.index))
+                };
+                let v2 = if vertex_positions.contains_key(&seg.end_vertex.index) {
+                    self.add_vertex(vertex_positions[&seg.end_vertex.index])
+                } else {
+                    self.add_ds_vertex(seg.end_vertex.index, get_pos(seg.end_vertex.index))
+                };
+                if iw_verts.is_empty() || iw_verts.last() != Some(&v1) {
+                    iw_verts.push(v1);
+                }
+                let ei = match &seg.source {
+                    super::types::WireEdgeSourceTopoDS::IntersectionCurve(ci) => {
+                        let crv = ic_curves.get(&ci.index)
+                            .cloned().unwrap_or(Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X }));
+                        self.add_ic_edge(ci.index, v1, v2, crv)
+                    }
+                    _ => self.add_edge(v1, v2),
+                };
+                let forward = self.edges[ei].0 == v1;
+                iw_edges.push((ei, forward));
+            }
+            inner_wire_edges.push(iw_edges);
+            iw_vert_indices_all.extend(iw_verts);
+        }
+
+        // Internal wire edges
+        let mut internal_wire_edges: Vec<Vec<(usize, bool)>> = Vec::new();
+        for iw in &wf.internal_wires {
+            let mut iw_edges = Vec::new();
+            for &si in iw {
+                let seg = &segments[si];
+                let v1 = if vertex_positions.contains_key(&seg.start_vertex.index) {
+                    self.add_vertex(vertex_positions[&seg.start_vertex.index])
+                } else {
+                    self.add_ds_vertex(seg.start_vertex.index, get_pos(seg.start_vertex.index))
+                };
+                let v2 = if vertex_positions.contains_key(&seg.end_vertex.index) {
+                    self.add_vertex(vertex_positions[&seg.end_vertex.index])
+                } else {
+                    self.add_ds_vertex(seg.end_vertex.index, get_pos(seg.end_vertex.index))
+                };
+                let ei = match &seg.source {
+                    super::types::WireEdgeSourceTopoDS::IntersectionCurve(ci) => {
+                        let crv = ic_curves.get(&ci.index)
+                            .cloned().unwrap_or(Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X }));
+                        if let Curve3::Circle(_) = &crv { self.add_circle_edge(v1, v2, crv) }
+                        else { self.add_edge(v1, v2) }
+                    }
+                    _ if seg.is_seam => {
+                        let sphere_surf = match tool.face_surface(rcad_kernel::topods::ShapeRef::new(face_idx)) {
+                            Some(Surface3::Sphere(s)) => s.clone(),
+                            _ => SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, ref_dir: DVec3::X },
+                        };
+                        let c = Curve3::Circle(Circle3 {
+                            center: sphere_surf.center,
+                            normal: any_perpendicular(sphere_surf.axis).normalize(),
+                            radius: sphere_surf.radius,
+                        });
+                        self.add_seam_edge(v1, v2, c)
+                    }
+                    _ => self.add_edge(v1, v2),
+                };
+                let forward = self.edges[ei].0 == v1;
+                iw_edges.push((ei, forward));
+            }
+            internal_wire_edges.push(iw_edges);
+        }
+
+        // Triangulation
+        let outer_boundary: Vec<DVec3> = vert_indices.iter().map(|&vi| self.vertices[vi]).collect();
+        let iw_boundaries: Vec<Vec<DVec3>> = inner_wire_edges.iter().map(|iw_es| {
+            let mut pts = Vec::new();
+            for &(ei, _) in iw_es {
+                let (a, b) = self.edges[ei];
+                if pts.is_empty() || pts.last() != Some(&a) { pts.push(a); }
+            }
+            pts.iter().map(|&vi| self.vertices[vi]).collect()
+        }).collect();
+        let all_vert_indices: Vec<usize> = [vert_indices.as_slice(), iw_vert_indices_all.as_slice()].concat();
+        let mut tris = if iw_boundaries.is_empty() {
+            triangulate_polygon(&outer_boundary, normal)
+        } else {
+            triangulate_polygon_with_holes(&outer_boundary, &iw_boundaries, normal)
+        };
+        for tri in &mut tris {
+            for idx in tri.iter_mut() {
+                *idx = all_vert_indices[*idx];
+            }
+        }
+
+        let centroid = outer_boundary.iter().copied().sum::<DVec3>() / outer_boundary.len().max(1) as f64;
+        let area = Self::polygon_signed_area_on_normal(&outer_boundary, normal);
+        let mut outer_sig: Vec<usize> = edge_indices.iter().map(|&(eid, _)| eid).collect();
+        outer_sig.sort_unstable();
+        let nlen = normal.length();
+        let nunit = if nlen > TOLERANCE_LEN_MIN { normal / nlen } else { normal };
+        // Same coincident face dedup as emit_wire_face
+        for (existing_idx, (existing_outer, existing_inner, _existing_tris, existing_normal,
+             _surf, _uv, existing_centroid, existing_area, _existing_sp, _existing_iw))
+            in self.faces.iter().enumerate()
+        {
+            let mut ex_sig: Vec<usize> = existing_outer.iter().map(|&(eid, _)| eid).collect();
+            for iw_edges in existing_inner {
+                ex_sig.extend(iw_edges.iter().map(|&(eid, _)| eid));
+            }
+            ex_sig.sort_unstable();
+            let elen = existing_normal.length();
+            if elen <= TOLERANCE_LEN_MIN { continue; }
+            let eunit = *existing_normal / elen;
+            let sig_match = ex_sig == outer_sig;
+            let geo_match = nunit.dot(eunit).abs() >= 0.99
+                && (*existing_centroid - centroid).length() <= TOLERANCE_LINEAR_RELAX_8
+                && (existing_area - area).abs() <= TOLERANCE_LINEAR_RELAX_8 * existing_area.max(area).max(1.0);
+            if sig_match || geo_match {
+                self.co_face_origins.push((existing_idx, origin));
+                return;
+            }
+        }
+
+        // UV domain for sphere faces
+        let sphere_uv = if let Some(Surface3::Sphere(sph)) = tool.face_surface(rcad_kernel::topods::ShapeRef::new(face_idx)) {
+            let uvs: Vec<DVec2> = if !wf.outer_wire.is_empty() {
+                wf.outer_wire.iter().map(|&si| {
+                    let pos = get_pos(segments[si].start_vertex.index);
+                    sph.world_to_uv(pos)
+                }).collect()
+            } else { vec![] };
+            if !uvs.is_empty() {
+                let u_min = uvs.iter().map(|uv| uv.x).fold(f64::INFINITY, f64::min);
+                let u_max = uvs.iter().map(|uv| uv.x).fold(f64::NEG_INFINITY, f64::max);
+                let v_min = uvs.iter().map(|uv| uv.y).fold(f64::INFINITY, f64::min);
+                let v_max = uvs.iter().map(|uv| uv.y).fold(f64::NEG_INFINITY, f64::max);
+                if (u_max - u_min).abs() > TOLERANCE_FLOAT_LOOSE && (v_max - v_min).abs() > TOLERANCE_FLOAT_LOOSE {
+                    Some([u_min, u_max, v_min, v_max])
+                } else { None }
+            } else { None }
+        } else { None };
+
+        let surface = tool.face_surface(rcad_kernel::topods::ShapeRef::new(face_idx))
+            .cloned().unwrap_or(Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z }));
+
+        let sample_pt = if !wf.outer_wire.is_empty() {
+            get_pos(segments[wf.outer_wire[0]].start_vertex.index)
+        } else { DVec3::ZERO };
+
+        self.face_internal_vtx.push(Vec::new());
+        self.faces.push((
+            edge_indices, inner_wire_edges, tris, normal, surface,
+            sphere_uv, centroid, area, sample_pt, internal_wire_edges,
+        ));
+        self.face_origins.push(origin);
+    }
+
+    /// ✅ OCCT-aligned: estimate face normal from wire segments (TopoDS variant).
+    fn estimate_boundary_normal_from_segments_topo(
+        outer_wire: &[usize],
+        segments: &[super::types::WireSegmentTopoDS],
+        tool: &dyn rcad_kernel::topods::BRepTool,
+        vertex_positions: &HashMap<usize, DVec3>,
+    ) -> DVec3 {
+        if outer_wire.len() < 3 { return DVec3::ZERO; }
+        let pts: Vec<DVec3> = outer_wire.iter().map(|&si| {
+            let seg = &segments[si];
+            let vi = seg.start_vertex.index;
+            vertex_positions.get(&vi).copied()
+                .unwrap_or_else(|| tool.vertex_position(rcad_kernel::topods::ShapeRef::new(vi)))
+        }).collect();
+        Self::estimate_boundary_normal(&pts)
+    }
+
     fn estimate_boundary_normal_from_segments(
         outer_wire: &[usize],
         segments: &[WireSegment],

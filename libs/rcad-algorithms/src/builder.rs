@@ -197,56 +197,62 @@ impl<'a> BooleanBuilder<'a> {
         Some((segments, wfs, vertex_positions))
     }
 
-    /// ✅ OCCT-aligned: TopoDS-based BuildFace pipeline.
-    ///   Uses segments_to_topo_ds + DSAsBRep + build_closed_wires_topoDS
-    ///   for the wire splitting step.
-    pub(crate) fn split_face_occt_wire_pipeline_topo_ds(
+    /// ✅ OCCT-aligned: TopoDS-based BuildFace pipeline with emit.
+    ///   Runs the full pipeline then emits result faces directly into ResultBuilder.
+    pub(crate) fn split_face_and_emit_topo_ds(
         &self,
         face_idx: usize,
-    ) -> Option<(Vec<WireSegment>, Vec<WireFace>, HashMap<usize, DVec3>)> {
+        is_a: bool,
+        result: &mut ResultBuilder,
+    ) {
         let ds = self.ds;
         let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
         let segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
-        if !self.builder_face_check_data(face_idx, &segments) { return None; }
+        if !self.builder_face_check_data(face_idx, &segments) { return; }
 
-        // Convert to topoDS once; all downstream logic uses BRepTool
         let segments_topo = crate::builder::builder_utils_topo_ds::segments_to_topo_ds(&segments, ds, face_idx);
         let adaptor = crate::builder::ds_as_brep::DSAsBRep::new(ds, face_idx);
-        // Drop original segments — only topoDS used from here on
         drop(segments);
 
         let (avoided_pids, pid_segs) = crate::builder::wire_splitter::perform_shapes_to_avoid_topo_ds(
             &segments_topo, &adaptor);
         let mut avoided = crate::builder::wire_splitter::expand_avoided_pids(&avoided_pids, &pid_segs);
-
         let wires = crate::builder::wire_path_topo_ds::build_closed_wires_topoDS(
             &segments_topo, &avoided, &adaptor);
 
-        // Post Treatment
         let in_loop: HashSet<usize> = wires.iter().flatten().copied().collect();
         for si in 0..segments_topo.len() {
             if !in_loop.contains(&si) && !avoided.contains(&si) { avoided.insert(si); }
         }
-
         let internal_wire_groups: Vec<Vec<usize>> = avoided.iter().map(|&si| vec![si]).collect();
 
-        let mut wfs = if !wires.is_empty() {
+        let wfs = if !wires.is_empty() {
             crate::builder::wire_path_topo_ds::perform_areas_topo_ds(&wires, &internal_wire_groups, &segments_topo, &adaptor, face_idx)
         } else if !avoided.is_empty() {
             vec![WireFace { outer_wire: vec![], inner_wires: vec![], internal_wires: segments_topo.iter().enumerate().filter(|(si, _)| avoided.contains(si)).map(|(si, _)| vec![si]).collect() }]
         } else {
             vec![WireFace { outer_wire: (0..segments_topo.len()).collect(), inner_wires: vec![], internal_wires: vec![] }]
         };
-        if wfs.is_empty() { return None; }
+        if wfs.is_empty() { return; }
 
+        let mut wfs = wfs;
         if !internal_wire_groups.is_empty() {
             for wf in &mut wfs {
                 for &si in &avoided { wf.internal_wires.push(vec![si]); }
             }
         }
-        // Convert topoDS segments back to WireSegment for emit_wire_face compatibility
-        let result_segments = crate::builder::builder_utils_topo_ds::topo_ds_to_segments(&segments_topo);
-        Some((result_segments, wfs, HashMap::new()))
+
+        let origin = if is_a {
+            FaceOrigin::FromA(ds.faces[face_idx].source_face_idx)
+        } else {
+            FaceOrigin::FromB(ds.faces[face_idx].source_face_idx)
+        };
+        let ic_curves: HashMap<usize, Curve3> = ds.intersection_curves.iter()
+            .enumerate().map(|(ci, ic)| (ci, ic.curve.clone())).collect();
+        for wf in &wfs {
+            result.emit_wire_face_topods(face_idx, wf, &segments_topo, &adaptor, &ic_curves, false, origin,
+                &HashMap::new());
+        }
     }
 
     /// ✅ OCCT-aligned: BuilderFace::CheckData (BOPAlgo_BuilderFace.cxx L50-115).
@@ -735,16 +741,7 @@ impl<'a> BooleanBuilder<'a> {
             }
 
             // Has IN or SC pave blocks → full BuilderFace::Perform (TopoDS path).
-            if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline_topo_ds(fi) {
-                for wf in &wfs {
-                    let origin = if is_a {
-                        FaceOrigin::FromA(self.ds.faces[fi].source_face_idx)
-                    } else {
-                        FaceOrigin::FromB(self.ds.faces[fi].source_face_idx)
-                    };
-                    result.emit_wire_face(fi, wf, &segments, self.ds, false, origin, &vertex_positions);
-                }
-            }
+            self.split_face_and_emit_topo_ds(fi, is_a, result);
         }
     }
 
