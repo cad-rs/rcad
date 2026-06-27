@@ -737,8 +737,8 @@ impl<'a> BooleanBuilder<'a> {
                 continue;
             }
 
-            // Has IN or SC pave blocks → full BuilderFace::Perform.
-            if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline(fi) {
+            // Has IN or SC pave blocks → full BuilderFace::Perform (TopoDS path).
+            if let Some((segments, wfs, vertex_positions)) = self.split_face_occt_wire_pipeline_topo_ds(fi) {
                 for wf in &wfs {
                     let origin = if is_a {
                         FaceOrigin::FromA(self.ds.faces[fi].source_face_idx)
