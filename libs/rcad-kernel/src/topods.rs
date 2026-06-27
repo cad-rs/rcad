@@ -243,6 +243,8 @@ impl BRep {
 /// Here they are methods on a `BRepTool` trait so the boolean pipeline can
 /// be generic over the data source (real BRep or DS adaptor).
 pub trait BRepTool {
+    /// BRep_Tool::Pnt(aV) — 3D position of a vertex.
+    fn vertex_position(&self, v: ShapeRef) -> DVec3;
     /// BRep_Tool::Tolerance(aV) — 3D tolerance of a vertex.
     fn vertex_tolerance(&self, v: ShapeRef) -> f64;
     /// BRep_Tool::Degenerated(aE).
@@ -251,6 +253,8 @@ pub trait BRepTool {
     fn parameter_on_edge(&self, vertex: ShapeRef, edge: ShapeRef, face: ShapeRef) -> Option<f64>;
     /// BRep_Tool::CurveOnSurface(aE, aF) — pcurve of edge on face.
     fn curve_on_surface(&self, edge: ShapeRef, face: ShapeRef) -> Option<&(Curve2d, f64, f64)>;
+    /// BRep_Tool::Surface(aF) — face surface.
+    fn face_surface(&self, face: ShapeRef) -> Option<&Surface3>;
     /// UResolution: parameter tolerance in U direction (OCCT: BRepAdaptor_Surface::UResolution).
     fn u_resolution(&self, face: ShapeRef, tol3d: f64) -> f64;
     /// VResolution: parameter tolerance in V direction.
@@ -258,6 +262,10 @@ pub trait BRepTool {
 }
 
 impl BRepTool for BRep {
+    fn vertex_position(&self, v: ShapeRef) -> DVec3 {
+        self.vertex(v).point
+    }
+
     fn vertex_tolerance(&self, v: ShapeRef) -> f64 {
         self.vertex(v).tolerance
     }
@@ -272,6 +280,11 @@ impl BRepTool for BRep {
 
     fn curve_on_surface(&self, edge: ShapeRef, face: ShapeRef) -> Option<&(Curve2d, f64, f64)> {
         self.edge(edge).pcurves.get(&face.index)
+    }
+
+    fn face_surface(&self, face: ShapeRef) -> Option<&Surface3> {
+        let fi = face.index;
+        self.face(face).surface.map(|si| &self.surfaces[si])
     }
 
     fn u_resolution(&self, face: ShapeRef, tol3d: f64) -> f64 {

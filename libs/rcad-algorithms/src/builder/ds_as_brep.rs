@@ -3,6 +3,7 @@
 /// During Phase 1 migration, this allows TopoDS-based wire path code to
 /// read from the existing DS by wrapping DS indices as ShapeRef handles.
 use std::collections::HashMap;
+use glam::DVec3;
 use crate::bopds::ds::DS;
 use rcad_kernel::geom::*;
 use rcad_kernel::topods::{BRepTool, ShapeRef, Orientation};
@@ -50,6 +51,10 @@ impl<'a> DSAsBRep<'a> {
 }
 
 impl BRepTool for DSAsBRep<'_> {
+    fn vertex_position(&self, v: ShapeRef) -> DVec3 {
+        self.ds.vertices.get(v.index).map(|v| v.point).unwrap_or(DVec3::ZERO)
+    }
+
     fn vertex_tolerance(&self, v: ShapeRef) -> f64 {
         self.ds.vertices.get(v.index).map(|v| v.geom_tol).unwrap_or(0.0)
     }
@@ -65,6 +70,10 @@ impl BRepTool for DSAsBRep<'_> {
 
     fn curve_on_surface(&self, edge: ShapeRef, _face: ShapeRef) -> Option<&(Curve2d, f64, f64)> {
         self.pcurve_cache.get(&edge.index)
+    }
+
+    fn face_surface(&self, _face: ShapeRef) -> Option<&Surface3> {
+        Some(&self.ds.faces[self.face_idx].surface)
     }
 
     fn u_resolution(&self, _face: ShapeRef, tol3d: f64) -> f64 {
