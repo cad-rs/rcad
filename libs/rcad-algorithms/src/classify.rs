@@ -535,74 +535,100 @@ fn classify_with_single_ray(
     let boundary_tol = relaxed_tol_for_solid_face_set(ds, tol, solid_face_indices, wf);
     let ray_tol = tol.tolerance(ToleranceLevel::Strict);
 
-    // OCCT L257-278: try each face direction (Segment/OtherSegment pattern)
+    // Try each face direction (OCCT L257-278: Segment/OtherSegment pattern)
+    // For each ray direction, check ALL faces and find nearest intersection
+    // (OCCT L363-399: Intersector3d.Perform for each face → find nearest parmin).
+    let mut test_dirs: Vec<DVec3> = Vec::new();
+
+    // OCCT L259-266: Segment(P) → ray toward face; OtherSegment(P) → alternate
     for &fi in solid_face_indices {
-        // Build ray toward this face's centroid (OCCT: face point from SolidExplorer)
         let face_verts = ds.face_boundary_points(fi);
         if face_verts.len() < 3 { continue; }
         let centroid = face_verts.iter().sum::<DVec3>() / face_verts.len() as f64;
         let ray_dir = centroid - point;
         let dir_len = ray_dir.length();
         if dir_len < 1e-30 { continue; }
-        let ray_dir = ray_dir / dir_len;
+        test_dirs.push(ray_dir / dir_len);
+    }
 
-        // OCCT L280-298: check face intersection
-        //   iFlag==1 → Infinite face → On; iFlag==2 → no inters → Out;
-        //   iFlag==3 → On surface but Out of face → skip (faulty).
-        let result = ray_cast_classify_point_on_face(
-            point, ray_dir, fi, ds, boundary_tol, ray_tol,
-        );
-
-        match result {
-            RayFaceResult::In => return Classification::In,
-            RayFaceResult::Out => return Classification::Out,
-            RayFaceResult::On => return Classification::On,
-            RayFaceResult::Faulty => {
-                // OCCT L299: isFaultyLine = false initially,
-                // set to true if edge/vertex intersection detected.
-                // rcad: faulty → try next face direction (OtherSegment equivalent).
-                continue;
-            }
+    // OCCT L257-278: try each direction; if faulty → try next (OtherSegment)
+    for ray_dir in &test_dirs {
+        if let Some(class) = try_classify_along_ray(point, *ray_dir, solid_face_indices,
+                                                      ds, boundary_tol, ray_tol) {
+            return class;
         }
     }
 
-    // OCCT L276-278: if no valid face direction found → Faulty state.
-    // OCCT retries via OtherSegment (L265) with a fixed direction.
-    // (rcad extension) Fixed-direction fallback along +X axis.
-    let fixed_dir = DVec3::X;
-    for &fi in solid_face_indices {
-        let result = ray_cast_classify_point_on_face(
-            point, fixed_dir, fi, ds, boundary_tol, ray_tol,
-        );
-        match result {
-            RayFaceResult::In => return Classification::In,
-            RayFaceResult::Out => return Classification::Out,
-            RayFaceResult::On => return Classification::On,
-            RayFaceResult::Faulty => continue,
-        }
-    }
-    // Last-resort: random direction (matching OCCT solid explorer retry).
-    let alt_dir = DVec3::new(0.0, 0.57735, 0.57735); // (0, 1/√3, 1/√3)
-    for &fi in solid_face_indices {
-        let result = ray_cast_classify_point_on_face(
-            point, alt_dir, fi, ds, boundary_tol, ray_tol,
-        );
-        match result {
-            RayFaceResult::In => return Classification::In,
-            RayFaceResult::Out => return Classification::Out,
-            RayFaceResult::On => return Classification::On,
-            RayFaceResult::Faulty => continue,
+    // OCCT L265: OtherSegment(P) → fixed/alternate directions
+    for &dir in &[DVec3::X, DVec3::Y, DVec3::Z,
+                  -DVec3::X, -DVec3::Y, -DVec3::Z,
+                  DVec3::new(0.0, 0.57735, 0.57735)] {
+        if let Some(class) = try_classify_along_ray(point, dir, solid_face_indices,
+                                                      ds, boundary_tol, ray_tol) {
+            return class;
         }
     }
     Classification::Out
 }
 
+/// OCCT L306-493: fire ray, find nearest face intersection, determine In/Out.
+/// Returns None if no valid intersection found (all faces return Faulty).
+fn try_classify_along_ray(
+    point: DVec3,
+    ray_dir: DVec3,
+    solid_face_indices: &[usize],
+    ds: &DS,
+    boundary_tol: f64,
+    ray_tol: f64,
+) -> Option<Classification> {
+    // OCCT L363-399: for each face, find nearest intersection along this ray
+    let mut nearest_t = f64::MAX;
+    let mut has_valid = false;
+
+    for &fi in solid_face_indices {
+        let result = ray_cast_classify_point_on_face(
+            point, ray_dir, fi, ds, boundary_tol, ray_tol,
+        );
+        match result {
+            RayFaceResult::On => return Some(Classification::On),
+            RayFaceResult::In(t) | RayFaceResult::Out(t) => {
+                // OCCT L446-483: Intersector3d.WParameter(i) < parmin
+                if t >= -ray_tol && t < nearest_t {
+                    nearest_t = t;
+                    has_valid = true;
+                }
+            }
+            RayFaceResult::Faulty => {}
+        }
+    }
+
+    if !has_valid { return None; }
+
+    // Re-run to find which face gives the nearest intersection
+    for &fi in solid_face_indices {
+        let result = ray_cast_classify_point_on_face(
+            point, ray_dir, fi, ds, boundary_tol, ray_tol,
+        );
+        match result {
+            RayFaceResult::In(t) if (t - nearest_t).abs() < ray_tol => {
+                return Some(Classification::In);
+            }
+            RayFaceResult::Out(t) if (t - nearest_t).abs() < ray_tol => {
+                return Some(Classification::Out);
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Result of a single ray-face intersection, matching OCCT iFlag semantics.
+/// The f64 parameter is the ray parameter t (distance along ray at intersection).
 enum RayFaceResult {
     /// Point is inside the solid (ray exits through this face).
-    In,
+    In(f64),
     /// Point is outside the solid.
-    Out,
+    Out(f64),
     /// Point is ON the face boundary.
     On,
     /// Ray grazes face boundary → retry needed (faulty line).
@@ -646,9 +672,9 @@ fn ray_cast_classify_point_on_face(
             // If ray enters: point was OUTSIDE before intersection.
             // If ray exits:  point was INSIDE before intersection.
             if denom < 0.0 {
-                RayFaceResult::Out  // ray enters solid → point was Out
+                RayFaceResult::Out(t)  // ray enters solid → point was Out
             } else {
-                RayFaceResult::In   // ray exits solid → point was In
+                RayFaceResult::In(t)   // ray exits solid → point was In
             }
         }
         Surface3::Sphere(s) => {
@@ -690,9 +716,9 @@ fn ray_cast_classify_point_on_face(
                 let hit = point + ray_dir * nearest;
                 let n = (hit - s.center).normalize_or_zero();
                 if ray_dir.dot(n) < 0.0 {
-                    RayFaceResult::Out
+                    RayFaceResult::Out(nearest)
                 } else {
-                    RayFaceResult::In
+                    RayFaceResult::In(nearest)
                 }
             } else {
                 RayFaceResult::Faulty
