@@ -659,25 +659,43 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
         };
         prev_end = Some(ev);
 
-        // ✅ OCCT-aligned: degenerate edge (BOPAlgo_Builder_2.cxx L401, L408-412).
-        //    bIsDegenerated = BRep_Tool::Degenerated(aE);
-        //    if (bIsDegenerated) { aSp.Orientation(anOriE); aLE.Append(aSp); continue; }
-        //    Degenerate edges: added once with original orientation, NOT FWD+REV.
-        let is_degenerate = ds.is_edge_degenerated(ei);
+        // ✅ OCCT L369: check if edge was split by intersection (myImages.IsBound).
+        let edge_is_split = ei < ds.my_images.len() && ds.my_images[ei].len() > 1;
 
-        // OCCT-aligned: seam (L392-449)
-        let is_seam = !is_degenerate && match &face.surface {
+        if !edge_is_split {
+            // ✅ OCCT L371-382: unsplit edge — add directly.
+            //   INTERNAL orientation → FWD+REV (OCCT L371-377).
+            //   FORWARD/REVERSED → add as-is (OCCT L379-381).
+            let rep = ds.edge_on_face(ei, face_idx);
+            let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface,
+                Some(&edge.curve), Some(edge.t_range));
+            segments.push(WireSegment {
+                start_vertex: sv, end_vertex: ev,
+                source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Forward,
+                is_seam: false, second_pcurve: None,
+                first_pcurve: rep.map(|r| r.pcurve.clone()),
+                t_range: rep.map(|r| r.pcurve_range).unwrap_or(edge.t_range),
+                tangent_start: t_start, tangent_end: t_end,
+            });
+            continue;
+        }
+
+        // ✅ OCCT L387-404: surface closed check + seam detection.
+        //   bIsClosed = ((isUClosed && isUIso) || (isVClosed && isVIso)).
+        let b_is_degenerated = ds.is_edge_degenerated(ei);
+        let b_is_seam = !b_is_degenerated && match &face.surface {
             Surface3::Sphere(_) => true,
             _ => (is_u_closed || is_v_closed)
                 && (sv == ev || are_verts_coincident(ds, sv, ev)),
         };
 
-        if is_degenerate {
+        // ✅ OCCT L408-464: iterate split sub-edges (aLIE from myImages.Find).
+        if b_is_degenerated {
             segments.extend(build_degenerate_edge_segments(ds, ei, sv, ev, face, face_idx));
-        } else if is_seam && matches!(face.surface, Surface3::Sphere(_)) {
+        } else if b_is_seam && matches!(face.surface, Surface3::Sphere(_)) {
             if !processed_seam_ds_edges.insert(ei) { continue; }
             segments.extend(build_sphere_seam_segments(ds, ei, sv, ev, face, face_idx));
-        } else if is_seam {
+        } else if b_is_seam {
             segments.extend(build_cylinder_seam_segments(ds, ei, sv, ev, face));
         } else {
             // ✅ OCCT-aligned: use my_images sub-edges when available (populated
@@ -718,7 +736,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                     // whose UV lies on the seam (U ≈ 0 or 2π).  For a sphere seam edge
                     // between two poles (V varies along U=0), an IC endpoint at U=0 on
                     // the equator (V=π/2) splits the seam into two sub-edges.
-                    let is_periodic_seam = is_seam && matches!(face.surface,
+                    let is_periodic_seam = b_is_seam && matches!(face.surface,
                         Surface3::Sphere(_) | Surface3::Cylinder(_) | Surface3::Torus(_));
                     if is_periodic_seam {
                         let uv_s = world_to_uv(&face.surface, ds.vertices[sv].point);
