@@ -1187,7 +1187,13 @@ pub(crate) fn perform_areas(
     _context: &mut Context,
     face_idx: usize,
 ) -> Vec<WireFace> {
+    // OCCT L401-414: if no loops at all
     if wires.is_empty() {
+        if ds.faces[face_idx].natural_restriction {
+            // OCCT L403-411: infinite face → create a single face without wires
+            return vec![WireFace { outer_wire: vec![], inner_wires: vec![], internal_wires: vec![] }];
+        }
+        // OCCT L413: non-infinite face with no loops → nothing to create
         return vec![];
     }
 
@@ -1404,22 +1410,157 @@ pub(crate) fn perform_areas(
             }
         }
         if !assigned && !growths.is_empty() {
-            // OCCT: IsInside may fail for degenerate wires; assign orphan holes
-            // to the first (largest) growth (OCCT L558-581 orphan-to-infinite-face).
-            h2g.push((h, growths[0]));
+            // Orphan hole — defer to OCCT L557-581 handling below
         }
     }
+
+    // OCCT L557-581: identify orphan holes (assigned count < total holes)
+    let assigned_hole_set: std::collections::HashSet<usize> = h2g.iter().map(|&(h, _)| h).collect();
+    let orphan_holes: Vec<usize> = holes.iter()
+        .enumerate()
+        .filter(|(hi, _)| !assigned_hole_set.contains(hi))
+        .map(|(_, h)| *h)
+        .collect();
 
     // OCCT L540-555: build reverse map growth→holes.
     let mut g2h: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
     for &(h, g) in &h2g { g2h.entry(g).or_default().push(h); }
 
     // OCCT L584-613: add holes to growth faces.
-    growths.iter().map(|&g| WireFace {
+    let mut result: Vec<WireFace> = growths.iter().map(|&g| WireFace {
         outer_wire: wires[g].clone(),
         inner_wires: g2h.get(&g).map(|hs| hs.iter().map(|&h| wires[h].clone()).collect()).unwrap_or_default(),
         internal_wires: internal_wires.to_vec(),
-    }).collect()
+    }).collect();
+
+    // OCCT L557-581: unassigned holes → create new growth face from original surface
+    if !orphan_holes.is_empty() && ds.faces[face_idx].natural_restriction {
+        // OCCT L565-579: new TopoDS_Face from original surface → add orphan holes as inner wires
+        // rcad: WireFace with empty outer_wire = full parametric surface (natural_restriction)
+        let orphan_inner: Vec<Vec<usize>> = orphan_holes.iter().map(|&h| wires[h].clone()).collect();
+        result.push(WireFace {
+            outer_wire: vec![],
+            inner_wires: orphan_inner,
+            internal_wires: vec![],
+        });
+    }
+    result
+}
+
+/// ✅ OCCT-aligned: BOPAlgo_BuilderFace::PerformInternalShapes (L618-778).
+///   Classify internal wire groups against result faces and add as internal wires.
+///   L620-631: return early if no internal wires.
+///   L634-666: build UV boxes for each face (rcad: UV boundary polygon).
+///   L674-741: for each internal wire, test against each face via point-in-face.
+///   L744-777: un-wired edges silently dropped (rcad has no warning-alert).
+pub(crate) fn perform_internal_shapes(
+    wfs: &mut Vec<WireFace>,
+    internal_wire_groups: &[Vec<usize>],
+    segments: &[WireSegment],
+    ds: &DS,
+    face_idx: usize,
+) {
+    if internal_wire_groups.is_empty() { return; }
+    if wfs.is_empty() { return; }
+
+    let fsurf = &ds.faces[face_idx].surface;
+
+    // OCCT L634-666: Build UV boxes for each face (BRepTools::AddUVBounds)
+    //   rcad: build UV boundary polygon for each WireFace's outer wire.
+    let face_uv_bounds: Vec<Vec<DVec2>> = wfs.iter().map(|wf| {
+        let mut uv_bnd: Vec<DVec2> = Vec::new();
+        for &si in &wf.outer_wire {
+            let seg = &segments[si];
+            let forward = seg.orientation;
+            match &seg.source {
+                WireEdgeSource::DsEdge(ei) => {
+                    if let Some(rep) = ds.edge_on_face(*ei, face_idx) {
+                        let t0 = if forward == WireOrientation::Forward { rep.start_param } else { rep.end_param };
+                        let t1 = if forward == WireOrientation::Forward { rep.end_param } else { rep.start_param };
+                        let n = curve2d_nb_samples(&rep.pcurve, t0, t1).max(2);
+                        let du = if n > 1 { (t1 - t0) / (n - 1) as f64 } else { 0.0 };
+                        for i in 0..n {
+                            uv_bnd.push(rep.pcurve.point_at(t0 + du * i as f64));
+                        }
+                    }
+                }
+                WireEdgeSource::IntersectionCurve(ci) => {
+                    if let Some(ic) = ds.intersection_curves.get(*ci) {
+                        let pc = ic.pcurve_on_a.as_ref().or(ic.pcurve_on_b.as_ref());
+                        if let Some(pc) = pc {
+                            let t0 = seg.t_range[0];
+                            let t1 = seg.t_range[1];
+                            let n = curve2d_nb_samples(pc, t0, t1).max(2);
+                            let du = if n > 1 { (t1 - t0) / (n - 1) as f64 } else { 0.0 };
+                            for i in 0..n {
+                                uv_bnd.push(pc.point_at(t0 + du * i as f64));
+                            }
+                        }
+                    }
+                }
+                WireEdgeSource::SeamEdge => {
+                    if let Some(pc) = seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()) {
+                        let t0 = seg.t_range[0];
+                        let t1 = seg.t_range[1];
+                        let n = curve2d_nb_samples(pc, t0, t1).max(2);
+                        let du = if n > 1 { (t1 - t0) / (n - 1) as f64 } else { 0.0 };
+                        for i in 0..n {
+                            uv_bnd.push(pc.point_at(t0 + du * i as f64));
+                        }
+                    }
+                }
+            }
+            if let Some(uv) = world_to_uv(fsurf, ds.vertices[seg.start_vertex].point) {
+                uv_bnd.push(uv);
+            }
+        }
+        uv_bnd.dedup_by(|a, b| (*a - *b).length_squared() < 1e-20);
+        uv_bnd
+    }).collect();
+
+    // OCCT L674-741: classify each internal wire against each face
+    //   rcad: for each internal wire group, sample a UV point and find
+    //   the first face containing it (IsInside equivalent).
+    for group in internal_wire_groups {
+        if group.is_empty() { continue; }
+        // Sample a UV point from the first segment's midpoint
+        let si = group[0];
+        if si >= segments.len() { continue; }
+        let seg = &segments[si];
+        let uv_pt = {
+            let mut pt = DVec2::ZERO;
+            let mut found = false;
+            let pc_opt: Option<&dyn Curve2dEval> = match &seg.source {
+                WireEdgeSource::DsEdge(ei) => ds.edge_on_face(*ei, face_idx).map(|r| &r.pcurve as &dyn Curve2dEval),
+                WireEdgeSource::IntersectionCurve(ci) => ds.intersection_curves.get(*ci)
+                    .and_then(|ic| ic.pcurve_on_a.as_ref().or(ic.pcurve_on_b.as_ref()))
+                    .map(|pc| pc as &dyn Curve2dEval),
+                WireEdgeSource::SeamEdge => seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref())
+                    .map(|pc| pc as &dyn Curve2dEval),
+            };
+            if let Some(pc) = pc_opt {
+                let t_mid = (seg.t_range[0] + seg.t_range[1]) * 0.5;
+                pt = pc.point_at(t_mid);
+                found = true;
+            }
+            if !found {
+                if let Some(uv) = world_to_uv(fsurf, ds.vertices[seg.start_vertex].point) {
+                    pt = uv;
+                } else { continue; }
+            }
+            pt
+        };
+
+        // OCCT L710-715: if edge is inside face → add to internal wires
+        for (fi, wf) in wfs.iter_mut().enumerate() {
+            if fi < face_uv_bounds.len() && face_uv_bounds[fi].len() >= 3
+                && point_in_uv_polygon(uv_pt, &face_uv_bounds[fi])
+            {
+                wf.internal_wires.push(group.clone());
+                break;
+            }
+        }
+    }
 }
 
 /// Compute the signed area of a UV polygon using the shoelace formula.

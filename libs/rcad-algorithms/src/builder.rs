@@ -190,15 +190,9 @@ impl<'a> BooleanBuilder<'a> {
         };
         if wfs.is_empty() { return None; }
 
-        // ✅ OCCT-aligned L360-362: Add internal wire groups into the result WireFaces
-        //   for emit_wire_face to process.  OCCT: aBB.Add(aF, aW) per internal wire.
-        if !internal_wire_groups.is_empty() {
-            for wf in &mut wfs {
-                for &si in &avoided {
-                    wf.internal_wires.push(vec![si]);
-                }
-            }
-        }
+        // ✅ OCCT-aligned L147: PerformInternalShapes — classify internal wires against faces
+        crate::builder::wire_path::perform_internal_shapes(
+            &mut wfs, &internal_wire_groups, &segments, ds, face_idx);
         Some((segments, wfs, vertex_positions))
     }
 
@@ -240,7 +234,8 @@ impl<'a> BooleanBuilder<'a> {
         let internal_wire_groups: Vec<Vec<usize>> = avoided.iter().map(|&si| vec![si]).collect();
 
         let wfs = if !wires.is_empty() {
-            crate::builder::wire_path_topo_ds::perform_areas_topo_ds(&wires, &internal_wire_groups, &segments_topo, tool, face_idx)
+            crate::builder::wire_path_topo_ds::perform_areas_topo_ds(
+                &wires, &internal_wire_groups, &segments_topo, tool, face_idx, ds)
         } else if !avoided.is_empty() {
             vec![WireFace { outer_wire: vec![], inner_wires: vec![], internal_wires: segments_topo.iter().enumerate().filter(|(si, _)| avoided.contains(si)).map(|(si, _)| vec![si]).collect() }]
         } else {
@@ -249,11 +244,9 @@ impl<'a> BooleanBuilder<'a> {
         if wfs.is_empty() { return; }
 
         let mut wfs = wfs;
-        if !internal_wire_groups.is_empty() {
-            for wf in &mut wfs {
-                for &si in &avoided { wf.internal_wires.push(vec![si]); }
-            }
-        }
+        // ✅ OCCT-aligned L147: PerformInternalShapes
+        crate::builder::wire_path_topo_ds::perform_internal_shapes_topo_ds(
+            &mut wfs, &internal_wire_groups, &segments_topo, tool, face_idx, ds);
 
         let origin = if is_a {
             FaceOrigin::FromA(ds.faces[face_idx].source_face_idx)

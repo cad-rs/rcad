@@ -1,4 +1,4 @@
-﻿/// ✅ OCCT-aligned: TopoDS-based walk_path_extract_wires using BRepTool.
+/// ✅ OCCT-aligned: TopoDS-based walk_path_extract_wires using BRepTool.
 ///
 /// Phase 2 migration target: parallel implementation of walk_path_extract_wires
 /// that uses WireSegmentTopoDS + BRepTool instead of WireSegment + DS + face_idx.
@@ -534,8 +534,15 @@ pub(crate) fn perform_areas_topo_ds(
     segments: &[WireSegmentTopoDS],
     tool: &dyn BRepTool,
     face_idx: usize,
+    ds: &crate::bopds::ds::DS,
 ) -> Vec<WireFace> {
-    if wires.is_empty() { return vec![]; }
+    // OCCT L401-414: if no loops at all
+    if wires.is_empty() {
+        if ds.faces[face_idx].natural_restriction {
+            return vec![WireFace { outer_wire: vec![], inner_wires: vec![], internal_wires: vec![] }];
+        }
+        return vec![];
+    }
 
     // OCCT L420-423: aMHE — map of hole face edges for quick growth check.
     let mut a_mhe: HashSet<ShapeRef> = HashSet::new();
@@ -683,17 +690,113 @@ pub(crate) fn perform_areas_topo_ds(
                 h2g.push((hi, gi)); assigned = true; break;
             }
         }
-        if !assigned && !a_new_faces.is_empty() { h2g.push((hi, 0)); }
+        if !assigned && !a_new_faces.is_empty() {
+            // Defer to OCCT L557-581 orphan hole handling below
+        }
     }
 
-    // Build growth → holes map
+    // OCCT L557-581: identify orphan holes
+    let assigned_hole_set: std::collections::HashSet<usize> = h2g.iter().map(|&(h, _)| h).collect();
+    let orphan_holes: Vec<usize> = (0..a_hole_faces.len())
+        .filter(|hi| !assigned_hole_set.contains(hi))
+        .collect();
+
+    // OCCT L540-555: build growth → holes map
     let mut g2h: HashMap<usize, Vec<usize>> = HashMap::new();
     for &(h, g) in &h2g { g2h.entry(g).or_default().push(h); }
 
-    // Build result WireFaces
-    a_new_faces.iter().enumerate().map(|(gi, w)| WireFace {
+    // OCCT L584-613: build result WireFaces
+    let mut result: Vec<WireFace> = a_new_faces.iter().enumerate().map(|(gi, w)| WireFace {
         outer_wire: w.clone(),
         inner_wires: g2h.get(&gi).map(|hs| hs.iter().map(|&h| a_hole_faces[h].clone()).collect()).unwrap_or_default(),
         internal_wires: internal_wires.to_vec(),
-    }).collect()
+    }).collect();
+
+    // OCCT L557-581: unassigned holes + open face → create new growth from original surface
+    if !orphan_holes.is_empty() && ds.faces[face_idx].natural_restriction {
+        // rcad: WireFace with empty outer_wire = full parametric surface
+        let orphan_inner: Vec<Vec<usize>> = orphan_holes.iter().map(|&h| a_hole_faces[h].clone()).collect();
+        result.push(WireFace {
+            outer_wire: vec![],
+            inner_wires: orphan_inner,
+            internal_wires: vec![],
+        });
+    }
+    result
+}
+
+/// ✅ OCCT-aligned: BOPAlgo_BuilderFace::PerformInternalShapes (L618-778).
+///   Classify internal wire groups against result faces via UV point-in-polygon.
+pub(crate) fn perform_internal_shapes_topo_ds(
+    wfs: &mut Vec<WireFace>,
+    internal_wire_groups: &[Vec<usize>],
+    segments: &[WireSegmentTopoDS],
+    tool: &dyn BRepTool,
+    face_idx: usize,
+    ds: &crate::bopds::ds::DS,
+) {
+    if internal_wire_groups.is_empty() { return; }
+    if wfs.is_empty() { return; }
+
+    // OCCT L634-666: Build UV boundaries for each face
+    let face_uv_bounds: Vec<Vec<DVec2>> = wfs.iter().map(|wf| {
+        let mut uv_bnd: Vec<DVec2> = Vec::new();
+        for &si in &wf.outer_wire {
+            let seg = &segments[si];
+            let pc_opt = tool.curve_on_surface(seg.edge, seg.face)
+                .map(|(pc, _, _)| pc)
+                .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
+            if let Some(pc) = pc_opt {
+                let t0 = seg.t_range[0];
+                let t1 = seg.t_range[1];
+                let n = curve2d_nb_samples(pc, t0, t1).max(2);
+                let du = if n > 1 { (t1 - t0) / (n - 1) as f64 } else { 0.0 };
+                for i in 0..n {
+                    uv_bnd.push(pc.point_at(t0 + du * i as f64));
+                }
+            }
+        }
+        uv_bnd.dedup_by(|a, b| (*a - *b).length_squared() < 1e-20);
+        uv_bnd
+    }).collect();
+
+    // OCCT L674-741: classify each internal wire against each face
+    for group in internal_wire_groups {
+        if group.is_empty() { continue; }
+        let si = group[0];
+        if si >= segments.len() { continue; }
+        let seg = &segments[si];
+
+        // Sample UV midpoint
+        let uv_pt = {
+            let mut pt = DVec2::ZERO;
+            let mut found = false;
+            let pc_opt = tool.curve_on_surface(seg.edge, seg.face)
+                .map(|(pc, _, _)| pc)
+                .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
+            if let Some(pc) = pc_opt {
+                let t_mid = (seg.t_range[0] + seg.t_range[1]) * 0.5;
+                pt = pc.point_at(t_mid);
+                found = true;
+            }
+            if !found {
+                // Fallback: sample pcurve at midpoint via curve_on_surface
+                if let Some((pc, t0, t1)) = tool.curve_on_surface(seg.edge, seg.face) {
+                    let t_mid = (t0 + t1) * 0.5;
+                    pt = pc.point_at(t_mid);
+                } else { continue; }
+            }
+            pt
+        };
+
+        // OCCT L710-715: if edge is inside face → add to internal wires
+        for (fi, wf) in wfs.iter_mut().enumerate() {
+            if fi < face_uv_bounds.len() && face_uv_bounds[fi].len() >= 3
+                && crate::builder::wire_path::point_in_uv_polygon(uv_pt, &face_uv_bounds[fi])
+            {
+                wf.internal_wires.push(group.clone());
+                break;
+            }
+        }
+    }
 }
