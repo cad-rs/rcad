@@ -550,42 +550,52 @@ impl<'a> BooleanBuilder<'a> {
     ///   Reads split edges created by MakeSplitEdges (build_split_edges in PaveFiller)
     ///   via pb.new_edge, matching OCCT's aPBR->Edge() pattern.
     ///   Creates myImages(EDGE) and myOrigins(EDGE) mappings.
+    /// ✅ OCCT-aligned: FillImagesEdges (BOPAlgo_Builder_1.cxx L71-125).
+    ///   L75-81: iterate source shapes → filter TopAbs_EDGE
+    ///   L83-87: HasReference (pave blocks exist) → skip if none
+    ///   L89-90: aE = aSI.Shape(); aLPB = myDS->PaveBlocks(i)
+    ///   L95:    myImages.Bound(aE, ...)
+    ///   L97-119: for each pave block:
+    ///     L101:   aPBR = myDS->RealPaveBlock(aPB)
+    ///     L103:   nSpR = aPBR->Edge()
+    ///     L104:   aSpR = myDS->Shape(nSpR)
+    ///     L105:   pLS->Append(aSpR)  → myImages[source].Append(split)
+    ///     L107-112: myOrigins[split].Append(source)
+    ///     L114-118: IsCommonBlockOnEdge → myShapesSD.Bind(source, split)
     fn fill_images_edges(&self, result: &mut ResultBuilder) {
+        // OCCT L61: aNbE (base vertex index, rcad offset for flat indexing)
         let e_base = self.ds.vertices.len();
+        // OCCT L75: aNbS = myDS->NbSourceShapes()
+        //   rcad: iterate ds.edges (same set as NbSourceShapes-filtered TopAbs_EDGE)
         for (ei, edge) in self.ds.edges.iter().enumerate() {
+            // OCCT L77-81: if (aSI.ShapeType() != TopAbs_EDGE) continue;
+            //   rcad: already iterating edges, no type check needed.
+            // OCCT L83-87: if (!aSI.HasReference()) continue (no pave blocks)
             if edge.pave_blocks.is_empty() {
-                // OCCT L84-86: HasReference check — no pave blocks → no split images.
-                //   Such edges are not images of any source edge; they pass through
-                //   BuildResult(EDGE) as originals only when myArguments contain EDGE
-                //   types (no-op for solid boolean arguments).
-                //   rcad: unmodified edges are registered via face construction
-                //   (emit_wire_face → add_edge); no action needed here.
                 continue;
             }
-
+            // OCCT L89-90: aE = aSI.Shape(); aLPB = myDS->PaveBlocks(i);
+            let aE = rcad_kernel::topods::ShapeRef::new(e_base + ei);
+            // OCCT L95: pLS = myImages.Bound(aE, NCollection_List<TopoDS_Shape>());
+            //   rcad: entry().or_default() on first append achieves the same.
+            // OCCT L97-119: for each pave block
             for pb in &edge.pave_blocks {
-                let new_ei = if let Some(rei) = self.ds.real_pave_block_edge(ei, pb) {
-                    rei
-                } else if let Some(nei) = pb.new_edge {
-                    nei
-                } else {
-                    continue;
-                };
-
-                // OCCT L105-106: pLS->Append(aSpR) -> myImages(edge) += split_edge
-                self.my_images.borrow_mut().entry(rcad_kernel::topods::ShapeRef::new(e_base + ei)).or_default().push(rcad_kernel::topods::ShapeRef::new(e_base + new_ei));
-
+                // OCCT L101: aPBR = myDS->RealPaveBlock(aPB)
+                // OCCT L103-104: nSpR = aPBR->Edge(); aSpR = myDS->Shape(nSpR);
+                let nSpR = self.ds.real_pave_block_edge(ei, pb)
+                    .or(pb.new_edge)
+                    .expect("every pave block must have a real or new edge (OCCT invariant)");
+                let aSpR = rcad_kernel::topods::ShapeRef::new(e_base + nSpR);
+                // OCCT L105: pLS->Append(aSpR)
+                self.my_images.borrow_mut().entry(aE).or_default().push(aSpR);
                 // OCCT L107-112: myOrigins.ChangeSeek(aSpR).Append(aE)
-                self.my_origins.borrow_mut().entry(rcad_kernel::topods::ShapeRef::new(e_base + new_ei)).or_default().push(rcad_kernel::topods::ShapeRef::new(e_base + ei));
-
-                // OCCT L114-119: IsCommonBlockOnEdge -> myShapesSD.Bind(aSp, aSpR)
+                self.my_origins.borrow_mut().entry(aSpR).or_default().push(aE);
+                // OCCT L114-118: if (myDS->IsCommonBlockOnEdge(aPB)) myShapesSD.Bind(aSp, aSpR)
                 if pb.common_block_idx.is_some() {
-                    self.my_shapes_sd.borrow_mut().insert(rcad_kernel::topods::ShapeRef::new(e_base + ei), rcad_kernel::topods::ShapeRef::new(e_base + new_ei));
+                    self.my_shapes_sd.borrow_mut().insert(aE, aSpR);
                 }
-
-                // rcad flat edge: create result edge entry for face construction.
-                // OCCT: split edges are implicitly added to myShape through face sub-shapes.
-                let se = &self.ds.edges[new_ei];
+                // rcad flat edge (no OCCT equivalent — flat ResultBuilder data)
+                let se = &self.ds.edges[nSpR];
                 let sv = result.add_ds_vertex(se.start_vertex, self.ds.vertices[se.start_vertex].point);
                 let ev = result.add_ds_vertex(se.end_vertex, self.ds.vertices[se.end_vertex].point);
                 let fi = result.edges.len();
@@ -594,7 +604,7 @@ impl<'a> BooleanBuilder<'a> {
                     result.custom_edge_curves.push(None);
                 }
                 result.custom_edge_curves[fi] = Some(se.curve.clone());
-                if self.ds.is_edge_degenerated(new_ei) || se.start_vertex == se.end_vertex {
+                if self.ds.is_edge_degenerated(nSpR) || se.start_vertex == se.end_vertex {
                     result.deg_edge_indices.insert(fi);
                 }
             }
@@ -958,6 +968,20 @@ impl<'a> BooleanBuilder<'a> {
                 (fi, ids)
             }).collect();
 
+        // OCCT L694: aMFPlanar — track bounded planar faces for fast-path SD
+        let mut planars: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        for &fi in &result_fi_filtered {
+            if matches!(result.faces[fi].4, Surface3::Plane(_)) {
+                // Check boundedness: non-natural-restriction faces are bounded
+                let is_bounded = result.faces[fi].5.map_or(true, |uv| {
+                    uv[0].is_finite() && uv[1].is_finite()
+                });
+                if is_bounded {
+                    planars.insert(fi);
+                }
+            }
+        }
+
         // ── Group by edge-set signature ──
         let mut groups: std::collections::BTreeMap<Vec<usize>, Vec<usize>> =
             std::collections::BTreeMap::new();
@@ -1003,6 +1027,11 @@ impl<'a> BooleanBuilder<'a> {
                     let fi = survivors[i];
                     let fj = survivors[j];
                     if face_parent(fi) == face_parent(fj) {
+                        continue;
+                    }
+                    // OCCT L780-784: bounded planar faces with same edge set → SD fast path
+                    if planars.contains(&fi) && planars.contains(&fj) {
+                        to_remove[fj] = true;
                         continue;
                     }
                     // Get interior point from result face fi
@@ -1178,23 +1207,32 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     /// ✅ OCCT-aligned: FillImagesContainer(COMPSOLID) (Builder_1.cxx L221-276).
-    ///   L224-233: iterate sub-shapes, check if any has been modified.
+    ///   L224-233: iterate sub-shapes (SOLIDs), check if any has been modified.
     ///   L235-240: if none modified → early return.
     ///   L242-275: build new container from sub-shape images.
     ///
-    /// rcad: iterate DS faces → find those from CompSolids → group result solids
-    /// by their source compsolid → store in result.tmp_compsolid_groups.
+    /// rcad: iterate DS faces → find those from CompSolids → for each unique
+    ///   source compsolid, check if any sub-solid has split images.  If modified,
+    ///   group result solids by their source compsolid → result.tmp_compsolid_groups.
     fn fill_images_containers_compsolid(&self, result: &mut ResultBuilder) {
-        // OCCT L224-233: check if any sub-shape has been modified.
-        let has_compsolid = self.ds.faces.iter().any(|f| f.source_compsolid_idx.is_some());
-        if !has_compsolid {
-            return; // OCCT L235-240: early return
+        // OCCT L224-233 + L221: find all source CompSolids and check modification.
+        //   rcad: collect unique compsolid indices from DS faces.
+        let mut compsolid_modified: std::collections::BTreeMap<usize, bool> = std::collections::BTreeMap::new();
+        for df in &self.ds.faces {
+            if let Some(csi) = df.source_compsolid_idx {
+                if !compsolid_modified.contains_key(&csi) {
+                    compsolid_modified.insert(csi, false);
+                }
+            }
+        }
+        if compsolid_modified.is_empty() {
+            return; // OCCT L235-240: no container of this type
         }
 
-        // OCCT L242-275: build CompSolid from sub-solid images.
-        // Group result solids by their source compsolid index.
-        // For each result solid, find its origin DS faces to determine compsolid.
-        let mut solid_to_cs: Vec<Option<usize>> = vec![None; result.tmp_solids.len()];
+        // OCCT L224-233: check if any sub-shape (SOLID) has been modified.
+        //   rcad: a sub-solid is modified if its faces produce >1 result solid.
+        //   Group result faces by (compsolid_idx, source_solid_idx) → count distinct solids.
+        let mut cs_solid_groups: std::collections::BTreeMap<(usize, usize), Vec<usize>> = std::collections::BTreeMap::new();
         for (si, solid_shells) in result.tmp_solids.iter().enumerate() {
             for &shi in solid_shells {
                 if shi >= result.tmp_shells.len() { continue; }
@@ -1209,23 +1247,64 @@ impl<'a> BooleanBuilder<'a> {
                     };
                     if let Some(dfi) = ds_fi {
                         if let Some(csi) = self.ds.faces[dfi].source_compsolid_idx {
-                            solid_to_cs[si] = Some(csi);
-                            break; // found compsolid for this solid
+                            if let Some(ssi) = self.ds.faces[dfi].source_solid_idx {
+                                cs_solid_groups.entry((csi, ssi)).or_default().push(si);
+                            }
                         }
                     }
                 }
-                if solid_to_cs[si].is_some() { break; }
+            }
+        }
+        // Mark compsolid as modified if any sub-solid has >1 result solid
+        for ((csi, _), si_list) in &cs_solid_groups {
+            // Dedup solid indices per sub-solid
+            let mut dedup: Vec<usize> = si_list.clone();
+            dedup.sort_unstable();
+            dedup.dedup();
+            if dedup.len() > 1 {
+                compsolid_modified.insert(*csi, true);
             }
         }
 
-        // Group solid indices by compsolid index.
+        // OCCT L235-240: early return if no modification detected
+        let any_modified = compsolid_modified.values().any(|&m| m);
+        if !any_modified {
+            return;
+        }
+
+        // OCCT L242-275: build new container from sub-shape images.
+        //   rcad: group result solids by their compsolid ancestry.
         let mut cs_groups: std::collections::BTreeMap<usize, Vec<usize>> = std::collections::BTreeMap::new();
-        for (si, cs_opt) in solid_to_cs.iter().enumerate() {
-            if let Some(csi) = cs_opt {
-                cs_groups.entry(*csi).or_default().push(si);
+        for &csi in compsolid_modified.keys() {
+            for (si, solid_shells) in result.tmp_solids.iter().enumerate() {
+                let belongs = solid_shells.iter().any(|&shi| {
+                    result.tmp_shells.get(shi).map_or(false, |shell_faces| {
+                        shell_faces.iter().any(|&rfi| {
+                            result.face_origins.get(rfi).and_then(|fo| {
+                                let (exp_origin, sfi) = match fo {
+                                    FaceOrigin::FromA(sfi) => (ShapeOrigin::ShapeA, *sfi),
+                                    FaceOrigin::FromB(sfi) => (ShapeOrigin::ShapeB, *sfi),
+                                    _ => return None,
+                                };
+                                self.ds.faces.iter().position(|f|
+                                    f.origin == exp_origin && f.source_face_idx == sfi
+                                ).and_then(|dfi| {
+                                    if self.ds.faces[dfi].source_compsolid_idx == Some(csi) {
+                                        Some(())
+                                    } else { None }
+                                })
+                            }).is_some()
+                        })
+                    })
+                });
+                if belongs {
+                    cs_groups.entry(csi).or_default().push(si);
+                }
             }
         }
-        result.tmp_compsolid_groups = cs_groups.into_values().collect();
+        if !cs_groups.is_empty() {
+            result.tmp_compsolid_groups = cs_groups.into_values().collect();
+        }
     }
 
     /// ✅ OCCT-aligned: FillImagesSolids (BOPAlgo_Builder_3.cxx L60-93).
