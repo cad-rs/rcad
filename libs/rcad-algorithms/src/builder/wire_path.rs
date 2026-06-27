@@ -4,7 +4,7 @@ use glam::DVec2; use glam::DVec3;
 use rcad_kernel::geom::*;
 use crate::bopds::ds::*; use crate::tolerance::*;
 use super::angle_2d::{dir_to_angle, angle_2d, clock_wise_angle};
-use super::types::{WireSegment, WireFace, WireEdgeSource};
+use super::types::{WireSegment, WireFace, WireEdgeSource, WireOrientation};
 use super::wire_splitter::{
     EdgeInfo, world_to_uv, mark_edge_passed, mark_edge_passed_both_dirs,
     find_angle_at, select_best_outgoing, are_verts_coincident,
@@ -388,7 +388,7 @@ pub(crate) fn refine_angle_2d(
             //   surfaces store their DoSplitSEAMOnFace pcurves in first_pcurve
             //   (native U side) and second_pcurve (shifted U side).  The
             //   forward flag selects the correct pcurve per orientation.
-            let pc = if seg.forward {
+            let pc = if seg.orientation == WireOrientation::Forward {
                 seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref())
             } else {
                 seg.second_pcurve.as_ref().or(seg.first_pcurve.as_ref())
@@ -396,7 +396,6 @@ pub(crate) fn refine_angle_2d(
             if let Some(pc) = pc {
                 (pc.clone(), 0.0, 1.0)
             } else {
-                // Fallback: no pcurve on segment — construct Line from vertex UVs
                 let uv_s = world_to_uv(face_surface, ds.vertices[seg.start_vertex].point)?;
                 let uv_e = world_to_uv(face_surface, ds.vertices[seg.end_vertex].point)?;
                 let dir = uv_e - uv_s;
@@ -405,9 +404,7 @@ pub(crate) fn refine_angle_2d(
             }
         }
         WireEdgeSource::SeamEdge => {
-            // ✅ OCCT-aligned: use seam edge pcurve from WireSegment
-            //   (same as DsEdge seam handling above).
-            let pc = if seg.forward {
+            let pc = if seg.orientation == WireOrientation::Forward {
                 seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref())
             } else {
                 seg.second_pcurve.as_ref().or(seg.first_pcurve.as_ref())
@@ -514,10 +511,10 @@ pub(crate) fn walk_path_extract_wires(
             WireEdgeSource::IntersectionCurve(ci) => format!("IC({})", ci),
             WireEdgeSource::SeamEdge => "Seam".to_string(),
         };
-        eprintln!("[WALK_START] face={} si={} seg={} start_v={} end_v={} fwd={} seam={} has_info={}",
+        eprintln!("[WALK_START] face={} si={} seg={} start_v={} end_v={} fwd={:?} seam={} has_info={}",
             face_idx, start_si, seg_src,
             segments[start_si].start_vertex, segments[start_si].end_vertex,
-            segments[start_si].forward, segments[start_si].is_seam, has_info);
+            segments[start_si].orientation, segments[start_si].is_seam, has_info);
     }
     if !has_info {
         smart_map.entry(start_seg.start_vertex).or_default().push(EdgeInfo {
@@ -611,7 +608,7 @@ pub(crate) fn walk_path_extract_wires(
                             world_to_uv(face_surface, ds.vertices[vi].point)
                         }
                     }
-                } else if segment.forward {
+                } else if segment.orientation == WireOrientation::Forward {
                     match (&segment.first_pcurve, &segment.second_pcurve) {
                         (Some(Curve2d::Line(l)), _) => {
                             let t = if at_start { segment.t_range[0] } else { segment.t_range[1] };
@@ -1083,26 +1080,26 @@ pub(crate) fn wire_faces_to_face_sample_data(
         let all_boundary: Vec<DVec3> = {
             let mut pts: Vec<DVec3> = wf.outer_wire.iter().map(|&si| {
                 let seg = &segments[si];
-                ds.vertices[if seg.forward { seg.start_vertex } else { seg.end_vertex }].point
+                ds.vertices[if seg.orientation == WireOrientation::Forward { seg.start_vertex } else { seg.end_vertex }].point
             }).collect();
             for iw in &wf.inner_wires {
                 for &si in iw {
                     let seg = &segments[si];
-                    pts.push(ds.vertices[if seg.forward { seg.start_vertex } else { seg.end_vertex }].point);
+                    pts.push(ds.vertices[if seg.orientation == WireOrientation::Forward { seg.start_vertex } else { seg.end_vertex }].point);
                 }
             }
             pts
         };
         let boundary: Vec<DVec3> = wf.outer_wire.iter().map(|&si| {
             let seg = &segments[si];
-            ds.vertices[if seg.forward { seg.start_vertex } else { seg.end_vertex }].point
+            ds.vertices[if seg.orientation == WireOrientation::Forward { seg.start_vertex } else { seg.end_vertex }].point
         }).collect();
 
         // inner_wires: hole wire 3D
         let inner_wires: Vec<Vec<DVec3>> = wf.inner_wires.iter().map(|iw| {
             iw.iter().map(|&si| {
                 let seg = &segments[si];
-                ds.vertices[if seg.forward { seg.start_vertex } else { seg.end_vertex }].point
+                ds.vertices[if seg.orientation == WireOrientation::Forward { seg.start_vertex } else { seg.end_vertex }].point
             }).collect()
         }).collect();
 
@@ -1234,13 +1231,13 @@ pub(crate) fn perform_areas(
         let mut uv_bnd: Vec<DVec2> = Vec::new();
         for &si in w {
             let seg = &segments[si];
-            let forward = seg.forward;
+            let forward = seg.orientation;
             match &seg.source {
                 WireEdgeSource::DsEdge(ei) => {
                     // Sample the DS edge's face pcurve at NbSamples points
                     if let Some(rep) = ds.edge_on_face(*ei, face_idx) {
-                        let t0 = if forward { rep.start_param } else { rep.end_param };
-                        let t1 = if forward { rep.end_param } else { rep.start_param };
+                        let t0 = if forward == WireOrientation::Forward { rep.start_param } else { rep.end_param };
+                        let t1 = if forward == WireOrientation::Forward { rep.end_param } else { rep.start_param };
                         let n = curve2d_nb_samples(&rep.pcurve, t0, t1).max(2);
                         let du = if n > 1 { (t1 - t0) / (n - 1) as f64 } else { 0.0 };
                         for i in 0..n {
@@ -1538,7 +1535,7 @@ pub(crate) fn promote_exterior_holes(
         for iw in wf.inner_wires {
             let bnd: Vec<DVec3> = iw.iter().map(|&si| {
                 let seg = &segments[si];
-                ds.vertices[if seg.forward { seg.end_vertex } else { seg.start_vertex }].point
+                ds.vertices[if seg.orientation == WireOrientation::Forward { seg.end_vertex } else { seg.start_vertex }].point
             }).collect();
             let centroid = bnd.iter().copied().sum::<DVec3>() / bnd.len() as f64;
             let class = classify_point(centroid, other_faces, ds);

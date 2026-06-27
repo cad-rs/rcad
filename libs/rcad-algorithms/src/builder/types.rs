@@ -214,13 +214,22 @@ pub(crate) enum WireEdgeSource {
     SeamEdge,
 }
 
+/// OCCT-aligned: TopAbs_Orientation for WireSegment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WireOrientation {
+    Forward,
+    Reversed,
+    Internal,
+    External,
+}
+
 /// OCCT-aligned: Virtual edge used in the edge-to-wire pipeline.
 #[derive(Debug, Clone)]
 pub(crate) struct WireSegment {
     pub(crate) start_vertex: usize,
     pub(crate) end_vertex: usize,
     pub(crate) source: WireEdgeSource,
-    pub(crate) forward: bool,
+    pub(crate) orientation: WireOrientation,
     pub(crate) is_seam: bool,
     pub(crate) tangent_start: Option<f64>,
     pub(crate) tangent_end: Option<f64>,
@@ -246,7 +255,11 @@ impl WireSegment {
                 WireEdgeSource::IntersectionCurve(i) => WireEdgeSource::IntersectionCurve(*i),
                 WireEdgeSource::SeamEdge => WireEdgeSource::SeamEdge,
             },
-            forward: !self.forward,
+            orientation: match self.orientation {
+                WireOrientation::Forward => WireOrientation::Reversed,
+                WireOrientation::Reversed => WireOrientation::Forward,
+                o => o,
+            },
             is_seam: self.is_seam,
             second_pcurve: None, first_pcurve: None,
             t_range: [self.t_range[1], self.t_range[0]],

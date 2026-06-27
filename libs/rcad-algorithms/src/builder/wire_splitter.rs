@@ -4,7 +4,7 @@ use glam::DVec2; use glam::DVec3;
 use rcad_kernel::geom::*;
 use crate::bopds::ds::*; use crate::tolerance::*;
 use crate::dbg_smartmap;
-use super::types::{WireSegment, WireEdgeSource, WireFace};
+use super::types::{WireSegment, WireEdgeSource, WireFace, WireOrientation};
 use super::wire_path::{pc_parameter_range, refine_angles, walk_path_extract_wires};
 use crate::builder::point_in_polygon_2d;
 use super::angle_2d::{dir_to_angle, angle_2d, clock_wise_angle};
@@ -979,7 +979,7 @@ pub(crate) fn is_same_block_fwd_rev(a: &WireSegment, b: &WireSegment) -> bool {
         }
         // ✅ OCCT-aligned: SeamEdge FWD+REV (same seam, opposite directions).
         (WireEdgeSource::SeamEdge, WireEdgeSource::SeamEdge) => {
-            a.is_seam && b.is_seam && a.forward != b.forward
+            a.is_seam && b.is_seam && a.orientation != b.orientation
         }
         _ => false,
     }
@@ -1147,7 +1147,7 @@ mod tests {
         let seg_a = WireSegment {
             start_vertex: 0, end_vertex: 1,
             source: WireEdgeSource::DsEdge(5),
-            forward: true, is_seam: false,
+            orientation: WireOrientation::Forward, is_seam: false,
             tangent_start: None, tangent_end: None,
             second_pcurve: None, first_pcurve: None,
             t_range: [0.0, 1.0],
@@ -1155,7 +1155,7 @@ mod tests {
         let seg_b = WireSegment {
             start_vertex: 1, end_vertex: 0,
             source: WireEdgeSource::DsEdge(5),
-            forward: false, is_seam: false,
+            orientation: WireOrientation::Reversed, is_seam: false,
             tangent_start: None, tangent_end: None,
             second_pcurve: None, first_pcurve: None,
             t_range: [1.0, 0.0],
@@ -1168,7 +1168,7 @@ mod tests {
         let seg_a = WireSegment {
             start_vertex: 0, end_vertex: 1,
             source: WireEdgeSource::DsEdge(5),
-            forward: true, is_seam: false,
+            orientation: WireOrientation::Forward, is_seam: false,
             tangent_start: None, tangent_end: None,
             second_pcurve: None, first_pcurve: None,
             t_range: [0.0, 1.0],
@@ -1176,7 +1176,7 @@ mod tests {
         let seg_b = WireSegment {
             start_vertex: 1, end_vertex: 0,
             source: WireEdgeSource::DsEdge(7),
-            forward: false, is_seam: false,
+            orientation: WireOrientation::Reversed, is_seam: false,
             tangent_start: None, tangent_end: None,
             second_pcurve: None, first_pcurve: None,
             t_range: [1.0, 0.0],
