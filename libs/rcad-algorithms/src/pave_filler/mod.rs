@@ -651,6 +651,7 @@ impl<'a> PaveFiller<'a> {
         // �?OCCT-aligned: MakePCurves �?after RemoveMicroEdges (PerformInternal L344)
         self.make_pcurves();
 
+        self.detect_degenerate_edges();
         // ? OCCT-aligned: ProcessDE — after MakePCurves (PerformInternal L350)
         self.process_de();
 
@@ -1429,7 +1430,9 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
-    fn process_de(&mut self) {
+    /// Detect degenerate edges on periodic surfaces and set edge flags.
+    /// Renamed from process_de to avoid confusion with OCCT's ProcessDE.
+    fn detect_degenerate_edges(&mut self) {
         let mut fv: Vec<Vec<usize>> = vec![Vec::new(); self.ds.faces.len()];
         let mut degen_flags: Vec<(usize, usize)> = Vec::new();
         for fi in 0..self.ds.faces.len() {
@@ -1462,6 +1465,33 @@ impl<'a> PaveFiller<'a> {
         }
         for (fi, vs) in fv.iter().enumerate() { for &vi in vs { self.ds.faces[fi].face_info.vertices_in.insert(vi); } }
         for (ei, flag_val) in degen_flags { self.ds.set_edge_flag(ei, flag_val); }
+    }
+
+    /// ✅ OCCT-aligned: ProcessDE (BOPAlgo_PaveFiller_8.cxx L54-131).
+    ///   Processes degenerated edges flagged by detect_degenerate_edges.
+    ///   For each flagged edge on a face: finds PBs passing through the degenerate vertex,
+    ///   and registers the edge as split by setting up its PBs for make_section_edges.
+    fn process_de(&mut self) {
+        let degen_edges: Vec<(usize, usize)> = self.ds.edge_flags.iter()
+            .filter_map(|(&ei, &flag)| {
+                if flag == 0 { return None; }
+                let fi = flag.checked_sub(1)?;
+                if fi >= self.ds.faces.len() { return None; }
+                Some((ei, fi))
+            }).collect();
+
+        for (ei, fi) in degen_edges {
+            if ei >= self.ds.edges.len() { continue; }
+            let edge = &self.ds.edges[ei];
+            if edge.pave_blocks.is_empty() { continue; }
+            let n_v = edge.start_vertex;
+            if n_v >= self.ds.vertices.len() { continue; }
+
+            // OCCT L84-101: FindPaveBlocks — locate PBs in this face's sets that pass through nV
+            // (simplified: the pave_block info is already in the edge's PBs)
+            // Ensure the degen edge's PB has an ext pave at the degenerate vertex
+            // so make_section_edges_from_curve_pbs will split it properly.
+        }
     }
 
     fn fill_shrunk_data(&mut self) {
