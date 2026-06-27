@@ -62,9 +62,9 @@ pub struct BooleanBuilder<'a> {
     has_errors: bool,
     // ✅ OCCT-aligned: myImages — source shape index → list of split image indices.
     //   Uses RefCell because phase functions take &self (OCCT uses mutable member maps).
-    my_images: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
-    my_origins: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
-    my_shapes_sd: std::cell::RefCell<std::collections::HashMap<usize, usize>>,
+    my_images: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, Vec<rcad_kernel::topods::ShapeRef>>>,
+    my_origins: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, Vec<rcad_kernel::topods::ShapeRef>>>,
+    my_shapes_sd: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, rcad_kernel::topods::ShapeRef>>,
     // ✅ OCCT-aligned: myInParts — source solid index → list of its IN face indices
     //   (BOPAlgo_Builder.hxx L502).  Populated during FillImagesFaces, used by
     //   FillIn3DParts / BuildDraftSolid for solid assembly.
@@ -315,10 +315,12 @@ impl<'a> BooleanBuilder<'a> {
         }
 
         let mut entries = Vec::new();
+        let v_base = 0usize; // vertices start at 0 in BRep
+        let e_base = self.ds.vertices.len();
         // Vertices
         for (di, _dv) in self.ds.vertices.iter().enumerate() {
             let in_result = result_vtx.contains(&di);
-            let has_images = self.my_images.borrow().contains_key(&di);
+            let has_images = self.my_images.borrow().contains_key(&rcad_kernel::topods::ShapeRef::new(v_base + di));
             let status = if has_images && in_result { HistoryStatus::Modified }
                 else if in_result { HistoryStatus::Generated }
                 else { HistoryStatus::Deleted };
@@ -327,7 +329,7 @@ impl<'a> BooleanBuilder<'a> {
         // Edges
         for (di, _de) in self.ds.edges.iter().enumerate() {
             let in_result = result_edge.contains(&di);
-            let has_images = self.my_images.borrow().contains_key(&di);
+            let has_images = self.my_images.borrow().contains_key(&rcad_kernel::topods::ShapeRef::new(e_base + di));
             let status = if has_images && in_result { HistoryStatus::Modified }
                 else if in_result { HistoryStatus::Generated }
                 else { HistoryStatus::Deleted };
@@ -512,11 +514,11 @@ impl<'a> BooleanBuilder<'a> {
             let sd  = vb;   // OCCT: nVSD = aIt.Value()
 
             // OCCT L56: myImages.Bound(aV, ...)->Append(aVSD)
-            self.my_images.borrow_mut().entry(src).or_default().push(sd);
+            self.my_images.borrow_mut().entry(rcad_kernel::topods::ShapeRef::new(src)).or_default().push(rcad_kernel::topods::ShapeRef::new(sd));
             // OCCT L58: myShapesSD.Bind(aV, aVSD)
-            self.my_shapes_sd.borrow_mut().insert(src, sd);
+            self.my_shapes_sd.borrow_mut().insert(rcad_kernel::topods::ShapeRef::new(src), rcad_kernel::topods::ShapeRef::new(sd));
             // OCCT L60-65: myOrigins.ChangeSeek(aVSD).Append(aV)
-            self.my_origins.borrow_mut().entry(sd).or_default().push(src);
+            self.my_origins.borrow_mut().entry(rcad_kernel::topods::ShapeRef::new(sd)).or_default().push(rcad_kernel::topods::ShapeRef::new(src));
         }
     }
 
@@ -550,15 +552,16 @@ impl<'a> BooleanBuilder<'a> {
                     continue;
                 };
 
+                let e_base = self.ds.vertices.len();
                 // OCCT L105-106: pLS->Append(aSpR) -> myImages(edge) += split_edge
-                self.my_images.borrow_mut().entry(ei).or_default().push(new_ei);
+                self.my_images.borrow_mut().entry(rcad_kernel::topods::ShapeRef::new(e_base + ei)).or_default().push(rcad_kernel::topods::ShapeRef::new(e_base + new_ei));
 
                 // OCCT L107-112: myOrigins.ChangeSeek(aSpR).Append(aE)
-                self.my_origins.borrow_mut().entry(new_ei).or_default().push(ei);
+                self.my_origins.borrow_mut().entry(rcad_kernel::topods::ShapeRef::new(e_base + new_ei)).or_default().push(rcad_kernel::topods::ShapeRef::new(e_base + ei));
 
                 // OCCT L114-119: IsCommonBlockOnEdge -> myShapesSD.Bind(aSp, aSpR)
                 if pb.common_block_idx.is_some() {
-                    self.my_shapes_sd.borrow_mut().insert(ei, new_ei);
+                    self.my_shapes_sd.borrow_mut().insert(rcad_kernel::topods::ShapeRef::new(e_base + ei), rcad_kernel::topods::ShapeRef::new(e_base + new_ei));
                 }
 
                 // rcad flat edge: create result edge entry for face construction.
@@ -588,44 +591,43 @@ impl<'a> BooleanBuilder<'a> {
     ///   OCCT L172-193: NbSourceShapes → filter TopAbs_WIRE → FillImagesContainer(shape, WIRE).
     ///   rcad: iterate ds.wires[], process each as FillImagesContainer per OCCT L221-276.
     fn fill_images_containers_wires(&self) {
+        let e_base = self.ds.vertices.len();
+        let wire_base = e_base + self.ds.edges.len();
         // OCCT L175-183: for each source shape, filter TopAbs_WIRE
         for wi in 0..self.ds.wires.len() {
             let edges: Vec<usize> = self.ds.wires[wi].edges.clone();
 
             // OCCT L224-233: check if any sub-edge has been modified
-            //   (myImages.Seek(aE) exists && != aE itself)
             let has_split = edges.iter().any(|&ei| {
-                self.my_images.borrow().get(&ei).map_or(false, |imgs| {
-                    imgs.len() != 1 || imgs[0] != ei
+                let e_ref = rcad_kernel::topods::ShapeRef::new(e_base + ei);
+                self.my_images.borrow().get(&e_ref).map_or(false, |imgs| {
+                    imgs.len() != 1 || imgs[0].index != e_base + ei
                 })
             });
 
             if !has_split {
                 // OCCT L236-240: no modification → no new image.
-                //   myImages.Bound(theS, List{aS}) — wire passes through unchanged.
-                self.my_images.borrow_mut().entry(wi).or_default().push(wi);
+                let w_ref = rcad_kernel::topods::ShapeRef::new(wire_base + wi);
+                self.my_images.borrow_mut().entry(w_ref).or_default().push(w_ref);
                 continue;
             }
 
             // OCCT L247-271: rebuild wire from edge images.
-            let has_img: std::collections::HashMap<usize, Vec<usize>> =
+            let has_img: std::collections::HashMap<usize, Vec<rcad_kernel::topods::ShapeRef>> =
                 edges.iter().filter_map(|&ei| {
-                    self.my_images.borrow().get(&ei).map(|v| (ei, v.clone()))
+                    let e_ref = rcad_kernel::topods::ShapeRef::new(e_base + ei);
+                    self.my_images.borrow().get(&e_ref).map(|v| (ei, v.clone()))
                 }).collect();
             let mut wi_imgs = self.my_images.borrow_mut();
+            let w_ref = rcad_kernel::topods::ShapeRef::new(wire_base + wi);
             for &ei in &edges {
-                let entry = wi_imgs.entry(wi).or_default();
+                let entry = wi_imgs.entry(w_ref).or_default();
                 if let Some(imgs) = has_img.get(&ei) {
-                    for &new_ei in imgs {
-                        // OCCT L265-269: IsSplitToReverseWithWarn — if split edge
-                        //   direction opposes the original edge in the wire, reverse it.
-                        //   rcad: wire edges carry no standalone orientation — direction
-                        //   is baked into emit_wire_face's forward flag.  Orientation
-                        //   check kept for form alignment; reversal handled at face level.
-                        entry.push(new_ei);
+                    for &new_eref in imgs {
+                        entry.push(new_eref);
                     }
                 } else {
-                    entry.push(ei);
+                    entry.push(rcad_kernel::topods::ShapeRef::new(e_base + ei));
                 }
             }
         }
@@ -729,8 +731,9 @@ impl<'a> BooleanBuilder<'a> {
                     self.ds.edges.get(ei).map_or(false, |e| e.is_internal)
                 });
                 let has_modified = self.ds.faces[fi].boundary_edges.iter().any(|&ei| {
-                    self.my_images.borrow().get(&ei).map_or(false, |imgs| {
-                        imgs.len() != 1 || imgs[0] != ei
+                    let e_ref = rcad_kernel::topods::ShapeRef::new(self.ds.vertices.len() + ei);
+                    self.my_images.borrow().get(&e_ref).map_or(false, |imgs| {
+                        imgs.len() != 1 || imgs[0].index != self.ds.vertices.len() + ei
                     })
                 });
                 if !has_internals && !has_modified && !has_pb_on {
