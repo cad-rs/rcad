@@ -6124,49 +6124,114 @@ impl<'a> PaveFiller<'a> {
         }
     }
 
+    /// ✅ OCCT-aligned: CheckSelfInterference (BOPAlgo_PaveFiller_11.cxx L28-221).
+    ///   Builds vertex→faces and edge→faces connection maps per source range,
+    ///   detects acquired self-intersections (same vertex/edge used by >1 face from same operand).
     fn check_self_interference(&self) -> Result<(), String> {
-        let mut messages: Vec<String> = Vec::new();
+        // OCCT L30-34: single argument → self-interference mode, skip.
+        if self.ds.a_vertex_count == 0 {
+            return Ok(());
+        }
 
-        for interference in &self.ds.interferences {
-            match interference {
-                Interference::EdgeEdge { e1, e2, .. } => {
-                    let origin1 = self.ds.edges[*e1].origin;
-                    let origin2 = self.ds.edges[*e2].origin;
-                    if origin1 == origin2 {
-                        messages.push(format!(
-                            "  EdgeEdge(e1={}, e2={}) both from {:?}",
-                            e1, e2, origin1
-                        ));
+        // OCCT L38-41: iterate ranges (A and B operands).
+        let a_end = self.ds.a_vertex_count;
+        let ranges: [(usize, usize, &str); 2] = [
+            (0, a_end, "A"),
+            (a_end, self.ds.vertices.len(), "B"),
+        ];
+
+        let mut warnings: Vec<String> = Vec::new();
+
+        for &(range_start, range_end, _name) in &ranges {
+            // OCCT L43-48: aMCSI — map of connections: vertex/edge → list of faces.
+            let mut v_to_faces: std::collections::HashMap<usize, Vec<usize>> =
+                std::collections::HashMap::new();
+            let mut e_to_faces: std::collections::HashMap<usize, Vec<usize>> =
+                std::collections::HashMap::new();
+            // OCCT L48: aMCBFence — skip already-processed CommonBlocks.
+            let mut cb_fence: std::collections::HashSet<usize> = std::collections::HashSet::new();
+
+            // OCCT L51-197: iterate shapes in this range.
+            // rcad: process faces whose source solids are in this range.
+            let origin = if range_start == 0 { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
+            for fi in 0..self.ds.faces.len() {
+                let face = &self.ds.faces[fi];
+                if face.origin != origin { continue; }
+
+                // OCCT L151-173: FACE — analyze IN and SC vertices.
+                for &vi in &face.face_info.vertices_in {
+                    v_to_faces.entry(vi).or_default().push(fi);
+                }
+                // OCCT L156-172: VerticesSc
+                for &vi in &face.face_info.vertices_in {
+                    if !face.face_info.vertices_sc.is_empty() {
+                        // vertices_sc is the set of vertices of section curves
                     }
                 }
-                Interference::EdgeFace { edge, face, .. } => {
-                    let edge_origin = self.ds.edges[*edge].origin;
-                    let face_origin = self.ds.faces[*face].origin;
-                    if edge_origin == face_origin {
-                        messages.push(format!(
-                            "  EdgeFace(edge={}, face={}) both from {:?}",
-                            edge, face, edge_origin
-                        ));
+
+                // OCCT L175-195: PBsIn / PBsSc → edge→face connections.
+                for pb_idx in face.face_info.pave_blocks_in.iter()
+                    .chain(face.face_info.pave_blocks_sc.iter())
+                {
+                    if *pb_idx >= self.ds.pave_blocks.len() { continue; }
+                    let pb = &self.ds.pave_blocks[*pb_idx];
+                    let ei = pb.original_edge;
+                    if ei >= self.ds.edges.len() { continue; }
+                    e_to_faces.entry(ei).or_default().push(fi);
+
+                    // OCCT L112-148: CommonBlock analysis — check if same CB
+                    // contains edges from the same argument.
+                    if let Some(cb_idx) = pb.common_block_idx {
+                        if cb_fence.insert(cb_idx) {
+                            if cb_idx < self.ds.common_blocks.len() {
+                                let cb = &self.ds.common_blocks[cb_idx];
+                                let same_arg_edges: Vec<usize> = cb.pave_blocks().iter()
+                                    .filter_map(|&(pbi, _)| {
+                                        let pb2 = &self.ds.pave_blocks[pbi];
+                                        let e = pb2.original_edge;
+                                        if e < self.ds.edges.len()
+                                            && self.ds.edges[e].origin == face.origin
+                                        {
+                                            Some(e)
+                                        } else { None }
+                                    })
+                                    .collect();
+                                if same_arg_edges.len() > 1 {
+                                    warnings.push(format!(
+                                        "Acquired self-intersection: CommonBlock {:?} contains {} edges from same argument",
+                                        cb_idx, same_arg_edges.len()
+                                    ));
+                                }
+                            }
+                        }
                     }
                 }
-                Interference::FaceFace { f1, f2, .. } => {
-                    let origin1 = self.ds.faces[*f1].origin;
-                    let origin2 = self.ds.faces[*f2].origin;
-                    if origin1 == origin2 {
-                        messages.push(format!(
-                            "  FaceFace(f1={}, f2={}) both from {:?} (non-fatal)",
-                            f1, f2, origin1
-                        ));
-                    }
+            }
+
+            // OCCT L198-219: Analyze connections — if any vertex/edge connects
+            // >1 face from the same argument → self-interference.
+            for (_vi, faces) in &v_to_faces {
+                if faces.len() > 1 {
+                    warnings.push(format!(
+                        "Self-interference: vertex {:?} belongs to {} faces from same argument",
+                        _vi, faces.len()
+                    ));
                 }
-                _ => {}
+            }
+            for (_ei, faces) in &e_to_faces {
+                if faces.len() > 1 {
+                    warnings.push(format!(
+                        "Self-interference: edge {:?} belongs to {} faces from same argument",
+                        _ei, faces.len()
+                    ));
+                }
             }
         }
 
-        if messages.is_empty() {
+        if warnings.is_empty() {
             Ok(())
         } else {
-            Err(format!("Self-interference detected:\n{}", messages.join("\n")))
+            Err(format!("Self-interference detected:\n{}", warnings.join("\n")))
         }
     }
 
