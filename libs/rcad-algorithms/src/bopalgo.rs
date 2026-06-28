@@ -1,4 +1,5 @@
 use glam::DVec3;
+use std::collections::{HashMap, HashSet, VecDeque};
 use crate::bopds::ds::DS;
 use crate::bvh::Aabb;
 use crate::classify::{Classification, classify_point};
@@ -53,4 +54,105 @@ pub fn classify_faces(
         }
     }
     the_in_parts
+}
+
+/// ✅ OCCT-aligned: BOPAlgo_Tools::FillMap (hxx:83-102).
+///   Adds a bidirectional connection between n1 and n2 in an adjacency map.
+///   If either key doesn't exist, it's created.  rcad: uses HashMap<usize, Vec<usize>>.
+pub fn fill_map(the_mili: &mut HashMap<usize, Vec<usize>>, n1: usize, n2: usize) {
+    the_mili.entry(n1).or_default().push(n2);
+    the_mili.entry(n2).or_default().push(n1);
+}
+
+/// ✅ OCCT-aligned: BOPAlgo_Tools::MakeBlocks (hxx:45-80).
+///   Builds connected components from an adjacency map.
+///   Each component is a BFS closure under the adjacency relation.
+///   Equivalent to OCCT's template function NCollection_Map + chain building.
+///
+///   Args:
+///     the_mili: adjacency map — for each key, list of adjacent keys.
+///
+///   Returns: Vec of connected components (each component is a Vec of keys).
+pub fn make_blocks(the_mili: &HashMap<usize, Vec<usize>>) -> Vec<Vec<usize>> {
+    let mut fence: HashSet<usize> = HashSet::new();
+    let mut blocks: Vec<Vec<usize>> = Vec::new();
+
+    // OCCT L51: for (i = 1; i <= aNb; ++i) — iterate all keys
+    let keys: Vec<&usize> = the_mili.keys().collect();
+    for &&key in &keys {
+        if !fence.insert(key) {
+            continue; // OCCT L55: if (!aMFence.Add(n)) continue
+        }
+
+        // OCCT L59-61: Start the chain — aChain.Append(n)
+        let mut chain: Vec<usize> = Vec::new();
+        chain.push(key);
+
+        // OCCT L62-78: BFS-like traversal through adjacency
+        let mut queue: VecDeque<usize> = VecDeque::new();
+        queue.push_back(key);
+        while let Some(n1) = queue.pop_front() {
+            if let Some(adjacent) = the_mili.get(&n1) {
+                for &n2 in adjacent {
+                    if fence.insert(n2) {
+                        chain.push(n2);
+                        queue.push_back(n2);
+                    }
+                }
+            }
+        }
+
+        blocks.push(chain);
+    }
+
+    blocks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fill_map_and_make_blocks_single_edge() {
+        let mut m = HashMap::new();
+        fill_map(&mut m, 1, 2);
+        let blocks = make_blocks(&m);
+        assert_eq!(blocks.len(), 1);
+        assert!(blocks[0].contains(&1) && blocks[0].contains(&2));
+    }
+
+    #[test]
+    fn test_make_blocks_two_components() {
+        let mut m = HashMap::new();
+        fill_map(&mut m, 1, 2);
+        fill_map(&mut m, 3, 4);
+        let blocks = make_blocks(&m);
+        assert_eq!(blocks.len(), 2);
+    }
+
+    #[test]
+    fn test_make_blocks_chain() {
+        let mut m = HashMap::new();
+        fill_map(&mut m, 1, 2);
+        fill_map(&mut m, 2, 3);
+        fill_map(&mut m, 3, 4);
+        let blocks = make_blocks(&m);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].len(), 4);
+    }
+
+    #[test]
+    fn test_make_blocks_isolated() {
+        let mut m = HashMap::new();
+        m.entry(42).or_default();
+        let blocks = make_blocks(&m);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0], vec![42]);
+    }
+
+    #[test]
+    fn test_make_blocks_empty() {
+        let m: HashMap<usize, Vec<usize>> = HashMap::new();
+        assert!(make_blocks(&m).is_empty());
+    }
 }
