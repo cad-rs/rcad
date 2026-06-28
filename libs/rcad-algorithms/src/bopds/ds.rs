@@ -365,26 +365,13 @@ pub struct IntersectionCurve {
 
 impl IntersectionCurve {
     /// ✅ OCCT-aligned: BOPDS_Curve::InitPaveBlock1 (lxx:85-92).
-    ///   Creates an initial PaveBlock if the list is empty.
     pub fn init_pave_block1(&mut self) {
         if self.pave_blocks.is_empty() {
             self.pave_blocks.push(PaveBlock::new_curve_block());
         }
     }
 
-    /// ✅ OCCT-aligned: BOPDS_Curve::PaveBlocks (lxx:71-74).
-    pub fn pave_blocks(&self) -> &[PaveBlock] {
-        &self.pave_blocks
-    }
-
-    /// ✅ OCCT-aligned: BOPDS_Curve::ChangePaveBlocks (lxx:78-81).
-    pub fn change_pave_blocks(&mut self) -> &mut Vec<PaveBlock> {
-        &mut self.pave_blocks
-    }
-
     /// ✅ OCCT-aligned: BOPDS_Curve::ChangePaveBlock1 (lxx:96-100).
-    ///   Returns a mutable reference to the first PaveBlock.
-    ///   OCCT: returns handle<PaveBlock>& to first element in myPaveBlocks list.
     pub fn change_pave_block1(&mut self) -> Option<&mut PaveBlock> {
         self.pave_blocks.first_mut()
     }
@@ -423,14 +410,8 @@ impl ShapeInfo {
         ShapeInfo { shape_type, sub_shapes: Vec::new(), flag: -1, reference: -1, has_brep: true }
     }
     pub fn has_flag(&self) -> bool { self.flag >= 0 }
-    pub fn flag_value(&self) -> i64 { self.flag }
-    pub fn set_flag(&mut self, f: i64) { self.flag = f; }
     pub fn has_reference(&self) -> bool { self.reference >= 0 }
-    pub fn reference_value(&self) -> i64 { self.reference }
-    pub fn set_reference(&mut self, r: i64) { self.reference = r; }
     pub fn has_sub_shape(&self, idx: usize) -> bool { self.sub_shapes.contains(&idx) }
-    pub fn sub_shapes(&self) -> &[usize] { &self.sub_shapes }
-    pub fn sub_shapes_mut(&mut self) -> &mut Vec<usize> { &mut self.sub_shapes }
     pub fn has_brep(&self) -> bool { self.has_brep }
 }
 

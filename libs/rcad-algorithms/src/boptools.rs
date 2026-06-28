@@ -537,9 +537,6 @@ impl BOPToolsSet {
         self.sum == other.sum && self.faces == other.faces
     }
 
-    /// OCCT: GetSum() — returns the hash sum for fast comparison.
-    pub fn get_sum(&self) -> u64 { self.sum }
-
     /// Returns the sorted face indices.
     pub fn faces(&self) -> &[usize] { &self.faces }
 
@@ -587,8 +584,8 @@ mod tests {
     fn test_empty_set() {
         let s = BOPToolsSet::new();
         assert!(s.is_empty());
-        assert_eq!(s.nb_shapes(), 0);
-        assert_eq!(s.get_sum(), 0);
+        assert_eq!(s.len(), 0);
+        assert_eq!(s.sum, 0);
     }
 
     #[test]
@@ -596,7 +593,7 @@ mod tests {
         let mut s = BOPToolsSet::new();
         s.add(5);
         assert!(!s.is_empty());
-        assert_eq!(s.nb_shapes(), 1);
+        assert_eq!(s.len(), 1);
         assert_eq!(s.faces(), &[5]);
     }
 
@@ -604,7 +601,7 @@ mod tests {
     fn test_add_sorted_dedup() {
         let mut s = BOPToolsSet::new();
         s.add(3); s.add(1); s.add(2); s.add(1);
-        assert_eq!(s.nb_shapes(), 3);
+        assert_eq!(s.len(), 3);
         assert_eq!(s.faces(), &[1, 2, 3]);
     }
 

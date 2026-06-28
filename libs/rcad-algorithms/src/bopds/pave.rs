@@ -12,18 +12,6 @@ pub struct Pave {
     pub param: f64,
 }
 
-impl Pave {
-    /// OCCT: BOPDS_Pave::Index()
-    pub fn index(&self) -> usize {
-        self.vertex_idx
-    }
-
-    /// OCCT: BOPDS_Pave::Parameter()
-    pub fn parameter(&self) -> f64 {
-        self.param
-    }
-}
-
 impl PartialEq for Pave {
     fn eq(&self, other: &Self) -> bool {
         self.vertex_idx == other.vertex_idx && self.param == other.param
@@ -99,8 +87,6 @@ impl PaveBlock {
     }
 
     /// OCCT: BOPDS_PaveBlock default constructor (cxx:27-36) for curve PaveBlocks.
-    ///   myEdge=-1, myOriginalEdge=-1, myTS1=myTS2=-99., myIsSplittable=false,
-    ///   then InitPaveBlock1 overrides myIsSplittable=true.
     pub fn new_curve_block() -> Self {
         Self {
             original_edge: NO_EDGE,
@@ -121,51 +107,9 @@ impl PaveBlock {
 
     // ----- OCCT-aligned: Edge accessors (cxx:54-100) -----
 
-    /// OCCT: BOPDS_PaveBlock::SetEdge (cxx:54-57).
-    pub fn set_edge(&mut self, edge_idx: usize) {
-        self.new_edge = Some(edge_idx);
-    }
-
-    /// OCCT: BOPDS_PaveBlock::Edge (cxx:61-63).
-    pub fn edge(&self) -> Option<usize> {
-        self.new_edge
-    }
-
-    /// OCCT: BOPDS_PaveBlock::HasEdge (cxx:68-71).
-    pub fn has_edge(&self) -> bool {
-        self.new_edge.is_some()
-    }
-
-    /// OCCT: BOPDS_PaveBlock::HasEdge(int&) (cxx:75-79).
-    pub fn has_edge_value(&self) -> (bool, Option<usize>) {
-        (self.new_edge.is_some(), self.new_edge)
-    }
-
-    /// OCCT: BOPDS_PaveBlock::SetOriginalEdge (cxx:83-86).
-    pub fn set_original_edge(&mut self, edge_idx: usize) {
-        self.original_edge = edge_idx;
-    }
-
-    /// OCCT: BOPDS_PaveBlock::OriginalEdge (cxx:90-93).
-    pub fn original_edge(&self) -> usize {
-        self.original_edge
-    }
-
     /// OCCT: BOPDS_PaveBlock::IsSplitEdge (cxx:97-100).
     pub fn is_split_edge(&self) -> bool {
         self.new_edge.map_or(false, |e| e != self.original_edge)
-    }
-
-    // ----- Pave accessors (cxx:104-145) -----
-
-    /// OCCT: BOPDS_PaveBlock::SetPave1 (cxx:104-107).
-    pub fn set_pave1(&mut self, pave: Pave) {
-        self.pave1 = pave;
-    }
-
-    /// OCCT: BOPDS_PaveBlock::SetPave2 (cxx:118-121).
-    pub fn set_pave2(&mut self, pave: Pave) {
-        self.pave2 = pave;
     }
 
     /// OCCT: BOPDS_PaveBlock::Range (cxx:132-136).
@@ -188,7 +132,6 @@ impl PaveBlock {
     // ----- ExtPave methods (cxx:167-312) -----
 
     /// ✅ OCCT-aligned: BOPDS_PaveBlock::AppendExtPave (cxx:167-173).
-    ///   Adds an extra pave; deduplicates via myMFence (vertex index fence).
     pub fn append_ext_pave(&mut self, pave: Pave) {
         if self.ext_paves_fence.insert(pave.vertex_idx) {
             self.ext_paves.push(pave);
@@ -196,27 +139,15 @@ impl PaveBlock {
     }
 
     /// ✅ OCCT-aligned: BOPDS_PaveBlock::AppendExtPave1 (cxx:177-180).
-    ///   Adds an extra pave without dedup fence check.
     pub fn append_ext_pave1(&mut self, pave: Pave) {
         self.ext_paves.push(pave);
     }
 
     /// ✅ OCCT-aligned: BOPDS_PaveBlock::RemoveExtPave (cxx:184-202).
-    ///   Removes the extra pave with the given vertex index.
     pub fn remove_ext_pave(&mut self, vertex_idx: usize) {
         if self.ext_paves_fence.remove(&vertex_idx) {
             self.ext_paves.retain(|p| p.vertex_idx != vertex_idx);
         }
-    }
-
-    /// ✅ OCCT-aligned: BOPDS_PaveBlock::ExtPaves (cxx:206-209).
-    pub fn ext_paves(&self) -> &[Pave] {
-        &self.ext_paves
-    }
-
-    /// ✅ OCCT-aligned: BOPDS_PaveBlock::ChangeExtPaves (cxx:213-216).
-    pub fn change_ext_paves(&mut self) -> &mut Vec<Pave> {
-        &mut self.ext_paves
     }
 
     /// ✅ OCCT-aligned: BOPDS_PaveBlock::IsToUpdate (cxx:220-223).
@@ -225,8 +156,6 @@ impl PaveBlock {
     }
 
     /// ✅ OCCT-aligned: BOPDS_PaveBlock::ContainsParameter (cxx:227-245).
-    ///   Returns true if an ext pave exists with |param - thePrm| < theTol.
-    ///   Sets theIndex to the matching pave's vertex index.
     pub fn contains_parameter(&self, the_prm: f64, the_tol: f64, the_index: &mut usize) -> bool {
         for pave in &self.ext_paves {
             if (pave.param - the_prm).abs() < the_tol {
@@ -238,14 +167,10 @@ impl PaveBlock {
     }
 
     /// ✅ OCCT-aligned: BOPDS_PaveBlock::Update (cxx:249-312).
-    ///   Produces new PaveBlocks from the current block's ext_paves.
-    ///   When theFlag=true, includes myPave1/myPave2 as boundaries.
-    ///   Clears ext_paves and fence after splitting.
-    ///   Returns the list of new PaveBlocks (OCCT: output parameter theLPB).
     pub fn update(&mut self, the_flag: bool) -> Vec<PaveBlock> {
         let mut a_nb = self.ext_paves.len();
         if the_flag {
-            a_nb += 2; // include myPave1, myPave2
+            a_nb += 2;
         }
 
         if a_nb <= 1 {
@@ -254,7 +179,6 @@ impl PaveBlock {
             return Vec::new();
         }
 
-        // Collect all paves into a sorted array
         let mut p_paves: Vec<Pave> = Vec::with_capacity(a_nb);
         if the_flag {
             p_paves.push(self.pave1);
@@ -263,16 +187,14 @@ impl PaveBlock {
         p_paves.extend(self.ext_paves.drain(..));
         self.ext_paves_fence.clear();
 
-        // Sort by parameter (OCCT: std::sort with BOPDS_Pave::operator< by parameter)
         p_paves.sort_by(|a, b| a.param.partial_cmp(&b.param).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Create new PaveBlocks from adjacent pairs
         let mut result = Vec::with_capacity(p_paves.len() - 1);
         let mut a_pave1 = p_paves[0];
         for i in 1..p_paves.len() {
             let a_pave2 = p_paves[i];
             let mut pb = PaveBlock::new(self.original_edge, a_pave1, a_pave2);
-            pb.set_original_edge(self.original_edge);
+            pb.original_edge = self.original_edge;
             result.push(pb);
             a_pave1 = a_pave2;
         }
