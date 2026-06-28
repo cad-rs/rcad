@@ -656,52 +656,26 @@ impl<'a> BooleanBuilder<'a> {
     ///   OCCT L293-296: if no PBs and no AV → skip.
     /// ✅ OCCT-aligned: FillImagesFaces (Builder_2.cxx L215-229).
     ///   Calls BuildSplitFaces → FillSameDomainFaces → FillInternalVertices.
+    /// OCCT-aligned: FillImagesFaces (Builder_2.cxx L215-229).
+    ///   3-step dispatcher: BuildSplitFaces → FillSameDomainFaces → FillInternalVertices.
     fn fill_images_faces(
         &self,
         result: &mut ResultBuilder,
         a_faces: &[usize],
         b_faces: &[usize],
     ) {
+        // OCCT L218: BuildSplitFaces — split all faces along intersection curves.
         self.build_split_faces(result, a_faces, b_faces);
-
-        // ✅ OCCT L223: FillSameDomainFaces — merge duplicates after all faces split.
-        self.fill_same_domain_faces(result);
+        // OCCT L219-222: if (HasErrors()) return;
         if self.has_errors { return; }
 
-        // ✅ OCCT L228: FillInternalVertices — settle alone vertices as INTERNAL sub-shapes.
+        // OCCT L223: FillSameDomainFaces — merge duplicate same-domain faces.
+        self.fill_same_domain_faces(result);
+        // OCCT L224-227: if (HasErrors()) return;
+        if self.has_errors { return; }
+
+        // OCCT L228: FillInternalVertices — settle alone vertices as INTERNAL.
         self.fill_internal_vertices(result);
-
-        // rcad: build_faces validates edge refs and builds face topology.
-        // OCCT equivalent: image faces are already TopoDS during BuildSplitFaces;
-        // no separate "build_faces" step is needed.
-        result.build_faces();
-
-        // OCCT L146-152: add original faces without images.
-        // OCCT BuildResult(FACE) adds original faces when there are no split images.
-        // rcad: for faces from source solids that had no split, create original face entries.
-        let mut emitted_a: std::collections::HashSet<usize> =
-            std::collections::HashSet::new();
-        let mut emitted_b: std::collections::HashSet<usize> =
-            std::collections::HashSet::new();
-        for origin in &result.face_origins {
-            match origin {
-                FaceOrigin::FromA(fi) => { emitted_a.insert(*fi); }
-                FaceOrigin::FromB(fi) => { emitted_b.insert(*fi); }
-                _ => {}
-            }
-        }
-        for &fi in a_faces {
-            if !emitted_a.contains(&self.ds.faces[fi].source_face_idx) {
-                result.build_original_face(self.ds, fi,
-                    FaceOrigin::FromA(self.ds.faces[fi].source_face_idx));
-            }
-        }
-        for &fi in b_faces {
-            if !emitted_b.contains(&self.ds.faces[fi].source_face_idx) {
-                result.build_original_face(self.ds, fi,
-                    FaceOrigin::FromB(self.ds.faces[fi].source_face_idx));
-            }
-        }
     }
 
     /// ✅ OCCT-aligned: BuildSplitFaces (Builder_2.cxx L233-374).
@@ -2812,6 +2786,34 @@ impl<'a> BooleanBuilder<'a> {
             ShapeType::Face => {
                 // OCCT L145-165: for each source FACE, check myImages.Seek(aS).
                 //   rcad: result.face_origins tracks which source faces were split.
+                //   rcad: build_faces() validates edge refs before TShape creation.
+                result.build_faces();
+                // OCCT L146-152: add original source faces without split images.
+                let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
+                let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
+                let mut emitted_a: std::collections::HashSet<usize> =
+                    std::collections::HashSet::new();
+                let mut emitted_b: std::collections::HashSet<usize> =
+                    std::collections::HashSet::new();
+                for origin in &result.face_origins {
+                    match origin {
+                        FaceOrigin::FromA(fi) => { emitted_a.insert(*fi); }
+                        FaceOrigin::FromB(fi) => { emitted_b.insert(*fi); }
+                        _ => {}
+                    }
+                }
+                for &fi in &a_faces {
+                    if !emitted_a.contains(&self.ds.faces[fi].source_face_idx) {
+                        result.build_original_face(self.ds, fi,
+                            FaceOrigin::FromA(self.ds.faces[fi].source_face_idx));
+                    }
+                }
+                for &fi in &b_faces {
+                    if !emitted_b.contains(&self.ds.faces[fi].source_face_idx) {
+                        result.build_original_face(self.ds, fi,
+                            FaceOrigin::FromB(self.ds.faces[fi].source_face_idx));
+                    }
+                }
                 result.build_topods_faces(t);
             }
             ShapeType::Shell => {
