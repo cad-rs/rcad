@@ -600,31 +600,9 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
     let mut processed_seam_ds_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
     // ✅ OCCT-aligned: boundary vertex position map (ShapesSD equivalent).
-    //    OCCT's DS shares TopoDS_Vertex between shapes at same position.
-    //    rcad loads each shape's vertices independently, so the sphere north
-    //    pole and a box corner at the same 3D position have different DS indices.
-    //    This remaps ALL IC endpoint vertices to a GLOBAL canonical vertex per
-    //    position, using ALL faces' boundary vertices (not just the current face),
-    //    so section edges use the same canonical vertex regardless of which face
-    //    processes them.
-    let bv_positions: Vec<(DVec3, usize)> = (0..ds.faces.len()).flat_map(|fi| {
-        ds.faces[fi].boundary_edges.iter().flat_map(|&ei| {
-            let e = &ds.edges[ei];
-            [(ds.vertices[e.start_vertex].point, e.start_vertex),
-             (ds.vertices[e.end_vertex].point, e.end_vertex)]
-        })
-    }).collect();
-    let remap_ic_v = |v: usize| -> usize {
-        let p = ds.vertices[v].point;
-        let tol = crate::tolerance::TOLERANCE_ABS * 1000.0;
-        // Pick the canonical vertex with the MINIMUM index (earliest-loaded shape,
-        // typically from operand A) to ensure consistency across all faces.
-        bv_positions.iter()
-            .filter(|(bp, _)| (bp - p).length_squared() <= tol * tol)
-            .map(|&(_, bv)| bv)
-            .min()
-            .unwrap_or(v)
-    };
+    //   OCCT's DS shares vertices via ShapesSD during PaveFiller.
+    //   rcad: vertex remapping is done in make_section_edges_from_curve_pbs,
+    //   so IC endpoints already reference canonical vertices by this point.
 
     // Check if surface is closed (U/V)  for seam edge detection
     // OCCT L383-388: GeomLib::IsClosed  U/V
@@ -939,9 +917,9 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
         let edge = &ds.edges[nei];
         if edge.start_vertex == edge.end_vertex { continue; }
         // OCCT L484-494: FWD + REV orientations for each section edge PB.
-        // OCCT-aligned: remap IC endpoint to boundary vertex (ShapesSD equivalent).
-        let sv_remap = remap_ic_v(edge.start_vertex);
-        let ev_remap = remap_ic_v(edge.end_vertex);
+        // Vertex remapping now done in make_section_edges_from_curve_pbs.
+        let sv_remap = edge.start_vertex;
+        let ev_remap = edge.end_vertex;
         // ✅ OCCT-aligned: propagate pcurve from DSEdge face_reps to WireSegment.
         // OCCT BRep_Tool::CurveOnSurface(aE, myFace) returns the pcurve stored
         // on the edge; rcad stores it in edge.face_reps (populated by
@@ -971,9 +949,8 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
     if !had_pb_sc {
     for &ci in &face.face_info.curves_sc_only() {
         let ic = &ds.intersection_curves[ci];
-        // ✅ OCCT-aligned: remap IC endpoint to boundary vertex (ShapesSD).
-        let sv = remap_ic_v(ic.start_vertex);
-        let ev = remap_ic_v(ic.end_vertex);
+        let sv = ic.start_vertex;
+        let ev = ic.end_vertex;
         // OCCT-aligned: Skip degenerate IC (unless sphere face, where we try to infer correct vertex)
         let d2 = ds.vertices[sv].point.distance_squared(ds.vertices[ev].point);
         if std::env::var("RCAD_DEBUG_IC").is_ok() {

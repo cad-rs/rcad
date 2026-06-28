@@ -851,6 +851,22 @@ impl<'a> PaveFiller<'a> {
         // Collect section edge data per curve to avoid borrow conflicts
         struct SECurve { curve_idx: usize, sv: usize, ev: usize, curve: Curve3, geom_tol: f64, t_range: [f64; 2], pbs: Vec<PaveBlock> }
         let mut se_data: Vec<SECurve> = Vec::new();
+
+        // ✅ OCCT-aligned: build position→vertex map for IC endpoint remapping (ShapesSD equivalent).
+        //   OCCT's PaveFiller records same-domain vertices via AddShapeSD.
+        //   rcad: find the minimum-index vertex at each distinct position from ALL DS vertices.
+        let bv_positions: Vec<(DVec3, usize)> = self.ds.vertices.iter().enumerate()
+            .map(|(vi, v)| (v.point, vi)).collect();
+        let remap_ds_v = |v: usize| -> usize {
+            if v >= self.ds.vertices.len() { return v; }
+            let p = self.ds.vertices[v].point;
+            let tol = TOLERANCE_ABS * 1000.0;
+            bv_positions.iter()
+                .filter(|(bp, _)| (bp - p).length_squared() <= tol * tol)
+                .map(|&(_, bv)| bv)
+                .min()
+                .unwrap_or(v)
+        };
         // OCCT L854-875 (M6): Build BVH tree of existing PBs for IsExistingPaveBlock lookup.
         // rcad: use a HashMap keyed by (nV1, nV2) as a lightweight equivalent — if a DSEdge
         // already exists for the same vertex pair, the sub-PB is already handled (avoids duplicates
@@ -890,7 +906,16 @@ impl<'a> PaveFiller<'a> {
                     )]
                 };
             for mut sub_pb in sub_pbs {
-                let (nV1, nV2) = sub_pb.indices();
+                let (nV1_raw, nV2_raw) = sub_pb.indices();
+                // ✅ OCCT-aligned: remap IC endpoint vertices to canonical boundary vertices
+                //   (ShapesSD equivalent).  OCCT records SD during PaveFiller vertex creation;
+                //   rcad does it here so section edges connect boundary vertices, not orphan IC vertices.
+                let nV1 = remap_ds_v(nV1_raw);
+                let nV2 = remap_ds_v(nV2_raw);
+                if nV1 != nV1_raw || nV2 != nV2_raw {
+                    sub_pb.pave1.vertex_idx = nV1;
+                    sub_pb.pave2.vertex_idx = nV2;
+                }
                 let (aT1, aT2) = sub_pb.range();
                 if (aT2 - aT1).abs() < crate::tolerance::TOLERANCE_ABS {
                     continue;
