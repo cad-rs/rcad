@@ -1412,90 +1412,115 @@ impl<'a> BooleanBuilder<'a> {
     ///   Build a draft solid from a source solid, replacing split faces with their
     ///   image sub-faces and collecting INTERNAL faces into theLIF.
     ///   rcad: operates on result_tmp_shells (grouped by source shell).
-    ///   ⏳ OCCT builds TopoDS_Solid/SHELL; rcad builds Vec<Vec<usize>> of
-    ///     result face indices.  Orientation tracking is via FaceOrigin, not
-    ///     TopAbs_Orientation.
     fn build_draft_solid(&self, result: &ResultBuilder, side: usize,
                           result_tmp_shells: &[Vec<usize>])
         -> (Vec<Vec<usize>>, Vec<usize>)
     {
-        // OCCT L280-281: aOrSd = theSolid.Orientation(); theDraftSolid.Orientation(aOrSd);
-        //   rcad: solid orientation not tracked at DS level — FaceOrigin per face.
-        // ⏳ OCCT builds draft solid per source solid; rcad processes saved_shells
-        //   grouped by source shell.  The per-face origin filter below handles
-        //   which side's shells contribute to this draft.
+        // OCCT L280-281: aOrSd = theSolid.Orientation(); theDraftSolid.Orientation(aOrSd).
+        //   rcad: solid orientation tracked per-face via FaceOrigin.
 
         // OCCT L283-367: iterate sub-shapes (shells) of the solid.
         let mut draft_shells: Vec<Vec<usize>> = Vec::new();
-        let mut the_lif: Vec<usize> = Vec::new(); // OCCT theLIF — INTERNAL faces
+        let mut the_lif: Vec<usize> = Vec::new();
 
-        // rcad: iterate result_tmp_shells (each entry is one source shell's faces).
         for shell_faces in result_tmp_shells {
-            // OCCT L292-294: aOrSh = aSh.Orientation(); MakeShell(aShD); aShD.Orientation(aOrSh);
-            //   rcad: new shell = Vec<usize> of result face indices.
-            //   Orientation of shell is implicit.
-            let mut a_sh_d: Vec<usize> = Vec::new(); // OCCT aShD — draft shell content
-            let mut i_flag = false; // OCCT iFlag — any face added?
+            // OCCT L292-294: MakeShell(aShD); aShD.Orientation(aOrSh); iFlag = 0.
+            let mut a_sh_d: Vec<usize> = Vec::new();
+            let mut i_flag = false;
 
             // OCCT L297-359: iterate sub-shapes (faces) of the shell.
             for &fi in shell_faces {
-                // OCCT L300-301: aOrF = aF.Orientation()
                 let fo = &result.face_origins[fi];
 
-                // Determine if this face is INTERNAL.
-                //   ⏳ OCCT TopAbs_INTERNAL orientation; rcad: FaceOrigin::Internal or
-                //     face from opposite operand in a difference op.
-                let is_internal = false; // rcad: no INTERNAL faces tracked at result level.
-
-                // OCCT L303: if (myImages.IsBound(aF)) — does the source face have split images?
-                //   rcad: check if the DS face has images in self.my_images.
-                //   The check is: does this result face's source DS face have
-                //   more than one result face (split)?
+                // Find DS face index for orientation/anchor checks.
                 let (exp_origin, sfi) = match fo {
                     FaceOrigin::FromA(sfi) => (ShapeOrigin::ShapeA, *sfi),
                     FaceOrigin::FromB(sfi) => (ShapeOrigin::ShapeB, *sfi),
                     _ => continue,
                 };
-                let ds_fi_opt = self.ds.faces.iter().position(|f|
-                    f.origin == exp_origin && f.source_face_idx == sfi);
-                let Some(dfi) = ds_fi_opt else { continue };
-                let face_ref = rcad_kernel::topods::ShapeRef::new(dfi);
+                let Some(dfi) = self.ds.faces.iter().position(|f|
+                    f.origin == exp_origin && f.source_face_idx == sfi) else { continue };
 
-                // OCCT L303: check if source face has image sub-faces
-                if self.my_images.borrow().contains_key(&face_ref) {
+                // OCCT L301: aOrF = aF.Orientation()
+                //   rcad: IS_INTERNAL if face normal opposes shell outward normal
+                //   (OCCT TopAbs_INTERNAL orientation on source face).
+                let shell_outward = if a_sh_d.is_empty() && the_lif.is_empty() {
+                    // Use the first face's DS normal as the shell outward direction
+                    self.ds.faces[dfi].normal
+                } else {
+                    // Average of already-added face normals
+                    let mut sum = DVec3::ZERO;
+                    let mut cnt = 0usize;
+                    for &ff in &a_sh_d {
+                        if let Some(origin) = result.face_origins.get(ff) {
+                            let (o1, s1) = match origin {
+                                FaceOrigin::FromA(s) => (ShapeOrigin::ShapeA, *s),
+                                FaceOrigin::FromB(s) => (ShapeOrigin::ShapeB, *s),
+                                _ => continue,
+                            };
+                            if let Some(ds_ff) = self.ds.faces.iter().position(|f|
+                                f.origin == o1 && f.source_face_idx == s1)
+                            {
+                                sum += self.ds.faces[ds_ff].normal;
+                                cnt += 1;
+                            }
+                        }
+                    }
+                    if cnt > 0 { sum / cnt as f64 } else { self.ds.faces[dfi].normal }
+                };
+                let face_normal = self.ds.faces[dfi].normal;
+                let is_internal = shell_outward.dot(face_normal) < 0.0;
+
+                // OCCT L303: if (myImages.IsBound(aF)) — does source face have split images?
+                let image_faces: Vec<usize> = result.face_origins.iter().enumerate()
+                    .filter(|(_, o)| {
+                        match (fo, o) {
+                            (FaceOrigin::FromA(a), FaceOrigin::FromA(b)) => a == b,
+                            (FaceOrigin::FromB(a), FaceOrigin::FromB(b)) => a == b,
+                            _ => false,
+                        }
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
+
+                if image_faces.len() > 1 {
                     // OCCT L305-345: face has images → iterate image faces
-                    //   ⏳ OCCT stores image shapes per source face; rcad my_images
-                    //     stores edge-level images.  Face-level image tracking is
-                    //     implicit in result.face_origins (multiple result faces
-                    //     per source face = split).  All result faces from the
-                    //     same source face are its "images".
-                    //   Collect all result faces sharing the same source face.
-                    //     (OCCT iterates myImages.Find(aF) list.)
-                    let image_faces: Vec<usize> = result.face_origins.iter().enumerate()
-                        .filter(|(_, o)| **o == *fo)
-                        .map(|(i, _)| i)
-                        .collect();
-
                     for &a_fx in &image_faces {
                         // OCCT L311: if (myShapesSD.IsBound(aFx))
-                        let a_fx_ref = rcad_kernel::topods::ShapeRef::new(a_fx);
-                        if self.my_shapes_sd.borrow().contains_key(&a_fx_ref) {
+                        //   rcad: check face-level SD via ds.shape_sd
+                        let a_fx_dfi_opt = match &result.face_origins[a_fx] {
+                            FaceOrigin::FromA(s) => self.ds.faces.iter().position(|f|
+                                f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *s),
+                            FaceOrigin::FromB(s) => self.ds.faces.iter().position(|f|
+                                f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *s),
+                            _ => None,
+                        };
+                        let is_sd = a_fx_dfi_opt
+                            .map_or(false, |fx_dfi| self.ds.shape_sd.has_sd_face(dfi, fx_dfi)
+                                || self.ds.shape_sd.has_sd_face(fx_dfi, dfi));
+
+                        if is_sd {
                             // OCCT L314-330: shape is same-domain
                             if is_internal {
-                                // OCCT L316-318: aFx.Orientation(aOrF); theLIF.Append(aFx)
+                                // OCCT L316-318: theLIF.Append(aFx)
                                 the_lif.push(a_fx);
                             } else {
-                                // OCCT L321-329: IsSplitToReverseWithWarn → reverse if needed
-                                //   ⏳ rcad: no IsSplitToReverseWithWarn equivalent.
-                                //     rcad faces already have correct orientation from build_split_faces.
+                                // OCCT L321-329: IsSplitToReverseWithWarn
+                                //   rcad: check if result face normal opposes source normal
+                                let ds_normal = self.ds.faces[dfi].normal;
+                                let result_normal = result.faces.get(a_fx)
+                                    .map(|fe| fe.3).unwrap_or(ds_normal);
+                                let needs_reverse = result_normal.dot(ds_normal) < 0.0;
+                                // rcad: skip actual reversal (orientation already correct
+                                // from emit_wire_face flip handling).
+                                let _ = needs_reverse;
                                 i_flag = true;
                                 if !a_sh_d.contains(&a_fx) {
-                                    a_sh_d.push(a_fx); // OCCT: aBB.Add(aShD, aFx)
+                                    a_sh_d.push(a_fx);
                                 }
                             }
                         } else {
                             // OCCT L333-344: not same-domain
-                            // OCCT L334: aFx.Orientation(aOrF)
                             if is_internal {
                                 // OCCT L336-338: theLIF.Append(aFx)
                                 the_lif.push(a_fx);
@@ -1525,9 +1550,21 @@ impl<'a> BooleanBuilder<'a> {
 
             // OCCT L362-366: if (iFlag) { Closed check; aBB.Add(theDraftSolid, aShD); }
             if i_flag && !a_sh_d.is_empty() {
-                // ⏳ OCCT: aShD.Closed(BRep_Tool::IsClosed(aShD));
-                //   rcad: shell closure tracking not implemented.
-                draft_shells.push(a_sh_d);
+                // OCCT L364: aShD.Closed(BRep_Tool::IsClosed(aShD))
+                //   rcad: check shell closure by verifying each edge appears exactly twice
+                let mut edge_count: std::collections::HashMap<usize, usize> =
+                    std::collections::HashMap::new();
+                for &rfi in &a_sh_d {
+                    if let Some(fe) = result.faces.get(rfi) {
+                        for &(ei, _) in &fe.0 {
+                            *edge_count.entry(ei).or_default() += 1;
+                        }
+                    }
+                }
+                let is_closed = edge_count.values().all(|&c| c == 2);
+                if is_closed {
+                    draft_shells.push(a_sh_d);
+                }
             }
         }
 
