@@ -131,7 +131,7 @@ fn make_shell(faces: &[usize], ds: &DS) -> Vec<usize> {
 ///   3. For each block, check multi-connected edges → IsRegular flag.
 ///
 /// In rcad: same logic using DS face/edge indices instead of TopoDS_Shape.
-fn make_connexity_blocks(start_shapes: &[usize], ds: &DS, lcb: &mut Vec<ConnexityBlock>) {
+pub(crate) fn make_connexity_blocks(start_shapes: &[usize], ds: &DS, lcb: &mut Vec<ConnexityBlock>) {
     lcb.clear();
     if start_shapes.is_empty() {
         return;

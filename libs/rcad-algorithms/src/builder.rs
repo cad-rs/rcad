@@ -599,13 +599,14 @@ impl<'a> BooleanBuilder<'a> {
     /// ✅ OCCT-aligned: FillImagesContainers(WIRE) — iterate DS wires (first-class TopAbs_WIRE).
     ///   OCCT L172-193: NbSourceShapes → filter TopAbs_WIRE → FillImagesContainer(shape, WIRE).
     ///   rcad: iterate ds.wires[], process each as FillImagesContainer per OCCT L221-276.
-    /// OCCT-aligned: FillImagesContainer(WIRE) (Builder_1.cxx L221-276).
+    /// ✅ OCCT-aligned: FillImagesContainer(WIRE) (Builder_1.cxx L221-276).
     ///   Same algorithm as FillImagesContainer(SHELL), operating on WIRE type.
     ///   L224-233: check if any sub-edge has been modified via myImages.Seek.
     ///   L235-240: if none modified → return (no image, original kept by BuildResult).
     ///   L242-245: MakeContainer(WIRE, aCIm) — new wire to hold edge images.
     ///   L247-272: for each sub-edge → add split images or original.
     ///   L274-275: Closed check + myImages.Bind(theS).Append(aCIm).
+    ///   ⏳ IsSplitToReverseWithWarn skipped — edge orientation deferred to face construction.
     fn fill_images_containers_wires(&self) {
         let e_base = self.ds.vertices.len();
 
@@ -1097,14 +1098,11 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// OCCT-aligned: FillImagesContainer(SHELL) (Builder_1.cxx L221-276).
+    /// ✅ OCCT-aligned: FillImagesContainer(SHELL) (Builder_1.cxx L221-276).
     ///   L224-240: check if any sub-shape has been modified
     ///   L242-275: build new container from sub-shape images
-    /// OCCT-aligned: FillImagesContainer(SHELL) (Builder_1.cxx L221-276).
-    ///   L224-233: check if any sub-shape has been modified via myImages.Seek.
-    ///   L235-240: if none modified → return (no new container).
-    ///   L242-275: build new container from sub-shape images.
-    ///   rcad: adapted to store shell face groups in result.tmp_shells.
+    ///   ⏳ IsSplitToReverseWithWarn skipped — face orientation handled in emit_wire_face.
+    ///   ⏳ aCIm.Closed() skipped — shell closure determined during BuildRC.
     fn fill_images_containers_shells(&self, result: &mut ResultBuilder) {
         for ds_shell in &self.ds.shells {
             // OCCT L224-233: check if any sub-shape (FACE) has been modified.
@@ -1627,19 +1625,29 @@ impl<'a> BooleanBuilder<'a> {
         assignments
     }
 
-    /// OCCT-aligned: BuildSplitSolids (Builder_3.cxx L413-618).
-    ///   Phase 0 (L431-461): non-interfered solids → aMST (face set for same-domain dedup).
-    ///   Phase 1 (L467-518): build SplitSolid for solids WITH IN faces.
-    ///   Post-process (L539-617): aMST-based dedup + store in result solids.
+    /// ✅ OCCT-aligned: BuildSplitSolids (Builder_3.cxx L413-618).
+    ///
+    ///   Build result solids from draft solids and IN faces.
+    ///
+    ///   Phase 0 (L431-461):  Non-interfered solids → aMST (face-set dedup).
+    ///   Phase 1 (L467-518):  Interfered solids → BOPAlgo_SplitSolid → collect areas.
+    ///   Phase 2 (L531-537):  Parallel execution (rcad: sequential).
+    ///   Phase 3 (L539-577):  Collect results + merge alerts.
+    ///   Phase 4 (L580-617):  Dedup via aMST, store in myImages / myOrigins / myShapesSD.
+    ///
     ///   rcad: results stored in result.tmp_solids (BuildRC applies boolean filtering).
+    ///   ⏳ myImages / myOrigins / myShapesSD storage deferred to BuildRC / build_topods.
     fn build_split_solids(&self, result: &mut ResultBuilder,
                           assignments: &[(usize, usize, &'static str)]) {
         // OCCT L413-415: void BuildSplitSolids(theDraftSolids, theRange)
         //   rcad: assignments + saved_shells + my_in_parts replace theDraftSolids + myInParts.
-        // OCCT L417-428: local variables (aSFS, aLSEmpty, aMFence, aMST, aVBS)
+        // OCCT L417-428: local variables (aAlr0, aSFS, aLSEmpty, aMFence, aMST, aVBS)
         let my_in_parts = self.my_in_parts.borrow();
         let has_in_faces = !my_in_parts.is_empty();
 
+        // OCCT L425: aSFS — list of all faces for building new solid
+        // OCCT L426: aMFence — fence to avoid processing same solid twice
+        //   rcad: implicit in assignments iteration + in_faces_this filter.
         // OCCT L427: aMST — BOPTools_Set for same-domain detection (dedup).
         //   rcad: BTreeSet<usize> of DS face indices per registered set.
         let mut a_mst: Vec<std::collections::BTreeSet<usize>> = Vec::new();
@@ -1669,9 +1677,9 @@ impl<'a> BooleanBuilder<'a> {
         };
 
         // === Phase 0: Non-interfered solids → aMST (OCCT L431-461) ===
-        //   OCCT: source SOLIDs NOT in theDraftSolids → build BOPTools_Set, add to aMST.
-        //   rcad: shells WITH IN faces are "interfered" (→Phase 1);
-        //         shells WITHOUT IN faces are "non-interfered" → a_mst + stored as solids.
+        //   OCCT: iterate DS ShapeInfo for TopAbs_SOLID NOT in theDraftSolids →
+        //         build BOPTools_Set of faces, add to aMST.
+        //   rcad: shells WITHOUT IN faces are "non-interfered" → a_mst + stored as solids.
         //   ⏳ OCCT iterates DS shape info for TopAbs_SOLID entries; rcad uses assignments.
         for &(si, side, _state) in assignments {
             // OCCT L437-440: if (aSI.ShapeType() != TopAbs_SOLID) continue;
@@ -1689,7 +1697,6 @@ impl<'a> BooleanBuilder<'a> {
                 a_mst.push(ds_set);
 
                 // OCCT L487-488: aSolidsIm.Add(aS).Append(aSD) — store non-interfered draft solid.
-                //   Build result face list for this DS shell.
                 let result_faces: Vec<usize> = ds_shell.faces.iter()
                     .flat_map(|&dsfi| {
                         let dsf = &self.ds.faces[dsfi];
@@ -1716,15 +1723,13 @@ impl<'a> BooleanBuilder<'a> {
             // OCCT L478-481: if (!theDraftSolids.IsBound(aS)) continue;
             let in_faces_this: Vec<usize> = my_in_parts.get(&side).cloned().unwrap_or_default();
             if !has_in_faces || in_faces_this.is_empty() {
-                continue; // already handled in Phase 0
+                continue;
             }
 
             let origin = if side == 0 { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
             let other_origin = if side == 0 { ShapeOrigin::ShapeB } else { ShapeOrigin::ShapeA };
 
-            // OCCT L491-492: aSFS.Clear();
-            // OCCT L493-499: 1.1 Fill Shell Faces Set — iterate all faces of draft solid.
-            //   rcad: aExp.Init(aSD, TopAbs_FACE) → DS shell faces → result faces.
+            // OCCT L491-499: 1.1 Fill Shell Faces Set — iterate all faces of draft solid
             let mut ds_face_set: Vec<usize> = Vec::new();
             if let Some(ds_shell) = self.ds.shells.get(si) {
                 for &dsfi in &ds_shell.faces {
@@ -1746,21 +1751,27 @@ impl<'a> BooleanBuilder<'a> {
             if ds_face_set.is_empty() { continue; }
 
             // OCCT L513-517: 1.3 Build new solids via BOPAlgo_SplitSolid.
-            //   rcad: BuilderSolid (no parallel execution).
+            //   ⏳ rcad: BuilderSolid (single-threaded; OCCT uses parallel aVBS).
             let mut bs = crate::bopds::builder_solid::BuilderSolid::new();
             bs.set_shapes(&ds_face_set);
             bs.perform(&self.ds);
 
+            // OCCT L531-537: Parallel execution (BOPTools_Parallel::Perform).
+            //   ⏳ rcad: BuilderSolid already performed above (sequential).
+
             // OCCT L539-542: collect areas → aSolidsIm.
+            // OCCT L544-577: merge BuilderSolid alerts into builder report.
+            //   ⏳ rcad: alerts not merged.
             for area_ds in bs.areas() {
-                // OCCT L596-600: BOPTools_Set dedup via aMST.Contains / aMST.Added.
+                // OCCT L590-602: BOPTools_Set dedup via aMST.Contains / aMST.Added.
                 let ds_set: std::collections::BTreeSet<usize> = area_ds.iter().copied().collect();
                 if a_mst.iter().any(|s| s == &ds_set) {
+                    // OCCT L598: bFlagSD = aMST.Contains(aST) — same-domain → skip duplicate
                     continue;
                 }
                 a_mst.push(ds_set);
 
-                // Map DS faces → result faces (OCCT L590-602: add to myImages).
+                // OCCT L590-602: aST.Add(aSR, TopAbs_FACE) — map DS faces to result faces.
                 let mut result_faces: Vec<usize> = Vec::new();
                 let mut mapped: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
                 for &dfi in area_ds {
@@ -1772,8 +1783,8 @@ impl<'a> BooleanBuilder<'a> {
                 }
                 if result_faces.is_empty() { continue; }
 
-                // ⏳ OCCT L586-616: store in myImages + myOrigins + myShapesSD member maps.
-                //   rcad: stored in result.tmp_shells/tmp_solids for BuildRC.
+                // OCCT L603-614: store in myImages + myOrigins + myShapesSD.
+                //   ⏳ rcad: stored in result.tmp_shells/tmp_solids for BuildRC.
                 let csi = result.tmp_shells.len();
                 result.tmp_shells.push(result_faces);
                 result_solids.push(vec![csi]);
@@ -1781,10 +1792,12 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        // OCCT L579-617: already applied inline via a_mst dedup above.
+        // OCCT L580-617: aMST-based dedup already applied per-area above.
         result.tmp_solids = result_solids;
 
-        // OCCT BuilderSolid::PerformAreas (L397-576): shell-level void detection.
+        // OCCT BuilderSolid::PerformAreas (BuilderSolid.cxx L397-576): void detection.
+        //   ⏳ rcad: separate post-step because BuilderSolid does not perform
+        //     internal void detection during bs.perform().
         self.detect_internal_voids(result, assignments);
     }
 
