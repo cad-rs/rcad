@@ -469,6 +469,73 @@ pub fn fill_internals(
     }
 }
 
+/// ✅ OCCT-aligned: ComputeStateByOnePoint (BOPTools_AlgoTools.cxx L623-656).
+///
+/// Classify a shape (V/E/F) against a solid's face set by computing
+/// a representative point on the shape and testing IN/OUT/ON against
+/// the solid's boundary.
+///
+/// shape_type: 0=VERTEX, 1=EDGE, 2=FACE
+/// shape_idx: DS index into ds.vertices / ds.edges / ds.faces
+/// solid_faces: DS face indices belonging to the solid
+pub fn compute_state_by_one_point(
+    shape_type: u8,
+    shape_idx: usize,
+    solid_faces: &[usize],
+    ds: &DS,
+) -> crate::classify::Classification {
+    if solid_faces.is_empty() {
+        return crate::classify::Classification::Out;
+    }
+
+    // OCCT L632-645: dispatch on shape type
+    let pt = match shape_type {
+        0 => {
+            // OCCT L634-636: VERTEX → use vertex point
+            if shape_idx < ds.vertices.len() {
+                ds.vertices[shape_idx].point
+            } else {
+                return crate::classify::Classification::Out;
+            }
+        }
+        1 => {
+            // OCCT L637-639: EDGE → use edge midpoint
+            if shape_idx < ds.edges.len() {
+                let e = &ds.edges[shape_idx];
+                let p1 = if e.start_vertex < ds.vertices.len() {
+                    ds.vertices[e.start_vertex].point
+                } else { return crate::classify::Classification::Out; };
+                let p2 = if e.end_vertex < ds.vertices.len() {
+                    ds.vertices[e.end_vertex].point
+                } else { return crate::classify::Classification::Out; };
+                (p1 + p2) * 0.5
+            } else {
+                return crate::classify::Classification::Out;
+            }
+        }
+        2 => {
+            // OCCT L640-644: FACE → use face centroid
+            if shape_idx < ds.faces.len() {
+                let f = &ds.faces[shape_idx];
+                if f.boundary_verts.is_empty() {
+                    return crate::classify::Classification::Out;
+                }
+                let mut sum = glam::DVec3::ZERO;
+                for &vi in &f.boundary_verts {
+                    if vi < ds.vertices.len() {
+                        sum += ds.vertices[vi].point;
+                    }
+                }
+                sum / f.boundary_verts.len() as f64
+            } else {
+                return crate::classify::Classification::Out;
+            }
+        }
+        _ => return crate::classify::Classification::Out,
+    };
+
+    crate::classify::classify_point(pt, solid_faces, ds)
+}
 /// OCCT-aligned: IntermediatePoint (BOPTools_AlgoTools2D / IntTools_Tools).
 pub fn intermediate_point(t1: f64, t2: f64) -> f64 {
     0.5 * (t1 + t2)
