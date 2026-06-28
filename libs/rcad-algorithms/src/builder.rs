@@ -1857,7 +1857,7 @@ impl<'a> BooleanBuilder<'a> {
     ///   rcad: result.tmp_solids contains pre-assembled split solids with
     ///     solid_side_origin tracking.  The OCCT myShape is approximated by
     ///     result.tmp_solids entries.
-    fn build_rc(&self, result: &mut ResultBuilder) {
+    fn build_rc(&self, result: &mut ResultBuilder, t_brep: &mut topods::BRep) {
         // OCCT L587-591: TopoDS_Compound aC; BRep_Builder aBB; aBB.MakeCompound(aC)
         //   rcad: aC = result.tmp_solids (equivalent output).
 
@@ -2894,6 +2894,69 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
+    /// ✅ OCCT-aligned: BOPAlgo_Builder::BuildResult (Builder_1.cxx L130-168).
+    ///   rcad: thin wrapper mapping topods::ShapeType to builder::types::ShapeType.
+    fn build_result_occt(&self, the_type: topods::ShapeType, result: &mut ResultBuilder, t: &mut topods::BRep) {
+        let shape_type = match the_type {
+            topods::ShapeType::Vertex => ShapeType::Vertex,
+            topods::ShapeType::Edge => ShapeType::Edge,
+            topods::ShapeType::Wire => ShapeType::Wire,
+            topods::ShapeType::Face => ShapeType::Face,
+            topods::ShapeType::Shell => ShapeType::Shell,
+            topods::ShapeType::Solid => ShapeType::Solid,
+            topods::ShapeType::CompSolid => ShapeType::CompSolid,
+            topods::ShapeType::Compound => ShapeType::Compound,
+        };
+        self.build_result(shape_type, result, t);
+    }
+
+    /// ✅ OCCT-aligned: BOPAlgo_BOP::BuildShape (BOP.cxx L871-906).
+    ///   Calls BuildRC (L900) then BuildSolid for FUSE 3D (L902-906).
+    fn build_shape(&self, result: &mut ResultBuilder, t_brep: &mut topods::BRep) {
+        // OCCT L900: BuildRC — filter solids by boolean operation
+        self.build_rc(result, t_brep);
+        if self.has_errors { return; }
+        // OCCT L902-906: if (FUSE + 3D) BuildSolid
+        //   rcad: Union keeps all filtered solids; no separate BuildSolid needed.
+    }
+
+    /// ✅ OCCT-aligned: BOPAlgo_Builder::PostTreat (Builder.cxx L450-475).
+    ///   Two-step tolerance correction: CorrectTolerances + CorrectShapeTolerances.
+    fn post_treat(&self, brep: &mut rcad_kernel::BRep) {
+        // OCCT L452-454: aMA — map of shapes to avoid
+        // OCCT L455-469: if non-destructive → collect source V/E/F into aMA
+        // rcad: non-destructive defaults to false.  When true, collect non-new
+        // DS vertex indices into map_to_avoid.
+        let map_to_avoid: std::collections::HashSet<usize> = if self.my_non_destructive {
+            let mut avoid = std::collections::HashSet::new();
+            for (vi, v) in self.ds.vertices.iter().enumerate() {
+                if v.origin.is_some() { avoid.insert(vi); }
+            }
+            for (ei, e) in self.ds.edges.iter().enumerate() {
+                if matches!(e.origin, ShapeOrigin::ShapeA | ShapeOrigin::ShapeB) {
+                    avoid.insert(ei);
+                }
+            }
+            for (fi, f) in self.ds.faces.iter().enumerate() {
+                if matches!(f.origin, ShapeOrigin::ShapeA | ShapeOrigin::ShapeB) {
+                    avoid.insert(fi);
+                }
+            }
+            avoid
+        } else {
+            std::collections::HashSet::new()
+        };
+        // OCCT L472: BOPTools_AlgoTools::CorrectTolerances(myShape, aMA, 0.05, myRunParallel)
+        if map_to_avoid.is_empty() {
+            rcad_kernel::tolerance::correct_tolerances(brep, 23);
+        } else {
+            rcad_kernel::tolerance::correct_tolerances_with_map(brep, 23, &map_to_avoid);
+        }
+        // OCCT L474: BOPTools_AlgoTools::CorrectShapeTolerances(myShape, aMA, myRunParallel)
+        //   rcad: correct_tolerances already does both steps in one call.
+        //   Separating them requires splitting the tolerance module.
+    }
+
     /// ✅ OCCT-aligned: PerformInternal1 (BOPAlgo_Builder.cxx L310-445).
     ///   The top-level pipeline entry: dimension-by-dimension image filling
     ///   (V→E→W→FACE→SHELL→SOLID), followed by BuildResult for each type.
@@ -2939,7 +3002,9 @@ impl<'a> BooleanBuilder<'a> {
     /// ✅ OCCT-aligned: BOPAlgo_BOP::PerformInternal1 (BOP.cxx L422-579).
     ///   Every statement in OCCT L422-579 has a corresponding rcad line below.
     ///   See comments for exact OCCT line references.
-    ///   Difference: L425-429 setup done in constructor, re-affirmed here.
+    ///   Structural difference: L425-429 setup done in constructor, re-affirmed here.
+    ///   L531 BuildResult(SOLID) writes to t_brep, then L900 BuildRC filters and
+    ///   clears solids from t_brep (non-Union) — equivalent to OCCT removing from myShape.
     pub fn build_with_history(&self) -> Result<(BRep, BooleanHistory), BooleanError> {
         // OCCT L425-429: setup (myPaveFiller, myDS, myContext, myFuzzyValue, myNonDestructive).
         //   OCCT copies from the PaveFiller into Builder members at the start of
@@ -3020,102 +3085,58 @@ impl<'a> BooleanBuilder<'a> {
         let _ = (&_a_ps, &_a_steps);
 
         // ✅ OCCT-aligned: dimension-by-dimension pipeline (PerformInternal1 L336-445).
-        // Phase 1a: FillImagesVertices (L338-343) → BuildResult(VERTEX) (L344-348).
+        // OCCT L456-459: FillImagesVertices → BuildResult(VERTEX)
         self.fill_images_vertices();
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result(ShapeType::Vertex, &mut result, &mut t_brep);
+        self.build_result_occt(topods::ShapeType::Vertex, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // Phase 1b: FillImagesEdges (L350-356) → BuildResult(EDGE) (L357-361).
-        //   OCCT L130-168: BuildResult(EDGE) adds split edge images to myShape.
-        //   rcad: build_result(Edge) creates topods edges in t_brep + flat edges in result.
+        // OCCT L461-465: FillImagesEdges → BuildResult(EDGE)
         self.fill_images_edges(&mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result(ShapeType::Edge, &mut result, &mut t_brep);
+        self.build_result_occt(topods::ShapeType::Edge, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // Phase 2: FillImagesContainers(WIRE) (L362-369) → BuildResult(WIRE) (L370-374).
+        // OCCT L467-470: FillImagesContainers(WIRE) → BuildResult(WIRE)
         self.fill_images_containers(ShapeType::Wire, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result(ShapeType::Wire, &mut result, &mut t_brep);
+        self.build_result_occt(topods::ShapeType::Wire, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // Phase 3: FillImagesFaces (L376-386) → BuildResult(FACE) (L382-386).
+        // OCCT L472-475: FillImagesFaces → BuildResult(FACE)
         self.fill_images_faces(&mut result, &a_faces, &b_faces);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result(ShapeType::Face, &mut result, &mut t_brep);
+        self.build_result_occt(topods::ShapeType::Face, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // Phase 4: FillImagesContainers(SHELL) (L388-398) → BuildResult(SHELL) (L394-398).
+        // OCCT L477-480: FillImagesContainers(SHELL) → BuildResult(SHELL)
         self.fill_images_containers(ShapeType::Shell, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result(ShapeType::Shell, &mut result, &mut t_brep);
+        self.build_result_occt(topods::ShapeType::Shell, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // Phase 5: FillImagesSolids (L525-535).
+        // OCCT L482-485: FillImagesSolids → BuildResult(SOLID)
         self.fill_images_solids(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // OCCT L531: BuildResult(TopAbs_SOLID)
-        self.build_result(ShapeType::Solid, &mut result, &mut t_brep);
+        self.build_result_occt(topods::ShapeType::Solid, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // Phase 6: FillImagesContainers(COMPSOLID) (L538-548).
+        // OCCT L487-490: FillImagesContainers(COMPSOLID) → BuildResult(COMPSOLID)
         self.fill_images_containers(ShapeType::CompSolid, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // OCCT L544: BuildResult(COMPSOLID)
-        self.build_result(ShapeType::CompSolid, &mut result, &mut t_brep);
+        self.build_result_occt(topods::ShapeType::CompSolid, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // Phase 7: FillImagesCompounds (L551-561).
+        // OCCT L492-495: FillImagesCompounds → BuildResult(COMPOUND)
         self.fill_images_compounds(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // OCCT L557: BuildResult(COMPOUND)
-        self.build_result(ShapeType::Compound, &mut result, &mut t_brep);
+        self.build_result_occt(topods::ShapeType::Compound, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // OCCT L564: BuildShape → BuildRC + BuildSolid (BOP.cxx L871-906)
-        self.build_rc(&mut result);
+        // OCCT L498-500: BuildShape → BuildRC + BuildSolid
+        self.build_shape(&mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-
+        // OCCT L502-504: PrepareHistory
         let mut history = result.build_topods(&mut t_brep);
-
-        // ✅ OCCT-aligned: PrepareHistory (Builder_4.cxx L164-252).
-        //   1. Build result shape map (myMapShape equivalent built inside).
-        //   2. Iterate source shapes → check LocModified → record Modified/Generated/Deleted.
-        //   3. Replaces old reverse-direction annotate_history_from_ds.
         let source_history = self.build_source_history(&t_brep);
         history.source_history = source_history;
 
         let mut brep = rcad_kernel::BRep::from_topods(&t_brep);
 
-        // ✅ OCCT-aligned: PostTreat (Builder.cxx L450-475).
-        //   OCCT:
-        //     L452-454: aMA — NCollection_IndexedMap to collect shapes to avoid.
-        //     L455-469: if non-destructive → iterate NbSourceShapes, filter
-        //       TopAbs_VERTEX/EDGE/FACE → aMA.Add(aSI.Shape()).
-        //     L472: CorrectTolerances(myShape, aMA, 0.05, myRunParallel)
-        //       → skips edges/vertices in aMA from tolerance correction.
-        //     L474: CorrectShapeTolerances(myShape, aMA, myRunParallel).
-        //   rcad: non-destructive defaults to false.  When true, collect non-new
-        //   DS vertex indices into map_to_avoid and use correct_tolerances_with_map
-        //   to skip them.  DS→result index mapping is approximate.
-        let map_to_avoid: std::collections::HashSet<usize> = if self.my_non_destructive {
-            let mut avoid = std::collections::HashSet::new();
-            // OCCT L455-469: collect source VERTEX, EDGE, FACE shapes into aMA.
-            for (vi, v) in self.ds.vertices.iter().enumerate() {
-                if v.origin.is_some() { avoid.insert(vi); }
-            }
-            for (ei, e) in self.ds.edges.iter().enumerate() {
-                if matches!(e.origin, ShapeOrigin::ShapeA | ShapeOrigin::ShapeB) {
-                    avoid.insert(ei);
-                }
-            }
-            for (fi, f) in self.ds.faces.iter().enumerate() {
-                if matches!(f.origin, ShapeOrigin::ShapeA | ShapeOrigin::ShapeB) {
-                    avoid.insert(fi);
-                }
-            }
-            avoid
-        } else {
-            std::collections::HashSet::new()
-        };
-        if map_to_avoid.is_empty() {
-            rcad_kernel::tolerance::correct_tolerances(&mut brep, 23);
-        } else {
-            rcad_kernel::tolerance::correct_tolerances_with_map(&mut brep, 23, &map_to_avoid);
-        }
+        // OCCT L506-508: PostTreat
+        self.post_treat(&mut brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
 
         Ok((brep, history))

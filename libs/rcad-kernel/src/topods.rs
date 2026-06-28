@@ -188,6 +188,14 @@ impl BRep {
         ShapeRef::new(index)
     }
 
+    /// Remove all Solid TShapes from the BRep and return their indices.
+    /// OCCT BuildRC removes unwanted solids from myShape after BuildResult(SOLID) added them.
+    pub fn clear_solids(&mut self) -> usize {
+        let before = self.tshapes.len();
+        self.tshapes.retain(|ts| !matches!(&**ts, TShape::Solid(_)));
+        before - self.tshapes.len()
+    }
+
     pub fn vertex(&self, r: ShapeRef) -> &TVertexData {
         match &*self.tshapes[r.index] {
             TShape::Vertex(v) => v,
