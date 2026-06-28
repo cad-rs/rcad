@@ -32,6 +32,7 @@ pub mod brep_tools;
 pub mod brep_top_adaptor;
 pub mod bspline_edit;
 pub mod boptools;
+pub mod bopalgo;
 pub mod builder;
 pub mod builder_face;
 pub mod bvh;

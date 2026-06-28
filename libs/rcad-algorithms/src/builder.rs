@@ -1517,20 +1517,55 @@ impl<'a> BooleanBuilder<'a> {
         // === Phase 3: ClassifyFaces (OCCT L197-208) ===
         // OCCT L197-199: LOCAL anInParts — classification result map: draft solid → IN faces.
         // OCCT L201-208: BOPAlgo_Tools::ClassifyFaces(aLFaces, aLSolids,...) batch BVH.
-        //   rcad: per-face classify_point against each draft solid's DS face set.
+        //   rcad: using bopalgo::classify_faces with per-face classify_point.
+        let face_samples: Vec<DVec3> = a_l_faces.iter()
+            .map(|&fi| if fi < result.faces.len() { result.faces[fi].8 } else { DVec3::ZERO })
+            .collect();
+        let aabb_of_face: Vec<Aabb> = a_l_faces.iter().map(|&fi| {
+            // Build minimal AABB from face boundary vertices via DS
+            if fi < result.face_origins.len() {
+                let dfi_opt = match &result.face_origins[fi] {
+                    FaceOrigin::FromA(sfi) => self.ds.faces.iter().position(|f|
+                        f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
+                    FaceOrigin::FromB(sfi) => self.ds.faces.iter().position(|f|
+                        f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi),
+                    _ => None,
+                };
+                if let Some(dfi) = dfi_opt {
+                    let mut aabb = Aabb::empty();
+                    for &vi in &self.ds.faces[dfi].boundary_verts {
+                        if vi < self.ds.vertices.len() {
+                            aabb.expand_point(self.ds.vertices[vi].point);
+                        }
+                    }
+                    aabb
+                } else { Aabb::empty() }
+            } else { Aabb::empty() }
+        }).collect();
+        let aabb_of_solid: Vec<Aabb> = a_l_solids.iter().map(|shells| {
+            let mut aabb = Aabb::empty();
+            for sh in shells {
+                for &dfi in sh {
+                    if dfi < self.ds.faces.len() {
+                        for &vi in &self.ds.faces[dfi].boundary_verts {
+                            if vi < self.ds.vertices.len() {
+                                aabb.expand_point(self.ds.vertices[vi].point);
+                            }
+                        }
+                    }
+                }
+            }
+            aabb
+        }).collect();
+        let an_in_parts_list = crate::bopalgo::classify_faces(
+            &a_l_faces, &face_samples, &a_l_solids, self.ds,
+            &aabb_of_face, &aabb_of_solid,
+        );
         let mut an_in_parts: std::collections::HashMap<usize, Vec<usize>> =
             std::collections::HashMap::new();
-
-        for &fi in &a_l_faces {
-            if fi >= result.faces.len() { continue; }
-            let pt = result.faces[fi].8;
-            for (dsi, draft_solid) in a_l_solids.iter().enumerate() {
-                let ds_faces: Vec<usize> = draft_solid.iter().flat_map(|sh| sh.iter().copied()).collect();
-                if ds_faces.is_empty() { continue; }
-                let class = classify_point(pt, &ds_faces, self.ds);
-                if class == Classification::In {
-                    an_in_parts.entry(dsi).or_default().push(fi);
-                }
+        for (dsi, in_faces) in an_in_parts_list.into_iter().enumerate() {
+            if !in_faces.is_empty() {
+                an_in_parts.insert(dsi, in_faces);
             }
         }
 
