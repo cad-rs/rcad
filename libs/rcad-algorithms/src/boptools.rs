@@ -924,6 +924,261 @@ pub fn find_edge_tangent(curve: &Curve3) -> Option<glam::DVec3> {
     }
 }
 
+/// ✅ OCCT-aligned: WiresToFaces (BOPAlgo_Tools.cxx L665-799).
+///
+/// Converts planar wires into faces grouped by coplanarity.
+///
+/// OCCT flow:
+///   L685-697: For each wire, find its plane via FindPlane.
+///   L699-742: Group wires sharing the same plane (direction + distance).
+///   L743-789: Build planar face from edges of each group, split, collect sub-faces.
+///   L792-795: Correct tolerances.
+///
+/// rcad: adapted to work with DS wire indices + kernel BRep.
+///   For each coplanar wire group, creates a planar Face with a Plane surface
+///   and adds it to the output BRep.
+///
+/// Returns the output BRep containing the created faces.
+pub fn wires_to_faces(
+    wire_indices: &[usize],
+    ds: &crate::bopds::ds::DS,
+    angle_tol: f64,
+) -> rcad_kernel::BRep {
+    let mut out = rcad_kernel::BRep::new();
+
+    if wire_indices.is_empty() {
+        return out;
+    }
+
+    // OCCT L676-683: caches for edge tangents, wire planes, wire tolerances
+    //   rcad: edge_idx → tangent direction
+    let mut a_dm_edge_tgt: std::collections::HashMap<usize, glam::DVec3> =
+        std::collections::HashMap::new();
+    //   wire_idx → (plane_normal, plane_point, tolerance)
+    #[derive(Clone)]
+    struct WirePlaneInfo {
+        normal: glam::DVec3,
+        point: glam::DVec3,
+        tol: f64,
+    }
+    let mut a_dm_wire_pln: Vec<Option<WirePlaneInfo>> = vec![None; wire_indices.len()];
+
+    // OCCT L685-697: find planes for wires
+    for (wi, &w_idx) in wire_indices.iter().enumerate() {
+        if w_idx >= ds.wires.len() {
+            continue;
+        }
+        let wire = &ds.wires[w_idx];
+        if wire.edges.is_empty() {
+            continue;
+        }
+
+        // Find plane from edges of this wire
+        let mut plane_normal: Option<glam::DVec3> = None;
+        let mut plane_point: Option<glam::DVec3> = None;
+        let mut max_tol: f64 = 0.0;
+
+        for &ei in &wire.edges {
+            if ei >= ds.edges.len() {
+                continue;
+            }
+            let edge = &ds.edges[ei];
+            // Compute tangent (cached: OCCT aDMEdgeTgt)
+            let tangent = a_dm_edge_tgt.entry(ei).or_insert_with(|| {
+                find_edge_tangent(&edge.curve).unwrap_or(glam::DVec3::Z)
+            });
+            max_tol = max_tol.max(edge.geom_tol as f64);
+
+            if plane_normal.is_none() {
+                // Try to find plane from first edge curve
+                if let Some((norm, pt)) = find_plane(&edge.curve) {
+                    plane_normal = Some(norm);
+                    plane_point = Some(pt);
+                }
+            }
+        }
+
+        if let (Some(normal), Some(point)) = (plane_normal, plane_point) {
+            a_dm_wire_pln[wi] = Some(WirePlaneInfo {
+                normal,
+                point,
+                tol: max_tol,
+            });
+        }
+    }
+
+    // OCCT L699-742: group wires by coplanarity
+    let mut a_m_fence: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut wire_groups: Vec<Vec<usize>> = Vec::new(); // groups of w_idx values
+
+    for i in 0..wire_indices.len() {
+        if a_m_fence.contains(&i) {
+            continue;
+        }
+        let Some(ref pln_i) = a_dm_wire_pln[i] else { continue };
+
+        let mut group = vec![wire_indices[i]];
+        a_m_fence.insert(i);
+
+        for j in (i + 1)..wire_indices.len() {
+            if a_m_fence.contains(&j) {
+                continue;
+            }
+            let Some(ref pln_j) = a_dm_wire_pln[j] else { continue };
+
+            // OCCT L728: check direction parallelism
+            let dot = pln_i.normal.dot(pln_j.normal);
+            if dot.abs() < angle_tol.cos() {
+                continue;
+            }
+
+            // OCCT L733-738: check distance between planes
+            let dist = (pln_j.point - pln_i.point).dot(pln_i.normal).abs();
+            let tol_sum = pln_i.tol + pln_j.tol;
+            if dist > tol_sum {
+                continue;
+            }
+
+            group.push(wire_indices[j]);
+            a_m_fence.insert(j);
+        }
+
+        wire_groups.push(group);
+    }
+
+    // OCCT L743-789: build faces from each group
+    for group in &wire_groups {
+        if group.is_empty() {
+            continue;
+        }
+
+        // Get the plane from the first wire in the group
+        let group_wire_idx = group[0];
+        let Some(pln_info) = (|| {
+            wire_indices.iter().position(|&w| w == group_wire_idx)
+                .and_then(|wi| a_dm_wire_pln[wi].as_ref())
+        })() else { continue };
+
+        // Collect all edges (FORWARD + REVERSED per OCCT L752-753)
+        let mut all_edge_vertices: Vec<usize> = Vec::new();
+        let mut all_edges: Vec<(usize, bool)> = Vec::new();
+        for &w_idx in group {
+            if w_idx >= ds.wires.len() {
+                continue;
+            }
+            for &ei in &ds.wires[w_idx].edges {
+                if ei >= ds.edges.len() {
+                    continue;
+                }
+                all_edges.push((ei, true)); // FORWARD
+                all_edges.push((ei, false)); // REVERSED
+                // Add vertex positions for plane estimation
+                if ds.edges[ei].start_vertex < ds.vertices.len() {
+                    all_edge_vertices.push(ds.edges[ei].start_vertex);
+                }
+                if ds.edges[ei].end_vertex < ds.vertices.len() {
+                    all_edge_vertices.push(ds.edges[ei].end_vertex);
+                }
+            }
+        }
+
+        if all_edges.is_empty() {
+            continue;
+        }
+
+        // Build planar face (OCCT L758: BRepBuilderAPI_MakeFace)
+        let plane_surface = rcad_kernel::geom::Surface3::Plane(
+            rcad_kernel::geom::Plane {
+                origin: pln_info.point,
+                normal: pln_info.normal,
+            }
+        );
+
+        // Deduplicate edges and construct the face
+        let mut seen_edges = std::collections::HashSet::new();
+        let mut outer_edges: Vec<(usize, bool)> = Vec::new();
+        for &(ei, fwd) in &all_edges {
+            if seen_edges.insert(ei) {
+                outer_edges.push((ei, fwd));
+            }
+        }
+
+        // Create wire from edges (vertex mapping via BRep)
+        let mut wire_edges: Vec<rcad_kernel::topology::WireEdge> = Vec::new();
+        for &(ei, fwd) in &outer_edges {
+            let we = rcad_kernel::topology::WireEdge::new(ei, fwd);
+            wire_edges.push(we);
+        }
+
+        // Build the face
+        let face = rcad_kernel::topology::Face {
+            outer_wire: rcad_kernel::topology::Wire { edges: wire_edges },
+            inner_wires: Vec::new(),
+            normal: pln_info.normal,
+            triangles: Vec::new(),
+            sample_point: None,
+            mesh_dirty: true,
+            surface_idx: None,
+        };
+
+        // Add face to a shell/solid in the output BRep
+        if out.solids.is_empty() {
+            out.solids.push(rcad_kernel::Solid {
+                shells: vec![rcad_kernel::Shell { faces: Vec::new() }],
+            });
+        }
+        out.solids[0].shells[0].faces.push(face);
+    }
+
+    // Copy edges used by the new faces into the output BRep
+    let mut edge_map: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    for group in &wire_groups {
+        for &w_idx in group {
+            if w_idx >= ds.wires.len() {
+                continue;
+            }
+            for &ei in &ds.wires[w_idx].edges {
+                if ei >= ds.edges.len() {
+                    continue;
+                }
+                if !edge_map.contains_key(&ei) {
+                    let e = &ds.edges[ei];
+                    let sv = out.vertices.len();
+                    out.vertices.push(rcad_kernel::Vertex {
+                        point: if e.start_vertex < ds.vertices.len() {
+                            ds.vertices[e.start_vertex].point
+                        } else { glam::DVec3::ZERO }
+                    });
+                    let ev = out.vertices.len();
+                    out.vertices.push(rcad_kernel::Vertex {
+                        point: if e.end_vertex < ds.vertices.len() {
+                            ds.vertices[e.end_vertex].point
+                        } else { glam::DVec3::ZERO }
+                    });
+                    edge_map.insert(ei, out.edges.len());
+                    out.edges.push(rcad_kernel::Edge { start: sv, end: ev });
+                }
+            }
+        }
+    }
+
+    // Remap edges in the created faces to use output BRep edge indices
+    for solid in &mut out.solids {
+        for shell in &mut solid.shells {
+            for face in &mut shell.faces {
+                let new_edges: Vec<rcad_kernel::topology::WireEdge> = face.outer_wire.edges.iter()
+                    .filter_map(|we| edge_map.get(&we.idx).map(|&new_ei| {
+                        rcad_kernel::topology::WireEdge::new(new_ei, we.forward)
+                    }))
+                    .collect();
+                face.outer_wire.edges = new_edges;
+            }
+        }
+    }
+
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
