@@ -536,6 +536,26 @@ pub fn compute_state_by_one_point(
 
     crate::classify::classify_point(pt, solid_faces, ds)
 }
+/// OCCT-aligned: MakeContainer (BOPTools_AlgoTools.cxx L1600-1645).
+///
+/// Creates an empty container shape of the specified type.
+/// rcad: maps to topods TShape variants. Returns a ShapeRef with
+/// the appropriate empty TShape.
+pub fn make_container(shape_type: u8, brep: &mut rcad_kernel::topods::BRep) -> rcad_kernel::topods::ShapeRef {
+    use rcad_kernel::topods::{TShape, ShapeRef, TShellData, TWireData, TSolidData};
+    let idx = brep.tshapes.len();
+    let shape: std::sync::Arc<TShape> = match shape_type {
+        0 => std::sync::Arc::new(TShape::Compound(Vec::new())),
+        1 => std::sync::Arc::new(TShape::CompSolid(Vec::new())),
+        2 => std::sync::Arc::new(TShape::Solid(TSolidData { shells: Vec::new() })),
+        3 => std::sync::Arc::new(TShape::Shell(TShellData { faces: Vec::new() })),
+        4 => std::sync::Arc::new(TShape::Wire(TWireData { edges: Vec::new() })),
+        _ => return ShapeRef::new(0),
+    };
+    brep.tshapes.push(shape);
+    ShapeRef::new(idx)
+}
+
 /// OCCT-aligned: IntermediatePoint (BOPTools_AlgoTools2D / IntTools_Tools).
 pub fn intermediate_point(t1: f64, t2: f64) -> f64 {
     0.5 * (t1 + t2)
