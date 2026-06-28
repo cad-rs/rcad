@@ -2948,15 +2948,6 @@ impl<'a> BooleanBuilder<'a> {
         let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
         self.check_data(&a_faces, &b_faces)?;
 
-        // ✅ OCCT-aligned: convert DS to BRep for BRepTool-based pipeline.
-        // A3 completes: BRep is pre-populated by PaveFiller::export_to_brep.
-        // If somehow not set (legacy path), build from DS as fallback.
-        if self.brep.borrow().is_none() {
-            let mut br = rcad_kernel::topods::BRep::new();
-            let (face_refs, ic_edge_map) = crate::ds_to_brep::export_to_brep(self.ds, &mut br);
-            *self.brep.borrow_mut() = Some((br, face_refs, ic_edge_map));
-        }
-
         // OCCT L327-332: Prepare — creates empty TopoDS_Compound as myShape.
         let (mut t_brep, mut result) = self.prepare();
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
