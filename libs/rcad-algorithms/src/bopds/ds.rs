@@ -361,6 +361,23 @@ pub struct IntersectionCurve {
     /// ✅ OCCT-aligned: BOPDS_Curve::myPaveBlocks (hxx:115).
     ///   Sub-segments of this intersection curve, created by splitting at paves.
     pub pave_blocks: Vec<PaveBlock>,
+    /// ✅ OCCT-aligned: BOPDS_Curve / IntTools_Curve extra fields.
+    pub curve_extra: CurveExtra,
+}
+
+/// ✅ OCCT-aligned: IntTools_Curve (tangential_tol) + BOPDS_Curve
+///   (techno_vertices, my_box) fields.
+#[derive(Debug, Clone)]
+pub struct CurveExtra {
+    pub tangential_tol: f64,
+    pub techno_vertices: Vec<usize>,
+    pub my_box: Option<(glam::DVec3, glam::DVec3)>,
+}
+
+impl Default for CurveExtra {
+    fn default() -> Self {
+        CurveExtra { tangential_tol: 0.0, techno_vertices: Vec::new(), my_box: None }
+    }
 }
 
 impl IntersectionCurve {

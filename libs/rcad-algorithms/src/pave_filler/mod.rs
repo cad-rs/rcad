@@ -2879,7 +2879,8 @@ impl<'a> PaveFiller<'a> {
                             pcurve_on_b: Some(pcb),
                             geom_tol: crate::tolerance::TOLERANCE_ABS,
                         pave_blocks: Vec::new(),
-                        });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
 
                         self.ds.interferences.push(Interference::FaceFace {
                             f1,
@@ -2939,7 +2940,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: Some(pcb),
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
                     pave_blocks: Vec::new(),
-                    });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
 
                     self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
                     self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
@@ -3056,7 +3058,8 @@ impl<'a> PaveFiller<'a> {
                     pcurve_on_b,
                     geom_tol: crate::tolerance::TOLERANCE_ABS,
                 pave_blocks: Vec::new(),
-                });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
 
                 self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
                 self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
@@ -3147,6 +3150,7 @@ impl<'a> PaveFiller<'a> {
             pcurve_on_b: Some(pcurve_b),
             geom_tol: crate::tolerance::TOLERANCE_ABS,
         pave_blocks: Vec::new(),
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
         });
 
         self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
@@ -3215,7 +3219,8 @@ impl<'a> PaveFiller<'a> {
                     pcurve_on_b,
                     geom_tol: crate::tolerance::TOLERANCE_ABS,
                 pave_blocks: Vec::new(),
-                });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
                 ds.faces[f1].face_info.curves_sc.insert(curve_idx);
                 ds.faces[f2].face_info.curves_sc.insert(curve_idx);
                 ds.faces[f1].face_info.vertices_in.insert(v_start);
@@ -3294,7 +3299,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
                     pave_blocks: Vec::new(),
-                    });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
                     curve_indices.push(ci);
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
                     self.ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -3373,7 +3379,8 @@ impl<'a> PaveFiller<'a> {
                     pcurve_on_b,
                     geom_tol: crate::tolerance::TOLERANCE_ABS,
                 pave_blocks: Vec::new(),
-                });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
                 ds.faces[f1].face_info.curves_sc.insert(ci);
                 ds.faces[f2].face_info.curves_sc.insert(ci);
                 ds.faces[f1].face_info.vertices_in.insert(v_start);
@@ -3406,7 +3413,8 @@ impl<'a> PaveFiller<'a> {
                 pcurve_on_b,
                 geom_tol: crate::tolerance::TOLERANCE_ABS,
             pave_blocks: Vec::new(),
-            });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
             ds.faces[f1].face_info.curves_sc.insert(ci);
             ds.faces[f2].face_info.curves_sc.insert(ci);
             ds.faces[f1].face_info.vertices_in.insert(v_start);
@@ -3447,7 +3455,8 @@ impl<'a> PaveFiller<'a> {
                 pcurve_on_b,
                 geom_tol: crate::tolerance::TOLERANCE_ABS,
             pave_blocks: Vec::new(),
-            });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
             ds.faces[f1].face_info.curves_sc.insert(ci);
             ds.faces[f2].face_info.curves_sc.insert(ci);
             ds.faces[f1].face_info.vertices_in.insert(v_start);
@@ -3567,7 +3576,8 @@ impl<'a> PaveFiller<'a> {
                         t_range: [0.0, 1.0], pcurve_on_a: pca, pcurve_on_b: pcb,
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
                     pave_blocks: Vec::new(),
-                    });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
                     self.ds.faces[f2].face_info.curves_sc.insert(ci);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_start);
@@ -3669,7 +3679,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
                     pave_blocks: Vec::new(),
-                    });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
                     curve_indices.push(ci);
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
                     self.ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -3776,7 +3787,8 @@ impl<'a> PaveFiller<'a> {
                 pcurve_on_b,
                 geom_tol: crate::tolerance::TOLERANCE_ABS,
             pave_blocks: Vec::new(),
-            });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
             ds.faces[f1].face_info.curves_sc.insert(curve_idx);
             ds.faces[f2].face_info.curves_sc.insert(curve_idx);
             ds.faces[f1].face_info.vertices_in.insert(v_start);
@@ -4088,7 +4100,8 @@ impl<'a> PaveFiller<'a> {
                 pcurve_on_b,
                 geom_tol: crate::tolerance::TOLERANCE_ABS,
             pave_blocks: Vec::new(),
-            });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
             ds.faces[f1].face_info.curves_sc.insert(ci);
             ds.faces[f2].face_info.curves_sc.insert(ci);
             ds.faces[f1].face_info.vertices_in.insert(v_start);
@@ -4331,7 +4344,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
                     pave_blocks: Vec::new(),
-                    });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
                     curve_indices.push(ci);
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
                     self.ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -4380,7 +4394,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
                     pave_blocks: Vec::new(),
-                    });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
                     curve_indices.push(ci);
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
                     self.ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -4418,7 +4433,8 @@ impl<'a> PaveFiller<'a> {
                     pcurve_on_b: pcb,
                     geom_tol: crate::tolerance::TOLERANCE_ABS,
                 pave_blocks: Vec::new(),
-                });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
                 self.ds.faces[f1].face_info.curves_sc.insert(ci);
                 self.ds.faces[f2].face_info.curves_sc.insert(ci);
                 self.ds.faces[f1].face_info.vertices_in.insert(v_start);
@@ -4455,7 +4471,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: pcb,
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
                     pave_blocks: Vec::new(),
-                    });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
                     self.ds.faces[f2].face_info.curves_sc.insert(ci);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_start);
@@ -4549,7 +4566,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
                     pave_blocks: Vec::new(),
-                    });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
                     curve_indices.push(ci);
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
                     self.ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -4587,7 +4605,8 @@ impl<'a> PaveFiller<'a> {
                     pcurve_on_b: pcb,
                     geom_tol: crate::tolerance::TOLERANCE_ABS,
                 pave_blocks: Vec::new(),
-                });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
                 self.ds.faces[f1].face_info.curves_sc.insert(ci);
                 self.ds.faces[f2].face_info.curves_sc.insert(ci);
                 self.ds.faces[f1].face_info.vertices_in.insert(v_start);
@@ -4657,7 +4676,8 @@ impl<'a> PaveFiller<'a> {
                                 pcurve_on_b: pcb.clone(),
                                 geom_tol: crate::tolerance::TOLERANCE_ABS,
                             pave_blocks: Vec::new(),
-                            });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
 
                             self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
                             self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
@@ -4695,7 +4715,8 @@ impl<'a> PaveFiller<'a> {
                             pcurve_on_b: pcb,
                             geom_tol: crate::tolerance::TOLERANCE_ABS,
                         pave_blocks: Vec::new(),
-                        });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
 
                         self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
                         self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
@@ -4746,7 +4767,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: pcb,
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
                     pave_blocks: Vec::new(),
-                    });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
 
                     self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
                     self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
@@ -4800,7 +4822,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: pcb,
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
                     pave_blocks: Vec::new(),
-                    });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
 
                     self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
                     self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
@@ -4855,7 +4878,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: pcb,
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
                     pave_blocks: Vec::new(),
-                    });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
 
                     self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
                     self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
@@ -4913,7 +4937,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: pcb,
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
                     pave_blocks: Vec::new(),
-                    });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
 
                     self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
                     self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
@@ -5065,7 +5090,8 @@ impl<'a> PaveFiller<'a> {
                     pcurve_on_b: pcb,
                     geom_tol: crate::tolerance::TOLERANCE_ABS,
                 pave_blocks: Vec::new(),
-                });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
                 self.ds.faces[f1].face_info.curves_sc.insert(ci);
                 self.ds.faces[f2].face_info.curves_sc.insert(ci);
                 self.ds.faces[f1].face_info.vertices_in.insert(v_start);
@@ -5100,7 +5126,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: pcb,
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
                     pave_blocks: Vec::new(),
-                    });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
                     self.ds.faces[f2].face_info.curves_sc.insert(ci);
                     self.ds.faces[f1].face_info.vertices_in.insert(v_start);
@@ -5148,7 +5175,8 @@ impl<'a> PaveFiller<'a> {
                         pcurve_on_b: polyline_pcurve_by_projection(&branch, &s2),
                         geom_tol: crate::tolerance::TOLERANCE_ABS,
                     pave_blocks: Vec::new(),
-                    });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
                     curve_indices.push(ci);
                     self.ds.faces[f1].face_info.curves_sc.insert(ci);
                     self.ds.faces[f2].face_info.curves_sc.insert(ci);
@@ -5281,7 +5309,8 @@ impl<'a> PaveFiller<'a> {
                 pcurve_on_b: pcurve_b,
                 geom_tol: crate::tolerance::TOLERANCE_ABS,
             pave_blocks: Vec::new(),
-            });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
 
             self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
             self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
@@ -5529,7 +5558,8 @@ impl<'a> PaveFiller<'a> {
                 pcurve_on_b: pcurve_b,
                 geom_tol: crate::tolerance::TOLERANCE_ABS,
             pave_blocks: Vec::new(),
-            });
+            curve_extra: crate::bopds::ds::CurveExtra::default(),
+        });
 
             self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
             self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
