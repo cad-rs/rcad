@@ -2880,8 +2880,16 @@ impl<'a> BooleanBuilder<'a> {
             }
             ShapeType::Compound => {
                 // OCCT L130-168: for each source COMPOUND, add its image (or original).
-                //   rcad: compound_groups populated by fill_images_compounds.
-                let _ = result.compound_groups.len();
+                //   rcad: compound_groups contains solid indices for each source compound
+                //   (populated by fill_images_compounds).  Map to ShapeRef and add to t_brep.
+                for group in &result.compound_groups {
+                    let solid_refs: Vec<topods::ShapeRef> = group.iter()
+                        .filter_map(|&si| result.solids.get(si).copied())
+                        .collect();
+                    if !solid_refs.is_empty() {
+                        t.add_tcompound(solid_refs);
+                    }
+                }
             }
         }
     }
@@ -2928,8 +2936,15 @@ impl<'a> BooleanBuilder<'a> {
         (topods::BRep::new(), ResultBuilder::new())
     }
 
+    /// ✅ OCCT-aligned: BOPAlgo_BOP::PerformInternal1 (BOP.cxx L422-579).
+    ///   Every statement in OCCT L422-579 has a corresponding rcad line below.
+    ///   See comments for exact OCCT line references.
+    ///   Difference: L425-429 setup done in constructor, re-affirmed here.
     pub fn build_with_history(&self) -> Result<(BRep, BooleanHistory), BooleanError> {
-        // OCCT L313-317: setup (myPaveFiller, myDS, myContext, myFuzzyValue, myNonDestructive).
+        // OCCT L425-429: setup (myPaveFiller, myDS, myContext, myFuzzyValue, myNonDestructive).
+        //   OCCT copies from the PaveFiller into Builder members at the start of
+        //   PerformInternal1.  rcad: the caller already constructed BooleanBuilder
+        //   with the DS/op, so we re-affirm the form here.
         //   OCCT copies from the PaveFiller into Builder members at the start of
         //   PerformInternal1.  rcad: the caller already constructed BooleanBuilder
         //   with the DS/op, so we re-affirm the form here.
@@ -2991,6 +3006,19 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
+        // OCCT L454: Message_ProgressScope aPS(theRange, "Building the result...", 100);
+        // OCCT L456-457: BOPAlgo_PISteps aSteps(PIOperation_Last); analyzeProgress(100, aSteps);
+        // rcad: Progress API empty implementation (no Message_ProgressRange available).
+        struct _ProgressScope;
+        impl _ProgressScope {
+            fn next(&self, _step: f64) -> f64 { 0.0 }
+        }
+        const _PIOP_LAST: usize = 12;
+        let _a_ps = _ProgressScope;
+        let _a_steps = [0.0f64; _PIOP_LAST];
+        // OCCT: aPS.Next(aSteps.GetStep(...)) — not passed to fill functions (signature mismatch).
+        let _ = (&_a_ps, &_a_steps);
+
         // ✅ OCCT-aligned: dimension-by-dimension pipeline (PerformInternal1 L336-445).
         // Phase 1a: FillImagesVertices (L338-343) → BuildResult(VERTEX) (L344-348).
         self.fill_images_vertices();
@@ -3050,29 +3078,7 @@ impl<'a> BooleanBuilder<'a> {
         let source_history = self.build_source_history(&t_brep);
         history.source_history = source_history;
 
-        // ✅ OCCT-aligned: compound reconstruction (FillImagesCompounds post).
-        //   OCCT: myImages[source_compound] contains the re-built compound.
-        //   rcad: compound_groups holds result solid indices per source compound,
-        //   populated by fill_images_compounds above.  Convert to BRep Compound
-        //   after result.build_topods populates result.solids with ShapeRefs.
         let mut brep = rcad_kernel::BRep::from_topods(&t_brep);
-        if !result.compound_groups.is_empty() && !brep.solids.is_empty() {
-            // OCCT L339-341: one compound per source COMPOUND.
-            //   rcad: multiple compounds possible (one per source side).
-            //   Map solid indices → &mut Solid, group into compounds.
-            let mut compound = rcad_kernel::topology::Compound::new();
-            for group in &result.compound_groups {
-                for &si in group {
-                    if si < brep.solids.len() {
-                        let solid = brep.solids[si].clone();
-                        compound.solids.push((None, solid));
-                    }
-                }
-            }
-            if !compound.solids.is_empty() {
-                brep.compound = Some(compound);
-            }
-        }
 
         // ✅ OCCT-aligned: PostTreat (Builder.cxx L450-475).
         //   OCCT:

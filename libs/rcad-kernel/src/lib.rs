@@ -397,6 +397,35 @@ impl BRep {
                 _ => {}
             }
         }
+        // Rebuild compounds from topods compounds
+        // Collect flat solid index for each topods Solid shape index
+        let mut solid_idx_map: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        for (ti, ts) in t.tshapes.iter().enumerate() {
+            if matches!(&**ts, topods::TShape::Solid(_)) {
+                solid_idx_map.insert(ti, brep.solids.len());
+                // solid already pushed by the loop above — count it
+            }
+        }
+        // Actually count solids: the solids loop above pushes `brep.solids` in order of topods solids
+        let mut flat_si = 0usize;
+        for (ti, ts) in t.tshapes.iter().enumerate() {
+            if matches!(&**ts, topods::TShape::Solid(_)) {
+                solid_idx_map.insert(ti, flat_si);
+                flat_si += 1;
+            } else if let topods::TShape::Compound(cd) = &**ts {
+                let mut compound = topology::Compound::new();
+                for sr in cd {
+                    if let Some(&fsi) = solid_idx_map.get(&sr.index) {
+                        if fsi < brep.solids.len() {
+                            compound.solids.push((None, brep.solids[fsi].clone()));
+                        }
+                    }
+                }
+                if !compound.solids.is_empty() {
+                    brep.compound = Some(compound);
+                }
+            }
+        }
         // Rebuild solids from topods solids + populate geom stores
         let mut flat_fi = 0usize;
         for ts in &t.tshapes {

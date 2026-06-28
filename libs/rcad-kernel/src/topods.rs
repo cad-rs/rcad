@@ -61,6 +61,7 @@ pub enum TShape {
     Shell(TShellData),
     Solid(TSolidData),
     CompSolid(Vec<ShapeRef>),
+    Compound(Vec<ShapeRef>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -178,6 +179,12 @@ impl BRep {
     pub fn add_tcompsolid(&mut self, solids: Vec<ShapeRef>) -> ShapeRef {
         let index = self.tshapes.len();
         self.tshapes.push(Arc::new(TShape::CompSolid(solids)));
+        ShapeRef::new(index)
+    }
+
+    pub fn add_tcompound(&mut self, shapes: Vec<ShapeRef>) -> ShapeRef {
+        let index = self.tshapes.len();
+        self.tshapes.push(Arc::new(TShape::Compound(shapes)));
         ShapeRef::new(index)
     }
 
@@ -611,6 +618,7 @@ impl TShape {
             TShape::Shell(_) => ShapeType::Shell,
             TShape::Solid(_) => ShapeType::Solid,
             TShape::CompSolid(_) => ShapeType::CompSolid,
+            TShape::Compound(_) => ShapeType::Compound,
         }
     }
 }
