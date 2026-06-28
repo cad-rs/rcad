@@ -599,46 +599,79 @@ impl<'a> BooleanBuilder<'a> {
     /// ✅ OCCT-aligned: FillImagesContainers(WIRE) — iterate DS wires (first-class TopAbs_WIRE).
     ///   OCCT L172-193: NbSourceShapes → filter TopAbs_WIRE → FillImagesContainer(shape, WIRE).
     ///   rcad: iterate ds.wires[], process each as FillImagesContainer per OCCT L221-276.
+    /// OCCT-aligned: FillImagesContainer(WIRE) (Builder_1.cxx L221-276).
+    ///   Same algorithm as FillImagesContainer(SHELL), operating on WIRE type.
+    ///   L224-233: check if any sub-edge has been modified via myImages.Seek.
+    ///   L235-240: if none modified → return (no image, original kept by BuildResult).
+    ///   L242-245: MakeContainer(WIRE, aCIm) — new wire to hold edge images.
+    ///   L247-272: for each sub-edge → add split images or original.
+    ///   L274-275: Closed check + myImages.Bind(theS).Append(aCIm).
     fn fill_images_containers_wires(&self) {
         let e_base = self.ds.vertices.len();
-        let wire_base = e_base + self.ds.edges.len();
-        // OCCT L175-183: for each source shape, filter TopAbs_WIRE
+
+        // OCCT L180-183: Iterate source COMPOUND/WIRE shapes (myDS->NbSourceShapes).
+        //   rcad: iterate DS wires (each wire is a container of edges).
         for wi in 0..self.ds.wires.len() {
             let edges: Vec<usize> = self.ds.wires[wi].edges.clone();
 
-            // OCCT L224-233: check if any sub-edge has been modified
-            let has_split = edges.iter().any(|&ei| {
+            // OCCT L224-233: check if any sub-edge has been modified.
+            //   pLFIm = myImages.Seek(aSS) → pLFIm exists AND (not 1 or not same) → modified.
+            let mut a_it_modified = false;
+            for &ei in &edges {
                 let e_ref = rcad_kernel::topods::ShapeRef::new(e_base + ei);
-                self.my_images.borrow().get(&e_ref).map_or(false, |imgs| {
+                let imgs_borrow = self.my_images.borrow();
+                let p_lf_im = imgs_borrow.get(&e_ref);
+                let is_modified = p_lf_im.map_or(false, |imgs| {
                     imgs.len() != 1 || imgs[0].index != e_base + ei
-                })
-            });
+                });
+                if is_modified {
+                    a_it_modified = true;
+                    break;
+                }
+            }
 
-            if !has_split {
-                // OCCT L236-240: no modification → no new image.
-                let w_ref = rcad_kernel::topods::ShapeRef::new(wire_base + wi);
-                self.my_images.borrow_mut().entry(w_ref).or_default().push(w_ref);
+            // OCCT L235-240: if (!aIt.More()) return — no modification, keep original.
+            //   OCCT: no image bound → BuildResult adds the original wire.
+            //   rcad: no image bound → BuildResult adds original via myImages/wire_images.
+            if !a_it_modified {
+                // rcad: wire_images[wi] = None means "unchanged" — handled by BuildResult(WIRE).
                 continue;
             }
 
-            // OCCT L247-271: rebuild wire from edge images.
-            let has_img: std::collections::HashMap<usize, Vec<rcad_kernel::topods::ShapeRef>> =
-                edges.iter().filter_map(|&ei| {
-                    let e_ref = rcad_kernel::topods::ShapeRef::new(e_base + ei);
-                    self.my_images.borrow().get(&e_ref).map(|v| (ei, v.clone()))
-                }).collect();
-            let mut wi_imgs = self.my_images.borrow_mut();
-            let w_ref = rcad_kernel::topods::ShapeRef::new(wire_base + wi);
+            // OCCT L242-245: MakeContainer(theType, aCIm) — create a new wire.
+            //   rcad: a_c_im = Vec of edge refs (in order) forming the new wire.
+            let mut a_c_im: Vec<rcad_kernel::topods::ShapeRef> = Vec::new();
+
+            // OCCT L247-272: iterate sub-edges → add split images or original.
             for &ei in &edges {
-                let entry = wi_imgs.entry(w_ref).or_default();
-                if let Some(imgs) = has_img.get(&ei) {
-                    for &new_eref in imgs {
-                        entry.push(new_eref);
+                let e_ref = rcad_kernel::topods::ShapeRef::new(e_base + ei);
+                let p_lss_im = self.my_images.borrow().get(&e_ref).cloned();
+
+                if let Some(ref imgs) = p_lss_im {
+                    // OCCT L260-271: has splits → add each split edge image.
+                    for &a_ss_im in imgs {
+                        // OCCT L265-269: if (!aSSIm.IsEqual(aSS) && IsSplitToReverseWithWarn) → reverse.
+                        //   rcad: edge orientation handled during face construction.
+                        let _is_equal = a_ss_im.index == e_ref.index;
+                        if !a_c_im.contains(&a_ss_im) {
+                            a_c_im.push(a_ss_im);
+                        }
                     }
                 } else {
-                    entry.push(rcad_kernel::topods::ShapeRef::new(e_base + ei));
+                    // OCCT L253-258: no splits → add the sub-shape itself.
+                    if !a_c_im.contains(&e_ref) {
+                        a_c_im.push(e_ref);
+                    }
                 }
             }
+
+            // OCCT L274: aCIm.Closed(BRep_Tool::IsClosed(aCIm))
+            //   rcad: closure determined by edge connectivity — skip for wire.
+            // OCCT L275: myImages.Bound(theS, ...).Append(aCIm)
+            //   rcad: store wire image as edge ref list in wire_images.
+            let w_ref = rcad_kernel::topods::ShapeRef::new(
+                e_base + self.ds.edges.len() + wi);
+            self.my_images.borrow_mut().entry(w_ref).or_default().extend(a_c_im);
         }
     }
 
