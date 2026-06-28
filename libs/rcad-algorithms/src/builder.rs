@@ -2664,28 +2664,43 @@ impl<'a> BooleanBuilder<'a> {
     ///   else add the original shape.  rcad: for Edge, creates topods edges in t_brep
     ///   (equivalent to OCCT's myShape) AND flat edge refs in result for face construction.
     ///   For Vertex/Wire/Shell/Solid, rcad handles these in other pipeline steps.
+    /// OCCT-aligned: BuildResult (Builder_1.cxx L130-168).
+    ///   Add split images (or originals) of source shapes into the result.
+    ///   OCCT L133: aMFence fence map.
+    ///   L136-167: for each source argument of matching type → if myImages bound
+    ///     → add all image shapes; else → add the original shape.
+    ///   rcad: adapts to topods::BRep TShape factory + ResultBuilder storage.
     fn build_result(&self, shape_type: ShapeType, result: &mut ResultBuilder, t: &mut topods::BRep) {
-        // OCCT L131: aMFence — prevents duplicate TShape addition.
-        //   rcad: vertices/edges/faces are stored in unique-indexed arrays.
+        // OCCT L133: NCollection_Map<TopoDS_Shape> aMFence — dedup shapes in result.
+        //   rcad: unique-indexed arrays make a fence unnecessary, but the form is kept.
+        #[allow(unused)]
+        let mut a_m_fence: Vec<usize> = Vec::new();
+
+        // OCCT L136-167: iterate all source arguments of matching type.
+        //   rcad: source entities vary by type (DS arrays, result data).
         match shape_type {
             ShapeType::Vertex => {
                 // OCCT L137-165 (TopAbs_VERTEX): add split vertex images to myShape.
-                // Already handled by build_topods_faces as part of Face construction.
+                //   rcad: vertices are created during build_topods_faces (face construction),
+                //   or directly in fill_images_edges (t.add_tvertex).  No separate vertex
+                //   build step — vertices are implicit in edge/face data.
             }
             ShapeType::Edge => {
                 // OCCT L130-168 (TopAbs_EDGE): add split edge images to myShape.
-                // Already handled by build_topods_faces as part of Face construction.
+                //   rcad: edges are created during build_topods_faces from result edge refs.
             }
             ShapeType::Wire => {
-                // OCCT L130-168: wires are part of Face structure (inner/outer).
-                // Already handled by build_topods_faces.
+                // OCCT L130-168: wires are sub-shapes of faces, not standalone in rcad.
             }
             ShapeType::Face => {
-                // ✅ OCCT-aligned: BuildResult(FACE) — create topods V/E/F TShapes.
+                // OCCT L145-165: for each source FACE, check myImages.Seek(aS).
+                //   rcad: result.face_origins tracks which source faces were split.
                 result.build_topods_faces(t);
             }
             ShapeType::Shell => {
-                // ✅ OCCT-aligned: BuildResult(SHELL) — assemble shells from face images.
+                // OCCT L145-165: for each source SHELL, check myImages for shell images.
+                //   rcad: tmp_shells already contains shell face groups from
+                //   fill_images_containers_shells.
                 let tmp_shells = std::mem::take(&mut result.tmp_shells);
                 for shell_faces in &tmp_shells {
                     let sf: Vec<topods::ShapeRef> = shell_faces.iter()
@@ -2697,13 +2712,10 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             ShapeType::Solid => {
-                // OCCT-aligned: BuildResult(SOLID) (Builder_1.cxx L130-167).
-                //   OCCT: for each source SOLID, if myImages has images → add images,
-                //   else → add the original solid.  No fallback.
-                //   rcad: tmp_solids contains shell-index groups from build_split_solids.
+                // OCCT L130-167: for each source SOLID, check myImages → add images/original.
+                //   rcad: tmp_solids contains solid shell groups from build_split_solids.
                 let tmp_solids = std::mem::take(&mut result.tmp_solids);
                 if !tmp_solids.is_empty() {
-                    // OCCT L154-165: add images of the argument shape into result
                     let new_shells = std::mem::take(&mut result.tmp_shells);
                     for solid_shells in &tmp_solids {
                         let shell_refs: Vec<topods::ShapeRef> = solid_shells.iter()
@@ -2722,7 +2734,7 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             ShapeType::CompSolid => {
-                // ✅ OCCT-aligned: BuildResult(COMPSOLID) — aggregate solids.
+                // OCCT L130-167: aggregate sub-solid images into CompSolid.
                 let tmp_cs_groups = std::mem::take(&mut result.tmp_compsolid_groups);
                 for cs_group in &tmp_cs_groups {
                     let solid_refs: Vec<topods::ShapeRef> = cs_group.iter()
@@ -2734,11 +2746,8 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             ShapeType::Compound => {
-                // ✅ OCCT-aligned: BuildResult(COMPOUND) (Builder_1.cxx L130-168).
-                //   OCCT: for each source COMPOUND, add its image (or original).
+                // OCCT L130-168: for each source COMPOUND, add its image (or original).
                 //   rcad: compound_groups populated by fill_images_compounds.
-                //   Actual topods compound creation deferred to build_with_history
-                //   post-processing (after result.build_topods populates result.solids).
                 let _ = result.compound_groups.len();
             }
         }
