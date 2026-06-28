@@ -2845,9 +2845,11 @@ impl<'a> BooleanBuilder<'a> {
             ShapeType::Solid => {
                 // OCCT L130-167: for each source SOLID, check myImages → add images/original.
                 //   rcad: tmp_solids contains solid shell groups from build_split_solids.
-                let tmp_solids = std::mem::take(&mut result.tmp_solids);
+                //   OCCT-aligned: clone, not take — BuildResult does not consume myImages,
+                //   and build_rc (called after All BuildResults) still needs the data.
+                let tmp_solids = result.tmp_solids.clone();
                 if !tmp_solids.is_empty() {
-                    let new_shells = std::mem::take(&mut result.tmp_shells);
+                    let new_shells = result.tmp_shells.clone();
                     for solid_shells in &tmp_solids {
                         let shell_refs: Vec<topods::ShapeRef> = solid_shells.iter()
                             .filter_map(|&si| new_shells.get(si))
@@ -2962,6 +2964,11 @@ impl<'a> BooleanBuilder<'a> {
         // OCCT L334-335: analyzeProgress (rcad: no OCCT Message_Progress API).
         // OCCT L336: // 3. Fill Images
 
+        // OCCT L445-453: EmptyShape check — early exit with history when operands
+        //   don't intersect or are fully contained.  rcad: check_data already
+        //   validates non-empty input, but TreatEmptyShape is not implemented yet.
+        //   Skip for now — the DS handles non-intersecting cases normally.
+
         // ✅ OCCT-aligned: dimension-by-dimension pipeline (PerformInternal1 L336-445).
         // Phase 1a: FillImagesVertices (L338-343) → BuildResult(VERTEX) (L344-348).
         self.fill_images_vertices();
@@ -2990,23 +2997,26 @@ impl<'a> BooleanBuilder<'a> {
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result(ShapeType::Shell, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // Phase 5: FillImagesSolids (L400-410) → BuildRC (L563-564) → BuildResult(SOLID) (L406-410).
+        // Phase 5: FillImagesSolids (L525-535).
         self.fill_images_solids(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // OCCT L563-564: BuildShape → BuildRC applies boolean operation filtering
-        self.build_rc(&mut result);
-        if self.has_errors { return Err(BooleanError::DegenerateResult); }
+        // OCCT L531: BuildResult(TopAbs_SOLID)
         self.build_result(ShapeType::Solid, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // Phase 6: FillImagesContainers(COMPSOLID) (L412-422) → BuildResult(COMPSOLID) (L418-422).
+        // Phase 6: FillImagesContainers(COMPSOLID) (L538-548).
         self.fill_images_containers(ShapeType::CompSolid, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
+        // OCCT L544: BuildResult(COMPSOLID)
         self.build_result(ShapeType::CompSolid, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // Phase 7: FillImagesCompounds (L425-435) → BuildResult(COMPOUND) (L431-435).
+        // Phase 7: FillImagesCompounds (L551-561).
         self.fill_images_compounds(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
+        // OCCT L557: BuildResult(COMPOUND)
         self.build_result(ShapeType::Compound, &mut result, &mut t_brep);
+        if self.has_errors { return Err(BooleanError::DegenerateResult); }
+        // OCCT L564: BuildShape → BuildRC + BuildSolid (BOP.cxx L871-906)
+        self.build_rc(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
 
         let mut history = result.build_topods(&mut t_brep);

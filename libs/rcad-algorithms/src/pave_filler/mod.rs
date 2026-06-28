@@ -2875,7 +2875,7 @@ impl<'a> PaveFiller<'a> {
         sphere: &SphericalSurface,
     ) {
         use inttools::pcurve_derive::{
-            circle_pcurve_on_plane, circle_pcurve_on_sphere, fallback_pcurve_by_projection,
+            circle_pcurve_on_plane, circle_pcurve_on_sphere,
         };
         use inttools::plane_sphere::{PlaneSphereResult, intersect_plane_sphere};
 
@@ -2906,14 +2906,10 @@ impl<'a> PaveFiller<'a> {
                 // pre-clipping to face boundaries.  OCCT PaveFiller clips via
                 // PutBoundPaveOnCurve during MakeBlocks.
                 if circle.radius <= TOLERANCE_MESH_LEGACY + TOLERANCE_ABS { return; }
-                let (effective_t0, effective_t1) = (0.0, std::f64::consts::TAU);
+                let (effective_t0, effective_t1) = (0.0_f64, std::f64::consts::TAU);
 
                 let pcurve_plane = circle_pcurve_on_plane(&circle, plane);
-                let pcurve_sphere = fallback_pcurve_by_projection(
-                    &Curve3::Circle(circle),
-                    &[effective_t0, effective_t1],
-                    &Surface3::Sphere(*sphere),
-                );
+                let pcurve_sphere = circle_pcurve_on_sphere(&circle, sphere);
                 let (pcurve_on_a, pcurve_on_b) = if plane_is_f1 {
                     (Some(pcurve_plane), Some(pcurve_sphere))
                 } else {
