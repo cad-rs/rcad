@@ -1067,21 +1067,18 @@ impl<'a> BooleanBuilder<'a> {
     /// OCCT-aligned: FillImagesContainer(SHELL) (Builder_1.cxx L221-276).
     ///   L224-240: check if any sub-shape has been modified
     ///   L242-275: build new container from sub-shape images
+    /// OCCT-aligned: FillImagesContainer(SHELL) (Builder_1.cxx L221-276).
+    ///   L224-233: check if any sub-shape has been modified via myImages.Seek.
+    ///   L235-240: if none modified → return (no new container).
+    ///   L242-275: build new container from sub-shape images.
+    ///   rcad: adapted to store shell face groups in result.tmp_shells.
     fn fill_images_containers_shells(&self, result: &mut ResultBuilder) {
-        // OCCT L221: theS is the source SHELL, theType = SHELL
-        //   In rcad: iterate DS shells (each shell is a "container" of faces)
-
-        // OCCT L224-233: check if any sub-shape has been modified
-        //   For each FACE sub-shape of the shell: check myImages[face]
-        //   In rcad: check if the DS face has more than one result face (split)
         for ds_shell in &self.ds.shells {
-            // OCCT L224: TopoDS_Iterator aIt(theS)
-            let mut modified = false;
-
-            // OCCT L225-233: iterate sub-shapes, check for images
+            // OCCT L224-233: check if any sub-shape (FACE) has been modified.
+            //   OCCT: myImages.Seek(aSS) → if images exist AND (not 1 or not same) → modified.
+            //   rcad: count result faces for this DS face — >1 means split, 1 means same.
+            let mut a_it: Option<bool> = None; // OCCT: iterator break on modification found
             for &dsfi in &ds_shell.faces {
-                // OCCT L228: pLFIm = myImages.Seek(aSS)
-                //   In rcad: count result faces for this DS face
                 let count = result.face_origins.iter().filter(|origin| {
                     match origin {
                         FaceOrigin::FromA(sfi) => {
@@ -1095,9 +1092,9 @@ impl<'a> BooleanBuilder<'a> {
                         _ => false,
                     }
                 }).count();
-
-                // OCCT L229: if images exist AND (extent != 1 || first != original) → modified
-                if count > 1 || (count == 1 && !result.face_origins.iter().any(|origin| {
+                // OCCT L229: pLFIm exists AND (extent != 1 || first != original) → modified
+                let has_images = count > 0;
+                let is_modified = has_images && (count > 1 || !result.face_origins.iter().any(|origin| {
                     match origin {
                         FaceOrigin::FromA(sfi) => {
                             self.ds.faces[dsfi].origin == crate::bopds::ds::ShapeOrigin::ShapeA
@@ -1109,21 +1106,18 @@ impl<'a> BooleanBuilder<'a> {
                         }
                         _ => false,
                     }
-                })) {
-                    modified = true;
-                    break;
+                }));
+                if is_modified {
+                    a_it = Some(true);
+                    break; // OCCT L231: modified found, stop checking
                 }
             }
 
-            // OCCT L235-240: if no modification → no new container needed
-            if !modified {
-                // OCCT: return without creating new container.
-                //   rcad: the original shell faces are already in result.faces;
-                //   skipping means they won't be grouped into a new shell,
-                //   which is correct for unmodified shells.
-                //   BUT: tmp_shells must be populated for build_rc to work.
-                //   OCCT uses identity mapping for unmodified containers;
-                //   rcad: push original faces as a shell so build_rc sees them.
+            // OCCT L235-240: if no sub-shape modified → return (no new container).
+            //   rcad: push identity shell so build_rc can see the face group.
+            //   OCCT doesn't need this because it uses TopoDS shape identity in myShape.
+            if a_it.is_none() {
+                // Push identity shell (original faces) for downstream build_rc.
                 let mut sf: Vec<usize> = Vec::new();
                 let a_origin = crate::bopds::ds::ShapeOrigin::ShapeA;
                 let b_origin = crate::bopds::ds::ShapeOrigin::ShapeB;
@@ -1145,10 +1139,13 @@ impl<'a> BooleanBuilder<'a> {
                 continue;
             }
 
-            // OCCT L242-275: Build new container from sub-shape images
-            let mut shell_faces: Vec<usize> = Vec::new();
+            // OCCT L242-245: MakeContainer(theType, aCIm) — create new container.
+            //   rcad: new shell = Vec<usize> of result face indices.
+            let mut a_c_im: Vec<usize> = Vec::new();
+
+            // OCCT L247-272: iterate sub-shapes (faces) → add images or original.
             for &dsfi in &ds_shell.faces {
-                // OCCT L251: pLSSIm = myImages.Seek(aSS)
+                // OCCT L251: pLSSIm = myImages.Seek(aSS) — check if face has split images.
                 let result_faces: Vec<usize> = result.face_origins.iter().enumerate()
                     .filter(|(_, origin)| {
                         match origin {
@@ -1166,17 +1163,40 @@ impl<'a> BooleanBuilder<'a> {
                     .map(|(fi, _)| fi)
                     .collect();
 
-                // OCCT L253-258: no images → add original sub-shape
-                // OCCT L261-271: has images → add all image sub-shapes
+                if result_faces.is_empty() {
+                    // OCCT L253-258: no images → add sub-shape itself.
+                    //   rcad: the DS face wasn't split; no result face to add.
+                    //   (Original face already added via build_original_face in build_result(Face).)
+                    continue;
+                }
+
+                // OCCT L260-271: has images (split) → add each image sub-face.
                 for &rfi in &result_faces {
-                    if !shell_faces.contains(&rfi) {
-                        shell_faces.push(rfi);
+                    // OCCT L265-269: if (!aSSIm.IsEqual(aSS) && IsSplitToReverseWithWarn) → reverse.
+                    //   rcad: orientation already correct from emit_wire_face flip handling.
+                    if !a_c_im.contains(&rfi) {
+                        a_c_im.push(rfi);
                     }
                 }
             }
 
-            if !shell_faces.is_empty() {
-                result.tmp_shells.push(shell_faces);
+            // OCCT L274: aCIm.Closed(BRep_Tool::IsClosed(aCIm));
+            //   rcad: closure check on shell — verify each edge appears twice.
+            let mut edge_count: std::collections::HashMap<usize, usize> =
+                std::collections::HashMap::new();
+            for &rfi in &a_c_im {
+                if let Some(fe) = result.faces.get(rfi) {
+                    for &(ei, _) in &fe.0 {
+                        *edge_count.entry(ei).or_default() += 1;
+                    }
+                }
+            }
+            let is_closed = edge_count.values().all(|&c| c == 2);
+
+            // OCCT L275: myImages.Bound(theS, ...).Append(aCIm);
+            //   rcad: push to result.tmp_shells.
+            if is_closed && !a_c_im.is_empty() {
+                result.tmp_shells.push(a_c_im);
             }
         }
     }
