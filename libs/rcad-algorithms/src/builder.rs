@@ -2713,12 +2713,6 @@ impl<'a> BooleanBuilder<'a> {
     ///   L295-308: recurse into sub-compounds; check if any sub-shape has images.
     ///   L309-312: no modification → return.
     ///   L314-341: build new compound from sub-shape images; store in myImages.
-    ///
-    /// rcad: DS does not store TopoDS_COMPOUND — compounds are tracked via
-    ///   a_has_compound / b_has_compound flags.  For each source side with
-    ///   compound: check if any sub-solid (result solids from that side) was
-    ///   split (modified).  If modified → group result solids into one compound
-    ///   per source side.  Groups stored in result.compound_groups.
     /// OCCT-aligned: FillImagesCompounds (Builder_1.cxx L197-217) + FillImagesCompound (L280-342).
     ///   L197-201: dispatcher with fence map; iterate source COMPOUND shapes.
     ///   L280-293: FillImagesCompound — fence skip if already processed.

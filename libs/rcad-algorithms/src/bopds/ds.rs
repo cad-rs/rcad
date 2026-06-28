@@ -454,13 +454,6 @@ pub struct DS {
     /// Indexed by sub-edge index, value is the original edge index.
     pub my_origins: Vec<usize>,
 
-    /// ✅ OCCT-aligned: BRep compound existence marker (OCCT BOPAlgo_Builder
-    ///   iterates myDS for TopAbs_COMPOUND shapes).  Flags whether each source
-    ///   BRep has a compound structure.  Used by fill_images_compounds to
-    ///   reconstruct the compound hierarchy in the result BRep.
-    pub a_has_compound: bool,
-    pub b_has_compound: bool,
-
     /// OCCT FillImagesContainers(WIRE): pre-built edge lists for wires whose
     /// edges were split by the PaveFiller.  Each entry corresponds to one
     /// original wire (flat index across all solids/shells of the source BRep).
@@ -688,8 +681,6 @@ impl DS {
             pave_blocks: Vec::new(),
             edge_flags: EdgeFlagMap::new(),
             increased_ss: std::collections::HashSet::new(),
-            a_has_compound: false,
-            b_has_compound: false,
         };
 
         ds.load_brep(a, ShapeOrigin::ShapeA);
@@ -1173,13 +1164,6 @@ impl DS {
                 shell_counter += 1;
             }
             solid_counter += 1;
-        }
-
-        // OCCT L200-202: FillImagesCompounds checks for TopAbs_COMPOUND in the DS.
-        //   rcad: record whether the source BRep has a compound structure.
-        match origin {
-            ShapeOrigin::ShapeA => self.a_has_compound = brep.compound.is_some(),
-            ShapeOrigin::ShapeB => self.b_has_compound = brep.compound.is_some(),
         }
 
         // OCCT L622-887 (FillInternalShapes Phase 2): internal V/E from source solids.
