@@ -556,7 +556,45 @@ pub fn make_container(shape_type: u8, brep: &mut rcad_kernel::topods::BRep) -> r
     ShapeRef::new(idx)
 }
 
-/// OCCT-aligned: IntermediatePoint (BOPTools_AlgoTools2D / IntTools_Tools).
+/// OCCT-aligned: PointOnEdge (BOPTools_AlgoTools_2.cxx L275-280).
+///
+/// Evaluates a point on a DS edge at the given parameter.
+pub fn point_on_edge(edge: &crate::bopds::ds::DSEdge, t: f64) -> glam::DVec3 {
+    edge.curve.point_at(t)
+}
+
+/// ✅ OCCT-aligned: IsInvertedSolid (BOPTools_AlgoTools.cxx L2398-2408).
+///
+/// Checks if a solid is inverted (normals point inward) by classifying
+/// an "infinite point" against the solid's face set.
+/// Returns true if the infinite point is IN (solid encloses infinity → inverted).
+pub fn is_inverted_solid(solid_faces: &[usize], ds: &DS) -> bool {
+    if solid_faces.is_empty() {
+        return false;
+    }
+    // Build an AABB from the solid's vertices, then place a test point
+    // far outside that AABB (OCCT uses PerformInfinitePoint which classifies
+    // a point at ~1e15 from origin).  Here we use the AABB diagonal * 100.
+    let mut aabb_min = glam::DVec3::splat(f64::INFINITY);
+    let mut aabb_max = glam::DVec3::splat(f64::NEG_INFINITY);
+    for &fi in solid_faces {
+        if fi >= ds.faces.len() { continue; }
+        for &vi in &ds.faces[fi].boundary_verts {
+            if vi < ds.vertices.len() {
+                let p = ds.vertices[vi].point;
+                aabb_min = aabb_min.min(p);
+                aabb_max = aabb_max.max(p);
+            }
+        }
+    }
+    let size = (aabb_max - aabb_min).length();
+    if size < 1e-30 { return false; }
+    let far_point = aabb_max + glam::DVec3::splat(size * 100.0);
+    let state = crate::classify::classify_point(far_point, solid_faces, ds);
+    state == crate::classify::Classification::In
+}
+
+/// ✅ OCCT-aligned: IntermediatePoint (BOPTools_AlgoTools2D / IntTools_Tools).
 pub fn intermediate_point(t1: f64, t2: f64) -> f64 {
     0.5 * (t1 + t2)
 }
