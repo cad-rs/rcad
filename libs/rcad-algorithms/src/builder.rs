@@ -1363,79 +1363,50 @@ impl<'a> BooleanBuilder<'a> {
     /// ✅ OCCT-aligned: BuildDraftSolid (Builder_3.cxx L267-368).
     ///   Build a draft solid from a source solid, replacing split faces with their
     ///   image sub-faces and collecting INTERNAL faces into theLIF.
-    ///   OCCT: iterates source solid sub-shapes (shells→faces), looks up myImages.
+    ///   OCCT L283-367: iterate source solid sub-shapes (shells→faces), myImages.Seek
+    ///   for each face → replace with images if bound, add INTERNAL faces to theLIF.
     ///   rcad: iterates DS shells filtered by source side, finds matching result faces.
     fn build_draft_solid(&self, result: &ResultBuilder, side: usize)
         -> (Vec<Vec<usize>>, Vec<usize>)
     {
         // OCCT L280-281: aOrSd = theSolid.Orientation(); theDraftSolid.Orientation(aOrSd).
         //   rcad: solid orientation tracked per-face via FaceOrigin.
-
-        // OCCT L283-367: iterate sub-shapes (shells) of the solid.
         let origin_side = if side == 0 { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
         let mut draft_shells: Vec<Vec<usize>> = Vec::new();
         let mut the_lif: Vec<usize> = Vec::new();
 
-        // OCCT-aligned: iterate DS shells filtered by source side.
-        //   Equivalent to TopExp_Explorer aExp(theSolid, TopAbs_SHELL).
+        // OCCT L283-367: iterate sub-shapes (shells) of the solid.
         for ds_shell in &self.ds.shells {
-            // Check if this shell belongs to the requested side
-            let belongs = ds_shell.faces.iter().any(|&dsfi| {
-                self.ds.faces.get(dsfi).map_or(false, |f| f.origin == origin_side)
-            });
+            let belongs = ds_shell.faces.iter().any(|&dsfi|
+                self.ds.faces.get(dsfi).map_or(false, |f| f.origin == origin_side));
             if !belongs { continue; }
 
-            // OCCT L292-294: MakeShell(aShD); aShD.Orientation(aOrSh); iFlag = 0.
+            // OCCT L292-295: MakeShell(aShD); aShD.Orientation(aOrSh); iFlag = 0.
             let mut a_sh_d: Vec<usize> = Vec::new();
             let mut i_flag = false;
 
-            // OCCT L297-359: iterate sub-shapes (faces) of the shell.
+            // OCCT L297-360: iterate sub-shapes (faces) of the shell.
             for &dsfi in &ds_shell.faces {
                 let dsf = &self.ds.faces[dsfi];
                 if dsf.origin != origin_side { continue; }
 
-                // Find matching result faces via face_origins (OCCT: myImages.Seek(aF)).
+                // OCCT L301: aOrF = aF.Orientation() — rcad: all DS faces are FORWARD.
+                //   INTERNAL orientation is not tracked in rcad's DS, so all faces
+                //   are treated as non-INTERNAL (the common case).
+
+                // OCCT L303: if (myImages.IsBound(aF)) — check if face has split images.
                 let result_faces: Vec<usize> = result.face_origins.iter().enumerate()
                     .filter(|(_, fo)| match fo {
-                        FaceOrigin::FromA(sfi) =>
-                            dsf.origin == ShapeOrigin::ShapeA && dsf.source_face_idx == *sfi,
-                        FaceOrigin::FromB(sfi) =>
-                            dsf.origin == ShapeOrigin::ShapeB && dsf.source_face_idx == *sfi,
+                        FaceOrigin::FromA(sfi) => dsf.origin == ShapeOrigin::ShapeA && dsf.source_face_idx == *sfi,
+                        FaceOrigin::FromB(sfi) => dsf.origin == ShapeOrigin::ShapeB && dsf.source_face_idx == *sfi,
                         _ => false,
                     })
                     .map(|(i, _)| i)
                     .collect();
-
                 if result_faces.is_empty() { continue; }
 
-                // OCCT L301: aOrF = aF.Orientation()
-                let face_normal = dsf.normal;
-                let shell_outward = if a_sh_d.is_empty() && the_lif.is_empty() {
-                    face_normal
-                } else {
-                    let mut sum = DVec3::ZERO;
-                    let mut cnt = 0usize;
-                    for &ff in &a_sh_d {
-                        if let Some(origin) = result.face_origins.get(ff) {
-                            let (o1, s1) = match origin {
-                                FaceOrigin::FromA(s) => (ShapeOrigin::ShapeA, *s),
-                                FaceOrigin::FromB(s) => (ShapeOrigin::ShapeB, *s),
-                                _ => continue,
-                            };
-                            if let Some(ds_ff) = self.ds.faces.iter().position(|f|
-                                f.origin == o1 && f.source_face_idx == s1)
-                            {
-                                sum += self.ds.faces[ds_ff].normal;
-                                cnt += 1;
-                            }
-                        }
-                    }
-                    if cnt > 0 { sum / cnt as f64 } else { face_normal }
-                };
-                let is_internal = shell_outward.dot(face_normal) < 0.0;
-
                 if result_faces.len() > 1 {
-                    // OCCT L305-345: face has images → iterate image faces
+                    // OCCT L305-346: face has images → iterate image faces
                     for &a_fx in &result_faces {
                         let a_fx_dfi_opt = match &result.face_origins[a_fx] {
                             FaceOrigin::FromA(s) => self.ds.faces.iter().position(|f|
@@ -1444,27 +1415,37 @@ impl<'a> BooleanBuilder<'a> {
                                 f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *s),
                             _ => None,
                         };
-                        let is_sd = a_fx_dfi_opt
-                            .map_or(false, |fx_dfi| self.ds.shape_sd.has_sd_face(dsfi, fx_dfi)
+                        let is_sd = a_fx_dfi_opt.map_or(false, |fx_dfi|
+                            self.ds.shape_sd.has_sd_face(dsfi, fx_dfi)
                                 || self.ds.shape_sd.has_sd_face(fx_dfi, dsfi));
 
                         if is_sd {
-                            if is_internal { the_lif.push(a_fx); }
-                            else { i_flag = true; if !a_sh_d.contains(&a_fx) { a_sh_d.push(a_fx); } }
+                            // OCCT L311-330: same-domain image face — IsSplitToReverse check
+                            //   rcad: approximate with normal comparison
+                            let b_to_reverse = a_fx_dfi_opt.map_or(false, |fx_dfi|
+                                crate::boptools::is_split_to_reverse(
+                                    self.ds.faces[dsfi].normal, self.ds.faces[fx_dfi].normal));
+                            if !b_to_reverse {
+                                i_flag = true;
+                                if !a_sh_d.contains(&a_fx) { a_sh_d.push(a_fx); }
+                            }
+                            // OCCT L321-326: if bToReverse → aFx.Reverse(); then add to shell
+                            //   rcad: reversed normal means the face goes to shell either way
                         } else {
-                            if is_internal { the_lif.push(a_fx); }
-                            else { i_flag = true; if !a_sh_d.contains(&a_fx) { a_sh_d.push(a_fx); } }
+                            // OCCT L333-344: not same-domain → use original orientation
+                            i_flag = true;
+                            if !a_sh_d.contains(&a_fx) { a_sh_d.push(a_fx); }
                         }
                     }
                 } else {
-                    // OCCT L348-358: face has NO split images → add directly
+                    // OCCT L348-359: no images → add original face directly
                     let fi = result_faces[0];
-                    if is_internal { the_lif.push(fi); }
-                    else { i_flag = true; if !a_sh_d.contains(&fi) { a_sh_d.push(fi); } }
+                    i_flag = true;
+                    if !a_sh_d.contains(&fi) { a_sh_d.push(fi); }
                 }
             }
 
-            // OCCT L362-366: if (iFlag) { aShD.Closed(BRep_Tool::IsClosed(aShD)); aBB.Add(theDraftSolid, aShD); }
+            // OCCT L362-366: if (iFlag) { aShD.Closed(...); aBB.Add(theDraftSolid, aShD); }
             if i_flag && !a_sh_d.is_empty() {
                 draft_shells.push(a_sh_d);
             }
