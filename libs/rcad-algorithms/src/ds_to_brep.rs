@@ -105,7 +105,7 @@ fn populate_brep(ds: &crate::bopds::ds::DS, br: &mut BRep) -> (Vec<ShapeRef>, Ve
             .map(|&vi| ShapeRef::new(vi)).collect();
 
         let face_ref = br.add_tface(Some(surface), outer_wire, inner_wires,
-            None, None, internal_vertices);
+            None, None, internal_vertices, face.natural_restriction);
         face_refs.push(face_ref);
     }
 

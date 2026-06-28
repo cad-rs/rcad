@@ -42,6 +42,32 @@ const BVH_THRESHOLD: usize = 20;
 ///   (PaveFiller.hxx L106-107, PaveFiller.cxx L234-355).
 mod glue;
 mod intersection;
+
+/// OCCT-aligned: BOPAlgo_SectionAttribute — controls approximation and
+/// pcurve computation for section edges (BOPAlgo_SectionAttribute.hxx).
+#[derive(Debug, Clone)]
+pub(crate) struct SectionAttribute {
+    pub approximation: bool,
+    pub pcurve_on_s1: bool,
+    pub pcurve_on_s2: bool,
+}
+
+impl Default for SectionAttribute {
+    fn default() -> Self {
+        Self { approximation: true, pcurve_on_s1: true, pcurve_on_s2: true }
+    }
+}
+
+/// OCCT-aligned: PaveFiller::EdgeRangeDistance — stores minimal distance
+/// between an edge range and a face that don't geometrically intersect.
+/// Used by PostTreatFF to re-check E-F pairs after tolerance updates.
+#[derive(Debug, Clone)]
+pub(crate) struct EdgeRangeDistance {
+    pub first: f64,
+    pub last: f64,
+    pub distance: f64,
+}
+
 pub struct PaveFiller<'a> {
     pub ds: &'a mut DS,
     /// Optional BRep for direct output (dual-write mode). When set, PaveFiller
@@ -67,6 +93,24 @@ pub struct PaveFiller<'a> {
     use_obb: bool,
     /// �?OCCT-aligned: IntTools_Context (PaveFiller::Init L203)
     context: IntToolsContext,
+    /// �?OCCT-aligned: myArguments — original input shapes (BOPAlgo_PaveFiller.hxx L639).
+    ///   rcad: carries the original BRep operands for OCCT-API compatibility.
+    my_arguments: Vec<rcad_kernel::BRep>,
+    /// �?OCCT-aligned: mySectionAttribute (BOPAlgo_SectionAttribute.hxx)
+    section_attribute: SectionAttribute,
+    /// �?OCCT-aligned: myIsPrimary (BOPAlgo_PaveFiller.cxx L62)
+    is_primary: bool,
+    /// �?OCCT-aligned: myAvoidBuildPCurve (BOPAlgo_PaveFiller.cxx L63)
+    avoid_build_pcurve: bool,
+    /// �?OCCT-aligned: myFPBDone — fence map tracking processed (face, pave_block) pairs.
+    ///   Map: face_idx → set of pave_block indices already processed in PostTreatFF.
+    fpbdone: std::collections::HashMap<usize, std::collections::HashSet<usize>>,
+    /// �?OCCT-aligned: myVertsToAvoidExtension — vertices that should NOT have
+    ///   their tolerance extended further (near EE/EF intersection points).
+    verts_to_avoid_extension: std::collections::HashSet<usize>,
+    /// �?OCCT-aligned: myDistances — minimal edge-face distances for non-intersecting
+    ///   pairs.  Map: (edge_idx, face_idx) → Vec<EdgeRangeDistance>.
+    distances: std::collections::HashMap<(usize, usize), Vec<EdgeRangeDistance>>,
 }
 
 /// �?OCCT-aligned:Propagate IC vertices to all faces sharing boundary edges
@@ -137,8 +181,14 @@ impl<'a> PaveFiller<'a> {
             // ??OCCT-aligned: UseOBB (default false)
             use_obb: false,
             // ??OCCT-aligned: IntTools_Context with FClass2d cache
-            // OCCT PaveFiller.cxx L203: myContext = new IntTools_Context
             context,
+            my_arguments: Vec::new(),
+            section_attribute: SectionAttribute::default(),
+            is_primary: true,
+            avoid_build_pcurve: false,
+            fpbdone: std::collections::HashMap::new(),
+            verts_to_avoid_extension: std::collections::HashSet::new(),
+            distances: std::collections::HashMap::new(),
         }
     }
 
@@ -158,13 +208,17 @@ impl<'a> PaveFiller<'a> {
             glue_tolerance: TOLERANCE_ABS,
             fuzzy_tolerance: 0.0,
             seam_shift_tol: 0.0,
-            // ??OCCT-aligned: RunParallel (default false)
             run_parallel: false,
-            // ??OCCT-aligned: NonDestructive (default false)
             non_destructive: false,
-            // ??OCCT-aligned: UseOBB (default false)
             use_obb: false,
             context,
+            my_arguments: Vec::new(),
+            section_attribute: SectionAttribute::default(),
+            is_primary: true,
+            avoid_build_pcurve: false,
+            fpbdone: std::collections::HashMap::new(),
+            verts_to_avoid_extension: std::collections::HashSet::new(),
+            distances: std::collections::HashMap::new(),
         }
     }
 
@@ -184,14 +238,17 @@ impl<'a> PaveFiller<'a> {
             glue_tolerance: TOLERANCE_ABS,
             fuzzy_tolerance: 0.0,
             seam_shift_tol: 0.0,
-            // �?OCCT-aligned: RunParallel (default false)
             run_parallel: false,
-            // �?OCCT-aligned: NonDestructive (default false)
             non_destructive: false,
-            // �?OCCT-aligned: UseOBB (default false)
             use_obb: false,
-            // �?OCCT-aligned: IntTools_Context with FClass2d cache
             context,
+            my_arguments: Vec::new(),
+            section_attribute: SectionAttribute::default(),
+            is_primary: true,
+            avoid_build_pcurve: false,
+            fpbdone: std::collections::HashMap::new(),
+            verts_to_avoid_extension: std::collections::HashSet::new(),
+            distances: std::collections::HashMap::new(),
         }
     }
 
@@ -239,6 +296,31 @@ impl<'a> PaveFiller<'a> {
 
     pub fn set_use_obb(&mut self, use_obb: bool) {
         self.use_obb = use_obb;
+    }
+
+    /// OCCT-aligned: SetSectionAttribute (BOPAlgo_PaveFiller.hxx L137)
+    pub fn set_section_attribute(&mut self, attr: SectionAttribute) {
+        self.section_attribute = attr;
+    }
+
+    /// OCCT-aligned: SetArguments (BOPAlgo_PaveFiller.hxx L124-127)
+    pub fn set_arguments(&mut self, args: Vec<rcad_kernel::BRep>) {
+        self.my_arguments = args;
+    }
+
+    /// OCCT-aligned: Arguments() const (BOPAlgo_PaveFiller.hxx L133)
+    pub fn arguments(&self) -> &[rcad_kernel::BRep] {
+        &self.my_arguments
+    }
+
+    /// OCCT-aligned: SetAvoidBuildPCurve (BOPAlgo_PaveFiller.hxx L159)
+    pub fn set_avoid_build_pcurve(&mut self, flag: bool) {
+        self.avoid_build_pcurve = flag;
+    }
+
+    /// OCCT-aligned: IsAvoidBuildPCurve() const (BOPAlgo_PaveFiller.hxx L162)
+    pub fn is_avoid_build_pcurve(&self) -> bool {
+        self.avoid_build_pcurve
     }
 
     pub fn effective_tolerance(&self, base: f64) -> f64 {

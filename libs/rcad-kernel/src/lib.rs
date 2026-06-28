@@ -339,7 +339,7 @@ impl BRep {
                     let internal_vtx: Vec<topods::ShapeRef> = self.geom.face_internal_vertices.get(flat_fi)
                         .map(|v| v.iter().map(|&vi| topods::ShapeRef::new(vi)).collect())
                         .unwrap_or_default();
-                    let sr = t.add_tface(face.surface_idx, outer_wire, inner_wires, face.sample_point, None, internal_vtx);
+                    let sr = t.add_tface(face.surface_idx, outer_wire, inner_wires, face.sample_point, None, internal_vtx, true);
                     face_refs.push(sr);
                     flat_fi += 1;
                 }

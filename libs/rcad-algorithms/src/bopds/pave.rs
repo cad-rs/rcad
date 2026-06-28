@@ -70,6 +70,9 @@ pub struct PaveBlock {
     pub shrunk_range: Option<[f64; 2]>,
     /// ✅ OCCT-aligned: myIsSplittable (hxx:193, cxx:35).
     pub is_splittable: bool,
+    /// ✅ OCCT-aligned: BOPDS_PaveBlock::myShrunkBox (hxx:191).
+    ///   Bounding box of the shrunk range, used by GetPBBox.
+    pub my_shrunk_box: Option<(glam::DVec3, glam::DVec3)>,
     /// ✅ OCCT-aligned: index of the CommonBlock this PaveBlock belongs to,
     ///   or None if not on any CommonBlock (BOPDS_PaveBlock::myCommonBlock).
     pub common_block_idx: Option<usize>,
@@ -89,6 +92,7 @@ impl PaveBlock {
             pcurve_on_a: None,
             pcurve_on_b: None,
             shrunk_range: None,
+            my_shrunk_box: None,
             is_splittable: false,
             common_block_idx: None,
         }
@@ -109,6 +113,7 @@ impl PaveBlock {
             pcurve_on_a: None,
             pcurve_on_b: None,
             shrunk_range: None,
+            my_shrunk_box: None,
             is_splittable: true,
             common_block_idx: None,
         }
@@ -285,6 +290,14 @@ impl PaveBlock {
     /// OCCT: BOPDS_PaveBlock::SetShrunkData (cxx:324-333).
     pub fn set_shrunk_data(&mut self, ts1: f64, ts2: f64, the_is_splittable: bool) {
         self.shrunk_range = Some([ts1, ts2]);
+        self.is_splittable = the_is_splittable;
+    }
+
+    /// OCCT: BOPDS_PaveBlock::SetShrunkData with bounding box (full sig).
+    pub fn set_shrunk_data_with_box(&mut self, ts1: f64, ts2: f64,
+        box_min: glam::DVec3, box_max: glam::DVec3, the_is_splittable: bool) {
+        self.shrunk_range = Some([ts1, ts2]);
+        self.my_shrunk_box = Some((box_min, box_max));
         self.is_splittable = the_is_splittable;
     }
 

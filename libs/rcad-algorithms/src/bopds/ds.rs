@@ -1,6 +1,7 @@
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve2d, Curve3, Line2d, Line3, Plane, Surface3, any_perpendicular};
 use rcad_kernel::{BRep, CurveEval, SurfaceEval, WireEdge};
+use rcad_kernel::topods;
 
 use super::common_block::CommonBlock;
 use super::face_info::FaceInfo;
@@ -406,6 +407,33 @@ pub enum NearTangentType {
     General,
 }
 
+/// ✅ OCCT-aligned: BOPDS_ShapeInfo — per-shape metadata in the flat DS index.
+///   Corresponds to one entry in BOPDS_DS::myLines.
+#[derive(Debug, Clone)]
+pub struct ShapeInfo {
+    pub shape_type: rcad_kernel::topods::ShapeType,
+    pub sub_shapes: Vec<usize>,
+    pub flag: i64,
+    pub reference: i64,
+    pub has_brep: bool,
+}
+
+impl ShapeInfo {
+    pub fn new(shape_type: rcad_kernel::topods::ShapeType) -> Self {
+        ShapeInfo { shape_type, sub_shapes: Vec::new(), flag: -1, reference: -1, has_brep: true }
+    }
+    pub fn has_flag(&self) -> bool { self.flag >= 0 }
+    pub fn flag_value(&self) -> i64 { self.flag }
+    pub fn set_flag(&mut self, f: i64) { self.flag = f; }
+    pub fn has_reference(&self) -> bool { self.reference >= 0 }
+    pub fn reference_value(&self) -> i64 { self.reference }
+    pub fn set_reference(&mut self, r: i64) { self.reference = r; }
+    pub fn has_sub_shape(&self, idx: usize) -> bool { self.sub_shapes.contains(&idx) }
+    pub fn sub_shapes(&self) -> &[usize] { &self.sub_shapes }
+    pub fn sub_shapes_mut(&mut self) -> &mut Vec<usize> { &mut self.sub_shapes }
+    pub fn has_brep(&self) -> bool { self.has_brep }
+}
+
 /// Central data structure (OCCT: BOPDS_DS).
 #[derive(Debug)]
 pub struct DS {
@@ -476,6 +504,13 @@ pub struct DS {
     ///   during intersection processing.  Read by RepeatIntersection to determine
     ///   which vertices need VV/VE/VF re-checks.
     pub increased_ss: std::collections::HashSet<usize>,
+    /// ✅ OCCT-aligned: BOPDS_DS::myLines — flat array of BOPDS_ShapeInfo for all shapes.
+    ///   Each entry records shape_type, sub_shapes, flag, reference, has_brep.
+    ///   First nb_source_shapes entries are original source shapes; entries beyond
+    ///   are shapes created during intersection.
+    pub shape_info: Vec<ShapeInfo>,
+    /// ✅ OCCT-aligned: myNbSourceShapes — count of original source shapes.
+    pub nb_source_shapes: usize,
 }
 
 impl DS {
@@ -681,6 +716,8 @@ impl DS {
             pave_blocks: Vec::new(),
             edge_flags: EdgeFlagMap::new(),
             increased_ss: std::collections::HashSet::new(),
+            shape_info: Vec::new(),
+            nb_source_shapes: 0,
         };
 
         ds.load_brep(a, ShapeOrigin::ShapeA);
@@ -690,6 +727,9 @@ impl DS {
         ds.load_brep(b, ShapeOrigin::ShapeB);
         ds.compute_uv_boundaries();
         ds.build_face_reps();
+
+        // OCCT-aligned: initialize ShapeInfo flat array after all shapes loaded.
+        ds.init_shape_info();
 
         ds
     }
@@ -1328,6 +1368,72 @@ impl DS {
             }
             _ => None,
         }
+    }
+
+    /// ✅ OCCT-aligned: InitShapeInfo — build flat ShapeInfo array from existing Vecs.
+    ///   OCCT: BOPDS_DS::InitShapeInfo (BOPDS_DS.cxx L264-309).  Populates myLines
+    ///   with one BOPDS_ShapeInfo per shape, setting type, sub-shapes, has_brep.
+    ///   rcad: builds shape_info from vertices/edges/faces/shells arrays.
+    ///   Flat index: [0..nV) = VERTEX, [nV..nV+nE) = EDGE,
+    ///   [nV+nE..nV+nE+nF) = FACE, [nV+nE+nF..) = SHELL+SOLID.
+    pub fn init_shape_info(&mut self) {
+        self.shape_info.clear();
+        let nv = self.vertices.len();
+        let ne = self.edges.len();
+        let nf = self.faces.len();
+        let nsh = self.shells.len();
+
+        // VERTEX entries
+        for _ in 0..nv {
+            self.shape_info.push(ShapeInfo::new(rcad_kernel::topods::ShapeType::Vertex));
+        }
+        // EDGE entries
+        for _ in 0..ne {
+            self.shape_info.push(ShapeInfo::new(rcad_kernel::topods::ShapeType::Edge));
+        }
+        // FACE entries — sub-shapes = edge indices (flat)
+        for fi in 0..nf {
+            let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Face);
+            for &ei in &self.faces[fi].boundary_edges {
+                si.sub_shapes.push(nv + ei);
+            }
+            self.shape_info.push(si);
+        }
+        // SHELL entries — sub-shapes = face indices (flat)
+        for shi in 0..nsh {
+            let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Shell);
+            si.has_brep = false;
+            for &fi in &self.shells[shi].faces {
+                si.sub_shapes.push(nv + ne + fi);
+            }
+            self.shape_info.push(si);
+        }
+        // SOLID entries — sub-shapes = shell indices (flat)
+        for shi in 0..nsh {
+            let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Solid);
+            si.has_brep = false;
+            si.sub_shapes.push(nv + ne + nf + shi);
+            self.shape_info.push(si);
+        }
+        self.nb_source_shapes = self.shape_info.len();
+    }
+
+    /// ✅ OCCT-aligned: ShapeInfo(index) — access shape info by flat index.
+    ///   OCCT: BOPDS_DS::ShapeInfo (BOPDS_DS.cxx L255-258).
+    pub fn shape_info_at(&self, idx: usize) -> &ShapeInfo {
+        &self.shape_info[idx]
+    }
+
+    /// ✅ OCCT-aligned: NbSourceShapes() — original source shape count.
+    ///   OCCT: BOPDS_DS::NbSourceShapes (BOPDS_DS.cxx L193-195).
+    pub fn nb_source_shapes(&self) -> usize {
+        self.nb_source_shapes
+    }
+
+    /// ✅ OCCT-aligned: ShapeType(index) — type from flat index.
+    ///   OCCT: ShapeInfo(index).ShapeType().
+    pub fn shape_type_of(&self, idx: usize) -> rcad_kernel::topods::ShapeType {
+        self.shape_info[idx].shape_type
     }
 
     /// ✅ OCCT-aligned: build per-face pcurve representations for all boundary edges.

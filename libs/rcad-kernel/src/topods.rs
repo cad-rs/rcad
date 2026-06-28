@@ -109,6 +109,10 @@ pub struct TFaceData {
     /// BRep_Tool::Tolerance(aF) equivalent.
     #[serde(default)]
     pub tolerance: f64,
+    /// BRep_Tool::NaturalRestriction equivalent — true when the face surface
+    /// has natural boundaries (full untrimmed sphere, cylinder, cone, etc.).
+    #[serde(default)]
+    pub natural_restriction: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,9 +162,9 @@ impl BRep {
         ShapeRef::new(index)
     }
 
-    pub fn add_tface(&mut self, surface: Option<usize>, outer_wire: ShapeRef, inner_wires: Vec<ShapeRef>, sample_point: Option<DVec3>, uv_domain: Option<[f64; 4]>, internal_vertices: Vec<ShapeRef>) -> ShapeRef {
+    pub fn add_tface(&mut self, surface: Option<usize>, outer_wire: ShapeRef, inner_wires: Vec<ShapeRef>, sample_point: Option<DVec3>, uv_domain: Option<[f64; 4]>, internal_vertices: Vec<ShapeRef>, natural_restriction: bool) -> ShapeRef {
         let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Face(TFaceData { surface, outer_wire, inner_wires, sample_point, uv_domain, internal_vertices, tolerance: 0.0 })));
+        self.tshapes.push(Arc::new(TShape::Face(TFaceData { surface, outer_wire, inner_wires, sample_point, uv_domain, internal_vertices, tolerance: 0.0, natural_restriction })));
         ShapeRef::new(index)
     }
 
@@ -468,8 +472,7 @@ impl BRepBuilder {
         let mut face_refs = Vec::new();
         for (i, face_edges) in edge_for_face.into_iter().enumerate() {
             let wire = brep.add_twire(face_edges);
-            let face = brep.add_tface(None, wire, vec![], None, None, vec![]);
-            let face_ref = ShapeRef::new(face.index);
+            let face = brep.add_tface(None, wire, vec![], None, None, vec![], true);            let face_ref = ShapeRef::new(face.index);
 
             // Outer normal: orient face based on the face index
             // For a unit cube at origin, faces 0,2,4 have inward normals, orient REVERSED
@@ -552,7 +555,7 @@ impl BRepBuilder {
     /// Make a face from a surface and outer wire.
     pub fn make_face(&mut self, brep: &mut BRep,
         surface: Option<usize>, outer_wire: ShapeRef) -> ShapeRef {
-        brep.add_tface(surface, outer_wire, vec![], None, None, vec![])
+        brep.add_tface(surface, outer_wire, vec![], None, None, vec![], true)
     }
 
     /// Add an inner wire to a face.
@@ -743,7 +746,7 @@ mod tests {
         let e1 = brep.add_tedge(None, v[1], v[2], [0.0, 1.0]);
         let e2 = brep.add_tedge(None, v[2], v[3], [0.0, 1.0]);
         let wire = brep.add_twire(vec![e0, e1, e2]);
-        let face = brep.add_tface(None, wire, vec![], None, None, vec![]);
+        let face = brep.add_tface(None, wire, vec![], None, None, vec![], true);
         let fd = brep.face(face);
         assert_eq!(brep.tshapes.len(), 9); // 4V + 3E + 1W + 1F
         assert!(fd.inner_wires.is_empty());
@@ -762,7 +765,7 @@ mod tests {
         let w = brep.add_twire(vec![e]);
         assert_eq!(brep.tshapes[w.index].shape_type(), ShapeType::Wire);
 
-        let f = brep.add_tface(None, w, vec![], None, None, vec![]);
+        let f = brep.add_tface(None, w, vec![], None, None, vec![], true);
         assert_eq!(brep.tshapes[f.index].shape_type(), ShapeType::Face);
 
         let sh = brep.add_tshell(vec![f]);
@@ -869,5 +872,38 @@ mod tests {
         // Check surface area (unit cube SA = 6.0)
         let sa = crate::surface_area(&back);
         assert!((sa - 6.0).abs() < 0.01, "unit cube SA: expected 6.0, got {}", sa);
+    }
+
+    #[test]
+    fn test_face_natural_restriction_default_true() {
+        let mut brep = BRep::new();
+        let v = brep.add_tvertex(DVec3::ZERO);
+        let w = brep.add_twire(vec![]);
+        // default (no explicit nr) → true via add_tface with natural_restriction=true
+        let f = brep.add_tface(None, w, vec![], None, None, vec![], true);
+        let fd = brep.face(f);
+        assert!(fd.natural_restriction);
+    }
+
+    #[test]
+    fn test_face_natural_restriction_false() {
+        let mut brep = BRep::new();
+        let v = brep.add_tvertex(DVec3::ZERO);
+        let w = brep.add_twire(vec![]);
+        let f = brep.add_tface(None, w, vec![], None, None, vec![], false);
+        let fd = brep.face(f);
+        assert!(!fd.natural_restriction);
+    }
+
+    #[test]
+    fn test_face_natural_restriction_serialize_roundtrip() {
+        let mut brep = BRep::new();
+        let v = brep.add_tvertex(DVec3::ZERO);
+        let w = brep.add_twire(vec![]);
+        let f = brep.add_tface(None, w, vec![], None, None, vec![], false);
+        let json = serde_json::to_string(&brep).unwrap();
+        let restored: BRep = serde_json::from_str(&json).unwrap();
+        let fd = restored.face(f);
+        assert!(!fd.natural_restriction);
     }
 }

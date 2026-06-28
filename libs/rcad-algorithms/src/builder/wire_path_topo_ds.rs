@@ -164,27 +164,13 @@ pub(crate) fn walk_path_extract_wires_topoDS(
         tool.vertex_tolerance(ShapeRef::new(vi)).max(TOLERANCE_ABS)
     };
     let face_ref = segments[start_si].face;
-    let is_sphere = tool.face_surface(face_ref).map_or(false, |s| matches!(s, Surface3::Sphere(_)));
-    let u_res_for_vertex = |vi: usize, uv_v: Option<f64>| -> f64 {
-        let base = tool.u_resolution(face_ref, vtol(vi));
-        if is_sphere {
-            if let Some(v) = uv_v {
-                let cos_v = v.cos().abs();
-                if cos_v < 1e-10 { return std::f64::MAX; }
-                return (base / cos_v).max(base);
-            }
-        }
-        base
-    };
-    let tolerance_2d = |vi: usize, uv_v: Option<f64>| -> f64 {
+    let tolerance_2d = |vi: usize| -> f64 {
         let vt = vtol(vi);
-        let ur = u_res_for_vertex(vi, uv_v);
-        let vr = tool.v_resolution(face_ref, vt);
-        ur.max(vr).max(vt)
+        tool.u_resolution(face_ref, vt).max(tool.v_resolution(face_ref, vt)).max(vt)
     };
-    let u_tolerance_2d = |vi: usize, uv_v: Option<f64>| -> f64 { 2.0 * u_res_for_vertex(vi, uv_v) };
-    let v_tolerance_2d = |vi: usize| -> f64 { 2.0 * tool.v_resolution(face_ref, vtol(vi)) };
-    let uv_tolerance = |vi: usize, uv_v: Option<f64>| -> f64 { 2.0 * tolerance_2d(vi, uv_v) };
+    let u_tolerance_2d = |vi: usize| -> f64 { tool.u_resolution(face_ref, vtol(vi)) };
+    let v_tolerance_2d = |vi: usize| -> f64 { tool.v_resolution(face_ref, vtol(vi)) };
+    let uv_tolerance = |vi: usize| -> f64 { 2.0 * tolerance_2d(vi) };
 
     let mut edge_seq: Vec<usize> = Vec::new();
     let mut vert_seq: Vec<usize> = Vec::new();
@@ -220,7 +206,7 @@ pub(crate) fn walk_path_extract_wires_topoDS(
         // ── Loop Detection (OCCT L424-523) ──
         let b_is_closed = is_vert_closed(smart_map, arrived_vertex);
         let a_pb = vertex_uv(ShapeRef::new(arrived_vertex), &segments[ci], false).unwrap_or(DVec2::ZERO);
-        let a_tol_2d = uv_tolerance(arrived_vertex, Some(a_pb.y));
+        let a_tol_2d = uv_tolerance(arrived_vertex);
         let a_tol_2d_sq = a_tol_2d * a_tol_2d;
 
         let mut b_has_edge = false;
@@ -249,7 +235,7 @@ pub(crate) fn walk_path_extract_wires_topoDS(
                     if is_same_v_2d {
                         let u_dist = (prev_uv.x - a_pb.x).abs();
                         let v_dist = (prev_uv.y - a_pb.y).abs();
-                        let a_tol_u = 2.0 * u_tolerance_2d(arrived_vertex, Some(a_pb.y));
+                        let a_tol_u = 2.0 * u_tolerance_2d(arrived_vertex);
                         let a_tol_v = 2.0 * v_tolerance_2d(arrived_vertex);
                         if u_dist > a_tol_u || v_dist > a_tol_v {
                             is_same_v_2d = false;
@@ -311,7 +297,7 @@ pub(crate) fn walk_path_extract_wires_topoDS(
 
         let b_is_closed = is_vert_closed(smart_map, arrived_vertex);
         let a_pb = vertex_uv(ShapeRef::new(arrived_vertex), &segments[ci], false).unwrap_or(DVec2::ZERO);
-        let a_tol_2d_sq = { let tol = uv_tolerance(arrived_vertex, Some(a_pb.y)); tol * tol };
+        let a_tol_2d_sq = { let tol = uv_tolerance(arrived_vertex); tol * tol };
 
         let i_cnt = raw_candidates.len();
         if i_cnt == 0 { return; }

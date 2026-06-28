@@ -35,6 +35,9 @@ pub(crate) struct ResultBuilder {
     /// OCCT-aligned: compound groups (FillImagesCompound output).
     ///   Each entry is a Vec of solid indices (into result.solids) forming one compound.
     pub(crate) compound_groups: Vec<Vec<usize>>,
+    /// OCCT-aligned: natural_restriction for each face in self.faces.
+    ///   Parallel to face_origins.  Populated by emit_wire_face / build_original_face.
+    pub(crate) face_natural_restriction: Vec<bool>,
     /// Final topods shell references (populated by build_topods from tmp_shells).
     pub(crate) shells: Vec<topods::ShapeRef>,
     /// Final topods solid references (populated by build_topods from tmp_solids).
@@ -307,6 +310,7 @@ impl ResultBuilder {
             internal_wire_edges,
         ));
         self.face_origins.push(origin);
+        self.face_natural_restriction.push(ds.faces[face_idx].natural_restriction);
     }
 
     /// ✅ OCCT-aligned: emit_wire_face using WireSegmentTopoDS.
@@ -322,6 +326,7 @@ impl ResultBuilder {
         origin: FaceOrigin,
         vertex_positions: &HashMap<usize, DVec3>,
         face_ref: rcad_kernel::topods::ShapeRef,
+        natural_restriction: bool,
     ) {
         let normal = if let Some(surf) = tool.face_surface(face_ref) {
             match surf {
@@ -554,6 +559,7 @@ impl ResultBuilder {
             sphere_uv, centroid, area, sample_pt, internal_wire_edges,
         ));
         self.face_origins.push(origin);
+        self.face_natural_restriction.push(natural_restriction);
     }
 
     /// ✅ OCCT-aligned: estimate face normal from wire segments (TopoDS variant).
@@ -634,6 +640,7 @@ impl ResultBuilder {
             tmp_compsolid_groups: Vec::new(),
             solid_side_origin: Vec::new(),
             compound_groups: Vec::new(),
+            face_natural_restriction: Vec::new(),
             shells: Vec::new(),
             solids: Vec::new(),
             compsolid_groups: Vec::new(),
@@ -733,6 +740,43 @@ impl ResultBuilder {
             edge_indices, inner_wires, vec![], normal, surface, None, centroid, 0.0, centroid, vec![],
         ));
         self.face_origins.push(origin);
+        self.face_natural_restriction.push(ds.faces[fi].natural_restriction);
+    }
+
+    /// ✅ OCCT-aligned: BuildResult(COMPSOLID) — build compsolids via BRepBuilder.
+    ///   OCCT: BOPAlgo_Builder::BuildResult (Builder_1.cxx L130-168) iterates
+    ///   source COMPSOLID shapes and adds their split images to myShape via
+    ///   BRep_Builder::Add.  rcad: processes tmp_compsolid_groups (groups of
+    ///   solid indices from fill_images_containers_compsolid) and creates
+    ///   topods compsolids using BRepBuilder::make_compsolid.
+    pub(crate) fn build_compsolids(&mut self, t: &mut topods::BRep, groups: Vec<Vec<usize>>) {
+        let mut bb = topods::BRepBuilder::new();
+        for cs_group in &groups {
+            let solid_refs: Vec<topods::ShapeRef> = cs_group.iter()
+                .filter_map(|&si| self.solids.get(si).copied())
+                .collect();
+            if !solid_refs.is_empty() {
+                self.compsolid_groups.push(bb.make_compsolid(t, solid_refs));
+            }
+        }
+    }
+
+    /// ✅ OCCT-aligned: BuildResult(COMPOUND) — build compounds via BRepBuilder.
+    ///   OCCT: BOPAlgo_Builder::BuildResult (Builder_1.cxx L130-168) iterates
+    ///   source COMPOUND shapes and adds their split images to myShape via
+    ///   BRep_Builder::Add.  rcad: processes compound_groups (groups of solid
+    ///   indices from fill_images_compounds) and creates topods compounds
+    ///   using BRepBuilder::make_compound.
+    pub(crate) fn build_compounds(&mut self, t: &mut topods::BRep, groups: &[Vec<usize>]) {
+        let mut bb = topods::BRepBuilder::new();
+        for group in groups {
+            let solid_refs: Vec<topods::ShapeRef> = group.iter()
+                .filter_map(|&si| self.solids.get(si).copied())
+                .collect();
+            if !solid_refs.is_empty() {
+                bb.make_compound(t, solid_refs);
+            }
+        }
     }
 
     pub(crate) fn add_vertex(&mut self, point: DVec3) -> usize {
@@ -1031,7 +1075,8 @@ impl ResultBuilder {
             t.surfaces.push(surface.clone());
             let internal_vtx: Vec<ShapeRef> = self.face_internal_vtx.get(flat_fi)
                 .map_or(vec![], |v| v.iter().map(|&vi| ShapeRef::new(vi)).collect());
-            self.face_refs.push(t.add_tface(Some(surf_idx), outer_wire, inner_wires, Some(*sample_point), *_uv_domain, internal_vtx));
+            let nr = self.face_natural_restriction.get(flat_fi).copied().unwrap_or(true);
+            self.face_refs.push(t.add_tface(Some(surf_idx), outer_wire, inner_wires, Some(*sample_point), *_uv_domain, internal_vtx, nr));
             flat_fi += 1;
         }
     }
@@ -1444,7 +1489,7 @@ mod tests {
                             .unwrap_or_default();
                         face_refs.push(t.add_tface(
                             face.surface_idx, outer_wire, inner_wires,
-                            face.sample_point, None, internal_vtx,
+                            face.sample_point, None, internal_vtx, true,
                         ));
                         fi += 1;
                     }
@@ -1538,5 +1583,121 @@ mod tests {
         }
 
         (rb, t.clone())
+    }
+
+    #[test]
+    fn test_face_natural_restriction_tracked_in_builder() {
+        let mut rb = ResultBuilder::new();
+        // Add a face directly (simulates emit_wire_face)
+        let v0 = rb.add_vertex(DVec3::ZERO);
+        let v1 = rb.add_vertex(DVec3::X);
+        let v2 = rb.add_vertex(DVec3::new(0.5, 0.866, 0.0));
+        let e0 = rb.add_edge(v0, v1);
+        let e1 = rb.add_edge(v1, v2);
+        let e2 = rb.add_edge(v2, v0);
+        let outer = vec![(e0, true), (e1, true), (e2, true)];
+        let centroid = DVec3::new(0.5, 0.289, 0.0);
+        rb.faces.push((
+            outer, vec![], vec![], DVec3::Z,
+            Surface3::Plane(rcad_kernel::geom::Plane { origin: DVec3::ZERO, normal: DVec3::Z }),
+            None, centroid, 1.0, centroid, vec![],
+        ));
+        rb.face_origins.push(FaceOrigin::FromA(0));
+        rb.face_natural_restriction.push(false);
+
+        assert_eq!(rb.face_natural_restriction.len(), 1);
+        assert!(!rb.face_natural_restriction[0]);
+    }
+
+    #[test]
+    fn test_face_natural_restriction_propagated_to_topods_via_build_topods_faces() {
+        let mut rb = ResultBuilder::new();
+        let v0 = rb.add_vertex(DVec3::ZERO);
+        let v1 = rb.add_vertex(DVec3::X);
+        let v2 = rb.add_vertex(DVec3::new(0.5, 0.866, 0.0));
+        let e0 = rb.add_edge(v0, v1);
+        let e1 = rb.add_edge(v1, v2);
+        let e2 = rb.add_edge(v2, v0);
+        let outer = vec![(e0, true), (e1, true), (e2, true)];
+        let centroid = DVec3::new(0.5, 0.289, 0.0);
+        rb.faces.push((
+            outer, vec![], vec![], DVec3::Z,
+            Surface3::Plane(rcad_kernel::geom::Plane { origin: DVec3::ZERO, normal: DVec3::Z }),
+            None, centroid, 1.0, centroid, vec![],
+        ));
+        rb.face_origins.push(FaceOrigin::FromA(0));
+        rb.face_natural_restriction.push(false);
+
+        let mut t = topods::BRep::new();
+        rb.build_topods_faces(&mut t);
+
+        // Find the face TShape and check natural_restriction
+        let face_count = t.tshapes.iter().filter(|ts| matches!(&***ts, topods::TShape::Face(_))).count();
+        assert_eq!(face_count, 1);
+        let face_sr = rb.face_refs[0];
+        let fd = t.face(face_sr);
+        assert!(!fd.natural_restriction);
+    }
+
+    #[test]
+    fn test_build_compsolids_creates_compsolid() {
+        let mut rb = ResultBuilder::new();
+        let mut t = topods::BRep::new();
+        // Create two solids in t
+        let v0 = t.add_tvertex(DVec3::ZERO);
+        let v1 = t.add_tvertex(DVec3::X);
+        let e = t.add_tedge(None, v0, v1, [0.0, 1.0]);
+        let w = t.add_twire(vec![e]);
+        let f = t.add_tface(None, w, vec![], None, None, vec![], true);
+        let sh = t.add_tshell(vec![f]);
+        let s0 = t.add_tsolid(vec![sh]);
+
+        let v2 = t.add_tvertex(DVec3::Y);
+        let e2 = t.add_tedge(None, v1, v2, [0.0, 1.0]);
+        let w2 = t.add_twire(vec![e2]);
+        let f2 = t.add_tface(None, w2, vec![], None, None, vec![], true);
+        let sh2 = t.add_tshell(vec![f2]);
+        let s1 = t.add_tsolid(vec![sh2]);
+
+        // Register solids in result.solids
+        rb.solids.push(s0);
+        rb.solids.push(s1);
+
+        // Build compsolid from [0, 1]
+        rb.build_compsolids(&mut t, vec![vec![0, 1]]);
+
+        assert_eq!(rb.compsolid_groups.len(), 1);
+        // t should contain the compsolid TShape (in addition to previous shapes)
+        let n_compsolid = t.tshapes.iter().filter(|ts| matches!(&***ts, topods::TShape::CompSolid(_))).count();
+        assert_eq!(n_compsolid, 1);
+    }
+
+    #[test]
+    fn test_build_compounds_creates_compound() {
+        let mut rb = ResultBuilder::new();
+        let mut t = topods::BRep::new();
+        // Create two solids
+        let v0 = t.add_tvertex(DVec3::ZERO);
+        let v1 = t.add_tvertex(DVec3::X);
+        let e = t.add_tedge(None, v0, v1, [0.0, 1.0]);
+        let w = t.add_twire(vec![e]);
+        let f = t.add_tface(None, w, vec![], None, None, vec![], true);
+        let sh = t.add_tshell(vec![f]);
+        let s0 = t.add_tsolid(vec![sh]);
+
+        let v2 = t.add_tvertex(DVec3::Y);
+        let e2 = t.add_tedge(None, v1, v2, [0.0, 1.0]);
+        let w2 = t.add_twire(vec![e2]);
+        let f2 = t.add_tface(None, w2, vec![], None, None, vec![], true);
+        let sh2 = t.add_tshell(vec![f2]);
+        let s1 = t.add_tsolid(vec![sh2]);
+
+        rb.solids.push(s0);
+        rb.solids.push(s1);
+
+        rb.build_compounds(&mut t, &[vec![0, 1]]);
+
+        let n_compound = t.tshapes.iter().filter(|ts| matches!(&***ts, topods::TShape::Compound(_))).count();
+        assert_eq!(n_compound, 1);
     }
 }
