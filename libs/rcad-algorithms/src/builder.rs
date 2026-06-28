@@ -8,6 +8,7 @@ use rcad_kernel::topods;
 use rcad_kernel::geom::{Curve2dEval, SurfaceEval, *};
 use rcad_kernel::topology::*;
 
+use crate::bvh::{Aabb, DsBvh};
 use crate::bopds::ds::*;
 use crate::classify::{Classification, classify_point};
 use crate::history::{
@@ -1875,60 +1876,22 @@ impl<'a> BooleanBuilder<'a> {
     ///   (OCCT adds it to the TopoDS_Solid as INTERNAL sub-shape).
 
     /// OCCT-aligned: PerformAreas void detection (BuilderSolid.cxx L397-576).
-    ///   Detect IN-state shells (holes) that are inside OUT-state solids (growths)
-    ///   and add them as internal voids.
-    ///   OCCT: IsGrowthShell/IsHole + IsInside (BVH); rcad: classify_point with centroid.
-    ///   ⏳ OCCT runs self-contained Growth/Hole analysis via IsGrowthShell + IsHole
-    ///     on myLoops shells.  rcad reuses fill_in_3d_parts IN/OUT state.  Result is
-    ///     equivalent: IN shells → holes, OUT shells → growths.
     fn detect_internal_voids(&self, result: &mut ResultBuilder,
                               assignments: &[(usize, usize, &'static str)]) {
-        // OCCT L397-399: myAreas.Clear(); BRep_Builder
-        // OCCT L400-407: aNewSolids (growths), aHoleShells (holes), aMHF (hole face map)
+        // OCCT L397-399: myAreas.Clear(); BRep_Builder aBB;
+        // OCCT L400-407: aNewSolids, aHoleShells, aMHF (hole face map).
 
-        // OCCT L411-442: Classify each shell as Growth or Hole.
-        //   rcad: use assignments IN/OUT state (equivalent to IsGrowthShell/IsHole).
-        //   ⏳ OCCT IsGrowthShell(aShell, aMHF) does fast face-map intersection check;
-        //     IsHole(aShell, myContext) does point classification.
-        //     rcad: fill_in_3d_parts already determined IN/OUT per shell
-        //     via classify_point against the opposite operand.
-        let mut solid_is_in: Vec<bool> = vec![false; result.tmp_solids.len()];
-        for (si, solid_shells) in result.tmp_solids.iter().enumerate() {
-            if let Some(&first_sh) = solid_shells.first() {
-                if let Some(&(_sh_i, _origin, state)) = assignments.iter().find(|&&(si, _, _)| si == first_sh) {
-                    solid_is_in[si] = state == "IN";
-                }
-            }
-        }
-
-        // OCCT L429-441:
-        //   Growth shells → aNewSolids (out_solids in rcad).
-        //   Hole shells → aHoleShells + aMHF (in_solids in rcad).
-        let in_solid_indices: Vec<usize> = (0..result.tmp_solids.len())
-            .filter(|&si| solid_is_in[si]).collect();
-        let out_solid_indices: Vec<usize> = (0..result.tmp_solids.len())
-            .filter(|&si| !solid_is_in[si]).collect();
-
-        // OCCT L444-458: if no holes → add all aNewSolids to myAreas, return.
-        if in_solid_indices.is_empty() || out_solid_indices.is_empty() {
-            // OCCT: myAreas.Append(aSol) + BuildBox for each growth solid.
-            //   rcad: tmp_solids already contains the OUT solids; nothing to add.
-            return;
-        }
-
-        // OCCT L460-530: Classify holes against solids.
-        //   ⏳ OCCT uses BVH (BOPTools_BoxTree) for candidate selection +
-        //     IsInside for precise geometric check.
-        //     rcad: classify_point per (in_solid, out_solid) pair (no BVH).
-        let mut in_to_out: Vec<(usize, usize)> = Vec::new(); // OCCT aHoleSolidMap: hole → outermost solid
-
-        // Pre-build DS face index sets for each OUT solid (OCCT L484-498: build box, bind to myBoxes).
-        let mut out_ds_face_sets: Vec<Vec<usize>> = Vec::new();
-        for &out_si in &out_solid_indices {
-            let mut ds_faces: Vec<usize> = Vec::new();
-            for &sh in &result.tmp_solids[out_si] {
-                // OCCT L494-497: BRepBndLib::Add(aSolid, aBox);
-                //   rcad: collect DS faces from tmp_shells.
+        // Precompute DS face set, centroid, AABB per solid.
+        //   OCCT operates on raw shells (myLoops); rcad operates on result.tmp_solids.
+        let n_solids = result.tmp_solids.len();
+        let mut ds_faces_of: Vec<Vec<usize>> = Vec::with_capacity(n_solids);
+        let mut centroids: Vec<DVec3> = Vec::with_capacity(n_solids);
+        let mut aabbs: Vec<Aabb> = Vec::with_capacity(n_solids);
+        for si in 0..n_solids {
+            let mut faces = Vec::new();
+            let mut aabb = Aabb::empty();
+            let mut centroid = DVec3::ZERO;
+            for &sh in &result.tmp_solids[si] {
                 if let Some(shell) = result.tmp_shells.get(sh) {
                     for &fi in shell {
                         if let Some(origin) = result.face_origins.get(fi) {
@@ -1939,59 +1902,140 @@ impl<'a> BooleanBuilder<'a> {
                                     f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi),
                                 _ => None,
                             };
-                            if let Some(dfi) = ds_fi { ds_faces.push(dfi); }
+                            if let Some(dfi) = ds_fi {
+                                faces.push(dfi);
+                                for &vi in &self.ds.faces[dfi].boundary_verts {
+                                    if vi < self.ds.vertices.len() {
+                                        aabb.expand_point(self.ds.vertices[vi].point);
+                                    }
+                                }
+                                if fi < result.faces.len() {
+                                    centroid = result.faces[fi].6;
+                                }
+                            }
                         }
                     }
                 }
             }
-            ds_faces.sort_unstable();
-            ds_faces.dedup();
-            out_ds_face_sets.push(ds_faces);
+            faces.sort_unstable(); faces.dedup();
+            ds_faces_of.push(faces);
+            centroids.push(centroid);
+            aabbs.push(aabb);
         }
 
-        // OCCT L483-529: For each growth solid, classify holes inside it.
-        for (i, &in_si) in in_solid_indices.iter().enumerate() {
-            // OCCT L422-427: IsGrowthShell + IsHole classify shell type.
-            //   rcad: centroid of IN solid's first face as test point.
-            //   ⏳ OCCT IsInside checks shell geometry; rcad uses single point.
-            let centroid = result.tmp_solids[in_si].first()
-                .and_then(|&sh| result.tmp_shells.get(sh))
-                .and_then(|shell| shell.first())
-                .map(|&fi| {
-                    if fi < result.faces.len() { result.faces[fi].6 } else { DVec3::ZERO }
-                })
-                .unwrap_or(DVec3::ZERO);
+        // === Step 1: Classify each shell as Growth or Hole (OCCT L411-442) ===
+        //   OCCT L422: IsGrowthShell(aShell, aMHF) — fast face overlap check.
+        //     If any face of theShell is already in aMHF (face map of known holes),
+        //     the shell is a Growth (it bounds a hole).
+        //   OCCT L426: IsHole(aShell, myContext) — classify infinite point against
+        //     the dead solid (original solid being split).  IN = hole, OUT = growth.
+        let mut a_mhf: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut is_hole = vec![false; n_solids];
 
-            // OCCT L499-529: for each candidate hole (via BVH), check IsInside.
-            //   rcad: check all OUT solids (no BVH acceleration).
-            //   ⏳ OCCT selects the outermost containing solid via IsInside comparison
-            //     (L519-523).  rcad uses first match (simplified).
-            for (j, &out_si) in out_solid_indices.iter().enumerate() {
-                if out_ds_face_sets[j].is_empty() { continue; }
-                let class = classify_point(centroid, &out_ds_face_sets[j], self.ds);
-                if class == Classification::In || class == Classification::On {
-                    in_to_out.push((in_si, out_si));
-                    break; // OCCT L519-523 selects the outermost containing solid
+        for si in 0..n_solids {
+            // OCCT L422: IsGrowthShell
+            let is_growth = if !a_mhf.is_empty() {
+                ds_faces_of[si].iter().any(|dfi| a_mhf.contains(dfi))
+            } else {
+                false
+            };
+
+            if !is_growth {
+                // OCCT L426: IsHole — classify against original solid (source operand).
+                let side = result.solid_side_origin.get(si).copied().unwrap_or(0);
+                let dead_faces: Vec<usize> = self.ds.faces.iter().enumerate()
+                    .filter(|(_, f)| match side {
+                        0 => f.origin == ShapeOrigin::ShapeA,
+                        _ => f.origin == ShapeOrigin::ShapeB,
+                    })
+                    .map(|(fi, _)| fi)
+                    .collect();
+                let class = classify_point(centroids[si], &dead_faces, self.ds);
+                // OCCT: IsHole returns true if infinite point is IN dead solid → hole.
+                is_hole[si] = class == Classification::In;
+            }
+            // else: IsGrowthShell returned true → definitely a growth.
+
+            if is_hole[si] {
+                // OCCT L439-441: aHoleShells.Add + TopExp::MapShapes(,TopAbs_FACE,aMHF)
+                for &dfi in &ds_faces_of[si] {
+                    a_mhf.insert(dfi);
                 }
             }
         }
 
-        // OCCT L532-548: Build reverse map: solid → list of its holes.
-        //   rcad: in_to_out already gives (hole, solid) pairs.
+        // OCCT L429-441 (Growth/Hole separation done above).
+        let in_si: Vec<usize> = (0..n_solids).filter(|&i| is_hole[i]).collect();
+        let out_si: Vec<usize> = (0..n_solids).filter(|&i| !is_hole[i]).collect();
 
-        // OCCT L550-576: Add holes to solids + store in myAreas.
-        //   rcad: add void shells to containing solids, remove merged holes.
-        let mut removed = vec![false; result.tmp_solids.len()];
-        for &(in_si, out_si) in &in_to_out {
-            // OCCT L565-569: aBB.Add(aSolid, aHole) — add hole shell as sub-shape.
-            //   rcad: extend the OUT solid's shell list with IN solid's shells.
-            let void_shells = result.tmp_solids[in_si].clone();
-            result.tmp_solids[out_si].extend(void_shells);
-            removed[in_si] = true;
+        // OCCT L444-458: if no holes → add all growths to myAreas + return.
+        if in_si.is_empty() || out_si.is_empty() { return; }
+
+        // === Step 2: Build BVH of hole shells (OCCT L462-478) ===
+        //   OCCT L464-475: BOPTools_BoxTree with BRepBndLib bounding boxes.
+        //   rcad: Bvh built from hole solid AABBs.
+        let hole_key: Vec<usize> = in_si.clone();
+        let hole_aabbs: Vec<Aabb> = in_si.iter().map(|&i| aabbs[i]).collect();
+        let hole_bvh = crate::bvh::DsBvh::build(hole_key, hole_aabbs);
+
+        // === Step 3: Classify holes against growth solids (OCCT L483-529) ===
+        //   OCCT L493-529: for each growth solid:
+        //     build box → BVH-select candidate holes → IsInside → store outermost.
+        let mut a_hole_solid_map: std::collections::HashMap<usize, usize> =
+            std::collections::HashMap::new();
+
+        for &os in &out_si {
+            // OCCT L494-497: BRepBndLib::Add(aSolid, aBox)
+            // OCCT L499-502: BOPTools_BoxTreeSelector → candidate holes
+            let candidates = hole_bvh.query_aabb(&aabbs[os]);
+
+            for &hole_idx in &candidates {
+                // OCCT L511: IsInside(aHole, aSolid, myContext)
+                let class = classify_point(centroids[hole_idx], &ds_faces_of[os], self.ds);
+                if class != Classification::In && class != Classification::On {
+                    continue;
+                }
+
+                // OCCT L517-527: select outermost containing solid.
+                //   If current os is INSIDE the previously recorded solid,
+                //   the current os is more specific (innermost container) → prefer it.
+                use std::collections::hash_map::Entry;
+                match a_hole_solid_map.entry(hole_idx) {
+                    Entry::Occupied(mut e) => {
+                        let prev_os = *e.get();
+                        let prev_faces = &ds_faces_of[prev_os];
+                        let os_inside = classify_point(centroids[os], prev_faces, self.ds);
+                        if os_inside == Classification::In || os_inside == Classification::On {
+                            e.insert(os);
+                        }
+                    }
+                    Entry::Vacant(e) => {
+                        e.insert(os);
+                    }
+                }
+            }
         }
 
-        // Remove merged IN solids (holes absorbed into growth solids).
-        let mut new_solids: Vec<Vec<usize>> = Vec::with_capacity(result.tmp_solids.len());
+        // === Step 4: Build reverse map: solid → list of holes (OCCT L532-548) ===
+        let mut solid_holes_map: std::collections::HashMap<usize, Vec<usize>> =
+            std::collections::HashMap::new();
+        for (&hole_idx, &os) in &a_hole_solid_map {
+            solid_holes_map.entry(os).or_default().push(hole_idx);
+        }
+
+        // === Step 5: Add holes to solids + myAreas (OCCT L550-576) ===
+        let mut removed = vec![false; n_solids];
+        // OCCT L553-573: for each growth with holes → aBB.Add(aSolid, aHole)
+        for (&os, holes) in &solid_holes_map {
+            for &hole_idx in holes {
+                let void_shells = result.tmp_solids[hole_idx].clone();
+                result.tmp_solids[os].extend(void_shells);
+                removed[hole_idx] = true;
+            }
+        }
+        // OCCT L575: myAreas.Append(aSolid) — rcad: non-removed solids kept in tmp_solids.
+        // OCCT L578-581: add un-associated holes to myAreas (rcad: not needed — kept as-is).
+        let mut new_solids: Vec<Vec<usize>> = Vec::with_capacity(n_solids);
         for (si, solid) in result.tmp_solids.drain(..).enumerate() {
             if !removed[si] { new_solids.push(solid); }
         }
