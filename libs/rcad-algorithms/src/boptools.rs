@@ -889,6 +889,41 @@ pub fn find_plane(curve: &Curve3) -> Option<(glam::DVec3, glam::DVec3)> {
     }
 }
 
+/// ✅ OCCT-aligned: FindEdgeTangent (BOPAlgo_Tools.cxx L875-904).
+///
+/// Computes the tangent vector of a 3D curve at a suitable parameter.
+/// - For `Line`: direction is the line direction.
+/// - For other curves: samples D1 at 11 points, returns first non-zero tangent.
+/// Returns `None` if no valid tangent found (e.g. degenerate curve).
+pub fn find_edge_tangent(curve: &Curve3) -> Option<glam::DVec3> {
+    match curve {
+        Curve3::Line(l) => {
+            // OCCT L882-886: Line → direction is defined by line direction
+            Some(l.direction.normalize())
+        }
+        _ => {
+            // OCCT L888-903: Sample D1 at multiple points, find first non-zero tangent
+            let t_range = curve.default_domain();
+            let t1 = t_range[0];
+            let t2 = t_range[1];
+            if (t2 - t1).abs() < 1e-15 {
+                return None;
+            }
+            let a_nb_p = 11usize;
+            let a_dt = (t2 - t1) / a_nb_p as f64;
+            let mut t = t1 + a_dt;
+            for _ in 1..=a_nb_p {
+                let tangent = curve.tangent_at(t);
+                if tangent.length_squared() > 1e-30 {
+                    return Some(tangent.normalize());
+                }
+                t += a_dt;
+            }
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
