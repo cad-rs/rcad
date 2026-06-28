@@ -9,7 +9,7 @@ use rcad_kernel::geom::{Curve3, CurveEval};
 /// `|P(t + resolution) - P(t)| ≈ tol` (first-order approximation using tangent speed).
 ///
 /// When the tangent speed is nearly zero (singularity), the resolution is clamped to `tol`.
-fn curve_resolution(curve: &Curve3, t: f64, tol: f64) -> f64 {
+pub fn curve_resolution(curve: &Curve3, t: f64, tol: f64) -> f64 {
     let speed = curve.tangent_at(t).length();
     if speed < 1e-15 {
         tol

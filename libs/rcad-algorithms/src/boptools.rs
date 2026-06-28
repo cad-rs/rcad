@@ -6,6 +6,7 @@
 use glam::DVec2;
 use glam::DVec3;
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Circle2d, Surface3};
+use rcad_kernel::topods;
 use crate::bopds::ds::DS;
 use crate::classify::Classification;
 
@@ -495,6 +496,69 @@ pub fn compute_tolerance_of_cb(
     _cb: &crate::bopds::common_block::CommonBlock, _ds: &DS,
 ) -> f64 {
     crate::tolerance::TOLERANCE_ABS
+}
+
+/// ✅ OCCT-aligned: BOPTools_AlgoTools::TreatCompound (cxx:877-927).
+///   Flattens a compound shape into a list of non-compound sub-shapes.
+///   For DS shapes, compounds are already flattened during load_brep,
+///   so for a single DS shape index this simply returns vec![idx].
+///   For topods::BRep compounds, recursively collects sub-shapes.
+pub fn treat_compound(shape: &rcad_kernel::topods::ShapeRef,
+                      brep: &rcad_kernel::topods::BRep) -> Vec<rcad_kernel::topods::ShapeRef> {
+    let ts = &brep.tshapes[shape.index];
+    match &**ts {
+        rcad_kernel::topods::TShape::Compound(shapes) => {
+            let mut result = Vec::new();
+            for sub in shapes {
+                result.append(&mut treat_compound(sub, brep));
+            }
+            result
+        }
+        _ => vec![*shape],
+    }
+}
+
+/// ✅ OCCT-aligned: BOPTools_AlgoTools::AreFacesSameDomain (cxx:1119-1179).
+///   Checks if two faces are same-domain (coincident).
+///   Returns true if the faces have the same surface type, the distance
+///   between their centers is within tolerance, and their normals are aligned.
+pub fn are_faces_same_domain(
+    fi_a: usize, fi_b: usize, ds: &DS,
+) -> bool {
+    let fa = &ds.faces[fi_a];
+    let fb = &ds.faces[fi_b];
+    if std::mem::discriminant(&fa.surface) != std::mem::discriminant(&fb.surface) { return false; }
+    if fa.normal.dot(fb.normal).abs() < 0.99 { return false; }
+    // Compute centroid from first 3 boundary vertices
+    let centroid = |f: &crate::bopds::ds::DSFace| -> DVec3 {
+        let n = f.boundary_verts.len().min(3);
+        if n == 0 { return DVec3::ZERO; }
+        f.boundary_verts[..n].iter().map(|&vi| ds.vertices[vi].point).sum::<DVec3>() / n as f64
+    };
+    let dist = (centroid(fa) - centroid(fb)).length();
+    let max_tol = fa.geom_tol.max(fb.geom_tol).max(crate::tolerance::TOLERANCE_ABS);
+    dist < max_tol * 100.0
+}
+
+/// ✅ OCCT-aligned: BOPTools_AlgoTools::CorrectRange (cxx:1011-1080).
+///   Corrects the shrunk range of an intersection pair (EE or EF) by
+///   taking into account edge curve resolution and tolerances.
+///   Returns the corrected range, or None if the range becomes invalid.
+pub fn correct_range(
+    edge_tol: f64, v1_tol: f64, v2_tol: f64,
+    t_range: [f64; 2], curve: &Curve3,
+) -> Option<[f64; 2]> {
+    let [t1, t2] = t_range;
+    if (t2 - t1).abs() < 1e-12 { return None; }
+    let confusion = 1e-7;
+    let a_tol_e = edge_tol + confusion;
+    let step1 = crate::inttools::curve_range::curve_resolution(curve, t1, a_tol_e);
+    let step2 = crate::inttools::curve_range::curve_resolution(curve, t2, a_tol_e);
+    let adjust1 = step1 * 0.5 + v1_tol;
+    let adjust2 = step2 * 0.5 + v2_tol;
+    let ct1 = t1 + adjust1;
+    let ct2 = t2 - adjust2;
+    if ct1 >= ct2 || (ct2 - ct1) < 1e-12 { None } else { Some([ct1, ct2]) }
 }
 
 /// ✅ OCCT-aligned: BOPTools_Set — set of shapes for same-domain dedup.

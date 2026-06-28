@@ -1603,23 +1603,42 @@ impl<'a> PaveFiller<'a> {
     fn fill_shrunk_data(&mut self) {
         let ec: Vec<Curve3> = self.ds.edges.iter().map(|e| e.curve.clone()).collect();
         let et: Vec<f64> = self.ds.edges.iter().map(|e| e.geom_tol).collect();
-        let cf = TOLERANCE_ABS;
+        let v_tols: Vec<f64> = self.ds.vertices.iter().map(|v| v.geom_tol).collect();
+        // Read phase: copy all PB params into flat arrays
+        let mut all_pb: Vec<(usize, usize, usize, f64, f64)> = Vec::new();
         for ei in 0..self.ds.edges.len() {
-            for pb in &mut self.ds.edges[ei].pave_blocks {
-                let v1 = self.ds.vertices[pb.pave1.vertex_idx].geom_tol;
-                let v2 = self.ds.vertices[pb.pave2.vertex_idx].geom_tol;
-                if let Some(sr) = crate::inttools::curve_range::shrunk_range(&ec[ei], [pb.pave1.param, pb.pave2.param], v1, v2, et[ei]) {
-                    pb.shrunk_range = Some(sr); pb.is_splittable = (sr[1]-sr[0]) > 2.0*et[ei] + 2.0*cf;
-                } else { pb.shrunk_range = None; pb.is_splittable = false; }
+            for pb in &self.ds.edges[ei].pave_blocks {
+                all_pb.push((ei, pb.pave1.vertex_idx, pb.pave2.vertex_idx, pb.pave1.param, pb.pave2.param));
+            }
+        }
+        for pb in &self.ds.pave_blocks {
+            if pb.original_edge < self.ds.edges.len() {
+                all_pb.push((pb.original_edge, pb.pave1.vertex_idx, pb.pave2.vertex_idx, pb.pave1.param, pb.pave2.param));
+            }
+        }
+        let num_edges = self.ds.edges.len();
+        let edge_pb_counts: Vec<usize> = self.ds.edges.iter().map(|e| e.pave_blocks.len()).collect();
+        // Compute phase: ShrunkRange (no borrow on self)
+        let results: Vec<(Option<[f64; 2]>, bool)> = all_pb.iter().map(|(ei, v1i, v2i, p1, p2)| {
+            let mut sr = crate::inttools::shrunk_range::ShrunkRange::new();
+            sr.set_data(*ei, [*p1, *p2], v_tols[*v1i], v_tols[*v2i], et[*ei]);
+            sr.perform(&ec[*ei]);
+            (sr.shrunk_range(), sr.is_splittable())
+        }).collect();
+        // Write phase: apply results back to PaveBlocks
+        let mut idx = 0usize;
+        for ei in 0..num_edges {
+            for pi in 0..edge_pb_counts[ei] {
+                let (range, splittable) = results[idx]; idx += 1;
+                self.ds.edges[ei].pave_blocks[pi].shrunk_range = range;
+                self.ds.edges[ei].pave_blocks[pi].is_splittable = splittable;
             }
         }
         for pb in &mut self.ds.pave_blocks {
             if pb.original_edge >= self.ds.edges.len() { continue; }
-            let v1 = self.ds.vertices[pb.pave1.vertex_idx].geom_tol;
-            let v2 = self.ds.vertices[pb.pave2.vertex_idx].geom_tol;
-            if let Some(sr) = crate::inttools::curve_range::shrunk_range(&ec[pb.original_edge], [pb.pave1.param, pb.pave2.param], v1, v2, et[pb.original_edge]) {
-                pb.shrunk_range = Some(sr); pb.is_splittable = (sr[1]-sr[0]) > 2.0*et[pb.original_edge] + 2.0*cf;
-            } else { pb.shrunk_range = None; pb.is_splittable = false; }
+            let (range, splittable) = results[idx]; idx += 1;
+            pb.shrunk_range = range;
+            pb.is_splittable = splittable;
         }
     }
 

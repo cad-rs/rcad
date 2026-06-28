@@ -45,3 +45,5 @@ pub use extreme_geometry::{
 };
 pub use plane_torus::{PlaneTorusResult, intersect_plane_torus, intersect_plane_torus_with_tolerance};
 pub use cylinder_torus::{CylinderTorusResult, intersect_cylinder_torus, intersect_cylinder_torus_with_tolerance};
+
+pub mod shrunk_range;
