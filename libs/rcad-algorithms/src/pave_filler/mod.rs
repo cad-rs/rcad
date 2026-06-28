@@ -859,23 +859,6 @@ impl<'a> PaveFiller<'a> {
 
         for ci in 0..self.ds.intersection_curves.len() {
             let ic = &self.ds.intersection_curves[ci];
-            // Must have exactly one PB (init_pave_block1 was called)
-            if ic.pave_blocks.len() != 1 { continue; }
-            let pb = &ic.pave_blocks[0];
-
-            // Clone all data before mutable access
-            let mut pb_clone = pb.clone();
-            let sub_pbs = if pb_clone.is_to_update() {
-                pb_clone.update(false) // flag=false: ext_paves only, no boundary paves
-            } else {
-                // OCCT-aligned: curves without ext_paves produce a single section edge
-                // spanning the entire curve (no split points).
-                vec![PaveBlock::new(
-                    crate::bopds::pave::NO_EDGE,
-                    Pave { vertex_idx: ic.start_vertex, param: ic.t_range[0] },
-                    Pave { vertex_idx: ic.end_vertex, param: ic.t_range[1] },
-                )]
-            };
 
             // Find the two faces for IsValidBlockForFaces check (OCCT L906-918)
             let face_ids = find_face_idxs_for_curve(&self.ds, ci);
@@ -887,6 +870,25 @@ impl<'a> PaveFiller<'a> {
             let surf1 = if face_ids[1] != usize::MAX { Some(self.ds.faces[face_ids[1]].surface.clone()) } else { None };
 
             let mut sub_with_edge: Vec<PaveBlock> = Vec::new();
+
+            for pbi in 0..ic.pave_blocks.len() {
+                let pb = &ic.pave_blocks[pbi];
+
+                // Clone all data before mutable access
+                let mut pb_clone = pb.clone();
+                let sub_pbs = if pb_clone.is_to_update() {
+                    pb_clone.update(false) // flag=false: ext_paves only, no boundary paves
+                } else {
+                    // OCCT-aligned: curves without ext_paves produce a single section edge
+                    // spanning the entire PB range (no split points).
+                    let (v1, v2) = pb.indices();
+                    let (t1, t2) = pb.range();
+                    vec![PaveBlock::new(
+                        crate::bopds::pave::NO_EDGE,
+                        Pave { vertex_idx: v1, param: t1 },
+                        Pave { vertex_idx: v2, param: t2 },
+                    )]
+                };
             for mut sub_pb in sub_pbs {
                 let (nV1, nV2) = sub_pb.indices();
                 let (aT1, aT2) = sub_pb.range();
@@ -984,6 +986,7 @@ impl<'a> PaveFiller<'a> {
                 existing_edge_map.insert(edge_key, new_ei);
                 sub_with_edge.push(sub_pb);
             }
+            } // end for pbi in 0..ic.pave_blocks.len()
 
             if !sub_with_edge.is_empty() {
                 se_data.push(SECurve {

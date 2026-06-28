@@ -1164,6 +1164,7 @@ dependencies = [
  "criterion",
  "earcut",
  "glam",
+ "indexmap",
  "rayon",
  "rcad-kernel",
  "rcad-modeling",

@@ -1213,22 +1213,9 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
 
-            // OCCT L274: aCIm.Closed(BRep_Tool::IsClosed(aCIm));
-            //   rcad: closure check on shell — verify each edge appears twice.
-            let mut edge_count: std::collections::HashMap<usize, usize> =
-                std::collections::HashMap::new();
-            for &rfi in &a_c_im {
-                if let Some(fe) = result.faces.get(rfi) {
-                    for &(ei, _) in &fe.0 {
-                        *edge_count.entry(ei).or_default() += 1;
-                    }
-                }
-            }
-            let is_closed = edge_count.values().all(|&c| c == 2);
-
-            // OCCT L275: myImages.Bound(theS, ...).Append(aCIm);
-            //   rcad: push to result.tmp_shells.
-            if is_closed && !a_c_im.is_empty() {
+            // OCCT L274-275: aCIm.Closed(BRep_Tool::IsClosed(aCIm)); myImages.Bound(theS).Append(aCIm);
+            //   OCCT always appends the shell regardless of closure.
+            if !a_c_im.is_empty() {
                 result.tmp_shells.push(a_c_im);
             }
         }
@@ -1349,11 +1336,9 @@ impl<'a> BooleanBuilder<'a> {
     ///   A/B lists as parameters — FillIn3DParts iterates myDS->ShapeInfo()).
     ///   OCCT L60-73 check: rcad's CheckData (L320-325) has already ensured
     ///   both operands have faces, so the source-solid skip never triggers.
-    fn fill_images_solids(&self, result: &mut ResultBuilder, saved_shells: Vec<Vec<usize>>) {
+    fn fill_images_solids(&self, result: &mut ResultBuilder) {
         let has_solid = self.ds.faces.iter().any(|f| f.source_solid_idx.is_some());
         if !has_solid { return; }
-        if saved_shells.is_empty() { return; }
-        if saved_shells.is_empty() { return; }
 
         // --- PerformShapesToAvoid (BOPAlgo_BuilderSolid.cxx L129-218) ---
         // Use BuilderSolid for this step, operating on DS face indices.
@@ -1403,10 +1388,10 @@ impl<'a> BooleanBuilder<'a> {
         // OCCT L77-83: FillIn3DParts — build draft solids + classify shells
         let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
         let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
-        let shell_assignments = self.fill_in_3d_parts(result, &a_faces, &b_faces, &saved_shells);
+        let shell_assignments = self.fill_in_3d_parts(result, &a_faces, &b_faces);
 
         // OCCT L86: BuildSplitSolids — group shells into result solids
-        self.build_split_solids(result, &shell_assignments, &saved_shells);
+        self.build_split_solids(result, &shell_assignments);
 
         // OCCT L92: FillInternalShapes — internal sub-shapes
         self.fill_internal_shapes(result);
@@ -1423,59 +1408,58 @@ impl<'a> BooleanBuilder<'a> {
     ///                store in myInParts[solid] = IN_faces + INTERNAL_faces
     ///
     /// ✅ OCCT-aligned: BuildDraftSolid (Builder_3.cxx L267-368).
-    ///   Build a draft solid face set for each source operand, preserving
-    ///   source shell structure and collecting INTERNAL faces.
-    ///
-    /// OCCT: iterates source solid shells → replaces split faces with images
-    ///   (myImages.IsBound → image faces), preserves orientation, collects
-    ///   TopAbs_INTERNAL faces into theLIF.  rcad: builds an explicit
-    ///   Vec<Vec<usize>> of result face indices grouped by source shell.
-    ///   The "draft solid" is the set of result faces belonging to each
-    ///   source operand, organized by their source shell boundaries.
-    ///
-    /// Returns (draft_face_indices, internal_face_indices) per source side.
-    ///   draft_face_indices: Vec<Vec<usize>> — result face indices per shell.
-    /// OCCT-aligned: BuildDraftSolid (Builder_3.cxx L267-368).
     ///   Build a draft solid from a source solid, replacing split faces with their
     ///   image sub-faces and collecting INTERNAL faces into theLIF.
-    ///   rcad: operates on result_tmp_shells (grouped by source shell).
-    fn build_draft_solid(&self, result: &ResultBuilder, side: usize,
-                          result_tmp_shells: &[Vec<usize>])
+    ///   OCCT: iterates source solid sub-shapes (shells→faces), looks up myImages.
+    ///   rcad: iterates DS shells filtered by source side, finds matching result faces.
+    fn build_draft_solid(&self, result: &ResultBuilder, side: usize)
         -> (Vec<Vec<usize>>, Vec<usize>)
     {
         // OCCT L280-281: aOrSd = theSolid.Orientation(); theDraftSolid.Orientation(aOrSd).
         //   rcad: solid orientation tracked per-face via FaceOrigin.
 
         // OCCT L283-367: iterate sub-shapes (shells) of the solid.
+        let origin_side = if side == 0 { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
         let mut draft_shells: Vec<Vec<usize>> = Vec::new();
         let mut the_lif: Vec<usize> = Vec::new();
 
-        for shell_faces in result_tmp_shells {
+        // OCCT-aligned: iterate DS shells filtered by source side.
+        //   Equivalent to TopExp_Explorer aExp(theSolid, TopAbs_SHELL).
+        for ds_shell in &self.ds.shells {
+            // Check if this shell belongs to the requested side
+            let belongs = ds_shell.faces.iter().any(|&dsfi| {
+                self.ds.faces.get(dsfi).map_or(false, |f| f.origin == origin_side)
+            });
+            if !belongs { continue; }
+
             // OCCT L292-294: MakeShell(aShD); aShD.Orientation(aOrSh); iFlag = 0.
             let mut a_sh_d: Vec<usize> = Vec::new();
             let mut i_flag = false;
 
             // OCCT L297-359: iterate sub-shapes (faces) of the shell.
-            for &fi in shell_faces {
-                let fo = &result.face_origins[fi];
+            for &dsfi in &ds_shell.faces {
+                let dsf = &self.ds.faces[dsfi];
+                if dsf.origin != origin_side { continue; }
 
-                // Find DS face index for orientation/anchor checks.
-                let (exp_origin, sfi) = match fo {
-                    FaceOrigin::FromA(sfi) => (ShapeOrigin::ShapeA, *sfi),
-                    FaceOrigin::FromB(sfi) => (ShapeOrigin::ShapeB, *sfi),
-                    _ => continue,
-                };
-                let Some(dfi) = self.ds.faces.iter().position(|f|
-                    f.origin == exp_origin && f.source_face_idx == sfi) else { continue };
+                // Find matching result faces via face_origins (OCCT: myImages.Seek(aF)).
+                let result_faces: Vec<usize> = result.face_origins.iter().enumerate()
+                    .filter(|(_, fo)| match fo {
+                        FaceOrigin::FromA(sfi) =>
+                            dsf.origin == ShapeOrigin::ShapeA && dsf.source_face_idx == *sfi,
+                        FaceOrigin::FromB(sfi) =>
+                            dsf.origin == ShapeOrigin::ShapeB && dsf.source_face_idx == *sfi,
+                        _ => false,
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
+
+                if result_faces.is_empty() { continue; }
 
                 // OCCT L301: aOrF = aF.Orientation()
-                //   rcad: IS_INTERNAL if face normal opposes shell outward normal
-                //   (OCCT TopAbs_INTERNAL orientation on source face).
+                let face_normal = dsf.normal;
                 let shell_outward = if a_sh_d.is_empty() && the_lif.is_empty() {
-                    // Use the first face's DS normal as the shell outward direction
-                    self.ds.faces[dfi].normal
+                    face_normal
                 } else {
-                    // Average of already-added face normals
                     let mut sum = DVec3::ZERO;
                     let mut cnt = 0usize;
                     for &ff in &a_sh_d {
@@ -1493,28 +1477,13 @@ impl<'a> BooleanBuilder<'a> {
                             }
                         }
                     }
-                    if cnt > 0 { sum / cnt as f64 } else { self.ds.faces[dfi].normal }
+                    if cnt > 0 { sum / cnt as f64 } else { face_normal }
                 };
-                let face_normal = self.ds.faces[dfi].normal;
                 let is_internal = shell_outward.dot(face_normal) < 0.0;
 
-                // OCCT L303: if (myImages.IsBound(aF)) — does source face have split images?
-                let image_faces: Vec<usize> = result.face_origins.iter().enumerate()
-                    .filter(|(_, o)| {
-                        match (fo, o) {
-                            (FaceOrigin::FromA(a), FaceOrigin::FromA(b)) => a == b,
-                            (FaceOrigin::FromB(a), FaceOrigin::FromB(b)) => a == b,
-                            _ => false,
-                        }
-                    })
-                    .map(|(i, _)| i)
-                    .collect();
-
-                if image_faces.len() > 1 {
+                if result_faces.len() > 1 {
                     // OCCT L305-345: face has images → iterate image faces
-                    for &a_fx in &image_faces {
-                        // OCCT L311: if (myShapesSD.IsBound(aFx))
-                        //   rcad: check face-level SD via ds.shape_sd
+                    for &a_fx in &result_faces {
                         let a_fx_dfi_opt = match &result.face_origins[a_fx] {
                             FaceOrigin::FromA(s) => self.ds.faces.iter().position(|f|
                                 f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *s),
@@ -1523,75 +1492,28 @@ impl<'a> BooleanBuilder<'a> {
                             _ => None,
                         };
                         let is_sd = a_fx_dfi_opt
-                            .map_or(false, |fx_dfi| self.ds.shape_sd.has_sd_face(dfi, fx_dfi)
-                                || self.ds.shape_sd.has_sd_face(fx_dfi, dfi));
+                            .map_or(false, |fx_dfi| self.ds.shape_sd.has_sd_face(dsfi, fx_dfi)
+                                || self.ds.shape_sd.has_sd_face(fx_dfi, dsfi));
 
                         if is_sd {
-                            // OCCT L314-330: shape is same-domain
-                            if is_internal {
-                                // OCCT L316-318: theLIF.Append(aFx)
-                                the_lif.push(a_fx);
-                            } else {
-                                // OCCT L321-329: IsSplitToReverseWithWarn
-                                //   rcad: check if result face normal opposes source normal
-                                let ds_normal = self.ds.faces[dfi].normal;
-                                let result_normal = result.faces.get(a_fx)
-                                    .map(|fe| fe.3).unwrap_or(ds_normal);
-                                let needs_reverse = result_normal.dot(ds_normal) < 0.0;
-                                // rcad: skip actual reversal (orientation already correct
-                                // from emit_wire_face flip handling).
-                                let _ = needs_reverse;
-                                i_flag = true;
-                                if !a_sh_d.contains(&a_fx) {
-                                    a_sh_d.push(a_fx);
-                                }
-                            }
+                            if is_internal { the_lif.push(a_fx); }
+                            else { i_flag = true; if !a_sh_d.contains(&a_fx) { a_sh_d.push(a_fx); } }
                         } else {
-                            // OCCT L333-344: not same-domain
-                            if is_internal {
-                                // OCCT L336-338: theLIF.Append(aFx)
-                                the_lif.push(a_fx);
-                            } else {
-                                // OCCT L341-343: iFlag=1; aBB.Add(aShD, aFx)
-                                i_flag = true;
-                                if !a_sh_d.contains(&a_fx) {
-                                    a_sh_d.push(a_fx);
-                                }
-                            }
+                            if is_internal { the_lif.push(a_fx); }
+                            else { i_flag = true; if !a_sh_d.contains(&a_fx) { a_sh_d.push(a_fx); } }
                         }
                     }
                 } else {
-                    // OCCT L348-358: face has NO split images — add directly
-                    if is_internal {
-                        // OCCT L351-353: theLIF.Append(aF)
-                        the_lif.push(fi);
-                    } else {
-                        // OCCT L356-357: iFlag=1; aBB.Add(aShD, aF)
-                        i_flag = true;
-                        if !a_sh_d.contains(&fi) {
-                            a_sh_d.push(fi);
-                        }
-                    }
+                    // OCCT L348-358: face has NO split images → add directly
+                    let fi = result_faces[0];
+                    if is_internal { the_lif.push(fi); }
+                    else { i_flag = true; if !a_sh_d.contains(&fi) { a_sh_d.push(fi); } }
                 }
             }
 
-            // OCCT L362-366: if (iFlag) { Closed check; aBB.Add(theDraftSolid, aShD); }
+            // OCCT L362-366: if (iFlag) { aShD.Closed(BRep_Tool::IsClosed(aShD)); aBB.Add(theDraftSolid, aShD); }
             if i_flag && !a_sh_d.is_empty() {
-                // OCCT L364: aShD.Closed(BRep_Tool::IsClosed(aShD))
-                //   rcad: check shell closure by verifying each edge appears exactly twice
-                let mut edge_count: std::collections::HashMap<usize, usize> =
-                    std::collections::HashMap::new();
-                for &rfi in &a_sh_d {
-                    if let Some(fe) = result.faces.get(rfi) {
-                        for &(ei, _) in &fe.0 {
-                            *edge_count.entry(ei).or_default() += 1;
-                        }
-                    }
-                }
-                let is_closed = edge_count.values().all(|&c| c == 2);
-                if is_closed {
-                    draft_shells.push(a_sh_d);
-                }
+                draft_shells.push(a_sh_d);
             }
         }
 
@@ -1600,8 +1522,7 @@ impl<'a> BooleanBuilder<'a> {
 
     /// OCCT-aligned: FillIn3DParts (Builder_3.cxx L97-263).
     fn fill_in_3d_parts(&self, result: &mut ResultBuilder,
-                         a_faces: &[usize], b_faces: &[usize],
-                         saved_shells: &[Vec<usize>]) -> Vec<(usize, usize, &'static str)> {
+                         a_faces: &[usize], b_faces: &[usize]) -> Vec<(usize, usize, &'static str)> {
         // OCCT L97-99: void FillIn3DParts(theDraftSolids, theRange)
         //   rcad: returns shell_assignings Vec; theDraftSolids is implicit via saved_shells.
         // OCCT L101: Message_ProgressScope — rcad: skipped (no progress API).
@@ -1645,8 +1566,8 @@ impl<'a> BooleanBuilder<'a> {
         //   rcad: build_draft_solid returns draft shells + internal faces per operand.
         //   ⏳ OCCT builds actual TopoDS_Solid from shell→face iteration with
         //     myImages replacement; rcad groups result face indices by source shell.
-        let (_draft_a, _int_a) = self.build_draft_solid(result, 0, saved_shells);
-        let (_draft_b, _int_b) = self.build_draft_solid(result, 1, saved_shells);
+        let (_draft_a, _int_a) = self.build_draft_solid(result, 0);
+        let (_draft_b, _int_b) = self.build_draft_solid(result, 1);
 
         // === Phase 3: ClassifyFaces (OCCT L197-208) ===
         // OCCT L197-199: LOCAL anInParts — classification result map: draft solid → IN faces.
@@ -1682,21 +1603,16 @@ impl<'a> BooleanBuilder<'a> {
 
         // OCCT L211: int aNbSol = aDraftSolid.Extent();
         //   Number of draft solids (one per source solid with IN faces).
-        //   rcad: iterate saved_shells (result shells pre-grouped by source).
-        for (si, shell) in saved_shells.iter().enumerate() {
+        //   rcad: iterate DS shells (OCCT iterates source shapes → sub-shapes).
+        for (si, ds_shell) in self.ds.shells.iter().enumerate() {
             // OCCT L214: UserBreak — rcad: skipped.
 
             // OCCT L218-221: Get solid, draft solid, IN faces, internal faces.
-            //   rcad: determine side from shell's face origins.
-            let mut side: Option<usize> = None;
-            for &fi in shell {
-                if fi >= result.face_origins.len() { continue; }
-                match &result.face_origins[fi] {
-                    FaceOrigin::FromA(_) => side = Some(0),
-                    FaceOrigin::FromB(_) => side = Some(1),
-                    _ => {}
-                }
-            }
+            //   rcad: determine side from shell's first DS face's origin.
+            let side = ds_shell.faces.first().and_then(|&dsfi| {
+                let f = self.ds.faces.get(dsfi)?;
+                match f.origin { ShapeOrigin::ShapeA => Some(0), ShapeOrigin::ShapeB => Some(1), _ => None }
+            });
             let Some(s) = side else { continue };
 
             // OCCT L220: aLInFaces = IN faces for this draft solid (from anInParts local).
@@ -1724,28 +1640,16 @@ impl<'a> BooleanBuilder<'a> {
                 let mut has_image = false;
                 //   ⏳ OCCT: myImages.IsBound(shell TopoDS_Shape).
                 //     rcad: check if any DS edge of this shell has image.
-                for &fi in shell {
-                    if let Some(origin) = result.face_origins.get(fi) {
-                        let (exp_origin, sfi) = match origin {
-                            FaceOrigin::FromA(sfi) =>
-                                (crate::bopds::ds::ShapeOrigin::ShapeA, *sfi),
-                            FaceOrigin::FromB(sfi) =>
-                                (crate::bopds::ds::ShapeOrigin::ShapeB, *sfi),
-                            _ => continue,
-                        };
-                        if let Some(dfi) = self.ds.faces.iter().position(|f|
-                            f.origin == exp_origin && f.source_face_idx == sfi)
-                        {
-                            let v_base = self.ds.vertices.len();
-                            for &ei in &self.ds.faces[dfi].boundary_edges {
-                                let e_ref = rcad_kernel::topods::ShapeRef::new(v_base + ei);
-                                if self.my_images.borrow().contains_key(&e_ref) {
-                                    has_image = true; break;
-                                }
-                            }
+                for &dsfi in &ds_shell.faces {
+                    let dsf = &self.ds.faces[dsfi];
+                    let v_base = self.ds.vertices.len();
+                    for &ei in &dsf.boundary_edges {
+                        let e_ref = rcad_kernel::topods::ShapeRef::new(v_base + ei);
+                        if self.my_images.borrow().contains_key(&e_ref) {
+                            has_image = true; break;
                         }
-                        if has_image { break; }
                     }
+                    if has_image { break; }
                 }
                 // OCCT L234-238: if (!bHasImage) continue — no split needed
                 if !has_image { continue; }
@@ -1782,8 +1686,7 @@ impl<'a> BooleanBuilder<'a> {
     ///   Post-process (L539-617): aMST-based dedup + store in result solids.
     ///   rcad: results stored in result.tmp_solids (BuildRC applies boolean filtering).
     fn build_split_solids(&self, result: &mut ResultBuilder,
-                          assignments: &[(usize, usize, &'static str)],
-                          saved_shells: &[Vec<usize>]) {
+                          assignments: &[(usize, usize, &'static str)]) {
         // OCCT L413-415: void BuildSplitSolids(theDraftSolids, theRange)
         //   rcad: assignments + saved_shells + my_in_parts replace theDraftSolids + myInParts.
         // OCCT L417-428: local variables (aSFS, aLSEmpty, aMFence, aMST, aVBS)
@@ -1833,24 +1736,28 @@ impl<'a> BooleanBuilder<'a> {
             }
 
             // OCCT L456-459: BOPTools_Set aST; aST.Add(aS, TopAbs_FACE); aMST.Add(aST);
-            if let Some(shell_faces) = saved_shells.get(si) {
-                let ds_set: std::collections::BTreeSet<usize> = shell_faces.iter()
-                    .filter_map(|&fi| {
-                        let (exp_origin, sfi) = match result.face_origins.get(fi)? {
-                            FaceOrigin::FromA(sfi) => (ShapeOrigin::ShapeA, *sfi),
-                            FaceOrigin::FromB(sfi) => (ShapeOrigin::ShapeB, *sfi),
-                            _ => return None,
-                        };
-                        self.ds.faces.iter().position(|f|
-                            f.origin == exp_origin && f.source_face_idx == sfi)
-                    })
-                    .collect();
+            if let Some(ds_shell) = self.ds.shells.get(si) {
+                let ds_set: std::collections::BTreeSet<usize> = ds_shell.faces.iter().copied().collect();
                 if ds_set.is_empty() { continue; }
                 a_mst.push(ds_set);
 
                 // OCCT L487-488: aSolidsIm.Add(aS).Append(aSD) — store non-interfered draft solid.
+                //   Build result face list for this DS shell.
+                let result_faces: Vec<usize> = ds_shell.faces.iter()
+                    .flat_map(|&dsfi| {
+                        let dsf = &self.ds.faces[dsfi];
+                        result.face_origins.iter().enumerate()
+                            .filter(|(_, fo)| match (dsf.origin, fo) {
+                                (ShapeOrigin::ShapeA, FaceOrigin::FromA(sfi)) => dsf.source_face_idx == *sfi,
+                                (ShapeOrigin::ShapeB, FaceOrigin::FromB(sfi)) => dsf.source_face_idx == *sfi,
+                                _ => false,
+                            })
+                            .map(|(fi, _)| fi)
+                    })
+                    .collect();
+                if result_faces.is_empty() { continue; }
                 let csi = result.tmp_shells.len();
-                result.tmp_shells.push(shell_faces.clone());
+                result.tmp_shells.push(result_faces);
                 result_solids.push(vec![csi]);
                 result.solid_side_origin.push(side);
             }
@@ -1870,13 +1777,13 @@ impl<'a> BooleanBuilder<'a> {
 
             // OCCT L491-492: aSFS.Clear();
             // OCCT L493-499: 1.1 Fill Shell Faces Set — iterate all faces of draft solid.
-            //   rcad: aExp.Init(aSD, TopAbs_FACE) → shell's result faces → DS faces.
+            //   rcad: aExp.Init(aSD, TopAbs_FACE) → DS shell faces → result faces.
             let mut ds_face_set: Vec<usize> = Vec::new();
-            if let Some(shell_faces) = saved_shells.get(si) {
-                for &fi in shell_faces {
-                    if let Some(dfi) = result_to_ds(fi, origin) {
-                        ds_face_set.push(dfi);
-                    }
+            if let Some(ds_shell) = self.ds.shells.get(si) {
+                for &dsfi in &ds_shell.faces {
+                    let dsf = &self.ds.faces[dsfi];
+                    if dsf.origin != origin { continue; }
+                    ds_face_set.push(dsfi);
                 }
             }
 
@@ -3081,13 +2988,10 @@ impl<'a> BooleanBuilder<'a> {
         // Phase 4: FillImagesContainers(SHELL) (L388-398) → BuildResult(SHELL) (L394-398).
         self.fill_images_containers(ShapeType::Shell, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // NOTE: save shells BEFORE build_result consumes them (OCCT builds
-        // shells from face images during FillImagesSolids, not before).
-        let saved_shells = result.tmp_shells.clone();
         self.build_result(ShapeType::Shell, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Phase 5: FillImagesSolids (L400-410) → BuildRC (L563-564) → BuildResult(SOLID) (L406-410).
-        self.fill_images_solids(&mut result, saved_shells);
+        self.fill_images_solids(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // OCCT L563-564: BuildShape → BuildRC applies boolean operation filtering
         self.build_rc(&mut result);
