@@ -601,6 +601,26 @@ impl BRepBuilder {
     pub fn make_solid(&mut self, brep: &mut BRep, shells: Vec<ShapeRef>) -> ShapeRef {
         brep.add_tsolid(shells)
     }
+
+    /// Make a compsolid from solids.
+    pub fn make_compsolid(&mut self, brep: &mut BRep, solids: Vec<ShapeRef>) -> ShapeRef {
+        brep.add_tcompsolid(solids)
+    }
+
+    /// Make a compound from shapes.
+    pub fn make_compound(&mut self, brep: &mut BRep, shapes: Vec<ShapeRef>) -> ShapeRef {
+        brep.add_tcompound(shapes)
+    }
+
+    /// Add a shape to an existing compound.
+    pub fn add_to_compound(&self, brep: &mut BRep, compound: ShapeRef, shape: ShapeRef) {
+        let ts = Arc::get_mut(&mut brep.tshapes[compound.index])
+            .expect("add_to_compound: unique ownership required");
+        match ts {
+            TShape::Compound(shapes) => shapes.push(shape),
+            _ => panic!("add_to_compound: shape is not a Compound"),
+        }
+    }
 }
 
 /// Get the parameter range for a Curve2d (Trimmed → stored range, Circle → [0, 2π]).
