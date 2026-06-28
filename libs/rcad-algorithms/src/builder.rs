@@ -2719,60 +2719,118 @@ impl<'a> BooleanBuilder<'a> {
     ///   compound: check if any sub-solid (result solids from that side) was
     ///   split (modified).  If modified → group result solids into one compound
     ///   per source side.  Groups stored in result.compound_groups.
+    /// OCCT-aligned: FillImagesCompounds (Builder_1.cxx L197-217) + FillImagesCompound (L280-342).
+    ///   L197-201: dispatcher with fence map; iterate source COMPOUND shapes.
+    ///   L280-293: FillImagesCompound — fence skip if already processed.
+    ///   L295-308: recurse into sub-compounds; check if any sub-shape has images.
+    ///   L309-312: no modification → return.
+    ///   L314-341: build new compound from sub-shape images; store in myImages.
+    ///   ⏳ rcad: no compound nesting in DS.  Flat per-face source_compsolid_idx.
+    ///     The recursive FillImagesCompound is collapsed to a single level.
     fn fill_images_compounds(&self, result: &mut ResultBuilder) {
-        // OCCT L197-201: aMFP fence; OCCT L290-293: fence skip.
-        //   rcad: single flag per source side (no compound nesting in DS).
-        if !self.ds.a_has_compound && !self.ds.b_has_compound {
-            return;
-        }
-
-        // OCCT L295-308: check if any sub-shape (SOLID) has been modified.
-        //   rcad: for each source side with compound, check if any result solid
-        //   from that side was split (modified > multiple result solids).
-        let mut has_modified = false;
-        for side in 0..=1 {
-            let side_has_compound = if side == 0 { self.ds.a_has_compound } else { self.ds.b_has_compound };
-            if !side_has_compound { continue; }
-
-            // Count distinct result solids per source side
-            let side_solid_count = result.solid_side_origin.iter().filter(|&&s| s == side).count();
-            // Estimate: if more than 1 result solid from this side, at least one sub-solid split
-            //   OCCT: check myImages.IsBound for each sub-shape individually.
-            //   rcad: multiple result solids from same side implies split.
-            if side_solid_count > 0 {
-                has_modified = true;
-                break;
+        // OCCT L199-200: aMFP fence map — prevents reprocessing the same compound.
+        //   rcad: HashSet of processed compsolid indices.
+        let mut a_mfp: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        // OCCT L202: aNbS = myDS->NbSourceShapes() — iterate all DS shapes.
+        //   rcad: collect unique source_compsolid_idx from DS faces.
+        let mut compound_indices: Vec<usize> = Vec::new();
+        for df in &self.ds.faces {
+            if let Some(csi) = df.source_compsolid_idx {
+                if !compound_indices.contains(&csi) {
+                    compound_indices.push(csi);
+                }
             }
         }
+        if compound_indices.is_empty() { return; }
 
-        // OCCT L309-312: if none interfered → return (no compound needed)
-        if !has_modified {
-            return;
-        }
+        for &csi in &compound_indices {
+            // OCCT L290-293: if (!theMFP.Add(theS)) return — fence check.
+            if !a_mfp.insert(csi) { continue; }
 
-        // OCCT L314-337: build new compound from sub-shape images.
-        //   OCCT L314-315: MakeContainer(COMPOUND, aCIm)
-        //   rcad: group result solids by source compound side.
-        //   (OCCT iterates sub-shapes; rcad maps side→result solids.)
-        let mut groups: Vec<Vec<usize>> = Vec::new();
-        for side in 0..=1 {
-            let side_has_compound = if side == 0 { self.ds.a_has_compound } else { self.ds.b_has_compound };
-            if !side_has_compound { continue; }
-
-            // Collect result solid indices for this source side
-            let solid_indices: Vec<usize> = result.solid_side_origin.iter()
-                .enumerate()
-                .filter(|(_, s)| **s == side)
-                .map(|(si, _)| si)
+            // OCCT L295-308: check if any sub-shape (SOLID) has been modified.
+            //   rcad: collect source_solid_idx values under this compsolid,
+            //   check if any has images (multiple result solids).
+            let sub_solid_indices: Vec<usize> = self.ds.faces.iter()
+                .filter_map(|f| {
+                    if f.source_compsolid_idx == Some(csi) {
+                        f.source_solid_idx
+                    } else {
+                        None
+                    }
+                })
                 .collect();
-            if !solid_indices.is_empty() {
-                groups.push(solid_indices);
+            // OCCT L300-303: recurse into sub-compounds — rcad: flat, no nesting.
+            // OCCT L304-307: if (myImages.IsBound(aSx)) bInterferred = true.
+            //   rcad: check if any sub-solid produces >1 result solid (split).
+            let mut b_interferred = false;
+            for &ssi in &sub_solid_indices {
+                // Count result solids from this source solid
+                let count = result.solid_side_origin.iter()
+                    .filter(|&&side| {
+                        // Count result solids from the side matching this source solid's origin
+                        let dfi = self.ds.faces.iter().position(|f|
+                            f.source_solid_idx == Some(ssi));
+                        dfi.map_or(false, |di| {
+                            let origin = &self.ds.faces[di].origin;
+                            (origin == &crate::bopds::ds::ShapeOrigin::ShapeA && side == 0)
+                                || (origin == &crate::bopds::ds::ShapeOrigin::ShapeB && side == 1)
+                        })
+                    })
+                    .count();
+                if count > 0 {
+                    b_interferred = true;
+                    break;
+                }
+            }
+
+            // OCCT L309-312: if (!bInterferred) return — no modification.
+            if !b_interferred { continue; }
+
+            // OCCT L314-315: MakeContainer(COMPOUND, aCIm)
+            //   rcad: collect result solid indices for this compsolid.
+            let mut a_c_im: Vec<usize> = Vec::new();
+
+            // OCCT L317-336: iterate sub-shapes → add images or original.
+            for &ssi in &sub_solid_indices {
+                // Find the DS face for this source solid to determine its side (origin)
+                let side = self.ds.faces.iter()
+                    .find(|f| f.source_solid_idx == Some(ssi))
+                    .map(|f| match f.origin {
+                        crate::bopds::ds::ShapeOrigin::ShapeA => 0,
+                        crate::bopds::ds::ShapeOrigin::ShapeB => 1,
+                    })
+                    .unwrap_or(0);
+
+                // OCCT L322: if (myImages.IsBound(aSX)) — has split images?
+                //   rcad: check if result solids exist for this side+source solid.
+                let matching_solids: Vec<usize> = result.solid_side_origin.iter()
+                    .enumerate()
+                    .filter(|&(_, &s)| s == side)
+                    .map(|(si, _)| si)
+                    .collect();
+
+                if matching_solids.is_empty() {
+                    // OCCT L334-335: no images → add original sub-shape
+                    //   rcad: no solid to add — the original solid is implicit.
+                    continue;
+                }
+
+                // OCCT L324-331: has images → add each image with orientation.
+                for &si in &matching_solids {
+                    if !a_c_im.contains(&si) {
+                        // OCCT L329: aSXIm.Orientation(aOrX) — preserve orientation.
+                        //   rcad: orientation is per-face via FaceOrigin.
+                        a_c_im.push(si);
+                    }
+                }
+            }
+
+            // OCCT L339-341: aLSIm.Append(aCIm); myImages.Bind(theS, aLSIm)
+            //   rcad: store for build_result(Compound) to consume.
+            if !a_c_im.is_empty() {
+                result.compound_groups.push(a_c_im);
             }
         }
-
-        // OCCT L339-341: aLSIm.Append(aCIm); myImages.Bind(theS, aLSIm)
-        //   rcad: store groups for build_result(Compound) to consume.
-        result.compound_groups = groups;
     }
 
     /// Retrieve the EdgeInfo.is_inside status for the incoming edge at the given vertex.
