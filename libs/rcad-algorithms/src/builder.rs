@@ -1915,70 +1915,345 @@ impl<'a> BooleanBuilder<'a> {
     ///        has the same face set (intersection region)
     ///     3. FUSE: keep all; COMMON: keep only solids with matching face set in tools;
     ///        CUT: keep only solids WITHOUT matching face set in tools
+    /// OCCT-aligned: BuildRC (BOPAlgo_BOP.cxx L583-867).
+    ///   Filters split solids by boolean operation type using face-set comparison.
+    ///   A. FUSE (L594-609): keep all split solids (fence-deduped).
+    ///   B. COMMON/CUT/CUT21 (L616-864): build args/tools building-element maps,
+    ///      resolve to split images, compare for intersection containment.
+    ///   rcad: result.tmp_solids contains pre-assembled split solids with
+    ///     solid_side_origin tracking.  The OCCT myShape is approximated by
+    ///     result.tmp_solids entries.
     fn build_rc(&self, result: &mut ResultBuilder) {
+        // OCCT L587-591: TopoDS_Compound aC; BRep_Builder aBB; aBB.MakeCompound(aC)
+        //   rcad: aC = result.tmp_solids (equivalent output).
+
         let solids = std::mem::take(&mut result.tmp_solids);
-        let sides = std::mem::take(&mut result.solid_side_origin);
+        let sides: Vec<usize> = result.solid_side_origin.clone();
         if sides.len() != solids.len() { return; }
 
-        // Build DS face set (BOPTools_Set equivalent) for each solid
-        let solid_ds_face_sets: Vec<std::collections::BTreeSet<usize>> = solids.iter().map(|solid_shells| {
-            let mut ds_set: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+        // OCCT L594-609: A. FUSE — iterate myShape with fence, add all
+        if self.op == BooleanOpType::Union {
+            // OCCT L596: aMFence fence map
+            // OCCT L597-606: TopExp_Explorer aExp(myShape, aType); fence-add to aC
+            let mut a_m_fence: std::collections::HashSet<Vec<usize>> =
+                std::collections::HashSet::new();
+            let mut kept: Vec<Vec<usize>> = Vec::new();
+            for s in &solids {
+                if a_m_fence.insert(s.clone()) {
+                    kept.push(s.clone());
+                }
+            }
+            // OCCT L607: myRC = aC
+            result.tmp_solids = kept;
+            return;
+        }
+
+        // OCCT L616-645: prepare building elements of arguments to get splits
+        //   OCCT: iterate myArguments/myTools → TreatCompound → TopExp::MapShapes
+        //   rcad: DS vertices/edges/faces are the building elements.
+        //   For each side (0=args, 1=tools): collect V/E/F indices into maps.
+        let e_base = self.ds.vertices.len();
+        let f_base = e_base + self.ds.edges.len();
+
+        // OCCT L622: aMArgs, aMTools — indexed maps of source shapes (V/E/F)
+        //   rcad: HashSet<usize> of flat V/E/F indices.
+        let mut a_m_args: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut a_m_tools: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut a_maps = [&mut a_m_args, &mut a_m_tools];
+
+        for (side_idx, a_ms) in a_maps.iter_mut().enumerate() {
+            // OCCT L628-643: for each argument/tool shape → TreatCompound → MapShapes
+            //   rcad: source building elements classified by origin in DS arrays.
+            let v_range = if side_idx == 0 {
+                (0usize, self.ds.a_vertex_count)
+            } else {
+                (self.ds.a_vertex_count, self.ds.vertices.len())
+            };
+            let e_range = if side_idx == 0 {
+                (0usize, self.ds.a_edge_count)
+            } else {
+                (self.ds.a_edge_count, self.ds.edges.len())
+            };
+            let f_range = if side_idx == 0 {
+                (0usize, self.ds.a_face_count)
+            } else {
+                (self.ds.a_face_count, self.ds.faces.len())
+            };
+
+            // OCCT L641-642: TypeToExplore(iDim) → MapShapes(aSS, aType, aMS)
+            //   rcad: each DS entity is a building element by type.
+            for vi in v_range.0..v_range.1 { a_ms.insert(vi); }
+            for ei in e_range.0..e_range.1 { a_ms.insert(e_base + ei); }
+            for fi in f_range.0..f_range.1 { a_ms.insert(f_base + fi); }
+        }
+
+        // OCCT L654-705: get splits of building elements
+        //   For each building element, check myImages.IsBound → add split images.
+        //   rcad: for edges: self.my_images[b].  for faces: result.face_origins count.
+        //   For faces with no images, also build BOPTools_Set for SOLID.
+        let mut a_m_args_im: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut a_m_tools_im: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut a_mset_args: Vec<std::collections::BTreeSet<usize>> = Vec::new();
+        let mut a_mset_tools: Vec<std::collections::BTreeSet<usize>> = Vec::new();
+
+        let mut im_maps = [&mut a_m_args_im, &mut a_m_tools_im];
+        let mut set_maps = [&mut a_mset_args, &mut a_mset_tools];
+
+        for (side_idx, (a_ms_im, a_mset)) in im_maps.iter_mut().zip(set_maps.iter_mut()).enumerate() {
+            let a_ms = &a_maps[side_idx]; // &HashSet<usize> for this side
+            let side_is_args = side_idx == 0;
+
+            // OCCT L667-704: for each building element
+            let mut sorted_elements: Vec<&usize> = a_ms.iter().collect();
+            sorted_elements.sort(); // deterministic order
+
+            for &&flat_idx in &sorted_elements {
+                // OCCT L670-678: Type check + degenerated edge skip
+                //   rcad: flat_idx < v_range → VERTEX, < e_range → EDGE, else FACE
+                let is_edge = flat_idx >= e_base && flat_idx < f_base;
+                let is_face = flat_idx >= f_base;
+                let local_idx = if is_edge { flat_idx - e_base }
+                    else if is_face { flat_idx - f_base }
+                    else { flat_idx };
+
+                if is_edge {
+                    // OCCT L671-678: degenerated edge check
+                    if self.ds.is_edge_degenerated(local_idx) { continue; }
+                }
+
+                // OCCT L681-691: if (myImages.IsBound(aS)) { add split images }
+                let has_images = if is_edge {
+                    self.my_images.borrow().contains_key(
+                        &rcad_kernel::topods::ShapeRef::new(local_idx))
+                } else if is_face {
+                    // Face has images if DS face produces multiple result faces
+                    let (o_exp, sfi) = if side_is_args {
+                        (ShapeOrigin::ShapeA, local_idx)
+                    } else {
+                        (ShapeOrigin::ShapeB, local_idx)
+                    };
+                    let result_count = result.face_origins.iter().filter(|fo| match fo {
+                        FaceOrigin::FromA(s) if side_is_args => *s == sfi,
+                        FaceOrigin::FromB(s) if !side_is_args => *s == sfi,
+                        _ => false,
+                    }).count();
+                    result_count > 1
+                    // If result_count == 0, the face was not split at all
+                } else {
+                    // OCCT: VERTEX images from myImages — not tracked at this level in rcad
+                    false
+                };
+
+                if has_images {
+                    // OCCT L683-689: iterate split images and add to image map
+                    let (o_exp, sfi) = if side_is_args {
+                        (ShapeOrigin::ShapeA, local_idx)
+                    } else {
+                        (ShapeOrigin::ShapeB, local_idx)
+                    };
+
+                    if is_face {
+                        for (rfi, fo) in result.face_origins.iter().enumerate() {
+                            let matches = match fo {
+                                FaceOrigin::FromA(s) if side_is_args => *s == sfi,
+                                FaceOrigin::FromB(s) if !side_is_args => *s == sfi,
+                                _ => false,
+                            };
+                            if matches {
+                                a_ms_im.insert(f_base + rfi);
+                            }
+                        }
+                    } else if is_edge {
+                        if let Some(imgs) = self.my_images.borrow().get(
+                            &rcad_kernel::topods::ShapeRef::new(local_idx))
+                        {
+                            for &sr in imgs {
+                                a_ms_im.insert(e_base + sr.index);
+                            }
+                        }
+                    }
+                } else {
+                    // OCCT L692-702: no images → add original shape
+                    a_ms_im.insert(flat_idx);
+
+                    // OCCT L694-701: for SOLID building elements, build BOPTools_Set
+                    //   rcad: for face elements, build DS face set for BOPTools_Set comparison
+                    if is_face {
+                        let mut a_st: std::collections::BTreeSet<usize> =
+                            std::collections::BTreeSet::new();
+                        // Build face set from this face and its adjacent faces in the same solid
+                        //   ⏳ rcad: BOPTools_Set at FACE level approximates OCCT's
+                        //     SOLID-level BOPTools_Set.  OCCT adds all faces of the SOLID;
+                        //     rcad adds the single DS face and its shell siblings.
+                        let (o_exp2, sfi2) = if side_is_args {
+                            (ShapeOrigin::ShapeA, local_idx)
+                        } else {
+                            (ShapeOrigin::ShapeB, local_idx)
+                        };
+                        a_st.insert(local_idx);
+                        // Add sibling faces from the same shell
+                        for (dfi2, df2) in self.ds.faces.iter().enumerate() {
+                            if dfi2 != local_idx && df2.origin == o_exp2
+                                && df2.source_shell_idx
+                                    == self.ds.faces[local_idx].source_shell_idx
+                            {
+                                a_st.insert(dfi2);
+                            }
+                        }
+                        if !a_mset.contains(&a_st) {
+                            a_mset.push(a_st);
+                        }
+                    }
+                }
+            }
+        }
+
+        // OCCT L707-783: compare the maps and make the result
+        let b_common = self.op == BooleanOpType::Intersection;
+        let b_cut21 = false; // ⏳ rcad: CUT21 not supported
+
+        // OCCT L715-720: determine iteration/check maps based on CUT21
+        let a_m_it: &std::collections::HashSet<usize> = if b_cut21 { &a_m_tools_im } else { &a_m_args_im };
+        let a_m_check: &std::collections::HashSet<usize> = if b_cut21 { &a_m_args_im } else { &a_m_tools_im };
+        let a_mset_check: &Vec<std::collections::BTreeSet<usize>> =
+            if b_cut21 { &a_mset_args } else { &a_mset_tools };
+
+        // OCCT L724-755: expand sub-shapes for COMMON
+        let a_m_it_exp: std::collections::HashSet<usize> = if b_common {
+            let mut exp = std::collections::HashSet::new();
+            for &&flat_idx in &a_m_it.iter().collect::<Vec<_>>() {
+                // OCCT L730-736: expand to lower dimensions via TypeToExplore
+                //   rcad: if this is a FACE, include its EDGEs and VERTEXes.
+                let is_edge = flat_idx >= e_base && flat_idx < f_base;
+                let is_face = flat_idx >= f_base;
+                if is_face {
+                    let local_fi = flat_idx - f_base;
+                    if local_fi < self.ds.faces.len() {
+                        for &ei in &self.ds.faces[local_fi].boundary_edges {
+                            exp.insert(e_base + ei);
+                        }
+                        for &vi in &self.ds.faces[local_fi].boundary_verts {
+                            exp.insert(vi);
+                        }
+                    }
+                } else if is_edge {
+                    let local_ei = flat_idx - e_base;
+                    if local_ei < self.ds.edges.len() {
+                        exp.insert(self.ds.edges[local_ei].start_vertex);
+                        exp.insert(self.ds.edges[local_ei].end_vertex);
+                    }
+                }
+                exp.insert(flat_idx);
+            }
+            exp
+        } else {
+            a_m_it.clone()
+        };
+
+        // OCCT L744-755: expand check side too
+        let a_m_check_exp: std::collections::HashSet<usize> = {
+            let mut exp = std::collections::HashSet::new();
+            for &&flat_idx in &a_m_check.iter().collect::<Vec<_>>() {
+                let is_edge = flat_idx >= e_base && flat_idx < f_base;
+                let is_face = flat_idx >= f_base;
+                if is_face {
+                    let local_fi = flat_idx - f_base;
+                    if local_fi < self.ds.faces.len() {
+                        for &ei in &self.ds.faces[local_fi].boundary_edges {
+                            exp.insert(e_base + ei);
+                        }
+                        for &vi in &self.ds.faces[local_fi].boundary_verts {
+                            exp.insert(vi);
+                        }
+                    }
+                } else if is_edge {
+                    let local_ei = flat_idx - e_base;
+                    if local_ei < self.ds.edges.len() {
+                        exp.insert(self.ds.edges[local_ei].start_vertex);
+                        exp.insert(self.ds.edges[local_ei].end_vertex);
+                    }
+                }
+                exp.insert(flat_idx);
+            }
+            exp
+        };
+
+        // OCCT L757-784: compare and filter
+        let mut kept_solids: Vec<Vec<usize>> = Vec::new();
+        for (i, solid_shells) in solids.iter().enumerate() {
+            let side = sides.get(i).copied().unwrap_or(0);
+            let is_args = side == 0;
+
+            // Build split face set for this result solid (BOPTools_Set equivalent)
+            let mut a_st: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
             for &si in solid_shells {
                 if let Some(shell_faces) = result.tmp_shells.get(si) {
-                    for &fi in shell_faces {
-                        if let Some(origin) = result.face_origins.get(fi) {
-                            let (exp_origin, sfi) = match origin {
-                                FaceOrigin::FromA(sfi) => (ShapeOrigin::ShapeA, *sfi),
-                                FaceOrigin::FromB(sfi) => (ShapeOrigin::ShapeB, *sfi),
-                                _ => continue,
-                            };
-                            if let Some(dfi) = self.ds.faces.iter().position(|f|
-                                f.origin == exp_origin && f.source_face_idx == sfi)
-                            {
-                                ds_set.insert(dfi);
+                    for &rfi in shell_faces {
+                        // Map result face → DS face index
+                        let dfi_opt = match result.face_origins.get(rfi) {
+                            Some(FaceOrigin::FromA(sfi)) => self.ds.faces.iter().position(|f|
+                                f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
+                            Some(FaceOrigin::FromB(sfi)) => self.ds.faces.iter().position(|f|
+                                f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi),
+                            _ => None,
+                        };
+                        if let Some(dfi) = dfi_opt {
+                            // Add the face and its lower-dim sub-shapes
+                            a_st.insert(dfi);
+                            for &vi in &self.ds.faces[dfi].boundary_verts {
+                                a_st.insert(vi);
+                            }
+                            for &ei in &self.ds.faces[dfi].boundary_edges {
+                                a_st.insert(e_base + ei);
                             }
                         }
                     }
                 }
             }
-            ds_set
-        }).collect();
 
-        // Split into args (side=0) and tools (side=1) groups
-        let mut args_face_sets: Vec<&std::collections::BTreeSet<usize>> = Vec::new();
-        let mut tools_face_sets: Vec<&std::collections::BTreeSet<usize>> = Vec::new();
-        for (i, &side) in sides.iter().enumerate() {
-            if side == 0 {
-                args_face_sets.push(&solid_ds_face_sets[i]);
+            // OCCT L762: bContains = aMCheckExp.Contains(aS)
+            let mut b_contains = a_m_check_exp.contains(&(f_base + i));
+            // OCCT L763-768: for SOLIDs, also check BOPTools_Set
+            if !b_contains && !a_st.is_empty() {
+                b_contains = a_mset_check.iter().any(|s| s == &a_st);
+            }
+
+            // OCCT L770-783: COMMON → keep if contains; CUT → keep if NOT contains
+            if b_common {
+                if b_contains {
+                    kept_solids.push(solid_shells.clone());
+                }
             } else {
-                tools_face_sets.push(&solid_ds_face_sets[i]);
-            }
-        }
-
-        let mut kept_solids: Vec<Vec<usize>> = Vec::new();
-
-        match self.op {
-            BooleanOpType::Union => {
-                // OCCT L594-608: FUSE — keep all
-                kept_solids = solids;
-            }
-            BooleanOpType::Intersection => {
-                // OCCT L724-783: COMMON — keep args solids whose face set also exists in tools
-                for (i, args_fs) in args_face_sets.iter().enumerate() {
-                    if tools_face_sets.iter().any(|tfs| tfs == args_fs) {
-                        kept_solids.push(solids[i].clone());
-                    }
-                }
-            }
-            BooleanOpType::Difference => {
-                // OCCT L724-783: CUT (A-B) — keep args solids NOT in tools
-                for (i, args_fs) in args_face_sets.iter().enumerate() {
-                    if !tools_face_sets.iter().any(|tfs| tfs == args_fs) {
-                        kept_solids.push(solids[i].clone());
-                    }
+                // OCCT L777-782: CUT (A-B) — keep if NOT in check (tools)
+                if !b_contains {
+                    kept_solids.push(solid_shells.clone());
                 }
             }
         }
+
+        // OCCT L786-809: filter result for COMMON — re-explore from high dim to low
+        if b_common {
+            let mut a_m_fence: std::collections::HashSet<usize> =
+                std::collections::HashSet::new();
+            let mut reordered: Vec<Vec<usize>> = Vec::new();
+
+            // OCCT L794-807: iterate from dim 3 (SOLID) down to iDimMin
+            //   rcad: filtered solids already contain only SOLID-level entries
+            for s in &kept_solids {
+                if a_m_fence.insert(s.len()) { // simple hash: shell count as proxy
+                    reordered.push(s.clone());
+                }
+            }
+            kept_solids = reordered;
+        }
+
+        // OCCT L811-864: degenerated edge squat
+        //   OCCT: find DEs whose vertex is in result and is not new/interfered → add
+        //   rcad: result edges are tracked in result vertices/edges, not as standalone
+        //   DE squat not applicable at this level.
+        //   ⏳ OCCT adds degenerated edges to myRC Compound.  rcad builds from
+        //     result vertices/edges/faces, where DEs are already present.
+
         result.tmp_solids = kept_solids;
     }
 
