@@ -132,13 +132,19 @@ pub(crate) fn walk_path_extract_wires_topoDS(
         })
     };
 
-    // ✅ OCCT-aligned: Coord2d (BOPAlgo_WireSplitter_1.cxx L663-674).
+    // ✅ OCCT-aligned: Coord2d (BOPAlgo_WireSplitter_1.cxx L677-688).
     // Gets UV of a vertex on a specific edge by evaluating the edge's pcurve
-    // at the vertex parameter. Uses BRepTool::curve_on_surface for pcurve lookup.
-    let vertex_uv = |_vi: ShapeRef, segment: &WireSegmentTopoDS, at_start: bool| -> Option<DVec2> {
+    // at the vertex parameter.  Uses BRepTool::parameter_on_edge (equivalent of
+    // BRep_Tool::Parameter in OCCT) to get the exact vertex parameter on each
+    // specific edge, matching OCCT's approach where different edges at the same
+    // 3D vertex each have their own pcurve parameterization.
+    let vertex_uv = |vi: ShapeRef, segment: &WireSegmentTopoDS, at_start: bool| -> Option<DVec2> {
         // Try BRepTool pcurve lookup first (OCCT: CurveOnSurface + D0).
+        let t = tool.parameter_on_edge(vi, segment.edge, segment.face)
+            .or_else(|| {
+                if at_start { Some(segment.t_range[0]) } else { Some(segment.t_range[1]) }
+            })?;
         if let Some((pc, _, _)) = tool.curve_on_surface(segment.edge, segment.face) {
-            let t = if at_start { segment.t_range[0] } else { segment.t_range[1] };
             return Some(pc.point_at(t));
         }
         // Fallback: use first_pcurve/second_pcurve from segment if available
@@ -148,7 +154,6 @@ pub(crate) fn walk_path_extract_wires_topoDS(
             segment.second_pcurve.as_ref().or(segment.first_pcurve.as_ref())
         };
         if let Some(pc) = pc {
-            let t = if at_start { segment.t_range[0] } else { segment.t_range[1] };
             return Some(pc.point_at(t));
         }
         None
