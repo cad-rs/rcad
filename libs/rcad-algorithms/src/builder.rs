@@ -2964,10 +2964,41 @@ impl<'a> BooleanBuilder<'a> {
         // OCCT L334-335: analyzeProgress (rcad: no OCCT Message_Progress API).
         // OCCT L336: // 3. Fill Images
 
-        // OCCT L445-453: EmptyShape check — early exit with history when operands
-        //   don't intersect or are fully contained.  rcad: check_data already
-        //   validates non-empty input, but TreatEmptyShape is not implemented yet.
-        //   Skip for now — the DS handles non-intersecting cases normally.
+        // OCCT L440-448: EmptyShape check
+        //   OCCT: if (HasAlert(AlertEmptyShape)) { TreatEmptyShape(); if done { PrepareHistory(); return; } }
+        //   rcad: check if any operand has zero faces in the DS.  If one side is
+        //   empty, the boolean result depends on the operation type.
+        let has_a = !a_faces.is_empty();
+        let has_b = !b_faces.is_empty();
+        if !has_a || !has_b {
+            if !has_a && !has_b {
+                // OCCT L252-256: all shapes empty → return empty result
+                return Ok((rcad_kernel::BRep::new(), BooleanHistory::default()));
+            }
+            // OCCT L258-317: one side empty → result depends on operation
+            match self.op {
+                BooleanOpType::Union => {
+                    // FUSE: return the non-empty side (OCCT L270-279)
+                    let src = if has_a { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
+                    let brep = self.brep_of_side(src, a_faces.len(), b_faces.len());
+                    return Ok((brep, BooleanHistory::default()));
+                }
+                BooleanOpType::Intersection => {
+                    // COMMON: always empty when one side is empty (OCCT L303-304)
+                    return Ok((rcad_kernel::BRep::new(), BooleanHistory::default()));
+                }
+                BooleanOpType::Difference => {
+                    if !has_a {
+                        // CUT: objects empty → result empty (OCCT L287-289)
+                        return Ok((rcad_kernel::BRep::new(), BooleanHistory::default()));
+                    }
+                    // CUT with tools empty → return objects (OCCT L281-289)
+                    let brep = self.brep_of_side(ShapeOrigin::ShapeA, a_faces.len(), b_faces.len());
+                    return Ok((brep, BooleanHistory::default()));
+                }
+                _ => {}
+            }
+        }
 
         // ✅ OCCT-aligned: dimension-by-dimension pipeline (PerformInternal1 L336-445).
         // Phase 1a: FillImagesVertices (L338-343) → BuildResult(VERTEX) (L344-348).
@@ -3112,10 +3143,61 @@ impl<'a> BooleanBuilder<'a> {
             .filter(|(_, f)| f.origin == origin)
             .map(|(i, _)| i)
             .collect();
-        // Global face index order is deterministic for a given DS; sort keeps
-        // `classify_point` and boolean emission order independent of `faces` vec layout.
         v.sort_unstable();
         v
+    }
+
+    /// OCCT L258-317: build result BRep from one side's source shapes (TreatEmptyShape path).
+    fn brep_of_side(&self, origin: ShapeOrigin, _na: usize, _nb: usize) -> rcad_kernel::BRep {
+        // OCCT L310-316: BRep_Builder().Add(myShape, aItLS.Value())
+        //   rcad: reconstruct a BRep from the DS faces/edges/vertices of one side.
+        let mut brep = rcad_kernel::BRep::new();
+        let mut v_map = std::collections::HashMap::new();
+        let mut e_map = std::collections::HashMap::new();
+        let mut edge_store: Vec<(usize, usize)> = Vec::new();
+        for (fi, f) in self.ds.faces.iter().enumerate() {
+            if f.origin != origin { continue; }
+            let mut outer_edges: Vec<(usize, bool)> = Vec::new();
+            for &ei in &f.boundary_edges {
+                if ei >= self.ds.edges.len() { continue; }
+                let e = &self.ds.edges[ei];
+                let sv = *v_map.entry(e.start_vertex).or_insert_with(|| {
+                    let vi = brep.vertices.len();
+                    brep.vertices.push(rcad_kernel::Vertex { point: self.ds.vertices[e.start_vertex].point });
+                    vi
+                });
+                let ev = *v_map.entry(e.end_vertex).or_insert_with(|| {
+                    let vi = brep.vertices.len();
+                    brep.vertices.push(rcad_kernel::Vertex { point: self.ds.vertices[e.end_vertex].point });
+                    vi
+                });
+                let ei_new = *e_map.entry(ei).or_insert_with(|| {
+                    let index = brep.edges.len();
+                    brep.edges.push(rcad_kernel::Edge { start: sv, end: ev });
+                    edge_store.push((e.start_vertex, e.end_vertex));
+                    index
+                });
+                outer_edges.push((ei_new, true));
+            }
+            let face_normal = f.normal;
+            let surf = f.surface.clone();
+            let rcad_face = rcad_kernel::topology::Face {
+                outer_wire: rcad_kernel::topology::Wire { edges: outer_edges.into_iter().map(|(i, _)| rcad_kernel::topology::WireEdge::fwd(i)).collect() },
+                inner_wires: vec![],
+                normal: face_normal,
+                triangles: vec![],
+                sample_point: None,
+                mesh_dirty: false,
+                surface_idx: None,
+            };
+            brep.geom.surfaces.push(surf);
+            let surfi = brep.geom.surfaces.len() - 1;
+            brep.geom.face_surface.push(Some(surfi));
+            let shell = rcad_kernel::topology::Shell { faces: vec![rcad_face] };
+            let solid = rcad_kernel::topology::Solid { shells: vec![shell] };
+            brep.solids.push(solid);
+        }
+        brep
     }
 
     fn is_glued_face(&self, fi: usize, others: &[usize]) -> bool {
