@@ -833,6 +833,62 @@ impl std::fmt::Display for BOPToolsSet {
     }
 }
 
+/// ✅ OCCT-aligned: FindPlane from curve (BOPAlgo_Tools.cxx L910-970).
+///
+/// Finds the plane in which the curve lies.
+/// - Line: no unique plane → returns None.
+/// - Circle/Ellipse/Hyperbola/Parabola: normal = curve axis direction.
+/// - Other (BSpline etc.): cross two D1 tangents at different parameters.
+///
+/// Returns `Some(normal, point_on_plane)` or `None`.
+pub fn find_plane(curve: &Curve3) -> Option<(glam::DVec3, glam::DVec3)> {
+    match curve {
+        Curve3::Line(_) => {
+            // OCCT L922: Line has no unique plane
+            None
+        }
+        Curve3::Circle(c) => {
+            // OCCT L923-925: Circle → normal = circle axis
+            let normal = c.normal.normalize();
+            let point = c.center;
+            Some((normal, point))
+        }
+        Curve3::Ellipse(e) => {
+            // OCCT L926-928: Ellipse → normal = ellipse axis (major × minor)
+            let normal = e.major_dir.cross(e.normal).normalize();
+            let point = e.center;
+            Some((normal, point))
+        }
+        _ => {
+            // OCCT L935-963: For other curve types (BSpline, etc.),
+            // sample two D1 tangents at different points and cross them.
+            let t_range = curve.default_domain();
+            let t1 = t_range[0];
+            let t2 = t_range[1];
+            if (t2 - t1).abs() < 1e-15 {
+                return None;
+            }
+            let a_nb_p = 11usize;
+            let a_dt = (t2 - t1) / a_nb_p as f64;
+
+            let p1 = curve.point_at(t1);
+            let v1 = curve.tangent_at(t1);
+
+            let mut t = t1 + a_dt;
+            for _ in 1..=a_nb_p {
+                let v2 = curve.tangent_at(t);
+                let cross = v1.cross(v2);
+                if cross.length_squared() > 1e-30 {
+                    let normal = cross.normalize();
+                    return Some((normal, p1));
+                }
+                t += a_dt;
+            }
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
