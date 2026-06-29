@@ -1155,8 +1155,10 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
         if nei >= ds.edges.len() { continue; }
         let edge = &ds.edges[nei];
         if edge.start_vertex == edge.end_vertex { continue; }
-        // OCCT L484-494: FWD + REV orientations for each section edge PB.
-        // Vertex remapping now done in make_section_edges_from_curve_pbs.
+        // OCCT L484-494: single segment per section edge PB. OCCT uses a single
+        // TopoDS_Edge with orientation; rcad stores direction in in_flag via
+        // build_smart_map. No REV segment needed — removes duplicate-PID issues
+        // in perform_shapes_to_avoid and simplifies the segment graph.
         let sv_remap = edge.start_vertex;
         let ev_remap = edge.end_vertex;
         // ✅ OCCT-aligned: propagate pcurve from DSEdge face_reps to WireSegment.
@@ -1169,16 +1171,9 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
         segments.push(WireSegment {
             start_vertex: sv_remap, end_vertex: ev_remap,
             source: WireEdgeSource::DsEdge(nei), orientation: WireOrientation::Forward,
-            is_seam: false, second_pcurve: None, first_pcurve: sec_pcurve.clone(),
-            t_range: edge.t_range,
-            tangent_start: t_fwd_s, tangent_end: t_fwd_e,
-        });
-        segments.push(WireSegment {
-            start_vertex: ev_remap, end_vertex: sv_remap,
-            source: WireEdgeSource::DsEdge(nei), orientation: WireOrientation::Reversed,
             is_seam: false, second_pcurve: None, first_pcurve: sec_pcurve,
             t_range: edge.t_range,
-            tangent_start: t_fwd_e, tangent_end: t_fwd_s,
+            tangent_start: t_fwd_s, tangent_end: t_fwd_e,
         });
     }
     segments
