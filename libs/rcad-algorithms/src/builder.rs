@@ -45,7 +45,7 @@ mod builder_utils;
 
 pub(crate) use builder_utils::{
     curve_eq, hash_point,
-    classify_subface_against_box, classify_against_solid_for_boolean,
+    classify_subface_against_box, compute_state,
     is_tangent_face, build_edge_bounds, quantize_pos,
     check_and_add_split_vertex, collect_face_edge_segments,
     cmp_boolean_emit_order,
@@ -253,7 +253,7 @@ impl<'a> BooleanBuilder<'a> {
         let (avoided_pids, pid_segs) = crate::builder::wire_splitter::perform_shapes_to_avoid_topo_ds(
             &segments_topo, tool);
         let mut avoided = crate::builder::wire_splitter::expand_avoided_pids(&avoided_pids, &pid_segs);
-        let wires = crate::builder::wire_path_topo_ds::build_closed_wires_topoDS(
+        let wires = crate::builder::wire_path_topo_ds::build_closed_wires(
             &segments_topo, &avoided, tool);
 
         let in_loop: HashSet<usize> = wires.iter().flatten().copied().collect();
@@ -261,11 +261,11 @@ impl<'a> BooleanBuilder<'a> {
             if !in_loop.contains(&si) && !avoided.contains(&si) { avoided.insert(si); }
         }
         // OCCT L327-382: group connected avoided edges into internal wires
-        let internal_wire_groups = crate::builder::wire_path_topo_ds::build_internal_wires_topoDS(
+        let internal_wire_groups = crate::builder::wire_path_topo_ds::build_internal_wires(
             &segments_topo, &avoided);
 
         let wfs = if !wires.is_empty() {
-            crate::builder::wire_path_topo_ds::perform_areas_topo_ds(
+            crate::builder::wire_path_topo_ds::perform_areas(
                 &wires, &internal_wire_groups, &segments_topo, tool, face_idx, ds)
         } else if !avoided.is_empty() {
             vec![WireFace { outer_wire: vec![], inner_wires: vec![], internal_wires: segments_topo.iter().enumerate().filter(|(si, _)| avoided.contains(si)).map(|(si, _)| vec![si]).collect() }]
@@ -276,7 +276,7 @@ impl<'a> BooleanBuilder<'a> {
 
         let mut wfs = wfs;
         // ✅ OCCT-aligned L147: PerformInternalShapes
-        crate::builder::wire_path_topo_ds::perform_internal_shapes_topo_ds(
+        crate::builder::wire_path_topo_ds::perform_internal_shapes(
             &mut wfs, &internal_wire_groups, &segments_topo, tool, face_idx, ds);
 
         let origin = if is_a {

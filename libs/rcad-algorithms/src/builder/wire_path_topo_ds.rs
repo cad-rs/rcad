@@ -99,7 +99,7 @@ pub(crate) fn select_best_outgoing_topo<'a>(
 /// Walk a path extracting closed wires using BRepTool-based data access.
 ///
 /// Analogous to walk_path_extract_wires but uses ShapeRef handles and BRepTool
-pub(crate) fn walk_path_extract_wires_topoDS(
+pub(crate) fn walk_path_extract_wires(
     start_si: usize,
     segments: &[WireSegmentTopoDS],
     smart_map: &mut IndexMap<usize, Vec<EdgeInfo>>,
@@ -333,7 +333,7 @@ pub(crate) fn walk_path_extract_wires_topoDS(
 /// OCCT-aligned: RefineAngles (WireSplitter_1.cxx L919-1043).
 /// For each multi-vertex with 2 boundary edges, adjust internal edge angles
 /// that fall outside the boundary sweep.  Uses BRepTool for angle computation.
-fn refine_angles_topoDS(
+fn refine_angles(
     smart_map: &mut IndexMap<usize, Vec<EdgeInfo>>,
     segments: &[WireSegmentTopoDS],
     tool: &dyn BRepTool,
@@ -405,7 +405,7 @@ fn refine_angles_topoDS(
 }
 
 /// ✅ OCCT-aligned: TopoDS-based SplitBlock — refine angles + path walk for irregular blocks.
-pub(crate) fn split_block_topoDS(
+pub(crate) fn split_block(
     block: &[usize],
     segments: &[WireSegmentTopoDS],
     smart_map: &mut IndexMap<usize, Vec<EdgeInfo>>,
@@ -413,7 +413,7 @@ pub(crate) fn split_block_topoDS(
     tool: &dyn BRepTool,
 ) {
     // OCCT L324: RefineAngles before Path walk
-    refine_angles_topoDS(smart_map, segments, tool);
+    refine_angles(smart_map, segments, tool);
     // OCCT L331-358: Path walk
     let order_keys: Vec<usize> = smart_map.keys().copied().collect();
     for &v in &order_keys {
@@ -424,7 +424,7 @@ pub(crate) fn split_block_topoDS(
                 && (segments[ei.seg_idx].start_vertex.index != segments[ei.seg_idx].end_vertex.index
                     || segments[ei.seg_idx].is_seam)
             {
-                walk_path_extract_wires_topoDS(ei.seg_idx, segments, smart_map, wires, tool);
+                walk_path_extract_wires(ei.seg_idx, segments, smart_map, wires, tool);
             }
         }
     }
@@ -433,7 +433,7 @@ pub(crate) fn split_block_topoDS(
 /// ✅ OCCT-aligned: TopoDS-based build_closed_wires — SmartMap + angle computation + wire walking.
 ///
 /// Simplified version without vi_to_canon/deg_end_canon (ShapeRef handles use DS indices directly).
-pub(crate) fn build_closed_wires_topoDS(
+pub(crate) fn build_closed_wires(
     segments: &[WireSegmentTopoDS],
     avoided: &HashSet<usize>,
     tool: &dyn BRepTool,
@@ -449,7 +449,7 @@ pub(crate) fn build_closed_wires_topoDS(
     }
 
     // Build connexity blocks
-    let blocks = make_connexity_blocks_topoDS(segments, avoided, &vert_to_segs, n);
+    let blocks = make_connexity_blocks(segments, avoided, &vert_to_segs, n);
 
     // Process each block
     let mut wires: Vec<Vec<usize>> = Vec::new();
@@ -457,7 +457,7 @@ pub(crate) fn build_closed_wires_topoDS(
         if block.len() < 2 { continue; }
 
         // Build SmartMap
-        let smart_map = build_smart_map_topoDS(block, segments, tool);
+        let smart_map = build_smart_map(block, segments, tool);
         if smart_map.is_empty() { continue; }
 
         // Check regularity
@@ -473,19 +473,19 @@ pub(crate) fn build_closed_wires_topoDS(
 
         if is_regular {
             // Regular: simple cyclic wire from block
-            if let Some(wire) = build_regular_wire_topoDS(block) {
+            if let Some(wire) = build_regular_wire(block) {
                 wires.push(wire);
             }
         } else {
             // Irregular: split via path walk
-            split_block_topoDS(block, segments, &mut (smart_map.clone()), &mut wires, tool);
+            split_block(block, segments, &mut (smart_map.clone()), &mut wires, tool);
         }
     }
     wires
 }
 
 /// Build SmartMap for TopoDS segments with angle computation.
-fn build_smart_map_topoDS(
+fn build_smart_map(
     block: &[usize],
     segments: &[WireSegmentTopoDS],
     tool: &dyn BRepTool,
@@ -586,7 +586,7 @@ fn build_smart_map_topoDS(
 }
 
 /// Build a regular wire from a block (all vertices have degree 2).
-fn build_regular_wire_topoDS(block: &[usize]) -> Option<Vec<usize>> {
+fn build_regular_wire(block: &[usize]) -> Option<Vec<usize>> {
     if block.is_empty() { return None; }
     let mut result: Vec<usize> = Vec::with_capacity(block.len());
     if block.len() == 1 {
@@ -599,7 +599,7 @@ fn build_regular_wire_topoDS(block: &[usize]) -> Option<Vec<usize>> {
 }
 
 /// Connected-component grouping for TopoDS segments.
-fn make_connexity_blocks_topoDS(
+fn make_connexity_blocks(
     segments: &[WireSegmentTopoDS],
     avoided: &HashSet<usize>,
     vert_to_segs: &HashMap<usize, Vec<usize>>,
@@ -638,7 +638,7 @@ fn make_connexity_blocks_topoDS(
 /// ✅ OCCT-aligned: BOPAlgo_BuilderFace::PerformAreas (L420-499).
 ///   Uses IsGrowthWire fast pre-check + IsHole classification via UV signed area.
 ///   Returns Vec<WireFace> for backward compatibility with emit_wire_face_topods.
-pub(crate) fn perform_areas_topo_ds(
+pub(crate) fn perform_areas(
     wires: &[Vec<usize>],
     internal_wires: &[Vec<usize>],
     segments: &[WireSegmentTopoDS],
@@ -837,7 +837,7 @@ pub(crate) fn perform_areas_topo_ds(
 
 /// ✅ OCCT-aligned: BOPAlgo_BuilderFace::PerformInternalShapes (L618-778).
 ///   Classify internal wire groups against result faces via UV point-in-polygon.
-pub(crate) fn perform_internal_shapes_topo_ds(
+pub(crate) fn perform_internal_shapes(
     wfs: &mut Vec<WireFace>,
     internal_wire_groups: &[Vec<usize>],
     segments: &[WireSegmentTopoDS],
@@ -912,7 +912,7 @@ pub(crate) fn perform_internal_shapes_topo_ds(
 }
 
 /// OCCT BOPAlgo_BuilderFace::PerformLoops L327-382: group connected avoided edges into internal wires.
-pub(crate) fn build_internal_wires_topoDS(
+pub(crate) fn build_internal_wires(
     segments: &[WireSegmentTopoDS],
     avoided: &HashSet<usize>,
 ) -> Vec<Vec<usize>> {

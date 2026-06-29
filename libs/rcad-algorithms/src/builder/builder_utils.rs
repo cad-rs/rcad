@@ -466,7 +466,7 @@ pub(crate) fn classify_subface_against_box(
 //    鎺ュ彈 FaceSampleData(浠?WireFace 鎴?FaceSampleData 鏋勯€?銆?
 /// ✅ OCCT-aligned: classify_against_solid_for_boolean — ComputeState (OCCT BOPAlgo_Builder).
 /// OCCT-aligned: BOPTools_AlgoTools::ComputeState (cxx L660-714).
-pub(crate) fn classify_against_solid_for_boolean(
+pub(crate) fn compute_state(
     _op: BooleanOpType,
     _source: SourceSide,
     sub: &FaceSampleData,

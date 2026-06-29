@@ -678,7 +678,7 @@ impl<'a> PaveFiller<'a> {
             // ✅ OCCT-aligned: InitPaveBlock1 for each IC (BOPDS_Curve::InitPaveBlock1
             //   is called during PerformFF in OCCT).  rcad ICs are created with empty
             //   pave_blocks; this gives them the default PB needed by
-            //   make_section_edges_from_curve_pbs (inside make_blocks).
+            //   make_section_edges (inside make_blocks).
             for ci in 0..self.ds.intersection_curves.len() {
                 self.ds.intersection_curves[ci].init_pave_block1();
             }
@@ -927,7 +927,7 @@ impl<'a> PaveFiller<'a> {
             }
         }
     }
-    fn make_section_edges_from_curve_pbs(&mut self) {
+    fn make_section_edges(&mut self) {
         let n_edges_before = self.ds.edges.len();
         // Initialize section_edge_refs (used by ds_to_brep for IC -> DSEdge mapping)
         self.ds.section_edge_refs = vec![Vec::new(); self.ds.intersection_curves.len()];
@@ -1604,7 +1604,7 @@ impl<'a> PaveFiller<'a> {
             // OCCT L84-101: FindPaveBlocks — locate PBs in this face's sets that pass through nV
             // (simplified: the pave_block info is already in the edge's PBs)
             // Ensure the degen edge's PB has an ext pave at the degenerate vertex
-            // so make_section_edges_from_curve_pbs will split it properly.
+            // so make_section_edges will split it properly.
         }
     }
 
@@ -2804,7 +2804,7 @@ impl<'a> PaveFiller<'a> {
                 }
             }
             // prepare_lines_3d may have split closed curves. register split siblings (ci+1)
-            // on both faces so make_section_edges_from_curve_pbs sees them.
+            // on both faces so make_section_edges sees them.
             let mut split_extra: Vec<usize> = Vec::new();
             for &ci in &ff_curves {
                 if ci + 1 < self.ds.intersection_curves.len() && !split_extra.contains(&(ci + 1)) {
@@ -5952,7 +5952,7 @@ impl<'a> PaveFiller<'a> {
             //   add interior vertices as ext_paves on the curve's PaveBlock via
             //   put_pave_on_curve (= PutPaveOnCurve in OCCT PaveFiller_6.cxx L833-900).
             //   The PaveBlock's update() will later produce sub-PBs from these ext_paves,
-            //   and make_section_edges_from_curve_pbs creates DSEdges from each sub-PB.
+            //   and make_section_edges creates DSEdges from each sub-PB.
             let [t0_live, t1_live] = self.ds.intersection_curves[ci].t_range;
             for &(p, vi) in &on_curve {
                 // Skip vertices at or near endpoints (already boundary vertices)
@@ -5963,7 +5963,7 @@ impl<'a> PaveFiller<'a> {
             }
         }
         // �?OCCT-aligned: ext_paves have been added via put_pave_on_curve above.
-        //   make_section_edges_from_curve_pbs will later call update() on each
+        //   make_section_edges will later call update() on each
         //   curve's PB to produce sub-PBs (OCCT PaveFiller_6.cxx L882-980).
         //   Sub-PBs that are too short (no valid range) will be excluded there.
 
@@ -6091,7 +6091,7 @@ impl<'a> PaveFiller<'a> {
 
         // �?OCCT-aligned: MakeSectionEdges from curve PaveBlocks (PaveFiller_6.cxx L882-980).
         //   Creates DSEdges from curve PBs split by ext_paves.
-        self.make_section_edges_from_curve_pbs();
+        self.make_section_edges();
 
         // �?OCCT-aligned: Build edge images from pave blocks (FillImagesEdges)
         self.ds.build_edge_images();

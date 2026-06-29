@@ -91,8 +91,8 @@ impl<'a> super::PaveFiller<'a> {
             })
             .flat_map(|&(ae, be)| {
                 // OCCT L200-232: iterate PaveBlocks per edge (GetPBBox)
-                let ra = Self::collect_paveblock_ranges_static(ds, ae, ds.edges[ae].t_range);
-                let rb = Self::collect_paveblock_ranges_static(ds, be, ds.edges[be].t_range);
+                let ra = Self::get_pb_boxes(ds, ae, ds.edges[ae].t_range);
+                let rb = Self::get_pb_boxes(ds, be, ds.edges[be].t_range);
                 let mut v = Vec::new();
                 for &r1 in &ra { for &r2 in &rb { v.push((ae, be, r1, r2)); } }
                 v
@@ -100,11 +100,11 @@ impl<'a> super::PaveFiller<'a> {
             .collect();
         // OCCT L244+: BOPTools_AlgoTools::IntersectCurves for each pair
         for &(ae, be, r1, r2) in &blocks {
-            self.check_edge_edge_range(ae, be, r1, r2);
+            self.intersect_ee(ae, be, r1, r2);
         }
     }
     /// OCCT: PaveBlock range extraction (GetPBBox equivalent)
-    pub(crate) fn collect_paveblock_ranges_static(ds: &DS, edge_idx: usize, edge_t_range: [f64; 2]) -> Vec<[f64; 2]> {
+    pub(crate) fn get_pb_boxes(ds: &DS, edge_idx: usize, edge_t_range: [f64; 2]) -> Vec<[f64; 2]> {
         let paves = &ds.edges[edge_idx].paves;
         if paves.is_empty() { return vec![edge_t_range]; }
         let mut params: Vec<f64> = paves.iter().map(|p| p.param).filter(|p| p.is_finite()).collect();
@@ -177,13 +177,13 @@ impl<'a> super::PaveFiller<'a> {
                 }
                 if results.is_empty() {
                     // Fallback: no PBs �?use full edge range (OCCT L240: aLPB outer iteration)
-                    let r = Self::collect_paveblock_ranges_static(ds, ei, ds.edges[ei].t_range);
+                    let r = Self::get_pb_boxes(ds, ei, ds.edges[ei].t_range);
                     r.into_iter().map(move |range| (ei, fi, range)).collect::<Vec<_>>()
                 } else { results }
             })
             .collect();
         for &(ei, fi, r) in &blocks {
-            self.intersect_edge_face_range(ei, fi, &r);
+            self.intersect_ef(ei, fi, &r);
         }
     }
     /// OCCT BOPDS_Iterator: face BVH construction
@@ -543,7 +543,7 @@ impl<'a> super::PaveFiller<'a> {
                 // OCCT L215-240: iterate PaveBlock pairs + GetPBBox + intersect
                 for ra in &ranges_a {
                     for rb in &ranges_b {
-                        self.check_edge_edge_range(ae, be, *ra, *rb);
+                        self.intersect_ee(ae, be, *ra, *rb);
                     }
                 }
             }
@@ -552,7 +552,7 @@ impl<'a> super::PaveFiller<'a> {
     }
     // OCCT PaveFiller_3.cxx L215-296: GetPBBox + IntersectCurves + AddInterf
     /// OCCT PaveFiller_3.cxx L580-640: CheckEdgeEdge
-    pub(crate) fn check_edge_edge_range(&mut self, e1: usize, e2: usize,
+    pub(crate) fn intersect_ee(&mut self, e1: usize, e2: usize,
                               range1: [f64; 2], range2: [f64; 2]) {
         let edge1 = &self.ds.edges[e1];
         let edge2 = &self.ds.edges[e2];
@@ -1015,7 +1015,7 @@ impl<'a> super::PaveFiller<'a> {
                 for &fi in &b_faces {
                     // OCCT: myDS->HasInterf(nE, nF) �?skip if already interfered
                     if self.ds.has_interf_ef(ei, fi) { continue; }
-                    self.intersect_edge_face_range(ei, fi, r);
+                    self.intersect_ef(ei, fi, r);
                 }
             }
         }
@@ -1031,7 +1031,7 @@ impl<'a> super::PaveFiller<'a> {
             for r in &ranges {
                 for &fi in &a_faces {
                     if self.ds.has_interf_ef(ei, fi) { continue; }
-                    self.intersect_edge_face_range(ei, fi, r);
+                    self.intersect_ef(ei, fi, r);
                 }
             }
         }
@@ -1135,7 +1135,7 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
     /// OCCT PaveFiller_5.cxx L340-480: IntersectEdgeFace
-    pub(crate) fn intersect_edge_face_range(&mut self, edge_idx: usize, face_idx: usize, pb_range: &[f64; 2]) {
+    pub(crate) fn intersect_ef(&mut self, edge_idx: usize, face_idx: usize, pb_range: &[f64; 2]) {
         let edge_curve = self.ds.edges[edge_idx].curve.clone();
         let edge_t_range = self.ds.edges[edge_idx].t_range;
 
