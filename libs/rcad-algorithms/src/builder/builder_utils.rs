@@ -676,9 +676,10 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
         }
 
         // ✅ OCCT L395-404: bIsClosed via IsClosed + IsEdgeIsoline.
+        // On U-closed periodic surfaces (Sphere, Cylinder, Cone), seam edges
+        // are U-isolines. Vertex coincidence NOT required (sphere pole-to-pole).
         let b_is_degenerated = ds.is_edge_degenerated(ei);
-        let b_edge_closed = sv == ev || are_verts_coincident(ds, sv, ev);
-        let b_is_seam = if !b_is_degenerated && b_edge_closed && (is_u_closed || is_v_closed) {
+        let b_is_seam = if !b_is_degenerated && (is_u_closed || is_v_closed) {
             if let Some(rep) = ds.edge_on_face(ei, face_idx) {
                 let (is_uiso, is_v_iso) = is_edge_isoline(&rep.pcurve, rep.pcurve_range);
                 (is_u_closed && is_uiso) || (is_v_closed && is_v_iso)
@@ -927,8 +928,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
         }
 
         let b_is_degenerated = ds.is_edge_degenerated(ei);
-        let b_edge_closed = sv == ev || are_verts_coincident(ds, sv, ev);
-        let b_is_seam = if !b_is_degenerated && b_edge_closed && (is_u_closed || is_v_closed) {
+        let b_is_seam = if !b_is_degenerated && (is_u_closed || is_v_closed) {
             if let Some(rep) = ds.edge_on_face(ei, face_idx) {
                 let (is_uiso, is_v_iso) = is_edge_isoline(&rep.pcurve, rep.pcurve_range);
                 (is_u_closed && is_uiso) || (is_v_closed && is_v_iso)

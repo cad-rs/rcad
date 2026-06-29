@@ -70,8 +70,15 @@ pub fn build_sphere_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face
         segs.push(WireSegment {
             start_vertex: sv, end_vertex: ev,
             source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Forward,
-            is_seam: true, second_pcurve: second_pcurve, first_pcurve,
+            is_seam: true, second_pcurve: None, first_pcurve,
             t_range: [0.0, 1.0], tangent_start: ts, tangent_end: te,
+        });
+        let (ts_rev, te_rev) = compute_seam_tangent_angles(ds, ei, ev, sv, &face.surface);
+        segs.push(WireSegment {
+            start_vertex: ev, end_vertex: sv,
+            source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Reversed,
+            is_seam: true, second_pcurve, first_pcurve: None, t_range: [0.0, 1.0],
+            tangent_start: ts_rev, tangent_end: te_rev,
         });
     }
     segs

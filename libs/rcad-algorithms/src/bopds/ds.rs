@@ -1349,8 +1349,18 @@ impl DS {
             //   OCCT's stored pcurve (the edge is short enough that the pcurve is
             //   well-approximated by a line segment in UV space).
             (Surface3::Sphere(s), _) => {
-                let uv_start = s.world_to_uv(curve.point_at(0.0));
-                let uv_end = s.world_to_uv(curve.point_at(1.0));
+                let mut uv_start = s.world_to_uv(curve.point_at(0.0));
+                let mut uv_end = s.world_to_uv(curve.point_at(1.0));
+                // At sphere poles (V=0 or V=π), U is undefined (atan2(0,0) ambiguity).
+                // Use the midpoint's U which is reliable (midpoint is at or near equator).
+                let at_pole = |v: f64| v.abs() < 1e-10 || (v - std::f64::consts::PI).abs() < 1e-10;
+                if at_pole(uv_start.y) && at_pole(uv_end.y) {
+                    let uv_mid = s.world_to_uv(curve.point_at(0.5));
+                    uv_start.x = uv_mid.x; uv_end.x = uv_mid.x;
+                } else {
+                    if at_pole(uv_start.y) { uv_start.x = uv_end.x; }
+                    if at_pole(uv_end.y) { uv_end.x = uv_start.x; }
+                }
                 let delta = uv_end - uv_start;
                 let span = delta.length();
                 if span < 1e-15 || !span.is_finite() { return None; }
@@ -1503,7 +1513,19 @@ impl DS {
             for &ei in &all_ei {
                 if self.edge_on_face(ei, fi).is_some() { continue; } // already computed
                 let Some(edge) = self.edges.get_mut(ei) else { continue; };
-                if let Some((pcurve, span)) = Self::compute_edge_pcurve(&edge.curve, &surface) {
+                if let Some((mut pcurve, mut span)) = Self::compute_edge_pcurve(&edge.curve, &surface) {
+                    // Scale pcurve direction to match edge's 3D parameter range.
+                    // OCCT Geom2d_Curve::Value(t) uses the 3D curve parameter t,
+                    // not normalized UV-space.  pcurve point_at(raw_t) must give
+                    // the correct UV for any raw 3D parameter t on the edge.
+                    let t_span = edge.t_range[1] - edge.t_range[0];
+                    if t_span.abs() > 1e-15 && (span - t_span.abs()).abs() > 1e-12 {
+                        let scale = span / t_span;
+                        if let Curve2d::Line(ref mut l) = pcurve {
+                            l.direction *= scale;
+                        }
+                        span = t_span;
+                    }
                     edge.face_reps.push(DSRepOnFace {
                         face_idx: fi,
                         pcurve,

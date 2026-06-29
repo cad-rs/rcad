@@ -79,6 +79,19 @@ impl BRepTool for DSAsBRep<'_> {
             .unwrap_or(edge)
     }
 
+    fn last_vertex(&self, edge: ShapeRef) -> ShapeRef {
+        self.ds.edges.get(edge.index)
+            .map(|e| ShapeRef::new(e.end_vertex))
+            .unwrap_or(edge)
+    }
+
+    fn oriented_first_vertex(&self, edge: ShapeRef, orientation: Orientation) -> ShapeRef {
+        self.ds.edges.get(edge.index).map(|e| {
+            let vi = if orientation == Orientation::Reversed { e.end_vertex } else { e.start_vertex };
+            ShapeRef::new(vi)
+        }).unwrap_or(edge)
+    }
+
     fn parameter_on_edge(&self, vertex: ShapeRef, edge: ShapeRef, _face: ShapeRef) -> Option<f64> {
         self.vertex_param_cache.get(&edge.index)
             .and_then(|vpm| vpm.get(&vertex.index).copied())

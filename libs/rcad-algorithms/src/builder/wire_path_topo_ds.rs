@@ -140,9 +140,10 @@ pub(crate) fn walk_path_extract_wires(
         Some(pc.point_at(t))
     };
     // ✅ OCCT-aligned: Coord2dVf (BOPAlgo_WireSplitter_1.cxx L692-711).
-    let coord2d_vf = |edge: ShapeRef, face: ShapeRef| -> Option<DVec2> {
-        let fwd_v = tool.first_vertex(edge);
-        coord2d(fwd_v, edge, face)
+    // Uses oriented_first_vertex to respect edge orientation in the face wire.
+    let coord2d_vf = |seg: &WireSegmentTopoDS| -> Option<DVec2> {
+        let fwd_v = tool.oriented_first_vertex(seg.edge, seg.orientation);
+        coord2d(fwd_v, seg.edge, seg.face)
     };
 
     // OCCT Tolerance2D/UTolerance2D/VTolerance2D (BOPAlgo_WireSplitter_1.cxx L873-912)
@@ -302,7 +303,7 @@ pub(crate) fn walk_path_extract_wires(
             else {
                 // OCCT L584-596: 2D distance filter for closed vertices
                 if b_is_closed {
-                    let cand_uv = coord2d_vf(segments[ei.seg_idx].edge, segments[ei.seg_idx].face)
+                    let cand_uv = coord2d_vf(&segments[ei.seg_idx])
                         .unwrap_or(DVec2::ZERO);
                     if cand_uv.distance_squared(a_pb) >= a_tol_2d_sq { continue; }
                 }

@@ -324,6 +324,11 @@ pub trait BRepTool {
     fn edge_other_vertex(&self, edge: ShapeRef, v: ShapeRef) -> ShapeRef;
     /// First vertex of an edge (FORWARD orientation, OCCT TopExp::FirstVertex).
     fn first_vertex(&self, edge: ShapeRef) -> ShapeRef;
+    /// Last vertex of an edge (FORWARD orientation, OCCT TopExp::LastVertex).
+    fn last_vertex(&self, edge: ShapeRef) -> ShapeRef;
+    /// TopExp::FirstVertex on an oriented edge — canonical first for FORWARD,
+    /// canonical last for REVERSED.  Matches OCCT's orientation-aware topology.
+    fn oriented_first_vertex(&self, edge: ShapeRef, orientation: Orientation) -> ShapeRef;
     /// BRep_Tool::Parameter(aV, aE, aF) — vertex parameter on edge's pcurve.
     fn parameter_on_edge(&self, vertex: ShapeRef, edge: ShapeRef, face: ShapeRef) -> Option<f64>;
     /// BRep_Tool::CurveOnSurface(aE, aF) — pcurve of edge on face.
@@ -359,6 +364,18 @@ impl BRepTool for BRep {
 
     fn first_vertex(&self, edge: ShapeRef) -> ShapeRef {
         self.edge(edge).first
+    }
+
+    fn last_vertex(&self, edge: ShapeRef) -> ShapeRef {
+        self.edge(edge).last
+    }
+
+    fn oriented_first_vertex(&self, edge: ShapeRef, orientation: Orientation) -> ShapeRef {
+        if orientation == Orientation::Reversed {
+            self.last_vertex(edge)
+        } else {
+            self.first_vertex(edge)
+        }
     }
 
     fn parameter_on_edge(&self, vertex: ShapeRef, edge: ShapeRef, _face: ShapeRef) -> Option<f64> {
