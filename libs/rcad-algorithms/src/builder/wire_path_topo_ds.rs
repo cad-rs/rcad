@@ -815,6 +815,12 @@ pub(crate) fn perform_areas(
     let mut g2h: HashMap<usize, Vec<usize>> = HashMap::new();
     for &(h, g) in &h2g { g2h.entry(g).or_default().push(h); }
 
+    // OCCT L584-613: build result WireFaces — each wire becomes its own face.
+    //   OCCT BOPAlgo_BuilderFace::PerformAreas creates a separate TopoDS_Face
+    //   for EACH wire (growth or hole).  The caller (ComputeState) then classifies
+    //   each face independently, removing those that are In the opposing solid.
+    //   rcad legacy approach merged holes as inner_wires, preventing per-face
+    //   classification and leaving internal vertices in the result.
     // OCCT L584-613: build result WireFaces
     let mut result: Vec<WireFace> = a_new_faces.iter().enumerate().map(|(gi, w)| WireFace {
         outer_wire: w.clone(),
