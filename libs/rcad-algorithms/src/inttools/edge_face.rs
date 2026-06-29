@@ -1,6 +1,6 @@
 use glam::DVec3;
 use rcad_kernel::geom::*;
-
+use crate::bopds::ds::DS;
 use crate::tolerance::*;
 
 pub struct EdgeFaceHit {
@@ -114,6 +114,189 @@ pub fn clip_line_to_convex_polygon(
 ) -> Option<(f64, f64)> {
     let intervals = clip_line_to_polygon_with_tol(line, plane, face_verts, TOLERANCE_ABS);
     intervals.first().copied()
+}
+
+/// ✅ OCCT-aligned: compute_edge_face_criteria (IntTools_EdgeFace.cxx L528-548).
+/// Computes the tolerance sum for edge-face intersection.
+/// For BSpline/Bezier curves with large tolerance ratio, uses max.
+pub fn compute_edge_face_criteria(edge_tol: f64, face_tol: f64, curve_type: &Curve3) -> f64 {
+    let fuzz = 0.0;
+    let a_tol_f = face_tol + fuzz;
+    let a_tol_e = edge_tol + fuzz;
+    match curve_type {
+        Curve3::BSpline(_) | Curve3::Bezier(_) => {
+            let diff1 = a_tol_e / a_tol_f.max(1e-30);
+            let diff2 = a_tol_f / a_tol_e.max(1e-30);
+            if diff1 > 100.0 || diff2 > 100.0 {
+                a_tol_e.max(a_tol_f)
+            } else {
+                1.5 * a_tol_e + a_tol_f
+            }
+        }
+        _ => a_tol_e + a_tol_f,
+    }
+}
+
+/// ✅ OCCT-aligned: IsEqDistance (IntTools_EdgeFace.cxx L240-299).
+/// Checks if point is near the axis of a cylindrical/conical/toroidal surface,
+/// returning the surface's radius at that point.
+pub fn is_eq_distance(p: DVec3, surface: &Surface3, tol: f64) -> Option<f64> {
+    match surface {
+        Surface3::Cylinder(c) => {
+            let v = p - c.origin;
+            let proj = v.dot(c.axis);
+            let radial = v - c.axis * proj;
+            let dist = radial.length();
+            if dist < tol {
+                Some(c.radius)
+            } else {
+                None
+            }
+        }
+        Surface3::Cone(cn) => {
+            let axis = cn.axis_dir();
+            let v = p - cn.apex;
+            let proj = v.dot(axis);
+            let radial = v - axis * proj;
+            let dist = radial.length();
+            if dist < tol {
+                let r_at_z = cn.radius + proj * cn.half_angle_rad.tan();
+                Some(r_at_z.abs())
+            } else {
+                None
+            }
+        }
+        Surface3::Torus(t) => {
+            let d_center = (p - t.center).length();
+            let dc = (d_center - t.major_radius).abs();
+            if dc < tol {
+                Some(t.minor_radius)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// ✅ OCCT-aligned: IsCoincident (IntTools_EdgeFace.cxx L62-163).
+/// Checks if an edge is coincident with a face by sampling points along the
+/// edge, projecting onto the face, and classifying them.
+/// Returns true if >50% of sample points project within criteria AND are IN.
+pub fn is_coincident_edge_face(
+    curve: &Curve3,
+    t_range: [f64; 2],
+    surface: &Surface3,
+    face_tol: f64,
+    edge_tol: f64,
+    context: &mut crate::inttools::context::Context,
+    ds: &DS,
+    face_idx: usize,
+) -> bool {
+    let criteria = compute_edge_face_criteria(edge_tol, face_tol, curve);
+    let a_tresh = 0.5;
+    let a_nb_seg = if matches!(curve, Curve3::Line(_)) && matches!(surface, Surface3::Plane(_)) {
+        2
+    } else {
+        23
+    };
+    let a_tresh_idx_f = ((a_nb_seg + 1) as f64 * 0.25) as i32;
+    let a_tresh_idx_l = ((a_nb_seg + 1) as f64 * 0.75) as i32;
+
+    let mut t1 = t_range[0];
+    let mut t2 = t_range[1];
+    let bnd_shift = 0.01 * (t2 - t1);
+    t1 += bnd_shift;
+    t2 -= bnd_shift;
+    let dt = (t2 - t1) / a_nb_seg as f64;
+
+    let mut i_cnt = 0i32;
+    let mut is_classified = false;
+
+    for i in 0..=a_nb_seg {
+        let t = t1 + i as f64 * dt;
+        let p = curve.point_at(t);
+        let proj = context.proj_ps(ds, face_idx, p);
+        let Some((uv, _pt3d, dist)) = proj else { continue; };
+        if dist > criteria {
+            if dist > 100.0 * criteria { return false; }
+            continue;
+        }
+        i_cnt += 1;
+        if ((0 < i) && (i < a_tresh_idx_f)) || ((a_tresh_idx_l < i) && (i < a_nb_seg)) {
+            continue;
+        }
+        if is_classified && (i != a_nb_seg) { continue; }
+        let state = context.fclass2d(ds, face_idx).perform(uv, true);
+        use crate::inttools::fclass2d::State;
+        if state == State::Out { return false; }
+        if i != 0 { is_classified = true; }
+    }
+
+    let coeff = i_cnt as f64 / (a_nb_seg + 1) as f64;
+    coeff > a_tresh
+}
+
+/// ✅ OCCT-aligned: IsCoplanar (IntTools_EdgeFace.cxx L788-813).
+/// Checks if a curve lies in the plane of a planar surface.
+pub fn is_coplanar(curve: &Curve3, surface: &Surface3) -> bool {
+    let Surface3::Plane(pl) = surface else { return false; };
+    match curve {
+        Curve3::Line(l) => l.direction.dot(pl.normal).abs() < 1e-12,
+        Curve3::Circle(c) => c.normal.dot(pl.normal).abs() > 1.0 - 1e-12,
+        Curve3::Ellipse(e) => e.normal.dot(pl.normal).abs() > 1.0 - 1e-12,
+        _ => false,
+    }
+}
+
+/// ✅ OCCT-aligned: IsRadius (IntTools_EdgeFace.cxx L815-843).
+/// Checks if a curve's radius matches the surface's curvature radius.
+pub fn is_radius(curve: &Curve3, surface: &Surface3, criteria: f64) -> bool {
+    match (curve, surface) {
+        (Curve3::Circle(c), Surface3::Sphere(s)) => {
+            let dist = (c.center - s.center).length();
+            (dist - s.radius).abs() < criteria
+        }
+        (Curve3::Circle(c), Surface3::Cylinder(cyl)) => {
+            let v = c.center - cyl.origin;
+            let proj = v.dot(cyl.axis);
+            let radial = v - cyl.axis * proj;
+            let axis_dist = radial.length();
+            (axis_dist - c.radius).abs() < criteria
+        }
+        _ => false,
+    }
+}
+
+/// ✅ OCCT-aligned: MakeType (IntTools_EdgeFace.cxx L304-359).
+/// Determines whether a common part is EDGE or VERTEX type.
+pub fn make_edge_face_type(
+    edge_t_range: [f64; 2],
+    common_t_range: [f64; 2],
+    curve: &Curve3,
+    criteria: f64,
+    is_whole_range: bool,
+) -> (i8, f64) {
+    let [af1, al1] = common_t_range;
+    let [ef1, el1] = edge_t_range;
+    let pf = curve.point_at(af1);
+    let pl = curve.point_at(al1);
+    let df1 = (pf - pl).length();
+
+    if (df1 > criteria * 2.0) && is_whole_range {
+        return (1, 0.0); // TopAbs_EDGE
+    }
+
+    if is_whole_range {
+        let tm = (af1 + al1) * 0.5;
+        let dist = (pf - curve.point_at(tm)).length();
+        if dist > criteria * 2.0 {
+            return (1, 0.0); // TopAbs_EDGE
+        }
+    }
+
+    let tm = (af1 + al1) * 0.5;
+    (0, tm) // TopAbs_VERTEX
 }
 
 /// Clip an infinite line to a (possibly non-convex) polygon on a plane.
