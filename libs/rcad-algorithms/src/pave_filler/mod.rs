@@ -928,9 +928,9 @@ impl<'a> PaveFiller<'a> {
         }
     }
     fn make_section_edges(&mut self) {
-        let n_edges_before = self.ds.edges.len();
-        // Initialize section_edge_refs (used by ds_to_brep for IC -> DSEdge mapping)
-        self.ds.section_edge_refs = vec![Vec::new(); self.ds.intersection_curves.len()];
+        // Section edges are now created per-curve inside make_blocks (OCCT form alignment).
+        // This function is kept for reference but is no-op.
+        return;
         // Collect section edge data per curve to avoid borrow conflicts
         struct SECurve { curve_idx: usize, sv: usize, ev: usize, curve: Curve3, geom_tol: f64, t_range: [f64; 2], pbs: Vec<PaveBlock> }
         let mut se_data: Vec<SECurve> = Vec::new();
@@ -1046,7 +1046,9 @@ impl<'a> PaveFiller<'a> {
                     let v2_tol = ff_tol.max(self.ds.vertices[nV2].geom_tol);
                     if find_valid_range(&ic.curve, aT1, aT2, v1_pt, v1_tol, v2_pt, v2_tol).is_none() {
                         if std::env::var("RCAD_DEBUG_PB").is_ok() {
-                            eprintln!("[PB] ci={} BLOCKED FindValidRange nV=({},{})", ci, nV1, nV2);
+                            eprintln!("[PB] ci={} BLOCKED FindValidRange nV=({},{}) v1_tol={:.12} v2_tol={:.12} v1_pt=({:.4},{:.4},{:.4}) v2_pt=({:.4},{:.4},{:.4})",
+                                ci, nV1, nV2, v1_tol, v2_tol,
+                                v1_pt.x, v1_pt.y, v1_pt.z, v2_pt.x, v2_pt.y, v2_pt.z);
                         }
                         continue;
                     }
@@ -5917,6 +5919,22 @@ impl<'a> PaveFiller<'a> {
         let mut actions: Vec<SplitAction> = Vec::new();
         let mut cur_tol = self.tol(); // fallback for post-loop code
 
+        // ✅ OCCT-aligned: section edge tracking maps (moved inline from make_section_edges).
+        self.ds.section_edge_refs = vec![Vec::new(); n_curves];
+        let bv_positions: Vec<(DVec3, usize)> = self.ds.vertices.iter().enumerate()
+            .map(|(vi, v)| (v.point, vi)).collect();
+        let remap_ds_v = |v: usize, verts: &[crate::bopds::ds::DSVertex]| -> usize {
+            if v >= verts.len() { return v; }
+            let p = verts[v].point;
+            let tol = TOLERANCE_ABS * 1000.0;
+            bv_positions.iter()
+                .filter(|(bp, _)| (bp - p).length_squared() <= tol * tol)
+                .map(|&(_, bv)| bv)
+                .min()
+                .unwrap_or(v)
+        };
+        let mut existing_edge_map: std::collections::HashMap<(usize, usize, usize, usize), usize> = std::collections::HashMap::new();
+
         for ci in 0..n_curves {
             // Use per-pair tolerance from the two faces that reference this curve
             let fi_a = (0..n_faces).find(|&fi| face_curves[fi].contains(&ci)).unwrap_or(0);
@@ -5968,6 +5986,249 @@ impl<'a> PaveFiller<'a> {
                     continue;
                 }
                 self.put_pave_on_curve(vi, ci);
+            }
+            // ✅ OCCT-aligned: PutBoundPaveOnCurve (BOPAlgo_PaveFiller_6.cxx L2308-2368).
+            //   For each curve endpoint, checks if a boundary vertex exists.  If the endpoint
+            //   is valid on both faces but has no boundary vertex, creates one.
+            {
+                let ic = &self.ds.intersection_curves[ci];
+                let a_tol_r3d = ic.geom_tol.max(crate::tolerance::TOLERANCE_ABS);
+                let face_idxs = find_face_idxs_for_curve(&self.ds, ci);
+                let t_bnd = [t0_live, t1_live];
+                let p_bnd = [ic.curve.point_at(t0_live), ic.curve.point_at(t1_live)];
+                let pca = ic.pcurve_on_a.clone();
+                let pcb = ic.pcurve_on_b.clone();
+                let sv = ic.start_vertex;
+                let ev = ic.end_vertex;
+                // Pre-compute face boundary points for planar faces
+                let mut plane_vert_cache: Vec<Vec<DVec3>> = vec![Vec::new(); 2];
+                for (i, &fi) in face_idxs.iter().enumerate() {
+                    if fi != usize::MAX {
+                        if let Surface3::Plane(_) = &self.ds.faces[fi].surface {
+                            plane_vert_cache[i] = self.ds.face_boundary_points(fi);
+                        }
+                    }
+                }
+                let mut new_verts: Vec<(f64, usize)> = Vec::new();
+                if let Some(pb) = ic.pave_blocks.first() {
+                    let (nV_min, nV_max) = {
+                        let mut n_min = usize::MAX;
+                        let mut n_max = usize::MAX;
+                        let mut t_min = f64::MAX;
+                        let mut t_max = f64::MIN;
+                        for ep in &pb.ext_paves {
+                            if ep.param < t_min { t_min = ep.param; n_min = ep.vertex_idx; }
+                            if ep.param > t_max { t_max = ep.param; n_max = ep.vertex_idx; }
+                        }
+                        (n_min, n_max)
+                    };
+                    for j in 0..2 {
+                        let nV_cur = if j == 0 { nV_min } else { nV_max };
+                        let is_match = if nV_cur < self.ds.vertices.len() {
+                            self.ds.vertices[nV_cur].point.distance(p_bnd[j]) < a_tol_r3d
+                        } else { false };
+                        if is_match { continue; }
+                        // Skip if the IC's own endpoint vertex already matches
+                        let existing_v = if j == 0 { sv } else { ev };
+                        if existing_v < self.ds.vertices.len()
+                            && self.ds.vertices[existing_v].point.distance(p_bnd[j]) < a_tol_r3d
+                        {
+                            continue;
+                        }
+                        let valid = face_idxs[0] == usize::MAX || face_idxs[1] == usize::MAX || {
+                            let mut ok = true;
+                            for (i, &fi) in face_idxs.iter().enumerate() {
+                                if fi == usize::MAX { continue; }
+                                let surf = &self.ds.faces[fi].surface;
+                                match surf {
+                                    Surface3::Plane(pl) => {
+                                        if !inttools::edge_face::point_in_planar_face_with_tol(
+                                            p_bnd[j], pl, &plane_vert_cache[i], a_tol_r3d)
+                                        {
+                                            ok = false; break;
+                                        }
+                                    }
+                                    _ => {
+                                        let pcurve = if i == 0 { pca.as_ref() } else { pcb.as_ref() };
+                                        if let Some(pc) = pcurve {
+                                            let uv = pc.point_at(t_bnd[j]);
+                                            if !self.context.is_point_in_on_face(self.ds, fi, uv) {
+                                                ok = false; break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            ok
+                        };
+                        if !valid { continue; }
+                        new_verts.push((t_bnd[j], self.ds.add_vertex(p_bnd[j])));
+                    }
+                }
+                // Drop reference to ic before mutating
+                for &(_t, vi) in &new_verts {
+                    self.put_pave_on_curve(vi, ci);
+                }
+            }
+            // ✅ OCCT-aligned: per-curve section edge creation (PaveFiller_6.cxx L882-1066).
+            //   After ext_paves are committed, process sub-PBs from PB update(),
+            //   validate each, and create/reuse DSEdges.
+            //   In OCCT this is done inline per-curve; rcad previously deferred to
+            //   the separate make_section_edges call.
+            {
+                let ic = &self.ds.intersection_curves[ci];
+                let face_ids = find_face_idxs_for_curve(&self.ds, ci);
+                let ff_tol = if face_ids[0] != usize::MAX && face_ids[1] != usize::MAX {
+                    self.ff_tol(face_ids[0], face_ids[1])
+                } else { ic.geom_tol };
+                let surf0 = if face_ids[0] != usize::MAX { Some(self.ds.faces[face_ids[0]].surface.clone()) } else { None };
+                let surf1 = if face_ids[1] != usize::MAX { Some(self.ds.faces[face_ids[1]].surface.clone()) } else { None };
+                let curve = ic.curve.clone();
+                let pca = ic.pcurve_on_a.clone();
+                let pcb = ic.pcurve_on_b.clone();
+                let geom_tol = ic.geom_tol;
+                let start_v = ic.start_vertex;
+                let end_v = ic.end_vertex;
+                let t_range = ic.t_range;
+                let mut sub_with_edge: Vec<PaveBlock> = Vec::new();
+                // Clone PBs for processing
+                let pb_list: Vec<PaveBlock> = ic.pave_blocks.clone();
+                // Drop ic borrow before mutating
+                drop(ic);
+                for pb in &pb_list {
+                    let mut pb_clone = pb.clone();
+                    let sub_pbs = if pb_clone.is_to_update() {
+                        pb_clone.update(true)
+                    } else {
+                        vec![PaveBlock::new(
+                            crate::bopds::pave::NO_EDGE,
+                            Pave { vertex_idx: start_v, param: t_range[0] },
+                            Pave { vertex_idx: end_v, param: t_range[1] },
+                        )]
+                    };
+                    for mut sub_pb in sub_pbs {
+                        let (nV1_raw, nV2_raw) = sub_pb.indices();
+                        let nV1 = remap_ds_v(nV1_raw, &self.ds.vertices);
+                        let nV2 = remap_ds_v(nV2_raw, &self.ds.vertices);
+                        if nV1 != nV1_raw || nV2 != nV2_raw {
+                            sub_pb.pave1.vertex_idx = nV1;
+                            sub_pb.pave2.vertex_idx = nV2;
+                        }
+                        let (aT1, aT2) = sub_pb.range();
+                        if (aT2 - aT1).abs() < crate::tolerance::TOLERANCE_ABS {
+                            if std::env::var("RCAD_DEBUG_PB").is_ok() { eprintln!("[PB_FAIL] ci={} RANGE_TOO_SMALL", ci); }
+                            continue;
+                        }
+                        // IsValidBlockForFaces
+                        if surf0.is_some() && surf1.is_some() {
+                            let mid_t = (aT1 + aT2) * 0.5;
+                            let mid_pt = curve.point_at(mid_t);
+                            let check_tol = ff_tol.max(TOLERANCE_ABS);
+                            let mut b_flag = true;
+                            for (i, &fi) in [face_ids[0], face_ids[1]].iter().enumerate() {
+                                if fi == usize::MAX { continue; }
+                                let pcurve = if i == 0 { pca.as_ref() } else { pcb.as_ref() };
+                                if let Some(pc) = pcurve {
+                                    let uv = pc.point_at(mid_t);
+                                    let in_on = self.context.is_point_in_on_face(self.ds, fi, uv);
+                                    if std::env::var("RCAD_DEBUG_ISVALID").is_ok() && (fi == 3 || fi == 0) {
+                                        eprintln!("[IV] ci={} fi={} uv=({:.6},{:.6}) in_on={}", ci, fi, uv.x, uv.y, in_on);
+                                    }
+                                    if !in_on {
+                                        let surf = if i == 0 { surf0.as_ref().unwrap() } else { surf1.as_ref().unwrap() };
+                                        let (_, proj_pt) = crate::extrema::closest_point_on_surface(surf, mid_pt);
+                                        let dist_3d = proj_pt.distance(mid_pt);
+                                        if dist_3d > check_tol { b_flag = false; break; }
+                                    }
+                                } else {
+                                    let surf = if i == 0 { surf0.as_ref().unwrap() } else { surf1.as_ref().unwrap() };
+                                    let (_, proj) = crate::extrema::closest_point_on_surface(surf, mid_pt);
+                                    if proj.distance(mid_pt) > check_tol { b_flag = false; break; }
+                                }
+                            }
+                            if !b_flag { continue; }
+                        }
+                        // FindValidRange
+                        if nV1 < self.ds.vertices.len() && nV2 < self.ds.vertices.len() {
+                            let v1_pt = self.ds.vertices[nV1].point;
+                            let v2_pt = self.ds.vertices[nV2].point;
+                            let v1_tol = ff_tol.max(self.ds.vertices[nV1].geom_tol);
+                            let v2_tol = ff_tol.max(self.ds.vertices[nV2].geom_tol);
+                            if find_valid_range(&curve, aT1, aT2, v1_pt, v1_tol, v2_pt, v2_tol).is_none() {
+                                if std::env::var("RCAD_DEBUG_PB").is_ok() {
+                                    eprintln!("[PB] ci={} BLOCKED FindValidRange nV=({},{})", ci, nV1, nV2);
+                                }
+                                continue;
+                            }
+                        }
+                        // IsExistingPaveBlock
+                        let (v1, v2) = if nV1 < nV2 { (nV1, nV2) } else { (nV2, nV1) };
+                        let f1 = face_ids[0].min(face_ids[1]);
+                        let f2 = face_ids[0].max(face_ids[1]);
+                        let edge_key = (f1, f2, v1, v2);
+                        if let Some(&existing_ei) = existing_edge_map.get(&edge_key) {
+                            sub_pb.new_edge = Some(existing_ei);
+                            sub_with_edge.push(sub_pb);
+                            if std::env::var("RCAD_DEBUG_PB").is_ok() && face_ids[0] == 0 {
+                                eprintln!("[PB_PASS] ci={} REUSE edge={}", ci, existing_ei);
+                            }
+                            continue;
+                        }
+                        // Create new DSEdge
+                        let new_ei = self.ds.edges.len();
+                        let mut sec_face_reps = Vec::new();
+                        if let Some(ref pca_ref) = pca {
+                            sec_face_reps.push(DSRepOnFace {
+                                face_idx: face_ids[0],
+                                pcurve: pca_ref.clone(),
+                                pcurve2: None,
+                                pcurve_range: [aT1, aT2],
+                                start_param: aT1, end_param: aT2,
+                            });
+                        }
+                        if let Some(ref pcb_ref) = pcb {
+                            sec_face_reps.push(DSRepOnFace {
+                                face_idx: face_ids[1],
+                                pcurve: pcb_ref.clone(),
+                                pcurve2: None,
+                                pcurve_range: [aT1, aT2],
+                                start_param: aT1, end_param: aT2,
+                            });
+                        }
+                        self.ds.edges.push(DSEdge {
+                            start_vertex: nV1, end_vertex: nV2,
+                            curve: curve.clone(),
+                            t_range: [aT1, aT2],
+                            origin: ShapeOrigin::ShapeA,
+                            geom_tol,
+                            paves: Vec::new(),
+                            pave_blocks: Vec::new(),
+                            face_reps: sec_face_reps,
+                            is_internal: false,
+                            vertex_params: {
+                                let mut vp = std::collections::HashMap::new();
+                                vp.insert(nV1, aT1);
+                                vp.insert(nV2, aT2);
+                                vp
+                            },
+                        });
+                        sub_pb.new_edge = Some(new_ei);
+                        self.ds.section_edge_refs[ci].push(new_ei);
+                        existing_edge_map.insert(edge_key, new_ei);
+                        sub_with_edge.push(sub_pb);
+                    }
+                }
+                // Register section edge PBs to face info
+                for pb in &sub_with_edge {
+                    if pb.new_edge.is_some() {
+                        let g_pb_idx = self.ds.allocate_pave_block(pb.clone());
+                        for &fi in &face_ids {
+                            if fi != usize::MAX {
+                                self.ds.faces[fi].face_info.pave_blocks_sc.insert(g_pb_idx);
+                            }
+                        }
+                    }
+                }
             }
         }
         // �?OCCT-aligned: ext_paves have been added via put_pave_on_curve above.
@@ -6097,9 +6358,8 @@ impl<'a> PaveFiller<'a> {
             }
         }
 
-        // �?OCCT-aligned: MakeSectionEdges from curve PaveBlocks (PaveFiller_6.cxx L882-980).
-        //   Creates DSEdges from curve PBs split by ext_paves.
-        self.make_section_edges();
+        // ✅ OCCT-aligned: section edges created per-curve inside make_blocks above.
+        //   make_section_edges (legacy) is now a no-op — kept for OCCT alignment reference.
 
         // �?OCCT-aligned: Build edge images from pave blocks (FillImagesEdges)
         self.ds.build_edge_images();
@@ -6813,15 +7073,15 @@ fn put_pave_on_curve_full(
     // OCCT-aligned: compute curve bounding box for vertex filtering (L2409: aBoxC.IsOut(aBoxV)).
     let curve_bbox = curve_bounding_box_simple(&ic.curve, a_tol_r3d);
 
-    // OCCT-aligned: GetStickVertices (PaveFiller_6.cxx L2847-2905) collects EF vertex set
-    //   per FF pair.  Only EF vertices belonging to this specific pair are added to aMVEF.
-    //   rcad: filter EF vertices by checking if the interference's face is in this pair.
+    // ✅ OCCT-aligned: GetStickVertices (PaveFiller_6.cxx L2847-2905) collects EF vertex set
+    //   per FF pair.  Only EF vertices where BOTH sub-shapes (edge AND face) belong to the pair
+    //   are added to aMVEF, matching OCCT's aMI.Contains(nS1) && aMI.Contains(nS2).
     let ef_vertices: std::collections::HashSet<usize> = ds.interferences.iter()
         .filter_map(|inf| {
-            if let Interference::EdgeFace { new_vertex, face, .. } = inf {
-                // OCCT L2896: aMI.Contains(nS1) && aMI.Contains(nS2)
-                //   Both sub-shapes belong to the two faces — the EF vertex involves this pair.
-                if *face == face_idxs[0] || *face == face_idxs[1] {
+            if let Interference::EdgeFace { new_vertex, edge, face, .. } = inf {
+                let edge_on_pair = ds.edges[*edge].face_reps.iter()
+                    .any(|fr| fr.face_idx == face_idxs[0] || fr.face_idx == face_idxs[1]);
+                if edge_on_pair && (*face == face_idxs[0] || *face == face_idxs[1]) {
                     Some(*new_vertex)
                 } else { None }
             } else { None }
@@ -6849,20 +7109,30 @@ fn put_pave_on_curve_full(
         cv
     };
 
-    // OCCT-aligned: build combined vertex sets (theMVOnIn, theMVEF) from both faces,
+    // ✅ OCCT-aligned: build combined vertex sets (theMVOnIn, theMVEF) from both faces,
     //   matching OCCT PutPavesOnCurve's pre-computed parameters.  Processing per-face
     //   would project the same vertex onto the curve twice, creating duplicate ext_paves.
+    //
+    //   D5: Exclude CI endpoints of OTHER curves from ON/IN sets.  OCCT's GetStickVertices
+    //   only collects vertices from VV/VE/EE/VF/EF interferences for the current face pair.
+    //   CI endpoints registered by earlier face pairs leak into vertices_on/vertices_in;
+    //   filtering them here matches OCCT behavior (PostTreatFF runs after MakeBlocks).
+    let other_ic_endpoints: HashSet<usize> = ds.intersection_curves.iter()
+        .enumerate()
+        .filter(|&(j, _)| j != curve_idx)
+        .flat_map(|(_, ic)| [ic.start_vertex, ic.end_vertex])
+        .collect();
     let mut mv_ef: std::collections::HashSet<usize> = std::collections::HashSet::new();
     let mut mv_on_in: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for &fi in face_idxs.iter().filter(|&&fi| fi != usize::MAX) {
         let face = &ds.faces[fi];
         for &vi in &face.face_info.vertices_on {
             if ef_vertices.contains(&vi) { mv_ef.insert(vi); }
-            else { mv_on_in.insert(vi); }
+            else if !other_ic_endpoints.contains(&vi) { mv_on_in.insert(vi); }
         }
         for &vi in &face.face_info.vertices_in {
             if ef_vertices.contains(&vi) { mv_ef.insert(vi); }
-            else { mv_on_in.insert(vi); }
+            else if !other_ic_endpoints.contains(&vi) { mv_on_in.insert(vi); }
         }
     }
     // OCCT L2386-2392: EF vertices first
