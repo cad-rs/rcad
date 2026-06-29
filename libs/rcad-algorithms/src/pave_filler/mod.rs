@@ -1018,7 +1018,13 @@ impl<'a> PaveFiller<'a> {
                                 eprintln!("[IV] ci={} fi={} uv=({:.6},{:.6}) in_on={}", ci, fi, uv.x, uv.y, in_on);
                             }
                             if !in_on {
-                                b_flag = false; break;
+                                // 3D fallback: check distance from midpoint to face surface.
+                                let surf = if i == 0 { surf0.as_ref().unwrap() } else { surf1.as_ref().unwrap() };
+                                let (_, proj_pt) = crate::extrema::closest_point_on_surface(surf, mid_pt);
+                                let dist_3d = proj_pt.distance(mid_pt);
+                                if dist_3d > check_tol {
+                                    b_flag = false; break;
+                                }
                             }
                         } else {
                             let surf = if i == 0 { surf0.as_ref().unwrap() } else { surf1.as_ref().unwrap() };
