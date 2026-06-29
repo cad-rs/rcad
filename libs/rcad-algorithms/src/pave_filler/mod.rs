@@ -5921,10 +5921,35 @@ impl<'a> PaveFiller<'a> {
 
         // ✅ OCCT-aligned: section edge tracking maps (moved inline from make_section_edges).
         self.ds.section_edge_refs = vec![Vec::new(); n_curves];
+        // ✅ OCCT-aligned: build canonical vertex map from ShapeSD + position fallback.
+        //   In OCCT, ShapesSD records Same-Domain vertex equivalences explicitly during
+        //   PaveFiller processing.  rcad uses the DS's ShapeSD (from shared topology) plus
+        //   position-based matching for non-SD vertices.
         let bv_positions: Vec<(DVec3, usize)> = self.ds.vertices.iter().enumerate()
             .map(|(vi, v)| (v.point, vi)).collect();
+        let sd_canon: std::collections::HashMap<usize, usize> = {
+            let mut map = std::collections::HashMap::new();
+            // Build SD groups from ShapeSD: for each pair (a,b), both map to min(a,b)
+            for &(a, b) in self.ds.shape_sd.sd_vertices_iter() {
+                let canon = a.min(b);
+                map.entry(a).or_insert(canon);
+                map.entry(b).or_insert(canon);
+                // Propagate: if a or b already maps to a different canonical, use the min
+                let cur_a = *map.get(&a).unwrap_or(&a);
+                let cur_b = *map.get(&b).unwrap_or(&b);
+                let best = cur_a.min(cur_b).min(canon);
+                map.insert(a, best);
+                map.insert(b, best);
+            }
+            map
+        };
         let remap_ds_v = |v: usize, verts: &[crate::bopds::ds::DSVertex]| -> usize {
             if v >= verts.len() { return v; }
+            // Check ShapeSD first (OCCT-aligned)
+            if let Some(&canon) = sd_canon.get(&v) {
+                return canon;
+            }
+            // Fallback: position-based matching for non-SD vertices
             let p = verts[v].point;
             let tol = TOLERANCE_ABS * 1000.0;
             bv_positions.iter()
