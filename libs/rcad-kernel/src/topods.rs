@@ -334,6 +334,9 @@ pub trait BRepTool {
     fn u_resolution(&self, face: ShapeRef, tol3d: f64) -> f64;
     /// VResolution: parameter tolerance in V direction.
     fn v_resolution(&self, face: ShapeRef, tol3d: f64) -> f64;
+    /// OCCT L204-207: vertex orientation (TopAbs_INTERNAL for split-edge interior vertices).
+    /// Default: Forward (non-INTERNAL). Override when INTERNAL vertex data is available.
+    fn vertex_orientation(&self, _v: ShapeRef) -> Orientation { Orientation::Forward }
 }
 
 impl BRepTool for BRep {

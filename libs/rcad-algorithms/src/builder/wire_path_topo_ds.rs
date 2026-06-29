@@ -385,7 +385,7 @@ fn refine_angles(
             };
             if !b_refined && cnt_int == 2 {
                 let eps = 1e-12;
-                let new_angle = if a_ic <= a1_bnd || a_ic > a2_bnd {
+                let new_angle = if a_ic <= a1_bnd {
                     (a1_bnd + eps) % std::f64::consts::TAU
                 } else {
                     (a2_bnd - eps + std::f64::consts::TAU) % std::f64::consts::TAU
@@ -578,8 +578,16 @@ fn build_smart_map(
             };
             let surf = tool.face_surface(seg.face).unwrap_or(
                 &Surface3::Plane(rcad_kernel::geom::Plane { origin: DVec3::ZERO, normal: DVec3::Z }));
-            ei.angle = angle_2d(curve, t_v, curve_domain, ei.in_flag, surf, geom_tol, None)
+            let new_angle = angle_2d(curve, t_v, curve_domain, ei.in_flag, surf, geom_tol, None)
                 .unwrap_or(0.0);
+            if std::env::var("RCAD_ANGLE_DUMP").is_ok() {
+                let face_idx = segments[0].face.index;
+                let curve_type = match curve { Curve2d::Line(_) => "Line", Curve2d::Circle(_) => "Circle", Curve2d::Ellipse(_) => "Ellipse", Curve2d::BSpline(_) => "BSpline", _ => "Other" };
+                eprintln!("[ANGLE] face={} v={} seg={} in={} t_v={:.10} dom=[{:.6},{:.6}] curve={} angle={:.10} deg={:.4}",
+                    face_idx, v, ei.seg_idx, ei.in_flag, t_v, curve_domain[0], curve_domain[1],
+                    curve_type, new_angle, new_angle.to_degrees());
+            }
+            ei.angle = new_angle;
         }
     }
     smart_map

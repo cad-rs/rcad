@@ -1176,6 +1176,11 @@ pub(crate) fn perform_shapes_to_avoid_topo_ds(
         }
     };
 
+    let is_internal_vertex = |vi: usize| -> bool {
+        tool.vertex_orientation(rcad_kernel::topods::ShapeRef::new(vi))
+            == rcad_kernel::topods::Orientation::Internal
+    };
+
     // OCCT L152-156: aMVE — MapShapesAndAncestors(VERTEX, EDGE).
     // vertex → Vec<Pid> built directly from segments (collapses FWD/REV of same edge).
     let mut a_mve: std::collections::HashMap<usize, Vec<Pid>> = std::collections::HashMap::new();
@@ -1189,30 +1194,21 @@ pub(crate) fn perform_shapes_to_avoid_topo_ds(
 
     // OCCT L182-228: fixed-point loop — avoid dangling edges (valence 1) and
     // self-coincident edges, updating aMVE after each avoidance.
+    // ⚠ Architecture difference: OCCT's MapShapesAndAncestors gives one
+    // entry per TopoDS_Edge per vertex.  rcad's pid-based map can give
+    // duplicate entries for the same physical edge (IC forward+reverse are
+    // separate segments).  Self-coincidence check (OCCT L211-227) does not
+    // apply directly — skip it.  Only valence-1 removal with INTERNAL check.
     loop {
         let mut b_found = false;
         for (&v, pids) in &a_mve {
-            // OCCT L204-207: INTERNAL vertices → skip
-            // (rcad: no internal vertex data in topoDS variant, skip check)
-            let a_nb_e = pids.len();
-            if a_nb_e == 1 {
-                // OCCT L198-210: dangling edge → avoid
-                let pid = pids[0];
-                if is_degenerate(&pid) { continue; }
-                if avoided_pids.insert(pid) { b_found = true; }
-            } else if a_nb_e >= 2 {
-                // OCCT L211-227: check for same edge appearing twice at this vertex
-                for i in 0..a_nb_e {
-                    for j in (i+1)..a_nb_e {
-                        if pids[i] == pids[j] {
-                            let pid = pids[i];
-                            let (_, _, a, b) = pid;
-                            if a == b { continue; } // OCCT L219-222: self-loop → keep
-                            if avoided_pids.insert(pid) { b_found = true; }
-                        }
-                    }
-                }
-            }
+            if pids.len() != 1 { continue; }
+            // OCCT L198-210: dangling edge → avoid (skip degenerate / INTERNAL vertex)
+            let pid = pids[0];
+            if is_degenerate(&pid) { continue; }
+            // OCCT L204-207: INTERNAL vertex → keep the edge
+            if is_internal_vertex(v) { continue; }
+            if avoided_pids.insert(pid) { b_found = true; }
         }
         if !b_found { break; }
         // OCCT L230: rebuild aMVE without avoided edges

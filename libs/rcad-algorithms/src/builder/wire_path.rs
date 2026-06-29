@@ -65,11 +65,9 @@ pub(crate) fn refine_angles(
                 if let Some(refined_angle) = b_refined {
                     refined_map.insert(ei.seg_idx, refined_angle);
                 } else if cnt_int == 2 {
-                    // OCCT L996-999: epsilon fallback — place just inside boundary
-                    // OCCT L998: aA = (aA <= aA1) ? (aA1 + Precision::Angular()) : (aA2 - Precision::Angular());
-                    // Precision::Angular() = 1e-12 (OCCT L1030: Precision::Angular())
+                    // OCCT L1012: aA = (aA <= aA1) ? (aA1 + Precision::Angular()) : (aA2 - Precision::Angular());
                     let eps = 1e-12;
-                    let new_angle = if a_ic <= a1_bnd || a_ic > a2_bnd {
+                    let new_angle = if a_ic <= a1_bnd {
                         (a1_bnd + eps) % std::f64::consts::TAU
                     } else {
                         (a2_bnd - eps + std::f64::consts::TAU) % std::f64::consts::TAU

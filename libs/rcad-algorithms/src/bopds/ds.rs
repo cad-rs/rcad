@@ -1312,7 +1312,7 @@ impl DS {
                 let uv_end = s.world_to_uv(curve.point_at(1.0));
                 let delta = uv_end - uv_start;
                 let span = delta.length();
-                if span < 1e-15 { return None; }
+                if span < 1e-15 || !span.is_finite() { return None; }
                 Some((
                     Curve2d::Line(Line2d {
                         origin: uv_start,
@@ -1340,7 +1340,7 @@ impl DS {
                 };
                 let delta = uv_end - uv_start;
                 let span = delta.length();
-                if span < 1e-15 { return None; }
+                if span < 1e-15 || !span.is_finite() { return None; }
                 Some((
                     Curve2d::Line(Line2d {
                         origin: uv_start,
@@ -1352,22 +1352,24 @@ impl DS {
             (Surface3::Cone(c), _) => {
                 let axis = c.axis_dir();
                 let uv_start = {
-                    let apex_to_pt = curve.point_at(0.0) - c.apex;
-                    let v = apex_to_pt.dot(axis);
-                    let radial = apex_to_pt - axis * v;
-                    let u = radial.y.atan2(radial.x);
-                    DVec2::new(if u < 0.0 { u + std::f64::consts::TAU } else { u }, v)
+                    let local = curve.point_at(0.0) - c.apex;
+                    let along = local.dot(axis);
+                    let radial = local - axis * along;
+                    let r = radial.length();
+                    let u = if r < 1e-15 { 0.0 } else { radial.y.atan2(radial.x) };
+                    DVec2::new(if u < 0.0 { u + std::f64::consts::TAU } else { u }, along)
                 };
                 let uv_end = {
-                    let apex_to_pt = curve.point_at(1.0) - c.apex;
-                    let v = apex_to_pt.dot(axis);
-                    let radial = apex_to_pt - axis * v;
-                    let u = radial.y.atan2(radial.x);
-                    DVec2::new(if u < 0.0 { u + std::f64::consts::TAU } else { u }, v)
+                    let local = curve.point_at(1.0) - c.apex;
+                    let along = local.dot(axis);
+                    let radial = local - axis * along;
+                    let r = radial.length();
+                    let u = if r < 1e-15 { 0.0 } else { radial.y.atan2(radial.x) };
+                    DVec2::new(if u < 0.0 { u + std::f64::consts::TAU } else { u }, along)
                 };
                 let delta = uv_end - uv_start;
                 let span = delta.length();
-                if span < 1e-15 { return None; }
+                if span < 1e-15 || !span.is_finite() { return None; }
                 Some((
                     Curve2d::Line(Line2d {
                         origin: uv_start,

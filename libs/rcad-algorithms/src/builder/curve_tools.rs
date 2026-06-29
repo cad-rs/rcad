@@ -82,29 +82,41 @@ pub fn curve2d_resolution(curve: &Curve2d, r_uv: f64) -> f64 {
         // OCCT L1203-1205
         Curve2d::Ellipse(e) => r_uv / e.major_radius,
         // OCCT L1206-1209: BSplCLib::Resolution (analytical, not sampling)
-        Curve2d::Bezier(b) => { let ms = sample_max_speed_2d(b, 16); if ms > 1e-15 { r_uv / ms } else { r_uv } }
-        // OCCT L1211-1215: BSplCLib::Resolution (analytical, not sampling)
-        Curve2d::BSpline(b) => { let ms = sample_max_speed_bspline_2d(b, 32); if ms > 1e-15 { r_uv / ms } else { r_uv } }
+        Curve2d::Bezier(b) => { let ms = sample_max_speed_bezier_2d(b); if ms > 1e-15 { r_uv / ms } else { r_uv } }
+        // OCCT L1211-1215: BSplCLib::Resolution — evaluates at knots + span midpoints
+        Curve2d::BSpline(b) => { let ms = sample_max_speed_bspline_2d(b); if ms > 1e-15 { r_uv / ms } else { r_uv } }
         // OCCT: TrimmedCurve unwrapped to base type before dispatch
         Curve2d::Trimmed(tc) => curve2d_resolution(&tc.curve, r_uv),
-        // OCCT L1217: Precision::Parametric(Ruv) = Ruv * 1e-14
-        _ => r_uv,
+        // OCCT L1217: Precision::Parametric(Ruv) = Ruv * 0.01
+        _ => r_uv * 0.01,
     }
 }
 
-fn sample_max_speed_2d(b: &BezierCurve2, n: usize) -> f64 {
-    let mut ms: f64 = 0.0;
-    for i in 0..=n { let t = i as f64 / n as f64; let d = curve2d_d1(&Curve2d::Bezier(b.clone()), t); ms = ms.max(d.length()); }
-    ms
+/// OCCT-aligned: BSplCLib::Resolution — evaluates |dC/dt| at endpoints and
+/// midpoint, returns the MAXIMUM derivative (Resolution = Ruv / max|dC/dt|).
+fn sample_max_speed_bezier_2d(b: &BezierCurve2) -> f64 {
+    let d0 = curve2d_d1(&Curve2d::Bezier(b.clone()), 0.0).length();
+    let d1 = curve2d_d1(&Curve2d::Bezier(b.clone()), 1.0).length();
+    let dm = curve2d_d1(&Curve2d::Bezier(b.clone()), 0.5).length();
+    d0.max(d1).max(dm)
 }
 
-fn sample_max_speed_bspline_2d(b: &BSplineCurve2, n: usize) -> f64 {
-    let mut ms: f64 = 0.0;
-    let t0 = b.knots.first().copied().unwrap_or(0.0);
-    let t1 = b.knots.last().copied().unwrap_or(1.0);
-    let span = (t1 - t0).max(1e-15);
-    for i in 0..=n { let t = t0 + (i as f64 / n as f64) * span; ms = ms.max(b.derivative_at(t).length()); }
-    ms
+/// OCCT-aligned: BSplCLib::Resolution for BSpline — evaluates at knots and
+/// knot-span midpoints, returns the MAXIMUM derivative (Resolution = Ruv / max|dC/dt|).
+fn sample_max_speed_bspline_2d(b: &BSplineCurve2) -> f64 {
+    let mut max_s = 0.0;
+    for &k in &b.knots {
+        let d = b.derivative_at(k).length();
+        if d > max_s { max_s = d; }
+    }
+    for w in b.knots.windows(2) {
+        let t_mid = 0.5 * (w[0] + w[1]);
+        if t_mid > w[0] && t_mid < w[1] {
+            let d = b.derivative_at(t_mid).length();
+            if d > max_s { max_s = d; }
+        }
+    }
+    max_s
 }
 
 #[cfg(test)]
@@ -188,12 +200,13 @@ mod tests {
     }
 
     #[test]
-    fn resolution_default_returns_r_uv() {
+    fn resolution_default_returns_r_uv_times_001() {
         let inv = Curve2d::CircleInvolute(CircleInvolute2d {
             center: DVec2::ZERO, base_radius: 1.0, start_angle: 0.0,
         });
+        // OCCT L1217: Precision::Parametric(Ruv) = Ruv * 0.01
         let res = curve2d_resolution(&inv, 0.01);
-        assert!((res - 0.01).abs() < 1e-15);
+        assert!((res - 0.01 * 0.01).abs() < 1e-15);
     }
 
     #[test]

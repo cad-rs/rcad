@@ -92,7 +92,7 @@ pub fn angle_2d(curve: &Curve2d, t: f64, domain: [f64; 2], b_is_in: bool, surfac
     let max_dt = 0.05 * range;
     let a_tx = if max_dt < 5e-5 { (5e-5_f64).min(range / 2.0) } else { max_dt };
     if dt > a_tx { dt = a_tx; }
-    let t1 = if (t - first).abs() < (t - last).abs() { (t + dt).min(last) } else { (t - dt).max(first) };
+    let t1 = if (t - first).abs() < (t - last).abs() { t + dt } else { t - dt };
     let dir = if b_is_in { curve.point_at(t) - curve.point_at(t1) } else { curve.point_at(t1) - curve.point_at(t) };
     if dir.length_squared() < 1e-40 { return None; }
     Some(dir_to_angle(dir))
