@@ -1,5 +1,5 @@
 use glam::{DVec2, DVec3};
-use rcad_kernel::geom::{Curve2d, Curve3, Line2d, Line3, Plane, Surface3, any_perpendicular};
+use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, Line2d, Line3, Plane, Surface3, any_perpendicular};
 use rcad_kernel::{BRep, CurveEval, SurfaceEval, WireEdge};
 use rcad_kernel::topods;
 
@@ -989,6 +989,7 @@ impl DS {
 
     fn load_brep(&mut self, brep: &BRep, origin: ShapeOrigin) {
         let edge_offset = self.edges.len();
+        let face_offset = self.faces.len();
 
         // OCCT-aligned: share vertices at same 3D position between operands.
         let mut local_to_ds: Vec<usize> = Vec::with_capacity(brep.vertices.len());
@@ -1222,6 +1223,46 @@ impl DS {
         //   is_internal flag is reserved for future use when the BRep data model
         //   supports internal sub-shape storage.
         // rcad: no internal shapes to load at this time.
+
+        // ✅ Transfer pcurves from BRep's edge_pcurves into DS edge face_reps.
+        // This preserves the BRep's stored pcurves (proper surface curves) instead
+        // of recomputing them via endpoint projection + Line2d approximation.
+        // build_face_reps (called after load_brep) skips edges that already have
+        // a DSRepOnFace via edge_on_face check.
+        let n_brep_faces = brep.solids.iter()
+            .flat_map(|s| &s.shells)
+            .map(|sh| sh.faces.len())
+            .sum::<usize>();
+        for ei in 0..brep.edges.len() {
+            let Some(pcurves) = brep.geom.edge_pcurves.get(ei) else { continue; };
+            if pcurves.is_empty() { continue; }
+            let ds_ei = edge_offset + ei;
+            let Some(ds_edge) = self.edges.get_mut(ds_ei) else { continue; };
+            for pc in pcurves {
+                    let Some(curve2d) = brep.geom.curve2ds.get(pc.curve2d_idx) else { continue; };
+                // Find DS face indices whose BRep surface_idx matches this PCurve's
+                for bi in 0..n_brep_faces {
+                    let Some(Some(si)) = brep.geom.face_surface.get(bi).map(|&s| s) else { continue; };
+                    if si != pc.surface_idx { continue; }
+                    let ds_fi = face_offset + bi;
+                    if ds_edge.face_reps.iter().any(|r| r.face_idx == ds_fi) { continue; }
+                    // Compute span as the 2D chord length at the 3D curve's t_range
+                    let t_range = ds_edge.t_range;
+                    let uv_start = curve2d.point_at(t_range[0]);
+                    let uv_end = curve2d.point_at(t_range[1]);
+                    let span = (uv_end - uv_start).length();
+                    if span < 1e-15 || !span.is_finite() { continue; }
+                    ds_edge.face_reps.push(DSRepOnFace {
+                        face_idx: ds_fi,
+                        pcurve: curve2d.clone(),
+                        pcurve2: None,
+                        pcurve_range: [0.0, span],
+                        start_param: 0.0,
+                        end_param: span,
+                    });
+                }
+            }
+        }
     }
 
     /// ✅ OCCT-aligned: reorder wire edges by traversal order (TopExp_Explorer).
