@@ -585,6 +585,13 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
                 };
                 ei.angle = angle_2d(&curve, t_v, curve_domain, ei.in_flag, &ds.faces[face_idx].surface, ds.vertices[*v].geom_tol, None)
                     .unwrap_or(0.0);
+                if std::env::var("RCAD_DEBUG_SM").is_ok() && face_idx == 0 {
+                    let seg = &segments[ei.seg_idx];
+                    eprintln!("[SM] fi=0 v={} seg={} src={:?} pc={} ang={:.3} in={}", v, ei.seg_idx,
+                        std::mem::discriminant(&seg.source),
+                        seg.first_pcurve.is_some() || seg.second_pcurve.is_some(),
+                        ei.angle, ei.in_flag);
+                }
             }
         }
 

@@ -805,3 +805,41 @@ pub(crate) fn perform_internal_shapes_topo_ds(
         }
     }
 }
+
+/// OCCT BOPAlgo_BuilderFace::PerformLoops L327-382: group connected avoided edges into internal wires.
+pub(crate) fn build_internal_wires_topoDS(
+    segments: &[WireSegmentTopoDS],
+    avoided: &HashSet<usize>,
+) -> Vec<Vec<usize>> {
+    if avoided.is_empty() { return vec![]; }
+    let mut v_to_e: HashMap<usize, Vec<usize>> = HashMap::new();
+    for &si in avoided {
+        let seg = &segments[si];
+        v_to_e.entry(seg.start_vertex.index).or_default().push(si);
+        v_to_e.entry(seg.end_vertex.index).or_default().push(si);
+    }
+    let mut visited: HashSet<usize> = HashSet::new();
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for &si in avoided {
+        if visited.contains(&si) { continue; }
+        let mut group: Vec<usize> = Vec::new();
+        let mut queue: VecDeque<usize> = VecDeque::new();
+        queue.push_back(si);
+        visited.insert(si);
+        while let Some(cur) = queue.pop_front() {
+            group.push(cur);
+            let seg = &segments[cur];
+            for &v in &[seg.start_vertex.index, seg.end_vertex.index] {
+                if let Some(neighbors) = v_to_e.get(&v) {
+                    for &nsi in neighbors {
+                        if visited.insert(nsi) {
+                            queue.push_back(nsi);
+                        }
+                    }
+                }
+            }
+        }
+        groups.push(group);
+    }
+    groups
+}

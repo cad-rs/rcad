@@ -176,10 +176,38 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        // ✅ OCCT-aligned L327-362: Internal Wires — build wire groups from myShapesToAvoid.
-        //   OCCT: each avoided edge wraps in a TopoDS_Wire → myLoopsInternal.
-        //   rcad: each avoided segment becomes its own wire group, passed to PerformAreas.
-        let internal_wire_groups: Vec<Vec<usize>> = avoided.iter().map(|&si| vec![si]).collect();
+        // ✅ OCCT-aligned L327-382: Internal Wires — group connected avoided edges.
+        let mut internal_wire_groups: Vec<Vec<usize>> = Vec::new();
+        {
+            use std::collections::{HashSet, VecDeque};
+            let av: Vec<usize> = avoided.iter().copied().collect();
+            let mut v_to_e: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+            for &si in &av {
+                v_to_e.entry(segments[si].start_vertex).or_default().push(si);
+                v_to_e.entry(segments[si].end_vertex).or_default().push(si);
+            }
+            let mut visited: HashSet<usize> = HashSet::new();
+            for &si in &av {
+                if visited.contains(&si) { continue; }
+                let mut group: Vec<usize> = Vec::new();
+                let mut queue: VecDeque<usize> = VecDeque::new();
+                queue.push_back(si);
+                visited.insert(si);
+                while let Some(cur) = queue.pop_front() {
+                    group.push(cur);
+                    for &v in &[segments[cur].start_vertex, segments[cur].end_vertex] {
+                        if let Some(neighbors) = v_to_e.get(&v) {
+                            for &nsi in neighbors {
+                                if visited.insert(nsi) {
+                                    queue.push_back(nsi);
+                                }
+                            }
+                        }
+                    }
+                }
+                internal_wire_groups.push(group);
+            }
+        }
 
         // OCCT L141-145: PerformAreas
         let mut wfs = if !wires.is_empty() {
@@ -232,7 +260,9 @@ impl<'a> BooleanBuilder<'a> {
         for si in 0..segments_topo.len() {
             if !in_loop.contains(&si) && !avoided.contains(&si) { avoided.insert(si); }
         }
-        let internal_wire_groups: Vec<Vec<usize>> = avoided.iter().map(|&si| vec![si]).collect();
+        // OCCT L327-382: group connected avoided edges into internal wires
+        let internal_wire_groups = crate::builder::wire_path_topo_ds::build_internal_wires_topoDS(
+            &segments_topo, &avoided);
 
         let wfs = if !wires.is_empty() {
             crate::builder::wire_path_topo_ds::perform_areas_topo_ds(
