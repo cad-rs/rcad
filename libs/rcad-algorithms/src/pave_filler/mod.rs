@@ -1096,7 +1096,7 @@ impl<'a> PaveFiller<'a> {
                     origin: ShapeOrigin::ShapeA,
                     geom_tol: ic.geom_tol,
                     paves: Vec::new(),
-                    pave_blocks: Vec::new(),
+                    pave_blocks: vec![sub_pb.clone()],
                     face_reps: sec_face_reps,
                     is_internal: false,
                     vertex_params: {
@@ -1106,6 +1106,10 @@ impl<'a> PaveFiller<'a> {
                         vp
                     },
                 });
+                // Set new_edge in the PB stored inside the edge AND in sub_with_edge
+                if let Some(epb) = self.ds.edges.last_mut().and_then(|e| e.pave_blocks.first_mut()) {
+                    epb.new_edge = Some(new_ei);
+                }
                 sub_pb.new_edge = Some(new_ei);
                 self.ds.section_edge_refs[ci].push(new_ei);
                 existing_edge_map.insert(edge_key, new_ei);
@@ -6255,7 +6259,7 @@ impl<'a> PaveFiller<'a> {
                             origin: ShapeOrigin::ShapeA,
                             geom_tol,
                             paves: Vec::new(),
-                            pave_blocks: Vec::new(),
+                            pave_blocks: vec![sub_pb.clone()],
                             face_reps: sec_face_reps,
                             is_internal: false,
                             vertex_params: {
@@ -6265,6 +6269,10 @@ impl<'a> PaveFiller<'a> {
                                 vp
                             },
                         });
+                        // Set new_edge in the PB stored inside the edge
+                        if let Some(epb) = self.ds.edges.last_mut().and_then(|e| e.pave_blocks.first_mut()) {
+                            epb.new_edge = Some(new_ei);
+                        }
                         sub_pb.new_edge = Some(new_ei);
                         self.ds.section_edge_refs[ci].push(new_ei);
                         existing_edge_map.insert(edge_key, new_ei);
