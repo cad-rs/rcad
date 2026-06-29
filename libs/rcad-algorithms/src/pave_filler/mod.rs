@@ -5987,6 +5987,34 @@ impl<'a> PaveFiller<'a> {
                 }
                 self.put_pave_on_curve(vi, ci);
             }
+            // ✅ OCCT-aligned: PutEFPavesOnCurve (PaveFiller_6.cxx L2692-2743).
+            //   For Bezier/BSpline curves with a single PaveBlock, projects EF vertices
+            //   onto the curve as ext_paves.  Skip for analytic curves (Line/Circle/Ellipse).
+            {
+                let ic = &self.ds.intersection_curves[ci];
+                let is_bspline = matches!(&ic.curve, Curve3::BSpline(_));
+                let has_one_pb = ic.pave_blocks.len() == 1;
+                if is_bspline && has_one_pb {
+                    let face_idxs = find_face_idxs_for_curve(&self.ds, ci);
+                    let ef_verts: Vec<usize> = self.ds.interferences.iter()
+                        .filter_map(|inf| {
+                            if let Interference::EdgeFace { new_vertex, edge, face, .. } = inf {
+                                let edge_on_pair = self.ds.edges[*edge].face_reps.iter()
+                                    .any(|fr| fr.face_idx == face_idxs[0] || fr.face_idx == face_idxs[1]);
+                                if edge_on_pair && (*face == face_idxs[0] || *face == face_idxs[1]) {
+                                    Some(*new_vertex)
+                                } else { None }
+                            } else { None }
+                        })
+                        .collect();
+                    if !ef_verts.is_empty() {
+                        drop(ic);
+                        for nV in &ef_verts {
+                            self.put_pave_on_curve(*nV, ci);
+                        }
+                    }
+                }
+            }
             // ✅ OCCT-aligned: PutBoundPaveOnCurve (BOPAlgo_PaveFiller_6.cxx L2308-2368).
             //   For each curve endpoint, checks if a boundary vertex exists.  If the endpoint
             //   is valid on both faces but has no boundary vertex, creates one.
