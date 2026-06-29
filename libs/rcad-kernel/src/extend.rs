@@ -578,9 +578,9 @@ pub fn bspline_to_bezier_curves(curve: &BSplineCurve3) -> Vec<BSplineCurve3> {
     let d = curve.degree;
     // Insert all interior knots to multiplicity d+1
     let mut c = curve.clone();
+    let eps = 1e-14;
     // Collect unique interior knots
     let mut unique_knots: Vec<f64> = Vec::new();
-    let eps = 1e-14;
     for &k in &c.knots {
         if (k - c.knots[0]).abs() < eps || (k - c.knots[c.knots.len() - 1]).abs() < eps {
             continue;
@@ -592,14 +592,22 @@ pub fn bspline_to_bezier_curves(curve: &BSplineCurve3) -> Vec<BSplineCurve3> {
     for &k in &unique_knots {
         c = insert_knot_to_multiplicity(&c, k, d + 1);
     }
-    // Now each knot span is a Bezier segment
+    // Now each unique knot value between start and end defines a Bezier segment.
+    // Build list of unique knot values (including boundaries).
+    let mut kv: Vec<f64> = Vec::new();
+    for &k in &c.knots {
+        if kv.iter().all(|u| (u - k).abs() >= eps) {
+            kv.push(k);
+        }
+    }
+    let n_spans = kv.len() - 1;
     let mut segments = Vec::new();
-    let mut i = d;
-    while i < c.control_points.len() - 1 {
-        let j = (i + d + 1).min(c.control_points.len() - 1);
-        let seg_ctrl: Vec<DVec3> = c.control_points[i..=j].to_vec();
-        let seg_weights: Vec<f64> = c.weights[i..=j].to_vec();
-        // The knot vector for a Bezier segment: d+1 copies of 0, d+1 copies of 1
+    for si in 0..n_spans {
+        let cp_start = si * d;
+        let cp_end = cp_start + d + 1;
+        if cp_end > c.control_points.len() { break; }
+        let seg_ctrl = c.control_points[cp_start..cp_end].to_vec();
+        let seg_weights = c.weights[cp_start..cp_end].to_vec();
         let mut seg_knots = Vec::new();
         for _ in 0..=d { seg_knots.push(0.0); }
         for _ in 0..=d { seg_knots.push(1.0); }
@@ -609,7 +617,6 @@ pub fn bspline_to_bezier_curves(curve: &BSplineCurve3) -> Vec<BSplineCurve3> {
             control_points: seg_ctrl,
             weights: seg_weights,
         });
-        i = j;
     }
     segments
 }
