@@ -998,6 +998,7 @@ impl<'a> PaveFiller<'a> {
                 }
                 let (aT1, aT2) = sub_pb.range();
                 if (aT2 - aT1).abs() < crate::tolerance::TOLERANCE_ABS {
+                    if std::env::var("RCAD_DEBUG_PB").is_ok() { eprintln!("[PB_FAIL] ci={} RANGE_TOO_SMALL", ci); }
                     continue;
                 }
                 // OCCT L906-918: IsValidBlockForFaces �?check midpoint of sub-PB against both faces
@@ -1061,6 +1062,7 @@ impl<'a> PaveFiller<'a> {
                     // OCCT L924-928: UpdateEdgeTolerance + UpdateSavedTolerance for reused edge
                     sub_pb.new_edge = Some(existing_ei);
                     sub_with_edge.push(sub_pb);
+                    if std::env::var("RCAD_DEBUG_PB").is_ok() && face_ids[0] == 0 { eprintln!("[PB_PASS] ci={} REUSE edge={}", ci, existing_ei); }
                     continue;
                 }
                 // Create new DSEdge for this sub-PB
