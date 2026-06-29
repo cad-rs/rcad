@@ -284,51 +284,59 @@ pub(crate) fn walk_path_extract_wires_topoDS(
         }
 
         // ── Outgoing Edge Selection (OCCT L526-616) ──
-        // OCCT L532-535: after loop detection, falls through here with
-        // the truncated state (ci = aLS.Last(), arrived_vertex = aVertVa(i)).
-
         let angle_in = match find_angle_at(smart_map, ci, arrived_vertex, true) {
             Some(a) => a,
             None => return,
         };
-
-        let raw_candidates: Vec<&EdgeInfo> = if let Some(infos) = smart_map.get(&arrived_vertex) {
-            infos.iter().filter(|ei| !ei.passed && !ei.in_flag).collect()
-        } else { return; };
-
+        let a_tol_2d_sq = { let tol = uv_tolerance(arrived_vertex); tol * tol };
         let b_is_closed = is_vert_closed(smart_map, arrived_vertex);
         let a_pb = vertex_uv(ShapeRef::new(arrived_vertex), &segments[ci], false).unwrap_or(DVec2::ZERO);
-        let a_tol_2d_sq = { let tol = uv_tolerance(arrived_vertex); tol * tol };
 
-        let i_cnt = raw_candidates.len();
-        if i_cnt == 0 { return; }
-
-        // Single candidate shortcut (OCCT L571-575)
-        if i_cnt == 1 {
-            let best = raw_candidates[0];
-            ci = best.seg_idx;
-            arrived_vertex = segments[ci].end_vertex.index;
-            continue;
-        }
-
-        // 2D distance filter for closed vertices (OCCT L571-582)
-        let candidates: Vec<&EdgeInfo> = if b_is_closed {
-            raw_candidates.into_iter().filter(|ei| {
-                let cand_uv = vertex_uv(ShapeRef::new(arrived_vertex), &segments[ei.seg_idx], true)
-                    .unwrap_or(DVec2::ZERO);
-                cand_uv.distance_squared(a_pb) < a_tol_2d_sq
-            }).collect()
-        } else { raw_candidates };
-
-        if candidates.is_empty() { return; }
-
+        // OCCT L540-549: prepare selection state
+        let mut p_edge_info: Option<usize> = None;
+        let mut a_min_angle = 100.0;
+        let le_info = smart_map.get(&arrived_vertex).map(|v| v.as_slice()).unwrap_or(&[]);
+        let i_cnt = le_info.iter().filter(|ei| !ei.passed && !ei.in_flag).count();
         let incoming_is_boundary = !matches!(segments[ci].source, WireEdgeSourceTopoDS::IntersectionCurve(_));
-        let best = match select_best_outgoing(&candidates, angle_in, incoming_is_boundary, ci) {
-            Some(e) => e,
-            None => return,
-        };
+        let mut a_nb_ways_inside = 0i32;
+        let mut p_only_way_in: Option<usize> = None;
 
-        ci = best.seg_idx;
+        for ei in le_info {
+            let an_is_out = !ei.in_flag;
+            let an_is_not_passed = !ei.passed;
+            if !an_is_out || !an_is_not_passed { continue; }
+            // OCCT L565-569: no way to go
+            if i_cnt == 0 { return; }
+            // OCCT L571-575: single way out
+            if i_cnt == 1 { p_edge_info = Some(ei.seg_idx); break; }
+            let an_angle = if ei.seg_idx == ci { std::f64::consts::TAU }
+            else {
+                // OCCT L584-596: 2D distance filter for closed vertices
+                if b_is_closed {
+                    let cand_uv = vertex_uv(ShapeRef::new(arrived_vertex), &segments[ei.seg_idx], true)
+                        .unwrap_or(DVec2::ZERO);
+                    if cand_uv.distance_squared(a_pb) >= a_tol_2d_sq { continue; }
+                }
+                let an_angle_out = ei.angle;
+                clock_wise_angle(angle_in, an_angle_out)
+            };
+            // OCCT L603-607: count inside ways
+            if incoming_is_boundary && ei.is_inside {
+                a_nb_ways_inside += 1;
+                p_only_way_in = Some(ei.seg_idx);
+            }
+            // OCCT L609-613: select minimal angle
+            if an_angle < a_min_angle - std::f64::EPSILON {
+                a_min_angle = an_angle;
+                p_edge_info = Some(ei.seg_idx);
+            }
+        }
+        // OCCT L616-619: prefer only way inside
+        if a_nb_ways_inside == 1 { p_edge_info = p_only_way_in; }
+        // OCCT L621-625: no way to go
+        let best_si = match p_edge_info { Some(si) => si, None => return };
+        // OCCT L627-629: advance to next vertex
+        ci = best_si;
         arrived_vertex = segments[ci].end_vertex.index;
     }
 }
