@@ -638,6 +638,24 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
         let edge_is_split = ei < ds.my_images.len() && ds.my_images[ei].len() > 1;
 
         if !edge_is_split {
+            // ✅ OCCT L395-404: seam detection for unsplit edges on periodic surfaces.
+            //   OCCT iterates all wire edges uniformly (no split/unsplit distinction);
+            //   rcad processes unsplit edges here — must detect seam before adding.
+            let b_is_degenerated = ds.is_edge_degenerated(ei);
+            let b_is_seam = !b_is_degenerated && (is_u_closed || is_v_closed)
+                && ds.edge_on_face(ei, face_idx).map_or(false, |rep| {
+                    let (is_uiso, is_v_iso) = is_edge_isoline(&rep.pcurve, rep.pcurve_range);
+                    (is_u_closed && is_uiso) || (is_v_closed && is_v_iso)
+                });
+            if b_is_seam {
+                if matches!(face.surface, Surface3::Sphere(_)) {
+                    if !processed_seam_ds_edges.insert(ei) { continue; }
+                    segments.extend(build_sphere_seam_segments(ds, ei, sv, ev, face, face_idx));
+                } else {
+                    segments.extend(build_cylinder_seam_segments(ds, ei, sv, ev, face));
+                }
+                continue;
+            }
             // ✅ OCCT L371-382: unsplit edge — add directly.
             //   OCCT L371-377: INTERNAL orientation → FWD+REV.
             //   OCCT L379-381: FORWARD/REVERSED → add with orientation.
