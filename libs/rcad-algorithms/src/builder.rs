@@ -224,7 +224,60 @@ impl<'a> BooleanBuilder<'a> {
             &mut wfs, &internal_wire_groups, &segments, ds, face_idx);
         Some((segments, wfs, vertex_positions))
     }
+}
 
+/// Find a 3D sample point inside the face region (outer polygon minus hole polygons).
+/// Uses UV-space point-in-polygon to find a point that is inside the outer boundary
+/// but outside all hole boundaries.  Falls back to candidates when centroid is in a hole.
+fn find_interior_3d(
+    outer_uvs: &[DVec2],
+    hole_uvs: &[Vec<DVec2>],
+    surface: &Surface3,
+    normal: &DVec3,
+) -> Option<DVec3> {
+    if outer_uvs.len() < 3 { return None; }
+    let centroid = outer_uvs.iter().copied().sum::<DVec2>() / outer_uvs.len() as f64;
+
+    // Try the centroid first
+    let candidates = {
+        let mut c = vec![centroid];
+        // Add midpoints between centroid and each outer vertex
+        for uv in outer_uvs {
+            c.push((centroid + *uv) * 0.5);
+        }
+        c
+    };
+    for &uv in &candidates {
+        if !point_in_polygon_2d(outer_uvs, uv) { continue; }
+        let in_hole = hole_uvs.iter().any(|h| {
+            h.len() >= 3 && point_in_polygon_2d(h, uv)
+        });
+        if in_hole { continue; }
+        // Valid interior UV point — convert to 3D
+        let pt = match surface {
+            Surface3::Plane(p) => {
+                let x_axis = rcad_kernel::geom::any_perpendicular(p.normal).normalize();
+                let y_axis = p.normal.cross(x_axis).normalize();
+                p.origin + uv.x * x_axis + uv.y * y_axis
+            }
+            Surface3::Sphere(s) => s.point_at(uv.x, uv.y),
+            Surface3::Cylinder(c) => {
+                use rcad_kernel::geom::SurfaceEval;
+                c.point_at(uv.x, uv.y)
+            }
+            Surface3::Cone(c) => {
+                use rcad_kernel::geom::SurfaceEval;
+                c.point_at(uv.x, uv.y)
+            }
+            _ => return None,
+        };
+        let inward = -normal;
+        return Some(pt + inward * (TOLERANCE_ABS * 100.0));
+    }
+    None
+}
+
+impl<'a> BooleanBuilder<'a> {
     /// ✅ OCCT-aligned: TopoDS-based BuildFace pipeline with emit.
     ///   Runs the full pipeline then emits result faces directly into ResultBuilder.
     pub(crate) fn split_face_and_emit_topo_ds(
@@ -246,7 +299,7 @@ impl<'a> BooleanBuilder<'a> {
         if !self.builder_face_check_data(face_idx, &segments) { return; }
 
         let segments_topo = crate::builder::builder_utils_topo_ds::segments_to_topo_ds(&segments, ds, face_idx, &face_refs[..], &_ic_edge_map[..]);
-        drop(segments);
+        // segments kept alive for classification below; dropped after classification.
 
         let tool: &dyn rcad_kernel::topods::BRepTool = br;
 
@@ -278,6 +331,49 @@ impl<'a> BooleanBuilder<'a> {
         // ✅ OCCT-aligned L147: PerformInternalShapes
         crate::builder::wire_path_topo_ds::perform_internal_shapes(
             &mut wfs, &internal_wire_groups, &segments_topo, tool, face_idx, ds);
+
+        // ✅ OCCT-aligned: ComputeState — classify each WireFace against opposing solid.
+        //   OCCT BOPAlgo_Builder::PerformInternal1 classifies each split face via
+        //   BOPTools_AlgoTools::ComputeState then filters via classification_keep_policy.
+        //   rcad: find an interior UV point (outer polygon minus hole polygons), map to 3D,
+        //   offset inward along face normal, and classify against opposing solid faces.
+        let face_surf = ds.faces[face_idx].surface.clone();
+        let normal = ds.faces[face_idx].normal;
+        let opposing_faces: Vec<usize> = if is_a {
+            (self.ds.a_face_count..self.ds.faces.len()).collect()
+        } else {
+            (0..self.ds.a_face_count).collect()
+        };
+        if !opposing_faces.is_empty() {
+            let source = if is_a { SourceSide::A } else { SourceSide::B };
+            wfs.retain(|wf| {
+                // Build UV polygons: outer boundary + hole boundaries
+                let outer_uvs: Vec<DVec2> = wf.outer_wire.iter().filter_map(|&si| {
+                    let seg = &segments[si];
+                    let pt = ds.vertices[seg.start_vertex].point;
+                    world_to_uv(&face_surf, pt)
+                }).collect();
+                let hole_uvs: Vec<Vec<DVec2>> = wf.inner_wires.iter().map(|iw| {
+                    iw.iter().filter_map(|&si| {
+                        let seg = &segments[si];
+                        world_to_uv(&face_surf, ds.vertices[seg.start_vertex].point)
+                    }).collect()
+                }).collect();
+                // Find interior sample point (outer polygon minus holes)
+                let sample_pt = find_interior_3d(&outer_uvs, &hole_uvs, &face_surf, &normal)
+                    .unwrap_or_else(|| {
+                        // Fallback: centroid of outer boundary vertices, offset inward
+                        let cent = wf.outer_wire.iter()
+                            .map(|&si| ds.vertices[segments[si].start_vertex].point)
+                            .sum::<DVec3>() / wf.outer_wire.len() as f64;
+                        let inward = -normal; // from surface toward solid interior
+                        cent + inward * (TOLERANCE_ABS * 100.0)
+                    });
+                let class = classify_point(sample_pt, &opposing_faces, ds);
+                self.classification_keep_policy(source, class, face_idx)
+            });
+        }
+        drop(segments);
 
         let origin = if is_a {
             FaceOrigin::FromA(ds.faces[face_idx].source_face_idx)
