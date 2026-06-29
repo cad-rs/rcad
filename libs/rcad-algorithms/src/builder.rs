@@ -296,6 +296,15 @@ impl<'a> BooleanBuilder<'a> {
 
         let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
         let segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
+        if std::env::var("RCAD_DEBUG_IC").is_ok() {
+            eprintln!("[SPLIT] face={} DS origin={:?} n_segments={} has_pb_sc={}", 
+                face_idx, ds.faces[face_idx].origin, segments.len(),
+                !ds.faces[face_idx].face_info.curves_sc.is_empty());
+            for (si, seg) in segments.iter().enumerate() {
+                let src = format!("{:?}", seg.source);
+                eprintln!("[SPLIT]   seg[{}] src={} v{}->v{}", si, src, seg.start_vertex, seg.end_vertex);
+            }
+        }
         if !self.builder_face_check_data(face_idx, &segments) { return; }
 
         let segments_topo = crate::builder::builder_utils_topo_ds::segments_to_topo_ds(&segments, ds, face_idx, &face_refs[..], &_ic_edge_map[..]);

@@ -5963,6 +5963,7 @@ impl<'a> PaveFiller<'a> {
                 .unwrap_or(v)
         };
         let mut existing_edge_map: std::collections::HashMap<(usize, usize, usize, usize), usize> = std::collections::HashMap::new();
+        let mut reg_sec_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
         for ci in 0..n_curves {
             // Use per-pair tolerance from the two faces that reference this curve
@@ -6279,9 +6280,11 @@ impl<'a> PaveFiller<'a> {
                         sub_with_edge.push(sub_pb);
                     }
                 }
-                // Register section edge PBs to face info
+                // Register section edge PBs to face info — skip reused edges
+                // (same edge registered by a sibling curve from the same face pair).
                 for pb in &sub_with_edge {
-                    if pb.new_edge.is_some() {
+                    if let Some(nei) = pb.new_edge {
+                        if !reg_sec_edges.insert(nei) { continue; }
                         let g_pb_idx = self.ds.allocate_pave_block(pb.clone());
                         for &fi in &face_ids {
                             if fi != usize::MAX {
