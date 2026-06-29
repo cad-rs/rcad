@@ -950,10 +950,9 @@ impl<'a> PaveFiller<'a> {
                 .unwrap_or(v)
         };
         // OCCT L854-875 (M6): Build BVH tree of existing PBs for IsExistingPaveBlock lookup.
-        // rcad: use a HashMap keyed by (nV1, nV2) as a lightweight equivalent — if a DSEdge
-        // already exists for the same vertex pair, the sub-PB is already handled (avoids duplicates
-        // when two curves produce edges on the same geometric line).
-        let mut existing_edge_map: std::collections::HashMap<(usize, usize), usize> = std::collections::HashMap::new();
+        // rcad: key by (face1, face2, nV1, nV2) — same geometric edge from same face pair reuses.
+        // Different face pairs produce separate edges even with same vertices (sphere pole case).
+        let mut existing_edge_map: std::collections::HashMap<(usize, usize, usize, usize), usize> = std::collections::HashMap::new();
 
         for ci in 0..self.ds.intersection_curves.len() {
             let ic = &self.ds.intersection_curves[ci];
@@ -1046,7 +1045,11 @@ impl<'a> PaveFiller<'a> {
                 }
                 // OCCT L920-963 (M7e): IsExistingPaveBlock — check if this sub-PB already has
                 //   a DSEdge from another curve (via BVH tree / existing_edge_map).
-                let edge_key = if nV1 < nV2 { (nV1, nV2) } else { (nV2, nV1) };
+                // key includes face pair so different FF pairs create separate edges.
+                let (v1, v2) = if nV1 < nV2 { (nV1, nV2) } else { (nV2, nV1) };
+                let f1 = face_ids[0].min(face_ids[1]);
+                let f2 = face_ids[0].max(face_ids[1]);
+                let edge_key = (f1, f2, v1, v2);
                 if let Some(&existing_ei) = existing_edge_map.get(&edge_key) {
                     // OCCT L924-928: UpdateEdgeTolerance + UpdateSavedTolerance for reused edge
                     sub_pb.new_edge = Some(existing_ei);
@@ -1094,7 +1097,6 @@ impl<'a> PaveFiller<'a> {
                 });
                 sub_pb.new_edge = Some(new_ei);
                 self.ds.section_edge_refs[ci].push(new_ei);
-                let edge_key = if nV1 < nV2 { (nV1, nV2) } else { (nV2, nV1) };
                 existing_edge_map.insert(edge_key, new_ei);
                 sub_with_edge.push(sub_pb);
             }
