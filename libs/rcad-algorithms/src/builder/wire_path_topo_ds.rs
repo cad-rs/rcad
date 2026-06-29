@@ -145,18 +145,18 @@ pub(crate) fn walk_path_extract_wires_topoDS(
         coord2d(fwd_v, edge, face)
     };
 
-    // OCCT Tolerance2D/UTolerance2D/VTolerance2D via BRepTool face queries.
-    // OCCT-aligned: for spherical surfaces at the pole (V ≈ ±π/2), UResolution
-    // tends to infinity (|cos(V)| → 0).  rcad's u_resolution_for_surface computes
-    // only the equator value (tol3d / R).  Override with a large U tolerance when
-    // the vertex is near the pole of a periodic surface.
-    let vtol = |vi: usize| -> f64 {
-        tool.vertex_tolerance(ShapeRef::new(vi)).max(TOLERANCE_ABS)
-    };
+    // OCCT Tolerance2D/UTolerance2D/VTolerance2D (BOPAlgo_WireSplitter_1.cxx L873-912)
     let face_ref = segments[start_si].face;
+    let is_bspline = matches!(tool.face_surface(face_ref), Some(&Surface3::BSpline(_)));
+    let vtol = |vi: usize| -> f64 { tool.vertex_tolerance(ShapeRef::new(vi)) };
     let tolerance_2d = |vi: usize| -> f64 {
         let vt = vtol(vi);
-        tool.u_resolution(face_ref, vt).max(tool.v_resolution(face_ref, vt)).max(vt)
+        let u = tool.u_resolution(face_ref, vt);
+        let v = tool.v_resolution(face_ref, vt);
+        let mut t = u.max(v);
+        if t < vt { t = vt; }
+        if is_bspline { t *= 1.1; }
+        t
     };
     let u_tolerance_2d = |vi: usize| -> f64 { tool.u_resolution(face_ref, vtol(vi)) };
     let v_tolerance_2d = |vi: usize| -> f64 { tool.v_resolution(face_ref, vtol(vi)) };
