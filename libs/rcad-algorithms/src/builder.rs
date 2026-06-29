@@ -2754,12 +2754,39 @@ impl<'a> BooleanBuilder<'a> {
         // OCCT L136-167: iterate all source arguments of matching type.
         //   rcad: source entities vary by type (DS arrays, result data).
         match shape_type {
-            ShapeType::Vertex => {
-                // OCCT L137-165 (TopAbs_VERTEX): add split vertex images to myShape.
-                //   rcad: vertices are created during build_topods_faces (face construction),
-                //   or directly in fill_images_edges (t.add_tvertex).  No separate vertex
-                //   build step — vertices are implicit in edge/face data.
+    ShapeType::Vertex => {
+        // ✅ OCCT-aligned: BuildResult (Builder_1.cxx L130-168).
+        //   Iterate all source arguments of type VERTEX → add images to myShape.
+        //   If no images, add the original vertex.
+        //   rcad: source vertices = DS vertices 0..a_vc (A) + a_vc.. (B).
+        let a_vc = self.ds.a_vertex_count;
+        let nv = self.ds.vertices.len();
+        for side in 0..2usize {
+            let (start, end) = if side == 0 { (0usize, a_vc.min(nv)) } else { (a_vc, nv) };
+            for vi in start..end {
+                // OCCT L145: myImages.Seek(aS) — check if vertex has split image
+                let sref = rcad_kernel::topods::ShapeRef::new(vi);
+                let has_images = self.my_images.borrow().contains_key(&sref);
+                if !has_images {
+                    // OCCT L149-152: no images → add the original shape
+                    let pt = self.ds.vertices[vi].point;
+                    let _rvi = result.add_ds_vertex(vi, pt);
+                    t.add_tvertex(pt);
+                } else {
+                    // OCCT L156-165: add images of the argument shape into result
+                    let images = self.my_images.borrow().get(&sref).unwrap().clone();
+                    for img in &images {
+                        let vi_img = img.index;
+                        if vi_img < self.ds.vertices.len() {
+                            let pt = self.ds.vertices[vi_img].point;
+                            let _rvi = result.add_ds_vertex(vi_img, pt);
+                            t.add_tvertex(pt);
+                        }
+                    }
+                }
             }
+        }
+    }
             ShapeType::Edge => {
                 // OCCT L130-168 (TopAbs_EDGE): add split edge images to myShape.
                 //   rcad: edges are created during build_topods_faces from result edge refs.
@@ -2962,6 +2989,51 @@ impl<'a> BooleanBuilder<'a> {
         (topods::BRep::new(), ResultBuilder::new())
     }
 
+    /// ✅ OCCT-aligned: TreatEmptyShape (BOPAlgo_BOP.cxx L214-319).
+    ///   Handles the case where one or both operands have no geometry.
+    ///   Returns Ok(Some(brep)) if a quick result was determined,
+    ///   Ok(None) if the full pipeline must run.
+    fn treat_empty_shape(&self, a_faces: &[usize], b_faces: &[usize])
+        -> Result<Option<rcad_kernel::BRep>, BooleanError>
+    {
+        let has_a = !a_faces.is_empty();
+        let has_b = !b_faces.is_empty();
+        if has_a && has_b {
+            return Ok(None); // need full pipeline
+        }
+        if !has_a && !has_b {
+            // OCCT L252-256: all empty → empty result
+            return Ok(Some(rcad_kernel::BRep::new()));
+        }
+        // OCCT L258-317: one side empty → result depends on operation
+        match self.op {
+            BooleanOpType::Union => {
+                // OCCT L270-279: return non-empty side
+                let src = if has_a { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
+                let brep = self.brep_of_side(src, a_faces.len(), b_faces.len());
+                Ok(Some(brep))
+            }
+            BooleanOpType::Intersection => {
+                // OCCT L303-304: Common always empty
+                Ok(Some(rcad_kernel::BRep::new()))
+            }
+            BooleanOpType::Difference => {
+                if !has_a {
+                    // OCCT L287-289: CUT with empty objects → empty
+                    Ok(Some(rcad_kernel::BRep::new()))
+                } else {
+                    // OCCT L281-289: CUT with empty tools → return objects
+                    let brep = self.brep_of_side(ShapeOrigin::ShapeA, a_faces.len(), b_faces.len());
+                    Ok(Some(brep))
+                }
+            }
+            _ => {
+                // Unknown operation → fall through to full pipeline
+                Ok(None)
+            }
+        }
+    }
+
     /// ✅ OCCT-aligned: BOPAlgo_BOP::PerformInternal1 (BOP.cxx L422-579).
     ///   Every statement in OCCT L422-579 has a corresponding rcad line below.
     ///   See comments for exact OCCT line references.
@@ -2970,81 +3042,30 @@ impl<'a> BooleanBuilder<'a> {
     ///   clears solids from t_brep (non-Union) — equivalent to OCCT removing from myShape.
     pub fn build_with_history(&self) -> Result<(BRep, BooleanHistory), BooleanError> {
         // OCCT L425-429: setup (myPaveFiller, myDS, myContext, myFuzzyValue, myNonDestructive).
-        //   OCCT copies from the PaveFiller into Builder members at the start of
-        //   PerformInternal1.  rcad: the caller already constructed BooleanBuilder
-        //   with the DS/op, so we re-affirm the form here.
-        //   OCCT copies from the PaveFiller into Builder members at the start of
-        //   PerformInternal1.  rcad: the caller already constructed BooleanBuilder
-        //   with the DS/op, so we re-affirm the form here.
-        //   (myPaveFiller = &theFiller)
-        //   (myDS = myPaveFiller->PDS())
-        //   (myContext = myPaveFiller->Context())
-        //   (myFuzzyValue = myPaveFiller->FuzzyValue())
-        //   (myNonDestructive = myPaveFiller->NonDestructive())
-        //   rcad equivalents are already assigned in new(); this re-assignment
-        //   aligns the form with PerformInternal1 L313-317.
+        //   rcad equivalents are already assigned in new(); re-affirm the form.
         let _fuzzy_value = self.ds.fuzzy_tol;
         let _non_destructive = self.my_non_destructive;
 
-        // OCCT L320-325: CheckData
+        // OCCT L431-436: CheckData
         let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
         let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
         self.check_data(&a_faces, &b_faces)?;
 
-        // OCCT L327-332: Prepare — creates empty TopoDS_Compound as myShape.
+        // OCCT L438-443: Prepare — creates empty TopoDS_Compound as myShape.
         let (mut t_brep, mut result) = self.prepare();
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
 
-        // OCCT L334-335: analyzeProgress (rcad: no OCCT Message_Progress API).
-        // OCCT L336: // 3. Fill Images
-
-        // OCCT L440-448: EmptyShape check
-        //   OCCT: if (HasAlert(AlertEmptyShape)) { TreatEmptyShape(); if done { PrepareHistory(); return; } }
-        //   rcad: check if any operand has zero faces in the DS.  If one side is
-        //   empty, the boolean result depends on the operation type.
-        let has_a = !a_faces.is_empty();
-        let has_b = !b_faces.is_empty();
-        if !has_a || !has_b {
-            if !has_a && !has_b {
-                // OCCT L252-256: all shapes empty → return empty result
-                return Ok((rcad_kernel::BRep::new(), BooleanHistory::default()));
-            }
-            // OCCT L258-317: one side empty → result depends on operation
-            match self.op {
-                BooleanOpType::Union => {
-                    // FUSE: return the non-empty side (OCCT L270-279)
-                    let src = if has_a { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
-                    let brep = self.brep_of_side(src, a_faces.len(), b_faces.len());
-                    return Ok((brep, BooleanHistory::default()));
-                }
-                BooleanOpType::Intersection => {
-                    // COMMON: always empty when one side is empty (OCCT L303-304)
-                    return Ok((rcad_kernel::BRep::new(), BooleanHistory::default()));
-                }
-                BooleanOpType::Difference => {
-                    if !has_a {
-                        // CUT: objects empty → result empty (OCCT L287-289)
-                        return Ok((rcad_kernel::BRep::new(), BooleanHistory::default()));
-                    }
-                    // CUT with tools empty → return objects (OCCT L281-289)
-                    let brep = self.brep_of_side(ShapeOrigin::ShapeA, a_faces.len(), b_faces.len());
-                    return Ok((brep, BooleanHistory::default()));
-                }
-                _ => {}
-            }
+        // OCCT L445-453: TreatEmptyShape — check if any operand is degenerate.
+        if let Some(brep) = self.treat_empty_shape(&a_faces, &b_faces)? {
+            return Ok((brep, BooleanHistory::default()));
         }
 
-        // OCCT L454: Message_ProgressScope aPS(theRange, "Building the result...", 100);
-        // OCCT L456-457: BOPAlgo_PISteps aSteps(PIOperation_Last); analyzeProgress(100, aSteps);
-        // rcad: Progress API empty implementation (no Message_ProgressRange available).
+        // OCCT L454-457: ProgressScope + PISteps
         struct _ProgressScope;
-        impl _ProgressScope {
-            fn next(&self, _step: f64) -> f64 { 0.0 }
-        }
+        impl _ProgressScope { fn next(&self, _step: f64) -> f64 { 0.0 } }
         const _PIOP_LAST: usize = 12;
         let _a_ps = _ProgressScope;
         let _a_steps = [0.0f64; _PIOP_LAST];
-        // OCCT: aPS.Next(aSteps.GetStep(...)) — not passed to fill functions (signature mismatch).
         let _ = (&_a_ps, &_a_steps);
 
         // ✅ OCCT-aligned: dimension-by-dimension pipeline (PerformInternal1 L336-445).
