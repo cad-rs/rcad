@@ -1013,7 +1013,11 @@ impl<'a> PaveFiller<'a> {
                         let pcurve = if i == 0 { ic.pcurve_on_a.as_ref() } else { ic.pcurve_on_b.as_ref() };
                         if let Some(pc) = pcurve {
                             let uv = pc.point_at(mid_t);
-                            if !self.context.is_point_in_on_face(self.ds, fi, uv) {
+                            let in_on = self.context.is_point_in_on_face(self.ds, fi, uv);
+                            if std::env::var("RCAD_DEBUG_ISVALID").is_ok() && (fi == 3 || fi == 0) {
+                                eprintln!("[IV] ci={} fi={} uv=({:.6},{:.6}) in_on={}", ci, fi, uv.x, uv.y, in_on);
+                            }
+                            if !in_on {
                                 b_flag = false; break;
                             }
                         } else {
