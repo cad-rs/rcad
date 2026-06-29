@@ -439,6 +439,10 @@ pub(crate) fn build_closed_wires(
     tool: &dyn BRepTool,
 ) -> Vec<Vec<usize>> {
     if segments.is_empty() { return vec![]; }
+    if std::env::var("RCAD_DEBUG_IC").is_ok() {
+        let face_id = segments[0].face.index;
+        eprintln!("[WIRE] face={} n_seg={} n_avoided={}", face_id, segments.len(), avoided.len());
+    }
 
     let n = segments.len();
     let mut vert_to_segs: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -465,12 +469,37 @@ pub(crate) fn build_closed_wires(
 
     // Process each block
     let mut wires: Vec<Vec<usize>> = Vec::new();
-    for block in &blocks {
-        if block.len() < 2 { continue; }
+    for (bi, block) in blocks.iter().enumerate() {
+        if block.len() < 2 {
+            if std::env::var("RCAD_DEBUG_IC").is_ok() {
+                let face_id = segments[0].face.index;
+                let vset: std::collections::HashSet<usize> = block.iter().flat_map(|&si| {
+                    let s = &segments[si];
+                    [s.start_vertex.index, s.end_vertex.index]
+                }).collect();
+                eprintln!("[WIRE] face={} block[{}] too small ({} segs, {} verts)", face_id, bi, block.len(), vset.len());
+            }
+            continue;
+        }
 
         // Build SmartMap
         let smart_map = build_smart_map(block, segments, tool);
-        if smart_map.is_empty() { continue; }
+        if smart_map.is_empty() {
+            if std::env::var("RCAD_DEBUG_IC").is_ok() {
+                let face_id = segments[0].face.index;
+                let vset: std::collections::HashSet<usize> = block.iter().flat_map(|&si| {
+                    let s = &segments[si];
+                    [s.start_vertex.index, s.end_vertex.index]
+                }).collect();
+                let no_pcurve: Vec<usize> = block.iter().filter(|&&si| {
+                    let seg = &segments[si];
+                    tool.curve_on_surface(seg.edge, seg.face).is_none()
+                        && seg.first_pcurve.is_none() && seg.second_pcurve.is_none()
+                }).copied().collect();
+                eprintln!("[WIRE] face={} block[{}] EMPTY smart_map ({} segs, {} verts, {} no-pcurve)", face_id, bi, block.len(), vset.len(), no_pcurve.len());
+            }
+            continue;
+        }
 
         // Check regularity
         let is_regular = {
