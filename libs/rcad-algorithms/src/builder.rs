@@ -556,12 +556,18 @@ impl<'a> BooleanBuilder<'a> {
     ///     L105:   pLS->Append(aSpR)  → myImages[source].Append(split)
     ///     L107-112: myOrigins[split].Append(source)
     ///     L114-118: IsCommonBlockOnEdge → myShapesSD.Bind(source, split)
-    fn fill_images_edges(&self, t: &mut topods::BRep) {
-        // OCCT: Create TShape::Vertex entries (BuildResult path).
-        for (vi, v) in self.ds.vertices.iter().enumerate() {
-            let vr = t.add_tvertex(v.point);
-            t.vertex_mut(vr).tolerance = v.geom_tol.max(crate::tolerance::TOLERANCE_ABS);
-        }
+    fn fill_images_edges(&self) {
+        // OCCT L73: aNbS = myDS->NbSourceShapes()
+        // OCCT L75-81: iterate source shapes, filter TopAbs_EDGE
+        // OCCT L83-87: filter HasReference (has pave blocks)
+        // OCCT L89-90: aE = aSI.Shape(); aLPB = myDS->PaveBlocks(i)
+        // OCCT L95:    myImages.Bound(aE, ...)
+        // OCCT L97-119: for each pave block:
+        //   L101:   aPBR = myDS->RealPaveBlock(aPB)
+        //   L103:   nSpR = aPBR->Edge()
+        //   L104-105: aSpR = myDS->Shape(nSpR); pLS->Append(aSpR)
+        //   L107-112: myOrigins[split].Append(source)
+        //   L114-118: IsCommonBlockOnEdge → myShapesSD.Bind(source, split)
         // OCCT L61: aNbE (base vertex index, rcad offset for flat indexing)
         let e_base = self.ds.vertices.len();
         for (ei, edge) in self.ds.edges.iter().enumerate() {
@@ -576,16 +582,6 @@ impl<'a> BooleanBuilder<'a> {
                 self.my_origins.borrow_mut().entry(aSpR).or_default().push(aE);
                 if pb.common_block_idx.is_some() {
                     self.my_shapes_sd.borrow_mut().insert(aE, aSpR);
-                }
-                // OCCT: BuildResult creates result edges in t_brep from myImages.
-                let se = &self.ds.edges[nSpR];
-                let sv_sr = rcad_kernel::topods::ShapeRef::new(se.start_vertex);
-                let ev_sr = rcad_kernel::topods::ShapeRef::new(se.end_vertex);
-                let ci = t.curves.len();
-                t.curves.push(se.curve.clone());
-                let tedge = t.add_tedge(Some(ci), sv_sr, ev_sr, se.t_range);
-                if self.ds.is_edge_degenerated(nSpR) || se.start_vertex == se.end_vertex {
-                    t.edge_mut(tedge).degenerated = true;
                 }
             }
         }
@@ -2789,7 +2785,63 @@ impl<'a> BooleanBuilder<'a> {
     }
             ShapeType::Edge => {
                 // OCCT L130-168 (TopAbs_EDGE): add split edge images to myShape.
-                //   rcad: edges are created during build_topods_faces from result edge refs.
+                //   rcad: iterate myImages(EDGE) entries, create TShape::Edge for each.
+                //   First ensure all DS vertices have TShapes for edge vertex refs.
+                let e_base = self.ds.vertices.len();
+                // Ensure vertex TShapes exist (needed by edge creation)
+                for vi in 0..self.ds.vertices.len() {
+                    let vr = rcad_kernel::topods::ShapeRef::new(vi);
+                    if t.tshapes.len() <= vi {
+                        // Extend tshapes array to cover this index
+                        let pt = self.ds.vertices[vi].point;
+                        let sv = t.add_tvertex(pt);
+                        t.vertex_mut(sv).tolerance = self.ds.vertices[vi].geom_tol
+                            .max(crate::tolerance::TOLERANCE_ABS);
+                        let _ = vr;
+                    }
+                }
+                // Iterate A and B side source edges
+                let a_ec = self.ds.a_edge_count;
+                let n_edges = self.ds.edges.len();
+                for side in 0..2usize {
+                    let (start, end) = if side == 0 {
+                        (0usize, a_ec.min(n_edges))
+                    } else {
+                        (a_ec, n_edges)
+                    };
+                    for ei in start..end {
+                        let aE = rcad_kernel::topods::ShapeRef::new(e_base + ei);
+                        let has_images = self.my_images.borrow().contains_key(&aE);
+                        if !has_images {
+                            // OCCT L149-152: no images → add original edge
+                            let edge = &self.ds.edges[ei];
+                            let sv_sr = rcad_kernel::topods::ShapeRef::new(edge.start_vertex);
+                            let ev_sr = rcad_kernel::topods::ShapeRef::new(edge.end_vertex);
+                            let ci = t.curves.len();
+                            t.curves.push(edge.curve.clone());
+                            let te = t.add_tedge(Some(ci), sv_sr, ev_sr, edge.t_range);
+                            if self.ds.is_edge_degenerated(ei) || edge.start_vertex == edge.end_vertex {
+                                t.edge_mut(te).degenerated = true;
+                            }
+                        } else {
+                            // OCCT L156-165: add split images
+                            let images = self.my_images.borrow().get(&aE).unwrap().clone();
+                            for img in &images {
+                                let nSpR = img.index.saturating_sub(e_base);
+                                if nSpR >= self.ds.edges.len() { continue; }
+                                let edge = &self.ds.edges[nSpR];
+                                let sv_sr = rcad_kernel::topods::ShapeRef::new(edge.start_vertex);
+                                let ev_sr = rcad_kernel::topods::ShapeRef::new(edge.end_vertex);
+                                let ci = t.curves.len();
+                                t.curves.push(edge.curve.clone());
+                                let te = t.add_tedge(Some(ci), sv_sr, ev_sr, edge.t_range);
+                                if self.ds.is_edge_degenerated(nSpR) || edge.start_vertex == edge.end_vertex {
+                                    t.edge_mut(te).degenerated = true;
+                                }
+                            }
+                        }
+                    }
+                }
             }
             ShapeType::Wire => {
                 // OCCT L130-168: wires are sub-shapes of faces, not standalone in rcad.
@@ -3083,7 +3135,7 @@ impl<'a> BooleanBuilder<'a> {
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         _dump.snapshot("after_FillImagesVertices", self.ds, Some(&t_brep));
         // OCCT L461-465: FillImagesEdges → BuildResult(EDGE)
-        self.fill_images_edges(&mut t_brep);
+        self.fill_images_edges();
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result_occt(topods::ShapeType::Edge, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
