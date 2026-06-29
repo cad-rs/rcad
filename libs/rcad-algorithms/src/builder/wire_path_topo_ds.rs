@@ -14,6 +14,7 @@ use super::wire_splitter::{
     EdgeInfo, mark_edge_passed,
     find_angle_at, select_best_outgoing,
 };
+use super::angle_2d::clock_wise_angle;
 use crate::inttools::fclass2d::curve2d_nb_samples;
 use super::point_in_polygon_2d;
 
@@ -332,6 +333,80 @@ pub(crate) fn walk_path_extract_wires_topoDS(
     }
 }
 
+/// OCCT-aligned: RefineAngles (WireSplitter_1.cxx L919-1043).
+/// For each multi-vertex with 2 boundary edges, adjust internal edge angles
+/// that fall outside the boundary sweep.  Uses BRepTool for angle computation.
+fn refine_angles_topoDS(
+    smart_map: &mut IndexMap<usize, Vec<EdgeInfo>>,
+    segments: &[WireSegmentTopoDS],
+    tool: &dyn BRepTool,
+) {
+    let vertices: Vec<usize> = smart_map.keys().copied().collect();
+    for &v in &vertices {
+        let Some(infos) = smart_map.get(&v).cloned() else { continue; };
+        let mut cnt_bnd = 0;
+        let mut cnt_int = 0;
+        let mut a1_bnd = 0.0;
+        let mut a2_bnd = 0.0;
+        for ei in &infos {
+            if !ei.is_inside { cnt_bnd += 1; if !ei.in_flag { a1_bnd = ei.angle; } else { a2_bnd = ei.angle; } }
+            else { cnt_int += 1; }
+        }
+        if cnt_bnd != 2 { continue; }
+        let a_delta = super::angle_2d::clock_wise_angle(a2_bnd, a1_bnd);
+        let mut refined_map: std::collections::HashMap<usize, f64> = std::collections::HashMap::new();
+        for ei in &infos {
+            if !ei.is_inside || ei.in_flag { continue; }
+            let a_ic = ei.angle;
+            let a_da = super::angle_2d::clock_wise_angle(a2_bnd, a_ic);
+            if a_da < a_delta { continue; }
+            let seg = &segments[ei.seg_idx];
+            let v_ref = rcad_kernel::topods::ShapeRef::new(v);
+            let geom_tol = tool.vertex_tolerance(v_ref);
+            let t_v = tool.parameter_on_edge(v_ref, seg.edge, seg.face)
+                .unwrap_or_else(|| if v == seg.start_vertex.index { seg.t_range[0] } else { seg.t_range[1] });
+            let domain = seg.t_range;
+            let pc = seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref());
+            let b_refined = match pc {
+                Some(pc) => {
+                    let ta = pc.point_at(t_v);
+                    // OCCT L1057-1061: use pcurve UV to compute new angle
+                    // Check if angle is near boundary — true refine via micro-step
+                    let eps = 1e-12;
+                    let dt = (1e-8 * (domain[1] - domain[0]).abs().max(1.0)).min((domain[1] - domain[0]).abs() * 0.1);
+                    let t2 = (t_v + dt).min(domain[1]);
+                    let pt2 = pc.point_at(t2);
+                    let dir = pt2 - ta;
+                    if dir.length_squared() < 1e-30 { false }
+                    else {
+                        let new_ang = dir.y.atan2(dir.x);
+                        if clock_wise_angle(a2_bnd, new_ang) < a_delta { false }
+                        else { refined_map.insert(ei.seg_idx, new_ang); true }
+                    }
+                }
+                None => false,
+            };
+            if !b_refined && cnt_int == 2 {
+                let eps = 1e-12;
+                let new_angle = if a_ic <= a1_bnd || a_ic > a2_bnd {
+                    (a1_bnd + eps) % std::f64::consts::TAU
+                } else {
+                    (a2_bnd - eps + std::f64::consts::TAU) % std::f64::consts::TAU
+                };
+                refined_map.insert(ei.seg_idx, new_angle);
+            }
+        }
+        if refined_map.is_empty() { continue; }
+        if let Some(infos_mut) = smart_map.get_mut(&v) {
+            for ei in infos_mut.iter_mut() {
+                if let Some(&new_angle) = refined_map.get(&ei.seg_idx) {
+                    ei.angle = if ei.in_flag { (new_angle + std::f64::consts::PI) % std::f64::consts::TAU } else { new_angle };
+                }
+            }
+        }
+    }
+}
+
 /// ✅ OCCT-aligned: TopoDS-based SplitBlock — refine angles + path walk for irregular blocks.
 pub(crate) fn split_block_topoDS(
     block: &[usize],
@@ -340,7 +415,8 @@ pub(crate) fn split_block_topoDS(
     wires: &mut Vec<Vec<usize>>,
     tool: &dyn BRepTool,
 ) {
-    // OCCT L327: RefineAngles.  rcad: use topoDS-based angle refinement (currently skipped, uses pre-computed angles).
+    // OCCT L324: RefineAngles before Path walk
+    refine_angles_topoDS(smart_map, segments, tool);
     // OCCT L331-358: Path walk
     let order_keys: Vec<usize> = smart_map.keys().copied().collect();
     for &v in &order_keys {
