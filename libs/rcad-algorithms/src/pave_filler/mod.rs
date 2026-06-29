@@ -639,8 +639,9 @@ impl<'a> PaveFiller<'a> {
         self.ds.update_pave_blocks_with_sd_vertices();
 
         if !skip_ef {
-            self.perform_ef_bvh(&bvh_edges_a, &bvh_faces_b);
-            self.perform_ef_bvh(&bvh_edges_b, &bvh_faces_a);
+            // OCCT-aligned: PerformEF uses BOPDS_Iterator for pair enumeration,
+            //   not a pre-built BVH.  rcad perform_ef iterates all A×B pairs.
+            self.perform_ef();
             // �?OCCT-aligned: TreatNewVertices �?merge new vertices created by EF intersection.
             //    OCCT PaveFiller_5.cxx L570: PerformNewVertices(aMVCPB, ..., false)
             let ef_survivors = self.treat_new_vertices();
