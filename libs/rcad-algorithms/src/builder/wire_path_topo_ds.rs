@@ -448,6 +448,18 @@ pub(crate) fn build_closed_wires(
         vert_to_segs.entry(seg.end_vertex.index).or_default().push(si);
     }
 
+    if std::env::var("RCAD_DUMP_FACE").is_ok() && !segments.is_empty() {
+        let face_id = segments[0].face.index;
+        eprintln!("[FACE] face={} n_seg={} n_avoided={} n_active={}", face_id, segments.len(), avoided.len(), n - avoided.len());
+        for (v, segs) in &vert_to_segs {
+            eprintln!("[FACE]   v={} valence={} segs={:?}", v, segs.len(), segs);
+        }
+        for (si, seg) in segments.iter().enumerate() {
+            let src = match &seg.source { WireEdgeSourceTopoDS::DsEdge(sr) => format!("DsEdge({})", sr.index), WireEdgeSourceTopoDS::IntersectionCurve(sr) => format!("IC({})", sr.index), WireEdgeSourceTopoDS::SeamEdge => "Seam".into() };
+            eprintln!("[FACE]   seg[{}] {} {}->{} avoided={}", si, src, seg.start_vertex.index, seg.end_vertex.index, avoided.contains(&si));
+        }
+    }
+
     // Build connexity blocks
     let blocks = make_connexity_blocks(segments, avoided, &vert_to_segs, n);
 
