@@ -266,6 +266,14 @@ impl FClass2d {
 
         let outer_edges: Vec<(usize, bool)> = face.boundary_edges.iter().map(|&e| (e, true)).collect();
         let mut outer_pts = collect_wire_uv(ds, face_idx, &outer_edges);
+        // ✅ OCCT-aligned: for periodic surfaces with natural restriction (sphere, cylinder, cone),
+        //   the uv_boundary provides a proper closed polygon, while edge-based sampling may
+        //   produce a degenerate polygon when degenerate edges lack pcurves (sphere poles).
+        if outer_pts.len() < 3 && face.natural_restriction {
+            if let Some(ref uv_bnd) = face.uv_boundary {
+                outer_pts = uv_bnd.clone();
+            }
+        }
         let mut fleche_u = tol_uv;
         let mut fleche_v = tol_uv;
 
