@@ -35,6 +35,8 @@ pub mod boptools;
 pub mod bopalgo;
 pub mod builder;
 pub mod builder_face;
+pub mod debug_trace;
+pub mod pipeline_dump;
 pub mod bvh;
 pub mod classify;
 pub mod defeature;

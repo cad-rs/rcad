@@ -3046,6 +3046,13 @@ impl<'a> BooleanBuilder<'a> {
         let _fuzzy_value = self.ds.fuzzy_tol;
         let _non_destructive = self.my_non_destructive;
 
+        // Pipeline dump context (env RCAD_DUMP_PIPELINE=1 to enable).
+        // Grid/case are set via RCAD_DUMP_GRID / RCAD_DUMP_CASE env vars.
+        let mut _dump = crate::pipeline_dump::DumpCtx::new(
+            &std::env::var("RCAD_DUMP_GRID").unwrap_or_else(|_| "unknown".into()),
+            &std::env::var("RCAD_DUMP_CASE").unwrap_or_else(|_| "unknown".into()),
+        );
+
         // OCCT L431-436: CheckData
         let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
         let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
@@ -3074,26 +3081,31 @@ impl<'a> BooleanBuilder<'a> {
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result_occt(topods::ShapeType::Vertex, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
+        _dump.snapshot("after_FillImagesVertices", self.ds, Some(&t_brep));
         // OCCT L461-465: FillImagesEdges → BuildResult(EDGE)
         self.fill_images_edges(&mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result_occt(topods::ShapeType::Edge, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
+        _dump.snapshot("after_FillImagesEdges", self.ds, Some(&t_brep));
         // OCCT L467-470: FillImagesContainers(WIRE) → BuildResult(WIRE)
         self.fill_images_containers(ShapeType::Wire, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result_occt(topods::ShapeType::Wire, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
+        _dump.snapshot("after_BuildResultWire", self.ds, Some(&t_brep));
         // OCCT L472-475: FillImagesFaces → BuildResult(FACE)
         self.fill_images_faces(&mut result, &a_faces, &b_faces);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result_occt(topods::ShapeType::Face, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
+        _dump.snapshot("after_FillImagesFaces", self.ds, Some(&t_brep));
         // OCCT L477-480: FillImagesContainers(SHELL) → BuildResult(SHELL)
         self.fill_images_containers(ShapeType::Shell, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result_occt(topods::ShapeType::Shell, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
+        _dump.snapshot("after_BuildResultShell", self.ds, Some(&t_brep));
         // OCCT L482-485: FillImagesSolids → BuildResult(SOLID)
         self.fill_images_solids(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
