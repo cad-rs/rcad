@@ -70,6 +70,36 @@ fn serialize_ds(ds: &DS) -> serde_json::Value {
         "nIC": ds.intersection_curves.len(),
         "nPB": ds.pave_blocks.len(), "nCB": ds.common_blocks.len(),
         "interf": { "EE": ee, "EF": ef, "total": ds.interferences.len() },
+        "faces": ds.faces.iter().enumerate().map(|(fi, f)| {
+            let st = format!("{:?}", f.surface);
+            json!({"fi": fi, "surf": st, "nBE": f.boundary_edges.len(),
+                "nIW": f.inner_boundary_edges.len(),
+                "boundary_edges": f.boundary_edges,
+                "nPBsIn": f.face_info.pave_blocks_in.len(),
+                "nPBsSc": f.face_info.pave_blocks_sc.len(),
+                "nCurvesSc": f.face_info.curves_sc.len(),
+                "nVIn": f.face_info.vertices_in.len(),
+                "curves_sc": f.face_info.curves_sc.iter().copied().collect::<Vec<_>>(),
+                "vertices_in": f.face_info.vertices_in.iter().copied().collect::<Vec<_>>(),
+            })
+        }).collect::<Vec<_>>(),
+        "edges": ds.edges.iter().enumerate().map(|(ei, e)| {
+            let ct = format!("{:?}", e.curve);
+            json!({"ei": ei, "sv": e.start_vertex, "ev": e.end_vertex,
+                "curve": ct,
+                "my_images": ds.my_images.get(ei).map(|v| v.clone()).unwrap_or_default(),
+                "is_internal": e.is_internal,
+                "nPBs": e.pave_blocks.len(),
+            })
+        }).collect::<Vec<_>>(),
+        "intersection_curves": ds.intersection_curves.iter().enumerate().map(|(ci, ic)| {
+            let ct = format!("{:?}", ic.curve);
+            json!({"ci": ci, "curve": ct, "sv": ic.start_vertex, "ev": ic.end_vertex,
+                "t_range": ic.t_range, "has_pca": ic.pcurve_on_a.is_some(),
+                "has_pcb": ic.pcurve_on_b.is_some(),
+                "n_pave_blocks": ic.pave_blocks.len(),
+            })
+        }).collect::<Vec<_>>(),
     }})
 }
 

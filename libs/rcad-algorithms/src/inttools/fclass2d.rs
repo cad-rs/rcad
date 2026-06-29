@@ -94,14 +94,12 @@ pub struct CSLibClass2d {
     xs: Vec<f64>,
     ys: Vec<f64>,
     n: usize,
-    tol_u: f64, tol_v: f64,
-    pub umin: f64, pub vmin: f64, pub umax: f64, pub vmax: f64,
-    /// ✅ OCCT-aligned: tangent direction at each vertex (aD1Prev/aD1Next).
-    ///   Normalized (dx, dy) for C0 continuity detection.  Empty when n < 2.
-    ///   OCCT stores first derivatives of pcurves at edge junctions; rcad
-    ///   approximates via polygon tangent: normalize([i+1] - [i-1]).
-    tan_xs: Vec<f64>,
-    tan_ys: Vec<f64>,
+    tol_u: f64,
+    tol_v: f64,
+    umin: f64,
+    vmin: f64,
+    umax: f64,
+    vmax: f64,
 }
 
 impl CSLibClass2d {
@@ -112,90 +110,127 @@ impl CSLibClass2d {
         let xs: Vec<f64> = points.iter().map(|p| (p.x - umin) / range_u).collect();
         let ys: Vec<f64> = points.iter().map(|p| (p.y - vmin) / range_v).collect();
         let n = xs.len();
-        // OCCT L383-409: compute tangent direction at each vertex.
-        //   Approximated as normalized direction of the chord through neighbors.
-        let mut tan_xs = Vec::with_capacity(n);
-        let mut tan_ys = Vec::with_capacity(n);
-        if n >= 2 {
-            for i in 0..n {
-                let prev = if i > 0 { i - 1 } else { n - 1 };
-                let next = (i + 1) % n;
-                let dx = xs[next] - xs[prev];
-                let dy = ys[next] - ys[prev];
-                let len = (dx * dx + dy * dy).sqrt();
-                if len > 1e-15 {
-                    tan_xs.push(dx / len);
-                    tan_ys.push(dy / len);
-                } else {
-                    tan_xs.push(0.0);
-                    tan_ys.push(0.0);
-                }
-            }
-        }
-        CSLibClass2d { xs, ys, n, tol_u, tol_v, umin, vmin, umax, vmax, tan_xs, tan_ys }
+        CSLibClass2d { xs, ys, n, tol_u, tol_v, umin, vmin, umax, vmax }
     }
 
     pub fn si_dans(&self, uv: DVec2) -> CSLibResult {
         if self.n < 3 { return CSLibResult::Outside; }
         let ru = if (self.umax - self.umin).abs() > 1e-30 { self.umax - self.umin } else { 1.0 };
         let rv = if (self.vmax - self.vmin).abs() > 1e-30 { self.vmax - self.vmin } else { 1.0 };
+
+        // OCCT L155-160: quick rejection outside tolerance-expanded bounding box
+        if uv.x < (self.umin - self.tol_u) || uv.x > (self.umax + self.tol_u)
+            || uv.y < (self.vmin - self.tol_v) || uv.y > (self.vmax + self.tol_v)
+        {
+            return CSLibResult::Outside;
+        }
+
+        // Transform to normalized coordinates
         let px = (uv.x - self.umin) / ru;
         let py = (uv.y - self.vmin) / rv;
 
-        // OCCT: no early exit on bounding box — points outside the normalized
-        // box may still be Inside (CW polygon), so winding number is always
-        // computed.  The old early exit (px<0||px>1||py<0||py>1→Outside)
-        // broke CW/hole detection because the test point (umin-ru, vmin-rv)
-        // normalizes to px <= -1 and never reaches the winding number loop.
+        // OCCT L166-171: internalSiDansOuOn returns Uncertain when point is ON vertex or edge
+        let result = self.internal_si_dans_ou_on(px, py);
+        if result == CSLibResult::Uncertain {
+            return CSLibResult::Uncertain;
+        }
 
-        // OCCT L273-275, L383-409: check if point is within tolerance of any
-        //   polygon edge → Uncertain.  tol_u/tol_v are chordal deviations
-        //   (FlecheU/FlecheV).  At vertices with C0 continuity (tangent edges),
-        //   skip the Uncertain check — the point is ON a smooth boundary edge.
-        let tol_u_norm = self.tol_u / ru;
-        let tol_v_norm = self.tol_v / rv;
-        let max_tol = tol_u_norm.max(tol_v_norm).max(1e-12);
-        for i in 0..self.n {
-            let xi = self.xs[i]; let yi = self.ys[i];
-            let xj = self.xs[(i + 1) % self.n]; let yj = self.ys[(i + 1) % self.n];
-
-            // OCCT: at vertex i, check if incoming/outgoing tangents are aligned
-            //   (C0 continuous).  If smooth, skip the Uncertain check for this edge.
-            if i < self.tan_xs.len() && self.tan_xs.len() > 1 {
-                let ni = (i + 1) % self.n;
-                let tx_in = self.tan_xs[i]; let ty_in = self.tan_ys[i];
-                let tx_out = self.tan_xs[ni]; let ty_out = self.tan_ys[ni];
-                let dot = tx_in * tx_out + ty_in * ty_out;
-                if dot > 0.999 {
-                    continue; // C0 continuous → skip Uncertain check
-                }
-            }
-
-            // Distance from (px,py) to segment (xi,yi)-(xj,yj)
-            let dx = xj - xi;
-            let dy = yj - yi;
-            let len2 = dx * dx + dy * dy;
-            if len2 < 1e-30 { continue; }
-            let t = ((px - xi) * dx + (py - yi) * dy) / len2;
-            let t_clamped = t.clamp(0.0, 1.0);
-            let near_x = xi + t_clamped * dx;
-            let near_y = yi + t_clamped * dy;
-            let dist = ((px - near_x) * (px - near_x) + (py - near_y) * (py - near_y)).sqrt();
-            if dist <= max_tol {
+        // OCCT L173-183: 4-corner tolerance check — shift by ±tol and re-classify
+        if self.tol_u > 0.0 || self.tol_v > 0.0 {
+            let tol_u_norm = self.tol_u / ru;
+            let tol_v_norm = self.tol_v / rv;
+            let is_inside = result == CSLibResult::Inside;
+            if is_inside != self.internal_si_dans(px - tol_u_norm, py - tol_v_norm)
+                || is_inside != self.internal_si_dans(px + tol_u_norm, py - tol_v_norm)
+                || is_inside != self.internal_si_dans(px - tol_u_norm, py + tol_v_norm)
+                || is_inside != self.internal_si_dans(px + tol_u_norm, py + tol_v_norm)
+            {
                 return CSLibResult::Uncertain;
             }
         }
 
-        // OCCT: winding number for In/Out classification.
-        let mut w = 0i32;
-        for i in 0..self.n {
-            let xi = self.xs[i]; let yi = self.ys[i];
-            let xj = self.xs[(i + 1) % self.n]; let yj = self.ys[(i + 1) % self.n];
-            if yi <= py {
-                if yj > py && ((xj - xi) * (py - yi) - (yj - yi) * (px - xi)) > 0.0 { w += 1; }
-            } else if yj <= py && ((xj - xi) * (py - yi) - (yj - yi) * (px - xi)) < 0.0 { w -= 1; }
+        result
+    }
+
+    /// OCCT CSLib_Class2d::internalSiDansOuOn (L279-341): ray-casting with ON detection.
+    /// Checks vertex proximity and edge ON before returning.
+    fn internal_si_dans_ou_on(&self, px: f64, py: f64) -> CSLibResult {
+        let mut a_nb_crossings: i32 = 0;
+        let mut a_prev_dx = self.xs[0] - px;
+        let mut a_prev_dy = self.ys[0] - py;
+        let mut a_prev_y_is_neg = a_prev_dy < 0.0;
+
+        for a_next_idx in 1..=self.n {
+            let a_prev_idx = a_next_idx - 1;
+            let a_curr_dx = self.xs[a_next_idx % self.n] - px;
+            let a_curr_dy = self.ys[a_next_idx % self.n] - py;
+
+            // OCCT L296-299: vertex proximity check
+            if a_curr_dx < self.tol_u && a_curr_dx > -self.tol_u
+                && a_curr_dy < self.tol_v && a_curr_dy > -self.tol_v
+            {
+                return CSLibResult::Uncertain;
+            }
+
+            // OCCT L301-316: edge ON detection — interpolate Y at test point's X
+            let a_edge_dx = self.xs[a_next_idx % self.n] - self.xs[a_prev_idx];
+            if (self.xs[a_prev_idx] - px) * a_curr_dx < 0.0 && a_edge_dx.abs() > 1e-12 {
+                let a_interp_y = self.ys[a_next_idx % self.n]
+                    - (self.ys[a_next_idx % self.n] - self.ys[a_prev_idx]) / a_edge_dx * a_curr_dx;
+                let a_delta_y = a_interp_y - py;
+                if a_delta_y >= -self.tol_v && a_delta_y <= self.tol_v {
+                    return CSLibResult::Uncertain;
+                }
+            }
+
+            // OCCT L318-338: ray-casting crossing count
+            let a_curr_y_is_neg = a_curr_dy < 0.0;
+            if a_curr_y_is_neg != a_prev_y_is_neg {
+                if a_prev_dx > 0.0 && a_curr_dx > 0.0 {
+                    a_nb_crossings += 1;
+                } else if a_prev_dx > 0.0 || a_curr_dx > 0.0 {
+                    let a_x_intersect = a_prev_dx - a_prev_dy * (a_curr_dx - a_prev_dx) / (a_curr_dy - a_prev_dy);
+                    if a_x_intersect > 0.0 {
+                        a_nb_crossings += 1;
+                    }
+                }
+                a_prev_y_is_neg = a_curr_y_is_neg;
+            }
+            a_prev_dx = a_curr_dx;
+            a_prev_dy = a_curr_dy;
         }
-        if w != 0 { CSLibResult::Inside } else { CSLibResult::Outside }
+
+        if (a_nb_crossings & 1) != 0 { CSLibResult::Inside } else { CSLibResult::Outside }
+    }
+
+    /// OCCT CSLib_Class2d::internalSiDans (L234-275): pure ray-casting, no ON detection.
+    fn internal_si_dans(&self, px: f64, py: f64) -> bool {
+        let mut a_nb_crossings: i32 = 0;
+        let mut a_prev_dx = self.xs[0] - px;
+        let mut a_prev_dy = self.ys[0] - py;
+        let mut a_prev_y_is_neg = a_prev_dy < 0.0;
+
+        for a_next_idx in 1..=self.n {
+            let a_curr_dx = self.xs[a_next_idx % self.n] - px;
+            let a_curr_dy = self.ys[a_next_idx % self.n] - py;
+            let a_curr_y_is_neg = a_curr_dy < 0.0;
+
+            if a_curr_y_is_neg != a_prev_y_is_neg {
+                if a_prev_dx > 0.0 && a_curr_dx > 0.0 {
+                    a_nb_crossings += 1;
+                } else if a_prev_dx > 0.0 || a_curr_dx > 0.0 {
+                    let a_x_intersect = a_prev_dx - a_prev_dy * (a_curr_dx - a_prev_dx) / (a_curr_dy - a_prev_dy);
+                    if a_x_intersect > 0.0 {
+                        a_nb_crossings += 1;
+                    }
+                }
+                a_prev_y_is_neg = a_curr_y_is_neg;
+            }
+            a_prev_dx = a_curr_dx;
+            a_prev_dy = a_curr_dy;
+        }
+
+        (a_nb_crossings & 1) != 0
     }
 }
 

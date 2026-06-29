@@ -186,6 +186,27 @@ pub(crate) fn edge_angle_2d(
     Some(dir_to_angle(dir))
 }
 
+/// OCCT BOPTools_AlgoTools2D::IsEdgeIsoline (BOPTools_AlgoTools2D.cxx L669-700).
+/// Checks if an edge's pcurve follows a U or V isoparametric line of the face surface.
+/// Returns (is_uiso, is_v_iso) — true when the pcurve tangent at midpoint is
+/// aligned with the U or V parametric direction respectively.
+pub(crate) fn is_edge_isoline(pcurve: &Curve2d, range: [f64; 2]) -> (bool, bool) {
+    let t_mid = (range[0] + range[1]) * 0.5;
+    let eps = 1e-8 * (range[1] - range[0]).abs().max(1.0);
+    let p_plus = pcurve.point_at((t_mid + eps).min(range[1]));
+    let p_minus = pcurve.point_at((t_mid - eps).max(range[0]));
+    let tangent = p_plus - p_minus;
+    if tangent.length_squared() < 1e-30 {
+        return (false, false);
+    }
+    let tangent_n = tangent.normalize();
+    let tol = 1e-12;
+    // OCCT L696-699: CrossMagnitude((0,1)) = |t.x|, CrossMagnitude((1,0)) = |t.y|
+    let is_uiso = tangent_n.x.abs() <= tol;
+    let is_v_iso = tangent_n.y.abs() <= tol;
+    (is_uiso, is_v_iso)
+}
+
 /// Map a 3D point to UV space on a surface.  Returns None for unsupported
 /// surface types (currently Sphere, Plane, Cylinder, Cone, Torus supported).
 pub(crate) fn world_to_uv(surface: &Surface3, pt: DVec3) -> Option<DVec2> {

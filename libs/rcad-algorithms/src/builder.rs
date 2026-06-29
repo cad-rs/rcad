@@ -48,7 +48,7 @@ pub(crate) use builder_utils::{
     classify_subface_against_box, classify_against_solid_for_boolean,
     is_tangent_face, build_edge_bounds, quantize_pos,
     check_and_add_split_vertex, collect_face_edge_segments,
-    compute_ic_second_pcurve, cmp_boolean_emit_order,
+    cmp_boolean_emit_order,
     annotate_history_from_ds, annotate_shell_and_solid_history,
     aggregate_face_region_origin, aggregate_shell_region_origin,
 };

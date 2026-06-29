@@ -12,8 +12,8 @@ use crate::builder::types::{BooleanOpType, FaceSampleData, WireSegment, WireEdge
 use crate::builder::SourceSide;
 
 use crate::builder::angle_2d::angle_2d;
-use crate::builder::wire_splitter::{world_to_uv, edge_uv_tangent, edge_angle_2d, compute_seam_tangent_angles, are_verts_coincident};
-use crate::builder::edge_builders::{build_degenerate_edge_segments, build_sphere_seam_segments, build_cylinder_seam_segments};
+use crate::builder::wire_splitter::{world_to_uv, edge_uv_tangent, edge_angle_2d, compute_seam_tangent_angles, are_verts_coincident, is_edge_isoline};
+use crate::builder::edge_builders::{build_sphere_seam_segments, build_cylinder_seam_segments, is_split_to_reverse};
 
 /// ✅ OCCT-aligned: compare two Curve3 for identity (same TShape).
 pub(crate) fn curve_eq(a: &Curve3, b: &Curve3) -> bool {
@@ -625,9 +625,6 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
     // from 7), making the SmartMap connectivity wrong and preventing the
     // wire splitter from forming closed loops (fi=3 was failing).
     let mut prev_end: Option<usize> = None;
-    // ✅ OCCT-aligned: virtual vertex indices for deg edge ends (OCCT uses
-    //   distinct TopoDS_Vertex instances for deg edge start and end).
-    let mut deg_virtual_counter: usize = ds.vertices.len();
     for &ei in &face.boundary_edges {
         let edge = &ds.edges[ei];
         let (sv, ev) = match prev_end {
@@ -653,70 +650,129 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                 // OCCT L373-377: INTERNAL unsplit → FWD + REV
                 segments.push(WireSegment {
                     start_vertex: sv, end_vertex: ev, source: src.clone(),
-                    orientation: WireOrientation::Internal, is_seam: false, second_pcurve: None,
+                    orientation: WireOrientation::Forward, is_seam: false, second_pcurve: None,
                     first_pcurve: rep.map(|r| r.pcurve.clone()),
                     t_range: rep.map(|r| r.pcurve_range).unwrap_or(edge.t_range),
                     tangent_start: t_start, tangent_end: t_end,
                 });
-            }
-            segments.push(WireSegment {
-                start_vertex: sv, end_vertex: ev, source: src,
-                orientation: WireOrientation::Forward, is_seam: false, second_pcurve: None,
-                first_pcurve: rep.map(|r| r.pcurve.clone()),
-                t_range: rep.map(|r| r.pcurve_range).unwrap_or(edge.t_range),
-                tangent_start: t_start, tangent_end: t_end,
-            });
-            if is_internal {
-                // OCCT L376-377: REVERSED copy of INTERNAL edge
                 segments.push(WireSegment {
-                    start_vertex: ev, end_vertex: sv, source: WireEdgeSource::DsEdge(ei),
+                    start_vertex: ev, end_vertex: sv, source: src,
                     orientation: WireOrientation::Reversed, is_seam: false, second_pcurve: None,
                     first_pcurve: None, t_range: [0.0, 1.0],
                     tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
                     tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
                 });
+            } else {
+                // OCCT L379-381: non-INTERNAL → add with orientation
+                segments.push(WireSegment {
+                    start_vertex: sv, end_vertex: ev, source: src,
+                    orientation: WireOrientation::Forward, is_seam: false, second_pcurve: None,
+                    first_pcurve: rep.map(|r| r.pcurve.clone()),
+                    t_range: rep.map(|r| r.pcurve_range).unwrap_or(edge.t_range),
+                    tangent_start: t_start, tangent_end: t_end,
+                });
             }
             continue;
         }
 
-        // ✅ OCCT L387-404: surface closed check + seam detection.
-        //   bIsClosed = IsClosed(aE, aF) && ((isUClosed && isUIso) || (isVClosed && isVIso)).
-        //   rcad: IsClosed = sv==ev || are_verts_coincident (same as OCCT TopoDS_Vertex identity).
+        // ✅ OCCT L395-404: bIsClosed via IsClosed + IsEdgeIsoline.
         let b_is_degenerated = ds.is_edge_degenerated(ei);
         let b_edge_closed = sv == ev || are_verts_coincident(ds, sv, ev);
-        let b_is_seam = !b_is_degenerated && b_edge_closed && (is_u_closed || is_v_closed);
+        let b_is_seam = if !b_is_degenerated && b_edge_closed && (is_u_closed || is_v_closed) {
+            if let Some(rep) = ds.edge_on_face(ei, face_idx) {
+                let (is_uiso, is_v_iso) = is_edge_isoline(&rep.pcurve, rep.pcurve_range);
+                (is_u_closed && is_uiso) || (is_v_closed && is_v_iso)
+            } else {
+                false
+            }
+        } else {
+            false
+        };
 
         // ✅ OCCT L408-464: iterate split sub-edges (aLIE from myImages.Find).
         if b_is_degenerated {
-            segments.extend(build_degenerate_edge_segments(ds, ei, sv, ev, face, face_idx, &mut deg_virtual_counter));
+            // OCCT L413-417: iterate sub-edges, set orientation, append
+            for &sub_ei in &ds.my_images[ei] {
+                let sub_edge = &ds.edges[sub_ei];
+                let sv_seg = sub_edge.start_vertex;
+                let ev_seg = sub_edge.end_vertex;
+                if sv_seg == ev_seg { continue; }
+                segments.push(WireSegment {
+                    start_vertex: sv_seg, end_vertex: ev_seg,
+                    source: WireEdgeSource::DsEdge(sub_ei),
+                    orientation: WireOrientation::Forward,
+                    is_seam: true, second_pcurve: None, first_pcurve: None,
+                    t_range: [0.0, 1.0],
+                    tangent_start: None, tangent_end: None,
+                });
+            }
         } else if b_is_seam && matches!(face.surface, Surface3::Sphere(_)) {
             if !processed_seam_ds_edges.insert(ei) { continue; }
             segments.extend(build_sphere_seam_segments(ds, ei, sv, ev, face, face_idx));
         } else if b_is_seam {
             segments.extend(build_cylinder_seam_segments(ds, ei, sv, ev, face));
         } else {
-            // ✅ OCCT-aligned: use my_images sub-edges when available (populated
-            //    by build_split_edges in PaveFiller).  Handles both split edges
-            //    (my_images[ei] = [sub1, sub2, ...]) and un-split edges
-            //    (my_images[ei] = [ei]).  Falls back to vertices_in-based splitting
-            //    only when my_images is not populated (defensive).
+            // ✅ OCCT-aligned L408-464: three-branch split edge processing.
+            //   For each sub-edge from my_images, after degenerated (handled above):
+            //   1. INTERNAL original (L420-426) -> FWD+REV
+            //   2. Seam bIsClosed (L429-455)   -> FWD+REV with fence (handled above)
+            //   3. Normal (L457-462)            -> orientation + IsSplitToReverseWithWarn
             if !ds.my_images.is_empty() && ei < ds.my_images.len() && !ds.my_images[ei].is_empty() {
+                let is_original_internal = ds.edges[ei].is_internal;
                 for &sub_ei in &ds.my_images[ei] {
                     let sub_edge = &ds.edges[sub_ei];
                     let sv_seg = sub_edge.start_vertex;
                     let ev_seg = sub_edge.end_vertex;
                     if sv_seg == ev_seg { continue; }
-                    let (t_start, t_end) = edge_uv_tangent(ds, sv_seg, ev_seg, &face.surface,
+                    // OCCT L420-426: INTERNAL original -> each sub-edge FWD+REV
+                    if is_original_internal {
+                        let (t_start, t_end) = edge_uv_tangent(ds, sv_seg, ev_seg, &face.surface,
+                            Some(&sub_edge.curve), Some(sub_edge.t_range));
+                        let rep = ds.edge_on_face(sub_ei, face_idx)
+                            .or_else(|| ds.edge_on_face(ei, face_idx));
+                        segments.push(WireSegment {
+                            start_vertex: sv_seg, end_vertex: ev_seg,
+                            source: WireEdgeSource::DsEdge(sub_ei),
+                            orientation: WireOrientation::Forward, is_seam: false, second_pcurve: None,
+                            first_pcurve: rep.map(|r| r.pcurve.clone()),
+                            t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
+                            tangent_start: t_start, tangent_end: t_end,
+                        });
+                        segments.push(WireSegment {
+                            start_vertex: ev_seg, end_vertex: sv_seg,
+                            source: WireEdgeSource::DsEdge(sub_ei),
+                            orientation: WireOrientation::Reversed, is_seam: false, second_pcurve: None,
+                            first_pcurve: None, t_range: [0.0, 1.0],
+                            tangent_start: t_end, tangent_end: t_start,
+                        });
+                        continue;
+                    }
+                    // OCCT L457-462: normal split -> orientation + IsSplitToReverseWithWarn
+                    let needs_reverse = is_split_to_reverse(ds, sub_ei, ei);
+                    let (t_fwd, t_rev) = edge_uv_tangent(ds, sv_seg, ev_seg, &face.surface,
                         Some(&sub_edge.curve), Some(sub_edge.t_range));
-                    let rep = ds.edge_on_face(sub_ei, face_idx);
-                    segments.push(WireSegment {
-                        start_vertex: sv_seg, end_vertex: ev_seg,
-                        source: WireEdgeSource::DsEdge(sub_ei),
-                        orientation: WireOrientation::Forward, is_seam: false, second_pcurve: None,
-                        first_pcurve: rep.map(|r| r.pcurve.clone()),
-                        t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
-                        tangent_start: t_start, tangent_end: t_end,
-                    });                }
+                    let rep = ds.edge_on_face(sub_ei, face_idx)
+                        .or_else(|| ds.edge_on_face(ei, face_idx));
+                    if needs_reverse {
+                        segments.push(WireSegment {
+                            start_vertex: ev_seg, end_vertex: sv_seg,
+                            source: WireEdgeSource::DsEdge(sub_ei),
+                            orientation: WireOrientation::Reversed, is_seam: false, second_pcurve: None,
+                            first_pcurve: rep.map(|r| r.pcurve.clone()),
+                            t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
+                            tangent_start: t_rev.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+                            tangent_end: t_fwd.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+                        });
+                    } else {
+                        segments.push(WireSegment {
+                            start_vertex: sv_seg, end_vertex: ev_seg,
+                            source: WireEdgeSource::DsEdge(sub_ei),
+                            orientation: WireOrientation::Forward, is_seam: false, second_pcurve: None,
+                            first_pcurve: rep.map(|r| r.pcurve.clone()),
+                            t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
+                            tangent_start: t_fwd, tangent_end: t_rev,
+                        });
+                    }                }
             } else {
                 // Fallback: split boundary edges by IC vertices (FillImagesEdges equivalent).
                 let p_a = ds.vertices[sv].point;
@@ -821,11 +877,11 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
     }
 
     // ================================================================
-    // ✅ OCCT-aligned: inner wire edges (BOPAlgo_Builder_2.cxx L362-384).
-    // TopExp_Explorer iterates inner wires' edges after outer wire edges.
-    // Each edge inherits its wire orientation (forward = FORWARD in wire).
+    // ✅ OCCT-aligned: inner wire edges — same processing as outer boundary.
+    // OCCT TopExp_Explorer iterates all wires' edges in one loop.
+    // rcad stores them separately, so we apply identical logic here.
     // ================================================================
-    for (wi, inner_wire) in face.inner_boundary_edges.iter().enumerate() {
+    for inner_wire in &face.inner_boundary_edges {
         for &(ei, forward_in_wire) in inner_wire {
             let edge = &ds.edges[ei];
             let (sv, ev) = if forward_in_wire {
@@ -834,40 +890,224 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                 (edge.end_vertex, edge.start_vertex)
             };
             if sv == ev { continue; }
-            let is_degenerate = ds.is_edge_degenerated(ei);
-            if is_degenerate { continue; }
-            // Handle seam edges for periodic surfaces
-            // Defer to existing is_seam detection
-            let is_seam = match &face.surface {
-                Surface3::Sphere(_) => true,
-                _ => (is_u_closed || is_v_closed)
-                    && (sv == ev || are_verts_coincident(ds, sv, ev)),
-            };
-            if is_seam {
-                // Use existing seam handling
-                // (Seam edges from inner wires are rare; for now, add as-is)
-                let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface,
-                    Some(&edge.curve), Some(edge.t_range));
+
+        let edge_is_split = ei < ds.my_images.len() && ds.my_images[ei].len() > 1;
+
+        if !edge_is_split {
+            let is_internal = ds.edges[ei].is_internal;
+            let rep = ds.edge_on_face(ei, face_idx);
+            let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface,
+                Some(&edge.curve), Some(edge.t_range));
+            let src = WireEdgeSource::DsEdge(ei);
+            if is_internal {
                 segments.push(WireSegment {
-                    start_vertex: sv, end_vertex: ev,
-                    source: WireEdgeSource::DsEdge(ei),
-                    orientation: if forward_in_wire { WireOrientation::Forward } else { WireOrientation::Reversed },
-                    is_seam: true, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0],
-                    tangent_start: t_start,
-                    tangent_end: t_end,
-                });            } else {
-                let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface,
-                    Some(&edge.curve), Some(edge.t_range));
+                    start_vertex: sv, end_vertex: ev, source: src.clone(),
+                    orientation: WireOrientation::Forward, is_seam: false, second_pcurve: None,
+                    first_pcurve: rep.map(|r| r.pcurve.clone()),
+                    t_range: rep.map(|r| r.pcurve_range).unwrap_or(edge.t_range),
+                    tangent_start: t_start, tangent_end: t_end,
+                });
                 segments.push(WireSegment {
-                    start_vertex: sv, end_vertex: ev,
-                    source: WireEdgeSource::DsEdge(ei),
-                    orientation: if forward_in_wire { WireOrientation::Forward } else { WireOrientation::Reversed },
-                    is_seam: false, second_pcurve: None, first_pcurve: None, t_range: [0.0, 1.0],
-                    tangent_start: t_start,
-                    tangent_end: t_end,
-                });            }
+                    start_vertex: ev, end_vertex: sv, source: src,
+                    orientation: WireOrientation::Reversed, is_seam: false, second_pcurve: None,
+                    first_pcurve: None, t_range: [0.0, 1.0],
+                    tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+                    tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+                });
+            } else {
+                segments.push(WireSegment {
+                    start_vertex: sv, end_vertex: ev, source: src,
+                    orientation: WireOrientation::Forward, is_seam: false, second_pcurve: None,
+                    first_pcurve: rep.map(|r| r.pcurve.clone()),
+                    t_range: rep.map(|r| r.pcurve_range).unwrap_or(edge.t_range),
+                    tangent_start: t_start, tangent_end: t_end,
+                });
+            }
+            continue;
         }
-    }
+
+        let b_is_degenerated = ds.is_edge_degenerated(ei);
+        let b_edge_closed = sv == ev || are_verts_coincident(ds, sv, ev);
+        let b_is_seam = if !b_is_degenerated && b_edge_closed && (is_u_closed || is_v_closed) {
+            if let Some(rep) = ds.edge_on_face(ei, face_idx) {
+                let (is_uiso, is_v_iso) = is_edge_isoline(&rep.pcurve, rep.pcurve_range);
+                (is_u_closed && is_uiso) || (is_v_closed && is_v_iso)
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if b_is_degenerated {
+            // OCCT L413-417: iterate sub-edges, set orientation, append
+            for &sub_ei in &ds.my_images[ei] {
+                let sub_edge = &ds.edges[sub_ei];
+                let sv_seg = sub_edge.start_vertex;
+                let ev_seg = sub_edge.end_vertex;
+                if sv_seg == ev_seg { continue; }
+                segments.push(WireSegment {
+                    start_vertex: sv_seg, end_vertex: ev_seg,
+                    source: WireEdgeSource::DsEdge(sub_ei),
+                    orientation: WireOrientation::Forward,
+                    is_seam: true, second_pcurve: None, first_pcurve: None,
+                    t_range: [0.0, 1.0],
+                    tangent_start: None, tangent_end: None,
+                });
+            }
+        } else if b_is_seam && matches!(face.surface, Surface3::Sphere(_)) {
+            if !processed_seam_ds_edges.insert(ei) { continue; }
+            segments.extend(build_sphere_seam_segments(ds, ei, sv, ev, face, face_idx));
+        } else if b_is_seam {
+            segments.extend(build_cylinder_seam_segments(ds, ei, sv, ev, face));
+        } else {
+            if !ds.my_images.is_empty() && ei < ds.my_images.len() && !ds.my_images[ei].is_empty() {
+                let is_original_internal = ds.edges[ei].is_internal;
+                for &sub_ei in &ds.my_images[ei] {
+                    let sub_edge = &ds.edges[sub_ei];
+                    let sv_seg = sub_edge.start_vertex;
+                    let ev_seg = sub_edge.end_vertex;
+                    if sv_seg == ev_seg { continue; }
+                    if is_original_internal {
+                        let (t_start, t_end) = edge_uv_tangent(ds, sv_seg, ev_seg, &face.surface,
+                            Some(&sub_edge.curve), Some(sub_edge.t_range));
+                        let rep = ds.edge_on_face(sub_ei, face_idx)
+                            .or_else(|| ds.edge_on_face(ei, face_idx));
+                        segments.push(WireSegment {
+                            start_vertex: sv_seg, end_vertex: ev_seg,
+                            source: WireEdgeSource::DsEdge(sub_ei),
+                            orientation: WireOrientation::Forward, is_seam: false, second_pcurve: None,
+                            first_pcurve: rep.map(|r| r.pcurve.clone()),
+                            t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
+                            tangent_start: t_start, tangent_end: t_end,
+                        });
+                        segments.push(WireSegment {
+                            start_vertex: ev_seg, end_vertex: sv_seg,
+                            source: WireEdgeSource::DsEdge(sub_ei),
+                            orientation: WireOrientation::Reversed, is_seam: false, second_pcurve: None,
+                            first_pcurve: None, t_range: [0.0, 1.0],
+                            tangent_start: t_end, tangent_end: t_start,
+                        });
+                        continue;
+                    }
+                    let needs_reverse = is_split_to_reverse(ds, sub_ei, ei);
+                    let (t_fwd, t_rev) = edge_uv_tangent(ds, sv_seg, ev_seg, &face.surface,
+                        Some(&sub_edge.curve), Some(sub_edge.t_range));
+                    let rep = ds.edge_on_face(sub_ei, face_idx)
+                        .or_else(|| ds.edge_on_face(ei, face_idx));
+                    if needs_reverse {
+                        segments.push(WireSegment {
+                            start_vertex: ev_seg, end_vertex: sv_seg,
+                            source: WireEdgeSource::DsEdge(sub_ei),
+                            orientation: WireOrientation::Reversed, is_seam: false, second_pcurve: None,
+                            first_pcurve: rep.map(|r| r.pcurve.clone()),
+                            t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
+                            tangent_start: t_rev.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+                            tangent_end: t_fwd.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
+                        });
+                    } else {
+                        segments.push(WireSegment {
+                            start_vertex: sv_seg, end_vertex: ev_seg,
+                            source: WireEdgeSource::DsEdge(sub_ei),
+                            orientation: WireOrientation::Forward, is_seam: false, second_pcurve: None,
+                            first_pcurve: rep.map(|r| r.pcurve.clone()),
+                            t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
+                            tangent_start: t_fwd, tangent_end: t_rev,
+                        });
+                    }                }
+            } else {
+                let p_a = ds.vertices[sv].point;
+                let p_b = ds.vertices[ev].point;
+                let ab = p_b - p_a;
+                let ab_len2 = ab.length_squared();
+                let mut split_verts: Vec<(usize, f64)> = Vec::new();
+                if ab_len2 > 1e-12 {
+                    for &vi in &face.face_info.vertices_in {
+                        check_and_add_split_vertex(ds, sv, ev, vi, p_a, ab, ab_len2, &mut split_verts);
+                    }
+                    let is_periodic_seam = b_is_seam && matches!(face.surface,
+                        Surface3::Sphere(_) | Surface3::Cylinder(_) | Surface3::Torus(_));
+                    if is_periodic_seam {
+                        let uv_s = world_to_uv(&face.surface, ds.vertices[sv].point);
+                        let uv_e = world_to_uv(&face.surface, ds.vertices[ev].point);
+                        if let (Some(uva), Some(uvb)) = (uv_s, uv_e) {
+                            let seam_tol = 1e-6;
+                            let on_seam_u = |u: f64| -> bool {
+                                u.abs() < seam_tol || (u - std::f64::consts::TAU).abs() < seam_tol
+                            };
+                            let v_range = [uva.y, uvb.y];
+                            let v_min = v_range[0].min(v_range[1]);
+                            let v_max = v_range[0].max(v_range[1]);
+                            let v_span = v_max - v_min;
+                            if v_span > 1e-15 {
+                                for &ci in &face.face_info.curves_sc_only() {
+                                    let ic = &ds.intersection_curves[ci];
+                                    for &ep in &[ic.start_vertex, ic.end_vertex] {
+                                        if ep == sv || ep == ev { continue; }
+                                        if split_verts.iter().any(|(v, _)| *v == ep) { continue; }
+                                        if let Some(uv_ep) = world_to_uv(&face.surface, ds.vertices[ep].point) {
+                                            if on_seam_u(uv_ep.x) && uv_ep.y >= v_min - seam_tol
+                                                && uv_ep.y <= v_max + seam_tol
+                                            {
+                                                let t = (uv_ep.y - v_min) / v_span;
+                                                if t > 1e-8 && t < 1.0 - 1e-8 {
+                                                    split_verts.push((ep, t));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                split_verts.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+                if split_verts.is_empty() {
+                    let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface,
+                        Some(&ds.edges[ei].curve), Some(ds.edges[ei].t_range));
+                    let rep = ds.edge_on_face(ei, face_idx);
+                    segments.push(WireSegment {
+                        start_vertex: sv, end_vertex: ev,
+                        source: WireEdgeSource::DsEdge(ei),
+                        orientation: WireOrientation::Forward, is_seam: false, second_pcurve: None,
+                        first_pcurve: rep.map(|r| r.pcurve.clone()),
+                        t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
+                        tangent_start: t_start, tangent_end: t_end,
+                    });                } else {
+                    let mut prev_v = sv;
+                    let edge_curve = &ds.edges[ei].curve;
+                    let etr = ds.edges[ei].t_range;
+                    let seg_rep = ds.edge_on_face(ei, face_idx);
+                    let seg_first_pcurve = seg_rep.map(|r| r.pcurve.clone());
+                    let seg_range = seg_rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]);
+                    let norm_to_t = |n: f64| etr[0] + n * (etr[1] - etr[0]);
+                    let mut prev_t = norm_to_t(0.0);
+                    for &(vi, t) in &split_verts {
+                        let t_vi = norm_to_t(t);
+                        let (ts, te) = edge_uv_tangent(ds, prev_v, vi, &face.surface,
+                            Some(edge_curve), Some([prev_t, t_vi]));
+                        segments.push(WireSegment {
+                            start_vertex: prev_v, end_vertex: vi,
+                            source: WireEdgeSource::DsEdge(ei),
+                            orientation: WireOrientation::Forward, is_seam: false, second_pcurve: None,
+                            first_pcurve: seg_first_pcurve.clone(), t_range: seg_range,
+                            tangent_start: ts, tangent_end: te,
+                        });                        prev_v = vi;
+                        prev_t = t_vi;
+                    }
+                    let (ts, te) = edge_uv_tangent(ds, prev_v, ev, &face.surface,
+                        Some(edge_curve), Some([prev_t, etr[1]]));
+                    segments.push(WireSegment {
+                        start_vertex: prev_v, end_vertex: ev,
+                        source: WireEdgeSource::DsEdge(ei),
+                        orientation: WireOrientation::Forward, is_seam: false, second_pcurve: None,
+                        first_pcurve: seg_first_pcurve.clone(), t_range: seg_range,
+                        tangent_start: ts, tangent_end: te,
+                    });                }
+            }
+        }
+        }  // end inner_wire edge loop
+    }  // end inner_wire loop
 
     // ================================================================
     // IN edge PBs (OCCT BOPAlgo_Builder_2.cxx L467-480).
@@ -908,7 +1148,6 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
     // ================================================================
     // OCCT-aligned: Process PaveBlocksSc — each PB has a pre-built edge with
     //   valid aPB->Edge().  This is the PRIMARY path for section edges.
-    let had_pb_sc = !face.face_info.pave_blocks_sc.is_empty();
     for &pb_idx in &face.face_info.pave_blocks_sc {
         if pb_idx >= ds.pave_blocks.len() { continue; }
         let pb = &ds.pave_blocks[pb_idx];
@@ -942,169 +1181,5 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
             tangent_start: t_fwd_e, tangent_end: t_fwd_s,
         });
     }
-
-    // OCCT-aligned: curves_sc fallback — only when PaveBlocksSc had no valid PBs.
-    //   OCCT only builds section edges from PaveBlocksSc.  rcad may miss PBs in
-    //   edge cases (no init_pave_block1), so curves_sc provides a recovery path.
-    if !had_pb_sc {
-    for &ci in &face.face_info.curves_sc_only() {
-        let ic = &ds.intersection_curves[ci];
-        let sv = ic.start_vertex;
-        let ev = ic.end_vertex;
-        // OCCT-aligned: Skip degenerate IC (unless sphere face, where we try to infer correct vertex)
-        let d2 = ds.vertices[sv].point.distance_squared(ds.vertices[ev].point);
-        if std::env::var("RCAD_DEBUG_IC").is_ok() {
-            eprintln!("[IC_LOOP] fi={} ci={} raw=({},{}) remap=({},{})",
-                face_idx, ci, ic.start_vertex, ic.end_vertex, sv, ev);
-        }
-        if sv == ev || d2 < TOLERANCE_ABS_SQ {
-            if matches!(face.surface, Surface3::Sphere(_)) {
-                // Degenerate IC on sphere: infer the correct second vertex from other ICs.
-                let other_v: Vec<usize> = face.face_info.curves_sc_only().iter()
-                    .filter(|&&oci| oci != ci)
-                    .flat_map(|&oci| {
-                        let oic = &ds.intersection_curves[oci];
-                        vec![oic.start_vertex, oic.end_vertex]
-                    })
-                    .filter(|&v| v != sv)
-                    .collect();
-                let vcounts: std::collections::HashMap<usize, usize> = {
-                    let mut m = std::collections::HashMap::new();
-                    for &v in &other_v { *m.entry(v).or_insert(0) += 1; }
-                    m
-                };
-                let mut candidate: Option<usize> = None;
-                for (&v, &cnt) in &vcounts {
-                    if cnt == 1 {
-                        if candidate.is_some() { }
-                        else { candidate = Some(v); }
-                    }
-                }
-                if candidate.is_none() {
-                    candidate = other_v.iter().max_by_key(|&&v| vcounts.get(&v).copied().unwrap_or(0)).copied();
-                }
-                if let Some(correct_ev) = candidate {
-                    let fixed_sv = sv;
-                    let fixed_ev = correct_ev;
-                    let pcurve = pcurve_lookup(ci);
-                    let (t_start, t_end) = if let Some(ref pc) = pcurve {
-                        (angle_2d(pc, ic.t_range[0], ic.t_range, false, &face.surface, ds.vertices[fixed_sv].geom_tol, None),
-                         angle_2d(pc, ic.t_range[1], ic.t_range, true, &face.surface, ds.vertices[correct_ev].geom_tol, None))
-                    } else { (None, None) };
-                    let ic_second_pcurve = compute_ic_second_pcurve(
-                        &face.surface, ds, fixed_sv, fixed_ev);
-                    segments.push(WireSegment { start_vertex: fixed_sv, end_vertex: fixed_ev,
-                        source: WireEdgeSource::IntersectionCurve(ci), orientation: WireOrientation::Forward,
-                        is_seam: false, second_pcurve: ic_second_pcurve, first_pcurve: None, t_range: [ic.t_range[0], ic.t_range[1]], tangent_start: t_start, tangent_end: t_end });
-                    continue;
-                }
-                // Non-sphere face with degenerate IC: skip completely
-                continue;
-            }
-            // ✅ OCCT-aligned: 闭合 Circle IC 在边界顶点处分裂(FillImagesEdges 等价)。
-            //    当 Circle IC(start==end)且 boundary 边已被 vertices_in 中的顶点分割时,
-            //    在 boundary 上的顶点处分裂圆为圆弧段,使 wire builder 能形成闭合环。
-            //    OCCT 在 BuildSplitFaces 中通过 myImages 获得的子边自然携带了这些顶点。
-            if let Curve3::Circle(ref circ) = ic.curve {
-                let center = circ.center;
-                let n = circ.normal.normalize();
-                let r_dir = rcad_kernel::geom::any_perpendicular(n);
-                let p_dir = n.cross(r_dir);
-                let r = circ.radius;
-                let circle_tol = 1e-8 * r.max(1.0);
-                // ✅ OCCT-aligned: 收集边界上的分割顶点(来自 FillImagesEdges 的边分裂)以及在
-                //    vertices_in 中的顶点,检查哪些在 Circle IC 上。
-                //    边界分割顶点来自 side 面上的 TangentLine IC,不在当前面的 vertices_in 中。
-                let mut vertices_to_check: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
-                for &vi in &face.face_info.vertices_in { vertices_to_check.insert(vi); }
-                for seg in &segments { vertices_to_check.insert(seg.start_vertex); vertices_to_check.insert(seg.end_vertex); }
-                let mut on_circle: Vec<(usize, f64)> = Vec::new();
-                for &vi in &vertices_to_check {
-                    let pt = ds.vertices[vi].point;
-                    let d = pt - center;
-                    if (d.length() - r).abs() < circle_tol {
-                        let angle = f64::atan2(d.dot(p_dir), d.dot(r_dir));
-                        on_circle.push((vi, angle));
-                    }
-                }
-                if on_circle.len() >= 2 {
-                    on_circle.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-                    let n_on = on_circle.len();
-                    for i in 0..n_on {
-                        let j = (i + 1) % n_on;
-                        let vi = on_circle[i].0;
-                        let vj = on_circle[j].0;
-                        let pcurve = pcurve_lookup(ci);
-                        let (ts_val, te_val) = if let Some(ref pc) = pcurve {
-                            (angle_2d(pc, ic.t_range[0], ic.t_range, false, &face.surface, ds.vertices[vi].geom_tol, None),
-                             angle_2d(pc, ic.t_range[1], ic.t_range, true, &face.surface, ds.vertices[vj].geom_tol, None))
-                        } else { (None, None) };
-                        let arc_second = compute_ic_second_pcurve(
-                            &face.surface, ds, vi, vj);
-                        segments.push(WireSegment {
-                            start_vertex: vi, end_vertex: vj,
-                            source: WireEdgeSource::IntersectionCurve(ci), orientation: WireOrientation::Forward,
-                            is_seam: false, second_pcurve: arc_second, first_pcurve: None, t_range: [on_circle[i].1, on_circle[j].1], tangent_start: ts_val, tangent_end: te_val,
-                        });                    }
-                    continue;
-                }
-            }
-            continue;
-        }
-
-        //  pcurve  (Angle2D)
-        let pcurve = pcurve_lookup(ci);
-        let (t_start, t_end) = if let Some(ref pc) = pcurve {
-            let domain = ic.t_range;
-            (angle_2d(pc, domain[0], domain, false, &face.surface, ds.vertices[sv].geom_tol, None),
-             angle_2d(pc, domain[1], domain, true, &face.surface, ds.vertices[ev].geom_tol, None))
-        } else {
-            (None, None)
-        };
-
-        // ✅ OCCT-aligned: IC edges go into WES once (FORWARD orientation).
-        // OCCT BOPAlgo_Builder_2.cxx L478-489: each non-closed edge added once.
-        // Closed edges (seam on periodic surfaces) get FWD+REV via separate seam logic.
-        let gen_ic_second = compute_ic_second_pcurve(&face.surface, ds, sv, ev);
-        segments.push(WireSegment {
-            start_vertex: sv,
-            end_vertex: ev,
-            source: WireEdgeSource::IntersectionCurve(ci),
-            orientation: WireOrientation::Forward,
-            is_seam: false, second_pcurve: gen_ic_second, first_pcurve: None, t_range: [ic.t_range[0], ic.t_range[1]],
-            tangent_start: t_start,
-            tangent_end: t_end,
-        });
-    }
-    } // end if !had_pb_sc (curves_sc fallback — only when PaveBlocksSc had no valid PBs)
     segments
-}
-
-/// DoSplitSEAMOnFace overload 2: compute second pcurve for an IC edge
-/// whose endpoints lie on the parametric seam of a periodic surface.
-/// Returns None for non-sphere surfaces or when UV can't be computed.
-pub(crate) fn compute_ic_second_pcurve(
-    surface: &Surface3,
-    ds: &DS,
-    start_vertex: usize,
-    end_vertex: usize,
-) -> Option<Curve2d> {
-    if !matches!(surface, Surface3::Sphere(_)) {
-        return None;
-    }
-    let sv_uv = world_to_uv(surface, ds.vertices[start_vertex].point)?;
-    let ev_uv = world_to_uv(surface, ds.vertices[end_vertex].point)?;
-    // Check if both endpoints are on the seam (U ≈ 0 or U ≈ 2π)
-    const SEAM_TOL: f64 = 1e-6;
-    let near_seam = |u: f64| -> bool {
-        u.abs() < SEAM_TOL || (u - std::f64::consts::TAU).abs() < SEAM_TOL
-    };
-    if near_seam(sv_uv.x) && near_seam(ev_uv.x) {
-        Some(Curve2d::Line(Line2d {
-            origin: DVec2::new(sv_uv.x + std::f64::consts::TAU, sv_uv.y),
-            direction: DVec2::new(ev_uv.x - sv_uv.x, ev_uv.y - sv_uv.y),
-        }))
-    } else {
-        None
-    }
 }

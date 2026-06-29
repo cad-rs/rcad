@@ -4,77 +4,7 @@ use crate::bopds::ds::*;
 use crate::tolerance::*;
 use crate::builder::types::{WireSegment, WireEdgeSource, WireOrientation};
 use super::wire_splitter::{world_to_uv, edge_uv_tangent, compute_seam_tangent_angles};
-
-/// ✅ OCCT-aligned: degenerate edge segments (BOPAlgo_Builder_2.cxx L408-412).
-///   OCCT uses distinct TopoDS_Vertex instances for deg edge start/end.
-///   rcad: creates virtual vertex indices (deg_virtual_counter) to match.
-///   FWD segment uses (sv, virtual_v), REV uses (virtual_v, sv).
-pub fn build_degenerate_edge_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face: &DSFace, face_idx: usize, deg_virtual_counter: &mut usize) -> Vec<WireSegment> {
-    let deg_pcurve = match &face.surface {
-        Surface3::Sphere(_) => {
-            let pole_v = world_to_uv(&face.surface, ds.vertices[sv].point)
-                .map(|uv| uv.y).unwrap_or(0.0);
-            let mut ic_uvs: Vec<f64> = Vec::new();
-            for &ci in &face.face_info.curves_sc {
-                let ic = &ds.intersection_curves[ci];
-                if let Curve3::Circle(c) = &ic.curve { if c.radius < 1e-3 { continue; } }
-                let pole_pt = ds.vertices[sv].point;
-                let tol_sq = TOLERANCE_ABS_SQ * 1_000_000.0;
-                let at_s = ds.vertices[ic.start_vertex].point.distance_squared(pole_pt) <= tol_sq;
-                let at_e = ds.vertices[ic.end_vertex].point.distance_squared(pole_pt) <= tol_sq;
-                if !at_s && !at_e { continue; }
-                let t = if at_s { ic.t_range[0] } else { ic.t_range[1] };
-                if let Some(pc) = ic.pcurve_on_b.as_ref().or(ic.pcurve_on_a.as_ref()) {
-                    let uv: DVec2 = pc.point_at(t);
-                    let u = uv.x;
-                    if u.abs() > 0.01 && (u - std::f64::consts::PI).abs() > 0.01
-                        && (u - std::f64::consts::TAU).abs() > 0.01 { ic_uvs.push(uv.x); }
-                }
-            }
-            let ic_u = if ic_uvs.is_empty() { std::f64::consts::TAU }
-                       else { ic_uvs.iter().sum::<f64>() / ic_uvs.len() as f64 };
-            Some(Curve2d::Line(Line2d { origin: DVec2::new(ic_u, pole_v), direction: DVec2::new(-ic_u, 0.0) }))
-        }
-        Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Torus(_) => {
-            world_to_uv(&face.surface, ds.vertices[sv].point).map(|uv| {
-                Curve2d::Line(Line2d { origin: DVec2::new(0.0, uv.y), direction: DVec2::new(std::f64::consts::TAU, 0.0) })
-            })
-        }
-        _ => world_to_uv(&face.surface, ds.vertices[sv].point).map(|uv| {
-            Curve2d::Line(Line2d { origin: DVec2::new(0.0, uv.y), direction: DVec2::new(std::f64::consts::TAU, 0.0) })
-        }),
-    };
-    let tangent = compute_seam_tangent_angles(ds, ei, sv, ev, &face.surface);
-    let virt_sv = *deg_virtual_counter;
-    *deg_virtual_counter += 1;
-    let virt_ev = *deg_virtual_counter;
-    *deg_virtual_counter += 1;
-    // ✅ OCCT-aligned: FWD segment uses (pole, virtual) → distinct from seam edge's pole vertex.
-    let fwd = WireSegment {
-        start_vertex: sv, end_vertex: virt_sv,
-        source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Forward,
-        is_seam: true, second_pcurve: deg_pcurve.clone(), first_pcurve: None, t_range: [0.0, 1.0],
-        tangent_start: tangent.0, tangent_end: tangent.1,
-    };
-    let deg_pcurve_rev = match &deg_pcurve {
-        Some(Curve2d::Line(l)) => {
-            let ic_u = l.origin.x; let pole_v = l.origin.y;
-            if (ic_u - std::f64::consts::TAU).abs() < 1e-10 {
-                Some(Curve2d::Line(Line2d { origin: DVec2::new(0.0, pole_v), direction: DVec2::new(std::f64::consts::TAU, 0.0) }))
-            } else {
-                Some(Curve2d::Line(Line2d { origin: DVec2::new(std::f64::consts::TAU, pole_v), direction: DVec2::new(-(std::f64::consts::TAU - ic_u), 0.0) }))
-            }
-        }
-        _ => None,
-    };
-    let rev = WireSegment {
-        start_vertex: virt_ev, end_vertex: sv,
-        source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Reversed,
-        is_seam: true, second_pcurve: deg_pcurve_rev, first_pcurve: None, t_range: [0.0, 1.0],
-        tangent_start: Some(std::f64::consts::PI), tangent_end: Some(std::f64::consts::PI),
-    };
-    vec![fwd, rev]
-}
+use crate::builder::curve_eq;
 
 /// ✅ OCCT: DoSplitSEAMOnFace — build second pcurve shifted by surface period.
 pub fn build_seam_second_pcurve(ds: &DS, surface: &Surface3, sv: usize, ev: usize, edge_tol: f64) -> Option<Curve2d> {
@@ -178,4 +108,52 @@ pub fn build_cylinder_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, fa
             tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
         },
     ]
+}
+
+/// ✅ OCCT-aligned: IsSplitToReverseWithWarn (BOPTools_AlgoTools.cxx L1432-1523).
+/// Compares the direction of a split sub-edge against its original edge.
+pub fn is_split_to_reverse(
+    ds: &DS,
+    sub_ei: usize,
+    orig_ei: usize,
+) -> bool {
+    let sub_edge = &ds.edges[sub_ei];
+    let orig_edge = &ds.edges[orig_ei];
+    // OCCT L1441-1448: skip degenerated edges
+    if ds.is_edge_degenerated(sub_ei) || ds.is_edge_degenerated(orig_ei) {
+        return false;
+    }
+    // OCCT L1462-1465: same 3D curve -> compare parameter direction
+    if curve_eq(&sub_edge.curve, &orig_edge.curve) {
+        let sub_dir = sub_edge.t_range[1] - sub_edge.t_range[0];
+        let orig_dir = orig_edge.t_range[1] - orig_edge.t_range[0];
+        return (sub_dir > 0.0) != (orig_dir > 0.0);
+    }
+    // OCCT L1479-1514: sample midpoint, project onto original, compare tangents
+    let sub_mid = (sub_edge.t_range[0] + sub_edge.t_range[1]) * 0.5;
+    let sub_mid_pt = sub_edge.curve.point_at(sub_mid);
+    let n = 30;
+    let mut best_t = orig_edge.t_range[0];
+    let mut best_d = f64::MAX;
+    for i in 0..=n {
+        let t = orig_edge.t_range[0]
+            + (orig_edge.t_range[1] - orig_edge.t_range[0]) * (i as f64 / n as f64);
+        let p = orig_edge.curve.point_at(t);
+        let d = sub_mid_pt.distance_squared(p);
+        if d < best_d {
+            best_d = d;
+            best_t = t;
+        }
+    }
+    if best_d > 1e-6 {
+        return false;
+    }
+    let eps = 1e-8;
+    let sub_t1 = sub_edge.curve.point_at((sub_mid + eps).min(sub_edge.t_range[1]));
+    let sub_t2 = sub_edge.curve.point_at((sub_mid - eps).max(sub_edge.t_range[0]));
+    let tangent_sub = sub_t1 - sub_t2;
+    let orig_t1 = orig_edge.curve.point_at((best_t + eps).min(orig_edge.t_range[1]));
+    let orig_t2 = orig_edge.curve.point_at((best_t - eps).max(orig_edge.t_range[0]));
+    let tangent_orig = orig_t1 - orig_t2;
+    tangent_sub.dot(tangent_orig) < 0.0
 }

@@ -975,16 +975,14 @@ impl<'a> PaveFiller<'a> {
                 // Clone all data before mutable access
                 let mut pb_clone = pb.clone();
                 let sub_pbs = if pb_clone.is_to_update() {
-                    pb_clone.update(false) // flag=false: ext_paves only, no boundary paves
+                    pb_clone.update(true) // flag=true: include boundary paves, matching OCCT Update() usage
                 } else {
                     // OCCT-aligned: curves without ext_paves produce a single section edge
-                    // spanning the entire PB range (no split points).
-                    let (v1, v2) = pb.indices();
-                    let (t1, t2) = pb.range();
+                    // spanning the entire IC range (OCCT uses Curve.StartVertex/EndVertex).
                     vec![PaveBlock::new(
                         crate::bopds::pave::NO_EDGE,
-                        Pave { vertex_idx: v1, param: t1 },
-                        Pave { vertex_idx: v2, param: t2 },
+                        Pave { vertex_idx: ic.start_vertex, param: ic.t_range[0] },
+                        Pave { vertex_idx: ic.end_vertex, param: ic.t_range[1] },
                     )]
                 };
             for mut sub_pb in sub_pbs {
@@ -1036,6 +1034,9 @@ impl<'a> PaveFiller<'a> {
                     let v1_tol = ff_tol.max(self.ds.vertices[nV1].geom_tol);
                     let v2_tol = ff_tol.max(self.ds.vertices[nV2].geom_tol);
                     if find_valid_range(&ic.curve, aT1, aT2, v1_pt, v1_tol, v2_pt, v2_tol).is_none() {
+                        if std::env::var("RCAD_DEBUG_PB").is_ok() {
+                            eprintln!("[PB] ci={} BLOCKED FindValidRange nV=({},{})", ci, nV1, nV2);
+                        }
                         continue;
                     }
                 }
@@ -2795,7 +2796,35 @@ impl<'a> PaveFiller<'a> {
                     self.ds.intersection_curves[ci].end_vertex = v_end;
                 }
             }
-            // �?OCCT-aligned: Register curves_sc and vertices_in for this face pair
+            // prepare_lines_3d may have split closed curves. register split siblings (ci+1)
+            // on both faces so make_section_edges_from_curve_pbs sees them.
+            let mut split_extra: Vec<usize> = Vec::new();
+            for &ci in &ff_curves {
+                if ci + 1 < self.ds.intersection_curves.len() && !split_extra.contains(&(ci + 1)) {
+                    split_extra.push(ci + 1);
+                }
+            }
+            if !split_extra.is_empty() {
+                if let Some(ff) = self.ds.interferences.iter_mut().find_map(|inf| {
+                    if let Interference::FaceFace { f1: a, f2: b, curves, .. } = inf {
+                        if *a == f1 && *b == f2 { Some(curves) } else { None }
+                    } else { None }
+                }) {
+                    for &ci in &split_extra { if !ff.contains(&ci) { ff.push(ci); } }
+                }
+                for &ci in &split_extra {
+                    self.ds.faces[f1].face_info.curves_sc.insert(ci);
+                    self.ds.faces[f2].face_info.curves_sc.insert(ci);
+                    if ci < self.ds.intersection_curves.len() {
+                        let ic = &self.ds.intersection_curves[ci];
+                        self.ds.faces[f1].face_info.vertices_in.insert(ic.start_vertex);
+                        self.ds.faces[f1].face_info.vertices_in.insert(ic.end_vertex);
+                        self.ds.faces[f2].face_info.vertices_in.insert(ic.start_vertex);
+                        self.ds.faces[f2].face_info.vertices_in.insert(ic.end_vertex);
+                    }
+                }
+            }
+            // OCCT-aligned: Register curves_sc and vertices_in for this face pair
             // (PostTreatFF equivalent in OCCT PaveFiller_6.cxx L1165-1397).
             self.ds.faces[f1].face_info.curves_sc.extend(&ff_curves);
             self.ds.faces[f2].face_info.curves_sc.extend(&ff_curves);
