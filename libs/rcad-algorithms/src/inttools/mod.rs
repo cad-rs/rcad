@@ -8,6 +8,7 @@ pub mod cylinder_cylinder;
 pub mod cylinder_torus;
 pub mod edge_edge;
 pub mod edge_face;
+pub mod face_face;
 pub mod extreme_geometry;
 pub mod intss;
 pub mod marching;
