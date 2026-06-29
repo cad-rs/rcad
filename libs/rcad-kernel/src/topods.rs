@@ -322,6 +322,8 @@ pub trait BRepTool {
     fn is_edge_degenerated(&self, e: ShapeRef) -> bool;
     /// TopExp: given one vertex of an edge, return the other vertex.
     fn edge_other_vertex(&self, edge: ShapeRef, v: ShapeRef) -> ShapeRef;
+    /// First vertex of an edge (FORWARD orientation, OCCT TopExp::FirstVertex).
+    fn first_vertex(&self, edge: ShapeRef) -> ShapeRef;
     /// BRep_Tool::Parameter(aV, aE, aF) — vertex parameter on edge's pcurve.
     fn parameter_on_edge(&self, vertex: ShapeRef, edge: ShapeRef, face: ShapeRef) -> Option<f64>;
     /// BRep_Tool::CurveOnSurface(aE, aF) — pcurve of edge on face.
@@ -350,6 +352,10 @@ impl BRepTool for BRep {
     fn edge_other_vertex(&self, edge: ShapeRef, v: ShapeRef) -> ShapeRef {
         let ed = self.edge(edge);
         if ed.first.index == v.index { ed.last } else { ed.first }
+    }
+
+    fn first_vertex(&self, edge: ShapeRef) -> ShapeRef {
+        self.edge(edge).first
     }
 
     fn parameter_on_edge(&self, vertex: ShapeRef, edge: ShapeRef, _face: ShapeRef) -> Option<f64> {

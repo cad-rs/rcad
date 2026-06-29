@@ -73,6 +73,12 @@ impl BRepTool for DSAsBRep<'_> {
         } else { v }
     }
 
+    fn first_vertex(&self, edge: ShapeRef) -> ShapeRef {
+        self.ds.edges.get(edge.index)
+            .map(|e| ShapeRef::new(e.start_vertex))
+            .unwrap_or(edge)
+    }
+
     fn parameter_on_edge(&self, vertex: ShapeRef, edge: ShapeRef, _face: ShapeRef) -> Option<f64> {
         self.vertex_param_cache.get(&edge.index)
             .and_then(|vpm| vpm.get(&vertex.index).copied())

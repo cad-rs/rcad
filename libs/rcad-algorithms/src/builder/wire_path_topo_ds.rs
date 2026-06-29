@@ -134,26 +134,15 @@ pub(crate) fn walk_path_extract_wires_topoDS(
     };
 
     // ✅ OCCT-aligned: Coord2d (BOPAlgo_WireSplitter_1.cxx L677-688).
-    // Gets UV of a vertex on a specific edge by evaluating the edge's pcurve
-    // at the vertex parameter.
-    let vertex_uv = |vi: ShapeRef, segment: &WireSegmentTopoDS, at_start: bool| -> Option<DVec2> {
-        // OCCT-aligned: use segment range first (reliable for all edge types),
-        // then try BRepTool::parameter_on_edge for exact vertex parameter.
-        let t_range_t = if at_start { segment.t_range[0] } else { segment.t_range[1] };
-        let t = tool.parameter_on_edge(vi, segment.edge, segment.face).unwrap_or(t_range_t);
-        if let Some((pc, _, _)) = tool.curve_on_surface(segment.edge, segment.face) {
-            return Some(pc.point_at(t));
-        }
-        // Fallback: use first_pcurve/second_pcurve from segment if available
-        let pc = if at_start || segment.orientation.is_forward() {
-            segment.first_pcurve.as_ref().or(segment.second_pcurve.as_ref())
-        } else {
-            segment.second_pcurve.as_ref().or(segment.first_pcurve.as_ref())
-        };
-        if let Some(pc) = pc {
-            return Some(pc.point_at(t));
-        }
-        None
+    let coord2d = |vi: ShapeRef, edge: ShapeRef, face: ShapeRef| -> Option<DVec2> {
+        let t = tool.parameter_on_edge(vi, edge, face)?;
+        let (pc, _, _) = tool.curve_on_surface(edge, face)?;
+        Some(pc.point_at(t))
+    };
+    // ✅ OCCT-aligned: Coord2dVf (BOPAlgo_WireSplitter_1.cxx L692-711).
+    let coord2d_vf = |edge: ShapeRef, face: ShapeRef| -> Option<DVec2> {
+        let fwd_v = tool.first_vertex(edge);
+        coord2d(fwd_v, edge, face)
     };
 
     // OCCT Tolerance2D/UTolerance2D/VTolerance2D via BRepTool face queries.
@@ -200,13 +189,13 @@ pub(crate) fn walk_path_extract_wires_topoDS(
 
         edge_seq.push(ci);
         vert_seq.push(seg.start_vertex.index);
-        let cur_uv = vertex_uv(seg.start_vertex, seg, true);
+        let cur_uv = coord2d(seg.start_vertex, seg.edge, seg.face);
         uv_seq.push(cur_uv.unwrap_or(DVec2::ZERO));
         info_seq.push(ci);
 
         // ── Loop Detection (OCCT L424-523) ──
         let b_is_closed = is_vert_closed(smart_map, arrived_vertex);
-        let a_pb = vertex_uv(ShapeRef::new(arrived_vertex), &segments[ci], false).unwrap_or(DVec2::ZERO);
+        let a_pb = coord2d(ShapeRef::new(arrived_vertex), segments[ci].edge, segments[ci].face).unwrap_or(DVec2::ZERO);
         let a_tol_2d = uv_tolerance(arrived_vertex);
         let a_tol_2d_sq = a_tol_2d * a_tol_2d;
 
@@ -290,7 +279,7 @@ pub(crate) fn walk_path_extract_wires_topoDS(
         };
         let a_tol_2d_sq = { let tol = uv_tolerance(arrived_vertex); tol * tol };
         let b_is_closed = is_vert_closed(smart_map, arrived_vertex);
-        let a_pb = vertex_uv(ShapeRef::new(arrived_vertex), &segments[ci], false).unwrap_or(DVec2::ZERO);
+        let a_pb = coord2d(ShapeRef::new(arrived_vertex), segments[ci].edge, segments[ci].face).unwrap_or(DVec2::ZERO);
 
         // OCCT L540-549: prepare selection state
         let mut p_edge_info: Option<usize> = None;
@@ -313,7 +302,7 @@ pub(crate) fn walk_path_extract_wires_topoDS(
             else {
                 // OCCT L584-596: 2D distance filter for closed vertices
                 if b_is_closed {
-                    let cand_uv = vertex_uv(ShapeRef::new(arrived_vertex), &segments[ei.seg_idx], true)
+                    let cand_uv = coord2d_vf(segments[ei.seg_idx].edge, segments[ei.seg_idx].face)
                         .unwrap_or(DVec2::ZERO);
                     if cand_uv.distance_squared(a_pb) >= a_tol_2d_sq { continue; }
                 }
