@@ -493,6 +493,28 @@ fn build_smart_map_topoDS(
     use super::angle_2d::angle_2d;
     use super::wire_path::pc_parameter_range;
 
+    // OCCT L147-152: aMS set tracking edge parity (odd → boundary, even → internal).
+    // Non-closed edges appearing an even number of times are internal (IsInside=true).
+    let mut a_ms: HashSet<usize> = HashSet::new();
+    for &si in block {
+        let seg = &segments[si];
+        let has_pcurve = tool.curve_on_surface(seg.edge, seg.face).is_some()
+            || seg.first_pcurve.is_some() || seg.second_pcurve.is_some();
+        if !has_pcurve { continue; }
+
+        let b_closed = seg.start_vertex.index == seg.end_vertex.index || seg.is_seam;
+
+        let src_key = match seg.source {
+            WireEdgeSourceTopoDS::DsEdge(ref sr) => sr.index,
+            WireEdgeSourceTopoDS::IntersectionCurve(ref sr) => sr.index,
+            WireEdgeSourceTopoDS::SeamEdge => usize::MAX - si,
+        };
+        // OCCT L149: !aMS.Add(aE) && !bIsClosed → aMS.Remove(aE)
+        if !a_ms.insert(src_key) && !b_closed {
+            a_ms.remove(&src_key);
+        }
+    }
+
     let mut smart_map: IndexMap<usize, Vec<EdgeInfo>> = IndexMap::new();
     for &si in block {
         let seg = &segments[si];
@@ -500,14 +522,26 @@ fn build_smart_map_topoDS(
             || seg.first_pcurve.is_some() || seg.second_pcurve.is_some();
         if !has_pcurve { continue; }
 
-        let is_inside = matches!(seg.source, WireEdgeSourceTopoDS::IntersectionCurve(_));
+        // OCCT L310: IsInside = !aMS.Contains(aE)
+        let src_key = match seg.source {
+            WireEdgeSourceTopoDS::DsEdge(ref sr) => sr.index,
+            WireEdgeSourceTopoDS::IntersectionCurve(ref sr) => sr.index,
+            WireEdgeSourceTopoDS::SeamEdge => usize::MAX - si,
+        };
+        let is_inside = !a_ms.contains(&src_key);
         let is_circle_arc = false;
 
+        // OCCT L170-172: in_flag based on vertex orientation in the edge.
+        //   FORWARD vertex → in_flag=false (outgoing), REVERSED → in_flag=true (incoming).
+        //   When segment is Reversed, start_vertex maps to REVERSED, end_vertex to FORWARD.
+        let in_flag_start = seg.orientation == Orientation::Reversed;
+        let in_flag_end = seg.orientation == Orientation::Forward;
+
         smart_map.entry(seg.start_vertex.index).or_default().push(EdgeInfo {
-            seg_idx: si, passed: false, in_flag: false, is_inside, is_circle_arc, angle: 0.0,
+            seg_idx: si, passed: false, in_flag: in_flag_start, is_inside, is_circle_arc, angle: 0.0,
         });
         smart_map.entry(seg.end_vertex.index).or_default().push(EdgeInfo {
-            seg_idx: si, passed: false, in_flag: true, is_inside, is_circle_arc, angle: 0.0,
+            seg_idx: si, passed: false, in_flag: in_flag_end, is_inside, is_circle_arc, angle: 0.0,
         });
     }
 
@@ -524,7 +558,6 @@ fn build_smart_map_topoDS(
             let domain = seg.t_range;
             let (curve, curve_domain): (&Curve2d, [f64; 2]) = match &seg.source {
                 WireEdgeSourceTopoDS::IntersectionCurve(_) => {
-                    // Use segment's own pcurve (populated by collect_face_edge_segments)
                     match seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()) {
                         Some(pc) => {
                             let (ta, tb) = pc_parameter_range(pc);
@@ -534,7 +567,6 @@ fn build_smart_map_topoDS(
                     }
                 }
                 _ => {
-                    // Try BRepTool pcurve, fall back to segment's own pcurve
                     let pc = tool.curve_on_surface(seg.edge, seg.face)
                         .map(|(pc, _, _)| pc)
                         .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
