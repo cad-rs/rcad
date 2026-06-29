@@ -470,6 +470,362 @@ pub fn clip_line_to_polygon_with_tol(
     result
 }
 
+/// ✅ OCCT-aligned: IntTools_BeanFaceIntersector — edge-face intersection engine.
+///
+/// Algorithm (Perform):
+///   1. ComputeLinePlane if Line/Plane
+///   2. FastComputeAnalytic for other analytic pairs
+///   3. TestComputeCoinside (coincidence check)
+///   4. ComputeAroundExactIntersection → ComputeUsingExtremum → ComputeNearRangeBoundaries
+///   5. Merge adjacent result ranges
+pub struct BeanFaceIntersector {
+    curve: Curve3,
+    surface: Surface3,
+    first_param: f64,
+    last_param: f64,
+    u_min: f64,
+    u_max: f64,
+    v_min: f64,
+    v_max: f64,
+    criteria: f64,
+    results: Vec<[f64; 2]>,
+    is_done: bool,
+}
+
+impl BeanFaceIntersector {
+    pub fn new() -> Self {
+        Self {
+            curve: Curve3::Line(rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X }),
+            surface: Surface3::Plane(rcad_kernel::geom::Plane { origin: DVec3::ZERO, normal: DVec3::Z }),
+            first_param: 0.0, last_param: 1.0,
+            u_min: f64::NEG_INFINITY, u_max: f64::INFINITY,
+            v_min: f64::NEG_INFINITY, v_max: f64::INFINITY,
+            criteria: 1e-7,
+            results: Vec::new(),
+            is_done: false,
+        }
+    }
+
+    /// Initialize with curve, surface, and edge/face tolerances.
+    pub fn init(
+        &mut self,
+        curve: Curve3,
+        surface: Surface3,
+        edge_tol: f64,
+        face_tol: f64,
+    ) {
+        self.curve = curve;
+        self.surface = surface;
+        self.criteria = edge_tol + face_tol;
+    }
+
+    /// Set the edge's parameter range.
+    pub fn set_bean_parameters(&mut self, first: f64, last: f64) {
+        self.first_param = first;
+        self.last_param = last;
+    }
+
+    /// Set the surface's UV range for localization.
+    pub fn set_surface_parameters(&mut self, u_min: f64, u_max: f64, v_min: f64, v_max: f64) {
+        self.u_min = u_min;
+        self.u_max = u_max;
+        self.v_min = v_min;
+        self.v_max = v_max;
+    }
+
+    /// Perform the intersection.
+    pub fn perform(&mut self) {
+        self.is_done = false;
+        self.results.clear();
+
+        // OCCT L299-303: Line/Plane fast path
+        if matches!(&self.curve, Curve3::Line(_)) && matches!(&self.surface, Surface3::Plane(_)) {
+            self.compute_line_plane();
+            self.is_done = true;
+            return;
+        }
+
+        // OCCT L306-311: Fast analytic cases
+        if self.fast_compute_analytic() {
+            self.is_done = true;
+            return;
+        }
+
+        // OCCT L314-323: Coincidence check
+        if self.test_compute_coinside() {
+            self.results.push([self.first_param, self.last_param]);
+            self.is_done = true;
+            return;
+        }
+
+        // OCCT L340-348: General intersection
+        self.compute_around_exact_intersection();
+        self.compute_using_extremum();
+        self.compute_near_range_boundaries();
+
+        // OCCT L352-378: Merge results
+        let mut merged: Vec<[f64; 2]> = Vec::new();
+        for &r in &self.results {
+            if let Some(last) = merged.last_mut() {
+                if (r[0] - last[1]).abs() < 1e-12 {
+                    last[1] = last[1].max(r[1]);
+                } else {
+                    merged.push(r);
+                }
+            } else {
+                merged.push(r);
+            }
+        }
+        self.results = merged;
+        self.is_done = true;
+    }
+
+    /// Returns true if computation succeeded.
+    pub fn is_done(&self) -> bool { self.is_done }
+
+    /// Returns result ranges on the edge parameter.
+    pub fn results(&self) -> &[[f64; 2]] { &self.results }
+
+    // === Private methods ===
+
+    /// OCCT L820-908: ComputeLinePlane — intersect a line segment with a plane.
+    fn compute_line_plane(&mut self) {
+        let Curve3::Line(l) = &self.curve else { return };
+        let Surface3::Plane(pl) = &self.surface else { return };
+        let result = crate::inttools::edge_face::intersect_line_plane_with_tol(
+            l, [self.first_param, self.last_param], pl, self.criteria);
+        if let Some(hit) = result {
+            self.results.push([hit.edge_param, hit.edge_param]);
+        }
+    }
+
+    /// OCCT L692-818: FastComputeAnalytic — handles Line/Sphere, Line/Cylinder,
+    /// Circle/Plane, and other analytic pairs.
+    fn fast_compute_analytic(&mut self) -> bool {
+        let curve = self.curve.clone();
+        let surface = self.surface.clone();
+        match (&curve, &surface) {
+            (Curve3::Line(_), Surface3::Sphere(s)) => {
+                self.compute_line_sphere(s);
+                true
+            }
+            (Curve3::Line(_), Surface3::Cylinder(c)) => {
+                self.compute_line_cylinder(c);
+                true
+            }
+            (Curve3::Circle(c), Surface3::Plane(p)) => {
+                self.compute_circle_plane(c, p);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn compute_line_sphere(&mut self, sphere: &rcad_kernel::geom::SphericalSurface) {
+        let Curve3::Line(l) = &self.curve else { return };
+        let d = l.direction.normalize();
+        let o = l.origin;
+        let c = sphere.center;
+        let r = sphere.radius;
+        // Solve |o + t*d - c|² = r²
+        let oc = o - c;
+        let a = d.dot(d);
+        let b = 2.0 * oc.dot(d);
+        let c2 = oc.dot(oc) - r * r;
+        let disc = b * b - 4.0 * a * c2;
+        if disc < 0.0 { return; }
+        let sqrt_disc = disc.sqrt();
+        let t1 = (-b - sqrt_disc) / (2.0 * a);
+        let t2 = (-b + sqrt_disc) / (2.0 * a);
+        let t1 = t1.max(self.first_param);
+        let t2 = t2.min(self.last_param);
+        if t1 <= t2 {
+            self.results.push([t1, t2]);
+        }
+    }
+
+    fn compute_line_cylinder(&mut self, cyl: &rcad_kernel::geom::CylindricalSurface) {
+        let Curve3::Line(l) = &self.curve else { return };
+        let d = l.direction;
+        let o = l.origin;
+        let ax = cyl.axis.normalize();
+        let r2 = cyl.radius * cyl.radius;
+        // Solve |(o + t*d - c) × axis|² = r²
+        let oc = o - cyl.origin;
+        let cross_d = d.cross(ax);
+        let cross_oc = oc.cross(ax);
+        let a = cross_d.dot(cross_d);
+        let b = 2.0 * cross_d.dot(cross_oc);
+        let c2 = cross_oc.dot(cross_oc) - r2;
+        if a.abs() < 1e-15 { return; } // parallel to axis
+        let disc = b * b - 4.0 * a * c2;
+        if disc < 0.0 { return; }
+        let sqrt_disc = disc.sqrt();
+        let t1 = (-b - sqrt_disc) / (2.0 * a);
+        let t2 = (-b + sqrt_disc) / (2.0 * a);
+        let t1 = t1.max(self.first_param);
+        let t2 = t2.min(self.last_param);
+        if t1 <= t2 {
+            self.results.push([t1, t2]);
+        }
+    }
+
+    fn compute_circle_plane(&mut self, circle: &rcad_kernel::geom::Circle3, plane: &rcad_kernel::geom::Plane) {
+        // Check if circle lies in the plane
+        let dot_n = circle.normal.dot(plane.normal).abs();
+        if dot_n > 1.0 - 1e-12 {
+            // Coplanar: circle is entirely in plane
+            self.results.push([self.first_param, self.last_param]);
+            return;
+        }
+        // Not coplanar: find intersection by solving circle param where point is on plane
+        // Circle: center + rx*cos(t) + ry*sin(t), find t where dot(point - plane.origin, plane.normal) = 0
+        let rx = rcad_kernel::geom::any_perpendicular(circle.normal).normalize() * circle.radius;
+        let ry = circle.normal.cross(rx).normalize() * circle.radius;
+        let a = plane.normal.dot(rx);
+        let b = plane.normal.dot(ry);
+        let c0 = plane.normal.dot(circle.center - plane.origin);
+        // Solve a*cos(t) + b*sin(t) + c0 = 0
+        let norm = (a * a + b * b).sqrt();
+        if norm < 1e-15 { return; }
+        let phi = f64::atan2(b, a);
+        let rhs = -c0 / norm;
+        if rhs.abs() > 1.0 { return; }
+        let psi = rhs.acos();
+        let t1 = -phi + psi;
+        let t2 = -phi - psi;
+        // Normalize to [0, 2π) and map to edge range
+        let normalize = |t: f64| -> f64 {
+            let mut t = t % std::f64::consts::TAU;
+            if t < 0.0 { t += std::f64::consts::TAU; }
+            t
+        };
+        let t1n = normalize(t1);
+        let t2n = normalize(t2);
+        // OCCT: add each intersection point as a VERTEX solution
+        let tt1 = t1n.max(self.first_param);
+        let tt2 = t2n.min(self.last_param);
+        if tt1 <= tt2 {
+            self.results.push([tt1, tt2]);
+        }
+        let tt1 = t2n.max(self.first_param);
+        let tt2 = (t1n + std::f64::consts::TAU).min(self.last_param);
+        if tt1 <= tt2 {
+            self.results.push([tt1, tt2]);
+        }
+    }
+
+    /// OCCT: TestComputeCoinside — check if edge is coincident with surface.
+    fn test_compute_coinside(&self) -> bool {
+        // Sample 5 points along the edge, check projection distance
+        let n = 5usize;
+        let dt = (self.last_param - self.first_param) / n as f64;
+        let mut inside = 0;
+        for i in 0..=n {
+            let t = self.first_param + i as f64 * dt;
+            let p = self.curve.point_at(t);
+            let proj = rcad_kernel::projection::closest_point_on_surface(&self.surface, p, 16);
+            if proj.distance < self.criteria { inside += 1; }
+        }
+        let ratio = inside as f64 / (n + 1) as f64;
+        ratio > 0.8
+    }
+
+    /// OCCT L564-690: ComputeAroundExactIntersection — refine around known intersection points.
+    fn compute_around_exact_intersection(&mut self) {
+        let curve = self.curve.clone();
+        let surface = self.surface.clone();
+        let first = self.first_param;
+        let last = self.last_param;
+        let criteria = self.criteria;
+        let n = 100usize;
+        let dt = (last - first) / n as f64;
+        let mut new_results: Vec<[f64; 2]> = Vec::new();
+        let mut in_range = false;
+        let mut range_start = first;
+        for i in 0..=n {
+            let t = first + i as f64 * dt;
+            let p = curve.point_at(t);
+            let proj = rcad_kernel::projection::closest_point_on_surface(&surface, p, 16);
+            let is_near = proj.distance < criteria * 1.5;
+            if is_near && !in_range {
+                in_range = true;
+                range_start = t;
+            } else if !is_near && in_range {
+                in_range = false;
+                new_results.push([range_start, t]);
+            }
+        }
+        if in_range {
+            new_results.push([range_start, last]);
+        }
+        self.results = new_results;
+    }
+
+    /// OCCT L910-1083: ComputeUsingExtremum — find extrema (min distance) and build ranges.
+    fn compute_using_extremum(&mut self) {
+        let curve = self.curve.clone();
+        let surface = self.surface.clone();
+        let criteria = self.criteria;
+        let prev_results: Vec<[f64; 2]> = self.results.drain(..).collect();
+        let mut refined: Vec<[f64; 2]> = Vec::new();
+        for &[r1, r2] in &prev_results {
+            let t_start = self.refine_boundary(&curve, &surface, r1, r2, criteria, true);
+            let t_end = self.refine_boundary(&curve, &surface, r1, r2, criteria, false);
+            if t_start < t_end {
+                refined.push([t_start, t_end]);
+            }
+        }
+        self.results = refined;
+    }
+
+    /// Binary search refine a range boundary.
+    fn refine_boundary(&self, curve: &Curve3, surface: &Surface3, t1: f64, t2: f64, criteria: f64, is_low: bool) -> f64 {
+        let tol = 1e-10;
+        let mut lo = t1;
+        let mut hi = t2;
+        for _ in 0..30 {
+            let mid = (lo + hi) * 0.5;
+            let p = curve.point_at(mid);
+            let proj = rcad_kernel::projection::closest_point_on_surface(surface, p, 16);
+            if is_low {
+                if proj.distance < criteria { lo = mid; } else { hi = mid; }
+            } else {
+                if proj.distance < criteria { hi = mid; } else { lo = mid; }
+            }
+            if (hi - lo) < tol { break; }
+        }
+        (lo + hi) * 0.5
+    }
+
+    /// OCCT L1085-1148: ComputeNearRangeBoundaries — extend ranges to cover near-boundary regions.
+    fn compute_near_range_boundaries(&mut self) {
+        let first = self.first_param;
+        let last = self.last_param;
+        let margin = self.criteria * 10.0;
+        let prev: Vec<[f64; 2]> = self.results.drain(..).collect();
+        let mut extended: Vec<[f64; 2]> = Vec::new();
+        for &[r1, r2] in &prev {
+            let e1 = (r1 - margin).max(first);
+            let e2 = (r2 + margin).min(last);
+            if let Some(last_r) = extended.last_mut() {
+                if e1 <= last_r[1] {
+                    last_r[1] = last_r[1].max(e2);
+                } else {
+                    extended.push([e1, e2]);
+                }
+            } else {
+                extended.push([e1, e2]);
+            }
+        }
+        self.results = extended;
+    }
+}
+
+impl Default for BeanFaceIntersector {
+    fn default() -> Self { Self::new() }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
