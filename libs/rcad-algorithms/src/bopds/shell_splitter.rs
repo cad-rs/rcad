@@ -114,9 +114,8 @@ fn is_shell_closed(shell_faces: &[usize], ds: &DS) -> bool {
 /// returns a Vec<usize> of face indices.
 /// ✅ OCCT-aligned: also calls OrientFacesOnShell.
 fn make_shell(faces: &[usize], ds: &DS) -> Vec<usize> {
-    let mut shell = faces.to_vec();
-    boptools::orient_faces_on_shell(&mut shell, ds);
-    shell
+    let mut reversed: HashSet<usize> = HashSet::new();
+    boptools::orient_faces_on_shell(faces, ds, &mut reversed)
 }
 
 // ============================================================================

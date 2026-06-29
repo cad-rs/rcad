@@ -6,6 +6,7 @@ pub mod curve_surface;
 pub mod cylinder_cone;
 pub mod cylinder_cylinder;
 pub mod cylinder_torus;
+pub mod edge_edge;
 pub mod edge_face;
 pub mod extreme_geometry;
 pub mod intss;

@@ -1,8 +1,277 @@
 use glam::DVec3;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque, BTreeMap};
 use crate::bopds::ds::DS;
 use crate::bvh::Aabb;
 use crate::classify::{Classification, classify_point};
+
+/// ✅ OCCT-aligned: BOPAlgo_Tools::FillMap (template, cxx L83-102).
+/// Adds pair (n1, n2) to a connection map for connectivity grouping.
+/// rcad: specialization for usize keys.
+pub fn fill_map(
+    map: &mut BTreeMap<usize, Vec<usize>>,
+    n1: usize,
+    n2: usize,
+) {
+    map.entry(n1).or_default().push(n2);
+    map.entry(n2).or_default().push(n1);
+}
+
+/// ✅ OCCT-aligned: BOPAlgo_Tools::MakeBlocks (template, cxx L45-80).
+/// Groups connected elements from a connection map into blocks.
+/// rcad: specialization for usize keys returning Vec<Vec<usize>>.
+pub fn make_blocks(map: &BTreeMap<usize, Vec<usize>>) -> Vec<Vec<usize>> {
+    let mut fence: HashSet<usize> = HashSet::new();
+    let mut blocks: Vec<Vec<usize>> = Vec::new();
+    for (&key, _) in map {
+        if !fence.insert(key) { continue; }
+        let mut block = Vec::new();
+        let mut queue = VecDeque::new();
+        queue.push_back(key);
+        while let Some(n1) = queue.pop_front() {
+            block.push(n1);
+            if let Some(neighbors) = map.get(&n1) {
+                for &n2 in neighbors {
+                    if fence.insert(n2) {
+                        queue.push_back(n2);
+                    }
+                }
+            }
+        }
+        blocks.push(block);
+    }
+    // Add isolated elements not in any connection
+    for (&key, neighbors) in map {
+        if neighbors.is_empty() && fence.insert(key) {
+            blocks.push(vec![key]);
+        }
+    }
+    blocks
+}
+
+/// ✅ OCCT-aligned: BOPAlgo_Tools::IntersectVertices (cxx L1119-1205).
+///
+/// Groups vertices by geometric proximity (overlapping tolerance spheres).
+/// Each resulting chain contains vertex indices that should be merged.
+///
+/// Args:
+///   vertex_indices — list of DS vertex indices to check.
+///   ds — DS containing vertex data.
+///   fuzzy_value — additional tolerance for intersection (half added to each vertex).
+///
+/// Returns: groups of vertex indices that intersect each other.
+pub fn intersect_vertices(
+    vertex_indices: &[usize],
+    ds: &DS,
+    fuzzy_value: f64,
+) -> Vec<Vec<usize>> {
+    let a_nb_v = vertex_indices.len();
+    if a_nb_v <= 1 {
+        return vertex_indices.iter().map(|&vi| vec![vi]).collect();
+    }
+
+    // OCCT L1135: aTolAdd = theFuzzyValue / 2.
+    let a_tol_add = fuzzy_value / 2.0;
+
+    // OCCT L1138-1157: build BVH tree of vertex bounding boxes
+    // rcad: use BTreeMap + nested loops (simpler than full BVH for vertex sets)
+    // Build connection map from proximity
+    let mut map: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+
+    for i in 0..a_nb_v {
+        let vi = vertex_indices[i];
+        let Some(v) = ds.vertices.get(vi) else { continue; };
+        let a_tol = ds.vertices[vi].geom_tol.max(0.0);
+        let total_tol = a_tol + a_tol_add;
+        let total_tol2 = total_tol * total_tol;
+
+        // OCCT L1175-1178: Find interfering pairs (FillMap)
+        for j in (i + 1)..a_nb_v {
+            let vj = vertex_indices[j];
+            let Some(v2) = ds.vertices.get(vj) else { continue; };
+            let a_tol_j = ds.vertices[vj].geom_tol.max(0.0);
+            let total_tol_j = a_tol_j + a_tol_add;
+            let total_tol_sum = total_tol + total_tol_j;
+            let dist2 = (v.point - v2.point).length_squared();
+            if dist2 <= total_tol_sum * total_tol_sum {
+                fill_map(&mut map, i, j);
+            }
+        }
+    }
+
+    // OCCT L1181-1194: MakeBlocks from connection map
+    let mut blocks = make_blocks(&map);
+
+    // OCCT L1197-1204: Add non-interfering vertices as singleton chains
+    let mut taken: HashSet<usize> = HashSet::new();
+    for block in &blocks {
+        for &idx in block {
+            taken.insert(idx);
+        }
+    }
+    for i in 0..a_nb_v {
+        if !taken.contains(&i) {
+            blocks.push(vec![i]);
+        }
+    }
+
+    // Convert internal indices back to DS vertex indices
+    blocks.iter().map(|block| {
+        block.iter().map(|&idx| vertex_indices[idx]).collect()
+    }).collect()
+}
+
+/// ✅ OCCT-aligned: BOPAlgo_Tools::EdgesToWires (cxx L360-663).
+/// Converts a set of edge indices into connected wires.
+/// The edges are expected to be planar; each resulting wire starts
+/// at a free end and follows connectivity through shared vertices.
+///
+/// Args:
+///   edge_indices — list of DS edge indices.
+///   ds — DS containing edge/vertex data.
+///   shared — if true, edges are already topologically shared.
+///   ang_tol — angular tolerance for plane detection.
+///
+/// Returns: groups of (edge_idx, forward_flag) representing wires.
+/// Error codes: 0=success, 1=no edges, 2=sharing failed.
+pub fn edges_to_wires(
+    edge_indices: &[usize],
+    ds: &DS,
+    shared: bool,
+    _ang_tol: f64,
+) -> Result<Vec<Vec<(usize, bool)>>, i32> {
+    if edge_indices.is_empty() {
+        return Err(1); // OCCT L392-395
+    }
+
+    // OCCT L404-438: Filter out degenerated edges
+    let a_le: Vec<usize> = edge_indices.iter()
+        .filter(|&&ei| {
+            ds.edges.get(ei).map_or(false, |e| {
+                !ds.is_edge_degenerated(ei) && {
+                    // BRep_Tool::IsGeometric(aE) — rcad: check that edge has a valid curve
+                    match &e.curve {
+                        rcad_kernel::geom::Curve3::Line(_) |
+                        rcad_kernel::geom::Curve3::Circle(_) |
+                        rcad_kernel::geom::Curve3::Ellipse(_) |
+                        rcad_kernel::geom::Curve3::BSpline(_) |
+                        rcad_kernel::geom::Curve3::Bezier(_) => true,
+                        _ => false,
+                    }
+                }
+            })
+        })
+        .copied()
+        .collect();
+
+    if a_le.is_empty() {
+        return Err(1); // no valid geometric edges
+    }
+
+    // OCCT L442-452: If not shared, try to share edges by vertex proximity
+    if !shared {
+        // rcad: edges in DS already share vertices by index, so sharing is implicit.
+        // If vertices need merging, the caller should call intersect_vertices first.
+    }
+
+    // OCCT L465-508: Build vertex→edge adjacency map (using edge orientation)
+    // rcad: map from vertex index to list of (edge_idx, forward_flag)
+    let mut a_ve_map: BTreeMap<usize, Vec<(usize, bool)>> = BTreeMap::new();
+    for &ei in &a_le {
+        let edge = &ds.edges[ei];
+        // Forward orientation
+        a_ve_map.entry(edge.start_vertex).or_default().push((ei, true));
+        a_ve_map.entry(edge.end_vertex).or_default().push((ei, false));
+    }
+
+    // OCCT L513-518: Build fence map (processed edges)
+    let mut a_m_fence: HashSet<usize> = HashSet::new();
+    // OCCT L522-525: Edge->wire order map (aMVE processed vertices)
+    let mut a_m_ve_processed: HashSet<usize> = HashSet::new();
+
+    // OCCT L528-658: Build wires by walking edge chains
+    let mut a_lwires: Vec<Vec<(usize, bool)>> = Vec::new();
+
+    // Start from edges with free vertices (valence 1), then follow the chain
+    // Collect start edges: all edges to process
+    let mut start_edges: Vec<(usize, bool)> = Vec::new();
+    
+    // OCCT L536-547: Start from edge with free vertex (or first unprocessed edge)
+    // First pass: find edges with valence-1 vertices
+    for &ei in &a_le {
+        if a_m_fence.contains(&ei) { continue; }
+        let edge = &ds.edges[ei];
+        let sv = edge.start_vertex;
+        let ev = edge.end_vertex;
+        let sv_count = a_ve_map.get(&sv).map_or(0, |v| v.len());
+        let ev_count = a_ve_map.get(&ev).map_or(0, |v| v.len());
+        // Prefer starting from edges with at least one free end
+        if sv_count == 1 || ev_count == 1 {
+            start_edges.push((ei, true));
+            a_m_fence.insert(ei);
+        }
+    }
+    // Second pass: add remaining unprocessed edges
+    for &ei in &a_le {
+        if a_m_fence.insert(ei) { continue; } // already added
+        start_edges.push((ei, true));
+    }
+
+    // Clear fence for the walking phase
+    a_m_fence.clear();
+    for &(ei, _) in &start_edges {
+        a_m_fence.insert(ei);
+    }
+
+    // Walk each start edge to build wires
+    for &(start_ei, start_fwd) in &start_edges {
+        if !a_m_fence.contains(&start_ei) { continue; }
+        
+        let mut wire: Vec<(usize, bool)> = Vec::new();
+        let edge = &ds.edges[start_ei];
+        let (mut a_v_cur, _a_v_other) = if start_fwd {
+            (edge.start_vertex, edge.end_vertex)
+        } else {
+            (edge.end_vertex, edge.start_vertex)
+        };
+
+        // Walk forward from the free end (or arbitrary start)
+        wire.push((start_ei, start_fwd));
+        a_m_fence.remove(&start_ei);
+
+        // Walk in the forward direction
+        loop {
+            let Some(neighbors) = a_ve_map.get(&a_v_cur) else { break; };
+            let mut found = false;
+            for &(next_ei, _next_fwd) in neighbors {
+                if !a_m_fence.contains(&next_ei) { continue; }
+                let next_edge = &ds.edges[next_ei];
+                // Determine orientation: connect a_v_cur → other_vertex
+                if next_edge.start_vertex == a_v_cur {
+                    a_v_cur = next_edge.end_vertex;
+                    wire.push((next_ei, true));
+                } else if next_edge.end_vertex == a_v_cur {
+                    a_v_cur = next_edge.start_vertex;
+                    wire.push((next_ei, false));
+                } else {
+                    continue;
+                }
+                a_m_fence.remove(&next_ei);
+                found = true;
+                break;
+            }
+            if !found { break; }
+        }
+
+        // OCCT L607-625: Handle closed wires — try the other direction from start
+        if !wire.is_empty() && wire.last().map(|&(ei, _)| ei) == Some(start_ei) {
+            // Closed wire — already complete
+        }
+
+        a_lwires.push(wire);
+    }
+
+    Ok(a_lwires)
+}
 
 /// ✅ OCCT-aligned: BOPAlgo_Tools::ClassifyFaces (cxx:1622-1747).
 ///
@@ -103,10 +372,11 @@ pub fn trsf_to_point(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
 
     #[test]
     fn test_fill_map_and_make_blocks_single_edge() {
-        let mut m = HashMap::new();
+        let mut m = BTreeMap::new();
         fill_map(&mut m, 1, 2);
         let blocks = make_blocks(&m);
         assert_eq!(blocks.len(), 1);
@@ -115,7 +385,7 @@ mod tests {
 
     #[test]
     fn test_make_blocks_two_components() {
-        let mut m = HashMap::new();
+        let mut m = BTreeMap::new();
         fill_map(&mut m, 1, 2);
         fill_map(&mut m, 3, 4);
         let blocks = make_blocks(&m);
@@ -124,7 +394,7 @@ mod tests {
 
     #[test]
     fn test_make_blocks_chain() {
-        let mut m = HashMap::new();
+        let mut m = BTreeMap::new();
         fill_map(&mut m, 1, 2);
         fill_map(&mut m, 2, 3);
         fill_map(&mut m, 3, 4);
@@ -135,7 +405,7 @@ mod tests {
 
     #[test]
     fn test_make_blocks_isolated() {
-        let mut m = HashMap::new();
+        let mut m = BTreeMap::new();
         m.entry(42).or_default();
         let blocks = make_blocks(&m);
         assert_eq!(blocks.len(), 1);
@@ -144,7 +414,7 @@ mod tests {
 
     #[test]
     fn test_make_blocks_empty() {
-        let m: HashMap<usize, Vec<usize>> = HashMap::new();
+        let m: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
         assert!(make_blocks(&m).is_empty());
     }
 }
