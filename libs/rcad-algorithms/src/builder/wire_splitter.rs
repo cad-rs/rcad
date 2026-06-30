@@ -361,7 +361,7 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
 
     // Deg end canonical vertices with offset position, only for non-split seams.
     let seam_is_split = segments.iter().any(|s| {
-        s.is_seam && matches!(&s.source, WireEdgeSource::DsEdge(ei)
+        s.is_closed_on_face && matches!(&s.source, WireEdgeSource::DsEdge(ei)
             if ds.edges.get(*ei).map_or(0, |e| e.pave_blocks.len()) > 1)
     });
     let mut deg_end_canon: HashMap<usize, usize> = HashMap::new();
@@ -387,7 +387,7 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
         // ✅ OCCT-aligned: degenerate self-loop seam edges (sphere pole) appear twice in
         //   the WES (FORWARD+REVERSED) like any closed edge — not duplicates.  OCCT's
         //   bIsClosed guard (L148: !bIsClosed) preserves the second entry in aMS.
-        if seg.is_seam && seg.start_vertex == seg.end_vertex { continue; }
+        if seg.is_closed_on_face && seg.start_vertex == seg.end_vertex { continue; }
         let variant = match &seg.source {
             WireEdgeSource::IntersectionCurve(ci) => (1u8, *ci),
             WireEdgeSource::DsEdge(ei) => (0u8, *ei),
@@ -522,7 +522,7 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
 
             // OCCT L147: bIsClosed = Degenerated(aE) || IsClosed(aE, myFace)
             let b_is_closed = seg.start_vertex == seg.end_vertex
-                || (seg.is_seam && !matches!(&seg.source, WireEdgeSource::DsEdge(ei)
+                || (seg.is_closed_on_face && !matches!(&seg.source, WireEdgeSource::DsEdge(ei)
                     if ds.edges.get(*ei).map_or(false, |e| e.pave_blocks.len() > 1)));
 
             // OCCT L167-172: ONE EdgeInfo per vertex, in_flag from vertex orientation.
@@ -693,7 +693,7 @@ pub(crate) fn split_block(
             if !ei.passed && !ei.in_flag
                 && ei.seg_idx < segments.len()
                 && (segments[ei.seg_idx].start_vertex != segments[ei.seg_idx].end_vertex
-                    || segments[ei.seg_idx].is_seam)
+                    || segments[ei.seg_idx].is_closed_on_face)
             {
                 walk_path_extract_wires(ei.seg_idx, segments, smart_map, wires, ds, face_idx);
             }
@@ -1007,7 +1007,7 @@ pub(crate) fn is_same_block_fwd_rev(a: &WireSegment, b: &WireSegment) -> bool {
         }
         // ✅ OCCT-aligned: SeamEdge FWD+REV (same seam, opposite directions).
         (WireEdgeSource::SeamEdge, WireEdgeSource::SeamEdge) => {
-            a.is_seam && b.is_seam && a.orientation != b.orientation
+            a.is_closed_on_face && b.is_closed_on_face && a.orientation != b.orientation
         }
         _ => false,
     }
@@ -1273,7 +1273,7 @@ mod tests {
         let seg_a = WireSegment {
             start_vertex: 0, end_vertex: 1,
             source: WireEdgeSource::DsEdge(5),
-            orientation: WireOrientation::Forward, is_seam: false,
+            orientation: WireOrientation::Forward, is_closed_on_face: false,
             tangent_start: None, tangent_end: None,
             second_pcurve: None, first_pcurve: None,
             t_range: [0.0, 1.0],
@@ -1281,7 +1281,7 @@ mod tests {
         let seg_b = WireSegment {
             start_vertex: 1, end_vertex: 0,
             source: WireEdgeSource::DsEdge(5),
-            orientation: WireOrientation::Reversed, is_seam: false,
+            orientation: WireOrientation::Reversed, is_closed_on_face: false,
             tangent_start: None, tangent_end: None,
             second_pcurve: None, first_pcurve: None,
             t_range: [1.0, 0.0],
@@ -1294,7 +1294,7 @@ mod tests {
         let seg_a = WireSegment {
             start_vertex: 0, end_vertex: 1,
             source: WireEdgeSource::DsEdge(5),
-            orientation: WireOrientation::Forward, is_seam: false,
+            orientation: WireOrientation::Forward, is_closed_on_face: false,
             tangent_start: None, tangent_end: None,
             second_pcurve: None, first_pcurve: None,
             t_range: [0.0, 1.0],
@@ -1302,7 +1302,7 @@ mod tests {
         let seg_b = WireSegment {
             start_vertex: 1, end_vertex: 0,
             source: WireEdgeSource::DsEdge(7),
-            orientation: WireOrientation::Reversed, is_seam: false,
+            orientation: WireOrientation::Reversed, is_closed_on_face: false,
             tangent_start: None, tangent_end: None,
             second_pcurve: None, first_pcurve: None,
             t_range: [1.0, 0.0],

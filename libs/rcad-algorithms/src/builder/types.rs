@@ -231,7 +231,7 @@ pub(crate) struct WireSegment {
     pub(crate) end_vertex: usize,
     pub(crate) source: WireEdgeSource,
     pub(crate) orientation: WireOrientation,
-    pub(crate) is_seam: bool,
+    pub(crate) is_closed_on_face: bool,
     pub(crate) tangent_start: Option<f64>,
     pub(crate) tangent_end: Option<f64>,
     /// OCCT DoSplitSEAMOnFace: second pcurve with U shifted by the surface
@@ -261,7 +261,7 @@ impl WireSegment {
                 WireOrientation::Reversed => WireOrientation::Forward,
                 o => o,
             },
-            is_seam: self.is_seam,
+            is_closed_on_face: self.is_closed_on_face,
             second_pcurve: None, first_pcurve: None,
             t_range: [self.t_range[1], self.t_range[0]],
             tangent_start: self.tangent_end
@@ -371,7 +371,7 @@ pub(crate) struct WireSegmentTopoDS {
     pub(crate) end_vertex: ShapeRef,
     pub(crate) source: WireEdgeSourceTopoDS,
     pub(crate) orientation: Orientation,
-    pub(crate) is_seam: bool,
+    pub(crate) is_closed_on_face: bool,
     pub(crate) tangent_start: Option<f64>,
     pub(crate) tangent_end: Option<f64>,
     pub(crate) first_pcurve: Option<Curve2d>,

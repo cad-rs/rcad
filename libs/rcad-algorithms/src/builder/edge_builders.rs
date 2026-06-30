@@ -44,7 +44,7 @@ pub fn build_sphere_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face
             segs.push(WireSegment {
                 start_vertex: sv_seg, end_vertex: ev_seg,
                 source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Forward,
-                is_seam: true, second_pcurve: second_pcurve.clone(), first_pcurve, t_range: [0.0, 1.0],
+                is_closed_on_face: true, second_pcurve: second_pcurve.clone(), first_pcurve, t_range: [0.0, 1.0],
                 tangent_start: t_start, tangent_end: t_end,
             });
             let (t_start_rev, t_end_rev) = compute_seam_tangent_angles(ds, ei, ev_seg, sv_seg, &face.surface);
@@ -55,7 +55,7 @@ pub fn build_sphere_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face
             segs.push(WireSegment {
                 start_vertex: ev_seg, end_vertex: sv_seg,
                 source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Reversed,
-                is_seam: true, second_pcurve: second_pcurve_rev, first_pcurve: None, t_range: [0.0, 1.0],
+                is_closed_on_face: true, second_pcurve: second_pcurve_rev, first_pcurve: None, t_range: [0.0, 1.0],
                 tangent_start: t_start_rev, tangent_end: t_end_rev,
             });
         }
@@ -70,14 +70,14 @@ pub fn build_sphere_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face
         segs.push(WireSegment {
             start_vertex: sv, end_vertex: ev,
             source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Forward,
-            is_seam: true, second_pcurve: None, first_pcurve,
+            is_closed_on_face: true, second_pcurve: None, first_pcurve,
             t_range: [0.0, 1.0], tangent_start: ts, tangent_end: te,
         });
         let (ts_rev, te_rev) = compute_seam_tangent_angles(ds, ei, ev, sv, &face.surface);
         segs.push(WireSegment {
             start_vertex: ev, end_vertex: sv,
             source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Reversed,
-            is_seam: true, second_pcurve, first_pcurve: None, t_range: [0.0, 1.0],
+            is_closed_on_face: true, second_pcurve, first_pcurve: None, t_range: [0.0, 1.0],
             tangent_start: ts_rev, tangent_end: te_rev,
         });
     }
@@ -104,13 +104,13 @@ pub fn build_cylinder_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, fa
         WireSegment {
             start_vertex: sv, end_vertex: ev,
             source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Forward,
-            is_seam: true, second_pcurve: None, first_pcurve: pcurve_opt, t_range: [0.0, 1.0],
+            is_closed_on_face: true, second_pcurve: None, first_pcurve: pcurve_opt, t_range: [0.0, 1.0],
             tangent_start: t_start, tangent_end: t_end,
         },
         WireSegment {
             start_vertex: ev, end_vertex: sv,
             source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Reversed,
-            is_seam: true, second_pcurve: second_pcurve_opt, first_pcurve: None, t_range: [0.0, 1.0],
+            is_closed_on_face: true, second_pcurve: second_pcurve_opt, first_pcurve: None, t_range: [0.0, 1.0],
             tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
             tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
         },

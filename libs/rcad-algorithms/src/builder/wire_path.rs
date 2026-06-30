@@ -537,7 +537,7 @@ pub(crate) fn walk_path_extract_wires(
         eprintln!("[WALK_START] face={} si={} seg={} start_v={} end_v={} fwd={:?} seam={} has_info={}",
             face_idx, start_si, seg_src,
             segments[start_si].start_vertex, segments[start_si].end_vertex,
-            segments[start_si].orientation, segments[start_si].is_seam, has_info);
+            segments[start_si].orientation, segments[start_si].is_closed_on_face, has_info);
     }
     if !has_info {
         smart_map.entry(start_seg.start_vertex).or_default().push(EdgeInfo {
@@ -572,7 +572,7 @@ pub(crate) fn walk_path_extract_wires(
         smart_map.get(&v).map_or(false, |infos| {
             infos.iter().any(|ei| {
                 let seg = &segments[ei.seg_idx];
-                seg.start_vertex == seg.end_vertex || seg.is_seam
+                seg.start_vertex == seg.end_vertex || seg.is_closed_on_face
             })
         })
     };
@@ -601,7 +601,7 @@ pub(crate) fn walk_path_extract_wires(
                         else { ic.t_range[1] };
                 Some(pc.point_at(t))
             }
-            WireEdgeSource::DsEdge(_) if segment.is_seam => {
+            WireEdgeSource::DsEdge(_) if segment.is_closed_on_face => {
                 // ✅ OCCT-aligned: Coord2d (WireSplitter_1.cxx L663-674) uses the
                 //   edge's own pcurve, selected by orientation per CurveOnSurface
                 //   (BRep_Tool.cxx L354-361): FORWARD → PCurve (native U side),
@@ -664,7 +664,7 @@ pub(crate) fn walk_path_extract_wires(
         // ✅ OCCT-aligned: non-seam DsEdge vertex_uv from first_pcurve (OCCT:
         //   BRep_Tool::CurveOnSurface → C2D->D0(BRep_Tool::Parameter(aV,aE,aF), aP2D1)).
         if let WireEdgeSource::DsEdge(_) = &segment.source {
-            if !segment.is_seam {
+            if !segment.is_closed_on_face {
                 if let Some(pc) = &segment.first_pcurve {
                     let t = if at_start { segment.t_range[0] } else { segment.t_range[1] };
                     return Some(pc.point_at(t));

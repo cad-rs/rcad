@@ -128,7 +128,7 @@ pub(crate) fn walk_path_extract_wires(
         smart_map.get(&v).map_or(false, |infos| {
             infos.iter().any(|ei| {
                 let seg = &segments[ei.seg_idx];
-                seg.start_vertex.index == seg.end_vertex.index || seg.is_seam
+                seg.start_vertex.index == seg.end_vertex.index || seg.is_closed_on_face
             })
         })
     };
@@ -423,7 +423,7 @@ pub(crate) fn split_block(
             if !ei.passed && !ei.in_flag
                 && ei.seg_idx < segments.len()
                 && (segments[ei.seg_idx].start_vertex.index != segments[ei.seg_idx].end_vertex.index
-                    || segments[ei.seg_idx].is_seam)
+                    || segments[ei.seg_idx].is_closed_on_face)
             {
                 walk_path_extract_wires(ei.seg_idx, segments, smart_map, wires, tool);
             }
@@ -554,7 +554,7 @@ fn build_smart_map(
             || seg.first_pcurve.is_some() || seg.second_pcurve.is_some();
         if !has_pcurve { continue; }
 
-        let b_closed = seg.start_vertex.index == seg.end_vertex.index || seg.is_seam;
+        let b_closed = seg.start_vertex.index == seg.end_vertex.index || seg.is_closed_on_face;
 
         let src_key = src_key_of(seg, si);
         // OCCT L149: !aMS.Add(aE) && !bIsClosed → aMS.Remove(aE)

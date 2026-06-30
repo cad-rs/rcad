@@ -113,7 +113,7 @@ impl ResultBuilder {
             if vert_indices.is_empty() || vert_indices.last() != Some(&v1) {
                 vert_indices.push(v1);
             }
-            let (ei, forward) = if seg.is_seam {
+            let (ei, forward) = if seg.is_closed_on_face {
                 let seam_deg = (get_pos(seg.start_vertex)
                     - get_pos(seg.end_vertex)).length_squared() < TOLERANCE_ABS_SQ;
                 let sphere_surf = match &ds.faces[face_idx].surface {
@@ -193,7 +193,7 @@ impl ResultBuilder {
                         if let Curve3::Circle(_) = crv { self.add_circle_edge(v1, v2, crv.clone()) }
                         else { self.add_edge(v1, v2) }
                     }
-                    WireEdgeSource::DsEdge(_) | WireEdgeSource::SeamEdge if seg.is_seam => {
+                    WireEdgeSource::DsEdge(_) | WireEdgeSource::SeamEdge if seg.is_closed_on_face => {
                         let s = match &ds.faces[face_idx].surface {
                             Surface3::Sphere(sph) => sph,
                             _ => &SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, ref_dir: DVec3::X },
@@ -364,7 +364,7 @@ impl ResultBuilder {
             if vert_indices.is_empty() || vert_indices.last() != Some(&v1) {
                 vert_indices.push(v1);
             }
-            let (ei, forward) = if seg.is_seam {
+            let (ei, forward) = if seg.is_closed_on_face {
                 let seam_deg = (get_pos(seg.start_vertex.index)
                     - get_pos(seg.end_vertex.index)).length_squared() < TOLERANCE_ABS_SQ;
                 let sphere_surf = match tool.face_surface(face_ref) {
@@ -456,7 +456,7 @@ impl ResultBuilder {
                         if let Curve3::Circle(_) = &crv { self.add_circle_edge(v1, v2, crv) }
                         else { self.add_edge(v1, v2) }
                     }
-                    _ if seg.is_seam => {
+                    _ if seg.is_closed_on_face => {
                         let sphere_surf = match tool.face_surface(face_ref) {
                             Some(Surface3::Sphere(s)) => s.clone(),
                             _ => SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, ref_dir: DVec3::X },
