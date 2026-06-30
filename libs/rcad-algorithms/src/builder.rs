@@ -409,7 +409,7 @@ impl<'a> BooleanBuilder<'a> {
 
     /// ✅ OCCT-aligned: PrepareHistory (Builder_4.cxx L164-252).
     ///   Builds source→result history matching OCCT's BRepTools_History.
-    fn build_source_history(&self, t_brep: &topods::BRep) -> Vec<crate::history::SourceShapeEntry> {
+    fn build_source_history(&self, t_brep: &mut topods::BRep) -> Vec<crate::history::SourceShapeEntry> {
         use crate::history::{HistoryStatus, SourceShapeEntry};
         use topods::TShape;
 
@@ -446,23 +446,44 @@ impl<'a> BooleanBuilder<'a> {
         let mut entries = Vec::new();
         let v_base = 0usize; // vertices start at 0 in BRep
         let e_base = self.ds.vertices.len();
+        let mut modified_verts: Vec<usize> = Vec::new();
+        let mut modified_edges: Vec<usize> = Vec::new();
         // Vertices
         for (di, _dv) in self.ds.vertices.iter().enumerate() {
             let in_result = result_vtx.contains(&di);
             let has_images = self.my_images.borrow().contains_key(&rcad_kernel::topods::ShapeRef::new(v_base + di));
-            let status = if has_images && in_result { HistoryStatus::Modified }
-                else if in_result { HistoryStatus::Generated }
-                else { HistoryStatus::Deleted };
+            let status = if has_images && in_result { 
+                modified_verts.push(di);
+                HistoryStatus::Modified 
+            } else if in_result { HistoryStatus::Generated }
+            else { HistoryStatus::Deleted };
             entries.push(SourceShapeEntry { ds_index: di, shape_type: 0, status, result_indices: vec![] });
         }
         // Edges
         for (di, _de) in self.ds.edges.iter().enumerate() {
             let in_result = result_edge.contains(&di);
             let has_images = self.my_images.borrow().contains_key(&rcad_kernel::topods::ShapeRef::new(e_base + di));
-            let status = if has_images && in_result { HistoryStatus::Modified }
-                else if in_result { HistoryStatus::Generated }
-                else { HistoryStatus::Deleted };
+            let status = if has_images && in_result { 
+                modified_edges.push(di);
+                HistoryStatus::Modified 
+            } else if in_result { HistoryStatus::Generated }
+            else { HistoryStatus::Deleted };
             entries.push(SourceShapeEntry { ds_index: di, shape_type: 1, status, result_indices: vec![] });
+        }
+        // Set TopoDS_TShape::Moved for modified source shapes (OCCT PrepareHistory).
+        for &di in &modified_verts {
+            if let Some(arc) = t_brep.tshapes.get_mut(v_base + di) {
+                if let TShape::Vertex(ref mut vd) = *std::sync::Arc::get_mut(arc).unwrap() {
+                    vd.moved = true;
+                }
+            }
+        }
+        for &di in &modified_edges {
+            if let Some(arc) = t_brep.tshapes.get_mut(e_base + di) {
+                if let TShape::Edge(ref mut ed) = *std::sync::Arc::get_mut(arc).unwrap() {
+                    ed.moved = true;
+                }
+            }
         }
         entries
     }
@@ -3314,7 +3335,7 @@ impl<'a> BooleanBuilder<'a> {
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // OCCT L502-504: PrepareHistory
         let mut history = result.build_topods(&mut t_brep);
-        let source_history = self.build_source_history(&t_brep);
+        let source_history = self.build_source_history(&mut t_brep);
         history.source_history = source_history;
 
         let mut brep = rcad_kernel::BRep::from_topods(&t_brep);
