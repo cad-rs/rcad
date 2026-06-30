@@ -172,6 +172,28 @@ fn populate_brep(ds: &crate::bopds::ds::DS, br: &mut BRep) -> (Vec<ShapeRef>, Ve
         }
     }
 
+    // Step 7b: populate vertex PointRepresentation from edge vertex_params.
+    //   OCCT BRep_TVertex.Points() stores vertex parameters on curves/surfaces.
+    for (ei, edge) in ds.edges.iter().enumerate() {
+        let curve_idx = edge_curve_idx[ei];
+        for (&vi, &param) in &edge.vertex_params {
+            if vi < v_count {
+                // Add PointOnCurve: vertex has parameter `param` on edge's 3D curve.
+                if let Some(ci) = curve_idx {
+                    if let Some(arc) = br.tshapes.get_mut(vi) {
+                        if let TShape::Vertex(ref mut vd) = *std::sync::Arc::get_mut(arc).unwrap() {
+                            vd.points.push(PointRepresentation::PointOnCurve {
+                                curve: ci,
+                                parameter: param,
+                                tolerance: edge.geom_tol,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Step 8: build shells from DS.shells
     for shell in &ds.shells {
         let faces: Vec<ShapeRef> = shell.faces.iter()
