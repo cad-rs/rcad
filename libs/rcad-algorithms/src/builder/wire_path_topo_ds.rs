@@ -900,15 +900,76 @@ pub(crate) fn perform_areas(
         internal_wires: internal_wires.to_vec(),
     }).collect();
 
-    // OCCT L557-581: unassigned holes + open face → create new growth from original surface
-    if !orphan_holes.is_empty() && ds.faces[face_idx].natural_restriction {
-        // rcad: WireFace with empty outer_wire = full parametric surface
-        let orphan_inner: Vec<Vec<usize>> = orphan_holes.iter().map(|&h| a_hole_faces[h].clone()).collect();
-        result.push(WireFace {
-            outer_wire: vec![],
-            inner_wires: orphan_inner,
-            internal_wires: vec![],
-        });
+    // OCCT L557-581: unassigned holes + open face → create new growth from original surface.
+    //   OCCT checks aBoxF.IsOpen* (infinite surface like plane).  When the original
+    //   face is open/unbounded, a new face is created from the original surface with
+    //   ALL orphan holes as inner wires, and appended to aNewFaces (growth list).
+    //   This ensures every hole belongs to some growth face even when the IsHole()
+    //   UV signed-area classification got the winding wrong (e.g. planar faces whose
+    //   UV parameterisation makes a CCW 3D loop appear CW in UV).
+    //   rcad: promote the outermost (largest UV area) orphan hole to outer_wire
+    //   and treat the remaining orphans as its inner wires.
+    if !orphan_holes.is_empty() {
+        if a_new_faces.is_empty() {
+            // No growth wires at all → all wires misclassified as holes.
+            // Find the hole with the largest absolute UV area (the outermost one)
+            // and promote it to outer wire.
+            let mut hole_areas: Vec<(usize, f64)> = orphan_holes.iter().map(|&h| {
+                let area = {
+                    let mut uv_bnd: Vec<DVec2> = Vec::new();
+                    for &si in &a_hole_faces[h] {
+                        let seg = &segments[si];
+                        let pc_opt = tool.curve_on_surface(seg.edge, seg.face)
+                            .map(|(pc, _, _)| pc)
+                            .or(seg.first_pcurve.as_ref().or(seg.second_pcurve.as_ref()));
+                        if let Some(pc) = pc_opt {
+                            let t0 = seg.t_range[0];
+                            let t1 = seg.t_range[1];
+                            let n = curve2d_nb_samples(pc, t0, t1).max(2);
+                            let du = if n > 1 { (t1 - t0) / (n - 1) as f64 } else { 0.0 };
+                            for i in 0..n {
+                                uv_bnd.push(pc.point_at(t0 + du * i as f64));
+                            }
+                        }
+                    }
+                    uv_bnd.dedup_by(|a, b| (*a - *b).length_squared() < 1e-20);
+                    if uv_bnd.len() < 3 { 0.0 } else {
+                        uv_bnd.windows(2).map(|pair| {
+                            pair[0].x * pair[1].y - pair[1].x * pair[0].y
+                        }).sum::<f64>() + {
+                            let n = uv_bnd.len();
+                            uv_bnd[n-1].x * uv_bnd[0].y - uv_bnd[0].x * uv_bnd[n-1].y
+                        } * 0.5
+                    }
+                };
+                (h, area.abs())
+            }).collect();
+            hole_areas.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            if let Some((outer_hi, _)) = hole_areas.first() {
+                let outer_wire = a_hole_faces[*outer_hi].clone();
+                let inner: Vec<Vec<usize>> = orphan_holes.iter()
+                    .filter(|&&h| h != *outer_hi)
+                    .map(|&h| a_hole_faces[h].clone()).collect();
+                result.push(WireFace {
+                    outer_wire,
+                    inner_wires: inner,
+                    internal_wires: vec![],
+                });
+            }
+        } else if ds.faces[face_idx].natural_restriction {
+            // OCCT L581 path for closed surfaces: each orphan hole is its own face
+            // (classified independently by caller).
+            for &h in &orphan_holes {
+                result.push(WireFace {
+                    outer_wire: a_hole_faces[h].clone(),
+                    inner_wires: vec![],
+                    internal_wires: vec![],
+                });
+            }
+        }
+        // OCCT L557-581: for open surfaces with existing growth wires, the orphan
+        //   holes are simply left unassigned — they were not enclosed by any growth.
+        //   rcad: same — skip them; they'll be filtered out during classification.
     }
     result
 }
