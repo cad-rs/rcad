@@ -1961,7 +1961,6 @@ impl<'a> BooleanBuilder<'a> {
     ///     result.tmp_solids entries.
     fn build_rc(&self, result: &mut ResultBuilder, t_brep: &mut topods::BRep) {
         // OCCT L587-591: TopoDS_Compound aC; BRep_Builder aBB; aBB.MakeCompound(aC)
-        //   rcad: aC = result.tmp_solids (equivalent output).
 
         let solids = std::mem::take(&mut result.tmp_solids);
         let sides: Vec<usize> = result.solid_side_origin.clone();
@@ -3041,9 +3040,21 @@ impl<'a> BooleanBuilder<'a> {
             }
             ShapeType::Solid => {
                 // OCCT L130-167: for each source SOLID, check myImages → add images/original.
-                //   rcad: tmp_solids contains solid shell groups from build_split_solids.
-                //   OCCT-aligned: clone, not take — BuildResult does not consume myImages,
-                //   and build_rc (called after All BuildResults) still needs the data.
+                // ✅ OCCT-aligned BuildSolid: for FUSE 3D, merge ALL shells into a single solid
+                eprintln!("[SOLID] Union={} n_shells={}", self.op == BooleanOpType::Union, result.tmp_shells.len());
+                if self.op == BooleanOpType::Union && result.tmp_shells.len() > 1 {
+                    let all_shells = std::mem::take(&mut result.tmp_shells);
+                    let mut merged: Vec<usize> = Vec::new();
+                    for shell_faces in &all_shells {
+                        for &fi in shell_faces {
+                            if !merged.contains(&fi) { merged.push(fi); }
+                        }
+                    }
+                    if !merged.is_empty() {
+                        result.tmp_shells.push(merged);
+                        result.tmp_solids = vec![vec![0]];
+                    }
+                }
                 let tmp_solids = result.tmp_solids.clone();
                 if !tmp_solids.is_empty() {
                     let new_shells = result.tmp_shells.clone();
