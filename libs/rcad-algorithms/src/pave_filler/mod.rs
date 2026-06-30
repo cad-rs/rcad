@@ -1190,81 +1190,150 @@ impl<'a> PaveFiller<'a> {
     }
 
     fn force_interf_ee(&mut self) {
-        // OCCT L1008-1023: initialize PBs for interfered vertices
-        // rcad: build vertex �?edge mapping from edge.paves
-        // OCCT L1047-1051: skip degenerated edges (HasFlag)
-        // OCCT L1041-1045: HasReference �?non-empty pave_blocks
-        // OCCT L1047-1051: HasFlag �?skip degenerated edges
-        let mut vert_edges: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+        // OCCT L999-1003: ForceInterfEE — find additional common blocks among
+        // pairs of edges.  Since all real intersections have already happened,
+        // here we are interested in common blocks only, thus we check only
+        // pairs of pave blocks with the same bounding vertices.
+
+        // OCCT L1008-1023: InitPaveBlocksForVertex for interfered vertices.
+        // rcad: PBs already initialized in earlier pipeline steps; skip.
+
+        // OCCT L1026-1080: build (v1,v2) → Vec<(edge, local_pb)> map from ALL edge PBs
+        // OCCT L1029-1030: aMPBFence — in OCCT, a fence avoids double-counting the same
+        //   PB (shared via CommonBlock). rcad PBs are per-edge and unique; skip fence.
+        let mut pb_map: std::collections::HashMap<(usize, usize), Vec<(usize, usize)>> =
+            std::collections::HashMap::new();
+
         for (ei, edge) in self.ds.edges.iter().enumerate() {
-            if edge.paves.is_empty() { continue; }
-            for pave in &edge.paves {
-                vert_edges.entry(pave.vertex_idx).or_default().push(ei);
+            // OCCT L1034-1039: ShapeType != TopAbs_EDGE → skip (all DS entries are edges)
+            // OCCT L1041-1045: HasReference (non-empty pave_blocks)
+            if edge.pave_blocks.is_empty() { continue; }
+            // OCCT L1047-1051: HasFlag → skip degenerated edges
+            if self.ds.is_edge_degenerated(ei) { continue; }
+
+            for (local_pbi, pb) in edge.pave_blocks.iter().enumerate() {
+                // OCCT L1060-1065: RealPaveBlock + fence dedup (skip — see above)
+                // OCCT L1068-1069: aPBR->Indices(nV1, nV2)
+                let (nV1, nV2) = pb.indices();
+                let key = if nV1 < nV2 { (nV1, nV2) } else { (nV2, nV1) };
+                // OCCT L1073-1078: append to map
+                pb_map.entry(key).or_default().push((ei, local_pbi));
             }
         }
 
-        // OCCT L1060-1177: intersect PaveBlock pairs sharing a vertex
-        for (&vi, edges) in &vert_edges {
-            if edges.len() < 2 { continue; }
-            for i in 0..edges.len() {
-                let e1 = edges[i];
-                for j in (i + 1)..edges.len() {
-                    let e2 = edges[j];
-                    // OCCT L1113-1121: check edges are from different operands
-                    let o1 = self.ds.edges[e1].origin;
-                    let o2 = self.ds.edges[e2].origin;
-                    if o1 == o2 { continue; }
+        // OCCT L1082-1086: early return if no entries
+        if pb_map.is_empty() { return; }
 
-                    // OCCT L1123-1128: skip edge pairs already forming a CommonBlock
-                    if self.has_ee_interf(e1, e2) { continue; }
+        // OCCT L1090: aVEdgeEdge — instead of a parallel vector, process pairs inline
+        // OCCT L1093-1225: iterate map entries with ≥2 PBs
+        for (&(nV1, nV2), pbs) in &pb_map {
+            // OCCT L1100-1103: skip entries with < 2 PBs
+            if pbs.len() < 2 { continue; }
 
-                    // OCCT L1077-1083: aTolAdd = 2 * max(tol(V1), tol(V2))
-                    let v_tol = self.ds.vertices[vi].geom_tol;
-                    let tol_add = 2.0 * v_tol;
+            // OCCT L1105-1118: vertex tolerances for aTolAdd
+            // OCCT L1116: aTolAdd = 2 * max(Tol(V1), Tol(V2))
+            let a_tol_add = 2.0 * self.ds.vertices[nV1].geom_tol
+                                .max(self.ds.vertices[nV2].geom_tol);
 
-                    // Only check line-line edges (OCCT L1138-1157: angle check)
-                    let c1 = &self.ds.edges[e1].curve;
-                    let c2 = &self.ds.edges[e2].curve;
+            // OCCT L1120-1223: iterate all (pb1,pb2) pairs from the list
+            for i in 0..pbs.len() {
+                let (ei1, pb1_local) = pbs[i];
+                let pb1 = &self.ds.edges[ei1].pave_blocks[pb1_local];
+                let nE1 = pb1.original_edge;                  // OCCT L1127
+                let r1 = self.ds.edges[nE1].origin;
+                let (t11, t12) = pb1.range();                 // OCCT L1130
+                let mid_t1 = (t11 + t12) * 0.5;              // OCCT L1134
+                let c1 = &self.ds.edges[nE1].curve;           // OCCT L1131: BRepAdaptor_Curve
+                // OCCT L1132-1134: tangent at midpoint
+                let tgt1 = c1.tangent_at(mid_t1);
+                // OCCT L1135-1139: skip if |tangent| < Resolution
+                if tgt1.length_squared() < 1e-60 { continue; }
+
+                for j in (i + 1)..pbs.len() {
+                    let (ei2, pb2_local) = pbs[j];
+                    let pb2 = &self.ds.edges[ei2].pave_blocks[pb2_local];
+                    let nE2 = pb2.original_edge;              // OCCT L1145
+                    let r2 = self.ds.edges[nE2].origin;       // OCCT L1147: iR2
+                    let (t21, t22) = pb2.range();             // OCCT L1173
+
+                    // OCCT L1149-1160: skip edges from the same argument
+                    //   if the bounding vertices are original (not acquired during operation)
+                    if r1 == r2 {
+                        let o_rank = if r1 == ShapeOrigin::ShapeA { 0 } else { 1 };
+                        // OCCT L1155-1158: IsNewShape + Rank check
+                        if (!self.ds.is_new_vertex(nV1) && self.ds.rank(nV1) == o_rank)
+                            || (!self.ds.is_new_vertex(nV2) && self.ds.rank(nV2) == o_rank)
+                        {
+                            continue;
+                        }
+                    }
+
+                    // OCCT L1162-1169: skip if PBs already form a CommonBlock
+                    // rcad: has_interf_ee checks for existing EE interference
+                    if self.ds.has_interf_ee(nE1, nE2) { continue; }
+
+                    // OCCT L1178: use angle between edges to decide bUseAddTol
+                    let c2 = &self.ds.edges[nE2].curve;       // OCCT L1180: BRepAdaptor_Curve aBAC2
+                    let tgt1_n = tgt1.normalize();            // OCCT L1139
+                    let b_use_add_tol = match (c1, c2) {
+                        // OCCT L1181: both lines → direction dot check
+                        (Curve3::Line(l1), Curve3::Line(l2)) => {
+                            let cos_angle = l1.direction.dot(l2.direction).abs();
+                            cos_angle >= 0.9063  // OCCT L1200: 25°
+                        }
+                        _ => {
+                            // OCCT L1183-1191: project midpoint of curve1 onto curve2
+                            let mid_pt = c1.point_at(mid_t1);
+                            // OCCT L1185: GeomAPI_ProjectPointOnCurve aProjPC(aE2);
+                            let proj = closest_point_on_curve(c2, mid_pt, 64);
+                            if !proj.param.is_finite() { false } else {
+                                // OCCT L1192: aBAC2.D1(projPC.LowerDistanceParameter(), ...)
+                                let tgt2 = c2.tangent_at(proj.param);
+                                if tgt2.length_squared() < 1e-60 { false } else {
+                                    let cos_angle = tgt1_n.dot(tgt2.normalize()).abs();
+                                    cos_angle >= 0.9063  // OCCT L1200
+                                }
+                            }
+                        }
+                    };
+
+                    // OCCT L1207-1222: create BOPAlgo_EdgeEdge
+                    let fuzzy = if b_use_add_tol {
+                        self.ds.fuzzy_tol + a_tol_add  // OCCT L1217: myFuzzyValue + aTolAdd
+                    } else {
+                        self.ds.fuzzy_tol              // OCCT L1221
+                    };
+
+                    // ── BEGIN existing intersection code (preserved verbatim) ──
                     match (c1, c2) {
                         (Curve3::Line(l1), Curve3::Line(l2)) => {
                             // OCCT L1097-1102: midpoint direction vector, check angle
-                            let d1 = l1.direction;
-                            let d2 = l2.direction;
-                            let cos_angle = d1.dot(d2).abs();
-                            // OCCT L1155: angle > 25�?�?cos < 0.9063 �?skip addTol
-                            let fuzzy = if cos_angle >= 0.9063 {
-                                self.ds.fuzzy_tol + tol_add
-                            } else {
-                                self.ds.fuzzy_tol
-                            };
-
-                            // Check collinearity (OCCT EdgeEdge intersection)
                             // intersect_line_line returns Option<(f64,f64,DVec3)>
                             if let Some((t1, t2, pt)) = intersect_line_line(
-                                l1, self.ds.edges[e1].t_range,
-                                l2, self.ds.edges[e2].t_range, fuzzy)
+                                l1, self.ds.edges[nE1].t_range,
+                                l2, self.ds.edges[nE2].t_range, fuzzy)
                             {
                                 self.ds.interferences.push(Interference::EdgeEdge {
-                                    e1, e2, point: pt, param1: t1, param2: t2, new_vertex: vi,
+                                    e1: nE1, e2: nE2, point: pt, param1: t1, param2: t2, new_vertex: nV1,
                                 });
                             }
                         }
                         (Curve3::Circle(circ), Curve3::Circle(_)) => {
-                            // �?circle-circle coincidence detection simplified: uses normal tolerance
                             // intersect_circle_circle returns Vec<DVec3>
-                            let fuzzy = self.ds.fuzzy_tol + tol_add;
                             let cp_hits = intersect_circle_circle(circ, circ, fuzzy);
                             if let Some(&pt) = cp_hits.first() {
                                 self.ds.interferences.push(Interference::EdgeEdge {
-                                    e1, e2, point: pt, param1: 0.0, param2: 0.0, new_vertex: vi,
+                                    e1: nE1, e2: nE2, point: pt, param1: 0.0, param2: 0.0, new_vertex: nV1,
                                 });
                             }
                         }
                         _ => {
-                            // OCCT L1138-1157: IntTools_EdgeEdge numerical intersection
-                            // with recursive adaptive subdivision (OCCT IntTools_CurveRange).
-                            let tr1 = self.ds.edges[e1].t_range;
-                            let tr2 = self.ds.edges[e2].t_range;
+                            // OCCT IntTools_EdgeEdge: coarse + adaptive + Newton
+                            // (1) Coarse 21x21 grid -> find best (t1,t2)
+                            // (2) Recursive subdivision around best: 2x denser per level
+                            // (3) Converge when distance < fuzzy OR subrange < 1e-6
+                            let tr1 = self.ds.edges[nE1].t_range;
+                            let tr2 = self.ds.edges[nE2].t_range;
                             let mid_t1 = (tr1[0] + tr1[1]) * 0.5;
                             let mid_t2 = (tr2[0] + tr2[1]) * 0.5;
                             let tgt1 = c1.tangent_at(mid_t1);
@@ -1273,18 +1342,14 @@ impl<'a> PaveFiller<'a> {
                                 tgt1.normalize().dot(tgt2.normalize()).abs()
                             } else { 0.0 };
                             let fuzzy = if cos_angle >= 0.9063 {
-                                self.ds.fuzzy_tol + tol_add
+                                self.ds.fuzzy_tol + a_tol_add
                             } else {
                                 self.ds.fuzzy_tol
                             };
-                            // OCCT IntTools_EdgeEdge: coarse �?adaptive �?Newton
-                            // (1) Coarse 21�?1 grid �?find best (t1,t2)
-                            // (2) Recursive subdivision around best: 2�?denser per level
-                            // (3) Converge when distance < fuzzy OR subrange < 1e-6
                             let mut best_t1 = mid_t1;
                             let mut best_t2 = mid_t2;
                             let mut best_d = f64::MAX;
-                            // OCCT N=20 �?21 samples per curve
+                            // OCCT N=20 -> 21 samples per curve
                             for si in 0..21 {
                                 let t1 = tr1[0] + (tr1[1] - tr1[0]) * (si as f64 / 20.0);
                                 let p1 = c1.point_at(t1);
@@ -1318,7 +1383,7 @@ impl<'a> PaveFiller<'a> {
                                 r2_hi = (best_t2 + span).min(tr2[1]);
                             }
                             // (3) OCCT IntTools_CurveRange L230-260: Newton-Raphson iteration
-                            // Minimize F(t1,t2) = ||C1(t1)-C2(t2)||�?using gradient+Hessian.
+                            // Minimize F(t1,t2) = ||C1(t1)-C2(t2)||^2 using gradient+Hessian.
                             let mut nr_t1 = best_t1;
                             let mut nr_t2 = best_t2;
                             for _ in 0..8 {
@@ -1331,18 +1396,17 @@ impl<'a> PaveFiller<'a> {
                                 if t1.length_squared() < 1e-30 || t2.length_squared() < 1e-30 { break; }
                                 let d1 = t1.normalize();
                                 let d2 = t2.normalize();
-                                // Hessian H and gradient 鈭嘑 of F(t1,t2) = ||C1-C2||�?
-                                let h00 = 2.0;  // H = 2*M, M = [[d1路d1, -d1路d2], [-d2路d1, d2路d2]]
+                                // Hessian H and gradient grad of F(t1,t2) = ||C1-C2||^2
+                                let h00 = 2.0;
                                 let h01 = -2.0 * d1.dot(d2);
-                                let h10 = h01;  // symmetric
+                                let h10 = h01;
                                 let h11 = 2.0;
-                                // OCCT IntTools_CurveRange: R[0]=-(C1-C2)路C1', R[1]=(C1-C2)路C2'
+                                // OCCT IntTools_CurveRange: R[0]=-(C1-C2).C1', R[1]=(C1-C2).C2'
                                 // H = 2*M where M = [[1, -cos], [-cos, 1]], RHS = [2*R[0], 2*R[1]]
-                                let g0 = 2.0 * diff.dot(d1);   // = -2*R[0]
-                                let g1 = 2.0 * diff.dot(d2);   // = 2*R[1]
+                                let g0 = 2.0 * diff.dot(d1);
+                                let g1 = 2.0 * diff.dot(d2);
                                 let det = h00 * h11 - h01 * h01;
                                 if det.abs() < 1e-30 { break; }
-                                // H路螖t = [-g0, g1] �?M路螖t = [R[0], R[1]] (OCCT L245-250)
                                 let dt1 = (-g0 * h11 - g1 * h01) / det;
                                 let dt2 = (g1 * h00 + g0 * h10) / det;
                                 let new_t1 = (nr_t1 + dt1).clamp(tr1[0], tr1[1]);
@@ -1355,90 +1419,301 @@ impl<'a> PaveFiller<'a> {
                             if best_d <= fuzzy {
                                 let best_pt = c1.point_at(best_t1);
                                 self.ds.interferences.push(Interference::EdgeEdge {
-                                    e1, e2, point: best_pt,
-                                    param1: best_t1, param2: best_t2, new_vertex: vi,
+                                    e1: nE1, e2: nE2, point: best_pt,
+                                    param1: best_t1, param2: best_t2, new_vertex: nV1,
                                 });
                             }
                         }
                     }
+                    // ── END existing intersection code ──
                 }
             }
         }
+        // OCCT L1332: PerformCommonBlocks — in rcad, the EE interferences above
+        // are consumed downstream by the builder.
     }
 
+    /// OCCT L772-827: ForceInterfEF (overload 1) — collect all edge PBs
     fn force_interf_ef(&mut self) {
-        // OCCT L787-821: collect all PBs (skip edges without PBs or degenerated)
-        for ei in 0..self.ds.edges.len() {
-            let edge = &self.ds.edges[ei];
-            if edge.pave_blocks.is_empty() { continue; }
-            // OCCT L804-808: skip degenerated edges
-            if self.ds.is_edge_degenerated(ei) { continue; }
+        // L774-778
+        if !self.is_primary {
+            return;
+        }
 
-            for fi in 0..self.ds.faces.len() {
-                // OCCT L1150: skip same-origin pairs
-                if edge.origin == self.ds.faces[fi].origin { continue; }
+        // L787-822: collect all PBs from all edges (skip no-PB, degenerated)
+        // rcad: Vec<(edge_idx, local_pb_idx)> — OCCT uses IndexedMap<handle<PaveBlock>>
+        let mut a_mpb: Vec<(usize, usize)> = Vec::new();
+        let a_nb_s = self.ds.edges.len();
+        for ne in 0..a_nb_s {
+            // L791-796: only edges (rcad: edges Vec contains only edges)
 
-                // OCCT L953-955: skip PBs already in face's On/In/Sc sets
-                if self.ds.interferences.iter().any(|inf| {
-                    matches!(inf, Interference::EdgeFace { edge: e, face: f, .. } if *e == ei && *f == fi)
-                }) { continue; }
+            // L798-802: edge must have PBs
+            if self.ds.edges[ne].pave_blocks.is_empty() {
+                continue;
+            }
 
-                let face = &self.ds.faces[fi];
+            // L804-808: skip degenerated edges
+            if self.ds.is_edge_degenerated(ne) {
+                continue;
+            }
 
-                // OCCT L915-924: collect ALL face vertices (VerticesOn + VerticesIn +
-                //   VerticesSc).  rcad: vertices_on + vertices_in + curves_sc endpoints.
-                let mut face_verts = face.face_info.vertices_on.clone();
-                face_verts.extend(&face.face_info.vertices_in);
-                // OCCT VerticesSc: section-curve vertices from FF intersection.
-                for &ci in &face.face_info.curves_sc {
-                    if ci < self.ds.intersection_curves.len() {
-                        let ic = &self.ds.intersection_curves[ci];
-                        face_verts.insert(ic.start_vertex);
-                        face_verts.insert(ic.end_vertex);
-                    }
+            // L814-821: add all PBs to map
+            for local_i in 0..self.ds.edges[ne].pave_blocks.len() {
+                a_mpb.push((ne, local_i));
+            }
+        }
+
+        // L826: call overload 2
+        self.force_interf_ef_with(&a_mpb);
+    }
+
+    /// OCCT L831-1199: ForceInterfEF (overload 2, with theMPB)
+    fn force_interf_ef_with(&mut self, the_mpb: &[(usize, usize)]) {
+        // L838-840
+        if the_mpb.is_empty() {
+            return;
+        }
+
+        // L842-874: Build BVH tree of PB shrunk-data boxes
+        // rcad: skip — no BOPTools_BoxTree equivalent.
+        // OCCT uses: aBBTree (BOPTools_BoxTree) + aPBMap re-indexing + aBBTree.Build().
+        // rcad: iterate the_mpb directly without spatial indexing.
+
+        // L876: bSICheckMode — Self-Interference check mode (one argument)
+        let b_si_check_mode = self.my_arguments.len() <= 1;
+
+        // L880: EdgeFace pairs for intersection
+        // rcad: Vec<(edge_idx, face_idx, local_pb_idx)>
+        let mut a_v_edge_face: Vec<(usize, usize, usize)> = Vec::new();
+
+        // L882-1108: For each face with face info
+        let a_nb_f = self.ds.faces.len();
+        for nf in 0..a_nb_f {
+            // L885-896: check face has face info (any interference data)
+            {
+                let fi = &self.ds.faces[nf].face_info;
+                if fi.pave_blocks_on.is_empty()
+                    && fi.pave_blocks_in.is_empty()
+                    && fi.pave_blocks_sc.is_empty()
+                    && fi.curves_sc.is_empty()
+                    && fi.vertices_on.is_empty()
+                    && fi.vertices_in.is_empty()
+                    && fi.vertices_sc.is_empty()
+                {
+                    continue;
                 }
+            }
 
-                // OCCT L958-964: check if PB's vertices are in the face's vertex set
-                for pb in &edge.pave_blocks {
-                    if !face_verts.contains(&pb.pave1.vertex_idx)
-                        || !face_verts.contains(&pb.pave2.vertex_idx)
-                    {
+            // L903-910: (rcad: skip BVH selector)
+            // L912-913: face reference + face info
+            let fi = &self.ds.faces[nf].face_info;
+
+            // L914-924: build aMVF from all face vertex sets
+            let mut a_mvf: std::collections::HashSet<usize> = std::collections::HashSet::new();
+            // L917-924: VerticesOn + VerticesIn + VerticesSc
+            for &v in &fi.vertices_on { a_mvf.insert(v); }
+            for &v in &fi.vertices_in { a_mvf.insert(v); }
+            for &v in &fi.vertices_sc { a_mvf.insert(v); }
+
+            // L926-938: also add PB endpoints from face's PaveBlocksOn/In/Sc
+            for &pb_gi in &fi.pave_blocks_on {
+                if pb_gi < self.ds.pave_blocks.len() {
+                    a_mvf.insert(self.ds.pave_blocks[pb_gi].pave1.vertex_idx);
+                    a_mvf.insert(self.ds.pave_blocks[pb_gi].pave2.vertex_idx);
+                }
+            }
+            for &pb_gi in &fi.pave_blocks_in {
+                if pb_gi < self.ds.pave_blocks.len() {
+                    a_mvf.insert(self.ds.pave_blocks[pb_gi].pave1.vertex_idx);
+                    a_mvf.insert(self.ds.pave_blocks[pb_gi].pave2.vertex_idx);
+                }
+            }
+            for &pb_gi in &fi.pave_blocks_sc {
+                if pb_gi < self.ds.pave_blocks.len() {
+                    a_mvf.insert(self.ds.pave_blocks[pb_gi].pave1.vertex_idx);
+                    a_mvf.insert(self.ds.pave_blocks[pb_gi].pave2.vertex_idx);
+                }
+            }
+
+                // L941-943: Projection tool + surface adaptor (rcad: context.proj_ps)
+                let a_face = &self.ds.faces[nf];
+
+                // L945-1107: Iterate on all collected PB candidates
+                for &(ne, local_i) in the_mpb {
+                    if ne >= self.ds.edges.len() {
+                        continue;
+                    }
+                    let pb = &self.ds.edges[ne].pave_blocks[local_i];
+
+                    // L952-955: skip if PB already in face's On/In/Sc sets
+                    // (rcad: global PB pool not fully populated yet — approximate check via
+                    //  existing Interference::EdgeFace)
+                    if self.ds.interferences.iter().any(|inf| {
+                        matches!(inf, Interference::EdgeFace { edge: e, face: f, .. }
+                            if *e == ne && *f == nf)
+                    }) {
                         continue;
                     }
 
-                    // OCCT L970-976: aTolAdd = max(tol(V1), tol(V2))
-                    let gt1 = self.ds.vertices.get(pb.pave1.vertex_idx).map(|v| v.geom_tol).unwrap_or(0.0);
-                    let gt2 = self.ds.vertices.get(pb.pave2.vertex_idx).map(|v| v.geom_tol).unwrap_or(0.0);
-                    let a_tol_add = gt1.max(gt2);
-                    // OCCT L1053: SetFuzzyValue(myFuzzyValue + aTolAdd)
-                    let fuzzy = self.ds.fuzzy_tol + a_tol_add;
+                    // L958-964: check if face contains both PB vertices
+                    let n_v1 = pb.pave1.vertex_idx;
+                    let n_v2 = pb.pave2.vertex_idx;
+                    if !a_mvf.contains(&n_v1) || !a_mvf.contains(&n_v2) {
+                        // L962: face does not contain the vertices
+                        continue;
+                    }
 
-                    // OCCT L982-1000: project PB midpoint onto face surface
-                    let mid_t = (pb.pave1.param + pb.pave2.param) * 0.5;
-                    let mid_pt = edge.curve.point_at(mid_t);
-                    let on_face = match &face.surface {
-                        Surface3::Plane(pl) => {
-                            let d = mid_pt - pl.origin;
-                            let proj = d - d.dot(pl.normal) * pl.normal;
-                            proj.length() <= fuzzy
-                        }
-                        _ => {
-                            let (_, proj_pt) = crate::extrema::closest_point_on_surface(&face.surface, mid_pt);
-                            mid_pt.distance(proj_pt) <= fuzzy
-                        }
+                    // L966-981: get edge, check different operand
+                    let a_edge = &self.ds.edges[ne];
+                    // OCCT L977-981: make sure edge and face came from different arguments
+                    if self.ds.edges[ne].origin == self.ds.faces[nf].origin {
+                        continue;
+                    }
+
+                    // L983-986: curve adaptor (rcad: use CurveEval trait)
+                    let a_e_curve = &a_edge.curve;
+
+                    // L988-1050: tangent angle check at PB midpoint
+                    // L991: bUseAddTol
+                    let mut b_use_add_tol = true;
+
+                    // L993-996: shrunk data ranges
+                    let a_ts = pb.shrunk_range.unwrap_or([pb.pave1.param, pb.pave2.param]);
+
+                    // L998-1002: middle point + tangent vector
+                    let a_t_mid = crate::boptools::intermediate_point(a_ts[0], a_ts[1]);
+                    let a_p_on_e = a_e_curve.point_at(a_t_mid);
+                    let a_ve_tgt = a_e_curve.tangent_at(a_t_mid);
+                    if a_ve_tgt.length_squared() < 1e-30 {
+                        continue;
+                    }
+
+                    // L1008-1012: project midpoint onto face surface
+                    let proj_data = match self.context.proj_ps(&self.ds, nf, a_p_on_e) {
+                        Some(data) => data,
+                        None => continue,
+                    };
+                    // (uv, p_on_s, distance)
+                    let (a_uv, a_p_on_s, a_lower_dist) = proj_data;
+
+                    // L1016-1024: tolerance check using max vertex tolerance
+                    let a_tol_v1 = self.ds.vertices.get(n_v1).map(|v| v.geom_tol).unwrap_or(0.0);
+                    let a_tol_v2 = self.ds.vertices.get(n_v2).map(|v| v.geom_tol).unwrap_or(0.0);
+                    let a_tol_check = if b_si_check_mode {
+                        self.ds.fuzzy_tol
+                    } else {
+                        2.0 * a_tol_v1.max(a_tol_v2)
                     };
 
-                    if on_face {
-                        // OCCT L1007-1025: create EdgeFace interference
-                        self.ds.interferences.push(Interference::EdgeFace {
-                            edge: ei, face: fi,
-                            point: mid_pt, edge_param: mid_t,
-                            new_vertex: pb.pave1.vertex_idx,
+                    // L1026-1029: distance must be within tolerance
+                    if a_lower_dist > a_tol_check + self.ds.fuzzy_tol {
+                        continue;
+                    }
+
+                    // L1031-1036: check that projected UV is inside face
+                    if !self.context.is_point_in_face(&self.ds, nf, a_uv) {
+                        // L1035: not in face
+                        continue;
+                    }
+
+                    // L1038-1052: tangent angle check (for non-planar or non-line cases)
+                    if !matches!(a_face.surface, Surface3::Plane(_))
+                        || !matches!(*a_e_curve, Curve3::Line(_))
+                    {
+                        let a_vf_norm = a_p_on_s - a_p_on_e;
+                        if a_vf_norm.length_squared() > 1e-30 {
+                            // OCCT L1046: cos(25 deg) = 0.4226
+                            let a_cos = a_vf_norm.normalize().dot(a_ve_tgt.normalize());
+                            if a_cos.abs() > 0.4226 {
+                                b_use_add_tol = false;
+                            }
+                        }
+                    }
+
+                    // L1054-1085: compute aTolAdd (additional fuzzy tolerance)
+                    let mut a_tol_add = 0.0;
+                    if b_use_add_tol {
+                        // L1064-1076: per-endpoint distance
+                        for &a_t in &[a_ts[0], a_ts[1]] {
+                            let a_p = a_e_curve.point_at(a_t);
+                            if let Some((_, _, a_dist_ef)) = self.context.proj_ps(&self.ds, nf, a_p) {
+                                if a_dist_ef < a_tol_check && a_dist_ef > a_tol_add {
+                                    a_tol_add = a_dist_ef;
+                                }
+                            }
+                        }
+                        if a_tol_add > 0.0 {
+                            // L1079: subtract edge and face tolerances
+                            let tol_e = a_edge.geom_tol;
+                            let tol_f = a_face.geom_tol;
+                            a_tol_add -= (tol_e + tol_f);
+                            if a_tol_add < 0.0 {
+                                a_tol_add = 0.0;
+                            }
+                        }
+                    }
+
+                    // L1087-1106: decide whether to intersect
+                    let b_intersect = a_tol_add > 0.0
+                        || !self.fpbdone.get(&nf).map_or(false, |done| {
+                            done.contains(&(ne << 16 | local_i))
                         });
-                        break;
+
+                    if b_intersect {
+                        // L1096-1105: prepare pair for intersection
+                        a_v_edge_face.push((ne, nf, local_i));
                     }
                 }
-            }
+    }
+
+        // L1110-1113: no pairs
+        let a_nb_ef = a_v_edge_face.len();
+        if a_nb_ef == 0 {
+            return;
+        }
+
+        // L1129: (rcad: skip parallel intersection — no BOPAlgo_EdgeFace equivalent)
+        // Instead, create Interference::EdgeFace entries directly from the collected pairs.
+
+        // L1147-1192: process results
+        // rcad: create Interference::EdgeFace + update FaceInfo
+        // Collect map for CommonBlock creation: PB index -> face list
+        // rcad: use BTreeMap for ordered iteration
+        let mut a_mpbli: std::collections::BTreeMap<usize, Vec<usize>> =
+            std::collections::BTreeMap::new();
+
+        for &(ne, nf, local_i) in &a_v_edge_face {
+            let pb = &self.ds.edges[ne].pave_blocks[local_i];
+
+            // L1154-1158: (rcad: skip error check — no intersection engine)
+            // L1162-1170: results check (rcad: all pairs produce a result)
+
+            // L1174-1183: Add EdgeFace interference (rcad equivalent)
+            let a_t_mid = crate::boptools::intermediate_point(pb.pave1.param, pb.pave2.param);
+            let a_mid_pt = self.ds.edges[ne].curve.point_at(a_t_mid);
+
+            // OCCT L1176-1182: create BOPDS_InterfEF + AddInterf
+            self.ds.interferences.push(Interference::EdgeFace {
+                edge: ne,
+                face: nf,
+                point: a_mid_pt,
+                edge_param: a_t_mid,
+                // Use first vertex index as new_vertex placeholder
+                new_vertex: pb.pave1.vertex_idx,
+            });
+
+            // L1184-1186: Update face info with new IN pave block
+            let g_pb_idx = self.ds.pave_blocks.len();
+            self.ds.pave_blocks.push(pb.clone());
+            self.ds.faces[nf].face_info.pave_blocks_in.insert(g_pb_idx);
+
+            // L1188-1192: Fill map for common blocks creation
+            crate::bopalgo::fill_map(&mut a_mpbli, g_pb_idx, nf);
+        }
+
+        // L1194-1198: PerformCommonBlocks for coinciding pairs
+        if a_mpbli.len() > 0 {
+            crate::bopds::tools::perform_common_blocks(self.ds);
         }
     }
 
