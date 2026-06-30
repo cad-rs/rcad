@@ -97,12 +97,40 @@ pub enum TShape {
     Compound(Vec<ShapeRef>),
 }
 
+/// OCCT BRep_PointRepresentation — stores vertex parameter on a curve or surface.
+/// Used for SameParameter tolerance propagation and history tracking.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "t")]
+pub enum PointRepresentation {
+    /// BRep_PointOnCurve — parameter on a 3D curve.
+    #[serde(rename = "c")]
+    PointOnCurve {
+        curve: usize,
+        parameter: f64,
+        tolerance: f64,
+    },
+    /// BRep_PointOnSurface — UV parameters on a surface.
+    #[serde(rename = "s")]
+    PointOnSurface {
+        face: usize,
+        u: f64,
+        v: f64,
+        tolerance: f64,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TVertexData {
     pub point: DVec3,
     /// BRep_Tool::Tolerance(aV) equivalent — vertex tolerance.
     #[serde(default)]
     pub tolerance: f64,
+    /// BRep_PointRepresentation list — vertex parameters on curves/surfaces.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub points: Vec<PointRepresentation>,
+    /// TopoDS_TShape::Moved flag — marked when shape is transferred (history tracking).
+    #[serde(default)]
+    pub moved: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,6 +161,9 @@ pub struct TEdgeData {
     /// the same parameter range (needed for correct tolerance propagation).
     #[serde(default)]
     pub same_range: bool,
+    /// TopoDS_TShape::Moved flag — marked when shape is transferred (history tracking).
+    #[serde(default)]
+    pub moved: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,6 +172,9 @@ pub struct TWireData {
     /// BRep_Tool::IsClosed equivalent — true when the wire forms a closed loop.
     #[serde(default)]
     pub closed: bool,
+    /// TopoDS_TShape::Moved flag — marked when shape is transferred (history tracking).
+    #[serde(default)]
+    pub moved: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,6 +198,9 @@ pub struct TFaceData {
     /// has natural boundaries (full untrimmed sphere, cylinder, cone, etc.).
     #[serde(default)]
     pub natural_restriction: bool,
+    /// TopoDS_TShape::Moved flag — marked when shape is transferred (history tracking).
+    #[serde(default)]
+    pub moved: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -172,6 +209,9 @@ pub struct TShellData {
     /// BRep_Tool::IsClosed equivalent — true when the shell is closed (watertight).
     #[serde(default)]
     pub closed: bool,
+    /// TopoDS_TShape::Moved flag — marked when shape is transferred (history tracking).
+    #[serde(default)]
+    pub moved: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,6 +221,9 @@ pub struct TSolidData {
     pub internal_vertices: Vec<ShapeRef>,
     /// INTERNAL edges embedded in the solid (OCCT: sub-shapes of TopoDS_Solid).
     pub internal_edges: Vec<ShapeRef>,
+    /// TopoDS_TShape::Moved flag — marked when shape is transferred (history tracking).
+    #[serde(default)]
+    pub moved: bool,
 }
 
 /// BRep top-level shape container — all TShapes in a single pool with shared Arc ownership.
@@ -233,37 +276,37 @@ impl BRep {
 
     pub fn add_tvertex(&mut self, point: DVec3) -> ShapeRef {
         let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Vertex(TVertexData { point, tolerance: 0.0 })));
+        self.tshapes.push(Arc::new(TShape::Vertex(TVertexData { point, tolerance: 0.0, points: Vec::new(), moved: false })));
         ShapeRef::new(index)
     }
 
     pub fn add_tedge(&mut self, curve: Option<usize>, first: ShapeRef, last: ShapeRef, range: [f64; 2]) -> ShapeRef {
         let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Edge(TEdgeData { curve, first, last, range, degenerated: false, pcurves: HashMap::new(), vertex_params: HashMap::new(), tolerance: 0.0, same_parameter: true, same_range: true })));
+        self.tshapes.push(Arc::new(TShape::Edge(TEdgeData { curve, first, last, range, degenerated: false, pcurves: HashMap::new(), vertex_params: HashMap::new(), tolerance: 0.0, same_parameter: true, same_range: true, moved: false })));
         ShapeRef::new(index)
     }
 
     pub fn add_twire(&mut self, edges: Vec<ShapeRef>) -> ShapeRef {
         let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Wire(TWireData { edges, closed: false })));
+        self.tshapes.push(Arc::new(TShape::Wire(TWireData { edges, closed: false, moved: false })));
         ShapeRef::new(index)
     }
 
     pub fn add_tface(&mut self, surface: Option<usize>, outer_wire: ShapeRef, inner_wires: Vec<ShapeRef>, sample_point: Option<DVec3>, uv_domain: Option<[f64; 4]>, internal_vertices: Vec<ShapeRef>, natural_restriction: bool) -> ShapeRef {
         let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Face(TFaceData { surface, surface_location: 0, outer_wire, inner_wires, sample_point, uv_domain, internal_vertices, tolerance: 0.0, natural_restriction })));
+        self.tshapes.push(Arc::new(TShape::Face(TFaceData { surface, surface_location: 0, outer_wire, inner_wires, sample_point, uv_domain, internal_vertices, tolerance: 0.0, natural_restriction, moved: false })));
         ShapeRef::new(index)
     }
 
     pub fn add_tshell(&mut self, faces: Vec<ShapeRef>) -> ShapeRef {
         let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Shell(TShellData { faces, closed: false })));
+        self.tshapes.push(Arc::new(TShape::Shell(TShellData { faces, closed: false, moved: false })));
         ShapeRef::new(index)
     }
 
     pub fn add_tsolid(&mut self, shells: Vec<ShapeRef>) -> ShapeRef {
         let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Solid(TSolidData { shells, internal_vertices: Vec::new(), internal_edges: Vec::new() })));
+        self.tshapes.push(Arc::new(TShape::Solid(TSolidData { shells, internal_vertices: Vec::new(), internal_edges: Vec::new(), moved: false })));
         ShapeRef::new(index)
     }
 
