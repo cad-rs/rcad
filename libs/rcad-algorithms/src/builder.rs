@@ -142,26 +142,55 @@ fn find_interior_3d(
     if outer_uvs.len() < 3 { return None; }
     let centroid = outer_uvs.iter().copied().sum::<DVec2>() / outer_uvs.len() as f64;
 
-    // Try the centroid first
-    let candidates = {
+    // Check if the UV polygon is CW (hole) → interior is the complement.
+    // Compute signed area: positive = CCW (interior is polygon), negative = CW (interior is complement).
+    let signed_area: f64 = outer_uvs.windows(2).map(|pair| {
+        pair[0].x * pair[1].y - pair[1].x * pair[0].y
+    }).sum::<f64>() + {
+        let n = outer_uvs.len();
+        outer_uvs[n-1].x * outer_uvs[0].y - outer_uvs[0].x * outer_uvs[n-1].y
+    } * 0.5;
+    let is_cw = signed_area < 0.0;
+
+    // Build candidates: for CCW polygons, points inside the polygon;
+    // for CW polygons, points outside the polygon (the complement interior).
+    let candidates = if is_cw {
+        // CW polygon → interior is the complement.  The centroid of the polygon
+        // vertices is inside the polygon (wrong region).  For periodic surfaces
+        // (sphere: [0,2π]×[-π/2,π/2]), try the domain center or points opposite.
+        let mut c = vec![
+            DVec2::new(centroid.x + std::f64::consts::PI, centroid.y),
+        ];
+        // Also try domain corners that are likely outside the small CW region
+        c.push(DVec2::new(std::f64::consts::PI, 0.0));
+        c.push(DVec2::new(std::f64::consts::PI, std::f64::consts::FRAC_PI_2));
+        c.push(DVec2::new(std::f64::consts::PI, -std::f64::consts::FRAC_PI_2));
+        c.push(DVec2::new(std::f64::consts::PI * 1.5, 0.0));
+        c.push(DVec2::new(std::f64::consts::PI * 0.5, std::f64::consts::FRAC_PI_4));
+        c
+    } else {
+        // CCW polygon → interior is the polygon itself
         let mut c = vec![centroid];
-        // Add midpoints between centroid and each outer vertex
         for uv in outer_uvs {
             c.push((centroid + *uv) * 0.5);
         }
         c
     };
+    let test_fn = |uv: DVec2| -> bool {
+        if is_cw {
+            // For CW: point must be OUTSIDE the polygon
+            if outer_uvs.len() >= 3 && point_in_polygon_2d(outer_uvs, uv) { return false; }
+            // AND outside any hole (holes are CCW, so inside-hole means inside hole polygon)
+            !hole_uvs.iter().any(|h| h.len() >= 3 && point_in_polygon_2d(h, uv))
+        } else {
+            // For CCW: point must be INSIDE the polygon
+            if !point_in_polygon_2d(outer_uvs, uv) { return false; }
+            // AND outside any hole
+            !hole_uvs.iter().any(|h| h.len() >= 3 && point_in_polygon_2d(h, uv))
+        }
+    };
     for &uv in &candidates {
-        if !point_in_polygon_2d(outer_uvs, uv) { continue; }
-        let in_hole = hole_uvs.iter().any(|h| {
-            h.len() >= 3 && point_in_polygon_2d(h, uv)
-        });
-        if in_hole { continue; }
-        // Valid interior UV point — convert to 3D
-        // ✅ OCCT-aligned: BOPTools_AlgoTools3D::PointInFace returns a point
-        //   ON the face surface (no inward/outward offset).  rcad previously
-        //   offset by -normal * 100*tol, which for convex surfaces (sphere)
-        //   pushed the point inside the opposing solid, causing misclassification.
+        if !test_fn(uv) { continue; }
         let pt = match surface {
             Surface3::Plane(p) => {
                 let x_axis = rcad_kernel::geom::any_perpendicular(p.normal).normalize();
@@ -180,6 +209,25 @@ fn find_interior_3d(
             _ => return None,
         };
         return Some(pt);
+    }
+    // Fallback: for sphere/cylinder periodic surfaces, try a grid of candidate
+    // points across the UV domain.  A CCW polygon on the sphere may represent
+    // the small-region interior (correct for small cap) or the large-region
+    // complement (for the large cap where both have CCW winding).
+    // Testing multiple distributed points increases the chance of finding a
+    // valid interior point for either region.
+    if matches!(surface, Surface3::Sphere(_)) {
+        for ui in 0..8 {
+            let u = (ui as f64 + 0.5) / 8.0 * std::f64::consts::TAU;
+            for vi in 0..4 {
+                let v = (vi as f64 + 0.5) / 4.0 * std::f64::consts::PI - std::f64::consts::FRAC_PI_2;
+                let uv = DVec2::new(u, v);
+                if !test_fn(uv) { continue; }
+                if let Surface3::Sphere(s) = surface {
+                    return Some(s.point_at(u, v));
+                }
+            }
+        }
     }
     None
 }
