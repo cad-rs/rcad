@@ -1006,8 +1006,30 @@ pub(crate) fn perform_internal_shapes(
             }
         }
         uv_bnd.dedup_by(|a, b| (*a - *b).length_squared() < 1e-20);
+        // Fallback: if pcurve sampling gave <3 points, build UV polygon by
+        // projecting outer wire vertices to UV using the face surface.
+        if uv_bnd.len() < 3 && !wf.outer_wire.is_empty() {
+            uv_bnd.clear();
+            if let Some(face_surf) = tool.face_surface(rcad_kernel::topods::ShapeRef::new(face_idx)) {
+                for &si in &wf.outer_wire {
+                    let seg = &segments[si];
+                    let pt = tool.vertex_position(seg.start_vertex);
+                    if let Some(uv) = crate::builder::wire_splitter::world_to_uv(face_surf, pt) {
+                        uv_bnd.push(uv);
+                    }
+                }
+                uv_bnd.dedup_by(|a, b| (*a - *b).length_squared() < 1e-20);
+            }
+        }
         uv_bnd
     }).collect();
+
+    if std::env::var("RCAD_DEBUG_FACE").is_ok() {
+        for (fi, uv) in face_uv_bounds.iter().enumerate() {
+            eprintln!("[DBG] face {} internal_shapes: uv_bounds[{}] has {} pts", face_idx, fi, uv.len());
+        }
+        eprintln!("[DBG] face {} internal_shapes: {} groups, {} wfs", face_idx, internal_wire_groups.len(), wfs.len());
+    }
 
     // OCCT L674-741: classify each internal wire against each face
     for group in internal_wire_groups {
@@ -1033,8 +1055,19 @@ pub(crate) fn perform_internal_shapes(
                 if let Some((pc, t0, t1)) = tool.curve_on_surface(seg.edge, seg.face) {
                     let t_mid = (t0 + t1) * 0.5;
                     pt = pc.point_at(t_mid);
-                } else { continue; }
+                    found = true;
+                }
             }
+            if !found {
+                // Second fallback: project internal wire vertex to UV via face surface
+                if let Some(face_surf) = tool.face_surface(rcad_kernel::topods::ShapeRef::new(face_idx)) {
+                    let v_pt = tool.vertex_position(seg.start_vertex);
+                    pt = crate::builder::wire_splitter::world_to_uv(face_surf, v_pt)
+                        .unwrap_or(DVec2::ZERO);
+                    found = true;
+                }
+            }
+            if !found { continue; }
             pt
         };
 
@@ -1043,6 +1076,10 @@ pub(crate) fn perform_internal_shapes(
             if fi < face_uv_bounds.len() && face_uv_bounds[fi].len() >= 3
                 && crate::builder::wire_path::point_in_uv_polygon(uv_pt, &face_uv_bounds[fi])
             {
+                if std::env::var("RCAD_DEBUG_FACE").is_ok() {
+                    eprintln!("[DBG] face {} internal group {} added to wf[{}]: seg {} had {} uv_bnd pts", 
+                        face_idx, group.len(), fi, si, face_uv_bounds[fi].len());
+                }
                 wf.internal_wires.push(group.clone());
                 break;
             }

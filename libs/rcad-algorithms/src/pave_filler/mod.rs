@@ -3505,19 +3505,80 @@ impl<'a> PaveFiller<'a> {
                 };
 
                 let (u_ax_p, v_ax_p) = crate::inttools::edge_face::plane_local_basis(plane);
-                let p_start = circle.center + circle.radius * (effective_t0.cos() * u_ax_p + effective_t0.sin() * v_ax_p);
-                let p_end = circle.center + circle.radius * (effective_t1.cos() * u_ax_p + effective_t1.sin() * v_ax_p);
-                const IC_VERTEX_MERGE_TOL: f64 = crate::tolerance::TOLERANCE_ABS * 1000.0;
-                let is_closed = p_start.distance_squared(p_end) < TOLERANCE_ABS_SQ;
-                let (v_start, v_end) = if is_closed {
-                    let v = self.ds.find_vertex_near(p_start, IC_VERTEX_MERGE_TOL)
-                        .unwrap_or_else(|| self.ds.add_vertex(p_start));
-                    (v, v)
+                // Find arc endpoints clipped to each face's domain.
+                // For the planar face, find where the circle intersects the face boundary edges.
+                let plane_fi = if plane_is_f1 { f1 } else { f2 };
+                let plane_boundary_pts = self.ds.face_boundary_points(plane_fi);
+                // Parametric angles of circle points that intersect the plane face boundary.
+                let mut clip_angles: Vec<f64> = Vec::new();
+                // Use dense angular sampling to find entry/exit points.
+                let n_samples = 64usize;
+                for i in 0..n_samples {
+                    let theta = (i as f64) / (n_samples as f64) * std::f64::consts::TAU;
+                    let pt = circle.center + circle.radius * (theta.cos() * u_ax_p + theta.sin() * v_ax_p);
+                    let inside = crate::inttools::edge_face::point_in_planar_face_with_tol(
+                        pt, plane, &plane_boundary_pts, crate::tolerance::TOLERANCE_ABS * 1000.0);
+                    let next_i = (i + 1) % n_samples;
+                    let next_theta = (next_i as f64) / (n_samples as f64) * std::f64::consts::TAU;
+                    let next_pt = circle.center + circle.radius * (next_theta.cos() * u_ax_p + next_theta.sin() * v_ax_p);
+                    let next_inside = crate::inttools::edge_face::point_in_planar_face_with_tol(
+                        next_pt, plane, &plane_boundary_pts, crate::tolerance::TOLERANCE_ABS * 1000.0);
+                    if inside != next_inside {
+                        // Bisect to find precise boundary crossing
+                        let t0 = theta;
+                        let t1 = if next_theta <= theta { next_theta + std::f64::consts::TAU } else { next_theta };
+                        let mut lo = t0;
+                        let mut hi = t1;
+                        for _ in 0..8 {
+                            let mid = (lo + hi) * 0.5;
+                            let mp = circle.center + circle.radius * (mid.cos() * u_ax_p + mid.sin() * v_ax_p);
+                            let m_inside = crate::inttools::edge_face::point_in_planar_face_with_tol(
+                                mp, plane, &plane_boundary_pts, crate::tolerance::TOLERANCE_ABS * 1000.0);
+                            if m_inside == inside { lo = mid; } else { hi = mid; }
+                        }
+                        let cross_angle = (lo + hi) * 0.5;
+                        if cross_angle >= 0.0 && cross_angle < std::f64::consts::TAU {
+                            clip_angles.push(cross_angle);
+                        }
+                    }
+                }
+                clip_angles.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                clip_angles.dedup_by(|a, b| (*a - *b).abs() < 1e-10);
+                if cfg!(debug_assertions) && std::env::var("RCAD_DEBUG_FF").is_ok() {
+                    eprintln!("[DBG_FF] plane-sphere clip: {} angles from {} samples",
+                        clip_angles.len(), n_samples);
+                }
+
+                let (v_start, v_end, actual_t0, actual_t1) = if clip_angles.len() >= 2 {
+                    // Use the first two distinct clip angles as the arc endpoints
+                    // (the face interior portion of the circle).
+                    let at0 = clip_angles[0];
+                    let at1 = clip_angles[1];
+                    let p0 = circle.center + circle.radius * (at0.cos() * u_ax_p + at0.sin() * v_ax_p);
+                    let p1 = circle.center + circle.radius * (at1.cos() * u_ax_p + at1.sin() * v_ax_p);
+                    const IC_VERTEX_MERGE_TOL: f64 = crate::tolerance::TOLERANCE_ABS * 1000.0;
+                    let va = self.ds.find_vertex_near(p0, IC_VERTEX_MERGE_TOL)
+                        .unwrap_or_else(|| self.ds.add_vertex(p0));
+                    let vb = self.ds.find_vertex_near(p1, IC_VERTEX_MERGE_TOL)
+                        .unwrap_or_else(|| self.ds.add_vertex(p1));
+                    (va, vb, at0, at1)
                 } else {
-                    (self.ds.find_vertex_near(p_start, IC_VERTEX_MERGE_TOL)
-                        .unwrap_or_else(|| self.ds.add_vertex(p_start)),
-                     self.ds.find_vertex_near(p_end, IC_VERTEX_MERGE_TOL)
-                        .unwrap_or_else(|| self.ds.add_vertex(p_end)))
+                    // No valid clip found — fallback to full circle
+                    let p_start = circle.center + circle.radius * (effective_t0.cos() * u_ax_p + effective_t0.sin() * v_ax_p);
+                    let p_end = circle.center + circle.radius * (effective_t1.cos() * u_ax_p + effective_t1.sin() * v_ax_p);
+                    const IC_VERTEX_MERGE_TOL: f64 = crate::tolerance::TOLERANCE_ABS * 1000.0;
+                    let is_closed = p_start.distance_squared(p_end) < TOLERANCE_ABS_SQ;
+                    let (v_start, v_end) = if is_closed {
+                        let v = self.ds.find_vertex_near(p_start, IC_VERTEX_MERGE_TOL)
+                            .unwrap_or_else(|| self.ds.add_vertex(p_start));
+                        (v, v)
+                    } else {
+                        (self.ds.find_vertex_near(p_start, IC_VERTEX_MERGE_TOL)
+                            .unwrap_or_else(|| self.ds.add_vertex(p_start)),
+                         self.ds.find_vertex_near(p_end, IC_VERTEX_MERGE_TOL)
+                            .unwrap_or_else(|| self.ds.add_vertex(p_end)))
+                    };
+                    (v_start, v_end, effective_t0, effective_t1)
                 };
                 // OCCT-aligned: inherit tolerance from parent faces (BRep_Tool::Tolerance).
                 // OCCT vertices on edges carry source edge/face tolerances (typically 1e-4 to 1e-6);
@@ -3538,7 +3599,7 @@ impl<'a> PaveFiller<'a> {
                     polyline: vec![],
                     start_vertex: v_start,
                     end_vertex: v_end,
-                    t_range: [effective_t0, effective_t1],
+                    t_range: [actual_t0, actual_t1],
                     pcurve_on_a,
                     pcurve_on_b,
                     geom_tol: crate::tolerance::TOLERANCE_ABS,
@@ -3559,6 +3620,11 @@ impl<'a> PaveFiller<'a> {
                     curves: vec![curve_idx],
                     points: vec![],
                 });
+                if cfg!(debug_assertions) && std::env::var("RCAD_DEBUG_FF").is_ok() {
+                    let ic = &self.ds.intersection_curves[curve_idx];
+                    eprintln!("[DBG_FF] IC[{}]: f1={} f2={} start_vertex={} end_vertex={} t_range=[{:.6},{:.6}] n_pbs={}",
+                        curve_idx, f1, f2, ic.start_vertex, ic.end_vertex, ic.t_range[0], ic.t_range[1], ic.pave_blocks.len());
+                }
             }
         }
     }
@@ -6602,7 +6668,18 @@ impl<'a> PaveFiller<'a> {
                     }
 
                     let mut new_verts: Vec<(f64, usize)> = Vec::new();
-                    if let Some(pb) = ic.pave_blocks.first() {
+                    // Ensure pave_block1 exists — OCCT PutBoundPaveOnCurve always has one.
+                    if self.ds.intersection_curves[ci].pave_blocks.is_empty() {
+                        self.ds.intersection_curves[ci].init_pave_block1();
+                        // Add initial paves from curve endpoints (OCCT L828-843).
+                        if sv < self.ds.vertices.len() {
+                            self.put_pave_on_curve(sv, ci);
+                        }
+                        if ev < self.ds.vertices.len() && ev != sv {
+                            self.put_pave_on_curve(ev, ci);
+                        }
+                    }
+                    if let Some(pb) = self.ds.intersection_curves[ci].pave_blocks.first() {
                         let (n_v_min, n_v_max) = {
                             let mut n_min = usize::MAX;
                             let mut n_max = usize::MAX;
@@ -6670,7 +6747,6 @@ impl<'a> PaveFiller<'a> {
                     if let Some(pb) = self.ds.intersection_curves[ci].pave_blocks.first() {
                         let mut ext_paves: Vec<_> = pb.ext_paves.iter().map(|p| (p.param, p.vertex_idx)).collect();
                         put_closing_pave_on_curve(&mut ext_paves, true);
-                        // Apply closing via ext_pave replacement (parameter-based dedup)
                     }
                 }
             }
@@ -6697,7 +6773,7 @@ impl<'a> PaveFiller<'a> {
                 {
                     let ic = &mut self.ds.intersection_curves[ci];
                     if let Some(pb1) = ic.change_pave_block1() {
-                        let sub_pbs = pb1.update(false);
+                        let sub_pbs = pb1.update(true);
                         a_lpb = sub_pbs;
                     }
                 }
@@ -6893,6 +6969,17 @@ impl<'a> PaveFiller<'a> {
                         epb.new_edge = Some(new_ei);
                     }
                     self.ds.section_edge_refs[ci].push(new_ei);
+                    // OCCT-aligned: register section edge on the plane face's boundary
+                    // only — the sphere face's curves_sc already references the IC.
+                    // Adding to the sphere's boundary_edges would cause the sphere to
+                    // be split, and its classification may incorrectly remove the
+                    // outside-box portion (see classification_keep_policy logic).
+                    for (k, &fi) in [n_f1, n_f2].iter().enumerate() {
+                        if fi == usize::MAX { continue; }
+                        if matches!(self.ds.faces[fi].surface, Surface3::Plane(_)) {
+                            self.ds.faces[fi].boundary_edges.push(new_ei);
+                        }
+                    }
                     {
                         let (v1, v2) = if n_v1 < n_v2 { (n_v1, n_v2) } else { (n_v2, n_v1) };
                         let f1 = n_f1.min(n_f2);

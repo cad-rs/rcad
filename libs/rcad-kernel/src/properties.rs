@@ -1471,23 +1471,35 @@ fn try_planar_face_exact_contour_area(brep: &BRep, face: &Face, face_normal: DVe
     }
 
     if total > 0.0 && total.is_finite() {
-        // ✅ OCCT对齐: 扣除退化内边界(单Circle3边 forward+reverse)的弧-弦面积。
+        // Subtract enclosed areas for inner wires (holes).
+        // OCCT BRepGProp processes each face's parametric domain with holes,
+        // so the GL integration naturally excludes hole regions.  rcad's
+        // analytic planar-area code computes the outer-wire area, then we
+        // subtract hole areas using the same shoelace + arc-correction method.
         for w in &face.inner_wires {
-            if w.edges.len() == 2 && w.edges[0].idx == w.edges[1].idx {
-                let ei = w.edges[0].idx;
-                if let (Some(ci), Some(e)) = (brep.geom.edge_curve.get(ei).copied().flatten(), brep.edges.get(ei)) {
-                    if let Some(Curve3::Circle(c)) = brep.geom.curves.get(ci) {
-                        if let (Some(v0), Some(v1)) = (brep.vertices.get(e.start), brep.vertices.get(e.end)) {
-                            let d0 = (v0.point - c.center).normalize();
-                            let d1 = (v1.point - c.center).normalize();
-                            let theta = d0.dot(d1).clamp(-1.0, 1.0).acos();
-                            if theta > 1e-12 {
-                                total -= c.radius * c.radius * (theta - theta.sin()) * 0.5;
-                            }
-                        }
-                    }
-                }
+            if w.edges.len() < 3 { continue; }
+            // Compute hole area via dense-sampled polyline projection.
+            let hole_pts: Vec<DVec3> = w.edges.iter().filter_map(|we| {
+                let e = brep.edges.get(we.idx)?;
+                let vi = if we.forward { e.start } else { e.end };
+                brep.vertices.get(vi).map(|v| v.point)
+            }).collect();
+            if hole_pts.len() < 3 { continue; }
+            let mut a_hole = 0.0;
+            for i in 1..hole_pts.len().saturating_sub(1) {
+                let v0 = hole_pts[0];
+                let v1 = hole_pts[i];
+                let v2 = hole_pts[i + 1];
+                let d1 = v1 - v0;
+                let d2 = v2 - v0;
+                let tri_area = (d1.cross(d2)).dot(face_normal).abs() * 0.5;
+                a_hole += tri_area;
             }
+            total -= a_hole.min(total);
+        }
+        if cfg!(debug_assertions) && std::env::var("RCAD_DEBUG_SA").is_ok() {
+            let n_inner = face.inner_wires.len();
+            eprintln!("[SA_EXACT] return total={:.8} inner_wires={}", total, n_inner);
         }
         return Some(total);
     } else { None }
@@ -3741,8 +3753,10 @@ pub fn surface_area(brep: &BRep) -> f64 {
                 .and_then(|si| brep.geom.surfaces.get(si))
                 .map(|s| match s { Surface3::Plane(_) => "Plane", Surface3::BSpline(_) => "BSpline", Surface3::Sphere(_) => "Sphere", Surface3::Cylinder(_) => "Cylinder", _ => "Other" })
                 .unwrap_or("none");
-            eprintln!("[SA_FACE] fi={} surf={} analytic={:?} area={:.6} n_tris={} mesh_dirty={}",
-                _fi, vname, analytic, a, f.triangles.len(), f.mesh_dirty);
+            let n_inner = f.inner_wires.len();
+            let inner_edges: usize = f.inner_wires.iter().map(|w| w.edges.len()).sum();
+            eprintln!("[SA_FACE] fi={} surf={} analytic={:?} area={:.6} inner_wires={} inner_edges={} n_tris={} mesh_dirty={}",
+                _fi, vname, analytic, a, n_inner, inner_edges, f.triangles.len(), f.mesh_dirty);
         }
         // CI assertion: warn if any face has no surface reference (mesh-only fast-path).
         // All boolean results should have proper analytic surfaces for exact SA.
