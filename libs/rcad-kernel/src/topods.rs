@@ -708,6 +708,34 @@ impl BRepBuilder {
         brep.edge_mut(edge).pcurves.insert(face.index, (pc, t1, t2));
     }
 
+    /// OCCT BRep_Builder::UpdateEdge(aE, theTol) — update edge tolerance.
+    pub fn update_edge_tolerance(&mut self, brep: &mut BRep, edge: ShapeRef, tol: f64) {
+        let ed = brep.edge_mut(edge);
+        ed.tolerance = ed.tolerance.max(tol);
+    }
+
+    /// OCCT BRep_Builder::UpdateEdge(aE, aC2d, aF, theTol) — set pcurve on face.
+    pub fn update_edge_pcurve(&mut self, brep: &mut BRep,
+        edge: ShapeRef, pcurve: Curve2d, face: ShapeRef, tol: f64)
+    {
+        let ed = brep.edge_mut(edge);
+        let (ta, tb) = pc_parameter_range(&pcurve);
+        ed.pcurves.insert(face.index, (pcurve.clone(), ta, tb));
+        ed.representations.push(CurveRepresentation::CurveOnSurface {
+            face: face.index,
+            pcurve,
+            range: [ta, tb],
+        });
+        ed.tolerance = ed.tolerance.max(tol);
+    }
+
+    /// OCCT BRep_Builder::UpdateEdge(aE, aC3d) — set 3D curve.
+    pub fn update_edge_curve3d(&mut self, brep: &mut BRep,
+        edge: ShapeRef, curve: usize, location: u32) {
+        let ed = brep.edge_mut(edge);
+        ed.representations.push(CurveRepresentation::Curve3D { curve, location });
+    }
+
     /// Set vertex parameter on an edge's pcurve.
     pub fn set_vertex_param(&mut self, brep: &mut BRep,
         edge: ShapeRef, vertex: ShapeRef, param: f64) {
