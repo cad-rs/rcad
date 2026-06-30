@@ -492,6 +492,27 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
             eprintln!("[BLK] fi={} bi={} n={}", face_idx, bi, block.len());
         }
 
+        // ✅ OCCT-aligned: aMS add/remove cycle (WireSplitter_1.cxx L149-152).
+        //   OCCT: if (!aMS.Add(aE) && !bIsClosed) { aMS.Remove(aE); }
+        //   Edges appearing exactly once → in aMS → IsInside=false (boundary).
+        //   Edges appearing twice (FWD+REV) → removed from aMS → IsInside=true (interior).
+        //   rcad: key by (source_type, canonical_idx) for identity.
+        let mut a_ms: std::collections::HashSet<(u8, usize)> = std::collections::HashSet::new();
+        for &si in block {
+            let seg = &segments[si];
+            let canon_key = match &seg.source {
+                WireEdgeSource::DsEdge(ei) => (0u8, *ei),
+                WireEdgeSource::IntersectionCurve(ci) => (1u8, *ci),
+                WireEdgeSource::SeamEdge => continue,
+            };
+            let b_is_closed_check = seg.start_vertex == seg.end_vertex
+                || (seg.is_closed_on_face && !matches!(&seg.source, WireEdgeSource::DsEdge(ei)
+                    if ds.edges.get(*ei).map_or(false, |e| e.pave_blocks.len() > 1)));
+            if !a_ms.insert(canon_key) && !b_is_closed_check {
+                a_ms.remove(&canon_key);
+            }
+        }
+
         // ✅ OCCT-aligned: Build SmartMap (WireSplitter_1.cxx L154-220).
         //    Always built first, used for BOTH regularity check and Path walk.
         let mut smart_map: IndexMap<usize, Vec<EdgeInfo>> = IndexMap::new();
@@ -510,7 +531,15 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
             };
             if !has_pcurve { continue; }
 
-            let is_inside = matches!(seg.source, WireEdgeSource::IntersectionCurve(_));
+            // ✅ OCCT-aligned: IsInside computed from aMS state (L310).
+            //   Edges present in aMS (appeared once) → boundary (IsInside=false).
+            //   Edges absent from aMS (appeared twice) → interior (IsInside=true).
+            let canon_key = match &seg.source {
+                WireEdgeSource::DsEdge(ei) => (0u8, *ei),
+                WireEdgeSource::IntersectionCurve(ci) => (1u8, *ci),
+                WireEdgeSource::SeamEdge => (2u8, 0),
+            };
+            let is_inside = !a_ms.contains(&canon_key);
             let is_circle_arc = is_inside && match &seg.source {
                 WireEdgeSource::IntersectionCurve(ci) => {
                     ds.intersection_curves.get(*ci).map_or(false, |ic| {
