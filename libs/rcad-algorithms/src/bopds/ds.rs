@@ -127,7 +127,7 @@ impl ShapeSD {
     pub fn is_sub_edge(&self, e: usize) -> bool {
         self.sd_edges.iter().any(|(a, _)| *a == e)
     }
-    pub fn is_sub_face(&self, fi: usize) -> bool {
+    pub fn is_sd_face(&self, fi: usize) -> bool {
         self.sd_faces.iter().any(|(a, _)| *a == fi)
     }
 

@@ -45,7 +45,7 @@ mod builder_utils;
 
 pub(crate) use builder_utils::{
     curve_eq, hash_point,
-    classify_subface_against_box, compute_state,
+    classify_face_against_box, compute_state,
     is_tangent_face, build_edge_bounds, quantize_pos,
     check_and_add_split_vertex, collect_face_edge_segments,
     cmp_boolean_emit_order,
@@ -117,9 +117,9 @@ mod wire_path_topo_ds;
 mod edge_builders;
 mod builder_utils_topo_ds;
 pub(crate) use wire_splitter::{
-    EdgeInfo, build_closed_wires, perform_shapes_to_avoid,
-    expand_avoided_pids, build_pid_maps,
-    build_vi_to_canon, physical_edge_id, world_to_uv,
+    EdgeInfo, build_closed_wires,
+    expand_avoided_pids,
+    physical_edge_id, world_to_uv,
     compute_seam_tangent_angles, edge_uv_tangent, edge_angle_2d,
     are_verts_coincident,
 };
@@ -130,106 +130,7 @@ pub(crate) use wire_path::{
     walk_path_extract_wires,
 };
 
-impl<'a> BooleanBuilder<'a> {
-    /// ✅ OCCT-aligned: BOPAlgo_BuilderFace::Perform (BuilderFace.cxx L117-147).
-    ///   Edge-to-wire pipeline: PerformShapesToAvoid → PerformLoops (WireSplitter)
-    ///   → PerformAreas → PerformInternalShapes.
-    pub(crate) fn split_face_occt_wire_pipeline(
-        &self,
-        face_idx: usize,
-    ) -> Option<(Vec<WireSegment>, Vec<WireFace>, HashMap<usize, DVec3>)> {
-        let ds = self.ds;
-        let face = &ds.faces[face_idx];
-        // ✅ OCCT-aligned: BuilderFace::Perform (BOPAlgo_BuilderFace.cxx L117-148).
-        //   L121: GetReport()->Clear()
-        //   L123-127: CheckData() → if HasErrors return
-        //   L129-133: PerformShapesToAvoid → if HasErrors return
-        //   L135-139: PerformLoops → if HasErrors return
-        //   L141-145: PerformAreas → if HasErrors return
-        //   L147: PerformInternalShapes
 
-        // OCCT L121: GetReport()->Clear() — rcad: delegated to caller error handling.
-
-        // OCCT L123-127: CheckData — validate face has intersection data.
-        //   OCCT: checks myShapes/DS state. rcad: segments must be non-empty
-        //   and face must have interferences.
-        let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
-        let mut segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
-        if !self.builder_face_check_data(face_idx, &segments) {
-            return None;
-        }
-
-        // OCCT builds vi_to_canon during CheckData/Prepare.
-        let vi_to_canon = build_vi_to_canon(&segments, ds);
-
-        // OCCT L129-133: PerformShapesToAvoid — returns PIDs (OCCT: myShapesToAvoid).
-        let (avoided_pids, pid_segs) = perform_shapes_to_avoid(&segments, &vi_to_canon, ds);
-        // Expand PIDs to segment indices (rcad: PerformLoops reads segment indices).
-        let mut avoided = expand_avoided_pids(&avoided_pids, &pid_segs);
-
-        // OCCT L135-139: PerformLoops
-        let (wires, mut internal_wires, vertex_positions) =
-            build_closed_wires(&mut segments, ds, face_idx, &avoided);
-
-        // ✅ OCCT-aligned L160-166: Post Treatment — edges not in any loop → add to myShapesToAvoid.
-        let in_loop: std::collections::HashSet<usize> = wires.iter().flatten().copied().collect();
-        for si in 0..segments.len() {
-            if !in_loop.contains(&si) && !avoided.contains(&si) {
-                avoided.insert(si);
-            }
-        }
-
-        // ✅ OCCT-aligned L327-382: Internal Wires — group connected avoided edges.
-        let mut internal_wire_groups: Vec<Vec<usize>> = Vec::new();
-        {
-            use std::collections::{HashSet, VecDeque};
-            let av: Vec<usize> = avoided.iter().copied().collect();
-            let mut v_to_e: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
-            for &si in &av {
-                v_to_e.entry(segments[si].start_vertex).or_default().push(si);
-                v_to_e.entry(segments[si].end_vertex).or_default().push(si);
-            }
-            let mut visited: HashSet<usize> = HashSet::new();
-            for &si in &av {
-                if visited.contains(&si) { continue; }
-                let mut group: Vec<usize> = Vec::new();
-                let mut queue: VecDeque<usize> = VecDeque::new();
-                queue.push_back(si);
-                visited.insert(si);
-                while let Some(cur) = queue.pop_front() {
-                    group.push(cur);
-                    for &v in &[segments[cur].start_vertex, segments[cur].end_vertex] {
-                        if let Some(neighbors) = v_to_e.get(&v) {
-                            for &nsi in neighbors {
-                                if visited.insert(nsi) {
-                                    queue.push_back(nsi);
-                                }
-                            }
-                        }
-                    }
-                }
-                internal_wire_groups.push(group);
-            }
-        }
-
-        // OCCT L141-145: PerformAreas
-        let mut wfs = if !wires.is_empty() {
-            perform_areas(&wires, &internal_wire_groups, &segments, ds, &mut *self.context.borrow_mut(), face_idx)
-        } else if !internal_wires.is_empty() {
-            vec![WireFace { outer_wire: vec![], inner_wires: vec![], internal_wires: internal_wires.clone() }]
-        } else {
-            vec![WireFace { outer_wire: (0..segments.len()).collect(), inner_wires: vec![], internal_wires: vec![] }]
-        };
-        if wfs.is_empty() { return None; }
-
-        // ✅ OCCT-aligned L147: PerformInternalShapes — classify internal wires against faces
-        crate::builder::wire_path::perform_internal_shapes(
-            &mut wfs, &internal_wire_groups, &segments, ds, face_idx);
-        Some((segments, wfs, vertex_positions))
-    }
-}
-
-/// Find a 3D sample point inside the face region (outer polygon minus hole polygons).
 /// Uses UV-space point-in-polygon to find a point that is inside the outer boundary
 /// but outside all hole boundaries.  Falls back to candidates when centroid is in a hole.
 fn find_interior_3d(
@@ -680,7 +581,7 @@ impl<'a> BooleanBuilder<'a> {
     ///
     /// This keeps A/B branches aligned to the same decision table instead of
     /// maintaining two subtly diverging helper functions.
-    fn keep_subface_policy(op: BooleanOpType, source: SourceSide, class: Classification) -> bool {
+    fn keep_face_policy(op: BooleanOpType, source: SourceSide, class: Classification) -> bool {
         match op {
             // Regularized union: keep outside + coincident boundary fragments.
             // Coincident (`On`) fragments are deduplicated downstream in ResultBuilder.
@@ -920,7 +821,7 @@ impl<'a> BooleanBuilder<'a> {
     /// ✅ OCCT-aligned: FillImagesFaces (BOPAlgo_Builder_1.cxx L376-386).
     ///   Phase 3: splits each face via WireSplitter → classifies → emits
     ///   via emit_wire_face.  rcad equivalent: for each face with IC data,
-    ///   call split_face_occt_wire_pipeline (BuilderFace::Perform), then
+    ///   call split_face_and_emit_topo_ds (TopoDS-based BuilderFace::Perform), then
     ///   classify_against_solid_for_boolean + classification_keep_policy.
     /// ✅ OCCT-aligned: FillImagesFaces (BOPAlgo_Builder_2.cxx L215-229).
     ///   Equivalent to BuildSplitFaces + FillSameDomainFaces + FillInternalVertices.
@@ -955,7 +856,7 @@ impl<'a> BooleanBuilder<'a> {
 
     /// ✅ OCCT-aligned: BuildSplitFaces (Builder_2.cxx L233-374).
     ///   Iterates source faces → splits each along intersection curves.
-    ///   For faces with IN/SC PBs: full BuilderFace::Perform (split_face_occt_wire_pipeline).
+    ///   For faces with IN/SC PBs: full BuilderFace::Perform (split_face_and_emit_topo_ds).
     ///   For ON-only faces: BuildDraftFace.
     ///   Faces with no interferences → skipped (no images).
     fn build_split_faces(

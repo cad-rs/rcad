@@ -1003,10 +1003,7 @@ impl ResultBuilder {
     ///    OCCT: MakeBlocks 鈫?BOPTools_AlgoTools::MakeEdge(aIC,...)
     ///    split_planar_face 鐢熸垚鐨勫唴杈圭晫鏈?28+鐐?绠€鍖栦负2绔偣(arc_simplify),
     ///    鐒跺悗 emit_face_with_origin 鐢?add_circle_edge 鍒涘缓绮剧‘ Circle3 杈广€?
-    /// DEPRECATED (FaceSampleData 鍐呴儴): 鍦嗗姬澶栬竟鐣屸啋鍐呰竟鐣岃浆鎹€俉ireFace 涓嶉渶瑕佹姝ラ銆?
-// SubFace removed: convert
 
-// SubFace removed: find_inner
 
 
     /// ✅ OCCT-aligned: BuildResult(FACE) — create topods vertices, edges, wires, faces

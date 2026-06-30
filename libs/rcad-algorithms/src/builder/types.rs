@@ -91,13 +91,7 @@ pub struct FaceSampleData {
     pub inner_wire_circle: Option<(usize, Curve3)>,
 }
 
-impl FaceSampleData {
-    /// ✅ OCCT-aligned: construct from sub-face data (transitional shim).
-    fn from_sub_face(sub: &FaceSampleData) -> Self {
-        sub.clone()
-    }
-
-    /// Returns a point slightly INSIDE the surface (toward the interior of the solid).
+impl FaceSampleData {    /// Returns a point slightly INSIDE the surface (toward the interior of the solid).
     /// 浠?FaceSampleData::sample_point 绉绘,浣跨敤 WireFace 鐨勬暟鎹簮銆?
     pub(crate) fn sample_point(&self) -> DVec3 {
         if let Some(pt) = self.sample_override {

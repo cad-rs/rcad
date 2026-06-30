@@ -559,9 +559,9 @@ pub fn compute_adaptive_glue_tolerance(
 
 /// When a planar A-sub-face is classified as Inside (for Difference), but the B solid
 /// is a cylinder, the sub-face may straddle the cylinder wall. This function detects
-/// exactly 2 crossings of the cylinder wall on the sub-face boundary, then constructs
+/// exactly 2 crossings of the cylinder wall on the face boundary, then constructs
 /// a trimmed polygon keeping only the outside-cylinder-wall portion.
-pub(crate) fn try_trim_planar_subface_by_cylinder(
+pub(crate) fn try_trim_planar_face_by_cylinder(
     sub: &FaceSampleData,
     _plane_normal: DVec3,
     _plane_origin: DVec3,
@@ -1736,7 +1736,7 @@ pub fn get_edge_on_face(edge_idx: usize, face_idx: usize, ds: &DS) -> bool {
 }
 
 // ================================================================
-// ✅ Current state: emit_sphere_faces_direct replaces build_sphere_sub_faces_by_circles
+// ✅ Current state: emit_sphere_faces_direct replaces sphere face emission pipeline
 //    OCCT edge-based path not yet implemented. Current approach:
 //    emit_sphere_faces_direct: Circle3 intersection points → emit_face_data (FaceSampleData-free)
 //    ✅ DoSplitSEAMOnFace 已实现 (collect_face_edge_segments L2196-2282)

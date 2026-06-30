@@ -34,7 +34,6 @@ pub mod bspline_edit;
 pub mod boptools;
 pub mod bopalgo;
 pub mod builder;
-pub mod builder_face;
 pub mod debug_trace;
 pub mod pipeline_dump;
 pub mod bvh;
@@ -514,7 +513,6 @@ pub use builder::{
     compute_adaptive_glue_tolerance,
     detect_glue_faces,
 };
-pub use builder_face::BuilderFace;
 pub use cells_builder::{CellExpr, CellsBuilder, CellsBuilderError};
 pub use chamfer::{
     ChamferError, ChamferMode, ChamferParams, ChamferResult, ChamferWarning,

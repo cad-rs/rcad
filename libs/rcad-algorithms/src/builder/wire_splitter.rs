@@ -798,7 +798,7 @@ pub(crate) fn build_pid_maps(
     (pid_segs, pid_endpoints)
 }
 
-/// Expand avoided PIDs to segment indices.  Called by split_face_occt_wire_pipeline
+/// Expand avoided PIDs to segment indices.  Called by split_face_and_emit_topo_ds
 /// (OCCT: PerformLoops checks myShapesToAvoid.Contains, rcad needs segment indices).
 pub(crate) fn expand_avoided_pids(
     avoided_pids: &std::collections::HashSet<Pid>,

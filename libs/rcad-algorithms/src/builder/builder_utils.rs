@@ -332,10 +332,10 @@ pub struct BooleanBuilder<'a> {
 /// sample point falls inside. Requiring ALL boundary vertices to be on the correct
 /// side ensures straddling cells are conservatively classified.
 ///
-/// - Intersection (any side): sub-face is kept only when ENTIRELY inside the box.
-/// - Difference B-side: sub-face is kept only when ENTIRELY inside the box.
-/// - Union/Difference A-side: sub-face is kept only when ENTIRELY outside the box.
-pub(crate) fn classify_subface_against_box(
+/// - Intersection (any side): face is kept only when ENTIRELY inside the box.
+/// - Difference B-side: face is kept only when ENTIRELY inside the box.
+/// - Union/Difference A-side: face is kept only when ENTIRELY outside the box.
+pub(crate) fn classify_face_against_box(
     sub: &FaceSampleData,
     solid_face_indices: &[usize],
     ds: &DS,
