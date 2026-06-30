@@ -782,12 +782,10 @@ impl ResultBuilder {
     pub(crate) fn add_vertex(&mut self, point: DVec3) -> usize {
         let key = hash_point(point);
         if let Some(&idx) = self.vertex_map.get(&key) {
-            // Double-check actual coincidence (hash collision protection)
             if points_coincide(self.vertices[idx], point) {
                 return idx;
             }
         }
-        // Linear scan fallback for hash collisions
         for (i, v) in self.vertices.iter().enumerate() {
             if points_coincide(*v, point) {
                 return i;
@@ -1015,15 +1013,31 @@ impl ResultBuilder {
         use topods::{Orientation, ShapeRef};
 
         // 1. Vertices → TShape::Vertex
+        // OCCT: BRep_Builder uses shared TopoDS TShapes — BuildResult(Face) reuses
+        //   the vertex TShapes created by BuildResult(Vertex).  rcad's add_tvertex
+        //   creates a NEW TShape every call, so map self.vertices indices to the
+        //   existing TShape index, creating new TShapes only for unseen positions.
+        let n_verts = self.vertices.len();
+        let mut vi_to_ti: Vec<usize> = Vec::with_capacity(n_verts);
         for v in &self.vertices {
-            t.add_tvertex(*v);
+            let found = t.tshapes.iter().position(|ts| {
+                matches!(&**ts, rcad_kernel::topods::TShape::Vertex(vd) if crate::tolerance::points_coincide(vd.point, *v))
+            });
+            match found {
+                Some(ti) => vi_to_ti.push(ti),
+                None => {
+                    let ti = t.tshapes.len();
+                    t.add_tvertex(*v);
+                    vi_to_ti.push(ti);
+                }
+            }
         }
 
-        // 2. Edges → TShape::Edge
+        // 2. Edges → TShape::Edge (use vi_to_ti to map vertex indices)
         let mut e_map: Vec<ShapeRef> = Vec::with_capacity(self.edges.len());
         for (ei, &(start, end)) in self.edges.iter().enumerate() {
-            let first = ShapeRef::new(start);
-            let last = ShapeRef::new(end);
+            let first = ShapeRef::new(vi_to_ti[start]);
+            let last = ShapeRef::new(vi_to_ti[end]);
             let curve_idx = self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
                 let ci = t.curves.len();
                 t.curves.push(crv.clone());
@@ -1075,7 +1089,7 @@ impl ResultBuilder {
             let surf_idx = t.surfaces.len();
             t.surfaces.push(surface.clone());
             let internal_vtx: Vec<ShapeRef> = self.face_internal_vtx.get(flat_fi)
-                .map_or(vec![], |v| v.iter().map(|&vi| ShapeRef::new(vi)).collect());
+                .map_or(vec![], |v| v.iter().map(|&vi| ShapeRef::new(vi_to_ti.get(vi).copied().unwrap_or(vi))).collect());
             let nr = self.face_natural_restriction.get(flat_fi).copied().unwrap_or(true);
             self.face_refs.push(t.add_tface(Some(surf_idx), outer_wire, inner_wires, Some(*sample_point), *_uv_domain, internal_vtx, nr));
             flat_fi += 1;
