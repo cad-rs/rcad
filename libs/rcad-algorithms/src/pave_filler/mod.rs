@@ -602,27 +602,20 @@ impl<'a> PaveFiller<'a> {
 
         self.perform_vv();
 
-        // OCCT L145: BOPDS_Iterator builds BVH trees for all shape types.
-        //   rcad: build DS-level BVHs for VE/EE/VF/EF pair culling.
-        let bvh_verts_a = self.build_ds_bvh(true, false);
-        let bvh_verts_b = self.build_ds_bvh(false, false);
-        let bvh_edges_a = self.build_ds_bvh(true, true);
-        let bvh_edges_b = self.build_ds_bvh(false, true);
-        // Face BVHs are built from the same index ranges as the face BVH trees.
-        let bvh_faces_a = self.build_ds_bvh_face(true);
-        let bvh_faces_b = self.build_ds_bvh_face(false);
+        // OCCT L145: BOPDS_Iterator — single combined BVH per shape type.
+        let bvh_all_verts = self.build_ds_bvh_combined(false);
+        let bvh_all_edges = self.build_ds_bvh_combined(true);
+        let bvh_all_faces = self.build_ds_bvh_face_all();
 
         if !skip_ve {
-            self.perform_ve_bvh(&bvh_verts_a, &bvh_edges_b);
-            // OCCT: Iterator covers ALL V-E pairs; rcad BVH needs explicit
-            //   second call for B-verts x A-edges (HasSubShape filters same-shape pairs).
-            self.perform_ve_bvh(&bvh_verts_b, &bvh_edges_a);
+            // OCCT: BOPDS_Iterator::Initialize(VERTEX, EDGE) — single traversal.
+            self.perform_ve_bvh(&bvh_all_verts, &bvh_all_edges);
         }
         // �?OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L266)
         self.ds.update_pave_blocks_with_sd_vertices();
 
         let ee_survivors: Vec<usize> = if !skip_ee {
-            self.perform_ee_bvh(&bvh_edges_a, &bvh_edges_b);
+            self.perform_ee_bvh(&bvh_all_edges, &bvh_all_edges);
             // �?OCCT-aligned: TreatNewVertices �?merge new vertices created by EE intersection.
             //    OCCT PaveFiller_5.cxx L570: PerformNewVertices(aMVCPB, ..., false)
             let survivors = self.treat_new_vertices();
@@ -632,8 +625,8 @@ impl<'a> PaveFiller<'a> {
         } else { vec![] };
 
         if !skip_vf {
-            self.perform_vf_bvh(&bvh_verts_a, &bvh_faces_b);
-            self.perform_vf_bvh(&bvh_verts_b, &bvh_faces_a);
+            // OCCT: BOPDS_Iterator::Initialize(VERTEX, FACE) — single traversal.
+            self.perform_vf_bvh(&bvh_all_verts, &bvh_all_faces);
         }
         // �?OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L280)
         self.ds.update_pave_blocks_with_sd_vertices();

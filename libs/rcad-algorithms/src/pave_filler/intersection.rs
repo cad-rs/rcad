@@ -49,15 +49,48 @@ impl<'a> super::PaveFiller<'a> {
         }
         DsBvh::build(indices, aabbs)
     }
+    /// ✅ OCCT-aligned: BOPDS_Iterator — build a single BVH for all elements
+    ///   of the given shape type (both operands A and B combined), used for
+    ///   single-pass cross-operand pair traversal.
+    pub(crate) fn build_ds_bvh_combined(&self, is_edge: bool) -> crate::bvh::DsBvh {
+        use crate::bvh::{Aabb, DsBvh};
+        let n = if is_edge { self.ds.edges.len() } else { self.ds.vertices.len() };
+        let mut indices = Vec::with_capacity(n);
+        let mut aabbs = Vec::with_capacity(n);
+        for ds_i in 0..n {
+            indices.push(ds_i);
+            let aabb = if is_edge {
+                let e = &self.ds.edges[ds_i];
+                let pts = [self.ds.vertices[e.start_vertex].point,
+                           self.ds.vertices[e.end_vertex].point];
+                let mut a = Aabb::empty();
+                for &p in &pts { a.expand_point(p); }
+                let tol = e.geom_tol.max(1e-7);
+                a.min -= DVec3::splat(tol);
+                a.max += DVec3::splat(tol);
+                a
+            } else {
+                let pt = self.ds.vertices[ds_i].point;
+                let tol = self.ds.vertices[ds_i].geom_tol.max(1e-7);
+                Aabb { min: pt - DVec3::splat(tol), max: pt + DVec3::splat(tol) }
+            };
+            aabbs.push(aabb);
+        }
+        DsBvh::build(indices, aabbs)
+    }
     /// OCCT PaveFiller_2.cxx L141-206: PerformVE
+    /// ✅ OCCT-aligned: BOPDS_Iterator::Initialize(VERTEX, EDGE) — single pass.
+    ///   Cross-operand filtering: skip same-side pairs.
     pub(crate) fn perform_ve_bvh(&mut self, bvh_verts: &crate::bvh::DsBvh, bvh_edges: &crate::bvh::DsBvh) {
         use rayon::prelude::*;
         self.fill_shrunk_data();
         let pairs = crate::bvh::DsBvh::candidate_pairs(bvh_verts, bvh_edges);
-        // Pre-collect skip conditions into a read-only filter.
         let ds = &self.ds;
+        let a_vc = ds.a_vertex_count;
+        let a_ec = ds.a_edge_count;
         let filtered: Vec<(usize, usize)> = pairs.par_iter()
             .filter(|&(vi, ei)| {
+                if (*vi < a_vc) == (*ei < a_ec) { return false; }
                 !ds.edge_has_vertex(*vi, *ei) && !ds.edge_has_flag(*ei)
                     && !ds.has_interf_ve(*vi, *ei) && !ds.has_interf_ve_via_faces(*vi, *ei)
                     && !ds.is_edge_degenerated(*ei)
@@ -72,19 +105,17 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
     /// OCCT PaveFiller_3.cxx L145-244: PerformEE
+    /// ✅ OCCT-aligned: BOPDS_Iterator::Initialize(EDGE, EDGE) — single pass.
+    ///   Cross-operand filtering via a_edge_count.
     pub(crate) fn perform_ee_bvh(&mut self, bvh_edges_a: &crate::bvh::DsBvh, bvh_edges_b: &crate::bvh::DsBvh) {
         use rayon::prelude::*;
-        // OCCT L147: FillShrunkData(TopAbs_EDGE, TopAbs_EDGE)
         self.fill_shrunk_data();
-        // OCCT L149: myIterator->Initialize(EDGE, EDGE) — rcad: BVH candidate_pairs
         let pairs = crate::bvh::DsBvh::candidate_pairs(bvh_edges_a, bvh_edges_b);
-        // OCCT L152-155: if (!iSize) return — rcad: empty pairs returns early.
-        // Filter pairs with OCCT L189-210 conditions:
-        //   L190-198: HasFlag → skip; L200-210: PaveBlocks empty → skip
-        //   L176-178: HasInterf → skip; L406-408: Degenerated → skip
         let ds = &self.ds;
+        let a_ec = ds.a_edge_count;
         let blocks: Vec<(usize, usize, [f64; 2], [f64; 2])> = pairs.par_iter()
             .filter(|&(ae, be)| {
+                if (*ae < a_ec) == (*be < a_ec) { return false; }
                 !ds.edge_has_flag(*ae) && !ds.edge_has_flag(*be)
                     && !ds.has_interf_ee(*ae, *be)
                     && !ds.is_edge_degenerated(*ae) && !ds.is_edge_degenerated(*be)
@@ -121,13 +152,18 @@ impl<'a> super::PaveFiller<'a> {
         ranges
     }
     /// OCCT PaveFiller_4.cxx: PerformVF (FillShrunkData + BVH pair iteration)
+    /// ✅ OCCT-aligned: BOPDS_Iterator::Initialize(VERTEX, FACE) — single pass.
+    ///   Cross-operand filtering: skip same-side pairs.
     pub(crate) fn perform_vf_bvh(&mut self, bvh_verts: &crate::bvh::DsBvh, bvh_faces: &crate::bvh::DsBvh) {
         use rayon::prelude::*;
         self.fill_shrunk_data();
         let pairs = crate::bvh::DsBvh::candidate_pairs(bvh_verts, bvh_faces);
         let ds = &self.ds;
+        let a_vc = ds.a_vertex_count;
+        let a_fc = ds.a_face_count;
         let filtered: Vec<(usize, usize)> = pairs.par_iter()
             .filter(|&(vi, fi)| {
+                if (*vi < a_vc) == (*fi < a_fc) { return false; }
                 // OCCT L189: IsSubShape — skip if vertex is sub-shape of face
                 //   rcad: no direct equivalent, but has_interf_vf covers already-interfered.
                 // OCCT L194: HasInterf(nV, nF) — skip if already interfered
@@ -213,6 +249,33 @@ impl<'a> super::PaveFiller<'a> {
             //   vertices only cover a patch, not the whole sphere volume).
             //   Cylinder/Cone: boundary vertices already span the full
             //   parametric extent �?no extra expansion needed.
+            if let Surface3::Sphere(s) = &f.surface {
+                let r = s.radius.abs();
+                aabb.expand_point(s.center + DVec3::splat(r));
+                aabb.expand_point(s.center - DVec3::splat(r));
+            }
+            let tol = f.geom_tol.max(1e-7);
+            aabb.min -= DVec3::splat(tol);
+            aabb.max += DVec3::splat(tol);
+            aabbs.push(aabb);
+        }
+        DsBvh::build(indices, aabbs)
+    }
+    /// ✅ OCCT-aligned: BOPDS_Iterator — combined face BVH (both operands).
+    pub(crate) fn build_ds_bvh_face_all(&self) -> crate::bvh::DsBvh {
+        use crate::bvh::{Aabb, DsBvh};
+        let n = self.ds.faces.len();
+        let mut indices = Vec::with_capacity(n);
+        let mut aabbs = Vec::with_capacity(n);
+        for fi in 0..n {
+            indices.push(fi);
+            let f = &self.ds.faces[fi];
+            let mut aabb = Aabb::empty();
+            for &vi in &f.boundary_verts {
+                if vi < self.ds.vertices.len() {
+                    aabb.expand_point(self.ds.vertices[vi].point);
+                }
+            }
             if let Surface3::Sphere(s) = &f.surface {
                 let r = s.radius.abs();
                 aabb.expand_point(s.center + DVec3::splat(r));
