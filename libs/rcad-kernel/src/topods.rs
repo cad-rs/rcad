@@ -357,6 +357,11 @@ impl BRep {
         before - self.tshapes.len()
     }
 
+    /// Count face TShapes in this BRep (for shifted-key pcurve lookup).
+    pub fn nb_faces(&self) -> usize {
+        self.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Face(_))).count()
+    }
+
     pub fn vertex(&self, r: ShapeRef) -> &TVertexData {
         match &*self.tshapes[r.index] {
             TShape::Vertex(v) => v,
@@ -499,6 +504,18 @@ pub trait BRepTool {
     /// OCCT L204-207: vertex orientation (TopAbs_INTERNAL for split-edge interior vertices).
     /// Default: Forward (non-INTERNAL). Override when INTERNAL vertex data is available.
     fn vertex_orientation(&self, _v: ShapeRef) -> Orientation { Orientation::Forward }
+    /// BRep_Tool::IsClosed(aE, aF) — true when the edge appears twice on the face
+    /// (periodic surface seam).  Checks for CurveOnClosedSurface representation.
+    fn is_edge_closed_on_face(&self, edge: ShapeRef, face: ShapeRef) -> bool {
+        self.curve_on_surface(edge, face).is_some()
+            && self.curve_on_surface_second(edge, face).is_some()
+    }
+    /// Retrieve the second pcurve for periodic surfaces (CurveOnClosedSurface).
+    /// Returns None for non-periodic faces or if only one pcurve exists.
+    fn curve_on_surface_second(&self, edge: ShapeRef, face: ShapeRef) -> Option<&(Curve2d, f64, f64)> {
+        let _ = (edge, face);
+        None
+    }
 }
 
 impl BRepTool for BRep {
@@ -541,6 +558,18 @@ impl BRepTool for BRep {
 
     fn curve_on_surface(&self, edge: ShapeRef, face: ShapeRef) -> Option<&(Curve2d, f64, f64)> {
         self.edge(edge).pcurves.get(&face.index)
+    }
+
+    fn is_edge_closed_on_face(&self, edge: ShapeRef, face: ShapeRef) -> bool {
+        let ed = self.edge(edge);
+        ed.representations.iter().any(|r| matches!(r, CurveRepresentation::CurveOnClosedSurface { face: f, .. } if *f == face.index))
+            || ed.pcurves.contains_key(&face.index)
+                && ed.pcurves.contains_key(&(face.index + self.nb_faces()))
+    }
+
+    fn curve_on_surface_second(&self, edge: ShapeRef, face: ShapeRef) -> Option<&(Curve2d, f64, f64)> {
+        let shifted = face.index + self.nb_faces();
+        self.edge(edge).pcurves.get(&shifted)
     }
 
     fn face_surface(&self, face: ShapeRef) -> Option<&Surface3> {
