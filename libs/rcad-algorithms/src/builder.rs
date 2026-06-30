@@ -3027,8 +3027,10 @@ impl<'a> BooleanBuilder<'a> {
             ShapeType::Shell => {
                 // OCCT L145-165: for each source SHELL, check myImages for shell images.
                 //   rcad: tmp_shells already contains shell face groups from
-                //   fill_images_containers_shells.
-                let tmp_shells = std::mem::take(&mut result.tmp_shells);
+                //   fill_images_containers_shells.  Clone to preserve for later use
+                //   (BuildResult(Solid) needs tmp_shells).  OCCT's myShape is never
+                //   consumed — shapes accumulate.  rcad's flat Vec<takes> broke this.
+                let tmp_shells = result.tmp_shells.clone();
                 for shell_faces in &tmp_shells {
                     let sf: Vec<topods::ShapeRef> = shell_faces.iter()
                         .filter_map(|&fi| result.face_refs.get(fi).copied())
