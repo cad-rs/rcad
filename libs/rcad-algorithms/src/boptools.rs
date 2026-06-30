@@ -254,11 +254,32 @@ pub fn fill_internals(
     }
 
     // === OCCT L1763-1775: aMSSolids — IndexedMap of V/E/F already in solids ===
-    //   rcad: collect all DS face indices already used by the result solids.
-    let mut owned_set = std::collections::HashSet::<usize>::new();
+    //   rcad: collect all DS face indices used by result solids AND their
+    //   boundary vertices/edges (OCCT: TopExp::MapShapes for V/E/F).
+    let mut a_ms_solids_vertices: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut a_ms_solids_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut a_ms_solids_faces: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for sdf in solid_ds_faces.iter() {
         for &fi in sdf {
-            owned_set.insert(fi);
+            a_ms_solids_faces.insert(fi);
+            if let Some(face) = ds.faces.get(fi) {
+                for &ei in &face.boundary_edges {
+                    a_ms_solids_edges.insert(ei);
+                    if let Some(edge) = ds.edges.get(ei) {
+                        a_ms_solids_vertices.insert(edge.start_vertex);
+                        a_ms_solids_vertices.insert(edge.end_vertex);
+                    }
+                }
+                for wire in &face.inner_boundary_edges {
+                    for &(ei, _) in wire {
+                        a_ms_solids_edges.insert(ei);
+                        if let Some(edge) = ds.edges.get(ei) {
+                            a_ms_solids_vertices.insert(edge.start_vertex);
+                            a_ms_solids_vertices.insert(edge.end_vertex);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -271,15 +292,36 @@ pub fn fill_internals(
     let mut a_l_parts: Vec<PartInfo> = Vec::new();
     for &(typ, idx) in parts {
         match typ {
-            0 | 1 | 2 => { // VERTEX, EDGE, FACE
-                // OCCT L1789-1805: check theImages for split images
+            0 => { // VERTEX
                 if let Some(img_list) = images.get(&idx) {
                     for &img_idx in img_list {
-                        if !owned_set.contains(&img_idx) {
+                        if !a_ms_solids_vertices.contains(&img_idx) {
                             a_l_parts.push(PartInfo { typ, idx: img_idx });
                         }
                     }
-                } else if !owned_set.contains(&idx) {
+                } else if !a_ms_solids_vertices.contains(&idx) {
+                    a_l_parts.push(PartInfo { typ, idx });
+                }
+            }
+            1 => { // EDGE
+                if let Some(img_list) = images.get(&idx) {
+                    for &img_idx in img_list {
+                        if !a_ms_solids_edges.contains(&img_idx) {
+                            a_l_parts.push(PartInfo { typ, idx: img_idx });
+                        }
+                    }
+                } else if !a_ms_solids_edges.contains(&idx) {
+                    a_l_parts.push(PartInfo { typ, idx });
+                }
+            }
+            2 => { // FACE
+                if let Some(img_list) = images.get(&idx) {
+                    for &img_idx in img_list {
+                        if !a_ms_solids_faces.contains(&img_idx) {
+                            a_l_parts.push(PartInfo { typ, idx: img_idx });
+                        }
+                    }
+                } else if !a_ms_solids_faces.contains(&idx) {
                     a_l_parts.push(PartInfo { typ, idx });
                 }
             }
@@ -295,108 +337,74 @@ pub fn fill_internals(
     }
 
     // === OCCT L1823-1865: classify parts against each solid ===
-    //   anINFaces: per-solid list of IN faces (for shell creation later).
+    //   (OCCT: iterate solids OUTER, parts INNER, remove classified parts from list)
+    //   anINFaces: per-solid map of IN faces (for shell creation later).
     let mut an_in_faces: Vec<Vec<usize>> = vec![Vec::new(); solids.len()];
-    // IN parts that are V/E and need direct embedding.
-    #[allow(unused)]
-    let mut in_vertices: Vec<Vec<usize>> = vec![Vec::new(); solids.len()];
-    #[allow(unused)]
-    let mut in_edges: Vec<Vec<usize>> = vec![Vec::new(); solids.len()];
 
-    // Compute centroid for each part for classification (OCCT uses ComputeStateByOnePoint).
-    fn part_centroid(typ: u8, idx: usize, ds: &crate::bopds::ds::DS) -> Option<glam::DVec3> {
-        match typ {
-            0 => { // VERTEX
-                if idx < ds.vertices.len() {
-                    Some(ds.vertices[idx].point)
-                } else { None }
-            }
-            1 => { // EDGE
-                if idx < ds.edges.len() {
-                    let e = &ds.edges[idx];
-                    if e.start_vertex < ds.vertices.len() && e.end_vertex < ds.vertices.len() {
-                        Some((ds.vertices[e.start_vertex].point
-                            + ds.vertices[e.end_vertex].point) * 0.5)
-                    } else { None }
-                } else { None }
-            }
-            2 => { // FACE
-                if idx < ds.faces.len() {
-                    let f = &ds.faces[idx];
-                    if !f.boundary_verts.is_empty() {
+    // OCCT L1825-1864: for each solid, classify remaining parts
+    for si in 0..solids.len() {
+        if solid_ds_faces[si].is_empty() {
+            continue;
+        }
+
+        // Compute centroid for each part (OCCT uses ComputeStateByOnePoint).
+        let mut i = 0usize;
+        while i < a_l_parts.len() {
+            let part = a_l_parts[i];
+            let pt = match part.typ {
+                0 => ds.vertices.get(part.idx).map(|v| v.point),
+                1 => ds.edges.get(part.idx).and_then(|e| {
+                    let p1 = ds.vertices.get(e.start_vertex)?;
+                    let p2 = ds.vertices.get(e.end_vertex)?;
+                    Some((p1.point + p2.point) * 0.5)
+                }),
+                2 => {
+                    let face = &ds.faces[part.idx];
+                    if !face.boundary_verts.is_empty() {
                         let mut sum = glam::DVec3::ZERO;
-                        for &vi in &f.boundary_verts {
-                            if vi < ds.vertices.len() {
-                                sum += ds.vertices[vi].point;
+                        for &vi in &face.boundary_verts {
+                            if let Some(v) = ds.vertices.get(vi) {
+                                sum += v.point;
                             }
                         }
-                        Some(sum / f.boundary_verts.len() as f64)
+                        Some(sum / face.boundary_verts.len() as f64)
                     } else { None }
-                } else { None }
-            }
-            _ => None,
-        }
-    }
-
-    // OCCT L1825-1864: iterate solids, classify parts
-    let mut i = 0usize;
-    while i < a_l_parts.len() {
-        let part = a_l_parts[i];
-        // Try each solid
-        let mut classified = false;
-        for si in 0..solids.len() {
-            let solid_faces = &solid_ds_faces[si];
-            if solid_faces.is_empty() {
-                continue;
-            }
-
-            // OCCT L1840-1841: ComputeStateByOnePoint
-            let pt = match part_centroid(part.typ, part.idx, ds) {
-                Some(p) => p,
-                None => { i += 1; classified = true; break; }
+                }
+                _ => None,
             };
+            let Some(pt) = pt else { i += 1; continue; };
 
             // OCCT L1841: BOPTools_AlgoTools::ComputeStateByOnePoint
-            let a_state = crate::classify::classify_point(pt, solid_faces, ds);
+            let a_state = crate::classify::classify_point(pt, &solid_ds_faces[si], ds);
 
             if a_state == crate::classify::Classification::In {
-                // OCCT L1844-1851: if FACE, collect into anINFaces
                 if part.typ == 2 { // FACE
                     if !an_in_faces[si].contains(&part.idx) {
                         an_in_faces[si].push(part.idx);
                     }
                 } else if part.typ == 0 { // VERTEX
-                    if !in_vertices[si].contains(&part.idx) {
-                        in_vertices[si].push(part.idx);
-                    }
+                    // OCCT L1853-1857: aPart.Orientation(TopAbs_INTERNAL);
+                    //   BRep_Builder().Add(aSd, aPart).  rcad equivalent:
+                    //   topods::TSolidData.internal_vertices.push(aPart)
+                    //   (not yet wired; TSolidData field added in topods.rs)
                 } else if part.typ == 1 { // EDGE
-                    if !in_edges[si].contains(&part.idx) {
-                        in_edges[si].push(part.idx);
-                    }
+                    // OCCT: same pattern → topods::TSolidData.internal_edges
                 }
-                // OCCT L1858: remove from aLParts
-                classified = true;
-                break;
+                // OCCT L1858: aLParts.Remove(itLP)
+                a_l_parts.swap_remove(i);
+            } else {
+                i += 1;
             }
-        }
-        if classified {
-            a_l_parts.swap_remove(i);
-        } else {
-            i += 1;
         }
     }
 
     // === OCCT L1867-1907: build INTERNAL shells from IN faces ===
-    //   For each solid with collected IN faces, group by edge connectivity
-    //   into shells and add to the solid.
     for si in 0..solids.len() {
-        // OCCT L1867-1871: collect IN faces for this solid
         let a_faces = &an_in_faces[si];
         if a_faces.is_empty() {
             continue;
         }
 
-        // Build a compound (flat group) from the faces
         // OCCT L1875-1882: MakeCompound + Add faces
         let all_faces: Vec<usize> = a_faces.clone();
 
@@ -411,59 +419,27 @@ pub fn fill_internals(
             }
 
             // OCCT L1894-1895: MakeShell
-            //   rcad: create a kernel Shell from the block's faces
             let mut a_shell = rcad_kernel::Shell { faces: Vec::new() };
 
-            // OCCT L1897-1903: add faces of the block to shell with INTERNAL orientation
+            // OCCT L1897-1903: add faces to shell with INTERNAL orientation
             for &fi in &cb.shapes {
-                // rcad: clone kernel face for this DS face index
-                //   (the kernel face should already exist in a solid's face)
-                //   For now, create a minimal placeholder face.
-                let mut f = rcad_kernel::Face {
-                    outer_wire: rcad_kernel::Wire { edges: Vec::new() },
-                    inner_wires: Vec::new(),
-                    normal: glam::DVec3::Z,
-                    triangles: Vec::new(),
-                    sample_point: None,
-                    mesh_dirty: true,
-                    surface_idx: None,
-                };
-                // Copy normal from DS face
-                if fi < ds.faces.len() {
-                    f.normal = ds.faces[fi].normal;
+                if let Some(ds_face) = ds.faces.get(fi) {
+                    let f = rcad_kernel::Face {
+                        outer_wire: rcad_kernel::Wire { edges: Vec::new() },
+                        inner_wires: Vec::new(),
+                        normal: ds_face.normal,
+                        triangles: Vec::new(),
+                        sample_point: None,
+                        mesh_dirty: true,
+                        surface_idx: None,
+                    };
+                    a_shell.faces.push(f);
                 }
-                a_shell.faces.push(f);
             }
 
             // OCCT L1905: BRep_Builder().Add(aSd, aShell)
             if let Some(solid) = solids.get_mut(si) {
                 solid.shells.push(a_shell);
-            }
-        }
-
-        // Embed V/E directly into the first shell/face of the solid
-        // (OCCT L1853-1857: aPart.Orientation(TopAbs_INTERNAL); BRep_Builder().Add(aSd, aPart))
-        // rcad: V/E are stored on the first face's inner_wires as markers.
-        for &vi in &in_vertices[si] {
-            if let Some(first_face) = solids.get_mut(si)
-                .and_then(|s| s.shells.first_mut())
-                .and_then(|sh| sh.faces.first_mut())
-            {
-                let pt = ds.vertices.get(vi).map(|v| v.point).unwrap_or_default();
-                // Add a single-edge degenerate wire as a vertex placeholder
-                let v_brep = rcad_kernel::Vertex { point: pt };
-                // (kernel rep stores internal vertices differently)
-                let _ = v_brep;
-            }
-        }
-        for &ei in &in_edges[si] {
-            if let Some(first_face) = solids.get_mut(si)
-                .and_then(|s| s.shells.first_mut())
-                .and_then(|sh| sh.faces.first_mut())
-            {
-                let _ = ei;
-                // Edge embedding into kernel solid requires edge refs
-                // Placeholder: edge is embedded as inner wire marker
             }
         }
     }
@@ -547,7 +523,7 @@ pub fn make_container(shape_type: u8, brep: &mut rcad_kernel::topods::BRep) -> r
     let shape: std::sync::Arc<TShape> = match shape_type {
         0 => std::sync::Arc::new(TShape::Compound(Vec::new())),
         1 => std::sync::Arc::new(TShape::CompSolid(Vec::new())),
-        2 => std::sync::Arc::new(TShape::Solid(TSolidData { shells: Vec::new() })),
+        2 => std::sync::Arc::new(TShape::Solid(TSolidData { shells: Vec::new(), internal_vertices: Vec::new(), internal_edges: Vec::new() })),
         3 => std::sync::Arc::new(TShape::Shell(TShellData { faces: Vec::new() })),
         4 => std::sync::Arc::new(TShape::Wire(TWireData { edges: Vec::new() })),
         _ => return ShapeRef::new(0),

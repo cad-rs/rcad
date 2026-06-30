@@ -123,6 +123,10 @@ pub struct TShellData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TSolidData {
     pub shells: Vec<ShapeRef>,
+    /// INTERNAL vertices embedded in the solid (OCCT: sub-shapes of TopoDS_Solid).
+    pub internal_vertices: Vec<ShapeRef>,
+    /// INTERNAL edges embedded in the solid (OCCT: sub-shapes of TopoDS_Solid).
+    pub internal_edges: Vec<ShapeRef>,
 }
 
 /// BRep top-level shape container — all TShapes in a single pool with shared Arc ownership.
@@ -176,7 +180,7 @@ impl BRep {
 
     pub fn add_tsolid(&mut self, shells: Vec<ShapeRef>) -> ShapeRef {
         let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Solid(TSolidData { shells })));
+        self.tshapes.push(Arc::new(TShape::Solid(TSolidData { shells, internal_vertices: Vec::new(), internal_edges: Vec::new() })));
         ShapeRef::new(index)
     }
 
