@@ -1056,7 +1056,9 @@ impl ResultBuilder {
                     else { ShapeRef::with_orientation(idx, orient) }
                 }).collect();
                 if !iw_edges.is_empty() {
-                    inner_wires.push(t.add_twire(iw_edges));
+                    let w = t.add_twire(iw_edges);
+                    t.wire_mut(w).closed = true;
+                    inner_wires.push(w);
                 }
             }
             // Internal wire edges
@@ -1067,7 +1069,9 @@ impl ResultBuilder {
                     else { ShapeRef::with_orientation(idx, orient) }
                 }).collect();
                 if iw.len() >= 2 {
-                    inner_wires.push(t.add_twire(iw));
+                    let w = t.add_twire(iw);
+                    t.wire_mut(w).closed = true;
+                    inner_wires.push(w);
                 }
             }
 
@@ -1475,7 +1479,8 @@ mod tests {
                             let orient = if we.forward { Orientation::Forward } else { Orientation::Reversed };
                             ShapeRef::with_orientation(e_map[we.idx].index, orient)
                         }).collect();
-                        let outer_wire = t.add_twire(outer_edges);
+            let outer_wire = t.add_twire(outer_edges);
+            t.wire_mut(outer_wire).closed = true;
                         let inner_wires: Vec<ShapeRef> = face.inner_wires.iter().map(|w| {
                             let iwe: Vec<ShapeRef> = w.edges.iter().map(|we| {
                                 let orient = if we.forward { Orientation::Forward } else { Orientation::Reversed };
