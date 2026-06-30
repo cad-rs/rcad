@@ -747,6 +747,16 @@ impl BRepBuilder {
         brep.edge_mut(edge).degenerated = flag;
     }
 
+    /// OCCT BRep_Builder::Add(aW).Closed(aW) — mark wire as closed.
+    pub fn close_wire(&mut self, brep: &mut BRep, wire: ShapeRef) {
+        brep.wire_mut(wire).closed = true;
+    }
+
+    /// OCCT BRep_Builder::Add(aShell).Closed(aShell) — mark shell as closed.
+    pub fn close_shell(&mut self, brep: &mut BRep, shell: ShapeRef) {
+        brep.shell_mut(shell).closed = true;
+    }
+
     /// Make a wire (empty container).
     pub fn make_wire(&mut self, brep: &mut BRep) -> ShapeRef {
         brep.add_twire(vec![])
