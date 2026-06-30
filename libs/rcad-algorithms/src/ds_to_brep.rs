@@ -46,12 +46,29 @@ fn populate_brep(ds: &crate::bopds::ds::DS, br: &mut BRep) -> (Vec<ShapeRef>, Ve
         let e = br.add_tedge(curve_idx, sv, ev, edge.t_range);
         let ed = br.edge_mut(e);
         ed.degenerated = ds.is_edge_degenerated(ei);
+        ed.same_parameter = true;
+        ed.same_range = true;
+        ed.tolerance = edge.geom_tol;
+        if let Some(ci) = curve_idx {
+            ed.representations.push(CurveRepresentation::Curve3D { curve: ci, location: 0 });
+        }
         for rep in &edge.face_reps {
             ed.pcurves.insert(rep.face_idx,
                 (rep.pcurve.clone(), rep.start_param, rep.end_param));
+            ed.representations.push(CurveRepresentation::CurveOnSurface {
+                face: rep.face_idx,
+                pcurve: rep.pcurve.clone(),
+                range: [rep.start_param, rep.end_param],
+            });
             if let Some(ref pc2) = rep.pcurve2 {
                 let shifted_fi = rep.face_idx + ds.faces.len();
                 ed.pcurves.insert(shifted_fi, (pc2.clone(), rep.start_param, rep.end_param));
+                ed.representations.push(CurveRepresentation::CurveOnClosedSurface {
+                    face: rep.face_idx,
+                    pcurve1: rep.pcurve.clone(),
+                    pcurve2: pc2.clone(),
+                    range: [rep.start_param, rep.end_param],
+                });
             }
         }
         ed.vertex_params = edge.vertex_params.clone();
@@ -72,14 +89,28 @@ fn populate_brep(ds: &crate::bopds::ds::DS, br: &mut BRep) -> (Vec<ShapeRef>, Ve
         ic_edge_refs[ci] = Some(e);
         let ed = br.edge_mut(e);
         let face_idxs = find_face_idxs_for_curve(ds, ci);
+        ed.same_parameter = true;
+        ed.same_range = true;
+        ed.tolerance = ic.geom_tol;
+        ed.representations.push(CurveRepresentation::Curve3D { curve: curve_idx, location: 0 });
         if let Some(ref pc) = ic.pcurve_on_a {
             if face_idxs[0] != usize::MAX {
                 ed.pcurves.insert(face_idxs[0], (pc.clone(), ic.t_range[0], ic.t_range[1]));
+                ed.representations.push(CurveRepresentation::CurveOnSurface {
+                    face: face_idxs[0],
+                    pcurve: pc.clone(),
+                    range: [ic.t_range[0], ic.t_range[1]],
+                });
             }
         }
         if let Some(ref pc) = ic.pcurve_on_b {
             if face_idxs[1] != usize::MAX {
                 ed.pcurves.insert(face_idxs[1], (pc.clone(), ic.t_range[0], ic.t_range[1]));
+                ed.representations.push(CurveRepresentation::CurveOnSurface {
+                    face: face_idxs[1],
+                    pcurve: pc.clone(),
+                    range: [ic.t_range[0], ic.t_range[1]],
+                });
             }
         }
         ed.degenerated = false;
