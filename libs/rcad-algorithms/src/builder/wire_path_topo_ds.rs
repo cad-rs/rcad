@@ -173,10 +173,15 @@ pub(crate) fn walk_path_extract_wires(
 
     for _iter in 0..max_iter {
         // OCCT L394-403: do not escape through edge from which you enter.
+        // OCCT L580: aEOuta.IsSame(aEL) — handle identity + orientation.
         if edge_seq.len() == 1 {
             let same_edge = match (&segments[edge_seq[0]].source, &segments[ci].source) {
-                (WireEdgeSourceTopoDS::DsEdge(ea), WireEdgeSourceTopoDS::DsEdge(eb)) => ea.index == eb.index,
-                (WireEdgeSourceTopoDS::IntersectionCurve(ca), WireEdgeSourceTopoDS::IntersectionCurve(cb)) => ca.index == cb.index,
+                (WireEdgeSourceTopoDS::DsEdge(ea), WireEdgeSourceTopoDS::DsEdge(eb)) => {
+                    ea.index == eb.index && segments[edge_seq[0]].orientation == segments[ci].orientation
+                }
+                (WireEdgeSourceTopoDS::IntersectionCurve(ca), WireEdgeSourceTopoDS::IntersectionCurve(cb)) => {
+                    ca.index == cb.index && segments[edge_seq[0]].orientation == segments[ci].orientation
+                }
                 (WireEdgeSourceTopoDS::SeamEdge, WireEdgeSourceTopoDS::SeamEdge) => true,
                 _ => false,
             };
@@ -428,7 +433,13 @@ pub(crate) fn split_block(
                 && (segments[ei.seg_idx].start_vertex.index != segments[ei.seg_idx].end_vertex.index
                     || segments[ei.seg_idx].is_closed_on_face)
             {
+                let pre_wires = wires.len();
                 walk_path_extract_wires(ei.seg_idx, segments, smart_map, wires, tool);
+                let face_ok = segments.len() > 0 && segments[0].face.index == 32
+                    && std::env::var("RCAD_DUMP_FACE").is_ok();
+                if face_ok {
+                    eprintln!("[DBG32] walk si={} result: wires={}->{}", ei.seg_idx, pre_wires, wires.len());
+                }
             }
         }
     }
