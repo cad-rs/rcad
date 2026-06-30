@@ -22,6 +22,8 @@ impl Orientation {
 /// OCCT TopAbs_ShapeEnum
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ShapeType {
+    /// TopAbs_SHAPE — generic shape (null/unknown).
+    Shape,
     Vertex,
     Edge,
     Wire,
@@ -44,6 +46,9 @@ pub struct ShapeRef {
 }
 
 impl ShapeRef {
+    /// OCCT TopoDS_Shape::IsNull — null/uninitialized shape.
+    pub const NULL: ShapeRef = ShapeRef { index: usize::MAX, orientation: Orientation::Forward, location: 0 };
+
     pub const fn new(index: usize) -> Self {
         Self { index, orientation: Orientation::Forward, location: 0 }
     }
@@ -52,6 +57,29 @@ impl ShapeRef {
     }
     pub const fn with_location(index: usize, orientation: Orientation, location: u32) -> Self {
         Self { index, orientation, location }
+    }
+    /// OCCT TopoDS_Shape::IsNull — true if this ShapeRef is null/uninitialized.
+    pub const fn is_null(&self) -> bool {
+        self.index == usize::MAX
+    }
+    /// OCCT TopoDS_Shape::IsSame — same TShape (ignores Location and Orientation).
+    pub const fn is_same(&self, other: &ShapeRef) -> bool {
+        self.index == other.index
+    }
+    /// OCCT TopoDS_Shape::IsPartner — same TShape AND same Location.
+    pub const fn is_partner(&self, other: &ShapeRef) -> bool {
+        self.index == other.index && self.location == other.location
+    }
+    /// OCCT TopoDS_Shape::IsEqual — same TShape, Location, AND Orientation.
+    pub const fn is_equal(&self, other: &ShapeRef) -> bool {
+        self.index == other.index
+            && self.location == other.location
+            && self.orientation as u8 == other.orientation as u8
+    }
+    /// OCCT TopoDS_Shape::ShapeType — returns shape type from BRep.
+    pub fn shape_type(&self, brep: &BRep) -> ShapeType {
+        if self.is_null() { return ShapeType::Shape; }
+        brep.tshapes.get(self.index).map_or(ShapeType::Shape, |ts| ts.shape_type())
     }
 }
 

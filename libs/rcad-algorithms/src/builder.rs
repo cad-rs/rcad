@@ -3075,6 +3075,7 @@ impl<'a> BooleanBuilder<'a> {
     ///   rcad: thin wrapper mapping topods::ShapeType to builder::types::ShapeType.
     fn build_result_occt(&self, the_type: topods::ShapeType, result: &mut ResultBuilder, t: &mut topods::BRep) {
         let shape_type = match the_type {
+            topods::ShapeType::Shape => unreachable!("ShapeType::Shape is a null sentinel, never passed to build_result"),
             topods::ShapeType::Vertex => ShapeType::Vertex,
             topods::ShapeType::Edge => ShapeType::Edge,
             topods::ShapeType::Wire => ShapeType::Wire,
