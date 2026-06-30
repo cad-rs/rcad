@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+﻿use std::collections::{HashMap, HashSet, VecDeque};
 use indexmap::IndexMap;
 use glam::DVec2; use glam::DVec3;
 use rcad_kernel::geom::*;
@@ -9,17 +9,16 @@ use super::wire_path::{pc_parameter_range, refine_angles, walk_path_extract_wire
 use crate::builder::point_in_polygon_2d;
 use super::angle_2d::{dir_to_angle, angle_2d, clock_wise_angle};
 
-/// ✅ OCCT-aligned: Angle2D for seam edges (BOPAlgo_WireSplitter_1.cxx L768-840).
+/// 鉁?OCCT-aligned: Angle2D for seam edges (BOPAlgo_WireSplitter_1.cxx L768-840).
 ///
 /// OCCT takes the edge's pcurve via BRep_Tool::CurveOnSurface, the vertex
 /// parameter via BRep_Tool::Parameter, and calls Angle2D(aV, aE, aF, aGAS, bIsIN).
 /// rcad equivalent: construct a Line pcurve along the surface isoline at the
 /// parametric seam, then call angle_2d (which mirrors OCCT's dt/tol/step logic).
-/// Returns (tangent_start, tangent_end) where both are the pcurve direction.
-// ═══════════════════════════════════════════════════════════════
-// ■ UV tangent angle computation
-// ═══════════════════════════════════════════════════════════════
-/// ✅ OCCT-aligned Angle2D for DsEdge segments.
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
+// 鈻?UV tangent angle computation
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
+/// 鉁?OCCT-aligned Angle2D for DsEdge segments.
 /// Evaluates the 3D curve at a micro-step near each vertex (OCCT
 /// BOPAlgo_WireSplitter_1.cxx L768-840).  Maps both points to UV space
 /// via world_to_uv, computes the direction.  Falls back to endpoint UV
@@ -66,7 +65,7 @@ pub(crate) fn edge_uv_tangent(
     }
 }
 
-/// ✅ OCCT-aligned: micro-step Angle2D for a 3D curve mapped to face UV.
+/// 鉁?OCCT-aligned: micro-step Angle2D for a 3D curve mapped to face UV.
 /// OCCT BOPAlgo_WireSplitter_1.cxx L768-840.  Evaluates the 3D curve at
 /// t and t+dt, maps to UV via world_to_uv, returns UV direction angle.
 pub(crate) fn edge_angle_2d(
@@ -75,7 +74,7 @@ pub(crate) fn edge_angle_2d(
 ) -> Option<f64> {
     let range = (domain[1] - domain[0]).abs();
     if range < 1e-15 { return None; }
-    // OCCT-aligned: Angle2D via 3D curve → UV mapping (WireSplitter_1.cxx L768-854).
+    // OCCT-aligned: Angle2D via 3D curve 鈫?UV mapping (WireSplitter_1.cxx L768-854).
     //   Unlike angle_2d.rs which takes a pcurve (Curve2d), this function evaluates
     //   the 3D curve and maps to UV via world_to_uv, then computes the UV tangent.
     let a_tol_2d = 2.0 * super::angle_2d::tolerance_2d(geom_tol, surface, None);
@@ -121,7 +120,7 @@ pub(crate) fn edge_angle_2d(
 
 /// OCCT BOPTools_AlgoTools2D::IsEdgeIsoline (BOPTools_AlgoTools2D.cxx L669-700).
 /// Checks if an edge's pcurve follows a U or V isoparametric line of the face surface.
-/// Returns (is_uiso, is_v_iso) — true when the pcurve tangent at midpoint is
+/// Returns (is_uiso, is_v_iso) 鈥?true when the pcurve tangent at midpoint is
 /// aligned with the U or V parametric direction respectively.
 pub(crate) fn is_edge_isoline(pcurve: &Curve2d, range: [f64; 2]) -> (bool, bool) {
     let t_mid = (range[0] + range[1]) * 0.5;
@@ -222,7 +221,7 @@ pub(crate) fn are_verts_coincident(ds: &DS, vi: usize, vj: usize) -> bool {
 ///   3. Irregular block ( degree>2 ): SmartMap + Path
 // Returns (wires, internal_wires, vertex_positions) where vertex_positions
 // maps canonical vertex indices (>= ds.vertices.len()) to their 3D position.
-/// ✅ OCCT-aligned: build canonical vertex map so different DS vertex indices
+/// 鉁?OCCT-aligned: build canonical vertex map so different DS vertex indices
 /// at the same 3D position map to one canonical index (OCCT BRep shares
 /// TopoDS_Vertex).  Skips degenerate virtual-end vertices (>= ds.vertices.len()).
 /// Extracted so the BuilderFace-level PerformShapesToAvoid and the WireSplitter
@@ -243,7 +242,7 @@ pub(crate) fn build_vi_to_canon(segments: &[WireSegment], ds: &DS) -> Vec<usize>
     vi_to_canon
 }
 
-/// ✅ OCCT-aligned: physical-edge identity for a WireSegment.
+/// 鉁?OCCT-aligned: physical-edge identity for a WireSegment.
 /// Collapses FWD/REV of one physical edge (same source + same unordered
 /// canonical endpoint pair) to ONE id, while keeping seam sub-edges that
 /// share DsEdge(ei) but span different vertex pairs distinct.  This is the
@@ -263,7 +262,7 @@ pub(crate) fn physical_edge_id(seg: &WireSegment, vi_to_canon: &[usize], ds: &DS
     (tag, idx, lo, hi)
 }
 
-/// ✅ OCCT-aligned: WireSplitter / PerformLoops (BOPAlgo_WireSplitter).
+/// 鉁?OCCT-aligned: WireSplitter / PerformLoops (BOPAlgo_WireSplitter).
 ///   OCCT BOPAlgo_WireSplitter organizes edges into ordered closed wires
 ///   by tracing 2D pcurves.  rcad: SmartMap-based edge-to-wire assembly
 ///   using canonical vertex indices and canonicalized edge connectivity.
@@ -278,7 +277,7 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
     // indices at the same 3D position map to a single canonical vertex.
     // OCCT BRep shares TopoDS_Vertex objects; rcad DS may assign different
     // indices to the same position (seam pole vs IC endpoint at pole).
-    // ✅ OCCT-aligned: vi_to_canon built skipping deg edges (build_vi_to_canon).
+    // 鉁?OCCT-aligned: vi_to_canon built skipping deg edges (build_vi_to_canon).
     let vi_to_canon: Vec<usize> = build_vi_to_canon(segments, ds);
     // Rebuild canon_vertices positions indexed by canonical id (deg_end_canon
     // below pushes new offset positions onto this vector).
@@ -317,8 +316,8 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
     let mut duplicate_segs: HashSet<usize> = HashSet::new();
         for (si, seg) in segments.iter().enumerate() {
             if avoided.contains(&si) { continue; } // OCCT: avoided edges not in WireSplitter input
-        // ✅ OCCT-aligned: degenerate self-loop seam edges (sphere pole) appear twice in
-        //   the WES (FORWARD+REVERSED) like any closed edge — not duplicates.  OCCT's
+        // 鉁?OCCT-aligned: degenerate self-loop seam edges (sphere pole) appear twice in
+        //   the WES (FORWARD+REVERSED) like any closed edge 鈥?not duplicates.  OCCT's
         //   bIsClosed guard (L148: !bIsClosed) preserves the second entry in aMS.
         if seg.is_closed_on_face && seg.start_vertex == seg.end_vertex { continue; }
         let variant = match &seg.source {
@@ -331,7 +330,7 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
         }
     }
 
-    // Build vertex→segments adjacency using CANONICAL vertex indices
+    // Build vertex鈫抯egments adjacency using CANONICAL vertex indices
     let mut vert_to_segs: HashMap<usize, Vec<usize>> = HashMap::new();
     for (si, seg) in segments.iter().enumerate() {
         if avoided.contains(&si) { continue; } // OCCT: avoided edges get no adjacency (not in aWES)
@@ -341,7 +340,7 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
         vert_to_segs.entry(sv).or_default().push(si);
         vert_to_segs.entry(ev).or_default().push(si);
     }
-    // ✅ OCCT-aligned: DoSplitSEAMOnFace equivalent — reroute seam_rev
+    // 鉁?OCCT-aligned: DoSplitSEAMOnFace equivalent 鈥?reroute seam_rev
     //   through deg_end_canon vertices + remove redundant deg directions.
     //   This makes the seam+deg block regular (1 in + 1 out per vertex).
     let mut vertex_positions: HashMap<usize, DVec3> = HashMap::new();
@@ -360,7 +359,7 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
     {
         let n = blocks.len();
         let mut block_merged = vec![false; n];
-        // Build vertex→block index map using RAW vertex indices
+        // Build vertex鈫抌lock index map using RAW vertex indices
         let mut v_to_b: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
         for (bi, b) in blocks.iter().enumerate() {
             for &si in b {
@@ -425,10 +424,10 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
             eprintln!("[BLK] fi={} bi={} n={}", face_idx, bi, block.len());
         }
 
-        // ✅ OCCT-aligned: aMS add/remove cycle (WireSplitter_1.cxx L149-152).
+        // 鉁?OCCT-aligned: aMS add/remove cycle (WireSplitter_1.cxx L149-152).
         //   OCCT: if (!aMS.Add(aE) && !bIsClosed) { aMS.Remove(aE); }
-        //   Edges appearing exactly once → in aMS → IsInside=false (boundary).
-        //   Edges appearing twice (FWD+REV) → removed from aMS → IsInside=true (interior).
+        //   Edges appearing exactly once 鈫?in aMS 鈫?IsInside=false (boundary).
+        //   Edges appearing twice (FWD+REV) 鈫?removed from aMS 鈫?IsInside=true (interior).
         //   rcad: key by (source_type, canonical_idx) for identity.
         let mut a_ms: std::collections::HashSet<(u8, usize)> = std::collections::HashSet::new();
         for &si in block {
@@ -446,10 +445,10 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
             }
         }
 
-        // ✅ OCCT-aligned: Build SmartMap (WireSplitter_1.cxx L154-220).
+        // 鉁?OCCT-aligned: Build SmartMap (WireSplitter_1.cxx L154-220).
         //    Always built first, used for BOTH regularity check and Path walk.
         let mut smart_map: IndexMap<usize, Vec<EdgeInfo>> = IndexMap::new();
-        // OCCT L131: aVertMap — per-vertex closed edge flag (built inline)
+        // OCCT L131: aVertMap 鈥?per-vertex closed edge flag (built inline)
         let mut vert_map: HashMap<usize, bool> = HashMap::new();
         for &si in block {
             let seg = &segments[si];
@@ -464,9 +463,9 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
             };
             if !has_pcurve { continue; }
 
-            // ✅ OCCT-aligned: IsInside computed from aMS state (L310).
-            //   Edges present in aMS (appeared once) → boundary (IsInside=false).
-            //   Edges absent from aMS (appeared twice) → interior (IsInside=true).
+            // 鉁?OCCT-aligned: IsInside computed from aMS state (L310).
+            //   Edges present in aMS (appeared once) 鈫?boundary (IsInside=false).
+            //   Edges absent from aMS (appeared twice) 鈫?interior (IsInside=true).
             let canon_key = match &seg.source {
                 WireEdgeSource::DsEdge(ei) => (0u8, *ei),
                 WireEdgeSource::IntersectionCurve(ci) => (1u8, *ci),
@@ -488,21 +487,21 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
                     if ds.edges.get(*ei).map_or(false, |e| e.pave_blocks.len() > 1)));
 
             // OCCT L167-172: ONE EdgeInfo per vertex, in_flag from vertex orientation.
-            // OCCT TopoDS_Edge: first vertex → FORWARD (out), second → REVERSED (in).
+            // OCCT TopoDS_Edge: first vertex 鈫?FORWARD (out), second 鈫?REVERSED (in).
             // rcad: regardless of forward flag, start_vertex is geometrically where the
             // edge begins (OUT) and end_vertex is where it ends (IN).  Using forward flag
             // would create imbalanced IN/OUT for FWD+REV section edge pairs (v5 got 2 OUT,
             // v3 got 2 IN), breaking Path walking at irregular vertices.
-            let sv_in = false;  // start_vertex → FORWARD/out
+            let sv_in = false;  // start_vertex 鈫?FORWARD/out
             smart_map.entry(seg.start_vertex).or_default().push(EdgeInfo {
                 seg_idx: si, passed: false, in_flag: sv_in, is_inside, is_circle_arc, angle: 0.0,
             });
-            let ev_in = true;   // end_vertex → REVERSED/in
+            let ev_in = true;   // end_vertex 鈫?REVERSED/in
             smart_map.entry(seg.end_vertex).or_default().push(EdgeInfo {
                 seg_idx: si, passed: false, in_flag: ev_in, is_inside, is_circle_arc, angle: 0.0,
             });
 
-            // OCCT L184-194: aVertMap — bind bIsClosed per vertex
+            // OCCT L184-194: aVertMap 鈥?bind bIsClosed per vertex
             let e_sv = vert_map.entry(seg.start_vertex).or_default();
             *e_sv = *e_sv || b_is_closed;
             let e_ev = vert_map.entry(seg.end_vertex).or_default();
@@ -514,7 +513,7 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
         for (v, infos) in smart_map.iter_mut() {
             for ei in infos.iter_mut() {
                 let seg = &segments[ei.seg_idx];
-                // ✅ OCCT-aligned: BRep_Tool::Parameter(aV, aE) — use vertex_params for DSEdges.
+                // 鉁?OCCT-aligned: BRep_Tool::Parameter(aV, aE) 鈥?use vertex_params for DSEdges.
                 let t_v = match &seg.source {
                     WireEdgeSource::DsEdge(ei) => {
                         ds.edges[*ei].vertex_param(*v).unwrap_or_else(|| {
@@ -557,7 +556,7 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
             }
         }
 
-        // ✅ OCCT-aligned: regularity check (L222-280) from SmartMap IN/OUT.
+        // 鉁?OCCT-aligned: regularity check (L222-280) from SmartMap IN/OUT.
         //   Step 1 (L222-260): each vertex 1 IN + 1 OUT. Step 2 (L261-280):
         //   no duplicate edges.
         let mut is_regular = !block.iter().any(|&si| duplicate_segs.contains(&si));
@@ -573,12 +572,12 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
         }
 
         if is_regular {
-            // OCCT L282-290: MakeWire — extract simple wire (no angles needed).
+            // OCCT L282-290: MakeWire 鈥?extract simple wire (no angles needed).
             if let Some(wire) = build_regular_wire(block, segments, &vert_to_segs, &vi_to_canon, &deg_end_canon) {
                 wires.push(wire);
             }
         } else {
-            // OCCT L292-358: SplitBlock — refine angles + path walk for irregular blocks.
+            // OCCT L292-358: SplitBlock 鈥?refine angles + path walk for irregular blocks.
             split_block(block, segments, &mut smart_map, ds, face_idx, &mut wires);
             if std::env::var("RCAD_DEBUG_IC").is_ok() {
                 eprintln!("[BLK_WIRES] fi={} bi={} n_wires_in_block={}", face_idx, bi,
@@ -590,7 +589,7 @@ pub(crate) fn build_closed_wires(segments: &mut Vec<WireSegment>, ds: &DS, face_
     (wires, internal_wires, vertex_positions)
 }
 
-/// ✅ OCCT-aligned: BOPTools_AlgoTools::MakeConnexityBlocks(start_elements, VERTEX, EDGE).
+/// 鉁?OCCT-aligned: BOPTools_AlgoTools::MakeConnexityBlocks(start_elements, VERTEX, EDGE).
 ///   Groups segments into connected components (blocks) by shared vertices.
 ///   Each block is a subset of segments that form a connected sub-graph.
 pub(crate) fn make_connexity_blocks(
@@ -629,7 +628,7 @@ pub(crate) fn make_connexity_blocks(
     blocks
 }
 
-/// ✅ OCCT-aligned: SplitBlock (BOPAlgo_WireSplitter.cxx L292-358).
+/// 鉁?OCCT-aligned: SplitBlock (BOPAlgo_WireSplitter.cxx L292-358).
 ///   Handles irregular blocks (vertices with degree > 2) by refining edge
 ///   angles at multi-connected vertices, then walking paths through the
 ///   SmartMap to extract closed wires.  OCCT parallelizes per block;
@@ -642,11 +641,11 @@ pub(crate) fn split_block(
     face_idx: usize,
     wires: &mut Vec<Vec<usize>>,
 ) {
-    // OCCT L327: RefineAngles — compute turning angles at each vertex.
+    // OCCT L327: RefineAngles 鈥?compute turning angles at each vertex.
     refine_angles(smart_map, segments, ds, face_idx);
     dbg_smartmap!("split_block", face_idx, smart_map);
 
-    // OCCT L331-358: Path walk — iterate all vertices by insertion order,
+    // OCCT L331-358: Path walk 鈥?iterate all vertices by insertion order,
     //   for each unpassed OUT entry start a new Path walk.
     let order_keys: Vec<usize> = smart_map.keys().copied().collect();
     for &v in &order_keys {
@@ -663,7 +662,7 @@ pub(crate) fn split_block(
     }
 }
 
-/// ✅ OCCT-aligned: Regular block (degree=2) wire build.
+/// 鉁?OCCT-aligned: Regular block (degree=2) wire build.
 pub(crate) fn build_regular_wire(
     block: &[usize],
     segments: &[WireSegment],
@@ -719,10 +718,10 @@ pub(crate) struct EdgeInfo {
     pub(crate) angle: f64,
 }
 
-// (SmartMap + Path moved into build_closed_wires — OCCT L154-358)
+// (SmartMap + Path moved into build_closed_wires 鈥?OCCT L154-358)
 
 // ====================================================================
-// ✅ OCCT-aligned: PerformShapesToAvoid (BOPAlgo_BuilderFace.cxx L152-235)
+// 鉁?OCCT-aligned: PerformShapesToAvoid (BOPAlgo_BuilderFace.cxx L152-235)
 //
 // Face-level (BuilderFace) pass over the whole segment set (= myShapes).
 // Builds the vertex->edge ancestor map (aMVE) using physical-edge identity
@@ -732,20 +731,20 @@ pub(crate) struct EdgeInfo {
 // Returns the set of avoided SEGMENT indices (both FWD+REV of each avoided
 // physical edge).  The caller excludes these from the WireSplitter input.
 // ====================================================================
-/// ✅ OCCT-aligned: PerformShapesToAvoid (BOPAlgo_BuilderFace.cxx L152-235).
-/// Physical edge identifier — groups WireSegments that belong to the same
+/// 鉁?OCCT-aligned: PerformShapesToAvoid (BOPAlgo_BuilderFace.cxx L152-235).
+/// Physical edge identifier 鈥?groups WireSegments that belong to the same
 /// source DS edge (or intersection curve).  OCCT-aligned: TopoDS_Edge identity.
 pub(crate) type Pid = (u8, usize, usize, usize);
 
-/// Build PID→segment and PID→endpoint maps from WireSegments.
+/// Build PID鈫抯egment and PID鈫抏ndpoint maps from WireSegments.
 /// OCCT: segments grouped by their TopoDS_Edge identity.
 pub(crate) fn build_pid_maps(
     segments: &[WireSegment],
     vi_to_canon: &[usize],
     ds: &DS,
 ) -> (
-    std::collections::HashMap<Pid, Vec<usize>>,       // pid → segment indices
-    std::collections::HashMap<Pid, (usize, usize)>,   // pid → (canon_start, canon_end)
+    std::collections::HashMap<Pid, Vec<usize>>,       // pid 鈫?segment indices
+    std::collections::HashMap<Pid, (usize, usize)>,   // pid 鈫?(canon_start, canon_end)
 ) {
     let mut pid_segs: std::collections::HashMap<Pid, Vec<usize>> = std::collections::HashMap::new();
     let mut pid_endpoints: std::collections::HashMap<Pid, (usize, usize)> = std::collections::HashMap::new();
@@ -775,9 +774,9 @@ pub(crate) fn expand_avoided_pids(
     segs
 }
 
-/// ✅ OCCT-aligned: PerformShapesToAvoid (BOPAlgo_BuilderFace.cxx L152-235).
+/// 鉁?OCCT-aligned: PerformShapesToAvoid (BOPAlgo_BuilderFace.cxx L152-235).
 /// Returns the set of physical edge PIDs to avoid (OCCT: myShapesToAvoid)
-/// AND the pid→segment map for the caller to expand PIDs to segment indices.
+/// AND the pid鈫抯egment map for the caller to expand PIDs to segment indices.
 pub(crate) fn perform_shapes_to_avoid(
     segments: &[WireSegment],
     vi_to_canon: &[usize],
@@ -803,13 +802,13 @@ pub(crate) fn perform_shapes_to_avoid(
         }
         for (&canon_vi, ids) in &anc {
             let a_nb_e = ids.len();
-            // OCCT L204-207: INTERNAL vertices → skip (vertex inside face,
-            //   not on boundary — dangling edges at internal vertices are valid).
+            // OCCT L204-207: INTERNAL vertices 鈫?skip (vertex inside face,
+            //   not on boundary 鈥?dangling edges at internal vertices are valid).
             if canon_vi < ds.vertices.len() && ds.vertices[canon_vi].is_internal {
                 continue;
             }
             if a_nb_e == 1 {
-                // OCCT L198-210: dangling edge → avoid (skip degenerate).
+                // OCCT L198-210: dangling edge 鈫?avoid (skip degenerate).
                 let pid = ids[0];
                 if is_degenerate(&pid) { continue; }
                 if avoided_pids.insert(pid) { b_found = true; }
@@ -817,7 +816,7 @@ pub(crate) fn perform_shapes_to_avoid(
                 // OCCT L211-227: same edge twice at this vertex (self-coincident).
                 let pid = ids[0];
                 let (a, b) = pid_endpoints[&pid];
-                if a == b { continue; } // OCCT L219-222: self-loop (closed) → keep
+                if a == b { continue; } // OCCT L219-222: self-loop (closed) 鈫?keep
                 if avoided_pids.insert(pid) { b_found = true; }
             }
         }
@@ -831,21 +830,21 @@ pub(crate) fn perform_shapes_to_avoid(
 // OCCT-aligned: Assemble internal wires from avoided segments
 // (BOPAlgo_BuilderFace.cxx L327-382)
 // ====================================================================
-/// ✅ OCCT-aligned: PerformInternalShapes (BOPAlgo_BuilderFace.cxx L327-382).
-/// ✅ OCCT-aligned: BuilderFace::PerformInternalShapes (L618-735).
+/// 鉁?OCCT-aligned: PerformInternalShapes (BOPAlgo_BuilderFace.cxx L327-382).
+/// 鉁?OCCT-aligned: BuilderFace::PerformInternalShapes (L618-735).
 ///   Classify avoided (internal) edges against each result WireFace,
 ///   assemble edges that fall INSIDE the face into per-face internal wires.
 ///
 /// OCCT flow:
 ///   L642-663: Build BVH tree of 2D UV boxes for each edge
-///   L674-716: For each result face, use BVH + IsInside → select internal edges
+///   L674-716: For each result face, use BVH + IsInside 鈫?select internal edges
 ///   L718-735: MakeInternalWires (vertex-degree-based wire assembly) + add to face
 ///
 /// rcad: for each WireFace, build 2D outer boundary polygon from segment pcurves,
 ///   classify each avoided segment's UV midpoint via 2D ray casting (point-in-polygon).
-///   Segments inside the outer boundary (but not inside a hole) → assemble into
+///   Segments inside the outer boundary (but not inside a hole) 鈫?assemble into
 ///   internal wires for that face.  Returns per-face internal wire segment groups:
-///   `Vec<Vec<Vec<usize>>>` — outer index = WireFace index, inner = internal wires
+///   `Vec<Vec<Vec<usize>>>` 鈥?outer index = WireFace index, inner = internal wires
 ///   for that face, each wire = Vec of segment indices.
 pub(crate) fn assemble_internal_wires(
     avoided: &[usize],
@@ -856,7 +855,7 @@ pub(crate) fn assemble_internal_wires(
         return vec![vec![]; wfs.len()];
     }
 
-    // OCCT L633-663: Build BVH tree — Bnd_Box2d per edge from pcurve UV bounds.
+    // OCCT L633-663: Build BVH tree 鈥?Bnd_Box2d per edge from pcurve UV bounds.
     //   OCCT: BRepTools::AddUVBounds(myFace, aE, aBoxE) samples the edge's
     //   pcurve on the face surface.  rcad: compute UV bounding box from segment's
     //   first_pcurve at sampled points (matching OCCT sampling density).
@@ -864,7 +863,7 @@ pub(crate) fn assemble_internal_wires(
         let seg = &segments[si];
         seg.first_pcurve.as_ref().map(|pc| {
             let [t0, t1] = seg.t_range;
-            let n_pts = 8usize; // OCCT IntTools_FClass2d uses NbSamples (≈8)
+            let n_pts = 8usize; // OCCT IntTools_FClass2d uses NbSamples (鈮?)
             let mut u_min = f64::INFINITY; let mut u_max = f64::NEG_INFINITY;
             let mut v_min = f64::INFINITY; let mut v_max = f64::NEG_INFINITY;
             for k in 0..n_pts {
@@ -903,7 +902,7 @@ pub(crate) fn assemble_internal_wires(
         //   + 2D point-in-polygon (equivalent to IsInside).
         for (ai, &si) in avoided.iter().enumerate() {
             let Some(box_e) = &seg_uv_box[ai] else { continue; };
-            // OCCT L694-695: BVH box prefilter — skip if box doesn't overlap face.
+            // OCCT L694-695: BVH box prefilter 鈥?skip if box doesn't overlap face.
             if outer_uv.iter().all(|p| p.x < box_e[0] || p.x > box_e[1] || p.y < box_e[2] || p.y > box_e[3]) {
                 continue;
             }
@@ -915,7 +914,7 @@ pub(crate) fn assemble_internal_wires(
         }
     }
 
-    // OCCT L724-725: MakeInternalWires — per-face BFS assembly.
+    // OCCT L724-725: MakeInternalWires 鈥?per-face BFS assembly.
     let mut per_face_wires: Vec<Vec<Vec<usize>>> = vec![Vec::new(); wfs.len()];
     for (fi, assigned) in face_internal.iter().enumerate() {
         if assigned.is_empty() { continue; }
@@ -962,12 +961,12 @@ pub(crate) fn is_same_block_fwd_rev(a: &WireSegment, b: &WireSegment) -> bool {
             && a.start_vertex == b.end_vertex
             && a.end_vertex == b.start_vertex
         }
-        // ✅ OCCT-aligned: IntersectionCurve FWD+REV share curve index
+        // 鉁?OCCT-aligned: IntersectionCurve FWD+REV share curve index
         //    (TopoDS_Shape::IsSame check, WireSplitter_1.cxx L564-567).
         (WireEdgeSource::IntersectionCurve(ca), WireEdgeSource::IntersectionCurve(cb)) => {
             ca == cb
         }
-        // ✅ OCCT-aligned: SeamEdge FWD+REV (same seam, opposite directions).
+        // 鉁?OCCT-aligned: SeamEdge FWD+REV (same seam, opposite directions).
         (WireEdgeSource::SeamEdge, WireEdgeSource::SeamEdge) => {
             a.is_closed_on_face && b.is_closed_on_face && a.orientation != b.orientation
         }
@@ -1085,7 +1084,7 @@ pub(crate) fn select_best_outgoing<'a>(
 }
 
 // ---------------------------------------------------------------------------
-// TopoDS-based perform_shapes_to_avoid — BRepTool variant
+// TopoDS-based perform_shapes_to_avoid 鈥?BRepTool variant
 // ---------------------------------------------------------------------------
 
 /// Physical edge identity for WireSegmentTopoDS (BRepTool variant).
@@ -1118,10 +1117,10 @@ pub(crate) fn build_pid_maps_topo_ds(
     (pid_segs, pid_endpoints)
 }
 
-/// ✅ OCCT-aligned: PerformShapesToAvoid for WireSegmentTopoDS.
-///   Builds vertex→Pid adjacency map from segments (OCCT: TopExp::MapShapesAndAncestors),
+/// 鉁?OCCT-aligned: PerformShapesToAvoid for WireSegmentTopoDS.
+///   Builds vertex鈫扨id adjacency map from segments (OCCT: TopExp::MapShapesAndAncestors),
 ///   then removes dangling edges (valence 1) and self-coincident edges in a fixed-point loop.
-///   Returns avoided PIDs and pid→segment map.
+///   Returns avoided PIDs and pid鈫抯egment map.
 pub(crate) fn perform_shapes_to_avoid_topo_ds(
     segments: &[super::types::WireSegmentTopoDS],
     tool: &dyn rcad_kernel::topods::BRepTool,
@@ -1143,8 +1142,8 @@ pub(crate) fn perform_shapes_to_avoid_topo_ds(
             == rcad_kernel::topods::Orientation::Internal
     };
 
-    // OCCT L152-156: aMVE — MapShapesAndAncestors(VERTEX, EDGE).
-    // vertex → Vec<Pid> built directly from segments (collapses FWD/REV of same edge).
+    // OCCT L152-156: aMVE 鈥?MapShapesAndAncestors(VERTEX, EDGE).
+    // vertex 鈫?Vec<Pid> built directly from segments (collapses FWD/REV of same edge).
     let mut a_mve: std::collections::HashMap<usize, Vec<Pid>> = std::collections::HashMap::new();
     for (si, seg) in segments.iter().enumerate() {
         let pid = physical_edge_id_topo_ds(seg);
@@ -1154,21 +1153,21 @@ pub(crate) fn perform_shapes_to_avoid_topo_ds(
 
     let mut avoided_pids: std::collections::HashSet<Pid> = std::collections::HashSet::new();
 
-    // OCCT L182-228: fixed-point loop — avoid dangling edges (valence 1) and
+    // OCCT L182-228: fixed-point loop 鈥?avoid dangling edges (valence 1) and
     // self-coincident edges, updating aMVE after each avoidance.
-    // ⚠ Architecture difference: OCCT's MapShapesAndAncestors gives one
+    // 鈿?Architecture difference: OCCT's MapShapesAndAncestors gives one
     // entry per TopoDS_Edge per vertex.  rcad's pid-based map can give
     // duplicate entries for the same physical edge (IC forward+reverse are
     // separate segments).  Self-coincidence check (OCCT L211-227) does not
-    // apply directly — skip it.  Only valence-1 removal with INTERNAL check.
+    // apply directly 鈥?skip it.  Only valence-1 removal with INTERNAL check.
     loop {
         let mut b_found = false;
         for (&v, pids) in &a_mve {
             if pids.len() != 1 { continue; }
-            // OCCT L198-210: dangling edge → avoid (skip degenerate / INTERNAL vertex)
+            // OCCT L198-210: dangling edge 鈫?avoid (skip degenerate / INTERNAL vertex)
             let pid = pids[0];
             if is_degenerate(&pid) { continue; }
-            // OCCT L204-207: INTERNAL vertex → keep the edge
+            // OCCT L204-207: INTERNAL vertex 鈫?keep the edge
             if is_internal_vertex(v) { continue; }
             if avoided_pids.insert(pid) { b_found = true; }
         }
@@ -1236,7 +1235,6 @@ mod tests {
             start_vertex: 0, end_vertex: 1,
             source: WireEdgeSource::DsEdge(5),
             orientation: WireOrientation::Forward, is_closed_on_face: false,
-            tangent_start: None, tangent_end: None,
             second_pcurve: None, first_pcurve: None,
             t_range: [0.0, 1.0],
         };
@@ -1244,7 +1242,6 @@ mod tests {
             start_vertex: 1, end_vertex: 0,
             source: WireEdgeSource::DsEdge(5),
             orientation: WireOrientation::Reversed, is_closed_on_face: false,
-            tangent_start: None, tangent_end: None,
             second_pcurve: None, first_pcurve: None,
             t_range: [1.0, 0.0],
         };
@@ -1257,7 +1254,6 @@ mod tests {
             start_vertex: 0, end_vertex: 1,
             source: WireEdgeSource::DsEdge(5),
             orientation: WireOrientation::Forward, is_closed_on_face: false,
-            tangent_start: None, tangent_end: None,
             second_pcurve: None, first_pcurve: None,
             t_range: [0.0, 1.0],
         };
@@ -1265,7 +1261,6 @@ mod tests {
             start_vertex: 1, end_vertex: 0,
             source: WireEdgeSource::DsEdge(7),
             orientation: WireOrientation::Reversed, is_closed_on_face: false,
-            tangent_start: None, tangent_end: None,
             second_pcurve: None, first_pcurve: None,
             t_range: [1.0, 0.0],
         };

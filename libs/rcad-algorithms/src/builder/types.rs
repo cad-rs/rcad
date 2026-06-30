@@ -226,8 +226,6 @@ pub(crate) struct WireSegment {
     pub(crate) source: WireEdgeSource,
     pub(crate) orientation: WireOrientation,
     pub(crate) is_closed_on_face: bool,
-    pub(crate) tangent_start: Option<f64>,
-    pub(crate) tangent_end: Option<f64>,
     /// OCCT DoSplitSEAMOnFace: second pcurve with U shifted by the surface
     /// period (e.g. 2*PI for sphere). Used by refine_angle_2d to project IC
     /// edges onto the other side of the parametric seam, preventing figure-8
@@ -258,10 +256,6 @@ impl WireSegment {
             is_closed_on_face: self.is_closed_on_face,
             second_pcurve: None, first_pcurve: None,
             t_range: [self.t_range[1], self.t_range[0]],
-            tangent_start: self.tangent_end
-                .map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-            tangent_end: self.tangent_start
-                .map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
         }
     }
 }
@@ -366,8 +360,6 @@ pub(crate) struct WireSegmentTopoDS {
     pub(crate) source: WireEdgeSourceTopoDS,
     pub(crate) orientation: Orientation,
     pub(crate) is_closed_on_face: bool,
-    pub(crate) tangent_start: Option<f64>,
-    pub(crate) tangent_end: Option<f64>,
     pub(crate) first_pcurve: Option<Curve2d>,
     pub(crate) second_pcurve: Option<Curve2d>,
     /// ✅ OCCT-aligned: vertex parameters on the pcurve (BRep_Tool::Parameter).

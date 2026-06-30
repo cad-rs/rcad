@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, BTreeSet};
+﻿use std::collections::{HashMap, HashSet, BTreeSet};
 use glam::DVec2; use glam::DVec3;
 use rcad_kernel::geom::*;
 use rcad_kernel::BRep;
@@ -15,7 +15,7 @@ use crate::builder::angle_2d::angle_2d;
 use crate::builder::wire_splitter::{world_to_uv, edge_uv_tangent, edge_angle_2d, are_verts_coincident, is_edge_isoline};
 use crate::builder::edge_builders::{build_sphere_seam_segments, build_cylinder_seam_segments, is_split_to_reverse};
 
-/// ✅ OCCT-aligned: compare two Curve3 for identity (same TShape).
+/// 鉁?OCCT-aligned: compare two Curve3 for identity (same TShape).
 pub(crate) fn curve_eq(a: &Curve3, b: &Curve3) -> bool {
     match (a, b) {
         (Curve3::Circle(ca), Curve3::Circle(cb)) => {
@@ -52,17 +52,17 @@ pub(crate) fn hash_point(p: DVec3) -> u64 {
 /// Both `edge_origins` and `vertex_origins` are filled in-place.
 /// OCCT PostTreat equivalent: builds shape-to-origin maps for history tracking.
 ///
-/// OCCT ref: BOPAlgo_Builder_3.cxx — `BOPAlgo_Builder::PostTreat`
+/// OCCT ref: BOPAlgo_Builder_3.cxx 鈥?`BOPAlgo_Builder::PostTreat`
 /// (L1-250: builds `myLocModified` and `myLocGenerated` maps from DS images).
 ///
 /// OCCT PostTreat algorithm (line-by-line mapping):
 ///   L20-40:  For each original shape, iterate sub-shapes (vertices, edges, faces).
-///   L42-80:  Check `myImages[ei]` on each edge → if non-empty, record as Modified.
-///   L82-110: For edges without images but present in result → record as Preserved.
-///   L112-130: Generated edges (intersection edges) → record in myGenerated.
-///   L132-170: For faces, check if wire edges were split → Modified; if not in
-///             result → IsDeleted.
-///   L172-200: Generated faces → myGenerated.
+///   L42-80:  Check `myImages[ei]` on each edge 鈫?if non-empty, record as Modified.
+///   L82-110: For edges without images but present in result 鈫?record as Preserved.
+///   L112-130: Generated edges (intersection edges) 鈫?record in myGenerated.
+///   L132-170: For faces, check if wire edges were split 鈫?Modified; if not in
+///             result 鈫?IsDeleted.
+///   L172-200: Generated faces 鈫?myGenerated.
 ///   L202-230: Vertex tracking (fromA/fromB/intersection).
 ///   L232-250: Compute IsDeleted for entities absent from the result shape.
 ///
@@ -84,11 +84,11 @@ pub(crate) fn hash_point(p: DVec3) -> u64 {
 /// See also `BooleanHistory::update_with_post_treat()` for a more OCCT-aligned
 /// implementation that uses `ds.my_images` instead of spatial proximity.
 ///
-/// ✅ OCCT-aligned: core concept (history tracking from DS) matches OCCT's
+/// 鉁?OCCT-aligned: core concept (history tracking from DS) matches OCCT's
 ///   image-map-based approach, adapted for rcad's flat-array data model.
-/// ✅ OCCT-aligned: TopExp::MapShapes(myShape, myMapShape) — build result→DS index map.
-///   OCCT maps TopoDS_Shape → identity for myMapShape lookup.
-///   rcad: maps result vertex index → DS vertex index, result edge index → (DS vertices).
+/// 鉁?OCCT-aligned: TopExp::MapShapes(myShape, myMapShape) 鈥?build result鈫扗S index map.
+///   OCCT maps TopoDS_Shape 鈫?identity for myMapShape lookup.
+///   rcad: maps result vertex index 鈫?DS vertex index, result edge index 鈫?(DS vertices).
 ///   Used by PrepareHistory to determine Modified/Generated/Deleted provenance.
 pub(crate) fn map_result_shapes(brep: &BRep, ds: &DS) -> (Vec<usize>, Vec<(usize, usize)>) {
     let mut result_to_ds: Vec<usize> = vec![usize::MAX; brep.vertices.len()];
@@ -111,8 +111,8 @@ pub(crate) fn map_result_shapes(brep: &BRep, ds: &DS) -> (Vec<usize>, Vec<(usize
     (result_to_ds, edge_pairs)
 }
 
-/// ✅ OCCT-aligned: PrepareHistory (Builder_4.cxx L164-252).
-///   OCCT iterates source shapes → LocModified → AddModified / AddGenerated / Remove.
+/// 鉁?OCCT-aligned: PrepareHistory (Builder_4.cxx L164-252).
+///   OCCT iterates source shapes 鈫?LocModified 鈫?AddModified / AddGenerated / Remove.
 ///   rcad: uses pre-built result_to_ds map to annotate vertex/edge provenance.
 pub(crate) fn annotate_history_from_ds(brep: &BRep, history: &mut BooleanHistory, ds: &DS) {
     let (result_to_ds, _) = map_result_shapes(brep, ds);
@@ -148,7 +148,7 @@ pub(crate) fn annotate_history_from_ds(brep: &BRep, history: &mut BooleanHistory
         let origin = if ds_s == usize::MAX || ds_e == usize::MAX {
             EdgeOrigin::Generated
         } else if ds_s < a_vc && ds_e < a_vc {
-            // Both endpoints are A vertices 閳?look for a DS edge in A range.
+            // Both endpoints are A vertices 闁?look for a DS edge in A range.
             let found = (0..a_ec.min(total_ds_edges)).find(|&dei| {
                 let de = &ds.edges[dei];
                 (de.start_vertex == ds_s && de.end_vertex == ds_e)
@@ -158,7 +158,7 @@ pub(crate) fn annotate_history_from_ds(brep: &BRep, history: &mut BooleanHistory
                 None => EdgeOrigin::SplitFromA(ds_s.min(a_vc - 1)),
             }
         } else if ds_s >= a_vc && ds_e >= a_vc {
-            // Both endpoints are B vertices 閳?look for a DS edge in B range.
+            // Both endpoints are B vertices 闁?look for a DS edge in B range.
             let found = (a_ec..total_ds_edges).find(|&dei| {
                 let de = &ds.edges[dei];
                 (de.start_vertex == ds_s && de.end_vertex == ds_e)
@@ -221,9 +221,9 @@ pub(crate) fn aggregate_shell_region_origin(shell_origins: &[ShellOrigin]) -> So
     }
 }
 
-/// ✅ OCCT-aligned: PrepareHistory shell/solid provenance (Builder_4.cxx L164-252).
-///   OCCT iterates source shapes → LocModified → AddModified/AddGenerated/Remove.
-///   rcad: aggregates per-face origins to shell/solid level via face_region → shell → solid.
+/// 鉁?OCCT-aligned: PrepareHistory shell/solid provenance (Builder_4.cxx L164-252).
+///   OCCT iterates source shapes 鈫?LocModified 鈫?AddModified/AddGenerated/Remove.
+///   rcad: aggregates per-face origins to shell/solid level via face_region 鈫?shell 鈫?solid.
 pub(crate) fn annotate_shell_and_solid_history(brep: &BRep, history: &mut BooleanHistory) {
     let mut face_cursor = 0;
     let mut shell_origins = Vec::new();
@@ -247,7 +247,7 @@ pub(crate) fn annotate_shell_and_solid_history(brep: &BRep, history: &mut Boolea
         // Face count mismatch: BRep has more/fewer faces than history tracks.
         // This happens when compound reconstruction adds/removes faces or when
         // the face order in BRep differs from the emission order.  OCCT's
-        // history tracking works with TopoDS shape identity — rcad's index-based
+        // history tracking works with TopoDS shape identity 鈥?rcad's index-based
         // tracking is inherently more fragile.  Pad shell_origins to match.
         eprintln!("[HISTORY] face_cursor={} != history={}",
             face_cursor, history.face_origins.len());
@@ -292,36 +292,36 @@ pub struct BooleanBuilder<'a> {
     use_glue: bool,
     glue_tolerance: f64,
     context: RefCell<Context>,
-    // ✅ OCCT-aligned: error tracking (myReport / HasErrors equivalent).
+    // 鉁?OCCT-aligned: error tracking (myReport / HasErrors equivalent).
     has_errors: bool,
-    // ✅ OCCT-aligned: myImages — source shape index → list of split image indices.
+    // 鉁?OCCT-aligned: myImages 鈥?source shape index 鈫?list of split image indices.
     //   Uses RefCell because phase functions take &self (OCCT uses mutable member maps).
     my_images: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
-    // ✅ OCCT-aligned: myOrigins — split shape index → list of source origin indices.
+    // 鉁?OCCT-aligned: myOrigins 鈥?split shape index 鈫?list of source origin indices.
     my_origins: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
-    // ✅ OCCT-aligned: myShapesSD — source shape index → same-domain shape index.
+    // 鉁?OCCT-aligned: myShapesSD 鈥?source shape index 鈫?same-domain shape index.
     my_shapes_sd: std::cell::RefCell<std::collections::HashMap<usize, usize>>,
-    // ✅ OCCT-aligned: split edges created by FillImagesEdges (PaveBlock → new DSEdge).
+    // 鉁?OCCT-aligned: split edges created by FillImagesEdges (PaveBlock 鈫?new DSEdge).
     //   Stored here because DS is immutable (rcad uses &'a DS); their indices start
     //   at ds.edges.len() and are referenced by my_images(EDGE) / my_origins(EDGE).
     split_edges: std::cell::RefCell<Vec<crate::bopds::ds::DSEdge>>,
-    // ✅ OCCT-aligned: myInParts — source solid index → list of its IN face indices
+    // 鉁?OCCT-aligned: myInParts 鈥?source solid index 鈫?list of its IN face indices
     //   (BOPAlgo_Builder.hxx L502).  Populated during FillImagesFaces, used by
     //   FillIn3DParts / BuildDraftSolid for solid assembly.
     my_in_parts: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
-    // ✅ OCCT-aligned: solid-level image tracking (BOPAlgo_Builder.hxx L498 myImages).
+    // 鉁?OCCT-aligned: solid-level image tracking (BOPAlgo_Builder.hxx L498 myImages).
     //   OCCT BuildSplitSolids stores split solids in myImages[source_solid].
-    //   rcad: maps source side (0=A, 1=B) → result solid indices from
+    //   rcad: maps source side (0=A, 1=B) 鈫?result solid indices from
     //   build_split_solids.  Used by annotate_shell_and_solid_history and
     //   for OCCT-form history tracking.
     my_solid_images: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
-    // ✅ OCCT-aligned: solid-level origin tracking (BOPAlgo_Builder.hxx L500 myOrigins).
-    //   Reverse map: result solid index → list of source sides.
+    // 鉁?OCCT-aligned: solid-level origin tracking (BOPAlgo_Builder.hxx L500 myOrigins).
+    //   Reverse map: result solid index 鈫?list of source sides.
     my_solid_origins: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
-    // ✅ OCCT-aligned: myNonDestructive (BOPAlgo_Builder.hxx L503).
-    //   Safe processing — avoids modifying input shapes. Used in PostTreat.
+    // 鉁?OCCT-aligned: myNonDestructive (BOPAlgo_Builder.hxx L503).
+    //   Safe processing 鈥?avoids modifying input shapes. Used in PostTreat.
     my_non_destructive: bool,
-    // ✅ OCCT-aligned: myCheckInverted (BOPAlgo_Builder.hxx L505).
+    // 鉁?OCCT-aligned: myCheckInverted (BOPAlgo_Builder.hxx L505).
     //   Enables/disables inverted-solid check on input shapes.
     my_check_inverted: bool,
 }
@@ -342,12 +342,12 @@ pub(crate) fn classify_face_against_box(
     op: BooleanOpType,
     source: SourceSide,
 ) -> Option<Classification> {
-    // Skip planar sub-faces 鈥?`classify_point` correctly classifies them as On
+    // Skip planar sub-faces 閳?`classify_point` correctly classifies them as On
     // when they're coplanar with a box face, allowing the coplanar dedup in
     // `build_with_history` to avoid double-counting the shared area.  The AABB
     // boundary-vertex check was designed for tessellated curved surfaces
     // (cone/cylinder UV grid) where individual grid cells straddle the boundary.
-    // Planar BSpline surfaces (from NURBS-converted boxes) are also planar 鈥?
+    // Planar BSpline surfaces (from NURBS-converted boxes) are also planar 閳?
     // their boundary vertices can span both inside and outside the box, causing
     // a false In/Out from a single vertex check.  OCCT classifies such faces by
     // sampling interior points (BOPTools_AlgoTools::PointInFace), not by
@@ -387,7 +387,7 @@ pub(crate) fn classify_face_against_box(
             if n.z > 0.0 { max_z = max_z.min(d.z); }
             else { min_z = min_z.max(d.z); }
         } else {
-            return None; // non-axis-aligned plane 鈫?not a simple box
+            return None; // non-axis-aligned plane 閳?not a simple box
         }
     }
 
@@ -395,7 +395,7 @@ pub(crate) fn classify_face_against_box(
         || min_y.is_infinite() || max_y.is_infinite()
         || min_z.is_infinite() || max_z.is_infinite()
     {
-        return None; // incomplete bounds 鈫?not a full box
+        return None; // incomplete bounds 閳?not a full box
     }
 
     let require_all_inside = op == BooleanOpType::Intersection
@@ -412,8 +412,8 @@ pub(crate) fn classify_face_against_box(
 
         if require_all_inside {
             if !inside {
-                // Boundary vertex outside the box 鈫?this sub-face straddles
-                // the boundary.  Don't immediately return Out 鈥?the tessellation
+                // Boundary vertex outside the box 閳?this sub-face straddles
+                // the boundary.  Don't immediately return Out 閳?the tessellation
                 // vertices of a curved sub-face (cylinder wall near a box face)
                 // can fall outside the box even when most of the sub-face is
                 // inside.  Return None to fall through to the probe grid which
@@ -422,7 +422,7 @@ pub(crate) fn classify_face_against_box(
             }
         } else {
             if inside {
-                // ✅ OCCT-aligned: for Union, boundary vertices may be ON the
+                // 鉁?OCCT-aligned: for Union, boundary vertices may be ON the
                 // box surface while the face INTERIOR extends outward (sphere
                 // sub-face bounded by IC arcs on the box).  Check the sample
                 // point to distinguish "on surface" from "inside".
@@ -433,18 +433,18 @@ pub(crate) fn classify_face_against_box(
                 if sp_inside {
                     return Some(Classification::In);
                 }
-                // Sample point outside → boundary vertices are on the box
-                // surface but face is outside → fall through to probe grid
+                // Sample point outside 鈫?boundary vertices are on the box
+                // surface but face is outside 鈫?fall through to probe grid
                 return None;
             }
         }
     }
 
-    // All vertices satisfy the condition 鈫?uniform classification
+    // All vertices satisfy the condition 閳?uniform classification
     let result = if require_all_inside {
-        Classification::In  // all inside 鈫?keep for Intersection / Difference B-side
+        Classification::In  // all inside 閳?keep for Intersection / Difference B-side
     } else {
-        Classification::Out // all outside 鈫?keep for Union / Difference A-side
+        Classification::Out // all outside 閳?keep for Union / Difference A-side
     };
     Some(result)
 }
@@ -452,7 +452,7 @@ pub(crate) fn classify_face_against_box(
 /// Classify a sub-face against the solid described by `solid_face_indices`.
 ///
 /// For [`BooleanOpType::Intersection`], [`FaceSampleData::sample_point`] can land outside the
-/// other solid even when the trimmed patch overlaps both volumes (e.g. sphere 閳?
+/// other solid even when the trimmed patch overlaps both volumes (e.g. sphere 闁?
 /// finite cylinder: the inward offset toward the sphere center exits the cylinder
 /// slab). When the primary sample is `Out`, we probe a coarse UV grid on
 /// [`FaceSampleData::uv_domain`] before concluding `Out`.
@@ -462,9 +462,9 @@ pub(crate) fn classify_face_against_box(
 /// happen to fall within the tolerance band of the other solid's surface despite the
 /// sub-face being entirely outside (e.g. a planar sub-face of a box near a sphere's
 /// surface). In that case we probe boundary and interior samples to break the tie.
-// ✅ OCCT-aligned: 鍒嗙被瀛愰潰涓?In/Out/On (ClassifyFaces)銆?
-//    鎺ュ彈 FaceSampleData(浠?WireFace 鎴?FaceSampleData 鏋勯€?銆?
-/// ✅ OCCT-aligned: classify_against_solid_for_boolean — ComputeState (OCCT BOPAlgo_Builder).
+// 鉁?OCCT-aligned: 閸掑棛琚€涙劙娼版稉?In/Out/On (ClassifyFaces)閵?
+//    閹恒儱褰?FaceSampleData(娴?WireFace 閹?FaceSampleData 閺嬪嫰鈧?閵?
+/// 鉁?OCCT-aligned: classify_against_solid_for_boolean 鈥?ComputeState (OCCT BOPAlgo_Builder).
 /// OCCT-aligned: BOPTools_AlgoTools::ComputeState (cxx L660-714).
 pub(crate) fn compute_state(
     _op: BooleanOpType,
@@ -500,10 +500,10 @@ pub(crate) fn compute_state(
 }
 
 // =============================================================================
-// OCCT 1:1 瀵归綈: IsInternalFace (BOPTools_AlgoTools.cxx L791-872)
+// OCCT 1:1 鐎靛綊缍? IsInternalFace (BOPTools_AlgoTools.cxx L791-872)
 // =============================================================================
 
-/// ✅ OCCT-aligned: 鏋勫缓 MEF (Map Edge鈫扚aces) 鐢ㄤ簬杈圭骇瑙掑害娉曘€?
+/// 鉁?OCCT-aligned: 閺嬪嫬缂?MEF (Map Edge閳墯aces) 閻劋绨潏鍦獓鐟欐帒瀹冲▔鏇樷偓?
 /// OCCT BOPAlgo_FillIn3DParts::MapEdgesAndFaces (BOPAlgo_Tools.cxx L1479-1503)
 /// OCCT-aligned: IsTangentFace (BOPTools_AlgoTools).
 /// Checks if two faces are tangent (parallel normals + close distance).
@@ -534,41 +534,41 @@ pub(crate) fn build_edge_bounds(face_indices: &[usize], ds: &DS) -> std::collect
     bounds
 }
 
-/// ✅ OCCT-aligned: PointInFace 绛変环 鈥?浠?FaceSampleData 鐨?UV domain 鑾峰彇鍐呴儴閲囨牱鐐广€?
+/// 鉁?OCCT-aligned: PointInFace 缁涘鐜?閳?娴?FaceSampleData 閻?UV domain 閼惧嘲褰囬崘鍛村劥闁插洦鐗遍悙骞库偓?
 /// OCCT BOPTools_AlgoTools3D.cxx L885-917
 ///
-/// rcad 瀹炵幇: FaceSampleData 宸叉湁 uv_domain 鍜?uv_centroid,鐩存帴鐢?UV centroid
-/// 浣滀负鍐呴儴鐐?(OCCT 鐢?Hatcher 鍋?2D point-in-face,浣?rcad 鐨?FaceSampleData
-/// 鏄弬鏁板寲鍖哄煙,UV centroid 鍦ㄥ唴閮?銆?
-// (point_in_face, classify_by_off_solid_edge removed — dead after ComputeState alignment)
+/// rcad 鐎圭偟骞? FaceSampleData 瀹稿弶婀?uv_domain 閸?uv_centroid,閻╁瓨甯撮悽?UV centroid
+/// 娴ｆ粈璐熼崘鍛村劥閻?(OCCT 閻?Hatcher 閸?2D point-in-face,娴?rcad 閻?FaceSampleData
+/// 閺勵垰寮弫鏉垮閸栧搫鐓?UV centroid 閸︺劌鍞撮柈?閵?
+// (point_in_face, classify_by_off_solid_edge removed 鈥?dead after ComputeState alignment)
 
-/// 閲忓寲 3D 浣嶇疆鍒?u64 key,鐢ㄤ簬瀹瑰樊鍖归厤銆?
+/// 闁插繐瀵?3D 娴ｅ秶鐤嗛崚?u64 key,閻劋绨€圭懓妯婇崠褰掑帳閵?
 pub(crate) fn quantize_pos(p: DVec3, tolerance: f64) -> u64 {
     let scale = 1.0 / tolerance;
     let x = (p.x * scale).round() as i64;
     let y = (p.y * scale).round() as i64;
     let z = (p.z * scale).round() as i64;
-    // 缁勫悎涓?u64
+    // 缂佸嫬鎮庢稉?u64
     let xb = (x as u64) & 0x3FFFFF;
     let yb = (y as u64) & 0x3FFFFF;
     let zb = (z as u64) & 0x3FFFFF;
     (xb << 42) | (yb << 21) | zb
 }
 
-/// ✅ OCCT-aligned: IsInternalFace 涓诲嚱鏁?(BOPTools_AlgoTools.cxx L791-872)
+/// 鉁?OCCT-aligned: IsInternalFace 娑撹鍤遍弫?(BOPTools_AlgoTools.cxx L791-872)
 ///
-/// 涓ょ骇鍒嗙被:
-///   Level 1: 杈圭骇瑙掑害娉?鈥?瀵逛簬鍦?solid 涓婃湁澶氫簬 1 涓偦闈㈢殑杈?
-///            璁＄畻瑙掑害鍒ゆ柇闈㈡槸鍚﹀湪 solid 鍐呴儴銆?
-///   Level 2: ComputeState 鈥?鍏堟壘涓嶅湪 solid 涓婄殑杈瑰垎绫讳腑鐐?
-///            鍚﹀垯 PointInFace 鈫?classify_point銆?
+/// 娑撱倗楠囬崚鍡欒:
+///   Level 1: 鏉堝湱楠囩憴鎺戝濞?閳?鐎甸€涚艾閸?solid 娑撳﹥婀佹径姘艾 1 娑擃亪鍋﹂棃銏㈡畱鏉?
+///            鐠侊紕鐣荤憴鎺戝閸掋倖鏌囬棃銏℃Ц閸氾箑婀?solid 閸愬懘鍎撮妴?
+///   Level 2: ComputeState 閳?閸忓牊澹樻稉宥呮躬 solid 娑撳﹦娈戞潏鐟板瀻缁鑵戦悙?
+///            閸氾箑鍨?PointInFace 閳?classify_point閵?
 ///
-/// 杩斿洖: Some(true) = 闈㈠湪 solid 鍐呴儴 (IN)
-///       Some(false) = 闈笉鍦?solid 鍐呴儴 (OUT)
-///       None = 鏃犳硶纭畾
+/// 鏉╂柨娲? Some(true) = 闂堛垹婀?solid 閸愬懘鍎?(IN)
+///       Some(false) = 闂堫澀绗夐崷?solid 閸愬懘鍎?(OUT)
+///       None = 閺冪姵纭剁涵顔肩暰
 /// Check if a DS vertex lies on the boundary edge between sv/ev, and if so add it
 /// to split_verts with its parametric position t.
-/// ✅ OCCT-aligned: FillImagesEdges checks pave blocks per edge (global scope).
+/// 鉁?OCCT-aligned: FillImagesEdges checks pave blocks per edge (global scope).
 pub(crate) fn check_and_add_split_vertex(
     ds: &DS,
     sv: usize,
@@ -593,13 +593,13 @@ pub(crate) fn check_and_add_split_vertex(
     }
 }
 
-/// ✅ OCCT-aligned: BuildSplitFaces edge assembly (L357-489) + DoSplitSEAMOnFace (L58-227).
+/// 鉁?OCCT-aligned: BuildSplitFaces edge assembly (L357-489) + DoSplitSEAMOnFace (L58-227).
 pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup: &impl Fn(usize) -> Option<Curve2d>) -> Vec<WireSegment> {
     let face = &ds.faces[face_idx];
     let mut segments: Vec<WireSegment> = Vec::new();
     let mut processed_seam_ds_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
-    // ✅ OCCT-aligned: boundary vertex position map (ShapesSD equivalent).
+    // 鉁?OCCT-aligned: boundary vertex position map (ShapesSD equivalent).
     //   OCCT's DS shares vertices via ShapesSD during PaveFiller.
     //   rcad: vertex remapping is done in make_section_edges_from_curve_pbs,
     //   so IC endpoints already reference canonical vertices by this point.
@@ -618,10 +618,10 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
     // ================================================================
     // OCCT-aligned: orient boundary edges consistently for closed loop.
     // OCCT's TopExp_Explorer returns edges with the orientation they have
-    // in the face's wire — each edge's end vertex matches the next edge's
+    // in the face's wire 鈥?each edge's end vertex matches the next edge's
     // start vertex.  rcad DS stores edges with arbitrary orientation.
-    // Without this fix, a box face may have boundary edges like [2→3, 3→7,
-    // 6→7, 2→6] where BOTH 3→7 and 6→7 end at vertex 7 (no outgoing edge
+    // Without this fix, a box face may have boundary edges like [2鈫?, 3鈫?,
+    // 6鈫?, 2鈫?] where BOTH 3鈫? and 6鈫? end at vertex 7 (no outgoing edge
     // from 7), making the SmartMap connectivity wrong and preventing the
     // wire splitter from forming closed loops (fi=3 was failing).
     let mut prev_end: Option<usize> = None;
@@ -634,13 +634,13 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
         };
         prev_end = Some(ev);
 
-        // ✅ OCCT L369: check if edge was split by intersection (myImages.IsBound).
+        // 鉁?OCCT L369: check if edge was split by intersection (myImages.IsBound).
         let edge_is_split = ei < ds.my_images.len() && ds.my_images[ei].len() > 1;
 
         if !edge_is_split {
-            // ✅ OCCT L395-404: seam detection for unsplit edges on periodic surfaces.
+            // 鉁?OCCT L395-404: seam detection for unsplit edges on periodic surfaces.
             //   OCCT iterates all wire edges uniformly (no split/unsplit distinction);
-            //   rcad processes unsplit edges here — must detect seam before adding.
+            //   rcad processes unsplit edges here 鈥?must detect seam before adding.
             let b_is_degenerated = ds.is_edge_degenerated(ei);
             let b_is_seam = !b_is_degenerated && (is_u_closed || is_v_closed)
                 && ds.edge_on_face(ei, face_idx).map_or(false, |rep| {
@@ -656,44 +656,40 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                 }
                 continue;
             }
-            // ✅ OCCT L371-382: unsplit edge — add directly.
-            //   OCCT L371-377: INTERNAL orientation → FWD+REV.
-            //   OCCT L379-381: FORWARD/REVERSED → add with orientation.
+            // 鉁?OCCT L371-382: unsplit edge 鈥?add directly.
+            //   OCCT L371-377: INTERNAL orientation 鈫?FWD+REV.
+            //   OCCT L379-381: FORWARD/REVERSED 鈫?add with orientation.
             let is_internal = ds.edges[ei].is_internal;
             let rep = ds.edge_on_face(ei, face_idx);
             let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface,
                 Some(&edge.curve), Some(edge.t_range));
             let src = WireEdgeSource::DsEdge(ei);
             if is_internal {
-                // OCCT L373-377: INTERNAL unsplit → FWD + REV
+                // OCCT L373-377: INTERNAL unsplit 鈫?FWD + REV
                 segments.push(WireSegment {
                     start_vertex: sv, end_vertex: ev, source: src.clone(),
                     orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
                     first_pcurve: rep.map(|r| r.pcurve.clone()),
                     t_range: rep.map(|r| r.pcurve_range).unwrap_or(edge.t_range),
-                    tangent_start: t_start, tangent_end: t_end,
                 });
                 segments.push(WireSegment {
                     start_vertex: ev, end_vertex: sv, source: src,
                     orientation: WireOrientation::Reversed, is_closed_on_face: false, second_pcurve: None,
                     first_pcurve: None, t_range: [0.0, 1.0],
-                    tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-                    tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
                 });
             } else {
-                // OCCT L379-381: non-INTERNAL → add with orientation
+                // OCCT L379-381: non-INTERNAL 鈫?add with orientation
                 segments.push(WireSegment {
                     start_vertex: sv, end_vertex: ev, source: src,
                     orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
                     first_pcurve: rep.map(|r| r.pcurve.clone()),
                     t_range: rep.map(|r| r.pcurve_range).unwrap_or(edge.t_range),
-                    tangent_start: t_start, tangent_end: t_end,
                 });
             }
             continue;
         }
 
-        // ✅ OCCT L395-404: bIsClosed via IsClosed + IsEdgeIsoline.
+        // 鉁?OCCT L395-404: bIsClosed via IsClosed + IsEdgeIsoline.
         // On U-closed periodic surfaces (Sphere, Cylinder, Cone), seam edges
         // are U-isolines. Vertex coincidence NOT required (sphere pole-to-pole).
         let b_is_degenerated = ds.is_edge_degenerated(ei);
@@ -708,7 +704,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
             false
         };
 
-        // ✅ OCCT L408-464: iterate split sub-edges (aLIE from myImages.Find).
+        // 鉁?OCCT L408-464: iterate split sub-edges (aLIE from myImages.Find).
         if b_is_degenerated {
             // OCCT L413-417: iterate sub-edges, set orientation, append
             for &sub_ei in &ds.my_images[ei] {
@@ -722,7 +718,6 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                     orientation: WireOrientation::Forward,
                     is_closed_on_face: true, second_pcurve: None, first_pcurve: None,
                     t_range: [0.0, 1.0],
-                    tangent_start: None, tangent_end: None,
                 });
             }
         } else if b_is_seam && matches!(face.surface, Surface3::Sphere(_)) {
@@ -731,7 +726,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
         } else if b_is_seam {
             segments.extend(build_cylinder_seam_segments(ds, ei, sv, ev, face));
         } else {
-            // ✅ OCCT-aligned L408-464: three-branch split edge processing.
+            // 鉁?OCCT-aligned L408-464: three-branch split edge processing.
             //   For each sub-edge from my_images, after degenerated (handled above):
             //   1. INTERNAL original (L420-426) -> FWD+REV
             //   2. Seam bIsClosed (L429-455)   -> FWD+REV with fence (handled above)
@@ -755,14 +750,12 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                             orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
                             first_pcurve: rep.map(|r| r.pcurve.clone()),
                             t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
-                            tangent_start: t_start, tangent_end: t_end,
                         });
                         segments.push(WireSegment {
                             start_vertex: ev_seg, end_vertex: sv_seg,
                             source: WireEdgeSource::DsEdge(sub_ei),
                             orientation: WireOrientation::Reversed, is_closed_on_face: false, second_pcurve: None,
                             first_pcurve: None, t_range: [0.0, 1.0],
-                            tangent_start: t_end, tangent_end: t_start,
                         });
                         continue;
                     }
@@ -779,8 +772,6 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                             orientation: WireOrientation::Reversed, is_closed_on_face: false, second_pcurve: None,
                             first_pcurve: rep.map(|r| r.pcurve.clone()),
                             t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
-                            tangent_start: t_rev.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-                            tangent_end: t_fwd.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
                         });
                     } else {
                         segments.push(WireSegment {
@@ -789,7 +780,6 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                             orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
                             first_pcurve: rep.map(|r| r.pcurve.clone()),
                             t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
-                            tangent_start: t_fwd, tangent_end: t_rev,
                         });
                     }                }
             } else {
@@ -805,9 +795,9 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                         check_and_add_split_vertex(ds, sv, ev, vi, p_a, ab, ab_len2, &mut split_verts);
                     }
                     // OCCT-aligned DoSplitSEAMOnFace: split seam edges at IC endpoints
-                    // whose UV lies on the seam (U ≈ 0 or 2π).  For a sphere seam edge
+                    // whose UV lies on the seam (U 鈮?0 or 2蟺).  For a sphere seam edge
                     // between two poles (V varies along U=0), an IC endpoint at U=0 on
-                    // the equator (V=π/2) splits the seam into two sub-edges.
+                    // the equator (V=蟺/2) splits the seam into two sub-edges.
                     let is_periodic_seam = b_is_seam && matches!(face.surface,
                         Surface3::Sphere(_) | Surface3::Cylinder(_) | Surface3::Torus(_));
                     if is_periodic_seam {
@@ -846,7 +836,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                 }
                 split_verts.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
                 if split_verts.is_empty() {
-                    // No split vertices — whole edge as one segment (OCCT L374-378)
+                    // No split vertices 鈥?whole edge as one segment (OCCT L374-378)
                     let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface,
                         Some(&ds.edges[ei].curve), Some(ds.edges[ei].t_range));
                     let rep = ds.edge_on_face(ei, face_idx);
@@ -856,13 +846,12 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                         orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
                         first_pcurve: rep.map(|r| r.pcurve.clone()),
                         t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
-                        tangent_start: t_start, tangent_end: t_end,
                     });                } else {
-                    // ✅ OCCT-aligned: edge split by IC vertices (OCCT myImages equivalent).
+                    // 鉁?OCCT-aligned: edge split by IC vertices (OCCT myImages equivalent).
                     let mut prev_v = sv;
                     let edge_curve = &ds.edges[ei].curve;
                     let etr = ds.edges[ei].t_range;
-                    // ✅ OCCT-aligned: sub-segments inherit pcurve from original edge.
+                    // 鉁?OCCT-aligned: sub-segments inherit pcurve from original edge.
                     let seg_rep = ds.edge_on_face(ei, face_idx);
                     let seg_first_pcurve = seg_rep.map(|r| r.pcurve.clone());
                     let seg_range = seg_rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]);
@@ -878,7 +867,6 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                             source: WireEdgeSource::DsEdge(ei),
                             orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
                             first_pcurve: seg_first_pcurve.clone(), t_range: seg_range,
-                            tangent_start: ts, tangent_end: te,
                         });                        prev_v = vi;
                         prev_t = t_vi;
                     }
@@ -889,14 +877,13 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                         source: WireEdgeSource::DsEdge(ei),
                         orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
                         first_pcurve: seg_first_pcurve.clone(), t_range: seg_range,
-                        tangent_start: ts, tangent_end: te,
                     });                }
             }
         }
     }
 
     // ================================================================
-    // ✅ OCCT-aligned: inner wire edges — same processing as outer boundary.
+    // 鉁?OCCT-aligned: inner wire edges 鈥?same processing as outer boundary.
     // OCCT TopExp_Explorer iterates all wires' edges in one loop.
     // rcad stores them separately, so we apply identical logic here.
     // ================================================================
@@ -924,14 +911,11 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                     orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
                     first_pcurve: rep.map(|r| r.pcurve.clone()),
                     t_range: rep.map(|r| r.pcurve_range).unwrap_or(edge.t_range),
-                    tangent_start: t_start, tangent_end: t_end,
                 });
                 segments.push(WireSegment {
                     start_vertex: ev, end_vertex: sv, source: src,
                     orientation: WireOrientation::Reversed, is_closed_on_face: false, second_pcurve: None,
                     first_pcurve: None, t_range: [0.0, 1.0],
-                    tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-                    tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
                 });
             } else {
                 segments.push(WireSegment {
@@ -939,7 +923,6 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                     orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
                     first_pcurve: rep.map(|r| r.pcurve.clone()),
                     t_range: rep.map(|r| r.pcurve_range).unwrap_or(edge.t_range),
-                    tangent_start: t_start, tangent_end: t_end,
                 });
             }
             continue;
@@ -970,7 +953,6 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                     orientation: WireOrientation::Forward,
                     is_closed_on_face: true, second_pcurve: None, first_pcurve: None,
                     t_range: [0.0, 1.0],
-                    tangent_start: None, tangent_end: None,
                 });
             }
         } else if b_is_seam && matches!(face.surface, Surface3::Sphere(_)) {
@@ -997,14 +979,12 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                             orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
                             first_pcurve: rep.map(|r| r.pcurve.clone()),
                             t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
-                            tangent_start: t_start, tangent_end: t_end,
                         });
                         segments.push(WireSegment {
                             start_vertex: ev_seg, end_vertex: sv_seg,
                             source: WireEdgeSource::DsEdge(sub_ei),
                             orientation: WireOrientation::Reversed, is_closed_on_face: false, second_pcurve: None,
                             first_pcurve: None, t_range: [0.0, 1.0],
-                            tangent_start: t_end, tangent_end: t_start,
                         });
                         continue;
                     }
@@ -1020,8 +1000,6 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                             orientation: WireOrientation::Reversed, is_closed_on_face: false, second_pcurve: None,
                             first_pcurve: rep.map(|r| r.pcurve.clone()),
                             t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
-                            tangent_start: t_rev.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-                            tangent_end: t_fwd.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
                         });
                     } else {
                         segments.push(WireSegment {
@@ -1030,7 +1008,6 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                             orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
                             first_pcurve: rep.map(|r| r.pcurve.clone()),
                             t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
-                            tangent_start: t_fwd, tangent_end: t_rev,
                         });
                     }                }
             } else {
@@ -1090,7 +1067,6 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                         orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
                         first_pcurve: rep.map(|r| r.pcurve.clone()),
                         t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
-                        tangent_start: t_start, tangent_end: t_end,
                     });                } else {
                     let mut prev_v = sv;
                     let edge_curve = &ds.edges[ei].curve;
@@ -1109,7 +1085,6 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                             source: WireEdgeSource::DsEdge(ei),
                             orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
                             first_pcurve: seg_first_pcurve.clone(), t_range: seg_range,
-                            tangent_start: ts, tangent_end: te,
                         });                        prev_v = vi;
                         prev_t = t_vi;
                     }
@@ -1120,7 +1095,6 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                         source: WireEdgeSource::DsEdge(ei),
                         orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
                         first_pcurve: seg_first_pcurve.clone(), t_range: seg_range,
-                        tangent_start: ts, tangent_end: te,
                     });                }
             }
         }
@@ -1150,7 +1124,6 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
             source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Forward,
             is_closed_on_face: false, second_pcurve: None, first_pcurve: None,
             t_range: edge.t_range,
-            tangent_start: t_start, tangent_end: t_end,
         });
         // OCCT: aLE.Append(aSp) with REVERSED orientation.
         segments.push(WireSegment {
@@ -1158,13 +1131,12 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
             source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Reversed,
             is_closed_on_face: false, second_pcurve: None, first_pcurve: None,
             t_range: edge.t_range,
-            tangent_start: t_end, tangent_end: t_start,
         });
     }
 
     // Section edges = Intersection curves (OCCT BOPAlgo_Builder_2.cxx L285-296, L478-489).
     // ================================================================
-    // OCCT-aligned: Process PaveBlocksSc — each PB has a pre-built edge with
+    // OCCT-aligned: Process PaveBlocksSc 鈥?each PB has a pre-built edge with
     //   valid aPB->Edge().  This is the PRIMARY path for section edges.
     for &pb_idx in &face.face_info.pave_blocks_sc {
         if pb_idx >= ds.pave_blocks.len() { continue; }
@@ -1175,11 +1147,11 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
         if edge.start_vertex == edge.end_vertex { continue; }
         // OCCT L484-494: single segment per section edge PB. OCCT uses a single
         // TopoDS_Edge with orientation; rcad stores direction in in_flag via
-        // build_smart_map. No REV segment needed — removes duplicate-PID issues
+        // build_smart_map. No REV segment needed 鈥?removes duplicate-PID issues
         // in perform_shapes_to_avoid and simplifies the segment graph.
         let sv_remap = edge.start_vertex;
         let ev_remap = edge.end_vertex;
-        // ✅ OCCT-aligned: propagate pcurve from DSEdge face_reps to WireSegment.
+        // 鉁?OCCT-aligned: propagate pcurve from DSEdge face_reps to WireSegment.
         // OCCT BRep_Tool::CurveOnSurface(aE, myFace) returns the pcurve stored
         // on the edge; rcad stores it in edge.face_reps (populated by
         // make_section_edges_from_curve_pbs). Required by SmartMap has_pcurve check.
@@ -1191,7 +1163,6 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
             source: WireEdgeSource::DsEdge(nei), orientation: WireOrientation::Forward,
             is_closed_on_face: false, second_pcurve: None, first_pcurve: sec_pcurve,
             t_range: edge.t_range,
-            tangent_start: t_fwd_s, tangent_end: t_fwd_e,
         });
     }
     segments

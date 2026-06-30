@@ -6,7 +6,7 @@ use crate::builder::types::{WireSegment, WireEdgeSource, WireOrientation};
 use super::wire_splitter::{world_to_uv, edge_uv_tangent};
 use crate::builder::curve_eq;
 
-/// ✅ OCCT: DoSplitSEAMOnFace — build second pcurve shifted by surface period.
+/// 鉁?OCCT: DoSplitSEAMOnFace 鈥?build second pcurve shifted by surface period.
 pub fn build_seam_second_pcurve(ds: &DS, surface: &Surface3, sv: usize, ev: usize, edge_tol: f64) -> Option<Curve2d> {
     let (is_periodic, period, u_min, u_max) = match surface {
         Surface3::Sphere(_) | Surface3::Cylinder(_) => (true, std::f64::consts::TAU, 0.0, std::f64::consts::TAU),
@@ -26,7 +26,7 @@ pub fn build_seam_second_pcurve(ds: &DS, surface: &Surface3, sv: usize, ev: usiz
     Some(Curve2d::Line(Line2d { origin: DVec2::new(uv_s.x + shift_u, uv_s.y), direction: DVec2::new(0.0, uv_e.y - uv_s.y) }))
 }
 
-/// ✅ OCCT-aligned: split seam sub-edges for sphere (DoSplitSEAMOnFace).
+/// 鉁?OCCT-aligned: split seam sub-edges for sphere (DoSplitSEAMOnFace).
 pub fn build_sphere_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face: &DSFace, _face_idx: usize) -> Vec<WireSegment> {
     let ds_edge = &ds.edges[ei];
     let mut segs: Vec<WireSegment> = Vec::new();
@@ -34,7 +34,6 @@ pub fn build_sphere_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face
         for pb in &ds_edge.pave_blocks {
             let sv_seg = pb.pave1.vertex_idx; let ev_seg = pb.pave2.vertex_idx;
             if sv_seg == ev_seg { continue; }
-            let (t_start, t_end) = (None, None);
             let second_pcurve = build_seam_second_pcurve(ds, &face.surface, sv_seg, ev_seg, ds_edge.geom_tol);
             let first_pcurve = world_to_uv(&face.surface, ds.vertices[sv_seg].point).and_then(|uv_s| {
                 world_to_uv(&face.surface, ds.vertices[ev_seg].point).map(|uv_e| {
@@ -45,9 +44,7 @@ pub fn build_sphere_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face
                 start_vertex: sv_seg, end_vertex: ev_seg,
                 source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Forward,
                 is_closed_on_face: true, second_pcurve: second_pcurve.clone(), first_pcurve, t_range: [0.0, 1.0],
-                tangent_start: t_start, tangent_end: t_end,
             });
-            let (t_start_rev, t_end_rev) = (None, None);
             let second_pcurve_rev = second_pcurve.map(|pc| match pc {
                 Curve2d::Line(l) => Curve2d::Line(Line2d { origin: l.origin + l.direction, direction: -l.direction }),
                 _ => pc,
@@ -56,7 +53,6 @@ pub fn build_sphere_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face
                 start_vertex: ev_seg, end_vertex: sv_seg,
                 source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Reversed,
                 is_closed_on_face: true, second_pcurve: second_pcurve_rev, first_pcurve: None, t_range: [0.0, 1.0],
-                tangent_start: t_start_rev, tangent_end: t_end_rev,
             });
         }
     } else {
@@ -66,27 +62,25 @@ pub fn build_sphere_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face
                 Curve2d::Line(Line2d { origin: DVec2::new(uv_sv.x, uv_sv.y), direction: DVec2::new(0.0, uv_ev.y - uv_sv.y) })
             })
         });
-        let (ts, te) = (None, None);
+        let (ts, te): (Option<f64>, Option<f64>) = (None, None);
         segs.push(WireSegment {
             start_vertex: sv, end_vertex: ev,
             source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Forward,
             is_closed_on_face: true, second_pcurve: None, first_pcurve,
-            t_range: [0.0, 1.0], tangent_start: ts, tangent_end: te,
+            t_range: [0.0, 1.0],
         });
-        let (ts_rev, te_rev) = (None, None);
+        let (ts_rev, te_rev): (Option<f64>, Option<f64>) = (None, None);
         segs.push(WireSegment {
             start_vertex: ev, end_vertex: sv,
             source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Reversed,
             is_closed_on_face: true, second_pcurve, first_pcurve: None, t_range: [0.0, 1.0],
-            tangent_start: ts_rev, tangent_end: te_rev,
         });
     }
     segs
 }
 
-/// ✅ OCCT-aligned: cylinder/cone seam edge — FWD+REV with shifted pcurves.
+/// 鉁?OCCT-aligned: cylinder/cone seam edge 鈥?FWD+REV with shifted pcurves.
 pub fn build_cylinder_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face: &DSFace) -> Vec<WireSegment> {
-    let (t_start, t_end) = (None, None);
     let uv_a = world_to_uv(&face.surface, ds.vertices[sv].point);
     let uv_b = world_to_uv(&face.surface, ds.vertices[ev].point);
     let (pcurve_opt, second_pcurve_opt) = match (uv_a, uv_b) {
@@ -105,19 +99,16 @@ pub fn build_cylinder_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, fa
             start_vertex: sv, end_vertex: ev,
             source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Forward,
             is_closed_on_face: true, second_pcurve: None, first_pcurve: pcurve_opt, t_range: [0.0, 1.0],
-            tangent_start: t_start, tangent_end: t_end,
         },
         WireSegment {
             start_vertex: ev, end_vertex: sv,
             source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Reversed,
             is_closed_on_face: true, second_pcurve: second_pcurve_opt, first_pcurve: None, t_range: [0.0, 1.0],
-            tangent_start: t_end.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
-            tangent_end: t_start.map(|a| (a + std::f64::consts::PI) % std::f64::consts::TAU),
         },
     ]
 }
 
-/// ✅ OCCT-aligned: IsSplitToReverseWithWarn (BOPTools_AlgoTools.cxx L1432-1523).
+/// 鉁?OCCT-aligned: IsSplitToReverseWithWarn (BOPTools_AlgoTools.cxx L1432-1523).
 /// Compares the direction of a split sub-edge against its original edge.
 pub fn is_split_to_reverse(
     ds: &DS,

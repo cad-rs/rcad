@@ -1,4 +1,4 @@
-/// Convert Vec<WireSegment> to Vec<WireSegmentTopoDS>.
+﻿/// Convert Vec<WireSegment> to Vec<WireSegmentTopoDS>.
 ///
 /// Maps DS indices to ShapeRef handles so the output feeds into
 /// walk_path_extract_wires_topoDS. The DSAsBRep adaptor maps back
@@ -49,8 +49,6 @@ pub(crate) fn segments_to_topo_ds(
             source,
             orientation,
             is_closed_on_face: seg.is_closed_on_face,
-            tangent_start: seg.tangent_start,
-            tangent_end: seg.tangent_end,
             first_pcurve: seg.first_pcurve.clone(),
             second_pcurve: seg.second_pcurve.clone(),
             t_range: seg.t_range,
@@ -80,8 +78,6 @@ pub(crate) fn topo_ds_to_segments(
             source: src,
             orientation: ori,
             is_closed_on_face: s.is_closed_on_face,
-            tangent_start: s.tangent_start,
-            tangent_end: s.tangent_end,
             first_pcurve: s.first_pcurve.clone(),
             second_pcurve: s.second_pcurve.clone(),
             t_range: s.t_range,
