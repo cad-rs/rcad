@@ -537,6 +537,16 @@ fn build_smart_map(
 
     // OCCT L147-152: aMS set tracking edge parity (odd → boundary, even → internal).
     // Non-closed edges appearing an even number of times are internal (IsInside=true).
+    // Uses orientation-aware key matching OCCT TopoDS_Shape hashing (orientation
+    // in the face wire distinguishes FWD and REV occurrences of the same edge).
+    let src_key_of = |seg: &WireSegmentTopoDS, si: usize| -> usize {
+        let base = match seg.source {
+            WireEdgeSourceTopoDS::DsEdge(ref sr) => sr.index,
+            WireEdgeSourceTopoDS::IntersectionCurve(ref sr) => sr.index,
+            WireEdgeSourceTopoDS::SeamEdge => usize::MAX - si,
+        };
+        base ^ ((seg.orientation as usize) << 24)
+    };
     let mut a_ms: HashSet<usize> = HashSet::new();
     for &si in block {
         let seg = &segments[si];
@@ -546,11 +556,7 @@ fn build_smart_map(
 
         let b_closed = seg.start_vertex.index == seg.end_vertex.index || seg.is_seam;
 
-        let src_key = match seg.source {
-            WireEdgeSourceTopoDS::DsEdge(ref sr) => sr.index,
-            WireEdgeSourceTopoDS::IntersectionCurve(ref sr) => sr.index,
-            WireEdgeSourceTopoDS::SeamEdge => usize::MAX - si,
-        };
+        let src_key = src_key_of(seg, si);
         // OCCT L149: !aMS.Add(aE) && !bIsClosed → aMS.Remove(aE)
         if !a_ms.insert(src_key) && !b_closed {
             a_ms.remove(&src_key);
@@ -565,11 +571,7 @@ fn build_smart_map(
         if !has_pcurve { continue; }
 
         // OCCT L310: IsInside = !aMS.Contains(aE)
-        let src_key = match seg.source {
-            WireEdgeSourceTopoDS::DsEdge(ref sr) => sr.index,
-            WireEdgeSourceTopoDS::IntersectionCurve(ref sr) => sr.index,
-            WireEdgeSourceTopoDS::SeamEdge => usize::MAX - si,
-        };
+        let src_key = src_key_of(seg, si);
         let is_inside = !a_ms.contains(&src_key);
         let is_circle_arc = false;
 
