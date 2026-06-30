@@ -195,7 +195,9 @@ pub(crate) fn walk_path_extract_wires(
         info_seq.push(ci);
 
         // ── Loop Detection (OCCT L424-523) ──
-        let b_is_closed = is_vert_closed(smart_map, arrived_vertex);
+        // OCCT L147: bIsClosed = Degenerated(aE) || IsClosed(aE, myFace).
+        let b_is_closed = segments[ci].start_vertex.index == segments[ci].end_vertex.index
+            || segments[ci].is_closed_on_face;
         let a_pb = coord2d(ShapeRef::new(arrived_vertex), segments[ci].edge, segments[ci].face).unwrap_or(DVec2::ZERO);
         let a_tol_2d = uv_tolerance(arrived_vertex);
         let a_tol_2d_sq = a_tol_2d * a_tol_2d;
@@ -279,7 +281,8 @@ pub(crate) fn walk_path_extract_wires(
             None => return,
         };
         let a_tol_2d_sq = { let tol = uv_tolerance(arrived_vertex); tol * tol };
-        let b_is_closed = is_vert_closed(smart_map, arrived_vertex);
+        let b_is_closed = segments[ci].start_vertex.index == segments[ci].end_vertex.index
+            || segments[ci].is_closed_on_face;
         let a_pb = coord2d(ShapeRef::new(arrived_vertex), segments[ci].edge, segments[ci].face).unwrap_or(DVec2::ZERO);
 
         // OCCT L540-549: prepare selection state
@@ -471,6 +474,7 @@ pub(crate) fn build_closed_wires(
     // Process each block
     let mut wires: Vec<Vec<usize>> = Vec::new();
     for (bi, block) in blocks.iter().enumerate() {
+        let face32 = segments.len() > 0 && segments[0].face.index == 32 && std::env::var("RCAD_DUMP_FACE").is_ok();
         if block.len() < 2 {
             if std::env::var("RCAD_DEBUG_IC").is_ok() {
                 let face_id = segments[0].face.index;
@@ -485,6 +489,7 @@ pub(crate) fn build_closed_wires(
 
         // Build SmartMap
         let smart_map = build_smart_map(block, segments, tool);
+        if face32 { eprintln!("[DBG] face=32 block[{}] sm={}", bi, smart_map.len()); }
         if smart_map.is_empty() {
             if std::env::var("RCAD_DEBUG_IC").is_ok() {
                 let face_id = segments[0].face.index;
@@ -522,6 +527,9 @@ pub(crate) fn build_closed_wires(
             // Irregular: split via path walk
             split_block(block, segments, &mut (smart_map.clone()), &mut wires, tool);
         }
+    }
+    if segments.len() > 0 && segments[0].face.index == 32 && std::env::var("RCAD_DUMP_FACE").is_ok() {
+        eprintln!("[DBG] face=32 n_wires={}", wires.len());
     }
     wires
 }
@@ -576,10 +584,11 @@ fn build_smart_map(
         let is_circle_arc = false;
 
         // OCCT L170-172: in_flag based on vertex orientation in the edge.
-        //   FORWARD vertex → in_flag=false (outgoing), REVERSED → in_flag=true (incoming).
-        //   When segment is Reversed, start_vertex maps to REVERSED, end_vertex to FORWARD.
-        let in_flag_start = seg.orientation == Orientation::Reversed;
-        let in_flag_end = seg.orientation == Orientation::Forward;
+        //   TopExp_Explorer of an oriented edge always returns:
+        //   first vertex = FORWARD → in_flag=false (outgoing from start)
+        //   second vertex = REVERSED → in_flag=true (incoming at end)
+        let in_flag_start = false;
+        let in_flag_end = true;
 
         smart_map.entry(seg.start_vertex.index).or_default().push(EdgeInfo {
             seg_idx: si, passed: false, in_flag: in_flag_start, is_inside, is_circle_arc, angle: 0.0,
