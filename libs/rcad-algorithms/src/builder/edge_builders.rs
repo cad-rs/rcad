@@ -3,7 +3,7 @@ use rcad_kernel::geom::*;
 use crate::bopds::ds::*;
 use crate::tolerance::*;
 use crate::builder::types::{WireSegment, WireEdgeSource, WireOrientation};
-use super::wire_splitter::{world_to_uv, edge_uv_tangent, compute_seam_tangent_angles};
+use super::wire_splitter::{world_to_uv, edge_uv_tangent};
 use crate::builder::curve_eq;
 
 /// ✅ OCCT: DoSplitSEAMOnFace — build second pcurve shifted by surface period.
@@ -34,7 +34,7 @@ pub fn build_sphere_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face
         for pb in &ds_edge.pave_blocks {
             let sv_seg = pb.pave1.vertex_idx; let ev_seg = pb.pave2.vertex_idx;
             if sv_seg == ev_seg { continue; }
-            let (t_start, t_end) = compute_seam_tangent_angles(ds, ei, sv_seg, ev_seg, &face.surface);
+            let (t_start, t_end) = (None, None);
             let second_pcurve = build_seam_second_pcurve(ds, &face.surface, sv_seg, ev_seg, ds_edge.geom_tol);
             let first_pcurve = world_to_uv(&face.surface, ds.vertices[sv_seg].point).and_then(|uv_s| {
                 world_to_uv(&face.surface, ds.vertices[ev_seg].point).map(|uv_e| {
@@ -47,7 +47,7 @@ pub fn build_sphere_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face
                 is_closed_on_face: true, second_pcurve: second_pcurve.clone(), first_pcurve, t_range: [0.0, 1.0],
                 tangent_start: t_start, tangent_end: t_end,
             });
-            let (t_start_rev, t_end_rev) = compute_seam_tangent_angles(ds, ei, ev_seg, sv_seg, &face.surface);
+            let (t_start_rev, t_end_rev) = (None, None);
             let second_pcurve_rev = second_pcurve.map(|pc| match pc {
                 Curve2d::Line(l) => Curve2d::Line(Line2d { origin: l.origin + l.direction, direction: -l.direction }),
                 _ => pc,
@@ -66,14 +66,14 @@ pub fn build_sphere_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face
                 Curve2d::Line(Line2d { origin: DVec2::new(uv_sv.x, uv_sv.y), direction: DVec2::new(0.0, uv_ev.y - uv_sv.y) })
             })
         });
-        let (ts, te) = compute_seam_tangent_angles(ds, ei, sv, ev, &face.surface);
+        let (ts, te) = (None, None);
         segs.push(WireSegment {
             start_vertex: sv, end_vertex: ev,
             source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Forward,
             is_closed_on_face: true, second_pcurve: None, first_pcurve,
             t_range: [0.0, 1.0], tangent_start: ts, tangent_end: te,
         });
-        let (ts_rev, te_rev) = compute_seam_tangent_angles(ds, ei, ev, sv, &face.surface);
+        let (ts_rev, te_rev) = (None, None);
         segs.push(WireSegment {
             start_vertex: ev, end_vertex: sv,
             source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Reversed,
@@ -86,7 +86,7 @@ pub fn build_sphere_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face
 
 /// ✅ OCCT-aligned: cylinder/cone seam edge — FWD+REV with shifted pcurves.
 pub fn build_cylinder_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face: &DSFace) -> Vec<WireSegment> {
-    let (t_start, t_end) = compute_seam_tangent_angles(ds, ei, sv, ev, &face.surface);
+    let (t_start, t_end) = (None, None);
     let uv_a = world_to_uv(&face.surface, ds.vertices[sv].point);
     let uv_b = world_to_uv(&face.surface, ds.vertices[ev].point);
     let (pcurve_opt, second_pcurve_opt) = match (uv_a, uv_b) {

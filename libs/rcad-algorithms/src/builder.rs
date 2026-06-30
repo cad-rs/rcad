@@ -120,7 +120,7 @@ pub(crate) use wire_splitter::{
     EdgeInfo, build_closed_wires,
     expand_avoided_pids,
     physical_edge_id, world_to_uv,
-    compute_seam_tangent_angles, edge_uv_tangent, edge_angle_2d,
+    edge_uv_tangent, edge_angle_2d,
     are_verts_coincident,
 };
 pub(crate) use wire_path::{

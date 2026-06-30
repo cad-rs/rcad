@@ -12,7 +12,7 @@ use crate::builder::types::{BooleanOpType, FaceSampleData, WireSegment, WireEdge
 use crate::builder::SourceSide;
 
 use crate::builder::angle_2d::angle_2d;
-use crate::builder::wire_splitter::{world_to_uv, edge_uv_tangent, edge_angle_2d, compute_seam_tangent_angles, are_verts_coincident, is_edge_isoline};
+use crate::builder::wire_splitter::{world_to_uv, edge_uv_tangent, edge_angle_2d, are_verts_coincident, is_edge_isoline};
 use crate::builder::edge_builders::{build_sphere_seam_segments, build_cylinder_seam_segments, is_split_to_reverse};
 
 /// ✅ OCCT-aligned: compare two Curve3 for identity (same TShape).

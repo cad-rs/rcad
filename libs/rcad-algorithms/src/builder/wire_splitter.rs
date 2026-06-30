@@ -16,75 +16,8 @@ use super::angle_2d::{dir_to_angle, angle_2d, clock_wise_angle};
 /// rcad equivalent: construct a Line pcurve along the surface isoline at the
 /// parametric seam, then call angle_2d (which mirrors OCCT's dt/tol/step logic).
 /// Returns (tangent_start, tangent_end) where both are the pcurve direction.
-pub(crate) fn compute_seam_tangent_angles(ds: &DS, ei: usize, sv: usize, ev: usize, surface: &Surface3) -> (Option<f64>, Option<f64>) {
-    match surface {
-        Surface3::Sphere(sph) => {
-            let uvs = sph.world_to_uv(ds.vertices[sv].point);
-            let uve = sph.world_to_uv(ds.vertices[ev].point);
-            if uve.y == uvs.y && uve.x == uvs.x {
-                return (Some(std::f64::consts::PI), Some(std::f64::consts::PI));
-            }
-            let uv_start = uvs;
-            let uv_end = uve;
-            let u_const = uv_start.x;
-            let v0 = uv_start.y.min(uv_end.y);
-            let v1 = uv_start.y.max(uv_end.y);
-            let span = v1 - v0;
-            if span < 1e-30 { return (None, None); }
-            let pcurve = Curve2d::Line(Line2d {
-                origin: DVec2::new(u_const, v0),
-                direction: DVec2::new(0.0, span),
-            });
-            // ✅ OCCT-aligned: BRep_Tool::Parameter — use DSEdge.vertex_params.
-            let sv_param = ds.edges[ei].vertex_param(sv).unwrap_or(uv_start.y);
-            let ev_param = ds.edges[ei].vertex_param(ev).unwrap_or(uv_end.y);
-            let t_start_v = sv_param - v0;
-            let t_end_v = ev_param - v0;
-            let domain = [0.0, span];
-            let t_start = angle_2d(&pcurve, t_start_v, domain, false, surface, ds.vertices[sv].geom_tol, None);
-            let t_end = angle_2d(&pcurve, t_end_v, domain, true, surface, ds.vertices[ev].geom_tol, None);
-            (t_start, t_end)
-        }
-        Surface3::Cylinder(cyl) => {
-            // ✅ OCCT-aligned: BRep_Tool::Parameter — use DSEdge.vertex_params.
-            let sv_v = ds.edges[ei].vertex_param(sv).unwrap_or_else(|| {
-                (ds.vertices[sv].point - cyl.origin).dot(cyl.axis.normalize_or_zero())
-            });
-            let ev_v = ds.edges[ei].vertex_param(ev).unwrap_or_else(|| {
-                (ds.vertices[ev].point - cyl.origin).dot(cyl.axis.normalize_or_zero())
-            });
-            let dir = if ev_v > sv_v { DVec2::new(0.0, 1.0) } else { DVec2::new(0.0, -1.0) };
-            let a = dir_to_angle(dir);
-            (Some(a), Some(a))
-        }
-        Surface3::Plane(p) => {
-            let x_axis = any_perpendicular(p.normal).normalize();
-            let y_axis = p.normal.cross(x_axis).normalize();
-            let local_s = ds.vertices[sv].point - p.origin;
-            let local_e = ds.vertices[ev].point - p.origin;
-            let uv_s = DVec2::new(local_s.dot(x_axis), local_s.dot(y_axis));
-            let uv_e = DVec2::new(local_e.dot(x_axis), local_e.dot(y_axis));
-            let dir = uv_e - uv_s;
-            if dir.length_squared() < 1e-30 { return (None, None); }
-            let a = dir_to_angle(dir);
-            (Some(a), Some(a))
-        }
-        _ => (None, None),
-    }
-}
-
 // ═══════════════════════════════════════════════════════════════
-// ■ CRITICAL OCCT ALIGNMENT ■ UV tangent angle computation
-//   Angles are NEGATED (na = −a) to match the clock_wise_angle
-//   OCCT formula (angle_out − angle_in + 2π).  The old rcad formula
-//   (angle_in − angle_out + 2π) was inverse, so ALL angles across
-//   edge_uv_tangent, compute_seam_tangent_angles, and angle_2d (for
-//   IC arcs) must be negated consistently.
-//
-//   ⚠ If clock_wise_angle formula is changed, REVERT the negation
-//     here AND in compute_seam_tangent_angles AND angle_2d call sites.
-//     Partial negation (some functions negated, others not) will
-//     produce wrong CWA ordering → box faces fail to split at IC.
+// ■ UV tangent angle computation
 // ═══════════════════════════════════════════════════════════════
 /// ✅ OCCT-aligned Angle2D for DsEdge segments.
 /// Evaluates the 3D curve at a micro-step near each vertex (OCCT
