@@ -925,7 +925,8 @@ impl<'a> BooleanBuilder<'a> {
             let has_info = self.ds.faces[fi].face_info.has_any_interference();
 
             // OCCT L283-287: PBsIn → curves_sc, PBsOn → curves_on.
-            let has_pb_in = !self.ds.faces[fi].face_info.pave_blocks_in.is_empty();
+            let has_pb_in = !self.ds.faces[fi].face_info.pave_blocks_in.is_empty()
+                || !self.ds.faces[fi].face_info.pave_blocks_sc.is_empty();
             let has_pb_sc = !self.ds.faces[fi].face_info.curves_sc.is_empty();
             let has_pb_on = !self.ds.faces[fi].face_info.pave_blocks_on.is_empty();
 

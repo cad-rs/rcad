@@ -1,4 +1,4 @@
-﻿use std::collections::{HashMap, HashSet, BTreeSet};
+use std::collections::{HashMap, HashSet, BTreeSet};
 use glam::DVec2; use glam::DVec3;
 use rcad_kernel::geom::*;
 use rcad_kernel::BRep;
@@ -1129,6 +1129,28 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
         segments.push(WireSegment {
             start_vertex: edge.end_vertex, end_vertex: edge.start_vertex,
             source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Reversed,
+            is_closed_on_face: false, second_pcurve: None, first_pcurve: None,
+            t_range: edge.t_range,
+        });
+    }
+
+    // Architecture diff A5: OCCT TopExp_Explorer iterates all wire edges including
+    // those added by MakeSectionEdges.  rcad's pave_blocks_sc stores section edge
+    // reference indices allocated during MakeBlocks.  Process them here so that
+    // face splitting can use section edges even when pave_blocks_in is empty.
+    let mut sc_dedup: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for &pb_idx in &face.face_info.pave_blocks_sc {
+        if pb_idx >= ds.pave_blocks.len() { continue; }
+        let pb = &ds.pave_blocks[pb_idx];
+        let ei = pb.new_edge.unwrap_or(pb.original_edge);
+        if ei >= ds.edges.len() { continue; }
+        if boundary_set.contains(&ei) { continue; }
+        if !sc_dedup.insert(ei) { continue; }
+        if ds.is_edge_degenerated(ei) { continue; }
+        let edge = &ds.edges[ei];
+        segments.push(WireSegment {
+            start_vertex: edge.start_vertex, end_vertex: edge.end_vertex,
+            source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Forward,
             is_closed_on_face: false, second_pcurve: None, first_pcurve: None,
             t_range: edge.t_range,
         });

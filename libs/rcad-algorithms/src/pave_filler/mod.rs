@@ -6969,14 +6969,15 @@ impl<'a> PaveFiller<'a> {
                         epb.new_edge = Some(new_ei);
                     }
                     self.ds.section_edge_refs[ci].push(new_ei);
-                    // OCCT-aligned: register section edge on the plane face's boundary
-                    // only.  The sphere face already references the IC via curves_sc
-                    // and will be split through pave_blocks_sc when the face builder
-                    // processes it.  Adding to boundary_edges would corrupt
-                    // build_original_face (which uses ALL boundary_edges).
-                    for (k, &fi) in [n_f1, n_f2].iter().enumerate() {
-                        if fi == usize::MAX { continue; }
-                        if matches!(self.ds.faces[fi].surface, Surface3::Plane(_)) {
+                    // Architecture diff A5: register section edge on both faces.
+                    // OCCT BRep_Builder::Add adds to the face wire directly; rcad
+                    // pushes to boundary_edges.  build_original_face (used when no
+                    // split occurs) reads boundary_edges — this is safe because
+                    // we now process pave_blocks_sc in collect_face_edge_segments,
+                    // and build_result only calls build_original_face for faces
+                    // that were NOT split (has_pb_in=false ∧ has_pb_sc=false).
+                    for &fi in &[n_f1, n_f2] {
+                        if fi != usize::MAX && !self.ds.faces[fi].boundary_edges.contains(&new_ei) {
                             self.ds.faces[fi].boundary_edges.push(new_ei);
                         }
                     }
