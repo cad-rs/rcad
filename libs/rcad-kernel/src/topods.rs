@@ -138,6 +138,9 @@ pub struct TEdgeData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TWireData {
     pub edges: Vec<ShapeRef>,
+    /// BRep_Tool::IsClosed equivalent — true when the wire forms a closed loop.
+    #[serde(default)]
+    pub closed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -166,6 +169,9 @@ pub struct TFaceData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TShellData {
     pub faces: Vec<ShapeRef>,
+    /// BRep_Tool::IsClosed equivalent — true when the shell is closed (watertight).
+    #[serde(default)]
+    pub closed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -239,7 +245,7 @@ impl BRep {
 
     pub fn add_twire(&mut self, edges: Vec<ShapeRef>) -> ShapeRef {
         let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Wire(TWireData { edges })));
+        self.tshapes.push(Arc::new(TShape::Wire(TWireData { edges, closed: false })));
         ShapeRef::new(index)
     }
 
@@ -251,7 +257,7 @@ impl BRep {
 
     pub fn add_tshell(&mut self, faces: Vec<ShapeRef>) -> ShapeRef {
         let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Shell(TShellData { faces })));
+        self.tshapes.push(Arc::new(TShape::Shell(TShellData { faces, closed: false })));
         ShapeRef::new(index)
     }
 

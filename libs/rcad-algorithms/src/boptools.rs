@@ -524,8 +524,8 @@ pub fn make_container(shape_type: u8, brep: &mut rcad_kernel::topods::BRep) -> r
         0 => std::sync::Arc::new(TShape::Compound(Vec::new())),
         1 => std::sync::Arc::new(TShape::CompSolid(Vec::new())),
         2 => std::sync::Arc::new(TShape::Solid(TSolidData { shells: Vec::new(), internal_vertices: Vec::new(), internal_edges: Vec::new() })),
-        3 => std::sync::Arc::new(TShape::Shell(TShellData { faces: Vec::new() })),
-        4 => std::sync::Arc::new(TShape::Wire(TWireData { edges: Vec::new() })),
+        3 => std::sync::Arc::new(TShape::Shell(TShellData { faces: Vec::new(), closed: false })),
+        4 => std::sync::Arc::new(TShape::Wire(TWireData { edges: Vec::new(), closed: false })),
         _ => return ShapeRef::new(0),
     };
     brep.tshapes.push(shape);
