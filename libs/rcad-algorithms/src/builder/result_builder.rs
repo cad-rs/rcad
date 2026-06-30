@@ -24,6 +24,7 @@ pub(crate) struct ResultBuilder {
     pub(crate) tmp_shells: Vec<Vec<usize>>,
     pub(crate) tmp_solids: Vec<Vec<usize>>,
     pub(crate) custom_edge_curves: Vec<Option<Curve3>>,
+    pub(crate) custom_edge_ranges: Vec<Option<[f64; 2]>>,
     pub(crate) face_internal_vtx: Vec<Vec<usize>>,
     pub(crate) deg_edge_indices: HashSet<usize>,
     pub(crate) ic_edge_map: HashMap<usize, usize>,
@@ -138,7 +139,7 @@ impl ResultBuilder {
                     // ✅ OCCT-aligned: IC edge identity (section edges shared).
                     WireEdgeSource::IntersectionCurve(ci) => {
                         let crv = &ds.intersection_curves[*ci].curve;
-                        self.add_ic_edge(*ci, v1, v2, crv.clone())
+                        self.add_ic_edge(*ci, v1, v2, crv.clone(), Some(seg.t_range))
                     }
                     WireEdgeSource::DsEdge(_) => self.add_edge(v1, v2),
                     _ => self.add_edge(v1, v2),
@@ -166,7 +167,7 @@ impl ResultBuilder {
                     // ✅ OCCT-aligned: IC edge identity (inner/internal wires).
                     WireEdgeSource::IntersectionCurve(ci) => {
                         let crv = &ds.intersection_curves[*ci].curve;
-                        self.add_ic_edge(*ci, v1, v2, crv.clone())
+                        self.add_ic_edge(*ci, v1, v2, crv.clone(), Some(seg.t_range))
                     }
                     WireEdgeSource::DsEdge(_) | WireEdgeSource::SeamEdge => self.add_edge(v1, v2),
                 };
@@ -403,7 +404,7 @@ impl ResultBuilder {
                     super::types::WireEdgeSourceTopoDS::IntersectionCurve(ci) => {
                         let crv = ic_curves.get(&ci.index)
                             .cloned().unwrap_or(Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X }));
-                        self.add_ic_edge(ci.index, v1, v2, crv)
+                        self.add_ic_edge(ci.index, v1, v2, crv, Some(seg.t_range))
                     }
                     _ => self.add_edge(v1, v2),
                 };
@@ -437,7 +438,7 @@ impl ResultBuilder {
                     super::types::WireEdgeSourceTopoDS::IntersectionCurve(ci) => {
                         let crv = ic_curves.get(&ci.index)
                             .cloned().unwrap_or(Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X }));
-                        self.add_ic_edge(ci.index, v1, v2, crv)
+                        self.add_ic_edge(ci.index, v1, v2, crv, Some(seg.t_range))
                     }
                     _ => self.add_edge(v1, v2),
                 };
@@ -659,6 +660,7 @@ impl ResultBuilder {
             face_origins: Vec::new(),
             co_face_origins: Vec::new(),
             custom_edge_curves: Vec::new(),
+            custom_edge_ranges: Vec::new(),
             face_internal_vtx: Vec::new(),
             deg_edge_indices: std::collections::HashSet::new(),
             ic_edge_map: HashMap::new(),
@@ -876,11 +878,8 @@ impl ResultBuilder {
     ///    rcad: maps intersection curve index → result edge index so both faces
     ///    emit_wire_face calls get the same edge index for the same IC curve.
     ///    OCCT: each TopoDS_Edge is a distinct handle — no post-hoc merge needed.
-    pub(crate) fn add_ic_edge(&mut self, ici: usize, v1: usize, v2: usize, curve: Curve3) -> usize {
+    pub(crate) fn add_ic_edge(&mut self, ici: usize, v1: usize, v2: usize, curve: Curve3, range: Option<[f64; 2]>) -> usize {
         if let Some(&idx) = self.ic_edge_map.get(&ici) {
-            // OCCT-aligned: the edge must have same vertices for both faces.
-            // If remap_ic_v produced different vertices for the same IC on
-            // different faces, log a warning (indicates remap inconsistency).
             let existing = self.edges[idx];
             if (existing.0 != v1 || existing.1 != v2) && (existing.0 != v2 || existing.1 != v1) {
                 eprintln!("[IC_VTX] ci={} existing=({}, {}) called=({}, {})", ici, existing.0, existing.1, v1, v2);
@@ -893,8 +892,11 @@ impl ResultBuilder {
             self.custom_edge_curves.push(None);
         }
         self.custom_edge_curves[idx] = Some(curve);
+        while self.custom_edge_ranges.len() <= idx {
+            self.custom_edge_ranges.push(None);
+        }
+        self.custom_edge_ranges[idx] = range;
         self.ic_edge_map.insert(ici, idx);
-        // no_merge_edges removed — edges are inherently unique by index
         idx
     }
 
@@ -1071,7 +1073,13 @@ impl ResultBuilder {
                 t.curves.push(crv.clone());
                 ci
             });
-            e_map.push(t.add_tedge(curve_idx, first, last, [0.0, 1.0]));
+            let curve_range = self.custom_edge_ranges.get(ei).and_then(|r| *r)
+                .or_else(|| self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
+                    use rcad_kernel::geom::CurveEval;
+                    crv.default_domain()
+                }))
+                .unwrap_or([0.0, 1.0]);
+            e_map.push(t.add_tedge(curve_idx, first, last, curve_range));
         }
 
         // 3. Faces → TShape::Face (with wires)
