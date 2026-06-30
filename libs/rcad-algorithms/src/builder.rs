@@ -3041,7 +3041,6 @@ impl<'a> BooleanBuilder<'a> {
             ShapeType::Solid => {
                 // OCCT L130-167: for each source SOLID, check myImages → add images/original.
                 // ✅ OCCT-aligned BuildSolid: for FUSE 3D, merge ALL shells into a single solid
-                eprintln!("[SOLID] Union={} n_shells={}", self.op == BooleanOpType::Union, result.tmp_shells.len());
                 if self.op == BooleanOpType::Union && result.tmp_shells.len() > 1 {
                     let all_shells = std::mem::take(&mut result.tmp_shells);
                     let mut merged: Vec<usize> = Vec::new();
