@@ -158,6 +158,10 @@ fn find_interior_3d(
         });
         if in_hole { continue; }
         // Valid interior UV point — convert to 3D
+        // ✅ OCCT-aligned: BOPTools_AlgoTools3D::PointInFace returns a point
+        //   ON the face surface (no inward/outward offset).  rcad previously
+        //   offset by -normal * 100*tol, which for convex surfaces (sphere)
+        //   pushed the point inside the opposing solid, causing misclassification.
         let pt = match surface {
             Surface3::Plane(p) => {
                 let x_axis = rcad_kernel::geom::any_perpendicular(p.normal).normalize();
@@ -175,8 +179,7 @@ fn find_interior_3d(
             }
             _ => return None,
         };
-        let inward = -normal;
-        return Some(pt + inward * (TOLERANCE_ABS * 100.0));
+        return Some(pt);
     }
     None
 }
@@ -273,14 +276,14 @@ impl<'a> BooleanBuilder<'a> {
                     }).collect()
                 }).collect();
                 // Find interior sample point (outer polygon minus holes)
+                // ✅ OCCT-aligned: BOPTools_AlgoTools3D::PointInFace finds point
+                //   ON the face surface (no inward/outward offset).
                 let sample_pt = find_interior_3d(&outer_uvs, &hole_uvs, &face_surf, &normal)
                     .unwrap_or_else(|| {
-                        // Fallback: centroid of outer boundary vertices, offset inward
                         let cent = wf.outer_wire.iter()
                             .map(|&si| ds.vertices[segments[si].start_vertex].point)
                             .sum::<DVec3>() / wf.outer_wire.len() as f64;
-                        let inward = -normal; // from surface toward solid interior
-                        cent + inward * (TOLERANCE_ABS * 100.0)
+                        cent
                     });
                 let class = classify_point(sample_pt, &opposing_faces, ds);
                 self.classification_keep_policy(source, class, face_idx)
@@ -874,8 +877,7 @@ impl<'a> BooleanBuilder<'a> {
             let has_info = self.ds.faces[fi].face_info.has_any_interference();
 
             // OCCT L283-287: PBsIn → curves_sc, PBsOn → curves_on.
-            let has_pb_in = !self.ds.faces[fi].face_info.pave_blocks_in.is_empty()
-                || !self.ds.faces[fi].face_info.pave_blocks_sc.is_empty();
+            let has_pb_in = !self.ds.faces[fi].face_info.pave_blocks_in.is_empty();
             let has_pb_sc = !self.ds.faces[fi].face_info.curves_sc.is_empty();
             let has_pb_on = !self.ds.faces[fi].face_info.pave_blocks_on.is_empty();
 

@@ -6970,10 +6970,8 @@ impl<'a> PaveFiller<'a> {
                     }
                     self.ds.section_edge_refs[ci].push(new_ei);
                     // OCCT-aligned: register section edge on the plane face's boundary
-                    // only — the sphere face's curves_sc already references the IC.
-                    // Adding to the sphere's boundary_edges would cause the sphere to
-                    // be split, and its classification may incorrectly remove the
-                    // outside-box portion (see classification_keep_policy logic).
+                    // only — the sphere face's classification requires further alignment
+                    // (ComputeState PointInFace for trimmed spherical faces).
                     for (k, &fi) in [n_f1, n_f2].iter().enumerate() {
                         if fi == usize::MAX { continue; }
                         if matches!(self.ds.faces[fi].surface, Surface3::Plane(_)) {
