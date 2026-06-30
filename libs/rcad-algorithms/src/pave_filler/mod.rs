@@ -2190,71 +2190,227 @@ impl<'a> PaveFiller<'a> {
     }
 
     fn make_pcurves(&mut self) {
-        use crate::bopds::ds::DSRepOnFace;
+        // OCCT L592-595: early return when pcurve building is avoided or neither
+        // section face requires pcurves.
+        if self.avoid_build_pcurve
+            || (!self.section_attribute.pcurve_on_s1 && !self.section_attribute.pcurve_on_s2)
+        {
+            return;
+        }
+        let b_pcurve_on_s = [self.section_attribute.pcurve_on_s1, self.section_attribute.pcurve_on_s2];
 
-        // Pre-collect (pb_idx, ei) pairs for all faces to avoid borrow conflicts
-        let mut pcurves_to_add: Vec<(usize, usize, Curve2d, f64, f64)> = Vec::new();
+        // OCCT L601: BOPAlgo_VectorOfMPC aVMPC — collection of MPC entries.
+        // rcad: the MPC (Make PCurve) concept is inlined — we store the data
+        // needed to either (a) compute a new pcurve, or (b) update vertex tolerances
+        // from an already-existing pcurve.
+        #[derive(Clone)]
+        struct MPCEntry {
+            edge_idx: usize,
+            face_idx: usize,
+            /// OCCT: SetFlag(true) means call UpdateVertices after pcurve is set.
+            update_vertices: bool,
+            /// OCCT SetData fields: existing edge to clone pcurve from.
+            existing_edge: Option<usize>,
+        }
 
-        // OCCT L606: for each face in the FaceInfo pool
+        let mut a_vmpc: Vec<MPCEntry> = Vec::new();
+
+        // ===== Phase 1: Common Block pcurves (OCCT L603-700) =====
+        // Process PaveBlocksIn (boundary edges through face) and PaveBlocksOn
+        // (edges lying on the face surface).
         for fi in 0..self.ds.faces.len() {
-            let face_surface = self.ds.faces[fi].surface.clone();
+            let face_info = &self.ds.faces[fi].face_info;
 
-            // OCCT L618-631: PaveBlocksIn + L633-699: PaveBlocksOn
-            let pb_indices: Vec<usize> = self.ds.faces[fi].face_info.pave_blocks_in
-                .iter()
-                .chain(self.ds.faces[fi].face_info.pave_blocks_on.iter())
-                .copied()
-                .collect();
+            // OCCT L618-631: PaveBlocksIn
+            for &pb_idx in &face_info.pave_blocks_in {
+                if pb_idx >= self.ds.pave_blocks.len() { continue; }
+                let pb = &self.ds.pave_blocks[pb_idx];
+                let ei = pb.original_edge;
+                if ei >= self.ds.edges.len() { continue; }
+                a_vmpc.push(MPCEntry {
+                    edge_idx: ei,
+                    face_idx: fi,
+                    update_vertices: false,
+                    existing_edge: None,
+                });
+            }
 
-            for &pb_idx in &pb_indices {
-                // OCCT L624: nE = aPB->Edge()
+            // OCCT L633-699: PaveBlocksOn
+            for &pb_idx in &face_info.pave_blocks_on {
                 if pb_idx >= self.ds.pave_blocks.len() { continue; }
                 let pb = &self.ds.pave_blocks[pb_idx];
                 let ei = pb.original_edge;
                 if ei >= self.ds.edges.len() { continue; }
 
-                // OCCT L641: check if pcurve already exists (HasCurveOnSurface)
-                if self.ds.edges[ei].face_reps.iter().any(|r| r.face_idx == fi) { continue; }
+                // OCCT L641: HasCurveOnSurface — skip if pcurve already exists
+                if self.ds.edges[ei].face_reps.iter().any(|r| r.face_idx == fi) {
+                    continue;
+                }
 
-                // OCCT L649-699: CommonBlock optimization — if another PB in the same
-                // CommonBlock already has a pcurve on this face, copy it instead of computing.
+                // OCCT L649-695: CommonBlock inheritance — if another PB in the same
+                // CommonBlock already has a pcurve on this face, reuse it (SetData).
+                let mut cb_existing_edge: Option<usize> = None;
                 if let Some(cb_idx) = pb.common_block_idx {
-                    if cb_idx < self.ds.common_blocks.len() {
-                        let cb = &self.ds.common_blocks[cb_idx];
+                    if let Some(cb) = self.ds.common_blocks.get(cb_idx) {
                         let cb_pbs = cb.pave_blocks();
                         if cb_pbs.len() >= 2 {
-                            let mut copied = false;
                             for &(other_pb_idx, _other_fi) in cb_pbs {
                                 if other_pb_idx == pb_idx { continue; }
-                                if other_pb_idx >= self.ds.pave_blocks.len() { continue; }
-                                let other_ei = self.ds.pave_blocks[other_pb_idx].original_edge;
-                                if other_ei >= self.ds.edges.len() { continue; }
-                                if let Some(rep) = self.ds.edges[other_ei].face_reps.iter()
-                                    .find(|r| r.face_idx == fi)
-                                {
-                                    pcurves_to_add.push((ei, fi, rep.pcurve.clone(),
-                                        self.ds.edges[ei].t_range[0],
-                                        self.ds.edges[ei].t_range[1]));
-                                    copied = true;
-                                    break;
+                                if let Some(other_pb) = self.ds.pave_blocks.get(other_pb_idx) {
+                                    let other_ei = other_pb.original_edge;
+                                    if let Some(other_edge) = self.ds.edges.get(other_ei) {
+                                        if other_edge.face_reps.iter().any(|r| r.face_idx == fi) {
+                                            // OCCT L678-690: SetData(aEz, aV1x, aT1x, aV2x, aT2x)
+                                            // AttachExistingPCurve — the existing pcurve on aEx
+                                            // (other edge) will be copied to this edge.
+                                            cb_existing_edge = Some(other_ei);
+                                            break;
+                                        }
+                                    }
                                 }
                             }
-                            if copied { continue; }
                         }
                     }
                 }
 
-                // Compute pcurve: project edge 3D curve onto face surface
-                let edge_curve = &self.ds.edges[ei].curve;
-                if let Some((pcurve, len)) = DS::compute_edge_pcurve(edge_curve, &face_surface) {
-                    pcurves_to_add.push((ei, fi, pcurve, self.ds.edges[ei].t_range[0], self.ds.edges[ei].t_range[1]));
-                    let _ = len; // length may be unused
+                a_vmpc.push(MPCEntry {
+                    edge_idx: ei,
+                    face_idx: fi,
+                    update_vertices: false,
+                    existing_edge: cb_existing_edge,
+                });
+            }
+        } // end Phase 1
+
+        // ===== Phase 2: Section edge pcurves — UpdateVertices only (OCCT L702-757) =====
+        // Pcurves for section edges are already computed during make_blocks.
+        // This phase creates MPC entries with SetFlag(true) so that UpdateVertices
+        // is called after the pcurve is known, correcting vertex tolerances.
+        if b_pcurve_on_s[0] || b_pcurve_on_s[1] {
+            // OCCT L711: anEFPairs fence prevents duplicate (edge, face) pairs
+            let mut ef_pairs: std::collections::HashSet<(usize, usize)> =
+                std::collections::HashSet::new();
+
+            // OCCT L712-713: iterate all FF interferences
+            for interf in &self.ds.interferences {
+                if let Interference::FaceFace { f1, f2, curves, .. } = interf {
+                    let nf = [*f1, *f2];
+
+                    // OCCT L733-755: for each curve in the FF interference
+                    for &ci in curves {
+                        if ci >= self.ds.intersection_curves.len() { continue; }
+                        let ic = &self.ds.intersection_curves[ci];
+
+                        // OCCT L736-754: for each PaveBlock of this curve
+                        for pb in &ic.pave_blocks {
+                            // OCCT L741: nE = aPB->Edge()
+                            // For section edges original_edge == NO_EDGE, use new_edge.
+                            let section_ei = match pb.new_edge {
+                                Some(ei) => ei,
+                                None => continue,
+                            };
+
+                            // OCCT L744-753: for each of the two faces
+                            for (m, &fi) in nf.iter().enumerate() {
+                                if !b_pcurve_on_s[m] { continue; }
+                                // OCCT L746: anEFPairs.Add(BOPDS_Pair(nE, nF[m]))
+                                // Returns false if pair already existed
+                                if !ef_pairs.insert((section_ei, fi)) {
+                                    continue;
+                                }
+                                // OCCT L748-751: create MPC with SetFlag(true)
+                                a_vmpc.push(MPCEntry {
+                                    edge_idx: section_ei,
+                                    face_idx: fi,
+                                    update_vertices: true,
+                                    existing_edge: None,
+                                });
+                            }
+                        }
+                    }
                 }
+            }
+        } // end Phase 2
+
+        // ===== Phase 3: Perform all MPC computations (OCCT L760-775) =====
+        // OCCT L760-766: BOPTools_Parallel::Perform(myRunParallel, aVMPC, myContext)
+        // rcad: sequential execution for now — each MPC.Perform computes the pcurve
+        // (or copies from existing_edge), stores it in the DS, and optionally calls
+        // UpdateVertices.
+        //
+        // Later: replace with parallel if myRunParallel==true.
+        let mut failed_pcurves: Vec<(usize, usize)> = Vec::new();
+        let mut applied_pcurves: Vec<(usize, usize, Curve2d, f64, f64)> = Vec::new();
+        let mut update_vertices_list: Vec<(usize, usize)> = Vec::new();
+
+        for mpc in &a_vmpc {
+            let ei = mpc.edge_idx;
+            let fi = mpc.face_idx;
+
+            if ei >= self.ds.edges.len() || fi >= self.ds.faces.len() {
+                continue;
+            }
+
+            // If another edge in the same CommonBlock already provides the pcurve,
+            // copy it (OCCT SetData / AttachExistingPCurve path).
+            if let Some(src_ei) = mpc.existing_edge {
+                if src_ei < self.ds.edges.len() {
+                    if let Some(rep) = self.ds.edges[src_ei].face_reps.iter().find(|r| r.face_idx == fi) {
+                        applied_pcurves.push((
+                            ei, fi,
+                            rep.pcurve.clone(),
+                            self.ds.edges[ei].t_range[0],
+                            self.ds.edges[ei].t_range[1],
+                        ));
+                        if mpc.update_vertices {
+                            update_vertices_list.push((ei, fi));
+                        }
+                        continue;
+                    }
+                }
+            }
+
+            // Check if this edge already has a pcurve on this face (OCCT HasCurveOnSurface).
+            // Section edges may already have their pcurve from make_blocks.
+            if self.ds.edges[ei].face_reps.iter().any(|r| r.face_idx == fi) {
+                if mpc.update_vertices {
+                    // OCCT SetFlag(true) — only UpdateVertices needed, pcurve exists
+                    update_vertices_list.push((ei, fi));
+                }
+                continue;
+            }
+
+            // Compute pcurve (OCCT MPC.Perform internal logic)
+            let face_surface = self.ds.faces[fi].surface.clone();
+            let edge_curve = &self.ds.edges[ei].curve;
+            if let Some((pcurve, len)) = DS::compute_edge_pcurve(edge_curve, &face_surface) {
+                applied_pcurves.push((
+                    ei, fi, pcurve,
+                    self.ds.edges[ei].t_range[0],
+                    self.ds.edges[ei].t_range[1],
+                ));
+                let _ = len;
+                if mpc.update_vertices {
+                    update_vertices_list.push((ei, fi));
+                }
+            } else {
+                // OCCT L782-788: failed — collect for warning
+                failed_pcurves.push((ei, fi));
             }
         }
 
-        // Apply all collected pcurves
-        for (ei, fi, pcurve, t0, t1) in pcurves_to_add {
+        // ===== Phase 4: Error reporting and batch application (OCCT L782-789) =====
+        // OCCT L782-788: AddWarning for each failed MPC
+        for &(ei, fi) in &failed_pcurves {
+            // OCCT: BRep_Builder MakeCompound + Add(Edge) + Add(Face) +
+            //       AddWarning(new BOPAlgo_AlertBuildingPCurveFailed(compound))
+            // rcad: non-fatal warning as debug trace
+            eprintln!("[WARN] MakePCurves failed for edge={} on face={}", ei, fi);
+        }
+
+        // Apply all computed pcurves to the DS
+        use crate::bopds::ds::DSRepOnFace;
+        for (ei, fi, pcurve, t0, t1) in applied_pcurves {
             self.ds.edges[ei].face_reps.push(DSRepOnFace {
                 face_idx: fi,
                 pcurve,
@@ -2263,6 +2419,17 @@ impl<'a> PaveFiller<'a> {
                 start_param: t0,
                 end_param: t1,
             });
+        }
+
+        // OCCT L284-287: UpdateVertices for section-edge pcurves.
+        // Adjusts vertex tolerances based on mismatch between 3D curve and 2D pcurve.
+        for &(ei, fi) in &update_vertices_list {
+            // OCCT: UpdateVertices(aCopyE, myF) — corrects vertex tolerances using the
+            // difference between the edge's 3D curve and its pcurve on the face.
+            //
+            // rcad placeholder: structure matches OCCT but the actual tolerance
+            // adjustment is deferred. The pcurve is already computed and stored above.
+            let _ = (ei, fi);
         }
     }
     fn update_face_info(&mut self, fi: usize) {
