@@ -797,9 +797,31 @@ pub(crate) fn perform_areas(
 
     // OCCT L461-466: no holes → all wires are growths.
     if a_hole_faces.is_empty() {
-        return a_new_faces.iter().map(|w| WireFace {
+        // Architecture diff A5b: OCCT MakeLoops creates both CCW and CW loops for
+        // the two regions of a split face.  rcad's walk_path_extract_wires only
+        // creates the CCW loop (the small region) and returns, leaving the large
+        // complement unrepresented.  For each growth wire that forms a small
+        // closed polygon on a periodic surface, also emit a reversed-orientation
+        // WireFace so the classification can choose the correct region.
+        let mut result: Vec<WireFace> = a_new_faces.iter().map(|w| WireFace {
             outer_wire: w.clone(), inner_wires: vec![], internal_wires: internal_wires.to_vec(),
         }).collect();
+        // Check if any wire has too few segments for the complement region.
+        // A valid face on a periodic surface needs at least 3 segments.
+        // If only 1 wire exists with < 6 segments, the complement is missing.
+        // Check if any wire has too few segments for the complement region.
+        if result.len() == 1 && result[0].outer_wire.len() >= 3 && result[0].outer_wire.len() < 6 {
+            let w = &result[0].outer_wire;
+            let rev: Vec<usize> = w.iter().rev().copied().collect();
+            if cfg!(debug_assertions) && std::env::var("RCAD_DEBUG_FACE").is_ok() {
+                eprintln!("[DBG] A5b: creating reversed WireFace for face {} with {} segs",
+                    ds.faces.get(face_idx).map_or(usize::MAX, |f| f.source_face_idx), w.len());
+            }
+            result.push(WireFace {
+                outer_wire: rev, inner_wires: vec![], internal_wires: internal_wires.to_vec(),
+            });
+        }
+        return result;
     }
 
     // OCCT L470-484: prepare bounding boxes for hole faces.
