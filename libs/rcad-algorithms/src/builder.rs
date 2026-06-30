@@ -3040,35 +3040,30 @@ impl<'a> BooleanBuilder<'a> {
             }
             ShapeType::Solid => {
                 // OCCT L130-167: for each source SOLID, check myImages → add images/original.
-                // ✅ OCCT-aligned BuildSolid: for FUSE 3D, merge ALL shells into a single solid
-                if self.op == BooleanOpType::Union && result.tmp_shells.len() > 1 {
-                    let all_shells = std::mem::take(&mut result.tmp_shells);
-                    let mut merged: Vec<usize> = Vec::new();
-                    for shell_faces in &all_shells {
-                        for &fi in shell_faces {
-                            if !merged.contains(&fi) { merged.push(fi); }
-                        }
-                    }
-                    if !merged.is_empty() {
-                        result.tmp_shells.push(merged);
-                        result.tmp_solids = vec![vec![0]];
-                    }
-                }
-                let tmp_solids = result.tmp_solids.clone();
-                if !tmp_solids.is_empty() {
-                    let new_shells = result.tmp_shells.clone();
-                    for solid_shells in &tmp_solids {
-                        let shell_refs: Vec<topods::ShapeRef> = solid_shells.iter()
-                            .filter_map(|&si| new_shells.get(si))
-                            .map(|shell_faces| {
-                                let sf: Vec<topods::ShapeRef> = shell_faces.iter()
-                                    .filter_map(|&fi| result.face_refs.get(fi).copied())
-                                    .collect();
-                                t.add_tshell(sf)
-                            })
-                            .collect();
-                        if !shell_refs.is_empty() {
-                            result.solids.push(t.add_tsolid(shell_refs));
+                // ✅ OCCT-aligned BuildSolid: for FUSE, collect ALL result faces into one solid
+                //   (BOPAlgo_BOP.cxx L902-906).  BuildResult(Shell) already consumed tmp_shells,
+                //   so build directly from face_refs.
+                if self.op == BooleanOpType::Union && !result.face_refs.is_empty() {
+                    let sf = result.face_refs.clone();
+                    let shell_ref = t.add_tshell(sf);
+                    result.solids.push(t.add_tsolid(vec![shell_ref]));
+                } else {
+                    let tmp_solids = result.tmp_solids.clone();
+                    if !tmp_solids.is_empty() {
+                        let new_shells = result.tmp_shells.clone();
+                        for solid_shells in &tmp_solids {
+                            let shell_refs: Vec<topods::ShapeRef> = solid_shells.iter()
+                                .filter_map(|&si| new_shells.get(si))
+                                .map(|shell_faces| {
+                                    let sf: Vec<topods::ShapeRef> = shell_faces.iter()
+                                        .filter_map(|&fi| result.face_refs.get(fi).copied())
+                                        .collect();
+                                    t.add_tshell(sf)
+                                })
+                                .collect();
+                            if !shell_refs.is_empty() {
+                                result.solids.push(t.add_tsolid(shell_refs));
+                            }
                         }
                     }
                 }
