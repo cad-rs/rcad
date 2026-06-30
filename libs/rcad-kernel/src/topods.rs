@@ -143,6 +143,10 @@ pub struct TWireData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TFaceData {
     pub surface: Option<usize>,
+    /// TopLoc_Location index for the face surface; 0 = identity.
+    /// OCCT BRep_TFace::Location — transforms surface to world coordinates.
+    #[serde(default)]
+    pub surface_location: u32,
     pub outer_wire: ShapeRef,
     pub inner_wires: Vec<ShapeRef>,
     pub sample_point: Option<DVec3>,
@@ -241,7 +245,7 @@ impl BRep {
 
     pub fn add_tface(&mut self, surface: Option<usize>, outer_wire: ShapeRef, inner_wires: Vec<ShapeRef>, sample_point: Option<DVec3>, uv_domain: Option<[f64; 4]>, internal_vertices: Vec<ShapeRef>, natural_restriction: bool) -> ShapeRef {
         let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Face(TFaceData { surface, outer_wire, inner_wires, sample_point, uv_domain, internal_vertices, tolerance: 0.0, natural_restriction })));
+        self.tshapes.push(Arc::new(TShape::Face(TFaceData { surface, surface_location: 0, outer_wire, inner_wires, sample_point, uv_domain, internal_vertices, tolerance: 0.0, natural_restriction })));
         ShapeRef::new(index)
     }
 
