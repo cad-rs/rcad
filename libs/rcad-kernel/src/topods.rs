@@ -89,6 +89,13 @@ pub struct TEdgeData {
     /// OCCT: BRep_Tool::Parameter(aV, aE, aF).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub vertex_params: HashMap<usize, f64>,
+    /// BRep_TEdge::Tolerance equivalent — edge tolerance.
+    #[serde(default)]
+    pub tolerance: f64,
+    /// BRep_TEdge::SameParameter — true when 3D curve and pcurve share
+    /// the same parameterization (same parameter t maps to same point).
+    #[serde(default)]
+    pub same_parameter: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -156,7 +163,7 @@ impl BRep {
 
     pub fn add_tedge(&mut self, curve: Option<usize>, first: ShapeRef, last: ShapeRef, range: [f64; 2]) -> ShapeRef {
         let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Edge(TEdgeData { curve, first, last, range, degenerated: false, pcurves: HashMap::new(), vertex_params: HashMap::new() })));
+        self.tshapes.push(Arc::new(TShape::Edge(TEdgeData { curve, first, last, range, degenerated: false, pcurves: HashMap::new(), vertex_params: HashMap::new(), tolerance: 0.0, same_parameter: true })));
         ShapeRef::new(index)
     }
 
