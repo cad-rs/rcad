@@ -331,6 +331,21 @@ impl ResultBuilder {
         let normal = if let Some(surf) = tool.face_surface(face_ref) {
             match surf {
                 Surface3::Plane(p) => if flip { -p.normal } else { p.normal },
+                Surface3::Sphere(s) => {
+                    // OCCT-aligned: use surface analytical normal (radial from center).
+                    // estimate_boundary_normal_from_segments_topo is not form-aligned
+                    // and gives near-zero for CW (complement) wires (A5c).
+                    let center = s.center;
+                    let centroid = if !wf.outer_wire.is_empty() {
+                        let mut sum = DVec3::ZERO;
+                        for &si in &wf.outer_wire {
+                            sum += tool.vertex_position(segments[si].start_vertex);
+                        }
+                        sum / wf.outer_wire.len() as f64
+                    } else { return; };
+                    let outward = (centroid - center).normalize_or_zero();
+                    if outward.length_squared() > 1e-12 { if flip { -outward } else { outward } } else { return; }
+                }
                 _ => {
                     let n = Self::estimate_boundary_normal_from_segments_topo(
                         &wf.outer_wire, segments, tool, vertex_positions);
@@ -500,6 +515,15 @@ impl ResultBuilder {
 
         let centroid = outer_boundary.iter().copied().sum::<DVec3>() / outer_boundary.len().max(1) as f64;
         let area = Self::polygon_signed_area_on_normal(&outer_boundary, normal);
+        let cw_centroid_antipode = if area < 0.0 {
+            if let Some(Surface3::Sphere(s)) = tool.face_surface(face_ref) {
+                let to_centroid = centroid - s.center;
+                let len = to_centroid.length();
+                if len > 1e-12 {
+                    Some(s.center - to_centroid / len * s.radius)
+                } else { None }
+            } else { None }
+        } else { None };
         let mut outer_sig: Vec<usize> = edge_indices.iter().map(|&(eid, _)| eid).collect();
         outer_sig.sort_unstable();
         let nlen = normal.length();
@@ -550,7 +574,11 @@ impl ResultBuilder {
             .cloned().unwrap_or(Surface3::Plane(rcad_kernel::geom::Plane { origin: glam::DVec3::ZERO, normal: glam::DVec3::Z }));
 
         let sample_pt = if !wf.outer_wire.is_empty() {
-            get_pos(segments[wf.outer_wire[0]].start_vertex.index)
+            if let Some(ap) = cw_centroid_antipode {
+                ap
+            } else {
+                get_pos(segments[wf.outer_wire[0]].start_vertex.index)
+            }
         } else { DVec3::ZERO };
 
         self.face_internal_vtx.push(Vec::new());

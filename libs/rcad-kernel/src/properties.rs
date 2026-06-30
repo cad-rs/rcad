@@ -933,19 +933,30 @@ fn try_spherical_polygon_great_circle_area(
     }
 
     let r2 = s.radius * s.radius;
+    let full = 4.0 * std::f64::consts::PI * r2;
     let mut area = r2 * (sum_angles - (n as f64 - 2.0) * std::f64::consts::PI);
-    // ✅ OCCT对齐: 根据 sample_point 选择大/小区域。
-    if area > 0.0 && area <= 4.0 * std::f64::consts::PI * r2 + 1e-12 {
-        let full = 4.0 * std::f64::consts::PI * r2;
+    if cfg!(debug_assertions) && std::env::var("RCAD_DEBUG_SA").is_ok() {
+        eprintln!("[SA_SPHERE] n={} sum_angles={:.6} area_raw={:.6} full={:.6} sp={:?}",
+            n, sum_angles, area, full, face.sample_point);
+    }
+    // For CW (reversed) wires, the spherical polygon formula gives area < 0.
+    // Take the absolute value — the correct region (small polygon vs complement)
+    // is determined below by the sample_point check.
+    area = area.abs();
+    if area <= full + 1e-12 {
+        // ✅ OCCT对齐: 自动选择小区域或补区域。
+        //   当 area > half sphere 时取 complement（覆盖小区域）。
         if area > full * 0.5 { area = full - area; }
         if let Some(sp) = face.sample_point {
             let inside = point_in_spherical_polygon_3d(&verts[..n], sp);
             if !inside { area = full - area; }
         }
-        Some(area)
-    } else {
-        None
+        // ✅ OCCT对齐: 最终 clamp 确保不超出球面总面积。
+        if area > 0.0 && area <= full + 1e-12 {
+            return Some(area);
+        }
     }
+    None
 }
 
 /// Compute sphere face area using 2x2 Gauss-Legendre quadrature over the
@@ -2688,11 +2699,32 @@ let ctx = spherical_holed_uv_mask_setup(s, brep, face)?;
                     ctx.inner_3d.len(),
                 );
             }
+            // Architecture diff A5b: the UV mask covers the small polygon region,
+            // but the WireFace may represent the complement (large cap).  Check
+            // the winding of outer_uv to determine which region is correct.
+            let is_cw = {
+                let mut area2 = 0.0;
+                let n = ctx.outer_uv.len();
+                for i in 0..n {
+                    let j = (i + 1) % n;
+                    area2 += ctx.outer_uv[i].x * ctx.outer_uv[j].y - ctx.outer_uv[j].x * ctx.outer_uv[i].y;
+                }
+                area2 * 0.5 < 0.0
+            };
+            let result_area = if is_cw { full_sphere_area - v } else { v };
             let suspicious_wrap = (ctx.umax - ctx.umin).abs() > std::f64::consts::TAU + 0.25;
-            if suspicious_wrap || !sample_inside || v > full_sphere_area * 1.001 {
+            if suspicious_wrap || result_area > full_sphere_area * 1.001 {
                 return None;
             }
-            if v > 0.0 { return Some(v); }
+            // Also check sample_inside consistency: if the sample point is
+            // outside the UV polygon but the face is CCW (small region),
+            // the region is wrong → return None (let triangulation handle it).
+            if !suspicious_wrap && !is_cw && v > 0.0 && v < full_sphere_area * 0.5 {
+                if !sample_inside {
+                    return None;
+                }
+            }
+            if result_area > 0.0 { return Some(result_area); }
             None
         }
         _ => {
