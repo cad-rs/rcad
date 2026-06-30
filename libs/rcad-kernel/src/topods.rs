@@ -39,14 +39,19 @@ pub struct ShapeRef {
     /// Index into BRep.tshapes[]
     pub index: usize,
     pub orientation: Orientation,
+    /// TopLoc_Location index into BRep.locations[]; 0 = identity.
+    pub location: u32,
 }
 
 impl ShapeRef {
     pub const fn new(index: usize) -> Self {
-        Self { index, orientation: Orientation::Forward }
+        Self { index, orientation: Orientation::Forward, location: 0 }
     }
     pub const fn with_orientation(index: usize, orientation: Orientation) -> Self {
-        Self { index, orientation }
+        Self { index, orientation, location: 0 }
+    }
+    pub const fn with_location(index: usize, orientation: Orientation, location: u32) -> Self {
+        Self { index, orientation, location }
     }
 }
 
@@ -148,6 +153,10 @@ pub struct BRep {
     pub curves: Vec<Curve3>,
     pub surfaces: Vec<Surface3>,
     pub curve2ds: Vec<crate::geom::Curve2d>,
+    /// 3D transformations (TopLoc_Location equivalent). Index 0 = identity.
+    /// TopLoc_Datum3D wraps gp_Trsf (affine transformation); rcad uses DAffine3.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub locations: Vec<glam::DAffine3>,
 }
 
 impl Default for BRep {
@@ -156,7 +165,32 @@ impl Default for BRep {
 
 impl BRep {
     pub fn new() -> Self {
-        Self { tshapes: Vec::new(), curves: Vec::new(), surfaces: Vec::new(), curve2ds: Vec::new() }
+        Self {
+            tshapes: Vec::new(),
+            curves: Vec::new(),
+            surfaces: Vec::new(),
+            curve2ds: Vec::new(),
+            locations: Vec::new(),
+        }
+    }
+
+    /// Add a location transformation and return its index.
+    /// If the transformation is identity, returns 0.
+    pub fn add_location(&mut self, loc: glam::DAffine3) -> u32 {
+        if loc == glam::DAffine3::IDENTITY {
+            return 0;
+        }
+        let idx = self.locations.len();
+        self.locations.push(loc);
+        // Index 0 is identity — shift by 1 so 0 = identity, 1 = first real location
+        (idx + 1) as u32
+    }
+
+    /// Get a location by index (0 = identity).
+    pub fn get_location(&self, idx: u32) -> glam::DAffine3 {
+        if idx == 0 { glam::DAffine3::IDENTITY } else {
+            self.locations.get((idx - 1) as usize).copied().unwrap_or(glam::DAffine3::IDENTITY)
+        }
     }
 
     pub fn add_tvertex(&mut self, point: DVec3) -> ShapeRef {
