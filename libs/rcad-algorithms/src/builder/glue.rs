@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+﻿use std::collections::HashMap;
 use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::geom::*;
@@ -23,7 +23,7 @@ pub struct GlueConfig {
     /// Enable geometric hashing for O(n) face pairing (default: true).
     ///
     /// When enabled, uses a spatial hash to quickly find candidate face
-    /// pairs, reducing the complexity from O(n铏? to O(n) for models
+    /// pairs, reducing the complexity from O(n閾? to O(n) for models
     /// with many faces.
     pub use_geometric_hash: bool,
 
@@ -556,236 +556,6 @@ pub fn compute_adaptive_glue_tolerance(
 
     adaptive_tol.max(TOLERANCE_ABS)
 }
-
-/// When a planar A-sub-face is classified as Inside (for Difference), but the B solid
-/// is a cylinder, the sub-face may straddle the cylinder wall. This function detects
-/// exactly 2 crossings of the cylinder wall on the face boundary, then constructs
-/// a trimmed polygon keeping only the outside-cylinder-wall portion.
-pub(crate) fn try_trim_planar_face_by_cylinder(
-    sub: &FaceSampleData,
-    _plane_normal: DVec3,
-    _plane_origin: DVec3,
-    cylinder: &CylindricalSurface,
-    keep_inside: bool, // true 鈫?keep inside-cylinder portion (Intersection), false 鈫?keep outside-cylinder portion (Difference)
-) -> Option<FaceSampleData> {
-    let tol = TOLERANCE_MESH_LEGACY;
-    let cyl_axis = cylinder.axis;
-    let cyl_origin = cylinder.origin;
-    let cyl_r = cylinder.radius;
-    let boundary = &sub.boundary;
-    let n = boundary.len();
-    if n < 3 {
-        return None;
-    }
-
-    // Signed distance to cylinder wall (negative = inside, positive = outside)
-    let dists: Vec<f64> = boundary
-        .iter()
-        .map(|p| {
-            let v = *p - cyl_origin;
-            let proj = v.dot(cyl_axis);
-            let radial = (v - cyl_axis * proj).length();
-            radial - cyl_r
-        })
-        .collect();
-
-    let ins: Vec<bool> = dists.iter().map(|&d| d < -tol).collect();
-    let outs: Vec<bool> = dists.iter().map(|&d| d > tol).collect();
-
-    let n_inside = ins.iter().filter(|&&b| b).count();
-    if n_inside == 0 {
-        return None;
-    }
-
-    // Find crossing edges (Inside 鈫?Outside transitions)
-    let mut crossing_edges: Vec<usize> = Vec::new();
-    for i in 0..n {
-        let j = (i + 1) % n;
-        if (ins[i] && outs[j]) || (outs[i] && ins[j]) {
-            crossing_edges.push(i);
-        }
-    }
-    if crossing_edges.len() != 2 {
-        return None;
-    }
-
-    let e1 = crossing_edges[0];
-    let e2 = crossing_edges[1];
-    let j1 = (e1 + 1) % n;
-    let j2 = (e2 + 1) % n;
-
-    let cp1 = edge_cylinder_crossing(boundary[e1], boundary[j1], cyl_origin, cyl_axis, cyl_r)?;
-    let cp2 = edge_cylinder_crossing(boundary[e2], boundary[j2], cyl_origin, cyl_axis, cyl_r)?;
-
-    // Determine traversal direction based on which side of the cylinder wall to keep.
-    //
-    // For the outside chain (keep_inside = false):
-    //   O鈫扞: outside at i, inside at j 鈫?start at i, step backward
-    //   I鈫扥: inside at i, outside at j 鈫?start at j, step forward
-    //
-    // For the inside chain (keep_inside = true):
-    //   O鈫扞: outside at i, inside at j 鈫?start at j, step forward
-    //   I鈫扥: inside at i, outside at j 鈫?start at i, step backward
-    let (start1, step1, start2) = if keep_inside {
-        // Inside chain: walk through inside vertices
-        let (s1, st1) = if outs[e1] && ins[j1] {
-            (j1 as i32, 1i32)     // O鈫扞: inside at j, step forward
-        } else if ins[e1] && outs[j1] {
-            (e1 as i32, -1i32)    // I鈫扥: inside at e, step backward
-        } else {
-            return None;
-        };
-        let s2 = if outs[e2] && ins[j2] {
-            j2 as i32             // O鈫扞: inside at j
-        } else if ins[e2] && outs[j2] {
-            e2 as i32             // I鈫扥: inside at e
-        } else {
-            return None;
-        };
-        (s1, st1, s2)
-    } else {
-        // Outside chain (original Difference behavior)
-        let (s1, st1) = if outs[e1] && ins[j1] {
-            (e1 as i32, -1i32)
-        } else if ins[e1] && outs[j1] {
-            (j1 as i32, 1i32)
-        } else {
-            return None;
-        };
-        let s2 = if outs[e2] && ins[j2] {
-            e2 as i32
-        } else if ins[e2] && outs[j2] {
-            j2 as i32
-        } else {
-            return None;
-        };
-        (s1, st1, s2)
-    };
-
-    // Walk from cp1 through selected chain vertices to cp2
-    let ni = n as i32;
-    let mut result_boundary: Vec<DVec3> = Vec::new();
-    result_boundary.push(cp1);
-    let mut idx = start1;
-    loop {
-        result_boundary.push(boundary[idx as usize]);
-        if idx == start2 {
-            break;
-        }
-        idx = (idx + step1).rem_euclid(ni);
-    }
-    result_boundary.push(cp2);
-
-    // Close with cylinder-plane intersection arc from cp2 back to cp1.
-    // This traces the ellipse formed by the intersection of the cylinder
-    // wall with the sub-face plane, so the arc lies on the plane.
-    add_plane_cylinder_intersection_arc(
-        &mut result_boundary, cp2, cp1, cylinder,
-        _plane_normal, _plane_origin, 24,
-    );
-
-    Some(FaceSampleData {
-        boundary: result_boundary,
-        surface: sub.surface.clone(),
-        normal: sub.normal,
-        uv_centroid: None,
-        sample_override: None,
-        uv_domain: None,
-        inner_wires: vec![],
-        outer_circle_edges: vec![],
-        seam_edge: None,
-            inner_wire_circle: None,
-    })
-}
-
-/// Find the point where line segment `a`鈥揱b` crosses the cylinder wall.
-pub(crate) fn edge_cylinder_crossing(
-    a: DVec3,
-    b: DVec3,
-    cyl_origin: DVec3,
-    cyl_axis: DVec3,
-    cyl_r: f64,
-) -> Option<DVec3> {
-    let d = b - a;
-    let v0 = a - cyl_origin;
-    let v0_ax = v0.dot(cyl_axis);
-    let d_ax = d.dot(cyl_axis);
-    let r0 = v0 - cyl_axis * v0_ax;
-    let rd = d - cyl_axis * d_ax;
-
-    // Solve |r0 + t路rd|虏 = cyl_r虏
-    let a_c = rd.dot(rd);
-    let b_c = 2.0 * r0.dot(rd);
-    let c_c = r0.dot(r0) - cyl_r * cyl_r;
-
-    let disc = b_c * b_c - 4.0 * a_c * c_c;
-    if disc < 0.0 {
-        return None;
-    }
-    let sqrt_disc = disc.sqrt();
-    let t1 = (-b_c + sqrt_disc) / (2.0 * a_c);
-    let t2 = (-b_c - sqrt_disc) / (2.0 * a_c);
-
-    // One root must be in [0, 1]
-    let t = if (0.0..=1.0).contains(&t1) { t1 } else { t2 };
-    if !(0.0..=1.0).contains(&t) {
-        return None;
-    }
-    Some(a + d * t)
-}
-
-/// Add points along the cylinder-plane intersection arc from `from` to `to`.
-/// Each arc point lies on BOTH the cylinder surface and the sub-face plane,
-/// tracing the ellipse formed by their intersection.
-pub(crate) fn add_plane_cylinder_intersection_arc(
-    result: &mut Vec<DVec3>,
-    from: DVec3,
-    to: DVec3,
-    cyl: &CylindricalSurface,
-    plane_normal: DVec3,
-    plane_origin: DVec3,
-    n_arc: usize,
-) {
-    let v_from = from - cyl.origin;
-    let v_to = to - cyl.origin;
-    let proj_from = v_from.dot(cyl.axis);
-    let proj_to = v_to.dot(cyl.axis);
-
-    let radial_from = (v_from - cyl.axis * proj_from).normalize();
-    let radial_to = (v_to - cyl.axis * proj_to).normalize();
-
-    // Short arc angle
-    let dot = radial_from.dot(radial_to).clamp(-1.0, 1.0);
-    let angle = dot.acos();
-    let cross = radial_from.cross(radial_to);
-    let sign = if cross.dot(cyl.axis) >= 0.0 { 1.0 } else { -1.0 };
-
-    // Precompute plane-projection coefficients.
-    // For a point on the cylinder: p(胃,h) = origin + r路r虃(胃) + axis路h
-    // Plane equation: n路(p - plane_origin) = 0
-    // Solve for h:  h = -(n路(origin - plane_origin) + r路n路r虃(胃)) / (n路axis)
-    let denom = plane_normal.dot(cyl.axis);
-    let cyl_offset = plane_normal.dot(cyl.origin - plane_origin);
-
-    for i in 1..n_arc {
-        let frac = i as f64 / n_arc as f64;
-        let theta = sign * frac * angle;
-        let rotated = radial_from * theta.cos() + cyl.axis.cross(radial_from) * theta.sin();
-
-        // Height on cylinder axis that satisfies the plane equation.
-        // When the plane is nearly parallel to the axis (denom 鈮?0), the
-        // intersection approaches a straight line; fall back to linear
-        // height interpolation between the two crossing points.
-        let h = if denom.abs() > 1e-10 {
-            -(cyl_offset + cyl.radius * plane_normal.dot(rotated)) / denom
-        } else {
-            proj_from * (1.0 - frac) + proj_to * frac
-        };
-
-        result.push(cyl.origin + cyl.radius * rotated + cyl.axis * h);
-    }
-}
-
 #[cfg(test)]
 mod glue_tests {
     use super::*;
@@ -1043,13 +813,13 @@ mod glue_tests {
 
     #[test]
     fn split_uv_polygon_detects_seam_crossing_on_cylinder() {
-        // UV polygon that crosses the U=0/2锜?seam on a cylinder
+        // UV polygon that crosses the U=0/2閿?seam on a cylinder
         // This is a quad that wraps around the seam:
-        // - Right side: u 閳?5.5 (near 2锜?
-        // - Left side: u 閳?0.5 (near 0)
-        let period = std::f64::consts::TAU; // 閳?6.283
+        // - Right side: u 闁?5.5 (near 2閿?
+        // - Left side: u 闁?0.5 (near 0)
+        let period = std::f64::consts::TAU; // 闁?6.283
         let uv_polygon = vec![
-            DVec2::new(5.5, 0.0),  // Near 2锜?
+            DVec2::new(5.5, 0.0),  // Near 2閿?
             DVec2::new(0.5, 0.0),  // Near 0
             DVec2::new(0.5, 1.0),
             DVec2::new(5.5, 1.0),
@@ -1172,7 +942,7 @@ mod glue_tests {
         let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Y, 1.0);
         let surface = Surface3::Sphere(sphere);
 
-        // Small triangle near north pole (v 閳?0)
+        // Small triangle near north pole (v 闁?0)
         let uv_polygon = vec![
             DVec2::new(0.0, 0.001),
             DVec2::new(std::f64::consts::FRAC_PI_2, 0.001),
@@ -1199,11 +969,11 @@ mod glue_tests {
 
     #[test]
     fn test_handle_degenerate_uv_polygon_sphere_south_pole_cap() {
-        // UV polygon near south pole (v 閳?锜?
+        // UV polygon near south pole (v 闁?閿?
         let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Y, 1.0);
         let surface = Surface3::Sphere(sphere);
 
-        // Small triangle near south pole (v 閳?锜?
+        // Small triangle near south pole (v 闁?閿?
         let uv_polygon = vec![
             DVec2::new(0.0, std::f64::consts::PI - 0.001),
             DVec2::new(std::f64::consts::FRAC_PI_2, std::f64::consts::PI - 0.001),
@@ -1232,7 +1002,7 @@ mod glue_tests {
         };
         let surface = Surface3::Cone(cone);
 
-        // Small triangle near apex (v 閳?0)
+        // Small triangle near apex (v 闁?0)
         let uv_polygon = vec![
             DVec2::new(0.0, 0.001),
             DVec2::new(std::f64::consts::FRAC_PI_2, 0.001),
@@ -1289,7 +1059,7 @@ mod glue_tests {
 
     #[test]
     fn test_split_edge_at_periodic_seam_cylinder() {
-        // Edge that crosses U=0/2锜?boundary on cylinder
+        // Edge that crosses U=0/2閿?boundary on cylinder
         let cylinder = CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Y,
@@ -1297,7 +1067,7 @@ mod glue_tests {
             radius: 1.0,
         };
 
-        // Edge from u near 2锜?to u near 0
+        // Edge from u near 2閿?to u near 0
         let start_uv = DVec2::new(std::f64::consts::TAU - 0.1, 0.5);
         let end_uv = DVec2::new(0.1, 0.5);
 
@@ -1347,7 +1117,7 @@ mod glue_tests {
 
     #[test]
     fn test_split_edge_at_periodic_seam_sphere() {
-        // Edge crossing U=0/2锜?boundary on sphere
+        // Edge crossing U=0/2閿?boundary on sphere
         let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Y, 1.0);
 
         let start_uv = DVec2::new(std::f64::consts::TAU - 0.1, 1.0);
@@ -1367,7 +1137,7 @@ mod glue_tests {
         // UV polygon on torus that crosses U seam only
         let period = std::f64::consts::TAU;
         let uv_polygon = vec![
-            DVec2::new(5.5, 0.5), // Near U=2锜?
+            DVec2::new(5.5, 0.5), // Near U=2閿?
             DVec2::new(0.5, 0.5), // Near U=0
             DVec2::new(0.5, 1.5),
             DVec2::new(5.5, 1.5),
@@ -1399,7 +1169,7 @@ mod glue_tests {
 
         // Polygon that spans nearly full U range and crosses V seam
         let uv_polygon = vec![
-            DVec2::new(0.1, 5.5), // V near 2锜?
+            DVec2::new(0.1, 5.5), // V near 2閿?
             DVec2::new(5.9, 5.5),
             DVec2::new(5.9, 0.5), // V near 0
             DVec2::new(0.1, 0.5),
@@ -1467,7 +1237,7 @@ mod glue_tests {
     #[test]
     fn split_diamond_by_diagonal() {
         use glam::DVec2;
-        // Diamond with vertices at cardinal points 鈥?split by x-axis
+        // Diamond with vertices at cardinal points 閳?split by x-axis
         // The line y=0 passes through vertex 0 (1,0) and vertex 2 (-1,0).
         let poly = vec![
             DVec2::new(1.0, 0.0),
@@ -1494,13 +1264,13 @@ mod glue_tests {
             DVec2::new(2.0, 2.0),
             DVec2::new(0.0, 2.0),
         ];
-        // Vertical line x=1.2 鈥?does not pass through any vertex
+        // Vertical line x=1.2 閳?does not pass through any vertex
         let out = split_polygon_2d_by_line(&poly, DVec2::new(1.2, 0.0), DVec2::new(0.0, 1.0));
         assert!(out.len() >= 2, "square split by offset line should produce 2+ polygons, got {}", out.len());
     }
 
     /// Debug: ZD3 cylinder-cylinder concentric union SA undercount.
-    /// rcad reports 16.3 vs expected 22.0 (= 7蟺 鈮?21.9911).
+    /// rcad reports 16.3 vs expected 22.0 (= 7锜?閳?21.9911).
     #[test]
     fn zd3_concentric_cylinder_union() {
         use crate::boolean::boolean_op_with_retry_policy;
@@ -1512,12 +1282,12 @@ mod glue_tests {
         use rcad_modeling::make_cylinder_brep;
 
         // OCCT ZD3 geometry:
-        //   pcylinder b1 1 2     鈫?r=1, h=2, z鈭圼0,2]
-        //   pcylinder b2 0.5 3   鈫?r=0.5, h=3, z鈭圼-1,2] after ttranslate 0 0 -1
+        //   pcylinder b1 1 2     閳?r=1, h=2, z閳溂0,2]
+        //   pcylinder b2 0.5 3   閳?r=0.5, h=3, z閳溂-1,2] after ttranslate 0 0 -1
         //
         // rcad make_cylinder_brep centers the cylinder at `center`, so:
-        //   b1: center at z=1 鈫?z鈭圼0,2]
-        //   b2: center at z=0.5 鈫?z鈭圼-1,2]
+        //   b1: center at z=1 閳?z閳溂0,2]
+        //   b2: center at z=0.5 閳?z閳溂-1,2]
         let b1 = make_cylinder_brep(DVec3::new(0.0, 0.0, 1.0), DVec3::Z, DVec3::X, 1.0, 2.0)
             .expect("b1");
         let b2 =
@@ -1546,7 +1316,7 @@ mod glue_tests {
             .count();
 
         println!(
-            "ZD3: SA = {:.4} (expected {:.4} = 7蟺, diff = {:.4})",
+            "ZD3: SA = {:.4} (expected {:.4} = 7锜? diff = {:.4})",
             actual_sa,
             expected_sa,
             actual_sa - expected_sa
@@ -1598,7 +1368,7 @@ mod glue_tests {
             }
         }
 
-        // Allow wide tolerance for now 鈥?this is a known failure
+        // Allow wide tolerance for now 閳?this is a known failure
         let tol = (5e-3_f64).max(0.15 * expected_sa.abs());
         if (actual_sa - expected_sa).abs() > tol {
             println!(
@@ -1613,11 +1383,11 @@ mod glue_tests {
 }
 
 
-// ════════════════════════════════════════════════════════════════════
-// ✅ OCCT-aligned: BOPTools_AlgoTools3D — orient_edges_on_wire
-// ════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+// 鉁?OCCT-aligned: BOPTools_AlgoTools3D 鈥?orient_edges_on_wire
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
 
-/// ✅ OCCT-aligned: BOPTools_AlgoTools3D::OrientEdgesOnWire.
+/// 鉁?OCCT-aligned: BOPTools_AlgoTools3D::OrientEdgesOnWire.
 ///
 /// Orients edges so they form a consistent closed wire (end-to-start
 /// connectivity).  After orientation, the end vertex of edges[i] equals
@@ -1626,9 +1396,9 @@ mod glue_tests {
 /// OCCT reference: BOPTools_AlgoTools3D.cxx (OrientEdgesOnWire)
 ///
 /// # Arguments
-/// * `edges` — Mutable list of (edge_index, forward_flag) pairs to
+/// * `edges` 鈥?Mutable list of (edge_index, forward_flag) pairs to
 ///   orient in-place.  The first edge's orientation is kept as-is.
-/// * `ds` — The DS containing vertices and edges.
+/// * `ds` 鈥?The DS containing vertices and edges.
 pub fn orient_edges_on_wire(edges: &mut Vec<(usize, bool)>, ds: &DS) {
     if edges.is_empty() {
         return;
@@ -1643,21 +1413,21 @@ pub fn orient_edges_on_wire(edges: &mut Vec<(usize, bool)>, ds: &DS) {
         let (cur_ei, _cur_fwd) = edges[i];
         // Check both orientations of the current edge.
         if ds.edges[cur_ei].start_vertex == prev_end_vi {
-            // Already oriented forward — keep as-is.
+            // Already oriented forward 鈥?keep as-is.
             continue;
         } else if ds.edges[cur_ei].end_vertex == prev_end_vi {
             // Reverse orientation makes the connection.
             edges[i].1 = !edges[i].1;
         }
-        // If neither matches there is a topological gap — OCCT leaves it as-is.
+        // If neither matches there is a topological gap 鈥?OCCT leaves it as-is.
     }
 }
 
-// ════════════════════════════════════════════════════════════════════
-// ✅ OCCT-aligned: BOPTools_AlgoTools3D — is_micro_edge
-// ════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+// 鉁?OCCT-aligned: BOPTools_AlgoTools3D 鈥?is_micro_edge
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
 
-/// ✅ OCCT-aligned: BOPTools_AlgoTools3D::IsMicroEdge.
+/// 鉁?OCCT-aligned: BOPTools_AlgoTools3D::IsMicroEdge.
 ///
 /// Returns `true` when the edge's 3D length is shorter than
 /// `edge.geom_tol * 2.0`.  Micro-edges are degenerate candidates that
@@ -1702,11 +1472,11 @@ pub(crate) fn compute_edge_length_3d(edge_idx: usize, ds: &DS) -> f64 {
     }
 }
 
-// ════════════════════════════════════════════════════════════════════
-// ✅ OCCT-aligned: BOPTools_AlgoTools3D — get_edge_on_face
-// ════════════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+// 鉁?OCCT-aligned: BOPTools_AlgoTools3D 鈥?get_edge_on_face
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
 
-/// ✅ OCCT-aligned: BOPTools_AlgoTools3D::GetEdgeOnFace.
+/// 鉁?OCCT-aligned: BOPTools_AlgoTools3D::GetEdgeOnFace.
 ///
 /// Checks whether a DS edge lies entirely on a DS face's surface.
 /// The edge is considered "on face" when both its vertices project
@@ -1736,19 +1506,19 @@ pub fn get_edge_on_face(edge_idx: usize, face_idx: usize, ds: &DS) -> bool {
 }
 
 // ================================================================
-// ✅ Current state: emit_sphere_faces_direct replaces sphere face emission pipeline
+// 鉁?Current state: emit_sphere_faces_direct replaces sphere face emission pipeline
 //    OCCT edge-based path not yet implemented. Current approach:
-//    emit_sphere_faces_direct: Circle3 intersection points → emit_face_data (FaceSampleData-free)
-//    ✅ DoSplitSEAMOnFace 已实现 (collect_face_edge_segments L2196-2282)
-//    ✅ SmartMap/Path walk 已实现 (build_closed_wires L3312-3617)
-//    ✅ PerformAreas 已实现 (perform_areas)
-//    当前仍使用 emit_sphere_faces_direct 作为球面发射路径,替代 OCCT 的
-//    BuildSplitFaces → BuilderFace::Perform 边级路径。(架构差异: 球面分割)
+//    emit_sphere_faces_direct: Circle3 intersection points 鈫?emit_face_data (FaceSampleData-free)
+//    鉁?DoSplitSEAMOnFace 宸插疄鐜?(collect_face_edge_segments L2196-2282)
+//    鉁?SmartMap/Path walk 宸插疄鐜?(build_closed_wires L3312-3617)
+//    鉁?PerformAreas 宸插疄鐜?(perform_areas)
+//    褰撳墠浠嶄娇鐢?emit_sphere_faces_direct 浣滀负鐞冮潰鍙戝皠璺緞,鏇夸唬 OCCT 鐨?
+//    BuildSplitFaces 鈫?BuilderFace::Perform 杈圭骇璺緞銆?鏋舵瀯宸紓: 鐞冮潰鍒嗗壊)
 // ================================================================
 
-// ✅ DoSplitSEAMOnFace — 已实现 (collect_face_edge_segments L2196-2282)
+// 鉁?DoSplitSEAMOnFace 鈥?宸插疄鐜?(collect_face_edge_segments L2196-2282)
 // OCCT BOPTools_AlgoTools3D::DoSplitSEAMOnFace (BOPTools_AlgoTools3D.cxx L58-232)
-// 在 seam 与 IC 的交点处分割 seam 边,创建 seam 子段,带 shifted pcurve。
-// rcad: collect_face_edge_segments 在 seam 子段上计算 second_pcurve,
-// 通过 midpoint UV 靠近 U=0 或 U=TAU 来判断偏移方向。
+// 鍦?seam 涓?IC 鐨勪氦鐐瑰鍒嗗壊 seam 杈?鍒涘缓 seam 瀛愭,甯?shifted pcurve銆?
+// rcad: collect_face_edge_segments 鍦?seam 瀛愭涓婅绠?second_pcurve,
+// 閫氳繃 midpoint UV 闈犺繎 U=0 鎴?U=TAU 鏉ュ垽鏂亸绉绘柟鍚戙€?
 

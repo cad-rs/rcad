@@ -2658,17 +2658,11 @@ pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) 
 
 /// Convert cylinder sub-faces to per-face BSpline surfaces.
 ///
-/// For faces whose surface type is Cylinder and have a face_surface_range
-/// (parametric trim domain), this creates a new BSpline surface that covers
-/// exactly the face's parametric range. This allows promote_planar_surfaces
-/// to then detect planar strips and convert them to Plane.
-///
 /// OCCT ref: ShapeCustom_ConvertToBSpline converts per-face surfaces from
 /// analytic to BSpline, then ShapeCustom_SweptToElementary detects planar strips.
 /// Merge duplicate edges: when two or more edges connect the same vertex pair
 /// (start, end), remap all face wire references to use a single canonical edge.
-/// This fixes the 2× EDGE_CURVE count in BooleanBuilder results (P3) and any
-/// other code path that creates separate edge entries for shared boundaries.
+/// (removed from main boolean pipeline — OCCT PostTreat does not do this)
 pub(crate) fn deduplicate_edges(mut brep: BRep) -> BRep {
     use std::collections::HashMap;
     use rcad_kernel::topology::WireEdge;
@@ -3066,14 +3060,7 @@ pub fn boolean_op_with_retry(
     //   unique index-based edges/vertices; the extra steps have been removed
     //   to match OCCT's PostTreat (Builder.cxx L450-475).
     let mut brep = brep;
-    // Skip BSPLINE→PLANE promotion — OCCT preserves the original surface type
-    // of each operand face (a NURBS-converted box keeps BSpline surfaces even
-    // though they are geometrically planar).  promote_planar_surfaces would
-    // flatten NURBS box BSpline faces to Plane, changing the surface-type
-    // distribution vs OCCT's reference (bfuse_simple B2: 6BS+5PL → 11PL).
-    // OCCT's STEP export writes the original surfaces as-is.
-    // brep = promote_planar_surfaces(brep);
-    // ✅ OCCT对齐: CorrectTolerances (SameParameter + vertex + hierarchy).
+    // ✅ OCCT-aligned: correct_tolerances — OCCT PostTreat does CorrectTolerances + CorrectShapeTolerances.
     rcad_kernel::tolerance::correct_tolerances(&mut brep, 23);
     Ok(brep)
 }
@@ -6330,7 +6317,7 @@ fn unify_one_merge_pass_with_origins(brep: &mut BRep, face_origins: Option<&[Fac
             // (GeomAbs_Plane).  It does NOT promote planar BSpline to Plane and merge
             // across types — that would incorrectly fuse sub-faces from different
             // operands whose underlying geometry differs (b1=BSpline box vs b2=box).
-            // The separate `promote_planar_surfaces` pass handles Plane conversion later.
+            // OCCT preserves the original surface type of each operand face.
             (Surface3::BSpline(_), Surface3::Plane(_))
             | (Surface3::Plane(_), Surface3::BSpline(_)) => (Some(false), false),
             (Surface3::BSpline(b1), Surface3::BSpline(b2)) => {
