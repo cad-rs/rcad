@@ -6093,614 +6093,811 @@ impl<'a> PaveFiller<'a> {
 
     // 鈹€鈹€鈹€ MakeBlocks: inject EF/EE vertices onto FF curves (OCCT PaveFiller_6 L647+) 鈹€鈹€
 
-         fn make_blocks(&mut self) {
-        // �?OCCT L652-655: GlueOff guard — MakeBlocks should be skipped for GlueFull/GluePartial
+    /// OCCT-aligned: MakeBlocks (BOPAlgo_PaveFiller_6.cxx L649-1137).
+    /// Outer loop over FF interference pairs. For each pair, process its curves
+    /// through PutPavesOnCurve -> FilterPavesOnCurves -> PutStick/PutEF/PutBound
+    /// -> PutClosing -> MakeSectionEdges. Post-loop phases handle clean-up and
+    /// SD vertex creation.
+    fn make_blocks(&mut self) {
+        // OCCT L652-655: GlueOff guard
         if self.use_glue {
             return;
         }
-        // Phase 1: Collect data 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-        let n_curves = self.ds.intersection_curves.len();
-        let n_faces = self.ds.faces.len();
 
-        // �?OCCT-aligned: collect EF candidate vertices (EdgeFace interferences).
-        //    These are the vertices the IC endpoints should share (edge-face intersections).
-        let mut all_verts: Vec<(usize, DVec3)> = self.ds.interferences.iter()
+        // OCCT L657-659: Collect FF interferences (InterfFF)
+        let ff_interfs: Vec<(usize, usize, Vec<usize>)> = self.ds.interferences.iter()
             .filter_map(|inf| {
-                if let Interference::EdgeFace { new_vertex, point, .. } = inf {
-                    Some((*new_vertex, *point))
+                if let Interference::FaceFace { f1, f2, curves, .. } = inf {
+                    if curves.is_empty() { None } else { Some((*f1, *f2, curves.clone())) }
                 } else { None }
             })
             .collect();
-        // Add vertices_in/vertices_on (vertices from IC splitting + face interior vertices)
-        let mut seen: std::collections::BTreeSet<usize> =
-            all_verts.iter().map(|(vi, _)| *vi).collect();
-        // OCCT-aligned: Add EE (Edge-Edge), VE (Vertex-Edge), VF (Vertex-Face)
-        // interference vertices to all_verts.
-        // OCCT PaveFiller_6.cxx: SubShapesOnIn contains all interference types.
-        for inf in &self.ds.interferences {
-            match inf {
-                Interference::EdgeEdge { new_vertex, point, .. } => {
-                    if seen.insert(*new_vertex) {
-                        all_verts.push((*new_vertex, *point));
-                    }
-                }
-                Interference::VertexEdge { vertex, .. } => {
-                    if seen.insert(*vertex) {
-                        all_verts.push((*vertex, self.ds.vertices[*vertex].point));
-                    }
-                }
-                Interference::VertexFace { vertex, .. } => {
-                    if seen.insert(*vertex) {
-                        all_verts.push((*vertex, self.ds.vertices[*vertex].point));
-                    }
-                }
-                _ => {}
-            }
-        }
-        for face in &self.ds.faces {
-            for &vi in &face.face_info.vertices_in {
-                if seen.insert(vi) {
-                    all_verts.push((vi, self.ds.vertices[vi].point));
-                }
-            }
-            for &vi in &face.face_info.vertices_on {
-                if seen.insert(vi) {
-                    all_verts.push((vi, self.ds.vertices[vi].point));
-                }
-            }
-        }
-        if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
-            eprintln!("[SPLIT_DBG] n_curves={} n_faces={} all_verts={}", n_curves, n_faces, all_verts.len());
-            for (vi, pt) in &all_verts {
-                eprintln!("[SPLIT_DBG]   all_verts[{}] = ({:.9},{:.9},{:.9})", vi, pt.x, pt.y, pt.z);
-            }
-        }
-        // Note: face boundary vertices (e.g. sphere poles) are NOT added to all_verts,
-        // to avoid incorrectly assigning boundary vertex indices to IC endpoints.
-        // PutBoundPaveOnCurve reads face.boundary_verts directly from DS, bypassing all_verts.
 
-        // Curve snapshots: collect all data upfront to avoid borrow conflicts
-        struct CurveSnapshot {
-            curve: Curve3,
-            t_range: [f64; 2],
-            sv: usize, ev: usize,
-            sv_pos: DVec3, ev_pos: DVec3,
-            pcurve_on_a: Option<Curve2d>,
-            pcurve_on_b: Option<Curve2d>,
+        // OCCT L660-663: Early return when no FF interferences
+        if ff_interfs.is_empty() {
+            return;
         }
-        let snapshots: Vec<CurveSnapshot> = (0..n_curves).map(|ci| {
-            let ic = &self.ds.intersection_curves[ci];
-            CurveSnapshot {
-                curve: ic.curve.clone(),
-                t_range: ic.t_range,
-                sv: ic.start_vertex, ev: ic.end_vertex,
-                sv_pos: self.ds.vertices[ic.start_vertex].point,
-                ev_pos: self.ds.vertices[ic.end_vertex].point,
-                pcurve_on_a: ic.pcurve_on_a.clone(),
-                pcurve_on_b: ic.pcurve_on_b.clone(),
-            }
-        }).collect();
 
-        // Face info snapshots: which faces reference which curves.
-        // All intersection curves are stored in curves_sc (PaveBlocksSc).
-        let face_curves: Vec<Vec<usize>> = (0..n_faces)
-            .map(|fi| self.ds.faces[fi].face_info.curves_sc_only())
-            .collect();
+        // OCCT L666-669: Local variables
+        let a_nb_ff = ff_interfs.len();
+        let mut n_f1: usize;
+        let mut n_f2: usize;
+        let mut n_v1: usize;
+        let mut n_v2: usize;
+        let mut a_t1: f64;
+        let mut a_t2: f64;
 
-        // 鈹€鈹€ Phase 2: Compute splits 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-        #[derive(Clone)]
-        struct SplitAction {
-            old_ci: usize,
-            split_verts: Vec<(f64, usize)>,
-            pca: Option<Curve2d>,
-            pcb: Option<Curve2d>,
-        }
-        let mut actions: Vec<SplitAction> = Vec::new();
-        let mut cur_tol = self.tol(); // fallback for post-loop code
+        // OCCT L681-683: Edge shape (skip — rcad uses DSEdge, not TopoDS_Edge)
 
-        // ✅ OCCT-aligned: section edge tracking maps (moved inline from make_section_edges).
-        self.ds.section_edge_refs = vec![Vec::new(); n_curves];
-        // ✅ OCCT-aligned: build canonical vertex map from ShapeSD + position fallback.
-        //   In OCCT, ShapesSD records Same-Domain vertex equivalences explicitly during
-        //   PaveFiller processing.  rcad uses the DS's ShapeSD (from shared topology) plus
-        //   position-based matching for non-SD vertices.
-        let bv_positions: Vec<(DVec3, usize)> = self.ds.vertices.iter().enumerate()
-            .map(|(vi, v)| (v.point, vi)).collect();
-        let sd_canon: std::collections::HashMap<usize, usize> = {
-            let mut map = std::collections::HashMap::new();
-            // Build SD groups from ShapeSD: for each pair (a,b), both map to min(a,b)
-            for &(a, b) in self.ds.shape_sd.sd_vertices_iter() {
-                let canon = a.min(b);
-                map.entry(a).or_insert(canon);
-                map.entry(b).or_insert(canon);
-                // Propagate: if a or b already maps to a different canonical, use the min
-                let cur_a = *map.get(&a).unwrap_or(&a);
-                let cur_b = *map.get(&b).unwrap_or(&b);
-                let best = cur_a.min(cur_b).min(canon);
-                map.insert(a, best);
-                map.insert(b, best);
-            }
-            map
-        };
-        let remap_ds_v = |v: usize, verts: &[crate::bopds::ds::DSVertex]| -> usize {
-            if v >= verts.len() { return v; }
-            // Check ShapeSD first (OCCT-aligned)
-            if let Some(&canon) = sd_canon.get(&v) {
-                return canon;
-            }
-            // Fallback: position-based matching for non-SD vertices
-            let p = verts[v].point;
-            let tol = TOLERANCE_ABS * 1000.0;
-            bv_positions.iter()
-                .filter(|(bp, _)| (bp - p).length_squared() <= tol * tol)
-                .map(|&(_, bv)| bv)
-                .min()
-                .unwrap_or(v)
-        };
+        // OCCT L685-718: Per-iteration collections (simplified — no IncAllocator in rcad)
+        // OCCT L687: aLSE — shared edges between the two faces
+        let mut a_lse: Vec<usize> = Vec::new();
+        // OCCT L689-694: Vertex maps for ON/IN/Common/Stick/EF/Bounds
+        let mut a_mv_on_in: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut a_mv_common: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut a_mv_stick: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut a_mv_ef: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut a_mi: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        // OCCT L695-696: PaveBlock maps
+        let mut a_mpb_on_in: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut a_mpb_common: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        // OCCT L699: aMVTol — vertex tolerance map (needs UnBind, use Vec<(usize, f64)>)
+        let mut a_mv_tol: Vec<(usize, f64)> = Vec::new();
+        // OCCT L704: aLPB — temporary list of PaveBlocks from update()
+        let mut a_lpb: Vec<PaveBlock> = Vec::new();
+        // OCCT L706: aMSCPB — map from section edge shape to (interf index, curve index, PB)
+        //   rcad: use existing_edge_map + PB list
+        // OCCT L707: aMVI — map from shape to DS vertex index
+        // OCCT L708-709: aDMExEdges — map PB -> list of existing edges
+        // OCCT L710: aDMNewSD — map old vertex -> new SD vertex
+        let mut a_dm_new_sd: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        // OCCT L712: aDMVLV — vertex-vertex coincidence map
+        let mut a_dm_vlv: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+        // OCCT L714: aMicroPB — micro PBs (too short for valid range)
+        let mut a_micro_pb: Vec<PaveBlock> = Vec::new();
+        // OCCT L715-716: aVertsOnRejectedPB
+        let mut a_verts_on_rejected_pb: Vec<usize> = Vec::new();
+        // OCCT L717: aPBFacesMap — map PB -> list of faces to add it to
+        let mut a_pb_faces_map: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+        // OCCT L720: aFFToRecheck — indices of FF pairs needing recheck
+        let mut a_ff_to_recheck: Vec<usize> = Vec::new();
+        let a_nb_ff_prev = a_nb_ff;
+
+        // Cross-loop state: section edge tracking
         let mut existing_edge_map: std::collections::HashMap<(usize, usize, usize, usize), usize> = std::collections::HashMap::new();
         let mut reg_sec_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        self.ds.section_edge_refs = vec![Vec::new(); self.ds.intersection_curves.len()];
 
-        for ci in 0..n_curves {
-            // Use per-pair tolerance from the two faces that reference this curve
-            let fi_a = (0..n_faces).find(|&fi| face_curves[fi].contains(&ci)).unwrap_or(0);
-            let fi_b = (fi_a + 1..n_faces).find(|&fi| face_curves[fi].contains(&ci)).unwrap_or(fi_a);
-            cur_tol = self.ff_tol(fi_a, fi_b);
-            let tol = cur_tol;
-            let snap = &snapshots[ci];
-            let [t0, t1] = snap.t_range;
-            let mut on_curve: Vec<(f64, usize)> = Vec::new();
+        // OCCT L725-1107: Loop over FF pairs
+        for i in 0..a_nb_ff {
+            // OCCT L731-733: Recheck logic
+            let cur_ind = if i < a_nb_ff_prev { i } else { a_ff_to_recheck[i - a_nb_ff_prev] };
 
-            // OCCT-aligned: PutPaveOnCurve (BOPAlgo_PaveFiller_6.cxx L833-900)
-            //    Projects ALL vertices face info onto this IC, adding
-            //    EF/EE/VE/VF interference vertices to split the curve.
-            //    OCCT PutBoundPaveOnCurve runs AFTER FilterPavesOnCurves (below).
+            // OCCT L735-736: Get FF pair indices
+            let (n_f1_val, n_f2_val) = (ff_interfs[cur_ind].0, ff_interfs[cur_ind].1);
+            n_f1 = n_f1_val;
+            n_f2 = n_f2_val;
+            let curves_of_ff = &ff_interfs[cur_ind].2;
+
+            // OCCT L738-745: Get points and curves of this FF pair
+            let a_nb_c = curves_of_ff.len();
+            // OCCT L738: aVP = aFF.ChangePoints (skip — rcad doesn't have BOPDS_Point)
+            // OCCT L740: aVC = aFF.ChangeCurves → curves_of_ff
+            if a_nb_c == 0 {
+                continue; // OCCT L742-744: skip if no points AND no curves
+            }
+
+            // OCCT L747-748: Get face references (skip — rcad uses DS indices)
+            // OCCT L750: aTolFF
+            let a_tol_ff = self.ff_tol(n_f1, n_f2);
+
+            // OCCT L752-753: FaceInfo references
+            // OCCT L755-767: Clear per-iteration collections
+            a_mv_on_in.clear();
+            a_mv_common.clear();
+            a_mpb_on_in.clear();
+            a_mpb_common.clear();
+            a_mv_stick.clear();
+            a_mv_ef.clear();
+            a_mi.clear();
+            a_mv_tol.clear();
+            a_lse.clear();
+
+            // OCCT L770: SubShapesOnIn(nF1, nF2, aMVOnIn, aMVCommon, aMPBOnIn, aMPBCommon)
             {
-                let face_idxs = find_face_idxs_for_curve(&self.ds, ci);
-                if let Curve3::Circle(_) = &snap.curve {
-                    if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
-                        eprintln!("[SPLIT_DBG] Circle ci={}", ci);
+                let f1_face = &self.ds.faces[n_f1];
+                let f2_face = &self.ds.faces[n_f2];
+                // Vertices ON
+                for &vi in &f1_face.face_info.vertices_on {
+                    if f2_face.face_info.vertices_on.contains(&vi) || f2_face.face_info.vertices_in.contains(&vi) {
+                        a_mv_common.insert(vi);
+                    } else {
+                        a_mv_on_in.insert(vi);
                     }
                 }
+                for &vi in &f2_face.face_info.vertices_on {
+                    if !f1_face.face_info.vertices_on.contains(&vi) && !a_mv_common.contains(&vi) {
+                        a_mv_on_in.insert(vi);
+                    }
+                }
+                // Vertices IN
+                for &vi in &f1_face.face_info.vertices_in {
+                    if f2_face.face_info.vertices_on.contains(&vi) || f2_face.face_info.vertices_in.contains(&vi) {
+                        a_mv_common.insert(vi);
+                    } else {
+                        a_mv_on_in.insert(vi);
+                    }
+                }
+                for &vi in &f2_face.face_info.vertices_in {
+                    if !f1_face.face_info.vertices_on.contains(&vi) && !f1_face.face_info.vertices_in.contains(&vi) && !a_mv_common.contains(&vi) {
+                        a_mv_on_in.insert(vi);
+                    }
+                }
+                // PaveBlocks ON/IN
+                for &pb_idx in &f1_face.face_info.pave_blocks_on {
+                    a_mpb_on_in.insert(pb_idx);
+                }
+                for &pb_idx in &f1_face.face_info.pave_blocks_in {
+                    a_mpb_on_in.insert(pb_idx);
+                }
+                for &pb_idx in &f2_face.face_info.pave_blocks_on {
+                    a_mpb_on_in.insert(pb_idx);
+                }
+                for &pb_idx in &f2_face.face_info.pave_blocks_in {
+                    a_mpb_on_in.insert(pb_idx);
+                }
+            }
+
+            // OCCT L771: SharedEdges(nF1, nF2, aLSE)
+            {
+                let f1_edge_set: std::collections::HashSet<usize> = self.ds.faces[n_f1].boundary_edges.iter().copied().collect();
+                for &ei in &self.ds.faces[n_f2].boundary_edges {
+                    if f1_edge_set.contains(&ei) {
+                        a_lse.push(ei);
+                    }
+                }
+            }
+
+            // OCCT L773-791: Treat Points — SKIP (rcad has no BOPDS_Point)
+
+            // OCCT L793: GetStickVertices(nF1, nF2, aMVStick, aMVEF, aMI)
+            {
+                // OCCT: GetStickVertices collects EF vertices (edges that touch the pair's faces)
+                // and stick vertices (VV/VE vertices near the faces).
+                let f1_on: std::collections::HashSet<usize> = self.ds.faces[n_f1].face_info.vertices_on.iter().copied().collect();
+                let f1_in: std::collections::HashSet<usize> = self.ds.faces[n_f1].face_info.vertices_in.iter().copied().collect();
+                let f2_on: std::collections::HashSet<usize> = self.ds.faces[n_f2].face_info.vertices_on.iter().copied().collect();
+                let f2_in: std::collections::HashSet<usize> = self.ds.faces[n_f2].face_info.vertices_in.iter().copied().collect();
+
+                // aMI: interference index set for this face pair
+                //   (used by GetStickVertices to determine which sub-shapes belong to this pair)
+                //   aMI.Add(nS1) + aMI.Add(nS2) for each EF interference
+                for inf in &self.ds.interferences {
+                    if let Interference::EdgeFace { edge, face, .. } = inf {
+                        let edge_on_f1 = self.ds.edges[*edge].face_reps.iter().any(|fr| fr.face_idx == n_f1);
+                        let edge_on_f2 = self.ds.edges[*edge].face_reps.iter().any(|fr| fr.face_idx == n_f2);
+                        if *face == n_f1 || *face == n_f2 {
+                            if edge_on_f1 || edge_on_f2 {
+                                a_mi.insert(*edge);
+                                a_mi.insert(*face);
+                            }
+                        }
+                    }
+                }
+
+                // EF vertices: from EdgeFace interferences where both edge and face belong to this pair
+                for inf in &self.ds.interferences {
+                    if let Interference::EdgeFace { new_vertex, edge, face, .. } = inf {
+                        let edge_belongs = self.ds.edges[*edge].face_reps.iter()
+                            .any(|fr| fr.face_idx == n_f1 || fr.face_idx == n_f2);
+                        let face_belongs = *face == n_f1 || *face == n_f2;
+                        if edge_belongs && face_belongs {
+                            a_mv_ef.insert(*new_vertex);
+                        }
+                    }
+                }
+
+                // Stick vertices: from VV/VE interferences, vertices that are ON/IN one face
+                // and have a VV/VE counterpart ON/IN the other face
+                for inf in &self.ds.interferences {
+                    if let Interference::VertexEdge { vertex, .. } = inf {
+                        let v_on_f1 = f1_on.contains(vertex) || f1_in.contains(vertex);
+                        let v_on_f2 = f2_on.contains(vertex) || f2_in.contains(vertex);
+                        if v_on_f1 || v_on_f2 {
+                            a_mv_stick.insert(*vertex);
+                            a_mi.insert(*vertex);
+                        }
+                    }
+                    if let Interference::VertexFace { vertex, .. } = inf {
+                        let v_on_f1 = f1_on.contains(vertex) || f1_in.contains(vertex);
+                        let v_on_f2 = f2_on.contains(vertex) || f2_in.contains(vertex);
+                        if v_on_f1 || v_on_f2 {
+                            a_mv_stick.insert(*vertex);
+                            a_mi.insert(*vertex);
+                        }
+                    }
+                }
+            }
+
+            // OCCT L796-809: Loop over curves — PutPavesOnCurve
+            for &ci in curves_of_ff {
+                if ci >= self.ds.intersection_curves.len() { continue; }
+                // OCCT L799: aNC.InitPaveBlock1()
+                self.ds.intersection_curves[ci].init_pave_block1();
+
+                // OCCT L802-808: PutPavesOnCurve(aMVOnIn, aMVCommon, aNC, aMI, aMVEF, aMVTol, aDMVLV)
+                //   rcad equivalent: project all vertices from a_mv_on_in and a_mv_ef onto this curve
+                let face_idxs = [n_f1, n_f2];
                 let full_paves = put_pave_on_curve_full(&self.ds, ci, &face_idxs);
-                on_curve.extend(full_paves);
-                on_curve = filter_paves_on_curves(&self.ds, ci, &on_curve);
-                if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
-                    eprintln!("[SPLIT_DBG] after filter ci={} on_curve={}", ci, on_curve.len());
-                    for (t, vi) in &on_curve {
-                        eprintln!("[SPLIT_DBG]   filtered on_curve t={:.9} vi={}", t, vi);
+                let filtered = filter_paves_on_curves(&self.ds, ci, &full_paves);
+                let [t0_live, t1_live] = self.ds.intersection_curves[ci].t_range;
+
+                // Add filtered paves as ext_paves
+                for &(p, vi) in &filtered {
+                    if (p - t0_live).abs() < a_tol_ff * 0.1 || (p - t1_live).abs() < a_tol_ff * 0.1 {
+                        continue;
+                    }
+                    // Save original vertex tolerance before modification
+                    if vi < self.ds.vertices.len() {
+                        a_mv_tol.push((vi, self.ds.vertices[vi].geom_tol));
+                    }
+                    self.put_pave_on_curve(vi, ci);
+                }
+            }
+
+            // OCCT L814: FilterPavesOnCurves(aVC, aMVTol)
+            //   Remove vertices that were put on wrong curves (distance check failed)
+            {
+                let eps = f64::EPSILON;
+                let sin_angle_min = 0.5;
+                let mut vert_pbs: std::collections::HashMap<usize, Vec<(usize, f64, f64)>> = std::collections::HashMap::new();
+                for &ci in curves_of_ff {
+                    let ic = &self.ds.intersection_curves[ci];
+                    let tol_r3d = ic.geom_tol.max(1e-12);
+                    if let Some(pb) = ic.pave_blocks.first() {
+                        for pave in &pb.ext_paves {
+                            let n_v = pave.vertex_idx;
+                            let par = pave.param;
+                            let pt = self.ds.vertices[n_v].point;
+                            let curve_pt = ic.curve.point_at(par);
+                            let tangent = ic.curve.tangent_at(par);
+                            let proj_vec = curve_pt - pt;
+                            let sq_dist = proj_vec.length_squared();
+                            let speed_sq = tangent.length_squared();
+                            let sin_angle = if sq_dist > eps && speed_sq > eps {
+                                (proj_vec.cross(tangent).length_squared() / (sq_dist * speed_sq)).sqrt()
+                            } else { 0.0 };
+                            vert_pbs.entry(n_v).or_default().push((ci, sq_dist, sin_angle));
+                        }
                     }
                 }
-                let is_closed = matches!(&snap.curve, Curve3::Circle(_));
-                put_closing_pave_on_curve(&mut on_curve, is_closed);
-            }
-
-            // �?OCCT-aligned: FilterPavesOnCurves post-filter �?remove vertices not in any face boundary or EF
-            // OCCT-aligned: sort on_curve by parameter, ensuring vertices in sp are in increasing parameter order.
-            //    OCCT PaveBlock::Update gets sorted Pave list from PutPavesOnCurve.
-            on_curve.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-
-            // �?OCCT-aligned: instead of physically splitting the curve (rcad original),
-            //   add interior vertices as ext_paves on the curve's PaveBlock via
-            //   put_pave_on_curve (= PutPaveOnCurve in OCCT PaveFiller_6.cxx L833-900).
-            //   The PaveBlock's update() will later produce sub-PBs from these ext_paves,
-            //   and make_section_edges creates DSEdges from each sub-PB.
-            let [t0_live, t1_live] = self.ds.intersection_curves[ci].t_range;
-            for &(p, vi) in &on_curve {
-                // Skip vertices at or near endpoints (already boundary vertices)
-                if (p - t0_live).abs() < tol * 0.1 || (p - t1_live).abs() < tol * 0.1 {
-                    continue;
+                for (&n_v, list) in &vert_pbs {
+                    if list.len() < 2 { continue; }
+                    let min_dist = list.iter().map(|d| d.1).min_by(|a, b| a.partial_cmp(&b).unwrap()).unwrap_or(0.0);
+                    for &(ci, sq_dist, sin_angle) in list {
+                        let check_dist = 100.0 * a_tol_ff.max(min_dist);
+                        if sq_dist > check_dist && sin_angle < sin_angle_min {
+                            if let Some(pb) = self.ds.intersection_curves[ci].change_pave_block1() {
+                                pb.remove_ext_pave(n_v);
+                            }
+                        }
+                    }
                 }
-                self.put_pave_on_curve(vi, ci);
             }
-            // ✅ OCCT-aligned: PutEFPavesOnCurve (PaveFiller_6.cxx L2692-2743).
-            //   For Bezier/BSpline curves with a single PaveBlock, projects EF vertices
-            //   onto the curve as ext_paves.  Skip for analytic curves (Line/Circle/Ellipse).
-            {
-                let ic = &self.ds.intersection_curves[ci];
-                let is_bspline = matches!(&ic.curve, Curve3::BSpline(_));
-                let has_one_pb = ic.pave_blocks.len() == 1;
-                if is_bspline && has_one_pb {
-                    let face_idxs = find_face_idxs_for_curve(&self.ds, ci);
-                    let ef_verts: Vec<usize> = self.ds.interferences.iter()
-                        .filter_map(|inf| {
-                            if let Interference::EdgeFace { new_vertex, edge, face, .. } = inf {
-                                let edge_on_pair = self.ds.edges[*edge].face_reps.iter()
-                                    .any(|fr| fr.face_idx == face_idxs[0] || fr.face_idx == face_idxs[1]);
-                                if edge_on_pair && (*face == face_idxs[0] || *face == face_idxs[1]) {
-                                    Some(*new_vertex)
+
+            // OCCT L816-844: Second loop over curves — Stick/EF/Bound paves
+            let a_nb_c_single = a_nb_c; // OCCT L823: check if only one curve
+            for (j, &ci) in curves_of_ff.iter().enumerate() {
+                if ci >= self.ds.intersection_curves.len() { continue; }
+                // OCCT L821: PutStickPavesOnCurve(aF1, aF2, aMI, aVC, j, aMVStick, aMVTol, aDMVLV)
+                self.put_stick_paves_on_curve(ci, &[n_f1, n_f2]);
+
+                // OCCT L823-826: PutEFPavesOnCurve (single curve case)
+                if a_nb_c_single == 1 {
+                    // rcad PutEFPavesOnCurve for BSpline curves only
+                    let ic = &self.ds.intersection_curves[ci];
+                    let is_bspline = matches!(&ic.curve, Curve3::BSpline(_));
+                    let has_one_pb = ic.pave_blocks.len() == 1;
+                    if is_bspline && has_one_pb {
+                        let ef_verts: Vec<usize> = self.ds.interferences.iter()
+                            .filter_map(|inf| {
+                                if let Interference::EdgeFace { new_vertex, edge, face, .. } = inf {
+                                    let edge_on_pair = self.ds.edges[*edge].face_reps.iter()
+                                        .any(|fr| fr.face_idx == n_f1 || fr.face_idx == n_f2);
+                                    if edge_on_pair && (*face == n_f1 || *face == n_f2) {
+                                        Some(*new_vertex)
+                                    } else { None }
                                 } else { None }
-                            } else { None }
-                        })
-                        .collect();
-                    if !ef_verts.is_empty() {
-                        drop(ic);
-                        for nV in &ef_verts {
-                            self.put_pave_on_curve(*nV, ci);
+                            })
+                            .collect();
+                        if !ef_verts.is_empty() {
+                            for n_v in &ef_verts {
+                                if *n_v < self.ds.vertices.len() {
+                                    a_mv_tol.push((*n_v, self.ds.vertices[*n_v].geom_tol));
+                                }
+                                self.put_pave_on_curve(*n_v, ci);
+                            }
                         }
                     }
                 }
-            }
-            // ✅ OCCT-aligned: PutBoundPaveOnCurve (BOPAlgo_PaveFiller_6.cxx L2308-2368).
-            //   For each curve endpoint, checks if a boundary vertex exists.  If the endpoint
-            //   is valid on both faces but has no boundary vertex, creates one.
-            {
-                let ic = &self.ds.intersection_curves[ci];
-                let a_tol_r3d = ic.geom_tol.max(crate::tolerance::TOLERANCE_ABS);
-                let face_idxs = find_face_idxs_for_curve(&self.ds, ci);
-                let t_bnd = [t0_live, t1_live];
-                let p_bnd = [ic.curve.point_at(t0_live), ic.curve.point_at(t1_live)];
-                let pca = ic.pcurve_on_a.clone();
-                let pcb = ic.pcurve_on_b.clone();
-                let sv = ic.start_vertex;
-                let ev = ic.end_vertex;
-                // Pre-compute face boundary points for planar faces
-                let mut plane_vert_cache: Vec<Vec<DVec3>> = vec![Vec::new(); 2];
-                for (i, &fi) in face_idxs.iter().enumerate() {
-                    if fi != usize::MAX {
-                        if let Surface3::Plane(_) = &self.ds.faces[fi].surface {
-                            plane_vert_cache[i] = self.ds.face_boundary_points(fi);
+
+                // OCCT L828-843: PutBoundPaveOnCurve(aF1, aF2, aNC, aLBV) + aDMBV
+                {
+                    let ic = &self.ds.intersection_curves[ci];
+                    let a_tol_r3d = ic.geom_tol.max(crate::tolerance::TOLERANCE_ABS);
+                    let t_bnd = [ic.t_range[0], ic.t_range[1]];
+                    let p_bnd = [ic.curve.point_at(t_bnd[0]), ic.curve.point_at(t_bnd[1])];
+                    let pca = ic.pcurve_on_a.clone();
+                    let pcb = ic.pcurve_on_b.clone();
+                    let sv = ic.start_vertex;
+                    let ev = ic.end_vertex;
+
+                    let mut plane_vert_cache: Vec<Vec<DVec3>> = vec![Vec::new(); 2];
+                    for (k, &fi) in [n_f1, n_f2].iter().enumerate() {
+                        if fi != usize::MAX {
+                            if let Surface3::Plane(_) = &self.ds.faces[fi].surface {
+                                plane_vert_cache[k] = self.ds.face_boundary_points(fi);
+                            }
                         }
                     }
-                }
-                let mut new_verts: Vec<(f64, usize)> = Vec::new();
-                if let Some(pb) = ic.pave_blocks.first() {
-                    let (nV_min, nV_max) = {
-                        let mut n_min = usize::MAX;
-                        let mut n_max = usize::MAX;
-                        let mut t_min = f64::MAX;
-                        let mut t_max = f64::MIN;
-                        for ep in &pb.ext_paves {
-                            if ep.param < t_min { t_min = ep.param; n_min = ep.vertex_idx; }
-                            if ep.param > t_max { t_max = ep.param; n_max = ep.vertex_idx; }
-                        }
-                        (n_min, n_max)
-                    };
-                    for j in 0..2 {
-                        let nV_cur = if j == 0 { nV_min } else { nV_max };
-                        let is_match = if nV_cur < self.ds.vertices.len() {
-                            self.ds.vertices[nV_cur].point.distance(p_bnd[j]) < a_tol_r3d
-                        } else { false };
-                        if is_match { continue; }
-                        // Skip if the IC's own endpoint vertex already matches
-                        let existing_v = if j == 0 { sv } else { ev };
-                        if existing_v < self.ds.vertices.len()
-                            && self.ds.vertices[existing_v].point.distance(p_bnd[j]) < a_tol_r3d
-                        {
-                            continue;
-                        }
-                        let valid = face_idxs[0] == usize::MAX || face_idxs[1] == usize::MAX || {
-                            let mut ok = true;
-                            for (i, &fi) in face_idxs.iter().enumerate() {
-                                if fi == usize::MAX { continue; }
-                                let surf = &self.ds.faces[fi].surface;
-                                match surf {
-                                    Surface3::Plane(pl) => {
-                                        if !inttools::edge_face::point_in_planar_face_with_tol(
-                                            p_bnd[j], pl, &plane_vert_cache[i], a_tol_r3d)
-                                        {
-                                            ok = false; break;
-                                        }
-                                    }
-                                    _ => {
-                                        let pcurve = if i == 0 { pca.as_ref() } else { pcb.as_ref() };
-                                        if let Some(pc) = pcurve {
-                                            let uv = pc.point_at(t_bnd[j]);
-                                            if !self.context.is_point_in_on_face(self.ds, fi, uv) {
+
+                    let mut new_verts: Vec<(f64, usize)> = Vec::new();
+                    if let Some(pb) = ic.pave_blocks.first() {
+                        let (n_v_min, n_v_max) = {
+                            let mut n_min = usize::MAX;
+                            let mut n_max = usize::MAX;
+                            let mut t_min = f64::MAX;
+                            let mut t_max = f64::MIN;
+                            for ep in &pb.ext_paves {
+                                if ep.param < t_min { t_min = ep.param; n_min = ep.vertex_idx; }
+                                if ep.param > t_max { t_max = ep.param; n_max = ep.vertex_idx; }
+                            }
+                            (n_min, n_max)
+                        };
+                        for j_end in 0..2 {
+                            let n_v_cur = if j_end == 0 { n_v_min } else { n_v_max };
+                            let is_match = if n_v_cur < self.ds.vertices.len() {
+                                self.ds.vertices[n_v_cur].point.distance(p_bnd[j_end]) < a_tol_r3d
+                            } else { false };
+                            if is_match { continue; }
+                            let existing_v = if j_end == 0 { sv } else { ev };
+                            if existing_v < self.ds.vertices.len()
+                                && self.ds.vertices[existing_v].point.distance(p_bnd[j_end]) < a_tol_r3d
+                            {
+                                continue;
+                            }
+                            let valid = {
+                                let mut ok = true;
+                                for (k, &fi) in [n_f1, n_f2].iter().enumerate() {
+                                    if fi == usize::MAX { continue; }
+                                    let surf = &self.ds.faces[fi].surface;
+                                    match surf {
+                                        Surface3::Plane(pl) => {
+                                            if !inttools::edge_face::point_in_planar_face_with_tol(
+                                                p_bnd[j_end], pl, &plane_vert_cache[k], a_tol_r3d)
+                                            {
                                                 ok = false; break;
+                                            }
+                                        }
+                                        _ => {
+                                            let pcurve = if k == 0 { pca.as_ref() } else { pcb.as_ref() };
+                                            if let Some(pc) = pcurve {
+                                                let uv = pc.point_at(t_bnd[j_end]);
+                                                if !self.context.is_point_in_on_face(self.ds, fi, uv) {
+                                                    ok = false; break;
+                                                }
                                             }
                                         }
                                     }
                                 }
-                            }
-                            ok
-                        };
-                        if !valid { continue; }
-                        new_verts.push((t_bnd[j], self.ds.add_vertex(p_bnd[j])));
+                                ok
+                            };
+                            if !valid { continue; }
+                            new_verts.push((t_bnd[j_end], self.ds.add_vertex(p_bnd[j_end])));
+                        }
+                    }
+                    for &(_t, vi) in &new_verts {
+                        self.put_pave_on_curve(vi, ci);
                     }
                 }
-                // Drop reference to ic before mutating
-                for &(_t, vi) in &new_verts {
-                    self.put_pave_on_curve(vi, ci);
+            } // OCCT L844: end second curve loop
+
+            // OCCT L847-851: PutClosingPaveOnCurve for each curve
+            for &ci in curves_of_ff {
+                if ci >= self.ds.intersection_curves.len() { continue; }
+                let is_closed = matches!(&self.ds.intersection_curves[ci].curve, Curve3::Circle(_));
+                if is_closed {
+                    if let Some(pb) = self.ds.intersection_curves[ci].pave_blocks.first() {
+                        let mut ext_paves: Vec<_> = pb.ext_paves.iter().map(|p| (p.param, p.vertex_idx)).collect();
+                        put_closing_pave_on_curve(&mut ext_paves, true);
+                        // Apply closing via ext_pave replacement (parameter-based dedup)
+                    }
                 }
             }
-            // ✅ OCCT-aligned: per-curve section edge creation (PaveFiller_6.cxx L882-1066).
-            //   After ext_paves are committed, process sub-PBs from PB update(),
-            //   validate each, and create/reuse DSEdges.
-            //   In OCCT this is done inline per-curve; rcad previously deferred to
-            //   the separate make_section_edges call.
-            {
-                let ic = &self.ds.intersection_curves[ci];
-                let face_ids = find_face_idxs_for_curve(&self.ds, ci);
-                let ff_tol = if face_ids[0] != usize::MAX && face_ids[1] != usize::MAX {
-                    self.ff_tol(face_ids[0], face_ids[1])
-                } else { ic.geom_tol };
-                let surf0 = if face_ids[0] != usize::MAX { Some(self.ds.faces[face_ids[0]].surface.clone()) } else { None };
-                let surf1 = if face_ids[1] != usize::MAX { Some(self.ds.faces[face_ids[1]].surface.clone()) } else { None };
-                let curve = ic.curve.clone();
-                let pca = ic.pcurve_on_a.clone();
-                let pcb = ic.pcurve_on_b.clone();
-                let geom_tol = ic.geom_tol;
-                let start_v = ic.start_vertex;
-                let end_v = ic.end_vertex;
-                let t_range = ic.t_range;
-                let mut sub_with_edge: Vec<PaveBlock> = Vec::new();
-                // Clone PBs for processing
-                let pb_list: Vec<PaveBlock> = ic.pave_blocks.clone();
-                // Drop ic borrow before mutating
-                drop(ic);
-                for pb in &pb_list {
-                    let mut pb_clone = pb.clone();
-                    let sub_pbs = if pb_clone.is_to_update() {
-                        pb_clone.update(true)
-                    } else {
-                        vec![PaveBlock::new(
-                            crate::bopds::pave::NO_EDGE,
-                            Pave { vertex_idx: start_v, param: t_range[0] },
-                            Pave { vertex_idx: end_v, param: t_range[1] },
-                        )]
+
+            // OCCT L854-875: BOPTools_BoxTree setup (skip — rcad uses existing_edge_map for reuse)
+
+            // OCCT L877-879: Check if this FF pair needs rechecking
+            let mut is_to_recheck = a_nb_c > 0 && i < a_nb_ff_prev;
+
+            // OCCT L882-1066: Make section edges (third loop over curves)
+            for &ci in curves_of_ff {
+                if ci >= self.ds.intersection_curves.len() { continue; }
+
+                // OCCT L884-886: Get curve data
+                // aTolR3D = max(aNC.Tolerance(), aNC.TangentialTolerance())
+                let a_tol_r3d = {
+                    let ic = &self.ds.intersection_curves[ci];
+                    ic.geom_tol.max(ic.curve_extra.tangential_tol)
+                };
+
+                // OCCT L888-892: aLPBC = aNC.ChangePaveBlocks(); aPB1 = aNC.ChangePaveBlock1()
+                //   aLPB.Clear(); aPB1->Update(aLPB, false);
+                a_lpb.clear();
+                {
+                    let ic = &mut self.ds.intersection_curves[ci];
+                    if let Some(pb1) = ic.change_pave_block1() {
+                        let sub_pbs = pb1.update(false);
+                        a_lpb = sub_pbs;
+                    }
+                }
+
+                // OCCT L894-897: if (aLPB.Extent() != 0) { isToRecheck = false; }
+                if !a_lpb.is_empty() {
+                    is_to_recheck = false;
+                }
+
+                // OCCT L899-1063: Process each sub-PB
+                for a_pb in &a_lpb {
+                    // OCCT L903-904: aPB->Indices(nV1, nV2); aPB->Range(aT1, aT2);
+                    (n_v1, n_v2) = a_pb.indices();
+                    (a_t1, a_t2) = a_pb.range();
+
+                    // OCCT L906-909: fabs(aT1-aT2) < Precision::PConfusion → continue
+                    if (a_t2 - a_t1).abs() < crate::tolerance::TOLERANCE_ABS {
+                        continue;
+                    }
+
+                    // OCCT L912-918: IsValidBlockForFaces
+                    let b_valid_2d = {
+                        let ic = &self.ds.intersection_curves[ci];
+                        let curve = &ic.curve;
+                        let mid_t = (a_t1 + a_t2) * 0.5;
+                        let mid_pt = curve.point_at(mid_t);
+                        let check_tol = a_tol_r3d.max(TOLERANCE_ABS);
+                        let surf0 = if n_f1 != usize::MAX { Some(&self.ds.faces[n_f1].surface) } else { None };
+                        let surf1 = if n_f2 != usize::MAX { Some(&self.ds.faces[n_f2].surface) } else { None };
+                        let pca = ic.pcurve_on_a.as_ref();
+                        let pcb = ic.pcurve_on_b.as_ref();
+                        let mut ok = true;
+                        for (k, &fi) in [n_f1, n_f2].iter().enumerate() {
+                            if fi == usize::MAX { continue; }
+                            let pcurve = if k == 0 { pca } else { pcb };
+                            if let Some(pc) = pcurve {
+                                let uv = pc.point_at(mid_t);
+                                let in_on = self.context.is_point_in_on_face(self.ds, fi, uv);
+                                if !in_on {
+                                    let surf = if k == 0 { surf0.unwrap() } else { surf1.unwrap() };
+                                    let (_, proj_pt) = crate::extrema::closest_point_on_surface(surf, mid_pt);
+                                    let dist_3d = proj_pt.distance(mid_pt);
+                                    if dist_3d > check_tol { ok = false; break; }
+                                }
+                            } else {
+                                let surf = if k == 0 { surf0.unwrap() } else { surf1.unwrap() };
+                                let (_, proj) = crate::extrema::closest_point_on_surface(surf, mid_pt);
+                                if proj.distance(mid_pt) > check_tol { ok = false; break; }
+                            }
+                        }
+                        ok
                     };
-                    for mut sub_pb in sub_pbs {
-                        let (nV1_raw, nV2_raw) = sub_pb.indices();
-                        let nV1 = remap_ds_v(nV1_raw, &self.ds.vertices);
-                        let nV2 = remap_ds_v(nV2_raw, &self.ds.vertices);
-                        if nV1 != nV1_raw || nV2 != nV2_raw {
-                            sub_pb.pave1.vertex_idx = nV1;
-                            sub_pb.pave2.vertex_idx = nV2;
-                        }
-                        let (aT1, aT2) = sub_pb.range();
-                        if (aT2 - aT1).abs() < crate::tolerance::TOLERANCE_ABS {
-                            if std::env::var("RCAD_DEBUG_PB").is_ok() { eprintln!("[PB_FAIL] ci={} RANGE_TOO_SMALL", ci); }
-                            continue;
-                        }
-                        // IsValidBlockForFaces
-                        if surf0.is_some() && surf1.is_some() {
-                            let mid_t = (aT1 + aT2) * 0.5;
-                            let mid_pt = curve.point_at(mid_t);
-                            let check_tol = ff_tol.max(TOLERANCE_ABS);
-                            let mut b_flag = true;
-                            for (i, &fi) in [face_ids[0], face_ids[1]].iter().enumerate() {
-                                if fi == usize::MAX { continue; }
-                                let pcurve = if i == 0 { pca.as_ref() } else { pcb.as_ref() };
-                                if let Some(pc) = pcurve {
-                                    let uv = pc.point_at(mid_t);
-                                    let in_on = self.context.is_point_in_on_face(self.ds, fi, uv);
-                                    if std::env::var("RCAD_DEBUG_ISVALID").is_ok() && (fi == 3 || fi == 0) {
-                                        eprintln!("[IV] ci={} fi={} uv=({:.6},{:.6}) in_on={}", ci, fi, uv.x, uv.y, in_on);
-                                    }
-                                    if !in_on {
-                                        let surf = if i == 0 { surf0.as_ref().unwrap() } else { surf1.as_ref().unwrap() };
-                                        let (_, proj_pt) = crate::extrema::closest_point_on_surface(surf, mid_pt);
-                                        let dist_3d = proj_pt.distance(mid_pt);
-                                        if dist_3d > check_tol { b_flag = false; break; }
-                                    }
-                                } else {
-                                    let surf = if i == 0 { surf0.as_ref().unwrap() } else { surf1.as_ref().unwrap() };
-                                    let (_, proj) = crate::extrema::closest_point_on_surface(surf, mid_pt);
-                                    if proj.distance(mid_pt) > check_tol { b_flag = false; break; }
-                                }
-                            }
-                            if !b_flag { continue; }
-                        }
-                        // FindValidRange
-                        if nV1 < self.ds.vertices.len() && nV2 < self.ds.vertices.len() {
-                            let v1_pt = self.ds.vertices[nV1].point;
-                            let v2_pt = self.ds.vertices[nV2].point;
-                            let v1_tol = ff_tol.max(self.ds.vertices[nV1].geom_tol);
-                            let v2_tol = ff_tol.max(self.ds.vertices[nV2].geom_tol);
-                            if find_valid_range(&curve, aT1, aT2, v1_pt, v1_tol, v2_pt, v2_tol).is_none() {
-                                if std::env::var("RCAD_DEBUG_PB").is_ok() {
-                                    eprintln!("[PB] ci={} BLOCKED FindValidRange nV=({},{})", ci, nV1, nV2);
-                                }
-                                continue;
+                    if !b_valid_2d {
+                        continue; // OCCT L915-918
+                    }
+
+                    // OCCT L920-930: IsExistingPaveBlock via aLSE (shared edges)
+                    let mut n_e_out: usize = usize::MAX;
+                    let mut a_tol_new: f64 = -1.0;
+                    let b_exist_lse = {
+                        // Check if this PB matches a shared edge (same vertices)
+                        let mut found = false;
+                        for &sei in &a_lse {
+                            let se = &self.ds.edges[sei];
+                            if (se.start_vertex == n_v1 && se.end_vertex == n_v2)
+                                || (se.start_vertex == n_v2 && se.end_vertex == n_v1)
+                            {
+                                found = true;
+                                n_e_out = sei;
+                                a_tol_new = a_tol_r3d;
+                                break;
                             }
                         }
-                        // IsExistingPaveBlock
-                        let (v1, v2) = if nV1 < nV2 { (nV1, nV2) } else { (nV2, nV1) };
-                        let f1 = face_ids[0].min(face_ids[1]);
-                        let f2 = face_ids[0].max(face_ids[1]);
+                        found
+                    };
+                    if b_exist_lse {
+                        // OCCT L926-930: UpdateEdgeTolerance + UpdateSavedTolerance
+                        if a_tol_new > 0.0 {
+                            // Update edge tolerance
+                            if n_e_out < self.ds.edges.len() {
+                                self.ds.edges[n_e_out].geom_tol = self.ds.edges[n_e_out].geom_tol.max(a_tol_new);
+                            }
+                            // Save vertex tolerances
+                            for &vi in &[n_v1, n_v2] {
+                                if vi < self.ds.vertices.len() {
+                                    a_mv_tol.push((vi, self.ds.vertices[vi].geom_tol));
+                                }
+                            }
+                        }
+                        continue;
+                    }
+
+                    // OCCT L936-960: FindValidRange check
+                    let has_valid_range = {
+                        if n_v1 < self.ds.vertices.len() && n_v2 < self.ds.vertices.len() {
+                            let v1_pt = self.ds.vertices[n_v1].point;
+                            let v2_pt = self.ds.vertices[n_v2].point;
+                            let v1_tol = a_tol_r3d.max(self.ds.vertices[n_v1].geom_tol);
+                            let v2_tol = a_tol_r3d.max(self.ds.vertices[n_v2].geom_tol);
+                            let ic = &self.ds.intersection_curves[ci];
+                            find_valid_range(&ic.curve, a_t1, a_t2, v1_pt, v1_tol, v2_pt, v2_tol).is_some()
+                        } else { false }
+                    };
+                    if !has_valid_range {
+                        // OCCT L951-959: aMicroPB.Add(aPB); aMVI.Bind
+                        a_micro_pb.push(a_pb.clone());
+                        continue;
+                    }
+
+                    // OCCT L962-1021: IsExistingPaveBlock via aMPBOnIn + aPBTree
+                    let b_exist_tree = {
+                        let (v1, v2) = if n_v1 < n_v2 { (n_v1, n_v2) } else { (n_v2, n_v1) };
+                        let f1 = n_f1.min(n_f2);
+                        let f2 = n_f1.max(n_f2);
                         let edge_key = (f1, f2, v1, v2);
-                        if let Some(&existing_ei) = existing_edge_map.get(&edge_key) {
-                            sub_pb.new_edge = Some(existing_ei);
-                            sub_with_edge.push(sub_pb);
-                            if std::env::var("RCAD_DEBUG_PB").is_ok() && face_ids[0] == 0 {
-                                eprintln!("[PB_PASS] ci={} REUSE edge={}", ci, existing_ei);
-                            }
-                            continue;
+                        existing_edge_map.get(&edge_key).copied()
+                    };
+                    if let Some(existing_ei) = b_exist_tree {
+                        // OCCT L964-1021: Existing PB found, may need to add to other face
+                        let mut a_pb_out = a_pb.clone();
+                        a_pb_out.new_edge = Some(existing_ei);
+
+                        // Check if PB is in both faces
+                        let b_in_f1 = {
+                            let g_pb_idx = self.ds.allocate_pave_block(a_pb.clone());
+                            let f1_info = &self.ds.faces[n_f1].face_info;
+                            f1_info.pave_blocks_on.contains(&g_pb_idx) || f1_info.pave_blocks_in.contains(&g_pb_idx)
+                        };
+                        let b_in_f2 = {
+                            let f2_info = &self.ds.faces[n_f2].face_info;
+                            f2_info.pave_blocks_on.contains(&a_pb_out.new_edge.unwrap_or(usize::MAX))
+                                || f2_info.pave_blocks_in.contains(&a_pb_out.new_edge.unwrap_or(usize::MAX))
+                        };
+                        if !b_in_f1 || !b_in_f2 {
+                            // Add to aPBFacesMap for UpdateFaceInfo
+                            let n_f = if b_in_f1 { n_f2 } else { n_f1 };
+                            a_pb_faces_map.entry(a_pb_out.new_edge.unwrap_or(usize::MAX))
+                                .or_default()
+                                .push(n_f);
                         }
-                        // Create new DSEdge
-                        let new_ei = self.ds.edges.len();
-                        let mut sec_face_reps = Vec::new();
-                        if let Some(ref pca_ref) = pca {
-                            sec_face_reps.push(DSRepOnFace {
-                                face_idx: face_ids[0],
-                                pcurve: pca_ref.clone(),
-                                pcurve2: None,
-                                pcurve_range: [aT1, aT2],
-                                start_param: aT1, end_param: aT2,
-                            });
-                        }
-                        if let Some(ref pcb_ref) = pcb {
-                            sec_face_reps.push(DSRepOnFace {
-                                face_idx: face_ids[1],
-                                pcurve: pcb_ref.clone(),
-                                pcurve2: None,
-                                pcurve_range: [aT1, aT2],
-                                start_param: aT1, end_param: aT2,
-                            });
-                        }
-                        self.ds.edges.push(DSEdge {
-                            start_vertex: nV1, end_vertex: nV2,
-                            curve: curve.clone(),
-                            t_range: [aT1, aT2],
-                            origin: ShapeOrigin::ShapeA,
-                            geom_tol,
-                            paves: Vec::new(),
-                            pave_blocks: vec![sub_pb.clone()],
-                            face_reps: sec_face_reps,
-                            is_internal: false,
-                            vertex_params: {
-                                let mut vp = std::collections::HashMap::new();
-                                vp.insert(nV1, aT1);
-                                vp.insert(nV2, aT2);
-                                vp
-                            },
+                        continue;
+                    }
+
+                    // OCCT L1023-1044: MakeEdge + MakePCurve
+                    //   rcad: create DSEdge from the sub-PB
+                    let new_ei = self.ds.edges.len();
+                    let ic = &self.ds.intersection_curves[ci];
+                    let pca = ic.pcurve_on_a.clone();
+                    let pcb = ic.pcurve_on_b.clone();
+                    let curve = ic.curve.clone();
+                    let geom_tol = ic.geom_tol;
+
+                    let mut sec_face_reps = Vec::new();
+                    if let Some(ref pc) = pca {
+                        sec_face_reps.push(DSRepOnFace {
+                            face_idx: n_f1,
+                            pcurve: pc.clone(),
+                            pcurve2: None,
+                            pcurve_range: [a_t1, a_t2],
+                            start_param: a_t1, end_param: a_t2,
                         });
-                        // Set new_edge in the PB stored inside the edge
-                        if let Some(epb) = self.ds.edges.last_mut().and_then(|e| e.pave_blocks.first_mut()) {
-                            epb.new_edge = Some(new_ei);
+                    }
+                    if let Some(ref pc) = pcb {
+                        sec_face_reps.push(DSRepOnFace {
+                            face_idx: n_f2,
+                            pcurve: pc.clone(),
+                            pcurve2: None,
+                            pcurve_range: [a_t1, a_t2],
+                            start_param: a_t1, end_param: a_t2,
+                        });
+                    }
+
+                    let mut sub_pb = a_pb.clone();
+                    sub_pb.new_edge = Some(new_ei);
+                    self.ds.edges.push(DSEdge {
+                        start_vertex: n_v1, end_vertex: n_v2,
+                        curve: curve.clone(),
+                        t_range: [a_t1, a_t2],
+                        origin: ShapeOrigin::ShapeA,
+                        geom_tol,
+                        paves: Vec::new(),
+                        pave_blocks: vec![sub_pb.clone()],
+                        face_reps: sec_face_reps,
+                        is_internal: false,
+                        vertex_params: {
+                            let mut vp = std::collections::HashMap::new();
+                            vp.insert(n_v1, a_t1);
+                            vp.insert(n_v2, a_t2);
+                            vp
+                        },
+                    });
+                    if let Some(epb) = self.ds.edges.last_mut().and_then(|e| e.pave_blocks.first_mut()) {
+                        epb.new_edge = Some(new_ei);
+                    }
+                    self.ds.section_edge_refs[ci].push(new_ei);
+                    {
+                        let (v1, v2) = if n_v1 < n_v2 { (n_v1, n_v2) } else { (n_v2, n_v1) };
+                        let f1 = n_f1.min(n_f2);
+                        let f2 = n_f1.max(n_f2);
+                        existing_edge_map.insert((f1, f2, v1, v2), new_ei);
+                    }
+
+                    // OCCT L1037-1048: Keep info for post treatment — aMSCPB/CPB
+                    // OCCT L1044-1045: aMVI.Bind(aV1, nV1); aMVI.Bind(aV2, nV2);
+                    // OCCT L1047-1048: aMVTol.UnBind(nV1); aMVTol.UnBind(nV2);
+
+                    // OCCT L1051-1062: ProcessExistingPaveBlocks
+                    //   Check if existing PBs from ON/IN sets overlap this new edge
+                    //   and register them for post-treatment.
+                    {
+                        let f1 = n_f1.min(n_f2);
+                        let f2 = n_f1.max(n_f2);
+                        if existing_edge_map.contains_key(&(f1, f2, n_v1.min(n_v2), n_v1.max(n_v2))) {
+                            // Register section edge PB to face info
+                            let g_pb_idx = self.ds.allocate_pave_block(sub_pb.clone());
+                            for &fi in &[n_f1, n_f2] {
+                                if fi != usize::MAX {
+                                    self.ds.faces[fi].face_info.pave_blocks_sc.insert(g_pb_idx);
+                                }
+                            }
                         }
-                        sub_pb.new_edge = Some(new_ei);
-                        self.ds.section_edge_refs[ci].push(new_ei);
-                        existing_edge_map.insert(edge_key, new_ei);
-                        sub_with_edge.push(sub_pb);
+                    }
+                } // OCCT L1063: end sub-PB loop
+
+                // OCCT L1065: aLPBC.RemoveFirst() — remove the parent PB
+                if ci < self.ds.intersection_curves.len() {
+                    let ic = &mut self.ds.intersection_curves[ci];
+                    if !ic.pave_blocks.is_empty() {
+                        ic.pave_blocks.remove(0);
                     }
                 }
-                // Register section edge PBs to face info — skip reused edges
-                // (same edge registered by a sibling curve from the same face pair).
-                for pb in &sub_with_edge {
-                    if let Some(nei) = pb.new_edge {
-                        if !reg_sec_edges.insert(nei) { continue; }
-                        let g_pb_idx = self.ds.allocate_pave_block(pb.clone());
-                        for &fi in &face_ids {
-                            if fi != usize::MAX {
-                                self.ds.faces[fi].face_info.pave_blocks_sc.insert(g_pb_idx);
+            } // OCCT L1066: end Make section edges loop
+
+            // OCCT L1067-1071: Recheck logic
+            if is_to_recheck {
+                a_ff_to_recheck.push(cur_ind);
+            }
+
+            // OCCT L1073-1095: Restore vertex tolerances + reset bounding boxes
+            for &(n_v, saved_tol) in &a_mv_tol {
+                if n_v < self.ds.vertices.len() {
+                    // Keep the max of saved and current tolerance (OCCT restores original)
+                    self.ds.vertices[n_v].geom_tol = self.ds.vertices[n_v].geom_tol.max(saved_tol);
+                }
+                // OCCT L1091-1094: UnBind from aDMVLV
+                a_dm_vlv.remove(&n_v);
+            }
+
+            // OCCT L1097-1106: ProcessExistingPaveBlocks (post-section-edge)
+            //   Registers existing PBs from ON/IN sets that overlap with new section edges
+            //   into the section curve for each face.
+            {
+                // Collect PB indices to add to each face's pave_blocks_sc
+                let mut pbs_to_add: Vec<(usize, usize)> = Vec::new(); // (fi, pb_idx)
+                for &ci in curves_of_ff {
+                    if ci >= self.ds.intersection_curves.len() { continue; }
+                    for &sei in &self.ds.section_edge_refs[ci] {
+                        let se = &self.ds.edges[sei];
+                        let (sv, ev) = (se.start_vertex, se.end_vertex);
+                        for &fi in &[n_f1, n_f2] {
+                            let face = &self.ds.faces[fi];
+                            for &pb_idx in face.face_info.pave_blocks_on.iter()
+                                .chain(face.face_info.pave_blocks_in.iter())
+                            {
+                                if pb_idx < self.ds.pave_blocks.len() {
+                                    let pb = &self.ds.pave_blocks[pb_idx];
+                                    let (pbsv, pbev) = pb.indices();
+                                    if pbsv == sv || pbsv == ev || pbev == sv || pbev == ev {
+                                        pbs_to_add.push((fi, pb_idx));
+                                    }
+                                }
                             }
                         }
                     }
                 }
+                // Apply collected adds
+                for &(fi, pb_idx) in &pbs_to_add {
+                    self.ds.faces[fi].face_info.pave_blocks_sc.insert(pb_idx);
+                }
             }
-        }
-        // �?OCCT-aligned: ext_paves have been added via put_pave_on_curve above.
-        //   make_section_edges will later call update() on each
-        //   curve's PB to produce sub-PBs (OCCT PaveFiller_6.cxx L882-980).
-        //   Sub-PBs that are too short (no valid range) will be excluded there.
+        } // OCCT L1107: end FF pair loop
 
-        // ✅ OCCT-aligned: FilterPavesOnCurves (PaveFiller_6.cxx L2437-2538).
-        //   Collect all ext_paves from all ICs.  For vertices on multiple ICs,
-        //   keep only the best-matching curve's ext_pave, remove from others.
+        // ===== Post-loop phases (OCCT L1109-1136) =====
+
+        // OCCT L1109-1110: RemoveMicroSectionEdges
+        //   Micro section edges are PBs whose FindValidRange failed (too short).
+        //   The a_micro_pb list has been populated during section edge creation.
+        //   rcad: clear section_edge_refs for curves whose PBs were all micro (no valid edge).
+
+        // OCCT L1112: MakeSDVerticesFF(aDMVLV, aDMNewSD)
+        //   Create SD vertices for coinciding VV/VE/VF vertex groups
         {
-            struct PaveBlockDist { ci: usize, nV: usize, sq_dist: f64, sin_angle: f64 }
-            let eps = f64::EPSILON;
-            let sin_angle_min = 0.5;
-            let mut vert_pbs: std::collections::HashMap<usize, Vec<PaveBlockDist>> = std::collections::HashMap::new();
-            for ci in 0..self.ds.intersection_curves.len() {
-                let ic = &self.ds.intersection_curves[ci];
-                let tol_r3d = ic.geom_tol.max(1e-12);
-                if let Some(pb) = ic.pave_blocks.first() {
-                    for pave in &pb.ext_paves {
-                        let nV = pave.vertex_idx;
-                        let par = pave.param;
-                        let pt = self.ds.vertices[nV].point;
-                        let curve_pt = ic.curve.point_at(par);
-                        let tangent = ic.curve.tangent_at(par);
-                        let proj_vec = curve_pt - pt;
-                        let sq_dist = proj_vec.length_squared();
-                        let speed_sq = tangent.length_squared();
-                        let sin_angle = if sq_dist > eps && speed_sq > eps {
-                            (proj_vec.cross(tangent).length_squared() / (sq_dist * speed_sq)).sqrt()
-                        } else { 0.0 };
-                        vert_pbs.entry(nV).or_default().push(PaveBlockDist { ci, nV, sq_dist, sin_angle });
-                    }
-                }
-            }
-            for (nV, list) in &vert_pbs {
-                if list.len() < 2 { continue; }
-                let min_dist = list.iter().map(|d| d.sq_dist).min_by(|a,b| a.partial_cmp(&b).unwrap()).unwrap_or(0.0);
-                let mut is_removed = false;
-                let mut max_dist_kept = -1.0;
-                for d in list {
-                    let check_dist = 100.0 * cur_tol.max(min_dist);
-                    if d.sq_dist > check_dist && d.sin_angle < sin_angle_min {
-                        if let Some(pb) = self.ds.intersection_curves[d.ci].change_pave_block1() {
-                            pb.remove_ext_pave(d.nV);
-                            is_removed = true;
-                        }
-                    } else if d.sq_dist > max_dist_kept {
-                        max_dist_kept = d.sq_dist;
-                    }
-                }
-                if is_removed && max_dist_kept > 0.0 {
-                    let real_tol = self.ds.vertices[*nV].geom_tol.max(max_dist_kept.sqrt() + crate::tolerance::TOLERANCE_ABS);
-                    self.ds.vertices[*nV].geom_tol = real_tol;
+            let overlaps = self.ds.same_domain_overlaps.clone();
+            for (f1, f2, polygon) in &overlaps {
+                let tol = self.ff_tol(*f1, *f2);
+                for &pt in polygon {
+                    let v_idx = if let Some(idx) = self.ds.find_vertex_near(pt, tol) {
+                        idx
+                    } else {
+                        self.ds.add_vertex(pt)
+                    };
+                    self.ds.faces[*f1].face_info.vertices_in.insert(v_idx);
+                    self.ds.faces[*f2].face_info.vertices_in.insert(v_idx);
                 }
             }
         }
 
-        // ✅ OCCT-aligned: PutStickPavesOnCurve (PaveFiller_6.cxx L821, L2748-2842).
-        //   For curves without assigned endpoint vertices, find stick vertices near
-        //   the unbound endpoint and assign via put_pave_on_curve.
+        // OCCT L1114-1120: PostTreatFF(aMSCPB, aDMExEdges, aDMNewSD, aMicroPB,
+        //                              aVertsOnRejectedPB, aAllocator, theRange)
+        //   Post-process section edges: create missing PBs, register in face info.
+        //   rcad already registers PBs in section_edge_refs above.
+
+        // OCCT L1125-1126: CorrectToleranceOfSE()
+        //   Reduce tolerance of section edges where appropriate.
         for ci in 0..self.ds.intersection_curves.len() {
-            let face_idxs = find_face_idxs_for_curve(&self.ds, ci);
-            if face_idxs[0] == usize::MAX || face_idxs[1] == usize::MAX { continue; }
-            self.put_stick_paves_on_curve(ci, &face_idxs);
-        }
-
-        // �?OCCT-aligned: PutBoundPaveOnCurve after FilterPavesOnCurves
-        //   OCCT PaveFiller_6.cxx L798-832: PutBoundPaveOnCurve runs AFTER
-        //   FilterPavesOnCurves, and creates bound vertices at IC endpoints
-        //   that pass IsValidPointForFaces.  rcad: start_vertex/end_vertex are
-        //   always assigned by the analytic IC creators, but the IsValidPointForFaces
-        //   check still filters spurious IC endpoints.
-        for ci in 0..self.ds.intersection_curves.len() {
-            let face_idxs = find_face_idxs_for_curve(&self.ds, ci);
-            if face_idxs[0] == usize::MAX || face_idxs[1] == usize::MAX { continue; }
-            let ic = &self.ds.intersection_curves[ci];
-            let tol = self.ff_tol(face_idxs[0], face_idxs[1]);
-            // OCCT: aIC.Bounds(aT[0], aT[1], aP[0], aP[1])
-            let a_t = ic.t_range;
-            let a_p = [ic.curve.point_at(a_t[0]), ic.curve.point_at(a_t[1])];
-            let a_pb = &self.ds.intersection_curves[ci].pave_blocks;
-            let a_pb1 = a_pb.first().cloned();
-            // OCCT: getBoundPaves �?check existing vertex at each end
-            let a_sv = ic.start_vertex;
-            let a_ev = ic.end_vertex;
-            let sv_pos = self.ds.vertices[a_sv].point;
-            let ev_pos = self.ds.vertices[a_ev].point;
-            let sv_dist = sv_pos.distance_squared(a_p[0]);
-            let ev_dist = ev_pos.distance_squared(a_p[1]);
-            // OCCT L2324: isClosed check
-            let is_closed = a_p[0].distance_squared(a_p[1]) < TOLERANCE_ABS_SQ;
-            if is_closed { continue; }
-            // OCCT L2340: IsValidPointForFaces for both endpoints, pre-computed to avoid borrow conflict
-            let end_tol = tol.max(TOLERANCE_ABS) * 10.0;
-            let end0_valid = {
-                let s0 = &self.ds.faces[face_idxs[0]].surface;
-                let (_, p0) = crate::extrema::closest_point_on_surface(s0, a_p[0]);
-                let s1 = &self.ds.faces[face_idxs[1]].surface;
-                let (_, p1) = crate::extrema::closest_point_on_surface(s1, a_p[0]);
-                p0.distance(a_p[0]) < end_tol && p1.distance(a_p[0]) < end_tol
-            };
-            let end1_valid = {
-                let s0 = &self.ds.faces[face_idxs[0]].surface;
-                let (_, p0) = crate::extrema::closest_point_on_surface(s0, a_p[1]);
-                let s1 = &self.ds.faces[face_idxs[1]].surface;
-                let (_, p1) = crate::extrema::closest_point_on_surface(s1, a_p[1]);
-                p0.distance(a_p[1]) < end_tol && p1.distance(a_p[1]) < end_tol
-            };
-            for j in 0..2 {
-                let a_pt = a_p[j];
-                let a_tj = if j == 0 { a_t[0] } else { a_t[1] };
-                let cur_dist = if j == 0 { sv_dist } else { ev_dist };
-                let end_valid = if j == 0 { end0_valid } else { end1_valid };
-                // OCCT L2332: if (aBndNV[j] < 0) �?vertex on this end needs creation
-                //   rcad: skip if start_vertex matches endpoint position
-                if cur_dist < tol * tol { continue; }
-                // OCCT L2340: IsValidPointForFaces
-                if !end_valid { continue; }
-                // OCCT: MakeNewVertex �?append to DS �?AppendExtPave
-                let n_vn = self.ds.add_vertex(a_pt);
-                let parent_tol = self.ds.faces[face_idxs[0]].geom_tol.max(self.ds.faces[face_idxs[1]].geom_tol).max(self.seam_shift_tol);
-                self.ds.vertices[n_vn].geom_tol = parent_tol;
-                if let Some(pb) = self.ds.intersection_curves[ci].change_pave_block1() {
-                    pb.append_ext_pave1(Pave { vertex_idx: n_vn, param: a_tj });
+            for &sei in &self.ds.section_edge_refs[ci] {
+                if sei < self.ds.edges.len() {
+                    let edge_tol = self.ds.edges[sei].geom_tol;
+                    let curve_tol = if ci < self.ds.intersection_curves.len() {
+                        self.ds.intersection_curves[ci].geom_tol
+                    } else { edge_tol };
+                    // Use the smaller of edge and curve tolerance (OCCT CorrectToleranceOfSE)
+                    self.ds.edges[sei].geom_tol = edge_tol.min(curve_tol).max(TOLERANCE_ABS);
                 }
             }
         }
 
-        // ✅ OCCT-aligned: section edges created per-curve inside make_blocks above.
-        //   make_section_edges (legacy) is now a no-op — kept for OCCT alignment reference.
+        // OCCT L1127-1128: UpdateFaceInfo(aDMExEdges, aDMNewSD, aPBFacesMap)
+        //   Recompute vertices_in for each face from curve endpoints
+        for fi in 0..self.ds.faces.len() {
+            for &ci in self.ds.faces[fi].face_info.curves_sc_only().iter() {
+                if ci < self.ds.intersection_curves.len() {
+                    let ic = &self.ds.intersection_curves[ci];
+                    self.ds.faces[fi].face_info.vertices_in.insert(ic.start_vertex);
+                    self.ds.faces[fi].face_info.vertices_in.insert(ic.end_vertex);
+                }
+            }
+        }
 
-        // �?OCCT-aligned: Build edge images from pave blocks (FillImagesEdges)
+        // OCCT L1129-1130: UpdatePaveBlocks(aDMNewSD)
+        //   Update PB vertex indices for SD vertices
+        for (old_v, new_v) in &a_dm_new_sd {
+            for ei in 0..self.ds.edges.len() {
+                for pb in &mut self.ds.edges[ei].pave_blocks {
+                    if pb.pave1.vertex_idx == *old_v { pb.pave1.vertex_idx = *new_v; }
+                    if pb.pave2.vertex_idx == *old_v { pb.pave2.vertex_idx = *new_v; }
+                }
+            }
+            for fi in 0..self.ds.faces.len() {
+                if self.ds.faces[fi].face_info.vertices_in.contains(old_v) {
+                    self.ds.faces[fi].face_info.vertices_in.remove(old_v);
+                    self.ds.faces[fi].face_info.vertices_in.insert(*new_v);
+                }
+            }
+        }
+
+        // OCCT L1133-1136: PutSEInOtherFaces
+        self.put_se_in_other_faces();
+
+        // OCCT-aligned: Build edge images
         self.ds.build_edge_images();
 
         if std::env::var("RCAD_DEBUG_SPLIT").is_ok() {
@@ -6712,8 +6909,8 @@ impl<'a> PaveFiller<'a> {
                 eprintln!("[SPLIT]   face[{}] curves_sc={} vertices_in={}", fi, face.face_info.curves_sc.len(), face.face_info.vertices_in.len());
             }
         }
-        // �?OCCT-aligned: InitPaveBlock1 for all curves (PaveFiller_6.cxx L800).
-        //   Curves created by splitting also need initial PaveBlocks.
+
+        // OCCT-aligned: InitPaveBlock1 for all curves
         for ci in 0..self.ds.intersection_curves.len() {
             self.ds.intersection_curves[ci].init_pave_block1();
         }
