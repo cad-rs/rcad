@@ -25,6 +25,9 @@ pub(crate) struct ResultBuilder {
     pub(crate) tmp_solids: Vec<Vec<usize>>,
     pub(crate) custom_edge_curves: Vec<Option<Curve3>>,
     pub(crate) custom_edge_ranges: Vec<Option<[f64; 2]>>,
+    /// Reference to DS edge array for looking up curve data of section edges
+    /// (architecture diff A6).  Set by split_face_and_emit_topo_ds before use.
+    pub(crate) ds_edges: Option<std::sync::Arc<Vec<crate::bopds::ds::DSEdge>>>,
     pub(crate) face_internal_vtx: Vec<Vec<usize>>,
     pub(crate) deg_edge_indices: HashSet<usize>,
     pub(crate) ic_edge_map: HashMap<usize, usize>,
@@ -406,6 +409,18 @@ impl ResultBuilder {
                             .cloned().unwrap_or(Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X }));
                         self.add_ic_edge(ci.index, v1, v2, crv, Some(seg.t_range))
                     }
+                    super::types::WireEdgeSourceTopoDS::DsEdge(sr) => {
+                        // Architecture diff A6: section edges created by MakeBlocks
+                        // have their curve stored in the DS edge.  Use it so that
+                        // build_topods_faces creates edges with the correct parametric
+                        // range (not hardcoded [0,1]).
+                        if let Some(ds_edge) = self.ds_edges.as_ref().and_then(|e| e.get(sr.index)) {
+                            let crv = ds_edge.curve.clone();
+                            self.add_edge_with_curve(v1, v2, crv, seg.t_range)
+                        } else {
+                            self.add_edge(v1, v2)
+                        }
+                    }
                     _ => self.add_edge(v1, v2),
                 };
                 let forward = self.edges[ei].0 == v1;
@@ -661,6 +676,7 @@ impl ResultBuilder {
             co_face_origins: Vec::new(),
             custom_edge_curves: Vec::new(),
             custom_edge_ranges: Vec::new(),
+            ds_edges: None,
             face_internal_vtx: Vec::new(),
             deg_edge_indices: std::collections::HashSet::new(),
             ic_edge_map: HashMap::new(),
@@ -914,6 +930,32 @@ impl ResultBuilder {
         }
         let idx = self.edges.len();
         self.edges.push((v1, v2));
+        idx
+    }
+
+    /// Add edge with known curve and parametric range (OCCT BRep_Builder::Add).
+    /// Like add_edge but also stores the 3D curve geometry and its parameter
+    /// range so that downstream consumers (area computation, STEP export) can
+    /// evaluate the curve correctly without relying on hardcoded [0,1].
+    pub(crate) fn add_edge_with_curve(&mut self, v1: usize, v2: usize, curve: Curve3, range: [f64; 2]) -> usize {
+        let key = (v1.min(v2), v1.max(v2));
+        // Dedup by (v1,v2) pair even with curves (unlike add_ic_edge which
+        // dedups by IC index — same geometric edge on different faces).
+        for (i, e) in self.edges.iter().enumerate() {
+            if (e.0.min(e.1), e.0.max(e.1)) == key {
+                return i;
+            }
+        }
+        let idx = self.edges.len();
+        self.edges.push((v1, v2));
+        while self.custom_edge_curves.len() <= idx {
+            self.custom_edge_curves.push(None);
+        }
+        self.custom_edge_curves[idx] = Some(curve);
+        while self.custom_edge_ranges.len() <= idx {
+            self.custom_edge_ranges.push(None);
+        }
+        self.custom_edge_ranges[idx] = Some(range);
         idx
     }
 

@@ -346,6 +346,8 @@ impl<'a> BooleanBuilder<'a> {
         };
         let ic_curves: HashMap<usize, Curve3> = ds.intersection_curves.iter()
             .enumerate().map(|(ci, ic)| (ci, ic.curve.clone())).collect();
+        // Architecture diff A6: provide DS edge array for curve lookup.
+        result.ds_edges = Some(std::sync::Arc::new(self.ds.edges.clone()));
         for wf in &wfs {
             result.emit_wire_face_topods(face_idx, wf, &segments_topo, tool, &ic_curves, false, origin,
                 &HashMap::new(), face_refs[face_idx], self.ds.faces[face_idx].natural_restriction);
