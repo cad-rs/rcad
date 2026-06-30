@@ -3332,6 +3332,7 @@ impl<'a> BooleanBuilder<'a> {
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result_occt(topods::ShapeType::Solid, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
+        _dump.snapshot("after_BuildResultSolid", self.ds, Some(&t_brep));
         // OCCT L487-490: FillImagesContainers(COMPSOLID) → BuildResult(COMPSOLID)
         self.fill_images_containers(ShapeType::CompSolid, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
@@ -3345,6 +3346,7 @@ impl<'a> BooleanBuilder<'a> {
         // OCCT L498-500: BuildShape → BuildRC + BuildSolid
         self.build_shape(&mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
+        _dump.snapshot("after_BuildShape", self.ds, Some(&t_brep));
         // OCCT L502-504: PIOperation_FillHistory → PrepareHistory
         //   OCCT: myDS->NbSourceShapes() → LocModified/Generated → AddModified/Remove.
         //   rcad: fill_history populates source_history from my_images + result map.
