@@ -1085,11 +1085,13 @@ impl ResultBuilder {
         }
     }
 
-    /// ✅ OCCT-aligned: Final assembly — return history.
+    /// ✅ OCCT-aligned: Final assembly — return history (PIOperation_FillHistory).
     ///   Per-dimension BuildResult calls (Face/Shell/Solid/CompSolid) have already
     ///   created the corresponding topods TShapes in t_brep. This method returns
     ///   the BooleanHistory from the accumulated result data.
-    pub(crate) fn build_topods(&mut self, t: &mut topods::BRep) -> BooleanHistory {
+    ///   When `fill_history` is false (OCCT: !HasHistory → !myFillHistory),
+    ///   returns an empty history with no origins tracking.
+    pub(crate) fn build_topods(&mut self, t: &mut topods::BRep, fill_history: bool) -> BooleanHistory {
         // Fallback: if no solids were created by BuildResult but faces exist,
         // create a default shell + solid (OCCT: defaults to single shell/solid).
         if self.shells.is_empty() && !self.face_refs.is_empty() {
@@ -1098,8 +1100,8 @@ impl ResultBuilder {
         }
 
         BooleanHistory {
-            face_origins: std::mem::take(&mut self.face_origins),
-            co_face_origins: std::mem::take(&mut self.co_face_origins),
+            face_origins: if fill_history { std::mem::take(&mut self.face_origins) } else { vec![] },
+            co_face_origins: if fill_history { std::mem::take(&mut self.co_face_origins) } else { vec![] },
             edge_origins: Vec::new(),
             vertex_origins: Vec::new(),
             shell_origins: Vec::new(),
@@ -1276,7 +1278,7 @@ mod tests {
         let mut rb = make_test_builder(false, false);
         let mut t = topods::BRep::new();
         rb.build_topods_faces(&mut t);
-        let _history = rb.build_topods(&mut t);
+        let _history = rb.build_topods(&mut t, true);
 
         // tshapes: 4 vertices + 4 edges + 2 wires + 1 face + 1 shell + 1 solid
         assert!(t.tshapes.len() >= 12, "expected >= 12 tshapes, got {}", t.tshapes.len());
@@ -1302,7 +1304,7 @@ mod tests {
         let (mut rb, _) = builder_from_topods(&t_in);
         let mut t = topods::BRep::new();
         rb.build_topods_faces(&mut t);
-        let _history = rb.build_topods(&mut t);
+        let _history = rb.build_topods(&mut t, true);
         let rebuilt = rcad_kernel::BRep::from_topods(&t);
 
         assert_eq!(rebuilt.solids.len(), orig.solids.len(),
@@ -1354,7 +1356,7 @@ mod tests {
 
         let mut t = topods::BRep::new();
         rb.build_topods_faces(&mut t);
-        let _history = rb.build_topods(&mut t);
+        let _history = rb.build_topods(&mut t, true);
         let rebuilt = rcad_kernel::BRep::from_topods(&t);
 
         assert_eq!(rebuilt.solids.len(), 1);
@@ -1381,7 +1383,7 @@ mod tests {
 
         let mut t1 = topods::BRep::new();
         rb.build_topods_faces(&mut t1);
-        let _history = rb.build_topods(&mut t1);
+        let _history = rb.build_topods(&mut t1, true);
 
         // Same number of Vertex/Edge/Face/Shell/Solid TShapes
         let count_by_type = |t: &topods::BRep| -> (usize, usize, usize, usize, usize) {
@@ -1433,7 +1435,7 @@ mod tests {
 
         let mut t = topods::BRep::new();
         rb.build_topods_faces(&mut t);
-        let _history = rb.build_topods(&mut t);
+        let _history = rb.build_topods(&mut t, true);
         let rebuilt = rcad_kernel::BRep::from_topods(&t);
 
         assert_eq!(rebuilt.solids.len(), 1);
