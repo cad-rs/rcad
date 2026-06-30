@@ -133,6 +133,29 @@ pub struct TVertexData {
     pub moved: bool,
 }
 
+/// OCCT BRep_CurveRepresentation — how an edge lies on a face or in 3D.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CurveRepresentation {
+    /// BRep_GCurve — 3D curve.
+    Curve3D {
+        curve: usize,
+        location: u32,
+    },
+    /// BRep_CurveOnSurface — pcurve on a face.
+    CurveOnSurface {
+        face: usize,
+        pcurve: Curve2d,
+        range: [f64; 2],
+    },
+    /// BRep_CurveOnClosedSurface — two pcurves for periodic surfaces.
+    CurveOnClosedSurface {
+        face: usize,
+        pcurve1: Curve2d,
+        pcurve2: Curve2d,
+        range: [f64; 2],
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TEdgeData {
     pub curve: Option<usize>,
@@ -146,6 +169,10 @@ pub struct TEdgeData {
     /// OCCT: BRep_Tool::CurveOnSurface(aE, aF) → Handle(Geom2d_Curve).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub pcurves: HashMap<usize, (Curve2d, f64, f64)>,
+    /// BRep_CurveRepresentation list — OCCT BRep_TEdge::Curves().
+    /// Mirrors the linked list of curve representations (3D curve + face pcurves).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub representations: Vec<CurveRepresentation>,
     /// Per-vertex parameter on this edge: vertex ShapeRef index → param.
     /// OCCT: BRep_Tool::Parameter(aV, aE, aF).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
@@ -282,7 +309,7 @@ impl BRep {
 
     pub fn add_tedge(&mut self, curve: Option<usize>, first: ShapeRef, last: ShapeRef, range: [f64; 2]) -> ShapeRef {
         let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Edge(TEdgeData { curve, first, last, range, degenerated: false, pcurves: HashMap::new(), vertex_params: HashMap::new(), tolerance: 0.0, same_parameter: true, same_range: true, moved: false })));
+        self.tshapes.push(Arc::new(TShape::Edge(TEdgeData { curve, first, last, range, degenerated: false, pcurves: HashMap::new(), representations: Vec::new(), vertex_params: HashMap::new(), tolerance: 0.0, same_parameter: true, same_range: true, moved: false })));
         ShapeRef::new(index)
     }
 
