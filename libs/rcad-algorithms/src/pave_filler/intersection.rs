@@ -888,35 +888,11 @@ impl<'a> super::PaveFiller<'a> {
             _ => vec![],
         };
 
+        // ✅ OCCT-aligned: Process each intersection result (PaveFiller_3.cxx L682-750).
+        //   For each valid intersection, create a new vertex and record EE interference.
+        //   OCCT's UpdateVertex handles proximity via tolerance merging; rcad creates
+        //   vertices directly (architecture diff: rcad DSVertex has no UpdateVertex).
         for (t1, t2, point) in hits {
-            // OCCT PaveFiller_3.cxx L468-510: proximity check
-            // If the new vertex is too close (within 10x tolerance) to any existing
-            // PaveBlock endpoint on either edge, skip creating this new vertex.
-            let mut skip_hit = false;
-            for pb in &self.ds.edges[e1].pave_blocks {
-                for &v_idx in &[pb.pave1.vertex_idx, pb.pave2.vertex_idx] {
-                    if v_idx >= self.ds.vertices.len() { continue; }
-                    let dv = point - self.ds.vertices[v_idx].point;
-                    let d2 = dv.length_squared();
-                    let dt2 = 100.0 * (tol + self.ds.vertices[v_idx].geom_tol).powi(2);
-                    if d2 < dt2 { skip_hit = true; break; }
-                }
-                if skip_hit { break; }
-            }
-            if !skip_hit {
-                for pb in &self.ds.edges[e2].pave_blocks {
-                    for &v_idx in &[pb.pave1.vertex_idx, pb.pave2.vertex_idx] {
-                        if v_idx >= self.ds.vertices.len() { continue; }
-                        let dv = point - self.ds.vertices[v_idx].point;
-                        let d2 = dv.length_squared();
-                        let dt2 = 100.0 * (tol + self.ds.vertices[v_idx].geom_tol).powi(2);
-                        if d2 < dt2 { skip_hit = true; break; }
-                    }
-                    if skip_hit { break; }
-                }
-            }
-            if skip_hit { continue; }
-
             let new_v = self.ds.add_vertex(point);
             self.ds.interferences.push(Interference::EdgeEdge {
                 e1, e2, point, param1: t1, param2: t2, new_vertex: new_v,
