@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 impl<'a> super::PaveFiller<'a> {
     pub(crate) fn perform_ff(&mut self) {
@@ -647,10 +647,6 @@ impl<'a> super::PaveFiller<'a> {
     }
 
     pub(crate) fn make_split_edges(&mut self) {
-        self.build_split_edges();
-    }
-
-    pub(crate) fn build_split_edges(&mut self) {
         // OCCT L392: UpdateCommonBlocksWithSDVertices �?before creating split edges,
         //   ensure CommonBlocks reference correct (SD-deduplicated) vertex indices.
         self.ds.update_common_blocks_with_sd_vertices();

@@ -1121,7 +1121,7 @@ pub(crate) fn build_pid_maps_topo_ds(
 ///   Builds vertex鈫扨id adjacency map from segments (OCCT: TopExp::MapShapesAndAncestors),
 ///   then removes dangling edges (valence 1) and self-coincident edges in a fixed-point loop.
 ///   Returns avoided PIDs and pid鈫抯egment map.
-pub(crate) fn perform_shapes_to_avoid_topo_ds(
+pub(crate) fn perform_shapes_to_avoid_topo(
     segments: &[super::types::WireSegmentTopoDS],
     tool: &dyn rcad_kernel::topods::BRepTool,
 ) -> (std::collections::HashSet<Pid>, std::collections::HashMap<Pid, Vec<usize>>) {

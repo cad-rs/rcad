@@ -240,7 +240,7 @@ fn find_interior_3d(
 impl<'a> BooleanBuilder<'a> {
     /// ✅ OCCT-aligned: TopoDS-based BuildFace pipeline with emit.
     ///   Runs the full pipeline then emits result faces directly into ResultBuilder.
-    pub(crate) fn split_face_and_emit_topo_ds(
+    pub(crate) fn builder_face_perform(
         &self,
         face_idx: usize,
         is_a: bool,
@@ -273,7 +273,7 @@ impl<'a> BooleanBuilder<'a> {
 
         let tool: &dyn rcad_kernel::topods::BRepTool = br;
 
-        let (avoided_pids, pid_segs) = crate::builder::wire_splitter::perform_shapes_to_avoid_topo_ds(
+        let (avoided_pids, pid_segs) = crate::builder::wire_splitter::perform_shapes_to_avoid_topo(
             &segments_topo, tool);
         let mut avoided = crate::builder::wire_splitter::expand_avoided_pids(&avoided_pids, &pid_segs);
         let wires = crate::builder::wire_path_topo_ds::build_closed_wires(
@@ -861,7 +861,7 @@ impl<'a> BooleanBuilder<'a> {
     /// ✅ OCCT-aligned: FillImagesFaces (BOPAlgo_Builder_1.cxx L376-386).
     ///   Phase 3: splits each face via WireSplitter → classifies → emits
     ///   via emit_wire_face.  rcad equivalent: for each face with IC data,
-    ///   call split_face_and_emit_topo_ds (TopoDS-based BuilderFace::Perform), then
+    ///   call builder_face_perform (TopoDS-based BuilderFace::Perform), then
     ///   classify_against_solid_for_boolean + classification_keep_policy.
     /// ✅ OCCT-aligned: FillImagesFaces (BOPAlgo_Builder_2.cxx L215-229).
     ///   Equivalent to BuildSplitFaces + FillSameDomainFaces + FillInternalVertices.
@@ -895,7 +895,7 @@ impl<'a> BooleanBuilder<'a> {
 
     /// ✅ OCCT-aligned: BuildSplitFaces (Builder_2.cxx L233-374).
     ///   Iterates source faces → splits each along intersection curves.
-    ///   For faces with IN/SC PBs: full BuilderFace::Perform (split_face_and_emit_topo_ds).
+    ///   For faces with IN/SC PBs: full BuilderFace::Perform (builder_face_perform).
     ///   For ON-only faces: BuildDraftFace.
     ///   Faces with no interferences → skipped (no images).
     fn build_split_faces(
@@ -961,7 +961,7 @@ impl<'a> BooleanBuilder<'a> {
             // OCCT-aligned: record source face as split (myImages equivalent for faces).
             self.split_source_faces.borrow_mut().insert(self.ds.faces[fi].source_face_idx);
             // Architecture A1: pass t so split faces create TShapes incrementally.
-            self.split_face_and_emit_topo_ds(fi, is_a, result, t);
+            self.builder_face_perform(fi, is_a, result, t);
         }
     }
 

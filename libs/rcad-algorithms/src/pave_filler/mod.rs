@@ -334,7 +334,7 @@ impl<'a> PaveFiller<'a> {
         }
 
         // 鉁?OCCT L322: MakeSplitEdges
-        self.build_split_edges();
+        self.make_split_edges();
 
         // 鉁?OCCT L328: UpdatePaveBlocksWithSDVertices
         self.ds.update_pave_blocks_with_sd_vertices();
