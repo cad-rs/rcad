@@ -52,11 +52,17 @@ pub(crate) fn param_on_circle3(pt: DVec3, circle: &Circle3, tol: f64) -> Option<
     if (dist_to_center - r).abs() > tol {
         return None;
     }
-    let ref_dir = any_perpendicular(normal);
-    let u = ref_dir.normalize();
-    let v = normal.cross(u);
-    let x = local.dot(u);
-    let y = local.dot(v);
+    // Use Circle3's own basis (same as point_at), NOT any_perpendicular.
+    // OCCT-aligned: deterministic reference direction from normal x DVec3::X.
+    let nm = normal.normalize();
+    let x_ax = if nm.x.abs() < 0.9 {
+        nm.cross(DVec3::X).normalize()
+    } else {
+        nm.cross(DVec3::Y).normalize()
+    };
+    let y_ax = nm.cross(x_ax);
+    let x = local.dot(x_ax);
+    let y = local.dot(y_ax);
     Some(y.atan2(x))
 }
 
@@ -756,11 +762,17 @@ pub(crate) fn sample_circle_arc(circle: &Circle3, t_start: f64, t_end: f64, n: u
 }
 
 /// Compute the angular parameter of `point` on `circle` in [0, 2*pi).
+/// OCCT-aligned: uses deterministic reference direction (normal x DVec3::X).
 pub(crate) fn circle_param(point: DVec3, circle: &Circle3) -> f64 {
-    let u = rcad_kernel::any_perpendicular(circle.normal);
-    let v = circle.normal.cross(u);
+    let nm = circle.normal.normalize();
+    let x_ax = if nm.x.abs() < 0.9 {
+        nm.cross(DVec3::X).normalize()
+    } else {
+        nm.cross(DVec3::Y).normalize()
+    };
+    let y_ax = nm.cross(x_ax);
     let d = point - circle.center;
-    let mut theta = d.dot(v).atan2(d.dot(u));
+    let mut theta = d.dot(y_ax).atan2(d.dot(x_ax));
     if theta < 0.0 {
         theta += std::f64::consts::TAU;
     }
