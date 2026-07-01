@@ -1,4 +1,4 @@
-//! Defeaturing pass: suppress small cylindrical holes, bosses, and very small faces.
+﻿//! Defeaturing pass: suppress small cylindrical holes, bosses, and very small faces.
 //!
 //! Analogous to `BRepAlgoAPI_Defeaturing` in OCCT 8.0.
 //!
@@ -1662,4 +1662,5 @@ fn analyze_pocket_group(
 }
 include!("e1.rs");
 include!("e2.rs");
-include!("tests_inc.rs");
+include!("tests_inc.rs");include!("test2_inc.rs");
+
