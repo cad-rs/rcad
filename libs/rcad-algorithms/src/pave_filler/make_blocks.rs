@@ -660,18 +660,6 @@ impl<'a> super::PaveFiller<'a> {
                         epb.new_edge = Some(new_ei);
                     }
                     self.ds.section_edge_refs[ci].push(new_ei);
-                    // Architecture diff A5: register section edge on both faces.
-                    // OCCT BRep_Builder::Add adds to the face wire directly; rcad
-                    // pushes to boundary_edges.  build_original_face (used when no
-                    // split occurs) reads boundary_edges — this is safe because
-                    // we now process pave_blocks_sc in collect_face_edge_segments,
-                    // and build_result only calls build_original_face for faces
-                    // that were NOT split (has_pb_in=false ∧ has_pb_sc=false).
-                    for &fi in &[n_f1, n_f2] {
-                        if fi != usize::MAX && !self.ds.faces[fi].boundary_edges.contains(&new_ei) {
-                            self.ds.faces[fi].boundary_edges.push(new_ei);
-                        }
-                    }
                     {
                         let (v1, v2) = if n_v1 < n_v2 { (n_v1, n_v2) } else { (n_v2, n_v1) };
                         let f1 = n_f1.min(n_f2);

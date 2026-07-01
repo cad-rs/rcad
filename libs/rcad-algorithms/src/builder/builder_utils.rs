@@ -1134,55 +1134,38 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
         });
     }
 
-    // Architecture diff A5: OCCT TopExp_Explorer iterates all wire edges including
-    // those added by MakeSectionEdges.  rcad's pave_blocks_sc stores section edge
-    // reference indices allocated during MakeBlocks.  Process them here so that
-    // face splitting can use section edges even when pave_blocks_in is empty.
+    // OCCT-aligned: Process PaveBlocksSc — each PB has a pre-built edge with
+    //   valid aPB->Edge().  This is the PRIMARY path for section edges.
     let mut sc_dedup: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for &pb_idx in &face.face_info.pave_blocks_sc {
         if pb_idx >= ds.pave_blocks.len() { continue; }
         let pb = &ds.pave_blocks[pb_idx];
         let ei = pb.new_edge.unwrap_or(pb.original_edge);
         if ei >= ds.edges.len() { continue; }
+        // Section edges in boundary_set are handled by the boundary_edges loop above.
         if boundary_set.contains(&ei) { continue; }
-        if !sc_dedup.insert(ei) { continue; }
         if ds.is_edge_degenerated(ei) { continue; }
+        // Dedup: each physical edge appears at most once (one FWD + one REV).
+        if !sc_dedup.insert(ei) { continue; }
         let edge = &ds.edges[ei];
+        // OCCT-aligned: section edges contribute FWD+REV pair to the wire,
+        // matching how OCCT adds a single TopoDS_Edge with bidirectional
+        // traversal in BOPAlgo_BuilderFace::PerformLoops → WireSplitter.
+        let sv = edge.start_vertex;
+        let ev = edge.end_vertex;
+        let is_deg = (ds.vertices[sv].point - ds.vertices[ev].point).length_squared() < TOLERANCE_ABS_SQ;
+        if is_deg { continue; }
+        // ✅ OCCT-aligned: propagate pcurve from DSEdge face_reps to WireSegment.
+        let sec_pcurve = edge.face_reps.iter().find(|r| r.face_idx == face_idx).map(|r| r.pcurve.clone());
         segments.push(WireSegment {
-            start_vertex: edge.start_vertex, end_vertex: edge.end_vertex,
+            start_vertex: sv, end_vertex: ev,
             source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Forward,
-            is_closed_on_face: false, second_pcurve: None, first_pcurve: None,
+            is_closed_on_face: false, second_pcurve: None, first_pcurve: sec_pcurve.clone(),
             t_range: edge.t_range,
         });
-    }
-
-    // Section edges = Intersection curves (OCCT BOPAlgo_Builder_2.cxx L285-296, L478-489).
-    // ================================================================
-    // OCCT-aligned: Process PaveBlocksSc 鈥?each PB has a pre-built edge with
-    //   valid aPB->Edge().  This is the PRIMARY path for section edges.
-    for &pb_idx in &face.face_info.pave_blocks_sc {
-        if pb_idx >= ds.pave_blocks.len() { continue; }
-        let pb = &ds.pave_blocks[pb_idx];
-        let Some(nei) = pb.new_edge else { continue; };
-        if nei >= ds.edges.len() { continue; }
-        let edge = &ds.edges[nei];
-        if edge.start_vertex == edge.end_vertex { continue; }
-        // OCCT L484-494: single segment per section edge PB. OCCT uses a single
-        // TopoDS_Edge with orientation; rcad stores direction in in_flag via
-        // build_smart_map. No REV segment needed 鈥?removes duplicate-PID issues
-        // in perform_shapes_to_avoid and simplifies the segment graph.
-        let sv_remap = edge.start_vertex;
-        let ev_remap = edge.end_vertex;
-        // 鉁?OCCT-aligned: propagate pcurve from DSEdge face_reps to WireSegment.
-        // OCCT BRep_Tool::CurveOnSurface(aE, myFace) returns the pcurve stored
-        // on the edge; rcad stores it in edge.face_reps (populated by
-        // make_section_edges_from_curve_pbs). Required by SmartMap has_pcurve check.
-        let sec_pcurve = edge.face_reps.iter().find(|r| r.face_idx == face_idx).map(|r| r.pcurve.clone());
-        let (t_fwd_s, t_fwd_e) = edge_uv_tangent(ds, sv_remap, ev_remap,
-            &face.surface, Some(&edge.curve), Some(edge.t_range));
         segments.push(WireSegment {
-            start_vertex: sv_remap, end_vertex: ev_remap,
-            source: WireEdgeSource::DsEdge(nei), orientation: WireOrientation::Forward,
+            start_vertex: ev, end_vertex: sv,
+            source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Reversed,
             is_closed_on_face: false, second_pcurve: None, first_pcurve: sec_pcurve,
             t_range: edge.t_range,
         });
