@@ -660,25 +660,22 @@ impl<'a> super::PaveFiller<'a> {
                         epb.new_edge = Some(new_ei);
                     }
                     self.ds.section_edge_refs[ci].push(new_ei);
-                    // OCCT L1037-1048: Keep info for post treatment — aMSCPB/CPB
-                    // OCCT L1044-1045: aMVI.Bind(aV1, nV1); aMVI.Bind(aV2, nV2);
-                    // OCCT L1047-1048: aMVTol.UnBind(nV1); aMVTol.UnBind(nV2);
-
-                    // OCCT L1051-1062: ProcessExistingPaveBlocks
-                    //   Check if existing PBs from ON/IN sets overlap this new edge
-                    //   and register them for post-treatment.
+                    // OCCT L1066-1067: aLPBC.Append(aPB) — append PB to curve.
+                    // OCCT L1069-1075: aMSCPB.Add(aES, aCPB) — register section edge.
+                    //   rcad: allocate a global PB and register on both faces' pave_blocks_sc.
+                    let g_pb_idx = self.ds.allocate_pave_block(sub_pb.clone());
+                    for &fi in &[n_f1, n_f2] {
+                        if fi != usize::MAX {
+                            self.ds.faces[fi].face_info.pave_blocks_sc.insert(g_pb_idx);
+                        }
+                    }
+                    // OCCT L1051-1062: ProcessExistingPaveBlocks — existing PBs from
+                    //   ON/IN sets may overlap this new edge; handled by aPBFacesMap.
                     {
+                        let (v1, v2) = if n_v1 < n_v2 { (n_v1, n_v2) } else { (n_v2, n_v1) };
                         let f1 = n_f1.min(n_f2);
                         let f2 = n_f1.max(n_f2);
-                        if existing_edge_map.contains_key(&(f1, f2, n_v1.min(n_v2), n_v1.max(n_v2))) {
-                            // Register section edge PB to face info
-                            let g_pb_idx = self.ds.allocate_pave_block(sub_pb.clone());
-                            for &fi in &[n_f1, n_f2] {
-                                if fi != usize::MAX {
-                                    self.ds.faces[fi].face_info.pave_blocks_sc.insert(g_pb_idx);
-                                }
-                            }
-                        }
+                        existing_edge_map.insert((f1, f2, v1, v2), new_ei);
                     }
                 } // OCCT L1063: end sub-PB loop
 
