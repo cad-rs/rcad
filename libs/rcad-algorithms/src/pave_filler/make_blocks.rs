@@ -660,13 +660,6 @@ impl<'a> super::PaveFiller<'a> {
                         epb.new_edge = Some(new_ei);
                     }
                     self.ds.section_edge_refs[ci].push(new_ei);
-                    {
-                        let (v1, v2) = if n_v1 < n_v2 { (n_v1, n_v2) } else { (n_v2, n_v1) };
-                        let f1 = n_f1.min(n_f2);
-                        let f2 = n_f1.max(n_f2);
-                        existing_edge_map.insert((f1, f2, v1, v2), new_ei);
-                    }
-
                     // OCCT L1037-1048: Keep info for post treatment — aMSCPB/CPB
                     // OCCT L1044-1045: aMVI.Bind(aV1, nV1); aMVI.Bind(aV2, nV2);
                     // OCCT L1047-1048: aMVTol.UnBind(nV1); aMVTol.UnBind(nV2);

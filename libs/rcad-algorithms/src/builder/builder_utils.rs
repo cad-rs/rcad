@@ -1134,28 +1134,24 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
         });
     }
 
-    // OCCT-aligned: Process PaveBlocksSc — each PB has a pre-built edge with
-    //   valid aPB->Edge().  This is the PRIMARY path for section edges.
+    // Section edges from pave_blocks_sc (OCCT: aMSCPB entries from MakeBlocks).
+    // These edges are NOT in boundary_edges — they're registered only in
+    // pave_blocks_sc.  Add FWD+REV pair so the WireSplitter can form closed
+    // wires connecting section edges to boundary sub-edges.
     let mut sc_dedup: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for &pb_idx in &face.face_info.pave_blocks_sc {
         if pb_idx >= ds.pave_blocks.len() { continue; }
         let pb = &ds.pave_blocks[pb_idx];
         let ei = pb.new_edge.unwrap_or(pb.original_edge);
         if ei >= ds.edges.len() { continue; }
-        // Section edges in boundary_set are handled by the boundary_edges loop above.
         if boundary_set.contains(&ei) { continue; }
-        if ds.is_edge_degenerated(ei) { continue; }
-        // Dedup: each physical edge appears at most once (one FWD + one REV).
         if !sc_dedup.insert(ei) { continue; }
+        if ds.is_edge_degenerated(ei) { continue; }
         let edge = &ds.edges[ei];
-        // OCCT-aligned: section edges contribute FWD+REV pair to the wire,
-        // matching how OCCT adds a single TopoDS_Edge with bidirectional
-        // traversal in BOPAlgo_BuilderFace::PerformLoops → WireSplitter.
         let sv = edge.start_vertex;
         let ev = edge.end_vertex;
-        let is_deg = (ds.vertices[sv].point - ds.vertices[ev].point).length_squared() < TOLERANCE_ABS_SQ;
+        let is_deg = sv == ev || (ds.vertices[sv].point - ds.vertices[ev].point).length_squared() < TOLERANCE_ABS_SQ;
         if is_deg { continue; }
-        // ✅ OCCT-aligned: propagate pcurve from DSEdge face_reps to WireSegment.
         let sec_pcurve = edge.face_reps.iter().find(|r| r.face_idx == face_idx).map(|r| r.pcurve.clone());
         segments.push(WireSegment {
             start_vertex: sv, end_vertex: ev,
