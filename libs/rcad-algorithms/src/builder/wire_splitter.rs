@@ -1,4 +1,4 @@
-﻿use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use indexmap::IndexMap;
 use glam::DVec2; use glam::DVec3;
 use rcad_kernel::geom::*;
@@ -1163,13 +1163,23 @@ pub(crate) fn perform_shapes_to_avoid_topo_ds(
     loop {
         let mut b_found = false;
         for (&v, pids) in &a_mve {
-            if pids.len() != 1 { continue; }
-            // OCCT L198-210: dangling edge 鈫?avoid (skip degenerate / INTERNAL vertex)
-            let pid = pids[0];
-            if is_degenerate(&pid) { continue; }
-            // OCCT L204-207: INTERNAL vertex 鈫?keep the edge
-            if is_internal_vertex(v) { continue; }
-            if avoided_pids.insert(pid) { b_found = true; }
+            match pids.len() {
+                1 => {
+                    // OCCT L198-210: dangling edge → avoid (skip degenerate / INTERNAL vertex)
+                    let pid = pids[0];
+                    if is_degenerate(&pid) { continue; }
+                    if is_internal_vertex(v) { continue; }
+                    if avoided_pids.insert(pid) { b_found = true; }
+                }
+                2 if pids[0] == pids[1] => {
+                    // OCCT L211-227: self-coincident edge (same physical edge wraps back).
+                    //   Skip if degenerate (lo == hi → start == end vertex).
+                    let pid = pids[0];
+                    if pid.2 == pid.3 { continue; }
+                    if avoided_pids.insert(pid) { b_found = true; }
+                }
+                _ => {}
+            }
         }
         if !b_found { break; }
         // OCCT L230: rebuild aMVE without avoided edges
