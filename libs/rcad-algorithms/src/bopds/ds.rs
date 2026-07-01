@@ -382,21 +382,11 @@ impl Default for CurveExtra {
 
 impl IntersectionCurve {
     /// ✅ OCCT-aligned: BOPDS_Curve::InitPaveBlock1 (lxx:85-92).
-    /// OCCT's BOPDS_PaveBlock default constructor sets empty pave1/pave2, and they
-    /// are populated from Curve's StartVertex/EndVertex when MakeSectionEdges runs.
+    /// OCCT only pushes an empty PB to the list. PB vertices are set by
+    /// PutPavesOnCurve (ext_paves) -> Update(false) (sub-PBs from ext_paves).
     pub fn init_pave_block1(&mut self) {
         if self.pave_blocks.is_empty() {
             self.pave_blocks.push(PaveBlock::new_curve_block());
-        }
-        // populate the blank PB with the IC's actual endpoints so Update() produces
-        // sub-PBs with valid ranges and vertices (OCCT form alignment).
-        if let Some(pb) = self.pave_blocks.first_mut() {
-            if pb.pave1.vertex_idx == NO_EDGE {
-                pb.pave1.vertex_idx = self.start_vertex;
-                pb.pave1.param = self.t_range[0];
-                pb.pave2.vertex_idx = self.end_vertex;
-                pb.pave2.param = self.t_range[1];
-            }
         }
     }
 
