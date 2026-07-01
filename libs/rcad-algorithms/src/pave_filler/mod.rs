@@ -257,11 +257,31 @@ impl<'a> PaveFiller<'a> {
         self.ds.update_pave_blocks_with_sd_vertices();
 
         let ee_survivors: Vec<usize> = if !skip_ee {
-            self.perform_ee_bvh(&bvh_all_edges, &bvh_all_edges);
-            // 锟?OCCT-aligned: TreatNewVertices 锟?merge new vertices created by EE intersection.
-            //    OCCT PaveFiller_5.cxx L570: PerformNewVertices(aMVCPB, ..., false)
+            // OCCT L145-267: PerformEE — build intersections
+            let ee_modified = self.perform_ee_bvh(&bvh_all_edges, &bvh_all_edges);
+            // OCCT L558-565: PerformCommonBlocks + PerformNewVertices
             let survivors = self.treat_new_vertices();
-            // 锟?OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L273)
+            // OCCT L571-585: SplitPaveBlocks for remaining modified edges
+            //   (edges with new vertices already handled by treat_new_vertices)
+            if !ee_modified.is_empty() {
+                let sd_vertices: std::collections::HashSet<usize> =
+                    self.ds.shape_sd.sd_vertices_iter()
+                        .map(|&(a, _)| a)
+                        .collect();
+                // Edges to split = modified - edges whose new vertex is in SD
+                let remaining: std::collections::HashSet<usize> = ee_modified.iter()
+                    .filter(|&&ei| {
+                        let e = &self.ds.edges[ei];
+                        !sd_vertices.contains(&e.start_vertex) &&
+                        !sd_vertices.contains(&e.end_vertex)
+                    })
+                    .copied()
+                    .collect();
+                if !remaining.is_empty() {
+                    self.split_pave_blocks(&remaining, false);
+                }
+            }
+            // OCCT L273: UpdatePaveBlocksWithSDVertices
             self.ds.update_pave_blocks_with_sd_vertices();
             survivors
         } else { vec![] };

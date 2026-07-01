@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 impl<'a> super::PaveFiller<'a> {
     pub(crate) fn process_de(&mut self) {
@@ -106,6 +106,80 @@ impl<'a> super::PaveFiller<'a> {
             if pb.pave1.vertex_idx == vi || pb.pave2.vertex_idx == vi { return true; }
         }
         false
+    }
+
+    /// OCCT-aligned: SplitPaveBlocks (PaveFiller_2.cxx L419-626).
+    ///   Splits PaveBlocks of the given edges using extra paves.
+    ///   For each edge, reconstructs pave_blocks from the full pave set,
+    ///   computes shrunk data, and unifies vertices when no valid range.
+    pub(crate) fn split_pave_blocks(&mut self, edges: &std::collections::HashSet<usize>,
+                                    add_interfs: bool) {
+        let mut verts_to_merge: Vec<Vec<usize>> = Vec::new();
+        for &ei in edges {
+            if ei >= self.ds.edges.len() { continue; }
+            let edge = &self.ds.edges[ei];
+            if edge.paves.len() < 2 { continue; }
+
+            // OCCT L447-453: aPB->Update(aLPBN) — rebuild PBs from all paves
+            let mut params: Vec<(usize, f64)> = edge.paves.iter()
+                .map(|p| (p.vertex_idx, p.param)).collect();
+            params.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+            params.dedup_by(|a, b| (a.1 - b.1).abs() < TOLERANCE_ABS);
+
+            // Build new PBs from consecutive pave pairs
+            let mut new_pbs: Vec<PaveBlock> = Vec::new();
+            for w in params.windows(2) {
+                // OCCT L460-461: UpdatePaveBlockWithSDVertices
+                let pb = PaveBlock::new(
+                    ei,
+                    Pave { vertex_idx: w[0].0, param: w[0].1 },
+                    Pave { vertex_idx: w[1].0, param: w[1].1 },
+                );
+
+                // OCCT L462: FillShrunkData
+                let v1_tol = if w[0].0 < self.ds.vertices.len() { self.ds.vertices[w[0].0].geom_tol } else { TOLERANCE_ABS };
+                let v2_tol = if w[1].0 < self.ds.vertices.len() { self.ds.vertices[w[1].0].geom_tol } else { TOLERANCE_ABS };
+                let mut sr = crate::inttools::shrunk_range::ShrunkRange::new();
+                sr.set_data(ei, [w[0].1, w[1].1], v1_tol, v2_tol, edge.geom_tol);
+                sr.perform(&edge.curve);
+
+                // OCCT L468-507: Check valid range + unify if needed
+                if sr.shrunk_range().is_none() || (!sr.is_splittable() && sr.shrunk_range().is_some()) {
+                    let nv1 = w[0].0;
+                    let nv2 = w[1].0;
+                    if nv1 != nv2 {
+                        // OCCT L493-506: MakeSDVertices for the pair
+                        verts_to_merge.push(vec![nv1, nv2]);
+                    }
+                    continue;
+                }
+
+                new_pbs.push(pb);
+            }
+
+            // OCCT L526: Replace old PBs with new ones
+            self.ds.edges[ei].pave_blocks = new_pbs;
+        }
+
+        // OCCT L493-506: Merge vertex pairs that have no valid range
+        for pair in &verts_to_merge {
+            if pair.len() >= 2 {
+                let nv1 = pair[0];
+                let nv2 = pair[1];
+                // Use min index as merge target (convention)
+                let n_v = nv1.min(nv2);
+                self.ds.add_shape_sd(nv1, n_v);
+                self.ds.add_shape_sd(nv2, n_v);
+                if add_interfs {
+                    self.ds.interferences.push(Interference::VertexVertex {
+                        v1: nv1, v2: nv2, merged_vertex: n_v,
+                    });
+                }
+            }
+        }
+
+        // OCCT L529-617: CommonBlock handling — skipped (Architecture diff A2:
+        //   rcad uses inline PaveBlock on DSEdge, not pool-based with CommonBlocks)
     }
 
     pub(crate) fn split_ics_at_periodic_boundary(&mut self) {

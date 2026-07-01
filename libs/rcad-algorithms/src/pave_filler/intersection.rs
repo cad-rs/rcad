@@ -1,10 +1,11 @@
-use std::collections::HashSet;
+use std::collections::{HashSet, BTreeMap};
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, Surface3};
 use rcad_kernel::CurveEval;
 
-use crate::bopds::ds::{DS, Interference, ShapeOrigin};
+use crate::bopalgo::{fill_map, make_blocks};
+use crate::bopds::ds::{DS, Interference, ShapeOrigin, PairIterator};
 use crate::bopds::pave::Pave;
 use crate::inttools;
 use crate::inttools::fclass2d::{FClass2d, State};
@@ -83,39 +84,131 @@ impl<'a> super::PaveFiller<'a> {
     ///   Cross-operand filtering: skip same-side pairs.
     pub(crate) fn perform_ve_bvh(&mut self, bvh_verts: &crate::bvh::DsBvh, bvh_edges: &crate::bvh::DsBvh) {
         use rayon::prelude::*;
+        // OCCT L143: FillShrunkData(TopAbs_VERTEX, TopAbs_EDGE)
         self.fill_shrunk_data();
+
+        // OCCT L145: myIterator->Initialize(VERTEX, EDGE)
         let pairs = crate::bvh::DsBvh::candidate_pairs(bvh_verts, bvh_edges);
         let ds = &self.ds;
         let a_vc = ds.a_vertex_count;
         let a_ec = ds.a_edge_count;
+
+        // OCCT L148-152: aSize = ExpectedLength; early return if none
+        if pairs.is_empty() { return; }
+
+        // OCCT L154-205: Prepare pairs for intersection (filter + build aMVEPairs)
         let filtered: Vec<(usize, usize)> = pairs.par_iter()
             .filter(|&(vi, ei)| {
                 if (*vi < a_vc) == (*ei < a_ec) { return false; }
+                // OCCT L165-168: aSIE.HasSubShape(nV) — skip if vertex is sub-shape of edge
+                // OCCT L171-173: aSIE.HasFlag() — skip flagged edges
+                // OCCT L176-178: myDS->HasInterf(nV, nE) — skip if already interfered
+                // OCCT L181-183: myDS->HasInterfShapeSubShapes(nV, nE)
+                // OCCT L186-197: PaveBlocks not empty + first PB splittable
                 !ds.edge_has_vertex(*vi, *ei) && !ds.edge_has_flag(*ei)
                     && !ds.has_interf_ve(*vi, *ei) && !ds.has_interf_ve_via_faces(*vi, *ei)
                     && !ds.is_edge_degenerated(*ei)
-                    // OCCT L186-197: PaveBlocks not empty + first PB is splittable
                     && !ds.edges[*ei].pave_blocks.is_empty()
                     && ds.edges[*ei].pave_blocks[0].is_splittable
             })
             .copied()
             .collect();
-        for &(vi, ei) in &filtered {
-            self.check_vertex_edge(vi, ei);
+
+        // OCCT L207: IntersectVE(aMVEPairs) — process filtered pairs in batch
+        self.intersect_ve(&filtered);
+    }
+
+    /// OCCT-aligned: IntersectVE (PaveFiller_2.cxx L212-394).
+    ///   Processes vertex-edge pair list: creates interferences, updates
+    ///   vertices, adds extra paves, and splits pave blocks.
+    fn intersect_ve(&mut self, pairs: &[(usize, usize)]) {
+        if pairs.is_empty() { return; }
+
+        // OCCT L223-228: InterfVE array + SetIncrement
+        //   rcad: interferences Vec (no pre-allocation needed)
+
+        // OCCT L311-312: Keep modified edges for further update
+        let mut a_m_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
+
+        // OCCT L235-291: Build aDMVSD fence map for dedup
+        //   rcad: simplified — no TopoDS handles; process each pair directly.
+        //   (Architecture diff A1: rcad uses DSEdge with inline Pave, not
+        //    BOPDS_PaveBlock handles)
+
+        // OCCT L314-388: Process each intersection result
+        for &(vi, ei) in pairs {
+            // OCCT L321-328: Skip if flag != 0 (no intersection found)
+            let point = self.ds.vertices[vi].point;
+            let edge = &self.ds.edges[ei];
+            let te = self.ve_tol(vi, ei);
+
+            // Project vertex onto edge curve (OCCT: IntTools_Context::ComputeVE)
+            let t_opt = crate::pave_filler::helpers::project_vertex_to_curve(point, &edge.curve, te);
+            let t = match t_opt {
+                Some(t) if t >= edge.t_range[0] && t <= edge.t_range[1] => t,
+                _ => continue,
+            };
+
+            // OCCT L337-338: UpdateVertex(nV, aTolVNew) — increase vertex tolerance
+            let dist_3d = edge.curve.point_at(t).distance(point);
+            if dist_3d > self.ds.vertices[vi].geom_tol {
+                self.ds.vertices[vi].geom_tol = dist_3d;
+                self.ds.increased_ss.insert(vi);
+            }
+
+            // OCCT L340-364: Create extra pave in the PaveBlock
+            //   rcad: push Pave directly to edge's pave list
+            let has_vertex_at_t = self.ds.edges[ei].paves.iter()
+                .any(|p| (p.param - t).abs() < TOLERANCE_ABS && p.vertex_idx == vi);
+            if !has_vertex_at_t {
+                self.ds.edges[ei].paves.push(Pave { vertex_idx: vi, param: t });
+                a_m_edges.insert(ei);
+            }
+
+            // OCCT L366-387: Add interferences (if addInterfs)
+            // OCCT L376-378: Create interference VE
+            let already_interfered = self.ds.interferences.iter().any(|inf| {
+                matches!(inf, Interference::VertexEdge { vertex, edge, .. }
+                    if *vertex == vi && *edge == ei)
+            });
+            if !already_interfered {
+                self.ds.interferences.push(Interference::VertexEdge {
+                    vertex: vi,
+                    edge: ei,
+                    param: t,
+                });
+            }
+        }
+
+        // OCCT L390-394: SplitPaveBlocks(aMEdges, theAddInterfs)
+        if !a_m_edges.is_empty() {
+            self.split_pave_blocks(&a_m_edges, true);
         }
     }
     /// OCCT PaveFiller_3.cxx L145-244: PerformEE
     /// ✅ OCCT-aligned: BOPDS_Iterator::Initialize(EDGE, EDGE) — single pass.
     ///   Cross-operand filtering via a_edge_count.
-    pub(crate) fn perform_ee_bvh(&mut self, bvh_edges_a: &crate::bvh::DsBvh, bvh_edges_b: &crate::bvh::DsBvh) {
+    /// OCCT-aligned: PerformEE (PaveFiller_3.cxx L145-590).
+    ///   Returns the set of edges that were modified (got new paves).
+    ///   The caller should call split_pave_blocks for remaining edges
+    ///   after treat_new_vertices has processed the new vertex edges.
+    pub(crate) fn perform_ee_bvh(&mut self, bvh_edges_a: &crate::bvh::DsBvh, bvh_edges_b: &crate::bvh::DsBvh)
+        -> std::collections::HashSet<usize>
+    {
         use rayon::prelude::*;
+        // OCCT L147: FillShrunkData(EDGE, EDGE)
         self.fill_shrunk_data();
+
+        // OCCT L149-155: Iterator(EDGE, EDGE), ExpectedLength, early return
         let pairs = crate::bvh::DsBvh::candidate_pairs(bvh_edges_a, bvh_edges_b);
         let ds = &self.ds;
         let a_ec = ds.a_edge_count;
+
+        // OCCT L181-267: Build parallel job list (aVEdgeEdge)
         let blocks: Vec<(usize, usize, [f64; 2], [f64; 2])> = pairs.par_iter()
             .filter(|&(ae, be)| {
                 if (*ae < a_ec) == (*be < a_ec) { return false; }
+                // OCCT L189-198: HasFlag checks
                 !ds.edge_has_flag(*ae) && !ds.edge_has_flag(*be)
                     && !ds.has_interf_ee(*ae, *be)
                     && !ds.is_edge_degenerated(*ae) && !ds.is_edge_degenerated(*be)
@@ -129,10 +222,18 @@ impl<'a> super::PaveFiller<'a> {
                 v
             })
             .collect();
-        // OCCT L244+: BOPTools_AlgoTools::IntersectCurves for each pair
+
+        // OCCT L244-556: For each pair, intersect curves & process results
+        let mut modified: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for &(ae, be, r1, r2) in &blocks {
-            self.intersect_ee(ae, be, r1, r2);
+            self.intersect_ee(ae, be, r1, r2, &mut modified);
         }
+
+        // OCCT L558-585: Post-treatment (PerformCommonBlocks + PerformNewVertices +
+        //   SplitPaveBlocks) is handled in the caller (perform() in mod.rs):
+        //   - treat_new_vertices() ≈ PerformNewVertices
+        //   - split_pave_blocks() for remaining modified edges
+        modified
     }
     /// OCCT: PaveBlock range extraction (GetPBBox equivalent)
     pub(crate) fn get_pb_boxes(ds: &DS, edge_idx: usize, edge_t_range: [f64; 2]) -> Vec<[f64; 2]> {
@@ -373,35 +474,121 @@ impl<'a> super::PaveFiller<'a> {
         let total_face_pairs = self.ds.a_face_count * (self.ds.faces.len() - self.ds.a_face_count);
         self.ds.shared_topology.fully_glued_faces.len() == total_face_pairs && total_face_pairs > 0
     }
-    /// OCCT PaveFiller_2.cxx L254: PerformVV (FillShrunkData + BVH pair iteration)
+    /// ✅ OCCT-aligned: PerformVV (PaveFiller_1.cxx L45-132).
+    ///   Builds vertex-vertex connection map (FillMap), groups connected
+    ///   vertices (MakeBlocks), then creates SD vertices for each group.
     pub(crate) fn perform_vv(&mut self) {
-        if self.use_glue && !self.ds.shared_topology.shared_vertices.is_empty() {
-            for &(vi_a, vi_b) in &self.ds.shared_topology.shared_vertices {
-                self.ds.interferences.push(Interference::VertexVertex {
-                    v1: vi_a,
-                    v2: vi_b,
-                    merged_vertex: vi_a,
-                });
-            }
-            return;
-        }
-        // OCCT L50: Iterator(Vertex, Vertex) �?pair enumeration with BVH.
+        // OCCT L47-56: n1, n2, iFlag, aSize; iterator init + early return
         let a_vc = self.ds.a_vertex_count;
-        let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_vc, self.ds.vertices.len());
+        let a_size = a_vc * (self.ds.vertices.len() - a_vc);
+        if a_size == 0 { return; }
+
+        // OCCT L62-64: aAllocator, aMILI (connection map), aMBlocks
+        //   rcad: BTreeMap + Vec<Vec<usize>> for equivalent grouping.
+        let mut a_mili: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+
+        // OCCT L68-98: 1. Map V/LV — build connection map of close vertex pairs.
+        let mut fit = PairIterator::prepare_ab(a_vc, self.ds.vertices.len());
         while fit.more() {
             let pk = fit.value();
-            let ai = pk.i1;
-            let bi = pk.i2;
-            let tol = self.vv_pair_tol(ai, bi);
-            let dist = (self.ds.vertices[ai].point - self.ds.vertices[bi].point).length();
-            if dist <= tol {
+            let n1 = pk.i1; let n2 = pk.i2;
+            fit.next();
+
+            // OCCT L77-81: if HasInterf → FillMap + continue
+            if self.ds.has_interf_vv(n1, n2) {
+                fill_map(&mut a_mili, n1, n2);
+                continue;
+            }
+
+            // OCCT L84-91: Resolve SD vertices (HasShapeSD) + ComputeVV
+            let n1sd = self.ds.has_shape_sd(n1).unwrap_or(n1);
+            let n2sd = self.ds.has_shape_sd(n2).unwrap_or(n2);
+
+            // OCCT L93: ComputeVV(aV1, aV2, myFuzzyValue) — tolerance-based distance check
+            let tol = self.vv_pair_tol(n1, n2);
+            let dist = (self.ds.vertices[n1sd].point - self.ds.vertices[n2sd].point).length();
+            let i_flag = if dist <= tol { 0 } else { 1 };
+
+            // OCCT L94-97: if !iFlag (vertices interfere) → FillMap
+            if i_flag == 0 {
+                fill_map(&mut a_mili, n1, n2);
+            }
+        }
+
+        // OCCT L100-101: 2. MakeBlocks from connection map
+        let a_m_blocks = make_blocks(&a_mili);
+
+        // OCCT L103-113: 3. Make SD vertices for each block
+        for block in &a_m_blocks {
+            if block.len() < 2 { continue; }
+            // OCCT L112: MakeSDVertices(aLI)
+            self.make_sd_vertices_vv(block);
+        }
+
+        // OCCT L115-127: InitPaveBlocksForVertex for each SD vertex
+        //   rcad: DS uses inline Pave on DSEdge, not pool-based PaveBlocks;
+        //   SD vertex registration (AddShapeSD) is sufficient for downstream
+        //   consumers (update_interfs_with_sd_vertices, etc.).
+        //   (Architecture diff A5)
+    }
+
+    /// ✅ OCCT-aligned: MakeSDVertices (PaveFiller_1.cxx L136-233).
+    ///   Merges a connected group of vertices into a single SD vertex.
+    ///   The first vertex in the block becomes the merge target; all other
+    ///   vertices in the block are remapped to it via AddShapeSD and
+    ///   Interference::VertexVertex entries.
+    fn make_sd_vertices_vv(&mut self, block: &[usize]) {
+        if block.len() < 2 { return; }
+
+        // OCCT L141-161: Find existing SD root among block members.
+        //   nSD tracks the existing SD vertex index; others go into aLV.
+        let mut n_sd: Option<usize> = None;
+        let mut a_lv: Vec<usize> = Vec::with_capacity(block.len());
+        for &n_x in block {
+            if let Some(n_sd1) = self.ds.has_shape_sd(n_x) {
+                if n_sd.is_none() {
+                    n_sd = Some(n_sd1);
+                }
+            }
+            a_lv.push(n_x);
+        }
+
+        // OCCT L162: MakeVertex(aLV, aVn) — merge point.
+        //   rcad: use the minimum-index vertex as the merged target.
+        let n_v = n_sd.unwrap_or_else(|| *a_lv.iter().min().unwrap());
+
+        // OCCT L181-184: Update bounding box (rcad: vertex point never changes).
+        //   rcad: geom_tol of the merged vertex is max of all members' tolerances.
+        if let Some(&target) = block.iter().max_by(|&&a, &&b| {
+            self.ds.vertices[a].geom_tol.partial_cmp(&self.ds.vertices[b].geom_tol).unwrap()
+        }) {
+            if n_v < self.ds.vertices.len() {
+                self.ds.vertices[n_v].geom_tol = self.ds.vertices[n_v].geom_tol
+                    .max(self.ds.vertices[target].geom_tol);
+            }
+        }
+
+        // OCCT L186-231: Fill ShapesSD + InterfVV for each pair in block.
+        for i in 0..block.len() {
+            let n1 = block[i];
+            // OCCT L197: AddShapeSD(n1, nV)
+            self.ds.add_shape_sd(n1, n_v);
+
+            // OCCT L199-219: Rank check — self-interference warning when same shape
+            //   rcad: ShapeOrigin check.
+            //   (OCCT L208-218: self-interfering shape warning — skipped for brevity)
+
+            // OCCT L221-229: Create VV interferences for each remaining pair
+            for j in (i + 1)..block.len() {
+                let n2 = block[j];
+                // OCCT L223-224: AddInterf(n1, n2)
+                // rcad: push VertexVertex interference
                 self.ds.interferences.push(Interference::VertexVertex {
-                    v1: ai,
-                    v2: bi,
-                    merged_vertex: ai,
+                    v1: n1,
+                    v2: n2,
+                    merged_vertex: n_v,
                 });
             }
-            fit.next();
         }
     }
     /// OCCT PaveFiller_2.cxx L141-206: PerformVE
@@ -604,9 +791,10 @@ impl<'a> super::PaveFiller<'a> {
                 }
             } else {
                 // OCCT L215-240: iterate PaveBlock pairs + GetPBBox + intersect
+                let mut _ee_modified: std::collections::HashSet<usize> = std::collections::HashSet::new();
                 for ra in &ranges_a {
                     for rb in &ranges_b {
-                        self.intersect_ee(ae, be, *ra, *rb);
+                        self.intersect_ee(ae, be, *ra, *rb, &mut _ee_modified);
                     }
                 }
             }
@@ -616,7 +804,8 @@ impl<'a> super::PaveFiller<'a> {
     // OCCT PaveFiller_3.cxx L215-296: GetPBBox + IntersectCurves + AddInterf
     /// OCCT PaveFiller_3.cxx L580-640: CheckEdgeEdge
     pub(crate) fn intersect_ee(&mut self, e1: usize, e2: usize,
-                              range1: [f64; 2], range2: [f64; 2]) {
+                              range1: [f64; 2], range2: [f64; 2],
+                              modified: &mut std::collections::HashSet<usize>) {
         let edge1 = &self.ds.edges[e1];
         let edge2 = &self.ds.edges[e2];
         let tol = self.ee_tol(e1, e2);
@@ -702,6 +891,8 @@ impl<'a> super::PaveFiller<'a> {
             });
             self.ds.edges[e1].paves.push(Pave { vertex_idx: new_v, param: t1 });
             self.ds.edges[e2].paves.push(Pave { vertex_idx: new_v, param: t2 });
+            modified.insert(e1);
+            modified.insert(e2);
         }
     }
     // OCCT PaveFiller_3.cxx L580-640: CheckEdgeEdge + common block creation
@@ -1015,51 +1206,67 @@ impl<'a> super::PaveFiller<'a> {
     }
 
     /// OCCT PaveFiller_4.cxx: CheckVertexFace
+    /// OCCT-aligned: Vertex/Face check (PaveFiller_4.cxx L249-298).
     pub(crate) fn check_vertex_face(&mut self, vi: usize, fi: usize) {
         let point = self.ds.vertices[vi].point;
         let face = &self.ds.faces[fi];
         let tf = self.vf_tol(vi, fi);
 
-        if let Surface3::Plane(plane) = &face.surface
+        // OCCT L257-266: ComputeVF + process result
+        let (is_on, proj_dist): (bool, f64) = if let Surface3::Plane(plane) = &face.surface
             && inttools::vertex_ops::vertex_on_plane_with_tol(point, plane, tf)
         {
             let face_verts = self.ds.face_boundary_points(fi);
-            if inttools::edge_face::point_in_planar_face_with_tol(point, plane, &face_verts, tf) {
-                self.ds.interferences.push(Interference::VertexFace {
-                    vertex: vi,
-                    face: fi,
-                });
-                self.ds.faces[fi].face_info.vertices_on.insert(vi);
-            }
+            let on_face = inttools::edge_face::point_in_planar_face_with_tol(
+                point, plane, &face_verts, tf);
+            (on_face, 0.0)
         } else {
-            // OCCT-aligned: IntTools_Context::ComputeVF (L546-591).
-            //   Project vertex onto curved surface → check distance → FClass2d UV containment.
+            // OCCT L546-591: Project vertex onto curved surface
             let surface = face.surface.clone();
-            if !matches!(surface, Surface3::Plane(_)) {
-                let proj =
-                    rcad_kernel::projection::closest_point_on_surface(&surface, point, 16);
+            if matches!(surface, Surface3::Plane(_)) {
+                (false, f64::MAX)
+            } else {
+                let proj = rcad_kernel::projection::closest_point_on_surface(
+                    &surface, point, 16);
                 let a_tol_v = self.ds.vertices[vi].geom_tol;
                 let a_tol_f = face.geom_tol;
                 let a_tol_sum = a_tol_v + a_tol_f + self.ds.fuzzy_tol.max(tf);
                 if proj.distance <= a_tol_sum {
                     let uv = DVec2::new(proj.params.0, proj.params.1);
-                    // OCCT L608: IsPointInFace — excludes ON (returns false for On).
                     let inside = {
                         let fclass = FClass2d::new(self.ds, fi, tf);
                         fclass.perform(uv, false) == State::In
                     };
-                    if inside {
-                        self.ds.interferences.push(Interference::VertexFace {
-                            vertex: vi,
-                            face: fi,
-                        });
-                        // OCCT L295-297: all In-classified VF vertices go to VerticesIn.
-                        self.ds.faces[fi].face_info.vertices_in.insert(vi);
-                    }
+                    (inside, proj.distance)
+                } else {
+                    (false, f64::MAX)
                 }
             }
+        };
+
+        if is_on {
+            // OCCT L279-284: Create InterfVF
+            self.ds.interferences.push(Interference::VertexFace {
+                vertex: vi,
+                face: fi,
+            });
+
+            // OCCT L286: UpdateVertex(nV, aTolVNew) — increase vertex tolerance
+            if proj_dist > 0.0 && proj_dist < f64::MAX
+                && proj_dist > self.ds.vertices[vi].geom_tol
+            {
+                self.ds.vertices[vi].geom_tol = proj_dist;
+                self.ds.increased_ss.insert(vi);
+            }
+
+            // OCCT L295-297: Update FaceInfo (vertices_on for planar, vertices_in for curved)
+            if matches!(self.ds.faces[fi].surface, Surface3::Plane(_)) {
+                self.ds.faces[fi].face_info.vertices_on.insert(vi);
+            } else {
+                self.ds.faces[fi].face_info.vertices_in.insert(vi);
+            }
         }
-}
+    }
     /// OCCT PaveFiller_5.cxx L165-300: PerformEF
     pub(crate) fn perform_ef(&mut self) {
         // OCCT PaveFiller_5.cxx L165+: FillShrunkData + BVH pair iteration
