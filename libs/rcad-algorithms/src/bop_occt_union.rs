@@ -32,6 +32,7 @@ use glam::{DVec2, DVec3};
 use crate::brep_repair::merge_close_vertices;
 use crate::bopds;
 use crate::bopds::ds::{DS, Interference};
+use crate::bopds::pave::NO_EDGE;
 use crate::builder;
 use crate::bvh;
 use crate::geom_populate;
@@ -146,7 +147,7 @@ fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
             }
         }
         for pb in &e.pave_blocks {
-            if pb.original_edge >= ne {
+            if pb.original_edge != NO_EDGE && pb.original_edge >= ne {
                 return Err(BooleanError::InvalidResult(
                     "union: DS pave_block original_edge out of range",
                 ));

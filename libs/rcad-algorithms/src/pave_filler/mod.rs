@@ -49,6 +49,8 @@ pub(crate) mod analytic_cylinder;
 pub(crate) mod analytic_cone;
 pub(crate) mod analytic_torus;
 pub(crate) mod marching;
+pub(crate) mod prm_prm_intersection;
+pub(crate) mod p_walking;
 mod make_blocks;
 mod config;
 mod tolerances;

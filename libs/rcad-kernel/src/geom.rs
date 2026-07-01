@@ -817,6 +817,15 @@ pub trait SurfaceEval {
     fn normal_at(&self, u: f64, v: f64) -> DVec3;
     /// Natural parameter domain `[u_min, u_max, v_min, v_max]`.
     fn default_domain(&self) -> [f64; 4];
+    /// First partial derivatives `(point, dP/du, dP/dv)` at `(u, v)`.
+    /// Default: finite-difference approximation (2-point, 1e-6 step).
+    fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
+        let eps = 1e-6;
+        let p = self.point_at(u, v);
+        let pu = self.point_at(u + eps, v);
+        let pv = self.point_at(u, v + eps);
+        (p, (pu - p) / eps, (pv - p) / eps)
+    }
 }
 
 /// Parametric evaluation of a 2D curve (PCurve): `t -> Point2`.
