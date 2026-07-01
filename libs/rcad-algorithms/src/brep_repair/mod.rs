@@ -1988,7 +1988,6 @@ fn check_edge_curvature_continuity(
 
     max_curvature_diff <= tolerance * 10.0 // Allow some tolerance for curvature
 }
-
 include!("extra1.rs");
 include!("extra2.rs");
 include!("extra3.rs");
@@ -1997,5 +1996,7 @@ include!("extra5.rs");
 include!("extra6.rs");
 #[cfg(test)]
 mod tests {
-    include!("tests_inc.rs");
+    include!("tests_p1.rs");
+    include!("tests_p2.rs");
+    include!("tests_p3.rs");
 }
