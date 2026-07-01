@@ -118,32 +118,57 @@ impl<'a> super::PaveFiller<'a> {
         self.intersect_ve(&filtered);
     }
 
-    /// OCCT-aligned: IntersectVE (PaveFiller_2.cxx L212-394).
-    ///   Processes vertex-edge pair list: creates interferences, updates
-    ///   vertices, adds extra paves, and splits pave blocks.
+    /// ✅ OCCT-aligned: IntersectVE (PaveFiller_2.cxx L212-394).
+    ///   Processes vertex-edge pairs with SD vertex resolution, PB endpoint
+    ///   dedup (aMVPB), and aDMVSD fence map, matching OCCT's structure.
     fn intersect_ve(&mut self, pairs: &[(usize, usize)]) {
         if pairs.is_empty() { return; }
 
         // OCCT L223-228: InterfVE array + SetIncrement
         //   rcad: interferences Vec (no pre-allocation needed)
 
-        // OCCT L311-312: Keep modified edges for further update
+        // OCCT L235-291: Build aMVPB + aDMVSD fence map for dedup
+        //   Group vertices by edge, then resolve SD and dedup per (nVSD, nE)
+        let mut edge_verts: std::collections::HashMap<usize, Vec<usize>> =
+            std::collections::HashMap::new();
+        for &(vi, ei) in pairs {
+            edge_verts.entry(ei).or_default().push(vi);
+        }
+
+        // aDMVSD map: (nVSD, nE) → list of original vertices deduped to same SD root
+        let mut a_dmv_sd: std::collections::HashMap<(usize, usize), Vec<usize>> =
+            std::collections::HashMap::new();
         let mut a_m_edges: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
-        // OCCT L235-291: Build aDMVSD fence map for dedup
-        //   rcad: simplified — no TopoDS handles; process each pair directly.
-        //   (Architecture diff A1: rcad uses DSEdge with inline Pave, not
-        //    BOPDS_PaveBlock handles)
+        // OCCT L260-291: For each edge with candidate vertices
+        for (&ei, verts) in &edge_verts {
+            // OCCT L260-265: Build aMVPB set = all PB endpoint vertices for this edge
+            let a_mv_pb: std::collections::HashSet<usize> = self.ds.edges[ei].paves.iter()
+                .map(|p| p.vertex_idx)
+                .collect();
 
-        // OCCT L314-388: Process each intersection result
-        for &(vi, ei) in pairs {
-            // OCCT L321-328: Skip if flag != 0 (no intersection found)
-            let point = self.ds.vertices[vi].point;
+            for &vi in verts {
+                // OCCT L268: HasShapeSD(nV, nVSD) — resolve to SD root
+                let n_vsd = self.ds.has_shape_sd(vi).unwrap_or(vi);
+
+                // OCCT L270-271: Skip if nVSD is already a PB endpoint (in aMVPB)
+                if a_mv_pb.contains(&n_vsd) { continue; }
+
+                // OCCT L273-287: Dedup via aDMVSD map keyed by (nVSD, nE)
+                let key = (n_vsd, ei);
+                a_dmv_sd.entry(key).or_default().push(vi);
+            }
+        }
+
+        // OCCT L314-388: Process each unique (nVSD, nE) intersection
+        for (&(n_vsd, ei), original_verts) in &a_dmv_sd {
+            // OCCT L321-328: Perform VE computation (ComputeVE)
+            let point = self.ds.vertices[n_vsd].point;
             let edge = &self.ds.edges[ei];
-            let te = self.ve_tol(vi, ei);
+            let te = self.ve_tol(n_vsd, ei);
 
-            // Project vertex onto edge curve (OCCT: IntTools_Context::ComputeVE)
-            let t_opt = crate::pave_filler::helpers::project_vertex_to_curve(point, &edge.curve, te);
+            let t_opt = crate::pave_filler::helpers::project_vertex_to_curve(
+                point, &edge.curve, te);
             let t = match t_opt {
                 Some(t) if t >= edge.t_range[0] && t <= edge.t_range[1] => t,
                 _ => continue,
@@ -151,32 +176,39 @@ impl<'a> super::PaveFiller<'a> {
 
             // OCCT L337-338: UpdateVertex(nV, aTolVNew) — increase vertex tolerance
             let dist_3d = edge.curve.point_at(t).distance(point);
-            if dist_3d > self.ds.vertices[vi].geom_tol {
-                self.ds.vertices[vi].geom_tol = dist_3d;
-                self.ds.increased_ss.insert(vi);
+            if dist_3d > self.ds.vertices[n_vsd].geom_tol {
+                self.ds.vertices[n_vsd].geom_tol = dist_3d;
+                self.ds.increased_ss.insert(n_vsd);
             }
 
-            // OCCT L340-364: Create extra pave in the PaveBlock
-            //   rcad: push Pave directly to edge's pave list
-            let has_vertex_at_t = self.ds.edges[ei].paves.iter()
-                .any(|p| (p.param - t).abs() < TOLERANCE_ABS && p.vertex_idx == vi);
-            if !has_vertex_at_t {
-                self.ds.edges[ei].paves.push(Pave { vertex_idx: vi, param: t });
+            // OCCT L340-364: AppendExtPave for each original vertex
+            //   OCCT adds pave via aPave.SetIndex(nVx) using the UpdateVertex result.
+            //   rcad: push Pave directly to edge's pave list.
+            let edge_had_paves = !self.ds.edges[ei].paves.is_empty();
+            for &vi in original_verts {
+                let has_vertex_at_t = self.ds.edges[ei].paves.iter()
+                    .any(|p| (p.param - t).abs() < TOLERANCE_ABS && p.vertex_idx == vi);
+                if !has_vertex_at_t {
+                    self.ds.edges[ei].paves.push(Pave { vertex_idx: vi, param: t });
+                }
+            }
+            if !edge_had_paves || self.ds.edges[ei].paves.len() > 1 {
                 a_m_edges.insert(ei);
             }
 
-            // OCCT L366-387: Add interferences (if addInterfs)
-            // OCCT L376-378: Create interference VE
-            let already_interfered = self.ds.interferences.iter().any(|inf| {
-                matches!(inf, Interference::VertexEdge { vertex, edge, .. }
-                    if *vertex == vi && *edge == ei)
-            });
-            if !already_interfered {
-                self.ds.interferences.push(Interference::VertexEdge {
-                    vertex: vi,
-                    edge: ei,
-                    param: t,
+            // OCCT L366-387: Add VE interferences for ALL original vertices
+            for &vi in original_verts {
+                let already_interfered = self.ds.interferences.iter().any(|inf| {
+                    matches!(inf, Interference::VertexEdge { vertex, edge, .. }
+                        if *vertex == vi && *edge == ei)
                 });
+                if !already_interfered {
+                    self.ds.interferences.push(Interference::VertexEdge {
+                        vertex: vi,
+                        edge: ei,
+                        param: t,
+                    });
+                }
             }
         }
 
