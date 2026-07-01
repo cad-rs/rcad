@@ -1766,7 +1766,4 @@ fn extract_ellipsoid_silhouettes_numerical(
     }
 }
 include!("e1.rs");
-#[cfg(test)]
-mod tests {
-    include!("tests_inc.rs");
-}
+include!("tests_inc.rs");

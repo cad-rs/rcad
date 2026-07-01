@@ -1727,7 +1727,4 @@ fn orthonormal_basis_from_normal(normal: DVec3) -> (DVec3, DVec3) {
 include!("e1.rs");
 include!("e2.rs");
 include!("e3.rs");
-#[cfg(test)]
-mod tests {
-    include!("tests_inc.rs");
-}
+include!("tests_inc.rs");
