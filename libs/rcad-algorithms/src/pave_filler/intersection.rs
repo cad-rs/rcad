@@ -1289,26 +1289,21 @@ impl<'a> super::PaveFiller<'a> {
             self.ds.faces[fi].face_info.vertices_in.insert(n_vsd);
         }
     }
-    /// OCCT PaveFiller_5.cxx L165-300: PerformEF
+    /// ✅ OCCT-aligned: PerformEF (PaveFiller_5.cxx L165-300).
+    ///   Iterates (edge, face) pairs with HasFlag / HasInterf skip conditions.
+    ///   Uses full edge range (not sub-ranges) — matching OCCT's original PB iteration.
     pub(crate) fn perform_ef(&mut self) {
-        // OCCT PaveFiller_5.cxx L165+: FillShrunkData + BVH pair iteration
-        //   with HasFlag / HasInterf skip conditions.
         self.fill_shrunk_data(); // OCCT L165: FillShrunkData(EDGE, FACE)
         let a_edges = self.edges_of(ShapeOrigin::ShapeA);
         let b_faces = self.faces_of(ShapeOrigin::ShapeB);
 
         for &ei in &a_edges {
-            // OCCT: aSIE.HasFlag() �?skip flagged edges
             if self.ds.edge_has_flag(ei) { continue; }
             if self.ds.is_edge_degenerated(ei) { continue; }
             let etr = self.ds.edges[ei].t_range;
-            let ranges = self.collect_paveblock_ranges(ei, etr);
-            for r in &ranges {
-                for &fi in &b_faces {
-                    // OCCT: myDS->HasInterf(nE, nF) �?skip if already interfered
-                    if self.ds.has_interf_ef(ei, fi) { continue; }
-                    self.intersect_ef(ei, fi, r);
-                }
+            for &fi in &b_faces {
+                if self.ds.has_interf_ef(ei, fi) { continue; }
+                self.intersect_ef(ei, fi, &etr);
             }
         }
 
@@ -1319,12 +1314,9 @@ impl<'a> super::PaveFiller<'a> {
             if self.ds.edge_has_flag(ei) { continue; }
             if self.ds.is_edge_degenerated(ei) { continue; }
             let etr = self.ds.edges[ei].t_range;
-            let ranges = self.collect_paveblock_ranges(ei, etr);
-            for r in &ranges {
-                for &fi in &a_faces {
-                    if self.ds.has_interf_ef(ei, fi) { continue; }
-                    self.intersect_ef(ei, fi, r);
-                }
+            for &fi in &a_faces {
+                if self.ds.has_interf_ef(ei, fi) { continue; }
+                self.intersect_ef(ei, fi, &etr);
             }
         }
     }
