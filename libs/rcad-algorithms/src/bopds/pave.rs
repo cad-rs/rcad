@@ -172,6 +172,9 @@ impl PaveBlock {
         if the_flag {
             a_nb += 2;
         }
+        if std::env::var("RCAD_DEBUG_MB").is_ok() {
+            eprintln!("[MB_update] a_nb={} the_flag={} ext={}", a_nb, the_flag, self.ext_paves.len());
+        }
 
         if a_nb <= 1 {
             self.ext_paves.clear();

@@ -331,6 +331,8 @@ impl ResultBuilder {
         vertex_positions: &HashMap<usize, DVec3>,
         face_ref: rcad_kernel::topods::ShapeRef,
         natural_restriction: bool,
+        _ds_ei_to_sr: &HashMap<usize, topods::ShapeRef>,
+        sr_index_to_ds_ei: &HashMap<usize, usize>,
     ) {
         let normal = if let Some(surf) = tool.face_surface(face_ref) {
             match surf {
@@ -414,9 +416,22 @@ impl ResultBuilder {
                         // have their curve stored in the DS edge.  Use it so that
                         // build_topods_faces creates edges with the correct parametric
                         // range (not hardcoded [0,1]).
-                        if let Some(ds_edge) = self.ds_edges.as_ref().and_then(|e| e.get(sr.index)) {
-                            let crv = ds_edge.curve.clone();
-                            self.add_edge_with_curve(v1, v2, crv, seg.t_range)
+                        // sr.index = e_base + ds_ei; use sr_index_to_ds_ei reverse
+                        // lookup to get the original DS edge index.
+                        if let Some(&ds_ei) = sr_index_to_ds_ei.get(&sr.index) {
+                            if let Some(ref ds_edges) = self.ds_edges {
+                                if ds_ei < ds_edges.len() {
+                                    let crv = ds_edges[ds_ei].curve.clone();
+                                    // Use ds_edges[ds_ei].t_range (3D curve range) instead of
+                                    // seg.t_range (which may be pcurve range for boundary edges).
+                                    let range = ds_edges[ds_ei].t_range;
+                                    self.add_edge_with_curve(v1, v2, crv, range)
+                                } else {
+                                    self.add_edge(v1, v2)
+                                }
+                            } else {
+                                self.add_edge(v1, v2)
+                            }
                         } else {
                             self.add_edge(v1, v2)
                         }
@@ -938,14 +953,10 @@ impl ResultBuilder {
     /// range so that downstream consumers (area computation, STEP export) can
     /// evaluate the curve correctly without relying on hardcoded [0,1].
     pub(crate) fn add_edge_with_curve(&mut self, v1: usize, v2: usize, curve: Curve3, range: [f64; 2]) -> usize {
-        let key = (v1.min(v2), v1.max(v2));
-        // Dedup by (v1,v2) pair even with curves (unlike add_ic_edge which
-        // dedups by IC index — same geometric edge on different faces).
-        for (i, e) in self.edges.iter().enumerate() {
-            if (e.0.min(e.1), e.0.max(e.1)) == key {
-                return i;
-            }
-        }
+        // No dedup by (v1,v2): two different curves may share endpoints.
+        // Sharing of the same DSEdge between faces is handled upstream
+        // (same segment generates the same edge index via add_ic_edge or
+        //  the fallback add_edge dedup for uncurved edges).
         let idx = self.edges.len();
         self.edges.push((v1, v2));
         while self.custom_edge_curves.len() <= idx {
@@ -1076,6 +1087,123 @@ impl ResultBuilder {
 
 
 
+    /// ✅ OCCT-aligned: Architecture A1 — emit TShape for the face just added to self.faces.
+    ///   OCCT BRep_Builder creates edges/wires/faces incrementally during BuildSplitFaces.
+    ///   rcad previously deferred this to build_topods_faces; now creates TShapes per-face.
+    pub(crate) fn emit_face_topods(&mut self, t: &mut topods::BRep) {
+        use topods::{Orientation, ShapeRef};
+        let fi = self.faces.len().wrapping_sub(1);
+        if fi >= self.faces.len() {
+            return; // no face data
+        }
+        if fi < self.face_refs.len() && !self.face_refs[fi].is_null() {
+            return; // already emitted
+        }
+        let (edge_indices, inner_wire_edges, _tris, _normal, surface, _uv_domain,
+             _centroid, _area, sample_point, internal_wire_edges) = &self.faces[fi];
+
+        // Helper: resolve ResultBuilder vertex index → TShape::Vertex ref.
+        // Finds existing TShape by position or creates a new one.
+        fn resolve_v<'a>(
+            vi: usize,
+            verts: &[DVec3],
+            tshapes: &'a mut Vec<std::sync::Arc<topods::TShape>>,
+            v_map: &mut HashMap<usize, ShapeRef>,
+        ) -> ShapeRef {
+            if vi >= verts.len() { return ShapeRef::NULL; }
+            *v_map.entry(vi).or_insert_with(|| {
+                let pt = verts[vi];
+                let found = tshapes.iter().position(|ts| {
+                    matches!(&**ts, topods::TShape::Vertex(vd)
+                        if crate::tolerance::points_coincide(vd.point, pt))
+                });
+                match found {
+                    Some(ti) => ShapeRef::new(ti),
+                    None => {
+                        tshapes.push(std::sync::Arc::new(topods::TShape::Vertex(
+                            topods::TVertexData { point: pt, tolerance: 0.0, points: Vec::new(), moved: false })));
+                        ShapeRef::new(tshapes.len() - 1)
+                    }
+                }
+            })
+        }
+
+        // Edge → TShape::Edge (read curve/range from custom arrays)
+        let mut v_map: HashMap<usize, ShapeRef> = HashMap::new();
+        let mut e_map: Vec<ShapeRef> = Vec::with_capacity(edge_indices.len());
+        for &(ei, _forward) in edge_indices.iter() {
+            if ei >= self.edges.len() { continue; }
+            let (v1, v2) = self.edges[ei];
+            let first = resolve_v(v1, &self.vertices, &mut t.tshapes, &mut v_map);
+            let last = resolve_v(v2, &self.vertices, &mut t.tshapes, &mut v_map);
+            let curve_idx = self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
+                let ci = t.curves.len();
+                t.curves.push(crv.clone());
+                ci
+            });
+            let curve_range = self.custom_edge_ranges.get(ei).and_then(|r| *r)
+                .or_else(|| self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
+                    use rcad_kernel::geom::CurveEval;
+                    crv.default_domain()
+                }))
+                .unwrap_or([0.0, 1.0]);
+            let e_ref = t.add_tedge(curve_idx, first, last, curve_range);
+            while e_map.len() <= ei { e_map.push(ShapeRef::NULL); }
+            e_map[ei] = e_ref;
+        }
+
+        // Outer wire
+        let outer_edges: Vec<ShapeRef> = edge_indices.iter().map(|&(idx, forward)| {
+            let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
+            if idx < e_map.len() { ShapeRef::with_orientation(e_map[idx].index, orient) }
+            else { ShapeRef::with_orientation(idx, orient) }
+        }).collect();
+        let outer_wire = t.add_twire(outer_edges);
+        t.wire_mut(outer_wire).closed = true;
+
+        // Inner wires
+        let mut inner_wires = Vec::new();
+        for wire_idxs in inner_wire_edges {
+            let iw_edges: Vec<ShapeRef> = wire_idxs.iter().map(|&(idx, forward)| {
+                let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
+                if idx < e_map.len() { ShapeRef::with_orientation(e_map[idx].index, orient) }
+                else { ShapeRef::with_orientation(idx, orient) }
+            }).collect();
+            if !iw_edges.is_empty() {
+                let w = t.add_twire(iw_edges);
+                t.wire_mut(w).closed = true;
+                inner_wires.push(w);
+            }
+        }
+
+        // Internal wire edges
+        for iw_edges in internal_wire_edges {
+            let iw: Vec<ShapeRef> = iw_edges.iter().map(|&(idx, forward)| {
+                let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
+                if idx < e_map.len() { ShapeRef::with_orientation(e_map[idx].index, orient) }
+                else { ShapeRef::with_orientation(idx, orient) }
+            }).collect();
+            if iw.len() >= 2 {
+                let w = t.add_twire(iw);
+                t.wire_mut(w).closed = true;
+                inner_wires.push(w);
+            }
+        }
+
+        // Face
+        let surf_idx = t.surfaces.len();
+        t.surfaces.push(surface.clone());
+        // face_internal_vtx stores raw vertex indices; map to ShapeRef via vi_to_ti-like
+        // lookup for consistency with build_topods_faces.  For incremental emission, skip
+        // internal vertices (handled by post-processing, not critical for topology).
+        let internal_vtx: Vec<ShapeRef> = Vec::new();
+        let nr = self.face_natural_restriction.get(fi)
+            .copied().unwrap_or(false);
+        let face_sr = t.add_tface(Some(surf_idx), outer_wire, inner_wires,
+            Some(*sample_point), *_uv_domain, internal_vtx, nr);
+        self.face_refs.push(face_sr);
+    }
+
     /// ✅ OCCT-aligned: BuildResult(FACE) — create topods vertices, edges, wires, faces
     ///   in t_brep from the flat arrays.  Called after fill_images_faces so that
     ///   later BuildResult(SHELL) / BuildResult(SOLID) can reference these ShapeRefs.
@@ -1084,11 +1212,15 @@ impl ResultBuilder {
     pub(crate) fn build_topods_faces(&mut self, t: &mut topods::BRep) {
         use topods::{Orientation, ShapeRef};
 
-        // 1. Vertices → TShape::Vertex
-        // OCCT: BRep_Builder uses shared TopoDS TShapes — BuildResult(Face) reuses
-        //   the vertex TShapes created by BuildResult(Vertex).  rcad's add_tvertex
-        //   creates a NEW TShape every call, so map self.vertices indices to the
-        //   existing TShape index, creating new TShapes only for unseen positions.
+        // Architecture A1: skip faces already emitted as TShapes (via emit_face_topods).
+        // face_refs already contains ShapeRefs for incrementally-emitted faces.
+        let start_fi = self.face_refs.len();
+        if start_fi >= self.faces.len() {
+            return; // all faces already have TShapes
+        }
+
+        // 1. Vertices → TShape::Vertex (dedup with existing TShapes, including
+        //    those created by incremental emission).
         let n_verts = self.vertices.len();
         let mut vi_to_ti: Vec<usize> = Vec::with_capacity(n_verts);
         for v in &self.vertices {
@@ -1105,7 +1237,12 @@ impl ResultBuilder {
             }
         }
 
-        // 2. Edges → TShape::Edge (use vi_to_ti to map vertex indices)
+        // 2. Edges → TShape::Edge (use vi_to_ti to map vertex indices).
+        //    Edges for incrementally-emitted faces may also be in self.edges
+        //    (the flat arrays are shared).  This creates NEW TShapes for those
+        //    edges — they are duplicates of TShapes created by emit_face_topods,
+        //    but the face loop below only processes faces NOT yet in face_refs,
+        //    so these duplicate edges are never referenced.
         let mut e_map: Vec<ShapeRef> = Vec::with_capacity(self.edges.len());
         for (ei, &(start, end)) in self.edges.iter().enumerate() {
             let first = ShapeRef::new(vi_to_ti[start]);
@@ -1124,10 +1261,8 @@ impl ResultBuilder {
             e_map.push(t.add_tedge(curve_idx, first, last, curve_range));
         }
 
-        // 3. Faces → TShape::Face (with wires)
-        self.face_refs.clear();
-        let mut flat_fi = 0usize;
-        for (edge_indices, inner_wire_edges, _triangles, _normal, surface, _uv_domain, _centroid, _area, sample_point, internal_wire_edges) in &self.faces {
+        // 3. Faces → TShape::Face (with wires) — only for faces NOT yet in face_refs.
+        for (flat_fi, (edge_indices, inner_wire_edges, _triangles, _normal, surface, _uv_domain, _centroid, _area, sample_point, internal_wire_edges)) in self.faces.iter().enumerate().skip(start_fi) {
             // Outer wire
             let outer_edges: Vec<ShapeRef> = edge_indices.iter().map(|&(idx, forward)| {
                 let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
@@ -1170,7 +1305,6 @@ impl ResultBuilder {
                 .map_or(vec![], |v| v.iter().map(|&vi| ShapeRef::new(vi_to_ti.get(vi).copied().unwrap_or(vi))).collect());
             let nr = self.face_natural_restriction.get(flat_fi).copied().unwrap_or(true);
             self.face_refs.push(t.add_tface(Some(surf_idx), outer_wire, inner_wires, Some(*sample_point), *_uv_domain, internal_vtx, nr));
-            flat_fi += 1;
         }
     }
 

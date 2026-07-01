@@ -240,6 +240,7 @@ impl<'a> BooleanBuilder<'a> {
         face_idx: usize,
         is_a: bool,
         result: &mut ResultBuilder,
+        t: &mut topods::BRep,
     ) {
         let ds = self.ds;
         // Get BRep from the cached conversion (built during build_with_history)
@@ -337,6 +338,20 @@ impl<'a> BooleanBuilder<'a> {
                 self.classification_keep_policy(source, class, face_idx)
             });
         }
+        // Build reverse lookup: DsEdge(sr) in segments_topo has sr.index = e_base + ei,
+        // which cannot directly index ds.edges. Map ShapeRef.index -> DS edge index.
+        // Must build before drop(segments) below.
+        let e_base = self.ds.vertices.len();
+        let ds_ei_to_sr: HashMap<usize, topods::ShapeRef> = segments.iter()
+            .filter_map(|seg| match &seg.source {
+                WireEdgeSource::DsEdge(ei) => Some((*ei, topods::ShapeRef::new(e_base + *ei))),
+                _ => None,
+            }).collect();
+        let sr_index_to_ds_ei: HashMap<usize, usize> = segments.iter()
+            .filter_map(|seg| match &seg.source {
+                WireEdgeSource::DsEdge(ei) => Some((e_base + *ei, *ei)),
+                _ => None,
+            }).collect();
         drop(segments);
 
         let origin = if is_a {
@@ -350,7 +365,12 @@ impl<'a> BooleanBuilder<'a> {
         result.ds_edges = Some(std::sync::Arc::new(self.ds.edges.clone()));
         for wf in &wfs {
             result.emit_wire_face_topods(face_idx, wf, &segments_topo, tool, &ic_curves, false, origin,
-                &HashMap::new(), face_refs[face_idx], self.ds.faces[face_idx].natural_restriction);
+                &HashMap::new(), face_refs[face_idx], self.ds.faces[face_idx].natural_restriction,
+                &ds_ei_to_sr, &sr_index_to_ds_ei);
+            // Architecture A1: create TShapes for this face immediately (incremental),
+            // matching OCCT's per-face BRep_Builder assembly.  build_topods_faces will
+            // skip faces already emitted as TShapes.
+            result.emit_face_topods(t);
         }
     }
 
@@ -892,15 +912,14 @@ impl<'a> BooleanBuilder<'a> {
         result: &mut ResultBuilder,
         a_faces: &[usize],
         b_faces: &[usize],
+        t: &mut topods::BRep,
     ) {
         // OCCT L218: BuildSplitFaces — split all faces along intersection curves.
-        self.build_split_faces(result, a_faces, b_faces);
-        // OCCT L219-222: if (HasErrors()) return;
+        self.build_split_faces(result, a_faces, b_faces, t);
         if self.has_errors { return; }
 
         // OCCT L223: FillSameDomainFaces — merge duplicate same-domain faces.
         self.fill_same_domain_faces(result);
-        // OCCT L224-227: if (HasErrors()) return;
         if self.has_errors { return; }
 
         // OCCT L228: FillInternalVertices — settle alone vertices as INTERNAL.
@@ -917,6 +936,7 @@ impl<'a> BooleanBuilder<'a> {
         result: &mut ResultBuilder,
         a_faces: &[usize],
         b_faces: &[usize],
+        t: &mut topods::BRep,
     ) {
         // OCCT L258-266: iterate all source shapes → filter TopAbs_FACE.
         for fi in 0..self.ds.faces.len() {
@@ -971,7 +991,8 @@ impl<'a> BooleanBuilder<'a> {
             }
 
             // Has IN or SC pave blocks → full BuilderFace::Perform (TopoDS path).
-            self.split_face_and_emit_topo_ds(fi, is_a, result);
+            // Architecture A1: pass t so split faces create TShapes incrementally.
+            self.split_face_and_emit_topo_ds(fi, is_a, result, t);
         }
     }
 
@@ -3377,8 +3398,12 @@ impl<'a> BooleanBuilder<'a> {
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         _dump.snapshot("after_BuildResultWire", self.ds, Some(&t_brep));
         // OCCT L472-475: FillImagesFaces → BuildResult(FACE)
-        self.fill_images_faces(&mut result, &a_faces, &b_faces);
+        // Architecture A1: pass t_brep so split faces create TShapes incrementally
+        // during fill_images_faces (not batch-deferred in build_result_occt).
+        self.fill_images_faces(&mut result, &a_faces, &b_faces, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
+        // BuildResult(FACE) now only handles unsplit original faces (those not
+        // already emitted as TShapes during fill_images_faces).
         self.build_result_occt(topods::ShapeType::Face, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         _dump.snapshot("after_FillImagesFaces", self.ds, Some(&t_brep));
