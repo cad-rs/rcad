@@ -82,6 +82,11 @@ pub struct BooleanBuilder<'a> {
     // ✅ OCCT-aligned: myNonDestructive (BOPAlgo_Builder.hxx L503).
     //   Safe processing — avoids modifying input shapes. Used in PostTreat.
     my_non_destructive: bool,
+    // ✅ OCCT-aligned: myImages for faces — tracks which source faces were split
+    //   by BuildSplitFaces (regardless of classification outcome). Used by
+    //   build_result(Face) to decide build_original_face, matching OCCT's
+    //   myImages.IsBound(aS) check in BuildResult(TopAbs_FACE).
+    split_source_faces: std::cell::RefCell<std::collections::HashSet<usize>>,
     // ✅ OCCT-aligned: myFillHistory (BOPAlgo_Options.hxx).
     //   When false, PrepareHistory is a no-op (HasHistory() returns false).
     my_fill_history: bool,
@@ -621,6 +626,7 @@ impl<'a> BooleanBuilder<'a> {
             my_non_destructive: false,
             my_fill_history: true,   // OCCT default
             my_check_inverted: false,
+            split_source_faces: std::cell::RefCell::new(std::collections::HashSet::new()),
             brep: std::cell::RefCell::new(None),
         }
     }
@@ -991,6 +997,8 @@ impl<'a> BooleanBuilder<'a> {
             }
 
             // Has IN or SC pave blocks → full BuilderFace::Perform (TopoDS path).
+            // OCCT-aligned: record source face as split (myImages equivalent for faces).
+            self.split_source_faces.borrow_mut().insert(self.ds.faces[fi].source_face_idx);
             // Architecture A1: pass t so split faces create TShapes incrementally.
             self.split_face_and_emit_topo_ds(fi, is_a, result, t);
         }
@@ -3071,28 +3079,20 @@ impl<'a> BooleanBuilder<'a> {
                 //   rcad: result.face_origins tracks which source faces were split.
                 //   rcad: build_faces() validates edge refs before TShape creation.
                 result.build_faces();
-                // OCCT L146-152: add original source faces without split images.
+                // OCCT-aligned: use split_source_faces (myImages for faces) to decide
+                // which source faces had split images — independent of classification.
+                let split_faces: std::collections::HashSet<usize> =
+                    self.split_source_faces.borrow().iter().copied().collect();
                 let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
                 let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
-                let mut emitted_a: std::collections::HashSet<usize> =
-                    std::collections::HashSet::new();
-                let mut emitted_b: std::collections::HashSet<usize> =
-                    std::collections::HashSet::new();
-                for origin in &result.face_origins {
-                    match origin {
-                        FaceOrigin::FromA(fi) => { emitted_a.insert(*fi); }
-                        FaceOrigin::FromB(fi) => { emitted_b.insert(*fi); }
-                        _ => {}
-                    }
-                }
                 for &fi in &a_faces {
-                    if !emitted_a.contains(&self.ds.faces[fi].source_face_idx) {
+                    if !split_faces.contains(&self.ds.faces[fi].source_face_idx) {
                         result.build_original_face(self.ds, fi,
                             FaceOrigin::FromA(self.ds.faces[fi].source_face_idx));
                     }
                 }
                 for &fi in &b_faces {
-                    if !emitted_b.contains(&self.ds.faces[fi].source_face_idx) {
+                    if !split_faces.contains(&self.ds.faces[fi].source_face_idx) {
                         result.build_original_face(self.ds, fi,
                             FaceOrigin::FromB(self.ds.faces[fi].source_face_idx));
                     }

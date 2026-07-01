@@ -783,101 +783,17 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                         });
                     }                }
             } else {
-                // Fallback: split boundary edges by IC vertices (FillImagesEdges equivalent).
-                let p_a = ds.vertices[sv].point;
-                let p_b = ds.vertices[ev].point;
-                let ab = p_b - p_a;
-                let ab_len2 = ab.length_squared();
-                let mut split_verts: Vec<(usize, f64)> = Vec::new();
-                if ab_len2 > 1e-12 {
-                    // Vertices from current face's face_info.vertices_in
-                    for &vi in &face.face_info.vertices_in {
-                        check_and_add_split_vertex(ds, sv, ev, vi, p_a, ab, ab_len2, &mut split_verts);
-                    }
-                    // OCCT-aligned DoSplitSEAMOnFace: split seam edges at IC endpoints
-                    // whose UV lies on the seam (U 鈮?0 or 2蟺).  For a sphere seam edge
-                    // between two poles (V varies along U=0), an IC endpoint at U=0 on
-                    // the equator (V=蟺/2) splits the seam into two sub-edges.
-                    let is_periodic_seam = b_is_seam && matches!(face.surface,
-                        Surface3::Sphere(_) | Surface3::Cylinder(_) | Surface3::Torus(_));
-                    if is_periodic_seam {
-                        let uv_s = world_to_uv(&face.surface, ds.vertices[sv].point);
-                        let uv_e = world_to_uv(&face.surface, ds.vertices[ev].point);
-                        if let (Some(uva), Some(uvb)) = (uv_s, uv_e) {
-                            let seam_tol = 1e-6;
-                            let on_seam_u = |u: f64| -> bool {
-                                u.abs() < seam_tol || (u - std::f64::consts::TAU).abs() < seam_tol
-                            };
-                            let v_range = [uva.y, uvb.y];
-                            let v_min = v_range[0].min(v_range[1]);
-                            let v_max = v_range[0].max(v_range[1]);
-                            let v_span = v_max - v_min;
-                            if v_span > 1e-15 {
-                                for &ci in &face.face_info.curves_sc_only() {
-                                    let ic = &ds.intersection_curves[ci];
-                                    for &ep in &[ic.start_vertex, ic.end_vertex] {
-                                        if ep == sv || ep == ev { continue; }
-                                        if split_verts.iter().any(|(v, _)| *v == ep) { continue; }
-                                        if let Some(uv_ep) = world_to_uv(&face.surface, ds.vertices[ep].point) {
-                                            if on_seam_u(uv_ep.x) && uv_ep.y >= v_min - seam_tol
-                                                && uv_ep.y <= v_max + seam_tol
-                                            {
-                                                let t = (uv_ep.y - v_min) / v_span;
-                                                if t > 1e-8 && t < 1.0 - 1e-8 {
-                                                    split_verts.push((ep, t));
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                split_verts.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-                if split_verts.is_empty() {
-                    // No split vertices 鈥?whole edge as one segment (OCCT L374-378)
-                    let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface,
-                        Some(&ds.edges[ei].curve), Some(ds.edges[ei].t_range));
-                    let rep = ds.edge_on_face(ei, face_idx);
-                    segments.push(WireSegment {
-                        start_vertex: sv, end_vertex: ev,
-                        source: WireEdgeSource::DsEdge(ei),
-                        orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
-                        first_pcurve: rep.map(|r| r.pcurve.clone()),
-                        t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
-                    });                } else {
-                    // 鉁?OCCT-aligned: edge split by IC vertices (OCCT myImages equivalent).
-                    let mut prev_v = sv;
-                    let edge_curve = &ds.edges[ei].curve;
-                    let etr = ds.edges[ei].t_range;
-                    // 鉁?OCCT-aligned: sub-segments inherit pcurve from original edge.
-                    let seg_rep = ds.edge_on_face(ei, face_idx);
-                    let seg_first_pcurve = seg_rep.map(|r| r.pcurve.clone());
-                    let seg_range = seg_rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]);
-                    // Map normalized position to curve parameter for sub-edge ranges.
-                    let norm_to_t = |n: f64| etr[0] + n * (etr[1] - etr[0]);
-                    let mut prev_t = norm_to_t(0.0);
-                    for &(vi, t) in &split_verts {
-                        let t_vi = norm_to_t(t);
-                        let (ts, te) = edge_uv_tangent(ds, prev_v, vi, &face.surface,
-                            Some(edge_curve), Some([prev_t, t_vi]));
-                        segments.push(WireSegment {
-                            start_vertex: prev_v, end_vertex: vi,
-                            source: WireEdgeSource::DsEdge(ei),
-                            orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
-                            first_pcurve: seg_first_pcurve.clone(), t_range: seg_range,
-                        });                        prev_v = vi;
-                        prev_t = t_vi;
-                    }
-                    let (ts, te) = edge_uv_tangent(ds, prev_v, ev, &face.surface,
-                        Some(edge_curve), Some([prev_t, etr[1]]));
-                    segments.push(WireSegment {
-                        start_vertex: prev_v, end_vertex: ev,
-                        source: WireEdgeSource::DsEdge(ei),
-                        orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
-                        first_pcurve: seg_first_pcurve.clone(), t_range: seg_range,
-                    });                }
+                // OCCT: edge not split → add as single segment (Builder_2.cxx L374-378).
+                let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface,
+                    Some(&ds.edges[ei].curve), Some(ds.edges[ei].t_range));
+                let rep = ds.edge_on_face(ei, face_idx);
+                segments.push(WireSegment {
+                    start_vertex: sv, end_vertex: ev,
+                    source: WireEdgeSource::DsEdge(ei),
+                    orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
+                    first_pcurve: rep.map(|r| r.pcurve.clone()),
+                    t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
+                });
             }
         }
     }
@@ -1011,91 +927,16 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
                         });
                     }                }
             } else {
-                let p_a = ds.vertices[sv].point;
-                let p_b = ds.vertices[ev].point;
-                let ab = p_b - p_a;
-                let ab_len2 = ab.length_squared();
-                let mut split_verts: Vec<(usize, f64)> = Vec::new();
-                if ab_len2 > 1e-12 {
-                    for &vi in &face.face_info.vertices_in {
-                        check_and_add_split_vertex(ds, sv, ev, vi, p_a, ab, ab_len2, &mut split_verts);
-                    }
-                    let is_periodic_seam = b_is_seam && matches!(face.surface,
-                        Surface3::Sphere(_) | Surface3::Cylinder(_) | Surface3::Torus(_));
-                    if is_periodic_seam {
-                        let uv_s = world_to_uv(&face.surface, ds.vertices[sv].point);
-                        let uv_e = world_to_uv(&face.surface, ds.vertices[ev].point);
-                        if let (Some(uva), Some(uvb)) = (uv_s, uv_e) {
-                            let seam_tol = 1e-6;
-                            let on_seam_u = |u: f64| -> bool {
-                                u.abs() < seam_tol || (u - std::f64::consts::TAU).abs() < seam_tol
-                            };
-                            let v_range = [uva.y, uvb.y];
-                            let v_min = v_range[0].min(v_range[1]);
-                            let v_max = v_range[0].max(v_range[1]);
-                            let v_span = v_max - v_min;
-                            if v_span > 1e-15 {
-                                for &ci in &face.face_info.curves_sc_only() {
-                                    let ic = &ds.intersection_curves[ci];
-                                    for &ep in &[ic.start_vertex, ic.end_vertex] {
-                                        if ep == sv || ep == ev { continue; }
-                                        if split_verts.iter().any(|(v, _)| *v == ep) { continue; }
-                                        if let Some(uv_ep) = world_to_uv(&face.surface, ds.vertices[ep].point) {
-                                            if on_seam_u(uv_ep.x) && uv_ep.y >= v_min - seam_tol
-                                                && uv_ep.y <= v_max + seam_tol
-                                            {
-                                                let t = (uv_ep.y - v_min) / v_span;
-                                                if t > 1e-8 && t < 1.0 - 1e-8 {
-                                                    split_verts.push((ep, t));
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                split_verts.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
-                if split_verts.is_empty() {
-                    let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface,
-                        Some(&ds.edges[ei].curve), Some(ds.edges[ei].t_range));
-                    let rep = ds.edge_on_face(ei, face_idx);
-                    segments.push(WireSegment {
-                        start_vertex: sv, end_vertex: ev,
-                        source: WireEdgeSource::DsEdge(ei),
-                        orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
-                        first_pcurve: rep.map(|r| r.pcurve.clone()),
-                        t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
-                    });                } else {
-                    let mut prev_v = sv;
-                    let edge_curve = &ds.edges[ei].curve;
-                    let etr = ds.edges[ei].t_range;
-                    let seg_rep = ds.edge_on_face(ei, face_idx);
-                    let seg_first_pcurve = seg_rep.map(|r| r.pcurve.clone());
-                    let seg_range = seg_rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]);
-                    let norm_to_t = |n: f64| etr[0] + n * (etr[1] - etr[0]);
-                    let mut prev_t = norm_to_t(0.0);
-                    for &(vi, t) in &split_verts {
-                        let t_vi = norm_to_t(t);
-                        let (ts, te) = edge_uv_tangent(ds, prev_v, vi, &face.surface,
-                            Some(edge_curve), Some([prev_t, t_vi]));
-                        segments.push(WireSegment {
-                            start_vertex: prev_v, end_vertex: vi,
-                            source: WireEdgeSource::DsEdge(ei),
-                            orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
-                            first_pcurve: seg_first_pcurve.clone(), t_range: seg_range,
-                        });                        prev_v = vi;
-                        prev_t = t_vi;
-                    }
-                    let (ts, te) = edge_uv_tangent(ds, prev_v, ev, &face.surface,
-                        Some(edge_curve), Some([prev_t, etr[1]]));
-                    segments.push(WireSegment {
-                        start_vertex: prev_v, end_vertex: ev,
-                        source: WireEdgeSource::DsEdge(ei),
-                        orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
-                        first_pcurve: seg_first_pcurve.clone(), t_range: seg_range,
-                    });                }
+                let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface,
+                    Some(&ds.edges[ei].curve), Some(ds.edges[ei].t_range));
+                let rep = ds.edge_on_face(ei, face_idx);
+                segments.push(WireSegment {
+                    start_vertex: sv, end_vertex: ev,
+                    source: WireEdgeSource::DsEdge(ei),
+                    orientation: WireOrientation::Forward, is_closed_on_face: false, second_pcurve: None,
+                    first_pcurve: rep.map(|r| r.pcurve.clone()),
+                    t_range: rep.map(|r| r.pcurve_range).unwrap_or([0.0, 1.0]),
+                });
             }
         }
         }  // end inner_wire edge loop
