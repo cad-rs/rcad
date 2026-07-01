@@ -302,47 +302,8 @@ impl<'a> BooleanBuilder<'a> {
         crate::builder::wire_path_topo_ds::perform_internal_shapes(
             &mut wfs, &internal_wire_groups, &segments_topo, tool, face_idx, ds);
 
-        // ✅ OCCT-aligned: ComputeState — classify each WireFace against opposing solid.
-        //   OCCT BOPAlgo_Builder::PerformInternal1 classifies each split face via
-        //   BOPTools_AlgoTools::ComputeState then filters via classification_keep_policy.
-        //   rcad: find an interior UV point (outer polygon minus hole polygons), map to 3D,
-        //   offset inward along face normal, and classify against opposing solid faces.
-        let face_surf = ds.faces[face_idx].surface.clone();
-        let normal = ds.faces[face_idx].normal;
-        let opposing_faces: Vec<usize> = if is_a {
-            (self.ds.a_face_count..self.ds.faces.len()).collect()
-        } else {
-            (0..self.ds.a_face_count).collect()
-        };
-        if !opposing_faces.is_empty() {
-            let source = if is_a { SourceSide::A } else { SourceSide::B };
-            wfs.retain(|wf| {
-                // Build UV polygons: outer boundary + hole boundaries
-                let outer_uvs: Vec<DVec2> = wf.outer_wire.iter().filter_map(|&si| {
-                    let seg = &segments[si];
-                    let pt = ds.vertices[seg.start_vertex].point;
-                    world_to_uv(&face_surf, pt)
-                }).collect();
-                let hole_uvs: Vec<Vec<DVec2>> = wf.inner_wires.iter().map(|iw| {
-                    iw.iter().filter_map(|&si| {
-                        let seg = &segments[si];
-                        world_to_uv(&face_surf, ds.vertices[seg.start_vertex].point)
-                    }).collect()
-                }).collect();
-                // Find interior sample point (outer polygon minus holes)
-                // ✅ OCCT-aligned: BOPTools_AlgoTools3D::PointInFace finds point
-                //   ON the face surface (no inward/outward offset).
-                let sample_pt = find_interior_3d(&outer_uvs, &hole_uvs, &face_surf, &normal)
-                    .unwrap_or_else(|| {
-                        let cent = wf.outer_wire.iter()
-                            .map(|&si| ds.vertices[segments[si].start_vertex].point)
-                            .sum::<DVec3>() / wf.outer_wire.len() as f64;
-                        cent
-                    });
-                let class = classify_point(sample_pt, &opposing_faces, ds);
-                self.classification_keep_policy(source, class, face_idx)
-            });
-        }
+        // OCCT form: BuilderFace::Perform keeps ALL WireFaces.  Classification against
+        // the opposing solid is done at the SOLID level (BuildRC), not per-face.
         // Build reverse lookup: DsEdge(sr) in segments_topo has sr.index = e_base + ei,
         // which cannot directly index ds.edges. Map ShapeRef.index -> DS edge index.
         // Must build before drop(segments) below.
