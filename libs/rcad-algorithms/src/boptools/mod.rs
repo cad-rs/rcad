@@ -1,4 +1,4 @@
-//! OCCT-aligned BOPTools helpers (BOPTools_AlgoTools, BOPTools_AlgoTools2D, BOPTools_AlgoTools3D).
+﻿//! OCCT-aligned BOPTools helpers (BOPTools_AlgoTools, BOPTools_AlgoTools2D, BOPTools_AlgoTools3D).
 //!
 //! These functions provide edge/face classification and p-curve utilities
 //! used by the boolean pipeline.
@@ -74,7 +74,7 @@ pub fn point_near_edge(
     edge_mid + normal * crate::tolerance::TOLERANCE_ABS * 10.0
 }
 
-/// ✅ OCCT-aligned: AdjustPCurveOnFace (BOPTools_AlgoTools2D.cxx L223-400).
+/// 鉁?OCCT-aligned: AdjustPCurveOnFace (BOPTools_AlgoTools2D.cxx L223-400).
 ///   OCCT evaluates the pcurve midpoint and shifts by the surface period
 ///   when the midpoint falls outside the face's UV domain.
 ///   Returns the adjusted pcurve if a shift was needed, or None.
@@ -156,7 +156,7 @@ pub fn adjust_pcurve_on_face(
     }
 }
 
-/// ✅ OCCT-aligned: HasCurveOnSurface (BOPTools_AlgoTools2D).
+/// 鉁?OCCT-aligned: HasCurveOnSurface (BOPTools_AlgoTools2D).
 ///   OCCT checks if the edge has a pcurve for the given face's surface.
 ///   rcad: check if edge has face_reps for the given face_idx.
 pub fn has_curve_on_surface(edge: &crate::bopds::ds::DSEdge, face_idx: usize) -> bool {
@@ -210,7 +210,7 @@ pub fn compute_state_point(pt: glam::DVec3, fi: &[usize], ds: &DS) -> crate::cla
 pub fn is_hole_wire(edges: &[crate::bopds::pave::PaveBlock]) -> bool { edges.len() == 1 }
 /// OCCT-aligned: Sense (BOPTools_AlgoTools).
 pub fn sense_orientation(dot: f64) -> i8 { if dot > 1e-10 { 1 } else if dot < -1e-10 { -1 } else { 0 } }
-/// ✅ OCCT-aligned: CorrectShapeTolerances (BOPTools_AlgoTools_1.cxx L389-423).
+/// 鉁?OCCT-aligned: CorrectShapeTolerances (BOPTools_AlgoTools_1.cxx L389-423).
 ///   OCCT propagates edge tolerances up to vertices and faces in parallel.
 ///   rcad: tolerance hierarchy finalization is integrated into the build pipeline
 ///   (rcad_kernel::tolerance).  Standalone call is a no-op since the pipeline
@@ -223,24 +223,24 @@ pub fn is_growth_shell(face_count: usize) -> bool { face_count > 0 }
 /// OCCT-aligned: IsGrowthWire (BOPAlgo_BuilderFace).
 pub fn is_growth_wire(edge_count: usize) -> bool { edge_count >= 3 }
 
-/// ✅ OCCT-aligned: BOPAlgo_Tools::FillInternals (cxx L1751-1908).
+/// 鉁?OCCT-aligned: BOPAlgo_Tools::FillInternals (cxx L1751-1908).
 ///
 /// Classify internal parts (V/E/F) against result solids and embed them:
-///   - VERTEX/EDGE classified IN → add as INTERNAL sub-shape of the solid.
-///   - FACE classified IN → group by connectivity into INTERNAL shells.
+///   - VERTEX/EDGE classified IN 鈫?add as INTERNAL sub-shape of the solid.
+///   - FACE classified IN 鈫?group by connectivity into INTERNAL shells.
 ///
 /// OCCT parameters:
-///   theSolids   — result solids (list of TopoDS_Shape/Solid).
-///   theParts    — internal parts from source solids (V/E/F).
-///   theImages   — split images map (original → split parts).
-///   theContext  — geometric context (IntTools_Context).
+///   theSolids   鈥?result solids (list of TopoDS_Shape/Solid).
+///   theParts    鈥?internal parts from source solids (V/E/F).
+///   theImages   鈥?split images map (original 鈫?split parts).
+///   theContext  鈥?geometric context (IntTools_Context).
 ///
 /// rcad equivalents:
-///   solids           — mutable kernel solids to embed internal shapes into.
-///   parts            — (type, DS-index) pairs; type: 0=VERTEX, 1=EDGE, 2=FACE.
-///   images           — DS my_images: maps original DS index → split image indices.
-///   ds               — DS for geometry & classification.
-///   solid_ds_faces   — per-solid list of DS face indices for classification.
+///   solids           鈥?mutable kernel solids to embed internal shapes into.
+///   parts            鈥?(type, DS-index) pairs; type: 0=VERTEX, 1=EDGE, 2=FACE.
+///   images           鈥?DS my_images: maps original DS index 鈫?split image indices.
+///   ds               鈥?DS for geometry & classification.
+///   solid_ds_faces   鈥?per-solid list of DS face indices for classification.
 pub fn fill_internals(
     solids: &mut [rcad_kernel::Solid],
     parts: &[(u8, usize)],
@@ -253,7 +253,7 @@ pub fn fill_internals(
         return;
     }
 
-    // === OCCT L1763-1775: aMSSolids — IndexedMap of V/E/F already in solids ===
+    // === OCCT L1763-1775: aMSSolids 鈥?IndexedMap of V/E/F already in solids ===
     //   rcad: collect all DS face indices used by result solids AND their
     //   boundary vertices/edges (OCCT: TopExp::MapShapes for V/E/F).
     let mut a_ms_solids_vertices: std::collections::HashSet<usize> = std::collections::HashSet::new();
@@ -326,7 +326,7 @@ pub fn fill_internals(
                 }
             }
             _ => {
-                // OCCT L1809-1815: explode compound/other → sub-shapes
+                // OCCT L1809-1815: explode compound/other 鈫?sub-shapes
                 //   rcad: not supported; parts must be flat V/E/F.
             }
         }
@@ -388,7 +388,7 @@ pub fn fill_internals(
                     //   topods::TSolidData.internal_vertices.push(aPart)
                     //   (not yet wired; TSolidData field added in topods.rs)
                 } else if part.typ == 1 { // EDGE
-                    // OCCT: same pattern → topods::TSolidData.internal_edges
+                    // OCCT: same pattern 鈫?topods::TSolidData.internal_edges
                 }
                 // OCCT L1858: aLParts.Remove(itLP)
                 a_l_parts.swap_remove(i);
@@ -408,7 +408,7 @@ pub fn fill_internals(
         // OCCT L1875-1882: MakeCompound + Add faces
         let all_faces: Vec<usize> = a_faces.clone();
 
-        // OCCT L1884-1886: MakeConnexityBlocks — group by edge connectivity
+        // OCCT L1884-1886: MakeConnexityBlocks 鈥?group by edge connectivity
         let mut lcb: Vec<crate::bopds::ds::ConnexityBlock> = Vec::new();
         crate::bopds::shell_splitter::make_connexity_blocks(&all_faces, ds, &mut lcb);
 
@@ -445,7 +445,7 @@ pub fn fill_internals(
     }
 }
 
-/// ✅ OCCT-aligned: ComputeStateByOnePoint (BOPTools_AlgoTools.cxx L623-656).
+/// 鉁?OCCT-aligned: ComputeStateByOnePoint (BOPTools_AlgoTools.cxx L623-656).
 ///
 /// Classify a shape (V/E/F) against a solid's face set by computing
 /// a representative point on the shape and testing IN/OUT/ON against
@@ -467,7 +467,7 @@ pub fn compute_state_by_one_point(
     // OCCT L632-645: dispatch on shape type
     let pt = match shape_type {
         0 => {
-            // OCCT L634-636: VERTEX → use vertex point
+            // OCCT L634-636: VERTEX 鈫?use vertex point
             if shape_idx < ds.vertices.len() {
                 ds.vertices[shape_idx].point
             } else {
@@ -475,7 +475,7 @@ pub fn compute_state_by_one_point(
             }
         }
         1 => {
-            // OCCT L637-639: EDGE → use edge midpoint
+            // OCCT L637-639: EDGE 鈫?use edge midpoint
             if shape_idx < ds.edges.len() {
                 let e = &ds.edges[shape_idx];
                 let p1 = if e.start_vertex < ds.vertices.len() {
@@ -490,7 +490,7 @@ pub fn compute_state_by_one_point(
             }
         }
         2 => {
-            // OCCT L640-644: FACE → use face centroid
+            // OCCT L640-644: FACE 鈫?use face centroid
             if shape_idx < ds.faces.len() {
                 let f = &ds.faces[shape_idx];
                 if f.boundary_verts.is_empty() {
@@ -539,11 +539,11 @@ pub fn point_on_edge(edge: &crate::bopds::ds::DSEdge, t: f64) -> glam::DVec3 {
     edge.curve.point_at(t)
 }
 
-/// ✅ OCCT-aligned: IsInvertedSolid (BOPTools_AlgoTools.cxx L2398-2408).
+/// 鉁?OCCT-aligned: IsInvertedSolid (BOPTools_AlgoTools.cxx L2398-2408).
 ///
 /// Checks if a solid is inverted (normals point inward) by classifying
 /// an "infinite point" against the solid's face set.
-/// Returns true if the infinite point is IN (solid encloses infinity → inverted).
+/// Returns true if the infinite point is IN (solid encloses infinity 鈫?inverted).
 pub fn is_inverted_solid(solid_faces: &[usize], ds: &DS) -> bool {
     if solid_faces.is_empty() {
         return false;
@@ -570,19 +570,19 @@ pub fn is_inverted_solid(solid_faces: &[usize], ds: &DS) -> bool {
     state == crate::classify::Classification::In
 }
 
-/// ✅ OCCT-aligned: IntermediatePoint (BOPTools_AlgoTools2D / IntTools_Tools).
+/// 鉁?OCCT-aligned: IntermediatePoint (BOPTools_AlgoTools2D / IntTools_Tools).
 pub fn intermediate_point(t1: f64, t2: f64) -> f64 {
     0.5 * (t1 + t2)
 }
 
-/// ✅ OCCT-aligned: IntermediatePoint (IntTools_Tools.cxx L254-258).
+/// 鉁?OCCT-aligned: IntermediatePoint (IntTools_Tools.cxx L254-258).
 /// OCCT uses PAR_T = 0.43213918 instead of 0.5 for numerical stability.
 pub fn intermediate_point_occt(t1: f64, t2: f64) -> f64 {
     const PAR_T: f64 = 0.43213918;
     (1.0 - PAR_T) * t1 + PAR_T * t2
 }
 
-/// ✅ OCCT-aligned: IsDirsCoinside (IntTools_Tools.cxx L164-173).
+/// 鉁?OCCT-aligned: IsDirsCoinside (IntTools_Tools.cxx L164-173).
 /// Checks if two direction unit vectors are coincident within angular threshold.
 /// OCCT default threshold is 0.0002 (approx 0.011 degrees).
 pub fn is_dirs_coinside(d1: glam::DVec3, d2: glam::DVec3) -> bool {
@@ -591,14 +591,14 @@ pub fn is_dirs_coinside(d1: glam::DVec3, d2: glam::DVec3) -> bool {
     d < lim || (2.0 - d).abs() < lim
 }
 
-/// ✅ OCCT-aligned: IsDirsCoinside with custom threshold (IntTools_Tools.cxx L177-187).
+/// 鉁?OCCT-aligned: IsDirsCoinside with custom threshold (IntTools_Tools.cxx L177-187).
 pub fn is_dirs_coinside_with_tol(d1: glam::DVec3, d2: glam::DVec3, d_lim: f64) -> bool {
     let d = (d1 - d2).length();
     d < d_lim || (2.0 - d).abs() < d_lim
 }
 
-/// ✅ OCCT-aligned: IsClosed (IntTools_Tools.cxx L78-102).
-/// Checks if a bounded 3D curve is closed (start point ≈ end point).
+/// 鉁?OCCT-aligned: IsClosed (IntTools_Tools.cxx L78-102).
+/// Checks if a bounded 3D curve is closed (start point 鈮?end point).
 pub fn is_curve_closed(curve: &Curve3, t_range: [f64; 2]) -> bool {
     let p1 = curve.point_at(t_range[0]);
     let p2 = curve.point_at(t_range[1]);
@@ -606,13 +606,13 @@ pub fn is_curve_closed(curve: &Curve3, t_range: [f64; 2]) -> bool {
     (p1 - p2).length_squared() < conf * conf
 }
 
-/// ✅ OCCT-aligned: IsOnPave (IntTools_Tools.cxx L579-589).
+/// 鉁?OCCT-aligned: IsOnPave (IntTools_Tools.cxx L579-589).
 /// Checks if parameter aT1 is within aTolerance of either range boundary.
 pub fn is_on_pave(t: f64, range: [f64; 2], tol: f64) -> bool {
     (range[0] - t).abs() < tol || (range[1] - t).abs() < tol
 }
 
-/// ✅ OCCT-aligned: IsInRange (IntTools_Tools.cxx L650-666).
+/// 鉁?OCCT-aligned: IsInRange (IntTools_Tools.cxx L650-666).
 /// Checks if either endpoint of range aR falls within aRRef (expanded by tolerance).
 pub fn is_in_range(r: [f64; 2], r_ref: [f64; 2], tol: f64) -> bool {
     let t_ref1 = r_ref[0] - tol;
@@ -620,7 +620,7 @@ pub fn is_in_range(r: [f64; 2], r_ref: [f64; 2], tol: f64) -> bool {
     (r[0] >= t_ref1 && r[0] <= t_ref2) || (r[1] >= t_ref1 && r[1] <= t_ref2)
 }
 
-/// ✅ OCCT-aligned: ComputeIntRange (IntTools_Tools.cxx L783-804).
+/// 鉁?OCCT-aligned: ComputeIntRange (IntTools_Tools.cxx L783-804).
 /// Computes intersection range tolerance from two tolerances and the angle
 /// between the surfaces at the intersection point.
 pub fn compute_int_range(tol1: f64, tol2: f64, angle: f64) -> f64 {
@@ -634,7 +634,7 @@ pub fn compute_int_range(tol1: f64, tol2: f64, angle: f64) -> f64 {
     a1 + a2
 }
 
-/// ✅ OCCT-aligned: CurveTolerance (IntTools_Tools.cxx L430-464).
+/// 鉁?OCCT-aligned: CurveTolerance (IntTools_Tools.cxx L430-464).
 /// Computes the max tolerance for a curve given the base tolerance.
 /// For non-parabola curves, returns aTolBase unchanged.
 pub fn curve_tolerance(curve: &Curve3, tol_base: f64) -> f64 {
@@ -727,18 +727,18 @@ pub fn get_face_off(
             if cfi == fi {
                 a_angle = std::f64::consts::PI;
             }
-            // (OCCT also has IsSame check — same face index matches that)
+            // (OCCT also has IsSame check 鈥?same face index matches that)
         }
 
-        // OCCT L1077-1081: if angle ≈ min_angle, can't reliably decide
+        // OCCT L1077-1081: if angle 鈮?min_angle, can't reliably decide
         let an_angle_criteria = 1e-12;
         if a_angle.abs() < an_angle_criteria
             || (a_angle - a_angle_min).abs() < an_angle_criteria
         {
-            // Ambiguous — but still usable (OCCT sets bRet=false but continues)
+            // Ambiguous 鈥?but still usable (OCCT sets bRet=false but continues)
         }
 
-        // OCCT L1083-1086: normalize to [0, 2π)
+        // OCCT L1083-1086: normalize to [0, 2蟺)
         if a_angle < 0.0 {
             a_angle = two_pi + a_angle;
         }
@@ -753,15 +753,15 @@ pub fn get_face_off(
     Some(a_sel_f)
 }
 
-/// ✅ OCCT-aligned: OrientFacesOnShell (BOPTools_AlgoTools.cxx L363-507).
+/// 鉁?OCCT-aligned: OrientFacesOnShell (BOPTools_AlgoTools.cxx L363-507).
 ///
 /// OCCT algorithm:
-///   1. Build edge→face map for the shell, deduplicate seam edges.
+///   1. Build edge鈫抐ace map for the shell, deduplicate seam edges.
 ///   2. For each non-degenerated edge with exactly 2 faces:
 ///      a. If both unprocessed: add first face to new shell.
 ///      b. Get Orientation(edge, face) for each face (FWD/REV in wire).
 ///      c. If one processed, one not:
-///         - Orientations equal → reverse the unprocessed face
+///         - Orientations equal 鈫?reverse the unprocessed face
 ///           (unless edge is closed in that face).
 ///         - Mark processed, add to shell.
 ///   3. For edges with != 2 faces: add remaining unprocessed faces.
@@ -778,7 +778,7 @@ pub fn orient_faces_on_shell(
     let mut a_processed: std::collections::HashSet<usize> = std::collections::HashSet::new();
     let mut a_shell_new: Vec<usize> = Vec::new();
 
-    // OCCT L370-377: TopExp::MapShapesAndAncestors → edge→face map
+    // OCCT L370-377: TopExp::MapShapesAndAncestors 鈫?edge鈫抐ace map
     let mut a_ef_map: std::collections::BTreeMap<usize, Vec<usize>> = std::collections::BTreeMap::new();
     for &fi in shell_faces.iter() {
         if let Some(face) = ds.faces.get(fi) {
@@ -871,11 +871,11 @@ pub fn is_split_to_reverse(original_normal: glam::DVec3, split_normal: glam::DVe
     original_normal.dot(split_normal) < 0.0
 }
 
-/// ✅ OCCT-aligned: ComputeToleranceOfCB (BOPAlgo_Tools.cxx L248-356).
+/// 鉁?OCCT-aligned: ComputeToleranceOfCB (BOPAlgo_Tools.cxx L248-356).
 ///
 /// OCCT algorithm:
 ///   1. Get reference PB's original edge tolerance as aTolMax.
-///   2. If no other PBs and no faces → return aTolMax.
+///   2. If no other PBs and no faces 鈫?return aTolMax.
 ///   3. Sample reference curve at 11 points.
 ///   4. For each OTHER PB: project points onto that edge's curve,
 ///      aTolNew = edge.tol + projection_distance.
@@ -939,7 +939,7 @@ pub fn compute_tolerance_of_cb(
     a_tol_max
 }
 
-/// ✅ OCCT-aligned: BOPTools_AlgoTools::TreatCompound (cxx:512-531).
+/// 鉁?OCCT-aligned: BOPTools_AlgoTools::TreatCompound (cxx:512-531).
 ///   Recursively flattens compounds into non-compound shapes.
 ///   The fence prevents duplicates when the same sub-shape appears
 ///   in multiple compounds (OCCT optional NCollection_Map parameter).
@@ -964,7 +964,7 @@ fn treat_compound_inner(
     }
 }
 
-/// Pubic wrapper — flattens a compound (with fence).
+/// Pubic wrapper 鈥?flattens a compound (with fence).
 pub fn treat_compound(
     shape: &topods::ShapeRef, brep: &topods::BRep,
 ) -> Vec<topods::ShapeRef> {
@@ -974,7 +974,7 @@ pub fn treat_compound(
     out
 }
 
-/// ✅ OCCT-aligned: BOPTools_AlgoTools::AreFacesSameDomain (cxx:1131-1197).
+/// 鉁?OCCT-aligned: BOPTools_AlgoTools::AreFacesSameDomain (cxx:1131-1197).
 ///   Checks if two faces are same-domain by comparing surface type,
 ///   normal direction, and vertex proximity.  OCCT uses PointInFace +
 ///   IsValidPointForFace; rcad approximates with vertex-distance check
@@ -994,7 +994,7 @@ pub fn are_faces_same_domain(fi_a: usize, fi_b: usize, ds: &DS) -> bool {
     max_dist < tol
 }
 
-/// ✅ OCCT-aligned: BOPTools_AlgoTools::CorrectRange (EE, cxx:284-360).
+/// 鉁?OCCT-aligned: BOPTools_AlgoTools::CorrectRange (EE, cxx:284-360).
 ///   Corrects the shrunk range of an edge-edge intersection pair by
 ///   adjusting for edge tolerance and curve resolution.
 ///   For line curves, returns the original range unchanged (lines need no correction).
@@ -1020,7 +1020,7 @@ pub fn correct_range_ee(
     if ct2 - ct1 < d_t { t_range } else { [ct1, ct2] }
 }
 
-/// ✅ OCCT-aligned: BOPTools_AlgoTools::CorrectRange (EF, cxx:364-400).
+/// 鉁?OCCT-aligned: BOPTools_AlgoTools::CorrectRange (EF, cxx:364-400).
 pub fn correct_range_ef(
     tol_face: f64, t_range: [f64; 2], curve: &Curve3,
 ) -> [f64; 2] {
@@ -1035,7 +1035,7 @@ pub fn correct_range_ef(
     if ct2 - ct1 < d_t { t_range } else { [ct1, ct2] }
 }
 
-/// ✅ OCCT-aligned: BOPTools_Set — set of shapes for same-domain dedup.
+/// 鉁?OCCT-aligned: BOPTools_Set 鈥?set of shapes for same-domain dedup.
 ///   OCCT BOPTools_Set.hxx: stores TopoDS_Shape handles + type filter.
 ///   rcad: stores DS face indices representing a solid's face group.
 ///   Used by BuildRC and BuildSplitSolids to identify identical solids
@@ -1054,7 +1054,7 @@ impl BOPToolsSet {
         BOPToolsSet { faces: Vec::new(), sum: 0 }
     }
 
-    /// OCCT: Add(theS, TopAbs_FACE) — adds a shape filtered by type.
+    /// OCCT: Add(theS, TopAbs_FACE) 鈥?adds a shape filtered by type.
     ///   rcad: adds a DS face index.
     pub fn add(&mut self, face_idx: usize) {
         // Maintain sorted order + dedup
@@ -1064,12 +1064,12 @@ impl BOPToolsSet {
         }
     }
 
-    /// OCCT: NbShapes() — returns the number of shapes in the set.
+    /// OCCT: NbShapes() 鈥?returns the number of shapes in the set.
     pub fn nb_shapes(&self) -> usize {
         self.faces.len()
     }
 
-    /// OCCT: IsEqual(theOther) — true if both sets contain the same shapes.
+    /// OCCT: IsEqual(theOther) 鈥?true if both sets contain the same shapes.
     pub fn is_equal(&self, other: &Self) -> bool {
         if self.faces.len() != other.faces.len() { return false; }
         self.sum == other.sum && self.faces == other.faces
@@ -1114,10 +1114,10 @@ impl std::fmt::Display for BOPToolsSet {
     }
 }
 
-/// ✅ OCCT-aligned: FindPlane from curve (BOPAlgo_Tools.cxx L910-970).
+/// 鉁?OCCT-aligned: FindPlane from curve (BOPAlgo_Tools.cxx L910-970).
 ///
 /// Finds the plane in which the curve lies.
-/// - Line: no unique plane → returns None.
+/// - Line: no unique plane 鈫?returns None.
 /// - Circle/Ellipse/Hyperbola/Parabola: normal = curve axis direction.
 /// - Other (BSpline etc.): cross two D1 tangents at different parameters.
 ///
@@ -1129,13 +1129,13 @@ pub fn find_plane(curve: &Curve3) -> Option<(glam::DVec3, glam::DVec3)> {
             None
         }
         Curve3::Circle(c) => {
-            // OCCT L923-925: Circle → normal = circle axis
+            // OCCT L923-925: Circle 鈫?normal = circle axis
             let normal = c.normal.normalize();
             let point = c.center;
             Some((normal, point))
         }
         Curve3::Ellipse(e) => {
-            // OCCT L926-928: Ellipse → normal = ellipse axis (major × minor)
+            // OCCT L926-928: Ellipse 鈫?normal = ellipse axis (major 脳 minor)
             let normal = e.major_dir.cross(e.normal).normalize();
             let point = e.center;
             Some((normal, point))
@@ -1170,7 +1170,7 @@ pub fn find_plane(curve: &Curve3) -> Option<(glam::DVec3, glam::DVec3)> {
     }
 }
 
-/// ✅ OCCT-aligned: FindEdgeTangent (BOPAlgo_Tools.cxx L875-904).
+/// 鉁?OCCT-aligned: FindEdgeTangent (BOPAlgo_Tools.cxx L875-904).
 ///
 /// Computes the tangent vector of a 3D curve at a suitable parameter.
 /// - For `Line`: direction is the line direction.
@@ -1179,7 +1179,7 @@ pub fn find_plane(curve: &Curve3) -> Option<(glam::DVec3, glam::DVec3)> {
 pub fn find_edge_tangent(curve: &Curve3) -> Option<glam::DVec3> {
     match curve {
         Curve3::Line(l) => {
-            // OCCT L882-886: Line → direction is defined by line direction
+            // OCCT L882-886: Line 鈫?direction is defined by line direction
             Some(l.direction.normalize())
         }
         _ => {
@@ -1205,7 +1205,7 @@ pub fn find_edge_tangent(curve: &Curve3) -> Option<glam::DVec3> {
     }
 }
 
-/// ✅ OCCT-aligned: WiresToFaces (BOPAlgo_Tools.cxx L665-799).
+/// 鉁?OCCT-aligned: WiresToFaces (BOPAlgo_Tools.cxx L665-799).
 ///
 /// Converts planar wires into faces grouped by coplanarity.
 ///
@@ -1232,10 +1232,10 @@ pub fn wires_to_faces(
     }
 
     // OCCT L676-683: caches for edge tangents, wire planes, wire tolerances
-    //   rcad: edge_idx → tangent direction
+    //   rcad: edge_idx 鈫?tangent direction
     let mut a_dm_edge_tgt: std::collections::HashMap<usize, glam::DVec3> =
         std::collections::HashMap::new();
-    //   wire_idx → (plane_normal, plane_point, tolerance)
+    //   wire_idx 鈫?(plane_normal, plane_point, tolerance)
     #[derive(Clone)]
     struct WirePlaneInfo {
         normal: glam::DVec3,
@@ -1627,7 +1627,7 @@ pub fn is_open_shell(
     shell_faces: &[usize],
     ds: &crate::bopds::ds::DS,
 ) -> bool {
-    // OCCT L2361: build edge→face map for the shell
+    // OCCT L2361: build edge鈫抐ace map for the shell
     let mut edge_face_count: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
     for &fi in shell_faces {
         if fi >= ds.faces.len() { continue; }
@@ -1643,7 +1643,7 @@ pub fn is_open_shell(
             }
         }
     }
-    // OCCT L2367-2391: an edge used by only one non-INTERNAL/EXTERNAL face → shell is open
+    // OCCT L2367-2391: an edge used by only one non-INTERNAL/EXTERNAL face 鈫?shell is open
     for &cnt in edge_face_count.values() {
         if cnt == 1 {
             return true;
@@ -1740,7 +1740,7 @@ pub fn compute_tolerance(
     face: &crate::bopds::ds::DSFace,
     ds: &crate::bopds::ds::DS,
 ) -> Option<(f64, f64)> {
-    // OCCT: BRepLib_CheckCurveOnSurface — check edge deviation from face surface
+    // OCCT: BRepLib_CheckCurveOnSurface 鈥?check edge deviation from face surface
     // rcad: sample the edge curve at multiple points and compute distance to face surface
     let n_samples = 23usize;
     let t_range = edge.t_range;
@@ -1883,7 +1883,7 @@ pub fn make_vertex_from_list(
         // OCCT L1793-1796: aVnew = first vertex
         return vertex_indices[0];
     }
-    // OCCT L1797-1804: BRepLib::BoundingVertex → midpoint + bounding tolerance
+    // OCCT L1797-1804: BRepLib::BoundingVertex 鈫?midpoint + bounding tolerance
     let mut sum = glam::DVec3::ZERO;
     let mut max_tol = 0.0f64;
     for &vi in vertex_indices {
@@ -1958,983 +1958,9 @@ pub fn update_vertex_from_vertex(
 ///
 /// b_pc1/b_pc2: if true, compute pcurve for that face; if false, skip.
 /// pcurve_a/pcurve_b: existing pcurves from intersection curve (may be None).
-pub fn make_pcurve(
-    ds: &mut crate::bopds::ds::DS,
-    ei: usize,
-    fi_a: usize,
-    fi_b: usize,
-    ci: usize,
-    b_pc1: bool,
-    b_pc2: bool,
-    pcurve_a: Option<&rcad_kernel::geom::Curve2d>,
-    pcurve_b: Option<&rcad_kernel::geom::Curve2d>,
-    pcurve_range_a: Option<[f64; 2]>,
-    pcurve_range_b: Option<[f64; 2]>,
-) {
-    if ei >= ds.edges.len() { return; }
-    let edge = &ds.edges[ei];
-    let t_range = edge.t_range;
-    let tol_e = edge.geom_tol;
 
-    for i in 0..2usize {
-        let b_pc = if i == 0 { b_pc1 } else { b_pc2 };
-        if !b_pc { continue; }
-
-        let fi = if i == 0 { fi_a } else { fi_b };
-        let src_pc = if i == 0 { pcurve_a } else { pcurve_b };
-        let src_range = if i == 0 { pcurve_range_a } else { pcurve_range_b };
-        let face = &ds.faces[fi];
-
-        // OCCT L1691-1701: get pcurve from intersection curve or build it
-        let pc = src_pc.cloned();
-
-        // Store pcurve on edge's face_reps
-        let pc_range = src_range.unwrap_or(t_range);
-        let rep = crate::bopds::ds::DSRepOnFace {
-            face_idx: fi,
-            pcurve: pc.clone().unwrap_or(rcad_kernel::geom::Curve2d::Line(
-                rcad_kernel::geom::Line2d { origin: glam::DVec2::ZERO, direction: glam::DVec2::X }
-            )),
-            pcurve2: None,
-            pcurve_range: pc_range,
-            start_param: pc_range[0],
-            end_param: pc_range[1],
-        };
-        ds.edges[ei].face_reps.push(rep);
-    }
-    // OCCT L1716: BRepLib::SameParameter(aE) — rcad: mark edge as needing param sync
-    ds.edges[ei].geom_tol = tol_e;
-}
-
-/// ✅ OCCT-aligned: IsClosed (BOPTools_AlgoTools2D_1.cxx L289-311).
-/// Checks if an edge appears twice in a face (closed seam edge on periodic surface).
-pub fn is_closed_2d(ei: usize, face_idx: usize, ds: &crate::bopds::ds::DS) -> bool {
-    // OCCT L293: BRep_Tool::IsClosed(aE, aF) — rcad: edge is closed when start==end
-    let edge = &ds.edges[ei];
-    if edge.start_vertex != edge.end_vertex { return false; }
-    // OCCT L299-307: count occurrences in the face's edges
-    let face = &ds.faces[face_idx];
-    let mut cnt = 0usize;
-    for &be in &face.boundary_edges {
-        if be == ei { cnt += 1; }
-    }
-    for wire in &face.inner_boundary_edges {
-        for &(be, _) in wire {
-            if be == ei { cnt += 1; }
-        }
-    }
-    cnt == 2
-}
-
-/// ✅ OCCT-aligned: AttachExistingPCurve (BOPTools_AlgoTools2D_1.cxx L44-160).
-/// Attaches pcurve from an old edge to a new edge on the given face.
-/// Handles orientation reversal and range adjustment.
-///
-/// Returns 0 on success, >0 on error (mirrors OCCT error codes).
-pub fn attach_existing_pcurve(
-    ds: &mut crate::bopds::ds::DS,
-    ei_new: usize,
-    ei_old: usize,
-    face_idx: usize,
-) -> i32 {
-    // OCCT L59-64: set orientations to FORWARD
-    // OCCT L66-71: get pcurve from old edge on face
-    let rep_old = {
-        if let Some(edge) = ds.edges.get(ei_old) {
-            edge.face_reps.iter().find(|r| r.face_idx == face_idx).cloned()
-        } else { return 1; }
-    };
-    let Some(rep) = rep_old else { return 1; };
-
-    // OCCT L75: IsSplitToReverse — check if new edge is reversed relative to old
-    let b_is_to_reverse = {
-        let old_edge = &ds.edges[ei_old];
-        let new_edge = &ds.edges[ei_new];
-        // OCCT: compares tangent vectors; rcad: compare start/end vertices
-        new_edge.start_vertex == old_edge.end_vertex
-            && new_edge.end_vertex == old_edge.start_vertex
-    };
-
-    let mut a_c2d = rep.pcurve.clone();
-    let mut t21 = rep.pcurve_range[0];
-    let mut t22 = rep.pcurve_range[1];
-
-    // OCCT L76-86: if reversed, reverse pcurve and swap parameters
-    if b_is_to_reverse {
-        a_c2d = reverse_curve_2d(&a_c2d);
-        t21 = rep.pcurve_range[1];
-        t22 = rep.pcurve_range[0];
-    }
-
-    // OCCT L88-94: SameRange — adjust pcurve range to match new edge's 3D curve range
-    let t11 = ds.edges[ei_new].t_range[0];
-    let t12 = ds.edges[ei_new].t_range[1];
-    let a_c2d_t = same_range_2d(&a_c2d, t21, t22, t11, t12);
-    if a_c2d_t.is_none() { return 2; }
-    let a_c2d_t = a_c2d_t.unwrap();
-
-    // OCCT L102-119: ComputeTolerance check
-    let a_new_tol = ds.edges[ei_new].geom_tol;
-    // rcad: sample pcurve deviation vs 3D curve (simplified)
-    let tol_sp = estimate_pcurve_deviation(&a_c2d_t, &ds.edges[ei_new].curve, t11, t12);
-    if (tol_sp > 10.0 * a_new_tol) && tol_sp > 0.1 { return 4; }
-
-    // OCCT L121-138: create temporary edge data, do SameParameter
-    // rcad: just copy the pcurve to the new edge with adjusted tolerance
-    ds.edges[ei_new].geom_tol = ds.edges[ei_new].geom_tol.max(a_new_tol);
-
-    // OCCT L140-149: handle closed edge (seam)
-    let b_is_closed = is_closed_2d(ei_old, face_idx, ds);
-    if b_is_closed {
-        let i_ret = update_closed_pcurve(ds, ei_new, ei_old, face_idx);
-        if i_ret != 0 { return 5; }
-    } else {
-        // OCCT L151: transfer pcurve (aBB.Transfert)
-        // Store the adjusted pcurve on the new edge
-        if let Some(edge) = ds.edges.get_mut(ei_new) {
-            if let Some(existing) = edge.face_reps.iter_mut().find(|r| r.face_idx == face_idx) {
-                existing.pcurve = a_c2d_t;
-                existing.pcurve_range = [t11, t12];
-            } else {
-                edge.face_reps.push(crate::bopds::ds::DSRepOnFace {
-                    face_idx,
-                    pcurve: a_c2d_t,
-                    pcurve2: None,
-                    pcurve_range: [t11, t12],
-                    start_param: t11,
-                    end_param: t12,
-                });
-            }
-        }
-    }
-
-    // OCCT L152-158: update vertex tolerances from new edge
-    let a_new_tol_final = ds.edges[ei_new].geom_tol;
-    let sv = ds.edges[ei_new].start_vertex;
-    let ev = ds.edges[ei_new].end_vertex;
-    if sv < ds.vertices.len() {
-        ds.vertices[sv].geom_tol = ds.vertices[sv].geom_tol.max(a_new_tol_final);
-    }
-    if ev < ds.vertices.len() {
-        ds.vertices[ev].geom_tol = ds.vertices[ev].geom_tol.max(a_new_tol_final);
-    }
-    0
-}
-
-/// ✅ OCCT-aligned: UpdateClosedPCurve (BOPTools_AlgoTools2D_1.cxx L164-285).
-/// For a closed (seam) edge on a face, builds the second (shifted) pcurve.
-/// Returns 0 on success.
-pub fn update_closed_pcurve(
-    ds: &mut crate::bopds::ds::DS,
-    ei_new: usize,
-    ei_old: usize,
-    face_idx: usize,
-) -> i32 {
-    let _a_tol = ds.edges[ei_new].geom_tol;
-    // OCCT L188: get pcurve of new edge on face
-    let rep_new = {
-        let edge = &ds.edges[ei_new];
-        edge.face_reps.iter().find(|r| r.face_idx == face_idx).cloned()
-    };
-    let Some(a_c2d_old_ct) = rep_new else { return 1; };
-
-    // OCCT L191: get pcurve of old edge on face
-    let rep_old = {
-        let edge = &ds.edges[ei_old];
-        edge.face_reps.iter().find(|r| r.face_idx == face_idx).cloned()
-    };
-    let Some(a_c2d_old) = rep_old else { return 1; };
-
-    // OCCT L197-202: get both pcurves from old edge (FWD and REV orientations)
-    // rcad: the second pcurve is stored in pcurve2
-    let a_c2d_s1 = a_c2d_old.pcurve.clone();
-    let a_c2d_s2 = a_c2d_old.pcurve2.clone().unwrap_or_else(|| a_c2d_old.pcurve.clone());
-    let a_ts1 = a_c2d_old.pcurve_range[0];
-    let a_ts2 = a_c2d_old.pcurve_range[1];
-
-    // OCCT L204-211: evaluate mid-point and tangent of both pcurves
-    let a_ts = 0.5 * (a_ts1 + a_ts2);
-    let p2d_s1 = a_c2d_s1.point_at(a_ts);
-    let p2d_s2 = a_c2d_s2.point_at(a_ts);
-    let a_p2d_s1 = glam::DVec2::new(p2d_s1.x, p2d_s1.y);
-    let a_p2d_s2 = glam::DVec2::new(p2d_s2.x, p2d_s2.y);
-
-    // OCCT L210-211: translation vector between the two pcurves
-    let a_v2d_s12 = a_p2d_s2 - a_p2d_s1;
-
-    // OCCT L214-220: determine U-closed or V-closed direction
-    let _sc_pr = a_v2d_s12.dot(glam::DVec2::X);
-    let _b_u_closed = true; // rcad: not distinguishing U/V for simplicity
-
-    // OCCT L226-240: sample seam point, project to new edge
-    let a_t = 0.5 * (a_c2d_old_ct.pcurve_range[0] + a_c2d_old_ct.pcurve_range[1]);
-
-    // OCCT L242-247: create translated pcurve copy
-    let a_c2d_new = a_c2d_old_ct.pcurve.clone();
-    // Translate: shift the control points
-    let shifted = shift_curve_2d(&a_c2d_new, a_v2d_s12);
-
-    // OCCT L248-256: determine order of the two pcurves based on tangent alignment
-    // For rcad: store both pcurves on the new edge's face_reps
-    if let Some(edge) = ds.edges.get_mut(ei_new) {
-        if let Some(existing) = edge.face_reps.iter_mut().find(|r| r.face_idx == face_idx) {
-            existing.pcurve2 = Some(shifted);
-        }
-    }
-
-    0
-}
-
-// --- Helper functions for pcurve manipulation ---
-
-/// Reverse a 2D curve (swap parameter direction).
-fn reverse_curve_2d(curve: &rcad_kernel::geom::Curve2d) -> rcad_kernel::geom::Curve2d {
-    match curve {
-        rcad_kernel::geom::Curve2d::Line(l) => {
-            rcad_kernel::geom::Curve2d::Line(rcad_kernel::geom::Line2d {
-                origin: l.origin,
-                direction: -l.direction,
-            })
-        }
-        rcad_kernel::geom::Curve2d::Circle(c) => {
-            // Reversed circle: same center, radius, negate direction
-            rcad_kernel::geom::Curve2d::Circle(rcad_kernel::geom::Circle2d {
-                center: c.center,
-                radius: c.radius,
-            })
-        }
-        rcad_kernel::geom::Curve2d::BSpline(b) => {
-            let mut b2 = b.clone();
-            b2.control_points.reverse();
-            let k1 = b2.knots[0];
-            let k2 = b2.knots[b2.knots.len() - 1];
-            b2.knots = b2.knots.iter().map(|&k| k1 + k2 - k).collect();
-            rcad_kernel::geom::Curve2d::BSpline(b2)
-        }
-        rcad_kernel::geom::Curve2d::Bezier(bz) => {
-            let mut b2 = bz.clone();
-            b2.control_points.reverse();
-            rcad_kernel::geom::Curve2d::Bezier(b2)
-        }
-        _ => curve.clone(),
-    }
-}
-
-/// Adjust pcurve range to match target range (OCCT GeomLib::SameRange equivalent).
-fn same_range_2d(
-    curve: &rcad_kernel::geom::Curve2d,
-    _src_t1: f64,
-    _src_t2: f64,
-    _dst_t1: f64,
-    _dst_t2: f64,
-) -> Option<rcad_kernel::geom::Curve2d> {
-    // For rcad: pcurves are stored with their range directly.
-    // If the source and destination ranges differ, we could reparametrize,
-    // but for now return the curve as-is with the target range.
-    Some(curve.clone())
-}
-
-/// Estimate deviation of pcurve from 3D curve by sampling.
-fn estimate_pcurve_deviation(
-    _pcurve: &rcad_kernel::geom::Curve2d,
-    _curve3: &rcad_kernel::geom::Curve3,
-    _t1: f64,
-    _t2: f64,
-) -> f64 {
-    // OCCT uses IntTools_Tools::ComputeTolerance with 3D curve + pcurve + surface.
-    // rcad: simplified — returns 0 (no deviation). Callers can use compute_tolerance.
-    0.0
-}
-
-/// Shift a 2D curve by a vector (translate all control points).
-fn shift_curve_2d(
-    curve: &rcad_kernel::geom::Curve2d,
-    shift: glam::DVec2,
-) -> rcad_kernel::geom::Curve2d {
-    match curve {
-        rcad_kernel::geom::Curve2d::Line(l) => {
-            rcad_kernel::geom::Curve2d::Line(rcad_kernel::geom::Line2d {
-                origin: l.origin + shift,
-                direction: l.direction,
-            })
-        }
-        rcad_kernel::geom::Curve2d::Circle(c) => {
-            rcad_kernel::geom::Curve2d::Circle(rcad_kernel::geom::Circle2d {
-                center: c.center + shift,
-                radius: c.radius,
-            })
-        }
-        rcad_kernel::geom::Curve2d::BSpline(b) => {
-            let mut b2 = b.clone();
-            for p in &mut b2.control_points {
-                *p += shift;
-            }
-            rcad_kernel::geom::Curve2d::BSpline(b2)
-        }
-        rcad_kernel::geom::Curve2d::Bezier(bz) => {
-            let mut b2 = bz.clone();
-            for p in &mut b2.control_points {
-                *p += shift;
-            }
-            rcad_kernel::geom::Curve2d::Bezier(b2)
-        }
-        _ => curve.clone(),
-    }
-}
-
-/// OCCT-aligned: CorrectTolerances (BOPTools_AlgoTools_1.cxx L309-317).
-/// Top-level tolerance correction: CorrectPointOnCurve + CorrectCurveOnSurface.
-/// In rcad, delegates to kernel tolerance correction pipeline.
-pub fn correct_tolerances(
-    ds: &mut crate::bopds::ds::DS,
-    _map_to_avoid: &std::collections::HashSet<usize>,
-    _max_tol: f64,
-) {
-    // OCCT L315-316: CorrectPointOnCurve → CorrectCurveOnSurface
-    // rcad: vertex-on-curve check → edge-on-surface check
-    for ei in 0..ds.edges.len() {
-        let curve = ds.edges[ei].curve.clone();
-        let sv = ds.edges[ei].start_vertex;
-        let ev = ds.edges[ei].end_vertex;
-        let vp_sv = ds.edges[ei].vertex_params.get(&sv).copied();
-        let vp_ev = ds.edges[ei].vertex_params.get(&ev).copied();
-        if let Some(t) = vp_sv {
-            update_vertex_from_curve(ds, sv, &curve, t);
-        }
-        if let Some(t) = vp_ev {
-            update_vertex_from_curve(ds, ev, &curve, t);
-        }
-    }
-    // rcad: edge-on-surface check (simplified)
-    for fi in 0..ds.faces.len() {
-        let face_edges: Vec<usize> = ds.faces[fi].boundary_edges.clone();
-        for &ei in &face_edges {
-            let has_rep = ds.edges.get(ei).map_or(false, |e| e.face_reps.iter().any(|r| r.face_idx == fi));
-            if has_rep {
-                // Sample tolerance available via compute_tolerance
-            }
-        }
-    }
-}
-
-/// OCCT-aligned: CorrectPointOnCurve (BOPTools_AlgoTools_1.cxx L322-344).
-/// Iterates all edges in DS, checks vertex distances to 3D curve,
-/// updates vertex tolerance if needed.
-pub fn correct_point_on_curve(
-    ds: &mut crate::bopds::ds::DS,
-    _map_to_avoid: &std::collections::HashSet<usize>,
-    max_tol: f64,
-) {
-    // OCCT L331-339: iterate TopAbs_EDGE sub-shapes, for each call CheckEdge
-    for ei in 0..ds.edges.len() {
-        let a_tol_e = ds.edges[ei].geom_tol;
-        let start_vi = ds.edges[ei].start_vertex;
-        let end_vi = ds.edges[ei].end_vertex;
-        let t_range = ds.edges[ei].t_range;
-        let vp_sv = ds.edges[ei].vertex_params.get(&start_vi).copied();
-        let vp_ev = ds.edges[ei].vertex_params.get(&end_vi).copied();
-        let curve = ds.edges[ei].curve.clone();
-        // Check each vertex
-        for &vi in &[start_vi, end_vi] {
-            if vi >= ds.vertices.len() { continue; }
-            let v_pt = ds.vertices[vi].point;
-            let a_tol_v = ds.vertices[vi].geom_tol;
-            let mut a_tol = a_tol_v.max(a_tol_e);
-            let dd = 0.1 * a_tol;
-            a_tol *= a_tol;
-            // Check distance from vertex point to curve at its parameter
-            let t_vi = if vi == start_vi { vp_sv } else { vp_ev };
-            if let Some(t) = t_vi {
-                let pc = curve.point_at(t);
-                let d2 = (v_pt - pc).length_squared();
-                if d2 > a_tol {
-                    let new_tol = d2.sqrt() + dd;
-                    if new_tol < max_tol && vi < ds.vertices.len() {
-                        ds.vertices[vi].geom_tol = ds.vertices[vi].geom_tol.max(new_tol);
-                    }
-                }
-            }
-            // Check distance from vertex to curve endpoints
-            for &t_end in &[t_range[0], t_range[1]] {
-                let p_end = curve.point_at(t_end);
-                let d2 = (v_pt - p_end).length_squared();
-                if d2 > a_tol {
-                    let new_tol = d2.sqrt() + dd;
-                    if new_tol < max_tol && vi < ds.vertices.len() {
-                        ds.vertices[vi].geom_tol = ds.vertices[vi].geom_tol.max(new_tol);
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// OCCT-aligned: CorrectCurveOnSurface (BOPTools_AlgoTools_1.cxx L348-385).
-/// Iterates faces and their edges, corrects pcurve deviation tolerances.
-pub fn correct_curve_on_surface(
-    ds: &mut crate::bopds::ds::DS,
-    _map_to_avoid: &std::collections::HashSet<usize>,
-    max_tol: f64,
-) {
-    // OCCT L358-378: iterate TopAbs_FACE sub-shapes
-    for fi in 0..ds.faces.len() {
-        let face_edges: Vec<usize> = ds.faces[fi].boundary_edges.clone();
-        let face_surface = ds.faces[fi].surface.clone();
-        for &ei in &face_edges {
-            if ei >= ds.edges.len() { continue; }
-            let edge = &ds.edges[ei];
-            let edge_clone = edge.clone();
-            let a_new_tol = edge.geom_tol;
-            drop(edge);
-            if let Some((max_dist, _)) = compute_tolerance(&edge_clone, &ds.faces[fi], ds) {
-                let updated_tol = max_dist + 0.1 * max_dist;
-                if updated_tol > a_new_tol && updated_tol < max_tol {
-                    ds.edges[ei].geom_tol = updated_tol;
-                }
-            }
-        }
-    }
-}
-
-/// OCCT-aligned: ComputeState for point vs solid (BOPTools_AlgoTools.cxx L790-803).
-/// Classifies a 3D point against a set of face indices representing a solid.
-pub fn compute_state_point_against_faces(
-    point: glam::DVec3,
-    solid_face_indices: &[usize],
-    ds: &crate::bopds::ds::DS,
-) -> crate::classify::Classification {
-    crate::classify::classify_point(point, solid_face_indices, ds)
-}
-
-/// OCCT-aligned: IsSplitToReverseWithWarn (BOPTools_AlgoTools.cxx L1294-1312).
-/// Wrapper around is_split_to_reverse that logs warnings on error.
-pub fn is_split_to_reverse_with_warn(
-    split_normal: glam::DVec3,
-    original_normal: glam::DVec3,
-) -> bool {
-    // OCCT: calls IsSplitToReverse(theSplit, theShape, &anErr)
-    //   if (anErr != 0) → add BOPAlgo_AlertUnableToOrientTheShape warning
-    // rcad: simple dot-product check matching OCCT L1427
-    is_split_to_reverse(original_normal, split_normal)
-}
-
-/// OCCT-aligned: Dimensions (BOPTools_AlgoTools.hxx L546-547).
-/// Returns the min and max dimension of sub-shapes in the solid.
-pub fn dimensions(solid_face_indices: &[usize], ds: &crate::bopds::ds::DS) -> (i32, i32) {
-    let mut d_min = 3i32;
-    let mut d_max = 0i32;
-    for &fi in solid_face_indices {
-        if fi >= ds.faces.len() { continue; }
-        // FACE has dimension 2
-        d_min = d_min.min(2);
-        d_max = d_max.max(2);
-        for &ei in &ds.faces[fi].boundary_edges {
-            // EDGE has dimension 1
-            d_min = d_min.min(1);
-            d_max = d_max.max(1);
-            if ei < ds.edges.len() {
-                let e = &ds.edges[ei];
-                if e.start_vertex < ds.vertices.len() {
-                    d_min = d_min.min(0);
-                    d_max = d_max.max(0);
-                }
-                if e.end_vertex < ds.vertices.len() {
-                    d_min = d_min.min(0);
-                }
-            }
-        }
-    }
-    (d_min, d_max)
-}
-
-/// OCCT-aligned: Dimension (BOPTools_AlgoTools.hxx L550).
-/// Returns the uniform dimension of shapes in the solid. If mixed, returns -1.
-pub fn dimension(solid_face_indices: &[usize], ds: &crate::bopds::ds::DS) -> i32 {
-    let (d_min, d_max) = dimensions(solid_face_indices, ds);
-    if d_min == d_max { d_min } else { -1 }
-}
-
-/// OCCT-aligned: DoSplitSEAMOnFace (BOPTools_AlgoTools3D.hxx L43-49).
-/// Checks if a split edge should be treated as a seam edge on a periodic surface.
-/// Returns true if the edge lies on the parametric seam (U=0 or U=2π).
-pub fn do_split_seam_on_face(
-    ei: usize,
-    face_idx: usize,
-    ds: &crate::bopds::ds::DS,
-) -> bool {
-    if ei >= ds.edges.len() || face_idx >= ds.faces.len() { return false; }
-    let edge = &ds.edges[ei];
-    let face = &ds.faces[face_idx];
-    let uv_s = crate::builder::world_to_uv(&face.surface, ds.vertices[edge.start_vertex].point);
-    let uv_e = crate::builder::world_to_uv(&face.surface, ds.vertices[edge.end_vertex].point);
-    let (Some(uva), Some(uvb)) = (uv_s, uv_e) else { return false };
-    let seam_tol = 1e-6;
-    let on_seam = |u: f64| u.abs() < seam_tol || (u - std::f64::consts::TAU).abs() < seam_tol;
-    on_seam(uva.x) && on_seam(uvb.x)
-}
-
-/// OCCT-aligned: PointOnSurface (BOPTools_AlgoTools2D.cxx L107-122).
-/// Evaluates UV parameters of an edge on a face at the given edge parameter.
-pub fn point_on_surface(
-    ds: &crate::bopds::ds::DS,
-    ei: usize,
-    face_idx: usize,
-    t: f64,
-) -> Option<glam::DVec2> {
-    let _edge = ds.edges.get(ei)?;
-    let _face = ds.faces.get(face_idx)?;
-    // Get pcurve from edge's face_reps
-    let rep = ds.edges[ei].face_reps.iter().find(|r| r.face_idx == face_idx)?;
-    let pt = rep.pcurve.point_at(t);
-    Some(glam::DVec2::new(pt.x, pt.y))
-}
-
-/// ✅ OCCT-aligned: SenseFlag (BOPTools_AlgoTools3D.cxx L380-402).
-/// Returns 1 if normals point same direction, -1 if opposite, 0 if not coincident.
-pub fn sense_flag(n1: glam::DVec3, n2: glam::DVec3) -> i8 {
-    // OCCT L384: IntTools_Tools::IsDirsCoinside — checks parallelism
-    let dot_abs = n1.dot(n2).abs();
-    let len1 = n1.length_squared();
-    let len2 = n2.length_squared();
-    if len1 < 1e-30 || len2 < 1e-30 { return 0; }
-    let cos_angle = dot_abs / (len1 * len2).sqrt();
-    if cos_angle < 0.9999 { return 0; } // not coincident
-    // OCCT L392-401: check scalar product sign
-    let sc_pr = n1.dot(n2);
-    if sc_pr < 0.0 { -1 } else if sc_pr > 0.0 { 1 } else { -1 }
-}
-
-/// ✅ OCCT-aligned: GetNormalToSurface (BOPTools_AlgoTools3D.cxx L406-439).
-/// Computes the normal to a surface at UV using the surface evaluation.
-pub fn get_normal_to_surface(
-    surface: &rcad_kernel::geom::Surface3,
-    u: f64,
-    v: f64,
-) -> Option<glam::DVec3> {
-    use rcad_kernel::geom::SurfaceEval;
-    let normal = surface.normal_at(u, v);
-    if normal.length_squared() < 1e-30 { None } else { Some(normal.normalize()) }
-}
-
-/// ✅ OCCT-aligned: GetApproxNormalToFaceOnEdge (BOPTools_AlgoTools3D.cxx L443-494).
-/// Computes the approximate normal to a face near an edge by evaluating
-/// the surface at a point offset from the edge toward the face interior.
-pub fn get_approx_normal_to_face_on_edge(
-    ds: &crate::bopds::ds::DS,
-    ei: usize,
-    face_idx: usize,
-) -> Option<(glam::DVec3, glam::DVec3)> {
-    let edge = ds.edges.get(ei)?;
-    let face = ds.faces.get(face_idx)?;
-    let t_mid = 0.5 * (edge.t_range[0] + edge.t_range[1]);
-    let edge_mid = edge.curve.point_at(t_mid);
-    let normal = get_normal_to_face_on_edge(&face.surface, face.normal, edge_mid);
-    let offset_pt = edge_mid + normal * crate::tolerance::TOLERANCE_ABS * 10.0;
-    Some((offset_pt, normal))
-}
-
-/// ✅ OCCT-aligned: MinStepIn2d (BOPTools_AlgoTools3D.hxx L215).
-/// Returns the minimum step used in 2D computations (1e-5).
-pub fn min_step_in_2d() -> f64 {
-    1e-5
-}
-
-/// ✅ OCCT-aligned: IsEmptyShape (BOPTools_AlgoTools3D.cxx L732-788).
-/// Returns true if a shape has no geometry or is empty.
-pub fn is_empty_face(face: &crate::bopds::ds::DSFace) -> bool {
-    face.boundary_edges.is_empty()
-}
-
-/// ✅ OCCT-aligned: IsEmptyShape for a general DS face list.
-pub fn is_empty_shape(shape_faces: &[usize], ds: &crate::bopds::ds::DS) -> bool {
-    if shape_faces.is_empty() { return true; }
-    // OCCT L732-788: calls HasGeometry recursively
-    // rcad: check if any face has boundary edges
-    shape_faces.iter().all(|&fi| {
-        ds.faces.get(fi).map_or(true, |f| f.boundary_edges.is_empty())
-    })
-}
-
-/// OCCT-aligned: IsInternalFace (BOPTools_AlgoTools.cxx L807-891).
-///
-/// Checks if face `fi` is internal to a solid described by `solid_face_indices`.
-/// Uses two-level classification:
-///   Level 1: edge-based angle method — for edges on the solid boundary,
-///            finds adjacent face pair and checks if candidate face is internal.
-///   Level 2: ComputeState — find edge not on solid, classify mid-point;
-///            or PointInFace → classify_point.
-///
-/// Returns: Some(true) = IN, Some(false) = OUT, None = unable to determine.
-pub fn is_internal_face_against_solid(
-    fi: usize,
-    solid_face_indices: &[usize],
-    ds: &crate::bopds::ds::DS,
-) -> Option<bool> {
-    // OCCT L815-826: build MEF for the solid (edge→face list)
-    let mut a_mef: std::collections::BTreeMap<usize, Vec<usize>> = std::collections::BTreeMap::new();
-    for &sfi in solid_face_indices {
-        if let Some(face) = ds.faces.get(sfi) {
-            for &ei in &face.boundary_edges {
-                a_mef.entry(ei).or_default().push(sfi);
-            }
-        }
-    }
-    // Deduplicate per edge
-    for flist in a_mef.values_mut() {
-        flist.sort_unstable();
-        flist.dedup();
-    }
-
-    let face = &ds.faces[fi];
-
-    // OCCT L828-874: try to find edge from face in MEF
-    let mut i_ret = 0i32; // 0=not IN, 1=IN, 2=unable
-    let mut found_edge = None;
-
-    for &ei in &face.boundary_edges {
-        let a_or = ds.edges.get(ei).map(|e| e.is_internal).unwrap_or(false);
-        if a_or { continue; } // TopAbs_INTERNAL → skip
-        if ds.is_edge_degenerated(ei) { continue; }
-
-        if let Some(a_lf) = a_mef.get(&ei) {
-            let a_nb_f = a_lf.len();
-            if a_nb_f == 1 {
-                // OCCT L851-861: single neighbor face — check if edge is INTERNAL in that face
-                let a_f1 = a_lf[0];
-                // Use GetEdgeOnFace to find edge orientation in that face
-                let e_on_f1 = if a_f1 < ds.faces.len() {
-                    crate::boptools::get_edge_off(ei, &ds.edges, &ds.faces[a_f1])
-                } else { None };
-                if let Some(ei_f1) = e_on_f1 {
-                    if ds.edges[ei_f1].is_internal {
-                        // Edge is INTERNAL in neighbor face → face is internal
-                        i_ret = is_internal_face_core(fi, ei, a_f1, a_f1, ds);
-                        found_edge = Some(ei);
-                        break;
-                    }
-                }
-                // Edge is not INTERNAL in the only neighbor → not a candidate
-                continue;
-            } else if a_nb_f >= 2 {
-                // OCCT L864-873: two+ neighbor faces — use angle-based method
-                let a_f1 = a_lf[0];
-                let a_f2 = a_lf[1];
-                i_ret = is_internal_face_core(fi, ei, a_f1, a_f2, ds);
-                if i_ret != 2 {
-                    found_edge = Some(ei);
-                    break;
-                }
-            }
-        }
-    }
-
-    if let Some(_ei) = found_edge {
-        if i_ret != 2 {
-            return Some(i_ret == 1);
-        }
-    }
-
-    // OCCT L882-891: fall back to ComputeState
-    let state = compute_state_face_against_solid(fi, solid_face_indices, ds);
-    Some(state == crate::classify::Classification::In)
-}
-
-/// OCCT-aligned: IsInternalFace (BOPTools_AlgoTools.cxx L939-990).
-/// Core implementation: check if face `the_face` is internal relative to
-/// adjacent faces `the_face1` and `the_face2` sharing `the_edge`.
-/// Returns 0=not IN, 1=IN, 2=unable.
-pub fn is_internal_face_core(
-    the_face: usize,
-    the_edge: usize,
-    the_face1: usize,
-    the_face2: usize,
-    ds: &crate::bopds::ds::DS,
-) -> i32 {
-    // OCCT L945-966: get edge copies for both faces with proper orientation
-    let a_e1_on_f1 = if the_face1 < ds.faces.len() {
-        crate::boptools::get_edge_off(the_edge, &ds.edges, &ds.faces[the_face1])
-    } else { None };
-    if a_e1_on_f1.is_none() { return 0; }
-    let a_e1 = a_e1_on_f1.unwrap();
-
-    let is_internal = ds.edges.get(a_e1).map(|e| e.is_internal).unwrap_or(false);
-    if is_internal {
-        // OCCT L952-956: INTERNAL edge → create both orientations
-        // rcad: just use the edge as-is for both
-    }
-
-    let a_e2 = if the_face1 == the_face2 {
-        // OCCT L958-962: same face → both orientations
-        a_e1
-    } else if the_face2 < ds.faces.len() {
-        crate::boptools::get_edge_off(the_edge, &ds.edges, &ds.faces[the_face2])
-            .unwrap_or(a_e1)
-    } else { a_e1 };
-
-    // OCCT L968-974: build candidate list: (edge, face) pairs
-    let mut lcs_off: Vec<(usize, usize)> = Vec::new();
-    lcs_off.push((the_edge, the_face));  // (theE1, theFace)
-    lcs_off.push((a_e2, the_face2));      // (aE2, theFace2)
-
-    // OCCT L976-989: GetFaceOff — find the face with minimal angle
-    let a_f_off = crate::boptools::get_face_off(a_e1, the_face1, &lcs_off, ds);
-
-    match a_f_off {
-        Some(f) if f == the_face => 1,  // face is internal
-        Some(_) => 0,                    // not internal
-        None => 2,                       // unable to determine
-    }
-}
-
-/// OCCT-aligned: IsInternalFace (BOPTools_AlgoTools.cxx L895-935).
-/// Checks if face `the_face` is internal relative to a list of face candidates
-/// sharing `the_edge`.
-pub fn is_internal_face_against_list(
-    the_face: usize,
-    the_edge: usize,
-    candidate_faces: &[usize],
-    ds: &crate::bopds::ds::DS,
-) -> i32 {
-    let a_nb_f = candidate_faces.len();
-    if a_nb_f == 2 {
-        // OCCT L906-910: exactly 2 → direct pairing
-        is_internal_face_core(the_face, the_edge, candidate_faces[0], candidate_faces[1], ds)
-    } else {
-        // OCCT L914-933: more than 2 → pair them via FindFacePairs
-        // rcad: iterate all pairs
-        for i in 0..candidate_faces.len() {
-            for j in (i + 1)..candidate_faces.len() {
-                let i_ret = is_internal_face_core(the_face, the_edge, candidate_faces[i], candidate_faces[j], ds);
-                if i_ret != 0 {
-                    return i_ret;
-                }
-            }
-        }
-        0
-    }
-}
-
-/// ✅ OCCT-aligned: OrientEdgesOnWire (BOPTools_AlgoTools.cxx L262-359).
-///
-/// OCCT algorithm:
-///   1. Build vertex→edge map (MapShapesAndAncestors VERTEX→EDGE).
-///   2. For each edge: add to new wire, get V1/V2.
-///   3. If closed edge (V1==V2): skip adjacency walk.
-///   4. For each vertex direction:
-///      - While vertex has exactly 2 incident edges:
-///        - Find the unused edge, orient to connect (end→start).
-///        - Move to next vertex.
-///
-/// rcad: operates on DS edge indices + forward flags.
-///   edges: mutable list of (edge_idx, forward) pairs.
-pub fn orient_edges_on_wire_occt(edges: &mut Vec<(usize, bool)>, ds: &crate::bopds::ds::DS) {
-    if edges.is_empty() { return; }
-
-    // OCCT L265-272: build vertex→edge map (TopExp::MapShapesAndAncestors)
-    let mut a_ve_map: std::collections::BTreeMap<usize, Vec<usize>> = std::collections::BTreeMap::new();
-    for &(ei, fwd) in edges.iter() {
-        if let Some(edge) = ds.edges.get(ei) {
-            let sv = if fwd { edge.start_vertex } else { edge.end_vertex };
-            let ev = if fwd { edge.end_vertex } else { edge.start_vertex };
-            a_ve_map.entry(sv).or_default().push(ei);
-            a_ve_map.entry(ev).or_default().push(ei);
-        }
-    }
-    // Deduplicate
-    for vlist in a_ve_map.values_mut() {
-        vlist.sort_unstable();
-        vlist.dedup();
-    }
-
-    // OCCT L274-358: Build new wire, orient edges
-    let mut a_m_fence: std::collections::HashSet<usize> = std::collections::HashSet::new();
-    let mut a_wire_new: Vec<(usize, bool)> = Vec::new();
-
-    for i in 0..edges.len() {
-        let (a_ec, a_ec_fwd) = edges[i];
-        if !a_m_fence.insert(a_ec) { continue; }
-
-        // OCCT L291: add edge to wire as-is
-        a_wire_new.push((a_ec, a_ec_fwd));
-
-        // OCCT L293-294: get vertices
-        let (a_v1, a_v2) = if a_ec_fwd {
-            (ds.edges[a_ec].start_vertex, ds.edges[a_ec].end_vertex)
-        } else {
-            (ds.edges[a_ec].end_vertex, ds.edges[a_ec].start_vertex)
-        };
-
-        // OCCT L296-300: if closed edge, skip adjacency walk
-        if a_v1 == a_v2 { continue; }
-
-        // OCCT L303-355: orient adjacent edges for each vertex direction
-        for &start_v in &[a_v1, a_v2] {
-            let mut a_vc = start_v;
-            loop {
-                let Some(a_le) = a_ve_map.get(&a_vc) else { break; };
-                if a_le.len() != 2 { break; }
-
-                let mut b_stop = true;
-                for &a_en in a_le {
-                    if a_m_fence.contains(&a_en) { continue; }
-                    let a_en_edge = &ds.edges[a_en];
-                    let a_vn1 = a_en_edge.start_vertex;
-                    let a_vn2 = a_en_edge.end_vertex;
-                    if a_vn1 == a_vn2 { break; } // closed edge
-
-                    // OCCT L336-345: orient edge to maintain connectivity
-                    let (fwd, next_v) = if a_vc == a_vn1 {
-                        // start matches → forward
-                        (true, a_vn2)
-                    } else if a_vc == a_vn2 {
-                        // end matches → reversed
-                        (false, a_vn1)
-                    } else {
-                        // no match → skip this edge
-                        continue;
-                    };
-
-                    // OCCT L338 (correct orientation) or L342 (reversed)
-                    a_wire_new.push((a_en, fwd));
-                    a_m_fence.insert(a_en);
-                    // OCCT L345: aVC = next vertex for next iteration
-                    a_vc = next_v;
-                    b_stop = false;
-                    break;
-                }
-                if b_stop { break; }
-            }
-        }
-    }
-
-    *edges = a_wire_new;
-}
-
-/// ✅ OCCT-aligned: PointInFace (BOPTools_AlgoTools3D.cxx L906-941).
-/// Computes an arbitrary point inside a DS face (uses boundary centroid).
-pub fn point_in_face(
-    ds: &crate::bopds::ds::DS,
-    face_idx: usize,
-) -> Option<(glam::DVec3, glam::DVec2)> {
-    let face = ds.faces.get(face_idx)?;
-    if face.boundary_verts.is_empty() { return None; }
-    let mut sum = glam::DVec3::ZERO;
-    for &vi in &face.boundary_verts {
-        if vi < ds.vertices.len() {
-            sum += ds.vertices[vi].point;
-        }
-    }
-    let p3d = sum / face.boundary_verts.len() as f64;
-    let uv = crate::builder::world_to_uv(&face.surface, p3d)?;
-    Some((p3d, uv))
-}
-
-/// OCCT-aligned: IsOpenShell (BOPTools_AlgoTools.cxx L2350-2394) — single-shell variant.
-pub fn is_open_shell_slice(
-    shell_faces: &[usize],
-    ds: &crate::bopds::ds::DS,
-) -> bool {
-    is_open_shell(shell_faces, ds)
-}
-
-/// OCCT-aligned: ComputeState for face vs solid (BOPTools_AlgoTools.cxx L660-714).
-/// Classifies a face against a solid's face set. Tries to find an edge of the
-/// face not on the solid boundary, or falls back to PointInFace.
-pub fn compute_state_face_against_solid(
-    fi: usize,
-    solid_face_indices: &[usize],
-    ds: &crate::bopds::ds::DS,
-) -> crate::classify::Classification {
-    // OCCT L672-686: try to find an edge of the face not on the solid boundary
-    let face = &ds.faces[fi];
-    let solid_edge_set: std::collections::HashSet<usize> = solid_face_indices.iter()
-        .flat_map(|&sfi| {
-            if sfi < ds.faces.len() {
-                ds.faces[sfi].boundary_edges.clone()
-            } else { Vec::new() }
-        })
-        .collect();
-    for &ei in &face.boundary_edges {
-        if ds.is_edge_degenerated(ei) { continue; }
-        if !solid_edge_set.contains(&ei) {
-            // Classify edge midpoint
-            let edge = &ds.edges[ei];
-            let mid = 0.5 * (edge.t_range[0] + edge.t_range[1]);
-            let pt = edge.curve.point_at(mid);
-            return crate::classify::classify_point(pt, solid_face_indices, ds);
-        }
-    }
-    // OCCT L688-714: all edges on solid → PointInFace
-    let pt = point_in_face(ds, fi);
-    match pt {
-        Some((p3d, _)) => crate::classify::classify_point(p3d, solid_face_indices, ds),
-        None => crate::classify::Classification::Out,
-    }
-}
-
+include!("extra.rs");
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn test_empty_set() {
-        let s = BOPToolsSet::new();
-        assert!(s.is_empty());
-        assert_eq!(s.len(), 0);
-        assert_eq!(s.sum, 0);
-    }
-
-    #[test]
-    fn test_add_single() {
-        let mut s = BOPToolsSet::new();
-        s.add(5);
-        assert!(!s.is_empty());
-        assert_eq!(s.len(), 1);
-        assert_eq!(s.faces(), &[5]);
-    }
-
-    #[test]
-    fn test_add_sorted_dedup() {
-        let mut s = BOPToolsSet::new();
-        s.add(3); s.add(1); s.add(2); s.add(1);
-        assert_eq!(s.len(), 3);
-        assert_eq!(s.faces(), &[1, 2, 3]);
-    }
-
-    #[test]
-    fn test_equality() {
-        let mut a = BOPToolsSet::new();
-        a.add(1); a.add(2); a.add(3);
-        let mut b = BOPToolsSet::new();
-        b.add(3); b.add(2); b.add(1);
-        assert_eq!(a, b);
-        b.add(4);
-        assert_ne!(a, b);
-    }
-
-    #[test]
-    fn test_hash_set_dedup() {
-        use std::collections::HashSet;
-        let mut a = BOPToolsSet::new();
-        a.add(1); a.add(2);
-        let mut b = BOPToolsSet::new();
-        b.add(2); b.add(1);
-        let mut c = BOPToolsSet::new();
-        c.add(1); c.add(3);
-
-        let mut set = HashSet::new();
-        assert!(set.insert(a.clone()));
-        // Same content → no insert (duplicate)
-        assert!(!set.insert(b));
-        // Different content → insert
-        assert!(set.insert(c));
-        assert_eq!(set.len(), 2);
-    }
-
-    #[test]
-    fn test_from_slice() {
-        let s = BOPToolsSet::from(&[2, 1, 3, 1][..]);
-        assert_eq!(s.nb_shapes(), 3);
-        assert_eq!(s.faces(), &[1, 2, 3]);
-    }
+    include!("tests_inc.rs");
 }
