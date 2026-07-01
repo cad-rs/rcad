@@ -1680,31 +1680,20 @@ impl<'a> super::PaveFiller<'a> {
                 if !near_face_vert { continue; }
             }
 
-            // �?OCCT-aligned: PaveBlock endpoint intersection handling
-            //    OCCT L262 SetRange: PaveBlock endpoints are already Pave vertices.
-            //    rcad: if intersection is at an edge endpoint, don't create a new vertex
-            //    but register the existing vertex in vertices_on for later MakeBlocks.
+            // ✅ OCCT-aligned: Skip if intersection coincides with an existing edge vertex.
+            //    OCCT: UseExistingVertex / UpdateVertex handles proximity merging.
+            //    rcad: check distance to edge endpoints directly.
             let sv = self.ds.edges[edge_idx].start_vertex;
             let ev = self.ds.edges[edge_idx].end_vertex;
             let tol = etf
                 .max(self.ds.vertices[sv].geom_tol)
                 .max(self.ds.vertices[ev].geom_tol);
-            // 1. 3D position check �?original edge endpoints
             let at_sv = (point - self.ds.vertices[sv].point).length() <= tol;
             let at_ev = (point - self.ds.vertices[ev].point).length() <= tol;
             if at_sv || at_ev {
-                // Don't create a new Pave, but register existing vertex in faces' vertices_on
                 let existing_v = if at_sv { sv } else { ev };
                 self.ds.faces[face_idx].face_info.vertices_on.insert(existing_v);
                 continue;
-            }
-            // 2. Parameter skip (PaveBlock internal endpoints) �?PaveBlock endpoints are already Paves
-            let at_pb_start = (edge_param - pb_range[0]).abs() <= tol;
-            let at_pb_end = (edge_param - pb_range[1]).abs() <= tol;
-            if at_pb_start || at_pb_end {
-                let edge_len = (edge_t_range[1] - edge_t_range[0]).abs();
-                let pb_len = (pb_range[1] - pb_range[0]).abs();
-                if pb_len < edge_len - tol { continue; }
             }
 
             let new_v = self.ds.add_vertex(point);
