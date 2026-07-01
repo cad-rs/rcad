@@ -29,6 +29,8 @@ impl<'a> PaveFiller<'a> {
             avoid_build_pcurve: false,
             fpbdone: std::collections::HashMap::new(),
             verts_to_avoid_extension: std::collections::HashSet::new(),
+            a_mv_tol: std::collections::HashMap::new(),
+            a_dmv_lv: std::collections::HashMap::new(),
             distances: std::collections::HashMap::new(),
         }
     }
@@ -59,6 +61,8 @@ impl<'a> PaveFiller<'a> {
             avoid_build_pcurve: false,
             fpbdone: std::collections::HashMap::new(),
             verts_to_avoid_extension: std::collections::HashSet::new(),
+            a_mv_tol: std::collections::HashMap::new(),
+            a_dmv_lv: std::collections::HashMap::new(),
             distances: std::collections::HashMap::new(),
         }
     }
@@ -89,6 +93,8 @@ impl<'a> PaveFiller<'a> {
             avoid_build_pcurve: false,
             fpbdone: std::collections::HashMap::new(),
             verts_to_avoid_extension: std::collections::HashSet::new(),
+            a_mv_tol: std::collections::HashMap::new(),
+            a_dmv_lv: std::collections::HashMap::new(),
             distances: std::collections::HashMap::new(),
         }
     }

@@ -123,9 +123,31 @@ pub struct PaveFiller<'a> {
     /// 锟?OCCT-aligned: myVertsToAvoidExtension 鈥?vertices that should NOT have
     ///   their tolerance extended further (near EE/EF intersection points).
     verts_to_avoid_extension: std::collections::HashSet<usize>,
+    /// OCCT-aligned: aMVTol -- per-vertex tolerance map (PaveFiller_6.cxx L2409).
+    a_mv_tol: std::collections::HashMap<usize, f64>,
+    /// OCCT-aligned: aDMVLV -- duplicate vertex map (PaveFiller_6.cxx L2410).
+    a_dmv_lv: std::collections::HashMap<usize, Vec<usize>>,
     /// 锟?OCCT-aligned: myDistances 鈥?minimal edge-face distances for non-intersecting
     ///   pairs.  Map: (edge_idx, face_idx) 鈫?Vec<EdgeRangeDistance>.
     distances: std::collections::HashMap<(usize, usize), Vec<EdgeRangeDistance>>,
+}
+
+/// OCCT-aligned: GetFullShapeMap (PaveFiller_6.cxx L2941-2958).
+///   Builds a set of all sub-shape indices belonging to face `fi`:
+///   the face itself, its boundary edges, and their endpoint vertices.
+pub(crate) fn build_face_shape_map(ds: &DS, fi: usize) -> std::collections::HashSet<usize> {
+    let mut aMI = std::collections::HashSet::new();
+    aMI.insert(fi);
+    if fi < ds.faces.len() {
+        for &ei in &ds.faces[fi].boundary_edges {
+            aMI.insert(ei);
+            if ei < ds.edges.len() {
+                aMI.insert(ds.edges[ei].start_vertex);
+                aMI.insert(ds.edges[ei].end_vertex);
+            }
+        }
+    }
+    aMI
 }
 
 /// 锟?OCCT-aligned:Propagate IC vertices to all faces sharing boundary edges

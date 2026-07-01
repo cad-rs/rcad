@@ -237,70 +237,19 @@ impl<'a> super::PaveFiller<'a> {
             }
 
             // OCCT L796-809: Loop over curves — PutPavesOnCurve
+            let aMI = crate::pave_filler::build_face_shape_map(self.ds, n_f1);
+            let aMI_ref = &aMI;
             for &ci in curves_of_ff {
                 if ci >= self.ds.intersection_curves.len() { continue; }
                 // OCCT L799: aNC.InitPaveBlock1()
                 self.ds.intersection_curves[ci].init_pave_block1();
 
                 // OCCT L802-808: PutPavesOnCurve(aMVOnIn, aMVCommon, aNC, aMI, aMVEF, aMVTol, aDMVLV)
-                //   rcad equivalent: project all vertices from a_mv_on_in and a_mv_ef onto this curve
-                let face_idxs = [n_f1, n_f2];
-                let full_paves = put_pave_on_curve_full(&self.ds, ci, &face_idxs);
-                let filtered = filter_paves_on_curves(&self.ds, ci, &full_paves);
-                let [t0_live, t1_live] = self.ds.intersection_curves[ci].t_range;
-
-                // Add filtered paves as ext_paves
-                for &(p, vi) in &filtered {
-                    if (p - t0_live).abs() < a_tol_ff * 0.1 || (p - t1_live).abs() < a_tol_ff * 0.1 {
-                        continue;
-                    }
-                    // Save original vertex tolerance before modification
-                    if vi < self.ds.vertices.len() {
-                        a_mv_tol.push((vi, self.ds.vertices[vi].geom_tol));
-                    }
-                    self.put_pave_on_curve(vi, ci);
-                }
+                self.put_paves_on_curve(ci, &[n_f1, n_f2]);
             }
 
-            // OCCT L814: FilterPavesOnCurves(aVC, aMVTol)
-            //   Remove vertices that were put on wrong curves (distance check failed)
-            {
-                let eps = f64::EPSILON;
-                let sin_angle_min = 0.5;
-                let mut vert_pbs: std::collections::HashMap<usize, Vec<(usize, f64, f64)>> = std::collections::HashMap::new();
-                for &ci in curves_of_ff {
-                    let ic = &self.ds.intersection_curves[ci];
-                    let tol_r3d = ic.geom_tol.max(1e-12);
-                    if let Some(pb) = ic.pave_blocks.first() {
-                        for pave in &pb.ext_paves {
-                            let n_v = pave.vertex_idx;
-                            let par = pave.param;
-                            let pt = self.ds.vertices[n_v].point;
-                            let curve_pt = ic.curve.point_at(par);
-                            let tangent = ic.curve.tangent_at(par);
-                            let proj_vec = curve_pt - pt;
-                            let sq_dist = proj_vec.length_squared();
-                            let speed_sq = tangent.length_squared();
-                            let sin_angle = if sq_dist > eps && speed_sq > eps {
-                                (proj_vec.cross(tangent).length_squared() / (sq_dist * speed_sq)).sqrt()
-                            } else { 0.0 };
-                            vert_pbs.entry(n_v).or_default().push((ci, sq_dist, sin_angle));
-                        }
-                    }
-                }
-                for (&n_v, list) in &vert_pbs {
-                    if list.len() < 2 { continue; }
-                    let min_dist = list.iter().map(|d| d.1).min_by(|a, b| a.partial_cmp(&b).unwrap()).unwrap_or(0.0);
-                    for &(ci, sq_dist, sin_angle) in list {
-                        let check_dist = 100.0 * a_tol_ff.max(min_dist);
-                        if sq_dist > check_dist && sin_angle < sin_angle_min {
-                            if let Some(pb) = self.ds.intersection_curves[ci].change_pave_block1() {
-                                pb.remove_ext_pave(n_v);
-                            }
-                        }
-                    }
-                }
-            }
+            // OCCT L814: FilterPavesOnCurves — remove bad paves across all curves
+            self.filter_paves_on_curves(curves_of_ff);
 
             // OCCT L816-844: Second loop over curves — Stick/EF/Bound paves
             let a_nb_c_single = a_nb_c; // OCCT L823: check if only one curve
@@ -332,7 +281,7 @@ impl<'a> super::PaveFiller<'a> {
                                 if *n_v < self.ds.vertices.len() {
                                     a_mv_tol.push((*n_v, self.ds.vertices[*n_v].geom_tol));
                                 }
-                                self.put_pave_on_curve(*n_v, ci);
+                                self.put_pave_on_curve(*n_v, self.ds.intersection_curves[ci].geom_tol, ci, aMI_ref, 1);
                             }
                         }
                     }
@@ -365,10 +314,10 @@ impl<'a> super::PaveFiller<'a> {
                     }
                     // OCCT PutBoundPaveOnCurve: add endpoint paves unconditionally
                     if sv < self.ds.vertices.len() {
-                        self.put_pave_on_curve(sv, ci);
+                        self.put_pave_on_curve(sv, self.ds.intersection_curves[ci].geom_tol, ci, aMI_ref, 1);
                     }
                     if ev < self.ds.vertices.len() && ev != sv {
-                        self.put_pave_on_curve(ev, ci);
+                        self.put_pave_on_curve(ev, self.ds.intersection_curves[ci].geom_tol, ci, aMI_ref, 1);
                     }
                     if let Some(pb) = self.ds.intersection_curves[ci].pave_blocks.first() {
                         let (n_v_min, n_v_max) = {
@@ -425,7 +374,7 @@ impl<'a> super::PaveFiller<'a> {
                         }
                     }
                     for &(_t, vi) in &new_verts {
-                        self.put_pave_on_curve(vi, ci);
+                        self.put_pave_on_curve(vi, self.ds.intersection_curves[ci].geom_tol, ci, aMI_ref, 1);
                     }
                 }
             } // OCCT L844: end second curve loop

@@ -2,6 +2,16 @@ use super::*;
 
 impl<'a> super::PaveFiller<'a> {
     pub(crate) fn perform_ff(&mut self) {
+        // OCCT PaveFiller_6.cxx L288-314: UpdateFaceInfoOn/In for all FF participant faces
+        //   before performing intersection (ensures FaceInfo is current).
+        let mut ff_face_set: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        ff_face_set.extend(self.faces_of(ShapeOrigin::ShapeA));
+        ff_face_set.extend(self.faces_of(ShapeOrigin::ShapeB));
+        for &fi in &ff_face_set {
+            self.ds.refine_face_info_on(fi);
+            self.ds.refine_face_info_in(fi);
+        }
+
         // OCCT PaveFiller_6.cxx: FillShrunkData + BVH pair iteration
         self.fill_shrunk_data(); // OCCT: FillShrunkData(FACE, FACE)
         let a_faces = self.faces_of(ShapeOrigin::ShapeA);
@@ -423,6 +433,20 @@ impl<'a> super::PaveFiller<'a> {
         // 鈹€鈹€ Restore seam shift tol 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         self.seam_shift_tol = old_shift_tol;
 
+        // OCCT L600-608: CheckCurve validation -- validate curve bounds before processing
+        if let Some(ff_curves) = self.find_face_face_curve_indices(f1, f2) {
+            let invalid: Vec<usize> = ff_curves.iter().filter(|&&ci| {
+                let ic = &self.ds.intersection_curves[ci];
+                !ic.t_range[0].is_finite() || !ic.t_range[1].is_finite()
+                    || (ic.t_range[1] - ic.t_range[0]).abs() < 1e-12
+                    || ic.curve.point_at(ic.t_range[0]).is_nan()
+            }).copied().collect();
+            for &ci in &invalid {
+                if ci < self.ds.intersection_curves.len() {
+                    self.ds.intersection_curves[ci].t_range = [0.0, 0.0];
+                }
+            }
+        }
         // �?OCCT-aligned:ComputeTolReached3d + PrepareLines3D �?post-process all
         // intersection curves for this face pair.  Runs for every path (analytic,
         // numeric_intss, marching) to ensure consistent curve tolerance and

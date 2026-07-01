@@ -435,16 +435,42 @@ pub struct ShapeInfo {
     pub flag: i64,
     pub reference: i64,
     pub has_brep: bool,
+    /// Bounding box min corner (Bnd_Box equivalent). None = not computed.
+    pub box_min: Option<DVec3>,
+    /// Bounding box max corner. None = not computed.
+    pub box_max: Option<DVec3>,
+    /// Box gap expansion (Bnd_Box::SetGap equivalent).
+    pub box_gap: f64,
+    /// True for shapes created during intersection (not from source BRep).
+    pub is_new: bool,
+    /// Operand rank: 0 = ShapeA, 1 = ShapeB.
+    pub rank: usize,
+    /// Original source index within the type-specific array.
+    pub source_idx: usize,
 }
 
 impl ShapeInfo {
     pub fn new(shape_type: rcad_kernel::topods::ShapeType) -> Self {
-        ShapeInfo { shape_type, sub_shapes: Vec::new(), flag: -1, reference: -1, has_brep: true }
+        ShapeInfo {
+            shape_type, sub_shapes: Vec::new(), flag: -1, reference: -1, has_brep: true,
+            box_min: None, box_max: None, box_gap: 0.0,
+            is_new: true, rank: 0, source_idx: 0,
+        }
     }
     pub fn has_flag(&self) -> bool { self.flag >= 0 }
     pub fn has_reference(&self) -> bool { self.reference >= 0 }
     pub fn has_sub_shape(&self, idx: usize) -> bool { self.sub_shapes.contains(&idx) }
     pub fn has_brep(&self) -> bool { self.has_brep }
+
+    /// OCCT-aligned: Bnd_Box::IsOut check — true if the two boxes do not overlap.
+    ///   Uses box_gap expansion (Bnd_Box.SetGap equivalent).
+    pub fn box_is_out(&self, other: &Self) -> bool {
+        let (Some(mn1), Some(mx1)) = (self.box_min, self.box_max) else { return false };
+        let (Some(mn2), Some(mx2)) = (other.box_min, other.box_max) else { return false };
+        let g = self.box_gap + other.box_gap;
+        mx1.x + g < mn2.x - g || mx1.y + g < mn2.y - g || mx1.z + g < mn2.z - g
+            || mx2.x + g < mn1.x - g || mx2.y + g < mn1.y - g || mx2.z + g < mn1.z - g
+    }
 }
 
 /// Central data structure (OCCT: BOPDS_DS).

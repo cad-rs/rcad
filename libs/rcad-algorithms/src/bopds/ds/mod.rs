@@ -41,7 +41,11 @@ impl DS {
     ///   with `origin: None` are intersection-created (new shapes).
     ///   Edges with `origin: None` carry the same semantics.
     pub fn is_new_vertex(&self, vi: usize) -> bool {
-        self.vertices.get(vi).map_or(true, |v| v.origin.is_none())
+        if vi < self.shape_info.len() {
+            self.shape_info[vi].is_new
+        } else {
+            self.vertices.get(vi).map_or(true, |v| v.origin.is_none())
+        }
     }
 
     /// 鉁?OCCT-aligned: BOPDS_DS::Rank (L214-226).
@@ -950,36 +954,82 @@ impl DS {
         let ne = self.edges.len();
         let nf = self.faces.len();
         let nsh = self.shells.len();
+        let a_v = self.a_vertex_count;
+        let a_e = self.a_edge_count;
+        let a_f = self.a_face_count;
 
         // VERTEX entries
-        for _ in 0..nv {
-            self.shape_info.push(ShapeInfo::new(rcad_kernel::topods::ShapeType::Vertex));
+        for vi in 0..nv {
+            let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Vertex);
+            si.rank = if vi < a_v { 0 } else { 1 };
+            si.source_idx = vi;
+            si.is_new = self.vertices[vi].origin.is_none();
+            si.box_min = Some(self.vertices[vi].point);
+            si.box_max = Some(self.vertices[vi].point);
+            self.shape_info.push(si);
         }
         // EDGE entries
-        for _ in 0..ne {
-            self.shape_info.push(ShapeInfo::new(rcad_kernel::topods::ShapeType::Edge));
-        }
-        // FACE entries 鈥?sub-shapes = edge indices (flat)
-        for fi in 0..nf {
-            let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Face);
-            for &ei in &self.faces[fi].boundary_edges {
-                si.sub_shapes.push(nv + ei);
+        for ei in 0..ne {
+            let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Edge);
+            si.rank = if ei < a_e { 0 } else { 1 };
+            si.source_idx = ei;
+            si.is_new = ei >= a_e;
+            let sv = self.edges[ei].start_vertex;
+            let ev = self.edges[ei].end_vertex;
+            if sv < self.vertices.len() && ev < self.vertices.len() {
+                let p1 = self.vertices[sv].point;
+                let p2 = self.vertices[ev].point;
+                si.box_min = Some(p1.min(p2));
+                si.box_max = Some(p1.max(p2));
             }
             self.shape_info.push(si);
         }
-        // SHELL entries 鈥?sub-shapes = face indices (flat)
+        // FACE entries -- sub-shapes = edge indices (flat)
+        for fi in 0..nf {
+            let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Face);
+            si.rank = if fi < a_f { 0 } else { 1 };
+            si.source_idx = fi;
+            si.is_new = false;
+            for &ei in &self.faces[fi].boundary_edges {
+                si.sub_shapes.push(nv + ei);
+            }
+            let verts = &self.faces[fi].boundary_verts;
+            if !verts.is_empty() {
+                let mut mn = glam::DVec3::splat(f64::INFINITY);
+                let mut mx = glam::DVec3::splat(f64::NEG_INFINITY);
+                for &vi in verts {
+                    if vi < self.vertices.len() {
+                        let p = self.vertices[vi].point;
+                        mn = mn.min(p);
+                        mx = mx.max(p);
+                    }
+                }
+                if mn.is_finite() {
+                    si.box_min = Some(mn);
+                    si.box_max = Some(mx);
+                }
+            }
+            self.shape_info.push(si);
+        }
+        // SHELL entries -- sub-shapes = face indices (flat)
         for shi in 0..nsh {
             let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Shell);
             si.has_brep = false;
+            si.rank = 0;
+            si.source_idx = shi;
+            si.is_new = false;
             for &fi in &self.shells[shi].faces {
                 si.sub_shapes.push(nv + ne + fi);
             }
             self.shape_info.push(si);
         }
-        // SOLID entries 鈥?sub-shapes = shell indices (flat)
+        // SOLID entries -- sub-shapes = shell indices (flat)
         for shi in 0..nsh {
             let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Solid);
             si.has_brep = false;
+            si.rank = 0;
+            si.source_idx = shi;
+            si.is_new = false;
             si.sub_shapes.push(nv + ne + nf + shi);
             self.shape_info.push(si);
         }

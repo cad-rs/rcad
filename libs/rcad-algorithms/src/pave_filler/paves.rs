@@ -241,51 +241,118 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
 
-    pub(crate) fn put_pave_on_curve(&mut self, nV: usize, curve_idx: usize) -> Option<f64> {
-        let t = self.project_vertex_on_curve(nV, &self.ds.intersection_curves[curve_idx])?;
-        let a_tol_r3d = self.ds.intersection_curves[curve_idx].geom_tol;
-        let v_tol = self.ds.vertices[nV].geom_tol;
-        let a_ptol = a_tol_r3d.max(v_tol); // OCCT L3002: Resolution(max(aTolR3D, aTolV))
-        if let Some(pb) = self.ds.intersection_curves[curve_idx].change_pave_block1() {
-            let mut n_v_used = 0usize;
-            // OCCT L3004: bExist = aPB->ContainsParameter(aT, aPTol, nVUsed)
-            if pb.contains_parameter(t, a_ptol, &mut n_v_used) {
-                return Some(t);
+    pub(crate) fn put_pave_on_curve(
+        &mut self,
+        nV: usize,
+        aTolR3D: f64,
+        curve_idx: usize,
+        aMI: &std::collections::HashSet<usize>,
+        iCheckExtend: i32,
+    ) -> Option<f64> {
+        let ic_curve = self.ds.intersection_curves[curve_idx].curve.clone();
+        let aV_tol = self.ds.vertices[nV].geom_tol;
+        let mut aTolV = self.a_mv_tol.get(&nV).copied().unwrap_or(aV_tol);
+
+        let mut aT: f64 = 0.0;
+        let mut bIsVertexOnLine = self.is_vertex_on_line(nV, aTolV, curve_idx, aTolR3D + self.fuzzy_tolerance, &mut aT);
+
+        if !bIsVertexOnLine && iCheckExtend != 0 && !self.verts_to_avoid_extension.contains(&nV) {
+            let mut anExtraTol = aTolV;
+            if self.extended_tolerance(nV, aMI, anExtraTol, &mut anExtraTol, iCheckExtend) {
+                bIsVertexOnLine = self.is_vertex_on_line(nV, anExtraTol, curve_idx, aTolR3D + self.fuzzy_tolerance, &mut aT);
+                if bIsVertexOnLine {
+                    let aPOnC = ic_curve.point_at(aT);
+                    aTolV = aPOnC.distance(self.ds.vertices[nV].point);
+                }
             }
-            pb.append_ext_pave(Pave { vertex_idx: nV, param: t });
         }
-        Some(t)
+
+        if bIsVertexOnLine {
+            let aDTol = 1e-12;
+            let aPTol = Self::curve_parametric_tolerance(&ic_curve, aTolR3D.max(aTolV));
+
+            let mut nVUsed = 0;
+            if let Some(pb) = self.ds.intersection_curves[curve_idx].change_pave_block1() {
+                let bExist = pb.contains_parameter(aT, aPTol, &mut nVUsed);
+                if bExist {
+                    let pList = self.a_dmv_lv.entry(nVUsed).or_insert_with(|| {
+                        let mut list = Vec::new();
+                        list.push(nVUsed);
+                        if !self.a_mv_tol.contains_key(&nVUsed) {
+                            let aVUsed_tol = if nVUsed < self.ds.vertices.len() {
+                                self.ds.vertices[nVUsed].geom_tol
+                            } else { aTolV };
+                            self.a_mv_tol.insert(nVUsed, aVUsed_tol);
+                        }
+                        list
+                    });
+                    if !pList.contains(&nV) {
+                        pList.push(nV);
+                    }
+                    if !self.a_mv_tol.contains_key(&nV) {
+                        self.a_mv_tol.insert(nV, aV_tol);
+                    }
+                } else {
+                    pb.append_ext_pave(Pave { vertex_idx: nV, param: aT });
+                    let aP1 = ic_curve.point_at(aT);
+                    aTolV = aV_tol;
+                    let aP2 = self.ds.vertices[nV].point;
+                    let aDist = aP1.distance(aP2);
+                    if aTolV < aDist + aDTol {
+                        self.ds.vertices[nV].geom_tol = aDist + aDTol;
+                        if !self.a_mv_tol.contains_key(&nV) {
+                            self.a_mv_tol.insert(nV, aTolV);
+                        }
+                    }
+                }
+            }
+            return Some(aT);
+        }
+        None
     }
 
-    pub(crate) fn put_paves_on_curve(&mut self, curve_idx: usize) {
+    pub(crate) fn put_paves_on_curve(&mut self, curve_idx: usize, face_idxs: &[usize; 2]) {
         let ic = self.ds.intersection_curves[curve_idx].clone();
-        let aBoxC = curve_bounding_box_simple(&ic.curve, ic.geom_tol.max(TOLERANCE_ABS));
         let aTolR3D = ic.geom_tol;
+        let aMI = crate::pave_filler::build_face_shape_map(self.ds, face_idxs[0]);
+        let aMI = &aMI;
+
         let ef_vertices: Vec<usize> = self.ds.interferences.iter()
             .filter_map(|inf| {
-                if let Interference::EdgeFace { new_vertex, .. } = inf { Some(*new_vertex) } else { None }
+                if let Interference::EdgeFace { new_vertex, face, .. } = inf {
+                    if *face == face_idxs[0] || *face == face_idxs[1] {
+                        Some(*new_vertex)
+                    } else { None }
+                } else { None }
             }).collect();
-        let ef_set: HashSet<usize> = ef_vertices.iter().copied().collect();
+        let ef_set: std::collections::HashSet<usize> = ef_vertices.iter().copied().collect();
+        for &vi in &ef_vertices {
+            self.put_pave_on_curve(vi, aTolR3D, curve_idx, aMI, 2);
+        }
+
+        // ShapeInfo box filtering (OCCT L2404-2412: aBoxC.IsOut(aBoxV))
+        let c_box_min = ic.curve.point_at(ic.t_range[0]).min(ic.curve.point_at(ic.t_range[1]));
+        let c_box_max = ic.curve.point_at(ic.t_range[0]).max(ic.curve.point_at(ic.t_range[1]));
         let in_vertices: Vec<usize> = (0..self.ds.faces.len())
             .flat_map(|fi| self.ds.faces[fi].face_info.vertices_in.iter().copied()).collect();
-        for &vi in &ef_vertices { self.put_pave_on_curve(vi, curve_idx); }
         for &vi in &in_vertices {
             if ef_set.contains(&vi) { continue; }
-            if let Some([c_min, c_max]) = aBoxC {
-                let v_pt = self.ds.vertices[vi].point;
-                let v_tol = self.ds.vertices[vi].geom_tol.max(aTolR3D);
-                let v_min = v_pt - DVec3::splat(v_tol);
-                let v_max = v_pt + DVec3::splat(v_tol);
-                if v_max.x < c_min.x || v_min.x > c_max.x || v_max.y < c_min.y || v_min.y > c_max.y || v_max.z < c_min.z || v_min.z > c_max.z { continue; }
+            if vi < self.ds.shape_info.len() {
+                if let (Some(vmn), Some(vmx)) = (self.ds.shape_info[vi].box_min, self.ds.shape_info[vi].box_max) {
+                    if vmx.x + aTolR3D < c_box_min.x - aTolR3D || vmn.x - aTolR3D > c_box_max.x + aTolR3D ||
+                       vmx.y + aTolR3D < c_box_min.y - aTolR3D || vmn.y - aTolR3D > c_box_max.y + aTolR3D ||
+                       vmx.z + aTolR3D < c_box_min.z - aTolR3D || vmn.z - aTolR3D > c_box_max.z + aTolR3D {
+                        continue;
+                    }
+                }
             }
-            if !self.ds.is_new_vertex(vi) { continue; }
-            self.put_pave_on_curve(vi, curve_idx);
+            if vi < self.ds.shape_info.len() && !self.ds.shape_info[vi].is_new {
+                continue;
+            }
+            self.put_pave_on_curve(vi, aTolR3D, curve_idx, aMI, 1);
         }
     }
 
-    /// �?OCCT-aligned: PutStickPavesOnCurve (PaveFiller_6.cxx L2748-2842).
-    ///   For curves without assigned endpoint vertices, finds VV/VE "stick" vertices
-    ///   near the unbound endpoint and assigns them via put_pave_on_curve.
     pub(crate) fn put_stick_paves_on_curve(&mut self, ci: usize, face_idxs: &[usize; 2]) {
         // Clone IC data to avoid borrow conflict with change_pave_block1
         let (start_vertex, end_vertex, t_range, curve, geom_tol) = {
@@ -368,6 +435,117 @@ impl<'a> super::PaveFiller<'a> {
                 (pt - proj).normalize_or_zero()
             }
         }
+    }
+
+    fn curve_parametric_tolerance(curve: &Curve3, tol_3d: f64) -> f64 {
+        match curve {
+            Curve3::Line(_) => tol_3d,
+            Curve3::Circle(c) => tol_3d / c.radius.max(1e-12),
+            Curve3::Ellipse(e) => tol_3d / e.major_radius.max(1e-12),
+            _ => tol_3d * 0.01,
+        }
+    }
+
+    pub(crate) fn is_vertex_on_line(
+        &self,
+        nV: usize,
+        aTolV: f64,
+        curve_idx: usize,
+        aTolC: f64,
+        aT: &mut f64,
+    ) -> bool {
+        use rcad_kernel::projection::closest_point_on_curve;
+        let ic = &self.ds.intersection_curves[curve_idx];
+        let vp = self.ds.vertices[nV].point;
+        let aFirst = ic.t_range[0];
+        let aLast = ic.t_range[1];
+
+        let mut aTolSum = 2.0 * (aTolV + aTolC);
+        if aTolSum < 1e-6 { aTolSum = 1e-6; }
+
+        if aFirst.is_finite() {
+            let p_first = ic.curve.point_at(aFirst);
+            let d_first = vp.distance(p_first);
+            if d_first < aTolSum {
+                *aT = aFirst;
+                if d_first > aTolV {
+                    let proj = closest_point_on_curve(&ic.curve, vp, 64);
+                    let mid = (aLast + aFirst) * 0.5;
+                    if proj.param > mid || proj.distance > aTolSum || p_first.distance(proj.point) < 1e-12 { *aT = aFirst; } else { *aT = proj.param; }
+                }
+                if aLast.is_finite() {
+                    let p_last = ic.curve.point_at(aLast);
+                    let d_last = vp.distance(p_last);
+                    if d_last < aTolSum && !(d_first < d_last) { *aT = aLast; }
+                }
+                return true;
+            }
+        }
+        if aLast.is_finite() {
+            let p_last = ic.curve.point_at(aLast);
+            let d_last = vp.distance(p_last);
+            if d_last < aTolSum {
+                *aT = aLast;
+                if d_last > aTolV {
+                    let proj = closest_point_on_curve(&ic.curve, vp, 64);
+                    let mid = (aLast + aFirst) * 0.5;
+                    if proj.param < mid || proj.distance > aTolSum || p_last.distance(proj.point) < 1e-12 { *aT = aLast; } else { *aT = proj.param; }
+                }
+                return true;
+            }
+        }
+
+        let proj = closest_point_on_curve(&ic.curve, vp, 64);
+        if proj.distance <= aTolSum { *aT = proj.param; return true; }
+        false
+    }
+
+    pub(crate) fn extended_tolerance(
+        &self,
+        nV: usize,
+        aMI: &std::collections::HashSet<usize>,
+        _aTolVExt: f64,
+        aTolVExt_out: &mut f64,
+        aType: i32,
+    ) -> bool {
+        if nV < self.ds.shape_info.len() && !self.ds.shape_info[nV].is_new {
+            return false;
+        }
+        let vp = self.ds.vertices[nV].point;
+        let mut found = false;
+        let mut max_ext = 0.0;
+
+        if aType == 0 || aType == 1 {
+            for inf in &self.ds.interferences {
+                if let Interference::EdgeEdge { e1, param1, param2, new_vertex, .. } = inf {
+                    if *new_vertex != nV { continue; }
+                    if !aMI.contains(e1) { continue; }
+                    if *e1 < self.ds.edges.len() {
+                        let p1 = crate::boptools::point_on_edge(&self.ds.edges[*e1], *param1);
+                        let p2 = crate::boptools::point_on_edge(&self.ds.edges[*e1], *param2);
+                        let d = vp.distance(p1).max(vp.distance(p2));
+                        if d > max_ext { max_ext = d; }
+                        found = true;
+                    }
+                }
+            }
+        }
+        if aType == 0 || aType == 2 {
+            for inf in &self.ds.interferences {
+                if let Interference::EdgeFace { edge, edge_param, new_vertex, .. } = inf {
+                    if *new_vertex != nV { continue; }
+                    if !aMI.contains(edge) { continue; }
+                    if *edge < self.ds.edges.len() {
+                        let p1 = crate::boptools::point_on_edge(&self.ds.edges[*edge], *edge_param);
+                        let d = vp.distance(p1);
+                        if d > max_ext { max_ext = d; }
+                        found = true;
+                    }
+                }
+            }
+        }
+        if found { *aTolVExt_out = max_ext; }
+        found
     }
 
     pub(crate) fn project_vertex_on_curve(&self, vi: usize, ic: &IntersectionCurve) -> Option<f64> {
@@ -809,6 +987,104 @@ impl<'a> super::PaveFiller<'a> {
         //   5-param: aTolSum = aTolV + aTolC; ×2
         let tl = (2.0 * (v_tol + c_tol)).max(1e-6);
         self.project_vertex_on_curve_with_tol(vi, ic, tl)
+    }
+
+    pub(crate) fn filter_paves_on_curves(&mut self, curve_idxs: &[usize]) {
+        #[derive(Clone)]
+        struct PBD { pb_idx: usize, sq_dist: f64, sin_angle: f64, tolerance: f64 }
+        let anEps = f64::EPSILON;
+        let mut vert_pbs: std::collections::HashMap<usize, Vec<PBD>> = std::collections::HashMap::new();
+
+        for &ci in curve_idxs {
+            if ci >= self.ds.intersection_curves.len() { continue; }
+            let aNC = &self.ds.intersection_curves[ci];
+            let aTolR3D = aNC.geom_tol.max(1e-12);
+            let Some(aPB) = aNC.pave_blocks.first() else { continue };
+            for pave in &aPB.ext_paves {
+                let nV = pave.vertex_idx;
+                if nV >= self.ds.vertices.len() { continue; }
+                let aPV = self.ds.vertices[nV].point;
+                let aPar = pave.param;
+                let aPonC = aNC.curve.point_at(aPar);
+                let aProjVec = aPV - aPonC;
+                let aSqDist = aProjVec.length_squared();
+                let dt = 1e-7;
+                let tan1 = aNC.curve.point_at(aPar + dt);
+                let tan2 = aNC.curve.point_at(aPar - dt);
+                let aD1 = (tan1 - tan2) / (2.0 * dt);
+                let aSqD1Mod = aD1.length_squared();
+                let mut aSin = 0.0;
+                if aSqDist > anEps && aSqD1Mod > anEps {
+                    aSin = (aProjVec.cross(aD1).length()) / (aSqDist.sqrt() * aSqD1Mod.sqrt());
+                }
+                vert_pbs.entry(nV).or_default().push(PBD { pb_idx: ci, sq_dist: aSqDist, sin_angle: aSin, tolerance: aTolR3D });
+            }
+        }
+
+        let aSinAngleMin = 0.5;
+        for (&nV, aList) in &vert_pbs {
+            let mut aMinDist = f64::MAX;
+            for pbd in aList { if pbd.sq_dist < aMinDist { aMinDist = pbd.sq_dist; } }
+
+            let mut aMaxDistKept = -1.0;
+            let mut isRemoved = false;
+            for pbd in aList {
+                let aCheckDist = 100.0 * (pbd.tolerance * pbd.tolerance).max(aMinDist);
+                if pbd.sq_dist > aCheckDist && pbd.sin_angle < aSinAngleMin {
+                    if pbd.pb_idx < self.ds.intersection_curves.len() {
+                        if let Some(pb) = self.ds.intersection_curves[pbd.pb_idx].pave_blocks.first_mut() {
+                            pb.remove_ext_pave(nV);
+                            isRemoved = true;
+                        }
+                    }
+                } else if pbd.sq_dist > aMaxDistKept {
+                    aMaxDistKept = pbd.sq_dist;
+                }
+            }
+
+            if isRemoved && aMaxDistKept > 0.0 {
+                if let Some(&pTol) = self.a_mv_tol.get(&nV) {
+                    let aRealTol = pTol.max(aMaxDistKept.sqrt() + 1e-12);
+                    if nV < self.ds.vertices.len() {
+                        self.ds.vertices[nV].geom_tol = aRealTol;
+                    }
+                }
+            }
+        }
+    }
+
+    pub(crate) fn put_closing_pave_on_curve(&mut self, curve_idx: usize) {
+        let ic = &self.ds.intersection_curves[curve_idx];
+        let aT = ic.t_range;
+        if !aT[0].is_finite() || !aT[1].is_finite() { return; }
+        let aP = [ic.curve.point_at(aT[0]), ic.curve.point_at(aT[1])];
+        let Some(aPB) = ic.pave_blocks.first() else { return };
+        let mut nV: Option<usize> = None;
+        let mut a_t_op = 0.0;
+        let mut a_p_op = glam::DVec3::ZERO;
+        for pave in &aPB.ext_paves {
+            let a_tc = pave.param;
+            for j in 0..2 {
+                if (a_tc - aT[j]).abs() < crate::tolerance::TOLERANCE_ABS * 100.0 {
+                    nV = Some(pave.vertex_idx);
+                    a_t_op = if j == 0 { aT[1] } else { aT[0] };
+                    a_p_op = if j == 0 { aP[1] } else { aP[0] };
+                    break;
+                }
+            }
+            if nV.is_some() { break; }
+        }
+        let Some(nV) = nV else { return };
+        if nV >= self.ds.vertices.len() { return; }
+        let a_tol_v = self.ds.vertices[nV].geom_tol;
+        let a_pv = self.ds.vertices[nV].point;
+        let a_tol_p = ic.geom_tol.max(1e-12) + 1e-12;
+        let a_dist_vp = a_pv.distance(a_p_op);
+        if a_dist_vp > a_tol_v + a_tol_p { return; }
+
+        if let Some(pb) = self.ds.intersection_curves[curve_idx].change_pave_block1() {
+            pb.append_ext_pave(Pave { vertex_idx: nV, param: a_t_op });
+        }
     }
 
     pub(crate) fn extended_tolerance_occt(&self, vi: usize) -> f64 {

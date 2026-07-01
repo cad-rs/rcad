@@ -1,14 +1,3 @@
-﻿            face_count: 3,
-            face_indices: vec![0, 1, 2],
-            repaired: false,
-            copies_created: 0,
-        };
-
-        assert_eq!(info.edge_index, 5);
-        assert_eq!(info.face_count, 3);
-        assert!(!info.repaired);
-    }
-
     #[test]
     fn edge_valence_info_classification() {
         let open_edge = EdgeValenceInfo {
