@@ -284,9 +284,9 @@ impl<'a> super::PaveFiller<'a> {
         if (edge_t_range[1] - prev).abs() > tol { ranges.push([prev, edge_t_range[1]]); }
         ranges
     }
-    /// OCCT PaveFiller_4.cxx: PerformVF (FillShrunkData + BVH pair iteration)
-    /// ✅ OCCT-aligned: BOPDS_Iterator::Initialize(VERTEX, FACE) — single pass.
-    ///   Cross-operand filtering: skip same-side pairs.
+    /// ✅ OCCT-aligned: PerformVF (PaveFiller_4.cxx L165-298).
+    ///   BOPDS_Iterator::Initialize(VERTEX, FACE) — single BVH pass.
+    ///   SD vertex resolution + aMVFPairs dedup matching OCCT form.
     pub(crate) fn perform_vf_bvh(&mut self, bvh_verts: &crate::bvh::DsBvh, bvh_faces: &crate::bvh::DsBvh) {
         use rayon::prelude::*;
         self.fill_shrunk_data();
@@ -294,21 +294,36 @@ impl<'a> super::PaveFiller<'a> {
         let ds = &self.ds;
         let a_vc = ds.a_vertex_count;
         let a_fc = ds.a_face_count;
+
+        // OCCT L172-175: early return if no pairs
+        if pairs.is_empty() { return; }
+
+        // OCCT L219-252: Build filtered pairs + aMVFPairs dedup by (nVSD, nF)
+        //   Skip already-interfered pairs; resolve SD vertices.
         let filtered: Vec<(usize, usize)> = pairs.par_iter()
             .filter(|&(vi, fi)| {
                 if (*vi < a_vc) == (*fi < a_fc) { return false; }
-                // OCCT L189: IsSubShape — skip if vertex is sub-shape of face
-                //   rcad: no direct equivalent, but has_interf_vf covers already-interfered.
-                // OCCT L194: HasInterf(nV, nF) — skip if already interfered
+                // OCCT L226: IsSubShape (rcad: no direct equivalent)
+                // OCCT L229: HasInterf(nV, nF)
                 if ds.has_interf_vf(*vi, *fi) { return false; }
-                // OCCT L200: HasInterfShapeSubShapes(nV, nF) — skip if vertex's edge
-                //   already has EF/VE interference with this face.
+                // OCCT L236: HasInterfShapeSubShapes(nV, nF)
                 if ds.has_interf_ve_via_faces(*vi, *fi) { return false; }
                 true
             })
             .copied()
             .collect();
+
+        // OCCT L254-274: aMVFPairs dedup — process only unique (nVSD, nF)
+        let mut a_mvf_pairs: std::collections::HashSet<(usize, usize)> =
+            std::collections::HashSet::new();
         for &(vi, fi) in &filtered {
+            // OCCT L261: HasShapeSD(nV, nVSD)
+            let n_vsd = ds.has_shape_sd(vi).unwrap_or(vi);
+            a_mvf_pairs.insert((n_vsd, fi));
+        }
+
+        // OCCT L276-290: Process each unique (nVSD, nF)
+        for &(vi, fi) in &a_mvf_pairs {
             self.check_vertex_face(vi, fi);
         }
     }
@@ -1213,38 +1228,41 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
 
-    /// OCCT PaveFiller_4.cxx: CheckVertexFace
-    /// OCCT-aligned: Vertex/Face check (PaveFiller_4.cxx L249-298).
+    /// ✅ OCCT-aligned: CheckVertexFace (PaveFiller_4.cxx L249-298).
+    ///   Vertex/Face proximity check with SD vertex resolution.
+    ///   OCCT: BOPAlgo_VertexFace parallel solver + result processing;
+    ///   rcad: sequential equivalent with same projection logic.
     pub(crate) fn check_vertex_face(&mut self, vi: usize, fi: usize) {
-        let point = self.ds.vertices[vi].point;
-        let face = &self.ds.faces[fi];
-        let tf = self.vf_tol(vi, fi);
+        // OCCT L268-270: HasShapeSD(nV, nVSD) — resolve to SD root
+        let n_vsd = self.ds.has_shape_sd(vi).unwrap_or(vi);
 
-        // OCCT L257-266: ComputeVF + process result
-        let (is_on, proj_dist): (bool, f64) = if let Surface3::Plane(plane) = &face.surface
-            && inttools::vertex_ops::vertex_on_plane_with_tol(point, plane, tf)
-        {
-            let face_verts = self.ds.face_boundary_points(fi);
-            let on_face = inttools::edge_face::point_in_planar_face_with_tol(
-                point, plane, &face_verts, tf);
-            (on_face, 0.0)
-        } else {
-            // OCCT L546-591: Project vertex onto curved surface
-            let surface = face.surface.clone();
-            if matches!(surface, Surface3::Plane(_)) {
-                (false, f64::MAX)
-            } else {
+        // OCCT L249: ComputeVF via Context
+        let point = self.ds.vertices[n_vsd].point;
+        let face = &self.ds.faces[fi];
+        let tf = self.vf_tol(n_vsd, fi);
+
+        // OCCT L257-266: Project point onto face surface
+        let (is_on, proj_dist): (bool, f64) = match &face.surface {
+            Surface3::Plane(plane) => {
+                if inttools::vertex_ops::vertex_on_plane_with_tol(point, plane, tf) {
+                    let face_verts = self.ds.face_boundary_points(fi);
+                    let on_face = inttools::edge_face::point_in_planar_face_with_tol(
+                        point, plane, &face_verts, tf);
+                    (on_face, 0.0)
+                } else {
+                    (false, f64::MAX)
+                }
+            }
+            surface => {
                 let proj = rcad_kernel::projection::closest_point_on_surface(
-                    &surface, point, 16);
-                let a_tol_v = self.ds.vertices[vi].geom_tol;
+                    surface, point, 16);
+                let a_tol_v = self.ds.vertices[n_vsd].geom_tol;
                 let a_tol_f = face.geom_tol;
                 let a_tol_sum = a_tol_v + a_tol_f + self.ds.fuzzy_tol.max(tf);
                 if proj.distance <= a_tol_sum {
                     let uv = DVec2::new(proj.params.0, proj.params.1);
-                    let inside = {
-                        let fclass = FClass2d::new(self.ds, fi, tf);
-                        fclass.perform(uv, false) == State::In
-                    };
+                    let fclass = FClass2d::new(self.ds, fi, tf);
+                    let inside = fclass.perform(uv, false) == State::In;
                     (inside, proj.distance)
                 } else {
                     (false, f64::MAX)
@@ -1253,26 +1271,22 @@ impl<'a> super::PaveFiller<'a> {
         };
 
         if is_on {
-            // OCCT L279-284: Create InterfVF
+            // OCCT L276-278: Create InterfVF for ALL original vertices (from aMVFPairs)
             self.ds.interferences.push(Interference::VertexFace {
-                vertex: vi,
+                vertex: n_vsd,
                 face: fi,
             });
 
             // OCCT L286: UpdateVertex(nV, aTolVNew) — increase vertex tolerance
             if proj_dist > 0.0 && proj_dist < f64::MAX
-                && proj_dist > self.ds.vertices[vi].geom_tol
+                && proj_dist > self.ds.vertices[n_vsd].geom_tol
             {
-                self.ds.vertices[vi].geom_tol = proj_dist;
-                self.ds.increased_ss.insert(vi);
+                self.ds.vertices[n_vsd].geom_tol = proj_dist;
+                self.ds.increased_ss.insert(n_vsd);
             }
 
-            // OCCT L295-297: Update FaceInfo (vertices_on for planar, vertices_in for curved)
-            if matches!(self.ds.faces[fi].surface, Surface3::Plane(_)) {
-                self.ds.faces[fi].face_info.vertices_on.insert(vi);
-            } else {
-                self.ds.faces[fi].face_info.vertices_in.insert(vi);
-            }
+            // ✅ OCCT-aligned: ALL VF vertices go to VerticesIn (OCCT L297: aMVIn.Add)
+            self.ds.faces[fi].face_info.vertices_in.insert(n_vsd);
         }
     }
     /// OCCT PaveFiller_5.cxx L165-300: PerformEF
