@@ -231,12 +231,19 @@ pub fn circle_pcurve_on_sphere(circle: &Circle3, sphere: &SphericalSurface) -> C
 pub fn circle_pcurve_on_cylinder(circle: &Circle3, cyl: &CylindricalSurface) -> Curve2d {
     let axis = cyl.axis.normalize_or_zero();
     let normal_dot = circle.normal.normalize().dot(axis).abs();
-    // Perpendicular circle: constant v (horizontal line in UV space).
+    // OCCT ProjLib_Cylinder.cxx L122-156: perp circle → Line2d with U offset and direction sign
     if (normal_dot - 1.0).abs() < TOLERANCE_MESH_LEGACY {
         let h = (circle.center - cyl.origin).dot(axis);
+        // Compute U offset: angular position of circle's X-axis on cylinder
+        let ux = any_perpendicular(circle.normal).normalize();
+        let cyl_x = cyl.ref_dir.normalize();
+        let cyl_y = axis.cross(cyl_x).normalize();
+        let u = ux.dot(cyl_y).atan2(ux.dot(cyl_x));
+        // Direction sign: circle normal vs cylinder axis (OCCT L145: ZCyl.Dot(aCircPos.Direction()))
+        let dir_sgn = if circle.normal.dot(axis) > 0.0 { 1.0 } else { -1.0 };
         return Curve2d::Line(Line2d {
-            origin: DVec2::new(0.0, h),
-            direction: DVec2::new(1.0, 0.0),
+            origin: DVec2::new(u, h),
+            direction: DVec2::new(dir_sgn, 0.0),
         });
     }
     // Diagonal circle: sample and map to UV.

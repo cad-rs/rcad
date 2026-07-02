@@ -42,7 +42,7 @@
 | `IntPatch_Intersection` (球-球) | `analytic_sphere.rs` | ⏳ |  |
 | `ProjLib::MakePCurveOfType` (平面) | `circle_pcurve_on_plane` (pcurve_derive.rs:31) | ⏳ | BSpline 分支 knot rescale 已修；Circle2d 分支对齐 ✅ |
 | `ProjLib::MakePCurveOfType` (球) | `circle_pcurve_on_sphere` (pcurve_derive.rs:130) | ❌→✅ | **刚修**：knot rescale + isIsoU/isIsoV 标注（Line2d 路径因缺 TrimmedCurve2 裁剪暂未启用） |
-| `ProjLib::MakePCurveOfType` (柱) | `circle_pcurve_on_cylinder` (pcurve_derive.rs:184) | ⏳ | knot rescale 已修 |
+| `ProjLib::MakePCurveOfType` (柱) | `circle_pcurve_on_cylinder` (pcurve_derive.rs:231) | ⏳→✅ | **刚修**：U 角 + 方向符号对齐 ProjLib_Cylinder.cxx L122-156 |
 | `ProjLib_Sphere::Project(gp_Lin)` | `line_pcurve_on_sphere` (pcurve_derive.rs:136) | ✅ | OCCT 自身也是 stub（ProjLib_Sphere.cxx L181-184 设 OtherCurve）；rcad 调用 fallback_pcurve_by_projection 匹配 |
 | `ProjLib_Sphere::Project(gp_Elips)` | `ellipse_pcurve_on_sphere` (pcurve_derive.rs:140) | ✅ | OCCT stub → generic fallback |
 | `ProjLib_Sphere::Project(gp_Parab)` | `parabola_pcurve_on_sphere` (pcurve_derive.rs:148) | ✅ | OCCT stub → generic fallback |
