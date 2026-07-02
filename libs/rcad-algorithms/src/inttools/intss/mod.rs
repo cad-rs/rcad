@@ -499,11 +499,7 @@ fn sphere_x_sphere(s1: &SphericalSurface, s2: &SphericalSurface) -> SurfaceSurfa
             pcurve_on_b: None,
         });
     } else {
-        let circle = Circle3 {
-            center,
-            normal: axis,
-            radius: r_circle,
-        };
+        let circle = Circle3::new(center, axis, r_circle);
         let pca = circle_pcurve_on_sphere(&circle, s1);
         let pcb = circle_pcurve_on_sphere(&circle, s2);
         out.curves.push(SurfaceIntersectionResult {
@@ -570,11 +566,7 @@ fn sphere_x_cylinder_with_tolerance(
             let dz = dz_sq.sqrt();
             for &sign in &[1.0f64, -1.0] {
                 let center = s.center + c.axis * (sign * dz);
-                let circle = Circle3 {
-                    center,
-                    normal: c.axis,
-                    radius: c.radius,
-                };
+                let circle = Circle3::new(center, c.axis, c.radius);
                 let pca = circle_pcurve_on_sphere(&circle, s);
                 let pcb = circle_pcurve_on_cylinder(&circle, c);
                 out.curves.push(SurfaceIntersectionResult {
@@ -1330,11 +1322,7 @@ fn torus_x_sphere_on_axis(
             let rho_sol = (R_s * R_s - dz * dz).max(0.0).sqrt();
             if rho_sol > TOLERANCE_ABS {
                 let center = torus.center + axis * z_sol;
-                let circle = Circle3 {
-                    center,
-                    normal: axis,
-                    radius: rho_sol,
-                };
+                let circle = Circle3::new(center, axis, rho_sol);
                 let pca = fallback_pcurve_by_projection(
                     &Curve3::Circle(circle),
                     &[0.0, TAU],
@@ -1442,11 +1430,7 @@ fn torus_x_cylinder_coaxial(
 
     for &hz in &heights {
         let center = torus.center + axis * hz;
-        let circle = Circle3 {
-            center,
-            normal: axis,
-            radius: r_cyl,
-        };
+        let circle = Circle3::new(center, axis, r_cyl);
         let pca = fallback_pcurve_by_projection(
             &Curve3::Circle(circle),
             &[0.0, TAU],

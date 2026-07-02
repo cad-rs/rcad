@@ -217,11 +217,7 @@ fn intersect_torus_torus_coaxial(
         }
         let v = A * u + B;
         let center = t1.center + axis * v;
-        return TorusTorusResult::TangentCircle(Circle3 {
-            center,
-            normal: axis,
-            radius: u,
-        });
+        return TorusTorusResult::TangentCircle(Circle3::new(center, axis, u));
     }
 
     // Two solutions
@@ -235,11 +231,7 @@ fn intersect_torus_torus_coaxial(
         if u > TOLERANCE_ABS {
             let v = A * u + B;
             let center = t1.center + axis * v;
-            circles.push(Circle3 {
-                center,
-                normal: axis,
-                radius: u,
-            });
+            circles.push(Circle3::new(center, axis, u));
         }
     }
 

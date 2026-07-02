@@ -250,7 +250,7 @@ fn build_box_minus_cone_tessellated(
 
     if faces.is_empty() { return None; }
 
-    let geom = GeomStore { face_internal_vertices: vec![],
+    let geom = GeomStore { edge_vertex_params: vec![],  face_internal_vertices: vec![],
         curves: vec![], surfaces: vec![], curve2ds: vec![],
         edge_curve: vec![],
         face_surface: vec![None; faces.len()],
@@ -609,7 +609,7 @@ fn build_cone_minus_box_tessellated(
 
     if faces.is_empty() { return None; }
 
-    let geom = GeomStore { face_internal_vertices: vec![],
+    let geom = GeomStore { edge_vertex_params: vec![],  face_internal_vertices: vec![],
         curves: vec![], surfaces: vec![], curve2ds: vec![],
         edge_curve: vec![],
         face_surface: vec![None; faces.len()],
@@ -991,7 +991,7 @@ fn build_cylinder_box_diff_tessellated(
 
     if faces.is_empty() { return None; }
 
-    let geom = GeomStore { face_internal_vertices: vec![],
+    let geom = GeomStore { edge_vertex_params: vec![],  face_internal_vertices: vec![],
         curves: vec![], surfaces: vec![], curve2ds: vec![],
         edge_curve: vec![],
         face_surface: vec![None; faces.len()],

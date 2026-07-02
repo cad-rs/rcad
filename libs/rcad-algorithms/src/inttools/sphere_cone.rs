@@ -205,11 +205,7 @@ fn intersect_sphere_cone_on_axis(
         }
 
         let center = apex + axis * z;
-        circles.push(Circle3 {
-            center,
-            normal: axis,
-            radius: r_cone.max(0.0),
-        });
+        circles.push(Circle3::new(center, axis, r_cone.max(0.0)));
     }
 
     match circles.len() {

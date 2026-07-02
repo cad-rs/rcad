@@ -556,11 +556,7 @@ pub fn intersect_plane_cylinder_intana(plane: &Plane, cyl: &CylindricalSurface) 
         // Plane perpendicular to cylinder axis -> circle
         let t = (plane.origin - cyl.origin).dot(cyl.axis);
         let center = cyl.origin + cyl.axis * t;
-        return PlnCylResult::Circle(Circle3 {
-            center,
-            normal: cyl.axis,
-            radius: cyl.radius,
-        });
+        return PlnCylResult::Circle(Circle3::new(center, cyl.axis, cyl.radius));
     }
 
     // General oblique case -> ellipse
@@ -610,7 +606,7 @@ pub fn intersect_plane_sphere_intana(plane: &Plane, sphere: &SphericalSurface) -
     let circle_radius = (sphere.radius * sphere.radius - signed_dist * signed_dist).sqrt();
     let center = sphere.center - plane.normal * signed_dist;
 
-    PlnSphResult::Circle(Circle3::new(center, normal, radius))
+    PlnSphResult::Circle(Circle3::new(center, plane.normal, circle_radius))
 }
 
 // -----------------------------------------------------------------------------
@@ -668,11 +664,7 @@ pub fn intersect_plane_cone_intana(plane: &Plane, cone: &ConicalSurface) -> PlnC
         if radius < TOLERANCE_ABS {
             return PlnConResult::Point(center);
         }
-        return PlnConResult::Circle(Circle3 {
-            center,
-            normal: cone.axis,
-            radius,
-        });
+        return PlnConResult::Circle(Circle3::new(center, cone.axis, radius));
     }
 
     // Plane through apex
@@ -947,8 +939,7 @@ fn intersect_parallel_cylinders(
     // Concentric same-radius cylinders
     if dist_between_axes < TOLERANCE_ABS && (r1 - r2).abs() < TOLERANCE_ABS {
         // Same cylinder - return a representative circle
-        return CylCylResult::SingleCurve(Curve3::Circle(Circle3::new(cyl1.origin, axis, r1,
-        )));
+        return CylCylResult::SingleCurve(Curve3::Circle(Circle3::new(cyl1.origin, axis, r1,)));
     }
 
     // Two parallel cylinders with overlapping cross-sections

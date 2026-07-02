@@ -123,7 +123,7 @@ fn build_cylinder_torus_union_tessellated(
 
     if faces.is_empty() { return None; }
 
-    let geom = GeomStore { face_internal_vertices: vec![],
+    let geom = GeomStore { edge_vertex_params: vec![],  face_internal_vertices: vec![],
         curves: vec![], surfaces: vec![], curve2ds: vec![],
         edge_curve: vec![],
         face_surface: vec![None; faces.len()],
@@ -523,7 +523,7 @@ fn build_coaxial_cones_union_tessellated(
 
     if faces.is_empty() { return None; }
 
-    let geom = GeomStore { face_internal_vertices: vec![],
+    let geom = GeomStore { edge_vertex_params: vec![],  face_internal_vertices: vec![],
         curves: vec![], surfaces: vec![], curve2ds: vec![],
         edge_curve: vec![],
         face_surface: vec![None; faces.len()],
@@ -856,7 +856,7 @@ fn build_cone_cone_union_tessellated(
 
     if faces.is_empty() { return None; }
 
-    let geom = GeomStore { face_internal_vertices: vec![],
+    let geom = GeomStore { edge_vertex_params: vec![],  face_internal_vertices: vec![],
         curves: vec![], surfaces: vec![], curve2ds: vec![],
         edge_curve: vec![],
         face_surface: vec![None; faces.len()],
@@ -1021,7 +1021,7 @@ fn build_conical_frustum_minus_frustum_brep(
 
     if faces.is_empty() { return None; }
 
-    let geom = GeomStore { face_internal_vertices: vec![],
+    let geom = GeomStore { edge_vertex_params: vec![],  face_internal_vertices: vec![],
         curves: vec![], surfaces: vec![], curve2ds: vec![],
         edge_curve: vec![],
         face_surface: vec![None; faces.len()],

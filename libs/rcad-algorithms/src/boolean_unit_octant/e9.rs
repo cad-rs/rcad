@@ -121,7 +121,7 @@ fn build_cone_box_intersection_tessellated(
 
     if faces.is_empty() { return None; }
 
-    let geom = GeomStore { face_internal_vertices: vec![],
+    let geom = GeomStore { edge_vertex_params: vec![],  face_internal_vertices: vec![],
         curves: vec![], surfaces: vec![], curve2ds: vec![],
         edge_curve: vec![],
         face_surface: vec![None; faces.len()],
@@ -640,7 +640,7 @@ fn build_box_minus_cylinder_one_v_face_exit(
     let bot_center = DVec3::new(cyl_cx, cyl_cy, -ew);
     let bot_arc = make_edge(
         &mut brep,
-        Curve3::Circle(Circle3::new(bot_center, DVec3::Z, cyl_r )),
+        Curve3::Circle(Circle3::new(bot_center, DVec3::Z, cyl_r)),
         0.0, pi, vi_va, vi_vb,
     ).ok()?;
 
@@ -655,7 +655,7 @@ fn build_box_minus_cylinder_one_v_face_exit(
     let top_center = DVec3::new(cyl_cx, cyl_cy, ew);
     let top_arc = make_edge(
         &mut brep,
-        Curve3::Circle(Circle3::new(top_center, DVec3::Z, cyl_r )),
+        Curve3::Circle(Circle3::new(top_center, DVec3::Z, cyl_r)),
         pi, 0.0, vi_vc, vi_vd,
     ).ok()?;
 

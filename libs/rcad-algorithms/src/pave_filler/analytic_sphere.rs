@@ -345,11 +345,7 @@ impl<'a> super::PaveFiller<'a> {
         // Center of the intersection circle
         let center = sph1.center + normal * h;
 
-        let circle = Circle3 {
-            center,
-            normal,
-            radius: r_circ,
-        };
+        let circle = Circle3::new(center, normal, r_circ);
 
         let curve3 = Curve3::Circle(circle);
         let t_range = [0.0_f64, TAU];

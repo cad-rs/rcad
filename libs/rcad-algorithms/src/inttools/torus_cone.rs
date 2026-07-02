@@ -177,11 +177,7 @@ fn intersect_torus_cone_coaxial(
         }
 
         let center = torus.center + axis * z;
-        return TorusConeResult::TangentCircle(Circle3 {
-            center,
-            normal: axis,
-            radius: rho,
-        });
+        return TorusConeResult::TangentCircle(Circle3::new(center, axis, rho));
     }
 
     // Two solutions
@@ -195,11 +191,7 @@ fn intersect_torus_cone_coaxial(
         let rho = A * z + B;
         if rho > TOLERANCE_ABS {
             let center = torus.center + axis * z;
-            circles.push(Circle3 {
-                center,
-                normal: axis,
-                radius: rho,
-            });
+            circles.push(Circle3::new(center, axis, rho));
         }
     }
 

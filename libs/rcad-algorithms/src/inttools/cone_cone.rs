@@ -376,7 +376,7 @@ fn intersect_parallel_cones(
         }
 
         let center = apex1 + a1 * h;
-        return ConeConeResult::CoaxialCircle(Circle3 { center, normal: a1, radius });
+        return ConeConeResult::CoaxialCircle(Circle3::new(center, a1, radius));
     }
 
     // ── Parallel but offset ───────────────────────────────────────────────────
@@ -602,7 +602,7 @@ pub fn intersect_cone_cone_with_tolerance(
             }
 
             let center = cone1.apex + a1 * h;
-            return ConeConeResult::CoaxialCircle(Circle3 { center, normal: a1, radius });
+            return ConeConeResult::CoaxialCircle(Circle3::new(center, a1, radius));
         }
     }
 

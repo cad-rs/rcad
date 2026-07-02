@@ -8261,7 +8261,7 @@ fn resolve_curve(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve3> {
 
     if let Some((placement_ref, radius)) = parsed.circles.get(&actual_ref) {
         let (center, normal) = placement_from_ref(parsed, *placement_ref)?;
-        return Some(Curve3::Circle(rcad_kernel::geom::Circle3::new(center, normal, radius)));
+        return Some(Curve3::Circle(rcad_kernel::geom::Circle3::new(center, normal, *radius)));
     }
 
     if let Some((placement_ref, major_radius, minor_radius)) = parsed.ellipses.get(&actual_ref) {
@@ -8983,10 +8983,7 @@ fn resolve_curve2d(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve2d> {
                     .and_then(|(loc_ref, _, _)| parsed.cartesian_points.get(loc_ref))
                     .map(|&p| glam::DVec2::new(p[0], p[1]))
             })?;
-        return Some(Curve2d::Circle(rcad_kernel::geom::Circle2d {
-            center,
-            radius: *radius,
-        }));
+        return Some(Curve2d::Circle(rcad_kernel::geom::Circle2d { center, x_dir: glam::DVec2::X, y_dir: glam::DVec2::Y, radius: *radius, }));
     }
 
     // 2D Ellipse: ELLIPSE referencing an AXIS2_PLACEMENT_2D

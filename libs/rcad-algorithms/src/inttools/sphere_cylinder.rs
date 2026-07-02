@@ -131,11 +131,7 @@ pub fn intersect_sphere_cylinder_with_tolerance(
 
         if disc.abs() < tol {
             let center = cyl.origin + axis * h_c;
-            return SphereCylinderResult::TangentCircle(Circle3 {
-                center,
-                normal: axis,
-                radius: r,
-            });
+            return SphereCylinderResult::TangentCircle(Circle3::new(center, axis, r));
         }
 
         let delta_h = disc.sqrt();

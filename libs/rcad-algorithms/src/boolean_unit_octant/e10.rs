@@ -76,9 +76,9 @@ fn build_cylinder_box_difference_full_wall(
         }));
         si
     };
-    let circle_bot = Curve3::Circle(Circle3::new(DVec3::new(center.x, 0.0, 0.0), -DVec3::Z, r));
+    let circle_bot = Curve3::Circle(Circle3::new(DVec3::new(center.x, center.y, cz_lo), -DVec3::Z, r,));
     let ba = push_edge!(circle_bot, -pi / 2.0 - two_pi, -pi / 2.0, 0, 0);
-    let circle_top = Curve3::Circle(Circle3::new(DVec3::new(center.x, 0.0, 0.0), DVec3::Z, r));
+    let circle_top = Curve3::Circle(Circle3::new(DVec3::new(center.x, center.y, cz_hi), DVec3::Z, r,));
     let ta = push_edge!(circle_top, -pi / 2.0, two_pi - pi / 2.0, 0, 0);
 
     let v0_lo = vtab[0].lo_idx;
@@ -378,7 +378,7 @@ pub(crate) fn build_cylinder_box_clipped_brep(
         // Circle3(normal=-Z): C(t) = center + r*(-sin(t), -cos(t), 0)
         // For vertex at standard CCW angle 鑳? P = center + r*(cos(鑳?, sin(鑳?, 0)
         // Mapping: (-sin(t), -cos(t)) = (cos(鑳?, sin(鑳?) 閳?t = -锜?2 - 鑳?
-        let circle_bot = Curve3::Circle(Circle3::new(DVec3::new(center.x, 0.0, 0.0), -DVec3::Z, r));
+        let circle_bot = Curve3::Circle(Circle3::new(DVec3::new(center.x, center.y, cz_lo), -DVec3::Z, r,));
         // Stored as V_e 閳?V_s, used as rev in wires 閳?effective V_s 閳?V_e (CCW)
         let ba = next_curve(circle_bot, -pi / 2.0 - e_raw, -pi / 2.0 - s_raw, v_lo(ei), v_lo(si));
 
@@ -392,7 +392,7 @@ pub(crate) fn build_cylinder_box_clipped_brep(
         // Top circle (normal = +Z)
         // Circle3(normal=+Z): C(t) = center + r*(-sin(t), cos(t), 0)
         // Mapping: (-sin(t), cos(t)) = (cos(鑳?, sin(鑳?) 閳?t = 鑳?- 锜?2
-        let circle_top = Curve3::Circle(Circle3::new(DVec3::new(center.x, 0.0, 0.0), DVec3::Z, r));
+        let circle_top = Curve3::Circle(Circle3::new(DVec3::new(center.x, center.y, cz_hi), DVec3::Z, r,));
         // Stored as V_s 閳?V_e (fwd in cap wire = 鑳僟s閳崹绔塭 CCW; rev in cyl wall = 鑳僟e閳崹绔塻)
         let ta = next_curve(circle_top, s_raw - pi / 2.0, e_raw - pi / 2.0, v_hi(si), v_hi(ei));
 
@@ -869,7 +869,7 @@ fn build_cylinder_arc_for_difference_skip(
     };
 
     // E0: bottom arc (V1閳壐0), same convention as build_half_cylinder_intersection_brep
-    let circle_bot = Curve3::Circle(Circle3::new(DVec3::new(center.x, 0.0, 0.0), -DVec3::Z, r));
+    let circle_bot = Curve3::Circle(Circle3::new(DVec3::new(center.x, center.y, cz_lo), -DVec3::Z, r,));
     let e0 = next_curve(circle_bot, -phi - alpha, -phi + alpha, v1, v0);
 
     // E1: right generator (V1閳壐2)
@@ -877,7 +877,7 @@ fn build_cylinder_arc_for_difference_skip(
     let e1 = next_curve(line_r, 0.0, h, v1, v2);
 
     // E2: top arc (V3閳壐2)
-    let circle_top = Curve3::Circle(Circle3::new(DVec3::new(center.x, 0.0, 0.0), DVec3::Z, r));
+    let circle_top = Curve3::Circle(Circle3::new(DVec3::new(center.x, center.y, cz_hi), DVec3::Z, r,));
     let e2 = next_curve(circle_top, phi - alpha, phi + alpha, v3, v2);
 
     // E3: left generator (V0閳壐3)

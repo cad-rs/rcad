@@ -54,11 +54,7 @@ pub fn intersect_plane_cylinder(plane: &Plane, cyl: &CylindricalSurface) -> Plan
         // Plane perpendicular to cylinder axis → circle
         let t = (plane.origin - cyl.origin).dot(cyl.axis);
         let center = cyl.origin + cyl.axis * t;
-        return PlaneCylinderResult::Circle(Circle3 {
-            center,
-            normal: cyl.axis,
-            radius: cyl.radius,
-        });
+        return PlaneCylinderResult::Circle(Circle3::new(center, cyl.axis, cyl.radius));
     }
 
     // General oblique case → ellipse

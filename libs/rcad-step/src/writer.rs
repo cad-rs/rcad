@@ -5083,10 +5083,7 @@ fn synthesize_plane_pcurve_for_edge(
         }
         Some(Curve3::Circle(c)) => {
             let center = to_uv(c.center);
-            Some(Curve2d::Circle(rcad_kernel::geom::Circle2d {
-                center,
-                radius: c.radius.max(1e-9),
-            }))
+            Some(Curve2d::Circle(rcad_kernel::geom::Circle2d { center, x_dir: glam::DVec2::X, y_dir: glam::DVec2::Y, radius: c.radius.max(1e-9), }))
         }
         Some(Curve3::Ellipse(e)) => {
             let center = to_uv(e.center);
@@ -5155,10 +5152,7 @@ fn synthesize_edge_curve2d_on_face_frame(
         }
         Some(Curve3::Circle(c)) => {
             let center = to_uv(c.center);
-            Some(Curve2d::Circle(rcad_kernel::geom::Circle2d {
-                center,
-                radius: c.radius.max(1e-9),
-            }))
+            Some(Curve2d::Circle(rcad_kernel::geom::Circle2d { center, x_dir: glam::DVec2::X, y_dir: glam::DVec2::Y, radius: c.radius.max(1e-9), }))
         }
         Some(Curve3::Ellipse(e)) => {
             let center = to_uv(e.center);

@@ -1213,11 +1213,7 @@ fn compute_variable_fillet_curves(
                 let axis = torus.axis.normalize();
                 let center = torus.center + axis * (pt - torus.center).dot(axis);
 
-                let curve = Curve3::Circle(Circle3 {
-                    center,
-                    normal: axis,
-                    radius: rp.radius,
-                });
+                let curve = Curve3::Circle(Circle3::new(center, axis, rp.radius));
 
                 curves.push(FilletCurve {
                     curve,

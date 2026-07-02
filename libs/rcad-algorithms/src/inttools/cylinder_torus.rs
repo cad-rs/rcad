@@ -506,11 +506,7 @@ fn intersect_cylinder_torus_coaxial(
         // Tangent: one circle
         let z = 0.0;
         let center = torus.center + torus.axis * z;
-        return CylinderTorusResult::TangentCircle(Circle3 {
-            center,
-            normal: torus.axis,
-            radius: r_cyl,
-        });
+        return CylinderTorusResult::TangentCircle(Circle3::new(center, torus.axis, r_cyl));
     }
 
     // Two intersection points in (rho, z): z = +/-sqrt(minor_r^2 - d^2)

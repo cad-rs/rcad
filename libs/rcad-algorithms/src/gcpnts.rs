@@ -742,7 +742,7 @@ mod tests {
     }
 
     fn create_test_circle() -> Curve3 {
-        Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0))
+        Curve3::Circle(Circle3::new(DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 0.0, 1.0), 5.0,))
     }
 
     fn create_test_plane() -> Surface3 {

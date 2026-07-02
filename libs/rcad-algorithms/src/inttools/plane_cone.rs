@@ -47,11 +47,7 @@ pub fn intersect_plane_cone(plane: &Plane, cone: &ConicalSurface) -> PlaneConica
         if radius < TOLERANCE_ABS {
             return PlaneConicalResult::Point(center);
         }
-        return PlaneConicalResult::Circle(Circle3 {
-            center,
-            normal: cone.axis,
-            radius,
-        });
+        return PlaneConicalResult::Circle(Circle3::new(center, cone.axis, radius));
     }
 
     // ── Plane through apex ────────────────────────────────────────────────────

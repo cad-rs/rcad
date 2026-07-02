@@ -90,11 +90,7 @@ fn intersect_plane_torus_perpendicular(
     // Tangent case: one circle
     if (abs_dist - torus.minor_radius).abs() < tol {
         let center = torus.center - torus.axis * signed_dist;
-        return PlaneTorusResult::TangentCircle(Circle3 {
-            center,
-            normal: torus.axis,
-            radius: torus.major_radius,
-        });
+        return PlaneTorusResult::TangentCircle(Circle3::new(center, torus.axis, torus.major_radius));
     }
 
     // Two circles at height signed_dist from torus center
@@ -109,15 +105,11 @@ fn intersect_plane_torus_perpendicular(
 
     if r2 < tol {
         // Inner circle degenerates to point
-        PlaneTorusResult::TangentCircle(Circle3 {
-            center,
-            normal: torus.axis,
-            radius: r1,
-        })
+        PlaneTorusResult::TangentCircle(Circle3::new(center, torus.axis, r1))
     } else {
         PlaneTorusResult::TwoCircles(
-            Circle3 { center, normal: torus.axis, radius: r1 },
-            Circle3 { center, normal: torus.axis, radius: r2 },
+            Circle3::new(center, torus.axis, r1),
+            Circle3::new(center, torus.axis, r2),
         )
     }
 }

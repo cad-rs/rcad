@@ -184,8 +184,7 @@ mod tests {
         use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
         use rcad_kernel::geom::{Circle3, Curve3, CurveEval};
 
-        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
-        );
+        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,);
         let p0 = circle.point_at(0.0);
         let p1 = circle.point_at(PI);
 

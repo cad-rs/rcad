@@ -799,7 +799,7 @@ fn compute_surface_silhouette(
             let center = sph.center;
 
             // Create circle in plane perpendicular to view direction
-            let circle = Curve3::Circle(Circle3::new(center, normal, radius));
+            let circle = Curve3::Circle(Circle3::new(center, normal, sph.radius));
             curves.push(circle);
         }
 

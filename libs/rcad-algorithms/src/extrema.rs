@@ -842,8 +842,7 @@ mod tests {
 
     #[test]
     fn test_distance_point_curve_circle() {
-        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
-        ));
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,));
         let point = DVec3::new(3.0, 0.0, 0.0);
 
         let (dist, _param) = distance_point_curve(point, &circle);
@@ -1030,8 +1029,7 @@ mod tests {
 
     #[test]
     fn test_find_closest_points_circle() {
-        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
-        ));
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,));
         let point = DVec3::new(0.0, 0.0, 0.0); // Center of circle
 
         let closest = find_closest_points(&circle, point, 2);
@@ -1100,7 +1098,7 @@ mod tests {
 
     #[test]
     fn test_refinement_convergence() {
-        let circle = Curve3::Circle(Circle3::new(DVec3::new(5.0, 0.0, 0.0), DVec3::Z, 3.0));
+        let circle = Curve3::Circle(Circle3::new(DVec3::new(5.0, 5.0, 0.0), DVec3::Z, 3.0,));
         let point = DVec3::new(10.0, 5.0, 0.0);
 
         let (dist, _param) = distance_point_curve(point, &circle);

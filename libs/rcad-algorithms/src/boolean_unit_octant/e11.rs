@@ -137,7 +137,7 @@ fn build_half_cylinder_intersection_brep(
     // E0: bottom arc (V1閳壐0 along kept side of bottom circle).
     // Circle3 with normal=-Z maps CylSurf u 閳?Circle3 -u, so V1(CylSurf u=锠?浼?
     // 閳?Circle3 u=-(锠?浼? and V0(CylSurf u=锠?浼? 閳?Circle3 u=-(锠?浼?.
-    let circle_bot = Curve3::Circle(Circle3::new(DVec3::new(center.x, 0.0, 0.0), -DVec3::Z, r));
+    let circle_bot = Curve3::Circle(Circle3::new(DVec3::new(center.x, center.y, cz_lo), -DVec3::Z, r,));
     let e0 = next_curve(circle_bot, -phi - alpha, -phi + alpha, v1, v0);
 
     // E1: right generator (V1閳壐2)
@@ -150,7 +150,7 @@ fn build_half_cylinder_intersection_brep(
     // E2: top arc (V3閳壐2 along kept side of top circle).
     // Circle3 with normal=Z uses the same param as CylSurf, so V3(CylSurf u=锠?浼?
     // 閳?Circle3 u=锠?浼?and V2(CylSurf u=锠?浼? 閳?Circle3 u=锠?浼?
-    let circle_top = Curve3::Circle(Circle3::new(DVec3::new(center.x, 0.0, 0.0), DVec3::Z, r));
+    let circle_top = Curve3::Circle(Circle3::new(DVec3::new(center.x, center.y, cz_hi), DVec3::Z, r,));
     let e2 = next_curve(circle_top, phi - alpha, phi + alpha, v3, v2);
 
     // E3: left generator (V0閳壐3)

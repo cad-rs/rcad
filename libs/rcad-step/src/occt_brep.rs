@@ -261,11 +261,7 @@ fn parse_curve3(c: &mut Cursor<'_>) -> Result<Curve3, OcctBrepError> {
             let n = c.parse_dir3()?;
             let _dx = c.parse_dir3()?;
             let _dy = c.parse_dir3()?;
-            Ok(Curve3::Circle(Circle3 {
-                center,
-                normal: n,
-                radius: c.parse_f64()?,
-            }))
+            Ok(Curve3::Circle(Circle3::new(center, n, c.parse_f64()?)))
         }
         "3" => Ok(Curve3::Ellipse(Ellipse3 {
             center: c.parse_point3()?,
@@ -350,10 +346,7 @@ fn parse_curve2d(c: &mut Cursor<'_>) -> Result<Curve2d, OcctBrepError> {
             let center = c.parse_point2()?;
             let _dx = c.parse_dir2()?;
             let _dy = c.parse_dir2()?;
-            Ok(Curve2d::Circle(Circle2d {
-                center,
-                radius: c.parse_f64()?,
-            }))
+            Ok(Curve2d::Circle(Circle2d { center, x_dir: glam::DVec2::X, y_dir: glam::DVec2::Y, radius: c.parse_f64()?, }))
         }
         "3" => Ok(Curve2d::Ellipse(Ellipse2d {
             center: c.parse_point2()?,
