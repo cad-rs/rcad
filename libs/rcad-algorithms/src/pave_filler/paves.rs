@@ -312,45 +312,53 @@ impl<'a> super::PaveFiller<'a> {
         None
     }
 
-    pub(crate) fn put_paves_on_curve(&mut self, curve_idx: usize, face_idxs: &[usize; 2]) {
-        let ic = self.ds.intersection_curves[curve_idx].clone();
-        let aTolR3D = ic.geom_tol;
-        let aMI = crate::pave_filler::build_face_shape_map(self.ds, face_idxs[0]);
-        let aMI = &aMI;
+    /// OCCT-aligned: BOPAlgo_PaveFiller::PutPavesOnCurve (L2404-2453).
+    ///   Takes pre-computed vertex sets instead of re-deriving from interferences.
+    pub(crate) fn put_paves_on_curve(
+        &mut self,
+        theMVOnIn: &std::collections::HashSet<usize>,
+        theMVCommon: &std::collections::HashSet<usize>,
+        curve_idx: usize,
+        aMI: &std::collections::HashSet<usize>,
+        theMVEF: &std::collections::HashSet<usize>,
+    ) {
+        let ic = &self.ds.intersection_curves[curve_idx];
+        let aTolR3D = ic.geom_tol.max(ic.curve_extra.tangential_tol);
+        // OCCT L2415-2416: aBoxC = theNC.Box()
+        let c_box = crate::pave_filler::helpers::curve_bounding_box_simple(&ic.curve, 0.0);
 
-        let ef_vertices: Vec<usize> = self.ds.interferences.iter()
-            .filter_map(|inf| {
-                if let Interference::EdgeFace { new_vertex, face, .. } = inf {
-                    if *face == face_idxs[0] || *face == face_idxs[1] {
-                        Some(*new_vertex)
-                    } else { None }
-                } else { None }
-            }).collect();
-        let ef_set: std::collections::HashSet<usize> = ef_vertices.iter().copied().collect();
-        for &vi in &ef_vertices {
-            self.put_pave_on_curve(vi, aTolR3D, curve_idx, aMI, 2);
+        // OCCT L2418-2424: Put EF vertices first (iCheckExtend=2)
+        for &nV in theMVEF {
+            self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 2);
         }
 
-        // ShapeInfo box filtering (OCCT L2404-2412: aBoxC.IsOut(aBoxV))
-        let c_box_min = ic.curve.point_at(ic.t_range[0]).min(ic.curve.point_at(ic.t_range[1]));
-        let c_box_max = ic.curve.point_at(ic.t_range[0]).max(ic.curve.point_at(ic.t_range[1]));
-        let in_vertices: Vec<usize> = (0..self.ds.faces.len())
-            .flat_map(|fi| self.ds.faces[fi].face_info.vertices_in.iter().copied()).collect();
-        for &vi in &in_vertices {
-            if ef_set.contains(&vi) { continue; }
-            if vi < self.ds.shape_info.len() {
-                if let (Some(vmn), Some(vmx)) = (self.ds.shape_info[vi].box_min, self.ds.shape_info[vi].box_max) {
-                    if vmx.x + aTolR3D < c_box_min.x - aTolR3D || vmn.x - aTolR3D > c_box_max.x + aTolR3D ||
-                       vmx.y + aTolR3D < c_box_min.y - aTolR3D || vmn.y - aTolR3D > c_box_max.y + aTolR3D ||
-                       vmx.z + aTolR3D < c_box_min.z - aTolR3D || vmn.z - aTolR3D > c_box_max.z + aTolR3D {
-                        continue;
+        // OCCT L2426-2452: Put all other ON/IN vertices (iCheckExtend=1)
+        for &nV in theMVOnIn {
+            if theMVEF.contains(&nV) { continue; }
+            if theMVCommon.contains(&nV) {
+                // OCCT L2436: common vertices skip box check
+                self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 1);
+            } else {
+                // OCCT L2438-2444: Box check — skip if curve box doesn't overlap vertex box
+                if nV < self.ds.shape_info.len() {
+                    if let (Some(vmn), Some(vmx)) = (self.ds.shape_info[nV].box_min, self.ds.shape_info[nV].box_max) {
+                        let v_box_min = vmn - glam::DVec3::splat(aTolR3D);
+                        let v_box_max = vmx + glam::DVec3::splat(aTolR3D);
+                        if let Some(c_box) = &c_box {
+                            if v_box_max.x < c_box[0].x || v_box_min.x > c_box[1].x ||
+                               v_box_max.y < c_box[0].y || v_box_min.y > c_box[1].y ||
+                               v_box_max.z < c_box[0].z || v_box_min.z > c_box[1].z {
+                                continue;
+                            }
+                        }
                     }
                 }
+                // OCCT L2445-2447: Skip non-new shapes
+                if nV < self.ds.shape_info.len() && !self.ds.shape_info[nV].is_new {
+                    continue;
+                }
+                self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 1);
             }
-            if vi < self.ds.shape_info.len() && !self.ds.shape_info[vi].is_new {
-                continue;
-            }
-            self.put_pave_on_curve(vi, aTolR3D, curve_idx, aMI, 1);
         }
     }
 

@@ -245,7 +245,7 @@ impl<'a> super::PaveFiller<'a> {
                 self.ds.intersection_curves[ci].init_pave_block1();
 
                 // OCCT L802-808: PutPavesOnCurve(aMVOnIn, aMVCommon, aNC, aMI, aMVEF, aMVTol, aDMVLV)
-                self.put_paves_on_curve(ci, &[n_f1, n_f2]);
+                self.put_paves_on_curve(&a_mv_on_in, &a_mv_common, ci, &aMI, &a_mv_ef);
             }
 
             // OCCT L814: FilterPavesOnCurves — remove bad paves across all curves
