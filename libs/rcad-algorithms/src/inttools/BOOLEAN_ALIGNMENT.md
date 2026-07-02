@@ -103,10 +103,10 @@
 | `gp_Circ2d` (坐标方向轴) | `Circle2d { x_dir, y_dir }` (geom.rs:628) | ✅ | **刚补齐** — 新增 x_dir/y_dir + `rotate_center()`，`point_at` 使用定向参数化 |
 | `BOPTools_AlgoTools::CorrectTolerances` (BRep 级) | `rcad_kernel::tolerance::correct_tolerances` (tolerance.rs:730) | ⏳ | 功能等价；形式对齐在 DS 级 boptools/extra.rs:402 |
 | `IntTools_Tools::ComputeTolerance` | `estimate_pcurve_deviation` (boptools/extra.rs:336) | ✅ | 25点均匀采样 + 1.00001 margin，对齐 OCCT L737-779 |
-| `IntTools_Context::ProjectPointOnEdge` | `closest_point_on_curve` (projection.rs) | ⏳ | 功能等价但实现不同 |
 | `IntTools_Context::ProjPT` (缓存投影器) | `Context::proj_pt()` (context.rs:102) | ✅ | 新增 `proj_pt_latest: Option<CurveProjection>` 单例缓存 |
-| `Extrema_LocateExtPC` | `closest_point_on_curve` 局部模式 (64 iter Newton) | ⏳ | 功能等价但形式不对 |
-| `Extrema_ExtPC` | 无独立函数 | ❌ | rcad 用单一 closest_point_on_curve 替代两级投影 |
+| `IntTools_Context::ProjectPointOnEdge` | `Context::proj_pc` / `proj_pt` (context.rs) | ✅ | 封装 closest_point_on_curve，匹配 OCCT ProjPC/ProjPT |
+| `ExtremaPC` (OCCT 8.0 per-type dispatch) | `closest_point_on_curve` (projection.rs:158) | ✅ | per-type match: Line/Circle 解析解 + BSpline C2 区间 + Newton |
+| `Extrema_LocateExtPC` / Newton step | `newton_refine` (projection.rs:102) | ✅ | g(t)=(P-C)·C', g'(t)=|C'|²+(P-C)·C'' 公式一致 |
 
 ## 关键未对齐点总结
 
