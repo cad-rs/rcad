@@ -288,93 +288,93 @@ impl<'a> super::PaveFiller<'a> {
                 }
 
                 // OCCT L828-843: PutBoundPaveOnCurve(aF1, aF2, aNC, aLBV) + aDMBV
+                // OCCT BOPAlgo_PaveFiller_6.cxx L2340-2400
+                //   For each un-vertexed endpoint of the IC, check if it lies on both face
+                //   surfaces (3D distance check, not UV domain), and if so create a vertex
+                //   and append it as an ext_pave on the IC's PB.
                 {
-                    let ic = &self.ds.intersection_curves[ci];
-                    let a_tol_r3d = ic.geom_tol.max(crate::tolerance::TOLERANCE_ABS);
-                    let t_bnd = [ic.t_range[0], ic.t_range[1]];
-                    let p_bnd = [ic.curve.point_at(t_bnd[0]), ic.curve.point_at(t_bnd[1])];
-                    let pca = ic.pcurve_on_a.clone();
-                    let pcb = ic.pcurve_on_b.clone();
-                    let sv = ic.start_vertex;
-                    let ev = ic.end_vertex;
-
-                    let mut plane_vert_cache: Vec<Vec<DVec3>> = vec![Vec::new(); 2];
-                    for (k, &fi) in [n_f1, n_f2].iter().enumerate() {
-                        if fi != usize::MAX {
-                            if let Surface3::Plane(_) = &self.ds.faces[fi].surface {
-                                plane_vert_cache[k] = self.ds.face_boundary_points(fi);
-                            }
-                        }
-                    }
-
-                    let mut new_verts: Vec<(f64, usize)> = Vec::new();
-                    // Ensure pave_block1 exists — OCCT PutBoundPaveOnCurve always has one.
+                    let mut a_lbv: Vec<usize> = Vec::new();
+                    // Clone IC data to avoid borrow conflict
+                    let ic_data = {
+                        let ic = &self.ds.intersection_curves[ci];
+                        (ic.curve.clone(), ic.t_range, ic.geom_tol, ic.start_vertex, ic.end_vertex)
+                    };
+                    let (ic_curve, ic_t_range, ic_geom_tol, ic_sv, ic_ev) = ic_data;
+                    let a_tol_r3d = ic_geom_tol.max(crate::tolerance::TOLERANCE_ABS);
+                    let a_t = [ic_t_range[0], ic_t_range[1]];
+                    let a_p = [ic_curve.point_at(a_t[0]), ic_curve.point_at(a_t[1])];
+                    // Ensure pave_block1 exists
                     if self.ds.intersection_curves[ci].pave_blocks.is_empty() {
                         self.ds.intersection_curves[ci].init_pave_block1();
                     }
-                    // OCCT PutBoundPaveOnCurve: add endpoint paves unconditionally
-                    if sv < self.ds.vertices.len() {
-                        self.put_pave_on_curve(sv, self.ds.intersection_curves[ci].geom_tol, ci, aMI_ref, 1);
-                    }
-                    if ev < self.ds.vertices.len() && ev != sv {
-                        self.put_pave_on_curve(ev, self.ds.intersection_curves[ci].geom_tol, ci, aMI_ref, 1);
-                    }
-                    if let Some(pb) = self.ds.intersection_curves[ci].pave_blocks.first() {
-                        let (n_v_min, n_v_max) = {
-                            let mut n_min = usize::MAX;
-                            let mut n_max = usize::MAX;
-                            let mut t_min = f64::MAX;
-                            let mut t_max = f64::MIN;
+                    // getBoundPaves: check which endpoints already have vertices
+                    // by comparing ext_pave positions and IC sv/ev against bound points.
+                    let mut a_bnd_nv = [usize::MAX; 2];
+                    {
+                        let ic = &self.ds.intersection_curves[ci];
+                        if let Some(pb) = ic.pave_blocks.first() {
                             for ep in &pb.ext_paves {
-                                if ep.param < t_min { t_min = ep.param; n_min = ep.vertex_idx; }
-                                if ep.param > t_max { t_max = ep.param; n_max = ep.vertex_idx; }
-                            }
-                            (n_min, n_max)
-                        };
-                        for j_end in 0..2 {
-                            let n_v_cur = if j_end == 0 { n_v_min } else { n_v_max };
-                            let is_match = if n_v_cur < self.ds.vertices.len() {
-                                self.ds.vertices[n_v_cur].point.distance(p_bnd[j_end]) < a_tol_r3d
-                            } else { false };
-                            if is_match { continue; }
-                            let existing_v = if j_end == 0 { sv } else { ev };
-                            if existing_v < self.ds.vertices.len()
-                                && self.ds.vertices[existing_v].point.distance(p_bnd[j_end]) < a_tol_r3d
-                            {
-                                continue;
-                            }
-                            let valid = {
-                                let mut ok = true;
-                                for (k, &fi) in [n_f1, n_f2].iter().enumerate() {
-                                    if fi == usize::MAX { continue; }
-                                    let surf = &self.ds.faces[fi].surface;
-                                    match surf {
-                                        Surface3::Plane(pl) => {
-                                            if !inttools::edge_face::point_in_planar_face_with_tol(
-                                                p_bnd[j_end], pl, &plane_vert_cache[k], a_tol_r3d)
-                                            {
-                                                ok = false; break;
-                                            }
-                                        }
-                                        _ => {
-                                            let pcurve = if k == 0 { pca.as_ref() } else { pcb.as_ref() };
-                                            if let Some(pc) = pcurve {
-                                                let uv = pc.point_at(t_bnd[j_end]);
-                                                if !self.context.is_point_in_on_face(self.ds, fi, uv) {
-                                                    ok = false; break;
-                                                }
-                                            }
-                                        }
+                                let pt = ic_curve.point_at(ep.param);
+                                for j in 0..2 {
+                                    if (pt - a_p[j]).length_squared() < a_tol_r3d * a_tol_r3d {
+                                        a_bnd_nv[j] = ep.vertex_idx;
                                     }
                                 }
-                                ok
-                            };
-                            if !valid { continue; }
-                            new_verts.push((t_bnd[j_end], self.ds.add_vertex(p_bnd[j_end])));
+                            }
+                        }
+                        if ic_sv < self.ds.vertices.len() {
+                            let sv_pt = self.ds.vertices[ic_sv].point;
+                            for j in 0..2 {
+                                if (sv_pt - a_p[j]).length_squared() < a_tol_r3d * a_tol_r3d {
+                                    a_bnd_nv[j] = ic_sv;
+                                }
+                            }
+                        }
+                        if ic_ev < self.ds.vertices.len() {
+                            let ev_pt = self.ds.vertices[ic_ev].point;
+                            for j in 0..2 {
+                                if (ev_pt - a_p[j]).length_squared() < a_tol_r3d * a_tol_r3d {
+                                    a_bnd_nv[j] = ic_ev;
+                                }
+                            }
                         }
                     }
-                    for &(_t, vi) in &new_verts {
-                        self.put_pave_on_curve(vi, self.ds.intersection_curves[ci].geom_tol, ci, aMI_ref, 1);
+                    let a_tol_v_new = crate::tolerance::TOLERANCE_ABS;
+                    let is_closed = a_p[1].distance(a_p[0]) < a_tol_v_new;
+                    if is_closed && (a_bnd_nv[0] != usize::MAX || a_bnd_nv[1] != usize::MAX) {
+                        // OCCT L2357-2360: closed curve with endpoints — nothing to do
+                    }
+                    for j in 0..2 {
+                        if a_bnd_nv[j] != usize::MAX { continue; }
+                        if j == 1 && is_closed { continue; }
+                        // OCCT L2372: IsValidPointForFaces — 3D distance to each face surface
+                        let mut bvf = true;
+                        for &fi in &[n_f1, n_f2] {
+                            if fi == usize::MAX { continue; }
+                            let surf = &self.ds.faces[fi].surface;
+                            let dist = match surf {
+                                Surface3::Plane(p) => (a_p[j] - p.origin).dot(p.normal).abs(),
+                                Surface3::Sphere(s) => ((a_p[j] - s.center).length() - s.radius).abs(),
+                                Surface3::Cylinder(c) => {
+                                    let v = a_p[j] - c.origin;
+                                    let axis = c.axis.normalize();
+                                    let radial = v - axis * v.dot(axis);
+                                    (radial.length() - c.radius).abs()
+                                }
+                                _ => f64::MAX,
+                            };
+                            if dist > a_tol_r3d { bvf = false; break; }
+                        }
+                        if !bvf { continue; }
+                        // OCCT L2377-2396: create vertex + add DS + append ext_pave
+                        let n_vn = self.ds.add_vertex(a_p[j]);
+                        self.ds.vertices[n_vn].geom_tol = a_tol_r3d;
+                        if let Some(pb) = self.ds.intersection_curves[ci].pave_blocks.first_mut() {
+                            pb.append_ext_pave(crate::bopds::pave::Pave {
+                                vertex_idx: n_vn, param: a_t[j],
+                            });
+                        }
+                        a_lbv.push(n_vn);
                     }
                 }
             } // OCCT L844: end second curve loop
