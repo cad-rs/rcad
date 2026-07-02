@@ -534,17 +534,8 @@ impl<'a> super::PaveFiller<'a> {
 
                     // OCCT L962-1021: IsExistingPaveBlock via aMPBOnIn + aPBTree
                     //   OCCT BOPAlgo_PaveFiller_6.cxx L2079-2260+
-                    //   Uses BVH tree query on ON/IN PBs; rcad iterates flat list.
-                    let a_mpb_on_in_vec: Vec<usize> = {
-                        let mut pbs = std::collections::BTreeSet::new();
-                        for &fi in &[n_f1, n_f2] {
-                            if fi == usize::MAX { continue; }
-                            let f_info = &self.ds.faces[fi].face_info;
-                            pbs.extend(f_info.pave_blocks_on.iter());
-                            pbs.extend(f_info.pave_blocks_in.iter());
-                        }
-                        pbs.into_iter().collect()
-                    };
+                    //   Uses BVH tree query on aMPBOnIn; rcad iterates flat list.
+                    let a_mpb_on_in_vec: Vec<usize> = a_mpb_on_in.iter().copied().collect();
                     let b_exist_on_in = {
                         if a_mpb_on_in_vec.is_empty() {
                             false
@@ -708,13 +699,41 @@ impl<'a> super::PaveFiller<'a> {
                             self.ds.faces[fi].face_info.pave_blocks_sc.insert(g_pb_idx);
                         }
                     }
-                    // OCCT L1051-1062: ProcessExistingPaveBlocks — existing PBs from
-                    //   ON/IN sets may overlap this new edge; handled by aPBFacesMap.
-                    {
-                        let (v1, v2) = if n_v1 < n_v2 { (n_v1, n_v2) } else { (n_v2, n_v1) };
-                        let f1 = n_f1.min(n_f2);
-                        let f2 = n_f1.max(n_f2);
-                        existing_edge_map.insert((f1, f2, v1, v2), new_ei);
+                    // OCCT L1082-1094: ProcessExistingPaveBlocks — existing PBs from
+                    //   ON/IN sets may overlap this new section edge. Uses BVH tree on
+                    //   aMPBOnIn; rcad iterates flat list checking vertex sharing.
+                    for &pb_idx in &a_mpb_on_in_vec {
+                        if pb_idx >= self.ds.pave_blocks.len() { continue; }
+                        let a_pbf = &self.ds.pave_blocks[pb_idx];
+                        let (pbsv, pbev) = a_pbf.indices();
+                        // Check if PB shares vertices with the new edge
+                        if pbsv == n_v1 || pbsv == n_v2 || pbev == n_v1 || pbev == n_v2 {
+                            // Check if this PB is already in both faces' ON/IN
+                            let b_in_f1 = self.ds.faces[n_f1].face_info.pave_blocks_on.contains(&pb_idx)
+                                || self.ds.faces[n_f1].face_info.pave_blocks_in.contains(&pb_idx);
+                            let b_in_f2 = self.ds.faces[n_f2].face_info.pave_blocks_on.contains(&pb_idx)
+                                || self.ds.faces[n_f2].face_info.pave_blocks_in.contains(&pb_idx);
+                            if b_in_f1 && b_in_f2 {
+                                // Register in curve PB list + pave_blocks_sc
+                                self.ds.intersection_curves[ci].pave_blocks.push(a_pbf.clone());
+                                for &fi in &[n_f1, n_f2] {
+                                    if fi != usize::MAX {
+                                        self.ds.faces[fi].face_info.pave_blocks_sc.insert(pb_idx);
+                                    }
+                                }
+                            } else {
+                                // Add to PBFacesMap for the missing face
+                                let n_f = if b_in_f1 { n_f2 } else { n_f1 };
+                                a_pb_faces_map.entry(pb_idx).or_default().push(n_f);
+                                // Register in curve PB list + pave_blocks_sc for both faces
+                                self.ds.intersection_curves[ci].pave_blocks.push(a_pbf.clone());
+                                for &fi in &[n_f1, n_f2] {
+                                    if fi != usize::MAX {
+                                        self.ds.faces[fi].face_info.pave_blocks_sc.insert(pb_idx);
+                                    }
+                                }
+                            }
+                        }
                     }
                 } // OCCT L1063: end sub-PB loop
 
@@ -733,12 +752,16 @@ impl<'a> super::PaveFiller<'a> {
             }
 
             // OCCT L1073-1095: Restore vertex tolerances + reset bounding boxes
+            a_mv_tol.sort_by(|a, b| a.0.cmp(&b.0));
+            a_mv_tol.dedup_by_key(|a| a.0);
             for &(n_v, saved_tol) in &a_mv_tol {
                 if n_v < self.ds.vertices.len() {
-                    // Keep the max of saved and current tolerance (OCCT restores original)
-                    self.ds.vertices[n_v].geom_tol = self.ds.vertices[n_v].geom_tol.max(saved_tol);
+                    // OCCT L1112-1116: Restore ORIGINAL tolerance (not max)
+                    self.ds.vertices[n_v].geom_tol = saved_tol;
                 }
-                // OCCT L1091-1094: UnBind from aDMVLV
+            }
+            // OCCT L1091-1094: UnBind from aDMVLV (separate loop)
+            for &(n_v, _) in &a_mv_tol {
                 a_dm_vlv.remove(&n_v);
             }
 
