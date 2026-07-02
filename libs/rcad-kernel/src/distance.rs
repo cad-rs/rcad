@@ -516,6 +516,7 @@ mod tests {
                 shells: vec![Shell { faces: vec![face] }],
             }],
             geom: GeomStore {
+                edge_vertex_params: vec![],
                 curves: Vec::new(),
                 surfaces: vec![Surface3::Plane(Plane { origin, normal: n })],
                 curve2ds: Vec::new(),

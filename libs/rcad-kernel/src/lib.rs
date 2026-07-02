@@ -273,6 +273,10 @@ pub struct GeomStore {
     ///    并行于 face_surface (同一 flat face index)。
     #[serde(default)]
     pub face_internal_vertices: Vec<Vec<usize>>,
+    /// Per-edge start/end vertex parameters on the edge's 3D curve.
+    /// [start_param, end_param] — parallel to BRep.edges.
+    #[serde(default)]
+    pub edge_vertex_params: Vec<Option<[f64; 2]>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -385,6 +389,10 @@ impl BRep {
                     brep.edges.push(Edge { start: vi, end: vj });
                     brep.geom.edge_curve.push(ed.curve);
                     brep.geom.edge_curve_range.push(Some(ed.range));
+                    brep.geom.edge_vertex_params.push(Some([
+                        ed.vertex_params.get(&ed.first.index).copied().unwrap_or(ed.range[0]),
+                        ed.vertex_params.get(&ed.last.index).copied().unwrap_or(ed.range[1]),
+                    ]));
                 }
                 topods::TShape::Edge(ed) => {
                     let fi = brep.edges.len(); // flat edge index
@@ -394,6 +402,10 @@ impl BRep {
                     brep.edges.push(Edge { start: vi, end: vj });
                     brep.geom.edge_curve.push(ed.curve);
                     brep.geom.edge_curve_range.push(Some(ed.range));
+                    brep.geom.edge_vertex_params.push(Some([
+                        ed.vertex_params.get(&ed.first.index).copied().unwrap_or(ed.range[0]),
+                        ed.vertex_params.get(&ed.last.index).copied().unwrap_or(ed.range[1]),
+                    ]));
                 }
                 _ => {}
             }
@@ -1032,7 +1044,7 @@ impl BRep {
         // Face surface indices
         let face_surface: Vec<Option<usize>> = (0..6).map(Some).collect();
 
-        let geom = GeomStore { face_internal_vertices: vec![],
+        let geom = GeomStore { face_internal_vertices: vec![], edge_vertex_params: vec![],
             curves: Vec::new(),
             surfaces,
             curve2ds: Vec::new(),
@@ -1124,6 +1136,7 @@ impl BRep {
         });
         let geom = GeomStore {
             face_internal_vertices: vec![],
+            edge_vertex_params: vec![],
             curves: vec![seam_curve],
             surfaces: vec![sphere_surf],
             curve2ds: vec![pc_fwd, pc_rev],
@@ -1263,7 +1276,7 @@ impl BRep {
             direction: glam::DVec2::new(0.0, -1.0),
         });
 
-        let geom = GeomStore { face_internal_vertices: vec![],
+        let geom = GeomStore { face_internal_vertices: vec![], edge_vertex_params: vec![],
             curves: vec![top_circle, bot_circle, seam_line],
             surfaces: vec![cyl_surf, top_plane, bot_plane],
             curve2ds: vec![e0_on_f0, e0_on_f1, e1_on_f0, e1_on_f2, e2_on_f0],
@@ -1413,7 +1426,7 @@ impl BRep {
             direction: glam::DVec2::new(0.0, 1.0),
         });
 
-        let geom = GeomStore { face_internal_vertices: vec![],
+        let geom = GeomStore { face_internal_vertices: vec![], edge_vertex_params: vec![],
             curves: vec![base_circle, slant],
             surfaces: vec![cone_surf, base_plane],
             curve2ds: vec![e0_on_f0, e0_on_f1, e1_on_f0],
@@ -1546,7 +1559,7 @@ impl BRep {
             direction: glam::DVec2::new(0.0, -1.0),
         });
 
-        let geom = GeomStore { face_internal_vertices: vec![],
+        let geom = GeomStore { face_internal_vertices: vec![], edge_vertex_params: vec![],
             curves: vec![major_circle, minor_circle],
             surfaces: vec![torus_surf],
             curve2ds: vec![e0_on_f0, e0_on_f0_rev, e1_on_f0, e1_on_f0_rev],

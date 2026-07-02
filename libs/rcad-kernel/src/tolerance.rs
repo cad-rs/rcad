@@ -948,7 +948,6 @@ pub fn correct_point_on_curve(brep: &mut BRep) {
 /// `a_max_tol` — do not apply corrections whose new tolerance would exceed
 /// this value (OCCT default 0.0001 for `CorrectTolerances`).
 pub fn correct_point_on_curve_with_max(brep: &mut BRep, a_max_tol: f64) {
-    // Collect (vi, new_tol) pairs first to avoid borrow conflicts.
     let mut updates: Vec<(usize, f64)> = Vec::new();
     for ei in 0..brep.edges.len() {
         let curve = edge_curve(brep, ei).cloned();
@@ -960,30 +959,49 @@ pub fn correct_point_on_curve_with_max(brep: &mut BRep, a_max_tol: f64) {
             continue;
         }
         let etol = edge_tolerance(brep, ei);
-        for &vi in &[brep.edges[ei].start, brep.edges[ei].end] {
-            let Some(vp) = brep.vertices.get(vi).map(|v| v.point) else {
-                continue;
-            };
-            // Base tolerance = max(vertex_tol, edge_tol) per OCCT CheckEdge
+        // Get vertex params from GeomStore::edge_vertex_params (populated by from_topods)
+        let vparam_sv = brep.geom.edge_vertex_params.get(ei).copied().flatten().map(|p| p[0]);
+        let vparam_ev = brep.geom.edge_vertex_params.get(ei).copied().flatten().map(|p| p[1]);
+        for (vi, t_vi, is_forward) in [
+            (brep.edges[ei].start, vparam_sv, true),
+            (brep.edges[ei].end, vparam_ev, false),
+        ] {
+            let Some(vp) = brep.vertices.get(vi).map(|v| v.point) else { continue; };
             let vtol = vertex_tolerance(brep, vi);
-            let base_tol = vtol.max(etol);
-            let dd = 0.1 * base_tol; // OCCT 10 % safety margin
-            let tol_sq = base_tol * base_tol;
+            let mut a_tol = vtol.max(etol);
+            let dd = 0.1 * a_tol;
+            a_tol *= a_tol;
 
-            let mut min_dist_sq = f64::MAX;
-            for s in 0..20 {
-                let t = t1 + (t2 - t1) * s as f64 / 19.0;
-                let pt = curve.point_at(t);
-                let d2 = (pt - vp).length_squared();
-                if d2 < min_dist_sq {
-                    min_dist_sq = d2;
+            // OCCT CheckEdge L462: check vertex at its specific parameter on the curve
+            if let Some(t) = t_vi {
+                let pc = curve.point_at(t);
+                let d2 = (vp - pc).length_squared();
+                if d2 > a_tol {
+                    let new_tol = d2.sqrt() + dd;
+                    if new_tol < a_max_tol {
+                        updates.push((vi, new_tol));
+                    }
                 }
             }
-            if min_dist_sq.is_finite() && min_dist_sq > tol_sq {
-                let min_dist = min_dist_sq.sqrt();
-                let new_tol = min_dist + dd;
-                if new_tol < a_max_tol {
-                    updates.push((vi, new_tol));
+
+            // OCCT L487-511: FORWARD->First(), REVERSED->Last() curve endpoints
+            if is_forward {
+                let p_end = curve.point_at(t1);
+                let d2 = (vp - p_end).length_squared();
+                if d2 > a_tol {
+                    let new_tol = d2.sqrt() + dd;
+                    if new_tol < a_max_tol {
+                        updates.push((vi, new_tol));
+                    }
+                }
+            } else {
+                let p_end = curve.point_at(t2);
+                let d2 = (vp - p_end).length_squared();
+                if d2 > a_tol {
+                    let new_tol = d2.sqrt() + dd;
+                    if new_tol < a_max_tol {
+                        updates.push((vi, new_tol));
+                    }
                 }
             }
         }

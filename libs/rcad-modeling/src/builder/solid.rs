@@ -317,7 +317,7 @@ pub fn make_conical_frustum_brep(
     };
 
     // ── Geometry store ──────────────────────────────────────────
-    let geom = GeomStore { face_internal_vertices: vec![],
+    let geom = GeomStore { face_internal_vertices: vec![], edge_vertex_params: vec![],
         curves: vec![bottom_circle, top_circle, seam_curve],
         surfaces: vec![cone_surf, bottom_plane, top_plane],
         curve2ds: vec![e0_on_cone, e0_on_plane, e1_on_cone, e1_on_plane, e2_on_cone],
