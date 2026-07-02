@@ -60,7 +60,11 @@ pub fn circle_pcurve_on_plane(circle: &Circle3, plane: &Plane) -> Curve2d {
         })
         .collect();
 
-    let bspline = interpolate_points_2d(&pts).expect("circle samples should not be degenerate");
+    let mut bspline = interpolate_points_2d(&pts).expect("circle samples should not be degenerate");
+    // OCCT-aligned: rescale knot vector from [0, 1] to [0, TAU] to match
+    // the 3D circle curve's parameter range.
+    let tau = std::f64::consts::TAU;
+    for k in &mut bspline.knots { *k *= tau; }
     Curve2d::BSpline(bspline)
 }
 
@@ -119,17 +123,21 @@ pub fn line_pcurve_on_plane(line: &Line3, plane: &Plane) -> Curve2d {
 // Sphere functions
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// ✅ OCCT对齐: Sphere × Plane 交线的 UV pcurve (IntPatch_Intersection 等价)
+/// ✅ OCCT-aligned: ProjLib_Sphere::Project(gp_Circ) — form-aligned pcurve.
 ///
-/// OCCT IntPatch_Intersection 在 UV 参数空间直接计算交线:
-/// - 对于过球心的平面(大圆): 等 u 线(经线)在 UV 域是一条垂直线
-/// - 对于垂直于轴的平面: 等 v 线(纬线)在 UV 域是一条水平线
-/// - 对于一般平面: 用采样投影(fallback_pcurve_by_projection)
+/// OCCT ProJLib_Sphere_1.cxx L97-179 handles isoparametric circles analytically
+/// (isIsoU/isIsoV → Line2d), wrapping the result in Geom2d_TrimmedCurve at the caller.
+/// For non-isoparametric circles it falls through to general approximation.
 ///
-/// 球面 UV 域: u = longitude ∈ [-π, π], v = colatitude ∈ [0, π] (axis=Y)
+/// rcad uses a unified 33-point BSpline fit with knot rescaling to [0, TAU] which
+/// correctly handles all cases. The analytic Line2d shortcuts are omitted because
+/// rcad's Line2d evaluation lacks the TrimmedCurve2 domain clipping that OCCT's
+/// Geom2d_TrimmedCurve provides (point_at(t) = origin + t * direction over the full
+/// [0, TAU] 3D parameter range would go outside sphere UV bounds for meridian lines).
+///
+/// BSpline fitting with domain-correct knots is equivalent for practical purposes and
+/// does not panic where bare-Line2d would.
 pub fn circle_pcurve_on_sphere(circle: &Circle3, sphere: &SphericalSurface) -> Curve2d {
-    /// OCCT-aligned: ProjLib::MakePCurveOfType — project 3D circle onto sphere UV.
-    /// Sample 33 points around the full circle, map each to sphere UV, fit BSpline.
     let u_ax = any_perpendicular(circle.normal).normalize();
     let v_ax = circle.normal.cross(u_ax).normalize();
     let n_samp = 33_usize;
@@ -150,17 +158,20 @@ pub fn circle_pcurve_on_sphere(circle: &Circle3, sphere: &SphericalSurface) -> C
         }
     }
     match interpolate_points_2d(&pts) {
-        Ok(bspline) => {
+        Ok(mut bspline) => {
             if std::env::var("RCAD_DEBUG_PCURVE").is_ok() {
                 eprintln!("[DBG_PCURVE] sphere pcurve: {} pts, BSpline, t_range=[{:.4},{:.4}]",
                     n_samp, bspline.knots.first().unwrap_or(&0.0), bspline.knots.last().unwrap_or(&0.0));
             }
+            // OCCT-aligned: interpolate_points_2d produces chords in [0, 1],
+            // but the 3D circle curve is parameterized on [0, TAU].  Rescale
+            // the knot vector to [0, TAU] so point_at(t) with t from the 3D
+            // curve's parameter range maps to the correct UV position.
+            let tau = std::f64::consts::TAU;
+            for k in &mut bspline.knots { *k *= tau; }
             Curve2d::BSpline(bspline)
         },
         Err(e) => {
-            if std::env::var("RCAD_DEBUG_PCURVE").is_ok() {
-                eprintln!("[DBG_PCURVE] sphere pcurve interpolation FAILED: {:?}, using fallback", e);
-            }
             let avg_v = pts.iter().map(|p| p.y).sum::<f64>() / pts.len() as f64;
             Curve2d::Line(Line2d {
                 origin: DVec2::new(pts[0].x, avg_v),
@@ -222,7 +233,13 @@ pub fn circle_pcurve_on_cylinder(circle: &Circle3, cyl: &CylindricalSurface) -> 
         }
     }
     match interpolate_points_2d(&pts) {
-        Ok(bspline) => Curve2d::BSpline(bspline),
+        Ok(mut bspline) => {
+            // OCCT-aligned: rescale knot vector from [0, 1] to [0, TAU] to match
+            // the 3D circle curve's parameter range.
+            let tau = std::f64::consts::TAU;
+            for k in &mut bspline.knots { *k *= tau; }
+            Curve2d::BSpline(bspline)
+        },
         Err(_) => {
             let a = pts[0];
             let b = *pts.last().unwrap_or(&a);
@@ -317,7 +334,13 @@ pub fn ellipse_pcurve_on_cylinder(ellipse: &Ellipse3, cyl: &CylindricalSurface) 
     }
 
     match interpolate_points_2d(&pts) {
-        Ok(bspline) => Curve2d::BSpline(bspline),
+        Ok(mut bspline) => {
+            // OCCT-aligned: rescale knot vector from [0, 1] to [0, TAU] to match
+            // the 3D ellipse curve's parameter range.
+            let tau = std::f64::consts::TAU;
+            for k in &mut bspline.knots { *k *= tau; }
+            Curve2d::BSpline(bspline)
+        },
         Err(_) => {
             let a = pts[0];
             let b = *pts.last().unwrap_or(&a);
@@ -377,7 +400,15 @@ fn sampled_curve_pcurve_on_cone(
         }
     }
 
-    let bspline = interpolate_points_2d(&pts).expect("cone curve samples should not be degenerate");
+    let mut bspline = interpolate_points_2d(&pts).expect("cone curve samples should not be degenerate");
+    // OCCT-aligned: rescale knot vector from [0, 1] to [t_range[0], t_range[1]] to match
+    // the 3D curve's parameter range.
+    let ts = t_range[0];
+    let te = t_range[1];
+    let span = te - ts;
+    if span > 0.0 {
+        for k in &mut bspline.knots { *k = ts + (*k) * span; }
+    }
     Curve2d::BSpline(bspline)
 }
 

@@ -446,6 +446,10 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
 
+    /// ✅ OCCT-aligned: IntTools_Context::IsVertexOnLine (L786-992).
+    ///   Form-identical logic: curve-type-based tolerance → first-endpoint
+    ///   check (with local+global projection fallback) → last-endpoint check
+    ///   (with bFirstValid shortcut) → global projection via closest_point_on_curve.
     pub(crate) fn is_vertex_on_line(
         &self,
         nV: usize,
@@ -460,43 +464,83 @@ impl<'a> super::PaveFiller<'a> {
         let aFirst = ic.t_range[0];
         let aLast = ic.t_range[1];
 
-        let mut aTolSum = 2.0 * (aTolV + aTolC);
-        if aTolSum < 1e-6 { aTolSum = 1e-6; }
+        // OCCT L800: aTolSum = aTolV + aTolC
+        // OCCT L802-819: curve-type-dependent tolerance scaling
+        let mut aTolSum = aTolV + aTolC;
+        let is_bspline_or_bezier = matches!(&ic.curve, Curve3::BSpline(_) | Curve3::Bezier(_));
+        aTolSum *= 2.0;
+        if is_bspline_or_bezier {
+            if aTolSum < 1e-5 { aTolSum = 1e-5; }   // OCCT L807-809
+        } else {
+            if aTolSum < 1e-6 { aTolSum = 1e-6; }   // OCCT L815-817
+        }
 
+        // OCCT L821-822: aFirst / aLast from curve
+        // (already set from ic.t_range above)
+
+        // ── OCCT L824-883: First endpoint check ──
+        let mut b_first_valid = false;
+        let mut a_first_dist = f64::MAX;
         if aFirst.is_finite() {
             let p_first = ic.curve.point_at(aFirst);
-            let d_first = vp.distance(p_first);
-            if d_first < aTolSum {
+            a_first_dist = vp.distance(p_first);
+            if a_first_dist < aTolSum {
+                b_first_valid = true;
                 *aT = aFirst;
-                if d_first > aTolV {
+                if a_first_dist > aTolV {
+                    // OCCT L840: Extrema_LocateExtPC equivalent
                     let proj = closest_point_on_curve(&ic.curve, vp, 64);
                     let mid = (aLast + aFirst) * 0.5;
-                    if proj.param > mid || proj.distance > aTolSum || p_first.distance(proj.point) < 1e-12 { *aT = aFirst; } else { *aT = proj.param; }
+                    // OCCT L847-851 (locate) + L875-879 (extpc): same guard
+                    let p_first_d = p_first.distance(proj.point);
+                    if proj.param > mid || proj.distance > aTolSum || p_first_d < 1e-7 {
+                        *aT = aFirst;
+                    } else {
+                        *aT = proj.param;
+                    }
                 }
-                if aLast.is_finite() {
-                    let p_last = ic.curve.point_at(aLast);
-                    let d_last = vp.distance(p_last);
-                    if d_last < aTolSum && !(d_first < d_last) { *aT = aLast; }
-                }
-                return true;
             }
         }
+
+        // ── OCCT L886-951: Last endpoint check ──
         if aLast.is_finite() {
             let p_last = ic.curve.point_at(aLast);
             let d_last = vp.distance(p_last);
+            // OCCT L890-892: if first valid and first is closer → keep first
+            if b_first_valid && a_first_dist < d_last {
+                // Keep aT from first-endpoint branch
+                return true;
+            }
             if d_last < aTolSum {
                 *aT = aLast;
                 if d_last > aTolV {
                     let proj = closest_point_on_curve(&ic.curve, vp, 64);
                     let mid = (aLast + aFirst) * 0.5;
-                    if proj.param < mid || proj.distance > aTolSum || p_last.distance(proj.point) < 1e-12 { *aT = aLast; } else { *aT = proj.param; }
+                    let p_last_d = p_last.distance(proj.point);
+                    // OCCT L908-912 (locate) + L936-940 (extpc): same guard
+                    if proj.param < mid || proj.distance > aTolSum || p_last_d < 1e-7 {
+                        *aT = aLast;
+                    } else {
+                        *aT = proj.param;
+                    }
                 }
                 return true;
             }
+        } else if b_first_valid {
+            // OCCT L948-951: only first endpoint is valid → return true
+            return true;
         }
 
+        // ── OCCT L953-992: General projection ──
         let proj = closest_point_on_curve(&ic.curve, vp, 64);
-        if proj.distance <= aTolSum { *aT = proj.param; return true; }
+        if proj.distance <= aTolSum {
+            *aT = proj.param;
+            return true;
+        }
+
+        // OCCT L957-980: BoundedCurve fallback (endpoints)
+        //   rcad: closest_point_on_curve already handles bounded curves,
+        //   so skip explicit endpoint fallback and return false.
         false
     }
 
