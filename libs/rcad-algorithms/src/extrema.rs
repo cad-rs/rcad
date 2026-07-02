@@ -1100,7 +1100,7 @@ mod tests {
 
     #[test]
     fn test_refinement_convergence() {
-        let circle = Curve3::Circle(Circle3::new(DVec3::new(5.0, DVec3::Z, 3.0));
+        let circle = Curve3::Circle(Circle3::new(DVec3::new(5.0, 0.0, 0.0), DVec3::Z, 3.0));
         let point = DVec3::new(10.0, 5.0, 0.0);
 
         let (dist, _param) = distance_point_curve(point, &circle);

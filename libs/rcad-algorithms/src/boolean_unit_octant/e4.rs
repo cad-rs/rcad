@@ -1,5 +1,5 @@
 
-/// Build BRep for cylinder Èñ≥?torus (coaxial Z-aligned, R == r_c).
+/// Build BRep for cylinder Èñ?torus (coaxial Z-aligned, R == r_c).
 ///
 /// Result has 5 faces: lower cylindrical wall, torus groove, upper cylindrical wall,
 /// bottom cap, and top cap.
@@ -31,13 +31,13 @@ fn build_cylinder_torus_difference_brep(
 
     // Èñ≥ÂÖâÂÅìÈñ≥ÂÖâÂÅì Edges Èñ≥ÂÖâÂÅìÈñ≥ÂÖâÂÅì
     // E0: bottom cap circle at z=z_lo
-    let e0 = make_edge(&mut brep, Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, r_c)), 0.0, two_pi, v0, v0).ok()?;
+    let e0 = make_edge(&mut brep, Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, r_c)), 0.0, two_pi, v0, v0).ok()?;
     // E1: lower intersection circle at z=z_low
-    let e1 = make_edge(&mut brep, Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, r_c)), 0.0, two_pi, v1, v1).ok()?;
+    let e1 = make_edge(&mut brep, Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, r_c)), 0.0, two_pi, v1, v1).ok()?;
     // E2: upper intersection circle at z=z_high
-    let e2 = make_edge(&mut brep, Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, r_c)), 0.0, two_pi, v2, v2).ok()?;
+    let e2 = make_edge(&mut brep, Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, r_c)), 0.0, two_pi, v2, v2).ok()?;
     // E3: top cap circle at z=z_hi
-    let e3 = make_edge(&mut brep, Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, r_c)), 0.0, two_pi, v3, v3).ok()?;
+    let e3 = make_edge(&mut brep, Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, r_c)), 0.0, two_pi, v3, v3).ok()?;
 
     // Seam edges
     let h_lower = z_low - z_lo;
@@ -141,7 +141,7 @@ fn build_cylinder_torus_difference_brep(
     // E3 shared by upper wall + top cap
     brep.geom.edge_pcurves[e3].push(PCurve { surface_idx: si_upper, curve2d_idx: c_e3_up });
     brep.geom.edge_pcurves[e3].push(PCurve { surface_idx: si_top, curve2d_idx: c_e3_cap });
-    // Lower seam (lower wall only Èñ≥?singular edge, appears fwd+rev in same face)
+    // Lower seam (lower wall only Èñ?singular edge, appears fwd+rev in same face)
     brep.geom.edge_pcurves[e_seam_low].push(PCurve { surface_idx: si_lower, curve2d_idx: c_sl_fwd });
     brep.geom.edge_pcurves[e_seam_low].push(PCurve { surface_idx: si_lower, curve2d_idx: c_sl_rev });
     // Torus seam (torus only)
@@ -156,7 +156,7 @@ fn build_cylinder_torus_difference_brep(
         brep.solids.push(rcad_kernel::Solid { shells: vec![rcad_kernel::Shell { faces: Vec::new() }] });
     }
 
-    // 1. Lower cylindrical wall: e0_fwd Èñ≥?seam_low_fwd Èñ≥?e1_rev Èñ≥?seam_low_rev
+    // 1. Lower cylindrical wall: e0_fwd Èñ?seam_low_fwd Èñ?e1_rev Èñ?seam_low_rev
     let f_lower = Face {
         outer_wire: make_wire(vec![
             WireEdge::fwd(e0), WireEdge::fwd(e_seam_low),
@@ -172,7 +172,7 @@ fn build_cylinder_torus_difference_brep(
     while brep.geom.face_surface_range.len() <= fi { brep.geom.face_surface_range.push(None); }
     brep.geom.face_surface_range[fi] = Some([0.0, two_pi, 0.0, h_lower]);
 
-    // 2. Torus groove: e1_rev Èñ≥?seam_torus_rev Èñ≥?e2_fwd Èñ≥?seam_torus_fwd
+    // 2. Torus groove: e1_rev Èñ?seam_torus_rev Èñ?e2_fwd Èñ?seam_torus_fwd
     let f_torus = Face {
         outer_wire: make_wire(vec![
             WireEdge::rev(e1), WireEdge::rev(e_seam_torus),
@@ -188,7 +188,7 @@ fn build_cylinder_torus_difference_brep(
     while brep.geom.face_surface_range.len() <= fi { brep.geom.face_surface_range.push(None); }
     brep.geom.face_surface_range[fi] = Some([0.0, two_pi, phi_min, phi_max]);
 
-    // 3. Upper cylindrical wall: e2_fwd Èñ≥?seam_upper_fwd Èñ≥?e3_rev Èñ≥?seam_upper_rev
+    // 3. Upper cylindrical wall: e2_fwd Èñ?seam_upper_fwd Èñ?e3_rev Èñ?seam_upper_rev
     let f_upper = Face {
         outer_wire: make_wire(vec![
             WireEdge::fwd(e2), WireEdge::fwd(e_seam_upper),
@@ -204,7 +204,7 @@ fn build_cylinder_torus_difference_brep(
     while brep.geom.face_surface_range.len() <= fi { brep.geom.face_surface_range.push(None); }
     brep.geom.face_surface_range[fi] = Some([0.0, two_pi, 0.0, h_upper]);
 
-    // 4. Bottom cap: plane at z=z_lo, normal -Z, outer wire = e0_rev (CW when viewed from above Èñ≥?normal -Z)
+    // 4. Bottom cap: plane at z=z_lo, normal -Z, outer wire = e0_rev (CW when viewed from above Èñ?normal -Z)
     let f_bot = Face {
         outer_wire: make_wire(vec![WireEdge::rev(e0)]),
         inner_wires: vec![], normal: -DVec3::Z, triangles: vec![], sample_point: None, mesh_dirty: true,
@@ -231,10 +231,10 @@ fn build_cylinder_torus_difference_brep(
     Some(brep)
 }
 
-/// Build BRep for torus Èñ≥?cylinder (coaxial Z-aligned, R == r_c).
+/// Build BRep for torus Èñ?cylinder (coaxial Z-aligned, R == r_c).
 ///
-/// The result has 2 faces: the outer half of the torus surface (Èë≥?Èñ≥?[-Èîú?2, Èîú?2])
-/// connected to a cylindrical wall (r=R, z Èñ≥?[z_low, z_high]).
+/// The result has 2 faces: the outer half of the torus surface (Èë?Èñ?[-Èî?2, Èî?2])
+/// connected to a cylindrical wall (r=R, z Èñ?[z_low, z_high]).
 /// The cylinder removes the inner-lower portion of the torus tube.
 fn build_torus_minus_cylinder_brep(
     z_low: f64, z_high: f64,
@@ -256,14 +256,14 @@ fn build_torus_minus_cylinder_brep(
 
     // Èñ≥ÂÖâÂÅìÈñ≥ÂÖâÂÅì Edges Èñ≥ÂÖâÂÅìÈñ≥ÂÖâÂÅì
     // E_bot: bottom intersection circle at z=z_low, r=R
-    let e_bot = make_edge(&mut brep, Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, r_c)), 0.0, two_pi, v_bot, v_bot).ok()?;
+    let e_bot = make_edge(&mut brep, Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, r_c)), 0.0, two_pi, v_bot, v_bot).ok()?;
     // E_top: top intersection circle at z=z_high, r=R
-    let e_top = make_edge(&mut brep, Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, r_c)), 0.0, two_pi, v_top, v_top).ok()?;
-    // Torus seam: Èî†?0, Èë≥?Èñ≥?[-Èîú?2, Èîú?2] on torus surface (approximated as vertical line)
+    let e_top = make_edge(&mut brep, Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, r_c)), 0.0, two_pi, v_top, v_top).ok()?;
+    // Torus seam: Èî?0, Èë?Èñ?[-Èî?2, Èî?2] on torus surface (approximated as vertical line)
     let e_seam_torus = make_edge(&mut brep, Curve3::Line(Line3 {
         origin: DVec3::new(r_c, 0.0, z_low), direction: DVec3::Z,
     }), 0.0, h, v_bot, v_top).ok()?;
-    // Cylinder seam: Èî†?0, z Èñ≥?[z_low, z_high]
+    // Cylinder seam: Èî?0, z Èñ?[z_low, z_high]
     let e_seam_cyl = make_edge(&mut brep, Curve3::Line(Line3 {
         origin: DVec3::new(r_c, 0.0, z_low), direction: DVec3::Z,
     }), 0.0, h, v_bot, v_top).ok()?;
@@ -283,10 +283,10 @@ fn build_torus_minus_cylinder_brep(
     brep.geom.surfaces.push(surf_cyl);
 
     // Èñ≥ÂÖâÂÅìÈñ≥ÂÖâÂÅì Curve2Ds (pcurves) Èñ≥ÂÖâÂÅìÈñ≥ÂÖâÂÅì
-    // Torus UV: u = Èî†?(major angle) Èñ≥?[0, 2ÈîúÁØØ, v = Èë≥?(minor angle) Èñ≥?[-Èîú?2, Èîú?2]
+    // Torus UV: u = Èî?(major angle) Èñ?[0, 2ÈîúÁØØ, v = Èë?(minor angle) Èñ?[-Èî?2, Èî?2]
     let theta_lo = -PI / 2.0;
     let theta_hi = PI / 2.0;
-    let dtheta = theta_hi - theta_lo; // = Èîú?
+    let dtheta = theta_hi - theta_lo; // = Èî?
 
     let mut c2d = 0usize;
     // Torus pcurves
@@ -332,7 +332,7 @@ fn build_torus_minus_cylinder_brep(
         brep.solids.push(rcad_kernel::Solid { shells: vec![rcad_kernel::Shell { faces: Vec::new() }] });
     }
 
-    // 1. Torus outer face: e_bot_fwd Èñ≥?seam_torus_fwd Èñ≥?e_top_rev Èñ≥?seam_torus_rev
+    // 1. Torus outer face: e_bot_fwd Èñ?seam_torus_fwd Èñ?e_top_rev Èñ?seam_torus_rev
     let f_torus = Face {
         outer_wire: make_wire(vec![
             WireEdge::fwd(e_bot), WireEdge::fwd(e_seam_torus),
@@ -348,7 +348,7 @@ fn build_torus_minus_cylinder_brep(
     while brep.geom.face_surface_range.len() <= fi { brep.geom.face_surface_range.push(None); }
     brep.geom.face_surface_range[fi] = Some([0.0, two_pi, theta_lo, theta_hi]);
 
-    // 2. Cylinder wall face: e_bot_fwd Èñ≥?seam_cyl_fwd Èñ≥?e_top_rev Èñ≥?seam_cyl_rev
+    // 2. Cylinder wall face: e_bot_fwd Èñ?seam_cyl_fwd Èñ?e_top_rev Èñ?seam_cyl_rev
     let f_cyl = Face {
         outer_wire: make_wire(vec![
             WireEdge::fwd(e_bot), WireEdge::fwd(e_seam_cyl),
@@ -373,7 +373,7 @@ fn build_torus_minus_cylinder_brep(
 /// The outer cone minus the inner cone produces a hollow conical frustum.
 pub fn try_difference_coaxial_cone_minus_cone(a: &BRep, b: &BRep) -> Option<BRep> {
     use rcad_modeling::make_conical_frustum_brep;
-    // Fast path: non-overlapping Z ranges Èñ≥?no volume intersection.
+    // Fast path: non-overlapping Z ranges Èñ?no volume intersection.
     // Coaxial conical frustums with disjoint Z ranges cannot overlap in 3D,
     // so a - b = a (even if the coincident face at the boundary would confuse
     // the Pave-Filler into removing it, e.g. bopcut_simple ZM7-ZN1).
@@ -382,7 +382,7 @@ pub fn try_difference_coaxial_cone_minus_cone(a: &BRep, b: &BRep) -> Option<BRep
         z_axis_cone_frustum_z_span_r(b),
     ) {
         if ai.1 <= bi.0 + TOLERANCE_MESH_LEGACY || ai.0 + TOLERANCE_MESH_LEGACY >= bi.1 {
-            // Reconstruct from scratch rather than cloning Èñ≥?a cloned BRep that
+            // Reconstruct from scratch rather than cloning Èñ?a cloned BRep that
             // went through apply_transform may carry stale triangulation that
             // inflates surface area (boptuc_simple ZN1).
             return make_conical_frustum_brep(
@@ -395,13 +395,13 @@ pub fn try_difference_coaxial_cone_minus_cone(a: &BRep, b: &BRep) -> Option<BRep
             ).ok();
         }
 
-        // Phase 4b: extending-past check Èñ≥?one cone extends below/above the
+        // Phase 4b: extending-past check Èñ?one cone extends below/above the
         // other but is completely inside the other's radius over the overlap.
         if let Some(r) = try_extending_cone_minus_cone(
             ai.0, ai.1, ai.2, ai.3,
             bi.0, bi.1, bi.2, bi.3,
         ) {
-            // a extends past b and a is inside b Èñ≥?a - b = protruding part of a
+            // a extends past b and a is inside b Èñ?a - b = protruding part of a
             return Some(r);
         }
         // When b extends past a and b is inside a in the overlap,
@@ -675,7 +675,7 @@ fn detect_z_axis_cone_frustum(brep: &BRep) -> Option<(DVec2, f64, f64, f64, f64)
 
 /// Detect a Z-aligned cone (frustum or full cone with apex).
 ///
-/// Returns `(center_xy, z_lo, z_hi, r_lo, r_hi)` Èñ≥?the XY center, Z range, and
+/// Returns `(center_xy, z_lo, z_hi, r_lo, r_hi)` Èñ?the XY center, Z range, and
 /// bottom/top radii. For a full cone one radius is near-zero (the apex).
 pub(crate) fn detect_z_axis_cone(brep: &BRep) -> Option<(DVec2, f64, f64, f64, f64)> {
     let sh = brep.solids.get(0)?.shells.get(0)?;
@@ -746,7 +746,7 @@ pub(crate) fn detect_z_axis_cone(brep: &BRep) -> Option<(DVec2, f64, f64, f64, f
     }
 }
 
-/// Build a tessellated BRep for coaxial `cone Èñ≥?cylinder` where the cylinder
+/// Build a tessellated BRep for coaxial `cone Èñ?cylinder` where the cylinder
 /// fills the bottom (or top) of the cone (same XY center, Z-aligned).
 ///
 /// The cylinder occupies `[z_cyl_lo, z_cyl_hi]` with constant radius `cyl_r`,
@@ -886,8 +886,7 @@ fn build_coaxial_cone_cylinder_union_tessellated(
         edge_degenerated: vec![], vertex_tolerance: vec![],
         edge_tolerance: vec![], face_tolerance: vec![],
         curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
-        edge_same_parameter: vec![], edge_same_range: vec![],
-    };
+        edge_same_parameter: vec![], edge_same_range: vec![], edge_vertex_params: vec![]};
 
     Some(BRep {
         vertices: verts, edges: vec![],
@@ -896,7 +895,7 @@ fn build_coaxial_cone_cylinder_union_tessellated(
     })
 }
 
-/// Build a BRep with analytical surfaces for `cylinder Èñ≥?cone` when the
+/// Build a BRep with analytical surfaces for `cylinder Èñ?cone` when the
 /// cylinder is wider than the cone at every Z level (cone sits entirely inside
 /// the cylinder and only protrudes above the cylinder's top face).
 ///
@@ -949,8 +948,8 @@ fn try_union_coaxial_cone_cylinder_one_dir(cone_brep: &BRep, cyl_brep: &BRep) ->
 
     if at_top && r_at_cyl_hi > tol {
         // TODO: implement cylinder-on-top case
-        // Needs: cone wall (cz_lo Èñ≥?cyl_z_lo), bottom cap, annular ring at cyl_z_lo,
-        // cylinder wall (cyl_z_lo Èñ≥?cyl_z_hi), top cap
+        // Needs: cone wall (cz_lo Èñ?cyl_z_lo), bottom cap, annular ring at cyl_z_lo,
+        // cylinder wall (cyl_z_lo Èñ?cyl_z_hi), top cap
         return None;
     }
 
@@ -972,7 +971,7 @@ fn try_union_coaxial_cone_cylinder_one_dir(cone_brep: &BRep, cyl_brep: &BRep) ->
     None
 }
 
-/// Build an analytical BRep for `cylinder Èñ≥?cone` when the cylinder is wider
+/// Build an analytical BRep for `cylinder Èñ?cone` when the cylinder is wider
 /// than the cone at every Z level.  Uses the same edge/face/surface/pcurve
 /// pattern as `build_cylinder_box_difference_full_wall` (proven PaveFiller-compatible).
 fn build_cylinder_cone_union_wider_cyl(
@@ -1022,13 +1021,13 @@ fn build_cylinder_cone_union_wider_cyl(
     brep.vertices.push(Vertex { point: DVec3::new(cx + r_con_hi, cy, z_con_hi) });
 
     // Edges
-    let e0 = push_edge!(Curve3::Circle(Circle3::new(DVec3::new(cx, -DVec3::Z, cyl_r)), 0.0, two_pi, v0, v0);
-    let e1 = push_edge!(Curve3::Circle(Circle3::new(DVec3::new(cx, DVec3::Z, cyl_r)), 0.0, two_pi, v1, v1);
+    let e0 = push_edge!(Curve3::Circle(Circle3::new(DVec3::new(cx, cy, z_cyl_lo), -DVec3::Z, cyl_r)), 0.0, two_pi, v0, v0);
+    let e1 = push_edge!(Curve3::Circle(Circle3::new(DVec3::new(cx, 0.0, 0.0), DVec3::Z, cyl_r)), 0.0, two_pi, v1, v1);
     let e2 = push_edge!(Curve3::Line(Line3 { origin: brep.vertices[v0].point, direction: DVec3::Z }), 0.0, h, v0, v1);
-    let e3 = push_edge!(Curve3::Circle(Circle3::new(DVec3::new(cx, DVec3::Z, r_top)), 0.0, two_pi, v2, v2);
+    let e3 = push_edge!(Curve3::Circle(Circle3::new(DVec3::new(cx, 0.0, 0.0), DVec3::Z, r_top)), 0.0, two_pi, v2, v2);
     let coned = brep.vertices[v3].point - brep.vertices[v2].point;
     let e4 = push_edge!(Curve3::Line(Line3 { origin: brep.vertices[v2].point, direction: coned.normalize_or_zero() }), 0.0, coned.length(), v2, v3);
-    let e5 = push_edge!(Curve3::Circle(Circle3::new(DVec3::new(cx, DVec3::Z, r_con_hi)), 0.0, two_pi, v3, v3);
+    let e5 = push_edge!(Curve3::Circle(Circle3::new(DVec3::new(cx, 0.0, 0.0), DVec3::Z, r_con_hi)), 0.0, two_pi, v3, v3);
 
     // Surfaces
     let si_cyl = brep.geom.surfaces.len();

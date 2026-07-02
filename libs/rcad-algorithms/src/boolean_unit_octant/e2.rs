@@ -155,8 +155,7 @@ fn build_perpendicular_cylinder_intersection(
         edge_degenerated: vec![], vertex_tolerance: vec![],
         edge_tolerance: vec![], face_tolerance: vec![],
         curve2d_range: vec![], face_surface_range: vec![None],
-        edge_same_parameter: vec![], edge_same_range: vec![],
-    };
+        edge_same_parameter: vec![], edge_same_range: vec![], edge_vertex_params: vec![]};
 
     Some(BRep {
         vertices: verts, edges: vec![],
@@ -248,8 +247,8 @@ fn build_steinmetz_brep(
     ];
     let mut shell_faces = Vec::new();
     // UV corners for each face on their respective cylinder surface.
-    // CylA (Z-axis): P(u,v) = (R路cos(u), R路sin(u), v) 鈥?V0(0,100), V1(0,300), V2(3蟺/2,200), V3(蟺/2,200), V4(蟺,300)
-    // CylB (X-axis): P(u,v) = (150-v, -R路sin(u), 200-R路cos(u)) 鈥?V0(0,50), V1(蟺,50), V2(蟺/2,150), V3(3蟺/2,150), V4(蟺,250)
+    // CylA (Z-axis): P(u,v) = (R路cos(u), R路sin(u), v) �?V0(0,100), V1(0,300), V2(3�?2,200), V3(�?2,200), V4(�?300)
+    // CylB (X-axis): P(u,v) = (150-v, -R路sin(u), 200-R路cos(u)) �?V0(0,50), V1(�?50), V2(�?2,150), V3(3�?2,150), V4(�?250)
     let face_uv = [
         [DVec2::new(0.0, 100.0), DVec2::new(0.0, 300.0), DVec2::new(3.0*PI/2.0, 200.0)],
         [DVec2::new(0.0, 300.0), DVec2::new(PI/2.0, 200.0), DVec2::new(0.0, 100.0)],
@@ -279,14 +278,14 @@ fn build_steinmetz_brep(
             cyl_params.origin + v * cyl_params.axis + r * (u.cos() * u_dir + u.sin() * v_dir)
         };
         // Compute exact analytic area for this triangular face on the cylinder.
-        // For a face bounded by E鈧?v=R路cos(u)) and E鈧?v=-R路cos(u)), the SA = R 脳 UV_area.
-        // UV_area = 鈭?|E鈧?E鈧倈 du over the face's u-range.
-        // For face A1(u鈭圼0,3蟺/2]): UV_area = 6R, SA = 6R虏
-        // For face A2(u鈭圼0,蟺/2]): UV_area = 2R, SA = 2R虏
-        // For face A3(between E鈧?and E鈧? u鈭圼蟺/2,3蟺/2]): UV_area = 4R, SA = 4R虏
-        // For CylB faces, by symmetry: B1=2R虏, B2=2R虏, B3=2R虏 ... actually:
-        // The total is 16R虏, CylA contributes 12R虏, CylB contributes 4R虏.
-        // CylB 3 faces: B1=~1.5R虏, B2=~1.5R虏, B3=~1R虏 (approximate).
+        // For a face bounded by E�?v=R路cos(u)) and E�?v=-R路cos(u)), the SA = R �?UV_area.
+        // UV_area = �?|E�?E鈧�?du over the face's u-range.
+        // For face A1(u鈭圼0,3�?2]): UV_area = 6R, SA = 6R�?
+        // For face A2(u鈭圼0,�?2]): UV_area = 2R, SA = 2R�?
+        // For face A3(between E�?and E�? u鈭圼�?2,3�?2]): UV_area = 4R, SA = 4R�?
+        // For CylB faces, by symmetry: B1=2R�? B2=2R�? B3=2R�?... actually:
+        // The total is 16R�? CylA contributes 12R�? CylB contributes 4R�?
+        // CylB 3 faces: B1=~1.5R�? B2=~1.5R�? B3=~1R�?(approximate).
         // Instead of computing exact geometry, create triangles with exact total area.
         let exact_sa: [f64; 6] = [
             6.0 * r * r,  // A1
@@ -294,10 +293,10 @@ fn build_steinmetz_brep(
             4.0 * r * r,  // A3
             2.0 * r * r,  // B1
             2.0 * r * r,  // B2
-            2.0 * r * r,  // B3 (last two share ~4R虏 total for CylB)
+            2.0 * r * r,  // B3 (last two share ~4R�?total for CylB)
         ];
         // Create a single large triangle at the centroid with the exact area.
-        // Position doesn't matter 鈥?these triangles are only used for SA computation
+        // Position doesn't matter �?these triangles are only used for SA computation
         // (the STEP writer uses the analytic surface reference).
         let base = brep.vertices.len();
         let cen = pt_fn(0.0, 200.0);
@@ -395,18 +394,18 @@ pub fn try_intersection_cylinder_cylinder_perpendicular(a: &BRep, b: &BRep) -> O
 ///
 /// When r1 <= r2 (C1 is fully contained in C2 in XY), the result is the
 /// portion(s) of C1 outside C2's Z-range.  When r1 > r2 (C1 extends beyond
-/// C2), the result would need a cylindrical hole 閳?too complex for now.
+/// C2), the result would need a cylindrical hole �?too complex for now.
 pub fn try_difference_coaxial_cylinder_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
     let (z1_lo, z1_hi, r1) = z_axis_cylinder_z_span_r(a)?;
     let (z2_lo, z2_hi, r2) = z_axis_cylinder_z_span_r(b)?;
     let overlap_lo = z1_lo.max(z2_lo);
     let overlap_hi = z1_hi.min(z2_hi);
     if overlap_hi - overlap_lo < TOLERANCE_MESH_LEGACY {
-        // No Z-overlap 閳?a is unchanged by subtracting b
+        // No Z-overlap �?a is unchanged by subtracting b
         return Some(a.clone());
     }
     if r1 > r2 + TOLERANCE_ADAPTIVE_MAX {
-        // C1 extends beyond C2 in XY 閳?would need a cylindrical hole in the
+        // C1 extends beyond C2 in XY �?would need a cylindrical hole in the
         // result.  Fall through to the general boolean engine.
         return None;
     }
@@ -466,7 +465,7 @@ pub(crate) fn sphere_center_r(sphere: &BRep) -> Option<(DVec3, f64)> {
 
 /// Build a BRep for the part of a sphere clipped between two Z-planes.
 ///
-/// The sphere is axis-aligned with axis=Z so that z=constant 閳?v=constant in the
+/// The sphere is axis-aligned with axis=Z so that z=constant �?v=constant in the
 /// sphere's parameterization.  The result has a spherical lateral face and planar
 /// cap(s) at the clip planes (or none when the clip is at the sphere pole).
 ///
@@ -486,8 +485,8 @@ pub(crate) fn build_sphere_clipped_by_z_planes(
     // Colatitude v in sphere param (axis=Z): z = center.z + r*cos(v), v = acos((z-C.z)/r)
     let cos_v_hi = ((z_max - center.z) / radius).clamp(-1.0, 1.0);
     let cos_v_lo = ((z_min - center.z) / radius).clamp(-1.0, 1.0);
-    let v_hi = cos_v_hi.acos(); // smaller v, higher z  (equator 閳?0 at north pole)
-    let v_lo = cos_v_lo.acos(); // larger v, lower z  (equator 閳?锜?at south pole)
+    let v_hi = cos_v_hi.acos(); // smaller v, higher z  (equator �?0 at north pole)
+    let v_lo = cos_v_lo.acos(); // larger v, lower z  (equator �?�?at south pole)
 
     let has_top_cap = (z_max - (center.z + radius)).abs() > 1e-12;
     let has_bot_cap = (z_min - (center.z - radius)).abs() > 1e-12;
@@ -549,7 +548,7 @@ pub(crate) fn build_sphere_clipped_by_z_planes(
         make_edge(&mut brep, curve, v_hi, v_lo, v_hi_idx, v_lo_idx).ok()?
     };
 
-    // 閳光偓閳光偓 Surfaces 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+    // 閳光偓閳光偓 Surfaces 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光�?
     let sphere_surf = Surface3::Sphere(SphericalSurface {
         center,
         axis: DVec3::Z,
@@ -575,13 +574,13 @@ pub(crate) fn build_sphere_clipped_by_z_planes(
         None
     };
 
-    // 閳光偓閳光偓 Curve2Ds (pcurves) 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+    // 閳光偓閳光偓 Curve2Ds (pcurves) 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光�?
     // Sphere face pcurves
     //   E0 on sphere: iso-v = v_hi
     let e0_on_sphere = Curve2d::Line(Line2d { origin: glam::DVec2::new(0.0, v_hi), direction: glam::DVec2::new(1.0, 0.0) });
     //   Seam fwd on sphere: u=0, v from v_hi to v_lo
     let seam_fwd = Curve2d::Line(Line2d { origin: glam::DVec2::new(0.0, v_hi), direction: glam::DVec2::new(0.0, 1.0) });
-    //   Seam rev on sphere: u=2锜? v from v_lo to v_hi
+    //   Seam rev on sphere: u=2�? v from v_lo to v_hi
     let seam_rev = Curve2d::Line(Line2d { origin: glam::DVec2::new(two_pi, v_lo), direction: glam::DVec2::new(0.0, -1.0) });
     //   E1 on sphere (if present): iso-v = v_lo
     let e1_on_sphere = if has_bot_cap {
@@ -602,7 +601,7 @@ pub(crate) fn build_sphere_clipped_by_z_planes(
         None
     };
 
-    // 閳光偓閳光偓 Build geometry store 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+    // 閳光偓閳光偓 Build geometry store 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光�?
     let surf_idx_sphere = 0usize;
     let mut surf_idx_top: Option<usize> = None;
     let mut surf_idx_bot: Option<usize> = None;
@@ -641,7 +640,7 @@ pub(crate) fn build_sphere_clipped_by_z_planes(
         let idx = c2d; c2d += 1; idx
     });
 
-    // Edge pcurves 閳?align vecs
+    // Edge pcurves �?align vecs
     while brep.geom.edge_pcurves.len() <= seam.max(e0).max(e1.unwrap_or(0)) {
         brep.geom.edge_pcurves.push(Vec::new());
     }
@@ -694,7 +693,7 @@ pub(crate) fn build_sphere_clipped_by_z_planes(
         face_wires_sphere.push(WireEdge::rev(e0));           // E0 rev at v_hi
         face_wires_sphere.push(WireEdge::fwd(seam));         // seam fwd v_hi->v_lo at u=0
     } else if has_top_cap {
-        // Only top cap (v_bot is at south pole): pattern = E0_rev 閳?seam_fwd 閳?seam_rev
+        // Only top cap (v_bot is at south pole): pattern = E0_rev �?seam_fwd �?seam_rev
         face_wires_sphere.push(WireEdge::rev(e0));
         face_wires_sphere.push(WireEdge::fwd(seam));
         face_wires_sphere.push(WireEdge::rev(seam));
@@ -706,7 +705,7 @@ pub(crate) fn build_sphere_clipped_by_z_planes(
         face_wires_sphere.push(WireEdge::rev(seam));
         face_wires_sphere.push(WireEdge::fwd(seam));
     } else {
-        // No caps 閳?sphere entirely inside cylinder, entire z-range inside
+        // No caps �?sphere entirely inside cylinder, entire z-range inside
         return None; // Should have been caught by containment
     }
 
@@ -728,7 +727,7 @@ pub(crate) fn build_sphere_clipped_by_z_planes(
         brep.geom.face_surface.push(None);
     }
     brep.geom.face_surface[sphere_face_idx] = Some(surf_idx_sphere);
-    // Set face_surface_range to restrict to [0,2锜篯 鑴?[v_hi, v_lo]
+    // Set face_surface_range to restrict to [0,2锜篯 �?[v_hi, v_lo]
     while brep.geom.face_surface_range.len() <= sphere_face_idx {
         brep.geom.face_surface_range.push(None);
     }
@@ -777,16 +776,16 @@ pub(crate) fn build_sphere_clipped_by_z_planes(
     Some(brep)
 }
 
-/// Build the intersection BRep for a coaxial Z-aligned cylinder 閳?sphere with R_s > R_c.
+/// Build the intersection BRep for a coaxial Z-aligned cylinder �?sphere with R_s > R_c.
 ///
-/// The cylinder wall cuts the sphere at z = s_z 鍗?閳?r_s铏?- r_c铏?.  This handles the
+/// The cylinder wall cuts the sphere at z = s_z �?�?r_s�?- r_c�?.  This handles the
 /// sub-case where only the LOWER intersection circle lies in the overlap Z-range and
 /// the upper boundary is the cylinder end cap (sphere center above cylinder center).
 ///
 /// Result faces:
-///   閳?Spherical face (bottom): south pole 閳?intersection circle
-///   閳?Cylindrical wall face (middle): intersection circle 閳?cylinder top (z_hi)
-///   閳?Cylinder top cap (top): planar disk at z = z_hi
+///   �?Spherical face (bottom): south pole �?intersection circle
+///   �?Cylindrical wall face (middle): intersection circle �?cylinder top (z_hi)
+///   �?Cylinder top cap (top): planar disk at z = z_hi
 fn build_cylinder_sphere_intersection_brep(
     z_lo: f64,
     z_hi: f64,
@@ -832,16 +831,16 @@ fn build_cylinder_sphere_intersection_brep(
     // E0: intersection circle (shared: sphere rev / cyl fwd)
     let e0 = make_edge(
         &mut brep,
-        Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, r_c)),
+        Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, r_c)),
         0.0, two_pi, v0, v0,
     )
     .ok()?;
 
-    // E1: sphere seam, meridian at u=0: V0 (u=0,v=v_isect) 閳?V1 (south pole, v=锜?
+    // E1: sphere seam, meridian at u=0: V0 (u=0,v=v_isect) �?V1 (south pole, v=�?
     // Circle3(normal=Y) param: point_at(t)=center+r_s*(-sin(t), 0, -cos(t))
-    // because any_perpendicular(Y) = (0,0,-1) and y_ax = Y 鑴?(0,0,-1) = (-1,0,0).
-    //   V0: -r_s*sin(t)=r_c, -r_s*cos(t)=z_isect-s_center.z=-dz 閳?t=atan2(-r_c, dz)
-    //   V1: -r_s*sin(t)=0, -r_s*cos(t)=-r_s 閳?t=0 (south pole)
+    // because any_perpendicular(Y) = (0,0,-1) and y_ax = Y �?(0,0,-1) = (-1,0,0).
+    //   V0: -r_s*sin(t)=r_c, -r_s*cos(t)=z_isect-s_center.z=-dz �?t=atan2(-r_c, dz)
+    //   V1: -r_s*sin(t)=0, -r_s*cos(t)=-r_s �?t=0 (south pole)
     let t_v0 = f64::atan2(-r_c, dz);
     let e1 = make_edge(
         &mut brep,
@@ -865,12 +864,12 @@ fn build_cylinder_sphere_intersection_brep(
     // E3: cylinder top circle
     let e3 = make_edge(
         &mut brep,
-        Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, r_c)),
+        Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, r_c)),
         0.0, two_pi, v2, v2,
     )
     .ok()?;
 
-    // 閳光偓閳光偓 Surfaces 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+    // 閳光偓閳光偓 Surfaces 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光�?
     let sph_surf = Surface3::Sphere(SphericalSurface {
         center: s_center,
         axis: DVec3::Z,
@@ -925,7 +924,7 @@ fn build_cylinder_sphere_intersection_brep(
     let e3_on_plane = Curve2d::Circle(Circle2d { center: glam::DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: r_c,
      });
 
-    // 閳光偓閳光偓 Geometry store 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+    // 閳光偓閳光偓 Geometry store 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光�?
     let si_sph = 0usize;
     brep.geom.surfaces.push(sph_surf);
     let si_cyl = brep.geom.surfaces.len();
@@ -975,7 +974,7 @@ fn build_cylinder_sphere_intersection_brep(
         });
     }
 
-    // Sphere face: E0_rev 閳?E1_fwd 閳?E1_rev
+    // Sphere face: E0_rev �?E1_fwd �?E1_rev
     let sph_face = Face {
         outer_wire: make_wire(vec![WireEdge::rev(e0), WireEdge::fwd(e1), WireEdge::rev(e1)]),
         inner_wires: vec![],
@@ -992,7 +991,7 @@ fn build_cylinder_sphere_intersection_brep(
     while brep.geom.face_surface_range.len() <= fi_sph { brep.geom.face_surface_range.push(None); }
     brep.geom.face_surface_range[fi_sph] = Some([0.0, two_pi, v_isect, PI]);
 
-    // Cylinder face: E0_fwd 閳?E2_fwd 閳?E3_rev 閳?E2_rev
+    // Cylinder face: E0_fwd �?E2_fwd �?E3_rev �?E2_rev
     let cyl_face = Face {
         outer_wire: make_wire(vec![
             WireEdge::fwd(e0),
@@ -1032,7 +1031,7 @@ fn build_cylinder_sphere_intersection_brep(
     Some(brep)
 }
 
-/// Fast path: coaxial Z-aligned cylinder 閳?sphere.
+/// Fast path: coaxial Z-aligned cylinder �?sphere.
 pub fn try_intersection_coaxial_cylinder_sphere(a: &BRep, b: &BRep) -> Option<BRep> {
     // Try both orderings
     try_intersection_coaxial_cylinder_sphere_pair(a, b)
@@ -1065,10 +1064,10 @@ fn try_intersection_coaxial_cylinder_sphere_pair(cyl: &BRep, sphere: &BRep) -> O
     }
 
     if r_s <= r_c + TOLERANCE_ADAPTIVE_MAX {
-        // R_s 閳?R_c: sphere is radially inside cylinder 閳?clip by Z-planes
+        // R_s �?R_c: sphere is radially inside cylinder �?clip by Z-planes
         build_sphere_clipped_by_z_planes(s_center, r_s, z_min, z_max)
     } else {
-        // R_s > R_c: cylinder wall cuts sphere 閳?composite sphere + cylinder + cap
+        // R_s > R_c: cylinder wall cuts sphere �?composite sphere + cylinder + cap
         build_cylinder_sphere_intersection_brep(z_lo, z_hi, r_c, s_center, r_s)
     }
 }

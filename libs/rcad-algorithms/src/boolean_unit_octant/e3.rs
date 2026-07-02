@@ -1,15 +1,15 @@
 
-/// Build a BRep for coaxial Z-aligned cylinder 閳?torus intersection.
+/// Build a BRep for coaxial Z-aligned cylinder �?torus intersection.
 ///
 /// Cylinder: radius `r_c`, Z-range `[z_lo, z_hi]`, axis Z.
 /// Torus: center at `tor_z` on Z axis, major radius `R`, minor radius `r_m`, axis Z.
 ///
 /// The result is a solid bounded by:
-/// - Cylindrical wall face: r = r_c, z 閳?[z_low, z_high]
-/// - Toroidal face: the part of the torus where r 閳?r_c (inner side of the tube)
+/// - Cylindrical wall face: r = r_c, z �?[z_low, z_high]
+/// - Toroidal face: the part of the torus where r �?r_c (inner side of the tube)
 ///
-/// Surface area: 2锜鸿矾r_c璺?d  +  4锜鸿矾r_m璺痆R璺?锜?锠侀埀鈧? 閳?r_m璺痵in(锠侀埀鈧?]
-/// where d = 閳?r_m铏?閳?(r_c 閳?R)铏? and 锠侀埀鈧?= arccos(clamp((r_c閳壊)/r_m, 閳?, 1)).
+/// Surface area: 2锜鸿矾r_c�?d  +  4锜鸿矾r_m璺痆R�?�?锠侀埀�? �?r_m璺痵in(锠侀埀�?]
+/// where d = �?r_m�?�?(r_c �?R)�? and 锠侀埀�?= arccos(clamp((r_c閳�?/r_m, �?, 1)).
 fn build_cylinder_torus_intersection_brep(
     z_lo: f64,
     z_hi: f64,
@@ -43,25 +43,25 @@ fn build_cylinder_torus_intersection_brep(
     if z_low > tor_z - d {
         // Clipped at bottom: recompute phi_low
         let sin_low = (z_low - tor_z) / r_m;
-        // phi_low = asin(sin_low) mapped to [锜?2, 3锜?2] range (where cos is 閳?锠乢0)
+        // phi_low = asin(sin_low) mapped to [�?2, 3�?2] range (where cos is �?锠乢0)
         // cos(phi_low) = beta (on the torus surface), so phi_low preserves cos = beta
         // sin(phi_low) = sin_low (negative for lower region)
-        // phi_low = 2锜?- acos(beta) = 2锜?- phi_0 when centered, or need to compute
+        // phi_low = 2�?- acos(beta) = 2�?- phi_0 when centered, or need to compute
         let _phi_low = (if sin_low < 0.0 { two_pi } else { 0.0 }) + (-sin_low).asin();
         // No, this is getting complex. Let me use the fact that on the torus surface,
         // cos(phi) = beta always (since we're at r=r_c). So phi = 鍗hi_0 + 2锜鸿矾k.
-        // For the lower part, sin(phi) < 0, so phi = 2锜?- phi_0 (if phi_0 > 0).
+        // For the lower part, sin(phi) < 0, so phi = 2�?- phi_0 (if phi_0 > 0).
         // For clipped z, recompute phi from geometry.
     }
 
     // For now, use phi_min = phi_0, phi_max = two_pi - phi_0.
-    // The 锠?endpoints for the circles:
-    // Lower circle (z = z_low):  锠乢lower = 2锜?- phi_0 (or determined by z_low)
+    // The �?endpoints for the circles:
+    // Lower circle (z = z_low):  锠乢lower = 2�?- phi_0 (or determined by z_low)
     // Upper circle (z = z_high): 锠乢upper = phi_0     (or determined by z_high)
     let phi_lower = two_pi - phi_0;
     let phi_upper = phi_0;
 
-    // The valid 锠?range on the torus (where r 閳?r_c) is [phi_0, 2锜?- phi_0]
+    // The valid �?range on the torus (where r �?r_c) is [phi_0, 2�?- phi_0]
     // which corresponds to the INNER half of the torus tube.
     let phi_min = phi_0;
     let phi_max = two_pi - phi_0;
@@ -78,14 +78,14 @@ fn build_cylinder_torus_intersection_brep(
     // E0: lower circle (shared: cylinder face + torus face)
     let e0 = make_edge(
         &mut brep,
-        Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, r_c)),
+        Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, r_c)),
         0.0, two_pi, v0, v0,
     ).ok()?;
 
     // E1: upper circle (shared: cylinder face + torus face)
     let e1 = make_edge(
         &mut brep,
-        Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, r_c)),
+        Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, r_c)),
         0.0, two_pi, v1, v1,
     ).ok()?;
 
@@ -99,7 +99,7 @@ fn build_cylinder_torus_intersection_brep(
         0.0, h, v0, v1,
     ).ok()?;
 
-    // 閳光偓閳光偓 Surfaces 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+    // 閳光偓閳光偓 Surfaces 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光�?
     let cyl_surf = Surface3::Cylinder(CylindricalSurface {
         origin: DVec3::new(0.0, 0.0, z_low),
         axis: DVec3::Z,
@@ -133,30 +133,30 @@ fn build_cylinder_torus_intersection_brep(
     });
 
     // Torus face pcurves
-    // E0 (lower circle) at u閳溂0,2锜篯, 锠?phi_lower
+    // E0 (lower circle) at u閳�?,2锜篯, �?phi_lower
     let e0_on_tor = Curve2d::Line(Line2d {
         origin: glam::DVec2::new(0.0, phi_lower),
         direction: glam::DVec2::new(1.0, 0.0),
     });
-    // E1 (upper circle) at u閳溂0,2锜篯, 锠?phi_upper
+    // E1 (upper circle) at u閳�?,2锜篯, �?phi_upper
     let e1_on_tor = Curve2d::Line(Line2d {
         origin: glam::DVec2::new(0.0, phi_upper),
         direction: glam::DVec2::new(1.0, 0.0),
     });
-    // E2_fwd on torus: V0 (锠?phi_lower) 閳?V1 (锠?phi_upper)
-    // 锠?changes by (phi_upper - phi_lower) over edge length h
+    // E2_fwd on torus: V0 (�?phi_lower) �?V1 (�?phi_upper)
+    // �?changes by (phi_upper - phi_lower) over edge length h
     let dphi = phi_upper - phi_lower; // negative: phi_lower > phi_upper
     let e2_tor_fwd = Curve2d::Line(Line2d {
         origin: glam::DVec2::new(0.0, phi_lower),
         direction: glam::DVec2::new(0.0, dphi / h),
     });
-    // E2_rev on torus: V1 (锠?phi_upper) 閳?V0 (锠?phi_lower)
+    // E2_rev on torus: V1 (�?phi_upper) �?V0 (�?phi_lower)
     let e2_tor_rev = Curve2d::Line(Line2d {
         origin: glam::DVec2::new(0.0, phi_upper),
         direction: glam::DVec2::new(0.0, -dphi / h),
     });
 
-    // 閳光偓閳光偓 Geometry store 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+    // 閳光偓閳光偓 Geometry store 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光�?
     let si_cyl = 0usize;
     brep.geom.surfaces.push(cyl_surf);
     let si_tor = brep.geom.surfaces.len();
@@ -206,7 +206,7 @@ fn build_cylinder_torus_intersection_brep(
         });
     }
 
-    // Cylinder wall face: E0_fwd 閳?E2_fwd 閳?E1_rev 閳?E2_rev
+    // Cylinder wall face: E0_fwd �?E2_fwd �?E1_rev �?E2_rev
     let cyl_face = Face {
         outer_wire: make_wire(vec![
             WireEdge::fwd(e0),
@@ -228,7 +228,7 @@ fn build_cylinder_torus_intersection_brep(
     while brep.geom.face_surface_range.len() <= fi_cyl { brep.geom.face_surface_range.push(None); }
     brep.geom.face_surface_range[fi_cyl] = Some([0.0, two_pi, 0.0, h]);
 
-    // Torus inner face: E0_rev 閳?E2_rev 閳?E1_fwd 閳?E2_fwd
+    // Torus inner face: E0_rev �?E2_rev �?E1_fwd �?E2_fwd
     // (opposite orientation to cylinder face)
     let tor_face = Face {
         outer_wire: make_wire(vec![
@@ -254,7 +254,7 @@ fn build_cylinder_torus_intersection_brep(
     Some(brep)
 }
 
-/// Fast path: coaxial Z-aligned cylinder 閳?torus.
+/// Fast path: coaxial Z-aligned cylinder �?torus.
 pub fn try_intersection_coaxial_cylinder_torus(a: &BRep, b: &BRep) -> Option<BRep> {
     try_intersection_coaxial_cylinder_torus_pair(a, b)
         .or_else(|| try_intersection_coaxial_cylinder_torus_pair(b, a))
@@ -537,7 +537,7 @@ fn reverse_wire_local(wire: &mut Wire) {
 }
 
 /// Loft builds the **solid** frustum mantle (normals outward from cone interior). For
-/// `cylinder \\ cone`, those faces bound the cavity 闁?outward from the result solid points into the
+/// `cylinder \\ cone`, those faces bound the cavity �?outward from the result solid points into the
 /// removed cone (flip normals vs loft defaults).
 fn invert_shell_planar_faces(brep: &mut BRep) {
     let Some(shell) = brep.solids.first_mut().and_then(|s| s.shells.first_mut()) else {
@@ -712,7 +712,7 @@ fn coaxial_cylinder_minus_frustum_loft_pieces(
     Some((outer_strip, inner_strip, annulus))
 }
 
-/// Closed shell for `cylinder \ (cone 闁?cylinder)` when overlap is the coaxial frustum:
+/// Closed shell for `cylinder \ (cone �?cylinder)` when overlap is the coaxial frustum:
 /// outer cylindrical loft strip + inner frustum loft strip + top annulus, sewn (`OCCT ZP3`).
 fn try_coaxial_cylinder_minus_frustum_loft_shell(
     z_lo: f64,
@@ -734,7 +734,7 @@ fn try_coaxial_cylinder_minus_frustum_loft_shell(
 
 /// `cylinder \ cone` with same coaxial ZP layout as [`try_difference_coaxial_cone_minus_cylinder`].
 ///
-/// Set identity: `cyl \ cone` equals `cyl \ (cone 闁?cyl)` when the overlap is the coaxial frustum.
+/// Set identity: `cyl \ cone` equals `cyl \ (cone �?cyl)` when the overlap is the coaxial frustum.
 pub fn try_difference_coaxial_cylinder_minus_cone(a: &BRep, b: &BRep) -> Option<BRep> {
     cyl_minus_cone_inner(a, b).or_else(|| cyl_minus_cone_inner(b, a))
 }
@@ -780,18 +780,18 @@ fn add_vertex(verts: &mut Vec<Vertex>, p: DVec3) -> usize {
 }
 
 
-/// Fast path: coaxial Z-aligned cylinder 閳?torus.
+/// Fast path: coaxial Z-aligned cylinder �?torus.
 ///
 /// Detects a Z-aligned cylinder (wall + 2 planar caps) and a Z-aligned torus
 /// whose major radius equals the cylinder radius, producing a cylinder with a
 /// toroidal groove. Falls through to Pave-Filler when the torus center is outside
-/// the cylinder Z-range or when R 閳?r_c (partial overlap).
+/// the cylinder Z-range or when R �?r_c (partial overlap).
 pub fn try_difference_coaxial_cylinder_torus(a: &BRep, b: &BRep) -> Option<BRep> {
     // Try (cylinder, torus) ordering
     if let Some(r) = try_difference_coaxial_cylinder_torus_pair(a, b) {
         return Some(r);
     }
-    // Try (torus, cylinder) ordering 閳?for torus - cylinder
+    // Try (torus, cylinder) ordering �?for torus - cylinder
     try_difference_coaxial_torus_cylinder_pair(a, b)
 }
 

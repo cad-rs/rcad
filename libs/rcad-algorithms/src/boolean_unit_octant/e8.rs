@@ -69,7 +69,7 @@ fn add_rect_perimeter_pts(
     }
 }
 
-/// Compute the 2D boundary polygon for `circle é–³?rect` (CCW closed polygon).
+/// Compute the 2D boundary polygon for `circle é–?rect` (CCW closed polygon).
 ///
 /// Returns empty `Vec` if the shapes are disjoint.
 fn build_circle_union_rect_polygon(
@@ -90,7 +90,7 @@ fn build_circle_union_rect_polygon(
     let raw_ints = circle_rect_intersections_uv(cu, cv, r, eu, ev);
 
     if raw_ints.is_empty() {
-        // No intersections é–³?check containment
+        // No intersections é–?check containment
         let corners = [
             DVec2::new(bmin.x, bmin.y),
             DVec2::new(bmax.x, bmin.y),
@@ -101,7 +101,7 @@ fn build_circle_union_rect_polygon(
             (c.x - cu).powi(2) + (c.y - cv).powi(2) <= (r + tol).powi(2)
         });
         if all_inside_circle {
-            // Circle fully contains rect é–³?return full circle
+            // Circle fully contains rect é–?return full circle
             let mut poly = Vec::with_capacity(n_arc + 1);
             for k in 0..=n_arc {
                 let ang = tau * k as f64 / n_arc as f64;
@@ -114,7 +114,7 @@ fn build_circle_union_rect_polygon(
         let cyl_in_rect = cu - r >= bmin.x - tol && cu + r <= bmax.x + tol
             && cv - r >= bmin.y - tol && cv + r <= bmax.y + tol;
         if center_in_rect && cyl_in_rect {
-            // Rect fully contains circle é–³?return rect perimeter
+            // Rect fully contains circle é–?return rect perimeter
             return vec![
                 DVec2::new(bmin.x, bmin.y),
                 DVec2::new(bmax.x, bmin.y),
@@ -145,10 +145,10 @@ fn build_circle_union_rect_polygon(
         let mid_pt = DVec2::new(cu + r * mid_ang.cos(), cv + r * mid_ang.sin());
 
         if point_in_rect(mid_pt) {
-            // Arc midpoint INSIDE rect é–³?rect perimeter is the boundary
+            // Arc midpoint INSIDE rect é–?rect perimeter is the boundary
             add_rect_perimeter_pts(&mut pts, sorted[i].t, sorted[j].t, eu, ev, tol);
         } else {
-            // Arc midpoint OUTSIDE rect é–³?circle arc is the boundary
+            // Arc midpoint OUTSIDE rect é–?circle arc is the boundary
             add_circle_arc_pts(&mut pts, cu, cv, r, a1, da_ccw, n_arc, tol);
         }
     }
@@ -161,7 +161,7 @@ fn build_circle_union_rect_polygon(
     pts
 }
 
-/// Compute the 2D boundary polygon for `circle é–³?rect` (CCW closed polygon).
+/// Compute the 2D boundary polygon for `circle é–?rect` (CCW closed polygon).
 ///
 /// Returns empty `Vec` if the shapes are disjoint.
 fn build_circle_intersect_rect_polygon(
@@ -182,7 +182,7 @@ fn build_circle_intersect_rect_polygon(
     let raw_ints = circle_rect_intersections_uv(cu, cv, r, eu, ev);
 
     if raw_ints.is_empty() {
-        // No intersections é–³?check containment
+        // No intersections é–?check containment
         let corners = [
             DVec2::new(bmin.x, bmin.y),
             DVec2::new(bmax.x, bmin.y),
@@ -193,7 +193,7 @@ fn build_circle_intersect_rect_polygon(
             (c.x - cu).powi(2) + (c.y - cv).powi(2) <= (r + tol).powi(2)
         });
         if all_inside_circle {
-            // Circle fully contains rect é–³?intersection = rect perimeter
+            // Circle fully contains rect é–?intersection = rect perimeter
             return vec![
                 DVec2::new(bmin.x, bmin.y),
                 DVec2::new(bmax.x, bmin.y),
@@ -205,7 +205,7 @@ fn build_circle_intersect_rect_polygon(
         let cyl_in_rect = cu - r >= bmin.x - tol && cu + r <= bmax.x + tol
             && cv - r >= bmin.y - tol && cv + r <= bmax.y + tol;
         if center_in_rect && cyl_in_rect {
-            // Rect fully contains circle é–³?intersection = circle polygon
+            // Rect fully contains circle é–?intersection = circle polygon
             let mut poly = Vec::with_capacity(n_arc + 1);
             for k in 0..=n_arc {
                 let ang = tau * k as f64 / n_arc as f64;
@@ -237,10 +237,10 @@ fn build_circle_intersect_rect_polygon(
         let mid_pt = DVec2::new(cu + r * mid_ang.cos(), cv + r * mid_ang.sin());
 
         if point_in_rect(mid_pt) {
-            // Arc midpoint INSIDE rect é–³?circle arc is part of intersection boundary
+            // Arc midpoint INSIDE rect é–?circle arc is part of intersection boundary
             add_circle_arc_pts(&mut pts, cu, cv, r, a1, da_ccw, n_arc, tol);
         } else {
-            // Arc midpoint OUTSIDE rect é–³?rect perimeter is part of intersection boundary
+            // Arc midpoint OUTSIDE rect é–?rect perimeter is part of intersection boundary
             add_rect_perimeter_pts(&mut pts, sorted[i].t, sorted[j].t, eu, ev, tol);
         }
     }
@@ -277,7 +277,7 @@ fn build_rect_minus_circle_polygon(
     let raw_ints = circle_rect_intersections_uv(cu, cv, r, eu, ev);
 
     if raw_ints.is_empty() {
-        // No intersections é–³?check containment
+        // No intersections é–?check containment
         let corners = [
             DVec2::new(bmin.x, bmin.y),
             DVec2::new(bmax.x, bmin.y),
@@ -288,14 +288,14 @@ fn build_rect_minus_circle_polygon(
             (c.x - cu).powi(2) + (c.y - cv).powi(2) <= (r + tol).powi(2)
         });
         if all_inside_circle {
-            // Circle fully contains rect é–³?rect - circle = empty
+            // Circle fully contains rect é–?rect - circle = empty
             return Vec::new();
         }
         let center_in_rect = point_in_rect(DVec2::new(cu, cv));
         let cyl_in_rect = cu - r >= bmin.x - tol && cu + r <= bmax.x + tol
             && cv - r >= bmin.y - tol && cv + r <= bmax.y + tol;
         if center_in_rect && cyl_in_rect {
-            // Rect fully contains circle é–³?rect - circle = rect perimeter
+            // Rect fully contains circle é–?rect - circle = rect perimeter
             return vec![
                 DVec2::new(bmin.x, bmin.y),
                 DVec2::new(bmax.x, bmin.y),
@@ -303,7 +303,7 @@ fn build_rect_minus_circle_polygon(
                 DVec2::new(bmin.x, bmax.y),
             ];
         }
-        // Disjoint é–³?rect - circle = full rect
+        // Disjoint é–?rect - circle = full rect
         return vec![
             DVec2::new(bmin.x, bmin.y),
             DVec2::new(bmax.x, bmin.y),
@@ -333,10 +333,10 @@ fn build_rect_minus_circle_polygon(
 
         // INVERTED from build_circle_intersect_rect_polygon:
         if point_in_rect(mid_pt) {
-            // Arc midpoint INSIDE rect é–³?rect perimeter is boundary
+            // Arc midpoint INSIDE rect é–?rect perimeter is boundary
             add_rect_perimeter_pts(&mut pts, sorted[i].t, sorted[j].t, eu, ev, tol);
         } else {
-            // Arc midpoint OUTSIDE rect é–³?circle arc cuts away the rect.
+            // Arc midpoint OUTSIDE rect é–?circle arc cuts away the rect.
             // Use the SHORT arc between a1 and a2 (whichever of CCW and CW
             // is shorter) to avoid overlapping complement arcs when the
             // circle is larger than the rect (all midpoints outside rect).
@@ -429,7 +429,7 @@ fn add_cap_face(
 
 /// Add a ring face at the interface between the union-polygon wall and the circle-polygon wall.
 ///
-/// At `z=box_z_hi`, the cross-section transitions from `circle é–³?rect` to just `circle`.
+/// At `z=box_z_hi`, the cross-section transitions from `circle é–?rect` to just `circle`.
 /// The box top face outside the cylinder adds surface area.  Triangulates the union polygon
 /// and keeps only triangles whose UV centroid lies outside the circle.
 fn add_interface_face(
@@ -467,9 +467,9 @@ fn add_interface_face(
     });
 }
 
-/// Build a tessellated BRep for `cylinder é–³?box` via Z-slice tessellation.
+/// Build a tessellated BRep for `cylinder é–?box` via Z-slice tessellation.
 ///
-/// Builds three sections: below-box (circle), overlap (circle é–³?rect), above-box (circle).
+/// Builds three sections: below-box (circle), overlap (circle é–?rect), above-box (circle).
 /// The full cylinder Z range is [cyl_z_lo, cyl_z_hi]; the box occupies [box_z_lo, box_z_hi].
 fn build_cylinder_box_union_tessellated(
     bc: DVec3,
@@ -594,8 +594,7 @@ fn build_cylinder_box_union_tessellated(
         edge_degenerated: vec![], vertex_tolerance: vec![],
         edge_tolerance: vec![], face_tolerance: vec![],
         curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
-        edge_same_parameter: vec![], edge_same_range: vec![],
-    };
+        edge_same_parameter: vec![], edge_same_range: vec![], edge_vertex_params: vec![]};
 
     Some(BRep {
         vertices: verts, edges: vec![],
@@ -655,13 +654,13 @@ fn remap_polygon_arclength(poly: &[DVec2], n: usize, ref_pt: DVec2) -> Vec<DVec2
     result
 }
 
-/// Build a tessellated BRep for `cone é–³?box` via Z-slice tessellation.
+/// Build a tessellated BRep for `cone é–?box` via Z-slice tessellation.
 ///
 /// The cone is a Z-aligned conical frustum with center at `(cx, cy)` in XY,
 /// extending from Z `cz_lo` to `cz_hi`, with bottom radius `cr_lo` and top
 /// radius `cr_hi`. The box is axis-aligned `[bmin, bmax]`.
 ///
-/// Builds three sections: below-box (circle), overlap (circle é–³?rect), above-box (circle).
+/// Builds three sections: below-box (circle), overlap (circle é–?rect), above-box (circle).
 fn build_cone_box_union_tessellated(
     bmin: DVec3, bmax: DVec3,
     cx: f64, cy: f64,
@@ -745,7 +744,7 @@ fn build_cone_box_union_tessellated(
         }
     }
 
-    // ---- Section 2: Overlap (circle é–³?rect cross-section) ----
+    // ---- Section 2: Overlap (circle é–?rect cross-section) ----
     if box_z_hi > box_z_lo + tol {
         let z0 = box_z_lo;
         let z1 = box_z_hi;
@@ -891,8 +890,7 @@ fn build_cone_box_union_tessellated(
         edge_degenerated: vec![], vertex_tolerance: vec![],
         edge_tolerance: vec![], face_tolerance: vec![],
         curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
-        edge_same_parameter: vec![], edge_same_range: vec![],
-    };
+        edge_same_parameter: vec![], edge_same_range: vec![], edge_vertex_params: vec![]};
 
     Some(BRep {
         vertices: verts, edges: vec![],

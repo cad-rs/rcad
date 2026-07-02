@@ -1044,7 +1044,7 @@ mod tests {
 
     #[test]
     fn circle_conversion_exact() {
-        let circle = Circle3::new(DVec3::new(1.0, DVec3::Z, 2.0);
+        let circle = Circle3::new(DVec3::new(1.0, 0.0, 0.0), DVec3::Z, 2.0);
         let bs = circle_to_bspline(&circle, 2);
 
         // Test points on circle

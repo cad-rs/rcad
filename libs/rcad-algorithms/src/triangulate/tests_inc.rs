@@ -1,4 +1,4 @@
-ï»¿#[cfg(test)]
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -216,8 +216,7 @@ mod tests {
                 edge_curve: vec![Some(0), None],
                 edge_curve_range: vec![Some([0.0, PI]), None],
                 face_surface: vec![None],
-                ..Default::default()
-            },
+                ..Default::default(), edge_vertex_params: vec![]},
             compound: None,
             compsolid: None,
         };
@@ -269,7 +268,7 @@ mod tests {
         let params = TessellationParams::standard();
         // Higher target count means more triangles -> finer tolerance
         let adjusted = params.with_target_triangle_count(10000);
-        // Factor = (10000/1000)^(1/3) é–³?2.15, so tolerance increases (coarser mesh)
+        // Factor = (10000/1000)^(1/3) éˆ?2.15, so tolerance increases (coarser mesh)
         // For more triangles, we'd actually want lower tolerance, so this adjusts accordingly
         assert!(adjusted.chord_tolerance != params.chord_tolerance);
     }
@@ -313,7 +312,7 @@ mod tests {
         let nodes = vec![
             DVec3::new(0.0, 0.0, 0.0),
             DVec3::new(1.0, 0.0, 0.0),
-            DVec3::new(0.5, 0.866, 0.0), // ~60éŽº?internal angles
+            DVec3::new(0.5, 0.866, 0.0), // ~60æŽ?internal angles
         ];
         let triangles = vec![[0, 1, 2]];
 
@@ -389,7 +388,7 @@ mod tests {
 
     #[test]
     fn boundary_sensitive_tessellator_detect_features() {
-        // Two triangles sharing an edge with ~90éŽº?dihedral
+        // Two triangles sharing an edge with ~90æŽ?dihedral
         let nodes = vec![
             DVec3::new(0.0, 0.0, 0.0),
             DVec3::new(1.0, 0.0, 0.0),

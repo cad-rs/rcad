@@ -130,7 +130,7 @@ fn build_box_minus_cone_tessellated(
         let z_bot = z0 + dz * i as f64;
         let z_top = z0 + dz * (i + 1) as f64;
 
-        // Both slices have boundaries 閳?build wall
+        // Both slices have boundaries �?build wall
         if !bot.is_empty() && !top.is_empty() {
             let n = bot.len().min(top.len());
             let mut idx = Vec::with_capacity(2 * n);
@@ -154,7 +154,7 @@ fn build_box_minus_cone_tessellated(
                 surface_idx: None,
             });
         } else if !bot.is_empty() {
-            // Top is empty (cone closed off at this Z) 閳?cap the top
+            // Top is empty (cone closed off at this Z) �?cap the top
             // Build a triangle fan from the last valid boundary to a center point
             let n = bot.len();
             let center_z = (z_bot + z_top) * 0.5;
@@ -179,7 +179,7 @@ fn build_box_minus_cone_tessellated(
                 surface_idx: None,
             });
         } else if !top.is_empty() {
-            // Bottom is empty (cone opened at this Z) 閳?cap the bottom
+            // Bottom is empty (cone opened at this Z) �?cap the bottom
             let n = top.len();
             let center_z = (z_bot + z_top) * 0.5;
             let mut center = DVec3::ZERO;
@@ -205,7 +205,7 @@ fn build_box_minus_cone_tessellated(
     }
 
     // ---- Build cap faces at z0 and z1 if boundary is non-empty ----
-    // Bottom cap at z0 閳?triangulated via ear-clipping
+    // Bottom cap at z0 �?triangulated via ear-clipping
     if !slices[0].is_empty() && slices[0].len() >= 3 {
         let empty_wire = || Wire { edges: vec![] };
         let poly_3d: Vec<DVec3> = slices[0].iter()
@@ -227,7 +227,7 @@ fn build_box_minus_cone_tessellated(
         });
     }
 
-    // Top cap at z1 閳?triangulated via ear-clipping
+    // Top cap at z1 �?triangulated via ear-clipping
     if !slices[n_slices].is_empty() && slices[n_slices].len() >= 3 {
         let empty_wire = || Wire { edges: vec![] };
         let poly_3d: Vec<DVec3> = slices[n_slices].iter()
@@ -258,8 +258,7 @@ fn build_box_minus_cone_tessellated(
         edge_degenerated: vec![], vertex_tolerance: vec![],
         edge_tolerance: vec![], face_tolerance: vec![],
         curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
-        edge_same_parameter: vec![], edge_same_range: vec![],
-    };
+        edge_same_parameter: vec![], edge_same_range: vec![], edge_vertex_params: vec![]};
 
     Some(BRep {
         vertices: verts, edges: vec![],
@@ -268,7 +267,7 @@ fn build_box_minus_cone_tessellated(
     })
 }
 
-/// Fast path for `box 閳?cone` boolean difference.
+/// Fast path for `box �?cone` boolean difference.
 ///
 /// Detects an axis-aligned box minus a Z-aligned conical frustum (possibly Z-rotated
 /// and translated in XY). Builds the result via Z-slice tessellation.
@@ -295,7 +294,7 @@ pub fn try_difference_box_cone(a: &BRep, b: &BRep) -> Option<BRep> {
         .max((bmax.y - cy).max(cy - bmin.y));
     let min_r = if cr_lo < cr_hi { cr_lo } else { cr_hi };
     if min_r < TOLERANCE_LEN_MIN {
-        // Sharp cone (radius near zero) 閳?can't form a proper void
+        // Sharp cone (radius near zero) �?can't form a proper void
         return None;
     }
     let r_at_zlo = cr_lo + (cr_hi - cr_lo) * (z_lo - cz_lo) / (cz_hi - cz_lo);
@@ -375,7 +374,7 @@ fn build_cone_minus_box_tessellated(
 
     // Find circle-rect intersections and generate boundary.
     // Only generates points for circle arcs OUTSIDE the rect.
-    // Arc segments INSIDE the rect are skipped 閳?the polygon's closing
+    // Arc segments INSIDE the rect are skipped �?the polygon's closing
     // edge from last-to-first serves as the return along the rect perimeter.
     let gen_boundary = |r: f64| -> Vec<DVec2> {
         if r <= tol { return vec![]; }
@@ -465,7 +464,7 @@ fn build_cone_minus_box_tessellated(
             let mid_pt = DVec2::new(cx + r * mid_ang.cos(), cy + r * mid_ang.sin());
 
             if !point_in_rect(mid_pt) {
-                // Arc outside rect 閳?sample with n_arc points (includes both endpoints)
+                // Arc outside rect �?sample with n_arc points (includes both endpoints)
                 for k in 0..=n_arc {
                     let frac = k as f64 / n_arc as f64;
                     let ang = a1 + da_ccw * frac;
@@ -473,7 +472,7 @@ fn build_cone_minus_box_tessellated(
                     result.push(DVec2::new(cx + r * c, cy + r * s));
                 }
             }
-            // Arc inside rect 閳?skip. The closing edge from the last polygon
+            // Arc inside rect �?skip. The closing edge from the last polygon
             // vertex back to the first serves as the rect perimeter return path.
         }
 
@@ -518,7 +517,7 @@ fn build_cone_minus_box_tessellated(
                 surface_idx: None,
             });
         } else if !bot.is_empty() {
-            // Top is empty (void closed off) 閳?cap the top with triangle fan
+            // Top is empty (void closed off) �?cap the top with triangle fan
             let n = bot.len();
             let center_z = (z_bot + z_top) * 0.5;
             let mut center = DVec3::ZERO;
@@ -541,7 +540,7 @@ fn build_cone_minus_box_tessellated(
                 surface_idx: None,
             });
         } else if !top.is_empty() {
-            // Bottom is empty (void opened at this Z) 閳?cap the bottom with triangle fan
+            // Bottom is empty (void opened at this Z) �?cap the bottom with triangle fan
             let n = top.len();
             let center_z = (z_bot + z_top) * 0.5;
             let mut center = DVec3::ZERO;
@@ -617,8 +616,7 @@ fn build_cone_minus_box_tessellated(
         edge_degenerated: vec![], vertex_tolerance: vec![],
         edge_tolerance: vec![], face_tolerance: vec![],
         curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
-        edge_same_parameter: vec![], edge_same_range: vec![],
-    };
+        edge_same_parameter: vec![], edge_same_range: vec![], edge_vertex_params: vec![]};
 
     Some(BRep {
         vertices: verts, edges: vec![],
@@ -627,17 +625,17 @@ fn build_cone_minus_box_tessellated(
     })
 }
 
-/// Build `cylinder 閳?box` by Z-slice tessellation.
+/// Build `cylinder �?box` by Z-slice tessellation.
 ///
-/// Handles the case where clip-plane corners fall outside the cylinder 閳?/// the gap routing in `build_cylinder_box_clipped_brep` cannot create correct
+/// Handles the case where clip-plane corners fall outside the cylinder �?/// the gap routing in `build_cylinder_box_clipped_brep` cannot create correct
 /// per-clip-plane side faces when the corner is outside the cylinder.
 ///
-/// The cross-section `circle 閳?rect` at every Z-level is identical (constant
+/// The cross-section `circle �?rect` at every Z-level is identical (constant
 /// cylinder radius, constant box size). This function computes the 2D boundary
 /// as one or more closed polygons (disconnected components) and builds a
 /// triangulated BRep by connecting Z-slices.
 ///
-/// Parameters are in the box's UV frame: the box is `[-eu, eu] 鑴?[-ev, ev]`,
+/// Parameters are in the box's UV frame: the box is `[-eu, eu] �?[-ev, ev]`,
 /// the circle center is at `(cu, cv)` with radius `r`, and the cylinder extends
 /// vertically from `z_lo` to `z_hi`. The world-space position of a point `(u, v, z)`
 /// is `bc + u * u_ax + v * v_ax + z * DVec3::Z`.
@@ -689,7 +687,7 @@ fn build_cylinder_box_diff_tessellated(
     };
 
     // ---- 1. Find circle-rect intersections ----
-    // Edge order: bottom (L閳壊), right (B閳壍), top (R閳墶), left (T閳墪)
+    // Edge order: bottom (L閳�?, right (B閳�?, top (R閳�?, left (T閳�?
     let rect_edges = [
         (DVec2::new(bmin.x, bmin.y), DVec2::new(bmax.x, bmin.y)),
         (DVec2::new(bmax.x, bmin.y), DVec2::new(bmax.x, bmax.y)),
@@ -724,7 +722,7 @@ fn build_cylinder_box_diff_tessellated(
     }
 
     // Same-edge dedup by t parameter.
-    // Keep corner duplicates (same point on 2 edges) 閳?they prevent
+    // Keep corner duplicates (same point on 2 edges) �?they prevent
     // per-edge routing gaps and the zero-length arc they create is
     // handled transparently in run grouping.
     ints.sort_by(|a, b| a.edge.cmp(&b.edge).then(a.t.partial_cmp(&b.t).unwrap()));
@@ -762,7 +760,7 @@ fn build_cylinder_box_diff_tessellated(
     }
 
     // ---- 3. Group consecutive KEPT arcs into runs ----
-    // Note: zero-length arcs (corner intersections) are NOT promoted 閳?they
+    // Note: zero-length arcs (corner intersections) are NOT promoted �?they
     // separate distinct boundary components around the box.
     let is_kept_run = &is_kept;
     struct Run { start: usize, end: usize }
@@ -812,7 +810,7 @@ fn build_cylinder_box_diff_tessellated(
 
     // ---- 4. For each run, build the boundary polygon ----
     // Map each rect edge to its two intersection indices (0..m).
-    // Edge order CW: bottom(0), right(1), top(2), left(3) 閳?but CW order is
+    // Edge order CW: bottom(0), right(1), top(2), left(3) �?but CW order is
     // bottom, left, top, right. We'll build by edge index and traverse manually.
     let mut edge_idxs: [Vec<usize>; 4] = [
         Vec::new(), Vec::new(), Vec::new(), Vec::new()
@@ -840,10 +838,10 @@ fn build_cylinder_box_diff_tessellated(
         let (a, b) = (e[0], e[1]);
         // Edge t parameter increases along the edge direction (as in rect_edges).
         // CW direction is OPPOSITE to edge direction for ALL edges:
-        // - edge 0 (bottom, A閳墪 left閳姰ight): CW = right閳姡eft = larger t first
-        // - edge 1 (right, B閳墫 bottom閳姲op): CW = top閳妼ottom = larger t first
-        // - edge 2 (top,    C閳墬 right閳姡eft): CW = left閳姰ight = larger t first
-        // - edge 3 (left,   D閳墣 top閳妼ottom): CW = bottom閳姲op = larger t first
+        // - edge 0 (bottom, A閳�?left閳姰ight): CW = right閳姡eft = larger t first
+        // - edge 1 (right, B閳�?bottom閳姲op): CW = top閳妼ottom = larger t first
+        // - edge 2 (top,    C閳�?right閳姡eft): CW = left閳姰ight = larger t first
+        // - edge 3 (left,   D閳�?top閳妼ottom): CW = bottom閳姲op = larger t first
         if ints[a].t > ints[b].t { Some((a, b)) } else { Some((b, a)) }
     };
 
@@ -853,7 +851,7 @@ fn build_cylinder_box_diff_tessellated(
 
         // Walk CCW from run.start through the consecutive KEPT arcs to run.end.
         // Zero-length SKIPPED arcs (promoted to KEPT in is_kept_run) are
-        // transparent 閳?skip their points but continue through them.
+        // transparent �?skip their points but continue through them.
         let mut idx = run.start;
         loop {
             let j = (idx + 1) % m;
@@ -893,7 +891,7 @@ fn build_cylinder_box_diff_tessellated(
             if let Some((cw_first, cw_second)) = edge_cw_order(edge) {
                 if first_edge {
                     // The polygon ends near ints[arc_end_idx].pt on this edge.
-                    // CW direction on this edge: cw_first 閳?cw_second.
+                    // CW direction on this edge: cw_first �?cw_second.
                     // If arc_end_idx == cw_first: we're at the CW start, add cw_second.
                     // If arc_end_idx == cw_second: we're at the CW end, no points to add.
                     if arc_end_idx == cw_first {
@@ -999,8 +997,7 @@ fn build_cylinder_box_diff_tessellated(
         edge_degenerated: vec![], vertex_tolerance: vec![],
         edge_tolerance: vec![], face_tolerance: vec![],
         curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
-        edge_same_parameter: vec![], edge_same_range: vec![],
-    };
+        edge_same_parameter: vec![], edge_same_range: vec![], edge_vertex_params: vec![]};
 
     Some(BRep {
         vertices: verts, edges: vec![],
@@ -1009,4 +1006,4 @@ fn build_cylinder_box_diff_tessellated(
     })
 }
 
-// 閳光偓閳光偓 Cylinder-Box Union Tessellation 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+// 閳光偓閳光偓 Cylinder-Box Union Tessellation 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光�

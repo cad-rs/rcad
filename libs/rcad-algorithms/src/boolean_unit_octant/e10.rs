@@ -78,7 +78,7 @@ fn build_cylinder_box_difference_full_wall(
     };
     let circle_bot = Curve3::Circle(Circle3::new(DVec3::new(center.x, -DVec3::Z, r));
     let ba = push_edge!(circle_bot, -pi / 2.0 - two_pi, -pi / 2.0, 0, 0);
-    let circle_top = Curve3::Circle(Circle3::new(DVec3::new(center.x, DVec3::Z, r));
+    let circle_top = Curve3::Circle(Circle3::new(DVec3::new(center.x, 0.0, 0.0), DVec3::Z, r);
     let ta = push_edge!(circle_top, -pi / 2.0, two_pi - pi / 2.0, 0, 0);
 
     let v0_lo = vtab[0].lo_idx;
@@ -88,9 +88,9 @@ fn build_cylinder_box_difference_full_wall(
 
     let cyl_wire = Wire {
         edges: vec![
-            WireEdge::rev(ba),     // bottom arc V0_lo閳壐0_lo
+            WireEdge::rev(ba),     // bottom arc V0_lo閳�?_lo
             WireEdge::fwd(seam_gen), // up
-            WireEdge::fwd(ta),     // top arc V0_lo閳壐0_hi
+            WireEdge::fwd(ta),     // top arc V0_lo閳�?_hi
             WireEdge::rev(seam_gen), // down
         ],
     };
@@ -309,8 +309,8 @@ pub(crate) fn build_cylinder_box_clipped_brep(
         (phi, alpha, n, d)
     }).collect();
 
-    // ---- 2. vertices 閳?one pair (lo, hi) per unique 鑳?----
-    // Canonicalize: 鑳?near 0 or 2锜?閳?0
+    // ---- 2. vertices �?one pair (lo, hi) per unique �?----
+    // Canonicalize: �?near 0 or 2�?�?0
     let canon = |t: f64| if t >= two_pi - 1e-12 { 0.0 } else { t };
 
     fn push_vertex(brep: &mut BRep, p: DVec3) -> usize {
@@ -374,15 +374,15 @@ pub(crate) fn build_cylinder_box_clipped_brep(
         let si = interval_verts[i].0;
         let ei = interval_verts[i].1;
 
-        // Bottom circle (normal = 閳妬)
+        // Bottom circle (normal = 閳�?
         // Circle3(normal=-Z): C(t) = center + r*(-sin(t), -cos(t), 0)
-        // For vertex at standard CCW angle 鑳? P = center + r*(cos(鑳?, sin(鑳?, 0)
-        // Mapping: (-sin(t), -cos(t)) = (cos(鑳?, sin(鑳?) 閳?t = -锜?2 - 鑳?
+        // For vertex at standard CCW angle �? P = center + r*(cos(�?, sin(�?, 0)
+        // Mapping: (-sin(t), -cos(t)) = (cos(�?, sin(�?) �?t = -�?2 - �?
         let circle_bot = Curve3::Circle(Circle3::new(DVec3::new(center.x, -DVec3::Z, r));
-        // Stored as V_e 閳?V_s, used as rev in wires 閳?effective V_s 閳?V_e (CCW)
+        // Stored as V_e �?V_s, used as rev in wires �?effective V_s �?V_e (CCW)
         let ba = next_curve(circle_bot, -pi / 2.0 - e_raw, -pi / 2.0 - s_raw, v_lo(ei), v_lo(si));
 
-        // Right generator at 鑳?= e
+        // Right generator at �?= e
         let p_e_lo = DVec3::new(center.x + r * e.cos(), center.y + r * e.sin(), cz_lo);
         let rg = next_curve(
             Curve3::Line(Line3 { origin: p_e_lo, direction: DVec3::Z }),
@@ -391,12 +391,12 @@ pub(crate) fn build_cylinder_box_clipped_brep(
 
         // Top circle (normal = +Z)
         // Circle3(normal=+Z): C(t) = center + r*(-sin(t), cos(t), 0)
-        // Mapping: (-sin(t), cos(t)) = (cos(鑳?, sin(鑳?) 閳?t = 鑳?- 锜?2
-        let circle_top = Curve3::Circle(Circle3::new(DVec3::new(center.x, DVec3::Z, r));
-        // Stored as V_s 閳?V_e (fwd in cap wire = 鑳僟s閳崹绔塭 CCW; rev in cyl wall = 鑳僟e閳崹绔塻)
+        // Mapping: (-sin(t), cos(t)) = (cos(�?, sin(�?) �?t = �?- �?2
+        let circle_top = Curve3::Circle(Circle3::new(DVec3::new(center.x, 0.0, 0.0), DVec3::Z, r);
+        // Stored as V_s �?V_e (fwd in cap wire = 鑳僟s閳崹绔�?CCW; rev in cyl wall = 鑳僟e閳崹绔�?
         let ta = next_curve(circle_top, s_raw - pi / 2.0, e_raw - pi / 2.0, v_hi(si), v_hi(ei));
 
-        // Left generator at 鑳?= s
+        // Left generator at �?= s
         let p_s_lo = DVec3::new(center.x + r * s.cos(), center.y + r * s.sin(), cz_lo);
         let lg = next_curve(
             Curve3::Line(Line3 { origin: p_s_lo, direction: DVec3::Z }),
@@ -406,10 +406,10 @@ pub(crate) fn build_cylinder_box_clipped_brep(
         // Cylindrical wall face
         let cyl_wire = Wire {
             edges: vec![
-                WireEdge::rev(ba),  // V_s_lo 閳?V_e_lo
-                WireEdge::fwd(rg),  // V_e_lo 閳?V_e_hi
-                WireEdge::rev(ta),  // V_e_hi 閳?V_s_hi
-                WireEdge::rev(lg),  // V_s_hi 閳?V_s_lo
+                WireEdge::rev(ba),  // V_s_lo �?V_e_lo
+                WireEdge::fwd(rg),  // V_e_lo �?V_e_hi
+                WireEdge::rev(ta),  // V_e_hi �?V_s_hi
+                WireEdge::rev(lg),  // V_s_hi �?V_s_lo
             ],
         };
 
@@ -439,14 +439,14 @@ pub(crate) fn build_cylinder_box_clipped_brep(
         while brep.geom.face_surface_range.len() <= fi {
             brep.geom.face_surface_range.push(None);
         }
-        // UV range: u 閳?[鑳僟s, 鑳僟e], v 閳?[0, h]
+        // UV range: u �?[鑳僟s, 鑳僟e], v �?[0, h]
         brep.geom.face_surface_range[fi] = Some([s_raw, e_raw, 0.0, h]);
 
         interval_edges.push(IntervalEdges { ba, rg, ta, lg });
     }
 
     // ---- 5. chord edges between interval endpoints (on clip planes) ----
-    // Each gap from interval[i].e 閳?interval[i+1].s (mod n_int) may have 1+
+    // Each gap from interval[i].e �?interval[i+1].s (mod n_int) may have 1+
     // segments (one per clip plane traversed).  We record gaps per interval as
     // a list of segments, each with bottom/top chord edges and the generator
     // edges at their endpoints (needed later for side faces).
@@ -455,8 +455,8 @@ pub(crate) fn build_cylinder_box_clipped_brep(
         bot_chord: usize,
         top_chord: usize,
         plane: usize,
-        gen_from: usize, // V_from_lo 閳?V_from_hi (stored direction)
-        gen_to: usize,   // V_to_lo 閳?V_to_hi (stored direction)
+        gen_from: usize, // V_from_lo �?V_from_hi (stored direction)
+        gen_to: usize,   // V_to_lo �?V_to_hi (stored direction)
     }
 
     let mut gap_segs: Vec<Vec<GapSeg>> = Vec::with_capacity(n_int);
@@ -477,7 +477,7 @@ pub(crate) fn build_cylinder_box_clipped_brep(
 
         match (p_from, p_to) {
             (Some(pidx), Some(pidx2)) if pidx == pidx2 => {
-                // Same plane 閳?single chord
+                // Same plane �?single chord
                 let vi_fr = interval_verts[i0].1;
                 let vi_to = interval_verts[i1].0;
 
@@ -611,7 +611,7 @@ pub(crate) fn build_cylinder_box_clipped_brep(
                             0.0, h, lo_corner, hi_corner,
                         );
 
-                        // Segment 1: p1 閳?corner
+                        // Segment 1: p1 �?corner
                         let bot_chord1 = Curve3::Line(Line3 {
                             origin: brep.vertices[v_lo(vi_fr)].point,
                             direction: brep.vertices[lo_corner].point - brep.vertices[v_lo(vi_fr)].point,
@@ -623,7 +623,7 @@ pub(crate) fn build_cylinder_box_clipped_brep(
                         });
                         let et1 = next_curve(top_chord1, 0.0, 1.0, v_hi(vi_fr), hi_corner);
 
-                        // Segment 2: corner 閳?p2
+                        // Segment 2: corner �?p2
                         let bot_chord2 = Curve3::Line(Line3 {
                             origin: brep.vertices[lo_corner].point,
                             direction: brep.vertices[v_lo(vi_to)].point - brep.vertices[lo_corner].point,
@@ -693,7 +693,7 @@ pub(crate) fn build_cylinder_box_clipped_brep(
         si
     };
 
-    // Bottom cap: V_s_lo 閳?V_e_lo (arc) 閳?V_s_{i+1}_lo (chords) 閳?...
+    // Bottom cap: V_s_lo �?V_e_lo (arc) �?V_s_{i+1}_lo (chords) �?...
     let mut bot_wire_edges: Vec<WireEdge> = Vec::new();
     let mut top_wire_edges: Vec<WireEdge> = Vec::new();
     for i in 0..n_int {
@@ -731,7 +731,7 @@ pub(crate) fn build_cylinder_box_clipped_brep(
     }
 
     // ---- 7. side faces (one per gap segment, on the segment's clip plane) ----
-    // The face wire runs: bot_chord_fwd 閳?gen_to_fwd 閳?top_chord_rev 閳?gen_from_rev
+    // The face wire runs: bot_chord_fwd �?gen_to_fwd �?top_chord_rev �?gen_from_rev
     for segs in &gap_segs {
         for seg in segs {
             // Determine the plane for this side face.
@@ -759,7 +759,7 @@ pub(crate) fn build_cylinder_box_clipped_brep(
                     let cross_z = chord_dir.cross(DVec3::Z);
                     let len = cross_z.length();
                     if len < 1e-15 {
-                        // Degenerate chord 閳?fall back to original plane.
+                        // Degenerate chord �?fall back to original plane.
                         (n0, d0)
                     } else {
                         let n = -cross_z / len; // so that -n = winding normal
@@ -793,12 +793,12 @@ pub(crate) fn build_cylinder_box_clipped_brep(
 /// Build an arc BRep for the parallel-only cylinder-box difference case.
 ///
 /// This builds the portion of a Z-aligned cylinder satisfying
-/// `(P - center)璺痗lip_n 閳?cut_dist` (the outside-slab region). The arc is
-/// centered on `clip_n` with half-angle `浼?= acos(cut_dist/r)`. The clip face
+/// `(P - center)璺痗lip_n �?cut_dist` (the outside-slab region). The arc is
+/// centered on `clip_n` with half-angle `�?= acos(cut_dist/r)`. The clip face
 /// is on the plane `center + clip_n璺痗ut_dist` with outward normal `-clip_n`.
 ///
 /// `clip_n`: horizontal unit normal from center toward the clip plane.
-/// `cut_dist`: distance from center to clip plane (閳?, 閳槝).
+/// `cut_dist`: distance from center to clip plane (�?, 閳�?.
 fn build_cylinder_arc_for_difference(
     center: DVec3,
     r: f64,
@@ -868,27 +868,27 @@ fn build_cylinder_arc_for_difference_skip(
         idx
     };
 
-    // E0: bottom arc (V1閳壐0), same convention as build_half_cylinder_intersection_brep
+    // E0: bottom arc (V1閳�?), same convention as build_half_cylinder_intersection_brep
     let circle_bot = Curve3::Circle(Circle3::new(DVec3::new(center.x, -DVec3::Z, r));
     let e0 = next_curve(circle_bot, -phi - alpha, -phi + alpha, v1, v0);
 
-    // E1: right generator (V1閳壐2)
+    // E1: right generator (V1閳�?)
     let line_r = Curve3::Line(Line3 { origin: v1_p, direction: DVec3::Z });
     let e1 = next_curve(line_r, 0.0, h, v1, v2);
 
-    // E2: top arc (V3閳壐2)
-    let circle_top = Curve3::Circle(Circle3::new(DVec3::new(center.x, DVec3::Z, r));
+    // E2: top arc (V3閳�?)
+    let circle_top = Curve3::Circle(Circle3::new(DVec3::new(center.x, 0.0, 0.0), DVec3::Z, r);
     let e2 = next_curve(circle_top, phi - alpha, phi + alpha, v3, v2);
 
-    // E3: left generator (V0閳壐3)
+    // E3: left generator (V0閳�?)
     let line_l = Curve3::Line(Line3 { origin: v0_p, direction: DVec3::Z });
     let e3 = next_curve(line_l, 0.0, h, v0, v3);
 
-    // E4: bottom chord on clip plane (V0閳壐1)
+    // E4: bottom chord on clip plane (V0閳�?)
     let line_cb = Curve3::Line(Line3 { origin: v0_p, direction: v1_p - v0_p });
     let e4 = next_curve(line_cb, 0.0, 1.0, v0, v1);
 
-    // E5: top chord on clip plane (V2閳壐3)
+    // E5: top chord on clip plane (V2閳�?)
     let line_ct = Curve3::Line(Line3 { origin: v2_p, direction: v3_p - v2_p });
     let e5 = next_curve(line_ct, 0.0, 1.0, v2, v3);
 
@@ -940,7 +940,7 @@ fn build_cylinder_arc_for_difference_skip(
         fi
     };
 
-    // F0: Cylindrical wall 閳?wire V0閳壐1閳壐2閳壐3閳壐0
+    // F0: Cylindrical wall �?wire V0閳�?閳�?閳�?閳�?
     let cyl_wire = Wire {
         edges: vec![
             WireEdge::rev(e0), WireEdge::fwd(e1),
