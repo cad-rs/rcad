@@ -419,7 +419,9 @@ impl<'a> super::PaveFiller<'a> {
                 {
                     let ic = &mut self.ds.intersection_curves[ci];
                     if let Some(pb1) = ic.change_pave_block1() {
-                        let sub_pbs = pb1.update(false);
+                        // OCCT Update(theFlag=false) still uses pave1/pave2 as implicit endpoints.
+                        // rcad: pass true so endpoints are included in the split calculation.
+                        let sub_pbs = pb1.update(true);
                         a_lpb = sub_pbs;
                     }
                 }
