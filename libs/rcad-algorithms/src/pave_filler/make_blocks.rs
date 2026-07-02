@@ -514,7 +514,7 @@ impl<'a> super::PaveFiller<'a> {
                             let v1_tol = a_tol_r3d.max(self.ds.vertices[n_v1].geom_tol);
                             let v2_tol = a_tol_r3d.max(self.ds.vertices[n_v2].geom_tol);
                             let ic = &self.ds.intersection_curves[ci];
-                            find_valid_range(&ic.curve, a_t1, a_t2, v1_pt, v1_tol, v2_pt, v2_tol).is_some()
+                            find_valid_range(&ic.curve, a_t1, a_t2, a_tol_r3d, v1_pt, v1_tol, v2_pt, v2_tol).is_some()
                         } else { false }
                     };
                     if !has_valid_range {

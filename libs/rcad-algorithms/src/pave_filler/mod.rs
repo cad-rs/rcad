@@ -723,7 +723,7 @@ impl<'a> PaveFiller<'a> {
                     let v2_pt = self.ds.vertices[nV2].point;
                     let v1_tol = ff_tol.max(self.ds.vertices[nV1].geom_tol);
                     let v2_tol = ff_tol.max(self.ds.vertices[nV2].geom_tol);
-                    if find_valid_range(&ic.curve, aT1, aT2, v1_pt, v1_tol, v2_pt, v2_tol).is_none() {
+                    if find_valid_range(&ic.curve, aT1, aT2, ff_tol, v1_pt, v1_tol, v2_pt, v2_tol).is_none() {
                         if std::env::var("RCAD_DEBUG_PB").is_ok() {
                             eprintln!("[PB] ci={} BLOCKED FindValidRange nV=({},{}) v1_tol={:.12} v2_tol={:.12} v1_pt=({:.4},{:.4},{:.4}) v2_pt=({:.4},{:.4},{:.4})",
                                 ci, nV1, nV2, v1_tol, v2_tol,

@@ -208,47 +208,43 @@ pub(crate) fn find_nearest_valid_point(
     Some(if is_first { u_out } else { u_in })
 }
 
-/// OCCT-aligned (core logic): BRepLib::FindValidRange (BRepLib_1.cxx L173-258)
+/// OCCT-aligned: BRepLib::FindValidRange (BRepLib_1.cxx L173-258)
 /// Compute the valid (shrunk) range of curve segment [t0, t1] excluding endpoint tolerance spheres.
+/// `theTolE` — edge tolerance used in Resolution (OCCT L201: curve.Resolution(theTolE * 0.1)).
 /// Returns (first, last); returns None if fully covered by tolerance spheres (micro edge).
-///
-/// OCCT differences in `find_valid_range`:
-/// 1. EPSILON (L201):
-///    OCCT: anEps = max(curve.Resolution(theTolE) * 0.1, Epsilon(aMaxPar), Precision::PConfusion())
-///    rcad: eps = curve_resolution(curve, mid, 1e-7).max(abs_max * 1e-12).max(1e-12)
-///    - OCCT uses `theTolE * 0.1` in Resolution; rcad uses hardcoded `1e-7`.
-///    - OCCT uses `Epsilon(aMaxPar) ~ aMaxPar * 2.2e-16`; rcad uses `abs_max * 1e-12`.
-/// 2. INFINITE PARAM (L204-228): OCCT handles infinite parameters for unbounded curves
-///    (lines) via Precision::IsInfinite check -- rcad does not, using is_infinite() directly.
-/// 3. Shrunk range check (L221, L244):
-///    OCCT: theParV2 - theFirst < anEps => return false
-///    rcad: (t1 - f).abs() < eps => return None
-///    OCCT checks directionally (t2 - first); rcad checks absolute (t1 - f).
 pub(crate) fn find_valid_range(
-    curve: &Curve3, t0: f64, t1: f64,
+    curve: &Curve3, t0: f64, t1: f64, theTolE: f64,
     sv_pt: DVec3, sv_tol: f64, ev_pt: DVec3, ev_tol: f64,
 ) -> Option<(f64, f64)> {
     use rcad_kernel::geom::CurveEval;
-    if (t1 - t0).abs() < 1e-12 { return None; }
+    // OCCT L184-187: range must be wider than PConfusion
+    if (t1 - t0).abs() < rcad_kernel::tolerance::P_CONFUSION { return None; }
+    // OCCT L191-199: aMaxPar for Epsilon computation
     let abs_max = t0.abs().max(t1.abs()).max(1.0);
-    let eps = curve_resolution(curve, (t0+t1)*0.5, 1e-7).max(abs_max * 1e-12).max(1e-12);
+    // OCCT L201-202: anEps = max(curve.Resolution(theTolE * 0.1), Epsilon(aMaxPar), Precision::PConfusion())
+    let eps = curve_resolution(curve, (t0 + t1) * 0.5, theTolE * 0.1)
+        .max(abs_max * f64::EPSILON)
+        .max(rcad_kernel::tolerance::P_CONFUSION);
 
-    // Start point shrunk
+    // OCCT L204-225: start point — infinite → pass through; otherwise findNearestValidPoint
     let first = if t0.is_infinite() { t0 } else {
         match find_nearest_valid_point(curve, t0, t1, true, sv_pt, sv_tol, eps) {
-            Some(f) => { if (t1 - f).abs() < eps { return None; } f }
+            // OCCT L221: theParV2 - theFirst < anEps => return false
+            Some(f) => { if t1 - f < eps { return None; } f }
             None => { return None; }
         }
     };
 
-    // End point shrunk
+    // OCCT L227-248: end point
     let last = if t1.is_infinite() { t1 } else {
         match find_nearest_valid_point(curve, t0, t1, false, ev_pt, ev_tol, eps) {
-            Some(l) => { if (l - t0).abs() < eps { return None; } l }
+            // OCCT L244: theLast - theParV1 < anEps => return false
+            Some(l) => { if l - t0 < eps { return None; } l }
             None => { return None; }
         }
     };
 
+    // OCCT L250-255: if first > last, overlapping, not valid
     if first > last { None } else { Some((first, last)) }
 }
 
