@@ -137,127 +137,116 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
         }
 
         Curve3::Circle(circ) => {
-            // Closest point on a circle: project query onto circle plane,
-            // compute the angle, then evaluate.
-            // The circle is parametrized as P(t) = center + cos(t)*x_ax + sin(t)*y_ax.
-            let x_ax = crate::geom::any_perpendicular(circ.normal);
-            let y_ax = circ.normal.cross(x_ax).normalize_or_zero();
-            // Project query onto the circle plane.
-            let q_in_plane = query - query.dot(circ.normal) * circ.normal
-                + circ.center.dot(circ.normal) * circ.normal;
-            let local = q_in_plane - circ.center;
-            let a = local.dot(x_ax);
-            let b = local.dot(y_ax);
-            // Handle the degenerate case (query on the axis).
-            let t_raw = if a.abs() < 1e-15 && b.abs() < 1e-15 {
-                0.0_f64
-            } else {
-                b.atan2(a)
-            };
+            // ✅ OCCT-aligned: Extrema_ExtPElC::Perform(Circle) L92-190.
+            // 1. Project query onto circle plane (subtract axial component)
+            let o = circ.center;
+            let axis = circ.normal.normalize_or_zero();
+            let axial = (query - o).dot(axis);
+            let pp = query - axis * axial;  // Pp = P projected to circle plane
+            let opp = pp - o;               // OPp vector from center to projected point
+            let opp_mag = opp.length();
+            if opp_mag < 1e-15 {
+                // P on axis → infinite solutions; return center(0) (OCCT returns IsDone=false)
+                let pt = circ.point_at(0.0);
+                return CurveProjection { point: pt, param: 0.0, distance: (pt - query).length() };
+            }
+            // Circle axes (OCCT: C.XAxis().Direction() and C.YAxis().Direction())
+            let cx = crate::geom::any_perpendicular(axis).normalize();
+            let cy = axis.cross(cx).normalize();
+            let x = opp.dot(cx);
+            let y = opp.dot(cy);
+            // OCCT L138: Usol[0] = XAxis.AngleWithRef(OPp, Axis) → atan2 of (X×OPp)·Axis, X·OPp
+            let u_min = y.atan2(x);                          // angle of OPp (minimum distance)
+            let half = std::f64::consts::PI;
+            let u_max = if u_min < 0.0 { u_min + half } else { u_min - half };  // antipodal (maximum)
             let [t0, t1] = curve.default_domain();
-            // Wrap t_raw into [t0, t1] for partial arcs.
-            let t = if t1 - t0 >= std::f64::consts::TAU - 1e-9 {
-                // Full circle — no clamping needed.
-                t_raw
-            } else {
-                // Clamp and check the two nearest full-circle candidates.
-                let candidates = [
-                    t_raw,
-                    t_raw + std::f64::consts::TAU,
-                    t_raw - std::f64::consts::TAU,
-                    t0,
-                    t1,
-                ];
-                candidates
-                    .iter()
-                    .filter(|&&tc| tc >= t0 - 1e-12 && tc <= t1 + 1e-12)
-                    .map(|&tc| tc.clamp(t0, t1))
-                    .min_by(|&a, &b| {
-                        let da = (circ.point_at(a) - query).length();
-                        let db = (circ.point_at(b) - query).length();
-                        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-                    })
-                    .unwrap_or(t_raw.clamp(t0, t1))
-            };
-            let pt = circ.point_at(t);
-            return CurveProjection {
-                point: pt,
-                param: t,
-                distance: (pt - query).length(),
-            };
+            // Adjust each solution into [t0, t0+TAU) then check against [t0, t1]
+            let mut best_t = u_min;
+            let mut best_d = f64::INFINITY;
+            for &u in &[u_min, u_max] {
+                let mut u_adj = u;
+                // Shift into [t0, t0+TAU) — OCCT ElCLib::AdjustPeriodic
+                if t0.is_finite() {
+                    let period = std::f64::consts::TAU;
+                    let diff = u_adj - t0;
+                    u_adj = t0 + diff - period * (diff / period).floor();
+                    if u_adj < t0 - 1e-12 { u_adj += period; }
+                    if u_adj > t0 + period + 1e-12 { u_adj -= period; }
+                }
+                if u_adj >= t0 - 1e-12 && u_adj <= t1 + 1e-12 {
+                    let pt = circ.point_at(u_adj);
+                    let d = (pt - query).length();
+                    if d < best_d { best_d = d; best_t = u_adj; }
+                }
+            }
+            // If no solution in range, try endpoints + fallback to u_min clamped
+            if best_d.is_infinite() {
+                best_t = u_min.clamp(t0, t1);
+                best_d = (circ.point_at(best_t) - query).length();
+            }
+            let pt = circ.point_at(best_t);
+            return CurveProjection { point: pt, param: best_t, distance: (pt - query).length() };
         }
 
         Curve3::Ellipse(ell) => {
-            // Closest point on an ellipse: project query onto ellipse plane,
-            // decompose into (a, b) components, use atan2 for initial angle
-            // estimate, then refine with a few Newton steps.
-            let minor_dir = ell.normal.cross(ell.major_dir).normalize_or_zero();
-            // Project query onto the ellipse plane.
-            let q_in_plane = query - query.dot(ell.normal) * ell.normal
-                + ell.center.dot(ell.normal) * ell.normal;
-            let local = q_in_plane - ell.center;
-            let a = local.dot(ell.major_dir);
-            let b = local.dot(minor_dir);
-            // Normalized angle that would locate the closest point on a unit circle.
-            let t_init = if a.abs() < 1e-15 && b.abs() < 1e-15 {
-                0.0_f64
-            } else {
-                (b / ell.minor_radius).atan2(a / ell.major_radius)
-            };
-            let [t0, t1] = curve.default_domain();
-            let t_init_clamped = if t1 - t0 >= std::f64::consts::TAU - 1e-9 {
-                t_init
-            } else {
-                // Try all canonical equivalent angles.
-                let candidates = [
-                    t_init,
-                    t_init + std::f64::consts::TAU,
-                    t_init - std::f64::consts::TAU,
-                    t0,
-                    t1,
-                ];
-                candidates
-                    .iter()
-                    .filter(|&&tc| tc >= t0 - 1e-12 && tc <= t1 + 1e-12)
-                    .map(|&tc| tc.clamp(t0, t1))
-                    .min_by(|&a, &b| {
-                        let da = (ell.point_at(a) - query).length();
-                        let db = (ell.point_at(b) - query).length();
-                        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-                    })
-                    .unwrap_or(t_init.clamp(t0, t1))
-            };
-            // Refine with Newton steps (at most 10 iterations).
-            let dt = 1e-7;
-            let clamp = |t: f64| {
-                if t1 - t0 >= std::f64::consts::TAU - 1e-9 { t } else { t.clamp(t0, t1) }
-            };
-            let mut best_t = t_init_clamped;
-            let mut best_dist = (ell.point_at(best_t) - query).length();
-            for _ in 0..10 {
-                let p = ell.point_at(best_t);
-                let diff = p - query;
-                let deriv = ell.derivative_at(best_t);
-                let deriv_sq = deriv.dot(deriv);
-                if deriv_sq < 1e-20 { break; }
-                let curv = (ell.point_at(best_t + 2.0 * dt) - 2.0 * p
-                    + ell.point_at(best_t - 2.0 * dt)) / (dt * dt);
-                let denom = deriv_sq + diff.dot(curv);
-                let delta = diff.dot(deriv) / if denom.abs() > 1e-20 { denom } else { deriv_sq };
-                let new_t = clamp(best_t - delta);
-                let new_dist = (ell.point_at(new_t) - query).length();
-                if new_dist < best_dist {
-                    best_dist = new_dist;
-                    best_t = new_t;
-                }
-                if delta.abs() < 1e-11 { break; }
+            // ✅ OCCT-aligned: Extrema_ExtPElC::Perform(Ellipse) L203-281.
+            // Solve g(u) = (P-C)·C' = 0 using sign-change detection + Newton.
+            // g(u) = (B²-A²)/2 * sin(2u) + A*X*sin(u) - B*Y*cos(u)
+            // where A=major_radius, B=minor_radius, X=OPp·XAxis, Y=OPp·YAxis
+            let o = ell.center;
+            let axis = ell.normal.normalize_or_zero();
+            let axial = (query - o).dot(axis);
+            let pp = query - axis * axial;
+            let opp = pp - o;
+            if opp.length_squared() < 1e-30 && (ell.major_radius - ell.minor_radius).abs() < 1e-15 {
+                // Point at center of circular ellipse → infinite solutions
+                let pt = ell.point_at(0.0);
+                return CurveProjection { point: pt, param: 0.0, distance: (pt - query).length() };
             }
-            let pt = ell.point_at(best_t);
-            return CurveProjection {
-                point: pt,
-                param: best_t,
-                distance: (pt - query).length(),
+            let ex = ell.major_dir.normalize();
+            let ey = axis.cross(ex).normalize();
+            let x = opp.dot(ex);
+            let y = opp.dot(ey);
+            let a = ell.major_radius;
+            let b = ell.minor_radius;
+            let [t0, t1] = curve.default_domain();
+            let n = 33_usize;
+            // Sample g(u) to find sign-change intervals
+            let g = |u: f64| {
+                let (s, c) = u.sin_cos();
+                let sin2u = 2.0 * s * c;
+                (b * b - a * a) / 2.0 * sin2u + a * x * s - b * y * c
             };
+            let mut u_best = t0;
+            let mut d_best = f64::INFINITY;
+            for i in 0..=n {
+                let u = t0 + (t1 - t0) * i as f64 / n as f64;
+                let pt = ell.point_at(u);
+                let d = (pt - query).length();
+                if d < d_best { d_best = d; u_best = u; }
+            }
+            // Sign-change-based refinement (OCCT: TrigonometricFunctionRoots per-interval)
+            let clamp = |u: f64| u.clamp(t0, t1);
+            let mut g_prev = g(t0);
+            for i in 1..=n {
+                let u = t0 + (t1 - t0) * i as f64 / n as f64;
+                let g_cur = g(u);
+                if g_prev * g_cur <= 0.0 || g_prev.abs() < 1e-12 || g_cur.abs() < 1e-12 {
+                    let u_mid = (u + (t0 + (t1 - t0) * (i - 1) as f64 / n as f64)) * 0.5;
+                    let mut t = clamp(u_mid);
+                    let mut dist = (ell.point_at(t) - query).length();
+                    newton_refine(curve, &mut t, &mut dist, query, 20, clamp);
+                    if dist < d_best { d_best = dist; u_best = t; }
+                }
+                g_prev = g_cur;
+            }
+            // Fallback: endpoints
+            for &u in &[t0, t1] {
+                let d = (ell.point_at(u) - query).length();
+                if d < d_best { d_best = d; u_best = u; }
+            }
+            let pt = ell.point_at(u_best);
+            return CurveProjection { point: pt, param: u_best, distance: (pt - query).length() };
         }
 
         // ✅ OCCT-aligned: BSpline — C2 interval splitting,
