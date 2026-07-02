@@ -2,7 +2,7 @@
 /// bounded by a vertical plane parallel to the cylinder axis.
 ///
 /// The result is a portion of the cylinder cut lengthwise by a plane parallel to
-/// its axis. Only the side where `(P - center)璺痗lip_n �?-cut_dist` is kept.
+/// its axis. Only the side where `(P - center)璺痗lip_n 閳?-cut_dist` is kept.
 /// `clip_n` must be a horizontal unit vector (z=0) pointing into the kept half.
 /// `cut_dist` is the distance from the cylinder center to the cut plane (measured
 /// in the direction opposite to `clip_n`, i.e., into the kept half).
@@ -54,7 +54,7 @@ fn build_cylinder_brep_caps(
 /// bounded by a vertical plane parallel to the cylinder axis.
 ///
 /// The result is a portion of the cylinder cut lengthwise by a plane parallel to
-/// its axis. Only the side where `(P - center)璺痗lip_n �?-cut_dist` is kept.
+/// its axis. Only the side where `(P - center)璺痗lip_n 閳?-cut_dist` is kept.
 /// `clip_n` must be a horizontal unit vector (z=0) pointing into the kept half.
 /// `cut_dist` is the distance from the cylinder center to the cut plane (measured
 /// in the direction opposite to `clip_n`, i.e., into the kept half).
@@ -70,7 +70,7 @@ fn build_half_cylinder_intersection_brep(
     r: f64,          // radius
     h: f64,          // height
     clip_n: DVec3,   // horizontal unit normal pointing into the kept half
-    cut_dist: f64,   // distance from center to cut plane (�?, into kept half)
+    cut_dist: f64,   // distance from center to cut plane (閳?, into kept half)
 ) -> BRep {
     debug_assert!(cut_dist >= 0.0 && cut_dist <= r + 1e-12,
         "cut_dist must be in [0, r]. Got {cut_dist} for r={r}");
@@ -82,17 +82,17 @@ fn build_half_cylinder_intersection_brep(
     // Azimuth angle of clip_n in XY plane.
     let phi = clip_n.y.atan2(clip_n.x);
 
-    // Half-angle of the kept arc: �?= arccos(-cut_dist/r).
-    // For cut_dist=0 (center cut): �?= �?2 �?铻杣 = �?(half-cylinder).
-    // For cut_dist=r (full cylinder): �?= arccos(-1) = �?�?铻杣 = 2�?(full cylinder).
+    // Half-angle of the kept arc: 浼?= arccos(-cut_dist/r).
+    // For cut_dist=0 (center cut): 浼?= 锜?2 閳?铻杣 = 锜?(half-cylinder).
+    // For cut_dist=r (full cylinder): 浼?= arccos(-1) = 锜?閳?铻杣 = 2锜?(full cylinder).
     let alpha = (-cut_dist / r).acos();
 
     // Vertices at the intersection of the cut plane with the cylinder surface.
-    // V0/V3 at u = �?- �?(left generator), V1/V2 at u = �?+ �?(right generator).
+    // V0/V3 at u = 锠?- 浼?(left generator), V1/V2 at u = 锠?+ 浼?(right generator).
     let (sa, ca) = alpha.sin_cos();
     let (sp, cp) = phi.sin_cos();
 
-    // (cos(锠佸崵浼?, sin(锠佸崵浼?) = (cp*ca �?sp*sa, sp*ca �?cp*sa)
+    // (cos(锠佸崵浼?, sin(锠佸崵浼?) = (cp*ca 閳?sp*sa, sp*ca 鍗?cp*sa)
     let cos_phi_minus_alpha = cp * ca + sp * sa;
     let sin_phi_minus_alpha = sp * ca - cp * sa;
     let cos_phi_plus_alpha = cp * ca - sp * sa;
@@ -116,7 +116,7 @@ fn build_half_cylinder_intersection_brep(
     let v3 = brep.vertices.len();
     brep.vertices.push(Vertex { point: v3_p });
 
-    // Edge index helpers �?push an edge and return its index.
+    // Edge index helpers 閳?push an edge and return its index.
     let mut next_curve = |c: Curve3, t0: f64, t1: f64, start: usize, end: usize| -> usize {
         let idx = brep.edges.len();
         brep.edges.push(Edge { start, end });
@@ -134,40 +134,40 @@ fn build_half_cylinder_intersection_brep(
         idx
     };
 
-    // E0: bottom arc (V1閳�? along kept side of bottom circle).
-    // Circle3 with normal=-Z maps CylSurf u �?Circle3 -u, so V1(CylSurf u=�?�?
-    // �?Circle3 u=-(�?�? and V0(CylSurf u=�?�? �?Circle3 u=-(�?�?.
-    let circle_bot = Curve3::Circle(Circle3::new(DVec3::new(center.x, -DVec3::Z, r));
+    // E0: bottom arc (V1閳壐0 along kept side of bottom circle).
+    // Circle3 with normal=-Z maps CylSurf u 閳?Circle3 -u, so V1(CylSurf u=锠?浼?
+    // 閳?Circle3 u=-(锠?浼? and V0(CylSurf u=锠?浼? 閳?Circle3 u=-(锠?浼?.
+    let circle_bot = Curve3::Circle(Circle3::new(DVec3::new(center.x, 0.0, 0.0), -DVec3::Z, r));
     let e0 = next_curve(circle_bot, -phi - alpha, -phi + alpha, v1, v0);
 
-    // E1: right generator (V1閳�?)
+    // E1: right generator (V1閳壐2)
     let line_r = Curve3::Line(Line3 {
         origin: v1_p,
         direction: DVec3::Z,
     });
     let e1 = next_curve(line_r, 0.0, h, v1, v2);
 
-    // E2: top arc (V3閳�? along kept side of top circle).
-    // Circle3 with normal=Z uses the same param as CylSurf, so V3(CylSurf u=�?�?
-    // �?Circle3 u=�?�?and V2(CylSurf u=�?�? �?Circle3 u=�?�?
-    let circle_top = Curve3::Circle(Circle3::new(DVec3::new(center.x, 0.0, 0.0), DVec3::Z, r);
+    // E2: top arc (V3閳壐2 along kept side of top circle).
+    // Circle3 with normal=Z uses the same param as CylSurf, so V3(CylSurf u=锠?浼?
+    // 閳?Circle3 u=锠?浼?and V2(CylSurf u=锠?浼? 閳?Circle3 u=锠?浼?
+    let circle_top = Curve3::Circle(Circle3::new(DVec3::new(center.x, 0.0, 0.0), DVec3::Z, r));
     let e2 = next_curve(circle_top, phi - alpha, phi + alpha, v3, v2);
 
-    // E3: left generator (V0閳�?)
+    // E3: left generator (V0閳壐3)
     let line_l = Curve3::Line(Line3 {
         origin: v0_p,
         direction: DVec3::Z,
     });
     let e3 = next_curve(line_l, 0.0, h, v0, v3);
 
-    // E4: cut bottom (V0閳�?)
+    // E4: cut bottom (V0閳壐1)
     let line_cb = Curve3::Line(Line3 {
         origin: v0_p,
         direction: v1_p - v0_p,
     });
     let e4 = next_curve(line_cb, 0.0, 1.0, v0, v1);
 
-    // E5: cut top (V2閳�?)
+    // E5: cut top (V2閳壐3)
     let line_ct = Curve3::Line(Line3 {
         origin: v2_p,
         direction: v3_p - v2_p,
@@ -230,11 +230,11 @@ fn build_half_cylinder_intersection_brep(
         fi
     };
 
-    // F0: Cylindrical face �?wire V0閳�?閳�?閳�?閳�?
-    // E0 stored as V1閳�? �?E0_rev = V0閳�?
-    // E1 stored as V1閳�? �?E1_fwd = V1閳�?
-    // E2 stored as V3閳�? �?E2_rev = V2閳�?
-    // E3 stored as V0閳�? �?E3_rev = V3閳�?
+    // F0: Cylindrical face 閳?wire V0閳壐1閳壐2閳壐3閳壐0
+    // E0 stored as V1閳壐0 閳?E0_rev = V0閳壐1
+    // E1 stored as V1閳壐2 閳?E1_fwd = V1閳壐2
+    // E2 stored as V3閳壐2 閳?E2_rev = V2閳壐3
+    // E3 stored as V0閳壐3 閳?E3_rev = V3閳壐0
     let cyl_wire = Wire {
         edges: vec![
             WireEdge::rev(e0),
@@ -244,28 +244,28 @@ fn build_half_cylinder_intersection_brep(
         ],
     };
     let _f0 = push_face(cyl_wire, si_cyl, clip_n);
-    // Set face_surface_range for analytic SA: u �?[�?�? �?浼猐, v �?[0, h]
+    // Set face_surface_range for analytic SA: u 閳?[锠?浼? 锠?浼猐, v 閳?[0, h]
     while brep.geom.face_surface_range.len() <= _f0 {
         brep.geom.face_surface_range.push(None);
     }
     brep.geom.face_surface_range[_f0] = Some([phi - alpha, phi + alpha, 0.0, h]);
 
-    // F1: Top half-disk (normal=+Z). Wire: V2閳�? (cut top) �?V3閳�? (top arc)
-    // E5_fwd: V2閳�?, E2_fwd: V3閳�?
+    // F1: Top half-disk (normal=+Z). Wire: V2閳壐3 (cut top) 閳?V3閳壐2 (top arc)
+    // E5_fwd: V2閳壐3, E2_fwd: V3閳壐2
     let top_wire = Wire {
         edges: vec![WireEdge::fwd(e5), WireEdge::fwd(e2)],
     };
     let _f1 = push_face(top_wire, si_top, DVec3::Z);
 
-    // F2: Bottom half-disk (normal=-Z). Wire: V0閳�? (cut bottom) �?V1閳�? (bottom arc)
-    // E4_fwd: V0閳�?, E0_fwd: V1閳�?
+    // F2: Bottom half-disk (normal=-Z). Wire: V0閳壐1 (cut bottom) 閳?V1閳壐0 (bottom arc)
+    // E4_fwd: V0閳壐1, E0_fwd: V1閳壐0
     let bot_wire = Wire {
         edges: vec![WireEdge::fwd(e4), WireEdge::fwd(e0)],
     };
     let _f2 = push_face(bot_wire, si_bot, -DVec3::Z);
 
-    // F3: Cut face (normal=-clip_n). Wire: V0閳�?閳�?閳�?閳�?
-    // E4_fwd: V0閳�?, E1_fwd: V1閳�?, E5_fwd: V2閳�?, E3_rev: V3閳�?
+    // F3: Cut face (normal=-clip_n). Wire: V0閳壐1閳壐2閳壐3閳壐0
+    // E4_fwd: V0閳壐1, E1_fwd: V1閳壐2, E5_fwd: V2閳壐3, E3_rev: V3閳壐0
     let cut_wire = Wire {
         edges: vec![
             WireEdge::fwd(e4),
@@ -367,13 +367,13 @@ fn try_intersect_cylinder_box_one_dir(cyl_brep: &BRep, box_brep: &BRep) -> Optio
     let cz = inter_lo + h / 2.0;
     let adj_center = DVec3::new(cyl_center.x, cyl_center.y, cz);
 
-    // Single clip plane �?existing half-cylinder builder (backward compat, efficient).
+    // Single clip plane 閳?existing half-cylinder builder (backward compat, efficient).
     if clip_planes.len() == 1 {
         let (clip_dir, cut_dist) = clip_planes[0];
         // When cut_dist < -r the cylinder center is so far outside the box
-        // that the cylinder doesn't reach the box face �?empty intersection.
-        // (The multi-plane builder below handles this via zero-range valid �?
-        // intervals, but the half-cylinder builder asserts cut_dist �?0.)
+        // that the cylinder doesn't reach the box face 閳?empty intersection.
+        // (The multi-plane builder below handles this via zero-range valid 鑳?
+        // intervals, but the half-cylinder builder asserts cut_dist 閳?0.)
         if cut_dist < -cyl_r + 1e-12 {
             return Some(BRep::default());
         }
@@ -382,7 +382,7 @@ fn try_intersect_cylinder_box_one_dir(cyl_brep: &BRep, box_brep: &BRep) -> Optio
         }
     }
 
-    // Multiple clip planes �?general multi-plane builder.
+    // Multiple clip planes 閳?general multi-plane builder.
     Some(build_cylinder_box_intersection_brep_with_splits(
         adj_center,
         cyl_r,

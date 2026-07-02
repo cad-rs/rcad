@@ -702,7 +702,7 @@ pub fn project_surface_on_surface(
             SurfaceCurve::Hyperbola(h) => Some(Curve3::Hyperbola(h)),
             // For polylines, fit a B-spline
             SurfaceCurve::Polyline(pts) => fit_points_to_bspline(&pts),
-            // BSpline already fitted â€?pass through
+            // BSpline already fitted â€” pass through
             SurfaceCurve::BSplineCurve(b) => Some(Curve3::BSpline(*b)),
             // Skip point intersections
             SurfaceCurve::Point(_) => None,
@@ -1178,7 +1178,7 @@ mod tests {
         s
     }
 
-    /// Chord length in 3D of `t â†?surface.point_at(c.point_at(t))` (not UV Euclidean length).
+    /// Chord length in 3D of `t â†¦ surface.point_at(c.point_at(t))` (not UV Euclidean length).
     fn approx_curve2d_pullback_3d_length(
         c: &Curve2d,
         surface: &Surface3,

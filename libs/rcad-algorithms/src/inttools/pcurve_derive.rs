@@ -39,7 +39,7 @@ pub fn circle_pcurve_on_plane(circle: &Circle3, plane: &Plane) -> Curve2d {
         .dot(plane.normal.normalize())
         .abs();
     if (normal_dot - 1.0).abs() < TOLERANCE_MESH_LEGACY {
-        // Circle lies in the plane �?analytic Circle2d.
+        // Circle lies in the plane → analytic Circle2d.
         let diff = circle.center - plane.origin;
         let center_2d = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));
         return Curve2d::Circle(Circle2d { center: center_2d, x_dir: DVec2::X, y_dir: DVec2::Y, radius: circle.radius,
@@ -69,7 +69,7 @@ pub fn circle_pcurve_on_plane(circle: &Circle3, plane: &Plane) -> Curve2d {
 /// Project an [`Ellipse3`] onto a [`Plane`]'s (u, v) domain.
 ///
 /// Returns an analytic [`Ellipse2d`] with the projected center, major
-/// direction, and radii (unchanged �?projection along a parallel normal
+/// direction, and radii (unchanged — projection along a parallel normal
 /// preserves semi-axes when the ellipse is coplanar with the plane).
 pub fn ellipse_pcurve_on_plane(ellipse: &Ellipse3, plane: &Plane) -> Curve2d {
     let u_axis = any_perpendicular(plane.normal);
@@ -121,9 +121,9 @@ pub fn line_pcurve_on_plane(line: &Line3, plane: &Plane) -> Curve2d {
 // Sphere functions
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// OCCT-aligned: ProjLib_Sphere::Project(gp_Lin) �?ProjLib_Sphere.cxx L181-184.
+/// OCCT-aligned: ProjLib_Sphere::Project(gp_Lin) — ProjLib_Sphere.cxx L181-184.
 /// OCCT implementation is a stub: sets myType = GeomAbs_OtherCurve and relies on
-/// the generic ProjLib_Projector::BuildResult (sampling �?BSpline fit) for the
+/// the generic ProjLib_Projector::BuildResult (sampling → BSpline fit) for the
 /// actual pcurve. rcad matches this by calling fallback_pcurve_by_projection.
 pub fn line_pcurve_on_sphere(line: &Line3, sphere: &SphericalSurface) -> Curve2d {
     use rcad_kernel::geom::Curve3;
@@ -137,7 +137,7 @@ pub fn line_pcurve_on_sphere(line: &Line3, sphere: &SphericalSurface) -> Curve2d
     fallback_pcurve_by_projection(&Curve3::Line(*line), &range, &Surface3::Sphere(*sphere))
 }
 
-/// OCCT-aligned: ProjLib_Sphere::Project(gp_Elips) �?ProjLib_Sphere.cxx L186-189.
+/// OCCT-aligned: ProjLib_Sphere::Project(gp_Elips) — ProjLib_Sphere.cxx L186-189.
 /// OCCT: stub sets myType = GeomAbs_OtherCurve, generic BuildResult handles it.
 pub fn ellipse_pcurve_on_sphere(ellipse: &Ellipse3, sphere: &SphericalSurface) -> Curve2d {
     use rcad_kernel::geom::Curve3;
@@ -145,24 +145,24 @@ pub fn ellipse_pcurve_on_sphere(ellipse: &Ellipse3, sphere: &SphericalSurface) -
     fallback_pcurve_by_projection(&Curve3::Ellipse(*ellipse), &t_range, &Surface3::Sphere(*sphere))
 }
 
-/// OCCT-aligned: ProjLib_Sphere::Project(gp_Parab) �?stub �?generic.
+/// OCCT-aligned: ProjLib_Sphere::Project(gp_Parab) — stub → generic.
 pub fn parabola_pcurve_on_sphere(parabola: &Parabola3, sphere: &SphericalSurface) -> Curve2d {
     use rcad_kernel::geom::Curve3;
     let t_range = parabola.default_domain();
     fallback_pcurve_by_projection(&Curve3::Parabola(*parabola), &t_range, &Surface3::Sphere(*sphere))
 }
 
-/// OCCT-aligned: ProjLib_Sphere::Project(gp_Hypr) �?stub �?generic.
+/// OCCT-aligned: ProjLib_Sphere::Project(gp_Hypr) — stub → generic.
 pub fn hyperbola_pcurve_on_sphere(hyperbola: &Hyperbola3, sphere: &SphericalSurface) -> Curve2d {
     use rcad_kernel::geom::Curve3;
     let t_range = hyperbola.default_domain();
     fallback_pcurve_by_projection(&Curve3::Hyperbola(*hyperbola), &t_range, &Surface3::Sphere(*sphere))
 }
 
-/// �?OCCT-aligned: ProjLib_Sphere::Project(gp_Circ) �?form-aligned pcurve.
+/// ✅ OCCT-aligned: ProjLib_Sphere::Project(gp_Circ) — form-aligned pcurve.
 ///
 /// OCCT ProJLib_Sphere_1.cxx L97-179 handles isoparametric circles analytically
-/// (isIsoU/isIsoV �?Line2d), wrapping the result in Geom2d_TrimmedCurve at the caller.
+/// (isIsoU/isIsoV → Line2d), wrapping the result in Geom2d_TrimmedCurve at the caller.
 /// For non-isoparametric circles it falls through to general approximation.
 ///
 /// rcad uses a unified 33-point BSpline fit with knot rescaling to [0, TAU] which
@@ -231,7 +231,7 @@ pub fn circle_pcurve_on_sphere(circle: &Circle3, sphere: &SphericalSurface) -> C
 pub fn circle_pcurve_on_cylinder(circle: &Circle3, cyl: &CylindricalSurface) -> Curve2d {
     let axis = cyl.axis.normalize_or_zero();
     let normal_dot = circle.normal.normalize().dot(axis).abs();
-    // OCCT ProjLib_Cylinder.cxx L122-156: perp circle �?Line2d with U offset and direction sign
+    // OCCT ProjLib_Cylinder.cxx L122-156: perp circle → Line2d with U offset and direction sign
     if (normal_dot - 1.0).abs() < TOLERANCE_MESH_LEGACY {
         let h = (circle.center - cyl.origin).dot(axis);
         // Compute U offset: angular position of circle's X-axis on cylinder
@@ -551,7 +551,7 @@ pub fn fallback_pcurve_by_projection(
 
     match interpolate_points_2d(&pts) {
         Ok(bspline) => {
-            // �?OCCT对齐: Geom2d_TrimmedCurve �?wrap in TrimmedCurve2 to
+            // ✅ OCCT对齐: Geom2d_TrimmedCurve — wrap in TrimmedCurve2 to
             // preserve the mapping between 3D curve parameter range [t0, t1]
             // and BSpline's native [0, 1] parameterization.
             let tc = rcad_kernel::geom::TrimmedCurve2 {
@@ -623,13 +623,13 @@ pub fn polyline_pcurve_by_projection(polyline: &[DVec3], surface: &Surface3) -> 
 
     // Phase 2: Detect V-shape folds. When the polyline has two disconnected curve
     // segments concatenated (e.g. PerpendicularOffsetCurves with a near-π gap),
-    // the standard π-threshold unwrap may fold the sequence �?u goes up then back
+    // the standard π-threshold unwrap may fold the sequence — u goes up then back
     // instead of continuing in one direction.
     //
-    // Detection: 1 sign change in consecutive du values (e.g. all-negative �?
+    // Detection: 1 sign change in consecutive du values (e.g. all-negative →
     // all-positive), with span < 2π and near-zero net delta.
     //
-    // NOTE: On Cylinder surfaces, this V-fold is geometrically correct �?the
+    // NOTE: On Cylinder surfaces, this V-fold is geometrically correct — the
     // analytic atan2 formula gives identical values to Newton projection, and the
     // intersection curve genuinely wraps from u=0 to u=π and back. The fix for
     // offset-cylinder boolean failures (ZE7-9, ZF1-4) is in the Pave-Filler, not
@@ -641,9 +641,9 @@ pub fn polyline_pcurve_by_projection(polyline: &[DVec3], surface: &Surface3) -> 
         let net_delta = pts[pts.len() - 1].x - pts[0].x;
         if abs_span < std::f64::consts::TAU * 0.9 && net_delta.abs() < abs_span * 0.5 {
             // Count sign changes in consecutive du values to detect V-shape fold.
-            // A V-shape fold has exactly one sign change (e.g. all-negative �?all-positive).
+            // A V-shape fold has exactly one sign change (e.g. all-negative → all-positive).
             // A boundary jump between valid segments has two sign changes (e.g.
-            // positive �?single-negative-jump �?positive).
+            // positive → single-negative-jump → positive).
             let mut sign_changes = 0;
             let mut fold_idx = 0;
             let mut prev_sign = 0i8;
@@ -669,7 +669,7 @@ pub fn polyline_pcurve_by_projection(polyline: &[DVec3], surface: &Surface3) -> 
                     abs_span, net_delta, fold_idx, pts.len(),
                     pts[0].x, pts[fold_idx].x, pts[pts.len()-1].x);
                 if let Surface3::Cylinder(cyl) = surface {
-                    // Analytic u recomputation is NOT effective here �?the V-fold
+                    // Analytic u recomputation is NOT effective here — the V-fold
                     // is geometrically correct on the cylinder UV (the intersection
                     // curve wraps around the front of the cylinder and back). The
                     // Newton projection already gives the correct analytic u values
@@ -682,7 +682,7 @@ pub fn polyline_pcurve_by_projection(polyline: &[DVec3], surface: &Surface3) -> 
                     // folded points produces a self-intersecting PCurve, which causes
                     // the boolean builder to produce wrong geometry.
                     let _ = cyl;
-                    eprintln!("[PCURVE_FOLD] V-fold on Cylinder �?diagnostic only, no fix applied");
+                    eprintln!("[PCURVE_FOLD] V-fold on Cylinder — diagnostic only, no fix applied");
                 }
                 // Note: for Cone/Torus surfaces we do not apply a fold fix
                 // here.  Empirical testing shows the V-shape fold only occurs
@@ -696,7 +696,7 @@ pub fn polyline_pcurve_by_projection(polyline: &[DVec3], surface: &Surface3) -> 
 
 /// Check whether `pcurve` lies entirely within the given UV bounds.
 ///
-/// �?OCCT对齐: CheckPCurve (IntTools_FaceFace.cxx L2924-2999)
+/// ✅ OCCT对齐: CheckPCurve (IntTools_FaceFace.cxx L2924-2999)
 ///
 /// Samples each C0-interval at NPoints (OCCT uses 23 per interval) and
 /// verifies every sample lies within the UV bounds (plus a relative
@@ -706,7 +706,7 @@ pub fn polyline_pcurve_by_projection(polyline: &[DVec3], surface: &Surface3) -> 
 /// midpoint of the pcurve falls within the shifted domain.  This matches
 /// OCCT's approach of evaluating the midpoint first and shifting accordingly.
 ///
-/// `t_range` is the effective parameter range to sample �?for most curves
+/// `t_range` is the effective parameter range to sample — for most curves
 /// this is the 3D curve's [`IntersectionCurve::t_range`]; for BSpline/Bezier
 /// pcurves it should be `[0.0, 1.0]`.
 ///
@@ -727,7 +727,7 @@ pub fn check_pcurve_in_face(
 
     let [t0, t1] = t_range;
     if !t0.is_finite() || !t1.is_finite() || (t1 - t0).abs() < TOLERANCE_LEN_MIN {
-        return true; // degenerate range �?skip
+        return true; // degenerate range — skip
     }
 
     // Periodic shift: shift UV bounds so the midpoint pcurve parameter
@@ -771,12 +771,12 @@ pub fn check_pcurve_in_face(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// IsCurveValid �?pcurve self-intersection check
+// IsCurveValid — pcurve self-intersection check
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Check whether a 2D curve is free of self-intersections.
 ///
-/// �?OCCT对齐: IsCurveValid (IntTools_FaceFace.cxx L2252-2289)
+/// ✅ OCCT对齐: IsCurveValid (IntTools_FaceFace.cxx L2252-2289)
 ///
 /// For analytic curves (Line, Circle, Ellipse, etc.) trivially returns true.
 /// For BSpline/Bezier curves, samples the curve and checks for non-adjacent
@@ -836,17 +836,17 @@ fn segments_intersect_2d_open(p1: DVec2, p2: DVec2, p3: DVec2, p4: DVec2) -> boo
     let dp = p3 - p1;
     let t = dp.perp_dot(d2) / cross;
     let u = dp.perp_dot(d1) / cross;
-    // Open interval (0, 1) �?endpoints are shared vertices
+    // Open interval (0, 1) — endpoints are shared vertices
     t > TOLERANCE_ABS && t < 1.0 - TOLERANCE_ABS && u > TOLERANCE_ABS && u < 1.0 - TOLERANCE_ABS
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ComputeTolReached3d �?deviation between 3D curve and pcurve
+// ComputeTolReached3d — deviation between 3D curve and pcurve
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Compute the maximum deviation between a 3D curve and its pcurve on a surface.
 ///
-/// �?OCCT对齐: IntTools_Tools::ComputeTolerance / FindMaxDistance
+/// ✅ OCCT对齐: IntTools_Tools::ComputeTolerance / FindMaxDistance
 /// (IntTools_FaceFace.cxx L603-681, L2813-2918)
 ///
 /// Uses golden-section search to find `t` in `[t0, t1]` that maximises
@@ -875,7 +875,7 @@ pub fn compute_max_deviation_3d_to_pcurve(
 /// Compute the maximum deviation between a 3D curve and a surface
 /// (when no pcurve is available).
 ///
-/// �?OCCT对齐: FindMaxDistance (IntTools_FaceFace.cxx L2813-2847)
+/// ✅ OCCT对齐: FindMaxDistance (IntTools_FaceFace.cxx L2813-2847)
 ///
 /// Projects equally-spaced samples onto the surface and uses golden-section
 /// search per segment to find the maximum distance.
@@ -912,7 +912,7 @@ pub fn compute_max_deviation_from_surface(
 /// Compute the tolerance and tangential tolerance for an intersection curve
 /// by evaluating the deviation between its 3D curve and pcurves on both surfaces.
 ///
-/// �?OCCT对齐: ComputeTolReached3d (IntTools_FaceFace.cxx L603-681)
+/// ✅ OCCT对齐: ComputeTolReached3d (IntTools_FaceFace.cxx L603-681)
 ///
 /// `current_tol` is the starting tolerance (e.g. from the intersection algorithm).
 /// Returns `(updated_tolerance, tangential_tolerance)`.
@@ -959,16 +959,16 @@ pub fn compute_intersection_curve_tolerance(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PrepareLines3D �?closed‑curve splitting + redundant‑line filtering
+// PrepareLines3D — closed‑curve splitting + redundant‑line filtering
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Split a closed intersection curve (full circle / ellipse) into two halves
 /// at the u-parameter midpoint.
 ///
-/// �?OCCT对齐: IntTools_Tools::SplitCurve (用于 PrepareLines3D)
+/// ✅ OCCT对齐: IntTools_Tools::SplitCurve (用于 PrepareLines3D)
 ///
 /// When a closed curve has the full [0, 2π] parametric range it cannot be
-/// properly trimmed as a single segment �?OCCT splits it into complementary
+/// properly trimmed as a single segment — OCCT splits it into complementary
 /// arcs.  Returns `None` for curves that are not closed or not full-range.
 fn split_closed_curve(
     curve_3d: &rcad_kernel::geom::Curve3,
@@ -992,7 +992,7 @@ fn split_closed_curve(
 /// Post-process intersection curves: split closed curves and reject redundant
 /// lines.
 ///
-/// �?OCCT对齐: PrepareLines3D (IntTools_FaceFace.cxx L1898-1979)
+/// ✅ OCCT对齐: PrepareLines3D (IntTools_FaceFace.cxx L1898-1979)
 ///
 /// 1. Splits closed 3D curves (circles/ellipses with full [0, 2π] range) at
 ///    the parametric midpoint so they can be trimmed properly.
@@ -1017,7 +1017,7 @@ pub fn prepare_lines_3d(curves: &mut Vec<crate::bopds::ds::IntersectionCurve>) {
         }
     }
 
-    // 2. (Plane/Cone 4-line rejection �?reserved for future alignment)
+    // 2. (Plane/Cone 4-line rejection — reserved for future alignment)
 
     *curves = new_curves;
 }
@@ -1308,7 +1308,7 @@ mod tests {
 
         let pcurve = circle_pcurve_on_sphere(&circle, &sphere);
 
-        // along_axis = (0.5, 0, 0) · (0, 0, 1) = 0  �? phi = acos(0) = π/2
+        // along_axis = (0.5, 0, 0) · (0, 0, 1) = 0  →  phi = acos(0) = π/2
         match pcurve {
             Curve2d::Line(l) => {
                 let expected_phi = std::f64::consts::PI / 2.0;
@@ -1319,7 +1319,7 @@ mod tests {
                 );
                 assert!((l.direction.x - 1.0).abs() < TOLERANCE_COORD_SUB);
                 assert!(l.direction.y.abs() < TOLERANCE_COORD_SUB);
-                // origin.x = longitude of circle.point_at(0) �?just check it's finite
+                // origin.x = longitude of circle.point_at(0) — just check it's finite
                 assert!(l.origin.x.is_finite());
             }
             other => panic!("expected Line2d, got {other:?}"),
@@ -1327,7 +1327,7 @@ mod tests {
     }
 
     /// Verify that `circle_pcurve_on_sphere` and `fallback_pcurve_by_projection`
-    /// agree at the equatorial circle (both should give v �?π/2).
+    /// agree at the equatorial circle (both should give v ≈ π/2).
     #[test]
     fn analytic_sphere_pcurve_matches_fallback() {
         use rcad_kernel::geom::{Curve2dEval, Curve3};
@@ -1349,7 +1349,7 @@ mod tests {
             &sphere_surf,
         );
 
-        // Both should yield v �?π/2 everywhere (equator = colatitude π/2)
+        // Both should yield v ≈ π/2 everywhere (equator = colatitude π/2)
         for i in 0..8 {
             let t = i as f64 / 8.0;
             let pa = analytic.point_at(t);

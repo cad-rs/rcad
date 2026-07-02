@@ -1,12 +1,12 @@
 
-/// Build a tessellated BRep for coaxial `cylinder é–?torus` where the torus
+/// Build a tessellated BRep for coaxial `cylinder é–³?torus` where the torus
 /// sits on the cylinder wall (same Z axis, same XY center).
 ///
 /// Cylinder: [cyl_z_lo, cyl_z_hi], radius cyl_r.
 /// Torus: centered at (0,0,tor_z), major radius R, minor radius r_m.
 ///
 /// Builds via Z-slice tessellation: at each Z the cross-section is a circle
-/// with radius = max(cyl_r, R + sqrt(r_mé“?é–?(z é–?tor_z)é“?).
+/// with radius = max(cyl_r, R + sqrt(r_mé“?é–³?(z é–³?tor_z)é“?).
 fn build_cylinder_torus_union_tessellated(
     center_xy: DVec2,
     cyl_z_lo: f64, cyl_z_hi: f64, cyl_r: f64,
@@ -131,7 +131,8 @@ fn build_cylinder_torus_union_tessellated(
         edge_degenerated: vec![], vertex_tolerance: vec![],
         edge_tolerance: vec![], face_tolerance: vec![],
         curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
-        edge_same_parameter: vec![], edge_same_range: vec![], edge_vertex_params: vec![]};
+        edge_same_parameter: vec![], edge_same_range: vec![],
+    };
 
     Some(BRep {
         vertices: verts, edges: vec![],
@@ -143,7 +144,7 @@ fn build_cylinder_torus_union_tessellated(
 /// Fast path: coaxial Z-aligned cylinder + torus Union.
 ///
 /// Detects a Z-aligned cylinder and a Z-aligned torus sharing the same XY
-/// center, where the torus major radius é–?cylinder radius (torus protrudes
+/// center, where the torus major radius é–³?cylinder radius (torus protrudes
 /// from or is flush with the cylinder wall).
 fn try_union_cylinder_torus_one_dir(cyl_brep: &BRep, torus_brep: &BRep) -> Option<BRep> {
     let (cyl_bottom, cyl_axis, cyl_r, cyl_h) = try_cylinder_center_axis_radius_height(cyl_brep)?;
@@ -360,8 +361,8 @@ fn build_same_center_tori_union_mesh(tori: &[ToroidalSurface]) -> Option<BRep> {
 /// Build a tessellated BRep for the union of two coaxial Z-aligned cones.
 ///
 /// Each cone i spans [z_i_lo, z_i_hi] with radius r_i(z) = r_i_lo +
-/// (r_i_hi é–?r_i_lo)ç’?z é–?z_i_lo)/(z_i_hi é–?z_i_lo).  The outer envelope
-/// at each Z is max(ré–?z), ré–?z), 0).  Ring faces are added at boundaries
+/// (r_i_hi é–³?r_i_lo)ç’º?z é–³?z_i_lo)/(z_i_hi é–³?z_i_lo).  The outer envelope
+/// at each Z is max(ré–³?z), ré–³?z), 0).  Ring faces are added at boundaries
 /// where the envelope radius changes discontinuously.
 fn build_coaxial_cones_union_tessellated(
     center_xy: DVec2,
@@ -530,7 +531,8 @@ fn build_coaxial_cones_union_tessellated(
         edge_degenerated: vec![], vertex_tolerance: vec![],
         edge_tolerance: vec![], face_tolerance: vec![],
         curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
-        edge_same_parameter: vec![], edge_same_range: vec![], edge_vertex_params: vec![]};
+        edge_same_parameter: vec![], edge_same_range: vec![],
+    };
 
     Some(BRep {
         vertices: verts, edges: vec![],
@@ -572,8 +574,8 @@ pub fn try_union_coaxial_cones(a: &BRep, b: &BRep) -> Option<BRep> {
 
 /// Return the CCW boundary polygon of the union of two circles.
 ///
-/// `c1`, `c2` é–?centers, `r1`, `r2` é–?radii.
-/// `n1` é–?sample count for C1's boundary arc, `n2` é–?for C2's arc.
+/// `c1`, `c2` é–³?centers, `r1`, `r2` é–³?radii.
+/// `n1` é–³?sample count for C1's boundary arc, `n2` é–³?for C2's arc.
 ///
 /// Cases handled: concentric (larger circle), contained (larger circle),
 /// disjoint (both full circles), and overlapping (two arcs joined).
@@ -584,7 +586,7 @@ fn two_circle_union_ccw_pts(
     let tol = 1e-12;
 
     if d < tol || d + r1.min(r2) <= r1.max(r2) + tol {
-        // Concentric or one contains the other é–?return the larger circle full.
+        // Concentric or one contains the other é–³?return the larger circle full.
         let (_c, r) = if r1 >= r2 { (c1, r1) } else { (c2, r2) };
         let tau = std::f64::consts::TAU;
         let n = n1 + n2;
@@ -596,7 +598,7 @@ fn two_circle_union_ccw_pts(
     }
 
     if d >= r1 + r2 - tol {
-        // Disjoint é–?both full circles.
+        // Disjoint é–³?both full circles.
         let tau = std::f64::consts::TAU;
         let mut pts: Vec<DVec2> = (0..n1).map(|i| {
             let ang = tau * i as f64 / n1 as f64;
@@ -616,9 +618,9 @@ fn two_circle_union_ccw_pts(
         return pts;
     }
 
-    // Overlapping é–?trace the outer envelope arcs.
-    let dir = (c2 - c1) / d;          // unit vector C1 é–?C2
-    let perp = DVec2::new(-dir.y, dir.x); // 90éŽ?CCW
+    // Overlapping é–³?trace the outer envelope arcs.
+    let dir = (c2 - c1) / d;          // unit vector C1 é–³?C2
+    let perp = DVec2::new(-dir.y, dir.x); // 90éŽº?CCW
 
     let ix = (d * d + r1 * r1 - r2 * r2) / (2.0 * d);
     let _iy = (r1 * r1 - ix * ix).max(0.0).sqrt();
@@ -630,7 +632,7 @@ fn two_circle_union_ccw_pts(
 
     let tau = std::f64::consts::TAU;
 
-    // C1 outer arc: from theta1 é–?2é”?é–?theta1 (through é”? the left/away side).
+    // C1 outer arc: from theta1 é–³?2é”œ?é–³?theta1 (through é”œ? the left/away side).
     let a1_start = theta1;
     let a1_end = tau - theta1;
     let sweep1 = ((a1_end - a1_start) % tau + tau) % tau; // positive
@@ -643,7 +645,7 @@ fn two_circle_union_ccw_pts(
         pts.push(c1 + DVec2::new(r1 * c, r1 * s));
     }
 
-    // C2 outer arc: from é–³î…Ÿå´? é–?+é‘? (through 0, the right/away side).
+    // C2 outer arc: from é–³î…Ÿå´¹? é–³?+é‘³? (through 0, the right/away side).
     // In C2's local frame (+X = dir = away from C1, +Y = perp = CCW).
     let a2_start = -theta2;
     let a2_end = theta2;
@@ -862,7 +864,8 @@ fn build_cone_cone_union_tessellated(
         edge_degenerated: vec![], vertex_tolerance: vec![],
         edge_tolerance: vec![], face_tolerance: vec![],
         curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
-        edge_same_parameter: vec![], edge_same_range: vec![], edge_vertex_params: vec![]};
+        edge_same_parameter: vec![], edge_same_range: vec![],
+    };
 
     Some(BRep {
         vertices: verts, edges: vec![],
@@ -890,7 +893,7 @@ fn try_union_offset_cones_one_dir(a: &BRep, b: &BRep) -> Option<BRep> {
 
     let tol = TOLERANCE_LEN_MIN;
 
-    // Not offset é–?delegate to coaxial path.
+    // Not offset é–³?delegate to coaxial path.
     if (c1_xy.x - c2_xy.x).abs() < tol && (c1_xy.y - c2_xy.y).abs() < tol {
         return None;
     }
@@ -993,7 +996,7 @@ fn build_conical_frustum_minus_frustum_brep(
         faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false, surface_idx: None });
     }
 
-    // 4. Inner lateral é–?cavity wall (overlap region only)
+    // 4. Inner lateral é–³?cavity wall (overlap region only)
     if has_overlap {
         let inner_bot = ring_pts(z_olap_lo, ri_at_olap_lo);
         let inner_top = ring_pts(z_olap_hi, ri_at_olap_hi);
@@ -1002,14 +1005,14 @@ fn build_conical_frustum_minus_frustum_brep(
         faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false, surface_idx: None });
     }
 
-    // 5. Cavity floor é–?where hole starts (if inner starts above outer bottom)
+    // 5. Cavity floor é–³?where hole starts (if inner starts above outer bottom)
     if zi_lo > zo_lo + tol && has_overlap && ri_at_olap_lo > tol {
         let mut tris = Vec::new();
         disk_tri_fan(&mut add_v, DVec3::new(0.0, 0.0, z_olap_lo), ri_at_olap_lo, N, &mut tris);
         faces.push(Face { outer_wire: empty_wire(), inner_wires: vec![], normal: DVec3::ZERO, triangles: tris, sample_point: None, mesh_dirty: false, surface_idx: None });
     }
 
-    // 6. Cavity ceiling é–?where hole ends (if inner ends below outer top)
+    // 6. Cavity ceiling é–³?where hole ends (if inner ends below outer top)
     if zi_hi < zo_hi - tol && has_overlap && ri_at_olap_hi > tol {
         let mut tris = Vec::new();
         disk_tri_fan(&mut add_v, DVec3::new(0.0, 0.0, z_olap_hi), ri_at_olap_hi, N, &mut tris);
@@ -1026,7 +1029,8 @@ fn build_conical_frustum_minus_frustum_brep(
         edge_degenerated: vec![], vertex_tolerance: vec![],
         edge_tolerance: vec![], face_tolerance: vec![],
         curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
-        edge_same_parameter: vec![], edge_same_range: vec![], edge_vertex_params: vec![]};
+        edge_same_parameter: vec![], edge_same_range: vec![],
+    };
 
     Some(BRep {
         vertices: verts, edges: vec![],

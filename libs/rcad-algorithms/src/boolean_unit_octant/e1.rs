@@ -110,7 +110,7 @@ fn surfaces_eq(a: &rcad_kernel::geom::Surface3, b: &rcad_kernel::geom::Surface3)
 /// Falls through to Pave-Filler (returns `None`) when sewing fails or excessive
 /// internal-face inflation is detected.
 pub fn try_union_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
-    // OCCT does not have fast paths �?skip NURBS so PaveFiller+Builder
+    // OCCT does not have fast paths 鈥?skip NURBS so PaveFiller+Builder
     // preserves BSpline surface types (nurbsconvert cases).
     for operand in [a, b] {
         if operand.geom.surfaces.iter().any(|s| matches!(s, Surface3::BSpline(_))) {
@@ -125,7 +125,7 @@ pub fn try_union_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
         None => return Some(BRep::compound_from_shapes(&[a.clone(), b.clone()])),
     };
 
-    // No overlap �?compound (disjoint boxes).
+    // No overlap 閳?compound (disjoint boxes).
     if inter.vertices.len() < 4 {
         return Some(BRep::compound_from_shapes(&[a.clone(), b.clone()]));
     }
@@ -136,11 +136,11 @@ pub fn try_union_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
     let scale = (a_vol.max(b_vol) / 3.0).max(1.0);
     let vol_tol = TOLERANCE_LEN_MIN * scale;
 
-    // A contains B �?A alone is the union.
+    // A contains B 閳?A alone is the union.
     if b_vol > vol_tol && (b_vol - inter_vol).abs() < vol_tol {
         return Some(a.clone());
     }
-    // B contains A �?B alone is the union.
+    // B contains A 閳?B alone is the union.
     if a_vol > vol_tol && (a_vol - inter_vol).abs() < vol_tol {
         return Some(b.clone());
     }
@@ -207,7 +207,7 @@ pub fn try_union_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
         }
     }
 
-    // 閳光偓閳光偓 A �?B (overlap) 閳光偓閳光偓
+    // 閳光偓閳光偓 A 閳?B (overlap) 閳光偓閳光偓
     slabs.push(inter.clone());
 
     // 閳光偓閳光偓 B \ A slabs: decompose B around A's axes 閳光偓閳光偓
@@ -272,7 +272,7 @@ pub fn try_union_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
         return Some(sewn);
     }
 
-    // SA inflated �?try fuse-based sequential merge to remove shared internal faces.
+    // SA inflated 閳?try fuse-based sequential merge to remove shared internal faces.
     let mut fused = slabs[0].clone();
     let mut ok = true;
     for slab in &slabs[1..] {
@@ -329,7 +329,7 @@ pub fn try_difference_coaxial_cylinder_sphere(a: &BRep, b: &BRep) -> Option<BRep
     if let Some((sp, cyl)) = try_sphere_primitive_center_radius(a)
         .and_then(|sp| z_axis_cylinder_z_span_r(b).map(|cyl| (sp, cyl)))
     {
-        // a = sphere, b = cylinder �?sphere - cylinder
+        // a = sphere, b = cylinder 閳?sphere - cylinder
         if let Some(result) = try_sphere_minus_cylinder(sp, cyl) {
             return Some(result);
         }
@@ -338,7 +338,7 @@ pub fn try_difference_coaxial_cylinder_sphere(a: &BRep, b: &BRep) -> Option<BRep
     if let Some((sp, cyl)) = try_sphere_primitive_center_radius(b)
         .and_then(|sp| z_axis_cylinder_z_span_r(a).map(|cyl| (sp, cyl)))
     {
-        // a = cylinder, b = sphere �?cylinder - sphere
+        // a = cylinder, b = sphere 閳?cylinder - sphere
         if let Some(result) = try_cylinder_minus_sphere(sp, cyl) {
             return Some(result);
         }
@@ -347,7 +347,7 @@ pub fn try_difference_coaxial_cylinder_sphere(a: &BRep, b: &BRep) -> Option<BRep
     None
 }
 
-/// Build `sphere - cylinder` �?portions of sphere outside cylinder Z range.
+/// Build `sphere - cylinder` 閳?portions of sphere outside cylinder Z range.
 fn try_sphere_minus_cylinder(
     sphere_brep: (DVec3, f64),
     cyl_brep: (f64, f64, f64),
@@ -408,7 +408,7 @@ fn try_sphere_minus_cylinder(
     }
 }
 
-/// Build `cylinder - sphere` �?cylinder body with a spherical cavity where the
+/// Build `cylinder - sphere` 閳?cylinder body with a spherical cavity where the
 /// sphere overlaps.  The sphere cross-section must fit inside the cylinder over
 /// the entire overlap Z-range (checked by the caller).
 fn try_cylinder_minus_sphere(
@@ -535,7 +535,7 @@ fn build_cylinder_minus_sphere_tessellated(
     let cavity_reaches_top = (overlap_hi - cyl_z_hi).abs() < 1e-9;
     let cavity_reaches_bot = (overlap_lo - cyl_z_lo).abs() < 1e-9;
 
-    // 3. Far-end cap(s) �?cylinder ends NOT reached by cavity
+    // 3. Far-end cap(s) 閳?cylinder ends NOT reached by cavity
     if !cavity_reaches_bot {
         add_cap_face(&mut add_v, &mut faces, &cyl_poly, cyl_z_lo, -DVec3::Z, &to_world, &empty_wire);
     }
@@ -609,7 +609,8 @@ fn build_cylinder_minus_sphere_tessellated(
         edge_degenerated: vec![], vertex_tolerance: vec![],
         edge_tolerance: vec![], face_tolerance: vec![],
         curve2d_range: vec![], face_surface_range: vec![None; faces.len()],
-        edge_same_parameter: vec![], edge_same_range: vec![], edge_vertex_params: vec![]};
+        edge_same_parameter: vec![], edge_same_range: vec![],
+    };
 
     Some(BRep {
         vertices: verts, edges: vec![],
@@ -620,7 +621,7 @@ fn build_cylinder_minus_sphere_tessellated(
 
 /// Build a Z-slice triangle-mesh solid representing a spherical slice (portion
 /// of a sphere between two parallel Z planes). The solid is built with
-/// pre-triangulated faces and no analytic surfaces �?SA computation reads
+/// pre-triangulated faces and no analytic surfaces 閳?SA computation reads
 /// the stored triangles directly.
 fn build_spherical_slice_solid(center: DVec3, radius: f64, z_lo: f64, z_hi: f64) -> Option<BRep> {
     const N_RINGS: usize = 32;
@@ -797,7 +798,7 @@ pub fn try_difference_concentric_spheres(a: &BRep, b: &BRep) -> Option<BRep> {
 ///
 /// The intersection of nested balls is the smaller-radius ball (same center).
 ///
-/// Returns [`None`] when centers differ or radii are degenerate �?callers fall back to Pave/Builder.
+/// Returns [`None`] when centers differ or radii are degenerate 闁?callers fall back to Pave/Builder.
 pub fn try_intersection_concentric_spheres(a: &BRep, b: &BRep) -> Option<BRep> {
     let (ca, ra) = try_sphere_primitive_center_radius(a)?;
     let (cb, rb) = try_sphere_primitive_center_radius(b)?;
@@ -813,7 +814,7 @@ pub fn try_intersection_concentric_spheres(a: &BRep, b: &BRep) -> Option<BRep> {
     make_sphere_brep(ca, r).ok()
 }
 
-// --- Coaxial cone �?cylinder (OCCT `bopcommon_simple/ZP7`): generic Builder over-counts area. --------
+// --- Coaxial cone 闁?cylinder (OCCT `bopcommon_simple/ZP7`): generic Builder over-counts area. --------
 
 fn z_axis_sharp_cone_z_span(cone: &BRep) -> Option<(f64, f64, f64)> {
     const APAR: f64 = TOLERANCE_ADAPTIVE_MAX;
@@ -923,7 +924,7 @@ fn try_intersection_coaxial_cone_cylinder_pair(cone: &BRep, cyl: &BRep) -> Optio
     make_conical_frustum_brep(DVec3::new(0.0, 0.0, zm), DVec3::Z, DVec3::X, r0, r1, h).ok()
 }
 
-/// Sharp Z-aligned cone �?finite Z-aligned cylinder (same axis / origin in `xy`), e.g. OCCT ZP7.
+/// Sharp Z-aligned cone 闁?finite Z-aligned cylinder (same axis / origin in `xy`), e.g. OCCT ZP7.
 pub fn try_intersection_coaxial_cone_cylinder(a: &BRep, b: &BRep) -> Option<BRep> {
     try_intersection_coaxial_cone_cylinder_pair(a, b)
         .or_else(|| try_intersection_coaxial_cone_cylinder_pair(b, a))

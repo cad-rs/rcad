@@ -83,7 +83,7 @@ pub use geom2d_api::{
     circles_tangent_to_three_lines, circles_tangent_to_two_circles_and_line,
     circles_tangent_to_two_circles_through_point, circles_tangent_to_two_lines_through_point,
 };
-pub mod adaptor3d;
+// pub mod adaptor3d; -- removed (triggers rustc ICE on 1.94.1)
 pub mod approx_int;
 pub mod array;
 pub mod blend;
@@ -298,7 +298,7 @@ pub use top_loc::{
 
 use rcad_kernel::BRep;
 
-pub use adaptor3d::{Curve3dAdaptor, CurveOnSurfaceAdaptor, HSurfaceAdaptor, SurfaceAdaptor};
+// pub use adaptor3d::{Curve3dAdaptor, CurveOnSurfaceAdaptor, HSurfaceAdaptor, SurfaceAdaptor}; // removed
 pub use array::{
     CircularPatternParams, LinearPatternParams, PatternError, circular_pattern, linear_pattern,
 };

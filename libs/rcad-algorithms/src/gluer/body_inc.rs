@@ -257,14 +257,14 @@ impl Gluer {
 
     /// Explicitly bind a face from the first shape to a face from the second shape.
     ///
-    /// âœ?OCCT-aligned: Corresponds to `BRepFeat_Gluer::Bind(F1, F2)`.
+    /// âœ… OCCT-aligned: Corresponds to `BRepFeat_Gluer::Bind(F1, F2)`.
     /// Tells the gluer that these two faces are coincident and should be merged,
     /// bypassing (or supplementing) auto-detection.
     ///
     /// # Arguments
     ///
-    /// * `face_in_first` â€?Face index in the first shape (shape[0]).
-    /// * `face_in_second` â€?Face index in the second shape (shape[1]).
+    /// * `face_in_first` â€” Face index in the first shape (shape[0]).
+    /// * `face_in_second` â€” Face index in the second shape (shape[1]).
     pub fn bind_faces(mut self, face_in_first: usize, face_in_second: usize) -> Self {
         self.explicit_face_binds.push((face_in_first, face_in_second));
         self
@@ -272,14 +272,14 @@ impl Gluer {
 
     /// Explicitly bind an edge from the first shape to an edge from the second shape.
     ///
-    /// âœ?OCCT-aligned: Corresponds to `BRepFeat_Gluer::Bind(E1, E2)`.
+    /// âœ… OCCT-aligned: Corresponds to `BRepFeat_Gluer::Bind(E1, E2)`.
     /// Tells the gluer that these two edges are coincident and should be merged,
     /// bypassing (or supplementing) auto-detection.
     ///
     /// # Arguments
     ///
-    /// * `edge_in_first` â€?Edge index in the first shape (shape[0]).
-    /// * `edge_in_second` â€?Edge index in the second shape (shape[1]).
+    /// * `edge_in_first` â€” Edge index in the first shape (shape[0]).
+    /// * `edge_in_second` â€” Edge index in the second shape (shape[1]).
     pub fn bind_edges(mut self, edge_in_first: usize, edge_in_second: usize) -> Self {
         self.explicit_edge_binds.push((edge_in_first, edge_in_second));
         self
@@ -1406,7 +1406,8 @@ fn merge_geom_stores(
     // Merge edge_curve with offset
     result.edge_curve.extend(
         geom2.edge_curve.iter().map(|ec| {
-            ec.map(|idx| idx + curve_offset), edge_vertex_params: vec![]})
+            ec.map(|idx| idx + curve_offset)
+        })
     );
 
     // Merge face_surface with offset
