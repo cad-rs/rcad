@@ -165,39 +165,6 @@
         ],
         "nPBs": 1,
         "sv": 5
-      },
-      {
-        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-0.0, -0.0, -1.0), x_dir: DVec3(0.0, -1.0, 0.0), y_dir: DVec3(-1.0, 0.0, 0.0), radius: 1.0 })",
-        "ei": 15,
-        "ev": 5,
-        "is_internal": false,
-        "my_images": [
-          15
-        ],
-        "nPBs": 1,
-        "sv": 9
-      },
-      {
-        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-0.0, -1.0, -0.0), x_dir: DVec3(0.0, 0.0, 1.0), y_dir: DVec3(-1.0, 0.0, 0.0), radius: 1.0 })",
-        "ei": 16,
-        "ev": 0,
-        "is_internal": false,
-        "my_images": [
-          16
-        ],
-        "nPBs": 1,
-        "sv": 1
-      },
-      {
-        "curve": "Circle(Circle3 { center: DVec3(0.0, 0.0, 0.0), normal: DVec3(-1.0, -0.0, -0.0), x_dir: DVec3(0.0, 0.0, -1.0), y_dir: DVec3(0.0, -1.0, 0.0), radius: 1.0 })",
-        "ei": 17,
-        "ev": 1,
-        "is_internal": false,
-        "my_images": [
-          17
-        ],
-        "nPBs": 1,
-        "sv": 0
       }
     ],
     "faces": [
@@ -221,7 +188,7 @@
         "nCurvesSc": 6,
         "nIW": 0,
         "nPBsIn": 0,
-        "nPBsSc": 3,
+        "nPBsSc": 0,
         "nVIn": 4,
         "surf": "Sphere(SphericalSurface { center: DVec3(0.0, 0.0, 0.0), axis: DVec3(0.0, 0.0, 1.0), radius: 1.0, ref_dir: DVec3(1.0, 0.0, 0.0) })",
         "vertices_in": [
@@ -251,7 +218,7 @@
         "nCurvesSc": 6,
         "nIW": 0,
         "nPBsIn": 0,
-        "nPBsSc": 1,
+        "nPBsSc": 0,
         "nVIn": 4,
         "surf": "Plane(Plane { origin: DVec3(0.0, 0.0, 0.0), normal: DVec3(-0.0, -0.0, -1.0) })",
         "vertices_in": [
@@ -297,7 +264,7 @@
         "nCurvesSc": 4,
         "nIW": 0,
         "nPBsIn": 0,
-        "nPBsSc": 1,
+        "nPBsSc": 0,
         "nVIn": 4,
         "surf": "Plane(Plane { origin: DVec3(0.0, 0.0, 0.0), normal: DVec3(-0.0, -1.0, -0.0) })",
         "vertices_in": [
@@ -341,7 +308,7 @@
         "nCurvesSc": 2,
         "nIW": 0,
         "nPBsIn": 0,
-        "nPBsSc": 1,
+        "nPBsSc": 0,
         "nVIn": 2,
         "surf": "Plane(Plane { origin: DVec3(0.0, 0.0, 0.0), normal: DVec3(-1.0, -0.0, -0.0) })",
         "vertices_in": [
@@ -456,10 +423,10 @@
     "nA": 2,
     "nB": 8,
     "nCB": 0,
-    "nE": 18,
+    "nE": 15,
     "nF": 7,
     "nIC": 6,
-    "nPB": 3,
+    "nPB": 0,
     "nV": 10
   }
 }
