@@ -178,59 +178,65 @@ impl<'a> super::PaveFiller<'a> {
             // OCCT L773-791: Treat Points — SKIP (rcad has no BOPDS_Point)
 
             // OCCT L793: GetStickVertices(nF1, nF2, aMVStick, aMVEF, aMI)
+            // OCCT BOPAlgo_PaveFiller_6.cxx L2879-2937
             {
-                // OCCT: GetStickVertices collects EF vertices (edges that touch the pair's faces)
-                // and stick vertices (VV/VE vertices near the faces).
-                let f1_on: std::collections::HashSet<usize> = self.ds.faces[n_f1].face_info.vertices_on.iter().copied().collect();
-                let f1_in: std::collections::HashSet<usize> = self.ds.faces[n_f1].face_info.vertices_in.iter().copied().collect();
-                let f2_on: std::collections::HashSet<usize> = self.ds.faces[n_f2].face_info.vertices_on.iter().copied().collect();
-                let f2_in: std::collections::HashSet<usize> = self.ds.faces[n_f2].face_info.vertices_in.iter().copied().collect();
-
-                // aMI: interference index set for this face pair
-                //   (used by GetStickVertices to determine which sub-shapes belong to this pair)
-                //   aMI.Add(nS1) + aMI.Add(nS2) for each EF interference
+                // Build aMI = all sub-shapes of nF1 ∪ nF2 (GetFullShapeMap)
+                // OCCT L2896-2897: GetFullShapeMap(nF1, aMI); GetFullShapeMap(nF2, aMI)
+                // rcad: use build_face_shape_map which collects all edges/vertices of a face
+                let mut a_mi = crate::pave_filler::build_face_shape_map(self.ds, n_f1);
+                let a_mi_b = crate::pave_filler::build_face_shape_map(self.ds, n_f2);
+                // OCCT L2900-2920: VV, VE, EE, VF with HasIndexNew
                 for inf in &self.ds.interferences {
-                    if let Interference::EdgeFace { edge, face, .. } = inf {
-                        let edge_on_f1 = self.ds.edges[*edge].face_reps.iter().any(|fr| fr.face_idx == n_f1);
-                        let edge_on_f2 = self.ds.edges[*edge].face_reps.iter().any(|fr| fr.face_idx == n_f2);
-                        if *face == n_f1 || *face == n_f2 {
-                            if edge_on_f1 || edge_on_f2 {
-                                a_mi.insert(*edge);
-                                a_mi.insert(*face);
-                            }
+                    let (n_s1, n_s2, new_vertex) = match inf {
+                        Interference::VertexEdge { vertex, edge, .. } => {
+                            // OCCT: InterfVE creates a new vertex when projecting onto edge.
+                            // rcad: uses existing vertex index; check if it belongs to the pair.
+                            let belongs = a_mi.contains(vertex) || a_mi_b.contains(vertex);
+                            if !belongs { continue; }
+                            a_mv_stick.insert(*vertex);
+                            a_mi.insert(*vertex);
+                            continue;
                         }
+                        Interference::VertexFace { vertex, face, .. } => {
+                            let belongs = a_mi.contains(vertex) || a_mi_b.contains(vertex);
+                            if !belongs { continue; }
+                            a_mv_stick.insert(*vertex);
+                            a_mi.insert(*vertex);
+                            continue;
+                        }
+                        Interference::EdgeEdge { e1, e2, new_vertex, .. } => (*e1, *e2, *new_vertex),
+                        Interference::VertexVertex { v1, v2, merged_vertex } => (*v1, *v2, *merged_vertex),
+                        _ => continue,
+                    };
+                    if new_vertex == usize::MAX { continue; } // OCCT: !HasIndexNew
+                    // OCCT L2912: both sub-shapes must belong to one of the two faces
+                    let s1_in_pair = a_mi.contains(&n_s1) || a_mi_b.contains(&n_s1);
+                    let s2_in_pair = a_mi.contains(&n_s2) || a_mi_b.contains(&n_s2);
+                    if !s1_in_pair || !s2_in_pair { continue; }
+                    // OCCT L2915: HasShapeSD(nVNew, nVNew) — resolve SD
+                    if let Some(n_v) = self.ds.has_shape_sd(new_vertex) {
+                        a_mv_stick.insert(n_v);
+                        a_mi.insert(n_v);
+                    } else {
+                        a_mv_stick.insert(new_vertex);
+                        a_mi.insert(new_vertex);
                     }
                 }
-
-                // EF vertices: from EdgeFace interferences where both edge and face belong to this pair
+                // OCCT L2921-2936: EF interferences
                 for inf in &self.ds.interferences {
-                    if let Interference::EdgeFace { new_vertex, edge, face, .. } = inf {
-                        let edge_belongs = self.ds.edges[*edge].face_reps.iter()
-                            .any(|fr| fr.face_idx == n_f1 || fr.face_idx == n_f2);
-                        let face_belongs = *face == n_f1 || *face == n_f2;
-                        if edge_belongs && face_belongs {
+                    if let Interference::EdgeFace { edge, face, new_vertex, .. } = inf {
+                        if *new_vertex == usize::MAX { continue; }
+                        let e_in_pair = a_mi.contains(edge) || a_mi_b.contains(edge);
+                        let f_in_pair = a_mi.contains(face) || a_mi_b.contains(face);
+                        if !e_in_pair || !f_in_pair { continue; }
+                        if let Some(n_v) = self.ds.has_shape_sd(*new_vertex) {
+                            a_mv_stick.insert(n_v);
+                            a_mv_ef.insert(n_v);
+                            a_mi.insert(n_v);
+                        } else {
+                            a_mv_stick.insert(*new_vertex);
                             a_mv_ef.insert(*new_vertex);
-                        }
-                    }
-                }
-
-                // Stick vertices: from VV/VE interferences, vertices that are ON/IN one face
-                // and have a VV/VE counterpart ON/IN the other face
-                for inf in &self.ds.interferences {
-                    if let Interference::VertexEdge { vertex, .. } = inf {
-                        let v_on_f1 = f1_on.contains(vertex) || f1_in.contains(vertex);
-                        let v_on_f2 = f2_on.contains(vertex) || f2_in.contains(vertex);
-                        if v_on_f1 || v_on_f2 {
-                            a_mv_stick.insert(*vertex);
-                            a_mi.insert(*vertex);
-                        }
-                    }
-                    if let Interference::VertexFace { vertex, .. } = inf {
-                        let v_on_f1 = f1_on.contains(vertex) || f1_in.contains(vertex);
-                        let v_on_f2 = f2_on.contains(vertex) || f2_in.contains(vertex);
-                        if v_on_f1 || v_on_f2 {
-                            a_mv_stick.insert(*vertex);
-                            a_mi.insert(*vertex);
+                            a_mi.insert(*new_vertex);
                         }
                     }
                 }
