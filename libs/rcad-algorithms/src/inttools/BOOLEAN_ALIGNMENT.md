@@ -44,7 +44,9 @@
 | `ProjLib::MakePCurveOfType` (球) | `circle_pcurve_on_sphere` (pcurve_derive.rs:130) | ❌→✅ | **刚修**：knot rescale + isIsoU/isIsoV 标注（Line2d 路径因缺 TrimmedCurve2 裁剪暂未启用） |
 | `ProjLib::MakePCurveOfType` (柱) | `circle_pcurve_on_cylinder` (pcurve_derive.rs:184) | ⏳ | knot rescale 已修 |
 | `ProjLib_Sphere::Project(gp_Lin)` | `line_pcurve_on_sphere` (pcurve_derive.rs:136) | ✅ | OCCT 自身也是 stub（ProjLib_Sphere.cxx L181-184 设 OtherCurve）；rcad 调用 fallback_pcurve_by_projection 匹配 |
-| `ProjLib_Sphere::Project(gp_Elips)` | 无 | ❌ | 椭圆-球投影 fallthrough 到通用 |
+| `ProjLib_Sphere::Project(gp_Elips)` | `ellipse_pcurve_on_sphere` (pcurve_derive.rs:140) | ✅ | OCCT stub → generic fallback |
+| `ProjLib_Sphere::Project(gp_Parab)` | `parabola_pcurve_on_sphere` (pcurve_derive.rs:148) | ✅ | OCCT stub → generic fallback |
+| `ProjLib_Sphere::Project(gp_Hypr)` | `hyperbola_pcurve_on_sphere` (pcurve_derive.rs:155) | ✅ | OCCT stub → generic fallback |
 
 ### PaveFiller 辅助函数
 
@@ -53,7 +55,7 @@
 | `SubShapesOnIn` | 内联在 make_blocks.rs:124-166 | ⏳ | 结构不同 |
 | `SharedEdges` | 内联在 make_blocks.rs:168-176 | ✅ |  |
 | `GetStickVertices` | 内联在 make_blocks.rs:181-237 | ⏳ | 过滤条件差异 |
-| `IsValidBlockForFaces` | 内联在 make_blocks.rs:438-471 | ⏳ | pcurve 求值/容差不同 |
+| `IsValidBlockForFaces` | 内联在 make_blocks.rs:438-471 | ⏳→✅ | **刚修**：IntermediatePoint 比例(0.43213918)、移除 3D fallback、用 is_valid_point_for_face |
 | `FindValidRange` | `find_valid_range` (make_blocks.rs) | ⏳ |  |
 | `PutClosingPaveOnCurve` | `put_closing_pave_on_curve` (make_blocks.rs) | ⏳ |  |
 | `CorrectTolerances` | `correct_tolerances` (boptools/extra.rs:402) | ✅ | L309-317 逐行对齐：CorrectPointOnCurve → CorrectCurveOnSurface |

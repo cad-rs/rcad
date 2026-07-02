@@ -10,7 +10,7 @@ use glam::{DVec2, DVec3};
 use rcad_kernel::fit::interpolate_points_2d;
 use rcad_kernel::geom::{
     Circle2d, Circle3, ConicalSurface, Curve2d, Curve2dEval, CurveEval, CylindricalSurface,
-    Ellipse2d, Ellipse3, Line2d, Line3, Plane, SphericalSurface, Surface3, SurfaceEval,
+    Ellipse2d, Ellipse3, Hyperbola3, Line2d, Line3, Parabola3, Plane, SphericalSurface, Surface3, SurfaceEval,
     any_perpendicular,
 };
 use rcad_kernel::projection::closest_point_on_surface;
@@ -135,6 +135,28 @@ pub fn line_pcurve_on_sphere(line: &Line3, sphere: &SphericalSurface) -> Curve2d
         [-1e3, 1e3]
     };
     fallback_pcurve_by_projection(&Curve3::Line(*line), &range, &Surface3::Sphere(*sphere))
+}
+
+/// OCCT-aligned: ProjLib_Sphere::Project(gp_Elips) — ProjLib_Sphere.cxx L186-189.
+/// OCCT: stub sets myType = GeomAbs_OtherCurve, generic BuildResult handles it.
+pub fn ellipse_pcurve_on_sphere(ellipse: &Ellipse3, sphere: &SphericalSurface) -> Curve2d {
+    use rcad_kernel::geom::Curve3;
+    let t_range = ellipse.default_domain();
+    fallback_pcurve_by_projection(&Curve3::Ellipse(*ellipse), &t_range, &Surface3::Sphere(*sphere))
+}
+
+/// OCCT-aligned: ProjLib_Sphere::Project(gp_Parab) — stub → generic.
+pub fn parabola_pcurve_on_sphere(parabola: &Parabola3, sphere: &SphericalSurface) -> Curve2d {
+    use rcad_kernel::geom::Curve3;
+    let t_range = parabola.default_domain();
+    fallback_pcurve_by_projection(&Curve3::Parabola(*parabola), &t_range, &Surface3::Sphere(*sphere))
+}
+
+/// OCCT-aligned: ProjLib_Sphere::Project(gp_Hypr) — stub → generic.
+pub fn hyperbola_pcurve_on_sphere(hyperbola: &Hyperbola3, sphere: &SphericalSurface) -> Curve2d {
+    use rcad_kernel::geom::Curve3;
+    let t_range = hyperbola.default_domain();
+    fallback_pcurve_by_projection(&Curve3::Hyperbola(*hyperbola), &t_range, &Surface3::Sphere(*sphere))
 }
 
 /// ✅ OCCT-aligned: ProjLib_Sphere::Project(gp_Circ) — form-aligned pcurve.

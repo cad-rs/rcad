@@ -435,40 +435,28 @@ impl<'a> super::PaveFiller<'a> {
                     }
 
                     // OCCT L912-918: IsValidBlockForFaces
-                    let b_valid_2d = {
-                        let ic = &self.ds.intersection_curves[ci];
-                        let curve = &ic.curve;
-                        let mid_t = (a_t1 + a_t2) * 0.5;
-                        let mid_pt = curve.point_at(mid_t);
-                        let check_tol = a_tol_r3d.max(TOLERANCE_ABS);
-                        let surf0 = if n_f1 != usize::MAX { Some(&self.ds.faces[n_f1].surface) } else { None };
-                        let surf1 = if n_f2 != usize::MAX { Some(&self.ds.faces[n_f2].surface) } else { None };
-                        let pca = ic.pcurve_on_a.as_ref();
-                        let pcb = ic.pcurve_on_b.as_ref();
-                        let mut ok = true;
-                        for (k, &fi) in [n_f1, n_f2].iter().enumerate() {
-                            if fi == usize::MAX { continue; }
-                            let pcurve = if k == 0 { pca } else { pcb };
-                            if let Some(pc) = pcurve {
-                                let uv = pc.point_at(mid_t);
-                                let in_on = self.context.is_point_in_on_face(self.ds, fi, uv);
-                                if !in_on {
-                                    let surf = if k == 0 { surf0.unwrap() } else { surf1.unwrap() };
-                                    let (_, proj_pt) = crate::extrema::closest_point_on_surface(surf, mid_pt);
-                                    let dist_3d = proj_pt.distance(mid_pt);
-                                    if dist_3d > check_tol { ok = false; break; }
-                                }
-                            } else {
-                                let surf = if k == 0 { surf0.unwrap() } else { surf1.unwrap() };
-                                let (_, proj) = crate::extrema::closest_point_on_surface(surf, mid_pt);
-                                if proj.distance(mid_pt) > check_tol { ok = false; break; }
-                            }
+                    // OCCT L733: aMidPar = IntTools_Tools::IntermediatePoint(theT1, theT2)
+                    //   PAR_T = 10*e^(-PI) = 0.43213918, mid = (1-PAR_T)*T1 + PAR_T*T2
+                    let ic = &self.ds.intersection_curves[ci];
+                    let curve = &ic.curve;
+                    let mid_t = 0.56786082 * a_t1 + 0.43213918 * a_t2;
+                    let mid_pt = curve.point_at(mid_t);
+                    let mut ok = true;
+                    for (k, &fi) in [n_f1, n_f2].iter().enumerate() {
+                        if fi == usize::MAX { continue; }
+                        // OCCT L746-756: if pcurve exists, D0(aMidPar, uv), IsPointInOnFace
+                        let pcurve = if k == 0 { ic.pcurve_on_a.as_ref() } else { ic.pcurve_on_b.as_ref() };
+                        if let Some(pc) = pcurve {
+                            let uv = pc.point_at(mid_t);
+                            // OCCT L752: IsPointInOnFace — true if State IN or ON
+                            if !self.context.is_point_in_on_face(self.ds, fi, uv) { ok = false; break; }
+                        } else {
+                            // OCCT L759: IsValidPointForFace(aP, aF, theTol) — project 3D point onto surface
+                            let surf = if k == 0 { &self.ds.faces[n_f1].surface } else { &self.ds.faces[n_f2].surface };
+                            if !self.context.is_valid_point_for_face(mid_pt, fi, a_tol_r3d) { ok = false; break; }
                         }
-                        ok
-                    };
-                    if !b_valid_2d {
-                        continue; // OCCT L915-918
                     }
+                    if !ok { continue; } // OCCT L755: bFlag false → skip this PB
 
                     // OCCT L920-930: IsExistingPaveBlock via aLSE (shared edges)
                     let mut n_e_out: usize = usize::MAX;
