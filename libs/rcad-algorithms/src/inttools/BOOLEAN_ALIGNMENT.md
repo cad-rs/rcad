@@ -166,3 +166,21 @@ TKPrim shared bottom-layer libraries (same as boolean):
 | BRepPrimAPI_MakeSphere | builder/solid.rs | ? | sphere via OneAxis |
 | BRepPrimAPI_MakeCone | builder/solid.rs | ? | cone via OneAxis |
 | BRepPrimAPI_MakeTorus | builder/solid.rs | ? | torus via OneAxis |
+
+## Level 6: TKTopAlgo ¡ª BRepLib / TopExp / BRepBuilder
+
+TKTopAlgo is the LAST shared bottom-layer library. Sub-modules:
+- BRepLib (MakeEdge/MakeWire/MakeFace/MakeSolid) -> brep_builder.rs
+- BRepLib_ValidateEdge / SameParameter -> tolerance.rs ? (already aligned)
+- BRepLib_FindValidRange -> helpers.rs ? (already aligned)
+- TopExp_Explorer -> Vec index loops (architecture diff)
+- BRep_Tool / BRepAdaptor -> brep.geom fields (architecture diff)
+
+| OCCT | rcad file | align | notes |
+|------|-----------|-------|-------|
+| BRepLib_MakeEdge | brep_builder.rs:23 | ? | edge creation, validation |
+| BRepLib_MakeWire | brep_builder.rs:63 | ? | wire from edge list |
+| BRepLib_MakeFace | brep_builder.rs:72 | ? | face from wire + surface |
+| BRepLib_MakeSolid | brep_builder.rs:121 | ? | solid from shells |
+| BRep_Tool::Curve() | brep.geom.edge_curve[ei] | arch | Vec-index substitute |
+| TopExp_Explorer | manual loops | arch | no iterator abstraction |
