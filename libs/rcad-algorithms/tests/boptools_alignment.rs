@@ -109,7 +109,7 @@ fn test_extrema_line_line_skew() {
 #[test]
 fn test_extrema_line_circle() {
     let l1 = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
-    let c = Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, 3.0));
+    let c = Curve3::Circle(Circle3::new(DVec3::new(0.0, 0.0, 0.0), DVec3::Z, 3.0));
     let ext = extrema_curve_curve(&l1, &c, 16);
     assert!(!ext.pairs.is_empty());
     // Minimum distance from line to circle center = 10, minus radius = 7
@@ -120,7 +120,7 @@ fn test_extrema_line_circle() {
 fn test_extrema_circle_circle_coaxial() {
     // Two coaxial circles in parallel planes
     let c1 = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
-    let c2 = Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, 3.0));
+    let c2 = Curve3::Circle(Circle3::new(DVec3::new(0.0, 0.0, 0.0), DVec3::Z, 3.0));
     let ext = extrema_curve_curve(&c1, &c2, 16);
     assert!(!ext.pairs.is_empty());
     // Min distance: distance between circle centers projected radially

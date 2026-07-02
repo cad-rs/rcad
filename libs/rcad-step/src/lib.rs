@@ -8261,11 +8261,7 @@ fn resolve_curve(parsed: &ParsedStep, curve_ref: u64) -> Option<Curve3> {
 
     if let Some((placement_ref, radius)) = parsed.circles.get(&actual_ref) {
         let (center, normal) = placement_from_ref(parsed, *placement_ref)?;
-        return Some(Curve3::Circle(rcad_kernel::geom::Circle3 {
-            center,
-            normal,
-            radius: *radius,
-        }));
+        return Some(Curve3::Circle(rcad_kernel::geom::Circle3::new(center, normal, radius)));
     }
 
     if let Some((placement_ref, major_radius, minor_radius)) = parsed.ellipses.get(&actual_ref) {
