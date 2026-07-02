@@ -38,7 +38,7 @@ fn closest_point_on_line_known() {
 fn closest_point_on_circle_known() {
     // Unit circle in XY plane, center (0,0,0), query at (2, 0, 0).
     // Closest point should be (1, 0, 0), distance = 1.
-    let circle = Curve3::Circle(Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 1.0 });
+    let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
     let result = closest_point_on_curve(&circle, DVec3::new(2.0, 0.0, 0.0), 16);
     let expected = DVec3::new(1.0, 0.0, 0.0);
     assert!(
@@ -92,7 +92,7 @@ fn closest_point_on_plane_known() {
 #[test]
 fn arc_length_semicircle() {
     // Semicircle of radius 3: arc length = π * r = 3π.
-    let circle = Curve3::Circle(Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 3.0 });
+    let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 3.0));
     let len = arc_length(&circle, 0.0, std::f64::consts::PI);
     let expected = std::f64::consts::PI * 3.0;
     assert!(
@@ -104,7 +104,7 @@ fn arc_length_semicircle() {
 #[test]
 fn arc_length_full_circle() {
     // Full circle of radius 1: circumference = 2π.
-    let circle = Curve3::Circle(Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 1.0 });
+    let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
     let len = arc_length(&circle, 0.0, std::f64::consts::TAU);
     let expected = std::f64::consts::TAU;
     assert!(

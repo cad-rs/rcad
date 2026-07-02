@@ -1192,11 +1192,8 @@ mod tests {
         brep.vertices.push(Vertex { point: DVec3::ZERO });
         brep.edges.push(Edge { start: 0, end: 0 }); // Same vertex
 
-        let circle = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        });
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        ));
         brep.geom.curves.push(circle);
         brep.geom.edge_curve.push(Some(0));
         brep.geom.edge_curve_range.push(Some([0.0, 2.0 * PI]));
@@ -1212,11 +1209,8 @@ mod tests {
         brep.vertices.push(Vertex { point: DVec3::ZERO }); // Closed edge.
         brep.edges.push(Edge { start: 0, end: 1 });
 
-        let circle = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        });
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        ));
         brep.geom.curves.push(circle);
         brep.geom.edge_curve.push(Some(0));
         brep.geom.edge_curve_range.push(Some([0.0, 2.0 * PI]));

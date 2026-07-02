@@ -247,7 +247,7 @@ pub fn ellipse_to_bspline(ellipse: &Ellipse3, _degree: usize) -> BSplineCurve3 {
 /// use rcad_kernel::geom::{Circle3, Curve3, CurveEval};
 /// use glam::DVec3;
 ///
-/// let circle = Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 1.0 };
+/// let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0 );
 /// let curve = Curve3::Circle(circle);
 /// let params = ConvertParams::default();
 /// let bspline = curve_to_bspline(&curve, &params);
@@ -1044,11 +1044,7 @@ mod tests {
 
     #[test]
     fn circle_conversion_exact() {
-        let circle = Circle3 {
-            center: DVec3::new(1.0, 2.0, 3.0),
-            normal: DVec3::Z,
-            radius: 2.0,
-        };
+        let circle = Circle3::new(DVec3::new(1.0, DVec3::Z, 2.0);
         let bs = circle_to_bspline(&circle, 2);
 
         // Test points on circle
@@ -1093,11 +1089,8 @@ mod tests {
         assert_eq!(bs.degree, 1);
 
         // Test Circle dispatch
-        let circle = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        });
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        ));
         let bs = curve_to_bspline(&circle, &params);
         assert_eq!(bs.degree, 2);
     }

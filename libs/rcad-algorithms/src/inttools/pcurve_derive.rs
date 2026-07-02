@@ -1132,11 +1132,7 @@ mod tests {
             origin: DVec3::ZERO,
             normal: DVec3::Z,
         };
-        let circle = Circle3 {
-            center: DVec3::new(1.0, 2.0, 0.0),
-            normal: DVec3::Z,
-            radius: 3.0,
-        };
+        let circle = Circle3::new(DVec3::new(1.0, DVec3::Z, 3.0);
 
         let pcurve = circle_pcurve_on_plane(&circle, &plane);
 
@@ -1158,11 +1154,7 @@ mod tests {
             radius: 2.0,
             ref_dir: any_perpendicular(DVec3::Z),
         };
-        let circle = Circle3 {
-            center: DVec3::new(0.0, 0.0, 1.0),
-            normal: DVec3::Z,
-            radius: (3.0_f64).sqrt(), // r² + z² = 4  ⟹  r = √3
-        };
+        let circle = Circle3::new(DVec3::new(0.0, DVec3::Z, (3.0_f64).sqrt());
 
         let pcurve = circle_pcurve_on_sphere(&circle, &sphere);
 
@@ -1198,11 +1190,7 @@ mod tests {
             ref_dir: any_perpendicular(DVec3::Z),
             radius: 1.0,
         };
-        let circle = Circle3 {
-            center: DVec3::new(0.0, 0.0, 3.0),
-            normal: DVec3::Z,
-            radius: 1.0,
-        };
+        let circle = Circle3::new(DVec3::new(0.0, DVec3::Z, 1.0);
 
         let pcurve = circle_pcurve_on_cylinder(&circle, &cyl);
 
@@ -1230,11 +1218,7 @@ mod tests {
         };
         let h = 3.0;
         let slant = cone.slant_from_axial(h);
-        let circle = Circle3 {
-            center: DVec3::new(0.0, 0.0, h),
-            normal: DVec3::Z,
-            radius: h * cone.half_angle_rad.tan(),
-        };
+        let circle = Circle3::new(DVec3::new(0.0, DVec3::Z, h * cone.half_angle_rad.tan());
 
         let pcurve = circle_pcurve_on_cone(&circle, &cone);
         match pcurve {
@@ -1286,11 +1270,8 @@ mod tests {
             ref_dir: any_perpendicular(DVec3::Z),
         });
         // A circle on the sphere at the equator (z = 0, r = 2).
-        let circle = Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 2.0,
-        };
+        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 2.0,
+        );
         let curve3 = Curve3::Circle(circle);
         let t_range = [0.0_f64, PI]; // half circle
 
@@ -1323,11 +1304,7 @@ mod tests {
         //   r_circ = sqrt(1 - 0.25) = sqrt(0.75)
         //   circle center = (0.5, 0, 0)
         let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Z, 1.0);
-        let circle = Circle3 {
-            center: DVec3::new(0.5, 0.0, 0.0),
-            normal: DVec3::X,  // NOT parallel to sphere axis (Z)
-            radius: (0.75_f64).sqrt(),
-        };
+        let circle = Circle3::new(DVec3::new(0.5, DVec3::X, (0.75_f64).sqrt());
 
         let pcurve = circle_pcurve_on_sphere(&circle, &sphere);
 
@@ -1363,7 +1340,7 @@ mod tests {
         });
         let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Z, 2.0);
         // Equatorial circle at z=0, r=2
-        let circle = Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 2.0 };
+        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 2.0 );
 
         let analytic = circle_pcurve_on_sphere(&circle, &sphere);
         let fallback = fallback_pcurve_by_projection(

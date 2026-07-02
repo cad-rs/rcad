@@ -520,8 +520,8 @@ fn intersect_cylinder_torus_coaxial(
     let center2 = torus.center - torus.axis * z_offset;
 
     CylinderTorusResult::TwoCircles(
-        Circle3 { center: center1, normal: torus.axis, radius: r_cyl },
-        Circle3 { center: center2, normal: torus.axis, radius: r_cyl },
+        Circle3::new(center1, torus.axis, r_cyl ),
+        Circle3::new(center2, torus.axis, r_cyl ),
     )
 }
 

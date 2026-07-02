@@ -32,9 +32,7 @@ fn test_point_on_line_closest_projection() {
 fn test_point_on_circle_closest_projection() {
     // Circle: center=(0,0,0), normal=Z, radius=5
     // Query: (10, 0, 0) → closest = (5, 0, 0), dist = 5, param = 0
-    let circle = Curve3::Circle(Circle3 {
-        center: DVec3::ZERO, normal: DVec3::Z, radius: 5.0,
-    });
+    let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
     let result = closest_point_on_curve(&circle, DVec3::new(10.0, 0.0, 0.0), 16);
     assert!((result.point - DVec3::new(5.0, 0.0, 0.0)).length() < 1e-10);
     assert!((result.distance - 5.0).abs() < 1e-10);
@@ -46,9 +44,7 @@ fn test_point_on_circle_closest_projection() {
 #[test]
 fn test_point_on_circle_center_projection() {
     // Point exactly at center of circle: should return any point on circle
-    let circle = Curve3::Circle(Circle3 {
-        center: DVec3::ZERO, normal: DVec3::Z, radius: 5.0,
-    });
+    let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
     let result = closest_point_on_curve(&circle, DVec3::ZERO, 16);
     assert!((result.distance - 5.0).abs() < 1e-10);
     assert!((result.point.length() - 5.0).abs() < 1e-10);
@@ -113,9 +109,7 @@ fn test_extrema_line_line_skew() {
 #[test]
 fn test_extrema_line_circle() {
     let l1 = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
-    let c = Curve3::Circle(Circle3 {
-        center: DVec3::new(0.0, 10.0, 0.0), normal: DVec3::Z, radius: 3.0,
-    });
+    let c = Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, 3.0));
     let ext = extrema_curve_curve(&l1, &c, 16);
     assert!(!ext.pairs.is_empty());
     // Minimum distance from line to circle center = 10, minus radius = 7
@@ -125,12 +119,8 @@ fn test_extrema_line_circle() {
 #[test]
 fn test_extrema_circle_circle_coaxial() {
     // Two coaxial circles in parallel planes
-    let c1 = Curve3::Circle(Circle3 {
-        center: DVec3::ZERO, normal: DVec3::Z, radius: 5.0,
-    });
-    let c2 = Curve3::Circle(Circle3 {
-        center: DVec3::new(0.0, 0.0, 10.0), normal: DVec3::Z, radius: 3.0,
-    });
+    let c1 = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
+    let c2 = Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, 3.0));
     let ext = extrema_curve_curve(&c1, &c2, 16);
     assert!(!ext.pairs.is_empty());
     // Min distance: distance between circle centers projected radially
@@ -156,9 +146,7 @@ fn test_curve_resolution_line_is_tolerance() {
 #[test]
 fn test_curve_resolution_circle() {
     // Circle of radius 10: |tangent| = 10, resolution = tol/10
-    let circle = Curve3::Circle(Circle3 {
-        center: DVec3::ZERO, normal: DVec3::Z, radius: 10.0,
-    });
+    let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 10.0));
     let res = curve_resolution(&circle, 0.0, 1e-7);
     // For a circle of radius 10, |tangent| = 10, so resolution should be
     // approximately tol / 10 = 1e-8. The exact value depends on finite difference step.

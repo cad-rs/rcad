@@ -78,22 +78,14 @@ fn build_cylinder_torus_intersection_brep(
     // E0: lower circle (shared: cylinder face + torus face)
     let e0 = make_edge(
         &mut brep,
-        Curve3::Circle(Circle3 {
-            center: DVec3::new(0.0, 0.0, z_low),
-            normal: DVec3::Z,
-            radius: r_c,
-        }),
+        Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, r_c)),
         0.0, two_pi, v0, v0,
     ).ok()?;
 
     // E1: upper circle (shared: cylinder face + torus face)
     let e1 = make_edge(
         &mut brep,
-        Curve3::Circle(Circle3 {
-            center: DVec3::new(0.0, 0.0, z_high),
-            normal: DVec3::Z,
-            radius: r_c,
-        }),
+        Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, r_c)),
         0.0, two_pi, v1, v1,
     ).ok()?;
 

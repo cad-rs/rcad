@@ -172,11 +172,8 @@ fn intersect_torus_torus_coaxial(
             // Tubes touch at one circle at z = 0, rho = midpoint
             let rho = (R1 + R2) / 2.0;
             if rho > TOLERANCE_ABS {
-                return TorusTorusResult::TangentCircle(Circle3 {
-                    center: t1.center,
-                    normal: axis,
-                    radius: rho,
-                });
+                return TorusTorusResult::TangentCircle(Circle3::new(t1.center, axis, rho,
+                ));
             }
         }
 

@@ -1,4 +1,4 @@
-﻿//! IGES B-Rep parsing and writing support for RCAD.
+//! IGES B-Rep parsing and writing support for RCAD.
 //!
 //! This module provides full IGES (Initial Graphics Exchange Specification) support:
 //! - Parsing IGES files into RCAD BRep structures
@@ -722,11 +722,7 @@ impl IgesBrepBuilder {
         let v23 = p3 - p2;
         let normal = v12.cross(v23).normalize_or(DVec3::Z);
 
-        let circle = Circle3 {
-            center,
-            normal,
-            radius,
-        };
+        let circle = Circle3::new(center, normal, radius);
 
         // Store the 3D curve
         let curve_idx = self.brep.geom.curves.len();

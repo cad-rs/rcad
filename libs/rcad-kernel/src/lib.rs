@@ -1106,11 +1106,8 @@ impl BRep {
         let shell = Shell { faces: vec![face] };
         let solid = Solid { shells: vec![shell] };
 
-        let seam_curve = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Y,
-            radius: r,
-        });
+        let seam_curve = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Y, r,
+        ));
         let sphere_surf = Surface3::Sphere(SphericalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Z,
@@ -1229,16 +1226,8 @@ impl BRep {
             shells: vec![shell],
         };
 
-        let top_circle = Curve3::Circle(Circle3 {
-            center: DVec3::new(0.0, half_h, 0.0),
-            normal: DVec3::Y,
-            radius: r,
-        });
-        let bot_circle = Curve3::Circle(Circle3 {
-            center: DVec3::new(0.0, -half_h, 0.0),
-            normal: -DVec3::Y,
-            radius: r,
-        });
+        let top_circle = Curve3::Circle(Circle3::new(DVec3::new(0.0, half_h, 0.0), DVec3::Y, r));
+        let bot_circle = Curve3::Circle(Circle3::new(DVec3::new(0.0, -half_h, 0.0), -DVec3::Y, r));
         let seam_line = Curve3::Line(Line3 {
             origin: top_p,
             direction: (bot_p - top_p).normalize(),
@@ -1389,11 +1378,7 @@ impl BRep {
         };
 
         // Curves
-        let base_circle = Curve3::Circle(Circle3 {
-            center: DVec3::new(0.0, -half_h, 0.0),
-            normal: -DVec3::Y,
-            radius: r,
-        });
+        let base_circle = Curve3::Circle(Circle3::new(DVec3::new(0.0, -half_h, 0.0), -DVec3::Y, r));
         let slant = Curve3::Line(Line3 {
             origin: apex_pt,
             direction: (base_pt - apex_pt).normalize(),
@@ -1531,17 +1516,10 @@ impl BRep {
         };
 
         // Curves
-        let major_circle = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Y,
-            radius: big_r,
-        });
+        let major_circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Y, big_r,
+        ));
         // Minor circle: centered at (R,0,0), in the YZ plane (normal = +X)
-        let minor_circle = Curve3::Circle(Circle3 {
-            center: DVec3::new(big_r, 0.0, 0.0),
-            normal: DVec3::X,
-            radius: small_r,
-        });
+        let minor_circle = Curve3::Circle(Circle3::new(DVec3::new(big_r, 0.0, 0.0), DVec3::X, small_r));
 
         let torus_surf = Surface3::Torus(ToroidalSurface {
             center: DVec3::ZERO,

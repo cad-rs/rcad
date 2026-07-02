@@ -255,11 +255,7 @@ pub fn cylinder_to_bspline(cyl: &CylindricalSurface) -> BSplineSurface {
 /// Convert a `CylindricalSurface` over the v-range `[v0, v1]`.
 pub fn cylinder_to_bspline_range(cyl: &CylindricalSurface, v0: f64, v1: f64) -> BSplineSurface {
     // Circle at height v0, then circle at height v1
-    let circle = Circle3 {
-        center: cyl.origin + v0 * cyl.axis,
-        normal: cyl.axis,
-        radius: cyl.radius,
-    };
+    let circle = Circle3::new(cyl.origin + v0 * cyl.axis, cyl.axis, cyl.radius);
     let c0 = circle_to_bspline(&circle);
 
     // Shift all control points along the axis for the v1 row
@@ -295,11 +291,7 @@ pub fn sphere_to_bspline(sphere: &SphericalSurface) -> BSplineSurface {
     let v_weights = [1.0f64, 2.0f64.sqrt() / 2.0, 1.0, 2.0f64.sqrt() / 2.0, 1.0];
 
     // Each v-row is a scaled copy of the circle NURBS
-    let circle_base = Circle3 {
-        center: sphere.center,
-        normal: sphere.axis,
-        radius: r,
-    };
+    let circle_base = Circle3::new(sphere.center, sphere.axis, r);
     let c_base = circle_to_bspline(&circle_base);
     let n_u = c_base.control_points.len();
 
@@ -466,11 +458,7 @@ mod tests {
 
     #[test]
     fn circle_bspline_is_exact() {
-        let circle = Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 2.0,
-        };
+        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 2.0);
         let bs = circle_to_bspline(&circle);
         // The NURBS circle evaluates with rational weights — test a few points
         for i in 0..8 {

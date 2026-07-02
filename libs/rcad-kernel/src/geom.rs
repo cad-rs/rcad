@@ -17,7 +17,45 @@ pub struct Line3 {
 pub struct Circle3 {
     pub center: Point3,
     pub normal: Vec3,
+    #[serde(default = "circle3_x_dir_default")]
+    pub x_dir: Vec3,
+    #[serde(default = "circle3_y_dir_default")]
+    pub y_dir: Vec3,
     pub radius: f64,
+}
+
+fn stable_x_dir(normal: Vec3) -> Vec3 {
+    if normal.x.abs() < 0.9 {
+        normal.cross(DVec3::X).normalize()
+    } else {
+        normal.cross(DVec3::Y).normalize()
+    }
+}
+fn circle3_x_dir_default() -> Vec3 { DVec3::X }
+fn circle3_y_dir_default() -> Vec3 { DVec3::Y }
+
+impl Circle3 {
+    pub fn new(center: Point3, normal: Vec3, radius: f64) -> Self {
+        let x_dir = stable_x_dir(normal);
+        let y_dir = normal.cross(x_dir).normalize();
+        Self { center, normal, x_dir, y_dir, radius }
+    }
+    pub fn rotate_frame(&mut self, angle: f64) {
+        let cos_a = angle.cos();
+        let sin_a = angle.sin();
+        let x = self.x_dir;
+        let y = self.y_dir;
+        self.x_dir = DVec3::new(
+            x.x * cos_a + y.x * sin_a,
+            x.y * cos_a + y.y * sin_a,
+            x.z * cos_a + y.z * sin_a,
+        );
+        self.y_dir = DVec3::new(
+            -x.x * sin_a + y.x * cos_a,
+            -x.y * sin_a + y.y * cos_a,
+            -x.z * sin_a + y.z * cos_a,
+        );
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -941,32 +979,13 @@ impl CurveEval for Line3 {
 
 impl CurveEval for Circle3 {
     fn point_at(&self, t: f64) -> DVec3 {
-        // Use deterministic reference direction (same as intersect_circle_plane_with_tol)
-        let x_ax = if self.normal.x.abs() < 0.9 {
-            self.normal.cross(DVec3::X).normalize()
-        } else {
-            self.normal.cross(DVec3::Y).normalize()
-        };
-        let y_ax = self.normal.cross(x_ax);
-        self.center + self.radius * (t.cos() * x_ax + t.sin() * y_ax)
+        self.center + self.x_dir * (self.radius * t.cos()) + self.y_dir * (self.radius * t.sin())
     }
     fn tangent_at(&self, t: f64) -> DVec3 {
-        let x_ax = if self.normal.x.abs() < 0.9 {
-            self.normal.cross(DVec3::X).normalize()
-        } else {
-            self.normal.cross(DVec3::Y).normalize()
-        };
-        let y_ax = self.normal.cross(x_ax);
-        (-t.sin() * x_ax + t.cos() * y_ax).normalize()
+        (-t.sin() * self.x_dir + t.cos() * self.y_dir).normalize()
     }
     fn derivative_at(&self, t: f64) -> DVec3 {
-        let x_ax = if self.normal.x.abs() < 0.9 {
-            self.normal.cross(DVec3::X).normalize()
-        } else {
-            self.normal.cross(DVec3::Y).normalize()
-        };
-        let y_ax = self.normal.cross(x_ax);
-        self.radius * (-t.sin() * x_ax + t.cos() * y_ax)
+        self.radius * (-t.sin() * self.x_dir + t.cos() * self.y_dir)
     }
     fn default_domain(&self) -> [f64; 2] {
         [0.0, 2.0 * PI]
@@ -2637,11 +2656,8 @@ mod eval_tests {
     #[test]
     fn circle3_point_at_zero_is_on_circle() {
         // Circle in XY plane, normal = Z
-        let c = Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 2.0,
-        };
+        let c = Circle3::new(DVec3::ZERO, DVec3::Z, 2.0,
+        );
         let p0 = c.point_at(0.0);
         assert!((p0.length() - 2.0).abs() < 1e-10);
     }
@@ -2660,11 +2676,8 @@ mod eval_tests {
 
     #[test]
     fn circle3_quarter_turn() {
-        let c = Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        };
+        let c = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        );
         let p0 = c.point_at(0.0);
         let p90 = c.point_at(FRAC_PI_2);
         // 90° rotation: p0 and p90 should be perpendicular from center
@@ -3063,11 +3076,8 @@ mod eval_tests {
     #[test]
     fn bspline_circle_tangent_perpendicular_to_radius() {
         // Use circle_to_bspline to get an exact NURBS circle, then check tangents.
-        let circle = Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        };
+        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        );
         let c = crate::nurbs_convert::circle_to_bspline(&circle);
         for &t in &[0.0, 0.5, 1.0, 1.5, 2.0] {
             let pt = c.point_at(t);

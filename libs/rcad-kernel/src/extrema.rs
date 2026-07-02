@@ -254,11 +254,7 @@ mod tests {
     }
 
     fn circle(center: DVec3, normal: DVec3, radius: f64) -> Curve3 {
-        Curve3::Circle(Circle3 {
-            center,
-            normal: normal.normalize(),
-            radius,
-        })
+        Curve3::Circle(Circle3::new(center, normal, radius))
     }
 
     #[test]

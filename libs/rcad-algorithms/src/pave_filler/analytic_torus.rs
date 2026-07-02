@@ -351,11 +351,8 @@ impl<'a> super::PaveFiller<'a> {
                 }
                 SurfaceCurve::Ellipse(ellipse) => {
                     let pts = sample_circle_arc(
-                        &Circle3 {
-                            center: ellipse.center,
-                            normal: ellipse.normal,
-                            radius: ellipse.major_radius,
-                        },
+                        &Circle3::new(ellipse.center, ellipse.normal, ellipse.major_radius,
+                        ),
                         0.0,
                         std::f64::consts::TAU,
                         32,

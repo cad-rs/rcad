@@ -364,11 +364,8 @@ mod tests {
 
     #[test]
     fn sample_circle_points() {
-        let circle = Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 2.0,
-        };
+        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 2.0,
+        );
 
         let curve = SectionCurveType::Circle(circle);
         let pts = curve.sample_points(10);

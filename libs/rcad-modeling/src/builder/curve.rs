@@ -17,11 +17,7 @@ pub fn circle(center: DVec3, normal: DVec3, radius: f64) -> Result<Curve3, Build
     let center = validate_point("center", center)?;
     let normal = normalize_vector("normal", normal)?;
     let radius = super::validate_positive("radius", radius)?;
-    Ok(Curve3::Circle(Circle3 {
-        center,
-        normal,
-        radius,
-    }))
+    Ok(Curve3::Circle(Circle3::new(center, normal, radius)))
 }
 
 pub fn make_circle(center: DVec3, normal: DVec3, radius: f64) -> Result<Curve3, BuildError> {

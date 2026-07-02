@@ -399,7 +399,7 @@ mod phase2a_tests {
 
     #[test]
     fn test_param_on_circle3() {
-        let circle = Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 1.0 };
+        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0 );
         // Point (1,0,0) -> angle 0
         let pt = DVec3::new(1.0, 0.0, 0.0);
         let t = param_on_circle3(pt, &circle, 1e-6).unwrap();

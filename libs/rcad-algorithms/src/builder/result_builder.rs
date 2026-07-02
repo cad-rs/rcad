@@ -130,11 +130,8 @@ impl ResultBuilder {
                     self.add_edge_seam_degenerate(v1, v2, sphere_surf)
                 } else {
                     let seam_normal = any_perpendicular(sphere_surf.axis).normalize();
-                    let seam_circle = Curve3::Circle(Circle3 {
-                        center: sphere_surf.center,
-                        normal: seam_normal,
-                        radius: sphere_surf.radius,
-                    });                    self.add_seam_edge(v1, v2, seam_circle)
+                    let seam_circle = Curve3::Circle(Circle3::new(sphere_surf.center, seam_normal, sphere_surf.radius,
+                    ));                    self.add_seam_edge(v1, v2, seam_circle)
                 };
                 (ei, true)
             } else {
@@ -202,7 +199,7 @@ impl ResultBuilder {
                             Surface3::Sphere(sph) => sph,
                             _ => &SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, ref_dir: DVec3::X },
                         };
-                        let c = Curve3::Circle(Circle3 { center: s.center, normal: any_perpendicular(s.axis).normalize(), radius: s.radius });
+                        let c = Curve3::Circle(Circle3::new(s.center, any_perpendicular(s.axis).normalize(), s.radius ));
                         self.add_seam_edge(v1, v2, c)
                     }
                     _ => self.add_edge(v1, v2),
@@ -398,9 +395,8 @@ impl ResultBuilder {
                     self.add_edge_seam_degenerate(v1, v2, &sphere_surf)
                 } else {
                     let seam_normal = any_perpendicular(sphere_surf.axis).normalize();
-                    let seam_circle = Curve3::Circle(Circle3 {
-                        center: sphere_surf.center, normal: seam_normal, radius: sphere_surf.radius,
-                    });
+                    let seam_circle = Curve3::Circle(Circle3::new(sphere_surf.center, seam_normal, sphere_surf.radius,
+                    ));
                     self.add_seam_edge(v1, v2, seam_circle)
                 };
                 (ei, true)
@@ -507,11 +503,8 @@ impl ResultBuilder {
                             Some(Surface3::Sphere(s)) => s.clone(),
                             _ => SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0, ref_dir: DVec3::X },
                         };
-                        let c = Curve3::Circle(Circle3 {
-                            center: sphere_surf.center,
-                            normal: any_perpendicular(sphere_surf.axis).normalize(),
-                            radius: sphere_surf.radius,
-                        });
+                        let c = Curve3::Circle(Circle3::new(sphere_surf.center, any_perpendicular(sphere_surf.axis).normalize(), sphere_surf.radius,
+                        ));
                         self.add_seam_edge(v1, v2, c)
                     }
                     _ => self.add_edge(v1, v2),
@@ -983,11 +976,8 @@ impl ResultBuilder {
         // ✅ OCCT-aligned: seam edge = sphere meridian through pole (not IC circle).
         //    If normal = axis, it would coincide with plane-sphere IC causing curve merge errors.
         let seam_normal = any_perpendicular(sphere_surf.axis).normalize();
-        let seam_circle = Curve3::Circle(Circle3 {
-            center: sphere_surf.center,
-            normal: seam_normal,
-            radius: sphere_surf.radius,
-        });
+        let seam_circle = Curve3::Circle(Circle3::new(sphere_surf.center, seam_normal, sphere_surf.radius,
+        ));
         self.custom_edge_curves[idx] = Some(seam_circle);
         self.deg_edge_indices.insert(idx);
         idx

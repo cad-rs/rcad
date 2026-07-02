@@ -189,11 +189,8 @@ fn do_mirror_brep(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> BRep
                 origin: mirror_point(l.origin),
                 direction: mirror_vec(l.direction),
             }),
-            Curve3::Circle(c) => Curve3::Circle(rcad_kernel::geom::Circle3 {
-                center: mirror_point(c.center),
-                normal: mirror_vec(c.normal),
-                radius: c.radius,
-            }),
+            Curve3::Circle(c) => Curve3::Circle(rcad_kernel::geom::Circle3::new(mirror_point(c.center), mirror_vec(c.normal), c.radius,
+            )),
             Curve3::Ellipse(e) => Curve3::Ellipse(rcad_kernel::geom::Ellipse3 {
                 center: mirror_point(e.center),
                 normal: mirror_vec(e.normal),

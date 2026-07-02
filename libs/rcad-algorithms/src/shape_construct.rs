@@ -147,22 +147,14 @@ pub fn construct_circle_from_3_points(p1: DVec3, p2: DVec3, p3: DVec3) -> Option
         return None;
     }
 
-    Some(Circle3 {
-        center,
-        normal,
-        radius,
-    })
+    Some(Circle3::new(center, normal, radius))
 }
 
 /// Construct a circle from center, normal, and radius.
 ///
 /// The normal vector will be normalized. The radius must be positive.
 pub fn construct_circle_center_normal(center: DVec3, normal: DVec3, radius: f64) -> Circle3 {
-    Circle3 {
-        center,
-        normal: normal.normalize_or(DVec3::Z),
-        radius: radius.abs().max(TOLERANCE_ABS),
-    }
+    Circle3::new(center, normal, radius)
 }
 
 /// Construct an ellipse from three points.

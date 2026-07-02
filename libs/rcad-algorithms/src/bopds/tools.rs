@@ -333,11 +333,8 @@ mod tests {
 
     #[test]
     fn test_min_distance_to_curve_circle() {
-        let circle = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        });
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        ));
         let dist = min_distance_to_curve(
             DVec3::new(2.0, 0.0, 0.0),
             &circle,

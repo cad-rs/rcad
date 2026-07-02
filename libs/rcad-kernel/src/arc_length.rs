@@ -146,11 +146,7 @@ mod tests {
 
     #[test]
     fn circle_half_circumference() {
-        let c = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        });
+        let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
         // half circle [0, π] → length = π
         let l = arc_length(&c, 0.0, PI);
         assert!(approx_eq(l, PI, TOL), "half circle got {l}");
@@ -158,11 +154,7 @@ mod tests {
 
     #[test]
     fn circle_full_circumference() {
-        let c = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 2.0,
-        });
+        let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 2.0));
         let l = arc_length(&c, 0.0, 2.0 * PI);
         assert!(approx_eq(l, 4.0 * PI, TOL), "full circle r=2 got {l}");
     }

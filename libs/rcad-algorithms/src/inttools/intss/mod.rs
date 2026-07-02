@@ -557,11 +557,8 @@ fn sphere_x_cylinder_with_tolerance(
         let mut out = SurfaceSurfaceIntersection::default();
         if dz_sq.abs() < tol {
             // Tangent 鈥?single circle at sphere center height
-            let circle = Circle3 {
-                center: s.center,
-                normal: c.axis,
-                radius: c.radius,
-            };
+            let circle = Circle3::new(s.center, c.axis, c.radius,
+            );
             let pca = circle_pcurve_on_sphere(&circle, s);
             let pcb = circle_pcurve_on_cylinder(&circle, c);
             out.curves.push(SurfaceIntersectionResult {
@@ -1133,19 +1130,13 @@ fn torus_x_plane_perp(
     if r1 > TOLERANCE_ABS {
         let pcurve_a = pcurve_for_torus_circle(torus, center_proj, r1, plane);
         let pcurve_b = crate::inttools::pcurve_derive::circle_pcurve_on_plane(
-            &rcad_kernel::geom::Circle3 {
-                center: center_proj,
-                normal: circle_normal,
-                radius: r1,
-            },
+            &rcad_kernel::geom::Circle3::new(center_proj, circle_normal, r1,
+            ),
             plane,
         );
         out.curves.push(SurfaceIntersectionResult {
-            curve_3d: SurfaceCurve::Circle(rcad_kernel::geom::Circle3 {
-                center: center_proj,
-                normal: circle_normal,
-                radius: r1,
-            }),
+            curve_3d: SurfaceCurve::Circle(rcad_kernel::geom::Circle3::new(center_proj, circle_normal, r1,
+            )),
             pcurve_on_a: Some(pcurve_a),
             pcurve_on_b: Some(pcurve_b),
         });
@@ -1155,19 +1146,13 @@ fn torus_x_plane_perp(
     if r2 > TOLERANCE_ABS {
         let pcurve_a = pcurve_for_torus_circle(torus, center_proj, r2, plane);
         let pcurve_b = crate::inttools::pcurve_derive::circle_pcurve_on_plane(
-            &rcad_kernel::geom::Circle3 {
-                center: center_proj,
-                normal: circle_normal,
-                radius: r2,
-            },
+            &rcad_kernel::geom::Circle3::new(center_proj, circle_normal, r2,
+            ),
             plane,
         );
         out.curves.push(SurfaceIntersectionResult {
-            curve_3d: SurfaceCurve::Circle(rcad_kernel::geom::Circle3 {
-                center: center_proj,
-                normal: circle_normal,
-                radius: r2,
-            }),
+            curve_3d: SurfaceCurve::Circle(rcad_kernel::geom::Circle3::new(center_proj, circle_normal, r2,
+            )),
             pcurve_on_a: Some(pcurve_a),
             pcurve_on_b: Some(pcurve_b),
         });

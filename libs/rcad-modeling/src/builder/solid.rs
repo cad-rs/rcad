@@ -222,16 +222,8 @@ pub fn make_conical_frustum_brep(
     ];
 
     // ── 3D curves ───────────────────────────────────────────────
-    let bottom_circle = Curve3::Circle(Circle3 {
-        center: DVec3::new(0.0, -half_h, 0.0),
-        normal: -DVec3::Y,
-        radius: rb,
-    });
-    let top_circle = Curve3::Circle(Circle3 {
-        center: DVec3::new(0.0, half_h, 0.0),
-        normal: DVec3::Y,
-        radius: rt,
-    });
+    let bottom_circle = Curve3::Circle(Circle3::new(DVec3::new(0.0, -half_h, 0.0), -DVec3::Y, rb));
+    let top_circle = Curve3::Circle(Circle3::new(DVec3::new(0.0, half_h, 0.0), DVec3::Y, rt));
     let seam_curve = Curve3::Line(Line3 {
         origin: bottom_pt,
         direction: (top_pt - bottom_pt).normalize(),

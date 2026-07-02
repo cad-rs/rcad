@@ -930,11 +930,8 @@ mod tests {
 
     #[test]
     fn project_onto_circle_curve() {
-        let circle = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        });
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        ));
         let q = DVec3::new(2.0, 0.0, 0.0);
         let r = closest_point_on_curve(&circle, q, 64);
         assert!(
@@ -1030,11 +1027,8 @@ mod tests {
     #[test]
     fn project_onto_partial_circle_arc() {
         // Arc from 0 to π/2 (first quadrant).
-        let arc = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        });
+        let arc = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        ));
         // For a full circle, query at (-2, 0, 0) should give t = π, point = (-1, 0, 0).
         let q = DVec3::new(-2.0, 0.0, 0.0);
         let r = closest_point_on_curve(&arc, q, 64);

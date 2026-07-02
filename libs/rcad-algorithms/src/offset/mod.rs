@@ -835,11 +835,8 @@ pub fn intersect_offset_sphere_sphere(
         let t = r1 / (r1 + r2);
         let point = sphere1.center + (sphere2.center - sphere1.center) * t;
         // Return a degenerate circle (radius 0)
-        return OffsetIntersectionCurve::Circle(Circle3 {
-            center: point,
-            normal: (sphere2.center - sphere1.center).normalize(),
-            radius: 0.0,
-        });
+        return OffsetIntersectionCurve::Circle(Circle3::new(point, (sphere2.center - sphere1.center).normalize(), 0.0,
+        ));
     }
     if (centers_dist - (r1 - r2).abs()).abs() < TOLERANCE_ABS {
         // Internal tangent - single point
@@ -849,11 +846,8 @@ pub fn intersect_offset_sphere_sphere(
         } else {
             sphere1.center - dir * r1
         };
-        return OffsetIntersectionCurve::Circle(Circle3 {
-            center: point,
-            normal: dir,
-            radius: 0.0,
-        });
+        return OffsetIntersectionCurve::Circle(Circle3::new(point, dir, 0.0,
+        ));
     }
 
     // Two intersecting spheres produce a circle
@@ -871,11 +865,8 @@ pub fn intersect_offset_sphere_sphere(
     let dir = (sphere2.center - sphere1.center).normalize();
     let circle_center = sphere1.center + dir * h;
 
-    OffsetIntersectionCurve::Circle(Circle3 {
-        center: circle_center,
-        normal: dir,
-        radius: circle_radius,
-    })
+    OffsetIntersectionCurve::Circle(Circle3::new(circle_center, dir, circle_radius,
+    ))
 }
 
 /// Intersect two offset cylinders.
@@ -1033,11 +1024,8 @@ pub fn intersect_offset_plane_sphere(
         }
         crate::inttools::plane_sphere::PlaneSphereResult::TangentPoint(point) => {
             // Return a degenerate circle
-            OffsetIntersectionCurve::Circle(Circle3 {
-                center: point,
-                normal: plane.normal,
-                radius: 0.0,
-            })
+            OffsetIntersectionCurve::Circle(Circle3::new(point, plane.normal, 0.0,
+            ))
         }
         crate::inttools::plane_sphere::PlaneSphereResult::Circle(circle) => {
             OffsetIntersectionCurve::Circle(circle)

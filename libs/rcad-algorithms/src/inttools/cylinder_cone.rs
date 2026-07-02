@@ -153,18 +153,12 @@ fn intersect_parallel_cylinder_cone(
         let mut second: Option<Circle3> = None;
 
         if h_upper > h_apex + TOLERANCE_ABS {
-            first = Some(Circle3 {
-                center: cyl.origin + a_cyl * h_upper,
-                normal: a_cyl,
-                radius: r_cyl,
-            });
+            first = Some(Circle3::new(cyl.origin + a_cyl * h_upper, a_cyl, r_cyl,
+            ));
         }
         if h_lower < h_apex - TOLERANCE_ABS {
-            second = Some(Circle3 {
-                center: cyl.origin + a_cyl * h_lower,
-                normal: a_cyl,
-                radius: r_cyl,
-            });
+            second = Some(Circle3::new(cyl.origin + a_cyl * h_lower, a_cyl, r_cyl,
+            ));
         }
 
         return match (first, second) {

@@ -5644,11 +5644,8 @@ mod tests {
             },
         ];
         brep.edges = vec![Edge { start: 0, end: 1 }];
-        brep.geom.curves.push(Curve3::Circle(rcad_kernel::geom::Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        }));
+        brep.geom.curves.push(Curve3::Circle(rcad_kernel::geom::Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        )));
         brep.geom.edge_curve = vec![Some(0)];
         brep.geom.edge_curve_range = vec![Some([135.0, 0.0])];
 
@@ -5675,11 +5672,8 @@ mod tests {
             },
         ];
         brep.edges = vec![Edge { start: 0, end: 1 }];
-        brep.geom.curves.push(Curve3::Circle(rcad_kernel::geom::Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        }));
+        brep.geom.curves.push(Curve3::Circle(rcad_kernel::geom::Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        )));
         brep.geom.edge_curve = vec![Some(0)];
         // 270-degree sweep hint should choose the major arc.
         brep.geom.edge_curve_range = vec![Some([0.0, 270.0])];

@@ -522,13 +522,13 @@ pub(crate) fn build_sphere_clipped_by_z_planes(
     // 閳光偓閳光偓 Edges 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
     // E0: circle at v_hi (higher z, smaller v)
     let c_hi = DVec3::new(center.x, center.y, center.z + radius * v_hi.cos());
-    let e0_curve = Curve3::Circle(Circle3 { center: c_hi, normal: DVec3::Z, radius: r_hi });
+    let e0_curve = Curve3::Circle(Circle3::new(c_hi, DVec3::Z, r_hi ));
     let e0 = make_edge(&mut brep, e0_curve, 0.0, two_pi, v_hi_idx, v_hi_idx).ok()?;
 
     // E1: circle at v_lo (lower z, larger v) whenever the lower clip plane exists.
     let e1 = if has_bot_cap {
         let c_lo = DVec3::new(center.x, center.y, center.z + radius * v_lo.cos());
-        let curve = Curve3::Circle(Circle3 { center: c_lo, normal: -DVec3::Z, radius: r_lo });
+        let curve = Curve3::Circle(Circle3::new(c_lo, -DVec3::Z, r_lo ));
         let idx = make_edge(&mut brep, curve, 0.0, two_pi, v_lo_idx, v_lo_idx).ok()?;
         Some(idx)
     } else {
@@ -832,11 +832,7 @@ fn build_cylinder_sphere_intersection_brep(
     // E0: intersection circle (shared: sphere rev / cyl fwd)
     let e0 = make_edge(
         &mut brep,
-        Curve3::Circle(Circle3 {
-            center: DVec3::new(0.0, 0.0, z_isect),
-            normal: DVec3::Z,
-            radius: r_c,
-        }),
+        Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, r_c)),
         0.0, two_pi, v0, v0,
     )
     .ok()?;
@@ -849,11 +845,8 @@ fn build_cylinder_sphere_intersection_brep(
     let t_v0 = f64::atan2(-r_c, dz);
     let e1 = make_edge(
         &mut brep,
-        Curve3::Circle(Circle3 {
-            center: s_center,
-            normal: DVec3::Y,
-            radius: r_s,
-        }),
+        Curve3::Circle(Circle3::new(s_center, DVec3::Y, r_s,
+        )),
         t_v0, 0.0, v0, v1,
     )
     .ok()?;
@@ -872,11 +865,7 @@ fn build_cylinder_sphere_intersection_brep(
     // E3: cylinder top circle
     let e3 = make_edge(
         &mut brep,
-        Curve3::Circle(Circle3 {
-            center: DVec3::new(0.0, 0.0, z_hi),
-            normal: DVec3::Z,
-            radius: r_c,
-        }),
+        Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, r_c)),
         0.0, two_pi, v2, v2,
     )
     .ok()?;

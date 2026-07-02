@@ -183,25 +183,16 @@ fn intersect_plane_torus_parallel(
 
         // Check for tangent case (circles merge into one)
         if (center1 - center2).length() < tol {
-            return PlaneTorusResult::TangentCircle(Circle3 {
-                center: center1,
-                normal: n,
-                radius: torus.minor_radius,
-            });
+            return PlaneTorusResult::TangentCircle(Circle3::new(center1, n, torus.minor_radius,
+            ));
         }
 
         // Two circles of radius r in the plane
         PlaneTorusResult::TwoCircles(
-            Circle3 {
-                center: center1,
-                normal: n,
-                radius: torus.minor_radius,
-            },
-            Circle3 {
-                center: center2,
-                normal: n,
-                radius: torus.minor_radius,
-            },
+            Circle3::new(center1, n, torus.minor_radius,
+            ),
+            Circle3::new(center2, n, torus.minor_radius,
+            ),
         )
     } else {
         // d > R: Plane is between the tube center circle and outer edge

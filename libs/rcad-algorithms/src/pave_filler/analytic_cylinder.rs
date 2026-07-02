@@ -345,11 +345,8 @@ impl<'a> super::PaveFiller<'a> {
                            f2: usize|
          -> usize {
             let pts = sample_circle_arc(
-                &Circle3 {
-                    center: ellipse.center,
-                    normal: ellipse.normal,
-                    radius: ellipse.major_radius.max(ellipse.minor_radius),
-                },
+                &Circle3::new(ellipse.center, ellipse.normal, ellipse.major_radius.max(ellipse.minor_radius),
+                ),
                 0.0,
                 TAU,
                 32,

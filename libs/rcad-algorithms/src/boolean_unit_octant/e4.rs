@@ -31,21 +31,13 @@ fn build_cylinder_torus_difference_brep(
 
     // 閳光偓閳光偓 Edges 閳光偓閳光偓
     // E0: bottom cap circle at z=z_lo
-    let e0 = make_edge(&mut brep, Curve3::Circle(Circle3 {
-        center: DVec3::new(0.0, 0.0, z_lo), normal: DVec3::Z, radius: r_c,
-    }), 0.0, two_pi, v0, v0).ok()?;
+    let e0 = make_edge(&mut brep, Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, r_c)), 0.0, two_pi, v0, v0).ok()?;
     // E1: lower intersection circle at z=z_low
-    let e1 = make_edge(&mut brep, Curve3::Circle(Circle3 {
-        center: DVec3::new(0.0, 0.0, z_low), normal: DVec3::Z, radius: r_c,
-    }), 0.0, two_pi, v1, v1).ok()?;
+    let e1 = make_edge(&mut brep, Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, r_c)), 0.0, two_pi, v1, v1).ok()?;
     // E2: upper intersection circle at z=z_high
-    let e2 = make_edge(&mut brep, Curve3::Circle(Circle3 {
-        center: DVec3::new(0.0, 0.0, z_high), normal: DVec3::Z, radius: r_c,
-    }), 0.0, two_pi, v2, v2).ok()?;
+    let e2 = make_edge(&mut brep, Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, r_c)), 0.0, two_pi, v2, v2).ok()?;
     // E3: top cap circle at z=z_hi
-    let e3 = make_edge(&mut brep, Curve3::Circle(Circle3 {
-        center: DVec3::new(0.0, 0.0, z_hi), normal: DVec3::Z, radius: r_c,
-    }), 0.0, two_pi, v3, v3).ok()?;
+    let e3 = make_edge(&mut brep, Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, r_c)), 0.0, two_pi, v3, v3).ok()?;
 
     // Seam edges
     let h_lower = z_low - z_lo;
@@ -264,13 +256,9 @@ fn build_torus_minus_cylinder_brep(
 
     // 閳光偓閳光偓 Edges 閳光偓閳光偓
     // E_bot: bottom intersection circle at z=z_low, r=R
-    let e_bot = make_edge(&mut brep, Curve3::Circle(Circle3 {
-        center: DVec3::new(0.0, 0.0, z_low), normal: DVec3::Z, radius: r_c,
-    }), 0.0, two_pi, v_bot, v_bot).ok()?;
+    let e_bot = make_edge(&mut brep, Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, r_c)), 0.0, two_pi, v_bot, v_bot).ok()?;
     // E_top: top intersection circle at z=z_high, r=R
-    let e_top = make_edge(&mut brep, Curve3::Circle(Circle3 {
-        center: DVec3::new(0.0, 0.0, z_high), normal: DVec3::Z, radius: r_c,
-    }), 0.0, two_pi, v_top, v_top).ok()?;
+    let e_top = make_edge(&mut brep, Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, r_c)), 0.0, two_pi, v_top, v_top).ok()?;
     // Torus seam: 锠?0, 鑳?閳?[-锜?2, 锜?2] on torus surface (approximated as vertical line)
     let e_seam_torus = make_edge(&mut brep, Curve3::Line(Line3 {
         origin: DVec3::new(r_c, 0.0, z_low), direction: DVec3::Z,
@@ -1034,13 +1022,13 @@ fn build_cylinder_cone_union_wider_cyl(
     brep.vertices.push(Vertex { point: DVec3::new(cx + r_con_hi, cy, z_con_hi) });
 
     // Edges
-    let e0 = push_edge!(Curve3::Circle(Circle3 { center: DVec3::new(cx,cy,z_cyl_lo), normal: -DVec3::Z, radius: cyl_r }), 0.0, two_pi, v0, v0);
-    let e1 = push_edge!(Curve3::Circle(Circle3 { center: DVec3::new(cx,cy,z_cyl_hi), normal: DVec3::Z, radius: cyl_r }), 0.0, two_pi, v1, v1);
+    let e0 = push_edge!(Curve3::Circle(Circle3::new(DVec3::new(cx, -DVec3::Z, cyl_r)), 0.0, two_pi, v0, v0);
+    let e1 = push_edge!(Curve3::Circle(Circle3::new(DVec3::new(cx, DVec3::Z, cyl_r)), 0.0, two_pi, v1, v1);
     let e2 = push_edge!(Curve3::Line(Line3 { origin: brep.vertices[v0].point, direction: DVec3::Z }), 0.0, h, v0, v1);
-    let e3 = push_edge!(Curve3::Circle(Circle3 { center: DVec3::new(cx,cy,z_cyl_hi), normal: DVec3::Z, radius: r_top }), 0.0, two_pi, v2, v2);
+    let e3 = push_edge!(Curve3::Circle(Circle3::new(DVec3::new(cx, DVec3::Z, r_top)), 0.0, two_pi, v2, v2);
     let coned = brep.vertices[v3].point - brep.vertices[v2].point;
     let e4 = push_edge!(Curve3::Line(Line3 { origin: brep.vertices[v2].point, direction: coned.normalize_or_zero() }), 0.0, coned.length(), v2, v3);
-    let e5 = push_edge!(Curve3::Circle(Circle3 { center: DVec3::new(cx,cy,z_con_hi), normal: DVec3::Z, radius: r_con_hi }), 0.0, two_pi, v3, v3);
+    let e5 = push_edge!(Curve3::Circle(Circle3::new(DVec3::new(cx, DVec3::Z, r_con_hi)), 0.0, two_pi, v3, v3);
 
     // Surfaces
     let si_cyl = brep.geom.surfaces.len();

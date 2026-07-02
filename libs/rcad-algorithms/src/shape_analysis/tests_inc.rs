@@ -115,11 +115,8 @@ mod tests {
 
     #[test]
     fn analyze_circle_curve() {
-        let circle = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        });
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        ));
 
         let report = analyze_curve(&circle, 64);
 

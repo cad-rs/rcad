@@ -1011,11 +1011,8 @@ mod tests {
     #[test]
     fn test_curve_bounds_default() {
         // Use a circle instead of a line, since lines have infinite default domain
-        let circle = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        });
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        ));
 
         let bbox = curve_bounds_default(&circle);
 

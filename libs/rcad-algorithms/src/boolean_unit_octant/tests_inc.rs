@@ -598,9 +598,9 @@ fn build_cylinder_quadrant_brep(
         let j = (i + 1) % 4;
         let a0 = angles[i]; let a1 = angles[j];
         bot_arcs[i] = e!(b[i], b[j],
-            Curve3::Circle(Circle3 { center: bot_c, normal: axis, radius: r }), a0, a1);
+            Curve3::Circle(Circle3::new(bot_c, axis, r )), a0, a1);
         top_arcs[i] = e!(t[i], t[j],
-            Curve3::Circle(Circle3 { center: top_c, normal: axis, radius: r }), a0, a1);
+            Curve3::Circle(Circle3::new(top_c, axis, r )), a0, a1);
     }
     let cyl_id = brep.geom.surfaces.len(); brep.geom.surfaces.push(cyl_surf_3.clone());
     let bp_id = brep.geom.surfaces.len(); brep.geom.surfaces.push(Surface3::Plane(Plane { origin: bot_c, normal: -axis }));

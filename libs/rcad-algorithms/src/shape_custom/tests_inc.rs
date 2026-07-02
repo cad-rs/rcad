@@ -61,11 +61,8 @@ mod tests {
 
     #[test]
     fn convert_circle_to_bspline() {
-        let circle = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        });
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        ));
 
         let bspline = ensure_bspline_curve(&circle, 32);
         assert_eq!(bspline.degree, 2, "circle converts to degree-2 NURBS");
@@ -113,11 +110,8 @@ mod tests {
         });
         assert_eq!(curve_degree(&line), 1);
 
-        let circle = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        });
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        ));
         assert_eq!(curve_degree(&circle), 2);
     }
 

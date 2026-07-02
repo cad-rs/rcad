@@ -1441,11 +1441,8 @@ mod tests {
     #[test]
     fn discretize_edge_line() {
         // Test with a bounded line segment using a circle (bounded domain)
-        let circle = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        });
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        ));
         let params = MeshParams::default().with_deflection(0.1);
 
         let points = discretize_edge(&circle, &params);
@@ -1459,11 +1456,8 @@ mod tests {
 
     #[test]
     fn discretize_edge_circle() {
-        let circle = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        });
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        ));
         let params = MeshParams::default().with_deflection(0.01);
 
         let points = discretize_edge(&circle, &params);
@@ -1652,11 +1646,8 @@ mod tests {
 
     #[test]
     fn test_discretize_edge_on_surface() {
-        let circle = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        });
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        ));
         let plane = test_plane();
         let params = MeshParams::default();
 

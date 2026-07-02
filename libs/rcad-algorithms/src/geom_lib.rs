@@ -62,11 +62,7 @@ use rcad_kernel::geom::{
 /// use rcad_algorithms::geom_lib::is_curve_closed;
 /// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 ///
-/// let circle = Circle3 {
-///     center: DVec3::ZERO,
-///     normal: DVec3::Z,
-///     radius: 1.0,
-/// };
+/// let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0);
 /// assert!(is_curve_closed(&Curve3::Circle(circle), TOLERANCE_MESH_LEGACY));
 /// ```
 pub fn is_curve_closed(curve: &Curve3, tol: f64) -> bool {
@@ -653,11 +649,8 @@ pub fn transform_curve(curve: &Curve3, transform: DAffine3) -> Curve3 {
             })
         }
         Curve3::Circle(circle) => {
-            Curve3::Circle(Circle3 {
-                center: transform.transform_point3(circle.center),
-                normal: transform.transform_vector3(circle.normal).normalize(),
-                radius: circle.radius * transform.matrix3.x_axis.length(),
-            })
+            Curve3::Circle(Circle3::new(transform.transform_point3(circle.center), transform.transform_vector3(circle.normal).normalize(), circle.radius * transform.matrix3.x_axis.length(),
+            ))
         }
         Curve3::Ellipse(ellipse) => {
             let scale = transform.matrix3.x_axis.length();
@@ -1276,11 +1269,8 @@ mod tests {
 
     #[test]
     fn test_is_curve_closed_circle() {
-        let circle = Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        };
+        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        );
         assert!(is_curve_closed(&Curve3::Circle(circle), TOLERANCE_MESH_LEGACY));
     }
 
@@ -1478,11 +1468,8 @@ mod tests {
 
     #[test]
     fn test_transform_curve_circle() {
-        let circle = Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        };
+        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        );
         let translation = DAffine3::from_translation(DVec3::new(1.0, 2.0, 3.0));
         let transformed = transform_curve(&Curve3::Circle(circle), translation);
 

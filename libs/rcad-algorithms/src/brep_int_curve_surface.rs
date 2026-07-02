@@ -1469,11 +1469,8 @@ mod tests {
         });
 
         // Circle in XY plane at z=0
-        let circle = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.5,
-        });
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.5,
+        ));
 
         let intersections = intersect_curve_with_brep(&circle, &box_brep, TOLERANCE_ABS);
 

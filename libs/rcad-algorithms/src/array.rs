@@ -999,11 +999,8 @@ fn transform_curve(curve: &Curve3, mat: &DMat4) -> Curve3 {
             origin: transform_point(l.origin),
             direction: transform_direction(l.direction),
         }),
-        Curve3::Circle(c) => Curve3::Circle(Circle3 {
-            center: transform_point(c.center),
-            normal: transform_direction(c.normal),
-            radius: c.radius,
-        }),
+        Curve3::Circle(c) => Curve3::Circle(Circle3::new(transform_point(c.center), transform_direction(c.normal), c.radius,
+        )),
         Curve3::Ellipse(e) => Curve3::Ellipse(Ellipse3 {
             center: transform_point(e.center),
             normal: transform_direction(e.normal),

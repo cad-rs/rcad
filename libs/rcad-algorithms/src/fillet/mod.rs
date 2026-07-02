@@ -1017,11 +1017,8 @@ pub fn compute_fillet_curves(
 
             // Start arc
             let start_center = torus.center + axis * (p0 - torus.center).dot(axis);
-            let start_curve = Curve3::Circle(Circle3 {
-                center: start_center,
-                normal: axis,
-                radius: torus.minor_radius,
-            });
+            let start_curve = Curve3::Circle(Circle3::new(start_center, axis, torus.minor_radius,
+            ));
 
             curves.push(FilletCurve {
                 curve: start_curve,
@@ -1031,11 +1028,8 @@ pub fn compute_fillet_curves(
 
             // End arc
             let end_center = torus.center + axis * (p1 - torus.center).dot(axis);
-            let end_curve = Curve3::Circle(Circle3 {
-                center: end_center,
-                normal: axis,
-                radius: torus.minor_radius,
-            });
+            let end_curve = Curve3::Circle(Circle3::new(end_center, axis, torus.minor_radius,
+            ));
 
             curves.push(FilletCurve {
                 curve: end_curve,
@@ -1047,11 +1041,8 @@ pub fn compute_fillet_curves(
             // For cylindrical fillet, curves are circles at start and end
             let axis = cyl.axis.normalize();
 
-            let start_curve = Curve3::Circle(Circle3 {
-                center: p0,
-                normal: axis,
-                radius: cyl.radius,
-            });
+            let start_curve = Curve3::Circle(Circle3::new(p0, axis, cyl.radius,
+            ));
 
             curves.push(FilletCurve {
                 curve: start_curve,
@@ -1059,11 +1050,8 @@ pub fn compute_fillet_curves(
                 is_start: true,
             });
 
-            let end_curve = Curve3::Circle(Circle3 {
-                center: p1,
-                normal: axis,
-                radius: cyl.radius,
-            });
+            let end_curve = Curve3::Circle(Circle3::new(p1, axis, cyl.radius,
+            ));
 
             curves.push(FilletCurve {
                 curve: end_curve,
@@ -1077,11 +1065,8 @@ pub fn compute_fillet_curves(
             let _ref_dir = any_perpendicular(axis);
 
             // Approximate with circles through the edge endpoints
-            let start_curve = Curve3::Circle(Circle3 {
-                center: p0 - axis * (p0 - sphere.center).dot(axis) * 0.5,
-                normal: axis,
-                radius: sphere.radius * 0.5,
-            });
+            let start_curve = Curve3::Circle(Circle3::new(p0 - axis * (p0 - sphere.center).dot(axis) * 0.5, axis, sphere.radius * 0.5,
+            ));
 
             curves.push(FilletCurve {
                 curve: start_curve,
@@ -1398,7 +1383,7 @@ fn push_arc_edge(
 ) -> usize {
     let idx = brep.edges.len();
     let curve_idx = brep.geom.curves.len();
-    brep.geom.curves.push(Curve3::Circle(Circle3 { center, normal, radius }));
+    brep.geom.curves.push(Curve3::Circle(Circle3::new(center, normal, radius)));
     brep.edges.push(rcad_kernel::topology::Edge { start, end });
     brep.geom.edge_curve.push(Some(curve_idx));
     brep.geom.edge_curve_range.push(Some([t_start, t_end]));

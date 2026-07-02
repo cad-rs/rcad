@@ -610,11 +610,7 @@ pub fn intersect_plane_sphere_intana(plane: &Plane, sphere: &SphericalSurface) -
     let circle_radius = (sphere.radius * sphere.radius - signed_dist * signed_dist).sqrt();
     let center = sphere.center - plane.normal * signed_dist;
 
-    PlnSphResult::Circle(Circle3 {
-        center,
-        normal: plane.normal,
-        radius: circle_radius,
-    })
+    PlnSphResult::Circle(Circle3::new(center, normal, radius))
 }
 
 // -----------------------------------------------------------------------------
@@ -951,11 +947,8 @@ fn intersect_parallel_cylinders(
     // Concentric same-radius cylinders
     if dist_between_axes < TOLERANCE_ABS && (r1 - r2).abs() < TOLERANCE_ABS {
         // Same cylinder - return a representative circle
-        return CylCylResult::SingleCurve(Curve3::Circle(Circle3 {
-            center: cyl1.origin,
-            normal: axis,
-            radius: r1,
-        }));
+        return CylCylResult::SingleCurve(Curve3::Circle(Circle3::new(cyl1.origin, axis, r1,
+        )));
     }
 
     // Two parallel cylinders with overlapping cross-sections

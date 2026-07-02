@@ -78,7 +78,7 @@ pub fn line_closest_point(line: &Line3, point: DVec3) -> DVec3 {
 ///
 /// # Example
 /// ```ignore
-/// let circle = Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 2.0 };
+/// let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 2.0 );
 /// let p = circle_point_at(&circle, 0.0); // Point at angle 0
 /// assert!((p.length() - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
 /// ```
@@ -535,11 +535,8 @@ mod tests {
 
     #[test]
     fn test_circle_point_at() {
-        let circle = Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 2.0,
-        };
+        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 2.0,
+        );
 
         let p0 = circle_point_at(&circle, 0.0);
         assert!((p0.length() - 2.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
@@ -554,11 +551,8 @@ mod tests {
 
     #[test]
     fn test_circle_parameter() {
-        let circle = Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 5.0,
-        };
+        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 5.0,
+        );
 
         let x_axis = any_perpendicular(circle.normal);
 
@@ -576,11 +570,8 @@ mod tests {
 
     #[test]
     fn test_circle_tangent_at() {
-        let circle = Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        };
+        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        );
 
         let tangent = circle_tangent_at(&circle, 0.0);
         let x_axis = any_perpendicular(circle.normal);
@@ -595,11 +586,8 @@ mod tests {
 
     #[test]
     fn test_circle_normal_at() {
-        let circle = Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        };
+        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        );
 
         let normal = circle_normal_at(&circle, 0.0);
         let x_axis = any_perpendicular(circle.normal);
@@ -613,11 +601,8 @@ mod tests {
 
     #[test]
     fn test_circle_binormal_at() {
-        let circle = Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        };
+        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        );
 
         let binormal = circle_binormal_at(&circle, 0.0);
         assert!((binormal - DVec3::Z).length() < TOLERANCE_LINEAR_ULTRA_STRICT);
@@ -625,11 +610,8 @@ mod tests {
 
     #[test]
     fn test_circle_derivative() {
-        let circle = Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 2.0,
-        };
+        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 2.0,
+        );
 
         // Order 0 should match point_at
         let p = circle_derivative(&circle, 1.0, 0);
@@ -879,11 +861,8 @@ mod tests {
 
     #[test]
     fn test_circle_derivative_cycle() {
-        let circle = Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        };
+        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        );
 
         let angle = FRAC_PI_4;
 

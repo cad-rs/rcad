@@ -139,16 +139,10 @@ pub fn intersect_sphere_cylinder_with_tolerance(
         }
 
         let delta_h = disc.sqrt();
-        let c1 = Circle3 {
-            center: cyl.origin + axis * (h_c - delta_h),
-            normal: axis,
-            radius: r,
-        };
-        let c2 = Circle3 {
-            center: cyl.origin + axis * (h_c + delta_h),
-            normal: axis,
-            radius: r,
-        };
+        let c1 = Circle3::new(cyl.origin + axis * (h_c - delta_h), axis, r,
+        );
+        let c2 = Circle3::new(cyl.origin + axis * (h_c + delta_h), axis, r,
+        );
         return SphereCylinderResult::TwoCircles(c1, c2);
     }
 

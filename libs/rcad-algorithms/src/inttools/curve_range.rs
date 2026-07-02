@@ -126,11 +126,8 @@ mod tests {
 
     // ── Helper: circle in XY plane, radius R, centered at origin ──
     fn unit_circle() -> Curve3 {
-        Curve3::Circle(rcad_kernel::geom::Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        })
+        Curve3::Circle(rcad_kernel::geom::Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        ))
     }
 
     // ── shrunk_range: line tests ──

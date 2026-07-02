@@ -991,11 +991,8 @@ mod tests {
 
     #[test]
     fn test_sample_intersection_points() {
-        let circle = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        });
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        ));
 
         let points = sample_intersection_points(&circle, 10);
         assert_eq!(points.len(), 10);
@@ -1009,11 +1006,8 @@ mod tests {
 
     #[test]
     fn test_sample_with_adaptive_density() {
-        let circle = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        });
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        ));
 
         let points = sample_with_adaptive_density(&circle, 0.01, 50);
         assert!(points.len() >= 10);

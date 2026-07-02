@@ -186,11 +186,7 @@ pub struct PointBRepProjection {
 /// use rcad_algorithms::projection::project_point_on_curve;
 /// use rcad_algorithms::tolerance::TOLERANCE_MESH_LEGACY;
 ///
-/// let circle = Curve3::Circle(Circle3 {
-///     center: DVec3::ZERO,
-///     normal: DVec3::Z,
-///     radius: 1.0,
-/// });
+/// let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
 /// let (proj, t) = project_point_on_curve(DVec3::new(2.0, 0.0, 0.0), &circle);
 /// assert!((proj - DVec3::new(1.0, 0.0, 0.0)).length() < TOLERANCE_MESH_LEGACY);
 /// ```
@@ -803,11 +799,7 @@ fn compute_surface_silhouette(
             let center = sph.center;
 
             // Create circle in plane perpendicular to view direction
-            let circle = Curve3::Circle(Circle3 {
-                center,
-                normal,
-                radius: sph.radius,
-            });
+            let circle = Curve3::Circle(Circle3::new(center, normal, radius));
             curves.push(circle);
         }
 
@@ -1237,11 +1229,8 @@ mod tests {
 
     #[test]
     fn project_point_on_curve_circle() {
-        let circle = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: 1.0,
-        });
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0,
+        ));
         let (proj, _t) = project_point_on_curve(DVec3::new(2.0, 0.0, 0.0), &circle);
         assert!((proj - DVec3::new(1.0, 0.0, 0.0)).length() < TOLERANCE_MESH_LEGACY);
     }
@@ -1332,11 +1321,7 @@ mod tests {
     #[test]
     fn project_circle_on_plane_matches_uv_circumference() {
         let r = 2.0_f64;
-        let circle3 = Curve3::Circle(Circle3 {
-            center: DVec3::new(0.0, 0.0, 3.0),
-            normal: DVec3::Z,
-            radius: r,
-        });
+        let circle3 = Curve3::Circle(Circle3::new(DVec3::new(0.0, DVec3::Z, r));
         let plane = Surface3::Plane(Plane {
             origin: DVec3::ZERO,
             normal: DVec3::Z,
@@ -1367,11 +1352,8 @@ mod tests {
     #[test]
     fn project_circle_onto_bilinear_plane_matches_3d_pullback_of_analytic_plane() {
         let r = 2.0_f64;
-        let circle3 = Curve3::Circle(Circle3 {
-            center: DVec3::ZERO,
-            normal: DVec3::Z,
-            radius: r,
-        });
+        let circle3 = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, r,
+        ));
         let plane = Plane {
             origin: DVec3::ZERO,
             normal: DVec3::Z,

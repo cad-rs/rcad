@@ -34,11 +34,7 @@ pub fn intersect_plane_sphere(plane: &Plane, sphere: &SphericalSurface) -> Plane
 
     let center = sphere.center - plane.normal * signed_dist;
 
-    PlaneSphereResult::Circle(Circle3 {
-        center,
-        normal: plane.normal,
-        radius: circle_radius,
-    })
+    PlaneSphereResult::Circle(Circle3::new(center, normal, radius))
 }
 
 #[cfg(test)]

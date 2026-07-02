@@ -377,7 +377,7 @@ fn add_arc_edge(
         dt += 2.0 * PI;
     }
 
-    let circle = Circle3 { center, normal, radius };
+    let circle = Circle3::new(center, normal, radius);
     make_edge(dst, Curve3::Circle(circle), t_a, t_a + dt, va, vb)
 }
 

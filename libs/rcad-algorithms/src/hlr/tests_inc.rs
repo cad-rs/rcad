@@ -103,11 +103,8 @@ mod tests {
 
         // Build a minimal BRep with a single circle edge (no solids).
         let mut brep = rcad_kernel::BRep::new();
-        let circ = Circle3 {
-            center: glam::DVec3::ZERO,
-            normal: glam::DVec3::Z,
-            radius: 1.0,
-        };
+        let circ = Circle3::new(glam::DVec3::ZERO, glam::DVec3::Z, 1.0,
+        );
         // Add two vertices on the circle (half-circle arc)
         brep.vertices.push(rcad_kernel::topology::Vertex {
             point: circ.point_at(0.0),

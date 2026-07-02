@@ -499,11 +499,7 @@ pub enum ContinuityLevel {
 /// use rcad_algorithms::shape_analysis::{analyze_curve, CurveAnalysisReport, ContinuityLevel};
 /// use glam::DVec3;
 ///
-/// let circle = Curve3::Circle(Circle3 {
-///     center: DVec3::ZERO,
-///     normal: DVec3::Z,
-///     radius: 1.0,
-/// });
+/// let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
 /// let report = analyze_curve(&circle, 64);
 /// assert!(report.is_closed);
 /// assert!(report.is_periodic);
