@@ -262,7 +262,7 @@ impl<'a> super::PaveFiller<'a> {
             for (j, &ci) in curves_of_ff.iter().enumerate() {
                 if ci >= self.ds.intersection_curves.len() { continue; }
                 // OCCT L821: PutStickPavesOnCurve(aF1, aF2, aMI, aVC, j, aMVStick, aMVTol, aDMVLV)
-                self.put_stick_paves_on_curve(ci, &[n_f1, n_f2]);
+                self.put_stick_paves_on_curve(ci, &aMI, &a_mv_stick);
 
                 // OCCT L823-826: PutEFPavesOnCurve (single curve case)
                 if a_nb_c_single == 1 {

@@ -362,70 +362,84 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
 
-    pub(crate) fn put_stick_paves_on_curve(&mut self, ci: usize, face_idxs: &[usize; 2]) {
-        // Clone IC data to avoid borrow conflict with change_pave_block1
+    /// OCCT-aligned: PutStickPavesOnCurve (BOPAlgo_PaveFiller_6.cxx L2780-2875).
+    ///   Processes stick vertices that are near the IC endpoints (rich criterion)
+    ///   and where both face normals are nearly opposite (crease criterion).
+    pub(crate) fn put_stick_paves_on_curve(
+        &mut self,
+        ci: usize,
+        aMI: &std::collections::HashSet<usize>,
+        aMVStick: &std::collections::HashSet<usize>,
+    ) {
         let (start_vertex, end_vertex, t_range, curve, geom_tol) = {
             let ic = &self.ds.intersection_curves[ci];
             (ic.start_vertex, ic.end_vertex, ic.t_range, ic.curve.clone(), ic.geom_tol)
         };
-        // OCCT L2759-2766: check if both endpoints already have assigned vertices
+        // OCCT L2792-2798: getBoundPaves — check if both ends already have vertices
         if start_vertex < self.ds.vertices.len() && end_vertex < self.ds.vertices.len() {
-            return; // both ends already bound
+            return;
         }
+        // OCCT L2799-2801: RemoveUsedVertices
+        let a_mv: std::collections::HashSet<usize> = aMVStick.iter().copied().collect();
+        if a_mv.is_empty() { return; }
+
         let a_tol_r3d = geom_tol.max(self.tol());
         let a_dt2 = 2e-7;
         let a_d_sc_pr = 5e-9;
         let a_t = t_range;
         let a_p = [curve.point_at(a_t[0]), curve.point_at(a_t[1])];
 
-        let mut stick_verts: Vec<usize> = Vec::new();
-        for &fi in face_idxs.iter().filter(|&&f| f != usize::MAX) {
-            stick_verts.extend(self.get_stick_vertices(fi));
-        }
-        stick_verts.sort(); stick_verts.dedup();
-
-        let used_verts: HashSet<usize> = self.ds.intersection_curves.iter()
-            .flat_map(|ic2| [ic2.start_vertex, ic2.end_vertex])
-            .filter(|&v| v < self.ds.vertices.len())
-            .collect();
-        stick_verts.retain(|v| !used_verts.contains(v));
-
-        if stick_verts.is_empty() { return; }
-
-        let surf0 = if face_idxs[0] != usize::MAX { Some(self.ds.faces[face_idxs[0]].surface.clone()) } else { None };
-        let surf1 = if face_idxs[1] != usize::MAX { Some(self.ds.faces[face_idxs[1]].surface.clone()) } else { None };
-
-        for &n_v in &stick_verts {
-            let v_pt = self.ds.vertices[n_v].point;
-            for m in 0..2 {
-                let is_start = (m == 0 && start_vertex >= self.ds.vertices.len())
-                    || (m == 1 && end_vertex >= self.ds.vertices.len());
-                if !is_start { continue; }
-                let d2 = a_p[m].distance_squared(v_pt);
-                if d2 > a_dt2 { continue; }
-
-                let mut normals_ok = true;
-                if let (Some(ref s0), Some(ref s1)) = (surf0.as_ref(), surf1.as_ref()) {
-                    let n0 = Self::estimate_surface_normal(s0, a_p[m]);
-                    let n1 = Self::estimate_surface_normal(s1, a_p[m]);
-                    let mut sc_pr = n0.dot(n1);
-                    if sc_pr < 0.0 { sc_pr = -sc_pr; }
-                    sc_pr = 1.0 - sc_pr;
-                    if sc_pr > a_d_sc_pr { normals_ok = false; }
-                }
-
-                if normals_ok {
-                    let a_ptol = a_tol_r3d.max(self.ds.vertices[n_v].geom_tol);
-                    if let Some(pb) = self.ds.intersection_curves[ci].change_pave_block1() {
-                        let mut n_v_used = 0;
-                        if !pb.contains_parameter(a_t[m], a_ptol, &mut n_v_used) {
-                            pb.append_ext_pave(Pave { vertex_idx: n_v, param: a_t[m] });
-                        }
-                    }
-                    break;
+        let surf_both: [Option<Surface3>; 2] = {
+            let mut sv = [None, None];
+            for (k, fi) in self.face_idxs_for_curve(ci).iter().enumerate() {
+                if *fi < self.ds.faces.len() {
+                    sv[k] = Some(self.ds.faces[*fi].surface.clone());
                 }
             }
+            sv
+        };
+
+        for &n_v in &a_mv {
+            let v_pt = self.ds.vertices[n_v].point;
+            for m in 0..2 {
+                // OCCT L2838-2841: skip if bound already has a vertex
+                if (m == 0 && start_vertex < self.ds.vertices.len()) ||
+                   (m == 1 && end_vertex < self.ds.vertices.len()) {
+                    continue;
+                }
+                // OCCT L2842-2846: rich criterion — close to IC endpoint
+                let d2 = a_p[m].distance_squared(v_pt);
+                if d2 > a_dt2 { continue; }
+                // OCCT L2848-2866: crease criterion — face normals nearly opposite
+                let mut sc_pr = 1.0;
+                if let (Some(s0), Some(s1)) = (&surf_both[0], &surf_both[1]) {
+                    let n0 = Self::estimate_surface_normal(s0, a_p[m]);
+                    let n1 = Self::estimate_surface_normal(s1, a_p[m]);
+                    sc_pr = n0.dot(n1);
+                    if sc_pr < 0.0 { sc_pr = -sc_pr; }
+                    sc_pr = 1.0 - sc_pr;
+                }
+                if sc_pr > a_d_sc_pr { continue; }
+                // OCCT L2869-2871: PutPaveOnCurve
+                let a_d = d2.sqrt();
+                let a_tol_r3d_use = a_tol_r3d.max(self.ds.vertices[n_v].geom_tol);
+                self.put_pave_on_curve(n_v, a_d.min(a_tol_r3d_use), ci, aMI, 1);
+                break;
+            }
         }
+    }
+
+    /// Find the two face indices for a given intersection curve.
+    fn face_idxs_for_curve(&self, ci: usize) -> [usize; 2] {
+        let mut result = [usize::MAX; 2];
+        let mut idx = 0;
+        for (fi, face) in self.ds.faces.iter().enumerate() {
+            if face.face_info.curves_sc.contains(&ci) && idx < 2 {
+                result[idx] = fi;
+                idx += 1;
+            }
+        }
+        result
     }
 
     /// Estimate surface normal at a 3D point (for PutStickPavesOnCurve normal check).
