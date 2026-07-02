@@ -144,3 +144,25 @@
 2. **P0**: `PutPaveOnCurve` — 顶点管理，直接影响 V=15
 3. **P1**: `MakeBlocks` 主循环 — 综合影响
 4. **P1**: `IsValidBlockForFaces` — pcurve 求值
+
+## Level 5: TKPrim �� Prism/Revol/Primitives
+
+TKPrim shared bottom-layer libraries (same as boolean):
+- TKernel/TKMath -> rcad-kernel ?
+- TKG2d/TKG3d -> rcad-kernel::geom ? Circle3 missing x_dir/y_dir
+- TKGeomBase (ProjLib/Extrema/GeomLib) -> projection.rs ?
+- TKTopAlgo (BRepBuilder/TopExp) -> topology ? pending
+- TKBRep -> BRep struct ?
+
+| OCCT | rcad file | align | notes |
+|------|-----------|-------|-------|
+| BRepPrimAPI_MakePrism | builder/ops.rs | ? | linear extrude, shares BRepSweep |
+| BRepPrimAPI_MakeRevol | builder/ops.rs | ? | revolve, shares BRepSweep |
+| BRepSweep_Translation | ops.rs:150-400 | ? | translation sweep builder |
+| BRepSweep_Rotation | ops.rs:500-900 | ? | rotation sweep builder |
+| BRepPrim_OneAxis | builder/solid.rs | ? | axially symmetric shapes |
+| BRepPrimAPI_MakeBox | builder/solid.rs | ? | box primitive |
+| BRepPrimAPI_MakeCylinder | builder/solid.rs | ? | cylinder via OneAxis |
+| BRepPrimAPI_MakeSphere | builder/solid.rs | ? | sphere via OneAxis |
+| BRepPrimAPI_MakeCone | builder/solid.rs | ? | cone via OneAxis |
+| BRepPrimAPI_MakeTorus | builder/solid.rs | ? | torus via OneAxis |
