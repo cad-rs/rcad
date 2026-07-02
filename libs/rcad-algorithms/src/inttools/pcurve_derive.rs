@@ -121,6 +121,22 @@ pub fn line_pcurve_on_plane(line: &Line3, plane: &Plane) -> Curve2d {
 // Sphere functions
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// OCCT-aligned: ProjLib_Sphere::Project(gp_Lin) — ProjLib_Sphere.cxx L181-184.
+/// OCCT implementation is a stub: sets myType = GeomAbs_OtherCurve and relies on
+/// the generic ProjLib_Projector::BuildResult (sampling → BSpline fit) for the
+/// actual pcurve. rcad matches this by calling fallback_pcurve_by_projection.
+pub fn line_pcurve_on_sphere(line: &Line3, sphere: &SphericalSurface) -> Curve2d {
+    use rcad_kernel::geom::Curve3;
+    let t_range = line.default_domain();
+    // If domain is unbounded, clamp to a reasonable range
+    let range = if t_range[0].is_finite() && t_range[1].is_finite() {
+        t_range
+    } else {
+        [-1e3, 1e3]
+    };
+    fallback_pcurve_by_projection(&Curve3::Line(*line), &range, &Surface3::Sphere(*sphere))
+}
+
 /// ✅ OCCT-aligned: ProjLib_Sphere::Project(gp_Circ) — form-aligned pcurve.
 ///
 /// OCCT ProJLib_Sphere_1.cxx L97-179 handles isoparametric circles analytically
