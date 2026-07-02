@@ -530,9 +530,13 @@ impl<'a> super::PaveFiller<'a> {
             }
             // OCCT-aligned: Register curves_sc and vertices_in for this face pair
             // (PostTreatFF equivalent in OCCT PaveFiller_6.cxx L1165-1397).
-            self.ds.faces[f1].face_info.curves_sc.extend(&ff_curves);
-            self.ds.faces[f2].face_info.curves_sc.extend(&ff_curves);
-            for &ci in &ff_curves {
+            // Handle both original and split curves by recomputing ff_curves
+            // after prepare_lines_3d may have split closed curves.
+            let post_ff_curves = self.find_face_face_curve_indices(f1, f2)
+                .unwrap_or_default();
+            self.ds.faces[f1].face_info.curves_sc.extend(&post_ff_curves);
+            self.ds.faces[f2].face_info.curves_sc.extend(&post_ff_curves);
+            for &ci in &post_ff_curves {
                 if ci < self.ds.intersection_curves.len() {
                     let ic = &self.ds.intersection_curves[ci];
                     self.ds.faces[f1].face_info.vertices_in.insert(ic.start_vertex);
