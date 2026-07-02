@@ -1704,9 +1704,9 @@ impl<'a> super::PaveFiller<'a> {
             {
                 self.ds.faces[face_idx].face_info.vertices_on.insert(new_v);
             }
-            if self.ds.faces[face_idx].face_info.vertices_on.contains(&new_v) {
-                continue;
-            }
+            // ✅ OCCT-aligned: Create EF interference for EVERY hit, even at edge endpoints.
+            //    OCCT IntTools_EdgeFace creates a new vertex for each hit (no dedup).
+            //    rcad: remove the vertices_on skip check — always push interference.
             self.ds.interferences.push(Interference::EdgeFace {
                 edge: edge_idx,
                 face: face_idx,
@@ -1714,7 +1714,10 @@ impl<'a> super::PaveFiller<'a> {
                 edge_param,
                 new_vertex: new_v,
             });
-            self.ds.faces[face_idx].face_info.vertices_on.insert(new_v);
+            // Only mark vertices_on if actually inserted (avoid duplicate insert msg)
+            if !self.ds.faces[face_idx].face_info.vertices_on.contains(&new_v) {
+                self.ds.faces[face_idx].face_info.vertices_on.insert(new_v);
+            }
             self.ds.edges[edge_idx].paves.push(Pave {
                 vertex_idx: new_v,
                 param: edge_param,
