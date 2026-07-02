@@ -13,7 +13,7 @@
 //!
 //! # Examples
 //!
-//! ```
+//! See the test module for complete usage examples.
 //! # use rcad_algorithms::tolerance::*;
 //! use rcad_algorithms::adaptor3d::Curve3dAdaptor;
 //! use rcad_algorithms::tolerance::TOLERANCE_LINEAR_ULTRA_STRICT;
@@ -21,7 +21,7 @@
 //! use rcad_kernel::geom::Circle3;
 //! use glam::dvec3;
 //!
-//! let circle = Circle3::new(dvec3(0.0, dvec3(0.0, 1.0);
+//! let circle = Circle3::new(dvec3(0.0, 0.0, 0.0), dvec3(0.0, 0.0, 1.0), 1.0);
 //! let curve = Curve3::Circle(circle);
 //! let adaptor = Curve3dAdaptor::from_curve(&curve);
 //!
@@ -944,7 +944,7 @@ mod tests {
 
     #[test]
     fn curve_adaptor_from_circle() {
-        let circle = Circle3::new(dvec3(0.0, dvec3(0.0, 2.0);
+        let circle = Circle3::new(dvec3(0.0, 0.0, 0.0), dvec3(0.0, 0.0, 1.0), 2.0);
         let curve = Curve3::Circle(circle);
         let adaptor = Curve3dAdaptor::from_curve(&curve);
 
@@ -983,7 +983,7 @@ mod tests {
 
     #[test]
     fn curve_adaptor_resolution() {
-        let circle = Circle3::new(dvec3(0.0, dvec3(0.0, 1.0);
+        let circle = Circle3::new(dvec3(0.0, 0.0, 0.0), dvec3(0.0, 0.0, 1.0), 1.0);
         let curve = Curve3::Circle(circle);
         let adaptor = Curve3dAdaptor::from_curve(&curve);
 
@@ -1203,7 +1203,7 @@ mod tests {
 
     #[test]
     fn curve_adaptor_with_trimmed_range() {
-        let circle = Circle3::new(dvec3(0.0, dvec3(0.0, 1.0);
+        let circle = Circle3::new(dvec3(0.0, 0.0, 0.0), dvec3(0.0, 0.0, 1.0), 1.0);
         let curve = Curve3::Circle(circle);
 
         // Create adaptor for a quarter arc
@@ -1223,7 +1223,7 @@ mod tests {
 
     #[test]
     fn curve_adaptor_with_reversed_trimmed_range_is_normalized() {
-        let circle = Circle3::new(dvec3(0.0, dvec3(0.0, 1.0);
+        let circle = Circle3::new(dvec3(0.0, 0.0, 0.0), dvec3(0.0, 0.0, 1.0), 1.0);
         let curve = Curve3::Circle(circle);
         let adaptor = Curve3dAdaptor::from_curve_with_range(&curve, PI / 2.0, 0.0);
 
@@ -1317,7 +1317,7 @@ mod tests {
 
     #[test]
     fn curve_adaptor_first_last_parameter_aliases() {
-        let circle = Circle3::new(dvec3(0.0, dvec3(0.0, 1.0);
+        let circle = Circle3::new(dvec3(0.0, 0.0, 0.0), dvec3(0.0, 0.0, 1.0), 1.0);
         let curve = Curve3::Circle(circle);
         let adaptor = Curve3dAdaptor::from_curve_with_range(&curve, 0.0, PI / 3.0);
 
