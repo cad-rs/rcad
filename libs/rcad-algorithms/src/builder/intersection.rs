@@ -491,14 +491,14 @@ mod tests {
     #[test]
     fn line_circle_two_intersections() {
         let l = Curve2d::Line(Line2d { origin: DVec2::new(-1.0, 0.0), direction: DVec2::new(2.0, 0.0) });
-        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: 1.0 });
+        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 1.0  });
         let r = intersect_line_conic(&l, &c, G2dCurveType::Circle, f64::NEG_INFINITY, f64::INFINITY, 0.0, std::f64::consts::TAU);
         assert_eq!(r.len(), 2);
     }
 
     #[test]
     fn circle_circle_two_intersections() {
-        let c1 = Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: 1.0 });
+        let c1 = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 1.0  });
         let c2 = Curve2d::Circle(Circle2d { center: DVec2::new(1.0, 0.0), radius: 1.0 });
         let r = intersect_circle_circle(&c1, &c2, 0.0, std::f64::consts::TAU, 0.0, std::f64::consts::TAU);
         assert_eq!(r.len(), 2);
@@ -506,7 +506,7 @@ mod tests {
 
     #[test]
     fn circle_ellipse_intersection() {
-        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: 2.0 });
+        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 2.0  });
         let e = Curve2d::Ellipse(Ellipse2d {
             center: DVec2::new(1.0, 0.0), major_dir: DVec2::X,
             major_radius: 2.0, minor_radius: 1.0,
@@ -544,7 +544,7 @@ mod tests {
 
     #[test]
     fn no_intersection_for_disjoint_circles() {
-        let c1 = Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: 1.0 });
+        let c1 = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 1.0  });
         let c2 = Curve2d::Circle(Circle2d { center: DVec2::new(10.0, 0.0), radius: 1.0 });
         let r = intersect_circle_circle(&c1, &c2, 0.0, std::f64::consts::TAU, 0.0, std::f64::consts::TAU);
         assert!(r.is_empty());
@@ -562,7 +562,7 @@ mod tests {
 
     #[test]
     fn icoinic_tool_circle() {
-        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: 2.0 });
+        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 2.0  });
         let tool = IConicTool::new(&c);
         // Point on the circle
         assert!(tool.value(DVec2::new(2.0, 0.0)).abs() < 1e-15);

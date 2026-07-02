@@ -42,10 +42,8 @@ pub fn circle_pcurve_on_plane(circle: &Circle3, plane: &Plane) -> Curve2d {
         // Circle lies in the plane → analytic Circle2d.
         let diff = circle.center - plane.origin;
         let center_2d = DVec2::new(diff.dot(u_axis), diff.dot(v_axis));
-        return Curve2d::Circle(Circle2d {
-            center: center_2d,
-            radius: circle.radius,
-        });
+        return Curve2d::Circle(Circle2d { center: center_2d, x_dir: DVec2::X, y_dir: DVec2::Y, radius: circle.radius,
+         });
     }
 
     // Oblique case: sample the circle and project each point into the plane.

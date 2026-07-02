@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn d1_circle() {
-        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: 2.0 });
+        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 2.0  });
         let d = curve2d_d1(&c, 0.0);
         assert!((d - DVec2::new(0.0, 2.0)).length() < 1e-10);
     }
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn d2_circle() {
-        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: 2.0 });
+        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 2.0  });
         let d = curve2d_d2(&c, 0.0);
         assert!((d - DVec2::new(-2.0, 0.0)).length() < 1e-10);
     }
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn resolution_circle_large_radius() {
-        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: 10.0 });
+        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 10.0  });
         let res = curve2d_resolution(&c, 0.01);
         let expected = 2.0 * ((0.01_f64 / 20.0_f64).asin());
         assert!((res - expected).abs() < 1e-15);
@@ -184,7 +184,7 @@ mod tests {
 
     #[test]
     fn resolution_circle_tiny_radius_returns_tau() {
-        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: 0.001 });
+        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 0.001  });
         let res = curve2d_resolution(&c, 0.01);
         assert!((res - std::f64::consts::TAU).abs() < 1e-15);
     }

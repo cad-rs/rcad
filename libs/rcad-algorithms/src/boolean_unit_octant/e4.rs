@@ -127,9 +127,9 @@ fn build_cylinder_torus_difference_brep(
     let c_su_rev = c2d; c2d += 1;
 
     // Cap pcurves (circles on planes)
-    brep.geom.curve2ds.push(Curve2d::Circle(Circle2d { center: glam::DVec2::ZERO, radius: r_c }));
+    brep.geom.curve2ds.push(Curve2d::Circle(Circle2d { center: glam::DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: r_c  }));
     let c_e0_cap = c2d; c2d += 1;
-    brep.geom.curve2ds.push(Curve2d::Circle(Circle2d { center: glam::DVec2::ZERO, radius: r_c }));
+    brep.geom.curve2ds.push(Curve2d::Circle(Circle2d { center: glam::DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: r_c  }));
     let c_e3_cap = c2d; c2d += 1;
 
     // 閳光偓閳光偓 Edge pcurves 閳光偓閳光偓
@@ -1059,17 +1059,17 @@ fn build_cylinder_cone_union_wider_cyl(
         let g = &mut brep.geom;
         let mut c2 = |c: Curve2d| -> usize { let i = g.curve2ds.len(); g.curve2ds.push(c); i };
         let p0w = c2(Curve2d::Line(Line2d { origin: DVec2::new(0.0,0.0), direction: DVec2::new(two_pi,0.0) }));
-        let p0b = c2(Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: cyl_r }));
+        let p0b = c2(Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: cyl_r  }));
         let p1w = c2(Curve2d::Line(Line2d { origin: DVec2::new(0.0,h), direction: DVec2::new(two_pi,0.0) }));
-        let p1s = c2(Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: cyl_r }));
+        let p1s = c2(Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: cyl_r  }));
         let p2f = c2(Curve2d::Line(Line2d { origin: DVec2::new(0.0,0.0), direction: DVec2::new(0.0,h) }));
         let p2r = c2(Curve2d::Line(Line2d { origin: DVec2::new(0.0,h), direction: DVec2::new(0.0,-h) }));
         let p3n = c2(Curve2d::Line(Line2d { origin: DVec2::new(0.0,0.0), direction: DVec2::new(two_pi,0.0) }));
-        let p3s = c2(Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: r_top }));
+        let p3s = c2(Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: r_top  }));
         let p4f = c2(Curve2d::Line(Line2d { origin: DVec2::new(0.0,0.0), direction: DVec2::new(0.0,1.0) }));
         let p4r = c2(Curve2d::Line(Line2d { origin: DVec2::new(0.0,1.0), direction: DVec2::new(0.0,-1.0) }));
         let p5n = c2(Curve2d::Line(Line2d { origin: DVec2::new(0.0,1.0), direction: DVec2::new(two_pi,0.0) }));
-        let p5t = c2(Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: r_con_hi }));
+        let p5t = c2(Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: r_con_hi  }));
         g.edge_pcurves[e0].extend(vec![PCurve { surface_idx: si_cyl, curve2d_idx: p0w }, PCurve { surface_idx: si_bot, curve2d_idx: p0b }]);
         g.edge_pcurves[e1].extend(vec![PCurve { surface_idx: si_cyl, curve2d_idx: p1w }, PCurve { surface_idx: si_step, curve2d_idx: p1s }]);
         g.edge_pcurves[e2].extend(vec![PCurve { surface_idx: si_cyl, curve2d_idx: p2f }, PCurve { surface_idx: si_cyl, curve2d_idx: p2r }]);

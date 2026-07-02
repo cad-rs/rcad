@@ -1,0 +1,12 @@
+{
+  "brep": {
+    "Comp": 0,
+    "CompSolid": 0,
+    "E": 30,
+    "F": 2,
+    "Shell": 1,
+    "Solid": 0,
+    "V": 15,
+    "total": 48
+  }
+}

@@ -220,7 +220,7 @@ mod tests {
     #[test]
     fn curve_geom_type_classification() {
         let l = Curve2d::Line(Line2d { origin: DVec2::ZERO, direction: DVec2::X });
-        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: 1.0 });
+        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 1.0  });
         let e = Curve2d::Ellipse(Ellipse2d {
             center: DVec2::ZERO, major_dir: DVec2::X,
             major_radius: 2.0, minor_radius: 1.0,
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn angle_2d_circle_non_line_triggers_curvature() {
-        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, radius: 10.0 });
+        let c = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 10.0  });
         let p = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
         // Circle at t=0: d1=(0,10), d2=(-10,0), curvature=1/10
         let a = angle_2d(&c, 0.0, [0.0, std::f64::consts::TAU], false, &p, 1e-5, None);

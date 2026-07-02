@@ -1,4 +1,4 @@
-﻿pub fn make_pcurve(
+pub fn make_pcurve(
     ds: &mut crate::bopds::ds::DS,
     ei: usize,
     fi_a: usize,
@@ -113,10 +113,10 @@ pub fn attach_existing_pcurve(
     if a_c2d_t.is_none() { return 2; }
     let a_c2d_t = a_c2d_t.unwrap();
 
-    // OCCT L102-119: ComputeTolerance check
+    // OCCT L102-119: ComputeTolerance check via IntTools_Tools::ComputeTolerance(3D curve, pcurve, surface, range)
     let a_new_tol = ds.edges[ei_new].geom_tol;
-    // rcad: sample pcurve deviation vs 3D curve (simplified)
-    let tol_sp = estimate_pcurve_deviation(&a_c2d_t, &ds.edges[ei_new].curve, t11, t12);
+    let surface = &ds.faces[face_idx].surface;
+    let tol_sp = estimate_pcurve_deviation(&a_c2d_t, &ds.edges[ei_new].curve, surface, t11, t12);
     if (tol_sp > 10.0 * a_new_tol) && tol_sp > 0.1 { return 4; }
 
     // OCCT L121-138: create temporary edge data, do SameParameter
@@ -237,11 +237,10 @@ fn reverse_curve_2d(curve: &rcad_kernel::geom::Curve2d) -> rcad_kernel::geom::Cu
             })
         }
         rcad_kernel::geom::Curve2d::Circle(c) => {
-            // Reversed circle: same center, radius, negate direction
-            rcad_kernel::geom::Curve2d::Circle(rcad_kernel::geom::Circle2d {
-                center: c.center,
-                radius: c.radius,
-            })
+            // Reversed circle: rotate frame by pi (negate both axes)
+            let mut c2 = *c;
+            c2.rotate_center(std::f64::consts::PI);
+            rcad_kernel::geom::Curve2d::Circle(c2)
         }
         rcad_kernel::geom::Curve2d::BSpline(b) => {
             let mut b2 = b.clone();
@@ -260,30 +259,111 @@ fn reverse_curve_2d(curve: &rcad_kernel::geom::Curve2d) -> rcad_kernel::geom::Cu
     }
 }
 
-/// Adjust pcurve range to match target range (OCCT GeomLib::SameRange equivalent).
+/// OCCT-aligned: GeomLib::SameRange (GeomLib.cxx L842-970).
+/// Adjusts the parameterization of a 2D curve from [src_t1, src_t2] to [dst_t1, dst_t2]
+/// while preserving the geometric shape. Returns None on degenerate source range.
+///
+/// OCCT tolerance: Precision::PConfusion() = 1e-9.
 fn same_range_2d(
     curve: &rcad_kernel::geom::Curve2d,
-    _src_t1: f64,
-    _src_t2: f64,
-    _dst_t1: f64,
-    _dst_t2: f64,
+    src_t1: f64,
+    src_t2: f64,
+    dst_t1: f64,
+    dst_t2: f64,
 ) -> Option<rcad_kernel::geom::Curve2d> {
-    // For rcad: pcurves are stored with their range directly.
-    // If the source and destination ranges differ, we could reparametrize,
-    // but for now return the curve as-is with the target range.
-    Some(curve.clone())
+    use rcad_kernel::geom::Curve2d;
+    let tol = rcad_kernel::tolerance::P_CONFUSION;
+
+    // OCCT L850-858: if range endpoints within tolerance, return as-is
+    if (src_t2 - dst_t2).abs() <= tol && (src_t1 - dst_t1).abs() <= tol {
+        return Some(curve.clone());
+    }
+
+    // OCCT L862: check if parametric length is preserved (shift-only)
+    if (src_t2 - src_t1 - dst_t2 + dst_t1).abs() <= tol {
+        match curve {
+            Curve2d::Line(l) => {
+                // OCCT L864-870: Translate(du * Direction)
+                let du = src_t1 - dst_t1;
+                Some(Curve2d::Line(rcad_kernel::geom::Line2d {
+                    origin: l.origin + du * l.direction,
+                    direction: l.direction,
+                }))
+            }
+            Curve2d::Circle(c) => {
+                // OCCT L872-888: rotate frame around center by dU
+                let du = src_t1 - dst_t1;
+                let mut c2 = *c;
+                c2.rotate_center(du);
+                Some(Curve2d::Circle(c2))
+            }
+            Curve2d::Trimmed(tc) => {
+                // OCCT L890-900: recurse into basis, re-wrap
+                let b = same_range_2d(tc.curve.as_ref(), src_t1, src_t2, dst_t1, dst_t2)?;
+                Some(Curve2d::Trimmed(rcad_kernel::geom::TrimmedCurve2 {
+                    curve: Box::new(b),
+                    t_min: dst_t1,
+                    t_max: dst_t2,
+                }))
+            }
+            Curve2d::BSpline(bs) => {
+                // OCCT L908-921: reparametrize BSpline knots
+                let src_len = src_t2 - src_t1;
+                if src_len.abs() <= tol { return Some(curve.clone()); }
+                let factor = (dst_t2 - dst_t1) / src_len;
+                let mut c = bs.clone();
+                for k in &mut c.knots { *k = dst_t1 + (*k - src_t1) * factor; }
+                Some(Curve2d::BSpline(c))
+            }
+            _ => Some(curve.clone()),
+        }
+    } else {
+        // OCCT L924-968: segmentation (different parametric length)
+        match curve {
+            Curve2d::BSpline(bs) => {
+                let src_len = src_t2 - src_t1;
+                if src_len.abs() <= tol { return Some(curve.clone()); }
+                let factor = (dst_t2 - dst_t1) / src_len;
+                let mut c = bs.clone();
+                for k in &mut c.knots { *k = dst_t1 + (*k - src_t1) * factor; }
+                Some(Curve2d::BSpline(c))
+            }
+            _ => Some(curve.clone()),
+        }
+    }
 }
 
-/// Estimate deviation of pcurve from 3D curve by sampling.
+/// OCCT-aligned: IntTools_Tools::ComputeTolerance (IntTools_Tools.cxx L737-779).
+/// Computes the maximum 3D deviation between a 3D curve and the surface evaluation
+/// of a pcurve over [t1, t2]. Samples uniformly; OCCT uses GeomLib_CheckCurveOnSurface
+/// with adaptive refinement. Returns the max distance * (1 + 1e-5) margin, matching OCCT.
 fn estimate_pcurve_deviation(
-    _pcurve: &rcad_kernel::geom::Curve2d,
-    _curve3: &rcad_kernel::geom::Curve3,
-    _t1: f64,
-    _t2: f64,
+    pcurve: &rcad_kernel::geom::Curve2d,
+    curve3: &rcad_kernel::geom::Curve3,
+    surface: &rcad_kernel::geom::Surface3,
+    t1: f64,
+    t2: f64,
 ) -> f64 {
-    // OCCT uses IntTools_Tools::ComputeTolerance with 3D curve + pcurve + surface.
-    // rcad: simplified 鈥?returns 0 (no deviation). Callers can use compute_tolerance.
-    0.0
+    use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval};
+    const N_SAMPLES: usize = 25;
+    let span = t2 - t1;
+    if span.abs() < 1e-15 {
+        let uv = pcurve.point_at(t1);
+        let p_c3d = curve3.point_at(t1);
+        let p_surf = surface.point_at(uv.x, uv.y);
+        return 1.00001 * p_c3d.distance(p_surf);
+    }
+    let mut max_dist = 0.0f64;
+    for i in 0..=N_SAMPLES {
+        let t = t1 + span * (i as f64) / (N_SAMPLES as f64);
+        let uv = pcurve.point_at(t);
+        let p_c3d = curve3.point_at(t);
+        let p_surf = surface.point_at(uv.x, uv.y);
+        let d = p_c3d.distance(p_surf);
+        if d > max_dist { max_dist = d; }
+    }
+    // OCCT L774: (1.0 + 1e-5) safety margin
+    1.00001 * max_dist
 }
 
 /// Shift a 2D curve by a vector (translate all control points).
@@ -299,10 +379,7 @@ fn shift_curve_2d(
             })
         }
         rcad_kernel::geom::Curve2d::Circle(c) => {
-            rcad_kernel::geom::Curve2d::Circle(rcad_kernel::geom::Circle2d {
-                center: c.center + shift,
-                radius: c.radius,
-            })
+            rcad_kernel::geom::Curve2d::Circle(rcad_kernel::geom::Circle2d { center: c.center + shift, x_dir: c.x_dir, y_dir: c.y_dir, radius: c.radius })
         }
         rcad_kernel::geom::Curve2d::BSpline(b) => {
             let mut b2 = b.clone();

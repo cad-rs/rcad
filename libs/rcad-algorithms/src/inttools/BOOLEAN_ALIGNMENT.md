@@ -97,9 +97,10 @@
 |------|------|------|------|
 | `Geom2d_TrimmedCurve` | `TrimmedCurve2` (geom.rs:740) | ✅ | 结构对齐 |
 | `Geom2d_BSplineCurve` | `BSplineCurve2` (geom.rs:702) | ✅ | |
-| `GeomLib::SameRange` | `same_range_2d` (boptools/extra.rs:264) | ⏳ | rcad 直接返回 clone |
+| `GeomLib::SameRange` | `same_range_2d` (boptools/extra.rs:262) | ✅ | 逐分支对齐：Line(translate), Circle(rotate frame), Trimmed(recurse), BSpline(reparam knots) |
+| `gp_Circ2d` (坐标方向轴) | `Circle2d { x_dir, y_dir }` (geom.rs:628) | ✅ | **刚补齐** — 新增 x_dir/y_dir + `rotate_center()`，`point_at` 使用定向参数化 |
 | `BOPTools_AlgoTools::CorrectTolerances` | `correct_tolerances` (tolerance.rs) | ⏳ | |
-| `IntTools_Tools::ComputeTolerance` | `estimate_pcurve_deviation` (boptools/extra.rs:278) | ⏳ | rcad 返回 0（未实现） |
+| `IntTools_Tools::ComputeTolerance` | `estimate_pcurve_deviation` (boptools/extra.rs:336) | ✅ | 25点均匀采样 + 1.00001 margin，对齐 OCCT L737-779 |
 | `IntTools_Context::ProjectPointOnEdge` | `closest_point_on_curve` (projection.rs) | ⏳ | 功能等价但实现不同 |
 | `IntTools_Context::ProjPT` (缓存投影器) | 无 | ❌ | rcad 每次新建，不缓存 |
 | `Extrema_LocateExtPC` | `closest_point_on_curve` 局部模式 (64 iter Newton) | ⏳ | 功能等价但形式不对 |

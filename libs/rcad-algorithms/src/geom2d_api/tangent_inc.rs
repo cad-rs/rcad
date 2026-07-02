@@ -39,7 +39,7 @@ pub fn circle_through_three_points(p1: DVec2, p2: DVec2, p3: DVec2) -> Option<Ci
         return None;
     }
 
-    Some(Circle2d { center, radius })
+    Some(Circle2d { center, radius, x_dir: DVec2::X, y_dir: DVec2::Y })
 }
 
 /// Construct circles through two points and tangent to `base`.
@@ -100,7 +100,7 @@ pub fn circles_tangent_to_circle_through_points(
         }) {
             continue;
         }
-        circles.push(Circle2d { center, radius });
+        circles.push(Circle2d { center, radius, x_dir: DVec2::X, y_dir: DVec2::Y });
     }
     circles.sort_by(|a, b| b.radius.partial_cmp(&a.radius).unwrap());
     circles
@@ -287,7 +287,7 @@ pub fn circles_tangent_to_line_through_points(line: Line2d, p1: DVec2, p2: DVec2
             }) {
                 continue;
             }
-            result.push(Circle2d { center, radius });
+            result.push(Circle2d { center, radius, x_dir: DVec2::X, y_dir: DVec2::Y });
         }
     }
 
@@ -390,7 +390,7 @@ pub fn circles_tangent_to_two_circles_and_line(
                     if (signed_distance_to_line(center, line, n).abs() - r).abs() > TOLERANCE_MESH_LEGACY {
                         continue;
                     }
-                    out.push(Circle2d { center, radius: r });
+                    out.push(Circle2d { center, x_dir: DVec2::X, y_dir: DVec2::Y, radius: r });
                 }
             }
         }
@@ -468,6 +468,8 @@ pub fn circles_tangent_to_three_circles(c1: Circle2d, c2: Circle2d, c3: Circle2d
                     }
                     out.push(Circle2d {
                         center,
+                        x_dir: DVec2::X,
+                        y_dir: DVec2::Y,
                         radius: r_candidate,
                     });
                 }
@@ -607,7 +609,7 @@ fn append_circle_circle_point_solutions(
         if !is_tangent_to_circle(center, radius, c1) || !is_tangent_to_circle(center, radius, c2) {
             continue;
         }
-        result.push(Circle2d { center, radius });
+        result.push(Circle2d { center, radius, x_dir: DVec2::X, y_dir: DVec2::Y });
     }
 }
 
@@ -712,7 +714,7 @@ fn append_circle_line_line_solutions(
         {
             continue;
         }
-        result.push(Circle2d { center, radius });
+        result.push(Circle2d { center, radius, x_dir: DVec2::X, y_dir: DVec2::Y });
     }
 }
 
@@ -804,7 +806,7 @@ fn append_radius_roots(
         }) {
             continue;
         }
-        result.push(Circle2d { center, radius });
+        result.push(Circle2d { center, radius, x_dir: DVec2::X, y_dir: DVec2::Y });
     }
 }
 
@@ -826,7 +828,7 @@ fn solve_three_signed_lines(lines: &[(Line2d, DVec2); 3], signs: [f64; 3]) -> Op
     let is_tangent = lines.iter().all(|(line, normal)| {
         (signed_distance_to_line(center, *line, *normal).abs() - radius).abs() <= TOLERANCE_ABS
     });
-    is_tangent.then_some(Circle2d { center, radius })
+    is_tangent.then_some(Circle2d { center, radius, x_dir: DVec2::X, y_dir: DVec2::Y })
 }
 
 fn solve_3x3(a: [[f64; 3]; 3], b: [f64; 3]) -> Option<[f64; 3]> {

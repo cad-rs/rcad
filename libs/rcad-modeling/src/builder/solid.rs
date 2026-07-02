@@ -261,20 +261,14 @@ pub fn make_conical_frustum_brep(
         direction: DVec2::new(1.0, 0.0),
     });
     // E0 on bottom plane: full circle in UV
-    let e0_on_plane = Curve2d::Circle(Circle2d {
-        center: DVec2::ZERO,
-        radius: rb,
-    });
+    let e0_on_plane = Curve2d::Circle(Circle2d::new(DVec2::ZERO, rb));
     // E1 top circle on cone face: iso-V at V=v_top
     let e1_on_cone = Curve2d::Line(Line2d {
         origin: DVec2::new(0.0, v_top),
         direction: DVec2::new(1.0, 0.0),
     });
     // E1 on top plane: full circle in UV
-    let e1_on_plane = Curve2d::Circle(Circle2d {
-        center: DVec2::ZERO,
-        radius: rt,
-    });
+    let e1_on_plane = Curve2d::Circle(Circle2d::new(DVec2::ZERO, rt));
     // E2 seam on cone face: iso-U at U=0, V ranges v_bottom → v_top
     let e2_on_cone = Curve2d::Line(Line2d {
         origin: DVec2::new(0.0, v_bottom),

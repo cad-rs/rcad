@@ -1263,18 +1263,12 @@ impl BRep {
             origin: glam::DVec2::new(2.0 * PI, h),
             direction: glam::DVec2::new(-1.0, 0.0),
         });
-        let e0_on_f1 = Curve2d::Circle(Circle2d {
-            center: glam::DVec2::ZERO,
-            radius: r,
-        });
+        let e0_on_f1 = Curve2d::Circle(Circle2d::new(glam::DVec2::ZERO, r));
         let e1_on_f0 = Curve2d::Line(Line2d {
             origin: glam::DVec2::new(0.0, 0.0),
             direction: glam::DVec2::new(1.0, 0.0),
         });
-        let e1_on_f2 = Curve2d::Circle(Circle2d {
-            center: glam::DVec2::ZERO,
-            radius: r,
-        });
+        let e1_on_f2 = Curve2d::Circle(Circle2d::new(glam::DVec2::ZERO, r));
         let e2_on_f0 = Curve2d::Line(Line2d {
             origin: glam::DVec2::new(0.0, h),
             direction: glam::DVec2::new(0.0, -1.0),
@@ -1427,10 +1421,7 @@ impl BRep {
             origin: glam::DVec2::new(0.0, slant_len),
             direction: glam::DVec2::new(1.0, 0.0),
         });
-        let e0_on_f1 = Curve2d::Circle(Circle2d {
-            center: glam::DVec2::ZERO,
-            radius: r,
-        });
+        let e0_on_f1 = Curve2d::Circle(Circle2d::new(glam::DVec2::ZERO, r));
         // E1 (slant seam) on F0: iso-line u=0, v from 0 to slant_len
         let e1_on_f0 = Curve2d::Line(Line2d {
             origin: glam::DVec2::new(0.0, 0.0),

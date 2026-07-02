@@ -134,10 +134,8 @@ pub fn adjust_pcurve_on_face(
                     direction: l.direction,
                 }),
             rcad_kernel::geom::Curve2d::Circle(c) =>
-                rcad_kernel::geom::Curve2d::Circle(rcad_kernel::geom::Circle2d {
-                    center: c.center + shift,
-                    radius: c.radius,
-                }),
+                rcad_kernel::geom::Curve2d::Circle(rcad_kernel::geom::Circle2d { center: c.center + shift, x_dir: DVec2::X, y_dir: DVec2::Y, radius: c.radius,
+                 }),
             rcad_kernel::geom::Curve2d::BSpline(b) => {
                 let mut b = b.clone();
                 for p in &mut b.control_points { *p += shift; }

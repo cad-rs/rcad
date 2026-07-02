@@ -592,12 +592,12 @@ pub(crate) fn build_sphere_clipped_by_z_planes(
 
     // Planar cap pcurves
     let e0_on_plane = if has_top_cap {
-        Some(Curve2d::Circle(rcad_kernel::geom::Circle2d { center: glam::DVec2::ZERO, radius: r_hi }))
+        Some(Curve2d::Circle(rcad_kernel::geom::Circle2d { center: glam::DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: r_hi  }))
     } else {
         None
     };
     let e1_on_bot_plane = if has_bot_cap {
-        Some(Curve2d::Circle(rcad_kernel::geom::Circle2d { center: glam::DVec2::ZERO, radius: r_lo }))
+        Some(Curve2d::Circle(rcad_kernel::geom::Circle2d { center: glam::DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: r_lo  }))
     } else {
         None
     };
@@ -933,10 +933,8 @@ fn build_cylinder_sphere_intersection_brep(
     });
 
     // Top cap pcurve
-    let e3_on_plane = Curve2d::Circle(Circle2d {
-        center: glam::DVec2::ZERO,
-        radius: r_c,
-    });
+    let e3_on_plane = Curve2d::Circle(Circle2d { center: glam::DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: r_c,
+     });
 
     // 閳光偓閳光偓 Geometry store 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
     let si_sph = 0usize;

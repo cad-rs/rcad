@@ -846,7 +846,7 @@ impl DS {
                 let normal_dot = c.normal.dot(p.normal).abs();
                 if (normal_dot - 1.0).abs() < 1e-6 {
                     let perim = std::f64::consts::TAU * c.radius;
-                    Some((Curve2d::Circle(rcad_kernel::geom::Circle2d { center: center_2d, radius: c.radius }), perim))
+                    Some((Curve2d::Circle(rcad_kernel::geom::Circle2d { center: center_2d, x_dir: DVec2::X, y_dir: DVec2::Y, radius: c.radius  }), perim))
                 } else { None }
             }
             // 鉁?OCCT-aligned: compute pcurve for curved surfaces by projecting

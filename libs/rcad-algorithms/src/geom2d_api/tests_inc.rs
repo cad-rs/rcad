@@ -38,10 +38,8 @@ mod tests {
     #[test]
     fn test_circles_tangent_to_circle_through_points_matches_occt_circle_point_point() {
         let circles = circles_tangent_to_circle_through_points(
-            Circle2d {
-                center: DVec2::ZERO,
-                radius: 10.0,
-            },
+            Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 10.0,
+             },
             DVec2::new(20.0, 0.0),
             DVec2::new(15.0, 5.0),
         );
@@ -56,10 +54,8 @@ mod tests {
     #[test]
     fn test_circles_tangent_to_circle_through_points_handles_internal_tangent_case() {
         let circles = circles_tangent_to_circle_through_points(
-            Circle2d {
-                center: DVec2::ZERO,
-                radius: 10.0,
-            },
+            Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 10.0,
+             },
             DVec2::new(5.0, 0.0),
             DVec2::new(0.0, 10.0),
         );
@@ -73,10 +69,8 @@ mod tests {
     #[test]
     fn test_circles_tangent_to_two_circles_through_point_matches_occt() {
         let circles = circles_tangent_to_two_circles_through_point(
-            Circle2d {
-                center: DVec2::ZERO,
-                radius: 10.0,
-            },
+            Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 10.0,
+             },
             Circle2d {
                 center: DVec2::new(30.0, 0.0),
                 radius: 20.0,
@@ -94,10 +88,8 @@ mod tests {
     #[test]
     fn test_circles_tangent_to_circle_and_line_through_point_matches_occt() {
         let circles = circles_tangent_to_circle_and_line_through_point(
-            Circle2d {
-                center: DVec2::ZERO,
-                radius: 10.0,
-            },
+            Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 10.0,
+             },
             Line2d {
                 origin: DVec2::ZERO,
                 direction: DVec2::new(10.0, 20.0),
@@ -279,10 +271,8 @@ mod tests {
 
     #[test]
     fn test_intersect_circle_line() {
-        let circle = Curve2d::Circle(Circle2d {
-            center: DVec2::ZERO,
-            radius: 1.0,
-        });
+        let circle = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 1.0,
+         });
         let line = Curve2d::Line(Line2d {
             origin: DVec2::new(-2.0, 0.0),
             direction: DVec2::X,
@@ -388,10 +378,8 @@ mod tests {
 
     #[test]
     fn test_project_point_on_circle() {
-        let circle = Curve2d::Circle(Circle2d {
-            center: DVec2::ZERO,
-            radius: 1.0,
-        });
+        let circle = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 1.0,
+         });
         let point = DVec2::new(3.0, 0.0);
 
         let (closest, _param) = project_point_on_curve2d(point, &circle);
@@ -402,10 +390,8 @@ mod tests {
 
     #[test]
     fn test_project_point_on_circle_center() {
-        let circle = Curve2d::Circle(Circle2d {
-            center: DVec2::ZERO,
-            radius: 1.0,
-        });
+        let circle = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 1.0,
+         });
         let point = DVec2::ZERO; // Center of circle
 
         let (closest, _param) = project_point_on_curve2d(point, &circle);
@@ -451,14 +437,10 @@ mod tests {
 
     #[test]
     fn test_distance_circle_circle_same_center() {
-        let circle1 = Curve2d::Circle(Circle2d {
-            center: DVec2::ZERO,
-            radius: 1.0,
-        });
-        let circle2 = Curve2d::Circle(Circle2d {
-            center: DVec2::ZERO,
-            radius: 2.0,
-        });
+        let circle1 = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 1.0,
+         });
+        let circle2 = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 2.0,
+         });
 
         let (dist, _t1, _t2) = distance_between_curves2d(&circle1, &circle2);
 
@@ -484,10 +466,8 @@ mod tests {
 
     #[test]
     fn test_distance_point_to_circle() {
-        let circle = Curve2d::Circle(Circle2d {
-            center: DVec2::ZERO,
-            radius: 2.0,
-        });
+        let circle = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 2.0,
+         });
         let point = DVec2::new(5.0, 0.0);
 
         let (dist, _param) = distance_point_to_curve2d(point, &circle);
@@ -497,10 +477,8 @@ mod tests {
 
     #[test]
     fn test_distance_point_on_curve() {
-        let circle = Curve2d::Circle(Circle2d {
-            center: DVec2::ZERO,
-            radius: 1.0,
-        });
+        let circle = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 1.0,
+         });
         let point = circle.point_at(0.0); // Point on circle
 
         let (dist, _param) = distance_point_to_curve2d(point, &circle);
@@ -538,10 +516,8 @@ mod tests {
 
     #[test]
     fn test_angle_circle() {
-        let circle = Curve2d::Circle(Circle2d {
-            center: DVec2::ZERO,
-            radius: 1.0,
-        });
+        let circle = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 1.0,
+         });
 
         // At t=0, tangent points in +Y direction (angle = pi/2)
         let angle0 = curve2d_angle_at(&circle, 0.0);
@@ -568,10 +544,8 @@ mod tests {
 
     #[test]
     fn test_curvature_circle() {
-        let circle = Curve2d::Circle(Circle2d {
-            center: DVec2::ZERO,
-            radius: 2.0,
-        });
+        let circle = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 2.0,
+         });
 
         let curvature = curve2d_curvature_at(&circle, 0.0);
 
@@ -582,10 +556,8 @@ mod tests {
     #[test]
     fn test_curvature_circle_sign() {
         // Circle with counterclockwise parameterization should have positive curvature
-        let circle = Curve2d::Circle(Circle2d {
-            center: DVec2::ZERO,
-            radius: 1.0,
-        });
+        let circle = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 1.0,
+         });
 
         let curvature = curve2d_curvature_at(&circle, 0.0);
 

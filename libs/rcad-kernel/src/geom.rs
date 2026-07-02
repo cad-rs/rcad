@@ -621,10 +621,53 @@ pub struct Line2d {
 }
 
 /// A circle in 2D parameter space.
+///
+/// OCCT-aligned: gp_Circ2d / Geom2d_Circle.
+/// Parametric form: `P(t) = center + x_dir * R*cos(t) + y_dir * R*sin(t)`
+/// where `x_dir` and `y_dir` are orthogonal unit vectors defining the
+/// orientation frame.  Rotating this frame around `center` by angle `dU`
+/// is equivalent to shifting the parameter `t → t + dU`.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Circle2d {
     pub center: Point2,
+    /// X-axis direction of the local frame (unit vector, cos(0) direction).
+    /// Default: (1, 0).
+    #[serde(default = "x_dir_default")]
+    pub x_dir: Vec2,
+    /// Y-axis direction of the local frame (unit vector, sin(0) direction).
+    /// Default: (0, 1).
+    #[serde(default = "y_dir_default")]
+    pub y_dir: Vec2,
     pub radius: f64,
+}
+
+fn x_dir_default() -> Vec2 { DVec2::X }
+fn y_dir_default() -> Vec2 { DVec2::Y }
+
+impl Circle2d {
+    /// Create a circle with identity frame (X=(1,0), Y=(0,1)).
+    pub fn new(center: Point2, radius: f64) -> Self {
+        Self { center, x_dir: DVec2::X, y_dir: DVec2::Y, radius }
+    }
+
+    /// Rotate the circle's local frame around its center by `angle` radians.
+    /// Equivalent to OCCT `gp_Trsf2d::SetRotation(Center, angle)` followed by
+    /// `Geom2d_Circle::Transform(Trsf)`.  After rotation,
+    /// `new_curve(t) = old_curve(t + angle)`.
+    pub fn rotate_center(&mut self, angle: f64) {
+        let cos_a = angle.cos();
+        let sin_a = angle.sin();
+        let x = self.x_dir;
+        let y = self.y_dir;
+        self.x_dir = DVec2::new(
+            x.x * cos_a + y.x * sin_a,
+            x.y * cos_a + y.y * sin_a,
+        );
+        self.y_dir = DVec2::new(
+            -x.x * sin_a + y.x * cos_a,
+            -x.y * sin_a + y.y * cos_a,
+        );
+    }
 }
 
 /// An ellipse in 2D parameter space.
@@ -2069,7 +2112,8 @@ impl Curve2dEval for Line2d {
 
 impl Curve2dEval for Circle2d {
     fn point_at(&self, t: f64) -> DVec2 {
-        self.center + self.radius * DVec2::new(t.cos(), t.sin())
+        // OCCT P(t) = Location + X_Dir * R*cos(t) + Y_Dir * R*sin(t)
+        self.center + self.x_dir * (self.radius * t.cos()) + self.y_dir * (self.radius * t.sin())
     }
 }
 
