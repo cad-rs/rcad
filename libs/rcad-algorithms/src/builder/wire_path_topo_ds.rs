@@ -499,7 +499,7 @@ pub(crate) fn build_closed_wires(
         }
 
         // Build SmartMap
-        let smart_map = build_smart_map(block, segments, tool);
+        let (smart_map, _a_vert_map) = build_smart_map(block, segments, tool);
         if face32 { eprintln!("[DBG] face=32 block[{}] sm={}", bi, smart_map.len()); }
         if smart_map.is_empty() {
             if std::env::var("RCAD_DEBUG_IC").is_ok() {
@@ -547,11 +547,12 @@ pub(crate) fn build_closed_wires(
 }
 
 /// Build SmartMap for TopoDS segments with angle computation.
+/// Returns (smart_map, aVertMap) — OCCT-aligned SplitBlock L137-196 + L298-319.
 fn build_smart_map(
     block: &[usize],
     segments: &[WireSegmentTopoDS],
     tool: &dyn BRepTool,
-) -> IndexMap<usize, Vec<EdgeInfo>> {
+) -> (IndexMap<usize, Vec<EdgeInfo>>, HashMap<usize, bool>) {
     use super::angle_2d::angle_2d;
     use super::wire_path::pc_parameter_range;
 
@@ -610,6 +611,20 @@ fn build_smart_map(
         });
     }
 
+    // OCCT L184-194: aVertMap — vertex→closed flag (any incident edge is closed).
+    let mut a_vert_map: HashMap<usize, bool> = HashMap::new();
+    for &si in block {
+        let seg = &segments[si];
+        let has_pcurve = tool.curve_on_surface(seg.edge, seg.face).is_some()
+            || seg.first_pcurve.is_some() || seg.second_pcurve.is_some();
+        if !has_pcurve { continue; }
+        let closed = seg.start_vertex.index == seg.end_vertex.index || seg.is_closed_on_face;
+        if closed {
+            a_vert_map.entry(seg.start_vertex.index).or_insert(true);
+            a_vert_map.entry(seg.end_vertex.index).or_insert(true);
+        }
+    }
+
     // Compute angles using BRepTool (OCCT Angle2D equivalent).
     for (v, infos) in smart_map.iter_mut() {
         let v_ref = ShapeRef::new(*v);
@@ -655,7 +670,7 @@ fn build_smart_map(
             ei.angle = new_angle;
         }
     }
-    smart_map
+    (smart_map, a_vert_map)
 }
 
 /// Build a regular wire from a block (all vertices have degree 2).
