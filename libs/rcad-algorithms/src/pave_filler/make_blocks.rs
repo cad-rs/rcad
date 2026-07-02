@@ -810,13 +810,12 @@ impl<'a> super::PaveFiller<'a> {
                 let mut keep: Vec<usize> = Vec::new();
                 for &sei in &self.ds.section_edge_refs[ci] {
                     let is_micro = a_micro_pb.iter().any(|pb: &PaveBlock| {
-                        let ei = pb.new_edge.unwrap_or(pb.original_edge);
-                        ei == sei
+                        // Only match if the micro PB has a new_edge set (section edge was allocated)
+                        pb.new_edge.map_or(false, |ne| ne == sei)
                     });
                     if !is_micro {
                         keep.push(sei);
                     } else if sei < self.ds.edges.len() {
-                        // OCCT L4398-4408: mark edge as invalid (clear pave_blocks)
                         self.ds.edges[sei].pave_blocks.clear();
                     }
                 }
