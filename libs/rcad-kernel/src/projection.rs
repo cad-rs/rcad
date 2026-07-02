@@ -44,17 +44,50 @@ pub struct SurfaceProjection {
 // Curve projection
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Newton refinement helper (OCCT-aligned: interval-perform Newton step).
+/// Solves g(t) = (P - C(t))·C'(t) = 0 via newton:
+///   t_{n+1} = t_n - (P-C)·C' / (|C'|² + (P-C)·C'')
+/// where C'' is approximated by finite-difference.
+fn newton_refine(
+    curve: &Curve3,
+    t: &mut f64,
+    best_dist: &mut f64,
+    query: DVec3,
+    max_iter: usize,
+    clamp: impl Fn(f64) -> f64,
+) {
+    let dt = 1e-7;
+    for _ in 0..max_iter {
+        let p = curve.point_at(*t);
+        let diff = p - query;
+        let deriv = curve.derivative_at(*t);
+        let deriv_sq = deriv.dot(deriv);
+        if deriv_sq < 1e-20 { break; }
+        let curv = (curve.point_at(*t + 2.0 * dt) - 2.0 * p
+            + curve.point_at(*t - 2.0 * dt)) / (dt * dt);
+        let denom = deriv_sq + diff.dot(curv);
+        let delta = diff.dot(deriv) / if denom.abs() > 1e-20 { denom } else { deriv_sq };
+        let new_t = clamp(*t - delta);
+        let new_dist = (curve.point_at(new_t) - query).length();
+        if new_dist < *best_dist {
+            *best_dist = new_dist;
+            *t = new_t;
+        }
+        if delta.abs() < 1e-10 { break; }
+    }
+}
+
 /// Project the point `query` onto `curve`, returning the nearest point on the
 /// curve, its parameter value, and the Euclidean distance.
 ///
-/// The curve is evaluated over its natural domain ([`CurveEval::default_domain`]).
+/// ✅ OCCT-aligned: dispatches per-type matching Extrema_ExtPC:
+///   - Line/Circle: analytic via Extrema_ExtPElC equivalent
+///   - Ellipse: analytic init + Newton refinement
+///   - BSpline: C2 interval splitting (Extrema_GGExtPC L190-388)
+///   - Bezier/Other: uniform sampling + Newton
 ///
-/// # Algorithm
-/// 1. Sample `n_samples` points uniformly in the domain.
-/// 2. Take the sample with the smallest distance as the initial guess.
-/// 3. Refine with Newton iterations minimising `f(t) = |C(t) - Q|²`:
-///    `t_{i+1} = t_i - (C(t) - Q) · T(t) / (|T|² + (C - Q) · T')` where
-///    `T = C'(t)` (approximated by finite difference).
+/// `n_samples` is the uniform sampling count (used for Bezier and fallback;
+/// for BSpline it's overridden by `degree + 1` per C2 interval).
 ///
 /// # Examples
 /// ```rust
@@ -204,13 +237,13 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
             for _ in 0..10 {
                 let p = ell.point_at(best_t);
                 let diff = p - query;
-                let tangent = (ell.point_at(best_t + dt) - ell.point_at(best_t - dt)) / (2.0 * dt);
-                let tang_sq = tangent.dot(tangent);
-                if tang_sq < 1e-20 { break; }
+                let deriv = ell.derivative_at(best_t);
+                let deriv_sq = deriv.dot(deriv);
+                if deriv_sq < 1e-20 { break; }
                 let curv = (ell.point_at(best_t + 2.0 * dt) - 2.0 * p
                     + ell.point_at(best_t - 2.0 * dt)) / (dt * dt);
-                let denom = tang_sq + diff.dot(curv);
-                let delta = diff.dot(tangent) / if denom.abs() > 1e-20 { denom } else { tang_sq };
+                let denom = deriv_sq + diff.dot(curv);
+                let delta = diff.dot(deriv) / if denom.abs() > 1e-20 { denom } else { deriv_sq };
                 let new_t = clamp(best_t - delta);
                 let new_dist = (ell.point_at(new_t) - query).length();
                 if new_dist < best_dist {
@@ -224,6 +257,74 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
                 point: pt,
                 param: best_t,
                 distance: (pt - query).length(),
+            };
+        }
+
+        // ✅ OCCT-aligned: BSpline — C2 interval splitting,
+        //   per-interval sampling + Newton refinement
+        //   (Extrema_GGExtPC L190-388: knot interval subdivision)
+        Curve3::BSpline(bs) => {
+            let [t0, t1] = curve.default_domain();
+            let intervals = bs.c2_intervals();
+            let n_per_int = (bs.degree + 1).max(4);
+            let mut best_t = t0;
+            let mut best_dist = f64::INFINITY;
+
+            let clamp_t = |t: f64| t.clamp(t0, t1);
+
+            for wi in 0..intervals.len().saturating_sub(1) {
+                let lo = intervals[wi];
+                let hi = intervals[wi + 1];
+                let span = hi - lo;
+                if span < 1e-15 { continue; }
+
+                // Sample n_per_int points in this interval
+                for i in 0..=n_per_int {
+                    let t = lo + span * i as f64 / n_per_int as f64;
+                    let p = bs.point_at(t);
+                    let d = (p - query).length();
+                    if d < best_dist {
+                        best_dist = d;
+                        best_t = t;
+                    }
+                }
+            }
+
+            // Refine best candidate with Newton (finite-difference curvature)
+            if best_dist < f64::INFINITY {
+                newton_refine(curve, &mut best_t, &mut best_dist, query, 30, clamp_t);
+            }
+
+            let best_point = curve.point_at(best_t);
+            return CurveProjection {
+                point: best_point,
+                param: best_t,
+                distance: (best_point - query).length(),
+            };
+        }
+
+        // Bezier: no C2 splitting needed (analytic)
+        Curve3::Bezier(_) => {
+            let [t0, t1] = curve.default_domain();
+            let mut best_t = t0;
+            let mut best_dist = f64::INFINITY;
+            let n = n_samples.max(4);
+            let clamp_t = |t: f64| t.clamp(t0, t1);
+            for i in 0..=n {
+                let t = t0 + (t1 - t0) * i as f64 / n as f64;
+                let p = curve.point_at(t);
+                let d = (p - query).length();
+                if d < best_dist {
+                    best_dist = d;
+                    best_t = t;
+                }
+            }
+            newton_refine(curve, &mut best_t, &mut best_dist, query, 30, clamp_t);
+            let best_point = curve.point_at(best_t);
+            return CurveProjection {
+                point: best_point,
+                param: best_t,
+                distance: (best_point - query).length(),
             };
         }
 
@@ -262,9 +363,6 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
     };
 
     // Step 2: Newton refinement
-    // OCCT-aligned: Extrema_LocateExtPC uses analytic derivative C'(t)
-    // from TheCurveTool::D1 (via CurveEval::derivative_at).
-    // For infinite domains, don't clamp the Newton step
     let clamp_t = |t: f64| {
         if t0_raw.is_infinite() || t1_raw.is_infinite() {
             t
@@ -272,37 +370,7 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
             t.clamp(t0, t1)
         }
     };
-    let dt = if (t1 - t0).is_finite() {
-        (t1 - t0) * 1e-6
-    } else {
-        1e-6
-    };
-    for _ in 0..30 {
-        let p = curve.point_at(best_t);
-        let diff = p - query;
-        // OCCT-aligned: analytic derivative C'(t) via CurveEval::derivative_at
-        let derivative = curve.derivative_at(best_t);
-        let deriv_sq = derivative.dot(derivative);
-        if deriv_sq < 1e-20 {
-            break;
-        }
-        // OCCT-aligned: Newton for g(t) = (P-C)·C' = 0
-        //   g'(t) ≈ |C'|² + (P-C)·C''  (C'' via finite-difference)
-        let curvature_approx = (curve.point_at(best_t + 2.0 * dt) - 2.0 * p
-            + curve.point_at(best_t - 2.0 * dt))
-            / (dt * dt);
-        let denom = deriv_sq + diff.dot(curvature_approx);
-        let delta = diff.dot(derivative) / if denom.abs() > 1e-20 { denom } else { deriv_sq };
-        let new_t = clamp_t(best_t - delta);
-        let new_dist = (curve.point_at(new_t) - query).length();
-        if new_dist < best_dist {
-            best_dist = new_dist;
-            best_t = new_t;
-        }
-        if delta.abs() < 1e-10 {
-            break;
-        }
-    }
+    newton_refine(curve, &mut best_t, &mut best_dist, query, 30, clamp_t);
 
     let best_point = curve.point_at(best_t);
     CurveProjection {

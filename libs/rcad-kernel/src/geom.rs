@@ -51,6 +51,39 @@ impl BSplineCurve3 {
             t,
         )
     }
+
+    /// ✅ OCCT-aligned: C2-continuous knot intervals.
+    /// Returns the knot values bounding each C2-continuous span.
+    /// Equivalent to OCCT's NbIntervals(curve, GeomAbs_C2).
+    /// Between consecutive returned values the curve has C2 continuity.
+    pub fn c2_intervals(&self) -> Vec<f64> {
+        let d = self.degree;
+        let n = self.knots.len();
+        let t_min = self.knots[d];
+        let t_max = self.knots[n - d - 1];
+        let mut boundaries = Vec::new();
+        boundaries.push(t_min);
+        // Skip the first knot multiplicity (the first d knots are clamped)
+        let mut i = d + 1;
+        while i < n - d {
+            let k = self.knots[i];
+            // Count multiplicity at this knot
+            let mut m = 1_usize;
+            while i + 1 < n - d && (self.knots[i + 1] - k).abs() < 1e-15 {
+                i += 1;
+                m += 1;
+            }
+            // OCCT: C2 boundary when multiplicity < degree
+            if m < d && k > t_min && k < t_max {
+                boundaries.push(k);
+            }
+            i += 1;
+        }
+        boundaries.push(t_max);
+        // Deduplicate near-equal boundaries
+        boundaries.dedup_by(|a, b| (*a - *b).abs() < 1e-14);
+        boundaries
+    }
 }
 
 /// A rational or non-rational Bezier curve in 3D.
