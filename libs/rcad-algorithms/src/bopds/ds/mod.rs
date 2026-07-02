@@ -1167,7 +1167,7 @@ impl DS {
     /// e.g. cylinder caps (2 boundary vertices on a diameter line) produce a proper
     /// circular polygon for face-face intersection clipping.
     pub fn face_boundary_points(&self, face_idx: usize) -> Vec<DVec3> {
-        let face = &self.faces[face_idx];
+        let Some(face) = self.faces.get(face_idx) else { return vec![] };
         let pts: Vec<DVec3> = face
             .boundary_verts
             .iter()

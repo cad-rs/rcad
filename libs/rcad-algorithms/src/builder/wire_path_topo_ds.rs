@@ -200,9 +200,11 @@ pub(crate) fn walk_path_extract_wires(
         info_seq.push(ci);
 
         // ── Loop Detection (OCCT L424-523) ──
-        // OCCT L147: bIsClosed = Degenerated(aE) || IsClosed(aE, myFace).
-        let b_is_closed = segments[ci].start_vertex.index == segments[ci].end_vertex.index
-            || segments[ci].is_closed_on_face;
+        // OCCT L437: bIsClosed = aVertMap.Find(aVb) — arrived vertex's closure.
+        //   Using arrived vertex (not current edge) matches OCCT's aVertMap:
+        //   a vertex is "closed" if any incident edge is degenerated or closed
+        //   on the face (BOPAlgo_WireSplitter_1.cxx L147-148, L184-194).
+        let b_is_closed = is_vert_closed(smart_map, arrived_vertex);
         let a_pb = coord2d(ShapeRef::new(arrived_vertex), segments[ci].edge, segments[ci].face).unwrap_or(DVec2::ZERO);
         let a_tol_2d = uv_tolerance(arrived_vertex);
         let a_tol_2d_sq = a_tol_2d * a_tol_2d;
@@ -286,8 +288,8 @@ pub(crate) fn walk_path_extract_wires(
             None => return,
         };
         let a_tol_2d_sq = { let tol = uv_tolerance(arrived_vertex); tol * tol };
-        let b_is_closed = segments[ci].start_vertex.index == segments[ci].end_vertex.index
-            || segments[ci].is_closed_on_face;
+        // OCCT L540: bIsClosed = aVertMap.Find(aVb) — arrived vertex's closure.
+        let b_is_closed = is_vert_closed(smart_map, arrived_vertex);
         let a_pb = coord2d(ShapeRef::new(arrived_vertex), segments[ci].edge, segments[ci].face).unwrap_or(DVec2::ZERO);
 
         // OCCT L540-549: prepare selection state
@@ -430,8 +432,6 @@ pub(crate) fn split_block(
         for ei in &infos {
             if !ei.passed && !ei.in_flag
                 && ei.seg_idx < segments.len()
-                && (segments[ei.seg_idx].start_vertex.index != segments[ei.seg_idx].end_vertex.index
-                    || segments[ei.seg_idx].is_closed_on_face)
             {
                 let pre_wires = wires.len();
                 walk_path_extract_wires(ei.seg_idx, segments, smart_map, wires, tool);
@@ -539,8 +539,9 @@ pub(crate) fn build_closed_wires(
             split_block(block, segments, &mut (smart_map.clone()), &mut wires, tool);
         }
     }
-    if segments.len() > 0 && segments[0].face.index == 32 && std::env::var("RCAD_DUMP_FACE").is_ok() {
-        eprintln!("[DBG] face=32 n_wires={}", wires.len());
+    if std::env::var("RCAD_DEBUG_IC").is_ok() {
+        let face_id = if segments.is_empty() { 9999 } else { segments[0].face.index };
+        eprintln!("[WIRES] face={} n_wires={}", face_id, wires.len());
     }
     wires
 }

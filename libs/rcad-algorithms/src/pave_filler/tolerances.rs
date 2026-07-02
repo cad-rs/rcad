@@ -63,8 +63,9 @@ impl<'a> PaveFiller<'a> {
 
     /// OCCT: sample face boundary points
     pub(crate) fn sampled_face_boundary_points(&self, face_idx: usize, samples_per_edge: usize) -> Vec<DVec3> {
+        let Some(face) = self.ds.faces.get(face_idx) else { return vec![] };
         let mut pts = Vec::new();
-        for &ei in &self.ds.faces[face_idx].boundary_edges {
+        for &ei in &face.boundary_edges {
             if let Some(edge) = self.ds.edges.get(ei) {
                 let [t0, t1] = edge.t_range;
                 let n = samples_per_edge.max(1);

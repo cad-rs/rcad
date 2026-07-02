@@ -1142,43 +1142,52 @@ pub(crate) fn perform_shapes_to_avoid_topo(
             == rcad_kernel::topods::Orientation::Internal
     };
 
-    // OCCT L152-156: aMVE 鈥?MapShapesAndAncestors(VERTEX, EDGE).
-    // vertex 鈫?Vec<Pid> built directly from segments (collapses FWD/REV of same edge).
-    let mut a_mve: std::collections::HashMap<usize, Vec<Pid>> = std::collections::HashMap::new();
+    // OCCT L152-156: aMVE = MapShapesAndAncestors(VERTEX, EDGE).
+    //   OCCT uses vertex+orientation as key: an edge's start vertex has
+    //   FORWARD orientation, end vertex has REVERSED.  FWD and REV of
+    //   the same edge at the same vertex → different orientation →
+    //   separate entries → not seen as self-coincident.
+    //   rcad: track (Pid, is_outgoing) per vertex.  is_outgoing == true
+    //   for start_vertex matches OCCT's FORWARD; false for end_vertex
+    //   matches REVERSED.
+    let mut a_mve: std::collections::HashMap<usize, Vec<(Pid, bool)>> = std::collections::HashMap::new();
     for (si, seg) in segments.iter().enumerate() {
         let pid = physical_edge_id_topo_ds(seg);
-        a_mve.entry(seg.start_vertex.index).or_default().push(pid);
-        a_mve.entry(seg.end_vertex.index).or_default().push(pid);
+        a_mve.entry(seg.start_vertex.index).or_default().push((pid, true));
+        a_mve.entry(seg.end_vertex.index).or_default().push((pid, false));
     }
 
     let mut avoided_pids: std::collections::HashSet<Pid> = std::collections::HashSet::new();
 
-    // OCCT L182-228: fixed-point loop 鈥?avoid dangling edges (valence 1) and
+    // OCCT L182-228: fixed-point loop → avoid dangling edges (valence 1) and
     // self-coincident edges, updating aMVE after each avoidance.
-    // 鈿?Architecture difference: OCCT's MapShapesAndAncestors gives one
-    // entry per TopoDS_Edge per vertex.  rcad's pid-based map can give
-    // duplicate entries for the same physical edge (IC forward+reverse are
-    // separate segments).  Self-coincidence check (OCCT L211-227) does not
-    // apply directly 鈥?skip it.  Only valence-1 removal with INTERNAL check.
     loop {
         let mut b_found = false;
-        for (&v, pids) in &a_mve {
-            match pids.len() {
-                1 => {
-                    // OCCT L198-210: dangling edge → avoid (skip degenerate / INTERNAL vertex)
-                    let pid = pids[0];
-                    if is_degenerate(&pid) { continue; }
-                    if is_internal_vertex(v) { continue; }
-                    if avoided_pids.insert(pid) { b_found = true; }
-                }
-                2 if pids[0] == pids[1] => {
-                    // OCCT L211-227: self-coincident edge (same physical edge wraps back).
-                    //   Skip if degenerate (lo == hi → start == end vertex).
-                    let pid = pids[0];
-                    if pid.2 == pid.3 { continue; }
-                    if avoided_pids.insert(pid) { b_found = true; }
-                }
-                _ => {}
+        for (&v, entries) in &a_mve {
+            // OCCT L198-210: dangling edge (valence 1 at vertex) → avoid
+            if entries.len() == 1 {
+                let (pid, _dir) = entries[0];
+                if is_degenerate(&pid) { continue; }
+                if is_internal_vertex(v) { continue; }
+                if avoided_pids.insert(pid) { b_found = true; }
+                continue;
+            }
+            // OCCT L211-227: self-coincident — same PID appearing twice
+            // in the SAME direction (both outgoing or both incoming).
+            //   aE2.IsSame(aE1) in OCCT: same TShape + same orientation
+            //   → true self-coincident.  Opposite orientations → different
+            //   TopoDS keys → not found as self-coincident.
+            //   FWD/REV pair: same PID, opposite directions → NOT
+            //   self-coincident (matches OCCT).  Self-loop edge (start==end):
+            //   same PID, same direction at both occurrences → also caught,
+            //   but degenerate → skipped below.
+            if entries.len() == 2
+                && entries[0].0 == entries[1].0
+                && entries[0].1 == entries[1].1
+            {
+                let pid = entries[0].0;
+                if pid.2 == pid.3 { continue; }  // degenerate self-loop → skip
+                if avoided_pids.insert(pid) { b_found = true; }
             }
         }
         if !b_found { break; }
@@ -1187,8 +1196,8 @@ pub(crate) fn perform_shapes_to_avoid_topo(
         for (si, seg) in segments.iter().enumerate() {
             let pid = physical_edge_id_topo_ds(seg);
             if avoided_pids.contains(&pid) { continue; }
-            a_mve.entry(seg.start_vertex.index).or_default().push(pid);
-            a_mve.entry(seg.end_vertex.index).or_default().push(pid);
+            a_mve.entry(seg.start_vertex.index).or_default().push((pid, true));
+            a_mve.entry(seg.end_vertex.index).or_default().push((pid, false));
         }
     }
 

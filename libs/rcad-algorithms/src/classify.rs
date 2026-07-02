@@ -213,7 +213,7 @@ impl ClassifyContext {
     fn compute_solid_aabb(&self, face_indices: &[usize]) -> Aabb {
         let mut aabb = Aabb::empty();
         for &fi in face_indices {
-            let face = &self.ds.faces[fi];
+            let Some(face) = self.ds.faces.get(fi) else { continue; };
             for &vi in &face.boundary_verts {
                 aabb.expand_point(self.ds.vertices[vi].point);
             }
@@ -224,13 +224,13 @@ impl ClassifyContext {
     fn compute_face_aabbs(&self, face_indices: &[usize]) -> Vec<Aabb> {
         face_indices
             .iter()
-            .map(|&fi| {
+            .filter_map(|&fi| {
+                let face = self.ds.faces.get(fi)?;
                 let mut aabb = Aabb::empty();
-                let face = &self.ds.faces[fi];
                 for &vi in &face.boundary_verts {
                     aabb.expand_point(self.ds.vertices[vi].point);
                 }
-                aabb
+                Some(aabb)
             })
             .collect()
     }
@@ -248,8 +248,12 @@ impl ClassifyContext {
             return Classification::Out;
         }
 
+        // Filter out invalid face indices to prevent cascading panics downstream.
+        let valid: Vec<usize> = solid_face_indices.iter().filter(|&&fi| fi < self.ds.faces.len()).copied().collect();
+        if valid.is_empty() { return Classification::Out; }
+
         // Extract tolerance before borrowing
-        let mut sorted_for_tol = solid_face_indices.to_vec();
+        let mut sorted_for_tol = valid.to_vec();
         sorted_for_tol.sort_unstable();
         let face_geom_max = sorted_for_tol
             .iter()
@@ -264,7 +268,7 @@ impl ClassifyContext {
 
         // Clone sorted face list so the cache borrow does not block `&self.ds` for classification.
         let face_indices_owned = {
-            let cache = self.get_or_create_cache(solid_face_indices);
+            let cache = self.get_or_create_cache(&valid);
 
             // Quick AABB rejection test
             if !cache.aabb.contains_point(point) {
@@ -415,7 +419,11 @@ pub fn classify_point(point: DVec3, solid_face_indices: &[usize], ds: &DS) -> Cl
     if solid_face_indices.is_empty() {
         return Classification::Out;
     }
-    let mut sorted = solid_face_indices.to_vec();
+    // Filter out invalid face indices (can happen when wire building produces
+    // unexpected face splits; skip to avoid cascading panics downstream).
+    let valid: Vec<usize> = solid_face_indices.iter().filter(|&&fi| fi < ds.faces.len()).copied().collect();
+    if valid.is_empty() { return Classification::Out; }
+    let mut sorted = valid;
     sorted.sort_unstable();
     let tol = AdaptiveTolerance::from_scale(ds.model_scale());
     let result = classify_point_internal(point, &sorted, ds, tol, 0.0);
@@ -462,6 +470,7 @@ fn classify_point_internal(
     let mut edge_aabbs: Vec<(usize, Aabb)> = Vec::new();
     let mut seen_edges = std::collections::HashSet::new();
     for &fi in solid_face_indices {
+        if fi >= ds.faces.len() { continue; }
         for &ei in &ds.faces[fi].boundary_edges {
             if !seen_edges.insert(ei) { continue; }
             if let Some(edge) = ds.edges.get(ei) {
@@ -501,6 +510,7 @@ fn classify_point_internal(
         }
     }
     for &fi in solid_face_indices {
+        if fi >= ds.faces.len() { continue; }
         for &vi in &ds.faces[fi].boundary_verts {
             if let Some(v) = ds.vertices.get(vi) {
                 if point.distance_squared(v.point) < edge_tol * edge_tol {
@@ -513,6 +523,7 @@ fn classify_point_internal(
     // OCCT L232-234: mapEF - edge->face adjacency
     let mut map_ef: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
     for &fi in solid_face_indices {
+        if fi >= ds.faces.len() { continue; }
         for &ei in &ds.faces[fi].boundary_edges {
             map_ef.entry(ei).or_default().push(fi);
         }
