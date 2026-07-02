@@ -128,30 +128,45 @@ pub fn line_pcurve_on_plane(line: &Line3, plane: &Plane) -> Curve2d {
 ///
 /// 球面 UV 域: u = longitude ∈ [-π, π], v = colatitude ∈ [0, π] (axis=Y)
 pub fn circle_pcurve_on_sphere(circle: &Circle3, sphere: &SphericalSurface) -> Curve2d {
-    let ax = sphere.axis.normalize_or_zero();
-    let n = circle.normal.normalize_or_zero();
-
-    let is_great = (circle.center - sphere.center).length_squared() < TOLERANCE_ABS_SQ;
-    if is_great {
-        // (equivalent of BRep_Tool::CurveOnSurface for the sphere-plane case)
-        let perp = any_perpendicular(n);
-        let p1 = circle.center + circle.radius * perp.normalize();
-        let uv1 = sphere.world_to_uv(p1);
-        let u_angle = if uv1.x.abs() < 1e-12 || (uv1.x - std::f64::consts::TAU).abs() < 1e-12 {
-            let p2 = circle.center + circle.radius * n.cross(perp).normalize();
-            sphere.world_to_uv(p2).x
-        } else { uv1.x };
-        Curve2d::Line(Line2d {
-            origin: DVec2::new(u_angle, 0.0),
-            direction: DVec2::new(0.0, 1.0),
+    /// OCCT-aligned: ProjLib::MakePCurveOfType — project 3D circle onto sphere UV.
+    /// Sample 33 points around the full circle, map each to sphere UV, fit BSpline.
+    let u_ax = any_perpendicular(circle.normal).normalize();
+    let v_ax = circle.normal.cross(u_ax).normalize();
+    let n_samp = 33_usize;
+    let mut pts: Vec<DVec2> = (0..n_samp)
+        .map(|i| {
+            let t = std::f64::consts::TAU * i as f64 / (n_samp - 1) as f64;
+            let p3 = circle.center + circle.radius * (t.cos() * u_ax + t.sin() * v_ax);
+            sphere.world_to_uv(p3)
         })
-    } else {
-        let d = (circle.center - sphere.center).dot(ax);
-        let phi = (d / sphere.radius).clamp(-1.0, 1.0).acos();
-        Curve2d::Line(Line2d {
-            origin: DVec2::new(-std::f64::consts::PI, phi),
-            direction: DVec2::new(1.0, 0.0),
-        })
+        .collect();
+    // Unwrap seam discontinuities at U wrap-around
+    for i in 1..pts.len() {
+        let du = pts[i].x - pts[i - 1].x;
+        if du > std::f64::consts::PI {
+            for p in &mut pts[i..] { p.x -= std::f64::consts::TAU; }
+        } else if du < -std::f64::consts::PI {
+            for p in &mut pts[i..] { p.x += std::f64::consts::TAU; }
+        }
+    }
+    match interpolate_points_2d(&pts) {
+        Ok(bspline) => {
+            if std::env::var("RCAD_DEBUG_PCURVE").is_ok() {
+                eprintln!("[DBG_PCURVE] sphere pcurve: {} pts, BSpline, t_range=[{:.4},{:.4}]",
+                    n_samp, bspline.knots.first().unwrap_or(&0.0), bspline.knots.last().unwrap_or(&0.0));
+            }
+            Curve2d::BSpline(bspline)
+        },
+        Err(e) => {
+            if std::env::var("RCAD_DEBUG_PCURVE").is_ok() {
+                eprintln!("[DBG_PCURVE] sphere pcurve interpolation FAILED: {:?}, using fallback", e);
+            }
+            let avg_v = pts.iter().map(|p| p.y).sum::<f64>() / pts.len() as f64;
+            Curve2d::Line(Line2d {
+                origin: DVec2::new(pts[0].x, avg_v),
+                direction: DVec2::new(1.0, 0.0),
+            })
+        }
     }
 }
 
