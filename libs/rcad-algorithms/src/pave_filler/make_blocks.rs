@@ -804,22 +804,59 @@ impl<'a> super::PaveFiller<'a> {
         // OCCT L1109-1110: RemoveMicroSectionEdges
         //   Micro section edges are PBs whose FindValidRange failed (too short).
         //   The a_micro_pb list has been populated during section edge creation.
-        //   rcad: clear section_edge_refs for curves whose PBs were all micro (no valid edge).
+        //   OCCT BOPAlgo_PaveFiller_6.cxx L4341-4419
+        {
+            for ci in 0..self.ds.intersection_curves.len() {
+                let mut keep: Vec<usize> = Vec::new();
+                for &sei in &self.ds.section_edge_refs[ci] {
+                    let is_micro = a_micro_pb.iter().any(|pb: &PaveBlock| {
+                        let ei = pb.new_edge.unwrap_or(pb.original_edge);
+                        ei == sei
+                    });
+                    if !is_micro {
+                        keep.push(sei);
+                    } else if sei < self.ds.edges.len() {
+                        // OCCT L4398-4408: mark edge as invalid (clear pave_blocks)
+                        self.ds.edges[sei].pave_blocks.clear();
+                    }
+                }
+                self.ds.section_edge_refs[ci] = keep;
+            }
+        }
 
         // OCCT L1112: MakeSDVerticesFF(aDMVLV, aDMNewSD)
         //   Create SD vertices for coinciding VV/VE/VF vertex groups
+        //   OCCT BOPAlgo_PaveFiller_6.cxx L1173-1193
         {
-            let overlaps = self.ds.same_domain_overlaps.clone();
-            for (f1, f2, polygon) in &overlaps {
-                let tol = self.ff_tol(*f1, *f2);
-                for &pt in polygon {
-                    let v_idx = if let Some(idx) = self.ds.find_vertex_near(pt, tol) {
-                        idx
-                    } else {
-                        self.ds.add_vertex(pt)
-                    };
-                    self.ds.faces[*f1].face_info.vertices_in.insert(v_idx);
-                    self.ds.faces[*f2].face_info.vertices_in.insert(v_idx);
+            // a_dm_vlv: map from vertex index to list of coincident vertices
+            let key_list: Vec<(usize, Vec<usize>)> = a_dm_vlv.iter()
+                .map(|(k, v)| (*k, v.clone()))
+                .collect();
+            for (_, verts) in &key_list {
+                if verts.len() < 2 { continue; }
+                // Create one SD vertex for the group.  Use the centroid of all
+                // vertices in the group as the SD point.
+                let mut sum = glam::DVec3::ZERO;
+                for &v in verts {
+                    if v < self.ds.vertices.len() {
+                        sum += self.ds.vertices[v].point;
+                    }
+                }
+                let sd_pt = sum / verts.len() as f64;
+                // Find the "best" existing vertex in the group (the one closest to centroid)
+                let mut best_v = verts[0];
+                let mut best_dist = f64::MAX;
+                for &v in verts {
+                    if v < self.ds.vertices.len() {
+                        let d = (self.ds.vertices[v].point - sd_pt).length_squared();
+                        if d < best_dist { best_v = v; best_dist = d; }
+                    }
+                }
+                // Map all other vertices to the best one
+                for &v in verts {
+                    if v != best_v && v < self.ds.vertices.len() {
+                        a_dm_new_sd.insert(v, best_v);
+                    }
                 }
             }
         }
