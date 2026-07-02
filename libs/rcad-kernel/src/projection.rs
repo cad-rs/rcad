@@ -566,57 +566,143 @@ pub fn closest_point_on_surface(
 
 /// Numerical closest-point on a parametric surface via uniform sampling +
 /// Newton refinement of `f(u,v) = |S(u,v) - Q|²`.
+/// ✅ OCCT-aligned: TreatSolution (Extrema_ExtPS L97-135).
+///   Wraps periodic UV into [uinf, uinf+period), then checks bounds.
+fn treat_solution(
+    u: f64, v: f64,
+    point: DVec3,
+    uinf: f64, usup: f64,
+    vinf: f64, vsup: f64,
+    u_period: Option<f64>,
+    v_period: Option<f64>,
+    tolu: f64, tolv: f64,
+) -> Option<(f64, f64, DVec3)> {
+    let mut u = u;
+    let mut v = v;
+    if let Some(per) = u_period {
+        let diff = u - uinf;
+        u = uinf + diff - per * (diff / per).floor();
+        if u > usup + tolu { u -= per; }
+        if u < uinf - tolu { u += per; }
+    }
+    if let Some(per) = v_period {
+        let diff = v - vinf;
+        v = vinf + diff - per * (diff / per).floor();
+        if v > vsup + tolv { v -= per; }
+        if v < vinf - tolv { v += per; }
+    }
+    if (uinf - u) <= tolu && (u - usup) <= tolu
+        && (vinf - v) <= tolv && (v - vsup) <= tolv
+    {
+        Some((u, v, point))
+    } else {
+        None
+    }
+}
+
+/// ✅ OCCT-aligned: Extrema_GenLocateExtPS (local Newton from initial UV guess).
+///   Solves (S-Q)·dS/du = 0  and  (S-Q)·dS/dv = 0 via Gauss-Newton.
+///   Returns the projected point and UV, or the initial guess if Newton fails.
+pub fn closest_point_on_surface_near(
+    surface: &Surface3,
+    query: DVec3,
+    u0: f64,
+    v0: f64,
+) -> SurfaceProjection {
+    use crate::geom::SurfaceEval;
+    let [uinf, usup, vinf, vsup] = surface.default_domain();
+    let mut u = u0.clamp(uinf, usup);
+    let mut v = v0.clamp(vinf, vsup);
+    let mut best_dist = (surface.point_at(u, v) - query).length();
+    for _ in 0..30 {
+        let (p, du, dv) = surface.derivatives(u, v);
+        let diff = p - query;
+        let gu = diff.dot(du);
+        let gv = diff.dot(dv);
+        let huu = du.dot(du);
+        let hvv = dv.dot(dv);
+        let huv = du.dot(dv);
+        let det = huu * hvv - huv * huv;
+        if det.abs() < 1e-20 { break; }
+        let du_step = (hvv * gu - huv * gv) / det;
+        let dv_step = (huu * gv - huv * gu) / det;
+        let nu = (u - du_step).clamp(uinf, usup);
+        let nv = (v - dv_step).clamp(vinf, vsup);
+        let nd = (surface.point_at(nu, nv) - query).length();
+        if nd < best_dist { best_dist = nd; u = nu; v = nv; }
+        if du_step.abs() < 1e-10 && dv_step.abs() < 1e-10 { break; }
+    }
+    let point = surface.point_at(u, v);
+    SurfaceProjection { point, params: (u, v), distance: (point - query).length() }
+}
+///   Initialize: grid size = 32 (44 for BSpline, 300 when isoparametric curves degenerate).
+///   Perform: grid sampling → Newton refinement with analytic derivatives.
+///   OCCT L237-259: grid sizing + IsoIsDeg degenerate isoparametric detection.
 fn numeric_surface_projection(
     surface: &Surface3,
     query: DVec3,
     n_samples: usize,
 ) -> SurfaceProjection {
+    use crate::geom::SurfaceEval;
     let [u0, u1, v0, v1] = surface.default_domain();
-    let n = n_samples.max(4);
 
-    // Coarse sampling
+    // OCCT L237-259: grid size depends on surface type and isoparametric degeneracy
+    let is_bspline = matches!(surface, Surface3::BSpline(_));
+    // OCCT: nbU = isB ? 44 : 32, nbV = isB ? 44 : 32
+    let mut nu = if is_bspline { 44usize } else { 32usize }.max(n_samples);
+    let mut nv = if is_bspline { 44usize } else { 32usize }.max(n_samples);
+
+    // OCCT L244-257: IsoIsDeg — check if isoparametric curves at domain boundaries
+    //   have near-zero or near-infinite first derivative → degenerate → 300 samples
+    let step_u = (u1 - u0) / 10.0;
+    let step_v = (v1 - v0) / 10.0;
+    if step_u.is_finite() && u1 > u0 {
+        let d_max = (0..=10).filter_map(|i| {
+            let u = u0 + step_u * i as f64;
+            if u < u0 || u > u1 { return None; }
+            let (_p, du, _dv) = surface.derivatives(u, v0);
+            Some(du.length_squared())
+        }).fold(0.0_f64, f64::max);
+        if d_max < 1e-18 || d_max > 1e9 { nu = nu.max(300); }
+    }
+    if step_v.is_finite() && v1 > v0 {
+        let d_max = (0..=10).filter_map(|i| {
+            let v = v0 + step_v * i as f64;
+            if v < v0 || v > v1 { return None; }
+            let (_p, _du, dv) = surface.derivatives(u0, v);
+            Some(dv.length_squared())
+        }).fold(0.0_f64, f64::max);
+        if d_max < 1e-18 || d_max > 1e9 { nv = nv.max(300); }
+    }
+
+    // Coarse sampling (OCCT L261: myExtPS.Initialize with nbU, nbV)
     let (mut best_u, mut best_v, mut best_dist) = {
         let mut bd = f64::INFINITY;
         let (mut bu, mut bv) = (u0, v0);
-        for i in 0..=n {
-            for j in 0..=n {
-                let u = u0 + (u1 - u0) * i as f64 / n as f64;
-                let v = v0 + (v1 - v0) * j as f64 / n as f64;
+        for i in 0..=nu {
+            let u = u0 + (u1 - u0) * i as f64 / nu as f64;
+            for j in 0..=nv {
+                let v = v0 + (v1 - v0) * j as f64 / nv as f64;
                 let p = surface.point_at(u, v);
                 let d = (p - query).length_squared();
-                if d < bd {
-                    bd = d;
-                    bu = u;
-                    bv = v;
-                }
+                if d < bd { bd = d; bu = u; bv = v; }
             }
         }
         (bu, bv, bd.sqrt())
     };
 
-    // Newton refinement: gradient of ½|S(u,v)-Q|²
-    let eps = ((u1 - u0) + (v1 - v0)) * 1e-6;
+    // OCCT-aligned: Newton refinement using analytic derivatives (SurfaceEval::derivatives).
+    // Solves g(u,v) = (S(u,v)-Q) · dS/du = 0 and h(u,v) = (S(u,v)-Q) · dS/dv = 0.
     for _ in 0..40 {
-        let p = surface.point_at(best_u, best_v);
+        let (p, du, dv) = surface.derivatives(best_u, best_v);
         let diff = p - query;
-        // Partial derivatives via finite difference
-        let pu = surface.point_at((best_u + eps).min(u1), best_v);
-        let pum = surface.point_at((best_u - eps).max(u0), best_v);
-        let pv = surface.point_at(best_u, (best_v + eps).min(v1));
-        let pvm = surface.point_at(best_u, (best_v - eps).max(v0));
-        let du = (pu - pum) / (2.0 * eps.min((best_u + eps).min(u1) - (best_u - eps).max(u0)));
-        let dv = (pv - pvm) / (2.0 * eps.min((best_v + eps).min(v1) - (best_v - eps).max(v0)));
-        // Gradient components: ∂f/∂u = diff · du, ∂f/∂v = diff · dv
         let gu = diff.dot(du);
         let gv = diff.dot(dv);
-        // Hessian diagonal approximation (Gauss-Newton)
         let huu = du.dot(du);
         let hvv = dv.dot(dv);
         let huv = du.dot(dv);
         let det = huu * hvv - huv * huv;
-        if det.abs() < 1e-20 {
-            break;
-        }
+        if det.abs() < 1e-20 { break; }
         let delta_u = (hvv * gu - huv * gv) / det;
         let delta_v = (huu * gv - huv * gu) / det;
         let new_u = (best_u - delta_u).clamp(u0, u1);
@@ -627,9 +713,7 @@ fn numeric_surface_projection(
             best_u = new_u;
             best_v = new_v;
         }
-        if delta_u.abs() < 1e-10 && delta_v.abs() < 1e-10 {
-            break;
-        }
+        if delta_u.abs() < 1e-10 && delta_v.abs() < 1e-10 { break; }
     }
 
     let best_point = surface.point_at(best_u, best_v);
