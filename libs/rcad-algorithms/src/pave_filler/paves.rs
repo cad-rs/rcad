@@ -258,7 +258,7 @@ impl<'a> super::PaveFiller<'a> {
 
         if !bIsVertexOnLine && iCheckExtend != 0 && !self.verts_to_avoid_extension.contains(&nV) {
             let mut anExtraTol = aTolV;
-            if self.extended_tolerance(nV, aMI, anExtraTol, &mut anExtraTol, iCheckExtend) {
+            if self.extended_tolerance(nV, aMI, &mut anExtraTol, iCheckExtend) {
                 bIsVertexOnLine = self.is_vertex_on_line(nV, anExtraTol, curve_idx, aTolR3D + self.fuzzy_tolerance, &mut aT);
                 if bIsVertexOnLine {
                     let aPOnC = ic_curve.point_at(aT);
@@ -268,6 +268,7 @@ impl<'a> super::PaveFiller<'a> {
         }
 
         if bIsVertexOnLine {
+            // OCCT L3031: aDTol = BOPTools_AlgoTools::DTolerance()  (=1.e-12)
             let aDTol = 1e-12;
             let aPTol = Self::curve_parametric_tolerance(&ic_curve, aTolR3D.max(aTolV));
 
@@ -544,12 +545,14 @@ impl<'a> super::PaveFiller<'a> {
         false
     }
 
+    /// OCCT-aligned: BOPAlgo_PaveFiller::ExtendedTolerance (PaveFiller_6.cxx L????).
+    /// In-out aTolVExt: on input it is the current vertex tolerance (lower bound),
+    /// on output it is set to the maximum extended distance found.
     pub(crate) fn extended_tolerance(
         &self,
         nV: usize,
         aMI: &std::collections::HashSet<usize>,
-        _aTolVExt: f64,
-        aTolVExt_out: &mut f64,
+        aTolVExt: &mut f64,
         aType: i32,
     ) -> bool {
         if nV < self.ds.shape_info.len() && !self.ds.shape_info[nV].is_new {
@@ -557,7 +560,8 @@ impl<'a> super::PaveFiller<'a> {
         }
         let vp = self.ds.vertices[nV].point;
         let mut found = false;
-        let mut max_ext = 0.0;
+        // Use input aTolVExt as initial threshold (OCCT in-out semantics)
+        let mut max_ext = *aTolVExt;
 
         if aType == 0 || aType == 1 {
             for inf in &self.ds.interferences {
@@ -588,7 +592,7 @@ impl<'a> super::PaveFiller<'a> {
                 }
             }
         }
-        if found { *aTolVExt_out = max_ext; }
+        if found { *aTolVExt = max_ext; }
         found
     }
 
