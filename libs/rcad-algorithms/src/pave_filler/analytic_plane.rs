@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 impl<'a> super::PaveFiller<'a> {
     pub(crate) fn intersect_plane_cylinder_faces(
@@ -443,11 +443,10 @@ impl<'a> super::PaveFiller<'a> {
                 }
             }
             PlaneSphereResult::Circle(circle) => {
-                // OCCT IntTools_FaceFace stores the full analytic curve without
-                // pre-clipping to face boundaries.  OCCT PaveFiller clips via
-                // PutBoundPaveOnCurve during MakeBlocks.
+                // OCCT-aligned: IntPatch_ImpImpIntersection returns the full analytic
+                // curve without pre-clipping to face boundaries.  OCCT PaveFiller clips
+                // via PutBoundPaveOnCurve during MakeBlocks (not at curve creation time).
                 if circle.radius <= TOLERANCE_MESH_LEGACY + TOLERANCE_ABS { return; }
-                let (effective_t0, effective_t1) = (0.0_f64, std::f64::consts::TAU);
 
                 let pcurve_plane = circle_pcurve_on_plane(&circle, plane);
                 let pcurve_sphere = circle_pcurve_on_sphere(&circle, sphere);
@@ -458,81 +457,16 @@ impl<'a> super::PaveFiller<'a> {
                 };
 
                 let (u_ax_p, v_ax_p) = crate::inttools::edge_face::plane_local_basis(plane);
-                // Find arc endpoints clipped to each face's domain.
-                // For the planar face, find where the circle intersects the face boundary edges.
-                let plane_fi = if plane_is_f1 { f1 } else { f2 };
-                let plane_boundary_pts = self.ds.face_boundary_points(plane_fi);
-                // Parametric angles of circle points that intersect the plane face boundary.
-                let mut clip_angles: Vec<f64> = Vec::new();
-                // Use dense angular sampling to find entry/exit points.
-                let n_samples = 64usize;
-                for i in 0..n_samples {
-                    let theta = (i as f64) / (n_samples as f64) * std::f64::consts::TAU;
-                    let pt = circle.center + circle.radius * (theta.cos() * u_ax_p + theta.sin() * v_ax_p);
-                    let inside = crate::inttools::edge_face::point_in_planar_face_with_tol(
-                        pt, plane, &plane_boundary_pts, crate::tolerance::TOLERANCE_ABS * 1000.0);
-                    let next_i = (i + 1) % n_samples;
-                    let next_theta = (next_i as f64) / (n_samples as f64) * std::f64::consts::TAU;
-                    let next_pt = circle.center + circle.radius * (next_theta.cos() * u_ax_p + next_theta.sin() * v_ax_p);
-                    let next_inside = crate::inttools::edge_face::point_in_planar_face_with_tol(
-                        next_pt, plane, &plane_boundary_pts, crate::tolerance::TOLERANCE_ABS * 1000.0);
-                    if inside != next_inside {
-                        // Bisect to find precise boundary crossing
-                        let t0 = theta;
-                        let t1 = if next_theta <= theta { next_theta + std::f64::consts::TAU } else { next_theta };
-                        let mut lo = t0;
-                        let mut hi = t1;
-                        for _ in 0..12 {
-                            let mid = (lo + hi) * 0.5;
-                            let mp = circle.center + circle.radius * (mid.cos() * u_ax_p + mid.sin() * v_ax_p);
-                            let m_inside = crate::inttools::edge_face::point_in_planar_face_with_tol(
-                                mp, plane, &plane_boundary_pts, crate::tolerance::TOLERANCE_ABS * 1000.0);
-                            if m_inside == inside { lo = mid; } else { hi = mid; }
-                        }
-                        let cross_angle = (lo + hi) * 0.5;
-                        if cross_angle >= 0.0 && cross_angle < std::f64::consts::TAU {
-                            clip_angles.push(cross_angle);
-                        }
-                    }
-                }
-                clip_angles.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                clip_angles.dedup_by(|a, b| (*a - *b).abs() < 1e-10);
-                if cfg!(debug_assertions) && std::env::var("RCAD_DEBUG_FF").is_ok() {
-                    eprintln!("[DBG_FF] plane-sphere clip: {} angles from {} samples",
-                        clip_angles.len(), n_samples);
-                }
+                // Full analytic circle: start_vertex == end_vertex, t_range = [0, 2π].
+                // OCCT makes a closed TopoDS_Edge (Edge() == aES); rcad uses a single
+                // vertex for both ends.  PrepareLines3D will split the closed curve later.
+                let p_start = circle.center + circle.radius * (0.0_f64.cos() * u_ax_p + 0.0_f64.sin() * v_ax_p);
+                const IC_VERTEX_MERGE_TOL: f64 = 1e-2;
+                let v = self.ds.find_vertex_near(p_start, IC_VERTEX_MERGE_TOL)
+                    .unwrap_or_else(|| self.ds.add_vertex(p_start));
+                let (v_start, v_end) = (v, v);
+                let (actual_t0, actual_t1) = (0.0_f64, std::f64::consts::TAU);
 
-                let (v_start, v_end, actual_t0, actual_t1) = if clip_angles.len() >= 2 {
-                    // Use the first two distinct clip angles as the arc endpoints
-                    // (the face interior portion of the circle).
-                    let at0 = clip_angles[0];
-                    let at1 = clip_angles[1];
-                    let p0 = circle.center + circle.radius * (at0.cos() * u_ax_p + at0.sin() * v_ax_p);
-                    let p1 = circle.center + circle.radius * (at1.cos() * u_ax_p + at1.sin() * v_ax_p);
-                    const IC_VERTEX_MERGE_TOL: f64 = 1e-2;
-                    let va = self.ds.find_vertex_near(p0, IC_VERTEX_MERGE_TOL)
-                        .unwrap_or_else(|| self.ds.add_vertex(p0));
-                    let vb = self.ds.find_vertex_near(p1, IC_VERTEX_MERGE_TOL)
-                        .unwrap_or_else(|| self.ds.add_vertex(p1));
-                    (va, vb, at0, at1)
-                } else {
-                    // No valid clip found — fallback to full circle
-                    let p_start = circle.center + circle.radius * (effective_t0.cos() * u_ax_p + effective_t0.sin() * v_ax_p);
-                    let p_end = circle.center + circle.radius * (effective_t1.cos() * u_ax_p + effective_t1.sin() * v_ax_p);
-                    const IC_VERTEX_MERGE_TOL: f64 = 1e-2;
-                    let is_closed = p_start.distance_squared(p_end) < TOLERANCE_ABS_SQ;
-                    let (v_start, v_end) = if is_closed {
-                        let v = self.ds.find_vertex_near(p_start, IC_VERTEX_MERGE_TOL)
-                            .unwrap_or_else(|| self.ds.add_vertex(p_start));
-                        (v, v)
-                    } else {
-                        (self.ds.find_vertex_near(p_start, IC_VERTEX_MERGE_TOL)
-                            .unwrap_or_else(|| self.ds.add_vertex(p_start)),
-                         self.ds.find_vertex_near(p_end, IC_VERTEX_MERGE_TOL)
-                            .unwrap_or_else(|| self.ds.add_vertex(p_end)))
-                    };
-                    (v_start, v_end, effective_t0, effective_t1)
-                };
                 // OCCT-aligned: inherit tolerance from parent faces (BRep_Tool::Tolerance).
                 // OCCT vertices on edges carry source edge/face tolerances (typically 1e-4 to 1e-6);
                 // rcad defaults to TOLERANCE_ABS (1e-7) which is too tight for pcurve comparison.
