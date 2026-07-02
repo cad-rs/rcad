@@ -882,7 +882,17 @@ impl<'a> super::PaveFiller<'a> {
         }
 
         // OCCT L1127-1128: UpdateFaceInfo(aDMExEdges, aDMNewSD, aPBFacesMap)
-        //   Recompute vertices_in for each face from curve endpoints
+        //   Register section edge PBs in their missing faces via aPBFacesMap.
+        //   Then recompute vertices_in for each face from curve endpoints.
+        for (&pb_idx, faces) in &a_pb_faces_map {
+            if pb_idx < self.ds.pave_blocks.len() {
+                for &fi in faces {
+                    if fi < self.ds.faces.len() {
+                        self.ds.faces[fi].face_info.pave_blocks_sc.insert(pb_idx);
+                    }
+                }
+            }
+        }
         for fi in 0..self.ds.faces.len() {
             for &ci in self.ds.faces[fi].face_info.curves_sc_only().iter() {
                 if ci < self.ds.intersection_curves.len() {
