@@ -459,23 +459,43 @@ impl<'a> super::PaveFiller<'a> {
                     if !ok { continue; } // OCCT L755: bFlag false → skip this PB
 
                     // OCCT L920-930: IsExistingPaveBlock via aLSE (shared edges)
+                    // OCCT BOPAlgo_PaveFiller_6.cxx L2020-2075
+                    //   Uses geometry-based detection: intermediate point → bounding box → ComputePE
                     let mut n_e_out: usize = usize::MAX;
                     let mut a_tol_new: f64 = -1.0;
                     let b_exist_lse = {
-                        // Check if this PB matches a shared edge (same vertices)
-                        let mut found = false;
-                        for &sei in &a_lse {
-                            let se = &self.ds.edges[sei];
-                            if (se.start_vertex == n_v1 && se.end_vertex == n_v2)
-                                || (se.start_vertex == n_v2 && se.end_vertex == n_v1)
-                            {
-                                found = true;
-                                n_e_out = sei;
-                                a_tol_new = a_tol_r3d;
-                                break;
+                        if a_lse.is_empty() {
+                            false
+                        } else {
+                            let a_tm = 0.56786082 * a_t1 + 0.43213918 * a_t2;
+                            let a_pm = {
+                                let ic = &self.ds.intersection_curves[ci];
+                                ic.curve.point_at(a_tm)
+                            };
+                            let a_tol = {
+                                let v1_tol = if n_v1 < self.ds.vertices.len() { self.ds.vertices[n_v1].geom_tol } else { a_tol_r3d };
+                                let v2_tol = if n_v2 < self.ds.vertices.len() { self.ds.vertices[n_v2].geom_tol } else { a_tol_r3d };
+                                v1_tol.max(v2_tol)
+                            };
+                            let mut found = false;
+                            let mut best_dist = f64::MAX;
+                            for &sei in &a_lse {
+                                if sei >= self.ds.edges.len() { continue; }
+                                let se = &self.ds.edges[sei];
+                                let a_tol_e = se.geom_tol;
+                                let a_tol_check = a_tol_e.max(a_tol);
+                                // ComputePE: project a_pm onto edge curve, check distance
+                                let (_t, a_proj) = crate::extrema::closest_point_on_curve(&se.curve, a_pm);
+                                let dist = (a_proj - a_pm).length();
+                                if dist <= a_tol_check && dist < best_dist {
+                                    found = true;
+                                    n_e_out = sei;
+                                    a_tol_new = dist;
+                                    best_dist = dist;
+                                }
                             }
+                            found
                         }
-                        found
                     };
                     if b_exist_lse {
                         // OCCT L926-930: UpdateEdgeTolerance + UpdateSavedTolerance
