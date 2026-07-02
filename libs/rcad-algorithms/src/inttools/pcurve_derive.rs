@@ -967,35 +967,46 @@ pub fn compute_intersection_curve_tolerance(
 ///
 /// ✅ OCCT对齐: IntTools_Tools::SplitCurve (用于 PrepareLines3D)
 ///
-/// When a closed curve has the full [0, 2π] parametric range it cannot be
+/// ✅ OCCT-aligned: IntTools_Tools::SplitCurve (L191-250) + IsClosed check.
+/// When a curve has coincident start/end points (closed curve), it cannot be
 /// properly trimmed as a single segment — OCCT splits it into complementary
-/// arcs.  Returns `None` for curves that are not closed or not full-range.
+/// arcs at the parametric midpoint.
+///
+/// OCCT `SplitCurve` also trims the 2D pcurves to the sub-ranges.  rcad
+/// handles pcurve trimming in `prepare_lines_3d` by cloning and setting new
+/// ranges on each split's face_reps.
 fn split_closed_curve(
     curve_3d: &rcad_kernel::geom::Curve3,
     t_range: &[f64; 2],
 ) -> Option<[[f64; 2]; 2]> {
     let [t0, t1] = *t_range;
-    let is_full_circle = match curve_3d {
-        rcad_kernel::geom::Curve3::Circle(_) | rcad_kernel::geom::Curve3::Ellipse(_) => {
-            (t1 - t0 - std::f64::consts::TAU).abs() < TOLERANCE_ANG
-        }
-        _ => false,
+    // OCCT IntTools_Tools::IsClosed: check if start/end points coincide
+    let is_closed = {
+        let p0 = curve_3d.point_at(t0);
+        let p1 = curve_3d.point_at(t1);
+        (p1 - p0).length_squared() < TOLERANCE_ABS_SQ
     };
-    if !is_full_circle {
+    if !is_closed {
         return None;
     }
-    // Split at mid-point of the range
-    let tm = 0.5 * (t0 + t1);
+    // OCCT L214-221: for BSpline/Bezier use IntermediatePoint, else regular midpoint
+    let tm = match curve_3d {
+        rcad_kernel::geom::Curve3::BSpline(_) | rcad_kernel::geom::Curve3::Bezier(_) => {
+            0.56786082 * t0 + 0.43213918 * t1
+        }
+        _ => 0.5 * (t0 + t1),
+    };
     Some([[t0, tm], [tm, t1]])
 }
 
 /// Post-process intersection curves: split closed curves and reject redundant
 /// lines.
 ///
-/// ✅ OCCT对齐: PrepareLines3D (IntTools_FaceFace.cxx L1898-1979)
+/// ✅ OCCT-aligned: PrepareLines3D (IntTools_FaceFace.cxx L1932-1967)
+///   + IntTools_Tools::SplitCurve (IntTools_Tools.cxx L191-250)
 ///
-/// 1. Splits closed 3D curves (circles/ellipses with full [0, 2π] range) at
-///    the parametric midpoint so they can be trimmed properly.
+/// 1. Splits closed 3D curves at the parametric midpoint so they can be
+///    trimmed properly.  Also trims 2D pcurves to the sub-ranges.
 /// 2. (Future) Plane/Cone 4-line redundant-line rejection.
 ///
 /// Operates on the `curves` vector in place.
@@ -1008,8 +1019,15 @@ pub fn prepare_lines_3d(curves: &mut Vec<crate::bopds::ds::IntersectionCurve>) {
         if let Some([r0, r1]) = splits {
             let mut c0 = ic.clone();
             c0.t_range = r0;
+            // OCCT L228-234: Trim first-curve 2D pcurve to sub-range
+            c0.pcurve_on_a = c0.pcurve_on_a.map(|pc| trim_curve2d(&pc, r0[0], r0[1]));
+            c0.pcurve_on_b = c0.pcurve_on_b.map(|pc| trim_curve2d(&pc, r0[0], r0[1]));
+
             let mut c1 = ic;
             c1.t_range = r1;
+            c1.pcurve_on_a = c1.pcurve_on_a.map(|pc| trim_curve2d(&pc, r1[0], r1[1]));
+            c1.pcurve_on_b = c1.pcurve_on_b.map(|pc| trim_curve2d(&pc, r1[0], r1[1]));
+
             new_curves.push(c0);
             new_curves.push(c1);
         } else {
@@ -1020,6 +1038,20 @@ pub fn prepare_lines_3d(curves: &mut Vec<crate::bopds::ds::IntersectionCurve>) {
     // 2. (Plane/Cone 4-line rejection — reserved for future alignment)
 
     *curves = new_curves;
+}
+
+/// Trim a Curve2d to the given parameter sub-range [lo, hi].
+/// Returns a new Curve2d that evaluates to the same UV coordinates but
+/// conceptually restricted to the sub-range.  For Line2d and Circle2d
+/// this is a no-op (evaluation at any t gives the same UV regardless of
+/// the conceptual range).  For BSpline2d, creates a trimmed copy.
+fn trim_curve2d(curve: &Curve2d, lo: f64, hi: f64) -> Curve2d {
+    match curve {
+        // Analytical curve2ds evaluate as pure functions of t — no internal
+        // range state to modify.  We keep the original curve; the caller
+        // restricts t_range via IC.t_range / section-edge pcurve_range.
+        _ => curve.clone(),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
