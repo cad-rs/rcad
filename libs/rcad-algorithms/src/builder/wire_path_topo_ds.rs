@@ -1020,6 +1020,7 @@ pub(crate) fn perform_internal_shapes(
     segments: &[WireSegmentTopoDS],
     tool: &dyn BRepTool,
     face_idx: usize,
+    face_ref: rcad_kernel::topods::ShapeRef,
     ds: &crate::bopds::ds::DS,
 ) {
     if internal_wire_groups.is_empty() { return; }
@@ -1098,7 +1099,7 @@ pub(crate) fn perform_internal_shapes(
             }
             if !found {
                 // Second fallback: project internal wire vertex to UV via face surface
-                if let Some(face_surf) = tool.face_surface(rcad_kernel::topods::ShapeRef::new(face_idx)) {
+            if let Some(face_surf) = tool.face_surface(face_ref) {
                     let v_pt = tool.vertex_position(seg.start_vertex);
                     pt = crate::builder::wire_splitter::world_to_uv(face_surf, v_pt)
                         .unwrap_or(DVec2::ZERO);

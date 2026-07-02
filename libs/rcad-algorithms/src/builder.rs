@@ -252,8 +252,30 @@ impl<'a> BooleanBuilder<'a> {
         let brep_borrow = self.brep.borrow();
         let (br, face_refs, _ic_edge_map): &(rcad_kernel::topods::BRep, Vec<rcad_kernel::topods::ShapeRef>, Vec<Option<rcad_kernel::topods::ShapeRef>>) = match brep_borrow.as_ref() {
             Some(v) => v,
-            None => return, // ds_to_brep not yet called
+            None => {
+                if std::env::var("RCAD_DEBUG_IC").is_ok() {
+                    eprintln!("[IC] builder_face_perform: self.brep is None, skipping face {}", face_idx);
+                }
+                return;
+            }
         };
+        // Guard: skip if face_refs doesn't have an entry for this face
+        if face_idx >= face_refs.len() {
+            if std::env::var("RCAD_DEBUG_IC").is_ok() {
+                eprintln!("[IC] builder_face_perform: face_refs[{}] out of bounds (len={}), skipping", face_idx, face_refs.len());
+            }
+            return;
+        }
+
+        let face_ref = face_refs[face_idx];
+        // Guard: verify the source face ShapeRef is valid in the brep
+        if face_ref.index >= br.tshapes.len() || !matches!(&*br.tshapes[face_ref.index], rcad_kernel::topods::TShape::Face(_)) {
+            if std::env::var("RCAD_DEBUG_IC").is_ok() {
+                eprintln!("[IC] builder_face_perform: face_ref {} is not a valid face in brep (tshapes.len={}), skipping face {}",
+                    face_ref.index, br.tshapes.len(), face_idx);
+            }
+            return;
+        }
 
         let pcurve_lookup = |ci: usize| self.find_pcurve_for_face(ci, face_idx);
         let segments = collect_face_edge_segments(ds, face_idx, &pcurve_lookup);
@@ -298,9 +320,9 @@ impl<'a> BooleanBuilder<'a> {
         if wfs.is_empty() { return; }
 
         let mut wfs = wfs;
-        // �?OCCT-aligned L147: PerformInternalShapes
+        // OCCT-aligned L147: PerformInternalShapes
         crate::builder::wire_path_topo_ds::perform_internal_shapes(
-            &mut wfs, &internal_wire_groups, &segments_topo, tool, face_idx, ds);
+            &mut wfs, &internal_wire_groups, &segments_topo, tool, face_idx, face_ref, ds);
 
         // OCCT form: BuilderFace::Perform keeps ALL WireFaces.  Classification against
         // the opposing solid is done at the SOLID level (BuildRC), not per-face.
