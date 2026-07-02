@@ -1,4 +1,4 @@
-﻿//! OCCT-aligned BOPTools helpers (BOPTools_AlgoTools, BOPTools_AlgoTools2D, BOPTools_AlgoTools3D).
+//! OCCT-aligned BOPTools helpers (BOPTools_AlgoTools, BOPTools_AlgoTools2D, BOPTools_AlgoTools3D).
 //!
 //! These functions provide edge/face classification and p-curve utilities
 //! used by the boolean pipeline.
@@ -1903,51 +1903,6 @@ pub fn make_vertex_from_list(
         point: mid, geom_tol: tol, origin: None, is_internal: false,
     });
     vi
-}
-
-/// OCCT-aligned: UpdateVertex from curve (BOPTools_AlgoTools.hxx L124-126).
-/// Updates vertex tolerance given its position on a curve.
-/// The new tolerance covers the distance from the vertex to the curve.
-pub fn update_vertex_from_curve(
-    ds: &mut crate::bopds::ds::DS,
-    vi: usize,
-    curve: &rcad_kernel::geom::Curve3,
-    t: f64,
-) {
-    if vi >= ds.vertices.len() { return; }
-    let pt = curve.point_at(t);
-    let dist = (ds.vertices[vi].point - pt).length();
-    let new_tol = dist + ds.vertices[vi].geom_tol + crate::tolerance::TOLERANCE_LEN_MIN;
-    ds.vertices[vi].geom_tol = ds.vertices[vi].geom_tol.max(new_tol);
-}
-
-/// OCCT-aligned: UpdateVertex from edge (BOPTools_AlgoTools.hxx L131-133).
-/// Updates vertex tolerance given its parameter on an edge.
-pub fn update_vertex_from_edge(
-    ds: &mut crate::bopds::ds::DS,
-    vi: usize,
-    ei: usize,
-    t: f64,
-) {
-    if vi >= ds.vertices.len() || ei >= ds.edges.len() { return; }
-    let edge = &ds.edges[ei];
-    let pt = edge.curve.point_at(t);
-    let dist = (ds.vertices[vi].point - pt).length();
-    let new_tol = dist + edge.geom_tol + crate::tolerance::TOLERANCE_LEN_MIN;
-    ds.vertices[vi].geom_tol = ds.vertices[vi].geom_tol.max(new_tol);
-}
-
-/// OCCT-aligned: UpdateVertex from another vertex (BOPTools_AlgoTools.hxx L136-138).
-/// Updates vertex aVN's tolerance to cover tolerance zone of aVF.
-pub fn update_vertex_from_vertex(
-    ds: &mut crate::bopds::ds::DS,
-    vn: usize,
-    vf: usize,
-) {
-    if vn >= ds.vertices.len() || vf >= ds.vertices.len() { return; }
-    let dist = (ds.vertices[vn].point - ds.vertices[vf].point).length();
-    let new_tol = dist + ds.vertices[vf].geom_tol + crate::tolerance::TOLERANCE_LEN_MIN;
-    ds.vertices[vn].geom_tol = ds.vertices[vn].geom_tol.max(new_tol);
 }
 
 /// OCCT-aligned: MakePCurve (BOPTools_AlgoTools.cxx L1649-1717).

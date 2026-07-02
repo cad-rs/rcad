@@ -56,7 +56,9 @@
 | `IsValidBlockForFaces` | 内联在 make_blocks.rs:438-471 | ⏳ | pcurve 求值/容差不同 |
 | `FindValidRange` | `find_valid_range` (make_blocks.rs) | ⏳ |  |
 | `PutClosingPaveOnCurve` | `put_closing_pave_on_curve` (make_blocks.rs) | ⏳ |  |
-| `CorrectTolerances` | `correct_tolerances` (boptools/extra.rs) | ⏳ |  |
+| `CorrectTolerances` | `correct_tolerances` (boptools/extra.rs:402) | ✅ | L309-317 逐行对齐：CorrectPointOnCurve → CorrectCurveOnSurface |
+| `CorrectPointOnCurve` (CheckEdge) | `correct_point_on_curve` (boptools/extra.rs:415) | ✅ | L430-517 逐行对齐：vertex param + FORWARD→First/REVERSED→Last |
+| `CorrectCurveOnSurface` | `correct_curve_on_surface` (boptools/extra.rs:491) | ✅ | L348-385 逐行对齐 |
 
 ## 第 2 层：Builder — 结果构建
 
@@ -99,7 +101,7 @@
 | `Geom2d_BSplineCurve` | `BSplineCurve2` (geom.rs:702) | ✅ | |
 | `GeomLib::SameRange` | `same_range_2d` (boptools/extra.rs:262) | ✅ | 逐分支对齐：Line(translate), Circle(rotate frame), Trimmed(recurse), BSpline(reparam knots) |
 | `gp_Circ2d` (坐标方向轴) | `Circle2d { x_dir, y_dir }` (geom.rs:628) | ✅ | **刚补齐** — 新增 x_dir/y_dir + `rotate_center()`，`point_at` 使用定向参数化 |
-| `BOPTools_AlgoTools::CorrectTolerances` | `correct_tolerances` (tolerance.rs:730) | ✅ | L309-317: CorrectPointOnCurve + CorrectCurveOnSurface 均已对齐；rcad 将 CorrectShapeTolerances 合并入同一调用 |
+| `BOPTools_AlgoTools::CorrectTolerances` (BRep 级) | `rcad_kernel::tolerance::correct_tolerances` (tolerance.rs:730) | ⏳ | 功能等价；形式对齐在 DS 级 boptools/extra.rs:402 |
 | `IntTools_Tools::ComputeTolerance` | `estimate_pcurve_deviation` (boptools/extra.rs:336) | ✅ | 25点均匀采样 + 1.00001 margin，对齐 OCCT L737-779 |
 | `IntTools_Context::ProjectPointOnEdge` | `closest_point_on_curve` (projection.rs) | ⏳ | 功能等价但实现不同 |
 | `IntTools_Context::ProjPT` (缓存投影器) | `Context::proj_pt()` (context.rs:102) | ✅ | 新增 `proj_pt_latest: Option<CurveProjection>` 单例缓存 |

@@ -400,50 +400,29 @@ fn shift_curve_2d(
 }
 
 /// OCCT-aligned: CorrectTolerances (BOPTools_AlgoTools_1.cxx L309-317).
-/// Top-level tolerance correction: CorrectPointOnCurve + CorrectCurveOnSurface.
-/// In rcad, delegates to kernel tolerance correction pipeline.
+/// Top-level tolerance correction: CorrectPointOnCurve -> CorrectCurveOnSurface.
 pub fn correct_tolerances(
     ds: &mut crate::bopds::ds::DS,
-    _map_to_avoid: &std::collections::HashSet<usize>,
-    _max_tol: f64,
+    map_to_avoid: &std::collections::HashSet<usize>,
+    max_tol: f64,
 ) {
-    // OCCT L315-316: CorrectPointOnCurve 鈫?CorrectCurveOnSurface
-    // rcad: vertex-on-curve check 鈫?edge-on-surface check
-    for ei in 0..ds.edges.len() {
-        let curve = ds.edges[ei].curve.clone();
-        let sv = ds.edges[ei].start_vertex;
-        let ev = ds.edges[ei].end_vertex;
-        let vp_sv = ds.edges[ei].vertex_params.get(&sv).copied();
-        let vp_ev = ds.edges[ei].vertex_params.get(&ev).copied();
-        if let Some(t) = vp_sv {
-            update_vertex_from_curve(ds, sv, &curve, t);
-        }
-        if let Some(t) = vp_ev {
-            update_vertex_from_curve(ds, ev, &curve, t);
-        }
-    }
-    // rcad: edge-on-surface check (simplified)
-    for fi in 0..ds.faces.len() {
-        let face_edges: Vec<usize> = ds.faces[fi].boundary_edges.clone();
-        for &ei in &face_edges {
-            let has_rep = ds.edges.get(ei).map_or(false, |e| e.face_reps.iter().any(|r| r.face_idx == fi));
-            if has_rep {
-                // Sample tolerance available via compute_tolerance
-            }
-        }
-    }
+    // OCCT L315: CorrectPointOnCurve
+    correct_point_on_curve(ds, map_to_avoid, max_tol);
+    // OCCT L316: CorrectCurveOnSurface
+    correct_curve_on_surface(ds, map_to_avoid, max_tol);
 }
 
 /// OCCT-aligned: CorrectPointOnCurve (BOPTools_AlgoTools_1.cxx L322-344).
-/// Iterates all edges in DS, checks vertex distances to 3D curve,
-/// updates vertex tolerance if needed.
+/// Iterates all edges, for each calls CheckEdge (L430-517).
 pub fn correct_point_on_curve(
     ds: &mut crate::bopds::ds::DS,
-    _map_to_avoid: &std::collections::HashSet<usize>,
+    map_to_avoid: &std::collections::HashSet<usize>,
     max_tol: f64,
 ) {
-    // OCCT L331-339: iterate TopAbs_EDGE sub-shapes, for each call CheckEdge
+    // OCCT L331-339: iterate TopAbs_EDGE sub-shapes, for each create CPC and Perform
+    //   CPC::Perform calls CheckEdge(myEdge, myMaxTol, *mypMapToAvoid)
     for ei in 0..ds.edges.len() {
+        // OCCT L434-436: aE.Orientation(FORWARD); aTolE = BRep_Tool::Tolerance(aE)
         let a_tol_e = ds.edges[ei].geom_tol;
         let start_vi = ds.edges[ei].start_vertex;
         let end_vi = ds.edges[ei].end_vertex;
@@ -451,19 +430,30 @@ pub fn correct_point_on_curve(
         let vp_sv = ds.edges[ei].vertex_params.get(&start_vi).copied();
         let vp_ev = ds.edges[ei].vertex_params.get(&end_vi).copied();
         let curve = ds.edges[ei].curve.clone();
-        // Check each vertex
-        for &vi in &[start_vi, end_vi] {
+
+        // OCCT L442-443: TopoDS_Iterator aItS(aE); for (; aItS.More(); aItS.Next())
+        for &(vi, t_vi, is_forward) in &[
+            (start_vi, vp_sv, true),
+            (end_vi, vp_ev, false),
+        ] {
             if vi >= ds.vertices.len() { continue; }
+            // If vertex is in map_to_avoid, skip (OCCT UpdateShape checks aMapToAvoid)
+            if map_to_avoid.contains(&vi) { continue; }
+
+            // OCCT L447-453: TV->Pnt(); aTol = BRep_Tool::Tolerance(aV); aTol = max(aTol, aTolE)
             let v_pt = ds.vertices[vi].point;
             let a_tol_v = ds.vertices[vi].geom_tol;
             let mut a_tol = a_tol_v.max(a_tol_e);
-            let dd = 0.1 * a_tol;
-            a_tol *= a_tol;
-            // Check distance from vertex point to curve at its parameter
-            let t_vi = if vi == start_vi { vp_sv } else { vp_ev };
+            let dd = 0.1 * a_tol;       // OCCT L452
+            a_tol *= a_tol;              // OCCT L453: square it
+
+            // OCCT L456-485: iterate curve representations; find point-on-curve at vertex param
             if let Some(t) = t_vi {
+                // OCCT L462: aC = aCR->Curve3D(); aPC = aC->Value(aPR->Parameter())
                 let pc = curve.point_at(t);
+                // OCCT L474: aD2 = aPV.SquareDistance(aPC)
                 let d2 = (v_pt - pc).length_squared();
+                // OCCT L475-482: if aD2 > aTol, new = sqrt(d2)+dd, UpdateShape if < aMaxTol
                 if d2 > a_tol {
                     let new_tol = d2.sqrt() + dd;
                     if new_tol < max_tol && vi < ds.vertices.len() {
@@ -471,9 +461,21 @@ pub fn correct_point_on_curve(
                     }
                 }
             }
-            // Check distance from vertex to curve endpoints
-            for &t_end in &[t_range[0], t_range[1]] {
-                let p_end = curve.point_at(t_end);
+
+            // OCCT L487-511: check FORWARD->First(), REVERSED->Last() curve endpoints
+            if is_forward {
+                // OCCT L492-494: FORWARD -> aC->Value(aGC->First())
+                let p_end = curve.point_at(t_range[0]);
+                let d2 = (v_pt - p_end).length_squared();
+                if d2 > a_tol {
+                    let new_tol = d2.sqrt() + dd;
+                    if new_tol < max_tol && vi < ds.vertices.len() {
+                        ds.vertices[vi].geom_tol = ds.vertices[vi].geom_tol.max(new_tol);
+                    }
+                }
+            } else {
+                // OCCT L497-499: REVERSED -> aC->Value(aGC->Last())
+                let p_end = curve.point_at(t_range[1]);
                 let d2 = (v_pt - p_end).length_squared();
                 if d2 > a_tol {
                     let new_tol = d2.sqrt() + dd;
@@ -490,19 +492,22 @@ pub fn correct_point_on_curve(
 /// Iterates faces and their edges, corrects pcurve deviation tolerances.
 pub fn correct_curve_on_surface(
     ds: &mut crate::bopds::ds::DS,
-    _map_to_avoid: &std::collections::HashSet<usize>,
+    map_to_avoid: &std::collections::HashSet<usize>,
     max_tol: f64,
 ) {
-    // OCCT L358-378: iterate TopAbs_FACE sub-shapes
+    // OCCT L358-360: aExpF.Init(aS, TopAbs_FACE)
     for fi in 0..ds.faces.len() {
-        let face_edges: Vec<usize> = ds.faces[fi].boundary_edges.clone();
         let face_surface = ds.faces[fi].surface.clone();
+        // OCCT L367-368: aExpE.Init(aF, TopAbs_EDGE)
+        let face_edges: Vec<usize> = ds.faces[fi].boundary_edges.clone();
         for &ei in &face_edges {
             if ei >= ds.edges.len() { continue; }
+            if map_to_avoid.contains(&ei) { continue; }
             let edge = &ds.edges[ei];
             let edge_clone = edge.clone();
             let a_new_tol = edge.geom_tol;
             drop(edge);
+            // Compute pcurve deviation on this face surface
             if let Some((max_dist, _)) = compute_tolerance(&edge_clone, &ds.faces[fi], ds) {
                 let updated_tol = max_dist + 0.1 * max_dist;
                 if updated_tol > a_new_tol && updated_tol < max_tol {
