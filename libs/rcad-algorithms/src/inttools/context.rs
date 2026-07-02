@@ -18,6 +18,8 @@ pub struct Context {
     proj_ps_latest: Vec<Option<SurfaceProjection>>,
     /// OCCT: ProjPC — point-on-curve projector cache (latest result per edge).
     proj_pc_latest: Vec<Option<CurveProjection>>,
+    /// OCCT: ProjPT — single reusable point-on-curve projector for transient curves.
+    proj_pt_latest: Option<CurveProjection>,
     /// OCCT: UVBounds cache — precomputed UV bounds per face.
     uv_bounds_cache: Vec<Option<[f64; 4]>>,
     /// OCCT: SurfaceAdaptor — precomputed surface references.
@@ -33,6 +35,7 @@ impl Context {
             num_faces,
             proj_ps_latest: (0..num_faces).map(|_| None).collect(),
             proj_pc_latest: Vec::new(),
+            proj_pt_latest: None,
             uv_bounds_cache: (0..num_faces).map(|_| None).collect(),
             surface_cache: (0..num_faces).map(|_| None).collect(),
         }
@@ -95,6 +98,20 @@ impl Context {
             }
             self.proj_pc_latest[edge_idx] = Some(proj);
             let cached = self.proj_pc_latest[edge_idx].as_ref().unwrap();
+            Some((cached.param, cached.point, cached.distance))
+        } else {
+            None
+        }
+    }
+
+    /// OCCT: ProjPT(theP, theC) — projects a 3D point onto a transient curve.
+    /// Unlike ProjPC (which is keyed by edge index), this is a single reusable
+    /// projector for one-off curve projections. Returns (param, 3d_point, distance).
+    pub fn proj_pt(&mut self, curve: &Curve3, p: DVec3) -> Option<(f64, DVec3, f64)> {
+        let proj = closest_point_on_curve(curve, p, 16);
+        if proj.distance.is_finite() && proj.param.is_finite() {
+            self.proj_pt_latest = Some(proj);
+            let cached = self.proj_pt_latest.as_ref().unwrap();
             Some((cached.param, cached.point, cached.distance))
         } else {
             None

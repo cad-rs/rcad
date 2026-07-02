@@ -99,10 +99,10 @@
 | `Geom2d_BSplineCurve` | `BSplineCurve2` (geom.rs:702) | ✅ | |
 | `GeomLib::SameRange` | `same_range_2d` (boptools/extra.rs:262) | ✅ | 逐分支对齐：Line(translate), Circle(rotate frame), Trimmed(recurse), BSpline(reparam knots) |
 | `gp_Circ2d` (坐标方向轴) | `Circle2d { x_dir, y_dir }` (geom.rs:628) | ✅ | **刚补齐** — 新增 x_dir/y_dir + `rotate_center()`，`point_at` 使用定向参数化 |
-| `BOPTools_AlgoTools::CorrectTolerances` | `correct_tolerances` (tolerance.rs) | ⏳ | |
+| `BOPTools_AlgoTools::CorrectTolerances` | `correct_tolerances` (tolerance.rs:730) | ✅ | L309-317: CorrectPointOnCurve + CorrectCurveOnSurface 均已对齐；rcad 将 CorrectShapeTolerances 合并入同一调用 |
 | `IntTools_Tools::ComputeTolerance` | `estimate_pcurve_deviation` (boptools/extra.rs:336) | ✅ | 25点均匀采样 + 1.00001 margin，对齐 OCCT L737-779 |
 | `IntTools_Context::ProjectPointOnEdge` | `closest_point_on_curve` (projection.rs) | ⏳ | 功能等价但实现不同 |
-| `IntTools_Context::ProjPT` (缓存投影器) | 无 | ❌ | rcad 每次新建，不缓存 |
+| `IntTools_Context::ProjPT` (缓存投影器) | `Context::proj_pt()` (context.rs:102) | ✅ | 新增 `proj_pt_latest: Option<CurveProjection>` 单例缓存 |
 | `Extrema_LocateExtPC` | `closest_point_on_curve` 局部模式 (64 iter Newton) | ⏳ | 功能等价但形式不对 |
 | `Extrema_ExtPC` | 无独立函数 | ❌ | rcad 用单一 closest_point_on_curve 替代两级投影 |
 
