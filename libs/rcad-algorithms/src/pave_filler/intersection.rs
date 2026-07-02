@@ -1686,23 +1686,24 @@ impl<'a> super::PaveFiller<'a> {
                 if !near_face_vert { continue; }
             }
 
-            // ✅ OCCT-aligned: Skip if intersection coincides with an existing edge vertex.
-            //    OCCT: UseExistingVertex / UpdateVertex handles proximity merging.
-            //    rcad: check distance to edge endpoints directly.
+            // ✅ OCCT-aligned: Always create EF interference for intersection hits.
+            //    OCCT IntTools_EdgeFace creates a new vertex for each hit, even when
+            //    the hit coincides with an existing edge endpoint.  SD vertex merging
+            //    handles near-coincident vertices later (MakeSDVerticesFF in PostTreat).
+            //    rcad: do NOT skip endpoint-coincident hits — they are needed for
+            //    PutPaveOnCurve to split intersection curve pave blocks.
+            let new_v = self.ds.add_vertex(point);
+            // Register vertices_on for the new vertex if it's near the edge boundary
             let sv = self.ds.edges[edge_idx].start_vertex;
             let ev = self.ds.edges[edge_idx].end_vertex;
             let tol = etf
                 .max(self.ds.vertices[sv].geom_tol)
                 .max(self.ds.vertices[ev].geom_tol);
-            let at_sv = (point - self.ds.vertices[sv].point).length() <= tol;
-            let at_ev = (point - self.ds.vertices[ev].point).length() <= tol;
-            if at_sv || at_ev {
-                let existing_v = if at_sv { sv } else { ev };
-                self.ds.faces[face_idx].face_info.vertices_on.insert(existing_v);
-                continue;
+            if (point - self.ds.vertices[sv].point).length() <= tol
+                || (point - self.ds.vertices[ev].point).length() <= tol
+            {
+                self.ds.faces[face_idx].face_info.vertices_on.insert(new_v);
             }
-
-            let new_v = self.ds.add_vertex(point);
             if self.ds.faces[face_idx].face_info.vertices_on.contains(&new_v) {
                 continue;
             }
