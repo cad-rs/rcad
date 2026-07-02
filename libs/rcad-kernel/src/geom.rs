@@ -802,6 +802,19 @@ pub trait CurveEval {
     fn point_at(&self, t: f64) -> DVec3;
     /// Unit tangent vector at parameter `t`.
     fn tangent_at(&self, t: f64) -> DVec3;
+    /// First derivative (non-unit velocity vector) at parameter `t`.
+    /// OCCT-aligned: Extrema_CurveTool::D1 — used by Extrema_LocateExtPC
+    /// for the Newton method solving g(u) = (P-C)·C' = 0.
+    /// Default: 6-point central difference (accurate to O(h⁴)).
+    fn derivative_at(&self, t: f64) -> DVec3 {
+        // 6-point stencil: f'(t) ≈ [f(t-2h)-8f(t-h)+8f(t+h)-f(t+2h)] / (12h)
+        let h = 1e-6;
+        let fp2 = self.point_at(t + 2.0 * h);
+        let fp1 = self.point_at(t + h);
+        let fm1 = self.point_at(t - h);
+        let fm2 = self.point_at(t - 2.0 * h);
+        (fm2 - 8.0 * fm1 + 8.0 * fp1 - fp2) / (12.0 * h)
+    }
     /// Natural parameter domain `[t_min, t_max]`.
     /// Lines use `[NEG_INFINITY, INFINITY]`; circles/ellipses use `[0, 2π]`.
     fn default_domain(&self) -> [f64; 2];
@@ -842,6 +855,9 @@ impl CurveEval for Line3 {
     fn tangent_at(&self, _t: f64) -> DVec3 {
         self.direction
     }
+    fn derivative_at(&self, _t: f64) -> DVec3 {
+        self.direction
+    }
     fn default_domain(&self) -> [f64; 2] {
         [f64::NEG_INFINITY, f64::INFINITY]
     }
@@ -867,6 +883,15 @@ impl CurveEval for Circle3 {
         let y_ax = self.normal.cross(x_ax);
         (-t.sin() * x_ax + t.cos() * y_ax).normalize()
     }
+    fn derivative_at(&self, t: f64) -> DVec3 {
+        let x_ax = if self.normal.x.abs() < 0.9 {
+            self.normal.cross(DVec3::X).normalize()
+        } else {
+            self.normal.cross(DVec3::Y).normalize()
+        };
+        let y_ax = self.normal.cross(x_ax);
+        self.radius * (-t.sin() * x_ax + t.cos() * y_ax)
+    }
     fn default_domain(&self) -> [f64; 2] {
         [0.0, 2.0 * PI]
     }
@@ -882,6 +907,11 @@ impl CurveEval for Ellipse3 {
         let x_ax = self.major_dir;
         let y_ax = self.normal.cross(x_ax).normalize();
         (-self.major_radius * t.sin() * x_ax + self.minor_radius * t.cos() * y_ax).normalize()
+    }
+    fn derivative_at(&self, t: f64) -> DVec3 {
+        let x_ax = self.major_dir;
+        let y_ax = self.normal.cross(x_ax).normalize();
+        -self.major_radius * t.sin() * x_ax + self.minor_radius * t.cos() * y_ax
     }
     fn default_domain(&self) -> [f64; 2] {
         [0.0, 2.0 * PI]
@@ -901,6 +931,10 @@ impl CurveEval for Hyperbola3 {
             self.semi_major * t.sinh() * self.major_dir + self.semi_minor * t.cosh() * minor_dir;
         v.normalize_or_zero()
     }
+    fn derivative_at(&self, t: f64) -> DVec3 {
+        let minor_dir = self.normal.cross(self.major_dir).normalize();
+        self.semi_major * t.sinh() * self.major_dir + self.semi_minor * t.cosh() * minor_dir
+    }
     fn default_domain(&self) -> [f64; 2] {
         [-1e4, 1e4] // unbounded; caller trims as needed
     }
@@ -916,6 +950,10 @@ impl CurveEval for Parabola3 {
         let dir_perp = self.axis_dir.cross(self.normal).normalize();
         let v = (t / self.focal_param) * self.axis_dir + dir_perp;
         v.normalize_or_zero()
+    }
+    fn derivative_at(&self, t: f64) -> DVec3 {
+        let dir_perp = self.axis_dir.cross(self.normal).normalize();
+        (t / self.focal_param) * self.axis_dir + dir_perp
     }
     fn default_domain(&self) -> [f64; 2] {
         [-1e4, 1e4] // unbounded
@@ -948,6 +986,18 @@ impl CurveEval for CircularHelix3 {
         (-self.radius * t.sin() * x_axis + self.radius * t.cos() * y_axis + lead * axis)
             .normalize_or_zero()
     }
+    fn derivative_at(&self, t: f64) -> DVec3 {
+        let axis = self.axis.normalize_or_zero();
+        let mut x_axis = self.ref_dir - axis * self.ref_dir.dot(axis);
+        if x_axis.length_squared() <= 1e-24 {
+            x_axis = any_perpendicular(axis);
+        } else {
+            x_axis = x_axis.normalize();
+        }
+        let y_axis = axis.cross(x_axis).normalize_or_zero();
+        let lead = self.pitch / (2.0 * PI);
+        -self.radius * t.sin() * x_axis + self.radius * t.cos() * y_axis + lead * axis
+    }
     fn default_domain(&self) -> [f64; 2] {
         [-1e4, 1e4]
     }
@@ -966,6 +1016,13 @@ impl CurveEval for SineWave3 {
                 * (self.frequency * t + self.phase).cos()
                 * self.amplitude_dir;
         v.normalize_or_zero()
+    }
+    fn derivative_at(&self, t: f64) -> DVec3 {
+        self.baseline_dir
+            + self.amplitude
+                * self.frequency
+                * (self.frequency * t + self.phase).cos()
+                * self.amplitude_dir
     }
     fn default_domain(&self) -> [f64; 2] {
         [-1e4, 1e4]
@@ -999,6 +1056,20 @@ impl CurveEval for Curve3 {
             Curve3::Parabola(c) => c.tangent_at(t),
             Curve3::CircularHelix(c) => c.tangent_at(t),
             Curve3::SineWave(c) => c.tangent_at(t),
+        }
+    }
+    fn derivative_at(&self, t: f64) -> DVec3 {
+        match self {
+            Curve3::Line(c) => c.derivative_at(t),
+            Curve3::Circle(c) => c.derivative_at(t),
+            Curve3::Ellipse(c) => c.derivative_at(t),
+            Curve3::BSpline(c) => c.derivative_at(t),
+            Curve3::Bezier(c) => c.derivative_at(t),
+            Curve3::Offset(c) => c.derivative_at(t),
+            Curve3::Hyperbola(c) => c.derivative_at(t),
+            Curve3::Parabola(c) => c.derivative_at(t),
+            Curve3::CircularHelix(c) => c.derivative_at(t),
+            Curve3::SineWave(c) => c.derivative_at(t),
         }
     }
     fn default_domain(&self) -> [f64; 2] {
@@ -1859,6 +1930,15 @@ impl CurveEval for BSplineCurve3 {
         )
         .normalize_or_zero()
     }
+    fn derivative_at(&self, t: f64) -> DVec3 {
+        bspline_tangent_analytic(
+            self.degree,
+            &self.knots,
+            &self.control_points,
+            &self.weights,
+            t,
+        )
+    }
     fn default_domain(&self) -> [f64; 2] {
         let d = self.degree;
         let n = self.knots.len();
@@ -2298,6 +2378,9 @@ impl CurveEval for BezierCurve3 {
     }
     fn tangent_at(&self, t: f64) -> DVec3 {
         bezier_tangent_analytic(&self.control_points, &self.weights, t).normalize_or_zero()
+    }
+    fn derivative_at(&self, t: f64) -> DVec3 {
+        bezier_tangent_analytic(&self.control_points, &self.weights, t)
     }
     fn default_domain(&self) -> [f64; 2] {
         [0.0, 1.0]

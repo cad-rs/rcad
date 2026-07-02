@@ -262,6 +262,8 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
     };
 
     // Step 2: Newton refinement
+    // OCCT-aligned: Extrema_LocateExtPC uses analytic derivative C'(t)
+    // from TheCurveTool::D1 (via CurveEval::derivative_at).
     // For infinite domains, don't clamp the Newton step
     let clamp_t = |t: f64| {
         if t0_raw.is_infinite() || t1_raw.is_infinite() {
@@ -278,24 +280,19 @@ pub fn closest_point_on_curve(curve: &Curve3, query: DVec3, n_samples: usize) ->
     for _ in 0..30 {
         let p = curve.point_at(best_t);
         let diff = p - query;
-        // Finite-difference tangent
-        let t_plus = best_t + dt;
-        let t_minus = best_t - dt;
-        let span = t_plus - t_minus;
-        if span.abs() < 1e-20 {
+        // OCCT-aligned: analytic derivative C'(t) via CurveEval::derivative_at
+        let derivative = curve.derivative_at(best_t);
+        let deriv_sq = derivative.dot(derivative);
+        if deriv_sq < 1e-20 {
             break;
         }
-        let tangent = (curve.point_at(t_plus) - curve.point_at(t_minus)) / span;
-        let tang_sq = tangent.dot(tangent);
-        if tang_sq < 1e-20 {
-            break;
-        }
-        // Second-order term (curvature denominator term)
+        // OCCT-aligned: Newton for g(t) = (P-C)·C' = 0
+        //   g'(t) ≈ |C'|² + (P-C)·C''  (C'' via finite-difference)
         let curvature_approx = (curve.point_at(best_t + 2.0 * dt) - 2.0 * p
             + curve.point_at(best_t - 2.0 * dt))
             / (dt * dt);
-        let denom = tang_sq + diff.dot(curvature_approx);
-        let delta = diff.dot(tangent) / if denom.abs() > 1e-20 { denom } else { tang_sq };
+        let denom = deriv_sq + diff.dot(curvature_approx);
+        let delta = diff.dot(derivative) / if denom.abs() > 1e-20 { denom } else { deriv_sq };
         let new_t = clamp_t(best_t - delta);
         let new_dist = (curve.point_at(new_t) - query).length();
         if new_dist < best_dist {
