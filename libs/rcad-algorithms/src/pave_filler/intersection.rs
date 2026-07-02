@@ -858,17 +858,15 @@ impl<'a> super::PaveFiller<'a> {
         let tol = self.ee_tol(e1, e2);
 
         // OCCT L215-232: GetPBBox extracts shrunk range for each PaveBlock.
-        //   rcad: compute shrunk_range from edge geom_tol (vertex tolerances
-        //   at sub-range boundaries are approximated by edge_tol for interior
-        //   pave points �?matching OCCT's per-PaveBlock tolerance approach).
+        //   rcad: compute shrunk_range from edge geom_tol.  If shrunk_range fails
+        //   (edge too short or invalid), fall back to the original range so that
+        //   endpoint-coincident EE intersections are not discarded.
         let sr1 = crate::inttools::curve_range::shrunk_range(
-            &edge1.curve, range1, edge1.geom_tol, edge1.geom_tol, edge1.geom_tol);
+            &edge1.curve, range1, edge1.geom_tol, edge1.geom_tol, edge1.geom_tol)
+            .unwrap_or(range1);
         let sr2 = crate::inttools::curve_range::shrunk_range(
-            &edge2.curve, range2, edge2.geom_tol, edge2.geom_tol, edge2.geom_tol);
-        let (sr1, sr2) = match (sr1, sr2) {
-            (Some(s1), Some(s2)) => (s1, s2),
-            _ => return, // OCCT L226-228: no shrunk data �?non-splittable
-        };
+            &edge2.curve, range2, edge2.geom_tol, edge2.geom_tol, edge2.geom_tol)
+            .unwrap_or(range2);
 
         // Compute intersections restricted to shrunk sub-ranges.
         let hits: Vec<(f64, f64, DVec3)> = match (&edge1.curve, &edge2.curve) {
