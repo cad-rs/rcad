@@ -429,8 +429,9 @@ impl<'a> super::PaveFiller<'a> {
                     (n_v1, n_v2) = a_pb.indices();
                     (a_t1, a_t2) = a_pb.range();
 
-                    // OCCT L906-909: fabs(aT1-aT2) < Precision::PConfusion → continue
-                    if (a_t2 - a_t1).abs() < crate::tolerance::TOLERANCE_ABS {
+                    // OCCT L906-909: fabs(aT1-aT2) < Precision::PConfusion() → continue
+                    // Precision::PConfusion() = Confusion() * 0.01 = 1e-9
+                    if (a_t2 - a_t1).abs() < 1e-9 {
                         continue;
                     }
 
@@ -532,35 +533,116 @@ impl<'a> super::PaveFiller<'a> {
                     }
 
                     // OCCT L962-1021: IsExistingPaveBlock via aMPBOnIn + aPBTree
-                    let b_exist_tree = {
-                        let (v1, v2) = if n_v1 < n_v2 { (n_v1, n_v2) } else { (n_v2, n_v1) };
-                        let f1 = n_f1.min(n_f2);
-                        let f2 = n_f1.max(n_f2);
-                        let edge_key = (f1, f2, v1, v2);
-                        existing_edge_map.get(&edge_key).copied()
+                    //   OCCT BOPAlgo_PaveFiller_6.cxx L2079-2260+
+                    //   Uses BVH tree query on ON/IN PBs; rcad iterates flat list.
+                    let a_mpb_on_in_vec: Vec<usize> = {
+                        let mut pbs = std::collections::BTreeSet::new();
+                        for &fi in &[n_f1, n_f2] {
+                            if fi == usize::MAX { continue; }
+                            let f_info = &self.ds.faces[fi].face_info;
+                            pbs.extend(f_info.pave_blocks_on.iter());
+                            pbs.extend(f_info.pave_blocks_in.iter());
+                        }
+                        pbs.into_iter().collect()
                     };
-                    if let Some(existing_ei) = b_exist_tree {
+                    let b_exist_on_in = {
+                        if a_mpb_on_in_vec.is_empty() {
+                            false
+                        } else {
+                            let mut found_pb_idx = usize::MAX;
+                            let mut best_dist = f64::MAX;
+                            let a_tm = 0.56786082 * a_t1 + 0.43213918 * a_t2;
+                            let a_pm = curve.point_at(a_tm);
+                            for &pb_idx in &a_mpb_on_in_vec {
+                                if pb_idx >= self.ds.pave_blocks.len() { continue; }
+                                let existing_pb = &self.ds.pave_blocks[pb_idx];
+                                let (n_v21, n_v22) = existing_pb.indices();
+                                // iFlag1: start vertex matches? iFlag2: end vertex matches?
+                                let i_flag1 = n_v1 == n_v21 || n_v1 == n_v22;
+                                let i_flag2 = n_v2 == n_v21 || n_v2 == n_v22;
+                                if !i_flag2 { continue; }
+                                let edge_idx = existing_pb.new_edge.unwrap_or(existing_pb.original_edge);
+                                if edge_idx >= self.ds.edges.len() { continue; }
+                                let existing_edge = &self.ds.edges[edge_idx];
+                                // ComputePE: project intermediate point onto edge
+                                let (_t, proj) = crate::extrema::closest_point_on_curve(&existing_edge.curve, a_pm);
+                                let dist = (proj - a_pm).length();
+                                if dist <= a_tol_r3d && dist < best_dist {
+                                    found_pb_idx = pb_idx;
+                                    a_tol_new = dist;
+                                    best_dist = dist;
+                                }
+                            }
+                            if found_pb_idx != usize::MAX {
+                                n_e_out = self.ds.pave_blocks[found_pb_idx].new_edge.unwrap_or(
+                                    self.ds.pave_blocks[found_pb_idx].original_edge);
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                    };
+                    if b_exist_on_in {
                         // OCCT L964-1021: Existing PB found, may need to add to other face
-                        let mut a_pb_out = a_pb.clone();
-                        a_pb_out.new_edge = Some(existing_ei);
-
-                        // Check if PB is in both faces
-                        let b_in_f1 = {
-                            let g_pb_idx = self.ds.allocate_pave_block(a_pb.clone());
-                            let f1_info = &self.ds.faces[n_f1].face_info;
-                            f1_info.pave_blocks_on.contains(&g_pb_idx) || f1_info.pave_blocks_in.contains(&g_pb_idx)
-                        };
-                        let b_in_f2 = {
-                            let f2_info = &self.ds.faces[n_f2].face_info;
-                            f2_info.pave_blocks_on.contains(&a_pb_out.new_edge.unwrap_or(usize::MAX))
-                                || f2_info.pave_blocks_in.contains(&a_pb_out.new_edge.unwrap_or(usize::MAX))
-                        };
-                        if !b_in_f1 || !b_in_f2 {
-                            // Add to aPBFacesMap for UpdateFaceInfo
-                            let n_f = if b_in_f1 { n_f2 } else { n_f1 };
-                            a_pb_faces_map.entry(a_pb_out.new_edge.unwrap_or(usize::MAX))
-                                .or_default()
-                                .push(n_f);
+                        let existing_pb = &self.ds.pave_blocks[a_mpb_on_in_vec.iter().find_map(
+                            |&p| if self.ds.pave_blocks[p].new_edge.unwrap_or(
+                                self.ds.pave_blocks[p].original_edge) == n_e_out
+                            { Some(p) } else { None }
+                        ).unwrap_or(usize::MAX)];
+                        if existing_pb.new_edge.is_some() || existing_pb.original_edge < self.ds.edges.len() {
+                            let b_in_f1 = {
+                                self.ds.faces[n_f1].face_info.pave_blocks_on.contains(
+                                    &a_mpb_on_in_vec.iter().find(|&&p| {
+                                        let e = self.ds.pave_blocks[p].new_edge.unwrap_or(self.ds.pave_blocks[p].original_edge);
+                                        e == n_e_out
+                                    }).unwrap_or(&usize::MAX))
+                                    || self.ds.faces[n_f1].face_info.pave_blocks_in.contains(
+                                        &a_mpb_on_in_vec.iter().find(|&&p| {
+                                            let e = self.ds.pave_blocks[p].new_edge.unwrap_or(self.ds.pave_blocks[p].original_edge);
+                                            e == n_e_out
+                                        }).unwrap_or(&usize::MAX))
+                            };
+                            let b_in_f2 = {
+                                self.ds.faces[n_f2].face_info.pave_blocks_on.contains(
+                                    &a_mpb_on_in_vec.iter().find(|&&p| {
+                                        let e = self.ds.pave_blocks[p].new_edge.unwrap_or(self.ds.pave_blocks[p].original_edge);
+                                        e == n_e_out
+                                    }).unwrap_or(&usize::MAX))
+                                    || self.ds.faces[n_f2].face_info.pave_blocks_in.contains(
+                                        &a_mpb_on_in_vec.iter().find(|&&p| {
+                                            let e = self.ds.pave_blocks[p].new_edge.unwrap_or(self.ds.pave_blocks[p].original_edge);
+                                            e == n_e_out
+                                        }).unwrap_or(&usize::MAX))
+                            };
+                            if !b_in_f1 || !b_in_f2 {
+                                // Update edge tolerance: OCCT L968-985
+                                if n_e_out < self.ds.edges.len() {
+                                    self.ds.edges[n_e_out].geom_tol = self.ds.edges[n_e_out].geom_tol.max(a_tol_new);
+                                }
+                                // aPBFacesMap: OCCT L988-993
+                                let n_f = if b_in_f1 { n_f2 } else { n_f1 };
+                                a_pb_faces_map.entry(a_mpb_on_in_vec.iter().find(|&&p| {
+                                    let e = self.ds.pave_blocks[p].new_edge.unwrap_or(self.ds.pave_blocks[p].original_edge);
+                                    e == n_e_out
+                                }).copied().unwrap_or(usize::MAX))
+                                    .or_default()
+                                    .push(n_f);
+                                // PreparePostTreatFF: OCCT L1015-1021
+                                //   Append PB to aLPBC, register in aMSCPB/aMVI
+                                //   rcad: register PB in both faces' pave_blocks_sc
+                                if let Some(&pb_idx) = a_mpb_on_in_vec.iter().find(|&&p| {
+                                    let e = self.ds.pave_blocks[p].new_edge.unwrap_or(self.ds.pave_blocks[p].original_edge);
+                                    e == n_e_out
+                                }) {
+                                    let ic_curves = &mut self.ds.intersection_curves[ci];
+                                    ic_curves.pave_blocks.push(self.ds.pave_blocks[pb_idx].clone());
+                                    for &fi in &[n_f1, n_f2] {
+                                        if fi != usize::MAX {
+                                            self.ds.faces[fi].face_info.pave_blocks_sc.insert(pb_idx);
+                                        }
+                                    }
+                                }
+                            }
                         }
                         continue;
                     }
