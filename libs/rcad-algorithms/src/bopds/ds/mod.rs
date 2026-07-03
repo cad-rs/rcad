@@ -624,9 +624,11 @@ impl DS {
                             })
                         });
 
-                    // 鉁?OCCT-aligned: wire traversal order (TopExp_Explorer).
-                    let boundary_edges: Vec<usize> = Self::reorder_to_wire_order(
+                    // OCCT-aligned: wire traversal order (TopExp_Explorer).
+                    let boundary_edges_ordered: Vec<(usize, bool)> = Self::reorder_to_wire_order(
                         &face.outer_wire.edges, &brep.edges, edge_offset);
+                    let boundary_edges: Vec<usize> = boundary_edges_ordered.iter().map(|&(ei, _)| ei).collect();
+                    let boundary_edge_forwards: Vec<bool> = boundary_edges_ordered.iter().map(|&(_, fwd)| fwd).collect();
 
                     // Trace the wire edges to get ordered boundary vertices.
                     // Wire edges are not necessarily in traversal order;
@@ -699,6 +701,7 @@ impl DS {
                         surface,
                         boundary_verts,
                         boundary_edges,
+                        boundary_edge_forwards,
                         inner_boundary_edges,
                         outer_wire_idx,
                         inner_wire_idxs,
@@ -779,13 +782,14 @@ impl DS {
     /// closed loop: each edge's end_vertex matches the next edge's start_vertex.
     /// The BRep's wire.edges may not be in this order; we rebuild it by
     /// following end -> start vertex adjacency through the edge graph.
+    /// Returns (edge_idx + edge_offset, forward_in_wire) pairs in wire traversal order.
     fn reorder_to_wire_order(
         wire_edges: &[rcad_kernel::topology::WireEdge],
         brep_edges: &[rcad_kernel::topology::Edge],
         edge_offset: usize,
-    ) -> Vec<usize> {
+    ) -> Vec<(usize, bool)> {
         if wire_edges.len() <= 1 {
-            return wire_edges.iter().map(|we| we.idx + edge_offset).collect();
+            return wire_edges.iter().map(|we| (we.idx + edge_offset, we.forward)).collect();
         }
         // Build vertex -> wire-edge-index adjacency
         let mut adj: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -804,8 +808,9 @@ impl DS {
                 .find(|&i| !used[i])
                 .expect("wire is not closed -- broken topology");
             used[next_i] = true;
-            ordered.push(wire_edges[next_i].idx + edge_offset);
-            let e = &brep_edges[wire_edges[next_i].idx];
+            let we = &wire_edges[next_i];
+            ordered.push((we.idx + edge_offset, we.forward));
+            let e = &brep_edges[we.idx];
             cur = if e.start == cur { e.end } else { e.start };
         }
         ordered

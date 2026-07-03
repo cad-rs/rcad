@@ -269,6 +269,9 @@ pub struct DSFace {
     pub boundary_verts: Vec<usize>,
     /// Boundary edge indices (into DS.edges) 鈥?outer wire.
     pub boundary_edges: Vec<usize>,
+    /// FORWARD/REVERSED orientation for each boundary edge, matching OCCT's
+    /// edge orientation in the face wire. Same length as boundary_edges.
+    pub boundary_edge_forwards: Vec<bool>,
     /// Inner wire edges (TopExp_Explorer iterates outer wire first, then inner wires).
     /// Each entry is one inner wire: Vec<(edge_idx, forward_in_wire)>.
     pub inner_boundary_edges: Vec<Vec<(usize, bool)>>,

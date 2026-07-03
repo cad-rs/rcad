@@ -977,8 +977,8 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
 
     // Section edges from pave_blocks_sc (OCCT: aMSCPB entries from MakeBlocks).
     // These edges are NOT in boundary_edges — they're registered only in
-    // pave_blocks_sc.  Add FWD+REV pair so the WireSplitter can form closed
-    // wires connecting section edges to boundary sub-edges.
+    // pave_blocks_sc.  OCCT adds each edge once to myShapes; the WireSplitter
+    // determines the required orientation during loop walking.
     let mut sc_dedup: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for &pb_idx in &face.face_info.pave_blocks_sc {
         if pb_idx >= ds.pave_blocks.len() { continue; }
@@ -989,20 +989,24 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
         if !sc_dedup.insert(ei) { continue; }
         if ds.is_edge_degenerated(ei) { continue; }
         let edge = &ds.edges[ei];
-        let sv = edge.start_vertex;
-        let ev = edge.end_vertex;
+        let mut sv = edge.start_vertex;
+        let mut ev = edge.end_vertex;
         let is_deg = sv == ev || (ds.vertices[sv].point - ds.vertices[ev].point).length_squared() < TOLERANCE_ABS_SQ;
         if is_deg { continue; }
+        // OCCT: orient section edge so its end_vertex doesn't get starved
+        // of outgoing edges.  The vertex connectivity from previously added
+        // segments determines the direction that balances in/out degree.
+        {
+            let ev_in = segments.iter().filter(|s| s.end_vertex == ev).count();
+            let ev_out = segments.iter().filter(|s| s.start_vertex == ev).count();
+            if ev_in >= ev_out + 1 {
+                std::mem::swap(&mut sv, &mut ev);
+            }
+        }
         let sec_pcurve = edge.face_reps.iter().find(|r| r.face_idx == face_idx).map(|r| r.pcurve.clone());
         segments.push(WireSegment {
             start_vertex: sv, end_vertex: ev,
             source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Forward,
-            is_closed_on_face: false, second_pcurve: None, first_pcurve: sec_pcurve.clone(),
-            t_range: edge.t_range,
-        });
-        segments.push(WireSegment {
-            start_vertex: ev, end_vertex: sv,
-            source: WireEdgeSource::DsEdge(ei), orientation: WireOrientation::Reversed,
             is_closed_on_face: false, second_pcurve: None, first_pcurve: sec_pcurve,
             t_range: edge.t_range,
         });
