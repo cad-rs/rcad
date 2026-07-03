@@ -514,38 +514,8 @@ impl<'a> super::PaveFiller<'a> {
                     self.ds.intersection_curves[ci].end_vertex = v_end;
                 }
             }
-            // prepare_lines_3d may have split closed curves. register split siblings (ci+1)
-            // on both faces so make_section_edges sees them.
-            let mut split_extra: Vec<usize> = Vec::new();
-            for &ci in &ff_curves {
-                if ci + 1 < self.ds.intersection_curves.len() && !split_extra.contains(&(ci + 1)) {
-                    split_extra.push(ci + 1);
-                }
-            }
-            if !split_extra.is_empty() {
-                if let Some(ff) = self.ds.interferences.iter_mut().find_map(|inf| {
-                    if let Interference::FaceFace { f1: a, f2: b, curves, .. } = inf {
-                        if *a == f1 && *b == f2 { Some(curves) } else { None }
-                    } else { None }
-                }) {
-                    for &ci in &split_extra { if !ff.contains(&ci) { ff.push(ci); } }
-                }
-                for &ci in &split_extra {
-                    self.ds.faces[f1].face_info.curves_sc.insert(ci);
-                    self.ds.faces[f2].face_info.curves_sc.insert(ci);
-                    if ci < self.ds.intersection_curves.len() {
-                        let ic = &self.ds.intersection_curves[ci];
-                        self.ds.faces[f1].face_info.vertices_in.insert(ic.start_vertex);
-                        self.ds.faces[f1].face_info.vertices_in.insert(ic.end_vertex);
-                        self.ds.faces[f2].face_info.vertices_in.insert(ic.start_vertex);
-                        self.ds.faces[f2].face_info.vertices_in.insert(ic.end_vertex);
-                    }
-                }
-            }
             // OCCT-aligned: Register curves_sc and vertices_in for this face pair
             // (PostTreatFF equivalent in OCCT PaveFiller_6.cxx L1165-1397).
-            // Handle both original and split curves by recomputing ff_curves
-            // after prepare_lines_3d may have split closed curves.
             let post_ff_curves = self.find_face_face_curve_indices(f1, f2)
                 .unwrap_or_default();
             self.ds.faces[f1].face_info.curves_sc.extend(&post_ff_curves);

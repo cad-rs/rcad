@@ -1011,33 +1011,11 @@ fn split_closed_curve(
 ///
 /// Operates on the `curves` vector in place.
 pub fn prepare_lines_3d(curves: &mut Vec<crate::bopds::ds::IntersectionCurve>) {
-    let mut new_curves: Vec<crate::bopds::ds::IntersectionCurve> = Vec::new();
-
-    for ic in curves.drain(..) {
-        // 1. Split closed curves
-        let splits = split_closed_curve(&ic.curve, &ic.t_range);
-        if let Some([r0, r1]) = splits {
-            let mut c0 = ic.clone();
-            c0.t_range = r0;
-            // OCCT L228-234: Trim first-curve 2D pcurve to sub-range
-            c0.pcurve_on_a = c0.pcurve_on_a.map(|pc| trim_curve2d(&pc, r0[0], r0[1]));
-            c0.pcurve_on_b = c0.pcurve_on_b.map(|pc| trim_curve2d(&pc, r0[0], r0[1]));
-
-            let mut c1 = ic;
-            c1.t_range = r1;
-            c1.pcurve_on_a = c1.pcurve_on_a.map(|pc| trim_curve2d(&pc, r1[0], r1[1]));
-            c1.pcurve_on_b = c1.pcurve_on_b.map(|pc| trim_curve2d(&pc, r1[0], r1[1]));
-
-            new_curves.push(c0);
-            new_curves.push(c1);
-        } else {
-            new_curves.push(ic);
-        }
-    }
-
-    // 2. (Plane/Cone 4-line rejection — reserved for future alignment)
-
-    *curves = new_curves;
+    // OCCT PrepareLines3D (IntTools_FaceFace.cxx L1932-1967) does NOT split
+    // closed curves — it only computes polyline approximation and tolerance.
+    // Splitting is self-invented and causes curve count doubling.  Aligned
+    // to OCCT: no-op.  MakeBlocks handles closed curves via PutPavesOnCurve
+    // + PutBoundPaveOnCurve.
 }
 
 /// Trim a Curve2d to the given parameter sub-range [lo, hi].

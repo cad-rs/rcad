@@ -456,14 +456,10 @@ impl<'a> super::PaveFiller<'a> {
                     (Some(pcurve_sphere), Some(pcurve_plane))
                 };
 
-                let (u_ax_p, v_ax_p) = crate::inttools::edge_face::plane_local_basis(plane);
                 // Full analytic circle: start_vertex == end_vertex, t_range = [0, 2π].
-                // OCCT makes a closed TopoDS_Edge (Edge() == aES); rcad uses a single
-                // vertex for both ends.  PrepareLines3D will split the closed curve later.
-                let p_start = circle.center + circle.radius * (0.0_f64.cos() * u_ax_p + 0.0_f64.sin() * v_ax_p);
-                const IC_VERTEX_MERGE_TOL: f64 = 1e-2;
-                let v = self.ds.find_vertex_near(p_start, IC_VERTEX_MERGE_TOL)
-                    .unwrap_or_else(|| self.ds.add_vertex(p_start));
+                // OCCT creates new vertex from curve evaluation (MakeEdge → D0).
+                let p_start = circle.point_at(0.0);
+                let v = self.ds.add_vertex(p_start);
                 let (v_start, v_end) = (v, v);
                 let (actual_t0, actual_t1) = (0.0_f64, std::f64::consts::TAU);
 

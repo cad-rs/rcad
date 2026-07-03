@@ -70,12 +70,16 @@ impl<'a> super::PaveFiller<'a> {
         let mut a_dm_new_sd: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
         // OCCT L712: aDMVLV — vertex-vertex coincidence map
         let mut a_dm_vlv: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+        // OCCT L695: aMVBounds — bound vertices from PutBoundPaveOnCurve
+        let mut a_mv_bounds: std::collections::HashSet<usize> = std::collections::HashSet::new();
         // OCCT L714: aMicroPB — micro PBs (too short for valid range)
         let mut a_micro_pb: Vec<PaveBlock> = Vec::new();
         // OCCT L715-716: aVertsOnRejectedPB
         let mut a_verts_on_rejected_pb: Vec<usize> = Vec::new();
         // OCCT L717: aPBFacesMap — map PB -> list of faces to add it to
         let mut a_pb_faces_map: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+        // OCCT L704: aMPBAdd — set of existing PBs already processed (cross-iteration)
+        let mut a_mpb_add: std::collections::HashSet<usize> = std::collections::HashSet::new();
         // OCCT L720: aFFToRecheck — indices of FF pairs needing recheck
         let mut a_ff_to_recheck: Vec<usize> = Vec::new();
         let a_nb_ff_prev = a_nb_ff;
@@ -119,6 +123,7 @@ impl<'a> super::PaveFiller<'a> {
             a_mi.clear();
             a_mv_tol.clear();
             a_lse.clear();
+            a_mv_bounds.clear();
 
             // OCCT L770: SubShapesOnIn(nF1, nF2, aMVOnIn, aMVCommon, aMPBOnIn, aMPBCommon)
             {
@@ -381,6 +386,7 @@ impl<'a> super::PaveFiller<'a> {
                             });
                         }
                         a_lbv.push(n_vn);
+                        a_mv_bounds.insert(n_vn);
                     }
                 }
             } // OCCT L844: end second curve loop
@@ -397,7 +403,22 @@ impl<'a> super::PaveFiller<'a> {
                 }
             }
 
-            // OCCT L854-875: BOPTools_BoxTree setup (skip — rcad uses existing_edge_map for reuse)
+            // OCCT L854-875: BOPTools_BoxTree setup
+            // OCCT L874-894: Build aPBTree — filter aMPBOnIn to PBs with HasEdge & !HasFlag
+            // rcad: pre-filtered vec instead of BVH tree (architecture A3)
+            let a_mpb_on_in_vec: Vec<usize> = a_mpb_on_in.iter().copied()
+                .filter(|&pb_idx| {
+                    if pb_idx >= self.ds.pave_blocks.len() { return false; }
+                    let pb = &self.ds.pave_blocks[pb_idx];
+                    // OCCT L883-886: skip PBs without an edge (!HasEdge)
+                    let has_edge = pb.new_edge.is_some() || pb.original_edge != NO_EDGE;
+                    if !has_edge { return false; }
+                    // OCCT L888-891: skip degenerated edges (HasFlag)
+                    let ei = pb.new_edge.unwrap_or(pb.original_edge);
+                    if ei < self.ds.edges.len() && self.ds.is_edge_degenerated(ei) { return false; }
+                    true
+                })
+                .collect();
 
             // OCCT L877-879: Check if this FF pair needs rechecking
             let mut is_to_recheck = a_nb_c > 0 && i < a_nb_ff_prev;
@@ -534,45 +555,128 @@ impl<'a> super::PaveFiller<'a> {
                     };
                     if !has_valid_range {
                         // OCCT L951-959: aMicroPB.Add(aPB); aMVI.Bind
-                        a_micro_pb.push(a_pb.clone());
+                        //   But only if neither vertex is a bound vertex (aMVBounds guard).
+                        //   Bound vertices are IC endpoints — their PBs are handled
+                        //   separately in post-treatment, not as micro edges.
+                        if !a_mv_bounds.contains(&n_v1) && !a_mv_bounds.contains(&n_v2) {
+                            a_micro_pb.push(a_pb.clone());
+                        }
                         continue;
                     }
 
                     // OCCT L962-1021: IsExistingPaveBlock via aMPBOnIn + aPBTree
-                    //   OCCT BOPAlgo_PaveFiller_6.cxx L2079-2260+
-                    //   Uses BVH tree query on aMPBOnIn; rcad iterates flat list.
-                    let a_mpb_on_in_vec: Vec<usize> = a_mpb_on_in.iter().copied().collect();
+                    //   OCCT BOPAlgo_PaveFiller_6.cxx L2079-2282
+                    //   rcad: iterate pre-filtered flat list instead of BVH tree
                     let b_exist_on_in = {
                         if a_mpb_on_in_vec.is_empty() {
                             false
                         } else {
-                            let mut found_pb_idx = usize::MAX;
-                            let mut best_dist = f64::MAX;
+                            // OCCT L2089-2095: Get curve, range, indices
+                            let ic = &self.ds.intersection_curves[ci];
+                            let a_curve = &ic.curve;
+                            // OCCT L2097-2103: aBoxP1 around start point aP1
+                            let a_p1 = curve.point_at(a_t1);
+                            let a_tol_v11 = if n_v1 < self.ds.vertices.len() { self.ds.vertices[n_v1].geom_tol } else { a_tol_r3d };
+                            // OCCT L2114-2126: aBoxPm around mid point aPm + tangent
                             let a_tm = 0.56786082 * a_t1 + 0.43213918 * a_t2;
                             let a_pm = curve.point_at(a_tm);
+                            // OCCT L2128-2134: aBoxP2 around end point aP2
+                            let a_p2 = curve.point_at(a_t2);
+                            let a_tol_v12 = if n_v2 < self.ds.vertices.len() { self.ds.vertices[n_v2].geom_tol } else { a_tol_r3d };
+                            // OCCT L2136: aTolV1 = max(v11_tol, v12_tol) + fuzzy
+                            let a_tol_v1 = a_tol_v11.max(a_tol_v12);
+                            // OCCT L2138: aTolCheck = theTolR3D + fuzzy
+                            let a_tol_check = a_tol_r3d;
+                            // OCCT L2142-2144: aMaxTolAdd
+                            let a_max_tol_add = 0.001_f64.min(10.0 * a_tol_check);
+
+                            let mut found_pb_idx = usize::MAX;
+                            let mut best_dist = f64::MAX;
+                            let mut best_a_tol_new = -1.0;
+
                             for &pb_idx in &a_mpb_on_in_vec {
                                 if pb_idx >= self.ds.pave_blocks.len() { continue; }
                                 let existing_pb = &self.ds.pave_blocks[pb_idx];
+                                // OCCT L2154-2155: nV21, nV22
                                 let (n_v21, n_v22) = existing_pb.indices();
-                                // iFlag1: start vertex matches? iFlag2: end vertex matches?
+                                // OCCT L2157-2159: aTolV21, aTolV22, aTolV2
+                                let a_tol_v21 = if n_v21 < self.ds.vertices.len() { self.ds.vertices[n_v21].geom_tol } else { a_tol_r3d };
+                                let a_tol_v22 = if n_v22 < self.ds.vertices.len() { self.ds.vertices[n_v22].geom_tol } else { a_tol_r3d };
+                                let a_tol_v2 = a_tol_v21.max(a_tol_v22);
+                                // OCCT L2165: iFlag1 — vertex match for start
                                 let i_flag1 = n_v1 == n_v21 || n_v1 == n_v22;
-                                let i_flag2 = n_v2 == n_v21 || n_v2 == n_v22;
+                                // OCCT L2166: iFlag2 — vertex match for end OR bbox overlap
+                                //   rcad: for bbox overlap, check if edge's curve passes near aP2
+                                let i_flag2 = if n_v2 == n_v21 || n_v2 == n_v22 {
+                                    true
+                                } else {
+                                    // OCCT: !aBoxSp.IsOut(aBoxP2) — approximate with point-on-curve check
+                                    let edge_ei = existing_pb.new_edge.unwrap_or(existing_pb.original_edge);
+                                    if edge_ei >= self.ds.edges.len() { false }
+                                    else {
+                                        let (_t, proj) = crate::extrema::closest_point_on_curve(
+                                            &self.ds.edges[edge_ei].curve, a_p2);
+                                        (proj - a_p2).length() <= a_tol_r3d + a_tol_v12
+                                    }
+                                };
                                 if !i_flag2 { continue; }
+
                                 let edge_idx = existing_pb.new_edge.unwrap_or(existing_pb.original_edge);
                                 if edge_idx >= self.ds.edges.len() { continue; }
                                 let existing_edge = &self.ds.edges[edge_idx];
-                                // ComputePE: project intermediate point onto edge
-                                let (_t, proj) = crate::extrema::closest_point_on_curve(&existing_edge.curve, a_pm);
-                                let dist = (proj - a_pm).length();
-                                if dist <= a_tol_r3d && dist < best_dist {
+
+                                // OCCT L2173-2176: init aCoeff, aDistm1m2, aPEStatus
+                                let mut a_coeff = 1.0;
+                                let mut a_dist_m1m2 = 0.0;
+                                let mut a_pe_status = 1;
+                                // OCCT L2178: aRealTol
+                                let mut a_real_tol = a_tol_check;
+                                // OCCT L2179-2187: IsCommonBlock
+                                if a_mpb_common.contains(&pb_idx) {
+                                    a_real_tol = a_real_tol.max(a_tol_v1.max(a_tol_v2));
+                                    // theMPBCommon check — rcad uses a_mpb_common (already true)
+                                    a_real_tol *= 2.0;
+                                }
+                                // OCCT L2189-2230: iFlag1==2 && iFlag2==2 (both vertices match)
+                                //   Tangent-based tolerance increase for non-linear edges
+                                //   rcad: simplified — skip the tangent check for now (linear approximation)
+                                // OCCT L2232-2252: Mid-point projection
+                                let (_t, proj) = crate::extrema::closest_point_on_curve(
+                                    &existing_edge.curve, a_pm);
+                                let dist_to_sp = (proj - a_pm).length();
+                                if dist_to_sp > a_real_tol { continue; }
+
+                                // OCCT L2254-2261: if iFlag1==1, project P1 onto edge
+                                let mut dist_p1 = f64::MAX;
+                                if !i_flag1 {
+                                    let (_t1, p1_proj) = crate::extrema::closest_point_on_curve(
+                                        &existing_edge.curve, a_p1);
+                                    dist_p1 = (p1_proj - a_p1).length();
+                                }
+                                // OCCT L2263-2270: if iFlag2==1 (bbox-only, not vertex), project P2
+                                let mut dist_to_use = dist_to_sp;
+                                if n_v2 != n_v21 && n_v2 != n_v22 {
+                                    // iFlag2 was bbox-only (not vertex match) — project P2
+                                    let (_t2, p2_proj) = crate::extrema::closest_point_on_curve(
+                                        &existing_edge.curve, a_p2);
+                                    let dist_p2 = (p2_proj - a_p2).length();
+                                    if dist_to_use < dist_p2 {
+                                        dist_to_use = dist_p2;
+                                    }
+                                }
+
+                                // OCCT L2272-2280: select best candidate
+                                let i_flag1_ok = i_flag1 || dist_p1 <= a_real_tol;
+                                if i_flag1_ok && dist_to_use < best_dist {
                                     found_pb_idx = pb_idx;
-                                    a_tol_new = dist;
-                                    best_dist = dist;
+                                    best_a_tol_new = a_coeff * dist_to_use;
+                                    best_dist = dist_to_use;
                                 }
                             }
                             if found_pb_idx != usize::MAX {
                                 n_e_out = self.ds.pave_blocks[found_pb_idx].new_edge.unwrap_or(
                                     self.ds.pave_blocks[found_pb_idx].original_edge);
+                                a_tol_new = best_a_tol_new;
                                 true
                             } else {
                                 false
@@ -627,15 +731,18 @@ impl<'a> super::PaveFiller<'a> {
                                 // PreparePostTreatFF: OCCT L1015-1021
                                 //   Append PB to aLPBC, register in aMSCPB/aMVI
                                 //   rcad: register PB in both faces' pave_blocks_sc
+                                // OCCT L1046: aMPBAdd.Add(aPBOut) — only process once
                                 if let Some(&pb_idx) = a_mpb_on_in_vec.iter().find(|&&p| {
                                     let e = self.ds.pave_blocks[p].new_edge.unwrap_or(self.ds.pave_blocks[p].original_edge);
                                     e == n_e_out
                                 }) {
-                                    let ic_curves = &mut self.ds.intersection_curves[ci];
-                                    ic_curves.pave_blocks.push(self.ds.pave_blocks[pb_idx].clone());
-                                    for &fi in &[n_f1, n_f2] {
-                                        if fi != usize::MAX {
-                                            self.ds.faces[fi].face_info.pave_blocks_sc.insert(pb_idx);
+                                    if a_mpb_add.insert(pb_idx) {
+                                        let ic_curves = &mut self.ds.intersection_curves[ci];
+                                        ic_curves.pave_blocks.push(self.ds.pave_blocks[pb_idx].clone());
+                                        for &fi in &[n_f1, n_f2] {
+                                            if fi != usize::MAX {
+                                                self.ds.faces[fi].face_info.pave_blocks_sc.insert(pb_idx);
+                                            }
                                         }
                                     }
                                 }
@@ -710,10 +817,13 @@ impl<'a> super::PaveFiller<'a> {
                     //   aMPBOnIn; rcad iterates flat list checking vertex sharing.
                     for &pb_idx in &a_mpb_on_in_vec {
                         if pb_idx >= self.ds.pave_blocks.len() { continue; }
+                        // OCCT L3139: theMPB.Contains(aPBF) — skip already-processed
+                        if a_mpb_add.contains(&pb_idx) { continue; }
                         let a_pbf = &self.ds.pave_blocks[pb_idx];
                         let (pbsv, pbev) = a_pbf.indices();
                         // Check if PB shares vertices with the new edge
                         if pbsv == n_v1 || pbsv == n_v2 || pbev == n_v1 || pbev == n_v2 {
+                            a_mpb_add.insert(pb_idx);
                             // Check if this PB is already in both faces' ON/IN
                             let b_in_f1 = self.ds.faces[n_f1].face_info.pave_blocks_on.contains(&pb_idx)
                                 || self.ds.faces[n_f1].face_info.pave_blocks_in.contains(&pb_idx);
@@ -811,14 +921,21 @@ impl<'a> super::PaveFiller<'a> {
         //   Micro section edges are PBs whose FindValidRange failed (too short).
         //   The a_micro_pb list has been populated during section edge creation.
         //   OCCT BOPAlgo_PaveFiller_6.cxx L4341-4419
+        //   rcad: match section edges to micro PBs by (vertex_idx) pair, since
+        //   the sub-PBs from update() don't have new_edge set (unlike OCCT where
+        //   aMSCPB maps edge shape -> PB directly).
         {
             for ci in 0..self.ds.intersection_curves.len() {
                 let mut keep: Vec<usize> = Vec::new();
                 for &sei in &self.ds.section_edge_refs[ci] {
-                    let is_micro = a_micro_pb.iter().any(|pb: &PaveBlock| {
-                        // Only match if the micro PB has a new_edge set (section edge was allocated)
-                        pb.new_edge.map_or(false, |ne| ne == sei)
-                    });
+                    let is_micro = if sei < self.ds.edges.len() {
+                        let e = &self.ds.edges[sei];
+                        a_micro_pb.iter().any(|pb: &PaveBlock| {
+                            let (pv1, pv2) = pb.indices();
+                            (pv1 == e.start_vertex && pv2 == e.end_vertex)
+                                || (pv1 == e.end_vertex && pv2 == e.start_vertex)
+                        })
+                    } else { false };
                     if !is_micro {
                         keep.push(sei);
                     } else if sei < self.ds.edges.len() {
