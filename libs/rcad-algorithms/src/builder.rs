@@ -82,12 +82,7 @@ pub struct BooleanBuilder<'a> {
     // �?OCCT-aligned: myNonDestructive (BOPAlgo_Builder.hxx L503).
     //   Safe processing �?avoids modifying input shapes. Used in PostTreat.
     my_non_destructive: bool,
-    // �?OCCT-aligned: myImages for faces �?tracks which source faces were split
-    //   by BuildSplitFaces (regardless of classification outcome). Used by
-    //   build_result(Face) to decide build_original_face, matching OCCT's
-    //   myImages.IsBound(aS) check in BuildResult(TopAbs_FACE).
-    split_source_faces: std::cell::RefCell<std::collections::HashSet<usize>>,
-    // �?OCCT-aligned: myFillHistory (BOPAlgo_Options.hxx).
+    // OCCT-aligned: myFillHistory (BOPAlgo_Options.hxx).
     //   When false, PrepareHistory is a no-op (HasHistory() returns false).
     my_fill_history: bool,
     // �?OCCT-aligned: myCheckInverted (BOPAlgo_Builder.hxx L505).
@@ -623,7 +618,6 @@ impl<'a> BooleanBuilder<'a> {
             my_non_destructive: false,
             my_fill_history: true,   // OCCT default
             my_check_inverted: false,
-            split_source_faces: std::cell::RefCell::new(std::collections::HashSet::new()),
             brep: std::cell::RefCell::new(None),
         }
     }

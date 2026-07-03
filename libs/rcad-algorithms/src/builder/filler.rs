@@ -262,8 +262,13 @@ impl<'a> BooleanBuilder<'a> {
             }
 
             // Has IN or SC pave blocks → full BuilderFace::Perform (TopoDS path).
-            // OCCT-aligned: record source face as split (myImages equivalent for faces).
-            self.split_source_faces.borrow_mut().insert(self.ds.faces[fi].source_face_idx);
+            // OCCT-aligned: record source face split in myImages.
+            let sf_idx = self.ds.faces[fi].source_face_idx;
+            let f_base = self.ds.vertices.len() + self.ds.edges.len();
+            let side_offset = if is_a { 0usize } else { self.ds.a_face_count };
+            self.my_images.borrow_mut()
+                .entry(rcad_kernel::topods::ShapeRef::new(f_base + side_offset + sf_idx))
+                .or_insert_with(Vec::new);
             // Architecture A1: pass t so split faces create TShapes incrementally.
             self.builder_face_perform(fi, is_a, result, t);
         }

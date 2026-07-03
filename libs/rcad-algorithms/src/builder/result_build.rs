@@ -1052,20 +1052,20 @@ impl<'a> BooleanBuilder<'a> {
                 //   rcad: result.face_origins tracks which source faces were split.
                 //   rcad: build_faces() validates edge refs before TShape creation.
                 result.build_faces();
-                // OCCT-aligned: use split_source_faces (myImages for faces) to decide
-                // which source faces had split images �?independent of classification.
-                let split_faces: std::collections::HashSet<usize> =
-                    self.split_source_faces.borrow().iter().copied().collect();
+                // OCCT-aligned: use myImages to decide which source faces had split images.
+                let f_base = self.ds.vertices.len() + self.ds.edges.len();
                 let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
                 let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
                 for &fi in &a_faces {
-                    if !split_faces.contains(&self.ds.faces[fi].source_face_idx) {
+                    let aS = rcad_kernel::topods::ShapeRef::new(f_base + fi);
+                    if !self.my_images.borrow().contains_key(&aS) {
                         result.build_original_face(self.ds, fi,
                             FaceOrigin::FromA(self.ds.faces[fi].source_face_idx));
                     }
                 }
                 for &fi in &b_faces {
-                    if !split_faces.contains(&self.ds.faces[fi].source_face_idx) {
+                    let aS = rcad_kernel::topods::ShapeRef::new(f_base + fi);
+                    if !self.my_images.borrow().contains_key(&aS) {
                         result.build_original_face(self.ds, fi,
                             FaceOrigin::FromB(self.ds.faces[fi].source_face_idx));
                     }
