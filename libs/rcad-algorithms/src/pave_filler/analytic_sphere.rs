@@ -61,7 +61,7 @@ impl<'a> super::PaveFiller<'a> {
                 self.ds.faces[f1].face_info.vertices_in.insert(v_end);
                 self.ds.faces[f2].face_info.vertices_in.insert(v_start);
                 self.ds.faces[f2].face_info.vertices_in.insert(v_end);
-                self.ds.interferences.push(Interference::FaceFace {
+                self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
                     f1, f2, curves: vec![ci], points: vec![],
                 });
             }
@@ -97,7 +97,7 @@ impl<'a> super::PaveFiller<'a> {
                     self.ds.faces[f1].face_info.vertices_in.insert(v_end);
                     self.ds.faces[f2].face_info.vertices_in.insert(v_start);
                     self.ds.faces[f2].face_info.vertices_in.insert(v_end);
-                    self.ds.interferences.push(Interference::FaceFace {
+                    self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
                         f1, f2, curves: vec![ci], points: vec![],
                     });
                 }
@@ -107,7 +107,7 @@ impl<'a> super::PaveFiller<'a> {
                 let v = self.ds.add_vertex(pt);
                 self.ds.faces[f1].face_info.vertices_in.insert(v);
                 self.ds.faces[f2].face_info.vertices_in.insert(v);
-                self.ds.interferences.push(Interference::FaceFace {
+                self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
                     f1, f2, curves: vec![], points: vec![v],
                 });
             }
@@ -149,7 +149,7 @@ impl<'a> super::PaveFiller<'a> {
                     self.ds.faces[f2].face_info.vertices_in.insert(v_end);
                 }
                 if !curve_indices.is_empty() {
-                    self.ds.interferences.push(Interference::FaceFace {
+                    self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
                         f1, f2, curves: curve_indices, points: vec![],
                     });
                 }
@@ -233,7 +233,7 @@ impl<'a> super::PaveFiller<'a> {
             SphereCylinderResult::TangentCircle(circle) => {
                 let (pca, pcb) = make_circle_pcurves(&circle);
                 let ci = add_circle(self.ds, &circle, pca, pcb, f1, f2);
-                self.ds.interferences.push(Interference::FaceFace {
+                self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
                     f1,
                     f2,
                     curves: vec![ci],
@@ -245,7 +245,7 @@ impl<'a> super::PaveFiller<'a> {
                 let ci1 = add_circle(self.ds, &c1, pca1, pcb1, f1, f2);
                 let (pca2, pcb2) = make_circle_pcurves(&c2);
                 let ci2 = add_circle(self.ds, &c2, pca2, pcb2, f1, f2);
-                self.ds.interferences.push(Interference::FaceFace {
+                self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
                     f1,
                     f2,
                     curves: vec![ci1, ci2],
@@ -294,7 +294,7 @@ impl<'a> super::PaveFiller<'a> {
                     self.ds.faces[f2].face_info.vertices_in.insert(v_end);
                 }
                 if !curve_indices.is_empty() {
-                    self.ds.interferences.push(Interference::FaceFace {
+                    self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
                         f1,
                         f2,
                         curves: curve_indices,
@@ -323,7 +323,7 @@ impl<'a> super::PaveFiller<'a> {
         // No intersection if disjoint or one contains the other
         if d < TOLERANCE_FLOAT_LOOSE {
             // Concentric spheres: same-domain (same center). Record empty FaceFace.
-            self.ds.interferences.push(Interference::FaceFace {
+            self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
                 f1, f2, curves: vec![], points: vec![],
             });
             return;
@@ -381,7 +381,7 @@ impl<'a> super::PaveFiller<'a> {
         self.ds.faces[f2].face_info.vertices_in.insert(v_start);
         self.ds.faces[f2].face_info.vertices_in.insert(v_end);
 
-        self.ds.interferences.push(Interference::FaceFace {
+        self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
             f1,
             f2,
             curves: vec![curve_idx],

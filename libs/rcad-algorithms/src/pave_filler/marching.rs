@@ -128,7 +128,7 @@ impl<'a> super::PaveFiller<'a> {
         }
 
         if !curve_indices.is_empty() {
-            self.ds.interferences.push(Interference::FaceFace {
+            self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
                 f1,
                 f2,
                 curves: curve_indices,
@@ -377,7 +377,7 @@ impl<'a> super::PaveFiller<'a> {
         }
 
         if !curve_indices.is_empty() {
-            self.ds.interferences.push(Interference::FaceFace {
+            self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
                 f1,
                 f2,
                 curves: curve_indices,

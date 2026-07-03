@@ -4,7 +4,8 @@ use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
 
 use crate::bopds::ds::{
-    DS, DSEdge, DSRepOnFace, DSVertex, Interference, IntersectionCurve, ShapeOrigin,
+    DS, DSEdge, DSRepOnFace, DSVertex, Interference, InterferenceFF, InterferenceVV,
+    InterferenceVE, InterferenceVF, InterferenceEE, InterferenceEF, IntersectionCurve, ShapeOrigin,
 };
 use crate::bopds::pave::*;
 use crate::bvh::Bvh;

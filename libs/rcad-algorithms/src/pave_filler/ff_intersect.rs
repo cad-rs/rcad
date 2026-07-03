@@ -913,7 +913,7 @@ impl<'a> super::PaveFiller<'a> {
             curve_indices.push(curve_idx);
         }
         if !curve_indices.is_empty() {
-            self.ds.interferences.push(crate::bopds::ds::Interference::FaceFace { f1, f2, curves: curve_indices, points: vec![] });
+            self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{ f1, f2, curves: curve_indices, points: vec![] });
         }
     }
 }

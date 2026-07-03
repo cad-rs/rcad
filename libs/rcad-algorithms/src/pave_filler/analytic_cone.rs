@@ -29,7 +29,7 @@ impl<'a> super::PaveFiller<'a> {
         match intersect_cone_cone(cone1, cone2) {
             ConeConeResult::NoIntersection => (),
             ConeConeResult::Coaxial => {
-                self.ds.interferences.push(Interference::FaceFace {
+                self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
                     f1, f2, curves: vec![], points: vec![],
                 });
             }
@@ -83,7 +83,7 @@ impl<'a> super::PaveFiller<'a> {
                     self.ds.faces[f2].face_info.vertices_in.insert(v_end);
                 }
                 if !curve_indices.is_empty() {
-                    self.ds.interferences.push(Interference::FaceFace {
+                    self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
                         f1,
                         f2,
                         curves: curve_indices,
@@ -120,7 +120,7 @@ impl<'a> super::PaveFiller<'a> {
                 self.ds.faces[f2].face_info.vertices_in.insert(v_start);
                 self.ds.faces[f2].face_info.vertices_in.insert(v_end);
 
-                self.ds.interferences.push(Interference::FaceFace {
+                self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
                     f1,
                     f2,
                     curves: vec![ci],

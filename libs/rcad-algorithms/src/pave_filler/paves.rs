@@ -171,7 +171,7 @@ impl<'a> super::PaveFiller<'a> {
                 self.ds.add_shape_sd(nv1, n_v);
                 self.ds.add_shape_sd(nv2, n_v);
                 if add_interfs {
-                    self.ds.interferences.push(Interference::VertexVertex {
+                    self.ds.interf_vv.push(InterferenceVV{
                         v1: nv1, v2: nv2, merged_vertex: n_v,
                     });
                 }

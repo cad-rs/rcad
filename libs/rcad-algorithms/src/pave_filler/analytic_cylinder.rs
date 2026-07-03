@@ -70,7 +70,7 @@ impl<'a> super::PaveFiller<'a> {
                     self.ds.faces[f2].face_info.vertices_in.insert(v_end);
                 }
                 if !curve_indices.is_empty() {
-                    self.ds.interferences.push(Interference::FaceFace {
+                    self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
                         f1,
                         f2,
                         curves: curve_indices,
@@ -120,7 +120,7 @@ impl<'a> super::PaveFiller<'a> {
                     self.ds.faces[f2].face_info.vertices_in.insert(v_end);
                 }
                 if !curve_indices.is_empty() {
-                    self.ds.interferences.push(Interference::FaceFace {
+                    self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
                         f1,
                         f2,
                         curves: curve_indices,
@@ -157,7 +157,7 @@ impl<'a> super::PaveFiller<'a> {
                 self.ds.faces[f2].face_info.vertices_in.insert(v_start);
                 self.ds.faces[f2].face_info.vertices_in.insert(v_end);
 
-                self.ds.interferences.push(Interference::FaceFace {
+                self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
                     f1,
                     f2,
                     curves: vec![ci],
@@ -196,7 +196,7 @@ impl<'a> super::PaveFiller<'a> {
                     self.ds.faces[f2].face_info.vertices_in.insert(v_end);
                     curve_indices.push(ci);
                 }
-                self.ds.interferences.push(Interference::FaceFace {
+                self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
                     f1,
                     f2,
                     curves: curve_indices,
@@ -383,7 +383,7 @@ impl<'a> super::PaveFiller<'a> {
             CylinderCylinderResult::Coaxial => {
                 // Same-domain coaxial cylinders: record empty-curves FaceFace so
                 // the Builder treats this pair as coincident (no intersection to split).
-                self.ds.interferences.push(Interference::FaceFace {
+                self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
                     f1, f2, curves: vec![], points: vec![],
                 });
                 return;
@@ -602,7 +602,7 @@ impl<'a> super::PaveFiller<'a> {
         }
 
         if !curve_indices.is_empty() {
-            self.ds.interferences.push(Interference::FaceFace {
+            self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
                 f1,
                 f2,
                 curves: curve_indices,

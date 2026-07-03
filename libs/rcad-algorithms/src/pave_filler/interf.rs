@@ -125,7 +125,7 @@ impl<'a> PaveFiller<'a> {
                                 l1, self.ds.edges[nE1].t_range,
                                 l2, self.ds.edges[nE2].t_range, fuzzy)
                             {
-                                self.ds.interferences.push(Interference::EdgeEdge {
+                                self.ds.interf_ee.push(InterferenceEE{
                                     e1: nE1, e2: nE2, point: pt, param1: t1, param2: t2, new_vertex: nV1,
                                 });
                             }
@@ -134,7 +134,7 @@ impl<'a> PaveFiller<'a> {
                             // intersect_circle_circle returns Vec<DVec3>
                             let cp_hits = intersect_circle_circle(circ, circ, fuzzy);
                             if let Some(&pt) = cp_hits.first() {
-                                self.ds.interferences.push(Interference::EdgeEdge {
+                                self.ds.interf_ee.push(InterferenceEE{
                                     e1: nE1, e2: nE2, point: pt, param1: 0.0, param2: 0.0, new_vertex: nV1,
                                 });
                             }
@@ -228,7 +228,7 @@ impl<'a> PaveFiller<'a> {
                             if nr_d < best_d { best_d = nr_d; best_t1 = nr_t1; best_t2 = nr_t2; }
                             if best_d <= fuzzy {
                                 let best_pt = c1.point_at(best_t1);
-                                self.ds.interferences.push(Interference::EdgeEdge {
+                                self.ds.interf_ee.push(InterferenceEE{
                                     e1: nE1, e2: nE2, point: best_pt,
                                     param1: best_t1, param2: best_t2, new_vertex: nV1,
                                 });
@@ -503,7 +503,7 @@ impl<'a> PaveFiller<'a> {
             let a_mid_pt = self.ds.edges[ne].curve.point_at(a_t_mid);
 
             // OCCT L1176-1182: create BOPDS_InterfEF + AddInterf
-            self.ds.interferences.push(Interference::EdgeFace {
+            self.ds.interf_ef.push(InterferenceEF{
                 edge: ne,
                 face: nf,
                 point: a_mid_pt,

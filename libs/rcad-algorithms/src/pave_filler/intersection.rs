@@ -5,7 +5,7 @@ use rcad_kernel::geom::{Curve3, Surface3};
 use rcad_kernel::CurveEval;
 
 use crate::bopalgo::{fill_map, make_blocks};
-use crate::bopds::ds::{DS, Interference, ShapeOrigin, PairIterator};
+use crate::bopds::ds::{DS, Interference, ShapeOrigin, PairIterator, InterferenceVV, InterferenceVE, InterferenceVF, InterferenceEE, InterferenceEF};
 use crate::bopds::pave::Pave;
 use crate::inttools;
 use crate::inttools::fclass2d::{FClass2d, State};
@@ -203,7 +203,7 @@ impl<'a> super::PaveFiller<'a> {
                         if *vertex == vi && *edge == ei)
                 });
                 if !already_interfered {
-                    self.ds.interferences.push(Interference::VertexEdge {
+                    self.ds.interf_ve.push(InterferenceVE{
                         vertex: vi,
                         edge: ei,
                         param: t,
@@ -630,7 +630,7 @@ impl<'a> super::PaveFiller<'a> {
                 let n2 = block[j];
                 // OCCT L223-224: AddInterf(n1, n2)
                 // rcad: push VertexVertex interference
-                self.ds.interferences.push(Interference::VertexVertex {
+                self.ds.interf_vv.push(InterferenceVV{
                     v1: n1,
                     v2: n2,
                     merged_vertex: n_v,
@@ -701,7 +701,7 @@ impl<'a> super::PaveFiller<'a> {
                     t_range,
                     te,
                 ) {
-                    self.ds.interferences.push(Interference::VertexEdge {
+                    self.ds.interf_ve.push(InterferenceVE{
                         vertex: vi,
                         edge: ei,
                         param: t,
@@ -732,7 +732,7 @@ impl<'a> super::PaveFiller<'a> {
                             // within tolerance of the edge's 3D curve at the computed param.
                             let on_edge_3d = edge_curve.point_at(theta).distance(point) <= te;
                             if on_edge_3d {
-                                self.ds.interferences.push(Interference::VertexEdge {
+                                self.ds.interf_ve.push(InterferenceVE{
                                     vertex: vi,
                                     edge: ei,
                                     param: theta,
@@ -758,7 +758,7 @@ impl<'a> super::PaveFiller<'a> {
                     if d < best_d { best_d = d; best_t = t; }
                 }
                 if best_d <= te {
-                    self.ds.interferences.push(Interference::VertexEdge {
+                    self.ds.interf_ve.push(InterferenceVE{
                         vertex: vi,
                         edge: ei,
                         param: best_t,
@@ -828,7 +828,7 @@ impl<'a> super::PaveFiller<'a> {
                 // Glue: use first pave point as shared vertex
                 let pv = self.ds.edges[ae].start_vertex;
                 if !self.ds.has_interf_ee(ae, be) {
-                    self.ds.interferences.push(Interference::EdgeEdge {
+                    self.ds.interf_ee.push(InterferenceEE{
                         e1: ae, e2: be,
                         point: self.ds.vertices[pv].point,
                         param1: self.ds.edges[ae].t_range[0],
@@ -907,7 +907,7 @@ impl<'a> super::PaveFiller<'a> {
         //   vertices directly (architecture diff: rcad DSVertex has no UpdateVertex).
         for (t1, t2, point) in hits {
             let new_v = self.ds.add_vertex(point);
-            self.ds.interferences.push(Interference::EdgeEdge {
+            self.ds.interf_ee.push(InterferenceEE{
                 e1, e2, point, param1: t1, param2: t2, new_vertex: new_v,
             });
             self.ds.edges[e1].paves.push(Pave { vertex_idx: new_v, param: t1 });
@@ -963,7 +963,7 @@ impl<'a> super::PaveFiller<'a> {
 
         for (t1, t2, point) in hits {
             let new_v = self.ds.add_vertex(point);
-            self.ds.interferences.push(Interference::EdgeEdge {
+            self.ds.interf_ee.push(InterferenceEE{
                 e1,
                 e2,
                 point,
@@ -1163,7 +1163,7 @@ impl<'a> super::PaveFiller<'a> {
                 let tol = self.vv_pair_tol(vi, vj);
                 let dist = (self.ds.vertices[vi].point - self.ds.vertices[vj].point).length();
                 if dist <= tol {
-                    self.ds.interferences.push(Interference::VertexVertex {
+                    self.ds.interf_vv.push(InterferenceVV{
                         v1: vi, v2: vj, merged_vertex: vi,
                     });
                 }
@@ -1270,7 +1270,7 @@ impl<'a> super::PaveFiller<'a> {
 
         if is_on {
             // OCCT L276-278: Create InterfVF for ALL original vertices (from aMVFPairs)
-            self.ds.interferences.push(Interference::VertexFace {
+            self.ds.interf_vf.push(InterferenceVF{
                 vertex: n_vsd,
                 face: fi,
             });
@@ -1705,7 +1705,7 @@ impl<'a> super::PaveFiller<'a> {
             // ✅ OCCT-aligned: Create EF interference for EVERY hit, even at edge endpoints.
             //    OCCT IntTools_EdgeFace creates a new vertex for each hit (no dedup).
             //    rcad: remove the vertices_on skip check — always push interference.
-            self.ds.interferences.push(Interference::EdgeFace {
+            self.ds.interf_ef.push(InterferenceEF{
                 edge: edge_idx,
                 face: face_idx,
                 point,
