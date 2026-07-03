@@ -372,7 +372,7 @@ impl<'a> BooleanBuilder<'a> {
         if nf < 2 { return; }
 
         // OCCT L584-589: Check FF interferences — if none, nothing to merge.
-        let has_ff = self.ds.interferences.iter().any(|i| matches!(i, crate::bopds::ds::Interference::FaceFace { .. }));
+        let has_ff = !self.ds.interf_ff.is_empty();
         if !has_ff { return; }
 
         // OCCT L597-648: Build aFaceToParent map — faces from the same parent
@@ -402,9 +402,9 @@ impl<'a> BooleanBuilder<'a> {
         // rcad: build (origin, source_face_idx) set from FF interferences,
         // then filter result faces to only those matching the FF set.
         let mut ff_source_set: std::collections::HashSet<(bool, usize)> = std::collections::HashSet::new();
-        for inf in &self.ds.interferences {
-            if let crate::bopds::ds::Interference::FaceFace { f1, f2, .. } = inf {
-                for &dfi in &[*f1, *f2] {
+        for ff in &self.ds.interf_ff {
+            if true {
+                for &dfi in &[ff.f1, ff.f2] {
                     if let Some(df) = self.ds.faces.get(dfi) {
                         ff_source_set.insert((df.origin == ShapeOrigin::ShapeA, df.source_face_idx));
                     }

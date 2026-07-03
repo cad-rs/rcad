@@ -157,13 +157,9 @@ pub fn imprint_shape(target: &BRep, tool: &BRep) -> ImprintResult {
         if has_intersection {
             for &tfi in &tool_face_indices {
                 // Check if any curve on this target face came from a FF interference with this tool face
-                let shares_curve = ds.interferences.iter().any(|iv| {
-                    if let crate::bopds::ds::Interference::FaceFace { f1, f2, curves, .. } = iv {
-                        let (ta, tb) = if *f1 == dfi { (*f1, *f2) } else { (*f2, *f1) };
-                        ta == dfi && tb == tfi && !curves.is_empty()
-                    } else {
-                        false
-                    }
+                let shares_curve = ds.interf_ff.iter().any(|ff| {
+                    let (ta, tb) = if ff.f1 == dfi { (ff.f1, ff.f2) } else { (ff.f2, ff.f1) };
+                    ta == dfi && tb == tfi && !ff.curves.is_empty()
                 });
                 if shares_curve {
                     for ri in result_face_start..result_faces.len() {
@@ -921,17 +917,15 @@ fn find_pcurve_for_face(
     curve_idx: usize,
     face_idx: usize,
 ) -> Option<rcad_kernel::geom::Curve2d> {
-    use crate::bopds::ds::Interference;
-    for interference in &ds.interferences {
-        if let Interference::FaceFace { f1, f2, curves, .. } = interference
-            && curves.contains(&curve_idx) {
-                let ic = &ds.intersection_curves[curve_idx];
-                if *f1 == face_idx {
-                    return ic.pcurve_on_a.clone();
-                } else if *f2 == face_idx {
-                    return ic.pcurve_on_b.clone();
-                }
+    for ff in &ds.interf_ff {
+        if ff.curves.contains(&curve_idx) {
+            let ic = &ds.intersection_curves[curve_idx];
+            if ff.f1 == face_idx {
+                return ic.pcurve_on_a.clone();
+            } else if ff.f2 == face_idx {
+                return ic.pcurve_on_b.clone();
             }
+        }
     }
     None
 }

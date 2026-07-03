@@ -185,11 +185,9 @@ impl<'a> super::PaveFiller<'a> {
     pub(crate) fn split_ics_at_periodic_boundary(&mut self) {
         let n_curves = self.ds.intersection_curves.len();
         let mut curve_faces = std::collections::HashMap::new();
-        for inf in &self.ds.interferences {
-            if let Interference::FaceFace { f1, f2, curves, .. } = inf {
-                for &ci in curves {
-                    curve_faces.entry(ci).or_insert((*f1, *f2));
-                }
+        for ff in &self.ds.interf_ff {
+            for &ci in &ff.curves {
+                curve_faces.entry(ci).or_insert((ff.f1, ff.f2));
             }
         }
         for ci in 0..n_curves {
@@ -784,12 +782,11 @@ impl<'a> super::PaveFiller<'a> {
                 std::collections::HashSet::new();
 
             // OCCT L712-713: iterate all FF interferences
-            for interf in &self.ds.interferences {
-                if let Interference::FaceFace { f1, f2, curves, .. } = interf {
-                    let nf = [*f1, *f2];
+            for ff in &self.ds.interf_ff {
+                let nf = [ff.f1, ff.f2];
 
                     // OCCT L733-755: for each curve in the FF interference
-                    for &ci in curves {
+                for &ci in &ff.curves {
                         if ci >= self.ds.intersection_curves.len() { continue; }
                         let ic = &self.ds.intersection_curves[ci];
 
@@ -821,7 +818,6 @@ impl<'a> super::PaveFiller<'a> {
                         }
                     }
                 }
-            }
         } // end Phase 2
 
         // ===== Phase 3: Perform all MPC computations (OCCT L760-775) =====
@@ -1031,11 +1027,7 @@ impl<'a> super::PaveFiller<'a> {
     pub(crate) fn is_existing_vertex(&self, ci: usize, param: f64) -> bool {
         let ic = &self.ds.intersection_curves[ci];
         let tol = ic.geom_tol.max(TOLERANCE_ABS) * 100.0;
-        for inf in &self.ds.interferences {
-            if let Interference::FaceFace { curves, .. } = inf {
-                if curves.contains(&ci) { continue; }
-            }
-        }
+        // (FaceFace curve check removed — was a no-op loop over interferences)
         // Check if any vertex already exists at this parameter
         for fi in 0..self.ds.faces.len() {
             for &vi in &self.ds.faces[fi].face_info.vertices_in {
@@ -1312,14 +1304,9 @@ impl<'a> super::PaveFiller<'a> {
             // from the FF interference that references this IC.
             let mut f1 = usize::MAX;
             let mut f2 = usize::MAX;
-            for inf in &self.ds.interferences {
-                if let Interference::FaceFace { f1: a, f2: b, curves, .. } = inf {
-                    if curves.contains(&ci) {
-                        f1 = *a;
-                        f2 = *b;
-                        break;
-                    }
-                }
+            if let Some(ff) = self.ds.interf_ff.iter().find(|ff| ff.curves.contains(&ci)) {
+                f1 = ff.f1;
+                f2 = ff.f2;
             }
 
             let new_ei = self.ds.edges.len();

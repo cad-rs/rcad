@@ -22,12 +22,8 @@ impl<'a> super::PaveFiller<'a> {
         }
 
         // OCCT L657-659: Collect FF interferences (InterfFF)
-        let ff_interfs: Vec<(usize, usize, Vec<usize>)> = self.ds.interferences.iter()
-            .filter_map(|inf| {
-                if let Interference::FaceFace { f1, f2, curves, .. } = inf {
-                    if curves.is_empty() { None } else { Some((*f1, *f2, curves.clone())) }
-                } else { None }
-            })
+        let ff_interfs: Vec<(usize, usize, Vec<usize>)> = self.ds.interf_ff.iter()
+            .map(|ff| (ff.f1, ff.f2, ff.curves.clone()))
             .collect();
 
         // OCCT L660-663: Early return when no FF interferences

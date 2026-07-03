@@ -1389,14 +1389,12 @@ impl<'a> BooleanBuilder<'a> {
         curve_idx: usize,
         face_idx: usize,
     ) -> Option<rcad_kernel::geom::Curve2d> {
-        for interference in &self.ds.interferences {
-            if let Interference::FaceFace { f1, f2, curves, .. } = interference
-                && curves.contains(&curve_idx)
-            {
+        for ff in &self.ds.interf_ff {
+            if ff.curves.contains(&curve_idx) {
                 let ic = &self.ds.intersection_curves[curve_idx];
-                if *f1 == face_idx {
+                if ff.f1 == face_idx {
                     return ic.pcurve_on_a.clone();
-                } else if *f2 == face_idx {
+                } else if ff.f2 == face_idx {
                     return ic.pcurve_on_b.clone();
                 }
             }
