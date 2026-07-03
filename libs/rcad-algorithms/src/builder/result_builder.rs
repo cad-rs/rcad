@@ -31,6 +31,11 @@ pub(crate) struct ResultBuilder {
     pub(crate) face_internal_vtx: Vec<Vec<usize>>,
     pub(crate) deg_edge_indices: HashSet<usize>,
     pub(crate) ic_edge_map: HashMap<usize, usize>,
+    /// OCCT-aligned: DS edge index → flat edge index.
+    ///   Two faces sharing the same DS edge get the same flat edge index,
+    ///   matching OCCT's TopoDS_Edge identity sharing (same TShape* pointer).
+    ///   Populated by emit_wire_face_topods for DsEdge-sourced wire segments.
+    pub(crate) ds_edge_to_flat: HashMap<usize, usize>,
     pub(crate) source_has_compound: bool,
     pub(crate) tmp_compsolid_groups: Vec<Vec<usize>>,
     /// OCCT-aligned: per-source side tracking for solids (0=ShapeA/Args, 1=ShapeB/Tools).
@@ -417,24 +422,30 @@ impl ResultBuilder {
                     }
                     super::types::WireEdgeSourceTopoDS::DsEdge(sr) => {
                         // Architecture diff A6: section edges created by MakeBlocks
-                        // have their curve stored in the DS edge.  Use it so that
-                        // build_topods_faces creates edges with the correct parametric
-                        // range (not hardcoded [0,1]).
+                        // have their curve stored in the DS edge.
                         // sr.index = e_base + ds_ei; use sr_index_to_ds_ei reverse
                         // lookup to get the original DS edge index.
                         if let Some(&ds_ei) = sr_index_to_ds_ei.get(&sr.index) {
-                            if let Some(ref ds_edges) = self.ds_edges {
+                            // OCCT-aligned: same DS edge → same flat edge index
+                            // (matching TopoDS_Edge identity sharing).
+                            if let Some(&existing) = self.ds_edge_to_flat.get(&ds_ei) {
+                                existing
+                            } else if let Some(ref ds_edges) = self.ds_edges {
                                 if ds_ei < ds_edges.len() {
                                     let crv = ds_edges[ds_ei].curve.clone();
-                                    // Use ds_edges[ds_ei].t_range (3D curve range) instead of
-                                    // seg.t_range (which may be pcurve range for boundary edges).
                                     let range = ds_edges[ds_ei].t_range;
-                                    self.add_edge_with_curve(v1, v2, crv, range)
+                                    let ei = self.add_edge_with_curve(v1, v2, crv, range);
+                                    self.ds_edge_to_flat.insert(ds_ei, ei);
+                                    ei
                                 } else {
-                                    self.add_edge(v1, v2)
+                                    let ei = self.add_edge(v1, v2);
+                                    self.ds_edge_to_flat.insert(ds_ei, ei);
+                                    ei
                                 }
                             } else {
-                                self.add_edge(v1, v2)
+                                let ei = self.add_edge(v1, v2);
+                                self.ds_edge_to_flat.insert(ds_ei, ei);
+                                ei
                             }
                         } else {
                             self.add_edge(v1, v2)
@@ -696,6 +707,7 @@ impl ResultBuilder {
             face_internal_vtx: Vec::new(),
             deg_edge_indices: std::collections::HashSet::new(),
             ic_edge_map: HashMap::new(),
+            ds_edge_to_flat: HashMap::new(),
             tmp_shells: Vec::new(),
             tmp_solids: Vec::new(),
             source_has_compound: false,
