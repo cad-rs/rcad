@@ -268,6 +268,7 @@ impl DS {
             solid_images: Vec::new(),
             pave_blocks: Vec::new(),
             edge_flags: EdgeFlagMap::new(),
+            locations: Vec::new(),
             increased_ss: std::collections::HashSet::new(),
             shape_info: Vec::new(),
             nb_source_shapes: 0,
@@ -547,6 +548,7 @@ impl DS {
                     origin: Some(origin),
                     geom_tol: rcad_kernel::vertex_tolerance(brep, local_i),
                     is_internal: false,
+                    location: 0,
                 });
                 local_to_ds.push(vi);
             }
@@ -1156,8 +1158,23 @@ impl DS {
             origin: None,
             geom_tol: new_base,
             is_internal: false,
+            location: 0,
         });
         idx
+    }
+
+    /// OCCT-aligned: add a TopLoc_Location to the DS location pool, return its index.
+    ///   Returns 0 if the transform is identity (index 0 = identity, implicit).
+    pub fn add_location(&mut self, loc: glam::DAffine3) -> u32 {
+        if loc == glam::DAffine3::IDENTITY { return 0; }
+        // Check if already stored
+        for (i, existing) in self.locations.iter().enumerate() {
+            if existing.abs_diff_eq(loc, 1e-12) {
+                return (i + 1) as u32;
+            }
+        }
+        self.locations.push(loc);
+        self.locations.len() as u32
     }
 
     /// 鉁?OCCT-aligned: Append a PaveBlock to the global pool (BOPDS_DS::ChangePaveBlocksPool).

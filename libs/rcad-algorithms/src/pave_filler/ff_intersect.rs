@@ -509,9 +509,9 @@ impl<'a> super::PaveFiller<'a> {
                     // face-boundary arcs onto the same vertex pair, creating the
                     // same section edges for different curves and breaking the loop.
                     let v_start = self.ds.vertices.len();
-                    self.ds.vertices.push(DSVertex { point: p_start, geom_tol: TOLERANCE_ABS, origin: None, is_internal: false });
+                    self.ds.vertices.push(DSVertex { point: p_start, geom_tol: TOLERANCE_ABS, origin: None, is_internal: false, location: 0 });
                     let v_end = self.ds.vertices.len();
-                    self.ds.vertices.push(DSVertex { point: p_end, geom_tol: TOLERANCE_ABS, origin: None, is_internal: false });
+                    self.ds.vertices.push(DSVertex { point: p_end, geom_tol: TOLERANCE_ABS, origin: None, is_internal: false, location: 0 });
                     self.ds.intersection_curves[ci].start_vertex = v_start;
                     self.ds.intersection_curves[ci].end_vertex = v_end;
                 }

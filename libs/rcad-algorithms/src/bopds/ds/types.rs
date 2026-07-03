@@ -190,10 +190,14 @@ pub struct DSVertex {
     /// Model tolerance at this vertex (`vertex_tolerance` from source BRep when loaded;
     /// [`TOLERANCE_ABS`](crate::tolerance::TOLERANCE_ABS) for vertices added by the DS).
     pub geom_tol: f64,
-    /// 鉁?OCCT-aligned: TopAbs_INTERNAL orientation marker.
+    /// OCCT-aligned: TopAbs_INTERNAL orientation marker.
     ///   True when this vertex is INTERNAL to its source solid volume
     ///   (not on the boundary).  Used by FillInternalShapes.
     pub is_internal: bool,
+    /// OCCT-aligned: TopLoc_Location index into DS.locations[]; 0 = identity.
+    ///   Populated when loading from topods::BRep with non-identity Location.
+    ///   Used by emit_wire_face_topods to create ShapeRefs with correct Location.
+    pub location: u32,
 }
 
 /// 鉁?OCCT-aligned: edge's pcurve on one face (BRep_CurveRepresentation equivalent).
@@ -536,6 +540,10 @@ pub struct DS {
 
     /// OCCT FillImagesSolids: placeholder for solid-level images.
     pub solid_images: Vec<bool>,
+
+    /// OCCT-aligned: TopLoc_Location storage. Index 0 = identity (implicit), 1+ stored here.
+    /// Populated by load_brep when loading from topods::BRep with non-identity Location.
+    pub locations: Vec<glam::DAffine3>,
 
     /// Global PaveBlock array (OCCT: BOPDS_DS::myPaveBlocks).
     /// Indices in FaceInfo::pave_blocks_on / pave_blocks_in refer to this array.

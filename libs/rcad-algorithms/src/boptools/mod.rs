@@ -1482,7 +1482,7 @@ pub fn compute_vv(v1: &crate::bopds::ds::DSVertex, v2: &crate::bopds::ds::DSVert
 pub fn make_new_vertex(ds: &mut crate::bopds::ds::DS, p: glam::DVec3, tol: f64) -> usize {
     let vi = ds.vertices.len();
     ds.vertices.push(crate::bopds::ds::DSVertex {
-        point: p, geom_tol: tol, origin: None, is_internal: false,
+        point: p, geom_tol: tol, origin: None, is_internal: false, location: 0,
     });
     vi
 }
@@ -1496,7 +1496,7 @@ pub fn make_new_vertex_from_two(v1: &crate::bopds::ds::DSVertex, v2: &crate::bop
     let tol = dist * 0.5 + v1.geom_tol.max(v2.geom_tol) + crate::tolerance::TOLERANCE_LEN_MIN;
     let vi = ds.vertices.len();
     ds.vertices.push(crate::bopds::ds::DSVertex {
-        point: mid, geom_tol: tol, origin: None, is_internal: false,
+        point: mid, geom_tol: tol, origin: None, is_internal: false, location: 0,
     });
     vi
 }
@@ -1900,7 +1900,7 @@ pub fn make_vertex_from_list(
     let tol = max_dist + max_tol + crate::tolerance::TOLERANCE_LEN_MIN;
     let vi = ds.vertices.len();
     ds.vertices.push(crate::bopds::ds::DSVertex {
-        point: mid, geom_tol: tol, origin: None, is_internal: false,
+        point: mid, geom_tol: tol, origin: None, is_internal: false, location: 0,
     });
     vi
 }

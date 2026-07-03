@@ -227,7 +227,7 @@ impl<'a> super::PaveFiller<'a> {
                                     let vi = self.ds.vertices.len();
                                     self.ds.vertices.push(crate::bopds::ds::DSVertex {
                                         point: pt, geom_tol: TOLERANCE_ABS, origin: None,
-                                        is_internal: false,
+                                        is_internal: false, location: 0,
                                     });
                                     vi
                                 });
