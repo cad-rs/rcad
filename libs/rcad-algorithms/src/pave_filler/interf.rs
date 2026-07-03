@@ -357,10 +357,9 @@ impl<'a> PaveFiller<'a> {
 
                 // L952-955: skip if PB already in face's On/In/Sc sets
                 // (rcad: global PB pool not fully populated yet — approximate check via
-                //  existing Interference::EdgeFace)
-                if self.ds.interferences.iter().any(|inf| {
-                    matches!(inf, Interference::EdgeFace { edge: e, face: f, .. }
-                        if *e == ne && *f == nf)
+                //  existing EdgeFace interferences)
+                if self.ds.interf_ef.iter().any(|inf| {
+                    inf.edge == ne && inf.face == nf
                 }) {
                     continue;
                 }
@@ -530,10 +529,8 @@ impl<'a> PaveFiller<'a> {
     fn force_interf_ve(&mut self) {
         // Build set of existing VE interferences for dedup
         let mut ve_done: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
-        for inf in &self.ds.interferences {
-            if let Interference::VertexEdge { vertex, edge, .. } = inf {
-                ve_done.insert((*vertex, *edge));
-            }
+        for inf in &self.ds.interf_ve {
+            ve_done.insert((inf.vertex, inf.edge));
         }
 
         for fi in 0..self.ds.faces.len() {
@@ -577,10 +574,8 @@ impl<'a> PaveFiller<'a> {
     fn force_interf_vf(&mut self) {
         // Build set of existing VF interferences for dedup
         let mut vf_done: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
-        for inf in &self.ds.interferences {
-            if let Interference::VertexFace { vertex, face } = inf {
-                vf_done.insert((*vertex, *face));
-            }
+        for inf in &self.ds.interf_vf {
+            vf_done.insert((inf.vertex, inf.face));
         }
 
         for vi in 0..self.ds.vertices.len() {
@@ -602,10 +597,8 @@ impl<'a> PaveFiller<'a> {
         let n_faces = self.ds.faces.len();
         let ics = self.ds.intersection_curves.clone();
         let mut ic_creators: Vec<Vec<usize>> = vec![Vec::new(); ics.len()];
-        for inf in &self.ds.interferences {
-            if let Interference::FaceFace { f1, f2, curves, .. } = inf {
-                for &ci in curves { if ci < ic_creators.len() { ic_creators[ci].push(*f1); ic_creators[ci].push(*f2); } }
-            }
+        for inf in &self.ds.interf_ff {
+            for &ci in &inf.curves { if ci < ic_creators.len() { ic_creators[ci].push(inf.f1); ic_creators[ci].push(inf.f2); } }
         }
         for (ci, ic) in ics.iter().enumerate() {
             let creators = &ic_creators[ci];

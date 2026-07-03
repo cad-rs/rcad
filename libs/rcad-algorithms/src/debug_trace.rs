@@ -68,7 +68,9 @@ pub fn dump_result_topo(result: &rcad_kernel::BRep, label: &str) {
 
 /// Print DS vertex/edge/face/interference counts.
 pub fn dump_ds(ds: &crate::bopds::ds::DS, label: &str) {
+    let n_interf = ds.interf_vv.len() + ds.interf_ve.len() + ds.interf_vf.len()
+        + ds.interf_ee.len() + ds.interf_ef.len() + ds.interf_ff.len();
     eprintln!("[TRACE] {}: vertices={} edges={} faces={} intersect_curves={} interferences={}",
         label, ds.vertices.len(), ds.edges.len(), ds.faces.len(),
-        ds.intersection_curves.len(), ds.interferences.len());
+        ds.intersection_curves.len(), n_interf);
 }

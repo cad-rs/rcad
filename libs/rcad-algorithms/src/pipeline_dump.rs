@@ -62,14 +62,16 @@ impl DumpCtx {
 fn serialize_ds(ds: &DS) -> serde_json::Value {
     let nv = ds.vertices.len();
     let av = ds.a_vertex_count;
-    let ee = cnt(&ds.interferences, |x| matches!(x, crate::bopds::ds::Interference::EdgeEdge{..}));
-    let ef = cnt(&ds.interferences, |x| matches!(x, crate::bopds::ds::Interference::EdgeFace{..}));
+    let ee = ds.interf_ee.len();
+    let ef = ds.interf_ef.len();
+    let n_interf_total = ds.interf_vv.len() + ds.interf_ve.len() + ds.interf_vf.len()
+        + ds.interf_ee.len() + ds.interf_ef.len() + ds.interf_ff.len();
     json!({"ds": {
         "nV": nv, "nA": av.min(nv), "nB": nv.saturating_sub(av),
         "nE": ds.edges.len(), "nF": ds.faces.len(),
         "nIC": ds.intersection_curves.len(),
         "nPB": ds.pave_blocks.len(), "nCB": ds.common_blocks.len(),
-        "interf": { "EE": ee, "EF": ef, "total": ds.interferences.len() },
+        "interf": { "EE": ee, "EF": ef, "total": n_interf_total },
         "faces": ds.faces.iter().enumerate().map(|(fi, f)| {
             let st = format!("{:?}", f.surface);
             json!({"fi": fi, "surf": st, "nBE": f.boundary_edges.len(),
@@ -120,4 +122,4 @@ fn serialize_brep(b: &rcad_kernel::topods::BRep) -> serde_json::Value {
     json!({"brep": {"V":v,"E":e,"F":f,"Shell":sh,"Solid":so,"Comp":cp,"CompSolid":cs,"total":v+e+f+sh+so+cp+cs}})
 }
 
-fn cnt<T>(v: &[T], f: fn(&T) -> bool) -> usize { v.iter().filter(|x| f(x)).count() }
+

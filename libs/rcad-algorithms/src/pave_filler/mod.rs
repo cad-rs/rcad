@@ -583,23 +583,21 @@ impl<'a> PaveFiller<'a> {
                 if a < b { Some((a, b)) } else { None }
             })
             .collect();
-        for inf in &mut self.ds.interferences {
-            match inf {
-                Interference::EdgeEdge { new_vertex, .. }
-                | Interference::EdgeFace { new_vertex, .. } => {
-                    if let Some(&sd) = sd_for.get(new_vertex) {
-                        *new_vertex = sd;
-                    }
-                }
-                Interference::VertexVertex { v1, v2, merged_vertex } => {
-                    // OCCT: find SD partner for either v1 or v2
-                    if let Some(&sd) = sd_for.get(v1) {
-                        *merged_vertex = sd;
-                    } else if let Some(&sd) = sd_for.get(v2) {
-                        *merged_vertex = sd;
-                    }
-                }
-                _ => {}
+        for inf in &mut self.ds.interf_ee {
+            if let Some(&sd) = sd_for.get(&inf.new_vertex) {
+                inf.new_vertex = sd;
+            }
+        }
+        for inf in &mut self.ds.interf_ef {
+            if let Some(&sd) = sd_for.get(&inf.new_vertex) {
+                inf.new_vertex = sd;
+            }
+        }
+        for inf in &mut self.ds.interf_vv {
+            if let Some(&sd) = sd_for.get(&inf.v1) {
+                inf.merged_vertex = sd;
+            } else if let Some(&sd) = sd_for.get(&inf.v2) {
+                inf.merged_vertex = sd;
             }
         }
     }

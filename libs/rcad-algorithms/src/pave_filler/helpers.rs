@@ -458,14 +458,12 @@ pub(crate) fn put_pave_on_curve_full(
     // OCCT-aligned: GetStickVertices (PaveFiller_6.cxx L2847-2905) collects EF vertex set
     //   per FF pair.  Only EF vertices belonging to this specific pair are added to aMVEF.
     //   rcad: filter EF vertices by checking if the interference's face is in this pair.
-    let ef_vertices: std::collections::HashSet<usize> = ds.interferences.iter()
+    let ef_vertices: std::collections::HashSet<usize> = ds.interf_ef.iter()
         .filter_map(|inf| {
-            if let Interference::EdgeFace { new_vertex, face, .. } = inf {
-                // OCCT L2896: aMI.Contains(nS1) && aMI.Contains(nS2)
-                //   Both sub-shapes belong to the two faces -- the EF vertex involves this pair.
-                if *face == face_idxs[0] || *face == face_idxs[1] {
-                    Some(*new_vertex)
-                } else { None }
+            // OCCT L2896: aMI.Contains(nS1) && aMI.Contains(nS2)
+            //   Both sub-shapes belong to the two faces -- the EF vertex involves this pair.
+            if inf.face == face_idxs[0] || inf.face == face_idxs[1] {
+                Some(inf.new_vertex)
             } else { None }
         })
         .collect();

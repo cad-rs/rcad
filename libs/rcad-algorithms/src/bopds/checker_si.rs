@@ -103,13 +103,43 @@ impl CheckerSI {
         // 1. Remove trivial A-B pairs (same original entity from two copies).
         // 2. Apply LevelOfCheck filter.
         let level = self.level_of_check;
-        let filtered: Vec<Interference> = ds
-            .interferences
-            .iter()
-            .filter(|interf| Self::is_non_trivial(interf, &ds, a_vc, a_ec, a_fc))
-            .filter(|interf| Self::is_allowed_by_level(interf, level))
-            .cloned()
-            .collect();
+        let mut filtered: Vec<Interference> = Vec::new();
+        for inf in &ds.interf_vv {
+            let interf = Interference::VertexVertex { v1: inf.v1, v2: inf.v2, merged_vertex: inf.merged_vertex };
+            if Self::is_non_trivial(&interf, &ds, a_vc, a_ec, a_fc) && Self::is_allowed_by_level(&interf, level) {
+                filtered.push(interf);
+            }
+        }
+        for inf in &ds.interf_ve {
+            let interf = Interference::VertexEdge { vertex: inf.vertex, edge: inf.edge, param: inf.param };
+            if Self::is_non_trivial(&interf, &ds, a_vc, a_ec, a_fc) && Self::is_allowed_by_level(&interf, level) {
+                filtered.push(interf);
+            }
+        }
+        for inf in &ds.interf_vf {
+            let interf = Interference::VertexFace { vertex: inf.vertex, face: inf.face };
+            if Self::is_non_trivial(&interf, &ds, a_vc, a_ec, a_fc) && Self::is_allowed_by_level(&interf, level) {
+                filtered.push(interf);
+            }
+        }
+        for inf in &ds.interf_ee {
+            let interf = Interference::EdgeEdge { e1: inf.e1, e2: inf.e2, point: inf.point, param1: inf.param1, param2: inf.param2, new_vertex: inf.new_vertex };
+            if Self::is_non_trivial(&interf, &ds, a_vc, a_ec, a_fc) && Self::is_allowed_by_level(&interf, level) {
+                filtered.push(interf);
+            }
+        }
+        for inf in &ds.interf_ef {
+            let interf = Interference::EdgeFace { edge: inf.edge, face: inf.face, point: inf.point, edge_param: inf.edge_param, new_vertex: inf.new_vertex };
+            if Self::is_non_trivial(&interf, &ds, a_vc, a_ec, a_fc) && Self::is_allowed_by_level(&interf, level) {
+                filtered.push(interf);
+            }
+        }
+        for inf in &ds.interf_ff {
+            let interf = Interference::FaceFace { f1: inf.f1, f2: inf.f2, curves: inf.curves.clone(), points: inf.points.clone() };
+            if Self::is_non_trivial(&interf, &ds, a_vc, a_ec, a_fc) && Self::is_allowed_by_level(&interf, level) {
+                filtered.push(interf);
+            }
+        }
 
         self.interferences = filtered;
         self.has_interferences = !self.interferences.is_empty();

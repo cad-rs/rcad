@@ -584,31 +584,27 @@ impl<'a> super::PaveFiller<'a> {
         let mut max_ext = *aTolVExt;
 
         if aType == 0 || aType == 1 {
-            for inf in &self.ds.interferences {
-                if let Interference::EdgeEdge { e1, param1, param2, new_vertex, .. } = inf {
-                    if *new_vertex != nV { continue; }
-                    if !aMI.contains(e1) { continue; }
-                    if *e1 < self.ds.edges.len() {
-                        let p1 = crate::boptools::point_on_edge(&self.ds.edges[*e1], *param1);
-                        let p2 = crate::boptools::point_on_edge(&self.ds.edges[*e1], *param2);
-                        let d = vp.distance(p1).max(vp.distance(p2));
-                        if d > max_ext { max_ext = d; }
-                        found = true;
-                    }
+            for inf in &self.ds.interf_ee {
+                if inf.new_vertex != nV { continue; }
+                if !aMI.contains(&inf.e1) { continue; }
+                if inf.e1 < self.ds.edges.len() {
+                    let p1 = crate::boptools::point_on_edge(&self.ds.edges[inf.e1], inf.param1);
+                    let p2 = crate::boptools::point_on_edge(&self.ds.edges[inf.e1], inf.param2);
+                    let d = vp.distance(p1).max(vp.distance(p2));
+                    if d > max_ext { max_ext = d; }
+                    found = true;
                 }
             }
         }
         if aType == 0 || aType == 2 {
-            for inf in &self.ds.interferences {
-                if let Interference::EdgeFace { edge, edge_param, new_vertex, .. } = inf {
-                    if *new_vertex != nV { continue; }
-                    if !aMI.contains(edge) { continue; }
-                    if *edge < self.ds.edges.len() {
-                        let p1 = crate::boptools::point_on_edge(&self.ds.edges[*edge], *edge_param);
-                        let d = vp.distance(p1);
-                        if d > max_ext { max_ext = d; }
-                        found = true;
-                    }
+            for inf in &self.ds.interf_ef {
+                if inf.new_vertex != nV { continue; }
+                if !aMI.contains(&inf.edge) { continue; }
+                if inf.edge < self.ds.edges.len() {
+                    let p1 = crate::boptools::point_on_edge(&self.ds.edges[inf.edge], inf.edge_param);
+                    let d = vp.distance(p1);
+                    if d > max_ext { max_ext = d; }
+                    found = true;
                 }
             }
         }
@@ -995,20 +991,15 @@ impl<'a> super::PaveFiller<'a> {
     }
     pub(crate) fn get_stick_vertices(&self, fi: usize) -> Vec<usize> {
         let mut verts: Vec<usize> = Vec::new();
-        for inf in &self.ds.interferences {
-            match inf {
-                Interference::VertexVertex { v1, v2, .. } => {
-                    if self.vertex_on_face(*v1, fi) { verts.push(*v1); }
-                    if self.vertex_on_face(*v2, fi) { verts.push(*v2); }
-                }
-                Interference::VertexEdge { vertex, .. } => {
-                    if self.vertex_on_face(*vertex, fi) { verts.push(*vertex); }
-                }
-                Interference::VertexFace { vertex, face } => {
-                    if *face == fi { verts.push(*vertex); }
-                }
-                _ => {}
-            }
+        for inf in &self.ds.interf_vv {
+            if self.vertex_on_face(inf.v1, fi) { verts.push(inf.v1); }
+            if self.vertex_on_face(inf.v2, fi) { verts.push(inf.v2); }
+        }
+        for inf in &self.ds.interf_ve {
+            if self.vertex_on_face(inf.vertex, fi) { verts.push(inf.vertex); }
+        }
+        for inf in &self.ds.interf_vf {
+            if inf.face == fi { verts.push(inf.vertex); }
         }
         verts.sort(); verts.dedup();
         verts
@@ -1156,25 +1147,31 @@ impl<'a> super::PaveFiller<'a> {
         let mut max_tol = base_tol;
 
         // For newly created vertices, check EE/EF interferences
-        for inf in &self.ds.interferences {
-            let (ei, param) = match inf {
-                Interference::EdgeEdge { e1, param1, new_vertex, .. } if *new_vertex == vi => {
-                    (*e1, *param1)
+        for inf in &self.ds.interf_ee {
+            if inf.new_vertex == vi {
+                if inf.e1 < self.ds.edges.len() {
+                    if let Some(pt) = {
+                        use rcad_kernel::geom::CurveEval;
+                        Some(self.ds.edges[inf.e1].curve.point_at(inf.param1))
+                    } {
+                        let v_pt = self.ds.vertices[vi].point;
+                        let d = (v_pt - pt).length();
+                        if d > max_tol { max_tol = d; }
+                    }
                 }
-                Interference::EdgeFace { edge, edge_param, new_vertex, .. } if *new_vertex == vi => {
-                    (*edge, *edge_param)
-                }
-                _ => continue,
-            };
-            // Compute distance from vertex to edge endpoints at the parameter
-            if ei < self.ds.edges.len() {
-                if let Some(pt) = {
-                    use rcad_kernel::geom::CurveEval;
-                    Some(self.ds.edges[ei].curve.point_at(param))
-                } {
-                    let v_pt = self.ds.vertices[vi].point;
-                    let d = (v_pt - pt).length();
-                    if d > max_tol { max_tol = d; }
+            }
+        }
+        for inf in &self.ds.interf_ef {
+            if inf.new_vertex == vi {
+                if inf.edge < self.ds.edges.len() {
+                    if let Some(pt) = {
+                        use rcad_kernel::geom::CurveEval;
+                        Some(self.ds.edges[inf.edge].curve.point_at(inf.edge_param))
+                    } {
+                        let v_pt = self.ds.vertices[vi].point;
+                        let d = (v_pt - pt).length();
+                        if d > max_tol { max_tol = d; }
+                    }
                 }
             }
         }
@@ -1183,28 +1180,23 @@ impl<'a> super::PaveFiller<'a> {
 
     pub(crate) fn get_ef_pnts(&self, ei: usize) -> Vec<(usize, f64)> {
         let mut pnts: Vec<(usize, f64)> = Vec::new();
-        for inf in &self.ds.interferences {
-            if let Interference::EdgeFace { edge, edge_param, new_vertex, .. } = inf {
-                if *edge == ei { pnts.push((*new_vertex, *edge_param)); }
-            }
+        for inf in &self.ds.interf_ef {
+            if inf.edge == ei { pnts.push((inf.new_vertex, inf.edge_param)); }
         }
         pnts
     }
     pub(crate) fn treat_vertices_ee(&mut self) {
         let mut to_merge: Vec<(usize, usize)> = Vec::new();
-        for inf in &self.ds.interferences {
-            if let Interference::EdgeEdge { new_vertex, e1, e2, .. } = inf {
-                let vi = *new_vertex;
-                if vi >= self.ds.vertices.len() { continue; }
-                let v_pt = self.ds.vertices[vi].point;
-                for inf2 in &self.ds.interferences {
-                    if let Interference::EdgeEdge { new_vertex: vi2, .. } = inf2 {
-                        if *vi2 != vi && *vi2 < self.ds.vertices.len() {
-                            let d = (v_pt - self.ds.vertices[*vi2].point).length();
-                            if d < TOLERANCE_ABS * 100.0 {
-                                to_merge.push((vi, *vi2));
-                            }
-                        }
+        for i in 0..self.ds.interf_ee.len() {
+            let vi = self.ds.interf_ee[i].new_vertex;
+            if vi >= self.ds.vertices.len() { continue; }
+            let v_pt = self.ds.vertices[vi].point;
+            for j in (i + 1)..self.ds.interf_ee.len() {
+                let vi2 = self.ds.interf_ee[j].new_vertex;
+                if vi2 < self.ds.vertices.len() {
+                    let d = (v_pt - self.ds.vertices[vi2].point).length();
+                    if d < TOLERANCE_ABS * 100.0 {
+                        to_merge.push((vi, vi2));
                     }
                 }
             }

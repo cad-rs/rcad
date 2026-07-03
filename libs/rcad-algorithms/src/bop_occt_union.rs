@@ -31,7 +31,7 @@
 use glam::{DVec2, DVec3};
 use crate::brep_repair::merge_close_vertices;
 use crate::bopds;
-use crate::bopds::ds::{DS, Interference};
+use crate::bopds::ds::{DS};
 use crate::bopds::pave::NO_EDGE;
 use crate::builder;
 use crate::bvh;
@@ -226,95 +226,74 @@ fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
         }
     }
 
-    for inf in &ds.interferences {
-        match inf {
-            Interference::VertexVertex {
-                v1,
-                v2,
-                merged_vertex,
-            } => {
-                if *v1 >= nv || *v2 >= nv || *merged_vertex >= nv {
-                    return Err(BooleanError::InvalidResult(
-                        "union: interference VertexVertex index out of range",
-                    ));
-                }
+    for inf in &ds.interf_vv {
+        if inf.v1 >= nv || inf.v2 >= nv || inf.merged_vertex >= nv {
+            return Err(BooleanError::InvalidResult(
+                "union: interference VertexVertex index out of range",
+            ));
+        }
+    }
+    for inf in &ds.interf_ve {
+        if inf.vertex >= nv || inf.edge >= ne || !inf.param.is_finite() {
+            return Err(BooleanError::InvalidResult(
+                "union: interference VertexEdge index/param invalid",
+            ));
+        }
+    }
+    for inf in &ds.interf_ee {
+        if inf.e1 >= ne
+            || inf.e2 >= ne
+            || inf.new_vertex >= nv
+            || !inf.point.x.is_finite()
+            || !inf.point.y.is_finite()
+            || !inf.point.z.is_finite()
+            || !inf.param1.is_finite()
+            || !inf.param2.is_finite()
+        {
+            return Err(BooleanError::InvalidResult(
+                "union: interference EdgeEdge invalid",
+            ));
+        }
+    }
+    for inf in &ds.interf_vf {
+        if inf.vertex >= nv || inf.face >= nf {
+            return Err(BooleanError::InvalidResult(
+                "union: interference VertexFace index out of range",
+            ));
+        }
+    }
+    for inf in &ds.interf_ef {
+        if inf.edge >= ne
+            || inf.face >= nf
+            || inf.new_vertex >= nv
+            || !inf.point.x.is_finite()
+            || !inf.point.y.is_finite()
+            || !inf.point.z.is_finite()
+            || !inf.edge_param.is_finite()
+        {
+            return Err(BooleanError::InvalidResult(
+                "union: interference EdgeFace invalid",
+            ));
+        }
+    }
+    for inf in &ds.interf_ff {
+        if inf.f1 >= nf || inf.f2 >= nf {
+            return Err(BooleanError::InvalidResult(
+                "union: interference FaceFace face index out of range",
+            ));
+        }
+        for &c in &inf.curves {
+            if c >= nic {
+                return Err(BooleanError::InvalidResult(
+                    "union: interference FaceFace curve index out of range",
+                ));
             }
-            Interference::VertexEdge { vertex, edge, param } => {
-                if *vertex >= nv || *edge >= ne || !param.is_finite() {
-                    return Err(BooleanError::InvalidResult(
-                        "union: interference VertexEdge index/param invalid",
-                    ));
-                }
-            }
-            Interference::EdgeEdge {
-                e1,
-                e2,
-                point,
-                param1,
-                param2,
-                new_vertex,
-            } => {
-                if *e1 >= ne
-                    || *e2 >= ne
-                    || *new_vertex >= nv
-                    || !point.x.is_finite()
-                    || !point.y.is_finite()
-                    || !point.z.is_finite()
-                    || !param1.is_finite()
-                    || !param2.is_finite()
-                {
-                    return Err(BooleanError::InvalidResult(
-                        "union: interference EdgeEdge invalid",
-                    ));
-                }
-            }
-            Interference::VertexFace { vertex, face } => {
-                if *vertex >= nv || *face >= nf {
-                    return Err(BooleanError::InvalidResult(
-                        "union: interference VertexFace index out of range",
-                    ));
-                }
-            }
-            Interference::EdgeFace {
-                edge,
-                face,
-                point,
-                edge_param,
-                new_vertex,
-            } => {
-                if *edge >= ne
-                    || *face >= nf
-                    || *new_vertex >= nv
-                    || !point.x.is_finite()
-                    || !point.y.is_finite()
-                    || !point.z.is_finite()
-                    || !edge_param.is_finite()
-                {
-                    return Err(BooleanError::InvalidResult(
-                        "union: interference EdgeFace invalid",
-                    ));
-                }
-            }
-            Interference::FaceFace { f1, f2, curves, points } => {
-                if *f1 >= nf || *f2 >= nf {
-                    return Err(BooleanError::InvalidResult(
-                        "union: interference FaceFace face index out of range",
-                    ));
-                }
-                for &c in curves {
-                    if c >= nic {
-                        return Err(BooleanError::InvalidResult(
-                            "union: interference FaceFace curve index out of range",
-                        ));
-                    }
-                }
-                for &pv in points {
-                    if pv >= nv {
-                        return Err(BooleanError::InvalidResult(
-                            "union: interference FaceFace point vertex out of range",
-                        ));
-                    }
-                }
+        }
+        for &pv in &inf.points {
+            if pv >= nv {
+                return Err(BooleanError::InvalidResult(
+                    "union: interference FaceFace point vertex out of range",
+                ));
             }
         }
     }

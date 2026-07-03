@@ -308,25 +308,22 @@ impl BRep {
     }
 
     pub fn add_tedge(&mut self, curve: Option<usize>, first: ShapeRef, last: ShapeRef, range: [f64; 2]) -> ShapeRef {
-        // OCCT-aligned: identity-based sharing — normalize vertex orientation to
-        // Forward before comparing/storing.  Edge identity is about which vertices
-        // connect, not vertex orientation (which belongs to the wire, not the edge).
-        let first_fwd = ShapeRef::new(first.index);
-        let last_fwd = ShapeRef::new(last.index);
+        // OCCT-aligned: identity-based sharing — return existing TShape::Edge
+        // when the same (first, last) vertex pair already exists, matching
+        // TopoDS_Edge identity semantics.
         for (i, ts) in self.tshapes.iter().enumerate() {
             if let TShape::Edge(ref ed) = **ts {
-                if ed.first.index == first.index && ed.last.index == last.index {
+                if ed.first == first && ed.last == last {
+                    if i < 30 && first.index < 10 { eprintln!("[ADD_TEDGE_HIT] idx={:3} haystack[{}] needle=({},{})", i, i, first.index, last.index); }
                     return ShapeRef::new(i);
                 }
             }
         }
         let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Edge(TEdgeData {
-            curve, first: first_fwd, last: last_fwd, range,
-            degenerated: false, pcurves: HashMap::new(),
-            representations: Vec::new(), vertex_params: HashMap::new(),
-            tolerance: 0.0, same_parameter: true, same_range: true, moved: false,
-        })));
+        self.tshapes.push(Arc::new(TShape::Edge(TEdgeData { curve, first, last, range, degenerated: false, pcurves: HashMap::new(), representations: Vec::new(), vertex_params: HashMap::new(), tolerance: 0.0, same_parameter: true, same_range: true, moved: false })));
+        eprintln!("[ADD_TEDGE_NEW] idx={:3} v=({}:{:?}:loc{})-({}:{:?}:loc{})",
+            index, first.index, first.orientation, first.location,
+            last.index, last.orientation, last.location);
         ShapeRef::new(index)
     }
 

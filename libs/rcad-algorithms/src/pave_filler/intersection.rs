@@ -5,7 +5,7 @@ use rcad_kernel::geom::{Curve3, Surface3};
 use rcad_kernel::CurveEval;
 
 use crate::bopalgo::{fill_map, make_blocks};
-use crate::bopds::ds::{DS, Interference, ShapeOrigin, PairIterator, InterferenceVV, InterferenceVE, InterferenceVF, InterferenceEE, InterferenceEF};
+use crate::bopds::ds::{DS, ShapeOrigin, PairIterator, InterferenceVV, InterferenceVE, InterferenceVF, InterferenceEE, InterferenceEF};
 use crate::bopds::pave::Pave;
 use crate::inttools;
 use crate::inttools::fclass2d::{FClass2d, State};
@@ -198,9 +198,8 @@ impl<'a> super::PaveFiller<'a> {
 
             // OCCT L366-387: Add VE interferences for ALL original vertices
             for &vi in original_verts {
-                let already_interfered = self.ds.interferences.iter().any(|inf| {
-                    matches!(inf, Interference::VertexEdge { vertex, edge, .. }
-                        if *vertex == vi && *edge == ei)
+                let already_interfered = self.ds.interf_ve.iter().any(|inf| {
+                    inf.vertex == vi && inf.edge == ei
                 });
                 if !already_interfered {
                     self.ds.interf_ve.push(InterferenceVE{
@@ -988,15 +987,16 @@ impl<'a> super::PaveFiller<'a> {
         struct NewVertInfo { idx: usize, pos: DVec3, tol: f64 }
         let mut new_verts: Vec<NewVertInfo> = Vec::new();
         let mut seen = std::collections::BTreeSet::new();
-        for inf in &self.ds.interferences {
-            let (vi, pt) = match inf {
-                Interference::EdgeEdge { new_vertex, point, .. } => (*new_vertex, *point),
-                Interference::EdgeFace { new_vertex, point, .. } => (*new_vertex, *point),
-                _ => continue,
-            };
-            if seen.insert(vi) {
-                let v_tol = self.ds.vertices[vi].geom_tol.max(self.ds.fuzzy_tol);
-                new_verts.push(NewVertInfo { idx: vi, pos: pt, tol: v_tol });
+        for inf in &self.ds.interf_ee {
+            if seen.insert(inf.new_vertex) {
+                let v_tol = self.ds.vertices[inf.new_vertex].geom_tol.max(self.ds.fuzzy_tol);
+                new_verts.push(NewVertInfo { idx: inf.new_vertex, pos: inf.point, tol: v_tol });
+            }
+        }
+        for inf in &self.ds.interf_ef {
+            if seen.insert(inf.new_vertex) {
+                let v_tol = self.ds.vertices[inf.new_vertex].geom_tol.max(self.ds.fuzzy_tol);
+                new_verts.push(NewVertInfo { idx: inf.new_vertex, pos: inf.point, tol: v_tol });
             }
         }
         if new_verts.len() < 2 { return vec![]; }
@@ -1099,16 +1099,11 @@ impl<'a> super::PaveFiller<'a> {
                         if pave.vertex_idx == old_vi { pave.vertex_idx = new_vi; }
                     }
                 }
-                for inf in &mut self.ds.interferences {
-                    match inf {
-                        Interference::EdgeEdge { new_vertex, .. } => {
-                            if *new_vertex == old_vi { *new_vertex = new_vi; }
-                        }
-                        Interference::EdgeFace { new_vertex, .. } => {
-                            if *new_vertex == old_vi { *new_vertex = new_vi; }
-                        }
-                        _ => {}
-                    }
+                for inf in &mut self.ds.interf_ee {
+                    if inf.new_vertex == old_vi { inf.new_vertex = new_vi; }
+                }
+                for inf in &mut self.ds.interf_ef {
+                    if inf.new_vertex == old_vi { inf.new_vertex = new_vi; }
                 }
                 for face in &mut self.ds.faces {
                     if face.face_info.vertices_on.remove(&old_vi) {
@@ -1135,12 +1130,11 @@ impl<'a> super::PaveFiller<'a> {
         use std::collections::BTreeSet;
         let mut ve_done: BTreeSet<(usize, usize)> = BTreeSet::new();
         let mut vf_done: BTreeSet<(usize, usize)> = BTreeSet::new();
-        for inf in &self.ds.interferences {
-            match inf {
-                Interference::VertexEdge { vertex, edge, .. } => { ve_done.insert((*vertex, *edge)); }
-                Interference::VertexFace { vertex, face } => { vf_done.insert((*vertex, *face)); }
-                _ => {}
-            }
+        for inf in &self.ds.interf_ve {
+            ve_done.insert((inf.vertex, inf.edge));
+        }
+        for inf in &self.ds.interf_vf {
+            vf_done.insert((inf.vertex, inf.face));
         }
 
         // 鈹€鈹€ VV: check survivors against vertices on the other side 鈹€鈹€鈹€鈹€鈹€鈹€
@@ -1750,9 +1744,8 @@ impl<'a> super::PaveFiller<'a> {
 
     /// OCCT myDS->HasInterf: check existing EE interference
     pub(crate) fn has_ee_interf(&self, e1: usize, e2: usize) -> bool {
-        self.ds.interferences.iter().any(|inf| {
-            matches!(inf, Interference::EdgeEdge { e1: a, e2: b, .. }
-                if (*a == e1 && *b == e2) || (*a == e2 && *b == e1))
+        self.ds.interf_ee.iter().any(|inf| {
+            (inf.e1 == e1 && inf.e2 == e2) || (inf.e1 == e2 && inf.e2 == e1)
         })
     }
 }

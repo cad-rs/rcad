@@ -540,8 +540,8 @@ pub struct DS {
     pub wires: Vec<DSWire>,
     pub shells: Vec<DSShell>,
     pub faces: Vec<DSFace>,
-    pub interferences: Vec<Interference>,
     /// OCCT-aligned: type-specific interference vecs (BOPDS_DS myInterfVV/VE/VF/EE/EF/FF).
+    /// Replaces the generic Vec<Interference> enum — each variant has its own typed Vec.
     pub interf_vv: Vec<InterferenceVV>,
     pub interf_ve: Vec<InterferenceVE>,
     pub interf_vf: Vec<InterferenceVF>,

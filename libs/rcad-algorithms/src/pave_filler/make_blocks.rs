@@ -187,58 +187,62 @@ impl<'a> super::PaveFiller<'a> {
                 let mut a_mi = crate::pave_filler::build_face_shape_map(self.ds, n_f1);
                 let a_mi_b = crate::pave_filler::build_face_shape_map(self.ds, n_f2);
                 // OCCT L2900-2920: VV, VE, EE, VF with HasIndexNew
-                for inf in &self.ds.interferences {
-                    let (n_s1, n_s2, new_vertex) = match inf {
-                        Interference::VertexEdge { vertex, edge, .. } => {
-                            // OCCT: InterfVE creates a new vertex when projecting onto edge.
-                            // rcad: uses existing vertex index; check if it belongs to the pair.
-                            let belongs = a_mi.contains(vertex) || a_mi_b.contains(vertex);
-                            if !belongs { continue; }
-                            a_mv_stick.insert(*vertex);
-                            a_mi.insert(*vertex);
-                            continue;
-                        }
-                        Interference::VertexFace { vertex, face, .. } => {
-                            let belongs = a_mi.contains(vertex) || a_mi_b.contains(vertex);
-                            if !belongs { continue; }
-                            a_mv_stick.insert(*vertex);
-                            a_mi.insert(*vertex);
-                            continue;
-                        }
-                        Interference::EdgeEdge { e1, e2, new_vertex, .. } => (*e1, *e2, *new_vertex),
-                        Interference::VertexVertex { v1, v2, merged_vertex } => (*v1, *v2, *merged_vertex),
-                        _ => continue,
-                    };
-                    if new_vertex == usize::MAX { continue; } // OCCT: !HasIndexNew
-                    // OCCT L2912: both sub-shapes must belong to one of the two faces
-                    let s1_in_pair = a_mi.contains(&n_s1) || a_mi_b.contains(&n_s1);
-                    let s2_in_pair = a_mi.contains(&n_s2) || a_mi_b.contains(&n_s2);
+                // VE: stick vertices from VE
+                for inf in &self.ds.interf_ve {
+                    let belongs = a_mi.contains(&inf.vertex) || a_mi_b.contains(&inf.vertex);
+                    if !belongs { continue; }
+                    a_mv_stick.insert(inf.vertex);
+                    a_mi.insert(inf.vertex);
+                }
+                // VF: stick vertices from VF
+                for inf in &self.ds.interf_vf {
+                    let belongs = a_mi.contains(&inf.vertex) || a_mi_b.contains(&inf.vertex);
+                    if !belongs { continue; }
+                    a_mv_stick.insert(inf.vertex);
+                    a_mi.insert(inf.vertex);
+                }
+                // EE: collect new vertices
+                for inf in &self.ds.interf_ee {
+                    if inf.new_vertex == usize::MAX { continue; }
+                    let s1_in_pair = a_mi.contains(&inf.e1) || a_mi_b.contains(&inf.e1);
+                    let s2_in_pair = a_mi.contains(&inf.e2) || a_mi_b.contains(&inf.e2);
                     if !s1_in_pair || !s2_in_pair { continue; }
-                    // OCCT L2915: HasShapeSD(nVNew, nVNew) — resolve SD
-                    if let Some(n_v) = self.ds.has_shape_sd(new_vertex) {
+                    if let Some(n_v) = self.ds.has_shape_sd(inf.new_vertex) {
                         a_mv_stick.insert(n_v);
                         a_mi.insert(n_v);
                     } else {
-                        a_mv_stick.insert(new_vertex);
-                        a_mi.insert(new_vertex);
+                        a_mv_stick.insert(inf.new_vertex);
+                        a_mi.insert(inf.new_vertex);
+                    }
+                }
+                // VV: collect merged vertices
+                for inf in &self.ds.interf_vv {
+                    if inf.merged_vertex == usize::MAX { continue; }
+                    let s1_in_pair = a_mi.contains(&inf.v1) || a_mi_b.contains(&inf.v1);
+                    let s2_in_pair = a_mi.contains(&inf.v2) || a_mi_b.contains(&inf.v2);
+                    if !s1_in_pair || !s2_in_pair { continue; }
+                    if let Some(n_v) = self.ds.has_shape_sd(inf.merged_vertex) {
+                        a_mv_stick.insert(n_v);
+                        a_mi.insert(n_v);
+                    } else {
+                        a_mv_stick.insert(inf.merged_vertex);
+                        a_mi.insert(inf.merged_vertex);
                     }
                 }
                 // OCCT L2921-2936: EF interferences
-                for inf in &self.ds.interferences {
-                    if let Interference::EdgeFace { edge, face, new_vertex, .. } = inf {
-                        if *new_vertex == usize::MAX { continue; }
-                        let e_in_pair = a_mi.contains(edge) || a_mi_b.contains(edge);
-                        let f_in_pair = a_mi.contains(face) || a_mi_b.contains(face);
-                        if !e_in_pair || !f_in_pair { continue; }
-                        if let Some(n_v) = self.ds.has_shape_sd(*new_vertex) {
-                            a_mv_stick.insert(n_v);
-                            a_mv_ef.insert(n_v);
-                            a_mi.insert(n_v);
-                        } else {
-                            a_mv_stick.insert(*new_vertex);
-                            a_mv_ef.insert(*new_vertex);
-                            a_mi.insert(*new_vertex);
-                        }
+                for inf in &self.ds.interf_ef {
+                    if inf.new_vertex == usize::MAX { continue; }
+                    let e_in_pair = a_mi.contains(&inf.edge) || a_mi_b.contains(&inf.edge);
+                    let f_in_pair = a_mi.contains(&inf.face) || a_mi_b.contains(&inf.face);
+                    if !e_in_pair || !f_in_pair { continue; }
+                    if let Some(n_v) = self.ds.has_shape_sd(inf.new_vertex) {
+                        a_mv_stick.insert(n_v);
+                        a_mv_ef.insert(n_v);
+                        a_mi.insert(n_v);
+                    } else {
+                        a_mv_stick.insert(inf.new_vertex);
+                        a_mv_ef.insert(inf.new_vertex);
+                        a_mi.insert(inf.new_vertex);
                     }
                 }
             }
@@ -272,14 +276,12 @@ impl<'a> super::PaveFiller<'a> {
                     let is_bspline = matches!(&ic.curve, Curve3::BSpline(_));
                     let has_one_pb = ic.pave_blocks.len() == 1;
                     if is_bspline && has_one_pb {
-                        let ef_verts: Vec<usize> = self.ds.interferences.iter()
+                        let ef_verts: Vec<usize> = self.ds.interf_ef.iter()
                             .filter_map(|inf| {
-                                if let Interference::EdgeFace { new_vertex, edge, face, .. } = inf {
-                                    let edge_on_pair = self.ds.edges[*edge].face_reps.iter()
-                                        .any(|fr| fr.face_idx == n_f1 || fr.face_idx == n_f2);
-                                    if edge_on_pair && (*face == n_f1 || *face == n_f2) {
-                                        Some(*new_vertex)
-                                    } else { None }
+                                let edge_on_pair = self.ds.edges[inf.edge].face_reps.iter()
+                                    .any(|fr| fr.face_idx == n_f1 || fr.face_idx == n_f2);
+                                if edge_on_pair && (inf.face == n_f1 || inf.face == n_f2) {
+                                    Some(inf.new_vertex)
                                 } else { None }
                             })
                             .collect();

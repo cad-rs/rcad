@@ -47,6 +47,10 @@ pub(crate) struct ResultBuilder {
     /// OCCT-aligned: natural_restriction for each face in self.faces.
     ///   Parallel to face_origins.  Populated by emit_wire_face / build_original_face.
     pub(crate) face_natural_restriction: Vec<bool>,
+    /// DS edge index → TShape::Edge ShapeRef. Populated by build_result_occt(Edge),
+    /// consumed by emit_wire_face_topods for DsEdge-sourced segments.  This ensures
+    /// that the same TopoDS_Edge handle is shared between faces (OCCT identity sharing).
+    pub(crate) ds_edge_to_tedge: Vec<Option<topods::ShapeRef>>,
     /// Final topods shell references (populated by build_topods from tmp_shells).
     pub(crate) shells: Vec<topods::ShapeRef>,
     /// Final topods solid references (populated by build_topods from tmp_solids).
@@ -708,6 +712,7 @@ impl ResultBuilder {
             deg_edge_indices: std::collections::HashSet::new(),
             ic_edge_map: HashMap::new(),
             ds_edge_to_flat: HashMap::new(),
+            ds_edge_to_tedge: Vec::new(),
             tmp_shells: Vec::new(),
             tmp_solids: Vec::new(),
             source_has_compound: false,
@@ -1248,11 +1253,6 @@ impl ResultBuilder {
         }
 
         // 2. Edges → TShape::Edge (use vi_to_ti to map vertex indices).
-        //    Edges for incrementally-emitted faces may also be in self.edges
-        //    (the flat arrays are shared).  This creates NEW TShapes for those
-        //    edges — they are duplicates of TShapes created by emit_face_topods,
-        //    but the face loop below only processes faces NOT yet in face_refs,
-        //    so these duplicate edges are never referenced.
         let mut e_map: Vec<ShapeRef> = Vec::with_capacity(self.edges.len());
         for (ei, &(start, end)) in self.edges.iter().enumerate() {
             let first = ShapeRef::new(vi_to_ti[start]);

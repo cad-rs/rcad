@@ -156,52 +156,41 @@ impl DS {
     }
 
     /// OCCT-aligned: dedup FaceFace interferences by (Fmin,Fmax) pair.
-    ///   Merges curves/points from duplicate entries, rebuilds both vecs.
+    ///   Merges curves/points from duplicate entries in interf_ff.
     pub fn dedup_ff_interferences(&mut self) {
         let mut merged: std::collections::HashMap<(usize, usize), (Vec<usize>, Vec<usize>)> = std::collections::HashMap::new();
-        // Collect all curves/points per (Fmin,Fmax) pair
-        for inf in &self.interferences {
-            if let Interference::FaceFace { f1, f2, curves, points } = inf {
-                let key = if *f1 < *f2 { (*f1, *f2) } else { (*f2, *f1) };
-                let entry = merged.entry(key).or_insert((Vec::new(), Vec::new()));
-                for &c in curves { if !entry.0.contains(&c) { entry.0.push(c); } }
-                for &p in points { if !entry.1.contains(&p) { entry.1.push(p); } }
-            }
+        for inf in &self.interf_ff {
+            let key = if inf.f1 < inf.f2 { (inf.f1, inf.f2) } else { (inf.f2, inf.f1) };
+            let entry = merged.entry(key).or_insert((Vec::new(), Vec::new()));
+            for &c in &inf.curves { if !entry.0.contains(&c) { entry.0.push(c); } }
+            for &p in &inf.points { if !entry.1.contains(&p) { entry.1.push(p); } }
         }
-        // Rebuild both vecs
-        self.interferences.retain(|inf| !matches!(inf, Interference::FaceFace { .. }));
         self.interf_ff.clear();
         for ((f1, f2), (curves, points)) in &merged {
             self.interf_ff.push(InterferenceFF { f1: *f1, f2: *f2, curves: curves.clone(), points: points.clone() });
-            self.interferences.push(Interference::FaceFace { f1: *f1, f2: *f2, curves: curves.clone(), points: points.clone() });
         }
     }
 
 
-    /// 鉁?OCCT-aligned: myDS->HasInterfShapeSubShapes(nV, nE) 鈥?checks if
+    /// OCCT-aligned: myDS->HasInterfShapeSubShapes(nV, nE) — checks if
     ///   vertex already has interference with any sub-shape (face) of the edge.
-    ///   In OCCT, edges belong to faces; rcad doesn't track edge鈫抐ace ancestry
-    ///   directly 鈥?this is a best-effort check using available face data.
     pub fn has_interf_ve_via_faces(&self, vi: usize, ei: usize) -> bool {
-        // Check if the vertex has interference with any face that references this edge
-        self.interferences.iter().any(|interf| {
-            match interf {
-                Interference::VertexFace { vertex, face } if *vertex == vi => {
-                    self.faces.get(*face).map_or(false, |f| {
-                        f.boundary_edges.contains(&ei)
-                            || f.inner_boundary_edges.iter().any(|iw| iw.iter().any(|&(e, _)| e == ei))
-                    })
-                }
-                Interference::EdgeFace { edge, face, .. } if *edge == ei => {
-                    // Already have EF with this face; check if same vertex also has VF
-                    self.interferences.iter().any(|interf2| {
-                        matches!(interf2, Interference::VertexFace { vertex, face: f }
-                            if *vertex == vi && *f == *face)
-                    })
-                }
-                _ => false,
+        // Check if the vertex has VF interference with any face that references this edge
+        if self.interf_vf.iter().any(|inf| inf.vertex == vi) {
+            if self.faces.iter().any(|f| {
+                f.boundary_edges.contains(&ei)
+                    || f.inner_boundary_edges.iter().any(|iw| iw.iter().any(|&(e, _)| e == ei))
+            }) {
+                return true;
             }
-        })
+        }
+        // Check if this edge has EF interference with a face that also has VF with the vertex
+        if self.interf_ef.iter().any(|inf| inf.edge == ei) {
+            if self.interf_vf.iter().any(|inf| inf.vertex == vi) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Build DS from two BReps using the default absolute tolerance.
@@ -222,7 +211,6 @@ impl DS {
             faces: Vec::new(),
             // internal V/E tracking: is_internal flag on DSVertex/DSEdge
             //   used instead of separate arrays (removed in favor of flags).
-            interferences: Vec::new(),
             interf_vv: Vec::new(),
             interf_ve: Vec::new(),
             interf_vf: Vec::new(),
@@ -946,6 +934,24 @@ impl DS {
                     let u = if r < 1e-15 { 0.0 } else { radial.y.atan2(radial.x) };
                     DVec2::new(if u < 0.0 { u + std::f64::consts::TAU } else { u }, along)
                 };
+                let delta = uv_end - uv_start;
+                let span = delta.length();
+                if span < 1e-15 || !span.is_finite() { return None; }
+                Some((
+                    Curve2d::Line(Line2d {
+                        origin: uv_start,
+                        direction: delta / span,
+                    }),
+                    span,
+                ))
+            }
+            // ✅ OCCT-aligned: Torus boundary edge pcurve via world_to_uv projection.
+            //   Same pattern as Sphere/Cylinder/Cone: project endpoints to UV space,
+            //   construct Line2d approximation.  Non-seam edges are short enough
+            //   that the chord in UV-space is a valid pcurve approximation.
+            (Surface3::Torus(t), _) => {
+                let uv_start = t.world_to_uv(curve.point_at(0.0));
+                let uv_end = t.world_to_uv(curve.point_at(1.0));
                 let delta = uv_end - uv_start;
                 let span = delta.length();
                 if span < 1e-15 || !span.is_finite() { return None; }

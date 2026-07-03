@@ -186,61 +186,52 @@ impl<'a> super::PaveFiller<'a> {
                 }
 
                 // Look for EE interference between this edge pair
-                for inf in &self.ds.interferences {
-                    if let Interference::EdgeEdge {
-                        e1: ee1,
-                        e2: ee2,
-                        point,
-                        new_vertex,
-                        ..
-                    } = inf
-                    {
-                        if !((*ee1 == e1 && *ee2 == e2) || (*ee1 == e2 && *ee2 == e1)) {
-                            continue;
-                        }
+                for inf in &self.ds.interf_ee {
+                    if !((inf.e1 == e1 && inf.e2 == e2) || (inf.e1 == e2 && inf.e2 == e1)) {
+                        continue;
+                    }
 
-                        // Project the EE vertex point onto both edges' 3D curves
-                        // (OCCT: GeomAPI_ProjectPointOnCurve)
-                        let curve1 = &self.ds.edges[e1].curve;
-                        let curve2 = &self.ds.edges[e2].curve;
-                        let proj1 = closest_point_on_curve(curve1, *point, 64);
-                        let proj2 = closest_point_on_curve(curve2, *point, 64);
+                    // Project the EE vertex point onto both edges' 3D curves
+                    // (OCCT: GeomAPI_ProjectPointOnCurve)
+                    let curve1 = &self.ds.edges[e1].curve;
+                    let curve2 = &self.ds.edges[e2].curve;
+                    let proj1 = closest_point_on_curve(curve1, inf.point, 64);
+                    let proj2 = closest_point_on_curve(curve2, inf.point, 64);
 
-                        let a_p1 = proj1.point;
-                        let a_p2 = proj2.point;
-                        let shift_dist = a_p1.distance(a_p2);
+                    let a_p1 = proj1.point;
+                    let a_p2 = proj2.point;
+                    let shift_dist = a_p1.distance(a_p2);
 
-                        // OCCT-aligned: the seam edge shift is a SMALL tolerance
-                        // correction, not a geometric transformation.  Verify both
-                        // projections are close to the EE vertex �?if either is
-                        // far, the vertex is not near both edges and shifting would
-                        // be invalid (e.g. sphere center jumps by 1 unit).
-                        let vtx_pt = *point;
-                        let d1 = a_p1.distance(vtx_pt);
-                        let d2 = a_p2.distance(vtx_pt);
-                        // OCCT's shift is a sub-tolerance adjustment.  A projection
-                        // error exceeding 1e-4 means the vertex is not on this edge.
-                        let sanity_tol = TOLERANCE_ABS * 1000.0;
-                        if d1 > sanity_tol || d2 > sanity_tol {
-                            continue;
-                        }
+                    // OCCT-aligned: the seam edge shift is a SMALL tolerance
+                    // correction, not a geometric transformation.  Verify both
+                    // projections are close to the EE vertex — if either is
+                    // far, the vertex is not near both edges and shifting would
+                    // be invalid (e.g. sphere center jumps by 1 unit).
+                    let vtx_pt = inf.point;
+                    let d1 = a_p1.distance(vtx_pt);
+                    let d2 = a_p2.distance(vtx_pt);
+                    // OCCT's shift is a sub-tolerance adjustment.  A projection
+                    // error exceeding 1e-4 means the vertex is not on this edge.
+                    let sanity_tol = TOLERANCE_ABS * 1000.0;
+                    if d1 > sanity_tol || d2 > sanity_tol {
+                        continue;
+                    }
 
-                        // Check if the shift exceeds vertex tolerance
-                        let vtx_tol = self.ds.vertices[*new_vertex].geom_tol;
-                        if shift_dist > vtx_tol {
-                            // OCCT: shift the face with the closed/seam edge
-                            let shift_vector = if is_closed1 {
-                                a_p2 - a_p1 // Shift f1: move aP1 toward aP2
-                            } else {
-                                a_p1 - a_p2 // Shift f2: move aP2 toward aP1
-                            };
+                    // Check if the shift exceeds vertex tolerance
+                    let vtx_tol = self.ds.vertices[inf.new_vertex].geom_tol;
+                    if shift_dist > vtx_tol {
+                        // OCCT: shift the face with the closed/seam edge
+                        let shift_vector = if is_closed1 {
+                            a_p2 - a_p1 // Shift f1: move aP1 toward aP2
+                        } else {
+                            a_p1 - a_p2 // Shift f2: move aP2 toward aP1
+                        };
 
-                            return Some(SeamEdgeShift {
-                                shift_vector,
-                                shift_value: shift_dist,
-                                shifted_face: if is_closed1 { 1 } else { 2 },
-                            });
-                        }
+                        return Some(SeamEdgeShift {
+                            shift_vector,
+                            shift_value: shift_dist,
+                            shifted_face: if is_closed1 { 1 } else { 2 },
+                        });
                     }
                 }
             }
@@ -259,18 +250,10 @@ impl<'a> super::PaveFiller<'a> {
 
         // Collect curve indices from the FaceFace interference for this pair
         let mut curve_indices: Vec<usize> = Vec::new();
-        for inf in &self.ds.interferences {
-            if let Interference::FaceFace {
-                f1: a,
-                f2: b,
-                curves,
-                ..
-            } = inf
-            {
-                if (*a == f1 && *b == f2) || (*a == f2 && *b == f1) {
-                    curve_indices = curves.clone();
-                    break;
-                }
+        for inf in &self.ds.interf_ff {
+            if (inf.f1 == f1 && inf.f2 == f2) || (inf.f1 == f2 && inf.f2 == f1) {
+                curve_indices = inf.curves.clone();
+                break;
             }
         }
 
