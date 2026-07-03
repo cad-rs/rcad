@@ -105,6 +105,14 @@ impl BRepTool for DSAsBRep<'_> {
         Some(&self.ds.faces[self.face_idx].surface)
     }
 
+    fn face_surface_world(&self, _face: ShapeRef) -> Option<Surface3> {
+        Some(self.ds.faces[self.face_idx].surface.clone())
+    }
+
+    fn edge_curve_world(&self, edge: ShapeRef) -> Option<(Curve3, [f64; 2])> {
+        self.ds.edges.get(edge.index).map(|e| (e.curve.clone(), e.t_range))
+    }
+
     fn u_resolution(&self, _face: ShapeRef, tol3d: f64) -> f64 {
         // Fallback: use the face surface from DS
         let surf = &self.ds.faces[self.face_idx].surface;

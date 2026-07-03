@@ -495,8 +495,12 @@ pub trait BRepTool {
     fn parameter_on_edge(&self, vertex: ShapeRef, edge: ShapeRef, face: ShapeRef) -> Option<f64>;
     /// BRep_Tool::CurveOnSurface(aE, aF) — pcurve of edge on face.
     fn curve_on_surface(&self, edge: ShapeRef, face: ShapeRef) -> Option<&(Curve2d, f64, f64)>;
-    /// BRep_Tool::Surface(aF) — face surface.
+    /// BRep_Tool::Surface(aF) — face surface (local coordinates, no Location applied).
     fn face_surface(&self, face: ShapeRef) -> Option<&Surface3>;
+    /// BRep_Tool::Surface(aF) with Location applied — returns world-coordinate surface.
+    fn face_surface_world(&self, face: ShapeRef) -> Option<Surface3>;
+    /// BRep_Tool::Curve(aE) with Location applied — returns 3D curve and range in world coordinates.
+    fn edge_curve_world(&self, edge: ShapeRef) -> Option<(Curve3, [f64; 2])>;
     /// UResolution: parameter tolerance in U direction (OCCT: BRepAdaptor_Surface::UResolution).
     fn u_resolution(&self, face: ShapeRef, tol3d: f64) -> f64;
     /// VResolution: parameter tolerance in V direction.
@@ -576,6 +580,29 @@ impl BRepTool for BRep {
     fn face_surface(&self, face: ShapeRef) -> Option<&Surface3> {
         let fi = face.index;
         self.face(face).surface.map(|si| &self.surfaces[si])
+    }
+
+    fn face_surface_world(&self, face: ShapeRef) -> Option<Surface3> {
+        let fd = self.face(face);
+        let surface = fd.surface.and_then(|si| self.surfaces.get(si))?;
+        let loc = self.get_location(face.location);
+        if loc == glam::DAffine3::IDENTITY {
+            Some(surface.clone())
+        } else {
+            Some(crate::geom::transform_surface(surface, &loc))
+        }
+    }
+
+    fn edge_curve_world(&self, edge: ShapeRef) -> Option<(Curve3, [f64; 2])> {
+        let ed = self.edge(edge);
+        let ci = ed.curve?;
+        let crv = &self.curves[ci];
+        let loc = self.get_location(edge.location);
+        if loc == glam::DAffine3::IDENTITY {
+            Some((crv.clone(), ed.range))
+        } else {
+            Some((crate::geom::transform_curve(crv, &loc), ed.range))
+        }
     }
 
     fn u_resolution(&self, face: ShapeRef, tol3d: f64) -> f64 {
