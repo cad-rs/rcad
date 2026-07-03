@@ -605,20 +605,32 @@ impl<'a> super::PaveFiller<'a> {
                                 let a_tol_v2 = a_tol_v21.max(a_tol_v22);
                                 // OCCT L2165: iFlag1 — vertex match for start
                                 let i_flag1 = n_v1 == n_v21 || n_v1 == n_v22;
-                                // OCCT L2166: iFlag2 — vertex match for end OR bbox overlap
-                                //   rcad: for bbox overlap, check if edge's curve passes near aP2
+                                // OCCT L2166: iFlag2 — vertex match for end
+                                //   OR edge AABB overlaps end-point AABB (!aBoxSp.IsOut(aBoxP2))
+                                let edge_ei = existing_pb.new_edge.unwrap_or(existing_pb.original_edge);
                                 let i_flag2 = if n_v2 == n_v21 || n_v2 == n_v22 {
                                     true
-                                } else {
-                                    // OCCT: !aBoxSp.IsOut(aBoxP2) — approximate with point-on-curve check
-                                    let edge_ei = existing_pb.new_edge.unwrap_or(existing_pb.original_edge);
-                                    if edge_ei >= self.ds.edges.len() { false }
-                                    else {
-                                        let (_t, proj) = crate::extrema::closest_point_on_curve(
-                                            &self.ds.edges[edge_ei].curve, a_p2);
-                                        (proj - a_p2).length() <= a_tol_r3d + a_tol_v12
-                                    }
-                                };
+                                } else if edge_ei < self.ds.edges.len() {
+                                    // OCCT: aBoxSp (edge AABB, from ShapeInfo) vs aBoxP2
+                                    let sv = self.ds.edges[edge_ei].start_vertex;
+                                    let ev = self.ds.edges[edge_ei].end_vertex;
+                                    let e_min = if sv < self.ds.vertices.len() && ev < self.ds.vertices.len() {
+                                        self.ds.vertices[sv].point.min(self.ds.vertices[ev].point)
+                                    } else { a_p2 };
+                                    let e_max = if sv < self.ds.vertices.len() && ev < self.ds.vertices.len() {
+                                        self.ds.vertices[sv].point.max(self.ds.vertices[ev].point)
+                                    } else { a_p2 };
+                                    let e_tol = a_tol_v21.max(a_tol_v22);
+                                    let sp_min = e_min - DVec3::splat(e_tol);
+                                    let sp_max = e_max + DVec3::splat(e_tol);
+                                    // aBoxP2 enlarged by aTolV12
+                                    let p2_min = a_p2 - DVec3::splat(a_tol_v12);
+                                    let p2_max = a_p2 + DVec3::splat(a_tol_v12);
+                                    // AABB overlap (OCCT: !aBoxSp.IsOut(aBoxP2))
+                                    !(sp_max.x < p2_min.x || sp_min.x > p2_max.x
+                                        || sp_max.y < p2_min.y || sp_min.y > p2_max.y
+                                        || sp_max.z < p2_min.z || sp_min.z > p2_max.z)
+                                } else { false };
                                 if !i_flag2 { continue; }
 
                                 let edge_idx = existing_pb.new_edge.unwrap_or(existing_pb.original_edge);
