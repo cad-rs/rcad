@@ -51,11 +51,9 @@ impl<'a> PaveFiller<'a> {
 
     /// OCCT: find FF curve indices by face pair
     pub(crate) fn find_face_face_curve_indices(&self, f1: usize, f2: usize) -> Option<Vec<usize>> {
-        for inf in &self.ds.interferences {
-            if let Interference::FaceFace { f1: a, f2: b, curves, .. } = inf {
-                if *a == f1 && *b == f2 {
-                    return Some(curves.clone());
-                }
+        for ff in &self.ds.interf_ff {
+            if ff.f1 == f1 && ff.f2 == f2 {
+                return Some(ff.curves.clone());
             }
         }
         None

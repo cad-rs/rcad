@@ -469,21 +469,18 @@ impl<'a> PaveFiller<'a> {
         if !self.non_destructive { return; }
 
         // OCCT L3953-3960: check FF interferences
-        let has_ff = self.ds.interferences.iter().any(|inf|
-            matches!(inf, Interference::FaceFace { curves, .. } if !curves.is_empty())
-        );
+        let has_ff = !self.ds.interf_ff.is_empty();
         if !has_ff { return; }
 
         // Collect face pairs with shared (old) vertices
         // OCCT L3967-4049: iterate each FF
-        let ff_entries: Vec<(usize, usize, Vec<usize>)> = self.ds.interferences.iter()
-            .filter_map(|inf| {
-                if let Interference::FaceFace { f1, f2, curves, .. } = inf {
-                    if curves.is_empty() { return None; }
+        let ff_entries: Vec<(usize, usize, Vec<usize>)> = self.ds.interf_ff.iter()
+            .filter_map(|ff| {
+                if ff.curves.is_empty() { return None; }
 
-                    // OCCT L3996-4017: collect shared old vertices
-                    let fi1 = *f1;
-                    let fi2 = *f2;
+                // OCCT L3996-4017: collect shared old vertices
+                let fi1 = ff.f1;
+                let fi2 = ff.f2;
                     let on1 = &self.ds.faces[fi1].face_info.vertices_on;
                     let in1 = &self.ds.faces[fi1].face_info.vertices_in;
                     let on2 = &self.ds.faces[fi2].face_info.vertices_on;
@@ -501,8 +498,7 @@ impl<'a> PaveFiller<'a> {
                         .collect();
 
                     if shared.is_empty() { return None; }
-                    Some((fi1, fi2, curves.clone()))
-                } else { None }
+                    Some((fi1, fi2, ff.curves.clone()))
             })
             .collect();
 
