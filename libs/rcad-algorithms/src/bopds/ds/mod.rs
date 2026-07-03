@@ -173,35 +173,24 @@ impl DS {
     }
 
     /// OCCT-aligned: dedup FaceFace interferences by (Fmin,Fmax) pair.
+    ///   Merges curves/points from duplicate entries, rebuilds both vecs.
     pub fn dedup_ff_interferences(&mut self) {
-        let mut seen: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
-        let mut i = 0;
-        while i < self.interferences.len() {
-            let do_remove = match &self.interferences[i] {
-                Interference::FaceFace { f1, f2, .. } => {
-                    let key = if *f1 < *f2 { (*f1, *f2) } else { (*f2, *f1) };
-                    if !seen.insert(key) {
-                        if let Interference::FaceFace { curves, points, .. } = &self.interferences[i] {
-                            let c_add = curves.clone();
-                            let p_add = points.clone();
-                            for e in &mut self.interferences {
-                                if let Interference::FaceFace { f1: fa, f2: fb, curves: ec, points: ep } = e {
-                                    let ek = if *fa < *fb { (*fa, *fb) } else { (*fb, *fa) };
-                                    if ek == key {
-                                        for &c in &c_add { if !ec.contains(&c) { ec.push(c); } }
-                                        for &p in &p_add { if !ep.contains(&p) { ep.push(p); } }
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        true
-                    } else { false }
-                }
-                _ => false,
-            };
-            if do_remove { self.interferences.swap_remove(i); }
-            else { i += 1; }
+        let mut merged: std::collections::HashMap<(usize, usize), (Vec<usize>, Vec<usize>)> = std::collections::HashMap::new();
+        // Collect all curves/points per (Fmin,Fmax) pair
+        for inf in &self.interferences {
+            if let Interference::FaceFace { f1, f2, curves, points } = inf {
+                let key = if *f1 < *f2 { (*f1, *f2) } else { (*f2, *f1) };
+                let entry = merged.entry(key).or_insert((Vec::new(), Vec::new()));
+                for &c in curves { if !entry.0.contains(&c) { entry.0.push(c); } }
+                for &p in points { if !entry.1.contains(&p) { entry.1.push(p); } }
+            }
+        }
+        // Rebuild both vecs
+        self.interferences.retain(|inf| !matches!(inf, Interference::FaceFace { .. }));
+        self.interf_ff.clear();
+        for ((f1, f2), (curves, points)) in &merged {
+            self.interf_ff.push(InterferenceFF { f1: *f1, f2: *f2, curves: curves.clone(), points: points.clone() });
+            self.interferences.push(Interference::FaceFace { f1: *f1, f2: *f2, curves: curves.clone(), points: points.clone() });
         }
     }
 
