@@ -2259,6 +2259,63 @@ impl Curve2d {
     }
 }
 
+/// OCCT-aligned: apply TopLoc_Location transform to a Curve3.
+pub fn transform_curve(curve: &Curve3, loc: &glam::DAffine3) -> Curve3 {
+    match curve {
+        Curve3::Line(l) => Curve3::Line(Line3 {
+            origin: loc.transform_point3(l.origin),
+            direction: loc.transform_vector3(l.direction),
+        }),
+        Curve3::Circle(c) => Curve3::Circle(Circle3 {
+            center: loc.transform_point3(c.center),
+            normal: loc.transform_vector3(c.normal).normalize_or_zero(),
+            x_dir: loc.transform_vector3(c.x_dir).normalize_or_zero(),
+            y_dir: loc.transform_vector3(c.y_dir).normalize_or_zero(),
+            radius: c.radius * loc.transform_vector3(c.normal).length().max(1e-12),
+        }),
+        Curve3::BSpline(bs) => Curve3::BSpline(BSplineCurve3 {
+            degree: bs.degree,
+            knots: bs.knots.clone(),
+            control_points: bs.control_points.iter().map(|&p| loc.transform_point3(p)).collect(),
+            weights: bs.weights.clone(),
+        }),
+        other => other.clone(),
+    }
+}
+
+/// OCCT-aligned: apply TopLoc_Location transform to a Surface3.
+pub fn transform_surface(surface: &Surface3, loc: &glam::DAffine3) -> Surface3 {
+    match surface {
+        Surface3::Plane(p) => Surface3::Plane(Plane {
+            origin: loc.transform_point3(p.origin),
+            normal: loc.transform_vector3(p.normal).normalize_or_zero(),
+        }),
+        Surface3::Cylinder(c) => Surface3::Cylinder(CylindricalSurface {
+            origin: loc.transform_point3(c.origin),
+            axis: loc.transform_vector3(c.axis).normalize_or_zero(),
+            radius: c.radius * loc.transform_vector3(c.axis).length().max(1e-12),
+            ref_dir: loc.transform_vector3(c.ref_dir).normalize_or_zero(),
+        }),
+        Surface3::Sphere(s) => Surface3::Sphere(SphericalSurface {
+            center: loc.transform_point3(s.center),
+            axis: loc.transform_vector3(s.axis).normalize_or_zero(),
+            radius: s.radius * loc.transform_vector3(s.axis).length().max(1e-12),
+            ref_dir: loc.transform_vector3(s.ref_dir).normalize_or_zero(),
+        }),
+        Surface3::BSpline(bs) => Surface3::BSpline(BSplineSurface {
+            degree_u: bs.degree_u,
+            degree_v: bs.degree_v,
+            knots_u: bs.knots_u.clone(),
+            knots_v: bs.knots_v.clone(),
+            control_points: bs.control_points.iter().map(|row| {
+                row.iter().map(|&p| loc.transform_point3(p)).collect()
+            }).collect(),
+            weights: bs.weights.clone(),
+        }),
+        other => other.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -364,7 +364,135 @@ impl BRep {
         t.add_twire(edges)
     }
 
+    /// Build from TopoDS-aligned representation with instance Location applied.
+    /// `instance_loc` transforms all vertex positions, edge curves, and face surfaces
+    /// to world coordinates.  Use DAffine3::IDENTITY for the default (no transform).
+    pub fn from_topods_with_location(t: &topods::BRep, instance_loc: glam::DAffine3) -> Self {
+        let mut brep = BRep::new();
+        let mut v_map: Vec<usize> = Vec::new();
+        let mut e_map: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        for (ti, ts) in t.tshapes.iter().enumerate() {
+            match &**ts {
+                topods::TShape::Vertex(vd) => {
+                    v_map.push(brep.vertices.len());
+                    brep.vertices.push(Vertex { point: instance_loc.transform_point3(vd.point) });
+                }
+                topods::TShape::Edge(ed) => {
+                    let fi = brep.edges.len();
+                    e_map.insert(ti, fi);
+                    let vi = v_map.get(ed.first.index).copied().unwrap_or_else(|| {
+                        eprintln!("WARN: from_topods edge[{}] first vertex idx {} >= v_map.len()={}", ti, ed.first.index, v_map.len());
+                        0
+                    });
+                    let vj = v_map.get(ed.last.index).copied().unwrap_or_else(|| {
+                        eprintln!("WARN: from_topods edge[{}] last vertex idx {} >= v_map.len()={}", ti, ed.last.index, v_map.len());
+                        0
+                    });
+                    brep.edges.push(Edge { start: vi, end: vj });
+                    // Apply Location to edge curve and range
+                    let (world_ci, world_range) = if let Some(ci) = ed.curve {
+                        if instance_loc != glam::DAffine3::IDENTITY {
+                            let transformed = crate::geom::transform_curve(&t.curves[ci], &instance_loc);
+                            let ci_idx = brep.geom.curves.len();
+                            brep.geom.curves.push(transformed);
+                            (Some(ci_idx), ed.range)
+                        } else {
+                            let ci_idx = brep.geom.curves.len();
+                            brep.geom.curves.push(t.curves[ci].clone());
+                            (Some(ci_idx), ed.range)
+                        }
+                    } else { (None, ed.range) };
+                    brep.geom.edge_curve.push(world_ci);
+                    brep.geom.edge_curve_range.push(Some(world_range));
+                    brep.geom.edge_vertex_params.push(Some([
+                        ed.vertex_params.get(&ed.first.index).copied().unwrap_or(world_range[0]),
+                        ed.vertex_params.get(&ed.last.index).copied().unwrap_or(world_range[1]),
+                    ]));
+                }
+                _ => {}
+            }
+        }
+        // Skip the duplicate Edge match (unreachable)
+        // Rebuild compounds from topods compounds
+        let mut solid_idx_map: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        let mut flat_si = 0usize;
+        for (ti, ts) in t.tshapes.iter().enumerate() {
+            if matches!(&**ts, topods::TShape::Solid(_)) {
+                solid_idx_map.insert(ti, flat_si);
+                flat_si += 1;
+            } else if let topods::TShape::Compound(cd) = &**ts {
+                let mut compound = topology::Compound::new();
+                for sr in cd {
+                    if let Some(&fsi) = solid_idx_map.get(&sr.index) {
+                        if fsi < brep.solids.len() {
+                            compound.solids.push((None, brep.solids[fsi].clone()));
+                        }
+                    }
+                }
+                if !compound.solids.is_empty() {
+                    brep.compound = Some(compound);
+                }
+            }
+        }
+        // Rebuild solids from topods solids + populate geom stores
+        let mut flat_fi = 0usize;
+        for ts in &t.tshapes {
+            if let topods::TShape::Solid(sd) = &**ts {
+                let mut shells = Vec::new();
+                for shell_sr in &sd.shells {
+                    if let topods::TShape::Shell(shd) = &*t.tshapes[shell_sr.index] {
+                        let mut faces = Vec::new();
+                        for face_sr in &shd.faces {
+                            if let topods::TShape::Face(fd) = &*t.tshapes[face_sr.index] {
+                                let outer_wire = Self::wire_from_topods(t, &e_map, &fd.outer_wire);
+                                let inner_wires: Vec<topology::Wire> = fd.inner_wires.iter()
+                                    .map(|sr| Self::wire_from_topods(t, &e_map, sr)).collect();
+                                let surface = if instance_loc != glam::DAffine3::IDENTITY {
+                                    fd.surface.map(|si| crate::geom::transform_surface(&t.surfaces[si], &instance_loc))
+                                } else {
+                                    fd.surface.map(|si| t.surfaces[si].clone())
+                                };
+                                let surf_idx = surface.map(|s| { let si = brep.geom.surfaces.len(); brep.geom.surfaces.push(s); si });
+                                let sample_pt = fd.sample_point.map(|p| instance_loc.transform_point3(p));
+                                faces.push(topology::Face {
+                                    outer_wire,
+                                    inner_wires,
+                                    normal: DVec3::Z,
+                                    triangles: Vec::new(),
+                                    sample_point: sample_pt,
+                                    mesh_dirty: true,
+                                    surface_idx: surf_idx,
+                                });
+                                while brep.geom.face_surface.len() <= flat_fi {
+                                    brep.geom.face_surface.push(None);
+                                }
+                                brep.geom.face_surface[flat_fi] = surf_idx;
+                                while brep.geom.face_surface_range.len() <= flat_fi {
+                                    brep.geom.face_surface_range.push(None);
+                                }
+                                brep.geom.face_surface_range[flat_fi] = fd.uv_domain;
+                                let internal_vtx: Vec<usize> = fd.internal_vertices.iter()
+                                    .filter_map(|sr| v_map.get(sr.index).copied())
+                                    .collect();
+                                while brep.geom.face_internal_vertices.len() <= flat_fi {
+                                    brep.geom.face_internal_vertices.push(Vec::new());
+                                }
+                                brep.geom.face_internal_vertices[flat_fi] = internal_vtx;
+                                flat_fi += 1;
+                            }
+                        }
+                        shells.push(topology::Shell { faces });
+                    }
+                }
+                brep.solids.push(topology::Solid { shells });
+            }
+        }
+        brep.geom.curve2ds = t.curve2ds.clone();
+        brep
+    }
+
     /// Build from TopoDS-aligned representation (simplified — reconstructs flat arrays).
+    /// Equivalent to from_topods_with_location(t, DAffine3::IDENTITY).
     pub fn from_topods(t: &topods::BRep) -> Self {
         let mut brep = BRep::new();
         let mut v_map: Vec<usize> = Vec::new();
