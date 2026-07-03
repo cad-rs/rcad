@@ -500,7 +500,23 @@ impl<'a> BooleanBuilder<'a> {
         entries
     }
 
-    /// �?OCCT-aligned: PrepareHistory for the TreatEmptyShape case (BOP.cxx L462-468).
+    /// OCCT-aligned: PrepareHistory (BOPAlgo_Builder.cxx L441-448).
+    ///   Single call that builds the final shape topology and records
+    ///   source shape history (modified/generated/deleted).
+    ///   In rcad this combines two steps (build_topods for shape-level,
+    ///   fill_history for source-level) into one public method.
+    fn prepare_history(&self, result: &mut ResultBuilder, t_brep: &mut topods::BRep) -> BooleanHistory {
+        let mut history = result.build_topods(t_brep, self.my_fill_history);
+        let source_history = if self.my_fill_history {
+            self.fill_history(t_brep)
+        } else {
+            vec![]
+        };
+        history.source_history = source_history;
+        history
+    }
+
+    /// OCCT-aligned: PrepareHistory for the TreatEmptyShape case (BOP.cxx L462-468).
     ///   All source shapes are present as-is (Generated) or absent (Deleted);
     ///   no splitting occurs, so no Modified shapes.
     fn source_history_single_side(&self, side: ShapeOrigin) -> Vec<crate::history::SourceShapeEntry> {
@@ -538,9 +554,7 @@ impl<'a> BooleanBuilder<'a> {
         entries
     }
 
-    /// �?OCCT-aligned: BuildDraftFace (BOPAlgo_Builder_2.cxx L951-1070).
     ///
-    /// For faces that have NO intersection curves but whose boundary edges may
     /// have been split by the PaveFiller (via myImages / vertices_in), build a
     /// single analytic face using the split boundary edges.  This avoids the
     /// tessellation fallback (split_curved_face_parametric, tessellate_sphere_face,
@@ -827,52 +841,48 @@ impl<'a> BooleanBuilder<'a> {
             &std::env::var("RCAD_DUMP_CASE").unwrap_or_else(|_| "unknown".into()),
         );
 
-        // OCCT L431-436: CheckData
+        // OCCT BOPAlgo_BOP::PerformInternal1 does NOT call CheckData or Prepare.
+        // These responsibilities are handled earlier by the PaveFiller phase
+        // (rcad: pave_fill() call in fuse/fuse_with_bvh, which prepares the DS).
+        // CheckData/Prepare exist in BOPAlgo_Builder::PerformInternal1 (the General
+        // Fuse variant) but are intentionally skipped in the BOP override because
+        // PaveFiller already validates and prepares the data. Keeping them here
+        // would be duplicating the Builder path — not the BOP path we align to.
         let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
         let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
-        self.check_data(&a_faces, &b_faces)?;
+        // Inline Prepare: create empty result container (OCCT: BRep_Builder.MakeCompound).
+        let (mut t_brep, mut result) = (topods::BRep::new(), ResultBuilder::new());
 
-        // OCCT L438-443: Prepare �?creates empty TopoDS_Compound as myShape.
-        let (mut t_brep, mut result) = self.prepare();
-        if self.has_errors { return Err(BooleanError::DegenerateResult); }
-
-        // OCCT L445-453: TreatEmptyShape �?check if any operand is degenerate.
-        if let Some(brep) = self.treat_empty_shape(&a_faces, &b_faces)? {
-            // OCCT L462-468: PrepareHistory(theRange) �?record source→result status.
-            //   For TreatEmptyShape, one side's shapes appear as-is (Generated),
-            //   the other side's shapes are absent (Deleted). There are no splits,
-            //   so the classification is trivially based on which side has faces.
-            let has_a = !a_faces.is_empty();
-            let has_b = !b_faces.is_empty();
-            let source_history = if !self.my_fill_history {
-                // OCCT L166: !HasHistory �?no history recorded
-                vec![]
-            } else if !has_a && !has_b {
-                // Both empty �?all Deleted
-                self.source_history_all_deleted()
-            } else if has_a && has_b {
-                // Both have faces �?should not reach this branch
-                vec![]
-            } else {
-                // Exactly one non-empty side
-                let side = if has_a { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
-                self.source_history_single_side(side)
-            };
-            let mut history = BooleanHistory::default();
-            history.source_history = source_history;
-            return Ok((brep, history));
+        // OCCT L435-443: TreatEmptyShape.
+        //   OCCT: GetReport()->HasAlert(AlertEmptyShape) -> TreatEmptyShape() -> PrepareHistory -> return.
+        //   rcad: check if either operand has no faces (DS was populated by pave_fill).
+        if a_faces.is_empty() || b_faces.is_empty() {
+            if self.treat_empty_shape(&a_faces, &b_faces)?.is_some() {
+                // PrepareHistory(theRange)
+                let source_history = if self.my_fill_history {
+                    let side = if !a_faces.is_empty() { ShapeOrigin::ShapeA }
+                               else { ShapeOrigin::ShapeB };
+                    self.source_history_single_side(side)
+                } else {
+                    vec![]
+                };
+                let mut history = result.build_topods(&mut t_brep, self.my_fill_history);
+                history.source_history = source_history;
+                let brep = rcad_kernel::BRep::from_topods(&t_brep);
+                return Ok((brep, history));
+            }
         }
 
-        // OCCT L454-457: ProgressScope + PISteps
+        // OCCT L444-447: ProgressScope + PISteps + analyzeProgress.
+        //   Placeholder: Message_ProgressScope is not available in Rust runtime.
+        //   Replace with real progress reporting when a Rust equivalent is added.
         struct _ProgressScope;
         impl _ProgressScope { fn next(&self, _step: f64) -> f64 { 0.0 } }
         const _PIOP_LAST: usize = 12;
         let _a_ps = _ProgressScope;
         let _a_steps = [0.0f64; _PIOP_LAST];
         let _ = (&_a_ps, &_a_steps);
-
-        // �?OCCT-aligned: dimension-by-dimension pipeline (PerformInternal1 L336-445).
-        // OCCT L456-459: FillImagesVertices �?BuildResult(VERTEX)
+        // OCCT L456-459: FillImagesVertices — BuildResult(VERTEX)
         self.fill_images_vertices();
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result_occt(topods::ShapeType::Vertex, &mut result, &mut t_brep);
@@ -911,7 +921,6 @@ impl<'a> BooleanBuilder<'a> {
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result_occt(topods::ShapeType::Solid, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        _dump.snapshot("after_BuildResultSolid", self.ds, Some(&t_brep));
         // OCCT L487-490: FillImagesContainers(COMPSOLID) �?BuildResult(COMPSOLID)
         self.fill_images_containers(ShapeType::CompSolid, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
@@ -922,24 +931,14 @@ impl<'a> BooleanBuilder<'a> {
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result_occt(topods::ShapeType::Compound, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // OCCT L498-500: BuildShape �?BuildRC + BuildSolid
+        // OCCT L498-500: BuildShape — BuildRC + BuildSolid
         self.build_shape(&mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        _dump.snapshot("after_BuildShape", self.ds, Some(&t_brep));
-        // OCCT L502-504: PIOperation_FillHistory �?PrepareHistory
-        //   OCCT: myDS->NbSourceShapes() �?LocModified/Generated �?AddModified/Remove.
-        //   rcad: fill_history populates source_history from my_images + result map.
-        let mut history = result.build_topods(&mut t_brep, self.my_fill_history);
-        let source_history = if self.my_fill_history {
-            self.fill_history(&mut t_brep)
-        } else {
-            vec![]
-        };
-        history.source_history = source_history;
-
-        let mut brep = rcad_kernel::BRep::from_topods(&t_brep);
+        // OCCT L502-504: PrepareHistory
+        let mut history = self.prepare_history(&mut result, &mut t_brep);
 
         // OCCT L506-508: PostTreat
+        let mut brep = rcad_kernel::BRep::from_topods(&t_brep);
         self.post_treat(&mut brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
 
