@@ -116,18 +116,12 @@ impl DS {
 
     /// 鉁?OCCT-aligned: myDS->HasInterf(nV, nE) 鈥?checks VE interference exists.
     pub fn has_interf_ve(&self, vi: usize, ei: usize) -> bool {
-        self.interferences.iter().any(|interf| {
-            matches!(interf, Interference::VertexEdge { vertex, edge, .. }
-                if *vertex == vi && *edge == ei)
-        })
+        self.interf_ve.iter().any(|inf| inf.vertex == vi && inf.edge == ei)
     }
 
     /// OCCT-aligned: myDS->HasInterf(n1, n2) 鈥?checks VV interference exists.
     pub fn has_interf_vv(&self, v1: usize, v2: usize) -> bool {
-        self.interferences.iter().any(|interf| {
-            matches!(interf, Interference::VertexVertex { v1: a, v2: b, .. }
-                if (*a == v1 && *b == v2) || (*a == v2 && *b == v1))
-        })
+        self.interf_vv.iter().any(|inf| (inf.v1 == v1 && inf.v2 == v2) || (inf.v1 == v2 && inf.v2 == v1))
     }
 
     /// OCCT-aligned: AddShapeSD 鈥?register dynamic SD mapping between two vertices.
@@ -142,34 +136,23 @@ impl DS {
 
     /// 鉁?OCCT-aligned: myDS->HasInterf(nE1, nE2) 鈥?checks EE interference exists.
     pub fn has_interf_ee(&self, e1: usize, e2: usize) -> bool {
-        self.interferences.iter().any(|interf| {
-            matches!(interf, Interference::EdgeEdge { e1: a, e2: b, .. }
-                if (*a == e1 && *b == e2) || (*a == e2 && *b == e1))
-        })
+        self.interf_ee.iter().any(|inf| (inf.e1 == e1 && inf.e2 == e2) || (inf.e1 == e2 && inf.e2 == e1))
     }
 
     /// 鉁?OCCT-aligned: myDS->HasInterf(nV, nF) 鈥?checks VF interference exists.
     pub fn has_interf_vf(&self, vi: usize, fi: usize) -> bool {
-        self.interferences.iter().any(|interf| {
-            matches!(interf, Interference::VertexFace { vertex, face, .. }
-                if *vertex == vi && *face == fi)
-        })
+        self.interf_vf.iter().any(|inf| inf.vertex == vi && inf.face == fi)
     }
 
     /// 鉁?OCCT-aligned: myDS->HasInterf(nE, nF) 鈥?checks EF interference exists.
     pub fn has_interf_ef(&self, ei: usize, fi: usize) -> bool {
-        self.interferences.iter().any(|interf| {
-            matches!(interf, Interference::EdgeFace { edge, face, .. }
-                if *edge == ei && *face == fi)
-        })
+        self.interf_ef.iter().any(|inf| inf.edge == ei && inf.face == fi)
     }
 
     /// 鉁?OCCT-aligned: myDS->HasInterf(nF1, nF2) 鈥?checks FF interference exists.
     pub fn has_interf_ff(&self, f1: usize, f2: usize) -> bool {
-        self.interferences.iter().any(|interf| {
-            matches!(interf, Interference::FaceFace { f1: a, f2: b, .. }
-                if (*a == f1 && *b == f2) || (*a == f2 && *b == f1))
-        })
+        let (a, b) = if f1 < f2 { (f1, f2) } else { (f2, f1) };
+        self.interf_ff.iter().any(|ff| { let (fa, fb) = if ff.f1 < ff.f2 { (ff.f1, ff.f2) } else { (ff.f2, ff.f1) }; fa == a && fb == b })
     }
 
     /// OCCT-aligned: dedup FaceFace interferences by (Fmin,Fmax) pair.
