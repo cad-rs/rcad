@@ -1075,16 +1075,46 @@ impl<'a> BooleanBuilder<'a> {
             ShapeType::Shell => {
                 // OCCT L145-165: for each source SHELL, check myImages for shell images.
                 //   rcad: tmp_shells already contains shell face groups from
-                //   fill_images_containers_shells.  Clone to preserve for later use
-                //   (BuildResult(Solid) needs tmp_shells).  OCCT's myShape is never
-                //   consumed �?shapes accumulate.  rcad's flat Vec<takes> broke this.
+                //   fill_images_containers_shells.
+                // OCCT L274: aCIm.Closed(BRep_Tool::IsClosed(aCIm)) — set closed flag.
                 let tmp_shells = result.tmp_shells.clone();
                 for shell_faces in &tmp_shells {
                     let sf: Vec<topods::ShapeRef> = shell_faces.iter()
                         .filter_map(|&fi| result.face_refs.get(fi).copied())
                         .collect();
                     if !sf.is_empty() {
-                        result.shells.push(t.add_tshell(sf));
+                        // OCCT L274: BRep_Tool::IsClosed → each edge used exactly twice
+                        let mut edge_count: std::collections::HashMap<usize, usize> =
+                            std::collections::HashMap::new();
+                        for &face_sr in &sf {
+                            if let Some(tf) = t.tshapes.get(face_sr.index) {
+                                if let topods::TShape::Face(fd) = &**tf {
+                                    if let Some(tw) = t.tshapes.get(fd.outer_wire.index) {
+                                        if let topods::TShape::Wire(wd) = &**tw {
+                                            for e_sr in &wd.edges {
+                                                *edge_count.entry(e_sr.index).or_default() += 1;
+                                            }
+                                        }
+                                    }
+                                    for iw_sr in &fd.inner_wires {
+                                        if let Some(tw) = t.tshapes.get(iw_sr.index) {
+                                            if let topods::TShape::Wire(wd) = &**tw {
+                                                for e_sr in &wd.edges {
+                                                    *edge_count.entry(e_sr.index).or_default() += 1;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        let is_closed = !edge_count.is_empty()
+                            && edge_count.values().all(|&c| c == 2);
+                        let shell_ref = t.add_tshell(sf);
+                        if is_closed {
+                            t.shell_mut(shell_ref).closed = true;
+                        }
+                        result.shells.push(shell_ref);
                     }
                 }
             }

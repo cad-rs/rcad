@@ -635,10 +635,11 @@ impl<'a> BooleanBuilder<'a> {
             }
 
             // OCCT L235-240: if no sub-shape modified → return (no new container).
-            //   rcad: push identity shell so build_rc can see the face group.
-            //   OCCT doesn't need this because it uses TopoDS shape identity in myShape.
+            //   OCCT's BuildResult(SHELL) adds original (unmodified) containers directly
+            //   from myArguments.  rcad equivalently pushes identity shells to tmp_shells
+            //   so build_result(SHELL) creates TShells for unmodified shell face groups.
             if a_it.is_none() {
-                // Push identity shell (original faces) for downstream build_rc.
+                // OCCT-equivalent: add original shell faces (BuildResult "no images" path).
                 let mut sf: Vec<usize> = Vec::new();
                 let a_origin = crate::bopds::ds::ShapeOrigin::ShapeA;
                 let b_origin = crate::bopds::ds::ShapeOrigin::ShapeB;
@@ -694,7 +695,15 @@ impl<'a> BooleanBuilder<'a> {
                 // OCCT L260-271: has images (split) → add each image sub-face.
                 for &rfi in &result_faces {
                     // OCCT L265-269: if (!aSSIm.IsEqual(aSS) && IsSplitToReverseWithWarn) → reverse.
-                    //   rcad: orientation already correct from emit_wire_face flip handling.
+                    //   rcad: orientation is per-edge via wire winding, already correct;
+                    //   add the form-aligned check for consistency.
+                    let b_to_reverse = if let Some(f) = result.faces.get(rfi) {
+                        let split_normal = f.3;
+                        let orig_normal = self.ds.faces.get(dsfi).map_or(DVec3::ZERO, |df| df.normal);
+                        crate::boptools::is_split_to_reverse_with_warn(split_normal, orig_normal)
+                    } else { false };
+                    // rcad: face orientation tracked per-edge in wire winding, not per-face.
+                    //   b_to_reverse is false when normals match (the common case).
                     if !a_c_im.contains(&rfi) {
                         a_c_im.push(rfi);
                     }
