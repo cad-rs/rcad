@@ -67,6 +67,8 @@ impl<'a> super::PaveFiller<'a> {
                 fit.next();
             }
         }
+        // OCCT-aligned: dedup FF interferences by pair (BOPDS_IndexRange).
+        self.ds.dedup_ff_interferences();
     }
 
     pub(crate) fn should_skip_glued_face_pair(&self, f1: usize, f2: usize) -> bool {
