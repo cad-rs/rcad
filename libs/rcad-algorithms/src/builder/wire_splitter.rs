@@ -1164,29 +1164,33 @@ pub(crate) fn perform_shapes_to_avoid_topo(
     loop {
         let mut b_found = false;
         for (&v, entries) in &a_mve {
-            // OCCT L198-210: dangling edge (valence 1 at vertex) → avoid
-            if entries.len() == 1 {
-                let (pid, _dir) = entries[0];
-                if is_degenerate(&pid) { continue; }
+            // OCCT: MapShapesAndAncestors counts each edge ONCE per vertex
+            // (with the vertex's orientation on the edge).  rcad may have
+            // both FWD and REV of the same edge at the same vertex, which
+            // share a single Pid.  Collapse by Pid for OCCT-equivalent
+            // valence counting.  Skip degenerate Pids (self-loop edges) as
+            // OCCT does (BRep_Tool::Degenerated -> continue).
+            let mut unique: Vec<&Pid> = entries.iter().map(|(p, _)| p).filter(|p| !is_degenerate(p)).collect();
+            unique.sort_unstable();
+            unique.dedup();
+            let val = unique.len();
+
+            // OCCT L198-210: dangling edge (valence 1 at vertex) -> avoid
+            if val == 1 {
+                let pid = *unique[0];
                 if is_internal_vertex(v) { continue; }
                 if avoided_pids.insert(pid) { b_found = true; }
                 continue;
             }
-            // OCCT L211-227: self-coincident — same PID appearing twice
-            // in the SAME direction (both outgoing or both incoming).
-            //   aE2.IsSame(aE1) in OCCT: same TShape + same orientation
-            //   → true self-coincident.  Opposite orientations → different
-            //   TopoDS keys → not found as self-coincident.
-            //   FWD/REV pair: same PID, opposite directions → NOT
-            //   self-coincident (matches OCCT).  Self-loop edge (start==end):
-            //   same PID, same direction at both occurrences → also caught,
-            //   but degenerate → skipped below.
-            if entries.len() == 2
+            // OCCT L211-227: self-coincident -- aE2.IsSame(aE1) matches
+            // TShape regardless of orientation.  Two entries with the same
+            // Pid at the same vertex (even with different directions) means
+            // the same physical edge, caught here when entries.len() == 2
+            // (only those 2 entries exist at this vertex).
+            if val == 2 && entries.len() == 2
                 && entries[0].0 == entries[1].0
-                && entries[0].1 == entries[1].1
             {
                 let pid = entries[0].0;
-                if pid.2 == pid.3 { continue; }  // degenerate self-loop → skip
                 if avoided_pids.insert(pid) { b_found = true; }
             }
         }
