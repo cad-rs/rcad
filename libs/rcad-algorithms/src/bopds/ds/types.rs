@@ -361,6 +361,58 @@ pub enum Interference {
     },
 }
 
+/// OCCT-aligned: type-specific interference records replacing the flat Vec<Interference>.
+///   OCCT BOPDS_DS stores interferences per-type in separate IndexedDataMaps,
+///   which provide O(log n) lookup by shape index and natural pair dedup.
+///   These are used by the new TypedInterferences container.
+#[derive(Debug, Clone)]
+pub struct InterferenceVV {
+    pub v1: usize,
+    pub v2: usize,
+    pub merged_vertex: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct InterferenceVE {
+    pub vertex: usize,
+    pub edge: usize,
+    pub param: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct InterferenceEE {
+    pub e1: usize,
+    pub e2: usize,
+    pub point: DVec3,
+    pub param1: f64,
+    pub param2: f64,
+    pub new_vertex: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct InterferenceVF {
+    pub vertex: usize,
+    pub face: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct InterferenceEF {
+    pub edge: usize,
+    pub face: usize,
+    pub point: DVec3,
+    pub edge_param: f64,
+    pub new_vertex: usize,
+}
+
+/// FF entry: keyed by (Fmin,Fmax) pair with all curves and touch points merged.
+#[derive(Debug, Clone)]
+pub struct InterferenceFF {
+    pub f1: usize,
+    pub f2: usize,
+    pub curves: Vec<usize>,
+    pub points: Vec<usize>,
+}
+
 /// An intersection curve from F-F intersection, bounded by vertices.
 /// 鉁?OCCT-aligned: BOPDS_Curve (hxx:31-119).
 #[derive(Debug, Clone)]
@@ -489,6 +541,14 @@ pub struct DS {
     pub shells: Vec<DSShell>,
     pub faces: Vec<DSFace>,
     pub interferences: Vec<Interference>,
+    /// OCCT-aligned: type-specific interference vecs (BOPDS_DS myInterfVV/VE/VF/EE/EF/FF).
+    pub interf_vv: Vec<InterferenceVV>,
+    pub interf_ve: Vec<InterferenceVE>,
+    pub interf_vf: Vec<InterferenceVF>,
+    pub interf_ee: Vec<InterferenceEE>,
+    pub interf_ef: Vec<InterferenceEF>,
+    pub interf_ff: Vec<InterferenceFF>,
+
     pub intersection_curves: Vec<IntersectionCurve>,
     /// Mapping: intersection curve index -> DSEdge indices created by make_section_edges_from_curve_pbs.
     /// Populated during PaveFiller::make_section_edges_from_curve_pbs.

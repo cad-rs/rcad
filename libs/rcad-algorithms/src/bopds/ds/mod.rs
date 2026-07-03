@@ -251,6 +251,12 @@ impl DS {
             // internal V/E tracking: is_internal flag on DSVertex/DSEdge
             //   used instead of separate arrays (removed in favor of flags).
             interferences: Vec::new(),
+            interf_vv: Vec::new(),
+            interf_ve: Vec::new(),
+            interf_vf: Vec::new(),
+            interf_ee: Vec::new(),
+            interf_ef: Vec::new(),
+            interf_ff: Vec::new(),
             intersection_curves: Vec::new(),
             section_edge_refs: Vec::new(),
             fuzzy_tol: tol,
