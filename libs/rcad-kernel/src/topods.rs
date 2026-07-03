@@ -520,7 +520,8 @@ pub trait BRepTool {
 
 impl BRepTool for BRep {
     fn vertex_position(&self, v: ShapeRef) -> DVec3 {
-        self.vertex(v).point
+        let pt = self.vertex(v).point;
+        self.get_location(v.location).transform_point3(pt)
     }
 
     fn vertex_tolerance(&self, v: ShapeRef) -> f64 {
