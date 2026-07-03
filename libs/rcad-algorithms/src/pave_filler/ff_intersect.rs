@@ -490,12 +490,26 @@ impl<'a> super::PaveFiller<'a> {
                     half_circle && ic.start_vertex == ic.end_vertex
                 };
                 if needs_fix {
+                    if std::env::var("RCAD_DBG_FF").is_ok() {
+                        eprintln!("[DBG_FF]   needs_fix: ci={} t=[{:.4},{:.4}] sv={} ev={}", ci,
+                            self.ds.intersection_curves[ci].t_range[0], self.ds.intersection_curves[ci].t_range[1],
+                            self.ds.intersection_curves[ci].start_vertex, self.ds.intersection_curves[ci].end_vertex);
+                    }
                     let t0 = self.ds.intersection_curves[ci].t_range[0];
                     let t1 = self.ds.intersection_curves[ci].t_range[1];
                     let p_start = self.ds.intersection_curves[ci].curve.point_at(t0);
                     let p_end = self.ds.intersection_curves[ci].curve.point_at(t1);
-                    let v_start = self.ds.add_vertex(p_start);
-                    let v_end = self.ds.add_vertex(p_end);
+                    // Push new vertices directly — do NOT use add_vertex which merges
+                    // near-coincident points.  Multiple sphere-plane intersection circles
+                    // pass through the same spatial positions (e.g. (1,0,0), (0,1,0),
+                    // (0,0,±1)), and each half-circle needs its OWN start/end vertices
+                    // to form distinct arcs.  Merging them collapses different
+                    // face-boundary arcs onto the same vertex pair, creating the
+                    // same section edges for different curves and breaking the loop.
+                    let v_start = self.ds.vertices.len();
+                    self.ds.vertices.push(DSVertex { point: p_start, geom_tol: TOLERANCE_ABS, origin: None, is_internal: false });
+                    let v_end = self.ds.vertices.len();
+                    self.ds.vertices.push(DSVertex { point: p_end, geom_tol: TOLERANCE_ABS, origin: None, is_internal: false });
                     self.ds.intersection_curves[ci].start_vertex = v_start;
                     self.ds.intersection_curves[ci].end_vertex = v_end;
                 }
