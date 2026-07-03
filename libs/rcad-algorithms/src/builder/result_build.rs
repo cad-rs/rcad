@@ -1114,6 +1114,9 @@ impl<'a> BooleanBuilder<'a> {
                         if is_closed {
                             t.shell_mut(shell_ref).closed = true;
                         }
+                        // OCCT-aligned: store in myImages (unified source→image map).
+                        let sh_key = rcad_kernel::topods::ShapeRef::new(usize::MAX - result.shells.len());
+                        self.my_images.borrow_mut().entry(sh_key).or_default().push(shell_ref);
                         result.shells.push(shell_ref);
                     }
                 }
@@ -1126,7 +1129,10 @@ impl<'a> BooleanBuilder<'a> {
                 if self.op == BooleanOpType::Union && !result.face_refs.is_empty() {
                     let sf = result.face_refs.clone();
                     let shell_ref = t.add_tshell(sf);
-                    result.solids.push(t.add_tsolid(vec![shell_ref]));
+                    let solid_ref = t.add_tsolid(vec![shell_ref]);
+                    let so_key = rcad_kernel::topods::ShapeRef::new(usize::MAX - 1 - result.solids.len());
+                    self.my_images.borrow_mut().entry(so_key).or_default().push(solid_ref);
+                    result.solids.push(solid_ref);
                 } else {
                     let tmp_solids = result.tmp_solids.clone();
                     if !tmp_solids.is_empty() {
@@ -1142,7 +1148,10 @@ impl<'a> BooleanBuilder<'a> {
                                 })
                                 .collect();
                             if !shell_refs.is_empty() {
-                                result.solids.push(t.add_tsolid(shell_refs));
+                                let solid_ref = t.add_tsolid(shell_refs);
+                                let so_key = rcad_kernel::topods::ShapeRef::new(usize::MAX - 1 - result.solids.len());
+                                self.my_images.borrow_mut().entry(so_key).or_default().push(solid_ref);
+                                result.solids.push(solid_ref);
                             }
                         }
                     }
