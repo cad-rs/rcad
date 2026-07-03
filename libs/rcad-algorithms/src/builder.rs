@@ -354,7 +354,7 @@ impl<'a> BooleanBuilder<'a> {
         for wf in &wfs {
             result.emit_wire_face_topods(face_idx, wf, &segments_topo, tool, &ic_curves, false, origin,
                 &HashMap::new(), face_refs[face_idx], self.ds.faces[face_idx].natural_restriction,
-                &ds_ei_to_sr, &sr_index_to_ds_ei);
+                &ds_ei_to_sr, &sr_index_to_ds_ei, &self.ds);
             // Architecture A1: create TShapes for this face immediately (incremental),
             // matching OCCT's per-face BRep_Builder assembly.  build_topods_faces will
             // skip faces already emitted as TShapes.

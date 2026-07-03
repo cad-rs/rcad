@@ -328,8 +328,9 @@ impl ResultBuilder {
         vertex_positions: &HashMap<usize, DVec3>,
         face_ref: rcad_kernel::topods::ShapeRef,
         natural_restriction: bool,
-        _ds_ei_to_sr: &HashMap<usize, topods::ShapeRef>,
+        ds_ei_to_sr: &HashMap<usize, topods::ShapeRef>,
         sr_index_to_ds_ei: &HashMap<usize, usize>,
+        ds: &crate::bopds::ds::DS,
     ) {
         let normal = if let Some(surf) = tool.face_surface(face_ref) {
             match surf {
@@ -358,8 +359,15 @@ impl ResultBuilder {
         } else { return; };
 
         let get_pos = |vi: usize| -> DVec3 {
-            vertex_positions.get(&vi).copied()
-                .unwrap_or_else(|| tool.vertex_position(rcad_kernel::topods::ShapeRef::new(vi)))
+            // OCCT-aligned: use DS vertex world coordinate (TopLoc_Location already baked
+            // by from_topods_with_location / load_brep).  The BRepTool fallback is only
+            // used when vi is NOT a DS vertex index.
+            if vi < ds.vertices.len() {
+                ds.vertices[vi].point
+            } else {
+                vertex_positions.get(&vi).copied()
+                    .unwrap_or_else(|| tool.vertex_position(rcad_kernel::topods::ShapeRef::new(vi)))
+            }
         };
 
         let mut vert_indices = Vec::new();
