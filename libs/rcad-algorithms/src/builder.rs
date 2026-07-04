@@ -896,7 +896,7 @@ impl<'a> BooleanBuilder<'a> {
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         _dump.snapshot("after_BuildResultShell", self.ds, Some(&t_brep));
         // OCCT L482-485: FillImagesSolids �?BuildResult(SOLID)
-        self.fill_images_solids(&mut result);
+        self.fill_images_solids(&mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result_occt(topods::ShapeType::Solid, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }

@@ -1108,10 +1108,10 @@ impl<'a> BooleanBuilder<'a> {
                 //   the OCCT L274-275 container creation step).
             }
             ShapeType::Solid => {
-                // OCCT L130-167: for each source SOLID, check myImages �?add images/original.
-                // �?OCCT-aligned BuildSolid: for FUSE, collect ALL result faces into one solid
-                //   (BOPAlgo_BOP.cxx L902-906).  BuildResult(Shell) already consumed tmp_shells,
-                //   so build directly from face_refs.
+                // OCCT L130-167: for each source SOLID, check myImages → add images/original.
+                //   ⏳ OCCT-aligned BuildSolid: for FUSE, collect ALL result faces into one solid
+                //   (BOPAlgo_BOP.cxx L902-906).  Non-union solids are already created by
+                //   build_split_solids (stored in result.solids + my_images).
                 if self.op == BooleanOpType::Union && !result.face_refs.is_empty() {
                     let sf = result.face_refs.clone();
                     let shell_ref = t.add_tshell(sf);
@@ -1119,28 +1119,6 @@ impl<'a> BooleanBuilder<'a> {
                     let so_key = rcad_kernel::topods::ShapeRef::new(usize::MAX - 1 - result.solids.len());
                     self.my_images.borrow_mut().entry(so_key).or_default().push(solid_ref);
                     result.solids.push(solid_ref);
-                } else {
-                    let tmp_solids = result.tmp_solids.clone();
-                    if !tmp_solids.is_empty() {
-                        let new_shells = result.tmp_shells.clone();
-                        for solid_shells in &tmp_solids {
-                            let shell_refs: Vec<topods::ShapeRef> = solid_shells.iter()
-                                .filter_map(|&si| new_shells.get(si))
-                                .map(|shell_faces| {
-                                    let sf: Vec<topods::ShapeRef> = shell_faces.iter()
-                                        .filter_map(|&fi| result.face_refs.get(fi).copied())
-                                        .collect();
-                                    t.add_tshell(sf)
-                                })
-                                .collect();
-                            if !shell_refs.is_empty() {
-                                let solid_ref = t.add_tsolid(shell_refs);
-                                let so_key = rcad_kernel::topods::ShapeRef::new(usize::MAX - 1 - result.solids.len());
-                                self.my_images.borrow_mut().entry(so_key).or_default().push(solid_ref);
-                                result.solids.push(solid_ref);
-                            }
-                        }
-                    }
                 }
             }
             ShapeType::CompSolid => {

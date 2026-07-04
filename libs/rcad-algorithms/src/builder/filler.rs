@@ -701,7 +701,7 @@ impl<'a> BooleanBuilder<'a> {
     ///   A/B lists as parameters — FillIn3DParts iterates myDS->ShapeInfo()).
     ///   OCCT L60-73 check: rcad's CheckData (L320-325) has already ensured
     ///   both operands have faces, so the source-solid skip never triggers.
-    fn fill_images_solids(&self, result: &mut ResultBuilder) {
+    fn fill_images_solids(&self, result: &mut ResultBuilder, t: &mut topods::BRep) {
         let has_solid = self.ds.faces.iter().any(|f| f.source_solid_idx.is_some());
         if !has_solid { return; }
 
@@ -709,7 +709,7 @@ impl<'a> BooleanBuilder<'a> {
         let shell_assignments = self.fill_in_3d_parts(result);
 
         // OCCT L86: BuildSplitSolids — group shells into result solids
-        self.build_split_solids(result, &shell_assignments);
+        self.build_split_solids(result, &shell_assignments, t);
 
         // OCCT L92: FillInternalShapes — internal sub-shapes
         self.fill_internal_shapes(result);
@@ -1005,7 +1005,8 @@ impl<'a> BooleanBuilder<'a> {
     ///   rcad: results stored in result.tmp_solids (BuildRC applies boolean filtering).
     ///   ⏳ myImages / myOrigins / myShapesSD storage deferred to BuildRC / build_topods.
     fn build_split_solids(&self, result: &mut ResultBuilder,
-                          assignments: &[(usize, usize, &'static str)]) {
+                          assignments: &[(usize, usize, &'static str)],
+                          t: &mut topods::BRep) {
         // OCCT L413-415: void BuildSplitSolids(theDraftSolids, theRange)
         //   rcad: assignments + saved_shells + my_in_parts replace theDraftSolids + myInParts.
         // OCCT L417-428: local variables (aAlr0, aSFS, aLSEmpty, aMFence, aMST, aVBS)
@@ -1077,6 +1078,19 @@ impl<'a> BooleanBuilder<'a> {
                     })
                     .collect();
                 if result_faces.is_empty() { continue; }
+                // OCCT-aligned: create TShape::Solid in my_images
+                {
+                    let sf: Vec<topods::ShapeRef> = result_faces.iter()
+                        .filter_map(|&rfi| result.face_refs.get(rfi).copied())
+                        .collect();
+                    if !sf.is_empty() {
+                        let shell_ref = t.add_tshell(sf);
+                        let solid_ref = t.add_tsolid(vec![shell_ref]);
+                        let so_key = topods::ShapeRef::new(usize::MAX - 1 - result.solids.len());
+                        self.my_images.borrow_mut().entry(so_key).or_default().push(solid_ref);
+                        result.solids.push(solid_ref);
+                    }
+                }
                 let csi = result.tmp_shells.len();
                 result.tmp_shells.push(result_faces);
                 result_solids.push(vec![csi]);
@@ -1151,7 +1165,19 @@ impl<'a> BooleanBuilder<'a> {
                 if result_faces.is_empty() { continue; }
 
                 // OCCT L603-614: store in myImages + myOrigins + myShapesSD.
-                //   ⏳ rcad: stored in result.tmp_shells/tmp_solids for BuildRC.
+                {
+                    let sf: Vec<topods::ShapeRef> = result_faces.iter()
+                        .filter_map(|&rfi| result.face_refs.get(rfi).copied())
+                        .collect();
+                    if !sf.is_empty() {
+                        let shell_ref = t.add_tshell(sf);
+                        let solid_ref = t.add_tsolid(vec![shell_ref]);
+                        let so_key = topods::ShapeRef::new(usize::MAX - 1 - result.solids.len());
+                        self.my_images.borrow_mut().entry(so_key).or_default().push(solid_ref);
+                        result.solids.push(solid_ref);
+                    }
+                }
+                //   rcad: also keep tmp_shells/tmp_solids for BuildRC.
                 let csi = result.tmp_shells.len();
                 result.tmp_shells.push(result_faces);
                 result_solids.push(vec![csi]);
