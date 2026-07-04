@@ -730,3 +730,21 @@ fn make_internal_shells(faces: &[usize], ds: &DS) -> Vec<Vec<usize>> {
     }
     shells
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builder_solid_default_merge_flags() {
+        let bs = BuilderSolid::new();
+        assert!(bs.myMergeEdges, "myMergeEdges should default true");
+        assert!(!bs.myMergeFaces, "myMergeFaces should default false");
+    }
+
+    #[test]
+    fn builder_solid_empty_has_no_shapes() {
+        let bs = BuilderSolid::new();
+        assert!(bs.myShapes.is_empty());
+    }
+}

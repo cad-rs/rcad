@@ -461,3 +461,59 @@ mod tests {
         assert!(make_blocks(&m).is_empty());
     }
 }
+
+    // ===== GlueEnum =====
+
+    #[test]
+    fn glue_enum_default_is_off() {
+        assert_eq!(GlueEnum::default(), GlueEnum::GlueOff);
+    }
+
+    #[test]
+    fn glue_enum_discriminants() {
+        assert_eq!(GlueEnum::GlueOff as i32, 0);
+        assert_eq!(GlueEnum::GlueFull as i32, 1);
+        assert_eq!(GlueEnum::GlueShift as i32, 2);
+    }
+
+    // ===== Alert / Report =====
+
+    #[test]
+    fn report_empty_initially() {
+        let r = Report::new();
+        assert!(!r.has_alerts());
+        assert!(!r.has_error());
+    }
+
+    #[test]
+    fn report_collects_alerts() {
+        let mut r = Report::new();
+        r.add_alert(Alert::TooSmallRange(3, 1e-12));
+        assert!(r.has_alerts());
+        assert!(r.has_error());
+    }
+
+    #[test]
+    fn report_building_pcurve_failed_not_fatal() {
+        let mut r = Report::new();
+        r.add_alert(Alert::BuildingPCurveFailed(5, 2));
+        assert!(r.has_alerts());
+        assert!(!r.has_error(), "pcurve failure should not count as error");
+    }
+
+    #[test]
+    fn report_clear_removes_alerts() {
+        let mut r = Report::new();
+        r.add_alert(Alert::TooSmallRange(0, 1e-9));
+        r.clear();
+        assert!(!r.has_alerts());
+    }
+
+    #[test]
+    fn report_alerts_slice_order() {
+        let mut r = Report::new();
+        r.add_alert(Alert::EdgeWithoutCurve(1));
+        r.add_alert(Alert::SolidBuilderUnusedFaces(vec![2, 3]));
+        assert_eq!(r.alerts().len(), 2);
+        assert!(matches!(r.alerts()[0], Alert::EdgeWithoutCurve(1)));
+    }
