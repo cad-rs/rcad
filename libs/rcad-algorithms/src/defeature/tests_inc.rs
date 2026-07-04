@@ -1,4 +1,4 @@
-﻿#[cfg(test)]
+#[cfg(test)]
 mod tests {
     use crate::defeature::*;
     use crate::{BooleanOpType, boolean_op};
@@ -1389,7 +1389,7 @@ pub fn suppress_feature_robust(
             };
             boolean_op_with_options(op, &current, fill_solid, fuzzy_opts)
         } else {
-            boolean_op(op, &current, fill_solid)
+            boolean_op_old(op, &current, fill_solid)
         };
 
         match result {
@@ -1447,7 +1447,7 @@ fn boolean_op_with_options(
         };
         boolean_op_robust(op, a, b, robust_opts).map(|(b, _)| b)
     } else {
-        boolean_op(op, a, b)
+        boolean_op_old(op, a, b)
     }
 }
 

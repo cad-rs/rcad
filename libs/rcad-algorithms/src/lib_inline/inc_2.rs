@@ -329,8 +329,8 @@ pub fn boolean_op_with_retry(
     b: &BRep,
 ) -> Result<BRep, BooleanError> {
     // First attempt: standard path including fast-paths (containment, box-box, etc.).
-    let brep = if let Ok(brep) = boolean_op(op, a, b) {
-        brep
+    let brep = if let Ok(t) = boolean_op(op, a, b) {
+        rcad_kernel::BRep::from_topods(&t)
     } else {
         // Fallback: retry with escalating tolerance.
         boolean::boolean_op_with_retry_policy(
@@ -448,7 +448,7 @@ pub fn boolean_op_with_options(
                 let r = builder.build()?;
                 boolean_postprocess_pave_result(op, a, b, r)?
             } else {
-                boolean_op(op, a, b)?
+                boolean_op(op, a, b).map(|t| rcad_kernel::BRep::from_topods(&t))?
             }
         } else {
             let mut ds = if options.fuzzy_tol > 0.0 {
@@ -859,15 +859,27 @@ pub fn boolean_op_simplified(
     b: &BRep,
     options: SimplifyOptions,
 ) -> Result<(BRep, SimplifyReport), BooleanError> {
+    let t = boolean_op_topods_simplified(op, a, b, options)?;
+    Ok((rcad_kernel::BRep::from_topods(&t.0), t.1))
+}
+
+/// Same as boolean_op_simplified but returns topods::BRep.
+pub fn boolean_op_topods_simplified(
+    op: BooleanOpType,
+    a: &BRep,
+    b: &BRep,
+    options: SimplifyOptions,
+) -> Result<(topods::BRep, SimplifyReport), BooleanError> {
     let raw = boolean_op(op, a, b)?;
+    let old = rcad_kernel::BRep::from_topods(&raw);
     // OCCT BRepAlgoAPI runs MakeConnected before any simplification.
-    // Merge coincident vertices/edges to ensure clean topology.
     let (connected, _mc_report) = make_connected_enhanced(
-        &raw,
+        &old,
         tolerance::TOLERANCE_ABS,
         3, /* max_passes */
     );
-    Ok(simplify_brep_post_ops(&connected, options))
+    let (simplified, report) = simplify_brep_post_ops(&connected, options);
+    Ok((simplified.to_topods(), report))
 }
 
 /// Split `target` by one or more `tools` without boolean classification.
@@ -1793,9 +1805,10 @@ pub fn boolean_op_healed(
     b: &BRep,
 ) -> Result<(BRep, HealingReport), BooleanError> {
     let raw = boolean_op(op, a, b)?;
+    let old = rcad_kernel::BRep::from_topods(&raw);
     let mut healing = HealingOptions::default();
     align_healing_options_with_boolean_operands(&mut healing, a, b, 0.0);
-    let (healed, report) = analyze_and_heal(&raw, healing);
+    let (healed, report) = analyze_and_heal(&old, healing);
     Ok((healed, report))
 }
 
@@ -1807,8 +1820,9 @@ pub fn boolean_op_healed_with_options(
     mut options: HealingOptions,
 ) -> Result<(BRep, HealingReport), BooleanError> {
     let raw = boolean_op(op, a, b)?;
+    let old = rcad_kernel::BRep::from_topods(&raw);
     align_healing_options_with_boolean_operands(&mut options, a, b, 0.0);
-    let (healed, report) = analyze_and_heal(&raw, options);
+    let (healed, report) = analyze_and_heal(&old, options);
     Ok((healed, report))
 }
 

@@ -154,7 +154,7 @@ pub fn defeature_brep(
                             )
                         } else {
                             boolean_op(BooleanOpType::Union, &current, &fill)
-                                .map(|b| (b, false))
+                                .map(|b| (rcad_kernel::BRep::from_topods(&b), false))
                         };
                         match result {
                             Ok((new_brep, retried)) => {
@@ -190,7 +190,7 @@ pub fn defeature_brep(
                             )
                         } else {
                             boolean_op(BooleanOpType::Difference, &current, &boss)
-                                .map(|b| (b, false))
+                                .map(|b| (rcad_kernel::BRep::from_topods(&b), false))
                         };
                         match result {
                             Ok((new_brep, retried)) => {
@@ -237,8 +237,8 @@ pub fn defeature_brep(
                             &mut report,
                         )
                     } else {
-                        boolean_op(BooleanOpType::Union, &current, &fill)
-                            .map(|b| (b, false))
+boolean_op(BooleanOpType::Union, &current, &fill)
+                                .map(|b| (rcad_kernel::BRep::from_topods(&b), false))
                     };
                     match result {
                         Ok((new_brep, retried)) => {
@@ -287,7 +287,7 @@ fn try_boolean_with_retry(
 ) -> Result<(BRep, bool), crate::BooleanError> {
     // First attempt with default fuzzy tolerance.
     match boolean_op(op, a, b) {
-        Ok(result) => Ok((result, false)),
+        Ok(result) => Ok((rcad_kernel::BRep::from_topods(&result), false)),
         Err(first_err) => {
             // Build retry ladder based on multiplier.
             let ladder: Vec<f64> = (1..=max_retries)
@@ -607,7 +607,7 @@ fn process_feature_group(
                     boolean_op_robust(op, &current, &fill, robust_opts)
                         .map(|(b, _)| b)
                 } else {
-                    boolean_op(op, &current, &fill)
+                    boolean_op(op, &current, &fill).map(|b| rcad_kernel::BRep::from_topods(&b))
                 };
 
                 match result {

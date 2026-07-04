@@ -1042,7 +1042,7 @@ where
     };
 
     let mut result_brep = match result {
-        Ok(b) => b,
+        Ok(b) => rcad_kernel::BRep::from_topods(&b),
         Err(_) => return brep.clone(),
     };
 

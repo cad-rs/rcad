@@ -1773,14 +1773,14 @@ pub(crate) fn boolean_postprocess_pave_result(
 /// difference branches (e.g. cylinder − loft frustum after `cone ∩ cylinder`).
 /// Direct PaveFiller + BooleanBuilder pipeline, no post-processing.
 /// OCCT-aligned: BOPAlgo_BOP::Perform.
-pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
-    let t = boolean_op_topods(op, a, b)?;
-    Ok(rcad_kernel::BRep::from_topods_with_location(&t, glam::DAffine3::IDENTITY))
+pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<topods::BRep, BooleanError> {
+    boolean_op_pave_fill_build(op, a, b)
 }
 
-/// Same as boolean_op but returns a topods::BRep (OCCT-aligned data model).
-pub fn boolean_op_topods(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<topods::BRep, BooleanError> {
-    boolean_op_pave_fill_build(op, a, b)
+/// Temporary bridge: call boolean_op and convert result to old BRep.
+/// Will be removed once all callers migrate to topods::BRep.
+pub(crate) fn boolean_op_old(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
+    boolean_op(op, a, b).map(|t| rcad_kernel::BRep::from_topods(&t))
 }
 
 pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<topods::BRep, BooleanError> {

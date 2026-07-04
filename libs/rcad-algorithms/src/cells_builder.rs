@@ -4,7 +4,7 @@
 //! `BOPAlgo_CellsBuilder`: callers register reusable cell solids and then
 //! evaluate boolean expressions over those cells.
 
-use crate::{BooleanError, BooleanOpType, boolean_op};
+use crate::{BooleanError, BooleanOpType, boolean_op, boolean_op_old};
 use rcad_kernel::BRep;
 
 /// Boolean expression over registered cells.
@@ -100,7 +100,7 @@ impl CellsBuilder {
                 // XOR: (A - B) ∪ (B - A)
                 let a_min_b = self.eval_bin(BooleanOpType::Difference, a, b)?;
                 let b_min_a = self.eval_bin(BooleanOpType::Difference, b, a)?;
-                Ok(boolean_op(BooleanOpType::Union, &a_min_b, &b_min_a)?)
+                Ok(boolean_op_old(BooleanOpType::Union, &a_min_b, &b_min_a)?)
             }
         }
     }
@@ -113,7 +113,7 @@ impl CellsBuilder {
     ) -> Result<BRep, CellsBuilderError> {
         let left = self.eval_rec(a)?;
         let right = self.eval_rec(b)?;
-        Ok(boolean_op(op, &left, &right)?)
+        Ok(boolean_op_old(op, &left, &right)?)
     }
 }
 

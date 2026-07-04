@@ -707,12 +707,14 @@ fn partition_face_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate:
     let mut cells = Vec::new();
     let mut remaining = obj.clone();
     for tool in &solid_tools {
-        let inside = crate::boolean_op(crate::BooleanOpType::Intersection, &remaining, tool)?;
+        let inside_t = crate::boolean_op(crate::BooleanOpType::Intersection, &remaining, tool)?;
+        let inside = rcad_kernel::BRep::from_topods(&inside_t);
         let in_faces = collect_on_plane(&inside);
         if !in_faces.is_empty() {
             cells.push(extract_brep_subset(&inside, &in_faces));
         }
-        remaining = crate::boolean_op(crate::BooleanOpType::Difference, &remaining, tool)?;
+        let remaining_t = crate::boolean_op(crate::BooleanOpType::Difference, &remaining, tool)?;
+        remaining = rcad_kernel::BRep::from_topods(&remaining_t);
     }
     let out_faces = collect_on_plane(&remaining);
     if !out_faces.is_empty() {

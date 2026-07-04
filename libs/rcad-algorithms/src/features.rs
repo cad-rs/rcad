@@ -123,7 +123,7 @@ pub fn make_cylindrical_hole(
     let rot = DMat3::from_cols(x_axis, y_axis, z_axis);
     tool.apply_transform(DAffine3::from_mat3_translation(rot, center));
 
-    Ok(boolean_op(BooleanOpType::Difference, target, &tool)?)
+    Ok(rcad_kernel::BRep::from_topods(&boolean_op(BooleanOpType::Difference, target, &tool)?))
 }
 
 /// Extrude a closed planar polygon into a solid prism (no boolean against a target).
@@ -192,7 +192,7 @@ pub fn make_prism(
     let depth = validate_positive("depth", depth)?;
 
     let tool = build_polygon_prism(profile_verts, dir, depth)?;
-    Ok(boolean_op(op, target, &tool)?)
+    Ok(rcad_kernel::BRep::from_topods(&boolean_op(op, target, &tool)?))
 }
 
 /// Create a drafted prismatic boss or pocket by extruding a polygon profile
@@ -240,7 +240,7 @@ pub fn make_draft_prism(
         .collect();
 
     let tool = build_prism_from_sections(&bot, &top, dir)?;
-    Ok(boolean_op(op, target, &tool)?)
+    Ok(rcad_kernel::BRep::from_topods(&boolean_op(op, target, &tool)?))
 }
 
 /// Create a revolution boss/pocket feature from a planar profile.
@@ -269,7 +269,7 @@ pub fn make_revolution(
     let profile = build_polygon_face_brep(profile_verts)?;
     let tool = rcad_modeling::revolve(&profile, 0, axis_origin, axis_dir, angle_rad)?;
 
-    Ok(boolean_op(op, target, &tool)?)
+    Ok(rcad_kernel::BRep::from_topods(&boolean_op(op, target, &tool)?))
 }
 
 fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<BRep, FeatureError> {

@@ -19,7 +19,7 @@ use rcad_kernel::BRep;
 use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
-use crate::{BooleanError, BooleanOpType, boolean_op};
+use crate::{BooleanError, BooleanOpType, boolean_op, boolean_op_old};
 
 // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 // Error Types
@@ -466,7 +466,7 @@ pub fn make_rib(
     let rib_solid = build_rib_solid(&profile_offset_neg, &profile_offset_pos, dir, thickness)?;
 
     // Fuse with target
-    Ok(boolean_op(BooleanOpType::Union, target, &rib_solid)?)
+    Ok(boolean_op_old(BooleanOpType::Union, target, &rib_solid)?)
 }
 
 /// Create a linear rib from a profile with specified height.
@@ -509,7 +509,7 @@ pub fn make_linear_rib(
     let rib_solid = build_prism_from_sections(&bottom, &top, dir)?;
 
     // Fuse with target
-    Ok(boolean_op(BooleanOpType::Union, target, &rib_solid)?)
+    Ok(boolean_op_old(BooleanOpType::Union, target, &rib_solid)?)
 }
 
 /// Build a solid rib from two offset profile sections.
@@ -561,7 +561,7 @@ pub fn make_groove(
     let groove_tool = build_prism_from_sections(&bottom, &top, dir)?;
 
     // Subtract from target
-    Ok(boolean_op(BooleanOpType::Difference, target, &groove_tool)?)
+    Ok(boolean_op_old(BooleanOpType::Difference, target, &groove_tool)?)
 }
 
 /// Create a through groove (slot) that goes through the entire shape.
@@ -599,7 +599,7 @@ pub fn make_through_groove(
     let groove_tool = build_prism_from_sections(&bottom, &top, dir)?;
 
     // Subtract from target
-    Ok(boolean_op(BooleanOpType::Difference, target, &groove_tool)?)
+    Ok(boolean_op_old(BooleanOpType::Difference, target, &groove_tool)?)
 }
 
 /// Compute the axis-aligned bounding box of a BRep.
@@ -658,7 +658,7 @@ pub fn make_prism_feature(
 
     // Apply boolean operation based on fuse mode
     let op = BooleanOpType::from(fuse_mode);
-    Ok(boolean_op(op, target, &prism_tool)?)
+    Ok(boolean_op_old(op, target, &prism_tool)?)
 }
 
 // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
@@ -709,7 +709,7 @@ pub fn make_revol_feature(
 
     // Apply boolean operation based on fuse mode
     let op = BooleanOpType::from(fuse_mode);
-    Ok(boolean_op(op, target, &revol_tool)?)
+    Ok(boolean_op_old(op, target, &revol_tool)?)
 }
 
 // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
@@ -749,7 +749,7 @@ pub fn make_pipe_feature(
 
     // Apply boolean operation based on fuse mode
     let op = BooleanOpType::from(fuse_mode);
-    Ok(boolean_op(op, target, &pipe_tool)?)
+    Ok(boolean_op_old(op, target, &pipe_tool)?)
 }
 
 /// Build a pipe solid by sweeping a profile along a spine.
@@ -1247,7 +1247,7 @@ pub fn make_drafted_prism(
     let prism_tool = build_prism_from_sections(&bottom, &top, dir)?;
 
     let op = BooleanOpType::from(fuse_mode);
-    Ok(boolean_op(op, target, &prism_tool)?)
+    Ok(boolean_op_old(op, target, &prism_tool)?)
 }
 
 /// Create a multi-profile pipe (loft) feature.
@@ -1283,7 +1283,7 @@ pub fn make_loft_feature(
     let loft_tool = build_loft_solid(profiles)?;
 
     let op = BooleanOpType::from(fuse_mode);
-    Ok(boolean_op(op, target, &loft_tool)?)
+    Ok(boolean_op_old(op, target, &loft_tool)?)
 }
 
 // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?

@@ -379,7 +379,7 @@ pub fn boolean_op_compound(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep
                 let mut acc = brep_operand_for_compound_solid(a, solid_a);
                 for solid_b in &b_solids {
                     let brep_b = brep_operand_for_compound_solid(b, solid_b);
-                    acc = boolean_op(BooleanOpType::Difference, &acc, &brep_b)?;
+                    acc = boolean_op_old(BooleanOpType::Difference, &acc, &brep_b)?;
                 }
                 results.push(acc);
             }
@@ -399,7 +399,7 @@ pub fn boolean_op_compound(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep
                 for solid_b in &b_solids {
                     let brep_b = brep_operand_for_compound_solid(b, solid_b);
 
-                    if let Ok(result) = boolean_op(BooleanOpType::Intersection, &brep_a, &brep_b)
+                    if let Ok(result) = boolean_op_old(BooleanOpType::Intersection, &brep_a, &brep_b)
                         && !result.solids.is_empty()
                     {
                         results.push(result);
@@ -907,7 +907,7 @@ pub fn unify_same_domain_faces_with_origins(
 ///   4. Merge each group: keep the representative face (lowest flat index),
 ///      remove the others.
 ///
-/// ✅ OCCT对齐: edge-set grouping (BOPTools_Set) + surface-type comparison.
+/// �?OCCT对齐: edge-set grouping (BOPTools_Set) + surface-type comparison.
 pub fn occt_fill_same_domain_faces(brep: &BRep) -> (BRep, usize) {
     use std::collections::{BTreeSet, HashMap, HashSet};
     use rcad_kernel::geom::Surface3;
@@ -1152,7 +1152,7 @@ pub fn occt_fill_same_domain_faces(brep: &BRep) -> (BRep, usize) {
                         for j in (i + 1)..members.len() {
                             let fj = members[j];
                             if check_same_surface(fi, fj) {
-                                // Same edge set + same surface → always adjacent
+                                // Same edge set + same surface �?always adjacent
                                 // (they share ALL boundary edges).  Record both
                                 // directions for the BFS below.
                                 adj.get_mut(&fi).unwrap().push(fj);
@@ -1208,7 +1208,7 @@ pub fn occt_fill_same_domain_faces(brep: &BRep) -> (BRep, usize) {
                         }
                     }
                 }
-            } // Drop `check_same_surface` → release immutable borrow on `out`.
+            } // Drop `check_same_surface` �?release immutable borrow on `out`.
 
             // ── Mutation phase: remove recorded faces ────────────────────────
             total_merges += analysis_merges;
@@ -1247,7 +1247,7 @@ pub fn occt_fill_same_domain_faces(brep: &BRep) -> (BRep, usize) {
 
 /// Check if a shared edge maintains continuity between two faces.
 
-/// ✅ OCCT对齐: 用 face.surface_idx 做同域面合并(BuildSolid loop/area 等价)。
+/// �?OCCT对齐: �?face.surface_idx 做同域面合并(BuildSolid loop/area 等价)�?
 pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
     use std::collections::{HashMap, HashSet};
     if brep.solids.is_empty() || brep.solids[0].shells.is_empty() { return (brep.clone(), 0); }
@@ -1303,11 +1303,11 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                 }).map(|(&e,_)| e).collect();
                 if std::env::var("RCAD_DEBUG_MERGE").is_ok() { eprintln!("[MERGE]   group[{}]: {} edges, {} boundary", gi, gr.len(), bnd.len()); }
                 if bnd.len() < 3 { continue; }
-                // ✅ OCCT对齐: pcurve-based seam edge 检测。
+                // �?OCCT对齐: pcurve-based seam edge 检测�?
                 //    OCCT FillSameDomainFaces 源码: BOPAlgo_Builder_2.cxx L571.
-                //    闭曲面(sphere/torus)上: seam edge 有2条pcurve指向同一surface。
-                //    普通交界面(sphere∩plane): pcurve指向不同surface → 非seam。
-                //    rcad 在 pipeline 中调用 compute_face_pcurves 预先计算 pcurve。
+                //    闭曲�?sphere/torus)�? seam edge �?条pcurve指向同一surface�?
+                //    普通交界面(sphere∩plane): pcurve指向不同surface �?非seam�?
+                //    rcad �?pipeline 中调�?compute_face_pcurves 预先计算 pcurve�?
                 {
                     let sd = out.solids[si].shells[shi].faces[g[0]].surface_idx;
                     let is_closed = sd.and_then(|sid| out.geom.surfaces.get(sid)).map(|s|
@@ -1332,10 +1332,10 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                     }
                 }
                 let mut loops: Vec<Vec<(usize,bool)>> = Vec::new();
-                // Find the LONGEST cycle by DFS — OCCT PerformLoops alignment.
+                // Find the LONGEST cycle by DFS �?OCCT PerformLoops alignment.
                 // OCCT 源码: BOPAlgo_BuilderSolid.cxx L262 (PerformLoops),
-                // 所有边界边参与,找到最外层环路(最大的面边界)。
-                // rcad: 用 DFS 探索所有可能的环路,选最长的一个。
+                // 所有边界边参与,找到最外层环路(最大的面边�?�?
+                // rcad: �?DFS 探索所有可能的环路,选最长的一个�?
                 let mut best_loop: Vec<(usize,bool)> = Vec::new();
                 for &start_ei in &bnd {
                     if out.edges.get(start_ei).map_or(true, |e| e.start == e.end) { continue; }
@@ -1379,11 +1379,11 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                 }
                 let oi = areas.iter().enumerate().max_by(|(_,a),(_,b)| a.partial_cmp(b).unwrap()).map(|(i,_)|i).unwrap_or(0);
                 let mut ol = loops.swap_remove(oi);
-                // ✅ OCCT对齐: loop 方向来自共享边的自然绕行。
-                //    OCCT FillSameDomainFaces 不翻转 loop 方向——共享边的遍历方向
-                //    自然使 merged face 覆盖正确区域(大区域/小区域由 surface normal
-                //    确定)。rcad 的 DFS 找到最长环,方向由 edge 的 forward flag 确定,
-                //    因共享边索引一致,方向与 OCCT 等价。
+                // �?OCCT对齐: loop 方向来自共享边的自然绕行�?
+                //    OCCT FillSameDomainFaces 不翻�?loop 方向——共享边的遍历方�?
+                //    自然�?merged face 覆盖正确区域(大区�?小区域由 surface normal
+                //    确定)。rcad �?DFS 找到最长环,方向�?edge �?forward flag 确定,
+                //    因共享边索引一�?方向�?OCCT 等价�?
                 use rcad_kernel::topology::WireEdge;
                 let ow = rcad_kernel::topology::Wire { edges: ol.iter().map(|&(ei,f)| WireEdge{idx:ei,forward:f}).collect() };
                 let iws: Vec<rcad_kernel::topology::Wire> = loops.iter().map(|lp| rcad_kernel::topology::Wire { edges: lp.iter().map(|&(ei,f)| WireEdge{idx:ei,forward:f}).collect() }).collect();
@@ -1395,7 +1395,7 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
                 let kp = g[0]; out.solids[si].shells[shi].faces[kp] = mf;
                 let mut rd: Vec<usize> = g.iter().skip(1).copied().collect();
                 rd.sort_unstable_by(|a,b| b.cmp(a));
-                // ✅ OCCT对齐: 删除面时同步更新 face_surface Vec。
+                // �?OCCT对齐: 删除面时同步更新 face_surface Vec�?
                 for &fi in &rd {
                     let mut flat = 0usize;
                     for s in 0..si { for sh in &out.solids[s].shells { flat += sh.faces.len(); } }
@@ -1616,7 +1616,7 @@ fn wire_to_polygon_points(
 
 /// Remove geometry slots for the flattened face at `remove_flat`.
 ///
-/// Must stay in sync with topology when a face is deleted — `face_surface`,
+/// Must stay in sync with topology when a face is deleted �?`face_surface`,
 /// `face_surface_range`, and `face_tolerance` all use the same flat face order
 /// as [`rcad_kernel::GeomStore`].
 pub(crate) fn remove_flat_face_geom_slots(geom: &mut rcad_kernel::GeomStore, remove_flat: usize) {
