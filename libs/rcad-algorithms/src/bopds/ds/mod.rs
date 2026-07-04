@@ -997,7 +997,28 @@ impl DS {
                     span,
                 ))
             }
-            _ => None,
+            // OCCT-aligned: fallback — use full sampling+interpolation via
+            // make_pcurve_on_surface (IntTools_Curve::MakePCurveOnSurface equivalent).
+            // Handles BSpline and other surface types not covered by analytic cases.
+            _ => {
+                let t_range = [0.0, 1.0];
+                let pc = rcad_kernel::projection::make_pcurve_on_surface(curve, t_range, surface, 16)?;
+                // Sample start/end UV points for span estimate (BSpline parameter
+                // range may not be [0,1] — use direct arc evaluation).
+                let uv_pts = {
+                    let mut pts = Vec::new();
+                    let n = 16usize;
+                    for i in 0..n {
+                        let t = i as f64 / (n - 1) as f64;
+                        pts.push(pc.point_at(t));
+                    }
+                    pts
+                };
+                let span = uv_pts.windows(2)
+                    .map(|w| (w[1] - w[0]).length())
+                    .sum::<f64>();
+                Some((pc, span))
+            }
         }
     }
 

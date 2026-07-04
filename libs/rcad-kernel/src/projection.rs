@@ -63,7 +63,7 @@ fn solve_quartic(a: f64, b: f64, c: f64, d: f64, e: f64) -> Vec<f64> {
 
 use glam::DVec3;
 
-use crate::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
+use crate::geom::{Curve2d, Curve3, CurveEval, Surface3, SurfaceEval};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Result types
@@ -829,6 +829,44 @@ fn numeric_surface_projection(
         params: (best_u, best_v),
         distance: (best_point - query).length(),
     }
+}
+
+/// OCCT-aligned: IntTools_Curve::MakePCurveOnSurface.
+///
+/// Samples the 3D curve at `n_samples` uniformly-spaced parameter values
+/// within `t_range`, projects each onto `surface` via [`closest_point_on_surface`],
+/// and fits a [`Curve2d::BSpline`] through the UV points.
+///
+/// Returns `None` when fewer than 2 valid projections are obtained, or
+/// when the curve fit fails (coincident UV points, degenerate sample set).
+pub fn make_pcurve_on_surface(
+    curve: &Curve3,
+    t_range: [f64; 2],
+    surface: &Surface3,
+    n_samples: usize,
+) -> Option<Curve2d> {
+    use crate::fit::interpolate_points_2d;
+    use crate::geom::CurveEval;
+    use glam::DVec2;
+
+    let n = n_samples.max(2);
+    let [t0, t1] = t_range;
+    let dt = if n > 1 { (t1 - t0) / (n - 1) as f64 } else { 0.0 };
+
+    let mut uv_pts: Vec<DVec2> = Vec::with_capacity(n);
+    for i in 0..n {
+        let t = t0 + dt * i as f64;
+        let pt3d = curve.point_at(t);
+        let proj = closest_point_on_surface(surface, pt3d, 8);
+        if proj.distance > 1e-4 { continue; }
+        uv_pts.push(DVec2::new(proj.params.0, proj.params.1));
+    }
+
+    if uv_pts.len() < 2 { return None; }
+    uv_pts.dedup_by(|a, b| (*a - *b).length_squared() < 1e-20);
+
+    let bspline = interpolate_points_2d(&uv_pts).ok()?;
+    Some(Curve2d::BSpline(bspline))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

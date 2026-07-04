@@ -124,7 +124,7 @@ pub use nurbs_convert::{
 };
 pub use projection::{
     CurveProjection, SurfaceProjection, closest_point_on_curve, closest_point_on_surface,
-    closest_point_on_surface_near,
+    closest_point_on_surface_near, make_pcurve_on_surface,
 };
 
 pub use appearance::{Color, FaceColor, StepColor};
