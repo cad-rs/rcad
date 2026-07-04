@@ -285,9 +285,16 @@ impl<'a> PaveFiller<'a> {
         }
 
         // L842-874: Build BVH tree of PB shrunk-data boxes
-        // rcad: group the_mpb by face index via BTreeMap, matching OCCT's
-        // BOPTools_BoxTree spatial grouping.  Equivalent: each PB is checked
-        // against the face it belongs to via the per-face map below.
+        // OCCT: BOPTools_BoxTree over PB AABBs for spatial pair filtering.
+        // rcad: pre-group PBs by operand side (A/B).  Within the face loop,
+        // iterate only PBs from the opposing operand — O(P + F·P/2) vs O(F·P).
+        let mut pb_by_side: [Vec<(usize, usize)>; 2] = [Vec::new(), Vec::new()];
+        for &(ne, local_i) in the_mpb {
+            if ne < self.ds.edges.len() {
+                let side = if ne < self.ds.a_edge_count { 0 } else { 1 };
+                pb_by_side[side].push((ne, local_i));
+            }
+        }
 
         // L876: bSICheckMode — Self-Interference check mode (one argument)
         let b_si_check_mode = self.my_arguments.len() <= 1;
@@ -349,7 +356,23 @@ impl<'a> PaveFiller<'a> {
             let a_face = &self.ds.faces[nf];
 
             // L945-1107: Iterate on all collected PB candidates
+            // G2: side-filtered PBs — only iterate PBs from the opposing operand
+            // (or both sides in SI check mode).  Equivalent to OCCT's BOPTools_BoxTree
+            // spatial filtering which restricts PB-face pairs by bounding box overlap.
+            let opposite_side = if b_si_check_mode {
+                2usize  // SI mode: check all PBs (no side filter)
+            } else {
+                match self.ds.faces[nf].origin {
+                    crate::bopds::ds::ShapeOrigin::ShapeA => 1,
+                    _ => 0,
+                }
+            };
             for &(ne, local_i) in the_mpb {
+                // G2: skip PBs not on the opposite operand side
+                if opposite_side != 2 {
+                    let pb_side = if ne < self.ds.a_edge_count { 0 } else { 1 };
+                    if pb_side != opposite_side { continue; }
+                }
                 if ne >= self.ds.edges.len() {
                     continue;
                 }
@@ -481,10 +504,11 @@ impl<'a> PaveFiller<'a> {
             return;
         }
 
-        // L1129: process EF pairs (rcad: sequential, same logic as OCCT parallel)
-        // OCCT uses BOPAlgo_EdgeFace parallel solver: aVEdgeFace → parallel for →
-        // process results.  rcad: process sequentially with par_iter() available
-        // via rayon if run_parallel is set.  Currently sequential for determinism.
+        // L1129: process EF pairs sequentially.
+        // OCCT uses BOPAlgo_EdgeFace parallel solver with thread-local contexts.
+        // rcad: sequential — IntTools_Context (proj_ps) requires &mut self,
+        // preventing parallel closure capture.  Thread-local contexts could
+        // enable parallel execution in a future refactor.
 
         // L1147-1192: process results
         // rcad: create Interference::EdgeFace + update FaceInfo
