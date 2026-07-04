@@ -56,6 +56,10 @@ pub(crate) struct ResultBuilder {
     /// Topods wire ShapeRefs built by BuildResult(WIRE), indexed by DSWire index.
     ///   Populated during build_result(Wire) before build_topods_faces runs.
     pub(crate) wire_refs: Vec<topods::ShapeRef>,
+    /// OCCT-aligned: maps result face index → array of DSWire indices for all its wires
+    ///   (outer first, then inners).  Parallel to face_origins.  Used by
+    ///   build_topods_faces to reference pre-built TShape::Wire from wire_refs.
+    pub(crate) face_all_wire_idxs: Vec<Vec<usize>>,
     /// Topods face ShapeRefs (populated by build_topods_faces after fill_images_faces).
     pub(crate) face_refs: Vec<topods::ShapeRef>,
 }
@@ -320,6 +324,12 @@ impl ResultBuilder {
         ));
         self.face_origins.push(origin);
         self.face_natural_restriction.push(ds.faces[face_idx].natural_restriction);
+        {
+            let mut widxs = Vec::new();
+            if let Some(owi) = ds.faces[face_idx].outer_wire_idx { widxs.push(owi); }
+            widxs.extend(&ds.faces[face_idx].inner_wire_idxs);
+            self.face_all_wire_idxs.push(widxs);
+        }
     }
 
     /// ✅ OCCT-aligned: emit_wire_face using WireSegmentTopoDS.
@@ -634,6 +644,12 @@ impl ResultBuilder {
         ));
         self.face_origins.push(origin);
         self.face_natural_restriction.push(natural_restriction);
+        {
+            let mut widxs = Vec::new();
+            if let Some(owi) = ds.faces[face_idx].outer_wire_idx { widxs.push(owi); }
+            widxs.extend(&ds.faces[face_idx].inner_wire_idxs);
+            self.face_all_wire_idxs.push(widxs);
+        }
     }
 
     /// ✅ OCCT-aligned: estimate face normal from wire segments (TopoDS variant).
@@ -722,6 +738,7 @@ impl ResultBuilder {
             solids: Vec::new(),
             compsolid_groups: Vec::new(),
             wire_refs: Vec::new(),
+            face_all_wire_idxs: Vec::new(),
             face_refs: Vec::new(),
         }
     }
@@ -819,6 +836,12 @@ impl ResultBuilder {
         ));
         self.face_origins.push(origin);
         self.face_natural_restriction.push(ds.faces[fi].natural_restriction);
+        {
+            let mut widxs = Vec::new();
+            if let Some(owi) = ds.faces[fi].outer_wire_idx { widxs.push(owi); }
+            widxs.extend(&ds.faces[fi].inner_wire_idxs);
+            self.face_all_wire_idxs.push(widxs);
+        }
     }
 
     /// ✅ OCCT-aligned: BuildResult(COMPSOLID) — build compsolids via BRepBuilder.
@@ -1240,17 +1263,39 @@ impl ResultBuilder {
 
         // 3. Faces → TShape::Face (with wires) — only for faces NOT yet in face_refs.
         for (flat_fi, (edge_indices, inner_wire_edges, _triangles, _normal, surface, _uv_domain, _centroid, _area, sample_point, internal_wire_edges)) in self.faces.iter().enumerate().skip(start_fi) {
-            // Outer wire
-            let outer_edges: Vec<ShapeRef> = edge_indices.iter().map(|&(idx, forward)| {
-                let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
-                if idx < e_map.len() { ShapeRef::with_orientation(e_map[idx].index, orient) }
-                else { ShapeRef::with_orientation(idx, orient) }
-            }).collect();
-            let outer_wire = t.add_twire(outer_edges);
+            // OCCT-aligned: use pre-built wires from wire_refs when available.
+            let wire_idxs: Option<&Vec<usize>> = self.face_all_wire_idxs.get(flat_fi);
+
+            // Outer wire — use pre-built if available
+            let outer_wire = wire_idxs.and_then(|idxs| idxs.first().copied())
+                .and_then(|wi| self.wire_refs.get(wi).filter(|sr| !sr.is_null()).copied())
+                .unwrap_or_else(|| {
+                    // Fallback: create wire inline from edge_indices
+                    let outer_edges: Vec<ShapeRef> = edge_indices.iter().map(|&(idx, forward)| {
+                        let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
+                        if idx < e_map.len() { ShapeRef::with_orientation(e_map[idx].index, orient) }
+                        else { ShapeRef::with_orientation(idx, orient) }
+                    }).collect();
+                    t.add_twire(outer_edges)
+                });
 
             // Inner wires
             let mut inner_wires = Vec::new();
-            for wire_idxs in inner_wire_edges {
+
+            // Pre-built inner wires from wire_refs
+            if let Some(ref idxs) = wire_idxs {
+                for &wi in idxs.iter().skip(1) {
+                    if let Some(&sr) = self.wire_refs.get(wi) {
+                        if !sr.is_null() {
+                            inner_wires.push(sr);
+                        }
+                    }
+                }
+            }
+
+            // Fallback: create inner wires inline for any extra edges not covered by wire_refs
+            let covered_count = inner_wires.len();
+            for wire_idxs in inner_wire_edges.iter().skip(covered_count) {
                 let iw_edges: Vec<ShapeRef> = wire_idxs.iter().map(|&(idx, forward)| {
                     let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
                     if idx < e_map.len() { ShapeRef::with_orientation(e_map[idx].index, orient) }
