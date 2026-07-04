@@ -1777,12 +1777,6 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<topods::BRep,
     boolean_op_pave_fill_build(op, a, b)
 }
 
-/// Temporary bridge: call boolean_op and convert result to old BRep.
-/// Will be removed once all callers migrate to topods::BRep.
-pub(crate) fn boolean_op_old(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
-    boolean_op(op, a, b).map(|t| rcad_kernel::BRep::from_topods(&t))
-}
-
 pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<topods::BRep, BooleanError> {
     let mut ds = bopds::ds::DS::new(a, b);
     let fuzzy_tol = ds.fuzzy_tol;

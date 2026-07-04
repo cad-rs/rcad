@@ -379,7 +379,7 @@ pub fn boolean_op_compound(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep
                 let mut acc = brep_operand_for_compound_solid(a, solid_a);
                 for solid_b in &b_solids {
                     let brep_b = brep_operand_for_compound_solid(b, solid_b);
-                    acc = boolean_op_old(BooleanOpType::Difference, &acc, &brep_b)?;
+                    let t = boolean_op(BooleanOpType::Difference, &acc, &brep_b)?; acc = rcad_kernel::BRep::from_topods(&t);
                 }
                 results.push(acc);
             }
@@ -399,10 +399,11 @@ pub fn boolean_op_compound(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep
                 for solid_b in &b_solids {
                     let brep_b = brep_operand_for_compound_solid(b, solid_b);
 
-                    if let Ok(result) = boolean_op_old(BooleanOpType::Intersection, &brep_a, &brep_b)
-                        && !result.solids.is_empty()
-                    {
-                        results.push(result);
+                    if let Ok(t) = boolean_op(BooleanOpType::Intersection, &brep_a, &brep_b) {
+                        let result = rcad_kernel::BRep::from_topods(&t);
+                        if !result.solids.is_empty() {
+                            results.push(result);
+                        }
                     }
                 }
             }

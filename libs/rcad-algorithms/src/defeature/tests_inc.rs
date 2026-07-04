@@ -1389,7 +1389,7 @@ pub fn suppress_feature_robust(
             };
             boolean_op_with_options(op, &current, fill_solid, fuzzy_opts)
         } else {
-            boolean_op_old(op, &current, fill_solid)
+            boolean_op(op, &current, fill_solid).map(|t| rcad_kernel::BRep::from_topods(&t))
         };
 
         match result {
@@ -1447,7 +1447,7 @@ fn boolean_op_with_options(
         };
         boolean_op_robust(op, a, b, robust_opts).map(|(b, _)| b)
     } else {
-        boolean_op_old(op, a, b)
+        boolean_op(op, a, b).map(|t| rcad_kernel::BRep::from_topods(&t))
     }
 }
 
