@@ -4626,10 +4626,8 @@ impl StepReader {
         options: HealingOptions,
     ) -> Result<(topods::BRep, HealingReport), StepError> {
         let t = Self::parse_string(content)?;
-        let old = BRep::from_topods_with_location(&t, glam::DAffine3::IDENTITY);
-        let (healed_old, report) = analyze_and_heal(&old, options);
-        let healed_topods = healed_old.to_topods();
-        Ok((healed_topods, report))
+        let (healed, report) = analyze_and_heal(&t, options);
+        Ok((healed, report))
     }
 
     /// Parse a STEP string, run healing, and export stable JSON diagnostics.

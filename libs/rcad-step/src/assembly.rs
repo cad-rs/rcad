@@ -776,9 +776,8 @@ pub fn read_assembly_with_healing(
     let mut reports = Vec::with_capacity(components.len());
 
     for component in &mut components {
-        let old = to_old_brep(&component.brep);
-        let (healed_old, report) = analyze_and_heal(&old, options);
-        component.brep = healed_old.to_topods();
+        let (healed, report) = analyze_and_heal(&component.brep, options);
+        component.brep = healed;
         reports.push(report);
     }
 
@@ -855,9 +854,8 @@ pub fn read_assembly_tree_with_healing(
         reports: &mut Vec<AssemblyNodeHealingReport>,
     ) {
         if let Some(brep) = node.brep.take() {
-            let old = to_old_brep(&brep);
-            let (healed_old, report) = analyze_and_heal(&old, options);
-            node.brep = Some(healed_old.to_topods());
+            let (healed, report) = analyze_and_heal(&brep, options);
+            node.brep = Some(healed);
             reports.push(AssemblyNodeHealingReport {
                 path: path.clone(),
                 name: node.name.clone(),
