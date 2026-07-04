@@ -1045,7 +1045,34 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             ShapeType::Wire => {
-                // OCCT L130-168: wires are sub-shapes of faces, not standalone in rcad.
+                // OCCT L130-168 (TopAbs_WIRE): create wire TShapes from DSWire edges.
+                // rcad: for each DSWire, build a topods::Wire using e_base mapping.
+                // Edges already exist in t_brep from BuildResult(EDGE).
+                let e_base = self.ds.vertices.len();
+                result.wire_refs = Vec::with_capacity(self.ds.wires.len());
+                for wi in 0..self.ds.wires.len() {
+                    let w_ref = rcad_kernel::topods::ShapeRef::new(e_base + self.ds.edges.len() + wi);
+                    // Check wire image for replacement edges
+                    let mut wire_edges: Vec<rcad_kernel::topods::ShapeRef> = Vec::new();
+                    if let Some(imgs) = self.my_images.borrow().get(&w_ref) {
+                        for &img_sr in imgs {
+                            wire_edges.push(img_sr);
+                        }
+                    } else {
+                        for &ei in &self.ds.wires[wi].edges {
+                            wire_edges.push(rcad_kernel::topods::ShapeRef::new(e_base + ei));
+                        }
+                    }
+                    // Create TShape::Wire in t_brep (but only if we have edges)
+                    if !wire_edges.is_empty() {
+                        let sr = t.add_twire(wire_edges);
+                        t.wire_mut(sr).closed = true;
+                        result.wire_refs.push(sr);
+                    } else {
+                        // No edges — skip this wire
+                        result.wire_refs.push(topods::ShapeRef::NULL);
+                    }
+                }
             }
             ShapeType::Face => {
                 // OCCT L145-165: for each source FACE, check myImages.Seek(aS).

@@ -53,6 +53,9 @@ pub(crate) struct ResultBuilder {
     pub(crate) solids: Vec<topods::ShapeRef>,
     /// Final topods compsolid references (populated by build_topods from tmp_compsolid_groups).
     pub(crate) compsolid_groups: Vec<topods::ShapeRef>,
+    /// Topods wire ShapeRefs built by BuildResult(WIRE), indexed by DSWire index.
+    ///   Populated during build_result(Wire) before build_topods_faces runs.
+    pub(crate) wire_refs: Vec<topods::ShapeRef>,
     /// Topods face ShapeRefs (populated by build_topods_faces after fill_images_faces).
     pub(crate) face_refs: Vec<topods::ShapeRef>,
 }
@@ -718,6 +721,7 @@ impl ResultBuilder {
             shells: Vec::new(),
             solids: Vec::new(),
             compsolid_groups: Vec::new(),
+            wire_refs: Vec::new(),
             face_refs: Vec::new(),
         }
     }
