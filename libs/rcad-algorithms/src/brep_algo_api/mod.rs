@@ -756,7 +756,7 @@ impl<'a> BRepAlgoAPI_Common<'a> {
             self.history = BRepHistory::from_boolean_history(bool_history);
         }
 
-        let mut result = brep;
+        let mut result = rcad_kernel::BRep::from_topods(&brep);
         if self.options.run_healing {
             let (healed, _) = crate::healing::analyze_and_heal(&result, self.options.healing_options);
             result = healed;
@@ -940,11 +940,12 @@ impl<'a> BRepAlgoAPI_Fuse<'a> {
             ds.build_container_images(&b);
 
             let builder = BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
-            if self.options.parallel {
+            let (t, hist) = if self.options.parallel {
                 builder.build_with_history()?
             } else {
                 builder.build_with_history()?
-            }
+            };
+            (rcad_kernel::BRep::from_topods(&t), hist)
         };
 
         if self.options.history {
@@ -1131,7 +1132,7 @@ impl<'a> BRepAlgoAPI_Cut<'a> {
             self.history = BRepHistory::from_boolean_history(bool_history);
         }
 
-        let mut result = brep;
+        let mut result = rcad_kernel::BRep::from_topods(&brep);
         if self.options.run_healing {
             let (healed, _) = crate::healing::analyze_and_heal(&result, self.options.healing_options);
             result = healed;

@@ -712,7 +712,8 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     pub fn build(&self) -> Result<BRep, BooleanError> {
-        let (brep, _) = self.build_with_history()?;
+        let (t, _) = self.build_with_history()?;
+        let brep = rcad_kernel::BRep::from_topods(&t);
         if !brep.solids.is_empty() && !brep.solids[0].shells.is_empty() {
             eprintln!("BooleanBuilder::build: {} faces", brep.solids[0].shells[0].faces.len());
         }
@@ -811,9 +812,8 @@ impl<'a> BooleanBuilder<'a> {
     ///   Structural difference: L425-429 setup done in constructor, re-affirmed here.
     ///   L531 BuildResult(SOLID) writes to t_brep, then L900 BuildRC filters and
     ///   clears solids from t_brep (non-Union) — equivalent to OCCT removing from myShape.
-    pub fn build_with_history(&self) -> Result<(BRep, BooleanHistory), BooleanError> {
-        let (t, history) = self.build_with_history_topods()?;
-        Ok((rcad_kernel::BRep::from_topods(&t), history))
+    pub fn build_with_history(&self) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
+        self.build_with_history_topods()
     }
 
     /// Same as build_with_history but returns topods::BRep directly (OCCT-aligned).

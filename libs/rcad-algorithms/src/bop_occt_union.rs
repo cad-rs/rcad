@@ -530,8 +530,9 @@ pub(crate) fn fuse_with_history_bvh(
     validate_ds_invariants(&ds)?;
     let builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
     let (result_brep, hist) = builder.build_with_history()?;
-    validate_union_brep_output("union: result failed checks after build (history)", &result_brep)?;
-    Ok((result_brep, hist))
+    let old = rcad_kernel::BRep::from_topods(&result_brep);
+    validate_union_brep_output("union: result failed checks after build (history)", &old)?;
+    Ok((old, hist))
 }
 
 /// Parallel classification path; same OCCT phase structure as [`fuse_with_history`].
@@ -552,8 +553,9 @@ pub(crate) fn fuse_with_history_par_bvh(
     validate_ds_invariants(&ds)?;
     let builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
     let (result_brep, hist) = builder.build_with_history()?;
-    validate_union_brep_output("union: result failed checks after build (history par)", &result_brep)?;
-    Ok((result_brep, hist))
+    let old = rcad_kernel::BRep::from_topods(&result_brep);
+    validate_union_brep_output("union: result failed checks after build (history par)", &old)?;
+    Ok((old, hist))
 }
 
 /// ✅ OCCT对齐: 按 edge set (BOPTools_Set) 对共面面做同域合并。

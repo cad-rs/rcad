@@ -391,7 +391,8 @@ pub fn boolean_op_with_options(
                 ds.build_container_images(a);
                 let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map)
                     .with_glue(options.use_glue, options.glue_tolerance);
-                builder.build_with_history()?
+                let (t, h) = builder.build_with_history()?;
+                (rcad_kernel::BRep::from_topods(&t), h)
             }
         } else {
             let mut ds = if options.fuzzy_tol > 0.0 {
@@ -411,11 +412,12 @@ pub fn boolean_op_with_options(
             ds.build_container_images(a);
             let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map)
                 .with_glue(options.use_glue, options.glue_tolerance);
-            builder.build_with_history()?
-        };
-        (
-            result,
-            BooleanExecutionReport {
+                let (t, h) = builder.build_with_history()?;
+                (rcad_kernel::BRep::from_topods(&t), h)
+            };
+            (
+                result,
+                BooleanExecutionReport {
                 input_faces_a,
                 input_faces_b,
                 used_bvh,
@@ -1232,7 +1234,8 @@ pub fn boolean_op_with_history(
     };
     ds.build_container_images(a);
     let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
-    builder.build_with_history()
+    let (t, history) = builder.build_with_history()?;
+    Ok((rcad_kernel::BRep::from_topods(&t), history))
 }
 
 pub fn boolean_op_par(
@@ -1266,7 +1269,8 @@ pub fn boolean_op_par(
         (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
     };
     let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
-    builder.build_with_history()
+    let (t, history) = builder.build_with_history()?;
+    Ok((rcad_kernel::BRep::from_topods(&t), history))
 }
 
 /// Check if any solid in the BRep has at least one face (deep check across all solids).

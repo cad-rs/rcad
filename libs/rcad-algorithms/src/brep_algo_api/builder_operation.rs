@@ -198,10 +198,10 @@ impl BooleanOp {
 
         // ✅ OCCT-aligned: Build result
         let builder = BooleanBuilder::with_brep(&ds, self.op_type, brep, face_refs, ic_edge_map);
-        let (brep, bool_history) = builder.build_with_history()?;
+        let (t, bool_history) = builder.build_with_history()?;
 
         self.history = Some(bool_history);
-        self.result = Some(brep);
+        self.result = Some(rcad_kernel::BRep::from_topods(&t));
         Ok(self.result.as_ref().unwrap())
     }
 
