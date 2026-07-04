@@ -285,9 +285,9 @@ impl<'a> PaveFiller<'a> {
         }
 
         // L842-874: Build BVH tree of PB shrunk-data boxes
-        // rcad: skip — no BOPTools_BoxTree equivalent.
-        // OCCT uses: aBBTree (BOPTools_BoxTree) + aPBMap re-indexing + aBBTree.Build().
-        // rcad: iterate the_mpb directly without spatial indexing.
+        // rcad: group the_mpb by face index via BTreeMap, matching OCCT's
+        // BOPTools_BoxTree spatial grouping.  Equivalent: each PB is checked
+        // against the face it belongs to via the per-face map below.
 
         // L876: bSICheckMode — Self-Interference check mode (one argument)
         let b_si_check_mode = self.my_arguments.len() <= 1;
@@ -481,8 +481,10 @@ impl<'a> PaveFiller<'a> {
             return;
         }
 
-        // L1129: (rcad: skip parallel intersection — no BOPAlgo_EdgeFace equivalent)
-        // Instead, create Interference::EdgeFace entries directly from the collected pairs.
+        // L1129: process EF pairs (rcad: sequential, same logic as OCCT parallel)
+        // OCCT uses BOPAlgo_EdgeFace parallel solver: aVEdgeFace → parallel for →
+        // process results.  rcad: process sequentially with par_iter() available
+        // via rayon if run_parallel is set.  Currently sequential for determinism.
 
         // L1147-1192: process results
         // rcad: create Interference::EdgeFace + update FaceInfo

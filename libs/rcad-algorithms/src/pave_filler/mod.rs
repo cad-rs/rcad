@@ -840,9 +840,12 @@ impl<'a> PaveFiller<'a> {
                 let nv1 = pb.pave1.vertex_idx;
                 let nv2 = pb.pave2.vertex_idx;
                 if nv1 == nv2 {
-                    // OCCT L4425-4426: FillShrunkData + HasShrunkData check
-                    // 锟?rcad: shrunk data not available 锟?skip valid-range check
-                    micro_edges.push(ei);
+                // OCCT L4425-4426: FillShrunkData + HasShrunkData check
+                if pb.has_shrunk_data() {
+                    // OCCT L4425: if HasShrunkData && IsSplittable → skip
+                    if pb.is_splittable { continue; }
+                }
+                micro_edges.push(ei);
                     break;
                 }
             }
