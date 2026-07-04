@@ -1026,8 +1026,8 @@ impl<'a> BooleanBuilder<'a> {
                         if !has_images {
                             // OCCT L149-152: no images — add original edge
                             let edge = &self.ds.edges[ei];
-                            let sv_sr = rcad_kernel::topods::ShapeRef::new(edge.start_vertex);
-                            let ev_sr = rcad_kernel::topods::ShapeRef::new(edge.end_vertex);
+                            let sv_sr = t.add_tvertex(self.ds.vertices[edge.start_vertex].point);
+                            let ev_sr = t.add_tvertex(self.ds.vertices[edge.end_vertex].point);
                             let ci = t.curves.len();
                             t.curves.push(edge.curve.clone());
                             let te = t.add_tedge(Some(ci), sv_sr, ev_sr, edge.t_range);
@@ -1042,8 +1042,8 @@ impl<'a> BooleanBuilder<'a> {
                                 let nSpR = img.index.saturating_sub(e_base);
                                 if nSpR >= n_edges { continue; }
                                 let edge = &self.ds.edges[nSpR];
-                                let sv_sr = rcad_kernel::topods::ShapeRef::new(edge.start_vertex);
-                                let ev_sr = rcad_kernel::topods::ShapeRef::new(edge.end_vertex);
+                                let sv_sr = t.add_tvertex(self.ds.vertices[edge.start_vertex].point);
+                                let ev_sr = t.add_tvertex(self.ds.vertices[edge.end_vertex].point);
                                 let ci = t.curves.len();
                                 t.curves.push(edge.curve.clone());
                                 let te = t.add_tedge(Some(ci), sv_sr, ev_sr, edge.t_range);

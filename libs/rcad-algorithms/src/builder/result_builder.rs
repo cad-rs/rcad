@@ -1147,9 +1147,21 @@ impl ResultBuilder {
         let (edge_indices, inner_wire_edges, _tris, _normal, surface, _uv_domain,
              _centroid, _area, sample_point, internal_wire_edges) = &self.faces[fi];
 
-        // Edge → TShape::Edge (read curve/range from custom arrays)
+        // Edge → TShape::Edge (use ds_edge_to_tshape to reuse DS edges, A5 fix).
         // Vertex identity is handled by BRep::add_tvertex (vert_by_pos cache).
         let mut e_map: Vec<ShapeRef> = Vec::with_capacity(edge_indices.len());
+        // Build reverse map: vertex TShape pair → DS edge ShapeRef
+        let mut vpair_to_ds_edge: std::collections::HashMap<(usize, usize), ShapeRef> =
+            std::collections::HashMap::with_capacity(self.ds_edge_to_tshape.len());
+        for &te_sr in &self.ds_edge_to_tshape {
+            if te_sr.is_null() { continue; }
+            let ed = t.edge(te_sr);
+            let sv = ed.first.index;
+            let ev = ed.last.index;
+            if sv != ShapeRef::NULL.index && ev != ShapeRef::NULL.index {
+                vpair_to_ds_edge.insert((sv, ev), te_sr);
+            }
+        }
         for &(ei, _forward) in edge_indices.iter() {
             if ei >= self.edges.len() { continue; }
             let (v1, v2) = self.edges[ei];
@@ -1159,18 +1171,24 @@ impl ResultBuilder {
             let last = if v2 < self.vertices.len() {
                 t.add_tvertex(self.vertices[v2])
             } else { ShapeRef::NULL };
-            let curve_idx = self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
-                let ci = t.curves.len();
-                t.curves.push(crv.clone());
-                ci
-            });
-            let curve_range = self.custom_edge_ranges.get(ei).and_then(|r| *r)
-                .or_else(|| self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
-                    use rcad_kernel::geom::CurveEval;
-                    crv.default_domain()
-                }))
-                .unwrap_or([0.0, 1.0]);
-            let e_ref = t.add_tedge(curve_idx, first, last, curve_range);
+            // Try to find matching DS edge by vertex pair
+            let e_ref = vpair_to_ds_edge.get(&(first.index, last.index))
+                .or_else(|| vpair_to_ds_edge.get(&(last.index, first.index)))
+                .copied()
+                .unwrap_or_else(|| {
+                    let curve_idx = self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
+                        let ci = t.curves.len();
+                        t.curves.push(crv.clone());
+                        ci
+                    });
+                    let curve_range = self.custom_edge_ranges.get(ei).and_then(|r| *r)
+                        .or_else(|| self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
+                            use rcad_kernel::geom::CurveEval;
+                            crv.default_domain()
+                        }))
+                        .unwrap_or([0.0, 1.0]);
+                    t.add_tedge(curve_idx, first, last, curve_range)
+                });
             while e_map.len() <= ei { e_map.push(ShapeRef::NULL); }
             e_map[ei] = e_ref;
         }
@@ -1250,23 +1268,66 @@ impl ResultBuilder {
             vi_to_ti.push(sr.index);
         }
 
-        // 2. Edges → TShape::Edge (use vi_to_ti to map vertex indices).
+        // 2. Build lookup from face-level edge → DS edge TShape position.
+        //    Avoids creating duplicate face-level TShape::Edge entries (A5 fix).
+        //    Map: (vertex_ti_start, vertex_ti_end) → DS edge TShape::Edge ShapeRef
         let mut e_map: Vec<ShapeRef> = Vec::with_capacity(self.edges.len());
-        for (ei, &(start, end)) in self.edges.iter().enumerate() {
-            let first = ShapeRef::new(vi_to_ti[start]);
-            let last = ShapeRef::new(vi_to_ti[end]);
-            let curve_idx = self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
-                let ci = t.curves.len();
-                t.curves.push(crv.clone());
-                ci
-            });
-            let curve_range = self.custom_edge_ranges.get(ei).and_then(|r| *r)
-                .or_else(|| self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
-                    use rcad_kernel::geom::CurveEval;
-                    crv.default_domain()
-                }))
-                .unwrap_or([0.0, 1.0]);
-            e_map.push(t.add_tedge(curve_idx, first, last, curve_range));
+        if !self.ds_edge_to_tshape.is_empty() {
+            // Build reverse map: TEdgeData vertex pair → DS edge ShapeRef
+            let mut vpair_to_ds_edge: std::collections::HashMap<(usize, usize), ShapeRef> =
+                std::collections::HashMap::with_capacity(self.ds_edge_to_tshape.len());
+            for &te_sr in &self.ds_edge_to_tshape {
+                if te_sr.is_null() { continue; }
+                let ed = t.edge(te_sr);
+                let sv = ed.first.index;
+                let ev = ed.last.index;
+                if sv != ShapeRef::NULL.index && ev != ShapeRef::NULL.index {
+                    vpair_to_ds_edge.insert((sv, ev), te_sr);
+                }
+            }
+            // Map each face-level edge to its DS edge via vertex TShape positions
+            for (ei, &(start, end)) in self.edges.iter().enumerate() {
+                let sv = vi_to_ti.get(start).copied().unwrap_or(start);
+                let ev = vi_to_ti.get(end).copied().unwrap_or(end);
+                let te_sr = vpair_to_ds_edge.get(&(sv, ev))
+                    .or_else(|| vpair_to_ds_edge.get(&(ev, sv)))
+                    .copied()
+                    .unwrap_or_else(|| {
+                        let first = ShapeRef::new(sv);
+                        let last = ShapeRef::new(ev);
+                        let curve_idx = self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
+                            let ci = t.curves.len();
+                            t.curves.push(crv.clone());
+                            ci
+                        });
+                        let curve_range = self.custom_edge_ranges.get(ei).and_then(|r| *r)
+                            .or_else(|| self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
+                                use rcad_kernel::geom::CurveEval;
+                                crv.default_domain()
+                            }))
+                            .unwrap_or([0.0, 1.0]);
+                        t.add_tedge(curve_idx, first, last, curve_range)
+                    });
+                e_map.push(te_sr);
+            }
+        } else {
+            // No ds_edge_to_tshape — legacy path: create edges from scratch
+            for (ei, &(start, end)) in self.edges.iter().enumerate() {
+                let first = ShapeRef::new(vi_to_ti[start]);
+                let last = ShapeRef::new(vi_to_ti[end]);
+                let curve_idx = self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
+                    let ci = t.curves.len();
+                    t.curves.push(crv.clone());
+                    ci
+                });
+                let curve_range = self.custom_edge_ranges.get(ei).and_then(|r| *r)
+                    .or_else(|| self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
+                        use rcad_kernel::geom::CurveEval;
+                        crv.default_domain()
+                    }))
+                    .unwrap_or([0.0, 1.0]);
+                e_map.push(t.add_tedge(curve_idx, first, last, curve_range));
+            }
         }
 
         // 3. Faces → TShape::Face (with wires) — only for faces NOT yet in face_refs.

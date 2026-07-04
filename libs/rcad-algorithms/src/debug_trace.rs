@@ -74,3 +74,30 @@ pub fn dump_ds(ds: &crate::bopds::ds::DS, label: &str) {
         label, ds.vertices.len(), ds.edges.len(), ds.faces.len(),
         ds.intersection_curves.len(), n_interf);
 }
+
+/// Count unique TShape::Edge indices referenced by all Face TShapes in a topods BRep.
+pub fn count_edges_in_faces(t: &rcad_kernel::topods::BRep) -> usize {
+    let mut used = std::collections::BTreeSet::new();
+    for ts in &t.tshapes {
+        if let rcad_kernel::topods::TShape::Face(fd) = &**ts {
+            for wire_sr in std::iter::once(&fd.outer_wire).chain(&fd.inner_wires) {
+                let wd = t.wire(*wire_sr);
+                for e_sr in &wd.edges {
+                    used.insert(e_sr.index);
+                }
+            }
+        }
+    }
+    used.len()
+}
+
+/// Dump edge usage stats: total tshape edges vs edges referenced by faces.
+pub fn dump_edge_stats(t: &rcad_kernel::topods::BRep, label: &str) {
+    let mut n_tshape_edges = 0usize;
+    for ts in &t.tshapes {
+        if matches!(ts.as_ref(), rcad_kernel::topods::TShape::Edge(_)) { n_tshape_edges += 1; }
+    }
+    let n_face_refs = count_edges_in_faces(t);
+    eprintln!("[TRACE] {}: tshape_edges={} edges_in_faces={}",
+        label, n_tshape_edges, n_face_refs);
+}
