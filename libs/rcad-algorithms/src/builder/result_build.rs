@@ -797,7 +797,7 @@ impl<'a> BooleanBuilder<'a> {
     ///   L314-341: build new compound from sub-shape images; store in myImages.
     ///   �?rcad: no compound nesting in DS.  Flat per-face source_compsolid_idx.
     ///     The recursive FillImagesCompound is collapsed to a single level.
-    fn fill_images_compounds(&self, result: &mut ResultBuilder) {
+    fn fill_images_compounds(&self, result: &mut ResultBuilder, t: &mut topods::BRep) {
         // OCCT L199-200: aMFP fence map �?prevents reprocessing the same compound.
         //   rcad: HashSet of processed compsolid indices.
         let mut a_mfp: std::collections::HashSet<usize> = std::collections::HashSet::new();
@@ -896,9 +896,17 @@ impl<'a> BooleanBuilder<'a> {
             }
 
             // OCCT L339-341: aLSIm.Append(aCIm); myImages.Bind(theS, aLSIm)
-            //   rcad: store for build_result(Compound) to consume.
+            //   rcad: create TShape::Compound from result solid ShapeRefs.
             if !a_c_im.is_empty() {
-                result.compound_groups.push(a_c_im);
+                let solid_refs: Vec<topods::ShapeRef> = a_c_im.iter()
+                    .filter_map(|&si| result.solids.get(si).copied())
+                    .collect();
+                if !solid_refs.is_empty() {
+                    let cmp_ref = t.add_tcompound(solid_refs);
+                    let ckey = topods::ShapeRef::new(usize::MAX - a_c_im.len());
+                    self.my_images.borrow_mut().entry(ckey).or_default().push(cmp_ref);
+                    result.compsolid_groups.push(cmp_ref);
+                }
             }
         }
     }
@@ -1128,12 +1136,8 @@ impl<'a> BooleanBuilder<'a> {
             }
             ShapeType::Compound => {
                 // OCCT L130-168: for each source COMPOUND, add its image (or original).
-                //   rcad: delegate to ResultBuilder::build_compounds which uses
-                //   BRepBuilder::make_compound (OCCT BRep_Builder equivalent).
-                //   compound_groups contains solid indices for each source compound
-                //   (populated by fill_images_compounds).
-                let groups = std::mem::take(&mut result.compound_groups);
-                result.build_compounds(t, &groups);
+                //   rcad: fill_images_compounds already created TShape::Compound
+                //   entries in result.compsolid_groups and my_images.
             }
         }
     }

@@ -906,7 +906,7 @@ impl<'a> BooleanBuilder<'a> {
         self.build_result_occt(topods::ShapeType::CompSolid, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // OCCT L492-495: FillImagesCompounds �?BuildResult(COMPOUND)
-        self.fill_images_compounds(&mut result);
+        self.fill_images_compounds(&mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result_occt(topods::ShapeType::Compound, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
