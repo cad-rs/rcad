@@ -682,6 +682,59 @@ pub trait BRepTool {
         let _ = (edge, face);
         None
     }
+
+    // ── OCCT BRep_Tool / TopoDS_Shape convenience queries ──
+
+    /// OCCT TopoDS_Shape::Closed — checks CLOSED flag on the TShape.
+    /// For Shell, this is a simple flag check; use `is_shell_closed` for
+    /// the full edge-count verification (BRepCheck_Shell).
+    fn is_closed(&self, s: ShapeRef) -> bool {
+        self.has_flag(s, tshape_flags::CLOSED)
+    }
+
+    /// BRep_Tool::SameParameter(aE) — true when edge pcurves match 3D curve.
+    fn edge_same_parameter(&self, e: ShapeRef) -> bool {
+        self.edge_data(e).map(|ed| ed.same_parameter).unwrap_or(true)
+    }
+
+    /// BRep_Tool::SameRange(aE) — true when edge pcurve ranges match 3D range.
+    fn edge_same_range(&self, e: ShapeRef) -> bool {
+        self.edge_data(e).map(|ed| ed.same_range).unwrap_or(true)
+    }
+
+    /// BRep_Tool::NaturalRestriction(aF) — true when face surface bounds are
+    /// determined by the underlying surface's natural domain.
+    fn face_natural_restriction(&self, f: ShapeRef) -> bool {
+        self.face_data(f).map(|fd| fd.natural_restriction).unwrap_or(true)
+    }
+
+    /// BRep_Tool::Curve(aE) — raw 3D curve reference (no Location applied).
+    /// Returns the curve index into the geometry pool.
+    fn edge_curve_idx(&self, e: ShapeRef) -> Option<usize> {
+        self.edge_data(e).and_then(|ed| ed.curve)
+    }
+
+    /// BRep_Tool::Range(aE) — 3D curve parameter range.
+    fn edge_range(&self, e: ShapeRef) -> [f64; 2] {
+        self.edge_data(e).map(|ed| ed.range).unwrap_or([0.0, 0.0])
+    }
+
+    /// BRep_Tool::Tolerance(s) — geometric tolerance for any shape type.
+    fn tolerance(&self, s: ShapeRef) -> f64;
+
+    // ── Extension helpers (not in OCCT's BRep_Tool) ──
+
+    /// TopoDS_Shape::ShapeType — returns the shape type.
+    fn shape_type(&self, s: ShapeRef) -> ShapeType;
+
+    /// Check CLOSED flag directly (bypasses trait default).
+    fn has_flag(&self, s: ShapeRef, flag: u16) -> bool;
+
+    /// Access Edge data (for implementing default methods).
+    fn edge_data(&self, e: ShapeRef) -> Option<&TEdgeData>;
+
+    /// Access Face data (for implementing default methods).
+    fn face_data(&self, f: ShapeRef) -> Option<&TFaceData>;
 }
 
 impl BRepTool for BRep {
@@ -781,6 +834,37 @@ impl BRepTool for BRep {
             None => return tol3d,
         };
         v_resolution_for_surface(&self.surfaces[surf_idx], tol3d)
+    }
+
+    fn tolerance(&self, s: ShapeRef) -> f64 {
+        match &*self.tshapes[s.index] {
+            TShape::Vertex(vd) => vd.tolerance,
+            TShape::Edge(ed) => ed.tolerance,
+            TShape::Face(fd) => fd.tolerance,
+            _ => 0.0,
+        }
+    }
+
+    fn shape_type(&self, s: ShapeRef) -> ShapeType {
+        s.shape_type(self)
+    }
+
+    fn has_flag(&self, s: ShapeRef, flag: u16) -> bool {
+        self.has_flag(s, flag)
+    }
+
+    fn edge_data(&self, e: ShapeRef) -> Option<&TEdgeData> {
+        match &*self.tshapes[e.index] {
+            TShape::Edge(ed) => Some(ed),
+            _ => None,
+        }
+    }
+
+    fn face_data(&self, f: ShapeRef) -> Option<&TFaceData> {
+        match &*self.tshapes[f.index] {
+            TShape::Face(fd) => Some(fd),
+            _ => None,
+        }
     }
 }
 

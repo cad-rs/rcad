@@ -44,6 +44,7 @@ use crate::BooleanError;
 use crate::BooleanOpType;
 use rcad_kernel::geom::Surface3;
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 
 /// DSU (Union-Find) for building connected SameDomain groups — equivalent to OCCT FillMap + MakeBlocks.
 struct DSU {
@@ -434,17 +435,23 @@ fn pave_fill(ds: &mut bopds::ds::DS, a: &BRep, b: &BRep, use_bvh: bool,
 ///
 /// Uses BVH when both operands have faces, matching [`crate::boolean_op`].
 pub(crate) fn fuse(a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
+    let t = fuse_topods(a, b)?;
+    Ok(rcad_kernel::BRep::from_topods(&t))
+}
+
+/// Same as fuse but returns topods::BRep directly (OCCT-aligned).
+pub(crate) fn fuse_topods(a: &BRep, b: &BRep) -> Result<topods::BRep, BooleanError> {
     fuse_with_bvh(a, b, true)
 }
 
 /// ✅ OCCT-aligned: DS → PaveFiller → BooleanBuilder(Union) → result.
 ///   OCCT BOPAlgo_BOP::Perform L395-408: PaveFiller config + Perform + PerformInternal1.
-pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<BRep, BooleanError> {
+pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<topods::BRep, BooleanError> {
     let mut ds = bopds::ds::DS::new(a, b);
     let mut brep = rcad_kernel::topods::BRep::new();
     let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, use_bvh, &mut brep);
     let builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
-    let (result, _history) = builder.build_with_history()?;
+    let (result, _history) = builder.build_with_history_topods()?;
     Ok(result)
 }
 

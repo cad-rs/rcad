@@ -581,14 +581,14 @@ fn partition_solid_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate
 
             if inside {
                 match crate::boolean_op_pave_fill_build(crate::BooleanOpType::Intersection, &cell, tool) {
-                    Ok(r) => { cell = compact_brep(&r); },
+                    Ok(r) => { cell = compact_brep(&rcad_kernel::BRep::from_topods(&r)); },
                     Err(_) => { failed = true; break; }
                 }
             } else if let Some(complement_idx) = expanded_complements[i] {
                 // Half-space: "outside" = Intersection with complementary half-space.
                 let complement = &expanded_tools[complement_idx];
                 match crate::boolean_op_pave_fill_build(crate::BooleanOpType::Intersection, &cell, complement) {
-                    Ok(r) => { cell = compact_brep(&r); },
+                    Ok(r) => { cell = compact_brep(&rcad_kernel::BRep::from_topods(&r)); },
                     Err(_) => { failed = true; break; }
                 }
             } else {
@@ -617,8 +617,9 @@ fn partition_solid_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate
                                 if let Ok(part) =
                                     crate::boolean_op_pave_fill_build(crate::BooleanOpType::Intersection, cell_part, &comp_box)
                                 {
-                                    if count_faces(&part) > 0 {
-                                        parts.push(part);
+                                    let p = rcad_kernel::BRep::from_topods(&part);
+                                    if count_faces(&p) > 0 {
+                                        parts.push(p);
                                     }
                                 }
                             }
@@ -630,7 +631,7 @@ fn partition_solid_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate
                 }
                 // Subsequent tool or non-box tool: use Diff.
                 match crate::boolean_op_pave_fill_build(crate::BooleanOpType::Difference, &cell, tool) {
-                    Ok(r) => { cell = compact_brep(&r); }
+                    Ok(r) => { cell = compact_brep(&rcad_kernel::BRep::from_topods(&r)); }
                     Err(_) => { failed = true; break; }
                 }
             }

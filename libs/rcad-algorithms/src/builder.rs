@@ -812,6 +812,12 @@ impl<'a> BooleanBuilder<'a> {
     ///   L531 BuildResult(SOLID) writes to t_brep, then L900 BuildRC filters and
     ///   clears solids from t_brep (non-Union) — equivalent to OCCT removing from myShape.
     pub fn build_with_history(&self) -> Result<(BRep, BooleanHistory), BooleanError> {
+        let (t, history) = self.build_with_history_topods()?;
+        Ok((rcad_kernel::BRep::from_topods(&t), history))
+    }
+
+    /// Same as build_with_history but returns topods::BRep directly (OCCT-aligned).
+    pub fn build_with_history_topods(&self) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
         // OCCT L425-429: setup (myPaveFiller, myDS, myContext, myFuzzyValue, myNonDestructive).
         //   rcad equivalents are already assigned in new(); re-affirm the form.
         let _fuzzy_value = self.ds.fuzzy_tol;
@@ -847,8 +853,7 @@ impl<'a> BooleanBuilder<'a> {
                 };
                 let mut history = result.build_topods(&mut t_brep, self.my_fill_history);
                 history.source_history = source_history;
-                let brep = rcad_kernel::BRep::from_topods(&t_brep);
-                return Ok((brep, history));
+                return Ok((t_brep, history));
             }
         }
 
@@ -917,11 +922,12 @@ impl<'a> BooleanBuilder<'a> {
         let mut history = self.prepare_history(&mut result, &mut t_brep);
 
         // OCCT L506-508: PostTreat
-        let mut brep = rcad_kernel::BRep::from_topods(&t_brep);
-        self.post_treat(&mut brep);
+        let mut old_brep = rcad_kernel::BRep::from_topods(&t_brep);
+        self.post_treat(&mut old_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
+        let t_brep = old_brep.to_topods();
 
-        Ok((brep, history))
+        Ok((t_brep, history))
     }
 
     /// Parallel version of `build_with_history`.

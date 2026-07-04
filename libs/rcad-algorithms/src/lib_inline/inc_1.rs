@@ -1774,10 +1774,16 @@ pub(crate) fn boolean_postprocess_pave_result(
 /// Direct PaveFiller + BooleanBuilder pipeline, no post-processing.
 /// OCCT-aligned: BOPAlgo_BOP::Perform.
 pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
+    let t = boolean_op_topods(op, a, b)?;
+    Ok(rcad_kernel::BRep::from_topods_with_location(&t, glam::DAffine3::IDENTITY))
+}
+
+/// Same as boolean_op but returns a topods::BRep (OCCT-aligned data model).
+pub fn boolean_op_topods(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<topods::BRep, BooleanError> {
     boolean_op_pave_fill_build(op, a, b)
 }
 
-pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
+pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<topods::BRep, BooleanError> {
     let mut ds = bopds::ds::DS::new(a, b);
     let fuzzy_tol = ds.fuzzy_tol;
 
@@ -1802,7 +1808,7 @@ pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) 
     };
 
     let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
-    let (result, _history) = builder.build_with_history()?;
+    let (result, _history) = builder.build_with_history_topods()?;
     Ok(result)
 }
 ///

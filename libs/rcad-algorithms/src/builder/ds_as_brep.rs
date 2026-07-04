@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use glam::DVec3;
 use crate::bopds::ds::DS;
 use rcad_kernel::geom::*;
-use rcad_kernel::topods::{BRepTool, ShapeRef, Orientation};
+use rcad_kernel::topods::{self, BRepTool, ShapeRef, Orientation, ShapeType};
 
 /// Adaptor: wraps DS + face_idx as a BRepTool, mapping ShapeRef.index → DS array index.
 ///
@@ -135,4 +135,18 @@ impl BRepTool for DSAsBRep<'_> {
             _ => tol3d,
         }
     }
+
+    fn tolerance(&self, _s: ShapeRef) -> f64 { 0.0 }
+
+    fn shape_type(&self, s: ShapeRef) -> ShapeType {
+        if self.ds.vertices.get(s.index).is_some() { ShapeType::Vertex }
+        else if self.ds.edges.get(s.index).is_some() { ShapeType::Edge }
+        else { ShapeType::Shape }
+    }
+
+    fn has_flag(&self, _s: ShapeRef, _flag: u16) -> bool { false }
+
+    fn edge_data(&self, _e: ShapeRef) -> Option<&topods::TEdgeData> { None }
+
+    fn face_data(&self, _f: ShapeRef) -> Option<&topods::TFaceData> { None }
 }

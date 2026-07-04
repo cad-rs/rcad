@@ -752,12 +752,10 @@ impl<'a> BRepAlgoAPI_Common<'a> {
             builder.build_with_history()?
         };
 
-        // Store history if requested
         if self.options.history {
             self.history = BRepHistory::from_boolean_history(bool_history);
         }
 
-        // Apply post-processing
         let mut result = brep;
         if self.options.run_healing {
             let (healed, _) = crate::healing::analyze_and_heal(&result, self.options.healing_options);
