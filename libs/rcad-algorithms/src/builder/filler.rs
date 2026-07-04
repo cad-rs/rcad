@@ -609,7 +609,7 @@ impl<'a> BooleanBuilder<'a> {
 
             // OCCT L274-275: create TShape::Shell → store in myImages
             let shell_ref = t.add_tshell(shell_faces);
-            if is_closed { t.shell_mut(shell_ref).closed = true; }
+            if is_closed { t.shell_mut(shell_ref).flags |= rcad_kernel::topods::tshape_flags::CLOSED; }
             let skey = topods::ShapeRef::new(usize::MAX - result.shells.len());
             self.my_images.borrow_mut().entry(skey).or_default().push(shell_ref);
             result.shells.push(shell_ref);

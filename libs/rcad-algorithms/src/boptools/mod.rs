@@ -520,14 +520,14 @@ pub fn compute_state_by_one_point(
 /// rcad: maps to topods TShape variants. Returns a ShapeRef with
 /// the appropriate empty TShape.
 pub fn make_container(shape_type: u8, brep: &mut rcad_kernel::topods::BRep) -> rcad_kernel::topods::ShapeRef {
-    use rcad_kernel::topods::{TShape, ShapeRef, TShellData, TWireData, TSolidData};
+    use rcad_kernel::topods::{TShape, ShapeRef, TShellData, TWireData, TSolidData, tshape_flags};
     let idx = brep.tshapes.len();
     let shape: std::sync::Arc<TShape> = match shape_type {
         0 => std::sync::Arc::new(TShape::Compound(Vec::new())),
         1 => std::sync::Arc::new(TShape::CompSolid(Vec::new())),
-        2 => std::sync::Arc::new(TShape::Solid(TSolidData { shells: Vec::new(), internal_vertices: Vec::new(), internal_edges: Vec::new(), moved: false })),
-        3 => std::sync::Arc::new(TShape::Shell(TShellData { faces: Vec::new(), closed: false, moved: false })),
-        4 => std::sync::Arc::new(TShape::Wire(TWireData { edges: Vec::new(), closed: false, moved: false })),
+        2 => std::sync::Arc::new(TShape::Solid(TSolidData { my_shapes: Vec::new(), flags: tshape_flags::FREE | tshape_flags::MODIFIED, shells: Vec::new(), internal_vertices: Vec::new(), internal_edges: Vec::new() })),
+        3 => std::sync::Arc::new(TShape::Shell(TShellData { my_shapes: Vec::new(), flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE, faces: Vec::new() })),
+        4 => std::sync::Arc::new(TShape::Wire(TWireData { my_shapes: Vec::new(), flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE, edges: Vec::new() })),
         _ => return ShapeRef::new(0),
     };
     brep.tshapes.push(shape);

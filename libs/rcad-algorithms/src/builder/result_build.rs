@@ -1074,7 +1074,7 @@ impl<'a> BooleanBuilder<'a> {
                     // Create TShape::Wire in t_brep (but only if we have edges)
                     if !wire_edges.is_empty() {
                         let sr = t.add_twire(wire_edges);
-                        t.wire_mut(sr).closed = true;
+                        t.wire_mut(sr).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
                         result.wire_refs.push(sr);
                     } else {
                         // No edges — skip this wire

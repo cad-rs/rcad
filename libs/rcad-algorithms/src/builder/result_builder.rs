@@ -1174,7 +1174,7 @@ impl ResultBuilder {
             else { ShapeRef::with_orientation(idx, orient) }
         }).collect();
         let outer_wire = t.add_twire(outer_edges);
-        t.wire_mut(outer_wire).closed = true;
+        t.wire_mut(outer_wire).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
 
         // Inner wires
         let mut inner_wires = Vec::new();
@@ -1186,7 +1186,7 @@ impl ResultBuilder {
             }).collect();
             if !iw_edges.is_empty() {
                 let w = t.add_twire(iw_edges);
-                t.wire_mut(w).closed = true;
+                t.wire_mut(w).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
                 inner_wires.push(w);
             }
         }
@@ -1200,7 +1200,7 @@ impl ResultBuilder {
             }).collect();
             if iw.len() >= 2 {
                 let w = t.add_twire(iw);
-                t.wire_mut(w).closed = true;
+                t.wire_mut(w).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
                 inner_wires.push(w);
             }
         }
@@ -1303,7 +1303,7 @@ impl ResultBuilder {
                 }).collect();
                 if !iw_edges.is_empty() {
                     let w = t.add_twire(iw_edges);
-                    t.wire_mut(w).closed = true;
+                    t.wire_mut(w).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
                     inner_wires.push(w);
                 }
             }
@@ -1316,7 +1316,7 @@ impl ResultBuilder {
                 }).collect();
                 if iw.len() >= 2 {
                     let w = t.add_twire(iw);
-                    t.wire_mut(w).closed = true;
+                    t.wire_mut(w).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
                     inner_wires.push(w);
                 }
             }
@@ -1727,7 +1727,7 @@ mod tests {
                             ShapeRef::with_orientation(e_map[we.idx].index, orient)
                         }).collect();
             let outer_wire = t.add_twire(outer_edges);
-            t.wire_mut(outer_wire).closed = true;
+            t.wire_mut(outer_wire).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
                         let inner_wires: Vec<ShapeRef> = face.inner_wires.iter().map(|w| {
                             let iwe: Vec<ShapeRef> = w.edges.iter().map(|we| {
                                 let orient = if we.forward { Orientation::Forward } else { Orientation::Reversed };

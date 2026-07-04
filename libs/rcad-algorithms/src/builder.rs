@@ -475,8 +475,8 @@ impl<'a> BooleanBuilder<'a> {
             if let Some(arc) = t_brep.tshapes.get_mut(idx) {
                 if let Some(arc) = std::sync::Arc::get_mut(arc) {
                     match arc {
-                        TShape::Vertex(vd) => vd.moved = true,
-                        TShape::Edge(ed) => ed.moved = true,
+                        TShape::Vertex(vd) => vd.flags |= topods::tshape_flags::MODIFIED,
+                        TShape::Edge(ed) => ed.flags |= topods::tshape_flags::MODIFIED,
                         _ => {}
                     }
                 }

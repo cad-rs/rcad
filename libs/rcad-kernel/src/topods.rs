@@ -36,6 +36,22 @@ impl Orientation {
     }
 }
 
+// ── TopoDS_TShape::myState flags (OCCT: BitLayout enum) ────────────────────
+// These mirror TopoDS_TShape.hxx L69-82. Bits 0-3 are the shape type;
+// bits 4-11 are boolean flags. Only the flag masks are exposed here.
+pub mod tshape_flags {
+    pub const FREE: u16 = 0x0010;       // TopoDS_TShape::Bit_Free
+    pub const MODIFIED: u16 = 0x0020;   // TopoDS_TShape::Bit_Modified
+    pub const CHECKED: u16 = 0x0040;    // TopoDS_TShape::Bit_Checked
+    pub const ORIENTABLE: u16 = 0x0080; // TopoDS_TShape::Bit_Orientable
+    pub const CLOSED: u16 = 0x0100;     // TopoDS_TShape::Bit_Closed
+    pub const INFINITE: u16 = 0x0200;   // TopoDS_TShape::Bit_Infinite
+    pub const CONVEX: u16 = 0x0400;     // TopoDS_TShape::Bit_Convex
+    pub const LOCKED: u16 = 0x0800;     // TopoDS_TShape::Bit_Locked
+    /// Default flags for a new TShape: Free | Modified | Orientable
+    pub const DEFAULT: u16 = FREE | MODIFIED | ORIENTABLE;
+}
+
 /// OCCT TopAbs_ShapeEnum
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ShapeType {
@@ -98,6 +114,14 @@ impl ShapeRef {
         if self.is_null() { return ShapeType::Shape; }
         brep.tshapes.get(self.index).map_or(ShapeType::Shape, |ts| ts.shape_type())
     }
+    /// OCCT TopoDS_Shape::NbChildren — direct sub-shape count.
+    pub fn nb_children(&self, brep: &BRep) -> usize {
+        brep.nb_children(*self)
+    }
+    /// OCCT TopoDS_Shape::EmptyCopy — create new TShape of same type, no sub-shapes.
+    pub fn empty_copy(&self, brep: &mut BRep) -> ShapeRef {
+        brep.empty_copy(*self)
+    }
 }
 
 /// TShape — shared geometric/topological data (analogous to TopoDS_TShape + subclasses).
@@ -138,16 +162,13 @@ pub enum PointRepresentation {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TVertexData {
+    pub my_shapes: Vec<ShapeRef>,
+    pub flags: u16,
     pub point: DVec3,
-    /// BRep_Tool::Tolerance(aV) equivalent — vertex tolerance.
     #[serde(default)]
     pub tolerance: f64,
-    /// BRep_PointRepresentation list — vertex parameters on curves/surfaces.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub points: Vec<PointRepresentation>,
-    /// TopoDS_TShape::Moved flag — marked when shape is transferred (history tracking).
-    #[serde(default)]
-    pub moved: bool,
 }
 
 /// OCCT BRep_CurveRepresentation — how an edge lies on a face or in 3D.
@@ -175,54 +196,39 @@ pub enum CurveRepresentation {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TEdgeData {
+    pub my_shapes: Vec<ShapeRef>,
+    pub flags: u16,
     pub curve: Option<usize>,
     pub first: ShapeRef,
     pub last: ShapeRef,
     pub range: [f64; 2],
-    /// BRep_Tool::Degenerated(aE) equivalent.
     #[serde(default)]
     pub degenerated: bool,
-    /// Per-face pcurves: face ShapeRef index → (curve2d, t_first, t_last).
-    /// OCCT: BRep_Tool::CurveOnSurface(aE, aF) → Handle(Geom2d_Curve).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub pcurves: HashMap<usize, (Curve2d, f64, f64)>,
-    /// BRep_CurveRepresentation list — OCCT BRep_TEdge::Curves().
-    /// Mirrors the linked list of curve representations (3D curve + face pcurves).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub representations: Vec<CurveRepresentation>,
-    /// Per-vertex parameter on this edge: vertex ShapeRef index → param.
-    /// OCCT: BRep_Tool::Parameter(aV, aE, aF).
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub vertex_params: HashMap<usize, f64>,
-    /// BRep_TEdge::Tolerance equivalent — edge tolerance.
     #[serde(default)]
     pub tolerance: f64,
-    /// BRep_TEdge::SameParameter — true when 3D curve and pcurve share
-    /// the same parameterization (same parameter t maps to same point).
     #[serde(default)]
     pub same_parameter: bool,
-    /// BRep_TEdge::SameRange — true when the 3D curve and pcurve have
-    /// the same parameter range (needed for correct tolerance propagation).
     #[serde(default)]
     pub same_range: bool,
-    /// TopoDS_TShape::Moved flag — marked when shape is transferred (history tracking).
-    #[serde(default)]
-    pub moved: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TWireData {
+    pub my_shapes: Vec<ShapeRef>,
+    pub flags: u16,
     pub edges: Vec<ShapeRef>,
-    /// BRep_Tool::IsClosed equivalent — true when the wire forms a closed loop.
-    #[serde(default)]
-    pub closed: bool,
-    /// TopoDS_TShape::Moved flag — marked when shape is transferred (history tracking).
-    #[serde(default)]
-    pub moved: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TFaceData {
+    pub my_shapes: Vec<ShapeRef>,
+    pub flags: u16,
     pub surface: Option<usize>,
     /// TopLoc_Location index for the face surface; 0 = identity.
     /// OCCT BRep_TFace::Location — transforms surface to world coordinates.
@@ -242,32 +248,22 @@ pub struct TFaceData {
     /// has natural boundaries (full untrimmed sphere, cylinder, cone, etc.).
     #[serde(default)]
     pub natural_restriction: bool,
-    /// TopoDS_TShape::Moved flag — marked when shape is transferred (history tracking).
-    #[serde(default)]
-    pub moved: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TShellData {
+    pub my_shapes: Vec<ShapeRef>,
+    pub flags: u16,
     pub faces: Vec<ShapeRef>,
-    /// BRep_Tool::IsClosed equivalent — true when the shell is closed (watertight).
-    #[serde(default)]
-    pub closed: bool,
-    /// TopoDS_TShape::Moved flag — marked when shape is transferred (history tracking).
-    #[serde(default)]
-    pub moved: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TSolidData {
+    pub my_shapes: Vec<ShapeRef>,
+    pub flags: u16,
     pub shells: Vec<ShapeRef>,
-    /// INTERNAL vertices embedded in the solid (OCCT: sub-shapes of TopoDS_Solid).
     pub internal_vertices: Vec<ShapeRef>,
-    /// INTERNAL edges embedded in the solid (OCCT: sub-shapes of TopoDS_Solid).
     pub internal_edges: Vec<ShapeRef>,
-    /// TopoDS_TShape::Moved flag — marked when shape is transferred (history tracking).
-    #[serde(default)]
-    pub moved: bool,
 }
 
 /// BRep top-level shape container — all TShapes in a single pool with shared Arc ownership.
@@ -340,7 +336,7 @@ impl BRep {
             return sr;
         }
         let sr = ShapeRef::new(self.tshapes.len());
-        self.tshapes.push(Arc::new(TShape::Vertex(TVertexData { point, tolerance: 0.0, points: Vec::new(), moved: false })));
+        self.tshapes.push(Arc::new(TShape::Vertex(TVertexData { my_shapes: Vec::new(), flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE | tshape_flags::CLOSED | tshape_flags::CONVEX, point, tolerance: 0.0, points: Vec::new() })));
         self.vert_by_pos.insert(key, sr);
         sr
     }
@@ -352,14 +348,14 @@ impl BRep {
             return sr;
         }
         let sr = ShapeRef::new(self.tshapes.len());
-        self.tshapes.push(Arc::new(TShape::Edge(TEdgeData { curve, first, last, range, degenerated: false, pcurves: HashMap::new(), representations: Vec::new(), vertex_params: HashMap::new(), tolerance: 0.0, same_parameter: true, same_range: true, moved: false })));
+        self.tshapes.push(Arc::new(TShape::Edge(TEdgeData { my_shapes: vec![first, last], flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE, curve, first, last, range, degenerated: false, pcurves: HashMap::new(), representations: Vec::new(), vertex_params: HashMap::new(), tolerance: 0.0, same_parameter: true, same_range: true })));
         self.edge_by_vpair.insert(key, sr);
         sr
     }
 
     pub fn add_twire(&mut self, edges: Vec<ShapeRef>) -> ShapeRef {
         let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Wire(TWireData { edges, closed: false, moved: false })));
+        self.tshapes.push(Arc::new(TShape::Wire(TWireData { my_shapes: edges.clone(), flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE, edges })));
         ShapeRef::new(index)
     }
 
@@ -372,20 +368,25 @@ impl BRep {
             return sr;
         }
         let sr = ShapeRef::new(self.tshapes.len());
-        self.tshapes.push(Arc::new(TShape::Face(TFaceData { surface, surface_location: 0, outer_wire, inner_wires, sample_point, uv_domain, internal_vertices, tolerance: 0.0, natural_restriction, moved: false })));
+        // OCCT: myShapes = [outer_wire, inner_wire_1, ..., inner_wire_n].
+        // Internal vertices are stored in separate list per OCCT (TopAbs_INTERNAL).
+        let mut face_shapes = Vec::with_capacity(1 + inner_wires.len());
+        face_shapes.push(outer_wire);
+        face_shapes.extend_from_slice(&inner_wires);
+        self.tshapes.push(Arc::new(TShape::Face(TFaceData { my_shapes: face_shapes, flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE, surface, surface_location: 0, outer_wire, inner_wires, sample_point, uv_domain, internal_vertices, tolerance: 0.0, natural_restriction })));
         self.face_by_key.insert(key, sr);
         sr
     }
 
     pub fn add_tshell(&mut self, faces: Vec<ShapeRef>) -> ShapeRef {
         let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Shell(TShellData { faces, closed: false, moved: false })));
+        self.tshapes.push(Arc::new(TShape::Shell(TShellData { my_shapes: faces.clone(), flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE, faces })));
         ShapeRef::new(index)
     }
 
     pub fn add_tsolid(&mut self, shells: Vec<ShapeRef>) -> ShapeRef {
         let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Solid(TSolidData { shells, internal_vertices: Vec::new(), internal_edges: Vec::new(), moved: false })));
+        self.tshapes.push(Arc::new(TShape::Solid(TSolidData { my_shapes: shells.clone(), flags: tshape_flags::FREE | tshape_flags::MODIFIED, shells, internal_vertices: Vec::new(), internal_edges: Vec::new() })));
         ShapeRef::new(index)
     }
 
@@ -409,9 +410,118 @@ impl BRep {
         before - self.tshapes.len()
     }
 
+    /// OCCT TopoDS_TShape::EmptyCopy — create a new TShape of the same type
+    /// with no sub-shapes. Preserves flags. Returns the new TShape index.
+    pub fn empty_copy(&mut self, r: ShapeRef) -> ShapeRef {
+        let ts = &self.tshapes[r.index];
+        let new = match &**ts {
+            TShape::Vertex(vd) => Arc::new(TShape::Vertex(TVertexData {
+                my_shapes: Vec::new(),
+                flags: vd.flags,
+                point: vd.point,
+                tolerance: vd.tolerance,
+                points: Vec::new(),
+            })),
+            TShape::Edge(ed) => Arc::new(TShape::Edge(TEdgeData {
+                my_shapes: Vec::new(),
+                flags: ed.flags,
+                curve: ed.curve,
+                first: ShapeRef::NULL,
+                last: ShapeRef::NULL,
+                range: ed.range,
+                degenerated: ed.degenerated,
+                pcurves: HashMap::new(),
+                representations: Vec::new(),
+                vertex_params: HashMap::new(),
+                tolerance: ed.tolerance,
+                same_parameter: ed.same_parameter,
+                same_range: ed.same_range,
+            })),
+            TShape::Wire(wd) => Arc::new(TShape::Wire(TWireData {
+                my_shapes: Vec::new(),
+                flags: wd.flags,
+                edges: Vec::new(),
+            })),
+            TShape::Face(fd) => Arc::new(TShape::Face(TFaceData {
+                my_shapes: Vec::new(),
+                flags: fd.flags,
+                surface: fd.surface,
+                surface_location: fd.surface_location,
+                outer_wire: ShapeRef::NULL,
+                inner_wires: Vec::new(),
+                sample_point: fd.sample_point,
+                uv_domain: fd.uv_domain,
+                internal_vertices: Vec::new(),
+                tolerance: fd.tolerance,
+                natural_restriction: fd.natural_restriction,
+            })),
+            TShape::Shell(sd) => Arc::new(TShape::Shell(TShellData {
+                my_shapes: Vec::new(),
+                flags: sd.flags,
+                faces: Vec::new(),
+            })),
+            TShape::Solid(sd) => Arc::new(TShape::Solid(TSolidData {
+                my_shapes: Vec::new(),
+                flags: sd.flags,
+                shells: Vec::new(),
+                internal_vertices: Vec::new(),
+                internal_edges: Vec::new(),
+            })),
+            TShape::CompSolid(_) => Arc::new(TShape::CompSolid(Vec::new())),
+            TShape::Compound(_) => Arc::new(TShape::Compound(Vec::new())),
+        };
+        let index = self.tshapes.len();
+        self.tshapes.push(new);
+        ShapeRef::new(index)
+    }
+
     /// Count face TShapes in this BRep (for shifted-key pcurve lookup).
     pub fn nb_faces(&self) -> usize {
         self.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Face(_))).count()
+    }
+
+    /// OCCT TopoDS_TShape::NbChildren — number of direct sub-shapes.
+    pub fn nb_children(&self, r: ShapeRef) -> usize {
+        match &*self.tshapes[r.index] {
+            TShape::Vertex(_) => 0,
+            TShape::Edge(_) => 2,
+            TShape::Wire(wd) => wd.edges.len(),
+            TShape::Face(fd) => 1 + fd.inner_wires.len() + fd.internal_vertices.len(),
+            TShape::Shell(sd) => sd.faces.len(),
+            TShape::Solid(sd) => sd.shells.len() + sd.internal_vertices.len() + sd.internal_edges.len(),
+            TShape::CompSolid(cd) => cd.len(),
+            TShape::Compound(cd) => cd.len(),
+        }
+    }
+
+    /// OCCT-aligned: check if a shape has a given flag set.
+    pub fn has_flag(&self, r: ShapeRef, flag: u16) -> bool {
+        let flags = match &*self.tshapes[r.index] {
+            TShape::Vertex(vd) => vd.flags,
+            TShape::Edge(ed) => ed.flags,
+            TShape::Wire(wd) => wd.flags,
+            TShape::Face(fd) => fd.flags,
+            TShape::Shell(sd) => sd.flags,
+            TShape::Solid(sd) => sd.flags,
+            TShape::CompSolid(_) => tshape_flags::FREE,
+            TShape::Compound(_) => tshape_flags::FREE,
+        };
+        (flags & flag) != 0
+    }
+
+    /// OCCT-aligned: set a single flag on a shape.
+    pub fn set_flag(&mut self, r: ShapeRef, flag: u16, on: bool) {
+        let arc = Arc::get_mut(&mut self.tshapes[r.index]).expect("set_flag: Arc still shared");
+        let flags = match arc {
+            TShape::Vertex(vd) => &mut vd.flags,
+            TShape::Edge(ed) => &mut ed.flags,
+            TShape::Wire(wd) => &mut wd.flags,
+            TShape::Face(fd) => &mut fd.flags,
+            TShape::Shell(sd) => &mut sd.flags,
+            TShape::Solid(sd) => &mut sd.flags,
+            _ => return,
+        };
+        if on { *flags |= flag; } else { *flags &= !flag; }
     }
 
     pub fn vertex(&self, r: ShapeRef) -> &TVertexData {
@@ -858,12 +968,12 @@ impl BRepBuilder {
 
     /// OCCT BRep_Builder::Add(aW).Closed(aW) — mark wire as closed.
     pub fn close_wire(&mut self, brep: &mut BRep, wire: ShapeRef) {
-        brep.wire_mut(wire).closed = true;
+        brep.wire_mut(wire).flags |= tshape_flags::CLOSED;
     }
 
-    /// OCCT BRep_Builder::Add(aShell).Closed(aShell) — mark shell as closed.
+    /// OCCT BRep_Builder::Add(aShell).Closed(aShell) — mark shell as closed via Closed flag.
     pub fn close_shell(&mut self, brep: &mut BRep, shell: ShapeRef) {
-        brep.shell_mut(shell).closed = true;
+        brep.shell_mut(shell).flags |= tshape_flags::CLOSED;
     }
 
     /// Make a wire (empty container).
@@ -875,6 +985,7 @@ impl BRepBuilder {
     pub fn add_to_wire(&mut self, brep: &mut BRep, wire: ShapeRef, edge: ShapeRef) {
         let wd = brep.wire_mut(wire);
         wd.edges.push(edge);
+        wd.my_shapes.push(edge);
     }
 
     /// Build a wire from edges.
@@ -892,12 +1003,14 @@ impl BRepBuilder {
     pub fn add_to_face(&mut self, brep: &mut BRep, face: ShapeRef, inner_wire: ShapeRef) {
         let fd = brep.face_mut(face);
         fd.inner_wires.push(inner_wire);
+        fd.my_shapes.push(inner_wire);
     }
 
     /// Add an internal vertex to a face.
     pub fn add_internal_vertex(&mut self, brep: &mut BRep, face: ShapeRef, v: ShapeRef) {
         let fd = brep.face_mut(face);
         fd.internal_vertices.push(v);
+        fd.my_shapes.push(v);
     }
 
     /// Add an edge with section-curve semantics (MakeSectEdge equivalent).
@@ -928,6 +1041,7 @@ impl BRepBuilder {
     pub fn add_to_shell(&mut self, brep: &mut BRep, shell: ShapeRef, face: ShapeRef) {
         let sd = brep.shell_mut(shell);
         sd.faces.push(face);
+        sd.my_shapes.push(face);
     }
 
     /// Make a solid from shells.
