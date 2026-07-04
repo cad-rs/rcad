@@ -1,6 +1,6 @@
-#[cfg(test)]
+﻿#[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::brep_graph::*;
     use rcad_kernel::PrimitiveSolid;
 
     #[test]
@@ -216,13 +216,13 @@ mod tests {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Tests for Cross-Operation Naming Stability Analysis
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 #[cfg(test)]
 mod cross_operation_tests {
-    use super::*;
+    use crate::brep_graph::*;
     use rcad_kernel::PrimitiveSolid;
     use rcad_kernel::persistent_naming::{
         OperationType, NamingEvent, PersistentId,
@@ -898,15 +898,15 @@ mod cross_operation_tests {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Tests for Enhanced Persistent Naming Semantics
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 #[cfg(test)]
 mod enhanced_naming_tests {
-    use super::*;
+    use crate::brep_graph::*;
 
-    // ── ScopedId Tests ────────────────────────────────────────────────────────
+    // 鈹€鈹€ ScopedId Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn scoped_id_creation() {
@@ -940,7 +940,7 @@ mod enhanced_naming_tests {
         assert!(name.contains("e42"));
     }
 
-    // ── NamingScope Tests ──────────────────────────────────────────────────────
+    // 鈹€鈹€ NamingScope Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn naming_scope_creation() {
@@ -1004,7 +1004,7 @@ mod enhanced_naming_tests {
         assert!(!parent.contains(&other));
     }
 
-    // ── EnhancedNamingContext Tests ────────────────────────────────────────────
+    // 鈹€鈹€ EnhancedNamingContext Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn enhanced_context_assign_id() {
@@ -1157,7 +1157,7 @@ mod enhanced_naming_tests {
         assert_eq!(ctx.resolve_persistent(20), Some(pid2));
     }
 
-    // ── NamePropagationRule Tests ──────────────────────────────────────────────
+    // 鈹€鈹€ NamePropagationRule Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn propagation_rule_for_boolean() {
@@ -1201,7 +1201,7 @@ mod enhanced_naming_tests {
         assert_eq!(rule.policy_for_kind(NodeKind::Vertex), NamePropagationPolicy::Generate);
     }
 
-    // ── NamePropagationManager Tests ───────────────────────────────────────────
+    // 鈹€鈹€ NamePropagationManager Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn propagation_manager_get_rule() {
@@ -1278,7 +1278,7 @@ mod enhanced_naming_tests {
         assert_eq!(pids.len(), 1);
     }
 
-    // ── NamingSnapshotManager Tests ────────────────────────────────────────────
+    // 鈹€鈹€ NamingSnapshotManager Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn snapshot_manager_take_snapshot() {
@@ -1329,7 +1329,7 @@ mod enhanced_naming_tests {
         assert_eq!(current.unwrap().operation, Some("test".to_string()));
     }
 
-    // ── Genealogy Tracking Tests ────────────────────────────────────────────────
+    // 鈹€鈹€ Genealogy Tracking Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn genealogy_tracking_through_boolean() {
@@ -1417,7 +1417,7 @@ mod enhanced_naming_tests {
         assert!(!descendants.is_empty() || ctx.get_genealogy(pid1).is_some());
     }
 
-    // ── Name Stability Tests ────────────────────────────────────────────────────
+    // 鈹€鈹€ Name Stability Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn name_stability_through_boolean_preserve() {
@@ -1484,7 +1484,7 @@ mod enhanced_naming_tests {
         assert_eq!(g2.status, EntityStatus::Merged);
     }
 
-    // ── Conflict Resolution Tests ───────────────────────────────────────────────
+    // 鈹€鈹€ Conflict Resolution Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn conflict_resolution_keep_existing() {
@@ -1536,7 +1536,7 @@ mod enhanced_naming_tests {
         assert!(pid1.is_some() || pid2.is_some());
     }
 
-    // ── Serialization Tests ─────────────────────────────────────────────────────
+    // 鈹€鈹€ Serialization Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn serialization_naming_scope() {

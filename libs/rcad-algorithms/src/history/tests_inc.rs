@@ -1,6 +1,6 @@
 ﻿#[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::history::*;
     use rcad_kernel::{PrimitiveSolid, TopoEntityRef};
 
     fn unit_box() -> BRep {

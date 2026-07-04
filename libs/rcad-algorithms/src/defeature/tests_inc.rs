@@ -1,6 +1,6 @@
 ﻿#[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::defeature::*;
     use crate::{BooleanOpType, boolean_op};
     use glam::DVec3;
     use rcad_kernel::geom::any_perpendicular;

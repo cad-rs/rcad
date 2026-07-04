@@ -4,7 +4,7 @@ use glam::DVec3;
 use rcad_kernel::geom::*;
 
 use crate::bopds::ds::{
-    DS, DSEdge, DSRepOnFace, Interference, IntersectionCurve, ShapeOrigin,
+    DS, DSEdge, DSCurveRepOnFace, Interference, IntersectionCurve, ShapeOrigin,
 };
 use crate::bopds::pave::*;
 use crate::inttools;
@@ -772,7 +772,7 @@ impl<'a> super::PaveFiller<'a> {
 
                     let mut sec_face_reps = Vec::new();
                     if let Some(ref pc) = pca {
-                        sec_face_reps.push(DSRepOnFace {
+                        sec_face_reps.push(DSCurveRepOnFace {
                             face_idx: n_f1,
                             pcurve: pc.clone(),
                             pcurve2: None,
@@ -781,7 +781,7 @@ impl<'a> super::PaveFiller<'a> {
                         });
                     }
                     if let Some(ref pc) = pcb {
-                        sec_face_reps.push(DSRepOnFace {
+                        sec_face_reps.push(DSCurveRepOnFace {
                             face_idx: n_f2,
                             pcurve: pc.clone(),
                             pcurve2: None,

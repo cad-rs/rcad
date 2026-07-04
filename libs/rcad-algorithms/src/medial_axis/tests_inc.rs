@@ -1,6 +1,6 @@
-#[cfg(test)]
+﻿#[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::medial_axis::*;
     use glam::{dvec2, dvec3};
 
     #[test]

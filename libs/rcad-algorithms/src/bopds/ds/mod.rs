@@ -776,7 +776,7 @@ impl DS {
         // This preserves the BRep's stored pcurves (proper surface curves) instead
         // of recomputing them via endpoint projection + Line2d approximation.
         // build_face_reps (called after load_brep) skips edges that already have
-        // a DSRepOnFace via edge_on_face check.
+        // a DSCurveRepOnFace via edge_on_face check.
         let n_brep_faces = brep.solids.iter()
             .flat_map(|s| &s.shells)
             .map(|sh| sh.faces.len())
@@ -800,7 +800,7 @@ impl DS {
                     let uv_end = curve2d.point_at(t_range[1]);
                     let span = (uv_end - uv_start).length();
                     if span < 1e-15 || !span.is_finite() { continue; }
-                    ds_edge.face_reps.push(DSRepOnFace {
+                    ds_edge.face_reps.push(DSCurveRepOnFace {
                         face_idx: ds_fi,
                         pcurve: curve2d.clone(),
                         pcurve2: None,
@@ -859,7 +859,7 @@ impl DS {
     /// based scan achieves the same sharing for rcad's flat vertex array.
     /// 鉁?OCCT-aligned: access edge's pcurve representation on a specific face.
     ///   Returns None when no representation exists for this (edge, face) pair.
-    pub fn edge_on_face(&self, edge_idx: usize, face_idx: usize) -> Option<&DSRepOnFace> {
+    pub fn edge_on_face(&self, edge_idx: usize, face_idx: usize) -> Option<&DSCurveRepOnFace> {
         self.edges.get(edge_idx)?.face_reps.iter().find(|r| r.face_idx == face_idx)
     }
 
@@ -1137,7 +1137,7 @@ impl DS {
     /// 鉁?OCCT-aligned: build per-face pcurve representations for all boundary edges.
     ///   Called after edges and faces are loaded (end of DS construction).
     pub fn build_face_reps(&mut self) {
-        // For each face, iterate its boundary edges and create DSRepOnFace entries.
+        // For each face, iterate its boundary edges and create DSCurveRepOnFace entries.
         for fi in 0..self.faces.len() {
             let surface = self.faces[fi].surface.clone();
             // Collect all edge indices from outer and inner wires.
@@ -1161,7 +1161,7 @@ impl DS {
                         }
                         span = t_span;
                     }
-                    edge.face_reps.push(DSRepOnFace {
+                    edge.face_reps.push(DSCurveRepOnFace {
                         face_idx: fi,
                         pcurve,
                         pcurve2: None,

@@ -1,6 +1,6 @@
 ﻿#[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::shape_custom::*;
     use glam::DVec3;
     use rcad_kernel::geom::{Circle3, Line3, Plane, SphericalSurface, CylindricalSurface, ToroidalSurface};
     use rcad_kernel::{Vertex, Wire, WireEdge};

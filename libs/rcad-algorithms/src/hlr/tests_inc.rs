@@ -1,6 +1,6 @@
-#[cfg(test)]
+﻿#[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::hlr::*;
     use rcad_kernel::PrimitiveSolid;
 
     #[test]
@@ -85,7 +85,7 @@ mod tests {
     #[test]
     fn hlr_result_has_correct_visibility_counts() {
         // An isometric view of a box has 3 visible faces and 3 hidden faces.
-        // The front 3 edges of each visible face → at least some hidden segments exist.
+        // The front 3 edges of each visible face 鈫?at least some hidden segments exist.
         let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
             width: 1.0,
             height: 1.0,
@@ -129,7 +129,7 @@ mod tests {
         );
 
         // All sampled 3D points on the circle should lie ON the circle (unit radius).
-        // Verify by checking screen_pts all lie within radius ≈ 1.0 of circle center
+        // Verify by checking screen_pts all lie within radius 鈮?1.0 of circle center
         // when projected top-down (X-Y plane).
         for seg in &result.segments {
             // The curve_hint for circle segments should be set.
@@ -157,7 +157,7 @@ mod tests {
             height: 2.0,
         });
         // The cylinder axis is +Y.  Use the right-side camera (looking along -X)
-        // so the view direction is perpendicular to the axis → two silhouette lines.
+        // so the view direction is perpendicular to the axis 鈫?two silhouette lines.
         let camera = HlrCamera::right(10.0);
         let result = compute_hlr(&brep, &camera, 8);
         assert!(
@@ -192,7 +192,7 @@ mod tests {
             base_radius: 1.0,
             height: 2.0,
         });
-        // View from the right (perpendicular to cone axis) → two silhouette generators.
+        // View from the right (perpendicular to cone axis) 鈫?two silhouette generators.
         let camera = HlrCamera::right(10.0);
         let result = compute_hlr(&brep, &camera, 8);
         assert!(
@@ -222,9 +222,9 @@ mod tests {
         );
     }
 
-    // ── Assembly HLR tests ─────────────────────────────────────────────────────
+    // 鈹€鈹€ Assembly HLR tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-    /// Two boxes side by side — both should produce segments.
+    /// Two boxes side by side 鈥?both should produce segments.
     #[test]
     fn hlr_assembly_two_boxes() {
         let box1 = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
@@ -247,7 +247,7 @@ mod tests {
             "each component should produce segments");
     }
 
-    /// Small box behind a large box — the small box should be partially hidden.
+    /// Small box behind a large box 鈥?the small box should be partially hidden.
     #[test]
     fn hlr_assembly_occlusion() {
         let big = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
@@ -299,7 +299,7 @@ mod tests {
             "assembly HLR should produce similar segment count");
     }
 
-    /// Stacked boxes — top box visible, bottom box partially occluded.
+    /// Stacked boxes 鈥?top box visible, bottom box partially occluded.
     #[test]
     fn hlr_assembly_stacked_boxes() {
         let bottom = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
@@ -334,7 +334,7 @@ mod tests {
         assert!(result.components.is_empty());
     }
 
-    // ── Improved HLR tests ─────────────────────────────────────────────────────
+    // 鈹€鈹€ Improved HLR tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn hlr_options_default_values() {
@@ -549,7 +549,7 @@ mod tests {
         assert!(!curves_loose.is_empty());
     }
 
-    // ── New Enhanced HLR Tests ───────────────────────────────────────────────────
+    // 鈹€鈹€ New Enhanced HLR Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn hlr_options_new_fields() {
@@ -614,14 +614,14 @@ mod tests {
         });
 
         // For a Y-axis sphere: x_ax = Z (perpendicular to Y), y_ax = X = Y.cross(Z)
-        // At u=π/2, v=π/2: normal = u.cos * Z + u.sin * X = 0*Z + 1*X = X (perpendicular to Z view)
+        // At u=蟺/2, v=蟺/2: normal = u.cos * Z + u.sin * X = 0*Z + 1*X = X (perpendicular to Z view)
         let props = compute_surface_properties(&surface, std::f64::consts::FRAC_PI_2, std::f64::consts::FRAC_PI_2);
         let view_dir = DVec3::Z;
 
-        assert!(props.is_near_silhouette(view_dir, 0.01), "equator at u=π/2 should be near silhouette for Z view");
+        assert!(props.is_near_silhouette(view_dir, 0.01), "equator at u=蟺/2 should be near silhouette for Z view");
         assert!((props.normal_dot_view(view_dir)).abs() < 0.01);
 
-        // At u=0, v=π/2: normal = Z (parallel to view) - NOT a silhouette
+        // At u=0, v=蟺/2: normal = Z (parallel to view) - NOT a silhouette
         let props_front = compute_surface_properties(&surface, 0.0, std::f64::consts::FRAC_PI_2);
         assert!(!props_front.is_near_silhouette(view_dir, 0.5), "point facing viewer should not be near silhouette");
 
@@ -905,7 +905,7 @@ mod tests {
         }
     }
 
-    // ── Ellipsoid Silhouette Tests ───────────────────────────────────────────────
+    // 鈹€鈹€ Ellipsoid Silhouette Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn ellipsoid_silhouette_basic() {
@@ -949,7 +949,7 @@ mod tests {
 
         assert!(!curves.is_empty(), "should have silhouette curves");
 
-        // Check that all silhouette points satisfy n·v ≈ 0
+        // Check that all silhouette points satisfy n路v 鈮?0
         for pt in &curves[0] {
             // Compute the point in local coordinates
             let x = pt.x;
@@ -968,7 +968,7 @@ mod tests {
             let dot = normal.dot(view_dir);
             assert!(
                 dot.abs() < 0.05,
-                "silhouette point should satisfy n·v ≈ 0, got {dot}"
+                "silhouette point should satisfy n路v 鈮?0, got {dot}"
             );
         }
     }
@@ -994,7 +994,7 @@ mod tests {
         assert!(!curves.is_empty());
 
         // Check that all silhouette points are on the ellipsoid surface
-        // x²/a² + y²/b² + z²/c² = 1
+        // x虏/a虏 + y虏/b虏 + z虏/c虏 = 1
         for pt in &curves[0] {
             let value = (pt.x / ell.radius_x).powi(2)
                 + (pt.y / ell.radius_y).powi(2)

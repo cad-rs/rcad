@@ -1,7 +1,12 @@
-#[cfg(test)]
+﻿#[cfg(test)]
+
+use glam::DVec3;
+use rcad_kernel::BRep;
+use rcad_kernel::topology::{Vertex, Edge, Face, Wire, WireEdge, Shell, Solid};
+use rcad_kernel::geom::{Curve3, Line3, Surface3, Circle3, Plane, CylindricalSurface};
 
 mod tests {
-    use super::*;
+    use crate::boolean_unit_octant::*;
     use crate::{boolean_op, BooleanOpType};
     use glam::DAffine3;
     use rcad_kernel::surface_area;
@@ -23,7 +28,7 @@ mod tests {
             "surface area {a} vs analytic shell SA {a_ex}"
         );
         // `signed_volume` across compounds relies on consistent face normals vs tessellation;
-        // sphere primitives carry approximate face normals 闁?SA matches analytic \(4\pi(R^2+r^2)\).
+        // sphere primitives carry approximate face normals 闂?SA matches analytic \(4\pi(R^2+r^2)\).
     }
 
     #[test]
@@ -109,7 +114,7 @@ mod tests {
 
     #[test]
     fn zp3_loft_shell_matches_occt_geometry_numbers() {
-        // Cone apex z=10, base z=-10, rb=10; cylinder z in [-10,0], r=10 闁?same as geometry_properties ZP3.
+        // Cone apex z=10, base z=-10, rb=10; cylinder z in [-10,0], r=10 闂?same as geometry_properties ZP3.
         let r = try_coaxial_cylinder_minus_frustum_loft_shell(-10.0, 0.0, 10.0, 10.0, -10.0, 10.0);
         assert!(r.is_some(), "expected sewn loft shell for ZP3 parameters");
         let brep = r.unwrap();
@@ -169,11 +174,11 @@ mod tests {
         );
     }
 
-    // 閳光偓閳光偓 box-box intersection fast path 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+    // 闁冲厜鍋撻柍鍏夊亾 box-box intersection fast path 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?
 
     #[test]
     fn box_box_intersection_partial_overlap() {
-        // bcommon_simple_c1: 1鑴?鑴? 閳?1.5鑴?.5鑴?.5 閳?1鑴?.5鑴?.5 (SA=2.5, vol=0.25)
+        // bcommon_simple_c1: 1閼?閼? 闁?1.5閼?.5閼?.5 闁?1閼?.5閼?.5 (SA=2.5, vol=0.25)
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
         let b = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.5, 0.5, 0.5).unwrap();
         let r = boolean_op(BooleanOpType::Intersection, &a, &b).expect("box-box intersection");
@@ -185,7 +190,7 @@ mod tests {
 
     #[test]
     fn box_box_intersection_full_containment() {
-        // 2鑴?鑴? box 閳?0.5鑴?.5鑴?.5 inside 閳?the inner 0.5^3 box
+        // 2閼?閼? box 闁?0.5閼?.5閼?.5 inside 闁?the inner 0.5^3 box
         let outer = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
         let inner = make_box_brep(
             DVec3::new(0.25, 0.25, 0.25),
@@ -203,7 +208,7 @@ mod tests {
 
     #[test]
     fn box_box_intersection_no_overlap() {
-        // Disjoint boxes 閳?empty intersection.
+        // Disjoint boxes 闁?empty intersection.
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
         let b = make_box_brep(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
         let r = boolean_op(BooleanOpType::Intersection, &a, &b).expect("no-overlap");
@@ -213,7 +218,7 @@ mod tests {
 
     #[test]
     fn box_box_intersection_a7_like() {
-        // bcommon_simple A7: 1鑴?鑴? 閳?1鑴?.5鑴? 閳?the contained 1鑴?鑴? (SA=6, vol=1).
+        // bcommon_simple A7: 1閼?閼? 闁?1閼?.5閼? 闁?the contained 1閼?閼? (SA=6, vol=1).
         // Tests that try_containment returns inner (not outer) when smaller operand
         // is passed first (swapped=true).
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
@@ -227,22 +232,22 @@ mod tests {
 
     #[test]
     fn box_box_intersection_non_box_falls_through() {
-        // Sphere 閳?box falls through to generic path (no panic).
+        // Sphere 闁?box falls through to generic path (no panic).
         let sphere = make_sphere_brep(DVec3::ZERO, 1.0).unwrap();
         let b = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
         let r = boolean_op(BooleanOpType::Intersection, &sphere, &b).expect("sphere-box");
-        // Some result 閳?specific value doesn't matter.
+        // Some result 闁?specific value doesn't matter.
         assert!(r.solids.len() >= 1 || r.vertices.is_empty());
     }
 
-    // 閳光偓閳光偓 box-box difference fast path 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+    // 闁冲厜鍋撻柍鍏夊亾 box-box difference fast path 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?
 
     #[test]
     fn box_box_difference_opposite_same_axis() {
-        // F1-like: A=1.5鑴?.5鑴?.5 at (-0.25,0,0), B=1鑴?鑴? at origin.
+        // F1-like: A=1.5閼?.5閼?.5 at (-0.25,0,0), B=1閼?閼? at origin.
         // boptuc = A - B (but here we test try_difference_box_box directly,
         // so a = first arg = A, b = second arg = B).
-        // A extends on x-lo (-0.25<0) and x-hi (1.25>1), same axis 閳?two
+        // A extends on x-lo (-0.25<0) and x-hi (1.25>1), same axis 闁?two
         // disjoint slabs: SA=2, vol=0.125.
         let a = make_box_brep(
             DVec3::new(-0.25, 0.0, 0.0), DVec3::X, DVec3::Y,
@@ -258,8 +263,8 @@ mod tests {
 
     #[test]
     fn box_box_difference_single_slab() {
-        // bcut_simple_c1: 0.5鑴?.5鑴? at (0,-0.5,0) minus 1鑴?鑴? at origin.
-        // Excess only on y-lo [-0.5, 0]. Result: 0.5鑴?.5鑴? box, SA=2.5.
+        // bcut_simple_c1: 0.5閼?.5閼? at (0,-0.5,0) minus 1閼?閼? at origin.
+        // Excess only on y-lo [-0.5, 0]. Result: 0.5閼?.5閼? box, SA=2.5.
         let a = make_box_brep(DVec3::new(0.0, -0.5, 0.0), DVec3::X, DVec3::Y, 0.5, 1.5, 1.0).unwrap();
         let b = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
         let r = boolean_op(BooleanOpType::Difference, &a, &b).expect("box-box difference");
@@ -271,7 +276,7 @@ mod tests {
 
     #[test]
     fn box_box_difference_no_overlap() {
-        // Disjoint boxes 閳?difference is just A.
+        // Disjoint boxes 闁?difference is just A.
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
         let b = make_box_brep(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
         let r = boolean_op(BooleanOpType::Difference, &a, &b).expect("no-overlap");
@@ -281,7 +286,7 @@ mod tests {
 
     #[test]
     fn box_box_difference_a_inside_b() {
-        // A fully inside B 閳?empty.
+        // A fully inside B 闁?empty.
         let a = make_box_brep(DVec3::new(0.25, 0.25, 0.25), DVec3::X, DVec3::Y, 0.5, 0.5, 0.5).unwrap();
         let outer = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
         let r = boolean_op(BooleanOpType::Difference, &a, &outer).expect("A-in-B");
@@ -289,7 +294,7 @@ mod tests {
         assert_eq!(n_faces, 0, "expected empty difference");
     }
 
-    // 閳光偓閳光偓 general box-box (rotated) 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+    // 闁冲厜鍋撻柍鍏夊亾 general box-box (rotated) 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?
 
     fn make_rotated_box(origin: DVec3, u_dir: DVec3, v_dir: DVec3, w: f64, h: f64, d: f64, pivot: DVec3, axis: DVec3, angle_deg: f64) -> BRep {
         // Handle OCCT-style negative extents: a negative extent means the box extends
@@ -325,7 +330,7 @@ mod tests {
 
     #[test]
     fn box_detection_rotated() {
-        // Box at origin, rotated 45鎺?around Z at origin.
+        // Box at origin, rotated 45閹?around Z at origin.
         let b = make_box_brep(DVec3::new(-0.5, -0.5, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
         let b = {
             let mut shape = b;
@@ -356,7 +361,7 @@ mod tests {
 
     #[test]
     fn rotated_box_intersection_partial_overlap() {
-        // bcommon_simple_c3-like: unit box 閳?rotated box.
+        // bcommon_simple_c3-like: unit box 闁?rotated box.
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
         let r = (2.0_f64).sqrt();
         let b = make_rotated_box(
@@ -400,7 +405,7 @@ mod tests {
         // boptuc_simple N3: B - A where B is a rotated box with offset.
         // Expected SA = 2.5.
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
-        // box at (0.25, 0.25, 0) size 0.5鑴?.5鑴?1, pivot (.25,.25,0), rotate 30鎺?Z
+        // box at (0.25, 0.25, 0) size 0.5閼?.5閼?1, pivot (.25,.25,0), rotate 30閹?Z
         let b = make_rotated_box(
             DVec3::new(0.25, 0.25, 0.0), DVec3::X, DVec3::Y, 0.5, 0.5, -1.0,
             DVec3::new(0.25, 0.25, 0.0), DVec3::Z, 30.0,
@@ -436,7 +441,7 @@ mod tests {
 
     #[test]
     fn rotated_box_difference_no_overlap() {
-        // Disjoint rotated boxes 閳?difference should be B unchanged.
+        // Disjoint rotated boxes 闁?difference should be B unchanged.
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
         let b = make_rotated_box(
             DVec3::new(5.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0,
@@ -450,7 +455,7 @@ mod tests {
 
     #[test]
     fn rotated_box_difference_a_contains_b() {
-        // B fully inside A 閳?B - A = empty.
+        // B fully inside A 闁?B - A = empty.
         let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
         let b = make_rotated_box(
             DVec3::new(0.25, 0.25, 0.25), DVec3::X, DVec3::Y, 0.5, 0.5, 0.5,
@@ -463,7 +468,7 @@ mod tests {
 
     #[test]
     fn rotated_box_intersection_non_box_falls_through() {
-        // Box 閳?sphere 閳?falls through to Pave-Filler (no panic).
+        // Box 闁?sphere 闁?falls through to Pave-Filler (no panic).
         let b = make_rotated_box(
             DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0,
             DVec3::ZERO, DVec3::Z, 45.0,
@@ -475,7 +480,7 @@ mod tests {
 
     #[test]
     fn debug_half_cylinder_sa() {
-        // U5 case: cylinder r=1, h=2, center (0,0,1), clip X閳?
+        // U5 case: cylinder r=1, h=2, center (0,0,1), clip X闁?
         let brep = build_half_cylinder_intersection_brep(
             DVec3::new(0.0, 0.0, 1.0), 1.0, 2.0, DVec3::X, 0.0,
         );
@@ -491,7 +496,7 @@ mod tests {
             }
         }
 
-        let expected = 3.0 * std::f64::consts::PI + 4.0; // 2锜?+ 锜?2 + 锜?2 + 4 = 3锜?4
+        let expected = 3.0 * std::f64::consts::PI + 4.0; // 2閿?+ 閿?2 + 閿?2 + 4 = 3閿?4
         println!("DEBUG expected = {expected}");
         assert!(
             (total - expected).abs() < 0.01,

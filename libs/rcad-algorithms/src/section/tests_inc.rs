@@ -1,6 +1,6 @@
 ﻿#[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::section::*;
     use crate::tolerance::*;
     use rcad_kernel::PrimitiveSolid;
     use glam::{Vec3Swizzles, DVec2};

@@ -663,7 +663,7 @@ impl<'a> super::PaveFiller<'a> {
             curve: Curve3,
             origin: ShapeOrigin,
             geom_tol: f64,
-            face_reps: Vec<DSRepOnFace>,
+            face_reps: Vec<DSCurveRepOnFace>,
         }
         let mut all_blocks: Vec<BlockData> = Vec::new();
         let n_orig_edges = self.ds.edges.len();

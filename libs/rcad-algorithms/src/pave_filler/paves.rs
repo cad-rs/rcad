@@ -894,9 +894,9 @@ impl<'a> super::PaveFiller<'a> {
         }
 
         // Apply all computed pcurves to the DS
-        use crate::bopds::ds::DSRepOnFace;
+        use crate::bopds::ds::DSCurveRepOnFace;
         for (ei, fi, pcurve, t0, t1) in applied_pcurves {
-            self.ds.edges[ei].face_reps.push(DSRepOnFace {
+            self.ds.edges[ei].face_reps.push(DSCurveRepOnFace {
                 face_idx: fi,
                 pcurve,
                 pcurve2: None,
@@ -1306,7 +1306,7 @@ impl<'a> super::PaveFiller<'a> {
             let mut face_reps = Vec::new();
             if f1 != usize::MAX {
                 if let Some(ref pc) = pca {
-                    face_reps.push(DSRepOnFace {
+                    face_reps.push(DSCurveRepOnFace {
                         face_idx: f1,
                         pcurve: pc.clone(),
                         pcurve2: None,
@@ -1318,7 +1318,7 @@ impl<'a> super::PaveFiller<'a> {
             }
             if f2 != usize::MAX {
                 if let Some(ref pc) = pcb {
-                    face_reps.push(DSRepOnFace {
+                    face_reps.push(DSCurveRepOnFace {
                         face_idx: f2,
                         pcurve: pc.clone(),
                         pcurve2: None,

@@ -203,7 +203,7 @@ pub struct DSVertex {
 /// 鉁?OCCT-aligned: edge's pcurve on one face (BRep_CurveRepresentation equivalent).
 /// Mirrors OCCT's BRep_TEdge per-face pcurve storage with PCurve/PCurve2.
 #[derive(Debug, Clone)]
-pub struct DSRepOnFace {
+pub struct DSCurveRepOnFace {
     pub face_idx: usize,
     pub pcurve: Curve2d,
     pub pcurve2: Option<Curve2d>,
@@ -230,7 +230,7 @@ pub struct DSEdge {
     pub pave_blocks: Vec<PaveBlock>,
     /// 鉁?OCCT-aligned: per-face pcurve representations (BRep_CurveRepresentation).
     ///   Populated by DS::build_face_reps() after edges and faces are loaded.
-    pub face_reps: Vec<DSRepOnFace>,
+    pub face_reps: Vec<DSCurveRepOnFace>,
     /// 鉁?OCCT-aligned: TopAbs_INTERNAL orientation marker.
     ///   True when this edge is INTERNAL to its source solid volume.
     pub is_internal: bool,

@@ -30,7 +30,7 @@ pub fn make_pcurve(
 
         // Store pcurve on edge's face_reps
         let pc_range = src_range.unwrap_or(t_range);
-        let rep = crate::bopds::ds::DSRepOnFace {
+        let rep = crate::bopds::ds::DSCurveRepOnFace {
             face_idx: fi,
             pcurve: pc.clone().unwrap_or(rcad_kernel::geom::Curve2d::Line(
                 rcad_kernel::geom::Line2d { origin: glam::DVec2::ZERO, direction: glam::DVec2::X }
@@ -136,7 +136,7 @@ pub fn attach_existing_pcurve(
                 existing.pcurve = a_c2d_t;
                 existing.pcurve_range = [t11, t12];
             } else {
-                edge.face_reps.push(crate::bopds::ds::DSRepOnFace {
+                edge.face_reps.push(crate::bopds::ds::DSCurveRepOnFace {
                     face_idx,
                     pcurve: a_c2d_t,
                     pcurve2: None,

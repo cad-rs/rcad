@@ -1,6 +1,6 @@
-#[cfg(test)]
+﻿#[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::point_cloud::*;
     use std::f64::consts::PI;
 
     const EPS: f64 = TOLERANCE_MESH_LEGACY;

@@ -977,6 +977,8 @@ mod tests {
         let circle = Curve3::Circle(GeomCircle {
             center: DVec3::ZERO,
             normal: DVec3::Z,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
             radius: 1.0,
         });
 
@@ -1038,6 +1040,8 @@ mod tests {
         let circle = Curve3::Circle(GeomCircle {
             center: DVec3::new(5.0, 0.0, 0.0),
             normal: DVec3::Z,
+            x_dir: DVec3::X,
+            y_dir: DVec3::Y,
             radius: 1.0,
         });
 

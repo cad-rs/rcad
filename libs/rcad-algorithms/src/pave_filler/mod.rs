@@ -4,7 +4,7 @@ use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
 
 use crate::bopds::ds::{
-    DS, DSEdge, DSRepOnFace, DSVertex, Interference, InterferenceFF, InterferenceVV,
+    DS, DSEdge, DSCurveRepOnFace, DSVertex, Interference, InterferenceFF, InterferenceVV,
     InterferenceVE, InterferenceVF, InterferenceEE, InterferenceEF, IntersectionCurve, ShapeOrigin,
 };
 use crate::bopds::pave::*;
@@ -233,7 +233,7 @@ impl<'a> PaveFiller<'a> {
                 if self.ds.edge_on_face(ei, fi).is_some() { continue; }
                 let Some(edge) = self.ds.edges.get_mut(ei) else { continue; };
                 if let Some((pcurve, span)) = DS::compute_edge_pcurve(&edge.curve, &surf[pos]) {
-                    edge.face_reps.push(DSRepOnFace {
+                    edge.face_reps.push(DSCurveRepOnFace {
                         face_idx: fi,
                         pcurve,
                         pcurve2: None,
@@ -746,7 +746,7 @@ impl<'a> PaveFiller<'a> {
                 // OCCT-aligned: propagate pcurves from IC to section DSEdge face_reps.
                 let mut sec_face_reps = Vec::new();
                 if let Some(ref pca) = ic.pcurve_on_a {
-                    sec_face_reps.push(DSRepOnFace {
+                    sec_face_reps.push(DSCurveRepOnFace {
                         face_idx: face_ids[0],
                         pcurve: pca.clone(),
                         pcurve2: None,
@@ -755,7 +755,7 @@ impl<'a> PaveFiller<'a> {
                     });
                 }
                 if let Some(ref pcb) = ic.pcurve_on_b {
-                    sec_face_reps.push(DSRepOnFace {
+                    sec_face_reps.push(DSCurveRepOnFace {
                         face_idx: face_ids[1],
                         pcurve: pcb.clone(),
                         pcurve2: None,

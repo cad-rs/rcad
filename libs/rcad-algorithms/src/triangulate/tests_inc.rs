@@ -1,6 +1,7 @@
-﻿#[cfg(test)]
+#[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::triangulate::*;
+    use glam::DVec3;
 
     #[test]
     fn triangulate_triangle() {
@@ -503,7 +504,7 @@ mod tests {
     #[test]
     fn find_boundary_nodes() {
         let triangles = vec![[0, 1, 2], [1, 3, 2]];
-        let boundary = super::find_boundary_nodes(&triangles);
+        let boundary = crate::triangulate::find_boundary_nodes(&triangles);
 
         // Boundary edges: (0,1), (0,2), (1,3), (2,3); internal edge: (1,2)
         assert!(boundary.contains(&0));

@@ -1,8 +1,8 @@
-﻿#[cfg(test)]
+#[cfg(test)]
 mod orth_union_tests {
-    use super::ring_corner_count_after_collinear_removal;
-    use super::rects_2d_bbox_positive_area_overlap;
-    use super::union_rects_to_rings_grid;
+    use crate::orthogonal_face_fuse::ring_corner_count_after_collinear_removal;
+    use crate::orthogonal_face_fuse::rects_2d_bbox_positive_area_overlap;
+    use crate::orthogonal_face_fuse::union_rects_to_rings_grid;
     use crate::tolerance::{TOLERANCE_ABS, TOLERANCE_MESH_LEGACY, TOLERANCE_RETRY_LADDER_COARSE};
 
     #[test]
@@ -66,7 +66,7 @@ mod bcommon_g1_bbox_probe_tests {
     };
     use crate::BooleanOpType;
 
-    use super::{
+    use crate::orthogonal_face_fuse::{
         axis_aligned_world_plane_uv_axes, canonicalize_plane_n_d, face_axis_world_bbox, face_first_point,
         plane_key, rects_2d_bbox_positive_area_overlap, snap_almost_axis,
     };

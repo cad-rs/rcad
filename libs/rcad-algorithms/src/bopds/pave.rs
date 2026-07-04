@@ -234,3 +234,382 @@ impl PaveBlock {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ===== Pave: Eq semantics (BOPDS_Pave::IsEqual) =====
+
+    #[test]
+    fn pave_eq_matches_both_vertex_and_param() {
+        let a = Pave { vertex_idx: 1, param: 0.5 };
+        let b = Pave { vertex_idx: 1, param: 0.5 };
+        let c = Pave { vertex_idx: 1, param: 0.7 };
+        let d = Pave { vertex_idx: 2, param: 0.5 };
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert_ne!(a, d);
+    }
+
+    #[test]
+    fn pave_partial_cmp_orders_by_param_only() {
+        let early = Pave { vertex_idx: 9, param: 0.2 };
+        let mid   = Pave { vertex_idx: 3, param: 0.5 };
+        let late  = Pave { vertex_idx: 7, param: 0.8 };
+        assert!(early < mid);
+        assert!(mid < late);
+        assert!(early < late);
+        // Same param → not less (PartialOrd returns Equal, not Less)
+        let same = Pave { vertex_idx: 99, param: 0.5 };
+        assert!(!(mid < same));
+        assert!(!(same < mid));
+    }
+
+    // ===== PaveBlock: constructor invariants =====
+
+    #[test]
+    fn new_block_not_splittable_and_no_ext_paves() {
+        let p1 = Pave { vertex_idx: 0, param: 0.0 };
+        let p2 = Pave { vertex_idx: 1, param: 1.0 };
+        let pb = PaveBlock::new(5, p1, p2);
+        assert_eq!(pb.original_edge, 5);
+        assert_eq!(pb.pave1, p1);
+        assert_eq!(pb.pave2, p2);
+        assert!(!pb.is_splittable);
+        assert!(pb.ext_paves.is_empty());
+        assert!(pb.ext_paves_fence.is_empty());
+        assert!(pb.new_edge.is_none());
+    }
+
+    #[test]
+    fn new_curve_block_uses_no_edge_and_splittable() {
+        let pb = PaveBlock::new_curve_block();
+        assert_eq!(pb.original_edge, NO_EDGE);
+        assert_eq!(pb.pave1.vertex_idx, NO_EDGE);
+        assert_eq!(pb.pave2.vertex_idx, NO_EDGE);
+        assert!(pb.is_splittable);
+        assert!(pb.ext_paves.is_empty());
+    }
+
+    // ===== Accessors =====
+
+    #[test]
+    fn range_and_indices_from_paves() {
+        let p1 = Pave { vertex_idx: 2, param: 0.3 };
+        let p2 = Pave { vertex_idx: 5, param: 1.7 };
+        let pb = PaveBlock::new(0, p1, p2);
+        assert_eq!(pb.range(), (0.3, 1.7));
+        assert_eq!(pb.indices(), (2, 5));
+    }
+
+    #[test]
+    fn has_same_bounds_matches_both_orientations() {
+        let a = PaveBlock::new(0,
+            Pave { vertex_idx: 1, param: 0.0 },
+            Pave { vertex_idx: 2, param: 1.0 });
+        // exact same orientation
+        let b = PaveBlock::new(0,
+            Pave { vertex_idx: 1, param: 0.0 },
+            Pave { vertex_idx: 2, param: 1.0 });
+        // reversed orientation (edge is undirected)
+        let c = PaveBlock::new(0,
+            Pave { vertex_idx: 2, param: 1.0 },
+            Pave { vertex_idx: 1, param: 0.0 });
+        assert!(a.has_same_bounds(&b));
+        assert!(a.has_same_bounds(&c));
+        assert!(b.has_same_bounds(&c));
+    }
+
+    #[test]
+    fn has_same_bounds_rejects_different_vertices() {
+        let a = PaveBlock::new(0,
+            Pave { vertex_idx: 1, param: 0.0 },
+            Pave { vertex_idx: 2, param: 1.0 });
+        let d = PaveBlock::new(0,
+            Pave { vertex_idx: 1, param: 0.0 },
+            Pave { vertex_idx: 3, param: 1.1 });
+        assert!(!a.has_same_bounds(&d));
+    }
+
+    #[test]
+    fn is_split_edge_cases() {
+        let pb = PaveBlock::new(7,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        // None → not split
+        assert!(!pb.is_split_edge());
+        // Some(original) → not split
+        let mut e2 = pb.clone();
+        e2.new_edge = Some(7);
+        assert!(!e2.is_split_edge());
+        // Some(different) → split
+        e2.new_edge = Some(42);
+        assert!(e2.is_split_edge());
+    }
+
+    // ===== ExtPave fence management =====
+
+    #[test]
+    fn append_ext_pave_dedup_by_vertex_idx() {
+        let mut pb = PaveBlock::new(0,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        pb.append_ext_pave(Pave { vertex_idx: 3, param: 0.5 });
+        assert_eq!(pb.ext_paves.len(), 1);
+        // Same vertex_idx, different param → still deduped (OCCT dedup by vertex_idx)
+        pb.append_ext_pave(Pave { vertex_idx: 3, param: 0.51 });
+        assert_eq!(pb.ext_paves.len(), 1, "second add with same vertex_idx must be deduped");
+        // Different vertex_idx → allowed
+        pb.append_ext_pave(Pave { vertex_idx: 4, param: 0.75 });
+        assert_eq!(pb.ext_paves.len(), 2);
+    }
+
+    #[test]
+    fn append_ext_pave1_no_dedup() {
+        let mut pb = PaveBlock::new(0,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        pb.append_ext_pave1(Pave { vertex_idx: 3, param: 0.5 });
+        pb.append_ext_pave1(Pave { vertex_idx: 3, param: 0.5 });
+        assert_eq!(pb.ext_paves.len(), 2, "append_ext_pave1 must skip dedup fence");
+    }
+
+    #[test]
+    fn remove_ext_pave_removes_from_vec_and_fence() {
+        let mut pb = PaveBlock::new(0,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        pb.append_ext_pave(Pave { vertex_idx: 3, param: 0.3 });
+        pb.append_ext_pave(Pave { vertex_idx: 4, param: 0.6 });
+        assert!(pb.ext_paves_fence.contains(&3));
+        assert_eq!(pb.ext_paves.len(), 2);
+
+        pb.remove_ext_pave(3);
+        assert!(!pb.ext_paves_fence.contains(&3));
+        assert_eq!(pb.ext_paves.len(), 1);
+        assert_eq!(pb.ext_paves[0].vertex_idx, 4);
+    }
+
+    #[test]
+    fn remove_ext_pave_unknown_is_noop() {
+        let mut pb = PaveBlock::new(0,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        pb.append_ext_pave(Pave { vertex_idx: 3, param: 0.5 });
+        pb.remove_ext_pave(42); // not in fence
+        assert_eq!(pb.ext_paves.len(), 1);
+    }
+
+    #[test]
+    fn is_to_update_reflects_ext_paves() {
+        let mut pb = PaveBlock::new(0,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        assert!(!pb.is_to_update());
+        pb.append_ext_pave(Pave { vertex_idx: 3, param: 0.5 });
+        assert!(pb.is_to_update());
+
+        // fence removed but vec still has the entry — OCCT's IsToUpdate checks
+        // myExtPaves->Extent(), which is the LIST size, not fence.
+        // rcad uses ext_paves.len(), which matches the vec size.
+        pb.ext_paves_fence.remove(&3);
+        assert!(pb.is_to_update(), "is_to_update must use ext_paves.len(), not fence");
+    }
+
+    // ===== ContainsParameter =====
+
+    #[test]
+    fn contains_parameter_matches_within_tolerance() {
+        let mut pb = PaveBlock::new(0,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        pb.append_ext_pave(Pave { vertex_idx: 5, param: 0.5 });
+        let mut idx = 0;
+        assert!(pb.contains_parameter(0.5001, 1e-3, &mut idx));
+        assert_eq!(idx, 5);
+    }
+
+    #[test]
+    fn contains_parameter_rejects_outside_tolerance() {
+        let mut pb = PaveBlock::new(0,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        pb.append_ext_pave(Pave { vertex_idx: 5, param: 0.5 });
+        let mut idx = 0;
+        assert!(!pb.contains_parameter(0.6, 0.01, &mut idx));
+        assert_eq!(idx, 0, "index must remain unchanged on miss");
+    }
+
+    #[test]
+    fn contains_parameter_only_checks_ext_paves() {
+        // does NOT check pave1 or pave2
+        let pb = PaveBlock::new(0,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        let mut idx = 0;
+        assert!(!pb.contains_parameter(0.0, 1e-15, &mut idx), "must not match pave1");
+        assert!(!pb.contains_parameter(1.0, 1e-15, &mut idx), "must not match pave2");
+    }
+
+    // ===== Update (the critical split method, cxx:249-312) =====
+
+    /// OCCT: a_nb=0, the_flag=false → no split.
+    #[test]
+    fn update_no_ext_paves_no_flag_returns_empty() {
+        let mut pb = PaveBlock::new(3,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        assert!(pb.update(false).is_empty());
+    }
+
+    /// OCCT: a_nb=1 (single ext pave) → a_nb<=1 → no split, clears ext_paves.
+    #[test]
+    fn update_single_ext_pave_no_flag_clears_and_returns_empty() {
+        let mut pb = PaveBlock::new(3,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        pb.append_ext_pave(Pave { vertex_idx: 5, param: 0.5 });
+        assert!(pb.update(false).is_empty(), "a_nb=1 must produce no sub-blocks");
+        assert!(pb.ext_paves.is_empty(), "ext_paves must be cleared");
+        assert!(pb.ext_paves_fence.is_empty(), "fence must be cleared");
+    }
+
+    /// OCCT: a_nb=2, the_flag=false → two ext paves → one sub-block.
+    #[test]
+    fn update_two_ext_paves_no_flag_produces_one_sub_block() {
+        let mut pb = PaveBlock::new(3,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        pb.append_ext_pave(Pave { vertex_idx: 5, param: 0.3 });
+        pb.append_ext_pave(Pave { vertex_idx: 6, param: 0.7 });
+        let result = pb.update(false);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].indices(), (5, 6));
+        assert_eq!(result[0].range(), (0.3, 0.7));
+        assert_eq!(result[0].original_edge, 3, "sub-block must inherit original_edge");
+        assert!(pb.ext_paves.is_empty(), "original ext_paves cleared");
+    }
+
+    /// OCCT: a_nb=3, the_flag=false → three ext paves → two sub-blocks.
+    #[test]
+    fn update_three_ext_paves_no_flag_produces_two_sub_blocks() {
+        let mut pb = PaveBlock::new(3,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        pb.append_ext_pave(Pave { vertex_idx: 5, param: 0.2 });
+        pb.append_ext_pave(Pave { vertex_idx: 6, param: 0.5 });
+        pb.append_ext_pave(Pave { vertex_idx: 7, param: 0.8 });
+        let result = pb.update(false);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].indices(), (5, 6));
+        assert_eq!(result[0].range(), (0.2, 0.5));
+        assert_eq!(result[1].indices(), (6, 7));
+        assert_eq!(result[1].range(), (0.5, 0.8));
+    }
+
+    /// OCCT: the_flag=true includes pave1/pave2 as boundaries.
+    /// a_nb = 0 + 2 = 2 → one sub-block = [pave1, pave2] (the full range).
+    #[test]
+    fn update_flag_true_without_ext_paves_covers_full_range() {
+        let mut pb = PaveBlock::new(3,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        let result = pb.update(true);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].indices(), (0, 1));
+        assert_eq!(result[0].range(), (0.0, 1.0));
+    }
+
+    /// OCCT: the_flag=true + two ext paves → a_nb=4 → three sub-blocks.
+    /// total sorted: [pave1(0.0), ext1(0.3), ext2(0.7), pave2(1.0)]
+    #[test]
+    fn update_flag_true_with_ext_paves_includes_range_bounds_as_endpoints() {
+        let mut pb = PaveBlock::new(3,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        pb.append_ext_pave(Pave { vertex_idx: 5, param: 0.3 });
+        pb.append_ext_pave(Pave { vertex_idx: 6, param: 0.7 });
+        let result = pb.update(true);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].indices(), (0, 5));
+        assert_eq!(result[0].range(), (0.0, 0.3));
+        assert_eq!(result[1].indices(), (5, 6));
+        assert_eq!(result[1].range(), (0.3, 0.7));
+        assert_eq!(result[2].indices(), (6, 1));
+        assert_eq!(result[2].range(), (0.7, 1.0));
+    }
+
+    /// OCCT: update clears ext_paves and fence regardless of split.
+    #[test]
+    fn update_clears_ext_paves_and_fence() {
+        let mut pb = PaveBlock::new(3,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        pb.append_ext_pave(Pave { vertex_idx: 5, param: 0.3 });
+        pb.append_ext_pave(Pave { vertex_idx: 6, param: 0.7 });
+        let _ = pb.update(false);
+        assert!(pb.ext_paves.is_empty(), "ext_paves must be drained");
+        assert!(pb.ext_paves_fence.is_empty(), "fence must be cleared");
+    }
+
+    /// OCCT: each sub-block from update inherits the original_edge.
+    #[test]
+    fn update_sub_blocks_inherit_original_edge() {
+        let mut pb = PaveBlock::new(42,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        pb.append_ext_pave(Pave { vertex_idx: 5, param: 0.3 });
+        pb.append_ext_pave(Pave { vertex_idx: 6, param: 0.7 });
+        let result = pb.update(false);
+        for sb in &result {
+            assert_eq!(sb.original_edge, 42);
+        }
+    }
+
+    // ===== ShrunkData =====
+
+    #[test]
+    fn shrunk_data_default_state() {
+        let pb = PaveBlock::new(0,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        assert!(!pb.has_shrunk_data());
+        let (ts1, ts2, splittable) = pb.shrunk_data();
+        assert_eq!(ts1, 0.0);
+        assert_eq!(ts2, 0.0);
+        assert!(!splittable);
+    }
+
+    #[test]
+    fn set_shrunk_data_roundtrip() {
+        let mut pb = PaveBlock::new(0,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        pb.set_shrunk_data(0.2, 0.8, true);
+        assert!(pb.has_shrunk_data());
+        let (ts1, ts2, splittable) = pb.shrunk_data();
+        assert!((ts1 - 0.2).abs() < 1e-15);
+        assert!((ts2 - 0.8).abs() < 1e-15);
+        assert!(splittable);
+    }
+
+    #[test]
+    fn set_shrunk_data_with_box_roundtrip() {
+        let mut pb = PaveBlock::new(0,
+            Pave { vertex_idx: 0, param: 0.0 },
+            Pave { vertex_idx: 1, param: 1.0 });
+        pb.set_shrunk_data_with_box(
+            0.1, 0.9,
+            glam::DVec3::new(0.0, 0.0, 0.0),
+            glam::DVec3::new(1.0, 1.0, 0.0),
+            true,
+        );
+        assert!(pb.has_shrunk_data());
+        assert!(pb.my_shrunk_box.is_some());
+        let (ts1, ts2, splittable) = pb.shrunk_data();
+        assert!((ts1 - 0.1).abs() < 1e-15);
+        assert!((ts2 - 0.9).abs() < 1e-15);
+        assert!(splittable);
+    }
+}

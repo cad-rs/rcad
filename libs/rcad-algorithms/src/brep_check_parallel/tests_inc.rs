@@ -1,6 +1,6 @@
 ﻿#[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::brep_check_parallel::*;
     use rcad_kernel::BRep;
     use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
     use rcad_kernel::PrimitiveSolid;

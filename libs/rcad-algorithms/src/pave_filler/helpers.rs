@@ -1,7 +1,7 @@
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
 use crate::bopds::ds::{
-    DS, DSEdge, DSRepOnFace, ShapeOrigin, Interference, IntersectionCurve, NearTangentType,
+    DS, DSEdge, DSCurveRepOnFace, ShapeOrigin, Interference, IntersectionCurve, NearTangentType,
 };
 use crate::bopds::pave::*;
 use crate::tolerance::*;

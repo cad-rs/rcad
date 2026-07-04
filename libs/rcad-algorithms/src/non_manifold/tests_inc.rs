@@ -1,6 +1,6 @@
 ﻿#[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::non_manifold::*;
     use rcad_kernel::{PrimitiveSolid, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
     use glam::DVec3;
 

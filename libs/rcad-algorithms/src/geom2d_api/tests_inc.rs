@@ -1,14 +1,14 @@
-// =============================================================================
+﻿// =============================================================================
 // Tests
 // =============================================================================
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::geom2d_api::*;
     use rcad_kernel::geom::{Circle2d, Ellipse2d, Line2d};
     use std::f64::consts::FRAC_PI_2;
 
-    // ── Curve-Curve Intersection Tests ───────────────────────────────────────────
+    // 鈹€鈹€ Curve-Curve Intersection Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_circle_through_three_points_matches_occt_point_point_point() {
@@ -73,6 +73,7 @@ mod tests {
              },
             Circle2d {
                 center: DVec2::new(30.0, 0.0),
+                x_dir: DVec2::X, y_dir: DVec2::Y,
                 radius: 20.0,
             },
             DVec2::new(10.0, 10.0),
@@ -109,6 +110,7 @@ mod tests {
         let circles = circles_tangent_to_circle_and_two_lines(
             Circle2d {
                 center: DVec2::new(0.0, 120.0),
+                x_dir: DVec2::X, y_dir: DVec2::Y,
                 radius: 20.0,
             },
             Line2d {
@@ -200,10 +202,12 @@ mod tests {
         let circles = circles_tangent_to_two_circles_and_line(
             Circle2d {
                 center: DVec2::new(0.0, 0.0),
+                x_dir: DVec2::X, y_dir: DVec2::Y,
                 radius: 50.0,
             },
             Circle2d {
                 center: DVec2::new(20.0, 0.0),
+                x_dir: DVec2::X, y_dir: DVec2::Y,
                 radius: 10.0,
             },
             Line2d {
@@ -226,14 +230,17 @@ mod tests {
         let circles = circles_tangent_to_three_circles(
             Circle2d {
                 center: DVec2::new(0.0, 0.0),
+                x_dir: DVec2::X, y_dir: DVec2::Y,
                 radius: 50.0,
             },
             Circle2d {
                 center: DVec2::new(20.0, 0.0),
+                x_dir: DVec2::X, y_dir: DVec2::Y,
                 radius: 10.0,
             },
             Circle2d {
                 center: DVec2::new(0.0, 20.0),
+                x_dir: DVec2::X, y_dir: DVec2::Y,
                 radius: 10.0,
             },
         );
@@ -311,7 +318,7 @@ mod tests {
         assert!(intersections.is_empty());
     }
 
-    // ── PointsToBSpline Tests ─────────────────────────────────────────────────────
+    // 鈹€鈹€ PointsToBSpline Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_points_to_bspline2d_line() {
@@ -360,7 +367,7 @@ mod tests {
         assert!(curve.control_points.len() >= 1);
     }
 
-    // ── ProjectPointOnCurve Tests ────────────────────────────────────────────────
+    // 鈹€鈹€ ProjectPointOnCurve Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_project_point_on_line() {
@@ -400,7 +407,7 @@ mod tests {
         assert!((closest.length() - 1.0).abs() < TOLERANCE_RETRY_LADDER_COARSE);
     }
 
-    // ── ExtremaCurveCurve Tests ──────────────────────────────────────────────────
+    // 鈹€鈹€ ExtremaCurveCurve Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_distance_parallel_lines() {
@@ -448,7 +455,7 @@ mod tests {
         assert!((dist - 1.0).abs() < TOLERANCE_ADAPTIVE_MAX);
     }
 
-    // ── ExtremaCurvePoint Tests ──────────────────────────────────────────────────
+    // 鈹€鈹€ ExtremaCurvePoint Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_distance_point_to_line() {
@@ -486,7 +493,7 @@ mod tests {
         assert!(dist < TOLERANCE_MESH_LEGACY);
     }
 
-    // ── Angle Analysis Tests ─────────────────────────────────────────────────────
+    // 鈹€鈹€ Angle Analysis Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_angle_line_x_axis() {
@@ -528,7 +535,7 @@ mod tests {
         assert!((angle90 - PI).abs() < TOLERANCE_RETRY_LADDER_COARSE || (angle90 + PI).abs() < TOLERANCE_RETRY_LADDER_COARSE);
     }
 
-    // ── Curvature Tests ──────────────────────────────────────────────────────────
+    // 鈹€鈹€ Curvature Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_curvature_line() {
@@ -585,7 +592,7 @@ mod tests {
         assert!(curvature90.is_finite());
     }
 
-    // ── BSpline Tests ────────────────────────────────────────────────────────────
+    // 鈹€鈹€ BSpline Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn test_bspline_curve_domain() {
@@ -619,7 +626,7 @@ mod tests {
     }
 
     fn circle_curve(cx: f64, cy: f64, r: f64) -> Curve2d {
-        Curve2d::Circle(Circle2d { center: DVec2::new(cx, cy), radius: r })
+        Curve2d::Circle(Circle2d { center: DVec2::new(cx, cy), x_dir: DVec2::X, y_dir: DVec2::Y, radius: r })
     }
 
     fn ellipse_curve(cx: f64, cy: f64, a: f64, b: f64, angle: f64) -> Curve2d {

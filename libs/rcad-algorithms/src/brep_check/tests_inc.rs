@@ -1,6 +1,6 @@
-#[cfg(test)]
+﻿#[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::brep_check::*;
     use rcad_kernel::PrimitiveSolid;
     use rcad_kernel::geom::{Curve2d, Curve3, Line2d, Line3};
 
@@ -48,7 +48,7 @@ mod tests {
         brep.edges.push(rcad_kernel::topology::Edge { start: 1, end: 2 });
         brep.edges.push(rcad_kernel::topology::Edge { start: 2, end: 0 });
 
-        // Edge 0: line from (0,0,0) toward (1,0,0), but with range [0, 999] 鈥?huge mismatch
+        // Edge 0: line from (0,0,0) toward (1,0,0), but with range [0, 999] 閳?huge mismatch
         let ci = brep.geom.curves.len();
         brep.geom.curves.push(Curve3::Line(Line3 {
             origin: glam::DVec3::ZERO,
@@ -169,9 +169,9 @@ mod tests {
         }); // 2
         brep.vertices.push(Vertex {
             point: DVec3::new(0.0, 1.0, 0.0),
-        }); // 3 (gap: wire goes 0鈫?鈫? then 2鈫? skips 3)
+        }); // 3 (gap: wire goes 0閳?閳? then 2閳? skips 3)
 
-        // Edge 0: v0 鈫?v1; Edge 1: v1 鈫?v2; Edge 2: v2 鈫?v0 (skips v3 鈥?would close)
+        // Edge 0: v0 閳?v1; Edge 1: v1 閳?v2; Edge 2: v2 閳?v0 (skips v3 閳?would close)
         brep.edges.push(Edge { start: 0, end: 1 });
         brep.edges.push(Edge { start: 1, end: 2 });
         brep.edges.push(Edge { start: 3, end: 0 }); // intentional gap: starts at v3 not v2
@@ -181,7 +181,7 @@ mod tests {
                 edges: vec![
                     WireEdge::fwd(0),
                     WireEdge::fwd(1),
-                    WireEdge::fwd(2), // e2 starts at v3, but e1 ends at v2 鈫?open
+                    WireEdge::fwd(2), // e2 starts at v3, but e1 ends at v2 閳?open
                 ],
             },
             inner_wires: vec![],
@@ -216,7 +216,7 @@ mod tests {
         brep.edges.push(Edge { start: 0, end: 1 });
         brep.edges.push(Edge { start: 1, end: 0 });
 
-        // Face with only 2 edges 鈥?degenerate
+        // Face with only 2 edges 閳?degenerate
         let face = Face {
             outer_wire: Wire {
                 edges: vec![WireEdge::fwd(0), WireEdge::fwd(1)],
@@ -259,7 +259,7 @@ mod tests {
                 edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
             },
             inner_wires: vec![],
-            normal: DVec3::ZERO, // zero normal 鈥?invalid
+            normal: DVec3::ZERO, // zero normal 閳?invalid
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
@@ -359,7 +359,7 @@ mod tests {
         brep.edges.push(Edge { start: 3, end: 0 }); // e3: left
         brep.edges.push(Edge { start: 0, end: 4 }); // e4: vertical
 
-        // 3 faces sharing edge e4 (vertical edge) 鈥?non-manifold
+        // 3 faces sharing edge e4 (vertical edge) 閳?non-manifold
         // Face 1: uses e4
         let face1 = Face {
             outer_wire: Wire {
@@ -384,7 +384,7 @@ mod tests {
             mesh_dirty: true,
             surface_idx: None,
         };
-        // Face 3: uses e4 again 鈥?this makes e4 shared by 3 faces
+        // Face 3: uses e4 again 閳?this makes e4 shared by 3 faces
         let face3 = Face {
             outer_wire: Wire {
                 edges: vec![WireEdge::fwd(4), WireEdge::fwd(3), WireEdge::rev(0)],
@@ -419,19 +419,19 @@ mod tests {
 
         // Build a BRep with a figure-8 wire: vertex 0 appears 3 times
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // v0 鈥?center, appears 3x
+        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // v0 閳?center, appears 3x
         brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // v1
         brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // v2
         brep.vertices.push(Vertex { point: DVec3::new(-1.0, 0.0, 0.0) }); // v3
         brep.vertices.push(Vertex { point: DVec3::new(0.0, -1.0, 0.0) }); // v4
 
-        // Figure-8: v0鈫抳1鈫抳2鈫抳0鈫抳3鈫抳4鈫抳0 (v0 appears 3 times as start/end)
-        brep.edges.push(Edge { start: 0, end: 1 }); // e0: v0鈫抳1
-        brep.edges.push(Edge { start: 1, end: 2 }); // e1: v1鈫抳2
-        brep.edges.push(Edge { start: 2, end: 0 }); // e2: v2鈫抳0
-        brep.edges.push(Edge { start: 0, end: 3 }); // e3: v0鈫抳3
-        brep.edges.push(Edge { start: 3, end: 4 }); // e4: v3鈫抳4
-        brep.edges.push(Edge { start: 4, end: 0 }); // e5: v4鈫抳0
+        // Figure-8: v0閳姵1閳姵2閳姵0閳姵3閳姵4閳姵0 (v0 appears 3 times as start/end)
+        brep.edges.push(Edge { start: 0, end: 1 }); // e0: v0閳姵1
+        brep.edges.push(Edge { start: 1, end: 2 }); // e1: v1閳姵2
+        brep.edges.push(Edge { start: 2, end: 0 }); // e2: v2閳姵0
+        brep.edges.push(Edge { start: 0, end: 3 }); // e3: v0閳姵3
+        brep.edges.push(Edge { start: 3, end: 4 }); // e4: v3閳姵4
+        brep.edges.push(Edge { start: 4, end: 0 }); // e5: v4閳姵0
 
         let face = Face {
             outer_wire: Wire {
@@ -527,7 +527,7 @@ mod tests {
         brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
         brep.vertices.push(Vertex { point: DVec3::new(3.0, 0.0, 0.0) });
         brep.vertices.push(Vertex { point: DVec3::new(1.5, 3.0, 0.0) });
-        // Inner wire vertices (don't close: v3鈫抳4鈫抳5, but v5鈮爒3)
+        // Inner wire vertices (don't close: v3閳姵4閳姵5, but v5閳垝3)
         brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) });
         brep.vertices.push(Vertex { point: DVec3::new(2.0, 1.0, 0.0) });
         brep.vertices.push(Vertex { point: DVec3::new(1.5, 0.5, 0.0) });
@@ -535,7 +535,7 @@ mod tests {
         brep.edges.push(Edge { start: 0, end: 1 }); // e0
         brep.edges.push(Edge { start: 1, end: 2 }); // e1
         brep.edges.push(Edge { start: 2, end: 0 }); // e2
-        // Inner wire edges (open: e3: v3鈫抳4, e4: v4鈫抳5, e5: v5鈫抳3 would close but we skip)
+        // Inner wire edges (open: e3: v3閳姵4, e4: v4閳姵5, e5: v5閳姵3 would close but we skip)
         brep.edges.push(Edge { start: 3, end: 4 }); // e3
         brep.edges.push(Edge { start: 4, end: 5 }); // e4
         // Intentionally missing: edge from v5 back to v3
@@ -545,7 +545,7 @@ mod tests {
                 edges: vec![WireEdge::fwd(0), WireEdge::fwd(1), WireEdge::fwd(2)],
             },
             inner_wires: vec![Wire {
-                edges: vec![WireEdge::fwd(3), WireEdge::fwd(4)], // open: v5鈮爒3
+                edges: vec![WireEdge::fwd(3), WireEdge::fwd(4)], // open: v5閳垝3
             }],
             normal: DVec3::Z,
             triangles: vec![],
@@ -585,7 +585,7 @@ mod tests {
 
     #[test]
     fn euler_analysis_box_has_euler_2_and_genus_0() {
-        // A box is topologically a sphere: V=8, E=12, F=6 鈫?蠂 = 8-12+6 = 2.
+        // A box is topologically a sphere: V=8, E=12, F=6 閳?锠?= 8-12+6 = 2.
         let brep = BRep::from_primitive(PrimitiveSolid::Box {
             width: 1.0,
             height: 1.0,
@@ -610,7 +610,7 @@ mod tests {
         let analyses = euler_analysis(&brep);
         assert_eq!(analyses.len(), 1);
         let a = &analyses[0];
-        // Sphere topology: 蠂 = V - E + F, should equal 2.
+        // Sphere topology: 锠?= V - E + F, should equal 2.
         assert_eq!(a.euler_number, 2, "Euler characteristic of sphere = 2");
         assert!(a.is_closed);
         assert_eq!(a.genus, Some(0), "genus of a sphere is 0");
@@ -653,7 +653,7 @@ mod tests {
         assert_eq!(report.consistent_face_count, 6, "box has 6 faces, all outward");
     }
 
-    // 鈹€鈹€ Geometry Validation Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // 閳光偓閳光偓 Geometry Validation Tests 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     #[test]
     fn check_surface_continuity_box_passes() {
@@ -685,7 +685,7 @@ mod tests {
         assert!(report.is_clean(), "box should pass curve-surface consistency check");
     }
 
-    // 鈹€鈹€ Topology Validation Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // 閳光偓閳光偓 Topology Validation Tests 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     #[test]
     fn validate_shell_orientation_box_is_consistent() {
@@ -821,7 +821,7 @@ mod tests {
         assert!(report.issues.iter().any(|i| matches!(i, CheckIssue::NestedWireViolation { .. })));
     }
 
-    // 鈹€鈹€ Tolerance Validation Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // 閳光偓閳光偓 Tolerance Validation Tests 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     #[test]
     fn check_tolerance_consistency_box_passes() {
@@ -857,7 +857,7 @@ mod tests {
         assert!(report.is_clean(), "box edge tolerances should be adequate");
     }
 
-    // 鈹€鈹€ Quality Metrics Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // 閳光偓閳光偓 Quality Metrics Tests 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     #[test]
     fn analyze_quality_metrics_box_passes() {
@@ -952,7 +952,7 @@ mod tests {
         assert!(report.sliver_face_count > 0, "sliver face should be detected");
     }
 
-    // 鈹€鈹€ Comprehensive Check Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // 閳光偓閳光偓 Comprehensive Check Tests 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     #[test]
     fn check_comprehensive_box_passes() {
@@ -1061,7 +1061,7 @@ mod tests {
             "should have detected degenerate edge");
     }
 
-    // 鈹€鈹€ Helper Function Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // 閳光偓閳光偓 Helper Function Tests 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     #[test]
     fn compute_polygon_normal_works_for_xy_plane() {
@@ -1119,7 +1119,7 @@ mod tests {
         brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 2
         brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 3
 
-        // CCW square: 0鈫?鈫?鈫?鈫?
+        // CCW square: 0閳?閳?閳?閳?
         brep.edges.push(Edge { start: 0, end: 1 });
         brep.edges.push(Edge { start: 1, end: 2 });
         brep.edges.push(Edge { start: 2, end: 3 });
@@ -1143,7 +1143,7 @@ mod tests {
         brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 2
         brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 3
 
-        // CW square: 0鈫?鈫?鈫?鈫? (clockwise when viewed from +Z)
+        // CW square: 0閳?閳?閳?閳? (clockwise when viewed from +Z)
         brep.edges.push(Edge { start: 0, end: 3 });
         brep.edges.push(Edge { start: 3, end: 2 });
         brep.edges.push(Edge { start: 2, end: 1 });

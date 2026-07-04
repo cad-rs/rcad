@@ -1,6 +1,6 @@
 ﻿#[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::inttools::intss::*;
     use glam::DVec3;
     use rcad_kernel::geom::{
         ConicalSurface, Curve2d, Curve2dEval, CylindricalSurface, Plane, SphericalSurface,
@@ -222,7 +222,7 @@ mod tests {
 
     #[test]
     fn cylinder_cylinder_perpendicular_steinmetz() {
-        // Two perpendicular cylinders r=1 鈥?Steinmetz configuration
+        // Two perpendicular cylinders r=1 閳?Steinmetz configuration
         let c1 = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::new(0.0, -2.0, 0.0),
             axis: DVec3::Y,
@@ -240,7 +240,7 @@ mod tests {
         assert!(!r.curves.is_empty(), "expected at least one intersection curve, got none");
         // The Steinmetz intersection is one or two closed space curves
         if let SurfaceCurve::Polyline(pts) = &r.curves[0].curve_3d {
-            assert!(pts.len() >= 4, "polyline should have 鈮? points, got {}", pts.len());
+            assert!(pts.len() >= 4, "polyline should have 閳? points, got {}", pts.len());
         }
     }
 
@@ -266,7 +266,7 @@ mod tests {
         assert_eq!(
             r.curves.len(),
             2,
-            "torus 鈭?perp-plane should give 2 circles, got {}",
+            "torus 閳?perp-plane should give 2 circles, got {}",
             r.curves.len()
         );
 
@@ -300,8 +300,8 @@ mod tests {
     #[test]
     fn cylinder_cone_coaxial_gives_circle() {
         // Cylinder: r=2, axis Z, origin (0,0,0)
-        // Cone: apex (0,0,0), axis Z, half_angle=45掳 鈫?tan=1
-        // Coaxial 鈫?circle at h = 0 + 2/1 = 2, radius = 2
+        // Cone: apex (0,0,0), axis Z, half_angle=45鎺?閳?tan=1
+        // Coaxial 閳?circle at h = 0 + 2/1 = 2, radius = 2
         let cyl = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
@@ -327,9 +327,9 @@ mod tests {
 
     #[test]
     fn cone_cone_coaxial_gives_circle() {
-        // Cone1: apex (0,0,2), axis Z, 45掳 (tan=1)
-        // Cone2: apex (0,0,0), axis Z, 30掳 (tan=1/鈭?)
-        // Coaxial 鈫?circle at h = 鈭?+1 鈮?2.732 from cone1 apex
+        // Cone1: apex (0,0,2), axis Z, 45鎺?(tan=1)
+        // Cone2: apex (0,0,0), axis Z, 30鎺?(tan=1/閳?)
+        // Coaxial 閳?circle at h = 閳?+1 閳?2.732 from cone1 apex
         let k1 = Surface3::Cone(ConicalSurface {
             apex: DVec3::new(0.0, 0.0, 2.0),
             axis: DVec3::Z,
@@ -360,7 +360,7 @@ mod tests {
 
     #[test]
     fn cone_cone_same_apex_gives_point() {
-        // Same apex, different half-angles 鈫?CoaxialPoint
+        // Same apex, different half-angles 閳?CoaxialPoint
         let k1 = Surface3::Cone(ConicalSurface {
             apex: DVec3::ZERO,
             axis: DVec3::Z,
@@ -451,7 +451,7 @@ mod tests {
 
     #[test]
     fn cylinder_cone_skew_falls_back_to_numeric() {
-        // Cylinder: axis Z; Cone: axis X 鈥?skew axes 鈫?General 鈫?numeric
+        // Cylinder: axis Z; Cone: axis X 閳?skew axes 閳?General 閳?numeric
         let cyl = Surface3::Cylinder(CylindricalSurface {
             origin: DVec3::ZERO,
             axis: DVec3::Z,
@@ -474,9 +474,9 @@ mod tests {
     fn torus_sphere_on_axis_gives_circles() {
         // Torus: axis=Z, center=origin, R=5, r=2.
         // Sphere: center at origin (on torus axis), radius=5.
-        // The torus tube is at (蟻-5)虏 + z虏 = 4; sphere is 蟻虏 + z虏 = 25.
-        // Substituting: 蟻虏 + 4 - (蟻-5)虏 = 25 鈫?10蟻 - 21 = 25 鈫?蟻 = 4.6.
-        // z虏 = 25 - 4.6虏 = 3.84 鈫?z = 卤1.96 鈫?two circles.
+        // The torus tube is at (锜?5)铏?+ z铏?= 4; sphere is 锜昏檹 + z铏?= 25.
+        // Substituting: 锜昏檹 + 4 - (锜?5)铏?= 25 閳?10锜?- 21 = 25 閳?锜?= 4.6.
+        // z铏?= 25 - 4.6铏?= 3.84 閳?z = 鍗?.96 閳?two circles.
         let torus = Surface3::Torus(rcad_kernel::geom::ToroidalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Z,
@@ -494,7 +494,7 @@ mod tests {
         assert_eq!(
             r.curves.len(),
             2,
-            "torus 鈭?sphere should give 2 circles, got {}",
+            "torus 閳?sphere should give 2 circles, got {}",
             r.curves.len()
         );
         for c in &r.curves {
@@ -526,7 +526,7 @@ mod tests {
         for c in &r.curves {
             match &c.curve_3d {
                 SurfaceCurve::Polyline(pts) => {
-                    assert!(pts.len() >= 4, "polyline should have 鈮? points");
+                    assert!(pts.len() >= 4, "polyline should have 閳? points");
                 }
                 other => {
                     panic!("Expected Polyline, got {:?}", other);
@@ -539,9 +539,9 @@ mod tests {
     fn torus_cylinder_coaxial_gives_circles() {
         // Torus: axis=Z, R=5, r=1.
         // Cylinder: axis=Z, radius=5 (cuts torus tube at centerline).
-        // (5-5)虏 + h虏 = 1虏 鈫?h = 卤1 鈫?two circles.
+        // (5-5)铏?+ h铏?= 1铏?閳?h = 鍗? 閳?two circles.
         // Cylinder: axis=Z, radius=5 (cuts torus tube at centerline).
-        // (5-5)虏 + h虏 = 1虏 鈫?h = 卤1 鈫?two circles.
+        // (5-5)铏?+ h铏?= 1铏?閳?h = 鍗? 閳?two circles.
         let torus = Surface3::Torus(rcad_kernel::geom::ToroidalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Z,
@@ -559,7 +559,7 @@ mod tests {
         assert_eq!(
             r.curves.len(),
             2,
-            "torus 鈭?coaxial cylinder should give 2 circles, got {}",
+            "torus 閳?coaxial cylinder should give 2 circles, got {}",
             r.curves.len()
         );
         for c in &r.curves {
@@ -574,9 +574,9 @@ mod tests {
     #[test]
     fn torus_cone_coaxial_gives_circle() {
         // Torus: axis=Z, R=5, r=4 (large tube).
-        // Cone: apex=origin, axis=Z, 45掳 (蟻=z).
-        // Substituting 蟻=z into (蟻-5)虏+z虏=16:
-        //   2z虏 - 10z + 9 = 0 鈫?z = (10卤鈭?8)/4 鈫?{3.82, 1.18} 鈫?two circles.
+        // Cone: apex=origin, axis=Z, 45鎺?(锜?z).
+        // Substituting 锜?z into (锜?5)铏?z铏?16:
+        //   2z铏?- 10z + 9 = 0 閳?z = (10鍗ら埈?8)/4 閳?{3.82, 1.18} 閳?two circles.
         let torus = Surface3::Torus(rcad_kernel::geom::ToroidalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Z,
@@ -591,7 +591,7 @@ mod tests {
         });
 
         let r = intersect_surfaces(&torus, &cone);
-        assert!(!r.is_empty(), "torus 鈭?coaxial cone should have intersection");
+        assert!(!r.is_empty(), "torus 閳?coaxial cone should have intersection");
         assert!(matches!(&r.curves[0].curve_3d, SurfaceCurve::Circle(_)));
     }
 
@@ -619,7 +619,7 @@ mod tests {
     fn torus_torus_coaxial_gives_circles() {
         // Torus1: axis=Z, R=5, r=1, center=origin.
         // Torus2: axis=Z, R=5, r=1.5, center=(0,0,0.5).
-        // Coaxial, offset 鈫?circles where tube circles intersect in (蟻,z) plane.
+        // Coaxial, offset 閳?circles where tube circles intersect in (锜?z) plane.
         let t1 = Surface3::Torus(rcad_kernel::geom::ToroidalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Z,
@@ -643,7 +643,7 @@ mod tests {
 
     #[test]
     fn torus_skew_cylinder_falls_back_to_numeric() {
-        // Torus: axis=Z; Cylinder: axis=X 鈥?not coaxial 鈫?numeric
+        // Torus: axis=Z; Cylinder: axis=X 閳?not coaxial 閳?numeric
         let torus = Surface3::Torus(rcad_kernel::geom::ToroidalSurface {
             center: DVec3::ZERO,
             axis: DVec3::Z,

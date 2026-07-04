@@ -1,6 +1,6 @@
 ﻿#[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::boptools::*;
 
     #[test]
     fn test_empty_set() {

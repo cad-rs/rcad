@@ -499,7 +499,7 @@ mod tests {
     #[test]
     fn circle_circle_two_intersections() {
         let c1 = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 1.0  });
-        let c2 = Curve2d::Circle(Circle2d { center: DVec2::new(1.0, 0.0), radius: 1.0 });
+        let c2 = Curve2d::Circle(Circle2d { center: DVec2::new(1.0, 0.0), x_dir: DVec2::X, y_dir: DVec2::Y, radius: 1.0 });
         let r = intersect_circle_circle(&c1, &c2, 0.0, std::f64::consts::TAU, 0.0, std::f64::consts::TAU);
         assert_eq!(r.len(), 2);
     }
@@ -545,7 +545,7 @@ mod tests {
     #[test]
     fn no_intersection_for_disjoint_circles() {
         let c1 = Curve2d::Circle(Circle2d { center: DVec2::ZERO, x_dir: DVec2::X, y_dir: DVec2::Y, radius: 1.0  });
-        let c2 = Curve2d::Circle(Circle2d { center: DVec2::new(10.0, 0.0), radius: 1.0 });
+        let c2 = Curve2d::Circle(Circle2d { center: DVec2::new(10.0, 0.0), x_dir: DVec2::X, y_dir: DVec2::Y, radius: 1.0 });
         let r = intersect_circle_circle(&c1, &c2, 0.0, std::f64::consts::TAU, 0.0, std::f64::consts::TAU);
         assert!(r.is_empty());
     }

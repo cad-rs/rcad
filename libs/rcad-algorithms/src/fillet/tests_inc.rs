@@ -1,6 +1,6 @@
 ﻿#[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::fillet::*;
     use rcad_kernel::PrimitiveSolid;
 
     fn create_box_brep() -> BRep {

@@ -19,7 +19,7 @@ use rcad_kernel::topods::{BRepTool, ShapeRef, Orientation};
 pub(crate) struct DSAsBRep<'a> {
     pub ds: &'a DS,
     pub face_idx: usize,
-    /// edge_index → (pc_on_face, t_first, t_last) — built once from DSRepOnFace
+    /// edge_index → (pc_on_face, t_first, t_last) — built once from DSCurveRepOnFace
     pub pcurve_cache: HashMap<usize, (Curve2d, f64, f64)>,
     /// edge_index → (vertex_index → param) — built once from DSEdge.vertex_params
     pub vertex_param_cache: HashMap<usize, HashMap<usize, f64>>,
