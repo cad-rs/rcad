@@ -735,23 +735,18 @@ impl<'a> BooleanBuilder<'a> {
             BooleanOpType::Union | BooleanOpType::Intersection | BooleanOpType::Difference => {}
             _ => return Err(BooleanError::InvalidOperation),
         }
-        // OCCT L120-126: myArguments must be non-empty
-        // OCCT L128-134: myTools must be non-empty
-        if a_faces.is_empty() || b_faces.is_empty() {
-            return Err(BooleanError::EmptyInput);
-        }
-        // OCCT L136-140: CheckFiller �?verify PaveFiller and DS are valid
-        //   OCCT: if (!myPaveFiller) �?AlertNoFiller
+        // OCCT L132-137: myArguments.Extent() < 2 → AlertTooFewArguments.
+        //   rcad: arguments are always at least 2 (set during fuse() call).
+        // OCCT L139-141: CheckFiller — verify PaveFiller and DS are valid
+        //   OCCT: if (!myPaveFiller) → AlertNoFiller
         //   OCCT: GetReport()->Merge(myPaveFiller->GetReport())
+        //   rcad: a_faces/b_faces empty is NOT a CheckData error — TreatEmptyShape handles it.
         //   rcad: check DS has valid shape data loaded
-        if self.ds.faces.is_empty() || self.ds.vertices.is_empty() {
+        if self.ds.vertices.is_empty() {
             return Err(BooleanError::EmptyInput);
         }
-        // OCCT L142-201: dimension validation for FUSE/CUT/CUT21
-        //   rcad: shapes are already loaded into DS; dimension info not tracked
-        //   in the DS.  For now, skip dimension validation (acceptable gap).
-        // OCCT L203+: empty shape handling
-        //   rcad: empty shapes are not loaded into DS; skip.
+        // OCCT L142-201: dimension validation (FUSE/CUT/CUT21)
+        //   rcad: shapes already in DS; dimension info not tracked.
         if self.has_errors {
             return Err(BooleanError::DegenerateResult);
         }
@@ -815,7 +810,7 @@ impl<'a> BooleanBuilder<'a> {
     ///   See comments for exact OCCT line references.
     ///   Structural difference: L425-429 setup done in constructor, re-affirmed here.
     ///   L531 BuildResult(SOLID) writes to t_brep, then L900 BuildRC filters and
-    ///   clears solids from t_brep (non-Union) �?equivalent to OCCT removing from myShape.
+    ///   clears solids from t_brep (non-Union) — equivalent to OCCT removing from myShape.
     pub fn build_with_history(&self) -> Result<(BRep, BooleanHistory), BooleanError> {
         // OCCT L425-429: setup (myPaveFiller, myDS, myContext, myFuzzyValue, myNonDestructive).
         //   rcad equivalents are already assigned in new(); re-affirm the form.
@@ -823,25 +818,21 @@ impl<'a> BooleanBuilder<'a> {
         let _non_destructive = self.my_non_destructive;
 
         // Pipeline dump context (env RCAD_DUMP_PIPELINE=1 to enable).
-        // Grid/case are set via RCAD_DUMP_GRID / RCAD_DUMP_CASE env vars.
         let mut _dump = crate::pipeline_dump::DumpCtx::new(
             &std::env::var("RCAD_DUMP_GRID").unwrap_or_else(|_| "unknown".into()),
             &std::env::var("RCAD_DUMP_CASE").unwrap_or_else(|_| "unknown".into()),
         );
 
-        // OCCT BOPAlgo_BOP::PerformInternal1 does NOT call CheckData or Prepare.
-        // These responsibilities are handled earlier by the PaveFiller phase
-        // (rcad: pave_fill() call in fuse/fuse_with_bvh, which prepares the DS).
-        // CheckData/Prepare exist in BOPAlgo_Builder::PerformInternal1 (the General
-        // Fuse variant) but are intentionally skipped in the BOP override because
-        // PaveFiller already validates and prepares the data. Keeping them here
-        // would be duplicating the Builder path — not the BOP path we align to.
+        // OCCT L431-436: CheckData — validates arguments and merges PaveFiller report.
         let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
         let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
-        // Inline Prepare: create empty result container (OCCT: BRep_Builder.MakeCompound).
-        let (mut t_brep, mut result) = (topods::BRep::new(), ResultBuilder::new());
+        self.check_data(&a_faces, &b_faces)?;
 
-        // OCCT L435-443: TreatEmptyShape.
+        // OCCT L438-442: Prepare — creates empty result compound.
+        //   rcad: prepare() returns (BRep, ResultBuilder) as OCCT MakeCompound.
+        let (mut t_brep, mut result) = self.prepare();
+
+        // OCCT L445-453: TreatEmptyShape.
         //   OCCT: GetReport()->HasAlert(AlertEmptyShape) -> TreatEmptyShape() -> PrepareHistory -> return.
         //   rcad: check if either operand has no faces (DS was populated by pave_fill).
         if a_faces.is_empty() || b_faces.is_empty() {
