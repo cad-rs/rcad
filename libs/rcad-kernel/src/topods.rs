@@ -281,10 +281,6 @@ pub struct BRep {
     /// Same geometric point → same TShape::Vertex across all code paths.
     #[serde(skip)]
     pub vert_by_pos: HashMap<VertexKey, ShapeRef>,
-    /// OCCT-aligned: edge identity cache — unordered vertex TShape index pair → ShapeRef.
-    /// Same vertex pair (regardless of order/orientation) → same TShape::Edge.
-    #[serde(skip)]
-    pub edge_by_vpair: HashMap<(usize, usize), ShapeRef>,
     /// OCCT-aligned: face identity cache — wire key → ShapeRef.
     /// Two faces with the same surface and wire structure share the same TShape::Face.
     /// Key: (surface_index, outer_wire.index, sorted inner_wire.indices).
@@ -305,7 +301,6 @@ impl BRep {
             curve2ds: Vec::new(),
             locations: Vec::new(),
             vert_by_pos: HashMap::new(),
-            edge_by_vpair: HashMap::new(),
             face_by_key: HashMap::new(),
         }
     }
@@ -342,14 +337,8 @@ impl BRep {
     }
 
     pub fn add_tedge(&mut self, curve: Option<usize>, first: ShapeRef, last: ShapeRef, range: [f64; 2]) -> ShapeRef {
-        // OCCT-aligned: identity-based sharing — same unordered vertex pair → same TShape::Edge.
-        let key = (first.index.min(last.index), first.index.max(last.index));
-        if let Some(&sr) = self.edge_by_vpair.get(&key) {
-            return sr;
-        }
         let sr = ShapeRef::new(self.tshapes.len());
         self.tshapes.push(Arc::new(TShape::Edge(TEdgeData { my_shapes: vec![first, last], flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE, curve, first, last, range, degenerated: false, pcurves: HashMap::new(), representations: Vec::new(), vertex_params: HashMap::new(), tolerance: 0.0, same_parameter: true, same_range: true })));
-        self.edge_by_vpair.insert(key, sr);
         sr
     }
 

@@ -87,33 +87,40 @@ impl<'a> BooleanBuilder<'a> {
     /// my_images[wire_ref]. BuildResult(WIRE) reads these to create TShape::Wire.
     fn fill_images_containers_wires(&self) {
         let e_base = self.ds.vertices.len();
-        let my_images = self.my_images.borrow();
-        for (wi, wire) in self.ds.wires.iter().enumerate() {
-            let w_ref = rcad_kernel::topods::ShapeRef::new(
-                e_base + self.ds.edges.len() + wi);
-            // OCCT L224-233: check if any sub-edge has been modified
-            let mut a_c_im: Vec<rcad_kernel::topods::ShapeRef> = Vec::new();
-            let mut has_images = false;
-            for &ei in &wire.edges {
-                let e_ref = rcad_kernel::topods::ShapeRef::new(e_base + ei);
-                if let Some(imgs) = my_images.get(&e_ref) {
-                    has_images = true;
-                    for &img_sr in imgs {
-                        if !a_c_im.contains(&img_sr) {
-                            a_c_im.push(img_sr);
+        // Collect wire image data from immutable borrow, then apply mutations.
+        let mut pending: Vec<(rcad_kernel::topods::ShapeRef, Vec<rcad_kernel::topods::ShapeRef>)> = Vec::new();
+        {
+            let my_images = self.my_images.borrow();
+            for (wi, wire) in self.ds.wires.iter().enumerate() {
+                let w_ref = rcad_kernel::topods::ShapeRef::new(
+                    e_base + self.ds.edges.len() + wi);
+                // OCCT L224-233: check if any sub-edge has been modified
+                let mut a_c_im: Vec<rcad_kernel::topods::ShapeRef> = Vec::new();
+                let mut has_images = false;
+                for &ei in &wire.edges {
+                    let e_ref = rcad_kernel::topods::ShapeRef::new(e_base + ei);
+                    if let Some(imgs) = my_images.get(&e_ref) {
+                        has_images = true;
+                        for &img_sr in imgs {
+                            if !a_c_im.contains(&img_sr) {
+                                a_c_im.push(img_sr);
+                            }
+                        }
+                    } else {
+                        if !a_c_im.contains(&e_ref) {
+                            a_c_im.push(e_ref);
                         }
                     }
-                } else {
-                    if !a_c_im.contains(&e_ref) {
-                        a_c_im.push(e_ref);
-                    }
+                }
+                // OCCT L235-240: if no sub-edge modified — skip (no wire image needed).
+                // OCCT L274-275: store new wire image in myImages.
+                if has_images {
+                    pending.push((w_ref, a_c_im));
                 }
             }
-            // OCCT L235-240: if no sub-edge modified → return (no wire image needed).
-            // OCCT L274-275: store new wire image in myImages.
-            if has_images {
-                self.my_images.borrow_mut().entry(w_ref).or_default().extend(a_c_im);
-            }
+        }
+        for (w_ref, a_c_im) in pending {
+            self.my_images.borrow_mut().entry(w_ref).or_default().extend(a_c_im);
         }
     }
     /// ✅ OCCT-aligned: FillImagesFaces (BOPAlgo_Builder_1.cxx L376-386).
