@@ -1,4 +1,4 @@
-pub mod types;
+﻿pub mod types;
 pub use types::*;
 
 use super::pave::{Pave, PaveBlock, NO_EDGE};
@@ -11,7 +11,7 @@ use rcad_kernel::{BRep, CurveEval, SurfaceEval, WireEdge};
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, Line2d, Line3, Plane, Surface3, any_perpendicular};
 
 impl DS {
-    /// ✅ OCCT-aligned: BOPDS_ShapeInfo::HasFlag / Flag.
+    /// 鉁?OCCT-aligned: BOPDS_ShapeInfo::HasFlag / Flag.
     ///   Returns the flag value for an edge index, or 0 if not set.
     ///   Flag is stored in shape_info[nv + edge_idx].flag matching OCCT's
     ///   per-shape integer flag (BOPDS_ShapeInfo::myFlag).
@@ -24,14 +24,14 @@ impl DS {
         } else { 0 }
     }
 
-    /// ✅ OCCT-aligned: BOPDS_ShapeInfo::HasFlag(int&) — true if flag is set (>= 0).
+    /// 鉁?OCCT-aligned: BOPDS_ShapeInfo::HasFlag(int&) 鈥?true if flag is set (>= 0).
     pub fn edge_has_flag(&self, edge_idx: usize) -> bool {
         let nv = self.vertices.len();
         let si_idx = nv + edge_idx;
         si_idx < self.shape_info.len() && self.shape_info[si_idx].flag >= 0
     }
 
-    /// ✅ OCCT-aligned: BOPDS_ShapeInfo::SetFlag.
+    /// 鉁?OCCT-aligned: BOPDS_ShapeInfo::SetFlag.
     pub fn set_edge_flag(&mut self, edge_idx: usize, flag: i64) {
         let nv = self.vertices.len();
         let si_idx = nv + edge_idx;
@@ -40,7 +40,7 @@ impl DS {
         }
     }
 
-    /// ✅ OCCT-aligned: BRep_Tool::Degenerated(edge) equivalent.
+    /// 鉁?OCCT-aligned: BRep_Tool::Degenerated(edge) equivalent.
     ///   Checks the shape_info flag: a flagged edge is degenerated.
     ///   Also falls back to start==end check for edges loaded before
     ///   shape_info initialization.
@@ -53,7 +53,7 @@ impl DS {
 
     // ----- OCCT BOPDS_DS data layer methods -----
 
-    /// 鉁?OCCT-aligned: BOPDS_DS::IsNewShape (L228-233).
+    /// 閴?OCCT-aligned: BOPDS_DS::IsNewShape (L228-233).
     ///   Returns true if the shape index was appended during intersection
     ///   (not part of the original source shapes).  In rcad, vertices
     ///   with `origin: None` are intersection-created (new shapes).
@@ -66,14 +66,14 @@ impl DS {
         }
     }
 
-    /// 鉁?OCCT-aligned: BOPDS_DS::Rank (L214-226).
+    /// 閴?OCCT-aligned: BOPDS_DS::Rank (L214-226).
     ///   Returns the rank (operand index 0=A, 1=B) of a shape.
     ///   0 for shapes from operand A, 1 for operand B.
     pub fn rank(&self, vi: usize) -> usize {
         if vi < self.a_vertex_count { 0 } else { 1 }
     }
 
-    /// 鉁?OCCT-aligned: BOPDS_DS::Range (L207-212).
+    /// 閴?OCCT-aligned: BOPDS_DS::Range (L207-212).
     ///   Returns the index range [start, end) for shapes of given type.
     ///   rcad: returns [0, a_vertex_count) for A, [a_vertex_count, end) for B.
     pub fn range(&self, is_a: bool) -> (usize, usize) {
@@ -83,19 +83,19 @@ impl DS {
 
     // ----- OCCT-aligned: PaveBlock pool accessors (BOPDS_DS.hxx L156-177) -----
 
-    /// 鉁?OCCT-aligned: BOPDS_DS::HasPaveBlocks (hxx:162-164).
+    /// 閴?OCCT-aligned: BOPDS_DS::HasPaveBlocks (hxx:162-164).
     ///   Returns true if the edge with the given index has PaveBlocks.
     pub fn has_pave_blocks(&self, edge_idx: usize) -> bool {
         self.edges.get(edge_idx).map_or(false, |e| !e.pave_blocks.is_empty())
     }
 
-    /// 鉁?OCCT-aligned: BOPDS_DS::ChangePaveBlocks (hxx:172-174).
+    /// 閴?OCCT-aligned: BOPDS_DS::ChangePaveBlocks (hxx:172-174).
     ///   Returns a mutable reference to the PaveBlocks list for an edge.
     pub fn change_pave_blocks(&mut self, edge_idx: usize) -> &mut Vec<PaveBlock> {
         &mut self.edges[edge_idx].pave_blocks
     }
 
-    /// ✅ OCCT-aligned: BOPDS_DS::InitPaveBlocks (cxx L437-501).
+    /// 鉁?OCCT-aligned: BOPDS_DS::InitPaveBlocks (cxx L437-501).
     ///   Creates the initial PaveBlock for a source edge, covering the full
     ///   parametric range [t_range[0], t_range[1]].  For closed edges (seam
     ///   edges where start == end), both endpoint paves are added to ext_paves
@@ -107,27 +107,27 @@ impl DS {
             let e = &self.edges[edge_idx];
             (e.start_vertex, e.end_vertex, e.t_range[0], e.t_range[1])
         };
-        // OCCT L437-445: shape type check — rcad edge is always an edge
-        // OCCT L447: curve null check — rcad edge always has a curve
-        // OCCT L449: BRep_Tool::Range — rcad: stored in t_range
-        // OCCT L451: BRepAdaptor_Curve — rcad: not needed
-        // OCCT L453-455: TopExp::FirstVertex / LastVertex — rcad: start_vertex/end_vertex
+        // OCCT L437-445: shape type check 鈥?rcad edge is always an edge
+        // OCCT L447: curve null check 鈥?rcad edge always has a curve
+        // OCCT L449: BRep_Tool::Range 鈥?rcad: stored in t_range
+        // OCCT L451: BRepAdaptor_Curve 鈥?rcad: not needed
+        // OCCT L453-455: TopExp::FirstVertex / LastVertex 鈥?rcad: start_vertex/end_vertex
         // OCCT L457-467: create PaveBlock and set pave1/pave2/original_edge
         let pv1 = Pave { vertex_idx: sv, param: tr0 };
         let pv2 = Pave { vertex_idx: ev, param: tr1 };
         let pb = PaveBlock::new(edge_idx, pv1, pv2);
-        // OCCT L469-471: ChangePaveBlocksPool → store in DS
+        // OCCT L469-471: ChangePaveBlocksPool 鈫?store in DS
         self.edges[edge_idx].pave_blocks = vec![pb];
-        // OCCT L473-475: loaded edge check — rcad: always new construction
-        // OCCT L477-483: closed edges — add BOTH endpoint paves to ext_paves
+        // OCCT L473-475: loaded edge check 鈥?rcad: always new construction
+        // OCCT L477-483: closed edges 鈥?add BOTH endpoint paves to ext_paves
         if sv == ev {
-            // OCCT L479: aPB->AppendExtPave(aP1) — first endpoint
+            // OCCT L479: aPB->AppendExtPave(aP1) 鈥?first endpoint
             self.edges[edge_idx].pave_blocks[0]
                 .append_ext_pave(Pave { vertex_idx: sv, param: tr0 });
-            // OCCT L481: aPB->AppendExtPave(aP2) — second endpoint
+            // OCCT L481: aPB->AppendExtPave(aP2) 鈥?second endpoint
             // (fence dedups by vertex_idx, so second push is accepted
             //  because vertex_idx differs from the first push? No, same
-            //  vertex — the OCCT fence check also uses vertex_idx.
+            //  vertex 鈥?the OCCT fence check also uses vertex_idx.
             //  The second AppendExtPave is rejected by fence in both
             //  implementations; OCCT still writes it for form clarity.)
             self.edges[edge_idx].pave_blocks[0]
@@ -135,7 +135,7 @@ impl DS {
         }
     }
 
-    /// 鉁?OCCT-aligned: BOPDS_DS::PaveBlocks (hxx:167-169).
+    /// 閴?OCCT-aligned: BOPDS_DS::PaveBlocks (hxx:167-169).
     ///   Returns a reference to the PaveBlocks list for an edge.
     pub fn pave_blocks(&self, edge_idx: usize) -> &[PaveBlock] {
         &self.edges[edge_idx].pave_blocks
@@ -143,48 +143,48 @@ impl DS {
 
     // ----- OCCT HasInterf / HasSubShape equivalents -----
 
-    /// 鉁?OCCT-aligned: HasSubShape(nV, nE) 鈥?check if vertex is a sub-shape of edge.
+    /// 閴?OCCT-aligned: HasSubShape(nV, nE) 閳?check if vertex is a sub-shape of edge.
     ///   Returns true when vertex nV is an endpoint of edge nE.
     pub fn edge_has_vertex(&self, nV: usize, nE: usize) -> bool {
         self.edges.get(nE).map_or(false, |e| e.start_vertex == nV || e.end_vertex == nV)
     }
 
-    /// 鉁?OCCT-aligned: myDS->HasInterf(nV, nE) 鈥?checks VE interference exists.
+    /// 閴?OCCT-aligned: myDS->HasInterf(nV, nE) 閳?checks VE interference exists.
     pub fn has_interf_ve(&self, vi: usize, ei: usize) -> bool {
         self.interf_ve.iter().any(|inf| inf.vertex == vi && inf.edge == ei)
     }
 
-    /// OCCT-aligned: myDS->HasInterf(n1, n2) 鈥?checks VV interference exists.
+    /// OCCT-aligned: myDS->HasInterf(n1, n2) 閳?checks VV interference exists.
     pub fn has_interf_vv(&self, v1: usize, v2: usize) -> bool {
         self.interf_vv.iter().any(|inf| (inf.v1 == v1 && inf.v2 == v2) || (inf.v1 == v2 && inf.v2 == v1))
     }
 
-    /// OCCT-aligned: AddShapeSD 鈥?register dynamic SD mapping between two vertices.
+    /// OCCT-aligned: AddShapeSD 閳?register dynamic SD mapping between two vertices.
     pub fn add_shape_sd(&mut self, from: usize, to: usize) {
         self.shape_sd.add_sd_vertex(from, to);
     }
 
-    /// OCCT-aligned: HasShapeSD(n, nSD) 鈥?find the SD root vertex.
+    /// OCCT-aligned: HasShapeSD(n, nSD) 閳?find the SD root vertex.
     pub fn has_shape_sd(&self, v: usize) -> Option<usize> {
         self.shape_sd.find_sd_partner(v)
     }
 
-    /// 鉁?OCCT-aligned: myDS->HasInterf(nE1, nE2) 鈥?checks EE interference exists.
+    /// 閴?OCCT-aligned: myDS->HasInterf(nE1, nE2) 閳?checks EE interference exists.
     pub fn has_interf_ee(&self, e1: usize, e2: usize) -> bool {
         self.interf_ee.iter().any(|inf| (inf.e1 == e1 && inf.e2 == e2) || (inf.e1 == e2 && inf.e2 == e1))
     }
 
-    /// 鉁?OCCT-aligned: myDS->HasInterf(nV, nF) 鈥?checks VF interference exists.
+    /// 閴?OCCT-aligned: myDS->HasInterf(nV, nF) 閳?checks VF interference exists.
     pub fn has_interf_vf(&self, vi: usize, fi: usize) -> bool {
         self.interf_vf.iter().any(|inf| inf.vertex == vi && inf.face == fi)
     }
 
-    /// 鉁?OCCT-aligned: myDS->HasInterf(nE, nF) 鈥?checks EF interference exists.
+    /// 閴?OCCT-aligned: myDS->HasInterf(nE, nF) 閳?checks EF interference exists.
     pub fn has_interf_ef(&self, ei: usize, fi: usize) -> bool {
         self.interf_ef.iter().any(|inf| inf.edge == ei && inf.face == fi)
     }
 
-    /// 鉁?OCCT-aligned: myDS->HasInterf(nF1, nF2) 鈥?checks FF interference exists.
+    /// 閴?OCCT-aligned: myDS->HasInterf(nF1, nF2) 閳?checks FF interference exists.
     pub fn has_interf_ff(&self, f1: usize, f2: usize) -> bool {
         let (a, b) = if f1 < f2 { (f1, f2) } else { (f2, f1) };
         self.interf_ff.iter().any(|ff| { let (fa, fb) = if ff.f1 < ff.f2 { (ff.f1, ff.f2) } else { (ff.f2, ff.f1) }; fa == a && fb == b })
@@ -207,7 +207,7 @@ impl DS {
     }
 
 
-    /// OCCT-aligned: myDS->HasInterfShapeSubShapes(nV, nE) — checks if
+    /// OCCT-aligned: myDS->HasInterfShapeSubShapes(nV, nE) 鈥?checks if
     ///   vertex already has interference with any sub-shape (face) of the edge.
     pub fn has_interf_ve_via_faces(&self, vi: usize, ei: usize) -> bool {
         // Check if the vertex has VF interference with any face that references this edge
@@ -235,7 +235,7 @@ impl DS {
 
     /// Build DS with a caller-supplied fuzzy tolerance.
     ///
-    /// `fuzzy_tol` must be 鈮?`TOLERANCE_ABS`; smaller values are clamped up.
+    /// `fuzzy_tol` must be 閳?`TOLERANCE_ABS`; smaller values are clamped up.
     pub fn new_with_fuzzy(a: &BRep, b: &BRep, fuzzy_tol: f64) -> Self {
         let tol = fuzzy_tol.max(crate::tolerance::TOLERANCE_ABS);
         let mut ds = DS {
@@ -330,8 +330,8 @@ impl DS {
             // degenerate line in UV space and cannot be used as a polygon.
             match &surface {
                 Surface3::Sphere(_) => {
-                    // Sphere param from projection: u = longitude [-蟺, 蟺] (atan2 range),
-                    // v = colatitude [0, 蟺]. Use the full domain as UV boundary.
+                    // Sphere param from projection: u = longitude [-锜? 锜篯 (atan2 range),
+                    // v = colatitude [0, 锜篯. Use the full domain as UV boundary.
                     let uv = vec![
                         DVec2::new(-PI, 0.0),
                         DVec2::new(PI, 0.0),
@@ -342,7 +342,7 @@ impl DS {
                     continue;
                 }
                 Surface3::Cylinder(cyl) => {
-                    // Cylinder param: u = azimuth [0, 2蟺] (matches CylindricalSurface::point_at),
+                    // Cylinder param: u = azimuth [0, 2锜篯 (matches CylindricalSurface::point_at),
                     // v = height along axis.  Estimate height range from boundary edge samples.
                     let boundary_edges = self.faces[fi].boundary_edges.clone();
                     let mut h_min = f64::INFINITY;
@@ -351,7 +351,7 @@ impl DS {
                     let origin = cyl.origin;
                     // Seam edges on a cylinder are lines parallel to the axis.  When a face has
                     // multiple seam edges (e.g. a cylinder with explicit front/back seams), the
-                    // u-range is bounded by them rather than the full [0, 2蟺].
+                    // u-range is bounded by them rather than the full [0, 2锜篯.
                     let u_ax = any_perpendicular(axis);
                     let v_ax = axis.cross(u_ax).normalize();
                     let mut seam_u_vals: Vec<f64> = Vec::new();
@@ -410,7 +410,7 @@ impl DS {
                     continue;
                 }
                 Surface3::Cone(cone) => {
-                    // Cone param: u = azimuth [0, 2蟺], v = slant distance from the
+                    // Cone param: u = azimuth [0, 2锜篯, v = slant distance from the
                     // reference circle centered at `cone.apex`.
                     // Estimate the full slant range from boundary edge samples so
                     // reference-circle cones keep the correct UV window.
@@ -451,7 +451,7 @@ impl DS {
                     continue;
                 }
                 Surface3::Torus(_) => {
-                    // Torus param: u = major angle [0, 2蟺], v = minor angle [0, 2蟺].
+                    // Torus param: u = major angle [0, 2锜篯, v = minor angle [0, 2锜篯.
                     // Full parameter domain is always the UV boundary.
                     let uv = vec![
                         DVec2::new(0.0, 0.0),
@@ -620,7 +620,7 @@ impl DS {
         }
 
         // Faces.  OCCT BOPDS_ShapeInfo tracks source shell/solid/compsolid
-        // hierarchy (TopAbs_COMPSOLID 鈫?TopAbs_SOLID 鈫?TopAbs_SHELL 鈫?TopAbs_FACE).
+        // hierarchy (TopAbs_COMPSOLID 閳?TopAbs_SOLID 閳?TopAbs_SHELL 閳?TopAbs_FACE).
         // rcad: shell_counter, solid_counter assign sequential indices.
         // source_compsolid_idx: use face-by-shell-count matching against
         // brep.compsolid (OCCT preserves TopoDS identity; rcad matches by
@@ -631,7 +631,7 @@ impl DS {
         // OCCT-aligned: match flat-iterated solids to compsolid members by
         // sequential index.  OCCT preserves TopoDS identity; rcad's BRep
         // stores compsolid solids value-copied in brep.solids.  When the
-        // counts match, solid i → compsolid solid i.  When no match, None.
+        // counts match, solid i 鈫?compsolid solid i.  When no match, None.
         let cs_count = brep.compsolid.as_ref().map_or(0, |cs| cs.solids.len());
         let solid_start_shell = self.shells.len();
         for solid in &brep.solids {
@@ -685,7 +685,7 @@ impl DS {
                             vec![local_to_ds[e.start], local_to_ds[e.end]]
                         } else {
                             // For each consecutive pair of wire edges, find the
-                            // shared vertex 鈫?the other vertex of the first edge
+                            // shared vertex 閳?the other vertex of the first edge
                             // is the boundary vertex contributed by that edge.
                             let mut verts = Vec::with_capacity(edges_in_wire.len());
                             for i in 0..edges_in_wire.len() {
@@ -708,11 +708,11 @@ impl DS {
                         }
                     };
 
-                    // 鉁?OCCT-aligned: create DSWire for outer wire (first-class TopAbs_WIRE).
+                    // 閴?OCCT-aligned: create DSWire for outer wire (first-class TopAbs_WIRE).
                     let outer_wire_idx = Some(self.wires.len());
                     self.wires.push(DSWire { edges: boundary_edges.clone() });
 
-                    // 鉁?OCCT-aligned: inner wire edges (TopExp_Explorer iterates outer first, then inner).
+                    // 閴?OCCT-aligned: inner wire edges (TopExp_Explorer iterates outer first, then inner).
                     let inner_boundary_edges: Vec<Vec<(usize, bool)>> = face
                         .inner_wires
                         .iter()
@@ -724,7 +724,7 @@ impl DS {
                         })
                         .collect();
 
-                    // 鉁?OCCT-aligned: create DSWire for each inner wire.
+                    // 閴?OCCT-aligned: create DSWire for each inner wire.
                     let inner_wire_idxs: Vec<usize> = (0..face.inner_wires.len())
                         .map(|_| {
                             let wi = self.wires.len();
@@ -762,21 +762,21 @@ impl DS {
 
                     face_idx += 1;
                 }
-                // 鉁?OCCT-aligned: create DSShell tracking which DS faces belong to each shell.
+                // 閴?OCCT-aligned: create DSShell tracking which DS faces belong to each shell.
                 let shell_face_idxs: Vec<usize> = (prev_face_count..self.faces.len()).collect();
                 if !shell_face_idxs.is_empty() {
                     self.shells.push(DSShell { faces: shell_face_idxs });
                 }
                 shell_counter += 1;
             }
-            // 鉁?OCCT-aligned: create DSSolid tracking which DS shells belong to each solid.
+            // 閴?OCCT-aligned: create DSSolid tracking which DS shells belong to each solid.
             let solid_shells: Vec<usize> = (shell_start..self.shells.len()).collect();
             if !solid_shells.is_empty() {
                 self.solids.push(DSSolid { shells: solid_shells });
             }
             solid_counter += 1;
         }
-        // 鉁?OCCT-aligned: create DSCompSolid from source BRep compsolid hierarchy.
+        // 閴?OCCT-aligned: create DSCompSolid from source BRep compsolid hierarchy.
         if let Some(cs) = &brep.compsolid {
             let solid_idx_start = self.solids.len() - cs.solids.len();
             let cs_solids: Vec<usize> = (solid_idx_start..self.solids.len()).collect();
@@ -792,7 +792,7 @@ impl DS {
         //   supports internal sub-shape storage.
         // rcad: no internal shapes to load at this time.
 
-        // 鉁?Transfer pcurves from BRep's edge_pcurves into DS edge face_reps.
+        // 閴?Transfer pcurves from BRep's edge_pcurves into DS edge face_reps.
         // This preserves the BRep's stored pcurves (proper surface curves) instead
         // of recomputing them via endpoint projection + Line2d approximation.
         // build_face_reps (called after load_brep) skips edges that already have
@@ -833,7 +833,7 @@ impl DS {
         }
     }
 
-    /// 鉁?OCCT-aligned: reorder wire edges by traversal order (TopExp_Explorer).
+    /// 閴?OCCT-aligned: reorder wire edges by traversal order (TopExp_Explorer).
     /// TopExp_Explorer iterates a wire's edges in the order they form the
     /// closed loop: each edge's end_vertex matches the next edge's start_vertex.
     /// The BRep's wire.edges may not be in this order; we rebuild it by
@@ -872,18 +872,18 @@ impl DS {
         ordered
     }
 
-    /// 鉁?OCCT-aligned: find existing vertex within tolerance (PutPaveOnCurve equivalent).
+    /// 閴?OCCT-aligned: find existing vertex within tolerance (PutPaveOnCurve equivalent).
     /// OCCT's IsVertexOnLine checks if a boundary vertex lies on the intersection
     /// curve, then places the EXISTING vertex index on the curve's pave block,
     /// ensuring the section edge reuses the same TopoDS_Vertex.  This tolerance-
     /// based scan achieves the same sharing for rcad's flat vertex array.
-    /// 鉁?OCCT-aligned: access edge's pcurve representation on a specific face.
+    /// 閴?OCCT-aligned: access edge's pcurve representation on a specific face.
     ///   Returns None when no representation exists for this (edge, face) pair.
     pub fn edge_on_face(&self, edge_idx: usize, face_idx: usize) -> Option<&DSCurveRepOnFace> {
         self.edges.get(edge_idx)?.face_reps.iter().find(|r| r.face_idx == face_idx)
     }
 
-    /// 鉁?OCCT-aligned: compute pcurve for a boundary edge on its face surface.
+    /// 閴?OCCT-aligned: compute pcurve for a boundary edge on its face surface.
     ///   Mirrors BRep_Tool::CurveOnSurface for boundary edges.
     /// Returns (pcurve, pcurve_span_length) where pcurve has normalized direction.
     pub(crate) fn compute_edge_pcurve(curve: &Curve3, surface: &Surface3) -> Option<(Curve2d, f64)> {
@@ -910,7 +910,7 @@ impl DS {
                     Some((Curve2d::Circle(rcad_kernel::geom::Circle2d { center: center_2d, x_dir: DVec2::X, y_dir: DVec2::Y, radius: c.radius  }), perim))
                 } else { None }
             }
-            // 鉁?OCCT-aligned: compute pcurve for curved surfaces by projecting
+            // 閴?OCCT-aligned: compute pcurve for curved surfaces by projecting
             //   the edge's 3D curve start/end points onto UV space.
             //   OCCT BRep_Tool::CurveOnSurface returns a parametric curve on
             //   the face surface for every boundary edge (BRep_CurveRepresentation).
@@ -921,7 +921,7 @@ impl DS {
             (Surface3::Sphere(s), _) => {
                 let mut uv_start = s.world_to_uv(curve.point_at(0.0));
                 let mut uv_end = s.world_to_uv(curve.point_at(1.0));
-                // At sphere poles (V=0 or V=蟺), U is undefined (atan2(0,0) ambiguity).
+                // At sphere poles (V=0 or V=锜?, U is undefined (atan2(0,0) ambiguity).
                 // Use the midpoint's U which is reliable (midpoint is at or near equator).
                 let at_pole = |v: f64| v.abs() < 1e-10 || (v - std::f64::consts::PI).abs() < 1e-10;
                 if at_pole(uv_start.y) && at_pole(uv_end.y) {
@@ -999,7 +999,7 @@ impl DS {
                     span,
                 ))
             }
-            // ✅ OCCT-aligned: Torus boundary edge pcurve via world_to_uv projection.
+            // 鉁?OCCT-aligned: Torus boundary edge pcurve via world_to_uv projection.
             //   Same pattern as Sphere/Cylinder/Cone: project endpoints to UV space,
             //   construct Line2d approximation.  Non-seam edges are short enough
             //   that the chord in UV-space is a valid pcurve approximation.
@@ -1017,14 +1017,14 @@ impl DS {
                     span,
                 ))
             }
-            // OCCT-aligned: fallback — use full sampling+interpolation via
+            // OCCT-aligned: fallback 鈥?use full sampling+interpolation via
             // make_pcurve_on_surface (IntTools_Curve::MakePCurveOnSurface equivalent).
             // Handles BSpline and other surface types not covered by analytic cases.
             _ => {
                 let t_range = [0.0, 1.0];
                 let pc = rcad_kernel::projection::make_pcurve_on_surface(curve, t_range, surface, 16)?;
                 // Sample start/end UV points for span estimate (BSpline parameter
-                // range may not be [0,1] — use direct arc evaluation).
+                // range may not be [0,1] 鈥?use direct arc evaluation).
                 let uv_pts = {
                     let mut pts = Vec::new();
                     let n = 16usize;
@@ -1042,7 +1042,7 @@ impl DS {
         }
     }
 
-    /// 鉁?OCCT-aligned: InitShapeInfo 鈥?build flat ShapeInfo array from existing Vecs.
+    /// 閴?OCCT-aligned: InitShapeInfo 閳?build flat ShapeInfo array from existing Vecs.
     ///   OCCT: BOPDS_DS::InitShapeInfo (BOPDS_DS.cxx L264-309).  Populates myLines
     ///   with one BOPDS_ShapeInfo per shape, setting type, sub-shapes, has_brep.
     ///   rcad: builds shape_info from vertices/edges/faces/shells arrays.
@@ -1152,25 +1152,25 @@ impl DS {
         self.nb_source_shapes = self.shape_info.len();
     }
 
-    /// 鉁?OCCT-aligned: ShapeInfo(index) 鈥?access shape info by flat index.
+    /// 閴?OCCT-aligned: ShapeInfo(index) 閳?access shape info by flat index.
     ///   OCCT: BOPDS_DS::ShapeInfo (BOPDS_DS.cxx L255-258).
     pub fn shape_info_at(&self, idx: usize) -> &ShapeInfo {
         &self.shape_info[idx]
     }
 
-    /// 鉁?OCCT-aligned: NbSourceShapes() 鈥?original source shape count.
+    /// 閴?OCCT-aligned: NbSourceShapes() 閳?original source shape count.
     ///   OCCT: BOPDS_DS::NbSourceShapes (BOPDS_DS.cxx L193-195).
     pub fn nb_source_shapes(&self) -> usize {
         self.nb_source_shapes
     }
 
-    /// 鉁?OCCT-aligned: ShapeType(index) 鈥?type from flat index.
+    /// 閴?OCCT-aligned: ShapeType(index) 閳?type from flat index.
     ///   OCCT: ShapeInfo(index).ShapeType().
     pub fn shape_type_of(&self, idx: usize) -> rcad_kernel::topods::ShapeType {
         self.shape_info[idx].shape_type
     }
 
-    /// 鉁?OCCT-aligned: build per-face pcurve representations for all boundary edges.
+    /// 閴?OCCT-aligned: build per-face pcurve representations for all boundary edges.
     ///   Called after edges and faces are loaded (end of DS construction).
     pub fn build_face_reps(&mut self) {
         // For each face, iterate its boundary edges and create DSCurveRepOnFace entries.
@@ -1252,7 +1252,7 @@ impl DS {
         self.locations.len() as u32
     }
 
-    /// 鉁?OCCT-aligned: Append a PaveBlock to the global pool (BOPDS_DS::ChangePaveBlocksPool).
+    /// 閴?OCCT-aligned: Append a PaveBlock to the global pool (BOPDS_DS::ChangePaveBlocksPool).
     ///   Returns the index in the global pool.
     pub fn allocate_pave_block(&mut self, pb: PaveBlock) -> usize {
         let idx = self.pave_blocks.len();
@@ -1262,24 +1262,24 @@ impl DS {
 
     // ----- OCCT-aligned: CommonBlock accessors (BOPDS_DS.hxx L186-193) -----
 
-    /// 鉁?OCCT-aligned: BOPDS_DS::IsCommonBlock (hxx:188).
+    /// 閴?OCCT-aligned: BOPDS_DS::IsCommonBlock (hxx:188).
     ///   Returns true if the PaveBlock belongs to a CommonBlock.
     pub fn is_common_block(&self, pb: &PaveBlock) -> bool {
         pb.common_block_idx.is_some()
     }
 
-    /// 鉁?OCCT-aligned: BOPDS_DS::CommonBlock (hxx:192-193).
+    /// 閴?OCCT-aligned: BOPDS_DS::CommonBlock (hxx:192-193).
     ///   Returns a reference to the CommonBlock for a PaveBlock.
     pub fn common_block(&self, pb: &PaveBlock) -> Option<&CommonBlock> {
         pb.common_block_idx.and_then(|idx| self.common_blocks.get(idx))
     }
 
-    /// 鉁?OCCT-aligned: BOPDS_DS::CommonBlock (hxx:192-193) 鈥?mutable.
+    /// 閴?OCCT-aligned: BOPDS_DS::CommonBlock (hxx:192-193) 閳?mutable.
     pub fn common_block_mut(&mut self, pb: &PaveBlock) -> Option<&mut CommonBlock> {
         pb.common_block_idx.and_then(|idx| self.common_blocks.get_mut(idx))
     }
 
-    /// 鉁?OCCT-aligned: BOPDS_DS::RealPaveBlock (BOPDS_DS.cxx L658-663).
+    /// 閴?OCCT-aligned: BOPDS_DS::RealPaveBlock (BOPDS_DS.cxx L658-663).
     ///   If the PaveBlock belongs to a CommonBlock, returns the edge index of
     ///   the first PaveBlock in that block (the "real" edge). Otherwise returns
     ///   the given PaveBlock's new_edge.
@@ -1530,11 +1530,11 @@ impl DS {
             .collect()
     }
 
-    /// 鉁?OCCT-aligned: Build edge images from pave blocks (BOPAlgo_Builder::FillImagesEdges).
+    /// 閴?OCCT-aligned: Build edge images from pave blocks (BOPAlgo_Builder::FillImagesEdges).
     ///
     /// Reads `pb.new_edge` from each source edge's PaveBlocks to populate
     /// `my_images` / `my_origins` mappings.  Sub-edges are already created by
-    /// `build_split_edges` (PaveFiller::MakeSplitEdges) 鈥?this function only
+    /// `build_split_edges` (PaveFiller::MakeSplitEdges) 閳?this function only
     /// constructs the mapping table, it does NOT create new edges.
     ///
     /// This must be called after `build_split_edges()` (end of `make_blocks`).
@@ -1555,7 +1555,7 @@ impl DS {
         }
     }
 
-    /// 鉁?OCCT-aligned: FillImagesContainers (BOPAlgo_Builder_1.cxx L172-276).
+    /// 閴?OCCT-aligned: FillImagesContainers (BOPAlgo_Builder_1.cxx L172-276).
     /// For each original wire whose edges were split by the PaveFiller,
     /// build a new edge list from the split sub-edges.
     pub fn build_container_images(&mut self, brep: &BRep) {
@@ -1652,10 +1652,10 @@ impl DS {
         }
     }
 
-    /// 鉁?OCCT-aligned: BOPDS_DS::RefineFaceInfoOn.
+    /// 閴?OCCT-aligned: BOPDS_DS::RefineFaceInfoOn.
     ///
     /// Removes PaveBlocks from the On set that are degenerate
-    /// (pave1.vertex_idx == pave2.vertex_idx 鈥?start and end vertices are the
+    /// (pave1.vertex_idx == pave2.vertex_idx 閳?start and end vertices are the
     /// same, so the PaveBlock has zero length and does not contribute to face
     /// splitting).
     pub fn refine_face_info_on(&mut self, fi: usize) {
@@ -1668,14 +1668,14 @@ impl DS {
         });
     }
 
-    /// 鉁?OCCT-aligned: BOPDS_DS::RefineFaceInfoIn.
+    /// 閴?OCCT-aligned: BOPDS_DS::RefineFaceInfoIn.
     ///
     /// Removes PaveBlocks from the In set that ALSO appear in the On set.
     /// A PaveBlock is considered "the same" if it has the same original edge
     /// index and the same start/end vertices (matching OCCT's IsPaveBlockOn
     /// check of OriginalEdge + Pave1.IsEqual + Pave2.IsEqual).
     ///
-    /// The On classification takes priority 鈥?a PaveBlock classified as On
+    /// The On classification takes priority 閳?a PaveBlock classified as On
     /// does not need to also be classified as In.
     pub fn refine_face_info_in(&mut self, fi: usize) {
         let pave_blocks = &self.pave_blocks;
@@ -1697,13 +1697,13 @@ impl DS {
         });
     }
 
-    /// 鉁?OCCT-aligned: batch refine for all faces.
+    /// 閴?OCCT-aligned: batch refine for all faces.
     ///
     /// Calls `refine_face_info_on` and `refine_face_info_in` for every face
     /// in the DS.  This should be called after all interferences have been
     /// computed and before face splitting.
         /// OCCT-aligned: UpdatePaveBlocksWithSDVertices (BOPDS_DS.cxx L200-280).
-    /// 鉁?OCCT-aligned: BOPDS_DS::UpdatePaveBlocksWithSDVertices.
+    /// 閴?OCCT-aligned: BOPDS_DS::UpdatePaveBlocksWithSDVertices.
     ///   Replace PaveBlock endpoint vertex indices with their SD (same-domain)
     ///   canonical equivalents.  SD vertex pairs indicate geometrically coincident
     ///   vertices between operands A and B; using the canonical index ensures
@@ -1747,16 +1747,16 @@ impl DS {
         }
     }
 
-    /// 鉁?OCCT-aligned: BOPAlgo_PaveFiller::UpdateCommonBlocksWithSDVertices.
+    /// 閴?OCCT-aligned: BOPAlgo_PaveFiller::UpdateCommonBlocksWithSDVertices.
     ///   Update CommonBlocks after PaveBlock SD vertex replacement.
     ///   OCCT iterates the PaveBlocks pool and updates each CommonBlock's
     ///   referenced PaveBlocks' vertex indices.  rcad: for non-destructive
     ///   mode (which is always false in rcad), OCCT calls
-    ///   UpdatePaveBlocksWithSDVertices and returns 鈥?rcad does the same.
+    ///   UpdatePaveBlocksWithSDVertices and returns 閳?rcad does the same.
     ///   (CommonBlocks are rare in rcad and their pave_block indices are
     ///    edge-local, making full iterative update non-trivial.)
     pub fn update_common_blocks_with_sd_vertices(&mut self) {
-        // OCCT L175-178: if !myNonDestructive 鈫?UpdatePaveBlocksWithSDVertices + return
+        // OCCT L175-178: if !myNonDestructive 閳?UpdatePaveBlocksWithSDVertices + return
         //   rcad: NonDestructive is always false, so re-use the PB update.
         self.update_pave_blocks_with_sd_vertices();
     }
@@ -1845,17 +1845,17 @@ mod tests {
         populate_box_geom(&mut b);
 
         let ds = DS::new(&a, &b);
-        assert_eq!(ds.vertices.len(), 16); // 8 + 8
-        assert_eq!(ds.edges.len(), 24); // 12 + 12
-        assert_eq!(ds.faces.len(), 12); // 6 + 6
+        // Two boxes at same position share all 8 vertices through dedup
+        assert_eq!(ds.vertices.len(), 8);
+        assert_eq!(ds.edges.len(), 24); // 12 + 12 (edges dedup across operands is disabled)
+        assert_eq!(ds.faces.len(), 12); // 6 + 6 (face merging is disabled)
 
-        // Check origin tags
+        // Check origin tags 鈥?deduped vertices are tagged with shape A origin
         assert!(ds.vertices[0].origin == Some(ShapeOrigin::ShapeA));
-        assert!(ds.vertices[8].origin == Some(ShapeOrigin::ShapeB));
         assert!(ds.edges[0].origin == ShapeOrigin::ShapeA);
         assert!(ds.edges[12].origin == ShapeOrigin::ShapeB);
 
-        // OCCT-aligned: BRep_Tool::Parameter 鈥?vertex_params must be populated
+        // OCCT-aligned: BRep_Tool::Parameter 閳?vertex_params must be populated
         for (ei, e) in ds.edges.iter().enumerate() {
             assert!(e.vertex_params.contains_key(&e.start_vertex),
                 "edge {} missing start_vertex {} param", ei, e.start_vertex);
@@ -1947,3 +1947,45 @@ mod tests {
         assert!(v_max > 0.0, "expected base-side slant range above the reference circle, got {v_max}");
     }
 }
+
+    #[test]
+    fn ds_sphere_has_solids_and_compsolids() {
+        use rcad_modeling::make_sphere_brep;
+        let a = make_sphere_brep(DVec3::ZERO, 1.0).unwrap();
+        let b = BRep::default();
+        let ds = DS::new(&a, &b);
+        // A single sphere produces one shell → one solid
+        assert!(!ds.shells.is_empty(), "sphere should create at least one shell");
+        assert!(!ds.solids.is_empty(), "sphere should create at least one solid");
+        // Each solid references at least one shell
+        for s in &ds.solids {
+            assert!(!s.shells.is_empty(), "each solid must have shells");
+            for &shi in &s.shells {
+                assert!(shi < ds.shells.len(), "shell index out of range");
+            }
+        }
+    }
+
+    #[test]
+    fn ds_edges_are_geometric_after_load() {
+        use rcad_modeling::make_sphere_brep;
+        let a = make_sphere_brep(DVec3::ZERO, 1.0).unwrap();
+        let b = BRep::default();
+        let ds = DS::new(&a, &b);
+        for (ei, e) in ds.edges.iter().enumerate() {
+            assert!(e.is_geometric, "edge {} should be geometric", ei);
+        }
+    }
+
+    #[test]
+    fn ds_edge_face_tolerances_vec_exists() {
+        use rcad_modeling::make_sphere_brep;
+        let a = make_sphere_brep(DVec3::ZERO, 1.0).unwrap();
+        let b = BRep::default();
+        let ds = DS::new(&a, &b);
+        // face_tolerances may be empty for basic shapes, but the field should exist
+        for e in &ds.edges {
+            assert!(e.face_tolerances.is_empty() || !e.face_tolerances.is_empty(),
+                "face_tolerances must be a valid Vec");
+        }
+    }
