@@ -365,7 +365,7 @@ pub fn boolean_op_with_options(
     let (mut out, mut report, history_opt) = if options.include_history {
         let (result, history) = if options.use_bvh {
             if options.fuzzy_tol <= 0.0 && !options.use_glue {
-                boolean_op_with_history(op, a, b)?
+                let (r, h) = boolean_op_with_history(op, a, b)?; (r.to_topods(), h)
             } else {
                 let mut ds = if options.fuzzy_tol > 0.0 {
                     bopds::ds::DS::new_with_fuzzy(a, b, options.fuzzy_tol)
@@ -392,7 +392,7 @@ pub fn boolean_op_with_options(
                 let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map)
                     .with_glue(options.use_glue, options.glue_tolerance);
                 let (t, h) = builder.build_with_history()?;
-                (rcad_kernel::BRep::from_topods(&t), h)
+                (t, h)
             }
         } else {
             let mut ds = if options.fuzzy_tol > 0.0 {
@@ -413,7 +413,7 @@ pub fn boolean_op_with_options(
             let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map)
                 .with_glue(options.use_glue, options.glue_tolerance);
                 let (t, h) = builder.build_with_history()?;
-                (rcad_kernel::BRep::from_topods(&t), h)
+                (t, h)
             };
             (
                 result,
@@ -448,9 +448,9 @@ pub fn boolean_op_with_options(
                 let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map)
                     .with_glue(options.use_glue, options.glue_tolerance);
                 let r = builder.build()?;
-                boolean_postprocess_pave_result(op, a, b, r)?
+                boolean_postprocess_pave_result(op, a, b, r)?.to_topods()
             } else {
-                boolean_op(op, a, b).map(|t| rcad_kernel::BRep::from_topods(&t))?
+                boolean_op(op, a, b)?
             }
         } else {
             let mut ds = if options.fuzzy_tol > 0.0 {
@@ -470,7 +470,7 @@ pub fn boolean_op_with_options(
             let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map)
                 .with_glue(options.use_glue, options.glue_tolerance);
             let r = builder.build()?;
-            boolean_postprocess_pave_result(op, a, b, r)?
+            boolean_postprocess_pave_result(op, a, b, r)?.to_topods()
         };
         (
             result,
@@ -497,38 +497,40 @@ pub fn boolean_op_with_options(
                 options.make_connected_tolerance_growth;
             healing_options.make_connected_tolerance_cap = options.make_connected_tolerance_cap;
         }
-        let (healed, heal_report) = analyze_and_heal(&out.to_topods(), healing_options);
-        out = rcad_kernel::BRep::from_topods(&healed);
+        let (healed, heal_report) = analyze_and_heal(&out, healing_options);
+        out = healed;
         report.healed = true;
         report.healing_report = Some(heal_report);
     }
 
     if options.run_make_connected {
+        let old_for_mc = rcad_kernel::BRep::from_topods(&out);
         let (connected, connected_report) = run_make_connected_for_boolean_output(
-            &out,
+            &old_for_mc,
             history_opt.as_ref(),
             &options,
             &mut report,
         );
-        out = connected;
+        out = connected.to_topods();
         report.made_connected = true;
         report.make_connected_report = Some(connected_report);
     }
 
     if options.run_simplify {
-        let (simplified, simp_report) = simplify_brep_post_ops(&out.to_topods(), options.simplify);
-        out = rcad_kernel::BRep::from_topods(&simplified);
+        let (simplified, simp_report) = simplify_brep_post_ops(&out, options.simplify);
+        out = simplified;
         report.simplified = true;
         report.simplify_report = Some(simp_report);
     }
 
     if options.run_propagate_geom_tolerances {
         let floor = resolved_boolean_fuzzy_tol_for_ds(options.fuzzy_tol);
-        out = propagate_tolerances(&out, floor, ToleranceFlowDirection::BottomUp);
+        let old_out = rcad_kernel::BRep::from_topods(&out);
+        out = propagate_tolerances(&old_out, floor, ToleranceFlowDirection::BottomUp).to_topods();
         report.propagated_geom_tolerances = true;
     }
 
-    report.output_faces = face_count_of(&out);
+    report.output_faces = face_count_of(&rcad_kernel::BRep::from_topods(&out));
     report.configured_fuzzy_tol = options.fuzzy_tol;
     report.effective_fuzzy_tol = resolved_boolean_fuzzy_tol_for_ds(options.fuzzy_tol);
     report.boolean_history = history_opt.as_ref().cloned();
@@ -544,7 +546,7 @@ pub fn boolean_op_with_options(
         report.persistent_solid_labels = persistent_solid_labels_from_history(&history);
     }
 
-    Ok((out, report))
+    Ok((rcad_kernel::BRep::from_topods(&out), report))
 }
 
 /// Robust boolean operation with automatic fuzzy-tolerance retries.
