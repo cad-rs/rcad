@@ -259,11 +259,27 @@ pub struct DSWire {
     pub edges: Vec<usize>,
 }
 
-/// A shell in the DS pool 閳?first-class entity matching OCCT TopoDS_Shell.
+/// A shell in the DS pool 鈥?first-class entity matching OCCT TopoDS_Shell.
 #[derive(Debug, Clone)]
 pub struct DSShell {
     /// Face indices forming this shell (into DS.faces).
     pub faces: Vec<usize>,
+}
+
+/// A solid in the DS pool — first-class entity matching OCCT TopoDS_Solid.
+/// 鉁?OCCT-aligned: BOPDS_ShapeInfo tracks TopAbs_SOLID hierarchy.
+#[derive(Debug, Clone)]
+pub struct DSSolid {
+    /// Shell indices forming this solid (into DS.shells).
+    pub shells: Vec<usize>,
+}
+
+/// A compsolid in the DS pool — first-class entity matching OCCT TopoDS_CompSolid.
+/// 鉁?OCCT-aligned: BOPDS_ShapeInfo tracks TopAbs_COMPSOLID hierarchy.
+#[derive(Debug, Clone)]
+pub struct DSCompSolid {
+    /// Solid indices forming this compsolid (into DS.solids).
+    pub solids: Vec<usize>,
 }
 
 /// A face in the DS pool with surface reference.
@@ -540,6 +556,10 @@ pub struct DS {
     pub edges: Vec<DSEdge>,
     pub wires: Vec<DSWire>,
     pub shells: Vec<DSShell>,
+    /// 鉁?OCCT-aligned: solid containers (TopAbs_SOLID in ShapeInfo hierarchy).
+    pub solids: Vec<DSSolid>,
+    /// 鉁?OCCT-aligned: compsolid containers (TopAbs_COMPSOLID in ShapeInfo hierarchy).
+    pub comp_solids: Vec<DSCompSolid>,
     pub faces: Vec<DSFace>,
     /// OCCT-aligned: type-specific interference vecs (BOPDS_DS myInterfVV/VE/VF/EE/EF/FF).
     /// Replaces the generic Vec<Interference> enum 鈥?each variant has its own typed Vec.

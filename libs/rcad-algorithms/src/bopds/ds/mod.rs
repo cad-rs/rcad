@@ -243,6 +243,8 @@ impl DS {
             edges: Vec::new(),
             wires: Vec::new(),
             shells: Vec::new(),
+            solids: Vec::new(),
+            comp_solids: Vec::new(),
             faces: Vec::new(),
             // internal V/E tracking: is_internal flag on DSVertex/DSEdge
             //   used instead of separate arrays (removed in favor of flags).
@@ -629,14 +631,16 @@ impl DS {
         // OCCT-aligned: match flat-iterated solids to compsolid members by
         // sequential index.  OCCT preserves TopoDS identity; rcad's BRep
         // stores compsolid solids value-copied in brep.solids.  When the
-        // counts match, solid i 鈫?compsolid solid i.  When no match, None.
+        // counts match, solid i → compsolid solid i.  When no match, None.
         let cs_count = brep.compsolid.as_ref().map_or(0, |cs| cs.solids.len());
+        let solid_start_shell = self.shells.len();
         for solid in &brep.solids {
             let compsolid_idx = if cs_count > 0 && solid_counter < cs_count {
                 Some(solid_counter)
             } else {
                 None
             };
+            let shell_start = self.shells.len();
             for shell in &solid.shells {
                 let prev_face_count = self.faces.len(); // track DSShell face range
                 for face in &shell.faces {
@@ -765,7 +769,20 @@ impl DS {
                 }
                 shell_counter += 1;
             }
+            // 鉁?OCCT-aligned: create DSSolid tracking which DS shells belong to each solid.
+            let solid_shells: Vec<usize> = (shell_start..self.shells.len()).collect();
+            if !solid_shells.is_empty() {
+                self.solids.push(DSSolid { shells: solid_shells });
+            }
             solid_counter += 1;
+        }
+        // 鉁?OCCT-aligned: create DSCompSolid from source BRep compsolid hierarchy.
+        if let Some(cs) = &brep.compsolid {
+            let solid_idx_start = self.solids.len() - cs.solids.len();
+            let cs_solids: Vec<usize> = (solid_idx_start..self.solids.len()).collect();
+            if !cs_solids.is_empty() {
+                self.comp_solids.push(DSCompSolid { solids: cs_solids });
+            }
         }
 
         // OCCT L622-887 (FillInternalShapes Phase 2): internal V/E from source solids.
@@ -1107,13 +1124,29 @@ impl DS {
             self.shape_info.push(si);
         }
         // SOLID entries -- sub-shapes = shell indices (flat)
-        for shi in 0..nsh {
+        let nso = self.solids.len();
+        for soi in 0..nso {
             let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Solid);
             si.has_brep = false;
             si.rank = 0;
-            si.source_idx = shi;
+            si.source_idx = soi;
             si.is_new = false;
-            si.sub_shapes.push(nv + ne + nf + shi);
+            for &shi in &self.solids[soi].shells {
+                si.sub_shapes.push(nv + ne + nf + shi);
+            }
+            self.shape_info.push(si);
+        }
+        // COMPSOLID entries -- sub-shapes = solid indices (flat)
+        let ncs = self.comp_solids.len();
+        for csi in 0..ncs {
+            let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::CompSolid);
+            si.has_brep = false;
+            si.rank = 0;
+            si.source_idx = csi;
+            si.is_new = false;
+            for &soi in &self.comp_solids[csi].solids {
+                si.sub_shapes.push(nv + ne + nf + nsh + soi);
+            }
             self.shape_info.push(si);
         }
         self.nb_source_shapes = self.shape_info.len();

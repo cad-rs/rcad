@@ -686,94 +686,72 @@ impl<'a> BooleanBuilder<'a> {
     /// rcad: iterate DS faces → find those from CompSolids → for each unique
     ///   source compsolid, check if any sub-solid has split images.  If modified,
     ///   group result solids by their source compsolid → result.tmp_compsolid_groups.
+    /// ✅ OCCT-aligned: FillImagesContainer(COMPSOLID) (Builder_1.cxx L221-276).
+    ///   L224-233: iterate sub-shapes (SOLIDs), check if any has been modified.
+    ///   L235-240: if none modified → early return.
+    ///   L242-275: build new container from sub-shape images.
     fn fill_images_containers_compsolid(&self, result: &mut ResultBuilder) {
-        // OCCT L224-233 + L221: find all source CompSolids and check modification.
-        //   rcad: collect unique compsolid indices from DS faces.
-        let mut compsolid_modified: std::collections::BTreeMap<usize, bool> = std::collections::BTreeMap::new();
-        for df in &self.ds.faces {
-            if let Some(csi) = df.source_compsolid_idx {
-                if !compsolid_modified.contains_key(&csi) {
-                    compsolid_modified.insert(csi, false);
-                }
-            }
-        }
-        if compsolid_modified.is_empty() {
+        if self.ds.comp_solids.is_empty() {
             return; // OCCT L235-240: no container of this type
         }
 
-        // OCCT L224-233: check if any sub-shape (SOLID) has been modified.
-        //   rcad: a sub-solid is modified if its faces produce >1 result solid.
-        //   Group result faces by (compsolid_idx, source_solid_idx) → count distinct solids.
-        let mut cs_solid_groups: std::collections::BTreeMap<(usize, usize), Vec<usize>> = std::collections::BTreeMap::new();
-        for (si, solid_shells) in result.tmp_solids.iter().enumerate() {
-            for &shi in solid_shells {
-                if shi >= result.tmp_shells.len() { continue; }
-                for &rfi in &result.tmp_shells[shi] {
-                    if rfi >= result.face_origins.len() { continue; }
-                    let ds_fi = match &result.face_origins[rfi] {
-                        FaceOrigin::FromA(sfi) => self.ds.faces.iter().position(|f|
-                            f.origin == ShapeOrigin::ShapeA && f.source_face_idx == *sfi),
-                        FaceOrigin::FromB(sfi) => self.ds.faces.iter().position(|f|
-                            f.origin == ShapeOrigin::ShapeB && f.source_face_idx == *sfi),
-                        _ => None,
-                    };
-                    if let Some(dfi) = ds_fi {
-                        if let Some(csi) = self.ds.faces[dfi].source_compsolid_idx {
-                            if let Some(ssi) = self.ds.faces[dfi].source_solid_idx {
-                                cs_solid_groups.entry((csi, ssi)).or_default().push(si);
+        // OCCT L224-233: iterate sub-shapes (SOLIDs), check myImages.IsBound.
+        //   rcad: a sub-solid is modified if it has >1 result solid.
+        let mut cs_groups: std::collections::BTreeMap<usize, Vec<usize>> = std::collections::BTreeMap::new();
+        for (csi, cs) in self.ds.comp_solids.iter().enumerate() {
+            let mut modified = false;
+            let mut solid_idxs: Vec<usize> = Vec::new();
+
+            // OCCT L224-233: for each sub-shape (SOLID), check if modified.
+            for &soi in &cs.solids {
+                if soi >= self.ds.solids.len() { continue; }
+                // Collect result solid indices for this DS solid
+                let mut result_solids: Vec<usize> = Vec::new();
+                for &shi in &self.ds.solids[soi].shells {
+                    if shi >= self.ds.shells.len() { continue; }
+                    for &dsfi in &self.ds.shells[shi].faces {
+                        if dsfi >= self.ds.faces.len() { continue; }
+                        // Find result faces for this DS face
+                        let origin = self.ds.faces[dsfi].origin;
+                        let sfi = self.ds.faces[dsfi].source_face_idx;
+                        for (rfi, fo) in result.face_origins.iter().enumerate() {
+                            let matches = match (fo, origin) {
+                                (FaceOrigin::FromA(s), ShapeOrigin::ShapeA) => *s == sfi,
+                                (FaceOrigin::FromB(s), ShapeOrigin::ShapeB) => *s == sfi,
+                                _ => false,
+                            };
+                            if matches && rfi < result.faces.len() {
+                                // Find which tmp_solid this result face belongs to
+                                for (si, solid_shells) in result.tmp_solids.iter().enumerate() {
+                                    if solid_shells.iter().any(|&shi2| {
+                                        result.tmp_shells.get(shi2).map_or(false, |shf| shf.contains(&rfi))
+                                    }) {
+                                        if !result_solids.contains(&si) {
+                                            result_solids.push(si);
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
-            }
-        }
-        // Mark compsolid as modified if any sub-solid has >1 result solid
-        for ((csi, _), si_list) in &cs_solid_groups {
-            // Dedup solid indices per sub-solid
-            let mut dedup: Vec<usize> = si_list.clone();
-            dedup.sort_unstable();
-            dedup.dedup();
-            if dedup.len() > 1 {
-                compsolid_modified.insert(*csi, true);
-            }
-        }
-
-        // OCCT L235-240: early return if no modification detected
-        let any_modified = compsolid_modified.values().any(|&m| m);
-        if !any_modified {
-            return;
-        }
-
-        // OCCT L242-275: build new container from sub-shape images.
-        //   rcad: group result solids by their compsolid ancestry.
-        let mut cs_groups: std::collections::BTreeMap<usize, Vec<usize>> = std::collections::BTreeMap::new();
-        for &csi in compsolid_modified.keys() {
-            for (si, solid_shells) in result.tmp_solids.iter().enumerate() {
-                let belongs = solid_shells.iter().any(|&shi| {
-                    result.tmp_shells.get(shi).map_or(false, |shell_faces| {
-                        shell_faces.iter().any(|&rfi| {
-                            result.face_origins.get(rfi).and_then(|fo| {
-                                let (exp_origin, sfi) = match fo {
-                                    FaceOrigin::FromA(sfi) => (ShapeOrigin::ShapeA, *sfi),
-                                    FaceOrigin::FromB(sfi) => (ShapeOrigin::ShapeB, *sfi),
-                                    _ => return None,
-                                };
-                                self.ds.faces.iter().position(|f|
-                                    f.origin == exp_origin && f.source_face_idx == sfi
-                                ).and_then(|dfi| {
-                                    if self.ds.faces[dfi].source_compsolid_idx == Some(csi) {
-                                        Some(())
-                                    } else { None }
-                                })
-                            }).is_some()
-                        })
-                    })
-                });
-                if belongs {
-                    cs_groups.entry(csi).or_default().push(si);
+                // OCCT L229: modified if images exist AND (not 1 or not same)
+                if result_solids.len() > 1 || (result_solids.len() == 1 && !solid_idxs.contains(&result_solids[0])) {
+                    modified = true;
+                }
+                for &si in &result_solids {
+                    if !solid_idxs.contains(&si) {
+                        solid_idxs.push(si);
+                    }
                 }
             }
+
+            // OCCT L242-275: build new container from sub-shape images.
+            if !solid_idxs.is_empty() {
+                cs_groups.entry(csi).or_default().extend(&solid_idxs);
+            }
         }
+
         if !cs_groups.is_empty() {
             result.tmp_compsolid_groups = cs_groups.into_values().collect();
         }
