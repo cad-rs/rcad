@@ -41,6 +41,8 @@ impl Context {
         }
     }
 
+    pub fn tol_uv(&self) -> f64 { self.tol_uv }
+
     /// OCCT: FClass2d(theFace) — returns cached 2D point classifier for a face.
     pub fn fclass2d(&mut self, ds: &DS, face_idx: usize) -> &FClass2d {
         assert!(face_idx < self.num_faces, "Context: face_idx {} out of range ({})", face_idx, self.num_faces);
