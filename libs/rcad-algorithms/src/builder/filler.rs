@@ -57,8 +57,8 @@ impl<'a> BooleanBuilder<'a> {
         //   L103:   nSpR = aPBR->Edge()
         //   L104-105: aSpR = myDS->Shape(nSpR); pLS->Append(aSpR)
         //   L107-112: myOrigins[split].Append(source)
-        //   L114-118: IsCommonBlockOnEdge → myShapesSD.Bind(source, split)
-        // OCCT L61: aNbE (base vertex index, rcad offset for flat indexing)
+        //   L114-118: IsCommonBlockOnEdge → myShapesSD.Bind(aPB->Edge(), aSpR)
+        //              where aPB->Edge() = split edge, aSpR = real edge
         let e_base = self.ds.vertices.len();
         for (ei, edge) in self.ds.edges.iter().enumerate() {
             if edge.pave_blocks.is_empty() { continue; }
@@ -70,8 +70,12 @@ impl<'a> BooleanBuilder<'a> {
                 let aSpR = rcad_kernel::topods::ShapeRef::new(e_base + nSpR);
                 self.my_images.borrow_mut().entry(aE).or_default().push(aSpR);
                 self.my_origins.borrow_mut().entry(aSpR).or_default().push(aE);
+                // OCCT L114-118: if IsCommonBlockOnEdge → myShapesSD.Bind(aPB->Edge(), aSpR)
                 if pb.common_block_idx.is_some() {
-                    self.my_shapes_sd.borrow_mut().insert(aE, aSpR);
+                    if let Some(nSp) = pb.new_edge {
+                        let aSp = rcad_kernel::topods::ShapeRef::new(e_base + nSp);
+                        self.my_shapes_sd.borrow_mut().insert(aSp, aSpR);
+                    }
                 }
             }
         }
