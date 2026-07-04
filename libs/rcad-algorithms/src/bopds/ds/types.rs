@@ -246,12 +246,7 @@ impl DSEdge {
     }
 }
 
-/// Per-edge integer flags (OCCT: BOPDS_ShapeInfo::Flag).
-/// Key = edge index, value = flag (0 = no flag, face_idx+1 for degenerated edges).
-/// Stored as a separate map to avoid bloating every DSEdge with an optional field.
-pub type EdgeFlagMap = std::collections::HashMap<usize, usize>;
-
-/// A wire in the DS pool 鈥?first-class entity matching OCCT TopoDS_Wire.
+/// A wire in the DS pool — first-class entity matching OCCT TopoDS_Wire.
 #[derive(Debug, Clone)]
 pub struct DSWire {
     /// Edge indices in traversal order (into DS.edges).
@@ -608,8 +603,6 @@ pub struct DS {
     /// Global PaveBlock array (OCCT: BOPDS_DS::myPaveBlocks).
     /// Indices in FaceInfo::pave_blocks_on / pave_blocks_in refer to this array.
     pub pave_blocks: Vec<PaveBlock>,
-    /// 鉁?OCCT-aligned: BOPDS_ShapeInfo flags (per-edge, keyed by edge index).
-    pub edge_flags: EdgeFlagMap,
     /// 鉁?OCCT-aligned: myIncreasedSS 鈥?vertices whose tolerance was increased
     ///   during intersection processing.  Read by RepeatIntersection to determine
     ///   which vertices need VV/VE/VF re-checks.

@@ -34,13 +34,14 @@ impl<'a> super::PaveFiller<'a> {
             fv[fi] = vs;
         }
         for (fi, vs) in fv.iter().enumerate() { for &vi in vs { self.ds.faces[fi].face_info.vertices_in.insert(vi); } }
-        for (ei, flag_val) in degen_flags { self.ds.set_edge_flag(ei, flag_val); }
+        for (ei, flag_val) in degen_flags { self.ds.set_edge_flag(ei, flag_val as i64); }
 
-        // Process flagged degenerate edges
-        let degen_edges: Vec<(usize, usize)> = self.ds.edge_flags.iter()
-            .filter_map(|(&ei, &flag)| {
+        // Process flagged degenerate edges — iterate shape_info for edge entries
+        let degen_edges: Vec<(usize, usize)> = (0..self.ds.edges.len())
+            .filter_map(|ei| {
+                let flag = self.ds.edge_flag(ei);
                 if flag == 0 { return None; }
-                let fi = flag.checked_sub(1)?;
+                let fi = (flag - 1) as usize;
                 if fi >= self.ds.faces.len() { return None; }
                 Some((ei, fi))
             }).collect();

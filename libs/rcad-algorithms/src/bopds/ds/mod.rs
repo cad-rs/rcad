@@ -11,26 +11,44 @@ use rcad_kernel::{BRep, CurveEval, SurfaceEval, WireEdge};
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, Line2d, Line3, Plane, Surface3, any_perpendicular};
 
 impl DS {
-    /// 鉁?OCCT-aligned: BOPDS_ShapeInfo::HasFlag / Flag.
-    ///   Returns the flag value for an edge, or 0 if no flag set.
-    pub fn edge_flag(&self, edge_idx: usize) -> usize {
-        self.edge_flags.get(&edge_idx).copied().unwrap_or(0)
+    /// ✅ OCCT-aligned: BOPDS_ShapeInfo::HasFlag / Flag.
+    ///   Returns the flag value for an edge index, or 0 if not set.
+    ///   Flag is stored in shape_info[nv + edge_idx].flag matching OCCT's
+    ///   per-shape integer flag (BOPDS_ShapeInfo::myFlag).
+    pub fn edge_flag(&self, edge_idx: usize) -> i64 {
+        let nv = self.vertices.len();
+        let si_idx = nv + edge_idx;
+        if si_idx < self.shape_info.len() {
+            let f = self.shape_info[si_idx].flag;
+            if f >= 0 { f } else { 0 }
+        } else { 0 }
     }
 
-    /// 鉁?OCCT-aligned: BOPDS_ShapeInfo::HasFlag(int&) 鈥?returns true with flag value.
+    /// ✅ OCCT-aligned: BOPDS_ShapeInfo::HasFlag(int&) — true if flag is set (>= 0).
     pub fn edge_has_flag(&self, edge_idx: usize) -> bool {
-        self.edge_flags.contains_key(&edge_idx)
+        let nv = self.vertices.len();
+        let si_idx = nv + edge_idx;
+        si_idx < self.shape_info.len() && self.shape_info[si_idx].flag >= 0
     }
 
-    /// 鉁?OCCT-aligned: BOPDS_ShapeInfo::SetFlag.
-    pub fn set_edge_flag(&mut self, edge_idx: usize, flag: usize) {
-        self.edge_flags.insert(edge_idx, flag);
+    /// ✅ OCCT-aligned: BOPDS_ShapeInfo::SetFlag.
+    pub fn set_edge_flag(&mut self, edge_idx: usize, flag: i64) {
+        let nv = self.vertices.len();
+        let si_idx = nv + edge_idx;
+        if si_idx < self.shape_info.len() {
+            self.shape_info[si_idx].flag = flag;
+        }
     }
 
-    /// 鉁?OCCT-aligned: BRep_Tool::Degenerated(edge) equivalent.
+    /// ✅ OCCT-aligned: BRep_Tool::Degenerated(edge) equivalent.
+    ///   Checks the shape_info flag: a flagged edge is degenerated.
+    ///   Also falls back to start==end check for edges loaded before
+    ///   shape_info initialization.
     pub fn is_edge_degenerated(&self, edge_idx: usize) -> bool {
+        if edge_idx < self.edges.len() && self.edges[edge_idx].start_vertex == self.edges[edge_idx].end_vertex {
+            return true;
+        }
         self.edge_has_flag(edge_idx)
-            || self.edges[edge_idx].start_vertex == self.edges[edge_idx].end_vertex
     }
 
     // ----- OCCT BOPDS_DS data layer methods -----
@@ -77,27 +95,44 @@ impl DS {
         &mut self.edges[edge_idx].pave_blocks
     }
 
-    /// 鉁?OCCT-aligned: BOPDS_DS::InitPaveBlocks (cxx L437-501).
+    /// ✅ OCCT-aligned: BOPDS_DS::InitPaveBlocks (cxx L437-501).
     ///   Creates the initial PaveBlock for a source edge, covering the full
-    ///   parametric range [t_range[0], t_range[1]]. For closed edges (seam
-    ///   edges where start == end), the PB is initialized with two paves at
-    ///   different parameters using the same vertex.
+    ///   parametric range [t_range[0], t_range[1]].  For closed edges (seam
+    ///   edges where start == end), both endpoint paves are added to ext_paves
+    ///   via AppendExtPave (fence-protected), matching OCCT's closed-edge
+    ///   split preparation (L477-483).
     pub fn init_pave_blocks_for_edge(&mut self, edge_idx: usize) {
         if edge_idx >= self.edges.len() { return; }
         let (sv, ev, tr0, tr1) = {
             let e = &self.edges[edge_idx];
             (e.start_vertex, e.end_vertex, e.t_range[0], e.t_range[1])
         };
-        if sv >= self.vertices.len() { return; }
-        if ev >= self.vertices.len() { return; }
+        // OCCT L437-445: shape type check — rcad edge is always an edge
+        // OCCT L447: curve null check — rcad edge always has a curve
+        // OCCT L449: BRep_Tool::Range — rcad: stored in t_range
+        // OCCT L451: BRepAdaptor_Curve — rcad: not needed
+        // OCCT L453-455: TopExp::FirstVertex / LastVertex — rcad: start_vertex/end_vertex
+        // OCCT L457-467: create PaveBlock and set pave1/pave2/original_edge
         let pv1 = Pave { vertex_idx: sv, param: tr0 };
         let pv2 = Pave { vertex_idx: ev, param: tr1 };
-        let mut pb = PaveBlock::new(edge_idx, pv1, pv2);
-        // OCCT L479-483: closed edges 鈥?add the second endpoint with reversed direction
-        if sv == ev {
-            pb.ext_paves.push(Pave { vertex_idx: sv, param: tr1 });
-        }
+        let pb = PaveBlock::new(edge_idx, pv1, pv2);
+        // OCCT L469-471: ChangePaveBlocksPool → store in DS
         self.edges[edge_idx].pave_blocks = vec![pb];
+        // OCCT L473-475: loaded edge check — rcad: always new construction
+        // OCCT L477-483: closed edges — add BOTH endpoint paves to ext_paves
+        if sv == ev {
+            // OCCT L479: aPB->AppendExtPave(aP1) — first endpoint
+            self.edges[edge_idx].pave_blocks[0]
+                .append_ext_pave(Pave { vertex_idx: sv, param: tr0 });
+            // OCCT L481: aPB->AppendExtPave(aP2) — second endpoint
+            // (fence dedups by vertex_idx, so second push is accepted
+            //  because vertex_idx differs from the first push? No, same
+            //  vertex — the OCCT fence check also uses vertex_idx.
+            //  The second AppendExtPave is rejected by fence in both
+            //  implementations; OCCT still writes it for form clarity.)
+            self.edges[edge_idx].pave_blocks[0]
+                .append_ext_pave(Pave { vertex_idx: sv, param: tr1 });
+        }
     }
 
     /// 鉁?OCCT-aligned: BOPDS_DS::PaveBlocks (hxx:167-169).
@@ -233,7 +268,6 @@ impl DS {
             shell_images: Vec::new(),
             solid_images: Vec::new(),
             pave_blocks: Vec::new(),
-            edge_flags: EdgeFlagMap::new(),
             locations: Vec::new(),
             increased_ss: std::collections::HashSet::new(),
             shape_info: Vec::new(),
