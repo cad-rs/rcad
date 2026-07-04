@@ -237,6 +237,12 @@ pub struct DSEdge {
     /// 鉁?OCCT-aligned: BRep_Tool::Parameter(aV, aE) 鈥?per-vertex parameter on this edge's curve.
     ///   Populated during DS loading; for intersection/section edges, set to t_range bounds.
     pub     vertex_params: std::collections::HashMap<usize, f64>,
+    /// 鉁?OCCT-aligned: BOPDS_Edge::myFaceTolerances — per-face tolerance for this edge.
+    pub face_tolerances: Vec<(usize, f64)>,
+    /// 鉁?OCCT-aligned: BRep_Tool::IsGeometric — true when this edge has a valid 3D curve.
+    ///   Cached during DS loading to avoid repeated Curve3 variant matching.
+    ///   Used by edges_to_wires and other geometry-sensitive paths.
+    pub is_geometric: bool,
 }
 
 impl DSEdge {

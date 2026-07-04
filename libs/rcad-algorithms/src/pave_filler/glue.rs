@@ -1,4 +1,4 @@
-use crate::pave_filler::helpers::*;
+﻿use crate::pave_filler::helpers::*;
 use crate::bopds::ds::NearTangentType;
 use glam::DVec3;
 use rcad_kernel::geom::*;
@@ -152,7 +152,7 @@ impl<'a> super::PaveFiller<'a> {
 
     /// OCCT: check partial glue overlap
     pub(crate) fn has_partial_glue(&self, f1: usize, f2: usize) -> bool {
-        if !self.use_glue {
+        if !self.use_glue() {
             return false;
         }
 
@@ -537,7 +537,7 @@ impl<'a> super::PaveFiller<'a> {
         // For point p on l2 at parameter s: p = l2.origin + s * d2
         // We need to find t such that: l1.origin + t * d1 = l2.origin + s * d2
         // t = (l2.origin - l1.origin) . d1 + s * (d2 . d1)
-        // Since d2 . d1 = �? (same or opposite direction), we have:
+        // Since d2 . d1 = 锟? (same or opposite direction), we have:
         // t = offset + s * sign
 
         let offset = (l2.origin - l1.origin).dot(d1);
@@ -564,7 +564,7 @@ impl<'a> super::PaveFiller<'a> {
         range2: [f64; 2],
         tol: f64,
     ) -> ParamOverlap {
-        // For circles, parameters are angles [0, 2蟺]
+        // For circles, parameters are angles [0, 2锜篯
         // Since we already verified circles are the same, we just compare angle ranges
         // But we need to handle periodicity
 
@@ -574,7 +574,7 @@ impl<'a> super::PaveFiller<'a> {
         let normal_dot = c1.normal.normalize_or_zero().dot(c2.normal.normalize_or_zero());
         let same_orientation = normal_dot >= 0.0;
 
-        // Normalize ranges to [0, 2蟺]
+        // Normalize ranges to [0, 2锜篯
         let r1 = self.normalize_angle_range(range1, period);
         let r2 = self.normalize_angle_range(range2, period);
 
@@ -1563,3 +1563,4 @@ impl<'a> super::PaveFiller<'a> {
     }
 
 }
+

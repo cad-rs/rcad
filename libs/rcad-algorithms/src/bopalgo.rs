@@ -4,6 +4,59 @@ use crate::bopds::ds::DS;
 use crate::bvh::Aabb;
 use crate::classify::{Classification, classify_point};
 
+/// ✅ OCCT-aligned: BOPAlgo_GlueEnum — glue mode for coincident-face detection.
+///   GlueOff=0: no glue (standard intersection).
+///   GlueFull=1: full glue (coincident faces create shared topology).
+///   GlueShift=2: shift glue (same as full, but with tolerance shift).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GlueEnum {
+    GlueOff = 0,
+    GlueFull = 1,
+    GlueShift = 2,
+}
+
+impl Default for GlueEnum {
+    fn default() -> Self { GlueEnum::GlueOff }
+}
+
+/// ✅ OCCT-aligned: BOPAlgo_Alert base — alert types for pipeline diagnostics.
+///   OCCT uses a polymorphic class hierarchy (BOPAlgo_Alert → subclasses).
+///   rcad uses a flat enum since Rust naturally models "one of" variants.
+#[derive(Debug, Clone)]
+pub enum Alert {
+    /// Edge range is too small to process (BOPAlgo_AlertTooSmallRange).
+    /// Stores (edge_idx, range_length).
+    TooSmallRange(usize, f64),
+    /// Building pcurve on face failed (BOPAlgo_AlertBuildingPCurveFailed).
+    /// Stores (edge_idx, face_idx).
+    BuildingPCurveFailed(usize, usize),
+    /// Faces from BuilderSolid that were not used in any solid shell
+    /// (BOPAlgo_AlertSolidBuilderUnusedFaces).
+    SolidBuilderUnusedFaces(Vec<usize>),
+    /// Alert: edge has no curve (section edge without valid geometry).
+    EdgeWithoutCurve(usize),
+}
+
+/// ✅ OCCT-aligned: BOPAlgo_Report — collects alerts during pipeline execution.
+///   OCCT BOPAlgo_Report stores Handle(BOPAlgo_Alert) list + Dump() method.
+#[derive(Debug, Clone, Default)]
+pub struct Report {
+    alerts: Vec<Alert>,
+}
+
+impl Report {
+    pub fn new() -> Self { Self { alerts: Vec::new() } }
+    pub fn add_alert(&mut self, alert: Alert) { self.alerts.push(alert); }
+    pub fn has_alerts(&self) -> bool { !self.alerts.is_empty() }
+    pub fn alerts(&self) -> &[Alert] { &self.alerts }
+    pub fn clear(&mut self) { self.alerts.clear(); }
+
+    /// OCCT-aligned: compatibility check for code that uses simple bool.
+    pub fn has_error(&self) -> bool {
+        self.alerts.iter().any(|a| matches!(a, Alert::TooSmallRange(_, _) | Alert::EdgeWithoutCurve(_)))
+    }
+}
+
 /// ✅ OCCT-aligned: BOPAlgo_Tools::FillMap (template, cxx L83-102).
 /// Adds pair (n1, n2) to a connection map for connectivity grouping.
 /// rcad: specialization for usize keys.
@@ -147,17 +200,7 @@ pub fn edges_to_wires(
     let a_le: Vec<usize> = edge_indices.iter()
         .filter(|&&ei| {
             ds.edges.get(ei).map_or(false, |e| {
-                !ds.is_edge_degenerated(ei) && {
-                    // BRep_Tool::IsGeometric(aE) — rcad: check that edge has a valid curve
-                    match &e.curve {
-                        rcad_kernel::geom::Curve3::Line(_) |
-                        rcad_kernel::geom::Curve3::Circle(_) |
-                        rcad_kernel::geom::Curve3::Ellipse(_) |
-                        rcad_kernel::geom::Curve3::BSpline(_) |
-                        rcad_kernel::geom::Curve3::Bezier(_) => true,
-                        _ => false,
-                    }
-                }
+                !ds.is_edge_degenerated(ei) && e.is_geometric
             })
         })
         .copied()

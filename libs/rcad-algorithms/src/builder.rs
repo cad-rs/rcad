@@ -11,6 +11,7 @@ use rcad_kernel::topology::*;
 use crate::bvh::{Aabb, DsBvh};
 use crate::bopds::ds::*;
 use crate::classify::{Classification, classify_point};
+use crate::bopalgo::{GlueEnum, Alert, Report};
 use crate::history::{
     BooleanHistory, EdgeOrigin, FaceOrigin, HistoryTracker, ShellOrigin, SolidOrigin, VertexOrigin,
 };
@@ -56,42 +57,32 @@ pub(crate) use builder_utils::{
 pub struct BooleanBuilder<'a> {
     ds: &'a DS,
     op: BooleanOpType,
-    use_glue: bool,
+    /// 鉁?OCCT-aligned: myGlue — BOPAlgo_GlueEnum (GlueOff/GlueFull/GlueShift).
+    glue: GlueEnum,
     glue_tolerance: f64,
     context: RefCell<Context>,
-    // �?OCCT-aligned: error tracking (myReport / HasErrors equivalent).
+    // 鉁?OCCT-aligned: error tracking (myReport / HasErrors equivalent).
     has_errors: bool,
-    // �?OCCT-aligned: myImages �?source shape index �?list of split image indices.
-    //   Uses RefCell because phase functions take &self (OCCT uses mutable member maps).
+    // 鉁?OCCT-aligned: myImages 鈥?source shape index 鈥?list of split image indices.
     my_images: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, Vec<rcad_kernel::topods::ShapeRef>>>,
     my_origins: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, Vec<rcad_kernel::topods::ShapeRef>>>,
     my_shapes_sd: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, rcad_kernel::topods::ShapeRef>>,
-    // �?OCCT-aligned: myInParts �?source solid index �?list of its IN face indices
-    //   (BOPAlgo_Builder.hxx L502).  Populated during FillImagesFaces, used by
-    //   FillIn3DParts / BuildDraftSolid for solid assembly.
     my_in_parts: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
-    // �?OCCT-aligned: solid-level image tracking (BOPAlgo_Builder.hxx L498 myImages).
-    //   OCCT BuildSplitSolids stores split solids in myImages[source_solid].
-    //   rcad: maps source side (0=A, 1=B) �?result solid indices from
-    //   build_split_solids.  Used by annotate_shell_and_solid_history and
-    //   for OCCT-form history tracking.
     my_solid_images: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
-    // �?OCCT-aligned: solid-level origin tracking (BOPAlgo_Builder.hxx L500 myOrigins).
-    //   Reverse map: result solid index �?list of source sides.
     my_solid_origins: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
-    // �?OCCT-aligned: myNonDestructive (BOPAlgo_Builder.hxx L503).
-    //   Safe processing �?avoids modifying input shapes. Used in PostTreat.
+    // 鉁?OCCT-aligned: myNonDestructive (BOPAlgo_Builder.hxx L503).
     my_non_destructive: bool,
     // OCCT-aligned: myFillHistory (BOPAlgo_Options.hxx).
-    //   When false, PrepareHistory is a no-op (HasHistory() returns false).
     my_fill_history: bool,
-    // �?OCCT-aligned: myCheckInverted (BOPAlgo_Builder.hxx L505).
-    //   Enables/disables inverted-solid check on input shapes.
+    // 鉁?OCCT-aligned: myCheckInverted (BOPAlgo_Builder.hxx L505).
     my_check_inverted: bool,
-    /// �?OCCT-aligned: converted BRep representation of DS.
-    ///   Populated after check_data in build_with_history via ds_to_brep().
-    ///   Wrapped in RefCell because build_with_history takes &self.
-    ///   This is topods::BRep (not the legacy rcad_kernel::BRep).
+    // 鉁?OCCT-aligned: myStopOnFatalError — abort pipeline on fatal error.
+    my_stop_on_fatal_error: bool,
+    /// 鉁?OCCT-aligned: myEntryPoint — tracks builder phase (1=PerformInternal1 done, etc.).
+    my_entry_point: u8,
+    /// 鉁?OCCT-aligned: myReport — collects alerts during Builder execution.
+    my_report: Report,
+    /// 鉁?OCCT-aligned: converted BRep representation of DS.
     brep: std::cell::RefCell<Option<(rcad_kernel::topods::BRep, Vec<rcad_kernel::topods::ShapeRef>, Vec<Option<rcad_kernel::topods::ShapeRef>>)>>,
 }
 
@@ -608,7 +599,7 @@ impl<'a> BooleanBuilder<'a> {
     pub fn new(ds: &'a DS, op: BooleanOpType) -> Self {
         let context = RefCell::new(Context::new(ds.faces.len(), TOLERANCE_ABS * 100.0));
         Self {
-            ds, op, use_glue: false, glue_tolerance: TOLERANCE_ABS, context, has_errors: false,
+            ds, op, glue: GlueEnum::GlueOff, glue_tolerance: TOLERANCE_ABS, context, has_errors: false,
             my_images: std::cell::RefCell::new(std::collections::HashMap::new()),
             my_origins: std::cell::RefCell::new(std::collections::HashMap::new()),
             my_shapes_sd: std::cell::RefCell::new(std::collections::HashMap::new()),
@@ -618,6 +609,9 @@ impl<'a> BooleanBuilder<'a> {
             my_non_destructive: false,
             my_fill_history: true,   // OCCT default
             my_check_inverted: false,
+            my_stop_on_fatal_error: true,
+            my_entry_point: 0,
+            my_report: Report::new(),
             brep: std::cell::RefCell::new(None),
         }
     }
@@ -642,7 +636,7 @@ impl<'a> BooleanBuilder<'a> {
     }
 
     pub fn with_glue(mut self, enable: bool, tolerance: f64) -> Self {
-        self.use_glue = enable;
+        self.glue = if enable { GlueEnum::GlueFull } else { GlueEnum::GlueOff };
         self.glue_tolerance = tolerance.max(TOLERANCE_ABS);
         self
     }

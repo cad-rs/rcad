@@ -11,7 +11,7 @@ impl<'a> PaveFiller<'a> {
             ic_edge_map: Vec::new(),
             bvh_a: None,
             bvh_b: None,
-            use_glue: false,
+            glue: GlueEnum::default(),
             glue_tolerance: TOLERANCE_ABS,
             fuzzy_tolerance: 0.0,
             seam_shift_tol: 0.0,
@@ -32,6 +32,7 @@ impl<'a> PaveFiller<'a> {
             a_mv_tol: std::collections::HashMap::new(),
             a_dmv_lv: std::collections::HashMap::new(),
             distances: std::collections::HashMap::new(),
+            my_report: Report::new(),
         }
     }
 
@@ -47,7 +48,7 @@ impl<'a> PaveFiller<'a> {
             ic_edge_map: Vec::new(),
             bvh_a: if use_bvh { Some(bvh_a) } else { None },
             bvh_b: if use_bvh { Some(bvh_b) } else { None },
-            use_glue: false,
+            glue: GlueEnum::default(),
             glue_tolerance: TOLERANCE_ABS,
             fuzzy_tolerance: 0.0,
             seam_shift_tol: 0.0,
@@ -64,6 +65,7 @@ impl<'a> PaveFiller<'a> {
             a_mv_tol: std::collections::HashMap::new(),
             a_dmv_lv: std::collections::HashMap::new(),
             distances: std::collections::HashMap::new(),
+            my_report: Report::new(),
         }
     }
 
@@ -79,7 +81,7 @@ impl<'a> PaveFiller<'a> {
             ic_edge_map: Vec::new(),
             bvh_a: if use_bvh { Some(bvh_a) } else { None },
             bvh_b: if use_bvh { Some(bvh_b) } else { None },
-            use_glue: false,
+            glue: GlueEnum::default(),
             glue_tolerance: TOLERANCE_ABS,
             fuzzy_tolerance: 0.0,
             seam_shift_tol: 0.0,
@@ -96,21 +98,22 @@ impl<'a> PaveFiller<'a> {
             a_mv_tol: std::collections::HashMap::new(),
             a_dmv_lv: std::collections::HashMap::new(),
             distances: std::collections::HashMap::new(),
+            my_report: Report::new(),
         }
     }
 
     pub fn configure_glue(&mut self, enable: bool, tolerance: f64) {
-        self.use_glue = enable;
+        self.glue = if enable { GlueEnum::GlueFull } else { GlueEnum::GlueOff };
         self.glue_tolerance = tolerance.max(TOLERANCE_ABS);
     }
 
     pub fn configure_glue_adaptive(&mut self, enable: bool, base_tolerance: f64, adaptive: bool) -> f64 {
         if !enable {
-            self.use_glue = false;
+            self.glue = GlueEnum::GlueOff;
             return TOLERANCE_ABS;
         }
 
-        self.use_glue = true;
+        self.glue = GlueEnum::GlueFull;
 
         if !adaptive {
             self.glue_tolerance = base_tolerance.max(TOLERANCE_ABS);

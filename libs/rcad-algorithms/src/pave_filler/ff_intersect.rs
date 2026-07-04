@@ -22,7 +22,7 @@ impl<'a> super::PaveFiller<'a> {
         }
 
         if let (Some(bvh_a), Some(bvh_b)) = (self.bvh_a, self.bvh_b) {
-            // Build reverse maps: BRep face index �?position in a_faces/b_faces
+            // Build reverse maps: BRep face index 锟?position in a_faces/b_faces
             let a_max_idx = a_faces.iter().map(|&dsi| self.ds.faces[dsi].source_face_idx).max().unwrap_or(0);
             let b_max_idx = b_faces.iter().map(|&dsi| self.ds.faces[dsi].source_face_idx).max().unwrap_or(0);
             let mut a_rev = vec![usize::MAX; a_max_idx + 1];
@@ -39,7 +39,7 @@ impl<'a> super::PaveFiller<'a> {
             for (fa_brep, fb_brep) in candidates {
                 if let (Some(&ai), Some(&bi)) = (a_rev.get(fa_brep), b_rev.get(fb_brep))
                     && ai != usize::MAX && bi != usize::MAX {
-                        // �?OCCT-aligned: BVH may produce duplicate candidate pairs when a face appears
+                        // 锟?OCCT-aligned: BVH may produce duplicate candidate pairs when a face appears
                         //    in multiple intersecting leaf nodes, causing duplicate intersection curves.
                         //    OCCT PaveFiller processes each face pair once (FF matrix uses BOPDS_IndexRange
                         //    to mark pairs as already processed).
@@ -53,13 +53,13 @@ impl<'a> super::PaveFiller<'a> {
                     }
             }
         } else {
-            // �?OCCT-aligned: BOPDS_Iterator cross-group face pair iteration.
+            // 锟?OCCT-aligned: BOPDS_Iterator cross-group face pair iteration.
             let a_fcount = self.ds.a_face_count;
             let mut fit = crate::bopds::ds::PairIterator::prepare_ab(a_fcount, self.ds.faces.len());
             while fit.more() {
                 let pk = fit.value();
                 let af = pk.i1; let bf = pk.i2;
-                // OCCT: myDS->HasInterf(nF1, nF2) �?skip if already interfered
+                // OCCT: myDS->HasInterf(nF1, nF2) 锟?skip if already interfered
                 if self.ds.has_interf_ff(af, bf) { fit.next(); continue; }
                 if !self.should_skip_glued_face_pair(af, bf) {
                     self.intersect_face_face(af, bf);
@@ -72,7 +72,7 @@ impl<'a> super::PaveFiller<'a> {
     }
 
     pub(crate) fn should_skip_glued_face_pair(&self, f1: usize, f2: usize) -> bool {
-        if !self.use_glue {
+        if !self.use_glue() {
             return false;
         }
 
@@ -123,10 +123,10 @@ impl<'a> super::PaveFiller<'a> {
                 // OCCT BOPAlgo_PaveFiller_6.cxx L106-134 IsClosedFF:
                 // Sphere seam edge = great circle arc in meridian plane (U=0 boundary).
                 // Checks mirror OCCT exactly:
-                //   (1) Curve is Geom_Circle  �? Curve3::Circle
-                //   (2) |center - S.Location()| < Precision::Confusion()  �? TOLERANCE_ABS_SQ
-                //   (3) |radius - S.Radius| < Precision::Confusion()     �? TOLERANCE_ABS
-                //   (4) |circle_normal �?sphere_axis| < Precision::Angular()  �? perp check
+                //   (1) Curve is Geom_Circle  锟? Curve3::Circle
+                //   (2) |center - S.Location()| < Precision::Confusion()  锟? TOLERANCE_ABS_SQ
+                //   (3) |radius - S.Radius| < Precision::Confusion()     锟? TOLERANCE_ABS
+                //   (4) |circle_normal 锟?sphere_axis| < Precision::Angular()  锟? perp check
                 match &edge.curve {
                     Curve3::Circle(c) => {
                         (c.center - sph.center).length_squared() < TOLERANCE_ABS_SQ
@@ -139,20 +139,20 @@ impl<'a> super::PaveFiller<'a> {
             Surface3::Torus(tor) => {
                 // OCCT IsClosedFF: torus has TWO periodic boundaries.
                 // U-seam: major circle, center = torus center, radius = major_radius,
-                //         normal �?torus axis.
+                //         normal 锟?torus axis.
                 // V-seam: minor circle, center on major circle, radius = minor_radius,
-                //         normal �?torus axis.
+                //         normal 锟?torus axis.
                 // All tolerances match OCCT Precision::Confusion/Angular.
                 match &edge.curve {
                     Curve3::Circle(c) => {
                         let axis = tor.axis.normalize();
                         let c_normal = c.normal.normalize();
                         let center_dist = (c.center - tor.center).length();
-                        // U-seam: center at torus center, normal �?axis, radius = major
+                        // U-seam: center at torus center, normal 锟?axis, radius = major
                         let is_u_seam = center_dist < TOLERANCE_ABS
                             && c_normal.dot(axis).abs() > 1.0 - 1e-12
                             && (c.radius - tor.major_radius).abs() < TOLERANCE_ABS;
-                        // V-seam: center on major circle, normal �?axis, radius = minor
+                        // V-seam: center on major circle, normal 锟?axis, radius = minor
                         let on_major = (center_dist - tor.major_radius).abs() < TOLERANCE_ABS;
                         let is_v_seam = on_major
                             && c_normal.dot(axis).abs() < 1e-12
@@ -204,7 +204,7 @@ impl<'a> super::PaveFiller<'a> {
 
                     // OCCT-aligned: the seam edge shift is a SMALL tolerance
                     // correction, not a geometric transformation.  Verify both
-                    // projections are close to the EE vertex — if either is
+                    // projections are close to the EE vertex 鈥?if either is
                     // far, the vertex is not near both edges and shifting would
                     // be invalid (e.g. sphere center jumps by 1 unit).
                     let vtx_pt = inf.point;
@@ -287,7 +287,7 @@ impl<'a> super::PaveFiller<'a> {
     /// OCCT: dispatch FF intersection by surface type
     /// OCCT: dispatch FF intersection by surface type
     pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
-        // 鈹€鈹€ Seam Edge Shift (OCCT PaveFiller_6.cxx L393-479) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+        // 閳光偓閳光偓 Seam Edge Shift (OCCT PaveFiller_6.cxx L393-479) 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
         let shift_info = self.check_seam_edge_shift(f1, f2);
         let old_shift_tol = self.seam_shift_tol;
         if let Some(ref info) = shift_info {
@@ -315,14 +315,14 @@ impl<'a> super::PaveFiller<'a> {
         // BSpline stays as Parametric (ts=0); Plane stays as Geom (ts=1).
         // The (ts1 != ts2) condition triggers ImpPrmIntersection path (marching).
 
-        // 鈺愨晲鈺?OCCT IntPatch_Intersection 3-category dispatch 鈺愨晲鈺?
+        // 閳烘劏鏅查埡?OCCT IntPatch_Intersection 3-category dispatch 閳烘劏鏅查埡?
         //   OCCT IntPatch_Intersection.cxx L1298-1339 classifies surface pairs:
-        //   - ts1 == ts2 == 1 : Geom-Geom (both analytic) �?ImpImpIntersection
-        //   - ts1 != ts2      : Geom-Param (one analytic, one parametric) �?ImpPrmIntersection
-        //   - ts1 == ts2 == 0 : Param-Param (both parametric) �?PrmPrmIntersection
+        //   - ts1 == ts2 == 1 : Geom-Geom (both analytic) 锟?ImpImpIntersection
+        //   - ts1 != ts2      : Geom-Param (one analytic, one parametric) 锟?ImpPrmIntersection
+        //   - ts1 == ts2 == 0 : Param-Param (both parametric) 锟?PrmPrmIntersection
         let (cat1, cat2) = (classify_surface_type(&s1), classify_surface_type(&s2));
         match (cat1, cat2) {
-            // 鈹€鈹€ Geom-Geom: both analytic surfaces 鈹€鈹€
+            // 閳光偓閳光偓 Geom-Geom: both analytic surfaces 閳光偓閳光偓
             //   OCCT ImpImpIntersection handles all analytic-analytic pairs.
             //   rcad dispatches to specialized functions per combination.
             (SurfaceCategory::GeomGeom, SurfaceCategory::GeomGeom) => {
@@ -391,7 +391,7 @@ impl<'a> super::PaveFiller<'a> {
                     _ => {}
                 }
             }
-            // 鈹€鈹€ Geom-Param: one analytic, one parametric 鈹€鈹€
+            // 閳光偓閳光偓 Geom-Param: one analytic, one parametric 閳光偓閳光偓
             //   OCCT ImpPrmIntersection handles this category.
             //   rcad: use PrmPrmIntersection when a Param surface is BSpline/Bezier
             //   (marching handles Plane-Plane quickly; PrmPrm handles mixed pairs).
@@ -411,11 +411,11 @@ impl<'a> super::PaveFiller<'a> {
             }
         }
 
-        // 鈹€鈹€ Reverse Seam Edge Shift (OCCT ApplyTrsf L560) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+        // 閳光偓閳光偓 Reverse Seam Edge Shift (OCCT ApplyTrsf L560) 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
         if let Some(ref info) = shift_info {
             self.reverse_seam_edge_shift(f1, f2, info);
         }
-        // 鈹€鈹€ Restore seam shift tol 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+        // 閳光偓閳光偓 Restore seam shift tol 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
         self.seam_shift_tol = old_shift_tol;
 
         // OCCT L600-608: CheckCurve validation -- validate curve bounds before processing
@@ -432,7 +432,7 @@ impl<'a> super::PaveFiller<'a> {
                 }
             }
         }
-        // �?OCCT-aligned:ComputeTolReached3d + PrepareLines3D �?post-process all
+        // 锟?OCCT-aligned:ComputeTolReached3d + PrepareLines3D 锟?post-process all
         // intersection curves for this face pair.  Runs for every path (analytic,
         // numeric_intss, marching) to ensure consistent curve tolerance and
         // closed-curve splitting.
@@ -456,9 +456,9 @@ impl<'a> super::PaveFiller<'a> {
                     self.ds.vertices[ev].geom_tol = self.ds.vertices[ev].geom_tol.max(vt);
                 }
             }
-            // PrepareLines3D �?split closed curves
+            // PrepareLines3D 锟?split closed curves
             inttools::pcurve_derive::prepare_lines_3d(&mut self.ds.intersection_curves);
-            // �?OCCT-aligned: After PrepareLines3D splits closed curves, new curve endpoints
+            // 锟?OCCT-aligned: After PrepareLines3D splits closed curves, new curve endpoints
             //    must be updated to the split points. OCCT's BRepBuilderAPI_MakeEdge auto-sets
             //    endpoints when creating edges. rcad's IntersectionCurve requires explicit update:
             //    for start==end but non-full-period t_range (i.e. split half-circle), compute
@@ -484,10 +484,10 @@ impl<'a> super::PaveFiller<'a> {
                     let t1 = self.ds.intersection_curves[ci].t_range[1];
                     let p_start = self.ds.intersection_curves[ci].curve.point_at(t0);
                     let p_end = self.ds.intersection_curves[ci].curve.point_at(t1);
-                    // Push new vertices directly — do NOT use add_vertex which merges
+                    // Push new vertices directly 鈥?do NOT use add_vertex which merges
                     // near-coincident points.  Multiple sphere-plane intersection circles
                     // pass through the same spatial positions (e.g. (1,0,0), (0,1,0),
-                    // (0,0,±1)), and each half-circle needs its OWN start/end vertices
+                    // (0,0,卤1)), and each half-circle needs its OWN start/end vertices
                     // to form distinct arcs.  Merging them collapses different
                     // face-boundary arcs onto the same vertex pair, creating the
                     // same section edges for different curves and breaking the loop.
@@ -527,7 +527,7 @@ impl<'a> super::PaveFiller<'a> {
                     }
                 }
             }
-            // �?OCCT-aligned: InitPaveBlock1 for all curves (PaveFiller_6.cxx L800).
+            // 锟?OCCT-aligned: InitPaveBlock1 for all curves (PaveFiller_6.cxx L800).
             //   Creates an initial PaveBlock on each curve for ext_pave tracking.
             for ci in 0..self.ds.intersection_curves.len() {
                 self.ds.intersection_curves[ci].init_pave_block1();
@@ -538,11 +538,11 @@ impl<'a> super::PaveFiller<'a> {
     /// OCCT: plane-plane intersection
     /// OCCT: plane-plane intersection
 
-    /// �?OCCT-aligned: CheckSelfInterference (BOPAlgo_PaveFiller_11.cxx L28-221).
-    ///   Builds vertex→faces and edge→faces connection maps per source range,
+    /// 锟?OCCT-aligned: CheckSelfInterference (BOPAlgo_PaveFiller_11.cxx L28-221).
+    ///   Builds vertex鈫抐aces and edge鈫抐aces connection maps per source range,
     ///   detects acquired self-intersections (same vertex/edge used by >1 face from same operand).
     pub(crate) fn check_self_interference(&self) -> Result<(), String> {
-        // OCCT L30-34: single argument �?self-interference mode, skip.
+        // OCCT L30-34: single argument 锟?self-interference mode, skip.
         if self.ds.a_vertex_count == 0 {
             return Ok(());
         }
@@ -557,12 +557,12 @@ impl<'a> super::PaveFiller<'a> {
         let mut warnings: Vec<String> = Vec::new();
 
         for &(range_start, range_end, _name) in &ranges {
-            // OCCT L43-48: aMCSI �?map of connections: vertex/edge �?list of faces.
+            // OCCT L43-48: aMCSI 锟?map of connections: vertex/edge 锟?list of faces.
             let mut v_to_faces: std::collections::HashMap<usize, Vec<usize>> =
                 std::collections::HashMap::new();
             let mut e_to_faces: std::collections::HashMap<usize, Vec<usize>> =
                 std::collections::HashMap::new();
-            // OCCT L48: aMCBFence �?skip already-processed CommonBlocks.
+            // OCCT L48: aMCBFence 锟?skip already-processed CommonBlocks.
             let mut cb_fence: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
             // OCCT L51-197: iterate shapes in this range.
@@ -572,7 +572,7 @@ impl<'a> super::PaveFiller<'a> {
                 let face = &self.ds.faces[fi];
                 if face.origin != origin { continue; }
 
-                // OCCT L151-173: FACE �?analyze IN and SC vertices.
+                // OCCT L151-173: FACE 锟?analyze IN and SC vertices.
                 for &vi in &face.face_info.vertices_in {
                     v_to_faces.entry(vi).or_default().push(fi);
                 }
@@ -583,7 +583,7 @@ impl<'a> super::PaveFiller<'a> {
                     }
                 }
 
-                // OCCT L175-195: PBsIn / PBsSc �?edge→face connections.
+                // OCCT L175-195: PBsIn / PBsSc 锟?edge鈫抐ace connections.
                 for pb_idx in face.face_info.pave_blocks_in.iter()
                     .chain(face.face_info.pave_blocks_sc.iter())
                 {
@@ -593,7 +593,7 @@ impl<'a> super::PaveFiller<'a> {
                     if ei >= self.ds.edges.len() { continue; }
                     e_to_faces.entry(ei).or_default().push(fi);
 
-                    // OCCT L112-148: CommonBlock analysis �?check if same CB
+                    // OCCT L112-148: CommonBlock analysis 锟?check if same CB
                     // contains edges from the same argument.
                     if let Some(cb_idx) = pb.common_block_idx {
                         if cb_fence.insert(cb_idx) {
@@ -622,8 +622,8 @@ impl<'a> super::PaveFiller<'a> {
                 }
             }
 
-            // OCCT L198-219: Analyze connections �?if any vertex/edge connects
-            // >1 face from the same argument �?self-interference.
+            // OCCT L198-219: Analyze connections 锟?if any vertex/edge connects
+            // >1 face from the same argument 锟?self-interference.
             for (_vi, faces) in &v_to_faces {
                 if faces.len() > 1 {
                     warnings.push(format!(
@@ -650,7 +650,7 @@ impl<'a> super::PaveFiller<'a> {
     }
 
     pub(crate) fn make_split_edges(&mut self) {
-        // OCCT L392: UpdateCommonBlocksWithSDVertices �?before creating split edges,
+        // OCCT L392: UpdateCommonBlocksWithSDVertices 锟?before creating split edges,
         //   ensure CommonBlocks reference correct (SD-deduplicated) vertex indices.
         self.ds.update_common_blocks_with_sd_vertices();
 
@@ -668,10 +668,10 @@ impl<'a> super::PaveFiller<'a> {
         let mut all_blocks: Vec<BlockData> = Vec::new();
         let n_orig_edges = self.ds.edges.len();
 
-        // �?OCCT-aligned: MakeSplitEdges (PaveFiller_7.cxx) only creates split
+        // 锟?OCCT-aligned: MakeSplitEdges (PaveFiller_7.cxx) only creates split
         //    edges and sets PaveBlock->Edge() (pb.new_edge).  rcad also initializes
         //    pave_blocks on source edges here so downstream FillImagesEdges can
-        //    read pb.new_edge.  my_images / my_origins are NOT populated here �?
+        //    read pb.new_edge.  my_images / my_origins are NOT populated here 锟?
         //    that is FillImagesEdges' responsibility (build_edge_images in ds.rs).
 
         for ei in 0..n_orig_edges {
@@ -693,7 +693,7 @@ impl<'a> super::PaveFiller<'a> {
             all_paves.sort_by(|a, b| a.param.partial_cmp(&b.param).unwrap_or(std::cmp::Ordering::Equal));
             all_paves.dedup_by(|a, b| params_equal(a.param, b.param));
 
-            // OCCT L406-421: CommonBlock dedup �?skip PBs whose CommonBlock was already processed.
+            // OCCT L406-421: CommonBlock dedup 锟?skip PBs whose CommonBlock was already processed.
             let mut processed_common_blocks: std::collections::HashSet<usize> = std::collections::HashSet::new();
 
             for w in all_paves.windows(2) {
@@ -732,7 +732,7 @@ impl<'a> super::PaveFiller<'a> {
 
         // Phase 2: create new DSEdges for each collected block + set pave_blocks
         // on source edges (MakeSplitEdges).  my_images / my_origins are NOT
-        // populated here �?that is FillImagesEdges' job (build_edge_images in ds.rs).
+        // populated here 锟?that is FillImagesEdges' job (build_edge_images in ds.rs).
         let mut edge_pbs: std::collections::HashMap<usize, Vec<(usize, usize, f64, f64, usize)>> =
             std::collections::HashMap::new();
 
@@ -755,6 +755,8 @@ impl<'a> super::PaveFiller<'a> {
                     vp.insert(data.ev, data.t_end);
                     vp
                 },
+                face_tolerances: Vec::new(),
+                is_geometric: true,
             });
 
             // Track for pave_blocks assignment on source edge
@@ -763,7 +765,7 @@ impl<'a> super::PaveFiller<'a> {
             ));
         }
 
-        // �?OCCT-aligned: Set pave_blocks on source edges that were split,
+        // 锟?OCCT-aligned: Set pave_blocks on source edges that were split,
         //    so Builder::fill_images_edges can read pb.new_edge.
         for (ei, blocks) in &edge_pbs {
             let pbs: Vec<PaveBlock> = blocks.iter().map(|&(sv, ev, t_start, t_end, new_ei)| {
@@ -778,7 +780,7 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
 
-    // 鈹€鈹€鈹€ Helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // 閳光偓閳光偓閳光偓 Helpers 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     pub(crate) fn verts_of(&self, origin: ShapeOrigin) -> Vec<usize> {
         self.ds
@@ -810,7 +812,7 @@ impl<'a> super::PaveFiller<'a> {
             .collect()
     }
 
-    /// ✅ OCCT-aligned: PrmPrmIntersection path for ParamParam + mixed BSpline pairs.
+    /// 鉁?OCCT-aligned: PrmPrmIntersection path for ParamParam + mixed BSpline pairs.
     pub(crate) fn intersect_ff_by_prmprm(
         &mut self,
         f1: usize,
@@ -901,7 +903,7 @@ impl<'a> super::PaveFiller<'a> {
     }
 }
 
-// ── PrmPrm helpers ─────────────────────────────────────────────────
+// 鈹€鈹€ PrmPrm helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 fn ff_uv_bounds(s: &Surface3) -> (f64, f64, f64, f64) {
     match s {
@@ -924,5 +926,7 @@ fn ff_project(surf: &Surface3, pt: DVec3) -> Option<(f64, f64)> {
     let (uv, _proj) = crate::extrema::closest_point_on_surface(surf, pt);
     if uv.x.is_finite() && uv.y.is_finite() { Some((uv.x, uv.y)) } else { None }
 }
+
+
 
 

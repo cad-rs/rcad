@@ -36,7 +36,7 @@ impl<'a> super::PaveFiller<'a> {
         for (fi, vs) in fv.iter().enumerate() { for &vi in vs { self.ds.faces[fi].face_info.vertices_in.insert(vi); } }
         for (ei, flag_val) in degen_flags { self.ds.set_edge_flag(ei, flag_val as i64); }
 
-        // Process flagged degenerate edges — iterate shape_info for edge entries
+        // Process flagged degenerate edges 鈥?iterate shape_info for edge entries
         let degen_edges: Vec<(usize, usize)> = (0..self.ds.edges.len())
             .filter_map(|ei| {
                 let flag = self.ds.edge_flag(ei);
@@ -53,7 +53,7 @@ impl<'a> super::PaveFiller<'a> {
             let n_v = edge.start_vertex;
             if n_v >= self.ds.vertices.len() { continue; }
 
-            // OCCT L84-101: FindPaveBlocks �?locate PBs in this face's sets that pass through nV
+            // OCCT L84-101: FindPaveBlocks 锟?locate PBs in this face's sets that pass through nV
             // (simplified: the pave_block info is already in the edge's PBs)
             // Ensure the degen edge's PB has an ext pave at the degenerate vertex
             // so make_section_edges will split it properly.
@@ -121,7 +121,7 @@ impl<'a> super::PaveFiller<'a> {
             let edge = &self.ds.edges[ei];
             if edge.paves.len() < 2 { continue; }
 
-            // OCCT L447-453: aPB->Update(aLPBN) — rebuild PBs from all paves
+            // OCCT L447-453: aPB->Update(aLPBN) 鈥?rebuild PBs from all paves
             let mut params: Vec<(usize, f64)> = edge.paves.iter()
                 .map(|p| (p.vertex_idx, p.param)).collect();
             params.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
@@ -179,7 +179,7 @@ impl<'a> super::PaveFiller<'a> {
             }
         }
 
-        // OCCT L529-617: CommonBlock handling — skipped (Architecture diff A2:
+        // OCCT L529-617: CommonBlock handling 鈥?skipped (Architecture diff A2:
         //   rcad uses inline PaveBlock on DSEdge, not pool-based with CommonBlocks)
     }
 
@@ -338,7 +338,7 @@ impl<'a> super::PaveFiller<'a> {
                 // OCCT L2436: common vertices skip box check
                 self.put_pave_on_curve(nV, aTolR3D, curve_idx, aMI, 1);
             } else {
-                // OCCT L2438-2444: Box check — skip if curve box doesn't overlap vertex box
+                // OCCT L2438-2444: Box check 鈥?skip if curve box doesn't overlap vertex box
                 if nV < self.ds.shape_info.len() {
                     if let (Some(vmn), Some(vmx)) = (self.ds.shape_info[nV].box_min, self.ds.shape_info[nV].box_max) {
                         let v_box_min = vmn - glam::DVec3::splat(aTolR3D);
@@ -374,7 +374,7 @@ impl<'a> super::PaveFiller<'a> {
             let ic = &self.ds.intersection_curves[ci];
             (ic.start_vertex, ic.end_vertex, ic.t_range, ic.curve.clone(), ic.geom_tol)
         };
-        // OCCT L2792-2798: getBoundPaves — check if both ends already have vertices
+        // OCCT L2792-2798: getBoundPaves 鈥?check if both ends already have vertices
         if start_vertex < self.ds.vertices.len() && end_vertex < self.ds.vertices.len() {
             return;
         }
@@ -406,10 +406,10 @@ impl<'a> super::PaveFiller<'a> {
                    (m == 1 && end_vertex < self.ds.vertices.len()) {
                     continue;
                 }
-                // OCCT L2842-2846: rich criterion — close to IC endpoint
+                // OCCT L2842-2846: rich criterion 鈥?close to IC endpoint
                 let d2 = a_p[m].distance_squared(v_pt);
                 if d2 > a_dt2 { continue; }
-                // OCCT L2848-2866: crease criterion — face normals nearly opposite
+                // OCCT L2848-2866: crease criterion 鈥?face normals nearly opposite
                 let mut sc_pr = 1.0;
                 if let (Some(s0), Some(s1)) = (&surf_both[0], &surf_both[1]) {
                     let n0 = Self::estimate_surface_normal(s0, a_p[m]);
@@ -468,10 +468,10 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
 
-    /// ✅ OCCT-aligned: IntTools_Context::IsVertexOnLine (L786-992).
-    ///   Form-identical logic: curve-type-based tolerance → first-endpoint
-    ///   check (with local+global projection fallback) → last-endpoint check
-    ///   (with bFirstValid shortcut) → global projection via closest_point_on_curve.
+    /// 鉁?OCCT-aligned: IntTools_Context::IsVertexOnLine (L786-992).
+    ///   Form-identical logic: curve-type-based tolerance 鈫?first-endpoint
+    ///   check (with local+global projection fallback) 鈫?last-endpoint check
+    ///   (with bFirstValid shortcut) 鈫?global projection via closest_point_on_curve.
     pub(crate) fn is_vertex_on_line(
         &self,
         nV: usize,
@@ -500,7 +500,7 @@ impl<'a> super::PaveFiller<'a> {
         // OCCT L821-822: aFirst / aLast from curve
         // (already set from ic.t_range above)
 
-        // ── OCCT L824-883: First endpoint check ──
+        // 鈹€鈹€ OCCT L824-883: First endpoint check 鈹€鈹€
         let mut b_first_valid = false;
         let mut a_first_dist = f64::MAX;
         if aFirst.is_finite() {
@@ -524,11 +524,11 @@ impl<'a> super::PaveFiller<'a> {
             }
         }
 
-        // ── OCCT L886-951: Last endpoint check ──
+        // 鈹€鈹€ OCCT L886-951: Last endpoint check 鈹€鈹€
         if aLast.is_finite() {
             let p_last = ic.curve.point_at(aLast);
             let d_last = vp.distance(p_last);
-            // OCCT L890-892: if first valid and first is closer → keep first
+            // OCCT L890-892: if first valid and first is closer 鈫?keep first
             if b_first_valid && a_first_dist < d_last {
                 // Keep aT from first-endpoint branch
                 return true;
@@ -549,11 +549,11 @@ impl<'a> super::PaveFiller<'a> {
                 return true;
             }
         } else if b_first_valid {
-            // OCCT L948-951: only first endpoint is valid → return true
+            // OCCT L948-951: only first endpoint is valid 鈫?return true
             return true;
         }
 
-        // ── OCCT L953-992: General projection ──
+        // 鈹€鈹€ OCCT L953-992: General projection 鈹€鈹€
         let proj = closest_point_on_curve(&ic.curve, vp, 64);
         if proj.distance <= aTolSum {
             *aT = proj.param;
@@ -686,8 +686,8 @@ impl<'a> super::PaveFiller<'a> {
         }
         let b_pcurve_on_s = [self.section_attribute.pcurve_on_s1, self.section_attribute.pcurve_on_s2];
 
-        // OCCT L601: BOPAlgo_VectorOfMPC aVMPC �?collection of MPC entries.
-        // rcad: the MPC (Make PCurve) concept is inlined �?we store the data
+        // OCCT L601: BOPAlgo_VectorOfMPC aVMPC 锟?collection of MPC entries.
+        // rcad: the MPC (Make PCurve) concept is inlined 锟?we store the data
         // needed to either (a) compute a new pcurve, or (b) update vertex tolerances
         // from an already-existing pcurve.
         #[derive(Clone)]
@@ -729,12 +729,12 @@ impl<'a> super::PaveFiller<'a> {
                 let ei = pb.original_edge;
                 if ei >= self.ds.edges.len() { continue; }
 
-                // OCCT L641: HasCurveOnSurface �?skip if pcurve already exists
+                // OCCT L641: HasCurveOnSurface 锟?skip if pcurve already exists
                 if self.ds.edges[ei].face_reps.iter().any(|r| r.face_idx == fi) {
                     continue;
                 }
 
-                // OCCT L649-695: CommonBlock inheritance �?if another PB in the same
+                // OCCT L649-695: CommonBlock inheritance 锟?if another PB in the same
                 // CommonBlock already has a pcurve on this face, reuse it (SetData).
                 let mut cb_existing_edge: Option<usize> = None;
                 if let Some(cb_idx) = pb.common_block_idx {
@@ -748,7 +748,7 @@ impl<'a> super::PaveFiller<'a> {
                                     if let Some(other_edge) = self.ds.edges.get(other_ei) {
                                         if other_edge.face_reps.iter().any(|r| r.face_idx == fi) {
                                             // OCCT L678-690: SetData(aEz, aV1x, aT1x, aV2x, aT2x)
-                                            // AttachExistingPCurve �?the existing pcurve on aEx
+                                            // AttachExistingPCurve 锟?the existing pcurve on aEx
                                             // (other edge) will be copied to this edge.
                                             cb_existing_edge = Some(other_ei);
                                             break;
@@ -769,7 +769,7 @@ impl<'a> super::PaveFiller<'a> {
             }
         } // end Phase 1
 
-        // ===== Phase 2: Section edge pcurves �?UpdateVertices only (OCCT L702-757) =====
+        // ===== Phase 2: Section edge pcurves 锟?UpdateVertices only (OCCT L702-757) =====
         // Pcurves for section edges are already computed during make_blocks.
         // This phase creates MPC entries with SetFlag(true) so that UpdateVertices
         // is called after the pcurve is known, correcting vertex tolerances.
@@ -819,7 +819,7 @@ impl<'a> super::PaveFiller<'a> {
 
         // ===== Phase 3: Perform all MPC computations (OCCT L760-775) =====
         // OCCT L760-766: BOPTools_Parallel::Perform(myRunParallel, aVMPC, myContext)
-        // rcad: sequential execution for now �?each MPC.Perform computes the pcurve
+        // rcad: sequential execution for now 锟?each MPC.Perform computes the pcurve
         // (or copies from existing_edge), stores it in the DS, and optionally calls
         // UpdateVertices.
         //
@@ -859,7 +859,7 @@ impl<'a> super::PaveFiller<'a> {
             // Section edges may already have their pcurve from make_blocks.
             if self.ds.edges[ei].face_reps.iter().any(|r| r.face_idx == fi) {
                 if mpc.update_vertices {
-                    // OCCT SetFlag(true) �?only UpdateVertices needed, pcurve exists
+                    // OCCT SetFlag(true) 锟?only UpdateVertices needed, pcurve exists
                     update_vertices_list.push((ei, fi));
                 }
                 continue;
@@ -879,7 +879,7 @@ impl<'a> super::PaveFiller<'a> {
                     update_vertices_list.push((ei, fi));
                 }
             } else {
-                // OCCT L782-788: failed �?collect for warning
+                // OCCT L782-788: failed 锟?collect for warning
                 failed_pcurves.push((ei, fi));
             }
         }
@@ -909,7 +909,7 @@ impl<'a> super::PaveFiller<'a> {
         // OCCT L284-287: UpdateVertices for section-edge pcurves.
         // Adjusts vertex tolerances based on mismatch between 3D curve and 2D pcurve.
         for &(ei, fi) in &update_vertices_list {
-            // OCCT: UpdateVertices(aCopyE, myF) �?corrects vertex tolerances using the
+            // OCCT: UpdateVertices(aCopyE, myF) 锟?corrects vertex tolerances using the
             // difference between the edge's 3D curve and its pcurve on the face.
             //
             // rcad placeholder: structure matches OCCT but the actual tolerance
@@ -1019,7 +1019,7 @@ impl<'a> super::PaveFiller<'a> {
     pub(crate) fn is_existing_vertex(&self, ci: usize, param: f64) -> bool {
         let ic = &self.ds.intersection_curves[ci];
         let tol = ic.geom_tol.max(TOLERANCE_ABS) * 100.0;
-        // (FaceFace curve check removed — was a no-op loop over interferences)
+        // (FaceFace curve check removed 鈥?was a no-op loop over interferences)
         // Check if any vertex already exists at this parameter
         for fi in 0..self.ds.faces.len() {
             for &vi in &self.ds.faces[fi].face_info.vertices_in {
@@ -1036,9 +1036,9 @@ impl<'a> super::PaveFiller<'a> {
         let v_tol = self.ds.vertices[vi].geom_tol;
         let c_tol = ic.geom_tol;
         // OCCT IsVertexOnLine 3-param overload (L4066):
-        //   aTolV = BRep_Tool::Tolerance(aV)        �?v_tol
-        //   aTolC = aTolR3D                         �?c_tol (no fuzzy)
-        //   5-param: aTolSum = aTolV + aTolC; ×2
+        //   aTolV = BRep_Tool::Tolerance(aV)        锟?v_tol
+        //   aTolC = aTolR3D                         锟?c_tol (no fuzzy)
+        //   5-param: aTolSum = aTolV + aTolC; 脳2
         let tl = (2.0 * (v_tol + c_tol)).max(1e-6);
         self.project_vertex_on_curve_with_tol(vi, ic, tl)
     }
@@ -1276,7 +1276,7 @@ impl<'a> super::PaveFiller<'a> {
         }
     }
 
-    /// �?OCCT-aligned: create section edges for intersecton curves lacking PaveBlocks.
+    /// 锟?OCCT-aligned: create section edges for intersecton curves lacking PaveBlocks.
     ///   OCCT PerformFF creates DSEdges for each intersecton curve PB immediately
     ///   (via BOPDS_Curve::InitPaveBlock1 + SetEdge).  rcad defers; this step
     ///   creates the missing section edge + PB so post_treat_ff can register PaveBlocksSc.
@@ -1346,6 +1346,8 @@ impl<'a> super::PaveFiller<'a> {
                     vp.insert(ev, t_range[1]);
                     vp
                 },
+                face_tolerances: Vec::new(),
+                is_geometric: true,
             });
 
             let mut pb = PaveBlock::new(NO_EDGE,
@@ -1361,6 +1363,7 @@ impl<'a> super::PaveFiller<'a> {
     }
 
 }
+
 
 
 

@@ -1,4 +1,4 @@
-/// ✅ OCCT-aligned: BOPAlgo_Tools — CommonBlock merging and tolerance computation.
+/// 鉁?OCCT-aligned: BOPAlgo_Tools 鈥?CommonBlock merging and tolerance computation.
 ///
 /// OCCT references:
 /// - `BOPAlgo_Tools::PerformCommonBlocks` (BOPAlgo_Tools.cxx L107-243)
@@ -17,9 +17,9 @@ use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval};
 
-// ── PerformCommonBlocks ────────────────────────────────────────────────────
+// 鈹€鈹€ PerformCommonBlocks 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-/// ✅ OCCT-aligned: `BOPAlgo_Tools::PerformCommonBlocks` (overload 1 — PB→PB
+/// 鉁?OCCT-aligned: `BOPAlgo_Tools::PerformCommonBlocks` (overload 1 鈥?PB鈫扨B
 /// connection map).
 ///
 /// Scans all edges in the DS, groups PaveBlocks that share the same
@@ -33,10 +33,10 @@ use rcad_kernel::geom::{Curve3, CurveEval};
 /// Calling this after all paves have been placed (post-`build_split_edges`)
 /// ensures the vertex indices reflect the final shared topology.
 pub fn perform_common_blocks(ds: &mut DS) {
-    // ── Phase 1: Populate global PaveBlock array ────────────────────────
-    // Map (edge_idx, local_pb_idx) → global PaveBlock index.
+    // 鈹€鈹€ Phase 1: Populate global PaveBlock array 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // Map (edge_idx, local_pb_idx) 鈫?global PaveBlock index.
     let mut edge_local_to_global: HashMap<(usize, usize), usize> = HashMap::new();
-    // Reverse map: global_pb_idx → (edge_idx, local_pb_idx).
+    // Reverse map: global_pb_idx 鈫?(edge_idx, local_pb_idx).
     let mut global_to_edge_local: HashMap<usize, (usize, usize)> = HashMap::new();
 
     for (ei, edge) in ds.edges.iter().enumerate() {
@@ -48,15 +48,15 @@ pub fn perform_common_blocks(ds: &mut DS) {
         }
     }
 
-    // ── Phase 2: Group coincident PaveBlocks ────────────────────────────
+    // 鈹€鈹€ Phase 2: Group coincident PaveBlocks 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     // Two PaveBlocks from different edges are geometrically coincident when
     // they share the same ordered (v_min, v_max) vertex pair.  After OCCT's
     // PutPaveOnCurve / PutBoundPaveOnCurve all intersection vertices are
     // merged into the DS pool, so the same 3D position on coincident edges
     // maps to the same DS vertex index.
     //
-    // Key: (v_min, v_max) with v_min ≤ v_max.
-    // Value: Vec<(global_pb_idx, face_idx)> — the PaveBlocks sharing this
+    // Key: (v_min, v_max) with v_min 鈮?v_max.
+    // Value: Vec<(global_pb_idx, face_idx)> 鈥?the PaveBlocks sharing this
     // vertex pair, along with the face they belong to.
     let mut vertex_groups: HashMap<(usize, usize), Vec<(usize, usize)>> = HashMap::new();
 
@@ -96,7 +96,7 @@ pub fn perform_common_blocks(ds: &mut DS) {
         }
     }
 
-    // ── Phase 3: Create CommonBlocks ────────────────────────────────────
+    // 鈹€鈹€ Phase 3: Create CommonBlocks 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     for ((_v_min, _v_max), entries) in vertex_groups.iter() {
         if entries.len() < 2 {
             continue;
@@ -123,7 +123,7 @@ pub fn perform_common_blocks(ds: &mut DS) {
         ds.common_blocks[cb_idx].set_tolerance(tol);
 
         // Mark local PaveBlocks as belonging to this CommonBlock.
-        // ✅ OCCT-aligned: BOPDS_PaveBlock::myCommonBlock (L103-108 in ds.cxx).
+        // 鉁?OCCT-aligned: BOPDS_PaveBlock::myCommonBlock (L103-108 in ds.cxx).
         for &(global_pb, _) in entries {
             if let Some(&(ei, local_i)) = global_to_edge_local.get(&global_pb) {
                 if let Some(local_pb) = ds.edges.get_mut(ei)
@@ -136,9 +136,9 @@ pub fn perform_common_blocks(ds: &mut DS) {
     }
 }
 
-// ── ComputeToleranceOfCB ───────────────────────────────────────────────────
+// 鈹€鈹€ ComputeToleranceOfCB 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-/// ✅ OCCT-aligned: `BOPAlgo_Tools::ComputeToleranceOfCB`.
+/// 鉁?OCCT-aligned: `BOPAlgo_Tools::ComputeToleranceOfCB`.
 ///
 /// Computes the maximum tolerance for a CommonBlock by sampling points along
 /// the reference PaveBlock's curve and measuring the deviation to:
@@ -174,7 +174,7 @@ pub fn compute_tolerance_of_cb(ds: &DS, cb_idx: usize) -> f64 {
     }
     let dt = (t2 - t1) / (n_samples as f64 + 1.0);
 
-    // ── 1. Other PaveBlocks: sample reference curve, project onto other curves ──
+    // 鈹€鈹€ 1. Other PaveBlocks: sample reference curve, project onto other curves 鈹€鈹€
     if pb_entries.len() > 1 {
         for &(pb_idx, _face_idx) in &pb_entries[1..] {
             let pb = &ds.pave_blocks[pb_idx];
@@ -199,7 +199,7 @@ pub fn compute_tolerance_of_cb(ds: &DS, cb_idx: usize) -> f64 {
         }
     }
 
-    // ── 2. Faces: project sample points onto each face's surface ─────────────
+    // 鈹€鈹€ 2. Faces: project sample points onto each face's surface 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     {
         let faces_list = cb.faces();
         if !faces_list.is_empty() {
@@ -227,7 +227,7 @@ pub fn compute_tolerance_of_cb(ds: &DS, cb_idx: usize) -> f64 {
     tol_max
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// 鈹€鈹€ Helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Compute the minimum distance from a point to a curve by sampling.
 ///
@@ -280,7 +280,7 @@ fn min_distance_to_curve(pt: DVec3, curve: &Curve3, t_range: [f64; 2]) -> f64 {
     best_dist_sq.sqrt()
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────────
+// 鈹€鈹€ Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 #[cfg(test)]
 mod tests {
@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn test_perform_common_blocks_two_boxes() {
-        // Two separate boxes — no shared edges, so no CommonBlocks.
+        // Two separate boxes 鈥?no shared edges, so no CommonBlocks.
         let mut a = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
             width: 1.0,
             height: 1.0,
@@ -316,7 +316,7 @@ mod tests {
         populate_box_geom(&mut b);
         let mut ds = DS::new(&a, &b);
 
-        // No pave blocks to start — edges are unsplit.
+        // No pave blocks to start 鈥?edges are unsplit.
         perform_common_blocks(&mut ds);
         assert!(ds.common_blocks.is_empty());
     }
@@ -382,6 +382,8 @@ mod tests {
                 vp.insert(vi1, 1.0);
                 vp
             },
+            face_tolerances: Vec::new(),
+            is_geometric: true,
         });
 
         let old_global_len = ds.pave_blocks.len();
@@ -392,3 +394,4 @@ mod tests {
         );
     }
 }
+

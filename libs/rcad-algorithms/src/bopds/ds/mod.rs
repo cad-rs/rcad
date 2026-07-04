@@ -596,7 +596,7 @@ impl DS {
             self.edges.push(DSEdge {
                 start_vertex: start,
                 end_vertex: end,
-                curve,
+                curve: curve.clone(),
                 t_range,
                 origin,
                 geom_tol: rcad_kernel::edge_tolerance(brep, i),
@@ -610,6 +610,9 @@ impl DS {
                     vp.insert(end, t_range[1]);
                     vp
                 },
+                face_tolerances: Vec::new(),
+                is_geometric: matches!(curve, Curve3::Line(_) | Curve3::Circle(_)
+                    | Curve3::Ellipse(_) | Curve3::BSpline(_) | Curve3::Bezier(_)),
             });
             self.init_pave_blocks_for_edge(self.edges.len() - 1);
         }

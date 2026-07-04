@@ -85,6 +85,10 @@ pub struct BuilderSolid {
     myContext: BuilderSolidContext,
     /// OCCT: unclassified faces collected for AlertSolidBuilderUnusedFaces.
     myUnusedFaces: Vec<usize>,
+    /// 鉁?OCCT-aligned: myMergeEdges — merge coincident edges in result shells.
+    myMergeEdges: bool,
+    /// 鉁?OCCT-aligned: myMergeFaces — merge coincident faces in result shells.
+    myMergeFaces: bool,
 }
 
 impl BuilderSolid {
@@ -102,6 +106,8 @@ impl BuilderSolid {
             myAvoidInternalShapes: false,
             myContext: BuilderSolidContext::new(),
             myUnusedFaces: Vec::new(),
+            myMergeEdges: true,
+            myMergeFaces: false,
         }
     }
 
