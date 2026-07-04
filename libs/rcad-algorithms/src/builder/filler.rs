@@ -542,7 +542,7 @@ impl<'a> BooleanBuilder<'a> {
         match shape_type {
             ShapeType::Wire => self.fill_images_containers_wires(),
             ShapeType::Shell => self.fill_images_containers_shells(result, t),
-            ShapeType::CompSolid => self.fill_images_containers_compsolid(result),
+            ShapeType::CompSolid => self.fill_images_containers_compsolid(result, t),
             _ => {}
         }
     }
@@ -628,28 +628,20 @@ impl<'a> BooleanBuilder<'a> {
     ///   L224-233: iterate sub-shapes (SOLIDs), check if any has been modified.
     ///   L235-240: if none modified → early return.
     ///   L242-275: build new container from sub-shape images.
-    fn fill_images_containers_compsolid(&self, result: &mut ResultBuilder) {
-        if self.ds.comp_solids.is_empty() {
-            return; // OCCT L235-240: no container of this type
-        }
+    fn fill_images_containers_compsolid(&self, result: &mut ResultBuilder, t: &mut topods::BRep) {
+        if self.ds.comp_solids.is_empty() { return; }
 
         // OCCT L224-233: iterate sub-shapes (SOLIDs), check myImages.IsBound.
         //   rcad: a sub-solid is modified if it has >1 result solid.
-        let mut cs_groups: std::collections::BTreeMap<usize, Vec<usize>> = std::collections::BTreeMap::new();
         for (csi, cs) in self.ds.comp_solids.iter().enumerate() {
-            let mut modified = false;
-            let mut solid_idxs: Vec<usize> = Vec::new();
-
-            // OCCT L224-233: for each sub-shape (SOLID), check if modified.
+            let mut solid_refs: Vec<topods::ShapeRef> = Vec::new();
             for &soi in &cs.solids {
                 if soi >= self.ds.solids.len() { continue; }
-                // Collect result solid indices for this DS solid
-                let mut result_solids: Vec<usize> = Vec::new();
+                // Collect TShape::Solid refs for this DS solid's result faces
                 for &shi in &self.ds.solids[soi].shells {
                     if shi >= self.ds.shells.len() { continue; }
                     for &dsfi in &self.ds.shells[shi].faces {
                         if dsfi >= self.ds.faces.len() { continue; }
-                        // Find result faces for this DS face
                         let origin = self.ds.faces[dsfi].origin;
                         let sfi = self.ds.faces[dsfi].source_face_idx;
                         for (rfi, fo) in result.face_origins.iter().enumerate() {
@@ -658,14 +650,24 @@ impl<'a> BooleanBuilder<'a> {
                                 (FaceOrigin::FromB(s), ShapeOrigin::ShapeB) => *s == sfi,
                                 _ => false,
                             };
-                            if matches && rfi < result.faces.len() {
-                                // Find which tmp_solid this result face belongs to
-                                for (si, solid_shells) in result.tmp_solids.iter().enumerate() {
-                                    if solid_shells.iter().any(|&shi2| {
-                                        result.tmp_shells.get(shi2).map_or(false, |shf| shf.contains(&rfi))
-                                    }) {
-                                        if !result_solids.contains(&si) {
-                                            result_solids.push(si);
+                            if matches {
+                                if let Some(&fsr) = result.face_refs.get(rfi) {
+                                    // Find the result solid that contains this face
+                                    for &ssr in &result.solids {
+                                        if !solid_refs.contains(&ssr) {
+                                            if let Some(ts) = t.tshapes.get(ssr.index) {
+                                                if let topods::TShape::Solid(sd) = &**ts {
+                                                    if sd.shells.iter().any(|sh_sr| {
+                                                        t.tshapes.get(sh_sr.index).map_or(false, |tsh| {
+                                                            if let topods::TShape::Shell(shd) = &**tsh {
+                                                                shd.faces.contains(&fsr)
+                                                            } else { false }
+                                                        })
+                                                    }) {
+                                                        solid_refs.push(ssr);
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -673,25 +675,15 @@ impl<'a> BooleanBuilder<'a> {
                         }
                     }
                 }
-                // OCCT L229: modified if images exist AND (not 1 or not same)
-                if result_solids.len() > 1 || (result_solids.len() == 1 && !solid_idxs.contains(&result_solids[0])) {
-                    modified = true;
-                }
-                for &si in &result_solids {
-                    if !solid_idxs.contains(&si) {
-                        solid_idxs.push(si);
-                    }
-                }
             }
-
-            // OCCT L242-275: build new container from sub-shape images.
-            if !solid_idxs.is_empty() {
-                cs_groups.entry(csi).or_default().extend(&solid_idxs);
+            // OCCT L242-275: create TShape::CompSolid from sub-solid images
+            if !solid_refs.is_empty() {
+                let cs_ref = t.add_tcompsolid(solid_refs.clone());
+                result.compsolid_groups.push(cs_ref);
+                // OCCT L275: myImages.Bound(theS).Append(aCIm)
+                let cskey = topods::ShapeRef::new(usize::MAX - result.compsolid_groups.len());
+                self.my_images.borrow_mut().entry(cskey).or_default().push(cs_ref);
             }
-        }
-
-        if !cs_groups.is_empty() {
-            result.tmp_compsolid_groups = cs_groups.into_values().collect();
         }
     }
 

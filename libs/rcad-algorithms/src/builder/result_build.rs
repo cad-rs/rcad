@@ -1145,10 +1145,8 @@ impl<'a> BooleanBuilder<'a> {
             }
             ShapeType::CompSolid => {
                 // OCCT L130-167: aggregate sub-solid images into CompSolid.
-                //   rcad: delegate to ResultBuilder::build_compsolids which uses
-                //   BRepBuilder::make_compsolid (OCCT BRep_Builder equivalent).
-                let tmp_cs_groups = std::mem::take(&mut result.tmp_compsolid_groups);
-                result.build_compsolids(t, tmp_cs_groups);
+                //   rcad: fill_images_containers_compsolid already created
+                //   TShape::CompSolid entries in result.compsolid_groups.
             }
             ShapeType::Compound => {
                 // OCCT L130-168: for each source COMPOUND, add its image (or original).
