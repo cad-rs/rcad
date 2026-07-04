@@ -85,7 +85,7 @@ impl<'a> BooleanBuilder<'a> {
     /// For each DSWire, check if any edge has split images (my_images.Seek).
     /// If so, rebuild the wire edge list with split sub-edges and store in
     /// my_images[wire_ref]. BuildResult(WIRE) reads these to create TShape::Wire.
-    fn fill_images_containers_wires(&self) {
+    fn fill_images_containers_wires(&self, _result: &ResultBuilder) {
         let e_base = self.ds.vertices.len();
         // Collect wire image data from immutable borrow, then apply mutations.
         let mut pending: Vec<(rcad_kernel::topods::ShapeRef, Vec<rcad_kernel::topods::ShapeRef>)> = Vec::new();
@@ -547,7 +547,7 @@ impl<'a> BooleanBuilder<'a> {
     ///   FillImagesContainer for each.  rcad: dispatches to type-specific handlers.
     fn fill_images_containers(&self, shape_type: ShapeType, result: &mut ResultBuilder, t: &mut topods::BRep) {
         match shape_type {
-            ShapeType::Wire => self.fill_images_containers_wires(),
+            ShapeType::Wire => self.fill_images_containers_wires(result),
             ShapeType::Shell => self.fill_images_containers_shells(result, t),
             ShapeType::CompSolid => self.fill_images_containers_compsolid(result, t),
             _ => {}

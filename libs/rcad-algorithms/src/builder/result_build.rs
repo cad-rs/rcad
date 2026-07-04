@@ -995,13 +995,13 @@ impl<'a> BooleanBuilder<'a> {
             ShapeType::Edge => {
                 // OCCT L130-168 (TopAbs_EDGE): add split edge images to myShape.
                 //   rcad: iterate myImages(EDGE) entries, create TShape::Edge for each.
-                //   First ensure all DS vertices have TShapes for edge vertex refs.
+                //   Stores actual TShape positions in ds_edge_to_tshape for downstream
+                //   Wire/Face building (eliminates A5 flat-index architecture gap).
                 let e_base = self.ds.vertices.len();
                 // Ensure vertex TShapes exist (needed by edge creation)
                 for vi in 0..self.ds.vertices.len() {
                     let vr = rcad_kernel::topods::ShapeRef::new(vi);
                     if t.tshapes.len() <= vi {
-                        // Extend tshapes array to cover this index
                         let pt = self.ds.vertices[vi].point;
                         let sv = t.add_tvertex(pt);
                         t.vertex_mut(sv).tolerance = self.ds.vertices[vi].geom_tol
@@ -1009,9 +1009,11 @@ impl<'a> BooleanBuilder<'a> {
                         let _ = vr;
                     }
                 }
+                // Init ds_edge_to_tshape with NULL placeholders for all DS edges
+                let n_edges = self.ds.edges.len();
+                result.ds_edge_to_tshape = vec![topods::ShapeRef::NULL; n_edges];
                 // Iterate A and B side source edges
                 let a_ec = self.ds.a_edge_count;
-                let n_edges = self.ds.edges.len();
                 for side in 0..2usize {
                     let (start, end) = if side == 0 {
                         (0usize, a_ec.min(n_edges))
@@ -1022,13 +1024,14 @@ impl<'a> BooleanBuilder<'a> {
                         let aE = rcad_kernel::topods::ShapeRef::new(e_base + ei);
                         let has_images = self.my_images.borrow().contains_key(&aE);
                         if !has_images {
-                            // OCCT L149-152: no images �?add original edge
+                            // OCCT L149-152: no images — add original edge
                             let edge = &self.ds.edges[ei];
                             let sv_sr = rcad_kernel::topods::ShapeRef::new(edge.start_vertex);
                             let ev_sr = rcad_kernel::topods::ShapeRef::new(edge.end_vertex);
                             let ci = t.curves.len();
                             t.curves.push(edge.curve.clone());
                             let te = t.add_tedge(Some(ci), sv_sr, ev_sr, edge.t_range);
+                            result.ds_edge_to_tshape[ei] = te;
                             if self.ds.is_edge_degenerated(ei) || edge.start_vertex == edge.end_vertex {
                                 t.edge_mut(te).degenerated = true;
                             }
@@ -1037,13 +1040,14 @@ impl<'a> BooleanBuilder<'a> {
                             let images = self.my_images.borrow().get(&aE).unwrap().clone();
                             for img in &images {
                                 let nSpR = img.index.saturating_sub(e_base);
-                                if nSpR >= self.ds.edges.len() { continue; }
+                                if nSpR >= n_edges { continue; }
                                 let edge = &self.ds.edges[nSpR];
                                 let sv_sr = rcad_kernel::topods::ShapeRef::new(edge.start_vertex);
                                 let ev_sr = rcad_kernel::topods::ShapeRef::new(edge.end_vertex);
                                 let ci = t.curves.len();
                                 t.curves.push(edge.curve.clone());
                                 let te = t.add_tedge(Some(ci), sv_sr, ev_sr, edge.t_range);
+                                result.ds_edge_to_tshape[nSpR] = te;
                                 if self.ds.is_edge_degenerated(nSpR) || edge.start_vertex == edge.end_vertex {
                                     t.edge_mut(te).degenerated = true;
                                 }
@@ -1054,8 +1058,8 @@ impl<'a> BooleanBuilder<'a> {
             }
             ShapeType::Wire => {
                 // OCCT L130-168 (TopAbs_WIRE): create wire TShapes from DSWire edges.
-                // rcad: for each DSWire, build a topods::Wire using e_base mapping.
                 // Edges already exist in t_brep from BuildResult(EDGE).
+                // Use ds_edge_to_tshape mapping for correct TShape positions (A5 fix).
                 let e_base = self.ds.vertices.len();
                 result.wire_refs = Vec::with_capacity(self.ds.wires.len());
                 for wi in 0..self.ds.wires.len() {
@@ -1064,11 +1068,21 @@ impl<'a> BooleanBuilder<'a> {
                     let mut wire_edges: Vec<rcad_kernel::topods::ShapeRef> = Vec::new();
                     if let Some(imgs) = self.my_images.borrow().get(&w_ref) {
                         for &img_sr in imgs {
-                            wire_edges.push(img_sr);
+                            // Convert flat-index myImages ref to actual TShape position
+                            let nSpR = img_sr.index.saturating_sub(e_base);
+                            if nSpR < result.ds_edge_to_tshape.len()
+                                && result.ds_edge_to_tshape[nSpR] != topods::ShapeRef::NULL
+                            {
+                                wire_edges.push(result.ds_edge_to_tshape[nSpR]);
+                            }
                         }
                     } else {
                         for &ei in &self.ds.wires[wi].edges {
-                            wire_edges.push(rcad_kernel::topods::ShapeRef::new(e_base + ei));
+                            if ei < result.ds_edge_to_tshape.len()
+                                && result.ds_edge_to_tshape[ei] != topods::ShapeRef::NULL
+                            {
+                                wire_edges.push(result.ds_edge_to_tshape[ei]);
+                            }
                         }
                     }
                     // Create TShape::Wire in t_brep (but only if we have edges)
