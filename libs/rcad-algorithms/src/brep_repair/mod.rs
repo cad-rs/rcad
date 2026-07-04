@@ -17,6 +17,7 @@
 
 use glam::DVec3;
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_kernel::CurveEval;
 use rcad_kernel::Curve2dEval;
 use rcad_kernel::SurfaceEval;
@@ -1590,7 +1591,14 @@ fn edges_similar_geometry(brep: &BRep, e1: usize, e2: usize, tol: f64) -> bool {
 /// into a comprehensive connectivity rebuilding pass.
 ///
 /// Analogous to `BOPAlgo_MakeConnected` in OCCT.
-pub fn make_connected_enhanced(brep: &BRep, tolerance: f64, max_passes: usize) -> (BRep, MakeConnectedReport) {
+pub fn make_connected_enhanced(brep: &topods::BRep, tolerance: f64, max_passes: usize) -> (topods::BRep, MakeConnectedReport) {
+    let old = rcad_kernel::BRep::from_topods_with_location(brep, glam::DAffine3::IDENTITY);
+    let (result, report) = make_connected_enhanced_old(&old, tolerance, max_passes);
+    (result.to_topods(), report)
+}
+
+/// Legacy: takes old BRep.
+pub fn make_connected_enhanced_old(brep: &BRep, tolerance: f64, max_passes: usize) -> (BRep, MakeConnectedReport) {
     make_connected_enhanced_with_mode(brep, tolerance, max_passes, MakeConnectedMode::Standard, false)
 }
 

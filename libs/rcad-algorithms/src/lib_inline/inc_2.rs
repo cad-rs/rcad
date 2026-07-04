@@ -497,8 +497,8 @@ pub fn boolean_op_with_options(
                 options.make_connected_tolerance_growth;
             healing_options.make_connected_tolerance_cap = options.make_connected_tolerance_cap;
         }
-        let (healed, heal_report) = analyze_and_heal(&out, healing_options);
-        out = healed;
+        let (healed, heal_report) = analyze_and_heal(&out.to_topods(), healing_options);
+        out = rcad_kernel::BRep::from_topods(&healed);
         report.healed = true;
         report.healing_report = Some(heal_report);
     }
@@ -516,8 +516,8 @@ pub fn boolean_op_with_options(
     }
 
     if options.run_simplify {
-        let (simplified, simp_report) = simplify_brep_post_ops(&out, options.simplify);
-        out = simplified;
+        let (simplified, simp_report) = simplify_brep_post_ops(&out.to_topods(), options.simplify);
+        out = rcad_kernel::BRep::from_topods(&simplified);
         report.simplified = true;
         report.simplify_report = Some(simp_report);
     }
@@ -719,7 +719,14 @@ pub fn boolean_op_robust(
 }
 
 /// Run post-operation simplification passes on a BRep.
-pub fn simplify_brep_post_ops(brep: &BRep, options: SimplifyOptions) -> (BRep, SimplifyReport) {
+pub fn simplify_brep_post_ops(brep: &topods::BRep, options: SimplifyOptions) -> (topods::BRep, SimplifyReport) {
+    let old = rcad_kernel::BRep::from_topods_with_location(brep, glam::DAffine3::IDENTITY);
+    let (result, report) = simplify_brep_post_ops_old(&old, options);
+    (result.to_topods(), report)
+}
+
+/// Legacy: takes old BRep.
+pub fn simplify_brep_post_ops_old(brep: &BRep, options: SimplifyOptions) -> (BRep, SimplifyReport) {
     fn closure_score(brep: &BRep) -> usize {
         let report = crate::brep_check::validate_solid_closure(brep);
         report
@@ -873,15 +880,13 @@ pub fn boolean_op_topods_simplified(
     options: SimplifyOptions,
 ) -> Result<(topods::BRep, SimplifyReport), BooleanError> {
     let raw = boolean_op(op, a, b)?;
-    let old = rcad_kernel::BRep::from_topods(&raw);
-    // OCCT BRepAlgoAPI runs MakeConnected before any simplification.
     let (connected, _mc_report) = make_connected_enhanced(
-        &old,
+        &raw,
         tolerance::TOLERANCE_ABS,
-        3, /* max_passes */
+        3,
     );
     let (simplified, report) = simplify_brep_post_ops(&connected, options);
-    Ok((simplified.to_topods(), report))
+    Ok((simplified, report))
 }
 
 /// Split `target` by one or more `tools` without boolean classification.
@@ -960,8 +965,8 @@ fn split_brep_internal_with_partial_report(
                 tool,
                 options.fuzzy_tolerance,
             );
-            let (healed, _) = analyze_and_heal(&step.brep, healing);
-            step.brep = healed;
+            let (healed, _) = analyze_and_heal(&step.brep.to_topods(), healing);
+            step.brep = rcad_kernel::BRep::from_topods(&healed);
         }
 
         let mut validation_issue_count = None;
@@ -1809,11 +1814,10 @@ pub fn boolean_op_healed(
     b: &BRep,
 ) -> Result<(BRep, HealingReport), BooleanError> {
     let raw = boolean_op(op, a, b)?;
-    let old = rcad_kernel::BRep::from_topods(&raw);
     let mut healing = HealingOptions::default();
     align_healing_options_with_boolean_operands(&mut healing, a, b, 0.0);
-    let (healed, report) = analyze_and_heal(&old, healing);
-    Ok((healed, report))
+    let (healed, report) = analyze_and_heal(&raw, healing);
+    Ok((rcad_kernel::BRep::from_topods(&healed), report))
 }
 
 /// Run boolean operation followed by structured healing using custom options.
@@ -1824,10 +1828,9 @@ pub fn boolean_op_healed_with_options(
     mut options: HealingOptions,
 ) -> Result<(BRep, HealingReport), BooleanError> {
     let raw = boolean_op(op, a, b)?;
-    let old = rcad_kernel::BRep::from_topods(&raw);
     align_healing_options_with_boolean_operands(&mut options, a, b, 0.0);
-    let (healed, report) = analyze_and_heal(&old, options);
-    Ok((healed, report))
+    let (healed, report) = analyze_and_heal(&raw, options);
+    Ok((rcad_kernel::BRep::from_topods(&healed), report))
 }
 
 /// Multi-body boolean fuse (union) over a list of solids.

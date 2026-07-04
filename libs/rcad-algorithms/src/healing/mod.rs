@@ -5,6 +5,7 @@
 
 use glam::DVec3;
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_kernel::{BSplineSurface, BezierSurface};
 
 use crate::brep_check::{

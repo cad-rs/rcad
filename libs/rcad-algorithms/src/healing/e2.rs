@@ -358,7 +358,7 @@ pub fn run_advanced_operator_chain(brep: &BRep, config: &OperatorChainConfig) ->
         // Check condition if dependencies passed
         if !skip
             && let Some(ref condition) = op_with_cond.condition {
-                let (_, temp_report) = analyze_and_heal(&current, HealingOptions {
+                let (_, temp_report) = analyze_and_heal(&current.to_topods(), HealingOptions {
                     mode: HealingMode::AnalyzeOnly,
                     ..options
                 });

@@ -195,7 +195,15 @@ impl HealingReport {
 }
 
 /// Analyze and heal a BRep using the provided options.
-pub fn analyze_and_heal(brep: &BRep, options: HealingOptions) -> (BRep, HealingReport) {
+/// Accepts topods::BRep, internally bridges to old BRep for healing.
+pub fn analyze_and_heal(brep: &topods::BRep, options: HealingOptions) -> (topods::BRep, HealingReport) {
+    let old = rcad_kernel::BRep::from_topods_with_location(brep, glam::DAffine3::IDENTITY);
+    let (healed, report) = analyze_and_heal_old(&old, options);
+    (healed.to_topods(), report)
+}
+
+/// Legacy: takes old BRep. Internal implementation.
+pub fn analyze_and_heal_old(brep: &BRep, options: HealingOptions) -> (BRep, HealingReport) {
     let initial = brep_check_analyze(brep);
     let initial_stats = HealingIssueStats::from_check_result(&initial);
 
@@ -506,7 +514,8 @@ fn has_parametric_issues(brep: &BRep, tolerance: f64) -> bool {
 
 /// Convenience wrapper using default options.
 pub fn heal(brep: &BRep) -> (BRep, HealingReport) {
-    analyze_and_heal(brep, HealingOptions::default())
+    let (t, report) = analyze_and_heal(&brep.to_topods(), HealingOptions::default());
+    (rcad_kernel::BRep::from_topods(&t), report)
 }
 
 /// Execute a ShapeProcess-like custom operator chain.

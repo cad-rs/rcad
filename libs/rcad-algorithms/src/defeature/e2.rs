@@ -262,9 +262,9 @@ boolean_op(BooleanOpType::Union, &current, &fill)
 
     // -- Post-defeature healing ---------------------------------------------
     if options.run_post_healing {
-        let (healed_brep, heal_report) =
-            make_connected_enhanced(&current, options.healing_tolerance, 3);
-        current = healed_brep;
+        let (healed_t, heal_report) =
+            make_connected_enhanced(&current.to_topods(), options.healing_tolerance, 3);
+        current = rcad_kernel::BRep::from_topods(&healed_t);
         report.healing_performed = true;
         report.healing_vertices_merged = heal_report.vertices_merged;
         report.healing_small_edges_removed = heal_report.small_edges_removed;

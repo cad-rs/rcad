@@ -758,12 +758,12 @@ impl<'a> BRepAlgoAPI_Common<'a> {
 
         let mut result = rcad_kernel::BRep::from_topods(&brep);
         if self.options.run_healing {
-            let (healed, _) = crate::healing::analyze_and_heal(&result, self.options.healing_options);
-            result = healed;
+            let (healed, _) = crate::healing::analyze_and_heal(&brep, self.options.healing_options);
+            result = rcad_kernel::BRep::from_topods(&healed);
         }
         if self.options.run_simplify {
-            let (simplified, _) = crate::simplify_brep_post_ops(&result, self.options.simplify_options);
-            result = simplified;
+            let (simplified, _) = crate::simplify_brep_post_ops(&brep, self.options.simplify_options);
+            result = rcad_kernel::BRep::from_topods(&simplified);
         }
 
         self.result = Some(result);
@@ -954,12 +954,12 @@ impl<'a> BRepAlgoAPI_Fuse<'a> {
 
         let mut result = brep;
         if self.options.run_healing {
-            let (healed, _) = crate::healing::analyze_and_heal(&result, self.options.healing_options);
-            result = healed;
+            let (healed, _) = crate::healing::analyze_and_heal(&result.to_topods(), self.options.healing_options);
+            result = rcad_kernel::BRep::from_topods(&healed);
         }
         if self.options.run_simplify {
-            let (simplified, _) = crate::simplify_brep_post_ops(&result, self.options.simplify_options);
-            result = simplified;
+            let (simplified, _) = crate::simplify_brep_post_ops(&result.to_topods(), self.options.simplify_options);
+            result = rcad_kernel::BRep::from_topods(&simplified);
         }
 
         self.result = Some(result);
@@ -1134,12 +1134,12 @@ impl<'a> BRepAlgoAPI_Cut<'a> {
 
         let mut result = rcad_kernel::BRep::from_topods(&brep);
         if self.options.run_healing {
-            let (healed, _) = crate::healing::analyze_and_heal(&result, self.options.healing_options);
-            result = healed;
+            let (healed, _) = crate::healing::analyze_and_heal(&brep, self.options.healing_options);
+            result = rcad_kernel::BRep::from_topods(&healed);
         }
         if self.options.run_simplify {
-            let (simplified, _) = crate::simplify_brep_post_ops(&result, self.options.simplify_options);
-            result = simplified;
+            let (simplified, _) = crate::simplify_brep_post_ops(&brep, self.options.simplify_options);
+            result = rcad_kernel::BRep::from_topods(&simplified);
         }
 
         self.result = Some(result);
