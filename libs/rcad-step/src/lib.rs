@@ -2,8 +2,9 @@ use rcad_kernel::appearance::{Color, StepColor};
 use rcad_algorithms::{HealingOptions, HealingReport, analyze_and_heal, analyze_wire_issues};
 use rcad_kernel::geom::BSplineCurve3;
 use rcad_kernel::tolerance::CONFUSION;
+use rcad_kernel::topods;
 use rcad_kernel::{
-    BRep, BSplineCurve2, Curve2d, Curve2dEval, Curve3, CurveEval, Ellipse2d, GeomStore, PCurve,
+    BRep, BSplineCurve2, Curve2d, Curve2dEval, CurveEval, Curve3, Ellipse2d, GeomStore, PCurve,
     Surface3, SurfaceEval,
 };
 use rcad_kernel::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
@@ -13,6 +14,7 @@ use std::io::Read;
 use std::path::Path;
 
 pub mod assembly;
+pub mod brep_flat;
 pub mod iges;
 pub mod obj_writer;
 pub mod occt_brep;
@@ -4446,7 +4448,7 @@ impl StepReader {
     /// Parse STEP content from any UTF-8 reader.
     ///
     /// This provides DE_Wrapper-style stream input without requiring a temp file.
-    pub fn parse_reader<R: Read>(mut reader: R) -> Result<BRep, StepError> {
+    pub fn parse_reader<R: Read>(mut reader: R) -> Result<topods::BRep, StepError> {
         let mut content = String::new();
         reader
             .read_to_string(&mut content)
@@ -4457,7 +4459,7 @@ impl StepReader {
     /// Parse STEP content from any UTF-8 reader and extract document metadata.
     pub fn parse_reader_with_metadata<R: Read>(
         mut reader: R,
-    ) -> Result<(BRep, StepDocumentMetadata), StepError> {
+    ) -> Result<(topods::BRep, StepDocumentMetadata), StepError> {
         let mut content = String::new();
         reader
             .read_to_string(&mut content)
@@ -4469,7 +4471,7 @@ impl StepReader {
     pub fn parse_reader_with_healing<R: Read>(
         mut reader: R,
         options: HealingOptions,
-    ) -> Result<(BRep, HealingReport), StepError> {
+    ) -> Result<(topods::BRep, HealingReport), StepError> {
         let mut content = String::new();
         reader
             .read_to_string(&mut content)
@@ -4481,7 +4483,7 @@ impl StepReader {
     pub fn parse_reader_with_healing_report_json<R: Read>(
         mut reader: R,
         options: HealingOptions,
-    ) -> Result<(BRep, HealingReport, String), StepError> {
+    ) -> Result<(topods::BRep, HealingReport, String), StepError> {
         let mut content = String::new();
         reader
             .read_to_string(&mut content)
@@ -4489,25 +4491,25 @@ impl StepReader {
         Self::parse_string_with_healing_report_json(&content, options)
     }
 
-    pub fn read_file<P: AsRef<Path>>(path: P) -> Result<BRep, StepError> {
+    pub fn read_file<P: AsRef<Path>>(path: P) -> Result<topods::BRep, StepError> {
         let content = std::fs::read_to_string(path).map_err(|e| StepError::Io(e.to_string()))?;
         Self::parse_string(&content)
     }
 
-    pub fn parse_string(content: &str) -> Result<BRep, StepError> {
+    pub fn parse_string(content: &str) -> Result<topods::BRep, StepError> {
         if !content.contains("ISO-10303-21") {
             return Err(StepError::InvalidFormat(
                 "missing ISO-10303-21 header".into(),
             ));
         }
         let entities = parse_entities(content)?;
-        build_brep_from_parsed(&entities)
+        build_topods_from_parsed(&entities)
     }
 
     /// Parse a STEP string and return BRep plus document-level metadata.
     pub fn parse_string_with_metadata(
         content: &str,
-    ) -> Result<(BRep, StepDocumentMetadata), StepError> {
+    ) -> Result<(topods::BRep, StepDocumentMetadata), StepError> {
         if !content.contains("ISO-10303-21") {
             return Err(StepError::InvalidFormat(
                 "missing ISO-10303-21 header".into(),
@@ -4515,7 +4517,7 @@ impl StepReader {
         }
 
         let entities = parse_entities(content)?;
-        let brep = build_brep_from_parsed(&entities)?;
+        let brep = build_topods_from_parsed(&entities)?;
         let file_schema = extract_file_schema(content);
         let products = extract_products(content);
         let metadata = StepDocumentMetadata {
@@ -4612,28 +4614,33 @@ impl StepReader {
     /// Read STEP file and return BRep plus document-level metadata.
     pub fn read_file_with_metadata<P: AsRef<Path>>(
         path: P,
-    ) -> Result<(BRep, StepDocumentMetadata), StepError> {
+    ) -> Result<(topods::BRep, StepDocumentMetadata), StepError> {
         let content = std::fs::read_to_string(path).map_err(|e| StepError::Io(e.to_string()))?;
         Self::parse_string_with_metadata(&content)
     }
 
     /// Parse a STEP string and run rcad-algorithms healing pipeline.
+    /// Bridges via old BRep temporarily until healing is migrated to topods.
     pub fn parse_string_with_healing(
         content: &str,
         options: HealingOptions,
-    ) -> Result<(BRep, HealingReport), StepError> {
-        let brep = Self::parse_string(content)?;
-        let (healed, report) = analyze_and_heal(&brep, options);
-        Ok((healed, report))
+    ) -> Result<(topods::BRep, HealingReport), StepError> {
+        let t = Self::parse_string(content)?;
+        let old = BRep::from_topods_with_location(&t, glam::DAffine3::IDENTITY);
+        let (healed_old, report) = analyze_and_heal(&old, options);
+        let healed_topods = healed_old.to_topods();
+        Ok((healed_topods, report))
     }
 
     /// Parse a STEP string, run healing, and export stable JSON diagnostics.
     pub fn parse_string_with_healing_report_json(
         content: &str,
         options: HealingOptions,
-    ) -> Result<(BRep, HealingReport, String), StepError> {
+    ) -> Result<(topods::BRep, HealingReport, String), StepError> {
         let (healed, report) = Self::parse_string_with_healing(content, options)?;
-        let wire = analyze_wire_issues(&healed, options.tolerance);
+        // Bridge: convert to old BRep for analyze_wire_issues
+        let old = BRep::from_topods_with_location(&healed, glam::DAffine3::IDENTITY);
+        let wire = analyze_wire_issues(&old, options.tolerance);
 
         let mut issue_map: BTreeMap<String, usize> = BTreeMap::new();
         for issue in &report.final_result.issues {
@@ -4702,7 +4709,7 @@ impl StepReader {
     pub fn read_file_with_healing<P: AsRef<Path>>(
         path: P,
         options: HealingOptions,
-    ) -> Result<(BRep, HealingReport), StepError> {
+    ) -> Result<(topods::BRep, HealingReport), StepError> {
         let content = std::fs::read_to_string(path).map_err(|e| StepError::Io(e.to_string()))?;
         Self::parse_string_with_healing(&content, options)
     }
@@ -4711,7 +4718,7 @@ impl StepReader {
     pub fn read_file_with_healing_report_json<P: AsRef<Path>>(
         path: P,
         options: HealingOptions,
-    ) -> Result<(BRep, HealingReport, String), StepError> {
+    ) -> Result<(topods::BRep, HealingReport, String), StepError> {
         let content = std::fs::read_to_string(path).map_err(|e| StepError::Io(e.to_string()))?;
         Self::parse_string_with_healing_report_json(&content, options)
     }
@@ -4722,22 +4729,31 @@ impl StepReader {
     /// Returns `None` for color when the file has no color entities.
     pub fn read_file_with_color<P: AsRef<Path>>(
         path: P,
-    ) -> Result<(BRep, Option<StepColor>), StepError> {
+    ) -> Result<(topods::BRep, Option<StepColor>), StepError> {
         let content = std::fs::read_to_string(path).map_err(|e| StepError::Io(e.to_string()))?;
         Self::parse_string_with_color(&content)
     }
 
     /// Parse a STEP string, returning both the BRep and an optional color map.
-    pub fn parse_string_with_color(content: &str) -> Result<(BRep, Option<StepColor>), StepError> {
+    pub fn parse_string_with_color(content: &str) -> Result<(topods::BRep, Option<StepColor>), StepError> {
         if !content.contains("ISO-10303-21") {
             return Err(StepError::InvalidFormat(
                 "missing ISO-10303-21 header".into(),
             ));
         }
         let entities = parse_entities(content)?;
-        let (brep, face_id_map) = build_brep_with_face_map(&entities)?;
+        let (t, face_ref_by_id) = build_topods_with_face_map(&entities)?;
+        // Build face index map: iterate tshapes and assign flat indices to faces
+        let mut face_idx: usize = 0;
+        let mut face_id_map: HashMap<u64, usize> = HashMap::new();
+        let mut ordered: Vec<(u64, topods::ShapeRef)> = face_ref_by_id.iter().map(|(k, v)| (*k, *v)).collect();
+        ordered.sort_by_key(|(_, sr)| sr.index);
+        for (step_face_id, _sr) in &ordered {
+            face_id_map.insert(*step_face_id, face_idx);
+            face_idx += 1;
+        }
         let color = resolve_step_color(&entities, &face_id_map);
-        Ok((brep, color))
+        Ok((t, color))
     }
 }
 
@@ -5675,6 +5691,578 @@ fn build_brep_with_face_map(parsed: &ParsedStep) -> Result<(BRep, HashMap<u64, u
     }
 
     Ok((brep, face_id_map))
+}
+
+// ── TopoDS-aligned STEP reader ──
+
+/// Build a topods::BRep from parsed STEP entities.
+/// This is the new (OCCT-aligned) path that produces a pool-based TopoDS
+/// representation instead of the old flat-array BRep.
+fn build_topods_from_parsed(parsed: &ParsedStep) -> Result<topods::BRep, StepError> {
+    if !parsed.compounds.is_empty() {
+        return build_compound_topods(parsed);
+    }
+    if !parsed.compsolids.is_empty() {
+        return build_compsolid_topods(parsed);
+    }
+    build_topods_with_face_map(parsed).map(|(brep, _)| brep)
+}
+
+/// TopoDS version of build_compound_brep.
+fn build_compound_topods(parsed: &ParsedStep) -> Result<topods::BRep, StepError> {
+    let mut t = topods::BRep::new();
+    let mut refs: Vec<topods::ShapeRef> = Vec::new();
+
+    let mut referenced: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    for elems in parsed.compounds.values() {
+        for &elem_ref in elems {
+            if parsed.compounds.contains_key(&elem_ref) || parsed.compsolids.contains_key(&elem_ref) {
+                referenced.insert(elem_ref);
+            }
+        }
+    }
+
+    for (&compound_id, elems) in &parsed.compounds {
+        if referenced.contains(&compound_id) {
+            continue;
+        }
+        for &elem_ref in elems {
+            if parsed.manifold_solids.contains(&elem_ref) {
+                if let Some(shell_ref) = get_shell_for_solid(parsed, elem_ref)
+                    && let Some(solid_ref) = build_topods_solid_from_shell(parsed, shell_ref, &mut t)? {
+                        refs.push(solid_ref);
+                    }
+            } else if let Some((outer, voids)) = parsed.brep_with_voids.get(&elem_ref) {
+                if let Some(solid_ref) = build_topods_solid_from_shell(parsed, *outer, &mut t)? {
+                    for void_ref in voids {
+                        if let Some(void_solid_ref) = build_topods_solid_from_shell(parsed, *void_ref, &mut t)? {
+                            let void_shells = t.solid(void_solid_ref).shells.clone();
+                            t.solid_mut(solid_ref).shells.extend(void_shells);
+                        }
+                    }
+                    refs.push(solid_ref);
+                }
+            } else if parsed.compounds.contains_key(&elem_ref) {
+                // Nested compound — build sub-compound and add its top-level shapes
+                let sub = build_compound_topods_nested(parsed, elem_ref, &mut t)?;
+                refs.extend(sub);
+            } else if parsed.compsolids.contains_key(&elem_ref)
+                && let Some(cs_ref) = build_topods_compsolid(parsed, elem_ref, &mut t)? {
+                    refs.push(cs_ref);
+                }
+        }
+    }
+
+    if refs.is_empty() {
+        return build_topods_with_face_map(parsed).map(|(brep, _)| brep);
+    }
+
+    let compound = t.add_tcompound(refs);
+    // Store as sole top-level shape
+    Ok(t)
+}
+
+fn build_compound_topods_nested(
+    parsed: &ParsedStep,
+    compound_id: u64,
+    t: &mut topods::BRep,
+) -> Result<Vec<topods::ShapeRef>, StepError> {
+    let mut refs: Vec<topods::ShapeRef> = Vec::new();
+    let Some(elems) = parsed.compounds.get(&compound_id) else {
+        return Ok(refs);
+    };
+    for &elem_ref in elems {
+        if parsed.manifold_solids.contains(&elem_ref) {
+            if let Some(shell_ref) = get_shell_for_solid(parsed, elem_ref)
+                && let Some(solid_ref) = build_topods_solid_from_shell(parsed, shell_ref, t)? {
+                    refs.push(solid_ref);
+                }
+        } else if let Some((outer, voids)) = parsed.brep_with_voids.get(&elem_ref) {
+            if let Some(mut solid_ref) = build_topods_solid_from_shell(parsed, *outer, t)? {
+                for void_ref in voids {
+                    if let Some(void_solid_ref) = build_topods_solid_from_shell(parsed, *void_ref, t)? {
+                        let void_shells = t.solid(void_solid_ref).shells.clone();
+                        t.solid_mut(solid_ref).shells.extend(void_shells);
+                    }
+                }
+                refs.push(solid_ref);
+            }
+        } else if parsed.compounds.contains_key(&elem_ref) {
+            let sub = build_compound_topods_nested(parsed, elem_ref, t)?;
+            refs.extend(sub);
+        } else if parsed.compsolids.contains_key(&elem_ref)
+            && let Some(cs_ref) = build_topods_compsolid(parsed, elem_ref, t)? {
+                refs.push(cs_ref);
+            }
+    }
+    Ok(refs)
+}
+
+fn build_compsolid_topods(parsed: &ParsedStep) -> Result<topods::BRep, StepError> {
+    let mut t = topods::BRep::new();
+    if let Some((&id, _solid_refs)) = parsed.compsolids.iter().next() {
+        if build_topods_compsolid(parsed, id, &mut t)?.is_some() {
+            return Ok(t);
+        }
+    }
+    build_topods_with_face_map(parsed).map(|(brep, _)| brep)
+}
+
+fn build_topods_compsolid(
+    parsed: &ParsedStep,
+    compsolid_id: u64,
+    t: &mut topods::BRep,
+) -> Result<Option<topods::ShapeRef>, StepError> {
+    let Some(solid_refs) = parsed.compsolids.get(&compsolid_id) else {
+        return Ok(None);
+    };
+    let mut refs: Vec<topods::ShapeRef> = Vec::new();
+    for &solid_ref in solid_refs {
+        if let Some(shell_ref) = get_shell_for_solid(parsed, solid_ref)
+            && let Some(sr) = build_topods_solid_from_shell(parsed, shell_ref, t)? {
+                refs.push(sr);
+            }
+        else if let Some((outer, voids)) = parsed.brep_with_voids.get(&solid_ref) {
+            if let Some(mut sr) = build_topods_solid_from_shell(parsed, *outer, t)? {
+                for void_ref in voids {
+                    if let Some(void_sr) = build_topods_solid_from_shell(parsed, *void_ref, t)? {
+                        let void_shells = t.solid(void_sr).shells.clone();
+                        t.solid_mut(sr).shells.extend(void_shells);
+                    }
+                }
+                refs.push(sr);
+            }
+        }
+    }
+    if refs.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(t.add_tcompsolid(refs)))
+    }
+}
+
+/// Build a solid from a CLOSED_SHELL reference. Helper for compound/compsolid paths.
+fn build_topods_solid_from_shell(
+    parsed: &ParsedStep,
+    shell_ref: u64,
+    t: &mut topods::BRep,
+) -> Result<Option<topods::ShapeRef>, StepError> {
+    let face_ids = parsed.closed_shells.get(&shell_ref);
+    let face_ids = match face_ids {
+        Some(fids) => fids,
+        None => return Ok(None),
+    };
+
+    let mut vertex_ref_by_id: HashMap<u64, topods::ShapeRef> = HashMap::new();
+    let mut edge_ref_by_curve: HashMap<u64, topods::ShapeRef> = HashMap::new();
+    let mut curve_store_index_by_step: HashMap<u64, usize> = HashMap::new();
+    let mut surface_store_index_by_step: HashMap<u64, usize> = HashMap::new();
+
+    // Collect vertex IDs used by this shell
+    let mut used_vids: BTreeSet<u64> = BTreeSet::new();
+    for &face_id in face_ids {
+        if let Some(bound_ids) = parsed.advanced_faces.get(&face_id) {
+            for bound_id in &bound_ids.bounds {
+                if let Some(&(loop_id, _)) = parsed.face_bounds.get(bound_id) {
+                    if let Some(oriented_ids) = parsed.edge_loops.get(&loop_id) {
+                        for oriented_id in oriented_ids {
+                            if let Some(&(edge_curve_id, _)) = parsed.oriented_edges.get(oriented_id) {
+                                if let Some(&(start, end, _, _)) = parsed.edge_curves.get(&edge_curve_id) {
+                                    used_vids.insert(start);
+                                    used_vids.insert(end);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for &vid in &used_vids {
+        if let Some(&point_id) = parsed.vertex_points.get(&vid) {
+            if let Some(&point) = parsed.cartesian_points.get(&point_id) {
+                let sr = t.add_tvertex(glam::DVec3::new(point[0], point[1], point[2]));
+                vertex_ref_by_id.insert(vid, sr);
+            }
+        }
+    }
+
+    let mut face_refs: Vec<topods::ShapeRef> = Vec::new();
+    for &face_id in face_ids {
+        if let Some((face_ref, surface_step_id)) = build_face_topods(
+            parsed, face_id, t, &vertex_ref_by_id,
+            &mut edge_ref_by_curve, &mut curve_store_index_by_step,
+        ) {
+            if let Some(surf_step_id) = surface_step_id {
+                if !surface_store_index_by_step.contains_key(&surf_step_id) {
+                    if let Some(surface) = resolve_surface(parsed, surf_step_id) {
+                        let idx = t.surfaces.len();
+                        t.surfaces.push(surface);
+                        surface_store_index_by_step.insert(surf_step_id, idx);
+                    }
+                }
+                if let Some(&surf_idx) = surface_store_index_by_step.get(&surf_step_id) {
+                    t.face_mut(face_ref).surface = Some(surf_idx);
+                }
+            }
+            face_refs.push(face_ref);
+        }
+    }
+
+    if face_refs.is_empty() {
+        return Ok(None);
+    }
+
+    let shell = t.add_tshell(face_refs);
+    Ok(Some(t.add_tsolid(vec![shell])))
+}
+
+/// TopoDS version of build_brep_with_face_map: produces a pool-based BRep
+/// and a mapping from STEP ADVANCED_FACE entity IDs to face ShapeRefs (for color resolution).
+fn build_topods_with_face_map(parsed: &ParsedStep) -> Result<(topods::BRep, HashMap<u64, topods::ShapeRef>), StepError> {
+    let shell_face_sets = collect_shell_faces(parsed);
+    let used_vertex_ids = if shell_face_sets.is_empty() {
+        collect_edge_vertices(parsed)
+    } else {
+        let mut used = collect_used_vertices(parsed, &shell_face_sets)?;
+        used.extend(collect_edge_vertices(parsed));
+        used
+    };
+    if used_vertex_ids.is_empty() && parsed.geometric_curve_sets.is_empty() {
+        return Err(StepError::EmptyResult("no vertices".into()));
+    }
+
+    let mut t = topods::BRep::new();
+    let mut vertex_ref_by_id: HashMap<u64, topods::ShapeRef> = HashMap::new();
+    let mut edge_ref_by_curve: HashMap<u64, topods::ShapeRef> = HashMap::new();
+    let mut curve_store_index_by_step: HashMap<u64, usize> = HashMap::new();
+    let mut surface_store_index_by_step: HashMap<u64, usize> = HashMap::new();
+    let mut face_ref_by_id: HashMap<u64, topods::ShapeRef> = HashMap::new();
+
+    // Build vertices
+    let mut vertex_ids: Vec<u64> = used_vertex_ids.into_iter().collect();
+    vertex_ids.sort_unstable();
+    for vertex_id in &vertex_ids {
+        let point_id = *parsed.vertex_points.get(vertex_id)
+            .ok_or(StepError::MissingEntity { entity_type: "VERTEX_POINT", id: Some(*vertex_id) })?;
+        let point = *parsed.cartesian_points.get(&point_id)
+            .ok_or(StepError::MissingEntity { entity_type: "CARTESIAN_POINT", id: Some(point_id) })?;
+        let sr = t.add_tvertex(glam::DVec3::new(point[0], point[1], point[2]));
+        vertex_ref_by_id.insert(*vertex_id, sr);
+    }
+
+    let mut solid_refs: Vec<topods::ShapeRef> = Vec::new();
+
+    for shell_faces in &shell_face_sets {
+        let mut face_refs: Vec<topods::ShapeRef> = Vec::new();
+        for &face_id in shell_faces {
+            if let Some((face_ref, surface_step_id)) = build_face_topods(
+                parsed, face_id, &mut t, &vertex_ref_by_id,
+                &mut edge_ref_by_curve, &mut curve_store_index_by_step,
+            ) {
+                // Resolve surface and set on face after creation
+                if let Some(surf_step_id) = surface_step_id {
+                    if !surface_store_index_by_step.contains_key(&surf_step_id) {
+                        let maybe_surf = resolve_surface(parsed, surf_step_id);
+                        if let Some(surface) = maybe_surf {
+                            let idx = t.surfaces.len();
+                            t.surfaces.push(surface);
+                            surface_store_index_by_step.insert(surf_step_id, idx);
+                        }
+                    }
+                    if let Some(&surf_idx) = surface_store_index_by_step.get(&surf_step_id) {
+                        t.face_mut(face_ref).surface = Some(surf_idx);
+                    }
+                }
+                face_ref_by_id.insert(face_id, face_ref);
+                face_refs.push(face_ref);
+            }
+        }
+        if !face_refs.is_empty() {
+            let shell_ref = t.add_tshell(face_refs);
+            let solid_ref = t.add_tsolid(vec![shell_ref]);
+            solid_refs.push(solid_ref);
+        }
+    }
+
+    // BREP_WITH_VOIDS: merge single-shell solids into multi-shell solids
+    if !parsed.brep_with_voids.is_empty() {
+        let base = parsed.manifold_solids.len();
+        let mut offset = 0usize;
+        let mut void_group: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut sorted_voids: Vec<&u64> = parsed.brep_with_voids.keys().collect();
+        sorted_voids.sort_unstable();
+        for key in sorted_voids {
+            let (_, voids) = &parsed.brep_with_voids[key];
+            let n = 1 + voids.len();
+            if base + offset + n <= solid_refs.len() {
+                let outer_si = base + offset;
+                for vi in (outer_si + 1)..(outer_si + n) {
+                    let void_shells = t.solid(solid_refs[vi]).shells.clone();
+                    t.solid_mut(solid_refs[outer_si]).shells.extend(void_shells);
+                    void_group.insert(vi);
+                }
+            }
+            offset += n;
+        }
+        let mut to_remove: Vec<usize> = void_group.into_iter().collect();
+        to_remove.sort_unstable_by(|a, b| b.cmp(a));
+        for idx in to_remove {
+            solid_refs.remove(idx);
+        }
+    }
+
+    // Standalone edges not part of any face loop
+    for (edge_curve_id, (start_id, end_id, curve_ref, same_sense)) in &parsed.edge_curves {
+        if edge_ref_by_curve.contains_key(edge_curve_id) {
+            continue;
+        }
+        let _ = ensure_edge_topods(
+            parsed, *start_id, *end_id, *curve_ref, *same_sense,
+            &mut t, &vertex_ref_by_id, &mut edge_ref_by_curve,
+            &mut curve_store_index_by_step, *edge_curve_id,
+        );
+    }
+
+    // Standalone 1D curves from GEOMETRIC_CURVE_SET
+    for curve_set in &parsed.geometric_curve_sets {
+        for &curve_ref in curve_set {
+            let (basis_curve_ref, _trim_range) = if let Some(&(underlying_ref, t0, t1)) =
+                parsed.trimmed_curves.get(&curve_ref)
+            {
+                (underlying_ref, Some([t0, t1]))
+            } else {
+                (curve_ref, None)
+            };
+            let Some(curve) = resolve_curve(parsed, basis_curve_ref) else { continue; };
+            let points = sample_standalone_curve(parsed, curve_ref);
+            let (Some(start), Some(end)) = (points.first().copied(), points.last().copied()) else { continue; };
+
+            let start_sr = t.add_tvertex(start);
+            let end_sr = t.add_tvertex(end);
+            let cidx = if let Some(&existing) = curve_store_index_by_step.get(&basis_curve_ref) {
+                existing
+            } else {
+                let idx = t.curves.len();
+                t.curves.push(curve);
+                curve_store_index_by_step.insert(basis_curve_ref, idx);
+                idx
+            };
+            let range = _trim_range.unwrap_or_else(|| {
+                let c = &t.curves[cidx];
+                let t0 = (start - c.point_at(c.default_domain()[0])).length().min(0.0);
+                let t1 = (end - c.point_at(c.default_domain()[1])).length().max(0.0);
+                // Fallback: use default domain
+                c.default_domain()
+            });
+            let _edge_ref = t.add_tedge(Some(cidx), start_sr, end_sr, range);
+        }
+    }
+
+    // Populate edge pcurves from SURFACE_CURVE entities
+    for (step_curve_id, (_inner_3d_ref, pcurve_ids, _same_param)) in &parsed.surface_curves {
+        let edge_ref = edge_ref_by_curve.get(step_curve_id).copied().or_else(|| {
+            parsed.edge_curves.iter().find_map(|(ec_id, (_, _, cr, _))| {
+                if cr.as_ref() == Some(step_curve_id) {
+                    edge_ref_by_curve.get(ec_id).copied()
+                } else {
+                    None
+                }
+            })
+        });
+        let Some(edge_ref) = edge_ref else { continue };
+
+        for &pc_step_id in pcurve_ids {
+            let Some(&(surface_step_id, def_rep_id)) = parsed.pcurves.get(&pc_step_id) else { continue; };
+            let Some(&curve2d_step_id) = parsed.definitional_reps.get(&def_rep_id) else { continue; };
+
+            let face_ref = face_ref_by_id.iter().find_map(|(&fid, &fr)| {
+                let bounds = parsed.advanced_faces.get(&fid)?;
+                if bounds.surface == Some(surface_step_id) { Some(fr) } else { None }
+            });
+            let Some(face_ref) = face_ref else { continue; };
+
+            let Some(curve2d) = resolve_curve2d(parsed, curve2d_step_id) else { continue; };
+            let c2d_idx = t.curve2ds.len();
+            t.curve2ds.push(curve2d);
+
+            let c2d = t.curve2ds[c2d_idx].clone();
+            let default_range = [0.0_f64, 1.0];
+            t.edge_mut(edge_ref).pcurves.insert(face_ref.index, (c2d, default_range[0], default_range[1]));
+        }
+    }
+
+    if solid_refs.is_empty() && edge_ref_by_curve.is_empty() {
+        return Err(StepError::EmptyResult("no faces or edges".into()));
+    }
+
+    // Propagate tolerance from UNCERTAINTY_MEASURE_WITH_UNIT
+    if let Some(tol) = parsed.uncertainty_value
+        && tol > 0.0
+        && (tol - CONFUSION).abs() > CONFUSION * 0.5
+    {
+        for v in vertex_ref_by_id.values() {
+            t.vertex_mut(*v).tolerance = tol;
+        }
+        for e in edge_ref_by_curve.values() {
+            t.edge_mut(*e).tolerance = tol;
+        }
+        for f in face_ref_by_id.values() {
+            t.face_mut(*f).tolerance = tol;
+        }
+    }
+
+    Ok((t, face_ref_by_id))
+}
+
+/// Build a single face into a topods::BRep.
+/// Returns (face ShapeRef, surface STEP entity ID if applicable).
+fn build_face_topods(
+    parsed: &ParsedStep,
+    face_id: u64,
+    t: &mut topods::BRep,
+    vertex_ref_by_id: &HashMap<u64, topods::ShapeRef>,
+    edge_ref_by_curve: &mut HashMap<u64, topods::ShapeRef>,
+    curve_store_index_by_step: &mut HashMap<u64, usize>,
+) -> Option<(topods::ShapeRef, Option<u64>)> {
+    let bound_ids = parsed.advanced_faces.get(&face_id)?;
+
+    let outer_bound = bound_ids.bounds.iter().copied().find(|bid| {
+        parsed.face_bounds.get(bid).map(|(_, is_outer)| *is_outer).unwrap_or(false)
+    }).unwrap_or(*bound_ids.bounds.first()?);
+
+    let (loop_id, _) = *parsed.face_bounds.get(&outer_bound)?;
+
+    // Single-vertex outer bound (e.g. spherical face from STEP interchange writer)
+    if parsed.vertex_loops.contains_key(&loop_id) {
+        let empty_wire = t.add_twire(vec![]);
+        let face_ref = t.add_tface(None, empty_wire, vec![], None, None, vec![], true);
+        return Some((face_ref, bound_ids.surface));
+    }
+
+    let oriented_ids = parsed.edge_loops.get(&loop_id)?;
+
+    let mut wire_edges: Vec<topods::ShapeRef> = Vec::new();
+
+    for oriented_id in oriented_ids {
+        let (edge_curve_id, orientation) = *parsed.oriented_edges.get(oriented_id)?;
+        let (start_id, end_id, curve_ref, same_sense) = *parsed.edge_curves.get(&edge_curve_id)?;
+
+        let edge_ref = ensure_edge_topods(
+            parsed, start_id, end_id, curve_ref, same_sense,
+            t, vertex_ref_by_id, edge_ref_by_curve,
+            curve_store_index_by_step, edge_curve_id,
+        )?;
+
+        let orient = if orientation { topods::Orientation::Forward } else { topods::Orientation::Reversed };
+        wire_edges.push(topods::ShapeRef::with_orientation(edge_ref.index, orient));
+    }
+
+    // Build inner wires (holes)
+    let mut inner_wires: Vec<topods::ShapeRef> = Vec::new();
+    for inner_bound in bound_ids.bounds.iter().copied().filter(|bid| *bid != outer_bound) {
+        let Some((inner_loop_id, _)) = parsed.face_bounds.get(&inner_bound).copied() else { continue; };
+        let Some(inner_oriented_ids) = parsed.edge_loops.get(&inner_loop_id) else { continue; };
+
+        let mut inner_edges = Vec::new();
+        for oriented_id in inner_oriented_ids {
+            let (edge_curve_id, orientation) = *parsed.oriented_edges.get(oriented_id)?;
+            let (start_id, end_id, curve_ref, same_sense) = *parsed.edge_curves.get(&edge_curve_id)?;
+
+            let edge_ref = ensure_edge_topods(
+                parsed, start_id, end_id, curve_ref, same_sense,
+                t, vertex_ref_by_id, edge_ref_by_curve,
+                curve_store_index_by_step, edge_curve_id,
+            )?;
+
+            let orient = if orientation { topods::Orientation::Forward } else { topods::Orientation::Reversed };
+            inner_edges.push(topods::ShapeRef::with_orientation(edge_ref.index, orient));
+        }
+
+        if !inner_edges.is_empty() {
+            let inner_wire = t.add_twire(inner_edges);
+            inner_wires.push(inner_wire);
+        }
+    }
+
+    let outer_wire = t.add_twire(wire_edges);
+    let face_ref = t.add_tface(None, outer_wire, inner_wires, None, None, vec![], true);
+
+    Some((face_ref, bound_ids.surface))
+}
+
+/// Ensure an edge exists in the topods::BRep for a STEP EDGE_CURVE entity.
+/// Returns the edge's ShapeRef (creating it if needed).
+fn ensure_edge_topods(
+    parsed: &ParsedStep,
+    start_id: u64,
+    end_id: u64,
+    curve_ref: Option<u64>,
+    same_sense: bool,
+    t: &mut topods::BRep,
+    vertex_ref_by_id: &HashMap<u64, topods::ShapeRef>,
+    edge_ref_by_curve: &mut HashMap<u64, topods::ShapeRef>,
+    curve_store_index_by_step: &mut HashMap<u64, usize>,
+    edge_curve_id: u64,
+) -> Option<topods::ShapeRef> {
+    if let Some(&sr) = edge_ref_by_curve.get(&edge_curve_id) {
+        return Some(sr);
+    }
+
+    let first = *vertex_ref_by_id.get(&start_id)?;
+    let last = *vertex_ref_by_id.get(&end_id)?;
+
+    // Resolve curve into geometry store
+    let curve_idx = curve_ref.and_then(|step_curve| {
+        if let Some(&existing) = curve_store_index_by_step.get(&step_curve) {
+            return Some(existing);
+        }
+        let curve = resolve_curve(parsed, step_curve)?;
+        let cidx = t.curves.len();
+        t.curves.push(curve);
+        curve_store_index_by_step.insert(step_curve, cidx);
+        Some(cidx)
+    });
+
+    // Determine trim range
+    let explicit_trim_range = curve_ref.and_then(|step_curve| {
+        if let Some(&(_, t0, t1)) = parsed.trimmed_curves.get(&step_curve) {
+            return Some([t0, t1]);
+        }
+        parsed.surface_curves.get(&step_curve).and_then(|(inner_ref, _, _)| {
+            parsed.trimmed_curves.get(inner_ref).map(|&(_, t0, t1)| [t0, t1])
+        })
+    });
+
+    let range = explicit_trim_range.unwrap_or_else(|| {
+        if let Some(cidx) = curve_idx {
+            let c = &t.curves[cidx];
+            c.default_domain()
+        } else {
+            [0.0, 1.0]
+        }
+    });
+
+    let mut adjusted_range = range;
+    if !same_sense {
+        adjusted_range = [range[1], range[0]];
+    }
+
+    let edge_ref = t.add_tedge(curve_idx, first, last, adjusted_range);
+    edge_ref_by_curve.insert(edge_curve_id, edge_ref);
+
+    // Check degenerated
+    if curve_idx.is_some() {
+        let p0 = t.vertex(first).point;
+        let p1 = t.vertex(last).point;
+        let len = (p1 - p0).length();
+        if len <= 1e-12 {
+            t.edge_mut(edge_ref).degenerated = true;
+        }
+    }
+
+    Some(edge_ref)
 }
 
 /// Resolve STYLED_ITEM ->COLOUR_RGB chains into a StepColor.
@@ -9254,10 +9842,16 @@ mod tests {
     const BOX_STEP: &str = include_str!("../../../assets/box.step");
     const EDGE_ONLY_STEP: &str = "ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\n#1=CARTESIAN_POINT('',(0.,0.,0.));\n#2=CARTESIAN_POINT('',(1.,0.,0.));\n#3=VERTEX_POINT('',#1);\n#4=VERTEX_POINT('',#2);\n#5=EDGE_CURVE('',#3,#4,$,.T.);\nENDSEC;\nEND-ISO-10303-21;\n";
 
+    /// Convert topods::BRep back to old BRep for accessing flat fields in tests.
+    fn to_old(t: &topods::BRep) -> BRep {
+        BRep::from_topods_with_location(t, glam::DAffine3::IDENTITY)
+    }
+
     /// Helper for round-trip testing: export BRep to STEP and re-import.
-    fn round_trip_brep(brep: &BRep) -> BRep {
+    fn round_trip_brep(brep: &BRep) -> topods::BRep {
+        let t = brep.to_topods();
         let step = StepWriter::write_string_with_options(
-            brep,
+            &t,
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -9271,7 +9865,26 @@ mod tests {
 
     /// Helper to count topology elements.
     /// Counts only topological vertices (those referenced by edges), not tessellation vertices.
-    fn count_topology(brep: &BRep) -> (usize, usize, usize, usize) {
+    fn count_topology(t: &topods::BRep) -> (usize, usize, usize, usize) {
+        let brep = to_old(t);
+        use std::collections::HashSet;
+        let topological_vertices: HashSet<usize> = brep.edges.iter()
+            .flat_map(|e| [e.start, e.end].into_iter())
+            .collect();
+        let vertices = topological_vertices.len();
+        let edges = brep.edges.len();
+        let shells: usize = brep.solids.iter().map(|s| s.shells.len()).sum();
+        let faces: usize = brep
+            .solids
+            .iter()
+            .flat_map(|s| s.shells.iter())
+            .map(|sh| sh.faces.len())
+            .sum();
+        (vertices, edges, faces, shells)
+    }
+
+    /// Count topology on old BRep (for boolean results before round-trip).
+    fn count_topology_old(brep: &BRep) -> (usize, usize, usize, usize) {
         use std::collections::HashSet;
         let topological_vertices: HashSet<usize> = brep.edges.iter()
             .flat_map(|e| [e.start, e.end].into_iter())
@@ -9302,7 +9915,7 @@ mod tests {
         let (union, _) = boolean_op_simplified(BooleanOpType::Union, &a, &b, SimplifyOptions::default())
             .expect("union should succeed");
 
-        let (v1, e1, f1, s1) = count_topology(&union);
+        let (v1, e1, f1, s1) = count_topology_old(&union);
         let round_tripped = round_trip_brep(&union);
         let (v2, e2, f2, s2) = count_topology(&round_tripped);
 
@@ -9336,7 +9949,7 @@ mod tests {
         let (diff, _) = boolean_op_simplified(BooleanOpType::Difference, &a, &b, SimplifyOptions::default())
             .expect("difference should succeed");
 
-        let (v1, e1, f1, s1) = count_topology(&diff);
+        let (v1, e1, f1, s1) = count_topology_old(&diff);
         let round_tripped = round_trip_brep(&diff);
         let (v2, e2, f2, s2) = count_topology(&round_tripped);
 
@@ -9348,7 +9961,8 @@ mod tests {
 
     #[test]
     fn parses_hfss_into_non_trivial_brep() {
-        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let t = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let brep = to_old(&t);
         assert!(
             brep.vertices.len() > 8,
             "hfss should have more than box vertices"
@@ -9368,7 +9982,8 @@ mod tests {
 
     #[test]
     fn triangulates_spherical_face_from_hfss() {
-        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let t = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let brep = to_old(&t);
 
         let mut face_triangles = Vec::new();
         for solid in &brep.solids {
@@ -9388,7 +10003,8 @@ mod tests {
 
     #[test]
     fn triangulates_toroidal_face_from_hfss() {
-        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let t = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let brep = to_old(&t);
 
         let mut face_idx = 0usize;
         let mut found_torus = false;
@@ -9428,7 +10044,8 @@ mod tests {
     #[test]
     #[ignore = "hfss fixture topology no longer guarantees a single outer-wire edge on disc/trim faces"]
     fn triangulates_single_edge_planar_faces_from_hfss() {
-        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let t = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let brep = to_old(&t);
         let mut found = false;
 
         for solid in &brep.solids {
@@ -9450,13 +10067,14 @@ mod tests {
 
     #[test]
     fn parses_box_example() {
-        let brep = StepReader::parse_string(BOX_STEP).expect("box.step should parse");
+        let t = StepReader::parse_string(BOX_STEP).expect("box.step should parse");
+        let brep = to_old(&t);
         assert!(!brep.vertices.is_empty());
     }
 
     #[test]
     fn parse_box_with_healing_analyze_only_reports_clean() {
-        let (brep, report) = StepReader::parse_string_with_healing(
+        let (t, report) = StepReader::parse_string_with_healing(
             BOX_STEP,
             HealingOptions {
                 mode: HealingMode::AnalyzeOnly,
@@ -9465,6 +10083,7 @@ mod tests {
         )
         .expect("box.step parse+healing should succeed");
 
+        let brep = to_old(&t);
         assert!(!brep.vertices.is_empty());
         assert!(report.initial.is_valid());
         assert!(report.final_result.is_valid());
@@ -9473,24 +10092,26 @@ mod tests {
 
     #[test]
     fn parse_hfss_with_healing_returns_report() {
-        let (brep, report) = StepReader::parse_string_with_healing(
+        let (t, report) = StepReader::parse_string_with_healing(
             HFSS_STEP,
             HealingOptions::default(),
         )
         .expect("hfss.step parse+healing should succeed");
 
+        let brep = to_old(&t);
         assert!(!brep.vertices.is_empty());
         assert!(report.initial_issue_count() >= report.final_issue_count());
     }
 
     #[test]
     fn parse_hfss_with_healing_report_json_contains_schema_and_counts() {
-        let (brep, report, json) = StepReader::parse_string_with_healing_report_json(
+        let (t, report, json) = StepReader::parse_string_with_healing_report_json(
             HFSS_STEP,
             HealingOptions::default(),
         )
         .expect("hfss.step parse+healing+json should succeed");
 
+        let brep = to_old(&t);
         assert!(!brep.vertices.is_empty());
         let v: serde_json::Value =
             serde_json::from_str(&json).expect("healing report json should parse");
@@ -9526,9 +10147,10 @@ mod tests {
 
     #[test]
     fn parse_box_with_metadata_extracts_schema_and_protocol_hint() {
-        let (brep, meta) = StepReader::parse_string_with_metadata(BOX_STEP)
+        let (t, meta) = StepReader::parse_string_with_metadata(BOX_STEP)
             .expect("box.step parse+metadata should succeed");
 
+        let brep = to_old(&t);
         assert!(!brep.vertices.is_empty());
         assert!(meta.file_schema.is_some(), "FILE_SCHEMA should be extracted");
         assert!(
@@ -9546,7 +10168,8 @@ mod tests {
 
     #[test]
     fn writer_tagged_ellipsoid_surface_resolves_back_to_native_surface() {
-        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let t = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let mut brep = to_old(&t);
         let sid = *brep
             .geom
             .face_surface
@@ -9564,7 +10187,7 @@ mod tests {
         });
 
         let step = StepWriter::write_string(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -9592,7 +10215,8 @@ mod tests {
 
     #[test]
     fn writer_tagged_helicoid_surface_resolves_back_to_native_surface() {
-        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let t = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let mut brep = to_old(&t);
         let sid = *brep
             .geom
             .face_surface
@@ -9608,7 +10232,7 @@ mod tests {
         });
 
         let step = StepWriter::write_string(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -9874,7 +10498,8 @@ END-ISO-10303-21;
 
     #[test]
     fn preserves_standalone_edge_only_geometry() {
-        let brep = StepReader::parse_string(EDGE_ONLY_STEP).expect("edge-only STEP should parse");
+        let t = StepReader::parse_string(EDGE_ONLY_STEP).expect("edge-only STEP should parse");
+        let brep = to_old(&t);
         assert_eq!(brep.vertices.len(), 2);
         assert_eq!(brep.edges.len(), 1);
         assert!(
@@ -9888,7 +10513,8 @@ END-ISO-10303-21;
         // hfss.step has GEOMETRIC_CURVE_SET with Polyline1 (2 trimmed lines),
         // Polyline2 (b-spline), and Polyline3 (trimmed circle arc 0..135 deg).
         // Each referenced curve should be preserved as at least one BRep edge.
-        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let t = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let brep = to_old(&t);
 
         // The known geometric curve sets in hfss.step contain at least 4 curve refs.
         let total_edges = brep.edges.len();
@@ -10377,9 +11003,11 @@ END-ISO-10303-21;
         let a = StepReader::parse_string(BOX_STEP).expect("box.step string parse should succeed");
         let b = StepReader::parse_reader(Cursor::new(BOX_STEP.as_bytes()))
             .expect("box.step stream parse should succeed");
-        assert_eq!(a.vertices.len(), b.vertices.len());
-        assert_eq!(a.edges.len(), b.edges.len());
-        assert_eq!(a.solids.len(), b.solids.len());
+        let oa = to_old(&a);
+        let ob = to_old(&b);
+        assert_eq!(oa.vertices.len(), ob.vertices.len());
+        assert_eq!(oa.edges.len(), ob.edges.len());
+        assert_eq!(oa.solids.len(), ob.solids.len());
     }
 
     #[test]
@@ -10461,7 +11089,8 @@ END-ISO-10303-21;
     fn export_readiness_clean_brep_is_ready() {
         // A BRep loaded from box.step should parse and be export-ready
         // (no out-of-range pcurve indices, tolerances are ?? CONFUSION).
-        let brep = StepReader::parse_string(BOX_STEP).expect("box.step should parse");
+        let t = StepReader::parse_string(BOX_STEP).expect("box.step should parse");
+        let brep = to_old(&t);
         let report = validate_export_readiness(&brep);
         assert!(
             report.is_ready,
@@ -11342,7 +11971,7 @@ END-ISO-10303-21;
         let shell_count: usize = compound.solids.iter().map(|s| s.shells.len()).sum();
         assert_eq!(shell_count, 3, "should have 3 shells");
 
-        let (v1, e1, f1, s1) = count_topology(&compound);
+        let (v1, e1, f1, s1) = count_topology_old(&compound);
         let round_tripped = round_trip_brep(&compound);
         let (v2, e2, f2, s2) = count_topology(&round_tripped);
 
@@ -11359,7 +11988,7 @@ END-ISO-10303-21;
 
         let cylinder = make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 2.0).unwrap();
 
-        let (_v1, _e1, f1, s1) = count_topology(&cylinder);
+        let (_v1, _e1, f1, s1) = count_topology_old(&cylinder);
         let round_tripped = round_trip_brep(&cylinder);
         let (_v2, _e2, f2, s2) = count_topology(&round_tripped);
 
@@ -11368,7 +11997,8 @@ END-ISO-10303-21;
         assert_eq!(s1, s2, "shell count should match after round-trip");
 
         // Verify cylindrical surface is preserved
-        let has_cylinder = round_tripped.geom.surfaces.iter().any(|s| matches!(s, Surface3::Cylinder(_)));
+        let rt = to_old(&round_tripped);
+        let has_cylinder = rt.geom.surfaces.iter().any(|s| matches!(s, Surface3::Cylinder(_)));
         assert!(has_cylinder, "should preserve cylindrical surface");
     }
 
@@ -11379,14 +12009,15 @@ END-ISO-10303-21;
 
         let sphere = make_sphere_brep(DVec3::ZERO, 1.0).unwrap();
 
-        let (_v1, _e1, f1, s1) = count_topology(&sphere);
+        let (_v1, _e1, f1, s1) = count_topology_old(&sphere);
         let round_tripped = round_trip_brep(&sphere);
         let (_v2, _e2, f2, s2) = count_topology(&round_tripped);
 
         assert_eq!(f1, f2, "face count should match after round-trip");
         assert_eq!(s1, s2, "shell count should match after round-trip");
 
-        let has_sphere = round_tripped.geom.surfaces.iter().any(|s| matches!(s, Surface3::Sphere(_)));
+        let rt = to_old(&round_tripped);
+        let has_sphere = rt.geom.surfaces.iter().any(|s| matches!(s, Surface3::Sphere(_)));
         assert!(has_sphere, "should preserve spherical surface");
     }
 
@@ -11397,14 +12028,15 @@ END-ISO-10303-21;
 
         let cone = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 2.0).unwrap();
 
-        let (_v1, _e1, f1, s1) = count_topology(&cone);
+        let (_v1, _e1, f1, s1) = count_topology_old(&cone);
         let round_tripped = round_trip_brep(&cone);
         let (_v2, _e2, f2, s2) = count_topology(&round_tripped);
 
         assert_eq!(f1, f2, "face count should match after round-trip");
         assert_eq!(s1, s2, "shell count should match after round-trip");
 
-        let has_cone = round_tripped.geom.surfaces.iter().any(|s| matches!(s, Surface3::Cone(_)));
+        let rt = to_old(&round_tripped);
+        let has_cone = rt.geom.surfaces.iter().any(|s| matches!(s, Surface3::Cone(_)));
         assert!(has_cone, "should preserve conical surface");
     }
 
@@ -11413,7 +12045,7 @@ END-ISO-10303-21;
         let brep = BRep::default();
 
         let step = StepWriter::write_string(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -11454,7 +12086,8 @@ END-ISO-10303-21;
         assert!(original_edge_count <= 4, "cylinder should not have excessive edges, got {}", original_edge_count);
 
         let round_tripped = round_trip_brep(&cylinder);
-        let round_trip_edge_count = round_tripped.edges.len();
+        let r = to_old(&round_tripped);
+        let round_trip_edge_count = r.edges.len();
         // Allow for tessellation edges but check reasonable bounds
         // A proper cylinder round-trip should preserve topology reasonably
         assert!(
@@ -11471,14 +12104,15 @@ END-ISO-10303-21;
 
         let torus = make_torus_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 2.0, 0.5).unwrap();
 
-        let (_v1, _e1, f1, _s1) = count_topology(&torus);
+        let (_v1, _e1, f1, _s1) = count_topology_old(&torus);
         let round_tripped = round_trip_brep(&torus);
         let (_v2, _e2, f2, _s2) = count_topology(&round_tripped);
 
         // Torus is a closed surface, should preserve face count
         assert_eq!(f1, f2, "torus face count should match after round-trip");
 
-        let has_torus = round_tripped.geom.surfaces.iter().any(|s| matches!(s, Surface3::Torus(_)));
+        let rt = to_old(&round_tripped);
+        let has_torus = rt.geom.surfaces.iter().any(|s| matches!(s, Surface3::Torus(_)));
         assert!(has_torus, "should preserve toroidal surface");
     }
 
@@ -11501,8 +12135,9 @@ END-ISO-10303-21;
 
         // Box: should have 6 PLANE surfaces
         let box_brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let t_box = box_brep.to_topods();
         let step = StepWriter::write_string(
-            &box_brep,
+            &t_box,
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -11522,8 +12157,9 @@ END-ISO-10303-21;
 
         // Cylinder: should have 1 CYLINDRICAL_SURFACE + 2 PLANE caps
         let cyl_brep = make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 2.0).unwrap();
+        let t_cyl = cyl_brep.to_topods();
         let step = StepWriter::write_string(
-            &cyl_brep,
+            &t_cyl,
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -11555,8 +12191,9 @@ END-ISO-10303-21;
         let original = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
 
         // Write to STEP string
+        let t_orig = original.to_topods();
         let step = StepWriter::write_string(
-            &original,
+            &t_orig,
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -11566,6 +12203,7 @@ END-ISO-10303-21;
         // Read back
         let roundtrip =
             StepReader::parse_string(&step).expect("Failed to read back STEP");
+        let rt = to_old(&roundtrip);
 
         // Compare topology counts
         let orig_faces: usize = original
@@ -11574,7 +12212,7 @@ END-ISO-10303-21;
             .flat_map(|s| &s.shells)
             .map(|sh| sh.faces.len())
             .sum();
-        let rt_faces: usize = roundtrip
+        let rt_faces: usize = rt
             .solids
             .iter()
             .flat_map(|s| &s.shells)
@@ -11583,7 +12221,7 @@ END-ISO-10303-21;
         assert_eq!(orig_faces, rt_faces, "Face count mismatch on round-trip");
 
         let orig_edges = original.edges.len();
-        let rt_edges = roundtrip.edges.len();
+        let rt_edges = rt.edges.len();
         assert_eq!(orig_edges, rt_edges, "Edge count mismatch on round-trip");
 
         // Vertex count may differ because triangulation nodes are stored as
@@ -11594,11 +12232,11 @@ END-ISO-10303-21;
             brep.edges.iter().flat_map(|e| [e.start, e.end]).collect::<HashSet<_>>().len()
         };
         let orig_verts = topological_verts(&original);
-        let rt_verts = topological_verts(&roundtrip);
+        let rt_verts = topological_verts(&rt);
         assert_eq!(orig_verts, rt_verts, "Topological vertex count mismatch on round-trip");
 
         let orig_solids = original.solids.len();
-        let rt_solids = roundtrip.solids.len();
+        let rt_solids = rt.solids.len();
         assert_eq!(
             orig_solids, rt_solids,
             "Solid count mismatch on round-trip"
@@ -11621,8 +12259,9 @@ END-ISO-10303-21;
         }
 
         // Read via StepReader
-        let brep = crate::StepReader::read_file(&path)
+        let t = crate::StepReader::read_file(&path)
             .expect("Failed to read OCCT STEP file");
+        let brep = to_old(&t);
 
         // Verify basic topology
         assert!(!brep.solids.is_empty(), "Should have at least one solid");

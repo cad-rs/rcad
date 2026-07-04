@@ -24,12 +24,17 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use glam::{DAffine3, DVec3};
 use rcad_algorithms::{HealingOptions, HealingReport, analyze_and_heal};
-use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_kernel::appearance::StepColor;
 use serde::Serialize;
 
 use crate::StepError;
 use crate::writer::{ExportSelection, StepWriter};
+
+/// Bridge: convert topods::BRep to old BRep for StepWriter (which still uses old BRep).
+fn to_old_brep(t: &topods::BRep) -> rcad_kernel::BRep {
+    rcad_kernel::BRep::from_topods_with_location(t, glam::DAffine3::IDENTITY)
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AssemblyComponent
@@ -40,13 +45,13 @@ use crate::writer::{ExportSelection, StepWriter};
 /// The [`transform`][AssemblyComponent::transform] field is a full affine
 /// transform (translation, rotation, uniform or non-uniform scale).  When
 /// writing to STEP the transform is **baked** into vertex coordinates via
-/// [`BRep::apply_transform`].
+/// bridge to old BRep.
 #[derive(Clone)]
 pub struct AssemblyComponent {
     /// Human-readable part name.
     pub name: String,
     /// The geometry.
-    pub brep: BRep,
+    pub brep: topods::BRep,
     /// Full affine transform for this component (default: identity).
     pub transform: DAffine3,
     /// Optional RGB color for this component's faces.
@@ -55,7 +60,7 @@ pub struct AssemblyComponent {
 
 impl AssemblyComponent {
     /// Create a new component with an identity transform.
-    pub fn new(name: impl Into<String>, brep: BRep) -> Self {
+    pub fn new(name: impl Into<String>, brep: topods::BRep) -> Self {
         Self {
             name: name.into(),
             brep,
@@ -101,7 +106,7 @@ pub struct AssemblyNode {
     /// Human-readable name for this node.
     pub name: String,
     /// Geometry for leaf nodes; `None` for branch (sub-assembly) nodes.
-    pub brep: Option<BRep>,
+    pub brep: Option<topods::BRep>,
     /// Full affine transform applied before writing (baked into coordinates).
     pub transform: DAffine3,
     /// Optional color for leaf nodes.
@@ -112,7 +117,7 @@ pub struct AssemblyNode {
 
 impl AssemblyNode {
     /// Create a leaf node (part with geometry).
-    pub fn leaf(name: impl Into<String>, brep: BRep) -> Self {
+    pub fn leaf(name: impl Into<String>, brep: topods::BRep) -> Self {
         Self {
             name: name.into(),
             brep: Some(brep),
@@ -219,12 +224,12 @@ pub fn write_assembly_tree(root_name: &str, root: &AssemblyNode) -> String {
         nauo_seq: &mut usize,
     ) -> u64 {
         // Apply transform to a cloned BRep if needed.
-        let baked_brep: Option<BRep> = node.brep.as_ref().map(|b| {
-            let mut b2 = b.clone();
+        let baked_brep: Option<topods::BRep> = node.brep.as_ref().map(|b| {
+            let mut old = to_old_brep(b);
             if node.transform != DAffine3::IDENTITY {
-                b2.apply_transform(node.transform);
+                old.apply_transform(node.transform);
             }
-            b2
+            old.to_topods()
         });
 
         // Emit geometry for leaf nodes.
@@ -399,7 +404,7 @@ pub fn read_assembly_tree(step: &str) -> Result<AssemblyNode, StepError> {
         entity_map: &HashMap<u64, String>,
         reverse_map: &HashMap<u64, Vec<u64>>,
         children_of: &HashMap<u64, Vec<(u64, String)>>,
-        merged_brep: &BRep,
+        merged_brep: &topods::BRep,
     ) -> AssemblyNode {
         let name = resolve_product_name(pd_id, entity_map)
             .unwrap_or_else(|| format!("node_{}", pd_id));
@@ -475,14 +480,14 @@ pub fn read_assembly_tree(step: &str) -> Result<AssemblyNode, StepError> {
 /// STEP transform entity).
 pub fn write_assembly(assembly_name: &str, components: &[AssemblyComponent]) -> String {
     // Apply full DAffine3 transform into new BReps and collect colors.
-    let prepared: Vec<(String, BRep, Option<rcad_kernel::appearance::Color>)> = components
+    let prepared: Vec<(String, topods::BRep, Option<rcad_kernel::appearance::Color>)> = components
         .iter()
         .map(|c| {
-            let mut b = c.brep.clone();
+            let mut old = to_old_brep(&c.brep);
             if c.transform != DAffine3::IDENTITY {
-                b.apply_transform(c.transform);
+                old.apply_transform(c.transform);
             }
-            (c.name.clone(), b, c.color)
+            (c.name.clone(), old.to_topods(), c.color)
         })
         .collect();
 
@@ -498,7 +503,7 @@ fn push_record(records: &mut Vec<String>, next_id: &mut u64, body: String) -> u6
 
 fn write_assembly_step(
     assembly_name: &str,
-    components: &[(String, BRep, Option<rcad_kernel::appearance::Color>)],
+    components: &[(String, topods::BRep, Option<rcad_kernel::appearance::Color>)],
 ) -> String {
     use std::fmt::Write as FmtWrite;
 
@@ -771,8 +776,9 @@ pub fn read_assembly_with_healing(
     let mut reports = Vec::with_capacity(components.len());
 
     for component in &mut components {
-        let (healed, report) = analyze_and_heal(&component.brep, options);
-        component.brep = healed;
+        let old = to_old_brep(&component.brep);
+        let (healed_old, report) = analyze_and_heal(&old, options);
+        component.brep = healed_old.to_topods();
         reports.push(report);
     }
 
@@ -849,8 +855,9 @@ pub fn read_assembly_tree_with_healing(
         reports: &mut Vec<AssemblyNodeHealingReport>,
     ) {
         if let Some(brep) = node.brep.take() {
-            let (healed, report) = analyze_and_heal(&brep, options);
-            node.brep = Some(healed);
+            let old = to_old_brep(&brep);
+            let (healed_old, report) = analyze_and_heal(&old, options);
+            node.brep = Some(healed_old.to_topods());
             reports.push(AssemblyNodeHealingReport {
                 path: path.clone(),
                 name: node.name.clone(),

@@ -35,7 +35,7 @@ pub enum StepProtocol {
     /// ISO 10303-242 "Managed Model Based 3D Engineering".
     Ap242,
 }
-use rcad_kernel::{BRep, BSplineCurve2, Curve2d, Curve3, CurveEval, Face, Surface3, step_export_uncertainty};
+use rcad_kernel::{BRep, BSplineCurve2, Curve2d, Curve3, CurveEval, Face, Surface3, step_export_uncertainty, topods};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Write;
 
@@ -129,7 +129,7 @@ impl StepWriter {
     /// Export BRep to STEP (OCCT-style interchange: radians, si_metre, surface-scoped curves).
     ///
     /// Uses AP214 protocol by default unless overridden via [`write_string_with_options`].
-    pub fn write_string(brep: &BRep, selection: ExportSelection<'_>) -> String {
+    pub fn write_string(brep: &topods::BRep, selection: ExportSelection<'_>) -> String {
         Self::write_string_with_options(
             brep,
             selection,
@@ -144,17 +144,18 @@ impl StepWriter {
     /// Export with a single options object containing protocol, header,
     /// color and AP242 metadata controls.
     pub fn write_string_with_options(
-        brep: &BRep,
+        brep: &topods::BRep,
         selection: ExportSelection<'_>,
         options: &StepWriteOptions,
     ) -> String {
+        let brep = BRep::from_topods_with_location(brep, glam::DAffine3::IDENTITY);
         let mut writer = Part21Writer::new_with_protocol_and_header(
             options.protocol,
             options.header.clone(),
             options.export_standalone_wire_overlay,
         );
         writer.write_brep(
-            brep,
+            &brep,
             selection,
             options.colors.as_ref(),
             &options.properties,
@@ -168,7 +169,7 @@ impl StepWriter {
     /// Writes the appropriate `FILE_SCHEMA` and `APPLICATION_PROTOCOL_DEFINITION`
     /// for the chosen protocol.
     pub fn write_string_with_protocol(
-        brep: &BRep,
+        brep: &topods::BRep,
         selection: ExportSelection<'_>,
         protocol: StepProtocol,
     ) -> String {
@@ -186,7 +187,7 @@ impl StepWriter {
     ///
     /// Properties are emitted as `GENERAL_PROPERTY` entities.
     pub fn write_string_with_properties(
-        brep: &BRep,
+        brep: &topods::BRep,
         selection: ExportSelection<'_>,
         properties: &[StepGeneralProperty],
         protocol: StepProtocol,
@@ -204,7 +205,7 @@ impl StepWriter {
 
     /// Export with generic properties plus AP242 metadata entities.
     pub fn write_string_with_ap242_metadata(
-        brep: &BRep,
+        brep: &topods::BRep,
         selection: ExportSelection<'_>,
         properties: &[StepGeneralProperty],
         metadata: &StepAp242Metadata,
@@ -226,14 +227,14 @@ impl StepWriter {
     ///
     /// Colors are written as `STYLED_ITEM` + `PRESENTATION_STYLE_ASSIGNMENT`
     /// + `SURFACE_STYLE_USAGE` + `FILL_AREA_STYLE_COLOUR` + `COLOUR_RGB`.
-    pub fn write_string_colored(brep: &BRep, colors: &StepColor) -> String {
+    pub fn write_string_colored(brep: &topods::BRep, colors: &StepColor) -> String {
         Self::write_string_colored_with_protocol(brep, colors, StepProtocol::Ap214)
     }
 
     /// Export with per-face / per-solid color information and the specified
     /// STEP application protocol.
     pub fn write_string_colored_with_protocol(
-        brep: &BRep,
+        brep: &topods::BRep,
         colors: &StepColor,
         protocol: StepProtocol,
     ) -> String {
@@ -254,7 +255,7 @@ impl StepWriter {
     /// Stream-based export variant that writes UTF-8 STEP content into any sink.
     pub fn write_to<W: Write>(
         sink: &mut W,
-        brep: &BRep,
+        brep: &topods::BRep,
         selection: ExportSelection<'_>,
     ) -> std::io::Result<()> {
         let step = Self::write_string(brep, selection);
@@ -264,7 +265,7 @@ impl StepWriter {
     /// Stream-based export with explicit protocol selection.
     pub fn write_to_with_protocol<W: Write>(
         sink: &mut W,
-        brep: &BRep,
+        brep: &topods::BRep,
         selection: ExportSelection<'_>,
         protocol: StepProtocol,
     ) -> std::io::Result<()> {
@@ -275,7 +276,7 @@ impl StepWriter {
     /// Stream-based export with generic metadata properties.
     pub fn write_to_with_properties<W: Write>(
         sink: &mut W,
-        brep: &BRep,
+        brep: &topods::BRep,
         selection: ExportSelection<'_>,
         properties: &[StepGeneralProperty],
         protocol: StepProtocol,
@@ -287,7 +288,7 @@ impl StepWriter {
     /// Stream-based export with AP242 metadata entities.
     pub fn write_to_with_ap242_metadata<W: Write>(
         sink: &mut W,
-        brep: &BRep,
+        brep: &topods::BRep,
         selection: ExportSelection<'_>,
         properties: &[StepGeneralProperty],
         metadata: &StepAp242Metadata,
@@ -301,7 +302,7 @@ impl StepWriter {
     /// Stream-based export with a single options object.
     pub fn write_to_with_options<W: Write>(
         sink: &mut W,
-        brep: &BRep,
+        brep: &topods::BRep,
         selection: ExportSelection<'_>,
         options: &StepWriteOptions,
     ) -> std::io::Result<()> {
@@ -504,7 +505,7 @@ impl Part21Writer {
                 }
             }
 
-            // Second pass: write topology — MANIFOLD_SOLID_BREP for
+            // Second pass: write topology �?MANIFOLD_SOLID_BREP for
             // single-shell solids, BREP_WITH_VOIDS for multi-shell solids
             // (outer shell + void shells), matching OCCT's export behaviour.
             let num_exported_solids = if export_all {
@@ -1114,7 +1115,7 @@ impl Part21Writer {
                 // Write a proper SEAM_CURVE (or SURFACE_CURVE with 2+ pcurves)
                 // for any edge that appears multiple times in the same face wire.
                 // The previous logic branched on has_surface_parametrics and
-                // wrote SURFACE_CURVE when pcurves existed — this prevented
+                // wrote SURFACE_CURVE when pcurves existed �?this prevented
                 // SEAM_CURVE output for synthetic seams (e.g. sphere-box union
                 // analytic builder) that explicitly provide sphere pcurves.
                 self.write_seam_edge_curve_cached(brep, edge.edge_idx, face_surface.clone())
@@ -1842,8 +1843,8 @@ impl Part21Writer {
                 self.plane("face_plane", placement)
             }
             Some(Surface3::BSpline(bs)) => {
-                // ⚠️ 保持 BSpline 表面类型不变,不提升为 PLANE。
-                //    OCCT 参考 STEP 文件保留原始表面类型(含 NURBS 转换后的 BSpline 面)。
+                // ⚠️ 保持 BSpline 表面类型不变,不提升为 PLANE�?
+                //    OCCT 参�?STEP 文件保留原始表面类型(�?NURBS 转换后的 BSpline �?�?
                 self.write_bspline_surface(&bs.clone())
             }
             Some(Surface3::Ellipsoid(ellipsoid)) => {
@@ -2684,7 +2685,7 @@ impl Part21Writer {
     fn write_curve2d(&mut self, curve2d: Option<Curve2d>) -> u64 {
         match curve2d {
             Some(Curve2d::Trimmed(tc)) => {
-                // Unwrap Trimmed and write the inner curve — the range
+                // Unwrap Trimmed and write the inner curve �?the range
                 // restriction is metadata, not a separate STEP entity.
                 self.write_curve2d(Some((*tc.curve).clone()))
             }
@@ -4411,7 +4412,7 @@ fn shell_is_closed(faces: &[Face], brep: &BRep) -> bool {
     }
     // Fallback: Euler characteristic on position-deduplicated vertices.
     // Some builders (sphere_box_analytic) create duplicate vertices at the
-    // same geometric position via mk_line — inflating V beyond the genuine
+    // same geometric position via mk_line �?inflating V beyond the genuine
     // topological vertex count.  Deduplicate by position for the Euler check.
     let nf = faces.len();
     let ne = counts.len();
@@ -5259,20 +5260,30 @@ mod tests {
     use std::io::Cursor;
     const HFSS_STEP: &str = include_str!("../../../assets/hfss.step");
 
+    /// Convert topods::BRep to old BRep for field access in tests.
+    fn to_old(t: &rcad_kernel::topods::BRep) -> rcad_kernel::BRep {
+        rcad_kernel::BRep::from_topods_with_location(t, glam::DAffine3::IDENTITY)
+    }
+
+    /// Convert old BRep to topods for StepWriter calls.
+    fn to_t(b: &rcad_kernel::BRep) -> rcad_kernel::topods::BRep {
+        b.to_topods()
+    }
+
     #[test]
     fn exports_full_box_and_reimports() {
         let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 2.0, 3.0)
             .expect("test box should be valid");
         // Default export path favors standard solid-only representation.
         let step = StepWriter::write_string(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
             },
         );
 
-        let reparsed = StepReader::parse_string(&step).expect("exported STEP should parse");
+        let reparsed = StepReader::parse_string(&step).expect("exported STEP should parse"); let reparsed_t = reparsed; let reparsed = to_old(&reparsed_t);
         assert!(!reparsed.edges.is_empty());
         assert!(!reparsed.solids.is_empty());
         assert!(step.contains("ADVANCED_BREP_SHAPE_REPRESENTATION"));
@@ -5299,7 +5310,7 @@ mod tests {
             },
         ];
         let step = StepWriter::write_string_with_properties(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -5396,7 +5407,7 @@ mod tests {
             datum_feature_callouts: vec![],
         };
         let step = StepWriter::write_string_with_ap242_metadata(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -5576,7 +5587,7 @@ mod tests {
         };
 
         let step = StepWriter::write_string_with_ap242_metadata(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -5614,14 +5625,14 @@ mod tests {
         let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
             .expect("test box should be valid");
         let step = StepWriter::write_string(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[0, 1],
             },
         );
 
-        let reparsed = StepReader::parse_string(&step).expect("edge-only export should parse");
+        let reparsed = StepReader::parse_string(&step).expect("edge-only export should parse"); let reparsed_t = reparsed; let reparsed = to_old(&reparsed_t);
         assert!(reparsed.solids.is_empty());
         assert_eq!(reparsed.edges.len(), 2);
     }
@@ -5644,7 +5655,7 @@ mod tests {
         brep.geom.edge_curve_range = vec![Some([135.0, 0.0])];
 
         let step = StepWriter::write_string(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[0],
@@ -5673,7 +5684,7 @@ mod tests {
         brep.geom.edge_curve_range = vec![Some([0.0, 270.0])];
 
         let step = StepWriter::write_string(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[0],
@@ -5691,7 +5702,7 @@ mod tests {
         let mut buf = Vec::<u8>::new();
         StepWriter::write_to(
             &mut buf,
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -5701,6 +5712,7 @@ mod tests {
 
         let reparsed =
             StepReader::parse_reader(Cursor::new(buf)).expect("stream read should parse");
+        let reparsed = to_old(&reparsed);
         assert!(!reparsed.edges.is_empty());
         assert!(!reparsed.solids.is_empty());
     }
@@ -5710,14 +5722,14 @@ mod tests {
         let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
             .expect("test box should be valid");
         let step = StepWriter::write_string(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[0],
                 selected_edges: &[],
             },
         );
 
-        let reparsed = StepReader::parse_string(&step).expect("selected-face export should parse");
+        let reparsed = StepReader::parse_string(&step).expect("selected-face export should parse"); let reparsed_t = reparsed; let reparsed = to_old(&reparsed_t);
         assert!(!reparsed.solids.is_empty());
         assert!(step.contains("OPEN_SHELL"));
         assert!(step.contains("SHELL_BASED_SURFACE_MODEL"));
@@ -5729,7 +5741,7 @@ mod tests {
         let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
             .expect("test box should be valid");
         let step = StepWriter::write_string_with_options(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[0],
                 selected_edges: &[],
@@ -5752,9 +5764,9 @@ mod tests {
 
     #[test]
     fn exports_analytic_surfaces_from_hfss() {
-        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let brep = to_old(&brep_t);
         let step = StepWriter::write_string(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -5780,9 +5792,9 @@ mod tests {
     fn hfss_wire_curve_set_references_geometry_not_edge_curve() {
         use std::collections::HashMap;
 
-        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let brep = to_old(&brep_t);
         let step = StepWriter::write_string(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -5852,7 +5864,7 @@ mod tests {
 
     #[test]
     fn round_trips_sphere_and_cone_surfaces() {
-        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let brep = to_old(&brep_t);
 
         // Find the original cone half-angle and radius for comparison
         let mut orig_cone_angle = 0.0f64;
@@ -5867,7 +5879,7 @@ mod tests {
 
         // Use non-strict mode for complex geometry round-trip tests
         let step = StepWriter::write_string_with_options(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -5878,7 +5890,7 @@ mod tests {
             },
         );
 
-        let reparsed = StepReader::parse_string(&step).expect("re-exported STEP should parse");
+        let reparsed = StepReader::parse_string(&step).expect("re-exported STEP should parse"); let reparsed_t = reparsed; let reparsed = to_old(&reparsed_t);
 
         // Count faces with each surface type and verify cone parameters survive round-trip
         let mut sphere_count = 0usize;
@@ -5918,12 +5930,12 @@ mod tests {
 
     #[test]
     fn creator_style_hfss_keeps_sphere_cylinder_cone_as_solids() {
-        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let brep = to_old(&brep_t);
         let original_solid_count = brep.solids.len();
 
         // Match creator save path: standard write_string defaults.
         let step = StepWriter::write_string(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -5936,7 +5948,7 @@ mod tests {
             "export should contain solid entities"
         );
 
-        let reparsed = StepReader::parse_string(&step).expect("re-exported STEP should parse");
+        let reparsed = StepReader::parse_string(&step).expect("re-exported STEP should parse"); let reparsed_t = reparsed; let reparsed = to_old(&reparsed_t);
         assert!(
             !reparsed.solids.is_empty(),
             "re-exported model should contain solids"
@@ -6002,7 +6014,7 @@ mod tests {
 
     #[test]
     fn exports_ellipsoid_surface_emits_semantic_tag() {
-        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let mut brep = to_old(&brep_t);
         let sid = *brep
             .geom
             .face_surface
@@ -6020,7 +6032,7 @@ mod tests {
         });
 
         let step = StepWriter::write_string_with_options(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -6032,7 +6044,7 @@ mod tests {
         assert!(step.contains("B_SPLINE_SURFACE_WITH_KNOTS"));
         assert!(step.contains("RCAD_ELLIPSOID"));
 
-        let reparsed = StepReader::parse_string(&step).expect("ellipsoid fallback STEP should parse");
+        let reparsed = StepReader::parse_string(&step).expect("ellipsoid fallback STEP should parse"); let reparsed_t = reparsed; let reparsed = to_old(&reparsed_t);
         let ellipsoid_surfaces = reparsed
             .geom
             .surfaces
@@ -6047,7 +6059,7 @@ mod tests {
 
     #[test]
     fn exports_helicoid_surface_emits_semantic_tag() {
-        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let mut brep = to_old(&brep_t);
         let sid = *brep
             .geom
             .face_surface
@@ -6063,7 +6075,7 @@ mod tests {
         });
 
         let step = StepWriter::write_string_with_options(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -6075,7 +6087,7 @@ mod tests {
         assert!(step.contains("B_SPLINE_SURFACE_WITH_KNOTS"));
         assert!(step.contains("RCAD_HELICOID"));
 
-        let reparsed = StepReader::parse_string(&step).expect("helicoid fallback STEP should parse");
+        let reparsed = StepReader::parse_string(&step).expect("helicoid fallback STEP should parse"); let reparsed_t = reparsed; let reparsed = to_old(&reparsed_t);
         let helicoid_surfaces = reparsed
             .geom
             .surfaces
@@ -6090,7 +6102,7 @@ mod tests {
 
     #[test]
     fn exports_coons_surface_via_bspline_fallback() {
-        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let mut brep = to_old(&brep_t);
         let sid = *brep
             .geom
             .face_surface
@@ -6118,7 +6130,7 @@ mod tests {
         });
 
         let step = StepWriter::write_string_with_options(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -6130,7 +6142,7 @@ mod tests {
         assert!(step.contains("B_SPLINE_SURFACE_WITH_KNOTS"));
         assert!(!step.contains("RCAD_COONS"));
 
-        let reparsed = StepReader::parse_string(&step).expect("Coons fallback STEP should parse");
+        let reparsed = StepReader::parse_string(&step).expect("Coons fallback STEP should parse"); let reparsed_t = reparsed; let reparsed = to_old(&reparsed_t);
         let bspline_surfaces = reparsed
             .geom
             .surfaces
@@ -6145,7 +6157,7 @@ mod tests {
 
     #[test]
     fn exports_pipe_surface_via_bspline_fallback() {
-        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let mut brep = to_old(&brep_t);
         let sid = *brep
             .geom
             .face_surface
@@ -6163,7 +6175,7 @@ mod tests {
         });
 
         let step = StepWriter::write_string_with_options(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -6174,7 +6186,7 @@ mod tests {
         );
         assert!(step.contains("B_SPLINE_SURFACE_WITH_KNOTS"));
 
-        let reparsed = StepReader::parse_string(&step).expect("Pipe fallback STEP should parse");
+        let reparsed = StepReader::parse_string(&step).expect("Pipe fallback STEP should parse"); let reparsed_t = reparsed; let reparsed = to_old(&reparsed_t);
         let bspline_surfaces = reparsed
             .geom
             .surfaces
@@ -6206,7 +6218,7 @@ mod tests {
             ..Default::default()
         };
         let step = StepWriter::write_string_with_ap242_metadata(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -6232,7 +6244,7 @@ mod tests {
             ..Default::default()
         };
         let step = StepWriter::write_string_with_ap242_metadata(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -6262,7 +6274,7 @@ mod tests {
             ..Default::default()
         };
         let step = StepWriter::write_string_with_ap242_metadata(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -6311,7 +6323,7 @@ mod tests {
             ..Default::default()
         };
         let step = StepWriter::write_string_with_ap242_metadata(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -6367,7 +6379,7 @@ mod tests {
             ..Default::default()
         };
         let step = StepWriter::write_string_with_ap242_metadata(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -6410,7 +6422,7 @@ mod tests {
             ..Default::default()
         };
         let step = StepWriter::write_string_with_ap242_metadata(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -6451,7 +6463,7 @@ mod tests {
             ..Default::default()
         };
         let step = StepWriter::write_string_with_ap242_metadata(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -6478,7 +6490,7 @@ mod tests {
             ..Default::default()
         };
         let step = StepWriter::write_string_with_ap242_metadata(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -6527,7 +6539,7 @@ mod tests {
             ..Default::default()
         };
         let step = StepWriter::write_string_with_ap242_metadata(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -6559,7 +6571,7 @@ mod tests {
             ..Default::default()
         };
         let step = StepWriter::write_string_with_ap242_metadata(
-            &brep,
+            &brep.to_topods(),
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],

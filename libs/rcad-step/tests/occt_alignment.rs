@@ -21,6 +21,7 @@ use rcad_step::{
     StepWriter, ExportSelection,
 };
 use rcad_kernel::appearance::Color;
+use rcad_kernel::BRep;
 use std::time::Instant;
 
 fn all_faces_selection() -> ExportSelection<'static> {
@@ -30,17 +31,21 @@ fn all_faces_selection() -> ExportSelection<'static> {
     }
 }
 
-fn face_count(brep: &rcad_kernel::BRep) -> usize {
-    brep
-        .solids
-        .iter()
-        .flat_map(|s| &s.shells)
-        .flat_map(|sh| &sh.faces)
-        .count()
+fn to_old(t: &rcad_kernel::topods::BRep) -> BRep {
+    BRep::from_topods_with_location(t, glam::DAffine3::IDENTITY)
 }
 
-fn solid_count(brep: &rcad_kernel::BRep) -> usize {
-    brep.solids.len()
+fn face_count(t: &rcad_kernel::topods::BRep) -> usize {
+    let b = to_old(t);
+    b.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count()
+}
+
+fn solid_count(t: &rcad_kernel::topods::BRep) -> usize {
+    to_old(t).solids.len()
+}
+
+fn vertex_count(t: &rcad_kernel::topods::BRep) -> usize {
+    to_old(t).vertices.len()
 }
 
 fn make_box(origin: DVec3) -> rcad_kernel::BRep {
@@ -65,7 +70,7 @@ fn boolean_union_result_roundtrip() {
 
     let union = boolean_op(BooleanOpType::Union, &box1, &box2).expect("union");
 
-    let step_str = StepWriter::write_string(&union, all_faces_selection());
+    let step_str = StepWriter::write_string(&union.to_topods(), all_faces_selection());
     assert!(step_str.contains("ISO-10303-21"), "should have STEP header");
 
     let parsed = StepReader::parse_string(&step_str).expect("parse union result");
@@ -86,7 +91,7 @@ fn boolean_difference_hole_roundtrip() {
 
     let difference = boolean_op(BooleanOpType::Difference, &box_shape, &cylinder).expect("diff");
 
-    let step_str = StepWriter::write_string(&difference, all_faces_selection());
+    let step_str = StepWriter::write_string(&difference.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step_str).expect("parse diff result");
 
     assert_eq!(solid_count(&parsed), 1, "difference should have 1 solid");
@@ -108,7 +113,7 @@ fn boolean_intersection_roundtrip() {
     let intersection =
         boolean_op(BooleanOpType::Intersection, &box1, &box2).expect("intersection");
 
-    let step_str = StepWriter::write_string(&intersection, all_faces_selection());
+    let step_str = StepWriter::write_string(&intersection.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step_str).expect("parse intersection result");
 
     assert_eq!(solid_count(&parsed), 1, "intersection should have 1 solid");
@@ -132,7 +137,7 @@ fn boolean_cone_box_intersection_roundtrip() {
     let intersection =
         boolean_op(BooleanOpType::Intersection, &cone, &box_shape).expect("intersection");
 
-    let step_str = StepWriter::write_string(&intersection, all_faces_selection());
+    let step_str = StepWriter::write_string(&intersection.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step_str).expect("parse intersection");
 
     assert_eq!(solid_count(&parsed), 1, "intersection should have 1 solid");
@@ -148,7 +153,7 @@ fn boolean_torus_sphere_difference_roundtrip() {
 
     let result = boolean_op(BooleanOpType::Difference, &torus, &sphere).expect("diff");
 
-    let step_str = StepWriter::write_string(&result, all_faces_selection());
+    let step_str = StepWriter::write_string(&result.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step_str).expect("parse result");
 
     assert_eq!(solid_count(&parsed), 1, "should have 1 solid");
@@ -165,7 +170,7 @@ fn boolean_box_difference_roundtrip() {
 
     let result = boolean_op(BooleanOpType::Difference, &box1, &box2).expect("diff");
 
-    let step = StepWriter::write_string(&result, all_faces_selection());
+    let step = StepWriter::write_string(&result.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse result");
 
     assert_eq!(solid_count(&parsed), 1, "should have 1 solid");
@@ -183,7 +188,7 @@ fn assembly_translation_baked() {
     let base_box = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
     let translation = DVec3::new(10.0, 0.0, 0.0);
 
-    let comp = AssemblyComponent::new("shifted_box", base_box).with_translation(translation);
+    let comp = AssemblyComponent::new("shifted_box", base_box.to_topods()).with_translation(translation);
 
     let step = write_assembly("shift_test", &[comp]);
 
@@ -197,7 +202,8 @@ fn assembly_translation_baked() {
 
     // Verify geometry was translated
     let brep = &components[0].brep;
-    for v in &brep.vertices {
+    let old = to_old(brep);
+    for v in &old.vertices {
         assert!(
             v.point.x >= 9.999,
             "vertex x should be >= 10 after baking translation, got {}",
@@ -214,7 +220,7 @@ fn single_part_step_roundtrip() {
 
     let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 3.0, 4.0).unwrap();
     let step = StepWriter::write_string(
-        &brep,
+        &brep.to_topods(),
         ExportSelection {
             selected_faces: &[],
             selected_edges: &[],
@@ -238,9 +244,9 @@ fn component_colors_written() {
         make_box_brep(DVec3::new(2.0, 0.0, 0.0), DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).expect("box2");
 
     let comp1 =
-        AssemblyComponent::new("red_box", box1).with_color(Color { r: 1.0, g: 0.0, b: 0.0 });
+        AssemblyComponent::new("red_box", box1.to_topods()).with_color(Color { r: 1.0, g: 0.0, b: 0.0 });
     let comp2 =
-        AssemblyComponent::new("blue_box", box2).with_color(Color { r: 0.0, g: 0.0, b: 1.0 });
+        AssemblyComponent::new("blue_box", box2.to_topods()).with_color(Color { r: 0.0, g: 0.0, b: 1.0 });
 
     let step = write_assembly("colored_asm", &[comp1, comp2]);
 
@@ -262,7 +268,7 @@ fn ap242_protocol_output() {
     let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).expect("box");
 
     let step = StepWriter::write_string_with_options(
-        &brep,
+        &brep.to_topods(),
         all_faces_selection(),
         &StepWriteOptions {
             protocol: StepProtocol::Ap242,
@@ -286,8 +292,9 @@ fn ap242_protocol_output() {
 fn protocol_selection() {
     let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).expect("box");
 
+    let t = brep.to_topods();
     let ap214 = StepWriter::write_string_with_options(
-        &brep,
+        &t,
         all_faces_selection(),
         &StepWriteOptions {
             protocol: StepProtocol::Ap214,
@@ -296,7 +303,7 @@ fn protocol_selection() {
     );
 
     let ap242 = StepWriter::write_string_with_options(
-        &brep,
+        &t,
         all_faces_selection(),
         &StepWriteOptions {
             protocol: StepProtocol::Ap242,
@@ -329,7 +336,7 @@ fn colored_solid_roundtrip() {
 
     let colors = StepColor::new().with_solid_color(Color { r: 0.8, g: 0.4, b: 0.2 });
 
-    let step = StepWriter::write_string_colored(&box_shape, &colors);
+    let step = StepWriter::write_string_colored(&box_shape.to_topods(), &colors);
 
     assert!(step.contains("ISO-10303-21"), "should have STEP header");
     assert!(step.contains("COLOUR_RGB"), "should have color definition");
@@ -345,7 +352,7 @@ fn colored_solid_roundtrip() {
 fn step_header_fields() {
     let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).expect("box");
 
-    let step = StepWriter::write_string(&brep, all_faces_selection());
+    let step = StepWriter::write_string(&brep.to_topods(), all_faces_selection());
 
     // Verify standard STEP header sections
     assert!(step.contains("ISO-10303-21"), "should have STEP magic number");
@@ -368,14 +375,14 @@ fn cylinder_roundtrip() {
     let cylinder =
         make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 2.0, 5.0).expect("cylinder");
 
-    let step = StepWriter::write_string(&cylinder, all_faces_selection());
+    let step = StepWriter::write_string(&cylinder.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse cylinder");
 
     // Cylinder should have 3 faces: top, bottom, and lateral
     assert_eq!(face_count(&parsed), 3, "cylinder should have 3 faces");
 
     // Verify bounding box preserves cylindrical geometry
-    let bbox = parsed.bounding_box().expect("should have bounds");
+    let bbox = to_old(&parsed).bounding_box().expect("should have bounds");
     let [min, max] = bbox;
 
     // Diameter should be 4.0 (radius * 2)
@@ -393,14 +400,14 @@ fn torus_roundtrip() {
     let torus = make_torus_brep(DVec3::ZERO, DVec3::Z, DVec3::X, major_radius, minor_radius)
         .expect("torus");
 
-    let step = StepWriter::write_string(&torus, all_faces_selection());
+    let step = StepWriter::write_string(&torus.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse torus");
 
     // Torus should have 1 face (the toroidal surface)
     assert!(face_count(&parsed) >= 1, "torus should have at least 1 face");
 
     // Verify bounding box
-    let bbox = parsed.bounding_box().expect("should have bounds");
+    let bbox = to_old(&parsed).bounding_box().expect("should have bounds");
     let [min, max] = bbox;
 
     let expected_outer_diameter = 2.0 * (major_radius + minor_radius);
@@ -421,14 +428,14 @@ fn torus_roundtrip() {
 fn cone_roundtrip() {
     let cone = make_cone_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 3.0, 6.0).expect("cone");
 
-    let step = StepWriter::write_string(&cone, all_faces_selection());
+    let step = StepWriter::write_string(&cone.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse cone");
 
     // Cone should have 2 faces: base and lateral
     assert_eq!(face_count(&parsed), 2, "cone should have 2 faces");
 
     // Verify cone geometry
-    let bbox = parsed.bounding_box().expect("should have bounds");
+    let bbox = to_old(&parsed).bounding_box().expect("should have bounds");
     let [min, max] = bbox;
 
     assert!((max.z - min.z - 6.0).abs() < 0.01, "height should be preserved");
@@ -447,7 +454,7 @@ fn cylinder_boolean_roundtrip() {
 
     let result = boolean_op(BooleanOpType::Difference, &box_shape, &cylinder).expect("diff");
 
-    let step = StepWriter::write_string(&result, all_faces_selection());
+    let step = StepWriter::write_string(&result.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse result");
 
     assert_eq!(solid_count(&parsed), 1, "should have 1 solid");
@@ -462,13 +469,13 @@ fn box_primitive_roundtrip() {
     let box_shape =
         make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 3.0, 4.0).expect("box");
 
-    let step = StepWriter::write_string(&box_shape, all_faces_selection());
+    let step = StepWriter::write_string(&box_shape.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse box");
 
     assert_eq!(solid_count(&parsed), 1, "should have 1 solid");
     assert_eq!(face_count(&parsed), 6, "box should have 6 faces");
 
-    let bbox = parsed.bounding_box().expect("should have bounds");
+    let bbox = to_old(&parsed).bounding_box().expect("should have bounds");
     let [min, max] = bbox;
     assert!((max.x - min.x - 2.0).abs() < 0.01, "x dimension preserved");
     assert!((max.y - min.y - 3.0).abs() < 0.01, "y dimension preserved");
@@ -492,7 +499,7 @@ fn moderate_assembly_write_perf() {
             let y = j as f64 * 2.0;
             components.push(AssemblyComponent::new(
                 format!("part_{}_{}", i, j),
-                make_box(DVec3::new(x, y, 0.0)),
+                make_box(DVec3::new(x, y, 0.0)).to_topods(),
             ));
         }
     }
@@ -522,11 +529,11 @@ fn moderate_assembly_write_perf() {
 #[test]
 fn step_file_size_reasonable() {
     let simple_box = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).expect("box");
-    let simple_step = StepWriter::write_string(&simple_box, all_faces_selection());
+    let simple_step = StepWriter::write_string(&simple_box.to_topods(), all_faces_selection());
 
     // Create more complex geometry
     let torus = make_torus_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 5.0, 1.0).expect("torus");
-    let complex_step = StepWriter::write_string(&torus, all_faces_selection());
+    let complex_step = StepWriter::write_string(&torus.to_topods(), all_faces_selection());
 
     // Complex geometry should be larger but not excessively so
     let ratio = complex_step.len() as f64 / simple_step.len() as f64;
@@ -547,7 +554,7 @@ fn complex_geometry_parses() {
     // Torus with small minor radius creates detailed geometry
     let torus = make_torus_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 5.0, 0.5).expect("torus");
 
-    let step = StepWriter::write_string(&torus, all_faces_selection());
+    let step = StepWriter::write_string(&torus.to_topods(), all_faces_selection());
 
     // Should parse without issues
     let parsed = StepReader::parse_string(&step).expect("parse complex torus");
@@ -561,18 +568,20 @@ fn multiple_roundtrips_stable() {
     let original = make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 2.0, 5.0).expect("cylinder");
 
     let mut current = original.clone();
-    let original_faces = face_count(&original);
+    let original_faces = face_count(&original.to_topods());
 
     for iteration in 0..5 {
-        let step = StepWriter::write_string(&current, all_faces_selection());
-        current = StepReader::parse_string(&step).unwrap_or_else(|_| panic!("iteration {}", iteration));
+        let step = StepWriter::write_string(&current.to_topods(), all_faces_selection());
+        let rt = StepReader::parse_string(&step).unwrap_or_else(|_| panic!("iteration {}", iteration));
+        let faces = face_count(&rt);
 
         assert_eq!(
-            face_count(&current),
+            faces,
             original_faces,
             "face count should be stable at iteration {}",
             iteration
         );
+        current = to_old(&rt);
     }
 }
 
@@ -582,8 +591,8 @@ fn multiple_roundtrips_stable() {
 fn step_output_deterministic() {
     let brep = make_torus_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 5.0, 1.0).expect("torus");
 
-    let step1 = StepWriter::write_string(&brep, all_faces_selection());
-    let step2 = StepWriter::write_string(&brep, all_faces_selection());
+    let step1 = StepWriter::write_string(&brep.to_topods(), all_faces_selection());
+    let step2 = StepWriter::write_string(&brep.to_topods(), all_faces_selection());
 
     assert_eq!(step1, step2, "identical inputs should produce identical STEP output");
 }
@@ -595,7 +604,7 @@ fn small_geometry_roundtrip() {
     let tiny_box =
         make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 0.001, 0.001, 0.001).expect("tiny box");
 
-    let step = StepWriter::write_string(&tiny_box, all_faces_selection());
+    let step = StepWriter::write_string(&tiny_box.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse tiny box");
 
     assert_eq!(face_count(&parsed), 6, "tiny box should have 6 faces");
@@ -608,10 +617,10 @@ fn large_coordinate_roundtrip() {
     let offset = DVec3::new(1e5, 1e5, 1e5);
     let large_box = make_box_brep(offset, DVec3::X, DVec3::Y, 10.0, 10.0, 10.0).expect("large box");
 
-    let step = StepWriter::write_string(&large_box, all_faces_selection());
+    let step = StepWriter::write_string(&large_box.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse large coordinate box");
 
-    let bbox = parsed.bounding_box().expect("should have bounds");
+    let bbox = to_old(&parsed).bounding_box().expect("should have bounds");
     let [min, _] = bbox;
 
     // Offset should be approximately preserved
@@ -635,10 +644,10 @@ fn negative_coordinate_roundtrip() {
     )
     .expect("negative box");
 
-    let step = StepWriter::write_string(&neg_box, all_faces_selection());
+    let step = StepWriter::write_string(&neg_box.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse negative box");
 
-    let bbox = parsed.bounding_box().expect("should have bounds");
+    let bbox = to_old(&parsed).bounding_box().expect("should have bounds");
     let [min, _] = bbox;
 
     assert!(min.x < 0.0, "should have negative x coordinates");
@@ -679,7 +688,7 @@ fn multiple_boolean_roundtrip() {
 
     // Roundtrip each result
     for (i, brep) in results.iter().enumerate() {
-        let step = StepWriter::write_string(brep, all_faces_selection());
+        let step = StepWriter::write_string(&brep.to_topods(), all_faces_selection());
         let parsed = StepReader::parse_string(&step).unwrap_or_else(|_| panic!("parse result {}", i));
         assert_eq!(solid_count(&parsed), 1, "result {} should have 1 solid", i);
     }
@@ -693,7 +702,7 @@ fn thin_geometry_roundtrip() {
     let brep =
         make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 10.0, 0.001).expect("thin box");
 
-    let step = StepWriter::write_string(&brep, all_faces_selection());
+    let step = StepWriter::write_string(&brep.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse should succeed");
 
     assert_eq!(face_count(&parsed), 6, "thin box should have 6 faces");
@@ -714,7 +723,7 @@ fn non_standard_orientation_roundtrip() {
     )
     .expect("rotated box");
 
-    let step = StepWriter::write_string(&brep, all_faces_selection());
+    let step = StepWriter::write_string(&brep.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse should succeed");
 
     assert_eq!(face_count(&parsed), 6);
@@ -729,7 +738,7 @@ fn non_standard_orientation_roundtrip() {
 #[test]
 fn truncated_step_error() {
     let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).expect("box");
-    let step_str = StepWriter::write_string(&brep, all_faces_selection());
+    let step_str = StepWriter::write_string(&brep.to_topods(), all_faces_selection());
 
     // Truncate the string
     let truncated = &step_str[..step_str.len() / 2];
@@ -791,7 +800,7 @@ fn cylinder_box_intersection_roundtrip() {
     let result =
         boolean_op(BooleanOpType::Intersection, &cylinder, &box_shape).expect("intersection");
 
-    let step = StepWriter::write_string(&result, all_faces_selection());
+    let step = StepWriter::write_string(&result.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse result");
 
     assert_eq!(solid_count(&parsed), 1, "should have 1 solid");
@@ -807,7 +816,7 @@ fn nested_cylinders_difference_roundtrip() {
 
     let tube = boolean_op(BooleanOpType::Difference, &outer, &inner).expect("tube");
 
-    let step = StepWriter::write_string(&tube, all_faces_selection());
+    let step = StepWriter::write_string(&tube.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse tube");
 
     assert_eq!(solid_count(&parsed), 1, "tube should have 1 solid");
@@ -827,7 +836,7 @@ fn rotated_cylinder_roundtrip() {
     let rotation = DAffine3::from_rotation_x(FRAC_PI_4);
     cyl.apply_transform(rotation);
 
-    let step = StepWriter::write_string(&cyl, all_faces_selection());
+    let step = StepWriter::write_string(&cyl.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse rotated cylinder");
 
     assert_eq!(face_count(&parsed), 3, "rotated cylinder should have 3 faces");
@@ -843,10 +852,10 @@ fn scaled_box_roundtrip() {
     let scale = DAffine3::from_scale(DVec3::new(2.0, 3.0, 4.0));
     box_shape.apply_transform(scale);
 
-    let step = StepWriter::write_string(&box_shape, all_faces_selection());
+    let step = StepWriter::write_string(&box_shape.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse scaled box");
 
-    let bbox = parsed.bounding_box().expect("should have bounds");
+    let bbox = to_old(&parsed).bounding_box().expect("should have bounds");
     let [min, max] = bbox;
 
     assert!((max.x - min.x - 2.0).abs() < 0.1, "x scaled to 2");
@@ -864,7 +873,7 @@ fn mirrored_box_roundtrip() {
     let mirror = DAffine3::from_scale(DVec3::new(1.0, 1.0, -1.0));
     box_shape.apply_transform(mirror);
 
-    let step = StepWriter::write_string(&box_shape, all_faces_selection());
+    let step = StepWriter::write_string(&box_shape.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse mirrored box");
 
     assert_eq!(face_count(&parsed), 6, "mirrored box should have 6 faces");
@@ -884,10 +893,10 @@ fn combined_transform_roundtrip() {
     let combined = translation * scale * rotation;
     box_shape.apply_transform(combined);
 
-    let step = StepWriter::write_string(&box_shape, all_faces_selection());
+    let step = StepWriter::write_string(&box_shape.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse transformed box");
 
-    let bbox = parsed.bounding_box().expect("should have bounds");
+    let bbox = to_old(&parsed).bounding_box().expect("should have bounds");
     let [min, _max] = bbox;
 
     // Box should be at offset location
@@ -913,7 +922,7 @@ fn boolean_chain_roundtrip() {
         .expect("cyl2");
     result = boolean_op(BooleanOpType::Difference, &result, &cyl2).expect("diff2");
 
-    let step = StepWriter::write_string(&result, all_faces_selection());
+    let step = StepWriter::write_string(&result.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse result");
 
     assert_eq!(solid_count(&parsed), 1, "should have 1 solid after chain");
@@ -935,7 +944,7 @@ fn multi_component_assembly_roundtrip() {
             2.0,
         )
         .expect("box");
-        components.push(AssemblyComponent::new(format!("part_{}", i), box_shape));
+        components.push(AssemblyComponent::new(format!("part_{}", i), box_shape.to_topods()));
     }
 
     let step = write_assembly("multi_part", &components);
@@ -958,10 +967,10 @@ fn very_large_box_roundtrip() {
     let large_box =
         make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1000.0, 1000.0, 1000.0).expect("large box");
 
-    let step = StepWriter::write_string(&large_box, all_faces_selection());
+    let step = StepWriter::write_string(&large_box.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse large box");
 
-    let bbox = parsed.bounding_box().expect("should have bounds");
+    let bbox = to_old(&parsed).bounding_box().expect("should have bounds");
     let [min, max] = bbox;
 
     assert!((max.x - min.x - 1000.0).abs() < 1.0, "large x dimension preserved");
@@ -980,7 +989,7 @@ fn three_box_union_roundtrip() {
     let union1 = boolean_op(BooleanOpType::Union, &box1, &box2).expect("union1");
     let final_union = boolean_op(BooleanOpType::Union, &union1, &box3).expect("union2");
 
-    let step = StepWriter::write_string(&final_union, all_faces_selection());
+    let step = StepWriter::write_string(&final_union.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse union");
 
     assert_eq!(solid_count(&parsed), 1, "should have 1 solid");

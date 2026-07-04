@@ -10,12 +10,17 @@ use rcad_step::{
     write_assembly_tree,
 };
 
-fn make_box(origin: DVec3) -> rcad_kernel::BRep {
+fn make_box(origin: DVec3) -> rcad_kernel::topods::BRep {
     let mut b = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
     if origin != DVec3::ZERO {
         b.apply_transform(DAffine3::from_translation(origin));
     }
-    b
+    b.to_topods()
+}
+
+/// Convert topods::BRep back to old BRep for inspecting vertex positions.
+fn to_old(t: &rcad_kernel::topods::BRep) -> rcad_kernel::BRep {
+    rcad_kernel::BRep::from_topods_with_location(t, glam::DAffine3::IDENTITY)
 }
 
 /// Write an assembly with two named components, parse it back, and verify:
@@ -67,7 +72,7 @@ fn assembly_with_translation_baked_into_geometry() {
     let base_box = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
     let translation = DVec3::new(10.0, 0.0, 0.0);
 
-    let comp = AssemblyComponent::new("shifted_box", base_box)
+    let comp = AssemblyComponent::new("shifted_box", base_box.to_topods())
         .with_translation(translation);
 
     let step = write_assembly("shift_test", &[comp]);
@@ -77,8 +82,8 @@ fn assembly_with_translation_baked_into_geometry() {
     assert!(!components.is_empty());
 
     // The merged BRep returned by read_assembly contains baked geometry.
-    let brep = &components[0].brep;
-    for v in &brep.vertices {
+    let old = to_old(&components[0].brep);
+    for v in &old.vertices {
         assert!(
             v.point.x >= 9.999,
             "vertex x should be >= 10 after baking translation, got {}",
@@ -95,7 +100,7 @@ fn single_part_step_returns_one_component() {
 
     let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 3.0, 4.0).unwrap();
     let step = StepWriter::write_string(
-        &brep,
+        &brep.to_topods(),
         ExportSelection {
             selected_faces: &[],
             selected_edges: &[],
@@ -118,7 +123,7 @@ fn assembly_with_rotation_no_panic() {
     let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
     let rotation = DAffine3::from_rotation_y(FRAC_PI_4);
 
-    let comp = AssemblyComponent::new("rotated_box", brep).with_transform(rotation);
+    let comp = AssemblyComponent::new("rotated_box", brep.to_topods()).with_transform(rotation);
     let step = write_assembly("rotation_test", &[comp]);
 
     // Should not panic and should produce a valid STEP structure.
