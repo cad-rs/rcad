@@ -429,7 +429,7 @@ impl<'a> PaveFiller<'a> {
 
         // Export to BRep if direct output is enabled (A3 dual-write).
         if let Some(ref mut brep) = self.brep {
-            let (face_refs, ic_edge_map) = crate::ds_to_brep::export_to_brep(&self.ds, brep);
+            let (face_refs, ic_edge_map, _ds_vertex_map, _ds_edge_map) = crate::ds_to_brep::export_to_brep(&self.ds, brep);
             self.face_refs = face_refs;
             self.ic_edge_map = ic_edge_map;
         }
