@@ -874,7 +874,7 @@ impl<'a> BooleanBuilder<'a> {
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         _dump.snapshot("after_FillImagesEdges", self.ds, Some(&t_brep));
         // OCCT L467-470: FillImagesContainers(WIRE) �?BuildResult(WIRE)
-        self.fill_images_containers(ShapeType::Wire, &mut result);
+        self.fill_images_containers(ShapeType::Wire, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result_occt(topods::ShapeType::Wire, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
@@ -890,7 +890,7 @@ impl<'a> BooleanBuilder<'a> {
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         _dump.snapshot("after_FillImagesFaces", self.ds, Some(&t_brep));
         // OCCT L477-480: FillImagesContainers(SHELL) �?BuildResult(SHELL)
-        self.fill_images_containers(ShapeType::Shell, &mut result);
+        self.fill_images_containers(ShapeType::Shell, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result_occt(topods::ShapeType::Shell, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
@@ -901,7 +901,7 @@ impl<'a> BooleanBuilder<'a> {
         self.build_result_occt(topods::ShapeType::Solid, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // OCCT L487-490: FillImagesContainers(COMPSOLID) �?BuildResult(COMPSOLID)
-        self.fill_images_containers(ShapeType::CompSolid, &mut result);
+        self.fill_images_containers(ShapeType::CompSolid, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result_occt(topods::ShapeType::CompSolid, &mut result, &mut t_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }

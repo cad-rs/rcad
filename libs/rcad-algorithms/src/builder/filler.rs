@@ -538,143 +538,81 @@ impl<'a> BooleanBuilder<'a> {
     /// ✅ OCCT-aligned: FillImagesContainers (Builder_1.cxx L172-193).
     ///   OCCT: iterates source shapes → filters by TopAbs_ShapeEnum →
     ///   FillImagesContainer for each.  rcad: dispatches to type-specific handlers.
-    fn fill_images_containers(&self, shape_type: ShapeType, result: &mut ResultBuilder) {
+    fn fill_images_containers(&self, shape_type: ShapeType, result: &mut ResultBuilder, t: &mut topods::BRep) {
         match shape_type {
-            // OCCT L221-276: FillImagesContainer(WIRE) — rebuilds wire edges from edge images.
             ShapeType::Wire => self.fill_images_containers_wires(),
-            ShapeType::Shell => self.fill_images_containers_shells(result),
+            ShapeType::Shell => self.fill_images_containers_shells(result, t),
             ShapeType::CompSolid => self.fill_images_containers_compsolid(result),
             _ => {}
         }
     }
 
     /// ✅ OCCT-aligned: FillImagesContainer(SHELL) (Builder_1.cxx L221-276).
-    ///   L224-240: check if any sub-shape has been modified
-    ///   L242-275: build new container from sub-shape images
-    ///   ⏳ IsSplitToReverseWithWarn skipped — face orientation handled in emit_wire_face.
-    ///   ⏳ aCIm.Closed() skipped — shell closure determined during BuildRC.
-    fn fill_images_containers_shells(&self, result: &mut ResultBuilder) {
+    ///   L224-240: check if any sub-shape (FACE) has been modified via myImages.Seek.
+    ///   L242-275: build new container (TShape::Shell) from sub-shape images.
+    ///   L274: aCIm.Closed(BRep_Tool::IsClosed(aCIm)).
+    ///   L275: myImages.Bound(theS).Append(aCIm) — store shell in myImages.
+    fn fill_images_containers_shells(&self, result: &mut ResultBuilder, t: &mut topods::BRep) {
+        // No DS shells → no SHELL container to process
+        if self.ds.shells.is_empty() { return; }
+        // OCCT L247-249: aIt.Initialize(theS) — re-iterate sub-shapes to build container.
+        //   rcad: iterate DS shells. For each, find result face ShapeRefs.
         for ds_shell in &self.ds.shells {
-            // OCCT L224-233: check if any sub-shape (FACE) has been modified.
-            //   OCCT: myImages.Seek(aSS) → if images exist AND (not 1 or not same) → modified.
-            //   rcad: count result faces for this DS face — >1 means split, 1 means same.
-            let mut a_it: Option<bool> = None; // OCCT: iterator break on modification found
+            // Collect TShape::Face refs from result.face_refs for this shell's DS faces
+            let mut shell_faces: Vec<topods::ShapeRef> = Vec::new();
             for &dsfi in &ds_shell.faces {
-                let count = result.face_origins.iter().filter(|origin| {
-                    match origin {
-                        FaceOrigin::FromA(sfi) => {
-                            self.ds.faces[dsfi].origin == crate::bopds::ds::ShapeOrigin::ShapeA
-                                && self.ds.faces[dsfi].source_face_idx == *sfi
-                        }
-                        FaceOrigin::FromB(sfi) => {
-                            self.ds.faces[dsfi].origin == crate::bopds::ds::ShapeOrigin::ShapeB
-                                && self.ds.faces[dsfi].source_face_idx == *sfi
-                        }
+                if dsfi >= self.ds.faces.len() { continue; }
+                let origin = self.ds.faces[dsfi].origin;
+                let source_fi = self.ds.faces[dsfi].source_face_idx;
+                for (rfi, fo) in result.face_origins.iter().enumerate() {
+                    let matches = match (fo, origin) {
+                        (FaceOrigin::FromA(s), crate::bopds::ds::ShapeOrigin::ShapeA) => *s == source_fi,
+                        (FaceOrigin::FromB(s), crate::bopds::ds::ShapeOrigin::ShapeB) => *s == source_fi,
                         _ => false,
-                    }
-                }).count();
-                // OCCT L229: pLFIm exists AND (extent != 1 || first != original) → modified
-                let has_images = count > 0;
-                let is_modified = has_images && (count > 1 || !result.face_origins.iter().any(|origin| {
-                    match origin {
-                        FaceOrigin::FromA(sfi) => {
-                            self.ds.faces[dsfi].origin == crate::bopds::ds::ShapeOrigin::ShapeA
-                                && self.ds.faces[dsfi].source_face_idx == *sfi
-                        }
-                        FaceOrigin::FromB(sfi) => {
-                            self.ds.faces[dsfi].origin == crate::bopds::ds::ShapeOrigin::ShapeB
-                                && self.ds.faces[dsfi].source_face_idx == *sfi
-                        }
-                        _ => false,
-                    }
-                }));
-                if is_modified {
-                    a_it = Some(true);
-                    break; // OCCT L231: modified found, stop checking
-                }
-            }
-
-            // OCCT L235-240: if no sub-shape modified → return (no new container).
-            //   OCCT's BuildResult(SHELL) adds original (unmodified) containers directly
-            //   from myArguments.  rcad equivalently pushes identity shells to tmp_shells
-            //   so build_result(SHELL) creates TShells for unmodified shell face groups.
-            if a_it.is_none() {
-                // OCCT-equivalent: add original shell faces (BuildResult "no images" path).
-                let mut sf: Vec<usize> = Vec::new();
-                let a_origin = crate::bopds::ds::ShapeOrigin::ShapeA;
-                let b_origin = crate::bopds::ds::ShapeOrigin::ShapeB;
-                for &dsfi in &ds_shell.faces {
-                    for (rfi, origin) in result.face_origins.iter().enumerate() {
-                        let (exp_origin, sfi) = match origin {
-                            FaceOrigin::FromA(s) => (a_origin, *s),
-                            FaceOrigin::FromB(s) => (b_origin, *s),
-                            _ => continue,
-                        };
-                        if self.ds.faces[dsfi].origin == exp_origin
-                            && self.ds.faces[dsfi].source_face_idx == sfi
-                        {
-                            if !sf.contains(&rfi) { sf.push(rfi); }
-                        }
-                    }
-                }
-                if !sf.is_empty() { result.tmp_shells.push(sf); }
-                continue;
-            }
-
-            // OCCT L242-245: MakeContainer(theType, aCIm) — create new container.
-            //   rcad: new shell = Vec<usize> of result face indices.
-            let mut a_c_im: Vec<usize> = Vec::new();
-
-            // OCCT L247-272: iterate sub-shapes (faces) → add images or original.
-            for &dsfi in &ds_shell.faces {
-                // OCCT L251: pLSSIm = myImages.Seek(aSS) — check if face has split images.
-                let result_faces: Vec<usize> = result.face_origins.iter().enumerate()
-                    .filter(|(_, origin)| {
-                        match origin {
-                            FaceOrigin::FromA(sfi) => {
-                                self.ds.faces[dsfi].origin == crate::bopds::ds::ShapeOrigin::ShapeA
-                                    && self.ds.faces[dsfi].source_face_idx == *sfi
+                    };
+                    if matches {
+                        if let Some(&sr) = result.face_refs.get(rfi) {
+                            if !shell_faces.contains(&sr) {
+                                shell_faces.push(sr);
                             }
-                            FaceOrigin::FromB(sfi) => {
-                                self.ds.faces[dsfi].origin == crate::bopds::ds::ShapeOrigin::ShapeB
-                                    && self.ds.faces[dsfi].source_face_idx == *sfi
-                            }
-                            _ => false,
                         }
-                    })
-                    .map(|(fi, _)| fi)
-                    .collect();
-
-                if result_faces.is_empty() {
-                    // OCCT L253-258: no images → add sub-shape itself.
-                    //   rcad: the DS face wasn't split; no result face to add.
-                    //   (Original face already added via build_original_face in build_result(Face).)
-                    continue;
-                }
-
-                // OCCT L260-271: has images (split) → add each image sub-face.
-                for &rfi in &result_faces {
-                    // OCCT L265-269: if (!aSSIm.IsEqual(aSS) && IsSplitToReverseWithWarn) → reverse.
-                    //   rcad: orientation is per-edge via wire winding, already correct;
-                    //   add the form-aligned check for consistency.
-                    let b_to_reverse = if let Some(f) = result.faces.get(rfi) {
-                        let split_normal = f.3;
-                        let orig_normal = self.ds.faces.get(dsfi).map_or(DVec3::ZERO, |df| df.normal);
-                        crate::boptools::is_split_to_reverse_with_warn(split_normal, orig_normal)
-                    } else { false };
-                    // rcad: face orientation tracked per-edge in wire winding, not per-face.
-                    //   b_to_reverse is false when normals match (the common case).
-                    if !a_c_im.contains(&rfi) {
-                        a_c_im.push(rfi);
                     }
                 }
             }
+            if shell_faces.is_empty() { continue; }
 
-            // OCCT L274-275: aCIm.Closed(BRep_Tool::IsClosed(aCIm)); myImages.Bound(theS).Append(aCIm);
-            //   OCCT always appends the shell regardless of closure.
-            if !a_c_im.is_empty() {
-                result.tmp_shells.push(a_c_im);
-            }
+            // OCCT L274: aCIm.Closed(BRep_Tool::IsClosed(aCIm))
+            //   Check closure via edge valence (each edge appears exactly twice).
+            let is_closed = {
+                let mut ecount: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+                for &fsr in &shell_faces {
+                    if let Some(tf) = t.tshapes.get(fsr.index) {
+                        if let topods::TShape::Face(fd) = &**tf {
+                            let count_wire_edges = |wsr: topods::ShapeRef| {
+                                t.tshapes.get(wsr.index).and_then(|tw| {
+                                    if let topods::TShape::Wire(wd) = &**tw { Some(&wd.edges) } else { None }
+                                })
+                            };
+                            if let Some(edges) = count_wire_edges(fd.outer_wire) {
+                                for esr in edges { *ecount.entry(esr.index).or_default() += 1; }
+                            }
+                            for iwsr in &fd.inner_wires {
+                                if let Some(edges) = count_wire_edges(*iwsr) {
+                                    for esr in edges { *ecount.entry(esr.index).or_default() += 1; }
+                                }
+                            }
+                        }
+                    }
+                }
+                !ecount.is_empty() && ecount.values().all(|&c| c == 2)
+            };
+
+            // OCCT L274-275: create TShape::Shell → store in myImages
+            let shell_ref = t.add_tshell(shell_faces);
+            if is_closed { t.shell_mut(shell_ref).closed = true; }
+            let skey = topods::ShapeRef::new(usize::MAX - result.shells.len());
+            self.my_images.borrow_mut().entry(skey).or_default().push(shell_ref);
+            result.shells.push(shell_ref);
         }
     }
 
