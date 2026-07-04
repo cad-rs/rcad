@@ -47,10 +47,6 @@ pub(crate) struct ResultBuilder {
     /// OCCT-aligned: natural_restriction for each face in self.faces.
     ///   Parallel to face_origins.  Populated by emit_wire_face / build_original_face.
     pub(crate) face_natural_restriction: Vec<bool>,
-    /// DS edge index → TShape::Edge ShapeRef. Populated by build_result_occt(Edge),
-    /// consumed by emit_wire_face_topods for DsEdge-sourced segments.  This ensures
-    /// that the same TopoDS_Edge handle is shared between faces (OCCT identity sharing).
-    pub(crate) ds_edge_to_tedge: Vec<Option<topods::ShapeRef>>,
     /// Final topods shell references (populated by build_topods from tmp_shells).
     pub(crate) shells: Vec<topods::ShapeRef>,
     /// Final topods solid references (populated by build_topods from tmp_solids).
@@ -712,7 +708,6 @@ impl ResultBuilder {
             deg_edge_indices: std::collections::HashSet::new(),
             ic_edge_map: HashMap::new(),
             ds_edge_to_flat: HashMap::new(),
-            ds_edge_to_tedge: Vec::new(),
             tmp_shells: Vec::new(),
             tmp_solids: Vec::new(),
             source_has_compound: false,
@@ -1117,40 +1112,18 @@ impl ResultBuilder {
         let (edge_indices, inner_wire_edges, _tris, _normal, surface, _uv_domain,
              _centroid, _area, sample_point, internal_wire_edges) = &self.faces[fi];
 
-        // Helper: resolve ResultBuilder vertex index → TShape::Vertex ref.
-        // Finds existing TShape by position or creates a new one.
-        fn resolve_v<'a>(
-            vi: usize,
-            verts: &[DVec3],
-            tshapes: &'a mut Vec<std::sync::Arc<topods::TShape>>,
-            v_map: &mut HashMap<usize, ShapeRef>,
-        ) -> ShapeRef {
-            if vi >= verts.len() { return ShapeRef::NULL; }
-            *v_map.entry(vi).or_insert_with(|| {
-                let pt = verts[vi];
-                let found = tshapes.iter().position(|ts| {
-                    matches!(&**ts, topods::TShape::Vertex(vd)
-                        if crate::tolerance::points_coincide(vd.point, pt))
-                });
-                match found {
-                    Some(ti) => ShapeRef::new(ti),
-                    None => {
-                        tshapes.push(std::sync::Arc::new(topods::TShape::Vertex(
-                            topods::TVertexData { point: pt, tolerance: 0.0, points: Vec::new(), moved: false })));
-                        ShapeRef::new(tshapes.len() - 1)
-                    }
-                }
-            })
-        }
-
         // Edge → TShape::Edge (read curve/range from custom arrays)
-        let mut v_map: HashMap<usize, ShapeRef> = HashMap::new();
+        // Vertex identity is handled by BRep::add_tvertex (vert_by_pos cache).
         let mut e_map: Vec<ShapeRef> = Vec::with_capacity(edge_indices.len());
         for &(ei, _forward) in edge_indices.iter() {
             if ei >= self.edges.len() { continue; }
             let (v1, v2) = self.edges[ei];
-            let first = resolve_v(v1, &self.vertices, &mut t.tshapes, &mut v_map);
-            let last = resolve_v(v2, &self.vertices, &mut t.tshapes, &mut v_map);
+            let first = if v1 < self.vertices.len() {
+                t.add_tvertex(self.vertices[v1])
+            } else { ShapeRef::NULL };
+            let last = if v2 < self.vertices.len() {
+                t.add_tvertex(self.vertices[v2])
+            } else { ShapeRef::NULL };
             let curve_idx = self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
                 let ci = t.curves.len();
                 t.curves.push(crv.clone());
@@ -1234,22 +1207,12 @@ impl ResultBuilder {
             return; // all faces already have TShapes
         }
 
-        // 1. Vertices → TShape::Vertex (dedup with existing TShapes, including
-        //    those created by incremental emission).
+        // 1. Vertices → TShape::Vertex (identity-based dedup via BRep::add_tvertex).
         let n_verts = self.vertices.len();
         let mut vi_to_ti: Vec<usize> = Vec::with_capacity(n_verts);
         for v in &self.vertices {
-            let found = t.tshapes.iter().position(|ts| {
-                matches!(&**ts, rcad_kernel::topods::TShape::Vertex(vd) if crate::tolerance::points_coincide(vd.point, *v))
-            });
-            match found {
-                Some(ti) => vi_to_ti.push(ti),
-                None => {
-                    let ti = t.tshapes.len();
-                    t.add_tvertex(*v);
-                    vi_to_ti.push(ti);
-                }
-            }
+            let sr = t.add_tvertex(*v);
+            vi_to_ti.push(sr.index);
         }
 
         // 2. Edges → TShape::Edge (use vi_to_ti to map vertex indices).

@@ -4,6 +4,23 @@ use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use crate::geom::{Curve2d, Curve3, Surface3};
 
+/// Quantized vertex position for identity-based sharing.
+/// Two geometrically coincident points at TOLERANCE_ABS scale produce the same key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct VertexKey(u64);
+
+impl VertexKey {
+    fn from(p: DVec3) -> Self {
+        const S: f64 = 1.0 / 1e-7;
+        let q = |c: f64| (c * S).round() as i64;
+        VertexKey(
+            (q(p.x) as u64).wrapping_mul(0xbf58476d1ce4e5b9)
+            ^ (q(p.y) as u64).wrapping_mul(0x94d049bb133111eb)
+            ^ (q(p.z) as u64).wrapping_mul(0x9e3779b97f4a7c15)
+        )
+    }
+}
+
 /// OCCT TopAbs_Orientation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Orientation {
@@ -262,9 +279,21 @@ pub struct BRep {
     pub surfaces: Vec<Surface3>,
     pub curve2ds: Vec<crate::geom::Curve2d>,
     /// 3D transformations (TopLoc_Location equivalent). Index 0 = identity.
-    /// TopLoc_Datum3D wraps gp_Trsf (affine transformation); rcad uses DAffine3.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub locations: Vec<glam::DAffine3>,
+    /// OCCT-aligned: vertex identity cache — quantized position → ShapeRef.
+    /// Same geometric point → same TShape::Vertex across all code paths.
+    #[serde(skip)]
+    pub vert_by_pos: HashMap<VertexKey, ShapeRef>,
+    /// OCCT-aligned: edge identity cache — unordered vertex TShape index pair → ShapeRef.
+    /// Same vertex pair (regardless of order/orientation) → same TShape::Edge.
+    #[serde(skip)]
+    pub edge_by_vpair: HashMap<(usize, usize), ShapeRef>,
+    /// OCCT-aligned: face identity cache — wire key → ShapeRef.
+    /// Two faces with the same surface and wire structure share the same TShape::Face.
+    /// Key: (surface_index, outer_wire.index, sorted inner_wire.indices).
+    #[serde(skip)]
+    pub face_by_key: HashMap<(Option<usize>, usize, Vec<usize>), ShapeRef>,
 }
 
 impl Default for BRep {
@@ -279,6 +308,9 @@ impl BRep {
             surfaces: Vec::new(),
             curve2ds: Vec::new(),
             locations: Vec::new(),
+            vert_by_pos: HashMap::new(),
+            edge_by_vpair: HashMap::new(),
+            face_by_key: HashMap::new(),
         }
     }
 
@@ -302,32 +334,27 @@ impl BRep {
     }
 
     pub fn add_tvertex(&mut self, point: DVec3) -> ShapeRef {
-        let index = self.tshapes.len();
+        // OCCT-aligned: identity-based sharing — same position → same TShape::Vertex.
+        let key = VertexKey::from(point);
+        if let Some(&sr) = self.vert_by_pos.get(&key) {
+            return sr;
+        }
+        let sr = ShapeRef::new(self.tshapes.len());
         self.tshapes.push(Arc::new(TShape::Vertex(TVertexData { point, tolerance: 0.0, points: Vec::new(), moved: false })));
-        ShapeRef::new(index)
+        self.vert_by_pos.insert(key, sr);
+        sr
     }
 
     pub fn add_tedge(&mut self, curve: Option<usize>, first: ShapeRef, last: ShapeRef, range: [f64; 2]) -> ShapeRef {
-        // OCCT-aligned: identity-based sharing — normalize vertex orientation to
-        // Forward before comparing/storing.  Edge identity is about which vertices
-        // connect, not vertex orientation (which belongs to the wire, not the edge).
-        let first_fwd = ShapeRef::new(first.index);
-        let last_fwd = ShapeRef::new(last.index);
-        for (i, ts) in self.tshapes.iter().enumerate() {
-            if let TShape::Edge(ref ed) = **ts {
-                if ed.first.index == first.index && ed.last.index == last.index {
-                    return ShapeRef::new(i);
-                }
-            }
+        // OCCT-aligned: identity-based sharing — same unordered vertex pair → same TShape::Edge.
+        let key = (first.index.min(last.index), first.index.max(last.index));
+        if let Some(&sr) = self.edge_by_vpair.get(&key) {
+            return sr;
         }
-        let index = self.tshapes.len();
-        self.tshapes.push(Arc::new(TShape::Edge(TEdgeData {
-            curve, first: first_fwd, last: last_fwd, range,
-            degenerated: false, pcurves: HashMap::new(),
-            representations: Vec::new(), vertex_params: HashMap::new(),
-            tolerance: 0.0, same_parameter: true, same_range: true, moved: false,
-        })));
-        ShapeRef::new(index)
+        let sr = ShapeRef::new(self.tshapes.len());
+        self.tshapes.push(Arc::new(TShape::Edge(TEdgeData { curve, first, last, range, degenerated: false, pcurves: HashMap::new(), representations: Vec::new(), vertex_params: HashMap::new(), tolerance: 0.0, same_parameter: true, same_range: true, moved: false })));
+        self.edge_by_vpair.insert(key, sr);
+        sr
     }
 
     pub fn add_twire(&mut self, edges: Vec<ShapeRef>) -> ShapeRef {
@@ -337,9 +364,17 @@ impl BRep {
     }
 
     pub fn add_tface(&mut self, surface: Option<usize>, outer_wire: ShapeRef, inner_wires: Vec<ShapeRef>, sample_point: Option<DVec3>, uv_domain: Option<[f64; 4]>, internal_vertices: Vec<ShapeRef>, natural_restriction: bool) -> ShapeRef {
-        let index = self.tshapes.len();
+        // OCCT-aligned: identity-based sharing — same surface + wire structure → same TShape::Face.
+        let mut inners: Vec<usize> = inner_wires.iter().map(|w| w.index).collect();
+        inners.sort_unstable();
+        let key = (surface, outer_wire.index, inners);
+        if let Some(&sr) = self.face_by_key.get(&key) {
+            return sr;
+        }
+        let sr = ShapeRef::new(self.tshapes.len());
         self.tshapes.push(Arc::new(TShape::Face(TFaceData { surface, surface_location: 0, outer_wire, inner_wires, sample_point, uv_domain, internal_vertices, tolerance: 0.0, natural_restriction, moved: false })));
-        ShapeRef::new(index)
+        self.face_by_key.insert(key, sr);
+        sr
     }
 
     pub fn add_tshell(&mut self, faces: Vec<ShapeRef>) -> ShapeRef {
