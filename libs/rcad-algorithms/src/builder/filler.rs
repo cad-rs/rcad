@@ -1098,29 +1098,28 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
 
-        // === Phase 1: Build solids for interfered source solids (OCCT L467-518) ===
+        // === Phase 1a: Collect interfered solid tasks (OCCT L467-518: build aVBS) ===
+        struct SolidTask {
+            side: usize,
+            builder_solid: crate::bopds::builder_solid::BuilderSolid,
+        }
+        let mut tasks: Vec<SolidTask> = Vec::new();
         for &(si, side, _state) in assignments {
-            // OCCT L470-473: if (aSI.ShapeType() != TopAbs_SOLID) continue;
-            // OCCT L478-481: if (!theDraftSolids.IsBound(aS)) continue;
             let in_faces_this: Vec<usize> = my_in_parts.get(&side).cloned().unwrap_or_default();
-            if !has_in_faces || in_faces_this.is_empty() {
-                continue;
-            }
-
+            if !has_in_faces || in_faces_this.is_empty() { continue; }
             let origin = if side == 0 { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
             let other_origin = if side == 0 { ShapeOrigin::ShapeB } else { ShapeOrigin::ShapeA };
 
-            // OCCT L491-499: 1.1 Fill Shell Faces Set — iterate all faces of draft solid
+            // OCCT L491-499: 1.1 Fill Shell Faces Set
             let mut ds_face_set: Vec<usize> = Vec::new();
             if let Some(ds_shell) = self.ds.shells.get(si) {
                 for &dsfi in &ds_shell.faces {
-                    let dsf = &self.ds.faces[dsfi];
-                    if dsf.origin != origin { continue; }
-                    ds_face_set.push(dsfi);
+                    if self.ds.faces.get(dsfi).map_or(false, |f| f.origin == origin) {
+                        ds_face_set.push(dsfi);
+                    }
                 }
             }
-
-            // OCCT L501-511: 1.2 Fill internal faces (FWD + REV orientations).
+            // OCCT L501-511: 1.2 Fill internal faces (FWD + REV orientations)
             for &rfi in &in_faces_this {
                 if let Some(dfi) = result_to_ds(rfi, other_origin) {
                     ds_face_set.push(dfi);
@@ -1131,35 +1130,34 @@ impl<'a> BooleanBuilder<'a> {
             ds_face_set.dedup();
             if ds_face_set.is_empty() { continue; }
 
-            // OCCT L513-517: 1.3 Build new solids via BOPAlgo_SplitSolid.
-            //   ⏳ rcad: BuilderSolid (single-threaded; OCCT uses parallel aVBS).
             let mut bs = crate::bopds::builder_solid::BuilderSolid::new();
             bs.set_shapes(&ds_face_set);
-            bs.perform(&self.ds);
+            tasks.push(SolidTask { side, builder_solid: bs });
+        }
 
-            // OCCT L531-537: Parallel execution (BOPTools_Parallel::Perform).
-            //   ⏳ rcad: BuilderSolid already performed above (sequential).
+        // === Phase 1b: BOPTools_Parallel::Perform (OCCT L531) ===
+        // OCCT runs aVBS in parallel when myRunParallel==true.
+        // rcad uses rayon::par_iter_mut for the same effect.
+        use rayon::prelude::*;
+        let ds_ref: &crate::bopds::ds::DS = self.ds;
+        tasks.par_iter_mut().for_each(|task| {
+            task.builder_solid.perform(ds_ref);
+        });
 
-            // OCCT L539-542: collect areas → aSolidsIm.
-            // OCCT L544-577: merge BuilderSolid alerts into builder report.
-            //   ⏳ rcad: alerts not merged.
-            for area_ds in bs.areas() {
+        // === Phase 2: Collect areas → aSolidsIm + myImages (OCCT L539-617) ===
+        for task in &tasks {
+            for area_ds in task.builder_solid.areas() {
                 // OCCT L590-602: BOPTools_Set dedup via aMST.Contains / aMST.Added.
                 let ds_set: std::collections::BTreeSet<usize> = area_ds.iter().copied().collect();
-                if a_mst.iter().any(|s| s == &ds_set) {
-                    // OCCT L598: bFlagSD = aMST.Contains(aST) — same-domain → skip duplicate
-                    continue;
-                }
+                if a_mst.iter().any(|s| s == &ds_set) { continue; }
                 a_mst.push(ds_set);
 
-                // OCCT L590-602: aST.Add(aSR, TopAbs_FACE) — map DS faces to result faces.
+                // OCCT L590-602: map DS faces to result faces.
                 let mut result_faces: Vec<usize> = Vec::new();
                 let mut mapped: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
                 for &dfi in area_ds {
                     if let Some(rfi) = ds_to_result(dfi) {
-                        if mapped.insert(rfi) {
-                            result_faces.push(rfi);
-                        }
+                        if mapped.insert(rfi) { result_faces.push(rfi); }
                     }
                 }
                 if result_faces.is_empty() { continue; }
@@ -1177,11 +1175,10 @@ impl<'a> BooleanBuilder<'a> {
                         result.solids.push(solid_ref);
                     }
                 }
-                //   rcad: also keep tmp_shells/tmp_solids for BuildRC.
                 let csi = result.tmp_shells.len();
                 result.tmp_shells.push(result_faces);
                 result_solids.push(vec![csi]);
-                result.solid_side_origin.push(side);
+                result.solid_side_origin.push(task.side);
             }
         }
 
