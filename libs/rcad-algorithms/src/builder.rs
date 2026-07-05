@@ -90,6 +90,8 @@ pub struct BooleanBuilder<'a> {
     my_arguments: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
     /// OCCT-aligned: DS edge → TShape::Edge mapping (replaces ResultBuilder.ds_edge_to_tshape).
     my_edge_map: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
+    /// OCCT-aligned: result wire TShape refs (replaces ResultBuilder.wire_refs).
+    my_wire_refs: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -623,6 +625,7 @@ impl<'a> BooleanBuilder<'a> {
             my_shape: std::cell::RefCell::new(rcad_kernel::topods::BRep::new()),
             my_arguments: std::cell::RefCell::new(Vec::new()),
             my_edge_map: std::cell::RefCell::new(Vec::new()),
+            my_wire_refs: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -1003,7 +1006,8 @@ impl<'a> BooleanBuilder<'a> {
         // Create TShape::Face for unsplit original faces before BuildResult(FACE).
         {
             let mut t = self.my_shape.borrow_mut();
-            result.build_topods_faces(&mut *t);
+            let wire_refs = self.my_wire_refs.borrow();
+            result.build_topods_faces(&mut *t, &wire_refs);
         }
         self.build_result(topods::ShapeType::Face, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }

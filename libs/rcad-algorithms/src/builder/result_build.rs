@@ -1032,9 +1032,9 @@ impl<'a> BooleanBuilder<'a> {
                     if !wire_edges.is_empty() {
                         let sr = t.add_twire(wire_edges);
                         t.wire_mut(sr).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
-                        result.wire_refs.push(sr);
+                        self.my_wire_refs.borrow_mut().push(sr);
                     } else {
-                        result.wire_refs.push(rcad_kernel::topods::ShapeRef::NULL);
+                        self.my_wire_refs.borrow_mut().push(rcad_kernel::topods::ShapeRef::NULL);
                     }
                 }
             }
