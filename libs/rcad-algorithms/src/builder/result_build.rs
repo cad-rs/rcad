@@ -1113,39 +1113,4 @@ impl<'a> BooleanBuilder<'a> {
         false // all shells closed
     }
 
-    /// �?OCCT-aligned: BOPAlgo_Builder::PostTreat (Builder.cxx L450-475).
-    ///   Two-step tolerance correction: CorrectTolerances + CorrectShapeTolerances.
-    fn post_treat(&self, brep: &mut rcad_kernel::BRep) {
-        // OCCT L452-454: aMA �?map of shapes to avoid
-        // OCCT L455-469: if non-destructive �?collect source V/E/F into aMA
-        // rcad: non-destructive defaults to false.  When true, collect non-new
-        // DS vertex indices into map_to_avoid.
-        let map_to_avoid: std::collections::HashSet<usize> = if self.my_non_destructive {
-            let mut avoid = std::collections::HashSet::new();
-            for (vi, v) in self.ds.vertices.iter().enumerate() {
-                if v.origin.is_some() { avoid.insert(vi); }
-            }
-            for (ei, e) in self.ds.edges.iter().enumerate() {
-                if matches!(e.origin, ShapeOrigin::ShapeA | ShapeOrigin::ShapeB) {
-                    avoid.insert(ei);
-                }
-            }
-            for (fi, f) in self.ds.faces.iter().enumerate() {
-                if matches!(f.origin, ShapeOrigin::ShapeA | ShapeOrigin::ShapeB) {
-                    avoid.insert(fi);
-                }
-            }
-            avoid
-        } else {
-            std::collections::HashSet::new()
-        };
-        // OCCT L472: BOPTools_AlgoTools::CorrectTolerances(myShape, aMA, 0.05, myRunParallel)
-        if map_to_avoid.is_empty() {
-            rcad_kernel::tolerance::correct_tolerances(brep, 23, 0.05);
-        } else {
-            rcad_kernel::tolerance::correct_tolerances_with_map(brep, 23, 0.05, &map_to_avoid);
-        }
-        // OCCT L474: BOPTools_AlgoTools::CorrectShapeTolerances(myShape, aMA, myRunParallel)
-        rcad_kernel::tolerance::correct_shape_tolerances(brep);
-    }
 }

@@ -35,7 +35,8 @@ pub enum StepProtocol {
     /// ISO 10303-242 "Managed Model Based 3D Engineering".
     Ap242,
 }
-use rcad_kernel::{BRep, BSplineCurve2, Curve2d, Curve3, CurveEval, Face, Surface3, step_export_uncertainty, topods};
+use crate::brep_flat::{self, BRep, Face, step_export_uncertainty};
+use rcad_kernel::{BSplineCurve2, Curve2d, Curve3, CurveEval, Surface3, topods};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Write;
 
@@ -148,7 +149,7 @@ impl StepWriter {
         selection: ExportSelection<'_>,
         options: &StepWriteOptions,
     ) -> String {
-        let brep = BRep::from_topods_with_location(brep, glam::DAffine3::IDENTITY);
+        let brep = brep_flat::FlatBRep::from_topods(brep);
         let mut writer = Part21Writer::new_with_protocol_and_header(
             options.protocol,
             options.header.clone(),
@@ -967,7 +968,7 @@ impl Part21Writer {
     /// Write a compound structure to STEP, returning the list of STEP entity IDs.
     fn write_compound_structure(
         &mut self,
-        compound: &rcad_kernel::topology::Compound,
+        compound: &brep_flat::Compound,
         existing_solids: &[u64],
     ) -> Vec<u64> {
         let mut element_ids = Vec::new();
@@ -1016,7 +1017,7 @@ impl Part21Writer {
     /// Write a compsolid structure to STEP, returning the list of STEP entity IDs.
     fn write_compsolid_structure(
         &mut self,
-        compsolid: &rcad_kernel::topology::CompSolid,
+        compsolid: &brep_flat::CompSolid,
         existing_solids: &[u64],
     ) -> Vec<u64> {
         let mut solid_ids = Vec::new();
@@ -5255,19 +5256,13 @@ mod tests {
         StepPropertyDefinitionRepr, StepReader, ToleranceZonePosition, ToleranceZoneShape,
     };
     use glam::DVec3;
-    use rcad_kernel::{Edge, Vertex};
     use rcad_modeling::make_box_brep;
     use std::io::Cursor;
     const HFSS_STEP: &str = include_str!("../../../assets/hfss.step");
 
-    /// Convert topods::BRep to old BRep for field access in tests.
-    fn to_old(t: &rcad_kernel::topods::BRep) -> rcad_kernel::BRep {
-        rcad_kernel::BRep::from_topods_with_location(t, glam::DAffine3::IDENTITY)
-    }
-
-    /// Convert old BRep to topods for StepWriter calls.
-    fn to_t(b: &rcad_kernel::BRep) -> rcad_kernel::topods::BRep {
-        b.to_topods()
+    /// Convert topods::BRep to FlatBRep for field access in tests.
+    fn to_flat(t: &rcad_kernel::topods::BRep) -> crate::brep_flat::FlatBRep {
+        crate::brep_flat::FlatBRep::from_topods(t)
     }
 
     #[test]
@@ -5283,7 +5278,7 @@ mod tests {
             },
         );
 
-        let reparsed = StepReader::parse_string(&step).expect("exported STEP should parse"); let reparsed_t = reparsed; let reparsed = to_old(&reparsed_t);
+        let reparsed = StepReader::parse_string(&step).expect("exported STEP should parse"); let reparsed_t = reparsed; let reparsed = to_flat(&reparsed_t);
         assert!(!reparsed.edges.is_empty());
         assert!(!reparsed.solids.is_empty());
         assert!(step.contains("ADVANCED_BREP_SHAPE_REPRESENTATION"));
@@ -5632,7 +5627,7 @@ mod tests {
             },
         );
 
-        let reparsed = StepReader::parse_string(&step).expect("edge-only export should parse"); let reparsed_t = reparsed; let reparsed = to_old(&reparsed_t);
+        let reparsed = StepReader::parse_string(&step).expect("edge-only export should parse"); let reparsed_t = reparsed; let reparsed = to_flat(&reparsed_t);
         assert!(reparsed.solids.is_empty());
         assert_eq!(reparsed.edges.len(), 2);
     }
@@ -5712,7 +5707,7 @@ mod tests {
 
         let reparsed =
             StepReader::parse_reader(Cursor::new(buf)).expect("stream read should parse");
-        let reparsed = to_old(&reparsed);
+        let reparsed = to_flat(&reparsed);
         assert!(!reparsed.edges.is_empty());
         assert!(!reparsed.solids.is_empty());
     }
@@ -5729,7 +5724,7 @@ mod tests {
             },
         );
 
-        let reparsed = StepReader::parse_string(&step).expect("selected-face export should parse"); let reparsed_t = reparsed; let reparsed = to_old(&reparsed_t);
+        let reparsed = StepReader::parse_string(&step).expect("selected-face export should parse"); let reparsed_t = reparsed; let reparsed = to_flat(&reparsed_t);
         assert!(!reparsed.solids.is_empty());
         assert!(step.contains("OPEN_SHELL"));
         assert!(step.contains("SHELL_BASED_SURFACE_MODEL"));
@@ -5764,7 +5759,7 @@ mod tests {
 
     #[test]
     fn exports_analytic_surfaces_from_hfss() {
-        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let brep = to_old(&brep_t);
+        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let brep = to_flat(&brep_t);
         let step = StepWriter::write_string(
             &brep.to_topods(),
             ExportSelection {
@@ -5792,7 +5787,7 @@ mod tests {
     fn hfss_wire_curve_set_references_geometry_not_edge_curve() {
         use std::collections::HashMap;
 
-        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let brep = to_old(&brep_t);
+        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let brep = to_flat(&brep_t);
         let step = StepWriter::write_string(
             &brep.to_topods(),
             ExportSelection {
@@ -5864,7 +5859,7 @@ mod tests {
 
     #[test]
     fn round_trips_sphere_and_cone_surfaces() {
-        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let brep = to_old(&brep_t);
+        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let brep = to_flat(&brep_t);
 
         // Find the original cone half-angle and radius for comparison
         let mut orig_cone_angle = 0.0f64;
@@ -5890,7 +5885,7 @@ mod tests {
             },
         );
 
-        let reparsed = StepReader::parse_string(&step).expect("re-exported STEP should parse"); let reparsed_t = reparsed; let reparsed = to_old(&reparsed_t);
+        let reparsed = StepReader::parse_string(&step).expect("re-exported STEP should parse"); let reparsed_t = reparsed; let reparsed = to_flat(&reparsed_t);
 
         // Count faces with each surface type and verify cone parameters survive round-trip
         let mut sphere_count = 0usize;
@@ -5930,7 +5925,7 @@ mod tests {
 
     #[test]
     fn creator_style_hfss_keeps_sphere_cylinder_cone_as_solids() {
-        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let brep = to_old(&brep_t);
+        let brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let brep = to_flat(&brep_t);
         let original_solid_count = brep.solids.len();
 
         // Match creator save path: standard write_string defaults.
@@ -5948,7 +5943,7 @@ mod tests {
             "export should contain solid entities"
         );
 
-        let reparsed = StepReader::parse_string(&step).expect("re-exported STEP should parse"); let reparsed_t = reparsed; let reparsed = to_old(&reparsed_t);
+        let reparsed = StepReader::parse_string(&step).expect("re-exported STEP should parse"); let reparsed_t = reparsed; let reparsed = to_flat(&reparsed_t);
         assert!(
             !reparsed.solids.is_empty(),
             "re-exported model should contain solids"
@@ -6014,7 +6009,7 @@ mod tests {
 
     #[test]
     fn exports_ellipsoid_surface_emits_semantic_tag() {
-        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let mut brep = to_old(&brep_t);
+        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let mut brep = to_flat(&brep_t);
         let sid = *brep
             .geom
             .face_surface
@@ -6044,7 +6039,7 @@ mod tests {
         assert!(step.contains("B_SPLINE_SURFACE_WITH_KNOTS"));
         assert!(step.contains("RCAD_ELLIPSOID"));
 
-        let reparsed = StepReader::parse_string(&step).expect("ellipsoid fallback STEP should parse"); let reparsed_t = reparsed; let reparsed = to_old(&reparsed_t);
+        let reparsed = StepReader::parse_string(&step).expect("ellipsoid fallback STEP should parse"); let reparsed_t = reparsed; let reparsed = to_flat(&reparsed_t);
         let ellipsoid_surfaces = reparsed
             .geom
             .surfaces
@@ -6059,7 +6054,7 @@ mod tests {
 
     #[test]
     fn exports_helicoid_surface_emits_semantic_tag() {
-        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let mut brep = to_old(&brep_t);
+        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let mut brep = to_flat(&brep_t);
         let sid = *brep
             .geom
             .face_surface
@@ -6087,7 +6082,7 @@ mod tests {
         assert!(step.contains("B_SPLINE_SURFACE_WITH_KNOTS"));
         assert!(step.contains("RCAD_HELICOID"));
 
-        let reparsed = StepReader::parse_string(&step).expect("helicoid fallback STEP should parse"); let reparsed_t = reparsed; let reparsed = to_old(&reparsed_t);
+        let reparsed = StepReader::parse_string(&step).expect("helicoid fallback STEP should parse"); let reparsed_t = reparsed; let reparsed = to_flat(&reparsed_t);
         let helicoid_surfaces = reparsed
             .geom
             .surfaces
@@ -6102,7 +6097,7 @@ mod tests {
 
     #[test]
     fn exports_coons_surface_via_bspline_fallback() {
-        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let mut brep = to_old(&brep_t);
+        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let mut brep = to_flat(&brep_t);
         let sid = *brep
             .geom
             .face_surface
@@ -6142,7 +6137,7 @@ mod tests {
         assert!(step.contains("B_SPLINE_SURFACE_WITH_KNOTS"));
         assert!(!step.contains("RCAD_COONS"));
 
-        let reparsed = StepReader::parse_string(&step).expect("Coons fallback STEP should parse"); let reparsed_t = reparsed; let reparsed = to_old(&reparsed_t);
+        let reparsed = StepReader::parse_string(&step).expect("Coons fallback STEP should parse"); let reparsed_t = reparsed; let reparsed = to_flat(&reparsed_t);
         let bspline_surfaces = reparsed
             .geom
             .surfaces
@@ -6157,7 +6152,7 @@ mod tests {
 
     #[test]
     fn exports_pipe_surface_via_bspline_fallback() {
-        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let mut brep = to_old(&brep_t);
+        let mut brep = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse"); let brep_t = brep; let mut brep = to_flat(&brep_t);
         let sid = *brep
             .geom
             .face_surface
@@ -6186,7 +6181,7 @@ mod tests {
         );
         assert!(step.contains("B_SPLINE_SURFACE_WITH_KNOTS"));
 
-        let reparsed = StepReader::parse_string(&step).expect("Pipe fallback STEP should parse"); let reparsed_t = reparsed; let reparsed = to_old(&reparsed_t);
+        let reparsed = StepReader::parse_string(&step).expect("Pipe fallback STEP should parse"); let reparsed_t = reparsed; let reparsed = to_flat(&reparsed_t);
         let bspline_surfaces = reparsed
             .geom
             .surfaces

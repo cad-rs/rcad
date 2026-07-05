@@ -1051,11 +1051,10 @@ impl<'a> BooleanBuilder<'a> {
         let mut history = self.prepare_history(&mut result);
 
         // OCCT L506-508: PostTreat
-        let final_brep = self.my_shape.borrow().clone();
-        let mut old_brep = rcad_kernel::BRep::from_topods(&final_brep);
-        self.post_treat(&mut old_brep);
-        if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        let result_brep = old_brep.to_topods();
+        // rcad: PostTreat (tolerance correction) is skipped here — the old-to-topods
+        // round-trip lost all tolerance data, making it a no-op.
+        // TODO: reimplement PostTreat directly on topods::BRep.
+        let result_brep = self.my_shape.borrow().clone();
 
         Ok((result_brep, history))
     }

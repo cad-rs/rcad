@@ -375,6 +375,7 @@ impl BRep {
                 topods::TShape::Vertex(vd) => {
                     v_map.push(brep.vertices.len());
                     brep.vertices.push(Vertex { point: instance_loc.transform_point3(vd.point) });
+                    brep.geom.vertex_tolerance.push(vd.tolerance.max(CONFUSION));
                 }
                 topods::TShape::Edge(ed) => {
                     let fi = brep.edges.len();
@@ -399,6 +400,9 @@ impl BRep {
                     } else { (None, ed.range) };
                     brep.geom.edge_curve.push(world_ci);
                     brep.geom.edge_curve_range.push(Some(world_range));
+                    brep.geom.edge_tolerance.push(ed.tolerance.max(CONFUSION));
+                    brep.geom.edge_same_parameter.push(ed.same_parameter);
+                    brep.geom.edge_same_range.push(ed.same_range);
                     brep.geom.edge_vertex_params.push(Some([
                         ed.vertex_params.get(&ed.first.index).copied().unwrap_or(world_range[0]),
                         ed.vertex_params.get(&ed.last.index).copied().unwrap_or(world_range[1]),
@@ -457,6 +461,7 @@ impl BRep {
                 topods::TShape::Vertex(vd) => {
                     v_map.push(brep.vertices.len());
                     brep.vertices.push(Vertex { point: vd.point });
+                    brep.geom.vertex_tolerance.push(vd.tolerance.max(CONFUSION));
                 }
                 topods::TShape::Edge(ed) => {
                     let fi = brep.edges.len();
@@ -477,6 +482,9 @@ impl BRep {
                     });
                     brep.geom.edge_curve.push(ci);
                     brep.geom.edge_curve_range.push(Some(ed.range));
+                    brep.geom.edge_tolerance.push(ed.tolerance.max(CONFUSION));
+                    brep.geom.edge_same_parameter.push(ed.same_parameter);
+                    brep.geom.edge_same_range.push(ed.same_range);
                     brep.geom.edge_vertex_params.push(Some([
                         ed.vertex_params.get(&ed.first.index).copied().unwrap_or(ed.range[0]),
                         ed.vertex_params.get(&ed.last.index).copied().unwrap_or(ed.range[1]),
@@ -541,6 +549,11 @@ impl BRep {
                                     mesh_dirty: true,
                                     surface_idx: surf_idx,
                                 });
+                                if flat_fi < brep.geom.face_tolerance.len() {
+                                    brep.geom.face_tolerance[flat_fi] = brep.geom.face_tolerance[flat_fi].max(fd.tolerance);
+                                } else {
+                                    brep.geom.face_tolerance.push(fd.tolerance.max(CONFUSION));
+                                }
                                 while brep.geom.face_surface.len() <= flat_fi {
                                     brep.geom.face_surface.push(None);
                                 }

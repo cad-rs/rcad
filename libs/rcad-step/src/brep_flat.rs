@@ -79,14 +79,16 @@ pub struct Solid {
     pub tag: Option<String>,
 }
 
-/// A compound holds labelled solids.
+/// A compound holds labelled solids (and optionally sub-compounds / compsolids).
 #[derive(Debug, Clone)]
 pub struct Compound {
     pub solids: Vec<(Option<String>, Solid)>,
+    pub comp_solids: Vec<(Option<String>, CompSolid)>,
+    pub compounds: Vec<(Option<String>, Compound)>,
 }
 
 impl Compound {
-    pub fn new() -> Self { Self { solids: Vec::new() } }
+    pub fn new() -> Self { Self { solids: Vec::new(), comp_solids: Vec::new(), compounds: Vec::new() } }
     pub fn add_solid(&mut self, tag: Option<String>, solid: Solid) {
         self.solids.push((tag, solid));
     }
@@ -301,3 +303,18 @@ impl FlatBRep {
 
 /// Type alias so STEP writer can use `BRep` directly.
 pub type BRep = FlatBRep;
+
+/// STEP export uncertainty for FlatBRep (analogous to `rcad_kernel::tolerance::step_export_uncertainty`).
+pub fn step_export_uncertainty(brep: &FlatBRep) -> f64 {
+    // Use max of vertex/edge tolerances if populated, else default 1e-6.
+    let max_vert = brep.vertices.iter().enumerate()
+        .filter_map(|(i, _)| brep.geom.vertex_tolerance.get(i))
+        .copied()
+        .fold(0.0_f64, f64::max);
+    let max_edge = brep.edges.iter().enumerate()
+        .filter_map(|(i, _)| brep.geom.edge_tolerance.get(i))
+        .copied()
+        .fold(0.0_f64, f64::max);
+    let tol = max_vert.max(max_edge);
+    if tol > 0.0 { tol * 10.0 } else { 1e-6 }
+}

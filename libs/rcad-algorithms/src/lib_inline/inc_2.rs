@@ -329,24 +329,22 @@ pub fn boolean_op_with_retry(
     b: &BRep,
 ) -> Result<BRep, BooleanError> {
     // First attempt: standard path including fast-paths (containment, box-box, etc.).
-    let brep = if let Ok(t) = boolean_op(op, a, b) {
+    let brep = if let Ok(mut t) = boolean_op(op, a, b) {
+        // ✅ OCCT-aligned: correct_tolerances on topods::BRep directly.
+        rcad_kernel::tolerance::correct_tolerances_topods(&mut t, 23, 0.05);
+        rcad_kernel::tolerance::correct_shape_tolerances_topods(&mut t);
         rcad_kernel::BRep::from_topods(&t)
     } else {
         // Fallback: retry with escalating tolerance.
-        boolean::boolean_op_with_retry_policy(
+        let mut brep = boolean::boolean_op_with_retry_policy(
             op, a, b, &RetryPolicy::conservative(), BooleanOptions::default(),
         )
-        .map(|(brep, _report)| brep)?
+        .map(|(brep, _report)| brep)?;
+        // ✅ OCCT-aligned: correct_tolerances on old BRep fallback.
+        rcad_kernel::tolerance::correct_tolerances(&mut brep, 23, 0.05);
+        rcad_kernel::tolerance::correct_shape_tolerances(&mut brep);
+        brep
     };
-    // ✅ OCCT-aligned: PostTreat does NOT merge_close_vertices, deduplicate_edges,
-    //   or prune_unused_topology — OCCT's BRep_Builder produces topology with
-    //   shared TopoDS TShape identity (no duplicates).  rcad's builder generates
-    //   unique index-based edges/vertices; the extra steps have been removed
-    //   to match OCCT's PostTreat (Builder.cxx L450-475).
-    let mut brep = brep;
-    // ✅ OCCT-aligned: correct_tolerances — OCCT PostTreat does CorrectTolerances + CorrectShapeTolerances.
-    rcad_kernel::tolerance::correct_tolerances(&mut brep, 23, 0.05);
-    rcad_kernel::tolerance::correct_shape_tolerances(&mut brep);
     Ok(brep)
 }
 

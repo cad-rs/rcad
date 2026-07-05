@@ -492,6 +492,165 @@ impl BRep {
         before - self.tshapes.len()
     }
 
+    /// Apply an affine transform to all vertex positions, edge curves, and
+    /// face surfaces in-place.  Equivalent to `rcad_kernel::BRep::apply_transform`.
+    pub fn apply_transform(&mut self, mat: glam::DAffine3) {
+        use glam::DAffine3;
+        use crate::geom::{Curve3, Surface3};
+
+        fn xf_curve(c: &mut Curve3, mat: DAffine3) {
+            match c {
+                Curve3::Line(l) => {
+                    l.origin = mat.transform_point3(l.origin);
+                    l.direction = mat.transform_vector3(l.direction).normalize_or_zero();
+                }
+                Curve3::Circle(c3) => {
+                    c3.center = mat.transform_point3(c3.center);
+                    c3.normal = mat.transform_vector3(c3.normal).normalize_or_zero();
+                }
+                Curve3::Ellipse(e) => {
+                    e.center = mat.transform_point3(e.center);
+                    e.normal = mat.transform_vector3(e.normal).normalize_or_zero();
+                    e.major_dir = mat.transform_vector3(e.major_dir).normalize_or_zero();
+                }
+                Curve3::BSpline(b) => {
+                    for p in &mut b.control_points {
+                        *p = mat.transform_point3(*p);
+                    }
+                }
+                Curve3::Bezier(b) => {
+                    for p in &mut b.control_points {
+                        *p = mat.transform_point3(*p);
+                    }
+                }
+                Curve3::Offset(o) => {
+                    xf_curve(&mut o.basis, mat);
+                    o.offset_dir = mat.transform_vector3(o.offset_dir).normalize_or_zero();
+                }
+                Curve3::Hyperbola(h) => {
+                    h.center = mat.transform_point3(h.center);
+                    h.normal = mat.transform_vector3(h.normal).normalize_or_zero();
+                    h.major_dir = mat.transform_vector3(h.major_dir).normalize_or_zero();
+                }
+                Curve3::Parabola(p) => {
+                    p.vertex = mat.transform_point3(p.vertex);
+                    p.normal = mat.transform_vector3(p.normal).normalize_or_zero();
+                    p.axis_dir = mat.transform_vector3(p.axis_dir).normalize_or_zero();
+                }
+                Curve3::CircularHelix(h) => {
+                    h.origin = mat.transform_point3(h.origin);
+                    h.axis = mat.transform_vector3(h.axis).normalize_or_zero();
+                    h.ref_dir = mat.transform_vector3(h.ref_dir).normalize_or_zero();
+                }
+                Curve3::SineWave(s) => {
+                    s.origin = mat.transform_point3(s.origin);
+                    s.baseline_dir = mat.transform_vector3(s.baseline_dir).normalize_or_zero();
+                    s.amplitude_dir = mat.transform_vector3(s.amplitude_dir).normalize_or_zero();
+                }
+            }
+        }
+
+        fn xf_surface(s: &mut Surface3, mat: DAffine3) {
+            match s {
+                Surface3::Plane(p) => {
+                    p.origin = mat.transform_point3(p.origin);
+                    p.normal = mat.transform_vector3(p.normal).normalize_or_zero();
+                }
+                Surface3::Cylinder(c) => {
+                    c.origin = mat.transform_point3(c.origin);
+                    c.axis = mat.transform_vector3(c.axis).normalize_or_zero();
+                    c.ref_dir = mat.transform_vector3(c.ref_dir).normalize_or_zero();
+                }
+                Surface3::Sphere(s) => {
+                    s.center = mat.transform_point3(s.center);
+                    s.axis = mat.transform_vector3(s.axis).normalize_or_zero();
+                    s.ref_dir = mat.transform_vector3(s.ref_dir).normalize_or_zero();
+                }
+                Surface3::Cone(c) => {
+                    c.apex = mat.transform_point3(c.apex);
+                    c.axis = mat.transform_vector3(c.axis).normalize_or_zero();
+                }
+                Surface3::Torus(t) => {
+                    t.center = mat.transform_point3(t.center);
+                    t.axis = mat.transform_vector3(t.axis).normalize_or_zero();
+                }
+                Surface3::Ellipsoid(e) => {
+                    e.center = mat.transform_point3(e.center);
+                    e.axis = mat.transform_vector3(e.axis).normalize_or_zero();
+                    e.ref_dir = mat.transform_vector3(e.ref_dir).normalize_or_zero();
+                }
+                Surface3::Helicoid(h) => {
+                    h.origin = mat.transform_point3(h.origin);
+                    h.axis = mat.transform_vector3(h.axis).normalize_or_zero();
+                    h.ref_dir = mat.transform_vector3(h.ref_dir).normalize_or_zero();
+                }
+                Surface3::Pipe(p) => {
+                    xf_curve(&mut p.spine, mat);
+                    p.ref_dir = mat.transform_vector3(p.ref_dir).normalize_or_zero();
+                }
+                Surface3::BSpline(b) => {
+                    for row in &mut b.control_points {
+                        for p in row {
+                            *p = mat.transform_point3(*p);
+                        }
+                    }
+                }
+                Surface3::Bezier(b) => {
+                    for row in &mut b.control_points {
+                        for p in row {
+                            *p = mat.transform_point3(*p);
+                        }
+                    }
+                }
+                Surface3::Coons(c) => {
+                    xf_curve(&mut c.south, mat);
+                    xf_curve(&mut c.north, mat);
+                    xf_curve(&mut c.west, mat);
+                    xf_curve(&mut c.east, mat);
+                }
+                Surface3::Offset(o) => {
+                    xf_surface(&mut o.basis, mat);
+                }
+                Surface3::Revolution(r) => {
+                    xf_curve(&mut r.profile, mat);
+                    r.axis_origin = mat.transform_point3(r.axis_origin);
+                    r.axis_dir = mat.transform_vector3(r.axis_dir).normalize_or_zero();
+                }
+                Surface3::LinearExtrusion(e) => {
+                    xf_curve(&mut e.profile, mat);
+                    e.direction = mat.transform_vector3(e.direction).normalize_or_zero();
+                }
+                Surface3::Ruled(r) => {
+                    xf_curve(&mut r.start, mat);
+                    xf_curve(&mut r.end, mat);
+                }
+                Surface3::Trimmed(t) => {
+                    xf_surface(&mut t.basis, mat);
+                }
+                Surface3::TriBezier(_) => {}
+            }
+        }
+
+        for ts in &mut self.tshapes {
+            match &mut *Arc::make_mut(ts) {
+                TShape::Vertex(vd) => {
+                    vd.point = mat.transform_point3(vd.point);
+                }
+                TShape::Edge(ed) => {
+                    if let Some(ref mut curve) = ed.curve {
+                        xf_curve(curve, mat);
+                    }
+                }
+                TShape::Face(fd) => {
+                    if let Some(ref mut surface) = fd.surface {
+                        xf_surface(surface, mat);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// OCCT TopoDS_TShape::EmptyCopy — create a new TShape of the same type
     /// with no sub-shapes. Preserves flags. Returns the new TShape index.
     pub fn empty_copy(&mut self, r: ShapeRef) -> ShapeRef {

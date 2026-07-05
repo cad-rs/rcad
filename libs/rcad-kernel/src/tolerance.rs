@@ -26,6 +26,7 @@
 //! ```
 
 use crate::BRep;
+use crate::topods;
 use crate::geom::{Curve2dEval, CurveEval, SurfaceEval};
 
 // ── Precision constants ───────────────────────────────────────────────────────
@@ -1033,6 +1034,71 @@ pub fn post_treat(brep: &mut BRep, samples_per_edge: usize) {
     correct_curve_on_surface(brep, samples_per_edge);
     correct_point_on_curve(brep);
     same_range(brep);
+}
+
+/// TopoDS-aligned: like [`correct_tolerances`] but operates on `&mut topods::BRep`.
+///
+/// Internally converts to old BRep, runs tolerance correction, and writes
+/// updated tolerances back to the topods TShape fields.
+pub fn correct_tolerances_topods(
+    t: &mut topods::BRep,
+    samples_per_edge: usize,
+    max_tolerance: f64,
+) {
+    let mut old = crate::BRep::from_topods(t);
+    correct_tolerances(&mut old, samples_per_edge, max_tolerance);
+    propagate_old_tolerances_topods(&old, t);
+}
+
+/// TopoDS-aligned: like [`correct_shape_tolerances`] but operates on `&mut topods::BRep`.
+pub fn correct_shape_tolerances_topods(t: &mut topods::BRep) {
+    let mut old = crate::BRep::from_topods(t);
+    correct_shape_tolerances(&mut old);
+    propagate_old_tolerances_topods(&old, t);
+}
+
+/// Write tolerance values from old BRep's GeomStore back to topods TShape fields.
+/// The flat-index order is preserved because `BRep::from_topods` iterates tshapes
+/// in order — flat index `i` corresponds to the i-th Vertex/Edge TShape in `t`.
+fn propagate_old_tolerances_topods(old: &crate::BRep, t: &mut topods::BRep) {
+    use std::sync::Arc;
+    // Vertex tolerances: old.vertices[i] ↔ i-th Vertex TShape in t
+    let mut vi: usize = 0;
+    for ts in &mut t.tshapes {
+        if let topods::TShape::Vertex(ref mut vd) = *Arc::make_mut(ts) {
+            if let Some(&tol) = old.geom.vertex_tolerance.get(vi) {
+                vd.tolerance = tol;
+            }
+            vi += 1;
+        }
+    }
+    // Edge tolerances: old.edges[i] ↔ i-th Edge TShape in t
+    let mut ei: usize = 0;
+    for ts in &mut t.tshapes {
+        if let topods::TShape::Edge(ref mut ed) = *Arc::make_mut(ts) {
+            if let Some(&tol) = old.geom.edge_tolerance.get(ei) {
+                ed.tolerance = tol;
+            }
+            if let Some(&sp) = old.geom.edge_same_parameter.get(ei) {
+                ed.same_parameter = sp;
+            }
+            if let Some(&sr) = old.geom.edge_same_range.get(ei) {
+                ed.same_range = sr;
+            }
+            ei += 1;
+        }
+    }
+    // Face tolerances: propagate old.face_tolerance (flat_fi order) to Face TShapes.
+    // The flat_fi order matches the order of Face TShapes in t.
+    let mut fi: usize = 0;
+    for ts in &mut t.tshapes {
+        if let topods::TShape::Face(ref mut fd) = *Arc::make_mut(ts) {
+            if let Some(&tol) = old.geom.face_tolerance.get(fi) {
+                fd.tolerance = tol;
+            }
+            fi += 1;
+        }
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

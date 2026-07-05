@@ -31,11 +31,6 @@ use serde::Serialize;
 use crate::StepError;
 use crate::writer::{ExportSelection, StepWriter};
 
-/// Bridge: convert topods::BRep to old BRep for StepWriter (which still uses old BRep).
-fn to_old_brep(t: &topods::BRep) -> rcad_kernel::BRep {
-    rcad_kernel::BRep::from_topods_with_location(t, glam::DAffine3::IDENTITY)
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // AssemblyComponent
 // ─────────────────────────────────────────────────────────────────────────────
@@ -45,7 +40,7 @@ fn to_old_brep(t: &topods::BRep) -> rcad_kernel::BRep {
 /// The [`transform`][AssemblyComponent::transform] field is a full affine
 /// transform (translation, rotation, uniform or non-uniform scale).  When
 /// writing to STEP the transform is **baked** into vertex coordinates via
-/// bridge to old BRep.
+/// `topods::BRep::apply_transform`.
 #[derive(Clone)]
 pub struct AssemblyComponent {
     /// Human-readable part name.
@@ -223,13 +218,13 @@ pub fn write_assembly_tree(root_name: &str, root: &AssemblyNode) -> String {
         geom_ctx: u64,
         nauo_seq: &mut usize,
     ) -> u64 {
-        // Apply transform to a cloned BRep if needed.
+        // Apply transform to a cloned BRep if needed (topods directly).
         let baked_brep: Option<topods::BRep> = node.brep.as_ref().map(|b| {
-            let mut old = to_old_brep(b);
+            let mut baked = b.clone();
             if node.transform != DAffine3::IDENTITY {
-                old.apply_transform(node.transform);
+                baked.apply_transform(node.transform);
             }
-            old.to_topods()
+            baked
         });
 
         // Emit geometry for leaf nodes.
@@ -483,11 +478,11 @@ pub fn write_assembly(assembly_name: &str, components: &[AssemblyComponent]) -> 
     let prepared: Vec<(String, topods::BRep, Option<rcad_kernel::appearance::Color>)> = components
         .iter()
         .map(|c| {
-            let mut old = to_old_brep(&c.brep);
+            let mut baked = c.brep.clone();
             if c.transform != DAffine3::IDENTITY {
-                old.apply_transform(c.transform);
+                baked.apply_transform(c.transform);
             }
-            (c.name.clone(), old.to_topods(), c.color)
+            (c.name.clone(), baked, c.color)
         })
         .collect();
 
