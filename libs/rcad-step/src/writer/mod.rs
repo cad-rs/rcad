@@ -1151,7 +1151,7 @@ impl Part21Writer {
                     normal,
                     face_ref_arr,
                 );
-                self.write_edge_curve_by_index(brep, edge.edge_idx)
+                self.write_edge_curve_by_index_topods(edge.edge_idx)
             };
             edge_entries.push((edge.edge_idx, edge.start, edge.end, edge_curve, edge.forward));
         }
@@ -1269,7 +1269,7 @@ impl Part21Writer {
                     normal,
                     face_ref_arr,
                 );
-                let curve = self.write_edge_curve_by_index(brep, edge.edge_idx);
+                let curve = self.write_edge_curve_by_index_topods(edge.edge_idx);
                 let orientation = edge.forward;
                 inner_entries.push((curve, orientation));
             }
@@ -1579,7 +1579,7 @@ impl Part21Writer {
         face_surface: Option<Surface3>,
     ) -> u64 {
         let Some(edge) = brep.edges.get(edge_idx) else {
-            return self.write_edge_curve_by_index(brep, edge_idx);
+            return self.write_edge_curve_by_index_topods(edge_idx);
         };
         let start_pt = brep
             .vertices
