@@ -29,6 +29,9 @@ mod intersection;
 mod types;
 mod ds_as_brep;
 
+mod builder_face;
+pub(crate) use builder_face::BuilderFace;
+
 pub use types::{
     BooleanOpType, BooleanError, FaceSampleData,
 };

@@ -226,7 +226,19 @@ impl<'a> BooleanBuilder<'a> {
                 .entry(self.brep_sr(f_base + side_offset + sf_idx))
                 .or_insert_with(Vec::new);
             // Architecture A1: pass t so split faces create TShapes incrementally.
-            self.builder_face_perform(fi, is_a, result, t);
+            // OCCT-style: BuilderFace::Perform with self-contained struct.
+            if let Some(ref brep_data) = *self.brep.borrow() {
+                let bf = crate::builder::BuilderFace::new(
+                    self.ds,
+                    &brep_data.0,
+                    &brep_data.1,
+                    &brep_data.2,
+                    &self.my_face_refs,
+                    fi,
+                    is_a,
+                );
+                bf.perform(result, t);
+            }
         }
     }
 
