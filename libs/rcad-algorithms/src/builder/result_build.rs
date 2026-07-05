@@ -1063,6 +1063,7 @@ impl<'a> BooleanBuilder<'a> {
     ///   Calls BuildRC (L900) then BuildSolid for FUSE 3D (L902-906).
     fn build_shape(&self, result: &mut ResultBuilder) {
         let mut t_brep = self.my_shape.borrow_mut();
+        // OCCT L875-897: CheckArgsForOpenSolid + BuildBOP fallback (no rcad equivalent).
         self.build_rc(result, &mut *t_brep);
         if self.has_errors { return; }
         // OCCT L902-906: BuildSolid for FUSE 3D
