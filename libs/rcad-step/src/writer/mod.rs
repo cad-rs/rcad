@@ -494,24 +494,43 @@ impl Part21Writer {
         // Map from face_index -> list of STEP ADVANCED_FACE ids (for color assignment)
         let mut face_step_ids: Vec<(usize, Vec<u64>)> = Vec::new();
 
+        // Pre-collect solid/shell/face data from topods to avoid borrow conflicts.
+        struct TopodsSolidData {
+            solid_idx: usize,
+            shells: Vec<TopodsShellData>,
+        }
+        struct TopodsShellData {
+            sr_index: usize,
+            face_indices: Vec<usize>,
+        }
+        let mut topods_solids: Vec<TopodsSolidData> = Vec::new();
+        unsafe {
+            let tbrep = &*self.topods_brep;
+            let mut solid_idx = 0usize;
+            for (ti, ts) in tbrep.tshapes.iter().enumerate() {
+                let topods::TShape::Solid(sd) = &**ts else { continue };
+                let mut shells = Vec::new();
+                for shell_sr in &sd.shells {
+                    if let topods::TShape::Shell(shd) = &*tbrep.tshapes[shell_sr.index] {
+                        let face_indices: Vec<usize> = shd.faces.iter().map(|sr| sr.index).collect();
+                        shells.push(TopodsShellData { sr_index: shell_sr.index, face_indices });
+                    }
+                }
+                topods_solids.push(TopodsSolidData { solid_idx, shells });
+                solid_idx += 1;
+            }
+        }
+
         let mut face_index = 0usize;
-        for (solid_index, solid) in brep.solids.iter().enumerate() {
+        for solid_data in &topods_solids {
             // First pass: collect faces for each shell.
             let mut shell_infos: Vec<(Vec<u64>, bool)> = Vec::new(); // (face_ids, is_closed)
-            for shell in &solid.shells {
+            for shell_data in &solid_data.shells {
                 let mut shell_faces = Vec::new();
-                for face in &shell.faces {
+                for &face_tshape_idx in &shell_data.face_indices {
                     if export_all || selected_face_set.contains(&face_index) {
-                        let face_surface_idx = brep
-                            .geom
-                            .face_surface
-                            .get(face_index)
-                            .and_then(|v| *v);
-                        let face_surface = face_surface_idx
-                            .and_then(|sid| brep.geom.surfaces.get(sid))
-                            .cloned();
                         let export =
-                            self.write_face(brep, face, face_surface, face_surface_idx);
+                            self.write_face_topods(face_tshape_idx);
                         if export.used_triangle_fallback {
                             has_triangle_fallback = true;
                         }
@@ -522,7 +541,10 @@ impl Part21Writer {
                     face_index += 1;
                 }
                 if !shell_faces.is_empty() {
-                    let is_closed = shell_is_closed(&shell.faces, brep);
+                    let is_closed = unsafe {
+                        let tbrep = &*self.topods_brep;
+                        shell_is_closed_topods(tbrep, shell_data.sr_index)
+                    };
                     shell_infos.push((shell_faces, is_closed));
                 }
             }
@@ -538,17 +560,17 @@ impl Part21Writer {
                     .collect();
                 if closed.len() == 1 {
                     let shell_id = self.closed_shell(
-                        &format!("closed_shell_{}_0", solid_index),
+                        &format!("closed_shell_{}_0", solid_data.solid_idx),
                         closed[0],
                     );
                     let solid_id = self.manifold_solid_brep(
-                        &format!("solid_{}", solid_index),
+                        &format!("solid_{}", solid_data.solid_idx),
                         shell_id,
                     );
                     solid_items.push(solid_id);
                 } else if closed.len() > 1 {
                     let outer_id = self.closed_shell(
-                        &format!("closed_shell_{}_0", solid_index),
+                        &format!("closed_shell_{}_0", solid_data.solid_idx),
                         closed[0],
                     );
                     let void_ids: Vec<u64> = closed[1..]
@@ -556,13 +578,13 @@ impl Part21Writer {
                         .enumerate()
                         .map(|(i, faces)| {
                             self.closed_shell(
-                                &format!("void_shell_{}_{}", solid_index, i),
+                                &format!("void_shell_{}_{}", solid_data.solid_idx, i),
                                 faces,
                             )
                         })
                         .collect();
                     let solid_id = self.brep_with_voids(
-                        &format!("solid_{}", solid_index),
+                        &format!("solid_{}", solid_data.solid_idx),
                         outer_id,
                         &void_ids,
                     );
@@ -1058,6 +1080,207 @@ impl Part21Writer {
             vec![compsolid_id]
         } else {
             solid_ids
+        }
+    }
+
+    /// Topods-native face writer: reads face data from tshapes instead of FlatBRep.
+    fn write_face_topods(&mut self, face_tshape_idx: usize) -> FaceExportResult {
+        // Phase 1: extract all data from tshapes (no self calls).
+        let (face_surface, oriented_edges, loop_points, origin_point, normal, face_ref_arr, seam_edge_indices, inner_wires_data)
+            = {
+            let tbrep = self.tbrep();
+            let topods::TShape::Face(fd) = &*tbrep.tshapes[face_tshape_idx] else {
+                return FaceExportResult { face_ids: vec![], used_triangle_fallback: false };
+            };
+            let face_surface = fd.surface.clone();
+
+            // Degenerate face — no surface and few edges
+            if is_degenerate_face_wire_topods(tbrep, face_tshape_idx) {
+                return FaceExportResult {
+                    face_ids: vec![],
+                    used_triangle_fallback: false,
+                };
+            }
+
+            let oriented_edges = oriented_face_edges_topods(tbrep, face_tshape_idx);
+            if oriented_edges.is_empty() && face_surface.is_some() {
+                return FaceExportResult {
+                    face_ids: vec![],
+                    used_triangle_fallback: false,
+                };
+            }
+
+            // Loop points from vertex tshape points
+            let loop_points: Vec<glam::DVec3> = oriented_edges
+                .iter()
+                .filter_map(|edge| {
+                    tbrep.tshapes.get(edge.start).and_then(|ts| {
+                        if let topods::TShape::Vertex(v) = &**ts { Some(v.point) } else { None }
+                    })
+                })
+                .collect();
+            let origin_point = loop_points.first().copied().unwrap_or(glam::DVec3::ZERO);
+
+            let normal = compute_face_normal(&loop_points)
+                .or_else(|| surface_normal(face_surface.clone()))
+                .map(dvec3_to_array)
+                .unwrap_or([0.0, 0.0, 1.0]);
+            let face_ref_arr = orthogonal_dir(normal);
+
+            // Seam edges by edge tshape index
+            let seam_edge_indices = detect_seam_edge_indices_topods(tbrep, face_tshape_idx);
+
+            // Extract inner wire data (Vec of Vec<OrientedEdgeExport>)
+            let inner_wires_data: Vec<Vec<OrientedEdgeExport>> = fd.inner_wires.iter().filter_map(|iw_sr| {
+                let topods::TShape::Wire(iwd) = &*tbrep.tshapes[iw_sr.index] else { return None };
+                let oriented: Vec<OrientedEdgeExport> = iwd.edges.iter().filter_map(|sr| {
+                    let topods::TShape::Edge(ed) = &*tbrep.tshapes[sr.index] else { return None };
+                    let (start, end) = if sr.orientation.is_forward() {
+                        (ed.first.index, ed.last.index)
+                    } else {
+                        (ed.last.index, ed.first.index)
+                    };
+                    Some(OrientedEdgeExport { edge_idx: sr.index, start, end, forward: sr.orientation.is_forward() })
+                }).collect();
+                if oriented.is_empty() { None } else { Some(oriented) }
+            }).collect();
+
+            (face_surface, oriented_edges, loop_points, origin_point, normal, face_ref_arr, seam_edge_indices, inner_wires_data)
+        };
+
+        // Phase 2: write operations (self method calls, no tbrep borrow active).
+        let surface = if face_surface.is_some() {
+            self.get_or_write_surface_id_topods(face_tshape_idx)
+        } else {
+            let fallback_placement = {
+                let origin = self.cartesian_point("face_origin", dvec3_to_array(origin_point));
+                let axis = self.direction("face_normal", normal);
+                let ref_dir = self.direction("face_ref", face_ref_arr);
+                Some(self.axis2_placement_3d("face_axis", origin, axis, ref_dir))
+            };
+            self.write_surface(None, fallback_placement)
+        };
+
+        let face_orientation = {
+            let tbrep = self.tbrep();
+            face_orientation_for_surface_topods(tbrep, &loop_points, face_tshape_idx)
+        };
+
+        // Separate degenerate edges (self-loop) from normal edges
+        let mut degen_verts: Vec<usize> = Vec::new();
+        let mut edge_entries: Vec<(usize, usize, usize, u64, bool)> = Vec::new();
+        for edge in &oriented_edges {
+            if edge.start == edge.end {
+                degen_verts.push(edge.start);
+                continue;
+            }
+            let edge_curve = if seam_edge_indices.contains(&edge.edge_idx) {
+                self.write_seam_edge_curve_topods(edge.edge_idx, face_surface.clone())
+            } else {
+                // write_edge_curve_by_index_topods handles pcurve seeding internally
+                self.write_edge_curve_by_index_topods(edge.edge_idx)
+            };
+            edge_entries.push((edge.edge_idx, edge.start, edge.end, edge_curve, edge.forward));
+        }
+
+        let mut oriented_entries: Vec<(u64, bool)> = edge_entries
+            .iter()
+            .map(|(_, _, _, curve, forward)| (*curve, *forward))
+            .collect();
+
+        // OCCT-style cyclic ordering on periodic cylinder/cone side faces
+        if matches!(face_surface.as_ref(), Some(Surface3::Cylinder(_)) | Some(Surface3::Cone(_)))
+            && seam_edge_indices.len() == 1
+            && edge_entries.len() == 4
+        {
+            let seam_idx = *seam_edge_indices.iter().next().unwrap_or(&usize::MAX);
+            if seam_idx != usize::MAX {
+                let seam_curve = edge_entries
+                    .iter()
+                    .find_map(|(idx, _, _, curve, _)| if *idx == seam_idx { Some(*curve) } else { None });
+                let circle_entries: Vec<(usize, usize, usize, u64, bool)> = edge_entries
+                    .iter()
+                    .copied()
+                    .filter(|(idx, _, _, _, _)| *idx != seam_idx)
+                    .collect();
+                if let (Some(seam_curve), 2) = (seam_curve, circle_entries.len()) {
+                    let axis = face_surface
+                        .as_ref()
+                        .and_then(|surf| match surf {
+                            Surface3::Cylinder(cyl) => Some(canonicalize_axis_sign(cyl.axis.normalize_or_zero())),
+                            Surface3::Cone(cone) => Some(canonicalize_axis_sign(cone.axis_dir())),
+                            _ => None,
+                        })
+                        .filter(|a: &glam::DVec3| a.length_squared() > 1e-18)
+                        .unwrap_or_else(|| canonicalize_axis_sign(glam::DVec3::Z));
+                    let z_of = |tbrep: &topods::BRep, vid: usize| -> f64 {
+                        tbrep.tshapes.get(vid).and_then(|ts| {
+                            if let topods::TShape::Vertex(v) = &**ts { Some(v.point) } else { None }
+                        }).map(|p| p.dot(axis)).unwrap_or(0.0)
+                    };
+                    let tbrep_local = self.tbrep();
+                    let (c0, c1) = (circle_entries[0], circle_entries[1]);
+                    let top_circle = if z_of(tbrep_local, c0.1) >= z_of(tbrep_local, c1.1) { c0 } else { c1 };
+                    let bottom_circle = if z_of(tbrep_local, c0.1) < z_of(tbrep_local, c1.1) { c0 } else { c1 };
+                    oriented_entries = vec![
+                        (top_circle.3, false),
+                        (seam_curve, false),
+                        (bottom_circle.3, true),
+                        (seam_curve, true),
+                    ];
+                }
+            }
+        }
+
+        let mut oriented_ids = Vec::with_capacity(oriented_entries.len());
+        for (curve, orientation) in oriented_entries {
+            oriented_ids.push(self.oriented_edge("face_edge", curve, orientation));
+        }
+
+        let edge_loop = self.edge_loop("outer_loop", &oriented_ids);
+        let mut bounds = vec![self.face_bound("outer_bound", edge_loop, true)];
+
+        for &dvi in &degen_verts {
+            let vp = self.vertex_point_by_tshape_idx(dvi);
+            let vl = self.vertex_loop("degen_loop", vp);
+            bounds.push(self.face_bound("degen_bound", vl, true));
+        }
+
+        // SplitCommonVertex: collect outer wire vertices
+        let outer_verts: HashSet<usize> = oriented_edges
+            .iter()
+            .flat_map(|e| [e.start, e.end])
+            .collect();
+        let mut all_wire_verts = outer_verts;
+
+        // Inner wires (data already extracted in Phase 1)
+        for (ii, inner_oriented) in inner_wires_data.iter().enumerate() {
+            // Clear vertex_point_ids for shared vertices
+            for oe in inner_oriented {
+                if !all_wire_verts.insert(oe.start) {
+                    self.vertex_point_ids.remove(&oe.start);
+                }
+                if !all_wire_verts.insert(oe.end) {
+                    self.vertex_point_ids.remove(&oe.end);
+                }
+            }
+
+            let mut inner_entries: Vec<(u64, bool)> = Vec::with_capacity(inner_oriented.len());
+            for edge in inner_oriented {
+                let curve = self.write_edge_curve_by_index_topods(edge.edge_idx);
+                inner_entries.push((curve, edge.forward));
+            }
+            let mut inner_ids = Vec::with_capacity(inner_entries.len());
+            for (curve, orientation) in inner_entries {
+                inner_ids.push(self.oriented_edge("face_edge", curve, orientation));
+            }
+            let inner_loop = self.edge_loop(&format!("inner_loop_{ii}"), &inner_ids);
+            bounds.push(self.face_bound(&format!("inner_bound_{ii}"), inner_loop, true));
+        }
+
+        FaceExportResult {
+            face_ids: vec![self.advanced_face("face", &bounds, surface, face_orientation)],
+            used_triangle_fallback: false,
         }
     }
 
@@ -3513,6 +3736,20 @@ impl Part21Writer {
             (0.0, sweep_param)
         };
         Some(self.trimmed_curve("wire_trimmed_curve", basis, t0, t1))
+    }
+
+    /// Topods-native variant: cache by tshape index (XOR with high bit to avoid collision).
+    fn get_or_write_surface_id_topods(&mut self, face_tshape_idx: usize) -> u64 {
+        let cache_key = face_tshape_idx | 0x8000_0000_0000_0000;
+        if let Some(existing) = self.surface_ids.get(&cache_key) {
+            return *existing;
+        }
+        let surface = self.tbrep().tshapes.get(face_tshape_idx).and_then(|ts| {
+            if let topods::TShape::Face(fd) = &**ts { fd.surface.clone() } else { None }
+        });
+        let sid = self.write_surface(surface, None);
+        self.surface_ids.insert(cache_key, sid);
+        sid
     }
 
     /// Returns the STEP id for a surface from GeomStore, writing it if not yet done.

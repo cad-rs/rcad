@@ -1,5 +1,5 @@
 use std::collections::{BTreeSet, HashMap};
-use rcad_kernel::{BSplineCurve2, Curve2d, Curve3, Surface3};
+use rcad_kernel::{BSplineCurve2, Curve2d, Curve3, Surface3, topods};
 use super::{BRep, Face};
 
 #[derive(Clone, Copy)]
@@ -9,6 +9,135 @@ pub(super) struct OrientedEdgeExport {
     #[allow(dead_code)]
     pub(super) end: usize,
     pub(super) forward: bool,
+}
+
+// ── Topods-native variants (migration) ──
+
+pub(super) fn oriented_face_edges_topods(tbrep: &topods::BRep, face_tshape_idx: usize) -> Vec<OrientedEdgeExport> {
+    let topods::TShape::Face(fd) = &*tbrep.tshapes[face_tshape_idx] else { return vec![] };
+    // Get outer wire edges
+    let topods::TShape::Wire(wd) = &*tbrep.tshapes[fd.outer_wire.index] else { return vec![] };
+    wd.edges
+        .iter()
+        .filter_map(|sr| {
+            let topods::TShape::Edge(ed) = &*tbrep.tshapes[sr.index] else { return None };
+            let (start, end) = if sr.orientation.is_forward() {
+                (ed.first.index, ed.last.index)
+            } else {
+                (ed.last.index, ed.first.index)
+            };
+            Some(OrientedEdgeExport {
+                edge_idx: sr.index,
+                start,
+                end,
+                forward: sr.orientation.is_forward(),
+            })
+        })
+        .collect()
+}
+
+pub(super) fn detect_seam_edge_indices_topods(tbrep: &topods::BRep, face_tshape_idx: usize) -> BTreeSet<usize> {
+    let topods::TShape::Face(fd) = &*tbrep.tshapes[face_tshape_idx] else { return BTreeSet::new() };
+    let topods::TShape::Wire(wd) = &*tbrep.tshapes[fd.outer_wire.index] else { return BTreeSet::new() };
+    let mut counts: HashMap<usize, usize> = HashMap::new();
+    for sr in &wd.edges {
+        *counts.entry(sr.index).or_insert(0) += 1;
+    }
+    counts
+        .into_iter()
+        .filter(|&(_, c)| c >= 2)
+        .map(|(idx, _)| idx)
+        .collect()
+}
+
+pub(super) fn is_degenerate_face_wire_topods(tbrep: &topods::BRep, face_tshape_idx: usize) -> bool {
+    let topods::TShape::Face(fd) = &*tbrep.tshapes[face_tshape_idx] else { return false };
+    if fd.surface.is_some() {
+        return false;
+    }
+    let topods::TShape::Wire(wd) = &*tbrep.tshapes[fd.outer_wire.index] else { return false };
+    wd.edges.len() < 3
+}
+
+pub(super) fn face_orientation_for_surface_topods(tbrep: &topods::BRep, loop_points: &[glam::DVec3], face_tshape_idx: usize) -> bool {
+    let topods::TShape::Face(fd) = &*tbrep.tshapes[face_tshape_idx] else { return true };
+    match fd.surface.as_ref() {
+        Some(Surface3::Plane(plane)) => {
+            let plane_normal = canonicalize_axis_sign(plane.normal);
+            let mut c = glam::DVec3::ZERO;
+            let mut n = 0usize;
+            for ts in &tbrep.tshapes {
+                if let topods::TShape::Vertex(vd) = &**ts {
+                    c += vd.point;
+                    n += 1;
+                }
+            }
+            let brep_centroid = if n > 0 { c / (n as f64) } else { glam::DVec3::ZERO };
+
+            let face_centroid = if loop_points.is_empty() {
+                brep_centroid
+            } else {
+                loop_points
+                    .iter()
+                    .copied()
+                    .fold(glam::DVec3::ZERO, |acc, p| acc + p)
+                    / (loop_points.len() as f64)
+            };
+
+            let outward = (face_centroid - brep_centroid).dot(plane_normal);
+            if outward.abs() <= 1e-12 {
+                // face.normal equivalent: compute from loop_points
+                if let Some(fn_comp) = compute_face_normal(loop_points) {
+                    fn_comp.dot(plane_normal) >= 0.0
+                } else {
+                    true
+                }
+            } else {
+                outward >= 0.0
+            }
+        }
+        _ => true,
+    }
+}
+
+pub(super) fn shell_is_closed_topods(tbrep: &topods::BRep, shell_tshape_idx: usize) -> bool {
+    let topods::TShape::Shell(shd) = &*tbrep.tshapes[shell_tshape_idx] else { return false };
+    fn edge_key(tbrep: &topods::BRep, edge_idx: usize) -> (u64, u64) {
+        let topods::TShape::Edge(ed) = &*tbrep.tshapes[edge_idx] else { return (0, 0) };
+        let p1 = tbrep.tshapes.get(ed.first.index).and_then(|ts| {
+            if let topods::TShape::Vertex(v) = &**ts { Some(v.point) } else { None }
+        }).unwrap_or_default();
+        let p2 = tbrep.tshapes.get(ed.last.index).and_then(|ts| {
+            if let topods::TShape::Vertex(v) = &**ts { Some(v.point) } else { None }
+        }).unwrap_or_default();
+        let a = p1.to_array().map(|c| c.to_bits());
+        let b = p2.to_array().map(|c| c.to_bits());
+        let ha = a[0] ^ a[1].rotate_left(21) ^ a[2].rotate_left(42);
+        let hb = b[0] ^ b[1].rotate_left(21) ^ b[2].rotate_left(42);
+        if ha < hb { (ha, hb) } else { (hb, ha) }
+    }
+    let mut counts: HashMap<(u64, u64), usize> = HashMap::new();
+    for face_sr in &shd.faces {
+        let topods::TShape::Face(fd) = &*tbrep.tshapes[face_sr.index] else { continue };
+        // outer wire
+        if let topods::TShape::Wire(wd) = &*tbrep.tshapes[fd.outer_wire.index] {
+            for sr in &wd.edges {
+                *counts.entry(edge_key(tbrep, sr.index)).or_insert(0) += 1;
+            }
+        }
+        // inner wires
+        for w_sr in &fd.inner_wires {
+            if let topods::TShape::Wire(wd) = &*tbrep.tshapes[w_sr.index] {
+                for sr in &wd.edges {
+                    *counts.entry(edge_key(tbrep, sr.index)).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+    if !counts.is_empty() && counts.values().all(|&count| count == 2) {
+        return true;
+    }
+    false
 }
 
 pub(super) fn oriented_face_edges(brep: &BRep, face: &Face) -> Vec<OrientedEdgeExport> {
