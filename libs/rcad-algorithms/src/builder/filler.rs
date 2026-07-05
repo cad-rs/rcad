@@ -561,7 +561,7 @@ impl<'a> BooleanBuilder<'a> {
         // OCCT L247-249: aIt.Initialize(theS) — re-iterate sub-shapes to build container.
         //   rcad: iterate DS shells. For each, find result face ShapeRefs.
         for ds_shell in &self.ds.shells {
-            // Collect TShape::Face refs from result.face_refs for this shell's DS faces
+            // Collect TShape::Face refs from self.my_face_refs.borrow() for this shell's DS faces
             let mut shell_faces: Vec<topods::ShapeRef> = Vec::new();
             for &dsfi in &ds_shell.faces {
                 if dsfi >= self.ds.faces.len() { continue; }
@@ -574,7 +574,7 @@ impl<'a> BooleanBuilder<'a> {
                         _ => false,
                     };
                     if matches {
-                        if let Some(&sr) = result.face_refs.get(rfi) {
+                        if let Some(&sr) = self.my_face_refs.borrow().get(rfi) {
                             if !shell_faces.contains(&sr) {
                                 shell_faces.push(sr);
                             }
@@ -654,9 +654,9 @@ impl<'a> BooleanBuilder<'a> {
                                 _ => false,
                             };
                             if matches {
-                                if let Some(&fsr) = result.face_refs.get(rfi) {
+                                if let Some(&fsr) = self.my_face_refs.borrow().get(rfi) {
                                     // Find the result solid that contains this face
-                                    for &ssr in &result.solids {
+                                    for &ssr in &*self.my_solids.borrow() {
                                         if !solid_refs.contains(&ssr) {
                                             if let Some(ts) = t.tshapes.get(ssr.index) {
                                                 if let topods::TShape::Solid(sd) = &**ts {
@@ -682,9 +682,9 @@ impl<'a> BooleanBuilder<'a> {
             // OCCT L242-275: create TShape::CompSolid from sub-solid images
             if !solid_refs.is_empty() {
                 let cs_ref = t.add_tcompsolid(solid_refs.clone());
-                result.compsolid_groups.push(cs_ref);
+                self.my_compsolid_groups.borrow_mut().push(cs_ref);
                 // OCCT L275: myImages.Bound(theS).Append(aCIm)
-                let cskey = topods::ShapeRef::synthetic(usize::MAX - result.compsolid_groups.len());
+                let cskey = topods::ShapeRef::synthetic(usize::MAX - self.my_compsolid_groups.borrow_mut().len());
                 self.my_images.borrow_mut().entry(cskey).or_default().push(cs_ref);
             }
         }
@@ -1079,14 +1079,14 @@ impl<'a> BooleanBuilder<'a> {
                 // OCCT-aligned: create TShape::Solid in my_images
                 {
                     let sf: Vec<topods::ShapeRef> = result_faces.iter()
-                        .filter_map(|&rfi| result.face_refs.get(rfi).copied())
+                        .filter_map(|&rfi| self.my_face_refs.borrow().get(rfi).copied())
                         .collect();
                     if !sf.is_empty() {
                         let shell_ref = t.add_tshell(sf);
                         let solid_ref = t.add_tsolid(vec![shell_ref]);
-                        let so_key = topods::ShapeRef::synthetic(usize::MAX - 1 - result.solids.len());
+                        let so_key = topods::ShapeRef::synthetic(usize::MAX - 1 - self.my_solids.borrow().len());
                         self.my_images.borrow_mut().entry(so_key).or_default().push(solid_ref);
-                        result.solids.push(solid_ref);
+                        self.my_solids.borrow_mut().push(solid_ref);
                     }
                 }
                 let csi = result.tmp_shells.len();
@@ -1163,14 +1163,14 @@ impl<'a> BooleanBuilder<'a> {
                 // OCCT L603-614: store in myImages + myOrigins + myShapesSD.
                 {
                     let sf: Vec<topods::ShapeRef> = result_faces.iter()
-                        .filter_map(|&rfi| result.face_refs.get(rfi).copied())
+                        .filter_map(|&rfi| self.my_face_refs.borrow().get(rfi).copied())
                         .collect();
                     if !sf.is_empty() {
                         let shell_ref = t.add_tshell(sf);
                         let solid_ref = t.add_tsolid(vec![shell_ref]);
-                        let so_key = topods::ShapeRef::synthetic(usize::MAX - 1 - result.solids.len());
+                        let so_key = topods::ShapeRef::synthetic(usize::MAX - 1 - self.my_solids.borrow().len());
                         self.my_images.borrow_mut().entry(so_key).or_default().push(solid_ref);
-                        result.solids.push(solid_ref);
+                        self.my_solids.borrow_mut().push(solid_ref);
                     }
                 }
                 let csi = result.tmp_shells.len();

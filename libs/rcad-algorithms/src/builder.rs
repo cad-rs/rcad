@@ -94,6 +94,12 @@ pub struct BooleanBuilder<'a> {
     my_wire_refs: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
     /// OCCT-aligned: result shell TShape refs (replaces ResultBuilder.shells).
     my_shells: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
+    /// Result face TShape refs (replaces ResultBuilder.face_refs).
+    my_face_refs: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
+    /// Result solid TShape refs (replaces ResultBuilder.solids).
+    my_solids: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
+    /// Result compsolid TShape refs (replaces ResultBuilder.compsolid_groups).
+    my_compsolid_groups: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -354,7 +360,7 @@ impl<'a> BooleanBuilder<'a> {
             // Architecture A1: create TShapes for this face immediately (incremental),
             // matching OCCT's per-face BRep_Builder assembly.  build_topods_faces will
             // skip faces already emitted as TShapes.
-            result.emit_face_topods(t);
+            result.emit_face_topods(t, &mut *self.my_face_refs.borrow_mut());
         }
     }
 
@@ -503,7 +509,7 @@ impl<'a> BooleanBuilder<'a> {
     ///   fill_history for source-level) into one public method.
     fn prepare_history(&self, result: &mut ResultBuilder) -> BooleanHistory {
         let mut t_brep = self.my_shape.borrow_mut();
-        let mut history = result.build_topods(&mut *t_brep, self.my_fill_history, &self.my_shells.borrow());
+        let mut history = result.build_topods(&mut *t_brep, self.my_fill_history, &self.my_shells.borrow(), &mut *self.my_face_refs.borrow_mut(), &self.my_solids.borrow(), &self.my_compsolid_groups.borrow());
         let source_history = if self.my_fill_history {
             self.fill_history(&mut *t_brep)
         } else {
@@ -629,6 +635,9 @@ impl<'a> BooleanBuilder<'a> {
             my_edge_map: std::cell::RefCell::new(Vec::new()),
             my_wire_refs: std::cell::RefCell::new(Vec::new()),
             my_shells: std::cell::RefCell::new(Vec::new()),
+            my_face_refs: std::cell::RefCell::new(Vec::new()),
+            my_solids: std::cell::RefCell::new(Vec::new()),
+            my_compsolid_groups: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -973,7 +982,7 @@ impl<'a> BooleanBuilder<'a> {
                 } else {
                     vec![]
                 };
-                let mut history = result.build_topods(&mut *self.my_shape.borrow_mut(), self.my_fill_history, &self.my_shells.borrow());
+                let mut history = result.build_topods(&mut *self.my_shape.borrow_mut(), self.my_fill_history, &self.my_shells.borrow(), &mut *self.my_face_refs.borrow_mut(), &self.my_solids.borrow(), &self.my_compsolid_groups.borrow());
                 history.source_history = source_history;
                 let result_brep = self.my_shape.borrow().clone();
                 return Ok((result_brep, history));
@@ -1010,7 +1019,8 @@ impl<'a> BooleanBuilder<'a> {
         {
             let mut t = self.my_shape.borrow_mut();
             let wire_refs = self.my_wire_refs.borrow();
-            result.build_topods_faces(&mut *t, &wire_refs);
+            let mut face_refs = self.my_face_refs.borrow_mut();
+            result.build_topods_faces(&mut *t, &wire_refs, &mut *face_refs);
         }
         self.build_result(topods::ShapeType::Face, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }

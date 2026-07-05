@@ -47,16 +47,10 @@ pub(crate) struct ResultBuilder {
     /// OCCT-aligned: natural_restriction for each face in self.faces.
     ///   Parallel to face_origins.  Populated by emit_wire_face / build_original_face.
     pub(crate) face_natural_restriction: Vec<bool>,
-    /// Final topods solid references (populated by build_topods from tmp_solids).
-    pub(crate) solids: Vec<topods::ShapeRef>,
-    /// Final topods compsolid references (populated by build_topods from tmp_compsolid_groups).
-    pub(crate) compsolid_groups: Vec<topods::ShapeRef>,
     /// OCCT-aligned: maps result face index → array of DSWire indices for all its wires
     ///   (outer first, then inners).  Parallel to face_origins.  Used by
     ///   build_topods_faces to reference pre-built TShape::Wire from wire_refs.
     pub(crate) face_all_wire_idxs: Vec<Vec<usize>>,
-    /// Topods face ShapeRefs (populated by build_topods_faces after fill_images_faces).
-    pub(crate) face_refs: Vec<topods::ShapeRef>,
 }
 
 impl ResultBuilder {
@@ -729,10 +723,7 @@ impl ResultBuilder {
             solid_side_origin: Vec::new(),
             compound_groups: Vec::new(),
             face_natural_restriction: Vec::new(),
-            solids: Vec::new(),
-            compsolid_groups: Vec::new(),
             face_all_wire_idxs: Vec::new(),
-            face_refs: Vec::new(),
         }
     }
 
@@ -843,14 +834,14 @@ impl ResultBuilder {
     ///   BRep_Builder::Add.  rcad: processes tmp_compsolid_groups (groups of
     ///   solid indices from fill_images_container_compsolid) and creates
     ///   topods compsolids using BRepBuilder::make_compsolid.
-    pub(crate) fn build_compsolids(&mut self, t: &mut topods::BRep, groups: Vec<Vec<usize>>) {
+    pub(crate) fn build_compsolids(&mut self, t: &mut topods::BRep, groups: Vec<Vec<usize>>, solids: &[topods::ShapeRef], compsolid_groups: &mut Vec<topods::ShapeRef>) {
         let mut bb = topods::BRepBuilder::new();
         for cs_group in &groups {
             let solid_refs: Vec<topods::ShapeRef> = cs_group.iter()
-                .filter_map(|&si| self.solids.get(si).copied())
+                .filter_map(|&si| solids.get(si).copied())
                 .collect();
             if !solid_refs.is_empty() {
-                self.compsolid_groups.push(bb.make_compsolid(t, solid_refs));
+                compsolid_groups.push(bb.make_compsolid(t, solid_refs));
             }
         }
     }
@@ -861,11 +852,11 @@ impl ResultBuilder {
     ///   BRep_Builder::Add.  rcad: processes compound_groups (groups of solid
     ///   indices from fill_images_compounds) and creates topods compounds
     ///   using BRepBuilder::make_compound.
-    pub(crate) fn build_compounds(&mut self, t: &mut topods::BRep, groups: &[Vec<usize>]) {
+    pub(crate) fn build_compounds(&mut self, t: &mut topods::BRep, groups: &[Vec<usize>], solids: &[topods::ShapeRef]) {
         let mut bb = topods::BRepBuilder::new();
         for group in groups {
             let solid_refs: Vec<topods::ShapeRef> = group.iter()
-                .filter_map(|&si| self.solids.get(si).copied())
+                .filter_map(|&si| solids.get(si).copied())
                 .collect();
             if !solid_refs.is_empty() {
                 bb.make_compound(t, solid_refs);
@@ -1120,13 +1111,13 @@ impl ResultBuilder {
     /// ✅ OCCT-aligned: Architecture A1 — emit TShape for the face just added to self.faces.
     ///   OCCT BRep_Builder creates edges/wires/faces incrementally during BuildSplitFaces.
     ///   rcad previously deferred this to build_topods_faces; now creates TShapes per-face.
-    pub(crate) fn emit_face_topods(&mut self, t: &mut topods::BRep) {
+    pub(crate) fn emit_face_topods(&mut self, t: &mut topods::BRep, face_refs: &mut Vec<topods::ShapeRef>) {
         use topods::{Orientation, ShapeRef};
         let fi = self.faces.len().wrapping_sub(1);
         if fi >= self.faces.len() {
             return; // no face data
         }
-        if fi < self.face_refs.len() && !self.face_refs[fi].is_null() {
+        if fi < face_refs.len() && !face_refs[fi].is_null() {
             return; // already emitted
         }
         let (edge_indices, inner_wire_edges, _tris, _normal, surface, _uv_domain,
@@ -1209,18 +1200,18 @@ impl ResultBuilder {
             .copied().unwrap_or(false);
         let face_sr = t.add_tface(Some(surf_idx), outer_wire, inner_wires,
             Some(*sample_point), *_uv_domain, internal_vtx, nr);
-        self.face_refs.push(face_sr);
+        face_refs.push(face_sr);
     }
 
     /// ✅ OCCT-aligned: BuildResult(FACE) – create topods vertices, edges, wires, faces
     ///   in t_brep from the flat arrays.  Called after fill_images_faces so that
     ///   split faces have already been emitted as TShapes via emit_face_topods.
-    pub(crate) fn build_topods_faces(&mut self, t: &mut topods::BRep, wire_refs: &[topods::ShapeRef]) {
+    pub(crate) fn build_topods_faces(&mut self, t: &mut topods::BRep, wire_refs: &[topods::ShapeRef], face_refs: &mut Vec<topods::ShapeRef>) {
         use topods::{Orientation, ShapeRef};
 
         // Architecture A1: skip faces already emitted as TShapes (via emit_face_topods).
         // face_refs already contains ShapeRefs for incrementally-emitted faces.
-        let start_fi = self.face_refs.len();
+        let start_fi = face_refs.len();
         if start_fi >= self.faces.len() {
             return; // all faces already have TShapes
         }
@@ -1317,7 +1308,7 @@ impl ResultBuilder {
             let internal_vtx: Vec<ShapeRef> = self.face_internal_vtx.get(flat_fi)
                 .map_or(vec![], |v| v.iter().map(|&vi| ShapeRef::synthetic(vi_to_ti.get(vi).copied().unwrap_or(vi))).collect());
             let nr = self.face_natural_restriction.get(flat_fi).copied().unwrap_or(true);
-            self.face_refs.push(t.add_tface(Some(surf_idx), outer_wire, inner_wires, Some(*sample_point), *_uv_domain, internal_vtx, nr));
+            face_refs.push(t.add_tface(Some(surf_idx), outer_wire, inner_wires, Some(*sample_point), *_uv_domain, internal_vtx, nr));
         }
     }
 
@@ -1327,11 +1318,11 @@ impl ResultBuilder {
     ///   the BooleanHistory from the accumulated result data.
     ///   When `fill_history` is false (OCCT: !HasHistory → !myFillHistory),
     ///   returns an empty history with no origins tracking.
-    pub(crate) fn build_topods(&mut self, t: &mut topods::BRep, fill_history: bool, shells: &[topods::ShapeRef]) -> BooleanHistory {
+    pub(crate) fn build_topods(&mut self, t: &mut topods::BRep, fill_history: bool, shells: &[topods::ShapeRef], face_refs: &mut Vec<topods::ShapeRef>, solids: &[topods::ShapeRef], compsolid_groups: &[topods::ShapeRef]) -> BooleanHistory {
         // Fallback: if no solids were created by BuildResult but faces exist,
         // create a default shell + solid (OCCT: defaults to single shell/solid).
-        if shells.is_empty() && !self.face_refs.is_empty() {
-            let shell = t.add_tshell(std::mem::take(&mut self.face_refs));
+        if shells.is_empty() && !face_refs.is_empty() {
+            let shell = t.add_tshell(std::mem::take(face_refs));
             t.add_tsolid(vec![shell]);
         }
 
@@ -1513,8 +1504,8 @@ mod tests {
         //   one shell from all faces, one solid wrapping that shell.
         let mut rb = make_test_builder(false, false);
         let mut t = topods::BRep::new();
-        rb.build_topods_faces(&mut t, &[]);
-        let _history = rb.build_topods(&mut t, true, &[]);
+        rb.build_topods_faces(&mut t, &[], &mut vec![]);
+        let _history = rb.build_topods(&mut t, true, &[], &mut vec![], &[], &[]);
 
         // tshapes: 4 vertices + 4 edges + 2 wires + 1 face + 1 shell + 1 solid
         assert!(t.tshapes.len() >= 12, "expected >= 12 tshapes, got {}", t.tshapes.len());
@@ -1539,8 +1530,8 @@ mod tests {
         let t_in = orig.to_topods();
         let (mut rb, _) = builder_from_topods(&t_in);
         let mut t = topods::BRep::new();
-        rb.build_topods_faces(&mut t, &[]);
-        let _history = rb.build_topods(&mut t, true, &[]);
+        rb.build_topods_faces(&mut t, &[], &mut vec![]);
+        let _history = rb.build_topods(&mut t, true, &[], &mut vec![], &[], &[]);
         let rebuilt = rcad_kernel::BRep::from_topods(&t);
 
         assert_eq!(rebuilt.solids.len(), orig.solids.len(),
@@ -1591,8 +1582,8 @@ mod tests {
         rb.face_origins.push(FaceOrigin::FromA(0));
 
         let mut t = topods::BRep::new();
-        rb.build_topods_faces(&mut t, &[]);
-        let _history = rb.build_topods(&mut t, true, &[]);
+        rb.build_topods_faces(&mut t, &[], &mut vec![]);
+        let _history = rb.build_topods(&mut t, true, &[], &mut vec![], &[], &[]);
         let rebuilt = rcad_kernel::BRep::from_topods(&t);
 
         assert_eq!(rebuilt.solids.len(), 1);
@@ -1618,8 +1609,8 @@ mod tests {
         let (mut rb, _) = builder_from_topods(&t0);
 
         let mut t1 = topods::BRep::new();
-        rb.build_topods_faces(&mut t1, &[]);
-        let _history = rb.build_topods(&mut t1, true, &[]);
+        rb.build_topods_faces(&mut t1, &[], &mut vec![]);
+        let _history = rb.build_topods(&mut t1, true, &[], &mut vec![], &[], &[]);
 
         // Same number of Vertex/Edge/Face/Shell/Solid TShapes
         let count_by_type = |t: &topods::BRep| -> (usize, usize, usize, usize, usize) {
@@ -1670,8 +1661,8 @@ mod tests {
         rb.face_origins.push(FaceOrigin::FromA(0));
 
         let mut t = topods::BRep::new();
-        rb.build_topods_faces(&mut t, &[]);
-        let _history = rb.build_topods(&mut t, true, &[]);
+        rb.build_topods_faces(&mut t, &[], &mut vec![]);
+        let _history = rb.build_topods(&mut t, true, &[], &mut vec![], &[], &[]);
         let rebuilt = rcad_kernel::BRep::from_topods(&t);
 
         assert_eq!(rebuilt.solids.len(), 1);
@@ -1872,7 +1863,7 @@ mod tests {
         rb.face_natural_restriction.push(false);
 
         let mut t = topods::BRep::new();
-        rb.build_topods_faces(&mut t, &[]);
+        rb.build_topods_faces(&mut t, &[], &mut vec![]);
 
         // Find the face TShape and check natural_restriction
         let face_count = t.tshapes.iter().filter(|ts| matches!(&***ts, topods::TShape::Face(_))).count();
@@ -1907,7 +1898,7 @@ mod tests {
         rb.solids.push(s1);
 
         // Build compsolid from [0, 1]
-        rb.build_compsolids(&mut t, vec![vec![0, 1]]);
+        rb.build_compsolids(&mut t, vec![vec![0, 1]], &[], &mut vec![]);
 
         assert_eq!(rb.compsolid_groups.len(), 1);
         // t should contain the compsolid TShape (in addition to previous shapes)
@@ -1938,7 +1929,7 @@ mod tests {
         rb.solids.push(s0);
         rb.solids.push(s1);
 
-        rb.build_compounds(&mut t, &[vec![0, 1]]);
+        rb.build_compounds(&mut t, &[vec![0, 1]], &[]);
 
         let n_compound = t.tshapes.iter().filter(|ts| matches!(&***ts, topods::TShape::Compound(_))).count();
         assert_eq!(n_compound, 1);

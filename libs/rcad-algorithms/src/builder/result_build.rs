@@ -900,13 +900,13 @@ impl<'a> BooleanBuilder<'a> {
             //   rcad: create TShape::Compound from result solid ShapeRefs.
             if !a_c_im.is_empty() {
                 let solid_refs: Vec<topods::ShapeRef> = a_c_im.iter()
-                    .filter_map(|&si| result.solids.get(si).copied())
+                    .filter_map(|&si| self.my_solids.borrow().get(si).copied())
                     .collect();
                 if !solid_refs.is_empty() {
                     let cmp_ref = t.add_tcompound(solid_refs);
                     let ckey = topods::ShapeRef::synthetic(usize::MAX - a_c_im.len());
                     self.my_images.borrow_mut().entry(ckey).or_default().push(cmp_ref);
-                    result.compsolid_groups.push(cmp_ref);
+                    self.my_compsolid_groups.borrow_mut().push(cmp_ref);
                 }
             }
         }
@@ -1040,8 +1040,8 @@ impl<'a> BooleanBuilder<'a> {
             }
             rcad_kernel::topods::ShapeType::Face => {
                 // Face TShape already created by build_topods_faces or emit_face_topods.
-                if !result.face_refs.iter().any(|&r| !r.is_null() && r.index == a_s.index) {
-                    result.face_refs.push(a_s);
+                if !self.my_face_refs.borrow().iter().any(|&r| !r.is_null() && r.index == a_s.index) {
+                    self.my_face_refs.borrow_mut().push(a_s);
                 }
             }
             rcad_kernel::topods::ShapeType::Shell => {
@@ -1050,8 +1050,8 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             rcad_kernel::topods::ShapeType::Solid => {
-                if !result.solids.contains(&a_s) {
-                    result.solids.push(a_s);
+                if !self.my_solids.borrow().contains(&a_s) {
+                    self.my_solids.borrow_mut().push(a_s);
                 }
             }
             rcad_kernel::topods::ShapeType::CompSolid | rcad_kernel::topods::ShapeType::Compound => {}
