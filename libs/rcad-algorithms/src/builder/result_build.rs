@@ -959,8 +959,8 @@ impl<'a> BooleanBuilder<'a> {
     fn build_result(&self, the_type: rcad_kernel::topods::ShapeType, result: &mut ResultBuilder) {
         let mut t = self.my_shape.borrow_mut();
         let mut a_m_fence: std::collections::HashSet<usize> = std::collections::HashSet::new();
-        if the_type == rcad_kernel::topods::ShapeType::Edge && result.ds_edge_to_tshape.is_empty() {
-            result.ds_edge_to_tshape = vec![rcad_kernel::topods::ShapeRef::NULL; self.ds.edges.len()];
+        if the_type == rcad_kernel::topods::ShapeType::Edge && self.my_edge_map.borrow().is_empty() {
+            *self.my_edge_map.borrow_mut() = vec![rcad_kernel::topods::ShapeRef::NULL; self.ds.edges.len()];
         }
         let args = self.my_arguments.borrow();
         for a_s in args.iter() {
@@ -1000,7 +1000,7 @@ impl<'a> BooleanBuilder<'a> {
                     let ev_sr = t.add_tvertex(self.ds.vertices[edge.end_vertex].point);
                     let ci = rcad_kernel::topods::find_or_add_curve3(&mut t.curves, &edge.curve);
                     let te = t.add_tedge(Some(ci), sv_sr, ev_sr, edge.t_range);
-                    result.ds_edge_to_tshape[ei] = te;
+                    self.my_edge_map.borrow_mut()[ei] = te;
                 }
             }
             rcad_kernel::topods::ShapeType::Wire => {
@@ -1009,24 +1009,26 @@ impl<'a> BooleanBuilder<'a> {
                 if wi < self.ds.wires.len() {
                     let w_ref = self.brep_sr(e_base + self.ds.edges.len() + wi);
                     let mut wire_edges = Vec::new();
+                    let e_map = self.my_edge_map.borrow();
                     if let Some(imgs) = self.my_images.borrow().get(&w_ref) {
                         for &img_sr in imgs {
                             let nSpR = img_sr.index.saturating_sub(e_base);
-                            if nSpR < result.ds_edge_to_tshape.len()
-                                && result.ds_edge_to_tshape[nSpR] != rcad_kernel::topods::ShapeRef::NULL
+                            if nSpR < e_map.len()
+                                && e_map[nSpR] != rcad_kernel::topods::ShapeRef::NULL
                             {
-                                wire_edges.push(result.ds_edge_to_tshape[nSpR]);
+                                wire_edges.push(e_map[nSpR]);
                             }
                         }
                     } else {
                         for &ei in &self.ds.wires[wi].edges {
-                            if ei < result.ds_edge_to_tshape.len()
-                                && result.ds_edge_to_tshape[ei] != rcad_kernel::topods::ShapeRef::NULL
+                            if ei < e_map.len()
+                                && e_map[ei] != rcad_kernel::topods::ShapeRef::NULL
                             {
-                                wire_edges.push(result.ds_edge_to_tshape[ei]);
+                                wire_edges.push(e_map[ei]);
                             }
                         }
                     }
+                    drop(e_map);
                     if !wire_edges.is_empty() {
                         let sr = t.add_twire(wire_edges);
                         t.wire_mut(sr).flags |= rcad_kernel::topods::tshape_flags::CLOSED;

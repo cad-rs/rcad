@@ -88,6 +88,8 @@ pub struct BooleanBuilder<'a> {
     my_shape: std::cell::RefCell<rcad_kernel::topods::BRep>,
     /// OCCT-aligned: myArguments — all source shapes pre-created as TShapes.
     my_arguments: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
+    /// OCCT-aligned: DS edge → TShape::Edge mapping (replaces ResultBuilder.ds_edge_to_tshape).
+    my_edge_map: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -620,6 +622,7 @@ impl<'a> BooleanBuilder<'a> {
             brep: std::cell::RefCell::new(None),
             my_shape: std::cell::RefCell::new(rcad_kernel::topods::BRep::new()),
             my_arguments: std::cell::RefCell::new(Vec::new()),
+            my_edge_map: std::cell::RefCell::new(Vec::new()),
         }
     }
 
