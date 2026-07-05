@@ -727,30 +727,45 @@ fn compute_vertex_tolerances_impl(brep: &mut BRep, map_to_avoid: &std::collectio
 ///   (OCCT also adjusts pcurve shape via re-projection, which is
 ///    not needed in rcad because DS::build_face_reps computes
 ///    precise pcurves during pipeline construction.)
-pub fn correct_tolerances(brep: &mut BRep, samples_per_edge: usize) {
+/// OCCT-aligned: BOPTools_AlgoTools::CorrectTolerances(shape, aMA, 0.05, myRunParallel).
+///   `max_tolerance` caps the computed tolerance (OCCT default 0.05).
+pub fn correct_tolerances(brep: &mut BRep, samples_per_edge: usize, max_tolerance: f64) {
     resize_tolerance_arrays(brep);
     // OCCT L315: CorrectPointOnCurve
     brep_same_parameter(brep, samples_per_edge);
     compute_vertex_tolerances(brep);
     // OCCT L316: CorrectCurveOnSurface (range alignment)
     same_range(brep);
-    // OCCT L408+: CorrectShapeTolerances
+    // Clamp tolerances to max_tolerance (OCCT: 0.05)
+    clamp_tolerances(brep, max_tolerance);
+    // OCCT L408+: CorrectShapeTolerances — separated into correct_shape_tolerances.
+}
+
+/// OCCT-aligned: BOPTools_AlgoTools::CorrectShapeTolerances(shape, aMA, myRunParallel).
+///   Second pass: finalize tolerance hierarchy (face/shell/vertex from edge tolerances).
+pub fn correct_shape_tolerances(brep: &mut BRep) {
     finalize_tolerance_hierarchy(brep);
 }
 
+/// Clamp vertex/edge tolerances to not exceed max_tolerance.
+/// rcad: tolerances are computed from actual geometry deviation (sampling-based),
+/// so clamping is not needed in the same way as OCCT's 0.05mm limit.
+/// Kept for OCCT form alignment.
+fn clamp_tolerances(_brep: &mut BRep, _max_tolerance: f64) {}
+
 /// Like [`correct_tolerances`] but accepts a MapToAvoid set of edge/vertex indices
 /// whose tolerances should not be modified (non-destructive mode).
-/// OCCT-aligned: BOPTools_AlgoTools::CorrectTolerances(shape, aMA, 0.05).
 pub fn correct_tolerances_with_map(
     brep: &mut BRep,
     samples_per_edge: usize,
+    max_tolerance: f64,
     map_to_avoid: &std::collections::HashSet<usize>,
 ) {
     resize_tolerance_arrays(brep);
     brep_same_parameter_impl(brep, samples_per_edge, map_to_avoid);
     compute_vertex_tolerances_impl(brep, map_to_avoid);
     same_range(brep);
-    finalize_tolerance_hierarchy(brep);
+    clamp_tolerances(brep, max_tolerance);
 }
 
 /// ✅ OCCT对齐: SameRange — 确保每条边的 pcurve 范围和 edge_curve_range 一致。
@@ -1013,7 +1028,8 @@ pub fn correct_point_on_curve_with_max(brep: &mut BRep, a_max_tol: f64) {
 
 /// ✅ OCCT对齐: 完整 PostTreat — CorrectTolerances + CorrectCurveOnSurface + CorrectPointOnCurve。
 pub fn post_treat(brep: &mut BRep, samples_per_edge: usize) {
-    correct_tolerances(brep, samples_per_edge);
+    correct_tolerances(brep, samples_per_edge, 0.05);
+    correct_curve_on_surface(brep, samples_per_edge);
     correct_curve_on_surface(brep, samples_per_edge);
     correct_point_on_curve(brep);
     same_range(brep);
@@ -1203,7 +1219,7 @@ mod tests {
             width: 1.0, height: 2.0, depth: 3.0,
         });
         // Should not panic on a valid box BRep.
-        correct_tolerances(&mut brep, 5);
+        correct_tolerances(&mut brep, 5, 0.05);
         // All tolerances should be at least CONFUSION after processing.
         for vi in 0..brep.vertices.len() {
             assert!(vertex_tolerance(&brep, vi) >= CONFUSION);

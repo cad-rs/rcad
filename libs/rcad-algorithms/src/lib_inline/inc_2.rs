@@ -345,7 +345,8 @@ pub fn boolean_op_with_retry(
     //   to match OCCT's PostTreat (Builder.cxx L450-475).
     let mut brep = brep;
     // ✅ OCCT-aligned: correct_tolerances — OCCT PostTreat does CorrectTolerances + CorrectShapeTolerances.
-    rcad_kernel::tolerance::correct_tolerances(&mut brep, 23);
+    rcad_kernel::tolerance::correct_tolerances(&mut brep, 23, 0.05);
+    rcad_kernel::tolerance::correct_shape_tolerances(&mut brep);
     Ok(brep)
 }
 

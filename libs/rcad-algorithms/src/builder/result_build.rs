@@ -1138,12 +1138,11 @@ impl<'a> BooleanBuilder<'a> {
         };
         // OCCT L472: BOPTools_AlgoTools::CorrectTolerances(myShape, aMA, 0.05, myRunParallel)
         if map_to_avoid.is_empty() {
-            rcad_kernel::tolerance::correct_tolerances(brep, 23);
+            rcad_kernel::tolerance::correct_tolerances(brep, 23, 0.05);
         } else {
-            rcad_kernel::tolerance::correct_tolerances_with_map(brep, 23, &map_to_avoid);
+            rcad_kernel::tolerance::correct_tolerances_with_map(brep, 23, 0.05, &map_to_avoid);
         }
         // OCCT L474: BOPTools_AlgoTools::CorrectShapeTolerances(myShape, aMA, myRunParallel)
-        //   rcad: correct_tolerances already does both steps in one call.
-        //   Separating them requires splitting the tolerance module.
+        rcad_kernel::tolerance::correct_shape_tolerances(brep);
     }
 }
