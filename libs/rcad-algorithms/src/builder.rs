@@ -852,9 +852,13 @@ impl<'a> BooleanBuilder<'a> {
                 .collect();
             let surf_idx = t.surfaces.len();
             t.surfaces.push(face.surface.clone());
+            let sample_pt = face.boundary_verts.first().copied()
+                .and_then(|vi| self.ds.vertices.get(vi))
+                .map(|v| v.point)
+                .unwrap_or(glam::DVec3::ZERO);
             let face_sr = t.add_tface(Some(surf_idx),
                 outer_wire.unwrap_or(rcad_kernel::topods::ShapeRef::NULL),
-                inner_wires, None, None, vec![], true);
+                inner_wires, Some(sample_pt), None, vec![], face.natural_restriction);
             args.push(face_sr);
         }
         // 5. Shells (from DS shells, using pre-created face TShapes)
@@ -1009,19 +1013,12 @@ impl<'a> BooleanBuilder<'a> {
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         self.build_result(topods::ShapeType::Wire, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // Prepare face data structures (needed by fill_images_faces).
-        result.build_faces();
         // OCCT L472-475: FillImagesFaces — BuildResult(FACE)
         // Architecture A1: split faces create TShapes incrementally during fill_images_faces.
+        // Remaining unsplit faces already have pre-created TShapes from pre_create_source_shapes.
         self.fill_images_faces(&mut result, &a_faces, &b_faces);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // Create TShape::Face for unsplit original faces before BuildResult(FACE).
-        {
-            let mut t = self.my_shape.borrow_mut();
-            let wire_refs = self.my_wire_refs.borrow();
-            let mut face_refs = self.my_face_refs.borrow_mut();
-            result.build_topods_faces(&mut *t, &wire_refs, &mut *face_refs);
-        }
+        // BuildResult(FACE) — generic loop over my_arguments, adds originals/splits to result.
         self.build_result(topods::ShapeType::Face, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // OCCT L477-480: FillImagesContainers(SHELL)

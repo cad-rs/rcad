@@ -757,15 +757,15 @@ impl ResultBuilder {
     ///   OCCT adds the original TopoDS_Face regardless of surface type.
     ///   rcad: builds FaceEntry from DS boundary_edges + inner_boundary_edges.
     ///   Handles all surface types (Plane, Cylinder, Sphere, Cone, Torus).
-    /// ✅ OCCT-aligned: BuildResult(FACE) — add original faces without images
-    /// (Builder_1.cxx L146-152).  When myImages does NOT contain the face,
-    /// OCCT adds the original TopoDS_Face as-is.  rcad: reconstruct the face
-    /// from DS boundary edges, surface, and centroid.
-    pub(crate) fn build_original_face(&mut self, ds: &DS, fi: usize, origin: FaceOrigin) {
+    /// ✅ OCCT-aligned: BuildResult(FACE) — add original faces without images.
+    ///   Now creates TShape::Face directly (OCCT: adds existing TopoDS_Face to myShape).
+    pub(crate) fn build_original_face(&mut self, ds: &DS, fi: usize, origin: FaceOrigin,
+        t: &mut topods::BRep, face_refs: &mut Vec<topods::ShapeRef>) {
         let face = &ds.faces[fi];
 
-        // --- Outer wire from boundary_edges ---
-        let mut edge_indices: Vec<(usize, bool)> = Vec::new();
+        // --- Outer wire from boundary_edges, creating TShape vertices/edges directly ---
+        let e_base = ds.vertices.len();
+        let mut outer_edges: Vec<topods::ShapeRef> = Vec::new();
         let mut prev_end: Option<usize> = None;
         for &ei in &face.boundary_edges {
             if ei >= ds.edges.len() { continue; }
@@ -775,19 +775,20 @@ impl ResultBuilder {
                 Some(pe) if e.end_vertex == pe => (e.end_vertex, e.start_vertex),
                 _ => (e.start_vertex, e.end_vertex),
             };
-            let brep_sv = self.add_ds_vertex(sv, ds.vertices[sv].point);
-            let brep_ev = self.add_ds_vertex(ev, ds.vertices[ev].point);
-            let bei = self.add_edge(brep_sv, brep_ev);
-            let fwd = (self.edges[bei].0, self.edges[bei].1) == (brep_sv, brep_ev);
-            edge_indices.push((bei, fwd));
+            let sv_sr = t.add_tvertex(ds.vertices[sv].point);
+            let ev_sr = t.add_tvertex(ds.vertices[ev].point);
+            let ci = topods::find_or_add_curve3(&mut t.curves, &e.curve);
+            let e_sr = t.add_tedge(Some(ci), sv_sr, ev_sr, e.t_range);
+            outer_edges.push(e_sr);
             prev_end = Some(ev);
         }
-        if edge_indices.len() < 3 { return; }
+        if outer_edges.len() < 3 { return; }
+        let outer_wire = t.add_twire(outer_edges);
 
-        // --- Inner wires (holes) from inner_boundary_edges ---
-        let mut inner_wires: Vec<Vec<(usize, bool)>> = Vec::new();
+        // --- Inner wires ---
+        let mut inner_wires: Vec<topods::ShapeRef> = Vec::new();
         for iw_edges in &face.inner_boundary_edges {
-            let mut wire: Vec<(usize, bool)> = Vec::new();
+            let mut wire_edges: Vec<topods::ShapeRef> = Vec::new();
             for &(ei, forward_in_ds) in iw_edges {
                 if ei >= ds.edges.len() { continue; }
                 let e = &ds.edges[ei];
@@ -796,29 +797,28 @@ impl ResultBuilder {
                 } else {
                     (e.end_vertex, e.start_vertex)
                 };
-                let brep_sv = self.add_ds_vertex(sv, ds.vertices[sv].point);
-                let brep_ev = self.add_ds_vertex(ev, ds.vertices[ev].point);
-                let bei = self.add_edge(brep_sv, brep_ev);
-                let fwd = (self.edges[bei].0, self.edges[bei].1) == (brep_sv, brep_ev);
-                wire.push((bei, fwd));
+                let sv_sr = t.add_tvertex(ds.vertices[sv].point);
+                let ev_sr = t.add_tvertex(ds.vertices[ev].point);
+                let ci = topods::find_or_add_curve3(&mut t.curves, &e.curve);
+                let e_sr = t.add_tedge(Some(ci), sv_sr, ev_sr, e.t_range);
+                wire_edges.push(e_sr);
             }
-            if wire.len() >= 2 {
-                inner_wires.push(wire);
+            if wire_edges.len() >= 2 {
+                inner_wires.push(t.add_twire(wire_edges));
             }
         }
 
-        let normal = face.normal;
-        let surface = face.surface.clone();
-        let centroid = edge_indices.iter()
-            .filter_map(|&(ei, fwd)| {
-                let e = self.edges.get(ei)?;
-                self.vertices.get(if fwd { e.1 } else { e.0 }).copied()
-            })
-            .sum::<DVec3>() / edge_indices.len() as f64;
-        self.faces.push((
-            edge_indices, inner_wires, vec![], normal, surface, None, centroid, 0.0, centroid, vec![],
-        ));
+        let surf_idx = t.surfaces.len();
+        t.surfaces.push(face.surface.clone());
+        let sample_pt = ds.vertices[face.boundary_verts.first().copied().unwrap_or(0)].point;
+        let face_sr = t.add_tface(Some(surf_idx), outer_wire, inner_wires,
+            Some(sample_pt), None, vec![], ds.faces[fi].natural_restriction);
+        face_refs.push(face_sr);
         self.face_origins.push(origin);
+
+        // Legacy flat-index path (kept for downstream consumers).
+        // TODO: remove when downstream is migrated.
+        {
         self.face_natural_restriction.push(ds.faces[fi].natural_restriction);
         {
             let mut widxs = Vec::new();
@@ -826,6 +826,7 @@ impl ResultBuilder {
             widxs.extend(&ds.faces[fi].inner_wire_idxs);
             self.face_all_wire_idxs.push(widxs);
         }
+    }
     }
 
     /// ✅ OCCT-aligned: BuildResult(COMPSOLID) — build compsolids via BRepBuilder.
