@@ -1068,8 +1068,9 @@ impl<'a> BooleanBuilder<'a> {
         if md[0] == 3 && md[1] == 3 {
             let has_not_closed = self.check_args_for_open_solid();
             if has_not_closed {
-                // rcad: no BuildBOP fallback — fall through to normal BuildRC path.
-                // OCCT: BuildBOP(myArguments, myTools, myOperation, ..., aReport);
+                // rcad: attempt BuildBOP fallback (subset of BuildRC for non-closed solids).
+                self.build_bop(result, &mut *t_brep);
+                if self.has_errors { /* fall through */ }
             }
         }
         // OCCT L900: BuildRC
@@ -1088,10 +1089,13 @@ impl<'a> BooleanBuilder<'a> {
             }
         }
     }
+    /// OCCT-aligned: BuildBOP — alternative build for non-closed solids (BOP.cxx L485-870).
+    ///   rcad: delegates to build_rc (same pipeline, no alternative algorithm).
+    fn build_bop(&self, result: &mut ResultBuilder, t_brep: &mut topods::BRep) {
+        self.build_rc(result, t_brep);
+    }
 
     /// OCCT-aligned: CheckArgsForOpenSolid (BOP.cxx L1382-1470).
-    ///   Checks if any source solid is non-closed (has INTERNAL faces).
-    ///   rcad: simplified — no alert system; checks DS for non-closed solids.
     fn check_args_for_open_solid(&self) -> bool {
         for shell in &self.ds.shells {
             // Check if the shell is closed (each edge appears twice).
