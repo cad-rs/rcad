@@ -1065,6 +1065,18 @@ impl<'a> BooleanBuilder<'a> {
         let mut t_brep = self.my_shape.borrow_mut();
         self.build_rc(result, &mut *t_brep);
         if self.has_errors { return; }
+        // OCCT L902-906: BuildSolid for FUSE 3D
+        if self.op == BooleanOpType::Union {
+            let face_refs: Vec<_> = self.my_face_refs.borrow().iter()
+                .filter(|sr| !sr.is_null())
+                .copied()
+                .collect();
+            if !face_refs.is_empty() {
+                let shell_ref = t_brep.add_tshell(face_refs);
+                let solid_ref = t_brep.add_tsolid(vec![shell_ref]);
+                self.my_solids.borrow_mut().push(solid_ref);
+            }
+        }
     }
 
     /// �?OCCT-aligned: BOPAlgo_Builder::PostTreat (Builder.cxx L450-475).
