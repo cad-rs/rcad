@@ -1293,14 +1293,14 @@ impl Part21Writer {
 
     fn write_seam_edge_curve_cached(
         &mut self,
-        brep: &BRep,
+        _brep: &BRep,
         edge_idx: usize,
         face_surface: Option<Surface3>,
     ) -> u64 {
         if let Some(existing) = self.seam_edge_curve_ids.get(&edge_idx) {
             return *existing;
         }
-        let edge_id = self.write_seam_edge_curve(brep, edge_idx, face_surface);
+        let edge_id = self.write_seam_edge_curve_topods(edge_idx, face_surface);
         self.seam_edge_curve_ids.insert(edge_idx, edge_id);
         edge_id
     }
@@ -1562,6 +1562,302 @@ impl Part21Writer {
 
         let surface_curve = self.surface_curve(basis_curve_3d, &pcurve_ids);
         self.edge_geometry_ids.insert(edge_idx, surface_curve);
+    }
+
+    /// Write an EDGE_CURVE for a seam edge from topods data.
+    /// Mirrors write_seam_edge_curve but reads edge and vertex data
+    /// from self.tbrep() (topods) instead of a flat BRep.
+    fn write_seam_edge_curve_topods(
+        &mut self,
+        edge_idx: usize,
+        face_surface: Option<Surface3>,
+    ) -> u64 {
+        let ed = {
+            let tbrep = self.tbrep();
+            tbrep.tshapes.get(edge_idx).and_then(|ts| {
+                if let topods::TShape::Edge(e) = &**ts {
+                    Some(e.clone())
+                } else {
+                    None
+                }
+            })
+        };
+        let Some(ed) = ed else {
+            return self.write_edge_curve_by_index_topods(edge_idx);
+        };
+
+        // Build temporary flat BRep for index-based operations
+        let flat = flat::FlatBRep::from_topods(self.tbrep());
+
+        // Map tshape edge index -> flat edge index
+        let e_map: HashMap<usize, usize> = {
+            let mut m = HashMap::new();
+            for (ti, ts) in self.tbrep().tshapes.iter().enumerate() {
+                if let topods::TShape::Edge(_) = &**ts {
+                    m.insert(ti, m.len());
+                }
+            }
+            m
+        };
+        let flat_ei = *e_map.get(&edge_idx).unwrap_or(&0);
+
+        let start_pt = {
+            let tbrep = self.tbrep();
+            tbrep
+                .tshapes
+                .get(ed.first.index)
+                .and_then(|ts| {
+                    if let topods::TShape::Vertex(v) = &**ts {
+                        Some(v.point)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default()
+        };
+        let end_pt = {
+            let tbrep = self.tbrep();
+            tbrep
+                .tshapes
+                .get(ed.last.index)
+                .and_then(|ts| {
+                    if let topods::TShape::Vertex(v) = &**ts {
+                        Some(v.point)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default()
+        };
+
+        let seam_is_cylinder = matches!(face_surface.as_ref(), Some(Surface3::Cylinder(_)));
+        let seam_is_cone = matches!(face_surface.as_ref(), Some(Surface3::Cone(_)));
+        let axis = canonicalize_axis_sign(glam::DVec3::Z);
+        let start_proj = start_pt.dot(axis);
+        let end_proj = end_pt.dot(axis);
+        let canonical_low_to_high = seam_is_cylinder;
+
+        let (edge_start_idx, edge_end_idx) = if canonical_low_to_high && start_proj > end_proj {
+            (ed.last.index, ed.first.index)
+        } else {
+            (ed.first.index, ed.last.index)
+        };
+        let v0 = self.vertex_point_by_tshape_idx(edge_start_idx);
+        let v1 = self.vertex_point_by_tshape_idx(edge_end_idx);
+
+        let pcurves = flat
+            .geom
+            .edge_pcurves
+            .get(flat_ei)
+            .cloned()
+            .unwrap_or_default();
+
+        let synthetic_curve2d = if pcurves.is_empty() {
+            match face_surface.as_ref() {
+                Some(Surface3::Cylinder(cyl)) => {
+                    synthesize_cylinder_pcurve_for_edge(&flat, flat_ei, cyl)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        let basis_curve = match face_surface.clone() {
+            Some(Surface3::Sphere(sphere)) => {
+                let a = (start_pt - sphere.center).normalize_or_zero();
+                let b = (end_pt - sphere.center).normalize_or_zero();
+                let mut circle_normal = a.cross(b);
+                if circle_normal.length_squared() < 1e-12 {
+                    circle_normal = any_perpendicular_dvec3(sphere.axis);
+                }
+                let circle_normal = circle_normal.normalize_or_zero();
+                let placement =
+                    self.axis2_from_origin_axis("seam_axis", sphere.center, circle_normal);
+                self.circle("seam_circle", placement, sphere.radius.max(1e-9))
+            }
+            Some(Surface3::Cone(_cone)) => {
+                let origin_id = self.cartesian_point("seam_origin", dvec3_to_array(start_pt));
+                let delta = dvec3_to_array(end_pt - start_pt);
+                let magnitude = vector_length(delta).max(1e-9);
+                let dir = self.direction("seam_dir", normalize(delta));
+                let vec = self.vector("seam_vec", dir, magnitude);
+                self.line("seam_line", origin_id, vec)
+            }
+            Some(Surface3::Cylinder(_)) => {
+                let (origin_pt, delta_vec) = if start_proj <= end_proj {
+                    (start_pt, end_pt - start_pt)
+                } else {
+                    (end_pt, start_pt - end_pt)
+                };
+                let origin_id = self.cartesian_point("seam_origin", dvec3_to_array(origin_pt));
+                let delta = dvec3_to_array(delta_vec);
+                let magnitude = vector_length(delta).max(1e-9);
+                let dir = self.direction("seam_dir", normalize(delta));
+                let vec = self.vector("seam_vec", dir, magnitude);
+                self.line("seam_line", origin_id, vec)
+            }
+            Some(Surface3::Torus(torus)) => {
+                let axis = torus.axis.normalize_or_zero();
+                if axis.length_squared() < 1e-18 {
+                    let origin_id =
+                        self.cartesian_point("seam_origin", dvec3_to_array(start_pt));
+                    let delta = dvec3_to_array(end_pt - start_pt);
+                    let magnitude = vector_length(delta).max(1e-9);
+                    let dir = self.direction("seam_dir", normalize(delta));
+                    let vec = self.vector("seam_vec", dir, magnitude);
+                    self.line("seam_line", origin_id, vec)
+                } else {
+                    let major_seam = pcurves.iter().any(|pc| {
+                        flat.geom
+                            .curve2ds
+                            .get(pc.curve2d_idx)
+                            .cloned()
+                            .and_then(|c2| match c2 {
+                                Curve2d::Line(l) => {
+                                    Some(l.direction.x.abs() > l.direction.y.abs())
+                                }
+                                _ => None,
+                            })
+                            .unwrap_or(false)
+                    });
+
+                    if major_seam {
+                        let radial_vec = start_pt
+                            - torus.center
+                            - axis * (start_pt - torus.center).dot(axis);
+                        let seam_radius = radial_vec.length().max(1e-9);
+                        let placement =
+                            self.axis2_from_origin_axis("seam_torus_axis", torus.center, axis);
+                        self.circle("seam_torus_circle", placement, seam_radius)
+                    } else {
+                        let mid = (start_pt + end_pt) * 0.5;
+                        let radial_raw =
+                            mid - torus.center - axis * (mid - torus.center).dot(axis);
+                        let radial = if radial_raw.length_squared() < 1e-18 {
+                            any_perpendicular_dvec3(axis)
+                        } else {
+                            radial_raw.normalize_or_zero()
+                        };
+                        let circle_center = torus.center + radial * torus.major_radius;
+                        let circle_normal = axis.cross(radial).normalize_or_zero();
+                        if circle_normal.length_squared() < 1e-18 {
+                            let origin_id =
+                                self.cartesian_point("seam_origin", dvec3_to_array(start_pt));
+                            let delta = dvec3_to_array(end_pt - start_pt);
+                            let magnitude = vector_length(delta).max(1e-9);
+                            let dir = self.direction("seam_dir", normalize(delta));
+                            let vec = self.vector("seam_vec", dir, magnitude);
+                            self.line("seam_line", origin_id, vec)
+                        } else {
+                            let placement = self.axis2_from_origin_axis(
+                                "seam_torus_axis",
+                                circle_center,
+                                circle_normal,
+                            );
+                            self.circle(
+                                "seam_torus_circle",
+                                placement,
+                                torus.minor_radius.max(1e-9),
+                            )
+                        }
+                    }
+                }
+            }
+            _ => {
+                let origin_id = self.cartesian_point("seam_origin", dvec3_to_array(start_pt));
+                let delta = dvec3_to_array(end_pt - start_pt);
+                let magnitude = vector_length(delta).max(1e-9);
+                let dir = self.direction("seam_dir", normalize(delta));
+                let vec = self.vector("seam_vec", dir, magnitude);
+                self.line("seam_line", origin_id, vec)
+            }
+        };
+
+        let final_curve = if !pcurves.is_empty() || synthetic_curve2d.is_some() {
+            let mut pcurve_ids = Vec::new();
+            let mut periodic_extra_curve2d: Option<Curve2d> = None;
+            let first_curve2d = if let Some(pc0) = pcurves.first() {
+                flat.geom.curve2ds.get(pc0.curve2d_idx).cloned()
+            } else {
+                synthetic_curve2d.clone()
+            };
+            if (seam_is_cylinder || seam_is_cone)
+                && (pcurves.len() == 1
+                    || (pcurves.is_empty() && synthetic_curve2d.is_some()))
+                && let Some(Curve2d::Line(l0)) = first_curve2d
+            {
+                let eps = 1e-9;
+                if l0.direction.x.abs() <= eps && l0.direction.y.abs() > eps {
+                    let mut l1 = l0;
+                    l1.origin.x = l0.origin.x + 2.0 * std::f64::consts::PI;
+                    periodic_extra_curve2d = Some(Curve2d::Line(l1));
+                }
+            }
+
+            if let Some(curve2d) = synthetic_curve2d
+                && let Some(Surface3::Cylinder(cyl)) = face_surface.as_ref()
+            {
+                let surface_id = self.write_surface(Some(Surface3::Cylinder(*cyl)), None);
+                let param_curve_id = self.write_curve2d(Some(curve2d));
+                let def_rep = self.definitional_representation(param_curve_id);
+                let pcurve_id = self.pcurve(surface_id, def_rep);
+                pcurve_ids.push(pcurve_id);
+                if let Some(extra_curve2d) = periodic_extra_curve2d.clone() {
+                    let extra_param = self.write_curve2d(Some(extra_curve2d));
+                    let extra_def = self.definitional_representation(extra_param);
+                    let extra_pc = self.pcurve(surface_id, extra_def);
+                    pcurve_ids.push(extra_pc);
+                }
+            }
+
+            for (pc_i, pc) in pcurves.iter().enumerate() {
+                let surface_id = self.get_or_write_surface_id(&flat, pc.surface_idx);
+                let mut curve2d = flat.geom.curve2ds.get(pc.curve2d_idx).cloned();
+                if seam_is_cylinder
+                    && let Some(Curve2d::Line(mut l)) = curve2d
+                {
+                    let eps = 1e-9;
+                    if l.direction.x.abs() <= eps && l.direction.y.abs() > eps {
+                        if l.direction.y < 0.0 {
+                            l.direction.y = -l.direction.y;
+                        }
+                        l.origin.y = 0.0;
+                        let two_pi = 2.0 * std::f64::consts::PI;
+                        let mut u = l.origin.x.rem_euclid(two_pi);
+                        if u <= 1e-6 {
+                            u = 0.0;
+                        }
+                        if (two_pi - u).abs() <= 1e-6 {
+                            u = two_pi;
+                        }
+                        l.origin.x = u;
+                    }
+                    curve2d = Some(Curve2d::Line(l));
+                }
+
+                let param_curve_id = self.write_curve2d(curve2d);
+                let def_rep = self.definitional_representation(param_curve_id);
+                let pcurve_id = self.pcurve(surface_id, def_rep);
+                pcurve_ids.push(pcurve_id);
+
+                if pc_i == 0 && let Some(extra_curve2d) = periodic_extra_curve2d.clone() {
+                    let extra_param = self.write_curve2d(Some(extra_curve2d));
+                    let extra_def = self.definitional_representation(extra_param);
+                    let extra_pc = self.pcurve(surface_id, extra_def);
+                    pcurve_ids.push(extra_pc);
+                }
+            }
+            if pcurve_ids.len() >= 2 {
+                self.seam_curve(basis_curve, &pcurve_ids)
+            } else {
+                self.surface_curve(basis_curve, &pcurve_ids)
+            }
+        } else {
+            basis_curve
+        };
+
+        self.edge_curve("seam_edge", v0, v1, final_curve, true)
     }
 
     /// Write an EDGE_CURVE for a seam edge, synthesizing a proper 3D curve
