@@ -1045,8 +1045,8 @@ impl<'a> BooleanBuilder<'a> {
                 }
             }
             rcad_kernel::topods::ShapeType::Shell => {
-                if !result.shells.contains(&a_s) {
-                    result.shells.push(a_s);
+                if !self.my_shells.borrow().contains(&a_s) {
+                    self.my_shells.borrow_mut().push(a_s);
                 }
             }
             rcad_kernel::topods::ShapeType::Solid => {
