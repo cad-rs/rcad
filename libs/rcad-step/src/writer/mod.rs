@@ -149,14 +149,13 @@ impl StepWriter {
         selection: ExportSelection<'_>,
         options: &StepWriteOptions,
     ) -> String {
-        let brep = flat::FlatBRep::from_topods(brep);
         let mut writer = Part21Writer::new_with_protocol_and_header(
             options.protocol,
             options.header.clone(),
             options.export_standalone_wire_overlay,
         );
-        writer.write_brep(
-            &brep,
+        writer.write_brep_topods(
+            brep,
             selection,
             options.colors.as_ref(),
             &options.properties,
@@ -320,6 +319,8 @@ struct Part21Writer {
     edge_curve_ids: HashMap<usize, u64>,
     seam_edge_curve_ids: HashMap<usize, u64>,
     edge_geometry_ids: HashMap<usize, u64>,
+    /// Set by write_brep_topods; read-only during write.
+    topods_brep: *const topods::BRep,
     protocol: StepProtocol,
     header: StepHeader,
     export_standalone_wire_overlay: bool,
@@ -340,11 +341,17 @@ impl Part21Writer {
             edge_curve_ids: HashMap::new(),
             seam_edge_curve_ids: HashMap::new(),
             edge_geometry_ids: HashMap::new(),
+            topods_brep: std::ptr::null(),
             protocol,
             header,
             export_standalone_wire_overlay,
             strict_plane_closed_ellipse_done: false,
         }
+    }
+
+    /// Accessor for topods::BRep during writing.
+    fn tbrep(&self) -> &topods::BRep {
+        unsafe { &*self.topods_brep }
     }
 
     fn finish(self) -> String {
@@ -418,6 +425,20 @@ impl Part21Writer {
         out.push_str("ENDSEC;\n");
         out.push_str("END-ISO-10303-21;\n");
         out
+    }
+
+    /// Entry point for topods::BRep — builds FlatBRep internally.
+    fn write_brep_topods(
+        &mut self,
+        brep: &topods::BRep,
+        selection: ExportSelection<'_>,
+        colors: Option<&StepColor>,
+        properties: &[StepGeneralProperty],
+        ap242_metadata: Option<&StepAp242Metadata>,
+    ) {
+        self.topods_brep = brep as *const topods::BRep;
+        let flat = flat::FlatBRep::from_topods(brep);
+        self.write_brep(&flat, selection, colors, properties, ap242_metadata);
     }
 
     fn write_brep(
@@ -2089,6 +2110,83 @@ impl Part21Writer {
         self.axis2_placement_3d(name, origin_id, axis_id, ref_id)
     }
 
+    /// Topods-native version of write_edge_curve_by_index (WIP).
+    /// Not yet wired into the call chain — all callers still use the old flat version.
+    fn write_edge_curve_by_index_topods(&mut self, edge_idx: usize) -> u64 {
+        if let Some(existing) = self.edge_curve_ids.get(&edge_idx) {
+            return *existing;
+        }
+        let ed = {
+            let tbrep = self.tbrep();
+            tbrep.tshapes.get(edge_idx).and_then(|ts| {
+                if let topods::TShape::Edge(e) = &**ts { Some(e.clone()) } else { None }
+            })
+        };
+        let Some(ed) = ed else {
+            let p0 = self.cartesian_point("edge_p0", [0.0, 0.0, 0.0]);
+            let p1 = self.cartesian_point("edge_p1", [0.0, 0.0, 0.0]);
+            let ve0 = self.vertex_point("v0", p0);
+            let ve1 = self.vertex_point("v1", p1);
+            let origin = self.cartesian_point("edge_origin", [0.0, 0.0, 0.0]);
+            let dir = self.direction("edge_dir", [1.0, 0.0, 0.0]);
+            let vec = self.vector("edge_vec", dir, 1.0);
+            let basis = self.line("edge_line", origin, vec);
+            let ec = self.edge_curve("edge", ve0, ve1, basis, true);
+            self.edge_curve_ids.insert(edge_idx, ec);
+            return ec;
+        };
+        let v0 = self.vertex_point_by_tshape_idx(ed.first.index);
+        let v1 = self.vertex_point_by_tshape_idx(ed.last.index);
+        let curve = ed.curve.clone();
+        let start_pt = {
+            let tbrep = self.tbrep();
+            tbrep.tshapes.get(ed.first.index).and_then(|ts| {
+                if let topods::TShape::Vertex(v) = &**ts { Some(v.point) } else { None }
+            }).unwrap_or_default()
+        };
+        let end_pt = {
+            let tbrep = self.tbrep();
+            tbrep.tshapes.get(ed.last.index).and_then(|ts| {
+                if let topods::TShape::Vertex(v) = &**ts { Some(v.point) } else { None }
+            }).unwrap_or_default()
+        };
+        let flat = flat::FlatBRep::from_topods(self.tbrep());
+        let basis_curve = self.write_edge_curve_geometry_by_index(&flat, edge_idx);
+        let mut same_sense = true;
+        if let Some((center, axis, major_dir)) = match curve {
+            Some(Curve3::Circle(c)) => Some((c.center, c.normal, glam::DVec3::ZERO)),
+            Some(Curve3::Ellipse(e)) => Some((e.center, e.normal, e.major_dir)),
+            _ => None,
+        } {
+            let canon_axis = canonicalize_axis_sign(axis);
+            let ref_dir = if major_dir.length_squared() > 1e-30 {
+                let proj = major_dir - major_dir.dot(canon_axis) * canon_axis;
+                let len = proj.length();
+                if len > 1e-15 { proj / len } else { canon_axis.cross(glam::DVec3::Y).normalize_or_zero() }
+            } else if canon_axis.z.abs() > 0.999999 { glam::DVec3::X }
+            else {
+                let helper = if canon_axis.y.abs() < 0.9 { glam::DVec3::Y } else { glam::DVec3::X };
+                canon_axis.cross(helper).normalize()
+            };
+            let perp = canon_axis.cross(ref_dir);
+            let d_start = start_pt - center;
+            let d_end = end_pt - center;
+            let theta_start = f64::atan2(d_start.dot(perp), d_start.dot(ref_dir));
+            let theta_end = f64::atan2(d_end.dot(perp), d_end.dot(ref_dir));
+            let theta_start = theta_start.rem_euclid(std::f64::consts::TAU);
+            let theta_end = theta_end.rem_euclid(std::f64::consts::TAU);
+            let forward = if theta_end >= theta_start {
+                theta_end - theta_start
+            } else {
+                theta_end + std::f64::consts::TAU - theta_start
+            };
+            if forward > std::f64::consts::PI { same_sense = false; }
+        }
+        let edge_curve = self.edge_curve("edge", v0, v1, basis_curve, same_sense);
+        self.edge_curve_ids.insert(edge_idx, edge_curve);
+        edge_curve
+    }
+
     fn write_edge_curve_by_index(&mut self, brep: &BRep, edge_idx: usize) -> u64 {
         if let Some(existing) = self.edge_curve_ids.get(&edge_idx) {
             return *existing;
@@ -3037,6 +3135,20 @@ impl Part21Writer {
             ))
         }
     }
+    fn vertex_point_by_tshape_idx(&mut self, tshape_idx: usize) -> u64 {
+        let tbrep = self.tbrep();
+        if let Some(existing) = self.vertex_point_ids.get(&tshape_idx) {
+            return *existing;
+        }
+        let point = tbrep.tshapes.get(tshape_idx).and_then(|ts| {
+            if let topods::TShape::Vertex(vd) = &**ts { Some(vd.point) } else { None }
+        }).map(dvec3_to_array).unwrap_or([0.0, 0.0, 0.0]);
+        let cartesian = self.cartesian_point("vertex_point", point);
+        let vertex = self.vertex_point("vertex", cartesian);
+        self.vertex_point_ids.insert(tshape_idx, vertex);
+        vertex
+    }
+
     fn vertex_point_by_index(&mut self, brep: &BRep, vertex_idx: usize) -> u64 {
         if let Some(existing) = self.vertex_point_ids.get(&vertex_idx) {
             return *existing;
