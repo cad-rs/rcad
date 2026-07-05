@@ -2150,8 +2150,7 @@ impl Part21Writer {
                 if let topods::TShape::Vertex(v) = &**ts { Some(v.point) } else { None }
             }).unwrap_or_default()
         };
-        let flat = flat::FlatBRep::from_topods(self.tbrep());
-        let basis_curve = self.write_edge_curve_geometry_by_index(&flat, edge_idx);
+        let basis_curve = self.write_edge_curve_geometry_by_index_topods(edge_idx);
         let mut same_sense = true;
         if let Some((center, axis, major_dir)) = match curve {
             Some(Curve3::Circle(c)) => Some((c.center, c.normal, glam::DVec3::ZERO)),
@@ -2277,6 +2276,459 @@ impl Part21Writer {
         let edge_curve = self.edge_curve("edge", v0, v1, basis_curve, same_sense);
         self.edge_curve_ids.insert(edge_idx, edge_curve);
         edge_curve
+    }
+
+    /// Write surface entity for a face tshape index (topods version of get_or_write_surface_id).
+    fn get_or_write_surface_for_face(&mut self, face_idx: usize) -> u64 {
+        if let Some(existing) = self.surface_ids.get(&face_idx) {
+            return *existing;
+        }
+        let surface = self.tbrep().tshapes.get(face_idx).and_then(|ts| {
+            if let topods::TShape::Face(fd) = &**ts { fd.surface.clone() } else { None }
+        });
+        let sid = self.write_surface(surface, None);
+        self.surface_ids.insert(face_idx, sid);
+        sid
+    }
+
+    /// Topods variant: same logic as write_edge_curve_geometry_by_index but reads
+    /// geometry data from self.tbrep() (topods::BRep) instead of flat BRep.
+    fn write_edge_curve_geometry_by_index_topods(&mut self, edge_idx: usize) -> u64 {
+        if let Some(existing) = self.edge_geometry_ids.get(&edge_idx) {
+            return *existing;
+        }
+
+        let ed_opt = {
+            let tbrep = self.tbrep();
+            tbrep.tshapes.get(edge_idx).and_then(|ts| {
+                if let topods::TShape::Edge(e) = &**ts { Some(e.clone()) } else { None }
+            })
+        };
+
+        let curve_id = if ed_opt.is_none() {
+            let origin = self.cartesian_point("edge_origin", [0.0, 0.0, 0.0]);
+            let dir = self.direction("edge_dir", [1.0, 0.0, 0.0]);
+            let vec = self.vector("edge_vec", dir, 1.0);
+            self.line("edge_line", origin, vec)
+        } else {
+            let ed = ed_opt.as_ref().unwrap();
+
+            let start_point = {
+                let tbrep = self.tbrep();
+                tbrep.tshapes.get(ed.first.index).and_then(|ts| {
+                    if let topods::TShape::Vertex(v) = &**ts { Some(dvec3_to_array(v.point)) } else { None }
+                }).unwrap_or([0.0, 0.0, 0.0])
+            };
+            let end_point = {
+                let tbrep = self.tbrep();
+                tbrep.tshapes.get(ed.last.index).and_then(|ts| {
+                    if let topods::TShape::Vertex(v) = &**ts { Some(dvec3_to_array(v.point)) } else { None }
+                }).unwrap_or([0.0, 0.0, 0.0])
+            };
+
+            let source_curve = ed.curve.clone();
+
+            // Build pcurves from the edge CurveRepresentations.
+            // surface_idx in each PCurve is the face tshape index.
+            // curve2d_idx indexes into rep_curve2ds.
+            let mut pcurves: Vec<flat::PCurve> = Vec::new();
+            let mut rep_curve2ds: Vec<Curve2d> = Vec::new();
+            for rep in &ed.representations {
+                match rep {
+                    topods::CurveRepresentation::CurveOnSurface { face, pcurve, .. } => {
+                        let ci = rep_curve2ds.len();
+                        rep_curve2ds.push(pcurve.clone());
+                        pcurves.push(flat::PCurve { surface_idx: *face, curve2d_idx: ci });
+                    }
+                    topods::CurveRepresentation::CurveOnClosedSurface { face, pcurve1, pcurve2, .. } => {
+                        let ci1 = rep_curve2ds.len();
+                        rep_curve2ds.push(pcurve1.clone());
+                        pcurves.push(flat::PCurve { surface_idx: *face, curve2d_idx: ci1 });
+                        let ci2 = rep_curve2ds.len();
+                        rep_curve2ds.push(pcurve2.clone());
+                        pcurves.push(flat::PCurve { surface_idx: *face, curve2d_idx: ci2 });
+                    }
+                    _ => {}
+                }
+            }
+
+            // Inline write_basis_curve_for_edge: write 3d curve from source_curve.
+            let mut basis_curve_3d = match source_curve.clone() {
+                Some(c) => self.write_curve3_entity(&c, start_point, end_point),
+                None => {
+                    let p0 = self.cartesian_point("edge_origin", start_point);
+                    let delta = [
+                        end_point[0] - start_point[0],
+                        end_point[1] - start_point[1],
+                        end_point[2] - start_point[2],
+                    ];
+                    let magnitude = vector_length(delta).max(1e-9);
+                    let direction = self.direction("edge_dir", normalize(delta));
+                    let vector = self.vector("edge_vec", direction, magnitude);
+                    self.line("edge_line", p0, vector)
+                }
+            };
+
+            // Helper: look up surface from a face tshape index (returns owned to avoid lifetime issues).
+            let get_surface = |tbrep: &topods::BRep, face_idx: usize| -> Option<Surface3> {
+                tbrep.tshapes.get(face_idx).and_then(|ts| {
+                    if let topods::TShape::Face(fd) = &**ts { fd.surface.clone() } else { None }
+                })
+            };
+
+            let is_single_plane_closed_circle = !self.strict_plane_closed_ellipse_done
+                && ed.first.index == ed.last.index
+                && pcurves.len() == 1
+                && matches!(
+                    get_surface(self.tbrep(), pcurves[0].surface_idx),
+                    Some(Surface3::Plane(_))
+                )
+                && matches!(source_curve.as_ref(), Some(Curve3::Circle(_)));
+
+            if is_single_plane_closed_circle
+                && let Some(Curve3::Circle(circle)) = source_curve.as_ref()
+            {
+                let placement =
+                    self.axis2_from_origin_axis("edge_plane_closed_axis", circle.center, circle.normal);
+                let major = circle.radius.max(1e-9);
+                let minor = (circle.radius * (1.0 - 1e-9)).max(1e-9);
+                basis_curve_3d = self.ellipse("edge_plane_closed_ellipse", placement, major, minor);
+                self.strict_plane_closed_ellipse_done = true;
+            }
+
+            let torus_surface = if !pcurves.is_empty() {
+                let mut torus = None;
+                let mut all_torus = true;
+                for pc in &pcurves {
+                    match get_surface(self.tbrep(), pc.surface_idx) {
+                        Some(Surface3::Torus(t)) => {
+                            if torus.is_none() {
+                                torus = Some(t);
+                            }
+                        }
+                        _ => {
+                            all_torus = false;
+                            break;
+                        }
+                    }
+                }
+                if all_torus { torus } else { None }
+            } else {
+                None
+            };
+
+            if let Some(torus) = torus_surface {
+                let mut major_seam = false;
+                if let Some(pc0) = pcurves.first()
+                    && let Some(Curve2d::Line(l)) = rep_curve2ds.get(pc0.curve2d_idx).cloned()
+                {
+                    major_seam = l.direction.x.abs() > l.direction.y.abs();
+                }
+
+                let start_pt = {
+                    let tbrep = self.tbrep();
+                    tbrep.tshapes.get(ed.first.index).and_then(|ts| {
+                        if let topods::TShape::Vertex(v) = &**ts { Some(v.point) } else { None }
+                    }).unwrap_or(glam::DVec3::ZERO)
+                };
+                let end_pt = {
+                    let tbrep = self.tbrep();
+                    tbrep.tshapes.get(ed.last.index).and_then(|ts| {
+                        if let topods::TShape::Vertex(v) = &**ts { Some(v.point) } else { None }
+                    }).unwrap_or(glam::DVec3::ZERO)
+                };
+                let axis = torus.axis.normalize_or_zero();
+                if axis.length_squared() >= 1e-18 {
+                    if major_seam {
+                        let radial_vec = start_pt - torus.center - axis * (start_pt - torus.center).dot(axis);
+                        let seam_radius = radial_vec.length().max(1e-9);
+                        let placement =
+                            self.axis2_from_origin_axis("edge_torus_major_axis", torus.center, axis);
+                        basis_curve_3d =
+                            self.circle("edge_torus_major_circle", placement, seam_radius);
+                    } else {
+                        let mid = (start_pt + end_pt) * 0.5;
+                        let radial_raw = mid - torus.center - axis * (mid - torus.center).dot(axis);
+                        let radial = if radial_raw.length_squared() < 1e-18 {
+                            any_perpendicular_dvec3(axis)
+                        } else {
+                            radial_raw.normalize_or_zero()
+                        };
+                        let circle_center = torus.center + radial * torus.major_radius;
+                        let circle_normal = axis.cross(radial).normalize_or_zero();
+                        if circle_normal.length_squared() >= 1e-18 {
+                            let placement = self.axis2_from_origin_axis(
+                                "edge_torus_seam_axis",
+                                circle_center,
+                                circle_normal,
+                            );
+                            basis_curve_3d = self.circle(
+                                "edge_torus_seam_circle",
+                                placement,
+                                torus.minor_radius.max(1e-9),
+                            );
+                        }
+                    }
+                }
+            }
+
+            if !pcurves.is_empty() {
+                let mut pcurve_ids = Vec::new();
+                let mut periodic_extra_curve2d: Option<Curve2d> = None;
+                let mut periodic_line_dup_for_seam = false;
+                if pcurves.len() == 1
+                    && let Some(pc0) = pcurves.first() {
+                        let is_periodic_u_surface = matches!(
+                            get_surface(self.tbrep(), pc0.surface_idx),
+                            Some(Surface3::Torus(_))
+                                | Some(Surface3::Cylinder(_))
+                                | Some(Surface3::Cone(_))
+                        );
+                        if is_periodic_u_surface
+                            && let Some(Curve2d::Line(l0)) = rep_curve2ds.get(pc0.curve2d_idx).cloned() {
+                                let eps = 1e-9;
+                                let mut l1 = l0;
+                                let mut duplicated = false;
+                                if l0.direction.x.abs() <= eps && l0.direction.y.abs() > eps {
+                                    l1.origin.x = l0.origin.x + 2.0 * std::f64::consts::PI;
+                                    duplicated = true;
+                                }
+                                if duplicated {
+                                    periodic_extra_curve2d = Some(Curve2d::Line(l1));
+                                    periodic_line_dup_for_seam = true;
+                                }
+                            }
+                    }
+                let mut first_plane: Option<rcad_kernel::geom::Plane> = None;
+                let mut first_is_line = false;
+                for (pc_i, pc) in pcurves.iter().enumerate() {
+                    let surface_id = self.get_or_write_surface_for_face(pc.surface_idx);
+                    // Get curve2d from rep_curve2ds using pc.curve2d_idx (not from flat GeomStore)
+                    let curve2d = rep_curve2ds.get(pc.curve2d_idx).cloned();
+
+                    // curve2d_to_match: use for matching patterns that check the type
+                    let mut curve2d = curve2d;
+                    let is_cylinder = matches!(
+                        get_surface(self.tbrep(), pc.surface_idx),
+                        Some(Surface3::Cylinder(_))
+                    );
+
+                    if is_cylinder
+                        && let Some(Curve2d::Line(mut l)) = curve2d
+                    {
+                        let eps = 1e-9;
+                        if l.direction.y.abs() <= eps && l.direction.x.abs() > eps {
+                            l.direction.x = l.direction.x.abs();
+                            l.direction.y = 0.0;
+                            let two_pi = 2.0 * std::f64::consts::PI;
+                            let u = l.origin.x.rem_euclid(two_pi);
+                            if u <= 1e-6 || (two_pi - u) <= 1e-6 {
+                                l.origin.x = 0.0;
+                            } else {
+                                l.origin.x = u;
+                            }
+                        }
+                        curve2d = Some(Curve2d::Line(l));
+                    }
+
+                    if pcurves.len() == 1 {
+                        first_plane = get_surface(self.tbrep(), pc.surface_idx)
+                            .and_then(|s| match s {
+                                Surface3::Plane(p) => Some(p),
+                                _ => None,
+                            });
+                        first_is_line = matches!(curve2d, Some(Curve2d::Line(_)) | None);
+                    }
+
+                    let param_curve_id = self.write_curve2d(curve2d);
+                    let def_rep = self.definitional_representation(param_curve_id);
+                    let pcurve_id = self.pcurve(surface_id, def_rep);
+                    pcurve_ids.push(pcurve_id);
+
+                    if pc_i == 0
+                        && let Some(extra_curve2d) = periodic_extra_curve2d.clone()
+                    {
+                        let extra_param = self.write_curve2d(Some(extra_curve2d));
+                        let extra_def = self.definitional_representation(extra_param);
+                        let extra_pc = self.pcurve(surface_id, extra_def);
+                        pcurve_ids.push(extra_pc);
+                    }
+                }
+
+                if pcurve_ids.len() == 1
+                    && first_is_line
+                {
+                    // For the extra-surface helpers, create a flat BRep once.
+                    let flat = flat::FlatBRep::from_topods(self.tbrep());
+                    let mut extra_surface: Option<(Option<usize>, rcad_kernel::geom::Plane)> = None;
+                    if let Some(base_plane) = first_plane
+                        && let Some((peer_surface_idx, extra_plane)) =
+                            find_peer_plane_surface_for_line_edge(&flat, edge_idx, base_plane)
+                    {
+                        extra_surface = Some((peer_surface_idx, extra_plane));
+                    }
+
+                    if extra_surface.is_none()
+                        && let Some((surface_idx, plane)) = find_plane_surface_for_edge(&flat, edge_idx)
+                    {
+                        extra_surface = Some((Some(surface_idx), plane));
+                    }
+
+                    if extra_surface.is_none()
+                        && let Some(plane) = find_topological_plane_for_edge(&flat, edge_idx)
+                    {
+                        extra_surface = Some((None, plane));
+                    }
+
+                    if extra_surface.is_none()
+                        && let Some(base_plane) = first_plane
+                        && count_plane_face_occurrences_for_line_edge(&flat, edge_idx) >= 2
+                    {
+                        extra_surface = Some((None, base_plane));
+                    }
+
+                    if let Some((surface_idx, extra_plane)) = extra_surface
+                        && let Some(extra_curve2d) =
+                            synthesize_plane_pcurve_for_edge(&flat, edge_idx, &extra_plane)
+                    {
+                        let extra_surface_id = if let Some(idx) = surface_idx {
+                            // surface_idx from flat BRep helpers — use the flat get_or_write_surface_id
+                            // but we don't have a flat brep reference here. Instead, look up the
+                            // face tshape via the flat surface index to find the face.
+                            // For simplicity, find a face tshape index that has this flat surface_idx.
+                            // Actually, use the flat BRep to write the surface directly.
+                            let surf = flat.geom.surfaces.get(idx).cloned();
+                            let sid = self.write_surface(surf, None);
+                            self.surface_ids.insert(idx, sid);
+                            sid
+                        } else if let Some(pc0) = pcurves.first() {
+                            self.get_or_write_surface_for_face(pc0.surface_idx)
+                        } else {
+                            let placement = self.axis2_from_origin_axis(
+                                "face_plane_fallback",
+                                extra_plane.origin,
+                                extra_plane.normal,
+                            );
+                            self.write_surface(Some(Surface3::Plane(extra_plane)), Some(placement))
+                        };
+                        let extra_param = self.write_curve2d(Some(extra_curve2d));
+                        let extra_def = self.definitional_representation(extra_param);
+                        let extra_pc = self.pcurve(extra_surface_id, extra_def);
+                        pcurve_ids.push(extra_pc);
+                    }
+                }
+
+                let use_torus_seam_curve = pcurve_ids.len() >= 2
+                    && torus_surface.is_some()
+                    && matches!(
+                        source_curve,
+                        Some(Curve3::Line(_)) | Some(Curve3::Circle(_)) | None
+                    );
+
+                let use_periodic_line_seam_curve =
+                    pcurve_ids.len() >= 2 && periodic_line_dup_for_seam;
+
+                let use_seam_curve = use_torus_seam_curve || use_periodic_line_seam_curve;
+
+                if use_seam_curve {
+                    self.seam_curve(basis_curve_3d, &pcurve_ids)
+                } else {
+                    self.surface_curve(basis_curve_3d, &pcurve_ids)
+                }
+            } else {
+                // No pcurves from representations — try helpers via flat BRep.
+                let flat = flat::FlatBRep::from_topods(self.tbrep());
+                if let Some((surface_idx, plane)) = find_plane_surface_for_edge(&flat, edge_idx) {
+                    if let Some(curve2d) = synthesize_plane_pcurve_for_edge(&flat, edge_idx, &plane) {
+                            let promote_plane_line = should_promote_plane_line_pcurve(&flat, edge_idx);
+                        // Write surface by looking up the flat surface (the helpers returned
+                        // a flat surface index, not tshape index). Write via flat surface data.
+                        let surf = flat.geom.surfaces.get(surface_idx).cloned();
+                        let surface_id = {
+                            if let Some(existing) = self.surface_ids.get(&surface_idx) {
+                                *existing
+                            } else {
+                                let sid = self.write_surface(surf, None);
+                                self.surface_ids.insert(surface_idx, sid);
+                                sid
+                            }
+                        };
+                            let curve2d = if promote_plane_line {
+                                plane_line_pcurve_as_bspline(&curve2d)
+                            } else {
+                                curve2d
+                            };
+                            let param_curve_id = self.write_curve2d(Some(curve2d));
+                        let def_rep = self.definitional_representation(param_curve_id);
+                        let pcurve_id = self.pcurve(surface_id, def_rep);
+                        let mut pcurve_ids = vec![pcurve_id];
+
+                        if let Some((peer_surface_idx, peer_plane)) =
+                            find_peer_plane_surface_for_line_edge(&flat, edge_idx, plane)
+                            && let Some(peer_curve2d) =
+                                synthesize_plane_pcurve_for_edge(&flat, edge_idx, &peer_plane)
+                        {
+                                let peer_curve2d = if promote_plane_line {
+                                    plane_line_pcurve_as_bspline(&peer_curve2d)
+                                } else {
+                                    peer_curve2d
+                                };
+                            let peer_surface_id = if let Some(idx) = peer_surface_idx {
+                                let psurf = flat.geom.surfaces.get(idx).cloned();
+                                if let Some(existing) = self.surface_ids.get(&idx) {
+                                    *existing
+                                } else {
+                                    let sid = self.write_surface(psurf, None);
+                                    self.surface_ids.insert(idx, sid);
+                                    sid
+                                }
+                            } else {
+                                surface_id
+                            };
+                            let peer_param = self.write_curve2d(Some(peer_curve2d));
+                            let peer_def = self.definitional_representation(peer_param);
+                            let peer_pc = self.pcurve(peer_surface_id, peer_def);
+                            pcurve_ids.push(peer_pc);
+                        } else if count_plane_face_occurrences_for_line_edge(&flat, edge_idx) >= 2
+                            && let Some(peer_curve2d) =
+                                synthesize_plane_pcurve_for_edge(&flat, edge_idx, &plane)
+                        {
+                                let peer_curve2d = if promote_plane_line {
+                                    plane_line_pcurve_as_bspline(&peer_curve2d)
+                                } else {
+                                    peer_curve2d
+                                };
+                            let peer_param = self.write_curve2d(Some(peer_curve2d));
+                            let peer_def = self.definitional_representation(peer_param);
+                            let peer_pc = self.pcurve(surface_id, peer_def);
+                            pcurve_ids.push(peer_pc);
+                        }
+
+                        self.surface_curve(basis_curve_3d, &pcurve_ids)
+                    } else {
+                        basis_curve_3d
+                    }
+                } else {
+                    if let Some(plane) = find_topological_plane_for_edge(&flat, edge_idx) {
+                        if let Some(curve2d) = synthesize_plane_pcurve_for_edge(&flat, edge_idx, &plane) {
+                            let placement = self.axis2_from_origin_axis("face_plane_fallback", plane.origin, plane.normal);
+                            let surface_id = self.write_surface(Some(Surface3::Plane(plane)), Some(placement));
+                            let param_curve_id = self.write_curve2d(Some(curve2d));
+                            let def_rep = self.definitional_representation(param_curve_id);
+                            let pcurve_id = self.pcurve(surface_id, def_rep);
+                            self.surface_curve(basis_curve_3d, &[pcurve_id])
+                        } else {
+                            basis_curve_3d
+                        }
+                    } else {
+                        basis_curve_3d
+                    }
+                }
+            }
+        };
+
+        self.edge_geometry_ids.insert(edge_idx, curve_id);
+        curve_id
     }
 
     fn write_edge_curve_geometry_by_index(&mut self, brep: &BRep, edge_idx: usize) -> u64 {
