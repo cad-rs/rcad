@@ -998,8 +998,7 @@ impl<'a> BooleanBuilder<'a> {
                     let edge = &self.ds.edges[ei];
                     let sv_sr = t.add_tvertex(self.ds.vertices[edge.start_vertex].point);
                     let ev_sr = t.add_tvertex(self.ds.vertices[edge.end_vertex].point);
-                    let ci = rcad_kernel::topods::find_or_add_curve3(&mut t.curves, &edge.curve);
-                    let te = t.add_tedge(Some(ci), sv_sr, ev_sr, edge.t_range);
+                    let te = t.add_tedge(Some(edge.curve.clone()), sv_sr, ev_sr, edge.t_range);
                     self.my_edge_map.borrow_mut()[ei] = te;
                 }
             }

@@ -5895,13 +5895,9 @@ fn build_topods_solid_from_shell(
             if let Some(surf_step_id) = surface_step_id {
                 if !surface_store_index_by_step.contains_key(&surf_step_id) {
                     if let Some(surface) = resolve_surface(parsed, surf_step_id) {
-                        let idx = t.surfaces.len();
-                        t.surfaces.push(surface);
-                        surface_store_index_by_step.insert(surf_step_id, idx);
+                        // Surface stored directly on TFace (OCCT-aligned)
+                        t.face_mut(face_ref).surface = Some(surface);
                     }
-                }
-                if let Some(&surf_idx) = surface_store_index_by_step.get(&surf_step_id) {
-                    t.face_mut(face_ref).surface = Some(surf_idx);
                 }
             }
             face_refs.push(face_ref);
@@ -5964,13 +5960,9 @@ fn build_topods_with_face_map(parsed: &ParsedStep) -> Result<(topods::BRep, Hash
                     if !surface_store_index_by_step.contains_key(&surf_step_id) {
                         let maybe_surf = resolve_surface(parsed, surf_step_id);
                         if let Some(surface) = maybe_surf {
-                            let idx = t.surfaces.len();
-                            t.surfaces.push(surface);
-                            surface_store_index_by_step.insert(surf_step_id, idx);
+                            // Surface stored directly on TFace (OCCT-aligned)
+                            t.face_mut(face_ref).surface = Some(surface);
                         }
-                    }
-                    if let Some(&surf_idx) = surface_store_index_by_step.get(&surf_step_id) {
-                        t.face_mut(face_ref).surface = Some(surf_idx);
                     }
                 }
                 face_ref_by_id.insert(face_id, face_ref);
@@ -6039,22 +6031,14 @@ fn build_topods_with_face_map(parsed: &ParsedStep) -> Result<(topods::BRep, Hash
 
             let start_sr = t.add_tvertex(start);
             let end_sr = t.add_tvertex(end);
-            let cidx = if let Some(&existing) = curve_store_index_by_step.get(&basis_curve_ref) {
-                existing
-            } else {
-                let idx = t.curves.len();
-                t.curves.push(curve);
-                curve_store_index_by_step.insert(basis_curve_ref, idx);
-                idx
-            };
             let range = _trim_range.unwrap_or_else(|| {
-                let c = &t.curves[cidx];
-                let t0 = (start - c.point_at(c.default_domain()[0])).length().min(0.0);
-                let t1 = (end - c.point_at(c.default_domain()[1])).length().max(0.0);
+                use rcad_kernel::geom::CurveEval;
+                let t0 = (start - curve.point_at(curve.default_domain()[0])).length().min(0.0);
+                let t1 = (end - curve.point_at(curve.default_domain()[1])).length().max(0.0);
                 // Fallback: use default domain
-                c.default_domain()
+                curve.default_domain()
             });
-            let _edge_ref = t.add_tedge(Some(cidx), start_sr, end_sr, range);
+            let _edge_ref = t.add_tedge(Some(curve), start_sr, end_sr, range);
         }
     }
 
@@ -6082,12 +6066,8 @@ fn build_topods_with_face_map(parsed: &ParsedStep) -> Result<(topods::BRep, Hash
             let Some(face_ref) = face_ref else { continue; };
 
             let Some(curve2d) = resolve_curve2d(parsed, curve2d_step_id) else { continue; };
-            let c2d_idx = t.curve2ds.len();
-            t.curve2ds.push(curve2d);
-
-            let c2d = t.curve2ds[c2d_idx].clone();
             let default_range = [0.0_f64, 1.0];
-            t.edge_mut(edge_ref).pcurves.insert(face_ref.index, (c2d, default_range[0], default_range[1]));
+            t.edge_mut(edge_ref).pcurves.insert(face_ref.index, (curve2d, default_range[0], default_range[1]));
         }
     }
 
@@ -6211,16 +6191,18 @@ fn ensure_edge_topods(
     let first = *vertex_ref_by_id.get(&start_id)?;
     let last = *vertex_ref_by_id.get(&end_id)?;
 
-    // Resolve curve into geometry store
-    let curve_idx = curve_ref.and_then(|step_curve| {
-        if let Some(&existing) = curve_store_index_by_step.get(&step_curve) {
-            return Some(existing);
+    // Resolve curve — store directly on edge (OCCT-aligned)
+    let curve = curve_ref.and_then(|step_curve| {
+        if curve_store_index_by_step.contains_key(&step_curve) {
+            // Already resolved — no need to resolve again (curve is stored directly on edge later)
+            // Return None; the edge creation uses the resolved curve from the store
+            return curve_store_index_by_step.get(&step_curve).copied()
+                .and_then(|_cidx| resolve_curve(parsed, step_curve));
         }
-        let curve = resolve_curve(parsed, step_curve)?;
-        let cidx = t.curves.len();
-        t.curves.push(curve);
-        curve_store_index_by_step.insert(step_curve, cidx);
-        Some(cidx)
+        let resolved = resolve_curve(parsed, step_curve)?;
+        let sentinel = curve_store_index_by_step.len();
+        curve_store_index_by_step.insert(step_curve, sentinel);
+        Some(resolved)
     });
 
     // Determine trim range
@@ -6234,8 +6216,8 @@ fn ensure_edge_topods(
     });
 
     let range = explicit_trim_range.unwrap_or_else(|| {
-        if let Some(cidx) = curve_idx {
-            let c = &t.curves[cidx];
+        if let Some(ref c) = curve {
+            use rcad_kernel::geom::CurveEval;
             c.default_domain()
         } else {
             [0.0, 1.0]
@@ -6247,11 +6229,12 @@ fn ensure_edge_topods(
         adjusted_range = [range[1], range[0]];
     }
 
-    let edge_ref = t.add_tedge(curve_idx, first, last, adjusted_range);
+    let has_curve = curve.is_some();
+    let edge_ref = t.add_tedge(curve, first, last, adjusted_range);
     edge_ref_by_curve.insert(edge_curve_id, edge_ref);
 
     // Check degenerated
-    if curve_idx.is_some() {
+    if has_curve {
         let p0 = t.vertex(first).point;
         let p1 = t.vertex(last).point;
         let len = (p1 - p0).length();

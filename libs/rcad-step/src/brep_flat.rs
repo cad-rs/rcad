@@ -168,9 +168,6 @@ impl FlatBRep {
 
         // Pass 2: collect geometry stores
         let mut geom = GeomStore::default();
-        geom.curves = brep.curves.clone();
-        geom.surfaces = brep.surfaces.clone();
-        geom.curve2ds = brep.curve2ds.clone();
         geom.edge_curve.resize(edges.len(), None);
         geom.edge_curve_range.resize(edges.len(), None);
         geom.edge_pcurves.resize(edges.len(), Vec::new());
@@ -178,8 +175,42 @@ impl FlatBRep {
         for (ti, ts) in brep.tshapes.iter().enumerate() {
             if let topods::TShape::Edge(ed) = &**ts {
                 if let Some(&fi) = e_map.get(&ti) {
-                    geom.edge_curve[fi] = ed.curve;
+                    let ci = ed.curve.as_ref().map(|crv| {
+                        let idx = geom.curves.len();
+                        geom.curves.push(crv.clone());
+                        idx
+                    });
+                    geom.edge_curve[fi] = ci;
                     geom.edge_curve_range[fi] = Some(ed.range);
+                }
+            }
+        }
+
+        // Pass 2b: collect face surfaces and edge curve2ds
+        let mut flat_fi = 0usize;
+        for ts in &brep.tshapes {
+            if let topods::TShape::Face(fd) = &**ts {
+                let surf_idx = fd.surface.as_ref().map(|s| {
+                    let idx = geom.surfaces.len();
+                    geom.surfaces.push(s.clone());
+                    idx
+                });
+                while geom.face_surface.len() <= flat_fi { geom.face_surface.push(None); }
+                geom.face_surface[flat_fi] = surf_idx;
+                flat_fi += 1;
+            }
+        }
+        // Collect curve2ds from edge representations
+        for ts in &brep.tshapes {
+            if let topods::TShape::Edge(ed) = &**ts {
+                for rep in &ed.representations {
+                    match rep {
+                        topods::CurveRepresentation::CurveOnSurface { pcurve, .. } |
+                        topods::CurveRepresentation::CurveOnClosedSurface { pcurve1: pcurve, .. } => {
+                            geom.curve2ds.push(pcurve.clone());
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
@@ -188,6 +219,7 @@ impl FlatBRep {
         let mut solids = Vec::new();
         let mut compound = None;
         let mut compsolid = None;
+        let mut flat_fi = 0usize;
 
         for ts in &brep.tshapes {
             if let topods::TShape::Solid(sd) = &**ts {
@@ -201,6 +233,7 @@ impl FlatBRep {
                                 let inner_wires: Vec<Wire> = fd.inner_wires.iter()
                                     .map(|sr| Self::wire_from_topods(brep, &e_map, sr))
                                     .collect();
+                                let sid = geom.face_surface.get(flat_fi).copied().flatten();
                                 faces.push(Face {
                                     outer_wire,
                                     inner_wires,
@@ -208,8 +241,9 @@ impl FlatBRep {
                                     triangles: Vec::new(),
                                     sample_point: fd.sample_point,
                                     mesh_dirty: true,
-                                    surface_idx: fd.surface,
+                                    surface_idx: sid,
                                 });
+                                flat_fi += 1;
                             }
                         }
                         shells.push(Shell { faces });

@@ -820,8 +820,7 @@ impl<'a> BooleanBuilder<'a> {
         for (ei, edge) in self.ds.edges.iter().enumerate() {
             let sv = t.add_tvertex(self.ds.vertices[edge.start_vertex].point);
             let ev = t.add_tvertex(self.ds.vertices[edge.end_vertex].point);
-            let ci = rcad_kernel::topods::find_or_add_curve3(&mut t.curves, &edge.curve);
-            let te = t.add_tedge(Some(ci), sv, ev, edge.t_range);
+            let te = t.add_tedge(Some(edge.curve.clone()), sv, ev, edge.t_range);
             if self.ds.is_edge_degenerated(ei) || edge.start_vertex == edge.end_vertex {
                 t.edge_mut(te).degenerated = true;
             }
@@ -855,13 +854,11 @@ impl<'a> BooleanBuilder<'a> {
                     if idx < t.tshapes.len() { Some(self.brep_sr(idx)) } else { None }
                 })
                 .collect();
-            let surf_idx = t.surfaces.len();
-            t.surfaces.push(face.surface.clone());
             let sample_pt = face.boundary_verts.first().copied()
                 .and_then(|vi| self.ds.vertices.get(vi))
                 .map(|v| v.point)
                 .unwrap_or(glam::DVec3::ZERO);
-            let face_sr = t.add_tface(Some(surf_idx),
+            let face_sr = t.add_tface(Some(face.surface.clone()),
                 outer_wire.unwrap_or(rcad_kernel::topods::ShapeRef::NULL),
                 inner_wires, Some(sample_pt), None, vec![], face.natural_restriction);
             args.push(face_sr);

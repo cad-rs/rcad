@@ -311,10 +311,6 @@ impl BRep {
     /// Convert to TopoDS-aligned representation.
     pub fn to_topods(&self) -> topods::BRep {
         let mut t = topods::BRep::new();
-        // Copy geometry stores
-        t.curves = self.geom.curves.clone();
-        t.surfaces = self.geom.surfaces.clone();
-        t.curve2ds = self.geom.curve2ds.clone();
         // Vertex mapping: old index -> new ShapeRef
         let mut v_map: Vec<topods::ShapeRef> = Vec::with_capacity(self.vertices.len());
         for v in &self.vertices {
@@ -326,7 +322,8 @@ impl BRep {
         for (i, e) in self.edges.iter().enumerate() {
             let first = v_map[e.start];
             let last = v_map[e.end];
-            let curve = self.geom.edge_curve.get(i).copied().flatten();
+            let curve = self.geom.edge_curve.get(i).copied().flatten()
+                .and_then(|ci| self.geom.curves.get(ci).cloned());
             let range = self.geom.edge_curve_range.get(i).copied().flatten().unwrap_or([0.0, 0.0]);
             let sr = t.add_tedge(curve, first, last, range);
             e_map.push(sr);
@@ -344,7 +341,9 @@ impl BRep {
                     let internal_vtx: Vec<topods::ShapeRef> = self.geom.face_internal_vertices.get(flat_fi)
                         .map(|v| v.iter().map(|&vi| topods::ShapeRef::synthetic(vi)).collect())
                         .unwrap_or_default();
-                    let sr = t.add_tface(face.surface_idx, outer_wire, inner_wires, face.sample_point, None, internal_vtx, true);
+                    let surface = face.surface_idx
+                        .and_then(|si| self.geom.surfaces.get(si).cloned());
+                    let sr = t.add_tface(surface, outer_wire, inner_wires, face.sample_point, None, internal_vtx, true);
                     face_refs.push(sr);
                     flat_fi += 1;
                 }
@@ -390,17 +389,13 @@ impl BRep {
                     });
                     brep.edges.push(Edge { start: vi, end: vj });
                     // Apply Location to edge curve and range
-                    let (world_ci, world_range) = if let Some(ci) = ed.curve {
-                        if instance_loc != glam::DAffine3::IDENTITY {
-                            let transformed = crate::geom::transform_curve(&t.curves[ci], &instance_loc);
-                            let ci_idx = brep.geom.curves.len();
-                            brep.geom.curves.push(transformed);
-                            (Some(ci_idx), ed.range)
-                        } else {
-                            let ci_idx = brep.geom.curves.len();
-                            brep.geom.curves.push(t.curves[ci].clone());
-                            (Some(ci_idx), ed.range)
-                        }
+                    let (world_ci, world_range) = if let Some(ref crv) = ed.curve {
+                        let transformed = if instance_loc != glam::DAffine3::IDENTITY {
+                            crate::geom::transform_curve(crv, &instance_loc)
+                        } else { crv.clone() };
+                        let ci_idx = brep.geom.curves.len();
+                        brep.geom.curves.push(transformed);
+                        (Some(ci_idx), ed.range)
                     } else { (None, ed.range) };
                     brep.geom.edge_curve.push(world_ci);
                     brep.geom.edge_curve_range.push(Some(world_range));
@@ -434,60 +429,20 @@ impl BRep {
                 }
             }
         }
-        // Rebuild solids from topods solids + populate geom stores
-        let mut flat_fi = 0usize;
+        // Collect curve2ds from edge CurveOnSurface representations
         for ts in &t.tshapes {
-            if let topods::TShape::Solid(sd) = &**ts {
-                let mut shells = Vec::new();
-                for shell_sr in &sd.shells {
-                    if let topods::TShape::Shell(shd) = &*t.tshapes[shell_sr.index] {
-                        let mut faces = Vec::new();
-                        for face_sr in &shd.faces {
-                            if let topods::TShape::Face(fd) = &*t.tshapes[face_sr.index] {
-                                let outer_wire = Self::wire_from_topods(t, &e_map, &fd.outer_wire);
-                                let inner_wires: Vec<topology::Wire> = fd.inner_wires.iter()
-                                    .map(|sr| Self::wire_from_topods(t, &e_map, sr)).collect();
-                                let surface = if instance_loc != glam::DAffine3::IDENTITY {
-                                    fd.surface.map(|si| crate::geom::transform_surface(&t.surfaces[si], &instance_loc))
-                                } else {
-                                    fd.surface.map(|si| t.surfaces[si].clone())
-                                };
-                                let surf_idx = surface.map(|s| { let si = brep.geom.surfaces.len(); brep.geom.surfaces.push(s); si });
-                                let sample_pt = fd.sample_point.map(|p| instance_loc.transform_point3(p));
-                                faces.push(topology::Face {
-                                    outer_wire,
-                                    inner_wires,
-                                    normal: DVec3::Z,
-                                    triangles: Vec::new(),
-                                    sample_point: sample_pt,
-                                    mesh_dirty: true,
-                                    surface_idx: surf_idx,
-                                });
-                                while brep.geom.face_surface.len() <= flat_fi {
-                                    brep.geom.face_surface.push(None);
-                                }
-                                brep.geom.face_surface[flat_fi] = surf_idx;
-                                while brep.geom.face_surface_range.len() <= flat_fi {
-                                    brep.geom.face_surface_range.push(None);
-                                }
-                                brep.geom.face_surface_range[flat_fi] = fd.uv_domain;
-                                let internal_vtx: Vec<usize> = fd.internal_vertices.iter()
-                                    .filter_map(|sr| v_map.get(sr.index).copied())
-                                    .collect();
-                                while brep.geom.face_internal_vertices.len() <= flat_fi {
-                                    brep.geom.face_internal_vertices.push(Vec::new());
-                                }
-                                brep.geom.face_internal_vertices[flat_fi] = internal_vtx;
-                                flat_fi += 1;
-                            }
+            if let topods::TShape::Edge(ed) = &**ts {
+                for rep in &ed.representations {
+                    match rep {
+                        topods::CurveRepresentation::CurveOnSurface { pcurve, .. }
+                        | topods::CurveRepresentation::CurveOnClosedSurface { pcurve1: pcurve, .. } => {
+                            brep.geom.curve2ds.push(pcurve.clone());
                         }
-                        shells.push(topology::Shell { faces });
+                        _ => {}
                     }
                 }
-                brep.solids.push(topology::Solid { shells });
             }
         }
-        brep.geom.curve2ds = t.curve2ds.clone();
         brep
     }
 
@@ -515,20 +470,12 @@ impl BRep {
                         0
                     });
                     brep.edges.push(Edge { start: vi, end: vj });
-                    brep.geom.edge_curve.push(ed.curve);
-                    brep.geom.edge_curve_range.push(Some(ed.range));
-                    brep.geom.edge_vertex_params.push(Some([
-                        ed.vertex_params.get(&ed.first.index).copied().unwrap_or(ed.range[0]),
-                        ed.vertex_params.get(&ed.last.index).copied().unwrap_or(ed.range[1]),
-                    ]));
-                }
-                topods::TShape::Edge(ed) => {
-                    let fi = brep.edges.len(); // flat edge index
-                    e_map.insert(ti, fi);       // topods tshape index -> flat index
-                    let vi = v_map.get(ed.first.index).copied().unwrap_or(0);
-                    let vj = v_map.get(ed.last.index).copied().unwrap_or(0);
-                    brep.edges.push(Edge { start: vi, end: vj });
-                    brep.geom.edge_curve.push(ed.curve);
+                    let ci = ed.curve.as_ref().map(|crv| {
+                        let idx = brep.geom.curves.len();
+                        brep.geom.curves.push(crv.clone());
+                        idx
+                    });
+                    brep.geom.edge_curve.push(ci);
                     brep.geom.edge_curve_range.push(Some(ed.range));
                     brep.geom.edge_vertex_params.push(Some([
                         ed.vertex_params.get(&ed.first.index).copied().unwrap_or(ed.range[0]),
@@ -580,6 +527,11 @@ impl BRep {
                                 let outer_wire = Self::wire_from_topods(t, &e_map, &fd.outer_wire);
                                 let inner_wires: Vec<topology::Wire> = fd.inner_wires.iter()
                                     .map(|sr| Self::wire_from_topods(t, &e_map, sr)).collect();
+                                let surf_idx = fd.surface.as_ref().map(|s| {
+                                    let si = brep.geom.surfaces.len();
+                                    brep.geom.surfaces.push(s.clone());
+                                    si
+                                });
                                 faces.push(topology::Face {
                                     outer_wire,
                                     inner_wires,
@@ -587,12 +539,12 @@ impl BRep {
                                     triangles: Vec::new(),
                                     sample_point: fd.sample_point,
                                     mesh_dirty: true,
-                                    surface_idx: fd.surface,
+                                    surface_idx: surf_idx,
                                 });
                                 while brep.geom.face_surface.len() <= flat_fi {
                                     brep.geom.face_surface.push(None);
                                 }
-                                brep.geom.face_surface[flat_fi] = fd.surface;
+                                brep.geom.face_surface[flat_fi] = surf_idx;
                                 while brep.geom.face_surface_range.len() <= flat_fi {
                                     brep.geom.face_surface_range.push(None);
                                 }
@@ -614,9 +566,35 @@ impl BRep {
                 brep.solids.push(topology::Solid { shells });
             }
         }
-        brep.geom.curves = t.curves.clone();
-        brep.geom.surfaces = t.surfaces.clone();
-        brep.geom.curve2ds = t.curve2ds.clone();
+        // Collect curves from edges
+        for ts in &t.tshapes {
+            if let topods::TShape::Edge(ed) = &**ts {
+                if let Some(ref crv) = ed.curve {
+                    let ci = brep.geom.curves.len();
+                    brep.geom.curves.push(crv.clone());
+                    brep.geom.edge_curve.push(Some(ci));
+                } else {
+                    brep.geom.edge_curve.push(None);
+                }
+                brep.geom.edge_curve_range.push(Some(ed.range));
+                let pcurves: Vec<crate::PCurve> = ed.representations.iter().filter_map(|rep| {
+                    match rep {
+                        topods::CurveRepresentation::CurveOnSurface { face: _, pcurve, .. } => {
+                            let ci = brep.geom.curve2ds.len();
+                            brep.geom.curve2ds.push(pcurve.clone());
+                            Some(crate::PCurve { surface_idx: 0, curve2d_idx: ci })
+                        }
+                        topods::CurveRepresentation::CurveOnClosedSurface { face: _, pcurve1, .. } => {
+                            let ci = brep.geom.curve2ds.len();
+                            brep.geom.curve2ds.push(pcurve1.clone());
+                            Some(crate::PCurve { surface_idx: 0, curve2d_idx: ci })
+                        }
+                        _ => None,
+                    }
+                }).collect();
+                brep.geom.edge_pcurves.push(pcurves);
+            }
+        }
         brep
     }
 

@@ -268,7 +268,7 @@ pub enum CurveRepresentation {
 pub struct TEdgeData {
     pub my_shapes: Vec<ShapeRef>,
     pub flags: u16,
-    pub curve: Option<usize>,
+    pub curve: Option<Curve3>,
     pub first: ShapeRef,
     pub last: ShapeRef,
     pub range: [f64; 2],
@@ -299,7 +299,7 @@ pub struct TWireData {
 pub struct TFaceData {
     pub my_shapes: Vec<ShapeRef>,
     pub flags: u16,
-    pub surface: Option<usize>,
+    pub surface: Option<Surface3>,
     /// TopLoc_Location index for the face surface; 0 = identity.
     /// OCCT BRep_TFace::Location — transforms surface to world coordinates.
     #[serde(default)]
@@ -341,9 +341,6 @@ pub struct TSolidData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BRep {
     pub tshapes: Vec<Arc<TShape>>,
-    pub curves: Vec<Curve3>,
-    pub surfaces: Vec<Surface3>,
-    pub curve2ds: Vec<crate::geom::Curve2d>,
     /// 3D transformations (TopLoc_Location equivalent). Index 0 = identity.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub locations: Vec<glam::DAffine3>,
@@ -352,32 +349,13 @@ pub struct BRep {
     #[serde(skip)]
     pub vert_by_pos: HashMap<VertexKey, ShapeRef>,
     /// OCCT-aligned: face identity cache — wire key → ShapeRef.
-    /// Two faces with the same surface and wire structure share the same TShape::Face.
-    /// Key: (surface_index, outer_wire.ptr_id as usize, sorted inner_wire.ptr_ids as usize).
+    /// Two faces with the same wire structure share the same TShape::Face.
+    /// Key: (outer_wire.ptr_id as usize, sorted inner_wire.ptr_ids as usize).
     #[serde(skip)]
-    pub face_by_key: HashMap<(Option<usize>, usize, Vec<usize>), ShapeRef>,
-    /// OCCT-aligned: edge identity cache — (first, last, curve, degenerated) → ShapeRef.
+    pub face_by_key: HashMap<(usize, Vec<usize>), ShapeRef>,
+    /// OCCT-aligned: edge identity cache — (first, last, degenerated) → ShapeRef.
     #[serde(skip)]
-    pub edge_by_key: HashMap<(u64, u64, usize, bool), ShapeRef>,
-}
-
-/// Curve dedup: same geometric curve → same index.
-pub fn find_or_add_curve3(curves: &mut Vec<Curve3>, curve: &Curve3) -> usize {
-    for (i, c) in curves.iter().enumerate() {
-        match (c, curve) {
-            (Curve3::Line(la), Curve3::Line(lb)) =>
-                if (la.origin - lb.origin).length_squared() < 1e-20
-                    && la.direction.dot(lb.direction) > 0.999999 { return i; },
-            (Curve3::Circle(ca), Curve3::Circle(cb)) =>
-                if (ca.center - cb.center).length_squared() < 1e-20
-                    && (ca.radius - cb.radius).abs() < 1e-20
-                    && ca.normal.dot(cb.normal) > 0.999999 { return i; },
-            _ => if std::ptr::eq(c as *const _, curve as *const _) { return i; },
-        }
-    }
-    let idx = curves.len();
-    curves.push(curve.clone());
-    idx
+    pub edge_by_key: HashMap<(u64, u64, bool), ShapeRef>,
 }
 
 impl Default for BRep {
@@ -388,9 +366,6 @@ impl BRep {
     pub fn new() -> Self {
         Self {
             tshapes: Vec::new(),
-            curves: Vec::new(),
-            surfaces: Vec::new(),
-            curve2ds: Vec::new(),
             locations: Vec::new(),
             vert_by_pos: HashMap::new(),
             face_by_key: HashMap::new(),
@@ -432,9 +407,9 @@ impl BRep {
         sr
     }
 
-    pub fn add_tedge(&mut self, curve: Option<usize>, first: ShapeRef, last: ShapeRef, range: [f64; 2]) -> ShapeRef {
-        // OCCT-aligned: identity cache — same (first, last, curve) → same TShape::Edge.
-        let ekey = (first.ptr_id, last.ptr_id, curve.unwrap_or(usize::MAX), false);
+    pub fn add_tedge(&mut self, curve: Option<Curve3>, first: ShapeRef, last: ShapeRef, range: [f64; 2]) -> ShapeRef {
+        // OCCT-aligned: edge identity by (first, last) — curve carried on TShape directly.
+        let ekey = (first.ptr_id, last.ptr_id, false);
         if let Some(&sr) = self.edge_by_key.get(&ekey) {
             return sr;
         }
@@ -455,11 +430,11 @@ impl BRep {
         ShapeRef { ptr_id, index, orientation: Orientation::Forward, location: 0 }
     }
 
-    pub fn add_tface(&mut self, surface: Option<usize>, outer_wire: ShapeRef, inner_wires: Vec<ShapeRef>, sample_point: Option<DVec3>, uv_domain: Option<[f64; 4]>, internal_vertices: Vec<ShapeRef>, natural_restriction: bool) -> ShapeRef {
-        // OCCT-aligned: identity-based sharing — same surface + wire structure → same TShape::Face.
+    pub fn add_tface(&mut self, surface: Option<Surface3>, outer_wire: ShapeRef, inner_wires: Vec<ShapeRef>, sample_point: Option<DVec3>, uv_domain: Option<[f64; 4]>, internal_vertices: Vec<ShapeRef>, natural_restriction: bool) -> ShapeRef {
+        // OCCT-aligned: identity-based sharing — same wire structure → same TShape::Face.
         let mut inners: Vec<usize> = inner_wires.iter().map(|w| w.ptr_id as usize).collect();
         inners.sort_unstable();
-        let key = (surface, outer_wire.ptr_id as usize, inners);
+        let key = (outer_wire.ptr_id as usize, inners);
         if let Some(&sr) = self.face_by_key.get(&key) {
             return sr;
         }
@@ -532,7 +507,7 @@ impl BRep {
             TShape::Edge(ed) => Arc::new(TShape::Edge(TEdgeData {
                 my_shapes: Vec::new(),
                 flags: ed.flags,
-                curve: ed.curve,
+                curve: ed.curve.clone(),
                 first: ShapeRef::NULL,
                 last: ShapeRef::NULL,
                 range: ed.range,
@@ -552,7 +527,7 @@ impl BRep {
             TShape::Face(fd) => Arc::new(TShape::Face(TFaceData {
                 my_shapes: Vec::new(),
                 flags: fd.flags,
-                surface: fd.surface,
+                surface: fd.surface.clone(),
                 surface_location: fd.surface_location,
                 outer_wire: ShapeRef::NULL,
                 inner_wires: Vec::new(),
@@ -817,9 +792,9 @@ pub trait BRepTool {
     }
 
     /// BRep_Tool::Curve(aE) — raw 3D curve reference (no Location applied).
-    /// Returns the curve index into the geometry pool.
-    fn edge_curve_idx(&self, e: ShapeRef) -> Option<usize> {
-        self.edge_data(e).and_then(|ed| ed.curve)
+    /// Returns the curve data directly (OCCT-aligned: geometry on TShape).
+    fn edge_curve_data(&self, e: ShapeRef) -> Option<Curve3> {
+        self.edge_data(e).and_then(|ed| ed.curve.clone())
     }
 
     /// BRep_Tool::Range(aE) — 3D curve parameter range.
@@ -901,47 +876,43 @@ impl BRepTool for BRep {
     }
 
     fn face_surface(&self, face: ShapeRef) -> Option<&Surface3> {
-        let fi = face.index;
-        self.face(face).surface.map(|si| &self.surfaces[si])
+        self.face(face).surface.as_ref()
     }
 
     fn face_surface_world(&self, face: ShapeRef) -> Option<Surface3> {
         let fd = self.face(face);
-        let surface = fd.surface.and_then(|si| self.surfaces.get(si))?;
+        let surface = fd.surface.as_ref()?.clone();
         let loc = self.get_location(face.location);
         if loc == glam::DAffine3::IDENTITY {
-            Some(surface.clone())
+            Some(surface)
         } else {
-            Some(crate::geom::transform_surface(surface, &loc))
+            Some(crate::geom::transform_surface(&surface, &loc))
         }
     }
 
     fn edge_curve_world(&self, edge: ShapeRef) -> Option<(Curve3, [f64; 2])> {
         let ed = self.edge(edge);
-        let ci = ed.curve?;
-        let crv = &self.curves[ci];
+        let crv = ed.curve.as_ref()?.clone();
         let loc = self.get_location(edge.location);
         if loc == glam::DAffine3::IDENTITY {
-            Some((crv.clone(), ed.range))
+            Some((crv, ed.range))
         } else {
-            Some((crate::geom::transform_curve(crv, &loc), ed.range))
+            Some((crate::geom::transform_curve(&crv, &loc), ed.range))
         }
     }
 
     fn u_resolution(&self, face: ShapeRef, tol3d: f64) -> f64 {
-        let surf_idx = match self.face(face).surface {
-            Some(si) => si,
-            None => return tol3d,
-        };
-        u_resolution_for_surface(&self.surfaces[surf_idx], tol3d)
+        match self.face(face).surface.as_ref() {
+            Some(surf) => u_resolution_for_surface(surf, tol3d),
+            None => tol3d,
+        }
     }
 
     fn v_resolution(&self, face: ShapeRef, tol3d: f64) -> f64 {
-        let surf_idx = match self.face(face).surface {
-            Some(si) => si,
-            None => return tol3d,
-        };
-        v_resolution_for_surface(&self.surfaces[surf_idx], tol3d)
+        match self.face(face).surface.as_ref() {
+            Some(surf) => v_resolution_for_surface(surf, tol3d),
+            None => tol3d,
+        }
     }
 
     fn tolerance(&self, s: ShapeRef) -> f64 {
@@ -1110,7 +1081,7 @@ impl BRepBuilder {
 
     /// Add an edge with curve, vertices, and range.
     pub fn add_edge(&mut self, brep: &mut BRep,
-        curve: Option<usize>, v1: ShapeRef, v2: ShapeRef, range: [f64; 2]) -> ShapeRef {
+        curve: Option<Curve3>, v1: ShapeRef, v2: ShapeRef, range: [f64; 2]) -> ShapeRef {
         brep.add_tedge(curve, v1, v2, range)
     }
 
@@ -1188,7 +1159,7 @@ impl BRepBuilder {
 
     /// Make a face from a surface and outer wire.
     pub fn make_face(&mut self, brep: &mut BRep,
-        surface: Option<usize>, outer_wire: ShapeRef) -> ShapeRef {
+        surface: Option<Surface3>, outer_wire: ShapeRef) -> ShapeRef {
         brep.add_tface(surface, outer_wire, vec![], None, None, vec![], true)
     }
 
@@ -1209,7 +1180,7 @@ impl BRepBuilder {
     /// Add an edge with section-curve semantics (MakeSectEdge equivalent).
     /// Creates an edge with pcurves for both faces.
     pub fn add_section_edge(&mut self, brep: &mut BRep,
-        curve: Option<usize>, v1: ShapeRef, v2: ShapeRef, range: [f64; 2],
+        curve: Option<Curve3>, v1: ShapeRef, v2: ShapeRef, range: [f64; 2],
         pc_a: Option<&Curve2d>, face_a: Option<ShapeRef>,
         pc_b: Option<&Curve2d>, face_b: Option<ShapeRef>,
     ) -> ShapeRef {

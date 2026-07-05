@@ -778,8 +778,7 @@ impl ResultBuilder {
             };
             let sv_sr = t.add_tvertex(ds.vertices[sv].point);
             let ev_sr = t.add_tvertex(ds.vertices[ev].point);
-            let ci = topods::find_or_add_curve3(&mut t.curves, &e.curve);
-            let e_sr = t.add_tedge(Some(ci), sv_sr, ev_sr, e.t_range);
+            let e_sr = t.add_tedge(Some(e.curve.clone()), sv_sr, ev_sr, e.t_range);
             outer_edges.push(e_sr);
             prev_end = Some(ev);
         }
@@ -800,8 +799,7 @@ impl ResultBuilder {
                 };
                 let sv_sr = t.add_tvertex(ds.vertices[sv].point);
                 let ev_sr = t.add_tvertex(ds.vertices[ev].point);
-                let ci = topods::find_or_add_curve3(&mut t.curves, &e.curve);
-                let e_sr = t.add_tedge(Some(ci), sv_sr, ev_sr, e.t_range);
+                let e_sr = t.add_tedge(Some(e.curve.clone()), sv_sr, ev_sr, e.t_range);
                 wire_edges.push(e_sr);
             }
             if wire_edges.len() >= 2 {
@@ -809,10 +807,8 @@ impl ResultBuilder {
             }
         }
 
-        let surf_idx = t.surfaces.len();
-        t.surfaces.push(face.surface.clone());
         let sample_pt = ds.vertices[face.boundary_verts.first().copied().unwrap_or(0)].point;
-        let face_sr = t.add_tface(Some(surf_idx), outer_wire, inner_wires,
+        let face_sr = t.add_tface(Some(face.surface.clone()), outer_wire, inner_wires,
             Some(sample_pt), None, vec![], ds.faces[fi].natural_restriction);
         face_refs.push(face_sr);
         self.face_origins.push(origin);
@@ -1137,18 +1133,14 @@ impl ResultBuilder {
             let last = if v2 < self.vertices.len() {
                 t.add_tvertex(self.vertices[v2])
             } else { ShapeRef::NULL };
-            let curve_idx = self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
-                let ci = t.curves.len();
-                t.curves.push(crv.clone());
-                ci
-            });
+            let curve = self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).cloned();
             let curve_range = self.custom_edge_ranges.get(ei).and_then(|r| *r)
                 .or_else(|| self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
                     use rcad_kernel::geom::CurveEval;
                     crv.default_domain()
                 }))
                 .unwrap_or([0.0, 1.0]);
-            let e_ref = t.add_tedge(curve_idx, first, last, curve_range);
+            let e_ref = t.add_tedge(curve, first, last, curve_range);
             while e_map.len() <= ei { e_map.push(ShapeRef::NULL); }
             e_map[ei] = e_ref;
         }
@@ -1192,15 +1184,11 @@ impl ResultBuilder {
         }
 
         // Face
-        let surf_idx = t.surfaces.len();
-        t.surfaces.push(surface.clone());
-        // face_internal_vtx stores raw vertex indices; map to ShapeRef via vi_to_ti-like
-        // lookup for consistency with build_topods_faces.  For incremental emission, skip
-        // internal vertices (handled by post-processing, not critical for topology).
+        // surface passed directly to add_tface (OCCT-aligned: geometry on TShape)
         let internal_vtx: Vec<ShapeRef> = Vec::new();
         let nr = self.face_natural_restriction.get(fi)
             .copied().unwrap_or(false);
-        let face_sr = t.add_tface(Some(surf_idx), outer_wire, inner_wires,
+        let face_sr = t.add_tface(Some(surface.clone()), outer_wire, inner_wires,
             Some(*sample_point), *_uv_domain, internal_vtx, nr);
         face_refs.push(face_sr);
     }
@@ -1231,18 +1219,14 @@ impl ResultBuilder {
         for (ei, &(start, end)) in self.edges.iter().enumerate() {
             let first = ShapeRef::synthetic(vi_to_ti[start]);
             let last = ShapeRef::synthetic(vi_to_ti[end]);
-            let curve_idx = self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
-                let ci = t.curves.len();
-                t.curves.push(crv.clone());
-                ci
-            });
+            let curve = self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).cloned();
             let curve_range = self.custom_edge_ranges.get(ei).and_then(|r| *r)
                 .or_else(|| self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
                     use rcad_kernel::geom::CurveEval;
                     crv.default_domain()
                 }))
                 .unwrap_or([0.0, 1.0]);
-            e_map.push(t.add_tedge(curve_idx, first, last, curve_range));
+            e_map.push(t.add_tedge(curve, first, last, curve_range));
         }
 
         // 3. Faces → TShape::Face (with wires) — only for faces NOT yet in face_refs.
@@ -1305,12 +1289,10 @@ impl ResultBuilder {
                 }
             }
 
-            let surf_idx = t.surfaces.len();
-            t.surfaces.push(surface.clone());
             let internal_vtx: Vec<ShapeRef> = self.face_internal_vtx.get(flat_fi)
                 .map_or(vec![], |v| v.iter().map(|&vi| ShapeRef::synthetic(vi_to_ti.get(vi).copied().unwrap_or(vi))).collect());
             let nr = self.face_natural_restriction.get(flat_fi).copied().unwrap_or(true);
-            face_refs.push(t.add_tface(Some(surf_idx), outer_wire, inner_wires, Some(*sample_point), *_uv_domain, internal_vtx, nr));
+            face_refs.push(t.add_tface(Some(surface.clone()), outer_wire, inner_wires, Some(*sample_point), *_uv_domain, internal_vtx, nr));
         }
     }
 
