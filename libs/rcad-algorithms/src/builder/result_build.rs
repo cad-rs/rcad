@@ -115,7 +115,7 @@ impl<'a> BooleanBuilder<'a> {
                 // OCCT L681-691: if (myImages.IsBound(aS)) { add split images }
                 let has_images = if is_edge {
                     self.my_images.borrow().contains_key(
-                        &rcad_kernel::topods::ShapeRef::new(local_idx))
+                        &self.brep_sr(flat_idx))
                 } else if is_face {
                     // Face has images if DS face produces multiple result faces
                     let (o_exp, sfi) = if side_is_args {
@@ -156,7 +156,7 @@ impl<'a> BooleanBuilder<'a> {
                         }
                     } else if is_edge {
                         if let Some(imgs) = self.my_images.borrow().get(
-                            &rcad_kernel::topods::ShapeRef::new(local_idx))
+                            &self.brep_sr(flat_idx))
                         {
                             for &sr in imgs {
                                 a_ms_im.insert(e_base + sr.index);
@@ -575,7 +575,7 @@ impl<'a> BooleanBuilder<'a> {
         for (vi, v) in self.ds.vertices.iter().enumerate() {
             if v.is_internal {
                 // OCCT L691-706: check myImages.IsBound �?add split images or original
-                let v_ref = rcad_kernel::topods::ShapeRef::new(vi);
+                let v_ref = self.brep_sr(vi);
                 if self.my_images.borrow().contains_key(&v_ref) {
                     for img in &self.my_images.borrow()[&v_ref] {
                         a_msi.insert(img.index);
@@ -588,7 +588,7 @@ impl<'a> BooleanBuilder<'a> {
         // Collect internal edges (OCCT L665-675: WIRE �?iterate edges; L677-679: EDGE directly)
         for (ei, e) in self.ds.edges.iter().enumerate() {
             if e.is_internal {
-                let e_ref = rcad_kernel::topods::ShapeRef::new(ei);
+                let e_ref = self.brep_sr(self.ds.vertices.len() + ei);
                 if self.my_images.borrow().contains_key(&e_ref) {
                     for img in &self.my_images.borrow()[&e_ref] {
                         a_msi.insert(img.index);
@@ -797,7 +797,8 @@ impl<'a> BooleanBuilder<'a> {
     ///   L314-341: build new compound from sub-shape images; store in myImages.
     ///   �?rcad: no compound nesting in DS.  Flat per-face source_compsolid_idx.
     ///     The recursive FillImagesCompound is collapsed to a single level.
-    fn fill_images_compounds(&self, result: &mut ResultBuilder, t: &mut topods::BRep) {
+    fn fill_images_compounds(&self, result: &mut ResultBuilder) {
+        let mut t = self.my_shape.borrow_mut();
         // OCCT L199-200: aMFP fence map �?prevents reprocessing the same compound.
         //   rcad: HashSet of processed compsolid indices.
         let mut a_mfp: std::collections::HashSet<usize> = std::collections::HashSet::new();
@@ -903,7 +904,7 @@ impl<'a> BooleanBuilder<'a> {
                     .collect();
                 if !solid_refs.is_empty() {
                     let cmp_ref = t.add_tcompound(solid_refs);
-                    let ckey = topods::ShapeRef::new(usize::MAX - a_c_im.len());
+                    let ckey = topods::ShapeRef::synthetic(usize::MAX - a_c_im.len());
                     self.my_images.borrow_mut().entry(ckey).or_default().push(cmp_ref);
                     result.compsolid_groups.push(cmp_ref);
                 }
@@ -949,129 +950,66 @@ impl<'a> BooleanBuilder<'a> {
     ///   OCCT L133: aMFence fence map.
     ///   L136-167: for each source argument of matching type �?if myImages bound
     ///     �?add all image shapes; else �?add the original shape.
-    ///   rcad: adapts to topods::BRep TShape factory + ResultBuilder storage.
-    fn build_result(&self, shape_type: ShapeType, result: &mut ResultBuilder, t: &mut topods::BRep) {
-        // OCCT L133: NCollection_Map<TopoDS_Shape> aMFence �?dedup shapes in result.
-        //   rcad: unique-indexed arrays make a fence unnecessary, but the form is kept.
-        #[allow(unused)]
-        let mut a_m_fence: Vec<usize> = Vec::new();
-
-        // OCCT L136-167: iterate all source arguments of matching type.
-        //   rcad: source entities vary by type (DS arrays, result data).
-        match shape_type {
-    ShapeType::Vertex => {
-        // �?OCCT-aligned: BuildResult (Builder_1.cxx L130-168).
-        //   Iterate all source arguments of type VERTEX �?add images to myShape.
-        //   If no images, add the original vertex.
-        //   rcad: source vertices = DS vertices 0..a_vc (A) + a_vc.. (B).
-        let a_vc = self.ds.a_vertex_count;
-        let nv = self.ds.vertices.len();
-        for side in 0..2usize {
-            let (start, end) = if side == 0 { (0usize, a_vc.min(nv)) } else { (a_vc, nv) };
-            for vi in start..end {
-                // OCCT L145: myImages.Seek(aS) �?check if vertex has split image
-                let sref = rcad_kernel::topods::ShapeRef::new(vi);
-                let has_images = self.my_images.borrow().contains_key(&sref);
-                if !has_images {
-                    // OCCT L149-152: no images �?add the original shape
-                    let pt = self.ds.vertices[vi].point;
-                    let _rvi = result.add_ds_vertex(vi, pt);
-                    t.add_tvertex(pt);
-                } else {
-                    // OCCT L156-165: add images of the argument shape into result
-                    let images = self.my_images.borrow().get(&sref).unwrap().clone();
-                    for img in &images {
-                        let vi_img = img.index;
-                        if vi_img < self.ds.vertices.len() {
-                            let pt = self.ds.vertices[vi_img].point;
-                            let _rvi = result.add_ds_vertex(vi_img, pt);
-                            t.add_tvertex(pt);
-                        }
+    /// ✅ OCCT-aligned: BuildResult (Builder_1.cxx L130-168).
+    ///   Generic loop over myArguments matching OCCT form for ALL types.
+    fn build_result(&self, topods_type: rcad_kernel::topods::ShapeType, result: &mut ResultBuilder, t: &mut rcad_kernel::topods::BRep) {
+        let mut a_m_fence: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        // Init ds_edge_to_tshape before the generic loop processes edges.
+        if topods_type == rcad_kernel::topods::ShapeType::Edge && result.ds_edge_to_tshape.is_empty() {
+            result.ds_edge_to_tshape = vec![rcad_kernel::topods::ShapeRef::NULL; self.ds.edges.len()];
+        }
+        let args = self.my_arguments.borrow();
+        for a_s in args.iter() {
+            if a_s.shape_type(&*t) != topods_type { continue; }
+            let has_images = self.my_images.borrow().contains_key(a_s);
+            if !has_images {
+                if a_m_fence.insert(a_s.index) {
+                    self.add_to_result(*a_s, topods_type, result, t);
+                }
+            } else if let Some(imgs) = self.my_images.borrow().get(a_s) {
+                for &img_sr in imgs {
+                    if a_m_fence.insert(img_sr.index) {
+                        self.add_to_result(img_sr, topods_type, result, t);
                     }
                 }
             }
         }
     }
-            ShapeType::Edge => {
-                // OCCT L130-168 (TopAbs_EDGE): add split edge images to myShape.
-                //   rcad: iterate myImages(EDGE) entries, create TShape::Edge for each.
-                //   Stores actual TShape positions in ds_edge_to_tshape for downstream
-                //   Wire/Face building (eliminates A5 flat-index architecture gap).
-                let e_base = self.ds.vertices.len();
-                // Ensure vertex TShapes exist (needed by edge creation)
-                for vi in 0..self.ds.vertices.len() {
-                    let vr = rcad_kernel::topods::ShapeRef::new(vi);
-                    if t.tshapes.len() <= vi {
-                        let pt = self.ds.vertices[vi].point;
-                        let sv = t.add_tvertex(pt);
-                        t.vertex_mut(sv).tolerance = self.ds.vertices[vi].geom_tol
-                            .max(crate::tolerance::TOLERANCE_ABS);
-                        let _ = vr;
-                    }
-                }
-                // Init ds_edge_to_tshape with NULL placeholders for all DS edges
-                let n_edges = self.ds.edges.len();
-                result.ds_edge_to_tshape = vec![topods::ShapeRef::NULL; n_edges];
-                // Iterate A and B side source edges
-                let a_ec = self.ds.a_edge_count;
-                for side in 0..2usize {
-                    let (start, end) = if side == 0 {
-                        (0usize, a_ec.min(n_edges))
-                    } else {
-                        (a_ec, n_edges)
-                    };
-                    for ei in start..end {
-                        let aE = rcad_kernel::topods::ShapeRef::new(e_base + ei);
-                        let has_images = self.my_images.borrow().contains_key(&aE);
-                        if !has_images {
-                            // OCCT L149-152: no images — add original edge
-                            let edge = &self.ds.edges[ei];
-                            let sv_sr = t.add_tvertex(self.ds.vertices[edge.start_vertex].point);
-                            let ev_sr = t.add_tvertex(self.ds.vertices[edge.end_vertex].point);
-                            let ci = t.curves.len();
-                            t.curves.push(edge.curve.clone());
-                            let te = t.add_tedge(Some(ci), sv_sr, ev_sr, edge.t_range);
-                            result.ds_edge_to_tshape[ei] = te;
-                            if self.ds.is_edge_degenerated(ei) || edge.start_vertex == edge.end_vertex {
-                                t.edge_mut(te).degenerated = true;
-                            }
-                        } else {
-                            // OCCT L156-165: add split images
-                            let images = self.my_images.borrow().get(&aE).unwrap().clone();
-                            for img in &images {
-                                let nSpR = img.index.saturating_sub(e_base);
-                                if nSpR >= n_edges { continue; }
-                                let edge = &self.ds.edges[nSpR];
-                                let sv_sr = t.add_tvertex(self.ds.vertices[edge.start_vertex].point);
-                                let ev_sr = t.add_tvertex(self.ds.vertices[edge.end_vertex].point);
-                                let ci = t.curves.len();
-                                t.curves.push(edge.curve.clone());
-                                let te = t.add_tedge(Some(ci), sv_sr, ev_sr, edge.t_range);
-                                result.ds_edge_to_tshape[nSpR] = te;
-                                if self.ds.is_edge_degenerated(nSpR) || edge.start_vertex == edge.end_vertex {
-                                    t.edge_mut(te).degenerated = true;
-                                }
-                            }
-                        }
-                    }
+
+    /// OCCT-aligned: add a ShapeRef to result (equivalent to BRep_Builder.Add(myShape, aS)).
+    ///   Handles ALL shape types — populates ResultBuilder data structures.
+    fn add_to_result(&self, a_s: rcad_kernel::topods::ShapeRef, topods_type: rcad_kernel::topods::ShapeType,
+                     result: &mut ResultBuilder, t: &mut rcad_kernel::topods::BRep) {
+        match topods_type {
+            rcad_kernel::topods::ShapeType::Vertex => {
+                let vi = a_s.index;
+                if vi < self.ds.vertices.len() {
+                    result.add_ds_vertex(vi, self.ds.vertices[vi].point);
                 }
             }
-            ShapeType::Wire => {
-                // OCCT L130-168 (TopAbs_WIRE): create wire TShapes from DSWire edges.
-                // Edges already exist in t_brep from BuildResult(EDGE).
-                // Use ds_edge_to_tshape mapping for correct TShape positions (A5 fix).
+            rcad_kernel::topods::ShapeType::Edge => {
                 let e_base = self.ds.vertices.len();
-                result.wire_refs = Vec::with_capacity(self.ds.wires.len());
-                for wi in 0..self.ds.wires.len() {
-                    let w_ref = rcad_kernel::topods::ShapeRef::new(e_base + self.ds.edges.len() + wi);
-                    // Check wire image for replacement edges
-                    let mut wire_edges: Vec<rcad_kernel::topods::ShapeRef> = Vec::new();
+                let ei = a_s.index.saturating_sub(e_base);
+                if ei < self.ds.edges.len() {
+                    let edge = &self.ds.edges[ei];
+                    let sv_sr = t.add_tvertex(self.ds.vertices[edge.start_vertex].point);
+                    let ev_sr = t.add_tvertex(self.ds.vertices[edge.end_vertex].point);
+                    let ci = rcad_kernel::topods::find_or_add_curve3(&mut t.curves, &edge.curve);
+                    let te = t.add_tedge(Some(ci), sv_sr, ev_sr, edge.t_range);
+                    result.ds_edge_to_tshape[ei] = te;
+                }
+            }
+            rcad_kernel::topods::ShapeType::Wire => {
+                let e_base = self.ds.vertices.len();
+                let wi = a_s.index.saturating_sub(e_base + self.ds.edges.len());
+                if wi < self.ds.wires.len() {
+                    let w_ref = self.brep_sr(e_base + self.ds.edges.len() + wi);
+                    let mut wire_edges = Vec::new();
                     if let Some(imgs) = self.my_images.borrow().get(&w_ref) {
                         for &img_sr in imgs {
-                            // Convert flat-index myImages ref to actual TShape position
                             let nSpR = img_sr.index.saturating_sub(e_base);
                             if nSpR < result.ds_edge_to_tshape.len()
-                                && result.ds_edge_to_tshape[nSpR] != topods::ShapeRef::NULL
+                                && result.ds_edge_to_tshape[nSpR] != rcad_kernel::topods::ShapeRef::NULL
                             {
                                 wire_edges.push(result.ds_edge_to_tshape[nSpR]);
                             }
@@ -1079,108 +1017,55 @@ impl<'a> BooleanBuilder<'a> {
                     } else {
                         for &ei in &self.ds.wires[wi].edges {
                             if ei < result.ds_edge_to_tshape.len()
-                                && result.ds_edge_to_tshape[ei] != topods::ShapeRef::NULL
+                                && result.ds_edge_to_tshape[ei] != rcad_kernel::topods::ShapeRef::NULL
                             {
                                 wire_edges.push(result.ds_edge_to_tshape[ei]);
                             }
                         }
                     }
-                    // Create TShape::Wire in t_brep (but only if we have edges)
                     if !wire_edges.is_empty() {
                         let sr = t.add_twire(wire_edges);
                         t.wire_mut(sr).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
                         result.wire_refs.push(sr);
                     } else {
-                        // No edges — skip this wire
-                        result.wire_refs.push(topods::ShapeRef::NULL);
+                        result.wire_refs.push(rcad_kernel::topods::ShapeRef::NULL);
                     }
                 }
             }
-            ShapeType::Face => {
-                // OCCT L145-165: for each source FACE, check myImages.Seek(aS).
-                //   rcad: result.face_origins tracks which source faces were split.
-                //   rcad: build_faces() validates edge refs before TShape creation.
-                result.build_faces();
-                // OCCT-aligned: use myImages to decide which source faces had split images.
-                let f_base = self.ds.vertices.len() + self.ds.edges.len();
-                let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
-                let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
-                for &fi in &a_faces {
-                    let aS = rcad_kernel::topods::ShapeRef::new(f_base + fi);
-                    if !self.my_images.borrow().contains_key(&aS) {
-                        result.build_original_face(self.ds, fi,
-                            FaceOrigin::FromA(self.ds.faces[fi].source_face_idx));
-                    }
-                }
-                for &fi in &b_faces {
-                    let aS = rcad_kernel::topods::ShapeRef::new(f_base + fi);
-                    if !self.my_images.borrow().contains_key(&aS) {
-                        result.build_original_face(self.ds, fi,
-                            FaceOrigin::FromB(self.ds.faces[fi].source_face_idx));
-                    }
-                }
-                result.build_topods_faces(t);
-            }
-            ShapeType::Shell => {
-                // OCCT L145-165: for each source SHELL, check myImages for shell images.
-                //   rcad: fill_images_containers_shells already created TShape::Shell
-                //   entries in result.shells and my_images.  BuildResult(SHELL) ensures
-                //   the shells are finalized (no additional work needed here since
-                //   the shell creation in fill_images_containers_shells already handles
-                //   the OCCT L274-275 container creation step).
-            }
-            ShapeType::Solid => {
-                // OCCT L130-167: for each source SOLID, check myImages → add images/original.
-                //   ⏳ OCCT-aligned BuildSolid: for FUSE, collect ALL result faces into one solid
-                //   (BOPAlgo_BOP.cxx L902-906).  Non-union solids are already created by
-                //   build_split_solids (stored in result.solids + my_images).
-                if self.op == BooleanOpType::Union && !result.face_refs.is_empty() {
-                    let sf = result.face_refs.clone();
-                    let shell_ref = t.add_tshell(sf);
-                    let solid_ref = t.add_tsolid(vec![shell_ref]);
-                    let so_key = rcad_kernel::topods::ShapeRef::new(usize::MAX - 1 - result.solids.len());
-                    self.my_images.borrow_mut().entry(so_key).or_default().push(solid_ref);
-                    result.solids.push(solid_ref);
+            rcad_kernel::topods::ShapeType::Face => {
+                // Face TShape already created by build_topods_faces or emit_face_topods.
+                if !result.face_refs.iter().any(|&r| !r.is_null() && r.index == a_s.index) {
+                    result.face_refs.push(a_s);
                 }
             }
-            ShapeType::CompSolid => {
-                // OCCT L130-167: aggregate sub-solid images into CompSolid.
-                //   rcad: fill_images_containers_compsolid already created
-                //   TShape::CompSolid entries in result.compsolid_groups.
+            rcad_kernel::topods::ShapeType::Shell => {
+                if !result.shells.contains(&a_s) {
+                    result.shells.push(a_s);
+                }
             }
-            ShapeType::Compound => {
-                // OCCT L130-168: for each source COMPOUND, add its image (or original).
-                //   rcad: fill_images_compounds already created TShape::Compound
-                //   entries in result.compsolid_groups and my_images.
+            rcad_kernel::topods::ShapeType::Solid => {
+                if !result.solids.contains(&a_s) {
+                    result.solids.push(a_s);
+                }
             }
+            rcad_kernel::topods::ShapeType::CompSolid | rcad_kernel::topods::ShapeType::Compound => {}
+            rcad_kernel::topods::ShapeType::Shape => unreachable!(),
         }
     }
 
-    /// �?OCCT-aligned: BOPAlgo_Builder::BuildResult (Builder_1.cxx L130-168).
-    ///   rcad: thin wrapper mapping topods::ShapeType to builder::types::ShapeType.
-    fn build_result_occt(&self, the_type: topods::ShapeType, result: &mut ResultBuilder, t: &mut topods::BRep) {
-        let shape_type = match the_type {
-            topods::ShapeType::Shape => unreachable!("ShapeType::Shape is a null sentinel, never passed to build_result"),
-            topods::ShapeType::Vertex => ShapeType::Vertex,
-            topods::ShapeType::Edge => ShapeType::Edge,
-            topods::ShapeType::Wire => ShapeType::Wire,
-            topods::ShapeType::Face => ShapeType::Face,
-            topods::ShapeType::Shell => ShapeType::Shell,
-            topods::ShapeType::Solid => ShapeType::Solid,
-            topods::ShapeType::CompSolid => ShapeType::CompSolid,
-            topods::ShapeType::Compound => ShapeType::Compound,
-        };
-        self.build_result(shape_type, result, t);
+    /// ✅ OCCT-aligned: BOPAlgo_Builder::BuildResult (Builder_1.cxx L130-168).
+    ///   Thin wrapper: acquires my_shape borrow, delegates to build_result.
+    fn build_result_occt(&self, the_type: topods::ShapeType, result: &mut ResultBuilder) {
+        let mut t = self.my_shape.borrow_mut();
+        self.build_result(the_type, result, &mut *t);
     }
 
     /// �?OCCT-aligned: BOPAlgo_BOP::BuildShape (BOP.cxx L871-906).
     ///   Calls BuildRC (L900) then BuildSolid for FUSE 3D (L902-906).
-    fn build_shape(&self, result: &mut ResultBuilder, t_brep: &mut topods::BRep) {
-        // OCCT L900: BuildRC �?filter solids by boolean operation
-        self.build_rc(result, t_brep);
+    fn build_shape(&self, result: &mut ResultBuilder) {
+        let mut t_brep = self.my_shape.borrow_mut();
+        self.build_rc(result, &mut *t_brep);
         if self.has_errors { return; }
-        // OCCT L902-906: if (FUSE + 3D) BuildSolid
-        //   rcad: Union keeps all filtered solids; no separate BuildSolid needed.
     }
 
     /// �?OCCT-aligned: BOPAlgo_Builder::PostTreat (Builder.cxx L450-475).

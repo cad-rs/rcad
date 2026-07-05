@@ -67,7 +67,7 @@ pub enum ShapeType {
     Compound,
 }
 
-/// Sentinel ptr_id value for ShapeRef::new(usize) — marks synthetic (non-Arc) identity.
+/// Sentinel ptr_id value for ShapeRef::synthetic(usize) — marks synthetic (non-Arc) identity.
 /// High bit patterns avoid collision with real heap addresses.
 const SYNTH_PTR_ID: u64 = 0xFFFFFFFF_DEAD0000;
 
@@ -144,16 +144,15 @@ impl ShapeRef {
     pub const NULL: ShapeRef = ShapeRef { ptr_id: 0, index: usize::MAX, orientation: Orientation::Forward, location: 0 };
 
     /// Construct a synthetic ShapeRef with a computed sentinel ptr_id.
-    /// This is a bridge from flat-index code to the new Arc identity model.
-    /// Prefer BRep::add_t* methods or known Arc-based ShapeRefs instead.
-    #[deprecated(note = "use BRep::add_t* methods or a known Arc-based ShapeRef instead of flat-index construction")]
-    pub const fn new(index: usize) -> Self {
+    /// Use for sentinel keys (shells/solids/compounds) and DS-adaptor code
+    /// where no real TShape Arc pointer is available.
+    pub const fn synthetic(index: usize) -> Self {
         Self { ptr_id: SYNTH_PTR_ID | (index as u64), index, orientation: Orientation::Forward, location: 0 }
     }
-    pub const fn with_orientation(index: usize, orientation: Orientation) -> Self {
+    pub const fn synthetic_with_orientation(index: usize, orientation: Orientation) -> Self {
         Self { ptr_id: SYNTH_PTR_ID | (index as u64), index, orientation, location: 0 }
     }
-    pub const fn with_location(index: usize, orientation: Orientation, location: u32) -> Self {
+    pub const fn synthetic_with_location(index: usize, orientation: Orientation, location: u32) -> Self {
         Self { ptr_id: SYNTH_PTR_ID | (index as u64), index, orientation, location }
     }
     /// Construct a ShapeRef from an Arc<TShape> pointer — real identity.
@@ -357,6 +356,28 @@ pub struct BRep {
     /// Key: (surface_index, outer_wire.ptr_id as usize, sorted inner_wire.ptr_ids as usize).
     #[serde(skip)]
     pub face_by_key: HashMap<(Option<usize>, usize, Vec<usize>), ShapeRef>,
+    /// OCCT-aligned: edge identity cache — (first, last, curve, degenerated) → ShapeRef.
+    #[serde(skip)]
+    pub edge_by_key: HashMap<(u64, u64, usize, bool), ShapeRef>,
+}
+
+/// Curve dedup: same geometric curve → same index.
+pub fn find_or_add_curve3(curves: &mut Vec<Curve3>, curve: &Curve3) -> usize {
+    for (i, c) in curves.iter().enumerate() {
+        match (c, curve) {
+            (Curve3::Line(la), Curve3::Line(lb)) =>
+                if (la.origin - lb.origin).length_squared() < 1e-20
+                    && la.direction.dot(lb.direction) > 0.999999 { return i; },
+            (Curve3::Circle(ca), Curve3::Circle(cb)) =>
+                if (ca.center - cb.center).length_squared() < 1e-20
+                    && (ca.radius - cb.radius).abs() < 1e-20
+                    && ca.normal.dot(cb.normal) > 0.999999 { return i; },
+            _ => if std::ptr::eq(c as *const _, curve as *const _) { return i; },
+        }
+    }
+    let idx = curves.len();
+    curves.push(curve.clone());
+    idx
 }
 
 impl Default for BRep {
@@ -373,6 +394,7 @@ impl BRep {
             locations: Vec::new(),
             vert_by_pos: HashMap::new(),
             face_by_key: HashMap::new(),
+            edge_by_key: HashMap::new(),
         }
     }
 
@@ -411,11 +433,18 @@ impl BRep {
     }
 
     pub fn add_tedge(&mut self, curve: Option<usize>, first: ShapeRef, last: ShapeRef, range: [f64; 2]) -> ShapeRef {
+        // OCCT-aligned: identity cache — same (first, last, curve) → same TShape::Edge.
+        let ekey = (first.ptr_id, last.ptr_id, curve.unwrap_or(usize::MAX), false);
+        if let Some(&sr) = self.edge_by_key.get(&ekey) {
+            return sr;
+        }
         let index = self.tshapes.len();
         let tshape = Arc::new(TShape::Edge(TEdgeData { my_shapes: vec![first, last], flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE, curve, first, last, range, degenerated: false, pcurves: HashMap::new(), representations: Vec::new(), vertex_params: HashMap::new(), tolerance: 0.0, same_parameter: true, same_range: true }));
         let ptr_id = Arc::as_ptr(&tshape) as u64;
+        let sr = ShapeRef { ptr_id, index, orientation: Orientation::Forward, location: 0 };
+        self.edge_by_key.insert(ekey, sr);
         self.tshapes.push(tshape);
-        ShapeRef { ptr_id, index, orientation: Orientation::Forward, location: 0 }
+        sr
     }
 
     pub fn add_twire(&mut self, edges: Vec<ShapeRef>) -> ShapeRef {
@@ -984,11 +1013,10 @@ impl BRepBuilder {
     }
 
     fn find_or_add_vertex(&mut self, brep: &mut BRep, pt: DVec3) -> ShapeRef {
-        #[allow(deprecated)]
         for (i, &cached) in self.vertex_cache.iter().enumerate() {
             let dp = DVec3::new(cached[0], cached[1], cached[2]) - pt;
             if dp.length_squared() < 1e-30 {
-                return ShapeRef::new(i);
+                return ShapeRef::synthetic(i);
             }
         }
         let r = brep.add_tvertex(pt);
@@ -1026,10 +1054,10 @@ impl BRepBuilder {
                 let e_idx = *edge_map.entry((a.min(b), a.max(b))).or_insert_with(|| {
                     let va = v[a];
                     let vb = v[b];
-                    brep.add_tedge(None, va, ShapeRef::with_orientation(vb.index, Orientation::Reversed), [0.0, 1.0]).index
+                    brep.add_tedge(None, va, ShapeRef::synthetic_with_orientation(vb.index, Orientation::Reversed), [0.0, 1.0]).index
                 });
                 let orient = if a < b { Orientation::Forward } else { Orientation::Reversed };
-                face_edges.push(ShapeRef::with_orientation(e_idx, orient));
+                face_edges.push(ShapeRef::synthetic_with_orientation(e_idx, orient));
             }
             edge_for_face.push(face_edges);
         }
@@ -1053,7 +1081,7 @@ impl BRepBuilder {
                 5 => Orientation::Forward,   // X+
                 _ => unreachable!(),
             };
-            face_refs.push(ShapeRef::with_orientation(face.index, orient));
+            face_refs.push(ShapeRef::synthetic_with_orientation(face.index, orient));
         }
 
         // Build shell from the 6 oriented faces
@@ -1281,12 +1309,11 @@ mod tests {
 
     #[test]
     fn test_shape_ref_construction() {
-        #[allow(deprecated)]
-        let r = ShapeRef::new(5);
+        let r = ShapeRef::synthetic(5);
         assert_eq!(r.index, 5);
         assert_eq!(r.orientation, Orientation::Forward);
 
-        let r2 = ShapeRef::with_orientation(3, Orientation::Reversed);
+        let r2 = ShapeRef::synthetic_with_orientation(3, Orientation::Reversed);
         assert_eq!(r2.index, 3);
         assert_eq!(r2.orientation, Orientation::Reversed);
     }
@@ -1391,7 +1418,7 @@ mod tests {
         let v0 = brep.add_tvertex(DVec3::ZERO);
         let v1 = brep.add_tvertex(DVec3::X);
         // Edge references v1 with REVERSED orientation (last vertex traversed backward)
-        let e = brep.add_tedge(None, v0, ShapeRef::with_orientation(v1.index, Orientation::Reversed), [0.0, 1.0]);
+        let e = brep.add_tedge(None, v0, ShapeRef::synthetic_with_orientation(v1.index, Orientation::Reversed), [0.0, 1.0]);
         let ed = brep.edge(e);
         assert_eq!(ed.last.orientation, Orientation::Reversed);
     }
@@ -1411,7 +1438,6 @@ mod tests {
 
     #[test]
     fn test_serde_roundtrip() {
-        #[allow(deprecated)]
         let mut brep = BRep::new();
         let v = brep.add_tvertex(DVec3::new(1.0, 2.0, 3.0));
         let e = brep.add_tedge(None, v, v, [0.0, 1.0]);
@@ -1419,8 +1445,8 @@ mod tests {
         let json = serde_json::to_string(&brep).unwrap();
         let restored: BRep = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.tshapes.len(), 2);
-        assert_eq!(restored.vertex(ShapeRef::new(0)).point, DVec3::new(1.0, 2.0, 3.0));
-        assert_eq!(restored.edge(ShapeRef::new(1)).range, [0.0, 1.0]);
+        assert_eq!(restored.vertex(ShapeRef::synthetic(0)).point, DVec3::new(1.0, 2.0, 3.0));
+        assert_eq!(restored.edge(ShapeRef::synthetic(1)).range, [0.0, 1.0]);
     }
 
     #[test]
@@ -1440,7 +1466,7 @@ mod tests {
         assert_eq!(brep.tshapes[wire_fwd.index].shape_type(), ShapeType::Wire);
 
         // Wire with reversed edge
-        let e0_rev = ShapeRef::with_orientation(e0.index, Orientation::Reversed);
+        let e0_rev = ShapeRef::synthetic_with_orientation(e0.index, Orientation::Reversed);
         let wire_rev = brep.add_twire(vec![e0_rev]);
         if let TShape::Wire(ref wd) = *brep.tshapes[wire_rev.index] {
             assert_eq!(wd.edges[0].orientation, Orientation::Reversed);

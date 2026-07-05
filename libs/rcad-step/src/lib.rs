@@ -6154,7 +6154,7 @@ fn build_face_topods(
         )?;
 
         let orient = if orientation { topods::Orientation::Forward } else { topods::Orientation::Reversed };
-        wire_edges.push(topods::ShapeRef::with_orientation(edge_ref.index, orient));
+        wire_edges.push(topods::ShapeRef { ptr_id: edge_ref.ptr_id, index: edge_ref.index, orientation: orient, location: 0 });
     }
 
     // Build inner wires (holes)
@@ -6175,7 +6175,7 @@ fn build_face_topods(
             )?;
 
             let orient = if orientation { topods::Orientation::Forward } else { topods::Orientation::Reversed };
-            inner_edges.push(topods::ShapeRef::with_orientation(edge_ref.index, orient));
+            inner_edges.push(topods::ShapeRef { ptr_id: edge_ref.ptr_id, index: edge_ref.index, orientation: orient, location: 0 });
         }
 
         if !inner_edges.is_empty() {

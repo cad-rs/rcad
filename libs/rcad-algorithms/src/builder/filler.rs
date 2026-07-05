@@ -17,11 +17,11 @@ impl<'a> BooleanBuilder<'a> {
             let sd  = vb;   // OCCT: nVSD = aIt.Value()
 
             // OCCT L56: myImages.Bound(aV, ...)->Append(aVSD)
-            self.my_images.borrow_mut().entry(rcad_kernel::topods::ShapeRef::new(src)).or_default().push(rcad_kernel::topods::ShapeRef::new(sd));
+            self.my_images.borrow_mut().entry(self.brep_sr(src)).or_default().push(self.brep_sr(sd));
             // OCCT L58: myShapesSD.Bind(aV, aVSD)
-            self.my_shapes_sd.borrow_mut().insert(rcad_kernel::topods::ShapeRef::new(src), rcad_kernel::topods::ShapeRef::new(sd));
+            self.my_shapes_sd.borrow_mut().insert(self.brep_sr(src), self.brep_sr(sd));
             // OCCT L60-65: myOrigins.ChangeSeek(aVSD).Append(aV)
-            self.my_origins.borrow_mut().entry(rcad_kernel::topods::ShapeRef::new(sd)).or_default().push(rcad_kernel::topods::ShapeRef::new(src));
+            self.my_origins.borrow_mut().entry(self.brep_sr(sd)).or_default().push(self.brep_sr(src));
         }
     }
 
@@ -62,18 +62,18 @@ impl<'a> BooleanBuilder<'a> {
         let e_base = self.ds.vertices.len();
         for (ei, edge) in self.ds.edges.iter().enumerate() {
             if edge.pave_blocks.is_empty() { continue; }
-            let aE = rcad_kernel::topods::ShapeRef::new(e_base + ei);
+            let aE = self.brep_sr(e_base + ei);
             for pb in &edge.pave_blocks {
                 let nSpR = self.ds.real_pave_block_edge(ei, pb)
                     .or(pb.new_edge)
                     .unwrap_or(ei);
-                let aSpR = rcad_kernel::topods::ShapeRef::new(e_base + nSpR);
+                let aSpR = self.brep_sr(e_base + nSpR);
                 self.my_images.borrow_mut().entry(aE).or_default().push(aSpR);
                 self.my_origins.borrow_mut().entry(aSpR).or_default().push(aE);
                 // OCCT L114-118: if IsCommonBlockOnEdge → myShapesSD.Bind(aPB->Edge(), aSpR)
                 if pb.common_block_idx.is_some() {
                     if let Some(nSp) = pb.new_edge {
-                        let aSp = rcad_kernel::topods::ShapeRef::new(e_base + nSp);
+                        let aSp = self.brep_sr(e_base + nSp);
                         self.my_shapes_sd.borrow_mut().insert(aSp, aSpR);
                     }
                 }
@@ -92,13 +92,13 @@ impl<'a> BooleanBuilder<'a> {
         {
             let my_images = self.my_images.borrow();
             for (wi, wire) in self.ds.wires.iter().enumerate() {
-                let w_ref = rcad_kernel::topods::ShapeRef::new(
+                let w_ref = self.brep_sr(
                     e_base + self.ds.edges.len() + wi);
                 // OCCT L224-233: check if any sub-edge has been modified
                 let mut a_c_im: Vec<rcad_kernel::topods::ShapeRef> = Vec::new();
                 let mut has_images = false;
                 for &ei in &wire.edges {
-                    let e_ref = rcad_kernel::topods::ShapeRef::new(e_base + ei);
+                    let e_ref = self.brep_sr(e_base + ei);
                     if let Some(imgs) = my_images.get(&e_ref) {
                         has_images = true;
                         for &img_sr in imgs {
@@ -144,17 +144,12 @@ impl<'a> BooleanBuilder<'a> {
         result: &mut ResultBuilder,
         a_faces: &[usize],
         b_faces: &[usize],
-        t: &mut topods::BRep,
     ) {
-        // OCCT L218: BuildSplitFaces — split all faces along intersection curves.
-        self.build_split_faces(result, a_faces, b_faces, t);
+        let mut t = self.my_shape.borrow_mut();
+        self.build_split_faces(result, a_faces, b_faces, &mut *t);
         if self.has_errors { return; }
-
-        // OCCT L223: FillSameDomainFaces — merge duplicate same-domain faces.
         self.fill_same_domain_faces(result);
         if self.has_errors { return; }
-
-        // OCCT L228: FillInternalVertices — settle alone vertices as INTERNAL.
         self.fill_internal_vertices(result);
     }
 
@@ -196,7 +191,7 @@ impl<'a> BooleanBuilder<'a> {
                     self.ds.edges.get(ei).map_or(false, |e| e.is_internal)
                 });
                 let has_modified = self.ds.faces[fi].boundary_edges.iter().any(|&ei| {
-                    let e_ref = rcad_kernel::topods::ShapeRef::new(self.ds.vertices.len() + ei);
+                    let e_ref = self.brep_sr(self.ds.vertices.len() + ei);
                     self.my_images.borrow().get(&e_ref).map_or(false, |imgs| {
                         imgs.len() != 1 || imgs[0].index != self.ds.vertices.len() + ei
                     })
@@ -228,7 +223,7 @@ impl<'a> BooleanBuilder<'a> {
             let f_base = self.ds.vertices.len() + self.ds.edges.len();
             let side_offset = if is_a { 0usize } else { self.ds.a_face_count };
             self.my_images.borrow_mut()
-                .entry(rcad_kernel::topods::ShapeRef::new(f_base + side_offset + sf_idx))
+                .entry(self.brep_sr(f_base + side_offset + sf_idx))
                 .or_insert_with(Vec::new);
             // Architecture A1: pass t so split faces create TShapes incrementally.
             self.builder_face_perform(fi, is_a, result, t);
@@ -545,11 +540,12 @@ impl<'a> BooleanBuilder<'a> {
     /// ✅ OCCT-aligned: FillImagesContainers (Builder_1.cxx L172-193).
     ///   OCCT: iterates source shapes → filters by TopAbs_ShapeEnum →
     ///   FillImagesContainer for each.  rcad: dispatches to type-specific handlers.
-    fn fill_images_containers(&self, shape_type: ShapeType, result: &mut ResultBuilder, t: &mut topods::BRep) {
+    fn fill_images_containers(&self, shape_type: ShapeType, result: &mut ResultBuilder) {
+        let mut t = self.my_shape.borrow_mut();
         match shape_type {
             ShapeType::Wire => self.fill_images_containers_wires(result),
-            ShapeType::Shell => self.fill_images_containers_shells(result, t),
-            ShapeType::CompSolid => self.fill_images_containers_compsolid(result, t),
+            ShapeType::Shell => self.fill_images_containers_shells(result, &mut *t),
+            ShapeType::CompSolid => self.fill_images_containers_compsolid(result, &mut *t),
             _ => {}
         }
     }
@@ -617,7 +613,7 @@ impl<'a> BooleanBuilder<'a> {
             // OCCT L274-275: create TShape::Shell → store in myImages
             let shell_ref = t.add_tshell(shell_faces);
             if is_closed { t.shell_mut(shell_ref).flags |= rcad_kernel::topods::tshape_flags::CLOSED; }
-            let skey = topods::ShapeRef::new(usize::MAX - result.shells.len());
+            let skey = topods::ShapeRef::synthetic(usize::MAX - result.shells.len());
             self.my_images.borrow_mut().entry(skey).or_default().push(shell_ref);
             result.shells.push(shell_ref);
         }
@@ -688,7 +684,7 @@ impl<'a> BooleanBuilder<'a> {
                 let cs_ref = t.add_tcompsolid(solid_refs.clone());
                 result.compsolid_groups.push(cs_ref);
                 // OCCT L275: myImages.Bound(theS).Append(aCIm)
-                let cskey = topods::ShapeRef::new(usize::MAX - result.compsolid_groups.len());
+                let cskey = topods::ShapeRef::synthetic(usize::MAX - result.compsolid_groups.len());
                 self.my_images.borrow_mut().entry(cskey).or_default().push(cs_ref);
             }
         }
@@ -708,17 +704,12 @@ impl<'a> BooleanBuilder<'a> {
     ///   A/B lists as parameters — FillIn3DParts iterates myDS->ShapeInfo()).
     ///   OCCT L60-73 check: rcad's CheckData (L320-325) has already ensured
     ///   both operands have faces, so the source-solid skip never triggers.
-    fn fill_images_solids(&self, result: &mut ResultBuilder, t: &mut topods::BRep) {
+    fn fill_images_solids(&self, result: &mut ResultBuilder) {
+        let mut t = self.my_shape.borrow_mut();
         let has_solid = self.ds.faces.iter().any(|f| f.source_solid_idx.is_some());
         if !has_solid { return; }
-
-        // OCCT L77-83: FillIn3DParts — build draft solids + classify shells
         let shell_assignments = self.fill_in_3d_parts(result);
-
-        // OCCT L86: BuildSplitSolids — group shells into result solids
-        self.build_split_solids(result, &shell_assignments, t);
-
-        // OCCT L92: FillInternalShapes — internal sub-shapes
+        self.build_split_solids(result, &shell_assignments, &mut *t);
         self.fill_internal_shapes(result);
     }
 
@@ -959,7 +950,7 @@ impl<'a> BooleanBuilder<'a> {
                         if let Some(dsf) = self.ds.faces.get(dsfi) {
                             for &ei in &dsf.boundary_edges {
                                 if self.my_images.borrow().contains_key(
-                                    &rcad_kernel::topods::ShapeRef::new(v_base + ei))
+                                    &self.brep_sr(v_base + ei))
                                 {
                                     has_image = true; break;
                                 }
@@ -1093,7 +1084,7 @@ impl<'a> BooleanBuilder<'a> {
                     if !sf.is_empty() {
                         let shell_ref = t.add_tshell(sf);
                         let solid_ref = t.add_tsolid(vec![shell_ref]);
-                        let so_key = topods::ShapeRef::new(usize::MAX - 1 - result.solids.len());
+                        let so_key = topods::ShapeRef::synthetic(usize::MAX - 1 - result.solids.len());
                         self.my_images.borrow_mut().entry(so_key).or_default().push(solid_ref);
                         result.solids.push(solid_ref);
                     }
@@ -1177,7 +1168,7 @@ impl<'a> BooleanBuilder<'a> {
                     if !sf.is_empty() {
                         let shell_ref = t.add_tshell(sf);
                         let solid_ref = t.add_tsolid(vec![shell_ref]);
-                        let so_key = topods::ShapeRef::new(usize::MAX - 1 - result.solids.len());
+                        let so_key = topods::ShapeRef::synthetic(usize::MAX - 1 - result.solids.len());
                         self.my_images.borrow_mut().entry(so_key).or_default().push(solid_ref);
                         result.solids.push(solid_ref);
                     }

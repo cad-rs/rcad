@@ -1131,14 +1131,14 @@ pub(crate) fn perform_shapes_to_avoid_topo(
         let (_tag, idx, a, b) = *pid;
         if a == b { return true; }
         if _tag == 0 {
-            tool.is_edge_degenerated(rcad_kernel::topods::ShapeRef::new(idx))
+            tool.is_edge_degenerated(rcad_kernel::topods::ShapeRef::synthetic(idx))
         } else {
             false
         }
     };
 
     let is_internal_vertex = |vi: usize| -> bool {
-        tool.vertex_orientation(rcad_kernel::topods::ShapeRef::new(vi))
+        tool.vertex_orientation(rcad_kernel::topods::ShapeRef::synthetic(vi))
             == rcad_kernel::topods::Orientation::Internal
     };
 

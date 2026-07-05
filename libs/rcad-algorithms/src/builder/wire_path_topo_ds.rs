@@ -149,7 +149,7 @@ pub(crate) fn walk_path_extract_wires(
     // OCCT Tolerance2D/UTolerance2D/VTolerance2D (BOPAlgo_WireSplitter_1.cxx L873-912)
     let face_ref = segments[start_si].face;
     let is_bspline = matches!(tool.face_surface(face_ref), Some(&Surface3::BSpline(_)));
-    let vtol = |vi: usize| -> f64 { tool.vertex_tolerance(ShapeRef::new(vi)) };
+    let vtol = |vi: usize| -> f64 { tool.vertex_tolerance(ShapeRef::synthetic(vi)) };
     let tolerance_2d = |vi: usize| -> f64 {
         let vt = vtol(vi);
         let u = tool.u_resolution(face_ref, vt);
@@ -205,7 +205,7 @@ pub(crate) fn walk_path_extract_wires(
         //   a vertex is "closed" if any incident edge is degenerated or closed
         //   on the face (BOPAlgo_WireSplitter_1.cxx L147-148, L184-194).
         let b_is_closed = is_vert_closed(smart_map, arrived_vertex);
-        let a_pb = coord2d(ShapeRef::new(arrived_vertex), segments[ci].edge, segments[ci].face).unwrap_or(DVec2::ZERO);
+        let a_pb = coord2d(ShapeRef::synthetic(arrived_vertex), segments[ci].edge, segments[ci].face).unwrap_or(DVec2::ZERO);
         let a_tol_2d = uv_tolerance(arrived_vertex);
         let a_tol_2d_sq = a_tol_2d * a_tol_2d;
 
@@ -290,7 +290,7 @@ pub(crate) fn walk_path_extract_wires(
         let a_tol_2d_sq = { let tol = uv_tolerance(arrived_vertex); tol * tol };
         // OCCT L540: bIsClosed = aVertMap.Find(aVb) — arrived vertex's closure.
         let b_is_closed = is_vert_closed(smart_map, arrived_vertex);
-        let a_pb = coord2d(ShapeRef::new(arrived_vertex), segments[ci].edge, segments[ci].face).unwrap_or(DVec2::ZERO);
+        let a_pb = coord2d(ShapeRef::synthetic(arrived_vertex), segments[ci].edge, segments[ci].face).unwrap_or(DVec2::ZERO);
 
         // OCCT L540-549: prepare selection state
         let mut p_edge_info: Option<usize> = None;
@@ -369,7 +369,7 @@ fn refine_angles(
             let a_da = super::angle_2d::clock_wise_angle(a2_bnd, a_ic);
             if a_da < a_delta { continue; }
             let seg = &segments[ei.seg_idx];
-            let v_ref = rcad_kernel::topods::ShapeRef::new(v);
+            let v_ref = rcad_kernel::topods::ShapeRef::synthetic(v);
             let geom_tol = tool.vertex_tolerance(v_ref);
             let t_v = tool.parameter_on_edge(v_ref, seg.edge, seg.face)
                 .unwrap_or_else(|| if v == seg.start_vertex.index { seg.t_range[0] } else { seg.t_range[1] });
@@ -627,7 +627,7 @@ fn build_smart_map(
 
     // Compute angles using BRepTool (OCCT Angle2D equivalent).
     for (v, infos) in smart_map.iter_mut() {
-        let v_ref = ShapeRef::new(*v);
+        let v_ref = ShapeRef::synthetic(*v);
         let geom_tol = tool.vertex_tolerance(v_ref);
         for ei in infos.iter_mut() {
             let seg = &segments[ei.seg_idx];
@@ -1049,7 +1049,7 @@ pub(crate) fn perform_internal_shapes(
         // projecting outer wire vertices to UV using the face surface.
         if uv_bnd.len() < 3 && !wf.outer_wire.is_empty() {
             uv_bnd.clear();
-            if let Some(face_surf) = tool.face_surface(rcad_kernel::topods::ShapeRef::new(face_idx)) {
+            if let Some(face_surf) = tool.face_surface(rcad_kernel::topods::ShapeRef::synthetic(face_idx)) {
                 for &si in &wf.outer_wire {
                     let seg = &segments[si];
                     let pt = tool.vertex_position(seg.start_vertex);

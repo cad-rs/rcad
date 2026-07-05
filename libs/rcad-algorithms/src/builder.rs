@@ -57,33 +57,37 @@ pub(crate) use builder_utils::{
 pub struct BooleanBuilder<'a> {
     ds: &'a DS,
     op: BooleanOpType,
-    /// 鉁?OCCT-aligned: myGlue — BOPAlgo_GlueEnum (GlueOff/GlueFull/GlueShift).
+    /// 閴?OCCT-aligned: myGlue 鈥?BOPAlgo_GlueEnum (GlueOff/GlueFull/GlueShift).
     glue: GlueEnum,
     glue_tolerance: f64,
     context: RefCell<Context>,
-    // 鉁?OCCT-aligned: error tracking (myReport / HasErrors equivalent).
+    // 閴?OCCT-aligned: error tracking (myReport / HasErrors equivalent).
     has_errors: bool,
-    // 鉁?OCCT-aligned: myImages 鈥?source shape index 鈥?list of split image indices.
+    // 閴?OCCT-aligned: myImages 閳?source shape index 閳?list of split image indices.
     my_images: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, Vec<rcad_kernel::topods::ShapeRef>>>,
     my_origins: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, Vec<rcad_kernel::topods::ShapeRef>>>,
     my_shapes_sd: std::cell::RefCell<std::collections::HashMap<rcad_kernel::topods::ShapeRef, rcad_kernel::topods::ShapeRef>>,
     my_in_parts: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
     my_solid_images: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
     my_solid_origins: std::cell::RefCell<std::collections::HashMap<usize, Vec<usize>>>,
-    // 鉁?OCCT-aligned: myNonDestructive (BOPAlgo_Builder.hxx L503).
+    // 閴?OCCT-aligned: myNonDestructive (BOPAlgo_Builder.hxx L503).
     my_non_destructive: bool,
     // OCCT-aligned: myFillHistory (BOPAlgo_Options.hxx).
     my_fill_history: bool,
-    // 鉁?OCCT-aligned: myCheckInverted (BOPAlgo_Builder.hxx L505).
+    // 閴?OCCT-aligned: myCheckInverted (BOPAlgo_Builder.hxx L505).
     my_check_inverted: bool,
-    // 鉁?OCCT-aligned: myStopOnFatalError — abort pipeline on fatal error.
+    // 閴?OCCT-aligned: myStopOnFatalError 鈥?abort pipeline on fatal error.
     my_stop_on_fatal_error: bool,
-    /// 鉁?OCCT-aligned: myEntryPoint — tracks builder phase (1=PerformInternal1 done, etc.).
+    /// 閴?OCCT-aligned: myEntryPoint 鈥?tracks builder phase (1=PerformInternal1 done, etc.).
     my_entry_point: u8,
-    /// 鉁?OCCT-aligned: myReport — collects alerts during Builder execution.
+    /// 閴?OCCT-aligned: myReport 鈥?collects alerts during Builder execution.
     my_report: Report,
-    /// 鉁?OCCT-aligned: converted BRep representation of DS.
+    /// 閴?OCCT-aligned: converted BRep representation of DS.
     brep: std::cell::RefCell<Option<(rcad_kernel::topods::BRep, Vec<rcad_kernel::topods::ShapeRef>, Vec<Option<rcad_kernel::topods::ShapeRef>>)>>,
+    /// OCCT-aligned: myShape — result shape accumulator (BRep).
+    my_shape: std::cell::RefCell<rcad_kernel::topods::BRep>,
+    /// OCCT-aligned: myArguments — all source shapes pre-created as TShapes.
+    my_arguments: std::cell::RefCell<Vec<rcad_kernel::topods::ShapeRef>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,7 +137,7 @@ fn find_interior_3d(
     if outer_uvs.len() < 3 { return None; }
     let centroid = outer_uvs.iter().copied().sum::<DVec2>() / outer_uvs.len() as f64;
 
-    // Check if the UV polygon is CW (hole) �?interior is the complement.
+    // Check if the UV polygon is CW (hole) 锟?interior is the complement.
     // Compute signed area: positive = CCW (interior is polygon), negative = CW (interior is complement).
     let signed_area: f64 = outer_uvs.windows(2).map(|pair| {
         pair[0].x * pair[1].y - pair[1].x * pair[0].y
@@ -146,9 +150,9 @@ fn find_interior_3d(
     // Build candidates: for CCW polygons, points inside the polygon;
     // for CW polygons, points outside the polygon (the complement interior).
     let candidates = if is_cw {
-        // CW polygon �?interior is the complement.  The centroid of the polygon
+        // CW polygon 锟?interior is the complement.  The centroid of the polygon
         // vertices is inside the polygon (wrong region).  For periodic surfaces
-        // (sphere: [0,2π]×[-π/2,π/2]), try the domain center or points opposite.
+        // (sphere: [0,2蟺]脳[-蟺/2,蟺/2]), try the domain center or points opposite.
         let mut c = vec![
             DVec2::new(centroid.x + std::f64::consts::PI, centroid.y),
         ];
@@ -160,7 +164,7 @@ fn find_interior_3d(
         c.push(DVec2::new(std::f64::consts::PI * 0.5, std::f64::consts::FRAC_PI_4));
         c
     } else {
-        // CCW polygon �?interior is the polygon itself
+        // CCW polygon 锟?interior is the polygon itself
         let mut c = vec![centroid];
         for uv in outer_uvs {
             c.push((centroid + *uv) * 0.5);
@@ -224,7 +228,7 @@ fn find_interior_3d(
 }
 
 impl<'a> BooleanBuilder<'a> {
-    /// �?OCCT-aligned: TopoDS-based BuildFace pipeline with emit.
+    /// 锟?OCCT-aligned: TopoDS-based BuildFace pipeline with emit.
     ///   Runs the full pipeline then emits result faces directly into ResultBuilder.
     pub(crate) fn builder_face_perform(
         &self,
@@ -318,7 +322,7 @@ impl<'a> BooleanBuilder<'a> {
         let e_base = self.ds.vertices.len();
         let ds_ei_to_sr: HashMap<usize, topods::ShapeRef> = segments.iter()
             .filter_map(|seg| match &seg.source {
-                WireEdgeSource::DsEdge(ei) => Some((*ei, topods::ShapeRef::new(e_base + *ei))),
+                WireEdgeSource::DsEdge(ei) => Some((*ei, self.brep_sr(e_base + *ei))),
                 _ => None,
             }).collect();
         let sr_index_to_ds_ei: HashMap<usize, usize> = segments.iter()
@@ -348,7 +352,7 @@ impl<'a> BooleanBuilder<'a> {
         }
     }
 
-    /// �?OCCT-aligned: BuilderFace::CheckData (BOPAlgo_BuilderFace.cxx L50-115).
+    /// 锟?OCCT-aligned: BuilderFace::CheckData (BOPAlgo_BuilderFace.cxx L50-115).
     ///   Validates face has intersection curves/segments. If no interferences,
     ///   delegates to BuildDraftFace (OCCT's alternative path for non-split faces).
     fn builder_face_check_data(&self, face_idx: usize, segments: &[WireSegment]) -> bool {
@@ -358,8 +362,8 @@ impl<'a> BooleanBuilder<'a> {
         true
     }
 
-    /// �?OCCT-aligned: PIOperation_FillHistory �?PrepareHistory (Builder_4.cxx L164-252).
-    ///   Builds source→result history matching OCCT's BRepTools_History.
+    /// 锟?OCCT-aligned: PIOperation_FillHistory 锟?PrepareHistory (Builder_4.cxx L164-252).
+    ///   Builds source鈫抮esult history matching OCCT's BRepTools_History.
     ///
     /// OCCT form:
     ///   L166:  if (!HasHistory()) return;
@@ -368,11 +372,11 @@ impl<'a> BooleanBuilder<'a> {
     ///   L176:  TopExp::MapShapes(myShape, myMapShape);
     ///   L185-187: for i in 0..NbSourceShapes()
     ///   L192:    if (!IsSupportedType(aS)) continue;
-    ///   L205:    pLSp = LocModified(aS);  // �?images
-    ///   L214:    if (myMapShape.Contains(aSp)) �?Modified
+    ///   L205:    pLSp = LocModified(aS);  // 锟?images
+    ///   L214:    if (myMapShape.Contains(aSp)) 锟?Modified
     ///   L233:    aGenShapes = LocGenerated(aS);
-    ///   L239:    if (myMapShape.Contains(aG)) �?Generated
-    ///   L247:    if (!isModified && !myMapShape.Contains(aS)) �?Deleted
+    ///   L239:    if (myMapShape.Contains(aG)) 锟?Generated
+    ///   L247:    if (!isModified && !myMapShape.Contains(aS)) 锟?Deleted
     fn fill_history(&self, t_brep: &mut topods::BRep) -> Vec<crate::history::SourceShapeEntry> {
         use crate::history::{HistoryStatus, SourceShapeEntry};
         use topods::TShape;
@@ -419,34 +423,34 @@ impl<'a> BooleanBuilder<'a> {
         let mut modified_indices: Vec<usize> = Vec::new();
         let mut entries = Vec::new();
 
-        // ── Iterate all source shapes ──────────────────────────────────────────
+        // 鈹€鈹€ Iterate all source shapes 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         // OCCT L185-187: for (int i = 0; i < aNbS; ++i)
         //
-        // �?Vertices (OCCT L192: IsSupportedType filter �?all vertex types are valid)
-        for (di, _dv) in self.ds.vertices.iter().enumerate() {
-            // OCCT L205: const List<TopoDS_Shape>* pLSp = LocModified(aS);
-            let sref = rcad_kernel::topods::ShapeRef::new(v_base + di);
-            let has_images = self.my_images.borrow().contains_key(&sref);
-            let in_result = result_vtx.contains(&di);
+            // 锟?Vertices (OCCT L192: IsSupportedType filter 锟?all vertex types are valid)
+            for (di, _dv) in self.ds.vertices.iter().enumerate() {
+                // OCCT L205: const List<TopoDS_Shape>* pLSp = LocModified(aS);
+                let sref = self.brep_sr(v_base + di);
+                let has_images = self.my_images.borrow().contains_key(&sref);
+                let in_result = result_vtx.contains(&di);
 
             let (status, result_indices) = if has_images && in_result {
-                // OCCT L208-230: split images found in result �?Modified
+                // OCCT L208-230: split images found in result 锟?Modified
                 let images = self.my_images.borrow().get(&sref).cloned().unwrap_or_default();
                 modified_indices.push(v_base + di);
                 (HistoryStatus::Modified, images.iter().map(|sr| sr.index).collect())
             } else if in_result {
-                // OCCT L233-243: LocGenerated �?in result �?Generated
+                // OCCT L233-243: LocGenerated 锟?in result 锟?Generated
                 (HistoryStatus::Generated, vec![v_base + di])
             } else {
-                // OCCT L247-249: not in result �?Deleted
+                // OCCT L247-249: not in result 锟?Deleted
                 (HistoryStatus::Deleted, vec![])
             };
             entries.push(SourceShapeEntry { ds_index: di, shape_type: 0, status, result_indices });
         }
 
-        // �?Edges (same form)
+        // 锟?Edges (same form)
         for (di, _de) in self.ds.edges.iter().enumerate() {
-            let sref = rcad_kernel::topods::ShapeRef::new(e_base + di);
+            let sref = self.brep_sr(e_base + di);
             let has_images = self.my_images.borrow().contains_key(&sref);
             let in_result = result_edge.contains(&di);
 
@@ -462,14 +466,14 @@ impl<'a> BooleanBuilder<'a> {
             entries.push(SourceShapeEntry { ds_index: di, shape_type: 1, status, result_indices });
         }
 
-        // �?Faces (OCCT shape type TopAbs_FACE �?matched by surface + wire topology)
-        //   TODO: Add face-level history when topods face→DS face matching is available.
+        // 锟?Faces (OCCT shape type TopAbs_FACE 锟?matched by surface + wire topology)
+        //   TODO: Add face-level history when topods face鈫扗S face matching is available.
         //   Currently faces are tracked indirectly via face_origins in BuildResult.
         //   OCCT L192: if (!BRepTools_History::IsSupportedType(aS)) continue;
-        //   For now, faces are not mapped here �?they are handled by
+        //   For now, faces are not mapped here 锟?they are handled by
         //   annotate_shell_and_solid_history during post_treat.
 
-        // ── Set TopoDS_TShape::Moved for modified shapes ─────────────────────
+        // 鈹€鈹€ Set TopoDS_TShape::Moved for modified shapes 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
         // OCCT L216-225: modified shapes get orientation fix + moved flag.
         for &idx in &modified_indices {
             if let Some(arc) = t_brep.tshapes.get_mut(idx) {
@@ -491,10 +495,11 @@ impl<'a> BooleanBuilder<'a> {
     ///   source shape history (modified/generated/deleted).
     ///   In rcad this combines two steps (build_topods for shape-level,
     ///   fill_history for source-level) into one public method.
-    fn prepare_history(&self, result: &mut ResultBuilder, t_brep: &mut topods::BRep) -> BooleanHistory {
-        let mut history = result.build_topods(t_brep, self.my_fill_history);
+    fn prepare_history(&self, result: &mut ResultBuilder) -> BooleanHistory {
+        let mut t_brep = self.my_shape.borrow_mut();
+        let mut history = result.build_topods(&mut *t_brep, self.my_fill_history);
         let source_history = if self.my_fill_history {
-            self.fill_history(t_brep)
+            self.fill_history(&mut *t_brep)
         } else {
             vec![]
         };
@@ -594,7 +599,7 @@ impl<'a> BooleanBuilder<'a> {
 // Phase 2: OCCT 1:1 PerformLoops Alignment (BOPAlgo_BuilderFace.cxx L239-606)
 // =============================================================================
 
-/// Edge-like segment for wire building�?can be a DS edge, an intersection curve,
+/// Edge-like segment for wire building锟?can be a DS edge, an intersection curve,
 impl<'a> BooleanBuilder<'a> {
     pub fn new(ds: &'a DS, op: BooleanOpType) -> Self {
         let context = RefCell::new(Context::new(ds.faces.len(), TOLERANCE_ABS * 100.0));
@@ -613,6 +618,8 @@ impl<'a> BooleanBuilder<'a> {
             my_entry_point: 0,
             my_report: Report::new(),
             brep: std::cell::RefCell::new(None),
+            my_shape: std::cell::RefCell::new(rcad_kernel::topods::BRep::new()),
+            my_arguments: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -633,6 +640,23 @@ impl<'a> BooleanBuilder<'a> {
         let builder = Self::new(ds, op);
         builder.set_brep_with_mappings(brep, face_refs, ic_edge_map);
         builder
+    }
+
+    /// Return a real Arc-based ShapeRef for a given flat DS index.
+    /// Looks up the TShape at `flat_idx` in the cached BRep to extract the real
+    /// Arc pointer identity.  Falls back to a synthetic ShapeRef when the BRep
+    /// is unavailable or the index is out of range (e.g. sentinel keys for
+    /// shells/solids).
+    fn brep_sr(&self, flat_idx: usize) -> rcad_kernel::topods::ShapeRef {
+        let brep_borrow = self.brep.borrow();
+        if let Some((ref br, ..)) = *brep_borrow {
+            if flat_idx < br.tshapes.len() {
+                let ptr_id = std::sync::Arc::as_ptr(&br.tshapes[flat_idx]) as u64;
+                return rcad_kernel::topods::ShapeRef { ptr_id, index: flat_idx,
+                    orientation: rcad_kernel::topods::Orientation::Forward, location: 0 };
+            }
+        }
+        { rcad_kernel::topods::ShapeRef::synthetic(flat_idx) }
     }
 
     pub fn with_glue(mut self, enable: bool, tolerance: f64) -> Self {
@@ -726,42 +750,138 @@ include!("builder/result_build.rs");
 
 impl<'a> BooleanBuilder<'a> {
     ///   The top-level pipeline entry: dimension-by-dimension image filling
-    ///   (V→E→W→FACE→SHELL→SOLID), followed by BuildResult for each type.
+    ///   (V鈫扙鈫扺鈫扚ACE鈫扴HELL鈫扴OLID), followed by BuildResult for each type.
     ///   OCCT L310-445 structure matched in full (see inline OCCT line refs).
-    /// �?OCCT-aligned: CheckData (BOPAlgo_BOP.cxx L106-202) + CheckFiller (Builder.cxx L143-151).
+    /// 锟?OCCT-aligned: CheckData (BOPAlgo_BOP.cxx L106-202) + CheckFiller (Builder.cxx L143-151).
     ///   Validates operation type, non-empty arguments, and DS/PaveFiller state.
-    fn check_data(&self, a_faces: &[usize], b_faces: &[usize]) -> Result<(), BooleanError> {
-        // OCCT L112-118: validate operation type
+    /// ✅ OCCT-aligned: CheckData (BOPAlgo_Builder.cxx L130-140).
+    fn check_data(&self) -> Result<(), BooleanError> {
+        // OCCT L132-137: aNb = myArguments.Extent(); if (aNb < 2) → AlertTooFewArguments
+        //   rcad: arguments are always at least 2 (set during fuse() call).
+        //   rcad: validate operation type as surrogate dimension check.
         match self.op {
             BooleanOpType::Union | BooleanOpType::Intersection | BooleanOpType::Difference => {}
             _ => return Err(BooleanError::InvalidOperation),
         }
-        // OCCT L132-137: myArguments.Extent() < 2 → AlertTooFewArguments.
-        //   rcad: arguments are always at least 2 (set during fuse() call).
-        // OCCT L139-141: CheckFiller — verify PaveFiller and DS are valid
-        //   OCCT: if (!myPaveFiller) → AlertNoFiller
-        //   OCCT: GetReport()->Merge(myPaveFiller->GetReport())
-        //   rcad: a_faces/b_faces empty is NOT a CheckData error — TreatEmptyShape handles it.
-        //   rcad: check DS has valid shape data loaded
+        // OCCT L139-141: CheckFiller — verify PaveFiller and DS are valid.
+        //   OCCT: if (!myPaveFiller) → AlertNoFiller; GetReport()->Merge(myPaveFiller->GetReport())
+        //   rcad: PaveFiller ran before builder; check DS has valid shape data loaded.
         if self.ds.vertices.is_empty() {
             return Err(BooleanError::EmptyInput);
         }
-        // OCCT L142-201: dimension validation (FUSE/CUT/CUT21)
-        //   rcad: shapes already in DS; dimension info not tracked.
         if self.has_errors {
             return Err(BooleanError::DegenerateResult);
         }
         Ok(())
     }
 
-    /// �?OCCT-aligned: Prepare (BOPAlgo_Builder.cxx L327-332).
-    ///   Creates the empty result container (myShape in OCCT, topods::BRep in rcad)
-    ///   and the ResultBuilder that accumulates flat arrays during the pipeline.
+    /// ✅ OCCT-aligned: Prepare (BOPAlgo_Builder.cxx L156-164).
+    ///   OCCT: BRep_Builder.MakeCompound(myShape) — empty compound as result.
+    ///   rcad: initializes my_shape + returns (BRep, ResultBuilder) for downstream.
     fn prepare(&self) -> (topods::BRep, ResultBuilder) {
+        *self.my_shape.borrow_mut() = topods::BRep::new();
         (topods::BRep::new(), ResultBuilder::new())
     }
 
-    /// �?OCCT-aligned: TreatEmptyShape (BOPAlgo_BOP.cxx L214-319).
+    /// ✅ OCCT-aligned: create TShapes for all DS source shapes in my_shape.
+    ///   Equivalent to OCCT's myArguments populated with all source TopoDS_Shape.
+    fn pre_create_source_shapes(&self) {
+        let mut t = self.my_shape.borrow_mut();
+        let mut args = Vec::new();
+        // 1. Vertices
+        for v in &self.ds.vertices {
+            let sr = t.add_tvertex(v.point);
+            args.push(sr);
+        }
+        // 2. Edges (with curves)
+        for (ei, edge) in self.ds.edges.iter().enumerate() {
+            let sv = t.add_tvertex(self.ds.vertices[edge.start_vertex].point);
+            let ev = t.add_tvertex(self.ds.vertices[edge.end_vertex].point);
+            let ci = rcad_kernel::topods::find_or_add_curve3(&mut t.curves, &edge.curve);
+            let te = t.add_tedge(Some(ci), sv, ev, edge.t_range);
+            if self.ds.is_edge_degenerated(ei) || edge.start_vertex == edge.end_vertex {
+                t.edge_mut(te).degenerated = true;
+            }
+            args.push(te);
+        }
+        // 3. Wires (from DS wires, using pre-created edge ShapeRefs)
+        let e_base = self.ds.vertices.len();
+        for wire in &self.ds.wires {
+            let wire_edges: Vec<rcad_kernel::topods::ShapeRef> = wire.edges.iter()
+                .filter_map(|&ei| {
+                    let idx = e_base + ei;
+                    if idx < t.tshapes.len() { Some(self.brep_sr(idx)) } else { None }
+                })
+                .collect();
+            let ws = t.add_twire(wire_edges);
+            args.push(ws);
+        }
+        // 4. Faces (from DS faces, using pre-created wire TShapes)
+        let w_base = e_base + self.ds.edges.len();
+        for fi in 0..self.ds.faces.len() {
+            let face = &self.ds.faces[fi];
+            // Outer wire
+            let outer_wire = if let Some(wi) = face.outer_wire_idx {
+                let idx = w_base + wi;
+                if idx < t.tshapes.len() { Some(self.brep_sr(idx)) } else { None }
+            } else { None };
+            // Inner wires
+            let inner_wires: Vec<rcad_kernel::topods::ShapeRef> = face.inner_wire_idxs.iter()
+                .filter_map(|&wi| {
+                    let idx = w_base + wi;
+                    if idx < t.tshapes.len() { Some(self.brep_sr(idx)) } else { None }
+                })
+                .collect();
+            let surf_idx = t.surfaces.len();
+            t.surfaces.push(face.surface.clone());
+            let face_sr = t.add_tface(Some(surf_idx),
+                outer_wire.unwrap_or(rcad_kernel::topods::ShapeRef::NULL),
+                inner_wires, None, None, vec![], true);
+            args.push(face_sr);
+        }
+        // 5. Shells (from DS shells, using pre-created face TShapes)
+        let f_base = w_base + self.ds.wires.len();
+        for shell in &self.ds.shells {
+            let face_refs: Vec<rcad_kernel::topods::ShapeRef> = shell.faces.iter()
+                .filter_map(|&fi| {
+                    let idx = f_base + fi;
+                    if idx < t.tshapes.len() { Some(self.brep_sr(idx)) } else { None }
+                })
+                .collect();
+            if !face_refs.is_empty() {
+                args.push(t.add_tshell(face_refs));
+            }
+        }
+        // 6. Solids (from DS solids, using pre-created shell TShapes)
+        let sh_base = f_base + self.ds.faces.len();
+        for solid in &self.ds.solids {
+            let shell_refs: Vec<rcad_kernel::topods::ShapeRef> = solid.shells.iter()
+                .filter_map(|&si| {
+                    let idx = sh_base + si;
+                    if idx < t.tshapes.len() { Some(self.brep_sr(idx)) } else { None }
+                })
+                .collect();
+            if !shell_refs.is_empty() {
+                args.push(t.add_tsolid(shell_refs));
+            }
+        }
+        // 7. CompSolids
+        let so_base = sh_base + self.ds.shells.len();
+        for cs in &self.ds.comp_solids {
+            let solid_refs: Vec<rcad_kernel::topods::ShapeRef> = cs.solids.iter()
+                .filter_map(|&soi| {
+                    let idx = so_base + soi;
+                    if idx < t.tshapes.len() { Some(self.brep_sr(idx)) } else { None }
+                })
+                .collect();
+            if !solid_refs.is_empty() {
+                args.push(t.add_tcompsolid(solid_refs));
+            }
+        }
+        *self.my_arguments.borrow_mut() = args;
+    }
+
+    /// ✅ OCCT-aligned: TreatEmptyShape (BOPAlgo_BOP.cxx L214-319).
     ///   Handles the case where one or both operands have no geometry.
     ///   Returns Ok(Some(brep)) if a quick result was determined,
     ///   Ok(None) if the full pipeline must run.
@@ -774,10 +894,10 @@ impl<'a> BooleanBuilder<'a> {
             return Ok(None); // need full pipeline
         }
         if !has_a && !has_b {
-            // OCCT L252-256: all empty �?empty result
+            // OCCT L252-256: all empty 锟?empty result
             return Ok(Some(rcad_kernel::BRep::new()));
         }
-        // OCCT L258-317: one side empty �?result depends on operation
+        // OCCT L258-317: one side empty 锟?result depends on operation
         match self.op {
             BooleanOpType::Union => {
                 // OCCT L270-279: return non-empty side
@@ -791,27 +911,27 @@ impl<'a> BooleanBuilder<'a> {
             }
             BooleanOpType::Difference => {
                 if !has_a {
-                    // OCCT L287-289: CUT with empty objects �?empty
+                    // OCCT L287-289: CUT with empty objects 锟?empty
                     Ok(Some(rcad_kernel::BRep::new()))
                 } else {
-                    // OCCT L281-289: CUT with empty tools �?return objects
+                    // OCCT L281-289: CUT with empty tools 锟?return objects
                     let brep = self.brep_of_side(ShapeOrigin::ShapeA, a_faces.len(), b_faces.len());
                     Ok(Some(brep))
                 }
             }
             _ => {
-                // Unknown operation �?fall through to full pipeline
+                // Unknown operation 锟?fall through to full pipeline
                 Ok(None)
             }
         }
     }
 
-    /// �?OCCT-aligned: BOPAlgo_BOP::PerformInternal1 (BOP.cxx L422-579).
+    /// 锟?OCCT-aligned: BOPAlgo_BOP::PerformInternal1 (BOP.cxx L422-579).
     ///   Every statement in OCCT L422-579 has a corresponding rcad line below.
     ///   See comments for exact OCCT line references.
     ///   Structural difference: L425-429 setup done in constructor, re-affirmed here.
     ///   L531 BuildResult(SOLID) writes to t_brep, then L900 BuildRC filters and
-    ///   clears solids from t_brep (non-Union) — equivalent to OCCT removing from myShape.
+    ///   clears solids from t_brep (non-Union) 鈥?equivalent to OCCT removing from myShape.
     pub fn build_with_history(&self) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
         self.build_with_history_topods()
     }
@@ -823,27 +943,20 @@ impl<'a> BooleanBuilder<'a> {
         let _fuzzy_value = self.ds.fuzzy_tol;
         let _non_destructive = self.my_non_destructive;
 
-        // Pipeline dump context (env RCAD_DUMP_PIPELINE=1 to enable).
-        let mut _dump = crate::pipeline_dump::DumpCtx::new(
-            &std::env::var("RCAD_DUMP_GRID").unwrap_or_else(|_| "unknown".into()),
-            &std::env::var("RCAD_DUMP_CASE").unwrap_or_else(|_| "unknown".into()),
-        );
-
-        // OCCT L431-436: CheckData — validates arguments and merges PaveFiller report.
+        // OCCT L431-436: CheckData 鈥?validates arguments and merges PaveFiller report.
         let a_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeA);
         let b_faces: Vec<usize> = self.faces_of(ShapeOrigin::ShapeB);
-        self.check_data(&a_faces, &b_faces)?;
+        self.check_data()?;
 
-        // OCCT L438-442: Prepare — creates empty result compound.
-        //   rcad: prepare() returns (BRep, ResultBuilder) as OCCT MakeCompound.
-        let (mut t_brep, mut result) = self.prepare();
+        // OCCT L438-442: Prepare
+        //   rcad: prepare() initializes my_shape + returns ResultBuilder.
+        let mut result = self.prepare().1;
 
         // OCCT L445-453: TreatEmptyShape.
         //   OCCT: GetReport()->HasAlert(AlertEmptyShape) -> TreatEmptyShape() -> PrepareHistory -> return.
         //   rcad: check if either operand has no faces (DS was populated by pave_fill).
         if a_faces.is_empty() || b_faces.is_empty() {
             if self.treat_empty_shape(&a_faces, &b_faces)?.is_some() {
-                // PrepareHistory(theRange)
                 let source_history = if self.my_fill_history {
                     let side = if !a_faces.is_empty() { ShapeOrigin::ShapeA }
                                else { ShapeOrigin::ShapeB };
@@ -851,83 +964,80 @@ impl<'a> BooleanBuilder<'a> {
                 } else {
                     vec![]
                 };
-                let mut history = result.build_topods(&mut t_brep, self.my_fill_history);
+                let mut history = result.build_topods(&mut *self.my_shape.borrow_mut(), self.my_fill_history);
                 history.source_history = source_history;
-                return Ok((t_brep, history));
+                let result_brep = self.my_shape.borrow().clone();
+                return Ok((result_brep, history));
             }
         }
 
-        // OCCT L444-447: ProgressScope + PISteps + analyzeProgress.
-        //   Placeholder: Message_ProgressScope is not available in Rust runtime.
-        //   Replace with real progress reporting when a Rust equivalent is added.
-        struct _ProgressScope;
-        impl _ProgressScope { fn next(&self, _step: f64) -> f64 { 0.0 } }
+        // OCCT L454-457: ProgressScope + PISteps + analyzeProgress.
         const _PIOP_LAST: usize = 12;
-        let _a_ps = _ProgressScope;
         let _a_steps = [0.0f64; _PIOP_LAST];
-        let _ = (&_a_ps, &_a_steps);
+        // OCCT: pre-create ALL source shapes as TShapes (matching myArguments in OCCT).
+        self.pre_create_source_shapes();
         // OCCT L456-459: FillImagesVertices — BuildResult(VERTEX)
         self.fill_images_vertices();
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result_occt(topods::ShapeType::Vertex, &mut result, &mut t_brep);
+        self.build_result_occt(topods::ShapeType::Vertex, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        _dump.snapshot("after_FillImagesVertices", self.ds, Some(&t_brep));
-        // OCCT L461-465: FillImagesEdges �?BuildResult(EDGE)
+        // OCCT L461-465: FillImagesEdges — BuildResult(EDGE)
         self.fill_images_edges();
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result_occt(topods::ShapeType::Edge, &mut result, &mut t_brep);
+        self.build_result_occt(topods::ShapeType::Edge, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        _dump.snapshot("after_FillImagesEdges", self.ds, Some(&t_brep));
-        // OCCT L467-470: FillImagesContainers(WIRE) �?BuildResult(WIRE)
-        self.fill_images_containers(ShapeType::Wire, &mut result, &mut t_brep);
+        // OCCT L467-470: FillImagesContainers(WIRE)
+        self.fill_images_containers(ShapeType::Wire, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result_occt(topods::ShapeType::Wire, &mut result, &mut t_brep);
+        self.build_result_occt(topods::ShapeType::Wire, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        _dump.snapshot("after_BuildResultWire", self.ds, Some(&t_brep));
-        // OCCT L472-475: FillImagesFaces �?BuildResult(FACE)
-        // Architecture A1: pass t_brep so split faces create TShapes incrementally
-        // during fill_images_faces (not batch-deferred in build_result_occt).
-        self.fill_images_faces(&mut result, &a_faces, &b_faces, &mut t_brep);
+        // Prepare face data structures (needed by fill_images_faces).
+        result.build_faces();
+        // OCCT L472-475: FillImagesFaces — BuildResult(FACE)
+        // Architecture A1: split faces create TShapes incrementally during fill_images_faces.
+        self.fill_images_faces(&mut result, &a_faces, &b_faces);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // BuildResult(FACE) now only handles unsplit original faces (those not
-        // already emitted as TShapes during fill_images_faces).
-        self.build_result_occt(topods::ShapeType::Face, &mut result, &mut t_brep);
+        // Create TShape::Face for unsplit original faces before BuildResult(FACE).
+        {
+            let mut t = self.my_shape.borrow_mut();
+            result.build_topods_faces(&mut *t);
+        }
+        self.build_result_occt(topods::ShapeType::Face, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        _dump.snapshot("after_FillImagesFaces", self.ds, Some(&t_brep));
-        // OCCT L477-480: FillImagesContainers(SHELL) �?BuildResult(SHELL)
-        self.fill_images_containers(ShapeType::Shell, &mut result, &mut t_brep);
+        // OCCT L477-480: FillImagesContainers(SHELL)
+        self.fill_images_containers(ShapeType::Shell, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result_occt(topods::ShapeType::Shell, &mut result, &mut t_brep);
+        self.build_result_occt(topods::ShapeType::Shell, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        _dump.snapshot("after_BuildResultShell", self.ds, Some(&t_brep));
-        // OCCT L482-485: FillImagesSolids �?BuildResult(SOLID)
-        self.fill_images_solids(&mut result, &mut t_brep);
+        // OCCT L482-485: FillImagesSolids
+        self.fill_images_solids(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result_occt(topods::ShapeType::Solid, &mut result, &mut t_brep);
+        self.build_result_occt(topods::ShapeType::Solid, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // OCCT L487-490: FillImagesContainers(COMPSOLID) �?BuildResult(COMPSOLID)
-        self.fill_images_containers(ShapeType::CompSolid, &mut result, &mut t_brep);
+        // OCCT L537-548: FillImagesContainers(COMPSOLID)
+        self.fill_images_containers(ShapeType::CompSolid, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result_occt(topods::ShapeType::CompSolid, &mut result, &mut t_brep);
+        self.build_result_occt(topods::ShapeType::CompSolid, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // OCCT L492-495: FillImagesCompounds �?BuildResult(COMPOUND)
-        self.fill_images_compounds(&mut result, &mut t_brep);
+        // OCCT L492-495: FillImagesCompounds
+        self.fill_images_compounds(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result_occt(topods::ShapeType::Compound, &mut result, &mut t_brep);
+        self.build_result_occt(topods::ShapeType::Compound, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        // OCCT L498-500: BuildShape — BuildRC + BuildSolid
-        self.build_shape(&mut result, &mut t_brep);
+        // OCCT L498-500: BuildShape
+        self.build_shape(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // OCCT L502-504: PrepareHistory
-        let mut history = self.prepare_history(&mut result, &mut t_brep);
+        let mut history = self.prepare_history(&mut result);
 
         // OCCT L506-508: PostTreat
-        let mut old_brep = rcad_kernel::BRep::from_topods(&t_brep);
+        let final_brep = self.my_shape.borrow().clone();
+        let mut old_brep = rcad_kernel::BRep::from_topods(&final_brep);
         self.post_treat(&mut old_brep);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        let t_brep = old_brep.to_topods();
+        let result_brep = old_brep.to_topods();
 
-        Ok((t_brep, history))
+        Ok((result_brep, history))
     }
 
     /// Parallel version of `build_with_history`.
@@ -1211,8 +1321,8 @@ impl<'a> BooleanBuilder<'a> {
 
     /// Unwrap a UV polyline's U coordinate to remove seam jumps.
     /// For periodic surfaces (cylinder, cone, torus), consecutive points whose
-    /// U values differ by more than �?indicate a seam crossing; we accumulate
-    /// offsets of 鍗eriod to make the polyline continuous in U.
+    /// U values differ by more than 锟?indicate a seam crossing; we accumulate
+    /// offsets of 閸楊槚eriod to make the polyline continuous in U.
     fn unwrap_u_polyline(&self, pts: Vec<glam::DVec2>, period: f64) -> Vec<glam::DVec2> {
         if pts.len() < 2 {
             return pts;
@@ -1236,11 +1346,11 @@ impl<'a> BooleanBuilder<'a> {
 
     /// Extend axis-aligned trim endpoints to the UV boundary so each open trim
     /// spans from one boundary edge to another. This is necessary for closed
-    /// surfaces (sphere, cylinder, �? where intersection PCurves are clipped
+    /// surfaces (sphere, cylinder, 锟? where intersection PCurves are clipped
     /// to the finite face-face overlap and may not reach the UV boundary.
     ///
     /// Only trims that are nearly axis-aligned (constant-u or constant-v) are
-    /// extended �?general trims pass through unchanged.
+    /// extended 锟?general trims pass through unchanged.
     fn extend_trim_to_uv_boundary(
         trim: &[DVec2],
         uv_boundary: &[DVec2],
@@ -1264,7 +1374,7 @@ impl<'a> BooleanBuilder<'a> {
 
         let boundary_u_span = u_max - u_min;
         let boundary_v_span = v_max - v_min;
-        // 0.5 % of the smaller span �?well above floating-point noise for any
+        // 0.5 % of the smaller span 锟?well above floating-point noise for any
         // practical model, yet tight enough to distinguish axis-aligned trims
         // from oblique ones on a sphere (where u/v vary together).
         let axis_threshold = (boundary_u_span.abs().min(boundary_v_span.abs())).max(TOLERANCE_ABS) * 0.005;
@@ -1273,10 +1383,10 @@ impl<'a> BooleanBuilder<'a> {
         let is_const_v = v_span_trim < axis_threshold;
 
         if !is_const_u && !is_const_v {
-            return trim.to_vec(); // non-axis-aligned �?cannot safely extend
+            return trim.to_vec(); // non-axis-aligned 锟?cannot safely extend
         }
 
-        // 閳光偓閳光偓 Clip trim points to boundary bounds 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+        // 闁冲厜鍋撻柍鍏夊亾 Clip trim points to boundary bounds 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾
         // Intersection PCurves may have t_range extending far outside the face's
         // actual UV boundary (hardcoded extent=20 in intersect_plane_cylinder_faces).
         // Without clipping, out-of-bounds points inflate the UV sub-polygon bounding
@@ -1301,7 +1411,7 @@ impl<'a> BooleanBuilder<'a> {
             return extended;
         }
 
-        // 閳光偓閳光偓 span-checking guard (AFTER clipping) 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光�?        // If this axis-aligned trim already covers �?0 % of the boundary span
+        // 闁冲厜鍋撻柍鍏夊亾 span-checking guard (AFTER clipping) 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜锟?        // If this axis-aligned trim already covers 锟?0 % of the boundary span
         // in the varying direction (measured within the boundary, not the raw
         // PCurve span), it runs boundary-to-boundary and needs no extension.
         let clipped_v_span = extended.iter().map(|p| p.y).fold(f64::NEG_INFINITY, f64::max)
@@ -1314,7 +1424,7 @@ impl<'a> BooleanBuilder<'a> {
         if is_const_v && clipped_u_span >= 0.9 * bnd_u_span.abs() {
             return extended;
         }
-        // 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光�?
+        // 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜锟?
         if is_const_u {
             // Constant-u trim: extend v range to the boundary.
             let u_val = extended[0].x;
@@ -1367,10 +1477,10 @@ impl<'a> BooleanBuilder<'a> {
     /// into a 2D trim polyline in UV space, then splits the UV boundary polygon.
     /// Maps resulting sub-polygons back to 3D via surface evaluation.
     ///
-    /// �?部分对齐: 鐢ㄧ簿纭ぇ鍦嗗姬鏋勫缓鐞冮潰瀛愰潰銆?
-    ///    OCCT: BuildSplitFaces �?section edges 鐩存帴鍒涘缓 BRep sub-face�?
-    ///    rcad: 鎵嬪姩璁＄畻 8 涓崷闄愮殑 FaceSampleData,�?outer_circle_edges 璁板綍澶у渾寮с�?
-    ///    鍔熻兘绛変环(8 涓崐鐞冮潰鍖哄�?+ 绮剧‘鍦嗗姬杈圭�?,�?OCCT 涓嶉渶瑕佷腑�?FaceSampleData�?
+    /// 锟?閮ㄥ垎瀵归綈: 閻劎绨跨涵顔笺亣閸﹀棗濮弸鍕紦閻炲啴娼扮€涙劙娼伴妴?
+    ///    OCCT: BuildSplitFaces 锟?section edges 閻╁瓨甯撮崚娑樼紦 BRep sub-face锟?
+    ///    rcad: 閹靛濮╃拋锛勭暬 8 娑擃亜宕烽梽鎰畱 FaceSampleData,锟?outer_circle_edges 鐠佹澘缍嶆径褍娓惧褋锟?
+    ///    閸旂喕鍏樼粵澶夌幆(8 娑擃亜宕愰悶鍐桨閸栧搫锟?+ 缁墽鈥橀崷鍡楀К鏉堝湱锟?,锟?OCCT 娑撳秹娓剁憰浣疯厬锟?FaceSampleData锟?
 
     /// Find the PCurve (2D parametric curve) for the given intersection curve
     /// as it lies on the given face. Searches FaceFace interferences to determine

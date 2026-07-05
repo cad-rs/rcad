@@ -391,7 +391,7 @@ impl ResultBuilder {
                 ds.vertices[vi].point
             } else {
                 vertex_positions.get(&vi).copied()
-                    .unwrap_or_else(|| tool.vertex_position(rcad_kernel::topods::ShapeRef::new(vi)))
+                    .unwrap_or_else(|| tool.vertex_position(rcad_kernel::topods::ShapeRef::synthetic(vi)))
             }
         };
 
@@ -671,7 +671,7 @@ impl ResultBuilder {
             let seg = &segments[si];
             let vi = seg.start_vertex.index;
             vertex_positions.get(&vi).copied()
-                .unwrap_or_else(|| tool.vertex_position(rcad_kernel::topods::ShapeRef::new(vi)))
+                .unwrap_or_else(|| tool.vertex_position(rcad_kernel::topods::ShapeRef::synthetic(vi)))
         }).collect();
         Self::estimate_boundary_normal(&pts)
     }
@@ -1178,8 +1178,8 @@ impl ResultBuilder {
         // Outer wire
         let outer_edges: Vec<ShapeRef> = edge_indices.iter().map(|&(idx, forward)| {
             let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
-            if idx < e_map.len() { ShapeRef::with_orientation(e_map[idx].index, orient) }
-            else { ShapeRef::with_orientation(idx, orient) }
+            if idx < e_map.len() { ShapeRef::synthetic_with_orientation(e_map[idx].index, orient) }
+            else { ShapeRef::synthetic_with_orientation(idx, orient) }
         }).collect();
         let outer_wire = t.add_twire(outer_edges);
         t.wire_mut(outer_wire).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
@@ -1189,8 +1189,8 @@ impl ResultBuilder {
         for wire_idxs in inner_wire_edges {
             let iw_edges: Vec<ShapeRef> = wire_idxs.iter().map(|&(idx, forward)| {
                 let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
-                if idx < e_map.len() { ShapeRef::with_orientation(e_map[idx].index, orient) }
-                else { ShapeRef::with_orientation(idx, orient) }
+                if idx < e_map.len() { ShapeRef::synthetic_with_orientation(e_map[idx].index, orient) }
+                else { ShapeRef::synthetic_with_orientation(idx, orient) }
             }).collect();
             if !iw_edges.is_empty() {
                 let w = t.add_twire(iw_edges);
@@ -1203,8 +1203,8 @@ impl ResultBuilder {
         for iw_edges in internal_wire_edges {
             let iw: Vec<ShapeRef> = iw_edges.iter().map(|&(idx, forward)| {
                 let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
-                if idx < e_map.len() { ShapeRef::with_orientation(e_map[idx].index, orient) }
-                else { ShapeRef::with_orientation(idx, orient) }
+                if idx < e_map.len() { ShapeRef::synthetic_with_orientation(e_map[idx].index, orient) }
+                else { ShapeRef::synthetic_with_orientation(idx, orient) }
             }).collect();
             if iw.len() >= 2 {
                 let w = t.add_twire(iw);
@@ -1253,8 +1253,8 @@ impl ResultBuilder {
         // 2. Edges → TShape::Edge (use vi_to_ti to map vertex indices).
         let mut e_map: Vec<ShapeRef> = Vec::with_capacity(self.edges.len());
         for (ei, &(start, end)) in self.edges.iter().enumerate() {
-            let first = ShapeRef::new(vi_to_ti[start]);
-            let last = ShapeRef::new(vi_to_ti[end]);
+            let first = ShapeRef::synthetic(vi_to_ti[start]);
+            let last = ShapeRef::synthetic(vi_to_ti[end]);
             let curve_idx = self.custom_edge_curves.get(ei).and_then(|c| c.as_ref()).map(|crv| {
                 let ci = t.curves.len();
                 t.curves.push(crv.clone());
@@ -1281,8 +1281,8 @@ impl ResultBuilder {
                     // Fallback: create wire inline from edge_indices
                     let outer_edges: Vec<ShapeRef> = edge_indices.iter().map(|&(idx, forward)| {
                         let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
-                        if idx < e_map.len() { ShapeRef::with_orientation(e_map[idx].index, orient) }
-                        else { ShapeRef::with_orientation(idx, orient) }
+                        if idx < e_map.len() { ShapeRef::synthetic_with_orientation(e_map[idx].index, orient) }
+                        else { ShapeRef::synthetic_with_orientation(idx, orient) }
                     }).collect();
                     t.add_twire(outer_edges)
                 });
@@ -1306,8 +1306,8 @@ impl ResultBuilder {
             for wire_idxs in inner_wire_edges.iter().skip(covered_count) {
                 let iw_edges: Vec<ShapeRef> = wire_idxs.iter().map(|&(idx, forward)| {
                     let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
-                    if idx < e_map.len() { ShapeRef::with_orientation(e_map[idx].index, orient) }
-                    else { ShapeRef::with_orientation(idx, orient) }
+                    if idx < e_map.len() { ShapeRef::synthetic_with_orientation(e_map[idx].index, orient) }
+                    else { ShapeRef::synthetic_with_orientation(idx, orient) }
                 }).collect();
                 if !iw_edges.is_empty() {
                     let w = t.add_twire(iw_edges);
@@ -1319,8 +1319,8 @@ impl ResultBuilder {
             for iw_edges in internal_wire_edges {
                 let iw: Vec<ShapeRef> = iw_edges.iter().map(|&(idx, forward)| {
                     let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
-                    if idx < e_map.len() { ShapeRef::with_orientation(e_map[idx].index, orient) }
-                    else { ShapeRef::with_orientation(idx, orient) }
+                    if idx < e_map.len() { ShapeRef::synthetic_with_orientation(e_map[idx].index, orient) }
+                    else { ShapeRef::synthetic_with_orientation(idx, orient) }
                 }).collect();
                 if iw.len() >= 2 {
                     let w = t.add_twire(iw);
@@ -1332,7 +1332,7 @@ impl ResultBuilder {
             let surf_idx = t.surfaces.len();
             t.surfaces.push(surface.clone());
             let internal_vtx: Vec<ShapeRef> = self.face_internal_vtx.get(flat_fi)
-                .map_or(vec![], |v| v.iter().map(|&vi| ShapeRef::new(vi_to_ti.get(vi).copied().unwrap_or(vi))).collect());
+                .map_or(vec![], |v| v.iter().map(|&vi| ShapeRef::synthetic(vi_to_ti.get(vi).copied().unwrap_or(vi))).collect());
             let nr = self.face_natural_restriction.get(flat_fi).copied().unwrap_or(true);
             self.face_refs.push(t.add_tface(Some(surf_idx), outer_wire, inner_wires, Some(*sample_point), *_uv_domain, internal_vtx, nr));
         }
@@ -1732,20 +1732,20 @@ mod tests {
                     for face in &shell.faces {
                         let outer_edges: Vec<ShapeRef> = face.outer_wire.edges.iter().map(|we| {
                             let orient = if we.forward { Orientation::Forward } else { Orientation::Reversed };
-                            ShapeRef::with_orientation(e_map[we.idx].index, orient)
+                            ShapeRef::synthetic_with_orientation(e_map[we.idx].index, orient)
                         }).collect();
             let outer_wire = t.add_twire(outer_edges);
             t.wire_mut(outer_wire).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
                         let inner_wires: Vec<ShapeRef> = face.inner_wires.iter().map(|w| {
                             let iwe: Vec<ShapeRef> = w.edges.iter().map(|we| {
                                 let orient = if we.forward { Orientation::Forward } else { Orientation::Reversed };
-                                ShapeRef::with_orientation(e_map[we.idx].index, orient)
+                                ShapeRef::synthetic_with_orientation(e_map[we.idx].index, orient)
                             }).collect();
                             t.add_twire(iwe)
                         }).collect();
                         let internal_vtx: Vec<ShapeRef> = brep.geom.face_internal_vertices
                             .get(fi)
-                            .map(|v| v.iter().map(|&vi| ShapeRef::new(vi)).collect())
+                            .map(|v| v.iter().map(|&vi| ShapeRef::synthetic(vi)).collect())
                             .unwrap_or_default();
                         face_refs.push(t.add_tface(
                             face.surface_idx, outer_wire, inner_wires,

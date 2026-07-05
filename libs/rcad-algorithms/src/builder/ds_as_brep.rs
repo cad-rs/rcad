@@ -66,29 +66,29 @@ impl BRepTool for DSAsBRep<'_> {
     fn edge_other_vertex(&self, edge: ShapeRef, v: ShapeRef) -> ShapeRef {
         if let Some(e) = self.ds.edges.get(edge.index) {
             if e.start_vertex == v.index {
-                ShapeRef::new(e.end_vertex)
+                ShapeRef::synthetic(e.end_vertex)
             } else {
-                ShapeRef::new(e.start_vertex)
+                ShapeRef::synthetic(e.start_vertex)
             }
         } else { v }
     }
 
     fn first_vertex(&self, edge: ShapeRef) -> ShapeRef {
         self.ds.edges.get(edge.index)
-            .map(|e| ShapeRef::new(e.start_vertex))
+            .map(|e| ShapeRef::synthetic(e.start_vertex))
             .unwrap_or(edge)
     }
 
     fn last_vertex(&self, edge: ShapeRef) -> ShapeRef {
         self.ds.edges.get(edge.index)
-            .map(|e| ShapeRef::new(e.end_vertex))
+            .map(|e| ShapeRef::synthetic(e.end_vertex))
             .unwrap_or(edge)
     }
 
     fn oriented_first_vertex(&self, edge: ShapeRef, orientation: Orientation) -> ShapeRef {
         self.ds.edges.get(edge.index).map(|e| {
             let vi = if orientation == Orientation::Reversed { e.end_vertex } else { e.start_vertex };
-            ShapeRef::new(vi)
+            ShapeRef::synthetic(vi)
         }).unwrap_or(edge)
     }
 

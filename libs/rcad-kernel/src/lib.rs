@@ -342,7 +342,7 @@ impl BRep {
                     let inner_wires: Vec<topods::ShapeRef> = face.inner_wires.iter()
                         .map(|w| Self::wire_to_topods(&mut t, &e_map, w)).collect();
                     let internal_vtx: Vec<topods::ShapeRef> = self.geom.face_internal_vertices.get(flat_fi)
-                        .map(|v| v.iter().map(|&vi| topods::ShapeRef::new(vi)).collect())
+                        .map(|v| v.iter().map(|&vi| topods::ShapeRef::synthetic(vi)).collect())
                         .unwrap_or_default();
                     let sr = t.add_tface(face.surface_idx, outer_wire, inner_wires, face.sample_point, None, internal_vtx, true);
                     face_refs.push(sr);
@@ -359,7 +359,7 @@ impl BRep {
         use topods::Orientation;
         let edges: Vec<topods::ShapeRef> = wire.edges.iter().map(|we| {
             let orient = if we.forward { Orientation::Forward } else { Orientation::Reversed };
-            topods::ShapeRef::with_orientation(e_map[we.idx].index, orient)
+            topods::ShapeRef::synthetic_with_orientation(e_map[we.idx].index, orient)
         }).collect();
         t.add_twire(edges)
     }

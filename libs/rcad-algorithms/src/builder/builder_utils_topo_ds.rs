@@ -1,4 +1,4 @@
-﻿/// Convert Vec<WireSegment> to Vec<WireSegmentTopoDS>.
+/// Convert Vec<WireSegment> to Vec<WireSegmentTopoDS>.
 ///
 /// Maps DS indices to ShapeRef handles so the output feeds into
 /// walk_path_extract_wires_topoDS. The DSAsBRep adaptor maps back
@@ -20,7 +20,7 @@ pub(crate) fn segments_to_topo_ds(
     segments.iter().map(|seg| {
         let (edge_ref, source) = match &seg.source {
             WireEdgeSource::DsEdge(ei) => {
-                (ShapeRef::new(e_base + *ei), WireEdgeSourceTopoDS::DsEdge(ShapeRef::new(e_base + *ei)))
+                (ShapeRef::synthetic(e_base + *ei), WireEdgeSourceTopoDS::DsEdge(ShapeRef::synthetic(e_base + *ei)))
             }
             WireEdgeSource::IntersectionCurve(ci) => {
                 if let Some(Some(edge_ref)) = ic_edge_map.get(*ci) {
@@ -28,11 +28,11 @@ pub(crate) fn segments_to_topo_ds(
                     (*edge_ref, WireEdgeSourceTopoDS::IntersectionCurve(*edge_ref))
                 } else {
                     // Fallback: should not happen
-                    (ShapeRef::new(0), WireEdgeSourceTopoDS::IntersectionCurve(ShapeRef::new(0)))
+                    (ShapeRef::synthetic(0), WireEdgeSourceTopoDS::IntersectionCurve(ShapeRef::synthetic(0)))
                 }
             }
             WireEdgeSource::SeamEdge => {
-                (ShapeRef::new(0), WireEdgeSourceTopoDS::SeamEdge)
+                (ShapeRef::synthetic(0), WireEdgeSourceTopoDS::SeamEdge)
             }
         };
         let orientation = match seg.orientation {
@@ -44,8 +44,8 @@ pub(crate) fn segments_to_topo_ds(
         WireSegmentTopoDS {
             edge: edge_ref,
             face: face_ref,
-            start_vertex: ShapeRef::new(seg.start_vertex),
-            end_vertex: ShapeRef::new(seg.end_vertex),
+            start_vertex: ShapeRef::synthetic(seg.start_vertex),
+            end_vertex: ShapeRef::synthetic(seg.end_vertex),
             source,
             orientation,
             is_closed_on_face: seg.is_closed_on_face,

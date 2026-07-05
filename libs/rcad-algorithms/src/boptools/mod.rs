@@ -528,10 +528,11 @@ pub fn make_container(shape_type: u8, brep: &mut rcad_kernel::topods::BRep) -> r
         2 => std::sync::Arc::new(TShape::Solid(TSolidData { my_shapes: Vec::new(), flags: tshape_flags::FREE | tshape_flags::MODIFIED, shells: Vec::new(), internal_vertices: Vec::new(), internal_edges: Vec::new() })),
         3 => std::sync::Arc::new(TShape::Shell(TShellData { my_shapes: Vec::new(), flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE, faces: Vec::new() })),
         4 => std::sync::Arc::new(TShape::Wire(TWireData { my_shapes: Vec::new(), flags: tshape_flags::FREE | tshape_flags::MODIFIED | tshape_flags::ORIENTABLE, edges: Vec::new() })),
-        _ => return ShapeRef::new(0),
+        _ => return ShapeRef::synthetic(0),
     };
     brep.tshapes.push(shape);
-    ShapeRef::new(idx)
+    let ptr_id = std::sync::Arc::as_ptr(&brep.tshapes[idx]) as u64;
+    ShapeRef { ptr_id, index: idx, orientation: rcad_kernel::topods::Orientation::Forward, location: 0 }
 }
 
 /// OCCT-aligned: PointOnEdge (BOPTools_AlgoTools_2.cxx L275-280).
