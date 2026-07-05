@@ -1063,11 +1063,19 @@ impl<'a> BooleanBuilder<'a> {
     ///   Calls BuildRC (L900) then BuildSolid for FUSE 3D (L902-906).
     fn build_shape(&self, result: &mut ResultBuilder) {
         let mut t_brep = self.my_shape.borrow_mut();
-        // OCCT L875-897: CheckArgsForOpenSolid + BuildBOP fallback (no rcad equivalent).
+        // OCCT L875-897: if both dims are 3D, check for open solids → BuildBOP fallback.
+        if self.my_dims[0] == 3 && self.my_dims[1] == 3 {
+            let has_not_closed = self.check_args_for_open_solid();
+            if has_not_closed {
+                // rcad: no BuildBOP fallback — fall through to normal BuildRC path.
+                // OCCT: BuildBOP(myArguments, myTools, myOperation, ..., aReport);
+            }
+        }
+        // OCCT L900: BuildRC
         self.build_rc(result, &mut *t_brep);
         if self.has_errors { return; }
         // OCCT L902-906: BuildSolid for FUSE 3D
-        if self.op == BooleanOpType::Union {
+        if self.op == BooleanOpType::Union && self.my_dims[0] == 3 {
             let face_refs: Vec<_> = self.my_face_refs.borrow().iter()
                 .filter(|sr| !sr.is_null())
                 .copied()
@@ -1078,6 +1086,27 @@ impl<'a> BooleanBuilder<'a> {
                 self.my_solids.borrow_mut().push(solid_ref);
             }
         }
+    }
+
+    /// OCCT-aligned: CheckArgsForOpenSolid (BOP.cxx L1382-1470).
+    ///   Checks if any source solid is non-closed (has INTERNAL faces).
+    ///   rcad: simplified — no alert system; checks DS for non-closed solids.
+    fn check_args_for_open_solid(&self) -> bool {
+        for shell in &self.ds.shells {
+            // Check if the shell is closed (each edge appears twice).
+            let mut ecount: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+            for &fi in &shell.faces {
+                if let Some(face) = self.ds.faces.get(fi) {
+                    for &ei in &face.boundary_edges {
+                        *ecount.entry(ei).or_default() += 1;
+                    }
+                }
+            }
+            if ecount.values().any(|&c| c != 2) {
+                return true; // non-closed shell found
+            }
+        }
+        false // all shells closed
     }
 
     /// �?OCCT-aligned: BOPAlgo_Builder::PostTreat (Builder.cxx L450-475).
