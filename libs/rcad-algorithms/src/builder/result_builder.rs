@@ -1176,10 +1176,10 @@ impl ResultBuilder {
         }
 
         // Outer wire
-        let outer_edges: Vec<ShapeRef> = edge_indices.iter().map(|&(idx, forward)| {
+        let outer_edges: Vec<ShapeRef> = edge_indices.iter().filter_map(|&(idx, forward)| {
             let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
-            if idx < e_map.len() { ShapeRef::synthetic_with_orientation(e_map[idx].index, orient) }
-            else { ShapeRef::synthetic_with_orientation(idx, orient) }
+            if idx < e_map.len() { Some(ShapeRef::synthetic_with_orientation(e_map[idx].index, orient)) }
+            else { None }
         }).collect();
         let outer_wire = t.add_twire(outer_edges);
         t.wire_mut(outer_wire).flags |= rcad_kernel::topods::tshape_flags::CLOSED;
@@ -1187,10 +1187,10 @@ impl ResultBuilder {
         // Inner wires
         let mut inner_wires = Vec::new();
         for wire_idxs in inner_wire_edges {
-            let iw_edges: Vec<ShapeRef> = wire_idxs.iter().map(|&(idx, forward)| {
+            let iw_edges: Vec<ShapeRef> = wire_idxs.iter().filter_map(|&(idx, forward)| {
                 let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
-                if idx < e_map.len() { ShapeRef::synthetic_with_orientation(e_map[idx].index, orient) }
-                else { ShapeRef::synthetic_with_orientation(idx, orient) }
+                if idx < e_map.len() { Some(ShapeRef::synthetic_with_orientation(e_map[idx].index, orient)) }
+                else { None }
             }).collect();
             if !iw_edges.is_empty() {
                 let w = t.add_twire(iw_edges);
@@ -1201,10 +1201,10 @@ impl ResultBuilder {
 
         // Internal wire edges
         for iw_edges in internal_wire_edges {
-            let iw: Vec<ShapeRef> = iw_edges.iter().map(|&(idx, forward)| {
+            let iw: Vec<ShapeRef> = iw_edges.iter().filter_map(|&(idx, forward)| {
                 let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
-                if idx < e_map.len() { ShapeRef::synthetic_with_orientation(e_map[idx].index, orient) }
-                else { ShapeRef::synthetic_with_orientation(idx, orient) }
+                if idx < e_map.len() { Some(ShapeRef::synthetic_with_orientation(e_map[idx].index, orient)) }
+                else { None }
             }).collect();
             if iw.len() >= 2 {
                 let w = t.add_twire(iw);
@@ -1279,10 +1279,10 @@ impl ResultBuilder {
                 .and_then(|wi| self.wire_refs.get(wi).filter(|sr| !sr.is_null()).copied())
                 .unwrap_or_else(|| {
                     // Fallback: create wire inline from edge_indices
-                    let outer_edges: Vec<ShapeRef> = edge_indices.iter().map(|&(idx, forward)| {
+                    let outer_edges: Vec<ShapeRef> = edge_indices.iter().filter_map(|&(idx, forward)| {
                         let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
-                        if idx < e_map.len() { ShapeRef::synthetic_with_orientation(e_map[idx].index, orient) }
-                        else { ShapeRef::synthetic_with_orientation(idx, orient) }
+                        if idx < e_map.len() { Some(ShapeRef::synthetic_with_orientation(e_map[idx].index, orient)) }
+                        else { None }
                     }).collect();
                     t.add_twire(outer_edges)
                 });
@@ -1304,10 +1304,10 @@ impl ResultBuilder {
             // Fallback: create inner wires inline for any extra edges not covered by wire_refs
             let covered_count = inner_wires.len();
             for wire_idxs in inner_wire_edges.iter().skip(covered_count) {
-                let iw_edges: Vec<ShapeRef> = wire_idxs.iter().map(|&(idx, forward)| {
+                let iw_edges: Vec<ShapeRef> = wire_idxs.iter().filter_map(|&(idx, forward)| {
                     let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
-                    if idx < e_map.len() { ShapeRef::synthetic_with_orientation(e_map[idx].index, orient) }
-                    else { ShapeRef::synthetic_with_orientation(idx, orient) }
+                    if idx < e_map.len() { Some(ShapeRef::synthetic_with_orientation(e_map[idx].index, orient)) }
+                    else { None }
                 }).collect();
                 if !iw_edges.is_empty() {
                     let w = t.add_twire(iw_edges);
@@ -1317,10 +1317,10 @@ impl ResultBuilder {
             }
             // Internal wire edges
             for iw_edges in internal_wire_edges {
-                let iw: Vec<ShapeRef> = iw_edges.iter().map(|&(idx, forward)| {
+                let iw: Vec<ShapeRef> = iw_edges.iter().filter_map(|&(idx, forward)| {
                     let orient = if forward { Orientation::Forward } else { Orientation::Reversed };
-                    if idx < e_map.len() { ShapeRef::synthetic_with_orientation(e_map[idx].index, orient) }
-                    else { ShapeRef::synthetic_with_orientation(idx, orient) }
+                    if idx < e_map.len() { Some(ShapeRef::synthetic_with_orientation(e_map[idx].index, orient)) }
+                    else { None }
                 }).collect();
                 if iw.len() >= 2 {
                     let w = t.add_twire(iw);
