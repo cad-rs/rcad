@@ -32,6 +32,16 @@ pub enum ShapeType {
 pub enum BooleanError {
     /// Operation type is not valid for the boolean operation.
     InvalidOperation,
+    /// OCCT-aligned: AlertTooFewArguments — fewer than 2 arguments.
+    TooFewArguments,
+    /// OCCT-aligned: AlertNoFiller — PaveFiller not initialized.
+    NoFiller,
+    /// OCCT-aligned: AlertBOPNotAllowed — non-licit operation for the arguments.
+    BOPNotAllowed,
+    /// OCCT-aligned: AlertBOPNotSet — operation type not set.
+    BOPNotSet,
+    /// OCCT-aligned: AlertEmptyShape — one argument is empty.
+    EmptyShape,
     EmptyInput,
     MissingGeometry(&'static str),
     DegenerateResult,
@@ -56,6 +66,11 @@ impl std::fmt::Display for BooleanError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidOperation => write!(f, "invalid operation"),
+            Self::TooFewArguments => write!(f, "too few arguments"),
+            Self::NoFiller => write!(f, "no pave filler"),
+            Self::BOPNotAllowed => write!(f, "operation not allowed for arguments"),
+            Self::BOPNotSet => write!(f, "operation type not set"),
+            Self::EmptyShape => write!(f, "empty shape argument"),
             Self::EmptyInput => write!(f, "empty input"),
             Self::MissingGeometry(msg) => write!(f, "missing geometry: {msg}"),
             Self::DegenerateResult => write!(f, "degenerate result"),

@@ -722,6 +722,11 @@ pub fn boolean_retry_fuzzy_values(initial: f64, ladder: &[f64]) -> Vec<f64> {
 pub fn classify_boolean_retry(err: &BooleanError) -> BooleanRetryClass {
     match err {
         BooleanError::InvalidOperation => BooleanRetryClass::FatalInput,
+        BooleanError::TooFewArguments => BooleanRetryClass::FatalInput,
+        BooleanError::NoFiller => BooleanRetryClass::FatalInput,
+        BooleanError::BOPNotAllowed => BooleanRetryClass::FatalInput,
+        BooleanError::BOPNotSet => BooleanRetryClass::FatalInput,
+        BooleanError::EmptyShape => BooleanRetryClass::FatalInput,
         BooleanError::EmptyInput => BooleanRetryClass::FatalInput,
         BooleanError::MissingGeometry(_) => BooleanRetryClass::IncompleteData,
         BooleanError::DegenerateResult => BooleanRetryClass::DegenerateTopology,
@@ -741,6 +746,11 @@ pub fn classify_boolean_retry(err: &BooleanError) -> BooleanRetryClass {
 pub fn classify_boolean_failure(err: &BooleanError) -> BooleanFailureClass {
     match err {
         BooleanError::InvalidOperation => BooleanFailureClass::InvalidInput,
+        BooleanError::TooFewArguments => BooleanFailureClass::InvalidInput,
+        BooleanError::NoFiller => BooleanFailureClass::InvalidInput,
+        BooleanError::BOPNotAllowed => BooleanFailureClass::InvalidInput,
+        BooleanError::BOPNotSet => BooleanFailureClass::InvalidInput,
+        BooleanError::EmptyShape => BooleanFailureClass::InvalidInput,
         BooleanError::EmptyInput => BooleanFailureClass::InvalidInput,
         BooleanError::MissingGeometry(_) => BooleanFailureClass::InvalidInput,
         BooleanError::DegenerateResult => BooleanFailureClass::DegenerateTopology,

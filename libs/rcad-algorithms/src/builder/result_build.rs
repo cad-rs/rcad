@@ -1064,7 +1064,8 @@ impl<'a> BooleanBuilder<'a> {
     fn build_shape(&self, result: &mut ResultBuilder) {
         let mut t_brep = self.my_shape.borrow_mut();
         // OCCT L875-897: if both dims are 3D, check for open solids → BuildBOP fallback.
-        if self.my_dims[0] == 3 && self.my_dims[1] == 3 {
+        let md = self.my_dims.get();
+        if md[0] == 3 && md[1] == 3 {
             let has_not_closed = self.check_args_for_open_solid();
             if has_not_closed {
                 // rcad: no BuildBOP fallback — fall through to normal BuildRC path.
@@ -1075,7 +1076,7 @@ impl<'a> BooleanBuilder<'a> {
         self.build_rc(result, &mut *t_brep);
         if self.has_errors { return; }
         // OCCT L902-906: BuildSolid for FUSE 3D
-        if self.op == BooleanOpType::Union && self.my_dims[0] == 3 {
+        if self.op == BooleanOpType::Union && md[0] == 3 {
             let face_refs: Vec<_> = self.my_face_refs.borrow().iter()
                 .filter(|sr| !sr.is_null())
                 .copied()

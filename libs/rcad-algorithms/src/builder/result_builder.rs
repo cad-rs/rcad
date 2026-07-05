@@ -13,6 +13,7 @@ use rcad_kernel::topology::*;
 /// Builds result BRep from accumulated DS face data.
 ///
 /// OCCT-aligned: pure conversion — BuildResult does no dedup/merge/cull.
+#[allow(dead_code)]
 pub(crate) struct ResultBuilder {
     pub(crate) vertices: Vec<DVec3>,
     pub(crate) vertex_map: HashMap<u64, usize>,
