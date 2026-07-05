@@ -21,7 +21,7 @@ use rcad_step::{
     StepWriter, ExportSelection,
 };
 use rcad_kernel::appearance::Color;
-use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use std::time::Instant;
 
 fn all_faces_selection() -> ExportSelection<'static> {
@@ -31,21 +31,48 @@ fn all_faces_selection() -> ExportSelection<'static> {
     }
 }
 
-fn to_old(t: &rcad_kernel::topods::BRep) -> BRep {
-    BRep::from_topods_with_location(t, glam::DAffine3::IDENTITY)
+fn face_count(t: &topods::BRep) -> usize {
+    let mut n = 0;
+    for ts in &t.tshapes {
+        if let topods::TShape::Face(_) = ts.as_ref() {
+            n += 1;
+        }
+    }
+    n
 }
 
-fn face_count(t: &rcad_kernel::topods::BRep) -> usize {
-    let b = to_old(t);
-    b.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count()
+fn solid_count(t: &topods::BRep) -> usize {
+    let mut n = 0;
+    for ts in &t.tshapes {
+        if let topods::TShape::Solid(_) = ts.as_ref() {
+            n += 1;
+        }
+    }
+    n
 }
 
-fn solid_count(t: &rcad_kernel::topods::BRep) -> usize {
-    to_old(t).solids.len()
+fn vertex_count(t: &topods::BRep) -> usize {
+    let mut n = 0;
+    for ts in &t.tshapes {
+        if let topods::TShape::Vertex(_) = ts.as_ref() {
+            n += 1;
+        }
+    }
+    n
 }
 
-fn vertex_count(t: &rcad_kernel::topods::BRep) -> usize {
-    to_old(t).vertices.len()
+fn bounding_box(t: &topods::BRep) -> Option<[DVec3; 2]> {
+    let mut mn = DVec3::splat(f64::INFINITY);
+    let mut mx = DVec3::splat(f64::NEG_INFINITY);
+    let mut has_any = false;
+    for ts in &t.tshapes {
+        if let topods::TShape::Vertex(vd) = ts.as_ref() {
+            has_any = true;
+            mn = mn.min(vd.point);
+            mx = mx.max(vd.point);
+        }
+    }
+    if !has_any { None } else { Some([mn, mx]) }
 }
 
 fn make_box(origin: DVec3) -> rcad_kernel::BRep {
@@ -70,7 +97,7 @@ fn boolean_union_result_roundtrip() {
 
     let union = boolean_op(BooleanOpType::Union, &box1, &box2).expect("union");
 
-    let step_str = StepWriter::write_string(&union.to_topods(), all_faces_selection());
+    let step_str = StepWriter::write_string(&union, all_faces_selection());
     assert!(step_str.contains("ISO-10303-21"), "should have STEP header");
 
     let parsed = StepReader::parse_string(&step_str).expect("parse union result");
@@ -91,7 +118,7 @@ fn boolean_difference_hole_roundtrip() {
 
     let difference = boolean_op(BooleanOpType::Difference, &box_shape, &cylinder).expect("diff");
 
-    let step_str = StepWriter::write_string(&difference.to_topods(), all_faces_selection());
+    let step_str = StepWriter::write_string(&difference, all_faces_selection());
     let parsed = StepReader::parse_string(&step_str).expect("parse diff result");
 
     assert_eq!(solid_count(&parsed), 1, "difference should have 1 solid");
@@ -113,7 +140,7 @@ fn boolean_intersection_roundtrip() {
     let intersection =
         boolean_op(BooleanOpType::Intersection, &box1, &box2).expect("intersection");
 
-    let step_str = StepWriter::write_string(&intersection.to_topods(), all_faces_selection());
+    let step_str = StepWriter::write_string(&intersection, all_faces_selection());
     let parsed = StepReader::parse_string(&step_str).expect("parse intersection result");
 
     assert_eq!(solid_count(&parsed), 1, "intersection should have 1 solid");
@@ -137,7 +164,7 @@ fn boolean_cone_box_intersection_roundtrip() {
     let intersection =
         boolean_op(BooleanOpType::Intersection, &cone, &box_shape).expect("intersection");
 
-    let step_str = StepWriter::write_string(&intersection.to_topods(), all_faces_selection());
+    let step_str = StepWriter::write_string(&intersection, all_faces_selection());
     let parsed = StepReader::parse_string(&step_str).expect("parse intersection");
 
     assert_eq!(solid_count(&parsed), 1, "intersection should have 1 solid");
@@ -153,7 +180,7 @@ fn boolean_torus_sphere_difference_roundtrip() {
 
     let result = boolean_op(BooleanOpType::Difference, &torus, &sphere).expect("diff");
 
-    let step_str = StepWriter::write_string(&result.to_topods(), all_faces_selection());
+    let step_str = StepWriter::write_string(&result, all_faces_selection());
     let parsed = StepReader::parse_string(&step_str).expect("parse result");
 
     assert_eq!(solid_count(&parsed), 1, "should have 1 solid");
@@ -170,7 +197,7 @@ fn boolean_box_difference_roundtrip() {
 
     let result = boolean_op(BooleanOpType::Difference, &box1, &box2).expect("diff");
 
-    let step = StepWriter::write_string(&result.to_topods(), all_faces_selection());
+    let step = StepWriter::write_string(&result, all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse result");
 
     assert_eq!(solid_count(&parsed), 1, "should have 1 solid");
@@ -202,13 +229,14 @@ fn assembly_translation_baked() {
 
     // Verify geometry was translated
     let brep = &components[0].brep;
-    let old = to_old(brep);
-    for v in &old.vertices {
-        assert!(
-            v.point.x >= 9.999,
-            "vertex x should be >= 10 after baking translation, got {}",
-            v.point.x
-        );
+    for ts in &brep.tshapes {
+        if let topods::TShape::Vertex(vd) = &**ts {
+            assert!(
+                vd.point.x >= 9.999,
+                "vertex x should be >= 10 after baking translation, got {}",
+                vd.point.x
+            );
+        }
     }
 }
 
@@ -382,7 +410,7 @@ fn cylinder_roundtrip() {
     assert_eq!(face_count(&parsed), 3, "cylinder should have 3 faces");
 
     // Verify bounding box preserves cylindrical geometry
-    let bbox = to_old(&parsed).bounding_box().expect("should have bounds");
+    let bbox = bounding_box(&parsed).expect("should have bounds");
     let [min, max] = bbox;
 
     // Diameter should be 4.0 (radius * 2)
@@ -407,7 +435,7 @@ fn torus_roundtrip() {
     assert!(face_count(&parsed) >= 1, "torus should have at least 1 face");
 
     // Verify bounding box
-    let bbox = to_old(&parsed).bounding_box().expect("should have bounds");
+    let bbox = bounding_box(&parsed).expect("should have bounds");
     let [min, max] = bbox;
 
     let expected_outer_diameter = 2.0 * (major_radius + minor_radius);
@@ -435,7 +463,7 @@ fn cone_roundtrip() {
     assert_eq!(face_count(&parsed), 2, "cone should have 2 faces");
 
     // Verify cone geometry
-    let bbox = to_old(&parsed).bounding_box().expect("should have bounds");
+    let bbox = bounding_box(&parsed).expect("should have bounds");
     let [min, max] = bbox;
 
     assert!((max.z - min.z - 6.0).abs() < 0.01, "height should be preserved");
@@ -454,7 +482,7 @@ fn cylinder_boolean_roundtrip() {
 
     let result = boolean_op(BooleanOpType::Difference, &box_shape, &cylinder).expect("diff");
 
-    let step = StepWriter::write_string(&result.to_topods(), all_faces_selection());
+    let step = StepWriter::write_string(&result, all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse result");
 
     assert_eq!(solid_count(&parsed), 1, "should have 1 solid");
@@ -475,7 +503,7 @@ fn box_primitive_roundtrip() {
     assert_eq!(solid_count(&parsed), 1, "should have 1 solid");
     assert_eq!(face_count(&parsed), 6, "box should have 6 faces");
 
-    let bbox = to_old(&parsed).bounding_box().expect("should have bounds");
+    let bbox = bounding_box(&parsed).expect("should have bounds");
     let [min, max] = bbox;
     assert!((max.x - min.x - 2.0).abs() < 0.01, "x dimension preserved");
     assert!((max.y - min.y - 3.0).abs() < 0.01, "y dimension preserved");
@@ -567,11 +595,11 @@ fn complex_geometry_parses() {
 fn multiple_roundtrips_stable() {
     let original = make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 2.0, 5.0).expect("cylinder");
 
-    let mut current = original.clone();
+    let mut current = original.to_topods();
     let original_faces = face_count(&original.to_topods());
 
     for iteration in 0..5 {
-        let step = StepWriter::write_string(&current.to_topods(), all_faces_selection());
+        let step = StepWriter::write_string(&current, all_faces_selection());
         let rt = StepReader::parse_string(&step).unwrap_or_else(|_| panic!("iteration {}", iteration));
         let faces = face_count(&rt);
 
@@ -581,7 +609,7 @@ fn multiple_roundtrips_stable() {
             "face count should be stable at iteration {}",
             iteration
         );
-        current = to_old(&rt);
+        current = rt;
     }
 }
 
@@ -620,7 +648,7 @@ fn large_coordinate_roundtrip() {
     let step = StepWriter::write_string(&large_box.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse large coordinate box");
 
-    let bbox = to_old(&parsed).bounding_box().expect("should have bounds");
+    let bbox = bounding_box(&parsed).expect("should have bounds");
     let [min, _] = bbox;
 
     // Offset should be approximately preserved
@@ -647,7 +675,7 @@ fn negative_coordinate_roundtrip() {
     let step = StepWriter::write_string(&neg_box.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse negative box");
 
-    let bbox = to_old(&parsed).bounding_box().expect("should have bounds");
+    let bbox = bounding_box(&parsed).expect("should have bounds");
     let [min, _] = bbox;
 
     assert!(min.x < 0.0, "should have negative x coordinates");
@@ -688,7 +716,7 @@ fn multiple_boolean_roundtrip() {
 
     // Roundtrip each result
     for (i, brep) in results.iter().enumerate() {
-        let step = StepWriter::write_string(&brep.to_topods(), all_faces_selection());
+    let step = StepWriter::write_string(brep, all_faces_selection());
         let parsed = StepReader::parse_string(&step).unwrap_or_else(|_| panic!("parse result {}", i));
         assert_eq!(solid_count(&parsed), 1, "result {} should have 1 solid", i);
     }
@@ -800,7 +828,7 @@ fn cylinder_box_intersection_roundtrip() {
     let result =
         boolean_op(BooleanOpType::Intersection, &cylinder, &box_shape).expect("intersection");
 
-    let step = StepWriter::write_string(&result.to_topods(), all_faces_selection());
+    let step = StepWriter::write_string(&result, all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse result");
 
     assert_eq!(solid_count(&parsed), 1, "should have 1 solid");
@@ -816,7 +844,7 @@ fn nested_cylinders_difference_roundtrip() {
 
     let tube = boolean_op(BooleanOpType::Difference, &outer, &inner).expect("tube");
 
-    let step = StepWriter::write_string(&tube.to_topods(), all_faces_selection());
+    let step = StepWriter::write_string(&tube, all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse tube");
 
     assert_eq!(solid_count(&parsed), 1, "tube should have 1 solid");
@@ -855,7 +883,7 @@ fn scaled_box_roundtrip() {
     let step = StepWriter::write_string(&box_shape.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse scaled box");
 
-    let bbox = to_old(&parsed).bounding_box().expect("should have bounds");
+    let bbox = bounding_box(&parsed).expect("should have bounds");
     let [min, max] = bbox;
 
     assert!((max.x - min.x - 2.0).abs() < 0.1, "x scaled to 2");
@@ -896,7 +924,7 @@ fn combined_transform_roundtrip() {
     let step = StepWriter::write_string(&box_shape.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse transformed box");
 
-    let bbox = to_old(&parsed).bounding_box().expect("should have bounds");
+    let bbox = bounding_box(&parsed).expect("should have bounds");
     let [min, _max] = bbox;
 
     // Box should be at offset location
@@ -910,19 +938,19 @@ fn combined_transform_roundtrip() {
 #[test]
 fn boolean_chain_roundtrip() {
     // Start with a box
-    let mut result = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 10.0, 10.0).expect("box");
+    let mut result = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 10.0, 10.0, 10.0).expect("box").to_topods();
 
     // Cut first cylinder
     let cyl1 = make_cylinder_brep(DVec3::new(3.0, 3.0, 0.0), DVec3::Z, DVec3::X, 1.0, 10.0)
         .expect("cyl1");
-    result = boolean_op(BooleanOpType::Difference, &result, &cyl1).expect("diff1");
+    result = boolean_op(BooleanOpType::Difference, &rcad_kernel::BRep::from_topods(&result), &cyl1).expect("diff1");
 
     // Cut second cylinder
     let cyl2 = make_cylinder_brep(DVec3::new(7.0, 7.0, 0.0), DVec3::Z, DVec3::X, 1.0, 10.0)
         .expect("cyl2");
-    result = boolean_op(BooleanOpType::Difference, &result, &cyl2).expect("diff2");
+    result = boolean_op(BooleanOpType::Difference, &rcad_kernel::BRep::from_topods(&result), &cyl2).expect("diff2");
 
-    let step = StepWriter::write_string(&result.to_topods(), all_faces_selection());
+    let step = StepWriter::write_string(&result, all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse result");
 
     assert_eq!(solid_count(&parsed), 1, "should have 1 solid after chain");
@@ -970,7 +998,7 @@ fn very_large_box_roundtrip() {
     let step = StepWriter::write_string(&large_box.to_topods(), all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse large box");
 
-    let bbox = to_old(&parsed).bounding_box().expect("should have bounds");
+    let bbox = bounding_box(&parsed).expect("should have bounds");
     let [min, max] = bbox;
 
     assert!((max.x - min.x - 1000.0).abs() < 1.0, "large x dimension preserved");
@@ -987,9 +1015,9 @@ fn three_box_union_roundtrip() {
         make_box_brep(DVec3::new(0.0, 1.0, 0.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).expect("box3");
 
     let union1 = boolean_op(BooleanOpType::Union, &box1, &box2).expect("union1");
-    let final_union = boolean_op(BooleanOpType::Union, &union1, &box3).expect("union2");
+    let final_union = boolean_op(BooleanOpType::Union, &rcad_kernel::BRep::from_topods(&union1), &box3).expect("union2");
 
-    let step = StepWriter::write_string(&final_union.to_topods(), all_faces_selection());
+    let step = StepWriter::write_string(&final_union, all_faces_selection());
     let parsed = StepReader::parse_string(&step).expect("parse union");
 
     assert_eq!(solid_count(&parsed), 1, "should have 1 solid");

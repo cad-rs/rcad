@@ -3,6 +3,7 @@
 use glam::{DAffine3, DVec3};
 use rcad_modeling::make_box_brep;
 use rcad_algorithms::{HealingMode, HealingOptions};
+use rcad_kernel::topods;
 use rcad_step::{
     AssemblyComponent, AssemblyNode, read_assembly, read_assembly_tree,
     read_assembly_with_healing_report_json,
@@ -16,11 +17,6 @@ fn make_box(origin: DVec3) -> rcad_kernel::topods::BRep {
         b.apply_transform(DAffine3::from_translation(origin));
     }
     b.to_topods()
-}
-
-/// Convert topods::BRep back to old BRep for inspecting vertex positions.
-fn to_old(t: &rcad_kernel::topods::BRep) -> rcad_kernel::BRep {
-    rcad_kernel::BRep::from_topods_with_location(t, glam::DAffine3::IDENTITY)
 }
 
 /// Write an assembly with two named components, parse it back, and verify:
@@ -82,13 +78,15 @@ fn assembly_with_translation_baked_into_geometry() {
     assert!(!components.is_empty());
 
     // The merged BRep returned by read_assembly contains baked geometry.
-    let old = to_old(&components[0].brep);
-    for v in &old.vertices {
-        assert!(
-            v.point.x >= 9.999,
-            "vertex x should be >= 10 after baking translation, got {}",
-            v.point.x
-        );
+    let brep = &components[0].brep;
+    for ts in &brep.tshapes {
+        if let topods::TShape::Vertex(vd) = &**ts {
+            assert!(
+                vd.point.x >= 9.999,
+                "vertex x should be >= 10 after baking translation, got {}",
+                vd.point.x
+            );
+        }
     }
 }
 

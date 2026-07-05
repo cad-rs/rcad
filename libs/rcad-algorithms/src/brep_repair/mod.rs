@@ -1590,7 +1590,7 @@ fn edges_similar_geometry(brep: &BRep, e1: usize, e2: usize, tol: f64) -> bool {
 /// This combines vertex merging, edge sewing, and small edge removal
 /// into a comprehensive connectivity rebuilding pass.
 ///
-/// Analogous to `BOPAlgo_MakeConnected` in OCCT.
+/// Analogous to `BOPAlgo_MakeConnected` in OCCT. Old-BRep conversion is internal.
 pub fn make_connected_enhanced(brep: &topods::BRep, tolerance: f64, max_passes: usize) -> (topods::BRep, MakeConnectedReport) {
     let old = rcad_kernel::BRep::from_topods_with_location(brep, glam::DAffine3::IDENTITY);
     let (result, report) = make_connected_enhanced_old(&old, tolerance, max_passes);
@@ -1598,7 +1598,7 @@ pub fn make_connected_enhanced(brep: &topods::BRep, tolerance: f64, max_passes: 
 }
 
 /// Legacy: takes old BRep.
-pub fn make_connected_enhanced_old(brep: &BRep, tolerance: f64, max_passes: usize) -> (BRep, MakeConnectedReport) {
+fn make_connected_enhanced_old(brep: &BRep, tolerance: f64, max_passes: usize) -> (BRep, MakeConnectedReport) {
     make_connected_enhanced_with_mode(brep, tolerance, max_passes, MakeConnectedMode::Standard, false)
 }
 

@@ -1,4 +1,4 @@
-﻿//! BRep validity checker.
+//! BRep validity checker.
 //!
 //! Analogous to OCCT `BRepCheck_Analyzer`. Checks structural and geometric
 //! consistency of a BRep without modifying it.
@@ -38,7 +38,7 @@
 
 use crate::tolerance::*;
 use glam::{DVec2, DVec3};
-use rcad_kernel::BRep;
+use rcad_kernel::{BRep, topods};
 use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval};
 
 /// A single validity issue found during checking.
@@ -727,7 +727,7 @@ fn segments_2d_properly_intersect(
 
 fn count_geometric_self_intersections(
     wire_verts: &[(usize, usize)],
-    vertices: &[rcad_kernel::topology::Vertex],
+    v_points: &[DVec3],
 ) -> usize {
     let n = wire_verts.len();
     if n < 4 {
@@ -737,8 +737,8 @@ fn count_geometric_self_intersections(
     let segs: Vec<(DVec3, DVec3)> = wire_verts
         .iter()
         .map(|&(sv, ev)| {
-            let p0 = vertices.get(sv).map(|v| v.point).unwrap_or(DVec3::ZERO);
-            let p1 = vertices.get(ev).map(|v| v.point).unwrap_or(DVec3::ZERO);
+            let p0 = v_points.get(sv).copied().unwrap_or(DVec3::ZERO);
+            let p1 = v_points.get(ev).copied().unwrap_or(DVec3::ZERO);
             (p0, p1)
         })
         .collect();
@@ -1216,36 +1216,59 @@ impl WireAnalysisReport {
 ///
 /// This is a structured counterpart to checker issues C1/C7/C8 and is useful
 /// for import diagnostics and healing reports.
-pub fn analyze_wire_issues(brep: &BRep, tolerance: f64) -> WireAnalysisReport {
-    use std::collections::HashMap;
+/// Analyze wire issues in a BRep by examining topology directly.
+/// Works on topods::BRep — no old BRep bridge needed.
+pub fn analyze_wire_issues(brep: &topods::BRep, tolerance: f64) -> WireAnalysisReport {
+    let tshapes = &brep.tshapes;
 
     let mut report = WireAnalysisReport::default();
-    let n_edges = brep.edges.len();
 
-    for (si, solid) in brep.solids.iter().enumerate() {
-        for (shi, shell) in solid.shells.iter().enumerate() {
-            for (fi, face) in shell.faces.iter().enumerate() {
-                let mut all_wires: Vec<(usize, &rcad_kernel::topology::Wire)> = Vec::new();
-                all_wires.push((0, &face.outer_wire));
-                for (wi, inner) in face.inner_wires.iter().enumerate() {
+    // Build vertex point lookup: tshape index → point
+    let v_points: Vec<DVec3> = tshapes.iter().filter_map(|ts| {
+        if let topods::TShape::Vertex(vd) = &**ts {
+            Some(vd.point)
+        } else {
+            None
+        }
+    }).collect();
+
+    let mut si = 0usize;
+    for ts in tshapes {
+        let topods::TShape::Solid(sd) = &**ts else { continue };
+
+        let mut shi = 0usize;
+        for shell_sr in &sd.shells {
+            let topods::TShape::Shell(shd) = &*tshapes[shell_sr.index] else { continue };
+
+            let mut fi = 0usize;
+            for face_sr in &shd.faces {
+                let topods::TShape::Face(fd) = &*tshapes[face_sr.index] else { continue };
+
+                // Collect wires: [outer, inner1, inner2, ...]
+                let mut all_wires: Vec<(usize, &topods::ShapeRef)> = Vec::new();
+                all_wires.push((0, &fd.outer_wire));
+                for (wi, inner) in fd.inner_wires.iter().enumerate() {
                     all_wires.push((wi + 1, inner));
                 }
 
-                for (wire_idx, wire) in all_wires {
-                    let mut wire_verts = Vec::with_capacity(wire.edges.len());
+                for (wire_idx, wire_sr) in all_wires {
+                    let topods::TShape::Wire(wd) = &*tshapes[wire_sr.index] else { continue };
+
+                    let mut wire_verts = Vec::with_capacity(wd.edges.len());
                     let mut valid = true;
-                    for we in &wire.edges {
-                        if we.idx >= n_edges {
+
+                    for we in &wd.edges {
+                        if we.index >= tshapes.len() {
                             valid = false;
                             break;
                         }
-                        let edge = &brep.edges[we.idx];
-                        let (sv, ev) = if we.forward {
-                            (edge.start, edge.end)
+                        let topods::TShape::Edge(ed) = &*tshapes[we.index] else { valid = false; break };
+                        let (sv, ev) = if we.orientation.is_forward() {
+                            (ed.first.index, ed.last.index)
                         } else {
-                            (edge.end, edge.start)
+                            (ed.last.index, ed.first.index)
                         };
-                        if sv >= brep.vertices.len() || ev >= brep.vertices.len() {
+                        if sv >= v_points.len() || ev >= v_points.len() {
                             valid = false;
                             break;
                         }
@@ -1264,8 +1287,8 @@ pub fn analyze_wire_issues(brep: &BRep, tolerance: f64) -> WireAnalysisReport {
                             let end_v = wire_verts[i].1;
                             let start_v = wire_verts[next].0;
                             if end_v != start_v {
-                                let end_pt = brep.vertices[end_v].point;
-                                let start_pt = brep.vertices[start_v].point;
+                                let end_pt = v_points[end_v];
+                                let start_pt = v_points[start_v];
                                 if (end_pt - start_pt).length() > tolerance {
                                     open_gaps += 1;
                                 }
@@ -1273,7 +1296,7 @@ pub fn analyze_wire_issues(brep: &BRep, tolerance: f64) -> WireAnalysisReport {
                         }
                     }
 
-                    let mut vertex_count: HashMap<usize, usize> = HashMap::new();
+                    let mut vertex_count: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
                     for &(sv, ev) in &wire_verts {
                         *vertex_count.entry(sv).or_insert(0) += 1;
                         *vertex_count.entry(ev).or_insert(0) += 1;
@@ -1281,7 +1304,7 @@ pub fn analyze_wire_issues(brep: &BRep, tolerance: f64) -> WireAnalysisReport {
                     let topological_self_intersections =
                         vertex_count.values().filter(|&&c| c > 2).count();
                     let geometric_self_intersections =
-                        count_geometric_self_intersections(&wire_verts, &brep.vertices);
+                        count_geometric_self_intersections(&wire_verts, &v_points);
 
                     if open_gaps > 0
                         || topological_self_intersections > 0
@@ -1303,11 +1326,21 @@ pub fn analyze_wire_issues(brep: &BRep, tolerance: f64) -> WireAnalysisReport {
                     report.total_topological_self_intersections += topological_self_intersections;
                     report.total_geometric_self_intersections += geometric_self_intersections;
                 }
+                fi += 1;
             }
+            shi += 1;
         }
+        si += 1;
     }
 
     report
+}
+
+/// Legacy internal helper: old flat BRep for tests that build flat structures.
+#[cfg(test)]
+pub(crate) fn analyze_wire_issues_flat(brep: &BRep, tolerance: f64) -> WireAnalysisReport {
+    // Reuse the topods implementation by converting
+    analyze_wire_issues(&brep.to_topods(), tolerance)
 }
 
 /// Scan all edges in `brep` for SameParameter violations.

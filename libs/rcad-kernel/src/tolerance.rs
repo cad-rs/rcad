@@ -1037,9 +1037,7 @@ pub fn post_treat(brep: &mut BRep, samples_per_edge: usize) {
 }
 
 /// TopoDS-aligned: like [`correct_tolerances`] but operates on `&mut topods::BRep`.
-///
-/// Internally converts to old BRep, runs tolerance correction, and writes
-/// updated tolerances back to the topods TShape fields.
+/// The old-BRep conversion is internal; callers see only topods.
 pub fn correct_tolerances_topods(
     t: &mut topods::BRep,
     samples_per_edge: usize,

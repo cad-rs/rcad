@@ -35,7 +35,7 @@ pub enum StepProtocol {
     /// ISO 10303-242 "Managed Model Based 3D Engineering".
     Ap242,
 }
-use crate::brep_flat::{self, BRep, Face, step_export_uncertainty};
+use self::flat::{BRep, Face, step_export_uncertainty};
 use rcad_kernel::{BSplineCurve2, Curve2d, Curve3, CurveEval, Surface3, topods};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Write;
@@ -149,7 +149,7 @@ impl StepWriter {
         selection: ExportSelection<'_>,
         options: &StepWriteOptions,
     ) -> String {
-        let brep = brep_flat::FlatBRep::from_topods(brep);
+        let brep = flat::FlatBRep::from_topods(brep);
         let mut writer = Part21Writer::new_with_protocol_and_header(
             options.protocol,
             options.header.clone(),
@@ -968,7 +968,7 @@ impl Part21Writer {
     /// Write a compound structure to STEP, returning the list of STEP entity IDs.
     fn write_compound_structure(
         &mut self,
-        compound: &brep_flat::Compound,
+        compound: &flat::Compound,
         existing_solids: &[u64],
     ) -> Vec<u64> {
         let mut element_ids = Vec::new();
@@ -1017,7 +1017,7 @@ impl Part21Writer {
     /// Write a compsolid structure to STEP, returning the list of STEP entity IDs.
     fn write_compsolid_structure(
         &mut self,
-        compsolid: &brep_flat::CompSolid,
+        compsolid: &flat::CompSolid,
         existing_solids: &[u64],
     ) -> Vec<u64> {
         let mut solid_ids = Vec::new();
@@ -4199,6 +4199,7 @@ pub(super) fn sanitize_step_entity_name(name: &str) -> String {
 }
 
 // ── Helpers (included inline for same-module visibility) ───────────────────
+pub(crate) mod flat;
 mod helpers;
 use helpers::*; // make pub(super) helpers accessible
 

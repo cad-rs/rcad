@@ -727,7 +727,7 @@ pub fn simplify_brep_post_ops(brep: &topods::BRep, options: SimplifyOptions) -> 
 }
 
 /// Legacy: takes old BRep.
-pub fn simplify_brep_post_ops_old(brep: &BRep, options: SimplifyOptions) -> (BRep, SimplifyReport) {
+fn simplify_brep_post_ops_old(brep: &BRep, options: SimplifyOptions) -> (BRep, SimplifyReport) {
     fn closure_score(brep: &BRep) -> usize {
         let report = crate::brep_check::validate_solid_closure(brep);
         report

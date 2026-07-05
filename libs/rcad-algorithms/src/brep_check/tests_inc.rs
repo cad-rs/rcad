@@ -1,4 +1,4 @@
-﻿#[cfg(test)]
+#[cfg(test)]
 mod tests {
     use crate::brep_check::*;
     use rcad_kernel::PrimitiveSolid;
@@ -465,7 +465,7 @@ mod tests {
             result.issues
         );
 
-        let wire_report = analyze_wire_issues(&brep, TOLERANCE_MESH_LEGACY);
+        let wire_report = analyze_wire_issues_flat(&brep, TOLERANCE_MESH_LEGACY);
         assert!(
             wire_report.total_topological_self_intersections >= 1,
             "wire analysis should report topological self-intersections"
@@ -511,7 +511,7 @@ mod tests {
             shells: vec![Shell { faces: vec![face] }],
         });
 
-        let wire_report = analyze_wire_issues(&brep, TOLERANCE_MESH_LEGACY);
+        let wire_report = analyze_wire_issues_flat(&brep, TOLERANCE_MESH_LEGACY);
         assert!(wire_report.total_open_gaps >= 1);
         assert!(!wire_report.is_clean());
     }

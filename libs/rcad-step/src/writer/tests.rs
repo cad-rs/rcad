@@ -1,4 +1,4 @@
-﻿#[cfg(test)]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
@@ -12,8 +12,8 @@ mod tests {
     const HFSS_STEP: &str = include_str!("../../../assets/hfss.step");
 
     /// Convert topods::BRep to FlatBRep for field access in tests.
-    fn to_flat(t: &rcad_kernel::topods::BRep) -> crate::brep_flat::FlatBRep {
-        crate::brep_flat::FlatBRep::from_topods(t)
+    fn to_flat(t: &rcad_kernel::topods::BRep) -> super::flat::FlatBRep {
+        super::flat::FlatBRep::from_topods(t)
     }
 
     #[test]

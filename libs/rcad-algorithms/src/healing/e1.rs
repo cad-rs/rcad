@@ -195,7 +195,7 @@ impl HealingReport {
 }
 
 /// Analyze and heal a BRep using the provided options.
-/// Accepts topods::BRep, internally bridges to old BRep for healing.
+/// Accepts topods::BRep; old-BRep conversion is internal.
 pub fn analyze_and_heal(brep: &topods::BRep, options: HealingOptions) -> (topods::BRep, HealingReport) {
     let old = rcad_kernel::BRep::from_topods_with_location(brep, glam::DAffine3::IDENTITY);
     let (healed, report) = analyze_and_heal_old(&old, options);
@@ -203,7 +203,7 @@ pub fn analyze_and_heal(brep: &topods::BRep, options: HealingOptions) -> (topods
 }
 
 /// Legacy: takes old BRep. Internal implementation.
-pub fn analyze_and_heal_old(brep: &BRep, options: HealingOptions) -> (BRep, HealingReport) {
+fn analyze_and_heal_old(brep: &BRep, options: HealingOptions) -> (BRep, HealingReport) {
     let initial = brep_check_analyze(brep);
     let initial_stats = HealingIssueStats::from_check_result(&initial);
 

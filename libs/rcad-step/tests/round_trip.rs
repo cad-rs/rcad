@@ -1,8 +1,8 @@
 /// Integration tests for STEP I/O: write a shape, parse it back, verify topology
 /// is preserved. These act as regression guards against serialization regressions.
 use glam::DVec3;
-use rcad_kernel::BRep;
 use rcad_modeling::{make_box_brep, make_sphere_brep};
+use rcad_kernel::topods;
 use rcad_step::{StepReader, StepWriter, ExportSelection};
 
 fn all_faces_selection() -> ExportSelection<'static> {
@@ -12,21 +12,20 @@ fn all_faces_selection() -> ExportSelection<'static> {
     }
 }
 
-/// Convert topods::BRep back to old BRep for accessing flat fields.
-fn to_old(t: &rcad_kernel::topods::BRep) -> BRep {
-    BRep::from_topods_with_location(t, glam::DAffine3::IDENTITY)
+fn face_count(t: &topods::BRep) -> usize {
+    let mut c = 0;
+    for ts in &t.tshapes {
+        if matches!(&**ts, topods::TShape::Face(_)) { c += 1; }
+    }
+    c
 }
 
-fn face_count(t: &rcad_kernel::topods::BRep) -> usize {
-    to_old(t).solids
-        .iter()
-        .flat_map(|s| &s.shells)
-        .flat_map(|sh| &sh.faces)
-        .count()
-}
-
-fn vertex_count(t: &rcad_kernel::topods::BRep) -> usize {
-    to_old(t).vertices.len()
+fn vertex_count(t: &topods::BRep) -> usize {
+    let mut c = 0;
+    for ts in &t.tshapes {
+        if matches!(&**ts, topods::TShape::Vertex(_)) { c += 1; }
+    }
+    c
 }
 
 // ── Box round-trip ───────────────────────────────────────────────────────────

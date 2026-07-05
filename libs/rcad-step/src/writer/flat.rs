@@ -1,9 +1,8 @@
 //! Flat-array BRep representation for STEP export.
 //!
-//! Converts from topods::BRep (pool-based, OCCT-aligned) to a flat array
-//! representation that the STEP writer uses internally. This is a local
-//! bridge — once the writer is rewritten to use topods::BRep natively,
-//! this module can be removed.
+//! Converts from topods::BRep (OCCT-aligned) to a flat array
+//! representation that the writer uses internally. This is a
+//! private submodule of the writer — no longer a public bridge.
 
 use std::collections::HashMap;
 
@@ -219,8 +218,8 @@ impl FlatBRep {
 
         // Pass 3: collect solids/shells/faces/wires
         let mut solids = Vec::new();
-        let mut compound = None;
-        let mut compsolid = None;
+        let compound = None;
+        let compsolid = None;
         let mut flat_fi = 0usize;
 
         for ts in &brep.tshapes {

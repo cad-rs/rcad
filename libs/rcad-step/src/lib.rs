@@ -14,7 +14,6 @@ use std::io::Read;
 use std::path::Path;
 
 pub mod assembly;
-pub mod brep_flat;
 pub mod iges;
 pub mod obj_writer;
 pub mod occt_brep;
@@ -4636,9 +4635,7 @@ impl StepReader {
         options: HealingOptions,
     ) -> Result<(topods::BRep, HealingReport, String), StepError> {
         let (healed, report) = Self::parse_string_with_healing(content, options)?;
-        // Bridge: convert to old BRep for analyze_wire_issues
-        let old = BRep::from_topods_with_location(&healed, glam::DAffine3::IDENTITY);
-        let wire = analyze_wire_issues(&old, options.tolerance);
+        let wire = analyze_wire_issues(&healed, options.tolerance);
 
         let mut issue_map: BTreeMap<String, usize> = BTreeMap::new();
         for issue in &report.final_result.issues {
