@@ -25,16 +25,24 @@ impl Default for GlueEnum {
 #[derive(Debug, Clone)]
 pub enum Alert {
     /// Edge range is too small to process (BOPAlgo_AlertTooSmallRange).
-    /// Stores (edge_idx, range_length).
     TooSmallRange(usize, f64),
     /// Building pcurve on face failed (BOPAlgo_AlertBuildingPCurveFailed).
-    /// Stores (edge_idx, face_idx).
     BuildingPCurveFailed(usize, usize),
     /// Faces from BuilderSolid that were not used in any solid shell
     /// (BOPAlgo_AlertSolidBuilderUnusedFaces).
     SolidBuilderUnusedFaces(Vec<usize>),
-    /// Alert: edge has no curve (section edge without valid geometry).
+    /// Edge has no curve (section edge without valid geometry).
     EdgeWithoutCurve(usize),
+    /// OCCT-aligned: BOPAlgo_AlertTooFewArguments.
+    TooFewArguments,
+    /// OCCT-aligned: BOPAlgo_AlertNoFiller.
+    NoFiller,
+    /// OCCT-aligned: BOPAlgo_AlertBOPNotAllowed.
+    BOPNotAllowed,
+    /// OCCT-aligned: BOPAlgo_AlertBOPNotSet.
+    BOPNotSet,
+    /// OCCT-aligned: BOPAlgo_AlertEmptyShape.
+    EmptyShape,
 }
 
 /// ✅ OCCT-aligned: BOPAlgo_Report — collects alerts during pipeline execution.
@@ -50,6 +58,28 @@ impl Report {
     pub fn has_alerts(&self) -> bool { !self.alerts.is_empty() }
     pub fn alerts(&self) -> &[Alert] { &self.alerts }
     pub fn clear(&mut self) { self.alerts.clear(); }
+
+    /// OCCT-aligned: HasErrors — checks for fatal alerts.
+    pub fn has_errors(&self) -> bool {
+        self.alerts.iter().any(|a| matches!(a,
+            Alert::TooSmallRange(_, _) | Alert::EdgeWithoutCurve(_)
+            | Alert::TooFewArguments | Alert::NoFiller
+            | Alert::BOPNotAllowed | Alert::BOPNotSet | Alert::EmptyShape))
+    }
+
+    /// OCCT-aligned: HasAlert — check if a specific alert type is present.
+    pub fn has_alert(&self, alert_type: &Alert) -> bool {
+        self.alerts.iter().any(|a| std::mem::discriminant(a) == std::mem::discriminant(alert_type))
+    }
+
+    /// OCCT-aligned: Merge — merge another report's alerts into this one.
+    pub fn merge(&mut self, other: &Report) {
+        self.alerts.extend_from_slice(&other.alerts);
+    }
+
+    /// OCCT-aligned: GetAlerts — get alerts matching a predicate, grouped.
+    ///   rcad: simplified — returns all alerts.
+    pub fn get_alerts(&self) -> &[Alert] { &self.alerts }
 
     /// OCCT-aligned: compatibility check for code that uses simple bool.
     pub fn has_error(&self) -> bool {
