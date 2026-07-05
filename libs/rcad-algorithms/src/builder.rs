@@ -979,17 +979,17 @@ impl<'a> BooleanBuilder<'a> {
         // OCCT L456-459: FillImagesVertices — BuildResult(VERTEX)
         self.fill_images_vertices();
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result_occt(topods::ShapeType::Vertex, &mut result);
+        self.build_result(topods::ShapeType::Vertex, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // OCCT L461-465: FillImagesEdges — BuildResult(EDGE)
         self.fill_images_edges();
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result_occt(topods::ShapeType::Edge, &mut result);
+        self.build_result(topods::ShapeType::Edge, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // OCCT L467-470: FillImagesContainers(WIRE)
-        self.fill_images_containers(ShapeType::Wire, &mut result);
+        self.fill_images_container(ShapeType::Wire, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result_occt(topods::ShapeType::Wire, &mut result);
+        self.build_result(topods::ShapeType::Wire, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // Prepare face data structures (needed by fill_images_faces).
         result.build_faces();
@@ -1002,27 +1002,27 @@ impl<'a> BooleanBuilder<'a> {
             let mut t = self.my_shape.borrow_mut();
             result.build_topods_faces(&mut *t);
         }
-        self.build_result_occt(topods::ShapeType::Face, &mut result);
+        self.build_result(topods::ShapeType::Face, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // OCCT L477-480: FillImagesContainers(SHELL)
-        self.fill_images_containers(ShapeType::Shell, &mut result);
+        self.fill_images_container(ShapeType::Shell, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result_occt(topods::ShapeType::Shell, &mut result);
+        self.build_result(topods::ShapeType::Shell, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // OCCT L482-485: FillImagesSolids
         self.fill_images_solids(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result_occt(topods::ShapeType::Solid, &mut result);
+        self.build_result(topods::ShapeType::Solid, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // OCCT L537-548: FillImagesContainers(COMPSOLID)
-        self.fill_images_containers(ShapeType::CompSolid, &mut result);
+        self.fill_images_container(ShapeType::CompSolid, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result_occt(topods::ShapeType::CompSolid, &mut result);
+        self.build_result(topods::ShapeType::CompSolid, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // OCCT L492-495: FillImagesCompounds
         self.fill_images_compounds(&mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
-        self.build_result_occt(topods::ShapeType::Compound, &mut result);
+        self.build_result(topods::ShapeType::Compound, &mut result);
         if self.has_errors { return Err(BooleanError::DegenerateResult); }
         // OCCT L498-500: BuildShape
         self.build_shape(&mut result);

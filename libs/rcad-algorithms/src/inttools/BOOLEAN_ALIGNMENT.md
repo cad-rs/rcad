@@ -70,14 +70,9 @@
 | `FillImagesVertices` | `fill_images_vertices` (filler.rs:11) | ✅ | 简短的 SD 登记，已对齐 |
 | `FillImagesEdges` | `fill_images_edges` (filler.rs:49) | ⏳ | 逻辑相同，DS 索引方案差异 |
 | `FillImagesFaces` | `fill_images_faces` (filler.rs:181) | ⏳ | **待检查** |
-| `FillImagesContainers(WIRE)` | `fill_images_containers_wires` (filler.rs:96) | ⏳ | 逻辑等价，wire 表示不同 |
-| `FillImagesContainers(SHELL)` | `fill_images_containers_shells` (filler.rs) | ⏳ |  |
-| `FillImagesSolids` | `fill_images_solids` (filler.rs) | ⏳ |  |
-| `BuildResult(VERTEX)` | `build_result_occt(Vertex)` (result_build.rs:1142) | ⏳ | |
-| `BuildResult(EDGE)` | `build_result_occt(Edge)` | ⏳ | |
-| `BuildResult(FACE)` | `build_result_occt(Face)` | ⏳ | rcad 在 fill_images_faces 就直接创建 TShape，不是 batch |
-| `BuildResult(SHELL)` | `build_result_occt(Shell)` | ⏳ | |
-| `BuildResult(SOLID)` | `build_result_occt(Solid)` | ⏳ | |
+| `FillImagesContainers(WIRE)` | `fill_images_container_wire` (filler.rs:88) | ⏳ | 逻辑等价，wire 表示不同 |
+| `FillImagesContainers(SHELL)` | `fill_images_container_shell` (filler.rs:558) | ⏳ |  |
+| `BuildResult` | `build_result` (result_build.rs:955) | ✅ | 通用循环，OCCT 形式对齐 |
 | `BuildShape` | `build_shape` (result_build.rs:1159) | ⏳ | |
 | `PostTreat` | `post_treat` (result_build.rs:1169) | ⏳ | 只做 tolerance correction |
 | `MakePCurve` (face 边) | `build_face_reps` / edge_builders.rs | ⏳ | **待检查** |
@@ -145,7 +140,7 @@
 3. **P1**: `MakeBlocks` 主循环 — 综合影响
 4. **P1**: `IsValidBlockForFaces` — pcurve 求值
 
-## Level 5: TKPrim �� Prism/Revol/Primitives
+## Level 5: TKPrim �� Prism/Revol/Primitives
 
 TKPrim shared bottom-layer libraries (same as boolean):
 - TKernel/TKMath -> rcad-kernel ?
@@ -167,7 +162,7 @@ TKPrim shared bottom-layer libraries (same as boolean):
 | BRepPrimAPI_MakeCone | builder/solid.rs | ? | cone via OneAxis |
 | BRepPrimAPI_MakeTorus | builder/solid.rs | ? | torus via OneAxis |
 
-## Level 6: TKTopAlgo �� BRepLib / TopExp / BRepBuilder
+## Level 6: TKTopAlgo �� BRepLib / TopExp / BRepBuilder
 
 TKTopAlgo is the LAST shared bottom-layer library. Sub-modules:
 - BRepLib (MakeEdge/MakeWire/MakeFace/MakeSolid) -> brep_builder.rs

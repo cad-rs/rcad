@@ -38,7 +38,7 @@ pub(crate) struct ResultBuilder {
     pub(crate) ds_edge_to_flat: HashMap<usize, usize>,
     /// OCCT-aligned: DS edge index → actual TShape::Edge position in result BRep.
     ///   Populated by build_result(EDGE).  Used by build_result(WIRE) and
-    ///   fill_images_containers_wires to map flat-index edge refs to real TShape positions.
+    ///   fill_images_container_wire to map flat-index edge refs to real TShape positions.
     ///   This eliminates the A5 architecture gap: OCCT's TopoDS_Shape is pointer-based
     ///   (identity independent of pool position), while rcad's flat-index ShapeRef scheme
     ///   assumes stable array positions that break when edges have split images.
@@ -856,7 +856,7 @@ impl ResultBuilder {
     ///   OCCT: BOPAlgo_Builder::BuildResult (Builder_1.cxx L130-168) iterates
     ///   source COMPSOLID shapes and adds their split images to myShape via
     ///   BRep_Builder::Add.  rcad: processes tmp_compsolid_groups (groups of
-    ///   solid indices from fill_images_containers_compsolid) and creates
+    ///   solid indices from fill_images_container_compsolid) and creates
     ///   topods compsolids using BRepBuilder::make_compsolid.
     pub(crate) fn build_compsolids(&mut self, t: &mut topods::BRep, groups: Vec<Vec<usize>>) {
         let mut bb = topods::BRepBuilder::new();

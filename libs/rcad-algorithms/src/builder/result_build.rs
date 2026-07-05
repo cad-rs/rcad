@@ -952,24 +952,28 @@ impl<'a> BooleanBuilder<'a> {
     ///     �?add all image shapes; else �?add the original shape.
     /// ✅ OCCT-aligned: BuildResult (Builder_1.cxx L130-168).
     ///   Generic loop over myArguments matching OCCT form for ALL types.
-    fn build_result(&self, topods_type: rcad_kernel::topods::ShapeType, result: &mut ResultBuilder, t: &mut rcad_kernel::topods::BRep) {
+    /// ✅ OCCT-aligned: BuildResult (Builder_1.cxx L130-168).
+    ///   Generic loop over myArguments matching OCCT form:
+    ///   for each source shape of matching type:
+    ///     if myImages bound → fence-add splits; else → fence-add original.
+    fn build_result(&self, the_type: rcad_kernel::topods::ShapeType, result: &mut ResultBuilder) {
+        let mut t = self.my_shape.borrow_mut();
         let mut a_m_fence: std::collections::HashSet<usize> = std::collections::HashSet::new();
-        // Init ds_edge_to_tshape before the generic loop processes edges.
-        if topods_type == rcad_kernel::topods::ShapeType::Edge && result.ds_edge_to_tshape.is_empty() {
+        if the_type == rcad_kernel::topods::ShapeType::Edge && result.ds_edge_to_tshape.is_empty() {
             result.ds_edge_to_tshape = vec![rcad_kernel::topods::ShapeRef::NULL; self.ds.edges.len()];
         }
         let args = self.my_arguments.borrow();
         for a_s in args.iter() {
-            if a_s.shape_type(&*t) != topods_type { continue; }
+            if a_s.shape_type(&*t) != the_type { continue; }
             let has_images = self.my_images.borrow().contains_key(a_s);
             if !has_images {
                 if a_m_fence.insert(a_s.index) {
-                    self.add_to_result(*a_s, topods_type, result, t);
+                    self.add_to_result(*a_s, the_type, result, &mut *t);
                 }
             } else if let Some(imgs) = self.my_images.borrow().get(a_s) {
                 for &img_sr in imgs {
                     if a_m_fence.insert(img_sr.index) {
-                        self.add_to_result(img_sr, topods_type, result, t);
+                        self.add_to_result(img_sr, the_type, result, &mut *t);
                     }
                 }
             }
@@ -1051,13 +1055,6 @@ impl<'a> BooleanBuilder<'a> {
             rcad_kernel::topods::ShapeType::CompSolid | rcad_kernel::topods::ShapeType::Compound => {}
             rcad_kernel::topods::ShapeType::Shape => unreachable!(),
         }
-    }
-
-    /// ✅ OCCT-aligned: BOPAlgo_Builder::BuildResult (Builder_1.cxx L130-168).
-    ///   Thin wrapper: acquires my_shape borrow, delegates to build_result.
-    fn build_result_occt(&self, the_type: topods::ShapeType, result: &mut ResultBuilder) {
-        let mut t = self.my_shape.borrow_mut();
-        self.build_result(the_type, result, &mut *t);
     }
 
     /// �?OCCT-aligned: BOPAlgo_BOP::BuildShape (BOP.cxx L871-906).

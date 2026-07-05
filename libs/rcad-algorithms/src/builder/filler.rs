@@ -85,7 +85,7 @@ impl<'a> BooleanBuilder<'a> {
     /// For each DSWire, check if any edge has split images (my_images.Seek).
     /// If so, rebuild the wire edge list with split sub-edges and store in
     /// my_images[wire_ref]. BuildResult(WIRE) reads these to create TShape::Wire.
-    fn fill_images_containers_wires(&self, _result: &ResultBuilder) {
+    fn fill_images_container_wire(&self, _result: &ResultBuilder) {
         let e_base = self.ds.vertices.len();
         // Collect wire image data from immutable borrow, then apply mutations.
         let mut pending: Vec<(rcad_kernel::topods::ShapeRef, Vec<rcad_kernel::topods::ShapeRef>)> = Vec::new();
@@ -540,12 +540,12 @@ impl<'a> BooleanBuilder<'a> {
     /// ✅ OCCT-aligned: FillImagesContainers (Builder_1.cxx L172-193).
     ///   OCCT: iterates source shapes → filters by TopAbs_ShapeEnum →
     ///   FillImagesContainer for each.  rcad: dispatches to type-specific handlers.
-    fn fill_images_containers(&self, shape_type: ShapeType, result: &mut ResultBuilder) {
+    fn fill_images_container(&self, shape_type: ShapeType, result: &mut ResultBuilder) {
         let mut t = self.my_shape.borrow_mut();
         match shape_type {
-            ShapeType::Wire => self.fill_images_containers_wires(result),
-            ShapeType::Shell => self.fill_images_containers_shells(result, &mut *t),
-            ShapeType::CompSolid => self.fill_images_containers_compsolid(result, &mut *t),
+            ShapeType::Wire => self.fill_images_container_wire(result),
+            ShapeType::Shell => self.fill_images_container_shell(result, &mut *t),
+            ShapeType::CompSolid => self.fill_images_container_compsolid(result, &mut *t),
             _ => {}
         }
     }
@@ -555,7 +555,7 @@ impl<'a> BooleanBuilder<'a> {
     ///   L242-275: build new container (TShape::Shell) from sub-shape images.
     ///   L274: aCIm.Closed(BRep_Tool::IsClosed(aCIm)).
     ///   L275: myImages.Bound(theS).Append(aCIm) — store shell in myImages.
-    fn fill_images_containers_shells(&self, result: &mut ResultBuilder, t: &mut topods::BRep) {
+    fn fill_images_container_shell(&self, result: &mut ResultBuilder, t: &mut topods::BRep) {
         // No DS shells → no SHELL container to process
         if self.ds.shells.is_empty() { return; }
         // OCCT L247-249: aIt.Initialize(theS) — re-iterate sub-shapes to build container.
@@ -631,7 +631,7 @@ impl<'a> BooleanBuilder<'a> {
     ///   L224-233: iterate sub-shapes (SOLIDs), check if any has been modified.
     ///   L235-240: if none modified → early return.
     ///   L242-275: build new container from sub-shape images.
-    fn fill_images_containers_compsolid(&self, result: &mut ResultBuilder, t: &mut topods::BRep) {
+    fn fill_images_container_compsolid(&self, result: &mut ResultBuilder, t: &mut topods::BRep) {
         if self.ds.comp_solids.is_empty() { return; }
 
         // OCCT L224-233: iterate sub-shapes (SOLIDs), check myImages.IsBound.

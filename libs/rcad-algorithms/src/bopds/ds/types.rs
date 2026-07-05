@@ -1,4 +1,4 @@
-﻿use glam::{DVec2, DVec3};
+use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, Line2d, Line3, Plane, Surface3, any_perpendicular};
 use rcad_kernel::topods;
 
@@ -319,7 +319,7 @@ pub struct DSFace {
     ///   knows which shell it belongs to via its ShapeInfo parent pointer.
     ///   rcad: shell index (0-based, counting all shells across all solids in
     ///   the source BRep) assigned during load_brep.  Used by
-    ///   fill_images_containers_shells to group result faces by source shell
+    ///   fill_images_container_shell to group result faces by source shell
     ///   boundary (OCCT FillImagesContainer preserves source shell structure).
     pub source_shell_idx: Option<usize>,
     /// 闁?OCCT-aligned: source solid index within the source BRep.
@@ -331,7 +331,7 @@ pub struct DSFace {
     /// 闁?OCCT-aligned: source compsolid index (0-based). OCCT BOPDS_DS
     ///   tracks TopAbs_COMPSOLID in ShapeInfo hierarchy.  rcad: assigned
     ///   during load_brep when solid belongs to a CompSolid (else None).
-    ///   Used by fill_images_containers_compsolid to preserve compsolid
+    ///   Used by fill_images_container_compsolid to preserve compsolid
     ///   boundaries in the result (FillImagesContainer, Builder_1.cxx L221-276).
     pub source_compsolid_idx: Option<usize>,
 }
