@@ -625,12 +625,25 @@ impl Part21Writer {
         // We keep this set to avoid duplicating them in wireframe export,
         // while still exporting standalone 1D curves.
         let mut face_edge_set: BTreeSet<usize> = BTreeSet::new();
-        for solid in &brep.solids {
-            for shell in &solid.shells {
-                for face in &shell.faces {
-                    face_edge_set.extend(face.outer_wire.edges.iter().map(|we| we.idx));
-                    for inner in &face.inner_wires {
-                        face_edge_set.extend(inner.edges.iter().map(|we| we.idx));
+        unsafe {
+            let tbrep = &*self.topods_brep;
+            for ts in &tbrep.tshapes {
+                if let topods::TShape::Solid(sd) = &**ts {
+                    for shell_sr in &sd.shells {
+                        if let topods::TShape::Shell(shd) = &*tbrep.tshapes[shell_sr.index] {
+                            for face_sr in &shd.faces {
+                                if let topods::TShape::Face(fd) = &*tbrep.tshapes[face_sr.index] {
+                                    if let topods::TShape::Wire(wd) = &*tbrep.tshapes[fd.outer_wire.index] {
+                                        face_edge_set.extend(wd.edges.iter().map(|sr| sr.index));
+                                    }
+                                    for inner_sr in &fd.inner_wires {
+                                        if let topods::TShape::Wire(wd) = &*tbrep.tshapes[inner_sr.index] {
+                                            face_edge_set.extend(wd.edges.iter().map(|sr| sr.index));
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -642,57 +655,71 @@ impl Part21Writer {
         // GEOMETRIC_CURVE_SET usage.
         let mut edge_items = Vec::new();
         let collect_standalone = export_all && (self.export_standalone_wire_overlay || !selected_edge_set.is_empty());
-        for (edge_index, _edge) in brep.edges.iter().enumerate() {
-            if collect_standalone && face_edge_set.contains(&edge_index) {
-                continue;
-            }
-            if collect_standalone {
-                let has_surface_parametrics = brep
-                    .geom
-                    .edge_pcurves
-                    .get(edge_index)
-                    .is_some_and(|pcs| !pcs.is_empty());
-                if has_surface_parametrics {
-                    // Keep wireframe export focused on standalone 3D curves.
-                    // SURFACE_CURVE + PCURVE-bound edges belong to face topology.
+        unsafe {
+            let tbrep = &*self.topods_brep;
+            for (ti, ts) in tbrep.tshapes.iter().enumerate() {
+                let topods::TShape::Edge(ed) = &**ts else { continue };
+                let edge_idx = ti;
+                if collect_standalone && face_edge_set.contains(&edge_idx) {
                     continue;
                 }
-                let Some(edge) = brep.edges.get(edge_index) else {
-                    continue;
-                };
-                let Some(start) = brep.vertices.get(edge.start).map(|v| v.point) else {
-                    continue;
-                };
-                let Some(end) = brep.vertices.get(edge.end).map(|v| v.point) else {
-                    continue;
-                };
-                if (end - start).length_squared() <= 1e-20 {
-                    // Degenerate standalone curve segments can invalidate
-                    // downstream wireframe representation parsing.
-                    continue;
+                if collect_standalone {
+                    if !ed.pcurves.is_empty() {
+                        // Keep wireframe export focused on standalone 3D curves.
+                        // SURFACE_CURVE + PCURVE-bound edges belong to face topology.
+                        continue;
+                    }
+                    let start = tbrep.tshapes.get(ed.first.index).and_then(|ts| {
+                        if let topods::TShape::Vertex(v) = &**ts { Some(v.point) } else { None }
+                    });
+                    let end = tbrep.tshapes.get(ed.last.index).and_then(|ts| {
+                        if let topods::TShape::Vertex(v) = &**ts { Some(v.point) } else { None }
+                    });
+                    let (Some(start), Some(end)) = (start, end) else { continue };
+                    if (end - start).length_squared() <= 1e-20 {
+                        // Degenerate standalone curve segments can invalidate
+                        // downstream wireframe representation parsing.
+                        continue;
+                    }
+                    edge_items.push(self.write_standalone_wire_curve_by_index_topods(edge_idx));
+                } else if selected_edge_set.contains(&edge_idx) {
+                    edge_items.push(self.write_standalone_wire_curve_by_index_topods(edge_idx));
                 }
-                edge_items.push(self.write_standalone_wire_curve_by_index(brep, edge_index));
-            } else if selected_edge_set.contains(&edge_index) {
-                edge_items.push(self.write_standalone_wire_curve_by_index(brep, edge_index));
             }
         }
 
         let mut standalone_point_items = Vec::new();
         if export_all && self.export_standalone_wire_overlay {
             let mut used_vertices: BTreeSet<usize> = BTreeSet::new();
-            for e in &brep.edges {
-                used_vertices.insert(e.start);
-                used_vertices.insert(e.end);
-            }
-            for (vi, v) in brep.vertices.iter().enumerate() {
-                if !used_vertices.contains(&vi) {
-                    standalone_point_items.push(self.cartesian_point("", dvec3_to_array(v.point)));
+            unsafe {
+                let tbrep = &*self.topods_brep;
+                for ts in &tbrep.tshapes {
+                    if let topods::TShape::Edge(ed) = &**ts {
+                        used_vertices.insert(ed.first.index);
+                        used_vertices.insert(ed.last.index);
+                    }
                 }
-            }
+                for (ti, ts) in tbrep.tshapes.iter().enumerate() {
+                    if let topods::TShape::Vertex(v) = &**ts {
+                        if !used_vertices.contains(&ti) {
+                            standalone_point_items.push(
+                                self.cartesian_point("", dvec3_to_array(v.point))
+                            );
+                        }
+                    }
+                }
 
-            if standalone_point_items.is_empty() {
-                for v in brep.vertices.iter().take(2) {
-                    standalone_point_items.push(self.cartesian_point("", dvec3_to_array(v.point)));
+                if standalone_point_items.is_empty() {
+                    for ts in &tbrep.tshapes {
+                        if let topods::TShape::Vertex(v) = &**ts {
+                            standalone_point_items.push(
+                                self.cartesian_point("", dvec3_to_array(v.point))
+                            );
+                        }
+                        if standalone_point_items.len() >= 2 {
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -3675,6 +3702,55 @@ impl Part21Writer {
             return self.write_edge_curve_geometry_by_index(brep, edge_idx);
         }
         let origin = self.cartesian_point("wire_origin", dvec3_to_array(start));
+        let dir = self.direction("wire_dir", normalize(dvec3_to_array(delta)));
+        let vec = self.vector("wire_vec", dir, length);
+        let basis = self.line("wire_line", origin, vec);
+        self.trimmed_curve("wire_segment", basis, 0.0, 1.0)
+    }
+
+    fn write_standalone_wire_curve_by_index_topods(&mut self, edge_idx: usize) -> u64 {
+        let tbrep = self.tbrep();
+        let Some(ed) = tbrep.tshapes.get(edge_idx).and_then(|ts| {
+            if let topods::TShape::Edge(e) = &**ts { Some(e.clone()) } else { None }
+        }) else {
+            return self.write_edge_curve_geometry_by_index_topods(edge_idx);
+        };
+        let start_point = tbrep.tshapes.get(ed.first.index).and_then(|ts| {
+            if let topods::TShape::Vertex(v) = &**ts { Some(v.point) } else { None }
+        }).unwrap_or_default();
+        let end_point = tbrep.tshapes.get(ed.last.index).and_then(|ts| {
+            if let topods::TShape::Vertex(v) = &**ts { Some(v.point) } else { None }
+        }).unwrap_or_default();
+        let range = ed.range;
+        // OCCT-like handling for standalone circular edges:
+        // do not trust persisted curve parameter zero blindly after
+        // import/rebuild. Reconstruct trimming from topological edge
+        // endpoints so exported TRIMMED_CURVE orientation matches the
+        // edge traversal seen by viewers (e.g. FreeCAD via OCCT).
+        if let Some(Curve3::Circle(circle)) = &ed.curve
+            && let Some(curve_id) = self.write_standalone_circle_trimmed_from_edge(
+                circle,
+                start_point,
+                end_point,
+                Some(range),
+            )
+        {
+            return curve_id;
+        }
+
+        let start = dvec3_to_array(start_point);
+        let end = dvec3_to_array(end_point);
+        if let Some(curve) = &ed.curve {
+            let basis = self.write_curve3_entity(curve, start, end);
+            return self.trimmed_curve("wire_trimmed_curve", basis, range[0], range[1]);
+        }
+
+        let delta = end_point - start_point;
+        let length = delta.length();
+        if length <= 1e-12 {
+            return self.write_edge_curve_geometry_by_index_topods(edge_idx);
+        }
+        let origin = self.cartesian_point("wire_origin", dvec3_to_array(start_point));
         let dir = self.direction("wire_dir", normalize(dvec3_to_array(delta)));
         let vec = self.vector("wire_vec", dir, length);
         let basis = self.line("wire_line", origin, vec);
