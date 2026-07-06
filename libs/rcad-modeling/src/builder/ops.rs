@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
 use rcad_kernel::topology::{Vertex, WireEdge};
 
@@ -1339,6 +1340,24 @@ pub fn sweep_pipe_variable(profiles: &[Vec<DVec2>], spine: &[DVec3]) -> Result<B
         .collect();
 
     loft(&cross_sections)
+}
+
+// ── Topods-native wrappers ──
+
+pub fn extrude_topods(profile: &BRep, face_idx: usize, direction: DVec3, distance: f64) -> Result<topods::BRep, BuildError> {
+    extrude(profile, face_idx, direction, distance).map(|b| b.to_topods())
+}
+
+pub fn revolve_topods(profile: &BRep, face_idx: usize, axis_origin: DVec3, axis_dir: DVec3, angle: f64) -> Result<topods::BRep, BuildError> {
+    revolve(profile, face_idx, axis_origin, axis_dir, angle).map(|b| b.to_topods())
+}
+
+pub fn loft_topods(profiles: &[Vec<DVec3>]) -> Result<topods::BRep, BuildError> {
+    loft(profiles).map(|b| b.to_topods())
+}
+
+pub fn sweep_pipe_topods(profile_2d: &[DVec2], spine: &[DVec3]) -> Result<topods::BRep, BuildError> {
+    sweep_pipe(profile_2d, spine).map(|b| b.to_topods())
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
