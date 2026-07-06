@@ -906,7 +906,7 @@ impl<'a> BooleanBuilder<'a> {
     ///   Returns Ok(Some(brep)) if a quick result was determined,
     ///   Ok(None) if the full pipeline must run.
     fn treat_empty_shape(&self, a_faces: &[usize], b_faces: &[usize])
-        -> Result<Option<rcad_kernel::BRep>, BooleanError>
+        -> Result<Option<topods::BRep>, BooleanError>
     {
         let has_a = !a_faces.is_empty();
         let has_b = !b_faces.is_empty();
@@ -914,39 +914,39 @@ impl<'a> BooleanBuilder<'a> {
             return Ok(None); // need full pipeline
         }
         if !has_a && !has_b {
-            // OCCT L252-256: all empty 閿?empty result
-            return Ok(Some(rcad_kernel::BRep::new()));
+            // OCCT L252-256: all empty → empty
+            return Ok(Some(topods::BRep::new()));
         }
-        // OCCT L258-317: one side empty 閿?result depends on operation
+        // OCCT L258-317: one side empty → result depends on operation
         match self.op {
             BooleanOpType::Union => {
                 // OCCT L270-279: return non-empty side
                 let src = if has_a { ShapeOrigin::ShapeA } else { ShapeOrigin::ShapeB };
-                let brep = self.brep_of_side(src, a_faces.len(), b_faces.len());
+                let brep = self.brep_of_side_topods(src, a_faces.len(), b_faces.len());
                 Ok(Some(brep))
             }
             BooleanOpType::Intersection => {
                 // OCCT L303-304: Common always empty
-                Ok(Some(rcad_kernel::BRep::new()))
+                Ok(Some(topods::BRep::new()))
             }
             BooleanOpType::Difference => {
                 if !has_a {
-                    // OCCT L287-289: CUT with empty objects 閿?empty
-                    Ok(Some(rcad_kernel::BRep::new()))
+                    // OCCT L287-289: CUT with empty objects → empty
+                    Ok(Some(topods::BRep::new()))
                 } else {
-                    // OCCT L281-289: CUT with empty tools 閿?return objects
-                    let brep = self.brep_of_side(ShapeOrigin::ShapeA, a_faces.len(), b_faces.len());
+                    // OCCT L281-289: CUT with empty tools → return objects
+                    let brep = self.brep_of_side_topods(ShapeOrigin::ShapeA, a_faces.len(), b_faces.len());
                     Ok(Some(brep))
                 }
             }
             _ => {
-                // Unknown operation 閿?fall through to full pipeline
+                // Unknown operation → fall through to full pipeline
                 Ok(None)
             }
         }
     }
 
-    /// 閿?OCCT-aligned: BOPAlgo_BOP::PerformInternal1 (BOP.cxx L422-579).
+    /// OCCT-aligned: BOPAlgo_BOP::PerformInternal1 (BOP.cxx L422-579).
     ///   Every statement in OCCT L422-579 has a corresponding rcad line below.
     ///   See comments for exact OCCT line references.
     ///   Structural difference: L425-429 setup done in constructor, re-affirmed here.
@@ -1078,59 +1078,47 @@ impl<'a> BooleanBuilder<'a> {
         v
     }
 
-    /// OCCT L258-317: build result BRep from one side's source shapes (TreatEmptyShape path).
-    fn brep_of_side(&self, origin: ShapeOrigin, _na: usize, _nb: usize) -> rcad_kernel::BRep {
-        // OCCT L310-316: BRep_Builder().Add(myShape, aItLS.Value())
-        //   rcad: reconstruct a BRep from the DS faces/edges/vertices of one side.
-        let mut brep = rcad_kernel::BRep::new();
-        let mut v_map = std::collections::HashMap::new();
-        let mut e_map = std::collections::HashMap::new();
-        let mut edge_store: Vec<(usize, usize)> = Vec::new();
+    /// OCCT L258-317: build result topods::BRep from one side's source shapes (TreatEmptyShape path).
+    fn brep_of_side_topods(&self, origin: ShapeOrigin, _na: usize, _nb: usize) -> topods::BRep {
+        let mut t = topods::BRep::new();
+        let mut v_map: HashMap<usize, topods::ShapeRef> = HashMap::new();
+        let mut e_map: HashMap<usize, topods::ShapeRef> = HashMap::new();
+
         for (fi, f) in self.ds.faces.iter().enumerate() {
             if f.origin != origin { continue; }
-            let mut outer_edges: Vec<(usize, bool)> = Vec::new();
+            let mut edge_refs: Vec<topods::ShapeRef> = Vec::new();
             for &ei in &f.boundary_edges {
                 if ei >= self.ds.edges.len() { continue; }
                 let e = &self.ds.edges[ei];
                 let sv = *v_map.entry(e.start_vertex).or_insert_with(|| {
-                    let vi = brep.vertices.len();
-                    brep.vertices.push(rcad_kernel::Vertex { point: self.ds.vertices[e.start_vertex].point });
-                    vi
+                    t.add_tvertex(self.ds.vertices[e.start_vertex].point)
                 });
                 let ev = *v_map.entry(e.end_vertex).or_insert_with(|| {
-                    let vi = brep.vertices.len();
-                    brep.vertices.push(rcad_kernel::Vertex { point: self.ds.vertices[e.end_vertex].point });
-                    vi
+                    t.add_tvertex(self.ds.vertices[e.end_vertex].point)
                 });
-                let ei_new = *e_map.entry(ei).or_insert_with(|| {
-                    let index = brep.edges.len();
-                    brep.edges.push(rcad_kernel::Edge { start: sv, end: ev });
-                    edge_store.push((e.start_vertex, e.end_vertex));
-                    index
+                let edge_sr = *e_map.entry(ei).or_insert_with(|| {
+                    t.add_tedge(None, sv, ev, [0.0, 1.0])
                 });
-                outer_edges.push((ei_new, true));
+                edge_refs.push(edge_sr);
             }
-            let face_normal = f.normal;
+            if edge_refs.is_empty() { continue; }
+            let ow = t.add_twire(edge_refs);
             let surf = f.surface.clone();
-            let rcad_face = rcad_kernel::topology::Face {
-                outer_wire: rcad_kernel::topology::Wire { edges: outer_edges.into_iter().map(|(i, _)| rcad_kernel::topology::WireEdge::fwd(i)).collect() },
-                inner_wires: vec![],
-                normal: face_normal,
-                triangles: vec![],
-                sample_point: None,
-                mesh_dirty: false,
-                surface_idx: None,
-            };
-            brep.geom.surfaces.push(surf);
-            let surfi = brep.geom.surfaces.len() - 1;
-            brep.geom.face_surface.push(Some(surfi));
-            let shell = rcad_kernel::topology::Shell { faces: vec![rcad_face] };
-            let solid = rcad_kernel::topology::Solid { shells: vec![shell] };
-            brep.solids.push(solid);
+            let face = t.add_tface(Some(surf), ow, vec![], None, None, vec![], false);
+            t.face_mut(face).tolerance = f.geom_tol;
         }
-        brep
-    }
 
+        // Collect face refs and wrap in Shell → Solid
+        let face_srs: Vec<topods::ShapeRef> = t.tshapes.iter().enumerate()
+            .filter(|(_, ts)| matches!(&***ts, topods::TShape::Face(_)))
+            .map(|(i, _)| { let idx = i; topods::ShapeRef::synthetic(idx) })
+            .collect();
+        if !face_srs.is_empty() {
+            let shell = t.add_tshell(face_srs);
+            t.add_tsolid(vec![shell]);
+        }
+        t
+    }
     fn is_glued_face(&self, fi: usize, others: &[usize]) -> bool {
         others
             .iter()
@@ -1617,6 +1605,7 @@ impl<'a> BooleanBuilder<'a> {
         total
     }
 }
+
 include!("builder/part2.rs");
 include!("builder/footer.rs");
 #[cfg(test)]
