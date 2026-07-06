@@ -6,7 +6,8 @@ pub mod types;
 
 use glam::{DAffine3, DMat4, DVec3, DVec4};
 use rcad_kernel::topology::{Face, Shell, Wire};
-use rcad_kernel::{BRep, CONFUSION, Curve2d, Curve3, Surface3};
+use rcad_kernel::{BRep, CONFUSION, Curve2d, Curve3, Surface3, topods};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};
 use std::path::Path;
@@ -26,6 +27,9 @@ include!("query_inc.rs");
 
 // Boolean Operations + Half-space
 include!("bool_ops_inc.rs");
+
+// Topods-native query variants (migration)
+include!("query_topods_inc.rs");
 
 #[cfg(test)]
 include!("tests_inc.rs");
