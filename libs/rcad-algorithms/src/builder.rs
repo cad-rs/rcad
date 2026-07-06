@@ -759,13 +759,9 @@ impl<'a> BooleanBuilder<'a> {
         max_err.is_finite() && max_err <= TOLERANCE_ADAPTIVE_MAX
     }
 
-    pub fn build(&self) -> Result<BRep, BooleanError> {
+    pub fn build(&self) -> Result<topods::BRep, BooleanError> {
         let (t, _) = self.build_with_history()?;
-        let brep = rcad_kernel::BRep::from_topods(&t);
-        if !brep.solids.is_empty() && !brep.solids[0].shells.is_empty() {
-            eprintln!("BooleanBuilder::build: {} faces", brep.solids[0].shells[0].faces.len());
-        }
-        Ok(brep)
+        Ok(t)
     }
 }
 

@@ -280,6 +280,7 @@ pub struct GeomStore {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[deprecated(note = "use topods::BRep instead — see rcad_kernel::topods")]
 pub struct BRep {
     pub vertices: Vec<Vertex>,
     pub edges: Vec<Edge>,

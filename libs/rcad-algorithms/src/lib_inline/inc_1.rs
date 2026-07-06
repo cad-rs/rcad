@@ -1777,6 +1777,15 @@ pub(crate) fn boolean_postprocess_pave_result(
     Ok(result)
 }
 
+/// Topods variant: no-op post-process, returns result as-is (debug logging removed).
+/// The old function only did debug logging — this variant skips it.
+pub(crate) fn boolean_postprocess_pave_result_topods(
+    _op: BooleanOpType, _a: &BRep, _b: &BRep,
+    result: topods::BRep,
+) -> Result<topods::BRep, BooleanError> {
+    Ok(result)
+}
+
 /// DS → [`pave_filler::PaveFiller`] → [`builder::BooleanBuilder`] → plane surface recompute.
 ///
 /// Used internally when a coaxial shortcut must call difference without re-entering other coaxial

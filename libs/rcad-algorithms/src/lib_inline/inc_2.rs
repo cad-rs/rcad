@@ -447,7 +447,7 @@ pub fn boolean_op_with_options(
                 let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map)
                     .with_glue(options.use_glue, options.glue_tolerance);
                 let r = builder.build()?;
-                boolean_postprocess_pave_result(op, a, b, r)?.to_topods()
+                boolean_postprocess_pave_result_topods(op, a, b, r)?
             } else {
                 boolean_op(op, a, b)?
             }
@@ -469,7 +469,7 @@ pub fn boolean_op_with_options(
             let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map)
                 .with_glue(options.use_glue, options.glue_tolerance);
             let r = builder.build()?;
-            boolean_postprocess_pave_result(op, a, b, r)?.to_topods()
+            boolean_postprocess_pave_result_topods(op, a, b, r)?
         };
         (
             result,
