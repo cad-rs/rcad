@@ -560,21 +560,33 @@ fn extrude_with_history_inner(
     Ok((t, history))
 }
 pub fn revolve(
-    profile: &BRep,
+    profile: &topods::BRep,
     face_idx: usize,
     axis_origin: DVec3,
     axis_dir: DVec3,
     angle: f64,
-) -> Result<BRep, BuildError> {
-    revolve_with_history(profile, face_idx, axis_origin, axis_dir, angle).map(|(brep, _)| brep)
+) -> Result<topods::BRep, BuildError> {
+    let old = rcad_kernel::BRep::from_topods(profile);
+    revolve_with_history_inner(&old, face_idx, axis_origin, axis_dir, angle).map(|(brep, _)| brep.to_topods())
 }
 
 /// Revolve a profile face around an axis and return history mapping face origins.
 ///
 /// See [`revolve`] for geometry details. The returned [`SweepHistory`]
 /// tracks which result faces are bottom cap, top cap, and lateral faces.
-/// For a full revolution (閳?2锜?, `bottom_cap` and `top_cap` are empty.
+/// For a full revolution (angle = 2*PI), `bottom_cap` and `top_cap` are empty.
 pub fn revolve_with_history(
+    profile: &topods::BRep,
+    face_idx: usize,
+    axis_origin: DVec3,
+    axis_dir: DVec3,
+    angle: f64,
+) -> Result<(topods::BRep, SweepHistory), BuildError> {
+    let old = rcad_kernel::BRep::from_topods(profile);
+    revolve_with_history_inner(&old, face_idx, axis_origin, axis_dir, angle).map(|(brep, h)| (brep.to_topods(), h))
+}
+
+fn revolve_with_history_inner(
     profile: &BRep,
     face_idx: usize,
     axis_origin: DVec3,
