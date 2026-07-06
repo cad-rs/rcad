@@ -1546,6 +1546,64 @@ impl<'a> BooleanBuilder<'a> {
         edge_refs
     }
 
+    /// Topods-native: build edge→face reference map from topods::BRep.
+    fn build_edge_ref_map_topods(brep: &topods::BRep) -> Vec<Vec<usize>> {
+        // Count edges by tshape index
+        let edge_indices: Vec<usize> = brep.tshapes.iter().enumerate()
+            .filter(|(_, ts)| matches!(&***ts, topods::TShape::Edge(_)))
+            .map(|(i, _)| i)
+            .collect();
+        let n_edges = edge_indices.len();
+        if n_edges == 0 {
+            return Vec::new();
+        }
+        // Map tshape index → local index
+        use std::collections::HashMap;
+        let e_to_local: HashMap<usize, usize> = edge_indices.iter().enumerate()
+            .map(|(li, &ti)| (ti, li)).collect();
+        let mut edge_refs: Vec<Vec<usize>> = vec![Vec::new(); n_edges];
+        let mut face_local_idx = 0usize;
+        for ts in &brep.tshapes {
+            let faces = match &**ts {
+                topods::TShape::Solid(sd) => {
+                    let mut f = Vec::new();
+                    for sr in &sd.shells {
+                        if let topods::TShape::Shell(shd) = &*brep.tshapes[sr.index] {
+                            f.extend(shd.faces.iter().map(|fsr| fsr.index));
+                        }
+                    }
+                    f
+                }
+                topods::TShape::Shell(shd) => {
+                    shd.faces.iter().map(|fsr| fsr.index).collect()
+                }
+                _ => continue,
+            };
+            for &fi in &faces {
+                if let topods::TShape::Face(fd) = &*brep.tshapes[fi] {
+                    if let topods::TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+                        for sr in &wd.edges {
+                            if let Some(&li) = e_to_local.get(&sr.index) {
+                                edge_refs[li].push(face_local_idx);
+                            }
+                        }
+                    }
+                    for isr in &fd.inner_wires {
+                        if let topods::TShape::Wire(wd) = &*brep.tshapes[isr.index] {
+                            for sr in &wd.edges {
+                                if let Some(&li) = e_to_local.get(&sr.index) {
+                                    edge_refs[li].push(face_local_idx);
+                                }
+                            }
+                        }
+                    }
+                }
+                face_local_idx += 1;
+            }
+        }
+        edge_refs
+    }
+
     /// After building the BRep, validate that every edge in every shell has
     /// exactly 2 face references (closed shell). Edges with <2 references
     /// (orphan edges) or >2 references (over-shared edges) indicate a
@@ -1602,6 +1660,35 @@ impl<'a> BooleanBuilder<'a> {
                 zero_ref_edges.len(), single_ref_edges.len());
         }
 
+        total
+    }
+
+    /// Topods-native: validate edge→face references in a topods::BRep.
+    pub fn validate_edge_face_references_topods(&self, brep: &topods::BRep) -> Result<(), BooleanError> {
+        let edge_refs = Self::build_edge_ref_map_topods(brep);
+        if edge_refs.is_empty() { return Ok(()); }
+        let orphan_edges: Vec<usize> = edge_refs.iter().enumerate()
+            .filter(|(_, refs)| refs.is_empty() || refs.len() == 1)
+            .map(|(ei, _)| ei).collect();
+        let over_shared_edges: Vec<usize> = edge_refs.iter().enumerate()
+            .filter(|(_, refs)| refs.len() > 2)
+            .map(|(ei, _)| ei).collect();
+        if !orphan_edges.is_empty() || !over_shared_edges.is_empty() {
+            return Err(BooleanError::OpenShell { orphan_edges, over_shared_edges });
+        }
+        Ok(())
+    }
+
+    /// Topods-native: diagnose orphan edges in a topods::BRep.
+    pub fn diagnose_orphan_edges_topods(&self, brep: &topods::BRep) -> usize {
+        let edge_refs = Self::build_edge_ref_map_topods(brep);
+        if edge_refs.is_empty() { return 0; }
+        let zero_ref = edge_refs.iter().filter(|r| r.is_empty()).count();
+        let single_ref = edge_refs.iter().filter(|r| r.len() == 1).count();
+        let total = zero_ref + single_ref;
+        if total > 0 {
+            eprintln!("[INFO] diagnose_orphan_edges_topods: {} zero-ref, {} single-ref edges", zero_ref, single_ref);
+        }
         total
     }
 }
