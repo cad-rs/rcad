@@ -10,7 +10,7 @@
 
 use rcad_kernel::geom::{CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::topology::{Face, Wire};
-use rcad_kernel::{BRep, vertex_indices};
+use rcad_kernel::{topods, BRep, vertex_indices};
 
 use crate::brep_tools::ShapeType;
 

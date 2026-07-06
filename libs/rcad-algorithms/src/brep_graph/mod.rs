@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_kernel::persistent_naming::{
     PersistentId, PersistentNamingEngine, NamingStabilityReport,
     OperationType, OperationStats, CrossOperationStabilityReport,

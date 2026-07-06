@@ -11,6 +11,7 @@ use std::path::Path;
 
 use glam::DVec3;
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_kernel::topology::{Face, Shell, Solid, Vertex, Wire};
 
 /// Errors that can occur when reading/parsing OBJ files.

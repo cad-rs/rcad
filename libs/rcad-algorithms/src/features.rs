@@ -5,7 +5,7 @@
 
 use crate::tolerance::*;
 use glam::{DAffine3, DMat3, DVec3};
-use rcad_kernel::{BRep, GeomStore, PrimitiveSolid};
+use rcad_kernel::{topods, BRep, GeomStore, PrimitiveSolid};
 use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 

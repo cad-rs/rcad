@@ -6,7 +6,7 @@
 /// - Name conflicts are resolved deterministically
 use glam::DVec3;
 use rcad_algorithms::{BooleanOpType, boolean_op_with_history, FaceOrigin};
-use rcad_kernel::{BRep, PersistentNamingHooks, TopoEntityRef, PrimitiveSolid};
+use rcad_kernel::{topods, BRep, PersistentNamingHooks, TopoEntityRef, PrimitiveSolid};
 use rcad_modeling::{make_box_brep, make_sphere_brep, make_cylinder_brep};
 
 fn face_count(brep: &BRep) -> usize {

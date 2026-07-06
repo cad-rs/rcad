@@ -13,6 +13,7 @@ use std::path::Path;
 use glam::DVec3;
 use rcad_kernel::topology::{Face, Shell, Solid, Vertex, Wire};
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 
 #[derive(Debug, Clone)]
 pub enum IgesError {

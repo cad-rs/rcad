@@ -3,6 +3,7 @@
 use glam::{DVec2, DVec3};
 use rcad_algorithms::{total_surface_area, total_volume};
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_modeling::{
     chamfer_edge, extrude, fillet_edge, loft, make_box_brep, make_cone_brep, make_conical_frustum_brep,
     make_cylinder_brep, make_sphere_brep, make_torus_brep, revolve, sweep_pipe,

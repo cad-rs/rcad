@@ -9,6 +9,7 @@
 
 use glam::DVec3;
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 
 use crate::boolean_unit_octant::{
     append_frustum_brep, build_sphere_clipped_by_z_planes, sphere_center_r,

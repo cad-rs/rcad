@@ -16,6 +16,7 @@
 use crate::builder::BooleanOpType;
 use crate::history::FaceOrigin;
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 
 // ── Task B: filter_object_only ──────────────────────────────────────────────
 

@@ -1,4 +1,4 @@
-use rcad_kernel::{BRep, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+use rcad_kernel::{topods, BRep, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
 use crate::error::{GdsError, Result};
 use crate::types::*;

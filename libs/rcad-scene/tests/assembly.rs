@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use glam::{DAffine3, DVec3};
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_modeling::{make_box_brep, make_sphere_brep};
 use rcad_scene::assembly::{Assembly, AssemblyNode, NodeContent, assembly_from_parts};
 

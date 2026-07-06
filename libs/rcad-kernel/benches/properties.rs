@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use glam::DVec3;
 use rcad_kernel::properties::volume;
-use rcad_kernel::{any_perpendicular, BRep, PrimitiveSolid};
+use rcad_kernel::{topods, any_perpendicular, BRep, PrimitiveSolid};
 
 fn volume_sphere(c: &mut Criterion) {
     let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });

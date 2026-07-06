@@ -33,7 +33,7 @@
 use crate::tolerance::*;
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, Curve2d, Surface3, CurveEval, SurfaceEval};
-use rcad_kernel::{BRep, Face};
+use rcad_kernel::{topods, BRep, Face};
 use rcad_kernel::topology::Wire;
 use rcad_kernel::projection::{closest_point_on_curve, closest_point_on_surface};
 

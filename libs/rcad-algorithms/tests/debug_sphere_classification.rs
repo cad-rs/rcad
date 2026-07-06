@@ -5,6 +5,7 @@ use rcad_algorithms::{boolean_op, boolean_op_with_history, BooleanOpType};
 use rcad_kernel::geom::Surface3;
 use rcad_kernel::properties::face_triangles_pub;
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_modeling::{make_box_brep, make_sphere_brep};
 use std::f64::consts::PI;
 

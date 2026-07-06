@@ -15,6 +15,7 @@ use rcad_algorithms::geom_populate::populate_box_geom;
 use rcad_algorithms::{boolean_op, boolean_op_simplified, BooleanOpType, SimplifyOptions};
 use rcad_kernel::properties::volume;
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_modeling::make_box_brep;
 
 fn face_count(brep: &BRep) -> usize {

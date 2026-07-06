@@ -5,6 +5,7 @@
 //! for topological consistency.
 
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_kernel::geom::{Curve3, Surface3, SurfaceEval};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 

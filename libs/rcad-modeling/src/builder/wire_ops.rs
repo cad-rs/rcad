@@ -23,6 +23,7 @@ use std::f64::consts::PI;
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_kernel::geom::{Curve3, Line3, Surface3};
 use rcad_kernel::projection::closest_point_on_surface;
 use rcad_kernel::topology::{Vertex, WireEdge, Wire};

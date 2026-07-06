@@ -34,6 +34,7 @@
 use std::collections::HashSet;
 
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 
 use crate::cells_builder::{CellExpr, CellsBuilder, CellsBuilderError};
 use crate::{BooleanError, GeneralFuseHistory, general_fuse, general_fuse_with_history};

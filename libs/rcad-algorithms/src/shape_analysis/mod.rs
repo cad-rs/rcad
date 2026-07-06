@@ -11,7 +11,7 @@
 use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, Surface3, CurveEval, SurfaceEval, Curve2dEval};
-use rcad_kernel::{BRep, Face, PCurve};
+use rcad_kernel::{topods, BRep, Face, PCurve};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Surface Analysis (ShapeAnalysis_Surface)

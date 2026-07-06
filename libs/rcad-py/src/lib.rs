@@ -21,6 +21,7 @@ use rcad_algorithms::{
 use rcad_features::{operations::FeatureOperations, FeaturesError as FeatErr};
 use rcad_kernel::properties::{centroid, inertia_tensor, signed_volume, surface_area, volume};
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_modeling::{
     chamfer_edge, cone_brep, cylinder_brep, extrude, fillet_edge, fillet_edges, loft, make_box_brep,
     make_conical_frustum_brep, project_wire_onto_surface, revolve, sphere_brep, sweep_pipe,

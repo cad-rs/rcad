@@ -9,6 +9,7 @@
 
 use glam::DVec3;
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_kernel::geom::{Surface3, SurfaceEval};
 
 use crate::tolerance::*;

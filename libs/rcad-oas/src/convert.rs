@@ -1,6 +1,6 @@
 //! Conversion between OASIS geometry and RCAD kernel types.
 
-use rcad_kernel::{BRep, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+use rcad_kernel::{topods, BRep, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
 use crate::{OasCell, OasError, OasLibrary, OasPath, OasPolygon};
 use crate::layer_config::LayerConfig;

@@ -26,7 +26,7 @@
 
 use crate::tolerance::*;
 use glam::DVec3;
-use rcad_kernel::{BRep, Curve3, Surface3};
+use rcad_kernel::{topods, BRep, Curve3, Surface3};
 use rcad_kernel::geom::{any_perpendicular, CurveEval, SurfaceEval};
 use rcad_kernel::topology::{Edge, Face, Wire, WireEdge};
 

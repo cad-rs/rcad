@@ -29,7 +29,7 @@
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
-use rcad_kernel::{BRep, GeomStore};
+use rcad_kernel::{topods, BRep, GeomStore};
 use std::collections::HashMap;
 
 

@@ -11,6 +11,7 @@ use rcad_algorithms::{
 };
 use rcad_algorithms::tolerance::TOLERANCE_ABS;
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_modeling::{make_box_brep, make_sphere_brep};
 
 fn face_count(brep: &BRep) -> usize {

@@ -10,7 +10,7 @@
 
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
-use rcad_kernel::{BRep, Edge, Face};
+use rcad_kernel::{topods, BRep, Edge, Face};
 
 use crate::tolerance::*;
 

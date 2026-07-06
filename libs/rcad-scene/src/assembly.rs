@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 
 use glam::{DAffine3, DVec3};
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use serde::{Deserialize, Serialize};
 
 use crate::append_brep;

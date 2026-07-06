@@ -13,7 +13,7 @@
 //! - **Path pattern**: pattern along a curve with optional alignment
 
 use glam::{DMat4, DVec3};
-use rcad_kernel::{any_perpendicular, BRep};
+use rcad_kernel::{topods, any_perpendicular, BRep};
 use rcad_kernel::geom::{
  Circle3, ConicalSurface, Curve3, CylindricalSurface, Ellipse3, Hyperbola3, Line3,
  LinearExtrusionSurface, OffsetSurface, Plane, RevolutionSurface, SphericalSurface, Surface3,

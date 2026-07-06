@@ -2,7 +2,7 @@
 pub use assembly::{Assembly, AssemblyMetadata, AssemblyNode, NodeContent, assembly_from_parts};
 
 use glam::DVec3;
-use rcad_kernel::{BRep, Edge, Face, Shell, Solid, Wire, WireEdge};
+use rcad_kernel::{topods, BRep, Edge, Face, Shell, Solid, Wire, WireEdge};
 use rcad_modeling::{make_box_brep, make_cone_brep, make_cylinder_brep, make_sphere_brep, make_torus_brep};
 use rcad_render::{
  Camera, DEFAULT_EDGE_PICK_RADIUS_PX, SelectionMode, SelectionState, cursor_point_on_plane,

@@ -34,6 +34,7 @@ pub mod builder_operation;
 pub mod section;
 
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use std::collections::HashMap;
 
 use crate::bopds::ds::DS;

@@ -15,7 +15,7 @@
 //! ```rust
 //! # use rcad_algorithms::tolerance::*;
 //! use glam::DVec3;
-//! use rcad_kernel::{BRep, PrimitiveSolid};
+//! use rcad_kernel::{topods, BRep, PrimitiveSolid};
 //! use rcad_algorithms::brep_int_curve_surface::{intersect_line_with_brep, ray_cast};
 //! use rcad_algorithms::tolerance::TOLERANCE_ABS;
 //!

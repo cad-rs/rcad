@@ -47,7 +47,7 @@ use std::collections::{HashMap, HashSet};
 use rayon::prelude::*;
 use glam::{DAffine3, DMat4, DVec2, DVec3, DVec4};
 use rcad_kernel::geom::{Circle3, CurveEval, Surface3, any_perpendicular};
-use rcad_kernel::{BRep, SurfaceEval};
+use rcad_kernel::{topods, BRep, SurfaceEval};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 

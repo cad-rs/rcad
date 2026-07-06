@@ -6,7 +6,7 @@ pub mod types;
 
 use glam::{DAffine3, DMat4, DVec3, DVec4};
 use rcad_kernel::topology::{Face, Shell, Wire};
-use rcad_kernel::{BRep, CONFUSION, Curve2d, Curve3, Surface3, topods};
+use rcad_kernel::{topods, BRep, CONFUSION, Curve2d, Curve3, Surface3};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Write};

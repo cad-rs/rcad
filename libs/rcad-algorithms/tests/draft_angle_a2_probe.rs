@@ -8,6 +8,7 @@ use rcad_algorithms::tolerance::*;
 use glam::DVec3;
 use rcad_algorithms::{apply_depouille, total_surface_area};
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_modeling::{fillet_edge, make_box_brep};
 
 /// Longest mostly-vertical edge on the right (`x > width/2`), shared by two faces — the `bx_6`

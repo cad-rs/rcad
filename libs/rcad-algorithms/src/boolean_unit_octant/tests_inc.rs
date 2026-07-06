@@ -2,6 +2,7 @@
 
 use glam::DVec3;
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_kernel::topology::{Vertex, Edge, Face, Wire, WireEdge, Shell, Solid};
 use rcad_kernel::geom::{Curve3, Line3, Surface3, Circle3, Plane, CylindricalSurface};
 

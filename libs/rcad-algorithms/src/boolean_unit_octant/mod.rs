@@ -26,7 +26,7 @@
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{any_perpendicular, bspline_is_planar, bspline_to_plane, Circle3, ConicalSurface, Curve3, CylindricalSurface, Ellipse3, Line3, Plane, SphericalSurface, Surface3, SurfaceEval, ToroidalSurface};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
-use rcad_kernel::{surface_area, volume, BRep, GeomStore, Vertex};
+use rcad_kernel::{topods, surface_area, volume, BRep, GeomStore, Vertex};
 use rcad_modeling::builder::brep_builder::{make_edge, make_face, make_vertex, make_wire};
 use rcad_modeling::builder::ops::LoftHistory;
 use rcad_modeling::{loft_with_history, make_box_brep, make_convex_polyhedron_from_half_spaces, make_cylinder_brep, make_sphere_brep, sew_shells};

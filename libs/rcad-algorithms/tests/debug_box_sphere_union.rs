@@ -1,7 +1,7 @@
 /// Debug test: box-sphere union matching the GMSH example.
 /// Box (0,0,0)-(1.6,1.2,1.0) + Sphere (1.0,0.6,0.5) r=0.7 Fuse.
 use glam::DVec3;
-use rcad_kernel::{face_surface_area, surface_area, BRep, Surface3};
+use rcad_kernel::{topods, face_surface_area, surface_area, BRep, Surface3};
 use rcad_algorithms::{boolean_op, boolean_op_simplified, BooleanOpType, SimplifyOptions};
 
 fn print_stats(label: &str, brep: &BRep) {

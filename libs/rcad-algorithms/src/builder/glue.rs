@@ -1,6 +1,7 @@
 ﻿use std::collections::HashMap;
 use glam::DVec3;
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_kernel::geom::*;
 use crate::bopds::ds::*;
 use crate::tolerance::*;

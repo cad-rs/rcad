@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet, BTreeSet};
 use glam::DVec2; use glam::DVec3;
 use rcad_kernel::geom::*;
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use std::cell::RefCell;
 use crate::bopds::ds::*;
 use crate::classify::{Classification, classify_point};

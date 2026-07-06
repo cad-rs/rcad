@@ -36,7 +36,7 @@
 //! ```
 
 use glam::DVec3;
-use rcad_kernel::{BRep, Curve3, CurveEval, Surface3, SurfaceEval};
+use rcad_kernel::{topods, BRep, Curve3, CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::topology::{Face, Shell, Wire};
 use std::collections::{HashMap, HashSet};
 

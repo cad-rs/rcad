@@ -24,6 +24,7 @@ pub use wire_ops::{chamfer_wire_2d, fillet_wire_2d, project_wire_onto_surface};
 
 use glam::DVec3;
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_kernel::geom::{Curve3, Surface3};
 use std::error::Error;
 use std::fmt;

@@ -9,7 +9,7 @@
 
 use rcad_algorithms::{boolean_op, BooleanOpType};
 use rcad_algorithms::geom_convert::{surface_to_bspline, ConvertParams};
-use rcad_kernel::{Surface3, BRep};
+use rcad_kernel::{topods, Surface3, BRep};
 use rcad_modeling::make_box_brep;
 
 /// Convert all surfaces in a BRep to BSpline (matching OCCT `nurbsconvert`).

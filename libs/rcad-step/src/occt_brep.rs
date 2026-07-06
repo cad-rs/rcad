@@ -12,7 +12,7 @@
 //! Trimmed 3D curves (record type 8) are unsupported.
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::{any_perpendicular, BRep};
+use rcad_kernel::{topods, any_perpendicular, BRep};
 use rcad_kernel::geom::{
     BSplineCurve2, BSplineCurve3, BSplineSurface, BezierCurve2, BezierCurve3, Circle2d, Circle3,
     ConicalSurface, Curve2d, Curve3, CylindricalSurface, Ellipse2d, Ellipse3, Hyperbola3, Line2d,

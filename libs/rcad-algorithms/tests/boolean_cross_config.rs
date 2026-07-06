@@ -17,6 +17,7 @@ use rcad_algorithms::{
     total_volume, validate_solid_closure, BooleanOpType, BooleanOptions,
 };
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_modeling::{make_box_brep, make_cylinder_brep, make_sphere_brep, make_torus_brep};
 
 fn face_count(brep: &BRep) -> usize {

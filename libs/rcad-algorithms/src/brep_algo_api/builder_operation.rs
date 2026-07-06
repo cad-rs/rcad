@@ -30,6 +30,7 @@ use crate::history::BooleanHistory;
 use crate::pave_filler::PaveFiller;
 use crate::tolerance::TOLERANCE_ABS;
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 
 /// A reference to a sub-shape in a BRep, analogous to OCCT TopoDS_Shape.
 ///

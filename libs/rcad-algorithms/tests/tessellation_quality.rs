@@ -12,7 +12,7 @@ use rcad_algorithms::{
  AdaptiveSubdivider, BoundarySensitiveTessellator, IncrementalMesher, MeshDelta,
  MeshSimplifier,
 };
-use rcad_kernel::{any_perpendicular, BRep, PrimitiveSolid, geom::{Surface3, SphericalSurface, CylindricalSurface, Plane}};
+use rcad_kernel::{topods, any_perpendicular, BRep, PrimitiveSolid, geom::{Surface3, SphericalSurface, CylindricalSurface, Plane}};
 
 fn total_triangle_count(brep: &BRep) -> usize {
  brep.solids

@@ -6,6 +6,7 @@
 
 use crate::{BooleanError, BooleanOpType, boolean_op};
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 
 /// Boolean expression over registered cells.
 #[derive(Debug, Clone)]

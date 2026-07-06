@@ -12,6 +12,7 @@
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, CurveEval, Line3, Surface3, SurfaceEval};
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 
 use crate::bvh::{Aabb, Bvh};
 use crate::tolerance::*;

@@ -1,6 +1,7 @@
 ﻿/// Smoke tests for rcad-render's CPU tessellation path.
 /// These do NOT require a GPU  ?they only test the mesh-building logic.
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_kernel::PrimitiveSolid;
 use rcad_render::{EditedModelDelta, TessellationOptions, Tessellator};
 

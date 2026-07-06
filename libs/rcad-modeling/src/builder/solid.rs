@@ -5,7 +5,7 @@ use super::{
 use glam::{DMat3, DVec3};
 use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
 use rcad_kernel::topology::WireEdge;
-use rcad_kernel::{BRep, PrimitiveSolid, topods};
+use rcad_kernel::{topods, BRep, PrimitiveSolid};
 
 pub fn box_primitive(width: f64, height: f64, depth: f64) -> Result<PrimitiveSolid, BuildError> {
     let width = validate_positive("width", width)?;

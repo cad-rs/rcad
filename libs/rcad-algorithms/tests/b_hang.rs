@@ -2,7 +2,7 @@ use glam::DVec3;
 use rcad_algorithms::boolean_op;
 use rcad_algorithms::BooleanOpType;
 use rcad_algorithms::geom_convert::surface_to_bspline;
-use rcad_kernel::{Surface3, BRep};
+use rcad_kernel::{topods, Surface3, BRep};
 use rcad_modeling::make_box_brep;
 
 fn nurbsconvert_brep(mut brep: BRep) -> BRep {

@@ -5,6 +5,7 @@
 //! `cursor_point_on_plane` returns valid points on the XZ work plane (normal = Y).
 
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_render::{Camera, SelectionMode, SelectionState};
 use rcad_scene::{CommandState, CreationController, Tool, WorkPlane};
 

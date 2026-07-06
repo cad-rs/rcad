@@ -29,7 +29,7 @@ use rcad_algorithms::{
     brep_check::brep_check_analyze,
     history::{EdgeOrigin as HistEdgeOrigin, VertexOrigin as HistVertexOrigin},
 };
-use rcad_kernel::{any_perpendicular, BRep};
+use rcad_kernel::{topods, any_perpendicular, BRep};
 use rcad_kernel::geom::{Surface3, SphericalSurface, CylindricalSurface, Plane,
                         ToroidalSurface, ConicalSurface};
 use rcad_kernel::properties::volume;

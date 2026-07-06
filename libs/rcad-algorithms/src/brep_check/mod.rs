@@ -38,7 +38,7 @@
 
 use crate::tolerance::*;
 use glam::{DVec2, DVec3};
-use rcad_kernel::{BRep, topods};
+use rcad_kernel::{topods, BRep};
 use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval};
 
 /// A single validity issue found during checking.

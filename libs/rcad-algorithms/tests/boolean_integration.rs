@@ -12,6 +12,7 @@ use rcad_algorithms::pave_filler::PaveFiller;
 use rcad_kernel::topology::Face;
 use rcad_kernel::PrimitiveSolid;
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_kernel::properties::volume;
 use rcad_algorithms::geom_populate;
 use rcad_modeling::{

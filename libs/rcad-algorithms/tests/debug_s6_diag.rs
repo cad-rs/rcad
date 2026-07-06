@@ -1,5 +1,5 @@
 use rcad_algorithms::{boolean_op, BooleanOpType};
-use rcad_kernel::{surface_area, BRep};
+use rcad_kernel::{topods, surface_area, BRep};
 use rcad_kernel::face_flat_iter;
 use rcad_modeling::{make_box_brep, make_cylinder_brep};
 use glam::DVec3;

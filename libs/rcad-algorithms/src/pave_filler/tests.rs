@@ -1,5 +1,5 @@
 use super::*;
-use rcad_kernel::{BRep, PrimitiveSolid};
+use rcad_kernel::{topods, BRep, PrimitiveSolid};
 use crate::bopds::ds::DS;
 
 #[test]

@@ -17,6 +17,7 @@ use rcad_kernel::geom::{
     ConicalSurface, CylindricalSurface, Plane, SphericalSurface, Surface3, ToroidalSurface,
 };
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use std::collections::HashMap;
 
 // =============================================================================

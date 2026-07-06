@@ -9,6 +9,7 @@ use rcad_algorithms::{
     ASPECT_RATIO_THRESHOLD,
 };
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_algorithms::tolerance::*;
 
 // ── Near-Tangent Geometry Tests ────────────────────────────────────────────────

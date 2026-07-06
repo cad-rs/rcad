@@ -12,7 +12,7 @@
 
 use crate::tolerance::*;
 use glam::DVec3;
-use rcad_kernel::{BRep, Curve3, CurveEval, Surface3, SurfaceEval, Wire};
+use rcad_kernel::{topods, BRep, Curve3, CurveEval, Surface3, SurfaceEval, Wire};
 use std::f64::consts::PI;
 
 // =============================================================================

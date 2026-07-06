@@ -7,7 +7,7 @@ use glam::DVec3;
 use std::collections::{HashMap, HashSet};
 use rcad_kernel::geom::{Plane, Surface3};
 use rcad_kernel::topology::{Edge, Face, Vertex, Wire, WireEdge};
-use rcad_kernel::{face_surface_area, surface_area, volume, BRep};
+use rcad_kernel::{topods, face_surface_area, surface_area, volume, BRep};
 
 use crate::inttools::edge_face::plane_local_basis;
 use crate::tolerance::{

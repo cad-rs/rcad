@@ -21,7 +21,7 @@
 
 use glam::DVec3;
 use glam::DVec2;
-use rcad_kernel::{face_tolerance, BRep};
+use rcad_kernel::{topods, face_tolerance, BRep};
 use rcad_kernel::geom::{
  Circle3, ConicalSurface, Curve3, CurveEval, CylindricalSurface, Ellipse3, Line3, Plane,
  SphericalSurface, Surface3, ToroidalSurface, any_perpendicular,

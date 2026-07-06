@@ -26,7 +26,7 @@ use std::path::Path;
 
 use glam::DVec3;
 use rcad_kernel::topology::{Face, Shell, Solid, Vertex, Wire};
-use rcad_kernel::{BRep, BSplineSurface, Curve3, Surface3};
+use rcad_kernel::{topods, BRep, BSplineSurface, Curve3, Surface3};
 use rcad_kernel::geom::{BSplineCurve3, Circle3, Line3, Plane};
 
 /// Errors that can occur when reading or parsing an IGES file.

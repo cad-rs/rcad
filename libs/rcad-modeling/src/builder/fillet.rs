@@ -13,6 +13,7 @@ use std::f64::consts::PI;
 
 use glam::DVec3;
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_kernel::geom::{any_perpendicular, Circle3, ConicalSurface, Curve3, CylindricalSurface, Line3, Plane, SphericalSurface, Surface3};
 use rcad_kernel::topology::{Edge, Face, Vertex, WireEdge};
 

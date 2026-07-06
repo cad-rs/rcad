@@ -30,7 +30,7 @@
 //! ```
 
 use glam::DVec3;
-use rcad_kernel::{BRep, Curve3, Surface3};
+use rcad_kernel::{topods, BRep, Curve3, Surface3};
 use rcad_kernel::geom::{CurveEval, SurfaceEval};
 
 // =============================================================================

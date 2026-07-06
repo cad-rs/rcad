@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use glam::DVec3;
-use rcad_kernel::{BRep, Edge, Face, Shell, Solid, GeomStore, PCurve};
+use rcad_kernel::{topods, BRep, Edge, Face, Shell, Solid, GeomStore, PCurve};
 use crate::bvh::Aabb;
 use crate::tolerance::TOLERANCE_MESH_LEGACY;
 

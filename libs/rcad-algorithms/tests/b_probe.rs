@@ -4,7 +4,7 @@ use rcad_algorithms::pave_filler::PaveFiller;
 use rcad_algorithms::builder::BooleanBuilder;
 use rcad_algorithms::BooleanOpType;
 use rcad_algorithms::geom_convert::surface_to_bspline;
-use rcad_kernel::{Surface3, BRep};
+use rcad_kernel::{topods, Surface3, BRep};
 use rcad_modeling::make_box_brep;
 
 fn nurbsconvert_brep(mut brep: BRep) -> BRep {

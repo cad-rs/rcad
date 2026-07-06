@@ -16,6 +16,7 @@
 
 use glam::DVec3;
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_modeling::make_box_brep;
 use rcad_modeling::make_conical_frustum_brep;
 use crate::tolerance::*;
