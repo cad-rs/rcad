@@ -515,13 +515,32 @@ pub fn torus_brep(
     ref_dir: DVec3,
     major_radius: f64,
     minor_radius: f64,
-) -> Result<BRep, BuildError> {
-    let center = validate_point("center", center)?;
-    let primitive = torus_primitive(major_radius, minor_radius)?;
+) -> Result<topods::BRep, BuildError> {
+    let c = validate_point("center", center)?;
+    let maj = validate_positive("major_radius", major_radius)?;
+    let min = validate_positive("minor_radius", minor_radius)?;
     let (x_axis, y_axis, z_axis) = basis_from_axis_ref(axis, ref_dir)?;
-    let mut brep = BRep::from_primitive(primitive);
-    transform_brep(&mut brep, center, x_axis, y_axis, z_axis);
-    Ok(brep)
+    use rcad_kernel::topods::Orientation;
+    let rev = |sr: rcad_kernel::topods::ShapeRef| rcad_kernel::topods::ShapeRef { orientation: Orientation::Reversed, ..sr };
+    let p = |dx: f64, dy: f64, dz: f64| c + x_axis * dx + y_axis * dy + z_axis * dz;
+
+    let mut t = topods::BRep::new();
+    let seam_v = t.add_tvertex(p(maj + min, 0.0, 0.0));
+
+    let major_circle = Curve3::Circle(rcad_kernel::geom::Circle3::new(c, z_axis, maj));
+    let minor_circle = Curve3::Circle(rcad_kernel::geom::Circle3::new(p(maj, 0.0, 0.0), x_axis, min));
+
+    let e_major = t.add_tedge(Some(major_circle), seam_v, seam_v, [0.0, std::f64::consts::TAU]);
+    let e_minor = t.add_tedge(Some(minor_circle), seam_v, seam_v, [0.0, std::f64::consts::TAU]);
+
+    let wire = t.add_twire(vec![e_major, e_minor, rev(e_major), rev(e_minor)]);
+    let surface = Surface3::Torus(rcad_kernel::geom::ToroidalSurface {
+        center: c, axis: z_axis, major_radius: maj, minor_radius: min,
+    });
+    let face = t.add_tface(Some(surface), wire, vec![], Some(p(maj + min, 0.0, 0.0)), None, vec![], true);
+    let shell = t.add_tshell(vec![face]);
+    t.add_tsolid(vec![shell]);
+    Ok(t)
 }
 
 pub fn make_torus_brep(
@@ -530,7 +549,7 @@ pub fn make_torus_brep(
     ref_dir: DVec3,
     major_radius: f64,
     minor_radius: f64,
-) -> Result<BRep, BuildError> {
+) -> Result<topods::BRep, BuildError> {
     torus_brep(center, axis, ref_dir, major_radius, minor_radius)
 }
 
@@ -593,7 +612,7 @@ pub fn make_planar_rect_brep(
     umax: f64,
     vmin: f64,
     vmax: f64,
-) -> Result<BRep, BuildError> {
+) -> Result<topods::BRep, BuildError> {
     let normal = u_axis.cross(v_axis).normalize();
     let surface = Surface3::Plane(Plane { origin, normal });
 
@@ -602,52 +621,30 @@ pub fn make_planar_rect_brep(
     let c2 = origin + u_axis * umax + v_axis * vmax;
     let c3 = origin + u_axis * umin + v_axis * vmax;
 
-    let mut brep = BRep::default();
-    let v0 = super::brep_builder::make_vertex(&mut brep, c0);
-    let v1 = super::brep_builder::make_vertex(&mut brep, c1);
-    let v2 = super::brep_builder::make_vertex(&mut brep, c2);
-    let v3 = super::brep_builder::make_vertex(&mut brep, c3);
-
-    let len01 = (c1 - c0).length();
-    let len12 = (c2 - c1).length();
-    let len23 = (c3 - c2).length();
-    let len30 = (c0 - c3).length();
+    let mut t = topods::BRep::new();
+    let v0 = t.add_tvertex(c0);
+    let v1 = t.add_tvertex(c1);
+    let v2 = t.add_tvertex(c2);
+    let v3 = t.add_tvertex(c3);
 
     let dir01 = (c1 - c0).normalize();
     let dir12 = (c2 - c1).normalize();
     let dir23 = (c3 - c2).normalize();
     let dir30 = (c0 - c3).normalize();
 
-    let e0 = super::brep_builder::make_edge(
-        &mut brep,
-        Curve3::Line(Line3 { origin: c0, direction: dir01 }),
-        0.0, len01, v0, v1,
-    )?;
-    let e1 = super::brep_builder::make_edge(
-        &mut brep,
-        Curve3::Line(Line3 { origin: c1, direction: dir12 }),
-        0.0, len12, v1, v2,
-    )?;
-    let e2 = super::brep_builder::make_edge(
-        &mut brep,
-        Curve3::Line(Line3 { origin: c2, direction: dir23 }),
-        0.0, len23, v2, v3,
-    )?;
-    let e3 = super::brep_builder::make_edge(
-        &mut brep,
-        Curve3::Line(Line3 { origin: c3, direction: dir30 }),
-        0.0, len30, v3, v0,
-    )?;
+    let len01 = (c1 - c0).length();
+    let len12 = (c2 - c1).length();
+    let len23 = (c3 - c2).length();
+    let len30 = (c0 - c3).length();
 
-    let w = super::brep_builder::make_wire(vec![
-        WireEdge::new(e0, true),
-        WireEdge::new(e1, true),
-        WireEdge::new(e2, true),
-        WireEdge::new(e3, true),
-    ]);
+    let e0 = t.add_tedge(Some(Curve3::Line(Line3 { origin: c0, direction: dir01 })), v0, v1, [0.0, len01]);
+    let e1 = t.add_tedge(Some(Curve3::Line(Line3 { origin: c1, direction: dir12 })), v1, v2, [0.0, len12]);
+    let e2 = t.add_tedge(Some(Curve3::Line(Line3 { origin: c2, direction: dir23 })), v2, v3, [0.0, len23]);
+    let e3 = t.add_tedge(Some(Curve3::Line(Line3 { origin: c3, direction: dir30 })), v3, v0, [0.0, len30]);
 
-    super::brep_builder::make_face(&mut brep, surface, w, vec![])?;
-    Ok(brep)
+    let wire = t.add_twire(vec![e0, e1, e2, e3]);
+    t.add_tface(Some(surface), wire, vec![], None, None, vec![], true);
+    Ok(t)
 }
 
 /// Create a BRep with a single planar face bounded by a polygon, with optional inner holes.
