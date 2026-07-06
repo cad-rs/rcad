@@ -33,13 +33,8 @@ pub fn box_brep(
     width: f64,
     height: f64,
     depth: f64,
-) -> Result<BRep, BuildError> {
-    let origin = validate_point("origin", origin)?;
-    let primitive = box_primitive(width, height, depth)?;
-    let (x_axis, y_axis, z_axis) = basis_from_x_y(x_dir, y_dir)?;
-    let mut brep = BRep::from_primitive(primitive);
-    transform_brep(&mut brep, origin, x_axis, y_axis, z_axis);
-    Ok(brep)
+) -> Result<topods::BRep, BuildError> {
+    make_box_brep(origin, x_dir, y_dir, width, height, depth)
 }
 
 pub fn make_box_brep(
@@ -49,8 +44,61 @@ pub fn make_box_brep(
     width: f64,
     height: f64,
     depth: f64,
-) -> Result<BRep, BuildError> {
-    box_brep(origin, x_dir, y_dir, width, height, depth)
+) -> Result<topods::BRep, BuildError> {
+    let w = validate_positive("width", width)?;
+    let h = validate_positive("height", height)?;
+    let d = validate_positive("depth", depth)?;
+    let (x_axis, y_axis, z_axis) = basis_from_x_y(x_dir, y_dir)?;
+    let o = validate_point("origin", origin)?;
+    use rcad_kernel::topods::Orientation;
+    let rev = |sr: rcad_kernel::topods::ShapeRef| rcad_kernel::topods::ShapeRef { orientation: Orientation::Reversed, ..sr };
+
+    let p = |dx: f64, dy: f64, dz: f64| o + x_axis * dx + y_axis * dy + z_axis * dz;
+
+    let mut t = topods::BRep::new();
+    let v = [
+        t.add_tvertex(p(0.0,0.0,0.0)), t.add_tvertex(p(w,0.0,0.0)),
+        t.add_tvertex(p(w,h,0.0)), t.add_tvertex(p(0.0,h,0.0)),
+        t.add_tvertex(p(0.0,0.0,d)), t.add_tvertex(p(w,0.0,d)),
+        t.add_tvertex(p(w,h,d)), t.add_tvertex(p(0.0,h,d)),
+    ];
+
+    let e01 = t.add_tedge(Some(Curve3::Line(Line3 { origin: p(0.0,0.0,0.0), direction: x_axis })), v[0], v[1], [0.0, w]);
+    let e12 = t.add_tedge(Some(Curve3::Line(Line3 { origin: p(w,0.0,0.0), direction: y_axis })), v[1], v[2], [0.0, h]);
+    let e23 = t.add_tedge(Some(Curve3::Line(Line3 { origin: p(w,h,0.0), direction: -x_axis })), v[2], v[3], [0.0, w]);
+    let e30 = t.add_tedge(Some(Curve3::Line(Line3 { origin: p(0.0,h,0.0), direction: -y_axis })), v[3], v[0], [0.0, h]);
+    let e04 = t.add_tedge(Some(Curve3::Line(Line3 { origin: p(0.0,0.0,0.0), direction: z_axis })), v[0], v[4], [0.0, d]);
+    let e15 = t.add_tedge(Some(Curve3::Line(Line3 { origin: p(w,0.0,0.0), direction: z_axis })), v[1], v[5], [0.0, d]);
+    let e26 = t.add_tedge(Some(Curve3::Line(Line3 { origin: p(w,h,0.0), direction: z_axis })), v[2], v[6], [0.0, d]);
+    let e37 = t.add_tedge(Some(Curve3::Line(Line3 { origin: p(0.0,h,0.0), direction: z_axis })), v[3], v[7], [0.0, d]);
+    let e45 = t.add_tedge(Some(Curve3::Line(Line3 { origin: p(0.0,0.0,d), direction: x_axis })), v[4], v[5], [0.0, w]);
+    let e56 = t.add_tedge(Some(Curve3::Line(Line3 { origin: p(w,0.0,d), direction: y_axis })), v[5], v[6], [0.0, h]);
+    let e67 = t.add_tedge(Some(Curve3::Line(Line3 { origin: p(w,h,d), direction: -x_axis })), v[6], v[7], [0.0, w]);
+    let e74 = t.add_tedge(Some(Curve3::Line(Line3 { origin: p(0.0,h,d), direction: -y_axis })), v[7], v[4], [0.0, h]);
+
+    let wires = [
+        t.add_twire(vec![e01, e12, e23, e30]),
+        t.add_twire(vec![e45, e56, e67, e74]),
+        t.add_twire(vec![e01, e15, rev(e45), rev(e04)]),
+        t.add_twire(vec![rev(e23), e26, e67, rev(e37)]),
+        t.add_twire(vec![rev(e30), e37, rev(e74), e04]),
+        t.add_twire(vec![e12, e26, rev(e56), rev(e15)]),
+    ];
+    let normals = [-z_axis, z_axis, -y_axis, y_axis, -x_axis, x_axis];
+    let centers = [
+        p(w/2.0, h/2.0, 0.0), p(w/2.0, h/2.0, d),
+        p(w/2.0, 0.0, d/2.0), p(w/2.0, h, d/2.0),
+        p(0.0, h/2.0, d/2.0), p(w, h/2.0, d/2.0),
+    ];
+
+    let mut face_refs = Vec::new();
+    for i in 0..6 {
+        let surface = Surface3::Plane(Plane { origin: centers[i], normal: normals[i] });
+        face_refs.push(t.add_tface(Some(surface), wires[i], vec![], Some(centers[i]), None, vec![], true));
+    }
+    let shell = t.add_tshell(face_refs);
+    t.add_tsolid(vec![shell]);
+    Ok(t)
 }
 
 pub fn sphere_primitive(radius: f64) -> Result<PrimitiveSolid, BuildError> {
@@ -108,13 +156,49 @@ pub fn cylinder_brep(
     ref_dir: DVec3,
     radius: f64,
     height: f64,
-) -> Result<BRep, BuildError> {
-    let center = validate_point("center", center)?;
-    let primitive = cylinder_primitive(radius, height)?;
+) -> Result<topods::BRep, BuildError> {
+    let c = validate_point("center", center)?;
+    let r = validate_positive("radius", radius)?;
+    let h = validate_positive("height", height)?;
     let (x_axis, y_axis, z_axis) = basis_from_axis_ref(axis, ref_dir)?;
-    let mut brep = BRep::from_primitive(primitive);
-    transform_brep(&mut brep, center, x_axis, y_axis, z_axis);
-    Ok(brep)
+    use rcad_kernel::topods::Orientation;
+    let rev = |sr: rcad_kernel::topods::ShapeRef| rcad_kernel::topods::ShapeRef { orientation: Orientation::Reversed, ..sr };
+    let p = |dx: f64, dy: f64, dz: f64| c + x_axis * dx + y_axis * dy + z_axis * dz;
+
+    let half = h * 0.5;
+    let mut t = topods::BRep::new();
+    let top_v = t.add_tvertex(p(0.0, half, 0.0));
+    let bot_v = t.add_tvertex(p(0.0, -half, 0.0));
+
+    // Degenerate edges at centers
+    let e_top = t.add_tedge(None, top_v, top_v, [0.0, r * std::f64::consts::TAU]);
+    let e_bot = t.add_tedge(None, bot_v, bot_v, [0.0, r * std::f64::consts::TAU]);
+    // Seam edge
+    let seam_curve = Curve3::Line(Line3 { origin: p(0.0, half, 0.0), direction: z_axis });
+    let e_seam = t.add_tedge(Some(seam_curve), top_v, bot_v, [-half, half]);
+
+    // Faces
+    let cyl_surface = Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
+        origin: c, axis: z_axis, ref_dir: x_axis, radius: r,
+    });
+    let lateral_wire = t.add_twire(vec![e_seam, rev(e_bot), rev(e_seam), e_top]);
+    let top_wire = t.add_twire(vec![e_top]);
+    let bot_wire = t.add_twire(vec![rev(e_bot)]);
+
+    let cyl_surface = Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
+        origin: c, axis: z_axis, ref_dir: x_axis, radius: r,
+    });
+    let lateral_face = t.add_tface(Some(cyl_surface), lateral_wire, vec![], Some(p(0.0, 0.0, r)), None, vec![], true);
+
+    let top_plane = Surface3::Plane(Plane { origin: p(0.0, half, 0.0), normal: z_axis });
+    let top_face = t.add_tface(Some(top_plane), top_wire, vec![], Some(p(0.0, half, 0.0)), None, vec![], false);
+
+    let bot_plane = Surface3::Plane(Plane { origin: p(0.0, -half, 0.0), normal: -z_axis });
+    let bot_face = t.add_tface(Some(bot_plane), bot_wire, vec![], Some(p(0.0, -half, 0.0)), None, vec![], false);
+
+    let shell = t.add_tshell(vec![lateral_face, top_face, bot_face]);
+    t.add_tsolid(vec![shell]);
+    Ok(t)
 }
 
 pub fn make_cylinder_brep(
@@ -123,7 +207,7 @@ pub fn make_cylinder_brep(
     ref_dir: DVec3,
     radius: f64,
     height: f64,
-) -> Result<BRep, BuildError> {
+) -> Result<topods::BRep, BuildError> {
     cylinder_brep(center, axis, ref_dir, radius, height)
 }
 
@@ -585,7 +669,7 @@ pub fn make_half_space_brep(
     origin: DVec3,
     normal: DVec3,
     size: f64,
-) -> Result<BRep, BuildError> {
+) -> Result<topods::BRep, BuildError> {
     let normal = normalize_vector("normal", normal)?;
     let origin = validate_point("origin", origin)?;
     let size = validate_positive("size", size)?;
