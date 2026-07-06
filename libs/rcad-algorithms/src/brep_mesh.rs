@@ -1,4 +1,4 @@
-﻿//! BRepMesh-style mesh generation for BRep shapes.
+//! BRepMesh-style mesh generation for BRep shapes.
 //!
 //! This module provides mesh generation capabilities similar to OCCT's BRepMesh.
 //! It includes:
@@ -12,6 +12,7 @@
 use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::topology::Face;
 use std::collections::HashMap;
@@ -700,6 +701,39 @@ pub fn mesh_brep(brep: &BRep, params: &MeshParams) -> BRepMesh {
         }
     }
 
+    brep_mesh
+}
+
+/// Topods-native: mesh a topods::BRep by iterating tshapes.
+pub fn mesh_brep_topods(brep: &topods::BRep, params: &MeshParams) -> BRepMesh {
+    let mut brep_mesh = BRepMesh::new();
+    for ts in &brep.tshapes {
+        let topods::TShape::Face(fd) = &**ts else { continue };
+        if let Some(surface) = &fd.surface {
+            // Build a flat Face struct for the existing mesh_face API.
+            let mut outer_edges = Vec::new();
+            if let topods::TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+                for sr in &wd.edges {
+                    outer_edges.push(rcad_kernel::topology::WireEdge::fwd(sr.index));
+                }
+            }
+            let flat_face = rcad_kernel::topology::Face {
+                outer_wire: rcad_kernel::topology::Wire { edges: outer_edges },
+                inner_wires: vec![],
+                normal: DVec3::Z,
+                triangles: vec![],
+                sample_point: fd.sample_point,
+                mesh_dirty: true,
+                surface_idx: None,
+            };
+            let mesh = mesh_face(&flat_face, surface, params);
+            brep_mesh.face_meshes.push(mesh);
+            brep_mesh.face_normals.push(DVec3::Z);
+        } else {
+            brep_mesh.face_meshes.push(Mesh::new());
+            brep_mesh.face_normals.push(DVec3::Z);
+        }
+    }
     brep_mesh
 }
 
