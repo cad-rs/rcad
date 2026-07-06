@@ -193,6 +193,7 @@ fn py_bool_err(e: BooleanError) -> PyErr {
         BooleanError::InvalidResult(_) => BooleanOpInvalidResult::new_err(msg),
         BooleanError::IncompleteIntersection(_) => BooleanOpIncompleteIntersection::new_err(msg),
         BooleanError::SelfIntersection(_) => BooleanOpSelfIntersection::new_err(msg),
+        _ => pyo3::exceptions::PyRuntimeError::new_err(msg),
     }
 }
 
@@ -698,7 +699,7 @@ impl PyBRep {
     #[staticmethod]
     fn read_step(path: &str) -> PyResult<Self> {
         let brep = StepReader::read_file(path).map_err(py_step_err)?;
-        Ok(Self { inner: brep })
+        Ok(Self { inner: BRep::from_topods(&brep) })
     }
 
     /// Load STEP geometry plus document metadata as a ``dict`` (JSON round-trip of ``StepDocumentMetadata``: products, file schema, tolerances, PMI-related lists, etc.).
@@ -706,14 +707,15 @@ impl PyBRep {
     fn read_step_with_metadata(py: Python<'_>, path: &str) -> PyResult<(Self, Py<PyAny>)> {
         let (brep, meta) = StepReader::read_file_with_metadata(path).map_err(py_step_err)?;
         let d = step_metadata_to_py(py, &meta)?;
-        Ok((Self { inner: brep }, d))
+        Ok((Self { inner: BRep::from_topods(&brep) }, d))
     }
 
     /// Write AP214 STEP to a file using OCCT-style interchange (``SURFACE_CURVE`` / ``PCURVE``, si_metre, radians).
     #[pyo3(signature = (path))]
     fn write_step(&self, path: &str) -> PyResult<()> {
+        let t = self.inner.to_topods();
         let s = StepWriter::write_string(
-            &self.inner,
+            &t,
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -738,7 +740,7 @@ impl PyBRep {
     /// Boolean union ``self | other``.
     fn union(&self, other: &PyBRep) -> PyResult<Self> {
         let out = boolean_op(BooleanOpType::Union, &self.inner, &other.inner).map_err(py_bool_err)?;
-        Ok(Self { inner: out })
+        Ok(Self { inner: BRep::from_topods(&out) })
     }
 
     /// Boolean union ``self | other`` with execution options (see [`BooleanOptions`]).
@@ -757,7 +759,7 @@ impl PyBRep {
     fn intersection(&self, other: &PyBRep) -> PyResult<Self> {
         let out =
             boolean_op(BooleanOpType::Intersection, &self.inner, &other.inner).map_err(py_bool_err)?;
-        Ok(Self { inner: out })
+        Ok(Self { inner: BRep::from_topods(&out) })
     }
 
     /// Boolean intersection with execution options (see [`BooleanOptions`]).
@@ -780,7 +782,7 @@ impl PyBRep {
     fn difference(&self, other: &PyBRep) -> PyResult<Self> {
         let out =
             boolean_op(BooleanOpType::Difference, &self.inner, &other.inner).map_err(py_bool_err)?;
-        Ok(Self { inner: out })
+        Ok(Self { inner: BRep::from_topods(&out) })
     }
 
     /// Boolean difference ``self - other`` with execution options (see [`BooleanOptions`]).

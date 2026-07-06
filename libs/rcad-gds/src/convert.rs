@@ -1,4 +1,4 @@
-﻿use rcad_kernel::{BRep, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+use rcad_kernel::{BRep, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
 use crate::error::{GdsError, Result};
 use crate::types::*;
@@ -81,12 +81,13 @@ fn polygon_to_brep_face(
         inner_wires: Vec::new(),
         normal: glam::DVec3::Z,
         triangles: Vec::new(),
-        sample_point: None,
-        mesh_dirty: true,
-    };
+            sample_point: None,
+            mesh_dirty: true,
+            surface_idx: None,
+        };
 
-    let shell = Shell { faces: vec![face] };
-    brep.solids.push(Solid { shells: vec![shell] });
+        let shell = Shell { faces: vec![face] };
+        brep.solids.push(Solid { shells: vec![shell] });
 
     Ok(brep)
 }

@@ -1,4 +1,4 @@
-﻿//! Conversion between OASIS geometry and RCAD kernel types.
+//! Conversion between OASIS geometry and RCAD kernel types.
 
 use rcad_kernel::{BRep, Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
@@ -48,12 +48,13 @@ fn polygon_to_brep_face(
         inner_wires: Vec::new(),
         normal: glam::DVec3::Z,
         triangles: Vec::new(),
-        sample_point: None,
-        mesh_dirty: true,
-    };
+            sample_point: None,
+            mesh_dirty: true,
+            surface_idx: None,
+        };
 
-    let shell = Shell { faces: vec![face] };
-    brep.solids.push(Solid { shells: vec![shell] });
+        let shell = Shell { faces: vec![face] };
+        brep.solids.push(Solid { shells: vec![shell] });
 
     Ok(brep)
 }
@@ -151,6 +152,7 @@ impl OasConverter {
             triangles: Vec::new(),
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
 
         Ok(face)
