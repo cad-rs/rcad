@@ -1012,5 +1012,23 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
  t_range: edge.t_range,
  });
  }
- segments
+  segments
+}
+
+/// Check if a 2D point is inside a 2D polygon using ray casting (OCCT-aligned utility).
+pub(crate) fn point_in_polygon_2d(poly: &[DVec2], pt: DVec2) -> bool {
+    let n = poly.len();
+    let mut inside = false;
+    let mut j = n - 1;
+    for i in 0..n {
+        let vi = poly[i];
+        let vj = poly[j];
+        if ((vi.y > pt.y) != (vj.y > pt.y))
+            && (pt.x < (vj.x - vi.x) * (pt.y - vi.y) / (vj.y - vi.y) + vi.x)
+        {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
 }
