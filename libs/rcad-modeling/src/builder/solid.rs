@@ -62,15 +62,33 @@ pub fn make_sphere_primitive(radius: f64) -> Result<PrimitiveSolid, BuildError> 
     sphere_primitive(radius)
 }
 
-pub fn sphere_brep(center: DVec3, radius: f64) -> Result<BRep, BuildError> {
-    let center = validate_point("center", center)?;
-    let primitive = sphere_primitive(radius)?;
-    let mut brep = BRep::from_primitive(primitive);
-    translate_brep(&mut brep, center);
-    Ok(brep)
+pub fn sphere_brep(center: DVec3, radius: f64) -> Result<topods::BRep, BuildError> {
+    let c = validate_point("center", center)?;
+    let r = validate_positive("radius", radius)?;
+    use rcad_kernel::topods::Orientation;
+    let rev = |sr: rcad_kernel::topods::ShapeRef| rcad_kernel::topods::ShapeRef { orientation: Orientation::Reversed, ..sr };
+
+    let mut t = topods::BRep::new();
+    let north = t.add_tvertex(c + DVec3::Z * r);
+    let south = t.add_tvertex(c - DVec3::Z * r);
+
+    let seam_curve = Curve3::Line(Line3 { origin: c, direction: DVec3::Z });
+    // Degenerate edge at north pole (start == end)
+    let e_top = t.add_tedge(None, north, north, [0.0, std::f64::consts::PI * r]);
+    // Seam edge north→south
+    let e_seam = t.add_tedge(Some(seam_curve.clone()), north, south, [-r, r]);
+    // Degenerate edge at south pole
+    let e_bot = t.add_tedge(None, south, south, [0.0, std::f64::consts::PI * r]);
+
+    let wire = t.add_twire(vec![e_top, e_seam, e_bot, rev(e_seam)]);
+    let surface = Surface3::Sphere(rcad_kernel::geom::SphericalSurface::new(c, DVec3::Y, r));
+    let face = t.add_tface(Some(surface), wire, vec![], Some(c + DVec3::Z * r), None, vec![], true);
+    let shell = t.add_tshell(vec![face]);
+    t.add_tsolid(vec![shell]);
+    Ok(t)
 }
 
-pub fn make_sphere_brep(center: DVec3, radius: f64) -> Result<BRep, BuildError> {
+pub fn make_sphere_brep(center: DVec3, radius: f64) -> Result<topods::BRep, BuildError> {
     sphere_brep(center, radius)
 }
 
