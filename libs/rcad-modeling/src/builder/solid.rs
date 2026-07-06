@@ -532,42 +532,30 @@ pub fn make_planar_polygon_brep(
     normal: DVec3,
     outer_polygon: &[DVec3],
     inner_polygons: &[Vec<DVec3>],
-) -> Result<BRep, BuildError> {
+) -> Result<topods::BRep, BuildError> {
     let surface = Surface3::Plane(Plane { origin, normal });
-    let mut brep = BRep::default();
-    let outer_wire = make_polygon_wire(&mut brep, outer_polygon)?;
+    let mut t = topods::BRep::new();
+    let outer_wire = make_polygon_wire_topods(&mut t, outer_polygon)?;
     let mut inner_wires = Vec::new();
     for poly in inner_polygons {
-        inner_wires.push(make_polygon_wire(&mut brep, poly)?);
+        inner_wires.push(make_polygon_wire_topods(&mut t, poly)?);
     }
-    super::brep_builder::make_face(&mut brep, surface, outer_wire, inner_wires)?;
-    Ok(brep)
+    t.add_tface(Some(surface), outer_wire, inner_wires, None, None, vec![], true);
+    Ok(t)
 }
 
-fn make_polygon_wire(brep: &mut BRep, points: &[DVec3]) -> Result<rcad_kernel::topology::Wire, BuildError> {
+fn make_polygon_wire_topods(t: &mut topods::BRep, points: &[DVec3]) -> Result<topods::ShapeRef, BuildError> {
     let n = points.len();
-    if n < 3 {
-        return Err(BuildError::DegenerateGeometry("polygon needs at least 3 points"));
-    }
-    let mut vertex_indices = Vec::with_capacity(n);
-    for p in points {
-        vertex_indices.push(super::brep_builder::make_vertex(brep, *p));
-    }
-    let mut wire_edges = Vec::with_capacity(n);
+    if n < 3 { return Err(BuildError::DegenerateGeometry("polygon needs at least 3 points")); }
+    let verts: Vec<_> = points.iter().map(|&p| t.add_tvertex(p)).collect();
+    let mut edges = Vec::with_capacity(n);
     for i in 0..n {
         let j = (i + 1) % n;
-        let vi = vertex_indices[i];
-        let vj = vertex_indices[j];
         let dir = (points[j] - points[i]).normalize();
         let len = (points[j] - points[i]).length();
-        let ei = super::brep_builder::make_edge(
-            brep,
-            Curve3::Line(Line3 { origin: points[i], direction: dir }),
-            0.0, len, vi, vj,
-        )?;
-        wire_edges.push(WireEdge::new(ei, true));
+        edges.push(t.add_tedge(Some(Curve3::Line(Line3 { origin: points[i], direction: dir })), verts[i], verts[j], [0.0, len]));
     }
-    Ok(super::brep_builder::make_wire(wire_edges))
+    Ok(t.add_twire(edges))
 }
 
 /// Create a half-space solid bounded by a plane: a large box extending from `origin` in the
