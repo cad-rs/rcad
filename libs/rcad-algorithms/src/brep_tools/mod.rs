@@ -31,5 +31,8 @@ include!("bool_ops_inc.rs");
 // Topods-native query variants (migration)
 include!("query_topods_inc.rs");
 
+// Topods-native transform variants (migration)
+include!("transform_topods_inc.rs");
+
 #[cfg(test)]
 include!("tests_inc.rs");
