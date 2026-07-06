@@ -1006,5 +1006,13 @@ fn mirror_surface(s: &Surface3, mirror_p: impl Fn(DVec3) -> DVec3, mirror_v: imp
     }
 }
 
+pub fn make_conical_frustum_brep_topods(center: DVec3, axis: DVec3, ref_dir: DVec3, r_bottom: f64, r_top: f64, height: f64) -> Result<topods::BRep, BuildError> {
+    make_conical_frustum_brep(center, axis, ref_dir, r_bottom, r_top, height).map(|b| b.to_topods())
+}
+
+pub fn make_convex_polyhedron_from_half_spaces_topods(planes: &[(DVec3, DVec3)]) -> Result<topods::BRep, BuildError> {
+    make_convex_polyhedron_from_half_spaces(planes).map(|b| b.to_topods())
+}
+
 // 闁冲厜鍋撻柍鍏夊亾 Topods-native wrappers 闁冲厜鍋撻柍鍏夊亾
 
