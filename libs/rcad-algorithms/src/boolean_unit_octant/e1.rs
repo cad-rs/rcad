@@ -277,7 +277,7 @@ pub fn try_union_box_general(a: &BRep, b: &BRep) -> Option<BRep> {
     let mut ok = true;
     for slab in &slabs[1..] {
         match crate::bop_occt_union::fuse(&fused, slab) {
-            Ok(u) => { fused = u; }
+            Ok(u) => { fused = rcad_kernel::BRep::from_topods(&u); }
             Err(_) => { ok = false; break; }
         }
     }

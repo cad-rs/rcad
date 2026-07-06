@@ -901,12 +901,13 @@ impl<'a> BRepAlgoAPI_Fuse<'a> {
         let b = self.ensure_geometry(self.shape2);
 
         let (brep, bool_history) = if self.options.fuzzy_value <= TOLERANCE_ABS {
-            // Same pipeline as `boolean_op` / `bop_occt_union`: DS 鈫?PaveFiller 鈫?Union builder.
-            if self.options.parallel {
+            // Same pipeline as `boolean_op` / `bop_occt_union`: DS → PaveFiller → Union builder.
+            let (t, h) = if self.options.parallel {
                 crate::bop_occt_union::fuse_with_history_par_bvh(&a, &b, self.options.use_bvh)?
             } else {
                 crate::bop_occt_union::fuse_with_history_bvh(&a, &b, self.options.use_bvh)?
-            }
+            };
+            (rcad_kernel::BRep::from_topods(&t), h)
         } else {
             let mut ds = DS::new_with_fuzzy(&a, &b, self.options.fuzzy_value);
 

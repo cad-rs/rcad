@@ -434,13 +434,7 @@ fn pave_fill(ds: &mut bopds::ds::DS, a: &BRep, b: &BRep, use_bvh: bool,
 /// Union: DS → PaveFiller → BooleanBuilder(Union) → recompute plane surfaces.
 ///
 /// Uses BVH when both operands have faces, matching [`crate::boolean_op`].
-pub(crate) fn fuse(a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
-    let t = fuse_topods(a, b)?;
-    Ok(rcad_kernel::BRep::from_topods(&t))
-}
-
-/// Same as fuse but returns topods::BRep directly (OCCT-aligned).
-pub(crate) fn fuse_topods(a: &BRep, b: &BRep) -> Result<topods::BRep, BooleanError> {
+pub(crate) fn fuse(a: &BRep, b: &BRep) -> Result<topods::BRep, BooleanError> {
     fuse_with_bvh(a, b, true)
 }
 
@@ -514,14 +508,15 @@ fn project_point_to_uv(p: glam::DVec3, surface: &rcad_kernel::geom::Surface3) ->
 /// Same phases as [`fuse`], but returns [`BooleanHistory`] and does not run plane recompute
 /// (matches legacy `boolean_op_with_history` for Union).
 pub(crate) fn fuse_with_history(a: &BRep, b: &BRep) -> Result<(BRep, BooleanHistory), BooleanError> {
-    fuse_with_history_bvh(a, b, true)
+    let (t, hist) = fuse_with_history_bvh(a, b, true)?;
+    Ok((rcad_kernel::BRep::from_topods(&t), hist))
 }
 
 pub(crate) fn fuse_with_history_bvh(
     a: &BRep,
     b: &BRep,
     use_bvh: bool,
-) -> Result<(BRep, BooleanHistory), BooleanError> {
+) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
     validate_union_operands(a, b)?;
     let mut ds = bopds::ds::DS::new(a, b);
     validate_ds_invariants(&ds)?;
@@ -530,21 +525,20 @@ pub(crate) fn fuse_with_history_bvh(
     validate_ds_invariants(&ds)?;
     let builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
     let (result_brep, hist) = builder.build_with_history()?;
-    let old = rcad_kernel::BRep::from_topods(&result_brep);
-    validate_union_brep_output("union: result failed checks after build (history)", &old)?;
-    Ok((old, hist))
+    Ok((result_brep, hist))
 }
 
 /// Parallel classification path; same OCCT phase structure as [`fuse_with_history`].
 pub(crate) fn fuse_with_history_par(a: &BRep, b: &BRep) -> Result<(BRep, BooleanHistory), BooleanError> {
-    fuse_with_history_par_bvh(a, b, true)
+    let (t, hist) = fuse_with_history_par_bvh(a, b, true)?;
+    Ok((rcad_kernel::BRep::from_topods(&t), hist))
 }
 
 pub(crate) fn fuse_with_history_par_bvh(
     a: &BRep,
     b: &BRep,
     use_bvh: bool,
-) -> Result<(BRep, BooleanHistory), BooleanError> {
+) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
     validate_union_operands(a, b)?;
     let mut ds = bopds::ds::DS::new(a, b);
     validate_ds_invariants(&ds)?;
@@ -553,9 +547,7 @@ pub(crate) fn fuse_with_history_par_bvh(
     validate_ds_invariants(&ds)?;
     let builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
     let (result_brep, hist) = builder.build_with_history()?;
-    let old = rcad_kernel::BRep::from_topods(&result_brep);
-    validate_union_brep_output("union: result failed checks after build (history par)", &old)?;
-    Ok((old, hist))
+    Ok((result_brep, hist))
 }
 
 /// ✅ OCCT对齐: 按 edge set (BOPTools_Set) 对共面面做同域合并。

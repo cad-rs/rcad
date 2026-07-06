@@ -1,4 +1,4 @@
-﻿//! Special-case intersections used by OCCT DRAW ports when the generic `BooleanBuilder`
+//! Special-case intersections used by OCCT DRAW ports when the generic `BooleanBuilder`
 //! path is wrong or overly faceted: (1) unit ball 闁?`[0,1]妞翠梗, (2) coaxial sharp cone 闁?finite
 //! cylinder (ZP7), (3) coaxial sharp cone minus cylinder sealing the base (ZP8),
 //! (4) coaxial cylinder minus cone via sewn loft shells (`boptuc_simple`/ZP3).
@@ -1827,7 +1827,7 @@ let sa_b = surface_area(a); // SA of the input box B (being cut).
     let mut ok = true;
     for slab in &result[1..] {
         match crate::bop_occt_union::fuse(&fused, slab) {
-            Ok(u) => { fused = u; }
+            Ok(u) => { fused = rcad_kernel::BRep::from_topods(&u); }
             Err(_) => { ok = false; break; }
         }
     }

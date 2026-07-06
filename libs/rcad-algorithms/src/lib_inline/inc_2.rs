@@ -1248,9 +1248,10 @@ pub fn boolean_op_par(
     op: BooleanOpType,
     a: &BRep,
     b: &BRep,
-) -> Result<(BRep, BooleanHistory), BooleanError> {
+) -> Result<(rcad_kernel::BRep, BooleanHistory), BooleanError> {
     if matches!(op, BooleanOpType::Union) {
-        return bop_occt_union::fuse_with_history_par(a, b);
+        let (t, h) = bop_occt_union::fuse_with_history_par(a, b)?;
+        return Ok((t, h));
     }
 
     let mut ds = bopds::ds::DS::new(a, b);
