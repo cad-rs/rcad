@@ -105,12 +105,9 @@ fn optimize_boolean_topology(mut brep: BRep) -> BRep {
  use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
 
  let tol = tolerance::TOLERANCE_ABS.max(1e-8);
- // Pass 1: orthogonal grid-based fuse
- let (m1, _) = crate::orthogonal_face_fuse::fuse_orthogonal_coplanar_faces(&brep, tol);
- count_topo(&m1, "topo-pass1");
- // Pass 1 can mint fresh edge records for boundaries that are geometrically
- // shared, so re-share them before same-domain adjacency walks by edge index.
- let m1 = deduplicate_edges(m1);
+ // Pass 1: removed orthogonal_face_fuse (self-created, no OCCT equivalent).
+ //          OCCT-aligned FillSameDomainFaces below handles same-domain merging.
+ let m1 = deduplicate_edges(brep);
  // Surface deduplication: merge identical surface geometries (same plane,
  // same cylinder, etc.) into a single surface entry.  The PaveFiller creates
  // separate entries for each sub-face even when they share the same geometry.
@@ -784,19 +781,7 @@ fn simplify_brep_post_ops_old(brep: &BRep, options: SimplifyOptions) -> (BRep, S
  report.same_domain_face_merges = n;
  }
  }
- if options.fuse_orthogonal_coplanar_faces {
- let cur_score = closure_score(&out);
- let (next, n) = crate::orthogonal_face_fuse::fuse_orthogonal_coplanar_faces(
- &out,
- options.merge_tolerance,
- );
- let next_score = closure_score(&next);
- if next_score <= cur_score {
- out = next;
- report.orthogonal_coplanar_fusions = n;
- }
- }
- // After orthogonal planar fusion, run same-domain unification once more to
+  // After same-domain unification, run same-domain unification once more to
  // absorb newly adjacent coplanar patches produced by the fuse pass.
  if options.unify_same_domain_faces {
  let cur_score = closure_score(&out);

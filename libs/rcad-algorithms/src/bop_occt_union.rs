@@ -11,7 +11,7 @@
 //! [`crate::BooleanOpType::Union`], analogous to building the fused solid from classified
 //! pieces.
 //! 4. **Post-process** (serial `fuse` only) — [`crate::geom_populate::recompute_plane_surfaces`]
-//! then an iterated [`crate::orthogonal_face_fuse::fuse_orthogonal_coplanar_faces`] /
+//! then an iterated [`unify_same_domain_faces`](crate::unify_same_domain_faces) /
 //! [`crate::unify_same_domain_faces`] pass to merge coplanar box fragments (OCCT
 //! `UnifySameDomain` + same-domain analog; wire order can still leave analytic area ~5–10% low
 //! on some merged planes until the kernel’s planar integrator is tightened).
@@ -29,7 +29,6 @@
 //! [`BooleanError::EmptyInput`], or [`BooleanError::NumericalFailure`] with message prefix `union:`.
 
 use glam::{DVec2, DVec3};
-use crate::brep_repair::merge_close_vertices;
 use crate::bopds;
 use crate::bopds::ds::{DS};
 use crate::bopds::pave::NO_EDGE;

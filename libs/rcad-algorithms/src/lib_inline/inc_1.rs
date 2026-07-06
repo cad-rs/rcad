@@ -7,12 +7,10 @@ pub struct SimplifyOptions {
  pub recompute_normals: bool,
  pub remove_degenerate_faces: bool,
  pub fix_wire_orientation: bool,
- /// Merge adjacent coplanar planar faces into larger faces.
- pub unify_same_domain_faces: bool,
- /// Fuse coplanar orthogonal rectangular patches into one face (2D union; holes as inner wires).
- pub fuse_orthogonal_coplanar_faces: bool,
- /// Remove redundant coplanar internal faces (mainly for union outputs).
- pub remove_internal_faces: bool,
+    /// Merge adjacent coplanar planar faces into larger faces.
+    pub unify_same_domain_faces: bool,
+    /// Remove redundant coplanar internal faces (mainly for union outputs).
+    pub remove_internal_faces: bool,
  /// Remove edges whose chord length is below `small_edge_min_length`.
  pub remove_small_edges: bool,
  /// Chord-length threshold for small-edge removal (default: `TOLERANCE_ABS`).
@@ -27,9 +25,8 @@ impl Default for SimplifyOptions {
  recompute_normals: true,
  remove_degenerate_faces: true,
  fix_wire_orientation: true,
- unify_same_domain_faces: true,
- fuse_orthogonal_coplanar_faces: true,
- remove_internal_faces: true,
+            unify_same_domain_faces: true,
+            remove_internal_faces: true,
  remove_small_edges: false,
  small_edge_min_length: tolerance::TOLERANCE_ABS,
  }
@@ -43,9 +40,8 @@ pub struct SimplifyReport {
  pub degenerate_faces_removed: usize,
  pub normals_recomputed: usize,
  pub wires_fixed: usize,
- pub same_domain_face_merges: usize,
- pub orthogonal_coplanar_fusions: usize,
- pub internal_faces_removed: usize,
+    pub same_domain_face_merges: usize,
+    pub internal_faces_removed: usize,
  pub small_edges_removed: usize,
  pub issues_before: usize,
  pub issues_after: usize,
@@ -1577,7 +1573,8 @@ fn brep_is_pure_plane_solid(brep: &BRep) -> bool {
 /// True when every face normal is (approximately) ±X, ±Y, or ±Z in world space.
 ///
 /// Gates post-intersection [`orthogonal_face_fuse::remove_axis_coplanar_redundant_child_faces`]:
-/// for **two world-axis-aligned planar solids** (e.g. `make_box` operands), that pass removes the
+/// True when every face normal is (approximately) +/-X, +/-Y, or +/-Z in world space.
+/// Used to gate axis-aligned optimization: for two world-axis-aligned planar solids,
 /// **smaller** 2D bbox on a shared plane, but in nested **box∩box** the smaller patch is often the
 /// true external face and the larger one is the untrimmed remainder — yielding too-low
 /// [`rcad_kernel::surface_area`] (OCCT `bcommon_simple/B1`). Rotated operands (`bcommon_simple/C8`)

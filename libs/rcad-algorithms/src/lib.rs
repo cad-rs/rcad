@@ -110,7 +110,6 @@ pub mod math_utils;
 pub mod medial_axis;
 pub mod offset;
 pub mod offset_prism;
-pub mod orthogonal_face_fuse;
 pub mod pave_filler;
 pub mod point_cloud;
 pub mod projection;
@@ -483,6 +482,7 @@ pub use brep_repair::{
     make_connected_with_strategy,
     merge_adjacent_faces_after_removal,
     merge_close_vertices,
+    merge_close_vertices_topods,
     merge_vertices_adaptive,
     propagate_tolerances,
     propagate_tolerances_post_boolean,

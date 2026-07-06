@@ -7,6 +7,7 @@
 //! | Function | Description | OCCT equivalent |
 //! |---|---|---|
 //! | [`merge_close_vertices`] | Merge vertices closer than `tolerance` | `ShapeFix_Wire::FixSameParameter` / `BRepBuilderAPI_Sewing` |
+//! | [`merge_close_vertices_topods`] | Topods-native merge close vertices | OCCT `BRepBuilderAPI_Sewing` |
 //! | [`remove_degenerate_faces`] | Remove faces with fewer than 3 edges or zero-area | `ShapeFix_Shape` |
 //! | [`recompute_face_normals`] | Recompute per-face normals from vertex positions | `BRepLib::UpdateEdgeTol` + fix normals |
 //! | [`fix_wire_orientation`] | Ensure each wire forms a closed, consistently-oriented loop | `ShapeFix_Wire::FixClosed` |
@@ -1583,6 +1584,15 @@ fn edges_similar_geometry(brep: &BRep, e1: usize, e2: usize, tol: f64) -> bool {
  (len1 - len2).abs() <= tol
  }
  }
+}
+
+/// Topods-native: merge close vertices with internal old-BRep conversion.
+///
+/// Analogue of OCCT `BRepBuilderAPI_Sewing` vertex merging step.
+pub fn merge_close_vertices_topods(brep: &topods::BRep, tolerance: f64) -> (topods::BRep, usize) {
+    let old = rcad_kernel::BRep::from_topods_with_location(brep, glam::DAffine3::IDENTITY);
+    let (result, merged) = merge_close_vertices(&old, tolerance);
+    (result.to_topods(), merged)
 }
 
 /// Enhanced make-connected with edge sewing.

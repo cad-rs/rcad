@@ -1077,8 +1077,7 @@ fn decompose_slabs(
 /// Falls back to `BRep::compound_from_shapes` when no pairs were stitched or the
 /// sewn result has no solids/shells.
 /// Post-process slab-decomposed result: merge coplanar faces.
-/// Uses `fuse_orthogonal_coplanar_faces` for grid-based fusion,
-/// `unify_same_domain_faces` for edge-based merging, then a final
+/// Uses `unify_same_domain_faces` for edge-based merging, then a final
 /// pass to merge remaining holed-plane sub-faces.
 fn rebuild_with_shared_edges(_brep: &mut BRep, _zero_tol: f64) {
  // Topology optimization is now handled by `optimize_boolean_topology`
