@@ -13,7 +13,7 @@ use rcad_kernel::topology::{Vertex, WireEdge};
 use crate::builder::brep_builder::{make_edge, make_face, make_wire};
 use crate::builder::{BuildError, normalize_vector};
 
-// 閳光偓閳光偓 History types 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+// 鈹€鈹€ History types 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Tracks which result faces came from the profile (caps) and which were
 /// generated (lateral swept faces).
@@ -65,7 +65,7 @@ impl LoftHistory {
     }
 }
 
-// 閳光偓閳光偓 Internal helpers 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+// 鈹€鈹€ Internal helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Rodrigues' rotation formula: rotate `p` around `axis_origin + t*axis_dir`.
 fn rotate_point(p: DVec3, axis_origin: DVec3, axis_dir: DVec3, angle: f64) -> DVec3 {
@@ -82,8 +82,8 @@ fn quad_normal(a: DVec3, b: DVec3, c: DVec3) -> DVec3 {
     (b - a).cross(c - a).normalize_or_zero()
 }
 
-/// Full 360鎺?revolution: tessellate in angle so lateral strips never use zero-length rotation edges
-/// (the naive quad sweep collapses when angle = 2锜?because rotated endpoints coincide).
+/// Full 360掳 revolution: tessellate in angle so lateral strips never use zero-length rotation edges
+/// (the naive quad sweep collapses when angle = 2蟺 because rotated endpoints coincide).
 ///
 /// Profile edges lying **on** the rotation axis produce triangular strips (one radial edge degenerates).
 fn revolve_full_turn_tessellated(
@@ -99,7 +99,7 @@ fn revolve_full_turn_tessellated(
     }
 
     // Angular segments: each profile edge yields ~one lateral strip per segment, so total lateral
-    // patches scale as ~(nseg 鑴?n). A fixed 128 segments explodes boolean paving / planar face
+    // patches scale as ~(nseg 脳 n). A fixed 128 segments explodes boolean paving / planar face
     // splitting against boxes (OCCT `bfuse_simple/K1`-style unions). Scale down when the profile
     // has many vertices; keep a minimum so axis-touching strips stay non-degenerate.
     const NSEG_MIN: usize = 16;
@@ -148,7 +148,7 @@ fn revolve_full_turn_tessellated(
             let face_idx = if deg_left && deg_right {
                 continue;
             } else if deg_left {
-                // Triangle p00 閳?p01 閳?p11
+                // Triangle p00 鈥?p01 鈥?p11
                 let nrm = quad_normal(p00, p01, p11);
                 if nrm.length_squared() <= eps_a {
                     continue;
@@ -440,7 +440,7 @@ fn face_boundary_points(brep: &BRep, face_idx: usize) -> Vec<DVec3> {
     pts
 }
 
-// 閳光偓閳光偓 Linear extrusion 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+// 鈹€鈹€ Linear extrusion 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Extrude a profile face (from `profile` BRep) along `direction` by `distance`.
 ///
@@ -451,15 +451,15 @@ fn face_boundary_points(brep: &BRep, face_idx: usize) -> Vec<DVec3> {
 ///
 /// # Errors
 /// - `BuildError::ZeroVector` if direction is zero.
-/// - `BuildError::NonPositiveValue` if distance 閳?0.
+/// - `BuildError::NonPositiveValue` if distance 鈮?0.
 /// - `BuildError::InvalidIndex` if face_idx is out of bounds.
 /// - `BuildError::DegenerateGeometry` if the profile has fewer than 3 vertices.
 pub fn extrude(
-    profile: &topods::BRep,
+    profile: &BRep,
     face_idx: usize,
     direction: DVec3,
     distance: f64,
-) -> Result<topods::BRep, BuildError> {
+) -> Result<BRep, BuildError> {
     extrude_with_history(profile, face_idx, direction, distance).map(|(brep, _)| brep)
 }
 
@@ -468,125 +468,250 @@ pub fn extrude(
 /// See [`extrude`] for geometry details. The returned [`SweepHistory`]
 /// tracks which result faces are bottom cap, top cap, and lateral faces.
 pub fn extrude_with_history(
-    profile: &topods::BRep,
-    face_idx: usize,
-    direction: DVec3,
-    distance: f64,
-) -> Result<(topods::BRep, SweepHistory), BuildError> {
-    // Convert to old BRep for face-boundary data extraction, then build in topods
-    let old = rcad_kernel::BRep::from_topods(profile);
-    extrude_with_history_inner(&old, face_idx, direction, distance)
-}
-
-fn extrude_with_history_inner(
     profile: &BRep,
     face_idx: usize,
     direction: DVec3,
     distance: f64,
-) -> Result<(topods::BRep, SweepHistory), BuildError> {
+) -> Result<(BRep, SweepHistory), BuildError> {
     let dir = normalize_vector("direction", direction)?;
-    if distance <= 0.0 { return Err(BuildError::NonPositiveValue("distance")); }
-    profile.solids.first().and_then(|s| s.shells.first())
+    if distance <= 0.0 {
+        return Err(BuildError::NonPositiveValue("distance"));
+    }
+
+    // Validate face_idx
+    profile
+        .solids
+        .first()
+        .and_then(|s| s.shells.first())
         .and_then(|sh| sh.faces.get(face_idx))
         .ok_or(BuildError::InvalidIndex(face_idx))?;
+
     let bot_pts = face_boundary_points(profile, face_idx);
-    if bot_pts.len() < 3 { return Err(BuildError::DegenerateGeometry("profile has fewer than 3 vertices")); }
+    if bot_pts.len() < 3 {
+        return Err(BuildError::DegenerateGeometry(
+            "profile has fewer than 3 vertices",
+        ));
+    }
 
     let offset = dir * distance;
     let top_pts: Vec<DVec3> = bot_pts.iter().map(|&p| p + offset).collect();
     let n = bot_pts.len();
 
-    let mut t = topods::BRep::new();
-    let bot_vi: Vec<_> = bot_pts.iter().map(|&p| t.add_tvertex(p)).collect();
-    let top_vi: Vec<_> = top_pts.iter().map(|&p| t.add_tvertex(p)).collect();
-
-    let line_edge = |t: &mut topods::BRep, a: DVec3, b: DVec3, va: topods::ShapeRef, vb: topods::ShapeRef| {
-        let dir = (b - a).normalize_or_zero();
-        let len = (b - a).length();
-        t.add_tedge(Some(Curve3::Line(Line3 { origin: a, direction: dir })), va, vb, [0.0, len])
+    let mut result = BRep {
+        vertices: Vec::new(),
+        edges: Vec::new(),
+        solids: Vec::new(),
+        geom: rcad_kernel::GeomStore::default(),
+        compound: None,
+        compsolid: None,
     };
 
-    // Bottom cap wire (CCW, normal = -dir)
-    let mut bot_edges = Vec::with_capacity(n);
-    for i in 0..n { let j = (i + 1) % n; bot_edges.push(line_edge(&mut t, bot_pts[i], bot_pts[j], bot_vi[i], bot_vi[j])); }
-    let bot_wire = t.add_twire(bot_edges);
-    let bot_surf = Surface3::Plane(Plane { origin: bot_pts[0], normal: -dir });
+    // Add all vertices: bot[0..n], top[0..n]
+    let bot_vi: Vec<usize> = bot_pts
+        .iter()
+        .map(|&p| {
+            let idx = result.vertices.len();
+            result.vertices.push(Vertex { point: p });
+            idx
+        })
+        .collect();
+    let top_vi: Vec<usize> = top_pts
+        .iter()
+        .map(|&p| {
+            let idx = result.vertices.len();
+            result.vertices.push(Vertex { point: p });
+            idx
+        })
+        .collect();
 
-    // Top cap wire (CCW, normal = +dir)
-    let mut top_edges = Vec::with_capacity(n);
-    for i in 0..n { let j = (i + 1) % n; top_edges.push(line_edge(&mut t, top_pts[i], top_pts[j], top_vi[i], top_vi[j])); }
-    let top_wire = t.add_twire(top_edges);
-    let top_surf = Surface3::Plane(Plane { origin: top_pts[0], normal: dir });
+    // Build bottom cap (inward normal = -dir)
+    let bot_face = {
+        let mut wire_edges = Vec::new();
+        for i in 0..n {
+            let j = (i + 1) % n;
+            // Bottom edges go bot[i] 鈫?bot[j]
+            let line = rcad_kernel::geom::Curve3::Line(Line3 {
+                origin: bot_pts[i],
+                direction: (bot_pts[j] - bot_pts[i]).normalize_or_zero(),
+            });
+            let t1 = 0.0_f64;
+            let t2 = (bot_pts[j] - bot_pts[i]).length();
+            let eidx = make_edge(&mut result, line, t1, t2, bot_vi[i], bot_vi[j])?;
+            wire_edges.push(WireEdge {
+                idx: eidx,
+                forward: true,
+            });
+        }
+        let bot_normal = -dir;
+        let surface = Surface3::Plane(Plane {
+            origin: bot_pts[0],
+            normal: bot_normal,
+        });
+        make_face(&mut result, surface, make_wire(wire_edges), vec![])?
+    };
 
-    // Lateral faces
-    use topods::Orientation;
-    let rev = |sr: topods::ShapeRef| topods::ShapeRef { orientation: Orientation::Reversed, ..sr };
-    let mut lat_faces = Vec::with_capacity(n);
+    // Build top cap (outward normal = +dir)
+    let top_face = {
+        let mut wire_edges = Vec::new();
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let line = rcad_kernel::geom::Curve3::Line(Line3 {
+                origin: top_pts[i],
+                direction: (top_pts[j] - top_pts[i]).normalize_or_zero(),
+            });
+            let t1 = 0.0_f64;
+            let t2 = (top_pts[j] - top_pts[i]).length();
+            let eidx = make_edge(&mut result, line, t1, t2, top_vi[i], top_vi[j])?;
+            wire_edges.push(WireEdge {
+                idx: eidx,
+                forward: true,
+            });
+        }
+        let top_normal = dir;
+        let surface = Surface3::Plane(Plane {
+            origin: top_pts[0],
+            normal: top_normal,
+        });
+        make_face(&mut result, surface, make_wire(wire_edges), vec![])?
+    };
+
+    // Build lateral faces: one quad per profile edge
+    let mut lateral_faces = Vec::with_capacity(n);
     let mut profile_edge_to_lateral = HashMap::with_capacity(n);
     for i in 0..n {
         let j = (i + 1) % n;
-        let a = bot_pts[i]; let b = bot_pts[j]; let c = top_pts[j]; let d = top_pts[i];
+
+        // Lateral quad vertices (CCW when viewed from outside):
+        // bot[i] 鈫?bot[j] 鈫?top[j] 鈫?top[i]
+        let a = bot_pts[i];
+        let b = bot_pts[j];
+        let c = top_pts[j];
+        let d = top_pts[i];
         let lat_normal = quad_normal(a, b, c);
 
-        let e_bot = line_edge(&mut t, a, b, bot_vi[i], bot_vi[j]);
-        let e_right = line_edge(&mut t, b, c, bot_vi[j], top_vi[j]);
-        let e_top = line_edge(&mut t, c, d, top_vi[j], top_vi[i]);
-        let e_left = line_edge(&mut t, d, a, top_vi[i], bot_vi[i]);
+        // Edges: bottom (already created), right, top (reversed), left
+        // We create the lateral-vertical edges. Bottom and top edges are reused
+        // by idx. For simplicity, create all 4 per quad (extra edges on shared sides).
+        let left_dir = (d - a).normalize_or_zero();
+        let left_len = (d - a).length();
+        let right_dir = (c - b).normalize_or_zero();
+        let right_len = (c - b).length();
+        let bot_dir = (b - a).normalize_or_zero();
+        let bot_len = (b - a).length();
+        let top_dir = (d - c).normalize_or_zero();
+        let top_len = (d - c).length();
 
-        let wire = t.add_twire(vec![e_bot, e_right, rev(e_top), rev(e_left)]);
-        let surf = Surface3::Plane(Plane { origin: a, normal: lat_normal });
-        let face_ref = t.add_tface(Some(surf), wire, vec![], Some((a + b + c + d) * 0.25), None, vec![], false);
-        lat_faces.push(face_ref);
-        // Note: SweepHistory uses usize indices, but topods uses ShapeRef.
-        // profile_edge_to_lateral requires usize->usize mapping (profile edge -> face index).
-        // Since we know the order: bottom(0), top(1), laterals(2..2+n), the face index for
-        // lateral face i is 2 + i.
-        profile_edge_to_lateral.insert(i, 2 + i);
+        // Create the 4 edges for this lateral face
+        let e_bot = make_edge(
+            &mut result,
+            rcad_kernel::geom::Curve3::Line(Line3 {
+                origin: a,
+                direction: bot_dir,
+            }),
+            0.0,
+            bot_len,
+            bot_vi[i],
+            bot_vi[j],
+        )?;
+        let e_right = make_edge(
+            &mut result,
+            rcad_kernel::geom::Curve3::Line(Line3 {
+                origin: b,
+                direction: right_dir,
+            }),
+            0.0,
+            right_len,
+            bot_vi[j],
+            top_vi[j],
+        )?;
+        let e_top = make_edge(
+            &mut result,
+            rcad_kernel::geom::Curve3::Line(Line3 {
+                origin: c,
+                direction: top_dir,
+            }),
+            0.0,
+            top_len,
+            top_vi[j],
+            top_vi[i],
+        )?;
+        let e_left = make_edge(
+            &mut result,
+            rcad_kernel::geom::Curve3::Line(Line3 {
+                origin: d,
+                direction: -left_dir,
+            }),
+            0.0,
+            left_len,
+            top_vi[i],
+            bot_vi[i],
+        )?;
+
+        let wire = make_wire(vec![
+            WireEdge {
+                idx: e_bot,
+                forward: true,
+            },
+            WireEdge {
+                idx: e_right,
+                forward: true,
+            },
+            WireEdge {
+                idx: e_top,
+                forward: true,
+            },
+            WireEdge {
+                idx: e_left,
+                forward: true,
+            },
+        ]);
+        let surface = Surface3::Plane(Plane {
+            origin: a,
+            normal: lat_normal,
+        });
+        let face_idx = make_face(&mut result, surface, wire, vec![])?;
+        lateral_faces.push(face_idx);
+        profile_edge_to_lateral.insert(i, face_idx);
     }
 
-    let bot_face = t.add_tface(Some(bot_surf), bot_wire, vec![], Some(bot_pts.iter().sum::<DVec3>() / n as f64), None, vec![], false);
-    let top_face = t.add_tface(Some(top_surf), top_wire, vec![], Some(top_pts.iter().sum::<DVec3>() / n as f64), None, vec![], false);
-
-    let mut face_refs = vec![bot_face, top_face];
-    face_refs.extend(lat_faces);
-    let shell = t.add_tshell(face_refs);
-    t.add_tsolid(vec![shell]);
-
     let history = SweepHistory {
-        bottom_cap: vec![0], top_cap: vec![1],
-        lateral_faces: (0..n).map(|i| 2 + i).collect(),
-        profile_edge_to_lateral: profile_edge_to_lateral,
+        bottom_cap: vec![bot_face],
+        top_cap: vec![top_face],
+        lateral_faces,
+        profile_edge_to_lateral,
     };
-    Ok((t, history))
+
+    Ok((result, history))
 }
+
+// 鈹€鈹€ Revolution 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+/// Revolve a profile face around an axis by `angle` radians.
+///
+/// For a full revolution (angle 鈮?2蟺), the start and end caps are identified,
+/// resulting in a closed solid without explicit caps.
+///
+/// # Errors
+/// - `BuildError::ZeroVector` if axis_dir is zero.
+/// - `BuildError::NonPositiveValue` if angle 鈮?0.
+/// - `BuildError::InvalidIndex` if face_idx is out of bounds.
+/// - `BuildError::DegenerateGeometry` if the profile has fewer than 2 vertices.
 pub fn revolve(
-    profile: &topods::BRep,
+    profile: &BRep,
     face_idx: usize,
     axis_origin: DVec3,
     axis_dir: DVec3,
     angle: f64,
-) -> Result<topods::BRep, BuildError> {
-    let old = rcad_kernel::BRep::from_topods(profile);
-    revolve_with_history_inner(&old, face_idx, axis_origin, axis_dir, angle).map(|(brep, _)| brep.to_topods())
+) -> Result<BRep, BuildError> {
+    revolve_with_history(profile, face_idx, axis_origin, axis_dir, angle).map(|(brep, _)| brep)
 }
 
 /// Revolve a profile face around an axis and return history mapping face origins.
 ///
 /// See [`revolve`] for geometry details. The returned [`SweepHistory`]
 /// tracks which result faces are bottom cap, top cap, and lateral faces.
-/// For a full revolution (angle = 2*PI), `bottom_cap` and `top_cap` are empty.
+/// For a full revolution (鈮?2蟺), `bottom_cap` and `top_cap` are empty.
 pub fn revolve_with_history(
-    profile: &topods::BRep,
-    face_idx: usize,
-    axis_origin: DVec3,
-    axis_dir: DVec3,
-    angle: f64,
-) -> Result<(topods::BRep, SweepHistory), BuildError> {
-    let old = rcad_kernel::BRep::from_topods(profile);
-    revolve_with_history_inner(&old, face_idx, axis_origin, axis_dir, angle).map(|(brep, h)| (brep.to_topods(), h))
-}
-
-fn revolve_with_history_inner(
     profile: &BRep,
     face_idx: usize,
     axis_origin: DVec3,
@@ -843,18 +968,18 @@ fn revolve_with_history_inner(
     Ok((result, history))
 }
 
-// 閳光偓閳光偓 Loft (multi-profile) 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+// 鈹€鈹€ Loft (multi-profile) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Connect N cross-section profiles with ruled lateral faces plus planar caps.
 ///
-/// All profiles must have the **same** vertex count (閳?3).
+/// All profiles must have the **same** vertex count (鈮?3).
 /// Each profile is a list of 3D positions in order (the polygon vertices).
 ///
 /// Returns a closed BRep Solid.
 ///
 /// # Errors
 /// - `BuildError::DegenerateGeometry` if fewer than 2 profiles, or vertex counts differ, or fewer than 3 vertices per profile.
-pub fn loft(profiles: &[Vec<DVec3>]) -> Result<BRep, BuildError> {
+pub fn loft(profiles: &[Vec<DVec3>]) -> Result<topods::BRep, BuildError> {
     loft_with_history(profiles).map(|(brep, _)| brep)
 }
 
@@ -862,7 +987,7 @@ pub fn loft(profiles: &[Vec<DVec3>]) -> Result<BRep, BuildError> {
 ///
 /// See [`loft`] for geometry details. The returned [`LoftHistory`]
 /// tracks which result faces are bottom cap, top cap, and lateral faces.
-pub fn loft_with_history(profiles: &[Vec<DVec3>]) -> Result<(BRep, LoftHistory), BuildError> {
+pub fn loft_with_history(profiles: &[Vec<DVec3>]) -> Result<(topods::BRep, LoftHistory), BuildError> {
     if profiles.len() < 2 {
         return Err(BuildError::DegenerateGeometry(
             "loft requires at least 2 profiles",
@@ -913,7 +1038,7 @@ pub fn loft_with_history(profiles: &[Vec<DVec3>]) -> Result<(BRep, LoftHistory),
         })
         .collect();
 
-    // Bottom cap (profile[0]) 閳?normal pointing away from profile[1]
+    // Bottom cap (profile[0]) 鈥?normal pointing away from profile[1]
     let bot_face = {
         let mut wire_edges = Vec::new();
         let pts = &profiles[0];
@@ -950,7 +1075,7 @@ pub fn loft_with_history(profiles: &[Vec<DVec3>]) -> Result<(BRep, LoftHistory),
         make_face(&mut result, surface, make_wire(wire_edges), vec![])?
     };
 
-    // Top cap (profile[last]) 閳?normal pointing away from profile[last-1]
+    // Top cap (profile[last]) 鈥?normal pointing away from profile[last-1]
     let top_face = {
         let mut wire_edges = Vec::new();
         let pts = &profiles[s - 1];
@@ -994,7 +1119,7 @@ pub fn loft_with_history(profiles: &[Vec<DVec3>]) -> Result<(BRep, LoftHistory),
 
         for i in 0..n {
             let j = (i + 1) % n;
-            // Quad: bot[i] 閳?bot[j] 閳?top[j] 閳?top[i]
+            // Quad: bot[i] 鈫?bot[j] 鈫?top[j] 鈫?top[i]
             let a = pts_bot[i];
             let b = pts_bot[j];
             let c = pts_top[j];
@@ -1082,15 +1207,15 @@ pub fn loft_with_history(profiles: &[Vec<DVec3>]) -> Result<(BRep, LoftHistory),
         lateral_faces,
     };
 
-    Ok((result, history))
+    Ok((result.to_topods(), history))
 }
 
-// 閳光偓閳光偓 Pipe Sweep 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+// Pipe Sweep
 
 /// Sweep a 2D profile polygon along a 3D spine polyline.
 ///
 /// `profile_2d` is a polygon in the XY plane (local cross-section).
-/// `spine` is the path (閳?2 points) in 3D world space.
+/// `spine` is the path (鈮?2 points) in 3D world space.
 ///
 /// At each spine station a Frenet-like frame (tangent/right/up) is computed and
 /// the 2D profile is transformed into the corresponding 3D cross-section.
@@ -1099,7 +1224,7 @@ pub fn loft_with_history(profiles: &[Vec<DVec3>]) -> Result<(BRep, LoftHistory),
 /// # Errors
 /// - `BuildError::DegenerateGeometry` if fewer than 2 spine points or fewer than 3 profile points.
 /// - `BuildError::ZeroVector` if a spine segment has zero length.
-pub fn sweep_pipe(profile_2d: &[DVec2], spine: &[DVec3]) -> Result<BRep, BuildError> {
+pub fn sweep_pipe(profile_2d: &[DVec2], spine: &[DVec3]) -> Result<topods::BRep, BuildError> {
     if profile_2d.len() < 3 {
         return Err(BuildError::DegenerateGeometry(
             "sweep_pipe profile must have at least 3 vertices",
@@ -1134,7 +1259,7 @@ pub fn sweep_pipe(profile_2d: &[DVec2], spine: &[DVec3]) -> Result<BRep, BuildEr
         .iter()
         .enumerate()
         .map(|(i, &tan)| {
-            // Right = tangent 鑴?world_up; fall back if nearly parallel
+            // Right = tangent 脳 world_up; fall back if nearly parallel
             let right_raw = tan.cross(world_up_primary);
             let right = if right_raw.length_squared() > 1e-8 {
                 right_raw.normalize()
@@ -1156,11 +1281,11 @@ pub fn sweep_pipe(profile_2d: &[DVec2], spine: &[DVec3]) -> Result<BRep, BuildEr
 /// Variable-section pipe sweep: a different 2D profile at each spine station.
 ///
 /// `profiles[i]` is placed at `spine[i]` using the same Frenet-like frame
-/// as [`sweep_pipe`]. All profiles must have the same vertex count (閳?3)
-/// and `profiles.len()` must equal `spine.len()` (閳?2).
+/// as [`sweep_pipe`]. All profiles must have the same vertex count (鈮?3)
+/// and `profiles.len()` must equal `spine.len()` (鈮?2).
 ///
 /// Analogous to OCCT `BRepOffsetAPI_MakePipeShell` with multiple sections.
-pub fn sweep_pipe_variable(profiles: &[Vec<DVec2>], spine: &[DVec3]) -> Result<BRep, BuildError> {
+pub fn sweep_pipe_variable(profiles: &[Vec<DVec2>], spine: &[DVec3]) -> Result<topods::BRep, BuildError> {
     if profiles.len() != spine.len() {
         return Err(BuildError::DegenerateGeometry(
             "sweep_pipe_variable: profiles.len() must equal spine.len()",
@@ -1217,9 +1342,9 @@ pub fn sweep_pipe_variable(profiles: &[Vec<DVec2>], spine: &[DVec3]) -> Result<B
     loft(&cross_sections)
 }
 
-// 閳光偓閳光偓 Topods-native wrappers 閳光偓閳光偓
+// 鈹€鈹€ Topods-native wrappers 鈹€鈹€
 
-// 閳光偓閳光偓 Tests 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+// 鈹€鈹€ Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 #[cfg(test)]
 mod tests {
@@ -1335,7 +1460,7 @@ mod tests {
         });
         make_face(&mut brep, surface, make_wire(wires), vec![]).unwrap();
 
-        // Revolve 90鎺?around Y axis
+        // Revolve 90掳 around Y axis
         let result = revolve(&brep, 0, DVec3::ZERO, DVec3::Y, std::f64::consts::FRAC_PI_2).unwrap();
         let n_faces = result.solids[0].shells[0].faces.len();
         // 2 caps + 3 lateral = 5
@@ -1345,7 +1470,7 @@ mod tests {
         );
     }
 
-    // 閳光偓閳光偓 Edge Case Tests 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+    // 鈹€鈹€ Edge Case Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     /// Test sweep with a very small (near-degenerate) profile.
     /// Should still succeed for small but valid profiles, but fail for too-small profiles.
