@@ -5,7 +5,7 @@ use super::{
 use glam::{DMat3, DVec3};
 use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
 use rcad_kernel::topology::WireEdge;
-use rcad_kernel::{BRep, PrimitiveSolid};
+use rcad_kernel::{BRep, PrimitiveSolid, topods};
 
 pub fn box_primitive(width: f64, height: f64, depth: f64) -> Result<PrimitiveSolid, BuildError> {
     let width = validate_positive("width", width)?;
@@ -797,4 +797,36 @@ pub fn mirror_brep(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> Res
     let _ = validate_point("plane_origin", plane_origin)?;
     let n = normalize_vector("plane_normal", plane_normal)?;
     Ok(do_mirror_brep(brep, plane_origin, n))
+}
+
+// ── Topods-native wrappers ──
+
+pub fn make_box_brep_topods(
+    origin: DVec3, x_dir: DVec3, y_dir: DVec3, w: f64, h: f64, d: f64,
+) -> Result<topods::BRep, BuildError> {
+    make_box_brep(origin, x_dir, y_dir, w, h, d).map(|b| b.to_topods())
+}
+
+pub fn sphere_brep_topods(center: DVec3, radius: f64) -> Result<topods::BRep, BuildError> {
+    sphere_brep(center, radius).map(|b| b.to_topods())
+}
+
+pub fn cylinder_brep_topods(center: DVec3, axis: DVec3, ref_dir: DVec3, radius: f64, height: f64) -> Result<topods::BRep, BuildError> {
+    cylinder_brep(center, axis, ref_dir, radius, height).map(|b| b.to_topods())
+}
+
+pub fn cone_brep_topods(center: DVec3, axis: DVec3, ref_dir: DVec3, base_radius: f64, height: f64) -> Result<topods::BRep, BuildError> {
+    cone_brep(center, axis, ref_dir, base_radius, height).map(|b| b.to_topods())
+}
+
+pub fn make_conical_frustum_brep_topods(center: DVec3, axis: DVec3, ref_dir: DVec3, r_bottom: f64, r_top: f64, height: f64) -> Result<topods::BRep, BuildError> {
+    make_conical_frustum_brep(center, axis, ref_dir, r_bottom, r_top, height).map(|b| b.to_topods())
+}
+
+pub fn torus_brep_topods(center: DVec3, axis_dir: DVec3, ref_dir: DVec3, major_r: f64, minor_r: f64) -> Result<topods::BRep, BuildError> {
+    torus_brep(center, axis_dir, ref_dir, major_r, minor_r).map(|b| b.to_topods())
+}
+
+pub fn mirror_brep_topods(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> Result<topods::BRep, BuildError> {
+    mirror_brep(brep, plane_origin, plane_normal).map(|b| b.to_topods())
 }
