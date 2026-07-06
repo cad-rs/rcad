@@ -13,7 +13,7 @@ use rcad_kernel::topology::{Vertex, WireEdge};
 use crate::builder::brep_builder::{make_edge, make_face, make_wire};
 use crate::builder::{BuildError, normalize_vector};
 
-// ── History types ─────────────────────────────────────────────────────────────
+// 鈹€鈹€ History types 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Tracks which result faces came from the profile (caps) and which were
 /// generated (lateral swept faces).
@@ -65,7 +65,7 @@ impl LoftHistory {
     }
 }
 
-// ── Internal helpers ──────────────────────────────────────────────────────────
+// 鈹€鈹€ Internal helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Rodrigues' rotation formula: rotate `p` around `axis_origin + t*axis_dir`.
 fn rotate_point(p: DVec3, axis_origin: DVec3, axis_dir: DVec3, angle: f64) -> DVec3 {
@@ -82,8 +82,8 @@ fn quad_normal(a: DVec3, b: DVec3, c: DVec3) -> DVec3 {
     (b - a).cross(c - a).normalize_or_zero()
 }
 
-/// Full 360° revolution: tessellate in angle so lateral strips never use zero-length rotation edges
-/// (the naive quad sweep collapses when angle = 2π because rotated endpoints coincide).
+/// Full 360掳 revolution: tessellate in angle so lateral strips never use zero-length rotation edges
+/// (the naive quad sweep collapses when angle = 2蟺 because rotated endpoints coincide).
 ///
 /// Profile edges lying **on** the rotation axis produce triangular strips (one radial edge degenerates).
 fn revolve_full_turn_tessellated(
@@ -99,7 +99,7 @@ fn revolve_full_turn_tessellated(
     }
 
     // Angular segments: each profile edge yields ~one lateral strip per segment, so total lateral
-    // patches scale as ~(nseg × n). A fixed 128 segments explodes boolean paving / planar face
+    // patches scale as ~(nseg 脳 n). A fixed 128 segments explodes boolean paving / planar face
     // splitting against boxes (OCCT `bfuse_simple/K1`-style unions). Scale down when the profile
     // has many vertices; keep a minimum so axis-touching strips stay non-degenerate.
     const NSEG_MIN: usize = 16;
@@ -148,7 +148,7 @@ fn revolve_full_turn_tessellated(
             let face_idx = if deg_left && deg_right {
                 continue;
             } else if deg_left {
-                // Triangle p00 — p01 — p11
+                // Triangle p00 鈥?p01 鈥?p11
                 let nrm = quad_normal(p00, p01, p11);
                 if nrm.length_squared() <= eps_a {
                     continue;
@@ -440,7 +440,7 @@ fn face_boundary_points(brep: &BRep, face_idx: usize) -> Vec<DVec3> {
     pts
 }
 
-// ── Linear extrusion ─────────────────────────────────────────────────────────
+// 鈹€鈹€ Linear extrusion 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Extrude a profile face (from `profile` BRep) along `direction` by `distance`.
 ///
@@ -451,7 +451,7 @@ fn face_boundary_points(brep: &BRep, face_idx: usize) -> Vec<DVec3> {
 ///
 /// # Errors
 /// - `BuildError::ZeroVector` if direction is zero.
-/// - `BuildError::NonPositiveValue` if distance ≤ 0.
+/// - `BuildError::NonPositiveValue` if distance 鈮?0.
 /// - `BuildError::InvalidIndex` if face_idx is out of bounds.
 /// - `BuildError::DegenerateGeometry` if the profile has fewer than 3 vertices.
 pub fn extrude(
@@ -529,7 +529,7 @@ pub fn extrude_with_history(
         let mut wire_edges = Vec::new();
         for i in 0..n {
             let j = (i + 1) % n;
-            // Bottom edges go bot[i] → bot[j]
+            // Bottom edges go bot[i] 鈫?bot[j]
             let line = rcad_kernel::geom::Curve3::Line(Line3 {
                 origin: bot_pts[i],
                 direction: (bot_pts[j] - bot_pts[i]).normalize_or_zero(),
@@ -582,7 +582,7 @@ pub fn extrude_with_history(
         let j = (i + 1) % n;
 
         // Lateral quad vertices (CCW when viewed from outside):
-        // bot[i] → bot[j] → top[j] → top[i]
+        // bot[i] 鈫?bot[j] 鈫?top[j] 鈫?top[i]
         let a = bot_pts[i];
         let b = bot_pts[j];
         let c = top_pts[j];
@@ -684,16 +684,16 @@ pub fn extrude_with_history(
     Ok((result, history))
 }
 
-// ── Revolution ────────────────────────────────────────────────────────────────
+// 鈹€鈹€ Revolution 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Revolve a profile face around an axis by `angle` radians.
 ///
-/// For a full revolution (angle ≈ 2π), the start and end caps are identified,
+/// For a full revolution (angle 鈮?2蟺), the start and end caps are identified,
 /// resulting in a closed solid without explicit caps.
 ///
 /// # Errors
 /// - `BuildError::ZeroVector` if axis_dir is zero.
-/// - `BuildError::NonPositiveValue` if angle ≤ 0.
+/// - `BuildError::NonPositiveValue` if angle 鈮?0.
 /// - `BuildError::InvalidIndex` if face_idx is out of bounds.
 /// - `BuildError::DegenerateGeometry` if the profile has fewer than 2 vertices.
 pub fn revolve(
@@ -710,7 +710,7 @@ pub fn revolve(
 ///
 /// See [`revolve`] for geometry details. The returned [`SweepHistory`]
 /// tracks which result faces are bottom cap, top cap, and lateral faces.
-/// For a full revolution (≈ 2π), `bottom_cap` and `top_cap` are empty.
+/// For a full revolution (鈮?2蟺), `bottom_cap` and `top_cap` are empty.
 pub fn revolve_with_history(
     profile: &BRep,
     face_idx: usize,
@@ -968,11 +968,11 @@ pub fn revolve_with_history(
     Ok((result, history))
 }
 
-// ── Loft (multi-profile) ──────────────────────────────────────────────────────
+// 鈹€鈹€ Loft (multi-profile) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Connect N cross-section profiles with ruled lateral faces plus planar caps.
 ///
-/// All profiles must have the **same** vertex count (≥ 3).
+/// All profiles must have the **same** vertex count (鈮?3).
 /// Each profile is a list of 3D positions in order (the polygon vertices).
 ///
 /// Returns a closed BRep Solid.
@@ -1038,7 +1038,7 @@ pub fn loft_with_history(profiles: &[Vec<DVec3>]) -> Result<(BRep, LoftHistory),
         })
         .collect();
 
-    // Bottom cap (profile[0]) — normal pointing away from profile[1]
+    // Bottom cap (profile[0]) 鈥?normal pointing away from profile[1]
     let bot_face = {
         let mut wire_edges = Vec::new();
         let pts = &profiles[0];
@@ -1075,7 +1075,7 @@ pub fn loft_with_history(profiles: &[Vec<DVec3>]) -> Result<(BRep, LoftHistory),
         make_face(&mut result, surface, make_wire(wire_edges), vec![])?
     };
 
-    // Top cap (profile[last]) — normal pointing away from profile[last-1]
+    // Top cap (profile[last]) 鈥?normal pointing away from profile[last-1]
     let top_face = {
         let mut wire_edges = Vec::new();
         let pts = &profiles[s - 1];
@@ -1119,7 +1119,7 @@ pub fn loft_with_history(profiles: &[Vec<DVec3>]) -> Result<(BRep, LoftHistory),
 
         for i in 0..n {
             let j = (i + 1) % n;
-            // Quad: bot[i] → bot[j] → top[j] → top[i]
+            // Quad: bot[i] 鈫?bot[j] 鈫?top[j] 鈫?top[i]
             let a = pts_bot[i];
             let b = pts_bot[j];
             let c = pts_top[j];
@@ -1210,12 +1210,12 @@ pub fn loft_with_history(profiles: &[Vec<DVec3>]) -> Result<(BRep, LoftHistory),
     Ok((result, history))
 }
 
-// ── Pipe Sweep ────────────────────────────────────────────────────────────────
+// 鈹€鈹€ Pipe Sweep 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Sweep a 2D profile polygon along a 3D spine polyline.
 ///
 /// `profile_2d` is a polygon in the XY plane (local cross-section).
-/// `spine` is the path (≥ 2 points) in 3D world space.
+/// `spine` is the path (鈮?2 points) in 3D world space.
 ///
 /// At each spine station a Frenet-like frame (tangent/right/up) is computed and
 /// the 2D profile is transformed into the corresponding 3D cross-section.
@@ -1259,7 +1259,7 @@ pub fn sweep_pipe(profile_2d: &[DVec2], spine: &[DVec3]) -> Result<BRep, BuildEr
         .iter()
         .enumerate()
         .map(|(i, &tan)| {
-            // Right = tangent × world_up; fall back if nearly parallel
+            // Right = tangent 脳 world_up; fall back if nearly parallel
             let right_raw = tan.cross(world_up_primary);
             let right = if right_raw.length_squared() > 1e-8 {
                 right_raw.normalize()
@@ -1281,8 +1281,8 @@ pub fn sweep_pipe(profile_2d: &[DVec2], spine: &[DVec3]) -> Result<BRep, BuildEr
 /// Variable-section pipe sweep: a different 2D profile at each spine station.
 ///
 /// `profiles[i]` is placed at `spine[i]` using the same Frenet-like frame
-/// as [`sweep_pipe`]. All profiles must have the same vertex count (≥ 3)
-/// and `profiles.len()` must equal `spine.len()` (≥ 2).
+/// as [`sweep_pipe`]. All profiles must have the same vertex count (鈮?3)
+/// and `profiles.len()` must equal `spine.len()` (鈮?2).
 ///
 /// Analogous to OCCT `BRepOffsetAPI_MakePipeShell` with multiple sections.
 pub fn sweep_pipe_variable(profiles: &[Vec<DVec2>], spine: &[DVec3]) -> Result<BRep, BuildError> {
@@ -1342,25 +1342,9 @@ pub fn sweep_pipe_variable(profiles: &[Vec<DVec2>], spine: &[DVec3]) -> Result<B
     loft(&cross_sections)
 }
 
-// ── Topods-native wrappers ──
+// 鈹€鈹€ Topods-native wrappers 鈹€鈹€
 
-pub fn extrude_topods(profile: &BRep, face_idx: usize, direction: DVec3, distance: f64) -> Result<topods::BRep, BuildError> {
-    extrude(profile, face_idx, direction, distance).map(|b| b.to_topods())
-}
-
-pub fn revolve_topods(profile: &BRep, face_idx: usize, axis_origin: DVec3, axis_dir: DVec3, angle: f64) -> Result<topods::BRep, BuildError> {
-    revolve(profile, face_idx, axis_origin, axis_dir, angle).map(|b| b.to_topods())
-}
-
-pub fn loft_topods(profiles: &[Vec<DVec3>]) -> Result<topods::BRep, BuildError> {
-    loft(profiles).map(|b| b.to_topods())
-}
-
-pub fn sweep_pipe_topods(profile_2d: &[DVec2], spine: &[DVec3]) -> Result<topods::BRep, BuildError> {
-    sweep_pipe(profile_2d, spine).map(|b| b.to_topods())
-}
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
+// 鈹€鈹€ Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 #[cfg(test)]
 mod tests {
@@ -1476,7 +1460,7 @@ mod tests {
         });
         make_face(&mut brep, surface, make_wire(wires), vec![]).unwrap();
 
-        // Revolve 90° around Y axis
+        // Revolve 90掳 around Y axis
         let result = revolve(&brep, 0, DVec3::ZERO, DVec3::Y, std::f64::consts::FRAC_PI_2).unwrap();
         let n_faces = result.solids[0].shells[0].faces.len();
         // 2 caps + 3 lateral = 5
@@ -1486,7 +1470,7 @@ mod tests {
         );
     }
 
-    // ── Edge Case Tests ───────────────────────────────────────────────────────────
+    // 鈹€鈹€ Edge Case Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     /// Test sweep with a very small (near-degenerate) profile.
     /// Should still succeed for small but valid profiles, but fail for too-small profiles.

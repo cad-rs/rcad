@@ -181,7 +181,7 @@ pub fn make_conical_frustum_brep(
         return Ok(brep);
     }
 
-    // Reuse the stable "narrower bottom → wider top" cone parameterization for
+    // Reuse the stable "narrower bottom 闁?wider top" cone parameterization for
     // the inverted frustum case by reversing the construction axis. This keeps
     // the cone V direction and apex-side semantics consistent instead of using a
     // separate mirrored branch that can drift in area/topology behavior.
@@ -221,7 +221,7 @@ pub fn make_conical_frustum_brep(
         Edge { start: 0, end: 1 },
     ];
 
-    // ── 3D curves ───────────────────────────────────────────────
+    // 闁冲厜鍋撻柍鍏夊亾 3D curves 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?
     let bottom_circle = Curve3::Circle(Circle3::new(DVec3::new(0.0, -half_h, 0.0), -DVec3::Y, rb));
     let top_circle = Curve3::Circle(Circle3::new(DVec3::new(0.0, half_h, 0.0), DVec3::Y, rt));
     let seam_curve = Curve3::Line(Line3 {
@@ -229,7 +229,7 @@ pub fn make_conical_frustum_brep(
         direction: (top_pt - bottom_pt).normalize(),
     });
 
-    // ── Surfaces ────────────────────────────────────────────────
+    // 闁冲厜鍋撻柍鍏夊亾 Surfaces 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾
     let apex = DVec3::new(0.0, apex_y, 0.0);
     let cone_surf = Surface3::Cone(geom::ConicalSurface {
         apex,
@@ -246,7 +246,7 @@ pub fn make_conical_frustum_brep(
         normal: DVec3::Y,
     });
 
-    // ── PCurves ─────────────────────────────────────────────────
+    // 闁冲厜鍋撻柍鍏夊亾 PCurves 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?
     // E0 bottom circle on cone face: iso-V at V=v_bottom
     let e0_on_cone = Curve2d::Line(Line2d {
         origin: DVec2::new(0.0, v_bottom),
@@ -261,14 +261,14 @@ pub fn make_conical_frustum_brep(
     });
     // E1 on top plane: full circle in UV
     let e1_on_plane = Curve2d::Circle(Circle2d::new(DVec2::ZERO, rt));
-    // E2 seam on cone face: iso-U at U=0, V ranges v_bottom → v_top
+    // E2 seam on cone face: iso-U at U=0, V ranges v_bottom 闁?v_top
     let e2_on_cone = Curve2d::Line(Line2d {
         origin: DVec2::new(0.0, v_bottom),
         direction: DVec2::new(0.0, (v_top - v_bottom) / seam_len),
     });
 
-    // ── Faces ───────────────────────────────────────────────────
-    // F0 lateral (cone): bottom circle fwd → seam fwd → top circle rev → seam rev
+    // 闁冲厜鍋撻柍鍏夊亾 Faces 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋?
+    // F0 lateral (cone): bottom circle fwd 闁?seam fwd 闁?top circle rev 闁?seam rev
     let f0 = Face {
         outer_wire: Wire {
             edges: vec![
@@ -316,7 +316,7 @@ pub fn make_conical_frustum_brep(
         }],
     };
 
-    // ── Geometry store ──────────────────────────────────────────
+    // 闁冲厜鍋撻柍鍏夊亾 Geometry store 闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾闁冲厜鍋撻柍鍏夊亾
     let geom = GeomStore { face_internal_vertices: vec![], edge_vertex_params: vec![],
         curves: vec![bottom_circle, top_circle, seam_curve],
         surfaces: vec![cone_surf, bottom_plane, top_plane],
@@ -456,7 +456,7 @@ mod tests {
 /// Create a BRep with a single rectangular planar face.
 ///
 /// `origin` is the plane origin; `u_axis`/`v_axis` are the parametric axes
-/// (the normal is `u_axis × v_axis`). The corners are `origin + u_axis*u + v_axis*v`.
+/// (the normal is `u_axis 閼?v_axis`). The corners are `origin + u_axis*u + v_axis*v`.
 pub fn make_planar_rect_brep(
     origin: DVec3,
     u_axis: DVec3,
@@ -525,7 +525,7 @@ pub fn make_planar_rect_brep(
 /// Create a BRep with a single planar face bounded by a polygon, with optional inner holes.
 ///
 /// `origin` and `normal` define the plane. `outer_polygon` gives the outer boundary
-/// vertices (≥3 points in CCW order). `inner_polygons` are hole boundaries (each ≥3 points
+/// vertices (闁? points in CCW order). `inner_polygons` are hole boundaries (each 闁? points
 /// in CW order).
 pub fn make_planar_polygon_brep(
     origin: DVec3,
@@ -574,7 +574,7 @@ fn make_polygon_wire(brep: &mut BRep, points: &[DVec3]) -> Result<rcad_kernel::t
 /// `-normal` direction (the "interior" side). Used by OCCT `mkvolume` translation to intersect
 /// planar half-spaces.
 ///
-/// `size` controls the extents: ±size in the plane directions, size in the -normal direction.
+/// `size` controls the extents: 閸楊槞ize in the plane directions, size in the -normal direction.
 pub fn make_half_space_brep(
     origin: DVec3,
     normal: DVec3,
@@ -594,11 +594,11 @@ pub fn make_half_space_brep(
         DVec3::Z
     };
     let u_axis = normal.cross(candidate).normalize();
-    // v_axis = u_axis × normal gives u_axis × v_axis = -normal (the interior direction).
+    // v_axis = u_axis 閼?normal gives u_axis 閼?v_axis = -normal (the interior direction).
     let v_axis = u_axis.cross(normal).normalize();
 
     // box_brep creates a corner-box at `origin - u_axis*size - v_axis*size` that extends
-    // +u_axis*2*size, +v_axis*2*size, +z_axis*size, giving ±size UV coverage around `origin`
+    // +u_axis*2*size, +v_axis*2*size, +z_axis*size, giving 閸楊槞ize UV coverage around `origin`
     // and `size` units in the -normal (interior) direction.
     let corner = origin - u_axis * size - v_axis * size;
     box_brep(corner, u_axis, v_axis, 2.0 * size, 2.0 * size, size)
@@ -607,7 +607,7 @@ pub fn make_half_space_brep(
 /// Build a convex polyhedron BRep directly from half-space plane equations (no boolean ops).
 ///
 /// Each half-space is `(origin, normal)` where the interior is the side opposite the normal,
-/// i.e. `normal · (p - origin) ≤ 0`. Input planes may contain coplanar duplicates — they
+/// i.e. `normal 鐠?(p - origin) 闁?0`. Input planes may contain coplanar duplicates 闁?they
 /// are merged into a single face by keeping the tightest constraint.
 ///
 /// The algorithm computes all vertices by intersecting 3 planes at a time, keeps those
@@ -645,7 +645,7 @@ pub fn make_convex_polyhedron_from_half_spaces(
         for eq in &mut eqs {
             let cos = n.dot(eq.n);
             if cos > 1.0 - tol {
-                // Same direction – keep the tighter constraint (smaller d for n·p ≤ d)
+                // Same direction 闁?keep the tighter constraint (smaller d for n鐠虹棷 闁?d)
                 if d < eq.d {
                     eq.d = d;
                     eq.origin = origin;
@@ -673,14 +673,14 @@ pub fn make_convex_polyhedron_from_half_spaces(
         for j in (i + 1)..np {
             for k in (j + 1)..np {
                 let (ni, nj, nk) = (eqs[i].n, eqs[j].n, eqs[k].n);
-                // Rows are plane normals (ni·p=di, …); columns store x/y/z components per plane.
+                // Rows are plane normals (ni鐠虹棷=di, 闁?; columns store x/y/z components per plane.
                 let m = DMat3::from_cols(
                     DVec3::new(ni.x, nj.x, nk.x),
                     DVec3::new(ni.y, nj.y, nk.y),
                     DVec3::new(ni.z, nj.z, nk.z),
                 );
                 if m.determinant().abs() < tol {
-                    continue; // singular — planes meet in a line or are parallel
+                    continue; // singular 闁?planes meet in a line or are parallel
                 }
                 let p = m.inverse() * DVec3::new(eqs[i].d, eqs[j].d, eqs[k].d);
 
@@ -701,7 +701,7 @@ pub fn make_convex_polyhedron_from_half_spaces(
 
     if verts.len() < 4 {
         return Err(BuildError::DegenerateGeometry(
-            "fewer than 4 valid vertices — half-spaces may not form a bounded convex polyhedron",
+            "fewer than 4 valid vertices 闁?half-spaces may not form a bounded convex polyhedron",
         ));
     }
 
@@ -736,7 +736,7 @@ pub fn make_convex_polyhedron_from_half_spaces(
             .sum::<DVec3>()
             / face_verts[fi].len() as f64;
 
-        // UV basis in the plane (u × v = n for CCW winding from +n)
+        // UV basis in the plane (u 閼?v = n for CCW winding from +n)
         let abs = n.abs();
         let candidate = if abs.x <= abs.y && abs.x <= abs.z {
             DVec3::X
@@ -746,7 +746,7 @@ pub fn make_convex_polyhedron_from_half_spaces(
             DVec3::Z
         };
         let u_axis = n.cross(candidate).normalize();
-        let v_axis = n.cross(u_axis).normalize(); // u × v = n
+        let v_axis = n.cross(u_axis).normalize(); // u 閼?v = n
 
         // Sort vertices by angle around centroid in the UV plane
         let mut sorted: Vec<usize> = face_verts[fi].clone();
@@ -799,34 +799,5 @@ pub fn mirror_brep(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> Res
     Ok(do_mirror_brep(brep, plane_origin, n))
 }
 
-// ── Topods-native wrappers ──
+// 闁冲厜鍋撻柍鍏夊亾 Topods-native wrappers 闁冲厜鍋撻柍鍏夊亾
 
-pub fn make_box_brep_topods(
-    origin: DVec3, x_dir: DVec3, y_dir: DVec3, w: f64, h: f64, d: f64,
-) -> Result<topods::BRep, BuildError> {
-    make_box_brep(origin, x_dir, y_dir, w, h, d).map(|b| b.to_topods())
-}
-
-pub fn sphere_brep_topods(center: DVec3, radius: f64) -> Result<topods::BRep, BuildError> {
-    sphere_brep(center, radius).map(|b| b.to_topods())
-}
-
-pub fn cylinder_brep_topods(center: DVec3, axis: DVec3, ref_dir: DVec3, radius: f64, height: f64) -> Result<topods::BRep, BuildError> {
-    cylinder_brep(center, axis, ref_dir, radius, height).map(|b| b.to_topods())
-}
-
-pub fn cone_brep_topods(center: DVec3, axis: DVec3, ref_dir: DVec3, base_radius: f64, height: f64) -> Result<topods::BRep, BuildError> {
-    cone_brep(center, axis, ref_dir, base_radius, height).map(|b| b.to_topods())
-}
-
-pub fn make_conical_frustum_brep_topods(center: DVec3, axis: DVec3, ref_dir: DVec3, r_bottom: f64, r_top: f64, height: f64) -> Result<topods::BRep, BuildError> {
-    make_conical_frustum_brep(center, axis, ref_dir, r_bottom, r_top, height).map(|b| b.to_topods())
-}
-
-pub fn torus_brep_topods(center: DVec3, axis_dir: DVec3, ref_dir: DVec3, major_r: f64, minor_r: f64) -> Result<topods::BRep, BuildError> {
-    torus_brep(center, axis_dir, ref_dir, major_r, minor_r).map(|b| b.to_topods())
-}
-
-pub fn mirror_brep_topods(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> Result<topods::BRep, BuildError> {
-    mirror_brep(brep, plane_origin, plane_normal).map(|b| b.to_topods())
-}

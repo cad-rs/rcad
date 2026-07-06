@@ -1,4 +1,4 @@
-﻿//! Chamfer and fillet operations on BRep edges.
+//! Chamfer and fillet operations on BRep edges.
 //!
 //! `chamfer_edge` and `fillet_edge` support:
 //! - Convex and concave edges shared by exactly two planar faces

@@ -8,11 +8,11 @@
 //!    a single pool, reindexing everything.
 //! 2. **Vertex merging** (union-find): vertices within `tolerance` of each
 //!    other are merged **only when they originate from different input BReps**.
-//!    Same-shell vertices are never merged even if duplicated numerically — this
+//!    Same-shell vertices are never merged even if duplicated numerically 閳?this
 //!    avoids collapsing quad corners when stitching independent shells (`RCAD ZP3`).
 //! 3. **Edge matching**: after vertex merging, edges that share both endpoint
 //!    vertices (in either orientation) and originated from different input
-//!    BReps are considered "stitched" — they represent the same boundary edge.
+//!    BReps are considered "stitched" 閳?they represent the same boundary edge.
 //!    Duplicate edges are removed and wire references updated; when the merged
 //!    duplicate uses the opposite `(start,end)` order from the canonical edge,
 //!    [`WireEdge.forward`] is toggled so loops remain consistently oriented.
@@ -29,9 +29,9 @@ use rcad_kernel::{
     topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge},
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 // Public types
-// ─────────────────────────────────────────────────────────────────────────────
+// 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
 /// Result returned by [`sew_shells`].
 #[derive(Debug)]
@@ -45,15 +45,15 @@ pub struct SewingResult {
     pub free_edges: Vec<usize>,
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 // Public API
-// ─────────────────────────────────────────────────────────────────────────────
+// 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
 /// Merge multiple BReps into a single BRep, stitching near-coincident edges.
 ///
 /// # Arguments
-/// * `breps` — slice of BReps to merge (must have at least one solid).
-/// * `tolerance` — vertex proximity threshold for merging.
+/// * `breps` 閳?slice of BReps to merge (must have at least one solid).
+/// * `tolerance` 閳?vertex proximity threshold for merging.
 ///
 /// # Examples
 /// ```rust
@@ -76,7 +76,7 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
         };
     }
 
-    // ── Step 1: concatenate everything ────────────────────────────────────
+    // 閳光偓閳光偓 Step 1: concatenate everything 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     let mut all_vertices: Vec<Vertex> = Vec::new();
     let mut all_edges: Vec<Edge> = Vec::new();
@@ -143,7 +143,7 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
     let n_verts = all_vertices.len();
     let n_edges = all_edges.len();
 
-    // ── Step 2: union-find vertex merge ───────────────────────────────────
+    // 閳光偓閳光偓 Step 2: union-find vertex merge 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     let mut parent: Vec<usize> = (0..n_verts).collect();
 
@@ -175,7 +175,7 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
         }
     }
 
-    // Build canonical index map: old index → canonical representative
+    // Build canonical index map: old index 閳?canonical representative
     let canon: Vec<usize> = (0..n_verts).map(|i| find(&mut parent, i)).collect();
 
     // Remap edge endpoints
@@ -184,13 +184,13 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
         e.end = canon[e.end];
     }
 
-    // ── Step 3: edge deduplication ────────────────────────────────────────
-    // Build a map from (min_v, max_v) → first edge index.
+    // 閳光偓閳光偓 Step 3: edge deduplication 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
+    // Build a map from (min_v, max_v) 閳?first edge index.
     // For each duplicate, record the pair (kept, duplicate) as stitched.
 
     use std::collections::HashMap;
     let mut edge_key_to_idx: HashMap<(usize, usize), usize> = HashMap::new();
-    // Maps old edge index → canonical edge index (for dedup)
+    // Maps old edge index 閳?canonical edge index (for dedup)
     let mut edge_canon: Vec<usize> = (0..n_edges).collect();
     let mut stitched_pairs = 0usize;
 
@@ -198,7 +198,7 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
         let e = &all_edges[i];
         let key = (e.start.min(e.end), e.start.max(e.end));
         if let Some(&existing) = edge_key_to_idx.get(&key) {
-            // This edge is a duplicate of `existing` → stitch
+            // This edge is a duplicate of `existing` 閳?stitch
             edge_canon[i] = existing;
             stitched_pairs += 1;
         } else {
@@ -238,7 +238,7 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
         }
     }
 
-    // ── Step 4: build result BRep ─────────────────────────────────────────
+    // 閳光偓閳光偓 Step 4: build result BRep 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     // Compact edges: keep only canonical ones
     let kept_edges: Vec<Edge> = (0..n_edges)
@@ -246,7 +246,7 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
         .map(|i| all_edges[i])
         .collect();
 
-    // Remap edge indices: old canonical → compacted index
+    // Remap edge indices: old canonical 閳?compacted index
     let mut compact_edge_idx: Vec<usize> = vec![0; n_edges];
     {
         let mut ci = 0;
@@ -303,7 +303,7 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
         }
     }
 
-    // ── Step 5: find free edges ───────────────────────────────────────────
+    // 閳光偓閳光偓 Step 5: find free edges 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     let n_compact_edges = compact_edges.len();
     let mut edge_face_count: Vec<usize> = vec![0; n_compact_edges];
@@ -325,7 +325,7 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
         .filter(|&i| edge_face_count[i] == 1)
         .collect();
 
-    // ── Step 6: assemble GeomStore (simple concatenation) ─────────────────
+    // 閳光偓閳光偓 Step 6: assemble GeomStore (simple concatenation) 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     let mut geom = rcad_kernel::GeomStore::default();
     let mut face_offset = 0usize;
@@ -386,9 +386,9 @@ pub fn sew_shells(breps: &[BRep], tolerance: f64) -> SewingResult {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 // Tests
-// ─────────────────────────────────────────────────────────────────────────────
+// 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
 #[cfg(test)]
 mod tests {
@@ -415,8 +415,8 @@ mod tests {
 
     #[test]
     fn sew_two_boxes_identifies_shared_face() {
-        // Box A: x ∈ [0,1], Box B: x ∈ [1,2] — share the x=1 plane
-        // Both use from_primitive which places box at [0,w]×[0,h]×[0,d].
+        // Box A: x 閳?[0,1], Box B: x 閳?[1,2] 閳?share the x=1 plane
+        // Both use from_primitive which places box at [0,w]鑴砙0,h]鑴砙0,d].
         // Box B vertices at x=0..1 coincide with Box A vertices at x=1..2
         // only if we offset B. Since from_primitive always starts at 0,
         // the two boxes overlap at x=0 face and x=1 face.
@@ -426,7 +426,7 @@ mod tests {
             height: 1.0,
             depth: 1.0,
         });
-        // Second box: same vertices as A (completely coincident) → all edges stitched
+        // Second box: same vertices as A (completely coincident) 閳?all edges stitched
         let b = BRep::from_primitive(PrimitiveSolid::Box {
             width: 1.0,
             height: 1.0,
