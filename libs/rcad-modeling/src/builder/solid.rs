@@ -906,10 +906,104 @@ pub fn make_convex_polyhedron_from_half_spaces(
 ///
 /// The mirrored BRep has inverted face normals and reversed wire orientations
 /// to maintain consistent outward-facing normals.
-pub fn mirror_brep(brep: &BRep, plane_origin: DVec3, plane_normal: DVec3) -> Result<BRep, BuildError> {
+pub fn mirror_brep(brep: &topods::BRep, plane_origin: DVec3, plane_normal: DVec3) -> Result<topods::BRep, BuildError> {
     let _ = validate_point("plane_origin", plane_origin)?;
     let n = normalize_vector("plane_normal", plane_normal)?;
-    Ok(do_mirror_brep(brep, plane_origin, n))
+    let mirror_p = |p: DVec3| { let d = (p - plane_origin).dot(n); p - n * (2.0 * d) };
+    let mirror_v = |v: DVec3| v - n * (2.0 * v.dot(n));
+
+    let mut out = topods::BRep::new();
+    use rcad_kernel::topods::{ShapeRef, Orientation};
+    use rcad_kernel::topods::TShape;
+    let rev = |sr: ShapeRef| ShapeRef { orientation: Orientation::Reversed, ..sr };
+
+    // Phase 1: mirror all vertices, build ptr_id → new ShapeRef map
+    let mut vmap: std::collections::HashMap<u64, ShapeRef> = std::collections::HashMap::new();
+    for ts in &brep.tshapes {
+        if let TShape::Vertex(vd) = &**ts {
+            let sr = out.add_tvertex(mirror_p(vd.point));
+            vmap.insert(tshape_ptr_id(ts), sr);
+        }
+    }
+
+    // Phase 2: mirror curves (transform each curve component)
+    let mirror_curve = |c: &Curve3| -> Curve3 {
+        match c {
+            Curve3::Line(l) => Curve3::Line(Line3 { origin: mirror_p(l.origin), direction: mirror_v(l.direction) }),
+            Curve3::Circle(c3) => Curve3::Circle(rcad_kernel::geom::Circle3::new(mirror_p(c3.center), mirror_v(c3.normal), c3.radius)),
+            _ => c.clone(), // fallback for complex curves — clone as-is
+        }
+    };
+
+    // Phase 3: create edges, map old edge ptr_id → new ShapeRef
+    let mut emap: std::collections::HashMap<u64, ShapeRef> = std::collections::HashMap::new();
+    for ts in &brep.tshapes {
+        if let TShape::Edge(ed) = &**ts {
+            let first = *vmap.get(&ed.first.ptr_id).unwrap_or(&ed.first);
+            let last = *vmap.get(&ed.last.ptr_id).unwrap_or(&ed.last);
+            let curve = ed.curve.as_ref().map(mirror_curve);
+            let sr = out.add_tedge(curve, first, last, ed.range);
+            emap.insert(tshape_ptr_id(ts), sr);
+        }
+    }
+
+    // Phase 4: create wires, faces, shells, solids — traverse in order
+    // topods::BRep stores TShapes in flat order. We iterate and build mirror
+    // structures, storing new ShapeRef for wires and faces as we go.
+    let mut wmap: std::collections::HashMap<u64, ShapeRef> = std::collections::HashMap::new();
+    let mut fmap: std::collections::HashMap<u64, ShapeRef> = std::collections::HashMap::new();
+    let mut shmap: std::collections::HashMap<u64, ShapeRef> = std::collections::HashMap::new();
+
+    for ts in &brep.tshapes {
+        match &**ts {
+            TShape::Wire(wd) => {
+                let mirrored: Vec<ShapeRef> = wd.edges.iter().map(|&sr| rev(sr)).collect();
+                let sr = out.add_twire(mirrored);
+                wmap.insert(tshape_ptr_id(ts), sr);
+            }
+            TShape::Face(fd) => {
+                let outer = *wmap.get(&fd.outer_wire.ptr_id).unwrap_or(&fd.outer_wire);
+                let inner: Vec<ShapeRef> = fd.inner_wires.iter().map(|sr| *wmap.get(&sr.ptr_id).unwrap_or(sr)).collect();
+                let surface = fd.surface.as_ref().map(|s| mirror_surface(s, &mirror_p, &mirror_v));
+                let sr = out.add_tface(surface, outer, inner, fd.sample_point, fd.uv_domain, fd.internal_vertices.clone(), fd.natural_restriction);
+                fmap.insert(tshape_ptr_id(ts), sr);
+            }
+            TShape::Shell(sd) => {
+                let faces: Vec<ShapeRef> = sd.faces.iter().map(|sr| *fmap.get(&sr.ptr_id).unwrap_or(sr)).collect();
+                let sr = out.add_tshell(faces);
+                shmap.insert(tshape_ptr_id(ts), sr);
+            }
+            TShape::Solid(sd) => {
+                let shells: Vec<ShapeRef> = sd.shells.iter().map(|sr| *shmap.get(&sr.ptr_id).unwrap_or(sr)).collect();
+                out.add_tsolid(shells);
+            }
+            _ => {}
+        }
+    }
+    Ok(out)
+}
+
+fn tshape_ptr_id(ts: &std::sync::Arc<rcad_kernel::topods::TShape>) -> u64 {
+    std::sync::Arc::as_ptr(ts) as u64
+}
+
+fn mirror_surface(s: &Surface3, mirror_p: impl Fn(DVec3) -> DVec3, mirror_v: impl Fn(DVec3) -> DVec3) -> Surface3 {
+    match s {
+        Surface3::Plane(p) => Surface3::Plane(Plane { origin: mirror_p(p.origin), normal: mirror_v(p.normal) }),
+        Surface3::Cylinder(c) => Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
+            origin: mirror_p(c.origin), axis: mirror_v(c.axis), radius: c.radius, ref_dir: mirror_v(c.ref_dir),
+        }),
+        Surface3::Sphere(s) => Surface3::Sphere(rcad_kernel::geom::SphericalSurface {
+            center: mirror_p(s.center), axis: mirror_v(s.axis), radius: s.radius, ref_dir: mirror_v(s.ref_dir),
+        }),
+        Surface3::Cone(c) => Surface3::Cone(rcad_kernel::geom::ConicalSurface {
+            apex: mirror_p(c.apex), axis: mirror_v(c.axis), radius: c.radius, half_angle_rad: c.half_angle_rad,
+        }),
+        Surface3::Torus(t) => Surface3::Torus(rcad_kernel::geom::ToroidalSurface {
+            center: mirror_p(t.center), axis: mirror_v(t.axis), major_radius: t.major_radius, minor_radius: t.minor_radius,
+        }),
+        _ => s.clone(),
+    }
 }
 
 // 闁冲厜鍋撻柍鍏夊亾 Topods-native wrappers 闁冲厜鍋撻柍鍏夊亾
