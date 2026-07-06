@@ -516,6 +516,12 @@ pub fn total_volume(brep: &BRep) -> f64 {
     rcad_kernel::volume(brep)
 }
 
+/// Total volume of a topods::BRep (converts internally).
+pub fn total_volume_topods(brep: &rcad_kernel::topods::BRep) -> f64 {
+    let old = rcad_kernel::BRep::from_topods(brep);
+    rcad_kernel::volume(&old)
+}
+
 /// Compute the total surface area of all faces in the BRep.
 ///
 /// # Example
@@ -535,6 +541,12 @@ pub fn total_volume(brep: &BRep) -> f64 {
 /// ```
 pub fn total_surface_area(brep: &BRep) -> f64 {
     rcad_kernel::surface_area(brep)
+}
+
+/// Total surface area of a topods::BRep (converts internally).
+pub fn total_surface_area_topods(brep: &rcad_kernel::topods::BRep) -> f64 {
+    let old = rcad_kernel::BRep::from_topods(brep);
+    rcad_kernel::surface_area(&old)
 }
 
 // =============================================================================

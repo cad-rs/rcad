@@ -1152,6 +1152,7 @@ impl IgesBrepBuilder {
             triangles: vec![],
             sample_point: None,
             mesh_dirty: true,
+            surface_idx: None,
         };
 
         let _ = (outer_bound_ptr, n_inner, surf_idx);
@@ -1317,12 +1318,24 @@ impl IgesWriter {
         writer.write_brep_to_string(brep)
     }
 
+    /// Write topods::BRep to an IGES string (converts internally).
+    pub fn write_string_topods(brep: &rcad_kernel::topods::BRep) -> String {
+        let old = rcad_kernel::BRep::from_topods(brep);
+        Self::write_string(&old)
+    }
+
     /// Write BRep to an IGES file.
     pub fn write_file<P: AsRef<Path>>(brep: &BRep, path: P) -> Result<usize, io::Error> {
         let writer = Self::new();
         let content = writer.write_brep_to_string(brep);
         std::fs::write(path, &content)?;
         Ok(content.len())
+    }
+
+    /// Write topods::BRep to an IGES file (converts internally).
+    pub fn write_file_topods<P: AsRef<Path>>(brep: &rcad_kernel::topods::BRep, path: P) -> Result<usize, io::Error> {
+        let old = rcad_kernel::BRep::from_topods(brep);
+        Self::write_file(&old, path)
     }
 
     /// Convert BRep to IGES string.
