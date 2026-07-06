@@ -1,11 +1,11 @@
-use std::collections::HashMap;
+﻿use std::collections::HashMap;
 use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::topods;
 use rcad_kernel::geom::*;
 use crate::bopds::ds::*;
 use crate::tolerance::*;
-use crate::builder::types::{BooleanOpType, FaceSampleData};
+
 use crate::builder::{SourceSide, BooleanBuilder};
 
 pub struct GlueConfig {
@@ -807,7 +807,7 @@ mod glue_tests {
  assert!(!config.early_normal_filter);
  }
 
-  // (split_polygon tests removed — OCCT MakeLoops+Areas pipeline used instead)
+  // (split_polygon tests removed 鈥?OCCT MakeLoops+Areas pipeline used instead)
 }
 
 
@@ -940,13 +940,13 @@ pub fn get_edge_on_face(edge_idx: usize, face_idx: usize, ds: &DS) -> bool {
 // ?DoSplitSEAMOnFace  ?(collect_face_edge_segments L2196-2282)
 // ?SmartMap/Path walk  ?(build_closed_wires L3312-3617)
 // ?PerformAreas  ?(perform_areas)
-// ?emit_sphere_faces_direct = =  OCCT  ?
-// BuildSplitFaces  ?BuilderFace::Perform  =?  :  =)
+// ?emit_sphere_faces_direct = 顖?  OCCT  ?
+// BuildSplitFaces  ?BuilderFace::Perform  顖?? 顔?:  =)
 // ================================================================
 
 //  ?DoSplitSEAMOnFace  ? ?(collect_face_edge_segments L2196-2282)
 // OCCT BOPTools_AlgoTools3D::DoSplitSEAMOnFace (BOPTools_AlgoTools3D.cxx L58-232)
-//  ?seam  ?IC   = seam  ?  seam  , ?shifted pcurve ?
-// rcad: collect_face_edge_segments  ?seam    ?second_pcurve,
-// midpoint UV U=0  ?U=TAU  ュ = = €?
+//  ?seam  ?IC  顦?= seam  ?  seam  顔? ?shifted pcurve ?
+// rcad: collect_face_edge_segments  ?seam  顔?顓??second_pcurve,
+// midpoint UV U=0  ?U=TAU  銉?= = 鈧?
 

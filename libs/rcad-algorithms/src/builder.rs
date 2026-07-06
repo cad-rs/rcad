@@ -33,12 +33,12 @@ mod builder_face;
 pub(crate) use builder_face::BuilderFace;
 
 pub use types::{
- BooleanOpType, BooleanError, FaceSampleData,
+ BooleanOpType, BooleanError,
 };
 pub(crate) use types::{
  ShapeType, WireFace, WireSegment, WireEdgeSource,
  WireSegmentTopoDS, WireEdgeSourceTopoDS,
- FaceWireEdges, FaceEntry, CollectedFaceResult,
+ FaceEntry,
 };
 
 
@@ -49,10 +49,8 @@ mod builder_utils;
 
 pub(crate) use builder_utils::{
  curve_eq, hash_point,
- classify_face_against_box, compute_state,
  is_tangent_face, build_edge_bounds, quantize_pos,
  check_and_add_split_vertex, collect_face_edge_segments,
- cmp_boolean_emit_order,
  annotate_history_from_ds, annotate_shell_and_solid_history,
  aggregate_face_region_origin, aggregate_shell_region_origin,
 };
@@ -137,7 +135,6 @@ pub(crate) use wire_splitter::{
 };
 pub(crate) use wire_path::{
  perform_areas, intersect_ray_curve_2d,
- wire_faces_to_face_sample_data,
  refine_angles, pc_parameter_range,
  walk_path_extract_wires,
 };

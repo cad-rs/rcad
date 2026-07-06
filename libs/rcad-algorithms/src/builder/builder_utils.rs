@@ -9,7 +9,7 @@ use crate::classify::{Classification, classify_point};
 use crate::history::{BooleanHistory, FaceOrigin, ShellOrigin, SolidOrigin, VertexOrigin, EdgeOrigin, HistoryTracker};
 use crate::inttools::context::Context;
 use crate::tolerance::*;
-use crate::builder::types::{BooleanOpType, FaceSampleData, WireSegment, WireEdgeSource, WireOrientation};
+use crate::builder::types::{BooleanOpType, WireSegment, WireEdgeSource, WireOrientation};
 use crate::builder::SourceSide;
 
 use crate::builder::angle_2d::angle_2d;
@@ -257,34 +257,6 @@ pub(crate) fn annotate_shell_and_solid_history(brep: &BRep, history: &mut Boolea
  history.solid_origins = solid_origins;
 }
 
-/// Deterministic order for merging parallel `boolean_op` face emissions into [`ResultBuilder`].
-/// Rayon `collect` order is undefined; sorting stabilizes co-face dedup and `total_surface_area`.
-pub(crate) fn cmp_boolean_emit_order(
- a: &(FaceSampleData, bool, FaceOrigin),
- b: &(FaceSampleData, bool, FaceOrigin),
-) -> std::cmp::Ordering {
- 
- let rank = |o: &FaceOrigin| -> (u8, usize) {
- match o {
- FaceOrigin::FromA(i) => (0, *i),
- FaceOrigin::FromB(i) => (1, *i),
- FaceOrigin::Generated => (2, 0),
- }
- };
- let (sa, ra) = rank(&a.2);
- let (sb, rb) = rank(&b.2);
- sa.cmp(&sb)
- .then(ra.cmp(&rb))
- .then_with(|| {
- let pa = a.0.sample_point();
- let pb = b.0.sample_point();
- pa.x
- .total_cmp(&pb.x)
- .then_with(|| pa.y.total_cmp(&pb.y))
- .then_with(|| pa.z.total_cmp(&pb.z))
- })
-}
-
 /// Boolean result builder (OCCT: BOPAlgo_BOP).
 /// Tracks face splice origins and participates in `BooleanHistory`.
 pub struct BooleanBuilder<'a> {
@@ -327,184 +299,11 @@ pub struct BooleanBuilder<'a> {
  my_check_inverted: bool,
 }
 
-/// Fast path: if the opposite solid is an axis-aligned box, check all sub-face
-/// boundary vertices against the box AABB. For tessellated faces (cone/cylinder
-/// UV grid), individual grid cells can straddle the box boundary even when their
-/// sample point falls inside. Requiring ALL boundary vertices to be on the correct
-/// side ensures straddling cells are conservatively classified.
-///
-/// - Intersection (any side): face is kept only when ENTIRELY inside the box.
-/// - Difference B-side: face is kept only when ENTIRELY inside the box.
-/// - Union/Difference A-side: face is kept only when ENTIRELY outside the box.
-pub(crate) fn classify_face_against_box(
- sub: &FaceSampleData,
- solid_face_indices: &[usize],
- ds: &DS,
- op: BooleanOpType,
- source: SourceSide,
-) -> Option<Classification> {
- // Skip planar sub-faces =`classify_point` correctly classifies them as On
- // when they're coplanar with a box face, allowing the coplanar dedup in
- // `build_with_history` to avoid double-counting the shared area.  The AABB
- // boundary-vertex check was designed for tessellated curved surfaces
- // (cone/cylinder UV grid) where individual grid cells straddle the boundary.
- // Planar BSpline surfaces (from NURBS-converted boxes) are also planar =
- // their boundary vertices can span both inside and outside the box, causing
- // a false In/Out from a single vertex check.  OCCT classifies such faces by
- // sampling interior points (BOPTools_AlgoTools::PointInFace), not by
- // boundary-vertex AABB test.
- let is_planar_surf = match &sub.surface {
- rcad_kernel::geom::Surface3::Plane(_) => true,
- rcad_kernel::geom::Surface3::BSpline(bsp) => {
- rcad_kernel::geom::bspline_is_planar(bsp, TOLERANCE_PLANE_DIST_RELAX)
- }
- _ => false,
- };
- if is_planar_surf {
- return None;
- }
- let tol = TOLERANCE_MESH_LEGACY;
- let mut min_x = f64::NEG_INFINITY;
- let mut max_x = f64::INFINITY;
- let mut min_y = f64::NEG_INFINITY;
- let mut max_y = f64::INFINITY;
- let mut min_z = f64::NEG_INFINITY;
- let mut max_z = f64::INFINITY;
-
- for &fi in solid_face_indices {
- let Surface3::Plane(pl) = &ds.faces[fi].surface else {
- return None;
- };
- let n = pl.normal;
- let d = pl.origin;
-
- if n.x.abs() > 1.0 - tol {
- if n.x > 0.0 { max_x = max_x.min(d.x); }
- else { min_x = min_x.max(d.x); }
- } else if n.y.abs() > 1.0 - tol {
- if n.y > 0.0 { max_y = max_y.min(d.y); }
- else { min_y = min_y.max(d.y); }
- } else if n.z.abs() > 1.0 - tol {
- if n.z > 0.0 { max_z = max_z.min(d.z); }
- else { min_z = min_z.max(d.z); }
- } else {
- return None; // non-axis-aligned plane =not a simple box
- }
- }
-
- if min_x.is_infinite() || max_x.is_infinite()
- || min_y.is_infinite() || max_y.is_infinite()
- || min_z.is_infinite() || max_z.is_infinite()
- {
- return None; // incomplete bounds =not a full box
- }
-
- let require_all_inside = op == BooleanOpType::Intersection
- || (op == BooleanOpType::Difference && source == SourceSide::B);
-
- let (_bmin_x, _bmax_x) = sub.boundary.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(mn, mx), v| (mn.min(v.x), mx.max(v.x)));
- let (_bmin_y, _bmax_y) = sub.boundary.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(mn, mx), v| (mn.min(v.y), mx.max(v.y)));
- let (_bmin_z, _bmax_z) = sub.boundary.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(mn, mx), v| (mn.min(v.z), mx.max(v.z)));
-
- for &v in &sub.boundary {
- let inside = v.x >= min_x - tol && v.x <= max_x + tol
- && v.y >= min_y - tol && v.y <= max_y + tol
- && v.z >= min_z - tol && v.z <= max_z + tol;
-
- if require_all_inside {
- if !inside {
- // Boundary vertex outside the box =this sub-face straddles
- // the boundary.  Don't immediately return Out =the tessellation
- // vertices of a curved sub-face (cylinder wall near a box face)
- // can fall outside the box even when most of the sub-face is
- // inside.  Return None to fall through to the probe grid which
- // correctly classifies partial overlap.
- return None;
- }
- } else {
- if inside {
- //  ?OCCT-aligned: for Union, boundary vertices may be ON the
- // box surface while the face INTERIOR extends outward (sphere
- // sub-face bounded by IC arcs on the box).  Check the sample
- // point to distinguish "on surface" from "inside".
- let sp = sub.sample_point();
- let sp_inside = sp.x >= min_x - tol && sp.x <= max_x + tol
- && sp.y >= min_y - tol && sp.y <= max_y + tol
- && sp.z >= min_z - tol && sp.z <= max_z + tol;
- if sp_inside {
- return Some(Classification::In);
- }
- // Sample point outside  ?boundary vertices are on the box
- // surface but face is outside  ?fall through to probe grid
- return None;
- }
- }
- }
-
- // All vertices satisfy the condition =uniform classification
- let result = if require_all_inside {
- Classification::In  // all inside =keep for Intersection / Difference B-side
- } else {
- Classification::Out // all outside =keep for Union / Difference A-side
- };
- Some(result)
-}
-
-/// Classify a sub-face against the solid described by `solid_face_indices`.
-///
-/// For [`BooleanOpType::Intersection`], [`FaceSampleData::sample_point`] can land outside the
-/// other solid even when the trimmed patch overlaps both volumes (e.g. sphere =
-/// finite cylinder: the inward offset toward the sphere center exits the cylinder
-/// slab). When the primary sample is `Out`, we probe a coarse UV grid on
-/// [`FaceSampleData::uv_domain`] before concluding `Out`.
-///
-/// Conversely, when the primary sample is `On` (within tolerance of the other solid's
-/// surface), the sub-face may be genuinely on the boundary OR the sample point may
-/// happen to fall within the tolerance band of the other solid's surface despite the
-/// sub-face being entirely outside (e.g. a planar sub-face of a box near a sphere's
-/// surface). In that case we probe boundary and interior samples to break the tie.
-//  ?OCCT-aligned: = € ?In/Out/On (ClassifyFaces) ?
-// = ?FaceSampleData( ?WireFace =FaceSampleData  ? ?
-///  ?OCCT-aligned: classify_against_solid_for_boolean  ?ComputeState (OCCT BOPAlgo_Builder).
-/// OCCT-aligned: BOPTools_AlgoTools::ComputeState (cxx L660-714).
-pub(crate) fn compute_state(
- _op: BooleanOpType,
- _source: SourceSide,
- sub: &FaceSampleData,
- solid_face_indices: &[usize],
- ds: &DS,
-) -> Classification {
- let bnd = &sub.boundary;
- if bnd.len() < 3 { return Classification::In; }
- let edge_bounds = build_edge_bounds(solid_face_indices, ds);
- let tol = TOLERANCE_ABS * 100.0;
- for i in 0..bnd.len() {
- let j = (i + 1) % bnd.len();
- let p1 = bnd[i]; let p2 = bnd[j];
- let edge_idx = ds.edges.iter().position(|e| {
- let k1 = quantize_pos(ds.vertices[e.start_vertex].point, tol);
- let k2 = quantize_pos(ds.vertices[e.end_vertex].point, tol);
- let kp1 = quantize_pos(p1, tol); let kp2 = quantize_pos(p2, tol);
- (kp1 == k1 && kp2 == k2) || (kp1 == k2 && kp2 == k1)
- });
- let on_solid = edge_idx.map_or(false, |ei| edge_bounds.contains(&ei));
- if !on_solid {
- match classify_point((p1 + p2) * 0.5, solid_face_indices, ds) {
- Classification::Out => return Classification::Out,
- Classification::In => return Classification::In,
- Classification::On => continue,
- }
- }
- }
- let cent = bnd.iter().copied().sum::<DVec3>() / bnd.len() as f64;
- classify_point(cent, solid_face_indices, ds)
-}
-
 // =============================================================================
 // OCCT 1:1  ? IsInternalFace (BOPTools_AlgoTools.cxx L791-872)
 // =============================================================================
 
-///  ?OCCT-aligned:  ?MEF (Map Edge= aces) =   ▔ ?
+///  ?OCCT-aligned:  ?MEF (Map Edge= aces) = 椤?椤?閳??
 /// OCCT BOPAlgo_FillIn3DParts::MapEdgesAndFaces (BOPAlgo_Tools.cxx L1479-1503)
 /// OCCT-aligned: IsTangentFace (BOPTools_AlgoTools).
 /// Checks if two faces are tangent (parallel normals + close distance).
@@ -535,15 +334,15 @@ pub(crate) fn build_edge_bounds(face_indices: &[usize], ds: &DS) -> std::collect
  bounds
 }
 
-///  ?OCCT-aligned: PointInFace   ?= ?FaceSampleData =UV domain  = ?
+///  ?OCCT-aligned: PointInFace  椤??= ?FaceSampleData =UV domain  = ?
 /// OCCT BOPTools_AlgoTools3D.cxx L885-917
 ///
 /// rcad  ? FaceSampleData  ?uv_domain =uv_centroid,= ?UV centroid
-///  ｆ =(OCCT =Hatcher =2D point-in-face, ?rcad =FaceSampleData
-///   = ?UV centroid = ? ?
+///  閿?=(OCCT =Hatcher =2D point-in-face, ?rcad =FaceSampleData
+///  椤?椤? ?UV centroid = ? ?
 // (point_in_face, classify_by_off_solid_edge removed  ?dead after ComputeState alignment)
 
-/// = =3D  ｅ ?u64 key,= € ?
+/// = =3D  閿??u64 key,= 椤掑倵鍋??
 pub(crate) fn quantize_pos(p: DVec3, tolerance: f64) -> u64 {
  let scale = 1.0 / tolerance;
  let x = (p.x * scale).round() as i64;
@@ -556,15 +355,15 @@ pub(crate) fn quantize_pos(p: DVec3, tolerance: f64) -> u64 {
  (xb << 42) | (yb << 21) | zb
 }
 
-///  ?OCCT-aligned: IsInternalFace   ?(BOPTools_AlgoTools.cxx L791-872)
+///  ?OCCT-aligned: IsInternalFace  椤??(BOPTools_AlgoTools.cxx L791-872)
 ///
-///  :
-/// Level 1:  == € =solid  ﹥   1  = ㈡ ?
-/// = ℃Ц= ?solid = ?
-/// Level 2: ComputeState == =  solid  ﹦ =  ?
+///  椤?
+/// Level 1:  椤?= 閳?=solid  閿?椤? 1  = 閵??
+/// 椤? 閳╁唭? ?solid = ?
+/// Level 2: ComputeState == =  solid  閿?= 椤愩儺鍞??
 /// = ?PointInFace =classify_point ?
 ///
-///  ╂ ? Some(true) =  ?solid = ?(IN)
+///  閳?? Some(true) =  ?solid = ?(IN)
 /// Some(false) =  ?solid = ?(OUT)
 /// None =  
 /// Check if a DS vertex lies on the boundary edge between sv/ev, and if so add it
@@ -784,7 +583,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
  });
  } }
  } else {
- // OCCT: edge not split → add as single segment (Builder_2.cxx L374-378).
+ // OCCT: edge not split 閳?add as single segment (Builder_2.cxx L374-378).
  let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface,
  Some(&ds.edges[ei].curve), Some(ds.edges[ei].t_range));
  let rep = ds.edge_on_face(ei, face_idx);
@@ -977,7 +776,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
  }
 
  // Section edges from pave_blocks_sc (OCCT: aMSCPB entries from MakeBlocks).
- // These edges are NOT in boundary_edges — they're registered only in
+ // These edges are NOT in boundary_edges 閳?they're registered only in
  // pave_blocks_sc.  OCCT adds each edge once to myShapes; the WireSplitter
  // determines the required orientation during loop walking.
  let mut sc_dedup: std::collections::HashSet<usize> = std::collections::HashSet::new();

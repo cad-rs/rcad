@@ -20,13 +20,127 @@ use rcad_kernel::projection::closest_point_on_surface;
 use rcad_kernel::topology::*;
 
 use crate::bopds::ds::{DS, ShapeOrigin};
-use crate::builder::FaceSampleData;
 use crate::pave_filler::PaveFiller;
 use crate::triangulate::triangulate_polygon;
 
-//  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+// (FaceSampleData inlined from builder/types.rs 鈥?internal to imprint module)
+#[derive(Debug, Clone)]
+pub(crate) struct FaceSampleData {
+ pub boundary: Vec<DVec3>,
+ pub surface: Surface3,
+ pub normal: DVec3,
+ pub inner_wires: Vec<Vec<DVec3>>,
+ pub uv_domain: Option<[f64; 4]>,
+ pub uv_centroid: Option<DVec2>,
+ pub sample_override: Option<DVec3>,
+ pub outer_circle_edges: Vec<(usize, Curve3)>,
+ pub seam_edge: Option<(usize, Curve3)>,
+ pub inner_wire_circle: Option<(usize, Curve3)>,
+}
+
+impl FaceSampleData {
+ pub(crate) fn sample_point(&self) -> DVec3 {
+ if let Some(pt) = self.sample_override {
+ return pt;
+ }
+ match &self.surface {
+ Surface3::Sphere(s) => {
+ let surface_pt = if let Some(uv) = self.uv_centroid {
+ s.point_at(uv.x, uv.y)
+ } else if !self.boundary.is_empty() {
+ self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
+ } else {
+ s.center + s.radius * DVec3::X
+ };
+ let to_center = (s.center - surface_pt).normalize_or_zero();
+ let inward = if to_center.length_squared() > 0.5 { to_center } else { -self.normal };
+ surface_pt + inward * (TOLERANCE_ABS * 10.0)
+ }
+ Surface3::Cylinder(c) => {
+ let surface_pt = if let Some(uv) = self.uv_centroid {
+ c.point_at(uv.x, uv.y)
+ } else if !self.boundary.is_empty() {
+ self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
+ } else {
+ c.origin + c.axis.normalize() * 0.5
+ };
+ let axis = c.axis.normalize();
+ let to_axis = c.origin + axis * (surface_pt - c.origin).dot(axis) - surface_pt;
+ let inward = to_axis.normalize_or_zero();
+ surface_pt + inward * (TOLERANCE_ABS * 5000.0)
+ }
+ Surface3::Torus(t) => {
+ let surface_pt = if let Some(uv) = self.uv_centroid {
+ t.point_at(uv.x, uv.y)
+ } else if !self.boundary.is_empty() {
+ self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
+ } else {
+ t.center + (t.major_radius + t.minor_radius) * DVec3::X
+ };
+ let axis = t.axis.normalize_or_zero();
+ let local = surface_pt - t.center;
+ let axial = local.dot(axis);
+ let radial = local - axial * axis;
+ let inward = if radial.length_squared() > TOLERANCE_FLOAT_ULTRA {
+ let tube_center = t.center + axial * axis + radial.normalize() * t.major_radius;
+ (tube_center - surface_pt).normalize_or_zero()
+ } else { -self.normal };
+ surface_pt + inward * (TOLERANCE_ABS * 10.0)
+ }
+ Surface3::Cone(c) => {
+ let surface_pt = if let Some(uv) = self.uv_centroid {
+ c.point_at(uv.x, uv.y)
+ } else if !self.boundary.is_empty() {
+ self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
+ } else { c.point_at(0.0, 1.0) };
+ let axis = c.axis_dir();
+ let local = surface_pt - c.apex;
+ let axial = local.dot(axis);
+ let axis_pt = c.apex + axis * axial;
+ let inward = (axis_pt - surface_pt).normalize_or_zero();
+ let inward = if inward.length_squared() > 0.5 { inward } else { -self.normal };
+ surface_pt + inward * (TOLERANCE_ABS * 5000.0)
+ }
+ _ => {
+ let boundary = &self.boundary;
+ let normal = self.normal;
+ let centroid = if boundary.len() >= 3 {
+ let n = normal.normalize();
+ let ref_vec = if n.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
+ let u = n.cross(ref_vec).normalize();
+ let v = n.cross(u).normalize();
+ let origin = boundary[0];
+ let count = boundary.len();
+ let mut area2 = 0.0_f64;
+ let mut cx6 = 0.0_f64;
+ let mut cy6 = 0.0_f64;
+ for i in 0..count {
+ let j = (i + 1) % count;
+ let xi = (boundary[i] - origin).dot(u);
+ let yi = (boundary[i] - origin).dot(v);
+ let xj = (boundary[j] - origin).dot(u);
+ let yj = (boundary[j] - origin).dot(v);
+ let cross = xi * yj - xj * yi;
+ area2 += cross;
+ cx6 += (xi + xj) * cross;
+ cy6 += (yi + yj) * cross;
+ }
+ if area2.abs() > 1e-30 {
+ origin + (cx6 / (3.0 * area2)) * u + (cy6 / (3.0 * area2)) * v
+ } else { boundary.iter().copied().sum::<DVec3>() / boundary.len() as f64 }
+ } else if boundary.is_empty() { DVec3::ZERO } else {
+ boundary.iter().copied().sum::<DVec3>() / boundary.len() as f64
+ };
+ centroid + normal * TOLERANCE_ABS * 10.0
+ }
+ }
+ }
+}
+
+
+//  閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?
 // Public types
-//  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//  閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?
 
 /// Result of imprinting `tool` geometry onto `target`.
 #[derive(Debug)]
@@ -71,9 +185,9 @@ pub struct GapOverlapReport {
  pub shared_faces: Vec<(usize, usize)>,
 }
 
-//  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//  閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?
 // Face imprinting
-//  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//  閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?
 
 /// Imprint the boundary of `tool` onto the faces of `target`.
 ///
@@ -94,7 +208,7 @@ pub fn imprint_shape(target: &BRep, tool: &BRep) -> ImprintResult {
  let mut filler = PaveFiller::new(&mut ds);
  filler.perform();
 
- // ✅ OCCT-aligned: FillImagesContainers — pre-build wire edge lists
+ // 閴?OCCT-aligned: FillImagesContainers 閳?pre-build wire edge lists
  ds.build_container_images(target);
 
  // Identify which DS faces came from target (ShapeA)
@@ -385,9 +499,9 @@ fn split_poly_2d(poly: &[[f64; 2]], sa: [f64; 2], sb: [f64; 2]) -> Vec<Vec<[f64;
  result
 }
 
-//  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//  閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?
 // Gap / overlap detection
-//  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//  閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?
 
 /// Detect gaps and overlaps between two BReps.
 ///
@@ -463,9 +577,9 @@ pub fn detect_gaps_overlaps(a: &BRep, b: &BRep, tolerance: f64) -> GapOverlapRep
  report
 }
 
-//  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//  閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?
 // Minimum distance
-//  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//  閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?
 
 /// Minimum distance between two `BRep`s.
 ///
@@ -530,9 +644,9 @@ pub fn min_distance(a: &BRep, b: &BRep) -> f64 {
  global_min
 }
 
-//  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//  閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?
 // Helpers
-//  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//  閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?閳?
 
 /// Collect (flat_face_idx, vertex_points, surface, normal) for every face in brep.
 fn collect_faces_with_surfaces(brep: &BRep) -> Vec<(usize, Vec<DVec3>, Surface3, DVec3)> {

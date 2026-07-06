@@ -32,15 +32,15 @@ pub enum ShapeType {
 pub enum BooleanError {
  /// Operation type is not valid for the boolean operation.
  InvalidOperation,
- /// OCCT-aligned: AlertTooFewArguments — fewer than 2 arguments.
+ /// OCCT-aligned: AlertTooFewArguments 闁?fewer than 2 arguments.
  TooFewArguments,
- /// OCCT-aligned: AlertNoFiller — PaveFiller not initialized.
+ /// OCCT-aligned: AlertNoFiller 闁?PaveFiller not initialized.
  NoFiller,
- /// OCCT-aligned: AlertBOPNotAllowed — non-licit operation for the arguments.
+ /// OCCT-aligned: AlertBOPNotAllowed 闁?non-licit operation for the arguments.
  BOPNotAllowed,
- /// OCCT-aligned: AlertBOPNotSet — operation type not set.
+ /// OCCT-aligned: AlertBOPNotSet 闁?operation type not set.
  BOPNotSet,
- /// OCCT-aligned: AlertEmptyShape — one argument is empty.
+ /// OCCT-aligned: AlertEmptyShape 闁?one argument is empty.
  EmptyShape,
  EmptyInput,
  MissingGeometry(&'static str),
@@ -89,108 +89,11 @@ impl std::fmt::Display for BooleanError {
 
 impl std::error::Error for BooleanError {}
 
-/// ✅ OCCT-aligned: classify   € ,  FaceSampleData ?
-/// ?WireFace + WireSegments + DS + face_idx  ?
-/// sample_point() / surface / normal / boundary  ?classify  €?
-#[derive(Debug, Clone)]
-pub struct FaceSampleData {
- pub boundary: Vec<DVec3>,
- pub surface: Surface3,
- pub normal: DVec3,
- pub inner_wires: Vec<Vec<DVec3>>,
- pub uv_domain: Option<[f64; 4]>,
- pub uv_centroid: Option<DVec2>,
- pub sample_override: Option<DVec3>,
- pub outer_circle_edges: Vec<(usize, Curve3)>,
- pub seam_edge: Option<(usize, Curve3)>,
- pub inner_wire_circle: Option<(usize, Curve3)>,
-}
+/// (FaceSampleData removed 閳?OCCT FClass2d + WireFace used instead)
 
-impl FaceSampleData { /// Returns a point slightly INSIDE the surface (toward the interior of the solid).
- ///  ?FaceSampleData::sample_point  =,=  WireFace   ?
- pub(crate) fn sample_point(&self) -> DVec3 {
- if let Some(pt) = self.sample_override {
- return pt;
- }
- match &self.surface {
- Surface3::Sphere(s) => {
- let surface_pt = if let Some(uv) = self.uv_centroid {
- let sp = s.point_at(uv.x, uv.y);
- eprintln!("[SAMPLE_PT] sphere uv_centroid=({:.4},{:.4})  ?3D=({:.4},{:.4},{:.4})",
- uv.x, uv.y, sp.x, sp.y, sp.z);
- sp
- } else if !self.boundary.is_empty() {
- self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
- } else {
- s.center + s.radius * DVec3::X
- };
- let to_center = (s.center - surface_pt).normalize_or_zero();
- let inward = if to_center.length_squared() > 0.5 { to_center } else { -self.normal };
- surface_pt + inward * (TOLERANCE_ABS * 10.0)
- }
- Surface3::Cylinder(c) => {
- use rcad_kernel::geom::SurfaceEval;
- let surface_pt = if let Some(uv) = self.uv_centroid {
- c.point_at(uv.x, uv.y)
- } else if !self.boundary.is_empty() {
- self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
- } else {
- c.origin + c.axis.normalize() * 0.5
- };
- let axis = c.axis.normalize();
- let to_axis = c.origin + axis * (surface_pt - c.origin).dot(axis) - surface_pt;
- let inward = to_axis.normalize_or_zero();
- surface_pt + inward * (TOLERANCE_ABS * 5000.0)
- }
- Surface3::Torus(t) => {
- use rcad_kernel::geom::SurfaceEval;
- let surface_pt = if let Some(uv) = self.uv_centroid {
- t.point_at(uv.x, uv.y)
- } else if !self.boundary.is_empty() {
- self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
- } else {
- t.center + (t.major_radius + t.minor_radius) * DVec3::X
- };
- let axis = t.axis.normalize_or_zero();
- let local = surface_pt - t.center;
- let axial = local.dot(axis);
- let radial = local - axial * axis;
- let inward = if radial.length_squared() > TOLERANCE_FLOAT_ULTRA {
- let tube_center = t.center + axial * axis + radial.normalize() * t.major_radius;
- (tube_center - surface_pt).normalize_or_zero()
- } else { -self.normal };
- surface_pt + inward * (TOLERANCE_ABS * 10.0)
- }
- Surface3::Cone(c) => {
- use rcad_kernel::geom::SurfaceEval;
- let surface_pt = if let Some(uv) = self.uv_centroid {
- c.point_at(uv.x, uv.y)
- } else if !self.boundary.is_empty() {
- self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
- } else { c.point_at(0.0, 1.0) };
- let axis = c.axis_dir();
- let local = surface_pt - c.apex;
- let axial = local.dot(axis);
- let axis_pt = c.apex + axis * axial;
- let inward = (axis_pt - surface_pt).normalize_or_zero();
- let inward = if inward.length_squared() > 0.5 { inward } else { -self.normal };
- surface_pt + inward * (TOLERANCE_ABS * 5000.0)
- }
- _ => {
- let centroid = if self.boundary.len() >= 3 {
- planar_polygon_centroid(&self.boundary, self.normal)
- } else if self.boundary.is_empty() { DVec3::ZERO } else {
- self.boundary.iter().copied().sum::<DVec3>() / self.boundary.len() as f64
- };
- centroid + self.normal * TOLERANCE_ABS * 10.0
- }
- }
- }
-}
-
-/// DEPRECATED: OCCT = ?  split_face + emit  €€= ?
-///  ュ =  FaceSampleData (classify)  ?WireFace (emit) ?
-/// OCCT-aligned: wire grouping result — ordered segment chains forming a face boundary.
+/// DEPRECATED: OCCT = ?  split_face + emit  闁逞屽厴閸? ?
+///  闁?=  FaceSampleData (classify)  ?WireFace (emit) ?
+/// OCCT-aligned: wire grouping result 闁?ordered segment chains forming a face boundary.
 #[derive(Clone)]
 pub struct WireFace {
  pub outer_wire: Vec<usize>,
@@ -199,22 +102,9 @@ pub struct WireFace {
  pub internal_wires: Vec<Vec<usize>>,
 }
 
-/// ✅ OCCT-aligned: collected sub-face result before classification.
+/// 闁?OCCT-aligned: collected sub-face result before classification.
 /// Holds either a wire-pipeline result (to emit via emit_wire_face) or
 /// a legacy split_face result (to emit via emit_face_with_origin).
-/// Used to defer classification until after all faces are split.
-#[derive(Clone)]
-pub(crate) enum CollectedFaceResult {
- Wire {
- wf: WireFace,
- segments: Vec<WireSegment>,
- vertex_positions: std::collections::HashMap<usize, DVec3>,
- fi: usize,
- flip: bool,
- origin: FaceOrigin,
- },
- Legacy(FaceSampleData, bool, FaceOrigin),
-}
 
 /// OCCT-aligned: Source of a virtual edge segment in the edge-to-wire pipeline.
 #[derive(Debug, Clone)]
@@ -247,7 +137,7 @@ pub(crate) struct WireSegment {
  /// wires. Set for seam segments on split-seam periodic surfaces.
  pub(crate) second_pcurve: Option<Curve2d>,
  pub(crate) first_pcurve: Option<Curve2d>,
- /// ✅ OCCT-aligned: vertex parameters on the pcurve (BRep_Tool::Parameter,
+ /// 闁?OCCT-aligned: vertex parameters on the pcurve (BRep_Tool::Parameter,
  /// WireSplitter_1.cxx L669). t_range[0] = start_vertex param,
  /// t_range[1] = end_vertex param.  vertex_uv evaluates pc.point_at(t).
  pub(crate) t_range: [f64; 2],
@@ -280,46 +170,6 @@ impl WireSegment {
 /// Guaranteed to lie inside a convex polygon and close to the interior of a
 /// concave polygon, unlike the boundary-vertex centroid which can be arbitrarily
 /// biased by uneven vertex distribution along the boundary.
-fn planar_polygon_centroid(boundary: &[DVec3], normal: DVec3) -> DVec3 {
- if boundary.len() < 3 {
- return if boundary.is_empty() {
- DVec3::ZERO
- } else {
- boundary.iter().copied().sum::<DVec3>() / boundary.len() as f64
- };
- }
-
- let n = normal.normalize();
- let ref_vec = if n.x.abs() < 0.9 { DVec3::X } else { DVec3::Y };
- let u = n.cross(ref_vec).normalize();
- let v = n.cross(u).normalize();
-
- let origin = boundary[0];
- let count = boundary.len();
-
- let mut area2 = 0.0_f64;
- let mut cx6 = 0.0_f64;
- let mut cy6 = 0.0_f64;
-
- for i in 0..count {
- let j = (i + 1) % count;
- let xi = (boundary[i] - origin).dot(u);
- let yi = (boundary[i] - origin).dot(v);
- let xj = (boundary[j] - origin).dot(u);
- let yj = (boundary[j] - origin).dot(v);
- let cross = xi * yj - xj * yi;
- area2 += cross;
- cx6 += (xi + xj) * cross;
- cy6 += (yi + yj) * cross;
- }
-
- if area2.abs() < 1e-30 {
- return boundary.iter().copied().sum::<DVec3>() / count as f64;
- }
-
- let inv = 1.0 / (3.0 * area2);
- origin + u * (cx6 * inv) + v * (cy6 * inv)
-}
 
 pub(crate) type FaceEntry = (
  Vec<(usize, bool)>, // outer wire: (edge_idx, forward)
@@ -334,7 +184,7 @@ pub(crate) type FaceEntry = (
  Vec<Vec<(usize, bool)>>, // internal wire edges (TopAbs_INTERNAL)
 );
 
-/// ✅ OCCT-aligned: intermediate result of the LOW-D phase (V+E+W creation)
+/// 闁?OCCT-aligned: intermediate result of the LOW-D phase (V+E+W creation)
 /// in the dimension-by-dimension pipeline.  Carries the data needed for
 /// HIGH-D face assembly from build_face_edges_and_wires to
 /// build_face_from_wire_edges, matching OCCT's separation of edge/wire
@@ -377,7 +227,7 @@ pub(crate) struct WireSegmentTopoDS {
  pub(crate) is_closed_on_face: bool,
  pub(crate) first_pcurve: Option<Curve2d>,
  pub(crate) second_pcurve: Option<Curve2d>,
- /// ✅ OCCT-aligned: vertex parameters on the pcurve (BRep_Tool::Parameter).
+ /// 闁?OCCT-aligned: vertex parameters on the pcurve (BRep_Tool::Parameter).
  /// t_range[0] = start_vertex param, t_range[1] = end_vertex param.
  pub(crate) t_range: [f64; 2],
 }
