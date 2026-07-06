@@ -230,13 +230,39 @@ pub fn cone_brep(
     ref_dir: DVec3,
     base_radius: f64,
     height: f64,
-) -> Result<BRep, BuildError> {
-    let center = validate_point("center", center)?;
-    let primitive = cone_primitive(base_radius, height)?;
+) -> Result<topods::BRep, BuildError> {
+    let c = validate_point("center", center)?;
+    let r = validate_positive("base_radius", base_radius)?;
+    let h = validate_positive("height", height)?;
     let (x_axis, y_axis, z_axis) = basis_from_axis_ref(axis, ref_dir)?;
-    let mut brep = BRep::from_primitive(primitive);
-    transform_brep(&mut brep, center, x_axis, y_axis, z_axis);
-    Ok(brep)
+    use rcad_kernel::topods::Orientation;
+    let rev = |sr: rcad_kernel::topods::ShapeRef| rcad_kernel::topods::ShapeRef { orientation: Orientation::Reversed, ..sr };
+    let p = |dx: f64, dy: f64, dz: f64| c + x_axis * dx + y_axis * dy + z_axis * dz;
+
+    let half = h * 0.5;
+    let mut t = topods::BRep::new();
+    let apex = t.add_tvertex(p(0.0, half, 0.0));
+    let base_c = t.add_tvertex(p(0.0, -half, 0.0));
+
+    let e_apex = t.add_tedge(None, apex, apex, [0.0, r * std::f64::consts::TAU]);
+    let e_base = t.add_tedge(None, base_c, base_c, [0.0, r * std::f64::consts::TAU]);
+    let seam_curve = Curve3::Line(Line3 { origin: p(0.0, half, 0.0), direction: z_axis });
+    let e_seam = t.add_tedge(Some(seam_curve), apex, base_c, [-half, half]);
+
+    let top_wire = t.add_twire(vec![e_seam, rev(e_base), rev(e_seam), e_apex]);
+    let bot_wire = t.add_twire(vec![e_base]);
+
+    let cone_surf = Surface3::Cone(rcad_kernel::geom::ConicalSurface {
+        apex: p(0.0, half, 0.0), axis: z_axis, radius: 0.0, half_angle_rad: (r / h).atan(),
+    });
+    let lateral = t.add_tface(Some(cone_surf), top_wire, vec![], Some(p(0.0, 0.0, r)), None, vec![], true);
+
+    let bot_surf = Surface3::Plane(Plane { origin: p(0.0, -half, 0.0), normal: -z_axis });
+    let bottom = t.add_tface(Some(bot_surf), bot_wire, vec![], Some(p(0.0, -half, 0.0)), None, vec![], false);
+
+    let shell = t.add_tshell(vec![lateral, bottom]);
+    t.add_tsolid(vec![shell]);
+    Ok(t)
 }
 
 pub fn make_cone_brep(
@@ -245,7 +271,7 @@ pub fn make_cone_brep(
     ref_dir: DVec3,
     base_radius: f64,
     height: f64,
-) -> Result<BRep, BuildError> {
+) -> Result<topods::BRep, BuildError> {
     cone_brep(center, axis, ref_dir, base_radius, height)
 }
 
