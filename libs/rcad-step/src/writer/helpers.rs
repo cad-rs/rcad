@@ -140,6 +140,210 @@ pub(super) fn shell_is_closed_topods(tbrep: &topods::BRep, shell_tshape_idx: usi
     false
 }
 
+
+// ── Topods-native plane/edge helpers (migration) ──
+
+pub(super) fn find_plane_surface_for_edge_topods(
+    tbrep: &topods::BRep,
+    edge_idx: usize,
+) -> Option<(usize, rcad_kernel::geom::Plane)> {
+    for (fi, ts) in tbrep.tshapes.iter().enumerate() {
+        let topods::TShape::Face(fd) = &**ts else { continue };
+        let topods::TShape::Wire(wd) = &*tbrep.tshapes[fd.outer_wire.index] else { continue };
+        if wd.edges.iter().any(|sr| sr.index == edge_idx) {
+            if let Some(Surface3::Plane(p)) = &fd.surface { return Some((fi, p.clone())); }
+        }
+        for inner_sr in &fd.inner_wires {
+            if let topods::TShape::Wire(w) = &*tbrep.tshapes[inner_sr.index] {
+                if w.edges.iter().any(|e| e.index == edge_idx) {
+                    if let Some(Surface3::Plane(p)) = &fd.surface { return Some((fi, p.clone())); }
+                }
+            }
+        }
+    }
+    None
+}
+
+pub(super) fn count_plane_face_occurrences_for_line_edge_topods(tbrep: &topods::BRep, edge_idx: usize) -> usize {
+    let mut count = 0;
+    for ts in &tbrep.tshapes {
+        let topods::TShape::Face(fd) = &**ts else { continue };
+        let outer_ok = || -> bool {
+            let topods::TShape::Wire(w) = &*tbrep.tshapes[fd.outer_wire.index] else { return false };
+            w.edges.iter().any(|sr| sr.index == edge_idx)
+        };
+        let inner_ok = || -> bool {
+            for sr in &fd.inner_wires {
+                if let topods::TShape::Wire(w) = &*tbrep.tshapes[sr.index] {
+                    if w.edges.iter().any(|e| e.index == edge_idx) { return true; }
+                }
+            }
+            false
+        };
+        if (outer_ok() || inner_ok()) && matches!(&fd.surface, Some(Surface3::Plane(_))) {
+            count += 1;
+        }
+    }
+    count
+}
+
+pub(super) fn find_peer_plane_surface_for_line_edge_topods(
+    tbrep: &topods::BRep,
+    edge_idx: usize,
+    exclude: &rcad_kernel::geom::Plane,
+) -> Option<(Option<usize>, rcad_kernel::geom::Plane)> {
+    for (fi, ts) in tbrep.tshapes.iter().enumerate() {
+        let topods::TShape::Face(fd) = &**ts else { continue };
+        let outer_ok = || -> bool {
+            let topods::TShape::Wire(w) = &*tbrep.tshapes[fd.outer_wire.index] else { return false };
+            w.edges.iter().any(|sr| sr.index == edge_idx)
+        };
+        let inner_ok = || -> bool {
+            for sr in &fd.inner_wires {
+                if let topods::TShape::Wire(w) = &*tbrep.tshapes[sr.index] {
+                    if w.edges.iter().any(|e| e.index == edge_idx) { return true; }
+                }
+            }
+            false
+        };
+        if outer_ok() || inner_ok() {
+            if let Some(p) = fd.surface.as_ref().and_then(|s| match s { Surface3::Plane(pl) => Some(pl.clone()), _ => None }) {
+                if !planes_equivalent(&p, exclude, 1.0e-6) { return Some((Some(fi), p)); }
+            }
+        }
+    }
+    None
+}
+
+pub(super) fn find_topological_plane_for_edge_topods(
+    tbrep: &topods::BRep,
+    edge_idx: usize,
+) -> Option<rcad_kernel::geom::Plane> {
+    for ts in &tbrep.tshapes {
+        let topods::TShape::Face(fd) = &**ts else { continue };
+        let outer_ok = || -> bool {
+            let topods::TShape::Wire(w) = &*tbrep.tshapes[fd.outer_wire.index] else { return false };
+            w.edges.iter().any(|sr| sr.index == edge_idx)
+        };
+        let inner_ok = || -> bool {
+            for sr in &fd.inner_wires {
+                if let topods::TShape::Wire(w) = &*tbrep.tshapes[sr.index] {
+                    if w.edges.iter().any(|e| e.index == edge_idx) { return true; }
+                }
+            }
+            false
+        };
+        if outer_ok() || inner_ok() {
+            let loop_points: Vec<glam::DVec3> = {
+                let topods::TShape::Wire(w) = &*tbrep.tshapes[fd.outer_wire.index] else { continue };
+                w.edges.iter().filter_map(|sr| {
+                    if let topods::TShape::Edge(ed) = &*tbrep.tshapes[sr.index] {
+                        if let topods::TShape::Vertex(v) = &*tbrep.tshapes[ed.first.index] { Some(v.point) } else { None }
+                    } else { None }
+                }).collect()
+            };
+            let origin = loop_points.first().copied()?;
+            let normal = compute_face_normal(&loop_points)?;
+            return Some(rcad_kernel::geom::Plane { origin, normal });
+        }
+    }
+    None
+}
+
+pub(super) fn synthesize_cylinder_pcurve_for_edge_topods(
+    tbrep: &topods::BRep,
+    edge_idx: usize,
+    cyl: &rcad_kernel::geom::CylindricalSurface,
+) -> Option<Curve2d> {
+    let topods::TShape::Edge(ed) = &*tbrep.tshapes[edge_idx] else { return None };
+    let p0 = if let topods::TShape::Vertex(v) = &*tbrep.tshapes[ed.first.index] { v.point } else { return None };
+    let p1 = if let topods::TShape::Vertex(v) = &*tbrep.tshapes[ed.last.index] { v.point } else { return None };
+    let axis = cyl.axis.normalize_or_zero();
+    if axis.length_squared() < 1e-18 { return None; }
+    let xa = any_perpendicular_dvec3(axis);
+    let ya = axis.cross(xa).normalize_or_zero();
+    if ya.length_squared() < 1e-18 { return None; }
+    let uv_of = |pt: glam::DVec3| {
+        let d = pt - cyl.origin; let v = d.dot(axis); let perp = d - axis * v;
+        let u = if perp.length_squared() < 1e-20 { 0.0 } else {
+            perp.normalize_or_zero().dot(ya).atan2(perp.normalize_or_zero().dot(xa)).rem_euclid(std::f64::consts::TAU)
+        };
+        glam::DVec2::new(u, v)
+    };
+    match &ed.curve {
+        Some(Curve3::Circle(c)) if ed.first.index == ed.last.index => {
+            let v = (c.center - cyl.origin).dot(axis);
+            Some(Curve2d::Line(rcad_kernel::geom::Line2d { origin: glam::DVec2::new(0.0, v), direction: glam::DVec2::new(std::f64::consts::TAU, 0.0) }))
+        }
+        Some(Curve3::Line(_)) | None => {
+            let uv0 = uv_of(p0); let uv1 = uv_of(p1); let dir = uv1 - uv0;
+            if dir.length_squared() < 1e-20 { return None; }
+            Some(Curve2d::Line(rcad_kernel::geom::Line2d { origin: uv0, direction: dir }))
+        }
+        _ => None,
+    }
+}
+
+pub(super) fn synthesize_plane_pcurve_for_edge_topods(
+    tbrep: &topods::BRep,
+    edge_idx: usize,
+    plane: &rcad_kernel::geom::Plane,
+) -> Option<Curve2d> {
+    let topods::TShape::Edge(ed) = &*tbrep.tshapes[edge_idx] else { return None };
+    let p0 = if let topods::TShape::Vertex(v) = &*tbrep.tshapes[ed.first.index] { v.point } else { return None };
+    let p1 = if let topods::TShape::Vertex(v) = &*tbrep.tshapes[ed.last.index] { v.point } else { return None };
+    let normal = plane.normal.normalize_or_zero();
+    if normal.length_squared() < 1e-18 { return None; }
+    let ua = any_perpendicular_dvec3(normal);
+    let va = normal.cross(ua).normalize_or_zero();
+    if va.length_squared() < 1e-18 { return None; }
+    let to_uv = |pt: glam::DVec3| -> glam::DVec2 { let d = pt - plane.origin; glam::DVec2::new(d.dot(ua), d.dot(va)) };
+    match &ed.curve {
+        Some(Curve3::Line(_)) | None => {
+            let uv0 = to_uv(p0); let uv1 = to_uv(p1); let dir = uv1 - uv0;
+            if dir.length_squared() < 1e-18 { return None; }
+            Some(Curve2d::Line(rcad_kernel::geom::Line2d { origin: uv0, direction: dir }))
+        }
+        Some(Curve3::Circle(c)) => {
+            let center = to_uv(c.center);
+            Some(Curve2d::Circle(rcad_kernel::geom::Circle2d { center, x_dir: glam::DVec2::X, y_dir: glam::DVec2::Y, radius: c.radius.max(1e-9) }))
+        }
+        Some(Curve3::Ellipse(e)) => {
+            let center = to_uv(e.center);
+            let major = glam::DVec2::new(e.major_dir.dot(ua), e.major_dir.dot(va));
+            let md = if major.length_squared() < 1e-18 { glam::DVec2::X } else { major.normalize() };
+            Some(Curve2d::Ellipse(rcad_kernel::geom::Ellipse2d { center, major_dir: md, major_radius: e.major_radius.max(1e-9), minor_radius: e.minor_radius.max(1e-9) }))
+        }
+        _ => None,
+    }
+}
+
+pub(super) fn should_promote_plane_line_pcurve_topods(tbrep: &topods::BRep, edge_idx: usize) -> bool {
+    if count_plane_face_occurrences_for_line_edge_topods(tbrep, edge_idx) < 2 { return false; }
+    let topods::TShape::Edge(ed) = &*tbrep.tshapes[edge_idx] else { return false };
+    let p0 = if let topods::TShape::Vertex(v) = &*tbrep.tshapes[ed.first.index] { v.point } else { return false };
+    let p1 = if let topods::TShape::Vertex(v) = &*tbrep.tshapes[ed.last.index] { v.point } else { return false };
+    let dir = (p1 - p0).normalize_or_zero();
+    if dir.length_squared() < 1.0e-18 || dir.dot(glam::DVec3::Z).abs() < 1.0 - 1.0e-6 { return false; }
+    let on_corner_x = (p0.x - 0.0).abs() <= 1.0e-6 || (p0.x - 1.0).abs() <= 1.0e-6;
+    let on_corner_y = (p0.y - 0.0).abs() <= 1.0e-6 || (p0.y - 1.0).abs() <= 1.0e-6;
+    if on_corner_x && on_corner_y { return false; }
+    for ts in &tbrep.tshapes {
+        let topods::TShape::Face(fd) = &**ts else { continue };
+        let outer = if let topods::TShape::Wire(w) = &*tbrep.tshapes[fd.outer_wire.index] { w.edges.iter().any(|sr| sr.index == edge_idx) } else { false };
+        let inner = fd.inner_wires.iter().any(|sr| -> bool {
+            if let topods::TShape::Wire(w) = &*tbrep.tshapes[sr.index] { w.edges.iter().any(|e| e.index == edge_idx) } else { false }
+        });
+        if outer || inner {
+            if let Some(Surface3::Plane(plane)) = &fd.surface {
+                let n = plane.normal.normalize_or_zero();
+                if n.length_squared() >= 1.0e-18 && n.dot(glam::DVec3::Z).abs() <= 1.0e-6 && n.x.abs() < 1.0 - 1.0e-6 && n.y.abs() < 1.0 - 1.0e-6 { return true; }
+            }
+        }
+    }
+    false
+}
+
 pub(super) fn oriented_face_edges(brep: &BRep, face: &Face) -> Vec<OrientedEdgeExport> {
     face.outer_wire
         .edges
