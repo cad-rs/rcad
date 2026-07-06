@@ -23,6 +23,7 @@ use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::geom::{Curve3, Line3, Surface3};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+use rcad_kernel::topods;
 use std::collections::HashMap;
 
 /// Default tolerance for geometric operations.
@@ -1516,4 +1517,16 @@ mod tests {
         assert!(s.contains("face 5"));
         assert!(s.contains("Sphere"));
     }
+}
+
+// ── Topods-native wrappers ──
+
+pub fn draft_solid_topods(brep: &topods::BRep, params: &DraftParams) -> Result<topods::BRep, DraftError> {
+    let old = rcad_kernel::BRep::from_topods(brep);
+    draft_solid(&old, params).map(|b| b.to_topods())
+}
+
+pub fn draft_solid_advanced_topods(brep: &topods::BRep, params: &DraftParamsAdvanced) -> Result<topods::BRep, DraftError> {
+    let old = rcad_kernel::BRep::from_topods(brep);
+    draft_solid_advanced(&old, params).map(|b| b.to_topods())
 }
