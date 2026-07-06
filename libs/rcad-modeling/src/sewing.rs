@@ -444,8 +444,27 @@ mod tests {
         );
     }
 
-    #[test]
-    fn sew_empty_input() {
+/// Topods-native result for sewing operations.
+#[derive(Debug, Clone)]
+pub struct SewingResultTopods {
+    pub brep: topods::BRep,
+    pub stitched_pairs: usize,
+    pub free_edges: Vec<usize>,
+}
+
+/// Topods-native: merge multiple BReps into a single solid by stitching edges.
+pub fn sew_shells_topods(breps: &[topods::BRep], tolerance: f64) -> SewingResultTopods {
+    let old: Vec<BRep> = breps.iter().map(rcad_kernel::BRep::from_topods).collect();
+    let r = sew_shells(&old, tolerance);
+    SewingResultTopods {
+        brep: r.brep.to_topods(),
+        stitched_pairs: r.stitched_pairs,
+        free_edges: r.free_edges,
+    }
+}
+
+#[test]
+fn sew_empty_input() {
         let result = sew_shells(&[], 1e-6);
         assert_eq!(result.stitched_pairs, 0);
         assert!(result.brep.solids.is_empty());
