@@ -34,7 +34,7 @@
 //! | Point / length (strict) | [`TOLERANCE_ABS`], [`TOLERANCE_ABS_SQ`] | Coincidence, param equality in analytic code, kernel-scale residuals |
 //! | Point / length (mesh / merge) | [`TOLERANCE_MESH_LEGACY`], [`TOLERANCE_PARAM_LEGACY`], [`UV_POLYLINE_TRIM_LEGACY_SQ`], [`UV_TRIM_CLOSED_REL_DOM`], [`uv_polyline_trim_closed_len_sq_from_uv_poly`] | Triangle merge, UV legs, legacy trim bounds; scaled UV closure (phase C) |
 //! | Point / length (slacks) | [`TOLERANCE_PLANE_DIST_RELAX`], [`TOLERANCE_COORD_SUB`], [`TOLERANCE_LINEAR_RELAX_8`] | Coplanar slack, test nudges, one-decade-relaxed linear |
-//! | Angle / direction (numeric) | [`TOLERANCE_ANG`], [`vectors_parallel`] | Parallel axes, `sin(angle)` near零, cross-product magnitude in **intersection / construction** (FP noise) |
+//! | Angle / direction (numeric) | [`TOLERANCE_ANG`], [`vectors_parallel`] | Parallel axes, `sin(angle)` near , cross-product magnitude in **intersection / construction** (FP noise) |
 //! | Angle (heuristic radians) | [`TOLERANCE_ANG_HEURISTIC_RAD`] | Coarse “same cone / same domain” angles in boolean-style code **not** tied to cross magnitude |
 //! | Direction dot heuristics | [`TOLERANCE_DOT_NEARLY_PARALLEL`] | Almost-parallel **unit** normals via `n1·n2` |
 //! | Boolean fuzzy ladder | [`TOLERANCE_RETRY_LADDER_MID`], [`TOLERANCE_RETRY_LADDER_COARSE`], [`TOLERANCE_AREA_REL`] | Robust BOP retry enlargement steps |
@@ -64,8 +64,8 @@
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::{
-    edge_tolerance as kernel_edge_tolerance, face_tolerance as kernel_face_tolerance, model_tolerance,
-    vertex_tolerance as kernel_vertex_tolerance, BRep, CONFUSION,
+ edge_tolerance as kernel_edge_tolerance, face_tolerance as kernel_face_tolerance, model_tolerance,
+ vertex_tolerance as kernel_vertex_tolerance, BRep, CONFUSION,
 };
 use tracing::debug;
 
@@ -176,30 +176,30 @@ pub const TOLERANCE_AXIS_CORNER_SLACK: f64 = 2e-2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToleranceLevel {
-    /// Strict tolerance for high-precision operations (e.g., intersection points).
-    /// Scale factor: 1.0
-    Strict,
-    /// Normal tolerance for general operations (e.g., point classification).
-    /// Scale factor: 10.0
-    Normal,
-    /// Relaxed tolerance for approximate operations (e.g., bounding box checks).
-    /// Scale factor: 100.0
-    Relaxed,
-    /// Very relaxed tolerance for coarse operations (e.g., AABB pre-filter).
-    /// Scale factor: 1000.0
-    Coarse,
+ /// Strict tolerance for high-precision operations (e.g., intersection points).
+ /// Scale factor: 1.0
+ Strict,
+ /// Normal tolerance for general operations (e.g., point classification).
+ /// Scale factor: 10.0
+ Normal,
+ /// Relaxed tolerance for approximate operations (e.g., bounding box checks).
+ /// Scale factor: 100.0
+ Relaxed,
+ /// Very relaxed tolerance for coarse operations (e.g., AABB pre-filter).
+ /// Scale factor: 1000.0
+ Coarse,
 }
 
 impl ToleranceLevel {
-    /// Get the scale factor for this tolerance level.
-    pub fn scale_factor(self) -> f64 {
-        match self {
-            ToleranceLevel::Strict => 1.0,
-            ToleranceLevel::Normal => 10.0,
-            ToleranceLevel::Relaxed => 100.0,
-            ToleranceLevel::Coarse => 1000.0,
-        }
-    }
+ /// Get the scale factor for this tolerance level.
+ pub fn scale_factor(self) -> f64 {
+ match self {
+ ToleranceLevel::Strict => 1.0,
+ ToleranceLevel::Normal => 10.0,
+ ToleranceLevel::Relaxed => 100.0,
+ ToleranceLevel::Coarse => 1000.0,
+ }
+ }
 }
 
 /// Adaptive tolerance context based on model scale.
@@ -210,104 +210,104 @@ impl ToleranceLevel {
 /// appropriately.
 #[derive(Debug, Clone, Copy)]
 pub struct AdaptiveTolerance {
-    /// Base tolerance (typically TOLERANCE_ABS for unit-scale models).
-    pub base_tolerance: f64,
-    /// Model scale factor (e.g., bounding box diagonal).
-    pub model_scale: f64,
-    /// Minimum tolerance to prevent excessive precision requirements.
-    pub min_tolerance: f64,
-    /// Maximum tolerance to prevent excessive looseness.
-    pub max_tolerance: f64,
+ /// Base tolerance (typically TOLERANCE_ABS for unit-scale models).
+ pub base_tolerance: f64,
+ /// Model scale factor (e.g., bounding box diagonal).
+ pub model_scale: f64,
+ /// Minimum tolerance to prevent excessive precision requirements.
+ pub min_tolerance: f64,
+ /// Maximum tolerance to prevent excessive looseness.
+ pub max_tolerance: f64,
 }
 
 impl Default for AdaptiveTolerance {
-    fn default() -> Self {
-        Self {
-            base_tolerance: TOLERANCE_ABS,
-            model_scale: 1.0,
-            min_tolerance: TOLERANCE_LEN_MIN,
-            max_tolerance: TOLERANCE_ADAPTIVE_MAX,
-        }
-    }
+ fn default() -> Self {
+ Self {
+ base_tolerance: TOLERANCE_ABS,
+ model_scale: 1.0,
+ min_tolerance: TOLERANCE_LEN_MIN,
+ max_tolerance: TOLERANCE_ADAPTIVE_MAX,
+ }
+ }
 }
 
 impl AdaptiveTolerance {
-    /// Create a new adaptive tolerance with default base tolerance.
-    pub fn new() -> Self {
-        Self::default()
-    }
+ /// Create a new adaptive tolerance with default base tolerance.
+ pub fn new() -> Self {
+ Self::default()
+ }
 
-    /// Create a new adaptive tolerance from a BRep's bounding box.
-    pub fn from_brep(brep: &BRep) -> Self {
-        let scale = compute_model_scale(brep);
-        Self::from_scale(scale)
-    }
+ /// Create a new adaptive tolerance from a BRep's bounding box.
+ pub fn from_brep(brep: &BRep) -> Self {
+ let scale = compute_model_scale(brep);
+ Self::from_scale(scale)
+ }
 
-    /// Create a new adaptive tolerance from two BReps' combined bounding box.
-    pub fn from_two_breps(a: &BRep, b: &BRep) -> Self {
-        let scale_a = compute_model_scale(a);
-        let scale_b = compute_model_scale(b);
-        Self::from_scale(scale_a.max(scale_b))
-    }
+ /// Create a new adaptive tolerance from two BReps' combined bounding box.
+ pub fn from_two_breps(a: &BRep, b: &BRep) -> Self {
+ let scale_a = compute_model_scale(a);
+ let scale_b = compute_model_scale(b);
+ Self::from_scale(scale_a.max(scale_b))
+ }
 
-    /// Create a new adaptive tolerance from a known scale.
-    pub fn from_scale(model_scale: f64) -> Self {
-        let mut ctx = Self::default();
-        ctx.model_scale = model_scale.max(TOLERANCE_MODEL_SCALE_MIN);
-        ctx
-    }
+ /// Create a new adaptive tolerance from a known scale.
+ pub fn from_scale(model_scale: f64) -> Self {
+ let mut ctx = Self::default();
+ ctx.model_scale = model_scale.max(TOLERANCE_MODEL_SCALE_MIN);
+ ctx
+ }
 
-    /// Get the effective tolerance for a specific level.
-    pub fn tolerance(self, level: ToleranceLevel) -> f64 {
-        let raw = self.base_tolerance * level.scale_factor() * self.model_scale;
-        raw.clamp(self.min_tolerance, self.max_tolerance)
-    }
+ /// Get the effective tolerance for a specific level.
+ pub fn tolerance(self, level: ToleranceLevel) -> f64 {
+ let raw = self.base_tolerance * level.scale_factor() * self.model_scale;
+ raw.clamp(self.min_tolerance, self.max_tolerance)
+ }
 
-    /// Get the squared tolerance for a specific level.
-    pub fn tolerance_sq(self, level: ToleranceLevel) -> f64 {
-        let t = self.tolerance(level);
-        t * t
-    }
+ /// Get the squared tolerance for a specific level.
+ pub fn tolerance_sq(self, level: ToleranceLevel) -> f64 {
+ let t = self.tolerance(level);
+ t * t
+ }
 
-    /// Get the angular tolerance (not affected by model scale).
-    pub fn angular_tolerance(self, level: ToleranceLevel) -> f64 {
-        TOLERANCE_ANG * level.scale_factor()
-    }
+ /// Get the angular tolerance (not affected by model scale).
+ pub fn angular_tolerance(self, level: ToleranceLevel) -> f64 {
+ TOLERANCE_ANG * level.scale_factor()
+ }
 
-    /// Check if two points coincide at the given tolerance level.
-    pub fn points_coincide_at(self, a: DVec3, b: DVec3, level: ToleranceLevel) -> bool {
-        (a - b).length_squared() < self.tolerance_sq(level)
-    }
+ /// Check if two points coincide at the given tolerance level.
+ pub fn points_coincide_at(self, a: DVec3, b: DVec3, level: ToleranceLevel) -> bool {
+ (a - b).length_squared() < self.tolerance_sq(level)
+ }
 
-    /// Check if a vector is zero at the given tolerance level.
-    pub fn is_zero_vec_at(self, v: DVec3, level: ToleranceLevel) -> bool {
-        v.length_squared() < self.tolerance_sq(level)
-    }
+ /// Check if a vector is zero at the given tolerance level.
+ pub fn is_zero_vec_at(self, v: DVec3, level: ToleranceLevel) -> bool {
+ v.length_squared() < self.tolerance_sq(level)
+ }
 
-    /// Check if two parameters are equal at the given tolerance level.
-    pub fn params_equal_at(self, a: f64, b: f64, level: ToleranceLevel) -> bool {
-        (a - b).abs() < self.tolerance(level)
-    }
+ /// Check if two parameters are equal at the given tolerance level.
+ pub fn params_equal_at(self, a: f64, b: f64, level: ToleranceLevel) -> bool {
+ (a - b).abs() < self.tolerance(level)
+ }
 
-    /// Get tolerance for point coincidence (strict level).
-    pub fn coincidence(self) -> f64 {
-        self.tolerance(ToleranceLevel::Strict)
-    }
+ /// Get tolerance for point coincidence (strict level).
+ pub fn coincidence(self) -> f64 {
+ self.tolerance(ToleranceLevel::Strict)
+ }
 
-    /// Get tolerance for classification operations (normal level).
-    pub fn classification(self) -> f64 {
-        self.tolerance(ToleranceLevel::Normal)
-    }
+ /// Get tolerance for classification operations (normal level).
+ pub fn classification(self) -> f64 {
+ self.tolerance(ToleranceLevel::Normal)
+ }
 
-    /// Get tolerance for boundary checks (relaxed level).
-    pub fn boundary(self) -> f64 {
-        self.tolerance(ToleranceLevel::Relaxed)
-    }
+ /// Get tolerance for boundary checks (relaxed level).
+ pub fn boundary(self) -> f64 {
+ self.tolerance(ToleranceLevel::Relaxed)
+ }
 
-    /// Get tolerance for AABB pre-filtering (coarse level).
-    pub fn coarse(self) -> f64 {
-        self.tolerance(ToleranceLevel::Coarse)
-    }
+ /// Get tolerance for AABB pre-filtering (coarse level).
+ pub fn coarse(self) -> f64 {
+ self.tolerance(ToleranceLevel::Coarse)
+ }
 }
 
 /// Scale-aware tolerances plus an optional workspace linear band (phase B).
@@ -316,78 +316,78 @@ impl AdaptiveTolerance {
 /// [`combined_linear_tol_models`] to form `max(workspace, adaptive, Tol(…))`.
 #[derive(Debug, Clone, Copy)]
 pub struct ToleranceContext {
-    /// Characteristic-size–scaled tolerances.
-    pub adaptive: AdaptiveTolerance,
-    /// Extra linear band (e.g. user boolean fuzzy). Negative values are clamped in accessors.
-    ///
-    /// [`Self::workspace_linear`] returns `max(adaptive.tolerance(level), workspace_fuzzy)`.
-    pub workspace_fuzzy: f64,
+ /// Characteristic-size–scaled tolerances.
+ pub adaptive: AdaptiveTolerance,
+ /// Extra linear band (e.g. user boolean fuzzy). Negative values are clamped in accessors.
+ ///
+ /// [`Self::workspace_linear`] returns `max(adaptive.tolerance(level), workspace_fuzzy)`.
+ pub workspace_fuzzy: f64,
 }
 
 impl Default for ToleranceContext {
-    fn default() -> Self {
-        Self {
-            adaptive: AdaptiveTolerance::default(),
-            workspace_fuzzy: 0.0,
-        }
-    }
+ fn default() -> Self {
+ Self {
+ adaptive: AdaptiveTolerance::default(),
+ workspace_fuzzy: 0.0,
+ }
+ }
 }
 
 impl ToleranceContext {
-    pub fn new(adaptive: AdaptiveTolerance, workspace_fuzzy: f64) -> Self {
-        Self {
-            adaptive,
-            workspace_fuzzy,
-        }
-    }
+ pub fn new(adaptive: AdaptiveTolerance, workspace_fuzzy: f64) -> Self {
+ Self {
+ adaptive,
+ workspace_fuzzy,
+ }
+ }
 
-    pub fn from_adaptive(adaptive: AdaptiveTolerance) -> Self {
-        Self::new(adaptive, 0.0)
-    }
+ pub fn from_adaptive(adaptive: AdaptiveTolerance) -> Self {
+ Self::new(adaptive, 0.0)
+ }
 
-    pub fn from_brep(brep: &BRep) -> Self {
-        Self::from_adaptive(AdaptiveTolerance::from_brep(brep))
-    }
+ pub fn from_brep(brep: &BRep) -> Self {
+ Self::from_adaptive(AdaptiveTolerance::from_brep(brep))
+ }
 
-    pub fn from_two_breps(a: &BRep, b: &BRep) -> Self {
-        Self::from_adaptive(AdaptiveTolerance::from_two_breps(a, b))
-    }
+ pub fn from_two_breps(a: &BRep, b: &BRep) -> Self {
+ Self::from_adaptive(AdaptiveTolerance::from_two_breps(a, b))
+ }
 
-    pub fn from_scale(model_scale: f64) -> Self {
-        Self::from_adaptive(AdaptiveTolerance::from_scale(model_scale))
-    }
+ pub fn from_scale(model_scale: f64) -> Self {
+ Self::from_adaptive(AdaptiveTolerance::from_scale(model_scale))
+ }
 
-    #[inline]
-    fn wf_nonnegative(&self) -> f64 {
-        self.workspace_fuzzy.max(0.0)
-    }
+ #[inline]
+ fn wf_nonnegative(&self) -> f64 {
+ self.workspace_fuzzy.max(0.0)
+ }
 
-    /// Linear tolerance from [`AdaptiveTolerance`] only (ignores [`Self::workspace_fuzzy`]).
-    #[inline]
-    pub fn adaptive_linear(&self, level: ToleranceLevel) -> f64 {
-        self.adaptive.tolerance(level)
-    }
+ /// Linear tolerance from [`AdaptiveTolerance`] only (ignores [`Self::workspace_fuzzy`]).
+ #[inline]
+ pub fn adaptive_linear(&self, level: ToleranceLevel) -> f64 {
+ self.adaptive.tolerance(level)
+ }
 
-    /// `max(adaptive_linear(level), workspace_fuzzy)` — for fuzzy-capable pipelines (booleans).
-    #[inline]
-    pub fn workspace_linear(&self, level: ToleranceLevel) -> f64 {
-        let adaptive = self.adaptive.tolerance(level);
-        let wf = self.wf_nonnegative();
-        let result = adaptive.max(wf);
-        if wf > adaptive {
-            debug!(
-                    "ToleranceContext::workspace_linear: workspace fuzzy ({:.3e}) dominates adaptive ({:.3e}) at level {:?} → {:.3e}",
-                    wf, adaptive, level, result,
-                );
-        }
-        result
-    }
+ /// `max(adaptive_linear(level), workspace_fuzzy)` — for fuzzy-capable pipelines (booleans).
+ #[inline]
+ pub fn workspace_linear(&self, level: ToleranceLevel) -> f64 {
+ let adaptive = self.adaptive.tolerance(level);
+ let wf = self.wf_nonnegative();
+ let result = adaptive.max(wf);
+ if wf > adaptive {
+ debug!(
+ "ToleranceContext::workspace_linear: workspace fuzzy ({:.3e}) dominates adaptive ({:.3e}) at level {:?} → {:.3e}",
+ wf, adaptive, level, result,
+ );
+ }
+ result
+ }
 
-    /// Angular tolerance at `level` (algorithms-layer [`TOLERANCE_ANG`] scaling).
-    #[inline]
-    pub fn angular(&self, level: ToleranceLevel) -> f64 {
-        self.adaptive.angular_tolerance(level)
-    }
+ /// Angular tolerance at `level` (algorithms-layer [`TOLERANCE_ANG`] scaling).
+ #[inline]
+ pub fn angular(&self, level: ToleranceLevel) -> f64 {
+ self.adaptive.angular_tolerance(level)
+ }
 }
 
 /// OCCT-style `max(base, Tol(face_a), Tol(face_b))` with optional operands.
@@ -396,55 +396,55 @@ impl ToleranceContext {
 /// [`ToleranceContext::adaptive_linear`]. A missing face uses [`CONFUSION`] for that side only.
 #[inline]
 pub fn combined_linear_tol_for_faces(
-    ctx: &ToleranceContext,
-    level: ToleranceLevel,
-    use_workspace: bool,
-    brep_a: &BRep,
-    face_a: Option<usize>,
-    brep_b: &BRep,
-    face_b: Option<usize>,
+ ctx: &ToleranceContext,
+ level: ToleranceLevel,
+ use_workspace: bool,
+ brep_a: &BRep,
+ face_a: Option<usize>,
+ brep_b: &BRep,
+ face_b: Option<usize>,
 ) -> f64 {
-    let base = if use_workspace {
-        ctx.workspace_linear(level)
-    } else {
-        ctx.adaptive_linear(level)
-    };
-    let ta = face_a
-        .map(|i| kernel_face_tolerance(brep_a, i))
-        .unwrap_or(CONFUSION);
-    let tb = face_b
-        .map(|i| kernel_face_tolerance(brep_b, i))
-        .unwrap_or(CONFUSION);
-    base.max(ta).max(tb)
+ let base = if use_workspace {
+ ctx.workspace_linear(level)
+ } else {
+ ctx.adaptive_linear(level)
+ };
+ let ta = face_a
+ .map(|i| kernel_face_tolerance(brep_a, i))
+ .unwrap_or(CONFUSION);
+ let tb = face_b
+ .map(|i| kernel_face_tolerance(brep_b, i))
+ .unwrap_or(CONFUSION);
+ base.max(ta).max(tb)
 }
 
 /// `max(base, model_tolerance(a), model_tolerance(b))` where `base` is chosen like
 /// [`combined_linear_tol_for_faces`].
 #[inline]
 pub fn combined_linear_tol_models(
-    ctx: &ToleranceContext,
-    level: ToleranceLevel,
-    use_workspace: bool,
-    brep_a: &BRep,
-    brep_b: &BRep,
+ ctx: &ToleranceContext,
+ level: ToleranceLevel,
+ use_workspace: bool,
+ brep_a: &BRep,
+ brep_b: &BRep,
 ) -> f64 {
-    let base = if use_workspace {
-        ctx.workspace_linear(level)
-    } else {
-        ctx.adaptive_linear(level)
-    };
-    base.max(model_tolerance(brep_a)).max(model_tolerance(brep_b))
+ let base = if use_workspace {
+ ctx.workspace_linear(level)
+ } else {
+ ctx.adaptive_linear(level)
+ };
+ base.max(model_tolerance(brep_a)).max(model_tolerance(brep_b))
 }
 
 /// `max(base_linear, geom_tol)` for checks that consume **stored** geometric tolerance
 /// (e.g. [`crate::bopds::ds::DSFace::geom_tol`]). Non-finite `entity_geom_tol` is ignored.
 #[inline]
 pub fn effective_linear_with_geom_tol(base_linear: f64, entity_geom_tol: f64) -> f64 {
-    if entity_geom_tol.is_finite() && entity_geom_tol > 0.0 {
-        base_linear.max(entity_geom_tol)
-    } else {
-        base_linear
-    }
+ if entity_geom_tol.is_finite() && entity_geom_tol > 0.0 {
+ base_linear.max(entity_geom_tol)
+ } else {
+ base_linear
+ }
 }
 
 /// Geometric tolerance **floor** for numerical surface–surface intersection (IntSS).
@@ -456,40 +456,40 @@ pub fn effective_linear_with_geom_tol(base_linear: f64, entity_geom_tol: f64) ->
 /// See [`intersect_surfaces_with_density_tol`](crate::inttools::intss::intersect_surfaces_with_density_tol).
 #[inline]
 pub fn intss_geom_tol_floor(baseline_linear: f64, participant_tolerance_max: f64) -> f64 {
-    let base = baseline_linear.max(TOLERANCE_ABS);
-    effective_linear_with_geom_tol(base, participant_tolerance_max)
+ let base = baseline_linear.max(TOLERANCE_ABS);
+ effective_linear_with_geom_tol(base, participant_tolerance_max)
 }
 
 /// [`intss_geom_tol_floor`] with `participant_tolerance_max = max(model_tol(A), model_tol(B))`.
 #[inline]
 pub fn intss_geom_tol_floor_for_brep_bounds(
-    baseline_linear: f64,
-    brep_a: &BRep,
-    brep_b: &BRep,
+ baseline_linear: f64,
+ brep_a: &BRep,
+ brep_b: &BRep,
 ) -> f64 {
-    intss_geom_tol_floor(
-        baseline_linear,
-        model_tolerance(brep_a).max(model_tolerance(brep_b)),
-    )
+ intss_geom_tol_floor(
+ baseline_linear,
+ model_tolerance(brep_a).max(model_tolerance(brep_b)),
+ )
 }
 
 /// Triangle-soup pair/merge epsilon derived from **[`AdaptiveTolerance::from_brep`]** at
 /// [`ToleranceLevel::Relaxed`], at least [`TOLERANCE_MESH_LEGACY`], folded with [`model_tolerance`].
 #[inline]
 pub fn tessellation_merge_linear_from_brep(brep: &BRep) -> f64 {
-    let adaptive = AdaptiveTolerance::from_brep(brep);
-    let base = adaptive.tolerance(ToleranceLevel::Relaxed).max(TOLERANCE_MESH_LEGACY);
-    effective_linear_with_geom_tol(base, model_tolerance(brep))
+ let adaptive = AdaptiveTolerance::from_brep(brep);
+ let base = adaptive.tolerance(ToleranceLevel::Relaxed).max(TOLERANCE_MESH_LEGACY);
+ effective_linear_with_geom_tol(base, model_tolerance(brep))
 }
 
 /// Like [`tessellation_merge_linear_from_brep`] using [`AdaptiveTolerance::from_two_breps`] and
 /// `max(model_tolerance(a), model_tolerance(b))` for the topological fold.
 #[inline]
 pub fn tessellation_merge_linear_from_two_breps(brep_a: &BRep, brep_b: &BRep) -> f64 {
-    let adaptive = AdaptiveTolerance::from_two_breps(brep_a, brep_b);
-    let base = adaptive.tolerance(ToleranceLevel::Relaxed).max(TOLERANCE_MESH_LEGACY);
-    let geom = model_tolerance(brep_a).max(model_tolerance(brep_b));
-    effective_linear_with_geom_tol(base, geom)
+ let adaptive = AdaptiveTolerance::from_two_breps(brep_a, brep_b);
+ let base = adaptive.tolerance(ToleranceLevel::Relaxed).max(TOLERANCE_MESH_LEGACY);
+ let geom = model_tolerance(brep_a).max(model_tolerance(brep_b));
+ effective_linear_with_geom_tol(base, geom)
 }
 
 /// Squared UV distance threshold for treating trim endpoints as coincident given face UV extents
@@ -498,81 +498,81 @@ pub fn tessellation_merge_linear_from_two_breps(brep_a: &BRep, brep_b: &BRep) ->
 /// Let **`ext = max(|u_extent|, |v_extent|)`**. Linear slack is **`min(√`**[`UV_POLYLINE_TRIM_LEGACY_SQ`]**, **`max([`TOLERANCE_ABS`]**, **`ext · [`UV_TRIM_CLOSED_REL_DOM`]`**))`** (then squared). That caps looseness at the historic mesh-tier analogue while tightening on modest UV domains (phase C).
 #[inline]
 pub fn uv_polyline_trim_closed_len_sq(u_extent: f64, v_extent: f64) -> f64 {
-    let ext = u_extent.abs().max(v_extent.abs()).max(TOLERANCE_MODEL_SCALE_MIN);
-    let rel_lin = ext * UV_TRIM_CLOSED_REL_DOM;
-    let cap_lin = UV_POLYLINE_TRIM_LEGACY_SQ.sqrt();
-    let lin = rel_lin.max(TOLERANCE_ABS).min(cap_lin);
-    lin * lin
+ let ext = u_extent.abs().max(v_extent.abs()).max(TOLERANCE_MODEL_SCALE_MIN);
+ let rel_lin = ext * UV_TRIM_CLOSED_REL_DOM;
+ let cap_lin = UV_POLYLINE_TRIM_LEGACY_SQ.sqrt();
+ let lin = rel_lin.max(TOLERANCE_ABS).min(cap_lin);
+ lin * lin
 }
 
 /// [`uv_polyline_trim_closed_len_sq`] from the axis-aligned bbox of **`poly`** in UV; falls back to [`UV_POLYLINE_TRIM_LEGACY_SQ`]
 /// when **`poly`** is empty.
 #[inline]
 pub fn uv_polyline_trim_closed_len_sq_from_uv_poly(poly: &[DVec2]) -> f64 {
-    if poly.is_empty() {
-        return UV_POLYLINE_TRIM_LEGACY_SQ;
-    }
-    let mut u_min = f64::INFINITY;
-    let mut u_max = f64::NEG_INFINITY;
-    let mut v_min = f64::INFINITY;
-    let mut v_max = f64::NEG_INFINITY;
-    for p in poly {
-        u_min = u_min.min(p.x);
-        u_max = u_max.max(p.x);
-        v_min = v_min.min(p.y);
-        v_max = v_max.max(p.y);
-    }
-    uv_polyline_trim_closed_len_sq(u_max - u_min, v_max - v_min)
+ if poly.is_empty() {
+ return UV_POLYLINE_TRIM_LEGACY_SQ;
+ }
+ let mut u_min = f64::INFINITY;
+ let mut u_max = f64::NEG_INFINITY;
+ let mut v_min = f64::INFINITY;
+ let mut v_max = f64::NEG_INFINITY;
+ for p in poly {
+ u_min = u_min.min(p.x);
+ u_max = u_max.max(p.x);
+ v_min = v_min.min(p.y);
+ v_max = v_max.max(p.y);
+ }
+ uv_polyline_trim_closed_len_sq(u_max - u_min, v_max - v_min)
 }
 
 /// OCCT-style `max(base, Tol(edge_a), Tol(edge_b))` with flattened edge indices.
 #[inline]
 pub fn combined_linear_tol_for_edges(
-    ctx: &ToleranceContext,
-    level: ToleranceLevel,
-    use_workspace: bool,
-    brep_a: &BRep,
-    edge_a: Option<usize>,
-    brep_b: &BRep,
-    edge_b: Option<usize>,
+ ctx: &ToleranceContext,
+ level: ToleranceLevel,
+ use_workspace: bool,
+ brep_a: &BRep,
+ edge_a: Option<usize>,
+ brep_b: &BRep,
+ edge_b: Option<usize>,
 ) -> f64 {
-    let base = if use_workspace {
-        ctx.workspace_linear(level)
-    } else {
-        ctx.adaptive_linear(level)
-    };
-    let ta = edge_a
-        .map(|i| kernel_edge_tolerance(brep_a, i))
-        .unwrap_or(CONFUSION);
-    let tb = edge_b
-        .map(|i| kernel_edge_tolerance(brep_b, i))
-        .unwrap_or(CONFUSION);
-    base.max(ta).max(tb)
+ let base = if use_workspace {
+ ctx.workspace_linear(level)
+ } else {
+ ctx.adaptive_linear(level)
+ };
+ let ta = edge_a
+ .map(|i| kernel_edge_tolerance(brep_a, i))
+ .unwrap_or(CONFUSION);
+ let tb = edge_b
+ .map(|i| kernel_edge_tolerance(brep_b, i))
+ .unwrap_or(CONFUSION);
+ base.max(ta).max(tb)
 }
 
 /// OCCT-style `max(base, Tol(vertex_a), Tol(vertex_b))`.
 #[inline]
 pub fn combined_linear_tol_for_vertices(
-    ctx: &ToleranceContext,
-    level: ToleranceLevel,
-    use_workspace: bool,
-    brep_a: &BRep,
-    vertex_a: Option<usize>,
-    brep_b: &BRep,
-    vertex_b: Option<usize>,
+ ctx: &ToleranceContext,
+ level: ToleranceLevel,
+ use_workspace: bool,
+ brep_a: &BRep,
+ vertex_a: Option<usize>,
+ brep_b: &BRep,
+ vertex_b: Option<usize>,
 ) -> f64 {
-    let base = if use_workspace {
-        ctx.workspace_linear(level)
-    } else {
-        ctx.adaptive_linear(level)
-    };
-    let ta = vertex_a
-        .map(|i| kernel_vertex_tolerance(brep_a, i))
-        .unwrap_or(CONFUSION);
-    let tb = vertex_b
-        .map(|i| kernel_vertex_tolerance(brep_b, i))
-        .unwrap_or(CONFUSION);
-    base.max(ta).max(tb)
+ let base = if use_workspace {
+ ctx.workspace_linear(level)
+ } else {
+ ctx.adaptive_linear(level)
+ };
+ let ta = vertex_a
+ .map(|i| kernel_vertex_tolerance(brep_a, i))
+ .unwrap_or(CONFUSION);
+ let tb = vertex_b
+ .map(|i| kernel_vertex_tolerance(brep_b, i))
+ .unwrap_or(CONFUSION);
+ base.max(ta).max(tb)
 }
 
 /// Scale the default boolean fuzzy retry ladder (`10×`, `100×`, `1000×` [`TOLERANCE_ABS`]) by
@@ -580,68 +580,68 @@ pub fn combined_linear_tol_for_vertices(
 ///
 /// With `extra_coarse_base = Some(c)`, appends `10·c` and `100·c` (multiscale mechanical preset).
 pub fn boolean_fuzzy_ladder_scaled(initial_fuzzy: f64, extra_coarse_base: Option<f64>) -> Vec<f64> {
-    let scale = (initial_fuzzy / TOLERANCE_ABS).max(1.0);
-    let mut out = vec![
-        TOLERANCE_ABS * 10.0 * scale,
-        TOLERANCE_ABS * 100.0 * scale,
-        TOLERANCE_ABS * 1000.0 * scale,
-    ];
-    if let Some(c) = extra_coarse_base {
-        let c = c.max(0.0);
-        if c > 0.0 {
-            out.push(c * 10.0);
-            out.push(c * 100.0);
-        }
-    }
-    out
+ let scale = (initial_fuzzy / TOLERANCE_ABS).max(1.0);
+ let mut out = vec![
+ TOLERANCE_ABS * 10.0 * scale,
+ TOLERANCE_ABS * 100.0 * scale,
+ TOLERANCE_ABS * 1000.0 * scale,
+ ];
+ if let Some(c) = extra_coarse_base {
+ let c = c.max(0.0);
+ if c > 0.0 {
+ out.push(c * 10.0);
+ out.push(c * 100.0);
+ }
+ }
+ out
 }
 
 /// Compute the characteristic scale of a model from its bounding box.
 /// Returns the diagonal of the bounding box, or 1.0 if the model is empty.
 pub fn compute_model_scale(brep: &BRep) -> f64 {
-    let mut min_pt = DVec3::splat(f64::INFINITY);
-    let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
-    let mut has_vertices = false;
+ let mut min_pt = DVec3::splat(f64::INFINITY);
+ let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
+ let mut has_vertices = false;
 
-    for vertex in &brep.vertices {
-        min_pt = min_pt.min(vertex.point);
-        max_pt = max_pt.max(vertex.point);
-        has_vertices = true;
-    }
+ for vertex in &brep.vertices {
+ min_pt = min_pt.min(vertex.point);
+ max_pt = max_pt.max(vertex.point);
+ has_vertices = true;
+ }
 
-    if !has_vertices {
-        return 1.0;
-    }
+ if !has_vertices {
+ return 1.0;
+ }
 
-    let diagonal = (max_pt - min_pt).length();
-    diagonal.max(TOLERANCE_MODEL_SCALE_MIN)
+ let diagonal = (max_pt - min_pt).length();
+ diagonal.max(TOLERANCE_MODEL_SCALE_MIN)
 }
 
 /// Compute the characteristic scale from a collection of points.
 pub fn compute_scale_from_points(points: &[DVec3]) -> f64 {
-    if points.is_empty() {
-        return 1.0;
-    }
+ if points.is_empty() {
+ return 1.0;
+ }
 
-    let mut min_pt = DVec3::splat(f64::INFINITY);
-    let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
+ let mut min_pt = DVec3::splat(f64::INFINITY);
+ let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
 
-    for &p in points {
-        min_pt = min_pt.min(p);
-        max_pt = max_pt.max(p);
-    }
+ for &p in points {
+ min_pt = min_pt.min(p);
+ max_pt = max_pt.max(p);
+ }
 
-    let diagonal = (max_pt - min_pt).length();
-    diagonal.max(TOLERANCE_MODEL_SCALE_MIN)
+ let diagonal = (max_pt - min_pt).length();
+ diagonal.max(TOLERANCE_MODEL_SCALE_MIN)
 }
 
 /// Face count in BRep traversal order (matches `geom.face_tolerance` / `face_surface` flat indices).
 pub fn flat_face_count(brep: &BRep) -> usize {
-    brep.solids
-        .iter()
-        .flat_map(|s| &s.shells)
-        .map(|sh| sh.faces.len())
-        .sum()
+ brep.solids
+ .iter()
+ .flat_map(|s| &s.shells)
+ .map(|sh| sh.faces.len())
+ .sum()
 }
 
 /// Maximum positive finite `geom.face_tolerance` entry for the first [`flat_face_count`] slots.
@@ -649,49 +649,49 @@ pub fn flat_face_count(brep: &BRep) -> usize {
 /// If the array is missing entries or has no valid values, returns [`TOLERANCE_ABS`].
 /// Use to derive mesh / triangle-soup intersection epsilons when geometry came from this BRep.
 pub fn max_face_tolerance_or_abs(brep: &BRep) -> f64 {
-    let n = flat_face_count(brep);
-    let mut m = TOLERANCE_ABS;
-    let ft = &brep.geom.face_tolerance;
-    for i in 0..n.min(ft.len()) {
-        let t = ft[i];
-        if t.is_finite() && t > 0.0 {
-            m = m.max(t);
-        }
-    }
-    m
+ let n = flat_face_count(brep);
+ let mut m = TOLERANCE_ABS;
+ let ft = &brep.geom.face_tolerance;
+ for i in 0..n.min(ft.len()) {
+ let t = ft[i];
+ if t.is_finite() && t > 0.0 {
+ m = m.max(t);
+ }
+ }
+ m
 }
 
 /// [`max_face_tolerance_or_abs`] applied to both inputs; suitable for mesh intersection of two sources.
 #[inline]
 pub fn max_face_tolerance_or_abs_pair(a: &BRep, b: &BRep) -> f64 {
-    max_face_tolerance_or_abs(a).max(max_face_tolerance_or_abs(b))
+ max_face_tolerance_or_abs(a).max(max_face_tolerance_or_abs(b))
 }
 
 #[inline]
 pub fn points_coincide(a: DVec3, b: DVec3) -> bool {
-    (a - b).length_squared() < TOLERANCE_ABS_SQ
+ (a - b).length_squared() < TOLERANCE_ABS_SQ
 }
 
 #[inline]
 pub fn is_zero_vec(v: DVec3) -> bool {
-    v.length_squared() < TOLERANCE_ABS_SQ
+ v.length_squared() < TOLERANCE_ABS_SQ
 }
 
 /// Returns true if two unit vectors are parallel (or anti-parallel).
 #[inline]
 pub fn vectors_parallel(a: DVec3, b: DVec3) -> bool {
-    a.cross(b).length_squared() < TOLERANCE_ANG * TOLERANCE_ANG
+ a.cross(b).length_squared() < TOLERANCE_ANG * TOLERANCE_ANG
 }
 
 #[inline]
 pub fn params_equal(a: f64, b: f64) -> bool {
-    (a - b).abs() < TOLERANCE_ABS
+ (a - b).abs() < TOLERANCE_ABS
 }
 
 /// Check if two vectors are parallel using adaptive tolerance.
 pub fn vectors_parallel_adaptive(a: DVec3, b: DVec3, tol: AdaptiveTolerance) -> bool {
-    let ang_tol = tol.angular_tolerance(ToleranceLevel::Normal);
-    a.cross(b).length_squared() < ang_tol * ang_tol
+ let ang_tol = tol.angular_tolerance(ToleranceLevel::Normal);
+ a.cross(b).length_squared() < ang_tol * ang_tol
 }
 
 // Re-export for test module convenience (any_perpendicular is in rcad-kernel).
@@ -699,359 +699,359 @@ pub use rcad_kernel::geom::any_perpendicular;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use glam::DVec2;
+ use super::*;
+ use glam::DVec2;
 
-    #[test]
-    fn coincident_points() {
-        let a = DVec3::new(1.0, 2.0, 3.0);
-        let b = DVec3::new(1.0, 2.0, 3.0 + 1e-8);
-        assert!(points_coincide(a, b));
-    }
+ #[test]
+ fn coincident_points() {
+ let a = DVec3::new(1.0, 2.0, 3.0);
+ let b = DVec3::new(1.0, 2.0, 3.0 + 1e-8);
+ assert!(points_coincide(a, b));
+ }
 
-    #[test]
-    fn non_coincident_points() {
-        let a = DVec3::ZERO;
-        let b = DVec3::new(1e-6, 0.0, 0.0);
-        assert!(!points_coincide(a, b));
-    }
+ #[test]
+ fn non_coincident_points() {
+ let a = DVec3::ZERO;
+ let b = DVec3::new(1e-6, 0.0, 0.0);
+ assert!(!points_coincide(a, b));
+ }
 
-    #[test]
-    fn parallel_vectors() {
-        assert!(vectors_parallel(DVec3::X, DVec3::X));
-        assert!(vectors_parallel(DVec3::X, -DVec3::X));
-        assert!(!vectors_parallel(DVec3::X, DVec3::Y));
-    }
+ #[test]
+ fn parallel_vectors() {
+ assert!(vectors_parallel(DVec3::X, DVec3::X));
+ assert!(vectors_parallel(DVec3::X, -DVec3::X));
+ assert!(!vectors_parallel(DVec3::X, DVec3::Y));
+ }
 
-    #[test]
-    fn tolerance_level_scale_factors() {
-        assert_eq!(ToleranceLevel::Strict.scale_factor(), 1.0);
-        assert_eq!(ToleranceLevel::Normal.scale_factor(), 10.0);
-        assert_eq!(ToleranceLevel::Relaxed.scale_factor(), 100.0);
-        assert_eq!(ToleranceLevel::Coarse.scale_factor(), 1000.0);
-    }
+ #[test]
+ fn tolerance_level_scale_factors() {
+ assert_eq!(ToleranceLevel::Strict.scale_factor(), 1.0);
+ assert_eq!(ToleranceLevel::Normal.scale_factor(), 10.0);
+ assert_eq!(ToleranceLevel::Relaxed.scale_factor(), 100.0);
+ assert_eq!(ToleranceLevel::Coarse.scale_factor(), 1000.0);
+ }
 
-    #[test]
-    fn adaptive_tolerance_default() {
-        let tol = AdaptiveTolerance::default();
-        assert_eq!(tol.tolerance(ToleranceLevel::Strict), TOLERANCE_ABS);
-        assert_eq!(tol.tolerance(ToleranceLevel::Normal), TOLERANCE_ABS * 10.0);
-    }
+ #[test]
+ fn adaptive_tolerance_default() {
+ let tol = AdaptiveTolerance::default();
+ assert_eq!(tol.tolerance(ToleranceLevel::Strict), TOLERANCE_ABS);
+ assert_eq!(tol.tolerance(ToleranceLevel::Normal), TOLERANCE_ABS * 10.0);
+ }
 
-    #[test]
-    fn adaptive_tolerance_with_scale() {
-        let tol = AdaptiveTolerance::from_scale(100.0);
-        // At 100x scale, tolerance should be 100x larger
-        assert!((tol.tolerance(ToleranceLevel::Strict) - TOLERANCE_ABS * 100.0).abs() < 1e-20);
-    }
+ #[test]
+ fn adaptive_tolerance_with_scale() {
+ let tol = AdaptiveTolerance::from_scale(100.0);
+ // At 100x scale, tolerance should be 100x larger
+ assert!((tol.tolerance(ToleranceLevel::Strict) - TOLERANCE_ABS * 100.0).abs() < 1e-20);
+ }
 
-    #[test]
-    fn adaptive_tolerance_clamping() {
-        // Very large scale should be clamped to max_tolerance
-        let tol = AdaptiveTolerance::from_scale(1e10);
-        assert_eq!(tol.tolerance(ToleranceLevel::Strict), tol.max_tolerance);
+ #[test]
+ fn adaptive_tolerance_clamping() {
+ // Very large scale should be clamped to max_tolerance
+ let tol = AdaptiveTolerance::from_scale(1e10);
+ assert_eq!(tol.tolerance(ToleranceLevel::Strict), tol.max_tolerance);
 
-        // Very small scale should be clamped to min_tolerance
-        let mut small_tol = AdaptiveTolerance::from_scale(1e-20);
-        small_tol.min_tolerance = 1e-15;
-        assert_eq!(small_tol.tolerance(ToleranceLevel::Strict), small_tol.min_tolerance);
-    }
+ // Very small scale should be clamped to min_tolerance
+ let mut small_tol = AdaptiveTolerance::from_scale(1e-20);
+ small_tol.min_tolerance = 1e-15;
+ assert_eq!(small_tol.tolerance(ToleranceLevel::Strict), small_tol.min_tolerance);
+ }
 
-    #[test]
-    fn compute_model_scale_from_points() {
-        let points = vec![
-            DVec3::ZERO,
-            DVec3::new(1.0, 0.0, 0.0),
-            DVec3::new(0.0, 1.0, 0.0),
-        ];
-        let scale = compute_scale_from_points(&points);
-        // Bounding box is [0,1] x [0,1] x [0,0], diagonal is sqrt(2)
-        assert!((scale - 2.0_f64.sqrt()).abs() < 1e-10);
-    }
+ #[test]
+ fn compute_model_scale_from_points() {
+ let points = vec![
+ DVec3::ZERO,
+ DVec3::new(1.0, 0.0, 0.0),
+ DVec3::new(0.0, 1.0, 0.0),
+ ];
+ let scale = compute_scale_from_points(&points);
+ // Bounding box is [0,1] x [0,1] x [0,0], diagonal is sqrt(2)
+ assert!((scale - 2.0_f64.sqrt()).abs() < 1e-10);
+ }
 
-    #[test]
-    fn compute_model_scale_empty() {
-        let scale = compute_scale_from_points(&[]);
-        assert_eq!(scale, 1.0);
-    }
+ #[test]
+ fn compute_model_scale_empty() {
+ let scale = compute_scale_from_points(&[]);
+ assert_eq!(scale, 1.0);
+ }
 
-    #[test]
-    fn adaptive_points_coincide() {
-        let tol = AdaptiveTolerance::default();
-        let a = DVec3::new(1.0, 2.0, 3.0);
-        let b = DVec3::new(1.0, 2.0, 3.0 + 1e-8);
-        assert!(tol.points_coincide_at(a, b, ToleranceLevel::Strict));
-    }
+ #[test]
+ fn adaptive_points_coincide() {
+ let tol = AdaptiveTolerance::default();
+ let a = DVec3::new(1.0, 2.0, 3.0);
+ let b = DVec3::new(1.0, 2.0, 3.0 + 1e-8);
+ assert!(tol.points_coincide_at(a, b, ToleranceLevel::Strict));
+ }
 
-    #[test]
-    fn convenience_methods() {
-        let tol = AdaptiveTolerance::default();
-        // Just verify these don't panic and return reasonable values
-        assert!(tol.coincidence() > 0.0);
-        assert!(tol.classification() > tol.coincidence());
-        assert!(tol.boundary() > tol.classification());
-        assert!(tol.coarse() > tol.boundary());
-    }
+ #[test]
+ fn convenience_methods() {
+ let tol = AdaptiveTolerance::default();
+ // Just verify these don't panic and return reasonable values
+ assert!(tol.coincidence() > 0.0);
+ assert!(tol.classification() > tol.coincidence());
+ assert!(tol.boundary() > tol.classification());
+ assert!(tol.coarse() > tol.boundary());
+ }
 
-    #[test]
-    fn mesh_legacy_tracks_confusion_decade() {
-        assert!((TOLERANCE_MESH_LEGACY - TOLERANCE_ABS * 10.0).abs() < 1e-20);
-        assert!((TOLERANCE_MESH_LEGACY - 1e-6).abs() < 1e-20);
-        assert!(
-            (UV_POLYLINE_TRIM_LEGACY_SQ - TOLERANCE_MESH_LEGACY).abs() < 1e-20,
-            "UV trim legacy sq alias must stay tied to mesh tier"
-        );
-    }
+ #[test]
+ fn mesh_legacy_tracks_confusion_decade() {
+ assert!((TOLERANCE_MESH_LEGACY - TOLERANCE_ABS * 10.0).abs() < 1e-20);
+ assert!((TOLERANCE_MESH_LEGACY - 1e-6).abs() < 1e-20);
+ assert!(
+ (UV_POLYLINE_TRIM_LEGACY_SQ - TOLERANCE_MESH_LEGACY).abs() < 1e-20,
+ "UV trim legacy sq alias must stay tied to mesh tier"
+ );
+ }
 
-    #[test]
-    fn uv_trim_closed_rel_matches_micro_tier() {
-        assert!(
-            (UV_TRIM_CLOSED_REL_DOM - TOLERANCE_TOL_SCALE_MICRO).abs() < 1e-20,
-            "UV trim relative dom stays tied to TOLERANCE_TOL_SCALE_MICRO"
-        );
-    }
+ #[test]
+ fn uv_trim_closed_rel_matches_micro_tier() {
+ assert!(
+ (UV_TRIM_CLOSED_REL_DOM - TOLERANCE_TOL_SCALE_MICRO).abs() < 1e-20,
+ "UV trim relative dom stays tied to TOLERANCE_TOL_SCALE_MICRO"
+ );
+ }
 
-    #[test]
-    fn uv_polyline_trim_sq_huge_domain_hits_legacy_ceiling_sq() {
-        assert!(
-            (uv_polyline_trim_closed_len_sq(1e12, 9e11) - UV_POLYLINE_TRIM_LEGACY_SQ).abs()
-                < 1e-20
-        );
-    }
+ #[test]
+ fn uv_polyline_trim_sq_huge_domain_hits_legacy_ceiling_sq() {
+ assert!(
+ (uv_polyline_trim_closed_len_sq(1e12, 9e11) - UV_POLYLINE_TRIM_LEGACY_SQ).abs()
+ < 1e-20
+ );
+ }
 
-    #[test]
-    fn uv_polyline_trim_sq_from_poly_bbox_scales_below_ceiling() {
-        let poly = [
-            DVec2::new(0.0, 0.0),
-            DVec2::new(10.0, 0.0),
-            DVec2::new(10.0, 2.0),
-            DVec2::new(0.0, 2.0),
-        ];
-        let sq = uv_polyline_trim_closed_len_sq_from_uv_poly(&poly);
-        let lin = (10.0_f64 * UV_TRIM_CLOSED_REL_DOM)
-            .max(TOLERANCE_ABS)
-            .min(UV_POLYLINE_TRIM_LEGACY_SQ.sqrt());
-        assert!(
-            (sq - lin * lin).abs() < 1e-28,
-            "expected sq≈{:e}, got {:e}",
-            lin * lin,
-            sq
-        );
-        assert!(sq < UV_POLYLINE_TRIM_LEGACY_SQ);
-    }
+ #[test]
+ fn uv_polyline_trim_sq_from_poly_bbox_scales_below_ceiling() {
+ let poly = [
+ DVec2::new(0.0, 0.0),
+ DVec2::new(10.0, 0.0),
+ DVec2::new(10.0, 2.0),
+ DVec2::new(0.0, 2.0),
+ ];
+ let sq = uv_polyline_trim_closed_len_sq_from_uv_poly(&poly);
+ let lin = (10.0_f64 * UV_TRIM_CLOSED_REL_DOM)
+ .max(TOLERANCE_ABS)
+ .min(UV_POLYLINE_TRIM_LEGACY_SQ.sqrt());
+ assert!(
+ (sq - lin * lin).abs() < 1e-28,
+ "expected sq≈{:e}, got {:e}",
+ lin * lin,
+ sq
+ );
+ assert!(sq < UV_POLYLINE_TRIM_LEGACY_SQ);
+ }
 
-    #[test]
-    fn uv_polyline_trim_sq_empty_poly_fallback() {
-        let empty: &[DVec2] = &[];
-        assert!(
-            (uv_polyline_trim_closed_len_sq_from_uv_poly(empty) - UV_POLYLINE_TRIM_LEGACY_SQ).abs()
-                < 1e-20
-        );
-    }
+ #[test]
+ fn uv_polyline_trim_sq_empty_poly_fallback() {
+ let empty: &[DVec2] = &[];
+ assert!(
+ (uv_polyline_trim_closed_len_sq_from_uv_poly(empty) - UV_POLYLINE_TRIM_LEGACY_SQ).abs()
+ < 1e-20
+ );
+ }
 
-    #[test]
-    fn max_face_tolerance_reads_geom_store() {
-        use rcad_kernel::PrimitiveSolid;
-        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
-            width: 1.0,
-            height: 1.0,
-            depth: 1.0,
-        });
-        let n = flat_face_count(&brep);
-        brep.geom.face_tolerance.clear();
-        brep.geom.face_tolerance.resize(n, TOLERANCE_ABS);
-        brep.geom.face_tolerance[0] = 2e-5;
-        assert!((max_face_tolerance_or_abs(&brep) - 2e-5).abs() < 1e-20);
-    }
+ #[test]
+ fn max_face_tolerance_reads_geom_store() {
+ use rcad_kernel::PrimitiveSolid;
+ let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
+ width: 1.0,
+ height: 1.0,
+ depth: 1.0,
+ });
+ let n = flat_face_count(&brep);
+ brep.geom.face_tolerance.clear();
+ brep.geom.face_tolerance.resize(n, TOLERANCE_ABS);
+ brep.geom.face_tolerance[0] = 2e-5;
+ assert!((max_face_tolerance_or_abs(&brep) - 2e-5).abs() < 1e-20);
+ }
 
-    #[test]
-    fn tolerance_context_workspace_floors_linear() {
-        let mut ctx = ToleranceContext::from_scale(1.0);
-        ctx.workspace_fuzzy = TOLERANCE_ABS * 1000.0;
-        assert!(
-            (ctx.workspace_linear(ToleranceLevel::Strict) - ctx.workspace_fuzzy).abs()
-                <= TOLERANCE_FLOAT_DEDUP
-        );
-    }
+ #[test]
+ fn tolerance_context_workspace_floors_linear() {
+ let mut ctx = ToleranceContext::from_scale(1.0);
+ ctx.workspace_fuzzy = TOLERANCE_ABS * 1000.0;
+ assert!(
+ (ctx.workspace_linear(ToleranceLevel::Strict) - ctx.workspace_fuzzy).abs()
+ <= TOLERANCE_FLOAT_DEDUP
+ );
+ }
 
-    #[test]
-    fn combined_linear_tol_faces_matches_kernel_face_tolerance() {
-        use rcad_kernel::{face_tolerance, PrimitiveSolid};
-        let mut a = BRep::from_primitive(PrimitiveSolid::Box {
-            width: 1.0,
-            height: 1.0,
-            depth: 1.0,
-        });
-        let b = BRep::from_primitive(PrimitiveSolid::Box {
-            width: 1.0,
-            height: 1.0,
-            depth: 1.0,
-        });
-        let n = flat_face_count(&a);
-        assert!(n >= 2, "box solid should expose ≥2 faces");
-        a.geom.face_tolerance.clear();
-        a.geom.face_tolerance.resize(n, TOLERANCE_ABS);
-        a.geom.face_tolerance[1] = 5e-5;
+ #[test]
+ fn combined_linear_tol_faces_matches_kernel_face_tolerance() {
+ use rcad_kernel::{face_tolerance, PrimitiveSolid};
+ let mut a = BRep::from_primitive(PrimitiveSolid::Box {
+ width: 1.0,
+ height: 1.0,
+ depth: 1.0,
+ });
+ let b = BRep::from_primitive(PrimitiveSolid::Box {
+ width: 1.0,
+ height: 1.0,
+ depth: 1.0,
+ });
+ let n = flat_face_count(&a);
+ assert!(n >= 2, "box solid should expose ≥2 faces");
+ a.geom.face_tolerance.clear();
+ a.geom.face_tolerance.resize(n, TOLERANCE_ABS);
+ a.geom.face_tolerance[1] = 5e-5;
 
-        let ctx = ToleranceContext::default();
-        let c = combined_linear_tol_for_faces(
-            &ctx,
-            ToleranceLevel::Strict,
-            false,
-            &a,
-            Some(1),
-            &b,
-            None,
-        );
-        assert!(
-            (c - face_tolerance(&a, 1)).abs() < TOLERANCE_COORD_SUB.max(1e-12),
-            "c={c}"
-        );
+ let ctx = ToleranceContext::default();
+ let c = combined_linear_tol_for_faces(
+ &ctx,
+ ToleranceLevel::Strict,
+ false,
+ &a,
+ Some(1),
+ &b,
+ None,
+ );
+ assert!(
+ (c - face_tolerance(&a, 1)).abs() < TOLERANCE_COORD_SUB.max(1e-12),
+ "c={c}"
+ );
 
-        let m = combined_linear_tol_models(&ctx, ToleranceLevel::Strict, false, &a, &b);
-        assert!(m >= TOLERANCE_ABS);
-        assert!(m + TOLERANCE_FLOAT_DEDUP >= face_tolerance(&a, 1));
-    }
+ let m = combined_linear_tol_models(&ctx, ToleranceLevel::Strict, false, &a, &b);
+ assert!(m >= TOLERANCE_ABS);
+ assert!(m + TOLERANCE_FLOAT_DEDUP >= face_tolerance(&a, 1));
+ }
 
-    #[test]
-    fn boolean_fuzzy_ladder_scaled_preset_shape() {
-        let base = boolean_fuzzy_ladder_scaled(TOLERANCE_ABS, None);
-        assert_eq!(base.len(), 3);
-        let scaled = boolean_fuzzy_ladder_scaled(TOLERANCE_ABS * 100.0, None);
-        assert_eq!(scaled.len(), 3);
-        assert!(
-            scaled[2] > base[2],
-            "larger initial fuzzy should widen ladder tail"
-        );
+ #[test]
+ fn boolean_fuzzy_ladder_scaled_preset_shape() {
+ let base = boolean_fuzzy_ladder_scaled(TOLERANCE_ABS, None);
+ assert_eq!(base.len(), 3);
+ let scaled = boolean_fuzzy_ladder_scaled(TOLERANCE_ABS * 100.0, None);
+ assert_eq!(scaled.len(), 3);
+ assert!(
+ scaled[2] > base[2],
+ "larger initial fuzzy should widen ladder tail"
+ );
 
-        let extra = boolean_fuzzy_ladder_scaled(TOLERANCE_ABS, Some(TOLERANCE_ABS * 1000.0));
-        assert!(extra.len() >= 5);
-    }
+ let extra = boolean_fuzzy_ladder_scaled(TOLERANCE_ABS, Some(TOLERANCE_ABS * 1000.0));
+ assert!(extra.len() >= 5);
+ }
 
-    #[test]
-    fn effective_linear_with_geom_tol_maxes() {
-        assert!((effective_linear_with_geom_tol(TOLERANCE_ABS, 2e-5) - 2e-5).abs() < 1e-20);
-        assert!(
-            (effective_linear_with_geom_tol(TOLERANCE_MESH_LEGACY, 0.0) - TOLERANCE_MESH_LEGACY).abs()
-                < 1e-20
-        );
-    }
+ #[test]
+ fn effective_linear_with_geom_tol_maxes() {
+ assert!((effective_linear_with_geom_tol(TOLERANCE_ABS, 2e-5) - 2e-5).abs() < 1e-20);
+ assert!(
+ (effective_linear_with_geom_tol(TOLERANCE_MESH_LEGACY, 0.0) - TOLERANCE_MESH_LEGACY).abs()
+ < 1e-20
+ );
+ }
 
-    #[test]
-    fn intss_geom_tol_floor_basics() {
-        assert!((intss_geom_tol_floor(TOLERANCE_ABS, 2e-5) - 2e-5).abs() < 1e-20);
-        assert!((intss_geom_tol_floor(TOLERANCE_ABS, 0.0) - TOLERANCE_ABS).abs() < 1e-20);
-        assert!(
-            (intss_geom_tol_floor(TOLERANCE_MESH_LEGACY * 10.0, TOLERANCE_ABS) - TOLERANCE_MESH_LEGACY * 10.0).abs()
-                < 1e-15
-        );
-    }
+ #[test]
+ fn intss_geom_tol_floor_basics() {
+ assert!((intss_geom_tol_floor(TOLERANCE_ABS, 2e-5) - 2e-5).abs() < 1e-20);
+ assert!((intss_geom_tol_floor(TOLERANCE_ABS, 0.0) - TOLERANCE_ABS).abs() < 1e-20);
+ assert!(
+ (intss_geom_tol_floor(TOLERANCE_MESH_LEGACY * 10.0, TOLERANCE_ABS) - TOLERANCE_MESH_LEGACY * 10.0).abs()
+ < 1e-15
+ );
+ }
 
-    #[test]
-    fn intss_geom_tol_floor_for_brep_bounds_reads_model_tol() {
-        use rcad_kernel::PrimitiveSolid;
+ #[test]
+ fn intss_geom_tol_floor_for_brep_bounds_reads_model_tol() {
+ use rcad_kernel::PrimitiveSolid;
 
-        let mut a = BRep::from_primitive(PrimitiveSolid::Box {
-            width: 1.0,
-            height: 1.0,
-            depth: 1.0,
-        });
-        let mut b = BRep::from_primitive(PrimitiveSolid::Box {
-            width: 1.0,
-            height: 1.0,
-            depth: 1.0,
-        });
-        let n = flat_face_count(&a);
-        assert!(n > 0, "box solid should expose faces");
+ let mut a = BRep::from_primitive(PrimitiveSolid::Box {
+ width: 1.0,
+ height: 1.0,
+ depth: 1.0,
+ });
+ let mut b = BRep::from_primitive(PrimitiveSolid::Box {
+ width: 1.0,
+ height: 1.0,
+ depth: 1.0,
+ });
+ let n = flat_face_count(&a);
+ assert!(n > 0, "box solid should expose faces");
 
-        a.geom.face_tolerance.clear();
-        a.geom.face_tolerance.resize(n.max(1), TOLERANCE_ABS);
-        a.geom.face_tolerance[0] = 9e-5;
+ a.geom.face_tolerance.clear();
+ a.geom.face_tolerance.resize(n.max(1), TOLERANCE_ABS);
+ a.geom.face_tolerance[0] = 9e-5;
 
-        let f = intss_geom_tol_floor_for_brep_bounds(TOLERANCE_ABS, &a, &b);
-        assert!(
-            f + TOLERANCE_FLOAT_DEDUP >= 9e-5,
-            "expected model_tolerance to widen IntSS floor, got {f}"
-        );
-    }
+ let f = intss_geom_tol_floor_for_brep_bounds(TOLERANCE_ABS, &a, &b);
+ assert!(
+ f + TOLERANCE_FLOAT_DEDUP >= 9e-5,
+ "expected model_tolerance to widen IntSS floor, got {f}"
+ );
+ }
 
-    #[test]
-    fn tessellation_merge_linear_respects_model_tol() {
-        use rcad_kernel::PrimitiveSolid;
+ #[test]
+ fn tessellation_merge_linear_respects_model_tol() {
+ use rcad_kernel::PrimitiveSolid;
 
-        let mut a = BRep::from_primitive(PrimitiveSolid::Box {
-            width: 1.0,
-            height: 1.0,
-            depth: 1.0,
-        });
-        let b = BRep::from_primitive(PrimitiveSolid::Box {
-            width: 1.0,
-            height: 1.0,
-            depth: 1.0,
-        });
-        let n = flat_face_count(&a);
-        assert!(n > 0);
-        a.geom.face_tolerance.clear();
-        a.geom.face_tolerance.resize(n.max(1), TOLERANCE_ABS);
-        a.geom.face_tolerance[0] = 8e-5;
+ let mut a = BRep::from_primitive(PrimitiveSolid::Box {
+ width: 1.0,
+ height: 1.0,
+ depth: 1.0,
+ });
+ let b = BRep::from_primitive(PrimitiveSolid::Box {
+ width: 1.0,
+ height: 1.0,
+ depth: 1.0,
+ });
+ let n = flat_face_count(&a);
+ assert!(n > 0);
+ a.geom.face_tolerance.clear();
+ a.geom.face_tolerance.resize(n.max(1), TOLERANCE_ABS);
+ a.geom.face_tolerance[0] = 8e-5;
 
-        let m = tessellation_merge_linear_from_two_breps(&a, &b);
-        assert!(
-            m + TOLERANCE_FLOAT_DEDUP >= 8e-5,
-            "expected mesh merge eps to respect model tolerance, got {m}"
-        );
-        assert!(m >= TOLERANCE_MESH_LEGACY - TOLERANCE_FLOAT_LOOSE);
-    }
+ let m = tessellation_merge_linear_from_two_breps(&a, &b);
+ assert!(
+ m + TOLERANCE_FLOAT_DEDUP >= 8e-5,
+ "expected mesh merge eps to respect model tolerance, got {m}"
+ );
+ assert!(m >= TOLERANCE_MESH_LEGACY - TOLERANCE_FLOAT_LOOSE);
+ }
 
-    #[test]
-    fn combined_linear_tol_for_edges_vertices() {
-        use rcad_kernel::PrimitiveSolid;
-        let mut a = BRep::from_primitive(PrimitiveSolid::Box {
-            width: 1.0,
-            height: 1.0,
-            depth: 1.0,
-        });
-        let b = BRep::from_primitive(PrimitiveSolid::Box {
-            width: 1.0,
-            height: 1.0,
-            depth: 1.0,
-        });
-        let ctx = ToleranceContext::default();
+ #[test]
+ fn combined_linear_tol_for_edges_vertices() {
+ use rcad_kernel::PrimitiveSolid;
+ let mut a = BRep::from_primitive(PrimitiveSolid::Box {
+ width: 1.0,
+ height: 1.0,
+ depth: 1.0,
+ });
+ let b = BRep::from_primitive(PrimitiveSolid::Box {
+ width: 1.0,
+ height: 1.0,
+ depth: 1.0,
+ });
+ let ctx = ToleranceContext::default();
 
-        if a.edges.len() > 1 {
-            a.geom.edge_tolerance.resize(a.edges.len(), TOLERANCE_ABS);
-            a.geom.edge_tolerance[1] = 4e-5;
-            let e = combined_linear_tol_for_edges(
-                &ctx,
-                ToleranceLevel::Strict,
-                false,
-                &a,
-                Some(1),
-                &b,
-                None,
-            );
-            assert!(
-                e + TOLERANCE_FLOAT_DEDUP >= 4e-5,
-                "expected edge_tol to dominate, got {e}"
-            );
-        }
+ if a.edges.len() > 1 {
+ a.geom.edge_tolerance.resize(a.edges.len(), TOLERANCE_ABS);
+ a.geom.edge_tolerance[1] = 4e-5;
+ let e = combined_linear_tol_for_edges(
+ &ctx,
+ ToleranceLevel::Strict,
+ false,
+ &a,
+ Some(1),
+ &b,
+ None,
+ );
+ assert!(
+ e + TOLERANCE_FLOAT_DEDUP >= 4e-5,
+ "expected edge_tol to dominate, got {e}"
+ );
+ }
 
-        if a.vertices.len() > 2 {
-            a.geom.vertex_tolerance.resize(a.vertices.len(), TOLERANCE_ABS);
-            a.geom.vertex_tolerance[2] = 3e-5;
-            let vx = combined_linear_tol_for_vertices(
-                &ctx,
-                ToleranceLevel::Strict,
-                false,
-                &a,
-                Some(2),
-                &b,
-                None,
-            );
-            assert!(
-                vx + TOLERANCE_FLOAT_DEDUP >= 3e-5,
-                "expected vertex_tol to dominate, got {vx}"
-            );
-        }
-    }
+ if a.vertices.len() > 2 {
+ a.geom.vertex_tolerance.resize(a.vertices.len(), TOLERANCE_ABS);
+ a.geom.vertex_tolerance[2] = 3e-5;
+ let vx = combined_linear_tol_for_vertices(
+ &ctx,
+ ToleranceLevel::Strict,
+ false,
+ &a,
+ Some(2),
+ &b,
+ None,
+ );
+ assert!(
+ vx + TOLERANCE_FLOAT_DEDUP >= 3e-5,
+ "expected vertex_tol to dominate, got {vx}"
+ );
+ }
+ }
 }

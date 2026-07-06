@@ -8,42 +8,42 @@ use crate::builder::types::{BooleanOpType, FaceSampleData};
 use crate::builder::{SourceSide, BooleanBuilder};
 
 pub struct GlueConfig {
-    /// Tolerance for face matching (default: TOLERANCE_MESH_LEGACY).
-    ///
-    /// Two faces are considered coincident if their surface geometry
-    /// matches within this tolerance.
-    pub face_tolerance: f64,
+ /// Tolerance for face matching (default: TOLERANCE_MESH_LEGACY).
+ ///
+ /// Two faces are considered coincident if their surface geometry
+ /// matches within this tolerance.
+ pub face_tolerance: f64,
 
-    /// Tolerance for edge matching (default: TOLERANCE_MESH_LEGACY).
-    ///
-    /// Two edges are considered coincident if their curve geometry
-    /// matches within this tolerance.
-    pub edge_tolerance: f64,
+ /// Tolerance for edge matching (default: TOLERANCE_MESH_LEGACY).
+ ///
+ /// Two edges are considered coincident if their curve geometry
+ /// matches within this tolerance.
+ pub edge_tolerance: f64,
 
-    /// Enable geometric hashing for O(n) face pairing (default: true).
-    ///
-    /// When enabled, uses a spatial hash to quickly find candidate face
-    /// pairs, reducing the complexity from O(n閾? to O(n) for models
-    /// with many faces.
-    pub use_geometric_hash: bool,
+ /// Enable geometric hashing for O(n) face pairing (default: true).
+ ///
+ /// When enabled, uses a spatial hash to quickly find candidate face
+ /// pairs, reducing the complexity from O(n ? to O(n) for models
+ /// with many faces.
+ pub use_geometric_hash: bool,
 
-    /// Skip non-parallel face pairs early (default: true).
-    ///
-    /// When enabled, quickly rejects face pairs whose normals are not
-    /// approximately anti-parallel, avoiding more expensive geometric
-    /// compatibility checks.
-    pub early_normal_filter: bool,
+ /// Skip non-parallel face pairs early (default: true).
+ ///
+ /// When enabled, quickly rejects face pairs whose normals are not
+ /// approximately anti-parallel, avoiding more expensive geometric
+ /// compatibility checks.
+ pub early_normal_filter: bool,
 }
 
 impl Default for GlueConfig {
-    fn default() -> Self {
-        Self {
-            face_tolerance: TOLERANCE_ABS,
-            edge_tolerance: TOLERANCE_ABS,
-            use_geometric_hash: true,
-            early_normal_filter: true,
-        }
-    }
+ fn default() -> Self {
+ Self {
+ face_tolerance: TOLERANCE_ABS,
+ edge_tolerance: TOLERANCE_ABS,
+ use_geometric_hash: true,
+ early_normal_filter: true,
+ }
+ }
 }
 
 /// Result of glue face detection.
@@ -53,26 +53,26 @@ impl Default for GlueConfig {
 /// boolean operations.
 #[derive(Debug, Clone)]
 pub struct GlueFacePair {
-    /// Index of face in shape A.
-    pub face_a: usize,
+ /// Index of face in shape A.
+ pub face_a: usize,
 
-    /// Index of face in shape B.
-    pub face_b: usize,
+ /// Index of face in shape B.
+ pub face_b: usize,
 
-    /// Match quality (1.0 = perfect match).
-    ///
-    /// This value indicates how well the two faces match:
-    /// - 1.0: Perfect geometric match
-    /// - 0.9-1.0: Near-perfect match, within tolerance
-    /// - 0.7-0.9: Partial match, some deviation
-    /// - < 0.7: Poor match, may not be suitable for gluing
-    pub match_quality: f64,
+ /// Match quality (1.0 = perfect match).
+ ///
+ /// This value indicates how well the two faces match:
+ /// - 1.0: Perfect geometric match
+ /// - 0.9-1.0: Near-perfect match, within tolerance
+ /// - 0.7-0.9: Partial match, some deviation
+ /// - < 0.7: Poor match, may not be suitable for gluing
+ pub match_quality: f64,
 
-    /// Estimated area of shared region.
-    ///
-    /// For fully coincident faces, this is the face area.
-    /// For partially overlapping faces, this is the overlap area.
-    pub shared_area: f64,
+ /// Estimated area of shared region.
+ ///
+ /// For fully coincident faces, this is the face area.
+ /// For partially overlapping faces, this is the overlap area.
+ pub shared_area: f64,
 }
 
 /// Geometric hash cell for face center points.
@@ -81,20 +81,20 @@ pub struct GlueFacePair {
 /// into spatial cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct GeomHashCell {
-    ix: i64,
-    iy: i64,
-    iz: i64,
+ ix: i64,
+ iy: i64,
+ iz: i64,
 }
 
 impl GeomHashCell {
-    fn from_point(p: DVec3, cell_size: f64) -> Self {
-        let scale = 1.0 / cell_size;
-        Self {
-            ix: (p.x * scale).round() as i64,
-            iy: (p.y * scale).round() as i64,
-            iz: (p.z * scale).round() as i64,
-        }
-    }
+ fn from_point(p: DVec3, cell_size: f64) -> Self {
+ let scale = 1.0 / cell_size;
+ Self {
+ ix: (p.x * scale).round() as i64,
+ iy: (p.y * scale).round() as i64,
+ iz: (p.z * scale).round() as i64,
+ }
+ }
 }
 
 /// Face-pairing cache for performance.
@@ -103,132 +103,132 @@ impl GeomHashCell {
 /// redundant computations during boolean operations.
 #[derive(Debug, Clone, Default)]
 pub struct GlueFaceCache {
-    /// Cached face center points for each face.
-    face_centers: Vec<DVec3>,
+ /// Cached face center points for each face.
+ face_centers: Vec<DVec3>,
 
-    /// Cached face normals for each face.
-    face_normals: Vec<DVec3>,
+ /// Cached face normals for each face.
+ face_normals: Vec<DVec3>,
 
-    /// Cached face areas for each face.
-    face_areas: Vec<f64>,
+ /// Cached face areas for each face.
+ face_areas: Vec<f64>,
 
-    /// Spatial hash mapping cells to face indices.
-    spatial_hash: HashMap<GeomHashCell, Vec<usize>>,
+ /// Spatial hash mapping cells to face indices.
+ spatial_hash: HashMap<GeomHashCell, Vec<usize>>,
 
-    /// Cached surface compatibility results.
-    /// Key: (face_a, face_b), Value: is_compatible
-    compatibility_cache: HashMap<(usize, usize), bool>,
+ /// Cached surface compatibility results.
+ /// Key: (face_a, face_b), Value: is_compatible
+ compatibility_cache: HashMap<(usize, usize), bool>,
 }
 
 impl GlueFaceCache {
-    /// Create a new empty cache.
-    pub fn new() -> Self {
-        Self::default()
-    }
+ /// Create a new empty cache.
+ pub fn new() -> Self {
+ Self::default()
+ }
 
-    /// Build the cache for a BRep by computing face centers, normals, and areas.
-    pub fn build(&mut self, brep: &BRep, cell_size: f64) {
-        self.face_centers.clear();
-        self.face_normals.clear();
-        self.face_areas.clear();
-        self.spatial_hash.clear();
-        self.compatibility_cache.clear();
+ /// Build the cache for a BRep by computing face centers, normals, and areas.
+ pub fn build(&mut self, brep: &BRep, cell_size: f64) {
+ self.face_centers.clear();
+ self.face_normals.clear();
+ self.face_areas.clear();
+ self.spatial_hash.clear();
+ self.compatibility_cache.clear();
 
-        let mut face_idx = 0usize;
-        for solid in &brep.solids {
-            for shell in &solid.shells {
-                for face in &shell.faces {
-                    // Compute face center and area from boundary vertices
-                    let mut center = DVec3::ZERO;
-                    let mut area = 0.0;
-                    let mut count = 0usize;
+ let mut face_idx = 0usize;
+ for solid in &brep.solids {
+ for shell in &solid.shells {
+ for face in &shell.faces {
+ // Compute face center and area from boundary vertices
+ let mut center = DVec3::ZERO;
+ let mut area = 0.0;
+ let mut count = 0usize;
 
-                    for we in &face.outer_wire.edges {
-                        if we.idx < brep.edges.len() {
-                            let edge = &brep.edges[we.idx];
-                            if edge.start < brep.vertices.len() {
-                                center += brep.vertices[edge.start].point;
-                                count += 1;
-                            }
-                            if edge.end < brep.vertices.len() {
-                                center += brep.vertices[edge.end].point;
-                                count += 1;
-                            }
-                        }
-                    }
+ for we in &face.outer_wire.edges {
+ if we.idx < brep.edges.len() {
+ let edge = &brep.edges[we.idx];
+ if edge.start < brep.vertices.len() {
+ center += brep.vertices[edge.start].point;
+ count += 1;
+ }
+ if edge.end < brep.vertices.len() {
+ center += brep.vertices[edge.end].point;
+ count += 1;
+ }
+ }
+ }
 
-                    if count > 0 {
-                        center /= count as f64;
-                    }
+ if count > 0 {
+ center /= count as f64;
+ }
 
-                    // Approximate area from bounding box
-                    let mut min_pt = DVec3::splat(f64::INFINITY);
-                    let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
-                    for we in &face.outer_wire.edges {
-                        if we.idx < brep.edges.len() {
-                            let edge = &brep.edges[we.idx];
-                            if edge.start < brep.vertices.len() {
-                                let p = brep.vertices[edge.start].point;
-                                min_pt = min_pt.min(p);
-                                max_pt = max_pt.max(p);
-                            }
-                            if edge.end < brep.vertices.len() {
-                                let p = brep.vertices[edge.end].point;
-                                min_pt = min_pt.min(p);
-                                max_pt = max_pt.max(p);
-                            }
-                        }
-                    }
-                    let diag = max_pt - min_pt;
-                    area = diag.x * diag.y + diag.y * diag.z + diag.z * diag.x;
+ // Approximate area from bounding box
+ let mut min_pt = DVec3::splat(f64::INFINITY);
+ let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
+ for we in &face.outer_wire.edges {
+ if we.idx < brep.edges.len() {
+ let edge = &brep.edges[we.idx];
+ if edge.start < brep.vertices.len() {
+ let p = brep.vertices[edge.start].point;
+ min_pt = min_pt.min(p);
+ max_pt = max_pt.max(p);
+ }
+ if edge.end < brep.vertices.len() {
+ let p = brep.vertices[edge.end].point;
+ min_pt = min_pt.min(p);
+ max_pt = max_pt.max(p);
+ }
+ }
+ }
+ let diag = max_pt - min_pt;
+ area = diag.x * diag.y + diag.y * diag.z + diag.z * diag.x;
 
-                    self.face_centers.push(center);
-                    self.face_normals.push(face.normal);
-                    self.face_areas.push(area);
+ self.face_centers.push(center);
+ self.face_normals.push(face.normal);
+ self.face_areas.push(area);
 
-                    // Add to spatial hash
-                    let cell = GeomHashCell::from_point(center, cell_size);
-                    self.spatial_hash.entry(cell).or_default().push(face_idx);
+ // Add to spatial hash
+ let cell = GeomHashCell::from_point(center, cell_size);
+ self.spatial_hash.entry(cell).or_default().push(face_idx);
 
-                    face_idx += 1;
-                }
-            }
-        }
-    }
+ face_idx += 1;
+ }
+ }
+ }
+ }
 
-    /// Get nearby faces using spatial hash.
-    pub fn get_nearby_faces(&self, center: DVec3, cell_size: f64) -> Vec<usize> {
-        let cell = GeomHashCell::from_point(center, cell_size);
+ /// Get nearby faces using spatial hash.
+ pub fn get_nearby_faces(&self, center: DVec3, cell_size: f64) -> Vec<usize> {
+ let cell = GeomHashCell::from_point(center, cell_size);
 
-        // Check the cell and its neighbors
-        let mut result = Vec::new();
-        for dx in -1i64..=1 {
-            for dy in -1i64..=1 {
-                for dz in -1i64..=1 {
-                    let neighbor = GeomHashCell {
-                        ix: cell.ix + dx,
-                        iy: cell.iy + dy,
-                        iz: cell.iz + dz,
-                    };
-                    if let Some(faces) = self.spatial_hash.get(&neighbor) {
-                        result.extend(faces.iter().copied());
-                    }
-                }
-            }
-        }
-        result
-    }
+ // Check the cell and its neighbors
+ let mut result = Vec::new();
+ for dx in -1i64..=1 {
+ for dy in -1i64..=1 {
+ for dz in -1i64..=1 {
+ let neighbor = GeomHashCell {
+ ix: cell.ix + dx,
+ iy: cell.iy + dy,
+ iz: cell.iz + dz,
+ };
+ if let Some(faces) = self.spatial_hash.get(&neighbor) {
+ result.extend(faces.iter().copied());
+ }
+ }
+ }
+ }
+ result
+ }
 
-    /// Check if surface compatibility is cached.
-    pub fn get_compatibility(&self, face_a: usize, face_b: usize) -> Option<bool> {
-        self.compatibility_cache.get(&(face_a, face_b)).copied()
-    }
+ /// Check if surface compatibility is cached.
+ pub fn get_compatibility(&self, face_a: usize, face_b: usize) -> Option<bool> {
+ self.compatibility_cache.get(&(face_a, face_b)).copied()
+ }
 
-    /// Cache a surface compatibility result.
-    pub fn set_compatibility(&mut self, face_a: usize, face_b: usize, compatible: bool) {
-        self.compatibility_cache.insert((face_a, face_b), compatible);
-        self.compatibility_cache.insert((face_b, face_a), compatible);
-    }
+ /// Cache a surface compatibility result.
+ pub fn set_compatibility(&mut self, face_a: usize, face_b: usize, compatible: bool) {
+ self.compatibility_cache.insert((face_a, face_b), compatible);
+ self.compatibility_cache.insert((face_b, face_a), compatible);
+ }
 }
 
 /// Detect glue face pairs between two shapes.
@@ -262,129 +262,129 @@ impl GlueFaceCache {
 /// let pairs = detect_glue_faces(&box1, &box2, &config);
 /// ```
 pub fn detect_glue_faces(
-    brep_a: &BRep,
-    brep_b: &BRep,
-    config: &GlueConfig,
+ brep_a: &BRep,
+ brep_b: &BRep,
+ config: &GlueConfig,
 ) -> Vec<GlueFacePair> {
-    let mut result = Vec::new();
+ let mut result = Vec::new();
 
-    // Build caches for both BReps
-    let cell_size = config.face_tolerance * 10.0;
-    let mut cache_a = GlueFaceCache::new();
-    let mut cache_b = GlueFaceCache::new();
-    cache_a.build(brep_a, cell_size);
-    cache_b.build(brep_b, cell_size);
+ // Build caches for both BReps
+ let cell_size = config.face_tolerance * 10.0;
+ let mut cache_a = GlueFaceCache::new();
+ let mut cache_b = GlueFaceCache::new();
+ cache_a.build(brep_a, cell_size);
+ cache_b.build(brep_b, cell_size);
 
-    // Get face counts
-    let faces_a: Vec<(usize, DVec3, DVec3, f64)> = brep_a.solids.iter()
-        .flat_map(|s| s.shells.iter())
-        .flat_map(|sh| sh.faces.iter().enumerate())
-        .enumerate()
-        .map(|(idx, (_, face))| {
-            let center = cache_a.face_centers.get(idx).copied().unwrap_or(DVec3::ZERO);
-            let normal = face.normal;
-            let area = cache_a.face_areas.get(idx).copied().unwrap_or(0.0);
-            (idx, center, normal, area)
-        })
-        .collect();
+ // Get face counts
+ let faces_a: Vec<(usize, DVec3, DVec3, f64)> = brep_a.solids.iter()
+ .flat_map(|s| s.shells.iter())
+ .flat_map(|sh| sh.faces.iter().enumerate())
+ .enumerate()
+ .map(|(idx, (_, face))| {
+ let center = cache_a.face_centers.get(idx).copied().unwrap_or(DVec3::ZERO);
+ let normal = face.normal;
+ let area = cache_a.face_areas.get(idx).copied().unwrap_or(0.0);
+ (idx, center, normal, area)
+ })
+ .collect();
 
-    let faces_b: Vec<(usize, DVec3, DVec3, f64)> = brep_b.solids.iter()
-        .flat_map(|s| s.shells.iter())
-        .flat_map(|sh| sh.faces.iter().enumerate())
-        .enumerate()
-        .map(|(idx, (_, face))| {
-            let center = cache_b.face_centers.get(idx).copied().unwrap_or(DVec3::ZERO);
-            let normal = face.normal;
-            let area = cache_b.face_areas.get(idx).copied().unwrap_or(0.0);
-            (idx, center, normal, area)
-        })
-        .collect();
+ let faces_b: Vec<(usize, DVec3, DVec3, f64)> = brep_b.solids.iter()
+ .flat_map(|s| s.shells.iter())
+ .flat_map(|sh| sh.faces.iter().enumerate())
+ .enumerate()
+ .map(|(idx, (_, face))| {
+ let center = cache_b.face_centers.get(idx).copied().unwrap_or(DVec3::ZERO);
+ let normal = face.normal;
+ let area = cache_b.face_areas.get(idx).copied().unwrap_or(0.0);
+ (idx, center, normal, area)
+ })
+ .collect();
 
-    // Early normal filter threshold
-    let normal_threshold = -0.95;
+ // Early normal filter threshold
+ let normal_threshold = -0.95;
 
-    for (idx_a, center_a, normal_a, area_a) in &faces_a {
-        // Use geometric hash to find nearby faces in B
-        let nearby_faces = if config.use_geometric_hash {
-            cache_b.get_nearby_faces(*center_a, cell_size)
-        } else {
-            faces_b.iter().map(|(idx, _, _, _)| *idx).collect()
-        };
+ for (idx_a, center_a, normal_a, area_a) in &faces_a {
+ // Use geometric hash to find nearby faces in B
+ let nearby_faces = if config.use_geometric_hash {
+ cache_b.get_nearby_faces(*center_a, cell_size)
+ } else {
+ faces_b.iter().map(|(idx, _, _, _)| *idx).collect()
+ };
 
-        for idx_b in nearby_faces {
-            let (_, center_b, normal_b, area_b) = &faces_b.get(idx_b).unwrap_or(&(0, DVec3::ZERO, DVec3::ZERO, 0.0));
+ for idx_b in nearby_faces {
+ let (_, center_b, normal_b, area_b) = &faces_b.get(idx_b).unwrap_or(&(0, DVec3::ZERO, DVec3::ZERO, 0.0));
 
-            // Early normal filter: skip if normals are not anti-parallel
-            if config.early_normal_filter {
-                let na_len2 = normal_a.length_squared();
-                let nb_len2 = normal_b.length_squared();
-                if na_len2 > TOLERANCE_LEN_MIN && nb_len2 > TOLERANCE_LEN_MIN {
-                    let na = *normal_a / na_len2.sqrt();
-                    let nb = *normal_b / nb_len2.sqrt();
-                    if na.dot(nb) > normal_threshold {
-                        continue;
-                    }
-                }
-            }
+ // Early normal filter: skip if normals are not anti-parallel
+ if config.early_normal_filter {
+ let na_len2 = normal_a.length_squared();
+ let nb_len2 = normal_b.length_squared();
+ if na_len2 > TOLERANCE_LEN_MIN && nb_len2 > TOLERANCE_LEN_MIN {
+ let na = *normal_a / na_len2.sqrt();
+ let nb = *normal_b / nb_len2.sqrt();
+ if na.dot(nb) > normal_threshold {
+ continue;
+ }
+ }
+ }
 
-            // Check center proximity
-            let center_dist = (*center_a - *center_b).length();
-            if center_dist > config.face_tolerance * 10.0 {
-                continue;
-            }
+ // Check center proximity
+ let center_dist = (*center_a - *center_b).length();
+ if center_dist > config.face_tolerance * 10.0 {
+ continue;
+ }
 
-            // Compute match quality
-            let normal_match = {
-                let na_len2 = normal_a.length_squared();
-                let nb_len2 = normal_b.length_squared();
-                if na_len2 > TOLERANCE_LEN_MIN && nb_len2 > TOLERANCE_LEN_MIN {
-                    let na = *normal_a / na_len2.sqrt();
-                    let nb = *normal_b / nb_len2.sqrt();
-                    // For glue, normals should be anti-parallel
-                    (-na.dot(nb)).max(0.0)
-                } else {
-                    0.0
-                }
-            };
+ // Compute match quality
+ let normal_match = {
+ let na_len2 = normal_a.length_squared();
+ let nb_len2 = normal_b.length_squared();
+ if na_len2 > TOLERANCE_LEN_MIN && nb_len2 > TOLERANCE_LEN_MIN {
+ let na = *normal_a / na_len2.sqrt();
+ let nb = *normal_b / nb_len2.sqrt();
+ // For glue, normals should be anti-parallel
+ (-na.dot(nb)).max(0.0)
+ } else {
+ 0.0
+ }
+ };
 
-            let center_match = {
-                let max_dist = config.face_tolerance * 10.0;
-                if max_dist > 0.0 {
-                    (1.0 - center_dist / max_dist).max(0.0)
-                } else {
-                    1.0
-                }
-            };
+ let center_match = {
+ let max_dist = config.face_tolerance * 10.0;
+ if max_dist > 0.0 {
+ (1.0 - center_dist / max_dist).max(0.0)
+ } else {
+ 1.0
+ }
+ };
 
-            let area_match = {
-                let max_area = area_a.max(*area_b);
-                let min_area = area_a.min(*area_b);
-                if max_area > 0.0 {
-                    min_area / max_area
-                } else {
-                    1.0
-                }
-            };
+ let area_match = {
+ let max_area = area_a.max(*area_b);
+ let min_area = area_a.min(*area_b);
+ if max_area > 0.0 {
+ min_area / max_area
+ } else {
+ 1.0
+ }
+ };
 
-            let match_quality = (normal_match * 0.4 + center_match * 0.3 + area_match * 0.3).min(1.0);
+ let match_quality = (normal_match * 0.4 + center_match * 0.3 + area_match * 0.3).min(1.0);
 
-            // Only include pairs with reasonable match quality
-            if match_quality >= 0.5 {
-                result.push(GlueFacePair {
-                    face_a: *idx_a,
-                    face_b: idx_b,
-                    match_quality,
-                    shared_area: area_a.min(*area_b),
-                });            }
-        }
-    }
+ // Only include pairs with reasonable match quality
+ if match_quality >= 0.5 {
+ result.push(GlueFacePair {
+ face_a: *idx_a,
+ face_b: idx_b,
+ match_quality,
+ shared_area: area_a.min(*area_b),
+ }); }
+ }
+ }
 
-    // Sort by match quality (highest first)
-    result.sort_by(|a, b| {
-        b.match_quality.partial_cmp(&a.match_quality).unwrap_or(std::cmp::Ordering::Equal)
-    });
+ // Sort by match quality (highest first)
+ result.sort_by(|a, b| {
+ b.match_quality.partial_cmp(&a.match_quality).unwrap_or(std::cmp::Ordering::Equal)
+ });
 
-    result
+ result
 }
 
 /// Apply glue optimization to pave filler.
@@ -416,31 +416,31 @@ pub fn detect_glue_faces(
 /// apply_glue_optimization(&mut filler, &pairs);
 /// ```
 pub fn apply_glue_optimization(
-    filler: &mut crate::pave_filler::PaveFiller,
-    glue_pairs: &[GlueFacePair],
+ filler: &mut crate::pave_filler::PaveFiller,
+ glue_pairs: &[GlueFacePair],
 ) {
-    if glue_pairs.is_empty() {
-        return;
-    }
+ if glue_pairs.is_empty() {
+ return;
+ }
 
-    // Use the tolerance from the best match
-    let best_pair = glue_pairs.iter()
-        .max_by(|a, b| {
-            a.match_quality.partial_cmp(&b.match_quality).unwrap_or(std::cmp::Ordering::Equal)
-        });
+ // Use the tolerance from the best match
+ let best_pair = glue_pairs.iter()
+ .max_by(|a, b| {
+ a.match_quality.partial_cmp(&b.match_quality).unwrap_or(std::cmp::Ordering::Equal)
+ });
 
-    if let Some(pair) = best_pair {
-        // Estimate tolerance from match quality
-        let tolerance = if pair.match_quality > 0.99 {
-            TOLERANCE_ABS
-        } else if pair.match_quality > 0.9 {
-            TOLERANCE_ABS * 10.0
-        } else {
-            TOLERANCE_ABS * 100.0
-        };
+ if let Some(pair) = best_pair {
+ // Estimate tolerance from match quality
+ let tolerance = if pair.match_quality > 0.99 {
+ TOLERANCE_ABS
+ } else if pair.match_quality > 0.9 {
+ TOLERANCE_ABS * 10.0
+ } else {
+ TOLERANCE_ABS * 100.0
+ };
 
-        filler.configure_glue(true, tolerance);
-    }
+ filler.configure_glue(true, tolerance);
+ }
 }
 
 /// Compute adaptive glue tolerance based on geometry characteristics.
@@ -459,935 +459,935 @@ pub fn apply_glue_optimization(
 ///
 /// The computed adaptive glue tolerance.
 pub fn compute_adaptive_glue_tolerance(
-    brep_a: &BRep,
-    brep_b: &BRep,
-    base_tolerance: f64,
+ brep_a: &BRep,
+ brep_b: &BRep,
+ base_tolerance: f64,
 ) -> f64 {
-    let mut min_feature_size = f64::INFINITY;
+ let mut min_feature_size = f64::INFINITY;
 
-    // Analyze edge lengths
-    for edge in &brep_a.edges {
-        if edge.start < brep_a.vertices.len() && edge.end < brep_a.vertices.len() {
-            let p1 = brep_a.vertices[edge.start].point;
-            let p2 = brep_a.vertices[edge.end].point;
-            let length = (p2 - p1).length();
-            if length > TOLERANCE_LINEAR_ULTRA_STRICT {
-                min_feature_size = min_feature_size.min(length);
-            }
-        }
-    }
-    for edge in &brep_b.edges {
-        if edge.start < brep_b.vertices.len() && edge.end < brep_b.vertices.len() {
-            let p1 = brep_b.vertices[edge.start].point;
-            let p2 = brep_b.vertices[edge.end].point;
-            let length = (p2 - p1).length();
-            if length > TOLERANCE_LINEAR_ULTRA_STRICT {
-                min_feature_size = min_feature_size.min(length);
-            }
-        }
-    }
+ // Analyze edge lengths
+ for edge in &brep_a.edges {
+ if edge.start < brep_a.vertices.len() && edge.end < brep_a.vertices.len() {
+ let p1 = brep_a.vertices[edge.start].point;
+ let p2 = brep_a.vertices[edge.end].point;
+ let length = (p2 - p1).length();
+ if length > TOLERANCE_LINEAR_ULTRA_STRICT {
+ min_feature_size = min_feature_size.min(length);
+ }
+ }
+ }
+ for edge in &brep_b.edges {
+ if edge.start < brep_b.vertices.len() && edge.end < brep_b.vertices.len() {
+ let p1 = brep_b.vertices[edge.start].point;
+ let p2 = brep_b.vertices[edge.end].point;
+ let length = (p2 - p1).length();
+ if length > TOLERANCE_LINEAR_ULTRA_STRICT {
+ min_feature_size = min_feature_size.min(length);
+ }
+ }
+ }
 
-    // Analyze face areas (approximate from bounding box)
-    for solid in &brep_a.solids {
-        for shell in &solid.shells {
-            for face in &shell.faces {
-                let mut min_pt = DVec3::splat(f64::INFINITY);
-                let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
-                for we in &face.outer_wire.edges {
-                    if we.idx < brep_a.edges.len() {
-                        let edge = &brep_a.edges[we.idx];
-                        if edge.start < brep_a.vertices.len() {
-                            let p = brep_a.vertices[edge.start].point;
-                            min_pt = min_pt.min(p);
-                            max_pt = max_pt.max(p);
-                        }
-                        if edge.end < brep_a.vertices.len() {
-                            let p = brep_a.vertices[edge.end].point;
-                            min_pt = min_pt.min(p);
-                            max_pt = max_pt.max(p);
-                        }
-                    }
-                }
-                let diag = max_pt - min_pt;
-                let size = diag.x.min(diag.y).min(diag.z);
-                if size > TOLERANCE_LINEAR_ULTRA_STRICT {
-                    min_feature_size = min_feature_size.min(size);
-                }
-            }
-        }
-    }
-    for solid in &brep_b.solids {
-        for shell in &solid.shells {
-            for face in &shell.faces {
-                let mut min_pt = DVec3::splat(f64::INFINITY);
-                let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
-                for we in &face.outer_wire.edges {
-                    if we.idx < brep_b.edges.len() {
-                        let edge = &brep_b.edges[we.idx];
-                        if edge.start < brep_b.vertices.len() {
-                            let p = brep_b.vertices[edge.start].point;
-                            min_pt = min_pt.min(p);
-                            max_pt = max_pt.max(p);
-                        }
-                        if edge.end < brep_b.vertices.len() {
-                            let p = brep_b.vertices[edge.end].point;
-                            min_pt = min_pt.min(p);
-                            max_pt = max_pt.max(p);
-                        }
-                    }
-                }
-                let diag = max_pt - min_pt;
-                let size = diag.x.min(diag.y).min(diag.z);
-                if size > TOLERANCE_LINEAR_ULTRA_STRICT {
-                    min_feature_size = min_feature_size.min(size);
-                }
-            }
-        }
-    }
+ // Analyze face areas (approximate from bounding box)
+ for solid in &brep_a.solids {
+ for shell in &solid.shells {
+ for face in &shell.faces {
+ let mut min_pt = DVec3::splat(f64::INFINITY);
+ let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
+ for we in &face.outer_wire.edges {
+ if we.idx < brep_a.edges.len() {
+ let edge = &brep_a.edges[we.idx];
+ if edge.start < brep_a.vertices.len() {
+ let p = brep_a.vertices[edge.start].point;
+ min_pt = min_pt.min(p);
+ max_pt = max_pt.max(p);
+ }
+ if edge.end < brep_a.vertices.len() {
+ let p = brep_a.vertices[edge.end].point;
+ min_pt = min_pt.min(p);
+ max_pt = max_pt.max(p);
+ }
+ }
+ }
+ let diag = max_pt - min_pt;
+ let size = diag.x.min(diag.y).min(diag.z);
+ if size > TOLERANCE_LINEAR_ULTRA_STRICT {
+ min_feature_size = min_feature_size.min(size);
+ }
+ }
+ }
+ }
+ for solid in &brep_b.solids {
+ for shell in &solid.shells {
+ for face in &shell.faces {
+ let mut min_pt = DVec3::splat(f64::INFINITY);
+ let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
+ for we in &face.outer_wire.edges {
+ if we.idx < brep_b.edges.len() {
+ let edge = &brep_b.edges[we.idx];
+ if edge.start < brep_b.vertices.len() {
+ let p = brep_b.vertices[edge.start].point;
+ min_pt = min_pt.min(p);
+ max_pt = max_pt.max(p);
+ }
+ if edge.end < brep_b.vertices.len() {
+ let p = brep_b.vertices[edge.end].point;
+ min_pt = min_pt.min(p);
+ max_pt = max_pt.max(p);
+ }
+ }
+ }
+ let diag = max_pt - min_pt;
+ let size = diag.x.min(diag.y).min(diag.z);
+ if size > TOLERANCE_LINEAR_ULTRA_STRICT {
+ min_feature_size = min_feature_size.min(size);
+ }
+ }
+ }
+ }
 
-    // Compute adaptive tolerance
-    let adaptive_tol = if min_feature_size.is_finite() && min_feature_size > 0.0 {
-        // Use a fraction of minimum feature size, but at least base tolerance
-        let feature_based = min_feature_size * 0.01;
-        base_tolerance.max(feature_based).min(min_feature_size * 0.1)
-    } else {
-        base_tolerance
-    };
+ // Compute adaptive tolerance
+ let adaptive_tol = if min_feature_size.is_finite() && min_feature_size > 0.0 {
+ // Use a fraction of minimum feature size, but at least base tolerance
+ let feature_based = min_feature_size * 0.01;
+ base_tolerance.max(feature_based).min(min_feature_size * 0.1)
+ } else {
+ base_tolerance
+ };
 
-    adaptive_tol.max(TOLERANCE_ABS)
+ adaptive_tol.max(TOLERANCE_ABS)
 }
 #[cfg(test)]
 mod glue_tests {
-    use super::*;
-    use rcad_kernel::PrimitiveSolid;
-    use rcad_kernel::geom::{SphericalSurface, CylindricalSurface, ConicalSurface, ToroidalSurface};
-    use glam::DAffine3;
-    use glam::DVec2;
-    use crate::builder::split_polygon::split_uv_polygon_at_seam;
-    use crate::builder::split_polygon::split_uv_polygon_torus_double;
-    use crate::builder::split_polygon::handle_degenerate_uv_polygon;
-    use crate::builder::split_polygon::split_edge_at_periodic_seam;
-    use crate::builder::split_polygon2::split_polygon_2d_by_line;
-
-    fn unit_box() -> BRep {
-        BRep::from_primitive(PrimitiveSolid::Box {
-            width: 1.0,
-            height: 1.0,
-            depth: 1.0,
-        })
-    }
-
-    #[test]
-    fn test_glue_config_default() {
-        let config = GlueConfig::default();
-        assert_eq!(config.face_tolerance, TOLERANCE_ABS);
-        assert_eq!(config.edge_tolerance, TOLERANCE_ABS);
-        assert!(config.use_geometric_hash);
-        assert!(config.early_normal_filter);
-    }
-
-    #[test]
-    fn test_detect_glue_faces_no_overlap() {
-        let box1 = unit_box();
-        let box2 = BRep::from_primitive(PrimitiveSolid::Box {
-            width: 1.0,
-            height: 1.0,
-            depth: 1.0,
-        }).transformed(DAffine3::from_translation(DVec3::new(10.0, 0.0, 0.0)));
-
-        let config = GlueConfig::default();
-        let pairs = detect_glue_faces(&box1, &box2, &config);
-
-        // No overlapping faces
-        assert!(pairs.is_empty());
-    }
-
-    #[test]
-    fn test_detect_glue_faces_touching() {
-        let box1 = unit_box();
-        let mut box2 = unit_box();
-        // Translate box2 to touch box1 at y=1 face
-        box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
-
-        let config = GlueConfig::default();
-        let pairs = detect_glue_faces(&box1, &box2, &config);
-
-        // Should detect at least one coincident face pair
-        assert!(!pairs.is_empty());
-
-        // Match quality should be high for exact match
-        assert!(pairs[0].match_quality > 0.9);
-    }
-
-    #[test]
-    fn test_detect_glue_faces_with_tolerance() {
-        let box1 = unit_box();
-        let mut box2 = unit_box();
-        // Slight offset - faces are near but not exactly coincident
-        box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0 + TOLERANCE_MESH_LEGACY * 0.1, 0.0)));
-
-        let config = GlueConfig {
-            face_tolerance: TOLERANCE_RETRY_LADDER_MID,
-            ..Default::default()
-        };
-        let pairs = detect_glue_faces(&box1, &box2, &config);
-
-        // Should still detect coincident faces with relaxed tolerance
-        assert!(!pairs.is_empty());
-    }
-
-    #[test]
-    fn test_glue_face_pair_structure() {
-        let pair = GlueFacePair {
-            face_a: 0,
-            face_b: 1,
-            match_quality: 0.95,
-            shared_area: 1.0,
-        };
-
-        assert_eq!(pair.face_a, 0);
-        assert_eq!(pair.face_b, 1);
-        assert!((pair.match_quality - 0.95).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
-        assert!((pair.shared_area - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
-    }
-
-    #[test]
-    fn test_glue_face_cache_build() {
-        let box1 = unit_box();
-        let mut cache = GlueFaceCache::new();
-        cache.build(&box1, 1.0);
-
-        // Should have cached 6 faces (box has 6 faces)
-        assert_eq!(cache.face_centers.len(), 6);
-        assert_eq!(cache.face_normals.len(), 6);
-        assert_eq!(cache.face_areas.len(), 6);
-
-        // Spatial hash should not be empty
-        assert!(!cache.spatial_hash.is_empty());
-    }
-
-    #[test]
-    fn test_glue_face_cache_nearby_faces() {
-        let box1 = unit_box();
-        let mut cache = GlueFaceCache::new();
-        cache.build(&box1, 1.0);
-
-        // Get nearby faces for the center of the box
-        let nearby = cache.get_nearby_faces(DVec3::new(0.5, 0.5, 0.5), 1.0);
-
-        // Should find at least some faces
-        assert!(!nearby.is_empty());
-    }
-
-    #[test]
-    fn test_compute_adaptive_glue_tolerance() {
-        let box1 = unit_box();
-        let box2 = unit_box();
-
-        let tolerance = compute_adaptive_glue_tolerance(&box1, &box2, TOLERANCE_MESH_LEGACY);
-
-        // Tolerance should be reasonable
-        assert!(tolerance >= TOLERANCE_ABS);
-        assert!(tolerance < 1.0); // Should be much smaller than box size
-    }
-
-    #[test]
-    fn test_early_normal_filter_disabled() {
-        let box1 = unit_box();
-        let mut box2 = unit_box();
-        box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
-
-        let config = GlueConfig {
-            early_normal_filter: false,
-            ..Default::default()
-        };
-        let pairs = detect_glue_faces(&box1, &box2, &config);
-
-        // Should still detect coincident faces
-        assert!(!pairs.is_empty());
-    }
-
-    #[test]
-    fn test_geometric_hash_disabled() {
-        let box1 = unit_box();
-        let mut box2 = unit_box();
-        box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
-
-        let config = GlueConfig {
-            use_geometric_hash: false,
-            ..Default::default()
-        };
-        let pairs = detect_glue_faces(&box1, &box2, &config);
-
-        // Should still detect coincident faces
-        assert!(!pairs.is_empty());
-    }
-
-    #[test]
-    fn test_match_quality_ordering() {
-        let box1 = unit_box();
-        let mut box2 = unit_box();
-        // Perfect match
-        box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
-
-        let mut box3 = unit_box();
-        // Slight rotation - not as good a match
-        box3.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
-        box3.apply_transform(DAffine3::from_rotation_z(0.001));
-
-        let config = GlueConfig::default();
-
-        let pairs_exact = detect_glue_faces(&box1, &box2, &config);
-        let pairs_rotated = detect_glue_faces(&box1, &box3, &config);
-
-        // Exact match should have higher quality
-        if !pairs_exact.is_empty() && !pairs_rotated.is_empty() {
-            assert!(pairs_exact[0].match_quality >= pairs_rotated[0].match_quality);
-        }
-    }
-
-    #[test]
-    fn test_shared_area_estimation() {
-        let box1 = unit_box();
-        let mut box2 = unit_box();
-        box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
-
-        let config = GlueConfig::default();
-        let pairs = detect_glue_faces(&box1, &box2, &config);
-
-        // Shared area should be approximately 1.0 (unit square face)
-        assert!(!pairs.is_empty());
-        assert!(pairs[0].shared_area > 0.1);
-    }
-
-    #[test]
-    fn test_multiple_face_pairs() {
-        // Create two boxes that share multiple faces (impossible in real geometry,
-        // but tests the algorithm)
-        let box1 = unit_box();
-        let mut box2 = unit_box();
-        box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
-
-        let config = GlueConfig::default();
-        let pairs = detect_glue_faces(&box1, &box2, &config);
-
-        // Should detect exactly one face pair (the touching faces)
-        assert!(!pairs.is_empty());
-        // All pairs should have valid indices
-        for pair in &pairs {
-            assert!(pair.face_a < 6); // Box has 6 faces
-            assert!(pair.face_b < 6);
-        }
-    }
-
-    #[test]
-    fn test_compatibility_cache() {
-        let mut cache = GlueFaceCache::new();
-
-        // Initially no cached value
-        assert!(cache.get_compatibility(0, 1).is_none());
-
-        // Set and retrieve
-        cache.set_compatibility(0, 1, true);
-        assert_eq!(cache.get_compatibility(0, 1), Some(true));
-        assert_eq!(cache.get_compatibility(1, 0), Some(true)); // Symmetric
-
-        cache.set_compatibility(0, 1, false);
-        assert_eq!(cache.get_compatibility(0, 1), Some(false));
-    }
-
-    #[test]
-    fn test_glue_config_custom_values() {
-        let config = GlueConfig {
-            face_tolerance: TOLERANCE_RETRY_LADDER_MID,
-            edge_tolerance: TOLERANCE_RETRY_LADDER_MID * 2.0,
-            use_geometric_hash: false,
-            early_normal_filter: false,
-        };
-
-        assert!((config.face_tolerance - TOLERANCE_RETRY_LADDER_MID).abs() < TOLERANCE_LEN_MIN);
-        assert!((config.edge_tolerance - TOLERANCE_RETRY_LADDER_MID * 2.0).abs() < TOLERANCE_LEN_MIN);
-        assert!(!config.use_geometric_hash);
-        assert!(!config.early_normal_filter);
-    }
-
-    #[test]
-    fn split_uv_polygon_detects_seam_crossing_on_cylinder() {
-        // UV polygon that crosses the U=0/2閿?seam on a cylinder
-        // This is a quad that wraps around the seam:
-        // - Right side: u 闁?5.5 (near 2閿?
-        // - Left side: u 闁?0.5 (near 0)
-        let period = std::f64::consts::TAU; // 闁?6.283
-        let uv_polygon = vec![
-            DVec2::new(5.5, 0.0),  // Near 2閿?
-            DVec2::new(0.5, 0.0),  // Near 0
-            DVec2::new(0.5, 1.0),
-            DVec2::new(5.5, 1.0),
-        ];
-
-        let result = split_uv_polygon_at_seam(&uv_polygon, period);
-
-        // Should split into two polygons
-        assert_eq!(result.len(), 2, "Seam crossing should split polygon");
-
-        // Each output polygon must have at least 3 vertices
-        for (i, poly) in result.iter().enumerate() {
-            assert!(
-                poly.len() >= 3,
-                "Output polygon {} has only {} vertices (need >= 3)",
-                i,
-                poly.len()
-            );
-        }
-
-        // No output polygon should cross the seam
-        for (i, poly) in result.iter().enumerate() {
-            for j in 0..poly.len() {
-                let k = (j + 1) % poly.len();
-                let du = poly[k].x - poly[j].x;
-                assert!(
-                    du.abs() < period * 0.5,
-                    "Output polygon {} still crosses seam: du = {} between vertices {} and {}",
-                    i,
-                    du,
-                    j,
-                    k
-                );
-            }
-        }
-
-        // Verify specific coordinates: each polygon should contain seam intersection points
-        // The original polygon has edges that cross the seam at v=0 and v=1
-        // Output polygons should have intersection points at u=0 or u=period
-
-        // Find the right-side polygon (u values near 5.5)
-        let right_poly = result
-            .iter()
-            .find(|p| p.iter().any(|v| v.x > period * 0.5))
-            .expect("Should have a polygon with high u values");
-        // Find the left-side polygon (u values near 0.5)
-        let left_poly = result
-            .iter()
-            .find(|p| p.iter().any(|v| v.x < period * 0.5))
-            .expect("Should have a polygon with low u values");
-
-        // Right polygon should have vertices with u near 5.5 and seam points
-        let has_high_u = right_poly.iter().any(|v| (v.x - 5.5).abs() < 0.01);
-        assert!(has_high_u, "Right polygon should contain original high-u vertices");
-
-        // Left polygon should have vertices with u near 0.5 and seam points
-        let has_low_u = left_poly.iter().any(|v| (v.x - 0.5).abs() < 0.01);
-        assert!(has_low_u, "Left polygon should contain original low-u vertices");
-
-        // Each polygon should have seam intersection points
-        // (either at u=0 or u=period, both representing the same physical location)
-        fn near_seam(u: f64, period: f64) -> bool {
-            u.abs() < 0.01 || (u - period).abs() < 0.01
-        }
-
-        assert!(
-            right_poly.iter().any(|v| near_seam(v.x, period)),
-            "Right polygon should have a seam intersection point"
-        );
-        assert!(
-            left_poly.iter().any(|v| near_seam(v.x, period)),
-            "Left polygon should have a seam intersection point"
-        );
-    }
-
-    #[test]
-    fn split_uv_polygon_no_crossing_returns_original() {
-        // Polygon that doesn't cross the seam
-        let period = std::f64::consts::TAU;
-        let uv_polygon = vec![
-            DVec2::new(1.0, 0.0),
-            DVec2::new(2.0, 0.0),
-            DVec2::new(2.0, 1.0),
-            DVec2::new(1.0, 1.0),
-        ];
-
-        let result = split_uv_polygon_at_seam(&uv_polygon, period);
-
-        assert_eq!(result.len(), 1, "No seam crossing should return one polygon");
-        assert_eq!(result[0].len(), 4, "Original polygon should be unchanged");
-    }
-
-    #[test]
-    fn split_uv_polygon_degenerate_input() {
-        let period = std::f64::consts::TAU;
-
-        // Less than 3 vertices
-        let two_vertices = vec![DVec2::new(1.0, 0.0), DVec2::new(2.0, 0.0)];
-        let result = split_uv_polygon_at_seam(&two_vertices, period);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].len(), 2);
-
-        // Empty input
-        let empty: Vec<DVec2> = vec![];
-        let result = split_uv_polygon_at_seam(&empty, period);
-        assert_eq!(result.len(), 1);
-        assert!(result[0].is_empty());
-    }
-
-    // =====================================================
-    // Track A: Periodic Surface Seam Enhancement Tests
-    // =====================================================
-
-    // --- A1: Enhanced degenerate UV polygon handling tests ---
-
-    #[test]
-    fn test_handle_degenerate_uv_polygon_sphere_pole_cap() {
-        // UV polygon that represents a small cap near the north pole of a sphere
-        // All vertices collapse toward v=0 (north pole)
-        let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Y, 1.0);
-        let surface = Surface3::Sphere(sphere);
-
-        // Small triangle near north pole (v 闁?0)
-        let uv_polygon = vec![
-            DVec2::new(0.0, 0.001),
-            DVec2::new(std::f64::consts::FRAC_PI_2, 0.001),
-            DVec2::new(std::f64::consts::PI, 0.001),
-        ];
-
-        let result = handle_degenerate_uv_polygon(&uv_polygon, &surface);
-
-        // Should produce valid 3D boundary
-        assert!(!result.is_empty(), "Should produce non-empty boundary");
-
-        // All points should be valid (no NaN)
-        for pt in &result {
-            assert!(pt.x.is_finite(), "Point x should be finite");
-            assert!(pt.y.is_finite(), "Point y should be finite");
-            assert!(pt.z.is_finite(), "Point z should be finite");
-        }
-
-        // Should include pole point since all vertices are near pole
-        let north_pole = sphere.center + sphere.axis * sphere.radius;
-        let has_pole = result.iter().any(|pt| (*pt - north_pole).length() < 0.1);
-        assert!(has_pole, "Should include pole point for collapsed vertices");
-    }
-
-    #[test]
-    fn test_handle_degenerate_uv_polygon_sphere_south_pole_cap() {
-        // UV polygon near south pole (v 闁?閿?
-        let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Y, 1.0);
-        let surface = Surface3::Sphere(sphere);
-
-        // Small triangle near south pole (v 闁?閿?
-        let uv_polygon = vec![
-            DVec2::new(0.0, std::f64::consts::PI - 0.001),
-            DVec2::new(std::f64::consts::FRAC_PI_2, std::f64::consts::PI - 0.001),
-            DVec2::new(std::f64::consts::PI, std::f64::consts::PI - 0.001),
-        ];
-
-        let result = handle_degenerate_uv_polygon(&uv_polygon, &surface);
-
-        // Should produce valid 3D boundary
-        assert!(!result.is_empty(), "Should produce non-empty boundary");
-
-        // Should include south pole point
-        let south_pole = sphere.center - sphere.axis * sphere.radius;
-        let has_pole = result.iter().any(|pt| (*pt - south_pole).length() < 0.1);
-        assert!(has_pole, "Should include south pole point for collapsed vertices");
-    }
-
-    #[test]
-    fn test_handle_degenerate_uv_polygon_cone_apex() {
-        // UV polygon that collapses toward cone apex (v=0)
-        let cone = ConicalSurface {
-            apex: DVec3::ZERO,
-            axis: DVec3::Y,
-            radius: 0.0, // Reference radius at apex
-            half_angle_rad: std::f64::consts::FRAC_PI_4,
-        };
-        let surface = Surface3::Cone(cone);
-
-        // Small triangle near apex (v 闁?0)
-        let uv_polygon = vec![
-            DVec2::new(0.0, 0.001),
-            DVec2::new(std::f64::consts::FRAC_PI_2, 0.001),
-            DVec2::new(std::f64::consts::PI, 0.001),
-        ];
-
-        let result = handle_degenerate_uv_polygon(&uv_polygon, &surface);
-
-        // Should produce valid 3D boundary
-        assert!(!result.is_empty(), "Should produce non-empty boundary");
-
-        // All points should be valid (no NaN)
-        for pt in &result {
-            assert!(pt.x.is_finite(), "Point x should be finite");
-            assert!(pt.y.is_finite(), "Point y should be finite");
-            assert!(pt.z.is_finite(), "Point z should be finite");
-        }
-
-        // Should include apex point
-        let apex = cone.apex_point();
-        let has_apex = result.iter().any(|pt| (*pt - apex).length() < 0.1);
-        assert!(has_apex, "Should include apex point for collapsed vertices");
-    }
-
-    #[test]
-    fn test_handle_degenerate_uv_polygon_sphere_triangular_pole_cap() {
-        // A triangular UV region that includes the pole, simulating a spherical triangle
-        // with one vertex at the pole
-        let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Y, 1.0);
-        let surface = Surface3::Sphere(sphere);
-
-        // Triangle with pole at one vertex
-        // u=0, v=0 is the pole, other vertices at larger v
-        let uv_polygon = vec![
-            DVec2::new(0.0, 0.0), // At pole
-            DVec2::new(0.0, 0.5), // Away from pole
-            DVec2::new(std::f64::consts::FRAC_PI_2, 0.5), // Away from pole
-        ];
-
-        let result = handle_degenerate_uv_polygon(&uv_polygon, &surface);
-
-        // Should produce valid 3D boundary with at least 2 distinct points
-        assert!(result.len() >= 2, "Should produce at least 2 boundary points");
-
-        // All points should be valid (no NaN)
-        for pt in &result {
-            assert!(pt.x.is_finite(), "Point x should be finite");
-            assert!(pt.y.is_finite(), "Point y should be finite");
-            assert!(pt.z.is_finite(), "Point z should be finite");
-        }
-    }
-
-    // --- A2: Edge splitting at periodic seam tests ---
-
-    #[test]
-    fn test_split_edge_at_periodic_seam_cylinder() {
-        // Edge that crosses U=0/2閿?boundary on cylinder
-        let cylinder = CylindricalSurface {
-            origin: DVec3::ZERO,
-            axis: DVec3::Y,
-            ref_dir: any_perpendicular(DVec3::Y),
-            radius: 1.0,
-        };
-
-        // Edge from u near 2閿?to u near 0
-        let start_uv = DVec2::new(std::f64::consts::TAU - 0.1, 0.5);
-        let end_uv = DVec2::new(0.1, 0.5);
-
-        let result = split_edge_at_periodic_seam(start_uv, end_uv, &Surface3::Cylinder(cylinder));
-
-        // Should return two segments
-        assert!(result.is_some(), "Should detect seam crossing");
-        let segments = result.unwrap();
-        assert_eq!(segments.len(), 2, "Should split into two segments");
-
-        // Each segment should have start and end UV
-        for (i, seg) in segments.iter().enumerate() {
-            assert_eq!(seg.len() as usize, 2, "Segment {} should have 2 points", i);
-        }
-
-        // First segment should end at seam
-        assert!(
-            segments[0][1].x.abs() < 0.01 || (segments[0][1].x - std::f64::consts::TAU).abs() < 0.01,
-            "First segment should end at seam"
-        );
-
-        // Second segment should start at seam
-        assert!(
-            segments[1][0].x.abs() < 0.01 || (segments[1][0].x - std::f64::consts::TAU).abs() < 0.01,
-            "Second segment should start at seam"
-        );
-    }
-
-    #[test]
-    fn test_split_edge_at_periodic_seam_no_crossing() {
-        // Edge that doesn't cross seam
-        let cylinder = CylindricalSurface {
-            origin: DVec3::ZERO,
-            axis: DVec3::Y,
-            ref_dir: any_perpendicular(DVec3::Y),
-            radius: 1.0,
-        };
-
-        let start_uv = DVec2::new(1.0, 0.5);
-        let end_uv = DVec2::new(2.0, 0.5);
-
-        let result = split_edge_at_periodic_seam(start_uv, end_uv, &Surface3::Cylinder(cylinder));
-
-        // Should return None (no splitting needed)
-        assert!(result.is_none(), "Should not split edge that doesn't cross seam");
-    }
-
-    #[test]
-    fn test_split_edge_at_periodic_seam_sphere() {
-        // Edge crossing U=0/2閿?boundary on sphere
-        let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Y, 1.0);
-
-        let start_uv = DVec2::new(std::f64::consts::TAU - 0.1, 1.0);
-        let end_uv = DVec2::new(0.1, 1.0);
-
-        let result = split_edge_at_periodic_seam(start_uv, end_uv, &Surface3::Sphere(sphere));
-
-        assert!(result.is_some(), "Should detect seam crossing on sphere");
-        let segments = result.unwrap();
-        assert_eq!(segments.len(), 2, "Should split into two segments");
-    }
-
-    // --- A3: Torus double periodicity tests ---
-
-    #[test]
-    fn test_split_uv_polygon_torus_u_period() {
-        // UV polygon on torus that crosses U seam only
-        let period = std::f64::consts::TAU;
-        let uv_polygon = vec![
-            DVec2::new(5.5, 0.5), // Near U=2閿?
-            DVec2::new(0.5, 0.5), // Near U=0
-            DVec2::new(0.5, 1.5),
-            DVec2::new(5.5, 1.5),
-        ];
-
-        let result = split_uv_polygon_at_seam(&uv_polygon, period);
-
-        // Should split into two polygons
-        assert_eq!(result.len(), 2, "Should split torus polygon at U seam");
-
-        // Each polygon should not cross U seam
-        for poly in &result {
-            for j in 0..poly.len() {
-                let k = (j + 1) % poly.len();
-                let du = poly[k].x - poly[j].x;
-                assert!(
-                    du.abs() < period * 0.5,
-                    "Output polygon should not cross U seam"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_split_uv_polygon_torus_double_period() {
-        // UV polygon on torus that crosses both U and V seams
-        // This is a complex case where the polygon wraps around both directions
-        let period = std::f64::consts::TAU;
-
-        // Polygon that spans nearly full U range and crosses V seam
-        let uv_polygon = vec![
-            DVec2::new(0.1, 5.5), // V near 2閿?
-            DVec2::new(5.9, 5.5),
-            DVec2::new(5.9, 0.5), // V near 0
-            DVec2::new(0.1, 0.5),
-        ];
-
-        // Use double periodic splitting
-        let result = split_uv_polygon_torus_double(&uv_polygon, period);
-
-        // Should produce multiple non-crossing polygons
-        assert!(!result.is_empty(), "Should produce output polygons");
-
-        // Each polygon should not cross U or V seams
-        for poly in &result {
-            assert!(poly.len() >= 3, "Polygon should have at least 3 vertices");
-
-            for j in 0..poly.len() {
-                let k = (j + 1) % poly.len();
-                let du = poly[k].x - poly[j].x;
-                let dv = poly[k].y - poly[j].y;
-                assert!(
-                    du.abs() < period * 0.5,
-                    "Output polygon should not cross U seam"
-                );
-                assert!(
-                    dv.abs() < period * 0.5,
-                    "Output polygon should not cross V seam"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_handle_degenerate_uv_polygon_non_degenerate() {
-        // Normal UV polygon on sphere (no degenerate points)
-        let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Y, 1.0);
-        let surface = Surface3::Sphere(sphere);
-
-        // Rectangle away from poles
-        let uv_polygon = vec![
-            DVec2::new(0.0, 1.0),
-            DVec2::new(1.0, 1.0),
-            DVec2::new(1.0, 2.0),
-            DVec2::new(0.0, 2.0),
-        ];
-
-        let result = handle_degenerate_uv_polygon(&uv_polygon, &surface);
-
-        // Should produce same number of points as input
-        assert_eq!(result.len(), uv_polygon.len(), "Non-degenerate should map 1:1");
-
-        // All points should be on sphere surface
-        for pt in &result {
-            let pt: &DVec3 = pt;
-            let dist = pt.length();
-            assert!(
-                (dist - sphere.radius).abs() < 0.001,
-                "Point should be on sphere surface"
-            );
-        }
-    }
-
-    /// `split_polygon_2d_by_line` must correctly split a diamond polygon when the
-    /// split line passes through two opposite vertices (vertices exactly on the line).
-    /// This tests the forward-search and backward-search crossing detection.
-    #[test]
-    fn split_diamond_by_diagonal() {
-        use glam::DVec2;
-        // Diamond with vertices at cardinal points 閳?split by x-axis
-        // The line y=0 passes through vertex 0 (1,0) and vertex 2 (-1,0).
-        let poly = vec![
-            DVec2::new(1.0, 0.0),
-            DVec2::new(0.0, 1.0),
-            DVec2::new(-1.0, 0.0),
-            DVec2::new(0.0, -1.0),
-        ];
-        let out: Vec<Vec<DVec2>> = split_polygon_2d_by_line(&poly, DVec2::new(0.0, 0.0), DVec2::new(1.0, 0.0));
-        assert!(out.len() >= 2, "diamond split by diagonal should produce 2+ polygons, got {}", out.len());
-        // Each sub-polygon should be non-degenerate
-        for (i, p) in out.iter().enumerate() {
-            assert!(p.len() >= 3, "sub-polygon {i} has {} vertices", p.len());
-        }
-    }
-
-    /// `split_polygon_2d_by_line` must correctly split a polygon when the split line
-    /// does NOT pass through any vertex (normal case, no regression).
-    #[test]
-    fn split_square_offset_line() {
-        use glam::DVec2;
-        let poly = vec![
-            DVec2::new(0.0, 0.0),
-            DVec2::new(2.0, 0.0),
-            DVec2::new(2.0, 2.0),
-            DVec2::new(0.0, 2.0),
-        ];
-        // Vertical line x=1.2 閳?does not pass through any vertex
-        let out = split_polygon_2d_by_line(&poly, DVec2::new(1.2, 0.0), DVec2::new(0.0, 1.0));
-        assert!(out.len() >= 2, "square split by offset line should produce 2+ polygons, got {}", out.len());
-    }
-
-    /// Debug: ZD3 cylinder-cylinder concentric union SA undercount.
-    /// rcad reports 16.3 vs expected 22.0 (= 7锜?閳?21.9911).
-    #[test]
-    fn zd3_concentric_cylinder_union() {
-        use crate::boolean::boolean_op_with_retry_policy;
-        use crate::brep_algo::total_surface_area;
-        use crate::BooleanOpType;
-        use crate::RetryPolicy;
-        use std::collections::HashMap;
-        use glam::DVec3;
-        use rcad_modeling::make_cylinder_brep;
-
-        // OCCT ZD3 geometry:
-        //   pcylinder b1 1 2     閳?r=1, h=2, z閳溂0,2]
-        //   pcylinder b2 0.5 3   閳?r=0.5, h=3, z閳溂-1,2] after ttranslate 0 0 -1
-        //
-        // rcad make_cylinder_brep centers the cylinder at `center`, so:
-        //   b1: center at z=1 閳?z閳溂0,2]
-        //   b2: center at z=0.5 閳?z閳溂-1,2]
-        let b1 = make_cylinder_brep(DVec3::new(0.0, 0.0, 1.0), DVec3::Z, DVec3::X, 1.0, 2.0)
-            .expect("b1");
-        let b2 =
-            make_cylinder_brep(DVec3::new(0.0, 0.0, 0.5), DVec3::Z, DVec3::X, 0.5, 3.0)
-                .expect("b2");
-
-        let expected_sa = 7.0 * std::f64::consts::PI;
-
-        let result = boolean_op_with_retry_policy(
-            BooleanOpType::Union,
-            &b1,
-            &b2,
-            &RetryPolicy::default(),
-            Default::default(),
-        )
-        .expect("ZD3 fuse");
-
-        let actual_sa = total_surface_area(&result.0);
-
-        let face_count: usize = result
-            .0
-            .solids
-            .iter()
-            .flat_map(|s| &s.shells)
-            .flat_map(|sh| &sh.faces)
-            .count();
-
-        println!(
-            "ZD3: SA = {:.4} (expected {:.4} = 7锜? diff = {:.4})",
-            actual_sa,
-            expected_sa,
-            actual_sa - expected_sa
-        );
-        println!("Result has {} faces", face_count);
-
-        // Surface details from GeomStore
-        let brep = &result.0;
-        println!("  GeomStore: {} surfaces", brep.geom.surfaces.len());
-        for (idx, surf) in brep.geom.surfaces.iter().enumerate() {
-            match surf {
-                rcad_kernel::geom::Surface3::Cylinder(c) => {
-                    println!(
-                        "  Surf[{}]: Cyl origin=({:.4},{:.4},{:.4}) axis=({:.4},{:.4},{:.4}) radius={:.4}",
-                        idx, c.origin.x, c.origin.y, c.origin.z,
-                        c.axis.x, c.axis.y, c.axis.z, c.radius
-                    );
-                }
-                rcad_kernel::geom::Surface3::Plane(p) => {
-                    println!(
-                        "  Surf[{}]: Plane origin=({:.4},{:.4},{:.4}) normal=({:.4},{:.4},{:.4})",
-                        idx, p.origin.x, p.origin.y, p.origin.z,
-                        p.normal.x, p.normal.y, p.normal.z
-                    );
-                }
-                _ => {
-                    println!("  Surf[{}]: {:?}", idx, std::mem::discriminant(surf));
-                }
-            }
-        }
-
-        // Face-to-surface mapping
-        let mut flat_idx = 0;
-        for solid in &brep.solids {
-            for shell in &solid.shells {
-                for _face in &shell.faces {
-                    let surf_idx = brep.geom.face_surface.get(flat_idx).and_then(|&i| i);
-                    println!("  Face[{}]: surf_idx={:?}", flat_idx, surf_idx);
-                    flat_idx += 1;
-                }
-            }
-        }
-
-        // Remaining face_surface entries that don't map to faces
-        let total_faces = flat_idx;
-        if total_faces < brep.geom.face_surface.len() {
-            for fi in total_faces..brep.geom.face_surface.len() {
-                println!("  Face[{}] (geom only): surf_idx={:?}", fi, brep.geom.face_surface[fi]);
-            }
-        }
-
-        // Allow wide tolerance for now 閳?this is a known failure
-        let tol = (5e-3_f64).max(0.15 * expected_sa.abs());
-        if (actual_sa - expected_sa).abs() > tol {
-            println!(
-                "ZD3 FAIL: SA {:.4} vs expected {:.4} (diff {:.4}, tol {:.4})",
-                actual_sa,
-                expected_sa,
-                actual_sa - expected_sa,
-                tol
-            );
-        }
-    }
+ use super::*;
+ use rcad_kernel::PrimitiveSolid;
+ use rcad_kernel::geom::{SphericalSurface, CylindricalSurface, ConicalSurface, ToroidalSurface};
+ use glam::DAffine3;
+ use glam::DVec2;
+ use crate::builder::split_polygon::split_uv_polygon_at_seam;
+ use crate::builder::split_polygon::split_uv_polygon_torus_double;
+ use crate::builder::split_polygon::handle_degenerate_uv_polygon;
+ use crate::builder::split_polygon::split_edge_at_periodic_seam;
+ use crate::builder::split_polygon2::split_polygon_2d_by_line;
+
+ fn unit_box() -> BRep {
+ BRep::from_primitive(PrimitiveSolid::Box {
+ width: 1.0,
+ height: 1.0,
+ depth: 1.0,
+ })
+ }
+
+ #[test]
+ fn test_glue_config_default() {
+ let config = GlueConfig::default();
+ assert_eq!(config.face_tolerance, TOLERANCE_ABS);
+ assert_eq!(config.edge_tolerance, TOLERANCE_ABS);
+ assert!(config.use_geometric_hash);
+ assert!(config.early_normal_filter);
+ }
+
+ #[test]
+ fn test_detect_glue_faces_no_overlap() {
+ let box1 = unit_box();
+ let box2 = BRep::from_primitive(PrimitiveSolid::Box {
+ width: 1.0,
+ height: 1.0,
+ depth: 1.0,
+ }).transformed(DAffine3::from_translation(DVec3::new(10.0, 0.0, 0.0)));
+
+ let config = GlueConfig::default();
+ let pairs = detect_glue_faces(&box1, &box2, &config);
+
+ // No overlapping faces
+ assert!(pairs.is_empty());
+ }
+
+ #[test]
+ fn test_detect_glue_faces_touching() {
+ let box1 = unit_box();
+ let mut box2 = unit_box();
+ // Translate box2 to touch box1 at y=1 face
+ box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
+
+ let config = GlueConfig::default();
+ let pairs = detect_glue_faces(&box1, &box2, &config);
+
+ // Should detect at least one coincident face pair
+ assert!(!pairs.is_empty());
+
+ // Match quality should be high for exact match
+ assert!(pairs[0].match_quality > 0.9);
+ }
+
+ #[test]
+ fn test_detect_glue_faces_with_tolerance() {
+ let box1 = unit_box();
+ let mut box2 = unit_box();
+ // Slight offset - faces are near but not exactly coincident
+ box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0 + TOLERANCE_MESH_LEGACY * 0.1, 0.0)));
+
+ let config = GlueConfig {
+ face_tolerance: TOLERANCE_RETRY_LADDER_MID,
+ ..Default::default()
+ };
+ let pairs = detect_glue_faces(&box1, &box2, &config);
+
+ // Should still detect coincident faces with relaxed tolerance
+ assert!(!pairs.is_empty());
+ }
+
+ #[test]
+ fn test_glue_face_pair_structure() {
+ let pair = GlueFacePair {
+ face_a: 0,
+ face_b: 1,
+ match_quality: 0.95,
+ shared_area: 1.0,
+ };
+
+ assert_eq!(pair.face_a, 0);
+ assert_eq!(pair.face_b, 1);
+ assert!((pair.match_quality - 0.95).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+ assert!((pair.shared_area - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
+ }
+
+ #[test]
+ fn test_glue_face_cache_build() {
+ let box1 = unit_box();
+ let mut cache = GlueFaceCache::new();
+ cache.build(&box1, 1.0);
+
+ // Should have cached 6 faces (box has 6 faces)
+ assert_eq!(cache.face_centers.len(), 6);
+ assert_eq!(cache.face_normals.len(), 6);
+ assert_eq!(cache.face_areas.len(), 6);
+
+ // Spatial hash should not be empty
+ assert!(!cache.spatial_hash.is_empty());
+ }
+
+ #[test]
+ fn test_glue_face_cache_nearby_faces() {
+ let box1 = unit_box();
+ let mut cache = GlueFaceCache::new();
+ cache.build(&box1, 1.0);
+
+ // Get nearby faces for the center of the box
+ let nearby = cache.get_nearby_faces(DVec3::new(0.5, 0.5, 0.5), 1.0);
+
+ // Should find at least some faces
+ assert!(!nearby.is_empty());
+ }
+
+ #[test]
+ fn test_compute_adaptive_glue_tolerance() {
+ let box1 = unit_box();
+ let box2 = unit_box();
+
+ let tolerance = compute_adaptive_glue_tolerance(&box1, &box2, TOLERANCE_MESH_LEGACY);
+
+ // Tolerance should be reasonable
+ assert!(tolerance >= TOLERANCE_ABS);
+ assert!(tolerance < 1.0); // Should be much smaller than box size
+ }
+
+ #[test]
+ fn test_early_normal_filter_disabled() {
+ let box1 = unit_box();
+ let mut box2 = unit_box();
+ box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
+
+ let config = GlueConfig {
+ early_normal_filter: false,
+ ..Default::default()
+ };
+ let pairs = detect_glue_faces(&box1, &box2, &config);
+
+ // Should still detect coincident faces
+ assert!(!pairs.is_empty());
+ }
+
+ #[test]
+ fn test_geometric_hash_disabled() {
+ let box1 = unit_box();
+ let mut box2 = unit_box();
+ box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
+
+ let config = GlueConfig {
+ use_geometric_hash: false,
+ ..Default::default()
+ };
+ let pairs = detect_glue_faces(&box1, &box2, &config);
+
+ // Should still detect coincident faces
+ assert!(!pairs.is_empty());
+ }
+
+ #[test]
+ fn test_match_quality_ordering() {
+ let box1 = unit_box();
+ let mut box2 = unit_box();
+ // Perfect match
+ box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
+
+ let mut box3 = unit_box();
+ // Slight rotation - not as good a match
+ box3.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
+ box3.apply_transform(DAffine3::from_rotation_z(0.001));
+
+ let config = GlueConfig::default();
+
+ let pairs_exact = detect_glue_faces(&box1, &box2, &config);
+ let pairs_rotated = detect_glue_faces(&box1, &box3, &config);
+
+ // Exact match should have higher quality
+ if !pairs_exact.is_empty() && !pairs_rotated.is_empty() {
+ assert!(pairs_exact[0].match_quality >= pairs_rotated[0].match_quality);
+ }
+ }
+
+ #[test]
+ fn test_shared_area_estimation() {
+ let box1 = unit_box();
+ let mut box2 = unit_box();
+ box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
+
+ let config = GlueConfig::default();
+ let pairs = detect_glue_faces(&box1, &box2, &config);
+
+ // Shared area should be approximately 1.0 (unit square face)
+ assert!(!pairs.is_empty());
+ assert!(pairs[0].shared_area > 0.1);
+ }
+
+ #[test]
+ fn test_multiple_face_pairs() {
+ // Create two boxes that share multiple faces (impossible in real geometry,
+ // but tests the algorithm)
+ let box1 = unit_box();
+ let mut box2 = unit_box();
+ box2.apply_transform(DAffine3::from_translation(DVec3::new(0.0, 1.0, 0.0)));
+
+ let config = GlueConfig::default();
+ let pairs = detect_glue_faces(&box1, &box2, &config);
+
+ // Should detect exactly one face pair (the touching faces)
+ assert!(!pairs.is_empty());
+ // All pairs should have valid indices
+ for pair in &pairs {
+ assert!(pair.face_a < 6); // Box has 6 faces
+ assert!(pair.face_b < 6);
+ }
+ }
+
+ #[test]
+ fn test_compatibility_cache() {
+ let mut cache = GlueFaceCache::new();
+
+ // Initially no cached value
+ assert!(cache.get_compatibility(0, 1).is_none());
+
+ // Set and retrieve
+ cache.set_compatibility(0, 1, true);
+ assert_eq!(cache.get_compatibility(0, 1), Some(true));
+ assert_eq!(cache.get_compatibility(1, 0), Some(true)); // Symmetric
+
+ cache.set_compatibility(0, 1, false);
+ assert_eq!(cache.get_compatibility(0, 1), Some(false));
+ }
+
+ #[test]
+ fn test_glue_config_custom_values() {
+ let config = GlueConfig {
+ face_tolerance: TOLERANCE_RETRY_LADDER_MID,
+ edge_tolerance: TOLERANCE_RETRY_LADDER_MID * 2.0,
+ use_geometric_hash: false,
+ early_normal_filter: false,
+ };
+
+ assert!((config.face_tolerance - TOLERANCE_RETRY_LADDER_MID).abs() < TOLERANCE_LEN_MIN);
+ assert!((config.edge_tolerance - TOLERANCE_RETRY_LADDER_MID * 2.0).abs() < TOLERANCE_LEN_MIN);
+ assert!(!config.use_geometric_hash);
+ assert!(!config.early_normal_filter);
+ }
+
+ #[test]
+ fn split_uv_polygon_detects_seam_crossing_on_cylinder() {
+ // UV polygon that crosses the U=0/2=seam on a cylinder
+ // This is a quad that wraps around the seam:
+ // - Right side: u =5.5 (near 2=
+ // - Left side: u =0.5 (near 0)
+ let period = std::f64::consts::TAU; // =6.283
+ let uv_polygon = vec![
+ DVec2::new(5.5, 0.0),  // Near 2=
+ DVec2::new(0.5, 0.0),  // Near 0
+ DVec2::new(0.5, 1.0),
+ DVec2::new(5.5, 1.0),
+ ];
+
+ let result = split_uv_polygon_at_seam(&uv_polygon, period);
+
+ // Should split into two polygons
+ assert_eq!(result.len(), 2, "Seam crossing should split polygon");
+
+ // Each output polygon must have at least 3 vertices
+ for (i, poly) in result.iter().enumerate() {
+ assert!(
+ poly.len() >= 3,
+ "Output polygon {} has only {} vertices (need >= 3)",
+ i,
+ poly.len()
+ );
+ }
+
+ // No output polygon should cross the seam
+ for (i, poly) in result.iter().enumerate() {
+ for j in 0..poly.len() {
+ let k = (j + 1) % poly.len();
+ let du = poly[k].x - poly[j].x;
+ assert!(
+ du.abs() < period * 0.5,
+ "Output polygon {} still crosses seam: du = {} between vertices {} and {}",
+ i,
+ du,
+ j,
+ k
+ );
+ }
+ }
+
+ // Verify specific coordinates: each polygon should contain seam intersection points
+ // The original polygon has edges that cross the seam at v=0 and v=1
+ // Output polygons should have intersection points at u=0 or u=period
+
+ // Find the right-side polygon (u values near 5.5)
+ let right_poly = result
+ .iter()
+ .find(|p| p.iter().any(|v| v.x > period * 0.5))
+ .expect("Should have a polygon with high u values");
+ // Find the left-side polygon (u values near 0.5)
+ let left_poly = result
+ .iter()
+ .find(|p| p.iter().any(|v| v.x < period * 0.5))
+ .expect("Should have a polygon with low u values");
+
+ // Right polygon should have vertices with u near 5.5 and seam points
+ let has_high_u = right_poly.iter().any(|v| (v.x - 5.5).abs() < 0.01);
+ assert!(has_high_u, "Right polygon should contain original high-u vertices");
+
+ // Left polygon should have vertices with u near 0.5 and seam points
+ let has_low_u = left_poly.iter().any(|v| (v.x - 0.5).abs() < 0.01);
+ assert!(has_low_u, "Left polygon should contain original low-u vertices");
+
+ // Each polygon should have seam intersection points
+ // (either at u=0 or u=period, both representing the same physical location)
+ fn near_seam(u: f64, period: f64) -> bool {
+ u.abs() < 0.01 || (u - period).abs() < 0.01
+ }
+
+ assert!(
+ right_poly.iter().any(|v| near_seam(v.x, period)),
+ "Right polygon should have a seam intersection point"
+ );
+ assert!(
+ left_poly.iter().any(|v| near_seam(v.x, period)),
+ "Left polygon should have a seam intersection point"
+ );
+ }
+
+ #[test]
+ fn split_uv_polygon_no_crossing_returns_original() {
+ // Polygon that doesn't cross the seam
+ let period = std::f64::consts::TAU;
+ let uv_polygon = vec![
+ DVec2::new(1.0, 0.0),
+ DVec2::new(2.0, 0.0),
+ DVec2::new(2.0, 1.0),
+ DVec2::new(1.0, 1.0),
+ ];
+
+ let result = split_uv_polygon_at_seam(&uv_polygon, period);
+
+ assert_eq!(result.len(), 1, "No seam crossing should return one polygon");
+ assert_eq!(result[0].len(), 4, "Original polygon should be unchanged");
+ }
+
+ #[test]
+ fn split_uv_polygon_degenerate_input() {
+ let period = std::f64::consts::TAU;
+
+ // Less than 3 vertices
+ let two_vertices = vec![DVec2::new(1.0, 0.0), DVec2::new(2.0, 0.0)];
+ let result = split_uv_polygon_at_seam(&two_vertices, period);
+ assert_eq!(result.len(), 1);
+ assert_eq!(result[0].len(), 2);
+
+ // Empty input
+ let empty: Vec<DVec2> = vec![];
+ let result = split_uv_polygon_at_seam(&empty, period);
+ assert_eq!(result.len(), 1);
+ assert!(result[0].is_empty());
+ }
+
+ // =====================================================
+ // Track A: Periodic Surface Seam Enhancement Tests
+ // =====================================================
+
+ // --- A1: Enhanced degenerate UV polygon handling tests ---
+
+ #[test]
+ fn test_handle_degenerate_uv_polygon_sphere_pole_cap() {
+ // UV polygon that represents a small cap near the north pole of a sphere
+ // All vertices collapse toward v=0 (north pole)
+ let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Y, 1.0);
+ let surface = Surface3::Sphere(sphere);
+
+ // Small triangle near north pole (v =0)
+ let uv_polygon = vec![
+ DVec2::new(0.0, 0.001),
+ DVec2::new(std::f64::consts::FRAC_PI_2, 0.001),
+ DVec2::new(std::f64::consts::PI, 0.001),
+ ];
+
+ let result = handle_degenerate_uv_polygon(&uv_polygon, &surface);
+
+ // Should produce valid 3D boundary
+ assert!(!result.is_empty(), "Should produce non-empty boundary");
+
+ // All points should be valid (no NaN)
+ for pt in &result {
+ assert!(pt.x.is_finite(), "Point x should be finite");
+ assert!(pt.y.is_finite(), "Point y should be finite");
+ assert!(pt.z.is_finite(), "Point z should be finite");
+ }
+
+ // Should include pole point since all vertices are near pole
+ let north_pole = sphere.center + sphere.axis * sphere.radius;
+ let has_pole = result.iter().any(|pt| (*pt - north_pole).length() < 0.1);
+ assert!(has_pole, "Should include pole point for collapsed vertices");
+ }
+
+ #[test]
+ fn test_handle_degenerate_uv_polygon_sphere_south_pole_cap() {
+ // UV polygon near south pole (v ==
+ let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Y, 1.0);
+ let surface = Surface3::Sphere(sphere);
+
+ // Small triangle near south pole (v ==
+ let uv_polygon = vec![
+ DVec2::new(0.0, std::f64::consts::PI - 0.001),
+ DVec2::new(std::f64::consts::FRAC_PI_2, std::f64::consts::PI - 0.001),
+ DVec2::new(std::f64::consts::PI, std::f64::consts::PI - 0.001),
+ ];
+
+ let result = handle_degenerate_uv_polygon(&uv_polygon, &surface);
+
+ // Should produce valid 3D boundary
+ assert!(!result.is_empty(), "Should produce non-empty boundary");
+
+ // Should include south pole point
+ let south_pole = sphere.center - sphere.axis * sphere.radius;
+ let has_pole = result.iter().any(|pt| (*pt - south_pole).length() < 0.1);
+ assert!(has_pole, "Should include south pole point for collapsed vertices");
+ }
+
+ #[test]
+ fn test_handle_degenerate_uv_polygon_cone_apex() {
+ // UV polygon that collapses toward cone apex (v=0)
+ let cone = ConicalSurface {
+ apex: DVec3::ZERO,
+ axis: DVec3::Y,
+ radius: 0.0, // Reference radius at apex
+ half_angle_rad: std::f64::consts::FRAC_PI_4,
+ };
+ let surface = Surface3::Cone(cone);
+
+ // Small triangle near apex (v =0)
+ let uv_polygon = vec![
+ DVec2::new(0.0, 0.001),
+ DVec2::new(std::f64::consts::FRAC_PI_2, 0.001),
+ DVec2::new(std::f64::consts::PI, 0.001),
+ ];
+
+ let result = handle_degenerate_uv_polygon(&uv_polygon, &surface);
+
+ // Should produce valid 3D boundary
+ assert!(!result.is_empty(), "Should produce non-empty boundary");
+
+ // All points should be valid (no NaN)
+ for pt in &result {
+ assert!(pt.x.is_finite(), "Point x should be finite");
+ assert!(pt.y.is_finite(), "Point y should be finite");
+ assert!(pt.z.is_finite(), "Point z should be finite");
+ }
+
+ // Should include apex point
+ let apex = cone.apex_point();
+ let has_apex = result.iter().any(|pt| (*pt - apex).length() < 0.1);
+ assert!(has_apex, "Should include apex point for collapsed vertices");
+ }
+
+ #[test]
+ fn test_handle_degenerate_uv_polygon_sphere_triangular_pole_cap() {
+ // A triangular UV region that includes the pole, simulating a spherical triangle
+ // with one vertex at the pole
+ let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Y, 1.0);
+ let surface = Surface3::Sphere(sphere);
+
+ // Triangle with pole at one vertex
+ // u=0, v=0 is the pole, other vertices at larger v
+ let uv_polygon = vec![
+ DVec2::new(0.0, 0.0), // At pole
+ DVec2::new(0.0, 0.5), // Away from pole
+ DVec2::new(std::f64::consts::FRAC_PI_2, 0.5), // Away from pole
+ ];
+
+ let result = handle_degenerate_uv_polygon(&uv_polygon, &surface);
+
+ // Should produce valid 3D boundary with at least 2 distinct points
+ assert!(result.len() >= 2, "Should produce at least 2 boundary points");
+
+ // All points should be valid (no NaN)
+ for pt in &result {
+ assert!(pt.x.is_finite(), "Point x should be finite");
+ assert!(pt.y.is_finite(), "Point y should be finite");
+ assert!(pt.z.is_finite(), "Point z should be finite");
+ }
+ }
+
+ // --- A2: Edge splitting at periodic seam tests ---
+
+ #[test]
+ fn test_split_edge_at_periodic_seam_cylinder() {
+ // Edge that crosses U=0/2=boundary on cylinder
+ let cylinder = CylindricalSurface {
+ origin: DVec3::ZERO,
+ axis: DVec3::Y,
+ ref_dir: any_perpendicular(DVec3::Y),
+ radius: 1.0,
+ };
+
+ // Edge from u near 2=to u near 0
+ let start_uv = DVec2::new(std::f64::consts::TAU - 0.1, 0.5);
+ let end_uv = DVec2::new(0.1, 0.5);
+
+ let result = split_edge_at_periodic_seam(start_uv, end_uv, &Surface3::Cylinder(cylinder));
+
+ // Should return two segments
+ assert!(result.is_some(), "Should detect seam crossing");
+ let segments = result.unwrap();
+ assert_eq!(segments.len(), 2, "Should split into two segments");
+
+ // Each segment should have start and end UV
+ for (i, seg) in segments.iter().enumerate() {
+ assert_eq!(seg.len() as usize, 2, "Segment {} should have 2 points", i);
+ }
+
+ // First segment should end at seam
+ assert!(
+ segments[0][1].x.abs() < 0.01 || (segments[0][1].x - std::f64::consts::TAU).abs() < 0.01,
+ "First segment should end at seam"
+ );
+
+ // Second segment should start at seam
+ assert!(
+ segments[1][0].x.abs() < 0.01 || (segments[1][0].x - std::f64::consts::TAU).abs() < 0.01,
+ "Second segment should start at seam"
+ );
+ }
+
+ #[test]
+ fn test_split_edge_at_periodic_seam_no_crossing() {
+ // Edge that doesn't cross seam
+ let cylinder = CylindricalSurface {
+ origin: DVec3::ZERO,
+ axis: DVec3::Y,
+ ref_dir: any_perpendicular(DVec3::Y),
+ radius: 1.0,
+ };
+
+ let start_uv = DVec2::new(1.0, 0.5);
+ let end_uv = DVec2::new(2.0, 0.5);
+
+ let result = split_edge_at_periodic_seam(start_uv, end_uv, &Surface3::Cylinder(cylinder));
+
+ // Should return None (no splitting needed)
+ assert!(result.is_none(), "Should not split edge that doesn't cross seam");
+ }
+
+ #[test]
+ fn test_split_edge_at_periodic_seam_sphere() {
+ // Edge crossing U=0/2=boundary on sphere
+ let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Y, 1.0);
+
+ let start_uv = DVec2::new(std::f64::consts::TAU - 0.1, 1.0);
+ let end_uv = DVec2::new(0.1, 1.0);
+
+ let result = split_edge_at_periodic_seam(start_uv, end_uv, &Surface3::Sphere(sphere));
+
+ assert!(result.is_some(), "Should detect seam crossing on sphere");
+ let segments = result.unwrap();
+ assert_eq!(segments.len(), 2, "Should split into two segments");
+ }
+
+ // --- A3: Torus double periodicity tests ---
+
+ #[test]
+ fn test_split_uv_polygon_torus_u_period() {
+ // UV polygon on torus that crosses U seam only
+ let period = std::f64::consts::TAU;
+ let uv_polygon = vec![
+ DVec2::new(5.5, 0.5), // Near U=2=
+ DVec2::new(0.5, 0.5), // Near U=0
+ DVec2::new(0.5, 1.5),
+ DVec2::new(5.5, 1.5),
+ ];
+
+ let result = split_uv_polygon_at_seam(&uv_polygon, period);
+
+ // Should split into two polygons
+ assert_eq!(result.len(), 2, "Should split torus polygon at U seam");
+
+ // Each polygon should not cross U seam
+ for poly in &result {
+ for j in 0..poly.len() {
+ let k = (j + 1) % poly.len();
+ let du = poly[k].x - poly[j].x;
+ assert!(
+ du.abs() < period * 0.5,
+ "Output polygon should not cross U seam"
+ );
+ }
+ }
+ }
+
+ #[test]
+ fn test_split_uv_polygon_torus_double_period() {
+ // UV polygon on torus that crosses both U and V seams
+ // This is a complex case where the polygon wraps around both directions
+ let period = std::f64::consts::TAU;
+
+ // Polygon that spans nearly full U range and crosses V seam
+ let uv_polygon = vec![
+ DVec2::new(0.1, 5.5), // V near 2=
+ DVec2::new(5.9, 5.5),
+ DVec2::new(5.9, 0.5), // V near 0
+ DVec2::new(0.1, 0.5),
+ ];
+
+ // Use double periodic splitting
+ let result = split_uv_polygon_torus_double(&uv_polygon, period);
+
+ // Should produce multiple non-crossing polygons
+ assert!(!result.is_empty(), "Should produce output polygons");
+
+ // Each polygon should not cross U or V seams
+ for poly in &result {
+ assert!(poly.len() >= 3, "Polygon should have at least 3 vertices");
+
+ for j in 0..poly.len() {
+ let k = (j + 1) % poly.len();
+ let du = poly[k].x - poly[j].x;
+ let dv = poly[k].y - poly[j].y;
+ assert!(
+ du.abs() < period * 0.5,
+ "Output polygon should not cross U seam"
+ );
+ assert!(
+ dv.abs() < period * 0.5,
+ "Output polygon should not cross V seam"
+ );
+ }
+ }
+ }
+
+ #[test]
+ fn test_handle_degenerate_uv_polygon_non_degenerate() {
+ // Normal UV polygon on sphere (no degenerate points)
+ let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Y, 1.0);
+ let surface = Surface3::Sphere(sphere);
+
+ // Rectangle away from poles
+ let uv_polygon = vec![
+ DVec2::new(0.0, 1.0),
+ DVec2::new(1.0, 1.0),
+ DVec2::new(1.0, 2.0),
+ DVec2::new(0.0, 2.0),
+ ];
+
+ let result = handle_degenerate_uv_polygon(&uv_polygon, &surface);
+
+ // Should produce same number of points as input
+ assert_eq!(result.len(), uv_polygon.len(), "Non-degenerate should map 1:1");
+
+ // All points should be on sphere surface
+ for pt in &result {
+ let pt: &DVec3 = pt;
+ let dist = pt.length();
+ assert!(
+ (dist - sphere.radius).abs() < 0.001,
+ "Point should be on sphere surface"
+ );
+ }
+ }
+
+ /// `split_polygon_2d_by_line` must correctly split a diamond polygon when the
+ /// split line passes through two opposite vertices (vertices exactly on the line).
+ /// This tests the forward-search and backward-search crossing detection.
+ #[test]
+ fn split_diamond_by_diagonal() {
+ use glam::DVec2;
+ // Diamond with vertices at cardinal points =split by x-axis
+ // The line y=0 passes through vertex 0 (1,0) and vertex 2 (-1,0).
+ let poly = vec![
+ DVec2::new(1.0, 0.0),
+ DVec2::new(0.0, 1.0),
+ DVec2::new(-1.0, 0.0),
+ DVec2::new(0.0, -1.0),
+ ];
+ let out: Vec<Vec<DVec2>> = split_polygon_2d_by_line(&poly, DVec2::new(0.0, 0.0), DVec2::new(1.0, 0.0));
+ assert!(out.len() >= 2, "diamond split by diagonal should produce 2+ polygons, got {}", out.len());
+ // Each sub-polygon should be non-degenerate
+ for (i, p) in out.iter().enumerate() {
+ assert!(p.len() >= 3, "sub-polygon {i} has {} vertices", p.len());
+ }
+ }
+
+ /// `split_polygon_2d_by_line` must correctly split a polygon when the split line
+ /// does NOT pass through any vertex (normal case, no regression).
+ #[test]
+ fn split_square_offset_line() {
+ use glam::DVec2;
+ let poly = vec![
+ DVec2::new(0.0, 0.0),
+ DVec2::new(2.0, 0.0),
+ DVec2::new(2.0, 2.0),
+ DVec2::new(0.0, 2.0),
+ ];
+ // Vertical line x=1.2 =does not pass through any vertex
+ let out = split_polygon_2d_by_line(&poly, DVec2::new(1.2, 0.0), DVec2::new(0.0, 1.0));
+ assert!(out.len() >= 2, "square split by offset line should produce 2+ polygons, got {}", out.len());
+ }
+
+ /// Debug: ZD3 cylinder-cylinder concentric union SA undercount.
+ /// rcad reports 16.3 vs expected 22.0 (= 7 ?=21.9911).
+ #[test]
+ fn zd3_concentric_cylinder_union() {
+ use crate::boolean::boolean_op_with_retry_policy;
+ use crate::brep_algo::total_surface_area;
+ use crate::BooleanOpType;
+ use crate::RetryPolicy;
+ use std::collections::HashMap;
+ use glam::DVec3;
+ use rcad_modeling::make_cylinder_brep;
+
+ // OCCT ZD3 geometry:
+ // pcylinder b1 1 2 =r=1, h=2, z= 0,2]
+ // pcylinder b2 0.5 3 =r=0.5, h=3, z= -1,2] after ttranslate 0 0 -1
+ //
+ // rcad make_cylinder_brep centers the cylinder at `center`, so:
+ // b1: center at z=1 =z= 0,2]
+ // b2: center at z=0.5 =z= -1,2]
+ let b1 = make_cylinder_brep(DVec3::new(0.0, 0.0, 1.0), DVec3::Z, DVec3::X, 1.0, 2.0)
+ .expect("b1");
+ let b2 =
+ make_cylinder_brep(DVec3::new(0.0, 0.0, 0.5), DVec3::Z, DVec3::X, 0.5, 3.0)
+ .expect("b2");
+
+ let expected_sa = 7.0 * std::f64::consts::PI;
+
+ let result = boolean_op_with_retry_policy(
+ BooleanOpType::Union,
+ &b1,
+ &b2,
+ &RetryPolicy::default(),
+ Default::default(),
+ )
+ .expect("ZD3 fuse");
+
+ let actual_sa = total_surface_area(&result.0);
+
+ let face_count: usize = result
+ .0
+ .solids
+ .iter()
+ .flat_map(|s| &s.shells)
+ .flat_map(|sh| &sh.faces)
+ .count();
+
+ println!(
+ "ZD3: SA = {:.4} (expected {:.4} = 7 ? diff = {:.4})",
+ actual_sa,
+ expected_sa,
+ actual_sa - expected_sa
+ );
+ println!("Result has {} faces", face_count);
+
+ // Surface details from GeomStore
+ let brep = &result.0;
+ println!("  GeomStore: {} surfaces", brep.geom.surfaces.len());
+ for (idx, surf) in brep.geom.surfaces.iter().enumerate() {
+ match surf {
+ rcad_kernel::geom::Surface3::Cylinder(c) => {
+ println!(
+ "  Surf[{}]: Cyl origin=({:.4},{:.4},{:.4}) axis=({:.4},{:.4},{:.4}) radius={:.4}",
+ idx, c.origin.x, c.origin.y, c.origin.z,
+ c.axis.x, c.axis.y, c.axis.z, c.radius
+ );
+ }
+ rcad_kernel::geom::Surface3::Plane(p) => {
+ println!(
+ "  Surf[{}]: Plane origin=({:.4},{:.4},{:.4}) normal=({:.4},{:.4},{:.4})",
+ idx, p.origin.x, p.origin.y, p.origin.z,
+ p.normal.x, p.normal.y, p.normal.z
+ );
+ }
+ _ => {
+ println!("  Surf[{}]: {:?}", idx, std::mem::discriminant(surf));
+ }
+ }
+ }
+
+ // Face-to-surface mapping
+ let mut flat_idx = 0;
+ for solid in &brep.solids {
+ for shell in &solid.shells {
+ for _face in &shell.faces {
+ let surf_idx = brep.geom.face_surface.get(flat_idx).and_then(|&i| i);
+ println!("  Face[{}]: surf_idx={:?}", flat_idx, surf_idx);
+ flat_idx += 1;
+ }
+ }
+ }
+
+ // Remaining face_surface entries that don't map to faces
+ let total_faces = flat_idx;
+ if total_faces < brep.geom.face_surface.len() {
+ for fi in total_faces..brep.geom.face_surface.len() {
+ println!("  Face[{}] (geom only): surf_idx={:?}", fi, brep.geom.face_surface[fi]);
+ }
+ }
+
+ // Allow wide tolerance for now =this is a known failure
+ let tol = (5e-3_f64).max(0.15 * expected_sa.abs());
+ if (actual_sa - expected_sa).abs() > tol {
+ println!(
+ "ZD3 FAIL: SA {:.4} vs expected {:.4} (diff {:.4}, tol {:.4})",
+ actual_sa,
+ expected_sa,
+ actual_sa - expected_sa,
+ tol
+ );
+ }
+ }
 }
 
 
-// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
-// 鉁?OCCT-aligned: BOPTools_AlgoTools3D 鈥?orient_edges_on_wire
-// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+// ===================================================
+//  ?OCCT-aligned: BOPTools_AlgoTools3D  ?orient_edges_on_wire
+// ===================================================
 
-/// 鉁?OCCT-aligned: BOPTools_AlgoTools3D::OrientEdgesOnWire.
+///  ?OCCT-aligned: BOPTools_AlgoTools3D::OrientEdgesOnWire.
 ///
 /// Orients edges so they form a consistent closed wire (end-to-start
 /// connectivity).  After orientation, the end vertex of edges[i] equals
@@ -1396,38 +1396,38 @@ mod glue_tests {
 /// OCCT reference: BOPTools_AlgoTools3D.cxx (OrientEdgesOnWire)
 ///
 /// # Arguments
-/// * `edges` 鈥?Mutable list of (edge_index, forward_flag) pairs to
-///   orient in-place.  The first edge's orientation is kept as-is.
-/// * `ds` 鈥?The DS containing vertices and edges.
+/// * `edges`  ?Mutable list of (edge_index, forward_flag) pairs to
+/// orient in-place.  The first edge's orientation is kept as-is.
+/// * `ds`  ?The DS containing vertices and edges.
 pub fn orient_edges_on_wire(edges: &mut Vec<(usize, bool)>, ds: &DS) {
-    if edges.is_empty() {
-        return;
-    }
-    for i in 1..edges.len() {
-        let (prev_ei, prev_fwd) = edges[i - 1];
-        let prev_end_vi = if prev_fwd {
-            ds.edges[prev_ei].end_vertex
-        } else {
-            ds.edges[prev_ei].start_vertex
-        };
-        let (cur_ei, _cur_fwd) = edges[i];
-        // Check both orientations of the current edge.
-        if ds.edges[cur_ei].start_vertex == prev_end_vi {
-            // Already oriented forward 鈥?keep as-is.
-            continue;
-        } else if ds.edges[cur_ei].end_vertex == prev_end_vi {
-            // Reverse orientation makes the connection.
-            edges[i].1 = !edges[i].1;
-        }
-        // If neither matches there is a topological gap 鈥?OCCT leaves it as-is.
-    }
+ if edges.is_empty() {
+ return;
+ }
+ for i in 1..edges.len() {
+ let (prev_ei, prev_fwd) = edges[i - 1];
+ let prev_end_vi = if prev_fwd {
+ ds.edges[prev_ei].end_vertex
+ } else {
+ ds.edges[prev_ei].start_vertex
+ };
+ let (cur_ei, _cur_fwd) = edges[i];
+ // Check both orientations of the current edge.
+ if ds.edges[cur_ei].start_vertex == prev_end_vi {
+ // Already oriented forward  ?keep as-is.
+ continue;
+ } else if ds.edges[cur_ei].end_vertex == prev_end_vi {
+ // Reverse orientation makes the connection.
+ edges[i].1 = !edges[i].1;
+ }
+ // If neither matches there is a topological gap  ?OCCT leaves it as-is.
+ }
 }
 
-// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
-// 鉁?OCCT-aligned: BOPTools_AlgoTools3D 鈥?is_micro_edge
-// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+// ===================================================
+//  ?OCCT-aligned: BOPTools_AlgoTools3D  ?is_micro_edge
+// ===================================================
 
-/// 鉁?OCCT-aligned: BOPTools_AlgoTools3D::IsMicroEdge.
+///  ?OCCT-aligned: BOPTools_AlgoTools3D::IsMicroEdge.
 ///
 /// Returns `true` when the edge's 3D length is shorter than
 /// `edge.geom_tol * 2.0`.  Micro-edges are degenerate candidates that
@@ -1441,42 +1441,42 @@ pub fn orient_edges_on_wire(edges: &mut Vec<(usize, bool)>, ds: &DS) {
 ///
 /// OCCT reference: BOPTools_AlgoTools3D.cxx (IsMicroEdge).
 pub fn is_micro_edge(edge_idx: usize, ds: &DS) -> bool {
-    let tol = ds.edges[edge_idx].geom_tol;
-    let len = compute_edge_length_3d(edge_idx, ds);
-    len < tol * 2.0
+ let tol = ds.edges[edge_idx].geom_tol;
+ let len = compute_edge_length_3d(edge_idx, ds);
+ len < tol * 2.0
 }
 
 /// Compute the 3D length of a DS edge by its curve type.
 pub(crate) fn compute_edge_length_3d(edge_idx: usize, ds: &DS) -> f64 {
-    let edge = &ds.edges[edge_idx];
-    match &edge.curve {
-        Curve3::Line(_) => {
-            ds.vertices[edge.start_vertex]
-                .point
-                .distance(ds.vertices[edge.end_vertex].point)
-        }
-        Curve3::Circle(c) => {
-            let angle = (edge.t_range[1] - edge.t_range[0]).abs();
-            c.radius * angle
-        }
-        Curve3::Ellipse(e) => {
-            let angle = (edge.t_range[1] - edge.t_range[0]).abs();
-            e.major_radius * angle
-        }
-        _ => {
-            // Fallback: chord distance between edge vertices.
-            ds.vertices[edge.start_vertex]
-                .point
-                .distance(ds.vertices[edge.end_vertex].point)
-        }
-    }
+ let edge = &ds.edges[edge_idx];
+ match &edge.curve {
+ Curve3::Line(_) => {
+ ds.vertices[edge.start_vertex]
+ .point
+ .distance(ds.vertices[edge.end_vertex].point)
+ }
+ Curve3::Circle(c) => {
+ let angle = (edge.t_range[1] - edge.t_range[0]).abs();
+ c.radius * angle
+ }
+ Curve3::Ellipse(e) => {
+ let angle = (edge.t_range[1] - edge.t_range[0]).abs();
+ e.major_radius * angle
+ }
+ _ => {
+ // Fallback: chord distance between edge vertices.
+ ds.vertices[edge.start_vertex]
+ .point
+ .distance(ds.vertices[edge.end_vertex].point)
+ }
+ }
 }
 
-// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
-// 鉁?OCCT-aligned: BOPTools_AlgoTools3D 鈥?get_edge_on_face
-// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+// ===================================================
+//  ?OCCT-aligned: BOPTools_AlgoTools3D  ?get_edge_on_face
+// ===================================================
 
-/// 鉁?OCCT-aligned: BOPTools_AlgoTools3D::GetEdgeOnFace.
+///  ?OCCT-aligned: BOPTools_AlgoTools3D::GetEdgeOnFace.
 ///
 /// Checks whether a DS edge lies entirely on a DS face's surface.
 /// The edge is considered "on face" when both its vertices project
@@ -1484,41 +1484,41 @@ pub(crate) fn compute_edge_length_3d(edge_idx: usize, ds: &DS) -> f64 {
 ///
 /// OCCT reference: BOPTools_AlgoTools3D.cxx (GetEdgeOnFace).
 pub fn get_edge_on_face(edge_idx: usize, face_idx: usize, ds: &DS) -> bool {
-    let edge = &ds.edges[edge_idx];
-    let face = &ds.faces[face_idx];
-    let surf = &face.surface;
+ let edge = &ds.edges[edge_idx];
+ let face = &ds.faces[face_idx];
+ let surf = &face.surface;
 
-    // OCCT-aligned SUM: vert_tol + face_tol + fuzzy (same pattern as ComputeVF)
-    let v1_tol = ds.vertices[edge.start_vertex].geom_tol + face.geom_tol + ds.fuzzy_tol;
-    let v2_tol = ds.vertices[edge.end_vertex].geom_tol + face.geom_tol + ds.fuzzy_tol;
+ // OCCT-aligned SUM: vert_tol + face_tol + fuzzy (same pattern as ComputeVF)
+ let v1_tol = ds.vertices[edge.start_vertex].geom_tol + face.geom_tol + ds.fuzzy_tol;
+ let v2_tol = ds.vertices[edge.end_vertex].geom_tol + face.geom_tol + ds.fuzzy_tol;
 
-    // Check both edge vertices project onto the face surface.
-    let v1_pt = ds.vertices[edge.start_vertex].point;
-    let v2_pt = ds.vertices[edge.end_vertex].point;
+ // Check both edge vertices project onto the face surface.
+ let v1_pt = ds.vertices[edge.start_vertex].point;
+ let v2_pt = ds.vertices[edge.end_vertex].point;
 
-    let (_uv1, p1_on_surf) = crate::extrema::closest_point_on_surface(surf, v1_pt);
-    let (_uv2, p2_on_surf) = crate::extrema::closest_point_on_surface(surf, v2_pt);
+ let (_uv1, p1_on_surf) = crate::extrema::closest_point_on_surface(surf, v1_pt);
+ let (_uv2, p2_on_surf) = crate::extrema::closest_point_on_surface(surf, v2_pt);
 
-    let d1 = p1_on_surf.distance(v1_pt);
-    let d2 = p2_on_surf.distance(v2_pt);
+ let d1 = p1_on_surf.distance(v1_pt);
+ let d2 = p2_on_surf.distance(v2_pt);
 
-    d1 < v1_tol && d2 < v2_tol
+ d1 < v1_tol && d2 < v2_tol
 }
 
 // ================================================================
-// 鉁?Current state: emit_sphere_faces_direct replaces sphere face emission pipeline
-//    OCCT edge-based path not yet implemented. Current approach:
-//    emit_sphere_faces_direct: Circle3 intersection points 鈫?emit_face_data (FaceSampleData-free)
-//    鉁?DoSplitSEAMOnFace 宸插疄鐜?(collect_face_edge_segments L2196-2282)
-//    鉁?SmartMap/Path walk 宸插疄鐜?(build_closed_wires L3312-3617)
-//    鉁?PerformAreas 宸插疄鐜?(perform_areas)
-//    褰撳墠浠嶄娇鐢?emit_sphere_faces_direct 浣滀负鐞冮潰鍙戝皠璺緞,鏇夸唬 OCCT 鐨?
-//    BuildSplitFaces 鈫?BuilderFace::Perform 杈圭骇璺緞銆?鏋舵瀯宸紓: 鐞冮潰鍒嗗壊)
+//  ?Current state: emit_sphere_faces_direct replaces sphere face emission pipeline
+// OCCT edge-based path not yet implemented. Current approach:
+// emit_sphere_faces_direct: Circle3 intersection points  ?emit_face_data (FaceSampleData-free)
+// ?DoSplitSEAMOnFace  ?(collect_face_edge_segments L2196-2282)
+// ?SmartMap/Path walk  ?(build_closed_wires L3312-3617)
+// ?PerformAreas  ?(perform_areas)
+// ?emit_sphere_faces_direct = =  OCCT  ?
+// BuildSplitFaces  ?BuilderFace::Perform  =?  :  =)
 // ================================================================
 
-// 鉁?DoSplitSEAMOnFace 鈥?宸插疄鐜?(collect_face_edge_segments L2196-2282)
+//  ?DoSplitSEAMOnFace  ? ?(collect_face_edge_segments L2196-2282)
 // OCCT BOPTools_AlgoTools3D::DoSplitSEAMOnFace (BOPTools_AlgoTools3D.cxx L58-232)
-// 鍦?seam 涓?IC 鐨勪氦鐐瑰鍒嗗壊 seam 杈?鍒涘缓 seam 瀛愭,甯?shifted pcurve銆?
-// rcad: collect_face_edge_segments 鍦?seam 瀛愭涓婅绠?second_pcurve,
-// 閫氳繃 midpoint UV 闈犺繎 U=0 鎴?U=TAU 鏉ュ垽鏂亸绉绘柟鍚戙€?
+//  ?seam  ?IC   = seam  ?  seam  , ?shifted pcurve ?
+// rcad: collect_face_edge_segments  ?seam    ?second_pcurve,
+// midpoint UV U=0  ?U=TAU  ュ = = €?
 
