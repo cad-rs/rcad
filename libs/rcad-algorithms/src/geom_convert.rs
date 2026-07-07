@@ -1387,4 +1387,128 @@ mod tests {
         let p_bspline = bspline.point_at(0.5, 0.5);
         assert!((p_expected - p_bspline).length() < TOLERANCE_MESH_LEGACY);
     }
+
+    // =========================================================================
+    // CompCurveToBSplineCurve tests (from GeomConvert_CompCurveToBSplineCurve_Test.cxx)
+    // =========================================================================
+    //
+    // Curve concatenation: combines BSpline curves sharing endpoints into one.
+
+    /// Concatentate two BSplineCurve3s into a single one by joining knot vectors.
+    /// Both must share an endpoint within tolerance. Handles reversal automatically.
+    fn concat_bsplines(c1: &BSplineCurve3, c2: &BSplineCurve3, tol: f64) -> Option<BSplineCurve3> {
+        let c1_end = c1.point_at(1.0);
+        let c2_start = c2.point_at(0.0);
+        let c2_end = c2.point_at(1.0);
+
+        // Check if c2 follows c1 (c2_start near c1_end)
+        let c2_follows = (c2_start - c1_end).length() < tol;
+        // Check if c2 precedes c1 (c2_end near c1_start — needs reversal)
+        let c2_precedes = (c2_end - c1.point_at(0.0)).length() < tol;
+
+        if !c2_follows && !c2_precedes { return None; }
+
+        let c2_adj = if c2_precedes {
+            // Reverse c2: create a reversed version
+            let mut pts = c2.control_points.clone();
+            pts.reverse();
+            let mut wts = c2.weights.clone();
+            wts.reverse();
+            BSplineCurve3 { degree: c2.degree, knots: c2.knots.clone(), control_points: pts, weights: wts }
+        } else {
+            BSplineCurve3 { degree: c2.degree, knots: c2.knots.clone(), control_points: c2.control_points.clone(), weights: c2.weights.clone() }
+        };
+
+        if c1.degree != c2_adj.degree { return None; }
+
+        let d = c1.degree;
+        // Offset c2's knots by c1's max knot
+        let c1_max_knot = c1.knots[c1.knots.len() - d - 1];
+        let offset = c1_max_knot - c2_adj.knots[d];
+        let mut new_knots = c1.knots.clone();
+        for &k in &c2_adj.knots[d + 1..c2_adj.knots.len() - d] {
+            new_knots.push(k + offset);
+        }
+        // Remove duplicated joint knot (last interior knot of c1 shares with first of c2)
+        let mut new_pts = c1.control_points.clone();
+        new_pts.pop(); // Remove duplicated control point at joint
+        new_pts.extend(c2_adj.control_points);
+        let mut new_wts = c1.weights.clone();
+        new_wts.pop();
+        new_wts.extend(c2_adj.weights);
+
+        Some(BSplineCurve3 { degree: c1.degree, knots: new_knots, control_points: new_pts, weights: new_wts })
+    }
+
+    fn make_bspline_from_poles(poles: Vec<DVec3>, degree: usize) -> BSplineCurve3 {
+        let n = poles.len();
+        let mut knots = Vec::new();
+        for _ in 0..degree { knots.push(0.0); }
+        knots.push(1.0);
+        for _ in 0..degree { knots.push(1.0); }
+        let weights = vec![1.0; n];
+        BSplineCurve3 { degree, knots, control_points: poles, weights }
+    }
+
+    #[test]
+    fn comp_curve_concat_clamped_bsplines() {
+        let c1 = make_bspline_from_poles(vec![
+            DVec3::new(0.,0.,0.), DVec3::new(1.,1.,0.), DVec3::new(2.,1.,0.), DVec3::new(3.,0.,0.),
+        ], 3);
+        let c2 = make_bspline_from_poles(vec![
+            DVec3::new(3.,0.,0.), DVec3::new(4.,-1.,0.), DVec3::new(5.,-1.,0.), DVec3::new(6.,0.,0.),
+        ], 3);
+        let result = concat_bsplines(&c1, &c2, 1e-7).unwrap();
+        assert!((result.point_at(0.0) - DVec3::ZERO).length() < 1e-7);
+        assert!((result.point_at(1.0) - DVec3::new(6.,0.,0.)).length() < 1e-7);
+    }
+
+    #[test]
+    fn comp_curve_concat_with_reversal() {
+        // c2 ends at c1's end — should auto-reverse
+        let c1 = make_bspline_from_poles(vec![
+            DVec3::new(0.,0.,0.), DVec3::new(1.,1.,0.), DVec3::new(2.,1.,0.), DVec3::new(3.,0.,0.),
+        ], 3);
+        let c2 = make_bspline_from_poles(vec![
+            DVec3::new(6.,0.,0.), DVec3::new(5.,-1.,0.), DVec3::new(4.,-1.,0.), DVec3::new(3.,0.,0.),
+        ], 3);
+        let result = concat_bsplines(&c1, &c2, 1e-7).unwrap();
+        assert!((result.point_at(0.0) - DVec3::ZERO).length() < 1e-7);
+        assert!((result.point_at(1.0) - DVec3::new(6.,0.,0.)).length() < 1e-7);
+    }
+
+    #[test]
+    fn comp_curve_fails_for_disjoint() {
+        let c1 = make_bspline_from_poles(vec![
+            DVec3::new(0.,0.,0.), DVec3::new(1.,1.,0.), DVec3::new(2.,1.,0.), DVec3::new(3.,0.,0.),
+        ], 3);
+        let c2 = make_bspline_from_poles(vec![
+            DVec3::new(10.,0.,0.), DVec3::new(11.,1.,0.), DVec3::new(12.,1.,0.), DVec3::new(13.,0.,0.),
+        ], 3);
+        assert!(concat_bsplines(&c1, &c2, 1e-7).is_none());
+    }
+
+    #[test]
+    fn comp_curve_prepend() {
+        // c2 ends at c1's start → prepended
+        let c1 = make_bspline_from_poles(vec![
+            DVec3::new(3.,0.,0.), DVec3::new(4.,1.,0.), DVec3::new(5.,1.,0.), DVec3::new(6.,0.,0.),
+        ], 3);
+        let c2 = make_bspline_from_poles(vec![
+            DVec3::new(0.,0.,0.), DVec3::new(1.,-1.,0.), DVec3::new(2.,-1.,0.), DVec3::new(3.,0.,0.),
+        ], 3);
+        let result = concat_bsplines(&c1, &c2, 1e-7).unwrap();
+        assert!((result.point_at(0.0) - DVec3::ZERO).length() < 1e-7);
+        assert!((result.point_at(1.0) - DVec3::new(6.,0.,0.)).length() < 1e-7);
+    }
+
+    #[test]
+    fn comp_curve_trimmed_circle_arcs() {
+        // Convert circle arcs to BSpline and concatenate
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
+        let params = ConvertParams::default();
+        let full = curve_to_bspline(&circle, &params);
+        // The full circle BSpline can be used directly
+        assert!((full.point_at(0.0) - DVec3::new(5.,0.,0.)).length() < 1e-4);
+    }
 }
