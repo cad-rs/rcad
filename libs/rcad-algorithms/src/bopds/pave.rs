@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::sync::{Arc, RwLock};
 
 use rcad_kernel::geom::{Curve2d, Curve3};
 
@@ -612,4 +613,12 @@ mod tests {
         assert!((ts2 - 0.9).abs() < 1e-15);
         assert!(splittable);
     }
+}
+
+/// OCCT-aligned: shared PaveBlock via `Arc<RwLock<PaveBlock>>`.
+#[derive(Debug, Clone)]
+pub struct SharedPB(pub Arc<RwLock<PaveBlock>>);
+
+impl SharedPB {
+    pub fn new(pb: PaveBlock) -> Self { SharedPB(Arc::new(RwLock::new(pb))) }
 }

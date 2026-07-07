@@ -227,7 +227,7 @@ pub struct DSCurveRepOnFace {
   /// Paves inserted on this edge by intersection passes (unsorted until build_split_edges).
   pub paves: Vec<Pave>,
   /// After `build_split_edges`, the edge is represented by these sub-segments.
-  pub pave_blocks: Vec<PaveBlock>,
+  pub pave_blocks: Vec<crate::bopds::pave::SharedPB>,
   /// =OCCT-aligned: per-face pcurve representations (BRep_CurveRepresentation).
   /// Populated by DS::build_face_reps() after edges and faces are loaded.
   pub face_reps: Vec<DSCurveRepOnFace>,
@@ -495,7 +495,7 @@ pub struct IntersectionCurve {
  pub geom_tol: f64,
  /// =OCCT-aligned: BOPDS_Curve::myPaveBlocks (hxx:115).
  /// Sub-segments of this intersection curve, created by splitting at paves.
- pub pave_blocks: Vec<PaveBlock>,
+ pub pave_blocks: Vec<crate::bopds::pave::SharedPB>,
  /// =OCCT-aligned: BOPDS_Curve / IntTools_Curve extra fields.
  pub curve_extra: CurveExtra,
 }
@@ -516,19 +516,17 @@ impl Default for CurveExtra {
 }
 
 impl IntersectionCurve {
- /// =OCCT-aligned: BOPDS_Curve::InitPaveBlock1 (lxx:85-92).
- /// OCCT only pushes an empty PB to the list. PB vertices are set by
- /// PutPavesOnCurve (ext_paves) -> Update(false) (sub-PBs from ext_paves).
- pub fn init_pave_block1(&mut self) {
- if self.pave_blocks.is_empty() {
- self.pave_blocks.push(PaveBlock::new_curve_block());
- }
- }
+  /// =OCCT-aligned: BOPDS_Curve::InitPaveBlock1 (lxx:85-92).
+  pub fn init_pave_block1(ds: &mut DS) -> usize {
+  let idx = ds.pave_blocks.len();
+  ds.pave_blocks.push(crate::bopds::pave::SharedPB::new(PaveBlock::new_curve_block()));
+  idx
+  }
 
- /// =OCCT-aligned: BOPDS_Curve::ChangePaveBlock1 (lxx:96-100).
- pub fn change_pave_block1(&mut self) -> Option<&mut PaveBlock> {
- self.pave_blocks.first_mut()
- }
+  /// =OCCT-aligned: BOPDS_Curve::ChangePaveBlock1 (lxx:96-100).
+  pub fn change_pave_block1(pb_indices: &[crate::bopds::pave::SharedPB]) -> Option<usize> {
+  pb_indices.first().map(|_| 0)
+  }
 }
 
 /// Type of near-tangency between faces (used by glue detection).
@@ -682,7 +680,7 @@ pub struct DS {
 
  /// Global PaveBlock array (OCCT: BOPDS_DS::myPaveBlocks).
  /// Indices in FaceInfo::pave_blocks_on / pave_blocks_in refer to this array.
- pub pave_blocks: Vec<PaveBlock>,
+ pub pave_blocks: Vec<crate::bopds::pave::SharedPB>,
   /// =OCCT-aligned: myIncreasedSS =vertices whose tolerance was increased
   /// during intersection processing.  Read by RepeatIntersection to determine
   /// which vertices need VV/VE/VF re-checks.
