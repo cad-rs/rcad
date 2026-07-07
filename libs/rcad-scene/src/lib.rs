@@ -1,4 +1,4 @@
-﻿pub mod assembly;
+pub mod assembly;
 pub use assembly::{Assembly, AssemblyMetadata, AssemblyNode, NodeContent, assembly_from_parts};
 
 use glam::DVec3;
@@ -361,7 +361,7 @@ impl CreationController {
  selection: &mut SelectionState,
  cursor: [f32; 2],
  viewport: [f32; 2],
- ) -> Option<BRep> {
+ ) -> Option<topods::BRep> {
  let aspect = viewport[0] / viewport[1].max(1.0);
  match self.active_tool {
  Tool::SelectFace | Tool::SelectEdge => {
@@ -730,7 +730,7 @@ impl CreationController {
  };
  }
 
- pub fn confirm_active_command(&mut self, camera: &Camera) -> Option<BRep> {
+ pub fn confirm_active_command(&mut self, camera: &Camera) -> Option<topods::BRep> {
  let finished = self.preview_brep(camera.distance);
  if finished.is_some() {
  self.command_state = CommandState::Idle;
@@ -738,7 +738,7 @@ impl CreationController {
  finished
  }
 
- pub fn preview_brep(&self, camera_distance: f32) -> Option<BRep> {
+ pub fn preview_brep(&self, camera_distance: f32) -> Option<topods::BRep> {
  match self.command_state {
  CommandState::Idle => None,
  CommandState::BoxBase { first, current } => build_box_from_points(first, current, 0.02),
@@ -822,7 +822,7 @@ fn box_height_from_screen(
  if raw.abs() < 0.1 { 1.0 } else { raw as f64 }
 }
 
-fn build_box_from_points(first: DVec3, second: DVec3, depth_signed: f64) -> Option<BRep> {
+fn build_box_from_points(first: DVec3, second: DVec3, depth_signed: f64) -> Option<topods::BRep> {
  let min_x = first.x.min(second.x);
  let min_y = first.y.min(second.y);
  let width = (first.x - second.x).abs();
@@ -848,7 +848,7 @@ fn build_box_from_points(first: DVec3, second: DVec3, depth_signed: f64) -> Opti
  .ok()
 }
 
-fn build_sphere_from_points(center: DVec3, current: DVec3) -> Option<BRep> {
+fn build_sphere_from_points(center: DVec3, current: DVec3) -> Option<topods::BRep> {
  let radius = center.distance(current);
  if radius < 1e-6 {
  return None;
@@ -856,17 +856,17 @@ fn build_sphere_from_points(center: DVec3, current: DVec3) -> Option<BRep> {
  make_sphere_brep(center, radius).ok()
 }
 
-fn build_cylinder_from_points(center: DVec3, radius: f64, height: f64) -> Option<BRep> {
+fn build_cylinder_from_points(center: DVec3, radius: f64, height: f64) -> Option<topods::BRep> {
  let height = height.abs().max(0.01);
  make_cylinder_brep(center, DVec3::Z, DVec3::X, radius, height).ok()
 }
 
-fn build_cone_from_points(center: DVec3, base_radius: f64, height: f64) -> Option<BRep> {
+fn build_cone_from_points(center: DVec3, base_radius: f64, height: f64) -> Option<topods::BRep> {
  let height = height.abs().max(0.01);
  make_cone_brep(center, DVec3::Z, DVec3::X, base_radius, height).ok()
 }
 
-fn build_torus_from_points(center: DVec3, major_radius: f64, minor_radius: f64) -> Option<BRep> {
+fn build_torus_from_points(center: DVec3, major_radius: f64, minor_radius: f64) -> Option<topods::BRep> {
  make_torus_brep(center, DVec3::Z, DVec3::X, major_radius, minor_radius).ok()
 }
 pub fn append_brep(dst: &mut BRep, src: BRep) {

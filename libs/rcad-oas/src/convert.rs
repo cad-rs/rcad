@@ -291,10 +291,11 @@ impl OasConverter {
  let flat = polygon_to_brep_face(&polygon.points, ls.z_offset)?;
 
  if ls.thickness > 0.0 {
+ let flat_t = flat.to_topods();
  match rcad_modeling::builder::ops::extrude(
- &flat, 0, glam::DVec3::Z, ls.thickness,
+ &flat_t, 0, glam::DVec3::Z, ls.thickness,
  ) {
- Ok(extruded) => merge_into(&mut result, &extruded),
+ Ok(extruded) => merge_into(&mut result, &rcad_kernel::BRep::from_topods(&extruded)),
  Err(_) => merge_into(&mut result, &flat),
  }
  } else {
@@ -309,10 +310,11 @@ impl OasConverter {
  let flat = polygon_to_brep_face(&polygon.points, ls.z_offset)?;
 
  if ls.thickness > 0.0 {
+ let flat_t = flat.to_topods();
  match rcad_modeling::builder::ops::extrude(
- &flat, 0, glam::DVec3::Z, ls.thickness,
+ &flat_t, 0, glam::DVec3::Z, ls.thickness,
  ) {
- Ok(extruded) => merge_into(&mut result, &extruded),
+ Ok(extruded) => merge_into(&mut result, &rcad_kernel::BRep::from_topods(&extruded)),
  Err(_) => merge_into(&mut result, &flat),
  }
  } else {

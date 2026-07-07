@@ -111,14 +111,15 @@ pub fn gds_to_brep(library: &GdsLibrary, cell_name: &str, config: &LayerConfig) 
 
  if layer_settings.thickness > 0.0 {
  // Extrude along +Z
+ let flat_t = flat.to_topods();
  match rcad_modeling::builder::ops::extrude(
- &flat,
+ &flat_t,
  0, // face_idx = 0 (the only face/solid/shell)
  glam::DVec3::Z,
  layer_settings.thickness,
  ) {
  Ok(extruded) => {
- merge_into(&mut result, &extruded);
+ merge_into(&mut result, &rcad_kernel::BRep::from_topods(&extruded));
  }
  Err(_) => {
  // Fall back to flat face on extrusion failure
