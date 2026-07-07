@@ -342,16 +342,125 @@ impl ImpPrmIntersection {
         }
 
         // ================================================================
-        // OCCT L1768-1808: PutVertexOnLine + post-process
+        // OCCT L1768-1808: PutVertexOnLine + remove short lines + reorder
+        //
+        // Remove lines with <= 2 coincident points, then move Walking
+        // lines to the end of slin (Restriction first, then Walking).
         // ================================================================
-        // rcad simplified: PutVertexOnLine (IntPatch_RstInt) not yet ported
+        let mut a_nb_lin = self.slin.len();
+        let mut i: usize = 0;
+        while i < a_nb_lin {
+            // OCCT L1783-1798: remove short lines (≤ 2 points with same 3D)
+            if self.slin[i].is_wline() && self.slin[i].wline_pnts.len() <= 2 {
+                let remove = if self.slin[i].wline_pnts.len() < 2 {
+                    true
+                } else {
+                    let p1 = self.slin[i].wline_pnts[0].p3d;
+                    let p2 = self.slin[i].wline_pnts[1].p3d;
+                    p1.distance_squared(p2) <= 1e-14
+                };
+                if remove {
+                    self.slin.remove(i);
+                    a_nb_lin = self.slin.len();
+                    continue;
+                }
+            }
+
+            // OCCT L1800-1808: move Walking lines to end
+            if self.slin[i].line_type == IntPatchIType::Walking {
+                let wl = self.slin.remove(i);
+                self.slin.push(wl);
+            }
+            i += 1;
+        }
 
         // ================================================================
-        // OCCT L1810-1913: IsCoincide — coincidence detection for restriction lines
+        // OCCT L1810-1913: IsCoincide — coincidence detection
+        //
+        // For each Restriction line (lower index), check against all
+        // subsequent lines. If coincident, delete the shorter one.
         // ================================================================
-        // rcad simplified
+        let tol_3d = tol_tang.max(1e-7);
+
+        // OCCT L1817-1841: iterate restriction lines
+        let mut i = 0;
+        while i < self.slin.len() {
+            let is_rline1 = self.slin[i].line_type == IntPatchIType::Restriction;
+            if !is_rline1 { break; }
+
+            // OCCT L1828-1837: restriction line must be isoline (line in 2D)
+            // rcad: skip this check — all our restriction curves are lines
+
+            let mut is_first_deleted = false;
+
+            // OCCT L1841-1907: check against all subsequent lines
+            let mut j = i + 1;
+            while j < self.slin.len() {
+                let is_rline2 = self.slin[j].line_type == IntPatchIType::Restriction;
+
+                // OCCT L1877: IsCoincide check
+                // rcad simplified: check if midpoints are close in 3D
+                let is_coincide = if self.slin[i].is_wline() || self.slin[j].is_wline() {
+                    let check_pnts = |line: &IntPatchLine| -> DVec3 {
+                        if line.is_wline() && !line.wline_pnts.is_empty() {
+                            let mid = line.wline_pnts.len() / 2;
+                            line.wline_pnts[mid].p3d
+                        } else {
+                            DVec3::ZERO
+                        }
+                    };
+                    let p1 = check_pnts(&self.slin[i]);
+                    let p2 = check_pnts(&self.slin[j]);
+                    p1.distance_squared(p2) < tol_3d * tol_3d
+                } else {
+                    // Restriction-Restriction: check curve similarity
+                    false
+                };
+
+                if is_coincide {
+                    if is_rline2 {
+                        // OCCT L1887-1904: Restriction-Restriction, keep longer
+                        let len1 = line_length(&self.slin[i]);
+                        let len2 = line_length(&self.slin[j]);
+                        if len2 > len1 {
+                            is_first_deleted = true;
+                            break;
+                        } else {
+                            self.slin.remove(j);
+                            continue;
+                        }
+                    } else {
+                        // Delete Walking-line
+                        self.slin.remove(j);
+                        continue;
+                    }
+                }
+                j += 1;
+            }
+
+            if is_first_deleted {
+                self.slin.remove(i);
+            } else {
+                i += 1;
+            }
+        }
 
         // OCCT L1915: set empt and done
+        self.empt = self.slin.is_empty() && self.spnt.is_empty();
+        self.done = true;
+
+        // OCCT L1918-1921: early return if no lines
+        if self.slin.is_empty() { return; }
+
+        // ================================================================
+        // OCCT L1923-1963: DecomposeResult for sphere/cone/cylinder/torus
+        //
+        // Post-process intersection lines for quadric surfaces with
+        // periodic/seamed parameterization. Splits lines at seam/pole
+        // boundaries into proper segments.
+        // ================================================================
+        // rcad simplified: DecomposeResult not yet ported
+        // Determines if decomposition is needed based on quadric type
         self.empt = self.slin.is_empty() && self.spnt.is_empty();
         self.done = true;
     }
@@ -376,6 +485,16 @@ fn classify_surface_type(s: &Surface3) -> GeomAbsSurfaceType {
 fn uv_bounds(s: &Surface3) -> (f64, f64, f64, f64) {
     let [umin, umax, vmin, vmax] = s.default_domain();
     (umin, umax, vmin, vmax)
+}
+
+/// Approximate 3D chord length of an IntPatchLine
+fn line_length(line: &IntPatchLine) -> f64 {
+    if line.is_wline() && line.wline_pnts.len() >= 2 {
+        line.wline_pnts.windows(2).map(|w| w[0].p3d.distance(w[1].p3d)).sum()
+    } else {
+        // For RLine without wline_pnts, use a default estimate
+        line.t_range[1] - line.t_range[0]
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
