@@ -1,4 +1,4 @@
-﻿use std::collections::{HashSet, BTreeMap};
+use std::collections::{HashSet, BTreeMap};
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, Surface3};
@@ -571,12 +571,16 @@ impl<'a> super::PaveFiller<'a> {
  self.make_sd_vertices_vv(block);
  }
 
- // OCCT L115-127: InitPaveBlocksForVertex for each SD vertex
- // rcad: DS uses inline Pave on DSEdge, not pool-based PaveBlocks;
- // SD vertex registration (AddShapeSD) is sufficient for downstream
- // consumers (update_interfs_with_sd_vertices, etc.).
- // (Architecture diff A5)
- }
+  // OCCT L115-127: InitPaveBlocksForVertex for each SD vertex
+  // OCCT ShapesSD is a DataMap<source, target> (one direction).
+  // rcad stores (source, target) bidirectionally; dedup via HashSet.
+  let a_dmii: std::collections::HashSet<usize> =
+    self.ds.shape_sd.sd_vertices_iter().map(|&(k, _)| k).collect();
+  for &n1 in &a_dmii {
+    // OCCT L121-123: UserBreak check (rcad: not applicable)
+    self.ds.init_pave_blocks_for_vertex(n1);
+  }
+  }
 
  ///  ?OCCT-aligned: MakeSDVertices (PaveFiller_1.cxx L136-233).
  /// Merges a connected group of vertices into a single SD vertex.

@@ -331,10 +331,12 @@ impl<'a> PaveFiller<'a> {
  // =OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L280)
  self.ds.update_pave_blocks_with_sd_vertices();
 
- if !skip_ef {
- // OCCT-aligned: PerformEF uses BOPDS_Iterator for pair enumeration,
- // not a pre-built BVH.  rcad perform_ef iterates all A  pairs.
- self.perform_ef();
+  if !skip_ef {
+  // OCCT-aligned: BOPDS_Iterator::Initialize(EDGE, FACE) with BVH.
+  // Rebuild BVH after MakeBlocks may have added/modified edges.
+  let bvh_all_edges_ef = self.build_ds_bvh_combined(true);
+  let bvh_all_faces_ef = self.build_ds_bvh_face_all();
+  self.perform_ef_bvh(&bvh_all_edges_ef, &bvh_all_faces_ef);
  // =OCCT-aligned: TreatNewVertices =merge new vertices created by EF intersection.
  // OCCT PaveFiller_5.cxx L570: PerformNewVertices(aMVCPB, ..., false)
  let ef_survivors = self.treat_new_vertices();

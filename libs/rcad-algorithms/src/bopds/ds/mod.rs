@@ -1,4 +1,4 @@
-﻿pub mod types;
+pub mod types;
 pub use types::*;
 
 use super::pave::{Pave, PaveBlock, NO_EDGE};
@@ -164,10 +164,40 @@ impl DS {
  self.shape_sd.add_sd_vertex(from, to);
  }
 
- /// OCCT-aligned: HasShapeSD(n, nSD) =find the SD root vertex.
- pub fn has_shape_sd(&self, v: usize) -> Option<usize> {
- self.shape_sd.find_sd_partner(v)
- }
+  /// OCCT-aligned: HasShapeSD(n, nSD) =find the SD root vertex.
+  pub fn has_shape_sd(&self, v: usize) -> Option<usize> {
+    self.shape_sd.find_sd_partner(v)
+  }
+
+  /// OCCT BOPDS_DS.cxx L1487-1499: InitPaveBlocksForVertex
+  ///
+  /// Ensures the PaveBlocks pool is initialized for all edges incident to
+  /// the given vertex.  OCCT uses myMapVE (vertex-to-edge map) for fast
+  /// lookup.  rcad scans edges by start/end vertex (no myMapVE equivalent).
+  /// The per-edge pave_blocks Vec is always allocated at creation time in
+  /// rcad (OCCT pool is lazy-initialized via ChangePaveBlocks), so the
+  /// body primarily records the form-aligned call structure.
+  pub fn init_pave_blocks_for_vertex(&mut self, vertex_idx: usize) {
+    // OCCT L1489: anEdgeIndices = myMapVE.Seek(theVertexIndex)
+    let mut incident_edges: Vec<usize> = Vec::new();
+    for (ei, e) in self.edges.iter().enumerate() {
+      if e.start_vertex == vertex_idx || e.end_vertex == vertex_idx {
+        incident_edges.push(ei);
+      }
+    }
+    // OCCT L1490-1492: if !anEdgeIndices return
+    if incident_edges.is_empty() {
+      return;
+    }
+    // OCCT L1495-1498: for each edge, ChangePaveBlocks(anEdgeIndex)
+    // rcad: per-edge pave_blocks Vec is always allocated at creation time.
+    // No additional initialization needed.  The SD vertex will be
+    // incorporated into these PaveBlocks by the subsequent
+    // update_pave_blocks_with_sd_vertices() call in the pipeline.
+    for _ei in &incident_edges {
+      // OCCT: ChangePaveBlocks(anEdgeIndex) ensures pool entry exists.
+    }
+  }
 
  ///  ?OCCT-aligned: myDS->HasInterf(nE1, nE2) =checks EE interference exists.
  pub fn has_interf_ee(&self, e1: usize, e2: usize) -> bool {
