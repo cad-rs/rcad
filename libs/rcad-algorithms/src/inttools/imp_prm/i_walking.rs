@@ -612,17 +612,56 @@ impl IWalking {
 // (fit_gradient removed — gauss_newton_root uses func.values() directly)
 
 // ═══════════════════════════════════════════════════════════════════════
-// Tests
+// Tests: OCCT math_FunctionSetRoot equivalence for gauss_newton_root
+//
+// Replicates OCCT math_FunctionSetRoot_Test.cxx test cases for the
+// underdetermined (1 eq, N vars) case, plus integration tests.
 // ═══════════════════════════════════════════════════════════════════════
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rcad_kernel::geom::{Surface3, SurfaceEval};
+    use rcad_kernel::geom::Surface3;
     use crate::inttools::int_surf_quadric::Quadric;
 
-    /// Test: constrained Newton converges to |F| < tol and direction constraint satisfied
+    fn make_linear_f(a: f64, b: f64, c: f64) -> SurfFunction {
+        let q = Surface3::Plane(rcad_kernel::geom::Plane {
+            origin: DVec3::ZERO, normal: DVec3::Z,
+        });
+        let quad = Quadric::from_surface3(&q).unwrap();
+        let n = DVec3::new(-a, -b, 1.0).normalize();
+        let p = Surface3::Plane(rcad_kernel::geom::Plane {
+            origin: DVec3::new(0.0, 0.0, -c), normal: n,
+        });
+        let mut f = SurfFunction::with_quadric(quad);
+        f.set_surface(p);
+        f
+    }
+
+    // ── OCCT SingleVariable: F(u) = 0 ────────────────────────────
     #[test]
-    fn test_constrained_newton() {
+    fn test_occt_single_variable() {
+        let mut func = make_linear_f(1.0, 0.0, 0.0); // F(u,v) = u
+        let r = IWalking::gauss_newton_root(&mut func, 5.0, 0.0, 1e-6);
+        assert!(r.is_some(), "should converge");
+        let (un, vn) = r.unwrap();
+        let f = func.value(&[un, vn]).unwrap();
+        assert!(f.abs() < 1e-5, "F={:.2e}", f);
+    }
+
+    // ── OCCT LinearSystemBasic: 1×2 linear ───────────────────────
+    #[test]
+    fn test_occt_linear_1x2() {
+        let mut func = make_linear_f(1.0, 1.0, -3.0); // u+v-3=0
+        let r = IWalking::gauss_newton_root(&mut func, 10.0, 10.0, 1e-6);
+        assert!(r.is_some());
+        let (un, vn) = r.unwrap();
+        let f = func.value(&[un, vn]).unwrap();
+        assert!(f.abs() < 1e-5, "F({:.4},{:.4})={:.2e}", un, vn, f);
+    }
+
+    // ── OCCT NonlinearSystem: x²+y²=4 ────────────────────────────
+    #[test]
+    fn test_occt_nonlinear_1x2() {
         let cyl = Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
             origin: DVec3::ZERO, axis: DVec3::Z, radius: 2.0,
         });
@@ -632,47 +671,74 @@ mod tests {
         });
         let mut func = SurfFunction::with_quadric(quad);
         func.set_surface(plane);
-        // P(u,v) = (u,v,0), F = sqrt(u^2+v^2) - 2
-        // At (2, 0): F=0. At (2.5, 0): F=0.5.
-        // Gauss-Newton should converge from (2.5, 0) to (2, 0)
-        if let Some((un, vn)) = IWalking::gauss_newton_root(&mut func, 2.5, 0.0, 1e-6) {
-            let x = [un, vn];
-            let f = func.value(&x).unwrap_or(1.0);
-            assert!(f.abs() < 1e-5, "F({}, {}) = {} should be near 0", un, vn, f);
+        let r = IWalking::gauss_newton_root(&mut func, 2.5, 0.0, 1e-6);
+        assert!(r.is_some());
+        let (un, vn) = r.unwrap();
+        let f = func.value(&[un, vn]).unwrap();
+        assert!(f.abs() < 1e-5, "F({:.4},{:.4})={:.2e}", un, vn, f);
+    }
+
+    // ── OCCT TightTolerances ─────────────────────────────────────
+    #[test]
+    fn test_occt_tight_tolerance() {
+        let mut func = make_linear_f(1.0, 0.0, 0.0);
+        let r = IWalking::gauss_newton_root(&mut func, 3.0, 0.0, 1e-10);
+        assert!(r.is_some());
+        let f = func.value(&[r.unwrap().0, 0.0]).unwrap();
+        assert!(f.abs() < 1e-8, "F={:.2e}", f);
+    }
+
+    // ── OCCT GoodStartingPoint → fast convergence ────────────────
+    #[test]
+    fn test_occt_good_start() {
+        let mut func = make_linear_f(1.0, -1.0, -1.0);
+        let r = IWalking::gauss_newton_root(&mut func, 2.01, 1.01, 1e-6);
+        assert!(r.is_some());
+    }
+
+    // ── OCCT StopOnDivergent: far start → may not converge ───────
+    #[test]
+    fn test_occt_far_start() {
+        let mut func = make_linear_f(1.0, -1.0, -1.0); // u-v-1=0
+        let r = IWalking::gauss_newton_root(&mut func, 1e6, -1e6, 1e-6);
+        // Should still converge for linear system
+        assert!(r.is_some(), "linear system should converge from far start");
+    }
+
+    // ── Convergence from multiple starting points ────────────────
+    #[test]
+    fn test_occt_multiple_starts() {
+        let mut func = make_linear_f(2.0, -1.0, 5.0); // 2u - v + 5 = 0
+        for &(su, sv) in &[(10.0, 10.0), (-5.0, -5.0), (100.0, -50.0)] {
+            let r = IWalking::gauss_newton_root(&mut func, su, sv, 1e-6);
+            assert!(r.is_some(), "diverged from ({},{})", su, sv);
+            let (un, vn) = r.unwrap();
+            let f = func.value(&[un, vn]).unwrap();
+            assert!(f.abs() < 1e-4, "F={:.2e} from ({},{})", f, su, sv);
         }
     }
 
-    /// Test: walk_segment maintains F ≈ 0 along entire line
+    // ── Walk segment integration test ─────────────────────────────
     #[test]
-    fn test_walk_stays_on_intersection() {
-        let q_plane = Surface3::Plane(rcad_kernel::geom::Plane {
-            origin: DVec3::ZERO, normal: DVec3::Z,
-        });
-        let quad = Quadric::from_surface3(&q_plane).unwrap();
-        let p_plane = Surface3::Plane(rcad_kernel::geom::Plane {
-            origin: DVec3::ZERO, normal: DVec3::new(-1.0, -1.0, 1.0).normalize(),
-        });
-        let mut func = SurfFunction::with_quadric(quad);
-        func.set_surface(p_plane);
+    fn test_occt_walk_integration() {
+        // F(u,v) = u → intersection is u=0 line
+        let mut func = make_linear_f(1.0, 0.0, 0.0);
+        let mut iw = IWalking::new(1e-7, 0.01, 0.01);
+        iw.um = -10.0; iw.um_max = 10.0;
+        iw.vm = -10.0; iw.vm_max = 10.0;
+        iw.tol_u = 1e-7; iw.tol_v = 1e-7;
+        iw.pas = 0.01; iw.fleche = 0.01;
+        iw.prev_u = 0.0; iw.prev_v = 0.0;
 
-        let mut iwalk = IWalking::new(1e-7, 0.01, 0.01);
-        iwalk.um = -10.0; iwalk.um_max = 10.0;
-        iwalk.vm = -10.0; iwalk.vm_max = 10.0;
-        iwalk.tol_u = 1e-7; iwalk.tol_v = 1e-7;
-        iwalk.pas = 0.01; iwalk.fleche = 0.01;
-
-        iwalk.prev_u = 0.0; iwalk.prev_v = 0.0;
         let mut line = IWLine::new();
-        iwalk.walk_segment(&mut func, 0.0, 0.0, 1.0, &mut line);
+        iw.walk_segment(&mut func, 0.0, 0.0, 1.0, &mut line);
+        assert!(line.nb_points() >= 2);
 
-        assert!(line.nb_points() >= 2, "Should have >= 2 points");
-        for k in 0..line.nb_points() {
+        // Max |F| along line must be small
+        let max_f = (0..line.nb_points()).filter_map(|k| {
             let (_, u, v) = line.point_at(k);
-            let x = [*u, *v];
-            if let Some(f) = func.value(&x) {
-                assert!(f.abs() < 0.01,
-                    "Point {}: F({}, {}) = {} should be near 0", k, u, v, f);
-            }
-        }
+            func.value(&[*u, *v])
+        }).map(|f| f.abs()).fold(0.0f64, f64::max);
+        assert!(max_f < 0.01, "max |F| = {:.2e} >= 0.01", max_f);
     }
 }
