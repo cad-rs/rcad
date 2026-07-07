@@ -15,6 +15,7 @@ pub use brep_graph::{
     TopoGraphValidationIssue, TopoNode,
 };
 pub mod bnd_lib;
+pub mod bnd_lib_2d;
 pub mod boolean;
 mod boolean_unit_octant;
 pub mod bopds;

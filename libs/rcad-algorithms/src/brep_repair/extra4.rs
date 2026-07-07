@@ -1,4 +1,4 @@
-﻿fn create_face_from_boundary(chain: &[usize], brep: &BRep, _tolerance: f64) -> Option<Face> {
+fn create_face_from_boundary(chain: &[usize], brep: &BRep, _tolerance: f64) -> Option<Face> {
  if chain.len() < 3 { return None; }
  let mut wire_edges: Vec<WireEdge> = Vec::new();
  let mut nodes: Vec<DVec3> = Vec::new();
@@ -2006,7 +2006,7 @@ fn extend_pcurve_to_boundary(
  t_max: tc.t_max,
  }))
  }
- Curve2d::Parabola(_) | Curve2d::Hyperbola(_) => None,
+ Curve2d::Parabola(_) | Curve2d::Hyperbola(_) | Curve2d::Offset(_) => None,
  }
 }
 

@@ -1,4 +1,4 @@
-﻿/// Repair a gap at a periodic surface boundary.
+/// Repair a gap at a periodic surface boundary.
 fn repair_periodic_seam_gap(
  result: &mut BRep,
  gap: &PeriodicGap,
@@ -184,7 +184,7 @@ fn wrap_pcurve_to_domain(
  let _ = range;
  None
  }
- Curve2d::Parabola(_) | Curve2d::Hyperbola(_) => None,
+ Curve2d::Parabola(_) | Curve2d::Hyperbola(_) | Curve2d::Offset(_) => None,
  }
 }
 
