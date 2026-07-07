@@ -110,7 +110,7 @@ pub fn make_cylindrical_hole(
     ref_dir: DVec3,
     radius: f64,
     depth: f64,
-) -> Result<BRep, FeatureError> {
+) -> Result<topods::BRep, FeatureError> {
     if !center.is_finite() {
         return Err(FeatureError::NonFiniteInput("center"));
     }
@@ -133,7 +133,7 @@ pub fn extrude_polygon_solid(
     profile_verts: &[DVec3],
     direction: DVec3,
     depth: f64,
-) -> Result<BRep, FeatureError> {
+) -> Result<topods::BRep, FeatureError> {
     if profile_verts.len() < 3 {
         return Err(FeatureError::InvalidInput(
             "profile_verts needs >= 3 vertices",
@@ -152,7 +152,7 @@ pub fn revolve_polygon_solid(
     axis_origin: DVec3,
     axis_dir: DVec3,
     angle_rad: f64,
-) -> Result<BRep, FeatureError> {
+) -> Result<topods::BRep, FeatureError> {
     if profile_verts.len() < 3 {
         return Err(FeatureError::InvalidInput(
             "profile_verts needs >= 3 vertices",
@@ -184,7 +184,7 @@ pub fn make_prism(
     direction: DVec3,
     depth: f64,
     op: BooleanOpType,
-) -> Result<BRep, FeatureError> {
+) -> Result<topods::BRep, FeatureError> {
     if profile_verts.len() < 3 {
         return Err(FeatureError::NonPositiveInput("profile_verts needs >= 3 vertices"));
     }
@@ -209,7 +209,7 @@ pub fn make_draft_prism(
     depth: f64,
     draft_angle_rad: f64,
     op: BooleanOpType,
-) -> Result<BRep, FeatureError> {
+) -> Result<topods::BRep, FeatureError> {
     if profile_verts.len() < 3 {
         return Err(FeatureError::InvalidInput("profile_verts needs >= 3 vertices"));
     }
@@ -256,7 +256,7 @@ pub fn make_revolution(
     axis_dir: DVec3,
     angle_rad: f64,
     op: BooleanOpType,
-) -> Result<BRep, FeatureError> {
+) -> Result<topods::BRep, FeatureError> {
     if profile_verts.len() < 3 {
         return Err(FeatureError::InvalidInput("profile_verts needs >= 3 vertices"));
     }
@@ -272,7 +272,7 @@ pub fn make_revolution(
     Ok(rcad_kernel::BRep::from_topods(&boolean_op(op, target, &tool)?))
 }
 
-fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<BRep, FeatureError> {
+fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<topods::BRep, FeatureError> {
     if profile_verts.len() < 3 {
         return Err(FeatureError::InvalidInput("profile_verts needs >= 3 vertices"));
     }
@@ -296,45 +296,30 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<BRep, FeatureError
         brep.edges.push(Edge { start: i, end: j });
     }
 
-    let normal = {
-        let a = profile_verts[0];
-        let b = profile_verts[1];
-        let c = profile_verts[2];
-        let n = (b - a).cross(c - a);
-        if n.length_squared() <= EPS {
-            return Err(FeatureError::InvalidInput("profile_verts are degenerate"));
-        }
-        n.normalize()
+    // Single shell with one face containing all edges as a single outer wire.
+    let wire = Wire {
+        edges: (0..n).map(|i| WireEdge { idx: i, forward: true }).collect(),
     };
-
     let face = Face {
-        outer_wire: Wire {
-            edges: (0..n).map(WireEdge::fwd).collect(),
-        },
-        inner_wires: vec![],
-        normal,
-        triangles: vec![],
-        sample_point: None,
-        mesh_dirty: true,
-                surface_idx: None,
-
+        outer_wire: wire,
+        inner_wires: Vec::new(),
+        triangles: Vec::new(),
     };
-
     brep.solids.push(Solid {
         shells: vec![Shell { faces: vec![face] }],
     });
 
-    Ok(brep)
+    Ok(brep.to_topods())
 }
 
 /// Build a solid BRep prism from a polygon profile (n vertices, coplanar) extruded
-fn build_polygon_prism(profile_verts: &[DVec3], dir: DVec3, depth: f64) -> Result<BRep, FeatureError> {
+fn build_polygon_prism(profile_verts: &[DVec3], dir: DVec3, depth: f64) -> Result<topods::BRep, FeatureError> {
     let bot: Vec<DVec3> = profile_verts.to_vec();
     let top: Vec<DVec3> = bot.iter().map(|&p| p + dir * depth).collect();
     build_prism_from_sections(&bot, &top, dir)
 }
 
-fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result<BRep, FeatureError> {
+fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result<topods::BRep, FeatureError> {
     let n = bot.len();
     if n < 3 || top.len() != n {
         return Err(FeatureError::InvalidInput("section vertex count mismatch"));
@@ -788,7 +773,7 @@ pub fn make_linear_rib(
     direction: DVec3,
     depth: f64,
     op: BooleanOpType,
-) -> Result<BRep, FeatureError> {
+) -> Result<topods::BRep, FeatureError> {
     make_prism(target, profile_verts, direction, depth, op)
 }
 
@@ -802,7 +787,7 @@ pub fn make_revolution_rib(
     axis_dir: DVec3,
     angle_rad: f64,
     op: BooleanOpType,
-) -> Result<BRep, FeatureError> {
+) -> Result<topods::BRep, FeatureError> {
     make_revolution(target, profile_verts, axis_origin, axis_dir, angle_rad, op)
 }
 

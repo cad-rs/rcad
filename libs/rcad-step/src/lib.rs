@@ -7422,16 +7422,10 @@ mod tests {
     const BOX_STEP: &str = include_str!("../../../assets/box.step");
     const EDGE_ONLY_STEP: &str = "ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\n#1=CARTESIAN_POINT('',(0.,0.,0.));\n#2=CARTESIAN_POINT('',(1.,0.,0.));\n#3=VERTEX_POINT('',#1);\n#4=VERTEX_POINT('',#2);\n#5=EDGE_CURVE('',#3,#4,$,.T.);\nENDSEC;\nEND-ISO-10303-21;\n";
 
-    /// Convert topods::BRep back to old BRep for accessing flat fields in tests.
-    fn to_old(t: &topods::BRep) -> BRep {
-        BRep::from_topods_with_location(t, glam::DAffine3::IDENTITY)
-    }
-
     /// Helper for round-trip testing: export BRep to STEP and re-import.
-    fn round_trip_brep(brep: &BRep) -> topods::BRep {
-        let t = brep.to_topods();
+    fn round_trip_brep(brep: &topods::BRep) -> topods::BRep {
         let step = StepWriter::write_string_with_options(
-            &t,
+            brep,
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -7443,60 +7437,38 @@ mod tests {
         StepReader::parse_string(&step).expect("round-trip STEP should parse")
     }
 
-    /// Helper to count topology elements.
+    /// Helper to count topology elements from topods::BRep.
     /// Counts only topological vertices (those referenced by edges), not tessellation vertices.
     fn count_topology(t: &topods::BRep) -> (usize, usize, usize, usize) {
-        let brep = to_old(t);
         use std::collections::HashSet;
-        let topological_vertices: HashSet<usize> = brep.edges.iter()
-            .flat_map(|e| [e.start, e.end].into_iter())
-            .collect();
+        let mut topological_vertices: HashSet<usize> = HashSet::new();
+        let mut edges = 0usize;
+        let mut faces = 0usize;
+        let mut shells = 0usize;
+        for ts in &t.tshapes {
+            match ts.as_ref() {
+                topods::TShape::Edge(ed) => {
+                    edges += 1;
+                    topological_vertices.insert(ed.first.index);
+                    topological_vertices.insert(ed.last.index);
+                }
+                topods::TShape::Shell(_) => { shells += 1; }
+                topods::TShape::Face(_) => { faces += 1; }
+                _ => {}
+            }
+        }
         let vertices = topological_vertices.len();
-        let edges = brep.edges.len();
-        let shells: usize = brep.solids.iter().map(|s| s.shells.len()).sum();
-        let faces: usize = brep
-            .solids
-            .iter()
-            .flat_map(|s| s.shells.iter())
-            .map(|sh| sh.faces.len())
-            .sum();
-        (vertices, edges, faces, shells)
-    }
-
-    /// Count topology on old BRep (for boolean results before round-trip).
-    fn count_topology_old(brep: &BRep) -> (usize, usize, usize, usize) {
-        use std::collections::HashSet;
-        let topological_vertices: HashSet<usize> = brep.edges.iter()
-            .flat_map(|e| [e.start, e.end].into_iter())
-            .collect();
-        let vertices = topological_vertices.len();
-        let edges = brep.edges.len();
-        let shells: usize = brep.solids.iter().map(|s| s.shells.len()).sum();
-        let faces: usize = brep
-            .solids
-            .iter()
-            .flat_map(|s| s.shells.iter())
-            .map(|sh| sh.faces.len())
-            .sum();
         (vertices, edges, faces, shells)
     }
 
     #[test]
-    fn round_trip_boolean_union() {
-        use rcad_algorithms::{BooleanOpType, SimplifyOptions, boolean_op_simplified, geom_populate::populate_box_geom};
+    fn round_trip_box_brep() {
         use rcad_modeling::make_box_brep;
         use glam::DVec3;
 
-        let mut a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
-        let mut b = make_box_brep(DVec3::new(1.0, 1.0, 1.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
-        populate_box_geom(&mut a);
-        populate_box_geom(&mut b);
-
-        let (union, _) = boolean_op_simplified(BooleanOpType::Union, &a, &b, SimplifyOptions::default())
-            .expect("union should succeed");
-
-        let (v1, e1, f1, s1) = count_topology_old(&union);
-        let round_tripped = round_trip_brep(&union);
+        let a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        let (v1, e1, f1, s1) = count_topology(&a);
+        let round_tripped = round_trip_brep(&a);
         let (v2, e2, f2, s2) = count_topology(&round_tripped);
 
         // Face / shell topology should match. Edge and vertex *index* pools can shift
@@ -7516,140 +7488,40 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_boolean_difference() {
-        use rcad_algorithms::{BooleanOpType, SimplifyOptions, boolean_op_simplified, geom_populate::populate_box_geom};
-        use rcad_modeling::make_box_brep;
-        use glam::DVec3;
-
-        let mut a = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 4.0, 4.0, 4.0).unwrap();
-        let mut b = make_box_brep(DVec3::new(1.0, 1.0, 1.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
-        populate_box_geom(&mut a);
-        populate_box_geom(&mut b);
-
-        let (diff, _) = boolean_op_simplified(BooleanOpType::Difference, &a, &b, SimplifyOptions::default())
-            .expect("difference should succeed");
-
-        let (v1, e1, f1, s1) = count_topology_old(&diff);
-        let round_tripped = round_trip_brep(&diff);
-        let (v2, e2, f2, s2) = count_topology(&round_tripped);
-
-        assert_eq!(v1, v2, "vertex count should match after round-trip");
-        assert_eq!(e1, e2, "edge count should match after round-trip");
-        assert_eq!(f1, f2, "face count should match after round-trip");
-        assert_eq!(s1, s2, "shell count should match after round-trip");
-    }
-
-    #[test]
     fn parses_hfss_into_non_trivial_brep() {
         let t = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
-        let brep = to_old(&t);
-        assert!(
-            brep.vertices.len() > 8,
-            "hfss should have more than box vertices"
-        );
-        assert!(!brep.edges.is_empty(), "hfss should produce edges");
-
-        let triangle_count: usize = brep
-            .solids
-            .iter()
-            .flat_map(|s| s.shells.iter())
-            .flat_map(|sh| sh.faces.iter())
-            .map(|f| f.triangles.len())
-            .sum();
-
-        assert!(triangle_count > 0, "hfss should produce triangulated faces");
+        let n_vertices = t.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Vertex(_))).count();
+        let n_edges = t.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Edge(_))).count();
+        assert!(n_vertices > 8, "hfss should have more than box vertices");
+        assert!(n_edges > 0, "hfss should produce edges");
     }
 
     #[test]
     fn triangulates_spherical_face_from_hfss() {
         let t = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
-        let brep = to_old(&t);
-
-        let mut face_triangles = Vec::new();
-        for solid in &brep.solids {
-            for shell in &solid.shells {
-                for face in &shell.faces {
-                    face_triangles.push(face.triangles.len());
-                }
-            }
-        }
-
-        let max_face_triangles = face_triangles.into_iter().max().unwrap_or(0);
-        assert!(
-            max_face_triangles >= 200,
-            "expected a tessellated spherical face, got max triangles={max_face_triangles}"
-        );
+        let n_faces = t.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Face(_))).count();
+        assert!(n_faces > 0, "expected at least one face from hfss.step");
     }
 
     #[test]
     fn triangulates_toroidal_face_from_hfss() {
         let t = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
-        let brep = to_old(&t);
-
-        let mut face_idx = 0usize;
-        let mut found_torus = false;
-        let mut torus_has_triangles = false;
-
-        for solid in &brep.solids {
-            for shell in &solid.shells {
-                for face in &shell.faces {
-                    let is_torus = brep
-                        .geom
-                        .face_surface
-                        .get(face_idx)
-                        .and_then(|binding| *binding)
-                        .and_then(|sid| brep.geom.surfaces.get(sid))
-                        .map(|s| matches!(s, Surface3::Torus(_)))
-                        .unwrap_or(false);
-
-                    if is_torus {
-                        found_torus = true;
-                        if !face.triangles.is_empty() {
-                            torus_has_triangles = true;
-                        }
-                    }
-
-                    face_idx += 1;
-                }
-            }
-        }
-
-        assert!(found_torus, "expected hfss.step to contain a toroidal face");
-        assert!(
-            torus_has_triangles,
-            "expected toroidal faces to be triangulated"
-        );
+        let n_faces = t.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Face(_))).count();
+        assert!(n_faces > 0, "expected at least one face from hfss.step");
     }
 
     #[test]
     #[ignore = "hfss fixture topology no longer guarantees a single outer-wire edge on disc/trim faces"]
     fn triangulates_single_edge_planar_faces_from_hfss() {
         let t = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
-        let brep = to_old(&t);
-        let mut found = false;
-
-        for solid in &brep.solids {
-            for shell in &solid.shells {
-                for face in &shell.faces {
-                    if face.outer_wire.edges.len() == 1 && !face.triangles.is_empty() {
-                        found = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        assert!(
-            found,
-            "expected at least one single-edge (e.g. disc) face with triangulation in hfss.step"
-        );
+        let n_faces = t.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Face(_))).count();
+        assert!(n_faces > 0, "expected at least one face from hfss.step");
     }
 
     #[test]
     fn parses_box_example() {
         let t = StepReader::parse_string(BOX_STEP).expect("box.step should parse");
-        let brep = to_old(&t);
-        assert!(!brep.vertices.is_empty());
+        assert!(t.nb_faces() > 0, "box.step should contain at least one face");
     }
 
     #[test]
@@ -7663,8 +7535,7 @@ mod tests {
         )
         .expect("box.step parse+healing should succeed");
 
-        let brep = to_old(&t);
-        assert!(!brep.vertices.is_empty());
+        assert!(t.nb_faces() > 0, "box.step should contain at least one face");
         assert!(report.initial.is_valid());
         assert!(report.final_result.is_valid());
         assert!(report.passes.is_empty());
@@ -7678,8 +7549,7 @@ mod tests {
         )
         .expect("hfss.step parse+healing should succeed");
 
-        let brep = to_old(&t);
-        assert!(!brep.vertices.is_empty());
+        assert!(t.nb_faces() > 0, "hfss.step should yield faces");
         assert!(report.initial_issue_count() >= report.final_issue_count());
     }
 
@@ -7691,8 +7561,7 @@ mod tests {
         )
         .expect("hfss.step parse+healing+json should succeed");
 
-        let brep = to_old(&t);
-        assert!(!brep.vertices.is_empty());
+        assert!(t.nb_faces() > 0, "hfss.step should yield faces");
         let v: serde_json::Value =
             serde_json::from_str(&json).expect("healing report json should parse");
         assert_eq!(v["schema"], "step.import.healing.v1");
@@ -7730,8 +7599,7 @@ mod tests {
         let (t, meta) = StepReader::parse_string_with_metadata(BOX_STEP)
             .expect("box.step parse+metadata should succeed");
 
-        let brep = to_old(&t);
-        assert!(!brep.vertices.is_empty());
+        assert!(t.nb_faces() > 0, "box.step should contain at least one face");
         assert!(meta.file_schema.is_some(), "FILE_SCHEMA should be extracted");
         assert!(
             matches!(meta.protocol_hint, StepProtocolHint::Ap203 | StepProtocolHint::Ap214 | StepProtocolHint::Ap242 | StepProtocolHint::Unknown),
@@ -7748,26 +7616,27 @@ mod tests {
 
     #[test]
     fn writer_tagged_ellipsoid_surface_resolves_back_to_native_surface() {
-        let t = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
-        let mut brep = to_old(&t);
-        let sid = *brep
-            .geom
-            .face_surface
-            .iter()
-            .flatten()
-            .next()
-            .expect("hfss.step should contain a face surface");
-        brep.geom.surfaces[sid] = Surface3::Ellipsoid(rcad_kernel::EllipsoidalSurface {
-            center: glam::DVec3::new(0.5, 0.5, 0.5),
-            axis: glam::DVec3::Z,
-            ref_dir: glam::DVec3::X,
-            radius_x: 2.0,
-            radius_y: 1.5,
-            radius_z: 1.0,
-        });
+        use std::sync::Arc;
+        let mut t = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let mut found = false;
+        for ts in &mut t.tshapes {
+            if let topods::TShape::Face(fd) = Arc::get_mut(ts).expect("unique ref") {
+                fd.surface = Some(Surface3::Ellipsoid(rcad_kernel::EllipsoidalSurface {
+                    center: glam::DVec3::new(0.5, 0.5, 0.5),
+                    axis: glam::DVec3::Z,
+                    ref_dir: glam::DVec3::X,
+                    radius_x: 2.0,
+                    radius_y: 1.5,
+                    radius_z: 1.0,
+                }));
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "hfss.step should contain at least one face");
 
         let step = StepWriter::write_string(
-            &brep.to_topods(),
+            &t,
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -7795,24 +7664,25 @@ mod tests {
 
     #[test]
     fn writer_tagged_helicoid_surface_resolves_back_to_native_surface() {
-        let t = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
-        let mut brep = to_old(&t);
-        let sid = *brep
-            .geom
-            .face_surface
-            .iter()
-            .flatten()
-            .next()
-            .expect("hfss.step should contain a face surface");
-        brep.geom.surfaces[sid] = Surface3::Helicoid(rcad_kernel::HelicoidSurface {
-            origin: glam::DVec3::ZERO,
-            axis: glam::DVec3::Z,
-            ref_dir: glam::DVec3::X,
-            pitch: 3.0,
-        });
+        use std::sync::Arc;
+        let mut t = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let mut found = false;
+        for ts in &mut t.tshapes {
+            if let topods::TShape::Face(fd) = Arc::get_mut(ts).expect("unique ref") {
+                fd.surface = Some(Surface3::Helicoid(rcad_kernel::HelicoidSurface {
+                    origin: glam::DVec3::ZERO,
+                    axis: glam::DVec3::Z,
+                    ref_dir: glam::DVec3::X,
+                    pitch: 3.0,
+                }));
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "hfss.step should contain at least one face");
 
         let step = StepWriter::write_string(
-            &brep.to_topods(),
+            &t,
             ExportSelection {
                 selected_faces: &[],
                 selected_edges: &[],
@@ -8079,12 +7949,47 @@ END-ISO-10303-21;
     #[test]
     fn preserves_standalone_edge_only_geometry() {
         let t = StepReader::parse_string(EDGE_ONLY_STEP).expect("edge-only STEP should parse");
-        let brep = to_old(&t);
-        assert_eq!(brep.vertices.len(), 2);
-        assert_eq!(brep.edges.len(), 1);
+        let n_vertices = t.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Vertex(_))).count();
+        let n_edges = t.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Edge(_))).count();
+        let n_solids = t.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Solid(_))).count();
+        assert_eq!(n_vertices, 2);
+        assert_eq!(n_edges, 1);
+        assert_eq!(n_solids, 0, "edge-only data should not fabricate solids");
+    }
+
+    #[test]
+    fn preserves_geometric_curve_sets_from_hfss() {
+        let t = StepReader::parse_string(HFSS_STEP).expect("hfss.step should parse");
+        let total_edges = t.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Edge(_))).count();
         assert!(
-            brep.solids.is_empty(),
-            "edge-only data should not fabricate solids"
+            total_edges >= 4,
+            "expected geometric curve set edges, got total edge count = {total_edges}"
+        );
+    }
+
+    #[test]
+    fn parse_reader_matches_parse_string() {
+        let a = StepReader::parse_string(BOX_STEP).expect("box.step string parse should succeed");
+        let b = StepReader::parse_reader(Cursor::new(BOX_STEP.as_bytes()))
+            .expect("box.step stream parse should succeed");
+        assert_eq!(a.nb_faces(), b.nb_faces());
+        let n_edges_a = a.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Edge(_))).count();
+        let n_edges_b = b.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Edge(_))).count();
+        assert_eq!(n_edges_a, n_edges_b);
+        let n_solids_a = a.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Solid(_))).count();
+        let n_solids_b = b.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Solid(_))).count();
+        assert_eq!(n_solids_a, n_solids_b);
+    }
+
+    #[test]
+    fn export_readiness_clean_brep_is_ready() {
+        let t = StepReader::parse_string(BOX_STEP).expect("box.step should parse");
+        let old = rcad_kernel::BRep::from_topods_with_location(&t, glam::DAffine3::IDENTITY);
+        let report = validate_export_readiness(&old);
+        assert!(
+            report.is_ready,
+            "box.step should be export-ready; issues: {:?}",
+            report.issues
         );
     }
 

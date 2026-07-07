@@ -868,6 +868,72 @@ impl BRep {
             _ => panic!("solid_mut: ShapeRef {} is not a Solid", r.index),
         }
     }
+
+    /// Count vertex TShapes (includes orphan vertices not referenced by any edge).
+    pub fn nb_vertices(&self) -> usize {
+        self.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Vertex(_))).count()
+    }
+
+    /// Count edge TShapes.
+    pub fn nb_edges(&self) -> usize {
+        self.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Edge(_))).count()
+    }
+
+    /// Count shell TShapes.
+    pub fn nb_shells(&self) -> usize {
+        self.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Shell(_))).count()
+    }
+
+    /// Count solid TShapes.
+    pub fn nb_solids(&self) -> usize {
+        self.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Solid(_))).count()
+    }
+
+    /// Axis-aligned bounding box computed from all vertex positions.
+    /// Returns `None` if the BRep has no vertices.
+    pub fn bounding_box(&self) -> Option<[DVec3; 2]> {
+        let mut mn = DVec3::splat(f64::INFINITY);
+        let mut mx = DVec3::splat(f64::NEG_INFINITY);
+        for ts in &self.tshapes {
+            if let TShape::Vertex(v) = ts.as_ref() {
+                mn = mn.min(v.point);
+                mx = mx.max(v.point);
+            }
+        }
+        if mn.x.is_infinite() { None } else { Some([mn, mx]) }
+    }
+
+    /// Centroid of all vertex positions (simple average).
+    pub fn center(&self) -> DVec3 {
+        let mut sum = DVec3::ZERO;
+        let mut count = 0usize;
+        for ts in &self.tshapes {
+            if let TShape::Vertex(v) = ts.as_ref() {
+                sum += v.point;
+                count += 1;
+            }
+        }
+        if count == 0 { DVec3::ZERO } else { sum / count as f64 }
+    }
+
+    /// Build a compound from multiple topods::BRep shapes.
+    pub fn compound_from_shapes(shapes: &[BRep]) -> BRep {
+        let mut t = BRep::new();
+        let mut refs = Vec::new();
+        for s in shapes {
+            let mut solid_refs = Vec::new();
+            for (ti, ts) in s.tshapes.iter().enumerate() {
+                if matches!(ts.as_ref(), TShape::Solid(_)) {
+                    solid_refs.push(t.add_tsolid(Vec::new()));
+                }
+            }
+            refs.extend(solid_refs);
+        }
+        if !refs.is_empty() {
+            t.add_tcompound(refs);
+        }
+        t
+    }
 }
 
 // ---------------------------------------------------------------------------
