@@ -109,7 +109,7 @@ impl<'a> super::PaveFiller<'a> {
  && !ds.has_interf_ve(*vi, *ei) && !ds.has_interf_ve_via_faces(*vi, *ei)
  && !ds.is_edge_degenerated(*ei)
  && !ds.edges[*ei].pave_blocks.is_empty()
- && ds.edges[*ei].pave_blocks[0].is_splittable
+ && ds.edges[*ei].pave_blocks[0].0.read().unwrap().is_splittable
  })
  .copied()
  .collect();
@@ -670,7 +670,7 @@ impl<'a> super::PaveFiller<'a> {
  if self.ds.is_edge_degenerated(ei) { continue; }
  // OCCT L186-197: PaveBlocks not empty + first PB is splittable
  if self.ds.edges[ei].pave_blocks.is_empty() { continue; }
- if !self.ds.edges[ei].pave_blocks[0].is_splittable { continue; }
+ if !self.ds.edges[ei].pave_blocks[0].0.read().unwrap().is_splittable { continue; }
  self.check_vertex_edge(vi, ei);
  }
  }
@@ -687,7 +687,7 @@ impl<'a> super::PaveFiller<'a> {
  if self.ds.is_edge_degenerated(ei) { continue; }
  // OCCT L186-197: PaveBlocks not empty + first PB is splittable
  if self.ds.edges[ei].pave_blocks.is_empty() { continue; }
- if !self.ds.edges[ei].pave_blocks[0].is_splittable { continue; }
+ if !self.ds.edges[ei].pave_blocks[0].0.read().unwrap().is_splittable { continue; }
  self.check_vertex_edge(vi, ei);
  }
  }

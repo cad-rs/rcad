@@ -90,15 +90,15 @@ impl<'a> super::PaveFiller<'a> {
  for ei in 0..num_edges {
  for pi in 0..edge_pb_counts[ei] {
  let (range, splittable) = results[idx]; idx += 1;
- self.ds.edges[ei].pave_blocks[pi].shrunk_range = range;
- self.ds.edges[ei].pave_blocks[pi].is_splittable = splittable;
+ self.ds.edges[ei].pave_blocks[pi].0.write().unwrap().shrunk_range = range;
+ self.ds.edges[ei].pave_blocks[pi].0.write().unwrap().is_splittable = splittable;
  }
  }
  for pb in &mut self.ds.pave_blocks {
  if pb.0.read().unwrap().original_edge >= self.ds.edges.len() { continue; }
  let (range, splittable) = results[idx]; idx += 1;
- pb.0.write().unwrap().shrunk_range = range;
- pb.0.write().unwrap().is_splittable = splittable;
+ pb.shrunk_range = range;
+ pb.is_splittable = splittable;
  }
  }
 
@@ -267,7 +267,7 @@ impl<'a> super::PaveFiller<'a> {
         if let Some(local_pb) = self.ds.edges.get_mut(ei)
           .and_then(|e| e.pave_blocks.get_mut(li))
         {
-          local_pb.0.write().unwrap().common_block_idx = Some(cb_idx);
+          local_pb.common_block_idx = Some(cb_idx);
         }
       }
     }
@@ -362,7 +362,7 @@ impl<'a> super::PaveFiller<'a> {
  let aPTol = Self::curve_parametric_tolerance(&ic_curve, aTolR3D.max(aTolV));
 
  let mut nVUsed = 0;
- if let Some(pb) = self.ds.intersection_curves[curve_idx].change_pave_block1() {
+ if let Some(pb) = self.ds.intersection_curves[curve_idx].pave_blocks.first().map(|spb| spb) {
  let bExist = pb.contains_parameter(aT, aPTol, &mut nVUsed);
  if bExist {
  let pList = self.a_dmv_lv.entry(nVUsed).or_insert_with(|| {
@@ -1226,7 +1226,7 @@ impl<'a> super::PaveFiller<'a> {
  let a_dist_vp = a_pv.distance(a_p_op);
  if a_dist_vp > a_tol_v + a_tol_p { return; }
 
- if let Some(pb) = self.ds.intersection_curves[curve_idx].change_pave_block1() {
+ if let Some(pb) = self.ds.intersection_curves[curve_idx].pave_blocks.first().map(|spb| spb) {
  pb.append_ext_pave(Pave { vertex_idx: nV, param: a_t_op });
  }
  }
@@ -1446,7 +1446,7 @@ impl<'a> super::PaveFiller<'a> {
  Pave { vertex_idx: ev, param: t_range[1] },
  );
  pb.curve = Some(curve);
- pb.0.write().unwrap().new_edge = Some(new_ei);
+ pb.new_edge = Some(new_ei);
  pb.pcurve_on_a = pca;
  pb.pcurve_on_b = pcb;
  self.ds.intersection_curves[ci].pave_blocks.push(crate::bopds::pave::SharedPB::new(pb));

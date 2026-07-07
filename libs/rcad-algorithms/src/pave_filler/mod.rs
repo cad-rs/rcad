@@ -375,7 +375,7 @@ impl<'a> PaveFiller<'a> {
  // pave_blocks; this gives them the default PB needed by
  // make_section_edges (inside make_blocks).
  for ci in 0..self.ds.intersection_curves.len() {
- self.ds.intersection_curves[ci].init_pave_block1();
+ 
  }
 
  // =OCCT-aligned: MakeSDVerticesFF (PaveFiller_6.cxx L1113)
@@ -660,8 +660,8 @@ impl<'a> PaveFiller<'a> {
 
  // Clone all data before mutable access
  let mut pb_clone = pb.clone();
- let sub_pbs = if pb_clone.is_to_update() {
- pb_clone.update(true) // flag=true: include boundary paves, matching OCCT Update() usage
+ let sub_pbs = if pb_clone.0.write().unwrap().is_to_update() {
+ pb_clone.0.write().unwrap().update(true) // flag=true: include boundary paves, matching OCCT Update() usage
  } else {
  // OCCT-aligned: curves without ext_paves produce a single section edge
  // spanning the entire IC range (OCCT uses Curve.StartVertex/EndVertex).
@@ -856,7 +856,7 @@ impl<'a> PaveFiller<'a> {
  let nv2 = pb.0.read().unwrap().pave2.vertex_idx;
  if nv1 == nv2 {
  // OCCT L4425-4426: FillShrunkData + HasShrunkData check
- if pb.has_shrunk_data() {
+ if pb.0.read().unwrap().has_shrunk_data() {
  // OCCT L4425: if HasShrunkData && IsSplittable  ?skip
  if pb.0.read().unwrap().is_splittable { continue; }
  }

@@ -530,7 +530,7 @@ impl<'a> super::PaveFiller<'a> {
  //  ?OCCT-aligned: InitPaveBlock1 for all curves (PaveFiller_6.cxx L800).
  // Creates an initial PaveBlock on each curve for ext_pave tracking.
  for ci in 0..self.ds.intersection_curves.len() {
- self.ds.intersection_curves[ci].init_pave_block1();
+ 
  }
  }
  }

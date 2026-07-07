@@ -253,7 +253,7 @@ impl<'a> super::PaveFiller<'a> {
  for &ci in curves_of_ff {
  if ci >= self.ds.intersection_curves.len() { continue; }
  // OCCT L799: aNC.InitPaveBlock1()
- self.ds.intersection_curves[ci].init_pave_block1();
+ 
 
  // OCCT L802-808: PutPavesOnCurve(aMVOnIn, aMVCommon, aNC, aMI, aMVEF, aMVTol, aDMVLV)
  self.put_paves_on_curve(&a_mv_on_in, &a_mv_common, ci, &aMI, &a_mv_ef);
@@ -314,7 +314,7 @@ impl<'a> super::PaveFiller<'a> {
  let a_p = [ic_curve.point_at(a_t[0]), ic_curve.point_at(a_t[1])];
  // Ensure pave_block1 exists
  if self.ds.intersection_curves[ci].pave_blocks.is_empty() {
- self.ds.intersection_curves[ci].init_pave_block1();
+ 
  }
  // getBoundPaves: check which endpoints already have vertices
  // by comparing ext_pave positions and IC sv/ev against bound points.
@@ -379,7 +379,7 @@ impl<'a> super::PaveFiller<'a> {
  let n_vn = self.ds.add_vertex(a_p[j]);
  self.ds.vertices[n_vn].geom_tol = a_tol_r3d;
  if let Some(pb) = self.ds.intersection_curves[ci].pave_blocks.first_mut() {
- pb.append_ext_pave(crate::bopds::pave::Pave {
+ pb.0.write().unwrap().append_ext_pave(crate::bopds::pave::Pave {
  vertex_idx: n_vn, param: a_t[j],
  });
  }
@@ -437,7 +437,7 @@ impl<'a> super::PaveFiller<'a> {
  a_lpb.clear();
  {
  let ic = &mut self.ds.intersection_curves[ci];
- if let Some(pb1) = ic.change_pave_block1() {
+ if let Some(pb1) = ic.pave_blocks.first().map(|spb| spb.0.write().unwrap()) {
  let sub_pbs = pb1.update(false);
  a_lpb = sub_pbs;
  }
@@ -451,7 +451,7 @@ impl<'a> super::PaveFiller<'a> {
  // OCCT L899-1063: Process each sub-PB
  for a_pb in &a_lpb {
  // OCCT L903-904: aPB->Indices(nV1, nV2); aPB->Range(aT1, aT2);
- (n_v1, n_v2) = a_pb.indices();
+ (n_v1, n_v2) = a_pb.0.read().unwrap().indices();
  (a_t1, a_t2) = a_pb.range();
 
  // OCCT L906-909: fabs(aT1-aT2) < Precision::PConfusion()  ?continue
@@ -596,7 +596,7 @@ impl<'a> super::PaveFiller<'a> {
  if pb_idx >= self.ds.pave_blocks.len() { continue; }
  let existing_pb = &self.ds.pave_blocks[pb_idx];
  // OCCT L2154-2155: nV21, nV22
- let (n_v21, n_v22) = existing_pb.indices();
+ let (n_v21, n_v22) = existing_pb.0.read().unwrap().indices();
  // OCCT L2157-2159: aTolV21, aTolV22, aTolV2
  let a_tol_v21 = if n_v21 < self.ds.vertices.len() { self.ds.vertices[n_v21].geom_tol } else { a_tol_r3d };
  let a_tol_v22 = if n_v22 < self.ds.vertices.len() { self.ds.vertices[n_v22].geom_tol } else { a_tol_r3d };
@@ -684,8 +684,8 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
  if found_pb_idx != usize::MAX {
- n_e_out = self.ds.pave_blocks[found_pb_idx].new_edge.unwrap_or(
- self.ds.pave_blocks[found_pb_idx].original_edge);
+ n_e_out = self.ds.pave_blocks[found_pb_idx].0.read().unwrap().new_edge.unwrap_or(
+ self.ds.pave_blocks[found_pb_idx].0.read().unwrap().original_edge);
  a_tol_new = best_a_tol_new;
  true
  } else {
@@ -696,32 +696,32 @@ impl<'a> super::PaveFiller<'a> {
  if b_exist_on_in {
  // OCCT L964-1021: Existing PB found, may need to add to other face
  let existing_pb = &self.ds.pave_blocks[a_mpb_on_in_vec.iter().find_map(
- |&p| if self.ds.pave_blocks[p].new_edge.unwrap_or(
- self.ds.pave_blocks[p].original_edge) == n_e_out
+ |&p| if self.ds.pave_blocks[p].0.read().unwrap().new_edge.unwrap_or(
+ self.ds.pave_blocks[p].0.read().unwrap().original_edge) == n_e_out
  { Some(p) } else { None }
  ).unwrap_or(usize::MAX)];
  if existing_pb.0.read().unwrap().new_edge.is_some() || existing_pb.0.read().unwrap().original_edge < self.ds.edges.len() {
  let b_in_f1 = {
  self.ds.faces[n_f1].face_info.pave_blocks_on.contains(
  &a_mpb_on_in_vec.iter().find(|&&p| {
- let e = self.ds.pave_blocks[p].new_edge.unwrap_or(self.ds.pave_blocks[p].original_edge);
+ let e = self.ds.pave_blocks[p].0.read().unwrap().new_edge.unwrap_or(self.ds.pave_blocks[p].0.read().unwrap().original_edge);
  e == n_e_out
  }).unwrap_or(&usize::MAX))
  || self.ds.faces[n_f1].face_info.pave_blocks_in.contains(
  &a_mpb_on_in_vec.iter().find(|&&p| {
- let e = self.ds.pave_blocks[p].new_edge.unwrap_or(self.ds.pave_blocks[p].original_edge);
+ let e = self.ds.pave_blocks[p].0.read().unwrap().new_edge.unwrap_or(self.ds.pave_blocks[p].0.read().unwrap().original_edge);
  e == n_e_out
  }).unwrap_or(&usize::MAX))
  };
  let b_in_f2 = {
  self.ds.faces[n_f2].face_info.pave_blocks_on.contains(
  &a_mpb_on_in_vec.iter().find(|&&p| {
- let e = self.ds.pave_blocks[p].new_edge.unwrap_or(self.ds.pave_blocks[p].original_edge);
+ let e = self.ds.pave_blocks[p].0.read().unwrap().new_edge.unwrap_or(self.ds.pave_blocks[p].0.read().unwrap().original_edge);
  e == n_e_out
  }).unwrap_or(&usize::MAX))
  || self.ds.faces[n_f2].face_info.pave_blocks_in.contains(
  &a_mpb_on_in_vec.iter().find(|&&p| {
- let e = self.ds.pave_blocks[p].new_edge.unwrap_or(self.ds.pave_blocks[p].original_edge);
+ let e = self.ds.pave_blocks[p].0.read().unwrap().new_edge.unwrap_or(self.ds.pave_blocks[p].0.read().unwrap().original_edge);
  e == n_e_out
  }).unwrap_or(&usize::MAX))
  };
@@ -733,7 +733,7 @@ impl<'a> super::PaveFiller<'a> {
  // aPBFacesMap: OCCT L988-993
  let n_f = if b_in_f1 { n_f2 } else { n_f1 };
  a_pb_faces_map.entry(a_mpb_on_in_vec.iter().find(|&&p| {
- let e = self.ds.pave_blocks[p].new_edge.unwrap_or(self.ds.pave_blocks[p].original_edge);
+ let e = self.ds.pave_blocks[p].0.read().unwrap().new_edge.unwrap_or(self.ds.pave_blocks[p].0.read().unwrap().original_edge);
  e == n_e_out
  }).copied().unwrap_or(usize::MAX))
  .or_default()
@@ -743,7 +743,7 @@ impl<'a> super::PaveFiller<'a> {
  // rcad: register PB in both faces' pave_blocks_sc
  // OCCT L1046: aMPBAdd.Add(aPBOut)  ?only process once
  if let Some(&pb_idx) = a_mpb_on_in_vec.iter().find(|&&p| {
- let e = self.ds.pave_blocks[p].new_edge.unwrap_or(self.ds.pave_blocks[p].original_edge);
+ let e = self.ds.pave_blocks[p].0.read().unwrap().new_edge.unwrap_or(self.ds.pave_blocks[p].0.read().unwrap().original_edge);
  e == n_e_out
  }) {
  if a_mpb_add.insert(pb_idx) {
@@ -833,7 +833,7 @@ impl<'a> super::PaveFiller<'a> {
  // OCCT L3139: theMPB.Contains(aPBF)  ?skip already-processed
  if a_mpb_add.contains(&pb_idx) { continue; }
  let a_pbf = &self.ds.pave_blocks[pb_idx];
- let (pbsv, pbev) = a_pbf.indices();
+ let (pbsv, pbev) = a_pbf.0.read().unwrap().indices();
  // Check if PB shares vertices with the new edge
  if pbsv == n_v1 || pbsv == n_v2 || pbev == n_v1 || pbev == n_v2 {
  a_mpb_add.insert(pb_idx);
@@ -912,7 +912,7 @@ impl<'a> super::PaveFiller<'a> {
  {
  if pb_idx < self.ds.pave_blocks.len() {
  let pb = &self.ds.pave_blocks[pb_idx];
- let (pbsv, pbev) = pb.indices();
+ let (pbsv, pbev) = pb.0.read().unwrap().indices();
  if pbsv == sv || pbsv == ev || pbev == sv || pbev == ev {
  pbs_to_add.push((fi, pb_idx));
  }
@@ -944,7 +944,7 @@ impl<'a> super::PaveFiller<'a> {
  let is_micro = if sei < self.ds.edges.len() {
  let e = &self.ds.edges[sei];
  a_micro_pb.iter().any(|pb: &PaveBlock| {
- let (pv1, pv2) = pb.indices();
+ let (pv1, pv2) = pb.0.read().unwrap().indices();
  (pv1 == e.start_vertex && pv2 == e.end_vertex)
  || (pv1 == e.end_vertex && pv2 == e.start_vertex)
  })
@@ -1073,7 +1073,7 @@ impl<'a> super::PaveFiller<'a> {
 
  // OCCT-aligned: InitPaveBlock1 for all curves
  for ci in 0..self.ds.intersection_curves.len() {
- self.ds.intersection_curves[ci].init_pave_block1();
+ 
  }
  }
 }

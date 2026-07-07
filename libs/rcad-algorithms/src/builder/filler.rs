@@ -281,7 +281,7 @@ impl<'a> BooleanBuilder<'a> {
             let mut pb_endpoints: HashSet<usize> = HashSet::new();
             for &pb_idx in fi.pave_blocks_in.iter().chain(fi.pave_blocks_sc.iter()) {
                 if pb_idx < self.ds.pave_blocks.len() {
-                    let (nV1, nV2) = self.ds.pave_blocks[pb_idx].indices();
+                    let (nV1, nV2) = self.ds.pave_blocks[pb_idx].0.read().unwrap().indices();
                     pb_endpoints.insert(nV1);
                     pb_endpoints.insert(nV2);
                 }
