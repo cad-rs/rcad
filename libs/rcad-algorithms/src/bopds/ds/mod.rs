@@ -1330,70 +1330,32 @@ impl DS {
  self.locations.len() as u32
  }
 
-  /// ✅ OCCT-aligned: Append a PaveBlock to the global pool (BOPDS_DS::ChangePaveBlocksPool).
-  /// Returns the index in the global pool.
-  pub fn allocate_pave_block(&mut self, pb: PaveBlock) -> usize {
-  let idx = self.pave_blocks.len();
-  self.pave_blocks.push(pb);
-  idx
+   pub fn allocate_pave_block(&mut self, pb: PaveBlock) -> usize {
+   let idx = self.pave_blocks.len();
+   self.pave_blocks.push(SharedPB::new(pb));
+   idx
+   }
+
+   // ----- OCCT-aligned: CommonBlock accessors (BOPDS_DS.hxx L186-193) -----
+
+  pub fn is_common_block(&self, pb: &SharedPB) -> bool {
+  pb.0.read().unwrap().common_block_idx.is_some()
   }
 
-  /// ✅ OCCT-aligned: sync all edge and curve PaveBlocks into the global pool.
-  /// OCCT stores all PBs in ONE pool (`myPaveBlocks`) and edges/curves reference
-  /// them via Handle (pointer).  rcad stores PBs per-edge/curve (Vec<PaveBlock>)
-  /// which can lead to stale copies when one reference is mutated and others are not.
-  /// This method copies every edge and intersection-curve PB into the global pool,
-  /// deduplicating by (original_edge, pave1, pave2) when possible.
-  /// Call at pipeline boundary: end of PaveFiller::perform, start of Builder.
-  pub fn sync_pave_blocks_to_pool(&mut self) {
-  let start_len = self.pave_blocks.len();
-  // Copy edge PBs (by reference — we look up by new_edge dedup)
-  for ei in 0..self.edges.len() {
-  for pi in 0..self.edges[ei].pave_blocks.len() {
-  let pb = self.edges[ei].pave_blocks[pi].clone();
-  self.pave_blocks.push(pb);
-  }
-  }
-  // Copy intersection curve PBs
-  for ci in 0..self.intersection_curves.len() {
-  for pi in 0..self.intersection_curves[ci].pave_blocks.len() {
-  let pb = self.intersection_curves[ci].pave_blocks[pi].clone();
-  self.pave_blocks.push(pb);
-  }
-  }
-  let _ = start_len; // for future dedup
+  pub fn common_block(&self, pb: &SharedPB) -> Option<&CommonBlock> {
+  pb.0.read().unwrap().common_block_idx.and_then(|idx| self.common_blocks.get(idx))
   }
 
- // ----- OCCT-aligned: CommonBlock accessors (BOPDS_DS.hxx L186-193) -----
+  pub fn common_block_mut(&mut self, pb: &SharedPB) -> Option<&mut CommonBlock> {
+  pb.0.read().unwrap().common_block_idx.and_then(|idx| self.common_blocks.get_mut(idx))
+  }
 
- ///  ?OCCT-aligned: BOPDS_DS::IsCommonBlock (hxx:188).
- /// Returns true if the PaveBlock belongs to a CommonBlock.
- pub fn is_common_block(&self, pb: &PaveBlock) -> bool {
- pb.common_block_idx.is_some()
- }
-
- ///  ?OCCT-aligned: BOPDS_DS::CommonBlock (hxx:192-193).
- /// Returns a reference to the CommonBlock for a PaveBlock.
- pub fn common_block(&self, pb: &PaveBlock) -> Option<&CommonBlock> {
- pb.common_block_idx.and_then(|idx| self.common_blocks.get(idx))
- }
-
- ///  ?OCCT-aligned: BOPDS_DS::CommonBlock (hxx:192-193) =mutable.
- pub fn common_block_mut(&mut self, pb: &PaveBlock) -> Option<&mut CommonBlock> {
- pb.common_block_idx.and_then(|idx| self.common_blocks.get_mut(idx))
- }
-
- ///  ?OCCT-aligned: BOPDS_DS::RealPaveBlock (BOPDS_DS.cxx L658-663).
- /// If the PaveBlock belongs to a CommonBlock, returns the edge index of
- /// the first PaveBlock in that block (the "real" edge). Otherwise returns
- /// the given PaveBlock's new_edge.
- pub fn real_pave_block_edge(&self, edge_idx: usize, pb: &PaveBlock) -> Option<usize> {
- let cb = self.common_block(pb)?;
- let first_pb_idx = cb.pave_blocks().first()?.0;
- self.edges.get(edge_idx)
- .and_then(|e| e.pave_blocks.get(first_pb_idx))
- .and_then(|pbr| pbr.new_edge)
- }
+  pub fn real_pave_block_edge(&self, edge_idx: usize, pb: &SharedPB) -> Option<usize> {
+  let cb = self.common_block(pb)?;
+  let first_pb_idx = cb.pave_blocks().first()?.0;
+  let pbr = self.edges.get(edge_idx)?.pave_blocks.get(first_pb_idx)?;
+  pbr.0.read().unwrap().new_edge
+  }
 
  /// Collect 3D boundary points for a face.
  ///
@@ -1866,28 +1828,7 @@ impl DS {
  }
 
  /// Apply vertex replacement to all PaveBlocks (both edge-local and global).
- fn apply_sd_vertex_replacement(&mut self, replace: &std::collections::HashMap<usize, usize>) {
- for edge in &mut self.edges {
- for pb in &mut edge.pave_blocks {
- if let Some(&rep) = replace.get(&pb.pave1.vertex_idx) {
- pb.pave1.vertex_idx = rep;
- }
- if let Some(&rep) = replace.get(&pb.pave2.vertex_idx) {
- pb.pave2.vertex_idx = rep;
- }
- }
- }
- for pb in &mut self.pave_blocks {
- if let Some(&rep) = replace.get(&pb.pave1.vertex_idx) {
- pb.pave1.vertex_idx = rep;
- }
- if let Some(&rep) = replace.get(&pb.pave2.vertex_idx) {
- pb.pave2.vertex_idx = rep;
- }
- }
- }
-
- /// OCCT-aligned: batch refine for all faces.
+  /// OCCT-aligned: batch refine for all faces.
  pub fn refine_all_face_info(&mut self) {
  for fi in 0..self.faces.len() {
  self.refine_face_info_on(fi);

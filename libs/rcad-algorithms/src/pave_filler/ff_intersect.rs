@@ -589,7 +589,7 @@ impl<'a> super::PaveFiller<'a> {
  {
  if *pb_idx >= self.ds.pave_blocks.len() { continue; }
  let pb = &self.ds.pave_blocks[*pb_idx];
- let ei = pb.0.read().unwrap().original_edge;
+ let ei = pb.original_edge;
  if ei >= self.ds.edges.len() { continue; }
  e_to_faces.entry(ei).or_default().push(fi);
 

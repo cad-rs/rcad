@@ -791,7 +791,7 @@ impl<'a> super::PaveFiller<'a> {
  }
 
  let mut sub_pb = a_pb.clone();
- sub_pb.0.write().unwrap().new_edge = Some(new_ei);
+ sub_pb.new_edge = Some(new_ei);
  self.ds.edges.push(DSEdge {
  start_vertex: n_v1, end_vertex: n_v2,
  curve: curve.clone(),
@@ -799,7 +799,7 @@ impl<'a> super::PaveFiller<'a> {
  origin: ShapeOrigin::ShapeA,
  geom_tol,
  paves: Vec::new(),
- pave_blocks: vec![sub_pb.clone()],
+ pave_blocks: vec![crate::bopds::pave::SharedPB::new(sub_pb.clone())],
  face_reps: sec_face_reps,
  is_internal: false,
  vertex_params: {

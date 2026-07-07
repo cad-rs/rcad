@@ -68,12 +68,12 @@ impl<'a> super::PaveFiller<'a> {
  let mut all_pb: Vec<(usize, usize, usize, f64, f64)> = Vec::new();
  for ei in 0..self.ds.edges.len() {
  for pb in &self.ds.edges[ei].pave_blocks {
- all_pb.push((ei, pb.0.read().unwrap().pave1.vertex_idx, pb.0.read().unwrap().pave2.vertex_idx, pb.0.read().unwrap().pave1.param, pb.0.read().unwrap().pave2.param));
+ all_pb.push((ei, pb.pave1.vertex_idx, pb.pave2.vertex_idx, pb.0.read().unwrap().pave1.param, pb.0.read().unwrap().pave2.param));
  }
  }
  for pb in &self.ds.pave_blocks {
  if pb.0.read().unwrap().original_edge < self.ds.edges.len() {
- all_pb.push((pb.0.read().unwrap().original_edge, pb.0.read().unwrap().pave1.vertex_idx, pb.0.read().unwrap().pave2.vertex_idx, pb.0.read().unwrap().pave1.param, pb.0.read().unwrap().pave2.param));
+ all_pb.push((pb.0.read().unwrap().original_edge, pb.pave1.vertex_idx, pb.pave2.vertex_idx, pb.0.read().unwrap().pave1.param, pb.0.read().unwrap().pave2.param));
  }
  }
  let num_edges = self.ds.edges.len();
@@ -83,7 +83,7 @@ impl<'a> super::PaveFiller<'a> {
  let mut sr = crate::inttools::shrunk_range::ShrunkRange::new();
  sr.set_data(*ei, [*p1, *p2], v_tols[*v1i], v_tols[*v2i], et[*ei]);
  sr.perform(&ec[*ei]);
- (sr.0.read().unwrap().shrunk_range(), sr.0.read().unwrap().is_splittable())
+ (sr.shrunk_range(), sr.is_splittable())
  }).collect();
  // Write phase: apply results back to PaveBlocks
  let mut idx = 0usize;
@@ -104,7 +104,7 @@ impl<'a> super::PaveFiller<'a> {
 
  pub(crate) fn existing_pave_block(&self, ei: usize, vi: usize) -> bool {
  for pb in &self.ds.edges[ei].pave_blocks {
- if pb.0.read().unwrap().pave1.vertex_idx == vi || pb.0.read().unwrap().pave2.vertex_idx == vi { return true; }
+ if pb.pave1.vertex_idx == vi || pb.pave2.vertex_idx == vi { return true; }
  }
  false
  }
@@ -129,8 +129,8 @@ impl<'a> super::PaveFiller<'a> {
       let old_pair_to_cb: std::collections::HashMap<(usize, usize), usize> = edge.pave_blocks.iter()
         .filter_map(|pb| {
           pb.0.read().unwrap().common_block_idx.map(|cb| {
-            let v1 = pb.0.read().unwrap().pave1.vertex_idx;
-            let v2 = pb.0.read().unwrap().pave2.vertex_idx;
+            let v1 = pb.pave1.vertex_idx;
+            let v2 = pb.pave2.vertex_idx;
             let key = if v1 <= v2 { (v1, v2) } else { (v2, v1) };
             (key, cb)
           })
@@ -161,7 +161,7 @@ impl<'a> super::PaveFiller<'a> {
         sr.perform(&edge.curve);
 
         // OCCT L468-507: Check valid range + unify if needed
-        if sr.0.read().unwrap().shrunk_range().is_none() || (!sr.0.read().unwrap().is_splittable() && sr.0.read().unwrap().shrunk_range().is_some()) {
+        if sr.shrunk_range().is_none() || (!sr.is_splittable() && sr.shrunk_range().is_some()) {
           let nv1 = w[0].0;
           let nv2 = w[1].0;
           if nv1 != nv2 {
@@ -173,8 +173,8 @@ impl<'a> super::PaveFiller<'a> {
 
         // OCCT L510-511: Append valid new PB
         // OCCT L512-523: If original PB had CB, track new PB
-        let v1 = pb.0.read().unwrap().pave1.vertex_idx;
-        let v2 = pb.0.read().unwrap().pave2.vertex_idx;
+        let v1 = pb.pave1.vertex_idx;
+        let v2 = pb.pave2.vertex_idx;
         let new_key = if v1 <= v2 { (v1, v2) } else { (v2, v1) };
         if let Some(&cb_idx) = old_pair_to_cb.get(&new_key) {
           a_mcb_new_pb.entry(cb_idx).or_default().push((ei, pb.clone()));
@@ -183,7 +183,7 @@ impl<'a> super::PaveFiller<'a> {
       }
 
       // OCCT L526: Replace old PBs with new ones
-      self.ds.edges[ei].pave_blocks = new_pbs;
+      self.ds.edges[ei].pave_blocks = new_pbs.into_iter().map(crate::bopds::pave::SharedPB::new).collect();
     }
 
     // OCCT L493-506: Merge vertex pairs that have no valid range
@@ -209,8 +209,8 @@ impl<'a> super::PaveFiller<'a> {
       std::collections::HashMap::new();
     for (&cb_idx, pb_entries) in &a_mcb_new_pb {
       for &(ei, ref pb) in pb_entries {
-        let v1 = pb.0.read().unwrap().pave1.vertex_idx;
-        let v2 = pb.0.read().unwrap().pave2.vertex_idx;
+        let v1 = pb.pave1.vertex_idx;
+        let v2 = pb.pave2.vertex_idx;
         let key = if v1 <= v2 { (v1, v2) } else { (v2, v1) };
         // Find local PB index on the edge matching this PB
         if let Some(li) = self.ds.edges.get(ei)
@@ -1067,8 +1067,8 @@ impl<'a> super::PaveFiller<'a> {
  for &vi in &group[1..] {
  for ei in 0..self.ds.edges.len() {
  for pb in &mut self.ds.edges[ei].pave_blocks {
- if pb.0.read().unwrap().pave1.vertex_idx == vi { pb.0.read().unwrap().pave1.vertex_idx = sd_vi; }
- if pb.0.read().unwrap().pave2.vertex_idx == vi { pb.0.read().unwrap().pave2.vertex_idx = sd_vi; }
+ if pb.pave1.vertex_idx == vi { pb.pave1.vertex_idx = sd_vi; }
+ if pb.pave2.vertex_idx == vi { pb.pave2.vertex_idx = sd_vi; }
  }
  }
  for fi in 0..self.ds.faces.len() {
@@ -1295,8 +1295,8 @@ impl<'a> super::PaveFiller<'a> {
  for (keep, remove) in &to_merge {
  for ei in 0..self.ds.edges.len() {
  for pb in &mut self.ds.edges[ei].pave_blocks {
- if pb.0.read().unwrap().pave1.vertex_idx == *remove { pb.0.read().unwrap().pave1.vertex_idx = *keep; }
- if pb.0.read().unwrap().pave2.vertex_idx == *remove { pb.0.read().unwrap().pave2.vertex_idx = *keep; }
+ if pb.pave1.vertex_idx == *remove { pb.pave1.vertex_idx = *keep; }
+ if pb.pave2.vertex_idx == *remove { pb.pave2.vertex_idx = *keep; }
  }
  }
  }
@@ -1308,7 +1308,7 @@ impl<'a> super::PaveFiller<'a> {
  for &ei in &face.boundary_edges {
  if ei >= self.ds.edges.len() { continue; }
  for pb in &self.ds.edges[ei].pave_blocks {
- if pb.0.read().unwrap().pave1.vertex_idx == vi || pb.0.read().unwrap().pave2.vertex_idx == vi {
+ if pb.pave1.vertex_idx == vi || pb.pave2.vertex_idx == vi {
  return true;
  }
  }
@@ -1449,7 +1449,7 @@ impl<'a> super::PaveFiller<'a> {
  pb.0.write().unwrap().new_edge = Some(new_ei);
  pb.pcurve_on_a = pca;
  pb.pcurve_on_b = pcb;
- self.ds.intersection_curves[ci].pave_blocks.push(pb);
+ self.ds.intersection_curves[ci].pave_blocks.push(crate::bopds::pave::SharedPB::new(pb));
  }
  }
 

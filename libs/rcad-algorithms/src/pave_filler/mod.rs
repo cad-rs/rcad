@@ -679,8 +679,8 @@ impl<'a> PaveFiller<'a> {
  let nV1 = remap_ds_v(nV1_raw);
  let nV2 = remap_ds_v(nV2_raw);
  if nV1 != nV1_raw || nV2 != nV2_raw {
- sub_pb.0.read().unwrap().pave1.vertex_idx = nV1;
- sub_pb.0.read().unwrap().pave2.vertex_idx = nV2;
+ sub_pb.pave1.vertex_idx = nV1;
+ sub_pb.pave2.vertex_idx = nV2;
  }
  let (aT1, aT2) = sub_pb.range();
  if (aT2 - aT1).abs() < crate::tolerance::TOLERANCE_ABS {
@@ -748,7 +748,7 @@ impl<'a> PaveFiller<'a> {
  let edge_key = (f1, f2, v1, v2);
  if let Some(&existing_ei) = existing_edge_map.get(&edge_key) {
  // OCCT L924-928: UpdateEdgeTolerance + UpdateSavedTolerance for reused edge
- sub_pb.0.write().unwrap().new_edge = Some(existing_ei);
+ sub_pb.new_edge = Some(existing_ei);
  sub_with_edge.push(sub_pb);
  if std::env::var("RCAD_DEBUG_PB").is_ok() && face_ids[0] == 0 { eprintln!("[PB_PASS] ci={} REUSE edge={}", ci, existing_ei); }
  continue;
@@ -799,7 +799,7 @@ impl<'a> PaveFiller<'a> {
  if let Some(epb) = self.ds.edges.last_mut().and_then(|e| e.pave_blocks.first_mut()) {
  epb.0.write().unwrap().new_edge = Some(new_ei);
  }
- sub_pb.0.write().unwrap().new_edge = Some(new_ei);
+ sub_pb.new_edge = Some(new_ei);
  self.ds.section_edge_refs[ci].push(new_ei);
  existing_edge_map.insert(edge_key, new_ei);
  sub_with_edge.push(sub_pb);
