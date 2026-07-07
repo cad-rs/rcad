@@ -497,19 +497,37 @@ impl PrmPrmIntersection {
     // ═══════════════════════════════════════════════════════════════
     pub fn perform_main(
         &mut self,
-        _s1: &Surface3,
-        _s2: &Surface3,
-        _tol_tangency: f64,
-        _epsilon: f64,
-        _deflection: f64,
-        _increment: f64,
+        s1: &Surface3,
+        s2: &Surface3,
+        tol_tangency: f64,
+        epsilon: f64,
+        deflection: f64,
+        increment: f64,
         _clear_flag: bool,
     ) {
-        // OCCT: computes polyhedra internally, then calls Perform with both polyhedra.
-        // rcad: without polyhedron, seed computation is delegated to the caller.
-        // This is a placeholder — the caller should use perform_with_seeds directly.
-        self.done = true;
+        self.done = false;
         self.empt = true;
+        self.slin.clear();
+
+        // OCCT L331, 363: construct polyhedra
+        let poly1 = super::polyhedron::Polyhedron::new(s1, 10, 10);
+        let poly2 = super::polyhedron::Polyhedron::new(s2, 10, 10);
+
+        // OCCT L380: InterferencePolyhedron
+        let interference = super::polyhedron::InterferencePolyhedron::new(&poly1, &poly2);
+
+        if interference.nb_section_lines() == 0 {
+            self.done = true;
+            return;
+        }
+
+        // Convert seed points to PntOn2S
+        let seeds: Vec<PntOn2S> = interference.seed_points().iter().map(|sp| {
+            PntOn2S { p3d: sp.p3d, u1: sp.u1, v1: sp.v1, u2: sp.u2, v2: sp.v2 }
+        }).collect();
+
+        // OCCT L395: walk from each seed
+        self.perform_with_seeds(s1, s2, &seeds, tol_tangency, epsilon, deflection, increment);
     }
 
     // ═══════════════════════════════════════════════════════════════
