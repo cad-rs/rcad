@@ -2,28 +2,22 @@
 //!
 //! OCCT IntPatch_PrmPrmIntersection.hxx / .cxx (137K, ~3500 lines)
 //!
-//! Intersects two parametric surfaces (BSpline/Bezier) using a marching
-//! algorithm.  Consists of:
-//!   - TheIWalking  — walking algorithm along intersection line
-//!   - TheSOnBounds — finding points on surface boundaries
-//!   - TheSearchInside — finding starting points for walking
-//!   - ThePathPointOfTheSOnBounds
-//!   - TheSegmentOfTheSOnBounds
-//!
-//! rcad: currently delegates to marching/numeric intersection via intss/.
+//! rcad: delegates to marching infrastructure (face_face::intersect_faces / intss:).
 
 use rcad_kernel::geom::Surface3;
 use super::int_patch_line::IntPatchLine;
+use super::int_patch_type::IntPatchIType;
 
 pub struct PrmPrmIntersection {
     done: bool,
     empt: bool,
+    spnt: Vec<super::int_patch_point::IntPatchPoint>,
     slin: Vec<IntPatchLine>,
 }
 
 impl PrmPrmIntersection {
     pub fn new() -> Self {
-        Self { done: false, empt: true, slin: Vec::new() }
+        Self { done: false, empt: true, spnt: Vec::new(), slin: Vec::new() }
     }
 
     pub fn is_done(&self) -> bool { self.done }
@@ -31,12 +25,21 @@ impl PrmPrmIntersection {
     pub fn nb_lines(&self) -> usize { self.slin.len() }
     pub fn slin_ref(&self) -> &[IntPatchLine] { &self.slin }
 
-    /// Perform intersection — rcad: uses marching
-    pub fn perform(&mut self, _s1: &Surface3, _s2: &Surface3, _tol_arc: f64, _tol_tang: f64,
-                    _fleche: f64, _uv_max_step: f64) {
-        // OCCT: IntPatch_PrmPrmIntersection with full marching framework.
-        // rcad: delegates to face_face::intersect_faces (marching/numeric).
+    /// OCCT: Perform(Caro1,Domain1, Caro2,Domain2, TolTang,Epsilon,Deflection,Increment)
+    /// rcad: delegates to face_face::intersect_faces (marching/numeric)
+    pub fn perform(&mut self, s1: &Surface3, s2: &Surface3,
+                   tol_arc: f64, tol_tang: f64, _fleche: f64, _uv_max_step: f64) {
+        self.done = false; self.empt = true;
+        self.slin.clear(); self.spnt.clear();
+
+        let curves = crate::inttools::face_face::intersect_faces(s1, s2, tol_arc, tol_tang);
+        self.slin = curves.into_iter().map(|c| IntPatchLine {
+            line_type: IntPatchIType::Walking,
+            curve: c.curve, t_range: c.t_range,
+            pcurve1: c.pcurve1, pcurve2: c.pcurve2,
+            tolerance: c.tolerance, tang_tolerance: c.tang_tolerance,
+        }).collect();
+        self.empt = self.slin.is_empty();
         self.done = true;
-        self.empt = true;
     }
 }
