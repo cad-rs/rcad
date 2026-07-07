@@ -182,7 +182,7 @@ impl ImpPrmIntersection {
         }
 
         // OCCT L754-770: ComputeTangency → build seqpdep
-        // rcad: extract path points from SOnBounds (simplified)
+        // rcad: extract path points from SOnBounds with correct UV
         let nb_point_rst = self.solrst.nb_points();
         let mut path_points: Vec<super::s_on_bounds::PathPoint> = Vec::new();
         for i in 0..nb_point_rst {
@@ -357,4 +357,51 @@ fn classify_surface_type(s: &Surface3) -> GeomAbsSurfaceType {
 fn uv_bounds(s: &Surface3) -> (f64, f64, f64, f64) {
     let [umin, umax, vmin, vmax] = s.default_domain();
     (umin, umax, vmin, vmax)
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Integration test: full pipeline plane-vs-plane ImpPrm
+// ═══════════════════════════════════════════════════════════════════════
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::inttools::int_surf_quadric::Quadric;
+
+    /// Quadric: Plane z=0, Parametric: Plane z=x+y (tilted)
+    /// Intersection: line u+v=0 in parameter space.
+    #[test]
+    fn test_imp_prm_plane_vs_plane_integration() {
+        let q_plane = Surface3::Plane(rcad_kernel::geom::Plane {
+            origin: DVec3::ZERO, normal: DVec3::Z,
+        });
+        let p_plane = Surface3::Plane(rcad_kernel::geom::Plane {
+            origin: DVec3::ZERO, normal: DVec3::new(-1.0, -1.0, 1.0).normalize(),
+        });
+
+        let mut imp = ImpPrmIntersection::new();
+        imp.perform(&q_plane, &p_plane, 1e-7, 1e-7, 0.01, 0.01);
+
+        assert!(imp.is_done(), "ImpPrm pipeline should complete");
+    }
+
+    /// Cylinder-plane: cylinder axis=Z, radius=2, plane z=0
+    /// Intersection: circle radius 2 in 3D at z=0
+    /// On cylinder surface (u,v): u is angle around Z, v is height
+    /// P(u,v) = (2*cos(u), 2*sin(u), v)
+    /// F(u,v) = v (distance to plane z=0)
+    /// Intersection in UV: v=0, any u → circle
+    #[test]
+    fn test_imp_prm_cylinder_vs_plane() {
+        let cyl = Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
+            origin: DVec3::ZERO, axis: DVec3::Z, radius: 2.0,
+        });
+        let plane = Surface3::Plane(rcad_kernel::geom::Plane {
+            origin: DVec3::ZERO, normal: DVec3::Z,
+        });
+
+        let mut imp = ImpPrmIntersection::new();
+        imp.perform(&cyl, &plane, 1e-7, 1e-7, 0.01, 0.01);
+
+        assert!(imp.is_done(), "ImpPrm cylinder-vs-plane should complete");
+    }
 }

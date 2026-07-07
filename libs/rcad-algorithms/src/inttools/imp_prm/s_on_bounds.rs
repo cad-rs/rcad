@@ -21,14 +21,16 @@ use super::super::geom_abs_surface_type::GeomAbsSurfaceType;
 pub struct PathPoint {
     pub value: glam::DVec3,
     pub tolerance: f64,
-    pub parameter: f64,
+    pub parameter: f64,      // curve parameter on boundary arc
+    pub u: f64,              // U coordinate on the parametric surface at this point
+    pub v: f64,              // V coordinate on the parametric surface at this point
     pub arc_index: usize,
     pub is_new: bool,
 }
 
 impl PathPoint {
-    pub fn new(value: glam::DVec3, tol: f64, param: f64, arc_i: usize, is_new: bool) -> Self {
-        Self { value, tolerance: tol, parameter: param, arc_index: arc_i, is_new }
+    pub fn new(value: glam::DVec3, tol: f64, param: f64, u: f64, v: f64, arc_i: usize, is_new: bool) -> Self {
+        Self { value, tolerance: tol, parameter: param, u, v, arc_index: arc_i, is_new }
     }
 }
 
@@ -94,8 +96,7 @@ impl SOnBounds {
         ];
 
         for (arc, p_deb, p_fin, arc_idx) in arcs {
-            func.set_arc(arc);
-            self.bounded_arc(func, p_deb, p_fin, arc_idx, tol_boundary, tol_tangency);
+            self.bounded_arc(func, &arc, p_deb, p_fin, arc_idx, tol_boundary, tol_tangency);
         }
 
         self.done = true;
@@ -107,12 +108,14 @@ impl SOnBounds {
     fn bounded_arc(
         &mut self,
         func: &mut ArcFunction,
+        arc: &Curve2d,
         p_deb: f64,
         p_fin: f64,
         arc_idx: usize,
         tol_boundary: f64,
         tol_tangency: f64,
     ) {
+        func.set_arc(arc.clone());
         let n_echant = func.nb_samples().max(100) as usize;
 
         // OCCT L273-281: adjust tolerances for short arcs
@@ -147,10 +150,11 @@ impl SOnBounds {
         for &param in params {
             if let Some(f) = func.value(param) {
                 if f.abs() <= n_tol_tang {
+                    let uv = arc.point_at(param);
                     self.points.push(PathPoint::new(
                         *func.last_computed_point(),
                         n_tol_tang.max(tol_boundary),
-                        param, arc_idx, true,
+                        param, uv.x, uv.y, arc_idx, true,
                     ));
                 }
             }

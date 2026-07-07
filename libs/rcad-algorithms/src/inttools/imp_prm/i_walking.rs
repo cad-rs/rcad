@@ -123,9 +123,9 @@ impl IWalking {
         let mut u_mult: Vec<f64> = Vec::new();
         let mut v_mult: Vec<f64> = Vec::new();
         for pp in path_points {
-            self.wd1.push(WalkingData::new(2, pp.parameter, 0.0));
+            self.wd1.push(WalkingData::new(2, pp.u, pp.v));
             self.nb_multiplicities.push(1);
-            u_mult.push(pp.parameter); v_mult.push(0.0);
+            u_mult.push(pp.u); v_mult.push(pp.v);
         }
 
         // OCCT L219-233: load interior points
