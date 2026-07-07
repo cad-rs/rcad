@@ -5,7 +5,7 @@ use rcad_kernel::geom::{Curve3, Surface3, any_perpendicular};
 use rcad_kernel::CurveEval;
 
 use crate::bopalgo::{fill_map, make_blocks};
-use crate::bopds::ds::{DS, ShapeOrigin, PairIterator, InterferenceVV, InterferenceVE, InterferenceVF, InterferenceEE, InterferenceEF};
+use crate::bopds::ds::{DS, ShapeOrigin, InterferenceVV, InterferenceVE, InterferenceVF, InterferenceEE, InterferenceEF};
 use crate::bopds::pave::Pave;
 use crate::inttools;
 use crate::inttools::fclass2d::{FClass2d, State};
@@ -523,43 +523,45 @@ impl<'a> super::PaveFiller<'a> {
  ///  ?OCCT-aligned: PerformVV (PaveFiller_1.cxx L45-132).
  /// Builds vertex-vertex connection map (FillMap), groups connected
  /// vertices (MakeBlocks), then creates SD vertices for each group.
- pub(crate) fn perform_vv(&mut self) {
- // OCCT L47-56: n1, n2, iFlag, aSize; iterator init + early return
- let a_vc = self.ds.a_vertex_count;
- let a_size = a_vc * (self.ds.vertices.len() - a_vc);
- if a_size == 0 { return; }
+  pub(crate) fn perform_vv(&mut self) {
+  // OCCT L47-56: n1, n2, iFlag, aSize; iterator init + early return
+  let a_vc = self.ds.a_vertex_count;
+  let nv = self.ds.vertices.len();
+  let a_size = a_vc * (nv - a_vc);
+  if a_size == 0 { return; }
 
- // OCCT L62-64: aAllocator, aMILI (connection map), aMBlocks
- // rcad: BTreeMap + Vec<Vec<usize>> for equivalent grouping.
- let mut a_mili: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+  // ✅ OCCT-aligned: BOPDS_Iterator(VERTEX, VERTEX) — BVH-based pair enumeration.
+  // OCCT L68-76: myIterator->Initialize(VERTEX, VERTEX) returns overlapping AABB pairs.
+  // rcad: build single BVH over all vertices, candidate_pairs + cross-operand filter.
+  let mut a_mili: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+  let bvh = self.build_ds_bvh_combined(false);
+  let pairs = crate::bvh::DsBvh::candidate_pairs(&bvh, &bvh);
 
- // OCCT L68-98: 1. Map V/LV  ?build connection map of close vertex pairs.
- let mut fit = PairIterator::prepare_ab(a_vc, self.ds.vertices.len());
- while fit.more() {
- let pk = fit.value();
- let n1 = pk.i1; let n2 = pk.i2;
- fit.next();
+  // OCCT L68-98: 1. Map V/LV — build connection map of close vertex pairs.
+  for &(n1, n2) in &pairs {
+  // Skip same-operand pairs (OCCT: cross-operand only)
+  if (n1 < a_vc) == (n2 < a_vc) { continue; }
 
- // OCCT L77-81: if HasInterf  ?FillMap + continue
- if self.ds.has_interf_vv(n1, n2) {
- fill_map(&mut a_mili, n1, n2);
- continue;
- }
+  // OCCT L77-81: if HasInterf — FillMap + continue
+  if self.ds.has_interf_vv(n1, n2) {
+  fill_map(&mut a_mili, n1, n2);
+  continue;
+  }
 
- // OCCT L84-91: Resolve SD vertices (HasShapeSD) + ComputeVV
- let n1sd = self.ds.has_shape_sd(n1).unwrap_or(n1);
- let n2sd = self.ds.has_shape_sd(n2).unwrap_or(n2);
+  // OCCT L84-91: Resolve SD vertices (HasShapeSD) + ComputeVV
+  let n1sd = self.ds.has_shape_sd(n1).unwrap_or(n1);
+  let n2sd = self.ds.has_shape_sd(n2).unwrap_or(n2);
 
- // OCCT L93: ComputeVV(aV1, aV2, myFuzzyValue)  ?tolerance-based distance check
- let tol = self.vv_pair_tol(n1, n2);
- let dist = (self.ds.vertices[n1sd].point - self.ds.vertices[n2sd].point).length();
- let i_flag = if dist <= tol { 0 } else { 1 };
+  // OCCT L93: ComputeVV(aV1, aV2, myFuzzyValue) — tolerance-based distance check
+  let tol = self.vv_pair_tol(n1, n2);
+  let dist = (self.ds.vertices[n1sd].point - self.ds.vertices[n2sd].point).length();
+  let i_flag = if dist <= tol { 0 } else { 1 };
 
- // OCCT L94-97: if !iFlag (vertices interfere)  ?FillMap
- if i_flag == 0 {
- fill_map(&mut a_mili, n1, n2);
- }
- }
+  // OCCT L94-97: if !iFlag (vertices interfere) — FillMap
+  if i_flag == 0 {
+  fill_map(&mut a_mili, n1, n2);
+  }
+  }
 
  // OCCT L100-101: 2. MakeBlocks from connection map
  let a_m_blocks = make_blocks(&a_mili);
