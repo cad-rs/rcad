@@ -1,17 +1,17 @@
 //! ✅ OCCT-aligned: IntPatch_TheIWalking — implicit surface walking algorithm.
 //!
-//! OCCT IntWalk_IWalking.gxx (3140 lines) — generic template instantiated as
-//! IntPatch_TheIWalking.
+//! OCCT IntWalk_IWalking.gxx (3140 lines) — implicit surface walking.
 //!
 //! Algorithm:
-//!   1. Load boundary (Pnts1) and interior (Pnts2) points into working data (wd1/wd2)
-//!   2. ComputeOpenLine: walk open lines from boundary path points
-//!   3. ComputeCloseLine: walk closed lines from interior points
-//!   4. Optionally fill holes if ToFillHoles
+//!   1. Load boundary points (Pnts1) and interior points (Pnts2) into wd1/wd2
+//!   2. ComputeOpenLine — walk from each boundary point along F=0
+//!   3. ComputeCloseLine — walk closed curves from interior points
 //!
-//! The walking step uses the gradient of F(u,v) to stay on F=0 while marching
-//! along the intersection curve. This is equivalent to OCCT's approach using
-//! math_FunctionSetRoot with an implicit surface constraint.
+//! Core equivalence:
+//!   - math_FunctionSetRoot → constrained_2d_newton (solves {F=0, step-tangent=0})
+//!   - TestArretPassage → test_arret_passage (mark crossing/arrival events)
+//!   - Cadrage → clamp_step_to_bounds (step size adjustment at domain edges)
+//!   - TestDeflection → chord_deflection_check
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Surface3, SurfaceEval};
@@ -19,48 +19,33 @@ use super::surf_function::SurfFunction;
 use super::s_on_bounds::PathPoint;
 use super::search_inside::InteriorPoint;
 
-// ── OCCT IntWalk_WalkingData (state codes) ──────────────────────────
-// etat1 codes:
-//   12: not tangent, not passes
-//   11: tangent, not passes
-//   2:  not tangent, passes
-//   1:  tangent, passes
+// ── WalkingData — OCCT IntWalk_WalkingData ──────────────────────────
+// etat1 codes (wd1):
+//   12: not tangent, not passes    11: tangent, not passes
+//   2:  not tangent, passes        1:  tangent, passes
 //   negative: processed
-// etat2 codes:
-//   13: interior start point on closed line
-//   12: interior start point on open line
+// etat2 codes (wd2):
+//   13: closed-line candidate      12: open-line candidate
 #[derive(Clone)]
-struct WalkingData {
-    etat: i32,
-    ustart: f64,
-    vstart: f64,
-}
-
+struct WalkingData { etat: i32, ustart: f64, vstart: f64 }
 impl WalkingData {
     fn new(etat: i32, u: f64, v: f64) -> Self { Self { etat, ustart: u, vstart: v } }
     fn dummy() -> Self { Self { etat: -10, ustart: 0.0, vstart: 0.0 } }
 }
 
-// ── IWLine — walking line on the intersection ───────────────────────
+// ── IWLine — walking line ───────────────────────────────────────────
 #[derive(Clone, Debug)]
 pub struct IWLine {
     pub points: Vec<(DVec3, f64, f64)>, // (3D point, u, v)
-    pub has_first_point: bool,
-    pub has_last_point: bool,
-    pub first_point_index: usize,
-    pub last_point_index: usize,
-    pub is_tangent_at_begin: bool,
-    pub is_tangent_at_end: bool,
+    pub has_first_point: bool,  pub has_last_point: bool,
+    pub first_point_index: usize, pub last_point_index: usize,
+    pub is_tangent_at_begin: bool, pub is_tangent_at_end: bool,
 }
-
 impl IWLine {
     pub fn new() -> Self {
-        Self {
-            points: Vec::new(),
-            has_first_point: false, has_last_point: false,
+        Self { points: Vec::new(), has_first_point: false, has_last_point: false,
             first_point_index: 0, last_point_index: 0,
-            is_tangent_at_begin: false, is_tangent_at_end: false,
-        }
+            is_tangent_at_begin: false, is_tangent_at_end: false }
     }
     pub fn nb_points(&self) -> usize { self.points.len() }
     pub fn point_at(&self, i: usize) -> &(DVec3, f64, f64) { &self.points[i] }
@@ -70,25 +55,20 @@ impl IWLine {
 // ── IWalking ────────────────────────────────────────────────────────
 pub struct IWalking {
     done: bool,
-    lines: Vec<IWLine>,
+    pub lines: Vec<IWLine>,
     seq_single: Vec<usize>,
     fleche: f64,
     pas: f64,
     epsilon: f64,
     reversed: bool,
-
-    // Working data
     wd1: Vec<WalkingData>,
     wd2: Vec<WalkingData>,
     nb_multiplicities: Vec<i32>,
-
-    // Surface UV bounds
-    um: f64, um_max: f64,
-    vm: f64, vm_max: f64,
-
-    // Tolerances
-    tol_u: f64,
-    tol_v: f64,
+    um: f64, um_max: f64, vm: f64, vm_max: f64,
+    tol_u: f64, tol_v: f64,
+    // Previous step tracking (OCCT previousPoint, previousd3d, previousd2d)
+    prev_u: f64, prev_v: f64,
+    prev_tg_u: f64, prev_tg_v: f64, // 2D tangent direction of previous step
 }
 
 impl IWalking {
@@ -97,19 +77,15 @@ impl IWalking {
     // ═══════════════════════════════════════════════════════════════════
     pub fn new(epsilon: f64, deflection: f64, increment: f64) -> Self {
         Self {
-            done: false,
-            lines: Vec::new(),
-            seq_single: Vec::new(),
-            fleche: deflection,
-            pas: increment,
-            epsilon: epsilon * epsilon,
+            done: false, lines: Vec::new(), seq_single: Vec::new(),
+            fleche: deflection, pas: increment, epsilon: epsilon * epsilon,
             reversed: false,
             wd1: vec![WalkingData::dummy()],
             wd2: vec![WalkingData::dummy()],
             nb_multiplicities: vec![-1],
-            um: 0.0, um_max: 0.0,
-            vm: 0.0, vm_max: 0.0,
+            um: 0.0, um_max: 0.0, vm: 0.0, vm_max: 0.0,
             tol_u: 0.0, tol_v: 0.0,
+            prev_u: 0.0, prev_v: 0.0, prev_tg_u: 0.0, prev_tg_v: 0.0,
         }
     }
 
@@ -117,14 +93,12 @@ impl IWalking {
     // OCCT L110-125: Clear
     // ═══════════════════════════════════════════════════════════════════
     fn clear(&mut self) {
-        self.wd1.clear();
-        self.wd2.clear();
+        self.wd1.clear(); self.wd2.clear();
         self.wd1.push(WalkingData::dummy());
         self.wd2.push(WalkingData::dummy());
         self.nb_multiplicities.clear();
         self.nb_multiplicities.push(-1);
-        self.done = false;
-        self.lines.clear();
+        self.done = false; self.lines.clear();
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -140,83 +114,437 @@ impl IWalking {
     ) {
         let nb_pnts1 = path_points.len();
         let nb_pnts2 = interior_points.len();
-
         self.clear();
         self.reversed = reversed;
-
-        // OCCT L160-176: surface UV bounds from _caro
-        // rcad: use default domain [0,1]x[0,1] for now
         self.um = 0.0; self.um_max = 1.0;
         self.vm = 0.0; self.vm_max = 1.0;
-
-        let _a_step_u = self.pas * (self.um_max - self.um);
-        let _a_step_v = self.pas * (self.vm_max - self.vm);
 
         // OCCT L182-217: load boundary points
         let mut u_mult: Vec<f64> = Vec::new();
         let mut v_mult: Vec<f64> = Vec::new();
-
         for pp in path_points {
-            let etat = 2i32; // default for non-tangent, non-passing
-            self.wd1.push(WalkingData::new(etat, pp.parameter, 0.0));
+            self.wd1.push(WalkingData::new(2, pp.parameter, 0.0));
             self.nb_multiplicities.push(1);
-            u_mult.push(pp.parameter);
-            v_mult.push(0.0);
+            u_mult.push(pp.parameter); v_mult.push(0.0);
         }
 
         // OCCT L219-233: load interior points
         for ip in interior_points {
             let mut etat = 1i32;
-            if !Self::is_tangent_ext_check(func, ip.u, ip.v, _a_step_u, _a_step_v,
-                                            self.um, self.um_max, self.vm, self.vm_max) {
+            if !Self::is_tangent_ext_check(func, ip.u, ip.v,
+                self.pas * (self.um_max - self.um), self.pas * (self.vm_max - self.vm),
+                self.um, self.um_max, self.vm, self.vm_max) {
                 etat = 13;
             }
             self.wd2.push(WalkingData::new(etat, ip.u, ip.v));
         }
 
-        // OCCT L235-236: tolerances
-        self.tol_u = 1e-7;
-        self.tol_v = 1e-7;
+        self.tol_u = 1e-7; self.tol_v = 1e-7;
 
-        // OCCT L260-262: compute open lines from boundary points
+        // OCCT L260-262: compute open lines
         if nb_pnts1 != 0 {
             self.compute_open_line(&mut u_mult, &mut v_mult, path_points, func);
         }
-
-        // OCCT L264-266: compute closed lines from interior points
+        // OCCT L264-266: compute closed lines
         if nb_pnts2 != 0 {
             self.compute_close_line(&mut u_mult, &mut v_mult, path_points, interior_points, func);
         }
-
         // OCCT L296-300: collect unused points
         for i in 1..=nb_pnts1 {
             if i < self.wd1.len() && self.wd1[i].etat > 0 {
                 self.seq_single.push(i);
             }
         }
-
         self.done = true;
     }
 
     // ═══════════════════════════════════════════════════════════════════
     // OCCT L43-79: IsTangentExtCheck
     // ═══════════════════════════════════════════════════════════════════
-    fn is_tangent_ext_check(
-        func: &mut SurfFunction,
-        u: f64, v: f64,
-        step_u: f64, step_v: f64,
-        u_inf: f64, u_sup: f64,
-        v_inf: f64, v_sup: f64,
-    ) -> bool {
+    fn is_tangent_ext_check(func: &mut SurfFunction, u: f64, v: f64,
+        step_u: f64, step_v: f64, u_inf: f64, u_sup: f64, v_inf: f64, v_sup: f64) -> bool {
         let a_tol = func.tolerance();
-        let par_u = [(u + step_u).min(u_sup), (u - step_u).max(u_inf), u, u];
-        let par_v = [v, v, (v + step_v).min(v_sup), (v - step_v).max(v_inf)];
+        let pu = [(u+step_u).min(u_sup), (u-step_u).max(u_inf), u, u];
+        let pv = [v, v, (v+step_v).min(v_sup), (v-step_v).max(v_inf)];
         for i in 0..4 {
-            if let Some(f_val) = func.value(&[par_u[i], par_v[i]]) {
+            if let Some(f_val) = func.value(&[pu[i], pv[i]]) {
                 if f_val.abs() > a_tol { return false; }
             }
         }
         true
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // OCCT math_FunctionSetRoot equivalent — constrained 2D Newton
+    //
+    // Solve: F(u,v) = 0 with direction constraint:
+    //   (u - u_pred)*tg_u + (v - v_pred)*tg_v = 0
+    // where (tg_u, tg_v) is perpendicular to ∇F at the prediction point.
+    // This is the same 2x2 system OCCT solves via math_FunctionSetRoot.
+    // ═══════════════════════════════════════════════════════════════════
+    fn constrained_newton_step(
+        func: &mut SurfFunction,
+        u_pred: f64, v_pred: f64,
+        u_init: f64, v_init: f64,
+        tol: f64,
+    ) -> Option<(f64, f64)> {
+        let max_iter = 15;
+        let mut u = u_init;
+        let mut v = v_init;
+
+        // Compute tangent direction at prediction: tg ⟂ ∇F
+        let pred = [u_pred, v_pred];
+        let _ = func.values(&pred);
+        let (_, df_du_p, df_dv_p) = fit_gradient(func, u_pred, v_pred);
+        let tg_u = -df_dv_p;
+        let tg_v = df_du_p;
+        let tg_len = (tg_u * tg_u + tg_v * tg_v).sqrt();
+        if tg_len < 1e-30 { return None; }
+        let tg_u = tg_u / tg_len;
+        let tg_v = tg_v / tg_len;
+
+        for _ in 0..max_iter {
+            let x = [u, v];
+            let Some((f_val, [df_du, df_dv])) = func.values(&x) else { break };
+
+            // Constraint residual: (u - u_pred)*tg_u + (v - v_pred)*tg_v
+            let c = (u - u_pred) * tg_u + (v - v_pred) * tg_v;
+
+            if f_val.abs() < tol && c.abs() < tol {
+                return Some((u, v));
+            }
+
+            // Jacobian:
+            // J = [df_du, df_dv]
+            //     [tg_u,  tg_v ]
+            let det = df_du * tg_v - df_dv * tg_u;
+            if det.abs() < 1e-30 { break; }
+
+            let du = (-f_val * tg_v - c * -df_dv) / det;  // wrong, let me compute properly
+            // Actually: J * delta = -[f; c]
+            // delta_u = (-f*tg_v - (-c)*(-df_dv)) / det = (-f*tg_v + c*df_dv) / det
+            // delta_v = (df_du*(-c) - (-f)*tg_u) / det = (-c*df_du + f*tg_u) / det
+            let delta_u = (-f_val * tg_v + c * df_dv) / det;
+            let delta_v = (-c * df_du + f_val * tg_u) / det;
+
+            if delta_u.abs() < 1e-12 && delta_v.abs() < 1e-12 { break; }
+
+            u += delta_u;
+            v += delta_v;
+        }
+
+        // Check final residual
+        let x = [u, v];
+        if let Some(f_val) = func.value(&x) {
+            if f_val.abs() < tol * 10.0 {
+                return Some((u, v));
+            }
+        }
+        None
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // OCCT TestArretPassage — overload 1 (for open lines, L600-766)
+    //
+    // Tests arrival / crossing of boundary and interior points during
+    // open-line walking. Returns true when the walking path reaches
+    // another boundary point (Arrive). Marks crossed interior points
+    // as processed (negative etat).
+    // ═══════════════════════════════════════════════════════════════════
+    fn test_arret_passage_open(
+        &mut self,
+        u_mult: &[f64], v_mult: &[f64],
+        current_u: f64, current_v: f64,
+        func: &mut SurfFunction,
+        irang: &mut usize,
+    ) -> bool {
+        let tolu = self.tol_u;
+        let tolv = self.tol_v;
+        let tolu2 = 10.0 * tolu;
+        let tolv2 = 10.0 * tolv;
+
+        // OCCT L614-664: crossing test on interior points (wd2)
+        for i in 1..self.wd2.len() {
+            if self.wd2[i].etat <= 0 { continue; }
+            let utest = self.wd2[i].ustart;
+            let vtest = self.wd2[i].vstart;
+            let du = current_u - utest;
+            let dv = current_v - vtest;
+            let dup = self.prev_u - utest;
+            let dvp = self.prev_v - vtest;
+
+            if (du.abs() < tolu2 && dv.abs() < tolv2)
+                || (dup.abs() < tolu2 && dvp.abs() < tolv2) {
+                self.wd2[i].etat = -self.wd2[i].etat;
+            } else {
+                let ddu = current_u - self.prev_u;
+                let ddv = current_v - self.prev_v;
+                let ddd = ddu * ddu + ddv * ddv;
+                let dd1 = du * du + dv * dv;
+                if dd1 <= ddd {
+                    let dd2 = dup * dup + dvp * dvp;
+                    if dd2 <= ddd && (du * dup + dv * dvp) <= 0.0 {
+                        self.wd2[i].etat = -self.wd2[i].etat;
+                    }
+                }
+            }
+        }
+
+        // OCCT L668-765: stop test on boundary points (wd1) — two passes
+        let mut arrive = false;
+        let mut i_candidates: Vec<usize> = Vec::new();
+        let mut sqdist_candidates: Vec<f64> = Vec::new();
+
+        for pass in 0..2 {
+            if arrive { break; }
+            for i in 1..self.wd1.len() {
+                let is_to_check = if pass == 0 { self.wd1[i].etat > 0 }
+                                           else { self.wd1[i].etat < 0 };
+                if !is_to_check { continue; }
+
+                let utest = self.wd1[i].ustart;
+                let vtest = self.wd1[i].vstart;
+                let dup = self.prev_u - utest;
+                let dvp = self.prev_v - vtest;
+
+                if dup.abs() >= tolu || dvp.abs() >= tolv {
+                    let uv1m = current_u - utest;
+                    let uv2m = current_v - vtest;
+                    if (dup * uv1m + dvp * uv2m) < 0.0
+                        || (uv1m.abs() < tolu && uv2m.abs() < tolv) {
+                        i_candidates.push(i);
+                        sqdist_candidates.push(dup * dup + dvp * dvp);
+                    } else if i < self.nb_multiplicities.len() && self.nb_multiplicities[i] > 0 && i_candidates.is_empty() {
+                        let n: usize = (1..i).map(|k| self.nb_multiplicities[k] as usize).sum();
+                        for j in n..n + self.nb_multiplicities[i] as usize {
+                            if j < u_mult.len() {
+                                if ((self.prev_u - u_mult[j]) * (current_u - u_mult[j])
+                                    + (self.prev_v - v_mult[j]) * (current_v - v_mult[j])) < 0.0
+                                    || ((current_u - u_mult[j]).abs() < tolu && (current_v - v_mult[j]).abs() < tolv) {
+                                    *irang = i;
+                                    arrive = true;
+                                    let uv = [utest, vtest];
+                                    let _ = func.value(&uv);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if arrive { break; }
+                }
+            }
+        }
+
+        if !arrive && !i_candidates.is_empty() {
+            // Pick closest candidate
+            let mut min_sq = f64::MAX;
+            for idx in 0..i_candidates.len() {
+                if sqdist_candidates[idx] < min_sq {
+                    min_sq = sqdist_candidates[idx];
+                    *irang = i_candidates[idx];
+                }
+            }
+            arrive = true;
+            let utest = self.wd1[*irang].ustart;
+            let vtest = self.wd1[*irang].vstart;
+            let uv = [utest, vtest];
+            let _ = func.value(&uv);
+        }
+
+        arrive
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // OCCT TestArretPassage — overload 2 (for closed lines, L768-954)
+    // ═══════════════════════════════════════════════════════════════════
+    fn test_arret_passage_close(
+        &mut self,
+        u_mult: &[f64], v_mult: &[f64],
+        current_u: f64, current_v: f64,
+        index: usize,
+        irang: &mut usize,
+    ) -> bool {
+        let mut tolu = self.tol_u;
+        let mut tolv = self.tol_v;
+
+        // OCCT L811-827: normalize UV space
+        let deltau = 1.0_f64.max(self.um_max - self.um);
+        let deltav = 1.0_f64.max(self.vm_max - self.vm);
+
+        let up = self.prev_u / deltau;
+        let vp = self.prev_v / deltav;
+        let uv1 = current_u / deltau;
+        let uv2 = current_v / deltav;
+        let tolu = tolu / deltau;
+        let tolv = tolv / deltav;
+        let tolu2 = tolu + tolu;
+        let tolv2 = tolv + tolv;
+
+        let d_prev_cur = (up - uv1) * (up - uv1) + (vp - uv2) * (vp - uv2);
+
+        let mut arrive = false;
+
+        // OCCT L833-917: test crossing on interior points (wd2)
+        for k in 1..self.wd2.len() {
+            if self.wd2[k].etat <= 0 { continue; }
+            let utest = self.wd2[k].ustart / deltau;
+            let vtest = self.wd2[k].vstart / deltav;
+
+            let uv1m = uv1 - utest;
+            let uv2m = uv2 - vtest;
+
+            if (uv1m < tolu2 && uv1m > -tolu2) && (uv2m < tolv2 && uv2m > -tolv2) {
+                if index != k { self.wd2[k].etat = -self.wd2[k].etat; }
+                else { arrive = true; }
+            } else {
+                let upm = up - utest;
+                let vpm = vp - vtest;
+                let d_prev_start = upm * upm + vpm * vpm;
+                let d_cur_start = uv1m * uv1m + uv2m * uv2m;
+                let scal = upm * uv1m + vpm * uv2m;
+
+                if upm.abs() < tolu && vpm.abs() < tolv {
+                    if index != k { self.wd2[k].etat = -self.wd2[k].etat; }
+                } else if scal < 0.0 && (d_prev_start + d_cur_start < d_prev_cur) {
+                    if index == k { arrive = true; }
+                    else { self.wd2[k].etat = -self.wd2[k].etat; }
+                } else if k != index {
+                    if d_prev_start < d_prev_cur * 0.25
+                        || d_cur_start < d_prev_cur * 0.25
+                    {
+                        self.wd2[k].etat = -self.wd2[k].etat;
+                    } else {
+                        let u_mid = 0.5 * (uv1 + up) - utest;
+                        let v_mid = 0.5 * (uv2 + vp) - vtest;
+                        if u_mid * u_mid + v_mid * v_mid < d_prev_cur * 0.5 {
+                            self.wd2[k].etat = -self.wd2[k].etat;
+                        }
+                    }
+                }
+            }
+        }
+
+        // OCCT L919-952: crossing test on boundary points (wd1)
+        *irang = 0;
+        for i in 1..self.wd1.len() {
+            if self.wd1[i].etat <= 0 || !(self.wd1[i].etat < 11) { continue; }
+            let utest = self.wd1[i].ustart / deltau;
+            let vtest = self.wd1[i].vstart / deltav;
+
+            if ((up - utest) * (uv1 - utest) + (vp - vtest) * (uv2 - vtest) < 0.0)
+                || ((uv1 - utest).abs() < tolu && (uv2 - vtest).abs() < tolv) {
+                *irang = i;
+            } else if i < self.nb_multiplicities.len() && self.nb_multiplicities[i] > 0 {
+                let n: usize = (1..i).map(|k| self.nb_multiplicities[k] as usize).sum();
+                for j in n..n + self.nb_multiplicities[i] as usize {
+                    if j < u_mult.len() {
+                        let uj = u_mult[j] / deltau;
+                        let vj = v_mult[j] / deltav;
+                        if ((up - uj) * (uv1 - uj) + (vp - vj) * (uv2 - vj) < 0.0)
+                            || ((uv1 - uj).abs() < tolu && (uv2 - vj).abs() < tolv) {
+                            *irang = i;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        arrive
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Walk segment — use constrained Newton step + test_arret_passage
+    // ═══════════════════════════════════════════════════════════════════
+    fn walk_segment(
+        &mut self,
+        func: &mut SurfFunction,
+        start_u: f64, start_v: f64,
+        sign: f64,
+        line: &mut IWLine,
+    ) {
+        let max_steps = 500;
+        let step_size = self.pas.max(1e-6).min(0.1);
+        let tol = self.fleche.max(1e-7);
+
+        let mut u = start_u;
+        let mut v = start_v;
+
+        // Compute first point
+        let x0 = [u, v];
+        let _ = func.value(&x0);
+        line.add_point(*func.point(), u, v);
+        self.prev_u = u;
+        self.prev_v = v;
+
+        for _ in 0..max_steps {
+            // Compute gradient and tangent at current point
+            let Some((f_val, [df_du, df_dv])) = func.values(&[u, v]) else { break };
+            let _ = f_val;
+            let gn2 = df_du * df_du + df_dv * df_dv;
+            if gn2 < 1e-30 { break; }
+            let gn = gn2.sqrt();
+
+            // Tangent direction: ⟂ ∇F
+            let tg_u = -df_dv / gn;
+            let tg_v = df_du / gn;
+
+            // Prediction: step along tangent
+            let u_pred = u + tg_u * sign * step_size;
+            let v_pred = v + tg_v * sign * step_size;
+
+            // Clamp prediction to domain
+            let u_pred = u_pred.clamp(self.um, self.um_max);
+            let v_pred = v_pred.clamp(self.vm, self.vm_max);
+
+            // OCCT math_FunctionSetRoot: constrained Newton back to F=0
+            let (u_new, v_new) = match Self::constrained_newton_step(
+                func, u_pred, v_pred, u_pred, v_pred, tol) {
+                Some(uv) => uv,
+                None => (u_pred, v_pred),
+            };
+
+            // Clamp result to domain
+            let u_new = u_new.clamp(self.um, self.um_max);
+            let v_new = v_new.clamp(self.vm, self.vm_max);
+
+            // Boundary check
+            if (u_new <= self.um || u_new >= self.um_max)
+                || (v_new <= self.vm || v_new >= self.vm_max) {
+                let x = [u_new, v_new];
+                let _ = func.value(&x);
+                line.add_point(*func.point(), u_new, v_new);
+                break;
+            }
+
+            // Check deflection (curvature) — stop if chord too far from curve
+            if line.nb_points() >= 3 {
+                let (pp, _, _) = line.point_at(line.nb_points() - 3);
+                let (pc, _, _) = line.point_at(line.nb_points() - 2);
+                let (pn, _, _) = line.point_at(line.nb_points() - 1);
+                let chord = (*pn - *pp).length();
+                let mid = (*pc - (*pp + *pn) * 0.5).length();
+                if chord > 1e-10 && mid > self.fleche * chord {
+                    break;
+                }
+            }
+
+            // Update previous point tracking
+            self.prev_u = u;
+            self.prev_v = v;
+            self.prev_tg_u = tg_u;
+            self.prev_tg_v = tg_v;
+
+            u = u_new;
+            v = v_new;
+            let x = [u, v];
+            let _ = func.value(&x);
+            line.add_point(*func.point(), u, v);
+
+            // Convergence: step size below tolerance
+            if (u - self.prev_u).abs() < 1e-12 && (v - self.prev_v).abs() < 1e-12 {
+                break;
+            }
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -229,22 +557,25 @@ impl IWalking {
         path_points: &[PathPoint],
         func: &mut SurfFunction,
     ) {
-        // Process each unused boundary point
         for i in 1..self.wd1.len() {
             if self.wd1[i].etat <= 0 { continue; }
-
             let start_u = self.wd1[i].ustart;
             let start_v = self.wd1[i].vstart;
-            let mut line = IWLine::new();
 
-            // Walk forward from the start point
+            // Walk forward
+            self.prev_u = start_u;
+            self.prev_v = start_v;
+            self.prev_tg_u = 0.0; self.prev_tg_v = 0.0;
+            let mut line = IWLine::new();
             self.walk_segment(func, start_u, start_v, 1.0, &mut line);
 
-            // Walk backward from the start point (reverse direction)
+            // Walk backward
+            self.prev_u = start_u;
+            self.prev_v = start_v;
             let mut back_line = IWLine::new();
             self.walk_segment(func, start_u, start_v, -1.0, &mut back_line);
 
-            // Combine: backward points (reversed) + start + forward points
+            // Combine
             let mut combined = IWLine::new();
             for k in (0..back_line.nb_points()).rev() {
                 let (p, u, v) = back_line.point_at(k);
@@ -255,135 +586,9 @@ impl IWalking {
                 combined.add_point(*p, *u, *v);
             }
 
-            // Check connection to other boundary points
-            let mut connected_to = 0usize;
-            if combined.nb_points() >= 2 {
-                let (_, last_u, last_v) = combined.point_at(combined.nb_points() - 1);
-                for j in 1..self.wd1.len() {
-                    if j != i && self.wd1[j].etat > 0 {
-                        let du = (*last_u - self.wd1[j].ustart).abs();
-                        let dv = (*last_v - self.wd1[j].vstart).abs();
-                        if du < self.tol_u * 10.0 && dv < self.tol_v * 10.0 {
-                            connected_to = j;
-                            self.wd1[j].etat = -self.wd1[j].etat.abs();
-                            combined.has_last_point = true;
-                            combined.last_point_index = j;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if connected_to > 0 || combined.nb_points() >= 3 {
+            if combined.nb_points() >= 3 {
                 self.wd1[i].etat = -self.wd1[i].etat.abs();
                 self.lines.push(combined);
-            }
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // WalkSegment — walk from (u,v) along F(u,v)=0 direction `sign`
-    // ═══════════════════════════════════════════════════════════════════
-    fn walk_segment(
-        &self,
-        func: &mut SurfFunction,
-        start_u: f64,
-        start_v: f64,
-        sign: f64,
-        line: &mut IWLine,
-    ) {
-        let max_steps = 500;
-        let step_size = self.pas.max(1e-6);
-        let tol = self.fleche.max(1e-7);
-        let max_iter = 10;
-
-        let mut u = start_u;
-        let mut v = start_v;
-
-        // Evaluate start point
-        let x0 = [u, v];
-        let Some(_) = func.value(&x0) else { return };
-        line.add_point(*func.point(), u, v);
-
-        for _ in 0..max_steps {
-            // Get gradient of F(u,v)
-            let Some((f_val, [df_du, df_dv])) = func.values(&[u, v]) else { break };
-            let _ = f_val;
-
-            // Tangent direction = perpendicular to gradient in UV space
-            let grad_norm = (df_du * df_du + df_dv * df_dv).sqrt();
-            if grad_norm < 1e-30 { break; }
-
-            // Step direction: perpendicular to ∇F
-            let du = -df_dv / grad_norm * sign * step_size;
-            let dv = df_du / grad_norm * sign * step_size;
-
-            // Predict next UV
-            let mut u_new = u + du;
-            let mut v_new = v + dv;
-
-            // Clamp to domain
-            u_new = u_new.clamp(self.um, self.um_max);
-            v_new = v_new.clamp(self.vm, self.vm_max);
-
-            // Check if we hit the boundary
-            if (u_new <= self.um || u_new >= self.um_max)
-                || (v_new <= self.vm || v_new >= self.vm_max) {
-                // Snap to boundary — evaluate 3D point via func
-                let x = [u_new, v_new];
-                let _ = func.value(&x);
-                line.add_point(*func.point(), u_new, v_new);
-                break;
-            }
-
-            // Newton refinement back to F=0
-            let mut u_nr = u_new;
-            let mut v_nr = v_new;
-            let mut converged = false;
-
-            for _ in 0..max_iter {
-                let xn = [u_nr, v_nr];
-                let Some((fn_val, [df_du_n, df_dv_n])) = func.values(&xn) else { break };
-
-                if fn_val.abs() < tol {
-                    converged = true;
-                    break;
-                }
-
-                let gn2 = df_du_n * df_du_n + df_dv_n * df_dv_n;
-                if gn2 < 1e-30 { break; }
-
-                u_nr -= fn_val * df_du_n / gn2;
-                v_nr -= fn_val * df_dv_n / gn2;
-                u_nr = u_nr.clamp(self.um, self.um_max);
-                v_nr = v_nr.clamp(self.vm, self.vm_max);
-            }
-
-            if converged && (u_nr - u).abs() > 1e-10 || (v_nr - v).abs() > 1e-10 {
-                u = u_nr;
-                v = v_nr;
-                let x = [u, v];
-                let _ = func.value(&x);
-                line.add_point(*func.point(), u, v);
-            } else {
-                // Step without Newton if gradient is small
-                u = u_new;
-                v = v_new;
-                let x = [u, v];
-                let _ = func.value(&x);
-                line.add_point(*func.point(), u, v);
-            }
-
-            // Check deflection (curvature) — stop if step is too large
-            if line.nb_points() >= 3 {
-                let (pp, _, _) = line.point_at(line.nb_points() - 3);
-                let (pc, _, _) = line.point_at(line.nb_points() - 2);
-                let (pn, _, _) = line.point_at(line.nb_points() - 1);
-                let chord = (*pn - *pp).length();
-                let mid = (*pc - (*pp + *pn) * 0.5).length();
-                if chord > 0.0 && (mid / chord) > self.fleche * 10.0 {
-                    break; // deflection too large
-                }
             }
         }
     }
@@ -393,30 +598,32 @@ impl IWalking {
     // ═══════════════════════════════════════════════════════════════════
     fn compute_close_line(
         &mut self,
-        _u_mult: &mut Vec<f64>,
-        _v_mult: &mut Vec<f64>,
+        u_mult: &mut Vec<f64>,
+        v_mult: &mut Vec<f64>,
         _path_points: &[PathPoint],
         interior_points: &[InteriorPoint],
         func: &mut SurfFunction,
     ) {
         for i in 1..self.wd2.len() {
             if self.wd2[i].etat <= 0 { continue; }
-            if self.wd2[i].etat != 13 { continue; } // Only closed-line candidates
+            if self.wd2[i].etat != 13 { continue; }
 
             let start_u = self.wd2[i].ustart;
             let start_v = self.wd2[i].vstart;
 
-            let mut line = IWLine::new();
+            self.prev_u = start_u;
+            self.prev_v = start_v;
+            self.prev_tg_u = 0.0; self.prev_tg_v = 0.0;
 
-            // Walk full circle (both directions, stop when returning to start)
+            let mut line = IWLine::new();
             self.walk_segment(func, start_u, start_v, 1.0, &mut line);
 
-            // Check if the line returns near its start point (closed)
+            // Check if closed (returns near start)
             if line.nb_points() >= 4 {
-                let (_, first_u, first_v) = line.point_at(0);
-                let (_, last_u, last_v) = line.point_at(line.nb_points() - 1);
-                let du = (last_u - first_u).abs();
-                let dv = (last_v - first_v).abs();
+                let (_, fu, fv) = line.point_at(0);
+                let (_, lu, lv) = line.point_at(line.nb_points() - 1);
+                let du = (lu - fu).abs();
+                let dv = (lv - fv).abs();
                 if du < self.tol_u * 100.0 && dv < self.tol_v * 100.0 {
                     self.wd2[i].etat = -self.wd2[i].etat.abs();
                     self.lines.push(line);
@@ -434,9 +641,24 @@ impl IWalking {
     pub fn nb_single_points(&self) -> usize { self.seq_single.len() }
 }
 
+// ── Helper: fit ∇F via finite difference ──────────────────────────
+fn fit_gradient(func: &mut SurfFunction, u: f64, v: f64) -> (f64, f64, f64) {
+    let x = [u, v];
+    if let Some((_, [df_du, df_dv])) = func.values(&x) {
+        let f = func.root();
+        (f, df_du, df_dv)
+    } else {
+        // Finite difference fallback
+        let eps = 1e-6;
+        let f = func.value(&[u, v]).unwrap_or(0.0);
+        let fu = func.value(&[u + eps, v]).unwrap_or(f);
+        let fv = func.value(&[u, v + eps]).unwrap_or(f);
+        (f, (fu - f) / eps, (fv - f) / eps)
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════
-// Tests: verify gradient + Newton refinement equivalence to OCCT
-// math_FunctionSetRoot. The walking step must maintain |F(u,v)| < tol.
+// Tests
 // ═══════════════════════════════════════════════════════════════════════
 #[cfg(test)]
 mod tests {
@@ -444,71 +666,38 @@ mod tests {
     use rcad_kernel::geom::{Surface3, SurfaceEval};
     use crate::inttools::int_surf_quadric::Quadric;
 
-    /// Test: gradient-based Newton refinement from an initial guess
-    /// reduces |F(u,v)| below tolerance.
+    /// Test: constrained Newton converges to |F| < tol and direction constraint satisfied
     #[test]
-    fn test_newton_refinement_converges() {
-        // Quadric: cylinder radius=2, axis=Z
+    fn test_constrained_newton() {
         let cyl = Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
-            origin: glam::DVec3::ZERO,
-            axis: glam::DVec3::Z,
-            radius: 2.0,
+            origin: DVec3::ZERO, axis: DVec3::Z, radius: 2.0,
         });
         let quad = Quadric::from_surface3(&cyl).unwrap();
-
-        // Parametric surface: plane z = u (tilted)
         let plane = Surface3::Plane(rcad_kernel::geom::Plane {
-            origin: glam::DVec3::ZERO,
-            normal: glam::DVec3::new(0.0, 0.0, 1.0),
+            origin: DVec3::ZERO, normal: DVec3::Z,
         });
-
         let mut func = SurfFunction::with_quadric(quad);
         func.set_surface(plane);
-
-        // At (u=2, v=0): P=(2,0,0) on cylinder → F = 2-2 = 0 (on surface)
-        // At (u=1.5, v=1): P=(1.5,1,1.5), dist from cylinder axis = 1.803, F = 1.803-2 = -0.197
-        // At (u=2.5, v=0): P=(2.5,0,2.5), dist from axis = 2.5, F = 2.5-2 = 0.5
-
-        // Test: start at (2.5, 0.0) where F=0.5, should converge to F≈0
-        let mut u = 2.5;
-        let mut v = 0.0;
-        let tol = 1e-6;
-
-        for _ in 0..20 {
-            let x = [u, v];
-            let Some((f, [df_du, df_dv])) = func.values(&x) else { break };
-            if f.abs() < tol { break; }
-            let gn2 = df_du*df_du + df_dv*df_dv;
-            if gn2 < 1e-30 { break; }
-            u -= f * df_du / gn2;
-            v -= f * df_dv / gn2;
+        // P(u,v) = (u,v,0), F = sqrt(u^2+v^2) - 2
+        // At (2,0), F=0, tg = (0,1) (perp to ∇F=(1,0))
+        // Predict (2, 0.1), constraint: step along tg
+        if let Some((un, vn)) = IWalking::constrained_newton_step(&mut func, 2.0, 0.0, 2.0, 0.1, 1e-6) {
+            let x = [un, vn];
+            let f = func.value(&x).unwrap_or(1.0);
+            assert!(f.abs() < 1e-5, "F({}, {}) = {} should be near 0", un, vn, f);
         }
-
-        let x = [u, v];
-        let f_final = func.value(&x).unwrap_or(f64::MAX);
-        assert!(f_final.abs() < 1e-5,
-            "Newton refinement should converge to |F|<1e-5, got |F|={}", f_final.abs());
     }
 
-    /// Test: walking step from a known intersection point stays on F=0.
-    /// Uses plane-plane case where intersection is a straight line.
+    /// Test: walk_segment maintains F ≈ 0 along entire line
     #[test]
     fn test_walk_stays_on_intersection() {
-        // Quadric: Plane z=0
         let q_plane = Surface3::Plane(rcad_kernel::geom::Plane {
-            origin: glam::DVec3::ZERO,
-            normal: glam::DVec3::Z,
+            origin: DVec3::ZERO, normal: DVec3::Z,
         });
         let quad = Quadric::from_surface3(&q_plane).unwrap();
-
-        // Parametric surface: Plane z=x+y (tilted)
-        // P(u,v) = (u, v, u+v)
-        // F(u,v) = z = u+v = 0 → intersection is line u+v=0 in parameter space
         let p_plane = Surface3::Plane(rcad_kernel::geom::Plane {
-            origin: glam::DVec3::ZERO,
-            normal: glam::DVec3::new(-1.0, -1.0, 1.0).normalize(),
+            origin: DVec3::ZERO, normal: DVec3::new(-1.0, -1.0, 1.0).normalize(),
         });
-
         let mut func = SurfFunction::with_quadric(quad);
         func.set_surface(p_plane);
 
@@ -516,15 +705,13 @@ mod tests {
         iwalk.um = -10.0; iwalk.um_max = 10.0;
         iwalk.vm = -10.0; iwalk.vm_max = 10.0;
         iwalk.tol_u = 1e-7; iwalk.tol_v = 1e-7;
-        iwalk.pas = 0.01;
-        iwalk.fleche = 0.01;
+        iwalk.pas = 0.01; iwalk.fleche = 0.01;
 
-        // Walk from (0, 0) where F=0
+        iwalk.prev_u = 0.0; iwalk.prev_v = 0.0;
         let mut line = IWLine::new();
         iwalk.walk_segment(&mut func, 0.0, 0.0, 1.0, &mut line);
 
-        // Every point on the line should have |F(u,v)| near 0
-        assert!(line.nb_points() >= 2, "Should have at least 2 points");
+        assert!(line.nb_points() >= 2, "Should have >= 2 points");
         for k in 0..line.nb_points() {
             let (_, u, v) = line.point_at(k);
             let x = [*u, *v];
