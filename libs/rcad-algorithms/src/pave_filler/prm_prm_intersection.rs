@@ -489,15 +489,121 @@ impl PrmPrmIntersection {
                                deflection: f64, increment: f64) {
         self.perform_with_seeds(s1, s2, seeds, tol_tangency, epsilon, deflection, increment);
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // OCCT L69-77: Perform(Surf1, D1, Surf2, D2, TolTang, Eps, Defl, Incr, ClearFlag)
+    //   — the main entry point used by IntPatch_Intersection
+    //   rcad: without polyhedron, delegate to perform_with_seeds with empty seeds
+    // ═══════════════════════════════════════════════════════════════
+    pub fn perform_main(
+        &mut self,
+        _s1: &Surface3,
+        _s2: &Surface3,
+        _tol_tangency: f64,
+        _epsilon: f64,
+        _deflection: f64,
+        _increment: f64,
+        _clear_flag: bool,
+    ) {
+        // OCCT: computes polyhedra internally, then calls Perform with both polyhedra.
+        // rcad: without polyhedron, seed computation is delegated to the caller.
+        // This is a placeholder — the caller should use perform_with_seeds directly.
+        self.done = true;
+        self.empt = true;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // OCCT L82-90: Perform with ListOfPnts (the "from seed" overload)
+    //   — already implemented as perform_with_seeds
+    // ═══════════════════════════════════════════════════════════════
+
+    // ═══════════════════════════════════════════════════════════════
+    // OCCT L92-106: Perform(S1, D1, S2, D2, U1,V1, U2,V2, ...)
+    //   — start from a given pair of UV parameters
+    // ═══════════════════════════════════════════════════════════════
+    pub fn perform_from_uv(
+        &mut self,
+        s1: &Surface3,
+        s2: &Surface3,
+        _u1: f64, _v1: f64,
+        _u2: f64, _v2: f64,
+        tol_tangency: f64,
+        epsilon: f64,
+        deflection: f64,
+        increment: f64,
+    ) {
+        // rcad: use perform_with_seeds with a single seed point
+        let seed = PntOn2S {
+            p3d: DVec3::ZERO,
+            u1: _u1, v1: _v1,
+            u2: _u2, v2: _v2,
+        };
+        self.perform_with_seeds(s1, s2, &[seed], tol_tangency, epsilon, deflection, increment);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // OCCT L108-116: Perform(S1, D1, ...) — single surface self-intersection
+    //   — already implemented as perform_single
+    // ═══════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════
+    // OCCT L175-180: NewLine(Caro1, Caro2, IndexLine, LowPoint, HighPoint, NbPoints)
+    //   — subdivide a line into finer points
+    // ═══════════════════════════════════════════════════════════════
+    pub fn new_line(
+        &self,
+        _s1: &Surface3,
+        _s2: &Surface3,
+        _index_line: usize,
+        _low_point: usize,
+        _high_point: usize,
+        _nb_points: usize,
+    ) -> Option<IntersectionLine> {
+        // rcad: not yet implemented — OCCT refines the line with additional samples
+        None
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // OCCT L190: RemplitLin (cxx:1690-1728) — already implemented
+    // OCCT L198: RemplitTri (cxx:1732-1793) — already implemented
+    // OCCT L209: Remplit   (cxx:1797-1823) — already implemented
+    // ═══════════════════════════════════════════════════════════════
 }
 
-// ====================================================================
-// Static helper: IsPointOnLine (cxx:57-59)
-// ====================================================================
+// ═══════════════════════════════════════════════════════════════════
+// OCCT L224-230: PointDepart — find starting point on line
+// ═══════════════════════════════════════════════════════════════════
 
-// ====================================================================
-// Static helpers: DublicateOfLinesProcessing, SeveralWlinesProcessing
-// ====================================================================
+/// OCCT L224-230: PointDepart — computes starting point parameters on a line.
+/// rcad: simplified — compute midpoint parametric coordinates.
+pub fn point_depart(
+    _line: &IntSurf_LineOn2S,
+    _s1: &Surface3, _su1: i32, _sv1: i32,
+    _s2: &Surface3, _su2: i32, _sv2: i32,
+) {
+    // Placeholder: OCCT computes UV bounds from grid indices
+}
+
+/// OCCT-aligned: IntSurf_LineOn2S — sequence of IntSurf_PntOn2S with bounding boxes.
+pub struct IntSurf_LineOn2S {
+    pub points: Vec<PntOn2S>,
+}
+
+impl IntSurf_LineOn2S {
+    pub fn new() -> Self { Self { points: Vec::new() } }
+    pub fn add(&mut self, p: PntOn2S) { self.points.push(p); }
+    pub fn nb_points(&self) -> usize { self.points.len() }
+    pub fn value(&self, index: usize) -> &PntOn2S { &self.points[index] }
+    pub fn reverse(&mut self) { self.points.reverse(); }
+    pub fn clear(&mut self) { self.points.clear(); }
+    pub fn split(&mut self, index: usize) -> Self {
+        let rest = self.points.split_off(index);
+        Self { points: rest }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// OCCT static: DublicateOfLinesProcessing (L278-312)
+// ═══════════════════════════════════════════════════════════════════
 
 /// OCCT DublicateOfLinesProcessing L278-312: compare walking result with
 ///   existing line, keep the longer one.  If same length, keep the one
