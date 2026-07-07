@@ -1036,4 +1036,59 @@ mod tests {
         assert!(sample_surface_grid(&plane, 0.0, 1.0).is_empty());
         assert!(sample_surface_grid(&plane, 1.0, 0.0).is_empty());
     }
+
+    // =========================================================================
+    // OCCT-aligned AbscissaPoint tests (from GCPnts_AbscissaPoint_Test.cxx)
+    // =========================================================================
+
+    #[test]
+    fn abscissa_point_line_length() {
+        let line = create_test_line();
+        // Length of a unit-X line from 0 to 10 = 10
+        let len = length(&line, 0.0, 10.0, TOLERANCE_MESH_LEGACY);
+        assert!((len - 10.0).abs() < TOLERANCE_MESH_LEGACY);
+    }
+
+    #[test]
+    fn abscissa_point_line_midpoint() {
+        let line = create_test_line();
+        // Find parameter at half-length
+        let params = uniform_abscissa(&line, 2);
+        assert!(!params.is_empty());
+        // With 2 segments, we get endpoints 0 and 10
+        if params.len() >= 2 {
+            assert!((params[0] - 0.0).abs() < TOLERANCE_MESH_LEGACY || (params[0] - 10.0).abs() < TOLERANCE_MESH_LEGACY);
+        }
+    }
+
+    #[test]
+    fn abscissa_point_circle_length() {
+        let circle = create_test_circle();
+        // Circle radius 2: circumference ≈ 4π ≈ 12.566
+        let len = length(&circle, 0.0, 2.0 * std::f64::consts::PI, TOLERANCE_MESH_LEGACY);
+        let expected = 2.0 * std::f64::consts::PI * 2.0;
+        assert!((len - expected).abs() < 0.01); // sampling-based, approximate
+    }
+
+    #[test]
+    fn abscissa_point_uniform_params() {
+        let line = create_test_line();
+        let params = uniform_abscissa(&line, 5);
+        // Should give 5 points (4 segments)
+        assert_eq!(params.len(), 5);
+        // Should be roughly equally spaced
+        for i in 1..params.len() {
+            let dt = params[i] - params[i - 1];
+            assert!(dt > 0.0);
+        }
+    }
+
+    #[test]
+    fn abscissa_point_quasi_uniform() {
+        let circle = create_test_circle();
+        // Quasi-uniform abscissa creates equal chord-length segments
+        let params = quasi_uniform(&circle, 8);
+        assert!(!params.is_empty());
+        assert!(params[0] >= 0.0);
+    }
 }

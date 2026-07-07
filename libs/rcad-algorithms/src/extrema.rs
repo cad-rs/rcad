@@ -1112,4 +1112,311 @@ mod tests {
         // point(t) = center + radius * (cos(t) * Y + sin(t) * (-X))
         // So the "rightmost" point corresponds to t = 3*pi/2
     }
+
+    // =========================================================================
+    // OCCT-aligned ExtremaPC tests (from ExtremaPC_*_Test.cxx)
+    // =========================================================================
+    //
+    // These test point-curve minimum distance using rcad's distance_point_curve
+    // and closest_point_on_curve APIs, which correspond to OCCT's ExtremaPC
+    // per-type optimized extremum computation.
+
+    fn assert_approx(a: f64, b: f64, tol: f64) {
+        assert!((a - b).abs() < tol, "{} != {}", a, b);
+    }
+
+    // ── Circle (ExtremaPC_Circle_Test.cxx) ────────────────────────────────
+
+    #[test]
+    fn extrema_circle_point_outside_x() {
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 10.0));
+        let point = DVec3::new(20.0, 0.0, 0.0);
+        let (dist, _t) = distance_point_curve(point, &circle);
+        assert_approx(dist, 10.0, TOLERANCE_COORD);
+    }
+
+    #[test]
+    fn extrema_circle_point_outside_y() {
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 10.0));
+        let point = DVec3::new(0.0, 25.0, 0.0);
+        let (dist, _t) = distance_point_curve(point, &circle);
+        assert_approx(dist, 15.0, TOLERANCE_COORD);
+    }
+
+    #[test]
+    fn extrema_circle_point_inside() {
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 10.0));
+        let point = DVec3::new(3.0, 0.0, 0.0);
+        let (dist, _t) = distance_point_curve(point, &circle);
+        assert_approx(dist, 7.0, TOLERANCE_COORD); // R - |P| = 10 - 3 = 7
+    }
+
+    #[test]
+    fn extrema_circle_point_at_center() {
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 10.0));
+        let point = DVec3::ZERO;
+        let (dist, _t) = distance_point_curve(point, &circle);
+        assert_approx(dist, 10.0, TOLERANCE_COORD); // distance to any point = R
+    }
+
+    #[test]
+    fn extrema_circle_point_above_plane() {
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 10.0));
+        let point = DVec3::new(20.0, 0.0, 5.0);
+        let (dist, _t) = distance_point_curve(point, &circle);
+        assert_approx(dist, (125.0f64).sqrt(), TOLERANCE_COORD); // sqrt(10^2 + 5^2)
+    }
+
+    #[test]
+    fn extrema_circle_on_axis() {
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 10.0));
+        let point = DVec3::new(0.0, 0.0, 15.0);
+        let (dist, _t) = distance_point_curve(point, &circle);
+        assert_approx(dist, (325.0f64).sqrt(), TOLERANCE_COORD); // sqrt(R^2 + h^2)
+    }
+
+    #[test]
+    fn extrema_circle_translated() {
+        let circle = Curve3::Circle(Circle3::new(DVec3::new(100.0, 200.0, 50.0), DVec3::Z, 15.0));
+        let point = DVec3::new(130.0, 200.0, 50.0);
+        let (dist, _t) = distance_point_curve(point, &circle);
+        assert_approx(dist, 15.0, TOLERANCE_COORD); // 30 - 15 = 15
+    }
+
+    #[test]
+    fn extrema_circle_yz_plane() {
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::X, 10.0));
+        let point = DVec3::new(5.0, 20.0, 0.0);
+        let (dist, _t) = distance_point_curve(point, &circle);
+        assert_approx(dist * dist, 125.0, TOLERANCE_COORD); // sqrt(5^2 + 10^2)
+    }
+
+    #[test]
+    fn extrema_circle_on_curve() {
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 10.0));
+        let point = DVec3::new(10.0, 0.0, 0.0);
+        let (dist, _t) = distance_point_curve(point, &circle);
+        assert_approx(dist, 0.0, TOLERANCE_COORD); // point is on circle
+    }
+
+    #[test]
+    fn extrema_circle_small_radius() {
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 0.001));
+        let point = DVec3::new(0.01, 0.0, 0.0);
+        let (dist, _t) = distance_point_curve(point, &circle);
+        assert_approx(dist, 0.009, 1e-6);
+    }
+
+    #[test]
+    fn extrema_circle_large_radius() {
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1000.0));
+        let point = DVec3::new(1500.0, 0.0, 0.0);
+        let (dist, _t) = distance_point_curve(point, &circle);
+        assert_approx(dist, 500.0, TOLERANCE_COORD);
+    }
+
+    // ── Line (ExtremaPC_Line_Test.cxx) ────────────────────────────────────
+
+    #[test]
+    fn extrema_line_point_on_line() {
+        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let (dist, _t) = distance_point_curve(DVec3::new(5.0, 0.0, 0.0), &line);
+        assert_approx(dist, 0.0, TOLERANCE_COORD);
+    }
+
+    #[test]
+    fn extrema_line_point_off_xy() {
+        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let (dist, _t) = distance_point_curve(DVec3::new(5.0, 3.0, 0.0), &line);
+        assert_approx(dist, 3.0, TOLERANCE_COORD);
+    }
+
+    #[test]
+    fn extrema_line_point_off_yz() {
+        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let (dist, _t) = distance_point_curve(DVec3::new(5.0, 3.0, 4.0), &line);
+        assert_approx(dist, 5.0, TOLERANCE_COORD); // sqrt(3^2 + 4^2) = 5
+    }
+
+    #[test]
+    fn extrema_line_along_y() {
+        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::Y });
+        let (dist, _t) = distance_point_curve(DVec3::new(3.0, 5.0, 4.0), &line);
+        assert_approx(dist, 5.0, TOLERANCE_COORD); // sqrt(3^2 + 4^2) = 5
+    }
+
+    #[test]
+    fn extrema_line_diagonal() {
+        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::new(1.0, 1.0, 1.0).normalize() });
+        let (dist, _t) = distance_point_curve(DVec3::new(3.0, 3.0, 3.0), &line);
+        assert_approx(dist, 0.0, TOLERANCE_COORD); // point is on line
+    }
+
+    #[test]
+    fn extrema_line_translated() {
+        let line = Curve3::Line(Line3 { origin: DVec3::new(10.0, 20.0, 30.0), direction: DVec3::X });
+        let (dist, _t) = distance_point_curve(DVec3::new(15.0, 23.0, 34.0), &line);
+        assert_approx(dist, 5.0, TOLERANCE_COORD); // sqrt(3^2 + 4^2) = 5
+    }
+
+    // ── Ellipse (ExtremaPC_Ellipse_Test.cxx) ──────────────────────────────
+
+    #[test]
+    fn extrema_ellipse_point_on_major_axis_outside() {
+        let ellipse = Curve3::Ellipse(Ellipse3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            major_radius: 20.0, minor_radius: 10.0,
+        });
+        let (dist, _t) = distance_point_curve(DVec3::new(30.0, 0.0, 0.0), &ellipse);
+        assert_approx(dist, 10.0, TOLERANCE_COORD);
+    }
+
+    #[test]
+    fn extrema_ellipse_point_on_minor_axis_outside() {
+        let ellipse = Curve3::Ellipse(Ellipse3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            major_radius: 20.0, minor_radius: 10.0,
+        });
+        let (dist, _t) = distance_point_curve(DVec3::new(0.0, 20.0, 0.0), &ellipse);
+        assert_approx(dist, 10.0, TOLERANCE_COORD); // 20 - 10 = 10
+    }
+
+    #[test]
+    fn extrema_ellipse_point_inside() {
+        let ellipse = Curve3::Ellipse(Ellipse3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            major_radius: 20.0, minor_radius: 10.0,
+        });
+        let (dist, _t) = distance_point_curve(DVec3::new(5.0, 3.0, 0.0), &ellipse);
+        assert!(dist > 0.0);
+    }
+
+    #[test]
+    fn extrema_ellipse_point_on_major_vertex() {
+        let ellipse = Curve3::Ellipse(Ellipse3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            major_radius: 20.0, minor_radius: 10.0,
+        });
+        let (dist, _t) = distance_point_curve(DVec3::new(20.0, 0.0, 0.0), &ellipse);
+        assert_approx(dist, 0.0, TOLERANCE_COORD);
+    }
+
+    #[test]
+    fn extrema_ellipse_point_on_minor_vertex() {
+        let ellipse = Curve3::Ellipse(Ellipse3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            major_radius: 20.0, minor_radius: 10.0,
+        });
+        let (dist, _t) = distance_point_curve(DVec3::new(0.0, 10.0, 0.0), &ellipse);
+        assert_approx(dist, 0.0, TOLERANCE_COORD);
+    }
+
+    #[test]
+    fn extrema_ellipse_above_plane() {
+        let ellipse = Curve3::Ellipse(Ellipse3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            major_radius: 20.0, minor_radius: 10.0,
+        });
+        let (dist, _t) = distance_point_curve(DVec3::new(30.0, 0.0, 5.0), &ellipse);
+        assert_approx(dist * dist, 125.0, TOLERANCE_COORD); // 10^2 + 5^2 = 125
+    }
+
+    #[test]
+    fn extrema_ellipse_nearly_circular() {
+        let ellipse = Curve3::Ellipse(Ellipse3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            major_radius: 10.0, minor_radius: 9.9,
+        });
+        let (dist, _t) = distance_point_curve(DVec3::new(20.0, 0.0, 0.0), &ellipse);
+        assert_approx(dist, 10.0, TOLERANCE_COORD);
+    }
+
+    #[test]
+    fn extrema_ellipse_very_flat() {
+        let ellipse = Curve3::Ellipse(Ellipse3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            major_radius: 20.0, minor_radius: 2.0,
+        });
+        let (dist, _t) = distance_point_curve(DVec3::new(0.0, 10.0, 0.0), &ellipse);
+        assert_approx(dist, 8.0, TOLERANCE_COORD); // 10 - 2 = 8
+    }
+
+    #[test]
+    fn extrema_ellipse_translated() {
+        let ellipse = Curve3::Ellipse(Ellipse3 {
+            center: DVec3::new(100.0, 200.0, 50.0), normal: DVec3::Z, major_dir: DVec3::X,
+            major_radius: 20.0, minor_radius: 10.0,
+        });
+        let (dist, _t) = distance_point_curve(DVec3::new(130.0, 200.0, 50.0), &ellipse);
+        assert_approx(dist, 10.0, TOLERANCE_COORD); // 30 - 20 = 10
+    }
+
+    // ── Parabola (ExtremaPC_Parabola_Test.cxx) ────────────────────────────
+
+    #[test]
+    fn extrema_parabola_basic() {
+        let parabola = Curve3::Parabola(Parabola3 {
+            vertex: DVec3::ZERO, normal: DVec3::Z, axis_dir: DVec3::X,
+            focal_param: 2.0,
+        });
+        let (dist, _t) = distance_point_curve(DVec3::new(0.0, 5.0, 0.0), &parabola);
+        assert!(dist > 0.0);
+    }
+
+    // ── Hyperbola (ExtremaPC_Hyperbola_Test.cxx) ──────────────────────────
+
+    #[test]
+    fn extrema_hyperbola_basic() {
+        let hyperbola = Curve3::Hyperbola(Hyperbola3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            semi_major: 3.0, semi_minor: 2.0,
+        });
+        let (dist, _t) = distance_point_curve(DVec3::new(5.0, 0.0, 0.0), &hyperbola);
+        assert!(dist > 0.0);
+    }
+
+    // ── Bezier (ExtremaPC_BezierCurve_Test.cxx) ───────────────────────────
+
+    #[test]
+    fn extrema_bezier_basic() {
+        let bezier = Curve3::Bezier(BezierCurve3 {
+            control_points: vec![
+                DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 5.0, 0.0), DVec3::new(5.0, 5.0, 0.0),
+            ],
+            weights: vec![1.0; 3],
+        });
+        let (dist, _t) = distance_point_curve(DVec3::new(2.5, -1.0, 0.0), &bezier);
+        assert!(dist > 0.0);
+    }
+
+    // ── BSpline (ExtremaPC_BSplineCurve_Test.cxx) ─────────────────────────
+
+    #[test]
+    fn extrema_bspline_basic() {
+        let spline = Curve3::BSpline(BSplineCurve3 {
+            degree: 3,
+            knots: vec![0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0],
+            control_points: vec![
+                DVec3::new(0.0, 0.0, 0.0), DVec3::new(2.0, 4.0, 0.0),
+                DVec3::new(5.0, 4.0, 0.0), DVec3::new(7.0, 0.0, 0.0),
+            ],
+            weights: vec![1.0; 4],
+        });
+        let (dist, _t) = distance_point_curve(DVec3::new(3.5, -1.0, 0.0), &spline);
+        assert!(dist > 0.0);
+    }
+
+    // ── OffsetCurve (ExtremaPC_OffsetCurve_Test.cxx) ──────────────────────
+
+    #[test]
+    fn extrema_offset_curve_basic() {
+        let basis = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
+        let offset = Curve3::Offset(OffsetCurve3 {
+            basis: Box::new(basis),
+            offset_distance: 2.0,
+            offset_dir: DVec3::Z,
+        });
+        let (dist, _t) = distance_point_curve(DVec3::new(10.0, 0.0, 0.0), &offset);
+        assert!(dist > 0.0);
+    }
 }
