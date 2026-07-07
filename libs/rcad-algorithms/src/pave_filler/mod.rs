@@ -265,81 +265,94 @@ impl<'a> PaveFiller<'a> {
  // RepeatInt->ForceEE->ForceEF->FF->UpdBlk->RefFI->MkSEdges->MkBlks->
  // ChkSI->RefFO->RmvME->MkPCurves->ProcDE
  pub fn perform(&mut self) {
- //  ?OCCT L248: Prepare =build pcurves on planar faces.
- self.prepare();
+  //  ?OCCT L248: Prepare =build pcurves on planar faces.
+  self.prepare();
 
- // Detect shared topology before interference passes when glue is enabled
- if self.use_glue() {
- self.ds.detect_shared_topology(self.glue_tolerance);
- }
+  // Detect shared topology before interference passes when glue is enabled
+  if self.use_glue() {
+  self.ds.detect_shared_topology(self.glue_tolerance);
+  }
 
- // Skip redundant interference passes when glue is enabled and shared topology is detected
- let skip_ve = self.should_skip_ve_pass();
- let skip_ee = self.should_skip_ee_pass();
- let skip_vf = self.should_skip_vf_pass();
- let skip_ef = self.should_skip_ef_pass();
- let skip_ff = self.should_skip_ff_pass();
+  // Skip redundant interference passes when glue is enabled and shared topology is detected
+  let skip_ve = self.should_skip_ve_pass();
+  let skip_ee = self.should_skip_ee_pass();
+  let skip_vf = self.should_skip_vf_pass();
+  let skip_ef = self.should_skip_ef_pass();
+  let skip_ff = self.should_skip_ff_pass();
 
- self.perform_vv();
+  // ✅ OCCT-aligned: BOPDS_Iterator — single BVH, type bucketing, stable_sort.
+  // Extract all pair lists upfront while iterator borrows self.ds,
+  // then drop iterator before calling any &mut self methods.
+  use crate::bopds::ds::BOPDS_Iterator;
+  use rcad_kernel::topods::ShapeType;
+  let (vv_pairs, ve_pairs, ee_pairs, vf_pairs) = {
+  let mut iterator = BOPDS_Iterator::new(self.ds);
+  iterator.prepare();
+  let vv = iterator.pairs(ShapeType::Vertex, ShapeType::Vertex).to_vec();
+  let ve = if !skip_ve { iterator.pairs(ShapeType::Vertex, ShapeType::Edge).to_vec() } else { vec![] };
+  let ee = if !skip_ee { iterator.pairs(ShapeType::Edge, ShapeType::Edge).to_vec() } else { vec![] };
+  let vf = if !skip_vf { iterator.pairs(ShapeType::Vertex, ShapeType::Face).to_vec() } else { vec![] };
+  (vv, ve, ee, vf)
+  };
 
- // OCCT L145: BOPDS_Iterator =single combined BVH per shape type.
- let bvh_all_verts = self.build_ds_bvh_combined(false);
- let bvh_all_edges = self.build_ds_bvh_combined(true);
- let bvh_all_faces = self.build_ds_bvh_face_all();
+  self.perform_vv(&vv_pairs);
 
- if !skip_ve {
- // OCCT: BOPDS_Iterator::Initialize(VERTEX, EDGE) =single traversal.
- self.perform_ve_bvh(&bvh_all_verts, &bvh_all_edges);
- }
- // =OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L266)
- self.ds.update_pave_blocks_with_sd_vertices();
+  if !skip_ve {
+  // OCCT: BOPDS_Iterator::Initialize(VERTEX, EDGE) =single traversal.
+  self.perform_ve_bvh(&ve_pairs);
+  }
+  // =OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L266)
+  self.ds.update_pave_blocks_with_sd_vertices();
 
- let ee_survivors: Vec<usize> = if !skip_ee {
- // OCCT L145-267: PerformEE  ?build intersections
- let ee_modified = self.perform_ee_bvh(&bvh_all_edges, &bvh_all_edges);
- // OCCT L558-565: PerformCommonBlocks + PerformNewVertices
- let survivors = self.treat_new_vertices();
- // OCCT L571-585: SplitPaveBlocks for remaining modified edges
- // (edges with new vertices already handled by treat_new_vertices)
- if !ee_modified.is_empty() {
- let sd_vertices: std::collections::HashSet<usize> =
- self.ds.shape_sd.sd_vertices_iter()
- .map(|&(a, _)| a)
- .collect();
- // Edges to split = modified - edges whose new vertex is in SD
- let remaining: std::collections::HashSet<usize> = ee_modified.iter()
- .filter(|&&ei| {
- let e = &self.ds.edges[ei];
- !sd_vertices.contains(&e.start_vertex) &&
- !sd_vertices.contains(&e.end_vertex)
- })
- .copied()
- .collect();
- if !remaining.is_empty() {
- self.split_pave_blocks(&remaining, false);
- }
- }
- // OCCT L273: UpdatePaveBlocksWithSDVertices
- self.ds.update_pave_blocks_with_sd_vertices();
- survivors
- } else { vec![] };
+  let _ee_survivors: Vec<usize> = if !skip_ee {
+  // OCCT L145-267: PerformEE  ?build intersections
+  let ee_modified = self.perform_ee_bvh(&ee_pairs);
+  // OCCT L558-565: PerformCommonBlocks + PerformNewVertices
+  let survivors = self.treat_new_vertices();
+  // OCCT L571-585: SplitPaveBlocks for remaining modified edges
+  // (edges with new vertices already handled by treat_new_vertices)
+  if !ee_modified.is_empty() {
+  let sd_vertices: std::collections::HashSet<usize> =
+  self.ds.shape_sd.sd_vertices_iter()
+  .map(|&(a, _)| a)
+  .collect();
+  // Edges to split = modified - edges whose new vertex is in SD
+  let remaining: std::collections::HashSet<usize> = ee_modified.iter()
+  .filter(|&&ei| {
+  let e = &self.ds.edges[ei];
+  !sd_vertices.contains(&e.start_vertex) &&
+  !sd_vertices.contains(&e.end_vertex)
+  })
+  .copied()
+  .collect();
+  if !remaining.is_empty() {
+  self.split_pave_blocks(&remaining, false);
+  }
+  }
+  // OCCT L273: UpdatePaveBlocksWithSDVertices
+  self.ds.update_pave_blocks_with_sd_vertices();
+  survivors
+  } else { vec![] };
 
- if !skip_vf {
- // OCCT: BOPDS_Iterator::Initialize(VERTEX, FACE) =single traversal.
- self.perform_vf_bvh(&bvh_all_verts, &bvh_all_faces);
- }
- // =OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L280)
- self.ds.update_pave_blocks_with_sd_vertices();
+  if !skip_vf {
+  // OCCT: BOPDS_Iterator::Initialize(VERTEX, FACE) =single traversal.
+  self.perform_vf_bvh(&vf_pairs);
+  }
+  // =OCCT-aligned: UpdatePaveBlocksWithSDVertices (PerformInternal L280)
+  self.ds.update_pave_blocks_with_sd_vertices();
 
-  if !skip_ef {
-  // OCCT-aligned: BOPDS_Iterator::Initialize(EDGE, FACE) with BVH.
-  // Rebuild BVH after MakeBlocks may have added/modified edges.
-  let bvh_all_edges_ef = self.build_ds_bvh_combined(true);
-  let bvh_all_faces_ef = self.build_ds_bvh_face_all();
-  self.perform_ef_bvh(&bvh_all_edges_ef, &bvh_all_faces_ef);
- // =OCCT-aligned: TreatNewVertices =merge new vertices created by EF intersection.
- // OCCT PaveFiller_5.cxx L570: PerformNewVertices(aMVCPB, ..., false)
- let ef_survivors = self.treat_new_vertices();
+   if !skip_ef {
+   // OCCT-aligned: BOPDS_Iterator::Initialize(EDGE, FACE) with BVH.
+   // Rebuild BVH after MakeBlocks may have added/modified edges.
+   let ef_pairs = {
+   let mut ef_iterator = BOPDS_Iterator::new(self.ds);
+   ef_iterator.prepare();
+   ef_iterator.pairs(ShapeType::Edge, ShapeType::Face).to_vec()
+   };
+   self.perform_ef_bvh(&ef_pairs);
+  // =OCCT-aligned: TreatNewVertices =merge new vertices created by EF intersection.
+  // OCCT PaveFiller_5.cxx L570: PerformNewVertices(aMVCPB, ..., false)
+  let _ef_survivors = self.treat_new_vertices();
 
  // =OCCT-aligned: RepeatIntersection (PaveFiller.cxx L296-299, L359-420).
  // After EF, before FF, re-run VV/VE/VF for vertices with increased tolerance.

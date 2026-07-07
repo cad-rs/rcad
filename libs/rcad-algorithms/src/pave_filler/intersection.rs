@@ -80,15 +80,16 @@ impl<'a> super::PaveFiller<'a> {
  DsBvh::build(indices, aabbs)
  }
  /// OCCT PaveFiller_2.cxx L141-206: PerformVE
- ///  ?OCCT-aligned: BOPDS_Iterator::Initialize(VERTEX, EDGE)  ?single pass.
- /// Cross-operand filtering: skip same-side pairs.
- pub(crate) fn perform_ve_bvh(&mut self, bvh_verts: &crate::bvh::DsBvh, bvh_edges: &crate::bvh::DsBvh) {
+ /// ✅ OCCT-aligned: BOPDS_Iterator::Initialize(VERTEX, EDGE) — single pass.
+ /// Cross-operand filtering is done by BOPDS_Iterator; this function
+ /// applies remaining type-specific filters and calls intersect_ve.
+ pub(crate) fn perform_ve_bvh(&mut self, pairs: &[(usize, usize)]) {
  use rayon::prelude::*;
  // OCCT L143: FillShrunkData(TopAbs_VERTEX, TopAbs_EDGE)
  self.fill_shrunk_data();
 
  // OCCT L145: myIterator->Initialize(VERTEX, EDGE)
- let pairs = crate::bvh::DsBvh::candidate_pairs(bvh_verts, bvh_edges);
+ // pairs come pre-computed from BOPDS_Iterator
  let ds = &self.ds;
  let a_vc = ds.a_vertex_count;
  let a_ec = ds.a_edge_count;
@@ -217,13 +218,13 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
  /// OCCT PaveFiller_3.cxx L145-244: PerformEE
- ///  ?OCCT-aligned: BOPDS_Iterator::Initialize(EDGE, EDGE)  ?single pass.
+ /// ✅ OCCT-aligned: BOPDS_Iterator::Initialize(EDGE, EDGE) — single pass.
  /// Cross-operand filtering via a_edge_count.
  /// OCCT-aligned: PerformEE (PaveFiller_3.cxx L145-590).
  /// Returns the set of edges that were modified (got new paves).
  /// The caller should call split_pave_blocks for remaining edges
  /// after treat_new_vertices has processed the new vertex edges.
- pub(crate) fn perform_ee_bvh(&mut self, bvh_edges_a: &crate::bvh::DsBvh, bvh_edges_b: &crate::bvh::DsBvh)
+ pub(crate) fn perform_ee_bvh(&mut self, pairs: &[(usize, usize)])
  -> std::collections::HashSet<usize>
  {
  use rayon::prelude::*;
@@ -231,7 +232,7 @@ impl<'a> super::PaveFiller<'a> {
  self.fill_shrunk_data();
 
  // OCCT L149-155: Iterator(EDGE, EDGE), ExpectedLength, early return
- let pairs = crate::bvh::DsBvh::candidate_pairs(bvh_edges_a, bvh_edges_b);
+ // pairs come pre-computed from BOPDS_Iterator
  let ds = &self.ds;
  let a_ec = ds.a_edge_count;
 
@@ -283,13 +284,13 @@ impl<'a> super::PaveFiller<'a> {
  if (edge_t_range[1] - prev).abs() > tol { ranges.push([prev, edge_t_range[1]]); }
  ranges
  }
- ///  ?OCCT-aligned: PerformVF (PaveFiller_4.cxx L165-298).
- /// BOPDS_Iterator::Initialize(VERTEX, FACE)  ?single BVH pass.
+ /// ✅ OCCT-aligned: PerformVF (PaveFiller_4.cxx L165-298).
+ /// BOPDS_Iterator::Initialize(VERTEX, FACE) — single BVH pass.
  /// SD vertex resolution + aMVFPairs dedup matching OCCT form.
- pub(crate) fn perform_vf_bvh(&mut self, bvh_verts: &crate::bvh::DsBvh, bvh_faces: &crate::bvh::DsBvh) {
+ pub(crate) fn perform_vf_bvh(&mut self, pairs: &[(usize, usize)]) {
  use rayon::prelude::*;
  self.fill_shrunk_data();
- let pairs = crate::bvh::DsBvh::candidate_pairs(bvh_verts, bvh_faces);
+ // pairs come pre-computed from BOPDS_Iterator
  let ds = &self.ds;
  let a_vc = ds.a_vertex_count;
  let a_fc = ds.a_face_count;
@@ -327,10 +328,10 @@ impl<'a> super::PaveFiller<'a> {
  }
  }
  /// OCCT PaveFiller_5.cxx L165-300: PerformEF
- pub(crate) fn perform_ef_bvh(&mut self, bvh_edges: &crate::bvh::DsBvh, bvh_faces: &crate::bvh::DsBvh) {
+ pub(crate) fn perform_ef_bvh(&mut self, pairs: &[(usize, usize)]) {
  use rayon::prelude::*;
  self.fill_shrunk_data();
- let pairs = crate::bvh::DsBvh::candidate_pairs(bvh_edges, bvh_faces);
+ // pairs come pre-computed from BOPDS_Iterator
  let ds = &self.ds;
  let a_edge_count = ds.a_edge_count;
  let a_face_count = ds.a_face_count;
@@ -520,25 +521,22 @@ impl<'a> super::PaveFiller<'a> {
  let total_face_pairs = self.ds.a_face_count * (self.ds.faces.len() - self.ds.a_face_count);
  self.ds.shared_topology.fully_glued_faces.len() == total_face_pairs && total_face_pairs > 0
  }
- ///  ?OCCT-aligned: PerformVV (PaveFiller_1.cxx L45-132).
+ /// ✅ OCCT-aligned: PerformVV (PaveFiller_1.cxx L45-132).
  /// Builds vertex-vertex connection map (FillMap), groups connected
  /// vertices (MakeBlocks), then creates SD vertices for each group.
-  pub(crate) fn perform_vv(&mut self) {
+ /// Pairs come pre-computed from BOPDS_Iterator (cross-operand, AABB-filtered).
+  pub(crate) fn perform_vv(&mut self, pairs: &[(usize, usize)]) {
   // OCCT L47-56: n1, n2, iFlag, aSize; iterator init + early return
   let a_vc = self.ds.a_vertex_count;
-  let nv = self.ds.vertices.len();
-  let a_size = a_vc * (nv - a_vc);
+  let a_size = a_vc * (self.ds.vertices.len() - a_vc);
   if a_size == 0 { return; }
 
   // ✅ OCCT-aligned: BOPDS_Iterator(VERTEX, VERTEX) — BVH-based pair enumeration.
   // OCCT L68-76: myIterator->Initialize(VERTEX, VERTEX) returns overlapping AABB pairs.
-  // rcad: build single BVH over all vertices, candidate_pairs + cross-operand filter.
   let mut a_mili: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-  let bvh = self.build_ds_bvh_combined(false);
-  let pairs = crate::bvh::DsBvh::candidate_pairs(&bvh, &bvh);
 
   // OCCT L68-98: 1. Map V/LV — build connection map of close vertex pairs.
-  for &(n1, n2) in &pairs {
+  for &(n1, n2) in pairs {
   // Skip same-operand pairs (OCCT: cross-operand only)
   if (n1 < a_vc) == (n2 < a_vc) { continue; }
 

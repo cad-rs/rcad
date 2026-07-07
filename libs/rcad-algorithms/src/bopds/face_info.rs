@@ -1,29 +1,28 @@
-use std::collections::BTreeSet;
+use indexmap::IndexSet;
 
 /// Per-face intersection bookkeeping (OCCT: BOPDS_FaceInfo).
 ///
-/// We use `BTreeSet` (not `HashSet`) so iteration order is **deterministic** for the same
-/// indices — `HashSet` iteration is insertion-order dependent and can vary between boolean
-/// runs, which breaks stable face splitting and `total_surface_area`.
+/// ✅ OCCT-aligned: uses `IndexSet` which preserves insertion order,
+/// matching OCCT's `NCollection_IndexedMap` (not `NCollection_Map`/`HashSet`).
 #[derive(Debug, Clone, Default)]
 pub struct FaceInfo {
     /// Indices of PaveBlocks that lie ON this face (from E-F intersection).
-    pub pave_blocks_on: BTreeSet<usize>,
+    pub pave_blocks_on: IndexSet<usize>,
     /// Indices of PaveBlocks that lie IN this face (from E-F intersection).
-    pub pave_blocks_in: BTreeSet<usize>,
+    pub pave_blocks_in: IndexSet<usize>,
     /// ✅ OCCT-aligned: BOPDS_FaceInfo::PaveBlocksSc (hxx:115-117).
     ///   Section curve PaveBlock indices (sub-segments of intersection curves).
     ///   Populated by post_treat_ff from each curve's pave_blocks via update().
-    pub pave_blocks_sc: BTreeSet<usize>,
+    pub pave_blocks_sc: IndexSet<usize>,
     /// IntersectionCurve indices from FF intersection.
-    pub curves_sc: BTreeSet<usize>,
+    pub curves_sc: IndexSet<usize>,
     /// Vertex indices that lie ON this face.
-    pub vertices_on: BTreeSet<usize>,
+    pub vertices_on: IndexSet<usize>,
     /// Vertex indices that lie IN this face (from F-F intersection).
-    pub vertices_in: BTreeSet<usize>,
+    pub vertices_in: IndexSet<usize>,
     /// ✅ OCCT-aligned: BOPDS_FaceInfo::VerticesSc (hxx:122-123).
     ///   Vertex indices from section curves (FF intersection).
-    pub vertices_sc: BTreeSet<usize>,
+    pub vertices_sc: IndexSet<usize>,
 }
 
 impl FaceInfo {
@@ -70,12 +69,13 @@ mod tests {
     }
 
     #[test]
-    fn face_info_curves_sc_only_returns_sorted() {
+    fn face_info_curves_sc_only_preserves_insertion_order() {
         let mut fi = FaceInfo::default();
         fi.curves_sc.insert(5);
         fi.curves_sc.insert(2);
         fi.curves_sc.insert(8);
         let v = fi.curves_sc_only();
-        assert_eq!(v, vec![2, 5, 8]);  // BTreeSet guarantees sorted order
+        // IndexSet preserves insertion order (matching OCCT's IndexedMap)
+        assert_eq!(v, vec![5, 2, 8]);
     }
 }

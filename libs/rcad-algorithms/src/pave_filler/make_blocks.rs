@@ -701,30 +701,25 @@ impl<'a> super::PaveFiller<'a> {
  { Some(p) } else { None }
  ).unwrap_or(usize::MAX)];
  if existing_pb.0.read().unwrap().new_edge.is_some() || existing_pb.0.read().unwrap().original_edge < self.ds.edges.len() {
- let b_in_f1 = {
- self.ds.faces[n_f1].face_info.pave_blocks_on.contains(
- &a_mpb_on_in_vec.iter().find(|&&p| {
- let e = self.ds.pave_blocks[p].0.read().unwrap().new_edge.unwrap_or(self.ds.pave_blocks[p].0.read().unwrap().original_edge);
- e == n_e_out
- }).unwrap_or(&usize::MAX))
- || self.ds.faces[n_f1].face_info.pave_blocks_in.contains(
- &a_mpb_on_in_vec.iter().find(|&&p| {
- let e = self.ds.pave_blocks[p].0.read().unwrap().new_edge.unwrap_or(self.ds.pave_blocks[p].0.read().unwrap().original_edge);
- e == n_e_out
- }).unwrap_or(&usize::MAX))
- };
- let b_in_f2 = {
- self.ds.faces[n_f2].face_info.pave_blocks_on.contains(
- &a_mpb_on_in_vec.iter().find(|&&p| {
- let e = self.ds.pave_blocks[p].0.read().unwrap().new_edge.unwrap_or(self.ds.pave_blocks[p].0.read().unwrap().original_edge);
- e == n_e_out
- }).unwrap_or(&usize::MAX))
- || self.ds.faces[n_f2].face_info.pave_blocks_in.contains(
- &a_mpb_on_in_vec.iter().find(|&&p| {
- let e = self.ds.pave_blocks[p].0.read().unwrap().new_edge.unwrap_or(self.ds.pave_blocks[p].0.read().unwrap().original_edge);
- e == n_e_out
- }).unwrap_or(&usize::MAX))
- };
+  // Find the matching PB index in a_mpb_on_in_vec
+  let pb_idx_f1 = a_mpb_on_in_vec.iter().find(|&&p| {
+  let e = self.ds.pave_blocks[p].0.read().unwrap().new_edge
+  .unwrap_or(self.ds.pave_blocks[p].0.read().unwrap().original_edge);
+  e == n_e_out
+  }).copied().unwrap_or(usize::MAX);
+  let b_in_f1 = {
+  self.ds.faces[n_f1].face_info.pave_blocks_on.contains(&pb_idx_f1)
+  || self.ds.faces[n_f1].face_info.pave_blocks_in.contains(&pb_idx_f1)
+  };
+  let pb_idx_f2 = a_mpb_on_in_vec.iter().find(|&&p| {
+  let e = self.ds.pave_blocks[p].0.read().unwrap().new_edge
+  .unwrap_or(self.ds.pave_blocks[p].0.read().unwrap().original_edge);
+  e == n_e_out
+  }).copied().unwrap_or(usize::MAX);
+  let b_in_f2 = {
+  self.ds.faces[n_f2].face_info.pave_blocks_on.contains(&pb_idx_f2)
+  || self.ds.faces[n_f2].face_info.pave_blocks_in.contains(&pb_idx_f2)
+  };
  if !b_in_f1 || !b_in_f2 {
  // Update edge tolerance: OCCT L968-985
  if n_e_out < self.ds.edges.len() {

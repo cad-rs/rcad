@@ -1,5 +1,7 @@
 pub mod types;
 pub use types::*;
+pub mod iterator;
+pub use iterator::BOPDS_Iterator;
 
 use super::pave::{Pave, PaveBlock, SharedPB, NO_EDGE};
 use super::common_block::CommonBlock;
