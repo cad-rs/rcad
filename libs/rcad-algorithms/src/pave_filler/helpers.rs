@@ -10,19 +10,7 @@ use rcad_kernel::closest_point_on_curve;
 use std::collections::HashSet;
 
 /// OCCT-aligned: IntPatch_Intersection surface category (L1264-1294).
-///   GeomGeom  = ts1==ts2==1 -> ImpImpIntersection (analytic-analytic)
-///   GeomParam = ts1!=ts2     -> ImpPrmIntersection (analytic-parametric)
 ///   ParamParam = ts1==ts2==0 -> PrmPrmIntersection (parametric-parametric)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SurfaceCategory { GeomGeom, ParamParam }
-
-pub(crate) fn classify_surface_type(surf: &Surface3) -> SurfaceCategory {
-    match surf {
-        Surface3::Plane(_) | Surface3::Cylinder(_) | Surface3::Sphere(_)
-        | Surface3::Cone(_) | Surface3::Torus(_) => SurfaceCategory::GeomGeom,
-        _ => SurfaceCategory::ParamParam,
-    }
-}
 
 // ---- Phase 2a helpers: vertex -> curve parameter projection ----
 

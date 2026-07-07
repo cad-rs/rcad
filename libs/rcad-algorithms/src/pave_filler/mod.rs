@@ -18,20 +18,9 @@ use rcad_kernel::closest_point_on_curve;
 pub mod helpers;
 use self::helpers::*;
 
-/// =OCCT-aligned: IntPatch_Intersection surface category (L1264-1294).
-/// GeomGeom  = ts1==ts2==1 =ImpImpIntersection (analytic-analytic)
-/// GeomParam = ts1!=ts2 =ImpPrmIntersection (analytic-parametric)
-/// ParamParam = ts1==ts2==0 =PrmPrmIntersection (parametric-parametric)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SurfaceCategory { GeomGeom, ParamParam }
-
-fn classify_surface_type(surf: &Surface3) -> SurfaceCategory {
- match surf {
- Surface3::Plane(_) | Surface3::Cylinder(_) | Surface3::Sphere(_)
- | Surface3::Cone(_) | Surface3::Torus(_) => SurfaceCategory::GeomGeom,
- _ => SurfaceCategory::ParamParam,
- }
-}
+// =OCCT-aligned: IntPatch_Intersection surface category (L1264-1294).
+// GeomGeom = ts1==ts2==1 (both analytic, ImpImpIntersection)
+// ParamParam = ts1==ts2==0 (both parametric, PrmPrmIntersection)
 
 // Re-export NearTangentType from bopds::ds for use in this module's public types
 pub use crate::bopds::ds::NearTangentType;
