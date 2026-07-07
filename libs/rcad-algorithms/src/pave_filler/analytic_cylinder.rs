@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 impl<'a> super::PaveFiller<'a> {
  pub(crate) fn intersect_cylinder_cone_faces(
@@ -74,8 +74,9 @@ impl<'a> super::PaveFiller<'a> {
  f1,
  f2,
  curves: curve_indices,
- points: vec![],
- });
+  points: vec![],
+  tangent_faces: false,
+  });
  }
  }
 
@@ -124,8 +125,9 @@ impl<'a> super::PaveFiller<'a> {
  f1,
  f2,
  curves: curve_indices,
- points: vec![],
- });
+  points: vec![],
+  tangent_faces: false,
+  });
  }
  }
 
@@ -161,8 +163,9 @@ impl<'a> super::PaveFiller<'a> {
  f1,
  f2,
  curves: vec![ci],
- points: vec![],
- });
+  points: vec![],
+  tangent_faces: false,
+  });
  }
 
  CylinderConeResult::CoaxialTwoCircles(c1, c2) => {
@@ -200,8 +203,9 @@ impl<'a> super::PaveFiller<'a> {
  f1,
  f2,
  curves: curve_indices,
- points: vec![],
- });
+  points: vec![],
+  tangent_faces: false,
+  });
  }
  }
  }
@@ -384,8 +388,9 @@ impl<'a> super::PaveFiller<'a> {
  // Same-domain coaxial cylinders: record empty-curves FaceFace so
  // the Builder treats this pair as coincident (no intersection to split).
  self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
- f1, f2, curves: vec![], points: vec![],
- });
+ f1, f2, curves: vec![],  points: vec![],
+  tangent_faces: false,
+  });
  return;
  }
 
@@ -606,8 +611,9 @@ impl<'a> super::PaveFiller<'a> {
  f1,
  f2,
  curves: curve_indices,
- points: vec![],
- });
+  points: vec![],
+  tangent_faces: false,
+  });
  }
  }
 

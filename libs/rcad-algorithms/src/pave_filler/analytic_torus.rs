@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 impl<'a> super::PaveFiller<'a> {
  pub(crate) fn intersect_torus_cylinder_faces(
@@ -256,8 +256,9 @@ impl<'a> super::PaveFiller<'a> {
 
  if !curve_indices.is_empty() {
  self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
- f1, f2, curves: curve_indices, points: vec![],
- });
+ f1, f2, curves: curve_indices,  points: vec![],
+  tangent_faces: false,
+  });
  }
  } else {
  let pts = sample_circle_arc(circle, 0.0, std::f64::consts::TAU, 32);
@@ -291,8 +292,9 @@ impl<'a> super::PaveFiller<'a> {
  self.ds.faces[f2].face_info.vertices_in.insert(v_end);
 
  self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
- f1, f2, curves: vec![curve_idx], points: vec![],
- });
+ f1, f2, curves: vec![curve_idx],  points: vec![],
+  tangent_faces: false,
+  });
  }
  }
  SurfaceCurve::Polyline(pts) => {
@@ -346,8 +348,9 @@ impl<'a> super::PaveFiller<'a> {
  f1,
  f2,
  curves: vec![curve_idx],
- points: vec![],
- });
+  points: vec![],
+  tangent_faces: false,
+  });
  }
  SurfaceCurve::Ellipse(ellipse) => {
  let pts = sample_circle_arc(
@@ -398,8 +401,9 @@ impl<'a> super::PaveFiller<'a> {
  f1,
  f2,
  curves: vec![curve_idx],
- points: vec![],
- });
+  points: vec![],
+  tangent_faces: false,
+  });
  }
  SurfaceCurve::Line(line) => {
  let pts = self.ds.face_boundary_points(f1);
@@ -454,8 +458,9 @@ impl<'a> super::PaveFiller<'a> {
  f1,
  f2,
  curves: vec![curve_idx],
- points: vec![],
- });
+  points: vec![],
+  tangent_faces: false,
+  });
  }
  SurfaceCurve::BSplineCurve(b) => {
  // Sample the BSpline to produce a polyline for face splitting.
@@ -513,8 +518,9 @@ impl<'a> super::PaveFiller<'a> {
  f1,
  f2,
  curves: vec![curve_idx],
- points: vec![],
- });
+  points: vec![],
+  tangent_faces: false,
+  });
  }
  SurfaceCurve::Point(_) | SurfaceCurve::Parabola(_) | SurfaceCurve::Hyperbola(_) => {
  // Skip degenerate / unsupported curve types for now

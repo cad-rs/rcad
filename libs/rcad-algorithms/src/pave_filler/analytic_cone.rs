@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 impl<'a> super::PaveFiller<'a> {
  pub(crate) fn intersect_cone_cone_faces(
@@ -30,8 +30,9 @@ impl<'a> super::PaveFiller<'a> {
  ConeConeResult::NoIntersection => (),
  ConeConeResult::Coaxial => {
  self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
- f1, f2, curves: vec![], points: vec![],
- });
+ f1, f2, curves: vec![],  points: vec![],
+  tangent_faces: false,
+  });
  }
 
  ConeConeResult::CoaxialPoint(_pt) => {
@@ -87,8 +88,9 @@ impl<'a> super::PaveFiller<'a> {
  f1,
  f2,
  curves: curve_indices,
- points: vec![],
- });
+  points: vec![],
+  tangent_faces: false,
+  });
  }
  }
 
@@ -124,8 +126,9 @@ impl<'a> super::PaveFiller<'a> {
  f1,
  f2,
  curves: vec![ci],
- points: vec![],
- });
+  points: vec![],
+  tangent_faces: false,
+  });
  }
  }
  }

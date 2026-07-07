@@ -1,6 +1,60 @@
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval};
 
+/// ✅ OCCT-aligned: IntTools_CommonPrt (IntTools_CommonPrt.hxx L32-128).
+/// Describes a common part between two edges: either a VERTEX-type (point)
+/// or EDGE-type (overlapping segment) intersection.
+#[derive(Debug, Clone)]
+pub struct CommonPrt {
+    /// Type of common part: `false` = VERTEX (point), `true` = EDGE (segment).
+    pub is_edge_type: bool,
+    /// Range on first edge `[t1, t2]`.
+    pub range1: [f64; 2],
+    /// Ranges on second edge — sequence of `[t1, t2]` supporting 1-to-N mapping.
+    /// OCCT: `NCollection_Sequence<IntTools_Range> myRanges2`.
+    pub ranges2: Vec<[f64; 2]>,
+    /// Parameter of the first vertex on edge1 (for VERTEX-type).
+    pub vertex_param1: f64,
+    /// Parameter of the second vertex on edge2 (for VERTEX-type).
+    pub vertex_param2: f64,
+    /// Bounding points of the common part (3D).
+    pub bounding_point1: DVec3,
+    pub bounding_point2: DVec3,
+    /// All-null flag: true when both ranges are degenerate/null.
+    pub all_null_flag: bool,
+}
+
+impl CommonPrt {
+    /// Create a VERTEX-type common part (point intersection).
+    pub fn new_vertex(t1: f64, t2: f64, p: DVec3) -> Self {
+        Self {
+            is_edge_type: false,
+            range1: [t1, t1],
+            ranges2: vec![[t2, t2]],
+            vertex_param1: t1,
+            vertex_param2: t2,
+            bounding_point1: p,
+            bounding_point2: p,
+            all_null_flag: false,
+        }
+    }
+
+    /// Create an EDGE-type common part (overlapping segment).
+    pub fn new_edge(range1: [f64; 2], ranges2: Vec<[f64; 2]>, p1: DVec3, p2: DVec3) -> Self {
+        let vp2 = ranges2.first().map_or(0.0, |r| r[0]);
+        Self {
+            is_edge_type: true,
+            range1,
+            ranges2,
+            vertex_param1: range1[0],
+            vertex_param2: vp2,
+            bounding_point1: p1,
+            bounding_point2: p2,
+            all_null_flag: false,
+        }
+    }
+}
+
 /// ✅ OCCT-aligned: IntTools_EdgeEdge::TypeToInteger (cxx L1456-1482).
 /// Maps curve type to integer priority for edge swapping (lower = simpler).
 pub fn curve_type_to_integer(curve: &Curve3) -> i32 {
@@ -262,8 +316,8 @@ pub struct EdgeEdgeIntersector {
     swapped: bool,
     /// Error status (0=ok)
     error_status: i32,
-    /// Result common parts: (range1, range2, is_edge_type)
-    common_parts: Vec<([f64; 2], [f64; 2], bool)>,
+    /// Result common parts as `CommonPrt` entries.
+    common_parts: Vec<CommonPrt>,
     /// Quick coincidence check flag
     quick_coincidence_check: bool,
     /// DS reference for edge data
@@ -361,8 +415,8 @@ impl EdgeEdgeIntersector {
     /// Returns true if common parts found.
     pub fn is_done(&self) -> bool { !self.common_parts.is_empty() }
 
-    /// Returns common parts: (range_on_edge1, range_on_edge2, is_edge_type).
-    pub fn common_parts(&self) -> &[([f64; 2], [f64; 2], bool)] { &self.common_parts }
+    /// Returns common parts.
+    pub fn common_parts(&self) -> &[CommonPrt] { &self.common_parts }
 
     // ===== Private methods =====
 
@@ -766,33 +820,75 @@ impl EdgeEdgeIntersector {
 
     /// OCCT L780-822: AddSolution
     fn add_solution(&mut self, t11: f64, t12: f64, t21: f64, t22: f64, is_edge: bool) {
-        if self.swapped {
-            self.common_parts.push(([t21, t22], [t11, t12], is_edge));
+        let p1 = self.curve1.point_at(t11);
+        let p2 = self.curve2.point_at(t22);
+        let cp = if is_edge {
+            CommonPrt::new_edge(
+                if self.swapped { [t21, t22] } else { [t11, t12] },
+                vec![if self.swapped { [t11, t12] } else { [t21, t22] }],
+                p1, p2,
+            )
         } else {
-            self.common_parts.push(([t11, t12], [t21, t22], is_edge));
-        }
+            let t1 = if self.swapped { t21 } else { t11 };
+            let t2 = if self.swapped { t11 } else { t21 };
+            CommonPrt::new_vertex(t1, t2, p1)
+        };
+        self.common_parts.push(cp);
     }
 
-    /// OCCT L1150-1206: CheckCoincidence
+    /// OCCT L1150-1206: CheckCoincidence — checks whether refined ranges
+    /// from `find_solutions_rec` are truly coincident, using golden-section
+    /// search to find the max distance between two curves on the interval.
     fn check_coincidence(&self, t11: f64, t12: f64, t21: f64, t22: f64,
-        criteria: f64, _curve_res1: f64) -> i32 {
+        criteria: f64, curve_res1: f64) -> i32 {
+        // Step 1: quick rejection — project 10 sample points from edge1 to edge2
         let a_nb = 10usize;
-        let proj = rcad_kernel::closest_point_on_curve;
-        let curve2 = &self.curve2;
-        let curve1 = &self.curve1;
-        // 1. Express evaluation: project midpoint of each segment
         let dt1 = (t12 - t11) / a_nb as f64;
         let mut t = t11;
         for _ in 0..a_nb {
             t += dt1;
             if t > t12 { break; }
-            let p = curve1.point_at(t);
-            let r = proj(curve2, p, 16);
-            if r.distance > criteria * 100.0 { return 2; } // too far
+            let p = self.curve1.point_at(t);
+            let r = rcad_kernel::closest_point_on_curve(&self.curve2, p, 16);
+            if r.distance > criteria * 100.0 { return 2; }
         }
-        // 2. Deep evaluation: golden section for max distance
-        // OCCT uses FindDistPC with golden section; simplified here
-        0 // all good = coincident
+
+        // Step 2: golden-section search for max distance on [t11, t12]
+        // OCCT uses FindDistPC which finds the point on edge2 closest to each
+        // sample on edge1, then does golden-section to find the MAX of these
+        // distances over the range — a one-dimensional min-max optimization.
+        const CF: f64 = 0.6180339887498948482045868343656;
+        let mut a = t11;
+        let mut b = t12;
+        let fa = |t: f64| -> f64 {
+            let p = self.curve1.point_at(t);
+            let r = rcad_kernel::closest_point_on_curve(&self.curve2, p, 16);
+            -r.distance // negate because we're minimizing -distance = maximizing distance
+        };
+        // Golden-section: find the point that MAXIMIZES distance (minimizes -distance)
+        let mut x1 = b - CF * (b - a);
+        let mut x2 = a + CF * (b - a);
+        let mut f1 = fa(x1);
+        let mut f2 = fa(x2);
+        let eps = curve_res1 * 0.1;
+        while (b - a).abs() > eps {
+            if f1 < f2 {
+                b = x2;
+                x2 = x1;
+                f2 = f1;
+                x1 = b - CF * (b - a);
+                f1 = fa(x1);
+            } else {
+                a = x1;
+                x1 = x2;
+                f1 = f2;
+                x2 = a + CF * (b - a);
+                f2 = fa(x2);
+            }
+        }
+        let max_dist = -f1; // re-negate to get actual distance
+
+        if max_dist <= criteria { 0 } else { 1 }
     }
 
     /// OCCT L826-898: FindBestSolution

@@ -86,7 +86,7 @@
 | `BOPDS_PaveBlock` | `PaveBlock` (pave.rs) | ✅ | |
 | `BOPDS_Pave` | `Pave` (pave.rs) | ✅ | |
 | `BOPDS_ShapeInfo` | `ShapeInfo` (types.rs) | ✅ | 标记系统已补(A4) |
-| `BOPDS_Iterator` | `PairIterator`/Bvh | ⏳ | BVH 替代 O(n²) |
+| `BOPDS_Iterator` | `DsBvh` / `PairIterator` | ✅ | VE/VF/EF 均使用 DsBvh 代替 O(n²)；VV 使用 PairIterator（需全量枚举） |
 | `BOPDS_SubIterator` | 类似 | ⏳ | |
 | `BRep_Builder` 增量构建 | `ResultBuilder` + `build_edges()` | ✅ | A1 已修 |
 
@@ -98,7 +98,7 @@
 | `Geom2d_BSplineCurve` | `BSplineCurve2` (geom.rs:702) | ✅ | |
 | `GeomLib::SameRange` | `same_range_2d` (boptools/extra.rs:262) | ✅ | 逐分支对齐：Line(translate), Circle(rotate frame), Trimmed(recurse), BSpline(reparam knots) |
 | `gp_Circ2d` (坐标方向轴) | `Circle2d { x_dir, y_dir }` (geom.rs:628) | ✅ | **刚补齐** — 新增 x_dir/y_dir + `rotate_center()`，`point_at` 使用定向参数化 |
-| `BOPTools_AlgoTools::CorrectTolerances` (BRep 级) | `rcad_kernel::tolerance::correct_tolerances` (tolerance.rs:730) | ⏳ | 功能等价；形式对齐在 DS 级 boptools/extra.rs:402 |
+| `BOPTools_AlgoTools::CorrectTolerances` (BRep 级) | `rcad_kernel::tolerance::correct_tolerances` (tolerance.rs:730) | ✅ | 已对齐 — DS 级在 boptools/extra.rs:402 使用 max_tol 参数；内核版本为旧路径遗留 |
 | `IntTools_Tools::ComputeTolerance` | `estimate_pcurve_deviation` (boptools/extra.rs:336) | ✅ | 25点均匀采样 + 1.00001 margin，对齐 OCCT L737-779 |
 | `IntTools_Context::ProjPT` (缓存投影器) | `Context::proj_pt()` (context.rs:102) | ✅ | 新增 `proj_pt_latest: Option<CurveProjection>` 单例缓存 |
 | `IntTools_Context::ProjectPointOnEdge` | `Context::proj_pc` / `proj_pt` (context.rs) | ✅ | 封装 closest_point_on_curve，匹配 OCCT ProjPC/ProjPT |

@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 impl<'a> super::PaveFiller<'a> {
  pub(crate) fn intersect_sphere_cone_faces(
@@ -62,8 +62,9 @@ impl<'a> super::PaveFiller<'a> {
  self.ds.faces[f2].face_info.vertices_in.insert(v_start);
  self.ds.faces[f2].face_info.vertices_in.insert(v_end);
  self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
- f1, f2, curves: vec![ci], points: vec![],
- });
+ f1, f2, curves: vec![ci],  points: vec![],
+  tangent_faces: false,
+  });
  }
 
  SphereConeResult::TwoCircles(c1, c2) => {
@@ -98,8 +99,9 @@ impl<'a> super::PaveFiller<'a> {
  self.ds.faces[f2].face_info.vertices_in.insert(v_start);
  self.ds.faces[f2].face_info.vertices_in.insert(v_end);
  self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
- f1, f2, curves: vec![ci], points: vec![],
- });
+ f1, f2, curves: vec![ci],  points: vec![],
+  tangent_faces: false,
+  });
  }
  }
 
@@ -108,8 +110,9 @@ impl<'a> super::PaveFiller<'a> {
  self.ds.faces[f1].face_info.vertices_in.insert(v);
  self.ds.faces[f2].face_info.vertices_in.insert(v);
  self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
- f1, f2, curves: vec![], points: vec![v],
- });
+  f1, f2, curves: vec![], points: vec![v],
+  tangent_faces: false,
+  });
  }
 
  SphereConeResult::Polyline(branches) => {
@@ -150,8 +153,9 @@ impl<'a> super::PaveFiller<'a> {
  }
  if !curve_indices.is_empty() {
  self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
- f1, f2, curves: curve_indices, points: vec![],
- });
+ f1, f2, curves: curve_indices,  points: vec![],
+  tangent_faces: false,
+  });
  }
  }
  }
@@ -237,8 +241,9 @@ impl<'a> super::PaveFiller<'a> {
  f1,
  f2,
  curves: vec![ci],
- points: vec![],
- });
+  points: vec![],
+  tangent_faces: false,
+  });
  }
  SphereCylinderResult::TwoCircles(c1, c2) => {
  let (pca1, pcb1) = make_circle_pcurves(&c1);
@@ -249,8 +254,9 @@ impl<'a> super::PaveFiller<'a> {
  f1,
  f2,
  curves: vec![ci1, ci2],
- points: vec![],
- });
+  points: vec![],
+  tangent_faces: false,
+  });
  }
 
  SphereCylinderResult::SkewQuartic(branches) => {
@@ -298,8 +304,9 @@ impl<'a> super::PaveFiller<'a> {
  f1,
  f2,
  curves: curve_indices,
- points: vec![],
- });
+  points: vec![],
+  tangent_faces: false,
+  });
  }
  }
  }
@@ -324,8 +331,9 @@ impl<'a> super::PaveFiller<'a> {
  if d < TOLERANCE_FLOAT_LOOSE {
  // Concentric spheres: same-domain (same center). Record empty FaceFace.
  self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF{
- f1, f2, curves: vec![], points: vec![],
- });
+ f1, f2, curves: vec![],  points: vec![],
+  tangent_faces: false,
+  });
  return;
  }
  if d >= sph1.radius + sph2.radius || d <= (sph1.radius - sph2.radius).abs() {
@@ -385,8 +393,9 @@ impl<'a> super::PaveFiller<'a> {
  f1,
  f2,
  curves: vec![curve_idx],
- points: vec![],
- });
+  points: vec![],
+  tangent_faces: false,
+  });
  }
 
  //  € € Sphere �?Cylinder analytic face-face intersection  € € € € € € € € € € € € € € € € € € € € €

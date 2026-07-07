@@ -412,8 +412,13 @@ pub struct InterferenceEE {
 
 #[derive(Debug, Clone)]
 pub struct InterferenceVF {
- pub vertex: usize,
- pub face: usize,
+    pub vertex: usize,
+    pub face: usize,
+    /// ✅ OCCT-aligned: BOPDS_InterfVF::myU / myV (Interf.hxx L360-362).
+    ///   UV coordinates of the vertex projection on the face surface.
+    ///   Stored as (f64, f64) — use u/v getters for clarity.
+    pub u: f64,
+    pub v: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -426,12 +431,49 @@ pub struct InterferenceEF {
 }
 
 /// FF entry: keyed by (Fmin,Fmax) pair with all curves and touch points merged.
+/// ✅ OCCT-aligned: BOPDS_InterfFF (Interf.hxx L445-495).
 #[derive(Debug, Clone)]
 pub struct InterferenceFF {
- pub f1: usize,
- pub f2: usize,
- pub curves: Vec<usize>,
- pub points: Vec<usize>,
+    pub f1: usize,
+    pub f2: usize,
+    pub curves: Vec<usize>,
+    pub points: Vec<usize>,
+    /// ✅ OCCT-aligned: BOPDS_InterfFF::myTangentFaces (Interf.hxx L490-492).
+    ///   True when the two faces are tangent at the intersection curve(s).
+    ///   Used by FillSameDomainFaces to decide whether faces can be merged.
+    pub tangent_faces: bool,
+}
+
+/// ✅ OCCT-aligned: BOPDS_InterfVZ (Interf.hxx L497-510).
+///   Interference between a Vertex and a Solid (vertex is inside/on the solid).
+#[derive(Debug, Clone)]
+pub struct InterferenceVZ {
+    pub vertex: usize,
+    pub solid: usize,
+}
+
+/// ✅ OCCT-aligned: BOPDS_InterfEZ (Interf.hxx L512-525).
+///   Interference between an Edge and a Solid.
+#[derive(Debug, Clone)]
+pub struct InterferenceEZ {
+    pub edge: usize,
+    pub solid: usize,
+}
+
+/// ✅ OCCT-aligned: BOPDS_InterfFZ (Interf.hxx L527-540).
+///   Interference between a Face and a Solid.
+#[derive(Debug, Clone)]
+pub struct InterferenceFZ {
+    pub face: usize,
+    pub solid: usize,
+}
+
+/// ✅ OCCT-aligned: BOPDS_InterfZZ (Interf.hxx L542-555).
+///   Interference between two Solids.
+#[derive(Debug, Clone)]
+pub struct InterferenceZZ {
+    pub s1: usize,
+    pub s2: usize,
 }
 
 /// An intersection curve from F-F intersection, bounded by vertices.
@@ -572,7 +614,15 @@ pub struct DS {
  pub interf_vf: Vec<InterferenceVF>,
  pub interf_ee: Vec<InterferenceEE>,
  pub interf_ef: Vec<InterferenceEF>,
- pub interf_ff: Vec<InterferenceFF>,
+  pub interf_ff: Vec<InterferenceFF>,
+  /// ✅ OCCT-aligned: BOPDS_DS myInterfVZ/EZ/FZ/ZZ (DS.hxx L498-501).
+  ///   Solid-level interference vecs for shape-solid classification.
+  ///   Currently reserved for future use; populated when solid-solid
+  ///   intersection detection is enabled.
+  pub interf_vz: Vec<InterferenceVZ>,
+  pub interf_ez: Vec<InterferenceEZ>,
+  pub interf_fz: Vec<InterferenceFZ>,
+  pub interf_zz: Vec<InterferenceZZ>,
 
  pub intersection_curves: Vec<IntersectionCurve>,
  /// Mapping: intersection curve index -> DSEdge indices created by make_section_edges_from_curve_pbs.
@@ -633,10 +683,19 @@ pub struct DS {
  /// Global PaveBlock array (OCCT: BOPDS_DS::myPaveBlocks).
  /// Indices in FaceInfo::pave_blocks_on / pave_blocks_in refer to this array.
  pub pave_blocks: Vec<PaveBlock>,
- /// =OCCT-aligned: myIncreasedSS =vertices whose tolerance was increased
- /// during intersection processing.  Read by RepeatIntersection to determine
- /// which vertices need VV/VE/VF re-checks.
- pub increased_ss: std::collections::HashSet<usize>,
+  /// =OCCT-aligned: myIncreasedSS =vertices whose tolerance was increased
+  /// during intersection processing.  Read by RepeatIntersection to determine
+  /// which vertices need VV/VE/VF re-checks.
+  pub increased_ss: std::collections::HashSet<usize>,
+  /// ✅ OCCT-aligned: BOPDS_DS::myInterfTB (DS.hxx L335, DS.cxx L109).
+  ///   Global interference pair fence: maps (i1,i2) sorted pair to unit.
+  ///   Prevents the same shape pair from being added to multiple interference
+  ///   type lists.  Checked by try_add_interf() before inserting into typed vecs.
+  pub interf_tb: std::collections::HashSet<(usize, usize)>,
+  /// ✅ OCCT-aligned: BOPDS_DS::myMapVE (DS.hxx L490).
+  ///   Vertex-to-incident-edge map built by build_map_ve().
+  ///   Used by init_pave_blocks_for_vertex() for O(1) edge lookup.
+  pub map_ve: std::collections::HashMap<usize, Vec<usize>>,
  /// =OCCT-aligned: BOPDS_DS::myLines =flat array of BOPDS_ShapeInfo for all shapes.
  /// Each entry records shape_type, sub_shapes, flag, reference, has_brep.
  /// First nb_source_shapes entries are original source shapes; entries beyond

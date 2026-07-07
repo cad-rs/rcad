@@ -169,8 +169,9 @@ impl<'a> super::PaveFiller<'a> {
  f1,
  f2,
  curves: curve_indices,
- points: vec![],
- });
+  points: vec![],
+  tangent_faces: false,
+  });
  }
  }
 
@@ -401,8 +402,9 @@ impl<'a> super::PaveFiller<'a> {
  f1,
  f2,
  curves: curve_indices,
- points: vec![],
- });
+  points: vec![],
+  tangent_faces: false,
+  });
  }
  }
 
@@ -438,8 +440,9 @@ impl<'a> super::PaveFiller<'a> {
  f1,
  f2,
  curves: vec![],
- points: vec![v],
- });
+  points: vec![v],
+  tangent_faces: false,
+  });
  }
  }
  PlaneSphereResult::Circle(circle) => {
@@ -501,8 +504,9 @@ impl<'a> super::PaveFiller<'a> {
  f1,
  f2,
  curves: vec![curve_idx],
- points: vec![],
- });
+  points: vec![],
+  tangent_faces: false,
+  });
  if cfg!(debug_assertions) && std::env::var("RCAD_DEBUG_FF").is_ok() {
  let ic = &self.ds.intersection_curves[curve_idx];
  eprintln!("[DBG_FF] IC[{}]: f1={} f2={} start_vertex={} end_vertex={} t_range=[{:.6},{:.6}] n_pbs={}",
@@ -569,8 +573,9 @@ impl<'a> super::PaveFiller<'a> {
  f1,
  f2,
  curves: vec![curve_idx],
- points: vec![],
- });
+  points: vec![],
+  tangent_faces: false,
+  });
 
  self.ds.faces[f1].face_info.curves_sc.insert(curve_idx);
  self.ds.faces[f2].face_info.curves_sc.insert(curve_idx);
@@ -640,8 +645,9 @@ impl<'a> super::PaveFiller<'a> {
  f1,
  f2,
  curves: vec![],
- points: vec![],
- });
+  points: vec![],
+  tangent_faces: false,
+  });
  if let Some(overlap) = result.overlap.into_iter().max_by_key(|poly| poly.len()) {
  self.ds.same_domain_overlaps.push((f1, f2, overlap));
  }

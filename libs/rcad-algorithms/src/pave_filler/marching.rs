@@ -132,8 +132,9 @@ impl<'a> super::PaveFiller<'a> {
                 f1,
                 f2,
                 curves: curve_indices,
-                points: vec![],
-            });
+  points: vec![],
+  tangent_faces: false,
+  });
         }
     }
 
@@ -381,8 +382,9 @@ impl<'a> super::PaveFiller<'a> {
                 f1,
                 f2,
                 curves: curve_indices,
-                points: vec![],
-            });
+  points: vec![],
+  tangent_faces: false,
+  });
         }
     }
 

@@ -173,18 +173,13 @@ impl DS {
   ///
   /// Ensures the PaveBlocks pool is initialized for all edges incident to
   /// the given vertex.  OCCT uses myMapVE (vertex-to-edge map) for fast
-  /// lookup.  rcad scans edges by start/end vertex (no myMapVE equivalent).
+  /// lookup.  rcad: uses map_ve (built by build_map_ve).
   /// The per-edge pave_blocks Vec is always allocated at creation time in
   /// rcad (OCCT pool is lazy-initialized via ChangePaveBlocks), so the
   /// body primarily records the form-aligned call structure.
   pub fn init_pave_blocks_for_vertex(&mut self, vertex_idx: usize) {
     // OCCT L1489: anEdgeIndices = myMapVE.Seek(theVertexIndex)
-    let mut incident_edges: Vec<usize> = Vec::new();
-    for (ei, e) in self.edges.iter().enumerate() {
-      if e.start_vertex == vertex_idx || e.end_vertex == vertex_idx {
-        incident_edges.push(ei);
-      }
-    }
+    let incident_edges = self.map_ve.get(&vertex_idx).cloned().unwrap_or_default();
     // OCCT L1490-1492: if !anEdgeIndices return
     if incident_edges.is_empty() {
       return;
@@ -197,6 +192,19 @@ impl DS {
     for _ei in &incident_edges {
       // OCCT: ChangePaveBlocks(anEdgeIndex) ensures pool entry exists.
     }
+  }
+
+  /// ✅ OCCT-aligned: build vertex-to-edge map (BOPDS_DS::myMapVE).
+  ///   Populates map_ve from edges array.  Called by init_shape_info()
+  ///   after all edges are loaded.
+  pub fn build_map_ve(&mut self) {
+  self.map_ve.clear();
+  for (ei, e) in self.edges.iter().enumerate() {
+  self.map_ve.entry(e.start_vertex).or_default().push(ei);
+  if e.start_vertex != e.end_vertex {
+  self.map_ve.entry(e.end_vertex).or_default().push(ei);
+  }
+  }
   }
 
  ///  ?OCCT-aligned: myDS->HasInterf(nE1, nE2) =checks EE interference exists.
@@ -215,10 +223,20 @@ impl DS {
  }
 
  ///  ?OCCT-aligned: myDS->HasInterf(nF1, nF2) =checks FF interference exists.
- pub fn has_interf_ff(&self, f1: usize, f2: usize) -> bool {
- let (a, b) = if f1 < f2 { (f1, f2) } else { (f2, f1) };
- self.interf_ff.iter().any(|ff| { let (fa, fb) = if ff.f1 < ff.f2 { (ff.f1, ff.f2) } else { (ff.f2, ff.f1) }; fa == a && fb == b })
- }
+  pub fn has_interf_ff(&self, f1: usize, f2: usize) -> bool {
+  let (a, b) = if f1 < f2 { (f1, f2) } else { (f2, f1) };
+  self.interf_ff.iter().any(|ff| { let (fa, fb) = if ff.f1 < ff.f2 { (ff.f1, ff.f2) } else { (ff.f2, ff.f1) }; fa == a && fb == b })
+  }
+
+  /// ✅ OCCT-aligned: BOPDS_DS::AddInterf (DS.cxx L410-420).
+  ///   Global interference pair fence.  Checks (i1, i2) with i1 < i2 against
+  ///   myInterfTB.  Returns true if the pair is NEW (first insertion), false
+  ///   if it already exists.  Call before adding to any typed interference vec.
+  ///   The fence prevents duplicate shape pairs across all interference types.
+  pub fn try_add_interf(&mut self, i1: usize, i2: usize) -> bool {
+  let key = if i1 < i2 { (i1, i2) } else { (i2, i1) };
+  self.interf_tb.insert(key)
+  }
 
  /// OCCT-aligned: dedup FaceFace interferences by (Fmin,Fmax) pair.
  /// Merges curves/points from duplicate entries in interf_ff.
@@ -231,9 +249,10 @@ impl DS {
  for &p in &inf.points { if !entry.1.contains(&p) { entry.1.push(p); } }
  }
  self.interf_ff.clear();
- for ((f1, f2), (curves, points)) in &merged {
- self.interf_ff.push(InterferenceFF { f1: *f1, f2: *f2, curves: curves.clone(), points: points.clone() });
- }
+  for ((f1, f2), (curves, points)) in &merged {
+  self.interf_ff.push(InterferenceFF { f1: *f1, f2: *f2, curves: curves.clone(), points: points.clone(), tangent_faces: false });
+  self.try_add_interf(*f1, *f2);
+  }
  }
 
 
@@ -283,7 +302,11 @@ impl DS {
  interf_vf: Vec::new(),
  interf_ee: Vec::new(),
  interf_ef: Vec::new(),
- interf_ff: Vec::new(),
+  interf_ff: Vec::new(),
+  interf_vz: Vec::new(),
+  interf_ez: Vec::new(),
+  interf_fz: Vec::new(),
+  interf_zz: Vec::new(),
  intersection_curves: Vec::new(),
  section_edge_refs: Vec::new(),
  fuzzy_tol: tol,
@@ -301,8 +324,10 @@ impl DS {
  solid_images: Vec::new(),
  pave_blocks: Vec::new(),
  locations: Vec::new(),
- increased_ss: std::collections::HashSet::new(),
- shape_info: Vec::new(),
+  increased_ss: std::collections::HashSet::new(),
+  interf_tb: std::collections::HashSet::new(),
+  map_ve: std::collections::HashMap::new(),
+  shape_info: Vec::new(),
  nb_source_shapes: 0,
  };
 
@@ -1090,32 +1115,49 @@ impl DS {
  let a_e = self.a_edge_count;
  let a_f = self.a_face_count;
 
- // VERTEX entries
- for vi in 0..nv {
- let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Vertex);
- si.rank = if vi < a_v { 0 } else { 1 };
- si.source_idx = vi;
- si.is_new = self.vertices[vi].origin.is_none();
- si.box_min = Some(self.vertices[vi].point);
- si.box_max = Some(self.vertices[vi].point);
- self.shape_info.push(si);
- }
+  // VERTEX entries
+  for vi in 0..nv {
+  let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Vertex);
+  si.rank = if vi < a_v { 0 } else { 1 };
+  si.source_idx = vi;
+  si.is_new = self.vertices[vi].origin.is_none();
+  si.box_min = Some(self.vertices[vi].point);
+  si.box_max = Some(self.vertices[vi].point);
+  // ✅ OCCT-aligned: Bnd_Box::SetGap(Tol(V) + theAdditionalTolerance)
+  //   theAdditionalTolerance = fuzzy_tol * 0.5 (matching OCCT PaveFiller UpdateTolerance).
+  si.box_gap = self.vertices[vi].geom_tol + self.fuzzy_tol * 0.5;
+  self.shape_info.push(si);
+  }
  // EDGE entries
- for ei in 0..ne {
- let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Edge);
- si.rank = if ei < a_e { 0 } else { 1 };
- si.source_idx = ei;
- si.is_new = ei >= a_e;
- let sv = self.edges[ei].start_vertex;
- let ev = self.edges[ei].end_vertex;
- if sv < self.vertices.len() && ev < self.vertices.len() {
- let p1 = self.vertices[sv].point;
- let p2 = self.vertices[ev].point;
- si.box_min = Some(p1.min(p2));
- si.box_max = Some(p1.max(p2));
- }
- self.shape_info.push(si);
- }
+  for ei in 0..ne {
+  let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Edge);
+  si.rank = if ei < a_e { 0 } else { 1 };
+  si.source_idx = ei;
+  si.is_new = ei >= a_e;
+  let sv = self.edges[ei].start_vertex;
+  let ev = self.edges[ei].end_vertex;
+  if sv < self.vertices.len() && ev < self.vertices.len() {
+  let p1 = self.vertices[sv].point;
+  let p2 = self.vertices[ev].point;
+  si.box_min = Some(p1.min(p2));
+  si.box_max = Some(p1.max(p2));
+  }
+  // ✅ OCCT-aligned: BOPDS_ShapeInfo for an Edge stores its vertex sub-shapes.
+  // OCCT stores sub-shape indices as flat shape indices into myLines.
+  si.sub_shapes.push(nv + sv);
+  if sv != ev {
+  si.sub_shapes.push(nv + ev);
+  }
+  // ✅ OCCT-aligned: Bnd_Box::SetGap with additional tolerance for edge.
+  si.box_gap = self.edges[ei].geom_tol + self.fuzzy_tol * 0.5;
+  // ✅ OCCT-aligned: BOPDS_ShapeInfo::SetFlag for degenerated edges.
+  //   OCCT BOPAlgo_Builder_1.cxx prepareFaces: SetFlag(faceIndex) for deg edges.
+  //   rcad: set flag >= 0 when start==end vertex (degenerated geometry).
+  if sv == ev {
+  si.flag = 0;
+  }
+  self.shape_info.push(si);
+  }
  // FACE entries -- sub-shapes = edge indices (flat)
  for fi in 0..nf {
  let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Face);
@@ -1136,13 +1178,15 @@ impl DS {
  mx = mx.max(p);
  }
  }
- if mn.is_finite() {
- si.box_min = Some(mn);
- si.box_max = Some(mx);
- }
- }
- self.shape_info.push(si);
- }
+  if mn.is_finite() {
+  si.box_min = Some(mn);
+  si.box_max = Some(mx);
+  }
+  }
+  // ✅ OCCT-aligned: Bnd_Box::SetGap with additional tolerance for face.
+  si.box_gap = self.faces[fi].geom_tol + self.fuzzy_tol * 0.5;
+  self.shape_info.push(si);
+  }
  // SHELL entries -- sub-shapes = face indices (flat)
  for shi in 0..nsh {
  let mut si = ShapeInfo::new(rcad_kernel::topods::ShapeType::Shell);
@@ -1179,10 +1223,12 @@ impl DS {
  for &soi in &self.comp_solids[csi].solids {
  si.sub_shapes.push(nv + ne + nf + nsh + soi);
  }
- self.shape_info.push(si);
- }
- self.nb_source_shapes = self.shape_info.len();
- }
+  self.shape_info.push(si);
+  }
+  self.nb_source_shapes = self.shape_info.len();
+  // ✅ OCCT-aligned: build vertex-to-edge map (myMapVE) after all shapes registered.
+  self.build_map_ve();
+  }
 
  ///  ?OCCT-aligned: ShapeInfo(index) =access shape info by flat index.
  /// OCCT: BOPDS_DS::ShapeInfo (BOPDS_DS.cxx L255-258).

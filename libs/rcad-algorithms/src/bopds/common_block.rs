@@ -46,6 +46,11 @@ impl CommonBlock {
     ///
     /// `pb_idx` — flat index referencing a PaveBlock in the DS edge's `pave_blocks` array.
     /// `face_idx` — face index in the DS that this PaveBlock belongs to.
+    ///
+    /// OCCT BOPDS_CommonBlock::AddPaveBlock inserts at the front of the list so
+    /// that `PaveBlock1()` returns the first-added block (the one on the real edge).
+    /// rcad: defers ordering to `sort_by_edge()` which is called after all blocks
+    /// are added, ensuring the real-edge PaveBlock comes first.
     pub fn add_pave_block(&mut self, pb_idx: usize, face_idx: usize) {
         self.myPaveBlocks.push((pb_idx, face_idx));
     }
@@ -98,6 +103,23 @@ impl CommonBlock {
     /// ✅ OCCT-aligned: `PaveBlock1()`.
     pub fn pave_block1(&self) -> Option<usize> {
         self.myPaveBlocks.first().map(|&(pb, _)| pb)
+    }
+
+    /// ✅ OCCT-aligned: sort PaveBlocks so that the block on the real edge
+    ///   (original_edge == myEdge) is first, matching OCCT's insertion order
+    ///   invariant where `AddPaveBlock` inserts the real-edge block first.
+    ///   `is_real_edge` is a closure `(pb_idx) -> bool` that returns true when
+    ///   the PaveBlock at index `pb_idx` has `original_edge == self.myEdge`.
+    ///   Call this after all PaveBlocks have been added, before using `PaveBlock1()`.
+    pub fn sort_by_edge(&mut self, is_real_edge: impl Fn(usize) -> bool) {
+        if self.myEdge.is_none() || self.myPaveBlocks.len() < 2 { return; }
+        let edge = self.myEdge.unwrap();
+        // Find the first PaveBlock on the real edge and swap it to front
+        if let Some(pos) = self.myPaveBlocks.iter().position(|&(pb, _)| is_real_edge(pb)) {
+            if pos != 0 {
+                self.myPaveBlocks.swap(0, pos);
+            }
+        }
     }
 
     /// Get the `PaveBlock` on the real edge.

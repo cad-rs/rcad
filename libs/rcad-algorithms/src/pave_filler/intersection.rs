@@ -1,7 +1,7 @@
 use std::collections::{HashSet, BTreeMap};
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::geom::{Curve3, Surface3};
+use rcad_kernel::geom::{Curve3, Surface3, any_perpendicular};
 use rcad_kernel::CurveEval;
 
 use crate::bopalgo::{fill_map, make_blocks};
@@ -891,17 +891,28 @@ impl<'a> super::PaveFiller<'a> {
  })
  .map(|(t_line, t_circle, p)| (t_circle, t_line, p))
  .collect(),
- (Curve3::Circle(c1), Curve3::Circle(c2)) => intersect_circle_circle(c1, c2, tol)
- .into_iter()
- .filter_map(|p| {
- let t1 = circle_param(p, c1);
- let t2 = circle_param(p, c2);
- if in_range(t1, sr1, tol) && in_range(t2, sr2, tol) {
- Some((t1, t2, p))
- } else { None }
- })
- .collect(),
- _ => vec![],
+  (Curve3::Circle(c1), Curve3::Circle(c2)) => intersect_circle_circle(c1, c2, tol)
+  .into_iter()
+  .filter_map(|p| {
+  let t1 = circle_param(p, c1);
+  let t2 = circle_param(p, c2);
+  if in_range(t1, sr1, tol) && in_range(t2, sr2, tol) {
+  Some((t1, t2, p))
+  } else { None }
+  })
+  .collect(),
+  _ => {
+  // Fallback: use EdgeEdgeIntersector for non-analytic curve pairs
+  let mut ee = crate::inttools::edge_edge::EdgeEdgeIntersector::new();
+  ee.set_edges(e1, sr1, e2, sr2, self.ds);
+  ee.set_fuzzy_value(tol);
+  ee.perform();
+  ee.common_parts().iter().map(|cp| {
+  let t1 = cp.vertex_param1;
+  let t2 = cp.vertex_param2;
+  Some((t1, t2, cp.bounding_point1))
+  }).flatten().collect()
+  }
  };
 
  //  ?OCCT-aligned: Process each intersection result (PaveFiller_3.cxx L682-750).
@@ -1237,41 +1248,49 @@ impl<'a> super::PaveFiller<'a> {
  let face = &self.ds.faces[fi];
  let tf = self.vf_tol(n_vsd, fi);
 
- // OCCT L257-266: Project point onto face surface
- let (is_on, proj_dist): (bool, f64) = match &face.surface {
- Surface3::Plane(plane) => {
- if inttools::vertex_ops::vertex_on_plane_with_tol(point, plane, tf) {
- let face_verts = self.ds.face_boundary_points(fi);
- let on_face = inttools::edge_face::point_in_planar_face_with_tol(
- point, plane, &face_verts, tf);
- (on_face, 0.0)
- } else {
- (false, f64::MAX)
- }
- }
- surface => {
- let proj = rcad_kernel::projection::closest_point_on_surface(
- surface, point, 16);
- let a_tol_v = self.ds.vertices[n_vsd].geom_tol;
- let a_tol_f = face.geom_tol;
- let a_tol_sum = a_tol_v + a_tol_f + self.ds.fuzzy_tol.max(tf);
- if proj.distance <= a_tol_sum {
- let uv = DVec2::new(proj.params.0, proj.params.1);
- let fclass = FClass2d::new(self.ds, fi, tf);
- let inside = fclass.perform(uv, false) == State::In;
- (inside, proj.distance)
- } else {
- (false, f64::MAX)
- }
- }
- };
+    // OCCT L257-266: Project point onto face surface
+    let (is_on, proj_dist, proj_u, proj_v): (bool, f64, f64, f64) = match &face.surface {
+        Surface3::Plane(plane) => {
+            if inttools::vertex_ops::vertex_on_plane_with_tol(point, plane, tf) {
+                let face_verts = self.ds.face_boundary_points(fi);
+                let on_face = inttools::edge_face::point_in_planar_face_with_tol(
+                    point, plane, &face_verts, tf);
+                // UV: project point onto plane UV coordinate system
+                let u_axis = any_perpendicular(plane.normal).normalize();
+                let v_axis = plane.normal.cross(u_axis).normalize();
+                let diff = point - plane.origin;
+                let u = diff.dot(u_axis);
+                let v = diff.dot(v_axis);
+                (on_face, 0.0, u, v)
+            } else {
+                (false, f64::MAX, 0.0, 0.0)
+            }
+        }
+        surface => {
+            let proj = rcad_kernel::projection::closest_point_on_surface(
+                surface, point, 16);
+            let a_tol_v = self.ds.vertices[n_vsd].geom_tol;
+            let a_tol_f = face.geom_tol;
+            let a_tol_sum = a_tol_v + a_tol_f + self.ds.fuzzy_tol.max(tf);
+            if proj.distance <= a_tol_sum {
+                let uv = DVec2::new(proj.params.0, proj.params.1);
+                let fclass = FClass2d::new(self.ds, fi, tf);
+                let inside = fclass.perform(uv, false) == State::In;
+                (inside, proj.distance, proj.params.0, proj.params.1)
+            } else {
+                (false, f64::MAX, 0.0, 0.0)
+            }
+        }
+    };
 
- if is_on {
- // OCCT L276-278: Create InterfVF for ALL original vertices (from aMVFPairs)
- self.ds.interf_vf.push(InterferenceVF{
- vertex: n_vsd,
- face: fi,
- });
+    if is_on {
+        // OCCT L276-278: Create InterfVF for ALL original vertices (from aMVFPairs)
+        self.ds.interf_vf.push(InterferenceVF{
+            vertex: n_vsd,
+            face: fi,
+            u: proj_u,
+            v: proj_v,
+        });
 
  // OCCT L286: UpdateVertex(nV, aTolVNew)  ?increase vertex tolerance
  if proj_dist > 0.0 && proj_dist < f64::MAX
