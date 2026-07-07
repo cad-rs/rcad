@@ -1436,9 +1436,10 @@ impl<'a> super::PaveFiller<'a> {
  vp.insert(ev, t_range[1]);
  vp
  },
- face_tolerances: Vec::new(),
- is_geometric: true,
- });
+  face_tolerances: Vec::new(),
+  is_geometric: true,
+  location: 0,
+  });
 
  let mut pb = PaveBlock::new(NO_EDGE,
  Pave { vertex_idx: sv, param: t_range[0] },

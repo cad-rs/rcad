@@ -809,9 +809,10 @@ impl<'a> super::PaveFiller<'a> {
  vp
  },
  face_tolerances: Vec::new(),
- is_geometric: true,
- });
- if let Some(epb) = self.ds.edges.last_mut().and_then(|e| e.pave_blocks.first_mut()) {
+  is_geometric: true,
+  location: 0,
+  });
+  if let Some(epb) = self.ds.edges.last_mut().and_then(|e| e.pave_blocks.first_mut()) {
  epb.new_edge = Some(new_ei);
  }
  self.ds.section_edge_refs[ci].push(new_ei);

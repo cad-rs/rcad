@@ -643,10 +643,11 @@ impl DS {
  vp
  },
  face_tolerances: Vec::new(),
- is_geometric: matches!(curve, Curve3::Line(_) | Curve3::Circle(_)
- | Curve3::Ellipse(_) | Curve3::BSpline(_) | Curve3::Bezier(_)),
- });
- self.init_pave_blocks_for_edge(self.edges.len() - 1);
+  is_geometric: matches!(curve, Curve3::Line(_) | Curve3::Circle(_)
+  | Curve3::Ellipse(_) | Curve3::BSpline(_) | Curve3::Bezier(_)),
+  location: 0,
+  });
+  self.init_pave_blocks_for_edge(self.edges.len() - 1);
  }
 
  // Faces.  OCCT BOPDS_ShapeInfo tracks source shell/solid/compsolid
@@ -783,8 +784,9 @@ impl DS {
  face_info: FaceInfo::default(),
  source_face_idx: face_idx,
  geom_tol: rcad_kernel::face_tolerance(brep, face_idx),
- uv_boundary: None,
- natural_restriction: true,
+  location: 0,
+  uv_boundary: None,
+  natural_restriction: true,
  source_shell_idx: Some(shell_counter),
  source_solid_idx: Some(solid_counter),
  source_compsolid_idx: compsolid_idx,

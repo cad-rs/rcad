@@ -791,10 +791,11 @@ impl<'a> PaveFiller<'a> {
  vp.insert(nV2, aT2);
  vp
  },
- face_tolerances: Vec::new(),
- is_geometric: true,
- });
- // Set new_edge in the PB stored inside the edge AND in sub_with_edge
+  face_tolerances: Vec::new(),
+  is_geometric: true,
+  location: 0,
+  });
+  // Set new_edge in the PB stored inside the edge AND in sub_with_edge
  if let Some(epb) = self.ds.edges.last_mut().and_then(|e| e.pave_blocks.first_mut()) {
  epb.new_edge = Some(new_ei);
  }

@@ -804,16 +804,16 @@ impl<'a> BooleanBuilder<'a> {
  fn pre_create_source_shapes(&self) {
  let mut t = self.my_shape.borrow_mut();
  let mut args = Vec::new();
- // 1. Vertices
- for v in &self.ds.vertices {
- let sr = t.add_tvertex(v.point);
- args.push(sr);
- }
- // 2. Edges (with curves)
- for (ei, edge) in self.ds.edges.iter().enumerate() {
- let sv = t.add_tvertex(self.ds.vertices[edge.start_vertex].point);
- let ev = t.add_tvertex(self.ds.vertices[edge.end_vertex].point);
- let te = t.add_tedge(Some(edge.curve.clone()), sv, ev, edge.t_range);
+  // 1. Vertices
+  for v in &self.ds.vertices {
+  let sr = t.add_tvertex(v.point).with_location(v.location);
+  args.push(sr);
+  }
+  // 2. Edges (with curves)
+  for (ei, edge) in self.ds.edges.iter().enumerate() {
+  let sv = t.add_tvertex(self.ds.vertices[edge.start_vertex].point).with_location(edge.location);
+  let ev = t.add_tvertex(self.ds.vertices[edge.end_vertex].point).with_location(edge.location);
+  let te = t.add_tedge(Some(edge.curve.clone()), sv, ev, edge.t_range).with_location(edge.location);
  if self.ds.is_edge_degenerated(ei) || edge.start_vertex == edge.end_vertex {
  t.edge_mut(te).degenerated = true;
  }
@@ -851,10 +851,10 @@ impl<'a> BooleanBuilder<'a> {
  .and_then(|vi| self.ds.vertices.get(vi))
  .map(|v| v.point)
  .unwrap_or(glam::DVec3::ZERO);
- let face_sr = t.add_tface(Some(face.surface.clone()),
- outer_wire.unwrap_or(rcad_kernel::topods::ShapeRef::NULL),
- inner_wires, Some(sample_pt), None, vec![], face.natural_restriction);
- args.push(face_sr);
+  let face_sr = t.add_tface(Some(face.surface.clone()),
+  outer_wire.unwrap_or(rcad_kernel::topods::ShapeRef::NULL),
+  inner_wires, Some(sample_pt), None, vec![], face.natural_restriction).with_location(face.location);
+  args.push(face_sr);
  }
  // 5. Shells (from DS shells, using pre-created face TShapes)
  let f_base = w_base + self.ds.wires.len();

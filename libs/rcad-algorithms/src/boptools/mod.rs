@@ -32,10 +32,11 @@ pub fn make_sect_edge(ds: &mut DS, ci: usize, v1: usize, v2: usize) -> usize {
  vp.insert(v2, ic.t_range[1]);
  vp
  },
- face_tolerances: Vec::new(),
- is_geometric: true,
- });
- ei
+  face_tolerances: Vec::new(),
+  is_geometric: true,
+  location: 0,
+  });
+  ei
 }
 
 /// OCCT-aligned: IsMicroEdge (BOPTools_AlgoTools).
@@ -190,10 +191,11 @@ pub fn make_ds_edge(
  vp.insert(v2, t_range[1]);
  vp
  },
- face_tolerances: Vec::new(),
- is_geometric: true,
- });
- ei
+  face_tolerances: Vec::new(),
+  is_geometric: true,
+  location: 0,
+  });
+  ei
 }
 /// OCCT-aligned: CorrectEdgeRange (BOPTools_AlgoTools).
 pub fn correct_edge_range(ds: &mut crate::bopds::ds::DS, ei: usize, t1: f64, t2: f64) -> [f64; 2] {
@@ -1867,10 +1869,11 @@ pub fn make_split_edge(
  vp.insert(v2, p2);
  vp
  },
- face_tolerances: Vec::new(),
- is_geometric: true,
- });
- new_ei
+  face_tolerances: Vec::new(),
+  is_geometric: true,
+  location: 0,
+  });
+  new_ei
 }
 
 /// OCCT-aligned: MakeVertex (BOPTools_AlgoTools.cxx L1790-1805).

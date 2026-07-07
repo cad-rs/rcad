@@ -212,38 +212,40 @@ pub struct DSCurveRepOnFace {
  pub end_param: f64,
 }
 
-/// An edge in the DS pool with curve reference.
-#[derive(Debug, Clone)]
-pub struct DSEdge {
- /// Index into DS.vertices.
- pub start_vertex: usize,
- pub end_vertex: usize,
- pub curve: Curve3,
- /// Parametric range `[t_start, t_end]` on the curve.
- pub t_range: [f64; 2],
- pub origin: ShapeOrigin,
- /// Model tolerance on the source edge (`edge_tolerance` from BRep when loaded).
- pub geom_tol: f64,
- /// Paves inserted on this edge by intersection passes (unsorted until build_split_edges).
- pub paves: Vec<Pave>,
- /// After `build_split_edges`, the edge is represented by these sub-segments.
- pub pave_blocks: Vec<PaveBlock>,
- /// =OCCT-aligned: per-face pcurve representations (BRep_CurveRepresentation).
- /// Populated by DS::build_face_reps() after edges and faces are loaded.
- pub face_reps: Vec<DSCurveRepOnFace>,
- /// =OCCT-aligned: TopAbs_INTERNAL orientation marker.
- /// True when this edge is INTERNAL to its source solid volume.
- pub is_internal: bool,
- /// =OCCT-aligned: BRep_Tool::Parameter(aV, aE) =per-vertex parameter on this edge's curve.
- /// Populated during DS loading; for intersection/section edges, set to t_range bounds.
- pub vertex_params: std::collections::HashMap<usize, f64>,
- /// =OCCT-aligned: BOPDS_Edge::myFaceTolerances =per-face tolerance for this edge.
- pub face_tolerances: Vec<(usize, f64)>,
- /// =OCCT-aligned: BRep_Tool::IsGeometric =true when this edge has a valid 3D curve.
- /// Cached during DS loading to avoid repeated Curve3 variant matching.
- /// Used by edges_to_wires and other geometry-sensitive paths.
- pub is_geometric: bool,
-}
+ /// An edge in the DS pool with curve reference.
+ #[derive(Debug, Clone)]
+ pub struct DSEdge {
+  /// Index into DS.vertices.
+  pub start_vertex: usize,
+  pub end_vertex: usize,
+  pub curve: Curve3,
+  /// Parametric range `[t_start, t_end]` on the curve.
+  pub t_range: [f64; 2],
+  pub origin: ShapeOrigin,
+  /// Model tolerance on the source edge (`edge_tolerance` from BRep when loaded).
+  pub geom_tol: f64,
+  /// Paves inserted on this edge by intersection passes (unsorted until build_split_edges).
+  pub paves: Vec<Pave>,
+  /// After `build_split_edges`, the edge is represented by these sub-segments.
+  pub pave_blocks: Vec<PaveBlock>,
+  /// =OCCT-aligned: per-face pcurve representations (BRep_CurveRepresentation).
+  /// Populated by DS::build_face_reps() after edges and faces are loaded.
+  pub face_reps: Vec<DSCurveRepOnFace>,
+  /// =OCCT-aligned: TopAbs_INTERNAL orientation marker.
+  /// True when this edge is INTERNAL to its source solid volume.
+  pub is_internal: bool,
+  /// =OCCT-aligned: BRep_Tool::Parameter(aV, aE) =per-vertex parameter on this edge's curve.
+  /// Populated during DS loading; for intersection/section edges, set to t_range bounds.
+  pub vertex_params: std::collections::HashMap<usize, f64>,
+  /// =OCCT-aligned: BOPDS_Edge::myFaceTolerances =per-face tolerance for this edge.
+  pub face_tolerances: Vec<(usize, f64)>,
+  /// =OCCT-aligned: BRep_Tool::IsGeometric =true when this edge has a valid 3D curve.
+  /// Cached during DS loading to avoid repeated Curve3 variant matching.
+  /// Used by edges_to_wires and other geometry-sensitive paths.
+  pub is_geometric: bool,
+  /// OCCT-aligned: TopLoc_Location index into DS.locations[]; 0 = identity.
+  pub location: u32,
+ }
 
 impl DSEdge {
  /// =OCCT-aligned: BRep_Tool::Parameter(aV, this edge) equivalent.
@@ -305,10 +307,12 @@ pub struct DSFace {
  pub face_info: FaceInfo,
  /// Original face index within the source BRep's flattened face list.
  pub source_face_idx: usize,
- /// Model tolerance on the source face (`face_tolerance` from BRep when loaded).
- pub geom_tol: f64,
- /// UV-space boundary polygon on this face's surface (populated in Task 3+).
- pub uv_boundary: Option<Vec<DVec2>>,
+  /// Model tolerance on the source face (`face_tolerance` from BRep when loaded).
+  pub geom_tol: f64,
+  /// OCCT-aligned: TopLoc_Location index into DS.locations[]; 0 = identity.
+  pub location: u32,
+  /// UV-space boundary polygon on this face's surface (populated in Task 3+).
+  pub uv_boundary: Option<Vec<DVec2>>,
  /// =OCCT-aligned: natural_restriction =true when the face surface has
  /// natural boundaries (full untrimmed sphere, cylinder, cone, etc.).
  /// BRep_Tool::NaturalRestriction in OCCT, used by BuilderFace::PerformAreas

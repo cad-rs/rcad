@@ -380,11 +380,12 @@ mod tests {
  vp.insert(vi1, 1.0);
  vp
  },
- face_tolerances: Vec::new(),
- is_geometric: true,
- });
+  face_tolerances: Vec::new(),
+  is_geometric: true,
+  location: 0,
+  });
 
- let old_global_len = ds.pave_blocks.len();
+  let old_global_len = ds.pave_blocks.len();
  perform_common_blocks(&mut ds);
  assert!(
  ds.pave_blocks.len() > old_global_len,

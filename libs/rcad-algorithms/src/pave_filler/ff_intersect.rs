@@ -756,10 +756,11 @@ impl<'a> super::PaveFiller<'a> {
  vp
  },
  face_tolerances: Vec::new(),
- is_geometric: true,
- });
+  is_geometric: true,
+  location: 0,
+  });
 
- // Track for pave_blocks assignment on source edge
+  // Track for pave_blocks assignment on source edge
  edge_pbs.entry(data.ei).or_default().push((
  data.sv, data.ev, data.t_start, data.t_end, new_ei,
  ));

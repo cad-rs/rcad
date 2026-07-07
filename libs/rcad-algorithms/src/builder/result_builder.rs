@@ -767,49 +767,49 @@ impl ResultBuilder {
  // --- Outer wire from boundary_edges, creating TShape vertices/edges directly ---
  let e_base = ds.vertices.len();
  let mut outer_edges: Vec<topods::ShapeRef> = Vec::new();
- let mut prev_end: Option<usize> = None;
- for &ei in &face.boundary_edges {
- if ei >= ds.edges.len() { continue; }
- let e = &ds.edges[ei];
- let (sv, ev) = match prev_end {
- Some(pe) if e.start_vertex == pe => (e.start_vertex, e.end_vertex),
- Some(pe) if e.end_vertex == pe => (e.end_vertex, e.start_vertex),
- _ => (e.start_vertex, e.end_vertex),
- };
- let sv_sr = t.add_tvertex(ds.vertices[sv].point);
- let ev_sr = t.add_tvertex(ds.vertices[ev].point);
- let e_sr = t.add_tedge(Some(e.curve.clone()), sv_sr, ev_sr, e.t_range);
- outer_edges.push(e_sr);
- prev_end = Some(ev);
- }
- if outer_edges.len() < 3 { return; }
- let outer_wire = t.add_twire(outer_edges);
+  let mut prev_end: Option<usize> = None;
+  for &ei in &face.boundary_edges {
+  if ei >= ds.edges.len() { continue; }
+  let e = &ds.edges[ei];
+  let (sv, ev) = match prev_end {
+  Some(pe) if e.start_vertex == pe => (e.start_vertex, e.end_vertex),
+  Some(pe) if e.end_vertex == pe => (e.end_vertex, e.start_vertex),
+  _ => (e.start_vertex, e.end_vertex),
+  };
+  let sv_sr = t.add_tvertex(ds.vertices[sv].point).with_location(e.location);
+  let ev_sr = t.add_tvertex(ds.vertices[ev].point).with_location(e.location);
+  let e_sr = t.add_tedge(Some(e.curve.clone()), sv_sr, ev_sr, e.t_range).with_location(e.location);
+  outer_edges.push(e_sr);
+  prev_end = Some(ev);
+  }
+  if outer_edges.len() < 3 { return; }
+  let outer_wire = t.add_twire(outer_edges);
 
- // --- Inner wires ---
- let mut inner_wires: Vec<topods::ShapeRef> = Vec::new();
- for iw_edges in &face.inner_boundary_edges {
- let mut wire_edges: Vec<topods::ShapeRef> = Vec::new();
- for &(ei, forward_in_ds) in iw_edges {
- if ei >= ds.edges.len() { continue; }
- let e = &ds.edges[ei];
- let (sv, ev) = if forward_in_ds {
- (e.start_vertex, e.end_vertex)
- } else {
- (e.end_vertex, e.start_vertex)
- };
- let sv_sr = t.add_tvertex(ds.vertices[sv].point);
- let ev_sr = t.add_tvertex(ds.vertices[ev].point);
- let e_sr = t.add_tedge(Some(e.curve.clone()), sv_sr, ev_sr, e.t_range);
- wire_edges.push(e_sr);
- }
- if wire_edges.len() >= 2 {
- inner_wires.push(t.add_twire(wire_edges));
- }
- }
+  // --- Inner wires ---
+  let mut inner_wires: Vec<topods::ShapeRef> = Vec::new();
+  for iw_edges in &face.inner_boundary_edges {
+  let mut wire_edges: Vec<topods::ShapeRef> = Vec::new();
+  for &(ei, forward_in_ds) in iw_edges {
+  if ei >= ds.edges.len() { continue; }
+  let e = &ds.edges[ei];
+  let (sv, ev) = if forward_in_ds {
+  (e.start_vertex, e.end_vertex)
+  } else {
+  (e.end_vertex, e.start_vertex)
+  };
+  let sv_sr = t.add_tvertex(ds.vertices[sv].point).with_location(e.location);
+  let ev_sr = t.add_tvertex(ds.vertices[ev].point).with_location(e.location);
+  let e_sr = t.add_tedge(Some(e.curve.clone()), sv_sr, ev_sr, e.t_range).with_location(e.location);
+  wire_edges.push(e_sr);
+  }
+  if wire_edges.len() >= 2 {
+  inner_wires.push(t.add_twire(wire_edges));
+  }
+  }
 
- let sample_pt = ds.vertices[face.boundary_verts.first().copied().unwrap_or(0)].point;
- let face_sr = t.add_tface(Some(face.surface.clone()), outer_wire, inner_wires,
- Some(sample_pt), None, vec![], ds.faces[fi].natural_restriction);
+  let sample_pt = ds.vertices[face.boundary_verts.first().copied().unwrap_or(0)].point;
+  let face_sr = t.add_tface(Some(face.surface.clone()), outer_wire, inner_wires,
+  Some(sample_pt), None, vec![], ds.faces[fi].natural_restriction).with_location(face.location);
  face_refs.push(face_sr);
  self.face_origins.push(origin);
 
