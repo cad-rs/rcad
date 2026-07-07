@@ -82,7 +82,7 @@ pub struct BooleanBuilder<'a> {
  /// =OCCT-aligned: myEntryPoint =tracks builder phase (1=PerformInternal1 done, etc.).
  my_entry_point: u8,
  /// =OCCT-aligned: myReport =collects alerts during Builder execution.
- my_report: Report,
+  my_report: std::cell::RefCell<Report>,
  /// OCCT-aligned: myDims - dimension per argument (3=solid, 2=face).
  my_dims: std::cell::Cell<[i8; 2]>,
  /// =OCCT-aligned: converted BRep representation of DS.
@@ -630,7 +630,7 @@ impl<'a> BooleanBuilder<'a> {
  my_check_inverted: false,
  my_stop_on_fatal_error: true,
  my_entry_point: 0,
- my_report: Report::new(),
+  my_report: std::cell::RefCell::new(Report::new()),
  my_dims: std::cell::Cell::new([3, 3]),
  brep: std::cell::RefCell::new(None),
  my_shape: std::cell::RefCell::new(rcad_kernel::topods::BRep::new()),
@@ -769,27 +769,31 @@ impl<'a> BooleanBuilder<'a> {
  /// The top-level pipeline entry: dimension-by-dimension image filling
  /// (V= = = ACE= HELL= OLID), followed by BuildResult for each type.
  /// OCCT L310-445 structure matched in full (see inline OCCT line refs).
- /// =OCCT-aligned: CheckData (BOPAlgo_BOP.cxx L106-202) + CheckFiller (Builder.cxx L143-151).
- /// Validates operation type, non-empty arguments, and DS/PaveFiller state.
- ///  ?OCCT-aligned: CheckData (BOPAlgo_Builder.cxx L130-140).
- fn check_data(&self) -> Result<(), BooleanError> {
- // OCCT L132-137: aNb = myArguments.Extent(); if (aNb < 2) -> AlertTooFewArguments
- // rcad: arguments are always at least 2 (set during fuse() call).
- // rcad: validate operation type as surrogate dimension check.
- match self.op {
- BooleanOpType::Union | BooleanOpType::Intersection | BooleanOpType::Difference => {}
- _ => return Err(BooleanError::BOPNotSet),
- }
- // OCCT L139-141: CheckFiller -> AlertNoFiller
- // rcad: PaveFiller ran before builder; check DS has valid shape data loaded.
- if self.ds.vertices.is_empty() {
- return Err(BooleanError::NoFiller);
- }
- if self.has_errors {
- return Err(BooleanError::DegenerateResult);
- }
- Ok(())
- }
+  /// =OCCT-aligned: CheckData (BOPAlgo_BOP.cxx L106-202) + CheckFiller (Builder.cxx L143-151).
+  /// Validates operation type, non-empty arguments, and DS/PaveFiller state.
+  /// OCCT form: AddError on each failure, then HasErrors check at the end.
+  fn check_data(&self) -> Result<(), BooleanError> {
+    // OCCT L132-137: if (myArguments.Extent() < 2) -> AlertTooFewArguments
+    let nb_args = self.my_arguments.borrow().len();
+    if nb_args < 2 {
+      self.my_report.borrow_mut().add_alert(crate::bopalgo::Alert::TooFewArguments);
+    }
+    // OCCT L139-141: CheckFiller -> AlertNoFiller
+    if self.ds.vertices.is_empty() {
+      self.my_report.borrow_mut().add_alert(crate::bopalgo::Alert::NoFiller);
+    }
+    // OCCT: BOPAlgo_Builder::CheckData() — parent class checks.
+    // rcad: operation type validation.
+    match self.op {
+      BooleanOpType::Union | BooleanOpType::Intersection | BooleanOpType::Difference => {}
+      _ => self.my_report.borrow_mut().add_alert(crate::bopalgo::Alert::BOPNotSet),
+    }
+    // OCCT: if (HasErrors()) return;
+    if self.my_report.borrow().has_alerts() {
+      return Err(BooleanError::InvalidOperation);
+    }
+    Ok(())
+  }
 
  ///  ?OCCT-aligned: Prepare (BOPAlgo_Builder.cxx L156-164).
  /// OCCT: BRep_Builder.MakeCompound(myShape)  ?empty compound as result.
@@ -968,8 +972,21 @@ impl<'a> BooleanBuilder<'a> {
  // OCCT L438-442: Prepare
  // rcad: prepare() initializes my_shape + returns ResultBuilder.
  let mut result = self.prepare().1;
- // OCCT-aligned: compute myDims from source topology.
- self.my_dims.set([if !self.ds.shells.is_empty() { 3 } else { 2 }; 2]);
+  // OCCT-aligned: compute myDims from argument shape types.
+  // OCCT BOPAlgo_BOP::PerformInternal1 (BOP.cxx L438):
+  //   myDims[0] = BRep_Tool::Dimension(myArguments.First());
+  //   myDims[1] = BRep_Tool::Dimension(myArguments.Last());
+  // BRep_Tool::Dimension: VERTEX=0, EDGE=1, WIRE/FACE=2, SHELL/SOLID/COMPSOLID=3.
+  // rcad: infer from per-origin shape counts in the DS.
+  let a_n_verts = self.ds.a_vertex_count;
+  let a_n_edges = self.ds.a_edge_count;
+  let a_n_faces = self.ds.a_face_count;
+  let b_n_verts = self.ds.vertices.len() - a_n_verts;
+  let b_n_edges = self.ds.edges.len() - a_n_edges;
+  let b_n_faces = self.ds.faces.len() - a_n_faces;
+  let dim_a = if a_n_faces > 0 { 3_i8 } else if a_n_edges > 0 { 1 } else if a_n_verts > 0 { 0 } else { 3 };
+  let dim_b = if b_n_faces > 0 { 3_i8 } else if b_n_edges > 0 { 1 } else if b_n_verts > 0 { 0 } else { 3 };
+  self.my_dims.set([dim_a, dim_b]);
  // OCCT L445-453: TreatEmptyShape.
  // OCCT: GetReport()->HasAlert(AlertEmptyShape) -> TreatEmptyShape() -> PrepareHistory -> return.
  // rcad: check if either operand has no faces (DS was populated by pave_fill).
