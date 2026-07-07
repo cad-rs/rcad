@@ -18,7 +18,7 @@
 | `BOPAlgo_PaveFiller::PerformEE` | EE 交线计算 (edge_edge.rs) | ⏳ | 结构等价，容差常数不同 |
 | `BOPAlgo_PaveFiller::PerformEF` | EF 交线 (edge_face.rs) | ⏳ | 部分对齐 |
 | `BOPAlgo_PaveFiller::PerformVF` | VF 交线 | ❌ | rcad 有 unique 逻辑 |
-| `BOPAlgo_PaveFiller::PerformVV` | VV → PairIterator | ✅ | 架构 A3 已修复 |
+| `BOPAlgo_PaveFiller::PerformVV` | VV → DsBvh | ✅ | OCCT 对齐 — BVH 配对 |
 | `BOPAlgo_PaveFiller::MakeBlocks` | `make_blocks` (make_blocks.rs:15) | ⏳ | 循环+变量结构与 OCCT L725-1107 大致对齐，但细节差异多 |
 | `IntTools_Context::IsVertexOnLine` | `is_vertex_on_line` (paves.rs:449) | ✅ | **刚对齐** |
 
@@ -86,7 +86,7 @@
 | `BOPDS_PaveBlock` | `PaveBlock` (pave.rs) | ✅ | |
 | `BOPDS_Pave` | `Pave` (pave.rs) | ✅ | |
 | `BOPDS_ShapeInfo` | `ShapeInfo` (types.rs) | ✅ | 标记系统已补(A4) |
-| `BOPDS_Iterator` | `DsBvh` / `PairIterator` | ✅ | VE/VF/EF 均使用 DsBvh 代替 O(n²)；VV 使用 PairIterator（需全量枚举） |
+| `BOPDS_Iterator` | `DsBvh` | ✅ | VV/VE/VF/EF 均使用 DsBvh |
 | `BOPDS_SubIterator` | 类似 | ⏳ | |
 | `BRep_Builder` 增量构建 | `ResultBuilder` + `build_edges()` | ✅ | A1 已修 |
 
