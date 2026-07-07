@@ -19,6 +19,7 @@ pub mod int_patch_line;
 pub mod int_patch_point;
 pub mod int_patch_prm_prm_intersection;
 pub mod int_patch_type;
+pub mod int_patch_wline_tool;
 pub mod int_surf_quadric;
 pub mod intss;
 pub mod marching;
