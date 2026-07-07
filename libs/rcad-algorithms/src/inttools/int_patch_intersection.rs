@@ -11,6 +11,7 @@
 
 use rcad_kernel::geom::Surface3;
 use crate::bopds::ds::IntersectionCurve;
+use glam::DVec3;
 use super::int_patch_type::IntPatchIType;
 use super::int_patch_point::IntPatchPoint;
 use super::int_patch_line::IntPatchLine;
@@ -139,31 +140,209 @@ impl IntPatchIntersection {
         let typs1 = classify_surface_type(s1);
         let typs2 = classify_surface_type(s2);
 
-        // ===== OCCT L1098-1261: Cone/Torus special treatment + ts1/ts2
-        let mut ts1: i32 = 0;
-        let mut ts2: i32 = 0;
-        let mut b_geom_geom: i32 = 0;
+        // ===== OCCT L1098-1234: Cone/Torus special treatment =====
         let mut treat_as_bi_parametric = false;
+        let mut b_geom_geom: i32 = 0;
 
-        if typs1 == GeomAbsSurfaceType::Cone
+        let has_cone_or_torus = typs1 == GeomAbsSurfaceType::Cone
             || typs2 == GeomAbsSurfaceType::Cone
             || typs1 == GeomAbsSurfaceType::Torus
-            || typs2 == GeomAbsSurfaceType::Torus
-        {
-            let has_cone = typs1 == GeomAbsSurfaceType::Cone
-                || typs2 == GeomAbsSurfaceType::Cone;
-            treat_as_bi_parametric = has_cone;
-            _ = b_geom_geom;
+            || typs2 == GeomAbsSurfaceType::Torus;
+
+        if has_cone_or_torus {
+            // OCCT L1104-1148: Cone special treatment
+            let (ct_surf, geom_surf, ct_type) = if typs1 == GeomAbsSurfaceType::Cone
+                || typs1 == GeomAbsSurfaceType::Torus
+            {
+                (s1, s2, typs1)
+            } else {
+                (s2, s1, typs2)
+            };
+
+            let mut b_to_check = false;
+            let mut ct_axis_loc = DVec3::ZERO;
+            let mut ct_axis_dir = DVec3::Z;
+
+            if typs1 == GeomAbsSurfaceType::Cone || typs2 == GeomAbsSurfaceType::Cone {
+                let cone_semi_angle = match ct_type {
+                    GeomAbsSurfaceType::Cone => match ct_surf {
+                        Surface3::Cone(c) => c.half_angle_rad,
+                        _ => 0.0,
+                    },
+                    _ => match geom_surf {
+                        Surface3::Cone(c) => c.half_angle_rad,
+                        _ => 0.0,
+                    },
+                };
+                let a1 = cone_semi_angle.abs();
+                b_to_check = a1 < 0.02 || a1 > 1.55;
+
+                if typs1 == typs2 {
+                    let a2 = match geom_surf {
+                        Surface3::Cone(c) => c.half_angle_rad.abs(),
+                        _ => 0.0,
+                    };
+                    b_to_check = b_to_check || a2 < 0.02 || a2 > 1.55;
+
+                    if a1 > 1.55 && a2 > 1.55 {
+                        // Quasi-planes: if same domain, treat as canonic
+                        match (ct_surf, geom_surf) {
+                            (Surface3::Cone(c1), Surface3::Cone(c2)) => {
+                                let apex1 = c1.apex_point();
+                                let apex2 = c2.apex_point();
+                                let dir1 = c1.axis_dir();
+                                let dist = (apex1 - apex2).dot(dir1.cross(apex1 - apex2)) / (dir1.length() * dir1.length());
+                                if dir1.dot(c2.axis_dir()).abs() > (1.0 - 1e-12) && dist.abs() < 1e-7 {
+                                    b_to_check = false;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                treat_as_bi_parametric = b_to_check;
+                if ct_type == GeomAbsSurfaceType::Cone {
+                    if let Surface3::Cone(c) = ct_surf {
+                        ct_axis_loc = c.apex;
+                        ct_axis_dir = c.axis_dir();
+                    }
+                }
+            }
+
+            // OCCT L1150-1164: Torus special treatment
+            if typs1 == GeomAbsSurfaceType::Torus || typs2 == GeomAbsSurfaceType::Torus {
+                let tor_major = match ct_type {
+                    GeomAbsSurfaceType::Torus => match ct_surf {
+                        Surface3::Torus(t) => t.major_radius,
+                        _ => 0.0,
+                    },
+                    _ => match geom_surf {
+                        Surface3::Torus(t) => t.major_radius,
+                        _ => 0.0,
+                    },
+                };
+                let tor_minor = match ct_type {
+                    GeomAbsSurfaceType::Torus => match ct_surf {
+                        Surface3::Torus(t) => t.minor_radius,
+                        _ => 0.0,
+                    },
+                    _ => match geom_surf {
+                        Surface3::Torus(t) => t.minor_radius,
+                        _ => 0.0,
+                    },
+                };
+                b_to_check = tor_major > tor_minor;
+                if typs1 == typs2 {
+                    let tor2_minor = match geom_surf {
+                        Surface3::Torus(t) => t.minor_radius,
+                        _ => 0.0,
+                    };
+                    b_to_check = b_to_check && tor2_minor > 0.0;
+                }
+                if ct_type == GeomAbsSurfaceType::Torus {
+                    if let Surface3::Torus(t) = ct_surf {
+                        ct_axis_loc = t.center;
+                        ct_axis_dir = t.axis.normalize_or_zero();
+                    }
+                }
+            }
+
+            // OCCT L1166-1233: Check axes for bGeomGeom
+            if b_to_check {
+                let ct_dir = ct_axis_dir;
+                let ct_axis_line_origin = ct_axis_loc;
+
+                let (gtype, gaxis_dir, gaxis_loc) = match geom_surf {
+                    Surface3::Plane(p) => {
+                        let gdir = p.normal;
+                        // bGeomGeom = 1 if axes parallel, or if perpendicular & origin
+                        let par = ct_dir.dot(gdir).abs();
+                        let mut bg = 1i32;
+                        if ct_type == GeomAbsSurfaceType::Cone {
+                            bg = 1;
+                            // Check if the cone semi-angle is very small
+                            if let Surface3::Cone(c) = ct_surf {
+                                if c.half_angle_rad.abs() < 0.02 {
+                                    if par < 0.015 { bg = 0; }
+                                }
+                            }
+                        } else {
+                            // Torus-Plane
+                            let normal = gdir;
+                            let cross = ct_dir.cross(normal);
+                            let perp = cross.length();
+                            let surf_center = p.origin;
+                            let dist_to_plane = (ct_axis_loc - surf_center).dot(normal).abs();
+                            if perp < 1e-10  // parallel
+                                || (perp > (1.0 - 1e-10) && dist_to_plane < 1e-7) // normal + axis thru plane
+                            {
+                                bg = 1;
+                            }
+                        }
+                        b_geom_geom = bg;
+                        b_to_check = false;
+                        (GeomAbsSurfaceType::Plane, gdir, p.origin)
+                    }
+                    Surface3::Sphere(s) => {
+                        if (ct_axis_loc - s.center).cross(ct_dir).length().abs() < 1e-7 {
+                            b_geom_geom = 1;
+                        }
+                        b_to_check = false;
+                        (GeomAbsSurfaceType::Sphere, s.axis.normalize_or_zero(), s.center)
+                    }
+                    Surface3::Cylinder(c) => {
+                        (GeomAbsSurfaceType::Cylinder, c.axis.normalize_or_zero(), c.origin)
+                    }
+                    Surface3::Cone(c) => {
+                        (GeomAbsSurfaceType::Cone, c.axis_dir(), c.apex)
+                    }
+                    Surface3::Torus(t) => {
+                        (GeomAbsSurfaceType::Torus, t.axis.normalize_or_zero(), t.center)
+                    }
+                    _ => {
+                        b_to_check = false;
+                        (GeomAbsSurfaceType::OtherSurface, DVec3::Z, DVec3::ZERO)
+                    }
+                };
+
+                // OCCT L1220-1227: remaining bToCheck cases (non-Plane/Sphere)
+                if b_to_check {
+                    let par = ct_dir.dot(gaxis_dir).abs();
+                    let dist = (ct_axis_line_origin - gaxis_loc).cross(ct_dir).length();
+                    if par > (1.0 - 1e-10) && dist < 1e-7 {
+                        b_geom_geom = 1;
+                    }
+                }
+
+                // OCCT L1229-1232: if bGeomGeom == 1, cancel TreatAsBiParametric
+                if b_geom_geom == 1 {
+                    treat_as_bi_parametric = false;
+                }
+            }
+        }
+
+        // OCCT L1242-1261: if TreatAsBiParametric, override surface types
+        // Forces typs1/typs2 to BezierSurface to route through ImpPrm or PrmPrm.
+        if treat_as_bi_parametric {
+            // rcad: does not have ImpPrm/PrmPrm sub-algorithms in OCCT form yet.
+            // When typsX is overridden to BezierSurface, OCCT routes to ImpPrm (one-side)
+            // or PrmPrm (both sides). rcad: use marching for these paths.
         }
 
         // ===== OCCT L1264-1294: ts1/ts2 classification
-        ts1 = match typs1 {
+        // Surface type definition: 1=analytic (geom), 0=parametric
+        // OCCT L1264-1278:
+        //   Plane, Cylinder, Sphere, Cone → ts=1
+        //   Torus → ts = bGeomGeom (0 normally, 1 if coaxial with compatible analytic surface)
+        //   BSpline/Bezier/etc → ts=0
+        let ts1 = match typs1 {
             GeomAbsSurfaceType::Plane | GeomAbsSurfaceType::Cylinder
             | GeomAbsSurfaceType::Sphere | GeomAbsSurfaceType::Cone => 1,
             GeomAbsSurfaceType::Torus => b_geom_geom,
             _ => 0,
         };
-        ts2 = match typs2 {
+        let ts2 = match typs2 {
             GeomAbsSurfaceType::Plane | GeomAbsSurfaceType::Cylinder
             | GeomAbsSurfaceType::Sphere | GeomAbsSurfaceType::Cone => 1,
             GeomAbsSurfaceType::Torus => b_geom_geom,
