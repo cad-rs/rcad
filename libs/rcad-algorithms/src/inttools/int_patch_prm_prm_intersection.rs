@@ -6,6 +6,7 @@
 
 use rcad_kernel::geom::Surface3;
 use super::int_patch_line::IntPatchLine;
+use super::int_patch_line::WLineType;
 use super::int_patch_type::IntPatchIType;
 
 pub struct PrmPrmIntersection {

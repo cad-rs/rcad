@@ -438,6 +438,7 @@ impl IntPatchIntersection {
             pcurve2: c.pcurve2,
             tolerance: c.tolerance,
             tang_tolerance: c.tang_tolerance,
+            wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown,
         }).collect();
         self.empt = self.slin.is_empty();
         self.done = true;
@@ -489,6 +490,7 @@ impl IntPatchIntersection {
             pcurve2: c.pcurve2,
             tolerance: c.tolerance,
             tang_tolerance: c.tang_tolerance,
+            wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown,
         }).collect();
         self.empt = self.slin.is_empty();
         self.done = true;

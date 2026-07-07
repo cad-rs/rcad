@@ -9,6 +9,7 @@ use rcad_kernel::geom::{Curve3, Surface3};
 use super::int_surf_quadric::Quadric;
 use super::int_ana_quad_quad_geo::{QuadQuadGeo, AnaResultType};
 use super::int_patch_line::IntPatchLine;
+use super::int_patch_line::WLineType;
 use super::int_patch_point::IntPatchPoint;
 use super::int_patch_type::IntPatchIType;
 use super::geom_abs_surface_type::GeomAbsSurfaceType;
@@ -164,6 +165,7 @@ impl ImpImpIntersection {
                 line_type, curve: c, t_range: [0.0, 1.0],
                 pcurve1: None, pcurve2: None,
                 tolerance: 1e-7, tang_tolerance: 1e-7,
+                wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown,
             });
         }
         self.my_done = IntStatus::OK;
@@ -184,7 +186,7 @@ impl ImpImpIntersection {
                     self.slin.push(IntPatchLine {
                         line_type: IntPatchIType::Line, curve: c, t_range: [-1e10, 1e10],
                         pcurve1: None, pcurve2: None, tolerance: 1e-7, tang_tolerance: 1e-7,
-                        wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: WLineType::Unknown,
+                wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown,
                     });
                 }
                 self.empt = false;
@@ -232,6 +234,7 @@ impl ImpImpIntersection {
                         curve: Curve3::Line(l), t_range: [-1e10, 1e10],
                         pcurve1: None, pcurve2: None,
                         tolerance: 1e-7, tang_tolerance: 1e-7,
+                wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown,
                     });
                 }
                 self.empt = false; self.my_done = IntStatus::OK;
@@ -243,6 +246,7 @@ impl ImpImpIntersection {
                     curve: Curve3::Ellipse(e), t_range: [0.0, std::f64::consts::TAU],
                     pcurve1: None, pcurve2: None,
                     tolerance: 1e-7, tang_tolerance: 1e-7,
+                wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown,
                 });
                 self.empt = false; self.my_done = IntStatus::OK;
             }
@@ -299,6 +303,7 @@ impl ImpImpIntersection {
                     curve: Curve3::Circle(c), t_range: [0.0, std::f64::consts::TAU],
                     pcurve1: None, pcurve2: None,
                     tolerance: 1e-7, tang_tolerance: 1e-7,
+                wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown,
                 });
                 self.empt = false; self.my_done = IntStatus::OK;
             }
@@ -345,7 +350,7 @@ impl ImpImpIntersection {
                 line_type, curve: c, t_range,
                 pcurve1: None, pcurve2: None,
                 tolerance: 1e-7, tang_tolerance: 1e-7,
-                wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: WLineType::Unknown,
+                wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown,
             });
         }
         self.my_done = IntStatus::OK;

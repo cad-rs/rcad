@@ -6,6 +6,7 @@
 
 use rcad_kernel::geom::Surface3;
 use super::int_patch_line::IntPatchLine;
+use super::int_patch_line::WLineType;
 use super::int_patch_type::IntPatchIType;
 use super::int_surf_quadric::Quadric;
 
@@ -47,7 +48,7 @@ impl ImpPrmIntersection {
             pcurve1: c.pcurve1, pcurve2: c.pcurve2,
             tolerance: c.tolerance, tang_tolerance: c.tang_tolerance,
             wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: WLineType::Unknown,
-        });
+        }).collect();
         self.empt = self.slin.is_empty(); self.done = true;
     }
 }
