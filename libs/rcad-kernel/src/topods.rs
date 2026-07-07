@@ -161,6 +161,10 @@ impl ShapeRef {
         let ptr_id = Arc::as_ptr(tshape) as u64;
         Self { ptr_id, index, orientation, location }
     }
+    /// OCCT-aligned: return a copy with a different TopLoc_Location index.
+    pub const fn with_location(self, location: u32) -> Self {
+        Self { location, ..self }
+    }
     /// OCCT TopoDS_Shape::IsNull — true if this ShapeRef is null/uninitialized.
     pub const fn is_null(&self) -> bool {
         self.index == usize::MAX
