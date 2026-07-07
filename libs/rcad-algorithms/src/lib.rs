@@ -85,6 +85,7 @@ pub use geom2d_api::{
 // pub mod adaptor3d; -- removed (triggers rustc ICE on 1.94.1)
 pub mod approx_int;
 pub mod adv_app2_var;
+pub mod app_cont;
 pub mod array;
 pub mod blend;
 mod bop_occt_union;
@@ -101,10 +102,12 @@ pub mod els_lib;
 pub mod extrema;
 pub mod fillet;
 pub mod gcpnts;
+pub mod gc_make;
 pub mod geom2d_api;
 pub mod int_ana;
 pub mod inttools;
 pub mod law;
+pub mod lprop_cur_and_inf;
 pub mod maker_volume;
 pub mod math_utils;
 pub mod medial_axis;
