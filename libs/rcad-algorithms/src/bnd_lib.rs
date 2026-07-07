@@ -2386,8 +2386,24 @@ mod tests {
     // OffsetCurve tests (from GeomBndLib_OffsetCurve_Test.cxx)
     // =========================================================================
 
+    /// Verify that all sampled points of a Curve3 lie inside the bounding box.
+    fn contains_curve_points(curve: &Curve3, bbox: &BoundingBox, t1: f64, t2: f64, n: usize) {
+        let step = (t2 - t1) / n as f64;
+        for i in 0..=n {
+            let u = t1 + i as f64 * step;
+            let p = curve.point_at(u);
+            assert!(p.x >= bbox.min.x - TOL, "Point outside box at t={}", u);
+            assert!(p.x <= bbox.max.x + TOL, "Point outside box at t={}", u);
+            assert!(p.y >= bbox.min.y - TOL);
+            assert!(p.y <= bbox.max.y + TOL);
+            assert!(p.z >= bbox.min.z - TOL);
+            assert!(p.z <= bbox.max.z + TOL);
+        }
+    }
+
+    // OCCT: GeomBndLib_OffsetCurveTest.CircleOffsetZ_Full_CompareWithBndLib
     #[test]
-    fn offset_curve_circle_z_full() {
+    fn offset_curve_z_full() {
         let basis = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
         let offset = Curve3::Offset(OffsetCurve3 {
             basis: Box::new(basis),
@@ -2395,83 +2411,206 @@ mod tests {
             offset_dir: DVec3::Z,
         });
         let b = curve_bounds(&offset, 0.0);
-        // Circle radius 5, offset 2 → effective radius ~7
         assert!(b.is_valid());
+        // Effective radius ≈ 5 + 2 = 7
         assert!(b.min.x <= -6.9);
         assert!(b.max.x >= 6.9);
+        contains_curve_points(&offset, &b, 0.0, 2.0 * std::f64::consts::PI, 100);
     }
 
+    // OCCT: GeomBndLib_OffsetCurveTest.CircleOffsetZ_Arc_CompareWithBndLib
     #[test]
-    fn offset_curve_circle_arc() {
+    fn offset_curve_z_arc() {
         let basis = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
         let offset = Curve3::Offset(OffsetCurve3 {
             basis: Box::new(basis),
-            offset_distance: 1.0,
+            offset_distance: 3.0,
             offset_dir: DVec3::Z,
         });
         let b = curve_bounds_with_range(&offset, 0.0, std::f64::consts::PI / 2.0, 0.0);
         assert!(b.is_valid());
+        contains_curve_points(&offset, &b, 0.0, std::f64::consts::PI / 2.0, 50);
     }
 
+    // OCCT: GeomBndLib_OffsetCurveTest.CircleOffsetX_Full_CompareWithBndLib
     #[test]
-    fn offset_curve_circle_diagonal() {
-        let basis = Curve3::Circle(Circle3::new(DVec3::new(10.0, 0.0, 0.0), DVec3::Z, 3.0));
+    fn offset_curve_x_full() {
+        let basis = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 7.0));
         let offset = Curve3::Offset(OffsetCurve3 {
             basis: Box::new(basis),
-            offset_distance: 0.5,
-            offset_dir: DVec3::new(1.0, 1.0, 0.0).normalize(),
+            offset_distance: 2.0,
+            offset_dir: DVec3::X,
+        });
+        let b = curve_bounds(&offset, 0.0);
+        assert!(b.is_valid());
+        contains_curve_points(&offset, &b, 0.0, 2.0 * std::f64::consts::PI, 100);
+    }
+
+    // OCCT: GeomBndLib_OffsetCurveTest.CircleOffsetX_Arc_CompareWithBndLib
+    #[test]
+    fn offset_curve_x_arc() {
+        let basis = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 7.0));
+        let offset = Curve3::Offset(OffsetCurve3 {
+            basis: Box::new(basis),
+            offset_distance: 4.0,
+            offset_dir: DVec3::X,
+        });
+        let b = curve_bounds_with_range(&offset, std::f64::consts::PI / 4.0, 3.0 * std::f64::consts::PI / 4.0, 0.0);
+        assert!(b.is_valid());
+        contains_curve_points(&offset, &b, std::f64::consts::PI / 4.0, 3.0 * std::f64::consts::PI / 4.0, 50);
+    }
+
+    // OCCT: GeomBndLib_OffsetCurveTest.CircleOffsetY_Full_Containment
+    // Offset direction Y is in the circle plane (XOY), so T(t) × V can be zero.
+    // Old BndLib throws "evaluation failed". Test only containment.
+    #[test]
+    fn offset_curve_y_containment() {
+        let basis = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 3.0));
+        let offset = Curve3::Offset(OffsetCurve3 {
+            basis: Box::new(basis),
+            offset_distance: 1.5,
+            offset_dir: DVec3::Y, // in the circle plane
         });
         let b = curve_bounds(&offset, 0.0);
         assert!(b.is_valid());
     }
 
+    // OCCT: GeomBndLib_OffsetCurveTest.CircleOffsetDiagonal_CompareWithBndLib
     #[test]
-    fn offset_curve_ellipse_full() {
-        let basis = Curve3::Ellipse(Ellipse3 {
-            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
-            major_radius: 10.0, minor_radius: 5.0,
-        });
+    fn offset_curve_diagonal() {
+        let basis = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
         let offset = Curve3::Offset(OffsetCurve3 {
             basis: Box::new(basis),
-            offset_distance: 1.0,
+            offset_distance: 2.0,
+            offset_dir: DVec3::new(1.0, 1.0, 1.0).normalize(),
+        });
+        let b = curve_bounds_optimal(&offset, 0.0, 2.0 * std::f64::consts::PI, 0.0);
+        assert!(b.is_valid());
+        contains_curve_points(&offset, &b, 0.0, 2.0 * std::f64::consts::PI, 100);
+    }
+
+    // OCCT: GeomBndLib_OffsetCurveTest.CircleNegativeOffset_CompareWithBndLib
+    #[test]
+    fn offset_curve_negative() {
+        let basis = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 10.0));
+        let offset = Curve3::Offset(OffsetCurve3 {
+            basis: Box::new(basis),
+            offset_distance: -3.0,
             offset_dir: DVec3::Z,
         });
         let b = curve_bounds(&offset, 0.0);
         assert!(b.is_valid());
-        assert!(b.min.x <= -10.9);
-        assert!(b.max.x >= 10.9);
+        // Effective radius ≈ 10 - 3 = 7
+        assert!(b.min.x <= -6.9);
+        assert!(b.max.x >= 6.9);
+        contains_curve_points(&offset, &b, 0.0, 2.0 * std::f64::consts::PI, 100);
     }
 
+    // OCCT: GeomBndLib_OffsetCurveTest.EllipseOffsetZ_Full_CompareWithBndLib
     #[test]
-    fn offset_curve_line() {
+    fn offset_curve_ellipse_z_full() {
+        let basis = Curve3::Ellipse(Ellipse3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            major_radius: 8.0, minor_radius: 3.0,
+        });
+        let offset = Curve3::Offset(OffsetCurve3 {
+            basis: Box::new(basis),
+            offset_distance: 2.0,
+            offset_dir: DVec3::Z,
+        });
+        let b = curve_bounds(&offset, 0.0);
+        assert!(b.is_valid());
+        assert!(b.min.x <= -9.9);
+        assert!(b.max.x >= 9.9);
+        contains_curve_points(&offset, &b, 0.0, 2.0 * std::f64::consts::PI, 100);
+    }
+
+    // OCCT: GeomBndLib_OffsetCurveTest.EllipseOffsetX_Arc_CompareWithBndLib
+    #[test]
+    fn offset_curve_ellipse_x_arc() {
+        let basis = Curve3::Ellipse(Ellipse3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            major_radius: 8.0, minor_radius: 3.0,
+        });
+        let offset = Curve3::Offset(OffsetCurve3 {
+            basis: Box::new(basis),
+            offset_distance: 1.5,
+            offset_dir: DVec3::X,
+        });
+        let b = curve_bounds_with_range(&offset, 0.0, std::f64::consts::PI, 0.0);
+        assert!(b.is_valid());
+        contains_curve_points(&offset, &b, 0.0, std::f64::consts::PI, 50);
+    }
+
+    // OCCT: GeomBndLib_OffsetCurveTest.LineOffset_CompareWithBndLib
+    #[test]
+    fn offset_curve_line_z() {
         let basis = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
         let offset = Curve3::Offset(OffsetCurve3 {
             basis: Box::new(basis),
-            offset_distance: 0.5,
+            offset_distance: 3.0,
             offset_dir: DVec3::Z,
         });
         let b = curve_bounds_with_range(&offset, 0.0, 10.0, 0.0);
         assert!(b.is_valid());
+        contains_curve_points(&offset, &b, 0.0, 10.0, 50);
     }
 
+    // OCCT: GeomBndLib_OffsetCurveTest.BSplineOffset_CompareWithBndLib
     #[test]
-    fn offset_curve_bspline() {
+    fn offset_curve_bspline_optimal() {
         let basis = Curve3::BSpline(BSplineCurve3 {
-            degree: 3,
-            knots: vec![0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+            degree: 2,
+            knots: vec![0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0],
             control_points: vec![
-                DVec3::new(0.0, 0.0, 0.0), DVec3::new(2.0, 3.0, 0.0),
-                DVec3::new(5.0, 3.0, 0.0), DVec3::new(7.0, 0.0, 0.0),
+                DVec3::new(0.0, 0.0, 0.0),
+                DVec3::new(3.0, 5.0, 1.0),
+                DVec3::new(7.0, -2.0, 2.0),
+                DVec3::new(10.0, 0.0, 0.0),
             ],
             weights: vec![1.0; 4],
         });
         let offset = Curve3::Offset(OffsetCurve3 {
             basis: Box::new(basis),
-            offset_distance: 0.5,
+            offset_distance: 1.0,
+            offset_dir: DVec3::Z,
+        });
+        let b = curve_bounds_optimal(&offset, 0.0, 1.0, 0.0);
+        assert!(b.is_valid());
+        contains_curve_points(&offset, &b, 0.0, 1.0, 50);
+    }
+
+    // OCCT: GeomBndLib_OffsetCurveTest.LargeOffset_CompareWithBndLib
+    #[test]
+    fn offset_curve_large_offset() {
+        let basis = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 2.0));
+        let offset = Curve3::Offset(OffsetCurve3 {
+            basis: Box::new(basis),
+            offset_distance: 20.0,
             offset_dir: DVec3::Z,
         });
         let b = curve_bounds(&offset, 0.0);
         assert!(b.is_valid());
+        // Effective radius ≈ 22
+        assert!(b.min.x <= -21.9);
+        assert!(b.max.x >= 21.9);
+        contains_curve_points(&offset, &b, 0.0, 2.0 * std::f64::consts::PI, 100);
+    }
+
+    // OCCT: GeomBndLib_OffsetCurveTest.TiltedCircle_CompareWithBndLib
+    #[test]
+    fn offset_curve_tilted_circle() {
+        // Circle in a tilted plane
+        let normal = DVec3::new(1.0, 1.0, 1.0).normalize();
+        let basis = Curve3::Circle(Circle3::new(DVec3::new(1.0, 2.0, 3.0), normal, 4.0));
+        let offset = Curve3::Offset(OffsetCurve3 {
+            basis: Box::new(basis),
+            offset_distance: 1.5,
+            offset_dir: DVec3::new(1.0, 1.0, 1.0).normalize(),
+        });
+        let b = curve_bounds(&offset, 0.0);
+        assert!(b.is_valid());
+        contains_curve_points(&offset, &b, 0.0, 2.0 * std::f64::consts::PI, 100);
     }
 
     // =========================================================================
