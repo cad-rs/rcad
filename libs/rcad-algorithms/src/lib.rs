@@ -29,6 +29,7 @@ pub mod brep_lib;
 pub mod brep_repair;
 pub mod brep_tools;
 pub mod brep_top_adaptor;
+pub mod bspline_approx_interp;
 pub mod bspline_edit;
 pub mod boptools;
 pub mod bopalgo;
