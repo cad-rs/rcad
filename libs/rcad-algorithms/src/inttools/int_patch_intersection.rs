@@ -477,22 +477,18 @@ impl IntPatchIntersection {
         _typs1: GeomAbsSurfaceType,
         _typs2: GeomAbsSurfaceType,
     ) {
-        // OCCT: IntPatch_ImpPrmIntersection inter;
-        // inter.Perform(S1, D1, S2, D2, TolTang, ...);
-        // rcad: use marching/numeric intersection
-        let curves = crate::inttools::face_face::intersect_faces(s1, s2,
-            self.my_tol_arc, self.my_tol_tang);
-        self.slin = curves.into_iter().map(|c| IntPatchLine {
-            line_type: IntPatchIType::Walking,
-            curve: c.curve,
-            t_range: c.t_range,
-            pcurve1: c.pcurve1,
-            pcurve2: c.pcurve2,
-            tolerance: c.tolerance,
-            tang_tolerance: c.tang_tolerance,
-            wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown,
-        }).collect();
-        self.empt = self.slin.is_empty();
-        self.done = true;
+        // OCCT L232-238: IntPatch_ImpPrmIntersection inter;
+        // inter.Perform(S1, D1, S2, D2, TolArc, TolTang, myFleche, myUVMaxStep);
+        let mut imp_prm = crate::pave_filler::imp_prm::ImpPrmIntersection::new();
+        imp_prm.perform(s1, s2, self.my_tol_arc, self.my_tol_tang, self.my_fleche, self.my_uv_max_step);
+        if imp_prm.is_done() {
+            // Transfer intersection lines
+            let nbl = imp_prm.nb_lines();
+            for i in 0..nbl {
+                self.slin.push(imp_prm.line(i).clone());
+            }
+            self.empt = self.slin.is_empty();
+            self.done = imp_prm.is_done();
+        }
     }
 }
