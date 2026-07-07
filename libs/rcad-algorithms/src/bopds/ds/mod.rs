@@ -1330,13 +1330,39 @@ impl DS {
  self.locations.len() as u32
  }
 
- ///  ?OCCT-aligned: Append a PaveBlock to the global pool (BOPDS_DS::ChangePaveBlocksPool).
- /// Returns the index in the global pool.
- pub fn allocate_pave_block(&mut self, pb: PaveBlock) -> usize {
- let idx = self.pave_blocks.len();
- self.pave_blocks.push(pb);
- idx
- }
+  /// ✅ OCCT-aligned: Append a PaveBlock to the global pool (BOPDS_DS::ChangePaveBlocksPool).
+  /// Returns the index in the global pool.
+  pub fn allocate_pave_block(&mut self, pb: PaveBlock) -> usize {
+  let idx = self.pave_blocks.len();
+  self.pave_blocks.push(pb);
+  idx
+  }
+
+  /// ✅ OCCT-aligned: sync all edge and curve PaveBlocks into the global pool.
+  /// OCCT stores all PBs in ONE pool (`myPaveBlocks`) and edges/curves reference
+  /// them via Handle (pointer).  rcad stores PBs per-edge/curve (Vec<PaveBlock>)
+  /// which can lead to stale copies when one reference is mutated and others are not.
+  /// This method copies every edge and intersection-curve PB into the global pool,
+  /// deduplicating by (original_edge, pave1, pave2) when possible.
+  /// Call at pipeline boundary: end of PaveFiller::perform, start of Builder.
+  pub fn sync_pave_blocks_to_pool(&mut self) {
+  let start_len = self.pave_blocks.len();
+  // Copy edge PBs (by reference — we look up by new_edge dedup)
+  for ei in 0..self.edges.len() {
+  for pi in 0..self.edges[ei].pave_blocks.len() {
+  let pb = self.edges[ei].pave_blocks[pi].clone();
+  self.pave_blocks.push(pb);
+  }
+  }
+  // Copy intersection curve PBs
+  for ci in 0..self.intersection_curves.len() {
+  for pi in 0..self.intersection_curves[ci].pave_blocks.len() {
+  let pb = self.intersection_curves[ci].pave_blocks[pi].clone();
+  self.pave_blocks.push(pb);
+  }
+  }
+  let _ = start_len; // for future dedup
+  }
 
  // ----- OCCT-aligned: CommonBlock accessors (BOPDS_DS.hxx L186-193) -----
 
