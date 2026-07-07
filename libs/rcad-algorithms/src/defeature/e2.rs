@@ -56,7 +56,7 @@ pub fn identify_small_faces(brep: &BRep, max_area: f64) -> Vec<usize> {
 fn make_fill_cylinder(
     feature: &CylindricalFeature,
     margin: f64,
-) -> Result<BRep, rcad_modeling::BuildError> {
+) -> Result<topods::BRep, rcad_modeling::BuildError> {
     let ax = feature.axis;
     let height = feature.height() + 2.0 * margin;
     // Base center of the fill cylinder (slightly below t_min).
@@ -73,7 +73,7 @@ fn make_fill_cylinder(
 fn make_boss_cylinder(
     feature: &CylindricalFeature,
     margin: f64,
-) -> Result<BRep, rcad_modeling::BuildError> {
+) -> Result<topods::BRep, rcad_modeling::BuildError> {
     // Same geometry as hole fill -> boolean Difference is used instead of Union.
     make_fill_cylinder(feature, margin)
 }
@@ -143,17 +143,18 @@ pub fn defeature_brep(
                 }
                 match make_fill_cylinder(feature, margin) {
                     Ok(fill) => {
+                        let fill_old = rcad_kernel::BRep::from_topods(&fill);
                         let result = if options.enable_retry {
                             try_boolean_with_retry(
                                 BooleanOpType::Union,
                                 &current,
-                                &fill,
+                                &fill_old,
                                 options.retry_fuzzy_multiplier,
                                 options.max_retries,
                                 &mut report,
                             )
                         } else {
-                            boolean_op(BooleanOpType::Union, &current, &fill)
+                            boolean_op(BooleanOpType::Union, &current, &fill_old)
                                 .map(|b| (rcad_kernel::BRep::from_topods(&b), false))
                         };
                         match result {
@@ -179,17 +180,18 @@ pub fn defeature_brep(
                 }
                 match make_boss_cylinder(feature, margin) {
                     Ok(boss) => {
+                        let boss_old = rcad_kernel::BRep::from_topods(&boss);
                         let result = if options.enable_retry {
                             try_boolean_with_retry(
                                 BooleanOpType::Difference,
                                 &current,
-                                &boss,
+                                &boss_old,
                                 options.retry_fuzzy_multiplier,
                                 options.max_retries,
                                 &mut report,
                             )
                         } else {
-                            boolean_op(BooleanOpType::Difference, &current, &boss)
+                            boolean_op(BooleanOpType::Difference, &current, &boss_old)
                                 .map(|b| (rcad_kernel::BRep::from_topods(&b), false))
                         };
                         match result {
@@ -227,17 +229,18 @@ pub fn defeature_brep(
             // A proper implementation would construct a conical solid.
             match make_fill_cone(feature, options.fill_margin) {
                 Ok(fill) => {
+                    let fill_old = rcad_kernel::BRep::from_topods(&fill);
                     let result = if options.enable_retry {
                         try_boolean_with_retry(
                             BooleanOpType::Union,
                             &current,
-                            &fill,
+                            &fill_old,
                             options.retry_fuzzy_multiplier,
                             options.max_retries,
                             &mut report,
                         )
                     } else {
-boolean_op(BooleanOpType::Union, &current, &fill)
+ boolean_op(BooleanOpType::Union, &current, &fill_old)
                                 .map(|b| (rcad_kernel::BRep::from_topods(&b), false))
                     };
                     match result {
@@ -323,7 +326,7 @@ fn try_boolean_with_retry(
 fn make_fill_cone(
     feature: &ConicalFeature,
     margin: f64,
-) -> Result<BRep, rcad_modeling::BuildError> {
+) -> Result<topods::BRep, rcad_modeling::BuildError> {
     // Use the reference radius and height to build an approximating cylinder.
     let ax = feature.axis;
     let height = (feature.t_max - feature.t_min).max(0.0) + 2.0 * margin;
@@ -585,6 +588,7 @@ fn process_feature_group(
             };
 
             if let Ok(fill) = fill_result {
+                let fill_old = rcad_kernel::BRep::from_topods(&fill);
                 let op = if feature.is_hole {
                     BooleanOpType::Union
                 } else {
@@ -604,10 +608,10 @@ fn process_feature_group(
                     };
 
                     report.base.retry_attempts += 1;
-                    boolean_op_robust(op, &current, &fill, robust_opts)
+                    boolean_op_robust(op, &current, &fill_old, robust_opts)
                         .map(|(b, _)| b)
                 } else {
-                    boolean_op(op, &current, &fill).map(|b| rcad_kernel::BRep::from_topods(&b))
+                    boolean_op(op, &current, &fill_old).map(|b| rcad_kernel::BRep::from_topods(&b))
                 };
 
                 match result {
@@ -642,12 +646,16 @@ fn process_feature_group(
 
     // Process conical features
     for &idx in &group.conical_indices {
-        if let Some(feature) = conical_features.get(idx)
-            && feature.is_hole
-                && let Ok(fill) = make_fill_cone(feature, margin)
-                    && boolean_op(BooleanOpType::Union, &current, &fill).is_ok() {
+        if let Some(feature) = conical_features.get(idx) {
+            if feature.is_hole {
+                if let Ok(fill) = make_fill_cone(feature, margin) {
+                    let fill_old = rcad_kernel::BRep::from_topods(&fill);
+                    if boolean_op(BooleanOpType::Union, &current, &fill_old).is_ok() {
                         report.base.conical_features_removed += 1;
                     }
+                }
+            }
+        }
     }
 
     Ok(current)

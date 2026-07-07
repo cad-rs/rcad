@@ -1,7 +1,7 @@
 use glam::DVec3;
 
 use rcad_kernel::{
-    BRep, CurveEval, SurfaceEval,
+    topods, BRep, CurveEval, SurfaceEval,
     geom::{Curve3, Surface3, Plane},
     topology::{Edge, Face, Shell, Solid, Vertex, Wire},
 };
@@ -418,7 +418,7 @@ pub fn offset_polygon_2d(polygon: &[glam::DVec2], distance: f64) -> Vec<glam::DV
 }
 
 /// Build an offset BRep for a prismatic solid using the 2D polygon offset.
-pub fn build_offset_prism(info: &PrismaticInfo, distance: f64) -> Option<BRep> {
+pub fn build_offset_prism(info: &PrismaticInfo, distance: f64) -> Option<topods::BRep> {
     let d = distance;
 
     let poly_2d = project_to_2d(&info.polygon_3d, info.cap_normal);

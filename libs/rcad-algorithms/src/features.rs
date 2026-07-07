@@ -104,7 +104,7 @@ fn axis_ref_basis(axis: DVec3, ref_dir: DVec3) -> Result<(DVec3, DVec3, DVec3), 
 /// For through holes, pass a `depth` larger than the part thickness along
 /// `axis`.
 pub fn make_cylindrical_hole(
-    target: &BRep,
+    target: &topods::BRep,
     center: DVec3,
     axis: DVec3,
     ref_dir: DVec3,
@@ -119,11 +119,12 @@ pub fn make_cylindrical_hole(
 
     let (x_axis, y_axis, z_axis) = axis_ref_basis(axis, ref_dir)?;
 
-    let mut tool = BRep::from_primitive(PrimitiveSolid::Cylinder { radius, height: depth });
-    let rot = DMat3::from_cols(x_axis, y_axis, z_axis);
-    tool.apply_transform(DAffine3::from_mat3_translation(rot, center));
-
-    Ok(rcad_kernel::BRep::from_topods(&boolean_op(BooleanOpType::Difference, target, &tool)?))
+    let tool_center = center - axis * (depth * 0.5);
+    let tool = rcad_modeling::make_cylinder_brep(tool_center, z_axis, x_axis, radius, depth)
+        .map_err(|_| FeatureError::InvalidInput("failed to build tool cylinder"))?;
+    let target_old = rcad_kernel::BRep::from_topods(target);
+    let tool_old = rcad_kernel::BRep::from_topods(&tool);
+    Ok(boolean_op(BooleanOpType::Difference, &target_old, &tool_old)?)
 }
 
 /// Extrude a closed planar polygon into a solid prism (no boolean against a target).
@@ -179,7 +180,7 @@ pub fn revolve_polygon_solid(
 ///
 /// Analogous to OCCT `BRepFeat_MakePrism` for linear boss/pocket features.
 pub fn make_prism(
-    target: &BRep,
+    target: &topods::BRep,
     profile_verts: &[DVec3],
     direction: DVec3,
     depth: f64,
@@ -192,7 +193,9 @@ pub fn make_prism(
     let depth = validate_positive("depth", depth)?;
 
     let tool = build_polygon_prism(profile_verts, dir, depth)?;
-    Ok(rcad_kernel::BRep::from_topods(&boolean_op(op, target, &tool)?))
+    let target_old = rcad_kernel::BRep::from_topods(target);
+    let tool_old = rcad_kernel::BRep::from_topods(&tool);
+    Ok(boolean_op(op, &target_old, &tool_old)?)
 }
 
 /// Create a drafted prismatic boss or pocket by extruding a polygon profile
@@ -203,7 +206,7 @@ pub fn make_prism(
 ///
 /// Analogous to OCCT `BRepFeat_MakeDPrism` (linear draft prism).
 pub fn make_draft_prism(
-    target: &BRep,
+    target: &topods::BRep,
     profile_verts: &[DVec3],
     direction: DVec3,
     depth: f64,
@@ -240,7 +243,9 @@ pub fn make_draft_prism(
         .collect();
 
     let tool = build_prism_from_sections(&bot, &top, dir)?;
-    Ok(rcad_kernel::BRep::from_topods(&boolean_op(op, target, &tool)?))
+    let target_old = rcad_kernel::BRep::from_topods(target);
+    let tool_old = rcad_kernel::BRep::from_topods(&tool);
+    Ok(boolean_op(op, &target_old, &tool_old)?)
 }
 
 /// Create a revolution boss/pocket feature from a planar profile.
@@ -250,7 +255,7 @@ pub fn make_draft_prism(
 ///
 /// Analogous to OCCT `BRepFeat_MakeRevol` for linear profile faces.
 pub fn make_revolution(
-    target: &BRep,
+    target: &topods::BRep,
     profile_verts: &[DVec3],
     axis_origin: DVec3,
     axis_dir: DVec3,
@@ -268,8 +273,9 @@ pub fn make_revolution(
 
     let profile = build_polygon_face_brep(profile_verts)?;
     let tool = rcad_modeling::revolve(&profile, 0, axis_origin, axis_dir, angle_rad)?;
-
-    Ok(rcad_kernel::BRep::from_topods(&boolean_op(op, target, &tool)?))
+    let target_old = rcad_kernel::BRep::from_topods(target);
+    let tool_old = rcad_kernel::BRep::from_topods(&tool);
+    Ok(boolean_op(op, &target_old, &tool_old)?)
 }
 
 fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<topods::BRep, FeatureError> {
@@ -304,6 +310,10 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<topods::BRep, Feat
         outer_wire: wire,
         inner_wires: Vec::new(),
         triangles: Vec::new(),
+        normal: DVec3::Z,
+        sample_point: None,
+        mesh_dirty: true,
+        surface_idx: None,
     };
     brep.solids.push(Solid {
         shells: vec![Shell { faces: vec![face] }],
@@ -416,7 +426,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
     }
 
     brep.solids.push(Solid { shells: vec![Shell { faces }] });
-    Ok(brep)
+    Ok(brep.to_topods())
 }
 
 #[cfg(test)]
@@ -768,7 +778,7 @@ pub fn split_face_by_wire(
 ///
 /// Analogous to OCCT `BRepFeat_MakeLinearForm`.
 pub fn make_linear_rib(
-    target: &BRep,
+    target: &topods::BRep,
     profile_verts: &[DVec3],
     direction: DVec3,
     depth: f64,
@@ -781,7 +791,7 @@ pub fn make_linear_rib(
 ///
 /// Analogous to OCCT `BRepFeat_MakeRevolutionForm`.
 pub fn make_revolution_rib(
-    target: &BRep,
+    target: &topods::BRep,
     profile_verts: &[DVec3],
     axis_origin: DVec3,
     axis_dir: DVec3,

@@ -1033,12 +1033,13 @@ where
 
     // Build the fill solid
     let fill_brep = feature.to_fill_brep();
+    let fill_old = rcad_kernel::BRep::from_topods(&fill_brep);
 
     // Perform the boolean operation
     let result = if feature.is_removal_by_union() {
-        boolean_op(BooleanOpType::Union, brep, &fill_brep)
+        boolean_op(BooleanOpType::Union, brep, &fill_old)
     } else {
-        boolean_op(BooleanOpType::Difference, brep, &fill_brep)
+        boolean_op(BooleanOpType::Difference, brep, &fill_old)
     };
 
     let mut result_brep = match result {
@@ -1062,14 +1063,14 @@ where
 /// Trait for converting a feature to a B-Rep for removal operations.
 pub trait FeatureToBRep {
     /// Convert the feature to a B-Rep solid for filling/removal.
-    fn to_fill_brep(&self) -> BRep;
+    fn to_fill_brep(&self) -> topods::BRep;
 
     /// Whether the feature is removed by union (true) or difference (false).
     fn is_removal_by_union(&self) -> bool;
 }
 
 impl FeatureToBRep for CylindricalFeature {
-    fn to_fill_brep(&self) -> BRep {
+    fn to_fill_brep(&self) -> topods::BRep {
         make_fill_cylinder(self, DEFAULT_FILL_MARGIN).unwrap_or_default()
     }
 
@@ -1079,7 +1080,7 @@ impl FeatureToBRep for CylindricalFeature {
 }
 
 impl FeatureToBRep for PocketFeature {
-    fn to_fill_brep(&self) -> BRep {
+    fn to_fill_brep(&self) -> topods::BRep {
         // Build a fill solid for the pocket
         // For circular pockets, use a cylinder
         // For rectangular pockets, use a box
@@ -1117,7 +1118,7 @@ impl FeatureToBRep for PocketFeature {
 }
 
 impl FeatureToBRep for BossFeature {
-    fn to_fill_brep(&self) -> BRep {
+    fn to_fill_brep(&self) -> topods::BRep {
         // Build a solid representing the boss for removal
         if self.is_circular {
             let radius = self.diameter / 2.0;
@@ -1154,10 +1155,10 @@ impl FeatureToBRep for BossFeature {
 }
 
 impl FeatureToBRep for FilletFeature {
-    fn to_fill_brep(&self) -> BRep {
+    fn to_fill_brep(&self) -> topods::BRep {
         // Fillet removal is complex - would need to reconstruct the sharp edge
         // For now, return an empty BRep
-        BRep::default()
+        topods::BRep::new()
     }
 
     fn is_removal_by_union(&self) -> bool {
@@ -1166,10 +1167,10 @@ impl FeatureToBRep for FilletFeature {
 }
 
 impl FeatureToBRep for ChamferFeature {
-    fn to_fill_brep(&self) -> BRep {
+    fn to_fill_brep(&self) -> topods::BRep {
         // Chamfer removal is complex - would need to reconstruct the sharp edge
         // For now, return an empty BRep
-        BRep::default()
+        topods::BRep::new()
     }
 
     fn is_removal_by_union(&self) -> bool {
@@ -1178,7 +1179,7 @@ impl FeatureToBRep for ChamferFeature {
 }
 
 impl FeatureToBRep for SlotFeature {
-    fn to_fill_brep(&self) -> BRep {
+    fn to_fill_brep(&self) -> topods::BRep {
         // Build a fill solid for the slot
         let height = self.depth + DEFAULT_FILL_MARGIN * 2.0;
         rcad_modeling::make_box_brep(
@@ -1198,8 +1199,8 @@ impl FeatureToBRep for SlotFeature {
 }
 
 impl FeatureToBRep for BlendFeature {
-    fn to_fill_brep(&self) -> BRep {
-        BRep::default()
+    fn to_fill_brep(&self) -> topods::BRep {
+        topods::BRep::new()
     }
 
     fn is_removal_by_union(&self) -> bool {

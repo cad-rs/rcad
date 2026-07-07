@@ -360,7 +360,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
 }
 
 /// Build a polygon face BRep from vertices.
-fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<BRep, BRepFeatError> {
+fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<topods::BRep, BRepFeatError> {
  if profile_verts.len() < 3 {
  return Err(BRepFeatError::InvalidInput("profile needs >= 3 vertices".to_string()));
  }
@@ -404,7 +404,7 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<BRep, BRepFeatErro
  shells: vec![Shell { faces: vec![face] }],
  });
 
- Ok(brep)
+    Ok(brep.to_topods())
 }
 
 // ===========================================================?
@@ -684,13 +684,13 @@ pub fn make_prism_feature(
 ///
 /// The resulting shape after the revolution operation.
 pub fn make_revol_feature(
- target: &BRep,
+ target: &topods::BRep,
  profile: &[DVec3],
  axis: DVec3,
  axis_dir: DVec3,
  angle: f64,
  fuse_mode: FuseMode,
-) -> Result<BRep, BRepFeatError> {
+) -> Result<topods::BRep, BRepFeatError> {
  if profile.len() < 3 {
  return Err(BRepFeatError::InvalidProfile("profile needs >= 3 vertices".to_string()));
  }
@@ -710,7 +710,9 @@ pub fn make_revol_feature(
 
  // Apply boolean operation based on fuse mode
  let op = BooleanOpType::from(fuse_mode);
- let t = boolean_op(op, target, &revol_tool)?; Ok(rcad_kernel::BRep::from_topods(&t))
+ let target_old = rcad_kernel::BRep::from_topods(target);
+ let tool_old = rcad_kernel::BRep::from_topods(&revol_tool);
+ Ok(boolean_op(op, &target_old, &tool_old)?)
 }
 
 // ===========================================================?

@@ -1677,7 +1677,8 @@ pub fn defeature_brep_v2(
             };
 
             // Apply robust suppression
-            let result = suppress_feature_robust(&current, &fill, feature.is_hole, &options.robustness);
+            let fill_old = rcad_kernel::BRep::from_topods(&fill);
+            let result = suppress_feature_robust(&current, &fill_old, feature.is_hole, &options.robustness);
 
             report.total_attempts += result.attempts;
             if result.success {

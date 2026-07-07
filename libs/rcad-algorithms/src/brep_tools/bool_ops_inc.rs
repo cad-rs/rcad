@@ -527,8 +527,8 @@ fn partition_solid_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate
  if let Some(ref plane) = face_tool_info[ti] {
  if let Some(b) = bbox {
  let h_plus_idx = expanded_tools.len();
- let h_plus = make_face_half_space(plane, &b, true);
- let h_minus = make_face_half_space(plane, &b, false);
+  let h_plus = rcad_kernel::BRep::from_topods(&make_face_half_space(plane, &b, true));
+  let h_minus = rcad_kernel::BRep::from_topods(&make_face_half_space(plane, &b, false));
  expanded_tools.push(h_plus);
  expanded_tools.push(h_minus);
  // h_plus  ?h_minus: each is the "outside" of the other.
@@ -610,12 +610,13 @@ fn partition_solid_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate
  let cell_solids = extract_solids(&cell);
  let mut parts = Vec::new();
  for (origin, u_dir, v_dir, w, h, d) in comp_boxes.iter() {
- let Ok(comp_box) =
- rcad_modeling::make_box_brep(*origin, *u_dir, *v_dir, *w, *h, *d)
- else { continue; };
- for cell_part in &cell_solids {
- if let Ok(part) =
- crate::boolean_op_pave_fill_build(crate::BooleanOpType::Intersection, cell_part, &comp_box)
+  let Ok(comp_box) =
+  rcad_modeling::make_box_brep(*origin, *u_dir, *v_dir, *w, *h, *d)
+  else { continue; };
+  let comp_box_old = rcad_kernel::BRep::from_topods(&comp_box);
+  for cell_part in &cell_solids {
+  if let Ok(part) =
+  crate::boolean_op_pave_fill_build(crate::BooleanOpType::Intersection, cell_part, &comp_box_old)
  {
  let p = rcad_kernel::BRep::from_topods(&part);
  if count_faces(&p) > 0 {
@@ -767,7 +768,7 @@ fn is_face_like(brep: &BRep) -> bool {
 /// `plane.origin` (with the plane's normal pointing inward for `normal_side=true`
 /// or outward for `normal_side=false`) and extending far enough along the normal
 /// to fully contain the `bbox` extent.
-pub fn make_face_half_space(plane: &rcad_kernel::geom::Plane, bbox: &[DVec3; 2], normal_side: bool) -> BRep {
+pub fn make_face_half_space(plane: &rcad_kernel::geom::Plane, bbox: &[DVec3; 2], normal_side: bool) -> topods::BRep {
  let [bmin, bmax] = *bbox;
  let diag = bmax - bmin;
  let margin = diag.length().max(1.0) * 2.0;
