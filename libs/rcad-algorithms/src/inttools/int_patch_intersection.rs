@@ -425,23 +425,34 @@ impl IntPatchIntersection {
         _typs1: GeomAbsSurfaceType,
         _typs2: GeomAbsSurfaceType,
     ) {
-        // OCCT: IntPatch_PrmPrmIntersection interpp;
+        // OCCT L204-213: IntPatch_PrmPrmIntersection interpp;
         // interpp.Perform(S1, D1, S2, D2, TolTang, TolArc, myFleche, myUVMaxStep, ListOfPnts);
-        // rcad: use marching/numeric intersection via face_face::intersect_faces
-        let curves = crate::inttools::face_face::intersect_faces(s1, s2,
-            self.my_tol_arc, self.my_tol_tang);
-        self.slin = curves.into_iter().map(|c| IntPatchLine {
-            line_type: IntPatchIType::Walking,
-            curve: c.curve,
-            t_range: c.t_range,
-            pcurve1: c.pcurve1,
-            pcurve2: c.pcurve2,
-            tolerance: c.tolerance,
-            tang_tolerance: c.tang_tolerance,
-            wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: crate::inttools::int_patch_line::WLineType::Unknown,
-        }).collect();
-        self.empt = self.slin.is_empty();
-        self.done = true;
+        let mut prm_prm = crate::pave_filler::prm_prm_intersection::PrmPrmIntersection::new();
+        // rcad: simplified — no polyhedron, use perform_with_seeds with empty seeds
+        prm_prm.perform_with_seeds(s1, s2, &[], _tol_tang, _tol_tang, self.my_fleche, self.my_uv_max_step);
+        if prm_prm.is_done() {
+            for line in &prm_prm.slin {
+                let wline_pnts: Vec<crate::inttools::int_patch_line::WLinePnt> = line.points.iter().map(|p| {
+                    crate::inttools::int_patch_line::WLinePnt {
+                        p3d: p.p3d, u1: p.u1, v1: p.v1, u2: p.u2, v2: p.v2,
+                    }
+                }).collect();
+                self.slin.push(IntPatchLine {
+                    line_type: IntPatchIType::Walking,
+                    curve: rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: glam::DVec3::ZERO, direction: glam::DVec3::X }),
+                    t_range: [0.0, 1.0],
+                    pcurve1: None,
+                    pcurve2: None,
+                    tolerance: _tol_tang,
+                    tang_tolerance: _tol_tang,
+                    wline_pnts,
+                    is_purging_allowed: true,
+                    wl_type: crate::inttools::int_patch_line::WLineType::PrmPrm,
+                });
+            }
+            self.empt = self.slin.is_empty();
+            self.done = true;
+        }
     }
 
     // =========================================================================
@@ -479,7 +490,7 @@ impl IntPatchIntersection {
     ) {
         // OCCT L232-238: IntPatch_ImpPrmIntersection inter;
         // inter.Perform(S1, D1, S2, D2, TolArc, TolTang, myFleche, myUVMaxStep);
-        let mut imp_prm = crate::pave_filler::imp_prm::ImpPrmIntersection::new();
+        let mut imp_prm = crate::inttools::imp_prm::ImpPrmIntersection::new();
         imp_prm.perform(s1, s2, self.my_tol_arc, self.my_tol_tang, self.my_fleche, self.my_uv_max_step);
         if imp_prm.is_done() {
             // Transfer intersection lines

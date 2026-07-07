@@ -35,7 +35,6 @@ mod glue;
 mod intersection;
 pub(crate) mod analytics;
 pub(crate) mod marching;
-pub(crate) mod imp_prm;
 pub(crate) mod prm_prm_intersection;
 pub(crate) mod p_walking;
 mod make_blocks;
