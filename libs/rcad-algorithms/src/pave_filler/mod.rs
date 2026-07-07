@@ -782,7 +782,7 @@ impl<'a> PaveFiller<'a> {
  origin: ShapeOrigin::ShapeA,
  geom_tol: ic.geom_tol,
  paves: Vec::new(),
- pave_blocks: vec![sub_pb.clone()],
+  pave_blocks: vec![crate::bopds::pave::SharedPB::new(sub_pb.clone())],
  face_reps: sec_face_reps,
  is_internal: false,
  vertex_params: {
@@ -823,7 +823,7 @@ impl<'a> PaveFiller<'a> {
  // Find the two faces referencing this curve
  let face_ids = find_face_idxs_for_curve(&self.ds, se.curve_idx);
  for pb in &se.pbs {
- if pb.0.read().unwrap().new_edge.is_some() {
+  if pb.new_edge.is_some() {
  let g_pb_idx = self.ds.allocate_pave_block(pb.clone());
  for &fi in &face_ids {
  if fi != usize::MAX {
@@ -873,11 +873,11 @@ impl<'a> PaveFiller<'a> {
  let ev = self.ds.edges[ei].end_vertex;
  let t0 = self.ds.edges[ei].t_range[0];
  let t1 = self.ds.edges[ei].t_range[1];
- self.ds.edges[ei].pave_blocks = vec![PaveBlock::new(
- ei,
- Pave { vertex_idx: sv, param: t0 },
- Pave { vertex_idx: ev, param: t1 },
- )];
+  self.ds.edges[ei].pave_blocks = vec![crate::bopds::pave::SharedPB::new(PaveBlock::new(
+  ei,
+  Pave { vertex_idx: sv, param: t0 },
+  Pave { vertex_idx: ev, param: t1 },
+  ))];
  }
  }
 

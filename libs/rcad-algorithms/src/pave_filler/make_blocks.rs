@@ -437,7 +437,7 @@ impl<'a> super::PaveFiller<'a> {
  a_lpb.clear();
  {
  let ic = &mut self.ds.intersection_curves[ci];
- if let Some(pb1) = ic.pave_blocks.first().map(|spb| spb.0.write().unwrap()) {
+  if let Some(mut pb1) = ic.pave_blocks.first().map(|spb| spb.0.write().unwrap()) {
  let sub_pbs = pb1.update(false);
  a_lpb = sub_pbs;
  }
@@ -451,8 +451,8 @@ impl<'a> super::PaveFiller<'a> {
  // OCCT L899-1063: Process each sub-PB
  for a_pb in &a_lpb {
  // OCCT L903-904: aPB->Indices(nV1, nV2); aPB->Range(aT1, aT2);
- (n_v1, n_v2) = a_pb.0.read().unwrap().indices();
- (a_t1, a_t2) = a_pb.range();
+  (n_v1, n_v2) = a_pb.indices();
+  (a_t1, a_t2) = a_pb.range();
 
  // OCCT L906-909: fabs(aT1-aT2) < Precision::PConfusion()  ?continue
  // Precision::PConfusion() = Confusion() * 0.01 = 1e-9
@@ -944,7 +944,7 @@ impl<'a> super::PaveFiller<'a> {
  let is_micro = if sei < self.ds.edges.len() {
  let e = &self.ds.edges[sei];
  a_micro_pb.iter().any(|pb: &PaveBlock| {
- let (pv1, pv2) = pb.0.read().unwrap().indices();
+  let (pv1, pv2) = pb.indices();
  (pv1 == e.start_vertex && pv2 == e.end_vertex)
  || (pv1 == e.end_vertex && pv2 == e.start_vertex)
  })
@@ -1042,9 +1042,10 @@ impl<'a> super::PaveFiller<'a> {
  // Update PB vertex indices for SD vertices
  for (old_v, new_v) in &a_dm_new_sd {
  for ei in 0..self.ds.edges.len() {
- for pb in &mut self.ds.edges[ei].pave_blocks {
- if pb.0.read().unwrap().pave1.vertex_idx == *old_v { pb.0.read().unwrap().pave1.vertex_idx = *new_v; }
- if pb.0.read().unwrap().pave2.vertex_idx == *old_v { pb.0.read().unwrap().pave2.vertex_idx = *new_v; }
+  for spb in &mut self.ds.edges[ei].pave_blocks {
+  let mut pb = spb.0.write().unwrap();
+  if pb.pave1.vertex_idx == *old_v { pb.pave1.vertex_idx = *new_v; }
+  if pb.pave2.vertex_idx == *old_v { pb.pave2.vertex_idx = *new_v; }
  }
  }
  for fi in 0..self.ds.faces.len() {

@@ -115,9 +115,9 @@ impl DS {
  // OCCT L457-467: create PaveBlock and set pave1/pave2/original_edge
  let pv1 = Pave { vertex_idx: sv, param: tr0 };
  let pv2 = Pave { vertex_idx: ev, param: tr1 };
- let pb = PaveBlock::new(edge_idx, pv1, pv2);
- // OCCT L469-471: ChangePaveBlocksPool  ?store in DS
- self.edges[edge_idx].pave_blocks = vec![pb];
+  let pb = SharedPB::new(PaveBlock::new(edge_idx, pv1, pv2));
+  // OCCT L469-471: ChangePaveBlocksPool  ?store in DS
+  self.edges[edge_idx].pave_blocks = vec![pb];
  // OCCT L473-475: loaded edge check  ?rcad: always new construction
  // OCCT L477-483: closed edges  ?add BOTH endpoint paves to ext_paves
  if sv == ev {
@@ -1609,10 +1609,11 @@ impl DS {
  self.my_images = vec![Vec::new(); n_edges];
  self.my_origins = Vec::new();
 
- for ei in 0..n_edges {
- let edge = &self.edges[ei];
- for pb in &edge.pave_blocks {
- let sub_ei = pb.new_edge.unwrap_or(ei);
+  for ei in 0..n_edges {
+  let edge = &self.edges[ei];
+  for spb in &edge.pave_blocks {
+  let pbb = spb.0.read().unwrap();
+  let sub_ei = pbb.new_edge.unwrap_or(ei);
  if sub_ei < self.edges.len() {
  self.my_images[ei].push(sub_ei);
  self.my_origins.push(ei);
@@ -1755,9 +1756,9 @@ impl DS {
  // Keep only if NOT in On (same edge index + pave bounds)
  !on_set.iter().any(|&on_idx| {
  pave_blocks.get(on_idx).map_or(false, |on_pb| {
- on_pb.original_edge == pb.original_edge
- && on_pb.pave1.vertex_idx == pb.pave1.vertex_idx
- && on_pb.pave2.vertex_idx == pb.pave2.vertex_idx
+  on_pb.0.read().unwrap().original_edge == pb.0.read().unwrap().original_edge
+  && on_pb.0.read().unwrap().pave1.vertex_idx == pb.0.read().unwrap().pave1.vertex_idx
+  && on_pb.0.read().unwrap().pave2.vertex_idx == pb.0.read().unwrap().pave2.vertex_idx
  })
  })
  });
@@ -1791,26 +1792,28 @@ impl DS {
  replace.entry(b).or_insert(canon);
  }
 
- // Apply replacement to all PaveBlocks on edges.
- for edge in &mut self.edges {
- for pb in &mut edge.pave_blocks {
- if let Some(&rep) = replace.get(&pb.pave1.vertex_idx) {
- pb.pave1.vertex_idx = rep;
- }
- if let Some(&rep) = replace.get(&pb.pave2.vertex_idx) {
- pb.pave2.vertex_idx = rep;
- }
- }
- }
- // Apply replacement to global PaveBlocks pool.
- for pb in &mut self.pave_blocks {
- if let Some(&rep) = replace.get(&pb.pave1.vertex_idx) {
- pb.pave1.vertex_idx = rep;
- }
- if let Some(&rep) = replace.get(&pb.pave2.vertex_idx) {
- pb.pave2.vertex_idx = rep;
- }
- }
+  // Apply SD replacement through SharedPB.
+  for edge in &mut self.edges {
+  for spb in &mut edge.pave_blocks {
+  let mut pb = spb.0.write().unwrap();
+  if let Some(&rep) = replace.get(&pb.pave1.vertex_idx) {
+  pb.pave1.vertex_idx = rep;
+  }
+  if let Some(&rep) = replace.get(&pb.pave2.vertex_idx) {
+  pb.pave2.vertex_idx = rep;
+  }
+  }
+  }
+  // Apply to global pool (curve and orphan PBs).
+  for spb in &mut self.pave_blocks {
+  let mut pb = spb.0.write().unwrap();
+  if let Some(&rep) = replace.get(&pb.pave1.vertex_idx) {
+  pb.pave1.vertex_idx = rep;
+  }
+  if let Some(&rep) = replace.get(&pb.pave2.vertex_idx) {
+  pb.pave2.vertex_idx = rep;
+  }
+  }
  }
 
  ///  ?OCCT-aligned: BOPAlgo_PaveFiller::UpdateCommonBlocksWithSDVertices.
