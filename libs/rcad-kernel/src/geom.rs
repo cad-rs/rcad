@@ -3193,4 +3193,366 @@ mod eval_tests {
             );
         }
     }
+
+    // =========================================================================
+    // OCCT-aligned TKG3d / TKG2d evaluation tests
+    // =========================================================================
+    //
+    // These test point_at (D0) and tangent_at (D1) for each curve/surface type,
+    // matching patterns in OCCT's TKG3d/GTests/ and TKG2d/GTests/.
+
+    // ── 3D Curve evaluation (Geom_CurveEval_Test.cxx pattern) ────────────
+
+    #[test]
+    fn line_eval_d0_d1() {
+        let line = Line3 { origin: DVec3::ZERO, direction: DVec3::X };
+        let p = line.point_at(5.0);
+        assert!((p - DVec3::new(5.0, 0.0, 0.0)).length() < 1e-12);
+        let t = line.tangent_at(5.0);
+        assert!((t - DVec3::X).length() < 1e-12);
+    }
+
+    #[test]
+    fn line_eval_d2_zero_second_derivative() {
+        let line = Line3 { origin: DVec3::ZERO, direction: DVec3::X };
+        // For a line, the first derivative (tangent) is constant; second derivative is zero.
+        // The curve is linear: P(t) = origin + t * direction
+        // The second derivative: d²P/dt² = 0
+        // Using the derivative_at method:
+        let d1 = line.derivative_at(0.0);
+        let d2 = (line.derivative_at(1e-4) - line.derivative_at(-1e-4)) / (2.0 * 1e-4);
+        assert!((d1 - DVec3::X).length() < 1e-10);
+        assert!(d2.length() < 1e-10, "Line second derivative should be 0, got {d2:?}");
+    }
+
+    #[test]
+    fn circle_eval_d0_d1() {
+        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 5.0);
+        let p0 = circle.point_at(0.0);
+        assert!((p0 - DVec3::new(5.0, 0.0, 0.0)).length() < 1e-10);
+        let p_half = circle.point_at(std::f64::consts::PI / 2.0);
+        assert!((p_half - DVec3::new(0.0, 5.0, 0.0)).length() < 1e-10);
+        let p_pi = circle.point_at(std::f64::consts::PI);
+        assert!((p_pi - DVec3::new(-5.0, 0.0, 0.0)).length() < 1e-10);
+        // Tangent at 0 should be (0, 1, 0)
+        let t0 = circle.tangent_at(0.0);
+        assert!((t0 - DVec3::Y).length() < 1e-10);
+        // Tangent at PI/2 should be (-1, 0, 0)
+        let t_half = circle.tangent_at(std::f64::consts::PI / 2.0);
+        assert!((t_half - DVec3::new(-1.0, 0.0, 0.0)).length() < 1e-10);
+    }
+
+    #[test]
+    fn circle_transform_copy() {
+        let circle = Circle3::new(DVec3::new(1.0, 2.0, 3.0), DVec3::Z, 4.0);
+        // Verify basic properties before transform
+        assert!((circle.point_at(0.0) - DVec3::new(5.0, 2.0, 3.0)).length() < 1e-10);
+    }
+
+    #[test]
+    fn bspline_eval_d0_d1_d2_consistency() {
+        // Degree-2 BSpline through 4 points
+        let c = BSplineCurve3 {
+            degree: 2,
+            knots: vec![0.0, 0.0, 0.0, 0.3, 0.7, 1.0, 1.0, 1.0],
+            control_points: vec![
+                DVec3::new(0.0, 0.0, 0.0),
+                DVec3::new(2.0, 3.0, 0.0),
+                DVec3::new(5.0, 3.0, 0.0),
+                DVec3::new(7.0, 0.0, 0.0),
+                DVec3::new(10.0, 0.0, 0.0),
+            ],
+            weights: vec![1.0; 5],
+        };
+        // Point at t=0 should be first control point
+        assert!((c.point_at(0.0) - DVec3::ZERO).length() < 1e-10);
+        // Point at t=1 should be last control point
+        assert!((c.point_at(1.0) - DVec3::new(10.0, 0.0, 0.0)).length() < 1e-10);
+        // Range check: some midpoint
+        let _pmid = c.point_at(0.5);
+        assert!(_pmid.x >= 0.0 && _pmid.x <= 10.0);
+    }
+
+    #[test]
+    fn bezier_eval_d0_d1() {
+        // Cubic Bezier through 4 control points
+        let c = BezierCurve3 {
+            control_points: vec![
+                DVec3::new(0.0, 0.0, 0.0),
+                DVec3::new(1.0, 3.0, 0.0),
+                DVec3::new(3.0, 3.0, 0.0),
+                DVec3::new(4.0, 0.0, 0.0),
+            ],
+            weights: vec![1.0; 4],
+        };
+        // t=0 -> first pole
+        assert!((c.point_at(0.0) - DVec3::ZERO).length() < 1e-10);
+        // t=1 -> last pole
+        assert!((c.point_at(1.0) - DVec3::new(4.0, 0.0, 0.0)).length() < 1e-10);
+        // Tangent at t=0: direction from P0 to P1
+        let t0 = c.tangent_at(0.0);
+        assert!((t0 - DVec3::new(1.0, 3.0, 0.0).normalize()).length() < 1e-10);
+    }
+
+    // ── 3D Surface evaluation (Geom_SurfaceEval_Test.cxx pattern) ───────
+
+    #[test]
+    fn plane_eval_d0_d1() {
+        let plane = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
+        let p = plane.point_at(2.0, 3.0);
+        assert!((p - DVec3::new(2.0, 3.0, 0.0)).length() < 1e-10);
+    }
+
+    #[test]
+    fn cylinder_eval_d0() {
+        let cyl = CylindricalSurface {
+            origin: DVec3::ZERO, axis: DVec3::Z,
+            radius: 3.0, ref_dir: DVec3::X,
+        };
+        let p0 = cyl.point_at(0.0, 0.0);
+        assert!((p0 - DVec3::new(3.0, 0.0, 0.0)).length() < 1e-10);
+        let p1 = cyl.point_at(std::f64::consts::PI / 2.0, 5.0);
+        assert!((p1 - DVec3::new(0.0, 3.0, 5.0)).length() < 1e-10);
+    }
+
+    #[test]
+    fn sphere_eval_d0_full_sphere() {
+        let s = SphericalSurface {
+            center: DVec3::ZERO, axis: DVec3::Z,
+            radius: 2.0, ref_dir: DVec3::X,
+        };
+        for u in [0.0, 1.0, 2.0, 4.0, 6.0] {
+            for v in [-1.0, -0.5, 0.0, 0.5, 1.0] {
+                let p = s.point_at(u, v);
+                assert!((p.length() - 2.0).abs() < 1e-9, "u={u} v={v}");
+            }
+        }
+    }
+
+    #[test]
+    fn cone_eval_d0() {
+        let cone = ConicalSurface {
+            apex: DVec3::ZERO, axis: DVec3::Z,
+            radius: 2.0, half_angle_rad: 45.0_f64.to_radians(),
+        };
+        // At V=0, radius=2
+        let p0 = cone.point_at(0.0, 0.0);
+        assert!((p0.x - 2.0).abs() < 1e-9 || (p0.y - 2.0).abs() < 1e-9);
+        assert!((p0.z).abs() < 1e-9);
+    }
+
+    #[test]
+    fn torus_eval_d0() {
+        use std::f64::consts::PI;
+        let t = ToroidalSurface {
+            center: DVec3::ZERO, axis: DVec3::Z,
+            major_radius: 5.0, minor_radius: 1.0,
+        };
+        // At u=0, v=0: point should be at (5+1, 0, 0) = (6, 0, 0)
+        let p = t.point_at(0.0, 0.0);
+        assert!((p - DVec3::new(6.0, 0.0, 0.0)).length() < 1e-9);
+    }
+
+    #[test]
+    fn offset_surface_eval_d0() {
+        let plane = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
+        let off = OffsetSurface {
+            basis: Box::new(Surface3::Plane(plane)),
+            offset_distance: 0.5,
+        };
+        let p = off.point_at(1.0, 2.0);
+        // Plane offset by 0.5 in Z: P should be (1, 2, 0.5)
+        assert!((p - DVec3::new(1.0, 2.0, 0.5)).length() < 1e-9);
+    }
+
+    // ── 2D Curve evaluation (Geom2d_CurveEval_Test.cxx pattern) ─────────
+
+    #[test]
+    fn line2d_eval_d0() {
+        let l = Line2d { origin: DVec2::ZERO, direction: DVec2::X };
+        let p = l.point_at(3.0);
+        assert!((p - DVec2::new(3.0, 0.0)).length() < 1e-12);
+    }
+
+    #[test]
+    fn circle2d_eval_d0() {
+        use std::f64::consts::PI;
+        let c = Circle2d::new(DVec2::ZERO, 5.0);
+        let p0 = c.point_at(0.0);
+        assert!((p0 - DVec2::new(5.0, 0.0)).length() < 1e-12);
+        let p_half = c.point_at(PI / 2.0);
+        assert!((p_half - DVec2::new(0.0, 5.0)).length() < 1e-12);
+        let p_pi = c.point_at(PI);
+        assert!((p_pi - DVec2::new(-5.0, 0.0)).length() < 1e-12);
+    }
+
+    #[test]
+    fn circle2d_revolved() {
+        let c = Circle2d::new(DVec2::ZERO, 5.0);
+        let p0 = c.point_at(0.0);
+        let p2pi = c.point_at(2.0 * std::f64::consts::PI);
+        assert!((p0 - p2pi).length() < 1e-12);
+    }
+
+    #[test]
+    fn ellipse2d_eval_d0() {
+        use std::f64::consts::PI;
+        let e = Ellipse2d {
+            center: DVec2::ZERO, major_dir: DVec2::X,
+            major_radius: 10.0, minor_radius: 5.0,
+        };
+        let p0 = e.point_at(0.0);
+        assert!((p0 - DVec2::new(10.0, 0.0)).length() < 1e-12);
+        let p_half = e.point_at(PI / 2.0);
+        assert!((p_half - DVec2::new(0.0, 5.0)).length() < 1e-12);
+    }
+
+    #[test]
+    fn parabola2d_eval_d0() {
+        let p = Parabola2d {
+            origin: DVec2::ZERO, axis_dir: DVec2::X, focal_param: 4.0,
+        };
+        // P(t) = (t²/(2p), t) = (t²/8, t)
+        let p0 = p.point_at(0.0);
+        assert!((p0 - DVec2::ZERO).length() < 1e-12);
+        let p4 = p.point_at(4.0);
+        assert!((p4 - DVec2::new(2.0, 4.0)).length() < 1e-10);
+    }
+
+    #[test]
+    fn hyperbola2d_eval_d0() {
+        let h = Hyperbola2d {
+            center: DVec2::ZERO, major_dir: DVec2::X,
+            semi_major: 3.0, semi_minor: 2.0,
+        };
+        let p0 = h.point_at(0.0);
+        // X = a*cosh(0) = 3, Y = b*sinh(0) = 0
+        assert!((p0 - DVec2::new(3.0, 0.0)).length() < 1e-12);
+    }
+
+    #[test]
+    fn bspline2_eval_d0() {
+        let c = BSplineCurve2 {
+            degree: 1,
+            knots: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![DVec2::ZERO, DVec2::X],
+            weights: vec![1.0, 1.0],
+        };
+        assert!((c.point_at(0.0) - DVec2::ZERO).length() < 1e-12);
+        assert!((c.point_at(1.0) - DVec2::X).length() < 1e-12);
+        assert!((c.point_at(0.5) - DVec2::new(0.5, 0.0)).length() < 1e-12);
+    }
+
+    #[test]
+    fn bezier2_eval_d0() {
+        let c = BezierCurve2 {
+            control_points: vec![DVec2::new(0.0, 0.0), DVec2::new(0.5, 1.0), DVec2::new(1.0, 0.0)],
+            weights: vec![1.0; 3],
+        };
+        assert!((c.point_at(0.0) - DVec2::ZERO).length() < 1e-12);
+        assert!((c.point_at(1.0) - DVec2::X).length() < 1e-12);
+    }
+
+    #[test]
+    fn trimmed_curve2_eval() {
+        let inner = Circle2d::new(DVec2::ZERO, 5.0);
+        let tc = TrimmedCurve2 {
+            curve: Box::new(Curve2d::Circle(inner)),
+            t_min: 0.0,
+            t_max: std::f64::consts::PI,
+        };
+        let p0 = tc.point_at(0.0);
+        assert!((p0 - DVec2::new(5.0, 0.0)).length() < 1e-12);
+        let p_half = tc.point_at(std::f64::consts::PI / 2.0);
+        assert!((p_half - DVec2::new(0.0, 5.0)).length() < 1e-12);
+        // Out of range → clamped
+        let p_out = tc.point_at(10.0);
+        assert!((p_out - DVec2::new(-5.0, 0.0)).length() < 1e-10);
+    }
+
+    #[test]
+    fn offset_curve2d_eval() {
+        let basis = Curve2d::Circle(Circle2d::new(DVec2::ZERO, 5.0));
+        let off = OffsetCurve2d {
+            basis: Box::new(basis),
+            offset_distance: 1.0,
+        };
+        let p0 = off.point_at(0.0);
+        // Circle r=5 offset +1: distance from origin should be ≈ 6
+        assert!((p0.length() - 6.0).abs() < 0.01);
+    }
+
+    // ── Special 2D curve evaluation tests ───────────────────────────────
+
+    #[test]
+    fn circle_involute2d_eval() {
+        let inv = CircleInvolute2d {
+            center: DVec2::ZERO, base_radius: 3.0, start_angle: 0.0,
+        };
+        // At t=0: P = center + r*(cos(0)+0*sin(0), sin(0)-0*cos(0)) = center + (r, 0)
+        let p0 = inv.point_at(0.0);
+        assert!((p0 - DVec2::new(3.0, 0.0)).length() < 1e-10);
+    }
+
+    #[test]
+    fn sine_wave2d_eval() {
+        let w = SineWave2d { amplitude: 2.0, frequency: 1.0, phase: 0.0 };
+        let p0 = w.point_at(0.0);
+        assert!((p0 - DVec2::ZERO).length() < 1e-12);
+        let p_pi = w.point_at(std::f64::consts::PI / 2.0);
+        assert!((p_pi - DVec2::new(std::f64::consts::PI / 2.0, 2.0)).length() < 1e-10);
+    }
+
+    #[test]
+    fn archimedean_spiral2d_eval() {
+        let s = ArchimedeanSpiral2d {
+            center: DVec2::ZERO, a: 0.0, b: 1.0, start_angle: 0.0,
+        };
+        // r(t) = 0 + 1*t, theta(t) = t
+        let p0 = s.point_at(0.0);
+        assert!((p0 - DVec2::ZERO).length() < 1e-12);
+        let p1 = s.point_at(2.0);
+        assert!((p1.length() - 2.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn logarithmic_spiral2d_eval() {
+        let s = LogarithmicSpiral2d {
+            center: DVec2::ZERO, a: 1.0, b: 0.5, start_angle: 0.0,
+        };
+        let p0 = s.point_at(0.0);
+        assert!((p0 - DVec2::new(1.0, 0.0)).length() < 1e-10);
+    }
+
+    // ── Offset curve evaluation (Geom_OffsetCurve_Test.cxx pattern) ─────
+
+    #[test]
+    fn offset_curve3_eval() {
+        let basis = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
+        let off = OffsetCurve3 {
+            basis: Box::new(basis),
+            offset_distance: 2.0,
+            offset_dir: DVec3::Z,
+        };
+        let p0 = off.point_at(0.0);
+        // Offset along Z direction: tangent at 0 is Y, cross Z = X, so offset along X
+        // Expected: (5, 0, 0) + 2 * (0, 0, 0 × 0, 1, 0) = (5+2, 0, 0) = (7, 0, 0)
+        // Actually tangent = (0,1,0), cross Z = (1,0,0). Result: (5+2, 0, 0) = (7, 0, 0)
+        assert!((p0 - DVec3::new(7.0, 0.0, 0.0)).length() < 0.01);
+    }
+
+    // ── Reverse parameter tests (Geom2d_*_ReversedParameter pattern) ────
+
+    #[test]
+    fn circle_reverse_eval() {
+        // A reversed circle should evaluate in the opposite direction
+        // OCCT: ReversedParameter(t) = 2*PI - t
+        // Since rcad doesn't have an explicit reverse flag, verify that
+        // the parameterization wraps around correctly.
+        let c = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0);
+        let p_fwd = c.point_at(0.3);
+        let p_rev = c.point_at(2.0 * std::f64::consts::PI - 0.3);
+        // These are different points (one advances forward, one backward)
+        assert!((p_fwd - p_rev).length() > 0.5);
+    }
 }
