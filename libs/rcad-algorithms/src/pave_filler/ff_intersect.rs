@@ -287,129 +287,49 @@ impl<'a> super::PaveFiller<'a> {
  /// OCCT: dispatch FF intersection by surface type
  /// OCCT: dispatch FF intersection by surface type
  pub(crate) fn intersect_face_face(&mut self, f1: usize, f2: usize) {
- // = =  Seam Edge Shift (OCCT PaveFiller_6.cxx L393-479) = = = = = = = = = = = = = = 
- let shift_info = self.check_seam_edge_shift(f1, f2);
- let old_shift_tol = self.seam_shift_tol;
- if let Some(ref info) = shift_info {
- self.seam_shift_tol = info.shift_value;
- }
+  // = =  Seam Edge Shift (OCCT PaveFiller_6.cxx L393-479) = = = = = = = = = = = = = = 
+  let shift_info = self.check_seam_edge_shift(f1, f2);
+  let old_shift_tol = self.seam_shift_tol;
+  if let Some(ref info) = shift_info {
+  self.seam_shift_tol = info.shift_value;
+  }
 
- let s1_orig = self.ds.faces[f1].surface.clone();
- let s2_orig = self.ds.faces[f2].surface.clone();
+  let s1_orig = self.ds.faces[f1].surface.clone();
+  let s2_orig = self.ds.faces[f2].surface.clone();
 
- // Apply seam edge shift to surface clones if needed
- let s1 = match &shift_info {
- Some(info) if info.shifted_face == 1 => {
- apply_shift_to_surface(&s1_orig, info.shift_vector)
- }
- _ => s1_orig,
- };
- let s2 = match &shift_info {
- Some(info) if info.shifted_face == 2 => {
- apply_shift_to_surface(&s2_orig, info.shift_vector)
- }
- _ => s2_orig,
- };
+  // Apply seam edge shift to surface clones if needed
+  let s1 = match &shift_info {
+  Some(info) if info.shifted_face == 1 => {
+  apply_shift_to_surface(&s1_orig, info.shift_vector)
+  }
+  _ => s1_orig,
+  };
+  let s2 = match &shift_info {
+  Some(info) if info.shifted_face == 2 => {
+  apply_shift_to_surface(&s2_orig, info.shift_vector)
+  }
+  _ => s2_orig,
+  };
 
- // OCCT IntPatch_Intersection does NOT demote BSpline surfaces.
- // BSpline stays as Parametric (ts=0); Plane stays as Geom (ts=1).
- // The (ts1 != ts2) condition triggers ImpPrmIntersection path (marching).
-
- // = =OCCT IntPatch_Intersection 3-category dispatch = =
- // OCCT IntPatch_Intersection.cxx L1298-1339 classifies surface pairs:
- // - ts1 == ts2 == 1 : Geom-Geom (both analytic)  ?ImpImpIntersection
- // - ts1 != ts2 : Geom-Param (one analytic, one parametric)  ?ImpPrmIntersection
- // - ts1 == ts2 == 0 : Param-Param (both parametric)  ?PrmPrmIntersection
- let (cat1, cat2) = (classify_surface_type(&s1), classify_surface_type(&s2));
- match (cat1, cat2) {
- // = =  Geom-Geom: both analytic surfaces = = 
- // OCCT ImpImpIntersection handles all analytic-analytic pairs.
- // rcad dispatches to specialized functions per combination.
- (SurfaceCategory::GeomGeom, SurfaceCategory::GeomGeom) => {
- match (&s1, &s2) {
- (Surface3::Plane(p1), Surface3::Plane(p2)) => {
- self.intersect_plane_plane_faces(f1, f2, p1, p2);
- }
- (Surface3::Plane(pl), Surface3::Sphere(sph))
- | (Surface3::Sphere(sph), Surface3::Plane(pl)) => {
- self.intersect_plane_sphere_faces(f1, f2, pl, sph);
- }
- (Surface3::Plane(pl), Surface3::Cylinder(cyl))
- | (Surface3::Cylinder(cyl), Surface3::Plane(pl)) => {
- self.intersect_plane_cylinder_faces(f1, f2, pl, cyl);
- }
- (Surface3::Sphere(sph1), Surface3::Sphere(sph2)) => {
- let (sph1, sph2) = (*sph1, *sph2);
- self.intersect_sphere_sphere_faces(f1, f2, &sph1, &sph2);
- }
- (Surface3::Sphere(sph), Surface3::Cylinder(cyl))
- | (Surface3::Cylinder(cyl), Surface3::Sphere(sph)) => {
- let (sph, cyl) = (*sph, *cyl);
- self.intersect_sphere_cylinder_faces(f1, f2, &sph, &cyl);
- }
- (Surface3::Cylinder(c1), Surface3::Cylinder(c2)) => {
- let (c1, c2) = (*c1, *c2);
- self.intersect_cylinder_cylinder_faces(f1, f2, &c1, &c2);
- }
- (Surface3::Plane(pl), Surface3::Cone(cone))
- | (Surface3::Cone(cone), Surface3::Plane(pl)) => {
- self.intersect_plane_cone_faces(f1, f2, pl, cone);
- }
- (Surface3::Cylinder(cyl), Surface3::Cone(cone))
- | (Surface3::Cone(cone), Surface3::Cylinder(cyl)) => {
- let (cyl, cone) = (*cyl, *cone);
- self.intersect_cylinder_cone_faces(f1, f2, &cyl, &cone);
- }
- (Surface3::Cone(cone1), Surface3::Cone(cone2)) => {
- let (cone1, cone2) = (*cone1, *cone2);
- self.intersect_cone_cone_faces(f1, f2, &cone1, &cone2);
- }
- (Surface3::Plane(pl), Surface3::Torus(tor))
- | (Surface3::Torus(tor), Surface3::Plane(pl)) => {
- self.intersect_torus_plane_faces(f1, f2, tor, pl);
- }
- (Surface3::Sphere(sph), Surface3::Torus(tor))
- | (Surface3::Torus(tor), Surface3::Sphere(sph)) => {
- self.intersect_torus_sphere_faces(f1, f2, tor, sph);
- }
- (Surface3::Cylinder(cyl), Surface3::Torus(tor))
- | (Surface3::Torus(tor), Surface3::Cylinder(cyl)) => {
- self.intersect_torus_cylinder_faces(f1, f2, tor, cyl);
- }
- (Surface3::Cone(cone), Surface3::Torus(tor))
- | (Surface3::Torus(tor), Surface3::Cone(cone)) => {
- self.intersect_torus_cone_faces(f1, f2, tor, cone);
- }
- (Surface3::Torus(tor1), Surface3::Torus(tor2)) => {
- self.intersect_torus_torus_faces(f1, f2, tor1, tor2);
- }
- (Surface3::Sphere(sph), Surface3::Cone(cone))
- | (Surface3::Cone(cone), Surface3::Sphere(sph)) => {
- let (sph, cone) = (*sph, *cone);
- self.intersect_sphere_cone_faces(f1, f2, &sph, &cone);
- }
- _ => {}
- }
- }
- // = =  Geom-Param: one analytic, one parametric = = 
- // OCCT ImpPrmIntersection handles this category.
- // rcad: use PrmPrmIntersection when a Param surface is BSpline/Bezier
- // (marching handles Plane-Plane quickly; PrmPrm handles mixed pairs).
- (SurfaceCategory::GeomGeom, SurfaceCategory::ParamParam)
- | (SurfaceCategory::ParamParam, SurfaceCategory::GeomGeom) => {
- let any_bspline = matches!(&s1, Surface3::BSpline(_) | Surface3::Bezier(_))
- || matches!(&s2, Surface3::BSpline(_) | Surface3::Bezier(_));
- if any_bspline {
- self.intersect_ff_by_prmprm(f1, f2, &s1, &s2);
- } else {
- self.intersect_ff_by_marching(f1, f2);
- }
- }
- _ => {
- // ParamParam (both parametric): PrmPrmIntersection
- self.intersect_ff_by_prmprm(f1, f2, &s1, &s2);
- }
- }
+  // ✅ OCCT-aligned: IntPatch_Intersection — generic surface-surface intersection.
+  // OCCT IntPatch_Intersection.cxx L1066-1372:
+  //   - Classifies typs1/typs2 (GeomAbs_SurfaceType)
+  //   - Computes ts1/ts2 (0 or 1)
+  //   - Dispatches to GeomGeom/GeomParam/ParamParam sub-algorithms
+  //   - Post-processes WLines
+  let mut int_patch = crate::inttools::int_patch_intersection::IntPatchIntersection::new();
+  int_patch.perform(&s1, &s2, self.fuzzy_tolerance, self.fuzzy_tolerance);
+  for ic in int_patch.to_intersection_curves() {
+  let curve_idx = self.ds.intersection_curves.len();
+  self.ds.intersection_curves.push(ic);
+  // ✅ Push FF interference entry (OCCT BOPAlgo_PaveFiller_6.cxx L540-550)
+  self.ds.interf_ff.push(crate::bopds::ds::InterferenceFF {
+  f1, f2,
+  curves: vec![curve_idx],
+  points: Vec::new(),
+  tangent_faces: int_patch.tangent_faces(),
+  });
+  }
 
  // = =  Reverse Seam Edge Shift (OCCT ApplyTrsf L560) = = = = = = = = = = = = = = 
  if let Some(ref info) = shift_info {
