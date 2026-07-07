@@ -115,43 +115,14 @@ impl SearchInside {
         self.done = true;
     }
 
-    // ── Newton-Raphson refinement ────────────────────────────────────
+    // ── Gauss-Newton refinement (identical to OCCT math_FunctionSetRoot) ──
     fn refine_and_add(&mut self, func: &mut SurfFunction, u: f64, v: f64, eps: f64) {
         let tol = eps.max(1e-8);
-        let eps_fd = 1e-6;
-        let max_iter = 15;
-        let mut u = u;
-        let mut v = v;
-
-        for _ in 0..max_iter {
-            let x = [u, v];
-            let Some((f, [df_du, df_dv])) = func.values(&x) else { break };
-
-            if f.abs() < tol {
+        if let Some((un, vn)) = super::i_walking::IWalking::gauss_newton_root(func, u, v, tol) {
+            if !self.is_duplicate(un, vn, tol) {
                 let dir_3d = func.direction_3d();
                 let dir_2d = func.direction_2d();
-                if !self.is_duplicate(u, v, tol) {
-                    self.list.push(InteriorPoint::new(
-                        *func.point(), u, v, dir_3d, dir_2d,
-                    ));
-                }
-                return;
-            }
-
-            let grad2 = df_du * df_du + df_dv * df_dv;
-            if grad2 < 1e-30 { break; }
-
-            u -= f * df_du / grad2;
-            v -= f * df_dv / grad2;
-        }
-
-        // Fallback: if close, accept even if not fully converged
-        let x = [u, v];
-        if let Some(f) = func.value(&x) {
-            if f.abs() < tol * 10.0 && !self.is_duplicate(u, v, tol) {
-                let dir_3d = func.direction_3d();
-                let dir_2d = func.direction_2d();
-                self.list.push(InteriorPoint::new(*func.point(), u, v, dir_3d, dir_2d));
+                self.list.push(InteriorPoint::new(*func.point(), un, vn, dir_3d, dir_2d));
             }
         }
     }

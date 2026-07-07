@@ -185,79 +185,110 @@ impl SOnBounds {
         !(minr < 0.0 && maxr > 0.0)
     }
 
-    // ── Exact intersection for analytic quadric surface (OCCT L374-472) ──
-    // rcad: use analytic formula for line-quadric intersection on boundary
-    fn try_exact_intersection(
-        &self,
-        func: &mut ArcFunction,
-        arc: &Curve2d,
-        _p_deb: f64, _p_fin: f64,
-        params: &mut Vec<f64>,
-    ) -> bool {
-        let is_line = matches!(arc, Curve2d::Line(_));
-        if !is_line { return false; }
-
-        let quad = func.quadric();
-        let tq = quad.surface_type();
-
-        // For planar quadric intersection with a line boundary,
-        // compute exact root using quadratic equation
-        match tq {
-            GeomAbsSurfaceType::Plane => false, // handled by sign-change
-            _ => false, // Other types need IntCurveSurface_HInter
-        }
-    }
-
-    // ── Numerical root finding via sign-change detection (OCCT L475-489) ──
+    // ── OCCT math_FunctionAllRoots — robust 1D root finding (L475-489) ──
+    //
+    // Algorithm (matching OCCT IntStart_SearchOnBoundaries):
+    //   1. Sample F(t) at NbEchant uniform points across [Pdeb, Pfin]
+    //   2. For each interval [t_i, t_{i+1}]:
+    //      a. Sign change → isolate root by linear interpolation
+    //      b. Both near zero → segment (continuous region)
+    //      c. One endpoint near zero → isolated point (tangent)
+    //   3. Build both point list (spnt) and segment list (sseg)
     fn numerical_roots(
-        &self,
+        &mut self,
         func: &mut ArcFunction,
         p_deb: f64,
         p_fin: f64,
         n_echant: usize,
-        _tol_tang: f64,
+        tol_tang: f64,
         params: &mut Vec<f64>,
     ) {
         let range = p_fin - p_deb;
         if range.abs() < 1e-15 { return; }
 
+        // OCCT: math_FunctionSample(Pdeb, Pfin, NbEchant)
+        let dt = range / n_echant as f64;
         let mut prev_f: Option<f64> = None;
-        let mut prev_t: Option<f64> = None;
+
+        // Collect sample values
+        struct Sample { t: f64, f: f64 }
+        let mut samples: Vec<Sample> = Vec::with_capacity(n_echant + 1);
 
         for i in 0..=n_echant {
-            let t = p_deb + (i as f64 / n_echant as f64) * range;
-            let Some(f) = func.value(t) else { continue };
+            let t = p_deb + i as f64 * dt;
+            if let Some(f) = func.value(t) {
+                samples.push(Sample { t, f });
+            }
+        }
 
-            if let Some(pf) = prev_f {
-                if f * pf < 0.0 || f.abs() < _tol_tang || pf.abs() < _tol_tang {
-                    // Interpolate zero crossing
-                    let t_zero = if f.abs() < _tol_tang { t }
-                    else if pf.abs() < _tol_tang { prev_t.unwrap() }
-                    else {
-                        let alpha = pf.abs() / (pf.abs() + f.abs());
-                        prev_t.unwrap() + alpha * (t - prev_t.unwrap())
+        if samples.is_empty() { return; }
+
+        // OCCT L568-600: detect intervals and build points/segments
+        let mut in_segment = false;
+        let mut seg_start_t = 0.0;
+        let mut seg_start_idx = 0usize;
+
+        for i in 0..samples.len() - 1 {
+            let s0 = &samples[i];
+            let s1 = &samples[i + 1];
+
+            let near0 = s0.f.abs() <= tol_tang;
+            let near1 = s1.f.abs() <= tol_tang;
+            let sign_change = s0.f * s1.f < 0.0;
+
+            if near0 && near1 {
+                // Both near zero → segment
+                if !in_segment {
+                    in_segment = true;
+                    seg_start_t = s0.t;
+                    seg_start_idx = params.len();
+                    params.push(s0.t);
+                }
+                // Don't add s1 yet — wait for segment end
+            } else {
+                if in_segment {
+                    // End of segment
+                    in_segment = false;
+                    // Create segment
+                    let seg = Segment {
+                        curve: Curve2d::Line(rcad_kernel::geom::Line2d {
+                            origin: DVec2::new(p_deb, 0.0),
+                            direction: DVec2::new(range, 0.0),
+                        }),
+                        first_point_index: seg_start_idx + 1,
+                        last_point_index: params.len() + 1,
                     };
-                    params.push(t_zero);
+                    params.push(s0.t); // segment endpoint
+                    self.segments.push(seg);
+                }
+
+                if sign_change || near0 || near1 {
+                    // OCCT: root isolation via linear interpolation
+                    let t_root = if near0 { s0.t }
+                    else if near1 { s1.t }
+                    else {
+                        let alpha = s0.f.abs() / (s0.f.abs() + s1.f.abs());
+                        s0.t + alpha * (s1.t - s0.t)
+                    };
+                    params.push(t_root);
                 }
             }
-
-            prev_f = Some(f);
-            prev_t = Some(t);
         }
-    }
 
-    // ── OCCT TreatLC (L800+) — special treatment for linear curves ──
-    fn treat_lc(
-        &self,
-        _func: &mut ArcFunction,
-        _arc: &Curve2d,
-        _quad: &Quadric,
-        _tol_boundary: f64,
-        _params: &[f64],
-        _p_deb: f64, _p_fin: f64,
-        _arc_idx: usize,
-    ) {
-        // rcad simplified
+        // Close trailing segment
+        if in_segment {
+            let last_t = samples.last().unwrap().t;
+            let seg = Segment {
+                curve: Curve2d::Line(rcad_kernel::geom::Line2d {
+                    origin: DVec2::new(p_deb, 0.0),
+                    direction: DVec2::new(range, 0.0),
+                }),
+                first_point_index: seg_start_idx + 1,
+                last_point_index: params.len() + 1,
+            };
+            params.push(last_t);
+            self.segments.push(seg);
+        }
     }
 
     // ── Public API ───────────────────────────────────────────────────

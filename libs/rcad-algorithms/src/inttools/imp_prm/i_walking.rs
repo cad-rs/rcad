@@ -175,70 +175,36 @@ impl IWalking {
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // OCCT math_FunctionSetRoot equivalent — constrained 2D Newton
+    // OCCT math_FunctionSetRoot — Gauss-Newton for F(u,v)=0 (1 eq, 2 vars)
     //
-    // Solve: F(u,v) = 0 with direction constraint:
-    //   (u - u_pred)*tg_u + (v - v_pred)*tg_v = 0
-    // where (tg_u, tg_v) is perpendicular to ∇F at the prediction point.
-    // This is the same 2x2 system OCCT solves via math_FunctionSetRoot.
+    // Underdetermined system: minimize ||Δ|| subject to F(u+Δu,v+Δv) ≈ 0.
+    // Gauss-Newton minimum-norm solution (identical to OCCT):
+    //   J = ∇F = [df/du, df/dv]
+    //   Δ = -J⁺ F = -F / ||∇F||² · ∇F
     // ═══════════════════════════════════════════════════════════════════
-    fn constrained_newton_step(
+    pub(crate) fn gauss_newton_root(
         func: &mut SurfFunction,
-        u_pred: f64, v_pred: f64,
         u_init: f64, v_init: f64,
         tol: f64,
     ) -> Option<(f64, f64)> {
-        let max_iter = 15;
+        let max_iter = 20;
         let mut u = u_init;
         let mut v = v_init;
-
-        // Compute tangent direction at prediction: tg ⟂ ∇F
-        let pred = [u_pred, v_pred];
-        let _ = func.values(&pred);
-        let (_, df_du_p, df_dv_p) = fit_gradient(func, u_pred, v_pred);
-        let tg_u = -df_dv_p;
-        let tg_v = df_du_p;
-        let tg_len = (tg_u * tg_u + tg_v * tg_v).sqrt();
-        if tg_len < 1e-30 { return None; }
-        let tg_u = tg_u / tg_len;
-        let tg_v = tg_v / tg_len;
-
         for _ in 0..max_iter {
             let x = [u, v];
             let Some((f_val, [df_du, df_dv])) = func.values(&x) else { break };
-
-            // Constraint residual: (u - u_pred)*tg_u + (v - v_pred)*tg_v
-            let c = (u - u_pred) * tg_u + (v - v_pred) * tg_v;
-
-            if f_val.abs() < tol && c.abs() < tol {
-                return Some((u, v));
-            }
-
-            // Jacobian:
-            // J = [df_du, df_dv]
-            //     [tg_u,  tg_v ]
-            let det = df_du * tg_v - df_dv * tg_u;
-            if det.abs() < 1e-30 { break; }
-
-            let du = (-f_val * tg_v - c * -df_dv) / det;  // wrong, let me compute properly
-            // Actually: J * delta = -[f; c]
-            // delta_u = (-f*tg_v - (-c)*(-df_dv)) / det = (-f*tg_v + c*df_dv) / det
-            // delta_v = (df_du*(-c) - (-f)*tg_u) / det = (-c*df_du + f*tg_u) / det
-            let delta_u = (-f_val * tg_v + c * df_dv) / det;
-            let delta_v = (-c * df_du + f_val * tg_u) / det;
-
-            if delta_u.abs() < 1e-12 && delta_v.abs() < 1e-12 { break; }
-
-            u += delta_u;
-            v += delta_v;
+            if f_val.abs() < tol { return Some((u, v)); }
+            let grad2 = df_du * df_du + df_dv * df_dv;
+            if grad2 < 1e-30 { break; }
+            let du = -f_val * df_du / grad2;
+            let dv = -f_val * df_dv / grad2;
+            if du.abs() < 1e-14 && dv.abs() < 1e-14 { break; }
+            u += du;
+            v += dv;
         }
-
-        // Check final residual
         let x = [u, v];
         if let Some(f_val) = func.value(&x) {
-            if f_val.abs() < tol * 10.0 {
-                return Some((u, v));
-            }
+            if f_val.abs() < tol * 10.0 { return Some((u, v)); }
         }
         None
     }
@@ -496,9 +462,10 @@ impl IWalking {
             let u_pred = u_pred.clamp(self.um, self.um_max);
             let v_pred = v_pred.clamp(self.vm, self.vm_max);
 
-            // OCCT math_FunctionSetRoot: constrained Newton back to F=0
-            let (u_new, v_new) = match Self::constrained_newton_step(
-                func, u_pred, v_pred, u_pred, v_pred, tol) {
+            // OCCT math_FunctionSetRoot: Gauss-Newton → F(u,v) = 0
+            // Minimum-norm step: Δ = -F / ||∇F||² · ∇F
+            let (u_new, v_new) = match Self::gauss_newton_root(
+                func, u_pred, v_pred, tol) {
                 Some(uv) => uv,
                 None => (u_pred, v_pred),
             };
@@ -641,21 +608,8 @@ impl IWalking {
     pub fn nb_single_points(&self) -> usize { self.seq_single.len() }
 }
 
-// ── Helper: fit ∇F via finite difference ──────────────────────────
-fn fit_gradient(func: &mut SurfFunction, u: f64, v: f64) -> (f64, f64, f64) {
-    let x = [u, v];
-    if let Some((_, [df_du, df_dv])) = func.values(&x) {
-        let f = func.root();
-        (f, df_du, df_dv)
-    } else {
-        // Finite difference fallback
-        let eps = 1e-6;
-        let f = func.value(&[u, v]).unwrap_or(0.0);
-        let fu = func.value(&[u + eps, v]).unwrap_or(f);
-        let fv = func.value(&[u, v + eps]).unwrap_or(f);
-        (f, (fu - f) / eps, (fv - f) / eps)
-    }
-}
+// ── Helpers for IWalking ─────────────────────────────────────────────
+// (fit_gradient removed — gauss_newton_root uses func.values() directly)
 
 // ═══════════════════════════════════════════════════════════════════════
 // Tests
@@ -679,9 +633,9 @@ mod tests {
         let mut func = SurfFunction::with_quadric(quad);
         func.set_surface(plane);
         // P(u,v) = (u,v,0), F = sqrt(u^2+v^2) - 2
-        // At (2,0), F=0, tg = (0,1) (perp to ∇F=(1,0))
-        // Predict (2, 0.1), constraint: step along tg
-        if let Some((un, vn)) = IWalking::constrained_newton_step(&mut func, 2.0, 0.0, 2.0, 0.1, 1e-6) {
+        // At (2, 0): F=0. At (2.5, 0): F=0.5.
+        // Gauss-Newton should converge from (2.5, 0) to (2, 0)
+        if let Some((un, vn)) = IWalking::gauss_newton_root(&mut func, 2.5, 0.0, 1e-6) {
             let x = [un, vn];
             let f = func.value(&x).unwrap_or(1.0);
             assert!(f.abs() < 1e-5, "F({}, {}) = {} should be near 0", un, vn, f);
