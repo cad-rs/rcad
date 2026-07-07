@@ -315,11 +315,30 @@ impl ImpPrmIntersection {
         }
 
         // ================================================================
-        // OCCT L1404-1766: Segment processing → RLine
+        // OCCT L1404-1766: Segment processing → RLine (simplified)
         // ================================================================
         let nb_segm = self.solrst.nb_segments();
-        if nb_segm > 0 {
-            // rcad simplified: segment processing for boundary-aligned intersection arcs
+        for si in 0..nb_segm {
+            let seg = self.solrst.segment(si);
+            if seg.has_first_point() && seg.has_last_point() {
+                let tol2 = 1e-14;
+                let (pp0, pp1) = (seg.first_point_index, seg.last_point_index);
+                if pp0 > 0 && pp1 > 0 && pp0 <= self.solrst.nb_points() && pp1 <= self.solrst.nb_points() {
+                    let fp = self.solrst.point(pp0 - 1);
+                    let lp = self.solrst.point(pp1 - 1);
+                    if fp.value.distance_squared(lp.value) <= tol2 { continue; }
+                }
+            }
+            let rline = IntPatchLine {
+                line_type: IntPatchIType::Restriction,
+                curve: rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X }),
+                t_range: [0.0, 1.0],
+                pcurve1: None, pcurve2: None,
+                tolerance: tol_arc, tang_tolerance: tol_tang,
+                wline_pnts: Vec::new(), is_purging_allowed: false,
+                wl_type: WLineType::Unknown,
+            };
+            self.slin.push(rline);
         }
 
         // ================================================================
