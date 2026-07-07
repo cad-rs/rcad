@@ -1197,11 +1197,7 @@ mod tests {
 
     #[test]
     fn project_onto_circle_at_parameter() {
-        let circle = Curve3::Circle(Circle3 {
-            center: DVec3::new(2.0, 3.0, 0.0),
-            normal: DVec3::Z,
-            radius: 1.0,
-        });
+        let circle = Curve3::Circle(Circle3::new(DVec3::new(2.0, 3.0, 0.0), DVec3::Z, 1.0));
         // Query at parameter 0 (should be at center + radius * X)
         let q = DVec3::new(3.0, 3.0, 0.0);
         let r = closest_point_on_curve(&circle, q, 32);

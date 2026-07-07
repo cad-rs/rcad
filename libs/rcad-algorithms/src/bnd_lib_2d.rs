@@ -129,26 +129,9 @@ impl BoundingBox2d {
 // Public API
 // =============================================================================
 
-/// Default domain for a Curve2d.
+/// Default domain for a Curve2d (curves default_domain from the trait).
 fn curve2d_default_domain(curve: &Curve2d) -> [f64; 2] {
-    match curve {
-        Curve2d::Line(_) | Curve2d::Parabola(_) | Curve2d::Hyperbola(_) => {
-            [f64::NEG_INFINITY, f64::INFINITY]
-        }
-        Curve2d::Circle(_) | Curve2d::Ellipse(_) => {
-            [0.0, 2.0 * std::f64::consts::PI]
-        }
-        Curve2d::BSpline(c) => {
-            let d = c.degree;
-            let n = c.knots.len();
-            if n > 2 * d { [c.knots[d], c.knots[n - d - 1]] }
-            else { [c.knots[0], c.knots[n - 1]] }
-        }
-        Curve2d::Bezier(_) => [0.0, 1.0],
-        Curve2d::Trimmed(c) => [c.t_min, c.t_max],
-        // Offset delegates to a sampling fallback
-        _ => [0.0, 1.0],
-    }
+    curve.default_domain()
 }
 
 /// Add a 2D curve to a bounding box over `[t1, t2]`.
