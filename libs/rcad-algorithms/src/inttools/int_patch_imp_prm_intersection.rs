@@ -46,7 +46,8 @@ impl ImpPrmIntersection {
             line_type: IntPatchIType::Walking, curve: c.curve, t_range: c.t_range,
             pcurve1: c.pcurve1, pcurve2: c.pcurve2,
             tolerance: c.tolerance, tang_tolerance: c.tang_tolerance,
-        }).collect();
+            wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: WLineType::Unknown,
+        });
         self.empt = self.slin.is_empty(); self.done = true;
     }
 }

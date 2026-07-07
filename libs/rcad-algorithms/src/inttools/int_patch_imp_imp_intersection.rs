@@ -184,6 +184,7 @@ impl ImpImpIntersection {
                     self.slin.push(IntPatchLine {
                         line_type: IntPatchIType::Line, curve: c, t_range: [-1e10, 1e10],
                         pcurve1: None, pcurve2: None, tolerance: 1e-7, tang_tolerance: 1e-7,
+                        wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: WLineType::Unknown,
                     });
                 }
                 self.empt = false;
@@ -344,6 +345,7 @@ impl ImpImpIntersection {
                 line_type, curve: c, t_range,
                 pcurve1: None, pcurve2: None,
                 tolerance: 1e-7, tang_tolerance: 1e-7,
+                wline_pnts: Vec::new(), is_purging_allowed: false, wl_type: WLineType::Unknown,
             });
         }
         self.my_done = IntStatus::OK;
