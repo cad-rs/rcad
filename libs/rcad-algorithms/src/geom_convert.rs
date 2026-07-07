@@ -1355,4 +1355,36 @@ mod tests {
         assert_eq!(params.continuity, 1);
         assert_eq!(params.sample_count, 30);
     }
+
+    // =========================================================================
+    // OCCT-aligned GeomConvert tests (from GeomConvert_Test.cxx)
+    // =========================================================================
+
+    #[test]
+    fn geom_convert_circle_to_bspline() {
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
+        let bspline = circle_to_bspline(&circle);
+        // BSpline should evaluate same as circle at t=0
+        let p_circle = circle.point_at(0.0);
+        let p_bspline = bspline.point_at(0.0);
+        assert!((p_circle - p_bspline).length() < TOLERANCE_MESH_LEGACY);
+    }
+
+    #[test]
+    fn geom_convert_line_to_bspline() {
+        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let bspline = line_to_bspline(&line, 0.0, 10.0);
+        let p_expected = DVec3::new(5.0, 0.0, 0.0);
+        let p_bspline = bspline.point_at(0.5); // midpoint of [0,1] domain
+        assert!((p_expected - p_bspline).length() < TOLERANCE_MESH_LEGACY);
+    }
+
+    #[test]
+    fn geom_convert_plane_to_bspline() {
+        let plane = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let bspline = plane_to_bspline(&plane, 0.0, 10.0, 0.0, 10.0);
+        let p_expected = DVec3::new(5.0, 5.0, 0.0);
+        let p_bspline = bspline.point_at(0.5, 0.5);
+        assert!((p_expected - p_bspline).length() < TOLERANCE_MESH_LEGACY);
+    }
 }
