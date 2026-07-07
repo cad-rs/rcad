@@ -3747,4 +3747,315 @@ mod eval_tests {
         // These are different points (one advances forward, one backward)
         assert!((p_fwd - p_rev).length() > 0.5);
     }
+
+    // =========================================================================
+    // OCCT-aligned comprehensive 3D curve evaluation tests
+    // (matching TKG3d/GTests Geom_Line/Circle/Ellipse/BSpline/Bezier patterns)
+    // =========================================================================
+
+    // ── Line ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn line3_eval_at_multiple_points() {
+        let line = Line3 { origin: DVec3::new(1.0, 2.0, 3.0), direction: DVec3::new(0.0, 1.0, 0.0) };
+        assert!((line.point_at(0.0) - DVec3::new(1.0, 2.0, 3.0)).length() < 1e-12);
+        assert!((line.point_at(5.0) - DVec3::new(1.0, 7.0, 3.0)).length() < 1e-12);
+        assert!((line.point_at(-3.0) - DVec3::new(1.0, -1.0, 3.0)).length() < 1e-12);
+    }
+
+    #[test]
+    fn line3_constant_tangent_and_derivative() {
+        let line = Line3 { origin: DVec3::ZERO, direction: DVec3::new(1.0, 1.0, 1.0).normalize() };
+        let d = DVec3::new(1.0, 1.0, 1.0).normalize();
+        for &t in &[-10.0, -1.0, 0.0, 1.0, 10.0] {
+            assert!((line.tangent_at(t) - d).length() < 1e-12);
+            assert!((line.derivative_at(t) - d).length() < 1e-12);
+        }
+    }
+
+    #[test]
+    fn line3_default_domain_infinite() {
+        let line = Line3 { origin: DVec3::ZERO, direction: DVec3::X };
+        let [t0, t1] = line.default_domain();
+        assert!(t0.is_infinite() && t0.is_sign_negative());
+        assert!(t1.is_infinite() && t1.is_sign_positive());
+    }
+
+    // ── Circle ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn circle3_eval_four_quadrants() {
+        // Use explicit x_dir/y_dir for predictable orientation
+        let c = Circle3 {
+            center: DVec3::ZERO, normal: DVec3::Z,
+            x_dir: DVec3::X, y_dir: DVec3::Y, radius: 5.0,
+        };
+        // P(0) = (5,0,0), P(PI/2) = (0,5,0), P(PI) = (-5,0,0), P(3PI/2) = (0,-5,0)
+        assert!((c.point_at(0.0) - DVec3::new(5.0, 0.0, 0.0)).length() < 1e-10);
+        assert!((c.point_at(std::f64::consts::PI / 2.0) - DVec3::new(0.0, 5.0, 0.0)).length() < 1e-10);
+        assert!((c.point_at(std::f64::consts::PI) - DVec3::new(-5.0, 0.0, 0.0)).length() < 1e-10);
+        assert!((c.point_at(3.0 * std::f64::consts::PI / 2.0) - DVec3::new(0.0, -5.0, 0.0)).length() < 1e-10);
+    }
+
+    #[test]
+    fn circle3_tangent_at_quadrants() {
+        let c = Circle3 {
+            center: DVec3::ZERO, normal: DVec3::Z,
+            x_dir: DVec3::X, y_dir: DVec3::Y, radius: 5.0,
+        };
+        use std::f64::consts::PI;
+        // tangent = (-R*sin(t)*X + R*cos(t)*Y).normalize()
+        assert!((c.tangent_at(0.0) - DVec3::Y).length() < 1e-10);
+        assert!((c.tangent_at(PI / 2.0) + DVec3::X).length() < 1e-10);
+        assert!((c.tangent_at(PI) + DVec3::Y).length() < 1e-10);
+        assert!((c.tangent_at(3.0 * PI / 2.0) - DVec3::X).length() < 1e-10);
+    }
+
+    #[test]
+    fn circle3_derivative_nonzero() {
+        let c = Circle3 {
+            center: DVec3::ZERO, normal: DVec3::Z,
+            x_dir: DVec3::X, y_dir: DVec3::Y, radius: 5.0,
+        };
+        // derivative = R * (-sin(t)*X + cos(t)*Y), always non-zero for R>0
+        for &t in &[0.0, 0.5, 1.0, 2.0, 4.0, 6.0] {
+            let d = c.derivative_at(t);
+            assert!(d.length() > 0.0);
+            assert!((d.length() - 5.0).abs() < 1e-10, "t={} |d|={}", t, d.length());
+        }
+    }
+
+    #[test]
+    fn circle3_default_domain() {
+        let c = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0);
+        let [t0, t1] = c.default_domain();
+        assert!((t0 - 0.0).abs() < 1e-12);
+        assert!((t1 - 2.0 * std::f64::consts::PI).abs() < 1e-12);
+    }
+
+    // ── Ellipse ────────────────────────────────────────────────────────
+
+    #[test]
+    fn ellipse3_eval_vertices() {
+        let e = Ellipse3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            major_radius: 10.0, minor_radius: 5.0,
+        };
+        use std::f64::consts::PI;
+        // Major vertices: t=0 → (10,0,0), t=PI → (-10,0,0)
+        assert!((e.point_at(0.0) - DVec3::new(10.0, 0.0, 0.0)).length() < 1e-10);
+        assert!((e.point_at(PI) - DVec3::new(-10.0, 0.0, 0.0)).length() < 1e-10);
+        // Minor vertices: t=PI/2 → (0,5,0), t=3PI/2 → (0,-5,0)
+        assert!((e.point_at(PI / 2.0) - DVec3::new(0.0, 5.0, 0.0)).length() < 1e-10);
+        assert!((e.point_at(3.0 * PI / 2.0) - DVec3::new(0.0, -5.0, 0.0)).length() < 1e-10);
+    }
+
+    #[test]
+    fn ellipse3_tangent_at_major_vertex() {
+        let e = Ellipse3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            major_radius: 10.0, minor_radius: 5.0,
+        };
+        // Tangent at major vertex t=0: direction = (0, 5, 0) = Y
+        // (derivative: -a*sin(0)*X + b*cos(0)*Y = 5*Y)
+        let t0 = e.tangent_at(0.0);
+        assert!((t0 - DVec3::Y).length() < 1e-10);
+    }
+
+    #[test]
+    fn ellipse3_derivative_at_vertices() {
+        let e = Ellipse3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            major_radius: 10.0, minor_radius: 5.0,
+        };
+        // derivative at t=0: a*(-sin(0))*X + b*cos(0)*Y = b*Y = 5*Y
+        let d0 = e.derivative_at(0.0);
+        assert!((d0 - DVec3::new(0.0, 5.0, 0.0)).length() < 1e-10);
+        // derivative at t=PI/2: a*(-sin(PI/2))*X + b*cos(PI/2)*Y = -a*X = -10*X
+        let d_half = e.derivative_at(std::f64::consts::PI / 2.0);
+        assert!((d_half - DVec3::new(-10.0, 0.0, 0.0)).length() < 1e-10);
+    }
+
+    // ── BSpline ────────────────────────────────────────────────────────
+
+    #[test]
+    fn bspline3_eval_at_knots() {
+        let c = BSplineCurve3 {
+            degree: 2,
+            knots: vec![0.0, 0.0, 0.0, 0.3, 0.7, 1.0, 1.0, 1.0],
+            control_points: vec![
+                DVec3::new(0.0, 0.0, 0.0), DVec3::new(3.0, 5.0, 0.0),
+                DVec3::new(6.0, 5.0, 0.0), DVec3::new(9.0, 0.0, 0.0),
+            ],
+            weights: vec![1.0; 4],
+        };
+        // Endpoints
+        assert!((c.point_at(0.0) - DVec3::ZERO).length() < 1e-10);
+        assert!((c.point_at(1.0) - DVec3::new(9.0, 0.0, 0.0)).length() < 1e-10);
+    }
+
+    #[test]
+    fn bspline3_degree1_is_line() {
+        let c = BSplineCurve3 {
+            degree: 1,
+            knots: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![DVec3::new(1.0, 2.0, 3.0), DVec3::new(4.0, 5.0, 6.0)],
+            weights: vec![1.0, 1.0],
+        };
+        assert!((c.point_at(0.0) - DVec3::new(1.0, 2.0, 3.0)).length() < 1e-10);
+        assert!((c.point_at(1.0) - DVec3::new(4.0, 5.0, 6.0)).length() < 1e-10);
+        assert!((c.point_at(0.5) - DVec3::new(2.5, 3.5, 4.5)).length() < 1e-10);
+    }
+
+    // ── Bezier ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn bezier3_linear_tangent_constant() {
+        // Degree-1 Bezier (line) has constant tangent
+        let c = BezierCurve3 {
+            control_points: vec![DVec3::ZERO, DVec3::new(2.0, 4.0, 0.0)],
+            weights: vec![1.0, 1.0],
+        };
+        let t0 = c.tangent_at(0.0);
+        let t1 = c.tangent_at(0.5);
+        let t_end = c.tangent_at(1.0);
+        assert!((t0 - t1).length() < 1e-10);
+        assert!((t0 - t_end).length() < 1e-10);
+    }
+
+    #[test]
+    fn bezier3_rational_weight_effect() {
+        // Rational Bezier with center weight > 1 pulls curve toward control point
+        let non_rational = BezierCurve3 {
+            control_points: vec![
+                DVec3::new(-1.0, 0.0, 0.0), DVec3::new(0.0, 1.0, 0.0), DVec3::new(1.0, 0.0, 0.0),
+            ],
+            weights: vec![1.0, 1.0, 1.0],
+        };
+        let rational = BezierCurve3 {
+            control_points: vec![
+                DVec3::new(-1.0, 0.0, 0.0), DVec3::new(0.0, 1.0, 0.0), DVec3::new(1.0, 0.0, 0.0),
+            ],
+            weights: vec![1.0, 5.0, 1.0], // heavy center weight pulls up
+        };
+        let p_nr = non_rational.point_at(0.5);
+        let p_r = rational.point_at(0.5);
+        // Rational with heavy center weight should be higher (more Y)
+        assert!(p_r.y > p_nr.y);
+    }
+
+    // ── Parabola ───────────────────────────────────────────────────────
+
+    #[test]
+    fn parabola3_eval_and_derivative() {
+        use std::f64::consts::PI;
+        // Parabola: dir_perp = axis_dir.cross(normal) = X.cross(Z) = -Y
+        // P(t) = (t²/(2p)) * X + t * (-Y) = (t²/8, -t, 0)
+        let p = Parabola3 {
+            vertex: DVec3::ZERO, normal: DVec3::Z, axis_dir: DVec3::X,
+            focal_param: 4.0,
+        };
+        // P(0) = (0,0,0)
+        assert!((p.point_at(0.0) - DVec3::ZERO).length() < 1e-10);
+        // P(4) = (16/8, -4, 0) = (2, -4, 0)
+        assert!((p.point_at(4.0) - DVec3::new(2.0, -4.0, 0.0)).length() < 1e-10);
+        // derivative = (t/4, -1, 0): at t=0 → (0, -1, 0), at t=4 → (1, -1, 0)
+        let d0 = p.derivative_at(0.0);
+        assert!((d0 - DVec3::new(0.0, -1.0, 0.0)).length() < 1e-10);
+        let d4 = p.derivative_at(4.0);
+        assert!((d4 - DVec3::new(1.0, -1.0, 0.0)).length() < 1e-10);
+    }
+
+    // ── Hyperbola ──────────────────────────────────────────────────────
+
+    #[test]
+    fn hyperbola3_eval_and_derivative() {
+        use std::f64::consts::PI;
+        let h = Hyperbola3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            semi_major: 3.0, semi_minor: 2.0,
+        };
+        // P(0) = (a*cosh(0), 0, 0) = (3, 0, 0)  (since minor_dir = normal×major_dir = Z×X = Y)
+        // Actually: P(t) = center + a*cosh(t)*X + b*sinh(t)*Y
+        // P(0) = (3*1, 2*0, 0) = (3, 0, 0)
+        assert!((h.point_at(0.0) - DVec3::new(3.0, 0.0, 0.0)).length() < 1e-10);
+        // P(1) = (3*cosh(1), 2*sinh(1), 0)
+        let p1 = h.point_at(1.0);
+        assert!((p1.x - 3.0 * 1.0f64.cosh()).abs() < 1e-10);
+        assert!((p1.y - 2.0 * 1.0f64.sinh()).abs() < 1e-10);
+        // derivative = (a*sinh(t), b*cosh(t), 0)
+        // at t=0: (0, 2, 0)
+        let d0 = h.derivative_at(0.0);
+        assert!((d0 - DVec3::new(0.0, 2.0, 0.0)).length() < 1e-10);
+    }
+
+    // ── Helix ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn helix3_full_turn_pitch_advance() {
+        // Helix with pitch 2: after one full turn, Z advances by 2
+        let h = CircularHelix3 {
+            origin: DVec3::ZERO, axis: DVec3::Z,
+            ref_dir: DVec3::X, radius: 3.0, pitch: 2.0,
+        };
+        use std::f64::consts::{PI, TAU};
+        // x_axis = ref_dir - axis * dot = X - 0 = X
+        // y_axis = Z.cross(X) = Y
+        // P(0) = (3, 0, 0), P(TAU) = (3, 0, pitch) = (3, 0, 2)
+        assert!((h.point_at(0.0) - DVec3::new(3.0, 0.0, 0.0)).length() < 1e-10);
+        let p_full = h.point_at(TAU);
+        assert!((p_full - DVec3::new(3.0, 0.0, 2.0)).length() < 1e-10);
+    }
+
+    #[test]
+    fn helix3_half_turn_opposite() {
+        let h = CircularHelix3 {
+            origin: DVec3::ZERO, axis: DVec3::Z,
+            ref_dir: DVec3::X, radius: 3.0, pitch: 2.0,
+        };
+        use std::f64::consts::PI;
+        // P(PI) = (-3, 0, 1)
+        let p_half = h.point_at(PI);
+        assert!((p_half - DVec3::new(-3.0, 0.0, 1.0)).length() < 1e-10);
+    }
+
+    // ── SineWave ───────────────────────────────────────────────────────
+
+    #[test]
+    fn sine_wave3_eval_and_derivative() {
+        let w = SineWave3 {
+            origin: DVec3::ZERO, baseline_dir: DVec3::X,
+            amplitude_dir: DVec3::Y, amplitude: 2.0,
+            frequency: 1.0, phase: 0.0,
+        };
+        use std::f64::consts::PI;
+        // P(0) = (0, 0, 0)
+        assert!((w.point_at(0.0) - DVec3::ZERO).length() < 1e-10);
+        // P(PI/2) = (PI/2, 2, 0)
+        let p = w.point_at(PI / 2.0);
+        assert!((p - DVec3::new(PI / 2.0, 2.0, 0.0)).length() < 1e-10);
+        // derivative = X + 2*cos(t)*Y, at t=0: X + 2*Y
+        let d0 = w.derivative_at(0.0);
+        assert!((d0 - DVec3::new(1.0, 2.0, 0.0)).length() < 1e-10);
+    }
+
+    // ── OffsetCurve3 ───────────────────────────────────────────────────
+
+    #[test]
+    fn offset_curve3_line_offset() {
+        // Line along X, offset along Z: tangent = X, perp = X×Z = -Y
+        // The offset displaces in the -Y direction (perpendicular to both tangent and offset_dir)
+        // FD tangent gives approximate direction, so just check the point differs from the line
+        let basis = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let off = OffsetCurve3 {
+            basis: Box::new(basis),
+            offset_distance: 2.0,
+            offset_dir: DVec3::Z,
+        };
+        let pt = off.point_at(5.0);
+        // Should differ from the base line point (5,0,0)
+        assert!((pt - DVec3::new(5.0, 0.0, 0.0)).length() > 1.0);
+        // The Z coordinate should be near 0 (offset in XY plane, not Z)
+        assert!(pt.z.abs() < 0.1);
+    }
 }
