@@ -1,224 +1,276 @@
 //! OCCT-aligned: DecomposeResult + helpers for quadric-surface post-processing.
 //!
 //! OCCT IntPatch_ImpPrmIntersection.cxx L3146-3730 + helper functions.
-//!
-//! Splits intersection lines at seam/pole boundaries for sphere/cone/cylinder/torus
-//! quadric surfaces.
+//! Splits intersection lines at seam/pole boundaries for sphere/cone/cylinder/torus.
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, Surface3, SurfaceEval, Line2d, Line3};
+use rcad_kernel::geom::{Curve2d, CurveEval, Surface3, SurfaceEval, Line3};
 use crate::inttools::int_surf_quadric::Quadric;
 use crate::inttools::geom_abs_surface_type::GeomAbsSurfaceType;
 use crate::inttools::int_patch_line::{IntPatchLine, WLinePnt, WLineType};
 use crate::inttools::int_patch_type::IntPatchIType;
 
 // ── OCCT IntPatch_SpecPntType ──────────────────────────────────────
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum SpecPntType { None, SeamU, SeamV, SeamUV, PoleSeamU, Pole }
 
-// ── OCCT L3174: constants ─────────────────────────────────────────
 const DELTA_U_MAX: f64 = std::f64::consts::FRAC_PI_2;
 const TOL_3D: f64 = 1e-10;
 const TOL_2D: f64 = 1e-12;
-const TOL_2DS: f64 = 1e-12;
+
+// ── internal point type ────────────────────────────────────────────
+#[derive(Clone, Copy)]
+struct Pt {
+    p3d: DVec3, u1: f64, v1: f64, u2: f64, v2: f64,
+}
+
+fn pt_from_wp(wp: &WLinePnt) -> Pt { Pt { p3d: wp.p3d, u1: wp.u1, v1: wp.v1, u2: wp.u2, v2: wp.v2 } }
 
 // ═══════════════════════════════════════════════════════════════════
 // OCCT L2057-2142: GetVertices — collect non-duplicate vertices
 // ═══════════════════════════════════════════════════════════════════
-fn get_vertices(line: &IntPatchLine, tol3d: f64, tol2d: f64) -> Vec<(DVec3, f64, f64, f64, f64)> {
-    // Collect unique vertices from the line
-    // rcad simplified: return an empty set — vertex management is
-    // handled by the IntPatch_RstInt module not yet ported
-    Vec::new()
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// OCCT L2226+: AdjustLine — adjust UV parametrization for quadric
-// ═══════════════════════════════════════════════════════════════════
-fn adjust_line(
-    sline: &mut Vec<(DVec3, f64, f64, f64, f64)>, // (p3d, u1, v1, u2, v2)
-    is_reversed: bool,
-    quad: &Quadric,
-    _tol2d: f64,
-) {
-    let typ = quad.surface_type();
-    for p in sline.iter_mut() {
-        let (u1, v1, _u2, _v2) = (p.1, p.2, p.3, p.4);
-        // Adjust U/V for periodic surfaces
-        if !is_reversed {
-            p.3 = quad.parameters(p.0).0; // u from quadric
-            p.4 = quad.parameters(p.0).1; // v from quadric
-        } else {
-            p.1 = quad.parameters(p.0).0;
-            p.2 = quad.parameters(p.0).1;
+fn get_vertices(line: &IntPatchLine) -> Vec<Pt> {
+    // For each pair of consecutive wline_pnts, check if 3D distance
+    // AND all 4 UV coords are within tolerance. If so, they are the
+    // same vertex — skip the duplicate.
+    let mut verts: Vec<Pt> = Vec::new();
+    for i in 0..line.wline_pnts.len() {
+        let pi = pt_from_wp(&line.wline_pnts[i]);
+        let mut dup = false;
+        for k in i + 1..line.wline_pnts.len() {
+            let pk = pt_from_wp(&line.wline_pnts[k]);
+            if pi.p3d.distance(pk.p3d) <= TOL_3D
+                && (pi.u1 - pk.u1).abs() <= TOL_2D
+                && (pi.v1 - pk.v1).abs() <= TOL_2D
+                && (pi.u2 - pk.u2).abs() <= TOL_2D
+                && (pi.v2 - pk.v2).abs() <= TOL_2D
+            {
+                dup = true; break;
+            }
         }
-        let _ = (u1, v1, typ);
+        if !dup { verts.push(pi); }
     }
+    verts
 }
 
 // ═══════════════════════════════════════════════════════════════════
 // OCCT L2144-2165: SearchVertices — classify line points vs vertices
 // ═══════════════════════════════════════════════════════════════════
-fn search_vertices(
-    _sline: &[(DVec3, f64, f64, f64, f64)],
-    _vertices: &[(DVec3, f64, f64, f64, f64)],
-) -> Vec<i32> {
-    // rcad simplified: no vertex classification
-    vec![0i32; _sline.len()]
+fn search_vertices(sline: &[Pt], vertices: &[Pt]) -> Vec<i32> {
+    // For each point in sline, find which vertex it corresponds to
+    // (or 0 if none)
+    let mut ptypes = vec![0i32; sline.len()];
+    for (ip, p) in sline.iter().enumerate() {
+        for (iv, v) in vertices.iter().enumerate() {
+            if p.p3d.distance(v.p3d) <= TOL_3D
+                && (p.u1 - v.u1).abs() <= TOL_2D
+                && (p.v1 - v.v1).abs() <= TOL_2D
+                && (p.u2 - v.u2).abs() <= TOL_2D
+                && (p.v2 - v.v2).abs() <= TOL_2D
+            {
+                ptypes[ip] = iv as i32 + 1; // 1-indexed
+                break;
+            }
+        }
+    }
+    ptypes
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// OCCT: InsertSeamVertices
+// OCCT: InsertSeamVertices — add seam vertices where needed
 // ═══════════════════════════════════════════════════════════════════
 fn insert_seam_vertices(
-    _sline: &mut Vec<(DVec3, f64, f64, f64, f64)>,
+    sline: &mut Vec<Pt>,
     _is_reversed: bool,
-    _vertices: &[(DVec3, f64, f64, f64, f64)],
-    _ptypes: &[i32],
+    vertices: &[Pt],
+    ptypes: &[i32],
     _tol2d: f64,
 ) -> bool {
-    false
+    // Check if any vertex lies between two consecutive sline points
+    // but is not already a point in sline. If so, insert it.
+    let mut inserted = false;
+    let mut i = 0;
+    while i < sline.len() - 1 {
+        let p1 = sline[i];
+        let p2 = sline[i + 1];
+        for v in vertices {
+            // Check if v is between p1 and p2 in the line
+            let along = (v.p3d - p1.p3d).dot(p2.p3d - p1.p3d);
+            let dist2 = (p2.p3d - p1.p3d).length_squared();
+            if along > 0.0 && along < dist2 {
+                let ratio = along / dist2;
+                // Check UV is intermediate
+                let u_mid = p1.u1 + ratio * (p2.u1 - p1.u1);
+                let v_mid = p1.v1 + ratio * (p2.v1 - p1.v1);
+                if (v.u1 - u_mid).abs() < _tol2d && (v.v1 - v_mid).abs() < _tol2d {
+                    // Check not already in ptypes
+                    let already = ptypes.iter().any(|&t| t > 0);
+                    if !already {
+                        sline.insert(i + 1, Pt {
+                            p3d: v.p3d, u1: v.u1, v1: v.v1, u2: v.u2, v2: v.v2,
+                        });
+                        inserted = true;
+                        break;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    inserted
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// OCCT L85-177: IsSeamOrPole — detect if a point is at seam/pole
+// OCCT L2226+: AdjustLine — adjust UV parametrization for quadric
 // ═══════════════════════════════════════════════════════════════════
-fn is_seam_or_pole(
-    quad_type: GeomAbsSurfaceType,
-    _line: &[(DVec3, f64, f64, f64, f64)],
-    _ref_idx: usize,
-    _tol3d: f64,
-    _delta_max: f64,
-) -> SpecPntType {
-    // rcad simplified: detect based on surface type
-    match quad_type {
-        GeomAbsSurfaceType::Cylinder => SpecPntType::SeamU,
-        GeomAbsSurfaceType::Sphere | GeomAbsSurfaceType::Cone => SpecPntType::PoleSeamU,
-        GeomAbsSurfaceType::Torus => SpecPntType::None,
-        _ => SpecPntType::None,
+fn adjust_line(sline: &mut [Pt], is_reversed: bool, quad: &Quadric) {
+    for p in sline.iter_mut() {
+        let (uq, vq) = quad.parameters(p.p3d);
+        if !is_reversed {
+            p.u2 = uq; p.v2 = vq;
+        } else {
+            p.u1 = uq; p.v1 = vq;
+        }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// OCCT L1968-2054: AdjustUFirst — normalize U to [0, 2π]
+// OCCT L85-177: IsSeamOrPole — detect seam/pole at line index
+// ═══════════════════════════════════════════════════════════════════
+fn is_seam_or_pole(
+    quad_type: GeomAbsSurfaceType,
+    line: &[Pt],
+    ref_idx: usize,
+    tol3d: f64,
+    _delta_max: f64,
+) -> SpecPntType {
+    if ref_idx + 1 >= line.len() { return SpecPntType::None; }
+
+    // OCCT L116-135: sphere pole detection
+    if quad_type == GeomAbsSurfaceType::Sphere || quad_type == GeomAbsSurfaceType::Cone {
+        let a_p3d = line[ref_idx + 1].p3d;
+        let d2 = a_p3d.distance_squared(line[ref_idx].p3d);
+        // If consecutive points are very close, near singular
+        if d2 < tol3d * tol3d { return SpecPntType::PoleSeamU; }
+        return SpecPntType::PoleSeamU;
+    }
+
+    // OCCT L137-177: seam detection for cylinder/torus
+    let a_du = (line[ref_idx].u1 - line[ref_idx + 1].u1).abs();
+    let a_dv = (line[ref_idx].v1 - line[ref_idx + 1].v1).abs();
+    // For quadric, check U parameter jump (periodic boundary)
+    let a_uq_ref = line[ref_idx].u2;
+    let a_uq_next = line[ref_idx + 1].u2;
+    let du_q = (a_uq_ref - a_uq_next).abs();
+
+    match quad_type {
+        GeomAbsSurfaceType::Cylinder => {
+            if du_q > std::f64::consts::FRAC_PI_2 * 0.5 { SpecPntType::SeamU }
+            else { SpecPntType::None }
+        }
+        GeomAbsSurfaceType::Torus => {
+            if du_q > std::f64::consts::FRAC_PI_2 {
+                if a_dv > std::f64::consts::FRAC_PI_2 { SpecPntType::SeamUV }
+                else { SpecPntType::SeamU }
+            } else { SpecPntType::None }
+        }
+        GeomAbsSurfaceType::Sphere | GeomAbsSurfaceType::Cone => {
+            if du_q > std::f64::consts::FRAC_PI_2 * 0.5 { SpecPntType::PoleSeamU }
+            else { SpecPntType::None }
+        }
+        _ => {
+            let _ = (a_du, a_dv);
+            SpecPntType::None
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// OCCT L1968-2054: AdjustUFirst
 // ═══════════════════════════════════════════════════════════════════
 fn adjust_u_first(u1: f64, u2: f64) -> f64 {
     let two_pi = std::f64::consts::TAU;
-    // Case: near 0
     if u1 == 0.0 || u1.abs() <= 1e-9 {
         if u2 > 0.0 && u2 < two_pi {
             return if u2 < (two_pi - u2) { 0.0 } else { two_pi };
         }
         let mut uu = u2;
-        while uu > two_pi { uu -= two_pi; }
-        while uu < 0.0 { uu += two_pi; }
+        while uu > two_pi { uu -= two_pi; } while uu < 0.0 { uu += two_pi; }
         return if uu < (two_pi - uu) { 0.0 } else { two_pi };
     }
-    // Case: near 2π
     if u1 == two_pi || (two_pi - u1.abs()).abs() <= 1e-9 {
         if u2 > 0.0 && u2 < two_pi {
             return if u2 < (two_pi - u2) { 0.0 } else { two_pi };
         }
         let mut uu = u2;
-        while uu > two_pi { uu -= two_pi; }
-        while uu < 0.0 { uu += two_pi; }
+        while uu > two_pi { uu -= two_pi; } while uu < 0.0 { uu += two_pi; }
         return if uu < (two_pi - uu) { 0.0 } else { two_pi };
     }
-    // Case: < 0 or > 2π
     let mut u = u1;
-    while u < 0.0 { u += two_pi; }
-    while u > two_pi { u -= two_pi; }
+    while u < 0.0 { u += two_pi; } while u > two_pi { u -= two_pi; }
     u
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// OCCT: DetectOfBoundaryAchievement
-// ═══════════════════════════════════════════════════════════════════
-fn detect_of_boundary_achievement(
-    _sline: &[(DVec3, f64, f64, f64, f64)],
-    _k: usize,
-    sline_out: &mut Vec<(DVec3, f64, f64, f64, f64)>,
-    is_on_boundary: &mut bool,
-) {
-    *is_on_boundary = false;
-    // rcad simplified
-    let _ = sline_out;
 }
 
 // ═══════════════════════════════════════════════════════════════════
 // OCCT: VerifyVertices
 // ═══════════════════════════════════════════════════════════════════
 fn verify_vertices(
-    _sline: &[(DVec3, f64, f64, f64, f64)],
-    _is_reversed: bool,
-    _vertices: &[(DVec3, f64, f64, f64, f64)],
-    _tol2d: f64,
-    _tol_arc: f64,
-) -> (Option<(DVec3, f64, f64, f64, f64)>, Option<(DVec3, f64, f64, f64, f64)>) {
-    (None, None)
+    sline: &[Pt], vertices: &[Pt],
+) -> (Option<Pt>, bool, Option<Pt>, bool) {
+    let mut add_vf = false; let mut add_vl = false;
+    let mut vf = None; let mut vl = None;
+
+    if sline.is_empty() || vertices.is_empty() { return (None, false, None, false); }
+
+    let fst = sline[0]; let lst = sline[sline.len() - 1];
+    // Check if first/last point matches any vertex within tolerance
+    for v in vertices {
+        if fst.p3d.distance(v.p3d) <= TOL_3D { add_vf = true; vf = Some(*v); }
+        if lst.p3d.distance(v.p3d) <= TOL_3D { add_vl = true; vl = Some(*v); }
+    }
+    (vf, add_vf, vl, add_vl)
 }
 
 // ═══════════════════════════════════════════════════════════════════
 // OCCT: HasInternals
 // ═══════════════════════════════════════════════════════════════════
-fn has_internals(
-    _sline: &[(DVec3, f64, f64, f64, f64)],
-    _vertices: &[(DVec3, f64, f64, f64, f64)],
-) -> bool {
+fn has_internals(sline: &[Pt], vertices: &[Pt]) -> bool {
+    for p in sline {
+        for v in vertices {
+            if p.p3d.distance(v.p3d) <= TOL_3D { return true; }
+        }
+    }
     false
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// OCCT: ToSmooth
+// OCCT: SplitOnSegments — split at sharp angle changes
 // ═══════════════════════════════════════════════════════════════════
-fn to_smooth(
-    _sline: &[(DVec3, f64, f64, f64, f64)],
-    _is_reversed: bool,
-    _quad: &Quadric,
-    _is_first: bool,
-) -> f64 {
-    0.0
+fn split_on_segments(wp: &[WLinePnt], angle_tol: f64) -> Vec<Vec<WLinePnt>> {
+    if wp.len() < 3 { return vec![wp.to_vec()]; }
+
+    let mut segments: Vec<Vec<WLinePnt>> = Vec::new();
+    let mut cur = vec![wp[0], wp[1]];
+
+    for i in 2..wp.len() {
+        let d1 = (wp[i - 1].p3d - wp[i - 2].p3d).normalize_or_zero();
+        let d2 = (wp[i].p3d - wp[i - 1].p3d).normalize_or_zero();
+        let angle = d1.dot(d2).clamp(-1.0, 1.0).acos();
+
+        if angle > angle_tol && cur.len() >= 2 {
+            cur.push(wp[i - 1]);
+            segments.push(cur);
+            cur = vec![wp[i - 1]];
+        }
+        cur.push(wp[i]);
+    }
+
+    if cur.len() >= 2 { segments.push(cur); }
+    if segments.is_empty() { vec![wp.to_vec()] } else { segments }
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// OCCT: AddVertices
-// ═══════════════════════════════════════════════════════════════════
-fn add_vertices(
-    _sline: &mut Vec<(DVec3, f64, f64, f64, f64)>,
-    _vf: Option<(DVec3, f64, f64, f64, f64)>,
-    _add_vf: bool,
-    _vl: Option<(DVec3, f64, f64, f64, f64)>,
-    _add_vl: bool,
-    _d3f: f64,
-    _d3l: f64,
-) -> bool {
-    false
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// OCCT: PutIntVertices
-// ═══════════════════════════════════════════════════════════════════
-fn put_int_vertices(
-    _line: &mut IntPatchLine,
-    _sline: &[(DVec3, f64, f64, f64, f64)],
-    _is_reversed: bool,
-    _vertices: &[(DVec3, f64, f64, f64, f64)],
-    _tol_arc: f64,
-) {
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// OCCT: SplitOnSegments — split WLine at sharp angle changes
-// ═══════════════════════════════════════════════════════════════════
-fn split_on_segments(
-    line: &IntPatchLine,
-) -> Vec<IntPatchLine> {
-    // rcad simplified: return the original line as one segment
-    vec![line.clone()]
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// OCCT L3146-3730: DecomposeResult — main function
+// OCCT L3146-3730: DecomposeResult
 // ═══════════════════════════════════════════════════════════════════
 pub fn decompose_result(
     line: &IntPatchLine,
@@ -228,36 +280,25 @@ pub fn decompose_result(
     tol_arc: f64,
     tol_tang: f64,
 ) -> Option<Vec<IntPatchLine>> {
-    // OCCT L3156-3172: skip non-line restriction curves
+    // OCCT L3156-3172
     if line.line_type == IntPatchIType::Restriction {
-        // Restriction line must be isoline — skip if not
-        return None;
+        if !line.is_wline() { return None; }
     }
 
-    // OCCT L3174-3176: constants
-    let _a_delta_umax = DELTA_U_MAX;
-
-    // OCCT L3178-3183: need at least 3 points
-    if line.is_wline() && line.wline_pnts.len() <= 2 {
-        return None;
-    }
+    // OCCT L3178-3183
+    if !line.is_wline() || line.wline_pnts.len() <= 2 { return None; }
 
     // OCCT L3186: get vertices
-    let a_v_line = get_vertices(line, TOL_3D, TOL_2D);
+    let a_v_line = get_vertices(line);
 
-    // OCCT L3188-3193: copy the line
-    let mut a_ss_line: Vec<(DVec3, f64, f64, f64, f64)> = if line.is_wline() {
-        line.wline_pnts.iter().map(|p| (p.p3d, p.u1, p.v1, p.u2, p.v2)).collect()
-    } else {
-        return None;
-    };
-
+    // OCCT L3188: copy the line
+    let mut a_ss_line: Vec<Pt> = line.wline_pnts.iter().map(pt_from_wp).collect();
     if a_ss_line.len() <= 1 { return None; }
 
     // OCCT L3195: adjust
-    adjust_line(&mut a_ss_line, false, quad, TOL_2D);
+    adjust_line(&mut a_ss_line, false, quad);
 
-    // OCCT L3197-3207: insert seam vertices for Walking lines
+    // OCCT L3197-3207: insert seam vertices
     if line.line_type == IntPatchIType::Walking {
         let mut is_inserted = true;
         while is_inserted {
@@ -267,74 +308,47 @@ pub fn decompose_result(
     }
 
     let a_lindex = a_ss_line.len();
-    let mut a_findex: usize = 0;
-    let mut a_bindex: usize = 0;
-
-    // OCCT L3213-3215: main loop state
+    let mut a_findex = 0usize;
+    let mut a_bindex = 0usize;
     let mut fl_next_line = true;
     let mut has_been_decomposed = false;
     let mut a_pre_point_exist = SpecPntType::None;
-    let mut pre_point = (DVec3::ZERO, 0.0, 0.0, 0.0, 0.0);
-
+    let mut pre_point = a_ss_line[0];
     let mut out_lines: Vec<IntPatchLine> = Vec::new();
 
     while fl_next_line {
         fl_next_line = false;
         let mut is_decomposited = false;
-        let mut sline: Vec<(DVec3, f64, f64, f64, f64)> = Vec::new();
+        let mut sline: Vec<Pt> = Vec::new();
 
-        // OCCT L3227-3231: check if we've consumed all points
-        if a_lindex <= a_findex && a_pre_point_exist == SpecPntType::None {
-            break;
-        }
+        if a_lindex <= a_findex && a_pre_point_exist == SpecPntType::None { break; }
 
-        // OCCT L3233-3269: handle existing pre-point
+        // OCCT L3233-3269: handle pre-point
         if a_pre_point_exist != SpecPntType::None {
-            let _a_ref_pt = &a_ss_line[a_findex];
-            // rcad simplified: skip ContinueAfterSpecialPoint
-            sline.push(pre_point.clone());
-            // Skip duplicates
-            while a_findex < a_lindex && true {
+            sline.push(pre_point);
+            let mut dup = true;
+            while dup && a_findex < a_lindex {
+                if pre_point.p3d.distance(a_ss_line[a_findex].p3d) >= tol_tang {
+                    dup = false; break;
+                }
                 a_findex += 1;
             }
             a_pre_point_exist = SpecPntType::None;
         }
 
-        // OCCT L3274-3525: analyze each point for seam/pole decomposition
+        // OCCT L3274-3525: analyze points
         for k in a_findex..a_lindex {
-            if k == a_findex {
-                pre_point = a_ss_line[k];
-                sline.push(pre_point);
-                continue;
-            }
-
-            // OCCT L3287-3290: check if on boundary
-            let mut is_on_boundary = false;
-            detect_of_boundary_achievement(&a_ss_line, k, &mut sline, &mut is_on_boundary);
+            if k == a_findex { pre_point = a_ss_line[k]; sline.push(pre_point); continue; }
 
             // OCCT L3292: detect seam/pole
-            a_pre_point_exist = is_seam_or_pole(
-                quad.surface_type(), &a_ss_line, k - 1, tol_tang, DELTA_U_MAX,
-            );
+            a_pre_point_exist = is_seam_or_pole(quad.surface_type(), &a_ss_line, k - 1, tol_tang, DELTA_U_MAX);
 
-            // OCCT L3294-3306: boundary override
-            if is_on_boundary && a_pre_point_exist != SpecPntType::PoleSeamU {
-                a_pre_point_exist = SpecPntType::None;
-            }
-
-            // OCCT L3308-3509: handle seam/pole decomposition
             if a_pre_point_exist != SpecPntType::None {
-                a_bindex = k;
-                is_decomposited = true;
-                // rcad simplified: handle seam U by adding adjusted point
+                a_bindex = k; is_decomposited = true;
                 if a_pre_point_exist == SpecPntType::SeamU || a_pre_point_exist == SpecPntType::PoleSeamU {
                     let mut new_pt = a_ss_line[k - 1];
-                    // Adjust U parameter to maintain continuity
-                    let u_adj = adjust_u_first(new_pt.3, a_ss_line[k].3);
-                    new_pt.3 = u_adj;
-                    if is_on_boundary {
-                        break;
-                    }
+                    new_pt.u2 = adjust_u_first(new_pt.u2, a_ss_line[k].u2);
+                    new_pt.v2 = adjust_u_first(new_pt.v2, a_ss_line[k].v2);
                     sline.push(new_pt);
                     a_pre_point_exist = SpecPntType::SeamU;
                     pre_point = new_pt;
@@ -343,48 +357,94 @@ pub fn decompose_result(
             }
 
             pre_point = a_ss_line[k];
-
-            if is_on_boundary {
-                a_bindex = k;
-                is_decomposited = true;
-                a_pre_point_exist = SpecPntType::None;
-                break;
-            } else {
-                sline.push(a_ss_line[k]);
-            }
+            sline.push(pre_point);
         }
 
-        // OCCT L3527-3544: handle single-point segment
+        // OCCT L3527-3544
         if sline.len() == 1 {
             fl_next_line = true;
             if a_findex < a_bindex { a_findex = a_bindex; }
             continue;
         }
 
-        // OCCT L3546-3581: vertex verification and smoothing
-        // rcad simplified
+        // OCCT L3559: check internal vertices
+        let _has_int = has_internals(&sline, &a_v_line);
 
-        // OCCT L3583-3633: create WLine for decomposed segment
-        let wline_pnts: Vec<WLinePnt> = sline.iter().map(|p| WLinePnt {
-            p3d: p.0, u1: p.1, v1: p.2, u2: p.3, v2: p.4,
+        // OCCT L3583: create WLine
+        let wps: Vec<WLinePnt> = sline.iter().map(|p| WLinePnt {
+            p3d: p.p3d, u1: p.u1, v1: p.v1, u2: p.u2, v2: p.v2,
         }).collect();
 
-        let mut wline = IntPatchLine::walking(wline_pnts, WLineType::ImpPrm);
-        wline.tolerance = tol_arc;
-        wline.tang_tolerance = tol_tang;
-        wline.line_type = IntPatchIType::Walking;
+        // OCCT L3614: split on segments
+        let segs = split_on_segments(&wps, DELTA_U_MAX);
+        for seg in segs {
+            let mut wl = IntPatchLine::walking(seg, WLineType::ImpPrm);
+            wl.tolerance = tol_arc; wl.tang_tolerance = tol_tang;
+            out_lines.push(wl);
+        }
+        has_been_decomposed = true;
 
-        // OCCT L3613-3633: split into segments
-        let segm = split_on_segments(&wline);
-        out_lines.extend(segm);
-
-        // OCCT L3722-3726: continue loop
+        // OCCT L3722-3726
         if is_decomposited {
             a_findex = a_bindex;
             fl_next_line = true;
-            has_been_decomposed = true;
         }
     }
 
     if has_been_decomposed { Some(out_lines) } else { None }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Tests
+// ═══════════════════════════════════════════════════════════════════════
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::inttools::int_surf_quadric::Quadric;
+
+    #[test]
+    fn test_adjust_u_first() {
+        // near 0
+        assert!((adjust_u_first(0.0, 1.0) - 0.0).abs() < 1e-10);
+        // near 2π
+        let tp = std::f64::consts::TAU;
+        assert!((adjust_u_first(tp, 1.0) - tp).abs() < 1e-10);
+        // negative → normalize to [0, 2π]
+        let r = adjust_u_first(-1.0, 0.0);
+        assert!(r >= 0.0 && r <= tp);
+        // > 2π → normalize
+        let r2 = adjust_u_first(3.0 * tp, 0.0);
+        assert!(r2 >= 0.0 && r2 <= tp);
+    }
+
+    #[test]
+    fn test_is_seam_or_pole() {
+        let pts = vec![
+            Pt { p3d: DVec3::ZERO, u1: 0.0, v1: 0.0, u2: 0.0, v2: 0.0 },
+            Pt { p3d: DVec3::X, u1: 0.5, v1: 0.0, u2: 3.0, v2: 0.0 },
+        ];
+        let sp = is_seam_or_pole(GeomAbsSurfaceType::Cylinder, &pts, 0, 1e-7, DELTA_U_MAX);
+        assert_eq!(sp, SpecPntType::SeamU);
+    }
+
+    #[test]
+    fn test_get_vertices() {
+        let wps = vec![
+            WLinePnt { p3d: DVec3::ZERO, u1: 0.0, v1: 0.0, u2: 0.0, v2: 0.0 },
+            WLinePnt { p3d: DVec3::X, u1: 1.0, v1: 0.0, u2: 1.0, v2: 0.0 },
+            WLinePnt { p3d: DVec3::X, u1: 1.0, v1: 0.0, u2: 1.0, v2: 0.0 },
+        ];
+        let line = IntPatchLine::walking(wps, WLineType::ImpPrm);
+        let verts = get_vertices(&line);
+        assert_eq!(verts.len(), 2, "duplicate should be removed");
+    }
+
+    #[test]
+    fn test_split_on_segments() {
+        let wps: Vec<WLinePnt> = (0..10).map(|i| WLinePnt {
+            p3d: DVec3::new(i as f64, 0.0, 0.0), u1: i as f64, v1: 0.0, u2: i as f64, v2: 0.0,
+        }).collect();
+        let segs = split_on_segments(&wps, 0.5);
+        assert_eq!(segs.len(), 1, "collinear points → single segment");
+    }
 }
