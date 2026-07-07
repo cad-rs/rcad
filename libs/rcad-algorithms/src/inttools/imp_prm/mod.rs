@@ -11,6 +11,7 @@ pub mod surf_function;
 pub mod s_on_bounds;
 pub mod search_inside;
 pub mod i_walking;
+pub mod decompose;
 pub mod intersection;
 
 pub use intersection::ImpPrmIntersection;

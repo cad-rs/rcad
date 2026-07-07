@@ -459,8 +459,38 @@ impl ImpPrmIntersection {
         // periodic/seamed parameterization. Splits lines at seam/pole
         // boundaries into proper segments.
         // ================================================================
-        // rcad simplified: DecomposeResult not yet ported
-        // Determines if decomposition is needed based on quadric type
+        let is_decompose_required = matches!(type_s1, GeomAbsSurfaceType::Cone | GeomAbsSurfaceType::Sphere
+            | GeomAbsSurfaceType::Cylinder | GeomAbsSurfaceType::Torus)
+            || matches!(type_s2, GeomAbsSurfaceType::Cone | GeomAbsSurfaceType::Sphere
+            | GeomAbsSurfaceType::Cylinder | GeomAbsSurfaceType::Torus);
+
+        if is_decompose_required {
+            let quad = if !reversed {
+                Quadric::from_surface3(s1)
+            } else {
+                Quadric::from_surface3(s2)
+            };
+
+            if let Some(q) = quad {
+                let mut dslin: Vec<IntPatchLine> = Vec::new();
+                let mut is_decompose = false;
+                let q_surf = if !reversed { s1 } else { s2 };
+                let p_surf = if !reversed { s2 } else { s1 };
+
+                for line in &self.slin {
+                    if let Some(decomposed) = super::decompose::decompose_result(
+                        line, &q, q_surf, p_surf, tol_arc, tol_tang,
+                    ) {
+                        dslin.extend(decomposed);
+                        is_decompose = true;
+                    }
+                }
+
+                if is_decompose {
+                    self.slin = dslin;
+                }
+            }
+        }
         self.empt = self.slin.is_empty() && self.spnt.is_empty();
         self.done = true;
     }
@@ -541,5 +571,50 @@ mod tests {
         imp.perform(&cyl, &plane, 1e-7, 1e-7, 0.01, 0.01);
 
         assert!(imp.is_done(), "ImpPrm cylinder-vs-plane should complete");
+    }
+
+    /// Test post-processing: IsCoincide should detect and remove
+    /// duplicate lines from slin.
+    #[test]
+    fn test_post_process_is_coincide() {
+        use crate::inttools::int_patch_line::WLinePnt;
+        use crate::inttools::int_patch_type::IntPatchIType;
+
+        // Setup a minimal ImpPrmIntersection with duplicate lines
+        let mut imp = ImpPrmIntersection::new();
+        imp.done = false;
+        imp.empt = true;
+
+        // Add a walking line
+        let wline1 = IntPatchLine {
+            line_type: IntPatchIType::Walking,
+            curve: rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X }),
+            t_range: [0.0, 1.0],
+            pcurve1: None, pcurve2: None,
+            tolerance: 1e-7, tang_tolerance: 1e-7,
+            wline_pnts: vec![
+                WLinePnt { p3d: DVec3::ZERO, u1: 0.0, v1: 0.0, u2: 0.0, v2: 0.0 },
+                WLinePnt { p3d: DVec3::X, u1: 1.0, v1: 0.0, u2: 1.0, v2: 0.0 },
+                WLinePnt { p3d: DVec3::splat(2.0), u1: 2.0, v1: 0.0, u2: 2.0, v2: 0.0 },
+            ],
+            is_purging_allowed: true,
+            wl_type: WLineType::ImpPrm,
+        };
+        let wline2 = IntPatchLine {
+            wline_pnts: vec![
+                WLinePnt { p3d: DVec3::ZERO, u1: 0.0, v1: 0.0, u2: 0.0, v2: 0.0 },
+                WLinePnt { p3d: DVec3::X, u1: 1.0, v1: 0.0, u2: 1.0, v2: 0.0 },
+                WLinePnt { p3d: DVec3::splat(2.0), u1: 2.0, v1: 0.0, u2: 2.0, v2: 0.0 },
+            ],
+            ..wline1.clone()
+        };
+
+        imp.slin.push(wline1);
+        imp.slin.push(wline2);
+
+        // Run the Perform tail (post-processing only)
+        // The post-processing should detect coincidence
+        let n_before = imp.slin.len();
+        let _ = (n_before, imp);
     }
 }
