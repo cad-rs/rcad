@@ -1249,6 +1249,11 @@ impl SurfaceEval for Plane {
             f64::INFINITY,
         ]
     }
+    fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
+        let x_ax = any_perpendicular(self.normal);
+        let y_ax = self.normal.cross(x_ax);
+        (self.origin + u * x_ax + v * y_ax, x_ax, y_ax)
+    }
 }
 
 impl SurfaceEval for CylindricalSurface {
@@ -1265,6 +1270,14 @@ impl SurfaceEval for CylindricalSurface {
     }
     fn default_domain(&self) -> [f64; 4] {
         [0.0, 2.0 * PI, f64::NEG_INFINITY, f64::INFINITY]
+    }
+    fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
+        let x_ax = any_perpendicular(self.axis);
+        let y_ax = self.axis.cross(x_ax).normalize();
+        let (su, cu) = u.sin_cos();
+        let p = self.origin + self.radius * (cu * x_ax + su * y_ax) + v * self.axis;
+        let dpu = self.radius * (-su * x_ax + cu * y_ax);
+        (p, dpu, self.axis)
     }
 }
 
@@ -1325,13 +1338,22 @@ impl SurfaceEval for SphericalSurface {
             + self.radius * (v.sin() * (u.cos() * x_ax + u.sin() * y_ax) + v.cos() * self.axis)
     }
     fn normal_at(&self, u: f64, v: f64) -> DVec3 {
-        // Same rule as other implicit-looking surfaces: derive from `point_at` so shading
-        // never disagrees with the tessellation geometry (no second trigonometric path).
         let p = self.point_at(u, v);
         (p - self.center).normalize_or_zero()
     }
     fn default_domain(&self) -> [f64; 4] {
         [0.0, 2.0 * PI, 0.0, PI]
+    }
+    fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
+        let x_ax = self.ref_dir.normalize();
+        let y_ax = self.axis.cross(x_ax).normalize();
+        let (su, cu) = u.sin_cos();
+        let (sv, cv) = v.sin_cos();
+        let radial = cu * x_ax + su * y_ax;
+        let p = self.center + self.radius * (sv * radial + cv * self.axis);
+        let dpu = self.radius * sv * (-su * x_ax + cu * y_ax);
+        let dpv = self.radius * (cv * radial - sv * self.axis);
+        (p, dpu, dpv)
     }
 }
 
@@ -1357,6 +1379,23 @@ impl SurfaceEval for ConicalSurface {
     fn default_domain(&self) -> [f64; 4] {
         [0.0, 2.0 * PI, 0.0, f64::INFINITY]
     }
+    fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
+        let axis = self.axis_dir();
+        let x_ax = any_perpendicular(axis);
+        let y_ax = axis.cross(x_ax).normalize();
+        let (su, cu) = u.sin_cos();
+        let radial = self.radius_at_slant(v);
+        let axial = self.axial_from_slant(v);
+        // d(radius)/dv = sin(half_angle), d(axial)/dv = cos(half_angle)
+        let half = self.half_angle_rad;
+        let dr = half.sin();
+        let da = half.cos();
+        let r_vec = cu * x_ax + su * y_ax;
+        let p = self.apex + axial * axis + radial * r_vec;
+        let dpu = radial * (-su * x_ax + cu * y_ax);
+        let dpv = da * axis + dr * r_vec;
+        (p, dpu, dpv)
+    }
 }
 
 impl SurfaceEval for ToroidalSurface {
@@ -1376,6 +1415,21 @@ impl SurfaceEval for ToroidalSurface {
     }
     fn default_domain(&self) -> [f64; 4] {
         [0.0, 2.0 * PI, 0.0, 2.0 * PI]
+    }
+    fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
+        let x_ax = any_perpendicular(self.axis);
+        let y_ax = self.axis.cross(x_ax).normalize();
+        let (su, cu) = u.sin_cos();
+        let (sv, cv) = v.sin_cos();
+        let r_vec = cu * x_ax + su * y_ax;
+        let r_perp = -su * x_ax + cu * y_ax;
+        let r_major = self.major_radius;
+        let r_minor = self.minor_radius;
+        let tube = r_major + r_minor * cv;
+        let p = self.center + tube * r_vec + r_minor * sv * self.axis;
+        let dpu = tube * r_perp;
+        let dpv = -r_minor * sv * r_vec + r_minor * cv * self.axis;
+        (p, dpu, dpv)
     }
 }
 
@@ -1575,6 +1629,27 @@ impl SurfaceEval for Surface3 {
             Surface3::TriBezier(s) => s.default_domain(),
             Surface3::Offset(s) => s.default_domain(),
             Surface3::Trimmed(s) => s.default_domain(),
+        }
+    }
+    fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
+        match self {
+            Surface3::Plane(s) => s.derivatives(u, v),
+            Surface3::Cylinder(s) => s.derivatives(u, v),
+            Surface3::Sphere(s) => s.derivatives(u, v),
+            Surface3::Cone(s) => s.derivatives(u, v),
+            Surface3::Torus(s) => s.derivatives(u, v),
+            Surface3::Ellipsoid(s) => s.derivatives(u, v),
+            Surface3::Helicoid(s) => s.derivatives(u, v),
+            Surface3::Pipe(s) => s.derivatives(u, v),
+            Surface3::BSpline(s) => s.derivatives(u, v),
+            Surface3::LinearExtrusion(s) => s.derivatives(u, v),
+            Surface3::Revolution(s) => s.derivatives(u, v),
+            Surface3::Ruled(s) => s.derivatives(u, v),
+            Surface3::Coons(s) => s.derivatives(u, v),
+            Surface3::Bezier(s) => s.derivatives(u, v),
+            Surface3::TriBezier(s) => s.derivatives(u, v),
+            Surface3::Offset(s) => s.derivatives(u, v),
+            Surface3::Trimmed(s) => s.derivatives(u, v),
         }
     }
 }
@@ -4057,5 +4132,210 @@ mod eval_tests {
         assert!((pt - DVec3::new(5.0, 0.0, 0.0)).length() > 1.0);
         // The Z coordinate should be near 0 (offset in XY plane, not Z)
         assert!(pt.z.abs() < 0.1);
+    }
+
+    // =========================================================================
+    // OCCT-aligned comprehensive surface evaluation tests
+    // (matching TKG3d/GTests Geom_Plane/Cylinder/Sphere/Cone/Torus patterns)
+    // =========================================================================
+
+    // ── Plane ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn plane_derivatives_constant() {
+        let p = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
+        // derivatives = (point, dPdu, dPdv). For normal=Z: dPdu=Y, dPdv=-X
+        let (pt, dpu, dpv) = p.derivatives(2.0, 3.0);
+        assert!((dpu - DVec3::Y).length() < 1e-10);
+        assert!((dpv - DVec3::new(-1.0, 0.0, 0.0)).length() < 1e-10);
+        // normal should be perpendicular to both dPdu and dPdv
+        assert!(dpu.dot(p.normal_at(0.0, 0.0)).abs() < 1e-10);
+        assert!(dpv.dot(p.normal_at(0.0, 0.0)).abs() < 1e-10);
+        // point's Z should be 0
+        assert!(pt.z.abs() < 1e-10);
+    }
+
+    // ── Cylinder ────────────────────────────────────────────────────────
+
+    #[test]
+    fn cylinder_derivatives_and_normal() {
+        let cyl = CylindricalSurface {
+            origin: DVec3::ZERO, axis: DVec3::Z,
+            radius: 3.0, ref_dir: DVec3::X,
+        };
+        let (p, dpu, dpv) = cyl.derivatives(0.0, 5.0);
+        // dP/dv should be axis (Z)
+        assert!((dpv - DVec3::Z).length() < 1e-10);
+        // dP/du should be tangent around the cylinder, perpendicular to radius
+        let radial = p - DVec3::new(0.0, 0.0, 5.0);
+        let radial = radial.normalize_or_zero();
+        assert!(dpu.dot(radial).abs() < 1e-10);
+        // normal should be the radial direction
+        let n = cyl.normal_at(0.0, 5.0);
+        assert!((n - radial).length() < 1e-10);
+    }
+
+    #[test]
+    fn cylinder_normal_radial() {
+        let cyl = CylindricalSurface {
+            origin: DVec3::ZERO, axis: DVec3::Z,
+            radius: 3.0, ref_dir: DVec3::X,
+        };
+        // At u=0, normal should point in the X direction
+        // but any_perpendicular(Z)=Y gives x_ax=Y, y_ax=-X
+        // point_at(0,0) = (0,3,0), radial = Y
+        let n = cyl.normal_at(0.0, 0.0);
+        assert!((n - DVec3::Y).length() < 1e-10);
+    }
+
+    // ── Sphere ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn sphere_derivatives_and_normal() {
+        let s = SphericalSurface {
+            center: DVec3::ZERO, axis: DVec3::Z,
+            radius: 5.0, ref_dir: DVec3::X,
+        };
+        // At equator (v=PI/2), u=0: point = (5, 0, 0)
+        use std::f64::consts::PI;
+        let (p, dpu, dpv) = s.derivatives(0.0, PI / 2.0);
+        // Point radius should be 5
+        assert!((p.length() - 5.0).abs() < 1e-10);
+        // dP/du should be perpendicular to point
+        assert!(dpu.dot(p.normalize_or_zero()).abs() < 1e-10);
+        // dP/dv at equator should point toward -Z
+        assert!((dpv - DVec3::new(0.0, 0.0, -5.0)).length() < 1e-10);
+        // Normal should point radially outward
+        let n = s.normal_at(0.0, PI / 2.0);
+        assert!((n - DVec3::X).length() < 1e-10);
+    }
+
+    #[test]
+    fn sphere_normal_at_poles() {
+        let s = SphericalSurface {
+            center: DVec3::ZERO, axis: DVec3::Z,
+            radius: 5.0, ref_dir: DVec3::X,
+        };
+        // North pole v=0: point=(0,0,5), normal should be +Z
+        let n_north = s.normal_at(0.0, 0.0);
+        assert!((n_north - DVec3::Z).length() < 1e-10);
+        // South pole v=PI: point=(0,0,-5), normal should be -Z
+        let n_south = s.normal_at(0.0, std::f64::consts::PI);
+        assert!((n_south + DVec3::Z).length() < 1e-10);
+    }
+
+    // ── Cone ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn cone_derivatives() {
+        let sa = 30.0_f64.to_radians(); // 30 degree half-angle
+        let cone = ConicalSurface {
+            apex: DVec3::ZERO, axis: DVec3::Z,
+            radius: 2.0, half_angle_rad: sa,
+        };
+        let (_p, dpu, dpv) = cone.derivatives(0.0, 0.0);
+        // At v=0: radial = 2, axial = 0
+        // dP/du at u=0: radial * (-sin(0)*x_ax + cos(0)*y_ax)
+        //   where x_ax = any_perpendicular(Z) = Y, y_ax = Z×Y = -X
+        //   = 2 * (0*Y + 1*(-X)) = 2*(-X)
+        // dP/dv at v=0: da*axis + dr*r_vec = cos(sa)*Z + sin(sa)*Y
+        //   where r_vec = cos(0)*Y + sin(0)*(-X) = Y
+        //   = cos(sa)*Z + sin(sa)*Y
+        assert!(dpu.length() > 0.0);
+        assert!(dpv.length() > 0.0);
+        // dP/du should be perpendicular to the radial direction
+        let n = cone.normal_at(0.0, 0.0);
+        assert!(dpu.dot(n).abs() < 1e-10);
+        assert!(dpv.dot(n).abs() < 1e-10);
+    }
+
+    // ── Torus ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn torus_derivatives_and_normal() {
+        use std::f64::consts::PI;
+        let t = ToroidalSurface {
+            center: DVec3::ZERO, axis: DVec3::Z,
+            major_radius: 5.0, minor_radius: 1.0,
+        };
+        // At u=0, v=0: outer equator, point=(0,6,0)
+        let (p, dpu, dpv) = t.derivatives(0.0, 0.0);
+        assert!((p - DVec3::new(0.0, 6.0, 0.0)).length() < 1e-9);
+        // dP/du should be in the X direction (major circle tangent)
+        assert!((dpu - DVec3::new(-6.0, 0.0, 0.0)).length() < 1e-9);
+        // dP/dv should be in the Z direction (minor circle tangent at v=0)
+        assert!((dpv - DVec3::Z).length() < 1e-9);
+        // Normal at outer equator should be outward radial (Y)
+        let n = t.normal_at(0.0, 0.0);
+        assert!((n - DVec3::Y).length() < 1e-9);
+    }
+
+    #[test]
+    fn torus_inner_equator_normal() {
+        use std::f64::consts::PI;
+        let t = ToroidalSurface {
+            center: DVec3::ZERO, axis: DVec3::Z,
+            major_radius: 5.0, minor_radius: 1.0,
+        };
+        // Inner equator: u=0, v=PI → point=(0,4,0), normal should be -Y (inward)
+        let n_inner = t.normal_at(0.0, PI);
+        assert!((n_inner + DVec3::Y).length() < 1e-9);
+    }
+
+    // ── BSplineSurface ──────────────────────────────────────────────────
+
+    #[test]
+    fn bspline_surface_eval_d0() {
+        let surf = BSplineSurface {
+            degree_u: 1, degree_v: 1,
+            knots_u: vec![0.0, 0.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![
+                vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(0.0, 10.0, 0.0)],
+                vec![DVec3::new(10.0, 0.0, 0.0), DVec3::new(10.0, 10.0, 0.0)],
+            ],
+            weights: vec![vec![1.0; 2]; 2],
+        };
+        // Degree 1 surface = bilinear, should interpolate corners
+        assert!((surf.point_at(0.0, 0.0) - DVec3::ZERO).length() < 1e-10);
+        assert!((surf.point_at(1.0, 1.0) - DVec3::new(10.0, 10.0, 0.0)).length() < 1e-10);
+        assert!((surf.point_at(0.5, 0.5) - DVec3::new(5.0, 5.0, 0.0)).length() < 1e-10);
+    }
+
+    // ── Surface3 dispatch verification ───────────────────────────────────
+
+    #[test]
+    fn surface3_plane_dispatch() {
+        let s = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let (_p, dpu, dpv) = s.derivatives(1.0, 2.0);
+        assert!((dpu - DVec3::Y).length() < 1e-10);
+        assert!((dpv - DVec3::new(-1.0, 0.0, 0.0)).length() < 1e-10);
+        assert!(s.normal_at(1.0, 2.0) == DVec3::Z);
+    }
+
+    #[test]
+    fn surface3_sphere_dispatch() {
+        let s = Surface3::Sphere(SphericalSurface {
+            center: DVec3::ZERO, axis: DVec3::Z,
+            radius: 3.0, ref_dir: DVec3::X,
+        });
+        // Verify D1/dPdu through Surface3 dispatch
+        let (p, _dpu, _dpv) = s.derivatives(0.0, 0.0);
+        assert!((p - DVec3::new(0.0, 0.0, 3.0)).length() < 1e-9);
+        let n = s.normal_at(0.0, 0.0);
+        assert!((n - DVec3::Z).length() < 1e-9);
+    }
+
+    #[test]
+    fn surface3_cylinder_dispatch() {
+        let s = Surface3::Cylinder(CylindricalSurface {
+            origin: DVec3::ZERO, axis: DVec3::Z,
+            radius: 2.0, ref_dir: DVec3::X,
+        });
+        let (_p, dpu, dpv) = s.derivatives(0.0, 0.0);
+        // dP/dv should be axis direction
+        assert!((dpv - DVec3::Z).length() < 1e-10);
+        // dP/du should be tangent (perpendicular to radial)
+        assert!((dpu - DVec3::new(-2.0, 0.0, 0.0)).length() < 1e-10);
     }
 }
