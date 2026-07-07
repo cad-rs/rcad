@@ -229,7 +229,7 @@ impl Section {
             // OCCT L231-240: PaveBlocksSc — section edges
             for &pb_idx in &f_info.pave_blocks_sc {
                 if pb_idx < ds.pave_blocks.len() {
-                    let n_e = ds.pave_blocks[pb_idx].original_edge;
+                    let n_e = ds.pave_blocks[pb_idx].0.read().unwrap().original_edge;
                     section_edges.insert(n_e);
                 }
             }
@@ -239,10 +239,10 @@ impl Section {
         for ei in 0..ds.edges.len() {
             for pb_idx in 0..ds.edges[ei].pave_blocks.len() {
                 let pb = &ds.edges[ei].pave_blocks[pb_idx];
-                let cb = pb.common_block_idx.and_then(|idx| ds.common_blocks.get(idx));
+                let cb = pb.0.read().unwrap().common_block_idx.and_then(|idx| ds.common_blocks.get(idx));
                 if let Some(cb) = cb {
                     if !cb.faces().is_empty() {
-                        let n_e = pb.original_edge;
+                        let n_e = pb.0.read().unwrap().original_edge;
                         section_edges.insert(n_e);
                     }
                 }

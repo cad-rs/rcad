@@ -147,17 +147,17 @@ fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
  }
  }
  for pb in &e.pave_blocks {
- if pb.original_edge != NO_EDGE && pb.original_edge >= ne {
+ if pb.0.read().unwrap().original_edge != NO_EDGE && pb.0.read().unwrap().original_edge >= ne {
  return Err(BooleanError::InvalidResult(
  "union: DS pave_block original_edge out of range",
  ));
  }
- if pb.pave1.vertex_idx >= nv || pb.pave2.vertex_idx >= nv {
+ if pb.0.read().unwrap().pave1.vertex_idx >= nv || pb.0.read().unwrap().pave2.vertex_idx >= nv {
  return Err(BooleanError::InvalidResult(
  "union: DS pave_block vertex out of range",
  ));
  }
- if let Some(ni) = pb.new_edge
+ if let Some(ni) = pb.0.read().unwrap().new_edge
  && ni >= ne {
  return Err(BooleanError::InvalidResult(
  "union: DS pave_block new_edge out of range",

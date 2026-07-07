@@ -751,9 +751,9 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
  for &pb_idx in &face.face_info.pave_blocks_in {
  if pb_idx >= ds.pave_blocks.len() { continue; }
  let pb = &ds.pave_blocks[pb_idx];
- if boundary_set.contains(&pb.original_edge) { continue; }
- if !pb_dedup.insert(pb.original_edge) { continue; }
- let ei = pb.new_edge.unwrap_or(pb.original_edge);
+ if boundary_set.contains(&pb.0.read().unwrap().original_edge) { continue; }
+ if !pb_dedup.insert(pb.0.read().unwrap().original_edge) { continue; }
+ let ei = pb.0.read().unwrap().new_edge.unwrap_or(pb.0.read().unwrap().original_edge);
  if ei >= ds.edges.len() { continue; }
  let edge = &ds.edges[ei];
  let face_surf = &ds.faces[face_idx].surface;
@@ -783,7 +783,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
  for &pb_idx in &face.face_info.pave_blocks_sc {
  if pb_idx >= ds.pave_blocks.len() { continue; }
  let pb = &ds.pave_blocks[pb_idx];
- let ei = pb.new_edge.unwrap_or(pb.original_edge);
+ let ei = pb.0.read().unwrap().new_edge.unwrap_or(pb.0.read().unwrap().original_edge);
  if ei >= ds.edges.len() { continue; }
  if boundary_set.contains(&ei) { continue; }
  if !sc_dedup.insert(ei) { continue; }

@@ -322,7 +322,7 @@ impl<'a> super::PaveFiller<'a> {
  {
  let ic = &self.ds.intersection_curves[ci];
  if let Some(pb) = ic.pave_blocks.first() {
- for ep in &pb.ext_paves {
+ for ep in &pb.0.read().unwrap().ext_paves {
  let pt = ic_curve.point_at(ep.param);
  for j in 0..2 {
  if (pt - a_p[j]).length_squared() < a_tol_r3d * a_tol_r3d {
@@ -395,7 +395,7 @@ impl<'a> super::PaveFiller<'a> {
  let is_closed = matches!(&self.ds.intersection_curves[ci].curve, Curve3::Circle(_));
  if is_closed {
  if let Some(pb) = self.ds.intersection_curves[ci].pave_blocks.first() {
- let mut ext_paves: Vec<_> = pb.ext_paves.iter().map(|p| (p.param, p.vertex_idx)).collect();
+ let mut ext_paves: Vec<_> = pb.0.read().unwrap().ext_paves.iter().map(|p| (p.param, p.vertex_idx)).collect();
  put_closing_pave_on_curve(&mut ext_paves, true);
  }
  }
@@ -409,10 +409,10 @@ impl<'a> super::PaveFiller<'a> {
  if pb_idx >= self.ds.pave_blocks.len() { return false; }
  let pb = &self.ds.pave_blocks[pb_idx];
  // OCCT L883-886: skip PBs without an edge (!HasEdge)
- let has_edge = pb.new_edge.is_some() || pb.original_edge != NO_EDGE;
+ let has_edge = pb.0.read().unwrap().new_edge.is_some() || pb.0.read().unwrap().original_edge != NO_EDGE;
  if !has_edge { return false; }
  // OCCT L888-891: skip degenerated edges (HasFlag)
- let ei = pb.new_edge.unwrap_or(pb.original_edge);
+ let ei = pb.0.read().unwrap().new_edge.unwrap_or(pb.0.read().unwrap().original_edge);
  if ei < self.ds.edges.len() && self.ds.is_edge_degenerated(ei) { return false; }
  true
  })
@@ -605,7 +605,7 @@ impl<'a> super::PaveFiller<'a> {
  let i_flag1 = n_v1 == n_v21 || n_v1 == n_v22;
  // OCCT L2166: iFlag2  ?vertex match for end
  // OR edge AABB overlaps end-point AABB (!aBoxSp.IsOut(aBoxP2))
- let edge_ei = existing_pb.new_edge.unwrap_or(existing_pb.original_edge);
+ let edge_ei = existing_pb.0.read().unwrap().new_edge.unwrap_or(existing_pb.0.read().unwrap().original_edge);
  let i_flag2 = if n_v2 == n_v21 || n_v2 == n_v22 {
  true
  } else if edge_ei < self.ds.edges.len() {
@@ -631,7 +631,7 @@ impl<'a> super::PaveFiller<'a> {
  } else { false };
  if !i_flag2 { continue; }
 
- let edge_idx = existing_pb.new_edge.unwrap_or(existing_pb.original_edge);
+ let edge_idx = existing_pb.0.read().unwrap().new_edge.unwrap_or(existing_pb.0.read().unwrap().original_edge);
  if edge_idx >= self.ds.edges.len() { continue; }
  let existing_edge = &self.ds.edges[edge_idx];
 
@@ -700,7 +700,7 @@ impl<'a> super::PaveFiller<'a> {
  self.ds.pave_blocks[p].original_edge) == n_e_out
  { Some(p) } else { None }
  ).unwrap_or(usize::MAX)];
- if existing_pb.new_edge.is_some() || existing_pb.original_edge < self.ds.edges.len() {
+ if existing_pb.0.read().unwrap().new_edge.is_some() || existing_pb.0.read().unwrap().original_edge < self.ds.edges.len() {
  let b_in_f1 = {
  self.ds.faces[n_f1].face_info.pave_blocks_on.contains(
  &a_mpb_on_in_vec.iter().find(|&&p| {
@@ -791,7 +791,7 @@ impl<'a> super::PaveFiller<'a> {
  }
 
  let mut sub_pb = a_pb.clone();
- sub_pb.new_edge = Some(new_ei);
+ sub_pb.0.write().unwrap().new_edge = Some(new_ei);
  self.ds.edges.push(DSEdge {
  start_vertex: n_v1, end_vertex: n_v2,
  curve: curve.clone(),
@@ -813,7 +813,7 @@ impl<'a> super::PaveFiller<'a> {
   location: 0,
   });
   if let Some(epb) = self.ds.edges.last_mut().and_then(|e| e.pave_blocks.first_mut()) {
- epb.new_edge = Some(new_ei);
+ epb.0.write().unwrap().new_edge = Some(new_ei);
  }
  self.ds.section_edge_refs[ci].push(new_ei);
  // OCCT L1066-1067: aLPBC.Append(aPB)  ?append PB to curve.
@@ -1043,8 +1043,8 @@ impl<'a> super::PaveFiller<'a> {
  for (old_v, new_v) in &a_dm_new_sd {
  for ei in 0..self.ds.edges.len() {
  for pb in &mut self.ds.edges[ei].pave_blocks {
- if pb.pave1.vertex_idx == *old_v { pb.pave1.vertex_idx = *new_v; }
- if pb.pave2.vertex_idx == *old_v { pb.pave2.vertex_idx = *new_v; }
+ if pb.0.read().unwrap().pave1.vertex_idx == *old_v { pb.0.read().unwrap().pave1.vertex_idx = *new_v; }
+ if pb.0.read().unwrap().pave2.vertex_idx == *old_v { pb.0.read().unwrap().pave2.vertex_idx = *new_v; }
  }
  }
  for fi in 0..self.ds.faces.len() {

@@ -679,8 +679,8 @@ impl<'a> PaveFiller<'a> {
  let nV1 = remap_ds_v(nV1_raw);
  let nV2 = remap_ds_v(nV2_raw);
  if nV1 != nV1_raw || nV2 != nV2_raw {
- sub_pb.pave1.vertex_idx = nV1;
- sub_pb.pave2.vertex_idx = nV2;
+ sub_pb.0.read().unwrap().pave1.vertex_idx = nV1;
+ sub_pb.0.read().unwrap().pave2.vertex_idx = nV2;
  }
  let (aT1, aT2) = sub_pb.range();
  if (aT2 - aT1).abs() < crate::tolerance::TOLERANCE_ABS {
@@ -748,7 +748,7 @@ impl<'a> PaveFiller<'a> {
  let edge_key = (f1, f2, v1, v2);
  if let Some(&existing_ei) = existing_edge_map.get(&edge_key) {
  // OCCT L924-928: UpdateEdgeTolerance + UpdateSavedTolerance for reused edge
- sub_pb.new_edge = Some(existing_ei);
+ sub_pb.0.write().unwrap().new_edge = Some(existing_ei);
  sub_with_edge.push(sub_pb);
  if std::env::var("RCAD_DEBUG_PB").is_ok() && face_ids[0] == 0 { eprintln!("[PB_PASS] ci={} REUSE edge={}", ci, existing_ei); }
  continue;
@@ -797,9 +797,9 @@ impl<'a> PaveFiller<'a> {
   });
   // Set new_edge in the PB stored inside the edge AND in sub_with_edge
  if let Some(epb) = self.ds.edges.last_mut().and_then(|e| e.pave_blocks.first_mut()) {
- epb.new_edge = Some(new_ei);
+ epb.0.write().unwrap().new_edge = Some(new_ei);
  }
- sub_pb.new_edge = Some(new_ei);
+ sub_pb.0.write().unwrap().new_edge = Some(new_ei);
  self.ds.section_edge_refs[ci].push(new_ei);
  existing_edge_map.insert(edge_key, new_ei);
  sub_with_edge.push(sub_pb);
@@ -823,7 +823,7 @@ impl<'a> PaveFiller<'a> {
  // Find the two faces referencing this curve
  let face_ids = find_face_idxs_for_curve(&self.ds, se.curve_idx);
  for pb in &se.pbs {
- if pb.new_edge.is_some() {
+ if pb.0.read().unwrap().new_edge.is_some() {
  let g_pb_idx = self.ds.allocate_pave_block(pb.clone());
  for &fi in &face_ids {
  if fi != usize::MAX {
@@ -852,13 +852,13 @@ impl<'a> PaveFiller<'a> {
 
  // OCCT L4412-4432: iterate PaveBlocks, find nV1==nV2
  for pb in &self.ds.edges[ei].pave_blocks {
- let nv1 = pb.pave1.vertex_idx;
- let nv2 = pb.pave2.vertex_idx;
+ let nv1 = pb.0.read().unwrap().pave1.vertex_idx;
+ let nv2 = pb.0.read().unwrap().pave2.vertex_idx;
  if nv1 == nv2 {
  // OCCT L4425-4426: FillShrunkData + HasShrunkData check
  if pb.has_shrunk_data() {
  // OCCT L4425: if HasShrunkData && IsSplittable  ?skip
- if pb.is_splittable { continue; }
+ if pb.0.read().unwrap().is_splittable { continue; }
  }
  micro_edges.push(ei);
  break;

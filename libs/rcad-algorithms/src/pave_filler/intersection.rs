@@ -350,11 +350,11 @@ impl<'a> super::PaveFiller<'a> {
  for pb_idx in 0..ds.edges[ei].pave_blocks.len() {
  // OCCT L256: RealPaveBlock  ?resolve CommonBlock to real PB
  let pb = &ds.edges[ei].pave_blocks[pb_idx];
- let real_original = pb.original_edge;
+ let real_original = pb.0.read().unwrap().original_edge;
  // OCCT L257-260: skip if this edge is already in face's PaveBlocksOn
  if face_pbon.contains(&real_original) { continue; }
- let aT1 = pb.pave1.param;
- let aT2 = pb.pave2.param;
+ let aT1 = pb.0.read().unwrap().pave1.param;
+ let aT2 = pb.0.read().unwrap().pave2.param;
  let range = [aT1.min(aT2), aT1.max(aT2)];
  results.push((ei, fi, range));
  }

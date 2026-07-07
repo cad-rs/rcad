@@ -26,7 +26,7 @@ impl<'a> PaveFiller<'a> {
             for (local_pbi, pb) in edge.pave_blocks.iter().enumerate() {
                 // OCCT L1060-1065: RealPaveBlock + fence dedup (skip — see above)
                 // OCCT L1068-1069: aPBR->Indices(nV1, nV2)
-                let (nV1, nV2) = pb.indices();
+                let (nV1, nV2) = pb.0.write().unwrap().indices();
                 let key = if nV1 < nV2 { (nV1, nV2) } else { (nV2, nV1) };
                 // OCCT L1073-1078: append to map
                 pb_map.entry(key).or_default().push((ei, local_pbi));
@@ -51,9 +51,9 @@ impl<'a> PaveFiller<'a> {
             for i in 0..pbs.len() {
                 let (ei1, pb1_local) = pbs[i];
                 let pb1 = &self.ds.edges[ei1].pave_blocks[pb1_local];
-                let nE1 = pb1.original_edge;                  // OCCT L1127
+                let nE1 = pb1.0.read().unwrap().original_edge;                  // OCCT L1127
                 let r1 = self.ds.edges[nE1].origin;
-                let (t11, t12) = pb1.range();                 // OCCT L1130
+                let (t11, t12) = pb1.0.write().unwrap().range();                 // OCCT L1130
                 let mid_t1 = (t11 + t12) * 0.5;              // OCCT L1134
                 let c1 = &self.ds.edges[nE1].curve;           // OCCT L1131: BRepAdaptor_Curve
                 // OCCT L1132-1134: tangent at midpoint
@@ -64,9 +64,9 @@ impl<'a> PaveFiller<'a> {
                 for j in (i + 1)..pbs.len() {
                     let (ei2, pb2_local) = pbs[j];
                     let pb2 = &self.ds.edges[ei2].pave_blocks[pb2_local];
-                    let nE2 = pb2.original_edge;              // OCCT L1145
+                    let nE2 = pb2.0.read().unwrap().original_edge;              // OCCT L1145
                     let r2 = self.ds.edges[nE2].origin;       // OCCT L1147: iR2
-                    let (t21, t22) = pb2.range();             // OCCT L1173
+                    let (t21, t22) = pb2.0.write().unwrap().range();             // OCCT L1173
 
                     // OCCT L1149-1160: skip edges from the same argument
                     //   if the bounding vertices are original (not acquired during operation)
@@ -292,15 +292,15 @@ impl<'a> PaveFiller<'a> {
         for (pi, &(ne, local_i)) in the_mpb.iter().enumerate() {
             if ne >= self.ds.edges.len() { continue; }
             let pb = &self.ds.edges[ne].pave_blocks[local_i];
-            let aabb = if let Some((mn, mx)) = pb.my_shrunk_box {
+            let aabb = if let Some((mn, mx)) = pb.0.read().unwrap().my_shrunk_box {
                 crate::bvh::Aabb { min: mn, max: mx }
             } else {
                 // Fallback: AABB from edge endpoint vertices
-                let v1 = if pb.pave1.vertex_idx < self.ds.vertices.len() {
-                    self.ds.vertices[pb.pave1.vertex_idx].point
+                let v1 = if pb.0.read().unwrap().pave1.vertex_idx < self.ds.vertices.len() {
+                    self.ds.vertices[pb.0.read().unwrap().pave1.vertex_idx].point
                 } else { continue; };
-                let v2 = if pb.pave2.vertex_idx < self.ds.vertices.len() {
-                    self.ds.vertices[pb.pave2.vertex_idx].point
+                let v2 = if pb.0.read().unwrap().pave2.vertex_idx < self.ds.vertices.len() {
+                    self.ds.vertices[pb.0.read().unwrap().pave2.vertex_idx].point
                 } else { continue; };
                 crate::bvh::Aabb { min: v1.min(v2), max: v1.max(v2) }
             };
@@ -354,20 +354,20 @@ impl<'a> PaveFiller<'a> {
                 // L926-938: add PB endpoints from face's PaveBlocksOn/In/Sc
                 for &pb_gi in &fi.pave_blocks_on {
                     if pb_gi < ds.pave_blocks.len() {
-                        a_mvf.insert(ds.pave_blocks[pb_gi].pave1.vertex_idx);
-                        a_mvf.insert(ds.pave_blocks[pb_gi].pave2.vertex_idx);
+                        a_mvf.insert(ds.pave_blocks[pb_gi].0.read().unwrap().pave1.vertex_idx);
+                        a_mvf.insert(ds.pave_blocks[pb_gi].0.read().unwrap().pave2.vertex_idx);
                     }
                 }
                 for &pb_gi in &fi.pave_blocks_in {
                     if pb_gi < ds.pave_blocks.len() {
-                        a_mvf.insert(ds.pave_blocks[pb_gi].pave1.vertex_idx);
-                        a_mvf.insert(ds.pave_blocks[pb_gi].pave2.vertex_idx);
+                        a_mvf.insert(ds.pave_blocks[pb_gi].0.read().unwrap().pave1.vertex_idx);
+                        a_mvf.insert(ds.pave_blocks[pb_gi].0.read().unwrap().pave2.vertex_idx);
                     }
                 }
                 for &pb_gi in &fi.pave_blocks_sc {
                     if pb_gi < ds.pave_blocks.len() {
-                        a_mvf.insert(ds.pave_blocks[pb_gi].pave1.vertex_idx);
-                        a_mvf.insert(ds.pave_blocks[pb_gi].pave2.vertex_idx);
+                        a_mvf.insert(ds.pave_blocks[pb_gi].0.read().unwrap().pave1.vertex_idx);
+                        a_mvf.insert(ds.pave_blocks[pb_gi].0.read().unwrap().pave2.vertex_idx);
                     }
                 }
 
@@ -394,15 +394,15 @@ impl<'a> PaveFiller<'a> {
                         continue;
                     }
 
-                    let n_v1 = pb.pave1.vertex_idx;
-                    let n_v2 = pb.pave2.vertex_idx;
+                    let n_v1 = pb.0.read().unwrap().pave1.vertex_idx;
+                    let n_v2 = pb.0.read().unwrap().pave2.vertex_idx;
                     if !a_mvf.contains(&n_v1) || !a_mvf.contains(&n_v2) { continue; }
 
                     if ds.edges[ne].origin == ds.faces[nf].origin { continue; }
 
                     let a_e_curve = &ds.edges[ne].curve;
                     let mut b_use_add_tol = true;
-                    let a_ts = pb.shrunk_range.unwrap_or([pb.pave1.param, pb.pave2.param]);
+                    let a_ts = pb.0.read().unwrap().shrunk_range.unwrap_or([pb.0.read().unwrap().pave1.param, pb.0.read().unwrap().pave2.param]);
                     let a_t_mid = crate::boptools::intermediate_point(a_ts[0], a_ts[1]);
                     let a_p_on_e = a_e_curve.point_at(a_t_mid);
                     let a_ve_tgt = a_e_curve.tangent_at(a_t_mid);
@@ -494,7 +494,7 @@ impl<'a> PaveFiller<'a> {
             // L1162-1170: results check (rcad: all pairs produce a result)
 
             // L1174-1183: Add EdgeFace interference (rcad equivalent)
-            let a_t_mid = crate::boptools::intermediate_point(pb.pave1.param, pb.pave2.param);
+            let a_t_mid = crate::boptools::intermediate_point(pb.0.read().unwrap().pave1.param, pb.0.read().unwrap().pave2.param);
             let a_mid_pt = self.ds.edges[ne].curve.point_at(a_t_mid);
 
             // OCCT L1176-1182: create BOPDS_InterfEF + AddInterf
@@ -504,7 +504,7 @@ impl<'a> PaveFiller<'a> {
                 point: a_mid_pt,
                 edge_param: a_t_mid,
                 // Use first vertex index as new_vertex placeholder
-                new_vertex: pb.pave1.vertex_idx,
+                new_vertex: pb.0.read().unwrap().pave1.vertex_idx,
             });
 
             // L1184-1186: Update face info with new IN pave block

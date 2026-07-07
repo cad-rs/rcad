@@ -896,7 +896,7 @@ pub fn compute_tolerance_of_cb(
  if a_pbr_pbs.is_empty() { return 0.0; }
  let (a_pb_idx_ref, _) = a_pbr_pbs[0];
  let a_ref_pb = &ds.pave_blocks[a_pb_idx_ref];
- let n_e = a_ref_pb.original_edge;
+ let n_e = a_ref_pb.0.read().unwrap().original_edge;
  let a_tol_max = ds.edges.get(n_e).map(|e| e.geom_tol).unwrap_or(0.0);
  if a_pbr_pbs.len() < 2 && cb.faces().is_empty() { return a_tol_max; }
 
@@ -911,7 +911,7 @@ pub fn compute_tolerance_of_cb(
  // OCCT L287-323: iterate other PaveBlocks
  for &(a_pb_idx, _fi) in &a_pbr_pbs[1..] {
  let a_pb = &ds.pave_blocks[a_pb_idx];
- let a_e_idx = a_pb.original_edge;
+ let a_e_idx = a_pb.0.read().unwrap().original_edge;
  let a_tol_e = ds.edges.get(a_e_idx).map(|e| e.geom_tol).unwrap_or(0.0);
  let a_curve_other = &ds.edges[a_e_idx].curve;
 

@@ -589,20 +589,20 @@ impl<'a> super::PaveFiller<'a> {
  {
  if *pb_idx >= self.ds.pave_blocks.len() { continue; }
  let pb = &self.ds.pave_blocks[*pb_idx];
- let ei = pb.original_edge;
+ let ei = pb.0.read().unwrap().original_edge;
  if ei >= self.ds.edges.len() { continue; }
  e_to_faces.entry(ei).or_default().push(fi);
 
  // OCCT L112-148: CommonBlock analysis  ?check if same CB
  // contains edges from the same argument.
- if let Some(cb_idx) = pb.common_block_idx {
+ if let Some(cb_idx) = pb.0.read().unwrap().common_block_idx {
  if cb_fence.insert(cb_idx) {
  if cb_idx < self.ds.common_blocks.len() {
  let cb = &self.ds.common_blocks[cb_idx];
  let same_arg_edges: Vec<usize> = cb.pave_blocks().iter()
  .filter_map(|&(pbi, _)| {
  let pb2 = &self.ds.pave_blocks[pbi];
- let e = pb2.original_edge;
+ let e = pb2.0.read().unwrap().original_edge;
  if e < self.ds.edges.len()
  && self.ds.edges[e].origin == face.origin
  {
@@ -669,9 +669,9 @@ impl<'a> super::PaveFiller<'a> {
  let n_orig_edges = self.ds.edges.len();
 
  //  ?OCCT-aligned: MakeSplitEdges (PaveFiller_7.cxx) only creates split
- // edges and sets PaveBlock->Edge() (pb.new_edge).  rcad also initializes
+ // edges and sets PaveBlock->Edge() (pb.0.read().unwrap().new_edge).  rcad also initializes
  // pave_blocks on source edges here so downstream FillImagesEdges can
- // read pb.new_edge.  my_images / my_origins are NOT populated here  ?
+ // read pb.0.read().unwrap().new_edge.  my_images / my_origins are NOT populated here  ?
  // that is FillImagesEdges' responsibility (build_edge_images in ds.rs).
 
  for ei in 0..n_orig_edges {
@@ -700,27 +700,27 @@ impl<'a> super::PaveFiller<'a> {
  let pb = PaveBlock::new(ei, w[0], w[1]);
 
  // OCCT L416-421: skip PaveBlock whose CommonBlock already processed.
- if let Some(cb_idx) = pb.common_block_idx {
+ if let Some(cb_idx) = pb.0.read().unwrap().common_block_idx {
  if !processed_common_blocks.insert(cb_idx) {
  continue;
  }
  }
 
  // OCCT L425-430: skip if no new vertices (both vertices are from source shapes).
- if !self.ds.is_new_vertex(pb.pave1.vertex_idx)
- && !self.ds.is_new_vertex(pb.pave2.vertex_idx)
+ if !self.ds.is_new_vertex(pb.0.read().unwrap().pave1.vertex_idx)
+ && !self.ds.is_new_vertex(pb.0.read().unwrap().pave2.vertex_idx)
  {
  continue;
  }
 
- let t1 = pb.pave1.param;
- let t2 = pb.pave2.param;
+ let t1 = pb.0.read().unwrap().pave1.param;
+ let t2 = pb.0.read().unwrap().pave2.param;
  let (t_start, t_end) = if t1 < t2 { (t1, t2) } else { (t2, t1) };
  let split_curve = pb.curve.clone().unwrap_or_else(|| edge.curve.clone());
  all_blocks.push(BlockData {
  ei,
- sv: pb.pave1.vertex_idx,
- ev: pb.pave2.vertex_idx,
+ sv: pb.0.read().unwrap().pave1.vertex_idx,
+ ev: pb.0.read().unwrap().pave2.vertex_idx,
  t_start, t_end,
  curve: split_curve,
  origin: edge.origin,
@@ -767,14 +767,14 @@ impl<'a> super::PaveFiller<'a> {
  }
 
  //  ?OCCT-aligned: Set pave_blocks on source edges that were split,
- // so Builder::fill_images_edges can read pb.new_edge.
+ // so Builder::fill_images_edges can read pb.0.read().unwrap().new_edge.
  for (ei, blocks) in &edge_pbs {
  let pbs: Vec<PaveBlock> = blocks.iter().map(|&(sv, ev, t_start, t_end, new_ei)| {
  let mut pb = PaveBlock::new(*ei,
  Pave { vertex_idx: sv, param: t_start },
  Pave { vertex_idx: ev, param: t_end },
  );
- pb.new_edge = Some(new_ei);
+ pb.0.write().unwrap().new_edge = Some(new_ei);
  pb
  }).collect();
  self.ds.edges[*ei].pave_blocks = pbs;

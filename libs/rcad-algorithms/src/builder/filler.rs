@@ -32,7 +32,7 @@ impl<'a> BooleanBuilder<'a> {
     ///   OCCT L84-86: filter HasReference (has pave blocks)
     /// ✅ OCCT-aligned: FillImagesEdges (BOPAlgo_Builder_1.cxx L71-126).
     ///   Reads split edges created by MakeSplitEdges (build_split_edges in PaveFiller)
-    ///   via pb.new_edge, matching OCCT's aPBR->Edge() pattern.
+    ///   via pb.0.read().unwrap().new_edge, matching OCCT's aPBR->Edge() pattern.
     ///   Creates myImages(EDGE) and myOrigins(EDGE) mappings.
     /// ✅ OCCT-aligned: FillImagesEdges (BOPAlgo_Builder_1.cxx L71-125).
     ///   L75-81: iterate source shapes → filter TopAbs_EDGE
@@ -65,14 +65,14 @@ impl<'a> BooleanBuilder<'a> {
             let aE = self.brep_sr(e_base + ei);
             for pb in &edge.pave_blocks {
                 let nSpR = self.ds.real_pave_block_edge(ei, pb)
-                    .or(pb.new_edge)
+                    .or(pb.0.read().unwrap().new_edge)
                     .unwrap_or(ei);
                 let aSpR = self.brep_sr(e_base + nSpR);
                 self.my_images.borrow_mut().entry(aE).or_default().push(aSpR);
                 self.my_origins.borrow_mut().entry(aSpR).or_default().push(aE);
                 // OCCT L114-118: if IsCommonBlockOnEdge → myShapesSD.Bind(aPB->Edge(), aSpR)
-                if pb.common_block_idx.is_some() {
-                    if let Some(nSp) = pb.new_edge {
+                if pb.0.read().unwrap().common_block_idx.is_some() {
+                    if let Some(nSp) = pb.0.read().unwrap().new_edge {
                         let aSp = self.brep_sr(e_base + nSp);
                         self.my_shapes_sd.borrow_mut().insert(aSp, aSpR);
                     }

@@ -32,7 +32,7 @@ pub fn build_sphere_seam_segments(ds: &DS, ei: usize, sv: usize, ev: usize, face
  let mut segs: Vec<WireSegment> = Vec::new();
  if ds_edge.pave_blocks.len() > 1 {
  for pb in &ds_edge.pave_blocks {
- let sv_seg = pb.pave1.vertex_idx; let ev_seg = pb.pave2.vertex_idx;
+ let sv_seg = pb.0.read().unwrap().pave1.vertex_idx; let ev_seg = pb.0.read().unwrap().pave2.vertex_idx;
  if sv_seg == ev_seg { continue; }
  let second_pcurve = build_seam_second_pcurve(ds, &face.surface, sv_seg, ev_seg, ds_edge.geom_tol);
  let first_pcurve = world_to_uv(&face.surface, ds.vertices[sv_seg].point).and_then(|uv_s| {

@@ -1,7 +1,7 @@
 pub mod types;
 pub use types::*;
 
-use super::pave::{Pave, PaveBlock, NO_EDGE};
+use super::pave::{Pave, PaveBlock, SharedPB, NO_EDGE};
 use super::common_block::CommonBlock;
 use super::face_info::FaceInfo;
 use crate::tolerance::*;
@@ -91,7 +91,7 @@ impl DS {
 
  ///  ?OCCT-aligned: BOPDS_DS::ChangePaveBlocks (hxx:172-174).
  /// Returns a mutable reference to the PaveBlocks list for an edge.
- pub fn change_pave_blocks(&mut self, edge_idx: usize) -> &mut Vec<PaveBlock> {
+ pub fn change_pave_blocks(&mut self, edge_idx: usize) -> &mut Vec<SharedPB> {
  &mut self.edges[edge_idx].pave_blocks
  }
 
@@ -123,7 +123,7 @@ impl DS {
  if sv == ev {
  // OCCT L479: aPB->AppendExtPave(aP1)  ?first endpoint
  self.edges[edge_idx].pave_blocks[0]
- .append_ext_pave(Pave { vertex_idx: sv, param: tr0 });
+ .0.write().unwrap().append_ext_pave(Pave { vertex_idx: sv, param: tr0 });
  // OCCT L481: aPB->AppendExtPave(aP2)  ?second endpoint
  // (fence dedups by vertex_idx, so second push is accepted
  //  because vertex_idx differs from the first push? No, same
@@ -131,13 +131,13 @@ impl DS {
  //  The second AppendExtPave is rejected by fence in both
  //  implementations; OCCT still writes it for form clarity.)
  self.edges[edge_idx].pave_blocks[0]
- .append_ext_pave(Pave { vertex_idx: sv, param: tr1 });
+ .0.write().unwrap().append_ext_pave(Pave { vertex_idx: sv, param: tr1 });
  }
  }
 
  ///  ?OCCT-aligned: BOPDS_DS::PaveBlocks (hxx:167-169).
  /// Returns a reference to the PaveBlocks list for an edge.
- pub fn pave_blocks(&self, edge_idx: usize) -> &[PaveBlock] {
+ pub fn pave_blocks(&self, edge_idx: usize) -> &[SharedPB] {
  &self.edges[edge_idx].pave_blocks
  }
 
@@ -1767,7 +1767,7 @@ impl DS {
  let info = &mut self.faces[fi].face_info;
  info.pave_blocks_on.retain(|&pb_idx| {
  pave_blocks.get(pb_idx).map_or(false, |pb| {
- pb.pave1.vertex_idx != pb.pave2.vertex_idx
+ pb.0.read().unwrap().pave1.vertex_idx != pb.0.read().unwrap().pave2.vertex_idx
  })
  });
  }

@@ -63,8 +63,8 @@ pub fn perform_common_blocks(ds: &mut DS) {
  for (ei, edge) in ds.edges.iter().enumerate() {
  for local_i in 0..edge.pave_blocks.len() {
  let pb = &edge.pave_blocks[local_i];
- let v1 = pb.pave1.vertex_idx;
- let v2 = pb.pave2.vertex_idx;
+ let v1 = pb.0.read().unwrap().pave1.vertex_idx;
+ let v2 = pb.0.read().unwrap().pave2.vertex_idx;
  let key = if v1 <= v2 { (v1, v2) } else { (v2, v1) };
 
  let global_pb = match edge_local_to_global.get(&(ei, local_i)) {
@@ -82,10 +82,10 @@ pub fn perform_common_blocks(ds: &mut DS) {
  .iter()
  .enumerate()
  .filter(|(_, f)| {
- f.boundary_edges.contains(&pb.original_edge)
+ f.boundary_edges.contains(&pb.0.read().unwrap().original_edge)
  || f.inner_boundary_edges
  .iter()
- .any(|wire| wire.iter().any(|(ei, _)| *ei == pb.original_edge))
+ .any(|wire| wire.iter().any(|(ei, _)| *ei == pb.0.read().unwrap().original_edge))
  })
  .map(|(fi, _)| fi)
  .collect();
@@ -129,7 +129,7 @@ pub fn perform_common_blocks(ds: &mut DS) {
  if let Some(local_pb) = ds.edges.get_mut(ei)
  .and_then(|e| e.pave_blocks.get_mut(local_i))
  {
- local_pb.common_block_idx = Some(cb_idx);
+ local_pb.0.write().unwrap().common_block_idx = Some(cb_idx);
  }
  }
  }
@@ -159,10 +159,10 @@ pub fn compute_tolerance_of_cb(ds: &DS, cb_idx: usize) -> f64 {
  // Reference PaveBlock (the first one).
  let (ref_pb_idx, _) = pb_entries[0];
  let ref_pb = &ds.pave_blocks[ref_pb_idx];
- let ref_edge = &ds.edges[ref_pb.original_edge];
+ let ref_edge = &ds.edges[ref_pb.0.read().unwrap().original_edge];
  let ref_curve = &ref_edge.curve;
- let t1 = ref_pb.pave1.param.min(ref_pb.pave2.param);
- let t2 = ref_pb.pave1.param.max(ref_pb.pave2.param);
+ let t1 = ref_pb.0.read().unwrap().pave1.param.min(ref_pb.0.read().unwrap().pave2.param);
+ let t2 = ref_pb.0.read().unwrap().pave1.param.max(ref_pb.0.read().unwrap().pave2.param);
 
  // Start tolerance from the reference edge's model tolerance (OCCT aTolMax = BRep_Tool::Tolerance(aEOr)).
  let mut tol_max = ref_edge.geom_tol;
@@ -178,11 +178,11 @@ pub fn compute_tolerance_of_cb(ds: &DS, cb_idx: usize) -> f64 {
  if pb_entries.len() > 1 {
  for &(pb_idx, _face_idx) in &pb_entries[1..] {
  let pb = &ds.pave_blocks[pb_idx];
- let other_edge = &ds.edges[pb.original_edge];
+ let other_edge = &ds.edges[pb.0.read().unwrap().original_edge];
  let other_curve = &other_edge.curve;
  let other_t_range = [
- pb.pave1.param.min(pb.pave2.param),
- pb.pave1.param.max(pb.pave2.param),
+ pb.0.read().unwrap().pave1.param.min(pb.0.read().unwrap().pave2.param),
+ pb.0.read().unwrap().pave1.param.max(pb.0.read().unwrap().pave2.param),
  ];
  let other_tol = other_edge.geom_tol;
 
