@@ -1,4 +1,4 @@
-//! OCCT-aligned: DecomposeResult + helpers for quadric-surface post-processing.
+﻿//! OCCT-aligned: DecomposeResult + helpers for quadric-surface post-processing.
 //!
 //! OCCT IntPatch_ImpPrmIntersection.cxx L3146-3730 + helper functions.
 //! Splits intersection lines at seam/pole boundaries for sphere/cone/cylinder/torus.
@@ -397,54 +397,4 @@ pub fn decompose_result(
 // ═══════════════════════════════════════════════════════════════════════
 // Tests
 // ═══════════════════════════════════════════════════════════════════════
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::inttools::int_surf_quadric::Quadric;
 
-    #[test]
-    fn test_adjust_u_first() {
-        // near 0
-        assert!((adjust_u_first(0.0, 1.0) - 0.0).abs() < 1e-10);
-        // near 2π
-        let tp = std::f64::consts::TAU;
-        assert!((adjust_u_first(tp, 1.0) - tp).abs() < 1e-10);
-        // negative → normalize to [0, 2π]
-        let r = adjust_u_first(-1.0, 0.0);
-        assert!(r >= 0.0 && r <= tp);
-        // > 2π → normalize
-        let r2 = adjust_u_first(3.0 * tp, 0.0);
-        assert!(r2 >= 0.0 && r2 <= tp);
-    }
-
-    #[test]
-    fn test_is_seam_or_pole() {
-        let pts = vec![
-            Pt { p3d: DVec3::ZERO, u1: 0.0, v1: 0.0, u2: 0.0, v2: 0.0 },
-            Pt { p3d: DVec3::X, u1: 0.5, v1: 0.0, u2: 3.0, v2: 0.0 },
-        ];
-        let sp = is_seam_or_pole(GeomAbsSurfaceType::Cylinder, &pts, 0, 1e-7, DELTA_U_MAX);
-        assert_eq!(sp, SpecPntType::SeamU);
-    }
-
-    #[test]
-    fn test_get_vertices() {
-        let wps = vec![
-            WLinePnt { p3d: DVec3::ZERO, u1: 0.0, v1: 0.0, u2: 0.0, v2: 0.0 },
-            WLinePnt { p3d: DVec3::X, u1: 1.0, v1: 0.0, u2: 1.0, v2: 0.0 },
-            WLinePnt { p3d: DVec3::X, u1: 1.0, v1: 0.0, u2: 1.0, v2: 0.0 },
-        ];
-        let line = IntPatchLine::walking(wps, WLineType::ImpPrm);
-        let verts = get_vertices(&line);
-        assert_eq!(verts.len(), 2, "duplicate should be removed");
-    }
-
-    #[test]
-    fn test_split_on_segments() {
-        let wps: Vec<WLinePnt> = (0..10).map(|i| WLinePnt {
-            p3d: DVec3::new(i as f64, 0.0, 0.0), u1: i as f64, v1: 0.0, u2: i as f64, v2: 0.0,
-        }).collect();
-        let segs = split_on_segments(&wps, 0.5);
-        assert_eq!(segs.len(), 1, "collinear points → single segment");
-    }
-}

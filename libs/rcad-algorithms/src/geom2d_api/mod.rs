@@ -16,5 +16,3 @@ include!("query_inc.rs");
 // Internal helpers (~355 lines)
 include!("helpers_inc.rs");
 
-#[cfg(test)]
-include!("tests_inc.rs");

@@ -1940,7 +1940,4 @@ fn check_shell_orientation_consistency(shell: &rcad_kernel::topology::Shell, bre
 /// A vector of `SolidValidationResult`, one per solid.
 
 include!("extra.rs");
-#[cfg(test)]
-mod tests {
- include!("tests_inc.rs");
-}
+

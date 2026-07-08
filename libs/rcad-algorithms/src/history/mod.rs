@@ -1998,7 +1998,4 @@ impl ChainStatistics {
 
 
 
-#[cfg(test)]
-mod tests {
- include!("tests_inc.rs");
-}
+

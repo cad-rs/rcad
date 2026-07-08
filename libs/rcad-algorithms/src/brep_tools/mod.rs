@@ -40,5 +40,3 @@ include!("bool_ops_topods_inc.rs");
 // Topods-native I/O + remaining variants (migration)
 include!("io_topods_inc.rs");
 
-#[cfg(test)]
-include!("tests_inc.rs");

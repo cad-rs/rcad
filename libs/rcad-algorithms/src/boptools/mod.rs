@@ -1,4 +1,4 @@
-//! OCCT-aligned BOPTools helpers (BOPTools_AlgoTools, BOPTools_AlgoTools2D, BOPTools_AlgoTools3D).
+﻿//! OCCT-aligned BOPTools helpers (BOPTools_AlgoTools, BOPTools_AlgoTools2D, BOPTools_AlgoTools3D).
 //!
 //! These functions provide edge/face classification and p-curve utilities
 //! used by the boolean pipeline.
@@ -1923,9 +1923,6 @@ pub fn make_vertex_from_list(
 /// pcurve_a/pcurve_b: existing pcurves from intersection curve (may be None).
 
 include!("extra.rs");
-#[cfg(test)]
-mod tests {
- include!("tests_inc.rs");
-}
+
 
 

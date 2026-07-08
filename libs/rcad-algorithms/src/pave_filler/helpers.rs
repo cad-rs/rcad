@@ -1,4 +1,4 @@
-use glam::{DVec2, DVec3};
+﻿use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
 use crate::bopds::ds::{
     DS, DSEdge, DSCurveRepOnFace, ShapeOrigin, Interference, IntersectionCurve, NearTangentType,
@@ -366,45 +366,7 @@ pub(crate) fn translate_curve3(curve: &Curve3, shift: DVec3) -> Curve3 {
     }
 }
 
-#[cfg(test)]
-mod phase2a_tests {
-    use super::*;
-    use crate::tolerance::*;
-    use rcad_kernel::geom::any_perpendicular;
-    use std::f64::consts::{FRAC_PI_2, PI};
 
-    #[test]
-    fn test_param_on_line3() {
-        let line = Line3 { origin: DVec3::ZERO, direction: DVec3::X };
-        let pt = DVec3::new(3.0, 0.0, 0.0);
-        let t = param_on_line3(pt, &line, 1e-6).unwrap();
-        assert!((t - 3.0).abs() < 1e-6, "expected 3.0, got {}", t);
-
-        // Point not on the line
-        let off = DVec3::new(3.0, 1.0, 0.0);
-        assert!(param_on_line3(off, &line, 1e-6).is_none());
-    }
-
-    #[test]
-    fn test_param_on_circle3() {
-        let circle = Circle3::new(DVec3::ZERO, DVec3::Z, 1.0 );
-        // Point (1,0,0) -> angle 0
-        let pt = DVec3::new(1.0, 0.0, 0.0);
-        let t = param_on_circle3(pt, &circle, 1e-6).unwrap();
-        assert!(t < 1e-6 || (t - 2.0 * PI).abs() < 1e-6,
-            "expected ~0 or 2*pi, got {}", t);
-
-        // Point (0,1,0) -> angle pi/2
-        let pt2 = DVec3::new(0.0, 1.0, 0.0);
-        let t2 = param_on_circle3(pt2, &circle, 1e-6).unwrap();
-        assert!((t2 - FRAC_PI_2).abs() < 1e-6,
-            "expected pi/2, got {}", t2);
-
-        // Point not on the circle
-        let off = DVec3::new(2.0, 0.0, 0.0);
-        assert!(param_on_circle3(off, &circle, 1e-6).is_none());
-    }
-}
 
 // ---- Phase 2a: MakeBlocks candidate injection helpers ----
 

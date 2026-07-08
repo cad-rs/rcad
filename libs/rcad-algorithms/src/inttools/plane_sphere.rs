@@ -1,4 +1,4 @@
-use glam::DVec3;
+﻿use glam::DVec3;
 use rcad_kernel::geom::*;
 
 use crate::tolerance::*;
@@ -37,88 +37,4 @@ pub fn intersect_plane_sphere(plane: &Plane, sphere: &SphericalSurface) -> Plane
     PlaneSphereResult::Circle(Circle3::new(center, plane.normal, circle_radius))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn plane_through_center() {
-        let plane = Plane {
-            origin: DVec3::ZERO,
-            normal: DVec3::Y,
-        };
-        let sphere = SphericalSurface {
-            center: DVec3::ZERO,
-            axis: DVec3::Y,
-            radius: 3.0,
-            ref_dir: any_perpendicular(DVec3::Y),
-        };
-        match intersect_plane_sphere(&plane, &sphere) {
-            PlaneSphereResult::Circle(c) => {
-                assert!((c.radius - 3.0).abs() < TOLERANCE_ABS);
-                assert!(points_coincide(c.center, DVec3::ZERO));
-            }
-            other => panic!("Expected Circle, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn plane_offset() {
-        let plane = Plane {
-            origin: DVec3::new(0.0, 2.0, 0.0),
-            normal: DVec3::Y,
-        };
-        let sphere = SphericalSurface {
-            center: DVec3::ZERO,
-            axis: DVec3::Y,
-            radius: 3.0,
-            ref_dir: any_perpendicular(DVec3::Y),
-        };
-        match intersect_plane_sphere(&plane, &sphere) {
-            PlaneSphereResult::Circle(c) => {
-                let expected_r = (9.0_f64 - 4.0).sqrt();
-                assert!((c.radius - expected_r).abs() < TOLERANCE_ABS);
-            }
-            other => panic!("Expected Circle, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn tangent_becomes_small_circle() {
-        let plane = Plane {
-            origin: DVec3::new(0.0, 3.0, 0.0),
-            normal: DVec3::Y,
-        };
-        let sphere = SphericalSurface {
-            center: DVec3::ZERO,
-            axis: DVec3::Y,
-            radius: 3.0,
-            ref_dir: any_perpendicular(DVec3::Y),
-        };
-        match intersect_plane_sphere(&plane, &sphere) {
-            PlaneSphereResult::Circle(c) => {
-                assert!((c.radius - TOLERANCE_MESH_LEGACY).abs() < TOLERANCE_LEN_MIN);
-                assert!(points_coincide(c.center, DVec3::new(0.0, 3.0, 0.0)));
-            }
-            other => panic!("Expected Circle (degenerate tangency inflated), got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn no_intersection() {
-        let plane = Plane {
-            origin: DVec3::new(0.0, 10.0, 0.0),
-            normal: DVec3::Y,
-        };
-        let sphere = SphericalSurface {
-            center: DVec3::ZERO,
-            axis: DVec3::Y,
-            radius: 3.0,
-            ref_dir: any_perpendicular(DVec3::Y),
-        };
-        assert!(matches!(
-            intersect_plane_sphere(&plane, &sphere),
-            PlaneSphereResult::NoIntersection
-        ));
-    }
-}

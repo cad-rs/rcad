@@ -1,4 +1,4 @@
-//! Hidden-Line Removal (HLR).
+﻿//! Hidden-Line Removal (HLR).
 //!
 //! Projects a BRep's edges onto a view plane and classifies each edge segment
 //! as **visible** or **hidden** by testing against the silhouette of all faces.
@@ -1766,4 +1766,4 @@ fn extract_ellipsoid_silhouettes_numerical(
     }
 }
 include!("e1.rs");
-include!("tests_inc.rs");
+

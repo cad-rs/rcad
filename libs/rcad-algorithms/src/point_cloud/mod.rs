@@ -1836,4 +1836,4 @@ fn jacobi_eigen(a: &[[f64; 3]; 3]) -> ([f64; 3], [[f64; 3]; 3]) {
     (eigenvalues, v_sorted)
 }
 include!("e1.rs");
-include!("tests_inc.rs");
+

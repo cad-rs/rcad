@@ -1,4 +1,4 @@
-//! LProp-style curve curvature extremum and inflection point storage.
+﻿//! LProp-style curve curvature extremum and inflection point storage.
 //!
 //! ✅ OCCT-aligned: LProp_CurAndInf — stores curvature extrema (min/max)
 //!                  and inflection points of a curve, sorted by parameter.
@@ -60,86 +60,4 @@ impl CurAndInf {
 // Tests — translated from LProp_CurAndInf_Test.cxx
 // =============================================================================
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn default_constructor_is_empty() {
-        let r = CurAndInf::new();
-        assert!(r.is_empty());
-        assert_eq!(r.nb_points(), 0);
-    }
-
-    #[test]
-    fn add_inflection() {
-        let mut r = CurAndInf::new();
-        r.add_inflection(1.5);
-        assert!(!r.is_empty());
-        assert_eq!(r.nb_points(), 1);
-        assert!((r.parameter(0) - 1.5).abs() < 1e-12);
-        assert_eq!(r.ci_type(0), CIType::Inflection);
-    }
-
-    #[test]
-    fn add_ext_cur_minimum() {
-        let mut r = CurAndInf::new();
-        r.add_ext_cur(2.0, true);
-        assert_eq!(r.nb_points(), 1);
-        assert_eq!(r.ci_type(0), CIType::MinCur);
-    }
-
-    #[test]
-    fn add_ext_cur_maximum() {
-        let mut r = CurAndInf::new();
-        r.add_ext_cur(3.0, false);
-        assert_eq!(r.nb_points(), 1);
-        assert_eq!(r.ci_type(0), CIType::MaxCur);
-    }
-
-    #[test]
-    fn multiple_points_sorted_by_parameter() {
-        let mut r = CurAndInf::new();
-        r.add_inflection(5.0);
-        r.add_ext_cur(1.0, true);
-        r.add_ext_cur(3.0, false);
-        r.add_inflection(7.0);
-        assert_eq!(r.nb_points(), 4);
-        for i in 1..r.nb_points() {
-            assert!(r.parameter(i - 1) <= r.parameter(i));
-        }
-    }
-
-    #[test]
-    fn multiple_points_correct_types() {
-        let mut r = CurAndInf::new();
-        r.add_ext_cur(1.0, true);   // MinCur
-        r.add_inflection(3.0);       // Inflection
-        r.add_ext_cur(5.0, false);  // MaxCur
-        assert_eq!(r.nb_points(), 3);
-        assert_eq!(r.ci_type(0), CIType::MinCur);
-        assert_eq!(r.ci_type(1), CIType::Inflection);
-        assert_eq!(r.ci_type(2), CIType::MaxCur);
-    }
-
-    #[test]
-    fn clear_empties() {
-        let mut r = CurAndInf::new();
-        r.add_inflection(1.0);
-        r.add_ext_cur(2.0, true);
-        assert_eq!(r.nb_points(), 2);
-        r.clear();
-        assert!(r.is_empty());
-        assert_eq!(r.nb_points(), 0);
-    }
-
-    #[test]
-    fn clear_and_refill() {
-        let mut r = CurAndInf::new();
-        r.add_inflection(1.0);
-        r.clear();
-        r.add_ext_cur(5.0, false);
-        assert_eq!(r.nb_points(), 1);
-        assert_eq!(r.ci_type(0), CIType::MaxCur);
-    }
-}

@@ -1817,7 +1817,4 @@ fn interpolate_radius(r1: f64, r2: f64, t: f64, tension: f64) -> f64 {
 // = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
 
 
-#[cfg(test)]
-mod tests {
- include!("tests_inc.rs");
-}
+

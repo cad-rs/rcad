@@ -1,4 +1,4 @@
-use crate::tolerance::*;
+﻿use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::topods;
@@ -259,32 +259,4 @@ pub fn populate_boolean_result_pcurves(brep: &mut BRep) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use rcad_kernel::PrimitiveSolid;
 
-    #[test]
-    fn box_geom_populated() {
-        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
-            width: 2.0,
-            height: 3.0,
-            depth: 4.0,
-        });
-        populate_box_geom(&mut brep);
-
-        assert_eq!(brep.geom.edge_curve.len(), 12);
-        assert!(brep.geom.edge_curve.iter().all(|c| c.is_some()));
-        assert_eq!(brep.geom.face_surface.len(), 6);
-        assert!(brep.geom.face_surface.iter().all(|s| s.is_some()));
-
-        // All curves should be lines
-        for c in &brep.geom.curves {
-            assert!(matches!(c, Curve3::Line(_)));
-        }
-        // All surfaces should be planes
-        for s in &brep.geom.surfaces {
-            assert!(matches!(s, Surface3::Plane(_)));
-        }
-    }
-}

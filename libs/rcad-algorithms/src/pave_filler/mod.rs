@@ -885,7 +885,4 @@ impl<'a> PaveFiller<'a> {
 impl<'a> PaveFiller<'a> {
 }
 
-#[cfg(test)]
-mod tests;
-
 

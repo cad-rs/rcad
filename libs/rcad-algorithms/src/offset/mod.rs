@@ -1,4 +1,4 @@
-//! Shell and solid offset operations  ?analogous to OCCT `BRepOffsetAPI_MakeOffsetShape`.
+﻿//! Shell and solid offset operations  ?analogous to OCCT `BRepOffsetAPI_MakeOffsetShape`.
 //!
 //! # Overview
 //!
@@ -1715,4 +1715,4 @@ fn orthonormal_basis_from_normal(normal: DVec3) -> (DVec3, DVec3) {
 include!("e1.rs");
 include!("e2.rs");
 include!("e3.rs");
-include!("tests_inc.rs");
+

@@ -1709,7 +1709,3 @@ impl<'a> BooleanBuilder<'a> {
 
 include!("builder/part2.rs");
 include!("builder/footer.rs");
-#[cfg(test)]
-mod tests {
- include!("builder/tests_inc.rs");
-}

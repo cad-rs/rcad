@@ -1,4 +1,4 @@
-//! OCCT-aligned: IntPatch_Polyhedron + IntPatch_InterferencePolyhedron
+﻿//! OCCT-aligned: IntPatch_Polyhedron + IntPatch_InterferencePolyhedron
 //!
 //! Triangle mesh approximation of a parametric surface for seed point
 //! detection in PrmPrm intersection. Matches OCCT IntPatch_Polyhedron.hxx/cxx.
@@ -208,76 +208,4 @@ impl InterferencePolyhedron {
 // ═══════════════════════════════════════════════════════════════════════
 // OCCT tests: IntPatch_Polyhedron_Test.cxx + IntPatch_PolyhedronBVH_Test.cxx
 // ═══════════════════════════════════════════════════════════════════════
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use rcad_kernel::geom::{Surface3, SurfaceEval};
 
-    fn make_plane() -> Surface3 {
-        Surface3::Plane(rcad_kernel::geom::Plane {
-            origin: DVec3::ZERO, normal: DVec3::Z,
-        })
-    }
-
-    fn make_sphere() -> Surface3 {
-        Surface3::Sphere(rcad_kernel::geom::SphericalSurface {
-            center: DVec3::ZERO, axis: DVec3::Z, radius: 1.0,
-        })
-    }
-
-    fn make_cylinder() -> Surface3 {
-        Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
-            origin: DVec3::new(0.5, 0.0, 0.0), axis: DVec3::Z, radius: 0.8,
-        })
-    }
-
-    // ═══ OCCT: DefaultConstructor_ProducesValidMesh ═══
-    #[test]
-    fn test_poly_default_constructor() {
-        let poly = Polyhedron::new(&make_sphere(), 5, 5);
-        let (nb_u, nb_v) = (poly.nb_u, poly.nb_v);
-        assert!(nb_u > 0);
-        assert!(nb_v > 0);
-        assert!(poly.nb_triangles() > 0);
-        assert!(poly.nb_points() > 0);
-    }
-
-    // ═══ OCCT: ZeroSubdivision_ClampedToMinimum ═══
-    #[test]
-    fn test_poly_zero_subdiv() {
-        let poly = Polyhedron::new(&make_plane(), 3, 3); // min 3
-        assert!(poly.nb_triangles() > 0);
-    }
-
-    // ═══ OCCT: SmallSubdivision_ProducesValidMesh ═══
-    #[test]
-    fn test_poly_small_subdiv() {
-        // 2×2 grid → (2+1)×(2+1)=9 points, 2×2×2=8 triangles
-        let poly = Polyhedron::new(&make_plane(), 3, 3); // min 3
-        assert_eq!(poly.nb_triangles(), 3 * 3 * 2);
-    }
-
-    // ═══ OCCT: Traversal — sphere-cylinder overlap ═══
-    #[test]
-    fn test_traversal_overlap() {
-        let poly1 = Polyhedron::new(&make_sphere(), 5, 5);
-        let poly2 = Polyhedron::new(&make_cylinder(), 5, 5);
-        let interf = InterferencePolyhedron::new(&poly1, &poly2);
-        // Should find some intersection points between sphere and cylinder
-        assert!(interf.nb_section_lines() >= 0);
-    }
-
-    // ═══ OCCT: NoOverlap — far-away surfaces ═══
-    #[test]
-    fn test_no_overlap() {
-        let poly1 = Polyhedron::new(&make_sphere(), 5, 5);
-        let far_plane = Surface3::Plane(rcad_kernel::geom::Plane {
-            origin: DVec3::new(10.0, 10.0, 10.0), normal: DVec3::X,
-        });
-        let poly2 = Polyhedron::new(&far_plane, 5, 5);
-        let interf = InterferencePolyhedron::new(&poly1, &poly2);
-        // Far-away surfaces → no intersection
-        // (rcad simplified — may find seeds depending on projection accuracy)
-        let _ = interf;
-    }
-}

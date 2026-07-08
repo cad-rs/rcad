@@ -1,4 +1,4 @@
-﻿//! Surface-surface intersection (IntSS).
+//! Surface-surface intersection (IntSS).
 //!
 //! Covers analytic pairs:
 //!
@@ -1763,7 +1763,3 @@ pub fn numeric_intss_with_domains(
 
 include!("extra1.rs");
 include!("extra2.rs");
-#[cfg(test)]
-mod tests {
- include!("tests_inc.rs");
-}

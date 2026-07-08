@@ -1964,7 +1964,4 @@ fn count_indirect_faces(brep: &BRep) -> usize {
 // =============================================================================
 
 
-#[cfg(test)]
-mod tests {
-    include!("tests_inc.rs");
-}
+

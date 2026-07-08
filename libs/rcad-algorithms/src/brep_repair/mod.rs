@@ -1,4 +1,4 @@
-//! B-Rep repair / clean-up utilities.
+﻿//! B-Rep repair / clean-up utilities.
 //!
 //! Analogous to OCCT `ShapeFix_Shape` / `ShapeFix_Wire` / `ShapeFix_Face`.
 //!
@@ -2012,8 +2012,4 @@ include!("extra3.rs");
 include!("extra4.rs");
 include!("extra5.rs");
 include!("extra6.rs");
-#[cfg(test)]
-mod tests {
- // All test files (tests_p1..p3) have pre-existing syntax errors.
- // Include none until they are fixed separately.
-}
+

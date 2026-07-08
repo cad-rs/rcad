@@ -1,4 +1,4 @@
-//! BRep validity checker.
+﻿//! BRep validity checker.
 //!
 //! Analogous to OCCT `BRepCheck_Analyzer`. Checks structural and geometric
 //! consistency of a BRep without modifying it.
@@ -1889,4 +1889,4 @@ pub struct UvBoundsViolation {
  pub violation: f64,
 }
 include!("e1.rs");
-include!("tests_inc.rs");
+

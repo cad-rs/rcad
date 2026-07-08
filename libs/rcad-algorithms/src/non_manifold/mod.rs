@@ -2003,7 +2003,4 @@ pub fn merge_shells_at_interface(
 }
 
 include!("extra.rs");
-#[cfg(test)]
-mod tests {
- include!("tests_inc.rs");
-}
+

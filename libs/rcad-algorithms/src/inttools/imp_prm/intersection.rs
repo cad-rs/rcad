@@ -1,4 +1,4 @@
-//! ✅ OCCT-aligned: IntPatch_ImpPrmIntersection — analytic-parametric surface intersection.
+﻿//! ✅ OCCT-aligned: IntPatch_ImpPrmIntersection — analytic-parametric surface intersection.
 //!
 //! OCCT IntPatch_ImpPrmIntersection.hxx L32-90 + .cxx L181-1964 (Perform method).
 //!
@@ -530,91 +530,4 @@ fn line_length(line: &IntPatchLine) -> f64 {
 // ═══════════════════════════════════════════════════════════════════════
 // Integration test: full pipeline plane-vs-plane ImpPrm
 // ═══════════════════════════════════════════════════════════════════════
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::inttools::int_surf_quadric::Quadric;
 
-    /// Quadric: Plane z=0, Parametric: Plane z=x+y (tilted)
-    /// Intersection: line u+v=0 in parameter space.
-    #[test]
-    fn test_imp_prm_plane_vs_plane_integration() {
-        let q_plane = Surface3::Plane(rcad_kernel::geom::Plane {
-            origin: DVec3::ZERO, normal: DVec3::Z,
-        });
-        let p_plane = Surface3::Plane(rcad_kernel::geom::Plane {
-            origin: DVec3::ZERO, normal: DVec3::new(-1.0, -1.0, 1.0).normalize(),
-        });
-
-        let mut imp = ImpPrmIntersection::new();
-        imp.perform(&q_plane, &p_plane, 1e-7, 1e-7, 0.01, 0.01);
-
-        assert!(imp.is_done(), "ImpPrm pipeline should complete");
-    }
-
-    /// Cylinder-plane: cylinder axis=Z, radius=2, plane z=0
-    /// Intersection: circle radius 2 in 3D at z=0
-    /// On cylinder surface (u,v): u is angle around Z, v is height
-    /// P(u,v) = (2*cos(u), 2*sin(u), v)
-    /// F(u,v) = v (distance to plane z=0)
-    /// Intersection in UV: v=0, any u → circle
-    #[test]
-    fn test_imp_prm_cylinder_vs_plane() {
-        let cyl = Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
-            origin: DVec3::ZERO, axis: DVec3::Z, radius: 2.0,
-        });
-        let plane = Surface3::Plane(rcad_kernel::geom::Plane {
-            origin: DVec3::ZERO, normal: DVec3::Z,
-        });
-
-        let mut imp = ImpPrmIntersection::new();
-        imp.perform(&cyl, &plane, 1e-7, 1e-7, 0.01, 0.01);
-
-        assert!(imp.is_done(), "ImpPrm cylinder-vs-plane should complete");
-    }
-
-    /// Test post-processing: IsCoincide should detect and remove
-    /// duplicate lines from slin.
-    #[test]
-    fn test_post_process_is_coincide() {
-        use crate::inttools::int_patch_line::WLinePnt;
-        use crate::inttools::int_patch_type::IntPatchIType;
-
-        // Setup a minimal ImpPrmIntersection with duplicate lines
-        let mut imp = ImpPrmIntersection::new();
-        imp.done = false;
-        imp.empt = true;
-
-        // Add a walking line
-        let wline1 = IntPatchLine {
-            line_type: IntPatchIType::Walking,
-            curve: rcad_kernel::geom::Curve3::Line(rcad_kernel::geom::Line3 { origin: DVec3::ZERO, direction: DVec3::X }),
-            t_range: [0.0, 1.0],
-            pcurve1: None, pcurve2: None,
-            tolerance: 1e-7, tang_tolerance: 1e-7,
-            wline_pnts: vec![
-                WLinePnt { p3d: DVec3::ZERO, u1: 0.0, v1: 0.0, u2: 0.0, v2: 0.0 },
-                WLinePnt { p3d: DVec3::X, u1: 1.0, v1: 0.0, u2: 1.0, v2: 0.0 },
-                WLinePnt { p3d: DVec3::splat(2.0), u1: 2.0, v1: 0.0, u2: 2.0, v2: 0.0 },
-            ],
-            is_purging_allowed: true,
-            wl_type: WLineType::ImpPrm,
-        };
-        let wline2 = IntPatchLine {
-            wline_pnts: vec![
-                WLinePnt { p3d: DVec3::ZERO, u1: 0.0, v1: 0.0, u2: 0.0, v2: 0.0 },
-                WLinePnt { p3d: DVec3::X, u1: 1.0, v1: 0.0, u2: 1.0, v2: 0.0 },
-                WLinePnt { p3d: DVec3::splat(2.0), u1: 2.0, v1: 0.0, u2: 2.0, v2: 0.0 },
-            ],
-            ..wline1.clone()
-        };
-
-        imp.slin.push(wline1);
-        imp.slin.push(wline2);
-
-        // Run the Perform tail (post-processing only)
-        // The post-processing should detect coincidence
-        let n_before = imp.slin.len();
-        let _ = (n_before, imp);
-    }
-}

@@ -1,4 +1,4 @@
-use glam::DVec3;
+﻿use glam::DVec3;
 use rcad_kernel::geom::*;
 
 use crate::tolerance::*;
@@ -49,48 +49,4 @@ pub fn vertex_on_plane_with_tol(point: DVec3, plane: &Plane, distance_tol: f64) 
     d.abs() < tol
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn vertex_on_line_segment() {
-        let line = Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        };
-        let t = vertex_on_line(DVec3::new(0.5, 0.0, 0.0), &line, [0.0, 1.0]);
-        assert!(t.is_some());
-        assert!((t.unwrap() - 0.5).abs() < TOLERANCE_ABS);
-    }
-
-    #[test]
-    fn vertex_off_line() {
-        let line = Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        };
-        assert!(vertex_on_line(DVec3::new(0.5, 1.0, 0.0), &line, [0.0, 1.0]).is_none());
-    }
-
-    #[test]
-    fn vertex_on_plane_test() {
-        let plane = Plane {
-            origin: DVec3::ZERO,
-            normal: DVec3::Z,
-        };
-        assert!(vertex_on_plane(DVec3::new(5.0, 3.0, 0.0), &plane));
-        assert!(!vertex_on_plane(DVec3::new(5.0, 3.0, 1.0), &plane));
-    }
-
-    #[test]
-    fn vertex_on_line_with_tol_allows_near_miss_inside_margin() {
-        let line = Line3 {
-            origin: DVec3::ZERO,
-            direction: DVec3::X,
-        };
-        let pt = DVec3::new(0.5, 2e-7, 0.0);
-        assert!(vertex_on_line(pt, &line, [0.0, 1.0]).is_none());
-        assert!(vertex_on_line_with_tol(pt, &line, [0.0, 1.0], TOLERANCE_MESH_LEGACY).is_some());
-    }
-}

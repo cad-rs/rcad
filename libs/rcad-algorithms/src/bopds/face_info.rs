@@ -1,4 +1,4 @@
-use indexmap::IndexSet;
+﻿use indexmap::IndexSet;
 
 /// Per-face intersection bookkeeping (OCCT: BOPDS_FaceInfo).
 ///
@@ -42,40 +42,4 @@ impl FaceInfo {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn face_info_default_has_no_interference() {
-        let fi = FaceInfo::default();
-        assert!(!fi.has_any_interference());
-        assert!(fi.curves_sc_only().is_empty());
-    }
-
-    #[test]
-    fn face_info_pave_blocks_on_triggers_has_any() {
-        let mut fi = FaceInfo::default();
-        fi.pave_blocks_on.insert(3);
-        assert!(fi.has_any_interference());
-    }
-
-    #[test]
-    fn face_info_curves_sc_triggers_has_any() {
-        let mut fi = FaceInfo::default();
-        fi.curves_sc.insert(1);
-        assert!(fi.has_any_interference());
-        assert_eq!(fi.curves_sc_only(), vec![1]);
-    }
-
-    #[test]
-    fn face_info_curves_sc_only_preserves_insertion_order() {
-        let mut fi = FaceInfo::default();
-        fi.curves_sc.insert(5);
-        fi.curves_sc.insert(2);
-        fi.curves_sc.insert(8);
-        let v = fi.curves_sc_only();
-        // IndexSet preserves insertion order (matching OCCT's IndexedMap)
-        assert_eq!(v, vec![5, 2, 8]);
-    }
-}

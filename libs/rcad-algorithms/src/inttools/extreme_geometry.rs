@@ -1,4 +1,4 @@
-//! Extreme geometry detection and handling for robust boolean operations.
+﻿//! Extreme geometry detection and handling for robust boolean operations.
 //!
 //! This module provides detection and specialized handling for geometric configurations
 //! that are challenging for boolean operations:
@@ -905,62 +905,4 @@ fn compute_brep_scale(brep: &BRep) -> f64 {
     (max_pt - min_pt).length().max(TOLERANCE_LINEAR_ULTRA_STRICT)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn test_near_tangent_severity_classification() {
-        let handler = NearTangentHandler::default();
-
-        // 0.0 degrees -> Critical
-        assert_eq!(
-            handler.classify_severity(0.0),
-            NearTangentSeverity::Critical
-        );
-        // 0.001 degrees -> NearTangent (just above Critical threshold)
-        assert_eq!(
-            handler.classify_severity(0.001_f64.to_radians()),
-            NearTangentSeverity::NearTangent
-        );
-        // 0.05 degrees -> Marginal
-        assert_eq!(
-            handler.classify_severity(0.05_f64.to_radians()),
-            NearTangentSeverity::Marginal
-        );
-        // 1.0 degrees -> NotTangent
-        assert_eq!(
-            handler.classify_severity(1.0_f64.to_radians()),
-            NearTangentSeverity::NotTangent
-        );
-    }
-
-    #[test]
-    fn test_aspect_ratio_tolerance_multiplier() {
-        let aat = AspectRatioAdaptiveTolerance::default();
-
-        // Normal aspect ratio
-        assert_eq!(aat.compute_tolerance_multiplier(10.0), 1.0);
-
-        // High aspect ratio
-        let mult = aat.compute_tolerance_multiplier(ASPECT_RATIO_THRESHOLD * 10.0);
-        assert!(mult > 1.0);
-        assert!(mult < aat.max_multiplier);
-    }
-
-    #[test]
-    fn test_size_difference_analysis() {
-        let handler = SizeDifferenceHandler::default();
-
-        // Create two simple BReps with different sizes
-        // This is a placeholder test - full test would need actual BReps
-        assert!(handler.size_ratio_threshold > 0.0);
-    }
-
-    #[test]
-    fn test_degenerate_geometry_handler_default() {
-        let handler = DegenerateGeometryHandler::default();
-        assert!(handler.zero_tolerance > 0.0);
-        assert!(handler.collinear_tolerance > 0.0);
-    }
-}

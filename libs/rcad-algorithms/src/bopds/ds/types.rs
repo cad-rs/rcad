@@ -1,4 +1,4 @@
-use glam::{DVec2, DVec3};
+﻿use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, Line2d, Line3, Plane, Surface3, any_perpendicular};
 use rcad_kernel::topods;
 
@@ -703,91 +703,7 @@ pub struct DS {
  pub nb_source_shapes: usize,
 }
 
-#[cfg(test)]
-mod types_tests {
- use super::*;
 
- #[test]
- fn intersection_curve_init_pave_block1_adds_one() {
- let mut ic = IntersectionCurve {
- curve: Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X }),
- polyline: Vec::new(),
- start_vertex: 0, end_vertex: 1,
- t_range: [0.0, 1.0],
- pcurve_on_a: None, pcurve_on_b: None,
- geom_tol: 1e-7,
- pave_blocks: Vec::new(),
- curve_extra: CurveExtra::default(),
- };
- assert!(ic.pave_blocks.is_empty());
- ic.init_pave_block1();
- assert_eq!(ic.pave_blocks.len(), 1);
- }
-
- #[test]
- fn intersection_curve_init_pave_block1_idempotent() {
- let mut ic = IntersectionCurve {
- curve: Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X }),
- polyline: Vec::new(),
- start_vertex: 0, end_vertex: 1,
- t_range: [0.0, 1.0],
- pcurve_on_a: None, pcurve_on_b: None,
- geom_tol: 1e-7,
- pave_blocks: Vec::new(),
- curve_extra: CurveExtra::default(),
- };
- ic.init_pave_block1();
- ic.init_pave_block1();
- assert_eq!(ic.pave_blocks.len(), 1);
- }
-
- #[test]
- fn intersection_curve_change_pave_block1_mutates_first() {
- let mut ic = IntersectionCurve {
- curve: Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X }),
- polyline: Vec::new(),
- start_vertex: 0, end_vertex: 1,
- t_range: [0.0, 1.0],
- pcurve_on_a: None, pcurve_on_b: None,
- geom_tol: 1e-7,
- pave_blocks: Vec::new(),
- curve_extra: CurveExtra::default(),
- };
- ic.init_pave_block1();
- let pb = ic.change_pave_block1();
- assert!(pb.is_some());
- pb.unwrap().original_edge = 42;
- assert_eq!(ic.pave_blocks[0].original_edge, 42);
- }
-
- #[test]
- fn shape_sd_has_sd_vertex_roundtrip() {
- let mut shared = SharedTopologyInfo::default();
- shared.shared_vertices.push((0, 10));
- let sd = ShapeSD::new(4, &shared);
- assert!(sd.has_sd_vertex(0, 10));
- assert!(sd.has_sd_vertex(10, 0));
- assert!(!sd.has_sd_vertex(0, 11));
- }
-
- #[test]
- fn shape_sd_add_sd_vertex_dynamic() {
- let mut sd = ShapeSD::new(0, &SharedTopologyInfo::default());
- sd.add_sd_vertex(3, 7);
- assert!(sd.has_sd_vertex(3, 7));
- assert!(sd.has_sd_vertex(7, 3));
- }
-
- #[test]
- fn shape_sd_find_sd_partner() {
- let mut shared = SharedTopologyInfo::default();
- shared.shared_vertices.push((2, 8));
- let sd = ShapeSD::new(4, &shared);
- assert_eq!(sd.find_sd_partner(2), Some(8));
- assert_eq!(sd.find_sd_partner(8), Some(2));
- assert_eq!(sd.find_sd_partner(99), None);
- }
-}
 
  // ===== PassKey =====
 

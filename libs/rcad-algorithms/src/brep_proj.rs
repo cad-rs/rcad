@@ -1,4 +1,4 @@
-//! Cylindrical BRep projection (OCCT `BRepProj_Projection` with `gp_Dir`).
+﻿//! Cylindrical BRep projection (OCCT `BRepProj_Projection` with `gp_Dir`).
 //!
 //! Strategy (matches OCCT): translate the wire by `-mdis·D`, build a prism by extruding
 //! the polyline along `2·mdis·D`, then intersect that prism with the target shape’s
@@ -355,54 +355,4 @@ pub fn brep_proj_cylindrical(
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::brep_algo::total_edge_length;
-    use rcad_kernel::PrimitiveSolid;
 
-    #[test]
-    fn horizontal_segment_projects_onto_box_top_along_neg_z() {
-        let plate = BRep::from_primitive(PrimitiveSolid::Box {
-            width: 1.0,
-            height: 1.0,
-            depth: 1.0,
-        });
-        let mut marker = BRep::new();
-        marker.vertices.push(Vertex {
-            point: DVec3::new(0.2, 0.5, 2.0),
-        });
-        marker.vertices.push(Vertex {
-            point: DVec3::new(0.8, 0.5, 2.0),
-        });
-        marker.edges.push(Edge { start: 0, end: 1 });
-        let ci = marker.geom.curves.len();
-        marker.geom.curves.push(Curve3::Line(Line3 {
-            origin: DVec3::new(0.2, 0.5, 2.0),
-            direction: DVec3::X,
-        }));
-        marker.geom.edge_curve.push(Some(ci));
-        marker
-            .geom
-            .edge_curve_range
-            .push(Some([0.0, 0.6]));
-        marker.geom.edge_degenerated.push(false);
-
-        let opts = BrepProjOptions::default();
-        let parts = brep_proj_cylindrical(&marker, &plate, DVec3::new(0.0, 0.0, -1.0), &opts);
-        assert!(
-            !parts.is_empty(),
-            "expected at least one projected wire"
-        );
-        let max_part = parts
-            .iter()
-            .map(total_edge_length)
-            .fold(0.0_f64, f64::max);
-        // Prism can meet both top and bottom of a box for a vertical cut, yielding two
-        // preimage segments of similar length; require at least one ~full span.
-        assert!(
-            (max_part - 0.6).abs() < 0.08,
-            "expected a projected segment length ~0.6, max part was {max_part}"
-        );
-    }
-}

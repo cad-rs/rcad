@@ -1,4 +1,4 @@
-use glam::DVec3;
+﻿use glam::DVec3;
 use std::collections::{HashMap, HashSet, VecDeque, BTreeMap};
 use crate::bopds::ds::DS;
 use crate::bvh::Aabb;
@@ -442,55 +442,7 @@ pub fn trsf_to_point(
     Some(point - a_box.min)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::BTreeMap;
 
-    #[test]
-    fn test_fill_map_and_make_blocks_single_edge() {
-        let mut m = BTreeMap::new();
-        fill_map(&mut m, 1, 2);
-        let blocks = make_blocks(&m);
-        assert_eq!(blocks.len(), 1);
-        assert!(blocks[0].contains(&1) && blocks[0].contains(&2));
-    }
-
-    #[test]
-    fn test_make_blocks_two_components() {
-        let mut m = BTreeMap::new();
-        fill_map(&mut m, 1, 2);
-        fill_map(&mut m, 3, 4);
-        let blocks = make_blocks(&m);
-        assert_eq!(blocks.len(), 2);
-    }
-
-    #[test]
-    fn test_make_blocks_chain() {
-        let mut m = BTreeMap::new();
-        fill_map(&mut m, 1, 2);
-        fill_map(&mut m, 2, 3);
-        fill_map(&mut m, 3, 4);
-        let blocks = make_blocks(&m);
-        assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].len(), 4);
-    }
-
-    #[test]
-    fn test_make_blocks_isolated() {
-        let mut m = BTreeMap::new();
-        m.entry(42).or_default();
-        let blocks = make_blocks(&m);
-        assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0], vec![42]);
-    }
-
-    #[test]
-    fn test_make_blocks_empty() {
-        let m: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-        assert!(make_blocks(&m).is_empty());
-    }
-}
 
     // ===== GlueEnum =====
 

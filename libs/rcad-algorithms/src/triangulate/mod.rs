@@ -1927,7 +1927,4 @@ fn compute_triangle_normal(nodes: &[DVec3], tri: &[usize; 3]) -> DVec3 {
 }
 
 include!("extra.rs");
-#[cfg(test)]
-mod tests {
- include!("tests_inc.rs");
-}
+

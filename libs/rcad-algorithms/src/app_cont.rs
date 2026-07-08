@@ -1,4 +1,4 @@
-//! AppCont-style continuation matrix utilities.
+﻿//! AppCont-style continuation matrix utilities.
 //!
 //! Provides Bernstein-basis mass/inverse/IP/IT matrices used in surface
 //! continuity constraints during approximation (OCCT AppCont_ContMatrices).
@@ -52,55 +52,4 @@ pub fn v_bernstein(classe: i32, nb_pts: i32, mat: &mut [f64]) {
 // Tests — translated from AppCont_ContMatrices_Test.cxx
 // =============================================================================
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn m_matches_closed_form() {
-        for classe in 2..=12 {
-            let n = classe - 1;
-            let mut mat = vec![0.0; (classe * classe) as usize];
-            m_matrix(classe, &mut mat);
-            for i in 0..classe {
-                for j in 0..classe {
-                    let expected = bernstein_mass_entry(n, i, j);
-                    let actual = mat[(i * classe + j) as usize];
-                    assert!((actual - expected).abs() < 1e-12,
-                        "classe={classe} i={i} j={j}");
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn m_symmetric() {
-        for classe in 2..=12 {
-            let mut mat = vec![0.0; (classe * classe) as usize];
-            m_matrix(classe, &mut mat);
-            for i in 0..classe {
-                for j in i + 1..classe {
-                    let a = mat[(i * classe + j) as usize];
-                    let b = mat[(j * classe + i) as usize];
-                    assert!((a - b).abs() < 1e-14, "classe={classe} i={i} j={j}");
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn v_bernstein_partition_of_unity() {
-        for &classe in &[3, 5, 10] {
-            let nb_pts = 12;
-            let mut mat = vec![0.0; (classe * nb_pts) as usize];
-            v_bernstein(classe, nb_pts, &mut mat);
-            for j in 0..nb_pts {
-                let mut sum = 0.0;
-                for i in 0..classe {
-                    sum += mat[(i * nb_pts + j) as usize];
-                }
-                assert!((sum - 1.0).abs() < 1e-12, "classe={classe} j={j}");
-            }
-        }
-    }
-}

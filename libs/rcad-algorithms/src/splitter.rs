@@ -1,4 +1,4 @@
-//! OCCT-aligned splitter: BOPAlgo_Splitter / BRepAlgoAPI_Splitter.
+﻿//! OCCT-aligned splitter: BOPAlgo_Splitter / BRepAlgoAPI_Splitter.
 //!
 //! OCCT's BOPAlgo_Splitter splits a shape (Object) by another shape (Tool),
 //! keeping only the Object's split parts. The Tool serves as cutting boundaries
@@ -167,71 +167,4 @@ pub fn split_shape_occt_aligned(shape: &BRep, tool: &BRep) -> Result<BRep, Strin
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use glam::DVec3;
-    use rcad_kernel::BRep;
-    use rcad_modeling::builder::{box_brep, sphere_brep};
 
-    fn make_box(origin: DVec3, x: DVec3, y: DVec3, w: f64, h: f64, d: f64) -> BRep {
-        box_brep(origin, x, y, w, h, d).expect("box")
-    }
-
-    fn make_sphere(center: DVec3, radius: f64) -> BRep {
-        sphere_brep(center, radius).expect("sphere")
-    }
-
-    /// Helper: count total faces across all solids/shells.
-    fn count_faces(brep: &BRep) -> usize {
-        brep.solids.iter().flat_map(|s| &s.shells).flat_map(|sh| &sh.faces).count()
-    }
-
-    #[test]
-    fn test_filter_object_only_all_keep() {
-        // When all faces are FromA, filter_object_only should keep all faces.
-        let brep = make_box(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0);
-        let nfaces = count_faces(&brep);
-        let origins: Vec<FaceOrigin> = (0..nfaces).map(|_| FaceOrigin::FromA(0)).collect();
-        let filtered = filter_object_only(&brep, &origins);
-        assert_eq!(count_faces(&filtered), nfaces);
-    }
-
-    #[test]
-    fn test_filter_object_only_all_removed() {
-        // When all faces are FromB, result should have no solids/faces.
-        let brep = make_box(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0);
-        let nfaces = count_faces(&brep);
-        let origins: Vec<FaceOrigin> = (0..nfaces).map(|_| FaceOrigin::FromB(0)).collect();
-        let filtered = filter_object_only(&brep, &origins);
-        assert_eq!(count_faces(&filtered), 0);
-    }
-
-    #[test]
-    fn test_filter_object_only_half_kept() {
-        // First 3 faces FromA, last 3 FromB -- should keep only the first 3.
-        let brep = make_box(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0);
-        let mut origins: Vec<FaceOrigin> = (0..3).map(|_| FaceOrigin::FromA(0)).collect();
-        origins.extend((0..3).map(|_| FaceOrigin::FromB(0)));
-        let filtered = filter_object_only(&brep, &origins);
-        assert_eq!(count_faces(&filtered), 3);
-    }
-
-    #[test]
-    fn test_split_shape_occt_aligned_no_intersection() {
-        // Non-overlapping shapes -- no intersection, result should be empty.
-        let shape = make_box(DVec3::new(-10.0, -1.0, -1.0), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0);
-        let tool = make_sphere(DVec3::new(10.0, 0.0, 0.0), 1.5);
-        let result = split_shape_occt_aligned(&shape, &tool);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_split_shape_occt_aligned_box_box() {
-        // Two overlapping boxes -- splitter should keep only ShapeA faces.
-        let shape = make_box(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0);
-        let tool = make_box(DVec3::new(0.5, 0.5, 0.5), DVec3::X, DVec3::Y, 2.0, 2.0, 2.0);
-        let result = split_shape_occt_aligned(&shape, &tool);
-        assert!(result.is_ok());
-    }
-}

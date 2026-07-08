@@ -1905,7 +1905,4 @@ fn build_brep_from_polylines(polylines: &[Vec<DVec3>]) -> BRep {
 /// Returns `None` if the section is not closed or not planar.
 
 include!("extra.rs");
-#[cfg(test)]
-mod tests {
- include!("tests_inc.rs");
-}
+

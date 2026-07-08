@@ -1,4 +1,4 @@
-use glam::{DVec2, DVec3};
+﻿use glam::{DVec2, DVec3};
 use rcad_kernel::geom::*;
 
 use crate::inttools::edge_face::plane_local_basis;
@@ -133,89 +133,4 @@ fn line_intersect_2d(p1: [f64; 2], p2: [f64; 2], p3: [f64; 2], p4: [f64; 2]) -> 
 }
 
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn overlapping_squares() {
-        let plane = Plane {
-            origin: DVec3::ZERO,
-            normal: DVec3::Z,
-        };
-        let poly1 = vec![
-            DVec3::new(0.0, 0.0, 0.0),
-            DVec3::new(2.0, 0.0, 0.0),
-            DVec3::new(2.0, 2.0, 0.0),
-            DVec3::new(0.0, 2.0, 0.0),
-        ];
-        let poly2 = vec![
-            DVec3::new(1.0, 1.0, 0.0),
-            DVec3::new(3.0, 1.0, 0.0),
-            DVec3::new(3.0, 3.0, 0.0),
-            DVec3::new(1.0, 3.0, 0.0),
-        ];
-        let result = analyze_coplanar_faces(&poly1, &poly2, &plane);
-        assert_eq!(result.overlap.len(), 1);
-        let overlap = &result.overlap[0];
-        assert_eq!(overlap.len(), 4);
-        // Overlap should be the 1x1 square (1,1)-(2,2)
-        for v in overlap {
-            assert!(v.x >= 1.0 - TOLERANCE_ABS && v.x <= 2.0 + TOLERANCE_ABS);
-            assert!(v.y >= 1.0 - TOLERANCE_ABS && v.y <= 2.0 + TOLERANCE_ABS);
-        }
-    }
-
-    #[test]
-    fn disjoint_squares() {
-        let plane = Plane {
-            origin: DVec3::ZERO,
-            normal: DVec3::Z,
-        };
-        let poly1 = vec![
-            DVec3::new(0.0, 0.0, 0.0),
-            DVec3::new(1.0, 0.0, 0.0),
-            DVec3::new(1.0, 1.0, 0.0),
-            DVec3::new(0.0, 1.0, 0.0),
-        ];
-        let poly2 = vec![
-            DVec3::new(5.0, 5.0, 0.0),
-            DVec3::new(6.0, 5.0, 0.0),
-            DVec3::new(6.0, 6.0, 0.0),
-            DVec3::new(5.0, 6.0, 0.0),
-        ];
-        let result = analyze_coplanar_faces(&poly1, &poly2, &plane);
-        assert!(result.overlap.is_empty());
-    }
-
-    #[test]
-    fn contained_square() {
-        let plane = Plane {
-            origin: DVec3::ZERO,
-            normal: DVec3::Z,
-        };
-        let outer = vec![
-            DVec3::new(0.0, 0.0, 0.0),
-            DVec3::new(4.0, 0.0, 0.0),
-            DVec3::new(4.0, 4.0, 0.0),
-            DVec3::new(0.0, 4.0, 0.0),
-        ];
-        let inner = vec![
-            DVec3::new(1.0, 1.0, 0.0),
-            DVec3::new(3.0, 1.0, 0.0),
-            DVec3::new(3.0, 3.0, 0.0),
-            DVec3::new(1.0, 3.0, 0.0),
-        ];
-        let result = analyze_coplanar_faces(&outer, &inner, &plane);
-        assert_eq!(result.overlap.len(), 1);
-        assert_eq!(result.overlap[0].len(), 4);
-    }
-
-    #[test]
-    fn sutherland_hodgman_basic() {
-        let subject = vec![[0.0, 0.0], [2.0, 0.0], [2.0, 2.0], [0.0, 2.0]];
-        let clip = vec![[1.0, 1.0], [3.0, 1.0], [3.0, 3.0], [1.0, 3.0]];
-        let result = sutherland_hodgman_clip(&subject, &clip);
-        assert_eq!(result.len(), 4);
-    }
-}

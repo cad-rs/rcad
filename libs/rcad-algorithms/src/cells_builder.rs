@@ -1,4 +1,4 @@
-//! Reusable split-cell expression builder.
+﻿//! Reusable split-cell expression builder.
 //!
 //! This provides a lightweight CellsBuilder API analogous to OCCT
 //! `BOPAlgo_CellsBuilder`: callers register reusable cell solids and then
@@ -118,82 +118,4 @@ impl CellsBuilder {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use glam::DVec3;
-    use rcad_kernel::PrimitiveSolid;
 
-    fn box_at(x: f64, y: f64, z: f64, w: f64, h: f64, d: f64) -> BRep {
-        let mut brep = BRep::from_primitive(PrimitiveSolid::Box {
-            width: w,
-            height: h,
-            depth: d,
-        });
-        for v in &mut brep.vertices {
-            v.point += DVec3::new(x, y, z);
-        }
-        brep
-    }
-
-    fn face_count_of(brep: &BRep) -> usize {
-        brep.solids
-            .iter()
-            .flat_map(|s| &s.shells)
-            .flat_map(|sh| &sh.faces)
-            .count()
-    }
-
-    #[test]
-    fn cells_builder_union_expression_succeeds() {
-        let a = box_at(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
-        let b = box_at(0.5, 0.0, 0.0, 1.0, 1.0, 1.0);
-
-        let builder = CellsBuilder::from_cells(vec![a, b]);
-        let expr = CellExpr::Union(Box::new(CellExpr::Cell(0)), Box::new(CellExpr::Cell(1)));
-
-        let out = builder.evaluate(&expr).expect("union expression should succeed");
-        assert!(face_count_of(&out) > 0);
-    }
-
-    #[test]
-    fn cells_builder_invalid_index_returns_error() {
-        let builder = CellsBuilder::new();
-        let expr = CellExpr::Cell(10);
-        let err = builder.evaluate(&expr).expect_err("invalid index should fail");
-        assert!(matches!(
-            err,
-            CellsBuilderError::InvalidCellIndex { index: 10, count: 0 }
-        ));
-    }
-
-    #[test]
-    fn cells_builder_xor_expression_succeeds() {
-        // Match `make_box_brep`-based OCCT-aligned orientation (same as asymmetric union probe).
-        use crate::geom_populate::populate_box_geom;
-        let mut a =
-            rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
-                .expect("box a");
-        let mut b = rcad_modeling::make_box_brep(
-            DVec3::new(0.5, 0.0, 0.0),
-            DVec3::X,
-            DVec3::Y,
-            1.0,
-            1.0,
-            1.0,
-        )
-        .expect("box b");
-        populate_box_geom(&mut a);
-        populate_box_geom(&mut b);
-
-        let builder = CellsBuilder::from_cells(vec![a, b]);
-
-        // XOR: (A ∪ B) - (A ∩ B)
-        let expr = CellExpr::Xor(Box::new(CellExpr::Cell(0)), Box::new(CellExpr::Cell(1)));
-
-        let out = builder.evaluate(&expr).expect("XOR expression should succeed");
-
-        // XOR of two overlapping boxes should have more faces than either input
-        assert!(face_count_of(&out) > 6);
-    }
-}

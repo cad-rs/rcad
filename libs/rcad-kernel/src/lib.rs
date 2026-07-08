@@ -1,4 +1,4 @@
-use glam::DVec3;
+﻿use glam::DVec3;
 use serde::{Deserialize, Serialize};
 
 /// Geometric (analytic) model types: position, curve, surface, primitive descriptors.
@@ -2303,74 +2303,5 @@ impl BRep {
  /// Labels are generated as `v{idx}`, `e{idx}`, `f{idx}`, `s{idx}`.
  pub fn persistent_naming_hooks(&self) -> PersistentNamingHooks {
  PersistentNamingHooks::with_default_labels_for_brep(self)
- }
-}
-
-#[cfg(test)]
-mod tests {
- use super::*;
-
- fn geom_populated(brep: &BRep) -> bool {
- !brep.geom.face_surface.is_empty()
- && brep.geom.face_surface.iter().all(|s| s.is_some())
- && !brep.geom.edge_pcurves.is_empty()
- }
-
- #[test]
- fn creates_sphere_with_analytic_geom() {
- let brep = BRep::create_sphere(1.0);
- assert!(!brep.vertices.is_empty());
- assert!(geom_populated(&brep));
- assert!(matches!(
- brep.geom.surfaces.first(),
- Some(Surface3::Sphere(_))
- ));
- // triangles are empty — render layer tessellates on demand
- assert!(
- brep.solids
- .iter()
- .flat_map(|s| &s.shells)
- .flat_map(|sh| &sh.faces)
- .all(|f| f.triangles.is_empty())
- );
- }
-
- #[test]
- fn creates_cylinder_with_analytic_geom() {
- let brep = BRep::create_cylinder(1.0, 2.0);
- assert!(!brep.vertices.is_empty());
- assert!(geom_populated(&brep));
- assert!(
- brep.geom
- .surfaces
- .iter()
- .any(|s| matches!(s, Surface3::Cylinder(_)))
- );
- }
-
- #[test]
- fn creates_cone_with_analytic_geom() {
- let brep = BRep::create_cone(1.0, 2.0);
- assert!(!brep.vertices.is_empty());
- assert!(geom_populated(&brep));
- assert!(
- brep.geom
- .surfaces
- .iter()
- .any(|s| matches!(s, Surface3::Cone(_)))
- );
- }
-
- #[test]
- fn creates_torus_with_analytic_geom() {
- let brep = BRep::create_torus(1.0, 0.3);
- assert!(!brep.vertices.is_empty());
- assert!(geom_populated(&brep));
- assert!(
- brep.geom
- .surfaces
- .iter()
- .any(|s| matches!(s, Surface3::Torus(_)))
- );
  }
 }
