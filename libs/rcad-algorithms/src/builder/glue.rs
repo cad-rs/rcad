@@ -1,4 +1,4 @@
-﻿use std::collections::HashMap;
+use std::collections::HashMap;
 use glam::DVec3;
 use rcad_kernel::BRep;
 use rcad_kernel::topods;

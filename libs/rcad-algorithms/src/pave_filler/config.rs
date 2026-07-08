@@ -154,12 +154,12 @@ impl<'a> PaveFiller<'a> {
     }
 
     /// OCCT-aligned: SetArguments (BOPAlgo_PaveFiller.hxx L124-127)
-    pub fn set_arguments(&mut self, args: Vec<rcad_kernel::BRep>) {
+    pub fn set_arguments(&mut self, args: Vec<rcad_kernel::topods::BRep>) {
         self.my_arguments = args;
     }
 
     /// OCCT-aligned: Arguments() const (BOPAlgo_PaveFiller.hxx L133)
-    pub fn arguments(&self) -> &[rcad_kernel::BRep] {
+    pub fn arguments(&self) -> &[rcad_kernel::topods::BRep] {
         &self.my_arguments
     }
 

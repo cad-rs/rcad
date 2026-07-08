@@ -42,7 +42,6 @@ use crate::total_surface_area;
 use crate::BooleanError;
 use crate::BooleanOpType;
 use rcad_kernel::geom::Surface3;
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 
 /// DSU (Union-Find) for building connected SameDomain groups — equivalent to OCCT FillMap + MakeBlocks.
@@ -73,27 +72,6 @@ impl DSU {
 /// topology (plus finite vertex coordinates). We intentionally do **not** require a watertight
 /// shell here — downstream feature code may pass intermediate shapes that are not yet
 /// `brep_check`‑clean.
-fn validate_union_operand(msg: &'static str, brep: &BRep) -> Result<(), BooleanError> {
- if brep.solids.is_empty() {
- return Err(BooleanError::EmptyInput);
- }
- let has_face = brep
- .solids
- .iter()
- .any(|s| s.shells.iter().any(|sh| !sh.faces.is_empty()));
- if !has_face {
- return Err(BooleanError::EmptyInput);
- }
- validate_brep_operand_topology(msg, brep)?;
- Ok(())
-}
-
-fn validate_union_operands(a: &BRep, b: &BRep) -> Result<(), BooleanError> {
- validate_union_operand("union: input A failed operand check", a)?;
- validate_union_operand("union: input B failed operand check", b)?;
- Ok(())
-}
-
 /// Invariants on the BOP DS after prepare ([`DS::new`]) and after paving ([`PaveFiller::perform`]).
 fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
  let nv = ds.vertices.len();
@@ -301,112 +279,16 @@ fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
  Ok(())
 }
 
-/// Full pool / finite checks for **result** BReps (includes non‑degenerate face normals).
-fn validate_brep_index_and_finite_geom(msg: &'static str, brep: &BRep) -> Result<(), BooleanError> {
- validate_brep_topology_indices(msg, brep, true)
-}
-
-/// Operands: index consistency and finite vertices only (face normals may be unset or zero on
-/// intermediate construction geometry).
-fn validate_brep_operand_topology(msg: &'static str, brep: &BRep) -> Result<(), BooleanError> {
- validate_brep_topology_indices(msg, brep, false)
-}
-
-fn validate_brep_topology_indices(
- msg: &'static str,
- brep: &BRep,
- check_face_normals: bool,
-) -> Result<(), BooleanError> {
- for v in &brep.vertices {
- let p = v.point;
- if !p.x.is_finite() || !p.y.is_finite() || !p.z.is_finite() {
- return Err(BooleanError::NumericalFailure(msg));
- }
- }
-
- for (eidx, edge) in brep.edges.iter().enumerate() {
- if edge.start >= brep.vertices.len() || edge.end >= brep.vertices.len() {
- return Err(BooleanError::InvalidResult(msg));
- }
- if let Some(ci) = brep.geom.edge_curve.get(eidx).copied().flatten()
- && ci >= brep.geom.curves.len() {
- return Err(BooleanError::InvalidResult(msg));
- }
- }
-
- for solid in &brep.solids {
- for shell in &solid.shells {
- for face in &shell.faces {
- if check_face_normals {
- // ✅ OCCT-aligned: only plane faces store a meaningful normal.
- // Non-planar faces derive normals from surface geometry.
- let is_plane = face.surface_idx
- .and_then(|si| brep.geom.surfaces.get(si))
- .is_some_and(|s| matches!(s, rcad_kernel::geom::Surface3::Plane(_)));
- if is_plane {
- let n = face.normal;
- if !n.x.is_finite()
- || !n.y.is_finite()
- || !n.z.is_finite()
- || n.length_squared() <= 0.0
- {
- return Err(BooleanError::InvalidResult(msg));
- }
- }
- }
- for we in &face.outer_wire.edges {
- if we.idx >= brep.edges.len() {
- return Err(BooleanError::InvalidResult(msg));
- }
- }
- for inner in &face.inner_wires {
- for we in &inner.edges {
- if we.idx >= brep.edges.len() {
- return Err(BooleanError::InvalidResult(msg));
- }
- }
- }
- }
- }
- }
-
- Ok(())
-}
-
-fn validate_union_brep_output(msg: &'static str, brep: &BRep) -> Result<(), BooleanError> {
- validate_brep_index_and_finite_geom(msg, brep)
-}
-
-fn optional_bvhs(a: &BRep, b: &BRep) -> (Option<bvh::Bvh>, Option<bvh::Bvh>) {
- let has_faces_a = a
- .solids
- .first()
- .and_then(|s| s.shells.first())
- .is_some_and(|sh| !sh.faces.is_empty());
- let has_faces_b = b
- .solids
- .first()
- .and_then(|s| s.shells.first())
- .is_some_and(|sh| !sh.faces.is_empty());
- (
- if has_faces_a {
- Some(bvh::Bvh::build(a))
- } else {
- None
- },
- if has_faces_b {
- Some(bvh::Bvh::build(b))
- } else {
- None
- },
- )
+fn optional_bvhs(a: &topods::BRep, b: &topods::BRep) -> (Option<bvh::Bvh>, Option<bvh::Bvh>) {
+ // BVH build currently requires old BRep; skip for topods (falls back to brute-force O(n?)).
+ (None, None)
 }
 
 /// `use_bvh`: match [`crate::boolean_op`] (`true`) or [`crate::brep_algo_api::BRepAlgoAPI_Fuse`]
 /// when BVH acceleration is toggled off (`false` → plain [`pave_filler::PaveFiller::new`]).
 /// ✅ OCCT-aligned: PaveFiller creation + configuration + Perform.
 /// OCCT BOPAlgo_BOP::Perform L395-405: new PaveFiller + config + Perform.
-fn pave_fill(ds: &mut bopds::ds::DS, a: &BRep, b: &BRep, use_bvh: bool,
+fn pave_fill(ds: &mut bopds::ds::DS, a: &topods::BRep, b: &topods::BRep, use_bvh: bool,
  brep: &mut rcad_kernel::topods::BRep) -> (Vec<rcad_kernel::topods::ShapeRef>, Vec<Option<rcad_kernel::topods::ShapeRef>>)
 {
  let (bvh_a, bvh_b) = if use_bvh { optional_bvhs(a, b) } else { (None, None) };
@@ -433,16 +315,14 @@ fn pave_fill(ds: &mut bopds::ds::DS, a: &BRep, b: &BRep, use_bvh: bool,
 /// Union: DS → PaveFiller → BooleanBuilder(Union) → recompute plane surfaces.
 ///
 /// Uses BVH when both operands have faces, matching [`crate::boolean_op`].
-pub(crate) fn fuse(a: &BRep, b: &BRep) -> Result<topods::BRep, BooleanError> {
+pub(crate) fn fuse(a: &topods::BRep, b: &topods::BRep) -> Result<topods::BRep, BooleanError> {
  fuse_with_bvh(a, b, true)
 }
 
 /// ✅ OCCT-aligned: DS → PaveFiller → BooleanBuilder(Union) → result.
 /// OCCT BOPAlgo_BOP::Perform L395-408: PaveFiller config + Perform + PerformInternal1.
-pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<topods::BRep, BooleanError> {
- let a_t = a.to_topods();
- let b_t = b.to_topods();
- let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, crate::tolerance::TOLERANCE_ABS);
+pub(crate) fn fuse_with_bvh(a: &topods::BRep, b: &topods::BRep, use_bvh: bool) -> Result<topods::BRep, BooleanError> {
+ let mut ds = bopds::ds::DS::new_from_topods(a, b, crate::tolerance::TOLERANCE_ABS);
  let mut brep = rcad_kernel::topods::BRep::new();
  let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, use_bvh, &mut brep);
  let builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
@@ -450,78 +330,18 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<topods:
  Ok(result)
 }
 
-/// ✅ OCCT : pcurve(3D →UV )。
-/// OCCT BuildSplitFaces section edge pcurve(IntTools_CurveRange).
-/// rcad add_circle_edge/add_edge pcurve, 。
-pub(crate) fn compute_face_pcurves(brep: &mut BRep) {
- use rcad_kernel::geom::{CurveEval, SurfaceEval, Curve2d, Line2d, Surface3};
- use rcad_kernel::PCurve;
- use std::f64::consts::PI;
- if brep.edges.is_empty() { return; }
- brep.geom.edge_pcurves.resize(brep.edges.len(), Vec::new());
- for si in 0..brep.solids.len() {
- for shi in 0..brep.solids[si].shells.len() {
- for fi in 0..brep.solids[si].shells[shi].faces.len() {
- let face = &brep.solids[si].shells[shi].faces[fi];
- let Some(surf_idx) = face.surface_idx else { continue; };
- let Some(surface) = brep.geom.surfaces.get(surf_idx) else { continue; };
- if matches!(surface, Surface3::Plane(_)) { continue; }
- let edges: Vec<usize> = face.outer_wire.edges.iter()
- .chain(face.inner_wires.iter().flat_map(|w| &w.edges))
- .map(|we| we.idx).collect();
- for &ei in &edges {
- if ei >= brep.geom.edge_pcurves.len() { continue; }
- if !brep.geom.edge_pcurves[ei].is_empty() { continue; }
- let Some(curve_idx) = brep.geom.edge_curve.get(ei).copied().flatten() else { continue; };
- let Some(curve) = brep.geom.curves.get(curve_idx) else { continue; };
- let n = 12usize;
- let mut uv: Vec<glam::DVec2> = Vec::with_capacity(n);
- for s in 0..n {
- let t = s as f64 / (n - 1) as f64;
- let p3d = curve.point_at(t);
- if let Some(u) = project_point_to_uv(p3d, surface) { uv.push(u); }
- }
- if uv.len() < 2 { continue; }
- let c2d = brep.geom.curve2ds.len();
- let dir = (uv[uv.len()-1] - uv[0]) / (n as f64 - 1.0);
- brep.geom.curve2ds.push(Curve2d::Line(Line2d { origin: uv[0], direction: dir }));
- brep.geom.edge_pcurves[ei].push(PCurve { surface_idx: surf_idx, curve2d_idx: c2d });
- }
- }
- }
- }
-}
-
-/// 3D  UV  。  compute_face_pcurves。
-fn project_point_to_uv(p: glam::DVec3, surface: &rcad_kernel::geom::Surface3) -> Option<glam::DVec2> {
- use rcad_kernel::geom::Surface3;
- match surface {
- Surface3::Sphere(s) => {
- let d = (p - s.center) / s.radius;
- let u = f64::atan2(d.dot(s.ref_dir_perp()), d.dot(s.ref_dir));
- let v = f64::asin(d.dot(s.axis).clamp(-1.0, 1.0));
- Some(glam::DVec2::new(u, v))
- }
- _ => None,
- }
-}
-
 /// Same phases as [`fuse`], but returns [`BooleanHistory`] and does not run plane recompute
 /// (matches legacy `boolean_op_with_history` for Union).
-pub(crate) fn fuse_with_history(a: &BRep, b: &BRep) -> Result<(BRep, BooleanHistory), BooleanError> {
- let (t, hist) = fuse_with_history_bvh(a, b, true)?;
- Ok((rcad_kernel::BRep::from_topods(&t), hist))
+pub(crate) fn fuse_with_history(a: &topods::BRep, b: &topods::BRep) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
+ fuse_with_history_bvh(a, b, true)
 }
 
 pub(crate) fn fuse_with_history_bvh(
- a: &BRep,
- b: &BRep,
+ a: &topods::BRep,
+ b: &topods::BRep,
  use_bvh: bool,
 ) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
- validate_union_operands(a, b)?;
- let a_t = a.to_topods();
- let b_t = b.to_topods();
- let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, crate::tolerance::TOLERANCE_ABS);
+ let mut ds = bopds::ds::DS::new_from_topods(a, b, crate::tolerance::TOLERANCE_ABS);
  validate_ds_invariants(&ds)?;
  let mut brep = rcad_kernel::topods::BRep::new();
  let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, use_bvh, &mut brep);
@@ -532,20 +352,16 @@ pub(crate) fn fuse_with_history_bvh(
 }
 
 /// Parallel classification path; same OCCT phase structure as [`fuse_with_history`].
-pub(crate) fn fuse_with_history_par(a: &BRep, b: &BRep) -> Result<(BRep, BooleanHistory), BooleanError> {
- let (t, hist) = fuse_with_history_par_bvh(a, b, true)?;
- Ok((rcad_kernel::BRep::from_topods(&t), hist))
+pub(crate) fn fuse_with_history_par(a: &topods::BRep, b: &topods::BRep) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
+ fuse_with_history_par_bvh(a, b, true)
 }
 
 pub(crate) fn fuse_with_history_par_bvh(
- a: &BRep,
- b: &BRep,
+ a: &topods::BRep,
+ b: &topods::BRep,
  use_bvh: bool,
 ) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
- validate_union_operands(a, b)?;
- let a_t = a.to_topods();
- let b_t = b.to_topods();
- let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, crate::tolerance::TOLERANCE_ABS);
+ let mut ds = bopds::ds::DS::new_from_topods(a, b, crate::tolerance::TOLERANCE_ABS);
  validate_ds_invariants(&ds)?;
  let mut brep = rcad_kernel::topods::BRep::new();
  let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, use_bvh, &mut brep);
@@ -571,7 +387,7 @@ pub(crate) fn fuse_with_history_par_bvh(
 /// 6.  ,  geom slots
 ///
 ///  ( ) 。
-fn fill_same_domain_faces_edge_set(brep: &mut BRep) -> usize {
+fn fill_same_domain_faces_edge_set(brep: &mut rcad_kernel::BRep) -> usize {
  use std::collections::{HashMap, BTreeSet};
  use rcad_kernel::geom::Surface3;
 
@@ -753,7 +569,7 @@ fn fill_same_domain_faces_edge_set(brep: &mut BRep) -> usize {
 /// ✅ OCCT : PointInFace (BOPTools_AlgoTools3D::PointInFace)
 /// OCCT: UV → 3D  
 /// rcad: face.triangles  
-fn point_in_face(brep: &BRep, (si, shi, fi): (usize, usize, usize)) -> Option<DVec3> {
+fn point_in_face(brep: &rcad_kernel::BRep, (si, shi, fi): (usize, usize, usize)) -> Option<DVec3> {
  let face = &brep.solids[si].shells[shi].faces[fi];
  // OCCT  :  
  if let Some(tri) = face.triangles.first() {
@@ -777,7 +593,7 @@ fn point_in_face(brep: &BRep, (si, shi, fi): (usize, usize, usize)) -> Option<DV
 /// OCCT: 3D  2  → UV  
 /// : tolF1 + tolF2 + max(fuzzy, Precision::Confusion)
 /// rcad: 3D + 2D point-in-polygon
-fn is_valid_point_for_face(brep: &BRep, pt: DVec3, (si, shi, fi): (usize, usize, usize)) -> bool {
+fn is_valid_point_for_face(brep: &rcad_kernel::BRep, pt: DVec3, (si, shi, fi): (usize, usize, usize)) -> bool {
  use glam::DVec2;
  let face = &brep.solids[si].shells[shi].faces[fi];
  let sid = face.surface_idx;
@@ -828,7 +644,7 @@ fn is_valid_point_for_face(brep: &BRep, pt: DVec3, (si, shi, fi): (usize, usize,
 /// 1. PointInFace(F1) → 3D ( )
 /// 2. IsValidPointForFace( , F2, aTol) →  2 
 fn fill_same_domain_cross_group(
- brep: &BRep, nf: usize,
+ brep: &rcad_kernel::BRep, nf: usize,
  flat_to_pos: &[(usize, usize, usize)],
  dsu: &mut DSU,
 ) -> usize {
@@ -864,7 +680,7 @@ fn fill_same_domain_cross_group(
 /// Check that every edge in the result is referenced exactly twice
 /// (once from each adjacent face), forming a closed manifold shell.
 /// Returns an error listing orphan (<2 refs) and over-shared (>2 refs) edges.
-fn validate_solid_closure(brep: &BRep) -> Result<(), BooleanError> {
+fn validate_solid_closure(brep: &rcad_kernel::BRep) -> Result<(), BooleanError> {
  use std::collections::HashMap;
  let mut edge_count: HashMap<usize, usize> = HashMap::new();
  for solid in &brep.solids {
@@ -917,7 +733,7 @@ fn validate_solid_closure(brep: &BRep) -> Result<(), BooleanError> {
 
 ///  。
 /// = (  Plane > planar BSpline >  )。
-fn surface_priority_for_merge(brep: &BRep, (si, shi, fi): (usize, usize, usize)) -> u32 {
+fn surface_priority_for_merge(brep: &rcad_kernel::BRep, (si, shi, fi): (usize, usize, usize)) -> u32 {
  let face = &brep.solids[si].shells[shi].faces[fi];
  let sid = face.surface_idx;
  match sid.and_then(|sid| brep.geom.surfaces.get(sid)) {

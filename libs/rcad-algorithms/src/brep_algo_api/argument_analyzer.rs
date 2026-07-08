@@ -1,4 +1,4 @@
-﻿//! BOPAlgo_ArgumentAnalyzer — line-by-line OCCT equivalent.
+//! BOPAlgo_ArgumentAnalyzer — line-by-line OCCT equivalent.
 //!
 //! OCCT reference: BOPAlgo_ArgumentAnalyzer.hxx / .cxx
 //!
@@ -786,7 +786,8 @@ impl ArgumentAnalyzer {
     fn check_single_self_interference(&self, shape: &BRep, is_shape1: bool) -> Option<CheckResult> {
         let mut checker = CheckerSI::new();
         checker.set_level_of_check(3); // OCCT: full check for self-interference
-        checker.perform(shape);
+        let topods_shape = shape.to_topods();
+        checker.perform(&topods_shape);
 
         if !checker.has_interferences() {
             return None;

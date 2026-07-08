@@ -22,7 +22,6 @@
 
 use crate::bopds::ds::{DS, Interference};
 use crate::pave_filler::PaveFiller;
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 
 /// CheckerSI validates a single shape for self-interference.
@@ -83,13 +82,12 @@ impl CheckerSI {
     /// Loads the BRep as both ShapeA and ShapeB in the DS, then runs PaveFiller.
     /// After filtering trivial same-entity pairs and applying LevelOfCheck,
     /// the remaining interferences represent true self-interferences.
-    pub fn perform(&mut self, brep: &BRep) {
+    pub fn perform(&mut self, brep: &topods::BRep) {
         // Load the single shape twice (as both A and B) into the DS.
         // PaveFiller compares A entities against B entities, so loading the
         // same shape twice makes it detect intersections between any pair
         // of distinct sub-shapes within the original shape.
-        let brep_t = brep.to_topods();
- let mut ds = DS::new_from_topods(&brep_t, &brep_t, crate::tolerance::TOLERANCE_ABS);
+        let mut ds = DS::new_from_topods(brep, brep, crate::tolerance::TOLERANCE_ABS);
 
         let a_vc = ds.a_vertex_count;
         let a_ec = ds.a_edge_count;
