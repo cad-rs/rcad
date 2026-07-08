@@ -461,3 +461,159 @@ mod api_extrema_curve_curve_tests {
         assert!(result.is_ok() || result.unwrap_or_default().pairs.is_empty() || true);
     }
 }
+
+// =============================================================================
+// GeomEval_CircularHelicoidSurface_Test.cxx — HelicoidSurface eval
+// =============================================================================
+
+#[cfg(test)]
+mod helicoid_surface_tests {
+    use super::*;
+
+    fn make_helicoid() -> HelicoidSurface {
+        HelicoidSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            ref_dir: DVec3::X,
+            pitch: 10.0,
+        }
+    }
+
+    #[test]
+    fn helicoid_eval_d0_known_points() {
+        let s = make_helicoid();
+        let surf = Surface3::Helicoid(s);
+        // S(0, 1) = (1, 0, 0)
+        let p1 = surf.point_at(0.0, 1.0);
+        assert!((p1 - DVec3::new(1.0, 0.0, 0.0)).length() < TOL);
+        // S(PI/2, 1) = (0, 1, P/4) = (0, 1, 2.5)
+        let p2 = surf.point_at(std::f64::consts::PI / 2.0, 1.0);
+        assert!((p2 - DVec3::new(0.0, 1.0, 2.5)).length() < TOL);
+        // S(u, 0) = (0, 0, P*u/(2*PI))
+        let p3 = surf.point_at(1.0, 0.0);
+        assert!((p3 - DVec3::new(0.0, 0.0, 10.0 / (2.0 * std::f64::consts::PI))).length() < TOL);
+    }
+
+    #[test]
+    fn helicoid_d1v_unit_radial() {
+        let s = make_helicoid();
+        let (_p, _dpu, dpv) = Surface3::Helicoid(s).derivatives(0.0, 2.0);
+        assert!((dpv.length() - 1.0).abs() < TOL);
+    }
+
+    #[test]
+    fn helicoid_comparison_with_helix_constant_v() {
+        let pitch = 10.0;
+        let radius = 3.0;
+        let helicoid = HelicoidSurface {
+            origin: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X, pitch,
+        };
+        let helix = CircularHelix3 {
+            origin: DVec3::ZERO, axis: DVec3::Z, ref_dir: DVec3::X,
+            radius, pitch,
+        };
+        let h_surf = Surface3::Helicoid(helicoid);
+        let h_curve = Curve3::CircularHelix(helix);
+        for u in [0.0, 0.5, 1.0, 3.14159, 6.28318] {
+            let ps = h_surf.point_at(u, radius);
+            let pc = h_curve.point_at(u);
+            assert!((ps - pc).length() < TOL);
+        }
+    }
+
+    #[test]
+    fn helicoid_eval_d1_consistent_with_d0() {
+        let s = make_helicoid();
+        let surf = Surface3::Helicoid(s);
+        let u = 1.0; let v = 2.0;
+        let (_p, dpu, dpv) = surf.derivatives(u, v);
+        let pu_plus = surf.point_at(u + TOL_FD, v);
+        let pu_minus = surf.point_at(u - TOL_FD, v);
+        let pv_plus = surf.point_at(u, v + TOL_FD);
+        let pv_minus = surf.point_at(u, v - TOL_FD);
+        let fd_u = (pu_plus - pu_minus) / (2.0 * TOL_FD);
+        let fd_v = (pv_plus - pv_minus) / (2.0 * TOL_FD);
+        assert!((dpu - fd_u).length() < TOL_FD);
+        assert!((dpv - fd_v).length() < TOL_FD);
+    }
+}
+
+// =============================================================================
+// GeomHash_SurfaceHasher_Test.cxx — Surface3 hash/equivalence
+// =============================================================================
+
+#[cfg(test)]
+mod surface_hasher_tests {
+    use super::*;
+    use crate::tkg3d_geometric_hash::*;
+
+    #[test]
+    fn plane_copied_same_hash() {
+        let p1 = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let p2 = p1.clone();
+        assert_eq!(hash_surface(&p1, TOL), hash_surface(&p2, TOL));
+        assert!(surfaces_equivalent(&p1, &p2, TOL));
+    }
+
+    #[test]
+    fn plane_different_different_hash() {
+        let p1 = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let p2 = Surface3::Plane(Plane { origin: DVec3::new(0.0, 0.0, 1.0), normal: DVec3::Z });
+        assert_ne!(hash_surface(&p1, TOL), hash_surface(&p2, TOL));
+        assert!(!surfaces_equivalent(&p1, &p2, TOL));
+    }
+
+    #[test]
+    fn cylinder_copied_same_hash() {
+        let c1 = Surface3::Cylinder(CylindricalSurface::new(DVec3::ZERO, DVec3::Z, 5.0));
+        let c2 = c1.clone();
+        assert_eq!(hash_surface(&c1, TOL), hash_surface(&c2, TOL));
+        assert!(surfaces_equivalent(&c1, &c2, TOL));
+    }
+
+    #[test]
+    fn sphere_copied_same_hash() {
+        let s1 = Surface3::Sphere(SphericalSurface::new(DVec3::ZERO, DVec3::Z, 5.0));
+        let s2 = s1.clone();
+        assert_eq!(hash_surface(&s1, TOL), hash_surface(&s2, TOL));
+        assert!(surfaces_equivalent(&s1, &s2, TOL));
+    }
+
+    #[test]
+    fn cone_copied_same_hash() {
+        let c1 = Surface3::Cone(ConicalSurface {
+            apex: DVec3::ZERO, axis: DVec3::Z, radius: 5.0,
+            half_angle_rad: std::f64::consts::PI / 6.0,
+        });
+        let c2 = c1.clone();
+        assert_eq!(hash_surface(&c1, TOL), hash_surface(&c2, TOL));
+        assert!(surfaces_equivalent(&c1, &c2, TOL));
+    }
+
+    #[test]
+    fn torus_copied_same_hash() {
+        let t1 = Surface3::Torus(ToroidalSurface {
+            center: DVec3::ZERO, axis: DVec3::Z, major_radius: 5.0, minor_radius: 1.0,
+        });
+        let t2 = t1.clone();
+        assert_eq!(hash_surface(&t1, TOL), hash_surface(&t2, TOL));
+        assert!(surfaces_equivalent(&t1, &t2, TOL));
+    }
+
+    #[test]
+    fn bspline_surface_copied_same_hash() {
+        let b1 = Surface3::BSpline(BSplineSurface {
+            degree_u: 1, degree_v: 1,
+            knots_u: vec![0.0, 0.0, 1.0, 1.0],
+            knots_v: vec![0.0, 0.0, 1.0, 1.0],
+            control_points: vec![
+                vec![DVec3::ZERO, DVec3::new(0.0, 10.0, 0.0)],
+                vec![DVec3::new(10.0, 0.0, 0.0), DVec3::new(10.0, 10.0, 0.0)],
+            ],
+            weights: vec![vec![1.0; 2]; 2],
+        });
+        let b2 = b1.clone();
+        assert_eq!(hash_surface(&b1, TOL), hash_surface(&b2, TOL));
+        assert!(surfaces_equivalent(&b1, &b2, TOL));
+    }
+}

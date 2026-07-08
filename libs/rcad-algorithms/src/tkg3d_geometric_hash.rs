@@ -146,6 +146,58 @@ pub fn curves_equivalent(a: &Curve3, b: &Curve3, tol: f64) -> bool {
     }
 }
 
+/// Compute hash for a Surface3 using tolerance-based quantization.
+pub fn hash_surface(surface: &Surface3, comp_tol: f64) -> u64 {
+    let mut h = 0u64;
+    match surface {
+        Surface3::Plane(p) => {
+            h = combine_hashes(h, quantize_vec3(p.origin, comp_tol).0);
+            h = combine_hashes(h, quantize_vec3(p.normal, comp_tol).0);
+        }
+        Surface3::Cylinder(c) => {
+            h = combine_hashes(h, quantize_vec3(c.origin, comp_tol).0);
+            h = combine_hashes(h, quantize(c.radius, comp_tol));
+        }
+        Surface3::Sphere(s) => {
+            h = combine_hashes(h, quantize_vec3(s.center, comp_tol).0);
+            h = combine_hashes(h, quantize(s.radius, comp_tol));
+        }
+        Surface3::Cone(c) => {
+            h = combine_hashes(h, quantize_vec3(c.apex, comp_tol).0);
+            h = combine_hashes(h, quantize(c.radius, comp_tol));
+            h = combine_hashes(h, quantize(c.half_angle_rad, comp_tol));
+        }
+        Surface3::Torus(t) => {
+            h = combine_hashes(h, quantize_vec3(t.center, comp_tol).0);
+            h = combine_hashes(h, quantize(t.major_radius, comp_tol));
+            h = combine_hashes(h, quantize(t.minor_radius, comp_tol));
+        }
+        _ => h = combine_hashes(h, 42),
+    }
+    h
+}
+
+/// Check if two Surface3 are equivalent within tolerance.
+pub fn surfaces_equivalent(a: &Surface3, b: &Surface3, tol: f64) -> bool {
+    use Surface3::*;
+    match (a, b) {
+        (Plane(pa), Plane(pb)) =>
+            (pa.origin - pb.origin).length() < tol && (pa.normal - pb.normal).length() < tol,
+        (Cylinder(ca), Cylinder(cb)) =>
+            (ca.origin - cb.origin).length() < tol && (ca.radius - cb.radius).abs() < tol,
+        (Sphere(sa), Sphere(sb)) =>
+            (sa.center - sb.center).length() < tol && (sa.radius - sb.radius).abs() < tol,
+        (Cone(ca), Cone(cb)) =>
+            (ca.apex - cb.apex).length() < tol && (ca.radius - cb.radius).abs() < tol
+            && (ca.half_angle_rad - cb.half_angle_rad).abs() < tol,
+        (Torus(ta), Torus(tb)) =>
+            (ta.center - tb.center).length() < tol
+            && (ta.major_radius - tb.major_radius).abs() < tol
+            && (ta.minor_radius - tb.minor_radius).abs() < tol,
+        _ => false,
+    }
+}
+
 // =============================================================================
 // Tests — GeomHash_CurveHasher_Test.cxx
 // =============================================================================
