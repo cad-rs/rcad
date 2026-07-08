@@ -452,6 +452,120 @@ mod extremapc_comparison_tests {
 }
 
 // =============================================================================
+// ExtremaPC_Parabola_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod extremapc_parabola_tests {
+    use super::*;
+
+    #[test]
+    fn parabola_point_at_vertex() {
+        let p = Curve3::Parabola(Parabola3 {
+            vertex: DVec3::ZERO, normal: DVec3::Z, axis_dir: DVec3::X,
+            focal_param: 10.0,
+        });
+        let (dist, _) = distance_point_curve(DVec3::ZERO, &p);
+        assert!(dist < 0.1, "point at vertex, dist={}", dist);
+    }
+
+    #[test]
+    fn parabola_point_above_plane() {
+        let p = Curve3::Parabola(Parabola3 {
+            vertex: DVec3::ZERO, normal: DVec3::Z, axis_dir: DVec3::X,
+            focal_param: 10.0,
+        });
+        let (dist, _) = distance_point_curve(DVec3::new(0.0, 0.0, -5.0), &p);
+        assert!(dist > 4.0);
+    }
+}
+
+// =============================================================================
+// ExtremaPC_Hyperbola_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod extremapc_hyperbola_tests {
+    use super::*;
+
+    #[test]
+    fn hyperbola_point_at_vertex() {
+        let h = Curve3::Hyperbola(Hyperbola3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            semi_major: 4.0, semi_minor: 3.0,
+        });
+        let (dist, _) = distance_point_curve(DVec3::new(4.0, 0.0, 0.0), &h);
+        assert!(dist < TOL, "point at vertex, dist={}", dist);
+    }
+
+    #[test]
+    fn hyperbola_point_on_axis() {
+        let h = Curve3::Hyperbola(Hyperbola3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            semi_major: 4.0, semi_minor: 3.0,
+        });
+        let (dist, _) = distance_point_curve(DVec3::ZERO, &h);
+        assert!(dist > 3.0, "distance from origin to hyperbola branches");
+    }
+}
+
+// =============================================================================
+// ExtremaPC_BezierCurve_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod extremapc_bezier_tests {
+    use super::*;
+
+    fn make_cubic_bezier() -> Curve3 {
+        Curve3::Bezier(BezierCurve3 {
+            control_points: vec![
+                DVec3::new(0.0, 0.0, 0.0),
+                DVec3::new(1.0, 2.0, 0.0),
+                DVec3::new(3.0, 2.0, 0.0),
+                DVec3::new(4.0, 0.0, 0.0),
+            ],
+            weights: vec![1.0; 4],
+        })
+    }
+
+    fn make_linear_bezier() -> Curve3 {
+        Curve3::Bezier(BezierCurve3 {
+            control_points: vec![DVec3::new(0.0, 0.0, 0.0), DVec3::new(10.0, 0.0, 0.0)],
+            weights: vec![1.0; 2],
+        })
+    }
+
+    #[test]
+    fn bezier_point_on_start() {
+        let b = make_cubic_bezier();
+        let (dist, _) = distance_point_curve(DVec3::ZERO, &b);
+        assert!(dist < TOL, "point at start, dist={}", dist);
+    }
+
+    #[test]
+    fn bezier_point_on_end() {
+        let b = make_cubic_bezier();
+        let (dist, _) = distance_point_curve(DVec3::new(4.0, 0.0, 0.0), &b);
+        assert!(dist < TOL, "point at end, dist={}", dist);
+    }
+
+    #[test]
+    fn bezier_linear_projection() {
+        let b = make_linear_bezier();
+        let (dist, _) = distance_point_curve(DVec3::new(5.0, 3.0, 0.0), &b);
+        assert!((dist - 3.0).abs() < TOL, "point projected onto linear Bezier, dist={}", dist);
+    }
+
+    #[test]
+    fn bezier_linear_before_start() {
+        let b = make_linear_bezier();
+        let (dist, _) = distance_point_curve(DVec3::new(-5.0, 0.0, 0.0), &b);
+        assert!((dist - 5.0).abs() < TOL, "point before start, dist={}", dist);
+    }
+}
+
+// =============================================================================
 // Extrema_ExtPC_Test.cxx
 // =============================================================================
 
