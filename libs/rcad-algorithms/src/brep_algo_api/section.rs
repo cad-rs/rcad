@@ -30,7 +30,6 @@ use crate::pave_filler::PaveFiller;
 use crate::tolerance::TOLERANCE_ABS;
 use rcad_kernel::geom::Curve3;
 use rcad_kernel::topology::{Edge, Vertex};
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 use rcad_kernel::geom::Line3;
 

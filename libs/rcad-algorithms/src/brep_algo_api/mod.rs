@@ -1,7 +1,7 @@
 //! BRepAlgoAPI-style high-level boolean algorithms.
 //!
 //! OCCT-aligned: Fuse, Common, Cut, Section with build/shape/is_done/history.
-//! Uses old `BRep` for input/output — the DS/boolean pipeline operates on old BRep.
+//! Uses `topods::BRep` for input/output. 
 
 #![allow(non_camel_case_types)]
 
@@ -9,7 +9,7 @@ pub mod argument_analyzer;
 pub mod builder_operation;
 pub mod section;
 
-use rcad_kernel::BRep;
+use rcad_kernel::topods;
 use std::collections::HashMap;
 
 use crate::bopds::ds::DS;
@@ -71,35 +71,33 @@ impl BRepHistory {
 macro_rules! def_boolean_op {
     ($name:ident, $op:expr) => {
         pub struct $name<'a> {
-            shape1: &'a BRep,
-            shape2: &'a BRep,
+            shape1: &'a topods::BRep,
+            shape2: &'a topods::BRep,
             options: BooleanApiOptions,
-            result: Option<BRep>,
+            result: Option<topods::BRep>,
             history: BRepHistory,
             error: Option<BooleanError>,
         }
         impl<'a> $name<'a> {
-            pub fn new(shape1: &'a BRep, shape2: &'a BRep) -> Self {
+            pub fn new(shape1: &'a topods::BRep, shape2: &'a topods::BRep) -> Self {
                 Self { shape1, shape2, options: BooleanApiOptions::default(),
                     result: None, history: BRepHistory::new(), error: None }
             }
             pub fn set_options(&mut self, options: BooleanApiOptions) { self.options = options; }
             pub fn build(&mut self) -> bool {
                 self.result = None; self.error = None; self.history = BRepHistory::new();
-                let shape1_t = self.shape1.to_topods();
-                let shape2_t = self.shape2.to_topods();
-                let ds = DS::new_from_topods(&shape1_t, &shape2_t, self.options.fuzzy_value);
+                let ds = DS::new_from_topods(self.shape1, self.shape2, self.options.fuzzy_value);
                 let builder = BooleanBuilder::new(&ds, $op);
                 match builder.build_with_history_topods() {
                     Ok((t, h)) => {
-                        self.result = Some(BRep::from_topods(&t));
+                        self.result = Some(t);
                         self.history.inner = Some(h);
                         true
                     }
                     Err(e) => { self.error = Some(e); false }
                 }
             }
-            pub fn shape(&self) -> &BRep { self.result.as_ref().expect("build() not called") }
+            pub fn shape(&self) -> &topods::BRep { self.result.as_ref().expect("build() not called") }
             pub fn history(&self) -> &BRepHistory { &self.history }
             pub fn is_done(&self) -> bool { self.result.is_some() }
             pub fn error(&self) -> Option<&BooleanError> { self.error.as_ref() }
@@ -112,14 +110,14 @@ def_boolean_op!(BRepAlgoAPI_Common, BooleanOpType::Intersection);
 def_boolean_op!(BRepAlgoAPI_Cut, BooleanOpType::Difference);
 
 pub struct BRepAlgoAPI_Section<'a> {
-    shape1: &'a BRep,
-    shape2: &'a BRep,
-    result: Option<BRep>,
+    shape1: &'a topods::BRep,
+    shape2: &'a topods::BRep,
+    result: Option<topods::BRep>,
     error: Option<BooleanError>,
 }
 
 impl<'a> BRepAlgoAPI_Section<'a> {
-    pub fn new(shape1: &'a BRep, shape2: &'a BRep) -> Self {
+    pub fn new(shape1: &'a topods::BRep, shape2: &'a topods::BRep) -> Self {
         Self { shape1, shape2, result: None, error: None }
     }
     pub fn build(&mut self) -> bool {
@@ -127,6 +125,6 @@ impl<'a> BRepAlgoAPI_Section<'a> {
         self.result = Some(self.shape1.clone());
         true
     }
-    pub fn shape(&self) -> &BRep { self.result.as_ref().expect("build() not called") }
+    pub fn shape(&self) -> &topods::BRep { self.result.as_ref().expect("build() not called") }
     pub fn is_done(&self) -> bool { self.result.is_some() }
 }

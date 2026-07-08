@@ -11,7 +11,6 @@
 //! 6. TestContinuity() — detect C0 discontinuities
 //! 7. TestCurveOnSurface() — check curve-surface consistency
 
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 use crate::tolerance::TOLERANCE_ABS;
 use crate::brep_tools::{get_shape_type, ShapeType};
