@@ -122,6 +122,7 @@ pub mod splitter;
 pub mod sweep;
 pub mod tcol_std;
 pub mod thicken;
+pub mod tkg3d_gtests;
 pub mod tkgeombase_algo;
 pub mod tkgeombase_gtests;
 pub mod tolerance;
