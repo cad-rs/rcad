@@ -1,4 +1,4 @@
-﻿//! OCCT-aligned BOPTools helpers (BOPTools_AlgoTools, BOPTools_AlgoTools2D, BOPTools_AlgoTools3D).
+//! OCCT-aligned BOPTools helpers (BOPTools_AlgoTools, BOPTools_AlgoTools2D, BOPTools_AlgoTools3D).
 //!
 //! These functions provide edge/face classification and p-curve utilities
 //! used by the boolean pipeline.
@@ -93,7 +93,7 @@ pub fn adjust_pcurve_on_face(
  let a_delta = 1e-7;
  let a_t = 0.5 * (t_range[0] + t_range[1]);
  let p = pcurve.point_at(a_t);
- let (mut u2, mut v2) = (p.x, p.y);
+ let (mut u2, v2) = (p.x, p.y);
 
  let mut du = 0.0;
  let mut dv = 0.0;

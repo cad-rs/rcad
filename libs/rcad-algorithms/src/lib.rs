@@ -84,7 +84,6 @@ pub use geom2d_api::{
 pub mod approx_int;
 pub mod adv_app2_var;
 pub mod app_cont;
-pub mod array;
 pub mod blend;
 mod bop_occt_union;
 pub mod brep_adaptor;
@@ -106,16 +105,19 @@ pub mod inttools;
 pub mod law;
 pub mod lprop_cur_and_inf;
 pub mod maker_volume;
-pub mod math_utils;
 pub mod offset;
 pub mod pave_filler;
 pub mod projection;
 pub mod section;
 pub mod splitter;
 pub mod sweep;
-pub mod tcol_std;
 pub mod thicken;
 pub mod tkbo_gtests;
+pub mod tkbrep_gtests;
+pub mod tkg2d_gtests;
+pub mod tkg3d_gtests;
+pub mod tkgeombase_algo;
+pub mod tkgeombase_gtests;
 pub mod tolerance;
 pub use tolerance::TOLERANCE_MESH_LEGACY;
 use crate::tolerance::*;
@@ -297,9 +299,6 @@ use rcad_kernel::BRep;
 use rcad_kernel::topods;
 
 // pub use adaptor3d::{Curve3dAdaptor, CurveOnSurfaceAdaptor, HSurfaceAdaptor, SurfaceAdaptor}; // removed
-pub use array::{
-    CircularPatternParams, LinearPatternParams, PatternError, circular_pattern, linear_pattern,
-};
 pub use blend::{
     BlendBoundary, BlendContinuity, BlendError, BlendMode, BlendParams, BlendQuality, BlendResult,
     RadiusLaw, SurfaceCurvePair, apply_blend_to_edge, blend_edge_to_face, blend_two_surfaces,
@@ -643,30 +642,10 @@ pub use maker_volume::{
     MakerVolume, MakerVolumeError, MakerVolumeSelection, make_solid_from_cell_indices,
     make_solid_from_region, make_solid_from_region_with_history,
 };
-pub use math_utils::{
-    bisection,
-    determinant_3x3,
-    // Eigenvalue/Matrix
-    eigenvalues_2x2,
-    eigenvalues_3x3,
-    gaussian_quadrature,
-    golden_section_max,
-    // Optimization
-    golden_section_min,
-    inverse_3x3,
-    // Multi-dimensional Newton
-    newton_2d,
-    newton_3d,
-    // Root finding
-    newton_raphson,
-    secant,
-    // Integration
-    simpson_integrate,
-    solve_cubic,
-    // Polynomial solvers
-    solve_linear,
-    solve_quadratic,
-    solve_quartic,
+pub use rcad_kernel::math_utils::{
+    bisection, determinant_3x3, eigenvalues_2x2, eigenvalues_3x3, gaussian_quadrature,
+    golden_section_max, golden_section_min, inverse_3x3, newton_2d, newton_3d, newton_raphson,
+    secant, simpson_integrate, solve_cubic, solve_linear, solve_quadratic, solve_quartic,
 };
 pub use offset::{
     JoinType, OffsetError, OffsetOptions, OffsetQuality, OffsetResult, VariableThickness,

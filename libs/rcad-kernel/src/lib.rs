@@ -1,4 +1,4 @@
-﻿use glam::DVec3;
+use glam::DVec3;
 use serde::{Deserialize, Serialize};
 
 /// Geometric (analytic) model types: position, curve, surface, primitive descriptors.
@@ -102,6 +102,15 @@ pub mod extrema;
 /// Analogous to OCCT `GeomConvert::CurveToBSplineCurve` /
 /// `GeomConvert::SurfaceToBSplineSurface`.
 pub mod nurbs_convert;
+
+/// Standard collections analogous to OCCT TColStd package.
+pub mod tcol_std;
+
+/// Mathematical utilities analogous to OCCT TKMath package.
+pub mod math_utils;
+
+/// Design-feature array/pattern creation utilities.
+pub mod array;
 
 /// Curve and surface trimming and extension.
 ///
