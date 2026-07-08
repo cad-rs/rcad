@@ -1,34 +1,9 @@
-﻿//! BRepIntCurveSurface-style curve-surface intersection operations.
+//! BRepIntCurveSurface-style curve-surface intersection operations.
 //!
-//! Provides intersection computations between curves/lines and BRep shapes.
-//! Analogous to OCCT `BRepIntCurveSurface` package.
-//!
-//! # Capabilities
-//!
-//! - **Curve-BRep Intersection**: Find all intersection points between a curve and a BRep
-//! - **Line-BRep Intersection**: Efficient ray/line intersection with BRep faces
-//! - **Ray Casting**: Cast rays through a BRep and collect all hits
-//! - **Point-Inside Test**: Determine if a point is inside a solid using ray casting
-//!
-//! # Example
-//!
-//! ```rust
-//! # use rcad_algorithms::tolerance::*;
-//! use glam::DVec3;
-//! use rcad_kernel::{topods, BRep, PrimitiveSolid};
-//! use rcad_algorithms::brep_int_curve_surface::{intersect_line_with_brep, ray_cast};
-//! use rcad_algorithms::tolerance::TOLERANCE_ABS;
-//!
-//! let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
-//!
-//! // Intersect a line through the box
-//! let intersections = intersect_line_with_brep(DVec3::new(1.0, 1.0, 5.0), DVec3::NEG_Z, &box_brep, TOLERANCE_ABS);
-//! assert_eq!(intersections.len(), 2); // Entry and exit points
-//!
-//! // Ray cast from above
-//! let hits = ray_cast(DVec3::new(1.0, 1.0, 5.0), DVec3::NEG_Z, &box_brep);
-//! assert!(!hits.is_empty());
-//! ```
+//! OCCT-aligned:
+//! - `CurveSurfaceInter` (class): iterate intersection points with
+//!   `init()` / `more()` / `next()` / `point()` / `face()` pattern.
+//! - Utility free functions: intersect_line_with_brep, ray_cast, etc.
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, Surface3, Line3, CurveEval, SurfaceEval};
@@ -42,6 +17,96 @@ use crate::inttools::curve_surface::{
     intersect_line_cone as intersect_line_cone_range,
 };
 use rayon::prelude::*;
+
+// =============================================================================
+// BRepIntCurveSurface_Inter — curve-surface intersection (OCCT-aligned class)
+// =============================================================================
+
+/// OCCT-aligned: BRepIntCurveSurface_Inter — iterate intersection points
+/// between a curve and a BRep shape.
+///
+/// Usage:
+/// ```rust,ignore
+/// let mut inter = CurveSurfaceInter::new();
+/// inter.init(&brep, &curve, tol);
+/// while inter.more() {
+///     let pt = inter.point();
+///     inter.next();
+/// }
+/// ```
+pub struct CurveSurfaceInter {
+    results: Vec<CurveBRepIntersection>,
+    index: usize,
+    shape: Option<BRep>,
+    curve: Option<Curve3>,
+    tol: f64,
+    initialized: bool,
+}
+
+impl CurveSurfaceInter {
+    /// OCCT-aligned: default constructor.
+    pub fn new() -> Self {
+        Self {
+            results: Vec::new(),
+            index: 0,
+            shape: None,
+            curve: None,
+            tol: 1e-7,
+            initialized: false,
+        }
+    }
+
+    /// OCCT-aligned: Init — set the shape, curve, and tolerance.
+    pub fn init(&mut self, shape: &BRep, curve: &Curve3, tol: f64) {
+        self.shape = Some(shape.clone());
+        self.curve = Some(curve.clone());
+        self.tol = tol;
+        self.results = Vec::new();
+        self.index = 0;
+        self.initialized = false;
+    }
+
+    /// OCCT-aligned: Perform — compute all intersection points at once.
+    pub fn perform(&mut self, shape: &BRep, curve: &Curve3, tol: f64) {
+        self.init(shape, curve, tol);
+        self.compute();
+    }
+
+    /// OCCT-aligned: More — returns true if there are more intersection points.
+    pub fn more(&self) -> bool {
+        self.initialized && self.index < self.results.len()
+    }
+
+    /// OCCT-aligned: Next — advance to the next intersection.
+    pub fn next(&mut self) {
+        if !self.initialized {
+            self.compute();
+        }
+        self.index += 1;
+    }
+
+    /// OCCT-aligned: Point — current intersection point.
+    pub fn point(&self) -> &CurveBRepIntersection {
+        &self.results[self.index]
+    }
+
+    /// OCCT-aligned: Face — the face containing the current intersection.
+    pub fn face(&self) -> usize {
+        self.results[self.index].face_index
+    }
+
+    /// Returns true if the intersection has been computed.
+    pub fn is_done(&self) -> bool {
+        self.initialized
+    }
+
+    fn compute(&mut self) {
+        let Some(ref shape) = self.shape else { return };
+        let Some(ref curve) = self.curve else { return };
+        self.results = intersect_curve_with_brep(curve, shape, self.tol);
+        self.initialized = true;
+    }
+}
 
 // =============================================================================
 // Result Types

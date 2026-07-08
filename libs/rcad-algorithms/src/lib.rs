@@ -237,8 +237,8 @@ pub use els_lib::{
 pub use extrema::{
     closest_point_on_curve, closest_point_on_surface, distance_brep_brep, distance_curve_curve,
     distance_curve_surface, distance_point_curve, distance_point_point, distance_point_surface,
-    distance_surface_surface, find_closest_points, find_furthest_points, find_supporting_edge,
-    find_supporting_face,
+    distance_surface_surface, DistShapeShape, find_closest_points, find_furthest_points,
+    find_supporting_edge, find_supporting_face,
 };
 pub use gcpnts::{
     adaptive_sample_curve, arc_length, point_at_arc_length, points_at_equal_arc_length,
@@ -384,9 +384,9 @@ pub use brep_check_parallel::{
     check_parallel_with_batch_size, check_parallel_with_options, check_parallel_with_stats,
 };
 pub use brep_int_curve_surface::{
-    CurveBRepIntersection, CurveFaceIntersection, RayHit, intersect_curve_with_brep,
-    intersect_curve_with_face, intersect_line_with_brep, intersect_line_with_face,
-    is_point_inside_by_ray, ray_cast, shoot_ray,
+    CurveBRepIntersection, CurveFaceIntersection, CurveSurfaceInter, RayHit,
+    intersect_curve_with_brep, intersect_curve_with_face, intersect_line_with_brep,
+    intersect_line_with_face, is_point_inside_by_ray, ray_cast, shoot_ray,
 };
 pub use brep_mesh::{
     BRepMesh, Mesh, MeshParams, discretize_edge, discretize_edge_on_surface, mesh_aspect_ratio,
