@@ -1,9 +1,5 @@
-﻿use crate::tolerance::*;
-
-
-use rcad_kernel::BRep;
-
 use crate::tolerance::*;
+
 use glam::DVec3;
 use rcad_kernel::topods;
 use rcad_kernel::PCurve;
@@ -15,7 +11,7 @@ use crate::inttools::pcurve_derive::fallback_pcurve_by_projection;
 ///
 /// After this call, every edge has a `Curve3::Line` and every face has a `Surface3::Plane`.
 /// Precondition: brep was created by `BRep::from_primitive(Box{..})`.
-pub fn populate_box_geom(brep: &mut BRep) {
+pub fn populate_box_geom(brep: &mut rcad_kernel::BRep) {
     let geom = &mut brep.geom;
     geom.curves.clear();
     geom.edge_curve.clear();
@@ -78,7 +74,7 @@ pub fn populate_box_geom(brep: &mut BRep) {
 ///
 /// Non-plane surfaces (cylinders, spheres, cones, tori) are left untouched.
 /// Existing edge curves are preserved; only missing straight-line curves are added.
-pub fn recompute_plane_surfaces(brep: &mut BRep) {
+pub fn recompute_plane_surfaces(brep: &mut rcad_kernel::BRep) {
     // --- Fix plane surface origins ---
     // Collect new origin for each face in flat iteration order.
     let mut face_origins: Vec<DVec3> = Vec::new();
@@ -147,7 +143,7 @@ pub fn recompute_plane_surfaces(brep: &mut BRep) {
 ///
 /// Call this after [`boolean_op`] when downstream code needs PCurves
 /// (e.g. parametric queries, STEP export of trimmed surfaces).
-pub fn populate_boolean_result_pcurves(brep: &mut BRep) {
+pub fn populate_boolean_result_pcurves(brep: &mut rcad_kernel::BRep) {
     // Collect all (edge_idx, face_idx) pairs where the face has a curved surface.
     // Use solids[0].shells[0] like the rest of the algorithms library.
     let face_indices: Vec<(usize, usize)> = {
