@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-use rcad_kernel::BRep;
-
 use serde::{Deserialize, Serialize};
 
 use rcad_kernel::topods;
@@ -56,7 +54,12 @@ pub struct TopoGraph {
 }
 
 impl TopoGraph {
-    pub fn from_brep(brep: &BRep) -> Self {
+    pub fn from_brep(brep: &topods::BRep) -> Self {
+        let old = rcad_kernel::BRep::from_topods(brep);
+        Self::from_old_brep(&old)
+    }
+
+    fn from_old_brep(brep: &rcad_kernel::BRep) -> Self {
         let mut g = Self::default();
         g.record("from_brep");
 
@@ -632,7 +635,7 @@ pub struct NamedGraph {
 
 impl NamedGraph {
     /// Create a new named graph from a BRep.
-    pub fn from_brep(brep: &BRep) -> Self {
+    pub fn from_brep(brep: &topods::BRep) -> Self {
         let graph = TopoGraph::from_brep(brep);
         let mut history = BRepGraphHistory::new();
 
