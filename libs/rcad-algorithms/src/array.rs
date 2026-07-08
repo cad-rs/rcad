@@ -1,4 +1,4 @@
-﻿//! Array (pattern) operations  ?linear and circular repetition of BRep solids.
+//! Array (pattern) operations  ?linear and circular repetition of BRep solids.
 //!
 //! Analogous to OCCT `BRepOffsetAPI_MakeThickSolid`-style patterns and
 //! `BRepFeat_MakeLinearForm` / `BRepFeat_MakeRevol` for feature repetition.
@@ -13,7 +13,7 @@
 //! - **Path pattern**: pattern along a curve with optional alignment
 
 use glam::{DMat4, DVec3};
-use rcad_kernel::{topods, any_perpendicular, BRep};
+use rcad_kernel::{topods, any_perpendicular};
 use rcad_kernel::geom::{
  Circle3, ConicalSurface, Curve3, CylindricalSurface, Ellipse3, Hyperbola3, Line3,
  LinearExtrusionSurface, OffsetSurface, Plane, RevolutionSurface, SphericalSurface, Surface3,
@@ -218,9 +218,9 @@ impl std::fmt::Display for PatternError {
 /// Returns a new BRep containing all copies merged into a single solid.
 /// The original is included as the first copy (offset 0).
 pub fn linear_pattern(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  params: &LinearPatternParams,
-) -> Result<BRep, PatternError> {
+) -> Result<rcad_kernel::BRep, PatternError> {
  if params.count < 1 {
  return Err(PatternError::InvalidCount);
  }
@@ -236,7 +236,7 @@ pub fn linear_pattern(
  return Err(PatternError::NoSolids);
  }
 
- let mut out = BRep::new();
+ let mut out = rcad_kernel::BRep::new();
 
  for i in 0..params.count {
  let offset = dir * (i as f64 * params.spacing);
@@ -251,9 +251,9 @@ pub fn linear_pattern(
 /// Returns a new BRep containing all copies merged into a single solid.
 /// The original is included as the first copy (angle 0).
 pub fn circular_pattern(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  params: &CircularPatternParams,
-) -> Result<BRep, PatternError> {
+) -> Result<rcad_kernel::BRep, PatternError> {
  if params.count < 1 {
  return Err(PatternError::InvalidCount);
  }
@@ -269,7 +269,7 @@ pub fn circular_pattern(
  return Err(PatternError::NoSolids);
  }
 
- let mut out = BRep::new();
+ let mut out = rcad_kernel::BRep::new();
  let angle_step = params.total_angle / params.count as f64;
 
  for i in 0..params.count {
@@ -287,9 +287,9 @@ pub fn circular_pattern(
 ///
 /// Returns a new BRep containing the mirrored copy and optionally the original.
 pub fn mirror_pattern(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  params: &MirrorPatternParams,
-) -> Result<BRep, PatternError> {
+) -> Result<rcad_kernel::BRep, PatternError> {
  let normal = params
  .plane_normal
  .try_normalize()
@@ -299,7 +299,7 @@ pub fn mirror_pattern(
  return Err(PatternError::NoSolids);
  }
 
- let mut out = BRep::new();
+ let mut out = rcad_kernel::BRep::new();
 
  // Include original if requested
  if params.include_original {
@@ -318,10 +318,10 @@ pub fn mirror_pattern(
 /// Mirrors the shape across a plane, then applies a linear pattern to both
 /// the original and mirrored copies.
 pub fn mirror_linear_pattern(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  mirror_params: &MirrorPatternParams,
  linear_params: &LinearPatternParams,
-) -> Result<BRep, PatternError> {
+) -> Result<rcad_kernel::BRep, PatternError> {
  // First apply mirror
  let mirrored = mirror_pattern(brep, mirror_params)?;
 
@@ -333,10 +333,10 @@ pub fn mirror_linear_pattern(
 ///
 /// Mirrors the shape across a plane, then applies a circular pattern.
 pub fn mirror_circular_pattern(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  mirror_params: &MirrorPatternParams,
  circular_params: &CircularPatternParams,
-) -> Result<BRep, PatternError> {
+) -> Result<rcad_kernel::BRep, PatternError> {
  let mirrored = mirror_pattern(brep, mirror_params)?;
  circular_pattern(&mirrored, circular_params)
 }
@@ -348,9 +348,9 @@ pub fn mirror_circular_pattern(
 /// Creates a 2D grid of copies along two orthogonal (or non-orthogonal) directions.
 /// Supports staggered patterns for alternating row offsets.
 pub fn rectangular_pattern(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  params: &RectangularPatternParams,
-) -> Result<BRep, PatternError> {
+) -> Result<rcad_kernel::BRep, PatternError> {
  if params.count1 < 1 || params.count2 < 1 {
  return Err(PatternError::InvalidCount);
  }
@@ -371,7 +371,7 @@ pub fn rectangular_pattern(
  return Err(PatternError::NoSolids);
  }
 
- let mut out = BRep::new();
+ let mut out = rcad_kernel::BRep::new();
 
  for j in 0..params.count2 {
  let row_offset = dir2 * (j as f64 * params.spacing2);
@@ -432,9 +432,9 @@ pub fn rectangular_pattern_transform(
 ///
 /// Creates copies at positions determined by cumulative spacings.
 pub fn variable_spacing_pattern(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  params: &VariableSpacingPatternParams,
-) -> Result<BRep, PatternError> {
+) -> Result<rcad_kernel::BRep, PatternError> {
  if params.spacings.is_empty() {
  return Err(PatternError::EmptySpacings);
  }
@@ -451,7 +451,7 @@ pub fn variable_spacing_pattern(
  return Err(PatternError::NoSolids);
  }
 
- let mut out = BRep::new();
+ let mut out = rcad_kernel::BRep::new();
 
  // First copy is at offset 0 (original)
  append_transformed_brep(&mut out, brep, &DMat4::IDENTITY)?;
@@ -471,9 +471,9 @@ pub fn variable_spacing_pattern(
 ///
 /// Distributes copies evenly along a total distance.
 pub fn distance_spacing_pattern(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  params: &DistanceSpacingPatternParams,
-) -> Result<BRep, PatternError> {
+) -> Result<rcad_kernel::BRep, PatternError> {
  if params.count < 1 {
  return Err(PatternError::InvalidCount);
  }
@@ -490,7 +490,7 @@ pub fn distance_spacing_pattern(
  return Err(PatternError::NoSolids);
  }
 
- let mut out = BRep::new();
+ let mut out = rcad_kernel::BRep::new();
 
  // Spacing between copies
  let spacing = if params.count > 1 {
@@ -521,10 +521,10 @@ pub trait PathEvaluator {
 /// Places copies at specified parameter values along a path curve.
 /// Optionally aligns instances with the path tangent.
 pub fn path_pattern(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  params: &PathPatternParams,
  path: &dyn PathEvaluator,
-) -> Result<BRep, PatternError> {
+) -> Result<rcad_kernel::BRep, PatternError> {
  if params.parameters.is_empty() {
  return Err(PatternError::EmptyParameters);
  }
@@ -536,7 +536,7 @@ pub fn path_pattern(
  return Err(PatternError::NoSolids);
  }
 
- let mut out = BRep::new();
+ let mut out = rcad_kernel::BRep::new();
  let up = params.up_vector.normalize_or(DVec3::Z);
 
  for &t in &params.parameters {
@@ -571,12 +571,12 @@ pub fn path_pattern(
 ///
 /// Creates count copies evenly distributed along the path.
 pub fn path_pattern_equal_spacing(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  path: &dyn PathEvaluator,
  count: usize,
  align_to_path: bool,
  up_vector: DVec3,
-) -> Result<BRep, PatternError> {
+) -> Result<rcad_kernel::BRep, PatternError> {
  if count < 1 {
  return Err(PatternError::InvalidCount);
  }
@@ -596,10 +596,10 @@ pub fn path_pattern_equal_spacing(
 ///
 /// Creates copies but excludes instances at the specified indices.
 pub fn pattern_with_suppression(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  transforms: &[DMat4],
  suppressed_indices: &[usize],
-) -> Result<BRep, PatternError> {
+) -> Result<rcad_kernel::BRep, PatternError> {
  if transforms.is_empty() {
  return Err(PatternError::EmptyTransforms);
  }
@@ -614,7 +614,7 @@ pub fn pattern_with_suppression(
  return Err(PatternError::SuppressedIndexOutOfRange);
  }
 
- let mut out = BRep::new();
+ let mut out = rcad_kernel::BRep::new();
  let suppressed_set: std::collections::HashSet<usize> = suppressed_indices.iter().copied().collect();
 
  for (i, mat) in transforms.iter().enumerate() {
@@ -628,10 +628,10 @@ pub fn pattern_with_suppression(
 
 /// Apply a linear pattern with suppression support.
 pub fn linear_pattern_with_suppression(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  params: &LinearPatternParams,
  suppressed_indices: &[usize],
-) -> Result<BRep, PatternError> {
+) -> Result<rcad_kernel::BRep, PatternError> {
  if params.count < 1 {
  return Err(PatternError::InvalidCount);
  }
@@ -657,10 +657,10 @@ pub fn linear_pattern_with_suppression(
 
 /// Apply a circular pattern with suppression support.
 pub fn circular_pattern_with_suppression(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  params: &CircularPatternParams,
  suppressed_indices: &[usize],
-) -> Result<BRep, PatternError> {
+) -> Result<rcad_kernel::BRep, PatternError> {
  if params.count < 1 {
  return Err(PatternError::InvalidCount);
  }
@@ -692,10 +692,10 @@ pub fn circular_pattern_with_suppression(
 /// Each instance can have its own additional transformation applied
 /// on top of the base pattern transformation.
 pub fn pattern_with_instance_transforms(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  base_transforms: &[DMat4],
  instance_transforms: &[InstanceTransform],
-) -> Result<BRep, PatternError> {
+) -> Result<rcad_kernel::BRep, PatternError> {
  if base_transforms.is_empty() {
  return Err(PatternError::EmptyTransforms);
  }
@@ -710,7 +710,7 @@ pub fn pattern_with_instance_transforms(
  .map(|it| (it.index, it.transform))
  .collect();
 
- let mut out = BRep::new();
+ let mut out = rcad_kernel::BRep::new();
 
  for (i, base_mat) in base_transforms.iter().enumerate() {
  let final_mat = if let Some(instance_mat) = instance_map.get(&i) {
@@ -730,9 +730,9 @@ pub fn pattern_with_instance_transforms(
 ///
 /// Only creates instances whose grid positions fall within the boundary.
 pub fn pattern_within_boundary(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  params: &BoundaryPatternParams,
-) -> Result<BRep, PatternError> {
+) -> Result<rcad_kernel::BRep, PatternError> {
  if params.count1 < 1 {
  return Err(PatternError::InvalidCount);
  }
@@ -753,7 +753,7 @@ pub fn pattern_within_boundary(
  return Err(PatternError::NoSolids);
  }
 
- let mut out = BRep::new();
+ let mut out = rcad_kernel::BRep::new();
 
  // Estimate count2 from boundary test
  // We need to iterate until boundary test fails consistently
@@ -876,8 +876,8 @@ fn rotation_matrix(origin: DVec3, axis: DVec3, angle: f64) -> DMat4 {
 }
 
 fn append_transformed_brep(
- target: &mut BRep,
- source: &BRep,
+ target: &mut rcad_kernel::BRep,
+ source: &rcad_kernel::BRep,
  mat: &DMat4,
 ) -> Result<(), PatternError> {
  let v_offset = target.vertices.len();

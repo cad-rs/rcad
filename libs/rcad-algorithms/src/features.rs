@@ -1,11 +1,11 @@
-﻿//! First-stage feature operations (TKFeat-like APIs).
+//! First-stage feature operations (TKFeat-like APIs).
 //!
 //! This module builds practical feature workflows on top of the existing
 //! boolean kernel. The first shipped feature is a cylindrical hole.
 
 use crate::tolerance::*;
 use glam::{DAffine3, DMat3, DVec3};
-use rcad_kernel::{topods, BRep, GeomStore, PrimitiveSolid};
+use rcad_kernel::{topods, GeomStore, PrimitiveSolid};
 use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
@@ -284,7 +284,7 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<topods::BRep, Feat
     }
 
     let n = profile_verts.len();
-    let mut brep = BRep {
+    let mut brep = rcad_kernel::BRep {
         vertices: Vec::with_capacity(n),
         edges: Vec::with_capacity(n),
         solids: Vec::new(),
@@ -335,7 +335,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
         return Err(FeatureError::InvalidInput("section vertex count mismatch"));
     }
 
-    let mut brep = BRep {
+    let mut brep = rcad_kernel::BRep {
         vertices: Vec::with_capacity(2 * n),
         edges: Vec::new(),
         solids: Vec::new(),
@@ -350,7 +350,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
     for &p in top { brep.vertices.push(Vertex { point: p }); }
 
     /// Add a line edge from start to end and return its index.
-    fn add_line_edge(brep: &mut BRep, start: usize, end: usize) -> usize {
+    fn add_line_edge(brep: &mut rcad_kernel::BRep, start: usize, end: usize) -> usize {
         let p0 = brep.vertices[start].point;
         let p1 = brep.vertices[end].point;
         let d = p1 - p0;
@@ -468,7 +468,7 @@ impl std::error::Error for SplitShapeError {}
 ///
 /// Analogous to OCCT `BRepFeat_SplitShape`.
 pub fn split_face_by_wire(
-    brep: &mut BRep,
+    brep: &mut rcad_kernel::BRep,
     solid_idx: usize,
     shell_idx: usize,
     face_idx: usize,
