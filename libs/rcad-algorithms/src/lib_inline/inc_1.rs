@@ -735,30 +735,6 @@ pub fn classify_boolean_retry(err: &BooleanError) -> BooleanRetryClass {
  }
 }
 
-/// Classify boolean execution failures into detailed failure classes.
-///
-/// This provides more specific failure classification than `classify_boolean_retry`,
-/// enabling targeted recovery strategies for each failure mode.
-pub fn classify_boolean_failure(err: &BooleanError) -> BooleanFailureClass {
- match err {
- BooleanError::InvalidOperation => BooleanFailureClass::InvalidInput,
- BooleanError::TooFewArguments => BooleanFailureClass::InvalidInput,
- BooleanError::NoFiller => BooleanFailureClass::InvalidInput,
- BooleanError::BOPNotAllowed => BooleanFailureClass::InvalidInput,
- BooleanError::BOPNotSet => BooleanFailureClass::InvalidInput,
- BooleanError::EmptyShape => BooleanFailureClass::InvalidInput,
- BooleanError::EmptyInput => BooleanFailureClass::InvalidInput,
- BooleanError::MissingGeometry(_) => BooleanFailureClass::InvalidInput,
- BooleanError::DegenerateResult => BooleanFailureClass::DegenerateTopology,
- BooleanError::NumericalFailure(_) => BooleanFailureClass::NumericalInstability,
- BooleanError::EmptyCollection(_) => BooleanFailureClass::DegenerateTopology,
- BooleanError::InvalidResult(_) => BooleanFailureClass::InvalidResult,
- BooleanError::IncompleteIntersection(_) => BooleanFailureClass::IncompleteIntersection,
- BooleanError::SelfIntersection(_) => BooleanFailureClass::SelfIntersection,
- BooleanError::OpenShell { .. } => BooleanFailureClass::InvalidResult,
- }
-}
-
 /// Build next fuzzy values based on the last failure type.
 ///
 /// Returned values are positive, deduplicated, and ordered from smaller to

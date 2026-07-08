@@ -1,12 +1,8 @@
-//! OCCT-compatibility retry stubs (removed retry system).
-//!
-//! OCCT runs a single pass with deterministic tolerances — no retry.
-//! These stubs satisfy internal references so the rest of the crate
-//! compiles without the full retry policy system.
+//! Minimal stubs for types still referenced by legacy retry/tuning code.
+//! The retry system was deleted — these remain only to satisfy existing
+//! references until the callers are cleaned up.
 
-use crate::{BRep, BooleanOpType, BooleanOptions, BooleanExecutionReport, BooleanError};
-
-// --- Types used by inc_1.rs (classify_boolean_failure, tune_boolean...) ---
+use crate::BooleanError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BooleanFailureClass {
@@ -23,7 +19,7 @@ pub enum BooleanFailureClass {
 impl BooleanFailureClass {
     pub fn is_recoverable(&self) -> bool { false }
     pub fn suggested_recovery(&self) -> RecoveryStrategy { RecoveryStrategy::None }
-    pub fn description(&self) -> &'static str { "removed retry system" }
+    pub fn description(&self) -> &'static str { "retry system removed" }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,7 +33,7 @@ pub enum RecoveryStrategy {
 }
 
 impl RecoveryStrategy {
-    pub fn description(&self) -> &'static str { "removed retry system" }
+    pub fn description(&self) -> &'static str { "retry system removed" }
 }
 
 #[derive(Debug, Clone)]
@@ -75,18 +71,22 @@ impl RetryPolicyBuilder {
 pub fn retry_policy_to_robust_options(
     _policy: &RetryPolicy, _base: BooleanOptions,
 ) -> crate::BooleanRobustOptions {
+    use crate::BooleanRetryPolicy;
+    use crate::ExtremeGeometryRetryConfig;
     crate::BooleanRobustOptions {
         base: _base,
         fuzzy_retry_ladder: vec![],
-        retry_policy: crate::BooleanRetryPolicy::Conservative,
-        extreme_geometry: crate::ExtremeGeometryRetryConfig::default(),
+        retry_policy: BooleanRetryPolicy::AdaptiveByFailureClass,
+        extreme_geometry: ExtremeGeometryRetryConfig::default(),
     }
 }
 
 pub fn boolean_op_with_retry_policy(
-    op: BooleanOpType, a: &BRep, b: &BRep,
+    _op: crate::BooleanOpType, _a: &rcad_kernel::BRep, _b: &rcad_kernel::BRep,
     _policy: &RetryPolicy, _options: BooleanOptions,
-) -> Result<(BRep, BooleanExecutionReport), BooleanError> {
-    let (brep, report) = crate::boolean_op_with_options(op, a, b, _options)?;
-    Ok((brep, report))
+) -> Result<(rcad_kernel::BRep, crate::BooleanHistory), crate::BooleanError> {
+    Err(crate::BooleanError::InvalidOperation)
 }
+
+use crate::BooleanOptions;
+

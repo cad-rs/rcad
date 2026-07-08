@@ -1,4 +1,4 @@
-﻿//! Build solids from reusable split cells.
+//! Build solids from reusable split cells.
 //!
 //! # OCCT Reference — BOPAlgo_MakerVolume
 //!
@@ -36,7 +36,6 @@ use std::collections::HashSet;
 use rcad_kernel::BRep;
 use rcad_kernel::topods;
 
-use crate::cells_builder::{CellExpr, CellsBuilder, CellsBuilderError};
 use crate::{BooleanError, GeneralFuseHistory, general_fuse, general_fuse_with_history};
 
 /// Error type for MakerVolume-style solid assembly.
@@ -52,8 +51,8 @@ pub enum MakerVolumeError {
     InvalidCellIndex { index: usize, count: usize },
     /// Boolean assembly failed.
     Boolean(BooleanError),
-    /// Expression-based assembly failed.
-    Expression(CellsBuilderError),
+    /// All cells are too small for the requested operation.
+    CellsTooSmall,
 }
 
 impl std::fmt::Display for MakerVolumeError {
@@ -68,7 +67,7 @@ impl std::fmt::Display for MakerVolumeError {
                 write!(f, "invalid cell index {index}; available cells: 0..{count}")
             }
             Self::Boolean(source) => write!(f, "boolean assembly failed: {source}"),
-            Self::Expression(source) => write!(f, "expression assembly failed: {source}"),
+            Self::CellsTooSmall => write!(f, "all cells are too small"),
         }
     }
 }
@@ -77,7 +76,6 @@ impl std::error::Error for MakerVolumeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Boolean(source) => Some(source),
-            Self::Expression(source) => Some(source),
             _ => None,
         }
     }
@@ -86,12 +84,6 @@ impl std::error::Error for MakerVolumeError {
 impl From<BooleanError> for MakerVolumeError {
     fn from(value: BooleanError) -> Self {
         Self::Boolean(value)
-    }
-}
-
-impl From<CellsBuilderError> for MakerVolumeError {
-    fn from(value: CellsBuilderError) -> Self {
-        Self::Expression(value)
     }
 }
 
@@ -177,15 +169,6 @@ impl MakerVolume {
     ) -> Result<(BRep, GeneralFuseHistory), MakerVolumeError> {
         let parts = self.selected_cells(indices)?;
         Ok(general_fuse_with_history(&parts)?)
-    }
-
-    /// Build a solid from a reusable cell expression.
-    pub fn build_from_expr(&self, expr: &CellExpr) -> Result<BRep, MakerVolumeError> {
-        if self.cells.is_empty() {
-            return Err(MakerVolumeError::EmptyInput);
-        }
-        let builder = CellsBuilder::from_cells(self.cells.clone());
-        Ok(builder.evaluate(expr)?)
     }
 
     /// Convert a region mask into a validated selection report.

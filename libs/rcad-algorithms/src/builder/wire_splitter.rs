@@ -1,4 +1,4 @@
-﻿use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use indexmap::IndexMap;
 use glam::DVec2; use glam::DVec3;
 use rcad_kernel::geom::*;
@@ -641,11 +641,11 @@ pub(crate) fn split_block(
  face_idx: usize,
  wires: &mut Vec<Vec<usize>>,
 ) {
- // OCCT L327: RefineAngles  ?compute turning angles at each vertex.
+ // OCCT L327: RefineAngles — compute turning angles at each vertex.
  refine_angles(smart_map, segments, ds, face_idx);
  dbg_smartmap!("split_block", face_idx, smart_map);
 
- // OCCT L331-358: Path walk  ?iterate all vertices by insertion order,
+ // OCCT L331-358: Path walk — iterate all vertices by insertion order,
  // for each unpassed OUT entry start a new Path walk.
  let order_keys: Vec<usize> = smart_map.keys().copied().collect();
  for &v in &order_keys {

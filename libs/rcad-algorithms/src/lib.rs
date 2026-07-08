@@ -17,7 +17,6 @@ pub use brep_graph::{
 pub mod boolean;
 pub mod bnd_lib;
 pub mod bnd_lib_2d;
-mod boolean_unit_octant;
 pub mod bopds;
 pub mod brep_algo;
 pub mod brep_algo_api;
@@ -45,12 +44,10 @@ pub mod features;
 pub mod geom_convert;
 pub mod geom_lib;
 pub mod geom_populate;
-pub mod gluer;
 pub mod healing;
 pub mod history;
 pub mod hlr;
 pub mod imprint;
-pub mod non_manifold;
 pub mod shape_algo;
 pub mod shape_analysis;
 pub mod shape_build;
@@ -96,7 +93,6 @@ pub mod brep_int_curve_surface;
 pub mod brep_mesh;
 pub mod brep_offset;
 pub mod brep_proj;
-pub mod cells_builder;
 pub mod chamfer;
 pub mod elc_lib;
 pub mod els_lib;
@@ -111,11 +107,8 @@ pub mod law;
 pub mod lprop_cur_and_inf;
 pub mod maker_volume;
 pub mod math_utils;
-pub mod medial_axis;
 pub mod offset;
-pub mod offset_prism;
 pub mod pave_filler;
-pub mod point_cloud;
 pub mod projection;
 pub mod section;
 pub mod splitter;
@@ -519,7 +512,6 @@ pub use builder::{
     compute_adaptive_glue_tolerance,
     detect_glue_faces,
 };
-pub use cells_builder::{CellExpr, CellsBuilder, CellsBuilderError};
 pub use chamfer::{
     ChamferError, ChamferMode, ChamferParams, ChamferResult, ChamferWarning,
     compute_chamfer_curves, compute_chamfer_surface, make_chamfer_all_edges, make_chamfer_angle,
@@ -529,11 +521,6 @@ pub use fillet::{
     FilletContinuity, FilletError, FilletMode, FilletParams, FilletResult, VariableRadiusPoint,
     blend_adjacent_faces, compute_fillet_curves, compute_rollball_surface, make_fillet_all_edges,
     make_fillet_edge, make_fillet_edge_with_params, make_variable_fillet,
-};
-pub use gluer::{
-    EdgeOrigin as GluerEdgeOrigin, FaceOrigin as GluerFaceOrigin, Gluer, GluerError, GluerHistory,
-    GluerMode, GluerOptions, GluerResult, InterfaceInfo, VertexOrigin as GluerVertexOrigin,
-    detect_interface, detect_interface_bvh, glue_at_interface, glue_shapes,
 };
 pub use healing::{
     BRepSnapshot,
@@ -681,33 +668,10 @@ pub use math_utils::{
     solve_quadratic,
     solve_quartic,
 };
-pub use medial_axis::{
-    MedialAxis2d, MedialAxisOptions, MedialBranch2d, MedialEdge, MedialFace, MedialPoint2d,
-    MedialSurface, MedialVertex, MidSurfaceResult, ThicknessMap, ThicknessSample, ThicknessStats,
-    ThinRegion, VoronoiDiagram2d, VoronoiEdge2d, VoronoiVertex2d, WallThicknessResult,
-    cluster_medial_vertices, compute_mat_2d, compute_medial_axis_2d, compute_medial_surface,
-    compute_mid_surface, compute_thickness_map, compute_voronoi_2d, compute_wall_thickness,
-    detect_thin_regions, find_max_inscribed_circle, generate_rib_paths, point_in_polygon_2d,
-};
-pub use non_manifold::{
-    EdgeSplitReport, MakeManifoldOptions, MakeManifoldReport, MergeShellsOptions,
-    MergeShellsResult, NonManifoldReport, NonManifoldTraversal, analyze_non_manifold,
-    boundary_edges, is_manifold, make_manifold, make_manifold_with_options,
-    merge_shells_at_interface, multi_face_edges, non_manifold_edges, non_manifold_vertices,
-    orphan_edges, split_non_manifold_edges,
-};
 pub use offset::{
     JoinType, OffsetError, OffsetOptions, OffsetQuality, OffsetResult, VariableThickness,
     detect_self_intersection, hollow_solid, hollow_solid_with_options, offset_shape, offset_shell,
     offset_shell_with_options, offset_solid, offset_solid_with_options, offset_surface,
-};
-pub use point_cloud::{
-    Dimensionality, FittedCylinder, FittedPlane, FittedPolygon, FittedSphere, OutlierPoint,
-    PointCloud, PointCloudAnalysis, SamplingStrategy, analyze_point_cloud, compute_inertia,
-    compute_pca, detect_outliers, estimate_dimensionality, estimate_normals,
-    extract_points_from_brep_mesh, extract_points_from_brep_vertices, extract_points_from_mesh,
-    fit_cylinder, fit_plane, fit_polygon, fit_sphere, remove_outliers,
-    sample_points_from_brep_surfaces, simplify_point_cloud,
 };
 pub use projection::{
     PointBRepProjection, PointCurveProjection, PointSurfaceProjection, ProjectionDirection,
