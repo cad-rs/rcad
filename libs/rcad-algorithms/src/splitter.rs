@@ -1,4 +1,4 @@
-﻿//! OCCT-aligned splitter: BOPAlgo_Splitter / BRepAlgoAPI_Splitter.
+//! OCCT-aligned splitter: BOPAlgo_Splitter / BRepAlgoAPI_Splitter.
 //!
 //! OCCT's BOPAlgo_Splitter splits a shape (Object) by another shape (Tool),
 //! keeping only the Object's split parts. The Tool serves as cutting boundaries
@@ -13,8 +13,6 @@
 //! - `BOPAlgo_Splitter.cxx` L1-80: BOPAlgo_Splitter::Perform + BuildResult
 //! - `BRepAlgoAPI_Splitter.cxx` L1-50: API wrapper
 
-
-use rcad_kernel::BRep;
 
 use crate::builder::BooleanOpType;
 use crate::history::FaceOrigin;
@@ -50,7 +48,7 @@ use rcad_kernel::topods;
 /// # OCCT Reference
 /// `BOPAlgo_Splitter.cxx` L58-L79 — BuildResult filtering loop
 /// `BOPAlgo_Builder.cxx` L178-L240 — BuildResult shape iteration
-pub fn filter_object_only(brep: &BRep, face_origins: &[FaceOrigin]) -> BRep {
+pub fn filter_object_only(brep: &rcad_kernel::BRep, face_origins: &[FaceOrigin]) -> rcad_kernel::BRep {
     // Build a keep mask: true if the origin is ShapeA or Generated.
     let keep_mask: Vec<bool> = face_origins
         .iter()
@@ -116,7 +114,7 @@ pub fn filter_object_only(brep: &BRep, face_origins: &[FaceOrigin]) -> BRep {
         }
     }
 
-    BRep {
+    rcad_kernel::BRep {
         vertices: brep.vertices.clone(),
         edges: brep.edges.clone(),
         solids: new_solids,
@@ -151,7 +149,7 @@ pub fn filter_object_only(brep: &BRep, face_origins: &[FaceOrigin]) -> BRep {
 ///     shapes.
 /// `BRepAlgoAPI_Splitter.cxx` L1-50:
 ///   - API wrapper that delegates to BOPAlgo_Splitter.
-pub fn split_shape_occt_aligned(shape: &BRep, tool: &BRep) -> Result<BRep, String> {
+pub fn split_shape_occt_aligned(shape: &rcad_kernel::BRep, tool: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, String> {
     // Step 1: Run the PaveFiller + Builder pipeline (same as boolean ops).
     // OCCT: BOPAlgo_Splitter uses BOPAlgo_Builder (not BOPAlgo_BOP), which
     // splits all faces and classifies them per the boolean op type.
