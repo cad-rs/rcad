@@ -1,4 +1,4 @@
-﻿use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use glam::DVec2; use glam::DVec3;
 use rcad_kernel::geom::*; use rcad_kernel::BRep;
 use rcad_kernel::topods;
@@ -1325,6 +1325,7 @@ impl ResultBuilder {
  }
  }
 
+ #[allow(dead_code)]
  pub(crate) fn build(mut self) -> (BRep, BooleanHistory) {
  eprintln!("ResultBuilder::build: {} vertices, {} edges, {} faces", self.vertices.len(), self.edges.len(), self.faces.len());
  for (vi, p) in self.vertices.iter().enumerate() {

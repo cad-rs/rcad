@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet, BTreeSet};
 use glam::DVec2; use glam::DVec3;
 use rcad_kernel::geom::*;
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 use std::cell::RefCell;
 use crate::bopds::ds::*;
@@ -91,21 +90,29 @@ pub(crate) fn hash_point(p: DVec3) -> u64 {
 /// OCCT maps TopoDS_Shape  ?identity for myMapShape lookup.
 /// rcad: maps result vertex index  ?DS vertex index, result edge index  ?(DS vertices).
 /// Used by PrepareHistory to determine Modified/Generated/Deleted provenance.
-pub(crate) fn map_result_shapes(brep: &BRep, ds: &DS) -> (Vec<usize>, Vec<(usize, usize)>) {
- let mut result_to_ds: Vec<usize> = vec![usize::MAX; brep.vertices.len()];
- for (ri, rv) in brep.vertices.iter().enumerate() {
- let pt = rv.point;
+#[allow(dead_code)]
+pub(crate) fn map_result_shapes(brep: &topods::BRep, ds: &DS) -> (Vec<usize>, Vec<(usize, usize)>) {
+ // Collect flat vertex list from topods in ShapeRef.index order
+ let topo_vertices: Vec<DVec3> = brep.tshapes.iter()
+ .filter_map(|ts| match &**ts { topods::TShape::Vertex(v) => Some(v.point), _ => None })
+ .collect();
+ let mut result_to_ds: Vec<usize> = vec![usize::MAX; topo_vertices.len()];
+ for (ri, pt) in topo_vertices.iter().enumerate() {
  for (di, dv) in ds.vertices.iter().enumerate() {
- if (dv.point - pt).length_squared() < crate::tolerance::TOLERANCE_ABS * crate::tolerance::TOLERANCE_ABS * 4.0 {
+ if (dv.point - *pt).length_squared() < crate::tolerance::TOLERANCE_ABS * crate::tolerance::TOLERANCE_ABS * 4.0 {
  result_to_ds[ri] = di;
  break;
  }
  }
  }
- let edge_pairs: Vec<(usize, usize)> = brep.edges.iter()
- .map(|e| {
- let ds_s = result_to_ds.get(e.start).copied().unwrap_or(usize::MAX);
- let ds_e = result_to_ds.get(e.end).copied().unwrap_or(usize::MAX);
+ // Edge pairs from topods edges: map ShapeRef.index -> flat position
+ let topo_edges: Vec<(usize, usize)> = brep.tshapes.iter()
+ .filter_map(|ts| match &**ts { topods::TShape::Edge(e) => Some((e.first.index, e.last.index)), _ => None })
+ .collect();
+ let edge_pairs: Vec<(usize, usize)> = topo_edges.iter()
+ .map(|&(s, e)| {
+ let ds_s = result_to_ds.get(s).copied().unwrap_or(usize::MAX);
+ let ds_e = result_to_ds.get(e).copied().unwrap_or(usize::MAX);
  (ds_s, ds_e)
  })
  .collect();
@@ -115,12 +122,13 @@ pub(crate) fn map_result_shapes(brep: &BRep, ds: &DS) -> (Vec<usize>, Vec<(usize
 ///  ?OCCT-aligned: PrepareHistory (Builder_4.cxx L164-252).
 /// OCCT iterates source shapes  ?LocModified  ?AddModified / AddGenerated / Remove.
 /// rcad: uses pre-built result_to_ds map to annotate vertex/edge provenance.
-pub(crate) fn annotate_history_from_ds(brep: &BRep, history: &mut BooleanHistory, ds: &DS) {
+#[allow(dead_code)]
+pub(crate) fn annotate_history_from_ds(brep: &topods::BRep, history: &mut BooleanHistory, ds: &DS) {
  let (result_to_ds, _) = map_result_shapes(brep, ds);
 
  // OCCT L176: MapShapes done.  Annotate vertex origins (FromA/FromB/Intersection).
  let a_vc = ds.a_vertex_count;
- let n_result_verts = brep.vertices.len();
+ let n_result_verts = brep.tshapes.iter().filter(|ts| std::matches!(ts.as_ref(), topods::TShape::Vertex(_))).count();
  let mut vertex_origins: Vec<VertexOrigin> = Vec::with_capacity(n_result_verts);
  for ri in 0..n_result_verts {
  let di = result_to_ds[ri];
@@ -137,14 +145,15 @@ pub(crate) fn annotate_history_from_ds(brep: &BRep, history: &mut BooleanHistory
 
  // --- edge origins ---
  let a_vc = ds.a_vertex_count;
- let n_result_edges = brep.edges.len();
+ let n_result_edges = brep.tshapes.iter().filter(|ts| std::matches!(ts.as_ref(), topods::TShape::Edge(_))).count();
  let mut edge_origins: Vec<EdgeOrigin> = Vec::with_capacity(n_result_edges);
  let a_ec = ds.a_edge_count;
  let total_ds_edges = ds.edges.len();
 
- for re in &brep.edges {
- let ds_s = result_to_ds[re.start];
- let ds_e = result_to_ds[re.end];
+ for ts in &brep.tshapes {
+ if let topods::TShape::Edge(ed) = &**ts {
+ let ds_s = result_to_ds.get(ed.first.index).copied().unwrap_or(usize::MAX);
+ let ds_e = result_to_ds.get(ed.last.index).copied().unwrap_or(usize::MAX);
 
  let origin = if ds_s == usize::MAX || ds_e == usize::MAX {
  EdgeOrigin::Generated
@@ -172,6 +181,7 @@ pub(crate) fn annotate_history_from_ds(brep: &BRep, history: &mut BooleanHistory
  EdgeOrigin::Generated
  };
  edge_origins.push(origin);
+ }
  }
  history.edge_origins = edge_origins;
 }
@@ -225,15 +235,17 @@ pub(crate) fn aggregate_shell_region_origin(shell_origins: &[ShellOrigin]) -> So
 ///  ?OCCT-aligned: PrepareHistory shell/solid provenance (Builder_4.cxx L164-252).
 /// OCCT iterates source shapes  ?LocModified  ?AddModified/AddGenerated/Remove.
 /// rcad: aggregates per-face origins to shell/solid level via face_region  ?shell  ?solid.
-pub(crate) fn annotate_shell_and_solid_history(brep: &BRep, history: &mut BooleanHistory) {
+pub(crate) fn annotate_shell_and_solid_history(brep: &topods::BRep, history: &mut BooleanHistory) {
  let mut face_cursor = 0;
  let mut shell_origins = Vec::new();
- let mut solid_origins = Vec::with_capacity(brep.solids.len());
+ let mut solid_origins = Vec::new();
 
- for solid in &brep.solids {
+ for ts in &brep.tshapes {
+ if let topods::TShape::Solid(sd) = &**ts {
  let solid_shell_start = shell_origins.len();
- for shell in &solid.shells {
- let shell_face_count = shell.faces.len();
+ for shell_sr in &sd.shells {
+ if let topods::TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+ let shell_face_count = shd.faces.len();
  let shell_face_origins = history
  .face_origins
  .get(face_cursor..face_cursor + shell_face_count)
@@ -241,7 +253,9 @@ pub(crate) fn annotate_shell_and_solid_history(brep: &BRep, history: &mut Boolea
  shell_origins.push(aggregate_face_region_origin(shell_face_origins));
  face_cursor += shell_face_count;
  }
+ }
  solid_origins.push(aggregate_shell_region_origin(&shell_origins[solid_shell_start..]));
+ }
  }
 
  if face_cursor != history.face_origins.len() {

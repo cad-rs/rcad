@@ -1,6 +1,5 @@
-﻿use std::collections::HashMap;
+use std::collections::HashMap;
 use glam::DVec3;
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 use rcad_kernel::geom::*;
 use crate::bopds::ds::*;
@@ -127,8 +126,8 @@ impl GlueFaceCache {
  Self::default()
  }
 
- /// Build the cache for a BRep by computing face centers, normals, and areas.
- pub fn build(&mut self, brep: &BRep, cell_size: f64) {
+ /// Build the cache for a topods::BRep by computing face centers, normals, and areas.
+ pub fn build(&mut self, brep: &topods::BRep, cell_size: f64) {
  self.face_centers.clear();
  self.face_normals.clear();
  self.face_areas.clear();
@@ -136,25 +135,25 @@ impl GlueFaceCache {
  self.compatibility_cache.clear();
 
  let mut face_idx = 0usize;
- for solid in &brep.solids {
- for shell in &solid.shells {
- for face in &shell.faces {
+ for ts in &brep.tshapes {
+ if let topods::TShape::Solid(sd) = ts.as_ref() {
+ for shell_sr in &sd.shells {
+ if let topods::TShape::Shell(shd) = brep.tshapes[shell_sr.index].as_ref() {
+ for face_sr in &shd.faces {
+ let fd = brep.face(*face_sr);
  // Compute face center and area from boundary vertices
  let mut center = DVec3::ZERO;
- let mut area = 0.0;
  let mut count = 0usize;
 
- for we in &face.outer_wire.edges {
- if we.idx < brep.edges.len() {
- let edge = &brep.edges[we.idx];
- if edge.start < brep.vertices.len() {
- center += brep.vertices[edge.start].point;
+ let outer_wire = brep.wire(fd.outer_wire);
+ for edge_sr in &outer_wire.edges {
+ if let topods::TShape::Edge(ed) = brep.tshapes[edge_sr.index].as_ref() {
+ let v1 = brep.vertex(ed.first);
+ center += v1.point;
  count += 1;
- }
- if edge.end < brep.vertices.len() {
- center += brep.vertices[edge.end].point;
+ let v2 = brep.vertex(ed.last);
+ center += v2.point;
  count += 1;
- }
  }
  }
 
@@ -165,26 +164,37 @@ impl GlueFaceCache {
  // Approximate area from bounding box
  let mut min_pt = DVec3::splat(f64::INFINITY);
  let mut max_pt = DVec3::splat(f64::NEG_INFINITY);
- for we in &face.outer_wire.edges {
- if we.idx < brep.edges.len() {
- let edge = &brep.edges[we.idx];
- if edge.start < brep.vertices.len() {
- let p = brep.vertices[edge.start].point;
- min_pt = min_pt.min(p);
- max_pt = max_pt.max(p);
- }
- if edge.end < brep.vertices.len() {
- let p = brep.vertices[edge.end].point;
- min_pt = min_pt.min(p);
- max_pt = max_pt.max(p);
- }
+ for edge_sr in &outer_wire.edges {
+ if let topods::TShape::Edge(ed) = brep.tshapes[edge_sr.index].as_ref() {
+ let p1 = brep.vertex(ed.first).point;
+ min_pt = min_pt.min(p1);
+ max_pt = max_pt.max(p1);
+ let p2 = brep.vertex(ed.last).point;
+ min_pt = min_pt.min(p2);
+ max_pt = max_pt.max(p2);
  }
  }
  let diag = max_pt - min_pt;
- area = diag.x * diag.y + diag.y * diag.z + diag.z * diag.x;
+ let area = diag.x * diag.y + diag.y * diag.z + diag.z * diag.x;
+
+ // Compute face normal from surface if available
+ let normal = fd.surface.as_ref().map(|s| match s {
+ Surface3::Plane(p) => p.normal,
+ Surface3::Cylinder(c) => {
+ let u = c.ref_dir;
+ let v = c.axis.cross(u);
+ (c.axis.cross(v)).normalize_or_zero()
+ }
+ Surface3::Sphere(sp) => {
+ (sp.center).normalize_or_zero()
+ }
+ Surface3::Cone(c) => c.axis.normalize_or_zero(),
+ Surface3::Torus(t) => t.axis.normalize_or_zero(),
+ _ => DVec3::Z,
+ }).unwrap_or(DVec3::Z);
 
  self.face_centers.push(center);
- self.face_normals.push(face.normal);
+ self.face_normals.push(normal);
  self.face_areas.push(area);
 
  // Add to spatial hash
@@ -192,6 +202,7 @@ impl GlueFaceCache {
  self.spatial_hash.entry(cell).or_default().push(face_idx);
 
  face_idx += 1;
+ }
  }
  }
  }

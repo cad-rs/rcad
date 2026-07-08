@@ -99,7 +99,7 @@ pub struct PaveFiller<'a> {
  context: IntToolsContext,
  /// =OCCT-aligned: myArguments =original input shapes (BOPAlgo_PaveFiller.hxx L639).
  /// rcad: carries the original BRep operands for OCCT-API compatibility.
- my_arguments: Vec<rcad_kernel::BRep>,
+ my_arguments: Vec<rcad_kernel::topods::BRep>,
  /// =OCCT-aligned: mySectionAttribute (BOPAlgo_SectionAttribute.hxx)
  section_attribute: SectionAttribute,
  /// =OCCT-aligned: myIsPrimary (BOPAlgo_PaveFiller.cxx L62)

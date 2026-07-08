@@ -42,8 +42,10 @@ use crate::total_surface_area;
 use crate::BooleanError;
 use crate::BooleanOpType;
 use rcad_kernel::geom::Surface3;
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
+// Legacy BRep used only by internal helpers (BVH, validation).
+// These functions are being phased out — they persist for OCCT parity validation.
+use rcad_kernel::BRep;
 
 /// DSU (Union-Find) for building connected SameDomain groups — equivalent to OCCT FillMap + MakeBlocks.
 struct DSU {
@@ -302,6 +304,7 @@ fn validate_ds_invariants(ds: &DS) -> Result<(), BooleanError> {
 }
 
 /// Full pool / finite checks for **result** BReps (includes non‑degenerate face normals).
+#[allow(dead_code)]
 fn validate_brep_index_and_finite_geom(msg: &'static str, brep: &BRep) -> Result<(), BooleanError> {
  validate_brep_topology_indices(msg, brep, true)
 }
@@ -373,6 +376,7 @@ fn validate_brep_topology_indices(
  Ok(())
 }
 
+#[allow(dead_code)]
 fn validate_union_brep_output(msg: &'static str, brep: &BRep) -> Result<(), BooleanError> {
  validate_brep_index_and_finite_geom(msg, brep)
 }
@@ -433,18 +437,18 @@ fn pave_fill(ds: &mut bopds::ds::DS, a: &BRep, b: &BRep, use_bvh: bool,
 /// Union: DS → PaveFiller → BooleanBuilder(Union) → recompute plane surfaces.
 ///
 /// Uses BVH when both operands have faces, matching [`crate::boolean_op`].
-pub(crate) fn fuse(a: &BRep, b: &BRep) -> Result<topods::BRep, BooleanError> {
+pub(crate) fn fuse(a: &topods::BRep, b: &topods::BRep) -> Result<topods::BRep, BooleanError> {
  fuse_with_bvh(a, b, true)
 }
 
 /// ✅ OCCT-aligned: DS → PaveFiller → BooleanBuilder(Union) → result.
 /// OCCT BOPAlgo_BOP::Perform L395-408: PaveFiller config + Perform + PerformInternal1.
-pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<topods::BRep, BooleanError> {
- let a_t = a.to_topods();
- let b_t = b.to_topods();
- let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, crate::tolerance::TOLERANCE_ABS);
+pub(crate) fn fuse_with_bvh(a: &topods::BRep, b: &topods::BRep, use_bvh: bool) -> Result<topods::BRep, BooleanError> {
+ let mut ds = bopds::ds::DS::new_from_topods(a, b, crate::tolerance::TOLERANCE_ABS);
  let mut brep = rcad_kernel::topods::BRep::new();
- let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, use_bvh, &mut brep);
+ let a_old = rcad_kernel::BRep::from_topods(a);
+ let b_old = rcad_kernel::BRep::from_topods(b);
+ let (face_refs, ic_edge_map) = pave_fill(&mut ds, &a_old, &b_old, use_bvh, &mut brep);
  let builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
  let (result, _history) = builder.build_with_history_topods()?;
  Ok(result)
@@ -453,6 +457,7 @@ pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<topods:
 /// ✅ OCCT : pcurve(3D →UV )。
 /// OCCT BuildSplitFaces section edge pcurve(IntTools_CurveRange).
 /// rcad add_circle_edge/add_edge pcurve, 。
+#[allow(dead_code)]
 pub(crate) fn compute_face_pcurves(brep: &mut BRep) {
  use rcad_kernel::geom::{CurveEval, SurfaceEval, Curve2d, Line2d, Surface3};
  use rcad_kernel::PCurve;
@@ -508,23 +513,22 @@ fn project_point_to_uv(p: glam::DVec3, surface: &rcad_kernel::geom::Surface3) ->
 
 /// Same phases as [`fuse`], but returns [`BooleanHistory`] and does not run plane recompute
 /// (matches legacy `boolean_op_with_history` for Union).
-pub(crate) fn fuse_with_history(a: &BRep, b: &BRep) -> Result<(BRep, BooleanHistory), BooleanError> {
- let (t, hist) = fuse_with_history_bvh(a, b, true)?;
- Ok((rcad_kernel::BRep::from_topods(&t), hist))
+pub(crate) fn fuse_with_history(a: &topods::BRep, b: &topods::BRep) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
+ fuse_with_history_bvh(a, b, true)
 }
 
 pub(crate) fn fuse_with_history_bvh(
- a: &BRep,
- b: &BRep,
+ a: &topods::BRep,
+ b: &topods::BRep,
  use_bvh: bool,
 ) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
- validate_union_operands(a, b)?;
- let a_t = a.to_topods();
- let b_t = b.to_topods();
- let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, crate::tolerance::TOLERANCE_ABS);
+ let a_old = rcad_kernel::BRep::from_topods(a);
+ let b_old = rcad_kernel::BRep::from_topods(b);
+ validate_union_operands(&a_old, &b_old)?;
+ let mut ds = bopds::ds::DS::new_from_topods(a, b, crate::tolerance::TOLERANCE_ABS);
  validate_ds_invariants(&ds)?;
  let mut brep = rcad_kernel::topods::BRep::new();
- let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, use_bvh, &mut brep);
+ let (face_refs, ic_edge_map) = pave_fill(&mut ds, &a_old, &b_old, use_bvh, &mut brep);
  validate_ds_invariants(&ds)?;
  let builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
  let (result_brep, hist) = builder.build_with_history()?;
@@ -532,23 +536,22 @@ pub(crate) fn fuse_with_history_bvh(
 }
 
 /// Parallel classification path; same OCCT phase structure as [`fuse_with_history`].
-pub(crate) fn fuse_with_history_par(a: &BRep, b: &BRep) -> Result<(BRep, BooleanHistory), BooleanError> {
- let (t, hist) = fuse_with_history_par_bvh(a, b, true)?;
- Ok((rcad_kernel::BRep::from_topods(&t), hist))
+pub(crate) fn fuse_with_history_par(a: &topods::BRep, b: &topods::BRep) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
+ fuse_with_history_par_bvh(a, b, true)
 }
 
 pub(crate) fn fuse_with_history_par_bvh(
- a: &BRep,
- b: &BRep,
+ a: &topods::BRep,
+ b: &topods::BRep,
  use_bvh: bool,
 ) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
- validate_union_operands(a, b)?;
- let a_t = a.to_topods();
- let b_t = b.to_topods();
- let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, crate::tolerance::TOLERANCE_ABS);
+ let a_old = rcad_kernel::BRep::from_topods(a);
+ let b_old = rcad_kernel::BRep::from_topods(b);
+ validate_union_operands(&a_old, &b_old)?;
+ let mut ds = bopds::ds::DS::new_from_topods(a, b, crate::tolerance::TOLERANCE_ABS);
  validate_ds_invariants(&ds)?;
  let mut brep = rcad_kernel::topods::BRep::new();
- let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, use_bvh, &mut brep);
+ let (face_refs, ic_edge_map) = pave_fill(&mut ds, &a_old, &b_old, use_bvh, &mut brep);
  validate_ds_invariants(&ds)?;
  let builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
  let (result_brep, hist) = builder.build_with_history()?;
@@ -571,6 +574,7 @@ pub(crate) fn fuse_with_history_par_bvh(
 /// 6.  ,  geom slots
 ///
 ///  ( ) 。
+#[allow(dead_code)]
 fn fill_same_domain_faces_edge_set(brep: &mut BRep) -> usize {
  use std::collections::{HashMap, BTreeSet};
  use rcad_kernel::geom::Surface3;
@@ -753,6 +757,7 @@ fn fill_same_domain_faces_edge_set(brep: &mut BRep) -> usize {
 /// ✅ OCCT : PointInFace (BOPTools_AlgoTools3D::PointInFace)
 /// OCCT: UV → 3D  
 /// rcad: face.triangles  
+#[allow(dead_code)]
 fn point_in_face(brep: &BRep, (si, shi, fi): (usize, usize, usize)) -> Option<DVec3> {
  let face = &brep.solids[si].shells[shi].faces[fi];
  // OCCT  :  
@@ -777,6 +782,7 @@ fn point_in_face(brep: &BRep, (si, shi, fi): (usize, usize, usize)) -> Option<DV
 /// OCCT: 3D  2  → UV  
 /// : tolF1 + tolF2 + max(fuzzy, Precision::Confusion)
 /// rcad: 3D + 2D point-in-polygon
+#[allow(dead_code)]
 fn is_valid_point_for_face(brep: &BRep, pt: DVec3, (si, shi, fi): (usize, usize, usize)) -> bool {
  use glam::DVec2;
  let face = &brep.solids[si].shells[shi].faces[fi];
@@ -827,6 +833,7 @@ fn is_valid_point_for_face(brep: &BRep, pt: DVec3, (si, shi, fi): (usize, usize,
 /// OCCT  :
 /// 1. PointInFace(F1) → 3D ( )
 /// 2. IsValidPointForFace( , F2, aTol) →  2 
+#[allow(dead_code)]
 fn fill_same_domain_cross_group(
  brep: &BRep, nf: usize,
  flat_to_pos: &[(usize, usize, usize)],
@@ -864,6 +871,7 @@ fn fill_same_domain_cross_group(
 /// Check that every edge in the result is referenced exactly twice
 /// (once from each adjacent face), forming a closed manifold shell.
 /// Returns an error listing orphan (<2 refs) and over-shared (>2 refs) edges.
+#[allow(dead_code)]
 fn validate_solid_closure(brep: &BRep) -> Result<(), BooleanError> {
  use std::collections::HashMap;
  let mut edge_count: HashMap<usize, usize> = HashMap::new();
@@ -917,6 +925,7 @@ fn validate_solid_closure(brep: &BRep) -> Result<(), BooleanError> {
 
 ///  。
 /// = (  Plane > planar BSpline >  )。
+#[allow(dead_code)]
 fn surface_priority_for_merge(brep: &BRep, (si, shi, fi): (usize, usize, usize)) -> u32 {
  let face = &brep.solids[si].shells[shi].faces[fi];
  let sid = face.surface_idx;

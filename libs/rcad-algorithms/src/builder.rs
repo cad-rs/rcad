@@ -3,7 +3,6 @@ use indexmap::IndexMap;
 
 use glam::{DVec2, DVec3};
 use rayon::prelude::*;
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 use rcad_kernel::geom::{Curve2dEval, SurfaceEval, *};
 use rcad_kernel::topology::*;
