@@ -1,9 +1,9 @@
-/// Handle degenerate points on periodic surfaces.
+﻿/// Handle degenerate points on periodic surfaces.
 ///
 /// This function identifies and handles degenerate points such as:
 /// - Sphere poles (V=0 and V= ?
 /// - Cone apex
-pub fn handle_degenerate_points(brep: &rcad_kernel::BRep, tolerance: f64) -> (brep, usize) {
+pub fn handle_degenerate_points(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel::BRep, usize) {
  let mut result = brep.clone();
  let mut degenerate_count = 0;
 
@@ -116,7 +116,7 @@ fn is_vertex_at_degenerate_point(
 ///
 /// When edges are incorrectly split at a seam, this function attempts to
 /// merge them back together.
-pub fn merge_seam_edges(brep: &rcad_kernel::BRep, config: &PeriodicSeamConfig) -> (brep, usize) {
+pub fn merge_seam_edges(brep: &rcad_kernel::BRep, config: &PeriodicSeamConfig) -> (rcad_kernel::BRep, usize) {
  let result = brep.clone();
  let mut merged_count = 0;
 
@@ -224,7 +224,7 @@ pub fn merge_seam_edges(brep: &rcad_kernel::BRep, config: &PeriodicSeamConfig) -
 ///
 /// On periodic surfaces (cylinder, cone, torus), edges that cross the seam
 /// may be split incorrectly. This function attempts to handle them.
-pub fn handle_periodic_surface_seams(brep: &rcad_kernel::BRep, tolerance: f64) -> (brep, PeriodicSeamReport) {
+pub fn handle_periodic_surface_seams(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel::BRep, PeriodicSeamReport) {
  let config = PeriodicSeamConfig {
  seam_tolerance: tolerance * 10.0,
  merge_tolerance: tolerance * 100.0,
@@ -237,7 +237,7 @@ pub fn handle_periodic_surface_seams(brep: &rcad_kernel::BRep, tolerance: f64) -
 pub fn handle_periodic_surface_seams_with_config(
  brep: &rcad_kernel::BRep,
  config: &PeriodicSeamConfig,
-) -> (brep, PeriodicSeamReport) {
+) -> (rcad_kernel::BRep, PeriodicSeamReport) {
  let mut result = brep.clone();
  let mut report = PeriodicSeamReport::default();
 
@@ -341,7 +341,7 @@ pub struct AdaptiveToleranceMergeReport {
 pub fn merge_vertices_adaptive(
  brep: &rcad_kernel::BRep,
  config: &AdaptiveToleranceConfig,
-) -> (brep, AdaptiveToleranceMergeReport) {
+) -> (rcad_kernel::BRep, AdaptiveToleranceMergeReport) {
  let mut result = brep.clone();
  let mut report = AdaptiveToleranceMergeReport::default();
 
@@ -959,7 +959,7 @@ pub fn merge_bspline_faces(
  face1_idx: usize,
  face2_idx: usize,
  tolerance: f64,
-) -> Option<(brep, MergedFaceInfo)> {
+) -> Option<(rcad_kernel::BRep, MergedFaceInfo)> {
  // Get surfaces for both faces
  let surf1_idx = brep.geom.face_surface.get(face1_idx).and_then(|v| *v)?;
  let surf2_idx = brep.geom.face_surface.get(face2_idx).and_then(|v| *v)?;
@@ -1938,4 +1938,6 @@ fn estimate_chain_area(chain: &[usize], brep: &rcad_kernel::BRep) -> f64 {
  }
  (area / 2.0).abs()
 }
+
+
 

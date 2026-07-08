@@ -1,4 +1,4 @@
-fn create_face_from_boundary(chain: &[usize], brep: &rcad_kernel::BRep, _tolerance: f64) -> Option<Face> {
+﻿fn create_face_from_boundary(chain: &[usize], brep: &rcad_kernel::BRep, _tolerance: f64) -> Option<Face> {
  if chain.len() < 3 { return None; }
  let mut wire_edges: Vec<WireEdge> = Vec::new();
  let mut nodes: Vec<DVec3> = Vec::new();
@@ -1685,7 +1685,7 @@ pub fn fix_uv_gaps(
  face_idx: usize,
  brep: &rcad_kernel::BRep,
  config: &UvGapRepairConfig,
-) -> (brep, UvGapRepairReport) {
+) -> (rcad_kernel::BRep, UvGapRepairReport) {
  let mut result = brep.clone();
  let mut report = UvGapRepairReport::default();
 
@@ -2009,4 +2009,5 @@ fn extend_pcurve_to_boundary(
  Curve2d::Parabola(_) | Curve2d::Hyperbola(_) | Curve2d::Offset(_) => None,
  }
 }
+
 

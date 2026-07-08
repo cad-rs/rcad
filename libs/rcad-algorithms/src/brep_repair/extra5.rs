@@ -31,7 +31,7 @@ fn repair_periodic_seam_gap(
 /// # Returns
 ///
 /// A tuple of (repaired brep, repair report).
-pub fn fix_all_uv_gaps(brep: &rcad_kernel::BRep, config: &UvGapRepairConfig) -> (brep, UvGapRepairReport) {
+pub fn fix_all_uv_gaps(brep: &rcad_kernel::BRep, config: &UvGapRepairConfig) -> (rcad_kernel::BRep, UvGapRepairReport) {
  let mut result = brep.clone();
  let mut total_report = UvGapRepairReport::default();
 
@@ -75,7 +75,7 @@ pub fn fix_edge_pcurve_uv_bounds(
  surface_idx: usize,
  brep: &rcad_kernel::BRep,
  config: &UvGapRepairConfig,
-) -> (brep, bool) {
+) -> (rcad_kernel::BRep, bool) {
  let mut result = brep.clone();
  let mut repaired = false;
 
@@ -834,7 +834,7 @@ pub struct InternalFaceRemovalReport {
 /// - Removes orphaned edges (edges no longer referenced by any face)
 /// - Removes orphaned vertices (vertices no longer referenced by any edge)
 /// - Updates geometric data arrays to match new topology
-pub fn remove_internal_faces(brep: &rcad_kernel::BRep, face_indices: &[usize]) -> (brep, InternalFaceRemovalReport) {
+pub fn remove_internal_faces(brep: &rcad_kernel::BRep, face_indices: &[usize]) -> (rcad_kernel::BRep, InternalFaceRemovalReport) {
  let mut report = InternalFaceRemovalReport::default();
  let remove_set: std::collections::HashSet<usize> = face_indices.iter().copied().collect();
 
@@ -963,7 +963,7 @@ pub fn remove_internal_faces(brep: &rcad_kernel::BRep, face_indices: &[usize]) -
 fn remove_orphaned_edges(
  brep: &rcad_kernel::BRep,
  edges_to_keep: &std::collections::HashSet<usize>,
-) -> (brep, std::collections::HashMap<usize, usize>) {
+) -> (rcad_kernel::BRep, std::collections::HashMap<usize, usize>) {
  let _n_edges = brep.edges.len();
 
  // Build remap: old_idx -> new_idx
@@ -1190,7 +1190,7 @@ pub struct BooleanCleanupReport {
 /// cleaned
 /// }
 /// ```
-pub fn cleanup_boolean_result(brep: &rcad_kernel::BRep, tolerance: f64) -> (brep, BooleanCleanupReport) {
+pub fn cleanup_boolean_result(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel::BRep, BooleanCleanupReport) {
  let mut report = BooleanCleanupReport::default();
  let tol = tolerance.max(TOLERANCE_ABS);
 
@@ -1200,30 +1200,30 @@ pub fn cleanup_boolean_result(brep: &rcad_kernel::BRep, tolerance: f64) -> (brep
  report.internal_faces_removed = removal_report.faces_removed;
 
  // Step 2: Merge duplicate faces
- let duplicate_report = detect_duplicate_faces(&rcad_kernel::BRep, tol);
+ let duplicate_report = detect_duplicate_faces(&brep, tol);
  let mut faces_to_merge: Vec<usize> = Vec::new();
  for pair in &duplicate_report.duplicate_pairs {
  if pair.opposite_orientation {
  faces_to_merge.push(pair.face_b);
  }
  }
- let (brep, merge_report) = remove_internal_faces(&rcad_kernel::BRep, &faces_to_merge);
+ let (brep, merge_report) = remove_internal_faces(&brep, &faces_to_merge);
  report.duplicate_faces_merged = merge_report.faces_removed;
 
  // Step 3: Remove degenerate faces
- let (brep, degenerate_removed) = remove_degenerate_faces(&rcad_kernel::BRep);
+ let (brep, degenerate_removed) = remove_degenerate_faces(&brep);
  report.degenerate_faces_removed = degenerate_removed;
 
  // Step 4: Merge close vertices
- let (brep, vertices_merged) = merge_close_vertices(&rcad_kernel::BRep, tol);
+ let (brep, vertices_merged) = merge_close_vertices(&brep, tol);
  report.vertices_merged = vertices_merged;
 
  // Step 5: Sew close edges
- let (brep, sew_report) = sew_close_edges(&rcad_kernel::BRep, tol);
+ let (brep, sew_report) = sew_close_edges(&brep, tol);
  report.edges_sewn = sew_report.edges_sewn;
 
  // Step 6: Fix tolerances
- let brep = propagate_tolerances(&rcad_kernel::BRep, tol, ToleranceFlowDirection::BottomUp);
+ let brep = propagate_tolerances(&brep, tol, ToleranceFlowDirection::BottomUp);
 
  // Validate result
  report.is_valid = !brep.solids.is_empty();
@@ -1370,7 +1370,7 @@ pub fn propagate_tolerances_post_boolean_op(
  operation_type: BooleanOpTypeForTolerance,
  intersection_edge_indices: &[usize],
  intersection_vertex_indices: &[usize],
-) -> (brep, PostBooleanToleranceReport) {
+) -> (rcad_kernel::BRep, PostBooleanToleranceReport) {
  propagate_tolerances_post_boolean_op_with_config(
  brep,
  operation_type,
@@ -1387,7 +1387,7 @@ pub fn propagate_tolerances_post_boolean_op_with_config(
  intersection_edge_indices: &[usize],
  intersection_vertex_indices: &[usize],
  config: &PostBooleanToleranceConfig,
-) -> (brep, PostBooleanToleranceReport) {
+) -> (rcad_kernel::BRep, PostBooleanToleranceReport) {
  let floor = config.tolerance_floor.max(TOLERANCE_ABS);
  let mut result = brep.clone();
  let mut report = PostBooleanToleranceReport::default();
@@ -1660,7 +1660,7 @@ pub fn propagate_tolerances_post_sew(
  brep: &rcad_kernel::BRep,
  sewing_tolerance: f64,
  seam_edge_pairs: &[(usize, usize)],
-) -> (brep, PostSewToleranceReport) {
+) -> (rcad_kernel::BRep, PostSewToleranceReport) {
  propagate_tolerances_post_sew_with_config(
  brep,
  sewing_tolerance,
@@ -1675,7 +1675,7 @@ pub fn propagate_tolerances_post_sew_with_config(
  sewing_tolerance: f64,
  seam_edge_pairs: &[(usize, usize)],
  config: &PostSewToleranceConfig,
-) -> (brep, PostSewToleranceReport) {
+) -> (rcad_kernel::BRep, PostSewToleranceReport) {
  let floor = config.tolerance_floor.max(TOLERANCE_ABS);
  let seam_tol = sewing_tolerance.max(floor) * config.seam_tolerance_factor;
 
@@ -1960,3 +1960,5 @@ impl Default for TolerancePropagationEngine {
  Self::new()
  }
 }
+
+

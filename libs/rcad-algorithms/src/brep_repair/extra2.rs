@@ -1,4 +1,4 @@
-/// Newell's method: compute the (un-normalized) area vector of a planar polygon.
+﻿/// Newell's method: compute the (un-normalized) area vector of a planar polygon.
 fn newell_normal(pts: &[DVec3]) -> DVec3 {
  let n = pts.len();
  let mut normal = DVec3::ZERO;
@@ -33,7 +33,7 @@ fn newell_area(pts: &[DVec3]) -> f64 {
 /// `edge_same_parameter[edge_idx]` is set to `true`.
 ///
 /// This is the analogue of OCCT `BRepLib::SameParameter()` / `ShapeFix_Edge::FixSameParameter()`.
-pub fn fix_same_parameter(brep: &rcad_kernel::BRep, _tolerance: f64) -> (brep, usize) {
+pub fn fix_same_parameter(brep: &rcad_kernel::BRep, _tolerance: f64) -> (rcad_kernel::BRep, usize) {
  let mut out = brep.clone();
  let edge_count = out.edges.len();
 
@@ -113,7 +113,7 @@ pub fn fix_same_parameter(brep: &rcad_kernel::BRep, _tolerance: f64) -> (brep, u
 /// Returns the repaired brep and the number of edges repaired.
 ///
 /// Analogous to OCCT `BRepLib::SameParameter(shape, enforce=true)`.
-pub fn fix_same_parameter_with_scan(brep: &rcad_kernel::BRep, tolerance: f64) -> (brep, usize) {
+pub fn fix_same_parameter_with_scan(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel::BRep, usize) {
  let diagnosis = diagnose_same_parameter(brep, tolerance);
  if diagnosis.suspect_edges.is_empty() {
  return (brep.clone(), 0);
@@ -149,7 +149,7 @@ pub fn fix_same_parameter_with_scan(brep: &rcad_kernel::BRep, tolerance: f64) ->
 /// Analogous to OCCT `ShapeUpgrade_RemoveLocations` / `ShapeFix::RemoveSmallEdges`.
 ///
 /// Returns the cleaned brep and the number of short edges removed.
-pub fn remove_small_edges(brep: &rcad_kernel::BRep, min_length: f64) -> (brep, usize) {
+pub fn remove_small_edges(brep: &rcad_kernel::BRep, min_length: f64) -> (rcad_kernel::BRep, usize) {
  let mut out = brep.clone();
  let mut total_removed = 0usize;
 
@@ -1133,7 +1133,7 @@ pub struct WireGapRepairReport {
 /// the gap. Gaps larger than `max_gap` are left unchanged.
 ///
 /// Analogous to `ShapeFix_Wire::FixGap()` in OCCT.
-pub fn fix_wire_gaps(brep: &rcad_kernel::BRep, tolerance: f64, max_gap: f64) -> (brep, WireGapRepairReport) {
+pub fn fix_wire_gaps(brep: &rcad_kernel::BRep, tolerance: f64, max_gap: f64) -> (rcad_kernel::BRep, WireGapRepairReport) {
  let mut report = WireGapRepairReport::default();
 
  // First, collect all gaps that need fixing
@@ -1249,7 +1249,7 @@ pub struct UvBoundsRepairReport {
 /// the canonical range. For bounded surfaces, clamps parameters.
 ///
 /// Analogous to `ShapeFix_Face::FixUVBounds()` in OCCT.
-pub fn fix_uv_bounds_violations(brep: &rcad_kernel::BRep, tolerance: f64) -> (brep, UvBoundsRepairReport) {
+pub fn fix_uv_bounds_violations(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel::BRep, UvBoundsRepairReport) {
  use crate::brep_check::analyze_surface_uv_consistency;
  use rcad_kernel::geom::Surface3;
 
@@ -1492,7 +1492,7 @@ pub struct EnhancedEdgeSewReport {
 ///
 /// # Returns
 /// A tuple of (modified brep, report).
-pub fn sew_edges_enhanced(brep: &rcad_kernel::BRep, config: &EdgeSewConfig) -> (brep, EnhancedEdgeSewReport) {
+pub fn sew_edges_enhanced(brep: &rcad_kernel::BRep, config: &EdgeSewConfig) -> (rcad_kernel::BRep, EnhancedEdgeSewReport) {
  let mut result = brep.clone();
  let mut report = EnhancedEdgeSewReport::default();
 
@@ -1555,7 +1555,7 @@ struct SameCurveMergeReport {
 ///
 /// This is useful for edges that were split during boolean operations
 /// but should logically be merged back together.
-fn merge_same_curve_edges(brep: &rcad_kernel::BRep, tolerance: f64) -> (brep, SameCurveMergeReport) {
+fn merge_same_curve_edges(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel::BRep, SameCurveMergeReport) {
  let result = brep.clone();
  let mut report = SameCurveMergeReport::default();
 
@@ -1996,7 +1996,7 @@ pub fn split_edge_at_seam(
  brep: &rcad_kernel::BRep,
  seam_info: &SeamEdgeInfo,
  _tolerance: f64,
-) -> (brep, bool) {
+) -> (rcad_kernel::BRep, bool) {
  let mut result = brep.clone();
  let mut split_performed = false;
 
@@ -2074,4 +2074,5 @@ pub fn split_edge_at_seam(
  split_performed = true;
  (result, split_performed)
 }
+
 

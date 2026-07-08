@@ -1,13 +1,13 @@
-//! OCCT-aligned TKBO GTest translations.
+﻿//! OCCT-aligned TKBO GTest translations.
 //!
 //! OCCT source: src/ModelingAlgorithms/TKBO/GTests/
 //!
 //! Files translated in this module:
-//!   rcad_kernel::BRepAlgoAPI_BuilderAlgo_Test.cxx  — Non-copyability traits (C++ → Rust: trivially pass)
-//!   BOPAlgo_BOP_Test.cxx              — Direct and two-step BOP operations
-//!   BOPAlgo_PaveFiller_Test.cxx       — PaveFiller regression tests (degenerated edges)
-//!   IntTools_FaceFace_Test.cxx         — Face-face intersection
-//!   rcad_kernel::BRepAlgoAPI_Common_Test.cxx       — Common operation tests
+//!   rcad_kernel::BRepAlgoAPI_BuilderAlgo_Test.cxx  鈥?Non-copyability traits (C++ 鈫?Rust: trivially pass)
+//!   BOPAlgo_BOP_Test.cxx              鈥?Direct and two-step BOP operations
+//!   BOPAlgo_PaveFiller_Test.cxx       鈥?PaveFiller regression tests (degenerated edges)
+//!   IntTools_FaceFace_Test.cxx         鈥?Face-face intersection
+//!   rcad_kernel::BRepAlgoAPI_Common_Test.cxx       鈥?Common operation tests
 //!
 //!
 //! NOTE: rcad_kernel::BRepAlgoAPI_Fuse_Test.cxx, rcad_kernel::BRepAlgoAPI_Cut_Test.cxx, and Cut_Test_1.cxx
@@ -24,7 +24,7 @@ const TOL: f64 = 1.0e-6;
 const SA_TOLERANCE: f64 = 5000.0;
 
 // =============================================================================
-// Helper utilities — BOPTest_Utilities equivalent
+// Helper utilities 鈥?BOPTest_Utilities equivalent
 // =============================================================================
 
 fn make_unit_box() -> topods::BRep {
@@ -93,7 +93,7 @@ fn validate_result_sa(result: &rcad_kernel::BRep, expected_sa: f64) {
 }
 
 // =============================================================================
-// rcad_kernel::BRepAlgoAPI_BuilderAlgo_Test.cxx — C++ type traits
+// rcad_kernel::BRepAlgoAPI_BuilderAlgo_Test.cxx 鈥?C++ type traits
 // =============================================================================
 
 #[cfg(test)]
@@ -115,7 +115,7 @@ mod builder_algo_tests {
 }
 
 // =============================================================================
-// BOPAlgo_BOP_Test.cxx — Direct and two-step BOP operations
+// BOPAlgo_BOP_Test.cxx 鈥?Direct and two-step BOP operations
 // =============================================================================
 
 #[cfg(test)]
@@ -163,7 +163,7 @@ mod bop_algo_direct_tests {
 }
 
 // =============================================================================
-// BOPAlgo_PaveFiller_Test.cxx — Degenerated edge handling
+// BOPAlgo_PaveFiller_Test.cxx 鈥?Degenerated edge handling
 // =============================================================================
 
 #[cfg(test)]
@@ -177,7 +177,7 @@ mod pave_filler_tests {
         let cone_b = rcad_kernel::BRep::from_topods(&cone);
         let box_b = rcad_kernel::BRep::from_topods(&box_);
 
-        let mut fuser = crate::brep_algo_api::rcad_kernel::BRepAlgoAPI_Fuse::new(&cone_b, &box_b);
+        let mut fuser = crate::brep_algo_api::BRepAlgoAPI_Fuse::new(&cone_b, &box_b);
         assert!(fuser.build(), "Boolean fuse of cone and box should succeed");
         assert!(get_volume(fuser.shape()) > 0.0);
     }
@@ -187,14 +187,14 @@ mod pave_filler_tests {
         let sphere_b = rcad_kernel::BRep::from_topods(&make_unit_sphere());
         let box_b = rcad_kernel::BRep::from_topods(&make_unit_box());
 
-        let mut fuser = crate::brep_algo_api::rcad_kernel::BRepAlgoAPI_Fuse::new(&sphere_b, &box_b);
+        let mut fuser = crate::brep_algo_api::BRepAlgoAPI_Fuse::new(&sphere_b, &box_b);
         assert!(fuser.build(), "Boolean fuse should succeed");
         assert!(get_volume(fuser.shape()) > 0.0);
     }
 }
 
 // =============================================================================
-// IntTools_FaceFace_Test.cxx — Face-face intersection
+// IntTools_FaceFace_Test.cxx 鈥?Face-face intersection
 // =============================================================================
 
 #[cfg(test)]
@@ -259,8 +259,9 @@ mod bop_common_simple_tests {
         let b1 = rcad_kernel::BRep::from_topods(&make_box(DVec3::ZERO, 1.0, 1.0, 1.0));
         let b2 = rcad_kernel::BRep::from_topods(&make_box(DVec3::ZERO, 1.0, 1.0, 1.0));
 
-        let mut common = crate::brep_algo_api::rcad_kernel::BRepAlgoAPI_Common::new(&b1, &b2);
+        let mut common = crate::brep_algo_api::BRepAlgoAPI_Common::new(&b1, &b2);
         assert!(common.build(), "Common operation should succeed");
         assert!(get_surface_area(common.shape()) > 0.0);
     }
 }
+

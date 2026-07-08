@@ -1,4 +1,4 @@
-
+﻿
 impl TolerancePropagationEngine {
  /// Create a new engine with default configuration.
  pub fn new() -> Self {
@@ -33,7 +33,7 @@ impl TolerancePropagationEngine {
  }
 
  /// Propagate tolerances according to the configured rule.
- pub fn propagate(&self, brep: &rcad_kernel::BRep) -> (brep, TolerancePropagationReport) {
+ pub fn propagate(&self, brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, TolerancePropagationReport) {
  match self.config.rule {
  ToleranceRule::OcctStandard => self.propagate_occt_standard(brep),
  ToleranceRule::Conservative => self.propagate_conservative(brep),
@@ -44,7 +44,7 @@ impl TolerancePropagationEngine {
  }
  }
 
- fn propagate_occt_standard(&self, brep: &rcad_kernel::BRep) -> (brep, TolerancePropagationReport) {
+ fn propagate_occt_standard(&self, brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, TolerancePropagationReport) {
  let mut result = brep.clone();
  let mut report = TolerancePropagationReport::default();
  let floor = self.config.tolerance_floor.max(TOLERANCE_ABS);
@@ -111,7 +111,7 @@ impl TolerancePropagationEngine {
  (result, report)
  }
 
- fn propagate_conservative(&self, brep: &rcad_kernel::BRep) -> (brep, TolerancePropagationReport) {
+ fn propagate_conservative(&self, brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, TolerancePropagationReport) {
  let mut result = brep.clone();
  let mut report = TolerancePropagationReport::default();
  let floor = self.config.tolerance_floor.max(TOLERANCE_ABS);
@@ -127,7 +127,7 @@ impl TolerancePropagationEngine {
  (result, report)
  }
 
- fn propagate_aggressive(&self, brep: &rcad_kernel::BRep) -> (brep, TolerancePropagationReport) {
+ fn propagate_aggressive(&self, brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, TolerancePropagationReport) {
  let mut result = brep.clone();
  let mut report = TolerancePropagationReport::default();
  let floor = self.config.tolerance_floor.max(TOLERANCE_ABS);
@@ -222,7 +222,7 @@ impl TolerancePropagationEngine {
  (result, report)
  }
 
- fn propagate_harmonized(&self, brep: &rcad_kernel::BRep) -> (brep, TolerancePropagationReport) {
+ fn propagate_harmonized(&self, brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, TolerancePropagationReport) {
  let mut result = brep.clone();
  let mut report = TolerancePropagationReport::default();
  let floor = self.config.tolerance_floor.max(TOLERANCE_ABS);
@@ -309,7 +309,7 @@ impl TolerancePropagationEngine {
  (result, report)
  }
 
- fn propagate_bounded(&self, brep: &rcad_kernel::BRep) -> (brep, TolerancePropagationReport) {
+ fn propagate_bounded(&self, brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, TolerancePropagationReport) {
  let mut result = brep.clone();
  let mut report = TolerancePropagationReport::default();
  let floor = self.config.tolerance_floor.max(TOLERANCE_ABS);
@@ -377,7 +377,7 @@ impl TolerancePropagationEngine {
  (result, report)
  }
 
- fn propagate_model_scale(&self, brep: &rcad_kernel::BRep) -> (brep, TolerancePropagationReport) {
+ fn propagate_model_scale(&self, brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, TolerancePropagationReport) {
  let mut result = brep.clone();
  let mut report = TolerancePropagationReport::default();
  let scale = self.config.model_scale.max(TOLERANCE_LINEAR_ULTRA_STRICT);
@@ -886,7 +886,7 @@ pub fn apply_tolerance_fixes(
  brep: &rcad_kernel::BRep,
  report: &ToleranceConsistencyReport,
  max_fixes: usize,
-) -> (brep, usize) {
+) -> (rcad_kernel::BRep, usize) {
  let mut result = brep.clone();
  let mut fixes_applied = 0usize;
  let floor = TOLERANCE_ABS;
@@ -1614,7 +1614,7 @@ pub struct PostBooleanRemovalReport {
 ///
 /// # Returns
 /// A tuple of (cleaned brep, removal report).
-pub fn remove_internal_faces_post_boolean(brep: &rcad_kernel::BRep) -> (brep, PostBooleanRemovalReport) {
+pub fn remove_internal_faces_post_boolean(brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, PostBooleanRemovalReport) {
  remove_internal_faces_post_boolean_with_config(brep, &PostBooleanRemovalConfig::default())
 }
 
@@ -1624,7 +1624,7 @@ pub fn remove_internal_faces_post_boolean(brep: &rcad_kernel::BRep) -> (brep, Po
 pub fn remove_internal_faces_post_boolean_with_config(
  brep: &rcad_kernel::BRep,
  config: &PostBooleanRemovalConfig,
-) -> (brep, PostBooleanRemovalReport) {
+) -> (rcad_kernel::BRep, PostBooleanRemovalReport) {
  let mut report = PostBooleanRemovalReport::default();
 
  // Step 1: Detect internal faces
@@ -1854,7 +1854,7 @@ fn estimate_face_area_from_wire(brep: &rcad_kernel::BRep, wire: &Wire) -> f64 {
 ///
 /// # Returns
 /// A tuple of (brep with merged faces, count of faces merged).
-pub fn merge_adjacent_faces_after_removal(brep: &rcad_kernel::BRep, tolerance: f64) -> (brep, usize) {
+pub fn merge_adjacent_faces_after_removal(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel::BRep, usize) {
  let tol = tolerance.max(TOLERANCE_ABS);
  let mut result = brep.clone();
  let mut total_merged = 0usize;
@@ -1957,4 +1957,6 @@ fn merge_faces_in_shell(brep: &rcad_kernel::BRep, faces: &[Face], tolerance: f64
 
  (result, merged_count)
 }
+
+
 
