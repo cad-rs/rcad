@@ -138,8 +138,8 @@ pub use approx_int::{
     sample_with_adaptive_density,
 };
 pub use brep_algo::{
-    BRepAlgoError, OrientationIssue as BRepAlgoOrientationIssue, check_orientation,
-    evaluate_edge_tangent, evaluate_face_normal, evaluate_vertex_normal,
+    BRepAlgoError, FaceSection, NormalProject, OrientationIssue as BRepAlgoOrientationIssue,
+    check_orientation, evaluate_edge_tangent, evaluate_face_normal, evaluate_vertex_normal,
     is_valid_brep,
     propagate_edge_tolerances, propagate_face_tolerances,
     total_surface_area, total_surface_area_topods, total_volume, total_volume_topods,
