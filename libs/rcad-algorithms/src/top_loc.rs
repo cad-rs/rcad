@@ -1,4 +1,4 @@
-﻿//! TopLoc-style location utilities for coordinate system management.
+//! TopLoc-style location utilities for coordinate system management.
 //!
 //! This module provides utilities analogous to OCCT's `TopLoc` package:
 //!
@@ -26,8 +26,6 @@
 //! let world_point = datum.to_world(local_point);
 //! ```
 
-
-use rcad_kernel::BRep;
 
 use crate::tolerance::*;
 use glam::{DAffine3, DMat3, DMat4, DVec3, DQuat};
@@ -1089,9 +1087,9 @@ impl LocationManager {
 /// apply_location_to_shape(&mut brep, &loc);
 ///
 /// // The box is now centered at (5.5, 0.5, 0.5)
-/// assert!((brep.vertices[0].point.x - 5.0).abs() < TOLERANCE_COORD_SUB);
+/// assert!((brep.vertex(0).point.x - 5.0).abs() < TOLERANCE_COORD_SUB);
 /// ```
-pub fn apply_location_to_shape(brep: &mut BRep, loc: &Location) {
+pub fn apply_location_to_shape(brep: &mut topods::BRep, loc: &Location) {
  if loc.is_identity() {
  return;
  }
@@ -1108,7 +1106,7 @@ pub fn apply_location_to_shape(brep: &mut BRep, loc: &Location) {
 /// # Returns
 ///
 /// A new BRep with the transformation applied.
-pub fn apply_location_to_shape_owned(brep: &BRep, loc: &Location) -> BRep {
+pub fn apply_location_to_shape_owned(brep: &topods::BRep, loc: &Location) -> topods::BRep {
  if loc.is_identity() {
  return brep.clone();
  }
