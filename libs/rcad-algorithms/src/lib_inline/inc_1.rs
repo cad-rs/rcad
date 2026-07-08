@@ -1,4 +1,4 @@
-
+﻿
 /// Options for post-operation topology simplification.
 #[derive(Debug, Clone, Copy)]
 pub struct SimplifyOptions {
@@ -602,7 +602,7 @@ impl BooleanRobustOptions {
 ///
 /// Values below [`tolerance::TOLERANCE_ABS`] clamp up to that floor. Use this for diagnostics
 /// ([`BooleanExecutionReport::effective_fuzzy_tol`]) so reports match runtime behavior when
-/// [`BooleanOptions::fuzzy_tol`] is `0.0` (“default fuzzy”).
+/// [`BooleanOptions::fuzzy_tol`] is `0.0` (鈥渄efault fuzzy鈥?.
 #[inline]
 pub fn resolved_boolean_fuzzy_tol_for_ds(configured_fuzzy: f64) -> f64 {
  configured_fuzzy.max(tolerance::TOLERANCE_ABS)
@@ -682,7 +682,7 @@ pub fn align_healing_options_with_boolean_operands(
 
 /// Like [`align_healing_options_with_boolean_operands`], but uses
 /// [`BooleanExecutionReport::configured_fuzzy_tol`] so post-boolean healing stays consistent
-/// with the attempt’s workspace flag (e.g. `fuzzy_tol == 0` vs strictly positive user fuzzy).
+/// with the attempt鈥檚 workspace flag (e.g. `fuzzy_tol == 0` vs strictly positive user fuzzy).
 pub fn align_healing_options_after_boolean_execution(
  healing: &mut HealingOptions,
  a: &BRep,
@@ -1520,12 +1520,12 @@ fn brep_shell_face_count(brep: &BRep) -> usize {
 
 /// OCCT `BRepAlgoAPI_Cut` yields an empty shape when operands coincide (e.g. two identical
 /// `box` definitions in `bopcut`). Match that without forcing every `DegenerateResult` from the
-/// builder to mean “empty”.
+/// builder to mean 鈥渆mpty鈥?
 /// True when every face has geometry and every face surface is a plane (e.g. `make_box_brep` solids).
 ///
-/// Used to gate “planar zero-volume sliver ⇒ empty intersection” heuristics: operands that include
-/// spheres/cylinders etc. can still yield all-plane *wrong* shells with `volume ≈ 0`; we must not
-/// collapse those to empty or OCCT sphere–box cases regress to `total_surface_area == 0`.
+/// Used to gate 鈥減lanar zero-volume sliver 鈬?empty intersection鈥?heuristics: operands that include
+/// spheres/cylinders etc. can still yield all-plane *wrong* shells with `volume 鈮?0`; we must not
+/// collapse those to empty or OCCT sphere鈥揵ox cases regress to `total_surface_area == 0`.
 fn brep_is_pure_plane_solid(brep: &BRep) -> bool {
  let nf = face_count_of(brep);
  if nf == 0 {
@@ -1546,13 +1546,13 @@ fn brep_is_pure_plane_solid(brep: &BRep) -> bool {
  true
 }
 
-/// True when every face normal is (approximately) ±X, ±Y, or ±Z in world space.
+/// True when every face normal is (approximately) 卤X, 卤Y, or 卤Z in world space.
 ///
 /// Gates post-intersection [`orthogonal_face_fuse::remove_axis_coplanar_redundant_child_faces`]:
 /// True when every face normal is (approximately) +/-X, +/-Y, or +/-Z in world space.
 /// Used to gate axis-aligned optimization: for two world-axis-aligned planar solids,
-/// **smaller** 2D bbox on a shared plane, but in nested **box∩box** the smaller patch is often the
-/// true external face and the larger one is the untrimmed remainder — yielding too-low
+/// **smaller** 2D bbox on a shared plane, but in nested **box鈭゜ox** the smaller patch is often the
+/// true external face and the larger one is the untrimmed remainder 鈥?yielding too-low
 /// [`rcad_kernel::surface_area`] (OCCT `bcommon_simple/B1`). Rotated operands (`bcommon_simple/C8`)
 /// still need the cleanup, so we only skip when **both** sides satisfy this predicate.
 fn brep_is_world_axis_aligned_plane_solid(brep: &BRep) -> bool {
@@ -1596,7 +1596,7 @@ fn boolean_difference_empty_coincident(a: &BRep, b: &BRep) -> bool {
  if (amin - bmin).length() > tol || (amax - bmax).length() > tol {
  return false;
  }
- // Bbox + face count is not sufficient — an inscribed rotated box shares
+ // Bbox + face count is not sufficient 鈥?an inscribed rotated box shares
  // the same bbox as its container (e.g. bopcut_simple/F5).
  // Also check that vertex sets match (identical shapes have identical vertices).
  if a.vertices.len() != b.vertices.len() {
@@ -1626,8 +1626,8 @@ fn intersection_planar_sliver_should_be_empty(result: &BRep, a: &BRep, b: &BRep)
  return false;
  }
 
- // Require one surface slot per face and all planes — `Iterator::all` on an empty iterator is
- // `true`, and skipping `None` slots could wrongly classify incomplete geom as “all planes”.
+ // Require one surface slot per face and all planes 鈥?`Iterator::all` on an empty iterator is
+ // `true`, and skipping `None` slots could wrongly classify incomplete geom as 鈥渁ll planes鈥?
  if result.geom.face_surface.len() != nf {
  return false;
  }
@@ -1751,7 +1751,7 @@ pub(crate) fn boolean_postprocess_pave_result(
 }
 
 /// Topods variant: no-op post-process, returns result as-is (debug logging removed).
-/// The old function only did debug logging — this variant skips it.
+/// The old function only did debug logging 鈥?this variant skips it.
 pub(crate) fn boolean_postprocess_pave_result_topods(
  _op: BooleanOpType, _a: &BRep, _b: &BRep,
  result: topods::BRep,
@@ -1759,10 +1759,10 @@ pub(crate) fn boolean_postprocess_pave_result_topods(
  Ok(result)
 }
 
-/// DS → [`pave_filler::PaveFiller`] → [`builder::BooleanBuilder`] → plane surface recompute.
+/// DS 鈫?[`pave_filler::PaveFiller`] 鈫?[`builder::BooleanBuilder`] 鈫?plane surface recompute.
 ///
 /// Used internally when a coaxial shortcut must call difference without re-entering other coaxial
-/// difference branches (e.g. cylinder − loft frustum after `cone ∩ cylinder`).
+/// difference branches (e.g. cylinder 鈭?loft frustum after `cone 鈭?cylinder`).
 /// Direct PaveFiller + BooleanBuilder pipeline, no post-processing.
 /// OCCT-aligned: BOPAlgo_BOP::Perform.
 pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<topods::BRep, BooleanError> {
@@ -1798,65 +1798,4 @@ pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) 
  let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
  let (result, _history) = builder.build_with_history_topods()?;
  Ok(result)
-}
-///
-/// (removed try_fast_path macro — OCCT has no fast-path shortcuts)
-
-/// Convert cylinder sub-faces to per-face BSpline surfaces.
-///
-/// OCCT ref: ShapeCustom_ConvertToBSpline converts per-face surfaces from
-/// analytic to BSpline, then ShapeCustom_SweptToElementary detects planar strips.
-/// Merge duplicate edges: when two or more edges connect the same vertex pair
-/// (start, end), remap all face wire references to use a single canonical edge.
-/// (removed from main boolean pipeline — OCCT PostTreat does not do this)
-pub(crate) fn deduplicate_edges(mut brep: BRep) -> BRep {
- use std::collections::HashMap;
- use rcad_kernel::topology::WireEdge;
-
- if brep.edges.len() < 2 { return brep; }
-
- // ✅ OCCT :  + 。 , ( 
- // seam IC  ) (TopoDS_Edge  )。 。
- // OCCT: edge uniqueness is curve-based, not vertex-pair-based.
- let mut canon: HashMap<(usize, usize), usize> = HashMap::new();
- let mut remap: Vec<usize> = (0..brep.edges.len()).collect();
- for ei in 0..brep.edges.len() {
- if let Some(e) = brep.edges.get(ei) {
- let key = if e.start < e.end { (e.start, e.end) } else { (e.end, e.start) };
- let ci = brep.geom.edge_curve.get(ei).copied().flatten();
- if let Some(&existing) = canon.get(&key) {
- let cj = brep.geom.edge_curve.get(existing).copied().flatten();
- if ci == cj {
- remap[ei] = existing;
- }
- // else: different curves → keep as separate edge (OCCT unique)
- } else {
- canon.insert(key, ei);
- }
- }
- }
-
- // Remap wire edges in all faces (only once, no trimming).
- let mut changed = false;
- for solid in &mut brep.solids {
- for shell in &mut solid.shells {
- for face in &mut shell.faces {
- fn do_remap(edges: &mut [WireEdge], remap: &[usize], changed: &mut bool) {
- for we in edges.iter_mut() {
- let new = remap[we.idx];
- if new != we.idx { *changed = true; we.idx = new; }
- }
- }
- do_remap(&mut face.outer_wire.edges, &remap, &mut changed);
- for wire in &mut face.inner_wires {
- do_remap(&mut wire.edges, &remap, &mut changed);
- }
- }
- }
- }
-
- // No edge trimming needed (keeping all edges preserves vertex indices).
- // The remap ensures edges are SHARED between adjacent faces, which fixes
- // the 2× EDGE_CURVE count in the STEP output for PaveFiller results.
- brep
 }
