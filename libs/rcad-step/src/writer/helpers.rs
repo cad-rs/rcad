@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 use rcad_kernel::{BSplineCurve2, Curve2d, Curve3, Surface3, topods};
-use super::{BRep, Face};
+use super::Face;
 
 #[derive(Clone, Copy)]
 pub(super) struct OrientedEdgeExport {

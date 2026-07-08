@@ -35,7 +35,7 @@ pub enum StepProtocol {
  /// ISO 10303-242 "Managed Model Based 3D Engineering".
  Ap242,
 }
-use self::flat::{BRep, Face};
+use self::flat::Face;
 use rcad_kernel::{BSplineCurve2, Curve2d, Curve3, CurveEval, Surface3, topods};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Write;
