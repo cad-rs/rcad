@@ -1,18 +1,16 @@
-﻿//! ShapeAlgo-style additional shape algorithms.
+//! ShapeAlgo-style additional shape algorithms.
 //!
 //! Provides utilities for shape analysis and geometry extraction, analogous to
 //! OCCT `ShapeAlgo` package. This module includes:
 //!
 //! - `AlgoContainer`: Container for pluggable shape algorithms
-//! - `GetBoxGeometry`: Extract box dimensions from a BRep
-//! - `GetCylinderGeometry`: Extract cylinder parameters from a BRep
-//! - `GetSphereGeometry`: Extract sphere parameters from a BRep
-//! - `GetConeGeometry`: Extract cone parameters from a BRep
-//! - `GetTorusGeometry`: Extract torus parameters from a BRep
+//! - `GetBoxGeometry`: Extract box dimensions from a rcad_kernel::BRep
+//! - `GetCylinderGeometry`: Extract cylinder parameters from a rcad_kernel::BRep
+//! - `GetSphereGeometry`: Extract sphere parameters from a rcad_kernel::BRep
+//! - `GetConeGeometry`: Extract cone parameters from a rcad_kernel::BRep
+//! - `GetTorusGeometry`: Extract torus parameters from a rcad_kernel::BRep
 //! - `IsPrimitive`: Check if a shape matches a primitive type
 
-
-use rcad_kernel::BRep;
 
 use crate::tolerance::*;
 use glam::DVec3;
@@ -102,15 +100,15 @@ pub struct TorusGeometry {
 /// Trait for pluggable shape algorithms.
 ///
 /// Algorithms implementing this trait can be registered with an `AlgoContainer`
-/// and executed on BRep shapes.
+/// and executed on rcad_kernel::BRep shapes.
 pub trait ShapeAlgorithm: Send + Sync {
     /// Get the name of this algorithm.
     fn name(&self) -> &str;
 
-    /// Execute the algorithm on the given BRep.
+    /// Execute the algorithm on the given rcad_kernel::BRep.
     ///
     /// Returns `true` if the algorithm succeeded, `false` otherwise.
-    fn execute(&self, brep: &BRep) -> bool;
+    fn execute(&self, brep: &rcad_kernel::BRep) -> bool;
 }
 
 // =============================================================================
@@ -120,7 +118,7 @@ pub trait ShapeAlgorithm: Send + Sync {
 /// Container for pluggable shape algorithms.
 ///
 /// Provides a registry for algorithms that can be looked up by name and
-/// executed on BRep shapes. Analogous to OCCT `ShapeAlgo_AlgoContainer`.
+/// executed on rcad_kernel::BRep shapes. Analogous to OCCT `ShapeAlgo_AlgoContainer`.
 ///
 /// # Example
 ///
@@ -191,13 +189,13 @@ impl Default for AlgoContainer {
 // Geometry Extraction Functions
 // =============================================================================
 
-/// Extract box geometry from a BRep.
+/// Extract box geometry from a rcad_kernel::BRep.
 ///
 /// A box is recognized as a solid with 6 planar faces arranged in 3 pairs
 /// of parallel faces with appropriate normals.
 ///
 /// Returns `None` if the shape is not a valid box.
-pub fn get_box_geometry(brep: &BRep) -> Option<BoxGeometry> {
+pub fn get_box_geometry(brep: &rcad_kernel::BRep) -> Option<BoxGeometry> {
     // Must have exactly one solid with one shell
     if brep.solids.len() != 1 {
         return None;
@@ -294,14 +292,14 @@ pub fn get_box_geometry(brep: &BRep) -> Option<BoxGeometry> {
     })
 }
 
-/// Extract cylinder geometry from a BRep.
+/// Extract cylinder geometry from a rcad_kernel::BRep.
 ///
 /// A cylinder is recognized as a solid with:
 /// - One cylindrical lateral face
 /// - Two planar end caps (optional for partial cylinders)
 ///
 /// Returns `None` if the shape is not a valid cylinder.
-pub fn get_cylinder_geometry(brep: &BRep) -> Option<CylinderGeometry> {
+pub fn get_cylinder_geometry(brep: &rcad_kernel::BRep) -> Option<CylinderGeometry> {
     // Must have exactly one solid with one shell
     if brep.solids.len() != 1 {
         return None;
@@ -390,12 +388,12 @@ pub fn get_cylinder_geometry(brep: &BRep) -> Option<CylinderGeometry> {
     })
 }
 
-/// Extract sphere geometry from a BRep.
+/// Extract sphere geometry from a rcad_kernel::BRep.
 ///
 /// A sphere is recognized as a solid with a single spherical face.
 ///
 /// Returns `None` if the shape is not a valid sphere.
-pub fn get_sphere_geometry(brep: &BRep) -> Option<SphereGeometry> {
+pub fn get_sphere_geometry(brep: &rcad_kernel::BRep) -> Option<SphereGeometry> {
     // Must have exactly one solid with one shell
     if brep.solids.len() != 1 {
         return None;
@@ -432,14 +430,14 @@ pub fn get_sphere_geometry(brep: &BRep) -> Option<SphereGeometry> {
     })
 }
 
-/// Extract cone geometry from a BRep.
+/// Extract cone geometry from a rcad_kernel::BRep.
 ///
 /// A cone is recognized as a solid with:
 /// - One conical lateral face
 /// - Optionally one planar base cap
 ///
 /// Returns `None` if the shape is not a valid cone.
-pub fn get_cone_geometry(brep: &BRep) -> Option<ConeGeometry> {
+pub fn get_cone_geometry(brep: &rcad_kernel::BRep) -> Option<ConeGeometry> {
     // Must have exactly one solid with one shell
     if brep.solids.len() != 1 {
         return None;
@@ -484,12 +482,12 @@ pub fn get_cone_geometry(brep: &BRep) -> Option<ConeGeometry> {
     Some(ConeGeometry { apex, axis, angle })
 }
 
-/// Extract torus geometry from a BRep.
+/// Extract torus geometry from a rcad_kernel::BRep.
 ///
 /// A torus is recognized as a solid with a single toroidal face.
 ///
 /// Returns `None` if the shape is not a valid torus.
-pub fn get_torus_geometry(brep: &BRep) -> Option<TorusGeometry> {
+pub fn get_torus_geometry(brep: &rcad_kernel::BRep) -> Option<TorusGeometry> {
     // Must have exactly one solid with one shell
     if brep.solids.len() != 1 {
         return None;
@@ -532,28 +530,28 @@ pub fn get_torus_geometry(brep: &BRep) -> Option<TorusGeometry> {
 // Primitive Detection Functions
 // =============================================================================
 
-/// Check if a BRep represents a box.
-pub fn is_box(brep: &BRep) -> bool {
+/// Check if a rcad_kernel::BRep represents a box.
+pub fn is_box(brep: &rcad_kernel::BRep) -> bool {
     get_box_geometry(brep).is_some()
 }
 
-/// Check if a BRep represents a cylinder.
-pub fn is_cylinder(brep: &BRep) -> bool {
+/// Check if a rcad_kernel::BRep represents a cylinder.
+pub fn is_cylinder(brep: &rcad_kernel::BRep) -> bool {
     get_cylinder_geometry(brep).is_some()
 }
 
-/// Check if a BRep represents a sphere.
-pub fn is_sphere(brep: &BRep) -> bool {
+/// Check if a rcad_kernel::BRep represents a sphere.
+pub fn is_sphere(brep: &rcad_kernel::BRep) -> bool {
     get_sphere_geometry(brep).is_some()
 }
 
-/// Check if a BRep represents a cone.
-pub fn is_cone(brep: &BRep) -> bool {
+/// Check if a rcad_kernel::BRep represents a cone.
+pub fn is_cone(brep: &rcad_kernel::BRep) -> bool {
     get_cone_geometry(brep).is_some()
 }
 
-/// Check if a BRep represents a torus.
-pub fn is_torus(brep: &BRep) -> bool {
+/// Check if a rcad_kernel::BRep represents a torus.
+pub fn is_torus(brep: &rcad_kernel::BRep) -> bool {
     get_torus_geometry(brep).is_some()
 }
 
@@ -562,7 +560,7 @@ pub fn is_torus(brep: &BRep) -> bool {
 // =============================================================================
 
 /// Get all surface references for faces in a shell.
-fn get_face_surfaces<'a>(brep: &'a BRep, shell: &rcad_kernel::topology::Shell) -> Vec<&'a Surface3> {
+fn get_face_surfaces<'a>(brep: &'a rcad_kernel::BRep, shell: &rcad_kernel::topology::Shell) -> Vec<&'a Surface3> {
     let mut surfaces = Vec::new();
 
     // Count faces before this shell
@@ -587,8 +585,8 @@ fn get_face_surfaces<'a>(brep: &'a BRep, shell: &rcad_kernel::topology::Shell) -
     surfaces
 }
 
-/// Check if a BRep has valid geometry data.
-fn has_geometry(brep: &BRep) -> bool {
+/// Check if a rcad_kernel::BRep has valid geometry data.
+fn has_geometry(brep: &rcad_kernel::BRep) -> bool {
     !brep.geom.surfaces.is_empty() || !brep.geom.curves.is_empty()
 }
 

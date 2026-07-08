@@ -1,11 +1,9 @@
-﻿//! Cylindrical BRep projection (OCCT `BRepProj_Projection` with `gp_Dir`).
+//! Cylindrical rcad_kernel::BRep projection (OCCT `rcad_kernel::BRepProj_Projection` with `gp_Dir`).
 //!
 //! Strategy (matches OCCT): translate the wire by `-mdis·D`, build a prism by extruding
 //! the polyline along `2·mdis·D`, then intersect that prism with the target shape’s
 //! triangle soup to obtain projected polylines as wires.
 
-
-use rcad_kernel::BRep;
 
 use std::collections::HashSet;
 
@@ -44,7 +42,7 @@ impl Default for BrepProjOptions {
 }
 
 /// OCCT-style `DistanceIn`-like scale: diagonal(A)+diagonal(B)+bbox separation.
-fn proj_distance_scale(wire_brep: &BRep, target: &BRep) -> f64 {
+fn proj_distance_scale(wire_brep: &rcad_kernel::BRep, target: &rcad_kernel::BRep) -> f64 {
     let Some(ba) = brep_tools::bounding_box(wire_brep) else {
         return 1.0;
     };
@@ -78,7 +76,7 @@ fn aabb_distance(a: [DVec3; 2], b: [DVec3; 2]) -> f64 {
     d2.sqrt()
 }
 
-fn first_outer_wire_edge_chain(brep: &BRep) -> Option<Vec<usize>> {
+fn first_outer_wire_edge_chain(brep: &rcad_kernel::BRep) -> Option<Vec<usize>> {
     let face = brep
         .solids
         .iter()
@@ -97,7 +95,7 @@ fn first_outer_wire_edge_chain(brep: &BRep) -> Option<Vec<usize>> {
     )
 }
 
-fn edge_chains_greedy(brep: &BRep) -> Vec<Vec<usize>> {
+fn edge_chains_greedy(brep: &rcad_kernel::BRep) -> Vec<Vec<usize>> {
     let n = brep.edges.len();
     if n == 0 {
         return Vec::new();
@@ -138,7 +136,7 @@ fn edge_chains_greedy(brep: &BRep) -> Vec<Vec<usize>> {
     chains
 }
 
-fn build_vertex_edge_adj(brep: &BRep) -> Vec<Vec<usize>> {
+fn build_vertex_edge_adj(brep: &rcad_kernel::BRep) -> Vec<Vec<usize>> {
     let mut adj = vec![Vec::new(); brep.vertices.len()];
     for (ei, e) in brep.edges.iter().enumerate() {
         if e.start < adj.len() {
@@ -151,7 +149,7 @@ fn build_vertex_edge_adj(brep: &BRep) -> Vec<Vec<usize>> {
     adj
 }
 
-fn wire_edge_chains(brep: &BRep) -> Vec<Vec<usize>> {
+fn wire_edge_chains(brep: &rcad_kernel::BRep) -> Vec<Vec<usize>> {
     if let Some(chain) = first_outer_wire_edge_chain(brep) {
         if !chain.is_empty() {
             return vec![chain];
@@ -167,7 +165,7 @@ fn push_pt(pts: &mut Vec<DVec3>, p: DVec3, tol: f64) {
 }
 
 fn sample_edge(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     ei: usize,
     from_v: usize,
     to_v: usize,
@@ -209,7 +207,7 @@ fn sample_edge(
     push_pt(pts, p1, tol);
 }
 
-fn dense_polyline_from_chain(brep: &BRep, chain: &[usize], options: &BrepProjOptions) -> Vec<DVec3> {
+fn dense_polyline_from_chain(brep: &rcad_kernel::BRep, chain: &[usize], options: &BrepProjOptions) -> Vec<DVec3> {
     if chain.is_empty() {
         return Vec::new();
     }
@@ -251,9 +249,9 @@ fn extrusion_prism_tris(polyline: &[DVec3], extrusion: DVec3) -> Vec<[DVec3; 3]>
     tris
 }
 
-/// Build a BRep containing only vertices and line edges (no solids), one edge per segment.
-fn wire_brep_from_polyline(poly: &[DVec3], tol: f64) -> BRep {
-    let mut brep = BRep::new();
+/// Build a rcad_kernel::BRep containing only vertices and line edges (no solids), one edge per segment.
+fn wire_brep_from_polyline(poly: &[DVec3], tol: f64) -> rcad_kernel::BRep {
+    let mut brep = rcad_kernel::BRep::new();
     if poly.len() < 2 {
         return brep;
     }
@@ -299,14 +297,14 @@ fn wire_brep_from_polyline(poly: &[DVec3], tol: f64) -> BRep {
 
 /// Cylindrical projection of wire-like `shape` onto `target` along `direction`.
 ///
-/// Returns one BRep per connected intersection chain (OCCT `BRepProj_Projection::More` /
+/// Returns one rcad_kernel::BRep per connected intersection chain (OCCT `rcad_kernel::BRepProj_Projection::More` /
 /// `Current`), each holding line edges approximating the image on `target`.
 pub fn brep_proj_cylindrical(
-    shape: &BRep,
-    target: &BRep,
+    shape: &rcad_kernel::BRep,
+    target: &rcad_kernel::BRep,
     direction: DVec3,
     options: &BrepProjOptions,
-) -> Vec<BRep> {
+) -> Vec<rcad_kernel::BRep> {
     let dir = direction.normalize_or_zero();
     if dir.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
         return Vec::new();
@@ -324,7 +322,7 @@ pub fn brep_proj_cylindrical(
         return Vec::new();
     }
 
-    let mut out: Vec<BRep> = Vec::new();
+    let mut out: Vec<rcad_kernel::BRep> = Vec::new();
     for chain in chains {
         let pts = dense_polyline_from_chain(shape, &chain, options);
         if pts.len() < 2 {

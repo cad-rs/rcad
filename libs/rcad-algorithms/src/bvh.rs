@@ -1,4 +1,4 @@
-﻿//! Bounding Volume Hierarchy (BVH) for spatial acceleration.
+//! Bounding Volume Hierarchy (BVH) for spatial acceleration.
 //!
 //! Built with the SAH (Surface Area Heuristic) to speed up:
 //! - Ray picking
@@ -7,8 +7,6 @@
 //!
 //! Analogous to OCCT `BVH_Tree` / `BVH_Builder`.
 
-
-use rcad_kernel::BRep;
 
 use glam::DVec3;
 use rcad_kernel::topods;
@@ -134,7 +132,7 @@ impl BvhNode {
  }
 }
 
-/// BVH over the faces of one `BRep`.
+/// BVH over the faces of one `rcad_kernel::BRep`.
 ///
 /// After construction, supports accelerated ray casts, nearest-face queries, etc.
 pub struct Bvh {
@@ -169,7 +167,7 @@ impl Bvh {
  ///
  /// Sampling: each face uses boundary vertices plus a small grid of interior samples
  /// on curved patches so the AABB conservatively covers the face.
- pub fn build(brep: &BRep) -> Self {
+ pub fn build(brep: &rcad_kernel::BRep) -> Self {
  let faces = &brep.solids[0].shells[0].faces;
  let n_faces = faces.len();
 
@@ -188,7 +186,7 @@ impl Bvh {
  aabb.expand_point(v1);
  }
 
- // ✅ OCCT : BRepBndLib::Add (BRepBndLib.cxx L83+) — AABB。
+ // ✅ OCCT : rcad_kernel::BRepBndLib::Add (rcad_kernel::BRepBndLib.cxx L83+) — AABB。
  // OCCT BndLib_AddSurface (BndLib_AddSurface.cxx L275-306):
  // Sphere: ± (L299-306); Cylinder/Cone/Torus: BndLib (L287-297)
  // Plane: 4 (L278-286); BSpline/Bezier:  /  (L315-316)
