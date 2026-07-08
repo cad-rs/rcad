@@ -6,8 +6,6 @@
 //! - Utility free functions: distance_point_curve, closest_point_on_curve, etc.
 
 
-use rcad_kernel::BRep;
-
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, CurveEval, Line3, Surface3, SurfaceEval};
 use rcad_kernel::topods;
@@ -19,10 +17,10 @@ use crate::tolerance::*;
 const H: f64 = TOLERANCE_MESH_LEGACY;
 
 // =============================================================================
-// BRepExtrema_DistShapeShape 鈥?distance between two shapes (OCCT-aligned class)
+// BRepExtrema_DistShapeShape 閳?distance between two shapes (OCCT-aligned class)
 // =============================================================================
 
-/// OCCT-aligned: BRepExtrema_DistShapeShape 鈥?compute minimum distance
+/// OCCT-aligned: BRepExtrema_DistShapeShape 閳?compute minimum distance
 /// between two shapes using BVH-accelerated surface sampling.
 ///
 /// Usage:
@@ -34,8 +32,8 @@ const H: f64 = TOLERANCE_MESH_LEGACY;
 /// }
 /// ```
 pub struct DistShapeShape {
-    shape1: Option<BRep>,
-    shape2: Option<BRep>,
+    shape1: Option<topods::BRep>,
+    shape2: Option<topods::BRep>,
     distance: f64,
     support1: Vec<topods::ShapeRef>,
     support2: Vec<topods::ShapeRef>,
@@ -57,7 +55,7 @@ impl DistShapeShape {
     }
 
     /// OCCT-aligned: constructor with both shapes.
-    pub fn with_shapes(s1: &BRep, s2: &BRep) -> Self {
+    pub fn with_shapes(s1: &topods::BRep, s2: &topods::BRep) -> Self {
         let mut dss = Self::new();
         dss.load_s1(s1);
         dss.load_s2(s2);
@@ -65,16 +63,18 @@ impl DistShapeShape {
     }
 
     /// OCCT-aligned: LoadS1.
-    pub fn load_s1(&mut self, s1: &BRep) { self.shape1 = Some(s1.clone()); }
+    pub fn load_s1(&mut self, s1: &topods::BRep) { self.shape1 = Some(s1.clone()); }
 
     /// OCCT-aligned: LoadS2.
-    pub fn load_s2(&mut self, s2: &BRep) { self.shape2 = Some(s2.clone()); }
+    pub fn load_s2(&mut self, s2: &topods::BRep) { self.shape2 = Some(s2.clone()); }
 
-    /// OCCT-aligned: Perform 鈥?compute the minimum distance.
+    /// OCCT-aligned: Perform 閳?compute the minimum distance.
     pub fn perform(&mut self) {
         let Some(ref s1) = self.shape1 else { return };
         let Some(ref s2) = self.shape2 else { return };
-        let (dist, p1, p2) = distance_brep_brep(s1, s2);
+        let old1 = rcad_kernel::BRep::from_topods(s1);
+        let old2 = rcad_kernel::BRep::from_topods(s2);
+        let (dist, p1, p2) = distance_brep_brep(&old1, &old2);
         self.distance = dist;
         self.pt1 = p1;
         self.pt2 = p2;
@@ -87,10 +87,10 @@ impl DistShapeShape {
     /// OCCT-aligned: Distance.
     pub fn distance(&self) -> f64 { self.distance }
 
-    /// OCCT-aligned: SupportOnShape1 鈥?the support elements on shape 1.
+    /// OCCT-aligned: SupportOnShape1 閳?the support elements on shape 1.
     pub fn support_on_shape1(&self) -> &[topods::ShapeRef] { &self.support1 }
 
-    /// OCCT-aligned: SupportOnShape2 鈥?the support elements on shape 2.
+    /// OCCT-aligned: SupportOnShape2 閳?the support elements on shape 2.
     pub fn support_on_shape2(&self) -> &[topods::ShapeRef] { &self.support2 }
 
     /// Convenience: closest point on shape 1.
@@ -274,7 +274,7 @@ pub fn distance_surface_surface(surf1: &Surface3, surf2: &Surface3) -> (f64, f64
 ///
 /// Returns the distance and the two closest points.
 /// Uses BVH acceleration for efficiency.
-pub fn distance_brep_brep(brep1: &BRep, brep2: &BRep) -> (f64, DVec3, DVec3) {
+pub fn distance_brep_brep(brep1: &rcad_kernel::BRep, brep2: &rcad_kernel::BRep) -> (f64, DVec3, DVec3) {
     let bvh1 = Bvh::build(brep1);
     let bvh2 = Bvh::build(brep2);
 
@@ -372,7 +372,7 @@ pub fn find_closest_points(curve: &Curve3, point: DVec3, n_points: usize) -> Vec
 /// Find the furthest points on a BRep in a given direction.
 ///
 /// Returns the two points that are furthest apart when projected onto the direction.
-pub fn find_furthest_points(brep: &BRep, direction: DVec3) -> (DVec3, DVec3) {
+pub fn find_furthest_points(brep: &rcad_kernel::BRep, direction: DVec3) -> (DVec3, DVec3) {
     let dir = direction.normalize();
     let mut min_proj = f64::INFINITY;
     let mut max_proj = f64::NEG_INFINITY;
@@ -494,7 +494,7 @@ pub fn closest_point_on_surface(surface: &Surface3, point: DVec3) -> (DVec2, DVe
 /// Find the face that supports a point (closest face).
 ///
 /// Returns the face index if found.
-pub fn find_supporting_face(brep: &BRep, point: DVec3) -> Option<usize> {
+pub fn find_supporting_face(brep: &rcad_kernel::BRep, point: DVec3) -> Option<usize> {
     let mut best_face = None;
     let mut best_dist = f64::INFINITY;
     let tolerance = TOLERANCE_ABS * 100.0;
@@ -522,7 +522,7 @@ pub fn find_supporting_face(brep: &BRep, point: DVec3) -> Option<usize> {
 /// Find the edge that supports a point (closest edge).
 ///
 /// Returns the edge index if found.
-pub fn find_supporting_edge(brep: &BRep, point: DVec3) -> Option<usize> {
+pub fn find_supporting_edge(brep: &rcad_kernel::BRep, point: DVec3) -> Option<usize> {
     let mut best_edge = None;
     let mut best_dist = f64::INFINITY;
     let tolerance = TOLERANCE_ABS * 100.0;
@@ -583,7 +583,7 @@ fn surface_domain(surface: &Surface3) -> [f64; 4] {
 }
 
 /// Compute the AABB of a BRep.
-fn compute_brep_aabb(brep: &BRep) -> Aabb {
+fn compute_brep_aabb(brep: &rcad_kernel::BRep) -> Aabb {
     let mut aabb = Aabb::empty();
     for v in &brep.vertices {
         aabb.expand_point(v.point);
@@ -592,14 +592,14 @@ fn compute_brep_aabb(brep: &BRep) -> Aabb {
 }
 
 /// Get a surface from a BRep by face index.
-fn get_brep_surface(brep: &BRep, face_idx: usize) -> Option<Surface3> {
+fn get_brep_surface(brep: &rcad_kernel::BRep, face_idx: usize) -> Option<Surface3> {
     brep.geom.face_surface.get(face_idx)
         .and_then(|s| *s)
         .and_then(|idx| brep.geom.surfaces.get(idx).cloned())
 }
 
 /// Get all face indices from a BRep.
-fn get_all_face_indices(brep: &BRep) -> Vec<usize> {
+fn get_all_face_indices(brep: &rcad_kernel::BRep) -> Vec<usize> {
     let mut count = 0usize;
     for solid in &brep.solids {
         for shell in &solid.shells {
@@ -610,7 +610,7 @@ fn get_all_face_indices(brep: &BRep) -> Vec<usize> {
 }
 
 /// Get a curve from a BRep by edge index.
-fn get_brep_curve(brep: &BRep, edge_idx: usize) -> Option<Curve3> {
+fn get_brep_curve(brep: &rcad_kernel::BRep, edge_idx: usize) -> Option<Curve3> {
     brep.geom.edge_curve.get(edge_idx)
         .and_then(|c| *c)
         .and_then(|idx| brep.geom.curves.get(idx).cloned())
@@ -880,5 +880,6 @@ fn refine_surface_surface_distance(
 // =============================================================================
 // Tests
 // =============================================================================
+
 
 
