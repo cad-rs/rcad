@@ -1,4 +1,4 @@
-﻿//! OCCT BRepAlgoAPI_BuilderOperation equivalent 鈥?boolean operation wrapper with history.
+//! OCCT BRepAlgoAPI_BuilderOperation equivalent 鈥?boolean operation wrapper with history.
 //!
 //! Provides a general-purpose boolean operation struct analogous to
 //! OCCT BRepAlgoAPI_BuilderOperation (base class for BRepAlgoAPI_Common/Fuse/Cut).
@@ -24,8 +24,6 @@
 //! ```
 
 
-use rcad_kernel::BRep;
-
 use crate::builder::{BooleanBuilder, BooleanError, BooleanOpType};
 use crate::bopds::ds::DS;
 use crate::bvh::Bvh;
@@ -34,7 +32,7 @@ use crate::pave_filler::PaveFiller;
 use crate::tolerance::TOLERANCE_ABS;
 use rcad_kernel::topods;
 
-/// A reference to a sub-shape in a BRep, analogous to OCCT TopoDS_Shape.
+/// A reference to a sub-shape in a rcad_kernel::BRep, analogous to OCCT TopoDS_Shape.
 ///
 /// OCCT ref: TopoDS_Shape (TopoDS_Shape.hxx)
 ///
@@ -99,9 +97,9 @@ pub struct BooleanOpStatistics {
 /// a struct that tracks shape history (Modified/Generated/IsDeleted).
 pub struct BooleanOp {
     /// First input shape (object).
-    shape_a: BRep,
+    shape_a: rcad_kernel::BRep,
     /// Second input shape (tool).
-    shape_b: BRep,
+    shape_b: rcad_kernel::BRep,
     /// Boolean operation type.
     op_type: BooleanOpType,
     /// History of the operation (set after perform()).
@@ -109,7 +107,7 @@ pub struct BooleanOp {
     /// Tolerance for interference detection.
     tolerance: f64,
     /// Result shape (set after perform()).
-    result: Option<BRep>,
+    result: Option<rcad_kernel::BRep>,
     /// Error from the last perform() call.
     error: Option<BooleanError>,
 }
@@ -123,7 +121,7 @@ impl BooleanOp {
     /// - `Union` 鈫?BRepAlgoAPI_Fuse
     /// - `Intersection` 鈫?BRepAlgoAPI_Common
     /// - `Difference` 鈫?BRepAlgoAPI_Cut
-    pub fn new(a: BRep, b: BRep, op: BooleanOpType) -> Self {
+    pub fn new(a: rcad_kernel::BRep, b: rcad_kernel::BRep, op: BooleanOpType) -> Self {
         Self {
             shape_a: a,
             shape_b: b,
@@ -159,7 +157,7 @@ impl BooleanOp {
     /// 4. 鉁?Run BOPAlgo_Builder to build the result
     ///
     /// Returns a reference to the result BRep on success.
-    pub fn perform(&mut self) -> Result<&BRep, BooleanError> {
+    pub fn perform(&mut self) -> Result<&rcad_kernel::BRep, BooleanError> {
         self.result = None;
         self.error = None;
         self.history = None;
@@ -206,7 +204,7 @@ impl BooleanOp {
     }
 
     /// Ensure geometry is populated for primitive shapes.
-    fn ensure_geometry(&self, brep: &BRep) -> BRep {
+    fn ensure_geometry(&self, brep: &rcad_kernel::BRep) -> rcad_kernel::BRep {
         if brep.geom.surfaces.is_empty() && !brep.solids.is_empty() {
             let mut result = brep.clone();
             crate::geom_populate::populate_box_geom(&mut result);
@@ -219,14 +217,14 @@ impl BooleanOp {
     /// Get the result shape.
     ///
     /// Panics if `perform()` has not been called or failed.
-    pub fn shape(&self) -> &BRep {
+    pub fn shape(&self) -> &rcad_kernel::BRep {
         self.result
             .as_ref()
             .expect("perform() must be called before shape()")
     }
 
     /// Get the result shape, consuming the builder.
-    pub fn into_shape(self) -> Option<BRep> {
+    pub fn into_shape(self) -> Option<rcad_kernel::BRep> {
         self.result
     }
 

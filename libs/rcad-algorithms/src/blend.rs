@@ -1,4 +1,4 @@
-﻿//! BRepBlend-style blend surface operations - analogous to OCCT `BRepBlend` module.
+//! BRepBlend-style blend surface operations - analogous to OCCT `BRepBlend` module.
 //!
 //! # Overview
 //!
@@ -40,7 +40,7 @@
 
 use glam::DVec3;
 use rcad_kernel::{
- any_perpendicular, BRep,
+ any_perpendicular,
  SurfaceEval, CurveEval,
  geom::{Curve3, Surface3, Line3, BSplineCurve3, BSplineSurface, Plane, CylindricalSurface, SphericalSurface, ToroidalSurface, RuledSurface},
  topology::{Edge, Face, Shell, Solid, Vertex, Wire},
@@ -820,7 +820,7 @@ fn compute_blend_boundary_curve(
 /// For edge blends, the spine is offset from the edge along the bisector
 /// of the adjacent face normals.
 pub fn compute_spine_curve(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_idx: usize,
  _radius: f64,
  params: &BlendParams,
@@ -937,7 +937,7 @@ pub fn compute_guide_curves(
 /// * `face_idx` - Index of the face to blend to
 /// * `params` - Blend parameters
 pub fn blend_edge_to_face(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_idx: usize,
  face_idx: usize,
  params: &BlendParams,
@@ -1029,7 +1029,7 @@ pub fn blend_edge_to_face(
 /// * `radius` - Blend radius
 /// * `params` - Blend parameters
 pub fn blend_vertex(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  vertex_idx: usize,
  radius: f64,
  params: &BlendParams,
@@ -1488,14 +1488,14 @@ fn compute_blend_quality(surface: &Surface3, target_radius: f64, tol: f64) -> Bl
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 
 /// Helper to add a vertex to a BRep and return its index.
-fn add_vertex(brep: &mut BRep, point: DVec3) -> usize {
+fn add_vertex(brep: &mut rcad_kernel::BRep, point: DVec3) -> usize {
  let idx = brep.vertices.len();
  brep.vertices.push(Vertex { point });
  idx
 }
 
 /// Helper to add an edge to a BRep and return its index.
-fn add_edge(brep: &mut BRep, curve: Curve3, t0: f64, t1: f64, v0: usize, v1: usize) -> usize {
+fn add_edge(brep: &mut rcad_kernel::BRep, curve: Curve3, t0: f64, t1: f64, v0: usize, v1: usize) -> usize {
  let idx = brep.edges.len();
  brep.edges.push(Edge { start: v0, end: v1 });
 
@@ -1518,7 +1518,7 @@ fn add_edge(brep: &mut BRep, curve: Curve3, t0: f64, t1: f64, v0: usize, v1: usi
 }
 
 /// Helper to add a face to a BRep and return its index.
-fn add_face(brep: &mut BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -> usize {
+fn add_face(brep: &mut rcad_kernel::BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -> usize {
  if brep.solids.is_empty() {
  brep.solids.push(Solid {
  shells: vec![Shell { faces: Vec::new() }],
@@ -1557,7 +1557,7 @@ fn add_face(brep: &mut BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -
 /// This function creates a blend surface along an edge and integrates
 /// it into the B-Rep model.
 pub fn apply_blend_to_edge(
- brep: &mut BRep,
+ brep: &mut rcad_kernel::BRep,
  edge_idx: usize,
  params: &BlendParams,
 ) -> Result<usize, BlendError> {

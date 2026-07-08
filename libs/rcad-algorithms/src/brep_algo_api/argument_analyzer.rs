@@ -1,4 +1,4 @@
-﻿//! BOPAlgo_ArgumentAnalyzer 鈥?line-by-line OCCT equivalent.
+//! BOPAlgo_ArgumentAnalyzer 鈥?line-by-line OCCT equivalent.
 //!
 //! OCCT reference: BOPAlgo_ArgumentAnalyzer.hxx / .cxx
 //!
@@ -11,8 +11,6 @@
 //! 6. TestContinuity() 鈥?detect C0 discontinuities
 //! 7. TestCurveOnSurface() 鈥?check curve-surface consistency
 
-
-use rcad_kernel::BRep;
 
 use rcad_kernel::topods;
 use crate::tolerance::TOLERANCE_ABS;
@@ -201,12 +199,12 @@ pub struct ArgumentAnalyzer {
     /// The first shape (object).
     ///
     /// OCCT ref: myShape1
-    shape1: Option<BRep>,
+    shape1: Option<rcad_kernel::BRep>,
 
     /// The second shape (tool).
     ///
     /// OCCT ref: myShape2
-    shape2: Option<BRep>,
+    shape2: Option<rcad_kernel::BRep>,
 
     /// Stop on first faulty result encountered.
     ///
@@ -309,28 +307,28 @@ impl ArgumentAnalyzer {
     /// Set shape1 (the object).
     ///
     /// OCCT ref: BOPAlgo_ArgumentAnalyzer::SetShape1 (BOPAlgo_ArgumentAnalyzer.hxx L40)
-    pub fn set_shape1(&mut self, shape: &BRep) {
+    pub fn set_shape1(&mut self, shape: &rcad_kernel::BRep) {
         self.shape1 = Some(shape.clone());
     }
 
     /// Set shape2 (the tool).
     ///
     /// OCCT ref: BOPAlgo_ArgumentAnalyzer::SetShape2 (BOPAlgo_ArgumentAnalyzer.hxx L43)
-    pub fn set_shape2(&mut self, shape: &BRep) {
+    pub fn set_shape2(&mut self, shape: &rcad_kernel::BRep) {
         self.shape2 = Some(shape.clone());
     }
 
     /// Get shape1 (the object).
     ///
     /// OCCT ref: BOPAlgo_ArgumentAnalyzer::GetShape1 (BOPAlgo_ArgumentAnalyzer.hxx L46)
-    pub fn get_shape1(&self) -> Option<&BRep> {
+    pub fn get_shape1(&self) -> Option<&rcad_kernel::BRep> {
         self.shape1.as_ref()
     }
 
     /// Get shape2 (the tool).
     ///
     /// OCCT ref: BOPAlgo_ArgumentAnalyzer::GetShape2 (BOPAlgo_ArgumentAnalyzer.hxx L49)
-    pub fn get_shape2(&self) -> Option<&BRep> {
+    pub fn get_shape2(&self) -> Option<&rcad_kernel::BRep> {
         self.shape2.as_ref()
     }
 
@@ -785,7 +783,7 @@ impl ArgumentAnalyzer {
     }
 
     /// Run CheckerSI on a single shape and return a CheckResult if interferences found.
-    fn check_single_self_interference(&self, shape: &BRep, is_shape1: bool) -> Option<CheckResult> {
+    fn check_single_self_interference(&self, shape: &rcad_kernel::BRep, is_shape1: bool) -> Option<CheckResult> {
         let mut checker = CheckerSI::new();
         checker.set_level_of_check(3); // OCCT: full check for self-interference
         let topods_shape = shape.to_topods();
@@ -910,7 +908,7 @@ impl ArgumentAnalyzer {
     /// Compute an edge's length from its start/end vertex distance.
     ///
     /// 鉁?OCCT-aligned: BRep_Tool::IsMicroEdge checks vertex distance.
-    fn compute_edge_length(&self, brep: &BRep, edge_idx: usize) -> f64 {
+    fn compute_edge_length(&self, brep: &rcad_kernel::BRep, edge_idx: usize) -> f64 {
         let Some(edge) = brep.edges.get(edge_idx) else {
             return 0.0;
         };
@@ -1001,7 +999,7 @@ impl ArgumentAnalyzer {
     /// 鉁?OCCT-aligned: Verifies wire closure and edge existence.
     fn face_rebuildable(
         &self,
-        brep: &BRep,
+        brep: &rcad_kernel::BRep,
         _global_face_idx: usize,
         face: &rcad_kernel::topology::Face,
     ) -> bool {
@@ -1246,7 +1244,7 @@ impl ArgumentAnalyzer {
     }
 
     /// Compute the midpoint of an edge from its start/end vertex positions.
-    fn edge_midpoint(&self, brep: &BRep, edge_idx: usize) -> Option<DVec3> {
+    fn edge_midpoint(&self, brep: &rcad_kernel::BRep, edge_idx: usize) -> Option<DVec3> {
         let edge = brep.edges.get(edge_idx)?;
         let start = brep.vertices.get(edge.start)?;
         let end = brep.vertices.get(edge.end)?;

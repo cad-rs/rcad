@@ -1,4 +1,4 @@
-﻿//! BRepChamfer-style edge chamfer operations  ?analogous to OCCT `BRepFilletAPI_MakeChamfer`.
+//! BRepChamfer-style edge chamfer operations  ?analogous to OCCT `BRepFilletAPI_MakeChamfer`.
 //!
 //! # Overview
 //!
@@ -38,7 +38,6 @@
 use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::{
- BRep,
  geom::{Curve3, Surface3, Line3, Plane},
  topology::{Edge, Face, Vertex, Wire, WireEdge},
 };
@@ -169,7 +168,7 @@ impl ChamferParams {
 #[derive(Debug)]
 pub struct ChamferResult {
  /// The resulting BRep with chamfers applied.
- pub brep: BRep,
+ pub brep: rcad_kernel::BRep,
  /// Number of edges chamfered.
  pub edges_chamfered: usize,
  /// Number of chamfer faces created.
@@ -350,7 +349,7 @@ impl From<&Surface3> for SurfaceType {
 /// let result = make_chamfer_edge(&box_brep, &[0, 1, 2], 0.1).unwrap();
 /// ```
 pub fn make_chamfer_edge(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_indices: &[usize],
  distance: f64,
 ) -> Result<ChamferResult, ChamferError> {
@@ -373,7 +372,7 @@ pub fn make_chamfer_edge(
 ///
 /// A `ChamferResult` containing the chamfered BRep and operation statistics.
 pub fn make_chamfer_asymmetric(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_indices: &[usize],
  d1: f64,
  d2: f64,
@@ -397,7 +396,7 @@ pub fn make_chamfer_asymmetric(
 ///
 /// A `ChamferResult` containing the chamfered BRep and operation statistics.
 pub fn make_chamfer_angle(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_indices: &[usize],
  distance: f64,
  angle: f64,
@@ -417,7 +416,7 @@ pub fn make_chamfer_angle(
 ///
 /// A `ChamferResult` containing the chamfered BRep and operation statistics.
 pub fn make_chamfer_all_edges(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  distance: f64,
 ) -> Result<ChamferResult, ChamferError> {
  let all_edges: Vec<usize> = (0..brep.edges.len()).collect();
@@ -428,7 +427,7 @@ pub fn make_chamfer_all_edges(
 ///
 /// This function processes all specified edges and creates chamfers.
 fn make_chamfer(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_indices: &[usize],
  params: &ChamferParams,
 ) -> Result<ChamferResult, ChamferError> {
@@ -555,7 +554,7 @@ struct ChamferGeometry {
 /// This function determines the chamfer surface based on the surface types
 /// of the adjacent faces and the chamfer parameters.
 fn compute_chamfer_geometry(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_info: &EdgeInfo,
  face_infos: &[AdjacentFaceInfo],
  params: &ChamferParams,
@@ -654,7 +653,7 @@ fn compute_chamfer_plane_plane(
 
 /// Compute chamfer for cylinder-plane intersection.
 fn compute_chamfer_cylinder_plane(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_info: &EdgeInfo,
  face0: &AdjacentFaceInfo,
  face1: &AdjacentFaceInfo,
@@ -750,7 +749,7 @@ fn compute_chamfer_cylinder_plane(
 
 /// Compute chamfer for cylinder-cylinder intersection.
 fn compute_chamfer_cylinder_cylinder(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_info: &EdgeInfo,
  face0: &AdjacentFaceInfo,
  face1: &AdjacentFaceInfo,
@@ -885,7 +884,7 @@ fn compute_chamfer_general(
 ///
 /// Returns the chamfer surface between two adjacent faces.
 pub fn compute_chamfer_surface(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_index: usize,
  params: &ChamferParams,
 ) -> Result<Surface3, ChamferError> {
@@ -911,7 +910,7 @@ pub fn compute_chamfer_surface(
 ///
 /// Returns the two curves where the chamfer face meets the original faces.
 pub fn compute_chamfer_curves(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_index: usize,
  params: &ChamferParams,
 ) -> Result<(Curve3, Curve3), ChamferError> {
@@ -949,7 +948,7 @@ pub fn compute_chamfer_curves(
 ///
 /// This function modifies the BRep by adjusting face boundaries.
 pub fn trim_adjacent_faces(
- _brep: &mut BRep,
+ _brep: &mut rcad_kernel::BRep,
  _edge_index: usize,
  _params: &ChamferParams,
 ) -> Result<(), ChamferError> {
@@ -976,7 +975,7 @@ pub fn trim_adjacent_faces(
 /// 3. Creates the chamfer face
 /// 4. Updates the shell topology
 fn apply_chamfer_to_brep(
- brep: &mut BRep,
+ brep: &mut rcad_kernel::BRep,
  _edge_info: &EdgeInfo,
  _face_infos: &[AdjacentFaceInfo],
  chamfer_geom: &ChamferGeometry,
@@ -1049,7 +1048,7 @@ fn apply_chamfer_to_brep(
 }
 
 /// Create a line edge between two vertices.
-fn create_line_edge(brep: &mut BRep, start_idx: usize, end_idx: usize) -> usize {
+fn create_line_edge(brep: &mut rcad_kernel::BRep, start_idx: usize, end_idx: usize) -> usize {
  let p0 = brep.vertices[start_idx].point;
  let p1 = brep.vertices[end_idx].point;
  let d = p1 - p0;
@@ -1073,7 +1072,7 @@ fn create_line_edge(brep: &mut BRep, start_idx: usize, end_idx: usize) -> usize 
 // ===========================================================?
 
 /// Build edge-to-face adjacency map.
-fn build_edge_face_adjacency(brep: &BRep) -> HashMap<usize, Vec<usize>> {
+fn build_edge_face_adjacency(brep: &rcad_kernel::BRep) -> HashMap<usize, Vec<usize>> {
  let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
 
  for (solid_idx, solid) in brep.solids.iter().enumerate() {
@@ -1096,7 +1095,7 @@ fn build_edge_face_adjacency(brep: &BRep) -> HashMap<usize, Vec<usize>> {
 }
 
 /// Compute the flat face index in the BRep.
-fn compute_flat_face_index(brep: &BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> usize {
+fn compute_flat_face_index(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> usize {
  let mut count = 0;
  for (si, solid) in brep.solids.iter().enumerate() {
  for (shi, shell) in solid.shells.iter().enumerate() {
@@ -1111,7 +1110,7 @@ fn compute_flat_face_index(brep: &BRep, solid_idx: usize, shell_idx: usize, face
 
 /// Get information about an edge.
 fn get_edge_info(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_idx: usize,
  adjacent_faces: &[usize],
 ) -> Result<EdgeInfo, ChamferError> {
@@ -1152,7 +1151,7 @@ fn get_edge_info(
 
 /// Get information about adjacent faces.
 fn get_adjacent_face_infos(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  adjacent_faces: &[usize],
  edge_info: &EdgeInfo,
 ) -> Result<Vec<AdjacentFaceInfo>, ChamferError> {
@@ -1193,7 +1192,7 @@ fn get_adjacent_face_infos(
 }
 
 /// Find solid, shell, and face indices from a flat face index.
-fn find_face_indices(brep: &BRep, flat_face_idx: usize) -> (usize, usize, usize) {
+fn find_face_indices(brep: &rcad_kernel::BRep, flat_face_idx: usize) -> (usize, usize, usize) {
  let mut count = 0;
  for (solid_idx, solid) in brep.solids.iter().enumerate() {
  for (shell_idx, shell) in solid.shells.iter().enumerate() {

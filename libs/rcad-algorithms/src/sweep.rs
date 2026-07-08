@@ -1,4 +1,4 @@
-﻿//! BRepSweep-style sweep operations for creating shapes by sweeping profiles.
+//! BRepSweep-style sweep operations for creating shapes by sweeping profiles.
 //!
 //! This module provides comprehensive sweep operations analogous to OCCT's BRepSweep:
 //! - **LinearSweep**: Extrude profiles along a direction
@@ -21,8 +21,6 @@
 //! let result = linear_sweep(&profile_pts, DVec3::Z, 2.0);
 //! ```
 
-
-use rcad_kernel::BRep;
 
 use crate::tolerance::*;
 use std::collections::HashMap;
@@ -316,14 +314,14 @@ fn centroid(pts: &[DVec3]) -> DVec3 {
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 
 /// Internal helper to add a vertex and return its index.
-fn add_vertex(brep: &mut BRep, point: DVec3) -> usize {
+fn add_vertex(brep: &mut rcad_kernel::BRep, point: DVec3) -> usize {
  let idx = brep.vertices.len();
  brep.vertices.push(Vertex { point });
  idx
 }
 
 /// Internal helper to add a linear edge and return its index.
-fn add_line_edge(brep: &mut BRep, start: usize, end: usize) -> usize {
+fn add_line_edge(brep: &mut rcad_kernel::BRep, start: usize, end: usize) -> usize {
  let p0 = brep.vertices[start].point;
  let p1 = brep.vertices[end].point;
  let d = p1 - p0;
@@ -342,7 +340,7 @@ fn add_line_edge(brep: &mut BRep, start: usize, end: usize) -> usize {
 }
 
 /// Internal helper to add a circular arc edge.
-fn add_arc_edge(brep: &mut BRep, circle: Circle3, start_angle: f64, end_angle: f64,
+fn add_arc_edge(brep: &mut rcad_kernel::BRep, circle: Circle3, start_angle: f64, end_angle: f64,
  start_v: usize, end_v: usize) -> usize {
  let ei = brep.edges.len();
  brep.edges.push(Edge { start: start_v, end: end_v });
@@ -378,7 +376,7 @@ pub fn linear_sweep(
  profile_pts: &[DVec3],
  direction: DVec3,
  distance: f64,
-) -> Result<BRep, SweepError> {
+) -> Result<rcad_kernel::BRep, SweepError> {
  let (brep, _) = linear_sweep_with_history(profile_pts, direction, distance)?;
  Ok(brep)
 }
@@ -388,7 +386,7 @@ pub fn linear_sweep_with_history(
  profile_pts: &[DVec3],
  direction: DVec3,
  distance: f64,
-) -> Result<(BRep, SweepHistory), SweepError> {
+) -> Result<(rcad_kernel::BRep, SweepHistory), SweepError> {
  linear_sweep_with_options(profile_pts, direction, distance, SweepOptions::default())
 }
 
@@ -398,7 +396,7 @@ pub fn linear_sweep_with_options(
  direction: DVec3,
  distance: f64,
  _options: SweepOptions,
-) -> Result<(BRep, SweepHistory), SweepError> {
+) -> Result<(rcad_kernel::BRep, SweepHistory), SweepError> {
  if profile_pts.len() < 3 {
  return Err(SweepError::InsufficientVertices {
  minimum: 3,
@@ -418,7 +416,7 @@ pub fn linear_sweep_with_options(
  // Compute profile normal
  let profile_normal = polygon_normal(profile_pts);
 
- let mut brep = BRep {
+ let mut brep = rcad_kernel::BRep {
  vertices: Vec::with_capacity(2 * n),
  edges: Vec::new(),
  solids: Vec::new(),
@@ -559,11 +557,11 @@ pub fn linear_sweep_with_options(
 /// * `direction` - Extrusion direction
 /// * `distance` - Extrusion distance
 pub fn linear_sweep_face(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  face_idx: usize,
  direction: DVec3,
  distance: f64,
-) -> Result<BRep, SweepError> {
+) -> Result<rcad_kernel::BRep, SweepError> {
  // Extract the face boundary points
  let face = brep.solids.first()
  .and_then(|s| s.shells.first())
@@ -589,11 +587,11 @@ pub fn linear_sweep_face(
 /// * `direction` - Extrusion direction
 /// * `distance` - Extrusion distance
 pub fn linear_sweep_wire(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  wire_idx: usize,
  direction: DVec3,
  distance: f64,
-) -> Result<BRep, SweepError> {
+) -> Result<rcad_kernel::BRep, SweepError> {
  // For simplicity, extract from face's outer wire
  let face = brep.solids.first()
  .and_then(|s| s.shells.first())
@@ -633,7 +631,7 @@ pub fn rotational_sweep(
  axis_origin: DVec3,
  axis_dir: DVec3,
  angle: f64,
-) -> Result<BRep, SweepError> {
+) -> Result<rcad_kernel::BRep, SweepError> {
  let (brep, _) = rotational_sweep_with_history(profile_pts, axis_origin, axis_dir, angle)?;
  Ok(brep)
 }
@@ -644,7 +642,7 @@ pub fn rotational_sweep_with_history(
  axis_origin: DVec3,
  axis_dir: DVec3,
  angle: f64,
-) -> Result<(BRep, SweepHistory), SweepError> {
+) -> Result<(rcad_kernel::BRep, SweepHistory), SweepError> {
  rotational_sweep_with_options(profile_pts, axis_origin, axis_dir, angle, SweepOptions::default())
 }
 
@@ -655,7 +653,7 @@ pub fn rotational_sweep_with_options(
  axis_dir: DVec3,
  angle: f64,
  _options: SweepOptions,
-) -> Result<(BRep, SweepHistory), SweepError> {
+) -> Result<(rcad_kernel::BRep, SweepHistory), SweepError> {
  if profile_pts.len() < 2 {
  return Err(SweepError::InsufficientVertices {
  minimum: 2,
@@ -678,7 +676,7 @@ pub fn rotational_sweep_with_options(
  .map(|&p| rotate_point(p, axis_origin, axis_dir, angle))
  .collect();
 
- let mut brep = BRep {
+ let mut brep = rcad_kernel::BRep {
  vertices: Vec::new(),
  edges: Vec::new(),
  solids: Vec::new(),
@@ -825,12 +823,12 @@ pub fn rotational_sweep_with_options(
 
 /// Revolve a BRep face around an axis.
 pub fn rotational_sweep_face(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  face_idx: usize,
  axis_origin: DVec3,
  axis_dir: DVec3,
  angle: f64,
-) -> Result<BRep, SweepError> {
+) -> Result<rcad_kernel::BRep, SweepError> {
  let face = brep.solids.first()
  .and_then(|s| s.shells.first())
  .and_then(|sh| sh.faces.get(face_idx))
@@ -849,12 +847,12 @@ pub fn rotational_sweep_face(
 
 /// Revolve a BRep wire around an axis.
 pub fn rotational_sweep_wire(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  wire_idx: usize,
  axis_origin: DVec3,
  axis_dir: DVec3,
  angle: f64,
-) -> Result<BRep, SweepError> {
+) -> Result<rcad_kernel::BRep, SweepError> {
  rotational_sweep_face(brep, wire_idx, axis_origin, axis_dir, angle)
 }
 
@@ -878,7 +876,7 @@ pub fn pipe_sweep(
  profile_2d: &[DVec2],
  spine: &[DVec3],
  _mode: SweepMode,
-) -> Result<BRep, SweepError> {
+) -> Result<rcad_kernel::BRep, SweepError> {
  let (brep, _) = pipe_sweep_with_history(profile_2d, spine)?;
  Ok(brep)
 }
@@ -887,7 +885,7 @@ pub fn pipe_sweep(
 pub fn pipe_sweep_with_history(
  profile_2d: &[DVec2],
  spine: &[DVec3],
-) -> Result<(BRep, SweepHistory), SweepError> {
+) -> Result<(rcad_kernel::BRep, SweepHistory), SweepError> {
  pipe_sweep_with_options(profile_2d, spine, SweepOptions::pipe_frenet())
 }
 
@@ -896,7 +894,7 @@ pub fn pipe_sweep_with_options(
  profile_2d: &[DVec2],
  spine: &[DVec3],
  options: SweepOptions,
-) -> Result<(BRep, SweepHistory), SweepError> {
+) -> Result<(rcad_kernel::BRep, SweepHistory), SweepError> {
  if profile_2d.len() < 3 {
  return Err(SweepError::InsufficientVertices {
  minimum: 3,
@@ -1010,7 +1008,7 @@ fn compute_frenet_frames(tangents: &[DVec3], is_frenet: bool) -> Result<Vec<Fren
 }
 
 /// Build a solid by lofting between cross-sections.
-fn build_lofted_solid(sections: &[Vec<DVec3>], _closed: bool) -> Result<(BRep, SweepHistory), SweepError> {
+fn build_lofted_solid(sections: &[Vec<DVec3>], _closed: bool) -> Result<(rcad_kernel::BRep, SweepHistory), SweepError> {
  if sections.len() < 2 {
  return Err(SweepError::InsufficientSpinePoints {
  minimum: 2,
@@ -1031,7 +1029,7 @@ fn build_lofted_solid(sections: &[Vec<DVec3>], _closed: bool) -> Result<(BRep, S
  }
  }
 
- let mut brep = BRep {
+ let mut brep = rcad_kernel::BRep {
  vertices: Vec::new(),
  edges: Vec::new(),
  solids: Vec::new(),
@@ -1171,7 +1169,7 @@ fn build_lofted_solid(sections: &[Vec<DVec3>], _closed: bool) -> Result<(BRep, S
 pub fn pipe_sweep_wire(
  profile_2d: &[DVec2],
  spine: &[DVec3],
-) -> Result<BRep, SweepError> {
+) -> Result<rcad_kernel::BRep, SweepError> {
  pipe_sweep(profile_2d, spine, SweepMode::Pipe)
 }
 
@@ -1179,7 +1177,7 @@ pub fn pipe_sweep_wire(
 pub fn pipe_with_rotation(
  profile_2d: &[DVec2],
  spine: &[DVec3],
-) -> Result<BRep, SweepError> {
+) -> Result<rcad_kernel::BRep, SweepError> {
  let options = SweepOptions {
  mode: SweepMode::Pipe,
  is_frenet: true,
@@ -1207,7 +1205,7 @@ pub fn handle_pipe_corners(
  spine: &[DVec3],
  profile_2d: &[DVec2],
  corner_radius: f64,
-) -> Result<BRep, SweepError> {
+) -> Result<rcad_kernel::BRep, SweepError> {
  if spine.len() < 3 {
  return Err(SweepError::InsufficientSpinePoints {
  minimum: 3,
@@ -1452,7 +1450,7 @@ pub fn linear_law_sweep<L: Law>(
  profile_2d: &[DVec2],
  spine: &[DVec3],
  law: L,
-) -> Result<BRep, SweepError> {
+) -> Result<rcad_kernel::BRep, SweepError> {
  if profile_2d.len() < 3 {
  return Err(SweepError::InsufficientVertices {
  minimum: 3,
@@ -1499,7 +1497,7 @@ pub fn linear_law_sweep<L: Law>(
 pub fn variable_section_sweep(
  profiles: &[Vec<DVec2>],
  spine: &[DVec3],
-) -> Result<BRep, SweepError> {
+) -> Result<rcad_kernel::BRep, SweepError> {
  if profiles.len() != spine.len() {
  return Err(SweepError::InvalidParameter(
  "profiles and spine must have the same length"

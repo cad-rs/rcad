@@ -5,8 +5,6 @@
 
 #![allow(non_camel_case_types)]
 
-use rcad_kernel::BRep;
-
 pub mod argument_analyzer;
 pub mod builder_operation;
 pub mod section;
@@ -72,15 +70,15 @@ impl BRepHistory {
 macro_rules! def_boolean_op {
     ($name:ident, $op:expr) => {
         pub struct $name<'a> {
-            shape1: &'a BRep,
-            shape2: &'a BRep,
+            shape1: &'a rcad_kernel::BRep,
+            shape2: &'a rcad_kernel::BRep,
             options: BooleanApiOptions,
-            result: Option<BRep>,
+            result: Option<rcad_kernel::BRep>,
             history: BRepHistory,
             error: Option<BooleanError>,
         }
         impl<'a> $name<'a> {
-            pub fn new(shape1: &'a BRep, shape2: &'a BRep) -> Self {
+            pub fn new(shape1: &'a rcad_kernel::BRep, shape2: &'a rcad_kernel::BRep) -> Self {
                 Self { shape1, shape2, options: BooleanApiOptions::default(),
                     result: None, history: BRepHistory::new(), error: None }
             }
@@ -93,14 +91,14 @@ macro_rules! def_boolean_op {
                 let builder = BooleanBuilder::new(&ds, $op);
                 match builder.build_with_history_topods() {
                     Ok((t, h)) => {
-                        self.result = Some(BRep::from_topods(&t));
+                        self.result = Some(rcad_kernel::BRep::from_topods(&t));
                         self.history.inner = Some(h);
                         true
                     }
                     Err(e) => { self.error = Some(e); false }
                 }
             }
-            pub fn shape(&self) -> &BRep { self.result.as_ref().expect("build() not called") }
+            pub fn shape(&self) -> &rcad_kernel::BRep { self.result.as_ref().expect("build() not called") }
             pub fn history(&self) -> &BRepHistory { &self.history }
             pub fn is_done(&self) -> bool { self.result.is_some() }
             pub fn error(&self) -> Option<&BooleanError> { self.error.as_ref() }
@@ -113,14 +111,14 @@ def_boolean_op!(BRepAlgoAPI_Common, BooleanOpType::Intersection);
 def_boolean_op!(BRepAlgoAPI_Cut, BooleanOpType::Difference);
 
 pub struct BRepAlgoAPI_Section<'a> {
-    shape1: &'a BRep,
-    shape2: &'a BRep,
-    result: Option<BRep>,
+    shape1: &'a rcad_kernel::BRep,
+    shape2: &'a rcad_kernel::BRep,
+    result: Option<rcad_kernel::BRep>,
     error: Option<BooleanError>,
 }
 
 impl<'a> BRepAlgoAPI_Section<'a> {
-    pub fn new(shape1: &'a BRep, shape2: &'a BRep) -> Self {
+    pub fn new(shape1: &'a rcad_kernel::BRep, shape2: &'a rcad_kernel::BRep) -> Self {
         Self { shape1, shape2, result: None, error: None }
     }
     pub fn build(&mut self) -> bool {
@@ -128,6 +126,6 @@ impl<'a> BRepAlgoAPI_Section<'a> {
         self.result = Some(self.shape1.clone());
         true
     }
-    pub fn shape(&self) -> &BRep { self.result.as_ref().expect("build() not called") }
+    pub fn shape(&self) -> &rcad_kernel::BRep { self.result.as_ref().expect("build() not called") }
     pub fn is_done(&self) -> bool { self.result.is_some() }
 }

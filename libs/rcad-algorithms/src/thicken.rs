@@ -1,4 +1,4 @@
-﻿//! Shell thickening  ?analogous to OCCT `BRepOffsetAPI_MakeThickSolid`.
+//! Shell thickening  ?analogous to OCCT `BRepOffsetAPI_MakeThickSolid`.
 //!
 //! # Algorithm
 //!
@@ -22,8 +22,6 @@
 //! - **Self-intersection handling**: Detection, automatic thickness reduction, warnings
 
 
-use rcad_kernel::BRep;
-
 use std::collections::{HashMap, HashSet};
 use glam::DVec3;
 use rcad_kernel::topods;
@@ -42,7 +40,7 @@ use crate::triangulate::{TessellationParams, mesh_brep};
 #[derive(Debug, Clone)]
 pub struct ThickeningResult {
  /// The thickened solid as a new BRep.
- pub brep: BRep,
+ pub brep: rcad_kernel::BRep,
  /// Number of offset faces (one per input face).
  pub offset_faces: usize,
  /// Number of lateral faces connecting boundaries.
@@ -185,7 +183,7 @@ impl FaceSelectionStrategy {
 
 /// Select faces to remove based on the given strategy.
 pub fn select_faces_for_removal(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  strategy: &FaceSelectionStrategy,
 ) -> Vec<usize> {
  let shell = match brep.solids.first().and_then(|s| s.shells.first()) {
@@ -243,7 +241,7 @@ pub fn select_faces_for_removal(
 /// Select faces that form thin-wall features (parallel pairs).
 fn select_faces_for_thin_wall(
  shell: &Shell,
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  area_ratio_threshold: f64,
  parallel_angle_tolerance: f64,
 ) -> Vec<usize> {
@@ -301,7 +299,7 @@ fn select_faces_for_thin_wall(
 /// Select faces by connectivity from seed faces.
 fn select_faces_by_connectivity(
  shell: &Shell,
- _brep: &BRep,
+ _brep: &rcad_kernel::BRep,
  seed_faces: &[usize],
  max_faces: Option<usize>,
  sharp_edge_angle: Option<f64>,
@@ -372,7 +370,7 @@ fn select_faces_by_connectivity(
 }
 
 /// Select the N largest faces by area.
-fn select_faces_by_area(shell: &Shell, brep: &BRep, count: usize) -> Vec<usize> {
+fn select_faces_by_area(shell: &Shell, brep: &rcad_kernel::BRep, count: usize) -> Vec<usize> {
  let mut face_areas: Vec<(usize, f64)> = shell.faces
  .iter()
  .enumerate()
@@ -402,7 +400,7 @@ fn select_faces_by_normal(shell: &Shell, direction: &DVec3, angle_tolerance: f64
 }
 
 /// Select planar faces.
-fn select_planar_faces(shell: &Shell, brep: &BRep) -> Vec<usize> {
+fn select_planar_faces(shell: &Shell, brep: &rcad_kernel::BRep) -> Vec<usize> {
  shell.faces
  .iter()
  .enumerate()
@@ -418,7 +416,7 @@ fn select_planar_faces(shell: &Shell, brep: &BRep) -> Vec<usize> {
 }
 
 /// Select non-planar faces.
-fn select_non_planar_faces(shell: &Shell, brep: &BRep) -> Vec<usize> {
+fn select_non_planar_faces(shell: &Shell, brep: &rcad_kernel::BRep) -> Vec<usize> {
  shell.faces
  .iter()
  .enumerate()
@@ -434,7 +432,7 @@ fn select_non_planar_faces(shell: &Shell, brep: &BRep) -> Vec<usize> {
 }
 
 /// Compute the area of a face (approximate from vertex loop).
-fn compute_face_area(face: &Face, brep: &BRep) -> f64 {
+fn compute_face_area(face: &Face, brep: &rcad_kernel::BRep) -> f64 {
  let vertices: Vec<DVec3> = face.outer_wire.edges
  .iter()
  .filter_map(|we| brep.edges.get(we.idx))
@@ -709,7 +707,7 @@ pub struct SelfIntersectionAnalysis {
 
 /// Analyze potential self-intersection for a given thickness.
 pub fn analyze_self_intersection(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  thickness: f64,
 ) -> SelfIntersectionAnalysis {
  let shell = match brep.solids.first().and_then(|s| s.shells.first()) {
@@ -762,7 +760,7 @@ pub fn analyze_self_intersection(
 }
 
 /// Compute the centroid of a face.
-fn compute_face_centroid(face: &Face, brep: &BRep) -> DVec3 {
+fn compute_face_centroid(face: &Face, brep: &rcad_kernel::BRep) -> DVec3 {
  let mut sum = DVec3::ZERO;
  let mut count = 0;
  for we in &face.outer_wire.edges {
@@ -852,13 +850,13 @@ impl ThickeningOptions {
 // Inline BRep builder helpers (avoids rcad_modeling dependency)
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 
-fn add_vertex(brep: &mut BRep, point: DVec3) -> usize {
+fn add_vertex(brep: &mut rcad_kernel::BRep, point: DVec3) -> usize {
  let idx = brep.vertices.len();
  brep.vertices.push(Vertex { point });
  idx
 }
 
-fn add_edge(brep: &mut BRep, curve: Curve3, t0: f64, t1: f64, v0: usize, v1: usize) -> usize {
+fn add_edge(brep: &mut rcad_kernel::BRep, curve: Curve3, t0: f64, t1: f64, v0: usize, v1: usize) -> usize {
  let idx = brep.edges.len();
  brep.edges.push(Edge { start: v0, end: v1 });
  let ci = brep.geom.curves.len();
@@ -871,7 +869,7 @@ fn add_edge(brep: &mut BRep, curve: Curve3, t0: f64, t1: f64, v0: usize, v1: usi
  idx
 }
 
-fn add_face(brep: &mut BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -> usize {
+fn add_face(brep: &mut rcad_kernel::BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -> usize {
  if brep.solids.is_empty() {
  brep.solids.push(Solid { shells: vec![Shell { faces: Vec::new() }] });
  }
@@ -942,7 +940,7 @@ fn offset_surface(surf: &Surface3, d: f64) -> Option<Surface3> {
 // Vertex normals
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 
-fn vertex_normal(shell: &Shell, brep: &BRep, vidx: usize) -> DVec3 {
+fn vertex_normal(shell: &Shell, brep: &rcad_kernel::BRep, vidx: usize) -> DVec3 {
  let mut n = DVec3::ZERO;
  let mut count = 0;
  for face in &shell.faces {
@@ -957,7 +955,7 @@ fn vertex_normal(shell: &Shell, brep: &BRep, vidx: usize) -> DVec3 {
 
 fn vertex_normal_with_thickness(
  shell: &Shell,
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  vidx: usize,
  thickness_map: &HashMap<usize, f64>,
  default_thickness: f64,
@@ -1030,7 +1028,7 @@ fn chain_edges(edge_indices: &[usize], edges: &[Edge]) -> Vec<Vec<usize>> {
 /// - Lateral face configuration
 /// - Variable thickness
 /// - Self-intersection handling
-pub fn thicken_solid(brep: &BRep, options: &ThickeningOptions) -> Option<ThickeningResult> {
+pub fn thicken_solid(brep: &rcad_kernel::BRep, options: &ThickeningOptions) -> Option<ThickeningResult> {
  let shell = brep.solids.first()?.shells.first()?;
  if shell.faces.is_empty() {
  return None;
@@ -1137,7 +1135,7 @@ pub fn thicken_solid(brep: &BRep, options: &ThickeningOptions) -> Option<Thicken
  };
 
  // Build result BRep
- let mut out = BRep::new();
+ let mut out = rcad_kernel::BRep::new();
  out.solids.push(Solid { shells: vec![Shell { faces: Vec::new() }] });
 
  let mut orig_vidx: Vec<usize> = Vec::new();
@@ -1231,7 +1229,7 @@ pub fn thicken_solid(brep: &BRep, options: &ThickeningOptions) -> Option<Thicken
 fn find_dominant_face_thickness(
  vidx: usize,
  shell: &Shell,
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  thickness_map: &HashMap<usize, f64>,
  default: f64,
 ) -> f64 {
@@ -1253,7 +1251,7 @@ fn find_dominant_face_thickness(
 
 /// Create lateral faces along boundary edges.
 fn create_lateral_faces(
- out: &mut BRep,
+ out: &mut rcad_kernel::BRep,
  boundary_edges: &[usize],
  edges: &[Edge],
  orig_vidx: &[usize],
@@ -1319,7 +1317,7 @@ fn create_lateral_faces(
 
 /// Create a single lateral face (quad).
 fn create_single_lateral_face(
- out: &mut BRep,
+ out: &mut rcad_kernel::BRep,
  v0: usize,
  v1: usize,
  v2: usize,
@@ -1364,7 +1362,7 @@ fn create_single_lateral_face(
 /// Returns `None` if all faces are removed, thickness is zero, or the offset
 /// would create degenerate surfaces.
 pub fn thick_solid_with_removed_faces(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  removed_face_indices: &[usize],
  thickness: f64,
 ) -> Option<ThickeningResult> {
@@ -1377,7 +1375,7 @@ pub fn thick_solid_with_removed_faces(
 ///
 /// Computes the minimum distance between non-adjacent face centroids.
 /// If `thickness > min_distance / 2`, the offset faces will self-intersect.
-fn detect_self_intersection(brep: &BRep, thickness: f64) -> bool {
+fn detect_self_intersection(brep: &rcad_kernel::BRep, thickness: f64) -> bool {
  let shell = brep.solids.first().and_then(|s| s.shells.first());
  let shell = match shell {
  Some(s) => s,
@@ -1422,7 +1420,7 @@ fn detect_self_intersection(brep: &BRep, thickness: f64) -> bool {
 /// `thickness` > 0 offsets outward, < 0 offsets inward.
 /// Returns `None` if the shell is closed, has no geometry, or the offset
 /// would create degenerate surfaces.
-pub fn thicken_shell(brep: &BRep, thickness: f64) -> Option<ThickeningResult> {
+pub fn thicken_shell(brep: &rcad_kernel::BRep, thickness: f64) -> Option<ThickeningResult> {
  if thickness.abs() < TOLERANCE_LEN_MIN { return None; }
 
  let shell = brep.solids.first()?.shells.first()?;
@@ -1449,7 +1447,7 @@ pub fn thicken_shell(brep: &BRep, thickness: f64) -> Option<ThickeningResult> {
  }).collect();
 
  // Build result BRep with original + offset vertices
- let mut out = BRep::new();
+ let mut out = rcad_kernel::BRep::new();
  out.solids.push(Solid { shells: vec![Shell { faces: Vec::new() }] });
 
  let mut orig_vidx: Vec<usize> = Vec::new();

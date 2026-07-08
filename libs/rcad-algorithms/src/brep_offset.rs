@@ -1,4 +1,4 @@
-﻿//! BRepOffsetAPI-style offset operations  ?high-level API for offset, hollow, and evolved shapes.
+//! BRepOffsetAPI-style offset operations  ?high-level API for offset, hollow, and evolved shapes.
 //!
 //! This module provides high-level offset operations analogous to OCCT's BRepOffsetAPI:
 //!
@@ -44,7 +44,6 @@
 
 use glam::DVec3;
 use rcad_kernel::{
- BRep,
  SurfaceEval, CurveEval,
  geom::{Curve3, Surface3, Line3, Plane},
  topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge},
@@ -211,7 +210,7 @@ pub struct WireOffsetResult {
 #[derive(Debug, Clone)]
 pub struct ThickSolidResult {
  /// The resulting BRep.
- pub brep: BRep,
+ pub brep: rcad_kernel::BRep,
  /// Number of offset faces.
  pub offset_faces: usize,
  /// Number of lateral faces.
@@ -230,7 +229,7 @@ pub struct PipeShellResult {
  /// The resulting shell.
  pub shell: Shell,
  /// The resulting BRep.
- pub brep: BRep,
+ pub brep: rcad_kernel::BRep,
  /// Number of section faces.
  pub section_faces: usize,
  /// Number of lateral faces.
@@ -243,7 +242,7 @@ pub struct PipeShellResult {
 #[derive(Debug, Clone)]
 pub struct EvolvedResult {
  /// The resulting BRep.
- pub brep: BRep,
+ pub brep: rcad_kernel::BRep,
  /// Number of faces created.
  pub face_count: usize,
  /// Warnings generated during the operation.
@@ -268,7 +267,7 @@ pub struct MakeOffset<'a> {
  /// The input wire to offset.
  wire: &'a Wire,
  /// The BRep containing the wire's geometry.
- brep: &'a BRep,
+ brep: &'a rcad_kernel::BRep,
  /// Offset distance.
  distance: f64,
  /// Join type for corners.
@@ -281,7 +280,7 @@ pub struct MakeOffset<'a> {
 
 impl<'a> MakeOffset<'a> {
  /// Create a new wire offset operation.
- pub fn new(wire: &'a Wire, brep: &'a BRep, distance: f64) -> Self {
+ pub fn new(wire: &'a Wire, brep: &'a rcad_kernel::BRep, distance: f64) -> Self {
  Self {
  wire,
  brep,
@@ -305,7 +304,7 @@ impl<'a> MakeOffset<'a> {
  }
 
  /// Check if the wire is closed.
- fn is_wire_closed(wire: &Wire, brep: &BRep) -> bool {
+ fn is_wire_closed(wire: &Wire, brep: &rcad_kernel::BRep) -> bool {
  if wire.edges.is_empty() {
  return false;
  }
@@ -334,7 +333,7 @@ impl<'a> MakeOffset<'a> {
  return Err(OffsetError::InvalidInput("wire has no edges"));
  }
 
- let mut result_brep = BRep::new();
+ let mut result_brep = rcad_kernel::BRep::new();
  let mut offset_vertices: Vec<usize> = Vec::new();
  let mut offset_edges: Vec<usize> = Vec::new();
  let mut warnings = Vec::new();
@@ -536,7 +535,7 @@ impl<'a> MakeOffset<'a> {
  /// Apply corner join geometry for arc/tangent joins.
  fn apply_corner_joins(
  &self,
- _result_brep: &mut BRep,
+ _result_brep: &mut rcad_kernel::BRep,
  _edges: &[usize],
  warnings: &mut Vec<String>,
  ) {
@@ -568,7 +567,7 @@ impl<'a> MakeOffset<'a> {
 /// The offset wire result.
 pub fn offset_wire(
  wire: &Wire,
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  distance: f64,
  join_type: JoinType,
 ) -> Result<WireOffsetResult, OffsetError> {
@@ -587,19 +586,19 @@ pub fn offset_wire(
 /// Supports different offset modes and join types.
 pub struct MakeOffsetShape<'a> {
  /// The input BRep.
- brep: &'a BRep,
+ brep: &'a rcad_kernel::BRep,
  /// Offset options.
  options: BRepOffsetOptions,
 }
 
 impl<'a> MakeOffsetShape<'a> {
  /// Create a new shape offset operation.
- pub fn new(brep: &'a BRep, options: BRepOffsetOptions) -> Self {
+ pub fn new(brep: &'a rcad_kernel::BRep, options: BRepOffsetOptions) -> Self {
  Self { brep, options }
  }
 
  /// Create with simple distance.
- pub fn from_distance(brep: &'a BRep, distance: f64) -> Self {
+ pub fn from_distance(brep: &'a rcad_kernel::BRep, distance: f64) -> Self {
  Self {
  brep,
  options: BRepOffsetOptions::new(distance),
@@ -623,7 +622,7 @@ impl<'a> MakeOffsetShape<'a> {
 /// # Returns
 ///
 /// The offset result.
-pub fn offset_shape_with_options(brep: &BRep, opts: BRepOffsetOptions) -> Result<OffsetResult, OffsetError> {
+pub fn offset_shape_with_options(brep: &rcad_kernel::BRep, opts: BRepOffsetOptions) -> Result<OffsetResult, OffsetError> {
  MakeOffsetShape::new(brep, opts).build()
 }
 
@@ -638,7 +637,7 @@ pub fn offset_shape_with_options(brep: &BRep, opts: BRepOffsetOptions) -> Result
 /// # Returns
 ///
 /// The offset result.
-pub fn offset_shape_with_join(brep: &BRep, distance: f64, join_type: JoinType) -> Result<OffsetResult, OffsetError> {
+pub fn offset_shape_with_join(brep: &rcad_kernel::BRep, distance: f64, join_type: JoinType) -> Result<OffsetResult, OffsetError> {
  let opts = BRepOffsetOptions::new(distance)
  .with_join_type(join_type);
 
@@ -655,7 +654,7 @@ pub fn offset_shape_with_join(brep: &BRep, distance: f64, join_type: JoinType) -
 /// the remaining faces inward by the wall thickness.
 pub struct MakeThickSolid<'a> {
  /// The input BRep.
- brep: &'a BRep,
+ brep: &'a rcad_kernel::BRep,
  /// Wall thickness.
  thickness: f64,
  /// Faces to remove (creates openings).
@@ -668,7 +667,7 @@ pub struct MakeThickSolid<'a> {
 
 impl<'a> MakeThickSolid<'a> {
  /// Create a new thick solid operation.
- pub fn new(brep: &'a BRep, thickness: f64) -> Self {
+ pub fn new(brep: &'a rcad_kernel::BRep, thickness: f64) -> Self {
  Self {
  brep,
  thickness,
@@ -800,7 +799,7 @@ impl<'a> MakeThickSolid<'a> {
 ///
 /// The hollow solid result.
 pub fn make_thick_solid(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  thickness: f64,
  faces_to_remove: &[usize],
 ) -> Result<ThickSolidResult, OffsetError> {
@@ -822,7 +821,7 @@ pub fn make_thick_solid(
 ///
 /// The hollow solid result.
 pub fn make_hollow_solid(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  wall_thickness: f64,
 ) -> Result<ThickSolidResult, OffsetError> {
  // Find the largest face to remove
@@ -858,7 +857,7 @@ pub struct MakePipeShell<'a> {
  /// Profile wires to sweep.
  profiles: Vec<&'a Wire>,
  /// The BRep containing the profile geometry.
- brep: &'a BRep,
+ brep: &'a rcad_kernel::BRep,
  /// Spine curve for the sweep path.
  spine: &'a Wire,
  /// Whether to create a solid (vs shell).
@@ -871,7 +870,7 @@ pub struct MakePipeShell<'a> {
 
 impl<'a> MakePipeShell<'a> {
  /// Create a new pipe shell operation.
- pub fn new(profiles: Vec<&'a Wire>, brep: &'a BRep, spine: &'a Wire) -> Self {
+ pub fn new(profiles: Vec<&'a Wire>, brep: &'a rcad_kernel::BRep, spine: &'a Wire) -> Self {
  Self {
  profiles,
  brep,
@@ -910,7 +909,7 @@ impl<'a> MakePipeShell<'a> {
  return Err(OffsetError::InvalidInput("spine has no edges"));
  }
 
- let mut result_brep = BRep::new();
+ let mut result_brep = rcad_kernel::BRep::new();
  result_brep.solids.push(Solid {
  shells: vec![Shell { faces: Vec::new() }],
  });
@@ -1075,7 +1074,7 @@ impl<'a> MakePipeShell<'a> {
  profile_verts: &[DVec3],
  origin: DVec3,
  tangent: DVec3,
- result_brep: &mut BRep,
+ result_brep: &mut rcad_kernel::BRep,
  _section_idx: usize,
  ) -> Vec<usize> {
  // Compute transformation
@@ -1112,7 +1111,7 @@ impl<'a> MakePipeShell<'a> {
  /// Create a quad face.
  fn create_quad_face(
  &self,
- result_brep: &mut BRep,
+ result_brep: &mut rcad_kernel::BRep,
  v0: usize,
  v1: usize,
  v2: usize,
@@ -1187,7 +1186,7 @@ impl<'a> MakePipeShell<'a> {
  }
 
  /// Create a cap face for the end of the pipe.
- fn create_cap_face(&self, result_brep: &mut BRep, section_verts: &[usize]) {
+ fn create_cap_face(&self, result_brep: &mut rcad_kernel::BRep, section_verts: &[usize]) {
  if section_verts.len() < 3 {
  return;
  }
@@ -1305,7 +1304,7 @@ impl<'a> MakePipeShell<'a> {
 /// The pipe shell result.
 pub fn make_pipe_shell(
  profiles: &[&Wire],
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  spine: &Wire,
 ) -> Result<PipeShellResult, OffsetError> {
  MakePipeShell::new(profiles.to_vec(), brep, spine).build()
@@ -1326,7 +1325,7 @@ pub struct MakeEvolved<'a> {
  /// The spine wire.
  spine: &'a Wire,
  /// The BRep containing geometry.
- brep: &'a BRep,
+ brep: &'a rcad_kernel::BRep,
  /// Whether the profile should rotate to follow the spine.
  follow_spine: bool,
  /// Whether to join profile end to start (for closed profiles).
@@ -1339,7 +1338,7 @@ pub struct MakeEvolved<'a> {
 
 impl<'a> MakeEvolved<'a> {
  /// Create a new evolved solid operation.
- pub fn new(profile: &'a Wire, spine: &'a Wire, brep: &'a BRep) -> Self {
+ pub fn new(profile: &'a Wire, spine: &'a Wire, brep: &'a rcad_kernel::BRep) -> Self {
  Self {
  profile,
  spine,
@@ -1420,7 +1419,7 @@ impl<'a> MakeEvolved<'a> {
 pub fn make_evolved(
  profile: &Wire,
  spine: &Wire,
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
 ) -> Result<EvolvedResult, OffsetError> {
  MakeEvolved::new(profile, spine, brep).build()
 }
@@ -1430,14 +1429,14 @@ pub fn make_evolved(
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 
 /// Helper to add a vertex to a BRep.
-fn add_vertex(brep: &mut BRep, point: DVec3) -> usize {
+fn add_vertex(brep: &mut rcad_kernel::BRep, point: DVec3) -> usize {
  let idx = brep.vertices.len();
  brep.vertices.push(Vertex { point });
  idx
 }
 
 /// Helper to add an edge to a BRep.
-fn add_edge(brep: &mut BRep, curve: Curve3, t0: f64, t1: f64, v0: usize, v1: usize) -> usize {
+fn add_edge(brep: &mut rcad_kernel::BRep, curve: Curve3, t0: f64, t1: f64, v0: usize, v1: usize) -> usize {
  let idx = brep.edges.len();
  brep.edges.push(Edge { start: v0, end: v1 });
 
@@ -1460,7 +1459,7 @@ fn add_edge(brep: &mut BRep, curve: Curve3, t0: f64, t1: f64, v0: usize, v1: usi
 }
 
 /// Helper to add a face to a BRep.
-fn add_face(brep: &mut BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -> usize {
+fn add_face(brep: &mut rcad_kernel::BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -> usize {
  if brep.solids.is_empty() {
  brep.solids.push(Solid {
  shells: vec![Shell { faces: Vec::new() }],

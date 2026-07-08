@@ -7,7 +7,7 @@
 
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, Surface3, Line3, CurveEval, SurfaceEval};
-use rcad_kernel::{BRep, Face};
+use rcad_kernel::Face;
 use crate::bvh::{Aabb, Bvh};
 use crate::tolerance::*;
 use crate::int_ana::{intersect_line_plane, intersect_line_torus};
@@ -37,7 +37,7 @@ use rayon::prelude::*;
 pub struct CurveSurfaceInter {
     results: Vec<CurveBRepIntersection>,
     index: usize,
-    shape: Option<BRep>,
+    shape: Option<rcad_kernel::BRep>,
     curve: Option<Curve3>,
     tol: f64,
     initialized: bool,
@@ -57,7 +57,7 @@ impl CurveSurfaceInter {
     }
 
     /// OCCT-aligned: Init — set the shape, curve, and tolerance.
-    pub fn init(&mut self, shape: &BRep, curve: &Curve3, tol: f64) {
+    pub fn init(&mut self, shape: &rcad_kernel::BRep, curve: &Curve3, tol: f64) {
         self.shape = Some(shape.clone());
         self.curve = Some(curve.clone());
         self.tol = tol;
@@ -67,7 +67,7 @@ impl CurveSurfaceInter {
     }
 
     /// OCCT-aligned: Perform — compute all intersection points at once.
-    pub fn perform(&mut self, shape: &BRep, curve: &Curve3, tol: f64) {
+    pub fn perform(&mut self, shape: &rcad_kernel::BRep, curve: &Curve3, tol: f64) {
         self.init(shape, curve, tol);
         self.compute();
     }
@@ -220,7 +220,7 @@ impl Default for RayHit {
 /// ```
 pub fn intersect_curve_with_brep(
     curve: &Curve3,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     tol: f64,
 ) -> Vec<CurveBRepIntersection> {
     let face_indices = collect_face_indices(brep);
@@ -299,7 +299,7 @@ pub fn intersect_curve_with_brep(
 pub fn intersect_line_with_brep(
     origin: DVec3,
     direction: DVec3,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     tol: f64,
 ) -> Vec<CurveBRepIntersection> {
     let dir = direction.normalize_or_zero();
@@ -358,7 +358,7 @@ pub fn intersect_line_with_brep(
 /// A vector of intersection points.
 pub fn intersect_curve_with_face(
     curve: &Curve3,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     face_idx: usize,
     tol: f64,
 ) -> Vec<CurveFaceIntersection> {
@@ -436,7 +436,7 @@ pub fn intersect_curve_with_face(
 pub fn intersect_line_with_face(
     origin: DVec3,
     dir: DVec3,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     face_idx: usize,
     tol: f64,
 ) -> Vec<CurveFaceIntersection> {
@@ -501,7 +501,7 @@ pub fn intersect_line_with_face(
 pub fn ray_cast(
     origin: DVec3,
     direction: DVec3,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
 ) -> Vec<RayHit> {
     let dir = direction.normalize_or_zero();
 
@@ -562,7 +562,7 @@ pub fn ray_cast(
 pub fn shoot_ray(
     origin: DVec3,
     direction: DVec3,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     max_distance: f64,
 ) -> Vec<RayHit> {
     let hits = ray_cast(origin, direction, brep);
@@ -595,7 +595,7 @@ pub fn shoot_ray(
 /// let inside = is_point_inside_by_ray(DVec3::new(1.0, 1.0, 1.0), &box_brep);
 /// assert!(inside);
 /// ```
-pub fn is_point_inside_by_ray(point: DVec3, brep: &BRep) -> bool {
+pub fn is_point_inside_by_ray(point: DVec3, brep: &rcad_kernel::BRep) -> bool {
     // Use multiple ray directions for robustness
     let directions = [
         DVec3::X,
@@ -637,7 +637,7 @@ pub fn is_point_inside_by_ray(point: DVec3, brep: &BRep) -> bool {
 // =============================================================================
 
 /// Collect all face indices from a BRep.
-fn collect_face_indices(brep: &BRep) -> Vec<usize> {
+fn collect_face_indices(brep: &rcad_kernel::BRep) -> Vec<usize> {
     let mut indices = Vec::new();
     let mut count = 0;
 
@@ -654,7 +654,7 @@ fn collect_face_indices(brep: &BRep) -> Vec<usize> {
 }
 
 /// Get a face by its flat index.
-fn get_face(brep: &BRep, face_idx: usize) -> Option<&Face> {
+fn get_face(brep: &rcad_kernel::BRep, face_idx: usize) -> Option<&Face> {
     let mut count = 0;
 
     for solid in &brep.solids {
@@ -672,7 +672,7 @@ fn get_face(brep: &BRep, face_idx: usize) -> Option<&Face> {
 }
 
 /// Get the surface for a face by its index.
-fn get_face_surface(brep: &BRep, face_idx: usize) -> Option<Surface3> {
+fn get_face_surface(brep: &rcad_kernel::BRep, face_idx: usize) -> Option<Surface3> {
     let surface_idx = brep.geom.face_surface.get(face_idx).copied().flatten()?;
     brep.geom.surfaces.get(surface_idx).cloned()
 }
@@ -928,7 +928,7 @@ fn compute_uv_for_point(surface: &Surface3, point: DVec3) -> DVec2 {
 /// Check if a point lies within a face's boundaries.
 ///
 /// Uses point-in-polygon test with the face's outer wire vertices.
-fn is_point_in_face_bounds(brep: &BRep, point: DVec3, _uv: DVec2, face_idx: usize, tol: f64) -> bool {
+fn is_point_in_face_bounds(brep: &rcad_kernel::BRep, point: DVec3, _uv: DVec2, face_idx: usize, tol: f64) -> bool {
     let face = match get_face(brep, face_idx) {
         Some(f) => f,
         None => return true, // No face bounds info, assume inside
@@ -1006,7 +1006,7 @@ fn is_point_in_face_bounds(brep: &BRep, point: DVec3, _uv: DVec2, face_idx: usiz
 }
 
 /// Collect 3D vertex positions from a wire in traversal order.
-fn collect_wire_vertices(brep: &BRep, wire: &rcad_kernel::topology::Wire) -> Vec<DVec3> {
+fn collect_wire_vertices(brep: &rcad_kernel::BRep, wire: &rcad_kernel::topology::Wire) -> Vec<DVec3> {
     let mut vertices = Vec::new();
     for wire_edge in &wire.edges {
         let edge = match brep.edges.get(wire_edge.idx) {
