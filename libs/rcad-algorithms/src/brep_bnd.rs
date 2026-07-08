@@ -21,7 +21,7 @@
 //!
 //! // Compute bounding box for the entire BRep
 //! let mut bbox = BoundingBox::new();
-//! add_brep_to_bbox(&brep, &mut bbox);
+//! add_brep_to_bbox(&rcad_kernel::BRep, &mut bbox);
 //!
 //! assert!(bbox.is_valid());
 //! assert!((bbox.size().x - 1.0).abs() < TOLERANCE_MESH_LEGACY);
@@ -30,7 +30,7 @@
 //! ```
 
 use glam::DVec3;
-use rcad_kernel::{topods, BRep, Curve3, Surface3};
+use rcad_kernel::{topods, Curve3, Surface3};
 use rcad_kernel::geom::{CurveEval, SurfaceEval};
 
 // =============================================================================
@@ -348,12 +348,12 @@ impl BoundingBox {
 ///
 /// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Sphere { radius: 1.0 });
 /// let mut bbox = BoundingBox::new();
-/// add_brep_to_bbox(&brep, &mut bbox);
+/// add_brep_to_bbox(&rcad_kernel::BRep, &mut bbox);
 ///
 /// // Sphere should be bounded by [-1, 1] in y (poles)
 /// assert!(bbox.is_valid());
 /// ```
-pub fn add_brep_to_bbox(brep: &BRep, bbox: &mut BoundingBox) {
+pub fn add_brep_to_bbox(brep: &rcad_kernel::BRep, bbox: &mut BoundingBox) {
     // Add all vertices
     for vertex in &brep.vertices {
         bbox.add_point(vertex.point);
@@ -375,7 +375,7 @@ pub fn add_brep_to_bbox(brep: &BRep, bbox: &mut BoundingBox) {
 ///
 /// Samples the face's surface at grid points to get accurate bounds
 /// for curved surfaces.
-pub fn add_face_to_bbox(brep: &BRep, face_idx: usize, bbox: &mut BoundingBox) {
+pub fn add_face_to_bbox(brep: &rcad_kernel::BRep, face_idx: usize, bbox: &mut BoundingBox) {
     // Get the face and its surface
     let (face, surface_idx) = match get_face_and_surface_idx(brep, face_idx) {
         Some(result) => result,
@@ -419,7 +419,7 @@ pub fn add_face_to_bbox(brep: &BRep, face_idx: usize, bbox: &mut BoundingBox) {
 /// Add an edge to a bounding box.
 ///
 /// Samples the edge's 3D curve to get accurate bounds for curved edges.
-pub fn add_edge_to_bbox(brep: &BRep, edge_idx: usize, bbox: &mut BoundingBox) {
+pub fn add_edge_to_bbox(brep: &rcad_kernel::BRep, edge_idx: usize, bbox: &mut BoundingBox) {
     if edge_idx >= brep.edges.len() {
         return;
     }
@@ -455,14 +455,14 @@ pub fn add_edge_to_bbox(brep: &BRep, edge_idx: usize, bbox: &mut BoundingBox) {
 }
 
 /// Add a vertex to a bounding box.
-pub fn add_vertex_to_bbox(brep: &BRep, vertex_idx: usize, bbox: &mut BoundingBox) {
+pub fn add_vertex_to_bbox(brep: &rcad_kernel::BRep, vertex_idx: usize, bbox: &mut BoundingBox) {
     if vertex_idx < brep.vertices.len() {
         bbox.add_point(brep.vertices[vertex_idx].point);
     }
 }
 
 /// Add surface geometry to bounding box with face-specific parameter range.
-fn add_surface_to_bbox(surface: &Surface3, brep: &BRep, face_idx: usize, bbox: &mut BoundingBox) {
+fn add_surface_to_bbox(surface: &Surface3, brep: &rcad_kernel::BRep, face_idx: usize, bbox: &mut BoundingBox) {
     // Get the parameter range for this face
     let domain = brep.geom.face_surface_range.get(face_idx)
         .copied()
@@ -569,7 +569,7 @@ pub fn curve_bounds_default(curve: &Curve3) -> BoundingBox {
 // =============================================================================
 
 /// Count the total number of faces in a BRep.
-fn count_brep_faces(brep: &BRep) -> usize {
+fn count_brep_faces(brep: &rcad_kernel::BRep) -> usize {
     brep.solids.iter()
         .flat_map(|s| &s.shells)
         .map(|sh| sh.faces.len())
@@ -577,7 +577,7 @@ fn count_brep_faces(brep: &BRep) -> usize {
 }
 
 /// Get a face and its surface index by flat index.
-fn get_face_and_surface_idx(brep: &BRep, face_idx: usize) -> Option<(&rcad_kernel::topology::Face, usize)> {
+fn get_face_and_surface_idx(brep: &rcad_kernel::BRep, face_idx: usize) -> Option<(&rcad_kernel::topology::Face, usize)> {
     let mut current_idx = 0;
 
     for solid in &brep.solids {
@@ -602,5 +602,6 @@ fn get_face_and_surface_idx(brep: &BRep, face_idx: usize) -> Option<(&rcad_kerne
 // =============================================================================
 // Tests
 // =============================================================================
+
 
 
