@@ -1,4 +1,4 @@
-//! Defeaturing pass: suppress small cylindrical holes, bosses, and very small faces.
+﻿//! Defeaturing pass: suppress small cylindrical holes, bosses, and very small faces.
 //!
 //! Analogous to `BRepAlgoAPI_Defeaturing` in OCCT 8.0.
 //!
@@ -58,7 +58,8 @@ use rcad_kernel::topology::{Face, Wire};
 use rcad_modeling::make_cylinder_brep;
 
 use crate::tolerance::*;
-use crate::{BooleanOpType, BooleanOptions, boolean_op, boolean_op_robust, BooleanRobustOptions, BooleanRetryPolicy};
+use crate::{BooleanOptions, BooleanRobustOptions, BooleanRetryPolicy, boolean_op_robust, ExtremeGeometryRetryConfig};
+use crate::{BooleanOpType, boolean_op};
 use crate::brep_repair::make_connected_enhanced;
 
 // -- Tolerances --------------------------------------------------------------

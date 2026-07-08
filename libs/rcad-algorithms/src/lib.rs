@@ -14,9 +14,9 @@ pub use brep_graph::{
     BRepGraphHistory, NamedGraph, NodeKind, TopoGraph, TopoGraphHistory, TopoGraphHistoryEvent,
     TopoGraphValidationIssue, TopoNode,
 };
+pub mod boolean;
 pub mod bnd_lib;
 pub mod bnd_lib_2d;
-pub mod boolean;
 mod boolean_unit_octant;
 pub mod bopds;
 pub mod brep_algo;

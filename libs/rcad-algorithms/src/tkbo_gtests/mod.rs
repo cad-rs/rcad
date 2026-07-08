@@ -122,14 +122,9 @@ mod builder_algo_tests {
 mod bop_algo_direct_tests {
     use super::*;
     use crate::BooleanOpType;
-    use crate::boolean::boolean_op_with_retry_policy;
-    use crate::boolean::RetryPolicy;
 
     fn perform_bop(a: &BRep, b: &BRep, op: BooleanOpType) -> BRep {
-        let (brep, _report) =
-            boolean_op_with_retry_policy(op, a, b, &RetryPolicy::default(), Default::default())
-                .expect("BOP operation failed");
-        brep
+        BRep::from_topods(&crate::boolean_op(op, a, b).expect("BOP operation failed"))
     }
 
     #[test]
