@@ -255,3 +255,219 @@ mod projlib_cone_tests {
         assert!(result.is_some(), "circle on cone should project");
     }
 }
+
+// =============================================================================
+// ExtremaPC_SearchMode_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod extremapc_searchmode_tests {
+    use super::*;
+
+    fn make_line() -> Curve3 {
+        Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X })
+    }
+
+    fn make_circle() -> Curve3 {
+        Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 10.0))
+    }
+
+    #[test]
+    fn line_min_mode() {
+        let line = make_line();
+        let pt = DVec3::new(25.0, 10.0, 0.0);
+        let r = find_extrema_curve(&line, pt, 1e-6, SearchMode::Min);
+        assert!(r.is_done());
+        assert_eq!(r.nb_ext(), 1);
+        assert!((r.min_square_distance().sqrt() - 10.0).abs() < TOL);
+    }
+
+    #[test]
+    fn line_max_mode() {
+        let pt = DVec3::new(0.0, 10.0, 0.0);
+        let bounded = Curve3::Line(Line3 { origin: DVec3::new(-50.0, 0.0, 0.0), direction: DVec3::X });
+        let r = find_extrema_curve(&bounded, pt, 1e-6, SearchMode::Max);
+        assert!(r.is_done());
+        assert!(r.nb_ext() >= 1);
+    }
+
+    #[test]
+    fn circle_min_mode_point_outside() {
+        let circle = make_circle();
+        let pt = DVec3::new(20.0, 0.0, 0.0);
+        let r = find_extrema_curve(&circle, pt, 1e-6, SearchMode::Min);
+        assert!(r.is_done());
+        assert_eq!(r.nb_ext(), 1);
+        assert!((r.min_square_distance().sqrt() - 10.0).abs() < TOL);
+    }
+
+    #[test]
+    fn circle_max_mode_point_outside() {
+        let circle = make_circle();
+        let pt = DVec3::new(20.0, 0.0, 0.0);
+        let r = find_extrema_curve(&circle, pt, 1e-6, SearchMode::Max);
+        assert!(r.is_done());
+        assert_eq!(r.nb_ext(), 1);
+        assert!((r.max_square_distance().sqrt() - 30.0).abs() < TOL);
+    }
+
+    #[test]
+    fn circle_min_mode_point_inside() {
+        let circle = make_circle();
+        let pt = DVec3::new(3.0, 0.0, 0.0);
+        let r = find_extrema_curve(&circle, pt, 1e-6, SearchMode::Min);
+        assert!(r.is_done());
+        assert_eq!(r.nb_ext(), 1);
+        assert!((r.min_square_distance().sqrt() - 7.0).abs() < TOL);
+    }
+
+    #[test]
+    fn circle_minmax_mode_different_min_max() {
+        let circle = make_circle();
+        let pt = DVec3::new(15.0, 0.0, 0.0);
+        let r = find_extrema_curve(&circle, pt, 1e-6, SearchMode::MinMax);
+        assert!(r.is_done());
+        assert!(r.nb_ext() >= 2);
+        assert!((r.min_square_distance().sqrt() - 5.0).abs() < TOL);
+        assert!((r.max_square_distance().sqrt() - 25.0).abs() < 2.0);
+    }
+}
+
+// =============================================================================
+// ExtremaPC_ExtendedGeometry_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod extremapc_extended_geo_tests {
+    use super::*;
+
+    #[test]
+    fn circle_translated() {
+        let c = Curve3::Circle(Circle3::new(DVec3::new(100.0, 200.0, 50.0), DVec3::Z, 25.0));
+        let pt = DVec3::new(150.0, 200.0, 50.0);
+        let (dist, _) = distance_point_curve(pt, &c);
+        assert!((dist - 25.0).abs() < TOL);
+    }
+
+    #[test]
+    fn circle_rotated_xy_plane() {
+        let normal = DVec3::new(1.0, 1.0, 0.0).normalize();
+        let c = Curve3::Circle(Circle3::new(DVec3::ZERO, normal, 15.0));
+        let pt = DVec3::new(20.0, 20.0, 5.0);
+        let (dist, _) = distance_point_curve(pt, &c);
+        assert!(dist > 0.0);
+    }
+
+    #[test]
+    fn circle_very_small() {
+        let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 0.001));
+        let pt = DVec3::new(0.002, 0.0, 0.0);
+        let (dist, _) = distance_point_curve(pt, &c);
+        assert!((dist - 0.001).abs() < 1e-9);
+    }
+
+    #[test]
+    fn circle_very_large() {
+        let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1000.0));
+        let pt = DVec3::new(1500.0, 0.0, 0.0);
+        let (dist, _) = distance_point_curve(pt, &c);
+        assert!((dist - 500.0).abs() < TOL);
+    }
+
+    #[test]
+    fn ellipse_translated() {
+        let e = Curve3::Ellipse(Ellipse3 {
+            center: DVec3::new(50.0, 100.0, 25.0), normal: DVec3::Z, major_dir: DVec3::X,
+            major_radius: 30.0, minor_radius: 15.0,
+        });
+        let pt = DVec3::new(90.0, 100.0, 25.0);
+        let (dist, _) = distance_point_curve(pt, &e);
+        assert!((dist - 10.0).abs() < TOL);
+    }
+
+    #[test]
+    fn ellipse_high_eccentricity() {
+        let e = Curve3::Ellipse(Ellipse3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            major_radius: 50.0, minor_radius: 2.0,
+        });
+        let pt = DVec3::new(40.0, 5.0, 0.0);
+        let (dist, _) = distance_point_curve(pt, &e);
+        assert!(dist > 0.0);
+    }
+}
+
+// =============================================================================
+// ExtremaPC_Comparison_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod extremapc_comparison_tests {
+    use super::*;
+
+    #[test]
+    fn line_point_on_line() {
+        let line = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let (d1, _) = distance_point_curve(DVec3::new(5.0, 0.0, 0.0), &line);
+        let (d2, _) = distance_point_curve(DVec3::new(5.0, 3.0, 4.0), &line);
+        assert!(d1 < TOL);
+        assert!((d2 - 5.0).abs() < TOL);
+    }
+
+    #[test]
+    fn circle_point_outside() {
+        let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 10.0));
+        let (d1, _) = distance_point_curve(DVec3::new(20.0, 0.0, 0.0), &c);
+        let (d2, _) = distance_point_curve(DVec3::new(3.0, 0.0, 0.0), &c);
+        assert!((d1 - 10.0).abs() < TOL);
+        assert!((d2 - 7.0).abs() < TOL);
+    }
+
+    #[test]
+    fn circle_point_off_plane() {
+        let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 10.0));
+        let (dist, _) = distance_point_curve(DVec3::new(15.0, 0.0, 5.0), &c);
+        assert!(dist > 0.0);
+    }
+
+    #[test]
+    fn ellipse_point_on_major_axis() {
+        let e = Curve3::Ellipse(Ellipse3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            major_radius: 20.0, minor_radius: 10.0,
+        });
+        let (dist, _) = distance_point_curve(DVec3::new(30.0, 0.0, 0.0), &e);
+        assert!((dist - 10.0).abs() < TOL);
+    }
+
+    #[test]
+    fn parabola_point_near_vertex() {
+        let p = Curve3::Parabola(Parabola3 {
+            vertex: DVec3::ZERO, normal: DVec3::Z, axis_dir: DVec3::X,
+            focal_param: 4.0,
+        });
+        let (dist, _) = distance_point_curve(DVec3::new(1.0, 2.0, 0.0), &p);
+        assert!(dist > 0.0);
+    }
+}
+
+// =============================================================================
+// Extrema_ExtPC_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod extrema_extpc_tests {
+    use super::*;
+
+    #[test]
+    fn bug24945_cylinder_parameter_normalization() {
+        let pt = DVec3::new(-1725.97, 843.257, -4.22741e-13);
+        let c = Curve3::Circle(Circle3::new(
+            DVec3::new(0.0, 843.257, 0.0),
+            -DVec3::Y,
+            1725.9708621929999,
+        ));
+        let (dist, _param) = distance_point_curve(pt, &c);
+        assert!(dist < 1.0, "bug24945: projected distance should be small, got {}", dist);
+    }
+}
