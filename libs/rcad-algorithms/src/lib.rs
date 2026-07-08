@@ -118,6 +118,7 @@ pub mod tkg2d_gtests;
 pub mod tkg3d_gtests;
 pub mod tkgeombase_algo;
 pub mod tkgeombase_gtests;
+pub mod tkgeombase_props;
 pub mod tolerance;
 pub use tolerance::TOLERANCE_MESH_LEGACY;
 use crate::tolerance::*;
