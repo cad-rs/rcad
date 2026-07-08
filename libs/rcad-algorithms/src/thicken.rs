@@ -21,9 +21,11 @@
 //! - **Thickness variation**: Variable thickness by face region with smooth transitions
 //! - **Self-intersection handling**: Detection, automatic thickness reduction, warnings
 
+
+use rcad_kernel::BRep;
+
 use std::collections::{HashMap, HashSet};
 use glam::DVec3;
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 use rcad_kernel::SurfaceEval;
 use rcad_kernel::geom::{Curve3, Line3, Surface3};

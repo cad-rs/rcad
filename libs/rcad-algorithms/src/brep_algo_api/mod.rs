@@ -5,11 +5,12 @@
 
 #![allow(non_camel_case_types)]
 
+use rcad_kernel::BRep;
+
 pub mod argument_analyzer;
 pub mod builder_operation;
 pub mod section;
 
-use rcad_kernel::BRep;
 use std::collections::HashMap;
 
 use crate::bopds::ds::DS;

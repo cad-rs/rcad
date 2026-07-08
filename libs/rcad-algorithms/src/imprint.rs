@@ -1,5 +1,7 @@
-//! Stub: imprint_shape module removed (self-created code).
+﻿//! Stub: imprint_shape module removed (self-created code).
 //! Kept to satisfy existing references until callers are cleaned up.
+
+
 
 use rcad_kernel::BRep;
 

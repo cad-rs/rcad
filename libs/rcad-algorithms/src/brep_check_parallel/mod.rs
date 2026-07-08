@@ -18,12 +18,14 @@
 //!
 //! Example speedup on an 8-core machine for a 10,000-face model: ~4-6x faster.
 
+
+use rcad_kernel::BRep;
+
 use crate::tolerance::*;
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 use glam::DVec3;
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 use rcad_kernel::geom::CurveEval;
 

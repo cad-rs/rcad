@@ -1,13 +1,15 @@
-//! BRepExtrema-style distance/extrema calculations.
+﻿//! BRepExtrema-style distance/extrema calculations.
 //!
 //! OCCT-aligned:
 //! - `DistShapeShape` (class): distance between two shapes, with
 //!   `perform()` / `is_done()` / `distance()` / `support_on_shape1()` / `support_on_shape2()`
 //! - Utility free functions: distance_point_curve, closest_point_on_curve, etc.
 
+
+use rcad_kernel::BRep;
+
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, CurveEval, Line3, Surface3, SurfaceEval};
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 
 use crate::bvh::{Aabb, Bvh};
@@ -17,10 +19,10 @@ use crate::tolerance::*;
 const H: f64 = TOLERANCE_MESH_LEGACY;
 
 // =============================================================================
-// BRepExtrema_DistShapeShape — distance between two shapes (OCCT-aligned class)
+// BRepExtrema_DistShapeShape 鈥?distance between two shapes (OCCT-aligned class)
 // =============================================================================
 
-/// OCCT-aligned: BRepExtrema_DistShapeShape — compute minimum distance
+/// OCCT-aligned: BRepExtrema_DistShapeShape 鈥?compute minimum distance
 /// between two shapes using BVH-accelerated surface sampling.
 ///
 /// Usage:
@@ -68,7 +70,7 @@ impl DistShapeShape {
     /// OCCT-aligned: LoadS2.
     pub fn load_s2(&mut self, s2: &BRep) { self.shape2 = Some(s2.clone()); }
 
-    /// OCCT-aligned: Perform — compute the minimum distance.
+    /// OCCT-aligned: Perform 鈥?compute the minimum distance.
     pub fn perform(&mut self) {
         let Some(ref s1) = self.shape1 else { return };
         let Some(ref s2) = self.shape2 else { return };
@@ -85,10 +87,10 @@ impl DistShapeShape {
     /// OCCT-aligned: Distance.
     pub fn distance(&self) -> f64 { self.distance }
 
-    /// OCCT-aligned: SupportOnShape1 — the support elements on shape 1.
+    /// OCCT-aligned: SupportOnShape1 鈥?the support elements on shape 1.
     pub fn support_on_shape1(&self) -> &[topods::ShapeRef] { &self.support1 }
 
-    /// OCCT-aligned: SupportOnShape2 — the support elements on shape 2.
+    /// OCCT-aligned: SupportOnShape2 鈥?the support elements on shape 2.
     pub fn support_on_shape2(&self) -> &[topods::ShapeRef] { &self.support2 }
 
     /// Convenience: closest point on shape 1.

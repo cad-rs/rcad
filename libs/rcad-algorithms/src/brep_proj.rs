@@ -4,12 +4,14 @@
 //! the polyline along `2·mdis·D`, then intersect that prism with the target shape’s
 //! triangle soup to obtain projected polylines as wires.
 
+
+use rcad_kernel::BRep;
+
 use std::collections::HashSet;
 
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval, Line3};
 use rcad_kernel::topology::{Edge, Vertex};
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 
 use crate::brep_tools;

@@ -16,8 +16,10 @@
 //! All functions are **non-destructive**: they return a new `BRep` leaving the
 //! original unchanged.
 
-use glam::DVec3;
+
 use rcad_kernel::BRep;
+
+use glam::DVec3;
 use rcad_kernel::topods;
 use rcad_kernel::CurveEval;
 use rcad_kernel::Curve2dEval;

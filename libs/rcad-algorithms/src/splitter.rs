@@ -13,9 +13,11 @@
 //! - `BOPAlgo_Splitter.cxx` L1-80: BOPAlgo_Splitter::Perform + BuildResult
 //! - `BRepAlgoAPI_Splitter.cxx` L1-50: API wrapper
 
+
+use rcad_kernel::BRep;
+
 use crate::builder::BooleanOpType;
 use crate::history::FaceOrigin;
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 
 // ── Task B: filter_object_only ──────────────────────────────────────────────

@@ -7,8 +7,10 @@
 //!
 //! Analogous to OCCT `BVH_Tree` / `BVH_Builder`.
 
-use glam::DVec3;
+
 use rcad_kernel::BRep;
+
+use glam::DVec3;
 use rcad_kernel::topods;
 use rcad_kernel::geom::{Surface3, SurfaceEval};
 

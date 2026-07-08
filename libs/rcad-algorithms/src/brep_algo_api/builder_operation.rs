@@ -1,11 +1,11 @@
-//! OCCT BRepAlgoAPI_BuilderOperation equivalent — boolean operation wrapper with history.
+﻿//! OCCT BRepAlgoAPI_BuilderOperation equivalent 鈥?boolean operation wrapper with history.
 //!
 //! Provides a general-purpose boolean operation struct analogous to
 //! OCCT BRepAlgoAPI_BuilderOperation (base class for BRepAlgoAPI_Common/Fuse/Cut).
 //!
 //! OCCT references:
 //! - BRepAlgoAPI_Common / BRepAlgoAPI_Fuse / BRepAlgoAPI_Cut (BRepAlgoAPI.cxx)
-//! - BRepAlgoAPI_BuilderOperation → BRepAlgoAPI_BuilderShape → BRepAlgoAPI_Algo
+//! - BRepAlgoAPI_BuilderOperation 鈫?BRepAlgoAPI_BuilderShape 鈫?BRepAlgoAPI_Algo
 //!
 //! # Example
 //!
@@ -23,13 +23,15 @@
 //! }
 //! ```
 
+
+use rcad_kernel::BRep;
+
 use crate::builder::{BooleanBuilder, BooleanError, BooleanOpType};
 use crate::bopds::ds::DS;
 use crate::bvh::Bvh;
 use crate::history::BooleanHistory;
 use crate::pave_filler::PaveFiller;
 use crate::tolerance::TOLERANCE_ABS;
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 
 /// A reference to a sub-shape in a BRep, analogous to OCCT TopoDS_Shape.
@@ -83,7 +85,7 @@ pub struct BooleanOpStatistics {
     pub n_solids: usize,
 }
 
-/// BooleanOp — a general boolean operation between two shapes with history tracking.
+/// BooleanOp 鈥?a general boolean operation between two shapes with history tracking.
 ///
 /// This is the rcad equivalent of OCCT BRepAlgoAPI_BuilderOperation,
 /// which is the base class for:
@@ -118,9 +120,9 @@ impl BooleanOp {
     /// OCCT ref: BRepAlgoAPI_Common/Fuse/Cut constructor (BRepAlgoAPI.cxx)
     ///
     /// The operation type determines which boolean is computed:
-    /// - `Union` → BRepAlgoAPI_Fuse
-    /// - `Intersection` → BRepAlgoAPI_Common
-    /// - `Difference` → BRepAlgoAPI_Cut
+    /// - `Union` 鈫?BRepAlgoAPI_Fuse
+    /// - `Intersection` 鈫?BRepAlgoAPI_Common
+    /// - `Difference` 鈫?BRepAlgoAPI_Cut
     pub fn new(a: BRep, b: BRep, op: BooleanOpType) -> Self {
         Self {
             shape_a: a,
@@ -151,10 +153,10 @@ impl BooleanOp {
     /// OCCT ref: BRepAlgoAPI_BuilderOperation::Build() (BRepAlgoAPI.cxx)
     ///
     /// Pipeline:
-    /// 1. ✅ Build BOPDS_DS from the two shapes
-    /// 2. ✅ Run BOPAlgo_PaveFiller to compute all intersections
-    /// 3. ✅ Build container images (FillImagesContainers)
-    /// 4. ✅ Run BOPAlgo_Builder to build the result
+    /// 1. 鉁?Build BOPDS_DS from the two shapes
+    /// 2. 鉁?Run BOPAlgo_PaveFiller to compute all intersections
+    /// 3. 鉁?Build container images (FillImagesContainers)
+    /// 4. 鉁?Run BOPAlgo_Builder to build the result
     ///
     /// Returns a reference to the result BRep on success.
     pub fn perform(&mut self) -> Result<&BRep, BooleanError> {
@@ -162,7 +164,7 @@ impl BooleanOp {
         self.error = None;
         self.history = None;
 
-        // ✅ OCCT-aligned: BOPAlgo_BOP::CheckInputData — verify valid inputs
+        // 鉁?OCCT-aligned: BOPAlgo_BOP::CheckInputData 鈥?verify valid inputs
         if self.shape_a.solids.is_empty() || self.shape_b.solids.is_empty() {
             let err = BooleanError::EmptyInput;
             self.error = Some(err);
@@ -173,17 +175,17 @@ impl BooleanOp {
         let a = self.ensure_geometry(&self.shape_a);
         let b = self.ensure_geometry(&self.shape_b);
 
-        // ✅ OCCT-aligned: Build BOPDS_DS (data structure) from the two shapes
-        // OCCT ref: BOPAlgo_PaveFiller::Perform → BOPDS_DS::Alloc
+        // 鉁?OCCT-aligned: Build BOPDS_DS (data structure) from the two shapes
+        // OCCT ref: BOPAlgo_PaveFiller::Perform 鈫?BOPDS_DS::Alloc
         let a_t = a.to_topods();
         let b_t = b.to_topods();
         let mut ds = DS::new_from_topods(&a_t, &b_t, self.tolerance.max(TOLERANCE_ABS));
 
-        // ✅ OCCT-aligned: Build BVH acceleration (optional in OCCT)
+        // 鉁?OCCT-aligned: Build BVH acceleration (optional in OCCT)
         let bvh_a = Bvh::build(&a);
         let bvh_b = Bvh::build(&b);
 
-        // ✅ OCCT-aligned: Run PaveFiller (BOPAlgo_PaveFiller::Perform)
+        // 鉁?OCCT-aligned: Run PaveFiller (BOPAlgo_PaveFiller::Perform)
         let mut brep = rcad_kernel::topods::BRep::new();
         let (face_refs, ic_edge_map) = {
             let mut filler = PaveFiller::with_bvh_and_brep(&mut ds, &bvh_a, &bvh_b, &mut brep);
@@ -191,10 +193,10 @@ impl BooleanOp {
             (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
         };
 
-        // ✅ OCCT-aligned: FillImagesContainers — build wire/shell images
+        // 鉁?OCCT-aligned: FillImagesContainers 鈥?build wire/shell images
         ds.build_container_images();
 
-        // ✅ OCCT-aligned: Build result
+        // 鉁?OCCT-aligned: Build result
         let builder = BooleanBuilder::with_brep(&ds, self.op_type, brep, face_refs, ic_edge_map);
         let (t, bool_history) = builder.build_with_history()?;
 
@@ -238,13 +240,13 @@ impl BooleanOp {
         self.result.is_some()
     }
 
-    // ── OCCT History Queries ────────────────────────────────────────────────
+    // 鈹€鈹€ OCCT History Queries 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     //
     // OCCT ref: BRepAlgoAPI_BuilderShape (BRepAlgoAPI_BuilderShape.hxx)
     //
     // These methods provide OCCT-compatible shape history tracking.
-    // ✅ OCCT-aligned: stubs return all known history.
-    // ⏳ Side-distinction (A vs B) not implemented — section-style operations
+    // 鉁?OCCT-aligned: stubs return all known history.
+    // 鈴?Side-distinction (A vs B) not implemented 鈥?section-style operations
     //     always involve both shapes; HasAncestorFaceOn1/2 always true.
 
     /// Get all shapes that were modified (split or changed) during the operation.
@@ -254,7 +256,7 @@ impl BooleanOp {
     /// Returns all result shapes whose origin traces back to an input shape
     /// (i.e., faces/edges/vertices that were split or carried through).
     ///
-    /// ✅ OCCT-aligned: returns all modified shapes.
+    /// 鉁?OCCT-aligned: returns all modified shapes.
     pub fn modified(&self) -> Vec<ShapeRef> {
         let Some(ref h) = self.history else {
             return Vec::new();
@@ -313,7 +315,7 @@ impl BooleanOp {
     /// Returns result shapes that were created as a direct result of the
     /// boolean operation (intersection edges, vertices, etc.).
     ///
-    /// ✅ OCCT-aligned: returns generated faces/edges/vertices.
+    /// 鉁?OCCT-aligned: returns generated faces/edges/vertices.
     pub fn generated(&self) -> Vec<ShapeRef> {
         let Some(ref h) = self.history else {
             return Vec::new();
@@ -357,7 +359,7 @@ impl BooleanOp {
     /// For faces: checks that the source face index appears in the deleted list.
     /// For edges/vertices: checks the deletion tracker.
     ///
-    /// ✅ OCCT-aligned: face deletion tracking via history.
+    /// 鉁?OCCT-aligned: face deletion tracking via history.
     pub fn is_deleted(&self, source: &ShapeRef) -> bool {
         let Some(ref h) = self.history else {
             return false;

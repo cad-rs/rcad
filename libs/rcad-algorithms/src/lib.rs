@@ -295,7 +295,6 @@ pub use top_loc::{
     Datum, Location, LocationManager, apply_location_to_shape, apply_location_to_shape_owned,
 };
 
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 
 // pub use adaptor3d::{Curve3dAdaptor, CurveOnSurfaceAdaptor, HSurfaceAdaptor, SurfaceAdaptor}; // removed
@@ -690,7 +689,6 @@ pub use shape_algo::{
     is_torus,
 };
 pub use shape_analysis::{
-    // Full BRep analysis
     BRepAnalysisReport,
     ContinuityLevel,
     // Curve analysis (ShapeAnalysis_Curve)

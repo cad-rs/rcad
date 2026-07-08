@@ -1,4 +1,8 @@
 ﻿
+
+
+use rcad_kernel::BRep;
+
 /// Options for post-operation topology simplification.
 #[derive(Debug, Clone, Copy)]
 pub struct SimplifyOptions {
@@ -602,7 +606,7 @@ impl BooleanRobustOptions {
 ///
 /// Values below [`tolerance::TOLERANCE_ABS`] clamp up to that floor. Use this for diagnostics
 /// ([`BooleanExecutionReport::effective_fuzzy_tol`]) so reports match runtime behavior when
-/// [`BooleanOptions::fuzzy_tol`] is `0.0` (鈥渄efault fuzzy鈥?.
+/// [`BooleanOptions::fuzzy_tol`] is `0.0` (閳ユ竸efault fuzzy閳?.
 #[inline]
 pub fn resolved_boolean_fuzzy_tol_for_ds(configured_fuzzy: f64) -> f64 {
  configured_fuzzy.max(tolerance::TOLERANCE_ABS)
@@ -682,7 +686,7 @@ pub fn align_healing_options_with_boolean_operands(
 
 /// Like [`align_healing_options_with_boolean_operands`], but uses
 /// [`BooleanExecutionReport::configured_fuzzy_tol`] so post-boolean healing stays consistent
-/// with the attempt鈥檚 workspace flag (e.g. `fuzzy_tol == 0` vs strictly positive user fuzzy).
+/// with the attempt閳ユ獨 workspace flag (e.g. `fuzzy_tol == 0` vs strictly positive user fuzzy).
 pub fn align_healing_options_after_boolean_execution(
  healing: &mut HealingOptions,
  a: &BRep,
@@ -1055,84 +1059,6 @@ fn tune_boolean_options_for_retry_class(
 
 /// Tune boolean options for a specific detailed failure class.
 ///
-/// This provides targeted recovery strategies based on the specific failure type,
-/// complementing the broader `tune_boolean_options_for_retry_class` function.
-pub fn tune_boolean_options_for_failure_class(
- options: &mut BooleanOptions,
- failure_class: BooleanFailureClass,
- retry_round: usize,
-) -> RecoveryStrategy {
- let base_tol = options
- .make_connected_tolerance
- .max(options.glue_tolerance)
- .max(tolerance::TOLERANCE_ABS);
-
- match failure_class {
- BooleanFailureClass::DegenerateTopology => {
- // Run MakeConnected cleanup with increased aggressiveness
- options.run_make_connected = true;
- options.make_connected_max_passes =
- options.make_connected_max_passes.max(5 + retry_round * 2);
- options.make_connected_tolerance = options
- .make_connected_tolerance
- .max(base_tol * (5.0 + retry_round as f64));
- options.make_connected_tolerance_growth = options
- .make_connected_tolerance_growth
- .max(2.0 + retry_round as f64);
-
- RecoveryStrategy::MakeConnectedCleanup
- }
- BooleanFailureClass::NumericalInstability => {
- // Increase fuzzy tolerance significantly
- options.use_glue = true;
- options.glue_tolerance = options
- .glue_tolerance
- .max(base_tol * 50.0 * (1.0 + retry_round as f64));
-
- RecoveryStrategy::IncreaseFuzzyTolerance
- }
- BooleanFailureClass::InvalidResult => {
- // Try different algorithm variant - enable glue and increase tolerances
- options.use_glue = true;
- options.glue_tolerance = options
- .glue_tolerance
- .max(base_tol * 20.0 * (1.0 + retry_round as f64));
- options.run_make_connected = true;
- options.make_connected_max_passes =
- options.make_connected_max_passes.max(4 + retry_round);
-
- RecoveryStrategy::AlgorithmVariant
- }
- BooleanFailureClass::IncompleteIntersection => {
- // Enable Glue mode for better intersection handling
- options.use_glue = true;
- options.glue_tolerance = options
- .glue_tolerance
- .max(base_tol * 10.0 * (1.0 + retry_round as f64));
-
- RecoveryStrategy::EnableGlueMode
- }
- BooleanFailureClass::SelfIntersection => {
- // Run MakeConnected cleanup with higher aggressiveness
- options.run_make_connected = true;
- options.make_connected_max_passes =
- options.make_connected_max_passes.max(6 + retry_round * 2);
- options.make_connected_tolerance = options
- .make_connected_tolerance
- .max(base_tol * (10.0 + retry_round as f64 * 5.0));
- options.make_connected_tolerance_growth = options
- .make_connected_tolerance_growth
- .max(3.0 + retry_round as f64);
-
- RecoveryStrategy::MakeConnectedCleanup
- }
- BooleanFailureClass::InvalidInput | BooleanFailureClass::Unknown => {
- // No recovery possible
- RecoveryStrategy::None
- }
- }
-}
-
 fn merge_make_connected_reports(
  mut initial: MakeConnectedReport,
  fallback: MakeConnectedReport,
@@ -1520,12 +1446,12 @@ fn brep_shell_face_count(brep: &BRep) -> usize {
 
 /// OCCT `BRepAlgoAPI_Cut` yields an empty shape when operands coincide (e.g. two identical
 /// `box` definitions in `bopcut`). Match that without forcing every `DegenerateResult` from the
-/// builder to mean 鈥渆mpty鈥?
+/// builder to mean 閳ユ竼mpty閳?
 /// True when every face has geometry and every face surface is a plane (e.g. `make_box_brep` solids).
 ///
-/// Used to gate 鈥減lanar zero-volume sliver 鈬?empty intersection鈥?heuristics: operands that include
-/// spheres/cylinders etc. can still yield all-plane *wrong* shells with `volume 鈮?0`; we must not
-/// collapse those to empty or OCCT sphere鈥揵ox cases regress to `total_surface_area == 0`.
+/// Used to gate 閳ユ笡lanar zero-volume sliver 閳?empty intersection閳?heuristics: operands that include
+/// spheres/cylinders etc. can still yield all-plane *wrong* shells with `volume 閳?0`; we must not
+/// collapse those to empty or OCCT sphere閳ユ彽ox cases regress to `total_surface_area == 0`.
 fn brep_is_pure_plane_solid(brep: &BRep) -> bool {
  let nf = face_count_of(brep);
  if nf == 0 {
@@ -1546,13 +1472,13 @@ fn brep_is_pure_plane_solid(brep: &BRep) -> bool {
  true
 }
 
-/// True when every face normal is (approximately) 卤X, 卤Y, or 卤Z in world space.
+/// True when every face normal is (approximately) 鍗, 鍗, or 鍗 in world space.
 ///
 /// Gates post-intersection [`orthogonal_face_fuse::remove_axis_coplanar_redundant_child_faces`]:
 /// True when every face normal is (approximately) +/-X, +/-Y, or +/-Z in world space.
 /// Used to gate axis-aligned optimization: for two world-axis-aligned planar solids,
-/// **smaller** 2D bbox on a shared plane, but in nested **box鈭゜ox** the smaller patch is often the
-/// true external face and the larger one is the untrimmed remainder 鈥?yielding too-low
+/// **smaller** 2D bbox on a shared plane, but in nested **box閳倻ox** the smaller patch is often the
+/// true external face and the larger one is the untrimmed remainder 閳?yielding too-low
 /// [`rcad_kernel::surface_area`] (OCCT `bcommon_simple/B1`). Rotated operands (`bcommon_simple/C8`)
 /// still need the cleanup, so we only skip when **both** sides satisfy this predicate.
 fn brep_is_world_axis_aligned_plane_solid(brep: &BRep) -> bool {
@@ -1596,7 +1522,7 @@ fn boolean_difference_empty_coincident(a: &BRep, b: &BRep) -> bool {
  if (amin - bmin).length() > tol || (amax - bmax).length() > tol {
  return false;
  }
- // Bbox + face count is not sufficient 鈥?an inscribed rotated box shares
+ // Bbox + face count is not sufficient 閳?an inscribed rotated box shares
  // the same bbox as its container (e.g. bopcut_simple/F5).
  // Also check that vertex sets match (identical shapes have identical vertices).
  if a.vertices.len() != b.vertices.len() {
@@ -1626,8 +1552,8 @@ fn intersection_planar_sliver_should_be_empty(result: &BRep, a: &BRep, b: &BRep)
  return false;
  }
 
- // Require one surface slot per face and all planes 鈥?`Iterator::all` on an empty iterator is
- // `true`, and skipping `None` slots could wrongly classify incomplete geom as 鈥渁ll planes鈥?
+ // Require one surface slot per face and all planes 閳?`Iterator::all` on an empty iterator is
+ // `true`, and skipping `None` slots could wrongly classify incomplete geom as 閳ユ竵ll planes閳?
  if result.geom.face_surface.len() != nf {
  return false;
  }
@@ -1751,7 +1677,7 @@ pub(crate) fn boolean_postprocess_pave_result(
 }
 
 /// Topods variant: no-op post-process, returns result as-is (debug logging removed).
-/// The old function only did debug logging 鈥?this variant skips it.
+/// The old function only did debug logging 閳?this variant skips it.
 pub(crate) fn boolean_postprocess_pave_result_topods(
  _op: BooleanOpType, _a: &BRep, _b: &BRep,
  result: topods::BRep,
@@ -1759,10 +1685,10 @@ pub(crate) fn boolean_postprocess_pave_result_topods(
  Ok(result)
 }
 
-/// DS 鈫?[`pave_filler::PaveFiller`] 鈫?[`builder::BooleanBuilder`] 鈫?plane surface recompute.
+/// DS 閳?[`pave_filler::PaveFiller`] 閳?[`builder::BooleanBuilder`] 閳?plane surface recompute.
 ///
 /// Used internally when a coaxial shortcut must call difference without re-entering other coaxial
-/// difference branches (e.g. cylinder 鈭?loft frustum after `cone 鈭?cylinder`).
+/// difference branches (e.g. cylinder 閳?loft frustum after `cone 閳?cylinder`).
 /// Direct PaveFiller + BooleanBuilder pipeline, no post-processing.
 /// OCCT-aligned: BOPAlgo_BOP::Perform.
 pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<topods::BRep, BooleanError> {

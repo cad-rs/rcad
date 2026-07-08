@@ -29,8 +29,10 @@
 //! assert_eq!(face_count, 6);
 //! ```
 
-use crate::tolerance::*;
+
 use rcad_kernel::BRep;
+
+use crate::tolerance::*;
 use rcad_kernel::topology::Face;
 pub use crate::brep_tools::ShapeType;
 

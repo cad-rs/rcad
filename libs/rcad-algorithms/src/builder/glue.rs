@@ -1,6 +1,8 @@
 use std::collections::HashMap;
-use glam::DVec3;
+
 use rcad_kernel::BRep;
+
+use glam::DVec3;
 use rcad_kernel::topods;
 use rcad_kernel::geom::*;
 use crate::bopds::ds::*;
@@ -689,13 +691,13 @@ pub fn get_edge_on_face(edge_idx: usize, face_idx: usize, ds: &DS) -> bool {
 // ?DoSplitSEAMOnFace  ?(collect_face_edge_segments L2196-2282)
 // ?SmartMap/Path walk  ?(build_closed_wires L3312-3617)
 // ?PerformAreas  ?(perform_areas)
-// ?emit_sphere_faces_direct = 顖?  OCCT  ?
-// BuildSplitFaces  ?BuilderFace::Perform  顖?? 顔?:  =)
+// ?emit_sphere_faces_direct = 椤?  OCCT  ?
+// BuildSplitFaces  ?BuilderFace::Perform  椤?? 椤?:  =)
 // ================================================================
 
 //  ?DoSplitSEAMOnFace  ? ?(collect_face_edge_segments L2196-2282)
 // OCCT BOPTools_AlgoTools3D::DoSplitSEAMOnFace (BOPTools_AlgoTools3D.cxx L58-232)
-//  ?seam  ?IC  顦?= seam  ?  seam  顔? ?shifted pcurve ?
-// rcad: collect_face_edge_segments  ?seam  顔?顓??second_pcurve,
-// midpoint UV U=0  ?U=TAU  銉?= = 鈧?
+//  ?seam  ?IC  椤?= seam  ?  seam  椤? ?shifted pcurve ?
+// rcad: collect_face_edge_segments  ?seam  椤?椤??second_pcurve,
+// midpoint UV U=0  ?U=TAU  閵?= = 閳?
 

@@ -81,12 +81,5 @@ pub fn retry_policy_to_robust_options(
     }
 }
 
-pub fn boolean_op_with_retry_policy(
-    _op: crate::BooleanOpType, _a: &rcad_kernel::BRep, _b: &rcad_kernel::BRep,
-    _policy: &RetryPolicy, _options: BooleanOptions,
-) -> Result<(rcad_kernel::BRep, crate::BooleanHistory), crate::BooleanError> {
-    Err(crate::BooleanError::InvalidOperation)
-}
-
 use crate::BooleanOptions;
 

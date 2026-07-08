@@ -48,10 +48,12 @@
 //! assert_eq!(report.holes_removed, 0);
 //! ```
 
+
+use rcad_kernel::BRep;
+
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use glam::DVec3;
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 use rcad_kernel::geom::{ConicalSurface, CylindricalSurface, Plane, SphericalSurface, Surface3, ToroidalSurface, any_perpendicular};
 use rcad_kernel::topology::{Face, Wire};

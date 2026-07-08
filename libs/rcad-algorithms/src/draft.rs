@@ -18,9 +18,11 @@
 //! - **Conical faces**: Inherit draft angle from base, adjusted for cone angle
 //! - **Spherical/toroidal faces**: Limited support via approximation
 
+
+use rcad_kernel::BRep;
+
 use crate::tolerance::*;
 use glam::DVec3;
-use rcad_kernel::BRep;
 use rcad_kernel::geom::{Curve3, Line3, Surface3};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 use rcad_kernel::topods;

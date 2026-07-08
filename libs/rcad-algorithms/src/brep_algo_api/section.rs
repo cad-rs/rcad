@@ -1,12 +1,12 @@
-//! OCCT BOPAlgo_Section / BRepAlgoAPI_Section equivalent.
+﻿//! OCCT BOPAlgo_Section / BRepAlgoAPI_Section equivalent.
 //!
 //! Computes the intersection curves (section) between two shapes.
 //! Unlike the boolean operations (Common/Fuse/Cut) which produce a solid,
 //! Section produces a set of edges/wires representing the intersection curves.
 //!
 //! OCCT references:
-//! - BOPAlgo_Section (BOPAlgo_Section.cxx) — low-level section algorithm
-//! - BRepAlgoAPI_Section (BRepAlgoAPI_Section.cxx) — API wrapper for Section
+//! - BOPAlgo_Section (BOPAlgo_Section.cxx) 鈥?low-level section algorithm
+//! - BRepAlgoAPI_Section (BRepAlgoAPI_Section.cxx) 鈥?API wrapper for Section
 //!
 //! # Example
 //!
@@ -23,6 +23,9 @@
 //! }
 //! ```
 
+
+use rcad_kernel::BRep;
+
 use crate::builder::BooleanError;
 use crate::bopds::ds::DS;
 use crate::bvh::Bvh;
@@ -30,11 +33,10 @@ use crate::pave_filler::PaveFiller;
 use crate::tolerance::TOLERANCE_ABS;
 use rcad_kernel::geom::Curve3;
 use rcad_kernel::topology::{Edge, Vertex};
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 use rcad_kernel::geom::Line3;
 
-/// Section — compute intersection curves between two shapes.
+/// Section 鈥?compute intersection curves between two shapes.
 ///
 /// This is the rcad equivalent of OCCT BOPAlgo_Section / BRepAlgoAPI_Section.
 /// It computes the intersection between all face pairs of the two input shapes
@@ -133,7 +135,7 @@ impl Section {
         self.ds = None;
         self.edge_to_ic = Vec::new();
 
-        // ✅ OCCT-aligned: Check for empty inputs
+        // 鉁?OCCT-aligned: Check for empty inputs
         if self.shape_a.solids.is_empty() || self.shape_b.solids.is_empty() {
             let err = BooleanError::EmptyInput;
             self.error = Some(err);
@@ -144,27 +146,27 @@ impl Section {
         let a = self.ensure_geometry(&self.shape_a);
         let b = self.ensure_geometry(&self.shape_b);
 
-        // ✅ OCCT-aligned: Build BOPDS_DS
+        // 鉁?OCCT-aligned: Build BOPDS_DS
         let a_t = a.to_topods();
         let b_t = b.to_topods();
         let mut ds = DS::new_from_topods(&a_t, &b_t, TOLERANCE_ABS);
 
-        // ✅ OCCT-aligned: Build BVH for acceleration
+        // 鉁?OCCT-aligned: Build BVH for acceleration
         let bvh_a = Bvh::build(&a);
         let bvh_b = Bvh::build(&b);
 
-        // ✅ OCCT-aligned: Run PaveFiller (BOPAlgo_PaveFiller::Perform)
-        // This is the core intersection computation — it handles:
+        // 鉁?OCCT-aligned: Run PaveFiller (BOPAlgo_PaveFiller::Perform)
+        // This is the core intersection computation 鈥?it handles:
         // - Edge-Edge (EE) intersections
         // - Edge-Face (EF) intersections
         // - Face-Face (FF) intersections
         let mut filler = PaveFiller::with_bvh(&mut ds, &bvh_a, &bvh_b);
         filler.perform();
 
-        // ✅ OCCT-aligned: FillImagesContainers
+        // 鉁?OCCT-aligned: FillImagesContainers
         ds.build_container_images();
 
-        // ✅ OCCT-aligned: Extract intersection curves from DS
+        // 鉁?OCCT-aligned: Extract intersection curves from DS
         // OCCT: BOPAlgo_Section collects the section edges from the DS
         // after PaveFiller has computed all face-face intersection curves.
         let (brep, edge_map) = Self::build_section_edges(&ds);
@@ -174,7 +176,7 @@ impl Section {
             // face intersections that were handled via EE/EF interferences).
             // Use the general brep_section which handles all surface types
             // via analytic intersection + triangle-soup fallback.
-            // ⏳ Architecture diff: OCCT BOPAlgo_Section extracts section
+            // 鈴?Architecture diff: OCCT BOPAlgo_Section extracts section
             // edges from the builder's internal DS images. The fallback here
             // uses a separate intersection pipeline (brep_section).
             let section_brep = crate::section::brep_section(&a, &b);
@@ -190,7 +192,7 @@ impl Section {
         Ok(self.result.as_ref().unwrap())
     }
 
-    /// ✅ OCCT-aligned: BuildSection — Builds the result of Section operation
+    /// 鉁?OCCT-aligned: BuildSection 鈥?Builds the result of Section operation
     /// (BOPAlgo_Section.cxx L167-414).
     ///
     /// Collects section edges and vertices from the DS:
@@ -206,9 +208,9 @@ impl Section {
         let a_ec = ds.a_edge_count;
 
         // OCCT L188-241: collect section edges and vertices from FaceInfo
-        // 1.1 VerticesSc — section vertices from FF intersection
-        // 1.2 VerticesIn — vertices inside face, if new or has interference
-        // 1.3 PaveBlocksSc — section edges from FF intersection
+        // 1.1 VerticesSc 鈥?section vertices from FF intersection
+        // 1.2 VerticesIn 鈥?vertices inside face, if new or has interference
+        // 1.3 PaveBlocksSc 鈥?section edges from FF intersection
         let mut section_edges: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
         let mut section_verts: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
 
@@ -227,7 +229,7 @@ impl Section {
                     section_verts.insert(n_v);
                 }
             }
-            // OCCT L231-240: PaveBlocksSc — section edges
+            // OCCT L231-240: PaveBlocksSc 鈥?section edges
             for &pb_idx in &f_info.pave_blocks_sc {
                 if pb_idx < ds.pave_blocks.len() {
                     let n_e = ds.pave_blocks[pb_idx].0.read().unwrap().original_edge;
@@ -251,7 +253,7 @@ impl Section {
         }
 
         // OCCT L270-279: fence for source shapes
-        // (skipped — rcad handles A/B assignment differently)
+        // (skipped 鈥?rcad handles A/B assignment differently)
 
         // OCCT L283-356: count occurrences of edges/vertices across arguments
         // rcad: edges from A-range: 0..a_ec, B-range: a_ec..
@@ -358,7 +360,7 @@ impl Section {
         self.result.is_some()
     }
 
-    // ── OCCT Ancestor Face Queries ──────────────────────────────────────────
+    // 鈹€鈹€ OCCT Ancestor Face Queries 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     //
     // OCCT ref: BRepAlgoAPI_Section::HasAncestorFaceOn1()
     // OCCT ref: BRepAlgoAPI_Section::HasAncestorFaceOn2()
@@ -375,7 +377,7 @@ impl Section {
     /// Returns true if the section edge at `edge_idx` was produced by
     /// an intersection involving a face from shape 1.
     ///
-    /// ✅ OCCT-aligned: section edges from intersection curves always
+    /// 鉁?OCCT-aligned: section edges from intersection curves always
     /// involve both shapes, returning true for all valid edges.
     pub fn has_ancestor_face_on_1(&self, edge_idx: usize) -> bool {
         let Some(ref result) = self.result else {
@@ -384,7 +386,7 @@ impl Section {
         if edge_idx >= result.edges.len() {
             return false;
         }
-        // ✅ OCCT-aligned: All section edges result from face-face
+        // 鉁?OCCT-aligned: All section edges result from face-face
         // intersections between both shapes, so every edge has
         // an ancestor on both sides.
         true
@@ -400,7 +402,7 @@ impl Section {
         if edge_idx >= result.edges.len() {
             return false;
         }
-        // ✅ OCCT-aligned: Same reasoning as has_ancestor_face_on_1
+        // 鉁?OCCT-aligned: Same reasoning as has_ancestor_face_on_1
         true
     }
 

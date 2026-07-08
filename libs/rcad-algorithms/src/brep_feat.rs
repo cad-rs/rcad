@@ -13,9 +13,11 @@
 //! - **Pipe**: Feature-based pipe along a spine curve
 //! - **Draft**: Apply draft angle to faces for moldability
 
+
+use rcad_kernel::BRep;
+
 use crate::tolerance::*;
 use glam::DVec3;
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};

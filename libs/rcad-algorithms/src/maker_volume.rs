@@ -1,18 +1,18 @@
-//! Build solids from reusable split cells.
+﻿//! Build solids from reusable split cells.
 //!
-//! # OCCT Reference — BOPAlgo_MakerVolume
+//! # OCCT Reference 鈥?BOPAlgo_MakerVolume
 //!
 //! This module provides functionality analogous to OCCT `BOPAlgo_MakerVolume`
 //! (`BOPAlgo_MakerVolume.cxx` / `BOPAlgo_MakerVolume.hxx`).
 //!
 //! ## OCCT Pipeline
 //!
-//! 1. **`CollectFaces()`** — Collects all input faces from the argument shapes.
-//! 2. **`MakeBox()`** — Creates a bounding box around all collected faces.
-//! 3. **`BuildSolids()`** — Uses `BOPAlgo_BuilderSolid` to compute 3D regions
+//! 1. **`CollectFaces()`** 鈥?Collects all input faces from the argument shapes.
+//! 2. **`MakeBox()`** 鈥?Creates a bounding box around all collected faces.
+//! 3. **`BuildSolids()`** 鈥?Uses `BOPAlgo_BuilderSolid` to compute 3D regions
 //!    from the space between the box and the collected faces.
-//! 4. **`RemoveBox()`** — Removes the box from each solid to yield the result.
-//! 5. **`FillInternalShapes()`** — Detects and fills internal voids in the result.
+//! 4. **`RemoveBox()`** 鈥?Removes the box from each solid to yield the result.
+//! 5. **`FillInternalShapes()`** 鈥?Detects and fills internal voids in the result.
 //!
 //! ## RCAD Approach (this file)
 //!
@@ -31,9 +31,11 @@
 //! pre-split cell solids and then assemble a final solid from a region mask, an
 //! explicit cell index list, or a [`CellExpr`] boolean expression.
 
-use std::collections::HashSet;
 
 use rcad_kernel::BRep;
+
+use std::collections::HashSet;
+
 use rcad_kernel::topods;
 
 use crate::{BooleanError, GeneralFuseHistory, general_fuse, general_fuse_with_history};
@@ -126,8 +128,8 @@ impl MakerVolume {
 
     /// Build a solid from all registered cells.
     ///
-    /// ✅ OCCT-aligned: Equivalent to `BOPAlgo_MakerVolume::Perform()` /
-    /// `BOPAlgo_MakerVolume::Build()` — the top-level entry point that assembles
+    /// 鉁?OCCT-aligned: Equivalent to `BOPAlgo_MakerVolume::Perform()` /
+    /// `BOPAlgo_MakerVolume::Build()` 鈥?the top-level entry point that assembles
     /// all input cells into a single solid. OCCT uses `BOPAlgo_BuilderSolid`
     /// internally; RCAD uses `general_fuse`.
     pub fn build_all(&self) -> Result<BRep, MakerVolumeError> {
@@ -152,7 +154,7 @@ impl MakerVolume {
 
     /// Build a solid from an explicit cell index list.
     ///
-    /// ✅ OCCT-aligned: Conceptually equivalent to
+    /// 鉁?OCCT-aligned: Conceptually equivalent to
     /// `BOPAlgo_MakerVolume::BuildSolids()`. Both select a subset of cells/solids
     /// and fuse them into a single solid. OCCT builds a bounding box and uses
     /// `BOPAlgo_BuilderSolid` to extract 3D regions; RCAD performs pairwise

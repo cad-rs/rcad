@@ -1,7 +1,8 @@
+use rcad_kernel::BRep;
+
 use std::collections::{HashMap, HashSet, BTreeSet};
 use glam::DVec2; use glam::DVec3;
 use rcad_kernel::geom::*;
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 use std::cell::RefCell;
 use crate::bopds::ds::*;
@@ -303,7 +304,7 @@ pub struct BooleanBuilder<'a> {
 // OCCT 1:1  ? IsInternalFace (BOPTools_AlgoTools.cxx L791-872)
 // =============================================================================
 
-///  ?OCCT-aligned:  ?MEF (Map Edge= aces) = 椤?椤?閳??
+///  ?OCCT-aligned:  ?MEF (Map Edge= aces) = 妞?妞?闁??
 /// OCCT BOPAlgo_FillIn3DParts::MapEdgesAndFaces (BOPAlgo_Tools.cxx L1479-1503)
 /// OCCT-aligned: IsTangentFace (BOPTools_AlgoTools).
 /// Checks if two faces are tangent (parallel normals + close distance).
@@ -334,15 +335,15 @@ pub(crate) fn build_edge_bounds(face_indices: &[usize], ds: &DS) -> std::collect
  bounds
 }
 
-///  ?OCCT-aligned: PointInFace  椤??= ?FaceSampleData =UV domain  = ?
+///  ?OCCT-aligned: PointInFace  妞??= ?FaceSampleData =UV domain  = ?
 /// OCCT BOPTools_AlgoTools3D.cxx L885-917
 ///
 /// rcad  ? FaceSampleData  ?uv_domain =uv_centroid,= ?UV centroid
-///  閿?=(OCCT =Hatcher =2D point-in-face, ?rcad =FaceSampleData
-///  椤?椤? ?UV centroid = ? ?
+///  闁?=(OCCT =Hatcher =2D point-in-face, ?rcad =FaceSampleData
+///  妞?妞? ?UV centroid = ? ?
 // (point_in_face, classify_by_off_solid_edge removed  ?dead after ComputeState alignment)
 
-/// = =3D  閿??u64 key,= 椤掑倵鍋??
+/// = =3D  闁??u64 key,= 妞ゆ帒鍊甸崑??
 pub(crate) fn quantize_pos(p: DVec3, tolerance: f64) -> u64 {
  let scale = 1.0 / tolerance;
  let x = (p.x * scale).round() as i64;
@@ -355,15 +356,15 @@ pub(crate) fn quantize_pos(p: DVec3, tolerance: f64) -> u64 {
  (xb << 42) | (yb << 21) | zb
 }
 
-///  ?OCCT-aligned: IsInternalFace  椤??(BOPTools_AlgoTools.cxx L791-872)
+///  ?OCCT-aligned: IsInternalFace  妞??(BOPTools_AlgoTools.cxx L791-872)
 ///
-///  椤?
-/// Level 1:  椤?= 閳?=solid  閿?椤? 1  = 閵??
-/// 椤? 閳╁唭? ?solid = ?
-/// Level 2: ComputeState == =  solid  閿?= 椤愩儺鍞??
+///  妞?
+/// Level 1:  妞?= 闁?=solid  闁?妞? 1  = 闁??
+/// 妞? 闁斥晛鍞? ?solid = ?
+/// Level 2: ComputeState == =  solid  闁?= 妞ゆ劑鍎洪崬??
 /// = ?PointInFace =classify_point ?
 ///
-///  閳?? Some(true) =  ?solid = ?(IN)
+///  闁?? Some(true) =  ?solid = ?(IN)
 /// Some(false) =  ?solid = ?(OUT)
 /// None =  
 /// Check if a DS vertex lies on the boundary edge between sv/ev, and if so add it
@@ -583,7 +584,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
  });
  } }
  } else {
- // OCCT: edge not split 閳?add as single segment (Builder_2.cxx L374-378).
+ // OCCT: edge not split 闁?add as single segment (Builder_2.cxx L374-378).
  let (t_start, t_end) = edge_uv_tangent(ds, sv, ev, &face.surface,
  Some(&ds.edges[ei].curve), Some(ds.edges[ei].t_range));
  let rep = ds.edge_on_face(ei, face_idx);
@@ -776,7 +777,7 @@ pub(crate) fn collect_face_edge_segments(ds: &DS, face_idx: usize, pcurve_lookup
  }
 
  // Section edges from pave_blocks_sc (OCCT: aMSCPB entries from MakeBlocks).
- // These edges are NOT in boundary_edges 閳?they're registered only in
+ // These edges are NOT in boundary_edges 闁?they're registered only in
  // pave_blocks_sc.  OCCT adds each edge once to myShapes; the WireSplitter
  // determines the required orientation during loop walking.
  let mut sc_dedup: std::collections::HashSet<usize> = std::collections::HashSet::new();

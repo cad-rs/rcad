@@ -1,33 +1,16 @@
-﻿/// Like [`boolean_op`] but with conservative auto-retry for numerical-instability cases.
+/// Like [`boolean_op`] — standard path with tolerance correction.
 ///
-/// First tries the standard [`boolean_op_pave_fill_build`] path (identical to
-/// [`boolean_op`]'s first attempt).  On failure, delegates to
-/// [`boolean::boolean_op_with_retry_policy`] with [`RetryPolicy::conservative`]
-/// and default [`BooleanOptions`] to escalate fuzzy tolerance, glue mode, and
-/// make-connected passes.
+/// Calls [`boolean_op`] internally, then runs OCCT-aligned tolerance correction
+/// on the result before wrapping it as old BRep for backward compatibility.
 pub fn boolean_op_with_retry(
  op: BooleanOpType,
  a: &BRep,
  b: &BRep,
 ) -> Result<BRep, BooleanError> {
- // First attempt: standard path including fast-paths (containment, box-box, etc.).
- let brep = if let Ok(mut t) = boolean_op(op, a, b) {
- // 鉁?OCCT-aligned: correct_tolerances on topods::BRep directly.
+ let mut t = boolean_op(op, a, b)?;
  rcad_kernel::tolerance::correct_tolerances_topods(&mut t, 23, 0.05);
  rcad_kernel::tolerance::correct_shape_tolerances_topods(&mut t);
- rcad_kernel::BRep::from_topods(&t)
- } else {
- // Fallback: retry with escalating tolerance.
- let mut brep = boolean::boolean_op_with_retry_policy(
- op, a, b, &RetryPolicy::conservative(), BooleanOptions::default(),
- )
- .map(|(brep, _report)| brep)?;
- // 鉁?OCCT-aligned: correct_tolerances on old BRep fallback.
- rcad_kernel::tolerance::correct_tolerances(&mut brep, 23, 0.05);
- rcad_kernel::tolerance::correct_shape_tolerances(&mut brep);
- brep
- };
- Ok(brep)
+ Ok(rcad_kernel::BRep::from_topods(&t))
 }
 
 /// Perform a boolean operation with advanced execution options and report.

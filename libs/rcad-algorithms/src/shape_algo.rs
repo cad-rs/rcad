@@ -11,12 +11,14 @@
 //! - `GetTorusGeometry`: Extract torus parameters from a BRep
 //! - `IsPrimitive`: Check if a shape matches a primitive type
 
+
+use rcad_kernel::BRep;
+
 use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::geom::{
     ConicalSurface, CylindricalSurface, Plane, SphericalSurface, Surface3, ToroidalSurface,
 };
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 use std::collections::HashMap;
 

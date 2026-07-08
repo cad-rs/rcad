@@ -1,10 +1,12 @@
-//! Structured healing pipeline for B-Rep analysis and repair.
+﻿//! Structured healing pipeline for B-Rep analysis and repair.
 //!
 //! This module provides an analyze -> repair -> recheck workflow similar in
 //! spirit to OCCT ShapeAnalysis/ShapeFix orchestration.
 
-use glam::DVec3;
+
 use rcad_kernel::BRep;
+
+use glam::DVec3;
 use rcad_kernel::topods;
 use rcad_kernel::{BSplineSurface, BezierSurface};
 
@@ -948,9 +950,9 @@ impl Default for OperatorReport {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Operator Result Aggregation, Rollback, and Progress Callbacks
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Aggregated results from a healing pipeline execution.
 ///
@@ -1269,9 +1271,9 @@ impl PipelineExecutionReport {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 // Operator Chaining Improvements
-// ─────────────────────────────────────────────────────────────────────────────
+// 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Condition for conditional operator execution.
 #[derive(Debug, Clone, PartialEq)]
@@ -1677,7 +1679,7 @@ impl ShapeProcessReport {
             )
         } else {
             format!(
-                "ShapeProcess: {} → {} issues ({} fixed) after {} operators in {:.3}s",
+                "ShapeProcess: {} 鈫?{} issues ({} fixed) after {} operators in {:.3}s",
                 self.initial_issue_count(),
                 self.final_issue_count(),
                 self.issues_fixed(),

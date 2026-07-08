@@ -26,9 +26,11 @@
 //! let world_point = datum.to_world(local_point);
 //! ```
 
+
+use rcad_kernel::BRep;
+
 use crate::tolerance::*;
 use glam::{DAffine3, DMat3, DMat4, DVec3, DQuat};
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 use std::collections::HashMap;
 

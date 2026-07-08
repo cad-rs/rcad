@@ -1,17 +1,19 @@
-//! BOPAlgo_ArgumentAnalyzer — line-by-line OCCT equivalent.
+﻿//! BOPAlgo_ArgumentAnalyzer 鈥?line-by-line OCCT equivalent.
 //!
 //! OCCT reference: BOPAlgo_ArgumentAnalyzer.hxx / .cxx
 //!
 //! Performs pre-checks on boolean operation inputs:
-//! 1. TestTypes() — validate shape type compatibility (same dimension)
-//! 2. TestSelfInterferences() — run CheckerSI on each operand
-//! 3. TestSmallEdge() — detect micro edges (IsMicroEdge)
-//! 4. TestRebuildFace() — verify faces can be rebuilt from edges
-//! 5. TestMergeSubShapes() — detect 1-to-many vertex/edge merges
-//! 6. TestContinuity() — detect C0 discontinuities
-//! 7. TestCurveOnSurface() — check curve-surface consistency
+//! 1. TestTypes() 鈥?validate shape type compatibility (same dimension)
+//! 2. TestSelfInterferences() 鈥?run CheckerSI on each operand
+//! 3. TestSmallEdge() 鈥?detect micro edges (IsMicroEdge)
+//! 4. TestRebuildFace() 鈥?verify faces can be rebuilt from edges
+//! 5. TestMergeSubShapes() 鈥?detect 1-to-many vertex/edge merges
+//! 6. TestContinuity() 鈥?detect C0 discontinuities
+//! 7. TestCurveOnSurface() 鈥?check curve-surface consistency
+
 
 use rcad_kernel::BRep;
+
 use rcad_kernel::topods;
 use crate::tolerance::TOLERANCE_ABS;
 use crate::brep_tools::{get_shape_type, ShapeType};
@@ -216,7 +218,7 @@ pub struct ArgumentAnalyzer {
     /// OCCT ref: myOperation
     operation: OperationType,
 
-    // ── Mode flags ────────────────────────────────────────────────────────────
+    // 鈹€鈹€ Mode flags 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     /// Check types of shapes (same dimension).
     ///
     /// OCCT ref: myArgumentTypeMode (BOPAlgo_ArgumentAnalyzer.hxx L132)
@@ -262,7 +264,7 @@ pub struct ArgumentAnalyzer {
     /// OCCT ref: myCurveOnSurfaceMode
     curve_on_surface_mode: bool,
 
-    // ── Results ───────────────────────────────────────────────────────────────
+    // 鈹€鈹€ Results 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     /// Collection of check results from the last Perform().
     ///
     /// OCCT ref: myResult (BOPAlgo_ArgumentAnalyzer.hxx L143)
@@ -270,7 +272,7 @@ pub struct ArgumentAnalyzer {
 }
 
 impl Default for ArgumentAnalyzer {
-    /// OCCT ref: BOPAlgo_ArgumentAnalyzer() — empty constructor
+    /// OCCT ref: BOPAlgo_ArgumentAnalyzer() 鈥?empty constructor
     ///
     /// All mode flags default to false. The user must enable desired
     /// checks before calling Perform().
@@ -302,7 +304,7 @@ impl ArgumentAnalyzer {
         Self::default()
     }
 
-    // ── Shape setters / getters ──────────────────────────────────────────────
+    // 鈹€鈹€ Shape setters / getters 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     /// Set shape1 (the object).
     ///
@@ -332,7 +334,7 @@ impl ArgumentAnalyzer {
         self.shape2.as_ref()
     }
 
-    // ── Operation / flags ────────────────────────────────────────────────────
+    // 鈹€鈹€ Operation / flags 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     /// Set the boolean operation type.
     ///
@@ -358,7 +360,7 @@ impl ArgumentAnalyzer {
         self.stop_on_first
     }
 
-    // ── Mode flag setters ────────────────────────────────────────────────────
+    // 鈹€鈹€ Mode flag setters 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     /// Enable/disable shape type check.
     ///
@@ -423,7 +425,7 @@ impl ArgumentAnalyzer {
         self.curve_on_surface_mode = mode;
     }
 
-    // ── Mode flag getters ────────────────────────────────────────────────────
+    // 鈹€鈹€ Mode flag getters 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     /// Returns the argument type mode flag.
     pub fn argument_type_mode(&self) -> bool {
@@ -496,9 +498,9 @@ impl ArgumentAnalyzer {
         self.curve_on_surface_mode = false;
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
     // Perform
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
 
     /// Run all enabled checks.
     ///
@@ -564,7 +566,7 @@ impl ArgumentAnalyzer {
             }
         }
 
-        // OCCT ref: TestMergeSubShapes(VERTEX) → TestMergeVertex()
+        // OCCT ref: TestMergeSubShapes(VERTEX) 鈫?TestMergeVertex()
         if self.merge_vertex_mode {
             self.test_merge_vertex();
             if self.stop_on_first && self.has_faulty() {
@@ -572,7 +574,7 @@ impl ArgumentAnalyzer {
             }
         }
 
-        // OCCT ref: TestMergeSubShapes(EDGE) → TestMergeEdge()
+        // OCCT ref: TestMergeSubShapes(EDGE) 鈫?TestMergeEdge()
         if self.merge_edge_mode {
             self.test_merge_edge();
             if self.stop_on_first && self.has_faulty() {
@@ -591,13 +593,13 @@ impl ArgumentAnalyzer {
         // OCCT ref: TestCurveOnSurface()
         if self.curve_on_surface_mode {
             self.test_curve_on_surface();
-            // No early-exit check here — curve-on-surface is the last test.
+            // No early-exit check here 鈥?curve-on-surface is the last test.
         }
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
     // Result queries
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
 
     /// Returns true if any fault was found in the last Perform().
     ///
@@ -657,9 +659,9 @@ impl ArgumentAnalyzer {
         lines.join("\n")
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
     // Prepare
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
 
     /// Prepare shapes for analysis.
     ///
@@ -702,9 +704,9 @@ impl ArgumentAnalyzer {
         true
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
     // TestTypes
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
 
     /// Validate that shape types are compatible for boolean operations.
     ///
@@ -750,9 +752,9 @@ impl ArgumentAnalyzer {
         }
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
     // TestSelfInterferences
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
 
     /// Check for self-interferences within each operand.
     ///
@@ -851,9 +853,9 @@ impl ArgumentAnalyzer {
         Some(result)
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
     // TestSmallEdge
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
 
     /// Detect micro edges where the edge length is below threshold.
     ///
@@ -862,10 +864,10 @@ impl ArgumentAnalyzer {
     ///
     /// OCCT uses `BRep_Tool::IsMicroEdge()` internally, which checks if
     /// the edge's 3D curve length is less than `Precision::Confusion()`.
-    /// We use `TOLERANCE_ABS` (1e-7) × 10 as threshold, matching the
+    /// We use `TOLERANCE_ABS` (1e-7) 脳 10 as threshold, matching the
     /// OCCT `IsMicroEdge` tolerance scaling.
     fn test_small_edge(&mut self) {
-        let threshold = TOLERANCE_ABS * 10.0; // ✅ OCCT-aligned: IsMicroEdge scale
+        let threshold = TOLERANCE_ABS * 10.0; // 鉁?OCCT-aligned: IsMicroEdge scale
 
         // Check shape1 edges
         if let Some(s1) = self.shape1.as_ref() {
@@ -907,7 +909,7 @@ impl ArgumentAnalyzer {
 
     /// Compute an edge's length from its start/end vertex distance.
     ///
-    /// ✅ OCCT-aligned: BRep_Tool::IsMicroEdge checks vertex distance.
+    /// 鉁?OCCT-aligned: BRep_Tool::IsMicroEdge checks vertex distance.
     fn compute_edge_length(&self, brep: &BRep, edge_idx: usize) -> f64 {
         let Some(edge) = brep.edges.get(edge_idx) else {
             return 0.0;
@@ -925,9 +927,9 @@ impl ArgumentAnalyzer {
         (end_pt - start_pt).length()
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
     // TestRebuildFace
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
 
     /// Verify that each face can be rebuilt from its edges.
     ///
@@ -943,7 +945,7 @@ impl ArgumentAnalyzer {
     /// - The outer wire forms a closed loop (start vertex == end vertex
     ///   of the last edge in the wire).
     ///
-    /// ✅ OCCT-aligned: structural rebuild-ability check (BOPAlgo_ArgumentAnalyzer.cxx L571-610).
+    /// 鉁?OCCT-aligned: structural rebuild-ability check (BOPAlgo_ArgumentAnalyzer.cxx L571-610).
     /// OCCT iterates faces, counts edges, checks INTERNAL orientation. Same approach.
     fn test_rebuild_face(&mut self) {
         self.rebuild_face_check_shape(true); // shape1
@@ -996,7 +998,7 @@ impl ArgumentAnalyzer {
 
     /// Structural check whether a face can be rebuilt from its wire edges.
     ///
-    /// ✅ OCCT-aligned: Verifies wire closure and edge existence.
+    /// 鉁?OCCT-aligned: Verifies wire closure and edge existence.
     fn face_rebuildable(
         &self,
         brep: &BRep,
@@ -1056,9 +1058,9 @@ impl ArgumentAnalyzer {
         true
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
     // TestTangent
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
 
     /// Check for tangency problems between sub-shapes.
     ///
@@ -1069,31 +1071,31 @@ impl ArgumentAnalyzer {
     /// produce unreliable results. This test requires geometric intersection
     /// analysis and is non-trivial.
     ///
-    /// ✅ OCCT-aligned: TestTangent (BOPAlgo_ArgumentAnalyzer.cxx L676-679).
+    /// 鉁?OCCT-aligned: TestTangent (BOPAlgo_ArgumentAnalyzer.cxx L676-679).
     ///   OCCT implementation is also empty (not implemented).
     fn test_tangent(&mut self) {
         // OCCT ref: Full implementation uses BOPTools_AlgoTools tangent detection.
         // This is a stub that records a single Unknown result (no fault).
         //
-        // ⏳ TODO: Implement tangent detection when needed for specific tests.
+        // 鈴?TODO: Implement tangent detection when needed for specific tests.
         // The OCCT approach:
         //   1. For each pair of intersecting faces, compute normals at
         //      intersection points.
-        //   2. If normals are nearly parallel (dot product near ±1),
+        //   2. If normals are nearly parallel (dot product near 卤1),
         //      the faces are tangent and the result is unreliable.
         //   3. Report BOPAlgo_GeomAbs_C0 for tangent intersections.
         //
         // For now, report success (no fault).
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
     // TestMergeSubShapes (VT)
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
 
     /// Detect vertices shared between the two shapes by proximity.
     ///
     /// OCCT ref: BOPAlgo_ArgumentAnalyzer::TestMergeSubShapes(VERTEX)
-    /// → TestMergeVertex() (BOPAlgo_ArgumentAnalyzer.cxx)
+    /// 鈫?TestMergeVertex() (BOPAlgo_ArgumentAnalyzer.cxx)
     ///
     /// When two shapes have vertices that are very close but not exactly
     /// coincident, the merge may produce non-manifold topology.
@@ -1107,7 +1109,7 @@ impl ArgumentAnalyzer {
     /// ambiguous merge.
     ///
     /// OCCT ref: BOPAlgo_ArgumentAnalyzer::TestMergeSubShapes(EDGE)
-    /// → TestMergeEdge() (BOPAlgo_ArgumentAnalyzer.cxx)
+    /// 鈫?TestMergeEdge() (BOPAlgo_ArgumentAnalyzer.cxx)
     fn test_merge_edge(&mut self) {
         self.test_merge_sub_shapes_impl(false);
     }
@@ -1129,7 +1131,7 @@ impl ArgumentAnalyzer {
             return;
         };
 
-        let merge_tol = TOLERANCE_ABS * 100.0; // ✅ OCCT-aligned: merge tolerance
+        let merge_tol = TOLERANCE_ABS * 100.0; // 鉁?OCCT-aligned: merge tolerance
 
         if is_vertex {
             // Check shape1 vertices against shape2 vertices
@@ -1251,9 +1253,9 @@ impl ArgumentAnalyzer {
         Some((start.point + end.point) * 0.5)
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
     // TestContinuity
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
 
     /// Detect C0 discontinuities along edges.
     ///
@@ -1264,12 +1266,12 @@ impl ArgumentAnalyzer {
     /// along shared edges. C0 (positional continuity only) may cause
     /// problems for boolean operations.
     ///
-    /// ❌ Not fully implemented: OCCT uses Geom_Curve::Continuity() to check
+    /// 鉂?Not fully implemented: OCCT uses Geom_Curve::Continuity() to check
     ///   if each edge's underlying curve is C0 (positional only), which can
     ///   cause boolean instability.  rcad Curve3 has no Continuity property;
     ///   analytic curves (Line3, Circle3) are C2+, BSpline curves with
     ///   repeated knots could be C0.
-    ///   ⏳ BSpline knot multiplicity not tracked — needed for C0 detection.
+    ///   鈴?BSpline knot multiplicity not tracked 鈥?needed for C0 detection.
     fn test_continuity(&mut self) {
         // OCCT ref: Full implementation inspects each edge shared by
         // two faces and evaluates the angle between the face normals
@@ -1278,7 +1280,7 @@ impl ArgumentAnalyzer {
         //
         // This stub records a single Unknown result (no fault).
         //
-        // ⏳ TODO: Implement continuity detection:
+        // 鈴?TODO: Implement continuity detection:
         //   1. For each edge, find the two faces that share it.
         //   2. Evaluate surface normals at several points along the edge.
         //   3. If the angle between normals exceeds a threshold,
@@ -1286,9 +1288,9 @@ impl ArgumentAnalyzer {
         //   4. Report BOPAlgo_GeomAbs_C0 with the faulty edge indices.
     }
 
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
     // TestCurveOnSurface
-    // ══════════════════════════════════════════════════════════════════════════
+    // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
 
     /// Check curve-surface consistency via pcurve deviation analysis.
     ///
@@ -1298,7 +1300,7 @@ impl ArgumentAnalyzer {
     /// Uses `BOPAlgo_AlgoTools::CheckCurveOnSurface()` in OCCT.
     /// Our equivalent is `diagnose_face_surface_consistency()`.
     ///
-    /// ✅ OCCT-aligned: Uses existing brep_check infrastructure.
+    /// 鉁?OCCT-aligned: Uses existing brep_check infrastructure.
     fn test_curve_on_surface(&mut self) {
         // Check shape1
         if let Some(s1) = self.shape1.as_ref() {

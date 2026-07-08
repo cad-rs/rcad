@@ -21,11 +21,13 @@
 //! let result = linear_sweep(&profile_pts, DVec3::Z, 2.0);
 //! ```
 
+
+use rcad_kernel::BRep;
+
 use crate::tolerance::*;
 use std::collections::HashMap;
 
 use glam::{DVec2, DVec3};
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 use rcad_kernel::geom::{
  Circle3, Curve3, Line3, Plane, Surface3,
