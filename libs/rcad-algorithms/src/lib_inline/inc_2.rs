@@ -607,7 +607,9 @@ fn split_brep_internal_with_partial_report(
  continue;
  }
 
- let mut step = imprint_shape(&acc, tool);
+ let acc_t = acc.to_topods();
+ let tool_t = tool.to_topods();
+ let mut step = imprint_shape(&acc_t, &tool_t);
  let seam_edges = step.seam_edges.len();
 
  if options.heal_after_each_step {
@@ -618,15 +620,18 @@ fn split_brep_internal_with_partial_report(
  tool,
  options.fuzzy_tolerance,
  );
- let (healed, _) = analyze_and_heal(&step.brep.to_topods(), healing);
- step.brep = rcad_kernel::BRep::from_topods(&healed);
+ let (healed, _) = analyze_and_heal(&step.brep, healing);
+ step.brep = healed;
  }
+
+ // Convert back to old BRep for downstream functions not yet converted
+ let step_old = rcad_kernel::BRep::from_topods(&step.brep);
 
  let mut validation_issue_count = None;
  let mut validation_first_issue = None;
- let output_faces = face_count_of(&step.brep);
+ let output_faces = face_count_of(&step_old);
  if validate_each_step {
- let validity = brep_check_analyze(&step.brep);
+ let validity = brep_check_analyze(&step_old);
  let (issue_count, first_issue) =
  splitter_issues_by_level(&validity, options.validation_level);
  validation_issue_count = Some(issue_count);
@@ -665,7 +670,7 @@ fn split_brep_internal_with_partial_report(
  validation_first_issue,
  });
 
- acc = step.brep;
+ acc = step_old;
  }
 
  (Ok(acc), report)

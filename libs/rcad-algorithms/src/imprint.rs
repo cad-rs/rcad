@@ -1,18 +1,16 @@
-﻿//! Stub: imprint_shape module removed (self-created code).
+//! Stub: imprint_shape module removed (self-created code).
 //! Kept to satisfy existing references until callers are cleaned up.
 
-
-
-use rcad_kernel::BRep;
+use rcad_kernel::topods;
 
 #[derive(Debug, Clone)]
 pub struct ImprintResult {
-    pub brep: BRep,
+    pub brep: topods::BRep,
     pub seam_edges: Vec<usize>,
 }
 
 /// Stub: always returns a no-op result (original BRep unchanged).
-pub fn imprint_shape(target: &BRep, _tool: &BRep) -> ImprintResult {
+pub fn imprint_shape(target: &topods::BRep, _tool: &topods::BRep) -> ImprintResult {
     ImprintResult {
         brep: target.clone(),
         seam_edges: vec![],
@@ -27,8 +25,8 @@ pub struct Overlap;
 #[derive(Debug, Clone)]
 pub struct GapOverlapReport;
 pub fn detect_gaps_overlaps(
-    _a: &BRep, _b: &BRep, _tol: f64,
+    _a: &topods::BRep, _b: &topods::BRep, _tol: f64,
 ) -> GapOverlapReport {
     GapOverlapReport
 }
-pub fn min_distance(_a: &BRep, _b: &BRep) -> f64 { f64::MAX }
+pub fn min_distance(_a: &topods::BRep, _b: &topods::BRep) -> f64 { f64::MAX }
