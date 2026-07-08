@@ -15,6 +15,7 @@ pub mod wire_ops;
 pub use brep_builder::*;
 pub use curve::*;
 pub use fillet::{chamfer_edge, chamfer_edge_angle, chamfer_edge_safe, corner_blend, fillet_edge, fillet_edge_safe, fillet_edges, fillet_edge_variable_radius};
+pub use fillet::{chamfer_edge_topods, chamfer_edge_angle_topods, fillet_edge_topods, fillet_edge_variable_radius_topods};
 pub use fillet::{chamfer_edge_with_history, chamfer_edge_angle_with_history, fillet_edge_with_history, fillet_edge_variable_radius_with_history, fillet_edges_with_history, corner_blend_with_history};
 pub use fillet::{FilletHistory, MultiFilletHistory, CornerBlendHistory, SafeFilletResult};
 pub use ops::*;
@@ -406,7 +407,7 @@ fn transform_brep(brep: &mut BRep, origin: DVec3, x_axis: DVec3, y_axis: DVec3, 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rcad_kernel::{PrimitiveSolid, Surface3};
+    use rcad_kernel::{PrimitiveSolid, Surface3, topods::TShape};
 
     #[test]
     fn line_rejects_zero_direction() {
@@ -424,33 +425,29 @@ mod tests {
     fn box_brep_builds_transformed_vertices() {
         let brep = box_brep(DVec3::new(1.0, 2.0, 3.0), DVec3::Y, DVec3::Z, 2.0, 3.0, 4.0).unwrap();
 
-        assert_eq!(brep.vertices.len(), 8);
-        assert!(
-            brep.vertices
-                .iter()
-                .any(|v| v.point == DVec3::new(1.0, 2.0, 3.0))
-        );
-        assert!(
-            brep.vertices
-                .iter()
-                .any(|v| v.point == DVec3::new(5.0, 4.0, 6.0))
-        );
+        let pts: Vec<DVec3> = brep.tshapes.iter()
+            .filter_map(|ts| match ts.as_ref() {
+                TShape::Vertex(v) => Some(v.point),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pts.len(), 8);
+        assert!(pts.contains(&DVec3::new(1.0, 2.0, 3.0)));
+        assert!(pts.contains(&DVec3::new(5.0, 4.0, 6.0)));
     }
 
     #[test]
     fn sphere_brep_translates_bounds() {
         let brep = sphere_brep(DVec3::new(10.0, -2.0, 4.0), 2.0).unwrap();
 
-        let min_y = brep
-            .vertices
-            .iter()
-            .map(|v| v.point.y)
-            .fold(f64::INFINITY, f64::min);
-        let max_y = brep
-            .vertices
-            .iter()
-            .map(|v| v.point.y)
-            .fold(f64::NEG_INFINITY, f64::max);
+        let y_vals: Vec<f64> = brep.tshapes.iter()
+            .filter_map(|ts| match ts.as_ref() {
+                TShape::Vertex(v) => Some(v.point.y),
+                _ => None,
+            })
+            .collect();
+        let min_y = y_vals.iter().cloned().fold(f64::INFINITY, f64::min);
+        let max_y = y_vals.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
 
         assert!((min_y - (-4.0)).abs() < 1e-6);
         assert!((max_y - 0.0).abs() < 1e-6);
@@ -484,58 +481,20 @@ mod tests {
 
     #[test]
     fn mirror_box_across_xy_plane() {
-        let mut brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
-        // Populate geometry manually (geom_populate lives in rcad-algorithms)
-        use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
-        for edge in &brep.edges {
-            let p0 = brep.vertices[edge.start].point;
-            let p1 = brep.vertices[edge.end].point;
-            let delta = p1 - p0;
-            let len = delta.length();
-            let dir = if len > 1e-12 { delta / len } else { DVec3::X };
-            let curve_idx = brep.geom.curves.len();
-            brep.geom.curves.push(Curve3::Line(Line3 { origin: p0, direction: dir }));
-            brep.geom.edge_curve.push(Some(curve_idx));
-            brep.geom.edge_curve_range.push(Some([0.0, len]));
-            brep.geom.edge_degenerated.push(false);
-        }
-        for solid in &brep.solids {
-            for shell in &solid.shells {
-                for face in &shell.faces {
-                    let origin = face.outer_wire.edges.first()
-                        .and_then(|we| brep.edges.get(we.idx))
-                        .map(|e| brep.vertices[e.start].point)
-                        .unwrap_or(DVec3::ZERO);
-                    let surf_idx = brep.geom.surfaces.len();
-                    brep.geom.surfaces.push(Surface3::Plane(Plane { origin, normal: face.normal }));
-                    let _face_idx = brep.geom.face_surface.len();
-                    brep.geom.face_surface.push(Some(surf_idx));
-                }
-            }
-        }
-        let v_orig = rcad_kernel::properties::volume(&brep);
+        let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+        // Convert to legacy BRep for do_mirror_brep
+        let legacy = rcad_kernel::BRep::from_topods(&brep);
+        let v_orig = rcad_kernel::properties::volume(&legacy);
 
-        let mirrored = do_mirror_brep(&brep, DVec3::ZERO, DVec3::Z);
+        let mirrored = do_mirror_brep(&legacy, DVec3::ZERO, DVec3::Z);
         let v_mirrored = rcad_kernel::properties::volume(&mirrored);
-
-        // Debug: check face triangles
-        for (fi, face) in mirrored.solids[0].shells[0].faces.iter().enumerate() {
-            eprintln!("mirrored face {fi}: normal={:?} tris={}", face.normal, face.triangles.len());
-            for tri in &face.triangles {
-                let a = mirrored.vertices[tri[0]].point;
-                let b = mirrored.vertices[tri[1]].point;
-                let c = mirrored.vertices[tri[2]].point;
-                let gn = (b - a).cross(c - a);
-                eprintln!("  tri: gn={gn:?}");
-            }
-        }
 
         assert!(
             (v_mirrored - v_orig).abs() < 0.01,
             "mirror should preserve volume: {v_orig} vs {v_mirrored}"
         );
 
-        for (i, v) in brep.vertices.iter().enumerate() {
+        for (i, v) in legacy.vertices.iter().enumerate() {
             let mv = &mirrored.vertices[i];
             assert!((mv.point.z - (-v.point.z)).abs() < 1e-9, "vertex {i} z should be negated");
         }

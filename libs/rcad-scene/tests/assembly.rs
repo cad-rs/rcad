@@ -3,23 +3,23 @@
 use std::sync::Arc;
 
 use glam::{DAffine3, DVec3};
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
+use rcad_kernel::topods::TShape;
 use rcad_modeling::{make_box_brep, make_sphere_brep};
 use rcad_scene::assembly::{Assembly, AssemblyNode, NodeContent, assembly_from_parts};
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
-fn face_count(brep: &BRep) -> usize {
-    brep.solids
-        .iter()
-        .flat_map(|s| &s.shells)
-        .map(|sh| sh.faces.len())
-        .sum()
+fn face_count(brep: &topods::BRep) -> usize {
+    brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Face(_))).count()
 }
 
-fn make_box() -> BRep {
+fn make_box() -> topods::BRep {
     make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap()
+}
+
+fn make_box_arc() -> Arc<rcad_kernel::BRep> {
+    Arc::new(rcad_kernel::BRep::from_topods(&make_box()))
 }
 
 // ─── tests ────────────────────────────────────────────────────────────────────
@@ -28,7 +28,7 @@ fn make_box() -> BRep {
 /// World position of child leaf should be (1,2,0).
 #[test]
 fn flatten_world_transforms() {
-    let brep = Arc::new(make_box());
+    let brep = make_box_arc();
 
     let child = AssemblyNode::new_leaf_with_transform(
         0,
@@ -63,7 +63,7 @@ fn flatten_world_transforms() {
 /// Two boxes (6 faces each) → `to_brep()` should give 12 faces total.
 #[test]
 fn to_brep_face_count() {
-    let box_brep = Arc::new(make_box());
+    let box_brep = make_box_arc();
     let mut asm = Assembly::new("two_boxes");
     asm.add_part("a", Arc::clone(&box_brep));
     asm.add_part_at(
@@ -73,8 +73,9 @@ fn to_brep_face_count() {
     );
 
     let merged = asm.to_brep();
+    let merged_t = merged.to_topods();
     assert_eq!(
-        face_count(&merged),
+        face_count(&merged_t),
         12,
         "two boxes should have 12 faces total"
     );
@@ -84,7 +85,7 @@ fn to_brep_face_count() {
 /// and Arc::ptr_eq confirms they share the same underlying data.
 #[test]
 fn instance_shared_arc() {
-    let shared = Arc::new(make_box());
+    let shared = make_box_arc();
     let mut asm = Assembly::new("shared");
     asm.add_part("inst1", Arc::clone(&shared));
     asm.add_part_with_transform(
@@ -102,7 +103,7 @@ fn instance_shared_arc() {
 /// Serialize an Assembly to JSON and deserialize it back; verify structure integrity.
 #[test]
 fn serde_roundtrip() {
-    let box_brep = Arc::new(make_box());
+    let box_brep = make_box_arc();
     let mut asm = Assembly::new("serde_test");
     asm.add_part("part_a", Arc::clone(&box_brep));
     asm.add_part_at("part_b", Arc::clone(&box_brep), DVec3::new(2.0, 0.0, 0.0));
@@ -127,10 +128,10 @@ fn assembly_from_parts_helper() {
         make_sphere_brep(DVec3::ZERO, 1.0).unwrap();
 
     let parts = vec![
-        ("box".to_string(), box_brep, DAffine3::IDENTITY),
+        ("box".to_string(), rcad_kernel::BRep::from_topods(&box_brep), DAffine3::IDENTITY),
         (
             "sphere".to_string(),
-            sphere_brep,
+            rcad_kernel::BRep::from_topods(&sphere_brep),
             DAffine3::from_translation(DVec3::new(3.0, 0.0, 0.0)),
         ),
     ];

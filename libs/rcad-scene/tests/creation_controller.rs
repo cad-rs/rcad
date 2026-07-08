@@ -4,8 +4,8 @@
 //! requiring a GPU.  Camera and SelectionState are constructed so that
 //! `cursor_point_on_plane` returns valid points on the XZ work plane (normal = Y).
 
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
+use rcad_kernel::topods::TShape;
 use rcad_render::{Camera, SelectionMode, SelectionState};
 use rcad_scene::{CommandState, CreationController, Tool, WorkPlane};
 
@@ -40,12 +40,8 @@ fn offset_cursor() -> [f32; 2] {
 }
 
 /// Count faces across all solids/shells.
-fn face_count(brep: &BRep) -> usize {
-    brep.solids
-        .iter()
-        .flat_map(|s| &s.shells)
-        .map(|sh| sh.faces.len())
-        .sum()
+fn face_count(brep: &topods::BRep) -> usize {
+    brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Face(_))).count()
 }
 
 fn is_idle(ctrl: &CreationController) -> bool {
@@ -56,11 +52,11 @@ fn is_idle(ctrl: &CreationController) -> bool {
 /// Returns the BRep if one was produced, otherwise None.
 fn click(
     ctrl: &mut CreationController,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     cam: &Camera,
     sel: &mut SelectionState,
     cursor: [f32; 2],
-) -> Option<BRep> {
+) -> Option<topods::BRep> {
     ctrl.handle_primary_click(brep, cam, sel, cursor, test_viewport())
 }
 
@@ -84,7 +80,7 @@ fn cancel_active_command_returns_to_idle() {
     ctrl.set_work_plane(WorkPlane::XY); // XY plane with normal Z
 
     let cam = test_camera();
-    let empty = BRep::new();
+    let empty = rcad_kernel::BRep::new();
 
     // First click should advance to SphereRadius if ray hits the plane.
     click(&mut ctrl, &empty, &cam, &mut sel, center_cursor());
@@ -113,7 +109,7 @@ fn work_plane_switch_resets_state() {
     ctrl.set_work_plane(WorkPlane::XZ);
 
     let cam = test_camera();
-    let empty = BRep::new();
+    let empty = rcad_kernel::BRep::new();
     // First click — may or may not advance state depending on ray intersection.
     click(&mut ctrl, &empty, &cam, &mut sel, center_cursor());
 
@@ -140,7 +136,7 @@ fn sphere_preview_and_confirm() {
     ctrl.set_work_plane(WorkPlane::XZ);
 
     let cam = test_camera();
-    let empty = BRep::new();
+    let empty = rcad_kernel::BRep::new();
     let vp = test_viewport();
 
     // Move pointer first to set a non-zero current point.
@@ -176,7 +172,7 @@ fn box_preview_and_confirm() {
     ctrl.set_work_plane(WorkPlane::XZ);
 
     let cam = test_camera();
-    let empty = BRep::new();
+    let empty = rcad_kernel::BRep::new();
     let vp = test_viewport();
 
     // Click 1: first corner at top-left of viewport.
@@ -219,7 +215,7 @@ fn undo_last_step_cylinder() {
     ctrl.set_work_plane(WorkPlane::XZ);
 
     let cam = test_camera();
-    let empty = BRep::new();
+    let empty = rcad_kernel::BRep::new();
 
     // Click 1 → CylinderRadius (if ray hits).
     click(&mut ctrl, &empty, &cam, &mut sel, center_cursor());
@@ -256,12 +252,13 @@ fn grow_selected_faces_basic() {
     use rcad_modeling::make_box_brep;
 
     let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+    let brep_legacy = rcad_kernel::BRep::from_topods(&brep);
     let ctrl = CreationController::default();
     let mut sel = SelectionState {
         selected_faces: vec![0],
         ..Default::default()
     };
-    ctrl.grow_selected_faces(&brep, &mut sel);
+    ctrl.grow_selected_faces(&brep_legacy, &mut sel);
 
     // After growing, should have more faces.
     assert!(
@@ -280,18 +277,19 @@ fn grow_selected_edges_basic() {
     use rcad_modeling::make_box_brep;
 
     let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
+    let brep_legacy = rcad_kernel::BRep::from_topods(&brep);
     let ctrl = CreationController::default();
     let mut sel = SelectionState {
         selected_edges: vec![0],
         ..Default::default()
     };
-    ctrl.grow_selected_edges(&brep, &mut sel);
+    ctrl.grow_selected_edges(&brep_legacy, &mut sel);
 
     assert!(
         sel.selected_edges.len() > 1,
         "grow should add adjacent edges: {:?}", sel.selected_edges
     );
-    let total_edges = brep.edges.len();
+    let total_edges = brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Edge(_))).count();
     for &ei in &sel.selected_edges {
         assert!(ei < total_edges, "edge index {ei} out of bounds ({total_edges})");
     }

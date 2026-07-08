@@ -1,4 +1,4 @@
-﻿//! OCCT BRepAlgoAPI_BuilderOperation equivalent — boolean operation wrapper with history.
+//! OCCT BRepAlgoAPI_BuilderOperation equivalent — boolean operation wrapper with history.
 //!
 //! Provides a general-purpose boolean operation struct analogous to
 //! OCCT BRepAlgoAPI_BuilderOperation (base class for BRepAlgoAPI_Common/Fuse/Cut).
@@ -175,11 +175,9 @@ impl BooleanOp {
 
         // ✅ OCCT-aligned: Build BOPDS_DS (data structure) from the two shapes
         // OCCT ref: BOPAlgo_PaveFiller::Perform → BOPDS_DS::Alloc
-        let mut ds = if self.tolerance > TOLERANCE_ABS {
-            DS::new_with_fuzzy(&a, &b, self.tolerance)
-        } else {
-            DS::new(&a, &b)
-        };
+        let a_t = a.to_topods();
+        let b_t = b.to_topods();
+        let mut ds = DS::new_from_topods(&a_t, &b_t, self.tolerance.max(TOLERANCE_ABS));
 
         // ✅ OCCT-aligned: Build BVH acceleration (optional in OCCT)
         let bvh_a = Bvh::build(&a);
@@ -194,8 +192,7 @@ impl BooleanOp {
         };
 
         // ✅ OCCT-aligned: FillImagesContainers — build wire/shell images
-        ds.build_container_images(&a);
-        ds.build_container_images(&b);
+        ds.build_container_images();
 
         // ✅ OCCT-aligned: Build result
         let builder = BooleanBuilder::with_brep(&ds, self.op_type, brep, face_refs, ic_edge_map);

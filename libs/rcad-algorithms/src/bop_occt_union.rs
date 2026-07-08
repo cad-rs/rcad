@@ -440,7 +440,9 @@ pub(crate) fn fuse(a: &BRep, b: &BRep) -> Result<topods::BRep, BooleanError> {
 /// ✅ OCCT-aligned: DS → PaveFiller → BooleanBuilder(Union) → result.
 /// OCCT BOPAlgo_BOP::Perform L395-408: PaveFiller config + Perform + PerformInternal1.
 pub(crate) fn fuse_with_bvh(a: &BRep, b: &BRep, use_bvh: bool) -> Result<topods::BRep, BooleanError> {
- let mut ds = bopds::ds::DS::new(a, b);
+ let a_t = a.to_topods();
+ let b_t = b.to_topods();
+ let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, crate::tolerance::TOLERANCE_ABS);
  let mut brep = rcad_kernel::topods::BRep::new();
  let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, use_bvh, &mut brep);
  let builder = builder::BooleanBuilder::with_brep(&ds, BooleanOpType::Union, brep, face_refs, ic_edge_map);
@@ -517,7 +519,9 @@ pub(crate) fn fuse_with_history_bvh(
  use_bvh: bool,
 ) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
  validate_union_operands(a, b)?;
- let mut ds = bopds::ds::DS::new(a, b);
+ let a_t = a.to_topods();
+ let b_t = b.to_topods();
+ let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, crate::tolerance::TOLERANCE_ABS);
  validate_ds_invariants(&ds)?;
  let mut brep = rcad_kernel::topods::BRep::new();
  let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, use_bvh, &mut brep);
@@ -539,7 +543,9 @@ pub(crate) fn fuse_with_history_par_bvh(
  use_bvh: bool,
 ) -> Result<(topods::BRep, BooleanHistory), BooleanError> {
  validate_union_operands(a, b)?;
- let mut ds = bopds::ds::DS::new(a, b);
+ let a_t = a.to_topods();
+ let b_t = b.to_topods();
+ let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, crate::tolerance::TOLERANCE_ABS);
  validate_ds_invariants(&ds)?;
  let mut brep = rcad_kernel::topods::BRep::new();
  let (face_refs, ic_edge_map) = pave_fill(&mut ds, a, b, use_bvh, &mut brep);

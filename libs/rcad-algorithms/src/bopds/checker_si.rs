@@ -88,7 +88,8 @@ impl CheckerSI {
         // PaveFiller compares A entities against B entities, so loading the
         // same shape twice makes it detect intersections between any pair
         // of distinct sub-shapes within the original shape.
-        let mut ds = DS::new(brep, brep);
+        let brep_t = brep.to_topods();
+ let mut ds = DS::new_from_topods(&brep_t, &brep_t, crate::tolerance::TOLERANCE_ABS);
 
         let a_vc = ds.a_vertex_count;
         let a_ec = ds.a_edge_count;

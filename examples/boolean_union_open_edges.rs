@@ -135,7 +135,9 @@ fn main() {
 
     // 1) Same pipeline as `boolean_op` up to `BooleanBuilder::build()` (no recompute_plane_surfaces).
     {
-        let mut ds = DS::new(&a, &b);
+        let a_t = a.to_topods();
+        let b_t = b.to_topods();
+        let mut ds = DS::new_from_topods(&a_t, &b_t, rcad_algorithms::tolerance::TOLERANCE_ABS);
         let ba = Bvh::build(&a);
         let bb = Bvh::build(&b);
         let mut filler = PaveFiller::with_bvh(&mut ds, &ba, &bb);
@@ -147,7 +149,9 @@ fn main() {
 
     // 2) After `recompute_plane_surfaces` (still what `boolean_op` does before returning).
     {
-        let mut ds = DS::new(&a, &b);
+        let a_t = a.to_topods();
+        let b_t = b.to_topods();
+        let mut ds = DS::new_from_topods(&a_t, &b_t, rcad_algorithms::tolerance::TOLERANCE_ABS);
         let ba = Bvh::build(&a);
         let bb = Bvh::build(&b);
         let mut filler = PaveFiller::with_bvh(&mut ds, &ba, &bb);

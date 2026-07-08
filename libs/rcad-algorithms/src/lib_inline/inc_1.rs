@@ -1770,7 +1770,9 @@ pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<topods::BRep,
 }
 
 pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<topods::BRep, BooleanError> {
- let mut ds = bopds::ds::DS::new(a, b);
+ let a_t = a.to_topods();
+ let b_t = b.to_topods();
+ let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, crate::tolerance::TOLERANCE_ABS);
  let fuzzy_tol = ds.fuzzy_tol;
 
  let mut brep = rcad_kernel::topods::BRep::new();

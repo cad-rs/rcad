@@ -86,7 +86,9 @@ macro_rules! def_boolean_op {
             pub fn set_options(&mut self, options: BooleanApiOptions) { self.options = options; }
             pub fn build(&mut self) -> bool {
                 self.result = None; self.error = None; self.history = BRepHistory::new();
-                let ds = DS::new_with_fuzzy(self.shape1, self.shape2, self.options.fuzzy_value);
+                let shape1_t = self.shape1.to_topods();
+                let shape2_t = self.shape2.to_topods();
+                let ds = DS::new_from_topods(&shape1_t, &shape2_t, self.options.fuzzy_value);
                 let builder = BooleanBuilder::new(&ds, $op);
                 match builder.build_with_history_topods() {
                     Ok((t, h)) => {

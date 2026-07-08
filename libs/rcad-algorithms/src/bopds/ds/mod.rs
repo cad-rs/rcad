@@ -1,7 +1,8 @@
-﻿pub mod types;
+pub mod types;
 pub use types::*;
 pub mod iterator;
 pub use iterator::BOPDS_Iterator;
+pub mod topods_builder;
 
 use super::pave::{Pave, PaveBlock, SharedPB, NO_EDGE};
 use super::common_block::CommonBlock;
@@ -9,7 +10,8 @@ use super::face_info::FaceInfo;
 use crate::tolerance::*;
 use std::collections::HashMap;
 use glam::{DVec2, DVec3};
-use rcad_kernel::{topods, BRep, CurveEval, SurfaceEval, WireEdge};
+use rcad_kernel::topods;
+use rcad_kernel::{CurveEval, SurfaceEval};
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, Line2d, Line3, Plane, Surface3, any_perpendicular};
 
 impl DS {
@@ -279,75 +281,14 @@ impl DS {
  false
  }
 
- /// Build DS from two BReps using the default absolute tolerance.
- pub fn new(a: &BRep, b: &BRep) -> Self {
- Self::new_with_fuzzy(a, b, crate::tolerance::TOLERANCE_ABS)
- }
+ /// Build DS from two topods::BRep shapes, bypassing the deprecated `rcad_kernel::BRep`.
+///
+/// Delegates to [`topods_builder::new_from_topods`].
+pub fn new_from_topods(a: &topods::BRep, b: &topods::BRep, fuzzy_tol: f64) -> Self {
+ topods_builder::new_from_topods(a, b, fuzzy_tol)
+}
 
- /// Build DS with a caller-supplied fuzzy tolerance.
- ///
- /// `fuzzy_tol` must be =`TOLERANCE_ABS`; smaller values are clamped up.
- pub fn new_with_fuzzy(a: &BRep, b: &BRep, fuzzy_tol: f64) -> Self {
- let tol = fuzzy_tol.max(crate::tolerance::TOLERANCE_ABS);
- let mut ds = DS {
- vertices: Vec::new(),
- edges: Vec::new(),
- wires: Vec::new(),
- shells: Vec::new(),
- solids: Vec::new(),
- comp_solids: Vec::new(),
- faces: Vec::new(),
- // internal V/E tracking: is_internal flag on DSVertex/DSEdge
- // used instead of separate arrays (removed in favor of flags).
- interf_vv: Vec::new(),
- interf_ve: Vec::new(),
- interf_vf: Vec::new(),
- interf_ee: Vec::new(),
- interf_ef: Vec::new(),
-  interf_ff: Vec::new(),
-  interf_vz: Vec::new(),
-  interf_ez: Vec::new(),
-  interf_fz: Vec::new(),
-  interf_zz: Vec::new(),
- intersection_curves: Vec::new(),
- section_edge_refs: Vec::new(),
- fuzzy_tol: tol,
- a_vertex_count: 0,
- a_edge_count: 0,
- a_face_count: 0,
- shared_topology: SharedTopologyInfo::default(),
- shape_sd: ShapeSD::new(0, &SharedTopologyInfo::default()),
- same_domain_overlaps: Vec::new(),
- common_blocks: Vec::new(),
- my_images: Vec::new(),
- my_origins: Vec::new(),
- wire_images: Vec::new(),
- shell_images: Vec::new(),
- solid_images: Vec::new(),
- pave_blocks: Vec::new(),
- locations: Vec::new(),
-  increased_ss: std::collections::HashSet::new(),
-  interf_tb: std::collections::HashSet::new(),
-  map_ve: std::collections::HashMap::new(),
-  shape_info: Vec::new(),
- nb_source_shapes: 0,
- };
-
- ds.load_brep(a, ShapeOrigin::ShapeA);
- ds.a_vertex_count = ds.vertices.len();
- ds.a_edge_count = ds.edges.len();
- ds.a_face_count = ds.faces.len();
- ds.load_brep(b, ShapeOrigin::ShapeB);
- ds.compute_uv_boundaries();
- ds.build_face_reps();
-
- // OCCT-aligned: initialize ShapeInfo flat array after all shapes loaded.
- ds.init_shape_info();
-
- ds
- }
-
- /// Compute the characteristic scale of the model from all vertices.
+/// Compute the characteristic scale of the model from all vertices.
  /// Returns the diagonal of the bounding box, or 1.0 if empty.
  pub fn model_scale(&self) -> f64 {
  use glam::DVec3;
@@ -588,347 +529,6 @@ impl DS {
 
  self.faces[fi].uv_boundary = Some(decimated);
  }
- }
-
- fn load_brep(&mut self, brep: &BRep, origin: ShapeOrigin) {
- let edge_offset = self.edges.len();
- let face_offset = self.faces.len();
-
- // OCCT-aligned: share vertices at same 3D position between operands.
- let mut local_to_ds: Vec<usize> = Vec::with_capacity(brep.vertices.len());
- for (local_i, v) in brep.vertices.iter().enumerate() {
- let tol = rcad_kernel::vertex_tolerance(brep, local_i).max(TOLERANCE_ABS);
- if let Some(existing) = self.find_vertex_near(v.point, tol) {
- local_to_ds.push(existing);
- } else {
- let vi = self.vertices.len();
- self.vertices.push(DSVertex {
- point: v.point,
- origin: Some(origin),
- geom_tol: rcad_kernel::vertex_tolerance(brep, local_i),
- is_internal: false,
- location: 0,
- });
- local_to_ds.push(vi);
- }
- }
-
- // Edges
- for (i, edge) in brep.edges.iter().enumerate() {
- let start = local_to_ds[edge.start];
- let end = local_to_ds[edge.end];
-
- let curve = brep
- .geom
- .edge_curve
- .get(i)
- .and_then(|c| *c)
- .map(|ci| brep.geom.curves[ci].clone())
- .unwrap_or_else(|| {
- // Fallback: synthesize line from vertices
- let p0 = brep.vertices[edge.start].point;
- let p1 = brep.vertices[edge.end].point;
- let dir = (p1 - p0).normalize();
- Curve3::Line(Line3 {
- origin: p0,
- direction: dir,
- })
- });
-
- // Compute parametric range
- let t_range = match &curve {
- Curve3::Line(line) => {
- let p0 = brep.vertices[edge.start].point;
- let p1 = brep.vertices[edge.end].point;
- let t0 = (p0 - line.origin).dot(line.direction);
- let t1 = (p1 - line.origin).dot(line.direction);
- [t0, t1]
- }
- _ => brep
- .geom
- .edge_curve_range
- .get(i)
- .and_then(|r| *r)
- .unwrap_or_else(|| curve.default_domain()),
- };
-
- self.edges.push(DSEdge {
- start_vertex: start,
- end_vertex: end,
- curve: curve.clone(),
- t_range,
- origin,
- geom_tol: rcad_kernel::edge_tolerance(brep, i),
- paves: Vec::new(),
- pave_blocks: Vec::new(),
- face_reps: Vec::new(),
- is_internal: false,
- vertex_params: {
- let mut vp = std::collections::HashMap::new();
- vp.insert(start, t_range[0]);
- vp.insert(end, t_range[1]);
- vp
- },
- face_tolerances: Vec::new(),
-  is_geometric: matches!(curve, Curve3::Line(_) | Curve3::Circle(_)
-  | Curve3::Ellipse(_) | Curve3::BSpline(_) | Curve3::Bezier(_)),
-  location: 0,
-  });
-  self.init_pave_blocks_for_edge(self.edges.len() - 1);
- }
-
- // Faces.  OCCT BOPDS_ShapeInfo tracks source shell/solid/compsolid
- // hierarchy (TopAbs_COMPSOLID =TopAbs_SOLID =TopAbs_SHELL =TopAbs_FACE).
- // rcad: shell_counter, solid_counter assign sequential indices.
- // source_compsolid_idx: use face-by-shell-count matching against
- // brep.compsolid (OCCT preserves TopoDS identity; rcad matches by
- // structural identity: same solid is found by same shell count).
- let mut face_idx = 0usize;
- let mut solid_counter = 0usize;
- let mut shell_counter = 0usize;
- // OCCT-aligned: match flat-iterated solids to compsolid members by
- // sequential index.  OCCT preserves TopoDS identity; rcad's BRep
- // stores compsolid solids value-copied in brep.solids.  When the
- // counts match, solid i  ?compsolid solid i.  When no match, None.
- let cs_count = brep.compsolid.as_ref().map_or(0, |cs| cs.solids.len());
- let solid_start_shell = self.shells.len();
- for solid in &brep.solids {
- let compsolid_idx = if cs_count > 0 && solid_counter < cs_count {
- Some(solid_counter)
- } else {
- None
- };
- let shell_start = self.shells.len();
- for shell in &solid.shells {
- let prev_face_count = self.faces.len(); // track DSShell face range
- for face in &shell.faces {
- let surface = brep
- .geom
- .face_surface
- .get(face_idx)
- .and_then(|s| *s)
- .map(|si| brep.geom.surfaces[si].clone())
- .unwrap_or_else(|| {
- // Fallback: synthesize plane from face normal
- // Use first vertex from outer wire, or origin if no wire
- let origin = if !face.triangles.is_empty() {
- brep.vertices[face.triangles[0][0]].point
- } else if !face.outer_wire.edges.is_empty() {
- let first_edge = &brep.edges[face.outer_wire.edges[0].idx];
- brep.vertices[first_edge.start].point
- } else {
- DVec3::ZERO
- };
- Surface3::Plane(Plane {
- origin,
- normal: face.normal,
- })
- });
-
- // OCCT-aligned: wire traversal order (TopExp_Explorer).
- let boundary_edges_ordered: Vec<(usize, bool)> = Self::reorder_to_wire_order(
- &face.outer_wire.edges, &brep.edges, edge_offset);
- let boundary_edges: Vec<usize> = boundary_edges_ordered.iter().map(|&(ei, _)| ei).collect();
- let boundary_edge_forwards: Vec<bool> = boundary_edges_ordered.iter().map(|&(_, fwd)| fwd).collect();
-
- // Trace the wire edges to get ordered boundary vertices.
- // Wire edges are not necessarily in traversal order;
- // we must find shared vertices between consecutive edges.
- let boundary_verts: Vec<usize> = {
- let edges_in_wire = &face.outer_wire.edges;
- if edges_in_wire.is_empty() {
- Vec::new()
- } else if edges_in_wire.len() == 1 {
- let e = &brep.edges[edges_in_wire[0].idx];
- vec![local_to_ds[e.start], local_to_ds[e.end]]
- } else {
- // For each consecutive pair of wire edges, find the
- // shared vertex =the other vertex of the first edge
- // is the boundary vertex contributed by that edge.
- let mut verts = Vec::with_capacity(edges_in_wire.len());
- for i in 0..edges_in_wire.len() {
- let next_i = (i + 1) % edges_in_wire.len();
- let e = &brep.edges[edges_in_wire[i].idx];
- let en = &brep.edges[edges_in_wire[next_i].idx];
-
- // The shared vertex between e and en
- let shared = if e.start == en.start || e.start == en.end {
- e.start
- } else {
- e.end
- };
-
- // The non-shared vertex of e is the boundary vertex
- let non_shared = if shared == e.start { e.end } else { e.start };
- verts.push(local_to_ds[non_shared]);
- }
- verts
- }
- };
-
- //  ?OCCT-aligned: create DSWire for outer wire (first-class TopAbs_WIRE).
- let outer_wire_idx = Some(self.wires.len());
- self.wires.push(DSWire { edges: boundary_edges.clone() });
-
- //  ?OCCT-aligned: inner wire edges (TopExp_Explorer iterates outer first, then inner).
- let inner_boundary_edges: Vec<Vec<(usize, bool)>> = face
- .inner_wires
- .iter()
- .map(|wire| {
- wire.edges
- .iter()
- .map(|we| (we.idx + edge_offset, we.forward))
- .collect()
- })
- .collect();
-
- //  ?OCCT-aligned: create DSWire for each inner wire.
- let inner_wire_idxs: Vec<usize> = (0..face.inner_wires.len())
- .map(|_| {
- let wi = self.wires.len();
- self.wires.push(DSWire { edges: Vec::new() });
- wi
- })
- .collect();
- for (ii, wire) in face.inner_wires.iter().enumerate() {
- self.wires[inner_wire_idxs[ii]].edges = wire
- .edges
- .iter()
- .map(|we| we.idx + edge_offset)
- .collect();
- }
-
- self.faces.push(DSFace {
- surface,
- boundary_verts,
- boundary_edges,
- boundary_edge_forwards,
- inner_boundary_edges,
- outer_wire_idx,
- inner_wire_idxs,
- normal: face.normal,
- origin,
- face_info: FaceInfo::default(),
- source_face_idx: face_idx,
- geom_tol: rcad_kernel::face_tolerance(brep, face_idx),
-  location: 0,
-  uv_boundary: None,
-  natural_restriction: true,
- source_shell_idx: Some(shell_counter),
- source_solid_idx: Some(solid_counter),
- source_compsolid_idx: compsolid_idx,
- });
-
- face_idx += 1;
- }
- //  ?OCCT-aligned: create DSShell tracking which DS faces belong to each shell.
- let shell_face_idxs: Vec<usize> = (prev_face_count..self.faces.len()).collect();
- if !shell_face_idxs.is_empty() {
- self.shells.push(DSShell { faces: shell_face_idxs });
- }
- shell_counter += 1;
- }
- //  ?OCCT-aligned: create DSSolid tracking which DS shells belong to each solid.
- let solid_shells: Vec<usize> = (shell_start..self.shells.len()).collect();
- if !solid_shells.is_empty() {
- self.solids.push(DSSolid { shells: solid_shells });
- }
- solid_counter += 1;
- }
- //  ?OCCT-aligned: create DSCompSolid from source BRep compsolid hierarchy.
- if let Some(cs) = &brep.compsolid {
- let solid_idx_start = self.solids.len() - cs.solids.len();
- let cs_solids: Vec<usize> = (solid_idx_start..self.solids.len()).collect();
- if !cs_solids.is_empty() {
- self.comp_solids.push(DSCompSolid { solids: cs_solids });
- }
- }
-
- // OCCT L622-887 (FillInternalShapes Phase 2): internal V/E from source solids.
- // TopAbs_INTERNAL sub-shapes inside the solid volume.  Currently no source
- // BRep provides internal shapes (Solid has no internal_* fields); the DS
- // is_internal flag is reserved for future use when the BRep data model
- // supports internal sub-shape storage.
- // rcad: no internal shapes to load at this time.
-
- //  ?Transfer pcurves from BRep's edge_pcurves into DS edge face_reps.
- // This preserves the BRep's stored pcurves (proper surface curves) instead
- // of recomputing them via endpoint projection + Line2d approximation.
- // build_face_reps (called after load_brep) skips edges that already have
- // a DSCurveRepOnFace via edge_on_face check.
- let n_brep_faces = brep.solids.iter()
- .flat_map(|s| &s.shells)
- .map(|sh| sh.faces.len())
- .sum::<usize>();
- for ei in 0..brep.edges.len() {
- let Some(pcurves) = brep.geom.edge_pcurves.get(ei) else { continue; };
- if pcurves.is_empty() { continue; }
- let ds_ei = edge_offset + ei;
- let Some(ds_edge) = self.edges.get_mut(ds_ei) else { continue; };
- for pc in pcurves {
- let Some(curve2d) = brep.geom.curve2ds.get(pc.curve2d_idx) else { continue; };
- // Find DS face indices whose BRep surface_idx matches this PCurve's
- for bi in 0..n_brep_faces {
- let Some(Some(si)) = brep.geom.face_surface.get(bi).map(|&s| s) else { continue; };
- if si != pc.surface_idx { continue; }
- let ds_fi = face_offset + bi;
- if ds_edge.face_reps.iter().any(|r| r.face_idx == ds_fi) { continue; }
- // Compute span as the 2D chord length at the 3D curve's t_range
- let t_range = ds_edge.t_range;
- let uv_start = curve2d.point_at(t_range[0]);
- let uv_end = curve2d.point_at(t_range[1]);
- let span = (uv_end - uv_start).length();
- if span < 1e-15 || !span.is_finite() { continue; }
- ds_edge.face_reps.push(DSCurveRepOnFace {
- face_idx: ds_fi,
- pcurve: curve2d.clone(),
- pcurve2: None,
- pcurve_range: [0.0, span],
- start_param: 0.0,
- end_param: span,
- });
- }
- }
- }
- }
-
- ///  ?OCCT-aligned: reorder wire edges by traversal order (TopExp_Explorer).
- /// TopExp_Explorer iterates a wire's edges in the order they form the
- /// closed loop: each edge's end_vertex matches the next edge's start_vertex.
- /// The BRep's wire.edges may not be in this order; we rebuild it by
- /// following end -> start vertex adjacency through the edge graph.
- /// Returns (edge_idx + edge_offset, forward_in_wire) pairs in wire traversal order.
- fn reorder_to_wire_order(
- wire_edges: &[rcad_kernel::topology::WireEdge],
- brep_edges: &[rcad_kernel::topology::Edge],
- edge_offset: usize,
- ) -> Vec<(usize, bool)> {
- if wire_edges.len() <= 1 {
- return wire_edges.iter().map(|we| (we.idx + edge_offset, we.forward)).collect();
- }
- // Build vertex -> wire-edge-index adjacency
- let mut adj: HashMap<usize, Vec<usize>> = HashMap::new();
- for (i, we) in wire_edges.iter().enumerate() {
- let e = &brep_edges[we.idx];
- adj.entry(e.start).or_default().push(i);
- adj.entry(e.end).or_default().push(i);
- }
- // Walk wire by following end -> start adjacency (start from first edge's start vertex)
- let first = wire_edges[0].idx;
- let mut cur = brep_edges[first].start;
- let mut used = vec![false; wire_edges.len()];
- let mut ordered = Vec::with_capacity(wire_edges.len());
- for _ in 0..wire_edges.len() {
- let next_i = adj.entry(cur).or_default().iter().copied()
- .find(|&i| !used[i])
- .expect("wire is not closed -- broken topology");
- used[next_i] = true;
- let we = &wire_edges[next_i];
- ordered.push((we.idx + edge_offset, we.forward));
- let e = &brep_edges[we.idx];
- cur = if e.start == cur { e.end } else { e.start };
- }
- ordered
  }
 
  ///  ?OCCT-aligned: find existing vertex within tolerance (PutPaveOnCurve equivalent).
@@ -1627,51 +1227,58 @@ impl DS {
  ///  ?OCCT-aligned: FillImagesContainers (BOPAlgo_Builder_1.cxx L172-276).
  /// For each original wire whose edges were split by the PaveFiller,
  /// build a new edge list from the split sub-edges.
- pub fn build_container_images(&mut self, brep: &BRep) {
- // Count total wires across all solids/shells
- let n_wires: usize = brep.solids.iter()
+ ///
+ /// Uses DS internal data only — no external BRep needed.
+ pub fn build_container_images(&mut self) {
+ // Count total wires across all solids/shells in the DS
+ let n_wires: usize = self.solids.iter()
  .flat_map(|s| &s.shells)
- .flat_map(|sh| &sh.faces)
- .map(|f| 1 + f.inner_wires.len())
+ .flat_map(|sh| &self.shells[*sh].faces)
+ .map(|&fi| 1 + self.faces[fi].inner_boundary_edges.len())
  .sum();
  self.wire_images = vec![None; n_wires];
 
  // Shell images: flag shells whose faces have any split edges
- let n_shells: usize = brep.solids.iter().map(|s| s.shells.len()).sum();
+ let n_shells: usize = self.shells.len();
  self.shell_images = vec![false; n_shells];
- self.solid_images = vec![false; brep.solids.len()];
+ self.solid_images = vec![false; self.solids.len()];
 
- let mut shi = 0usize;
- for (si, solid) in brep.solids.iter().enumerate() {
- for shell in &solid.shells {
- let shell_has_split = shell.faces.iter().any(|face| {
- Self::wire_has_split_edges(&face.outer_wire.edges, &self.my_images)
- || face.inner_wires.iter().any(|iw| {
- Self::wire_has_split_edges(&iw.edges, &self.my_images)
+ for (si, solid) in self.solids.iter().enumerate() {
+ for &shi in &solid.shells {
+ let shell = &self.shells[shi];
+ let shell_has_split = shell.faces.iter().any(|&fi| {
+ let face = &self.faces[fi];
+ Self::wire_has_split_edges_ds(&face.boundary_edges, &self.my_images)
+ || face.inner_boundary_edges.iter().any(|iw| {
+ let iw_edges: Vec<usize> = iw.iter().map(|&(ei, _)| ei).collect();
+ Self::wire_has_split_edges_ds(&iw_edges, &self.my_images)
  })
  });
  self.shell_images[shi] = shell_has_split;
  if shell_has_split {
  self.solid_images[si] = true;
  }
- shi += 1;
  }
  }
 
  let mut wi = 0usize;
- for solid in &brep.solids {
- for shell in &solid.shells {
- for face in &shell.faces {
+ for solid in &self.solids {
+ for &shi in &solid.shells {
+ let shell = &self.shells[shi];
+ for &fi in &shell.faces {
+ let face = &self.faces[fi];
  // Outer wire
- let new_outer = Self::rebuild_wire_edges(&face.outer_wire.edges, &self.my_images);
+ let new_outer = Self::rebuild_wire_edges_ds(&face.boundary_edges, &face.boundary_edge_forwards, &self.my_images);
  if new_outer.is_some() {
  self.wire_images[wi] = new_outer;
  }
  wi += 1;
 
  // Inner wires
- for iw in &face.inner_wires {
- let new_inner = Self::rebuild_wire_edges(&iw.edges, &self.my_images);
+ for iw in &face.inner_boundary_edges {
+ let iw_edges: Vec<usize> = iw.iter().map(|&(ei, _)| ei).collect();
+ let iw_fwd: Vec<bool> = iw.iter().map(|&(_, fwd)| fwd).collect();
+ let new_inner = Self::rebuild_wire_edges_ds(&iw_edges, &iw_fwd, &self.my_images);
  if new_inner.is_some() {
  self.wire_images[wi] = new_inner;
  }
@@ -1683,33 +1290,35 @@ impl DS {
  }
 
  /// Rebuild a wire's edge list, replacing split edges with their sub-edges.
+ /// Uses DS edge indices directly (no external BRep needed).
  /// Returns None if no edge was split (wire unchanged).
- fn rebuild_wire_edges(
- edges: &[WireEdge],
+ fn rebuild_wire_edges_ds(
+ edges: &[usize],
+ forwards: &[bool],
  my_images: &[Vec<usize>],
  ) -> Option<Vec<(usize, bool)>> {
  let mut new_edges = Vec::new();
  let mut changed = false;
- for we in edges {
- if we.idx < my_images.len() && !my_images[we.idx].is_empty() {
+ for (&ei, &fwd) in edges.iter().zip(forwards.iter()) {
+ if ei < my_images.len() && !my_images[ei].is_empty() {
  changed = true;
- for &sub_ei in &my_images[we.idx] {
- new_edges.push((sub_ei, we.forward));
+ for &sub_ei in &my_images[ei] {
+ new_edges.push((sub_ei, fwd));
  }
  } else {
- new_edges.push((we.idx, we.forward));
+ new_edges.push((ei, fwd));
  }
  }
  if changed { Some(new_edges) } else { None }
  }
 
  /// Check if any edge in a wire has been split by the PaveFiller.
- /// Used by `build_container_images` for shell/solid image computation.
- fn wire_has_split_edges(
- edges: &[WireEdge],
+ /// Uses DS edge indices directly.
+ fn wire_has_split_edges_ds(
+ edges: &[usize],
  my_images: &[Vec<usize>],
  ) -> bool {
- edges.iter().any(|we| we.idx < my_images.len() && !my_images[we.idx].is_empty())
+ edges.iter().any(|&ei| ei < my_images.len() && !my_images[ei].is_empty())
  }
 
  /// Get the Plane surface for a face (panics if face is not a plane).

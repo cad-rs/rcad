@@ -1,11 +1,11 @@
 //! Integration tests for `rcad-modeling` primitive builders and sweep operations.
 
 use glam::{DVec2, DVec3};
-use rcad_algorithms::{total_surface_area, total_volume};
-use rcad_kernel::BRep;
+use rcad_algorithms::{total_surface_area_topods, total_volume_topods};
 use rcad_kernel::topods;
+use rcad_kernel::topods::TShape;
 use rcad_modeling::{
-    chamfer_edge, extrude, fillet_edge, loft, make_box_brep, make_cone_brep, make_conical_frustum_brep,
+    extrude, loft, make_box_brep, make_cone_brep, make_conical_frustum_brep,
     make_cylinder_brep, make_sphere_brep, make_torus_brep, revolve, sweep_pipe,
 };
 
@@ -13,12 +13,15 @@ use rcad_modeling::{
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn face_count(brep: &BRep) -> usize {
-    brep.solids
+fn face_count(brep: &topods::BRep) -> usize {
+    brep.tshapes
         .iter()
-        .flat_map(|s| &s.shells)
-        .map(|sh| sh.faces.len())
-        .sum()
+        .filter(|ts| matches!(ts.as_ref(), TShape::Face(_)))
+        .count()
+}
+
+fn has_solid(brep: &topods::BRep) -> bool {
+    brep.tshapes.iter().any(|ts| matches!(ts.as_ref(), TShape::Solid(_)))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -35,7 +38,7 @@ fn box_face_count() {
 fn sphere_face_count_positive() {
     let brep = make_sphere_brep(DVec3::ZERO, 1.0).unwrap();
     assert!(face_count(&brep) >= 1, "sphere must have at least 1 face");
-    assert!(!brep.solids.is_empty(), "sphere must have a solid");
+    assert!(has_solid(&brep), "sphere must have a solid");
 }
 
 #[test]
@@ -57,7 +60,7 @@ fn conical_frustum_builds_solid() {
     let h = 4.0;
     let rb = 3.0;
     let rt = 2.0;
-    let brep = make_conical_frustum_brep(
+    let brep = rcad_modeling::make_conical_frustum_brep_topods(
         DVec3::new(0.0, 0.0, h * 0.5),
         DVec3::Z,
         DVec3::X,
@@ -66,7 +69,7 @@ fn conical_frustum_builds_solid() {
         h,
     )
     .unwrap();
-    assert!(!brep.solids.is_empty(), "frustum must have a solid");
+    assert!(has_solid(&brep), "frustum must have a solid");
     assert_eq!(face_count(&brep), 3, "analytic frustum: bottom cap + top cap + lateral = 3 faces");
 
     // SA and volume should match analytic formulas within tessellation tolerance.
@@ -79,15 +82,15 @@ fn conical_frustum_builds_solid() {
 
     let tol_sa = 1.0; // tessellation discretisation error (~0.06% of expected SA for this size)
     assert!(
-        (total_surface_area(&brep) - expected_sa).abs() < tol_sa,
+        (total_surface_area_topods(&brep) - expected_sa).abs() < tol_sa,
         "frustum SA: expected {expected_sa}, got {}",
-        total_surface_area(&brep)
+        total_surface_area_topods(&brep)
     );
     let tol_vol = 0.5; // tessellation discretisation error
     assert!(
-        (total_volume(&brep) - expected_vol).abs() < tol_vol,
+        (total_volume_topods(&brep) - expected_vol).abs() < tol_vol,
         "frustum volume: expected {expected_vol}, got {}",
-        total_volume(&brep)
+        total_volume_topods(&brep)
     );
 }
 
@@ -104,11 +107,11 @@ fn torus_face_count_positive() {
 #[test]
 fn extrude_box_face_returns_brep() {
     // Extrude the bottom face (index 0) of a flat box (depth=0.01 ≈ sheet).
-    let sheet = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 0.01).unwrap();
+    let sheet = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
     let result = extrude(&sheet, 0, DVec3::Z, 1.0);
     assert!(result.is_ok(), "extrude should succeed: {:?}", result.err());
     let brep = result.unwrap();
-    assert!(!brep.solids.is_empty(), "extruded brep must have solids");
+    assert!(has_solid(&brep), "extruded brep must have solids");
     assert!(face_count(&brep) > 0, "extruded brep must have faces");
 }
 
@@ -120,7 +123,7 @@ fn revolve_box_face_returns_brep() {
     let result = revolve(&sheet, 0, DVec3::ZERO, DVec3::Z, std::f64::consts::FRAC_PI_2);
     assert!(result.is_ok(), "revolve should succeed: {:?}", result.err());
     let brep = result.unwrap();
-    assert!(!brep.solids.is_empty(), "revolved brep must have solids");
+    assert!(has_solid(&brep), "revolved brep must have solids");
     assert!(face_count(&brep) > 0, "revolved brep must have faces");
 }
 
@@ -137,7 +140,7 @@ fn sweep_pipe_returns_brep() {
         .map(|i| DVec3::new(0.0, 0.0, i as f64 * 0.25))
         .collect();
     let brep = sweep_pipe(&profile, &spine).unwrap();
-    assert!(!brep.solids.is_empty(), "swept brep must have solids");
+    assert!(has_solid(&brep), "swept brep must have solids");
     assert!(face_count(&brep) > 0, "swept brep must have faces");
 }
 
@@ -158,7 +161,7 @@ fn loft_two_profiles_returns_brep() {
         })
         .collect();
     let brep = loft(&[profile1, profile2]).unwrap();
-    assert!(!brep.solids.is_empty(), "lofted brep must have solids");
+    assert!(has_solid(&brep), "lofted brep must have solids");
     assert!(face_count(&brep) > 0, "lofted brep must have faces");
 }
 
@@ -169,25 +172,25 @@ fn loft_two_profiles_returns_brep() {
 #[test]
 fn fillet_box_edge_returns_brep() {
     let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
-    let result = fillet_edge(&brep, 0, 0.1).unwrap();
+    let result = rcad_modeling::fillet_edge_topods(&brep, 0, 0.1).unwrap();
     assert!(
         face_count(&result) >= 6,
         "filleted box must have at least 6 faces, got {}",
         face_count(&result)
     );
-    assert!(!result.solids.is_empty(), "filleted box must have solids");
+    assert!(has_solid(&result), "filleted box must have solids");
 }
 
 #[test]
 fn chamfer_box_edge_returns_brep() {
     let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
-    let result = chamfer_edge(&brep, 0, 0.1).unwrap();
+    let result = rcad_modeling::chamfer_edge_topods(&brep, 0, 0.1).unwrap();
     assert!(
         face_count(&result) >= 6,
         "chamfered box must have at least 6 faces, got {}",
         face_count(&result)
     );
-    assert!(!result.solids.is_empty(), "chamfered box must have solids");
+    assert!(has_solid(&result), "chamfered box must have solids");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -2027,6 +2027,7 @@ mod tests {
  triangles: vec![],
  sample_point: None,
  mesh_dirty: true,
+ surface_idx: None,
  });
  let si = brep.geom.surfaces.len();
  brep.geom.surfaces.push(Surface3::Plane(Plane { origin: pts[verts[0]], normal }));
@@ -2085,18 +2086,19 @@ mod tests {
  use crate::builder::make_cylinder_brep;
 
  let brep = make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, 1.0, 2.0).unwrap();
- assert!(!brep.edges.is_empty(), "cylinder should have edges");
+ let legacy = rcad_kernel::BRep::from_topods(&brep);
+ assert!(!legacy.edges.is_empty(), "cylinder should have edges");
 
  // Find an edge that is shared by exactly two faces
  let mut shared_edge: Option<usize> = None;
- for (ei, _edge) in brep.edges.iter().enumerate() {
- if let Some((f0, f1)) = find_adjacent_faces(&brep, ei) {
+ for (ei, _edge) in legacy.edges.iter().enumerate() {
+ if let Some((f0, f1)) = find_adjacent_faces(&legacy, ei) {
  // Check that at least one face is not planar
- let s0 = brep.geom.face_surface[f0].as_ref();
- let s1 = brep.geom.face_surface[f1].as_ref();
- let has_curved = s0.map(|si| !matches!(brep.geom.surfaces[*si], Surface3::Plane(_)))
+ let s0 = legacy.geom.face_surface[f0].as_ref();
+ let s1 = legacy.geom.face_surface[f1].as_ref();
+ let has_curved = s0.map(|si| !matches!(legacy.geom.surfaces[*si], Surface3::Plane(_)))
  .unwrap_or(false)
- || s1.map(|si| !matches!(brep.geom.surfaces[*si], Surface3::Plane(_)))
+ || s1.map(|si| !matches!(legacy.geom.surfaces[*si], Surface3::Plane(_)))
  .unwrap_or(false);
  if has_curved {
  shared_edge = Some(ei);
@@ -2111,7 +2113,7 @@ mod tests {
  );
 
  let edge_idx = shared_edge.unwrap();
- let result = fillet_edge(&brep, edge_idx, 0.05);
+ let result = fillet_edge_topods(&brep, edge_idx, 0.05);
  assert!(
  result.is_ok(),
  "fillet on cylinder edge should succeed: {:?}",
@@ -2129,19 +2131,21 @@ mod tests {
 
  // Pick the first edge (bottom front edge)
  let edge_idx = 0;
- let result = fillet_edge_variable_radius(&brep, edge_idx, 0.1, 0.3);
+ let result = fillet_edge_variable_radius_topods(&brep, edge_idx, 0.1, 0.3);
  assert!(
  result.is_ok(),
  "variable radius fillet should succeed: {:?}",
  result.err()
  );
  let result = result.unwrap();
+ let n_res_v = result.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Vertex(_))).count();
+ let n_orig_v = brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Vertex(_))).count();
  // Result should have more vertices than original (midpoint split + fillet verts)
  assert!(
- result.vertices.len() > brep.vertices.len(),
+ n_res_v > n_orig_v,
  "variable fillet should add vertices: {} vs {}",
- result.vertices.len(),
- brep.vertices.len()
+ n_res_v,
+ n_orig_v
  );
  }
 
@@ -2151,15 +2155,15 @@ mod tests {
  let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0).unwrap();
 
  assert!(matches!(
- fillet_edge_variable_radius(&brep, 0, -0.1, 0.2),
+ fillet_edge_variable_radius_topods(&brep, 0, -0.1, 0.2),
  Err(BuildError::NonPositiveValue(_))
  ));
  assert!(matches!(
- fillet_edge_variable_radius(&brep, 0, 0.1, -0.2),
+ fillet_edge_variable_radius_topods(&brep, 0, 0.1, -0.2),
  Err(BuildError::NonPositiveValue(_))
  ));
  assert!(matches!(
- fillet_edge_variable_radius(&brep, 999, 0.1, 0.2),
+ fillet_edge_variable_radius_topods(&brep, 999, 0.1, 0.2),
  Err(BuildError::InvalidIndex(_))
  ));
  }
@@ -2227,7 +2231,7 @@ mod tests {
  let brep = make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 2.0, 2.0, 2.0).unwrap();
 
  // Variable radius: 0.05 at start, 0.2 at end
- let result = fillet_edge_variable_radius(&brep, 0, 0.05, 0.2);
+ let result = fillet_edge_variable_radius_topods(&brep, 0, 0.05, 0.2);
  assert!(
  result.is_ok(),
  "variable radius fillet should succeed: {:?}",
@@ -2237,14 +2241,8 @@ mod tests {
  let result = result.unwrap();
 
  // Should have 9 faces like a regular fillet (6 original + 1 fillet + 2 closing)
- let n_faces = result.solids[0].shells[0].faces.len();
+ let n_faces = result.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Face(_))).count();
  assert_eq!(n_faces, 9, "expected 9 faces after variable fillet");
-
- // The fillet face should be present
- assert!(
- !result.solids[0].shells[0].faces.is_empty(),
- "result should have faces"
- );
  }
 
  #[test]
@@ -2315,6 +2313,7 @@ mod tests {
  triangles: vec![],
  sample_point: None,
  mesh_dirty: true,
+ surface_idx: None,
  });
  let si = brep.geom.surfaces.len();
  brep.geom.surfaces.push(Surface3::Plane(Plane { origin: pts[verts[0]], normal }));

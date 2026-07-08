@@ -363,11 +363,10 @@ pub fn boolean_op_with_options(
  if options.fuzzy_tol <= 0.0 && !options.use_glue {
  let (r, h) = boolean_op_with_history(op, a, b)?; (r.to_topods(), h)
  } else {
- let mut ds = if options.fuzzy_tol > 0.0 {
- bopds::ds::DS::new_with_fuzzy(a, b, options.fuzzy_tol)
- } else {
- bopds::ds::DS::new(a, b)
- };
+ let a_t = a.to_topods();
+ let b_t = b.to_topods();
+ let ds_tol = if options.fuzzy_tol > 0.0 { options.fuzzy_tol } else { TOLERANCE_ABS };
+ let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, ds_tol);
  let mut brep = rcad_kernel::topods::BRep::new();
  let (face_refs, ic_edge_map) = {
  let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
@@ -384,18 +383,17 @@ pub fn boolean_op_with_options(
  filler.perform();
  (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
  };
- ds.build_container_images(a);
+ ds.build_container_images();
  let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map)
  .with_glue(options.use_glue, options.glue_tolerance);
  let (t, h) = builder.build_with_history()?;
  (t, h)
  }
  } else {
- let mut ds = if options.fuzzy_tol > 0.0 {
- bopds::ds::DS::new_with_fuzzy(a, b, options.fuzzy_tol)
- } else {
- bopds::ds::DS::new(a, b)
- };
+ let a_t = a.to_topods();
+ let b_t = b.to_topods();
+ let ds_tol = if options.fuzzy_tol > 0.0 { options.fuzzy_tol } else { TOLERANCE_ABS };
+ let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, ds_tol);
  let mut brep = rcad_kernel::topods::BRep::new();
  let (face_refs, ic_edge_map) = {
  let mut filler = pave_filler::PaveFiller::new(&mut ds);
@@ -405,7 +403,7 @@ pub fn boolean_op_with_options(
  filler.perform();
  (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
  };
- ds.build_container_images(a);
+ ds.build_container_images();
  let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map)
  .with_glue(options.use_glue, options.glue_tolerance);
  let (t, h) = builder.build_with_history()?;
@@ -424,7 +422,9 @@ pub fn boolean_op_with_options(
  } else {
  let result = if options.use_bvh {
  if options.fuzzy_tol > 0.0 || options.use_glue {
- let mut ds = bopds::ds::DS::new_with_fuzzy(a, b, options.fuzzy_tol);
+ let a_t = a.to_topods();
+ let b_t = b.to_topods();
+ let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, options.fuzzy_tol);
  let mut brep = rcad_kernel::topods::BRep::new();
  let (face_refs, ic_edge_map) = {
  let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
@@ -440,7 +440,7 @@ pub fn boolean_op_with_options(
  filler.perform();
  (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
  };
- ds.build_container_images(a);
+ ds.build_container_images();
  let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map)
  .with_glue(options.use_glue, options.glue_tolerance);
  let r = builder.build()?;
@@ -449,11 +449,10 @@ pub fn boolean_op_with_options(
  boolean_op(op, a, b)?
  }
  } else {
- let mut ds = if options.fuzzy_tol > 0.0 {
- bopds::ds::DS::new_with_fuzzy(a, b, options.fuzzy_tol)
- } else {
- bopds::ds::DS::new(a, b)
- };
+ let a_t = a.to_topods();
+ let b_t = b.to_topods();
+ let ds_tol = if options.fuzzy_tol > 0.0 { options.fuzzy_tol } else { TOLERANCE_ABS };
+ let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, ds_tol);
  let mut brep = rcad_kernel::topods::BRep::new();
  let (face_refs, ic_edge_map) = {
  let mut filler = pave_filler::PaveFiller::new(&mut ds);
@@ -462,7 +461,7 @@ pub fn boolean_op_with_options(
  filler.perform();
  (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
  };
- ds.build_container_images(a);
+ ds.build_container_images();
  let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map)
  .with_glue(options.use_glue, options.glue_tolerance);
  let r = builder.build()?;
@@ -1202,7 +1201,9 @@ pub fn boolean_op_with_history(
  return bop_occt_union::fuse_with_history(a, b);
  }
 
- let mut ds = bopds::ds::DS::new(a, b);
+ let a_t = a.to_topods();
+ let b_t = b.to_topods();
+ let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, TOLERANCE_ABS);
  let fuzzy_tol = ds.fuzzy_tol;
  let mut brep = rcad_kernel::topods::BRep::new();
  let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
@@ -1223,7 +1224,7 @@ pub fn boolean_op_with_history(
  filler.perform();
  (std::mem::take(&mut filler.face_refs), std::mem::take(&mut filler.ic_edge_map))
  };
- ds.build_container_images(a);
+ ds.build_container_images();
  let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
  let (t, history) = builder.build_with_history()?;
  Ok((rcad_kernel::BRep::from_topods(&t), history))
@@ -1239,7 +1240,9 @@ pub fn boolean_op_par(
  return Ok((t, h));
  }
 
- let mut ds = bopds::ds::DS::new(a, b);
+ let a_t = a.to_topods();
+ let b_t = b.to_topods();
+ let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, TOLERANCE_ABS);
  let fuzzy_tol = ds.fuzzy_tol;
  let mut brep = rcad_kernel::topods::BRep::new();
  let (bvh_a, bvh_b) = build_optional_bvhs(a, b);

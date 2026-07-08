@@ -1,4 +1,4 @@
-﻿//! OCCT BOPAlgo_Section / BRepAlgoAPI_Section equivalent.
+//! OCCT BOPAlgo_Section / BRepAlgoAPI_Section equivalent.
 //!
 //! Computes the intersection curves (section) between two shapes.
 //! Unlike the boolean operations (Common/Fuse/Cut) which produce a solid,
@@ -145,7 +145,9 @@ impl Section {
         let b = self.ensure_geometry(&self.shape_b);
 
         // ✅ OCCT-aligned: Build BOPDS_DS
-        let mut ds = DS::new(&a, &b);
+        let a_t = a.to_topods();
+        let b_t = b.to_topods();
+        let mut ds = DS::new_from_topods(&a_t, &b_t, TOLERANCE_ABS);
 
         // ✅ OCCT-aligned: Build BVH for acceleration
         let bvh_a = Bvh::build(&a);
@@ -160,8 +162,7 @@ impl Section {
         filler.perform();
 
         // ✅ OCCT-aligned: FillImagesContainers
-        ds.build_container_images(&a);
-        ds.build_container_images(&b);
+        ds.build_container_images();
 
         // ✅ OCCT-aligned: Extract intersection curves from DS
         // OCCT: BOPAlgo_Section collects the section edges from the DS

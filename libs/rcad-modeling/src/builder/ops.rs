@@ -1374,12 +1374,12 @@ pub fn sweep_pipe_variable(profiles: &[Vec<DVec2>], spine: &[DVec3]) -> Result<t
 mod tests {
     use super::*;
     use crate::builder::brep_builder::{make_edge, make_face, make_vertex, make_wire};
-    use rcad_kernel::BRep;
+    use rcad_kernel::topods::TShape;
     use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
     use rcad_kernel::topology::WireEdge;
 
-    fn square_profile() -> BRep {
-        let mut brep = BRep::default();
+    fn square_profile() -> rcad_kernel::BRep {
+        let mut brep = rcad_kernel::BRep::default();
         let v0 = make_vertex(&mut brep, DVec3::new(0.0, 0.0, 0.0));
         let v1 = make_vertex(&mut brep, DVec3::new(1.0, 0.0, 0.0));
         let v2 = make_vertex(&mut brep, DVec3::new(1.0, 1.0, 0.0));
@@ -1420,9 +1420,9 @@ mod tests {
 
     #[test]
     fn extrude_square_produces_6_faces() {
-        let profile = square_profile();
+        let profile = square_profile().to_topods();
         let result = extrude(&profile, 0, DVec3::Z, 1.0).unwrap();
-        let n_faces = result.solids[0].shells[0].faces.len();
+        let n_faces = result.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Face(_))).count();
         assert_eq!(
             n_faces, 6,
             "extrude of square should yield 6 faces, got {n_faces}"
@@ -1431,14 +1431,14 @@ mod tests {
 
     #[test]
     fn extrude_rejects_zero_direction() {
-        let profile = square_profile();
+        let profile = square_profile().to_topods();
         let err = extrude(&profile, 0, DVec3::ZERO, 1.0).unwrap_err();
         assert_eq!(err, BuildError::ZeroVector("direction"));
     }
 
     #[test]
     fn extrude_rejects_nonpositive_distance() {
-        let profile = square_profile();
+        let profile = square_profile().to_topods();
         let err = extrude(&profile, 0, DVec3::Z, -1.0).unwrap_err();
         assert_eq!(err, BuildError::NonPositiveValue("distance"));
     }
@@ -1446,7 +1446,7 @@ mod tests {
     #[test]
     fn revolve_triangle_partial_produces_faces() {
         // A simple triangle profile
-        let mut brep = BRep::default();
+        let mut brep = rcad_kernel::BRep::default();
         let v0 = make_vertex(&mut brep, DVec3::new(1.0, 0.0, 0.0));
         let v1 = make_vertex(&mut brep, DVec3::new(2.0, 0.0, 0.0));
         let v2 = make_vertex(&mut brep, DVec3::new(1.5, 1.0, 0.0));
@@ -1483,10 +1483,11 @@ mod tests {
             normal: DVec3::Z,
         });
         make_face(&mut brep, surface, make_wire(wires), vec![]).unwrap();
+        let brep_t = brep.to_topods();
 
         // Revolve 90掳 around Y axis
-        let result = revolve(&brep, 0, DVec3::ZERO, DVec3::Y, std::f64::consts::FRAC_PI_2).unwrap();
-        let n_faces = result.solids[0].shells[0].faces.len();
+        let result = revolve(&brep_t, 0, DVec3::ZERO, DVec3::Y, std::f64::consts::FRAC_PI_2).unwrap();
+        let n_faces = result.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Face(_))).count();
         // 2 caps + 3 lateral = 5
         assert!(
             n_faces >= 3,
@@ -1519,10 +1520,10 @@ mod tests {
 
         let brep = result.unwrap();
         assert!(
-            !brep.solids.is_empty(),
+            brep.tshapes.iter().any(|ts| matches!(ts.as_ref(), TShape::Solid(_))),
             "result should contain a solid"
         );
-        let n_faces = brep.solids[0].shells[0].faces.len();
+        let n_faces = brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Face(_))).count();
         assert!(n_faces >= 2, "should have at least 2 faces (caps + lateral), got {n_faces}");
 
         // Test with degenerate profile (only 2 vertices) - should fail
@@ -1567,7 +1568,7 @@ mod tests {
         assert!(result.is_ok(), "sweep_pipe should succeed along helical path");
 
         let brep = result.unwrap();
-        let n_faces = brep.solids[0].shells[0].faces.len();
+        let n_faces = brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Face(_))).count();
         // 8 segments * 4 lateral faces per segment + 2 caps = 34 faces
         let expected_lateral = (spine.len() - 1) * profile.len();
         assert!(
@@ -1666,9 +1667,9 @@ mod tests {
         assert!(result.is_ok(), "loft should succeed with non-planar profiles");
 
         let brep = result.unwrap();
-        assert!(!brep.solids.is_empty(), "result should contain a solid");
+        assert!(brep.tshapes.iter().any(|ts| matches!(ts.as_ref(), TShape::Solid(_))), "result should contain a solid");
 
-        let n_faces = brep.solids[0].shells[0].faces.len();
+        let n_faces = brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), TShape::Face(_))).count();
         // Should have 2 caps + lateral faces
         assert!(n_faces >= 2, "should have at least 2 faces, got {n_faces}");
 
@@ -1721,7 +1722,7 @@ mod tests {
         assert!(result.is_ok(), "sweep_pipe with circular profile should succeed");
 
         let brep = result.unwrap();
-        assert!(!brep.solids.is_empty() || !brep.edges.is_empty(), "should have geometry");
+        assert!(brep.tshapes.iter().any(|ts| matches!(ts.as_ref(), TShape::Solid(_))) || brep.tshapes.iter().any(|ts| matches!(ts.as_ref(), TShape::Edge(_))), "should have geometry");
     }
 
     #[test]
@@ -1796,18 +1797,18 @@ mod tests {
 
     #[test]
     fn extrude_simple() {
-        let profile = square_profile();
+        let profile = square_profile().to_topods();
 
         let result = extrude(&profile, 0, DVec3::Z, 2.0);
         assert!(result.is_ok(), "extrude should succeed");
 
         let swept = result.unwrap();
-        assert!(!swept.solids.is_empty(), "should create solid");
+        assert!(swept.tshapes.iter().any(|ts| matches!(ts.as_ref(), TShape::Solid(_))), "should create solid");
     }
 
     #[test]
     fn extrude_negative_direction() {
-        let profile = square_profile();
+        let profile = square_profile().to_topods();
 
         let result = extrude(&profile, 0, DVec3::NEG_Z, 2.0);
         assert!(result.is_ok(), "extrude with negative direction should succeed");
@@ -1815,7 +1816,7 @@ mod tests {
 
     #[test]
     fn revolve_simple() {
-        let profile = square_profile();
+        let profile = square_profile().to_topods();
 
         // Rotate around Z axis
         let result = revolve(&profile, 0, DVec3::ZERO, DVec3::Z, std::f64::consts::TAU);
@@ -1824,7 +1825,7 @@ mod tests {
 
     #[test]
     fn revolve_partial() {
-        let profile = square_profile();
+        let profile = square_profile().to_topods();
 
         // Partial rotation (90 degrees)
         let result = revolve(&profile, 0, DVec3::ZERO, DVec3::Z, std::f64::consts::FRAC_PI_2);

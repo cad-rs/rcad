@@ -25,7 +25,7 @@
 //!   (inner wires are preserved as-is, with reindexed edge refs).
 
 use rcad_kernel::{
-    BRep,
+    BRep, topods,
     topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge},
 };
 
