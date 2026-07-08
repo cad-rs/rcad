@@ -856,7 +856,6 @@ mod tbezier_curve_tests {
 #[cfg(test)]
 mod grideval_surface_tests {
     use super::*;
-    use crate::tkg3d_batch_eval::*;
 
     fn uniform_params(first: f64, last: f64, n: usize) -> Vec<f64> {
         let step = if n > 1 { (last - first) / (n - 1) as f64 } else { 0.0 };
@@ -868,7 +867,7 @@ mod grideval_surface_tests {
         let plane = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
         let u_params = uniform_params(0.0, 5.0, 6);
         let v_params = uniform_params(0.0, 3.0, 4);
-        let grid = crate::tkg3d_complete::batch_eval_plane(&plane, &u_params, &v_params);
+        let grid = crate::tkg3d_complete::batch_eval_plane_grid(&plane, &u_params, &v_params);
         assert_eq!(grid.len(), 6);
         assert_eq!(grid[0].len(), 4);
         for (iu, u_pt_row) in grid.iter().enumerate() {
@@ -885,7 +884,7 @@ mod grideval_surface_tests {
         let plane = Plane { origin: DVec3::new(1.0, 2.0, 3.0), normal: DVec3::Z };
         let u_params = uniform_params(-1.0, 1.0, 3);
         let v_params = uniform_params(-1.0, 1.0, 3);
-        let grid = crate::tkg3d_complete::batch_eval_plane(&plane, &u_params, &v_params);
+        let grid = crate::tkg3d_complete::batch_eval_plane_grid(&plane, &u_params, &v_params);
         for pt in grid.iter().flat_map(|r| r.iter()) {
             assert!((pt.z - 3.0).abs() < TOL);
         }
@@ -898,9 +897,265 @@ mod grideval_surface_tests {
         let surf = Surface3::Sphere(sphere);
         let u_params = uniform_params(0.0, 6.28318, 5);
         let v_params = uniform_params(-1.5, 1.5, 3);
-        let grid = crate::tkg3d_complete::batch_eval_surface(&surf, &u_params, &v_params);
+        let grid = crate::tkg3d_complete::batch_eval_surface_grid(&surf, &u_params, &v_params);
         for pt in grid.iter().flat_map(|r| r.iter()) {
             assert!((pt.length() - 5.0).abs() < 1e-5);
         }
+    }
+
+    #[test]
+    fn grideval_sphere_basic() {
+        let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Z, 1.0);
+        let u = vec![0.0, 1.57, 3.14, 4.71, 6.28];
+        let v = vec![-1.57, 0.0, 1.57];
+        let grid = crate::tkg3d_complete::batch_eval_sphere_grid(&sphere, &u, &v);
+        for pt in grid.iter().flat_map(|r| r.iter()) {
+            assert!((pt.length() - 1.0).abs() < 1e-4);
+        }
+        // North pole
+        assert!((grid[0][2] - DVec3::new(0.0, 0.0, 1.0)).length() < 1e-4);
+        // South pole
+        assert!((grid[0][0] - DVec3::new(0.0, 0.0, -1.0)).length() < 1e-4);
+    }
+}
+
+// =============================================================================
+// GeomEval_TBezierSurface_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod tbezier_surface_tests {
+    use super::*;
+    use crate::tkg3d_complete::TBezierSurface;
+
+    fn make_sphere_patch() -> TBezierSurface {
+        // 3x3 poles: S(u,v)=cos(u)*cos(v)*X+sin(u)*cos(v)*Y+sin(v)*Z
+        // P(1,2)=(0,0,1)=sin(v),
+        // P(2,3)=(0,1,0)=sin(u)*cos(v),
+        // P(3,3)=(1,0,0)=cos(u)*cos(v)
+        let mut poles = vec![vec![DVec3::ZERO; 3]; 3];
+        poles[0][1] = DVec3::new(0.0, 0.0, 1.0);
+        poles[1][2] = DVec3::new(0.0, 1.0, 0.0);
+        poles[2][2] = DVec3::new(1.0, 0.0, 0.0);
+        TBezierSurface::new(poles, 1.0, 1.0)
+    }
+
+    fn make_simple() -> TBezierSurface {
+        let mut poles = vec![vec![DVec3::ZERO; 3]; 3];
+        for i in 0..3 { for j in 0..3 { poles[i][j] = DVec3::new(i as f64, j as f64, 0.0); } }
+        TBezierSurface::new(poles, 1.0, 1.0)
+    }
+
+    #[test]
+    fn tbezier_surface_construction() {
+        let s = make_simple();
+        assert_eq!(s.nb_u_poles(), 3);
+        assert_eq!(s.nb_v_poles(), 3);
+        assert_eq!(s.order_u(), 1);
+        assert_eq!(s.order_v(), 1);
+    }
+
+    #[test]
+    fn tbezier_surface_bounds() {
+        let s = make_simple();
+        let b = s.bounds();
+        assert!((b[0] - 0.0).abs() < TOL);
+        assert!((b[1] - std::f64::consts::PI).abs() < TOL);
+        assert!((b[2] - 0.0).abs() < TOL);
+        assert!((b[3] - std::f64::consts::PI).abs() < TOL);
+    }
+
+    #[test]
+    fn tbezier_surface_corners_distinct() {
+        let s = make_simple();
+        let b = s.bounds();
+        let p00 = s.eval_d0(b[0], b[2]);
+        let p10 = s.eval_d0(b[1], b[2]);
+        let p01 = s.eval_d0(b[0], b[3]);
+        let p11 = s.eval_d0(b[1], b[3]);
+        assert!((p00 - p10).length() > TOL);
+        assert!((p00 - p01).length() > TOL);
+        assert!((p00 - p11).length() > TOL);
+    }
+
+    #[test]
+    fn tbezier_surface_d1_consistent() {
+        let s = make_simple();
+        let u = std::f64::consts::PI / 3.0;
+        let v = std::f64::consts::PI / 4.0;
+        let _pt = s.eval_d0(u, v);
+        let fd_u = (s.eval_d0(u + TOL_FD, v) - s.eval_d0(u - TOL_FD, v)) / (2.0 * TOL_FD);
+        let fd_v = (s.eval_d0(u, v + TOL_FD) - s.eval_d0(u, v - TOL_FD)) / (2.0 * TOL_FD);
+        assert!(fd_u.length() > 0.0);
+        assert!(fd_v.length() > 0.0);
+    }
+}
+
+// =============================================================================
+// GeomEval_AHTBezierCurve_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod aht_bezier_curve_tests {
+    use super::*;
+    use crate::tkg3d_complete::AHTBezierCurve;
+
+    #[test]
+    fn aht_construction_full_basis() {
+        let c = AHTBezierCurve::new(
+            vec![DVec3::ZERO, DVec3::X, DVec3::Y, DVec3::Y, DVec3::new(0.0,1.0,1.0), DVec3::new(1.0,0.0,1.0)],
+            1, 1.0, 1.0);
+        assert_eq!(c.nb_poles(), 6);
+        assert!((c.alpha - 1.0).abs() < TOL);
+        assert!((c.beta - 1.0).abs() < TOL);
+        assert!(!c.is_rational());
+    }
+
+    #[test]
+    fn aht_construction_polynomial() {
+        let c = AHTBezierCurve::new(
+            vec![DVec3::ZERO, DVec3::new(1.0, 1.0, 0.0), DVec3::new(2.0, 0.0, 0.0)],
+            2, 0.0, 0.0);
+        assert_eq!(c.nb_poles(), 3);
+        assert_eq!(c.alg_degree, 2);
+    }
+
+    #[test]
+    fn aht_eval_d0_endpoints() {
+        let c = AHTBezierCurve::new(
+            vec![DVec3::ZERO, DVec3::X, DVec3::Y, DVec3::Y, DVec3::new(0.0,1.0,1.0), DVec3::new(1.0,0.0,1.0)],
+            1, 1.0, 1.0);
+        let p0 = c.eval_d0(0.0);
+        let p1 = c.eval_d0(1.0);
+        assert!(p0.length() < TOL || p0.x.abs() > TOL);
+        assert!(p1.length() > TOL);
+    }
+
+    #[test]
+    fn aht_construction_rational() {
+        let c = AHTBezierCurve::new_rational(
+            vec![DVec3::ZERO, DVec3::new(1.0,1.0,0.0), DVec3::new(2.0,0.0,0.0)],
+            vec![1.0, 2.0, 1.0], 2, 0.0, 0.0);
+        assert!(c.is_rational());
+    }
+
+    #[test]
+    fn aht_derivative_consistent() {
+        let c = AHTBezierCurve::new(
+            vec![DVec3::ZERO, DVec3::X, DVec3::Y, DVec3::Y, DVec3::new(0.0,1.0,1.0), DVec3::new(1.0,0.0,1.0)],
+            1, 1.0, 1.0);
+        let u = 0.4;
+        let p1 = c.eval_d0(u + TOL_FD);
+        let p2 = c.eval_d0(u - TOL_FD);
+        let fd = (p1 - p2) / (2.0 * TOL_FD);
+        let (_pt, d1) = c.eval_d1(u);
+        assert!((d1 - fd).length() < TOL_FD);
+    }
+}
+
+// =============================================================================
+// GeomEval_AHTBezierSurface_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod aht_bezier_surface_tests {
+    use super::*;
+    use crate::tkg3d_complete::AHTBezierSurface;
+
+    #[test]
+    fn aht_surface_construction() {
+        let s = AHTBezierSurface::new(
+            vec![
+                vec![DVec3::new(0.0,0.0,0.0), DVec3::new(0.0,1.0,0.0), DVec3::new(0.0,2.0,0.0)],
+                vec![DVec3::new(1.0,0.0,0.0), DVec3::new(1.0,1.0,0.1), DVec3::new(1.0,2.0,0.0)],
+                vec![DVec3::new(2.0,0.0,0.0), DVec3::new(2.0,1.0,0.0), DVec3::new(2.0,2.0,0.0)],
+            ], 2, 2, 0.0, 0.0, 0.0, 0.0);
+        assert_eq!(s.nb_poles_u(), 3);
+        assert_eq!(s.nb_poles_v(), 3);
+    }
+
+    #[test]
+    fn aht_surface_bounds() {
+        let s = AHTBezierSurface::new(
+            vec![
+                vec![DVec3::new(0.0,0.0,0.0), DVec3::new(0.0,1.0,0.0), DVec3::new(0.0,2.0,0.0)],
+                vec![DVec3::new(1.0,0.0,0.0), DVec3::new(1.0,1.0,0.1), DVec3::new(1.0,2.0,0.0)],
+                vec![DVec3::new(2.0,0.0,0.0), DVec3::new(2.0,1.0,0.0), DVec3::new(2.0,2.0,0.0)],
+            ], 2, 2, 0.0, 0.0, 0.0, 0.0);
+        let b = s.bounds();
+        assert!((b[0] - 0.0).abs() < TOL);
+        assert!((b[1] - 1.0).abs() < TOL);
+    }
+
+    #[test]
+    fn aht_surface_corners_distinct() {
+        let s = AHTBezierSurface::new(
+            vec![
+                vec![DVec3::new(0.0,0.0,0.0), DVec3::new(0.0,1.0,0.0), DVec3::new(0.0,2.0,0.0)],
+                vec![DVec3::new(1.0,0.0,0.0), DVec3::new(1.0,1.0,0.1), DVec3::new(1.0,2.0,0.0)],
+                vec![DVec3::new(2.0,0.0,0.0), DVec3::new(2.0,1.0,0.0), DVec3::new(2.0,2.0,0.0)],
+            ], 2, 2, 0.0, 0.0, 0.0, 0.0);
+        let p00 = s.eval_d0(0.0, 0.0);
+        let p10 = s.eval_d0(1.0, 0.0);
+        let p01 = s.eval_d0(0.0, 1.0);
+        let p11 = s.eval_d0(1.0, 1.0);
+        assert!((p00 - p10).length() > TOL);
+        assert!((p00 - p01).length() > TOL);
+    }
+
+    #[test]
+    fn aht_surface_d1_consistent() {
+        let s = AHTBezierSurface::new(
+            vec![
+                vec![DVec3::new(0.0,0.0,0.0), DVec3::new(0.0,1.0,0.0), DVec3::new(0.0,2.0,0.0)],
+                vec![DVec3::new(1.0,0.0,0.0), DVec3::new(1.0,1.0,0.1), DVec3::new(1.0,2.0,0.0)],
+                vec![DVec3::new(2.0,0.0,0.0), DVec3::new(2.0,1.0,0.0), DVec3::new(2.0,2.0,0.0)],
+            ], 2, 2, 0.0, 0.0, 0.0, 0.0);
+        let u = 0.3; let v = 0.7;
+        let fd_u = (s.eval_d0(u + TOL_FD, v) - s.eval_d0(u - TOL_FD, v)) / (2.0 * TOL_FD);
+        let fd_v = (s.eval_d0(u, v + TOL_FD) - s.eval_d0(u, v - TOL_FD)) / (2.0 * TOL_FD);
+        assert!(fd_u.length() > 0.0);
+        assert!(fd_v.length() > 0.0);
+    }
+}
+
+// =============================================================================
+// GeomAdaptor_TransformedSurface_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod transformed_surface_tests {
+    use super::*;
+    use crate::tkg3d_complete::TransformedSurfaceAdaptor;
+
+    #[test]
+    fn identity_transform_uses_original() {
+        let plane = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let adaptor = TransformedSurfaceAdaptor::new(plane.clone(), DAffine3::IDENTITY);
+        let pt = adaptor.evaluate(1.0, 2.0);
+        let expected = plane.point_at(1.0, 2.0);
+        assert!((pt - expected).length() < TOL);
+    }
+
+    #[test]
+    fn plane_translated_by_trsf() {
+        let plane = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let trsf = DAffine3::from_translation(DVec3::new(0.0, 0.0, 5.0));
+        let adaptor = TransformedSurfaceAdaptor::new(plane, trsf);
+        let pt = adaptor.evaluate(0.0, 0.0);
+        assert!((pt - DVec3::new(0.0, 0.0, 5.0)).length() < TOL);
+    }
+
+    #[test]
+    fn set_trsf_rebuilds() {
+        let plane = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let trsf1 = DAffine3::from_translation(DVec3::new(0.0, 0.0, 1.0));
+        let trsf2 = DAffine3::from_translation(DVec3::new(0.0, 0.0, 3.0));
+        let mut adaptor = TransformedSurfaceAdaptor::new(plane, trsf1);
+        let pt1 = adaptor.evaluate(0.0, 0.0);
+        adaptor.set_trsf(trsf2);
+        let pt2 = adaptor.evaluate(0.0, 0.0);
+        assert!((pt1 - DVec3::new(0.0, 0.0, 1.0)).length() < TOL);
+        assert!((pt2 - DVec3::new(0.0, 0.0, 3.0)).length() < TOL);
     }
 }
