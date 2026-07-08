@@ -296,7 +296,6 @@ pub use top_loc::{
 };
 
 use rcad_kernel::BRep;
-use rcad_kernel::BRep;
 use rcad_kernel::topods;
 
 // pub use adaptor3d::{Curve3dAdaptor, CurveOnSurfaceAdaptor, HSurfaceAdaptor, SurfaceAdaptor}; // removed
