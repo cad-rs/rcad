@@ -6,7 +6,7 @@
 /// For bounded surfaces like Sphere, checks both U and V bounds.
 ///
 /// Analogous to `ShapeAnalysis_Surface::CheckUVBounds` in OCCT.
-pub fn analyze_surface_uv_consistency(brep: &BRep, tolerance: f64) -> SurfaceAnalysisReport {
+pub fn analyze_surface_uv_consistency(brep: &rcad_kernel::BRep, tolerance: f64) -> SurfaceAnalysisReport {
  use rcad_kernel::geom::Surface3;
 
  let mut report = SurfaceAnalysisReport::default();
@@ -148,7 +148,7 @@ pub fn analyze_surface_uv_consistency(brep: &BRep, tolerance: f64) -> SurfaceAna
  report
 }
 
-//  € € Wire Quality Metrics (ShapeAnalysis_Wire enhancement)  € € € € € € € € € € € € € € € € € € € € € € €
+//  ??????Wire Quality Metrics (ShapeAnalysis_Wire enhancement)  ?????????????????????????????????????????????????????????????????????
 
 /// Extended wire quality metrics for a single wire.
 ///
@@ -176,7 +176,7 @@ pub struct WireQualityMetrics {
  pub quality_score: f64,
 }
 
-/// Aggregated wire quality report for all wires in a BRep.
+/// Aggregated wire quality report for all wires in a brep.
 #[derive(Debug, Clone, Default)]
 pub struct WireQualityReport {
  pub wires_analyzed: usize,
@@ -217,7 +217,7 @@ impl WireQualityReport {
 /// detection, and quality scoring.
 ///
 /// Analogous to `ShapeAnalysis_Wire` in OCCT.
-pub fn analyze_wire_quality(brep: &BRep, tolerance: f64) -> WireQualityReport {
+pub fn analyze_wire_quality(brep: &rcad_kernel::BRep, tolerance: f64) -> WireQualityReport {
  let mut report = WireQualityReport::default();
  let mut total_quality = 0.0_f64;
 
@@ -264,7 +264,7 @@ pub fn analyze_wire_quality(brep: &BRep, tolerance: f64) -> WireQualityReport {
 }
 
 fn analyze_single_wire_quality(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  solid: usize,
  shell: usize,
  face: usize,
@@ -421,7 +421,7 @@ impl GeometryValidationReport {
 /// tangent continuity, and C2 requires curvature continuity.
 ///
 /// Analogous to `BRepCheck_Analyzer::CheckSurfaceContinuity` in OCCT.
-pub fn check_surface_continuity(brep: &BRep, tolerance: f64) -> GeometryValidationReport {
+pub fn check_surface_continuity(brep: &rcad_kernel::BRep, tolerance: f64) -> GeometryValidationReport {
  let mut report = GeometryValidationReport::default();
 
  // Build edge-to-faces mapping
@@ -525,7 +525,7 @@ pub fn check_surface_continuity(brep: &BRep, tolerance: f64) -> GeometryValidati
 /// surface evaluation at PCurve UV coordinates matches the 3D curve evaluation.
 ///
 /// Analogous to `BRepCheck_Edge::CheckCurveSurfaceConsistency` in OCCT.
-pub fn check_curve_surface_consistency(brep: &BRep, tolerance: f64) -> GeometryValidationReport {
+pub fn check_curve_surface_consistency(brep: &rcad_kernel::BRep, tolerance: f64) -> GeometryValidationReport {
  let mut report = GeometryValidationReport::default();
 
  for edge_idx in 0..brep.edges.len() {
@@ -590,7 +590,7 @@ pub fn check_curve_surface_consistency(brep: &BRep, tolerance: f64) -> GeometryV
 }
 
 /// Get the flat (linear) face index from solid/shell/face indices.
-fn get_flat_face_index(brep: &BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> usize {
+fn get_flat_face_index(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> usize {
  let mut idx = 0usize;
  for s in 0..solid_idx {
  for sh in &brep.solids[s].shells {
@@ -604,7 +604,7 @@ fn get_flat_face_index(brep: &BRep, solid_idx: usize, shell_idx: usize, face_idx
 }
 
 /// Get UV coordinates for an edge at a given parameter (0-1) on a specific surface.
-fn get_edge_uv_at(brep: &BRep, edge_idx: usize, alpha: f64, surface_idx: usize) -> DVec2 {
+fn get_edge_uv_at(brep: &rcad_kernel::BRep, edge_idx: usize, alpha: f64, surface_idx: usize) -> DVec2 {
  // Default UV in case we can't find the PCurve
  let default_uv = DVec2::new(alpha, alpha);
 
@@ -669,7 +669,7 @@ impl TopologyValidationReport {
 /// (all pointing outward for a valid closed shell).
 ///
 /// Analogous to `BRepCheck_Shell::Orientation` in OCCT.
-pub fn validate_shell_orientation(brep: &BRep) -> TopologyValidationReport {
+pub fn validate_shell_orientation(brep: &rcad_kernel::BRep) -> TopologyValidationReport {
  let mut report = TopologyValidationReport::default();
 
  for (si, solid) in brep.solids.iter().enumerate() {
@@ -714,7 +714,7 @@ pub fn validate_shell_orientation(brep: &BRep) -> TopologyValidationReport {
 ///
 /// Aligned with OCCT BRepCheck_Shell::Closed (BRepCheck_Shell.cxx lines ~55-90).
 /// Also corresponds to BRepCheck_Solid::Closed in OCCT.
-pub fn validate_solid_closure(brep: &BRep) -> TopologyValidationReport {
+pub fn validate_solid_closure(brep: &rcad_kernel::BRep) -> TopologyValidationReport {
  let mut report = TopologyValidationReport::default();
 
  for (si, solid) in brep.solids.iter().enumerate() {
@@ -755,7 +755,7 @@ pub fn validate_solid_closure(brep: &BRep) -> TopologyValidationReport {
 /// the face normal direction, and inner wires (holes) are clockwise (CW).
 ///
 /// Analogous to `ShapeAnalysis_Wire::CheckOrientation` in OCCT.
-pub fn validate_wire_orientation(brep: &BRep) -> TopologyValidationReport {
+pub fn validate_wire_orientation(brep: &rcad_kernel::BRep) -> TopologyValidationReport {
  let mut report = TopologyValidationReport::default();
 
  for (si, solid) in brep.solids.iter().enumerate() {
@@ -803,7 +803,7 @@ pub fn validate_wire_orientation(brep: &BRep) -> TopologyValidationReport {
 /// the outer wire boundary.
 ///
 /// Analogous to `ShapeAnalysis_Face::CheckInnerWires` in OCCT.
-pub fn validate_nested_wires(brep: &BRep) -> TopologyValidationReport {
+pub fn validate_nested_wires(brep: &rcad_kernel::BRep) -> TopologyValidationReport {
  let mut report = TopologyValidationReport::default();
 
  for (si, solid) in brep.solids.iter().enumerate() {
@@ -852,7 +852,7 @@ pub fn validate_nested_wires(brep: &BRep) -> TopologyValidationReport {
 }
 
 /// Compute the centroid of a solid from its vertices.
-fn compute_solid_centroid(brep: &BRep, solid_idx: usize) -> DVec3 {
+fn compute_solid_centroid(brep: &rcad_kernel::BRep, solid_idx: usize) -> DVec3 {
  let mut sum = DVec3::ZERO;
  let mut count = 0usize;
 
@@ -878,7 +878,7 @@ fn compute_solid_centroid(brep: &BRep, solid_idx: usize) -> DVec3 {
 }
 
 /// Compute the centroid of a face from its wire vertices.
-fn compute_face_centroid(brep: &BRep, face: &rcad_kernel::topology::Face) -> DVec3 {
+fn compute_face_centroid(brep: &rcad_kernel::BRep, face: &rcad_kernel::topology::Face) -> DVec3 {
  let mut sum = DVec3::ZERO;
  let mut count = 0usize;
 
@@ -896,7 +896,7 @@ fn compute_face_centroid(brep: &BRep, face: &rcad_kernel::topology::Face) -> DVe
 }
 
 /// Compute wire orientation (CCW = true, CW = false) using signed area.
-fn compute_wire_orientation(brep: &BRep, wire: &rcad_kernel::topology::Wire) -> bool {
+fn compute_wire_orientation(brep: &rcad_kernel::BRep, wire: &rcad_kernel::topology::Wire) -> bool {
  let points = collect_wire_points(brep, wire);
  if points.len() < 3 {
  return true; // Default to CCW for degenerate cases
@@ -922,7 +922,7 @@ fn compute_wire_orientation(brep: &BRep, wire: &rcad_kernel::topology::Wire) -> 
 }
 
 /// Collect 3D points from a wire's vertices.
-fn collect_wire_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -> Vec<DVec3> {
+fn collect_wire_points(brep: &rcad_kernel::BRep, wire: &rcad_kernel::topology::Wire) -> Vec<DVec3> {
  let mut points = Vec::with_capacity(wire.edges.len());
 
  for we in &wire.edges {
@@ -1040,7 +1040,7 @@ impl ToleranceValidationReport {
 /// within acceptable ratio (default 10:1).
 ///
 /// Analogous to `ShapeAnalysis_ShapeTolerance` in OCCT.
-pub fn check_tolerance_consistency(brep: &BRep, max_ratio: f64) -> ToleranceValidationReport {
+pub fn check_tolerance_consistency(brep: &rcad_kernel::BRep, max_ratio: f64) -> ToleranceValidationReport {
  let mut report = ToleranceValidationReport::default();
 
  // Build edge-to-faces mapping
@@ -1097,7 +1097,7 @@ pub fn check_tolerance_consistency(brep: &BRep, max_ratio: f64) -> ToleranceVali
 /// maximum deviation among its incident edge endpoints.
 ///
 /// Analogous to `BRepCheck_Vertex::Tolerance` in OCCT.
-pub fn check_vertex_tolerance(brep: &BRep, default_tolerance: f64) -> ToleranceValidationReport {
+pub fn check_vertex_tolerance(brep: &rcad_kernel::BRep, default_tolerance: f64) -> ToleranceValidationReport {
  let mut report = ToleranceValidationReport::default();
 
  // Build vertex-to-edges mapping
@@ -1159,7 +1159,7 @@ pub fn check_vertex_tolerance(brep: &BRep, default_tolerance: f64) -> ToleranceV
 /// maximum deviation between its 3D curve and vertex positions.
 ///
 /// Analogous to `BRepCheck_Edge::Tolerance` in OCCT.
-pub fn check_edge_tolerance(brep: &BRep, default_tolerance: f64) -> ToleranceValidationReport {
+pub fn check_edge_tolerance(brep: &rcad_kernel::BRep, default_tolerance: f64) -> ToleranceValidationReport {
  let mut report = ToleranceValidationReport::default();
 
  for (edge_idx, edge) in brep.edges.iter().enumerate() {
@@ -1277,7 +1277,7 @@ impl Default for QualityMetricsConfig {
  }
 }
 
-/// Analyze quality metrics for a BRep.
+/// Analyze quality metrics for a brep.
 ///
 /// Checks for:
 /// - Poor aspect ratio faces
@@ -1286,7 +1286,7 @@ impl Default for QualityMetricsConfig {
 /// - Small features (tiny faces, edges, gaps)
 ///
 /// Analogous to `ShapeAnalysis_CheckSmallFace` and `ShapeAnalysis_ShapeContents` in OCCT.
-pub fn analyze_quality_metrics(brep: &BRep, config: &QualityMetricsConfig) -> QualityMetricsReport {
+pub fn analyze_quality_metrics(brep: &rcad_kernel::BRep, config: &QualityMetricsConfig) -> QualityMetricsReport {
  let mut report = QualityMetricsReport::default();
 
  // Analyze edges
@@ -1364,7 +1364,7 @@ pub fn analyze_quality_metrics(brep: &BRep, config: &QualityMetricsConfig) -> Qu
 }
 
 /// Compute face metrics: area, minimum dimension, aspect ratio.
-fn compute_face_metrics(brep: &BRep, face: &rcad_kernel::topology::Face) -> (f64, f64, f64) {
+fn compute_face_metrics(brep: &rcad_kernel::BRep, face: &rcad_kernel::topology::Face) -> (f64, f64, f64) {
  let points = collect_wire_points(brep, &face.outer_wire);
 
  if points.len() < 3 {
@@ -1412,10 +1412,10 @@ fn compute_face_metrics(brep: &BRep, face: &rcad_kernel::topology::Face) -> (f64
 }
 
 // ===========================================================?
-// COMPREHENSIVE BREP CHECK
+// COMPREHENSIVE brep CHECK
 // ===========================================================?
 
-/// Comprehensive BRep check result combining all validation types.
+/// Comprehensive brep check result combining all validation types.
 #[derive(Debug, Clone)]
 pub struct ComprehensiveCheckResult {
  /// Basic structural check result.
@@ -1469,7 +1469,7 @@ impl ComprehensiveCheckResult {
  }
 }
 
-/// Run comprehensive BRep validation including all checks.
+/// Run comprehensive brep validation including all checks.
 ///
 /// This is the most thorough validation function, running all available checks:
 /// - Basic structural checks (wire closure, indices, manifold)
@@ -1477,7 +1477,7 @@ impl ComprehensiveCheckResult {
 /// - Topology validation (orientation, closure, nested wires)
 /// - Tolerance validation (consistency, propagation)
 /// - Quality metrics (aspect ratio, degenerate geometry, sliver faces)
-pub fn check_comprehensive(brep: &BRep, tolerance: f64) -> ComprehensiveCheckResult {
+pub fn check_comprehensive(brep: &rcad_kernel::BRep, tolerance: f64) -> ComprehensiveCheckResult {
  let basic_check = brep_check_analyze(brep);
  let geometry = check_surface_continuity(brep, tolerance);
  let geometry_curves = check_curve_surface_consistency(brep, tolerance);
@@ -1527,4 +1527,4 @@ pub fn check_comprehensive(brep: &BRep, tolerance: f64) -> ComprehensiveCheckRes
  }
 }
 
-//  € € Tests  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//  ??????Tests  ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????

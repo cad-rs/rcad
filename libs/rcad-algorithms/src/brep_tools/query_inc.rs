@@ -25,7 +25,7 @@
 /// let empty = BRep::new();
 /// assert_eq!(get_shape_type(&empty), ShapeType::Empty);
 /// ```
-pub fn get_shape_type(brep: &BRep) -> ShapeType {
+pub fn get_shape_type(brep: &rcad_kernel::BRep) -> ShapeType {
     if brep.compound.is_some() {
         return ShapeType::Compound;
     }
@@ -77,7 +77,7 @@ pub fn get_shape_type(brep: &BRep) -> ShapeType {
 /// let outer_wire = get_outer_wire(&brep, 0).unwrap();
 /// assert_eq!(outer_wire.edges.len(), 4); // Rectangle
 /// ```
-pub fn get_outer_wire(brep: &BRep, face_idx: usize) -> Result<&Wire, BRepToolsError> {
+pub fn get_outer_wire(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<&Wire, BRepToolsError> {
     let (face, _) = get_face_by_flat_index(brep, face_idx)?;
     Ok(&face.outer_wire)
 }
@@ -102,7 +102,7 @@ pub fn get_outer_wire(brep: &BRep, face_idx: usize) -> Result<&Wire, BRepToolsEr
 ///     println!("Hole with {} edges", wire.edges.len());
 /// }
 /// ```
-pub fn get_inner_wires(brep: &BRep, face_idx: usize) -> Result<&[Wire], BRepToolsError> {
+pub fn get_inner_wires(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<&[Wire], BRepToolsError> {
     let (face, _) = get_face_by_flat_index(brep, face_idx)?;
     Ok(&face.inner_wires)
 }
@@ -128,7 +128,7 @@ pub fn get_inner_wires(brep: &BRep, face_idx: usize) -> Result<&[Wire], BRepTool
 /// let empty = BRep::new();
 /// assert!(!is_closed(&empty));
 /// ```
-pub fn is_closed(brep: &BRep) -> bool {
+pub fn is_closed(brep: &rcad_kernel::BRep) -> bool {
     if brep.solids.is_empty() {
         return false;
     }
@@ -144,7 +144,7 @@ pub fn is_closed(brep: &BRep) -> bool {
 }
 
 /// Check if a shell is closed by verifying edge manifoldness.
-fn is_shell_closed(_brep: &BRep, shell: &Shell) -> bool {
+fn is_shell_closed(_brep: &rcad_kernel::BRep, shell: &Shell) -> bool {
     if shell.faces.is_empty() {
         return false;
     }
@@ -191,7 +191,7 @@ fn is_shell_closed(_brep: &BRep, shell: &Shell) -> bool {
 /// let surface = get_surface(&brep, 0).unwrap();
 /// // The surface of a box face is a plane
 /// ```
-pub fn get_surface(brep: &BRep, face_idx: usize) -> Result<&Surface3, BRepToolsError> {
+pub fn get_surface(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<&Surface3, BRepToolsError> {
     let (_, flat_idx) = get_face_by_flat_index(brep, face_idx)?;
 
     match brep.geom.face_surface.get(flat_idx) {
@@ -234,7 +234,7 @@ pub fn get_surface(brep: &BRep, face_idx: usize) -> Result<&Surface3, BRepToolsE
 /// });
 /// let curve = get_curve(&brep, 0).unwrap();
 /// ```
-pub fn get_curve(brep: &BRep, edge_idx: usize) -> Result<&Curve3, BRepToolsError> {
+pub fn get_curve(brep: &rcad_kernel::BRep, edge_idx: usize) -> Result<&Curve3, BRepToolsError> {
     if edge_idx >= brep.edges.len() {
         return Err(BRepToolsError::InvalidIndex {
             kind: "edge",
@@ -291,7 +291,7 @@ pub fn get_curve(brep: &BRep, edge_idx: usize) -> Result<&Curve3, BRepToolsError
 /// // Get pcurve of edge 0 on face 0
 /// let (pcurve, surface_idx) = get_pcurve(&brep, 0, 0).unwrap();
 /// ```
-pub fn get_pcurve(brep: &BRep, edge_idx: usize, face_idx: usize) -> Result<(&Curve2d, usize), BRepToolsError> {
+pub fn get_pcurve(brep: &rcad_kernel::BRep, edge_idx: usize, face_idx: usize) -> Result<(&Curve2d, usize), BRepToolsError> {
     if edge_idx >= brep.edges.len() {
         return Err(BRepToolsError::InvalidIndex {
             kind: "edge",
@@ -354,7 +354,7 @@ pub fn get_pcurve(brep: &BRep, edge_idx: usize, face_idx: usize) -> Result<(&Cur
 /// Get a face by its flat index (across all solids/shells).
 ///
 /// Returns a tuple of (face reference, actual flat index used).
-fn get_face_by_flat_index(brep: &BRep, face_idx: usize) -> Result<(&Face, usize), BRepToolsError> {
+fn get_face_by_flat_index(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<(&Face, usize), BRepToolsError> {
     let mut current_idx = 0;
 
     for solid in &brep.solids {
@@ -377,7 +377,7 @@ fn get_face_by_flat_index(brep: &BRep, face_idx: usize) -> Result<(&Face, usize)
 /// Get the parameter range of an edge's 3D curve.
 ///
 /// Returns `[t_min, t_max]` if the edge has a curve with a defined range.
-pub fn get_edge_range(brep: &BRep, edge_idx: usize) -> Result<Option<[f64; 2]>, BRepToolsError> {
+pub fn get_edge_range(brep: &rcad_kernel::BRep, edge_idx: usize) -> Result<Option<[f64; 2]>, BRepToolsError> {
     if edge_idx >= brep.edges.len() {
         return Err(BRepToolsError::InvalidIndex {
             kind: "edge",
@@ -390,7 +390,7 @@ pub fn get_edge_range(brep: &BRep, edge_idx: usize) -> Result<Option<[f64; 2]>, 
 }
 
 /// Check if an edge is degenerate (zero-length, like a pole).
-pub fn is_edge_degenerate(brep: &BRep, edge_idx: usize) -> Result<bool, BRepToolsError> {
+pub fn is_edge_degenerate(brep: &rcad_kernel::BRep, edge_idx: usize) -> Result<bool, BRepToolsError> {
     if edge_idx >= brep.edges.len() {
         return Err(BRepToolsError::InvalidIndex {
             kind: "edge",
@@ -403,7 +403,7 @@ pub fn is_edge_degenerate(brep: &BRep, edge_idx: usize) -> Result<bool, BRepTool
 }
 
 /// Get the tolerance of a vertex.
-pub fn get_vertex_tolerance(brep: &BRep, vertex_idx: usize) -> Result<f64, BRepToolsError> {
+pub fn get_vertex_tolerance(brep: &rcad_kernel::BRep, vertex_idx: usize) -> Result<f64, BRepToolsError> {
     if vertex_idx >= brep.vertices.len() {
         return Err(BRepToolsError::InvalidIndex {
             kind: "vertex",
@@ -416,7 +416,7 @@ pub fn get_vertex_tolerance(brep: &BRep, vertex_idx: usize) -> Result<f64, BRepT
 }
 
 /// Get the tolerance of an edge.
-pub fn get_edge_tolerance(brep: &BRep, edge_idx: usize) -> Result<f64, BRepToolsError> {
+pub fn get_edge_tolerance(brep: &rcad_kernel::BRep, edge_idx: usize) -> Result<f64, BRepToolsError> {
     if edge_idx >= brep.edges.len() {
         return Err(BRepToolsError::InvalidIndex {
             kind: "edge",
@@ -429,7 +429,7 @@ pub fn get_edge_tolerance(brep: &BRep, edge_idx: usize) -> Result<f64, BRepTools
 }
 
 /// Get the tolerance of a face.
-pub fn get_face_tolerance(brep: &BRep, face_idx: usize) -> Result<f64, BRepToolsError> {
+pub fn get_face_tolerance(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<f64, BRepToolsError> {
     let (_, _) = get_face_by_flat_index(brep, face_idx)?;
 
     Ok(brep.geom.face_tolerance.get(face_idx).copied().unwrap_or(rcad_kernel::CONFUSION))
@@ -440,7 +440,7 @@ pub fn get_face_tolerance(brep: &BRep, face_idx: usize) -> Result<f64, BRepTools
 // =============================================================================
 
 /// Count the total number of faces in a BRep.
-pub fn count_faces(brep: &BRep) -> usize {
+pub fn count_faces(brep: &rcad_kernel::BRep) -> usize {
     brep.solids.iter()
         .flat_map(|s| &s.shells)
         .map(|sh| sh.faces.len())
@@ -448,22 +448,22 @@ pub fn count_faces(brep: &BRep) -> usize {
 }
 
 /// Count the total number of edges in a BRep.
-pub fn count_edges(brep: &BRep) -> usize {
+pub fn count_edges(brep: &rcad_kernel::BRep) -> usize {
     brep.edges.len()
 }
 
 /// Count the total number of vertices in a BRep.
-pub fn count_vertices(brep: &BRep) -> usize {
+pub fn count_vertices(brep: &rcad_kernel::BRep) -> usize {
     brep.vertices.len()
 }
 
 /// Count the total number of shells in a BRep.
-pub fn count_shells(brep: &BRep) -> usize {
+pub fn count_shells(brep: &rcad_kernel::BRep) -> usize {
     brep.solids.iter().map(|s| s.shells.len()).sum()
 }
 
 /// Count the total number of wires (outer + inner) across all faces in a BRep.
-pub fn count_wires(brep: &BRep) -> usize {
+pub fn count_wires(brep: &rcad_kernel::BRep) -> usize {
     brep.solids.iter()
         .flat_map(|s| &s.shells)
         .flat_map(|sh| &sh.faces)
@@ -474,7 +474,7 @@ pub fn count_wires(brep: &BRep) -> usize {
 /// Get the bounding box of a BRep.
 ///
 /// Returns `[min_point, max_point]` or `None` if the BRep has no vertices.
-pub fn bounding_box(brep: &BRep) -> Option<[DVec3; 2]> {
+pub fn bounding_box(brep: &rcad_kernel::BRep) -> Option<[DVec3; 2]> {
     if brep.vertices.is_empty() {
         return None;
     }

@@ -50,7 +50,7 @@ pub struct CylindricalFeatureExtended {
 /// 2. Check if the adjacent faces at each end are planar (indicating a through-hole)
 /// 3. Check for conical or spherical bottom faces (indicating blind hole)
 /// 4. Analyze edge connectivity to determine hole termination
-pub fn classify_hole_type(brep: &BRep, feature: &CylindricalFeature) -> CylindricalFeatureExtended {
+pub fn classify_hole_type(brep: &rcad_kernel::BRep, feature: &CylindricalFeature) -> CylindricalFeatureExtended {
     let si = 0;
     let shi = 0;
     let Some(shell) = brep.solids.first().and_then(|s| s.shells.first()) else {
@@ -205,7 +205,7 @@ pub fn classify_hole_type(brep: &BRep, feature: &CylindricalFeature) -> Cylindri
 ///
 /// Returns extended features with hole type classification.
 pub fn detect_cylindrical_features_extended(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     max_hole_radius: f64,
     max_boss_radius: f64,
 ) -> Vec<CylindricalFeatureExtended> {
@@ -315,9 +315,9 @@ impl PostSuppressionHealingOptions {
 /// This function repairs the topology after feature suppression operations,
 /// addressing gaps, dangling edges, and tolerance mismatches.
 pub fn heal_after_suppression(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     options: &PostSuppressionHealingOptions,
-) -> (BRep, PostSuppressionHealingReport) {
+) -> (rcad_kernel::BRep, PostSuppressionHealingReport) {
     let mut current = brep.clone();
     let mut report = PostSuppressionHealingReport::default();
 
@@ -384,7 +384,7 @@ pub fn heal_after_suppression(
 /// Fill topology gaps by analyzing edge connectivity.
 ///
 /// Gaps can occur after boolean operations when faces don't align perfectly.
-fn fill_topology_gaps(brep: &BRep, tolerance: f64) -> (BRep, usize) {
+fn fill_topology_gaps(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel::BRep, usize) {
     let mut gaps_filled = 0usize;
     let mut current = brep.clone();
 
@@ -520,7 +520,7 @@ pub struct FeatureInteractionAnalysis {
 /// This function identifies pairs of features that share edges, vertices,
 /// or overlap spatially, which should be processed together for robust defeaturing.
 pub fn analyze_feature_interactions(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     features: &[CylindricalFeature],
     tolerance: f64,
 ) -> Vec<FeatureInteractionAnalysis> {
@@ -593,7 +593,7 @@ pub fn analyze_feature_interactions(
 }
 
 /// Check if two faces share an edge.
-fn faces_share_edge(brep: &BRep, fi_a: usize, fi_b: usize) -> bool {
+fn faces_share_edge(brep: &rcad_kernel::BRep, fi_a: usize, fi_b: usize) -> bool {
     let Some(shell) = brep.solids.first().and_then(|s| s.shells.first()) else {
         return false;
     };
@@ -612,7 +612,7 @@ fn faces_share_edge(brep: &BRep, fi_a: usize, fi_b: usize) -> bool {
 }
 
 /// Check if two faces share a vertex.
-fn faces_share_vertex(brep: &BRep, fi_a: usize, fi_b: usize) -> bool {
+fn faces_share_vertex(brep: &rcad_kernel::BRep, fi_a: usize, fi_b: usize) -> bool {
     let Some(shell) = brep.solids.first().and_then(|s| s.shells.first()) else {
         return false;
     };
@@ -758,7 +758,7 @@ impl Default for RobustnessOptions {
 #[derive(Debug, Clone)]
 pub struct RobustSuppressionResult {
     /// The resulting BRep.
-    pub brep: BRep,
+    pub brep: rcad_kernel::BRep,
     /// Whether the operation succeeded.
     pub success: bool,
     /// Number of attempts made.
@@ -776,8 +776,8 @@ pub struct RobustSuppressionResult {
 /// This function wraps the boolean operation with multiple retry strategies
 /// and inter-operation healing.
 pub fn suppress_feature_robust(
-    brep: &BRep,
-    fill_solid: &BRep,
+    brep: &rcad_kernel::BRep,
+    fill_solid: &rcad_kernel::BRep,
     is_hole: bool,
     options: &RobustnessOptions,
 ) -> RobustSuppressionResult {
@@ -847,10 +847,10 @@ pub fn suppress_feature_robust(
 /// Perform boolean operation with explicit options.
 fn boolean_op_with_options(
     op: BooleanOpType,
-    a: &BRep,
-    b: &BRep,
+    a: &rcad_kernel::BRep,
+    b: &rcad_kernel::BRep,
     options: BooleanOptions,
-) -> Result<BRep, crate::BooleanError> {
+) -> Result<rcad_kernel::BRep, crate::BooleanError> {
     // For now, delegate to the standard boolean with fuzzy tolerance
     // A full implementation would respect all options
     if options.fuzzy_tol > 0.0 {
@@ -984,9 +984,9 @@ pub struct DefeaturingReportV2 {
 /// - Robust error recovery
 /// - Post-suppression topology healing
 pub fn defeature_brep_v2(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     options: &DefeaturingOptionsV2,
-) -> Result<(BRep, DefeaturingReportV2), DefeaturingError> {
+) -> Result<(rcad_kernel::BRep, DefeaturingReportV2), DefeaturingError> {
     if brep.solids.is_empty() || brep.solids[0].shells.is_empty() {
         return Err(DefeaturingError::EmptyInput);
     }

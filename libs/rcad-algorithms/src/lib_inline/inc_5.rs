@@ -1,5 +1,5 @@
 
-fn face_count_of(brep: &BRep) -> usize {
+fn face_count_of(brep: &rcad_kernel::BRep) -> usize {
     brep.solids
         .iter()
         .flat_map(|s| &s.shells)

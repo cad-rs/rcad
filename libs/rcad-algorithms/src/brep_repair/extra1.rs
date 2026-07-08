@@ -1,4 +1,4 @@
-﻿/// Get curvature at a parameter value on a curve.
+/// Get curvature at a parameter value on a curve.
 fn curve_curvature_at(curve: &rcad_kernel::Curve3, t: f64) -> Option<f64> {
  use rcad_kernel::CurveEval;
 
@@ -25,7 +25,7 @@ fn curve_curvature_at(curve: &rcad_kernel::Curve3, t: f64) -> Option<f64> {
 
 /// Check if parameter ranges are compatible.
 fn check_param_range_compatibility(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  e1: usize,
  e2: usize,
  tolerance: f64,
@@ -46,7 +46,7 @@ fn check_param_range_compatibility(
 
 /// Analyze a pair of faces for shared topology.
 fn analyze_shared_face_pair(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  face1: &Face,
  face2: &Face,
  flat_idx1: usize,
@@ -144,11 +144,11 @@ fn analyze_shared_face_pair(
  })
 }
 
-/// Merge shared faces in a BRep.
+/// Merge shared faces in a brep.
 ///
 /// This function identifies and merges faces that share their complete boundary.
 /// Only available in Aggressive mode.
-fn merge_shared_faces(brep: &BRep, tolerance: f64) -> (BRep, usize) {
+fn merge_shared_faces(brep: &rcad_kernel::BRep, tolerance: f64) -> (brep, usize) {
  let report = detect_shared_topology_advanced(brep, tolerance);
 
  if report.fully_shared_faces.is_empty() {
@@ -166,7 +166,7 @@ fn merge_shared_faces(brep: &BRep, tolerance: f64) -> (BRep, usize) {
 // Connectivity Graph Analysis
 // = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
 
-/// A graph representing topological connectivity in a BRep.
+/// A graph representing topological connectivity in a brep.
 ///
 /// This structure tracks how faces, edges, and vertices are connected,
 /// enabling analysis of disconnected components and connectivity strength.
@@ -223,9 +223,9 @@ impl ConnectivityStrength {
  }
 }
 
-/// Build a connectivity graph from a BRep.
+/// Build a connectivity graph from a brep.
 ///
-/// This function analyzes the topological connectivity of a BRep and
+/// This function analyzes the topological connectivity of a brep and
 /// returns a graph structure that tracks:
 /// - Which faces are connected via shared edges
 /// - Which edges are connected via shared vertices
@@ -234,11 +234,11 @@ impl ConnectivityStrength {
 /// - Connectivity strength metrics
 ///
 /// # Arguments
-/// * `brep` - The BRep to analyze.
+/// * `brep` - The brep to analyze.
 ///
 /// # Returns
 /// A `ConnectivityGraph` containing all connectivity information.
-pub fn build_connectivity_graph(brep: &BRep) -> ConnectivityGraph {
+pub fn build_connectivity_graph(brep: &rcad_kernel::BRep) -> ConnectivityGraph {
  let mut graph = ConnectivityGraph::default();
 
  let n_vertices = brep.vertices.len();
@@ -408,23 +408,23 @@ fn find_connected_components(adjacency: &[Vec<usize>]) -> Vec<Vec<usize>> {
  components
 }
 
-/// Identify disconnected components in a BRep.
+/// Identify disconnected components in a brep.
 ///
 /// Returns a list of component groups, where each group contains the indices
 /// of faces that belong to the same connected component.
-pub fn identify_disconnected_components(brep: &BRep) -> Vec<Vec<usize>> {
+pub fn identify_disconnected_components(brep: &rcad_kernel::BRep) -> Vec<Vec<usize>> {
  let graph = build_connectivity_graph(brep);
  graph.face_components.clone()
 }
 
-/// Check if a BRep is fully connected (single component).
-pub fn is_fully_connected(brep: &BRep) -> bool {
+/// Check if a brep is fully connected (single component).
+pub fn is_fully_connected(brep: &rcad_kernel::BRep) -> bool {
  let graph = build_connectivity_graph(brep);
  graph.face_components.len() <= 1
 }
 
-/// Get the number of disconnected components in a BRep.
-pub fn disconnected_component_count(brep: &BRep) -> usize {
+/// Get the number of disconnected components in a brep.
+pub fn disconnected_component_count(brep: &rcad_kernel::BRep) -> usize {
  let graph = build_connectivity_graph(brep);
  graph.face_components.len()
 }
@@ -433,7 +433,7 @@ pub fn disconnected_component_count(brep: &BRep) -> usize {
 // Connectivity Gap Detection
 // = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
 
-/// A gap between disconnected regions in a BRep.
+/// A gap between disconnected regions in a brep.
 #[derive(Debug, Clone)]
 pub struct ConnectivityGap {
  /// Index of the first face region.
@@ -469,18 +469,18 @@ pub enum GapType {
  None,
 }
 
-/// Detect gaps between disconnected components in a BRep.
+/// Detect gaps between disconnected components in a brep.
 ///
 /// This function finds the closest points between disconnected regions
 /// and classifies the type of gap that needs to be bridged.
 ///
 /// # Arguments
-/// * `brep` - The BRep to analyze.
+/// * `brep` - The brep to analyze.
 /// * `tolerance` - Maximum distance to consider as a gap.
 ///
 /// # Returns
 /// A vector of `ConnectivityGap` structures describing each gap.
-pub fn detect_connectivity_gaps(brep: &BRep, tolerance: f64) -> Vec<ConnectivityGap> {
+pub fn detect_connectivity_gaps(brep: &rcad_kernel::BRep, tolerance: f64) -> Vec<ConnectivityGap> {
  let graph = build_connectivity_graph(brep);
  let mut gaps = Vec::new();
 
@@ -541,7 +541,7 @@ pub fn detect_connectivity_gaps(brep: &BRep, tolerance: f64) -> Vec<Connectivity
 }
 
 /// Compute the center point of a face (by averaging vertex positions).
-fn compute_face_center(brep: &BRep, face_flat_idx: usize) -> Option<DVec3> {
+fn compute_face_center(brep: &rcad_kernel::BRep, face_flat_idx: usize) -> Option<DVec3> {
  let faces: Vec<&Face> = brep
  .solids
  .iter()
@@ -570,7 +570,7 @@ fn compute_face_center(brep: &BRep, face_flat_idx: usize) -> Option<DVec3> {
 }
 
 /// Classify the type of gap between two faces.
-fn classify_gap_type(brep: &BRep, fa: usize, fb: usize, distance: f64, tolerance: f64) -> GapType {
+fn classify_gap_type(brep: &rcad_kernel::BRep, fa: usize, fb: usize, distance: f64, tolerance: f64) -> GapType {
  let faces: Vec<&Face> = brep
  .solids
  .iter()
@@ -698,18 +698,18 @@ pub struct MergeReport {
  pub errors: Vec<String>,
 }
 
-/// Merge disconnected components in a BRep.
+/// Merge disconnected components in a brep.
 ///
-/// This function attempts to connect disconnected regions in a BRep
+/// This function attempts to connect disconnected regions in a brep
 /// using the specified merging strategy.
 ///
 /// # Arguments
-/// * `brep` - The BRep to process.
+/// * `brep` - The brep to process.
 /// * `strategy` - The merging strategy to use.
 ///
 /// # Returns
-/// A tuple of (modified BRep, merge report).
-pub fn merge_disconnected_components(brep: &BRep, strategy: MergeStrategy) -> (BRep, MergeReport) {
+/// A tuple of (modified brep, merge report).
+pub fn merge_disconnected_components(brep: &rcad_kernel::BRep, strategy: MergeStrategy) -> (brep, MergeReport) {
  let config = MergeConfig {
  strategy,
  ..Default::default()
@@ -719,9 +719,9 @@ pub fn merge_disconnected_components(brep: &BRep, strategy: MergeStrategy) -> (B
 
 /// Merge disconnected components with custom configuration.
 pub fn merge_disconnected_components_with_config(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  config: &MergeConfig,
-) -> (BRep, MergeReport) {
+) -> (brep, MergeReport) {
  let mut result = brep.clone();
  let mut report = MergeReport::default();
 
@@ -799,10 +799,10 @@ pub fn merge_disconnected_components_with_config(
 
 /// Merge a gap by bringing nearby vertices together.
 fn merge_gap_by_proximity(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  gap: &ConnectivityGap,
  config: &MergeConfig,
-) -> (BRep, MergeReport) {
+) -> (brep, MergeReport) {
  let mut result = brep.clone();
  let mut report = MergeReport::default();
 
@@ -881,10 +881,10 @@ fn merge_gap_by_proximity(
 
 /// Merge a gap by creating shared edges.
 fn merge_gap_by_topology(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  gap: &ConnectivityGap,
  config: &MergeConfig,
-) -> (BRep, MergeReport) {
+) -> (brep, MergeReport) {
  let mut result = brep.clone();
  let mut report = MergeReport::default();
 
@@ -909,17 +909,17 @@ fn merge_gap_by_topology(
 
 /// Merge a gap by matching geometry (same surface).
 fn merge_gap_by_geometry(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  gap: &ConnectivityGap,
  config: &MergeConfig,
-) -> (BRep, MergeReport) {
+) -> (brep, MergeReport) {
  // Geometry-based merge requires same surface
  // For now, use proximity merge as fallback
  merge_gap_by_proximity(brep, gap, config)
 }
 
-/// Merge two specific vertices in a BRep.
-fn merge_specific_vertices(brep: &BRep, drop_vi: usize, keep_vi: usize) -> BRep {
+/// Merge two specific vertices in a brep.
+fn merge_specific_vertices(brep: &rcad_kernel::BRep, drop_vi: usize, keep_vi: usize) -> rcad_kernel::BRep {
  if drop_vi == keep_vi || drop_vi >= brep.vertices.len() || keep_vi >= brep.vertices.len() {
  return brep.clone();
  }
@@ -958,15 +958,15 @@ fn merge_specific_vertices(brep: &BRep, drop_vi: usize, keep_vi: usize) -> BRep 
 /// Create bridge faces to connect disconnected regions.
 ///
 /// This function creates new faces that bridge the gaps between
-/// disconnected components, making the BRep topologically connected.
+/// disconnected components, making the brep topologically connected.
 ///
 /// # Arguments
-/// * `brep` - The BRep to process.
+/// * `brep` - The brep to process.
 /// * `gaps` - The gaps to bridge.
 ///
 /// # Returns
-/// A tuple of (modified BRep, number of bridges created).
-pub fn create_bridges(brep: &BRep, gaps: &[ConnectivityGap]) -> (BRep, usize) {
+/// A tuple of (modified brep, number of bridges created).
+pub fn create_bridges(brep: &rcad_kernel::BRep, gaps: &[ConnectivityGap]) -> (brep, usize) {
  if gaps.is_empty() {
  return (brep.clone(), 0);
  }
@@ -991,7 +991,7 @@ pub fn create_bridges(brep: &BRep, gaps: &[ConnectivityGap]) -> (BRep, usize) {
 }
 
 /// Create a single bridge face for a gap.
-fn create_single_bridge(brep: &BRep, gap: &ConnectivityGap) -> (BRep, bool) {
+fn create_single_bridge(brep: &rcad_kernel::BRep, gap: &ConnectivityGap) -> (brep, bool) {
  let mut result = brep.clone();
 
  // Find vertices near the gap endpoints
@@ -1104,10 +1104,10 @@ fn create_single_bridge(brep: &BRep, gap: &ConnectivityGap) -> (BRep, bool) {
 
 /// Create bridge faces with custom configuration.
 pub fn create_bridges_with_config(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  gaps: &[ConnectivityGap],
  _config: &MergeConfig,
-) -> (BRep, usize) {
+) -> (brep, usize) {
  create_bridges(brep, gaps)
 }
 
@@ -1118,7 +1118,7 @@ pub fn create_bridges_with_config(
 /// Report from connectivity validation.
 #[derive(Debug, Clone, Default)]
 pub struct ConnectivityReport {
- /// Whether the BRep is fully connected.
+ /// Whether the brep is fully connected.
  pub is_connected: bool,
  /// Number of connected components.
  pub component_count: usize,
@@ -1143,30 +1143,30 @@ impl ConnectivityReport {
  pub fn summary(&self) -> String {
  if self.is_connected {
  format!(
- "Fully connected BRep with {} components, {} strong connections",
+ "Fully connected brep with {} components, {} strong connections",
  self.component_count, self.strong_connections
  )
  } else {
  format!(
- "Disconnected BRep: {} components, {} gaps, {} weak connections",
+ "Disconnected brep: {} components, {} gaps, {} weak connections",
  self.component_count, self.gaps_detected, self.weak_connections
  )
  }
  }
 }
 
-/// Validate the connectivity of a BRep.
+/// Validate the connectivity of a brep.
 ///
 /// This function performs a comprehensive connectivity analysis,
 /// checking for disconnected components, weak connections, and gaps.
 ///
 /// # Arguments
-/// * `brep` - The BRep to validate.
+/// * `brep` - The brep to validate.
 /// * `tolerance` - Maximum distance for gap detection.
 ///
 /// # Returns
 /// A `ConnectivityReport` with detailed findings.
-pub fn validate_connectivity(brep: &BRep, tolerance: f64) -> ConnectivityReport {
+pub fn validate_connectivity(brep: &rcad_kernel::BRep, tolerance: f64) -> ConnectivityReport {
  let graph = build_connectivity_graph(brep);
  let mut report = ConnectivityReport::default();
 
@@ -1233,13 +1233,13 @@ pub fn validate_connectivity(brep: &BRep, tolerance: f64) -> ConnectivityReport 
  report
 }
 
-/// Quick check if a BRep needs connectivity repair.
-pub fn needs_connectivity_repair(brep: &BRep) -> bool {
+/// Quick check if a brep needs connectivity repair.
+pub fn needs_connectivity_repair(brep: &rcad_kernel::BRep) -> bool {
  !is_fully_connected(brep)
 }
 
 /// Get the connectivity strength between two faces.
-pub fn get_face_connectivity_strength(brep: &BRep, face_a: usize, face_b: usize) -> ConnectivityStrength {
+pub fn get_face_connectivity_strength(brep: &rcad_kernel::BRep, face_a: usize, face_b: usize) -> ConnectivityStrength {
  let graph = build_connectivity_graph(brep);
 
  if face_a >= graph.face_count || face_b >= graph.face_count {
@@ -1335,15 +1335,15 @@ pub struct EnhancedMakeConnectedReport {
 /// 5. Connectivity validation
 ///
 /// # Arguments
-/// * `brep` - The BRep to process.
+/// * `brep` - The brep to process.
 /// * `config` - Configuration for the repair.
 ///
 /// # Returns
-/// A tuple of (modified BRep, detailed report).
+/// A tuple of (modified brep, detailed report).
 pub fn make_connected_with_connectivity_analysis(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  config: &EnhancedMakeConnectedConfig,
-) -> (BRep, EnhancedMakeConnectedReport) {
+) -> (brep, EnhancedMakeConnectedReport) {
  let mut result = brep.clone();
  let mut report = EnhancedMakeConnectedReport::default();
 
@@ -1406,7 +1406,7 @@ pub fn make_connected_with_connectivity_analysis(
 /// range, and reparameterizes the PCurves to match. This implementation performs
 /// the same range-alignment by overwriting `curve2d_range` with the 3D range
 /// when the mismatch exceeds `tolerance`.
-pub fn fix_same_range_flags(brep: &BRep, tolerance: f64) -> (BRep, usize) {
+pub fn fix_same_range_flags(brep: &rcad_kernel::BRep, tolerance: f64) -> (brep, usize) {
  let mut out = brep.clone();
  let edge_count = out.edges.len();
 
@@ -1463,7 +1463,7 @@ pub fn fix_same_range_flags(brep: &BRep, tolerance: f64) -> (BRep, usize) {
 ///
 /// This combines the diagnostic scan from [`diagnose_same_range`] with the
 /// repair logic of [`fix_same_range_flags`] in a single call.
-pub fn fix_same_range_with_scan(brep: &BRep, tolerance: f64) -> (BRep, usize) {
+pub fn fix_same_range_with_scan(brep: &rcad_kernel::BRep, tolerance: f64) -> (brep, usize) {
  let diagnosis = diagnose_same_range(brep, tolerance);
  if diagnosis.suspect_edges.is_empty() {
  return (brep.clone(), 0);
@@ -1492,11 +1492,11 @@ pub fn fix_same_range_with_scan(brep: &BRep, tolerance: f64) -> (BRep, usize) {
 /// For each pair of vertices closer than `tolerance`, they are merged into
 /// the vertex with the smaller index. All edges and wires are remapped.
 ///
-/// Returns the repaired BRep and the number of vertices merged.
+/// Returns the repaired brep and the number of vertices merged.
 ///
 /// Analogous to `BRepOffsetAPI_Sewing` vertex merging or
 /// `ShapeFix_Wire::FixSameParameter`.
-pub fn merge_close_vertices(brep: &BRep, tolerance: f64) -> (BRep, usize) {
+pub fn merge_close_vertices(brep: &rcad_kernel::BRep, tolerance: f64) -> (brep, usize) {
  let n = brep.vertices.len();
  // Union-find: parent[i] = canonical representative of vertex i
  let mut parent: Vec<usize> = (0..n).collect();
@@ -1674,10 +1674,10 @@ pub fn merge_close_vertices(brep: &BRep, tolerance: f64) -> (BRep, usize) {
 /// - Fewer than 3 edges in the outer wire, or
 /// - All wire vertices are collinear (zero-area face).
 ///
-/// Returns the cleaned BRep and the number of faces removed.
+/// Returns the cleaned brep and the number of faces removed.
 ///
 /// Analogous to `ShapeFix_Shape` degenerate-face removal.
-pub fn remove_degenerate_faces(brep: &BRep) -> (BRep, usize) {
+pub fn remove_degenerate_faces(brep: &rcad_kernel::BRep) -> (brep, usize) {
  let mut removed = 0usize;
 
  let new_solids = brep
@@ -1739,11 +1739,11 @@ pub fn remove_degenerate_faces(brep: &BRep) -> (BRep, usize) {
 /// Recompute each face's `normal` field from the positions of its wire vertices,
 /// using Newell's method for robustness with non-planar polygons.
 ///
-/// Returns the updated BRep and the number of faces whose normals changed by
+/// Returns the updated brep and the number of faces whose normals changed by
 /// more than 1 ?(indicating they were stale or flipped).
 ///
 /// Analogous to `BRepLib` normal re-computation after topology repair.
-pub fn recompute_face_normals(brep: &BRep) -> (BRep, usize) {
+pub fn recompute_face_normals(brep: &rcad_kernel::BRep) -> (brep, usize) {
  let mut changed = 0usize;
 
  let new_solids = brep
@@ -1808,16 +1808,16 @@ pub fn recompute_face_normals(brep: &BRep) -> (BRep, usize) {
  (result, changed)
 }
 
-/// Ensure that each wire in the BRep forms a properly closed chain.
+/// Ensure that each wire in the brep forms a properly closed chain.
 ///
 /// For each open wire (end of edge i =start of edge i+1 within `tolerance`),
 /// attempts to close it by reversing individual edges whose orientation appears
 /// flipped relative to the chain direction.
 ///
-/// Returns the repaired BRep and the count of wires that were modified.
+/// Returns the repaired brep and the count of wires that were modified.
 ///
 /// Analogous to `ShapeFix_Wire::FixClosed()` / `FixConnected()`.
-pub fn fix_wire_orientation(brep: &BRep, tolerance: f64) -> (BRep, usize) {
+pub fn fix_wire_orientation(brep: &rcad_kernel::BRep, tolerance: f64) -> (brep, usize) {
  let tol2 = tolerance * tolerance;
  let mut total_fixed = 0usize;
 
@@ -1869,7 +1869,7 @@ pub fn fix_wire_orientation(brep: &BRep, tolerance: f64) -> (BRep, usize) {
 ///
 /// Uses the same centroid heuristic as [`check_orientation_consistency`]. Each
 /// offending face has its stored normal negated and all wires reversed.
-pub fn fix_face_orientation(brep: &BRep) -> (BRep, usize) {
+pub fn fix_face_orientation(brep: &rcad_kernel::BRep) -> (brep, usize) {
  let report = check_orientation_consistency(brep);
  if report.issues.is_empty() {
  return (brep.clone(), 0);
@@ -1929,7 +1929,7 @@ pub fn fix_face_orientation(brep: &BRep) -> (BRep, usize) {
 // = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
 
 /// Attempt to fix one wire, returning (fixed_wire, number_of_edges_flipped).
-fn fix_wire(wire: &Wire, brep: &BRep, tol2: f64) -> (Wire, usize) {
+fn fix_wire(wire: &Wire, brep: &rcad_kernel::BRep, tol2: f64) -> (Wire, usize) {
  if wire.edges.len() < 2 {
  return (wire.clone(), 0);
  }

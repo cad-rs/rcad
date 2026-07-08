@@ -14,7 +14,7 @@
 ///
 /// # Returns
 /// A list of detected pocket features with through/blind classification.
-pub fn detect_pockets(brep: &BRep, config: &PocketDetectionConfig) -> Vec<PocketFeature> {
+pub fn detect_pockets(brep: &rcad_kernel::BRep, config: &PocketDetectionConfig) -> Vec<PocketFeature> {
     if config.max_diameter <= 0.0 || config.max_depth <= 0.0 {
         return Vec::new();
     }
@@ -130,7 +130,7 @@ pub fn detect_pockets(brep: &BRep, config: &PocketDetectionConfig) -> Vec<Pocket
 
 /// Analyze a group of faces to determine if they form an enhanced pocket.
 fn analyze_pocket_enhanced(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     si: usize,
     shi: usize,
     group: &[usize],
@@ -234,7 +234,7 @@ fn analyze_pocket_enhanced(
 
 /// Classify a pocket as through or blind, and identify wall/bottom faces.
 fn classify_pocket_type(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     si: usize,
     shi: usize,
     group: &[usize],
@@ -330,7 +330,7 @@ fn classify_pocket_type(
 ///
 /// # Returns
 /// A list of detected boss features with height analysis.
-pub fn detect_bosses(brep: &BRep, max_diameter: f64, max_height: f64) -> Vec<BossFeature> {
+pub fn detect_bosses(brep: &rcad_kernel::BRep, max_diameter: f64, max_height: f64) -> Vec<BossFeature> {
     if max_diameter <= 0.0 || max_height <= 0.0 {
         return Vec::new();
     }
@@ -494,7 +494,7 @@ pub fn detect_bosses(brep: &BRep, max_diameter: f64, max_height: f64) -> Vec<Bos
 
 /// Analyze a group of cylindrical faces to determine boss properties.
 fn analyze_boss_group(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     si: usize,
     shi: usize,
     group: &[usize],
@@ -552,7 +552,7 @@ fn analyze_boss_group(
 
 /// Find the top face of a boss (planar face at the maximum extent).
 fn find_top_face(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     _si: usize,
     _shi: usize,
     wall_faces: &[usize],
@@ -593,7 +593,7 @@ fn find_top_face(
 
 /// Analyze a group of planar faces to determine if they form a rectangular boss.
 fn analyze_rectangular_boss(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     si: usize,
     shi: usize,
     group: &[usize],
@@ -677,7 +677,7 @@ fn analyze_rectangular_boss(
 ///
 /// # Returns
 /// A list of detected fillet features.
-pub fn detect_fillets(brep: &BRep, max_radius: f64) -> Vec<FilletFeature> {
+pub fn detect_fillets(brep: &rcad_kernel::BRep, max_radius: f64) -> Vec<FilletFeature> {
     if max_radius <= 0.0 {
         return Vec::new();
     }
@@ -784,7 +784,7 @@ pub fn detect_fillets(brep: &BRep, max_radius: f64) -> Vec<FilletFeature> {
 
 /// Check if a face is a fillet face and extract its properties.
 fn detect_fillet_face(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     si: usize,
     shi: usize,
     fi: usize,
@@ -826,7 +826,7 @@ fn detect_fillet_face(
 ///
 /// # Returns
 /// A list of detected chamfer features.
-pub fn detect_chamfers(brep: &BRep, max_distance: f64) -> Vec<ChamferFeature> {
+pub fn detect_chamfers(brep: &rcad_kernel::BRep, max_distance: f64) -> Vec<ChamferFeature> {
     if max_distance <= 0.0 {
         return Vec::new();
     }
@@ -922,7 +922,7 @@ pub fn detect_chamfers(brep: &BRep, max_distance: f64) -> Vec<ChamferFeature> {
 
 /// Check if a face is a chamfer face and extract its properties.
 fn detect_chamfer_face(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     si: usize,
     shi: usize,
     fi: usize,
@@ -1018,12 +1018,12 @@ fn find_adjacent_faces(
 /// # Returns
 /// The modified B-Rep with the feature removed and geometry healed.
 pub fn remove_feature_with_healing<F>(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     feature_idx: usize,
     _feature_type: FeatureType,
     features: &[F],
     healing_tolerance: f64,
-) -> BRep
+) -> rcad_kernel::BRep
 where
     F: FeatureToBRep,
 {
@@ -1216,7 +1216,7 @@ impl FeatureToBRep for BlendFeature {
 ///
 /// Returns a list of [`BlendFeature`] objects.
 pub fn detect_blend_features(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     max_blend_radius: f64,
     max_chamfer_distance: f64,
 ) -> Vec<BlendFeature> {
@@ -1321,7 +1321,7 @@ pub fn detect_blend_features(
 ///
 /// Returns a map from face index to group ID.
 pub fn detect_connected_feature_groups(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     cylindrical_features: &[CylindricalFeature],
     conical_features: &[ConicalFeature],
     slot_features: &[SlotFeature],

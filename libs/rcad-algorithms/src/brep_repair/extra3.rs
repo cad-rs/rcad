@@ -1,9 +1,9 @@
-﻿/// Handle degenerate points on periodic surfaces.
+/// Handle degenerate points on periodic surfaces.
 ///
 /// This function identifies and handles degenerate points such as:
 /// - Sphere poles (V=0 and V= ?
 /// - Cone apex
-pub fn handle_degenerate_points(brep: &BRep, tolerance: f64) -> (BRep, usize) {
+pub fn handle_degenerate_points(brep: &rcad_kernel::BRep, tolerance: f64) -> (brep, usize) {
  let mut result = brep.clone();
  let mut degenerate_count = 0;
 
@@ -116,7 +116,7 @@ fn is_vertex_at_degenerate_point(
 ///
 /// When edges are incorrectly split at a seam, this function attempts to
 /// merge them back together.
-pub fn merge_seam_edges(brep: &BRep, config: &PeriodicSeamConfig) -> (BRep, usize) {
+pub fn merge_seam_edges(brep: &rcad_kernel::BRep, config: &PeriodicSeamConfig) -> (brep, usize) {
  let result = brep.clone();
  let mut merged_count = 0;
 
@@ -224,7 +224,7 @@ pub fn merge_seam_edges(brep: &BRep, config: &PeriodicSeamConfig) -> (BRep, usiz
 ///
 /// On periodic surfaces (cylinder, cone, torus), edges that cross the seam
 /// may be split incorrectly. This function attempts to handle them.
-pub fn handle_periodic_surface_seams(brep: &BRep, tolerance: f64) -> (BRep, PeriodicSeamReport) {
+pub fn handle_periodic_surface_seams(brep: &rcad_kernel::BRep, tolerance: f64) -> (brep, PeriodicSeamReport) {
  let config = PeriodicSeamConfig {
  seam_tolerance: tolerance * 10.0,
  merge_tolerance: tolerance * 100.0,
@@ -235,9 +235,9 @@ pub fn handle_periodic_surface_seams(brep: &BRep, tolerance: f64) -> (BRep, Peri
 
 /// Handle periodic surface seams with custom configuration.
 pub fn handle_periodic_surface_seams_with_config(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  config: &PeriodicSeamConfig,
-) -> (BRep, PeriodicSeamReport) {
+) -> (brep, PeriodicSeamReport) {
  let mut result = brep.clone();
  let mut report = PeriodicSeamReport::default();
 
@@ -274,7 +274,7 @@ pub fn handle_periodic_surface_seams_with_config(
 }
 
 /// Compute the flat face index for a given solid/shell/face tuple.
-fn compute_flat_face_idx(brep: &BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> usize {
+fn compute_flat_face_idx(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> usize {
  let mut idx = 0usize;
  for s in 0..solid_idx {
  for sh in &brep.solids[s].shells {
@@ -339,9 +339,9 @@ pub struct AdaptiveToleranceMergeReport {
 /// but respects minimum feature size constraints to avoid merging
 /// features that should be preserved.
 pub fn merge_vertices_adaptive(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  config: &AdaptiveToleranceConfig,
-) -> (BRep, AdaptiveToleranceMergeReport) {
+) -> (brep, AdaptiveToleranceMergeReport) {
  let mut result = brep.clone();
  let mut report = AdaptiveToleranceMergeReport::default();
 
@@ -386,13 +386,13 @@ pub fn merge_vertices_adaptive(
  (result, report)
 }
 
-/// Compute curvature-adjusted tolerance for a BRep.
+/// Compute curvature-adjusted tolerance for a brep.
 ///
 /// This function computes a tolerance that is adjusted based on the local
 /// curvature of the geometry. In regions of high curvature, the tolerance
 /// is reduced to preserve small features.
-fn compute_curvature_adjusted_tolerance(brep: &BRep, base_tolerance: f64, min_feature_size: f64) -> f64 {
- // Compute the minimum curvature radius in the BRep
+fn compute_curvature_adjusted_tolerance(brep: &rcad_kernel::BRep, base_tolerance: f64, min_feature_size: f64) -> f64 {
+ // Compute the minimum curvature radius in the brep
  let mut min_curvature_radius = f64::INFINITY;
 
  for solid in &brep.solids {
@@ -421,7 +421,7 @@ fn compute_curvature_adjusted_tolerance(brep: &BRep, base_tolerance: f64, min_fe
 }
 
 /// Compute the approximate area of a face.
-fn compute_face_area(brep: &BRep, face: &Face) -> f64 {
+fn compute_face_area(brep: &rcad_kernel::BRep, face: &Face) -> f64 {
  let mut pts: Vec<DVec3> = Vec::new();
  for we in &face.outer_wire.edges {
  if let Some(edge) = brep.edges.get(we.idx) {
@@ -953,13 +953,13 @@ fn check_adjacent_continuity_u(
 /// This function checks if two faces sharing a B-spline surface can be merged.
 /// The faces must be adjacent (share an edge) and lie on the same B-spline surface.
 ///
-/// Returns `Some((BRep, MergedFaceInfo))` if the faces were merged, `None` otherwise.
+/// Returns `Some((brep, MergedFaceInfo))` if the faces were merged, `None` otherwise.
 pub fn merge_bspline_faces(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  face1_idx: usize,
  face2_idx: usize,
  tolerance: f64,
-) -> Option<(BRep, MergedFaceInfo)> {
+) -> Option<(brep, MergedFaceInfo)> {
  // Get surfaces for both faces
  let surf1_idx = brep.geom.face_surface.get(face1_idx).and_then(|v| *v)?;
  let surf2_idx = brep.geom.face_surface.get(face2_idx).and_then(|v| *v)?;
@@ -1049,7 +1049,7 @@ pub fn merge_bspline_faces(
 }
 
 /// Find the shell containing two faces.
-fn find_shell_containing_faces(brep: &BRep, face1_idx: usize, face2_idx: usize) -> Option<(usize, usize)> {
+fn find_shell_containing_faces(brep: &rcad_kernel::BRep, face1_idx: usize, face2_idx: usize) -> Option<(usize, usize)> {
  let mut found_si = None;
  let mut found_shi = None;
 
@@ -1076,7 +1076,7 @@ fn find_shell_containing_faces(brep: &BRep, face1_idx: usize, face2_idx: usize) 
 }
 
 /// Find the local index of a face within a shell.
-fn find_face_index_in_shell(brep: &BRep, si: usize, shi: usize, global_face_idx: usize) -> Option<usize> {
+fn find_face_index_in_shell(brep: &rcad_kernel::BRep, si: usize, shi: usize, global_face_idx: usize) -> Option<usize> {
  let base = flat_face_index_global(brep, si, shi, 0);
  if global_face_idx >= base {
  Some(global_face_idx - base)
@@ -1086,7 +1086,7 @@ fn find_face_index_in_shell(brep: &BRep, si: usize, shi: usize, global_face_idx:
 }
 
 /// Get the global flat index of a face.
-fn flat_face_index_global(brep: &BRep, si: usize, shi: usize, fi: usize) -> usize {
+fn flat_face_index_global(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> usize {
  let mut idx = 0usize;
  for s in 0..si {
  for sh in &brep.solids[s].shells {
@@ -1100,7 +1100,7 @@ fn flat_face_index_global(brep: &BRep, si: usize, shi: usize, fi: usize) -> usiz
 }
 
 /// Find a shared edge between two faces in a shell.
-fn find_shared_edge(brep: &BRep, si: usize, shi: usize, fi1: usize, fi2: usize) -> Option<usize> {
+fn find_shared_edge(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi1: usize, fi2: usize) -> Option<usize> {
  use std::collections::HashSet;
 
  let face1 = &brep.solids[si].shells[shi].faces[fi1];
@@ -1236,26 +1236,26 @@ impl ClosureReport {
 ///
 /// # Arguments
 /// * `shell` - The shell to analyze.
-/// * `brep` - The containing BRep.
+/// * `brep` - The containing brep.
 ///
 /// # Returns
 /// A `ClosureReport` with closure status and Euler characteristic.
 ///
 /// # Example
 /// ```rust
-/// use rcad_kernel::BRep;
+/// use brep;
 /// use rcad_kernel::PrimitiveSolid;
 /// use rcad_algorithms::brep_repair::check_shell_closure;
 ///
-/// let brep = BRep::from_primitive(PrimitiveSolid::Box {
+/// let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
 /// width: 1.0, height: 1.0, depth: 1.0
 /// });
 /// let shell = &brep.solids[0].shells[0];
-/// let report = check_shell_closure(shell, &brep);
+/// let report = check_shell_closure(shell, &rcad_kernel::BRep);
 /// assert!(report.is_closed);
 /// assert_eq!(report.euler_characteristic, 2); // Sphere topology
 /// ```
-pub fn check_shell_closure(shell: &Shell, brep: &BRep) -> ClosureReport {
+pub fn check_shell_closure(shell: &Shell, brep: &rcad_kernel::BRep) -> ClosureReport {
  use std::collections::{HashMap, HashSet};
 
  let n_edges = brep.edges.len();
@@ -1338,7 +1338,7 @@ pub fn check_shell_closure(shell: &Shell, brep: &BRep) -> ClosureReport {
 }
 
 /// Check if a shell is orientable by verifying face normals are consistent.
-fn check_shell_orientability(shell: &Shell, brep: &BRep) -> bool {
+fn check_shell_orientability(shell: &Shell, brep: &rcad_kernel::BRep) -> bool {
  // For a properly oriented shell, all face normals should point outward.
  // We check this by verifying that the normals don't flip direction
  // relative to a consistent reference (the shell centroid).
@@ -1378,13 +1378,13 @@ fn check_shell_orientability(shell: &Shell, brep: &BRep) -> bool {
 ///
 /// # Arguments
 /// * `shell` - The shell to repair.
-/// * `brep` - The containing BRep.
+/// * `brep` - The containing brep.
 ///
 /// # Returns
 /// A tuple of (repaired shell, report).
 ///
 /// Analogous to OCCT `ShapeFix_Shell::FixOrientation()`.
-pub fn fix_shell_orientation(shell: &Shell, brep: &BRep) -> (Shell, ShellFixReport) {
+pub fn fix_shell_orientation(shell: &Shell, brep: &rcad_kernel::BRep) -> (Shell, ShellFixReport) {
  let mut report = ShellFixReport::default();
  let mut fixed_shell = shell.clone();
 
@@ -1422,7 +1422,7 @@ pub fn fix_shell_orientation(shell: &Shell, brep: &BRep) -> (Shell, ShellFixRepo
 }
 
 /// Compute the centroid of a shell from all its face vertices.
-fn compute_shell_centroid(shell: &Shell, brep: &BRep) -> DVec3 {
+fn compute_shell_centroid(shell: &Shell, brep: &rcad_kernel::BRep) -> DVec3 {
  let mut sum = DVec3::ZERO;
  let mut count = 0usize;
 
@@ -1446,7 +1446,7 @@ fn compute_shell_centroid(shell: &Shell, brep: &BRep) -> DVec3 {
 }
 
 /// Compute the centroid of a face from its outer wire vertices.
-fn compute_face_centroid(wire: &Wire, brep: &BRep) -> DVec3 {
+fn compute_face_centroid(wire: &Wire, brep: &rcad_kernel::BRep) -> DVec3 {
  let mut sum = DVec3::ZERO;
  let mut count = 0usize;
 
@@ -1476,7 +1476,7 @@ struct ManifoldReport {
 }
 
 /// Analyze a shell for manifoldness.
-fn analyze_shell_manifoldness(shell: &Shell, brep: &BRep) -> ManifoldReport {
+fn analyze_shell_manifoldness(shell: &Shell, brep: &rcad_kernel::BRep) -> ManifoldReport {
  use std::collections::{HashMap, HashSet};
 
  let n_edges = brep.edges.len();
@@ -1540,14 +1540,14 @@ fn analyze_shell_manifoldness(shell: &Shell, brep: &BRep) -> ManifoldReport {
 ///
 /// # Arguments
 /// * `shell` - The shell to repair.
-/// * `brep` - The containing BRep.
+/// * `brep` - The containing brep.
 ///
 /// # Returns
 /// A tuple of (repaired shell, report). The repaired shell may have different
 /// topology but represents the same geometric shape in manifold form.
 ///
 /// Analogous to OCCT `ShapeFix_Shell::FixManifold()`.
-pub fn fix_non_manifold_shell(shell: &Shell, brep: &BRep) -> (Shell, ShellFixReport) {
+pub fn fix_non_manifold_shell(shell: &Shell, brep: &rcad_kernel::BRep) -> (Shell, ShellFixReport) {
  let mut report = ShellFixReport::default();
 
  // First analyze the shell for manifold issues
@@ -1732,7 +1732,7 @@ pub struct VertexValenceInfo {
 }
 
 /// Fix shell orientation with detailed edge adjacency analysis.
-pub fn fix_shell_orientation_advanced(shell: &Shell, brep: &BRep) -> (Shell, ShellOrientationReport) {
+pub fn fix_shell_orientation_advanced(shell: &Shell, brep: &rcad_kernel::BRep) -> (Shell, ShellOrientationReport) {
  use std::collections::{HashMap, VecDeque};
 
  let mut report = ShellOrientationReport::default();
@@ -1830,7 +1830,7 @@ pub fn fix_shell_orientation_advanced(shell: &Shell, brep: &BRep) -> (Shell, She
 }
 
 /// Repair shell closure by detecting and closing gaps.
-pub fn repair_shell_closure(shell: &Shell, brep: &BRep, tolerance: f64) -> ShellClosureResult {
+pub fn repair_shell_closure(shell: &Shell, brep: &rcad_kernel::BRep, tolerance: f64) -> ShellClosureResult {
  use std::collections::{HashMap, HashSet};
 
  let mut result = ShellClosureResult {
@@ -1920,7 +1920,7 @@ pub fn repair_shell_closure(shell: &Shell, brep: &BRep, tolerance: f64) -> Shell
  result
 }
 
-fn estimate_chain_area(chain: &[usize], brep: &BRep) -> f64 {
+fn estimate_chain_area(chain: &[usize], brep: &rcad_kernel::BRep) -> f64 {
  if chain.len() < 3 { return 0.0; }
  let mut nodes: Vec<DVec3> = Vec::new();
  for &ei in chain {

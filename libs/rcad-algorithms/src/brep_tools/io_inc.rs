@@ -16,7 +16,7 @@
 /// let json = write_brep_to_string(&brep).unwrap();
 /// assert!(json.contains("vertices"));
 /// ```
-pub fn write_brep_to_string(brep: &BRep) -> Result<String, BRepToolsError> {
+pub fn write_brep_to_string(brep: &rcad_kernel::BRep) -> Result<String, BRepToolsError> {
     serde_json::to_string_pretty(brep)
         .map_err(|e| BRepToolsError::SerializationError(e.to_string()))
 }
@@ -36,7 +36,7 @@ pub fn write_brep_to_string(brep: &BRep) -> Result<String, BRepToolsError> {
 /// let restored = read_brep_from_string(&json).unwrap();
 /// assert_eq!(brep.vertices.len(), restored.vertices.len());
 /// ```
-pub fn read_brep_from_string(s: &str) -> Result<BRep, BRepToolsError> {
+pub fn read_brep_from_string(s: &str) -> Result<rcad_kernel::BRep, BRepToolsError> {
     serde_json::from_str(s)
         .map_err(|e| BRepToolsError::DeserializationError(e.to_string()))
 }
@@ -54,7 +54,7 @@ pub fn read_brep_from_string(s: &str) -> Result<BRep, BRepToolsError> {
 /// });
 /// write_brep_to_file(&brep, "box.brep").unwrap();
 /// ```
-pub fn write_brep_to_file<P: AsRef<Path>>(brep: &BRep, path: P) -> Result<(), BRepToolsError> {
+pub fn write_brep_to_file<P: AsRef<Path>>(brep: &rcad_kernel::BRep, path: P) -> Result<(), BRepToolsError> {
     let file = File::create(&path)
         .map_err(|e| BRepToolsError::IoError(format!("Failed to create file: {}", e)))?;
     let writer = BufWriter::new(file);
@@ -71,7 +71,7 @@ pub fn write_brep_to_file<P: AsRef<Path>>(brep: &BRep, path: P) -> Result<(), BR
 ///
 /// let brep = read_brep_from_file("box.brep").unwrap();
 /// ```
-pub fn read_brep_from_file<P: AsRef<Path>>(path: P) -> Result<BRep, BRepToolsError> {
+pub fn read_brep_from_file<P: AsRef<Path>>(path: P) -> Result<rcad_kernel::BRep, BRepToolsError> {
     let file = File::open(&path)
         .map_err(|e| BRepToolsError::IoError(format!("Failed to open file: {}", e)))?;
     let reader = BufReader::new(file);

@@ -1,4 +1,4 @@
-﻿pub fn validate_solids_parallel(brep: &BRep) -> Vec<SolidValidationResult> {
+pub fn validate_solids_parallel(brep: &rcad_kernel::BRep) -> Vec<SolidValidationResult> {
  brep.solids.par_iter()
  .enumerate()
  .map(|(si, _)| validate_single_solid(brep, si))
@@ -6,7 +6,7 @@
 }
 
 /// Validate a single solid.
-fn validate_single_solid(brep: &BRep, si: usize) -> SolidValidationResult {
+fn validate_single_solid(brep: &rcad_kernel::BRep, si: usize) -> SolidValidationResult {
  use std::collections::HashSet;
 
  let solid = &brep.solids[si];
@@ -105,7 +105,7 @@ fn validate_single_solid(brep: &BRep, si: usize) -> SolidValidationResult {
 }
 
 /// Compute the volume of a shell using signed volume method.
-fn compute_shell_volume(shell: &rcad_kernel::topology::Shell, brep: &BRep) -> f64 {
+fn compute_shell_volume(shell: &rcad_kernel::topology::Shell, brep: &rcad_kernel::BRep) -> f64 {
  
 
  let n_edges = brep.edges.len();
@@ -143,20 +143,20 @@ fn compute_shell_volume(shell: &rcad_kernel::topology::Shell, brep: &BRep) -> f6
 // Comprehensive Parallel Check
 // ===========================================================?
 
-/// Perform a comprehensive parallel check of a BRep.
+/// Perform a comprehensive parallel check of a brep.
 ///
 /// This function runs all configured checks in parallel and returns a detailed
 /// report including timing information for each phase.
 ///
 /// # Arguments
 ///
-/// * `brep` - The BRep to check.
+/// * `brep` - The brep to check.
 /// * `config` - Configuration for the check.
 ///
 /// # Returns
 ///
 /// A `ParallelCheckReport` containing all results and timing information.
-pub fn check_brep_parallel(brep: &BRep, config: &ParallelCheckConfig) -> ParallelCheckReport {
+pub fn check_brep_parallel(brep: &rcad_kernel::BRep, config: &ParallelCheckConfig) -> ParallelCheckReport {
  let start_time = Instant::now();
  let mut phase_timings: Vec<CheckPhaseTiming> = Vec::new();
  let mut structural_issues = Vec::new();
@@ -356,7 +356,7 @@ pub fn check_brep_parallel(brep: &BRep, config: &ParallelCheckConfig) -> Paralle
 }
 
 /// Sequential face checking fallback.
-fn check_faces_sequential(brep: &BRep) -> Vec<FaceCheckResult> {
+fn check_faces_sequential(brep: &rcad_kernel::BRep) -> Vec<FaceCheckResult> {
  let n_edges = brep.edges.len();
  let tolerance = TOLERANCE_MESH_LEGACY;
 
@@ -372,7 +372,7 @@ fn check_faces_sequential(brep: &BRep) -> Vec<FaceCheckResult> {
 }
 
 /// Sequential edge checking fallback.
-fn check_edges_sequential(brep: &BRep) -> Vec<EdgeCheckResult> {
+fn check_edges_sequential(brep: &rcad_kernel::BRep) -> Vec<EdgeCheckResult> {
  let n_verts = brep.vertices.len();
  let tolerance = TOLERANCE_MESH_LEGACY;
 
@@ -404,7 +404,7 @@ fn check_edges_sequential(brep: &BRep) -> Vec<EdgeCheckResult> {
 }
 
 /// Perform parallel check and return detailed statistics.
-pub fn check_parallel_with_stats(brep: &BRep) -> (CheckResult, ParallelCheckStats) {
+pub fn check_parallel_with_stats(brep: &rcad_kernel::BRep) -> (CheckResult, ParallelCheckStats) {
  let face_count: usize = brep.solids.iter()
  .map(|s| s.shells.iter().map(|sh| sh.faces.len()).sum::<usize>())
  .sum();

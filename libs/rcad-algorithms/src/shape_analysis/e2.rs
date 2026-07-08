@@ -1,6 +1,6 @@
 
 /// Check if two edges are adjacent (share a vertex).
-fn are_edges_adjacent(edge1_idx: usize, edge2_idx: usize, brep: &BRep) -> bool {
+fn are_edges_adjacent(edge1_idx: usize, edge2_idx: usize, brep: &rcad_kernel::BRep) -> bool {
     let Some(edge1) = brep.edges.get(edge1_idx) else { return false; };
     let Some(edge2) = brep.edges.get(edge2_idx) else { return false; };
 
@@ -150,7 +150,7 @@ pub fn validate_trimming_loops(
     solid_idx: usize,
     shell_idx: usize,
     face_idx: usize,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     tolerance: f64,
 ) -> TrimmingLoopValidationReport {
     let mut report = TrimmingLoopValidationReport::default();
@@ -272,7 +272,7 @@ pub fn validate_trimming_loops(
 fn analyze_wire_trimming(
     wire: &rcad_kernel::topology::Wire,
     surface_idx: usize,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     tolerance: f64,
 ) -> WireTrimmingInfo {
     let mut info = WireTrimmingInfo::default();
@@ -355,7 +355,7 @@ fn analyze_wire_trimming(
 fn compute_wire_uv_length(
     wire: &rcad_kernel::topology::Wire,
     surface_idx: usize,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
 ) -> f64 {
     let mut length = 0.0;
 
@@ -501,7 +501,7 @@ pub fn analyze_periodic_surface_handling(
     solid_idx: usize,
     shell_idx: usize,
     face_idx: usize,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     tolerance: f64,
 ) -> PeriodicSurfaceReport {
     let mut report = PeriodicSurfaceReport::default();
@@ -618,7 +618,7 @@ fn analyze_seam_edge(
     edge_idx: usize,
     pcurves: &[&PCurve],
     surface: &Surface3,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     tolerance: f64,
 ) -> SeamEdgeInfo {
     let mut info = SeamEdgeInfo {
@@ -837,7 +837,7 @@ pub struct UnderTrimmedRegion {
 pub fn analyze_surface_bounds_for_face(
     surface: &Surface3,
     face: &Face,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
 ) -> SurfaceBoundsAnalysis {
     let mut analysis = SurfaceBoundsAnalysis::default();
 
@@ -1017,7 +1017,7 @@ pub fn analyze_surface_bounds_for_face(
 }
 
 /// Find the surface index for a face in the BRep.
-fn find_surface_index_for_face(_face: &Face, brep: &BRep, target_surface: &Surface3) -> Option<usize> {
+fn find_surface_index_for_face(_face: &Face, brep: &rcad_kernel::BRep, target_surface: &Surface3) -> Option<usize> {
     // Search through face surfaces to find matching surface
     for surface_opt in brep.geom.face_surface.iter() {
         if let Some(surface_idx) = surface_opt
@@ -1129,7 +1129,7 @@ pub struct SeamEdgeIssue {
 /// let report = check_face_uv_consistency_by_idx(0, &brep);
 /// println!("UV consistent: {}", report.is_consistent);
 /// ```
-pub fn check_face_uv_consistency_by_idx(face_idx: usize, brep: &BRep) -> UvConsistencyReport {
+pub fn check_face_uv_consistency_by_idx(face_idx: usize, brep: &rcad_kernel::BRep) -> UvConsistencyReport {
     let mut report = UvConsistencyReport::default();
 
     // Find the face in the BRep structure
@@ -1310,7 +1310,7 @@ pub fn check_face_uv_consistency_by_idx(face_idx: usize, brep: &BRep) -> UvConsi
 }
 
 /// Find the location (solid, shell, local face index) of a face by its flat index.
-fn find_face_location(flat_face_idx: usize, brep: &BRep) -> (usize, usize, usize) {
+fn find_face_location(flat_face_idx: usize, brep: &rcad_kernel::BRep) -> (usize, usize, usize) {
     let mut count = 0usize;
 
     for (si, solid) in brep.solids.iter().enumerate() {
@@ -1392,7 +1392,7 @@ pub struct SurfaceDeviationViolation {
 /// let deviation = compute_surface_deviation(0, &brep, 16);
 /// println!("Max deviation: {}", deviation.max_deviation);
 /// ```
-pub fn compute_surface_deviation(face_idx: usize, brep: &BRep, samples: usize) -> SurfaceDeviation {
+pub fn compute_surface_deviation(face_idx: usize, brep: &rcad_kernel::BRep, samples: usize) -> SurfaceDeviation {
     let mut result = SurfaceDeviation::default();
     result.min_deviation = f64::INFINITY;
 

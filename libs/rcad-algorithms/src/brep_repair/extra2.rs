@@ -1,4 +1,4 @@
-﻿/// Newell's method: compute the (un-normalized) area vector of a planar polygon.
+/// Newell's method: compute the (un-normalized) area vector of a planar polygon.
 fn newell_normal(pts: &[DVec3]) -> DVec3 {
  let n = pts.len();
  let mut normal = DVec3::ZERO;
@@ -33,7 +33,7 @@ fn newell_area(pts: &[DVec3]) -> f64 {
 /// `edge_same_parameter[edge_idx]` is set to `true`.
 ///
 /// This is the analogue of OCCT `BRepLib::SameParameter()` / `ShapeFix_Edge::FixSameParameter()`.
-pub fn fix_same_parameter(brep: &BRep, _tolerance: f64) -> (BRep, usize) {
+pub fn fix_same_parameter(brep: &rcad_kernel::BRep, _tolerance: f64) -> (brep, usize) {
  let mut out = brep.clone();
  let edge_count = out.edges.len();
 
@@ -110,10 +110,10 @@ pub fn fix_same_parameter(brep: &BRep, _tolerance: f64) -> (BRep, usize) {
 /// 2. Flags those edges with `edge_same_parameter = false`.
 /// 3. Calls `fix_same_parameter` to reparameterize their PCurves.
 ///
-/// Returns the repaired BRep and the number of edges repaired.
+/// Returns the repaired brep and the number of edges repaired.
 ///
 /// Analogous to OCCT `BRepLib::SameParameter(shape, enforce=true)`.
-pub fn fix_same_parameter_with_scan(brep: &BRep, tolerance: f64) -> (BRep, usize) {
+pub fn fix_same_parameter_with_scan(brep: &rcad_kernel::BRep, tolerance: f64) -> (brep, usize) {
  let diagnosis = diagnose_same_parameter(brep, tolerance);
  if diagnosis.suspect_edges.is_empty() {
  return (brep.clone(), 0);
@@ -148,8 +148,8 @@ pub fn fix_same_parameter_with_scan(brep: &BRep, tolerance: f64) -> (BRep, usize
 ///
 /// Analogous to OCCT `ShapeUpgrade_RemoveLocations` / `ShapeFix::RemoveSmallEdges`.
 ///
-/// Returns the cleaned BRep and the number of short edges removed.
-pub fn remove_small_edges(brep: &BRep, min_length: f64) -> (BRep, usize) {
+/// Returns the cleaned brep and the number of short edges removed.
+pub fn remove_small_edges(brep: &rcad_kernel::BRep, min_length: f64) -> (brep, usize) {
  let mut out = brep.clone();
  let mut total_removed = 0usize;
 
@@ -264,7 +264,7 @@ pub fn remove_small_edges(brep: &BRep, min_length: f64) -> (BRep, usize) {
 // Tolerance propagation
 // = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
 
-/// Propagation direction for per-entity tolerance in a post-operation BRep.
+/// Propagation direction for per-entity tolerance in a post-operation brep.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToleranceFlowDirection {
  /// Vertex =edge =face (bottom-up, for newly assembled results).
@@ -273,7 +273,7 @@ pub enum ToleranceFlowDirection {
  TopDown,
 }
 
-/// Propagate per-entity tolerances throughout a BRep after a boolean, sew, or
+/// Propagate per-entity tolerances throughout a brep after a boolean, sew, or
 /// import operation.
 ///
 /// Analogous to `BRepLib::UpdateEdgeTol` + `BRepLib::SameParameter` tolerance
@@ -301,10 +301,10 @@ pub enum ToleranceFlowDirection {
 /// (typically `CONFUSION` = TOLERANCE_ABS).
 /// - `direction`: propagation direction.
 pub fn propagate_tolerances(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  tolerance_floor: f64,
  direction: ToleranceFlowDirection,
-) -> BRep {
+) -> rcad_kernel::BRep {
  let floor = tolerance_floor.max(TOLERANCE_ABS);
  let mut out = brep.clone();
 
@@ -422,11 +422,11 @@ pub fn propagate_tolerances(
 /// `seam_edge_indices`: edge indices that are new intersection edges; these
 /// receive `seam_tol` as their initial tolerance before propagation.
 pub fn propagate_tolerances_post_boolean(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  seam_edge_indices: &[usize],
  seam_tol: f64,
  floor: f64,
-) -> BRep {
+) -> rcad_kernel::BRep {
  let floor = floor.max(crate::tolerance::TOLERANCE_ABS);
  let seam_tol = seam_tol.max(floor);
 
@@ -444,7 +444,7 @@ pub fn propagate_tolerances_post_boolean(
  propagate_tolerances(&out, floor, ToleranceFlowDirection::BottomUp)
 }
 
-/// Tolerance statistics for a BRep entity type.
+/// Tolerance statistics for a brep entity type.
 ///
 /// Analogous to `ShapeAnalysis_ShapeTolerance::GetTolerance` in OCCT.
 #[derive(Debug, Clone, Default)]
@@ -485,7 +485,7 @@ impl ToleranceStats {
  }
 }
 
-/// Comprehensive tolerance analysis for a BRep.
+/// Comprehensive tolerance analysis for a brep.
 ///
 /// Provides min/max/avg tolerances for vertices, edges, and faces,
 /// similar to OCCT's ShapeAnalysis_ShapeTolerance analysis mode.
@@ -536,17 +536,17 @@ impl ToleranceAnalysisReport {
  }
 }
 
-/// Analyze tolerances throughout a BRep.
+/// Analyze tolerances throughout a brep.
 ///
 /// Returns statistics for vertex, edge, and face tolerances.
 ///
 /// # Arguments
-/// * `brep` - The BRep to analyze.
+/// * `brep` - The brep to analyze.
 /// * `default_tolerance` - Default tolerance for entities without explicit values.
 ///
 /// # Returns
 /// A `ToleranceAnalysisReport` containing tolerance statistics.
-pub fn analyze_tolerances(brep: &BRep, default_tolerance: f64) -> ToleranceAnalysisReport {
+pub fn analyze_tolerances(brep: &rcad_kernel::BRep, default_tolerance: f64) -> ToleranceAnalysisReport {
  let mut report = ToleranceAnalysisReport::default();
 
  // Collect vertex tolerances
@@ -621,7 +621,7 @@ pub fn analyze_tolerances(brep: &BRep, default_tolerance: f64) -> ToleranceAnaly
 /// This is useful for cleaning up imported models with overly large tolerances.
 ///
 /// Analogous to `ShapeAnalysis_ShapeTolerance::LimitTolerance` in OCCT.
-pub fn limit_tolerances(brep: &BRep, max_tol: f64) -> BRep {
+pub fn limit_tolerances(brep: &rcad_kernel::BRep, max_tol: f64) -> rcad_kernel::BRep {
  let mut result = brep.clone();
 
  // Limit vertex tolerances
@@ -663,7 +663,7 @@ pub fn limit_tolerances(brep: &BRep, max_tol: f64) -> BRep {
 /// OCCT's implementation computes max deviation between edge's 3D curve and
 /// its pcurves at sampled points, then updates the edge tolerance to cover
 /// the deviation. This implementation matches the same sampling strategy.
-pub fn update_edge_tolerance(brep: &mut BRep, edge_idx: usize, tol_floor: f64) -> f64 {
+pub fn update_edge_tolerance(brep: &mut rcad_kernel::BRep, edge_idx: usize, tol_floor: f64) -> f64 {
  let floor = tol_floor.max(TOLERANCE_ABS);
  let n_verts = brep.vertices.len();
  let n_edges = brep.edges.len();
@@ -748,7 +748,7 @@ pub fn update_edge_tolerance(brep: &mut BRep, edge_idx: usize, tol_floor: f64) -
  new_tol
 }
 
-/// Update all edge tolerances in the BRep by computing per-edge geometric
+/// Update all edge tolerances in the brep by computing per-edge geometric
 /// deviation at sampled points.
 ///
 /// Returns the maximum edge tolerance found.
@@ -756,7 +756,7 @@ pub fn update_edge_tolerance(brep: &mut BRep, edge_idx: usize, tol_floor: f64) -
 ///  ?OCCT = : BRepLib.cxx  ?UpdateTolerances (lines 125-195).
 /// OCCT's UpdateTolerances calls UpdateEdgeTolerance for every edge in the
 /// shape, then propagates to faces. This batch version does the same.
-pub fn update_all_edge_tolerances(brep: &mut BRep, tol_floor: f64) -> f64 {
+pub fn update_all_edge_tolerances(brep: &mut rcad_kernel::BRep, tol_floor: f64) -> f64 {
  let floor = tol_floor.max(TOLERANCE_ABS);
  let mut max_tol = floor;
 
@@ -776,7 +776,7 @@ pub fn update_all_edge_tolerances(brep: &mut BRep, tol_floor: f64) -> f64 {
 ///
 ///  ?OCCT = : BRepLib.cxx  ?UpdateTolerances, face propagation step.
 /// OCCT propagates edge tolerance to faces after updating edge tolerances.
-pub fn update_face_tolerance(brep: &mut BRep, flat_face_idx: usize, tol_floor: f64) -> f64 {
+pub fn update_face_tolerance(brep: &mut rcad_kernel::BRep, flat_face_idx: usize, tol_floor: f64) -> f64 {
  let floor = tol_floor.max(TOLERANCE_ABS);
 
  // Find the face by flat index.
@@ -831,10 +831,10 @@ pub fn update_face_tolerance(brep: &mut BRep, flat_face_idx: usize, tol_floor: f
  new_tol
 }
 
-/// Update all face tolerances in the BRep by propagating edge tolerances.
+/// Update all face tolerances in the brep by propagating edge tolerances.
 ///
 ///  ?OCCT = : BRepLib.cxx  ?UpdateTolerances, face propagation step.
-pub fn update_all_face_tolerances(brep: &mut BRep, tol_floor: f64) -> f64 {
+pub fn update_all_face_tolerances(brep: &mut rcad_kernel::BRep, tol_floor: f64) -> f64 {
  let floor = tol_floor.max(TOLERANCE_ABS);
  let mut max_tol = floor;
 
@@ -865,7 +865,7 @@ pub fn update_all_face_tolerances(brep: &mut BRep, tol_floor: f64) -> f64 {
 /// OCCT SameRange checks whether the parametric range of the 3D curve matches
 /// the range of each PCurve, and reparameterizes PCurves when they differ.
 /// This function extends or trims the PCurve range to match the 3D range.
-pub fn ensure_same_range(brep: &mut BRep, edge_idx: usize) -> bool {
+pub fn ensure_same_range(brep: &mut rcad_kernel::BRep, edge_idx: usize) -> bool {
  let n_edges = brep.edges.len();
 
  // Ensure arrays are sized.
@@ -928,12 +928,12 @@ pub fn ensure_same_range(brep: &mut BRep, edge_idx: usize) -> bool {
  changed
 }
 
-/// Ensure SameRange for all edges in the BRep.
+/// Ensure SameRange for all edges in the brep.
 ///
 /// Returns the number of edges whose PCurve ranges were modified.
 ///
 ///  ?OCCT = : BRepLib.cxx  ?SameRange (lines 75-120).
-pub fn ensure_all_same_range(brep: &mut BRep) -> usize {
+pub fn ensure_all_same_range(brep: &mut rcad_kernel::BRep) -> usize {
  let mut count = 0usize;
  for edge_idx in 0..brep.edges.len() {
  if ensure_same_range(brep, edge_idx) {
@@ -943,7 +943,7 @@ pub fn ensure_all_same_range(brep: &mut BRep) -> usize {
  count
 }
 
-/// Ensure that all face normals in the BRep point outward from their solid's
+/// Ensure that all face normals in the brep point outward from their solid's
 /// interior.
 ///
 /// For each solid:
@@ -961,7 +961,7 @@ pub fn ensure_all_same_range(brep: &mut BRep) -> usize {
 /// interior using a centroid-based heuristic: for each face, the normal is
 /// compared to the vector from the solid center to the face center. If
 /// they point in opposite directions, the face is reversed.
-pub fn ensure_normal_consistency(brep: &mut BRep) -> usize {
+pub fn ensure_normal_consistency(brep: &mut rcad_kernel::BRep) -> usize {
  let mut flipped = 0usize;
 
  for si in 0..brep.solids.len() {
@@ -1086,7 +1086,7 @@ pub struct UpdateTolerancesReport {
  pub normals_flipped: usize,
 }
 
-/// Run all BRepLib-aligned tolerance and consistency updates on a BRep:
+/// Run all BRepLib-aligned tolerance and consistency updates on a brep:
 ///
 /// 1. `ensure_all_same_range`  ?align PCurve ranges with 3D curve ranges.
 /// 2. `update_all_edge_tolerances`  ?recompute edge tolerances from geometry.
@@ -1097,7 +1097,7 @@ pub struct UpdateTolerancesReport {
 /// `BRepLib::SameRange` + `BRepLib::EnsureNormalConsistency`.
 ///
 ///  ?OCCT = : BRepLib.cxx  ?combined update entry point.
-pub fn update_tolerances(brep: &mut BRep, tol_floor: f64) -> UpdateTolerancesReport {
+pub fn update_tolerances(brep: &mut rcad_kernel::BRep, tol_floor: f64) -> UpdateTolerancesReport {
  let same_range_fixed = ensure_all_same_range(brep);
  update_all_edge_tolerances(brep, tol_floor);
  let edges_updated = brep.edges.len(); // Count how many had tolerance computed.
@@ -1133,7 +1133,7 @@ pub struct WireGapRepairReport {
 /// the gap. Gaps larger than `max_gap` are left unchanged.
 ///
 /// Analogous to `ShapeFix_Wire::FixGap()` in OCCT.
-pub fn fix_wire_gaps(brep: &BRep, tolerance: f64, max_gap: f64) -> (BRep, WireGapRepairReport) {
+pub fn fix_wire_gaps(brep: &rcad_kernel::BRep, tolerance: f64, max_gap: f64) -> (brep, WireGapRepairReport) {
  let mut report = WireGapRepairReport::default();
 
  // First, collect all gaps that need fixing
@@ -1164,7 +1164,7 @@ struct WireGapInfo {
  gap: f64,
 }
 
-fn collect_wire_gaps(brep: &BRep, tolerance: f64, max_gap: f64) -> Vec<WireGapInfo> {
+fn collect_wire_gaps(brep: &rcad_kernel::BRep, tolerance: f64, max_gap: f64) -> Vec<WireGapInfo> {
  let mut gaps = Vec::new();
 
  for (si, solid) in brep.solids.iter().enumerate() {
@@ -1202,7 +1202,7 @@ fn collect_wire_gaps(brep: &BRep, tolerance: f64, max_gap: f64) -> Vec<WireGapIn
  gaps
 }
 
-fn find_wire_gap(wire: &Wire, brep: &BRep, tolerance: f64, max_gap: f64) -> Option<(usize, f64)> {
+fn find_wire_gap(wire: &Wire, brep: &rcad_kernel::BRep, tolerance: f64, max_gap: f64) -> Option<(usize, f64)> {
  if wire.edges.len() < 2 {
  return None;
  }
@@ -1249,7 +1249,7 @@ pub struct UvBoundsRepairReport {
 /// the canonical range. For bounded surfaces, clamps parameters.
 ///
 /// Analogous to `ShapeFix_Face::FixUVBounds()` in OCCT.
-pub fn fix_uv_bounds_violations(brep: &BRep, tolerance: f64) -> (BRep, UvBoundsRepairReport) {
+pub fn fix_uv_bounds_violations(brep: &rcad_kernel::BRep, tolerance: f64) -> (brep, UvBoundsRepairReport) {
  use crate::brep_check::analyze_surface_uv_consistency;
  use rcad_kernel::geom::Surface3;
 
@@ -1487,12 +1487,12 @@ pub struct EnhancedEdgeSewReport {
 /// increasing tolerance, allowing for robust merging of near-coincident edges.
 ///
 /// # Arguments
-/// * `brep` - The BRep to process.
+/// * `brep` - The brep to process.
 /// * `config` - Configuration for the sewing operation.
 ///
 /// # Returns
-/// A tuple of (modified BRep, report).
-pub fn sew_edges_enhanced(brep: &BRep, config: &EdgeSewConfig) -> (BRep, EnhancedEdgeSewReport) {
+/// A tuple of (modified brep, report).
+pub fn sew_edges_enhanced(brep: &rcad_kernel::BRep, config: &EdgeSewConfig) -> (brep, EnhancedEdgeSewReport) {
  let mut result = brep.clone();
  let mut report = EnhancedEdgeSewReport::default();
 
@@ -1555,7 +1555,7 @@ struct SameCurveMergeReport {
 ///
 /// This is useful for edges that were split during boolean operations
 /// but should logically be merged back together.
-fn merge_same_curve_edges(brep: &BRep, tolerance: f64) -> (BRep, SameCurveMergeReport) {
+fn merge_same_curve_edges(brep: &rcad_kernel::BRep, tolerance: f64) -> (brep, SameCurveMergeReport) {
  let result = brep.clone();
  let mut report = SameCurveMergeReport::default();
 
@@ -1752,7 +1752,7 @@ pub fn detect_periodic_surface_info(surface: &Surface3) -> PeriodicSurfaceInfo {
 /// Information about an edge crossing a periodic seam.
 #[derive(Debug, Clone)]
 pub struct SeamEdgeInfo {
- /// Edge index in the BRep.
+ /// Edge index in the brep.
  pub edge_idx: usize,
  /// Surface index where the seam was detected.
  pub surface_idx: usize,
@@ -1801,7 +1801,7 @@ impl Default for PeriodicSeamConfig {
 ///
 /// This function examines all edges on periodic surfaces and identifies
 /// those whose UV parameterization crosses the seam boundary.
-pub fn detect_seam_edges(brep: &BRep, config: &PeriodicSeamConfig) -> Vec<SeamEdgeInfo> {
+pub fn detect_seam_edges(brep: &rcad_kernel::BRep, config: &PeriodicSeamConfig) -> Vec<SeamEdgeInfo> {
  let mut seam_edges = Vec::new();
 
  // Iterate through all faces
@@ -1993,10 +1993,10 @@ fn detect_curve2d_seam_crossing(
 /// This function creates a new vertex at the seam crossing point and
 /// splits the edge into two edges.
 pub fn split_edge_at_seam(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  seam_info: &SeamEdgeInfo,
  _tolerance: f64,
-) -> (BRep, bool) {
+) -> (brep, bool) {
  let mut result = brep.clone();
  let mut split_performed = false;
 

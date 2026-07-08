@@ -1,6 +1,6 @@
 
 /// Compute the flat face index from solid/shell/face indices.
-fn compute_flat_face_idx(brep: &BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> usize {
+fn compute_flat_face_idx(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> usize {
     let mut idx = 0usize;
     for s in 0..solid_idx {
         for sh in &brep.solids[s].shells {
@@ -105,7 +105,7 @@ pub fn check_face_uv_consistency(
     solid_idx: usize,
     shell_idx: usize,
     face_idx: usize,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     tolerance: f64,
 ) -> UVConsistencyReport {
     let mut report = UVConsistencyReport::default();
@@ -296,7 +296,7 @@ pub fn check_face_uv_consistency(
 fn check_seam_edge_consistency(
     _edge_idx: usize,
     pcurves: &[&PCurve],
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     surface: &Surface3,
     tolerance: f64,
 ) -> bool {
@@ -441,7 +441,7 @@ pub fn analyze_surface_continuity(
     solid_idx: usize,
     face1_idx: usize,
     face2_idx: usize,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     tolerance: f64,
 ) -> ContinuityReport {
     let mut report = ContinuityReport::default();
@@ -543,7 +543,7 @@ fn analyze_edge_continuity(
     surface2: &Surface3,
     face1: &Face,
     face2: &Face,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     tolerance: f64,
     report: &mut ContinuityReport,
 ) -> GeometricContinuity {
@@ -667,7 +667,7 @@ fn compute_normal_at_edge_point(
     p3d: DVec3,
     surface: &Surface3,
     _edge_idx: usize,
-    _brep: &BRep,
+    _brep: &rcad_kernel::BRep,
     _forward: Option<bool>,
 ) -> Option<DVec3> {
     // For analytical surfaces, project the point and compute normal
@@ -844,7 +844,7 @@ pub fn analyze_isoparametric_curves(
     solid_idx: usize,
     shell_idx: usize,
     face_idx: usize,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     tolerance: f64,
 ) -> IsoCurveReport {
     let mut report = IsoCurveReport::default();
@@ -941,7 +941,7 @@ fn get_face_uv_bounds(
     solid_idx: usize,
     shell_idx: usize,
     face_idx: usize,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     surface_idx: usize,
 ) -> Option<(f64, f64, f64, f64)> {
     let solid = brep.solids.get(solid_idx)?;
@@ -1317,7 +1317,7 @@ pub fn detect_uv_gaps(
     solid_idx: usize,
     shell_idx: usize,
     face_idx: usize,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     tolerance: f64,
 ) -> UvGapDetectionReport {
     let mut report = UvGapDetectionReport::default();
@@ -1690,7 +1690,7 @@ pub fn detect_uv_overlaps(
     solid_idx: usize,
     shell_idx: usize,
     face_idx: usize,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     tolerance: f64,
 ) -> UvOverlapDetectionReport {
     let mut report = UvOverlapDetectionReport::default();

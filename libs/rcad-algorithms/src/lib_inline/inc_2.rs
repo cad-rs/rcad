@@ -1,12 +1,12 @@
 /// Like [`boolean_op`] — standard path with tolerance correction.
 ///
 /// Calls [`boolean_op`] internally, then runs OCCT-aligned tolerance correction
-/// on the result before wrapping it as old BRep for backward compatibility.
+/// on the result before wrapping it as old rcad_kernel::BRep for backward compatibility.
 pub fn boolean_op_with_retry(
  op: BooleanOpType,
- a: &BRep,
- b: &BRep,
-) -> Result<BRep, BooleanError> {
+ a: &rcad_kernel::BRep,
+ b: &rcad_kernel::BRep,
+) -> Result<rcad_kernel::BRep, BooleanError> {
  let mut t = boolean_op(op, a, b)?;
  rcad_kernel::tolerance::correct_tolerances_topods(&mut t, 23, 0.05);
  rcad_kernel::tolerance::correct_shape_tolerances_topods(&mut t);
@@ -16,10 +16,10 @@ pub fn boolean_op_with_retry(
 /// Perform a boolean operation with advanced execution options and report.
 pub fn boolean_op_with_options(
  op: BooleanOpType,
- a: &BRep,
- b: &BRep,
+ a: &rcad_kernel::BRep,
+ b: &rcad_kernel::BRep,
  mut options: BooleanOptions,
-) -> Result<(BRep, BooleanExecutionReport), BooleanError> {
+) -> Result<(rcad_kernel::BRep, BooleanExecutionReport), BooleanError> {
  merge_pairwise_model_tol_into_boolean_options(&mut options, a, b);
 
  let input_faces_a = face_count_of(a);
@@ -222,10 +222,10 @@ pub fn boolean_op_with_options(
 /// [`BooleanExecutionReport`].
 pub fn boolean_op_robust(
  op: BooleanOpType,
- a: &BRep,
- b: &BRep,
+ a: &rcad_kernel::BRep,
+ b: &rcad_kernel::BRep,
  options: BooleanRobustOptions,
-) -> Result<(BRep, BooleanExecutionReport), BooleanError> {
+) -> Result<(rcad_kernel::BRep, BooleanExecutionReport), BooleanError> {
  const MAX_RETRY_ESCALATION_ROUNDS: usize = 2;
 
  let mut pending = std::collections::VecDeque::new();
@@ -383,16 +383,16 @@ pub fn boolean_op_robust(
  Err(last_err.unwrap_or(BooleanError::DegenerateResult))
 }
 
-/// Run post-operation simplification passes on a BRep.
+/// Run post-operation simplification passes on a rcad_kernel::BRep.
 pub fn simplify_brep_post_ops(brep: &topods::BRep, options: SimplifyOptions) -> (topods::BRep, SimplifyReport) {
  let old = rcad_kernel::BRep::from_topods_with_location(brep, glam::DAffine3::IDENTITY);
  let (result, report) = simplify_brep_post_ops_old(&old, options);
  (result.to_topods(), report)
 }
 
-/// Legacy: takes old BRep.
-fn simplify_brep_post_ops_old(brep: &BRep, options: SimplifyOptions) -> (BRep, SimplifyReport) {
- fn closure_score(brep: &BRep) -> usize {
+/// Legacy: takes old rcad_kernel::BRep.
+fn simplify_brep_post_ops_old(brep: &rcad_kernel::BRep, options: SimplifyOptions) -> (rcad_kernel::BRep, SimplifyReport) {
+ fn closure_score(brep: &rcad_kernel::BRep) -> usize {
  let report = crate::brep_check::validate_solid_closure(brep);
  report
  .issues
@@ -517,10 +517,10 @@ fn simplify_brep_post_ops_old(brep: &BRep, options: SimplifyOptions) -> (BRep, S
 /// vertices and edges, ensuring clean topological connectivity.
 pub fn boolean_op_simplified(
  op: BooleanOpType,
- a: &BRep,
- b: &BRep,
+ a: &rcad_kernel::BRep,
+ b: &rcad_kernel::BRep,
  options: SimplifyOptions,
-) -> Result<(BRep, SimplifyReport), BooleanError> {
+) -> Result<(rcad_kernel::BRep, SimplifyReport), BooleanError> {
  let t = boolean_op_topods_simplified(op, a, b, options)?;
  Ok((rcad_kernel::BRep::from_topods(&t.0), t.1))
 }
@@ -528,8 +528,8 @@ pub fn boolean_op_simplified(
 /// Same as boolean_op_simplified but returns topods::BRep.
 pub fn boolean_op_topods_simplified(
  op: BooleanOpType,
- a: &BRep,
- b: &BRep,
+ a: &rcad_kernel::BRep,
+ b: &rcad_kernel::BRep,
  options: SimplifyOptions,
 ) -> Result<(topods::BRep, SimplifyReport), BooleanError> {
  let raw = boolean_op(op, a, b)?;
@@ -547,16 +547,16 @@ pub fn boolean_op_topods_simplified(
 /// This is a first-stage splitter built on top of [`imprint_shape`]. It keeps
 /// target material and iteratively imprints tool boundaries onto the evolving
 /// target shape.
-pub fn split_shape(target: &BRep, tools: &[BRep]) -> (BRep, SplitterReport) {
+pub fn split_shape(target: &rcad_kernel::BRep, tools: &[rcad_kernel::BRep]) -> (rcad_kernel::BRep, SplitterReport) {
  split_shape_with_options(target, tools, SplitterOptions::default())
 }
 
 /// Like [`split_shape`] with advanced options.
 pub fn split_shape_with_options(
- target: &BRep,
- tools: &[BRep],
+ target: &rcad_kernel::BRep,
+ tools: &[rcad_kernel::BRep],
  options: SplitterOptions,
-) -> (BRep, SplitterReport) {
+) -> (rcad_kernel::BRep, SplitterReport) {
  let (result, report) = split_brep_internal_with_partial_report(target, tools, options, false);
  match result {
  Ok(brep) => (brep, report),
@@ -570,20 +570,20 @@ pub fn split_shape_with_options(
 /// validity issues, excluding `NonManifoldEdge` (which can be expected for
 /// split-first intermediate topology).
 pub fn split_shape_checked_with_options(
- target: &BRep,
- tools: &[BRep],
+ target: &rcad_kernel::BRep,
+ tools: &[rcad_kernel::BRep],
  options: SplitterOptions,
-) -> Result<(BRep, SplitterReport), SplitterError> {
+) -> Result<(rcad_kernel::BRep, SplitterReport), SplitterError> {
  let (result, report) = split_brep_internal_with_partial_report(target, tools, options, true);
  result.map(|brep| (brep, report))
 }
 
 fn split_brep_internal_with_partial_report(
- target: &BRep,
- tools: &[BRep],
+ target: &rcad_kernel::BRep,
+ tools: &[rcad_kernel::BRep],
  options: SplitterOptions,
  validate_each_step: bool,
-) -> (Result<BRep, SplitterError>, SplitterReport) {
+) -> (Result<rcad_kernel::BRep, SplitterError>, SplitterReport) {
  let mut acc = target.clone();
  let mut report = SplitterReport::default();
 
@@ -624,7 +624,7 @@ fn split_brep_internal_with_partial_report(
  step.brep = healed;
  }
 
- // Convert back to old BRep for downstream functions not yet converted
+ // Convert back to old rcad_kernel::BRep for downstream functions not yet converted
  let step_old = rcad_kernel::BRep::from_topods(&step.brep);
 
  let mut validation_issue_count = None;
@@ -676,7 +676,7 @@ fn split_brep_internal_with_partial_report(
  (Ok(acc), report)
 }
 
-fn brep_bounds(brep: &BRep) -> Option<(glam::DVec3, glam::DVec3)> {
+fn brep_bounds(brep: &rcad_kernel::BRep) -> Option<(glam::DVec3, glam::DVec3)> {
  let mut it = brep.vertices.iter();
  let first = it.next()?.point;
  let mut min = first;
@@ -718,7 +718,7 @@ fn aabb_distance(
  (dx * dx + dy * dy + dz * dz).sqrt()
 }
 
-fn breps_farther_than_tolerance(a: &BRep, b: &BRep, tol: f64) -> bool {
+fn breps_farther_than_tolerance(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep, tol: f64) -> bool {
  let Some((min_a, max_a)) = brep_bounds(a) else {
  return false;
  };
@@ -749,18 +749,18 @@ fn splitter_issues_by_level(
 /// boolean kernels: every input object is split against all tools, and results
 /// are returned in object order.
 pub fn split_objects_with_tools(
- objects: &[BRep],
- tools: &[BRep],
-) -> (Vec<BRep>, SplitterObjectsReport) {
+ objects: &[rcad_kernel::BRep],
+ tools: &[rcad_kernel::BRep],
+) -> (Vec<rcad_kernel::BRep>, SplitterObjectsReport) {
  split_objects_with_tools_options(objects, tools, SplitterOptions::default())
 }
 
 /// Like [`split_objects_with_tools`] but with advanced options.
 pub fn split_objects_with_tools_options(
- objects: &[BRep],
- tools: &[BRep],
+ objects: &[rcad_kernel::BRep],
+ tools: &[rcad_kernel::BRep],
  options: SplitterOptions,
-) -> (Vec<BRep>, SplitterObjectsReport) {
+) -> (Vec<rcad_kernel::BRep>, SplitterObjectsReport) {
  let mut outputs = Vec::with_capacity(objects.len());
  let mut objects_report = Vec::with_capacity(objects.len());
 
@@ -788,10 +788,10 @@ pub fn split_objects_with_tools_options(
 ///
 /// Validates each split step for each object and returns the first error.
 pub fn split_objects_with_tools_checked_options(
- objects: &[BRep],
- tools: &[BRep],
+ objects: &[rcad_kernel::BRep],
+ tools: &[rcad_kernel::BRep],
  options: SplitterOptions,
-) -> Result<(Vec<BRep>, SplitterObjectsReport), SplitterError> {
+) -> Result<(Vec<rcad_kernel::BRep>, SplitterObjectsReport), SplitterError> {
  let mut outputs = Vec::with_capacity(objects.len());
  let mut objects_report = Vec::with_capacity(objects.len());
 
@@ -821,10 +821,10 @@ pub fn split_objects_with_tools_checked_options(
 /// fail fast. It records per-object errors in the returned report and keeps
 /// processing remaining objects.
 pub fn split_objects_with_tools_checked_collect_options(
- objects: &[BRep],
- tools: &[BRep],
+ objects: &[rcad_kernel::BRep],
+ tools: &[rcad_kernel::BRep],
  options: SplitterOptions,
-) -> (Vec<Option<BRep>>, SplitterObjectsReport) {
+) -> (Vec<Option<rcad_kernel::BRep>>, SplitterObjectsReport) {
  let mut outputs = Vec::with_capacity(objects.len());
  let mut objects_report = Vec::with_capacity(objects.len());
 
@@ -867,9 +867,9 @@ pub fn split_objects_with_tools_checked_collect_options(
 /// face back to its source in solid A or B.
 pub fn boolean_op_with_history(
  op: BooleanOpType,
- a: &BRep,
- b: &BRep,
-) -> Result<(BRep, BooleanHistory), BooleanError> {
+ a: &rcad_kernel::BRep,
+ b: &rcad_kernel::BRep,
+) -> Result<(rcad_kernel::BRep, BooleanHistory), BooleanError> {
  if matches!(op, BooleanOpType::Union) {
  let a_t = a.to_topods();
  let b_t = b.to_topods();
@@ -908,8 +908,8 @@ pub fn boolean_op_with_history(
 
 pub fn boolean_op_par(
  op: BooleanOpType,
- a: &BRep,
- b: &BRep,
+ a: &rcad_kernel::BRep,
+ b: &rcad_kernel::BRep,
 ) -> Result<(rcad_kernel::BRep, BooleanHistory), BooleanError> {
  if matches!(op, BooleanOpType::Union) {
  let a_t = a.to_topods();
@@ -946,15 +946,15 @@ pub fn boolean_op_par(
  Ok((rcad_kernel::BRep::from_topods(&t), history))
 }
 
-/// Check if any solid in the BRep has at least one face (deep check across all solids).
-fn has_any_face(brep: &BRep) -> bool {
+/// Check if any solid in the rcad_kernel::BRep has at least one face (deep check across all solids).
+fn has_any_face(brep: &rcad_kernel::BRep) -> bool {
  brep.solids
  .iter()
  .any(|s| s.shells.iter().any(|sh| !sh.faces.is_empty()))
 }
 
 /// Build BVHs for both BReps if they have faces; returns None for empty BReps.
-fn build_optional_bvhs(a: &BRep, b: &BRep) -> (Option<bvh::Bvh>, Option<bvh::Bvh>) {
+fn build_optional_bvhs(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> (Option<bvh::Bvh>, Option<bvh::Bvh>) {
  let has_faces_a = a
  .solids
  .first()
@@ -979,14 +979,14 @@ fn build_optional_bvhs(a: &BRep, b: &BRep) -> (Option<bvh::Bvh>, Option<bvh::Bvh
  )
 }
 
-fn has_faces(brep: &BRep) -> bool {
+fn has_faces(brep: &rcad_kernel::BRep) -> bool {
  brep.solids
  .first()
  .and_then(|s| s.shells.first())
  .is_some_and(|sh| !sh.faces.is_empty())
 }
 
-fn make_connected_seed_vertices_from_short_edges(brep: &BRep, seed_length: f64) -> Vec<usize> {
+fn make_connected_seed_vertices_from_short_edges(brep: &rcad_kernel::BRep, seed_length: f64) -> Vec<usize> {
  let mut out = std::collections::BTreeSet::new();
  let threshold = seed_length.max(tolerance::TOLERANCE_ABS);
  for e in &brep.edges {
@@ -1003,7 +1003,7 @@ fn make_connected_seed_vertices_from_short_edges(brep: &BRep, seed_length: f64) 
  out.into_iter().collect()
 }
 
-fn make_connected_seed_vertices_from_near_duplicates(brep: &BRep, seed_length: f64) -> Vec<usize> {
+fn make_connected_seed_vertices_from_near_duplicates(brep: &rcad_kernel::BRep, seed_length: f64) -> Vec<usize> {
  let mut out = std::collections::BTreeSet::new();
  let threshold = seed_length.max(tolerance::TOLERANCE_ABS);
  let threshold2 = threshold * threshold;
@@ -1020,7 +1020,7 @@ fn make_connected_seed_vertices_from_near_duplicates(brep: &BRep, seed_length: f
 }
 
 fn make_connected_seed_vertices_from_tolerance_tagged_edges(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  tolerance_threshold: f64,
 ) -> Vec<usize> {
  let mut out = std::collections::BTreeSet::new();
@@ -1040,7 +1040,7 @@ fn make_connected_seed_vertices_from_tolerance_tagged_edges(
  out.into_iter().collect()
 }
 
-fn make_connected_seed_vertices_from_multi_pcurve_edges(brep: &BRep) -> Vec<usize> {
+fn make_connected_seed_vertices_from_multi_pcurve_edges(brep: &rcad_kernel::BRep) -> Vec<usize> {
  let mut out = std::collections::BTreeSet::new();
  for (ei, e) in brep.edges.iter().enumerate() {
  if brep
@@ -1057,7 +1057,7 @@ fn make_connected_seed_vertices_from_multi_pcurve_edges(brep: &BRep) -> Vec<usiz
  out.into_iter().collect()
 }
 
-fn make_connected_seed_vertices_from_topology_seam_candidates(brep: &BRep) -> Vec<usize> {
+fn make_connected_seed_vertices_from_topology_seam_candidates(brep: &rcad_kernel::BRep) -> Vec<usize> {
  let mut out = std::collections::BTreeSet::new();
  for ei in rcad_kernel::periodic_seam_edge_indices(brep) {
  if let Some(e) = brep.edges.get(ei) {
@@ -1068,7 +1068,7 @@ fn make_connected_seed_vertices_from_topology_seam_candidates(brep: &BRep) -> Ve
  out.into_iter().collect()
 }
 
-fn make_connected_seed_edges_from_short_edges(brep: &BRep, seed_length: f64) -> Vec<usize> {
+fn make_connected_seed_edges_from_short_edges(brep: &rcad_kernel::BRep, seed_length: f64) -> Vec<usize> {
  let mut out = Vec::new();
  let threshold = seed_length.max(tolerance::TOLERANCE_ABS);
  for (ei, e) in brep.edges.iter().enumerate() {
@@ -1084,7 +1084,7 @@ fn make_connected_seed_edges_from_short_edges(brep: &BRep, seed_length: f64) -> 
  out
 }
 
-fn make_connected_seed_edges_from_near_duplicates(brep: &BRep, seed_length: f64) -> Vec<usize> {
+fn make_connected_seed_edges_from_near_duplicates(brep: &rcad_kernel::BRep, seed_length: f64) -> Vec<usize> {
  let dup_vertices: std::collections::HashSet<usize> =
  make_connected_seed_vertices_from_near_duplicates(brep, seed_length)
  .into_iter()
@@ -1098,7 +1098,7 @@ fn make_connected_seed_edges_from_near_duplicates(brep: &BRep, seed_length: f64)
 }
 
 fn make_connected_seed_edges_from_tolerance_tagged_edges(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  tolerance_threshold: f64,
 ) -> Vec<usize> {
  let threshold = tolerance_threshold.max(tolerance::TOLERANCE_ABS);
@@ -1117,7 +1117,7 @@ fn make_connected_seed_edges_from_tolerance_tagged_edges(
  .collect()
 }
 
-fn make_connected_seed_edges_from_multi_pcurve_edges(brep: &BRep) -> Vec<usize> {
+fn make_connected_seed_edges_from_multi_pcurve_edges(brep: &rcad_kernel::BRep) -> Vec<usize> {
  brep.edges
  .iter()
  .enumerate()
@@ -1132,12 +1132,12 @@ fn make_connected_seed_edges_from_multi_pcurve_edges(brep: &BRep) -> Vec<usize> 
  .collect()
 }
 
-fn make_connected_seed_edges_from_topology_seam_candidates(brep: &BRep) -> Vec<usize> {
+fn make_connected_seed_edges_from_topology_seam_candidates(brep: &rcad_kernel::BRep) -> Vec<usize> {
  rcad_kernel::periodic_seam_edge_indices(brep)
 }
 
 fn make_connected_seed_edges(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  seed_length: f64,
  mode: MakeConnectedScopeSeedMode,
 ) -> Vec<usize> {
@@ -1179,7 +1179,7 @@ fn make_connected_seed_edges(
  }
 }
 
-fn make_connected_seed_vertices_from_edge_ids(brep: &BRep, edge_ids: &[usize]) -> Vec<usize> {
+fn make_connected_seed_vertices_from_edge_ids(brep: &rcad_kernel::BRep, edge_ids: &[usize]) -> Vec<usize> {
  let mut set = std::collections::BTreeSet::new();
  for &ei in edge_ids {
  if let Some(e) = brep.edges.get(ei) {
@@ -1191,7 +1191,7 @@ fn make_connected_seed_vertices_from_edge_ids(brep: &BRep, edge_ids: &[usize]) -
 }
 
 fn select_scoped_seed_edges(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  history: Option<&BooleanHistory>,
  seed_length: f64,
  mode: MakeConnectedScopeSeedMode,
@@ -1241,7 +1241,7 @@ fn select_scoped_seed_edges(
 }
 
 fn expand_seed_edges_with_ring_depth(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  seed_edges: &[usize],
  ring_depth: usize,
 ) -> Vec<usize> {
@@ -1283,7 +1283,7 @@ fn expand_seed_edges_with_ring_depth(
 }
 
 fn make_connected_seed_edges_from_boolean_history(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  history: &BooleanHistory,
 ) -> Vec<usize> {
  let mut seed_edges = std::collections::BTreeSet::new();
@@ -1329,7 +1329,7 @@ fn make_connected_seed_edges_from_boolean_history(
  seed_edges.into_iter().collect()
 }
 
-fn make_connected_seed_edge_labels(brep: &BRep, edge_ids: &[usize]) -> Vec<String> {
+fn make_connected_seed_edge_labels(brep: &rcad_kernel::BRep, edge_ids: &[usize]) -> Vec<String> {
  edge_ids
  .iter()
  .map(|&ei| match brep.edges.get(ei) {
@@ -1355,7 +1355,7 @@ fn make_connected_seed_edge_labels(brep: &BRep, edge_ids: &[usize]) -> Vec<Strin
 }
 
 fn make_connected_seed_vertices(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  seed_length: f64,
  mode: MakeConnectedScopeSeedMode,
 ) -> Vec<usize> {
@@ -1458,29 +1458,29 @@ pub fn persistent_solid_labels_from_history(history: &BooleanHistory) -> Vec<Str
 }
 
 /// Union two BReps and return both the result and face origin history.
-pub fn union_with_history(a: &BRep, b: &BRep) -> Result<(BRep, BooleanHistory), BooleanError> {
+pub fn union_with_history(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<(rcad_kernel::BRep, BooleanHistory), BooleanError> {
  boolean_op_with_history(BooleanOpType::Union, a, b)
 }
 
 /// Intersect two BReps and return both the result and face origin history.
 pub fn intersection_with_history(
- a: &BRep,
- b: &BRep,
-) -> Result<(BRep, BooleanHistory), BooleanError> {
+ a: &rcad_kernel::BRep,
+ b: &rcad_kernel::BRep,
+) -> Result<(rcad_kernel::BRep, BooleanHistory), BooleanError> {
  boolean_op_with_history(BooleanOpType::Intersection, a, b)
 }
 
 /// Subtract solid B from solid A and return both the result and face origin history.
-pub fn difference_with_history(a: &BRep, b: &BRep) -> Result<(BRep, BooleanHistory), BooleanError> {
+pub fn difference_with_history(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<(rcad_kernel::BRep, BooleanHistory), BooleanError> {
  boolean_op_with_history(BooleanOpType::Difference, a, b)
 }
 
 /// Run boolean operation followed by structured healing using default options.
 pub fn boolean_op_healed(
  op: BooleanOpType,
- a: &BRep,
- b: &BRep,
-) -> Result<(BRep, HealingReport), BooleanError> {
+ a: &rcad_kernel::BRep,
+ b: &rcad_kernel::BRep,
+) -> Result<(rcad_kernel::BRep, HealingReport), BooleanError> {
  let raw = boolean_op(op, a, b)?;
  let mut healing = HealingOptions::default();
  align_healing_options_with_boolean_operands(&mut healing, a, b, 0.0);
@@ -1491,10 +1491,10 @@ pub fn boolean_op_healed(
 /// Run boolean operation followed by structured healing using custom options.
 pub fn boolean_op_healed_with_options(
  op: BooleanOpType,
- a: &BRep,
- b: &BRep,
+ a: &rcad_kernel::BRep,
+ b: &rcad_kernel::BRep,
  mut options: HealingOptions,
-) -> Result<(BRep, HealingReport), BooleanError> {
+) -> Result<(rcad_kernel::BRep, HealingReport), BooleanError> {
  let raw = boolean_op(op, a, b)?;
  align_healing_options_with_boolean_operands(&mut options, a, b, 0.0);
  let (healed, report) = analyze_and_heal(&raw, options);
@@ -1506,6 +1506,6 @@ pub fn boolean_op_healed_with_options(
 /// Delegates to [`general_fuse_with_options`] with [`BooleanOptions::default`]. Each fold step
 /// uses [`boolean_op_with_options`], so pairwise [`merge_pairwise_model_tol_into_boolean_options`]
 /// runs on every `(accumulator, part)` pair.
-pub fn general_fuse(parts: &[BRep]) -> Result<BRep, BooleanError> {
+pub fn general_fuse(parts: &[rcad_kernel::BRep]) -> Result<rcad_kernel::BRep, BooleanError> {
  general_fuse_with_options(parts, BooleanOptions::default())
 }

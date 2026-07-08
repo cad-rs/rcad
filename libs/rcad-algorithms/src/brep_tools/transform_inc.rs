@@ -23,7 +23,7 @@
 /// // The box is now centered at (5.5, 0.5, 0.5)
 /// assert!((brep.vertices[0].point.x - 5.0).abs() < TOLERANCE_COORD_SUB);
 /// ```
-pub fn transform_shape(brep: &mut BRep, transform: DAffine3) {
+pub fn transform_shape(brep: &mut rcad_kernel::BRep, transform: DAffine3) {
     brep.apply_transform(transform);
 }
 
@@ -49,7 +49,7 @@ pub fn transform_shape(brep: &mut BRep, transform: DAffine3) {
 /// mirror_shape(&mut brep, DVec3::ZERO, DVec3::X);
 /// // The box is now in the negative X half-space
 /// ```
-pub fn mirror_shape(brep: &mut BRep, plane_origin: DVec3, plane_normal: DVec3) {
+pub fn mirror_shape(brep: &mut rcad_kernel::BRep, plane_origin: DVec3, plane_normal: DVec3) {
     let normal = plane_normal.normalize_or(DVec3::X);
 
     // Reflection matrix: R = I - 2 * n * n^T
@@ -99,7 +99,7 @@ pub fn mirror_shape(brep: &mut BRep, plane_origin: DVec3, plane_normal: DVec3) {
 /// scale_shape(&mut brep, 2.0, DVec3::ZERO);
 /// // The box is now 2x2x2
 /// ```
-pub fn scale_shape(brep: &mut BRep, factor: f64, center: DVec3) {
+pub fn scale_shape(brep: &mut rcad_kernel::BRep, factor: f64, center: DVec3) {
     let _transform = DAffine3::from_scale(glam::DVec3::splat(factor))
         * DAffine3::from_translation(-center)
         * DAffine3::from_translation(center);
@@ -136,7 +136,7 @@ pub fn scale_shape(brep: &mut BRep, factor: f64, center: DVec3) {
 /// // Rotate 90 degrees about the Z axis
 /// rotate_shape(&mut brep, DVec3::ZERO, DVec3::Z, PI / 2.0);
 /// ```
-pub fn rotate_shape(brep: &mut BRep, axis_origin: DVec3, axis_direction: DVec3, angle: f64) {
+pub fn rotate_shape(brep: &mut rcad_kernel::BRep, axis_origin: DVec3, axis_direction: DVec3, angle: f64) {
     let axis = axis_direction.normalize_or(DVec3::Z);
 
     // Rotation about an arbitrary axis through a point:

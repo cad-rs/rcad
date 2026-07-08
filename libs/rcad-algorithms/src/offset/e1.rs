@@ -786,7 +786,7 @@ struct EdgeInfo {
 /// For boundary edges, we use the offset vertex positions (which account for
 /// all adjacent faces' offset surfaces, e.g., caps trimming a cylinder seam).
 fn offset_edge(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_idx: usize,
  raw_face_indices: &[usize],
  distance: f64,
@@ -930,7 +930,7 @@ fn offset_edge(
 ///
 /// Projects the vertex point onto the surface to get accurate UV parameters,
 /// then evaluates the surface normal at that UV.
-fn compute_vertex_normal_on_face(brep: &BRep, vertex_idx: usize, face_idx: usize) -> DVec3 {
+fn compute_vertex_normal_on_face(brep: &rcad_kernel::BRep, vertex_idx: usize, face_idx: usize) -> DVec3 {
  let shell = match brep.solids.first().and_then(|s| s.shells.first()) {
  Some(s) => s,
  None => return DVec3::Z,
@@ -972,7 +972,7 @@ fn compute_vertex_normal_on_face(brep: &BRep, vertex_idx: usize, face_idx: usize
 /// intersection of the offset surfaces.
 fn offset_vertex_curved_plane(
  original_point: DVec3,
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  curved_face_idx: usize,
  plane_face_indices: &[usize],
  distance: f64,
@@ -1055,7 +1055,7 @@ fn offset_vertex_curved_plane(
 /// and adjacent to planar faces, computes the intersection of the offset surfaces.
 /// Otherwise, falls back to translating the original vertex along the average
 /// face normal (a smooth-surface approximation).
-fn offset_vertex(brep: &BRep, vertex_idx: usize, distance: f64, shell: &Shell, exclude_faces: Option<&HashSet<usize>>) -> DVec3 {
+fn offset_vertex(brep: &rcad_kernel::BRep, vertex_idx: usize, distance: f64, shell: &Shell, exclude_faces: Option<&HashSet<usize>>) -> DVec3 {
  let pt = brep.vertices[vertex_idx].point;
  let mut faces: Vec<usize> = Vec::new();
  let mut normal_sum = DVec3::ZERO;
@@ -1097,7 +1097,7 @@ fn offset_vertex(brep: &BRep, vertex_idx: usize, distance: f64, shell: &Shell, e
 /// For planar faces, the surface normal from the plane equation is geometrically
 /// authoritative, while the precomputed face normal may be inconsistent
 /// (e.g., inward-facing due to shape-creation artifacts in extrude_polygon_solid).
-fn get_face_offset_normal(brep: &BRep, fi: usize, shell: &Shell) -> DVec3 {
+fn get_face_offset_normal(brep: &rcad_kernel::BRep, fi: usize, shell: &Shell) -> DVec3 {
  // Prefer surface normal for planar faces — it's geometrically correct.
  if let Some(si) = brep.geom.face_surface.get(fi).and_then(|s| *s) {
  if let Some(Surface3::Plane(p)) = brep.geom.surfaces.get(si) {
@@ -1109,7 +1109,7 @@ fn get_face_offset_normal(brep: &BRep, fi: usize, shell: &Shell) -> DVec3 {
 }
 
 fn offset_vertex_from_faces(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  original_point: DVec3,
  face_indices: &[usize],
  normal_sum: DVec3,
@@ -1332,14 +1332,14 @@ fn compute_vertex_from_edge_constraints(
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 
 /// Helper to add a vertex to a BRep and return its index.
-fn add_vertex(brep: &mut BRep, point: DVec3) -> usize {
+fn add_vertex(brep: &mut rcad_kernel::BRep, point: DVec3) -> usize {
  let idx = brep.vertices.len();
  brep.vertices.push(Vertex { point });
  idx
 }
 
 /// Helper to add an edge to a BRep and return its index.
-fn add_edge(brep: &mut BRep, curve: Curve3, t0: f64, t1: f64, v0: usize, v1: usize) -> usize {
+fn add_edge(brep: &mut rcad_kernel::BRep, curve: Curve3, t0: f64, t1: f64, v0: usize, v1: usize) -> usize {
  let idx = brep.edges.len();
  brep.edges.push(Edge { start: v0, end: v1 });
 
@@ -1362,7 +1362,7 @@ fn add_edge(brep: &mut BRep, curve: Curve3, t0: f64, t1: f64, v0: usize, v1: usi
 }
 
 /// Helper to add a face to a BRep and return its index.
-fn add_face(brep: &mut BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -> usize {
+fn add_face(brep: &mut rcad_kernel::BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -> usize {
  if brep.solids.is_empty() {
  brep.solids.push(Solid {
  shells: vec![Shell { faces: Vec::new() }],
@@ -1407,7 +1407,7 @@ fn add_face(brep: &mut BRep, surface: Surface3, outer: Wire, inner: Vec<Wire>) -
 /// - Its signed area (Newell's method) is below the tolerance threshold
 ///
 /// Returns the number of faces removed.
-fn remove_degenerate_faces(brep: &mut BRep) -> usize {
+fn remove_degenerate_faces(brep: &mut rcad_kernel::BRep) -> usize {
  let shell = match brep.solids.first_mut().and_then(|s| s.shells.first_mut()) {
  Some(s) => s,
  None => return 0,
@@ -1500,8 +1500,8 @@ fn chain_boundary_edges(edge_indices: &[usize], edges: &[Edge]) -> Vec<Vec<usize
 /// Crossed faces are removed and the resulting holes are filled with new planar
 /// faces on best-fit planes through each hole's boundary vertices.
 fn fix_crossed_faces(
- result: &mut BRep,
- original_brep: &BRep,
+ result: &mut rcad_kernel::BRep,
+ original_brep: &rcad_kernel::BRep,
  original_shell: &Shell,
  distance: f64,
 ) -> usize {
@@ -1692,7 +1692,7 @@ fn fix_crossed_faces(
 ///
 /// Computes the minimum distance between non-adjacent face centroids.
 /// If the offset distance exceeds half this distance, self-intersection is likely.
-pub fn detect_self_intersection(brep: &BRep, distance: f64) -> bool {
+pub fn detect_self_intersection(brep: &rcad_kernel::BRep, distance: f64) -> bool {
  let result = detect_self_intersection_detailed(brep, distance);
  result.has_intersection
 }

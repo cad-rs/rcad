@@ -1,4 +1,4 @@
-﻿fn compute_planar_section_properties(polylines: &[Vec<DVec3>], plane: &Plane) -> Option<SectionProperties> {
+fn compute_planar_section_properties(polylines: &[Vec<DVec3>], plane: &Plane) -> Option<SectionProperties> {
  if polylines.is_empty() {
  return None;
  }
@@ -143,7 +143,7 @@ fn compute_polygon_properties(polylines: &[Vec<DVec3>], plane: &Plane) -> (f64, 
 ///
 /// A vector of `SectionResult`, one per plane.
 pub fn section_parallel_planes(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  origin: DVec3,
  direction: DVec3,
  spacing: f64,
@@ -177,7 +177,7 @@ pub fn section_parallel_planes(
 ///
 /// A vector of `SectionResult`, one per path parameter.
 pub fn section_along_path(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  path: &Curve3,
  param_values: &[f64],
 ) -> Vec<SectionResult> {
@@ -209,7 +209,7 @@ pub fn section_along_path(
 /// # Returns
 ///
 /// A vector of `SectionResult`, one per section.
-pub fn cross_sections_along_path(brep: &BRep, path: &Curve3, count: usize) -> Vec<SectionResult> {
+pub fn cross_sections_along_path(brep: &rcad_kernel::BRep, path: &Curve3, count: usize) -> Vec<SectionResult> {
  let [t0, t1] = path.default_domain();
 
  // Handle infinite parameter ranges
@@ -245,12 +245,12 @@ pub fn cross_sections_along_path(brep: &BRep, path: &Curve3, count: usize) -> Ve
 /// # Returns
 ///
 /// A BRep containing the lofted solid.
-pub fn stitch_sections_to_solid(sections: &[SectionResult], closed: bool) -> BRep {
+pub fn stitch_sections_to_solid(sections: &[SectionResult], closed: bool) -> rcad_kernel::BRep {
  if sections.is_empty() {
- return BRep::new();
+ return rcad_kernel::BRep::new();
  }
 
- let mut result = BRep::new();
+ let mut result = rcad_kernel::BRep::new();
  let mut all_faces = Vec::new();
 
  let n = sections.len();
@@ -291,7 +291,7 @@ fn extract_polylines_from_section(section: &SectionResult) -> Vec<Vec<DVec3>> {
 }
 
 /// Create a ruled face between two polylines.
-fn create_ruled_face(brep: &mut BRep, pts1: &[DVec3], pts2: &[DVec3]) -> Option<rcad_kernel::Face> {
+fn create_ruled_face(brep: &mut rcad_kernel::BRep, pts1: &[DVec3], pts2: &[DVec3]) -> Option<rcad_kernel::Face> {
  let n = pts1.len().min(pts2.len());
  if n < 2 {
  return None;
@@ -441,7 +441,7 @@ pub enum SectionCurve {
 /// // Equatorial section of a sphere -> one Circle
 /// assert!(!curves.is_empty());
 /// ```
-pub fn section_curves(brep: &BRep, plane: &Plane) -> Vec<SectionCurve> {
+pub fn section_curves(brep: &rcad_kernel::BRep, plane: &Plane) -> Vec<SectionCurve> {
  use crate::inttools::{
  plane_cone::{PlaneConicalResult, intersect_plane_cone},
  plane_cylinder::{PlaneCylinderResult, intersect_plane_cylinder},

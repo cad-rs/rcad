@@ -203,7 +203,7 @@ pub fn analyze_and_heal(brep: &topods::BRep, options: HealingOptions) -> (topods
 }
 
 /// Legacy: takes old BRep. Internal implementation.
-fn analyze_and_heal_old(brep: &BRep, options: HealingOptions) -> (BRep, HealingReport) {
+fn analyze_and_heal_old(brep: &rcad_kernel::BRep, options: HealingOptions) -> (rcad_kernel::BRep, HealingReport) {
     let initial = brep_check_analyze(brep);
     let initial_stats = HealingIssueStats::from_check_result(&initial);
 
@@ -507,13 +507,13 @@ fn has_connectivity_stress_issues(result: &CheckResult) -> bool {
     })
 }
 
-fn has_parametric_issues(brep: &BRep, tolerance: f64) -> bool {
+fn has_parametric_issues(brep: &rcad_kernel::BRep, tolerance: f64) -> bool {
     !diagnose_same_range(brep, tolerance).is_clean()
         || !diagnose_same_parameter(brep, tolerance).is_clean()
 }
 
 /// Convenience wrapper using default options.
-pub fn heal(brep: &BRep) -> (BRep, HealingReport) {
+pub fn heal(brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, HealingReport) {
     let (t, report) = analyze_and_heal(&brep.to_topods(), HealingOptions::default());
     (rcad_kernel::BRep::from_topods(&t), report)
 }
@@ -523,10 +523,10 @@ pub fn heal(brep: &BRep) -> (BRep, HealingReport) {
 /// This is a configurable alternative to [`analyze_and_heal`] for callers that
 /// need explicit control over pass ordering.
 pub fn run_healing_operator_chain(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     options: HealingOptions,
     operators: &[HealingOperator],
-) -> (BRep, HealingReport) {
+) -> (rcad_kernel::BRep, HealingReport) {
     let initial = brep_check_analyze(brep);
     let initial_stats = HealingIssueStats::from_check_result(&initial);
     let mut current = brep.clone();
@@ -907,7 +907,7 @@ pub fn run_healing_operator_chain(
 ///     println!("Shape is now valid");
 /// }
 /// ```
-pub fn run_shape_process(brep: &BRep, config: &ShapeProcessConfig) -> (BRep, ShapeProcessReport) {
+pub fn run_shape_process(brep: &rcad_kernel::BRep, config: &ShapeProcessConfig) -> (rcad_kernel::BRep, ShapeProcessReport) {
     use std::time::Instant;
 
     let start_time = Instant::now();
@@ -1068,7 +1068,7 @@ pub fn run_shape_process(brep: &BRep, config: &ShapeProcessConfig) -> (BRep, Sha
 /// Remove faces with area below a threshold.
 ///
 /// Returns (modified BRep, count of removed faces).
-fn fix_small_area_faces(brep: &BRep, min_area: f64) -> (BRep, usize) {
+fn fix_small_area_faces(brep: &rcad_kernel::BRep, min_area: f64) -> (rcad_kernel::BRep, usize) {
     let mut result = brep.clone();
     let mut removed_count = 0usize;
     let min_area = if min_area > 0.0 { min_area } else { TOLERANCE_LINEAR_ULTRA_STRICT };
@@ -1101,7 +1101,7 @@ fn fix_small_area_faces(brep: &BRep, min_area: f64) -> (BRep, usize) {
 ///
 /// A sliver face has a high aspect ratio (elongated in one dimension).
 /// Returns (modified BRep, count of fixed faces).
-fn fix_sliver_faces(brep: &BRep, max_aspect_ratio: f64) -> (BRep, usize) {
+fn fix_sliver_faces(brep: &rcad_kernel::BRep, max_aspect_ratio: f64) -> (rcad_kernel::BRep, usize) {
     // Placeholder implementation - for now just return the input unchanged
     // A full implementation would detect sliver faces by computing aspect ratio
     // and merge them with adjacent faces or remove them
@@ -1113,7 +1113,7 @@ fn fix_sliver_faces(brep: &BRep, max_aspect_ratio: f64) -> (BRep, usize) {
 ///
 /// Non-manifold edges are shared by more than 2 faces.
 /// Returns (modified BRep, count of edges processed).
-fn fix_non_manifold(brep: &BRep, _tolerance: f64) -> (BRep, usize) {
+fn fix_non_manifold(brep: &rcad_kernel::BRep, _tolerance: f64) -> (rcad_kernel::BRep, usize) {
     use rcad_kernel::BRepGraph;
 
     let graph = BRepGraph::from_brep(brep);
@@ -1136,7 +1136,7 @@ fn fix_non_manifold(brep: &BRep, _tolerance: f64) -> (BRep, usize) {
 ///
 /// This is useful for removing artificial seams in imported CAD data.
 /// Returns (modified BRep, count of merged face groups).
-fn unify_same_domain_faces(brep: &BRep, _tolerance: f64) -> (BRep, usize) {
+fn unify_same_domain_faces(brep: &rcad_kernel::BRep, _tolerance: f64) -> (rcad_kernel::BRep, usize) {
     // Placeholder implementation - requires surface comparison and face merging
     // A full implementation would identify faces sharing the same surface
     // and merge them into single faces
@@ -1147,7 +1147,7 @@ fn unify_same_domain_faces(brep: &BRep, _tolerance: f64) -> (BRep, usize) {
 ///
 /// Internal faces typically result from boolean operations that left
 /// internal partitions. Returns (modified BRep, count of removed faces).
-fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
+fn remove_internal_faces(brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, usize) {
     // Placeholder implementation - requires volumetric analysis
     // A full implementation would use ray casting or point-in-volume tests
     // to identify and remove internal partition faces
@@ -1155,7 +1155,7 @@ fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
 }
 
 /// Estimate face area from its wire using fan triangulation.
-fn estimate_face_area_from_wire(brep: &BRep, wire: &rcad_kernel::topology::Wire) -> f64 {
+fn estimate_face_area_from_wire(brep: &rcad_kernel::BRep, wire: &rcad_kernel::topology::Wire) -> f64 {
     use glam::DVec3;
 
     // Collect vertex positions in order
@@ -1193,7 +1193,7 @@ fn estimate_face_area_from_wire(brep: &BRep, wire: &rcad_kernel::topology::Wire)
 /// where each sector has a maximum angular extent.
 ///
 /// Returns (modified BRep, count of faces split).
-fn split_angle_operator(brep: &BRep, params: &SplitAngleOperator) -> (BRep, usize) {
+fn split_angle_operator(brep: &rcad_kernel::BRep, params: &SplitAngleOperator) -> (rcad_kernel::BRep, usize) {
     use rcad_kernel::geom::Surface3;
     use std::f64::consts::PI;
 
@@ -1279,7 +1279,7 @@ fn split_angle_operator(brep: &BRep, params: &SplitAngleOperator) -> (BRep, usiz
 /// and splits edges at those points.
 ///
 /// Returns (modified BRep, count of edge splits).
-fn split_continuity_operator(brep: &BRep, params: &SplitContinuityOperator) -> (BRep, usize) {
+fn split_continuity_operator(brep: &rcad_kernel::BRep, params: &SplitContinuityOperator) -> (rcad_kernel::BRep, usize) {
     use rcad_kernel::geom::CurveEval;
 
     let result = brep.clone();
@@ -1428,7 +1428,7 @@ fn compute_curvature_at(curve: &rcad_kernel::geom::Curve3, t: f64) -> f64 {
 /// Converts elementary surfaces and curves to NURBS representation.
 ///
 /// Returns (modified BRep, count of entities converted).
-fn convert_to_bspline_operator(brep: &BRep, params: &ConvertToBSplineOperator) -> (BRep, usize) {
+fn convert_to_bspline_operator(brep: &rcad_kernel::BRep, params: &ConvertToBSplineOperator) -> (rcad_kernel::BRep, usize) {
     use rcad_kernel::geom::{Surface3, Curve3};
     use rcad_kernel::nurbs_convert;
 
@@ -1484,7 +1484,7 @@ fn convert_to_bspline_operator(brep: &BRep, params: &ConvertToBSplineOperator) -
 /// Splits BSpline surfaces at all interior knot lines.
 ///
 /// Returns (modified BRep, count of surfaces converted).
-fn surface_to_bezier_operator(brep: &BRep, params: &SurfaceToBezierOperator) -> (BRep, usize) {
+fn surface_to_bezier_operator(brep: &rcad_kernel::BRep, params: &SurfaceToBezierOperator) -> (rcad_kernel::BRep, usize) {
     use rcad_kernel::geom::Surface3;
 
     let mut result = brep.clone();
@@ -1555,7 +1555,7 @@ fn split_bspline_to_bezier(bspline: &BSplineSurface) -> std::collections::VecDeq
 /// Scales geometry and optionally tolerances.
 ///
 /// Returns (modified BRep, count of entities modified).
-fn scale_shape_operator(brep: &BRep, params: &ScaleShapeOperator) -> (BRep, usize) {
+fn scale_shape_operator(brep: &rcad_kernel::BRep, params: &ScaleShapeOperator) -> (rcad_kernel::BRep, usize) {
     use glam::DAffine3;
 
     // Check for identity scaling
@@ -1615,7 +1615,7 @@ fn scale_shape_operator(brep: &BRep, params: &ScaleShapeOperator) -> (BRep, usiz
 /// by correcting face orientations.
 ///
 /// Returns (modified BRep, count of faces fixed).
-fn direct_faces_operator(brep: &BRep, params: &DirectFacesOperator) -> (BRep, usize) {
+fn direct_faces_operator(brep: &rcad_kernel::BRep, params: &DirectFacesOperator) -> (rcad_kernel::BRep, usize) {
     use crate::brep_repair::recompute_face_normals;
 
     let mut result = brep.clone();
@@ -1685,7 +1685,7 @@ fn direct_faces_operator(brep: &BRep, params: &DirectFacesOperator) -> (BRep, us
 /// Uses the existing `fix_same_parameter_with_scan` function with configurable options.
 ///
 /// Returns (modified BRep, count of edges fixed).
-fn same_parameter_operator(brep: &BRep, params: &SameParameterOperator) -> (BRep, usize) {
+fn same_parameter_operator(brep: &rcad_kernel::BRep, params: &SameParameterOperator) -> (rcad_kernel::BRep, usize) {
     // Use the existing implementation with the specified tolerance
     let (result, fixed_count) = fix_same_parameter_with_scan(brep, params.tolerance);
 
@@ -1710,7 +1710,7 @@ fn same_parameter_operator(brep: &BRep, params: &SameParameterOperator) -> (BRep
 /// keeping only the outer boundary faces.
 ///
 /// Returns (modified BRep, count of faces removed).
-fn remove_internal_faces_operator(brep: &BRep, params: &RemoveInternalFacesOperator) -> (BRep, usize) {
+fn remove_internal_faces_operator(brep: &rcad_kernel::BRep, params: &RemoveInternalFacesOperator) -> (rcad_kernel::BRep, usize) {
     use rcad_kernel::BRepGraph;
 
     let mut result = brep.clone();
@@ -1765,7 +1765,7 @@ fn remove_internal_faces_operator(brep: &BRep, params: &RemoveInternalFacesOpera
 }
 
 /// Identify internal faces in a solid.
-fn identify_internal_faces(brep: &BRep, solid_idx: usize, params: &RemoveInternalFacesOperator) -> Vec<usize> {
+fn identify_internal_faces(brep: &rcad_kernel::BRep, solid_idx: usize, params: &RemoveInternalFacesOperator) -> Vec<usize> {
     let mut internal_faces = Vec::new();
 
     let solid = match brep.solids.get(solid_idx) {

@@ -1,4 +1,4 @@
-﻿
+
 fn weld_surface_mesh_nodes_with_exclusion(
  mesh: &SurfaceMesh,
  excluded_nodes: &std::collections::HashSet<usize>,
@@ -188,7 +188,7 @@ impl IncrementalMesher {
  }
 
  /// Expand `dirty_faces` from explicit faces/edges/vertices in `delta`.
- pub fn infer_dirty_faces_from_delta(&mut self, brep: &BRep, delta: &MeshDelta) {
+ pub fn infer_dirty_faces_from_delta(&mut self, brep: &rcad_kernel::BRep, delta: &MeshDelta) {
  // Faces named explicitly in the delta
  self.invalidate_faces(&delta.modified_faces);
 
@@ -237,7 +237,7 @@ impl IncrementalMesher {
  /// Flag dirty faces on `brep` then invoke `mesh_brep` to refresh tessellation.
  pub fn update_mesh_for_face_change(
  &self,
- brep: &mut BRep,
+ brep: &mut rcad_kernel::BRep,
  params: &TessellationParams,
  ) {
  if self.dirty_faces.is_empty() {

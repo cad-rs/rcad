@@ -1,8 +1,8 @@
 
-fn unify_one_merge_pass_with_origins(brep: &mut BRep, face_origins: Option<&[FaceOrigin]>) -> bool {
+fn unify_one_merge_pass_with_origins(brep: &mut rcad_kernel::BRep, face_origins: Option<&[FaceOrigin]>) -> bool {
     use std::collections::HashMap;
 
-    fn closure_score(brep: &BRep) -> usize {
+    fn closure_score(brep: &rcad_kernel::BRep) -> usize {
         let report = crate::brep_check::validate_solid_closure(brep);
         report
             .issues
@@ -17,7 +17,7 @@ fn unify_one_merge_pass_with_origins(brep: &mut BRep, face_origins: Option<&[Fac
             .sum()
     }
 
-    fn flat_face_index_of(brep: &BRep, si: usize, shi: usize, fi: usize) -> usize {
+    fn flat_face_index_of(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> usize {
         let mut idx = 0usize;
         for s in 0..si {
             for sh in &brep.solids[s].shells {
@@ -36,7 +36,7 @@ fn unify_one_merge_pass_with_origins(brep: &mut BRep, face_origins: Option<&[Fac
     /// - `(None, _)`        → no surface data; caller should fall back to
     ///                        normal-direction heuristic.
     fn surfaces_are_same_domain(
-        brep: &BRep,
+        brep: &rcad_kernel::BRep,
         si: usize,
         shi: usize,
         fi1: usize,
@@ -220,7 +220,7 @@ fn unify_one_merge_pass_with_origins(brep: &mut BRep, face_origins: Option<&[Fac
                 )
             }
 
-            fn geometric_edge_key(brep: &BRep, edge_idx: usize) -> Option<((i64, i64, i64), (i64, i64, i64))> {
+            fn geometric_edge_key(brep: &rcad_kernel::BRep, edge_idx: usize) -> Option<((i64, i64, i64), (i64, i64, i64))> {
                 let edge = brep.edges.get(edge_idx)?;
                 let start = quantize_edge_point(brep.vertices.get(edge.start)?.point);
                 let end = quantize_edge_point(brep.vertices.get(edge.end)?.point);
@@ -521,7 +521,7 @@ fn splice_wires(
 }
 
 pub(crate) fn oriented_edge_vertices(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     we: rcad_kernel::topology::WireEdge,
 ) -> Option<(usize, usize)> {
     let e = brep.edges.get(we.idx)?;
@@ -533,7 +533,7 @@ pub(crate) fn oriented_edge_vertices(
 }
 
 fn find_existing_edge_between_vertices(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     from: usize,
     to: usize,
 ) -> Option<rcad_kernel::topology::WireEdge> {
@@ -563,7 +563,7 @@ fn points_are_collinear_forward(a: glam::DVec3, b: glam::DVec3, c: glam::DVec3) 
 }
 
 fn collapse_collinear_segments_with_existing_bridge(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     wire: &[rcad_kernel::topology::WireEdge],
 ) -> Option<Vec<rcad_kernel::topology::WireEdge>> {
     let mut out = wire.to_vec();
@@ -617,7 +617,7 @@ fn collapse_collinear_segments_with_existing_bridge(
     if out.len() >= 3 { Some(out) } else { None }
 }
 
-fn wire_is_closed_and_connected(brep: &BRep, wire: &[rcad_kernel::topology::WireEdge]) -> bool {
+fn wire_is_closed_and_connected(brep: &rcad_kernel::BRep, wire: &[rcad_kernel::topology::WireEdge]) -> bool {
     if wire.len() < 3 {
         return false;
     }
@@ -640,7 +640,7 @@ fn wire_is_closed_and_connected(brep: &BRep, wire: &[rcad_kernel::topology::Wire
 }
 
 fn reorder_wire_into_connected_loop(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     wire: &[rcad_kernel::topology::WireEdge],
 ) -> Option<Vec<rcad_kernel::topology::WireEdge>> {
     if wire.is_empty() {
@@ -689,7 +689,7 @@ fn reorder_wire_into_connected_loop(
 }
 
 fn cancel_duplicate_segments_by_parity(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     wire: &[rcad_kernel::topology::WireEdge],
 ) -> Option<Vec<rcad_kernel::topology::WireEdge>> {
     use std::collections::HashMap;
@@ -743,7 +743,7 @@ fn cancel_duplicate_segments_by_parity(
 ///
 /// Returns `(outer_wire_edges, inner_wires)`.
 fn extract_inner_loops_from_wire(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     wire: &[rcad_kernel::topology::WireEdge],
 ) -> (
     Vec<rcad_kernel::topology::WireEdge>,
@@ -797,7 +797,7 @@ fn extract_inner_loops_from_wire(
 }
 
 fn cleanup_merged_wire_edges(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     wire: &[rcad_kernel::topology::WireEdge],
 ) -> Vec<rcad_kernel::topology::WireEdge> {
     if wire.len() < 4 {
@@ -873,13 +873,13 @@ fn cleanup_merged_wire_edges(
 /// - Their edge sets overlap entirely (every outer-wire edge of the smaller
 ///   face is also in the larger face, or they share ≥ 75 % of edges).
 ///
-/// Returns the cleaned BRep and the number of faces removed.
+/// Returns the cleaned rcad_kernel::BRep and the number of faces removed.
 ///
 /// Analogous to the internal-face elimination step of OCCT `BOPAlgo_BuilderSolid`.
-pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
+pub fn remove_internal_faces(brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, usize) {
     use std::collections::HashSet;
 
-    fn flat_face_index_of(brep: &BRep, si: usize, shi: usize, fi: usize) -> usize {
+    fn flat_face_index_of(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> usize {
         let mut idx = 0usize;
         for s in 0..si {
             for sh in &brep.solids[s].shells {
@@ -893,7 +893,7 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
     }
 
     fn surfaces_are_same_domain(
-        brep: &BRep,
+        brep: &rcad_kernel::BRep,
         si: usize,
         shi: usize,
         fi1: usize,
@@ -1018,7 +1018,7 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
     /// Returns false if face orientation is inconsistent with majority orientation,
     /// indicating potential pseudo-internal topology that should not be removed.
     fn validate_face_orientation_consistency(
-        _brep: &BRep,
+        _brep: &rcad_kernel::BRep,
         _si: usize,
         _shi: usize,
         _fi: usize,
@@ -1028,7 +1028,7 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
         // and should be preserved rather than removed.
 
         // For now, we accept all orientations as valid (conservative).
-        // Future: could add full BRep solid vs. hollow validation.
+        // Future: could add full rcad_kernel::BRep solid vs. hollow validation.
         true
     }
 
@@ -1036,7 +1036,7 @@ pub fn remove_internal_faces(brep: &BRep) -> (BRep, usize) {
     /// True duplicates have opposite normals and identical/near-identical coverage.
     /// Pseudo-internal faces may share edges but represent distinct original surfaces.
     fn is_true_internal_duplicate(
-        brep: &BRep,
+        brep: &rcad_kernel::BRep,
         si: usize,
         shi: usize,
         fi1: usize,

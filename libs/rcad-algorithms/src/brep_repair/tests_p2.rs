@@ -71,60 +71,60 @@
 
  #[test]
  fn fix_uv_gaps_box_face() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
  });
 
  let config = UvGapRepairConfig::default();
- let (_, report) = fix_uv_gaps(0, 0, 0, &brep, &config);
+ let (_, report) = fix_uv_gaps(0, 0, 0, &rcad_kernel::BRep, &config);
 
  // Box faces should be processed
  }
 
  #[test]
  fn fix_uv_gaps_cylinder_face() {
- let brep = BRep::from_primitive(PrimitiveSolid::Cylinder {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Cylinder {
  radius: 1.0,
  height: 2.0,
  });
 
  let config = UvGapRepairConfig::default();
- let (_, report) = fix_uv_gaps(0, 0, 0, &brep, &config);
+ let (_, report) = fix_uv_gaps(0, 0, 0, &rcad_kernel::BRep, &config);
 
  // Cylinder faces should be processed
  }
 
  #[test]
  fn fix_uv_gaps_sphere_face() {
- let brep = BRep::from_primitive(PrimitiveSolid::Sphere {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Sphere {
  radius: 1.0,
  });
 
  let config = UvGapRepairConfig::default();
- let (_, report) = fix_uv_gaps(0, 0, 0, &brep, &config);
+ let (_, report) = fix_uv_gaps(0, 0, 0, &rcad_kernel::BRep, &config);
 
  // Sphere faces should be processed
  }
 
  #[test]
  fn fix_all_uv_gaps_box() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
  });
 
  let config = UvGapRepairConfig::default();
- let (_, report) = fix_all_uv_gaps(&brep, &config);
+ let (_, report) = fix_all_uv_gaps(&rcad_kernel::BRep, &config);
 
  // All faces should be processed
  }
 
  #[test]
  fn fix_uv_gaps_invalid_indices() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
@@ -133,15 +133,15 @@
  let config = UvGapRepairConfig::default();
 
  // Test with invalid solid index
- let (_, report) = fix_uv_gaps(99, 0, 0, &brep, &config);
+ let (_, report) = fix_uv_gaps(99, 0, 0, &rcad_kernel::BRep, &config);
  assert_eq!(report.faces_processed, 0);
 
  // Test with invalid shell index
- let (_, report) = fix_uv_gaps(0, 99, 0, &brep, &config);
+ let (_, report) = fix_uv_gaps(0, 99, 0, &rcad_kernel::BRep, &config);
  assert_eq!(report.faces_processed, 0);
 
  // Test with invalid face index
- let (_, report) = fix_uv_gaps(0, 0, 99, &brep, &config);
+ let (_, report) = fix_uv_gaps(0, 0, 99, &rcad_kernel::BRep, &config);
  assert_eq!(report.faces_processed, 0);
  }
 
@@ -168,7 +168,7 @@
 
  #[test]
  fn fix_edge_pcurve_uv_bounds_box() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
@@ -179,7 +179,7 @@
  // Test with valid indices (if edge has PCurve)
  if !brep.edges.is_empty() {
  let surface_idx = brep.geom.face_surface.get(0).and_then(|v| *v).unwrap_or(0);
- let (_, repaired) = fix_edge_pcurve_uv_bounds(0, surface_idx, &brep, &config);
+ let (_, repaired) = fix_edge_pcurve_uv_bounds(0, surface_idx, &rcad_kernel::BRep, &config);
  // repaired may be true or false depending on geometry
  assert!(repaired || !repaired); // Just check it doesn't panic
  }
@@ -187,7 +187,7 @@
 
  #[test]
  fn fix_edge_pcurve_uv_bounds_invalid_indices() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
@@ -196,11 +196,11 @@
  let config = UvGapRepairConfig::default();
 
  // Test with invalid edge index
- let (_, repaired) = fix_edge_pcurve_uv_bounds(999, 0, &brep, &config);
+ let (_, repaired) = fix_edge_pcurve_uv_bounds(999, 0, &rcad_kernel::BRep, &config);
  assert!(!repaired);
 
  // Test with invalid surface index
- let (_, repaired) = fix_edge_pcurve_uv_bounds(0, 999, &brep, &config);
+ let (_, repaired) = fix_edge_pcurve_uv_bounds(0, 999, &rcad_kernel::BRep, &config);
  assert!(!repaired);
  }
 
@@ -210,13 +210,13 @@
 
  #[test]
  fn detect_duplicate_faces_clean_box() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
  });
 
- let report = detect_duplicate_faces(&brep, TOLERANCE_MESH_LEGACY);
+ let report = detect_duplicate_faces(&rcad_kernel::BRep, TOLERANCE_MESH_LEGACY);
  // A clean box should have no duplicate faces
  assert_eq!(report.duplicate_pairs.len(), 0, "Clean box should have no duplicate faces");
  assert_eq!(report.internal_face_count, 0, "Clean box should have no internal faces");
@@ -226,8 +226,8 @@
  fn detect_duplicate_faces_with_duplicates() {
  use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
 
- // Create a BRep with two identical faces
- let mut brep = BRep::new();
+ // Create a brep with two identical faces
+ let mut brep = rcad_kernel::BRep::new();
 
  // Add 4 vertices for a quad
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
@@ -270,7 +270,7 @@
  shells: vec![Shell { faces: vec![face1, face2] }],
  });
 
- let report = detect_duplicate_faces(&brep, TOLERANCE_MESH_LEGACY);
+ let report = detect_duplicate_faces(&rcad_kernel::BRep, TOLERANCE_MESH_LEGACY);
 
  // Should detect the duplicate face pair
  assert!(report.duplicate_pairs.len() >= 1, "Should detect duplicate face pair");
@@ -282,13 +282,13 @@
 
  #[test]
  fn identify_internal_faces_clean_box() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
  });
 
- let internal = identify_internal_faces(&brep);
+ let internal = identify_internal_faces(&rcad_kernel::BRep);
  assert_eq!(internal.len(), 0, "Clean box should have no internal faces");
  }
 
@@ -296,8 +296,8 @@
  fn identify_internal_faces_with_void_shell() {
  use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
 
- // Create a BRep with an outer shell and a void shell
- let mut brep = BRep::new();
+ // Create a brep with an outer shell and a void shell
+ let mut brep = rcad_kernel::BRep::new();
 
  // Outer shell vertices (cube)
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
@@ -348,7 +348,7 @@
  ],
  });
 
- let internal = identify_internal_faces(&brep);
+ let internal = identify_internal_faces(&rcad_kernel::BRep);
 
  // Should identify faces in the void shell as internal
  assert!(internal.len() >= 1, "Should identify internal faces in void shell");
@@ -358,8 +358,8 @@
  fn remove_internal_faces_basic() {
  use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
 
- // Create a BRep with multiple faces
- let mut brep = BRep::new();
+ // Create a brep with multiple faces
+ let mut brep = rcad_kernel::BRep::new();
 
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
  brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
@@ -400,7 +400,7 @@
  });
 
  // Remove the second face
- let (result, report) = remove_internal_faces(&brep, &[1]);
+ let (result, report) = remove_internal_faces(&rcad_kernel::BRep, &[1]);
 
  assert_eq!(report.faces_removed, 1, "Should remove one face");
  assert!(report.is_valid, "Result should be valid");
@@ -417,13 +417,13 @@
 
  #[test]
  fn remove_internal_faces_empty_list() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
  });
 
- let (result, report) = remove_internal_faces(&brep, &[]);
+ let (result, report) = remove_internal_faces(&rcad_kernel::BRep, &[]);
 
  assert_eq!(report.faces_removed, 0, "Should remove no faces");
  assert!(report.is_valid, "Result should be valid");
@@ -432,13 +432,13 @@
 
  #[test]
  fn cleanup_boolean_result_clean_box() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
  });
 
- let (result, report) = cleanup_boolean_result(&brep, TOLERANCE_MESH_LEGACY);
+ let (result, report) = cleanup_boolean_result(&rcad_kernel::BRep, TOLERANCE_MESH_LEGACY);
 
  // A clean box should pass through with minimal changes
  assert!(report.is_valid, "Result should be valid");
@@ -451,8 +451,8 @@
  fn cleanup_boolean_result_with_internal_faces() {
  use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
 
- // Create a BRep simulating post-boolean result with internal face
- let mut brep = BRep::new();
+ // Create a brep simulating post-boolean result with internal face
+ let mut brep = rcad_kernel::BRep::new();
 
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
  brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
@@ -493,7 +493,7 @@
  shells: vec![Shell { faces: vec![face1, face2] }],
  });
 
- let (result, report) = cleanup_boolean_result(&brep, TOLERANCE_MESH_LEGACY);
+ let (result, report) = cleanup_boolean_result(&rcad_kernel::BRep, TOLERANCE_MESH_LEGACY);
 
  // Should have cleaned up the internal face
  assert!(report.is_valid, "Result should be valid");
@@ -596,7 +596,7 @@
  fn compute_face_centroid_basic() {
  use rcad_kernel::topology::{Edge, Face, Wire, WireEdge};
 
- let mut brep = BRep::new();
+ let mut brep = rcad_kernel::BRep::new();
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
  brep.vertices.push(Vertex { point: DVec3::new(2.0, 0.0, 0.0) });
  brep.vertices.push(Vertex { point: DVec3::new(2.0, 2.0, 0.0) });
@@ -619,7 +619,7 @@
  surface_idx: None,
  };
 
- let centroid = compute_face_centroid_from_wire(&brep, &face);
+ let centroid = compute_face_centroid_from_wire(&rcad_kernel::BRep, &face);
 
  // Centroid should be at (1, 1, 0)
  assert!((centroid.x - 1.0).abs() < TOLERANCE_LINEAR_ULTRA_STRICT);
@@ -633,14 +633,14 @@
 
  #[test]
  fn verify_solid_closure_unit_box() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
  });
 
  let solid = &brep.solids[0];
- let report = verify_solid_closure(solid, &brep);
+ let report = verify_solid_closure(solid, &rcad_kernel::BRep);
 
  assert!(report.is_valid(), "Unit box should pass closure verification");
  assert!(report.all_shells_closed, "Unit box should have all shells closed");
@@ -654,12 +654,12 @@
 
  #[test]
  fn verify_solid_closure_unit_sphere() {
- let brep = BRep::from_primitive(PrimitiveSolid::Sphere {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Sphere {
  radius: 1.0,
  });
 
  let solid = &brep.solids[0];
- let report = verify_solid_closure(solid, &brep);
+ let report = verify_solid_closure(solid, &rcad_kernel::BRep);
 
  // Sphere should be closed with a single shell
  assert!(report.all_shells_closed, "Unit sphere should have all shells closed");
@@ -670,13 +670,13 @@
 
  #[test]
  fn verify_solid_closure_unit_cylinder() {
- let brep = BRep::from_primitive(PrimitiveSolid::Cylinder {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Cylinder {
  radius: 1.0,
  height: 2.0,
  });
 
  let solid = &brep.solids[0];
- let report = verify_solid_closure(solid, &brep);
+ let report = verify_solid_closure(solid, &rcad_kernel::BRep);
 
  assert!(report.is_valid(), "Cylinder should pass closure verification");
  assert!(report.all_shells_closed, "Cylinder should have all shells closed");
@@ -686,10 +686,10 @@
  fn verify_solid_closure_empty_solid() {
  use rcad_kernel::topology::Solid as TopologySolid;
 
- let brep = BRep::new();
+ let brep = rcad_kernel::BRep::new();
  let solid = TopologySolid { shells: vec![] };
 
- let report = verify_solid_closure(&solid, &brep);
+ let report = verify_solid_closure(&solid, &rcad_kernel::BRep);
 
  assert!(!report.is_valid(), "Empty solid should not pass verification");
  assert!(!report.has_single_outer_shell, "Empty solid has no outer shell");
@@ -744,14 +744,14 @@
 
  #[test]
  fn orient_solid_shells_unit_box() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
  });
 
  let solid = &brep.solids[0];
- let (oriented, report) = orient_solid_shells(solid, &brep);
+ let (oriented, report) = orient_solid_shells(solid, &rcad_kernel::BRep);
 
  assert!(report.is_clean(), "Box should have clean orientation");
  assert!(report.is_properly_oriented, "Box should be properly oriented");
@@ -762,12 +762,12 @@
 
  #[test]
  fn orient_solid_shells_sphere() {
- let brep = BRep::from_primitive(PrimitiveSolid::Sphere {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Sphere {
  radius: 1.0,
  });
 
  let solid = &brep.solids[0];
- let (_, report) = orient_solid_shells(solid, &brep);
+ let (_, report) = orient_solid_shells(solid, &rcad_kernel::BRep);
 
  // Sphere should have shells oriented
  // Note: orientation issues may exist depending on how primitives are constructed
@@ -811,14 +811,14 @@
 
  #[test]
  fn validate_solid_topology_unit_box() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
  });
 
  let solid = &brep.solids[0];
- let report = validate_solid_topology(solid, &brep);
+ let report = validate_solid_topology(solid, &rcad_kernel::BRep);
 
  assert!(report.is_valid, "Unit box should be valid");
  assert!(report.containment_valid, "Unit box should have valid containment");
@@ -829,12 +829,12 @@
 
  #[test]
  fn validate_solid_topology_sphere() {
- let brep = BRep::from_primitive(PrimitiveSolid::Sphere {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Sphere {
  radius: 1.0,
  });
 
  let solid = &brep.solids[0];
- let report = validate_solid_topology(solid, &brep);
+ let report = validate_solid_topology(solid, &rcad_kernel::BRep);
 
  // Sphere should have valid closure
  assert!(report.closure_report.all_shells_closed, "Sphere should have closed shells");
@@ -845,10 +845,10 @@
  fn validate_solid_topology_empty_solid() {
  use rcad_kernel::topology::Solid as TopologySolid;
 
- let brep = BRep::new();
+ let brep = rcad_kernel::BRep::new();
  let solid = TopologySolid { shells: vec![] };
 
- let report = validate_solid_topology(&solid, &brep);
+ let report = validate_solid_topology(&solid, &rcad_kernel::BRep);
 
  assert!(!report.is_valid, "Empty solid should not be valid");
  assert!(!report.errors.is_empty(), "Empty solid should have errors");
@@ -888,14 +888,14 @@
 
  #[test]
  fn repair_solid_unit_box() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
  });
 
  let solid = &brep.solids[0];
- let result = repair_solid(solid, &brep, TOLERANCE_MESH_LEGACY);
+ let result = repair_solid(solid, &rcad_kernel::BRep, TOLERANCE_MESH_LEGACY);
 
  assert!(result.success, "Box repair should succeed");
  assert!(result.validation_report.is_valid, "Repaired box should be valid");
@@ -904,12 +904,12 @@
 
  #[test]
  fn repair_solid_sphere() {
- let brep = BRep::from_primitive(PrimitiveSolid::Sphere {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Sphere {
  radius: 1.0,
  });
 
  let solid = &brep.solids[0];
- let result = repair_solid(solid, &brep, TOLERANCE_MESH_LEGACY);
+ let result = repair_solid(solid, &rcad_kernel::BRep, TOLERANCE_MESH_LEGACY);
 
  // Sphere should have closed shells after repair
  assert!(result.validation_report.closure_report.all_shells_closed, "Sphere should have closed shells");
@@ -917,13 +917,13 @@
 
  #[test]
  fn repair_solid_cylinder() {
- let brep = BRep::from_primitive(PrimitiveSolid::Cylinder {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Cylinder {
  radius: 1.0,
  height: 2.0,
  });
 
  let solid = &brep.solids[0];
- let result = repair_solid(solid, &brep, TOLERANCE_MESH_LEGACY);
+ let result = repair_solid(solid, &rcad_kernel::BRep, TOLERANCE_MESH_LEGACY);
 
  // Cylinder should have closed shells after repair
  assert!(result.validation_report.closure_report.all_shells_closed, "Cylinder should have closed shells");
@@ -933,10 +933,10 @@
  fn repair_solid_empty_solid() {
  use rcad_kernel::topology::Solid as TopologySolid;
 
- let brep = BRep::new();
+ let brep = rcad_kernel::BRep::new();
  let solid = TopologySolid { shells: vec![] };
 
- let result = repair_solid(&solid, &brep, TOLERANCE_MESH_LEGACY);
+ let result = repair_solid(&solid, &rcad_kernel::BRep, TOLERANCE_MESH_LEGACY);
 
  // Empty solid should be "repaired" to an empty solid
  assert!(!result.success, "Empty solid repair should not succeed");
@@ -984,13 +984,13 @@
 
  #[test]
  fn verify_solid_closure_torus() {
- let brep = BRep::from_primitive(PrimitiveSolid::Torus {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Torus {
  major_radius: 2.0,
  minor_radius: 0.5,
  });
 
  let solid = &brep.solids[0];
- let report = verify_solid_closure(solid, &brep);
+ let report = verify_solid_closure(solid, &rcad_kernel::BRep);
 
  // Torus should be closed with a single shell
  assert!(report.all_shells_closed, "Torus should have all shells closed");
@@ -1001,13 +1001,13 @@
 
  #[test]
  fn validate_solid_topology_torus() {
- let brep = BRep::from_primitive(PrimitiveSolid::Torus {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Torus {
  major_radius: 2.0,
  minor_radius: 0.5,
  });
 
  let solid = &brep.solids[0];
- let report = validate_solid_topology(solid, &brep);
+ let report = validate_solid_topology(solid, &rcad_kernel::BRep);
 
  // Torus should have valid closure
  assert!(report.closure_report.all_shells_closed, "Torus should have closed shells");
@@ -1016,13 +1016,13 @@
 
  #[test]
  fn repair_solid_torus() {
- let brep = BRep::from_primitive(PrimitiveSolid::Torus {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Torus {
  major_radius: 2.0,
  minor_radius: 0.5,
  });
 
  let solid = &brep.solids[0];
- let result = repair_solid(solid, &brep, TOLERANCE_MESH_LEGACY);
+ let result = repair_solid(solid, &rcad_kernel::BRep, TOLERANCE_MESH_LEGACY);
 
  // Torus should have closed shells after repair
  assert!(result.validation_report.closure_report.all_shells_closed, "Torus should have closed shells");
@@ -1072,13 +1072,13 @@
  assert!(report.orientation_issues.is_empty());
  }
 
- // = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =
+ // = =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =
  // Tests for Post-Boolean Tolerance Propagation
- // = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =
+ // = =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =
 
  #[test]
  fn propagate_tolerances_post_boolean_basic() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
@@ -1089,7 +1089,7 @@
  let intersection_vertices = vec![0, 1, 2, 3]; // First 4 vertices
 
  let (result, report) = propagate_tolerances_post_boolean_op(
- &brep,
+ &rcad_kernel::BRep,
  BooleanOpTypeForTolerance::Union,
  &intersection_edges,
  &intersection_vertices,
@@ -1103,7 +1103,7 @@
 
  #[test]
  fn propagate_tolerances_post_boolean_intersection_type() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
@@ -1114,14 +1114,14 @@
 
  // Intersection operations typically need higher tolerances
  let (result_union, report_union) = propagate_tolerances_post_boolean_op(
- &brep,
+ &rcad_kernel::BRep,
  BooleanOpTypeForTolerance::Union,
  &intersection_edges,
  &intersection_vertices,
  );
 
  let (result_intersection, report_intersection) = propagate_tolerances_post_boolean_op(
- &brep,
+ &rcad_kernel::BRep,
  BooleanOpTypeForTolerance::Intersection,
  &intersection_edges,
  &intersection_vertices,
@@ -1133,7 +1133,7 @@
 
  #[test]
  fn test_propagate_tolerances_post_boolean_op_with_config() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
@@ -1144,7 +1144,7 @@
  let intersection_vertices = vec![0];
 
  let (_result, report) = propagate_tolerances_post_boolean_op_with_config(
- &brep,
+ &rcad_kernel::BRep,
  BooleanOpTypeForTolerance::General,
  &intersection_edges,
  &intersection_vertices,
@@ -1171,7 +1171,7 @@
  fn detect_and_resolve_tolerance_conflicts_resolves_vertex_edge() {
  use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
- let mut brep = BRep::new();
+ let mut brep = rcad_kernel::BRep::new();
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
  brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
@@ -1207,15 +1207,15 @@
  assert!(cloned.geom.edge_tolerance[0] >= TOLERANCE_ADAPTIVE_MAX);
  }
 
- // = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =
+ // = =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =
  // Tests for Post-Sew Tolerance Propagation
- // = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =
+ // = =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =
 
  #[test]
  fn propagate_tolerances_post_sew_basic() {
  use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
- let mut brep = BRep::new();
+ let mut brep = rcad_kernel::BRep::new();
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
  brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
  brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) });
@@ -1248,7 +1248,7 @@
  // Simulate seam edge pairs (edge 3 was sewn)
  let seam_pairs = vec![(3, 3)];
 
- let (_result, report) = propagate_tolerances_post_sew(&brep, TOLERANCE_RETRY_LADDER_COARSE, &seam_pairs);
+ let (_result, report) = propagate_tolerances_post_sew(&rcad_kernel::BRep, TOLERANCE_RETRY_LADDER_COARSE, &seam_pairs);
 
  // Verify function runs successfully
  assert!(report.max_seam_tolerance > 0.0 || report.seam_edges_updated == 0);
@@ -1258,7 +1258,7 @@
  fn test_propagate_tolerances_post_sew_with_config() {
  use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
- let mut brep = BRep::new();
+ let mut brep = rcad_kernel::BRep::new();
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
  brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
  brep.edges.push(Edge { start: 0, end: 1 });
@@ -1285,7 +1285,7 @@
 
  let seam_pairs = vec![(0, 0)];
  let (_result, report) = propagate_tolerances_post_sew_with_config(
- &brep,
+ &rcad_kernel::BRep,
  TOLERANCE_RETRY_LADDER_COARSE,
  &seam_pairs,
  &config,
@@ -1304,9 +1304,9 @@
  assert!(config.ensure_seam_consistency);
  }
 
- // = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =
+ // = =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =
  // Tests for Tolerance Rules Engine
- // = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =
+ // = =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =
 
  #[test]
  fn tolerance_rule_variants() {
@@ -1369,7 +1369,7 @@
  fn tolerance_propagation_engine_occt_standard() {
  use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
- let mut brep = BRep::new();
+ let mut brep = rcad_kernel::BRep::new();
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
  brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
@@ -1396,7 +1396,7 @@
  brep.geom.face_tolerance = vec![TOLERANCE_ABS];
 
  let engine = TolerancePropagationEngine::occt_standard();
- let (result, report) = engine.propagate(&brep);
+ let (result, report) = engine.propagate(&rcad_kernel::BRep);
 
  // Edges should now have higher tolerances (propagated from vertices)
  assert!(result.geom.edge_tolerance[0] >= TOLERANCE_RETRY_LADDER_COARSE);
@@ -1405,14 +1405,14 @@
 
  #[test]
  fn tolerance_propagation_engine_conservative() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
  });
 
  let engine = TolerancePropagationEngine::conservative();
- let (result, report) = engine.propagate(&brep);
+ let (result, report) = engine.propagate(&rcad_kernel::BRep);
 
  assert_eq!(report.rule_applied, ToleranceRule::Conservative);
  }
@@ -1421,7 +1421,7 @@
  fn tolerance_propagation_engine_aggressive() {
  use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
- let mut brep = BRep::new();
+ let mut brep = rcad_kernel::BRep::new();
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
  brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
@@ -1447,7 +1447,7 @@
  brep.geom.face_tolerance = vec![TOLERANCE_ABS];
 
  let engine = TolerancePropagationEngine::aggressive();
- let (result, report) = engine.propagate(&brep);
+ let (result, report) = engine.propagate(&rcad_kernel::BRep);
 
  assert_eq!(report.rule_applied, ToleranceRule::Aggressive);
  // Aggressive propagation may update tolerances more
@@ -1457,7 +1457,7 @@
  fn tolerance_propagation_engine_bounded() {
  use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
- let mut brep = BRep::new();
+ let mut brep = rcad_kernel::BRep::new();
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
  brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
  brep.edges.push(Edge { start: 0, end: 1 });
@@ -1479,7 +1479,7 @@
  brep.geom.face_tolerance = vec![1.0];
 
  let engine = TolerancePropagationEngine::bounded(TOLERANCE_ADAPTIVE_MAX);
- let (result, report) = engine.propagate(&brep);
+ let (result, report) = engine.propagate(&rcad_kernel::BRep);
 
  // All tolerances should be clamped to bound
  assert!(result.geom.vertex_tolerance[0] <= TOLERANCE_ADAPTIVE_MAX);
@@ -1491,7 +1491,7 @@
  fn tolerance_propagation_engine_model_scale() {
  use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
- let mut brep = BRep::new();
+ let mut brep = rcad_kernel::BRep::new();
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
  brep.vertices.push(Vertex { point: DVec3::new(1000.0, 0.0, 0.0) });
  brep.edges.push(Edge { start: 0, end: 1 });
@@ -1514,26 +1514,26 @@
  let engine = TolerancePropagationEngine::with_config(
  TolerancePropagationConfig::model_scale(1000.0)
  );
- let (result, report) = engine.propagate(&brep);
+ let (result, report) = engine.propagate(&rcad_kernel::BRep);
 
  assert_eq!(report.rule_applied, ToleranceRule::ModelScale);
  // Tolerances should be scaled
  assert!(result.geom.vertex_tolerance[0] > TOLERANCE_ABS);
  }
 
- // = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =
+ // = =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =
  // Tests for Tolerance Consistency Analysis
- // = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =
+ // = =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =
 
  #[test]
  fn analyze_tolerance_consistency_unit_box() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
  });
 
- let report = analyze_tolerance_consistency(&brep, TOLERANCE_ABS, TOLERANCE_ABS, 1.0);
+ let report = analyze_tolerance_consistency(&rcad_kernel::BRep, TOLERANCE_ABS, TOLERANCE_ABS, 1.0);
 
  // Unit box should have consistent tolerances
  assert!(report.is_consistent || report.violation_count == 0);
@@ -1543,7 +1543,7 @@
  fn analyze_tolerance_consistency_detects_vertex_edge_violation() {
  use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
- let mut brep = BRep::new();
+ let mut brep = rcad_kernel::BRep::new();
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
  brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
  brep.edges.push(Edge { start: 0, end: 1 });
@@ -1564,7 +1564,7 @@
  brep.geom.edge_tolerance = vec![TOLERANCE_ABS];
  brep.geom.face_tolerance = vec![TOLERANCE_ABS];
 
- let report = analyze_tolerance_consistency(&brep, TOLERANCE_ABS, TOLERANCE_ABS, 1.0);
+ let report = analyze_tolerance_consistency(&rcad_kernel::BRep, TOLERANCE_ABS, TOLERANCE_ABS, 1.0);
 
  assert!(!report.is_consistent, "Should detect inconsistency");
  assert!(report.violation_count >= 1, "Should have at least one violation");
@@ -1577,7 +1577,7 @@
  fn analyze_tolerance_consistency_detects_edge_face_violation() {
  use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
- let mut brep = BRep::new();
+ let mut brep = rcad_kernel::BRep::new();
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
  brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
  brep.edges.push(Edge { start: 0, end: 1 });
@@ -1598,7 +1598,7 @@
  brep.geom.edge_tolerance = vec![TOLERANCE_ADAPTIVE_MAX];
  brep.geom.face_tolerance = vec![TOLERANCE_ABS];
 
- let report = analyze_tolerance_consistency(&brep, TOLERANCE_ABS, TOLERANCE_ABS, 1.0);
+ let report = analyze_tolerance_consistency(&rcad_kernel::BRep, TOLERANCE_ABS, TOLERANCE_ABS, 1.0);
 
  let edge_face_violations = report.violations_by_type(ToleranceViolationType::EdgeExceedsFace);
  assert!(!edge_face_violations.is_empty(), "Should have edge>face violations");
@@ -1608,7 +1608,7 @@
  fn analyze_tolerance_consistency_detects_invalid_values() {
  use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
- let mut brep = BRep::new();
+ let mut brep = rcad_kernel::BRep::new();
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
  brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
  brep.edges.push(Edge { start: 0, end: 1 });
@@ -1629,7 +1629,7 @@
  brep.geom.edge_tolerance = vec![f64::INFINITY];
  brep.geom.face_tolerance = vec![0.0];
 
- let report = analyze_tolerance_consistency(&brep, TOLERANCE_ABS, TOLERANCE_ABS, 1.0);
+ let report = analyze_tolerance_consistency(&rcad_kernel::BRep, TOLERANCE_ABS, TOLERANCE_ABS, 1.0);
 
  let invalid_violations = report.violations_by_type(ToleranceViolationType::InvalidValue);
  assert!(invalid_violations.len() >= 2, "Should detect invalid values");
@@ -1700,7 +1700,7 @@
  fn apply_tolerance_fixes_basic() {
  use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
- let mut brep = BRep::new();
+ let mut brep = rcad_kernel::BRep::new();
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
  brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
  brep.edges.push(Edge { start: 0, end: 1 });
@@ -1721,10 +1721,10 @@
  brep.geom.edge_tolerance = vec![TOLERANCE_ABS]; // Low edge tolerance
  brep.geom.face_tolerance = vec![TOLERANCE_ABS];
 
- let report = analyze_tolerance_consistency(&brep, TOLERANCE_ABS, TOLERANCE_ABS, 1.0);
+ let report = analyze_tolerance_consistency(&rcad_kernel::BRep, TOLERANCE_ABS, TOLERANCE_ABS, 1.0);
  assert!(!report.is_consistent);
 
- let (fixed, fixes_applied) = apply_tolerance_fixes(&brep, &report, 0);
+ let (fixed, fixes_applied) = apply_tolerance_fixes(&rcad_kernel::BRep, &report, 0);
 
  assert!(fixes_applied >= 1, "Should apply at least one fix");
  // Edge tolerance should now be >= vertex tolerance
@@ -1751,7 +1751,7 @@
  fn propagate_tolerances_post_boolean_handles_conflicts() {
  use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
 
- let mut brep = BRep::new();
+ let mut brep = rcad_kernel::BRep::new();
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
  brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
  brep.edges.push(Edge { start: 0, end: 1 });
@@ -1773,7 +1773,7 @@
  brep.geom.face_tolerance = vec![TOLERANCE_ABS];
 
  let (_result, report) = propagate_tolerances_post_boolean_op(
- &brep,
+ &rcad_kernel::BRep,
  BooleanOpTypeForTolerance::Union,
  &[],
  &[],
@@ -1784,7 +1784,7 @@
 
  #[test]
  fn propagate_tolerances_post_boolean_empty_intersection_lists() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
@@ -1792,7 +1792,7 @@
 
  // Empty intersection lists should still work
  let (result, report) = propagate_tolerances_post_boolean_op(
- &brep,
+ &rcad_kernel::BRep,
  BooleanOpTypeForTolerance::General,
  &[],
  &[],
@@ -1802,19 +1802,19 @@
  assert!(report.max_edge_tolerance > 0.0);
  }
 
- // = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =
+ // = =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =
  // Tests for Connectivity Graph Analysis
- // = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =
+ // = =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =???= =
 
  #[test]
  fn build_connectivity_graph_unit_box() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
  });
 
- let graph = build_connectivity_graph(&brep);
+ let graph = build_connectivity_graph(&rcad_kernel::BRep);
 
  assert_eq!(graph.vertex_count, 8, "Unit box should have 8 vertices");
  assert_eq!(graph.edge_count, 12, "Unit box should have 12 edges");
@@ -1827,7 +1827,7 @@
  use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
 
  // Create two disconnected triangles
- let mut brep = BRep::new();
+ let mut brep = rcad_kernel::BRep::new();
 
  // Triangle 1
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
@@ -1869,7 +1869,7 @@
 
  brep.solids.push(Solid { shells: vec![Shell { faces: vec![face1, face2] }] });
 
- let graph = build_connectivity_graph(&brep);
+ let graph = build_connectivity_graph(&rcad_kernel::BRep);
 
  assert_eq!(graph.face_count, 2);
  assert_eq!(graph.face_components.len(), 2, "Should have two disconnected components");
@@ -1877,20 +1877,20 @@
 
  #[test]
  fn is_fully_connected_unit_box() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
  });
 
- assert!(is_fully_connected(&brep), "Unit box should be fully connected");
+ assert!(is_fully_connected(&rcad_kernel::BRep), "Unit box should be fully connected");
  }
 
  #[test]
  fn test_disconnected_component_count() {
  use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
 
- let mut brep = BRep::new();
+ let mut brep = rcad_kernel::BRep::new();
 
  // Single triangle
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
@@ -1913,7 +1913,7 @@
 
  brep.solids.push(Solid { shells: vec![Shell { faces: vec![face] }] });
 
- assert_eq!(disconnected_component_count(&brep), 1);
+ assert_eq!(disconnected_component_count(&rcad_kernel::BRep), 1);
  }
 
  #[test]
@@ -1925,25 +1925,25 @@
 
  #[test]
  fn detect_connectivity_gaps_connected() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
  });
 
- let gaps = detect_connectivity_gaps(&brep, TOLERANCE_ADAPTIVE_MAX);
+ let gaps = detect_connectivity_gaps(&rcad_kernel::BRep, TOLERANCE_ADAPTIVE_MAX);
  assert!(gaps.is_empty(), "Connected box should have no gaps");
  }
 
  #[test]
  fn validate_connectivity_unit_box() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
+ let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box {
  width: 1.0,
  height: 1.0,
  depth: 1.0,
  });
 
- let report = validate_connectivity(&brep, TOLERANCE_MESH_LEGACY);
+ let report = validate_connectivity(&rcad_kernel::BRep, TOLERANCE_MESH_LEGACY);
 
  assert!(report.is_connected, "Unit box should be connected");
  assert_eq!(report.component_count, 1);
@@ -1953,7 +1953,7 @@
  fn validate_connectivity_disconnected() {
  use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
 
- let mut brep = BRep::new();
+ let mut brep = rcad_kernel::BRep::new();
 
  // Triangle 1
  brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });

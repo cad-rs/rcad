@@ -4,7 +4,7 @@
 /// Combines multiple repair operations into a single configurable pass.
 ///
 /// Returns (modified BRep, repair report).
-fn heal_geometry_operator(brep: &BRep, params: &HealGeometryOperator) -> (BRep, RepairReport) {
+fn heal_geometry_operator(brep: &rcad_kernel::BRep, params: &HealGeometryOperator) -> (rcad_kernel::BRep, RepairReport) {
     use crate::brep_repair::{
         fix_face_orientation, fix_wire_gaps, fix_uv_bounds_violations,
         recompute_face_normals, remove_degenerate_faces, propagate_tolerances,
@@ -108,12 +108,12 @@ fn heal_geometry_operator(brep: &BRep, params: &HealGeometryOperator) -> (BRep, 
 /// # Returns
 /// A tuple of (processed BRep, PipelineExecutionReport).
 pub fn run_healing_pipeline_with_rollback(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     operators: &[HealingOperator],
     options: HealingOptions,
     rollback_config: RollbackConfig,
     progress_callback: Option<&dyn ProgressCallback>,
-) -> (BRep, PipelineExecutionReport) {
+) -> (rcad_kernel::BRep, PipelineExecutionReport) {
     use std::time::Instant;
 
     let start_time = Instant::now();
@@ -323,7 +323,7 @@ pub fn run_healing_pipeline_with_rollback(
 ///
 /// let (result, report) = run_advanced_operator_chain(&brep, &config);
 /// ```
-pub fn run_advanced_operator_chain(brep: &BRep, config: &OperatorChainConfig) -> (BRep, OperatorChainReport) {
+pub fn run_advanced_operator_chain(brep: &rcad_kernel::BRep, config: &OperatorChainConfig) -> (rcad_kernel::BRep, OperatorChainReport) {
     use std::time::Instant;
 
     let start_time = Instant::now();

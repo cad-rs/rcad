@@ -1,4 +1,4 @@
-﻿
+
 impl TolerancePropagationEngine {
  /// Create a new engine with default configuration.
  pub fn new() -> Self {
@@ -33,7 +33,7 @@ impl TolerancePropagationEngine {
  }
 
  /// Propagate tolerances according to the configured rule.
- pub fn propagate(&self, brep: &BRep) -> (BRep, TolerancePropagationReport) {
+ pub fn propagate(&self, brep: &rcad_kernel::BRep) -> (brep, TolerancePropagationReport) {
  match self.config.rule {
  ToleranceRule::OcctStandard => self.propagate_occt_standard(brep),
  ToleranceRule::Conservative => self.propagate_conservative(brep),
@@ -44,7 +44,7 @@ impl TolerancePropagationEngine {
  }
  }
 
- fn propagate_occt_standard(&self, brep: &BRep) -> (BRep, TolerancePropagationReport) {
+ fn propagate_occt_standard(&self, brep: &rcad_kernel::BRep) -> (brep, TolerancePropagationReport) {
  let mut result = brep.clone();
  let mut report = TolerancePropagationReport::default();
  let floor = self.config.tolerance_floor.max(TOLERANCE_ABS);
@@ -111,7 +111,7 @@ impl TolerancePropagationEngine {
  (result, report)
  }
 
- fn propagate_conservative(&self, brep: &BRep) -> (BRep, TolerancePropagationReport) {
+ fn propagate_conservative(&self, brep: &rcad_kernel::BRep) -> (brep, TolerancePropagationReport) {
  let mut result = brep.clone();
  let mut report = TolerancePropagationReport::default();
  let floor = self.config.tolerance_floor.max(TOLERANCE_ABS);
@@ -127,7 +127,7 @@ impl TolerancePropagationEngine {
  (result, report)
  }
 
- fn propagate_aggressive(&self, brep: &BRep) -> (BRep, TolerancePropagationReport) {
+ fn propagate_aggressive(&self, brep: &rcad_kernel::BRep) -> (brep, TolerancePropagationReport) {
  let mut result = brep.clone();
  let mut report = TolerancePropagationReport::default();
  let floor = self.config.tolerance_floor.max(TOLERANCE_ABS);
@@ -222,7 +222,7 @@ impl TolerancePropagationEngine {
  (result, report)
  }
 
- fn propagate_harmonized(&self, brep: &BRep) -> (BRep, TolerancePropagationReport) {
+ fn propagate_harmonized(&self, brep: &rcad_kernel::BRep) -> (brep, TolerancePropagationReport) {
  let mut result = brep.clone();
  let mut report = TolerancePropagationReport::default();
  let floor = self.config.tolerance_floor.max(TOLERANCE_ABS);
@@ -309,7 +309,7 @@ impl TolerancePropagationEngine {
  (result, report)
  }
 
- fn propagate_bounded(&self, brep: &BRep) -> (BRep, TolerancePropagationReport) {
+ fn propagate_bounded(&self, brep: &rcad_kernel::BRep) -> (brep, TolerancePropagationReport) {
  let mut result = brep.clone();
  let mut report = TolerancePropagationReport::default();
  let floor = self.config.tolerance_floor.max(TOLERANCE_ABS);
@@ -377,7 +377,7 @@ impl TolerancePropagationEngine {
  (result, report)
  }
 
- fn propagate_model_scale(&self, brep: &BRep) -> (BRep, TolerancePropagationReport) {
+ fn propagate_model_scale(&self, brep: &rcad_kernel::BRep) -> (brep, TolerancePropagationReport) {
  let mut result = brep.clone();
  let mut report = TolerancePropagationReport::default();
  let scale = self.config.model_scale.max(TOLERANCE_LINEAR_ULTRA_STRICT);
@@ -414,7 +414,7 @@ impl TolerancePropagationEngine {
  (result, report)
  }
 
- fn ensure_tolerance_arrays(&self, brep: &mut BRep, floor: f64) {
+ fn ensure_tolerance_arrays(&self, brep: &mut rcad_kernel::BRep, floor: f64) {
  let n_verts = brep.vertices.len();
  let n_edges = brep.edges.len();
  let n_faces: usize = brep.solids.iter()
@@ -433,7 +433,7 @@ impl TolerancePropagationEngine {
  }
  }
 
- fn handle_conflicts(&self, brep: &mut BRep, floor: f64) -> (usize, usize) {
+ fn handle_conflicts(&self, brep: &mut rcad_kernel::BRep, floor: f64) -> (usize, usize) {
  match self.config.conflict_policy {
  ConflictResolutionPolicy::Ignore => (0, 0),
  ConflictResolutionPolicy::PropagateUp => {
@@ -485,7 +485,7 @@ impl TolerancePropagationEngine {
  }
  }
 
- fn compute_report_stats(&self, brep: &BRep, report: &mut TolerancePropagationReport) {
+ fn compute_report_stats(&self, brep: &rcad_kernel::BRep, report: &mut TolerancePropagationReport) {
  if !brep.geom.vertex_tolerance.is_empty() {
  report.max_vertex_tolerance = brep.geom.vertex_tolerance.iter()
  .cloned()
@@ -528,9 +528,9 @@ pub struct TolerancePropagationReport {
  pub rule_applied: ToleranceRule,
 }
 
-// = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =
+// = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =
 // Tolerance Consistency Analysis
-// = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =
+// = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =
 
 /// A specific tolerance violation found during analysis.
 #[derive(Debug, Clone)]
@@ -586,7 +586,7 @@ pub enum ToleranceFix {
 /// Report from tolerance consistency analysis.
 #[derive(Debug, Clone, Default)]
 pub struct ToleranceConsistencyReport {
- /// Whether the BRep has consistent tolerances.
+ /// Whether the brep has consistent tolerances.
  pub is_consistent: bool,
  /// Total number of violations found.
  pub violation_count: usize,
@@ -629,7 +629,7 @@ impl ToleranceConsistencyReport {
  }
 }
 
-/// Analyze tolerance consistency in a BRep.
+/// Analyze tolerance consistency in a brep.
 ///
 /// This function checks for tolerance violations and inconsistencies:
 /// - Vertex tolerances exceeding edge tolerances
@@ -640,7 +640,7 @@ impl ToleranceConsistencyReport {
 ///
 /// # Arguments
 ///
-/// * `brep` - The BRep to analyze.
+/// * `brep` - The brep to analyze.
 /// * `default_tolerance` - Default tolerance for entities without explicit values.
 /// * `min_tolerance` - Minimum allowed tolerance (floor).
 /// * `max_tolerance` - Maximum allowed tolerance.
@@ -649,7 +649,7 @@ impl ToleranceConsistencyReport {
 ///
 /// A `ToleranceConsistencyReport` containing all violations found.
 pub fn analyze_tolerance_consistency(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  default_tolerance: f64,
  min_tolerance: f64,
  max_tolerance: f64,
@@ -875,18 +875,18 @@ pub fn analyze_tolerance_consistency(
 ///
 /// # Arguments
 ///
-/// * `brep` - The BRep to fix.
+/// * `brep` - The brep to fix.
 /// * `report` - The consistency report with violations.
 /// * `max_fixes` - Maximum number of fixes to apply (0 = unlimited).
 ///
 /// # Returns
 ///
-/// A tuple of (fixed BRep, number of fixes applied).
+/// A tuple of (fixed brep, number of fixes applied).
 pub fn apply_tolerance_fixes(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  report: &ToleranceConsistencyReport,
  max_fixes: usize,
-) -> (BRep, usize) {
+) -> (brep, usize) {
  let mut result = brep.clone();
  let mut fixes_applied = 0usize;
  let floor = TOLERANCE_ABS;
@@ -969,9 +969,9 @@ pub fn apply_tolerance_fixes(
  (result, fixes_applied)
 }
 
-// = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =
+// = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =
 // Enhanced Internal Face Detection and Removal
-// = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =ㄦ = =
+// = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =?? = =
 
 /// Configuration for internal face detection.
 #[derive(Debug, Clone)]
@@ -1074,7 +1074,7 @@ pub struct InternalFaceDetectionReport {
  pub summary: String,
 }
 
-/// Detect internal faces in a BRep using comprehensive analysis.
+/// Detect internal faces in a brep using comprehensive analysis.
 ///
 /// Internal faces are faces that do not contribute to the outer boundary of the solid.
 /// These typically arise from boolean operations where partition/separator faces
@@ -1088,11 +1088,11 @@ pub struct InternalFaceDetectionReport {
 /// 5. **Connectivity analysis**: Faces with all edges shared by other faces
 ///
 /// # Arguments
-/// * `brep` - The BRep to analyze.
+/// * `brep` - The brep to analyze.
 ///
 /// # Returns
 /// A vector of flattened face indices that are identified as internal.
-pub fn detect_internal_faces(brep: &BRep) -> Vec<usize> {
+pub fn detect_internal_faces(brep: &rcad_kernel::BRep) -> Vec<usize> {
  detect_internal_faces_with_config(brep, &InternalFaceDetectionConfig::default())
  .internal_face_indices
 }
@@ -1101,7 +1101,7 @@ pub fn detect_internal_faces(brep: &BRep) -> Vec<usize> {
 ///
 /// See [`detect_internal_faces`] for details.
 pub fn detect_internal_faces_with_config(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  config: &InternalFaceDetectionConfig,
 ) -> InternalFaceDetectionReport {
  let mut report = InternalFaceDetectionReport::default();
@@ -1200,7 +1200,7 @@ pub fn detect_internal_faces_with_config(
 
 /// Detect faces in void shells (shell index > 0 in a solid).
 fn detect_void_shell_faces(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  faces: &[(usize, usize, usize, &Face)],
 ) -> Vec<usize> {
  let mut result = Vec::new();
@@ -1221,7 +1221,7 @@ fn detect_void_shell_faces(
 
 /// Detect internal faces by finding duplicate faces with opposite orientation.
 fn detect_duplicate_internal_faces(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  faces: &[(usize, usize, usize, &Face)],
  tolerance: f64,
 ) -> Vec<usize> {
@@ -1314,7 +1314,7 @@ fn detect_duplicate_internal_faces(
 /// - Edges shared by MORE than 2 faces (non-manifold or partition faces)
 /// - Faces where all edges are shared but the sharing is unusual
 fn detect_internal_faces_by_connectivity(
- _brep: &BRep,
+ _brep: &rcad_kernel::BRep,
  faces: &[(usize, usize, usize, &Face)],
  _shared_edge_threshold: f64,
  min_edge_count: usize,
@@ -1371,7 +1371,7 @@ fn detect_internal_faces_by_connectivity(
 /// the same material region). This typically happens after boolean operations
 /// where partition faces are left behind.
 fn detect_internal_faces_by_material_side(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  faces: &[(usize, usize, usize, &Face)],
  _tolerance: f64,
 ) -> Vec<usize> {
@@ -1426,7 +1426,7 @@ fn detect_internal_faces_by_material_side(
 
 /// Detect internal faces by visibility check using ray casting.
 fn detect_internal_faces_by_visibility(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  faces: &[(usize, usize, usize, &Face)],
 ) -> Vec<usize> {
  let mut result = Vec::new();
@@ -1465,7 +1465,7 @@ fn detect_internal_faces_by_visibility(
 }
 
 /// Check if a point is inside a solid using ray casting.
-fn is_point_inside_solid(brep: &BRep, solid_idx: usize, point: DVec3) -> bool {
+fn is_point_inside_solid(brep: &rcad_kernel::BRep, solid_idx: usize, point: DVec3) -> bool {
  let solid = match brep.solids.get(solid_idx) {
  Some(s) => s,
  None => return false,
@@ -1604,17 +1604,17 @@ pub struct PostBooleanRemovalReport {
  pub summary: String,
 }
 
-/// Remove internal faces from a BRep after boolean operations.
+/// Remove internal faces from a brep after boolean operations.
 ///
 /// This is a convenience function that combines detection and removal
 /// with post-removal cleanup and validation.
 ///
 /// # Arguments
-/// * `brep` - The BRep to process.
+/// * `brep` - The brep to process.
 ///
 /// # Returns
-/// A tuple of (cleaned BRep, removal report).
-pub fn remove_internal_faces_post_boolean(brep: &BRep) -> (BRep, PostBooleanRemovalReport) {
+/// A tuple of (cleaned brep, removal report).
+pub fn remove_internal_faces_post_boolean(brep: &rcad_kernel::BRep) -> (brep, PostBooleanRemovalReport) {
  remove_internal_faces_post_boolean_with_config(brep, &PostBooleanRemovalConfig::default())
 }
 
@@ -1622,9 +1622,9 @@ pub fn remove_internal_faces_post_boolean(brep: &BRep) -> (BRep, PostBooleanRemo
 ///
 /// See [`remove_internal_faces_post_boolean`] for details.
 pub fn remove_internal_faces_post_boolean_with_config(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  config: &PostBooleanRemovalConfig,
-) -> (BRep, PostBooleanRemovalReport) {
+) -> (brep, PostBooleanRemovalReport) {
  let mut report = PostBooleanRemovalReport::default();
 
  // Step 1: Detect internal faces
@@ -1677,7 +1677,7 @@ pub fn remove_internal_faces_post_boolean_with_config(
 /// Validation result for internal face removal.
 #[derive(Debug, Clone, Default)]
 pub struct InternalFaceRemovalValidation {
- /// Whether the BRep is valid after removal.
+ /// Whether the brep is valid after removal.
  pub is_valid: bool,
  /// List of validation issues found.
  pub issues: Vec<String>,
@@ -1691,7 +1691,7 @@ pub struct InternalFaceRemovalValidation {
  pub orphaned_vertices: usize,
 }
 
-/// Validate a BRep after internal face removal.
+/// Validate a brep after internal face removal.
 ///
 /// Checks for:
 /// - Empty shells
@@ -1699,7 +1699,7 @@ pub struct InternalFaceRemovalValidation {
 /// - Degenerate edges (zero-length)
 /// - Orphaned vertices
 /// - Shell closure
-pub fn validate_internal_face_removal(brep: &BRep) -> InternalFaceRemovalValidation {
+pub fn validate_internal_face_removal(brep: &rcad_kernel::BRep) -> InternalFaceRemovalValidation {
  let mut validation = InternalFaceRemovalValidation::default();
  validation.is_valid = true;
 
@@ -1791,7 +1791,7 @@ struct ShellClosureCheck {
 }
 
 /// Check if a shell is properly closed (all edges shared by exactly 2 faces).
-fn check_shell_closure_internal(_brep: &BRep, shell: &Shell) -> ShellClosureCheck {
+fn check_shell_closure_internal(_brep: &rcad_kernel::BRep, shell: &Shell) -> ShellClosureCheck {
  let mut edge_count: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
 
  for face in &shell.faces {
@@ -1817,7 +1817,7 @@ fn check_shell_closure_internal(_brep: &BRep, shell: &Shell) -> ShellClosureChec
 }
 
 /// Estimate face area from its wire (approximate).
-fn estimate_face_area_from_wire(brep: &BRep, wire: &Wire) -> f64 {
+fn estimate_face_area_from_wire(brep: &rcad_kernel::BRep, wire: &Wire) -> f64 {
  // Get vertices
  let pts: Vec<DVec3> = wire
  .edges
@@ -1849,12 +1849,12 @@ fn estimate_face_area_from_wire(brep: &BRep, wire: &Wire) -> f64 {
 /// can potentially be merged if they are on the same underlying surface.
 ///
 /// # Arguments
-/// * `brep` - The BRep to process.
+/// * `brep` - The brep to process.
 /// * `tolerance` - Tolerance for geometric comparisons.
 ///
 /// # Returns
-/// A tuple of (BRep with merged faces, count of faces merged).
-pub fn merge_adjacent_faces_after_removal(brep: &BRep, tolerance: f64) -> (BRep, usize) {
+/// A tuple of (brep with merged faces, count of faces merged).
+pub fn merge_adjacent_faces_after_removal(brep: &rcad_kernel::BRep, tolerance: f64) -> (brep, usize) {
  let tol = tolerance.max(TOLERANCE_ABS);
  let mut result = brep.clone();
  let mut total_merged = 0usize;
@@ -1880,7 +1880,7 @@ pub fn merge_adjacent_faces_after_removal(brep: &BRep, tolerance: f64) -> (BRep,
 }
 
 /// Merge faces in a shell that share the same underlying surface.
-fn merge_faces_in_shell(brep: &BRep, faces: &[Face], tolerance: f64) -> (Vec<Face>, usize) {
+fn merge_faces_in_shell(brep: &rcad_kernel::BRep, faces: &[Face], tolerance: f64) -> (Vec<Face>, usize) {
  if faces.len() < 2 {
  return (faces.to_vec(), 0);
  }

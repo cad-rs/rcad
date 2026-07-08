@@ -12,16 +12,16 @@
 /// # Returns
 ///
 /// A new BRep containing the offset solid, or an error.
-pub fn offset_solid(solid: &Solid, brep: &BRep, distance: f64) -> Result<BRep, OffsetError> {
+pub fn offset_solid(solid: &Solid, brep: &rcad_kernel::BRep, distance: f64) -> Result<rcad_kernel::BRep, OffsetError> {
  offset_solid_with_options(solid, brep, &OffsetOptions::new(distance))
 }
 
 /// Offset a solid with full options.
 pub fn offset_solid_with_options(
  solid: &Solid,
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  opts: &OffsetOptions,
-) -> Result<BRep, OffsetError> {
+) -> Result<rcad_kernel::BRep, OffsetError> {
  let distance = opts.distance;
 
  if distance.abs() < TOLERANCE_LEN_MIN {
@@ -29,7 +29,7 @@ pub fn offset_solid_with_options(
  }
 
  // For a solid, offset each shell
- let mut result = BRep::new();
+ let mut result = rcad_kernel::BRep::new();
  result.solids.push(Solid { shells: Vec::new() });
 
  for shell in &solid.shells {
@@ -95,21 +95,21 @@ pub fn offset_solid_with_options(
 /// or an error.
 pub fn hollow_solid(
  solid: &Solid,
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  thickness: f64,
  open_faces: &[usize],
-) -> Result<BRep, OffsetError> {
+) -> Result<rcad_kernel::BRep, OffsetError> {
  hollow_solid_with_options(solid, brep, thickness, open_faces, &OffsetOptions::new(-thickness))
 }
 
 /// Create a hollow solid with full options.
 pub fn hollow_solid_with_options(
  solid: &Solid,
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  thickness: f64,
  open_faces: &[usize],
  opts: &OffsetOptions,
-) -> Result<BRep, OffsetError> {
+) -> Result<rcad_kernel::BRep, OffsetError> {
  if thickness <= 0.0 {
  return Err(OffsetError::InvalidInput("thickness must be positive"));
  }
@@ -190,7 +190,7 @@ pub fn hollow_solid_with_options(
  .collect();
 
  // Step 4: Build result BRep
- let mut result = BRep::new();
+ let mut result = rcad_kernel::BRep::new();
  result.solids.push(Solid {
  shells: vec![Shell { faces: Vec::new() }],
  });
@@ -353,7 +353,7 @@ pub fn hollow_solid_with_options(
 /// # Returns
 ///
 /// A new BRep with offset geometry.
-pub fn offset_shape(brep: &BRep, opts: OffsetOptions) -> Result<OffsetResult, OffsetError> {
+pub fn offset_shape(brep: &rcad_kernel::BRep, opts: OffsetOptions) -> Result<OffsetResult, OffsetError> {
  if opts.distance.abs() < TOLERANCE_LEN_MIN {
  return Err(OffsetError::ZeroDistance);
  }

@@ -2,9 +2,9 @@
 /// Like [`general_fuse`] with explicit [`BooleanOptions`] (fuzzy, glue, healing, make-connected,
 /// simplify, etc.) applied on **each** left-fold union step.
 pub fn general_fuse_with_options(
- parts: &[BRep],
+ parts: &[rcad_kernel::BRep],
  options: BooleanOptions,
-) -> Result<BRep, BooleanError> {
+) -> Result<rcad_kernel::BRep, BooleanError> {
  if parts.is_empty() {
  return Err(BooleanError::EmptyInput);
  }
@@ -94,8 +94,8 @@ impl std::error::Error for GeneralFuseError {
 /// Delegates to [`general_fuse_with_history_with_options`] with default options and
 /// [`BooleanOptions::include_history`] set.
 pub fn general_fuse_with_history(
- parts: &[BRep],
-) -> Result<(BRep, GeneralFuseHistory), BooleanError> {
+ parts: &[rcad_kernel::BRep],
+) -> Result<(rcad_kernel::BRep, GeneralFuseHistory), BooleanError> {
  let mut opts = BooleanOptions::default();
  opts.include_history = true;
  general_fuse_with_history_with_options(parts, opts)
@@ -104,9 +104,9 @@ pub fn general_fuse_with_history(
 /// Like [`general_fuse_with_history`] with explicit [`BooleanOptions`] per fold step.
 /// Forces [`BooleanOptions::include_history`] so each step contributes a [`BooleanHistory`].
 pub fn general_fuse_with_history_with_options(
- parts: &[BRep],
+ parts: &[rcad_kernel::BRep],
  mut options: BooleanOptions,
-) -> Result<(BRep, GeneralFuseHistory), BooleanError> {
+) -> Result<(rcad_kernel::BRep, GeneralFuseHistory), BooleanError> {
  if parts.is_empty() {
  return Err(BooleanError::EmptyInput);
  }
@@ -139,7 +139,7 @@ pub fn general_fuse_with_history_with_options(
 /// [`boolean_op_with_options`], so per-step [`BooleanOptions`] (fuzzy, glue, healing,
 /// pairwise merge) are **not** applied; use [`general_fuse_with_history_with_options`] when you
 /// need those on every fold.
-pub fn general_fuse_par(parts: &[BRep]) -> Result<(BRep, GeneralFuseHistory), BooleanError> {
+pub fn general_fuse_par(parts: &[rcad_kernel::BRep]) -> Result<(rcad_kernel::BRep, GeneralFuseHistory), BooleanError> {
  if parts.is_empty() {
  return Err(BooleanError::EmptyInput);
  }
@@ -163,7 +163,7 @@ pub fn general_fuse_par(parts: &[BRep]) -> Result<(BRep, GeneralFuseHistory), Bo
 // ============================================================================
 
 /// Count faces in all solids strictly before `solid_idx`.
-fn face_count_before_solid(full: &BRep, solid_idx: usize) -> usize {
+fn face_count_before_solid(full: &rcad_kernel::BRep, solid_idx: usize) -> usize {
  full.solids
  .iter()
  .take(solid_idx)
@@ -172,10 +172,10 @@ fn face_count_before_solid(full: &BRep, solid_idx: usize) -> usize {
  .sum()
 }
 
-/// Build a self-contained [`BRep`] holding only solid `solid_idx` of `full`, with
+/// Build a self-contained [`rcad_kernel::BRep`] holding only solid `solid_idx` of `full`, with
 /// vertices/edges/face geometry trimmed so boolean DS loading does not ingest
-/// orphan topology from sibling solids (e.g. after [`BRep::compound_from_shapes`]).
-fn compact_brep_isolated_solid(full: &BRep, solid_idx: usize) -> Option<BRep> {
+/// orphan topology from sibling solids (e.g. after [`rcad_kernel::BRep::compound_from_shapes`]).
+fn compact_brep_isolated_solid(full: &rcad_kernel::BRep, solid_idx: usize) -> Option<rcad_kernel::BRep> {
  use rcad_kernel::topology::{Face, Shell, Solid, Wire, WireEdge};
  use std::collections::BTreeSet;
 
@@ -239,7 +239,7 @@ fn compact_brep_isolated_solid(full: &BRep, solid_idx: usize) -> Option<BRep> {
  }
  };
 
- let mut out = BRep::new();
+ let mut out = rcad_kernel::BRep::new();
  for &vi in &v_list {
  out.vertices.push(full.vertices[vi].clone());
  out.geom
@@ -310,11 +310,11 @@ fn compact_brep_isolated_solid(full: &BRep, solid_idx: usize) -> Option<BRep> {
  Some(out)
 }
 
-/// `solid` must refer into this B-rep: either the copy in [`BRep::solids`], or (for
-/// compounds) a constituent solid as returned by [`BRep::flatten_to_solids`] (the
-/// canonical allocation lives in [`BRep::compound`], and `full.solids` holds clones
+/// `solid` must refer into this B-rep: either the copy in [`rcad_kernel::BRep::solids`], or (for
+/// compounds) a constituent solid as returned by [`rcad_kernel::BRep::flatten_to_solids`] (the
+/// canonical allocation lives in [`rcad_kernel::BRep::compound`], and `full.solids` holds clones
 /// with different addresses).
-fn brep_operand_for_compound_solid(full: &BRep, solid: &rcad_kernel::Solid) -> BRep {
+fn brep_operand_for_compound_solid(full: &rcad_kernel::BRep, solid: &rcad_kernel::Solid) -> rcad_kernel::BRep {
  let idx = full
  .solids
  .iter()
@@ -324,8 +324,8 @@ fn brep_operand_for_compound_solid(full: &BRep, solid: &rcad_kernel::Solid) -> B
  .iter()
  .position(|&s| std::ptr::eq(s, solid))
  })
- .expect("compound solid reference must point into parent BRep");
- compact_brep_isolated_solid(full, idx).expect("solid exists in parent BRep")
+ .expect("compound solid reference must point into parent rcad_kernel::BRep");
+ compact_brep_isolated_solid(full, idx).expect("solid exists in parent rcad_kernel::BRep")
 }
 
 /// Perform a boolean operation on a compound shape.
@@ -336,24 +336,24 @@ fn brep_operand_for_compound_solid(full: &BRep, solid: &rcad_kernel::Solid) -> B
 /// For union operations on compounds, all solids are fused together.
 /// For difference operations, each solid from A is subtracted by all solids from B.
 /// For intersection operations, each solid from A is intersected with all solids from B.
-pub fn boolean_op_compound(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep, BooleanError> {
+pub fn boolean_op_compound(op: BooleanOpType, a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
  let a_solids = a.flatten_to_solids();
  let b_solids = b.flatten_to_solids();
 
  if a_solids.is_empty() && b_solids.is_empty() {
- return Ok(BRep::default());
+ return Ok(rcad_kernel::BRep::default());
  }
  if a_solids.is_empty() {
  return match op {
  BooleanOpType::Union => Ok(b.clone()),
- BooleanOpType::Intersection => Ok(BRep::default()),
- BooleanOpType::Difference => Ok(BRep::default()),
+ BooleanOpType::Intersection => Ok(rcad_kernel::BRep::default()),
+ BooleanOpType::Difference => Ok(rcad_kernel::BRep::default()),
  };
  }
  if b_solids.is_empty() {
  return match op {
  BooleanOpType::Union => Ok(a.clone()),
- BooleanOpType::Intersection => Ok(BRep::default()),
+ BooleanOpType::Intersection => Ok(rcad_kernel::BRep::default()),
  BooleanOpType::Difference => Ok(a.clone()),
  };
  }
@@ -361,7 +361,7 @@ pub fn boolean_op_compound(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep
  match op {
  BooleanOpType::Union => {
  // Union all solids from both shapes
- let all_solids: Vec<BRep> = a_solids
+ let all_solids: Vec<rcad_kernel::BRep> = a_solids
  .iter()
  .map(|s| brep_operand_for_compound_solid(a, s))
  .chain(
@@ -387,7 +387,7 @@ pub fn boolean_op_compound(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep
  if results.len() == 1 {
  Ok(results.remove(0))
  } else {
- Ok(BRep::compound_from_shapes(&results))
+ Ok(rcad_kernel::BRep::compound_from_shapes(&results))
  }
  }
  BooleanOpType::Intersection => {
@@ -413,7 +413,7 @@ pub fn boolean_op_compound(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep
  } else if results.len() == 1 {
  Ok(results.remove(0))
  } else {
- Ok(BRep::compound_from_shapes(&results))
+ Ok(rcad_kernel::BRep::compound_from_shapes(&results))
  }
  }
  }
@@ -424,7 +424,7 @@ pub fn boolean_op_compound(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<BRep
 /// Face counts on `accum` are expected to be preset to total operand faces; callers
 /// set `output_faces` from the final shape. Scalar history counters are summed across
 /// steps; persistent label vectors take the last non-empty step (final fold is most
-/// representative for the returned BRep).
+/// representative for the returned rcad_kernel::BRep).
 fn merge_boolean_execution_reports_for_compound_step(
  accum: &mut BooleanExecutionReport,
  step: &BooleanExecutionReport,
@@ -544,27 +544,27 @@ fn merge_boolean_execution_reports_for_compound_step(
 /// returned report aggregates step diagnostics.
 pub fn boolean_op_compound_with_options(
  op: BooleanOpType,
- a: &BRep,
- b: &BRep,
+ a: &rcad_kernel::BRep,
+ b: &rcad_kernel::BRep,
  options: BooleanOptions,
-) -> Result<(BRep, BooleanExecutionReport), BooleanError> {
+) -> Result<(rcad_kernel::BRep, BooleanExecutionReport), BooleanError> {
  let a_solids = a.flatten_to_solids();
  let b_solids = b.flatten_to_solids();
 
  if a_solids.is_empty() && b_solids.is_empty() {
- return Ok((BRep::default(), BooleanExecutionReport::default()));
+ return Ok((rcad_kernel::BRep::default(), BooleanExecutionReport::default()));
  }
  if a_solids.is_empty() {
  return Ok((match op {
  BooleanOpType::Union => b.clone(),
- BooleanOpType::Intersection => BRep::default(),
- BooleanOpType::Difference => BRep::default(),
+ BooleanOpType::Intersection => rcad_kernel::BRep::default(),
+ BooleanOpType::Difference => rcad_kernel::BRep::default(),
  }, BooleanExecutionReport::default()));
  }
  if b_solids.is_empty() {
  return Ok((match op {
  BooleanOpType::Union => a.clone(),
- BooleanOpType::Intersection => BRep::default(),
+ BooleanOpType::Intersection => rcad_kernel::BRep::default(),
  BooleanOpType::Difference => a.clone(),
  }, BooleanExecutionReport::default()));
  }
@@ -583,7 +583,7 @@ pub fn boolean_op_compound_with_options(
 
  let result = match op {
  BooleanOpType::Union => {
- let all_solids: Vec<BRep> = a_solids
+ let all_solids: Vec<rcad_kernel::BRep> = a_solids
  .iter()
  .map(|s| brep_operand_for_compound_solid(a, s))
  .chain(
@@ -625,7 +625,7 @@ pub fn boolean_op_compound_with_options(
  if results.len() == 1 {
  results.remove(0)
  } else {
- BRep::compound_from_shapes(&results)
+ rcad_kernel::BRep::compound_from_shapes(&results)
  }
  }
  BooleanOpType::Intersection => {
@@ -657,7 +657,7 @@ pub fn boolean_op_compound_with_options(
  } else if results.len() == 1 {
  results.remove(0)
  } else {
- BRep::compound_from_shapes(&results)
+ rcad_kernel::BRep::compound_from_shapes(&results)
  }
  }
  };
@@ -669,7 +669,7 @@ pub fn boolean_op_compound_with_options(
 /// Fuse all solids in a compound into a single solid.
 ///
 /// This is equivalent to a general fuse operation on the compound's constituents.
-pub fn fuse_compound(compound: &BRep) -> Result<BRep, BooleanError> {
+pub fn fuse_compound(compound: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
  let solids = compound.flatten_to_solids();
  if solids.is_empty() {
  return Err(BooleanError::EmptyInput);
@@ -678,7 +678,7 @@ pub fn fuse_compound(compound: &BRep) -> Result<BRep, BooleanError> {
  return Ok(brep_operand_for_compound_solid(compound, solids[0]));
  }
 
- let breps: Vec<BRep> = solids
+ let breps: Vec<rcad_kernel::BRep> = solids
  .iter()
  .map(|s| brep_operand_for_compound_solid(compound, s))
  .collect();
@@ -692,8 +692,8 @@ pub fn fuse_compound(compound: &BRep) -> Result<BRep, BooleanError> {
 /// union fails. Delegates to [`general_fuse_detailed_with_options`] with
 /// [`BooleanOptions::default`] and history enabled.
 pub fn general_fuse_detailed(
- parts: &[BRep],
-) -> Result<(BRep, GeneralFuseHistory, GeneralFuseReport), GeneralFuseError> {
+ parts: &[rcad_kernel::BRep],
+) -> Result<(rcad_kernel::BRep, GeneralFuseHistory, GeneralFuseReport), GeneralFuseError> {
  let mut opts = BooleanOptions::default();
  opts.include_history = true;
  general_fuse_detailed_with_options(parts, opts)
@@ -701,9 +701,9 @@ pub fn general_fuse_detailed(
 
 /// Like [`general_fuse_detailed`] with explicit [`BooleanOptions`] on each fold step.
 pub fn general_fuse_detailed_with_options(
- parts: &[BRep],
+ parts: &[rcad_kernel::BRep],
  mut options: BooleanOptions,
-) -> Result<(BRep, GeneralFuseHistory, GeneralFuseReport), GeneralFuseError> {
+) -> Result<(rcad_kernel::BRep, GeneralFuseHistory, GeneralFuseReport), GeneralFuseError> {
  if parts.is_empty() {
  return Err(GeneralFuseError::EmptyInput);
  }
@@ -754,16 +754,16 @@ pub fn general_fuse_detailed_with_options(
 /// first split by all other objects, then the split outputs are fused in a
 /// final N-ary fold. The implementation remains conservative by reusing the
 /// existing splitter and binary boolean core.
-pub fn general_fuse_split_first(parts: &[BRep]) -> Result<BRep, GeneralFuseError> {
+pub fn general_fuse_split_first(parts: &[rcad_kernel::BRep]) -> Result<rcad_kernel::BRep, GeneralFuseError> {
  let (brep, _) = general_fuse_split_first_with_options(parts, SplitterOptions::default())?;
  Ok(brep)
 }
 
 /// Split-first multi-body fuse with splitter options and structured reporting.
 pub fn general_fuse_split_first_with_options(
- parts: &[BRep],
+ parts: &[rcad_kernel::BRep],
  splitter_options: SplitterOptions,
-) -> Result<(BRep, GeneralFuseSplitFirstReport), GeneralFuseError> {
+) -> Result<(rcad_kernel::BRep, GeneralFuseSplitFirstReport), GeneralFuseError> {
  if parts.is_empty() {
  return Err(GeneralFuseError::EmptyInput);
  }
@@ -773,7 +773,7 @@ pub fn general_fuse_split_first_with_options(
  let mut split_face_counts = Vec::with_capacity(parts.len());
 
  for (object_index, object) in parts.iter().enumerate() {
- let tools: Vec<BRep> = parts
+ let tools: Vec<rcad_kernel::BRep> = parts
  .iter()
  .enumerate()
  .filter(|(idx, _)| *idx != object_index)
@@ -809,8 +809,8 @@ pub fn general_fuse_split_first_with_options(
 ///
 /// Like [`general_fuse_par`], uses [`boolean_op_par`] each step (no per-step [`BooleanOptions`]).
 pub fn general_fuse_par_detailed(
- parts: &[BRep],
-) -> Result<(BRep, GeneralFuseHistory, GeneralFuseReport), GeneralFuseError> {
+ parts: &[rcad_kernel::BRep],
+) -> Result<(rcad_kernel::BRep, GeneralFuseHistory, GeneralFuseReport), GeneralFuseError> {
  if parts.is_empty() {
  return Err(GeneralFuseError::EmptyInput);
  }
@@ -857,14 +857,14 @@ pub fn general_fuse_par_detailed(
 /// The topology is simplified by removing internal shared edges between
 /// same-domain face pairs.
 ///
-/// Returns the simplified BRep and the number of face merges performed.
+/// Returns the simplified rcad_kernel::BRep and the number of face merges performed.
 ///
 /// # Algorithm
 /// Remove unreferenced geometry (surfaces, curves, edges, vertices) that are
 /// no longer used by any face in the result.  After butterfly merge + classify,
 /// pruned surface entries are no longer indexed by any face_surface slot.
 /// OCCT's BuildResult does this implicitly via compact shape copy.
-pub fn prune_unused_topology(brep: BRep) -> BRep {
+pub fn prune_unused_topology(brep: rcad_kernel::BRep) -> rcad_kernel::BRep {
  crate::brep_tools::compact_brep(&brep)
 }
 
@@ -872,7 +872,7 @@ pub fn prune_unused_topology(brep: BRep) -> BRep {
 /// same-domain faces sharing a single shell edge is merged. Passes repeat until
 /// no more merges are possible. This is O(faces² × passes) but correct for all
 /// surface-topology inputs produced by the boolean kernel.
-pub fn unify_same_domain_faces(brep: &BRep) -> (BRep, usize) {
+pub fn unify_same_domain_faces(brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, usize) {
  unify_same_domain_faces_with_origins(brep, None)
 }
 
@@ -880,9 +880,9 @@ pub fn unify_same_domain_faces(brep: &BRep) -> (BRep, usize) {
 /// Use this with the face origins from [`BooleanHistory`] to avoid merging across
 /// operands (A-side with B-side).
 pub fn unify_same_domain_faces_with_origins(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  face_origins: Option<&[FaceOrigin]>,
-) -> (BRep, usize) {
+) -> (rcad_kernel::BRep, usize) {
  let mut out = brep.clone();
  let mut total_merges = 0usize;
 
@@ -909,7 +909,7 @@ pub fn unify_same_domain_faces_with_origins(
 /// remove the others.
 ///
 /// �?OCCT : edge-set grouping (BOPTools_Set) + surface-type comparison.
-pub fn occt_fill_same_domain_faces(brep: &BRep) -> (BRep, usize) {
+pub fn occt_fill_same_domain_faces(brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, usize) {
  use std::collections::{BTreeSet, HashMap, HashSet};
  use rcad_kernel::geom::Surface3;
 
@@ -1249,7 +1249,7 @@ pub fn occt_fill_same_domain_faces(brep: &BRep) -> (BRep, usize) {
 /// Check if a shared edge maintains continuity between two faces.
 
 /// �?OCCT : �?face.surface_idx  (BuildSolid loop/area  )�?
-pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
+pub fn occt_merge_same_surface_faces(brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, usize) {
  use std::collections::{HashMap, HashSet};
  if brep.solids.is_empty() || brep.solids[0].shells.is_empty() { return (brep.clone(), 0); }
  let mut out = brep.clone(); let mut total = 0usize;
@@ -1415,7 +1415,7 @@ pub fn occt_merge_same_surface_faces(brep: &BRep) -> (BRep, usize) {
 /// Verifies that PCurve parameterizations align properly where the two faces meet.
 /// This is a topological guard to prevent merging faces with incompatible edge representations.
 fn validate_shared_edge_continuity(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  si: usize,
  shi: usize,
  fi1: usize,
@@ -1478,7 +1478,7 @@ fn validate_shared_edge_continuity(
 /// This prevents merging faces that happen to be coplanar but cover different
 /// parts of the surface domain.
 fn validate_uv_regions_compatible(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  si: usize,
  shi: usize,
  fi1: usize,
@@ -1587,7 +1587,7 @@ fn newell_polygon_abs_area(poly: &[glam::DVec3], normal: glam::DVec3) -> f64 {
  0.5 * area2.abs()
 }
 
-fn face_outer_polygon_points(brep: &BRep, si: usize, shi: usize, fi: usize) -> Vec<glam::DVec3> {
+fn face_outer_polygon_points(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Vec<glam::DVec3> {
  let face = &brep.solids[si].shells[shi].faces[fi];
  let mut pts = Vec::new();
  for we in &face.outer_wire.edges {
@@ -1601,7 +1601,7 @@ fn face_outer_polygon_points(brep: &BRep, si: usize, shi: usize, fi: usize) -> V
 }
 
 fn wire_to_polygon_points(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  wire: &[rcad_kernel::topology::WireEdge],
 ) -> Vec<glam::DVec3> {
  let mut pts = Vec::new();
@@ -1636,6 +1636,6 @@ pub(crate) fn remove_flat_face_geom_slots(geom: &mut rcad_kernel::GeomStore, rem
 /// if a merge was performed (mutating `brep` in place).
 ///
 /// Handles planar, cylindrical, toroidal, and spherical surface pairs.
-fn unify_one_merge_pass(brep: &mut BRep) -> bool {
+fn unify_one_merge_pass(brep: &mut rcad_kernel::BRep) -> bool {
  unify_one_merge_pass_with_origins(brep, None)
 }

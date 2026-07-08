@@ -25,7 +25,7 @@ fn orthonormal_frame(axis: DVec3, ref_dir: DVec3) -> (DVec3, DVec3, DVec3) {
 /// - The edge lies on a cylindrical or conical surface
 /// - The edge makes an angle with the surface axis (not parallel or perpendicular)
 pub fn is_thread_edge(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     edge_idx: usize,
     surface: &Surface3,
 ) -> bool {
@@ -61,7 +61,7 @@ pub fn is_thread_edge(
 fn is_approximately_helical_on_cylinder(
     curve: &rcad_kernel::geom::Curve3,
     cyl: &rcad_kernel::geom::CylindricalSurface,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     edge: &rcad_kernel::topology::Edge,
 ) -> bool {
     use rcad_kernel::geom::CurveEval;
@@ -118,7 +118,7 @@ fn is_approximately_helical_on_cylinder(
 fn is_approximately_helical_on_cone(
     curve: &rcad_kernel::geom::Curve3,
     cone: &rcad_kernel::geom::ConicalSurface,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     edge: &rcad_kernel::topology::Edge,
 ) -> bool {
     use rcad_kernel::geom::CurveEval;
@@ -181,7 +181,7 @@ fn is_approximately_helical_on_cone(
 /// Seam edges are edges where a closed surface (cylinder, cone, sphere, torus)
 /// meets itself at the parameter boundary (u = 0 and u = 2π).
 pub fn is_seam_edge(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     edge_idx: usize,
     surface: &Surface3,
 ) -> bool {
@@ -224,7 +224,7 @@ pub fn is_seam_edge(
 }
 
 /// Check if an edge is a degenerate edge (zero length, e.g., pole singularity).
-pub fn is_degenerate_edge_for_hlr(brep: &BRep, edge_idx: usize) -> bool {
+pub fn is_degenerate_edge_for_hlr(brep: &rcad_kernel::BRep, edge_idx: usize) -> bool {
     // Check the degenerated flag in GeomStore
     brep.geom.edge_degenerated.get(edge_idx).copied().unwrap_or(false)
 }
@@ -250,7 +250,7 @@ pub struct CurveSurfaceIntersection {
 /// This function finds where a curve intersects the silhouette of a surface
 /// and determines which portions of the curve are visible.
 pub fn compute_curve_visibility_on_surface(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     edge_idx: usize,
     surface_idx: usize,
     camera: &HlrCamera,
@@ -402,7 +402,7 @@ fn find_silhouette_crossing(
 
 /// Classify all edges in a BRep for HLR processing.
 pub fn classify_edges(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     camera: &HlrCamera,
     opts: &HlrOptions,
 ) -> Vec<EdgeClassInfo> {
@@ -418,7 +418,7 @@ pub fn classify_edges(
 
 /// Classify a single edge.
 fn classify_single_edge(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     edge_idx: usize,
     _camera: &HlrCamera,
     opts: &HlrOptions,
@@ -481,7 +481,7 @@ fn classify_single_edge(
 }
 
 /// Get the primary surface an edge is on.
-fn get_edge_surface(brep: &BRep, edge_idx: usize) -> Option<usize> {
+fn get_edge_surface(brep: &rcad_kernel::BRep, edge_idx: usize) -> Option<usize> {
     let pcurves = brep.geom.edge_pcurves.get(edge_idx)?;
     pcurves.first().map(|pc| pc.surface_idx)
 }
@@ -626,7 +626,7 @@ fn extract_numerical_silhouettes(
     view_dir: DVec3,
     domain: [f64; 4],
     opts: &HlrOptions,
-    _brep: &BRep,
+    _brep: &rcad_kernel::BRep,
 ) -> Vec<Vec<DVec3>> {
     let [u0, u1, v0, v1] = domain;
     let mut curves: Vec<Vec<DVec3>> = Vec::new();
@@ -1103,7 +1103,7 @@ fn fit_bspline_to_points(points: &[DVec3], tolerance: f64) -> Vec<DVec3> {
 }
 
 /// Generate silhouette curves for the HLR pipeline (internal function).
-fn compute_silhouettes(brep: &BRep, view_dir: DVec3, samples: usize) -> Vec<SilhouetteCurve> {
+fn compute_silhouettes(brep: &rcad_kernel::BRep, view_dir: DVec3, samples: usize) -> Vec<SilhouetteCurve> {
     let opts = HlrOptions {
         silhouette_samples: samples,
         ..HlrOptions::default()
@@ -1320,7 +1320,7 @@ fn process_world_pts_with_bvh(
 /// Returns 2D projected segments labeled visible/hidden.
 /// `samples` controls how finely each edge is subdivided for occlusion testing
 /// (higher = more accurate but slower; 8 is a reasonable default).
-pub fn compute_hlr(brep: &BRep, camera: &HlrCamera, samples: usize) -> HlrResult {
+pub fn compute_hlr(brep: &rcad_kernel::BRep, camera: &HlrCamera, samples: usize) -> HlrResult {
     compute_hlr_with_options(brep, camera, HlrOptions::default().with_edge_samples(samples))
 }
 
@@ -1336,7 +1336,7 @@ pub fn compute_hlr(brep: &BRep, camera: &HlrCamera, samples: usize) -> HlrResult
 ///
 /// # Returns
 /// An `HlrResult` containing projected 2D segments labeled as visible/hidden.
-pub fn compute_hlr_with_options(brep: &BRep, camera: &HlrCamera, opts: HlrOptions) -> HlrResult {
+pub fn compute_hlr_with_options(brep: &rcad_kernel::BRep, camera: &HlrCamera, opts: HlrOptions) -> HlrResult {
     let view = look_at(camera.eye, camera.target, camera.up);
     let triangles = collect_triangles(brep);
     let _edge_samples = opts.edge_samples.max(2);
@@ -1462,7 +1462,7 @@ pub fn compute_hlr_with_options(brep: &BRep, camera: &HlrCamera, opts: HlrOption
 
 /// Process a single edge and return its segments.
 fn process_single_edge(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     edge_idx: usize,
     camera: &HlrCamera,
     view: &DMat4,
@@ -1615,7 +1615,7 @@ fn process_single_edge(
 }
 
 /// Compute silhouette curves with full options (internal helper).
-fn compute_silhouettes_with_options(brep: &BRep, view_dir: DVec3, opts: &HlrOptions) -> Vec<SilhouetteCurve> {
+fn compute_silhouettes_with_options(brep: &rcad_kernel::BRep, view_dir: DVec3, opts: &HlrOptions) -> Vec<SilhouetteCurve> {
     extract_silhouette_curves(brep, view_dir, opts)
         .into_iter()
         .map(|curve| SilhouetteCurve {
@@ -1659,7 +1659,7 @@ impl AssemblyHlrResult {
 
 /// Transform a BRep's vertices by an affine transform.
 /// Returns a new BRep with transformed vertex positions.
-fn transform_brep(brep: &BRep, transform: &DAffine3) -> BRep {
+fn transform_brep(brep: &rcad_kernel::BRep, transform: &DAffine3) -> rcad_kernel::BRep {
     let mut out = brep.clone();
     for v in &mut out.vertices {
         v.point = transform.transform_point3(v.point);
@@ -1676,7 +1676,7 @@ fn transform_brep(brep: &BRep, transform: &DAffine3) -> BRep {
 ///
 /// Returns one `ComponentHlr` per leaf component.
 pub fn hlr_assembly(
-    components: &[(BRep, DAffine3, String)],
+    components: &[(rcad_kernel::BRep, DAffine3, String)],
     camera: &HlrCamera,
     samples: usize,
 ) -> AssemblyHlrResult {
@@ -1684,7 +1684,7 @@ pub fn hlr_assembly(
     let samples = samples.max(2);
 
     // Transform all BRePs to world space and collect a unified triangle pool.
-    let world_breps: Vec<BRep> = components
+    let world_breps: Vec<rcad_kernel::BRep> = components
         .iter()
         .map(|(brep, xf, _)| transform_brep(brep, xf))
         .collect();

@@ -3,7 +3,7 @@
 ///
 /// This is a more comprehensive analysis that returns information about
 /// which faces might intersect and the minimum safe offset distance.
-pub fn detect_self_intersection_detailed(brep: &BRep, distance: f64) -> SelfIntersectionResult {
+pub fn detect_self_intersection_detailed(brep: &rcad_kernel::BRep, distance: f64) -> SelfIntersectionResult {
  let shell = match brep.solids.first().and_then(|s| s.shells.first()) {
  Some(s) => s,
  None => {
@@ -127,8 +127,8 @@ pub fn detect_self_intersection_detailed(brep: &BRep, distance: f64) -> SelfInte
 /// - Two edges along the offset faces (one on each face's boundary)
 /// - Two connecting edges at the endpoints of the shared edge
 pub fn create_sewing_face(
- brep: &mut BRep,
- original_brep: &BRep,
+ brep: &mut rcad_kernel::BRep,
+ original_brep: &rcad_kernel::BRep,
  edge_idx: usize,
  _face_a_idx: usize,
  _face_b_idx: usize,
@@ -248,7 +248,7 @@ pub fn create_sewing_face(
 /// Creates a cylindrical surface that smoothly transitions between
 /// two offset faces meeting at an edge.
 pub fn create_arc_join(
- brep: &mut BRep,
+ brep: &mut rcad_kernel::BRep,
  edge_idx: usize,
  face0_idx: usize,
  face1_idx: usize,
@@ -320,7 +320,7 @@ pub fn create_arc_join(
 /// Creates a smooth, tangent-continuous transition between adjacent faces.
 /// Falls back to intersection join when the angle between faces is too large.
 pub fn create_tangent_join(
- brep: &mut BRep,
+ brep: &mut rcad_kernel::BRep,
  edge_idx: usize,
  face0_idx: usize,
  face1_idx: usize,
@@ -391,7 +391,7 @@ pub fn create_tangent_join(
 /// The offset surfaces extend until they intersect, creating sharp corners.
 /// This is the default mode and works well for mechanical parts.
 pub fn create_intersection_join(
- brep: &mut BRep,
+ brep: &mut rcad_kernel::BRep,
  edge_idx: usize,
  _face0_idx: usize,
  _face1_idx: usize,
@@ -442,8 +442,8 @@ pub fn create_intersection_join(
 /// This function creates the appropriate join geometry for each edge
 /// based on the specified join type.
 pub fn apply_join_type(
- result: &mut BRep,
- original_brep: &BRep,
+ result: &mut rcad_kernel::BRep,
+ original_brep: &rcad_kernel::BRep,
  opts: &OffsetOptions,
  edge_to_faces: &HashMap<usize, Vec<usize>>,
  vertex_map: &[usize],
@@ -494,8 +494,8 @@ pub fn apply_join_type(
 /// Computes various quality metrics including wall thickness, deviation,
 /// and self-intersection detection.
 pub fn analyze_offset_quality(
- result: &BRep,
- original: &BRep,
+ result: &rcad_kernel::BRep,
+ original: &rcad_kernel::BRep,
  opts: &OffsetOptions,
 ) -> OffsetQuality {
  let mut quality = OffsetQuality::default();
@@ -554,7 +554,7 @@ pub fn analyze_offset_quality(
 /// Compute the minimum wall thickness in the offset result.
 ///
 /// Uses face centroid distances to estimate minimum wall thickness.
-pub fn compute_min_wall_thickness(brep: &BRep, distance: f64) -> f64 {
+pub fn compute_min_wall_thickness(brep: &rcad_kernel::BRep, distance: f64) -> f64 {
  let shell = match brep.solids.first().and_then(|s| s.shells.first()) {
  Some(s) => s,
  None => return distance,
@@ -605,7 +605,7 @@ pub fn compute_min_wall_thickness(brep: &BRep, distance: f64) -> f64 {
 }
 
 /// Compute the maximum deviation between offset and expected positions.
-pub fn compute_max_deviation(result: &BRep, original: &BRep, opts: &OffsetOptions) -> f64 {
+pub fn compute_max_deviation(result: &rcad_kernel::BRep, original: &rcad_kernel::BRep, opts: &OffsetOptions) -> f64 {
  let _result_shell = match result.solids.first().and_then(|s| s.shells.first()) {
  Some(s) => s,
  None => return 0.0,
@@ -638,7 +638,7 @@ pub fn compute_max_deviation(result: &BRep, original: &BRep, opts: &OffsetOption
 }
 
 /// Compute the ratio of face areas between result and original.
-pub fn compute_face_area_ratio(result: &BRep, original: &BRep) -> f64 {
+pub fn compute_face_area_ratio(result: &rcad_kernel::BRep, original: &rcad_kernel::BRep) -> f64 {
  let result_shell = match result.solids.first().and_then(|s| s.shells.first()) {
  Some(s) => s,
  None => return 1.0,
@@ -659,7 +659,7 @@ pub fn compute_face_area_ratio(result: &BRep, original: &BRep) -> f64 {
 }
 
 /// Compute the ratio of edge lengths between result and original.
-pub fn compute_edge_length_ratio(result: &BRep, original: &BRep) -> f64 {
+pub fn compute_edge_length_ratio(result: &rcad_kernel::BRep, original: &rcad_kernel::BRep) -> f64 {
  if original.edges.is_empty() {
  return 1.0;
  }
@@ -700,9 +700,9 @@ pub fn compute_edge_length_ratio(result: &BRep, original: &BRep) -> f64 {
 ///
 /// Tries progressively smaller offset distances until a valid result is found.
 pub fn repair_self_intersection(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  opts: &OffsetOptions,
-) -> Result<(BRep, f64, usize), OffsetError> {
+) -> Result<(rcad_kernel::BRep, f64, usize), OffsetError> {
  let config = &opts.self_intersection_config;
 
  if !config.auto_repair {
@@ -758,9 +758,9 @@ pub fn repair_self_intersection(
 /// Implementation of offset_shell_with_options that can be called internally.
 fn offset_shell_with_options_impl(
  shell: &Shell,
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  opts: &OffsetOptions,
-) -> Result<BRep, OffsetError> {
+) -> Result<rcad_kernel::BRep, OffsetError> {
  // Validate variable thickness if specified
  if let Some(ref vt) = opts.variable_thickness {
  vt.validate(shell.faces.len())?;
@@ -860,7 +860,7 @@ fn offset_shell_with_options_impl(
  .collect();
 
  // Step 4: Build result BRep
- let mut result = BRep::new();
+ let mut result = rcad_kernel::BRep::new();
  result.solids.push(Solid {
  shells: vec![Shell { faces: Vec::new() }],
  });
@@ -1052,16 +1052,16 @@ fn clip_polygon_by_halfspace(polygon: &[DVec3], n: DVec3, d: f64, tol: f64) -> V
 /// # Returns
 ///
 /// A new BRep containing the offset shell, or an error.
-pub fn offset_shell(shell: &Shell, brep: &BRep, distance: f64) -> Result<BRep, OffsetError> {
+pub fn offset_shell(shell: &Shell, brep: &rcad_kernel::BRep, distance: f64) -> Result<rcad_kernel::BRep, OffsetError> {
  offset_shell_with_options(shell, brep, &OffsetOptions::new(distance))
 }
 
 /// Offset a shell with full options.
 pub fn offset_shell_with_options(
  shell: &Shell,
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  opts: &OffsetOptions,
-) -> Result<BRep, OffsetError> {
+) -> Result<rcad_kernel::BRep, OffsetError> {
  let distance = opts.distance;
 
  if distance.abs() < TOLERANCE_LEN_MIN {
@@ -1349,7 +1349,7 @@ pub fn offset_shell_with_options(
  .collect();
 
  // Step 4: Build result BRep
- let mut result = BRep::new();
+ let mut result = rcad_kernel::BRep::new();
  result.solids.push(Solid {
  shells: vec![Shell { faces: Vec::new() }],
  });

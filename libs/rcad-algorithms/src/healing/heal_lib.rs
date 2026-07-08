@@ -16,7 +16,7 @@
 ///
 /// # Returns
 /// Repaired B-Rep and count of fixes applied.
-pub fn fix_solid(brep: &BRep, _tolerance: f64) -> (BRep, SolidFixReport) {
+pub fn fix_solid(brep: &rcad_kernel::BRep, _tolerance: f64) -> (rcad_kernel::BRep, SolidFixReport) {
  use crate::brep_repair::{fix_face_orientation, recompute_face_normals};
  use rcad_kernel::BRepGraph;
 
@@ -148,7 +148,7 @@ impl SolidFixReport {
 ///
 /// # Returns
 /// Repaired B-Rep and detailed wire fix report.
-pub fn fix_wire(brep: &BRep, tolerance: f64) -> (BRep, WireFixReport) {
+pub fn fix_wire(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel::BRep, WireFixReport) {
  use crate::brep_repair::fix_wire_orientation;
 
  let mut report = WireFixReport::default();
@@ -271,7 +271,7 @@ impl WireFixReport {
 }
 
 /// Analyze wire for issues without modifying.
-fn analyze_wire_issues(brep: &BRep, wire: &rcad_kernel::topology::Wire, tolerance: f64) -> crate::brep_check::WireIssueReport {
+fn analyze_wire_issues(brep: &rcad_kernel::BRep, wire: &rcad_kernel::topology::Wire, tolerance: f64) -> crate::brep_check::WireIssueReport {
  let n_edges = brep.edges.len();
  let mut open_gaps = 0usize;
  let mut topological_self_intersections = 0usize;
@@ -396,7 +396,7 @@ fn segments_intersect_2d(p1: glam::DVec3, p2: glam::DVec3, p3: glam::DVec3, p4: 
 ///
 /// # Returns
 /// Healed B-Rep and comprehensive report.
-pub fn heal_comprehensive(brep: &BRep, options: &HealingOptions) -> (BRep, ComprehensiveHealingReport) {
+pub fn heal_comprehensive(brep: &rcad_kernel::BRep, options: &HealingOptions) -> (rcad_kernel::BRep, ComprehensiveHealingReport) {
  let mut report = ComprehensiveHealingReport::default();
  let mut current = brep.clone();
 

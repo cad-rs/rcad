@@ -5,7 +5,7 @@
 ///
 /// Note: the area estimate is a polygon fan-triangulation; it is exact for
 /// planar convex faces and an approximation for curved faces.
-pub fn identify_small_faces(brep: &BRep, max_area: f64) -> Vec<usize> {
+pub fn identify_small_faces(brep: &rcad_kernel::BRep, max_area: f64) -> Vec<usize> {
     if max_area <= 0.0 {
         return Vec::new();
     }
@@ -102,9 +102,9 @@ fn make_boss_cylinder(
 /// * When `run_post_healing` is enabled, `make_connected_enhanced` is called
 ///   after all features are processed to repair connectivity.
 pub fn defeature_brep(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     options: &DefeaturingOptions,
-) -> Result<(BRep, DefeaturingReport), DefeaturingError> {
+) -> Result<(rcad_kernel::BRep, DefeaturingReport), DefeaturingError> {
     if brep.solids.is_empty() || brep.solids[0].shells.is_empty() {
         return Err(DefeaturingError::EmptyInput);
     }
@@ -282,12 +282,12 @@ pub fn defeature_brep(
 /// succeeded on first try, or `Err` if all attempts failed.
 fn try_boolean_with_retry(
     op: BooleanOpType,
-    a: &BRep,
-    b: &BRep,
+    a: &rcad_kernel::BRep,
+    b: &rcad_kernel::BRep,
     fuzzy_multiplier: f64,
     max_retries: usize,
     report: &mut DefeaturingReport,
-) -> Result<(BRep, bool), crate::BooleanError> {
+) -> Result<(rcad_kernel::BRep, bool), crate::BooleanError> {
     // First attempt with default fuzzy tolerance.
     match boolean_op(op, a, b) {
         Ok(result) => Ok((rcad_kernel::BRep::from_topods(&result), false)),
@@ -469,9 +469,9 @@ pub struct DefeaturingReportEnhanced {
 /// # Returns
 /// Defeatured B-Rep and detailed report.
 pub fn defeature_brep_enhanced(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     options: &DefeaturingOptionsEnhanced,
-) -> Result<(BRep, DefeaturingReportEnhanced), DefeaturingError> {
+) -> Result<(rcad_kernel::BRep, DefeaturingReportEnhanced), DefeaturingError> {
     if brep.solids.is_empty() || brep.solids[0].shells.is_empty() {
         return Err(DefeaturingError::EmptyInput);
     }
@@ -564,13 +564,13 @@ pub fn defeature_brep_enhanced(
 
 /// Process a feature group as a batch.
 fn process_feature_group(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     group: &FeatureGroup,
     cylindrical_features: &[CylindricalFeature],
     conical_features: &[ConicalFeature],
     options: &DefeaturingOptionsEnhanced,
     report: &mut DefeaturingReportEnhanced,
-) -> Result<BRep, DefeaturingError> {
+) -> Result<rcad_kernel::BRep, DefeaturingError> {
     let mut current = brep.clone();
     let margin = if options.base.fill_margin > 0.0 {
         options.base.fill_margin

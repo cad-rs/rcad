@@ -12,7 +12,7 @@
 /// This function rebuilds the BRep using only vertices and edges that are
 /// referenced by at least one face wire, producing a minimal self-contained
 /// copy with correct bounding box.
-pub(crate) fn compact_brep(brep: &BRep) -> BRep {
+pub(crate) fn compact_brep(brep: &rcad_kernel::BRep) -> rcad_kernel::BRep {
  // Preserve multi-solid structure: compact each solid separately.
  if brep.solids.len() > 1 {
  let mut flat_idx = 0usize;
@@ -28,12 +28,12 @@ pub(crate) fn compact_brep(brep: &BRep) -> BRep {
  }
  flat_idx += face_count;
  }
- return BRep::compound_from_shapes(&comps);
+ return rcad_kernel::BRep::compound_from_shapes(&comps);
  }
 
  let all_faces: Vec<usize> = collect_flat_face_indices(brep);
  if all_faces.is_empty() {
- return BRep::new();
+ return rcad_kernel::BRep::new();
  }
  extract_brep_subset(brep, &all_faces)
 }
@@ -41,13 +41,13 @@ pub(crate) fn compact_brep(brep: &BRep) -> BRep {
 /// Create a new self-contained BRep containing only the specified flat face
 /// indices from the source BRep.  Vertices, edges, and geometry referenced by
 /// the selected faces are copied into the new BRep with dense index renumbering.
-fn extract_brep_subset(source: &BRep, face_indices: &[usize]) -> BRep {
+fn extract_brep_subset(source: &rcad_kernel::BRep, face_indices: &[usize]) -> rcad_kernel::BRep {
  use std::collections::{HashMap, HashSet};
 
  use rcad_kernel::topology::{Edge, Shell, Solid, Wire, WireEdge};
 
  if face_indices.is_empty() {
- return BRep::new();
+ return rcad_kernel::BRep::new();
  }
 
  // Build flat-face index  ?(solid_idx, shell_idx, local_face_idx) lookup
@@ -143,7 +143,7 @@ fn extract_brep_subset(source: &BRep, face_indices: &[usize]) -> BRep {
  let (sorted_surfaces, s_remap) = make_remap(&surface_set);
  let (sorted_curve2ds, k_remap) = make_remap(&curve2d_set);
 
- let mut result = BRep::new();
+ let mut result = rcad_kernel::BRep::new();
 
  // --- vertices ---
  for &old in &sorted_vertices {
@@ -306,7 +306,7 @@ fn extract_brep_subset(source: &BRep, face_indices: &[usize]) -> BRep {
 ///
 /// Each returned BRep has only the vertices, edges, and geometry belonging
 /// to that solid, with indices renumbered from 0.
-pub fn extract_solids(brep: &BRep) -> Vec<BRep> {
+pub fn extract_solids(brep: &rcad_kernel::BRep) -> Vec<rcad_kernel::BRep> {
  let mut results = Vec::new();
  let mut flat_idx = 0;
 
@@ -327,7 +327,7 @@ pub fn extract_solids(brep: &BRep) -> Vec<BRep> {
 ///
 /// Each returned BRep has only the vertices, edges, and geometry belonging
 /// to that shell, with indices renumbered from 0.
-pub fn extract_shells(brep: &BRep) -> Vec<BRep> {
+pub fn extract_shells(brep: &rcad_kernel::BRep) -> Vec<rcad_kernel::BRep> {
  let mut results = Vec::new();
  let mut flat_idx = 0;
 
@@ -359,7 +359,7 @@ pub fn extract_shells(brep: &BRep) -> Vec<BRep> {
 ///
 /// The number of boolean operations per call is O(objects.len() 2^n_tools n_tools),
 /// so this is suitable only for small numbers of tools ( ?10).
-pub fn n_ary_partition(objects: &[BRep], tools: &[BRep]) -> Result<Vec<BRep>, crate::BooleanError> {
+pub fn n_ary_partition(objects: &[rcad_kernel::BRep], tools: &[rcad_kernel::BRep]) -> Result<Vec<rcad_kernel::BRep>, crate::BooleanError> {
  let mut all_cells = Vec::new();
 
  for obj in objects {
@@ -471,7 +471,7 @@ fn box_complement_of_bbox(
 
 /// Check whether a BRep is a simple axis-aligned box (its volume matches its
 /// bounding-box volume within tolerance).
-fn is_box_like(brep: &BRep) -> bool {
+fn is_box_like(brep: &rcad_kernel::BRep) -> bool {
  let vol = crate::total_volume(brep);
  if vol <= 0.0 {
  return false;
@@ -489,7 +489,7 @@ fn is_box_like(brep: &BRep) -> bool {
 }
 
 /// Partition a solid object by tools, expanding face tools into half-space solids.
-fn partition_solid_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate::BooleanError> {
+fn partition_solid_object(obj: &rcad_kernel::BRep, tools: &[rcad_kernel::BRep]) -> Result<Vec<rcad_kernel::BRep>, crate::BooleanError> {
  // Detect face-like tools (planar faces used as dividing surfaces).
  let face_tool_info: Vec<Option<rcad_kernel::geom::Plane>> = tools
  .iter()
@@ -506,7 +506,7 @@ fn partition_solid_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate
  //
  // For solid tools (non-face), expanded_complements[i] = None  ?those
  // may need the complement-box fallback or Diff.
- let mut expanded_tools: Vec<BRep> = Vec::new();
+ let mut expanded_tools: Vec<rcad_kernel::BRep> = Vec::new();
  #[allow(clippy::type_complexity)]
  let mut expanded_complements: Vec<Option<usize>> = Vec::new();
 
@@ -604,7 +604,7 @@ fn partition_solid_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate
  let comp_boxes =
  box_complement_of_bbox(&tool_bbox, &cell_bbox);
  if comp_boxes.is_empty() {
- cell = BRep::new();
+ cell = rcad_kernel::BRep::new();
  break;
  }
  let cell_solids = extract_solids(&cell);
@@ -625,7 +625,7 @@ fn partition_solid_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate
  }
  }
  }
- cell = BRep::compound_from_shapes(&parts);
+ cell = rcad_kernel::BRep::compound_from_shapes(&parts);
  first_tool = false;
  continue;
  }
@@ -664,9 +664,9 @@ fn partition_solid_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate
 }
 
 /// Partition a face-like object by tools using split_shape and centroid classification.
-fn partition_face_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate::BooleanError> {
+fn partition_face_object(obj: &rcad_kernel::BRep, tools: &[rcad_kernel::BRep]) -> Result<Vec<rcad_kernel::BRep>, crate::BooleanError> {
  // Collect solid (non-face) tools.
- let solid_tools: Vec<BRep> = tools.iter().filter(|t| !is_face_like(t)).cloned().collect();
+ let solid_tools: Vec<rcad_kernel::BRep> = tools.iter().filter(|t| !is_face_like(t)).cloned().collect();
 
  if solid_tools.is_empty() || count_faces(obj) == 0 {
  return Ok(vec![obj.clone()]);
@@ -682,7 +682,7 @@ fn partition_face_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate:
  });
 
  /// Collect flat face indices whose surface matches the original plane.
- let collect_on_plane = |brep: &BRep| -> Vec<usize> {
+ let collect_on_plane = |brep: &rcad_kernel::BRep| -> Vec<usize> {
  let Some((plane_origin, plane_normal, _)) = orig_surface_info else { return vec![] };
  let mut out = Vec::new();
  let mut fi = 0usize;
@@ -726,7 +726,7 @@ fn partition_face_object(obj: &BRep, tools: &[BRep]) -> Result<Vec<BRep>, crate:
 }
 
 /// Check if a BRep represents a single planar face and extract its plane.
-fn try_as_planar_face(brep: &BRep) -> Option<rcad_kernel::geom::Plane> {
+fn try_as_planar_face(brep: &rcad_kernel::BRep) -> Option<rcad_kernel::geom::Plane> {
  if count_faces(brep) != 1 {
  return None;
  }
@@ -741,7 +741,7 @@ fn try_as_planar_face(brep: &BRep) -> Option<rcad_kernel::geom::Plane> {
 /// A BRep is face-like if every shell contains exactly one planar face. Proper 3D
 /// solids always have at least 4 faces per shell (minimum tetrahedron), except
 /// analytic primitives like spheres/cones/cylinders which may have only 1-3 faces.
-fn is_face_like(brep: &BRep) -> bool {
+fn is_face_like(brep: &rcad_kernel::BRep) -> bool {
  if count_faces(brep) == 0 {
  return false;
  }
@@ -832,7 +832,7 @@ fn face_triangle_centroid(face: &Face) -> DVec3 {
 }
 
 /// Compute the average vertex position of a face's boundary.
-fn average_vertex_of_face(brep: &BRep, face: &Face) -> DVec3 {
+fn average_vertex_of_face(brep: &rcad_kernel::BRep, face: &Face) -> DVec3 {
  let mut sum = DVec3::ZERO;
  let mut count = 0usize;
 
@@ -869,7 +869,7 @@ fn average_vertex_of_face(brep: &BRep, face: &Face) -> DVec3 {
 }
 
 /// Collect flat face indices for all faces in a BRep.
-fn collect_flat_face_indices(brep: &BRep) -> Vec<usize> {
+fn collect_flat_face_indices(brep: &rcad_kernel::BRep) -> Vec<usize> {
  let mut indices = Vec::new();
  let mut flat_idx = 0;
  for solid in &brep.solids {
@@ -885,7 +885,7 @@ fn collect_flat_face_indices(brep: &BRep) -> Vec<usize> {
 
 /// Find connected components of a set of flat face indices within a BRep.
 /// Two faces are connected if they share at least one edge (same edge index).
-fn connected_face_components(brep: &BRep, face_indices: &[usize]) -> Vec<Vec<usize>> {
+fn connected_face_components(brep: &rcad_kernel::BRep, face_indices: &[usize]) -> Vec<Vec<usize>> {
  use std::collections::{HashMap, HashSet};
 
  let face_set: HashSet<usize> = face_indices.iter().copied().collect();
