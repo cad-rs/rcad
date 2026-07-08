@@ -1,4 +1,4 @@
-﻿//! Shape customization tools analogous to OCCT ShapeCustom package.
+//! Shape customization tools analogous to OCCT ShapeCustom package.
 //!
 //! This module provides utilities for:
 //! - BSpline degree reduction and simplification
@@ -12,8 +12,8 @@
 //! - [`BSplineSimplifyOptions`] - Configuration for BSpline simplification
 //! - [`simplify_bspline_curve`] - Reduce degree and control points of a BSpline curve
 //! - [`simplify_bspline_surface`] - Reduce degree and control points of a BSpline surface
-//! - [`convert_to_bspline`] - Convert entire BRep geometry to BSpline representation
-//! - [`restrict_geometry`] - Apply geometry restrictions to a BRep
+//! - [`convert_to_bspline`] - Convert entire rcad_kernel::BRep geometry to BSpline representation
+//! - [`restrict_geometry`] - Apply geometry restrictions to a rcad_kernel::BRep
 //! - [`surface_to_bspline_from_face`] - Convert a face's surface to BSpline
 //! - [`curve_to_bspline_from_edge`] - Convert an edge's curve to BSpline
 //! - [`restrict_to_bspline`] - Convert all geometry to BSpline
@@ -25,7 +25,7 @@
 use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::{
-    BRep, Curve3, Surface3,
+    Curve3, Surface3,
     geom::{
         any_perpendicular, BSplineCurve3, BSplineSurface, CurveEval, SurfaceEval,
         Plane, CylindricalSurface, SphericalSurface, ConicalSurface, ToroidalSurface,
@@ -684,10 +684,10 @@ pub struct ConversionReport {
 }
 
 // =============================================================================
-// BRep Conversion API
+// rcad_kernel::BRep Conversion API
 // =============================================================================
 
-/// Convert all geometry in a BRep to BSpline representation.
+/// Convert all geometry in a rcad_kernel::BRep to BSpline representation.
 ///
 /// This function:
 /// 1. Converts all analytic curves to BSpline
@@ -699,20 +699,20 @@ pub struct ConversionReport {
 /// use rcad_algorithms::shape_custom::convert_to_bspline;
 /// let bspline_brep = convert_to_bspline(&brep, TOLERANCE_MESH_LEGACY);
 /// ```
-pub fn convert_to_bspline(brep: &BRep, tolerance: f64) -> (BRep, ConversionReport) {
+pub fn convert_to_bspline(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel::BRep, ConversionReport) {
     let mut restrictions = GeometryRestrictions::default();
     restrictions.tolerance = tolerance;
     restrict_geometry(brep, &restrictions)
 }
 
-/// Apply geometry restrictions to a BRep.
+/// Apply geometry restrictions to a rcad_kernel::BRep.
 ///
 /// Converts all geometry to conform to the specified restrictions,
 /// useful for export to formats with limited geometry support.
 pub fn restrict_geometry(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     restrictions: &GeometryRestrictions,
-) -> (BRep, ConversionReport) {
+) -> (rcad_kernel::BRep, ConversionReport) {
     let mut result = brep.clone();
     let mut report = ConversionReport::default();
 
@@ -860,8 +860,8 @@ pub fn ensure_bspline_surface(surface: &Surface3, samples_u: usize, samples_v: u
 ///
 /// # Arguments
 /// * `face` - Reference to the Face topology
-/// * `face_idx` - Flat index of the face in the BRep
-/// * `brep` - Reference to the BRep containing geometry
+/// * `face_idx` - Flat index of the face in the rcad_kernel::BRep
+/// * `brep` - Reference to the rcad_kernel::BRep containing geometry
 ///
 /// # Returns
 /// A BSplineSurface representing the face's underlying surface.
@@ -873,7 +873,7 @@ pub fn ensure_bspline_surface(surface: &Surface3, samples_u: usize, samples_v: u
 pub fn surface_to_bspline_from_face(
     _face: &Face,
     face_idx: usize,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
 ) -> BSplineSurface {
     // Get the surface index for this face
     let surface_idx = brep.geom.face_surface.get(face_idx).and_then(|&idx| idx);
@@ -966,8 +966,8 @@ pub fn surface_to_bspline_from_face(
 ///
 /// # Arguments
 /// * `edge` - Reference to the Edge topology
-/// * `edge_idx` - Index of the edge in the BRep
-/// * `brep` - Reference to the BRep containing geometry
+/// * `edge_idx` - Index of the edge in the rcad_kernel::BRep
+/// * `brep` - Reference to the rcad_kernel::BRep containing geometry
 ///
 /// # Returns
 /// A BSplineCurve3 representing the edge's 3D curve.
@@ -979,7 +979,7 @@ pub fn surface_to_bspline_from_face(
 pub fn curve_to_bspline_from_edge(
     edge: &Edge,
     edge_idx: usize,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
 ) -> BSplineCurve3 {
     // Get the curve index for this edge
     let curve_idx = brep.geom.edge_curve.get(edge_idx).and_then(|&idx| idx);
@@ -1032,7 +1032,7 @@ pub fn curve_to_bspline_from_edge(
     }
 }
 
-/// Convert all geometry in a BRep to BSpline representation.
+/// Convert all geometry in a rcad_kernel::BRep to BSpline representation.
 ///
 /// This is a comprehensive conversion that:
 /// 1. Converts all curves to BSpline
@@ -1055,11 +1055,11 @@ pub fn curve_to_bspline_from_edge(
 /// offset curve/surface conversion flags, etc.).
 ///
 /// # Arguments
-/// * `brep` - The BRep to convert
+/// * `brep` - The rcad_kernel::BRep to convert
 ///
 /// # Returns
-/// A new BRep with all geometry in BSpline form.
-pub fn restrict_to_bspline(brep: &BRep) -> BRep {
+/// A new rcad_kernel::BRep with all geometry in BSpline form.
+pub fn restrict_to_bspline(brep: &rcad_kernel::BRep) -> rcad_kernel::BRep {
     let tolerance = TOLERANCE_MESH_LEGACY;
     let (result, _report) = convert_to_bspline(brep, tolerance);
     result
@@ -1179,18 +1179,18 @@ pub fn identify_canonical_form(surface: &Surface3, tolerance: f64) -> CanonicalF
     }
 }
 
-/// Convert surfaces in a BRep to canonical forms where possible.
+/// Convert surfaces in a rcad_kernel::BRep to canonical forms where possible.
 ///
 /// This function attempts to align surfaces with canonical coordinate frames
 /// for better interoperability and numerical stability.
 ///
 /// # Arguments
-/// * `brep` - The BRep to convert
+/// * `brep` - The rcad_kernel::BRep to convert
 /// * `tolerance` - Tolerance for detecting canonical alignment
 ///
 /// # Returns
-/// A new BRep with surfaces converted to canonical forms where possible.
-pub fn convert_to_canonical(brep: &BRep, tolerance: f64) -> BRep {
+/// A new rcad_kernel::BRep with surfaces converted to canonical forms where possible.
+pub fn convert_to_canonical(brep: &rcad_kernel::BRep, tolerance: f64) -> rcad_kernel::BRep {
     let options = CanonicalConversionOptions {
         tolerance,
         ..Default::default()
@@ -1200,9 +1200,9 @@ pub fn convert_to_canonical(brep: &BRep, tolerance: f64) -> BRep {
 
 /// Convert surfaces to canonical forms with options.
 pub fn convert_to_canonical_with_options(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     options: &CanonicalConversionOptions,
-) -> BRep {
+) -> rcad_kernel::BRep {
     let mut result = brep.clone();
     let tol = options.tolerance;
 
@@ -1746,17 +1746,17 @@ fn try_detect_torus(surface: &BSplineSurface, tolerance: f64) -> Option<Toroidal
 
 /// Simplify geometry by converting BSpline surfaces to analytic where possible.
 ///
-/// This function analyzes all BSpline surfaces in a BRep and converts them
+/// This function analyzes all BSpline surfaces in a rcad_kernel::BRep and converts them
 /// to analytic surfaces (plane, cylinder, sphere, cone, torus) when they
 /// match within the given tolerance.
 ///
 /// # Arguments
-/// * `brep` - The BRep to simplify
+/// * `brep` - The rcad_kernel::BRep to simplify
 /// * `tolerance` - Tolerance for geometric fitting
 ///
 /// # Returns
-/// A new BRep with simplified geometry.
-pub fn simplify_geometry(brep: &BRep, tolerance: f64) -> BRep {
+/// A new rcad_kernel::BRep with simplified geometry.
+pub fn simplify_geometry(brep: &rcad_kernel::BRep, tolerance: f64) -> rcad_kernel::BRep {
     let mut result = brep.clone();
 
     for surface in &mut result.geom.surfaces {
@@ -1781,11 +1781,11 @@ pub fn simplify_geometry(brep: &BRep, tolerance: f64) -> BRep {
 /// underlying forms.
 ///
 /// # Arguments
-/// * `brep` - The BRep to process
+/// * `brep` - The rcad_kernel::BRep to process
 ///
 /// # Returns
-/// A new BRep with all faces converted to direct representation.
-pub fn make_direct_faces(brep: &BRep) -> BRep {
+/// A new rcad_kernel::BRep with all faces converted to direct representation.
+pub fn make_direct_faces(brep: &rcad_kernel::BRep) -> rcad_kernel::BRep {
     let mut result = brep.clone();
 
     for surface in &mut result.geom.surfaces {
@@ -1899,12 +1899,12 @@ pub struct ShapeCustomReport {
 /// 4. Make all faces direct
 ///
 /// # Arguments
-/// * `brep` - The BRep to process
+/// * `brep` - The rcad_kernel::BRep to process
 /// * `tolerance` - Tolerance for all operations
 ///
 /// # Returns
-/// A tuple of (processed BRep, report).
-pub fn customize_shape(brep: &BRep, tolerance: f64) -> (BRep, ShapeCustomReport) {
+/// A tuple of (processed rcad_kernel::BRep, report).
+pub fn customize_shape(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel::BRep, ShapeCustomReport) {
     let mut report = ShapeCustomReport::default();
 
     // Step 1: Convert to canonical forms
@@ -1929,7 +1929,7 @@ pub fn customize_shape(brep: &BRep, tolerance: f64) -> (BRep, ShapeCustomReport)
 }
 
 /// Count how many surfaces were converted to canonical form.
-fn count_canonical_conversions(before: &BRep, after: &BRep) -> usize {
+fn count_canonical_conversions(before: &rcad_kernel::BRep, after: &rcad_kernel::BRep) -> usize {
     let mut count = 0;
     for (s_before, s_after) in before.geom.surfaces.iter().zip(after.geom.surfaces.iter()) {
         let form_before = identify_canonical_form(s_before, TOLERANCE_MESH_LEGACY);
@@ -1942,7 +1942,7 @@ fn count_canonical_conversions(before: &BRep, after: &BRep) -> usize {
 }
 
 /// Count how many BSpline surfaces were converted to analytic.
-fn count_analytic_conversions(before: &BRep, after: &BRep) -> usize {
+fn count_analytic_conversions(before: &rcad_kernel::BRep, after: &rcad_kernel::BRep) -> usize {
     let mut count = 0;
     for (s_before, s_after) in before.geom.surfaces.iter().zip(after.geom.surfaces.iter()) {
         if matches!(s_before, Surface3::BSpline(_)) && !matches!(s_after, Surface3::BSpline(_)) {
@@ -1953,7 +1953,7 @@ fn count_analytic_conversions(before: &BRep, after: &BRep) -> usize {
 }
 
 /// Count indirect faces (faces with Offset/Trimmed surfaces).
-fn count_indirect_faces(brep: &BRep) -> usize {
+fn count_indirect_faces(brep: &rcad_kernel::BRep) -> usize {
     brep.geom.surfaces.iter()
         .filter(|s| matches!(s, Surface3::Offset(_) | Surface3::Trimmed(_)))
         .count()

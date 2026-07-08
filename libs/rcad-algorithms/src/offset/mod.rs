@@ -1,4 +1,4 @@
-﻿//! Shell and solid offset operations  ?analogous to OCCT `BRepOffsetAPI_MakeOffsetShape`.
+//! Shell and solid offset operations  ?analogous to OCCT `rcad_kernel::BRepOffsetAPI_MakeOffsetShape`.
 //!
 //! # Overview
 //!
@@ -37,14 +37,13 @@
 //!
 //! # References
 //!
-//! - OCCT `BRepOffsetAPI_MakeOffsetShape`
-//! - OCCT `BRepOffset_MakeOffset`
-//! - OCCT `BRepOffset_Mode` (join types)
+//! - OCCT `rcad_kernel::BRepOffsetAPI_MakeOffsetShape`
+//! - OCCT `rcad_kernel::BRepOffset_MakeOffset`
+//! - OCCT `rcad_kernel::BRepOffset_Mode` (join types)
 
 use std::collections::{HashMap, HashSet};
 use glam::DVec3;
 use rcad_kernel::{
- BRep,
  SurfaceEval, CurveEval, any_perpendicular,
  geom::{Curve3, Surface3, Line3, Plane, Circle3, Ellipse3, Parabola3, Hyperbola3, CylindricalSurface, SphericalSurface, ConicalSurface, ToroidalSurface, OffsetSurface},
  topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge},
@@ -178,7 +177,7 @@ impl std::error::Error for OffsetError {}
 /// Join type for offset operations at edges.
 ///
 /// Determines how adjacent offset faces are connected at their boundaries.
-/// Analogous to OCCT `BRepOffset_Mode`.
+/// Analogous to OCCT `rcad_kernel::BRepOffset_Mode`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum JoinType {
  /// Sharp corners at edge intersections.
@@ -568,8 +567,8 @@ impl OffsetOptions {
 /// Result of an offset operation.
 #[derive(Debug, Clone)]
 pub struct OffsetResult {
- /// The resulting BRep.
- pub brep: BRep,
+ /// The resulting rcad_kernel::BRep.
+ pub brep: rcad_kernel::BRep,
  /// Number of offset faces created.
  pub offset_faces: usize,
  /// Number of lateral faces created (for hollow operations).

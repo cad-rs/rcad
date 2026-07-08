@@ -1,4 +1,4 @@
-﻿//! Surface tessellation (adaptive chord error in UV / world space).
+//! Surface tessellation (adaptive chord error in UV / world space).
 //!
 //! **Phase C note:** several internal checks use [`TOLERANCE_MESH_LEGACY`] and related constants as
 //! **dimensionless UV / angle slacks** (parameter-domain noise, multi-turn heuristics), not as a
@@ -7,8 +7,6 @@
 //! [`crate::tolerance::tessellation_merge_linear_from_two_breps`] and
 //! [`crate::section::intersect_triangle_soups_adaptive`].
 //!
-
-use rcad_kernel::BRep;
 
 use crate::tolerance::*;
 use glam::DVec3;
@@ -626,7 +624,7 @@ fn local_basis(normal: DVec3) -> (DVec3, DVec3) {
 ///
 /// Curved edges are sampled using their analytic 3D curve + edge range.
 /// Straight or missing-geometry edges contribute only their end vertex.
-fn sample_wire_polygon_points(brep: &BRep, wire: &rcad_kernel::topology::Wire) -> Vec<DVec3> {
+fn sample_wire_polygon_points(brep: &rcad_kernel::BRep, wire: &rcad_kernel::topology::Wire) -> Vec<DVec3> {
  use std::collections::HashSet;
  let mut pts: Vec<DVec3> = Vec::new();
  let two_pi = 2.0 * std::f64::consts::PI;
@@ -1029,7 +1027,7 @@ fn point_in_triangle_2d(p: [f64; 2], a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> b
 /// [`BRep::invalidate_mesh`] first.
 ///
 /// After tessellating a face its `mesh_dirty` flag is set to `false`.
-pub fn mesh_brep(brep: &mut BRep, params: &TessellationParams) {
+pub fn mesh_brep(brep: &mut rcad_kernel::BRep, params: &TessellationParams) {
  let mut face_flat_idx = 0usize;
 
  for solid_idx in 0..brep.solids.len() {
@@ -1312,7 +1310,7 @@ fn fallback_infinite_domain(u0: f64, u1: f64, v0: f64, v1: f64) -> (f64, f64, f6
 /// Clamp a potentially infinite UV domain to the range spanned by the face's
 /// wire vertices projected onto the surface parameters.
 fn clamp_domain_to_vertices(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  face_flat_idx: usize,
  surf: &Surface3,
  u0: f64, u1: f64, v0: f64, v1: f64,

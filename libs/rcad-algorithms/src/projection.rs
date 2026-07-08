@@ -1,4 +1,4 @@
-﻿//! BRepProj-style projection operations.
+//! BRepProj-style projection operations.
 //!
 //! Provides projection operations for projecting points, wires, and curves onto shapes.
 //! Analogous to OCCT `BRepProj` package.
@@ -33,7 +33,7 @@
 use crate::tolerance::*;
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, Curve2d, Surface3, CurveEval, SurfaceEval};
-use rcad_kernel::{topods, BRep, Face};
+use rcad_kernel::{topods, Face};
 use rcad_kernel::topology::Wire;
 use rcad_kernel::projection::{closest_point_on_curve, closest_point_on_surface};
 
@@ -293,17 +293,17 @@ pub fn project_point_on_surface_with_options(
 /// # Example
 /// ```rust
 /// use glam::DVec3;
-/// use rcad_kernel::{BRep, PrimitiveSolid};
+/// use rcad_kernel::PrimitiveSolid;
 /// use rcad_algorithms::projection::{project_point_on_brep, ProjectionOptions};
 ///
-/// let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
+/// let box_brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
 /// let projections = project_point_on_brep(DVec3::new(1.0, 1.0, 5.0), &box_brep, &ProjectionOptions::default());
 /// // Nearest face is the top face (z = 2)
 /// assert!(!projections.is_empty());
 /// ```
 pub fn project_point_on_brep(
     point: DVec3,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     options: &ProjectionOptions,
 ) -> Vec<PointBRepProjection> {
     let mut projections = Vec::new();
@@ -347,7 +347,7 @@ pub fn project_point_on_brep(
 }
 
 /// Compute the flat face index from solid/shell/face indices.
-fn compute_flat_face_index(brep: &BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> usize {
+fn compute_flat_face_index(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> usize {
     let mut count = 0;
     for (si, solid) in brep.solids.iter().enumerate() {
         for (shi, shell) in solid.shells.iter().enumerate() {
@@ -382,7 +382,7 @@ fn compute_flat_face_index(brep: &BRep, solid_idx: usize, shell_idx: usize, face
 /// ```rust
 /// use glam::DVec3;
 /// use rcad_kernel::geom::{Surface3, Plane};
-/// use rcad_kernel::{BRep, topology::{Wire, WireEdge}};
+/// use rcad_kernel::{topology::{Wire, WireEdge}};
 /// use rcad_algorithms::projection::project_wire_on_surface;
 ///
 /// let plane = Surface3::Plane(Plane {
@@ -394,7 +394,7 @@ fn compute_flat_face_index(brep: &BRep, solid_idx: usize, shell_idx: usize, face
 /// ```
 pub fn project_wire_on_surface(
     wire: &Wire,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     surface: &Surface3,
     direction: DVec3,
 ) -> Wire {
@@ -463,7 +463,7 @@ pub fn project_wire_on_surface(
 /// A new wire representing the projected geometry clipped to the face bounds.
 pub fn project_wire_on_face(
     wire: &Wire,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     face_index: usize,
     direction: DVec3,
 ) -> Wire {
@@ -741,15 +741,15 @@ pub struct SilhouetteResult {
 /// # Example
 /// ```rust
 /// use glam::DVec3;
-/// use rcad_kernel::{BRep, PrimitiveSolid};
+/// use rcad_kernel::PrimitiveSolid;
 /// use rcad_algorithms::projection::compute_silhouette_curves;
 ///
-/// let sphere = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+/// let sphere = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
 /// let silhouette = compute_silhouette_curves(&sphere, DVec3::Z, &Default::default());
 /// // Sphere silhouette from +Z is a circle in the XY plane
 /// ```
 pub fn compute_silhouette_curves(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     view_dir: DVec3,
     options: &ProjectionOptions,
 ) -> Vec<Curve3> {
@@ -955,13 +955,13 @@ fn fit_points_to_bspline(points: &[DVec3]) -> Option<Curve3> {
 /// # Example
 /// ```rust
 /// use glam::DVec3;
-/// use rcad_kernel::{BRep, PrimitiveSolid};
+/// use rcad_kernel::PrimitiveSolid;
 /// use rcad_algorithms::projection::compute_contour_edges;
 ///
-/// let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
+/// let box_brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
 /// let contour_edges = compute_contour_edges(&box_brep, DVec3::Z);
 /// ```
-pub fn compute_contour_edges(brep: &BRep, view_dir: DVec3) -> Vec<usize> {
+pub fn compute_contour_edges(brep: &rcad_kernel::BRep, view_dir: DVec3) -> Vec<usize> {
     let dir = view_dir.normalize_or_zero();
     let mut contour_edges = Vec::new();
 

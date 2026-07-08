@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-use rcad_kernel::BRep;
-
 use glam::DVec3;
 use rcad_kernel::topods;
 use rcad_kernel::geom::*;
@@ -130,7 +128,7 @@ impl GlueFaceCache {
  }
 
  /// Build the cache for a BRep by computing face centers, normals, and areas.
- pub fn build(&mut self, brep: &BRep, cell_size: f64) {
+ pub fn build(&mut self, brep: &rcad_kernel::BRep, cell_size: f64) {
  self.face_centers.clear();
  self.face_normals.clear();
  self.face_areas.clear();
@@ -253,20 +251,20 @@ impl GlueFaceCache {
 /// # Example
 ///
 /// ```
-/// use rcad_kernel::{BRep, PrimitiveSolid};
+/// use rcad_kernel::PrimitiveSolid;
 /// use rcad_algorithms::builder::{GlueConfig, detect_glue_faces};
 /// use glam::DAffine3;
 ///
-/// let box1 = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
-/// let mut box2 = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+/// let box1 = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+/// let mut box2 = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
 /// box2.apply_transform(DAffine3::from_translation(glam::DVec3::new(0.0, 1.0, 0.0)));
 ///
 /// let config = GlueConfig::default();
 /// let pairs = detect_glue_faces(&box1, &box2, &config);
 /// ```
 pub fn detect_glue_faces(
- brep_a: &BRep,
- brep_b: &BRep,
+ brep_a: &rcad_kernel::BRep,
+ brep_b: &rcad_kernel::BRep,
  config: &GlueConfig,
 ) -> Vec<GlueFacePair> {
  let mut result = Vec::new();
@@ -403,13 +401,13 @@ pub fn detect_glue_faces(
 /// # Example
 ///
 /// ```
-/// use rcad_kernel::{BRep, PrimitiveSolid};
+/// use rcad_kernel::PrimitiveSolid;
 /// use rcad_algorithms::bopds::ds::DS;
 /// use rcad_algorithms::pave_filler::PaveFiller;
 /// use rcad_algorithms::builder::{GlueConfig, detect_glue_faces, apply_glue_optimization};
 ///
-/// let box1 = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
-/// let box2 = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+/// let box1 = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+/// let box2 = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
 ///
 /// let config = GlueConfig::default();
 /// let pairs = detect_glue_faces(&box1, &box2, &config);
@@ -462,8 +460,8 @@ pub fn apply_glue_optimization(
 ///
 /// The computed adaptive glue tolerance.
 pub fn compute_adaptive_glue_tolerance(
- brep_a: &BRep,
- brep_b: &BRep,
+ brep_a: &rcad_kernel::BRep,
+ brep_b: &rcad_kernel::BRep,
  base_tolerance: f64,
 ) -> f64 {
  let mut min_feature_size = f64::INFINITY;

@@ -1,4 +1,4 @@
-﻿//! Parallel BRep validity checker.
+//! Parallel BRep validity checker.
 //!
 //! This module provides parallel versions of the BRep check algorithms from
 //! `brep_check`, using Rayon for multi-threaded execution.
@@ -18,8 +18,6 @@
 //!
 //! Example speedup on an 8-core machine for a 10,000-face model: ~4-6x faster.
 
-
-use rcad_kernel::BRep;
 
 use crate::tolerance::*;
 use rayon::prelude::*;
@@ -203,7 +201,7 @@ impl ParallelCheckResult {
 /// # Returns
 ///
 /// A `ParallelCheckResult` containing all issues found and execution metadata.
-pub fn check_parallel_with_options(brep: &BRep, options: &ParallelCheckOptions) -> ParallelCheckResult {
+pub fn check_parallel_with_options(brep: &rcad_kernel::BRep, options: &ParallelCheckOptions) -> ParallelCheckResult {
  let face_count: usize = brep.solids.iter()
  .map(|s| s.shells.iter().map(|sh| sh.faces.len()).sum::<usize>())
  .sum();
@@ -233,7 +231,7 @@ pub fn check_parallel_with_options(brep: &BRep, options: &ParallelCheckOptions) 
 }
 
 /// Internal parallel check implementation.
-fn check_parallel_internal(brep: &BRep, options: &ParallelCheckOptions) -> ParallelCheckResult {
+fn check_parallel_internal(brep: &rcad_kernel::BRep, options: &ParallelCheckOptions) -> ParallelCheckResult {
  let mut issues = Vec::new();
  let mut parallel_issues = Vec::new();
  let n_edges = brep.edges.len();
@@ -298,7 +296,7 @@ fn check_parallel_internal(brep: &BRep, options: &ParallelCheckOptions) -> Paral
 }
 
 /// Internal sequential check implementation (fallback for small models).
-fn check_sequential_internal(brep: &BRep, options: &ParallelCheckOptions) -> ParallelCheckResult {
+fn check_sequential_internal(brep: &rcad_kernel::BRep, options: &ParallelCheckOptions) -> ParallelCheckResult {
  // Use the standard sequential check for basic issues
  let result = crate::brep_check::brep_check_analyze(brep);
  let mut parallel_issues = Vec::new();
@@ -340,13 +338,13 @@ fn check_sequential_internal(brep: &BRep, options: &ParallelCheckOptions) -> Par
 /// # Returns
 ///
 /// A `CheckResult` containing all issues found.
-pub fn check_parallel(brep: &BRep) -> CheckResult {
+pub fn check_parallel(brep: &rcad_kernel::BRep) -> CheckResult {
  let options = ParallelCheckOptions::default();
  check_parallel_with_options(brep, &options).to_check_result()
 }
 
 /// Compute edge face counts in parallel.
-fn compute_edge_face_counts_parallel(brep: &BRep, n_edges: usize) -> Vec<usize> {
+fn compute_edge_face_counts_parallel(brep: &rcad_kernel::BRep, n_edges: usize) -> Vec<usize> {
  // Use atomic counters for thread-safe counting
  let counts: Vec<AtomicUsize> = (0..n_edges)
  .map(|_| AtomicUsize::new(0))
@@ -377,7 +375,7 @@ fn compute_edge_face_counts_parallel(brep: &BRep, n_edges: usize) -> Vec<usize> 
 }
 
 /// Check all faces in parallel with chunking for work stealing.
-fn check_faces_parallel_chunked(brep: &BRep, n_edges: usize, chunk_size: usize) -> Vec<CheckIssue> {
+fn check_faces_parallel_chunked(brep: &rcad_kernel::BRep, n_edges: usize, chunk_size: usize) -> Vec<CheckIssue> {
  // Create a flat list of (solid_idx, shell_idx, face_idx, face_ref) for parallel iteration
  let face_items: Vec<(usize, usize, usize, &rcad_kernel::topology::Face)> = brep.solids
  .iter()
@@ -406,7 +404,7 @@ fn check_faces_parallel_chunked(brep: &BRep, n_edges: usize, chunk_size: usize) 
 
 /// Check a single face for all issues.
 fn check_single_face(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  face: &rcad_kernel::topology::Face,
  si: usize,
  shi: usize,
@@ -673,7 +671,7 @@ fn segments_intersect_2d(p1: DVec3, p2: DVec3, p3: DVec3, p4: DVec3) -> bool {
 }
 
 /// Check vertices in parallel for duplicate, isolated, and non-finite vertices.
-fn check_vertices_parallel(brep: &BRep, options: &ParallelCheckOptions) -> Vec<ParallelCheckIssue> {
+fn check_vertices_parallel(brep: &rcad_kernel::BRep, options: &ParallelCheckOptions) -> Vec<ParallelCheckIssue> {
  let n_verts = brep.vertices.len();
  if n_verts == 0 {
  return Vec::new();
@@ -739,7 +737,7 @@ fn check_vertices_parallel(brep: &BRep, options: &ParallelCheckOptions) -> Vec<P
 }
 
 /// Check vertices sequentially (fallback for small models).
-fn check_vertices_sequential(brep: &BRep, options: &ParallelCheckOptions) -> Vec<ParallelCheckIssue> {
+fn check_vertices_sequential(brep: &rcad_kernel::BRep, options: &ParallelCheckOptions) -> Vec<ParallelCheckIssue> {
  let n_verts = brep.vertices.len();
  if n_verts == 0 {
  return Vec::new();
@@ -888,7 +886,7 @@ fn find_duplicate_vertices_parallel(
 /// # Returns
 ///
 /// A `CheckResult` containing all issues found.
-pub fn check_parallel_with_batch_size(brep: &BRep, batch_size: usize) -> CheckResult {
+pub fn check_parallel_with_batch_size(brep: &rcad_kernel::BRep, batch_size: usize) -> CheckResult {
  let options = ParallelCheckOptions {
  chunk_size: batch_size,
  ..ParallelCheckOptions::default()
@@ -907,7 +905,7 @@ pub fn check_parallel_with_batch_size(brep: &BRep, batch_size: usize) -> CheckRe
 /// # Returns
 ///
 /// Vector of `CheckResult`s, one per input BRep.
-pub fn check_many_parallel(breps: &[BRep]) -> Vec<CheckResult> {
+pub fn check_many_parallel(breps: &[rcad_kernel::BRep]) -> Vec<CheckResult> {
  breps.par_iter().map(check_parallel).collect()
 }
 
@@ -921,7 +919,7 @@ pub fn check_many_parallel(breps: &[BRep]) -> Vec<CheckResult> {
 /// # Returns
 ///
 /// Vector of `ParallelCheckResult`s, one per input BRep.
-pub fn check_many_parallel_with_options(breps: &[BRep], options: &ParallelCheckOptions) -> Vec<ParallelCheckResult> {
+pub fn check_many_parallel_with_options(breps: &[rcad_kernel::BRep], options: &ParallelCheckOptions) -> Vec<ParallelCheckResult> {
  breps.par_iter().map(|brep| check_parallel_with_options(brep, options)).collect()
 }
 
@@ -1398,7 +1396,7 @@ impl ParallelCheckReport {
 /// # Returns
 ///
 /// A vector of `FaceCheckResult`, one per face.
-pub fn check_faces_parallel(brep: &BRep, num_threads: usize) -> Vec<FaceCheckResult> {
+pub fn check_faces_parallel(brep: &rcad_kernel::BRep, num_threads: usize) -> Vec<FaceCheckResult> {
  let n_edges = brep.edges.len();
  let tolerance = TOLERANCE_MESH_LEGACY;
 
@@ -1437,7 +1435,7 @@ pub fn check_faces_parallel(brep: &BRep, num_threads: usize) -> Vec<FaceCheckRes
 
 /// Check a single face and return a detailed result.
 fn check_single_face_detailed(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  si: usize,
  shi: usize,
  fi: usize,
@@ -1640,7 +1638,7 @@ fn check_geometric_self_intersection_face(
 /// # Returns
 ///
 /// A vector of `EdgeCheckResult`, one per edge.
-pub fn check_edges_parallel(brep: &BRep, num_threads: usize) -> Vec<EdgeCheckResult> {
+pub fn check_edges_parallel(brep: &rcad_kernel::BRep, num_threads: usize) -> Vec<EdgeCheckResult> {
  let n_verts = brep.vertices.len();
  let tolerance = TOLERANCE_MESH_LEGACY;
 
@@ -1670,7 +1668,7 @@ pub fn check_edges_parallel(brep: &BRep, num_threads: usize) -> Vec<EdgeCheckRes
 
 /// Check a single edge and return a detailed result.
 fn check_single_edge(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  eidx: usize,
  edge: &rcad_kernel::topology::Edge,
  n_verts: usize,
@@ -1760,7 +1758,7 @@ fn check_single_edge(
 /// # Returns
 ///
 /// A vector of `ShellValidationResult`, one per shell.
-pub fn validate_shells_parallel(brep: &BRep) -> Vec<ShellValidationResult> {
+pub fn validate_shells_parallel(brep: &rcad_kernel::BRep) -> Vec<ShellValidationResult> {
  // Create a flat list of shells for parallel processing
  let shell_items: Vec<(usize, usize)> = brep.solids
  .iter()
@@ -1776,7 +1774,7 @@ pub fn validate_shells_parallel(brep: &BRep) -> Vec<ShellValidationResult> {
 }
 
 /// Validate a single shell.
-fn validate_single_shell(brep: &BRep, si: usize, shi: usize) -> ShellValidationResult {
+fn validate_single_shell(brep: &rcad_kernel::BRep, si: usize, shi: usize) -> ShellValidationResult {
  use std::collections::{HashMap, HashSet};
 
  let solid = &brep.solids[si];
@@ -1894,7 +1892,7 @@ fn validate_single_shell(brep: &BRep, si: usize, shi: usize) -> ShellValidationR
 }
 
 /// Check orientation consistency for a shell.
-fn check_shell_orientation_consistency(shell: &rcad_kernel::topology::Shell, brep: &BRep) -> bool {
+fn check_shell_orientation_consistency(shell: &rcad_kernel::topology::Shell, brep: &rcad_kernel::BRep) -> bool {
  use std::collections::HashMap;
 
  let n_edges = brep.edges.len();

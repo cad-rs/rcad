@@ -1,4 +1,4 @@
-﻿//! OCCT BOPAlgo_Section / BRepAlgoAPI_Section equivalent.
+//! OCCT BOPAlgo_Section / BRepAlgoAPI_Section equivalent.
 //!
 //! Computes the intersection curves (section) between two shapes.
 //! Unlike the boolean operations (Common/Fuse/Cut) which produce a solid,
@@ -12,10 +12,10 @@
 //!
 //! ```
 //! use rcad_algorithms::brep_algo_api::section::Section;
-//! use rcad_kernel::{BRep, PrimitiveSolid};
+//! use rcad_kernel::PrimitiveSolid;
 //!
-//! let a = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
-//! let b = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 3.0 });
+//! let a = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
+//! let b = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 3.0 });
 //!
 //! let mut section = Section::new(a, b);
 //! if let Ok(result) = section.perform() {
@@ -23,8 +23,6 @@
 //! }
 //! ```
 
-
-use rcad_kernel::BRep;
 
 use crate::builder::BooleanError;
 use crate::bopds::ds::DS;
@@ -52,9 +50,9 @@ use rcad_kernel::geom::Line3;
 /// 4. Build edges + vertices from the intersection curves
 pub struct Section {
     /// First input shape (shape 1 / object).
-    shape_a: BRep,
+    shape_a: rcad_kernel::BRep,
     /// Second input shape (shape 2 / tool).
-    shape_b: BRep,
+    shape_b: rcad_kernel::BRep,
     /// Whether to compute pcurves on shape 1's surfaces.
     /// OCCT ref: BRepAlgoAPI_Section::ComputePCurveOn1()
     compute_pcurve_on_1: bool,
@@ -64,7 +62,7 @@ pub struct Section {
     /// The DS used internally (stored for ancestor face queries).
     ds: Option<DS>,
     /// Result BRep containing section edges.
-    result: Option<BRep>,
+    result: Option<rcad_kernel::BRep>,
     /// Error from the last perform() call.
     error: Option<BooleanError>,
     /// Mapping from result edge index to intersection curve index.
@@ -78,7 +76,7 @@ impl Section {
     ///
     /// By default, pcurve computation is disabled. Enable with
     /// `compute_pcurve_on_1()` / `compute_pcurve_on_2()`.
-    pub fn new(a: BRep, b: BRep) -> Self {
+    pub fn new(a: rcad_kernel::BRep, b: rcad_kernel::BRep) -> Self {
         Self {
             shape_a: a,
             shape_b: b,
@@ -129,7 +127,7 @@ impl Section {
     /// 4. Build a BRep with edges representing the section curves
     ///
     /// Returns a reference to the result BRep on success.
-    pub fn perform(&mut self) -> Result<&BRep, BooleanError> {
+    pub fn perform(&mut self) -> Result<&rcad_kernel::BRep, BooleanError> {
         self.result = None;
         self.error = None;
         self.ds = None;
@@ -201,8 +199,8 @@ impl Section {
     /// 3. CommonBlock edges (edge-face common blocks)
     /// 4. Occurrence counting: only edges/vertices appearing in >1 argument
     ///    are included (shared boundary edges).
-    fn build_section_edges(ds: &DS) -> (BRep, Vec<usize>) {
-        let mut result = BRep::new();
+    fn build_section_edges(ds: &DS) -> (rcad_kernel::BRep, Vec<usize>) {
+        let mut result = rcad_kernel::BRep::new();
         let mut edge_to_ic = Vec::new();
         let a_vc = ds.a_vertex_count;
         let a_ec = ds.a_edge_count;
@@ -326,7 +324,7 @@ impl Section {
     }
 
     /// Ensure geometry is populated for primitive shapes.
-    fn ensure_geometry(&self, brep: &BRep) -> BRep {
+    fn ensure_geometry(&self, brep: &rcad_kernel::BRep) -> rcad_kernel::BRep {
         if brep.geom.surfaces.is_empty() && !brep.solids.is_empty() {
             let mut result = brep.clone();
             crate::geom_populate::populate_box_geom(&mut result);
@@ -339,14 +337,14 @@ impl Section {
     /// Get the result shape containing section edges/wires.
     ///
     /// Panics if `perform()` has not been called or failed.
-    pub fn shape(&self) -> &BRep {
+    pub fn shape(&self) -> &rcad_kernel::BRep {
         self.result
             .as_ref()
             .expect("perform() must be called before shape()")
     }
 
     /// Get the result shape, consuming the builder.
-    pub fn into_shape(self) -> Option<BRep> {
+    pub fn into_shape(self) -> Option<rcad_kernel::BRep> {
         self.result
     }
 

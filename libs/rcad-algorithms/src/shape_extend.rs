@@ -1,4 +1,4 @@
-﻿//! ShapeExtend-style shape extension utilities.
+//! ShapeExtend-style shape extension utilities.
 //!
 //! Analogous to OCCT `ShapeExtend` package providing extended data structures
 //! for shape analysis and repair:
@@ -10,7 +10,7 @@
 
 use rcad_kernel::geom::{CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::topology::{Face, Wire};
-use rcad_kernel::{topods, BRep, vertex_indices};
+use rcad_kernel::{topods, vertex_indices};
 
 use crate::brep_tools::ShapeType;
 
@@ -196,7 +196,7 @@ impl WireData {
  ///
  /// # Returns
  /// true if the wire forms a closed loop.
- pub fn is_closed_with_brep(&self, brep: &BRep) -> bool {
+ pub fn is_closed_with_brep(&self, brep: &rcad_kernel::BRep) -> bool {
  if self.edges.is_empty() {
  return false;
  }
@@ -248,7 +248,7 @@ impl WireData {
  ///
  /// # Returns
  /// The total length of all edges in the wire.
- pub fn length_with_brep(&self, brep: &BRep) -> f64 {
+ pub fn length_with_brep(&self, brep: &rcad_kernel::BRep) -> f64 {
  let mut total = 0.0;
 
  for &(edge_idx, _orientation) in &self.edges {
@@ -869,7 +869,7 @@ pub struct ShapeExplorer;
 
 impl ShapeExplorer {
  /// Helper to iterate over all faces in a BRep.
- fn iter_faces(brep: &BRep) -> impl Iterator<Item = (usize, &Face)> {
+ fn iter_faces(brep: &rcad_kernel::BRep) -> impl Iterator<Item = (usize, &Face)> {
  brep.solids.iter()
  .flat_map(|solid| solid.shells.iter())
  .flat_map(|shell| shell.faces.iter())
@@ -893,7 +893,7 @@ impl ShapeExplorer {
  /// # Note
  /// In this simplified implementation, shape_idx is interpreted as:
  /// - For a solid: returns the shell indices (0-based, consecutive)
- pub fn explore_shape(brep: &BRep, shape_idx: usize) -> Vec<usize> {
+ pub fn explore_shape(brep: &rcad_kernel::BRep, shape_idx: usize) -> Vec<usize> {
  if shape_idx < brep.solids.len() {
  // Return shell count for this solid
  (0..brep.solids[shape_idx].shells.len()).collect()
@@ -910,7 +910,7 @@ impl ShapeExplorer {
  ///
  /// # Returns
  /// Number of shapes of the given type.
- pub fn count_subshapes(brep: &BRep, shape_type: ShapeType) -> usize {
+ pub fn count_subshapes(brep: &rcad_kernel::BRep, shape_type: ShapeType) -> usize {
  match shape_type {
  ShapeType::Vertex => vertex_indices(brep).len(),
  ShapeType::Edge => brep.edges.len(),
@@ -947,7 +947,7 @@ impl ShapeExplorer {
  ///
  /// # Returns
  /// Vector of all edge indices referenced in wires.
- pub fn all_edges(brep: &BRep) -> Vec<usize> {
+ pub fn all_edges(brep: &rcad_kernel::BRep) -> Vec<usize> {
  let mut edges: Vec<usize> = Vec::new();
 
  // Collect edges from all faces through the topology hierarchy
@@ -976,7 +976,7 @@ impl ShapeExplorer {
  ///
  /// # Returns
  /// Vector of all vertex indices used by edges.
- pub fn all_vertices(brep: &BRep) -> Vec<usize> {
+ pub fn all_vertices(brep: &rcad_kernel::BRep) -> Vec<usize> {
  vertex_indices(brep)
  }
 
@@ -988,7 +988,7 @@ impl ShapeExplorer {
  ///
  /// # Returns
  /// Vector of face indices (0-based global face index) that reference the given edge.
- pub fn faces_sharing_edge(brep: &BRep, edge_idx: usize) -> Vec<usize> {
+ pub fn faces_sharing_edge(brep: &rcad_kernel::BRep, edge_idx: usize) -> Vec<usize> {
  let mut faces = Vec::new();
  let mut face_counter = 0;
 
@@ -1017,7 +1017,7 @@ impl ShapeExplorer {
  ///
  /// # Returns
  /// Vector of edge indices that reference the given vertex.
- pub fn edges_sharing_vertex(brep: &BRep, vertex_idx: usize) -> Vec<usize> {
+ pub fn edges_sharing_vertex(brep: &rcad_kernel::BRep, vertex_idx: usize) -> Vec<usize> {
  let mut edges = Vec::new();
 
  for (edge_idx, edge) in brep.edges.iter().enumerate() {
@@ -1036,7 +1036,7 @@ impl ShapeExplorer {
  ///
  /// # Returns
  /// Vector of edge indices that appear exactly once (boundary edges).
- pub fn boundary_edges(brep: &BRep) -> Vec<usize> {
+ pub fn boundary_edges(brep: &rcad_kernel::BRep) -> Vec<usize> {
  let mut edge_counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
 
  for solid in &brep.solids {
@@ -1067,7 +1067,7 @@ impl ShapeExplorer {
  ///
  /// # Returns
  /// Vector of non-manifold edge indices.
- pub fn non_manifold_edges(brep: &BRep) -> Vec<usize> {
+ pub fn non_manifold_edges(brep: &rcad_kernel::BRep) -> Vec<usize> {
  let mut edge_counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
 
  for solid in &brep.solids {
@@ -1096,7 +1096,7 @@ impl ShapeExplorer {
  ///
  /// # Returns
  /// A string describing the topology.
- pub fn topology_summary(brep: &BRep) -> String {
+ pub fn topology_summary(brep: &rcad_kernel::BRep) -> String {
  let face_count = Self::count_subshapes(brep, ShapeType::Face);
  let shell_count = Self::count_subshapes(brep, ShapeType::Shell);
  let wire_count = Self::count_subshapes(brep, ShapeType::Wire);

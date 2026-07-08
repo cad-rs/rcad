@@ -11,7 +11,7 @@
 use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, Surface3, CurveEval, SurfaceEval, Curve2dEval};
-use rcad_kernel::{topods, BRep, Face, PCurve};
+use rcad_kernel::{topods, Face, PCurve};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Surface Analysis (ShapeAnalysis_Surface)
@@ -738,7 +738,7 @@ pub struct WireGap {
 /// This is a topological analysis that checks wire closure, orientation,
 /// and self-intersection at the topology level.
 pub fn analyze_wire(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     solid_idx: usize,
     shell_idx: usize,
     face_idx: usize,
@@ -907,7 +907,7 @@ pub fn analyze_wire(
 }
 
 /// Check if all wires in a face are valid.
-pub fn check_face_wires(brep: &BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> Vec<WireAnalysisReport> {
+pub fn check_face_wires(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> Vec<WireAnalysisReport> {
     let mut reports = Vec::new();
 
     // Check outer wire
@@ -973,7 +973,7 @@ pub enum SurfaceWireIssueKind {
 }
 
 /// Analyze a face for validity and characteristics.
-pub fn analyze_face(brep: &BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> FaceAnalysisReport {
+pub fn analyze_face(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> FaceAnalysisReport {
     let mut report = FaceAnalysisReport {
         has_surface: false,
         surface_report: None,
@@ -1019,7 +1019,7 @@ pub fn analyze_face(brep: &BRep, solid_idx: usize, shell_idx: usize, face_idx: u
 
 /// Check consistency between surface and wire geometry.
 fn check_surface_wire_consistency(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     solid_idx: usize,
     shell_idx: usize,
     face_idx: usize,
@@ -1135,7 +1135,7 @@ fn project_point_to_surface_simple(surface: &Surface3, point: DVec3) -> Option<D
 }
 
 /// Check if face orientation matches surface normal direction.
-fn check_face_orientation(brep: &BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> bool {
+fn check_face_orientation(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> bool {
     let Some(solid) = brep.solids.get(solid_idx) else { return true; };
     let Some(shell) = solid.shells.get(shell_idx) else { return true; };
     let Some(face) = shell.faces.get(face_idx) else { return true; };
@@ -1167,7 +1167,7 @@ fn check_face_orientation(brep: &BRep, solid_idx: usize, shell_idx: usize, face_
 // Convenience functions for full shape analysis
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Analyze all geometry in a BRep and return a comprehensive report.
+/// Analyze all geometry in a rcad_kernel::BRep and return a comprehensive report.
 #[derive(Debug, Clone, Default)]
 pub struct BRepAnalysisReport {
     /// Surface analysis reports indexed by surface index.
@@ -1182,8 +1182,8 @@ pub struct BRepAnalysisReport {
     pub issues_summary: String,
 }
 
-/// Perform comprehensive analysis of a BRep.
-pub fn analyze_brep(brep: &BRep) -> BRepAnalysisReport {
+/// Perform comprehensive analysis of a rcad_kernel::BRep.
+pub fn analyze_brep(brep: &rcad_kernel::BRep) -> BRepAnalysisReport {
     let mut report = BRepAnalysisReport::default();
     let mut issues = Vec::new();
 
@@ -1302,7 +1302,7 @@ pub enum UvDirection {
 /// * `solid_idx` - Index of the solid containing the face
 /// * `shell_idx` - Index of the shell containing the face
 /// * `face_idx` - Index of the face to analyze
-/// * `brep` - The BRep structure
+/// * `brep` - The rcad_kernel::BRep structure
 /// * `tolerance` - Geometric tolerance for gap detection
 ///
 /// # Example
@@ -1312,7 +1312,7 @@ pub enum UvDirection {
 /// use rcad_kernel::BRep;
 /// use rcad_algorithms::shape_analysis::analyze_surface_bounds;
 ///
-/// let brep = BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Sphere { radius: 1.0 });
+/// let brep = rcad_kernel::BRep::from_primitive(rcad_kernel::geom::PrimitiveSolid::Sphere { radius: 1.0 });
 /// let report = analyze_surface_bounds(0, 0, 0, &brep, TOLERANCE_MESH_LEGACY);
 /// assert!(report.bounds_match || report.seam_edge_count > 0);
 /// ```
@@ -1320,7 +1320,7 @@ pub fn analyze_surface_bounds(
     solid_idx: usize,
     shell_idx: usize,
     face_idx: usize,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     tolerance: f64,
 ) -> SurfaceBoundsReport {
     let mut report = SurfaceBoundsReport::default();

@@ -38,7 +38,7 @@
 
 use crate::tolerance::*;
 use glam::{DVec2, DVec3};
-use rcad_kernel::{topods, BRep};
+use rcad_kernel::topods;
 use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval};
 
 /// A single validity issue found during checking.
@@ -357,7 +357,7 @@ impl CheckResult {
 /// Check the validity of a BRep and return a `CheckResult` with any issues found.
 ///
 /// Analogous to OCCT `BRepCheck_Analyzer::Perform()`.
-pub fn brep_check_analyze(brep: &BRep) -> CheckResult {
+pub fn brep_check_analyze(brep: &rcad_kernel::BRep) -> CheckResult {
  let mut issues = Vec::new();
  let n_edges = brep.edges.len();
  let n_verts = brep.vertices.len();
@@ -571,7 +571,7 @@ pub fn brep_check_analyze(brep: &BRep) -> CheckResult {
 }
 
 /// Convenience short alias for [`brep_check_analyze`].
-pub fn check_brep(brep: &BRep) -> CheckResult { brep_check_analyze(brep) }
+pub fn check_brep(brep: &rcad_kernel::BRep) -> CheckResult { brep_check_analyze(brep) }
 
 /// Check a single wire for self-intersecting topology.
 ///
@@ -797,7 +797,7 @@ fn count_geometric_self_intersections(
 /// Returns `(solid_idx, shell_idx, face_idx, &Face)` or `None` if the index
 /// is out of range.
 fn find_face_by_flat_idx<'a>(
- brep: &'a BRep,
+ brep: &'a rcad_kernel::BRep,
  flat_idx: usize,
 ) -> Option<(usize, usize, usize, &'a rcad_kernel::topology::Face)> {
  let mut idx = 0usize;
@@ -821,7 +821,7 @@ fn find_face_by_flat_idx<'a>(
 /// of the next edge, and the last edge wraps back to the first.
 ///
 /// Aligned with OCCT BRepCheck_Wire::Closed (BRepCheck_Wire.cxx lines ~60-95)
-pub fn check_wire_closed(brep: &BRep, face_idx: usize) -> bool {
+pub fn check_wire_closed(brep: &rcad_kernel::BRep, face_idx: usize) -> bool {
  let (_, _, _, face) = match find_face_by_flat_idx(brep, face_idx) {
  Some(f) => f,
  None => return false,
@@ -844,7 +844,7 @@ pub fn check_wire_closed(brep: &BRep, face_idx: usize) -> bool {
 /// For each consecutive edge pair (including wrap-around), verifies that the
 /// end vertex of edge[i] matches the start vertex of edge[i+1]. Falls back to
 /// vertex position tolerance when vertex indices differ.
-fn check_single_wire_closed(brep: &BRep, wire: &rcad_kernel::topology::Wire) -> bool {
+fn check_single_wire_closed(brep: &rcad_kernel::BRep, wire: &rcad_kernel::topology::Wire) -> bool {
  let n = wire.edges.len();
  if n == 0 {
  return true;
@@ -890,7 +890,7 @@ fn check_single_wire_closed(brep: &BRep, wire: &rcad_kernel::topology::Wire) -> 
 ///
 /// Aligned with OCCT BRepCheck_Wire::SelfIntersection (BRepCheck_Wire.cxx lines ~100-145)
 pub fn check_wire_self_intersection_pairs(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  face_idx: usize,
 ) -> Vec<(usize, usize)> {
  let (_, _, _, face) = match find_face_by_flat_idx(brep, face_idx) {
@@ -907,7 +907,7 @@ pub fn check_wire_self_intersection_pairs(
 
 /// Internal helper: finds self-intersecting edge pairs in a single wire.
 fn check_single_wire_self_intersection_pairs(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  wire: &rcad_kernel::topology::Wire,
 ) -> Vec<(usize, usize)> {
  use std::collections::HashMap;
@@ -952,7 +952,7 @@ fn check_single_wire_self_intersection_pairs(
 ///
 /// Aligned with OCCT BRepCheck_Face::Intersection (BRepCheck_Face.cxx lines ~70-130)
 pub fn check_face_wire_on_surface(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  face_idx: usize,
  tolerance: f64,
 ) -> bool {
@@ -985,7 +985,7 @@ pub fn check_face_wire_on_surface(
 
 /// Check that a single edge's 3D curve lies on the given surface within tolerance.
 fn check_edge_on_surface(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_idx: usize,
  surface_idx: usize,
  surface: &rcad_kernel::geom::Surface3,
@@ -1114,7 +1114,7 @@ impl FaceSurfaceConsistencyDiagnosis {
 /// If the surface points deviate from the 3D edge endpoints beyond `tolerance`,
 /// the edge-PCurve pair is reported as inconsistent.
 pub fn diagnose_face_surface_consistency(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  tolerance: f64,
 ) -> FaceSurfaceConsistencyDiagnosis {
  use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval};
@@ -1337,7 +1337,7 @@ pub fn analyze_wire_issues(brep: &topods::BRep, tolerance: f64) -> WireAnalysisR
 
 /// Legacy internal helper: old flat BRep for tests that build flat structures.
 #[cfg(test)]
-pub(crate) fn analyze_wire_issues_flat(brep: &BRep, tolerance: f64) -> WireAnalysisReport {
+pub(crate) fn analyze_wire_issues_flat(brep: &rcad_kernel::BRep, tolerance: f64) -> WireAnalysisReport {
  // Reuse the topods implementation by converting
  analyze_wire_issues(&brep.to_topods(), tolerance)
 }
@@ -1354,7 +1354,7 @@ pub(crate) fn analyze_wire_issues_flat(brep: &BRep, tolerance: f64) -> WireAnaly
 ///
 /// Returns a non-mutating diagnosis; call `fix_same_parameter_with_scan` to
 /// also repair the flagged edges.
-pub fn diagnose_same_parameter(brep: &BRep, tolerance: f64) -> SameParameterDiagnosis {
+pub fn diagnose_same_parameter(brep: &rcad_kernel::BRep, tolerance: f64) -> SameParameterDiagnosis {
  use rcad_kernel::geom::CurveEval;
 
  let mut suspects = Vec::new();
@@ -1398,7 +1398,7 @@ pub fn diagnose_same_parameter(brep: &BRep, tolerance: f64) -> SameParameterDiag
 /// For each edge with known 3D range and attached PCurves, checks whether each
 /// referenced `curve2d_range` matches the edge's `[t1, t2]` within `tolerance`.
 /// Missing 2D ranges are also treated as violations.
-pub fn diagnose_same_range(brep: &BRep, tolerance: f64) -> SameRangeDiagnosis {
+pub fn diagnose_same_range(brep: &rcad_kernel::BRep, tolerance: f64) -> SameRangeDiagnosis {
  let mut suspects = Vec::new();
  let n_edges = brep.edges.len();
 
@@ -1479,7 +1479,7 @@ pub struct ShellTopologyReport {
 /// whether the BRep represents a closed manifold solid.
 ///
 /// Analogous to `ShapeAnalysis_Shell::LoadUnorientedEdges()` + checks in OCCT.
-pub fn analyze_shell_topology(brep: &BRep) -> ShellTopologyReport {
+pub fn analyze_shell_topology(brep: &rcad_kernel::BRep) -> ShellTopologyReport {
  let total_edges = brep.edges.len();
 
  // Count how many faces each edge is referenced by.
@@ -1564,7 +1564,7 @@ pub struct EulerAnalysis {
 /// Compute per-solid Euler analysis for every solid in `brep`.
 ///
 /// Analogous to the topological analysis portion of `BRepCheck_Analyzer`.
-pub fn euler_analysis(brep: &BRep) -> Vec<EulerAnalysis> {
+pub fn euler_analysis(brep: &rcad_kernel::BRep) -> Vec<EulerAnalysis> {
  let mut results = Vec::with_capacity(brep.solids.len());
 
  for (si, solid) in brep.solids.iter().enumerate() {
@@ -1687,7 +1687,7 @@ pub struct OrientationReport {
 /// advisory rather than a hard constraint.
 ///
 /// Analogous to `BRepCheck_Shell::Orientation()` in OCCT.
-pub fn check_orientation_consistency(brep: &BRep) -> OrientationReport {
+pub fn check_orientation_consistency(brep: &rcad_kernel::BRep) -> OrientationReport {
  use glam::DVec3;
 
  let mut issues = Vec::new();
@@ -1821,7 +1821,7 @@ impl RicherValidityReport {
 /// This is the preferred entry point for comprehensive BRep validation:
 /// it combines the basic `brep_check_analyze()`, shell topology, Euler analysis, and
 /// orientation consistency into a single call.
-pub fn richer_validity_analysis(brep: &BRep) -> RicherValidityReport {
+pub fn richer_validity_analysis(brep: &rcad_kernel::BRep) -> RicherValidityReport {
  let check_result = brep_check_analyze(brep);
  let shell_topology = analyze_shell_topology(brep);
  let euler = euler_analysis(brep);

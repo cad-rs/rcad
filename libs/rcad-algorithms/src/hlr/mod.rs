@@ -1,6 +1,6 @@
-﻿//! Hidden-Line Removal (HLR).
+//! Hidden-Line Removal (HLR).
 //!
-//! Projects a BRep's edges onto a view plane and classifies each edge segment
+//! Projects a rcad_kernel::BRep's edges onto a view plane and classifies each edge segment
 //! as **visible** or **hidden** by testing against the silhouette of all faces.
 //!
 //! Analytic silhouette curves are generated for curved surfaces (cylinder,
@@ -8,7 +8,7 @@
 //! For general surfaces (BSpline, Bezier, etc.), numerical silhouette extraction
 //! is performed using adaptive sampling with curvature-based refinement.
 //!
-//! Analogous to OCCT `HLRBRep_Algo` / `HLRBRep_HLRToShape`.
+//! Analogous to OCCT `HLRrcad_kernel::BRep_Algo` / `HLRrcad_kernel::BRep_HLRToShape`.
 //!
 //! # Algorithm
 //!
@@ -47,7 +47,7 @@ use std::collections::{HashMap, HashSet};
 use rayon::prelude::*;
 use glam::{DAffine3, DMat4, DVec2, DVec3, DVec4};
 use rcad_kernel::geom::{Circle3, CurveEval, Surface3, any_perpendicular};
-use rcad_kernel::{topods, BRep, SurfaceEval};
+use rcad_kernel::{topods, SurfaceEval};
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -262,7 +262,7 @@ pub enum CurveHint {
 /// Classification of an HLR segment type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SegmentType {
-    /// Regular edge (part of the BRep wire).
+    /// Regular edge (part of the rcad_kernel::BRep wire).
     Edge,
     /// Silhouette curve (contour of a curved face).
     Silhouette,
@@ -292,7 +292,7 @@ pub enum EdgeClassification {
 /// Information about an edge's classification for HLR.
 #[derive(Debug, Clone)]
 pub struct EdgeClassInfo {
-    /// Edge index in the BRep.
+    /// Edge index in the rcad_kernel::BRep.
     pub edge_idx: usize,
     /// Classification type.
     pub classification: EdgeClassification,
@@ -851,8 +851,8 @@ fn project(p: DVec3, view: &DMat4) -> (DVec2, f64) {
     (DVec2::new(hp.x, hp.y), hp.z)
 }
 
-/// Collect all triangles from a BRep (fan-triangulate faces without pre-triangulated data).
-fn collect_triangles(brep: &BRep) -> Vec<[DVec3; 3]> {
+/// Collect all triangles from a rcad_kernel::BRep (fan-triangulate faces without pre-triangulated data).
+fn collect_triangles(brep: &rcad_kernel::BRep) -> Vec<[DVec3; 3]> {
     let mut tris = Vec::new();
     for solid in &brep.solids {
         for shell in &solid.shells {
@@ -1279,7 +1279,7 @@ pub struct SilhouetteCurve3 {
     pub surface_index: usize,
 }
 
-/// Extract silhouette curves from a BRep for a given view direction.
+/// Extract silhouette curves from a rcad_kernel::BRep for a given view direction.
 ///
 /// This function computes the visible contour lines (silhouettes) of curved surfaces
 /// as seen from a specific viewing direction. For analytic surfaces (cylinder, sphere,
@@ -1287,13 +1287,13 @@ pub struct SilhouetteCurve3 {
 /// Bezier, etc.), numerical methods with adaptive sampling are used.
 ///
 /// # Arguments
-/// * `brep` - The BRep model to extract silhouettes from.
+/// * `brep` - The rcad_kernel::BRep model to extract silhouettes from.
 /// * `view_dir` - The normalized view direction (from target to eye).
 /// * `opts` - Configuration options for sampling and tolerance.
 ///
 /// # Returns
 /// A vector of 3D silhouette curves, each represented as a series of world-space points.
-pub fn extract_silhouette_curves(brep: &BRep, view_dir: DVec3, opts: &HlrOptions) -> Vec<SilhouetteCurve3> {
+pub fn extract_silhouette_curves(brep: &rcad_kernel::BRep, view_dir: DVec3, opts: &HlrOptions) -> Vec<SilhouetteCurve3> {
     let mut curves: Vec<SilhouetteCurve3> = Vec::new();
 
     if brep.solids.is_empty() {
@@ -1347,7 +1347,7 @@ fn extract_surface_silhouettes(
     surface: &Surface3,
     view_dir: DVec3,
     domain: [f64; 4],
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     opts: &HlrOptions,
     line_samples: usize,
     dense_curve_samples: usize,
@@ -1402,7 +1402,7 @@ fn extract_surface_silhouettes(
 fn extract_cylinder_silhouettes(
     cyl: &rcad_kernel::geom::CylindricalSurface,
     view_dir: DVec3,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     line_samples: usize,
     v0: f64,
     v1: f64,
@@ -1473,7 +1473,7 @@ fn extract_sphere_silhouette(
 fn extract_cone_silhouettes(
     con: &rcad_kernel::geom::ConicalSurface,
     view_dir: DVec3,
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     line_samples: usize,
     v0: f64,
     v1: f64,

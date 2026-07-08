@@ -1,4 +1,4 @@
-﻿//! B-Rep repair / clean-up utilities.
+//! B-Rep repair / clean-up utilities.
 //!
 //! Analogous to OCCT `ShapeFix_Shape` / `ShapeFix_Wire` / `ShapeFix_Face`.
 //!
@@ -16,8 +16,6 @@
 //! All functions are **non-destructive**: they return a new `BRep` leaving the
 //! original unchanged.
 
-
-use rcad_kernel::BRep;
 
 use glam::DVec3;
 use rcad_kernel::topods;
@@ -279,7 +277,7 @@ impl MakeConnectedStrategy {
  ///
  /// This is the main entry point for connectivity repair using
  /// a custom strategy configuration.
- pub fn apply(&self, brep: &BRep) -> (BRep, MakeConnectedReport) {
+ pub fn apply(&self, brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, MakeConnectedReport) {
  let mut out = brep.clone();
  let mut report = MakeConnectedReport::default();
  let base_tol = self.merge_tolerance.max(TOLERANCE_ABS);
@@ -455,7 +453,7 @@ pub struct CoverageAssessment {
 }
 
 /// Assess coverage of seed vertices over the BRep.
-pub fn assess_coverage(brep: &BRep, seed_vertices: &[usize]) -> CoverageAssessment {
+pub fn assess_coverage(brep: &rcad_kernel::BRep, seed_vertices: &[usize]) -> CoverageAssessment {
  let n_vertices = brep.vertices.len().max(1);
  let n_edges = brep.edges.len().max(1);
 
@@ -521,7 +519,7 @@ pub fn assess_coverage(brep: &BRep, seed_vertices: &[usize]) -> CoverageAssessme
 }
 
 /// Get adjacent faces for an edge (simplified, no BRepGraph needed).
-fn get_edge_adjacent_faces_brep(brep: &BRep, edge_idx: usize) -> Vec<usize> {
+fn get_edge_adjacent_faces_brep(brep: &rcad_kernel::BRep, edge_idx: usize) -> Vec<usize> {
  let mut faces = Vec::new();
  let mut face_idx = 0usize;
  for solid in &brep.solids {
@@ -542,7 +540,7 @@ fn get_edge_adjacent_faces_brep(brep: &BRep, edge_idx: usize) -> Vec<usize> {
 }
 
 /// Get face normal from geometry or stored normal.
-fn get_face_normal(brep: &BRep, face_idx: usize) -> Option<DVec3> {
+fn get_face_normal(brep: &rcad_kernel::BRep, face_idx: usize) -> Option<DVec3> {
  // First, try to get from face's stored normal
  let mut current_idx = 0usize;
  for solid in &brep.solids {
@@ -561,7 +559,7 @@ fn get_face_normal(brep: &BRep, face_idx: usize) -> Option<DVec3> {
 
 /// Detect seed vertices for scoped make-connected based on strategy.
 pub fn detect_seeds_for_scoped_cleanup(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  config: &SeedDetectionConfig,
 ) -> SeedDetectionResult {
  let mut result = SeedDetectionResult::default();
@@ -784,7 +782,7 @@ pub fn detect_seeds_for_scoped_cleanup(
 
 /// Expand seed set to include neighboring vertices.
 fn expand_seed_neighborhood(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  seeds: &std::collections::HashSet<usize>,
  depth: usize,
 ) -> std::collections::HashSet<usize> {
@@ -825,11 +823,11 @@ fn expand_seed_neighborhood(
 
 /// Apply scoped make-connected with automatic seed detection.
 pub fn make_connected_scoped_auto(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  config: &SeedDetectionConfig,
  tolerance: f64,
  max_passes: usize,
-) -> (BRep, MakeConnectedReport, SeedDetectionResult) {
+) -> (rcad_kernel::BRep, MakeConnectedReport, SeedDetectionResult) {
  let seeds = detect_seeds_for_scoped_cleanup(brep, config);
 
  let (result, report) = make_connected_iterative_scoped_with_growth_cap(
@@ -847,7 +845,7 @@ pub fn make_connected_scoped_auto(
 /// Apply a MakeConnectedStrategy to repair connectivity.
 ///
 /// This is a convenience function that delegates to `strategy.apply(brep)`.
-pub fn make_connected_with_strategy(brep: &BRep, strategy: &MakeConnectedStrategy) -> (BRep, MakeConnectedReport) {
+pub fn make_connected_with_strategy(brep: &rcad_kernel::BRep, strategy: &MakeConnectedStrategy) -> (rcad_kernel::BRep, MakeConnectedReport) {
  strategy.apply(brep)
 }
 
@@ -942,7 +940,7 @@ impl std::fmt::Display for RepairReport {
 ///
 /// Equivalent to `ShapeFix_Shape::Perform()` followed by
 /// `BRepLib::UpdateEdgeTol()`.
-pub fn repair(brep: &BRep, tolerance: f64) -> (BRep, RepairReport) {
+pub fn repair(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel::BRep, RepairReport) {
  let mut report = RepairReport::default();
  let (b, n) = merge_close_vertices(brep, tolerance);
  report.vertices_merged += n;
@@ -965,7 +963,7 @@ pub fn repair(brep: &BRep, tolerance: f64) -> (BRep, RepairReport) {
 ///
 /// This pass snaps near-coincident vertices and removes tiny/degenerate edges
 /// to improve topological connectivity before downstream operations.
-pub fn make_connected_baseline(brep: &BRep, tolerance: f64) -> (BRep, MakeConnectedReport) {
+pub fn make_connected_baseline(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel::BRep, MakeConnectedReport) {
  make_connected_iterative(brep, tolerance, 1)
 }
 
@@ -974,10 +972,10 @@ pub fn make_connected_baseline(brep: &BRep, tolerance: f64) -> (BRep, MakeConnec
 /// Runs repeated merge/small-edge cleanup passes until convergence or until
 /// `max_passes` is reached.
 pub fn make_connected_iterative(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  tolerance: f64,
  max_passes: usize,
-) -> (BRep, MakeConnectedReport) {
+) -> (rcad_kernel::BRep, MakeConnectedReport) {
  make_connected_iterative_with_growth(brep, tolerance, max_passes, 1.0)
 }
 
@@ -985,11 +983,11 @@ pub fn make_connected_iterative(
 ///
 /// `tolerance_growth` values <= 1.0 keep fixed tolerance across passes.
 pub fn make_connected_iterative_with_growth(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  tolerance: f64,
  max_passes: usize,
  tolerance_growth: f64,
-) -> (BRep, MakeConnectedReport) {
+) -> (rcad_kernel::BRep, MakeConnectedReport) {
  make_connected_iterative_with_growth_cap(
  brep,
  tolerance,
@@ -1002,12 +1000,12 @@ pub fn make_connected_iterative_with_growth(
 /// Iterative baseline "MakeConnected" cleanup with per-pass tolerance growth
 /// and an optional upper cap for safety.
 pub fn make_connected_iterative_with_growth_cap(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  tolerance: f64,
  max_passes: usize,
  tolerance_growth: f64,
  tolerance_cap: f64,
-) -> (BRep, MakeConnectedReport) {
+) -> (rcad_kernel::BRep, MakeConnectedReport) {
  let tol = tolerance.max(TOLERANCE_ABS);
  let pass_limit = max_passes.max(1);
  let growth = if tolerance_growth > 1.0 {
@@ -1061,13 +1059,13 @@ pub fn make_connected_iterative_with_growth_cap(
 /// Automatically falls back to global cleanup when seed coverage is below
 /// the fallback threshold (30% for any coverage dimension).
 pub fn make_connected_iterative_scoped_with_growth_cap(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  scope_vertices: &[usize],
  tolerance: f64,
  max_passes: usize,
  tolerance_growth: f64,
  tolerance_cap: f64,
-) -> (BRep, MakeConnectedReport) {
+) -> (rcad_kernel::BRep, MakeConnectedReport) {
  // Assess coverage first
  let assessment = assess_coverage(brep, scope_vertices);
 
@@ -1151,10 +1149,10 @@ pub fn make_connected_iterative_scoped_with_growth_cap(
 }
 
 fn merge_close_vertices_scoped(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  tolerance: f64,
  scope_vertices: &std::collections::HashSet<usize>,
-) -> (BRep, usize, std::collections::HashMap<usize, usize>) {
+) -> (rcad_kernel::BRep, usize, std::collections::HashMap<usize, usize>) {
  let n = brep.vertices.len();
  let mut parent: Vec<usize> = (0..n).collect();
 
@@ -1265,10 +1263,10 @@ fn merge_close_vertices_scoped(
 }
 
 fn remove_small_edges_scoped(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  min_length: f64,
  scope_vertices: &std::collections::HashSet<usize>,
-) -> (BRep, usize, std::collections::HashMap<usize, usize>) {
+) -> (rcad_kernel::BRep, usize, std::collections::HashMap<usize, usize>) {
  let mut out = brep.clone();
  let mut total_removed = 0usize;
  let mut remap_track: Vec<usize> = (0..brep.vertices.len()).collect();
@@ -1411,7 +1409,7 @@ pub struct EdgeSewReport {
 ///
 /// # Returns
 /// A tuple of (modified BRep, report).
-pub fn sew_close_edges(brep: &BRep, tolerance: f64) -> (BRep, EdgeSewReport) {
+pub fn sew_close_edges(brep: &rcad_kernel::BRep, tolerance: f64) -> (rcad_kernel::BRep, EdgeSewReport) {
  let tol = tolerance.max(TOLERANCE_ABS);
  let tol_sq = tol * tol;
  let mut result = brep.clone();
@@ -1543,7 +1541,7 @@ pub fn sew_close_edges(brep: &BRep, tolerance: f64) -> (BRep, EdgeSewReport) {
 }
 
 /// Check if two edges have similar geometry (same curve type and parameters).
-fn edges_similar_geometry(brep: &BRep, e1: usize, e2: usize, tol: f64) -> bool {
+fn edges_similar_geometry(brep: &rcad_kernel::BRep, e1: usize, e2: usize, tol: f64) -> bool {
  // Check if edges have the same curve type
  let curve1 = brep.geom.curves.get(e1);
  let curve2 = brep.geom.curves.get(e2);
@@ -1610,7 +1608,7 @@ pub fn make_connected_enhanced(brep: &topods::BRep, tolerance: f64, max_passes: 
 }
 
 /// Legacy: takes old BRep.
-fn make_connected_enhanced_old(brep: &BRep, tolerance: f64, max_passes: usize) -> (BRep, MakeConnectedReport) {
+fn make_connected_enhanced_old(brep: &rcad_kernel::BRep, tolerance: f64, max_passes: usize) -> (rcad_kernel::BRep, MakeConnectedReport) {
  make_connected_enhanced_with_mode(brep, tolerance, max_passes, MakeConnectedMode::Standard, false)
 }
 
@@ -1626,12 +1624,12 @@ fn make_connected_enhanced_old(brep: &BRep, tolerance: f64, max_passes: usize) -
 /// # Returns
 /// A tuple of (modified BRep, report).
 pub fn make_connected_enhanced_with_mode(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  tolerance: f64,
  max_passes: usize,
  mode: MakeConnectedMode,
  merge_faces: bool,
-) -> (BRep, MakeConnectedReport) {
+) -> (rcad_kernel::BRep, MakeConnectedReport) {
  let tol = tolerance.max(TOLERANCE_ABS);
  let mut out = brep.clone();
  let mut report = MakeConnectedReport::default();
@@ -1706,7 +1704,7 @@ pub fn make_connected_enhanced_with_mode(
 ///
 /// # Returns
 /// A `SharedTopologyReport` containing detailed classification of shared topology.
-pub fn detect_shared_topology_advanced(brep: &BRep, tolerance: f64) -> SharedTopologyReport {
+pub fn detect_shared_topology_advanced(brep: &rcad_kernel::BRep, tolerance: f64) -> SharedTopologyReport {
  let tol = tolerance.max(TOLERANCE_ABS);
  let mut report = SharedTopologyReport::default();
 
@@ -1830,7 +1828,7 @@ pub fn detect_shared_topology_advanced(brep: &BRep, tolerance: f64) -> SharedTop
 
 /// Analyze a pair of edges for shared topology.
 fn analyze_shared_edge_pair(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  e1: usize,
  e2: usize,
  tolerance: f64,
@@ -1975,7 +1973,7 @@ fn check_curve_compatibility(
 
 /// Check if two edges have curvature continuity.
 fn check_edge_curvature_continuity(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  e1: usize,
  e2: usize,
  tolerance: f64,

@@ -1,4 +1,4 @@
-﻿//! Extreme geometry detection and handling for robust boolean operations.
+//! Extreme geometry detection and handling for robust boolean operations.
 //!
 //! This module provides detection and specialized handling for geometric configurations
 //! that are challenging for boolean operations:
@@ -10,7 +10,7 @@
 
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
-use rcad_kernel::{topods, BRep, Edge, Face};
+use rcad_kernel::{topods, Edge, Face};
 
 use crate::tolerance::*;
 
@@ -301,7 +301,7 @@ impl AspectRatioAdaptiveTolerance {
     }
 
     /// Detect high aspect ratio edges in a BRep.
-    pub fn detect_high_aspect_ratio_edges(&self, brep: &BRep) -> Vec<HighAspectRatioEdge> {
+    pub fn detect_high_aspect_ratio_edges(&self, brep: &rcad_kernel::BRep) -> Vec<HighAspectRatioEdge> {
         let mut results = Vec::new();
 
         for (idx, edge) in brep.edges.iter().enumerate() {
@@ -315,7 +315,7 @@ impl AspectRatioAdaptiveTolerance {
     }
 
     /// Analyze aspect ratio of a single edge.
-    fn analyze_edge_aspect_ratio(&self, brep: &BRep, edge_idx: usize, edge: &Edge) -> HighAspectRatioEdge {
+    fn analyze_edge_aspect_ratio(&self, brep: &rcad_kernel::BRep, edge_idx: usize, edge: &Edge) -> HighAspectRatioEdge {
         // Get endpoints from BRep vertices
         let p_start = brep.vertices.get(edge.start).map(|v| v.point).unwrap_or(DVec3::ZERO);
         let p_end = brep.vertices.get(edge.end).map(|v| v.point).unwrap_or(DVec3::ZERO);
@@ -400,7 +400,7 @@ impl AspectRatioAdaptiveTolerance {
 }
 
 /// Detect high aspect ratio edges in a BRep.
-pub fn detect_high_aspect_ratio_edges(brep: &BRep, tolerance: f64) -> Vec<HighAspectRatioEdge> {
+pub fn detect_high_aspect_ratio_edges(brep: &rcad_kernel::BRep, tolerance: f64) -> Vec<HighAspectRatioEdge> {
     let aat = AspectRatioAdaptiveTolerance {
         base_tolerance: tolerance,
         ..Default::default()
@@ -480,7 +480,7 @@ impl DegenerateGeometryHandler {
     }
 
     /// Detect all near-degenerate geometry in a BRep.
-    pub fn detect_near_degenerate_geometry(&self, brep: &BRep) -> Vec<NearDegenerateGeometry> {
+    pub fn detect_near_degenerate_geometry(&self, brep: &rcad_kernel::BRep) -> Vec<NearDegenerateGeometry> {
         let mut results = Vec::new();
 
         // Check edges
@@ -507,7 +507,7 @@ impl DegenerateGeometryHandler {
     }
 
     /// Check an edge for degeneracy.
-    fn check_edge_degeneracy(&self, brep: &BRep, idx: usize, edge: &Edge) -> Option<NearDegenerateGeometry> {
+    fn check_edge_degeneracy(&self, brep: &rcad_kernel::BRep, idx: usize, edge: &Edge) -> Option<NearDegenerateGeometry> {
         // Get endpoints from BRep vertices
         let p_start = brep.vertices.get(edge.start).map(|v| v.point)?;
         let p_end = brep.vertices.get(edge.end).map(|v| v.point)?;
@@ -541,7 +541,7 @@ impl DegenerateGeometryHandler {
     }
 
     /// Check if edge has near-zero curvature.
-    fn is_near_zero_curvature(&self, brep: &BRep, edge_idx: usize) -> bool {
+    fn is_near_zero_curvature(&self, brep: &rcad_kernel::BRep, edge_idx: usize) -> bool {
         // Get curve if available
         let Some(curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|v| *v) else {
             // No curve - assume it's a line (zero curvature)
@@ -584,7 +584,7 @@ impl DegenerateGeometryHandler {
     }
 
     /// Check a face for degeneracy.
-    fn check_face_degeneracy(&self, _brep: &BRep, idx: usize, _face: &Face) -> Option<NearDegenerateGeometry> {
+    fn check_face_degeneracy(&self, _brep: &rcad_kernel::BRep, idx: usize, _face: &Face) -> Option<NearDegenerateGeometry> {
         // This would require more complex face analysis
         // For now, we return None as placeholder
         // Full implementation would compute face area, check for sliver faces, etc.
@@ -609,7 +609,7 @@ impl DegenerateGeometryHandler {
 }
 
 /// Detect near-degenerate geometry in a BRep.
-pub fn detect_near_degenerate_geometry(brep: &BRep, tolerance: f64) -> Vec<NearDegenerateGeometry> {
+pub fn detect_near_degenerate_geometry(brep: &rcad_kernel::BRep, tolerance: f64) -> Vec<NearDegenerateGeometry> {
     let handler = DegenerateGeometryHandler {
         zero_tolerance: tolerance,
         ..Default::default()
@@ -673,7 +673,7 @@ impl SizeDifferenceHandler {
     }
 
     /// Compute characteristic size of a BRep.
-    pub fn compute_characteristic_size(&self, brep: &BRep) -> f64 {
+    pub fn compute_characteristic_size(&self, brep: &rcad_kernel::BRep) -> f64 {
         if brep.vertices.is_empty() {
             return 1.0;
         }
@@ -690,7 +690,7 @@ impl SizeDifferenceHandler {
     }
 
     /// Analyze size difference between two BReps.
-    pub fn analyze_size_difference(&self, a: &BRep, b: &BRep) -> SizeDifferenceAnalysis {
+    pub fn analyze_size_difference(&self, a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> SizeDifferenceAnalysis {
         let size_a = self.compute_characteristic_size(a);
         let size_b = self.compute_characteristic_size(b);
 
@@ -733,7 +733,7 @@ impl SizeDifferenceHandler {
 }
 
 /// Analyze size difference between two BReps.
-pub fn analyze_size_difference(a: &BRep, b: &BRep, tolerance: f64) -> SizeDifferenceAnalysis {
+pub fn analyze_size_difference(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep, tolerance: f64) -> SizeDifferenceAnalysis {
     let handler = SizeDifferenceHandler {
         base_tolerance: tolerance,
         ..Default::default()
@@ -799,8 +799,8 @@ impl Default for ExtremeGeometryAnalysisOptions {
 
 /// Perform comprehensive extreme geometry analysis.
 pub fn analyze_extreme_geometry(
-    a: &BRep,
-    b: Option<&BRep>,
+    a: &rcad_kernel::BRep,
+    b: Option<&rcad_kernel::BRep>,
     options: &ExtremeGeometryAnalysisOptions,
 ) -> ExtremeGeometryAnalysis {
     let mut analysis = ExtremeGeometryAnalysis::default();
@@ -889,7 +889,7 @@ pub fn analyze_extreme_geometry(
 }
 
 /// Compute characteristic scale of a BRep.
-fn compute_brep_scale(brep: &BRep) -> f64 {
+fn compute_brep_scale(brep: &rcad_kernel::BRep) -> f64 {
     if brep.vertices.is_empty() {
         return 1.0;
     }

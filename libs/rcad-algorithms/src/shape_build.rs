@@ -1,4 +1,4 @@
-﻿//! ShapeBuild-style robust shape construction utilities.
+//! ShapeBuild-style robust shape construction utilities.
 //!
 //! Analogous to OCCT `ShapeBuild` package providing validated shape construction
 //! with comprehensive error reporting and automatic fixing capabilities.
@@ -29,7 +29,7 @@
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, CurveEval, Surface3, SurfaceEval};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
-use rcad_kernel::{topods, BRep, GeomStore};
+use rcad_kernel::{topods, GeomStore};
 use std::collections::HashMap;
 
 
@@ -1032,8 +1032,8 @@ impl BRepBuilder {
  }
 
  /// Build and return the final BRep.
- pub fn build(self) -> BRep {
- BRep {
+ pub fn build(self) -> rcad_kernel::BRep {
+ rcad_kernel::BRep {
  vertices: self.vertices,
  edges: self.edges,
  solids: self.solids,

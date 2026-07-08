@@ -1,14 +1,14 @@
-﻿//! Section: surface-solid intersection returning curves and wires.
+//! Section: surface-solid intersection returning curves and wires.
 //!
-//! Analogous to OCCT `BRepAlgoAPI_Section`. Computes the intersection of a
-//! cutting surface with the faces of a BRep, returning curves and wires.
+//! Analogous to OCCT `rcad_kernel::BRepAlgoAPI_Section`. Computes the intersection of a
+//! cutting surface with the faces of a rcad_kernel::BRep, returning curves and wires.
 //!
 //! # Capabilities
 //!
 //! - Section by plane (original)
 //! - Section by cylinder (cylindrical cut)
 //! - Section by sphere (spherical cut)
-//! - Section by arbitrary BRep surface
+//! - Section by arbitrary rcad_kernel::BRep surface
 //! - Section by arbitrary analytic surface (cone, torus, etc.)
 //!
 //! - Returns exact analytic curves when possible (circle, ellipse, line)
@@ -21,7 +21,7 @@
 
 use glam::DVec3;
 use glam::DVec2;
-use rcad_kernel::{topods, face_tolerance, BRep};
+use rcad_kernel::{topods, face_tolerance};
 use rcad_kernel::geom::{
  Circle3, ConicalSurface, Curve3, CurveEval, CylindricalSurface, Ellipse3, Line3, Plane,
  SphericalSurface, Surface3, ToroidalSurface, any_perpendicular,
@@ -47,15 +47,15 @@ use crate::triangulate::{mesh_brep, triangulate_polygon, TessellationParams};
 
 // = =  Internal helpers = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
 
-/// Flat BRep face index =geometric floor for numerical IntSS (phase C).
+/// Flat rcad_kernel::BRep face index =geometric floor for numerical IntSS (phase C).
 #[inline]
-fn face_geom_floor(brep: &BRep, flat_face_idx: usize) -> f64 {
+fn face_geom_floor(brep: &rcad_kernel::BRep, flat_face_idx: usize) -> f64 {
  intss_geom_tol_floor(TOLERANCE_ABS, face_tolerance(brep, flat_face_idx))
 }
 
 /// World-space merge / closed-loop slack for triangle-soup plane section (phase C).
 #[inline]
-fn plane_section_mesh_merge_eps(brep: &BRep) -> f64 {
+fn plane_section_mesh_merge_eps(brep: &rcad_kernel::BRep) -> f64 {
  tessellation_merge_linear_from_brep(brep)
 }
 
@@ -84,7 +84,7 @@ fn segment_plane_intersect(plane: &Plane, a: DVec3, b: DVec3) -> Option<DVec3> {
 }
 
 /// Collect triangles for a face (pre-triangulated or fan-triangulated from wire).
-fn face_triangles(brep: &BRep, face: &rcad_kernel::Face) -> Vec<[DVec3; 3]> {
+fn face_triangles(brep: &rcad_kernel::BRep, face: &rcad_kernel::Face) -> Vec<[DVec3; 3]> {
  if !face.triangles.is_empty() {
  return face
  .triangles
@@ -127,10 +127,10 @@ fn face_triangles(brep: &BRep, face: &rcad_kernel::Face) -> Vec<[DVec3; 3]> {
  .collect()
 }
 
-/// Collect all face triangles from a BRep (pre-triangulated or fan-triangulated).
+/// Collect all face triangles from a rcad_kernel::BRep (pre-triangulated or fan-triangulated).
 ///
 /// Used for mesh= esh intersection approximations (e.g. OCCT-style section).
-pub fn brep_triangle_soup(brep: &BRep) -> Vec<[DVec3; 3]> {
+pub fn brep_triangle_soup(brep: &rcad_kernel::BRep) -> Vec<[DVec3; 3]> {
  let mut out = Vec::new();
  for solid in &brep.solids {
  for shell in &solid.shells {
@@ -145,7 +145,7 @@ pub fn brep_triangle_soup(brep: &BRep) -> Vec<[DVec3; 3]> {
 /// Intersect two triangle soups and chain intersection segments into polylines.
 ///
 /// Uses [`TOLERANCE_MESH_LEGACY`] for pair/merge (historic default; unchanged for back-compat).
-/// When both [`BRep`] operands are known, prefer [`intersect_triangle_soups_adaptive`] or [`intersect_triangle_soups_for_brep_tolerance`].
+/// When both [`rcad_kernel::BRep`] operands are known, prefer [`intersect_triangle_soups_adaptive`] or [`intersect_triangle_soups_for_brep_tolerance`].
 pub fn intersect_triangle_soups(tris_a: &[[DVec3; 3]], tris_b: &[[DVec3; 3]]) -> Vec<Vec<DVec3>> {
  intersect_triangle_soups_eps(tris_a, tris_b, TOLERANCE_MESH_LEGACY, TOLERANCE_MESH_LEGACY)
 }
@@ -155,8 +155,8 @@ pub fn intersect_triangle_soups(tris_a: &[[DVec3; 3]], tris_b: &[[DVec3; 3]]) ->
 pub fn intersect_triangle_soups_adaptive(
  tris_a: &[[DVec3; 3]],
  tris_b: &[[DVec3; 3]],
- brep_a: &BRep,
- brep_b: &BRep,
+ brep_a: &rcad_kernel::BRep,
+ brep_b: &rcad_kernel::BRep,
 ) -> Vec<Vec<DVec3>> {
  let e = crate::tolerance::tessellation_merge_linear_from_two_breps(brep_a, brep_b);
  intersect_triangle_soups_eps(tris_a, tris_b, e, e)
@@ -187,8 +187,8 @@ pub fn intersect_triangle_soups_eps(
 pub fn intersect_triangle_soups_for_brep_tolerance(
  tris_a: &[[DVec3; 3]],
  tris_b: &[[DVec3; 3]],
- brep_a: &BRep,
- brep_b: &BRep,
+ brep_a: &rcad_kernel::BRep,
+ brep_b: &rcad_kernel::BRep,
 ) -> Vec<Vec<DVec3>> {
  let e = max_face_tolerance_or_abs_pair(brep_a, brep_b);
  intersect_triangle_soups_eps(tris_a, tris_b, e, e)
@@ -290,18 +290,18 @@ fn chain_segments_eps(segments: Vec<[DVec3; 2]>, merge_eps: f64) -> Vec<Vec<DVec
 
 // = =  Public API: Plane Section = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
 
-/// Compute the section of a BRep with a cutting plane.
+/// Compute the section of a rcad_kernel::BRep with a cutting plane.
 ///
-/// Returns a new BRep containing only edges and wires (no faces/solids)
+/// Returns a new rcad_kernel::BRep containing only edges and wires (no faces/solids)
 /// representing the section curves. Each closed loop is a separate wire.
 ///
-/// For rendering, callers can extract vertices from the returned BRep's wires.
+/// For rendering, callers can extract vertices from the returned rcad_kernel::BRep's wires.
 ///
 /// Triangle-soup segment chaining uses [`crate::tolerance::tessellation_merge_linear_from_brep`]
 /// (phase C), not a fixed [`TOLERANCE_MESH_LEGACY`] merge alone.
 ///
-/// Analogous to OCCT `BRepAlgoAPI_Section`.
-pub fn section(brep: &BRep, plane: &Plane) -> BRep {
+/// Analogous to OCCT `rcad_kernel::BRepAlgoAPI_Section`.
+pub fn section(brep: &rcad_kernel::BRep, plane: &Plane) -> rcad_kernel::BRep {
  // Collect all section segments from all triangles
  let mut segments: Vec<[DVec3; 2]> = Vec::new();
 
@@ -318,15 +318,15 @@ pub fn section(brep: &BRep, plane: &Plane) -> BRep {
  }
 
  if segments.is_empty() {
- return BRep::new();
+ return rcad_kernel::BRep::new();
  }
 
  // Chain segments into loops
  let merge_eps = plane_section_mesh_merge_eps(brep);
  let loops = chain_segments_eps(segments, merge_eps);
 
- // Build result BRep
- let mut result = BRep::new();
+ // Build result rcad_kernel::BRep
+ let mut result = rcad_kernel::BRep::new();
  let mut wire_list: Vec<Wire> = Vec::new();
 
  for loop_pts in loops {
@@ -415,7 +415,7 @@ struct PlanarFaceInfo {
 }
 
 /// Extract planar face info if the face at `flat_idx` is a Plane surface.
-fn extract_planar_face_info(brep: &BRep, flat_idx: usize) -> Option<PlanarFaceInfo> {
+fn extract_planar_face_info(brep: &rcad_kernel::BRep, flat_idx: usize) -> Option<PlanarFaceInfo> {
  let surf = brep
  .geom
  .face_surface
@@ -604,10 +604,10 @@ fn push_polyline_segments(polyline: &[DVec3], segments: &mut Vec<[DVec3; 2]>) {
 /// Try analytic intersection for a face pair, returning true if any segments
 /// were produced.
 fn try_analytic_face_pair(
- brep_a: &BRep,
+ brep_a: &rcad_kernel::BRep,
  flat_a: usize,
  a_info: Option<&PlanarFaceInfo>,
- brep_b: &BRep,
+ brep_b: &rcad_kernel::BRep,
  flat_b: usize,
  b_info: Option<&PlanarFaceInfo>,
  point_tol: f64,
@@ -856,16 +856,16 @@ fn intersect_plane_cone_pair(
  found
 }
 
-/// Section curves between two BReps (all face-pair intersections).
+/// Section curves between two rcad_kernel::BReps (all face-pair intersections).
 ///
 /// Uses fast closed-form analytic intersection for analytic surface pairs
 /// (plane-plane, plane-cylinder, plane-sphere, plane-cone) with 2D
 /// point-in-polygon trimming to face boundaries. Falls back to triangle-soup
 /// intersection for other surface types.
 ///
-/// Like OCCT `BRepAlgoAPI_Section` applied to two whole shapes.
-pub fn brep_section(a: &BRep, b: &BRep) -> BRep {
- // Tessellate both BReps so curved surfaces produce triangles for fallback.
+/// Like OCCT `rcad_kernel::BRepAlgoAPI_Section` applied to two whole shapes.
+pub fn brep_section(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> rcad_kernel::BRep {
+ // Tessellate both rcad_kernel::BReps so curved surfaces produce triangles for fallback.
  let mut a_tess = a.clone();
  let mut b_tess = b.clone();
  mesh_brep(&mut a_tess, &TessellationParams::standard());
@@ -957,7 +957,7 @@ pub fn brep_section(a: &BRep, b: &BRep) -> BRep {
  }
 
  if segments.is_empty() {
- return BRep::new();
+ return rcad_kernel::BRep::new();
  }
 
  // Deduplicate colinear overlapping segments.
@@ -1035,7 +1035,7 @@ fn dedup_colinear_segments(segs: &mut Vec<[DVec3; 2]>, eps: f64) {
 /// offset.  Triangle soup intersection of coplanar faces produces spurious
 /// area-boundary segments instead of clean section curves, so callers should
 /// skip those face pairs.
-fn is_coplanar_face_pair(brep_a: &BRep, flat_a: usize, brep_b: &BRep, flat_b: usize) -> bool {
+fn is_coplanar_face_pair(brep_a: &rcad_kernel::BRep, flat_a: usize, brep_b: &rcad_kernel::BRep, flat_b: usize) -> bool {
  let surf_a = brep_a
  .geom
  .face_surface
@@ -1067,8 +1067,8 @@ fn is_coplanar_face_pair(brep_a: &BRep, flat_a: usize, brep_b: &BRep, flat_b: us
 ///
 /// Each entry is one closed (or open) loop of points from the plane section.
 /// Chaining tolerance follows [`crate::tolerance::tessellation_merge_linear_from_brep`].
-pub fn section_polylines(brep: &BRep, plane: &Plane) -> Vec<Vec<DVec3>> {
- // Collect segments directly without building full BRep
+pub fn section_polylines(brep: &rcad_kernel::BRep, plane: &Plane) -> Vec<Vec<DVec3>> {
+ // Collect segments directly without building full rcad_kernel::BRep
  let mut segments: Vec<[DVec3; 2]> = Vec::new();
 
  for solid in &brep.solids {
@@ -1106,11 +1106,11 @@ pub enum CuttingSurface {
  Torus(ToroidalSurface),
  /// Arbitrary analytic surface.
  Surface(Surface3),
- /// Arbitrary BRep surface (uses face index).
+ /// Arbitrary rcad_kernel::BRep surface (uses face index).
  BRepSurface {
- /// Source BRep containing the cutting face.
- brep: Box<BRep>,
- /// Index of the face in the BRep to use as cutting surface.
+ /// Source rcad_kernel::BRep containing the cutting face.
+ brep: Box<rcad_kernel::BRep>,
+ /// Index of the face in the rcad_kernel::BRep to use as cutting surface.
  face_idx: usize,
  },
 }
@@ -1118,8 +1118,8 @@ pub enum CuttingSurface {
 /// Result of a section operation with curves and properties.
 #[derive(Debug, Clone)]
 pub struct SectionResult {
- /// The section curves as a BRep (wires only).
- pub brep: BRep,
+ /// The section curves as a rcad_kernel::BRep (wires only).
+ pub brep: rcad_kernel::BRep,
  /// Individual section curves (analytic or polyline).
  pub curves: Vec<SectionCurveResult>,
  /// Section properties (computed if section is planar and closed).
@@ -1224,21 +1224,21 @@ impl SectionProperties {
  }
 }
 
-/// Compute the section of a BRep with a cutting surface.
+/// Compute the section of a rcad_kernel::BRep with a cutting surface.
 ///
 /// This is the main entry point for section operations, supporting various
 /// cutting surface types.
 ///
 /// # Arguments
 ///
-/// * `brep` - The BRep to section.
+/// * `brep` - The rcad_kernel::BRep to section.
 /// * `cutting_surface` - The surface to cut with.
 ///
 /// # Returns
 ///
-/// A `SectionResult` containing the section curves as a BRep, individual curve
+/// A `SectionResult` containing the section curves as a rcad_kernel::BRep, individual curve
 /// data, and computed properties (if applicable).
-pub fn section_with_surface(brep: &BRep, cutting_surface: &CuttingSurface) -> SectionResult {
+pub fn section_with_surface(brep: &rcad_kernel::BRep, cutting_surface: &CuttingSurface) -> SectionResult {
  match cutting_surface {
  CuttingSurface::Plane(plane) => section_by_plane(brep, plane),
  CuttingSurface::Cylinder(cyl) => section_by_cylinder(brep, cyl),
@@ -1253,12 +1253,12 @@ pub fn section_with_surface(brep: &BRep, cutting_surface: &CuttingSurface) -> Se
 }
 
 /// Section by plane with full result.
-fn section_by_plane(brep: &BRep, plane: &Plane) -> SectionResult {
+fn section_by_plane(brep: &rcad_kernel::BRep, plane: &Plane) -> SectionResult {
  let merge_eps = plane_section_mesh_merge_eps(brep);
  let polylines = section_polylines(brep, plane);
 
  let mut curves = Vec::new();
- let mut result_brep = BRep::new();
+ let mut result_brep = rcad_kernel::BRep::new();
 
  for polyline in &polylines {
  if polyline.len() < 2 {
@@ -1285,7 +1285,7 @@ fn section_by_plane(brep: &BRep, plane: &Plane) -> SectionResult {
  });
  }
 
- // Build BRep from polylines
+ // Build rcad_kernel::BRep from polylines
  result_brep = build_brep_from_polylines(&polylines);
 
  // Compute properties if section is planar
@@ -1299,27 +1299,27 @@ fn section_by_plane(brep: &BRep, plane: &Plane) -> SectionResult {
 }
 
 /// Section by cylinder.
-fn section_by_cylinder(brep: &BRep, cyl: &CylindricalSurface) -> SectionResult {
+fn section_by_cylinder(brep: &rcad_kernel::BRep, cyl: &CylindricalSurface) -> SectionResult {
  section_by_analytic_surface(brep, &Surface3::Cylinder(*cyl))
 }
 
 /// Section by sphere.
-fn section_by_sphere(brep: &BRep, sphere: &SphericalSurface) -> SectionResult {
+fn section_by_sphere(brep: &rcad_kernel::BRep, sphere: &SphericalSurface) -> SectionResult {
  section_by_analytic_surface(brep, &Surface3::Sphere(*sphere))
 }
 
 /// Section by cone.
-fn section_by_cone(brep: &BRep, cone: &ConicalSurface) -> SectionResult {
+fn section_by_cone(brep: &rcad_kernel::BRep, cone: &ConicalSurface) -> SectionResult {
  section_by_analytic_surface(brep, &Surface3::Cone(*cone))
 }
 
 /// Section by torus.
-fn section_by_torus(brep: &BRep, torus: &ToroidalSurface) -> SectionResult {
+fn section_by_torus(brep: &rcad_kernel::BRep, torus: &ToroidalSurface) -> SectionResult {
  section_by_analytic_surface(brep, &Surface3::Torus(*torus))
 }
 
 /// Section by arbitrary analytic surface.
-fn section_by_analytic_surface(brep: &BRep, cutting_surface: &Surface3) -> SectionResult {
+fn section_by_analytic_surface(brep: &rcad_kernel::BRep, cutting_surface: &Surface3) -> SectionResult {
  let mesh_merge_eps = plane_section_mesh_merge_eps(brep);
  let mut curves = Vec::new();
  let mut polylines = Vec::new();
@@ -1391,9 +1391,9 @@ fn section_by_analytic_surface(brep: &BRep, cutting_surface: &Surface3) -> Secti
  }
 }
 
-/// Section by a face from another BRep.
-fn section_by_brep_surface(brep: &BRep, tool_brep: &BRep, face_idx: usize) -> SectionResult {
- // Get the cutting surface from the tool BRep
+/// Section by a face from another rcad_kernel::BRep.
+fn section_by_brep_surface(brep: &rcad_kernel::BRep, tool_brep: &rcad_kernel::BRep, face_idx: usize) -> SectionResult {
+ // Get the cutting surface from the tool rcad_kernel::BRep
  let cutting_surface = tool_brep
  .geom
  .face_surface
@@ -1430,8 +1430,8 @@ fn section_by_brep_surface(brep: &BRep, tool_brep: &BRep, face_idx: usize) -> Se
  }
 }
 
-/// Find a face in a BRep by index.
-fn find_face_in_brep(brep: &BRep, face_idx: usize) -> Option<&rcad_kernel::Face> {
+/// Find a face in a rcad_kernel::BRep by index.
+fn find_face_in_brep(brep: &rcad_kernel::BRep, face_idx: usize) -> Option<&rcad_kernel::Face> {
  let mut current_idx = 0;
  for solid in &brep.solids {
  for shell in &solid.shells {
@@ -1516,7 +1516,7 @@ fn convert_surface_curve(
 
 /// Section a face by marching along a surface.
 fn section_face_by_surface_marching(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  face: &rcad_kernel::Face,
  cutting_surface: &Surface3,
  geom_floor: f64,
@@ -1688,8 +1688,8 @@ fn find_surface_intersection(
 /// Returns polylines and merge epsilon: `max` of per-face IntSS floors and
 /// [`crate::tolerance::tessellation_merge_linear_from_two_breps`] (phase C soup-style chaining).
 fn section_by_face_triangles(
- brep: &BRep,
- tool_brep: &BRep,
+ brep: &rcad_kernel::BRep,
+ tool_brep: &rcad_kernel::BRep,
  tool_face_idx: usize,
  cutting_face: Option<&rcad_kernel::Face>,
 ) -> (Vec<Vec<DVec3>>, f64) {
@@ -1827,9 +1827,9 @@ fn point_in_triangle_eps(p: DVec3, tri: &[DVec3; 3], pair_eps: f64) -> bool {
  s >= -margin && t >= -margin && s + t <= 1.0 + margin
 }
 
-/// Build a BRep from polylines.
-fn build_brep_from_polylines(polylines: &[Vec<DVec3>]) -> BRep {
- let mut result = BRep::new();
+/// Build a rcad_kernel::BRep from polylines.
+fn build_brep_from_polylines(polylines: &[Vec<DVec3>]) -> rcad_kernel::BRep {
+ let mut result = rcad_kernel::BRep::new();
 
  for polyline in polylines {
  if polyline.len() < 2 {

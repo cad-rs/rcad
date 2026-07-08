@@ -6,26 +6,26 @@
 
 use glam::DVec3;
 use rcad_kernel::topods;
-use rcad_kernel::{BRep, PrimitiveSolid};
+use rcad_kernel::PrimitiveSolid;
 
 const TOL: f64 = 1e-6;
 
-fn make_unit_box() -> BRep {
+fn make_unit_box() -> rcad_kernel::BRep {
     let t = rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
         .expect("unit box");
-    BRep::from_topods(&t)
+    rcad_kernel::BRep::from_topods(&t)
 }
 
-fn make_box_at(origin: DVec3, size: f64) -> BRep {
+fn make_box_at(origin: DVec3, size: f64) -> rcad_kernel::BRep {
     let t = rcad_modeling::make_box_brep(origin, DVec3::X, DVec3::Y, size, size, size)
         .expect("box");
-    BRep::from_topods(&t)
+    rcad_kernel::BRep::from_topods(&t)
 }
 
-fn make_cylinder_brep(radius: f64, height: f64) -> BRep {
+fn make_cylinder_brep(radius: f64, height: f64) -> rcad_kernel::BRep {
     let t = rcad_modeling::make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, radius, height)
         .expect("cylinder");
-    BRep::from_topods(&t)
+    rcad_kernel::BRep::from_topods(&t)
 }
 
 // =============================================================================
@@ -163,11 +163,10 @@ mod toptools_map_tests {
 
 #[cfg(test)]
 mod solid_classifier_tests {
-    use rcad_kernel::topods::BRep;
     use crate::classify::{SolidClassifier, Classification};
     use glam::DVec3;
 
-    fn make_unit_cube() -> (BRep, rcad_kernel::topods::ShapeRef) {
+    fn make_unit_cube() -> (rcad_kernel::BRep, rcad_kernel::topods::ShapeRef) {
         // Use make_box_brep which creates faces with Plane surfaces
         let brep = rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
             .expect("unit cube");

@@ -1,4 +1,4 @@
-﻿//! Defeaturing pass: suppress small cylindrical holes, bosses, and very small faces.
+//! Defeaturing pass: suppress small cylindrical holes, bosses, and very small faces.
 //!
 //! Analogous to `BRepAlgoAPI_Defeaturing` in OCCT 8.0.
 //!
@@ -48,8 +48,6 @@
 //! assert_eq!(report.holes_removed, 0);
 //! ```
 
-
-use rcad_kernel::BRep;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -599,7 +597,7 @@ impl std::error::Error for DefeaturingError {}
 // -- Internal helpers --------------------------------------------------------
 
 /// Compute the flat face index for a face in `solids[si].shells[shi].faces[fi]`.
-fn flat_face_index(brep: &BRep, si: usize, shi: usize, fi: usize) -> usize {
+fn flat_face_index(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> usize {
     let mut idx = 0usize;
     for s in 0..si {
         for sh in &brep.solids[s].shells {
@@ -614,7 +612,7 @@ fn flat_face_index(brep: &BRep, si: usize, shi: usize, fi: usize) -> usize {
 
 /// Return the `CylindricalSurface` backing a face, or `None` if the face has
 /// no surface data or is not a cylinder.
-fn face_cylinder(brep: &BRep, si: usize, shi: usize, fi: usize) -> Option<CylindricalSurface> {
+fn face_cylinder(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Option<CylindricalSurface> {
     let ffi = flat_face_index(brep, si, shi, fi);
     let sid = brep.geom.face_surface.get(ffi)?.as_ref().copied()?;
     match brep.geom.surfaces.get(sid)? {
@@ -625,7 +623,7 @@ fn face_cylinder(brep: &BRep, si: usize, shi: usize, fi: usize) -> Option<Cylind
 
 /// Return the `ConicalSurface` backing a face, or `None` if the face has
 /// no surface data or is not a cone.
-fn face_cone(brep: &BRep, si: usize, shi: usize, fi: usize) -> Option<ConicalSurface> {
+fn face_cone(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Option<ConicalSurface> {
     let ffi = flat_face_index(brep, si, shi, fi);
     let sid = brep.geom.face_surface.get(ffi)?.as_ref().copied()?;
     match brep.geom.surfaces.get(sid)? {
@@ -636,7 +634,7 @@ fn face_cone(brep: &BRep, si: usize, shi: usize, fi: usize) -> Option<ConicalSur
 
 /// Return the `Plane` backing a face, or `None` if the face has
 /// no surface data or is not a plane.
-fn face_plane(brep: &BRep, si: usize, shi: usize, fi: usize) -> Option<Plane> {
+fn face_plane(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Option<Plane> {
     let ffi = flat_face_index(brep, si, shi, fi);
     let sid = brep.geom.face_surface.get(ffi)?.as_ref().copied()?;
     match brep.geom.surfaces.get(sid)? {
@@ -647,7 +645,7 @@ fn face_plane(brep: &BRep, si: usize, shi: usize, fi: usize) -> Option<Plane> {
 
 /// Return the `ToroidalSurface` backing a face, or `None` if the face has
 /// no surface data or is not a torus.
-fn face_torus(brep: &BRep, si: usize, shi: usize, fi: usize) -> Option<ToroidalSurface> {
+fn face_torus(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Option<ToroidalSurface> {
     let ffi = flat_face_index(brep, si, shi, fi);
     let sid = brep.geom.face_surface.get(ffi)?.as_ref().copied()?;
     match brep.geom.surfaces.get(sid)? {
@@ -658,7 +656,7 @@ fn face_torus(brep: &BRep, si: usize, shi: usize, fi: usize) -> Option<ToroidalS
 
 /// Return the `SphericalSurface` backing a face, or `None` if the face has
 /// no surface data or is not a sphere.
-fn face_sphere(brep: &BRep, si: usize, shi: usize, fi: usize) -> Option<SphericalSurface> {
+fn face_sphere(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Option<SphericalSurface> {
     let ffi = flat_face_index(brep, si, shi, fi);
     let sid = brep.geom.face_surface.get(ffi)?.as_ref().copied()?;
     match brep.geom.surfaces.get(sid)? {
@@ -669,7 +667,7 @@ fn face_sphere(brep: &BRep, si: usize, shi: usize, fi: usize) -> Option<Spherica
 
 /// Check if a face is likely a planar blend/chamfer face.
 /// Returns Some((is_fillet, radius_or_chamfer_dist)) if detected.
-fn detect_blend_face(brep: &BRep, si: usize, shi: usize, fi: usize, max_blend_radius: f64, max_chamfer_distance: f64) -> Option<BlendFeature> {
+fn detect_blend_face(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize, max_blend_radius: f64, max_chamfer_distance: f64) -> Option<BlendFeature> {
     // Check for torus (fillet)
     if max_blend_radius > 0.0 {
         if let Some(torus) = face_torus(brep, si, shi, fi) {
@@ -747,7 +745,7 @@ fn detect_blend_face(brep: &BRep, si: usize, shi: usize, fi: usize, max_blend_ra
 }
 
 /// Get a sample point from a face (first vertex).
-fn get_face_sample_point(brep: &BRep, si: usize, shi: usize, fi: usize) -> Option<DVec3> {
+fn get_face_sample_point(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Option<DVec3> {
     let face = &brep.solids[si].shells[shi].faces[fi];
     for we in &face.outer_wire.edges {
         if let Some(edge) = brep.edges.get(we.idx)
@@ -759,7 +757,7 @@ fn get_face_sample_point(brep: &BRep, si: usize, shi: usize, fi: usize) -> Optio
 }
 
 /// Estimate the area of a face using fan triangulation.
-fn estimate_face_area(brep: &BRep, si: usize, shi: usize, fi: usize) -> f64 {
+fn estimate_face_area(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> f64 {
     let face = &brep.solids[si].shells[shi].faces[fi];
 
     // Collect vertex positions in order
@@ -816,7 +814,7 @@ fn axes_same_line(o1: DVec3, ax1: DVec3, o2: DVec3, ax2: DVec3) -> bool {
 /// (this is a known limitation of the legacy curved-face split path).  We use a
 /// majority vote across ALL boundary vertices to reduce sensitivity to any single
 /// seam-direction artifact.  Falls back to `true` (hole) on tie or missing data.
-fn is_hole_face(face: &Face, brep: &BRep, cyl: &CylindricalSurface) -> bool {
+fn is_hole_face(face: &Face, brep: &rcad_kernel::BRep, cyl: &CylindricalSurface) -> bool {
     let ax = cyl.axis.normalize_or_zero();
     let face_n = face.normal.normalize_or_zero();
     if face_n.length_squared() < TOLERANCE_METRIC_SQ_NEAR_ZERO {
@@ -871,7 +869,7 @@ fn is_hole_face(face: &Face, brep: &BRep, cyl: &CylindricalSurface) -> bool {
 
 /// Compute the min/max projection of all wall-face vertices onto the cylinder axis.
 fn axis_extent_of_group(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     si: usize,
     shi: usize,
     face_indices: &[usize],
@@ -919,7 +917,7 @@ fn axis_extent_of_group(
 ///
 /// Returns a list of [`CylindricalFeature`] objects, one per connected group.
 pub fn detect_cylindrical_features(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     max_hole_radius: f64,
     max_boss_radius: f64,
 ) -> Vec<CylindricalFeature> {
@@ -1039,7 +1037,7 @@ pub fn detect_cylindrical_features(
 ///
 /// Returns a list of [`ConicalFeature`] objects, one per connected group.
 pub fn detect_conical_features(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     max_hole_radius: f64,
 ) -> Vec<ConicalFeature> {
     let si = 0;
@@ -1229,7 +1227,7 @@ pub fn detect_conical_features(
 ///
 /// Returns a list of [`SlotFeature`] objects.
 pub fn detect_slot_features(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     max_width: f64,
     max_depth: f64,
 ) -> Vec<SlotFeature> {
@@ -1345,7 +1343,7 @@ pub fn detect_slot_features(
 
 /// Analyze a group of faces to determine if they form a slot.
 fn analyze_slot_group(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     si: usize,
     shi: usize,
     group: &[usize],
@@ -1456,7 +1454,7 @@ fn analyze_slot_group(
 ///
 /// Returns a list of [`PocketFeature`] objects.
 pub fn detect_pocket_features(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     max_diameter: f64,
     max_depth: f64,
 ) -> Vec<PocketFeature> {
@@ -1576,7 +1574,7 @@ pub fn detect_pocket_features(
 
 /// Analyze a group of faces to determine if they form a pocket.
 fn analyze_pocket_group(
-    brep: &BRep,
+    brep: &rcad_kernel::BRep,
     si: usize,
     shi: usize,
     group: &[usize],

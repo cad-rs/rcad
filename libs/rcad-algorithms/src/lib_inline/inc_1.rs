@@ -1,7 +1,5 @@
-﻿
 
 
-use rcad_kernel::BRep;
 
 /// Options for post-operation topology simplification.
 #[derive(Debug, Clone, Copy)]
@@ -279,7 +277,7 @@ pub struct BooleanExecutionReport {
  /// Full face/edge/vertex history when [`BooleanOptions::include_history`] was enabled.
  ///
  /// Populated from the boolean builder **before** optional healing / simplify; if those change
- /// topology, indices may not match the final [`BRep`] (same caveat as derived label fields).
+ /// topology, indices may not match the final [`rcad_kernel::BRep`] (same caveat as derived label fields).
  pub boolean_history: Option<BooleanHistory>,
  /// Per-attempt diagnostics recorded by `boolean_op_robust`.
  pub robust_attempts: Vec<BooleanRobustAttemptReport>,
@@ -556,7 +554,7 @@ impl BooleanRobustOptions {
  /// Preset for **FEA-oriented** booleans: scale-aware fuzzy/glue, glue, healing,
  /// make-connected, and **bottom-up `propagate_tolerances`** enabled. Use with
  /// [`boolean_op_robust`] for mesh-friendly watertight recovery.
- pub fn for_fea(a: &BRep, b: &BRep) -> Self {
+ pub fn for_fea(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Self {
  let ctx = tolerance::ToleranceContext::from_two_breps(a, b);
  let fuzzy = ctx.adaptive_linear(tolerance::ToleranceLevel::Normal);
  let glue = ctx.adaptive_linear(tolerance::ToleranceLevel::Normal);
@@ -579,7 +577,7 @@ impl BooleanRobustOptions {
 
  /// Preset for **mechanical multi-scale** assemblies: relaxed starting fuzzy, wider retry
  /// ladder, and geometry-aware extreme-geometry escalation.
- pub fn for_mechanical_multiscale(a: &BRep, b: &BRep) -> Self {
+ pub fn for_mechanical_multiscale(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Self {
  let ctx = tolerance::ToleranceContext::from_two_breps(a, b);
  let fuzzy = ctx.adaptive_linear(tolerance::ToleranceLevel::Relaxed);
  let glue = ctx.adaptive_linear(tolerance::ToleranceLevel::Normal);
@@ -619,8 +617,8 @@ pub fn resolved_boolean_fuzzy_tol_for_ds(configured_fuzzy: f64) -> f64 {
 /// same linear floor as glue / make-connected and [`resolved_boolean_fuzzy_tol_for_ds`], avoiding
 /// repair passes that stay tighter than the pave / fuzzy context.
 ///
-/// Idempotent (`max`). Call at binary boolean entry whenever both [`BRep`] operands are known.
-fn merge_pairwise_model_tol_into_boolean_options(options: &mut BooleanOptions, a: &BRep, b: &BRep) {
+/// Idempotent (`max`). Call at binary boolean entry whenever both [`rcad_kernel::BRep`] operands are known.
+fn merge_pairwise_model_tol_into_boolean_options(options: &mut BooleanOptions, a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) {
  let base_ctx = tolerance::ToleranceContext::from_two_breps(a, b);
  let fuzzy_user = options.fuzzy_tol.max(0.0);
  let ctx = tolerance::ToleranceContext::new(base_ctx.adaptive, fuzzy_user);
@@ -673,8 +671,8 @@ fn merge_pairwise_model_tol_into_boolean_options(options: &mut BooleanOptions, a
 /// through [`BooleanOptions`] (for example [`boolean_op_healed_with_options`] or split imprint steps).
 pub fn align_healing_options_with_boolean_operands(
  healing: &mut HealingOptions,
- a: &BRep,
- b: &BRep,
+ a: &rcad_kernel::BRep,
+ b: &rcad_kernel::BRep,
  fuzzy_tol: f64,
 ) {
  let mut bridge = BooleanOptions::default();
@@ -689,8 +687,8 @@ pub fn align_healing_options_with_boolean_operands(
 /// with the attempt閳ユ獨 workspace flag (e.g. `fuzzy_tol == 0` vs strictly positive user fuzzy).
 pub fn align_healing_options_after_boolean_execution(
  healing: &mut HealingOptions,
- a: &BRep,
- b: &BRep,
+ a: &rcad_kernel::BRep,
+ b: &rcad_kernel::BRep,
  execution: &BooleanExecutionReport,
 ) {
  align_healing_options_with_boolean_operands(
@@ -1073,11 +1071,11 @@ fn merge_make_connected_reports(
 }
 
 fn run_make_connected_for_boolean_output(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  history: Option<&BooleanHistory>,
  options: &BooleanOptions,
  report: &mut BooleanExecutionReport,
-) -> (BRep, MakeConnectedReport) {
+) -> (rcad_kernel::BRep, MakeConnectedReport) {
  let global_fallback_tolerance = options
  .make_connected_tolerance
  .max(tolerance::TOLERANCE_ABS)
@@ -1436,7 +1434,7 @@ impl std::fmt::Display for SplitterError {
 
 impl std::error::Error for SplitterError {}
 
-fn brep_shell_face_count(brep: &BRep) -> usize {
+fn brep_shell_face_count(brep: &rcad_kernel::BRep) -> usize {
  brep.solids
  .iter()
  .flat_map(|s| &s.shells)
@@ -1444,7 +1442,7 @@ fn brep_shell_face_count(brep: &BRep) -> usize {
  .count()
 }
 
-/// OCCT `BRepAlgoAPI_Cut` yields an empty shape when operands coincide (e.g. two identical
+/// OCCT `rcad_kernel::BRepAlgoAPI_Cut` yields an empty shape when operands coincide (e.g. two identical
 /// `box` definitions in `bopcut`). Match that without forcing every `DegenerateResult` from the
 /// builder to mean 閳ユ竼mpty閳?
 /// True when every face has geometry and every face surface is a plane (e.g. `make_box_brep` solids).
@@ -1452,7 +1450,7 @@ fn brep_shell_face_count(brep: &BRep) -> usize {
 /// Used to gate 閳ユ笡lanar zero-volume sliver 閳?empty intersection閳?heuristics: operands that include
 /// spheres/cylinders etc. can still yield all-plane *wrong* shells with `volume 閳?0`; we must not
 /// collapse those to empty or OCCT sphere閳ユ彽ox cases regress to `total_surface_area == 0`.
-fn brep_is_pure_plane_solid(brep: &BRep) -> bool {
+fn brep_is_pure_plane_solid(brep: &rcad_kernel::BRep) -> bool {
  let nf = face_count_of(brep);
  if nf == 0 {
  return false;
@@ -1481,7 +1479,7 @@ fn brep_is_pure_plane_solid(brep: &BRep) -> bool {
 /// true external face and the larger one is the untrimmed remainder 閳?yielding too-low
 /// [`rcad_kernel::surface_area`] (OCCT `bcommon_simple/B1`). Rotated operands (`bcommon_simple/C8`)
 /// still need the cleanup, so we only skip when **both** sides satisfy this predicate.
-fn brep_is_world_axis_aligned_plane_solid(brep: &BRep) -> bool {
+fn brep_is_world_axis_aligned_plane_solid(brep: &rcad_kernel::BRep) -> bool {
  let is_axis_unit = |n: glam::DVec3| -> bool {
  let n = n.normalize_or_zero();
  if n.length_squared() < tolerance::TOLERANCE_VEC_SQ_MIN {
@@ -1507,7 +1505,7 @@ fn brep_is_world_axis_aligned_plane_solid(brep: &BRep) -> bool {
  true
 }
 
-fn boolean_difference_empty_coincident(a: &BRep, b: &BRep) -> bool {
+fn boolean_difference_empty_coincident(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> bool {
  if brep_shell_face_count(a) != brep_shell_face_count(b) {
  return false;
  }
@@ -1534,7 +1532,7 @@ fn boolean_difference_empty_coincident(a: &BRep, b: &BRep) -> bool {
  && b_pts.iter().all(|pb| a_pts.iter().any(|pa| (pa - pb).length() <= tol))
 }
 
-fn intersection_planar_sliver_should_be_empty(result: &BRep, a: &BRep, b: &BRep) -> bool {
+fn intersection_planar_sliver_should_be_empty(result: &rcad_kernel::BRep, a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> bool {
  let nf = face_count_of(result);
  if nf == 0 {
  return true;
@@ -1572,7 +1570,7 @@ fn intersection_planar_sliver_should_be_empty(result: &BRep, a: &BRep, b: &BRep)
 /// Check if an intersection result is degenerate: all faces planar and
 /// all vertices co-planar (zero thickness), meaning the solids only touch
 /// at a face without volumetric overlap.
-fn intersection_result_is_degenerate_sliver(result: &BRep) -> bool {
+fn intersection_result_is_degenerate_sliver(result: &rcad_kernel::BRep) -> bool {
  let nf = result.solids.iter().flat_map(|s| s.shells.iter()).flat_map(|sh| sh.faces.iter()).count();
  if nf == 0 { return false; }
  // All faces must be planar
@@ -1614,10 +1612,10 @@ fn intersection_result_is_degenerate_sliver(result: &BRep) -> bool {
 /// matching [`boolean_op_pave_fill_build`].
 pub(crate) fn boolean_postprocess_pave_result(
  _op: BooleanOpType,
- _a: &BRep,
- _b: &BRep,
- result: BRep,
-) -> Result<BRep, BooleanError> {
+ _a: &rcad_kernel::BRep,
+ _b: &rcad_kernel::BRep,
+ result: rcad_kernel::BRep,
+) -> Result<rcad_kernel::BRep, BooleanError> {
  // rcad-specific post-processing removed: recompute_plane_surfaces, coplanar clipping,
  // redundant face removal, spurious face removal, and degenerate sliver detection.
  // OCCT does not perform any post-processing after the Builder.
@@ -1679,7 +1677,7 @@ pub(crate) fn boolean_postprocess_pave_result(
 /// Topods variant: no-op post-process, returns result as-is (debug logging removed).
 /// The old function only did debug logging 閳?this variant skips it.
 pub(crate) fn boolean_postprocess_pave_result_topods(
- _op: BooleanOpType, _a: &BRep, _b: &BRep,
+ _op: BooleanOpType, _a: &rcad_kernel::BRep, _b: &rcad_kernel::BRep,
  result: topods::BRep,
 ) -> Result<topods::BRep, BooleanError> {
  Ok(result)
@@ -1691,11 +1689,11 @@ pub(crate) fn boolean_postprocess_pave_result_topods(
 /// difference branches (e.g. cylinder 閳?loft frustum after `cone 閳?cylinder`).
 /// Direct PaveFiller + BooleanBuilder pipeline, no post-processing.
 /// OCCT-aligned: BOPAlgo_BOP::Perform.
-pub fn boolean_op(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<topods::BRep, BooleanError> {
+pub fn boolean_op(op: BooleanOpType, a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<topods::BRep, BooleanError> {
  boolean_op_pave_fill_build(op, a, b)
 }
 
-pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &BRep, b: &BRep) -> Result<topods::BRep, BooleanError> {
+pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<topods::BRep, BooleanError> {
  let a_t = a.to_topods();
  let b_t = b.to_topods();
  let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, crate::tolerance::TOLERANCE_ABS);

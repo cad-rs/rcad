@@ -1,8 +1,8 @@
-﻿//! BRepFilletAPI-style edge fillet operations =analogous to OCCT `BRepFilletAPI_MakeFillet`.
+//! rcad_kernel::BRepFilletAPI-style edge fillet operations =analogous to OCCT `rcad_kernel::BRepFilletAPI_MakeFillet`.
 //!
 //! # Overview
 //!
-//! This module provides algorithms for creating fillets (rounded edges) on BRep shapes:
+//! This module provides algorithms for creating fillets (rounded edges) on rcad_kernel::BRep shapes:
 //!
 //! - **`make_fillet_edge`**: Fillet single or multiple edges with uniform radius
 //! - **`make_fillet_all_edges`**: Fillet all edges of a shape
@@ -30,14 +30,14 @@
 //!
 //! # References
 //!
-//! - OCCT `BRepFilletAPI_MakeFillet`
+//! - OCCT `rcad_kernel::BRepFilletAPI_MakeFillet`
 //! - OCCT `ChFi3d_FilBuilder`
 //! - OCCT `ChFi3d_ChBuilder`
 
 use std::collections::HashMap;
 use glam::DVec3;
 use rcad_kernel::{
- BRep, CurveEval,
+ CurveEval,
  geom::{Curve3, Surface3, Line3, Circle3, Plane, CylindricalSurface, SphericalSurface, ToroidalSurface},
  topology::{Face, Vertex, Wire, WireEdge},
 };
@@ -279,8 +279,8 @@ impl VariableRadiusPoint {
 /// Result of a fillet operation.
 #[derive(Debug, Clone)]
 pub struct FilletResult {
- /// The resulting BRep with fillets applied.
- pub brep: BRep,
+ /// The resulting rcad_kernel::BRep with fillets applied.
+ pub brep: rcad_kernel::BRep,
  /// Number of edges filletted.
  pub edges_processed: usize,
  /// Number of fillet faces created.
@@ -352,22 +352,22 @@ struct EdgeInfo {
 ///
 /// # Arguments
 ///
-/// * `brep` - The input BRep shape.
+/// * `brep` - The input rcad_kernel::BRep shape.
 /// * `edge_indices` - Indices of edges to fillet.
 /// * `radius` - Fillet radius (must be > 0).
 ///
 /// # Returns
 ///
-/// A `FilletResult` containing the modified BRep with fillets.
+/// A `FilletResult` containing the modified rcad_kernel::BRep with fillets.
 ///
 /// # Example
 ///
 /// ```ignore
-/// let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 4.0, height: 2.0, depth: 3.0 });
+/// let box_brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 4.0, height: 2.0, depth: 3.0 });
 /// let result = make_fillet_edge(&box_brep, &[0, 1, 2], 0.5)?;
 /// ```
 pub fn make_fillet_edge(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_indices: &[usize],
  radius: f64,
 ) -> Result<FilletResult, FilletError> {
@@ -379,15 +379,15 @@ pub fn make_fillet_edge(
 ///
 /// # Arguments
 ///
-/// * `brep` - The input BRep shape.
+/// * `brep` - The input rcad_kernel::BRep shape.
 /// * `edge_indices` - Indices of edges to fillet.
 /// * `params` - Fillet parameters.
 ///
 /// # Returns
 ///
-/// A `FilletResult` containing the modified BRep with fillets.
+/// A `FilletResult` containing the modified rcad_kernel::BRep with fillets.
 pub fn make_fillet_edge_with_params(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_indices: &[usize],
  params: &FilletParams,
 ) -> Result<FilletResult, FilletError> {
@@ -432,7 +432,7 @@ pub fn make_fillet_edge_with_params(
  }
  }
 
- // Build result BRep with fillets
+ // Build result rcad_kernel::BRep with fillets
  let result = build_fillet_brep(&brep, &fillet_surfaces, &edge_infos, params)?;
 
  Ok(FilletResult {
@@ -447,14 +447,14 @@ pub fn make_fillet_edge_with_params(
 ///
 /// # Arguments
 ///
-/// * `brep` - The input BRep shape.
+/// * `brep` - The input rcad_kernel::BRep shape.
 /// * `radius` - Fillet radius (must be > 0).
 ///
 /// # Returns
 ///
-/// A `FilletResult` containing the modified BRep with all edges filletted.
+/// A `FilletResult` containing the modified rcad_kernel::BRep with all edges filletted.
 pub fn make_fillet_all_edges(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  radius: f64,
 ) -> Result<FilletResult, FilletError> {
  let all_edges: Vec<usize> = (0..brep.edges.len()).collect();
@@ -465,20 +465,20 @@ pub fn make_fillet_all_edges(
 ///
 /// # Arguments
 ///
-/// * `brep` - The input BRep shape.
+/// * `brep` - The input rcad_kernel::BRep shape.
 /// * `edge_indices` - Indices of edges to fillet.
 /// * `radii` - Variable radius specification (at least 2 points required).
 ///
 /// # Returns
 ///
-/// A `FilletResult` containing the modified BRep with variable radius fillets.
+/// A `FilletResult` containing the modified rcad_kernel::BRep with variable radius fillets.
 ///
 /// # Notes
 ///
 /// The parameter values in `radii` should be in the range [0.0, 1.0] and represent
 /// positions along the edge curve. At least two points (start and end) are required.
 pub fn make_variable_fillet(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_indices: &[usize],
  radii: &[VariableRadiusPoint],
 ) -> Result<FilletResult, FilletError> {
@@ -512,7 +512,7 @@ pub fn make_variable_fillet(
 
 /// Create a variable radius fillet with custom parameters.
 fn make_variable_fillet_with_params(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_indices: &[usize],
  radii: &[VariableRadiusPoint],
  params: &FilletParams,
@@ -549,7 +549,7 @@ fn make_variable_fillet_with_params(
  }
  }
 
- // Build result BRep
+ // Build result rcad_kernel::BRep
  let result = build_fillet_brep(brep, &fillet_surfaces, &edge_infos, params)?;
 
  Ok(FilletResult {
@@ -566,7 +566,7 @@ fn make_variable_fillet_with_params(
 
 /// Collect information about edges to be filletted.
 fn collect_edge_infos(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_indices: &[usize],
 ) -> Result<Vec<EdgeInfo>, FilletError> {
  let mut infos = Vec::new();
@@ -632,7 +632,7 @@ fn collect_edge_infos(
 }
 
 /// Build a map from edge index to adjacent face indices.
-fn build_edge_face_adjacency(brep: &BRep) -> HashMap<usize, Vec<usize>> {
+fn build_edge_face_adjacency(brep: &rcad_kernel::BRep) -> HashMap<usize, Vec<usize>> {
  let mut edge_faces: HashMap<usize, Vec<usize>> = HashMap::new();
 
  for (solid_idx, solid) in brep.solids.iter().enumerate() {
@@ -655,7 +655,7 @@ fn build_edge_face_adjacency(brep: &BRep) -> HashMap<usize, Vec<usize>> {
 }
 
 /// Compute flat face index from (solid, shell, face) indices.
-fn compute_flat_face_index(brep: &BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> usize {
+fn compute_flat_face_index(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> usize {
  let mut count = 0;
  for (i, solid) in brep.solids.iter().enumerate() {
  if i < solid_idx {
@@ -674,7 +674,7 @@ fn compute_flat_face_index(brep: &BRep, solid_idx: usize, shell_idx: usize, face
 }
 
 /// Compute the length of an edge.
-fn compute_edge_length(brep: &BRep, edge_idx: usize) -> f64 {
+fn compute_edge_length(brep: &rcad_kernel::BRep, edge_idx: usize) -> f64 {
  let edge = &brep.edges[edge_idx];
  let p0 = brep.vertices[edge.start].point;
  let p1 = brep.vertices[edge.end].point;
@@ -683,7 +683,7 @@ fn compute_edge_length(brep: &BRep, edge_idx: usize) -> f64 {
 
 /// Compute tangent vectors at the start and end of an edge.
 fn compute_edge_tangents(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_idx: usize,
  curve: &Option<Curve3>,
  curve_range: &Option<[f64; 2]>,
@@ -716,7 +716,7 @@ fn compute_edge_tangents(
 /// adjacent faces and rolls it along the edge. The fillet surface is the
 /// envelope traced by the sphere.
 pub fn compute_rollball_surface(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_info: &EdgeInfo,
  radius: f64,
 ) -> Result<Surface3, FilletError> {
@@ -747,7 +747,7 @@ pub fn compute_rollball_surface(
 }
 
 /// Get the surface for a face (by flat index).
-fn get_face_surface(brep: &BRep, flat_face_idx: usize) -> Option<Surface3> {
+fn get_face_surface(brep: &rcad_kernel::BRep, flat_face_idx: usize) -> Option<Surface3> {
  if flat_face_idx < brep.geom.face_surface.len()
  && let Some(surf_idx) = brep.geom.face_surface[flat_face_idx]
  && surf_idx < brep.geom.surfaces.len() {
@@ -962,7 +962,7 @@ fn compute_general_fillet_surface(
 
 /// Compute a toroidal approximation for the fillet surface.
 fn compute_toroidal_fillet_surface(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_info: &EdgeInfo,
  radius: f64,
 ) -> Result<Surface3, FilletError> {
@@ -993,7 +993,7 @@ fn compute_toroidal_fillet_surface(
 ///
 /// Returns the curves that form the boundaries of the fillet surface.
 pub fn compute_fillet_curves(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_info: &EdgeInfo,
  radius: f64,
  surface: &Surface3,
@@ -1099,12 +1099,12 @@ pub fn compute_fillet_curves(
 /// This function creates smooth transitions between the fillet and the
 /// adjacent faces of the original shape.
 pub fn blend_adjacent_faces(
- _brep: &mut BRep,
+ _brep: &mut rcad_kernel::BRep,
  _fillet_surface: &Surface3,
  edge_info: &EdgeInfo,
  radius: f64,
 ) -> Result<(), FilletError> {
- // This function modifies the BRep to blend the fillet with adjacent faces
+ // This function modifies the rcad_kernel::BRep to blend the fillet with adjacent faces
  // In a full implementation, this would:
  // 1. Trim the adjacent faces at the fillet boundary
  // 2. Add the fillet face to the shell
@@ -1137,7 +1137,7 @@ pub fn blend_adjacent_faces(
 
 /// Compute fillet surface for a single edge.
 fn compute_fillet_for_edge(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_info: &EdgeInfo,
  params: &FilletParams,
 ) -> Result<FilletSurface, FilletError> {
@@ -1160,7 +1160,7 @@ fn compute_fillet_for_edge(
 
 /// Compute variable radius fillet surface for a single edge.
 fn compute_variable_fillet_for_edge(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_info: &EdgeInfo,
  radii: &[VariableRadiusPoint],
  _params: &FilletParams,
@@ -1191,7 +1191,7 @@ fn compute_variable_fillet_for_edge(
 
 /// Compute boundary curves for variable radius fillet.
 fn compute_variable_fillet_curves(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_info: &EdgeInfo,
  radii: &[VariableRadiusPoint],
  surface: &Surface3,
@@ -1264,13 +1264,13 @@ fn compute_fillet_uv_domain(surface: &Surface3, edge_info: &EdgeInfo) -> [f64; 4
 }
 
 // = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
-// BRep Construction  ?FIXED IMPLEMENTATION
+// rcad_kernel::BRep Construction  ?FIXED IMPLEMENTATION
 // = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
 //
-// The old implementation cloned the BRep and appended fillet faces with empty
+// The old implementation cloned the rcad_kernel::BRep and appended fillet faces with empty
 // wires, producing inflated surface area (original box SA + fillet face SA).
 //
-// This rewrite creates a proper BRep topology:
+// This rewrite creates a proper rcad_kernel::BRep topology:
 // 1. Adjacent faces are trimmed back from the filleted edge  ?new offset
 // vertices are created, shortened edges replace the original adjacent
 // edges, and a contact edge replaces the filleted edge.
@@ -1281,18 +1281,18 @@ fn compute_fillet_uv_domain(surface: &Surface3, edge_info: &EdgeInfo) -> [f64; 4
 // (correct for straight edges  ?the rolling-ball centre traces a line,
 // producing a constant quarter-circle cross-section).
 
-/// Build the result BRep with fillets.
+/// Build the result rcad_kernel::BRep with fillets.
 ///
 /// For cylinder-type fillets (plane-plane edges) this performs topological
 /// surgery: trimming adjacent faces and inserting a fillet face with a correct
 /// wire. For other surface types it falls back to the old face-appending
 /// approach.
 fn build_fillet_brep(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  fillet_surfaces: &[FilletSurface],
  edge_infos: &[EdgeInfo],
  params: &FilletParams,
-) -> Result<BRep, FilletError> {
+) -> Result<rcad_kernel::BRep, FilletError> {
  if fillet_surfaces.is_empty() {
  return Ok(brep.clone());
  }
@@ -1330,7 +1330,7 @@ fn build_fillet_brep(
 }
 
 /// Wire-direction start/end vertex indices of a [`WireEdge`].
-fn wire_edge_vertices(brep: &BRep, we: &WireEdge) -> (usize, usize) {
+fn wire_edge_vertices(brep: &rcad_kernel::BRep, we: &WireEdge) -> (usize, usize) {
  let e = &brep.edges[we.idx];
  if we.forward { (e.start, e.end) } else { (e.end, e.start) }
 }
@@ -1341,7 +1341,7 @@ fn find_wire_pos(face: &Face, edge_idx: usize) -> Option<usize> {
 }
 
 /// Compute the centroid of a planar face from its outer-wire vertices.
-fn face_vertex_centroid(brep: &BRep, face: &Face) -> DVec3 {
+fn face_vertex_centroid(brep: &rcad_kernel::BRep, face: &Face) -> DVec3 {
  let mut sum = DVec3::ZERO;
  let mut n = 0u32;
  for we in &face.outer_wire.edges {
@@ -1353,7 +1353,7 @@ fn face_vertex_centroid(brep: &BRep, face: &Face) -> DVec3 {
 }
 
 /// Push a straight-line edge and register it in all GeomStore arrays.
-fn push_line_edge(brep: &mut BRep, start: usize, end: usize, p0: DVec3, p1: DVec3) -> usize {
+fn push_line_edge(brep: &mut rcad_kernel::BRep, start: usize, end: usize, p0: DVec3, p1: DVec3) -> usize {
  let idx = brep.edges.len();
  let delta = p1 - p0;
  let len = delta.length();
@@ -1373,7 +1373,7 @@ fn push_line_edge(brep: &mut BRep, start: usize, end: usize, p0: DVec3, p1: DVec
 
 /// Push a circular-arc edge and register in all GeomStore arrays.
 fn push_arc_edge(
- brep: &mut BRep, start: usize, end: usize,
+ brep: &mut rcad_kernel::BRep, start: usize, end: usize,
  center: DVec3, normal: DVec3, radius: f64,
  t_start: f64, t_end: f64,
 ) -> usize {
@@ -1403,7 +1403,7 @@ fn circle_t_for_dir(dir: DVec3, normal: DVec3) -> f64 {
 /// Apply a cylindrical fillet (plane-plane edge): trim adjacent faces and
 /// insert the fillet face with a correct 4-edge wire.
 fn apply_cylinder_fillet(
- brep: &mut BRep,
+ brep: &mut rcad_kernel::BRep,
  edge_info: &EdgeInfo,
  params: &FilletParams,
 ) -> Result<(), FilletError> {
@@ -1426,7 +1426,7 @@ fn apply_cylinder_fillet(
  let f1_flat = adj[0];
  let f2_flat = adj[1];
 
- let get_plane_normal = |brep: &BRep, flat_idx: usize| -> Option<DVec3> {
+ let get_plane_normal = |brep: &rcad_kernel::BRep, flat_idx: usize| -> Option<DVec3> {
  let surf_idx = brep.geom.face_surface.get(flat_idx).copied().flatten()?;
  let surf = brep.geom.surfaces.get(surf_idx)?;
  match surf { Surface3::Plane(p) => Some(p.normal.normalize()), _ => None }
@@ -1620,7 +1620,7 @@ fn apply_cylinder_fillet(
 /// Trim a face at one vertex  ?shorten every edge in the face's outer wire
 /// that touches `old_vertex` so it now touches `new_vertex` instead.
 fn trim_face_at_vertex(
- brep: &mut BRep,
+ brep: &mut rcad_kernel::BRep,
  face_flat_idx: usize,
  old_vertex: usize,
  new_vertex: usize,
@@ -1668,7 +1668,7 @@ fn trim_face_at_vertex(
 /// Returns `None` when the edge is no longer present in the face wire
 /// (face already trimmed by a previous fillet in the same batch).
 fn build_trimmed_face(
- brep: &mut BRep,
+ brep: &mut rcad_kernel::BRep,
  face_flat_idx: usize,
  fillet_edge_idx: usize,
  v1_new: usize,

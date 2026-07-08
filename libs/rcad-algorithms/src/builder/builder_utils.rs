@@ -1,5 +1,3 @@
-use rcad_kernel::BRep;
-
 use std::collections::{HashMap, HashSet, BTreeSet};
 use glam::DVec2; use glam::DVec3;
 use rcad_kernel::geom::*;
@@ -92,7 +90,7 @@ pub(crate) fn hash_point(p: DVec3) -> u64 {
 /// OCCT maps TopoDS_Shape  ?identity for myMapShape lookup.
 /// rcad: maps result vertex index  ?DS vertex index, result edge index  ?(DS vertices).
 /// Used by PrepareHistory to determine Modified/Generated/Deleted provenance.
-pub(crate) fn map_result_shapes(brep: &BRep, ds: &DS) -> (Vec<usize>, Vec<(usize, usize)>) {
+pub(crate) fn map_result_shapes(brep: &rcad_kernel::BRep, ds: &DS) -> (Vec<usize>, Vec<(usize, usize)>) {
  let mut result_to_ds: Vec<usize> = vec![usize::MAX; brep.vertices.len()];
  for (ri, rv) in brep.vertices.iter().enumerate() {
  let pt = rv.point;
@@ -116,7 +114,7 @@ pub(crate) fn map_result_shapes(brep: &BRep, ds: &DS) -> (Vec<usize>, Vec<(usize
 ///  ?OCCT-aligned: PrepareHistory (Builder_4.cxx L164-252).
 /// OCCT iterates source shapes  ?LocModified  ?AddModified / AddGenerated / Remove.
 /// rcad: uses pre-built result_to_ds map to annotate vertex/edge provenance.
-pub(crate) fn annotate_history_from_ds(brep: &BRep, history: &mut BooleanHistory, ds: &DS) {
+pub(crate) fn annotate_history_from_ds(brep: &rcad_kernel::BRep, history: &mut BooleanHistory, ds: &DS) {
  let (result_to_ds, _) = map_result_shapes(brep, ds);
 
  // OCCT L176: MapShapes done.  Annotate vertex origins (FromA/FromB/Intersection).
@@ -226,7 +224,7 @@ pub(crate) fn aggregate_shell_region_origin(shell_origins: &[ShellOrigin]) -> So
 ///  ?OCCT-aligned: PrepareHistory shell/solid provenance (Builder_4.cxx L164-252).
 /// OCCT iterates source shapes  ?LocModified  ?AddModified/AddGenerated/Remove.
 /// rcad: aggregates per-face origins to shell/solid level via face_region  ?shell  ?solid.
-pub(crate) fn annotate_shell_and_solid_history(brep: &BRep, history: &mut BooleanHistory) {
+pub(crate) fn annotate_shell_and_solid_history(brep: &rcad_kernel::BRep, history: &mut BooleanHistory) {
  let mut face_cursor = 0;
  let mut shell_origins = Vec::new();
  let mut solid_origins = Vec::with_capacity(brep.solids.len());
