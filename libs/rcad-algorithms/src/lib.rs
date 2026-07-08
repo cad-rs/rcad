@@ -122,6 +122,7 @@ pub mod splitter;
 pub mod sweep;
 pub mod tcol_std;
 pub mod thicken;
+pub mod tkg2d_gtests;
 pub mod tkg3d_batch_eval;
 pub mod tkg3d_complete;
 pub mod tkg3d_geom_adaptor;
