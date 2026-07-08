@@ -12,7 +12,7 @@
 
 use crate::tolerance::*;
 use glam::DVec3;
-use rcad_kernel::{topods, BRep, Curve3, CurveEval, Surface3, SurfaceEval, Wire};
+use rcad_kernel::{topods, Curve3, CurveEval, Surface3, SurfaceEval, Wire};
 use std::f64::consts::PI;
 
 // =============================================================================
@@ -33,14 +33,14 @@ use std::f64::consts::PI;
 /// use rcad_kernel::BRep;
 /// use rcad_kernel::geom::PrimitiveSolid;
 ///
-/// let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+/// let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
 /// let adaptor = EdgeAdaptor::new(&brep, 0);
 /// let domain = adaptor.domain();
 /// let midpoint = adaptor.point_at((domain[0] + domain[1]) / 2.0);
 /// ```
 #[derive(Debug, Clone)]
 pub struct EdgeAdaptor<'a> {
-    brep: &'a BRep,
+    brep: &'a rcad_kernel::BRep,
     edge_idx: usize,
     /// Cached curve reference (if available).
     curve: Option<&'a Curve3>,
@@ -60,7 +60,7 @@ impl<'a> EdgeAdaptor<'a> {
     ///
     /// Does not panic; returns a default adaptor if the edge index is out of bounds
     /// or the edge has no associated curve.
-    pub fn new(brep: &'a BRep, edge_idx: usize) -> Self {
+    pub fn new(brep: &'a rcad_kernel::BRep, edge_idx: usize) -> Self {
         let curve = brep
             .geom
             .edge_curve
@@ -297,7 +297,7 @@ impl<'a> EdgeAdaptor<'a> {
 /// use rcad_kernel::BRep;
 /// use rcad_kernel::geom::PrimitiveSolid;
 ///
-/// let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+/// let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
 /// let adaptor = FaceAdaptor::new(&brep, 0);
 /// let domain = adaptor.domain();
 /// let center = adaptor.point_at(
@@ -307,7 +307,7 @@ impl<'a> EdgeAdaptor<'a> {
 /// ```
 #[derive(Debug, Clone)]
 pub struct FaceAdaptor<'a> {
-    brep: &'a BRep,
+    brep: &'a rcad_kernel::BRep,
     face_idx: usize,
     /// Cached surface reference (if available).
     surface: Option<&'a Surface3>,
@@ -326,7 +326,7 @@ impl<'a> FaceAdaptor<'a> {
     ///
     /// Does not panic; returns a default adaptor if the face index is out of bounds
     /// or the face has no associated surface.
-    pub fn new(brep: &'a BRep, face_idx: usize) -> Self {
+    pub fn new(brep: &'a rcad_kernel::BRep, face_idx: usize) -> Self {
         let surface = brep
             .geom
             .face_surface
@@ -727,7 +727,7 @@ struct WireSegment {
 /// use rcad_kernel::BRep;
 /// use rcad_kernel::geom::PrimitiveSolid;
 ///
-/// let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+/// let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
 /// // Get the outer wire of face 0.
 /// let wire = brep.solids[0].shells[0].faces[0].outer_wire.clone();
 /// let adaptor = WireAdaptor::new(&brep, &wire, 0);
@@ -735,7 +735,7 @@ struct WireSegment {
 /// let edge_at_mid = adaptor.edge_at(0.5);
 /// ```
 pub struct WireAdaptor<'a> {
-    brep: &'a BRep,
+    brep: &'a rcad_kernel::BRep,
     wire: &'a Wire,
     /// Face index for pcurve lookups (if available).
     face_idx: Option<usize>,
@@ -771,7 +771,7 @@ impl<'a> WireAdaptor<'a> {
     ///
     /// The wire's edges are preprocessed to compute arc-lengths for
     /// parameterization by cumulative length fraction.
-    pub fn new(brep: &'a BRep, wire: &'a Wire, face_idx: usize) -> Self {
+    pub fn new(brep: &'a rcad_kernel::BRep, wire: &'a Wire, face_idx: usize) -> Self {
         let mut segments = Vec::with_capacity(wire.edges.len());
         let mut total_length = 0.0f64;
 
@@ -823,7 +823,7 @@ impl<'a> WireAdaptor<'a> {
     /// Create a wire adaptor without a face context.
     ///
     /// This constructor is used when the wire is not associated with a specific face.
-    pub fn without_face(brep: &'a BRep, wire: &'a Wire) -> Self {
+    pub fn without_face(brep: &'a rcad_kernel::BRep, wire: &'a Wire) -> Self {
         let mut adaptor = Self::new(brep, wire, 0);
         adaptor.face_idx = None;
         adaptor
@@ -937,7 +937,7 @@ impl<'a> WireAdaptor<'a> {
     }
 
     /// Compute the approximate arc-length of an edge.
-    fn compute_edge_length(brep: &BRep, edge_idx: usize) -> f64 {
+    fn compute_edge_length(brep: &rcad_kernel::BRep, edge_idx: usize) -> f64 {
         // Try to compute from curve.
         if let Some(&curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|o| o.as_ref())
             && let Some(curve) = brep.geom.curves.get(curve_idx) {
@@ -1006,7 +1006,7 @@ impl<'a> WireAdaptor<'a> {
 /// use rcad_kernel::BRep;
 /// use rcad_kernel::geom::PrimitiveSolid;
 ///
-/// let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+/// let brep = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
 /// let mut array = CurveAdaptorArray::new();
 /// for i in 0..brep.edges.len() {
 ///     array.push(EdgeAdaptor::new(&brep, i));
@@ -1078,7 +1078,7 @@ impl<'a> CurveAdaptorArray<'a> {
     /// Create an array from a BRep's edges.
     ///
     /// Creates an adaptor for each edge in the BRep.
-    pub fn from_brep(brep: &'a BRep) -> Self {
+    pub fn from_brep(brep: &'a rcad_kernel::BRep) -> Self {
         let mut array = Self::with_capacity(brep.edges.len());
         for i in 0..brep.edges.len() {
             array.push(EdgeAdaptor::new(brep, i));

@@ -1,4 +1,4 @@
-﻿//! BRepFeat-style feature-based modeling operations.
+//! BRepFeat-style feature-based modeling operations.
 //!
 //! This module provides feature-based modeling operations analogous to OCCT's TKFeat
 //! (BRepFeat package). Features are operations that add or remove material from a
@@ -13,8 +13,6 @@
 //! - **Pipe**: Feature-based pipe along a spine curve
 //! - **Draft**: Apply draft angle to faces for moldability
 
-
-use rcad_kernel::BRep;
 
 use crate::tolerance::*;
 use glam::DVec3;
@@ -147,7 +145,7 @@ impl FeatureParams {
  /// (Relaxed adaptive, [`TOLERANCE_MESH_LEGACY`] minimum, topological fold).
  ///
  /// Use when post eature-result stitching should match [`crate::section::intersect_triangle_soups_adaptive`]-style pipelines.
- pub fn merge_tolerance_for_operands(base: &BRep, tool: &BRep) -> f64 {
+ pub fn merge_tolerance_for_operands(base: &rcad_kernel::BRep, tool: &rcad_kernel::BRep) -> f64 {
  tessellation_merge_linear_from_two_breps(base, tool)
  }
 }
@@ -246,13 +244,13 @@ fn axis_ref_basis(axis: DVec3, ref_dir: DVec3) -> Result<(DVec3, DVec3, DVec3), 
 }
 
 /// Build a prism solid from bottom and top polygon sections.
-fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result<BRep, BRepFeatError> {
+fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result<rcad_kernel::BRep, BRepFeatError> {
  let n = bot.len();
  if n < 3 || top.len() != n {
  return Err(BRepFeatError::InvalidInput("section vertex count mismatch or too few vertices".to_string()));
  }
 
- let mut brep = BRep::new();
+ let mut brep = rcad_kernel::BRep::new();
 
  // Add vertices: bot[0..n] then top[0..n]
  for &p in bot {
@@ -262,7 +260,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
  brep.vertices.push(Vertex { point: p });
  }
 
- fn add_line_edge(brep: &mut BRep, start: usize, end: usize) -> usize {
+ fn add_line_edge(brep: &mut rcad_kernel::BRep, start: usize, end: usize) -> usize {
  let p0 = brep.vertices[start].point;
  let p1 = brep.vertices[end].point;
  let d = p1 - p0;
@@ -368,7 +366,7 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<topods::BRep, BRep
  }
 
  let n = profile_verts.len();
- let mut brep = BRep::new();
+ let mut brep = rcad_kernel::BRep::new();
 
  for &p in profile_verts {
  brep.vertices.push(Vertex { point: p });
@@ -436,11 +434,11 @@ fn build_polygon_face_brep(profile_verts: &[DVec3]) -> Result<topods::BRep, BRep
 /// let result = make_rib(&base_shape, &profile, DVec3::Y, 2.0)?;
 /// ```
 pub fn make_rib(
- target: &BRep,
+ target: &rcad_kernel::BRep,
  profile_wire: &[DVec3],
  direction: DVec3,
  thickness: f64,
-) -> Result<BRep, BRepFeatError> {
+) -> Result<rcad_kernel::BRep, BRepFeatError> {
  if profile_wire.len() < 3 {
  return Err(BRepFeatError::InvalidProfile("profile needs >= 3 vertices".to_string()));
  }
@@ -486,10 +484,10 @@ pub fn make_rib(
 ///
 /// The resulting shape with the linear rib added.
 pub fn make_linear_rib(
- target: &BRep,
+ target: &rcad_kernel::BRep,
  profile: &[DVec3],
  direction: DVec3,
-) -> Result<BRep, BRepFeatError> {
+) -> Result<rcad_kernel::BRep, BRepFeatError> {
  if profile.len() < 3 {
  return Err(BRepFeatError::InvalidProfile("profile needs >= 3 vertices".to_string()));
  }
@@ -521,7 +519,7 @@ fn build_rib_solid(
  top: &[DVec3],
  dir: DVec3,
  _thickness: f64,
-) -> Result<BRep, BRepFeatError> {
+) -> Result<rcad_kernel::BRep, BRepFeatError> {
  build_prism_from_sections(bot, top, dir)
 }
 
@@ -545,11 +543,11 @@ fn build_rib_solid(
 ///
 /// The resulting shape with the groove cut.
 pub fn make_groove(
- target: &BRep,
+ target: &rcad_kernel::BRep,
  profile_wire: &[DVec3],
  direction: DVec3,
  depth: f64,
-) -> Result<BRep, BRepFeatError> {
+) -> Result<rcad_kernel::BRep, BRepFeatError> {
  if profile_wire.len() < 3 {
  return Err(BRepFeatError::InvalidProfile("profile needs >= 3 vertices".to_string()));
  }
@@ -581,10 +579,10 @@ pub fn make_groove(
 ///
 /// The resulting shape with the through groove cut.
 pub fn make_through_groove(
- target: &BRep,
+ target: &rcad_kernel::BRep,
  profile: &[DVec3],
  direction: DVec3,
-) -> Result<BRep, BRepFeatError> {
+) -> Result<rcad_kernel::BRep, BRepFeatError> {
  if profile.len() < 3 {
  return Err(BRepFeatError::InvalidProfile("profile needs >= 3 vertices".to_string()));
  }
@@ -606,7 +604,7 @@ pub fn make_through_groove(
 }
 
 /// Compute the axis-aligned bounding box of a BRep.
-fn compute_bounding_box(brep: &BRep) -> (DVec3, DVec3) {
+fn compute_bounding_box(brep: &rcad_kernel::BRep) -> (DVec3, DVec3) {
  if brep.vertices.is_empty() {
  return (DVec3::ZERO, DVec3::ZERO);
  }
@@ -637,11 +635,11 @@ fn compute_bounding_box(brep: &BRep) -> (DVec3, DVec3) {
 ///
 /// The resulting shape after the prism operation.
 pub fn make_prism_feature(
- target: &BRep,
+ target: &rcad_kernel::BRep,
  profile: &[DVec3],
  direction: DVec3,
  fuse_mode: FuseMode,
-) -> Result<BRep, BRepFeatError> {
+) -> Result<rcad_kernel::BRep, BRepFeatError> {
  if profile.len() < 3 {
  return Err(BRepFeatError::InvalidProfile("profile needs >= 3 vertices".to_string()));
  }
@@ -737,11 +735,11 @@ pub fn make_revol_feature(
 ///
 /// The resulting shape after the pipe operation.
 pub fn make_pipe_feature(
- target: &BRep,
+ target: &rcad_kernel::BRep,
  profile: &[DVec3],
  spine: &[DVec3],
  fuse_mode: FuseMode,
-) -> Result<BRep, BRepFeatError> {
+) -> Result<rcad_kernel::BRep, BRepFeatError> {
  if profile.len() < 3 {
  return Err(BRepFeatError::InvalidProfile("profile needs >= 3 vertices".to_string()));
  }
@@ -758,7 +756,7 @@ pub fn make_pipe_feature(
 }
 
 /// Build a pipe solid by sweeping a profile along a spine.
-fn build_pipe_solid(profile: &[DVec3], spine: &[DVec3]) -> Result<BRep, BRepFeatError> {
+fn build_pipe_solid(profile: &[DVec3], spine: &[DVec3]) -> Result<rcad_kernel::BRep, BRepFeatError> {
  if spine.len() < 2 {
  return Err(BRepFeatError::InvalidInput("spine needs at least 2 points".to_string()));
  }
@@ -798,7 +796,7 @@ fn build_pipe_solid(profile: &[DVec3], spine: &[DVec3]) -> Result<BRep, BRepFeat
 }
 
 /// Build a loft solid through multiple sections.
-fn build_loft_solid(sections: &[Vec<DVec3>]) -> Result<BRep, BRepFeatError> {
+fn build_loft_solid(sections: &[Vec<DVec3>]) -> Result<rcad_kernel::BRep, BRepFeatError> {
  if sections.len() < 2 {
  return Err(BRepFeatError::InvalidInput("need at least 2 sections for loft".to_string()));
  }
@@ -817,7 +815,7 @@ fn build_loft_solid(sections: &[Vec<DVec3>]) -> Result<BRep, BRepFeatError> {
  }
  }
 
- let mut brep = BRep::new();
+ let mut brep = rcad_kernel::BRep::new();
 
  let num_sections = sections.len();
 
@@ -1004,11 +1002,11 @@ impl Default for DraftFeatureParams {
 ///
 /// The shape with draft applied.
 pub fn apply_draft_feature(
- target: &BRep,
+ target: &rcad_kernel::BRep,
  face_indices: &[usize],
  angle: f64,
  neutral_plane: DVec3,
-) -> Result<BRep, BRepFeatError> {
+) -> Result<rcad_kernel::BRep, BRepFeatError> {
  // Validate angle
  if angle.abs() >= std::f64::consts::FRAC_PI_2 - TOLERANCE_MESH_LEGACY {
  return Err(BRepFeatError::InvalidDraftAngle { angle_rad: angle });
@@ -1085,10 +1083,10 @@ pub fn apply_draft_feature(
 /// suggestions (from the original vertex position). This avoids double-counting edge vertices
 /// when several faces are drafted with the same pull direction (OCCT `depouille` scripts).
 pub fn apply_depouille(
- target: &BRep,
+ target: &rcad_kernel::BRep,
  pull_direction: DVec3,
  blocks: &[(usize, f64, DVec3, DVec3)],
-) -> Result<BRep, BRepFeatError> {
+) -> Result<rcad_kernel::BRep, BRepFeatError> {
  let pull = pull_direction.normalize_or(DVec3::Z);
  if pull.length_squared() < TOLERANCE_LEN_SQ_DIV_SAFE {
  return Err(BRepFeatError::ZeroVector("pull_direction"));
@@ -1179,10 +1177,10 @@ fn draft_vertex_displacement_occt(
 /// Clones the original BRep (preserving all surfaces, curves, and topology)
 /// and updates only the vertex positions.
 fn build_drafted_brep(
- original: &BRep,
+ original: &rcad_kernel::BRep,
  new_positions: &[DVec3],
  _faces: &[Face],
-) -> Result<BRep, BRepFeatError> {
+) -> Result<rcad_kernel::BRep, BRepFeatError> {
  let mut brep = original.clone();
  for (i, p) in new_positions.iter().enumerate() {
  if let Some(v) = brep.vertices.get_mut(i) {
@@ -1213,13 +1211,13 @@ fn build_drafted_brep(
 ///
 /// The resulting shape with the drafted prism.
 pub fn make_drafted_prism(
- target: &BRep,
+ target: &rcad_kernel::BRep,
  profile: &[DVec3],
  direction: DVec3,
  depth: f64,
  draft_angle: f64,
  fuse_mode: FuseMode,
-) -> Result<BRep, BRepFeatError> {
+) -> Result<rcad_kernel::BRep, BRepFeatError> {
  if profile.len() < 3 {
  return Err(BRepFeatError::InvalidProfile("profile needs >= 3 vertices".to_string()));
  }
@@ -1269,10 +1267,10 @@ pub fn make_drafted_prism(
 ///
 /// The resulting shape with the loft feature.
 pub fn make_loft_feature(
- target: &BRep,
+ target: &rcad_kernel::BRep,
  profiles: &[Vec<DVec3>],
  fuse_mode: FuseMode,
-) -> Result<BRep, BRepFeatError> {
+) -> Result<rcad_kernel::BRep, BRepFeatError> {
  if profiles.len() < 2 {
  return Err(BRepFeatError::InvalidInput("need at least 2 profiles for loft".to_string()));
  }

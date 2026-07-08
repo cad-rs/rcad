@@ -1,4 +1,4 @@
-﻿//! BRepTopAdaptor-style topology adapters for high-level topology traversal.
+//! BRepTopAdaptor-style topology adapters for high-level topology traversal.
 //!
 //! This module provides high-level adapters for exploring BRep topology,
 //! analogous to OCCT's `TopExp_Explorer` and `BRepAdaptor` classes.
@@ -16,7 +16,7 @@
 //! use rcad_algorithms::brep_top_adaptor::*;
 //! use rcad_kernel::BRep;
 //!
-//! let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
+//! let brep = rcad_kernel::BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
 //!     width: 1.0, height: 1.0, depth: 1.0
 //! });
 //!
@@ -29,8 +29,6 @@
 //! assert_eq!(face_count, 6);
 //! ```
 
-
-use rcad_kernel::BRep;
 
 use crate::tolerance::*;
 use rcad_kernel::topology::Face;
@@ -45,7 +43,7 @@ pub use crate::brep_tools::ShapeType;
 /// Analogous to OCCT `BRepAdaptor_Face`.
 #[derive(Debug, Clone)]
 pub struct FaceAdaptor<'a> {
-    brep: &'a BRep,
+    brep: &'a rcad_kernel::BRep,
     face_idx: usize,
     shell_idx: usize,
     solid_idx: usize,
@@ -53,7 +51,7 @@ pub struct FaceAdaptor<'a> {
 
 impl<'a> FaceAdaptor<'a> {
     /// Create a new face adaptor.
-    pub fn new(brep: &'a BRep, face_idx: usize, shell_idx: usize, solid_idx: usize) -> Self {
+    pub fn new(brep: &'a rcad_kernel::BRep, face_idx: usize, shell_idx: usize, solid_idx: usize) -> Self {
         Self {
             brep,
             face_idx,
@@ -131,13 +129,13 @@ impl<'a> FaceAdaptor<'a> {
 /// Analogous to OCCT `BRepAdaptor_Curve` / `BRepAdaptor_Edge`.
 #[derive(Debug, Clone)]
 pub struct EdgeAdaptor<'a> {
-    brep: &'a BRep,
+    brep: &'a rcad_kernel::BRep,
     edge_idx: usize,
 }
 
 impl<'a> EdgeAdaptor<'a> {
     /// Create a new edge adaptor.
-    pub fn new(brep: &'a BRep, edge_idx: usize) -> Self {
+    pub fn new(brep: &'a rcad_kernel::BRep, edge_idx: usize) -> Self {
         Self { brep, edge_idx }
     }
 
@@ -198,13 +196,13 @@ impl<'a> EdgeAdaptor<'a> {
 /// Analogous to OCCT `BRepAdaptor_Point` / `BRep_Tool` for vertices.
 #[derive(Debug, Clone)]
 pub struct VertexAdaptor<'a> {
-    brep: &'a BRep,
+    brep: &'a rcad_kernel::BRep,
     vertex_idx: usize,
 }
 
 impl<'a> VertexAdaptor<'a> {
     /// Create a new vertex adaptor.
-    pub fn new(brep: &'a BRep, vertex_idx: usize) -> Self {
+    pub fn new(brep: &'a rcad_kernel::BRep, vertex_idx: usize) -> Self {
         Self { brep, vertex_idx }
     }
 
@@ -238,7 +236,7 @@ impl<'a> VertexAdaptor<'a> {
 /// use rcad_algorithms::brep_top_adaptor::FaceExplorer;
 /// use rcad_kernel::BRep;
 ///
-/// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
+/// let brep = rcad_kernel::BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
 ///     width: 1.0, height: 1.0, depth: 1.0
 /// });
 ///
@@ -251,7 +249,7 @@ impl<'a> VertexAdaptor<'a> {
 /// ```
 #[derive(Debug, Clone)]
 pub struct FaceExplorer<'a> {
-    brep: &'a BRep,
+    brep: &'a rcad_kernel::BRep,
     solid_idx: usize,
     shell_idx: usize,
     face_idx: usize,
@@ -261,7 +259,7 @@ pub struct FaceExplorer<'a> {
 
 impl<'a> FaceExplorer<'a> {
     /// Create a new face explorer.
-    pub fn new(brep: &'a BRep) -> Self {
+    pub fn new(brep: &'a rcad_kernel::BRep) -> Self {
         Self {
             brep,
             solid_idx: 0,
@@ -339,14 +337,14 @@ impl<'a> FaceExplorer<'a> {
 /// Analogous to OCCT `TopExp_Explorer(shape, TopAbs_EDGE)`.
 #[derive(Debug, Clone)]
 pub struct EdgeExplorer<'a> {
-    brep: &'a BRep,
+    brep: &'a rcad_kernel::BRep,
     edge_idx: usize,
     current: Option<EdgeAdaptor<'a>>,
 }
 
 impl<'a> EdgeExplorer<'a> {
     /// Create a new edge explorer.
-    pub fn new(brep: &'a BRep) -> Self {
+    pub fn new(brep: &'a rcad_kernel::BRep) -> Self {
         Self {
             brep,
             edge_idx: 0,
@@ -392,13 +390,13 @@ impl<'a> EdgeExplorer<'a> {
 /// Analogous to OCCT `TopExp_Explorer(shape, TopAbs_VERTEX)`.
 #[derive(Debug, Clone)]
 pub struct VertexExplorer<'a> {
-    brep: &'a BRep,
+    brep: &'a rcad_kernel::BRep,
     vertex_idx: usize,
 }
 
 impl<'a> VertexExplorer<'a> {
     /// Create a new vertex explorer.
-    pub fn new(brep: &'a BRep) -> Self {
+    pub fn new(brep: &'a rcad_kernel::BRep) -> Self {
         Self {
             brep,
             vertex_idx: 0,
@@ -454,7 +452,7 @@ impl OrientedEdge {
 /// use rcad_algorithms::brep_top_adaptor::WireExplorer;
 /// use rcad_kernel::BRep;
 ///
-/// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
+/// let brep = rcad_kernel::BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
 ///     width: 1.0, height: 1.0, depth: 1.0
 /// });
 ///
@@ -468,7 +466,7 @@ impl OrientedEdge {
 /// ```
 #[derive(Debug, Clone)]
 pub struct WireExplorer<'a> {
-    brep: &'a BRep,
+    brep: &'a rcad_kernel::BRep,
     face_idx: usize,
     wire_idx: usize,  // 0 = outer wire, 1+ = inner wires
     edge_idx: usize,
@@ -479,7 +477,7 @@ impl<'a> WireExplorer<'a> {
     /// Create a new wire explorer for a specific face.
     ///
     /// `face_idx` is the flattened face index across all solids/shells.
-    pub fn new(brep: &'a BRep, face_idx: usize) -> Self {
+    pub fn new(brep: &'a rcad_kernel::BRep, face_idx: usize) -> Self {
         Self {
             brep,
             face_idx,
@@ -594,7 +592,7 @@ impl ShapeIterState {
 /// use rcad_algorithms::brep_top_adaptor::{ShapeIterator, ShapeType};
 /// use rcad_kernel::BRep;
 ///
-/// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
+/// let brep = rcad_kernel::BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
 ///     width: 1.0, height: 1.0, depth: 1.0
 /// });
 ///
@@ -612,7 +610,7 @@ impl ShapeIterState {
 /// ```
 #[derive(Debug, Clone)]
 pub struct ShapeIterator<'a> {
-    brep: &'a BRep,
+    brep: &'a rcad_kernel::BRep,
     shape_type: ShapeType,
     state: ShapeIterState,
     done: bool,
@@ -620,7 +618,7 @@ pub struct ShapeIterator<'a> {
 
 impl<'a> ShapeIterator<'a> {
     /// Create a new shape iterator for the given shape type.
-    pub fn new(brep: &'a BRep, shape_type: ShapeType) -> Self {
+    pub fn new(brep: &'a rcad_kernel::BRep, shape_type: ShapeType) -> Self {
         Self {
             brep,
             shape_type,
@@ -850,14 +848,14 @@ impl<'a> ShapeIterator<'a> {
 /// use rcad_algorithms::brep_top_adaptor::edges_of_face;
 /// use rcad_kernel::BRep;
 ///
-/// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
+/// let brep = rcad_kernel::BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
 ///     width: 1.0, height: 1.0, depth: 1.0
 /// });
 ///
 /// let edges = edges_of_face(&brep, 0);
 /// assert_eq!(edges.len(), 4);
 /// ```
-pub fn edges_of_face(brep: &BRep, face_idx: usize) -> Vec<usize> {
+pub fn edges_of_face(brep: &rcad_kernel::BRep, face_idx: usize) -> Vec<usize> {
     let mut result = Vec::new();
     let mut flat_idx = 0;
 
@@ -895,7 +893,7 @@ pub fn edges_of_face(brep: &BRep, face_idx: usize) -> Vec<usize> {
 /// use rcad_algorithms::brep_top_adaptor::faces_of_edge;
 /// use rcad_kernel::BRep;
 ///
-/// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
+/// let brep = rcad_kernel::BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
 ///     width: 1.0, height: 1.0, depth: 1.0
 /// });
 ///
@@ -903,7 +901,7 @@ pub fn edges_of_face(brep: &BRep, face_idx: usize) -> Vec<usize> {
 /// let faces = faces_of_edge(&brep, 0);
 /// assert_eq!(faces.len(), 2);
 /// ```
-pub fn faces_of_edge(brep: &BRep, edge_idx: usize) -> Vec<usize> {
+pub fn faces_of_edge(brep: &rcad_kernel::BRep, edge_idx: usize) -> Vec<usize> {
     let mut result = Vec::new();
     let mut flat_idx = 0;
 
@@ -947,7 +945,7 @@ pub fn faces_of_edge(brep: &BRep, edge_idx: usize) -> Vec<usize> {
 /// use rcad_algorithms::brep_top_adaptor::vertices_of_edge;
 /// use rcad_kernel::BRep;
 ///
-/// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
+/// let brep = rcad_kernel::BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
 ///     width: 1.0, height: 1.0, depth: 1.0
 /// });
 ///
@@ -955,7 +953,7 @@ pub fn faces_of_edge(brep: &BRep, edge_idx: usize) -> Vec<usize> {
 /// assert!(start < 8); // Box has 8 vertices (0-7)
 /// assert!(end < 8);
 /// ```
-pub fn vertices_of_edge(brep: &BRep, edge_idx: usize) -> (usize, usize) {
+pub fn vertices_of_edge(brep: &rcad_kernel::BRep, edge_idx: usize) -> (usize, usize) {
     brep.edges
         .get(edge_idx)
         .map(|e| (e.start, e.end))
@@ -970,7 +968,7 @@ pub fn vertices_of_edge(brep: &BRep, edge_idx: usize) -> (usize, usize) {
 /// use rcad_algorithms::brep_top_adaptor::edges_of_vertex;
 /// use rcad_kernel::BRep;
 ///
-/// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
+/// let brep = rcad_kernel::BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
 ///     width: 1.0, height: 1.0, depth: 1.0
 /// });
 ///
@@ -978,7 +976,7 @@ pub fn vertices_of_edge(brep: &BRep, edge_idx: usize) -> (usize, usize) {
 /// let edges = edges_of_vertex(&brep, 0);
 /// assert_eq!(edges.len(), 3);
 /// ```
-pub fn edges_of_vertex(brep: &BRep, vertex_idx: usize) -> Vec<usize> {
+pub fn edges_of_vertex(brep: &rcad_kernel::BRep, vertex_idx: usize) -> Vec<usize> {
     brep.edges
         .iter()
         .enumerate()
@@ -995,7 +993,7 @@ pub fn edges_of_vertex(brep: &BRep, vertex_idx: usize) -> Vec<usize> {
 /// use rcad_algorithms::brep_top_adaptor::faces_of_vertex;
 /// use rcad_kernel::BRep;
 ///
-/// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
+/// let brep = rcad_kernel::BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
 ///     width: 1.0, height: 1.0, depth: 1.0
 /// });
 ///
@@ -1003,7 +1001,7 @@ pub fn edges_of_vertex(brep: &BRep, vertex_idx: usize) -> Vec<usize> {
 /// let faces = faces_of_vertex(&brep, 0);
 /// assert_eq!(faces.len(), 3);
 /// ```
-pub fn faces_of_vertex(brep: &BRep, vertex_idx: usize) -> Vec<usize> {
+pub fn faces_of_vertex(brep: &rcad_kernel::BRep, vertex_idx: usize) -> Vec<usize> {
     let mut result = Vec::new();
 
     // Get all edges that reference this vertex
@@ -1022,7 +1020,7 @@ pub fn faces_of_vertex(brep: &BRep, vertex_idx: usize) -> Vec<usize> {
 }
 
 /// Returns the number of faces in a BRep.
-pub fn face_count(brep: &BRep) -> usize {
+pub fn face_count(brep: &rcad_kernel::BRep) -> usize {
     brep.solids
         .iter()
         .flat_map(|s| &s.shells)
@@ -1031,12 +1029,12 @@ pub fn face_count(brep: &BRep) -> usize {
 }
 
 /// Returns the number of shells in a BRep.
-pub fn shell_count(brep: &BRep) -> usize {
+pub fn shell_count(brep: &rcad_kernel::BRep) -> usize {
     brep.solids.iter().map(|s| s.shells.len()).sum()
 }
 
 /// Returns the number of wires in a BRep (including inner wires).
-pub fn wire_count(brep: &BRep) -> usize {
+pub fn wire_count(brep: &rcad_kernel::BRep) -> usize {
     brep.solids
         .iter()
         .flat_map(|s| &s.shells)

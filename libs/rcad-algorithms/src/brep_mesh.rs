@@ -1,4 +1,4 @@
-﻿//! BRepMesh-style mesh generation for BRep shapes.
+//! BRepMesh-style mesh generation for BRep shapes.
 //!
 //! This module provides mesh generation capabilities similar to OCCT's BRepMesh.
 //! It includes:
@@ -9,8 +9,6 @@
 //! - Quality metrics for mesh analysis
 //! - Mesh refinement for improved quality
 
-
-use rcad_kernel::BRep;
 
 use crate::tolerance::*;
 use glam::DVec3;
@@ -674,7 +672,7 @@ fn min_triangle_angle(a: DVec3, b: DVec3, c: DVec3) -> f64 {
 ///
 /// # Returns
 /// A `BRepMesh` containing per-face mesh data.
-pub fn mesh_brep(brep: &BRep, params: &MeshParams) -> BRepMesh {
+pub fn mesh_brep(brep: &rcad_kernel::BRep, params: &MeshParams) -> BRepMesh {
     let mut brep_mesh = BRepMesh::new();
 
     // Collect all faces
@@ -740,7 +738,7 @@ pub fn mesh_brep_topods(brep: &topods::BRep, params: &MeshParams) -> BRepMesh {
 }
 
 /// Mesh a face from its wire boundary (fallback for faces without surfaces).
-fn mesh_face_from_wire(brep: &BRep, face: &Face, _params: &MeshParams) -> Mesh {
+fn mesh_face_from_wire(brep: &rcad_kernel::BRep, face: &Face, _params: &MeshParams) -> Mesh {
     // Sample points from the outer wire
     let mut poly_pts: Vec<DVec3> = Vec::new();
     for we in &face.outer_wire.edges {

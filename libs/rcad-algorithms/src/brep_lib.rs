@@ -26,7 +26,7 @@
 
 use crate::tolerance::*;
 use glam::DVec3;
-use rcad_kernel::{topods, BRep, Curve3, Surface3};
+use rcad_kernel::{topods, Curve3, Surface3};
 use rcad_kernel::geom::{any_perpendicular, CurveEval, SurfaceEval};
 use rcad_kernel::topology::{Edge, Face, Wire, WireEdge};
 
@@ -123,7 +123,7 @@ pub enum FittedSurfaceType {
 ///
 /// A `FoundSurface` containing the best-fit surface and fit quality metrics.
 pub fn find_surface_through_edges(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  edge_indices: &[usize],
 ) -> Result<FoundSurface, BRepLibError> {
  if edge_indices.is_empty() {
@@ -849,7 +849,7 @@ fn solve_linear_4x4(a: &[[f64; 4]; 4], b: &[f64; 4]) -> Option<[f64; 4]> {
 /// Sort faces by area in descending order (largest first).
 ///
 /// Returns indices of faces sorted by their surface area.
-pub fn sort_faces_by_area(brep: &BRep) -> Vec<usize> {
+pub fn sort_faces_by_area(brep: &rcad_kernel::BRep) -> Vec<usize> {
  let areas: Vec<(usize, f64)> = (0..count_faces(brep))
  .filter_map(|i| {
  let area = compute_face_area(brep, i);
@@ -865,7 +865,7 @@ pub fn sort_faces_by_area(brep: &BRep) -> Vec<usize> {
 /// Sort faces by bounding box volume in descending order (largest first).
 ///
 /// Returns indices of faces sorted by their bounding box volume.
-pub fn sort_faces_by_bounding_box(brep: &BRep) -> Vec<usize> {
+pub fn sort_faces_by_bounding_box(brep: &rcad_kernel::BRep) -> Vec<usize> {
  let volumes: Vec<(usize, f64)> = (0..count_faces(brep))
  .filter_map(|i| {
  let bb = compute_face_bounding_box(brep, i)?;
@@ -883,7 +883,7 @@ pub fn sort_faces_by_bounding_box(brep: &BRep) -> Vec<usize> {
 ///
 /// Returns indices of faces sorted by distance from the reference point
 /// to the face centroid.
-pub fn sort_faces_by_distance(brep: &BRep, reference: DVec3) -> Vec<usize> {
+pub fn sort_faces_by_distance(brep: &rcad_kernel::BRep, reference: DVec3) -> Vec<usize> {
  let distances: Vec<(usize, f64)> = (0..count_faces(brep))
  .filter_map(|i| {
  let centroid = compute_face_centroid(brep, i)?;
@@ -906,7 +906,7 @@ pub fn sort_faces_by_distance(brep: &BRep, reference: DVec3) -> Vec<usize> {
 /// Two faces share the same domain if:
 /// 1. They reference the same surface index, OR
 /// 2. Their surfaces are geometrically equivalent within tolerance
-pub fn faces_share_surface(brep: &BRep, face1_idx: usize, face2_idx: usize) -> Result<bool, BRepLibError> {
+pub fn faces_share_surface(brep: &rcad_kernel::BRep, face1_idx: usize, face2_idx: usize) -> Result<bool, BRepLibError> {
  let n_faces = count_faces(brep);
  if face1_idx >= n_faces {
  return Err(BRepLibError::InvalidIndex {
@@ -989,7 +989,7 @@ fn surfaces_equivalent(s1: &Surface3, s2: &Surface3) -> Result<bool, BRepLibErro
 /// Creates a new edge connecting two existing vertices with the given curve.
 /// Returns the index of the new edge.
 pub fn add_edge_with_curve(
- brep: &mut BRep,
+ brep: &mut rcad_kernel::BRep,
  curve: Curve3,
  start_vertex: usize,
  end_vertex: usize,
@@ -1042,7 +1042,7 @@ pub fn add_edge_with_curve(
 /// Note: This function requires the BRep to have at least one solid with one shell.
 /// If no shell exists, a new solid/shell structure is created.
 pub fn add_face_with_surface(
- brep: &mut BRep,
+ brep: &mut rcad_kernel::BRep,
  surface: Surface3,
  wires: Vec<Wire>,
 ) -> Result<usize, BRepLibError> {
@@ -1156,7 +1156,7 @@ pub fn make_wire_from_edges(edges: Vec<(usize, bool)>) -> Wire {
 /// Compute the parameter bounds of an edge's 3D curve.
 ///
 /// Returns `[t_min, t_max]` for the edge's parameter range.
-pub fn compute_edge_bounds(brep: &BRep, edge_idx: usize) -> Result<[f64; 2], BRepLibError> {
+pub fn compute_edge_bounds(brep: &rcad_kernel::BRep, edge_idx: usize) -> Result<[f64; 2], BRepLibError> {
  if edge_idx >= brep.edges.len() {
  return Err(BRepLibError::InvalidIndex {
  kind: "edge",
@@ -1190,7 +1190,7 @@ pub fn compute_edge_bounds(brep: &BRep, edge_idx: usize) -> Result<[f64; 2], BRe
 /// Compute the parameter bounds of a face's surface.
 ///
 /// Returns `[u_min, u_max, v_min, v_max]` for the face's parameter range.
-pub fn compute_face_bounds(brep: &BRep, face_idx: usize) -> Result<[f64; 4], BRepLibError> {
+pub fn compute_face_bounds(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<[f64; 4], BRepLibError> {
  let n_faces = count_faces(brep);
  if face_idx >= n_faces {
  return Err(BRepLibError::InvalidIndex {
@@ -1227,7 +1227,7 @@ pub fn compute_face_bounds(brep: &BRep, face_idx: usize) -> Result<[f64; 4], BRe
 // =============================================================================
 
 /// Count the total number of faces in a BRep.
-fn count_faces(brep: &BRep) -> usize {
+fn count_faces(brep: &rcad_kernel::BRep) -> usize {
  brep.solids.iter()
  .flat_map(|s| &s.shells)
  .map(|sh| sh.faces.len())
@@ -1235,7 +1235,7 @@ fn count_faces(brep: &BRep) -> usize {
 }
 
 /// Compute the approximate surface area of a face.
-fn compute_face_area(brep: &BRep, face_idx: usize) -> f64 {
+fn compute_face_area(brep: &rcad_kernel::BRep, face_idx: usize) -> f64 {
  // Get face vertices and compute polygon area approximation
  let (face, _) = match get_face_by_flat_index(brep, face_idx) {
  Ok(f) => f,
@@ -1261,7 +1261,7 @@ fn compute_face_area(brep: &BRep, face_idx: usize) -> f64 {
  area
 }
 
-fn estimate_wire_area(brep: &BRep, wire: &Wire) -> f64 {
+fn estimate_wire_area(brep: &rcad_kernel::BRep, wire: &Wire) -> f64 {
  // Get wire vertices
  let mut points = Vec::new();
  for we in &wire.edges {
@@ -1289,7 +1289,7 @@ fn estimate_wire_area(brep: &BRep, wire: &Wire) -> f64 {
 }
 
 /// Compute the bounding box of a face.
-fn compute_face_bounding_box(brep: &BRep, face_idx: usize) -> Option<[DVec3; 2]> {
+fn compute_face_bounding_box(brep: &rcad_kernel::BRep, face_idx: usize) -> Option<[DVec3; 2]> {
  let (face, _) = get_face_by_flat_index(brep, face_idx).ok()?;
 
  let mut min_pt = DVec3::splat(f64::INFINITY);
@@ -1312,7 +1312,7 @@ fn compute_face_bounding_box(brep: &BRep, face_idx: usize) -> Option<[DVec3; 2]>
 }
 
 /// Compute the centroid of a face.
-fn compute_face_centroid(brep: &BRep, face_idx: usize) -> Option<DVec3> {
+fn compute_face_centroid(brep: &rcad_kernel::BRep, face_idx: usize) -> Option<DVec3> {
  let (face, _) = get_face_by_flat_index(brep, face_idx).ok()?;
 
  let mut sum = DVec3::ZERO;
@@ -1333,7 +1333,7 @@ fn compute_face_centroid(brep: &BRep, face_idx: usize) -> Option<DVec3> {
 }
 
 /// Get a face by its flat index.
-fn get_face_by_flat_index(brep: &BRep, face_idx: usize) -> Result<(&Face, usize), BRepLibError> {
+fn get_face_by_flat_index(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<(&Face, usize), BRepLibError> {
  let mut current_idx = 0;
 
  for solid in &brep.solids {

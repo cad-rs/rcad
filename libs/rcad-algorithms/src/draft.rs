@@ -1,4 +1,4 @@
-﻿//! Draft angle operations  ?analogous to OCCT `BRepDraftBuilder`.
+//! Draft angle operations  ?analogous to OCCT `BRepDraftBuilder`.
 //!
 //! # Algorithm
 //!
@@ -19,7 +19,7 @@
 //! - **Spherical/toroidal faces**: Limited support via approximation
 
 
-use rcad_kernel::BRep;
+
 
 use crate::tolerance::*;
 use glam::DVec3;
@@ -278,7 +278,7 @@ pub enum NeutralSurface {
 ///
 /// Vertices on the neutral plane remain fixed. Other vertices are displaced
 /// perpendicular to the pull direction by `h * tan(angle)`.
-pub fn draft_solid(brep: &BRep, params: &DraftParams) -> Result<BRep, DraftError> {
+pub fn draft_solid(brep: &rcad_kernel::BRep, params: &DraftParams) -> Result<rcad_kernel::BRep, DraftError> {
  validate_draft_params(params)?;
 
  let shell = brep.solids.first().and_then(|s| s.shells.first()).ok_or(DraftError::NoFaces)?;
@@ -323,9 +323,9 @@ pub fn draft_solid(brep: &BRep, params: &DraftParams) -> Result<BRep, DraftError
 /// - Non-planar surface handling
 /// - Internal feature detection and handling
 pub fn draft_solid_advanced(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  params: &DraftParamsAdvanced,
-) -> Result<BRep, DraftError> {
+) -> Result<rcad_kernel::BRep, DraftError> {
  validate_draft_params(&params.base)?;
 
  let shell = brep.solids.first().and_then(|s| s.shells.first()).ok_or(DraftError::NoFaces)?;
@@ -359,10 +359,10 @@ pub fn draft_solid_advanced(
 /// For cylindrical surfaces, drafting changes the radius linearly with height.
 /// The cylindrical axis should be parallel to the pull direction.
 pub fn draft_cylindrical_face(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  face_index: usize,
  params: &DraftParams,
-) -> Result<BRep, DraftError> {
+) -> Result<rcad_kernel::BRep, DraftError> {
  validate_draft_params(params)?;
 
  let shell = brep.solids.first().and_then(|s| s.shells.first()).ok_or(DraftError::NoFaces)?;
@@ -420,10 +420,10 @@ pub fn draft_cylindrical_face(
 /// Conical surfaces inherently have a draft angle. This function adjusts
 /// the cone angle to match the desired draft angle.
 pub fn draft_conical_face(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  face_index: usize,
  params: &DraftParams,
-) -> Result<BRep, DraftError> {
+) -> Result<rcad_kernel::BRep, DraftError> {
  validate_draft_params(params)?;
 
  let shell = brep.solids.first().and_then(|s| s.shells.first()).ok_or(DraftError::NoFaces)?;
@@ -495,10 +495,10 @@ pub fn draft_conical_face(
 ///
 /// Uses vertex displacement based on height and draft angle.
 pub fn draft_face_general(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  face_index: usize,
  params: &DraftParams,
-) -> Result<BRep, DraftError> {
+) -> Result<rcad_kernel::BRep, DraftError> {
  validate_draft_params(params)?;
 
  let shell = brep.solids.first().and_then(|s| s.shells.first()).ok_or(DraftError::NoFaces)?;
@@ -548,7 +548,7 @@ pub fn draft_face_general(
 /// - Self-intersections
 /// - Internal features that may need special handling
 pub fn validate_draft_angles(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  pull_direction: DVec3,
  config: &DraftValidationConfig,
 ) -> Result<DraftValidationResult, DraftError> {
@@ -643,7 +643,7 @@ pub fn validate_draft_angles(
 ///
 /// Returns a list of face indices that form undercuts.
 pub fn detect_undercuts(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  pull_direction: DVec3,
  tolerance: f64,
 ) -> Result<Vec<usize>, DraftError> {
@@ -672,7 +672,7 @@ pub fn detect_undercuts(
 ///
 /// The parting line is the curve where the mold splits.
 pub fn detect_parting_line(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  pull_direction: DVec3,
 ) -> Result<PartingLineResult, DraftError> {
  let pull = pull_direction.normalize();
@@ -728,7 +728,7 @@ pub fn detect_parting_line(
 
 /// Detect internal features (bosses, ribs, etc.) in the part.
 pub fn detect_internal_features(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  pull_direction: DVec3,
 ) -> Result<Vec<InternalFeature>, DraftError> {
  let pull = pull_direction.normalize();
@@ -767,7 +767,7 @@ pub fn detect_internal_features(
 
 /// Optimize the draft direction for best parting line and minimum undercuts.
 pub fn optimize_draft_direction(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  initial_direction: DVec3,
 ) -> Result<DVec3, DraftError> {
  let shell = brep.solids.first().and_then(|s| s.shells.first()).ok_or(DraftError::NoFaces)?;
@@ -853,7 +853,7 @@ fn compute_draft_angle(normal: &DVec3, pull: DVec3) -> f64 {
 }
 
 fn compute_vertex_displacements(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  faces: &[Face],
  params: &DraftParamsAdvanced,
  pull: DVec3,
@@ -893,7 +893,7 @@ fn compute_vertex_displacements(
 
 fn apply_transition_zones(
  displacements: &mut HashMap<usize, DVec3>,
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  params: &DraftParamsAdvanced,
  pull: DVec3,
 ) {
@@ -933,12 +933,12 @@ fn apply_transition_zones(
 }
 
 fn build_drafted_brep(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  new_pts: &[DVec3],
  new_face_normals: &[DVec3],
  faces: &[Face],
-) -> Result<BRep, DraftError> {
- let mut out = BRep::new();
+) -> Result<rcad_kernel::BRep, DraftError> {
+ let mut out = rcad_kernel::BRep::new();
  out.solids.push(Solid { shells: vec![Shell { faces: Vec::new() }] });
 
  // Copy vertices with new positions
@@ -1028,7 +1028,7 @@ fn surface_type_name(surface: &Surface3) -> String {
  }
 }
 
-fn check_self_intersection(brep: &BRep) -> Result<Vec<SelfIntersectionIssue>, DraftError> {
+fn check_self_intersection(brep: &rcad_kernel::BRep) -> Result<Vec<SelfIntersectionIssue>, DraftError> {
  // Simplified self-intersection check
  // A proper implementation would use BVH and triangle-triangle intersection tests
  let mut issues = Vec::new();
@@ -1049,7 +1049,7 @@ fn check_self_intersection(brep: &BRep) -> Result<Vec<SelfIntersectionIssue>, Dr
  Ok(issues)
 }
 
-fn find_faces_with_edge(brep: &BRep, edge_index: usize) -> Vec<usize> {
+fn find_faces_with_edge(brep: &rcad_kernel::BRep, edge_index: usize) -> Vec<usize> {
  let mut faces = Vec::new();
  if let Some(shell) = brep.solids.first().and_then(|s| s.shells.first()) {
  for (fi, face) in shell.faces.iter().enumerate() {
@@ -1061,7 +1061,7 @@ fn find_faces_with_edge(brep: &BRep, edge_index: usize) -> Vec<usize> {
  faces
 }
 
-fn group_connected_faces(_brep: &BRep, faces: &[Face]) -> Vec<Vec<usize>> {
+fn group_connected_faces(_brep: &rcad_kernel::BRep, faces: &[Face]) -> Vec<Vec<usize>> {
  // Build edge-to-face adjacency
  let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
  for (fi, face) in faces.iter().enumerate() {
@@ -1107,7 +1107,7 @@ fn group_connected_faces(_brep: &BRep, faces: &[Face]) -> Vec<Vec<usize>> {
 }
 
 fn classify_feature_type(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  face_indices: &[usize],
  pull: DVec3,
 ) -> InternalFeatureType {
@@ -1154,7 +1154,7 @@ fn classify_feature_type(
 }
 
 fn compute_feature_properties(
- brep: &BRep,
+ brep: &rcad_kernel::BRep,
  face_indices: &[usize],
  pull: DVec3,
 ) -> (DVec3, f64, (f64, f64)) {
@@ -1203,7 +1203,7 @@ fn compute_feature_properties(
  (center, size, (h_min, h_max))
 }
 
-fn evaluate_draft_direction(_brep: &BRep, faces: &[Face], direction: DVec3) -> f64 {
+fn evaluate_draft_direction(_brep: &rcad_kernel::BRep, faces: &[Face], direction: DVec3) -> f64 {
  let mut score = 0.0;
 
  for face in faces {
