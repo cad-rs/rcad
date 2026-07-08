@@ -1,55 +1,6 @@
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 
-use crate::BRep;
-
-/// OCCT-aligned: TopAbs shape type enumeration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TopAbs { Compound, CompSolid, Solid, Shell, Face, Wire, Edge, Vertex, Shape }
-
-/// OCCT-aligned: TopExp_Explorer — iterates sub-shapes of a given type.
-pub struct TopExpExplorer {
- indices: Vec<usize>,
- pos: usize,
-}
-
-impl TopExpExplorer {
- pub fn new(brep: &BRep, to_find: TopAbs) -> Self { Self::with_avoid(brep, to_find, None) }
- pub fn with_avoid(brep: &BRep, to_find: TopAbs, to_avoid: Option<TopAbs>) -> Self {
- Self { indices: Self::collect(brep, to_find, to_avoid), pos: 0 }
- }
- pub fn init(&mut self, brep: &BRep, to_find: TopAbs, to_avoid: Option<TopAbs>) {
- self.indices = Self::collect(brep, to_find, to_avoid); self.pos = 0; }
- pub fn more(&self) -> bool { self.pos < self.indices.len() }
- pub fn next(&mut self) { self.pos += 1; }
- pub fn current(&self) -> Option<usize> { self.indices.get(self.pos).copied() }
-
- fn collect(brep: &BRep, to_find: TopAbs, to_avoid: Option<TopAbs>) -> Vec<usize> {
- match to_find {
- TopAbs::Vertex => (0..brep.vertices.len()).collect(),
- TopAbs::Edge => {
- if to_avoid == Some(TopAbs::Face) || to_avoid == Some(TopAbs::Shell) {
- let mut set = std::collections::BTreeSet::new();
- for solid in &brep.solids {
- for shell in &solid.shells {
- for face in &shell.faces {
- for we in &face.outer_wire.edges { set.insert(we.idx); }
- for wire in &face.inner_wires {
- for we in &wire.edges { set.insert(we.idx); }
- }
- }
- }
- }
- set.into_iter().collect()
- } else { (0..brep.edges.len()).collect() }
- }
- TopAbs::Face => (0..brep.geom.face_surface.len()).collect(),
- TopAbs::Solid => (0..brep.solids.len()).collect(),
- _ => Vec::new(),
- }
- }
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Vertex {
  pub point: DVec3,
