@@ -1,4 +1,4 @@
-﻿//! BRep validity checker.
+//! BRep validity checker.
 //!
 //! Analogous to OCCT `BRepCheck_Analyzer`. Checks structural and geometric
 //! consistency of a BRep without modifying it.
@@ -100,7 +100,7 @@ pub enum CheckIssue {
  /// Index of the other crossing edge within the outer wire.
  edge_b: usize,
  },
- //  € € Geometry validation issues  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+ //    Geometry validation issues                                              
  /// Surface continuity violation between adjacent faces.
  SurfaceContinuityViolation {
  solid: usize,
@@ -135,7 +135,7 @@ pub enum CheckIssue {
  stored_tolerance: f64,
  required_tolerance: f64,
  },
- //  € € Topology validation issues  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+ //    Topology validation issues                                              
  /// Shell has inconsistent orientation (mixed inward/outward normals).
  ShellOrientationInconsistent {
  solid: usize,
@@ -166,7 +166,7 @@ pub enum CheckIssue {
  /// Number of inner wire vertices outside outer wire boundary
  vertices_outside: usize,
  },
- //  € € Tolerance issues  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+ //    Tolerance issues                                                        
  /// Adjacent faces have inconsistent tolerances.
  ToleranceInconsistency {
  edge: usize,
@@ -182,7 +182,7 @@ pub enum CheckIssue {
  stored_tolerance: f64,
  required_tolerance: f64,
  },
- //  € € Quality metric issues  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+ //    Quality metric issues                                                  
  /// Face has poor aspect ratio.
  PoorAspectRatio {
  solid: usize,
@@ -1024,8 +1024,7 @@ fn check_edge_on_surface(
  true
 }
 
-
-//  € € SameParameter diagnosis  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//    SameParameter diagnosis                                                    
 
 /// A single edge whose 3D curve endpoints deviate from the vertex positions.
 ///
@@ -1217,13 +1216,13 @@ impl WireAnalysisReport {
 /// This is a structured counterpart to checker issues C1/C7/C8 and is useful
 /// for import diagnostics and healing reports.
 /// Analyze wire issues in a BRep by examining topology directly.
-/// Works on topods::BRep — no old BRep bridge needed.
+/// Works on topods::BRep  no old BRep bridge needed.
 pub fn analyze_wire_issues(brep: &topods::BRep, tolerance: f64) -> WireAnalysisReport {
  let tshapes = &brep.tshapes;
 
  let mut report = WireAnalysisReport::default();
 
- // Build vertex point lookup: tshape index → point
+ // Build vertex point lookup: tshape index  point
  let v_points: Vec<DVec3> = tshapes.iter().filter_map(|ts| {
  if let topods::TShape::Vertex(vd) = &**ts {
  Some(vd.point)
@@ -1451,7 +1450,7 @@ pub fn diagnose_same_range(brep: &BRep, tolerance: f64) -> SameRangeDiagnosis {
  SameRangeDiagnosis { suspect_edges: suspects }
 }
 
-//  € € Shell topology analysis  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//    Shell topology analysis                                                    
 
 /// Topology analysis report for a BRep's shell structure.
 ///
@@ -1533,7 +1532,7 @@ pub fn analyze_shell_topology(brep: &BRep) -> ShellTopologyReport {
  }
 }
 
-//  € € Euler characteristic analysis  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//    Euler characteristic analysis                                             
 
 /// Euler characteristic and topological genus for a single solid.
 ///
@@ -1644,7 +1643,7 @@ pub fn euler_analysis(brep: &BRep) -> Vec<EulerAnalysis> {
  results
 }
 
-//  € € Orientation consistency analysis  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//    Orientation consistency analysis                                          
 
 /// A face whose stored normal appears to point inward rather than outward.
 ///
@@ -1775,7 +1774,7 @@ pub fn check_orientation_consistency(brep: &BRep) -> OrientationReport {
  }
 }
 
-//  € € Comprehensive richer validity analysis  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
+//    Comprehensive richer validity analysis                                     
 
 /// Aggregated validity report combining all available checks.
 ///
@@ -1839,7 +1838,7 @@ pub fn richer_validity_analysis(brep: &BRep) -> RicherValidityReport {
  }
 }
 
-//  € € Surface UV Analysis (ShapeAnalysis_Surface equivalent)  € € € € € € € € € € € € € € € € € € € € € € €
+//    Surface UV Analysis (ShapeAnalysis_Surface equivalent)                        
 
 /// Report from surface UV domain analysis.
 ///
@@ -1888,5 +1887,12 @@ pub struct UvBoundsViolation {
  /// Maximum violation distance.
  pub violation: f64,
 }
+
+/// Quick structural validity check: at least one solid or face exists (topods::BRep).
+pub fn is_valid_brep(brep: &rcad_kernel::topods::BRep) -> bool {
+    brep.tshapes.iter().any(|ts| matches!(ts.as_ref(), rcad_kernel::topods::TShape::Solid(_) | rcad_kernel::topods::TShape::Face(_)))
+}
+
 include!("e1.rs");
+
 

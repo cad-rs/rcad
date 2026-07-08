@@ -1,4 +1,4 @@
-﻿//! BRepLib-style utilities for low-level BRep operations.
+//! BRepLib-style utilities for low-level BRep operations.
 //!
 //! This module provides utilities analogous to OCCT's `BRepLib` class:
 //!
@@ -1363,6 +1363,32 @@ fn compute_surface_normal(surface: &Surface3) -> DVec3 {
  Surface3::Torus(t) => t.axis.normalize_or(DVec3::Z),
  _ => DVec3::Z,
  }
+}
+
+// =============================================================================
+// Geometric properties (moved from brep_algo for OCCT-package alignment)
+// =============================================================================
+
+/// Total volume of an old BRep.
+pub fn total_volume(brep: &rcad_kernel::BRep) -> f64 {
+    rcad_kernel::volume(brep)
+}
+
+/// Total volume of a topods::BRep.
+pub fn total_volume_topods(brep: &rcad_kernel::topods::BRep) -> f64 {
+    let old = rcad_kernel::BRep::from_topods(brep);
+    rcad_kernel::volume(&old)
+}
+
+/// Total surface area of an old BRep.
+pub fn total_surface_area(brep: &rcad_kernel::BRep) -> f64 {
+    rcad_kernel::surface_area(brep)
+}
+
+/// Total surface area of a topods::BRep.
+pub fn total_surface_area_topods(brep: &rcad_kernel::topods::BRep) -> f64 {
+    let old = rcad_kernel::BRep::from_topods(brep);
+    rcad_kernel::surface_area(&old)
 }
 
 // =============================================================================

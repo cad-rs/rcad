@@ -1,4 +1,4 @@
-﻿//! BRepAdaptor-style topology adapters.
+//! BRepAdaptor-style topology adapters.
 //!
 //! Provides adapters to access BRep topology as geometric entities.
 //! Analogous to OCCT's BRepAdaptor_Curve, BRepAdaptor_Surface, and BRepAdaptor_CompCurve.
@@ -1093,6 +1093,51 @@ impl<'a> std::ops::Index<usize> for CurveAdaptorArray<'a> {
     fn index(&self, index: usize) -> &Self::Output {
         &self.adaptors[index]
     }
+}
+
+// =============================================================================
+// Free-standing evaluation helpers (moved from brep_algo for OCCT-package alignment)
+// =============================================================================
+
+/// Evaluate the normal of a face at parameter (u, v) on a topods::BRep.
+pub fn evaluate_face_normal(brep: &topods::BRep, face_idx: usize, u: f64, v: f64) -> DVec3 {
+    let faces: Vec<&topods::TShape> = brep.tshapes.iter()
+        .filter(|ts| matches!(ts.as_ref(), topods::TShape::Face(_)))
+        .map(|ts| ts.as_ref())
+        .collect();
+    faces.get(face_idx)
+        .and_then(|ts| match ts {
+            topods::TShape::Face(fd) => fd.surface.as_ref(),
+            _ => None,
+        })
+        .map(|s| s.normal_at(u, v))
+        .unwrap_or(DVec3::Z)
+}
+
+/// Evaluate the unit tangent of an edge at normalized parameter t in [0, 1].
+pub fn evaluate_edge_tangent(brep: &topods::BRep, edge_idx: usize, t: f64) -> DVec3 {
+    let edges: Vec<&topods::TShape> = brep.tshapes.iter()
+        .filter(|ts| matches!(ts.as_ref(), topods::TShape::Edge(_)))
+        .map(|ts| ts.as_ref())
+        .collect();
+    edges.get(edge_idx)
+        .and_then(|ts| match ts {
+            topods::TShape::Edge(ed) => ed.curve.as_ref().map(|c| (ed.range, c)),
+            _ => None,
+        })
+        .map(|([t0, t1], curve)| {
+            let t_actual = t0 + t * (t1 - t0);
+            curve.tangent_at(t_actual)
+        })
+        .unwrap_or(DVec3::X)
+}
+
+/// Evaluate approximate normal at a vertex (average of adjacent face normals).
+/// Simplified — returns Z for unconnected vertices.
+pub fn evaluate_vertex_normal(brep: &topods::BRep, vertex_idx: usize) -> DVec3 {
+    let v_count = brep.tshapes.iter().filter(|ts| matches!(ts.as_ref(), topods::TShape::Vertex(_))).count();
+    if vertex_idx >= v_count { return DVec3::Z; }
+    DVec3::Z
 }
 
 // =============================================================================

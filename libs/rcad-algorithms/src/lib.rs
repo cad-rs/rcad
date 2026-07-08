@@ -138,11 +138,7 @@ pub use approx_int::{
     sample_with_adaptive_density,
 };
 pub use brep_algo::{
-    BRepAlgoError, FaceSection, NormalProject, OrientationIssue as BRepAlgoOrientationIssue,
-    check_orientation, evaluate_edge_tangent, evaluate_face_normal, evaluate_vertex_normal,
-    is_valid_brep,
-    propagate_edge_tolerances, propagate_face_tolerances,
-    total_surface_area, total_surface_area_topods, total_volume, total_volume_topods,
+    BRepAlgoError, FaceSection, NormalProject,
 };
 pub use brep_bnd::{
     BoundingBox, add_brep_to_bbox, add_edge_to_bbox, add_face_to_bbox, add_vertex_to_bbox,
@@ -155,6 +151,7 @@ pub use brep_lib::{
     find_surface_through_edges, find_surface_through_points, make_edge_from_curve,
     make_face_from_surface, make_wire_from_edges, sort_faces_by_area, sort_faces_by_bounding_box,
     sort_faces_by_distance,
+    total_surface_area, total_surface_area_topods, total_volume, total_volume_topods,
 };
 pub use brep_tools::{
     BRepToolsError, ShapeType, bounding_box, count_edges, count_faces, count_shells,
