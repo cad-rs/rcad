@@ -128,6 +128,7 @@ pub mod tkg3d_complete;
 pub mod tkg3d_geom_adaptor;
 pub mod tkg3d_geometric_hash;
 pub mod tkg3d_gtests;
+pub mod tkbrep_gtests;
 pub mod tkgeombase_algo;
 pub mod tkgeombase_gtests;
 pub mod tolerance;
