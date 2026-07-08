@@ -157,3 +157,59 @@ mod toptools_map_tests {
     }
 }
 
+// =============================================================================
+// BRepClass3d_SolidClassifier_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod solid_classifier_tests {
+    use rcad_kernel::topods::BRep;
+    use crate::classify::{SolidClassifier, Classification};
+    use glam::DVec3;
+
+    fn make_unit_cube() -> (BRep, rcad_kernel::topods::ShapeRef) {
+        // Use make_box_brep which creates faces with Plane surfaces
+        let brep = rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
+            .expect("unit cube");
+        // Find the solid ref
+        let solid_ref = brep.tshapes.iter().enumerate()
+            .find(|(_, ts)| matches!(ts.as_ref(), rcad_kernel::topods::TShape::Solid(_)))
+            .map(|(i, _)| rcad_kernel::topods::ShapeRef::synthetic(i))
+            .expect("solid should exist");
+        (brep, solid_ref)
+    }
+
+    #[test]
+    fn center_of_unit_cube_is_inside() {
+        let (brep, solid_ref) = make_unit_cube();
+        let mut cls = SolidClassifier::new(&brep, solid_ref);
+        cls.perform(DVec3::splat(0.5), 1e-6);
+        assert_eq!(cls.state(), Classification::In, "center of unit cube should be In");
+    }
+
+    #[test]
+    fn point_outside_unit_cube() {
+        let (brep, solid_ref) = make_unit_cube();
+        let mut cls = SolidClassifier::new(&brep, solid_ref);
+        cls.perform(DVec3::new(10.0, 10.0, 10.0), 1e-6);
+        assert_eq!(cls.state(), Classification::Out, "point far away should be Out");
+    }
+
+    #[test]
+    fn point_on_face_of_unit_cube() {
+        let (brep, solid_ref) = make_unit_cube();
+        let mut cls = SolidClassifier::new(&brep, solid_ref);
+        cls.perform(DVec3::new(0.5, 0.5, 0.0), 0.1);
+        assert_eq!(cls.state(), Classification::On, "point on face should be On");
+    }
+
+    #[test]
+    fn is_done_after_perform() {
+        let (brep, solid_ref) = make_unit_cube();
+        let mut cls = SolidClassifier::new(&brep, solid_ref);
+        assert!(!cls.is_done(), "before perform, is_done should be false");
+        cls.perform(DVec3::splat(0.5), 1e-6);
+        assert!(cls.is_done(), "after perform, is_done should be true");
+    }
+}
+
