@@ -139,10 +139,10 @@ pub use approx_int::{
 };
 pub use brep_algo::{
     BRepAlgoError, OrientationIssue as BRepAlgoOrientationIssue, check_orientation,
-    evaluate_edge_tangent, evaluate_face_normal, evaluate_vertex_normal, find_connected_components,
-    fix_orientation, is_valid_brep, max_edge_length, max_face_area, min_face_area, total_edge_length,
-    propagate_edge_tolerances, propagate_face_tolerances, reverse_face, total_surface_area,
-    total_volume,
+    evaluate_edge_tangent, evaluate_face_normal, evaluate_vertex_normal,
+    is_valid_brep,
+    propagate_edge_tolerances, propagate_face_tolerances,
+    total_surface_area, total_surface_area_topods, total_volume, total_volume_topods,
 };
 pub use brep_bnd::{
     BoundingBox, add_brep_to_bbox, add_edge_to_bbox, add_face_to_bbox, add_vertex_to_bbox,
