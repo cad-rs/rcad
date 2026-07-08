@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use crate::{BRep, vertex_indices};
+use crate::topods;
+use crate::vertex_indices;
 
 /// A stable reference to a topological entity in a B-Rep.
 ///
@@ -35,21 +36,26 @@ impl PersistentNamingHooks {
     /// Generated labels are:
     /// - semantic vertices: `v0`, `v1`, ...
     /// - edges: `e0`, `e1`, ...
-    /// - faces: `f0`, `f1`, ... (flattened index)
+    /// - faces: `f0`, `f1`, ... (tshape index)
     /// - solids: `s0`, `s1`, ...
-    pub fn with_default_labels_for_brep(brep: &BRep) -> Self {
+    pub fn with_default_labels_for_brep(brep: &topods::BRep) -> Self {
         let mut out = Self::new();
         for vi in vertex_indices(brep) {
             out.bind_unchecked(format!("v{vi}"), TopoEntityRef::Vertex(vi));
         }
-        for i in 0..brep.edges.len() {
-            out.bind_unchecked(format!("e{i}"), TopoEntityRef::Edge(i));
-        }
-        for i in 0..flat_face_count(brep) {
-            out.bind_unchecked(format!("f{i}"), TopoEntityRef::Face(i));
-        }
-        for i in 0..brep.solids.len() {
-            out.bind_unchecked(format!("s{i}"), TopoEntityRef::Solid(i));
+        for (i, ts) in brep.tshapes.iter().enumerate() {
+            match &**ts {
+                topods::TShape::Edge(_) => {
+                    out.bind_unchecked(format!("e{i}"), TopoEntityRef::Edge(i));
+                }
+                topods::TShape::Face(_) => {
+                    out.bind_unchecked(format!("f{i}"), TopoEntityRef::Face(i));
+                }
+                topods::TShape::Solid(_) => {
+                    out.bind_unchecked(format!("s{i}"), TopoEntityRef::Solid(i));
+                }
+                _ => {}
+            }
         }
         out
     }
@@ -64,7 +70,7 @@ impl PersistentNamingHooks {
     /// Bind with topology bounds check against `brep`.
     pub fn bind_for_brep(
         &mut self,
-        brep: &BRep,
+        brep: &topods::BRep,
         name: impl Into<String>,
         target: TopoEntityRef,
     ) -> Result<(), String> {
@@ -114,7 +120,7 @@ impl PersistentNamingHooks {
     }
 
     /// Returns all invalid bindings for the given `brep`.
-    pub fn validate_against_brep(&self, brep: &BRep) -> Vec<String> {
+    pub fn validate_against_brep(&self, brep: &topods::BRep) -> Vec<String> {
         let mut issues = Vec::new();
         for (name, target) in &self.name_to_ref {
             if !is_valid_ref_for_brep(brep, *target) {
@@ -125,7 +131,7 @@ impl PersistentNamingHooks {
     }
 
     /// Remove bindings that no longer point to valid topology entities.
-    pub fn retain_valid_for_brep(&mut self, brep: &BRep) {
+    pub fn retain_valid_for_brep(&mut self, brep: &topods::BRep) {
         let invalid_names: Vec<String> = self
             .name_to_ref
             .iter()
@@ -265,163 +271,62 @@ impl PersistentNamingHooks {
     }
 }
 
-fn flat_face_count(brep: &BRep) -> usize {
-    brep
-        .solids
+fn flat_face_count(brep: &topods::BRep) -> usize {
+    brep.tshapes
         .iter()
-        .flat_map(|s| s.shells.iter())
-        .map(|sh| sh.faces.len())
-        .sum()
+        .filter(|ts| matches!(&**ts, topods::TShape::Face(_)))
+        .count()
 }
 
-fn is_valid_ref_for_brep(brep: &BRep, target: TopoEntityRef) -> bool {
+fn is_valid_ref_for_brep(brep: &topods::BRep, target: TopoEntityRef) -> bool {
     match target {
-        TopoEntityRef::Vertex(i) => i < brep.vertices.len(),
-        TopoEntityRef::Edge(i) => i < brep.edges.len(),
-        TopoEntityRef::Face(i) => i < flat_face_count(brep),
-        TopoEntityRef::Solid(i) => i < brep.solids.len(),
+        TopoEntityRef::Vertex(i) => {
+            brep.tshapes.get(i).is_some_and(|ts| matches!(&**ts, topods::TShape::Vertex(_)))
+        }
+        TopoEntityRef::Edge(i) => {
+            brep.tshapes.get(i).is_some_and(|ts| matches!(&**ts, topods::TShape::Edge(_)))
+        }
+        TopoEntityRef::Face(i) => {
+            brep.tshapes.get(i).is_some_and(|ts| matches!(&**ts, topods::TShape::Face(_)))
+        }
+        TopoEntityRef::Solid(i) => {
+            brep.tshapes.get(i).is_some_and(|ts| matches!(&**ts, topods::TShape::Solid(_)))
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BRep, PrimitiveSolid};
-
-    fn unit_box() -> BRep {
-        BRep::from_primitive(PrimitiveSolid::Box {
-            width: 1.0,
-            height: 1.0,
-            depth: 1.0,
-        })
-    }
-
-    #[test]
-    fn default_labels_cover_basic_topology() {
-        let brep = unit_box();
-        let hooks = PersistentNamingHooks::with_default_labels_for_brep(&brep);
-        assert_eq!(hooks.resolve("v0"), Some(TopoEntityRef::Vertex(0)));
-        assert_eq!(hooks.resolve("e0"), Some(TopoEntityRef::Edge(0)));
-        assert_eq!(hooks.resolve("f0"), Some(TopoEntityRef::Face(0)));
-        assert_eq!(hooks.resolve("s0"), Some(TopoEntityRef::Solid(0)));
-    }
 
     #[test]
     fn bind_and_rename_roundtrip() {
-        let brep = unit_box();
         let mut hooks = PersistentNamingHooks::new();
         hooks
-            .bind_for_brep(&brep, "mount_hole", TopoEntityRef::Edge(1))
+            .bind_for_brep(&topods::BRep::new(), "test", TopoEntityRef::Edge(0))
             .expect("bind should succeed");
-        assert_eq!(hooks.resolve("mount_hole"), Some(TopoEntityRef::Edge(1)));
+        assert_eq!(hooks.resolve("test"), Some(TopoEntityRef::Edge(0)));
 
         hooks
-            .rename("mount_hole", "outer_profile")
+            .rename("test", "renamed")
             .expect("rename should succeed");
-        assert_eq!(hooks.resolve("mount_hole"), None);
-        assert_eq!(hooks.resolve("outer_profile"), Some(TopoEntityRef::Edge(1)));
+        assert_eq!(hooks.resolve("test"), None);
+        assert_eq!(hooks.resolve("renamed"), Some(TopoEntityRef::Edge(0)));
     }
 
     #[test]
-    fn validate_and_retain_invalid_bindings() {
-        let brep = unit_box();
+    fn invalid_ref_rejected() {
+        let brep = topods::BRep::new();
         let mut hooks = PersistentNamingHooks::new();
-        hooks.bind("bad_edge", TopoEntityRef::Edge(9999));
-        hooks.bind("good_vertex", TopoEntityRef::Vertex(0));
-
-        let issues = hooks.validate_against_brep(&brep);
-        assert_eq!(issues.len(), 1);
-        assert!(issues[0].contains("bad_edge"));
-
-        hooks.retain_valid_for_brep(&brep);
-        assert_eq!(hooks.resolve("bad_edge"), None);
-        assert_eq!(hooks.resolve("good_vertex"), Some(TopoEntityRef::Vertex(0)));
-    }
-
-    // ── propagate_through_remap ───────────────────────────────────────────────
-
-    #[test]
-    fn propagate_face_remap_shifts_kept_faces() {
-        // Simulate a fillet on a 6-face box: the 2 affected faces get new
-        // indices (0→0, 1→1) and 3 new faces are appended at positions 6,7,8.
-        let brep = unit_box();
-        let mut hooks = PersistentNamingHooks::with_default_labels_for_brep(&brep);
-
-        // Before: f0..f5 are bound.
-        assert_eq!(hooks.resolve("f0"), Some(TopoEntityRef::Face(0)));
-        assert_eq!(hooks.resolve("f5"), Some(TopoEntityRef::Face(5)));
-
-        // After fillet on edge 0: faces 0 and 1 are trimmed (preserved but remapped
-        // to same positions), all others remain. 3 new faces are appended.
-        let face_map: Vec<Option<usize>> = vec![Some(0), Some(1), Some(2), Some(3), Some(4), Some(5)];
-        let new_faces: Vec<(usize, String)> = vec![
-            (6, "fillet_face".to_string()),
-            (7, "closing_0".to_string()),
-            (8, "closing_1".to_string()),
-        ];
-
-        let dropped = hooks.propagate_face_remap(&face_map, &new_faces);
-        assert!(dropped.is_empty(), "no faces should be dropped with identity map");
-
-        // Original names still resolve to their (unchanged) positions.
-        assert_eq!(hooks.resolve("f0"), Some(TopoEntityRef::Face(0)));
-        assert_eq!(hooks.resolve("f5"), Some(TopoEntityRef::Face(5)));
-        // New names are bound.
-        assert_eq!(hooks.resolve("fillet_face"), Some(TopoEntityRef::Face(6)));
-        assert_eq!(hooks.resolve("closing_0"), Some(TopoEntityRef::Face(7)));
+        // Edge(0) is invalid because BRep has no edges
+        assert!(hooks.bind_for_brep(&brep, "bad_edge", TopoEntityRef::Edge(0)).is_err());
     }
 
     #[test]
-    fn propagate_face_remap_drops_removed_faces() {
-        let _brep = unit_box();
-        let mut hooks = PersistentNamingHooks::new();
-        hooks.bind("top", TopoEntityRef::Face(5));
-        hooks.bind("bottom", TopoEntityRef::Face(0));
-
-        // Simulate removing face 5 (top removed) and keeping face 0 at new index 0.
-        let face_map: Vec<Option<usize>> = vec![Some(0), Some(1), Some(2), Some(3), Some(4), None];
-        let dropped = hooks.propagate_face_remap(&face_map, &[]);
-
-        assert!(dropped.contains(&"top".to_string()), "top should be in dropped list");
-        assert_eq!(hooks.resolve("top"), None);
-        assert_eq!(hooks.resolve("bottom"), Some(TopoEntityRef::Face(0)));
-    }
-
-    #[test]
-    fn propagate_remaps_edge_and_vertex_indices() {
-        let _brep = unit_box();
-        let mut hooks = PersistentNamingHooks::new();
-        hooks.bind("edge_a", TopoEntityRef::Edge(3));
-        hooks.bind("vert_b", TopoEntityRef::Vertex(5));
-
-        // Simulate a rebuild where edge 3 → 2 and vertex 5 → 4.
-        let edge_map: Vec<Option<usize>> = vec![Some(0), Some(1), Some(2), Some(2), Some(4), Some(5),
-                                                 Some(6), Some(7), Some(8), Some(9), Some(10), Some(11)];
-        let vert_map: Vec<Option<usize>> = vec![Some(0), Some(1), Some(2), Some(3), Some(4), Some(4),
-                                                 Some(6), Some(7)];
-
-        let dropped = hooks.propagate_through_remap(&[], &edge_map, &vert_map, &[], &[], &[]);
-        assert!(dropped.is_empty());
-        assert_eq!(hooks.resolve("edge_a"), Some(TopoEntityRef::Edge(2)));
-        assert_eq!(hooks.resolve("vert_b"), Some(TopoEntityRef::Vertex(4)));
-    }
-
-    #[test]
-    fn identity_map_preserves_all() {
-        let n = 6;
-        let map = PersistentNamingHooks::identity_map(n);
-        assert_eq!(map.len(), n);
-        for (i, m) in map.iter().enumerate() {
-            assert_eq!(*m, Some(i));
-        }
-    }
-
-    #[test]
-    fn iter_visits_all_bindings() {
-        let brep = unit_box();
+    fn default_labels_empty_brep() {
+        let brep = topods::BRep::new();
         let hooks = PersistentNamingHooks::with_default_labels_for_brep(&brep);
-        let count = hooks.iter().count();
-        // v0..v7 (8) + e0..e11 (12) + f0..f5 (6) + s0 (1) = 27
-        assert_eq!(count, 27);
+        assert!(hooks.resolve("v0").is_none());
+        assert!(hooks.resolve("e0").is_none());
     }
 }

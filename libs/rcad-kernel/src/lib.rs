@@ -167,7 +167,7 @@ pub use properties::{
  InertiaTensor, centroid, face_surface_area, face_triangles_pub, try_analytic_face_surface_area_pub, point_in_spherical_polygon_3d_pub, inertia_tensor, signed_volume, surface_area, volume,
 };
 pub use tolerance::{
- ANGULAR, APPROXIMATION, brep_same_parameter, compute_vertex_tolerances, CONFUSION, edge_same_parameter, edge_same_range, edge_tolerance,
+ ANGULAR, APPROXIMATION, brep_same_parameter, CONFUSION, edge_same_parameter, edge_same_range, edge_tolerance,
  face_domain, face_tolerance, model_tolerance, vertex_tolerance,
  resize_tolerance_arrays,
  set_vertex_tolerance, update_vertex_tolerance,
