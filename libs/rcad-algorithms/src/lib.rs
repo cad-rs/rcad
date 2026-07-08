@@ -122,6 +122,8 @@ pub mod splitter;
 pub mod sweep;
 pub mod tcol_std;
 pub mod thicken;
+pub mod tkgeombase_algo;
+pub mod tkgeombase_gtests;
 pub mod tolerance;
 pub use tolerance::TOLERANCE_MESH_LEGACY;
 use crate::tolerance::*;

@@ -1040,43 +1040,62 @@ mod tests {
     // =========================================================================
     // OCCT-aligned AbscissaPoint tests (from GCPnts_AbscissaPoint_Test.cxx)
     // =========================================================================
+    //
+    // These tests match the GTest suite:
+    //   src/ModelingData/TKGeomBase/GTests/GCPnts_AbscissaPoint_Test.cxx
+    //
+    // OCCT uses GCPnts_AbscissaPoint::Length(adaptor) to compute arc length.
+    // Our equivalent is `arc_length(curve, t0, t1)` (adaptive Simpson).
+
+    /// OCCT-aligned precision: matches Precision::Confusion()
+    const GCPNT_TOL: f64 = 1e-7;
 
     #[test]
     fn abscissa_point_line_length() {
         let line = create_test_line();
-        // Length of a unit-X line from 0 to 10 = 10
-        let len = length(&line, 0.0, 10.0, TOLERANCE_MESH_LEGACY);
-        assert!((len - 10.0).abs() < TOLERANCE_MESH_LEGACY);
+        // OCCT: Geom_Line from (0,0,0) dir (1,0,0), range [0,10] → length = 10
+        let len = arc_length(&line, 0.0, 10.0);
+        assert!((len - 10.0).abs() < GCPNT_TOL);
     }
 
     #[test]
-    fn abscissa_point_line_midpoint() {
+    fn abscissa_point_circle_arc_length() {
+        // OCCT: Circle radius=1, range [0, PI] → length = PI
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
+        let len = arc_length(&circle, 0.0, std::f64::consts::PI);
+        assert!((len - std::f64::consts::PI).abs() < GCPNT_TOL);
+    }
+
+    #[test]
+    fn abscissa_point_full_circle_length() {
+        // OCCT: Circle radius=5, full range [0, 2*PI] → length = 2*PI*5
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 5.0));
+        let len = arc_length(&circle, 0.0, 2.0 * std::f64::consts::PI);
+        let expected = 2.0 * std::f64::consts::PI * 5.0;
+        assert!((len - expected).abs() < GCPNT_TOL);
+    }
+
+    #[test]
+    fn abscissa_point_parameter_at_abscissa_line() {
+        // OCCT: Line [0,10], abscissa=5.0 from t=0 → param = 5.0
         let line = create_test_line();
-        // Find parameter at half-length
-        let params = uniform_abscissa(&line, 2);
-        assert!(!params.is_empty());
-        // With 2 segments, we get endpoints 0 and 10
-        if params.len() >= 2 {
-            assert!((params[0] - 0.0).abs() < TOLERANCE_MESH_LEGACY || (params[0] - 10.0).abs() < TOLERANCE_MESH_LEGACY);
-        }
+        let (_pt, param) = point_at_arc_length(&line, 5.0);
+        assert!((param - 5.0).abs() < GCPNT_TOL);
     }
 
     #[test]
-    fn abscissa_point_circle_length() {
-        let circle = create_test_circle();
-        // Circle radius 2: circumference ≈ 4π ≈ 12.566
-        let len = length(&circle, 0.0, 2.0 * std::f64::consts::PI, TOLERANCE_MESH_LEGACY);
-        let expected = 2.0 * std::f64::consts::PI * 2.0;
-        assert!((len - expected).abs() < 0.01); // sampling-based, approximate
+    fn abscissa_point_parameter_at_abscissa_circle() {
+        // OCCT: Circle radius=1, full range, abscissa=PI/2 from t=0 → param = PI/2
+        let circle = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
+        let (_pt, param) = point_at_arc_length(&circle, std::f64::consts::PI / 2.0);
+        assert!((param - std::f64::consts::PI / 2.0).abs() < 1e-4);
     }
 
     #[test]
     fn abscissa_point_uniform_params() {
         let line = create_test_line();
         let params = uniform_abscissa(&line, 5);
-        // Should give 5 points (4 segments)
         assert_eq!(params.len(), 5);
-        // Should be roughly equally spaced
         for i in 1..params.len() {
             let dt = params[i] - params[i - 1];
             assert!(dt > 0.0);
@@ -1086,7 +1105,6 @@ mod tests {
     #[test]
     fn abscissa_point_quasi_uniform() {
         let circle = create_test_circle();
-        // Quasi-uniform abscissa creates equal chord-length segments
         let params = quasi_uniform(&circle, 8);
         assert!(!params.is_empty());
         assert!(params[0] >= 0.0);

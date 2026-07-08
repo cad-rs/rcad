@@ -111,6 +111,29 @@ mod tests {
     }
 
     #[test]
+    fn multiple_points_correct_types() {
+        let mut r = CurAndInf::new();
+        r.add_ext_cur(1.0, true);   // MinCur
+        r.add_inflection(3.0);       // Inflection
+        r.add_ext_cur(5.0, false);  // MaxCur
+        assert_eq!(r.nb_points(), 3);
+        assert_eq!(r.ci_type(0), CIType::MinCur);
+        assert_eq!(r.ci_type(1), CIType::Inflection);
+        assert_eq!(r.ci_type(2), CIType::MaxCur);
+    }
+
+    #[test]
+    fn clear_empties() {
+        let mut r = CurAndInf::new();
+        r.add_inflection(1.0);
+        r.add_ext_cur(2.0, true);
+        assert_eq!(r.nb_points(), 2);
+        r.clear();
+        assert!(r.is_empty());
+        assert_eq!(r.nb_points(), 0);
+    }
+
+    #[test]
     fn clear_and_refill() {
         let mut r = CurAndInf::new();
         r.add_inflection(1.0);
