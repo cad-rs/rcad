@@ -617,3 +617,290 @@ mod surface_hasher_tests {
         assert!(surfaces_equivalent(&b1, &b2, TOL));
     }
 }
+
+// =============================================================================
+// GeomEval_HyperboloidSurface_Test.cxx — HyperboloidEvaluator
+// =============================================================================
+
+#[cfg(test)]
+mod hyperboloid_tests {
+    use super::*;
+    use crate::tkg3d_complete::{HyperboloidEvaluator, SheetMode};
+
+    #[test]
+    fn hyperboloid_construction_one_sheet() {
+        let ev = HyperboloidEvaluator::new(2.0, 3.0, SheetMode::OneSheet);
+        assert!((ev.r1 - 2.0).abs() < TOL);
+        assert!((ev.r2 - 3.0).abs() < TOL);
+    }
+
+    #[test]
+    fn hyperboloid_construction_two_sheets() {
+        let ev = HyperboloidEvaluator::new(2.0, 3.0, SheetMode::TwoSheets);
+        assert!((ev.r1 - 2.0).abs() < TOL);
+        assert!((ev.r2 - 3.0).abs() < TOL);
+    }
+
+    #[test]
+    fn hyperboloid_eval_d0_one_sheet_origin() {
+        let ev = HyperboloidEvaluator::new(2.0, 3.0, SheetMode::OneSheet);
+        let p = ev.eval_d0(0.0, 0.0);
+        assert!((p - DVec3::new(2.0, 0.0, 0.0)).length() < TOL);
+    }
+
+    #[test]
+    fn hyperboloid_eval_d0_one_sheet_half_pi() {
+        let ev = HyperboloidEvaluator::new(2.0, 3.0, SheetMode::OneSheet);
+        let p = ev.eval_d0(std::f64::consts::PI / 2.0, 0.0);
+        assert!((p - DVec3::new(0.0, 2.0, 0.0)).length() < TOL);
+    }
+
+    #[test]
+    fn hyperboloid_eval_d0_two_sheets_origin() {
+        let ev = HyperboloidEvaluator::new(2.0, 3.0, SheetMode::TwoSheets);
+        let p = ev.eval_d0(0.0, 0.0);
+        assert!((p - DVec3::new(0.0, 0.0, 2.0)).length() < TOL);
+    }
+
+    #[test]
+    fn hyperboloid_d1_consistent_with_d0() {
+        let ev = HyperboloidEvaluator::new(2.0, 3.0, SheetMode::OneSheet);
+        let u = 1.0; let v = 0.5;
+        let (_pt, du, dv) = ev.eval_d1(u, v);
+        let pu = ev.eval_d0(u + TOL_FD, v);
+        let pu2 = ev.eval_d0(u - TOL_FD, v);
+        let pv = ev.eval_d0(u, v + TOL_FD);
+        let pv2 = ev.eval_d0(u, v - TOL_FD);
+        let fd_u = (pu - pu2) / (2.0 * TOL_FD);
+        let fd_v = (pv - pv2) / (2.0 * TOL_FD);
+        assert!((du - fd_u).length() < TOL_FD);
+        assert!((dv - fd_v).length() < TOL_FD);
+    }
+
+    #[test]
+    fn hyperboloid_bounds() {
+        let ev = HyperboloidEvaluator::new(1.0, 1.0, SheetMode::OneSheet);
+        assert!(ev.is_u_periodic());
+        assert!(ev.is_u_closed());
+        let dom = ev.default_domain();
+        assert!((dom[0] - 0.0).abs() < TOL);
+        assert!((dom[1] - 2.0 * std::f64::consts::PI).abs() < TOL);
+    }
+}
+
+// =============================================================================
+// GeomEval_ParaboloidSurface_Test.cxx — ParaboloidEvaluator
+// =============================================================================
+
+#[cfg(test)]
+mod paraboloid_tests {
+    use super::*;
+    use crate::tkg3d_complete::ParaboloidEvaluator;
+
+    #[test]
+    fn paraboloid_construction() {
+        let ev = ParaboloidEvaluator::new(1.0);
+        assert!((ev.focal - 1.0).abs() < TOL);
+    }
+
+    #[test]
+    fn paraboloid_eval_d0_origin() {
+        let ev = ParaboloidEvaluator::new(1.0);
+        let p = ev.eval_d0(0.0, 0.0);
+        assert!((p - DVec3::ZERO).length() < TOL);
+    }
+
+    #[test]
+    fn paraboloid_eval_d0_known_point() {
+        let ev = ParaboloidEvaluator::new(1.0);
+        // u=0, v=2: P = (2, 0, 4/4) = (2, 0, 1)
+        let p = ev.eval_d0(0.0, 2.0);
+        assert!((p - DVec3::new(2.0, 0.0, 1.0)).length() < TOL);
+    }
+
+    #[test]
+    fn paraboloid_d1_consistent_with_d0() {
+        let ev = ParaboloidEvaluator::new(2.0);
+        let u = 1.0; let v = 1.5;
+        let (_pt, du, dv) = ev.eval_d1(u, v);
+        let fd_u = (ev.eval_d0(u + TOL_FD, v) - ev.eval_d0(u - TOL_FD, v)) / (2.0 * TOL_FD);
+        let fd_v = (ev.eval_d0(u, v + TOL_FD) - ev.eval_d0(u, v - TOL_FD)) / (2.0 * TOL_FD);
+        assert!((du - fd_u).length() < TOL_FD);
+        assert!((dv - fd_v).length() < TOL_FD);
+    }
+
+    #[test]
+    fn paraboloid_bounds() {
+        let ev = ParaboloidEvaluator::new(1.0);
+        assert!(ev.is_u_periodic());
+        let dom = ev.default_domain();
+        assert!((dom[0] - 0.0).abs() < TOL);
+        assert!((dom[1] - 2.0 * std::f64::consts::PI).abs() < TOL);
+    }
+}
+
+// =============================================================================
+// GeomEval_HypParaboloidSurface_Test.cxx — HypParaboloidEvaluator
+// =============================================================================
+
+#[cfg(test)]
+mod hypparaboloid_tests {
+    use super::*;
+    use crate::tkg3d_complete::HypParaboloidEvaluator;
+
+    #[test]
+    fn hypparaboloid_eval_d0_origin() {
+        let ev = HypParaboloidEvaluator::new(2.0, 3.0);
+        let p = ev.eval_d0(0.0, 0.0);
+        assert!((p - DVec3::ZERO).length() < TOL);
+    }
+
+    #[test]
+    fn hypparaboloid_eval_d0_known_point_u() {
+        let ev = HypParaboloidEvaluator::new(2.0, 3.0);
+        let p = ev.eval_d0(1.0, 0.0);
+        assert!((p - DVec3::new(1.0, 0.0, 1.0 / 4.0)).length() < TOL);
+    }
+
+    #[test]
+    fn hypparaboloid_eval_d0_known_point_v() {
+        let ev = HypParaboloidEvaluator::new(2.0, 3.0);
+        let p = ev.eval_d0(0.0, 1.0);
+        assert!((p - DVec3::new(0.0, 1.0, -1.0 / 9.0)).length() < TOL);
+    }
+
+    #[test]
+    fn hypparaboloid_d1_consistent_with_d0() {
+        let ev = HypParaboloidEvaluator::new(2.0, 3.0);
+        let u = 1.5; let v = 0.7;
+        let (_pt, du, dv) = ev.eval_d1(u, v);
+        let fd_u = (ev.eval_d0(u + TOL_FD, v) - ev.eval_d0(u - TOL_FD, v)) / (2.0 * TOL_FD);
+        let fd_v = (ev.eval_d0(u, v + TOL_FD) - ev.eval_d0(u, v - TOL_FD)) / (2.0 * TOL_FD);
+        assert!((du - fd_u).length() < TOL_FD);
+        assert!((dv - fd_v).length() < TOL_FD);
+    }
+
+    #[test]
+    fn hypparaboloid_d2_constant_z() {
+        let ev = HypParaboloidEvaluator::new(2.0, 3.0);
+        let (_pt, _du, _dv, d2u, d2v, _d2uv) = ev.eval_d2(0.0, 0.0);
+        assert!((d2u.x - 0.0).abs() < TOL);
+        assert!((d2u.z - 2.0 / 4.0).abs() < TOL);
+        assert!((d2v.z + 2.0 / 9.0).abs() < TOL);
+    }
+
+    #[test]
+    fn hypparaboloid_bounds_infinite() {
+        let ev = HypParaboloidEvaluator::new(1.0, 1.0);
+        let dom = ev.default_domain();
+        assert!(dom[0].is_infinite() && dom[0].is_sign_negative());
+        assert!(dom[1].is_infinite() && dom[1].is_sign_positive());
+    }
+}
+
+// =============================================================================
+// GeomEval_TBezierCurve_Test.cxx
+// =============================================================================
+
+#[cfg(test)]
+mod tbezier_curve_tests {
+    use super::*;
+    use crate::tkg3d_complete::TBezierCurve;
+
+    fn make_semicircle() -> TBezierCurve {
+        TBezierCurve::new(vec![
+            DVec3::ZERO, DVec3::new(0.0, 1.0, 0.0), DVec3::new(1.0, 0.0, 0.0),
+        ], 1.0)
+    }
+
+    fn make_simple() -> TBezierCurve {
+        TBezierCurve::new(vec![
+            DVec3::ZERO, DVec3::new(1.0, 1.0, 0.0), DVec3::new(2.0, 0.0, 0.0),
+        ], 1.0)
+    }
+
+    #[test]
+    fn tbezier_construction() {
+        let c = make_simple();
+        assert_eq!(c.nb_poles(), 3);
+        assert_eq!(c.order(), 1);
+        assert!((c.alpha - 1.0).abs() < TOL);
+    }
+
+    #[test]
+    fn tbezier_parameter_range() {
+        let c = make_simple();
+        assert!((c.first_param() - 0.0).abs() < TOL);
+        assert!((c.last_param() - std::f64::consts::PI).abs() < TOL);
+    }
+
+    #[test]
+    fn tbezier_d1_consistent_with_d0() {
+        let c = make_simple();
+        let u = std::f64::consts::PI / 3.0;
+        let p1 = c.eval_d0(u + TOL_FD);
+        let p2 = c.eval_d0(u - TOL_FD);
+        let fd = (p1 - p2) / (2.0 * TOL_FD);
+
+        let d_analytic = c.eval_d0(u + TOL_FD);
+        let d2 = c.eval_d0(u - TOL_FD);
+        let fd2 = (d_analytic - d2) / (2.0 * TOL_FD);
+        assert!((fd - fd2).length() < TOL_FD);
+    }
+}
+
+// =============================================================================
+// GeomGridEval surface tests
+// =============================================================================
+
+#[cfg(test)]
+mod grideval_surface_tests {
+    use super::*;
+    use crate::tkg3d_batch_eval::*;
+
+    fn uniform_params(first: f64, last: f64, n: usize) -> Vec<f64> {
+        let step = if n > 1 { (last - first) / (n - 1) as f64 } else { 0.0 };
+        (0..n).map(|i| first + i as f64 * step).collect()
+    }
+
+    #[test]
+    fn grideval_plane_basic() {
+        let plane = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
+        let u_params = uniform_params(0.0, 5.0, 6);
+        let v_params = uniform_params(0.0, 3.0, 4);
+        let grid = crate::tkg3d_complete::batch_eval_plane(&plane, &u_params, &v_params);
+        assert_eq!(grid.len(), 6);
+        assert_eq!(grid[0].len(), 4);
+        for (iu, u_pt_row) in grid.iter().enumerate() {
+            for (iv, pt) in u_pt_row.iter().enumerate() {
+                assert!((pt.z - 0.0).abs() < TOL);
+                assert!((pt.x - u_params[iu]).abs() < TOL);
+                assert!((pt.y - v_params[iv]).abs() < TOL);
+            }
+        }
+    }
+
+    #[test]
+    fn grideval_plane_non_origin() {
+        let plane = Plane { origin: DVec3::new(1.0, 2.0, 3.0), normal: DVec3::Z };
+        let u_params = uniform_params(-1.0, 1.0, 3);
+        let v_params = uniform_params(-1.0, 1.0, 3);
+        let grid = crate::tkg3d_complete::batch_eval_plane(&plane, &u_params, &v_params);
+        for pt in grid.iter().flat_map(|r| r.iter()) {
+            assert!((pt.z - 3.0).abs() < TOL);
+        }
+        assert!((grid[1][1] - DVec3::new(1.0, 2.0, 3.0)).length() < TOL);
+    }
+
+    #[test]
+    fn grideval_surface_sphere_via_batch() {
+        let sphere = SphericalSurface::new(DVec3::ZERO, DVec3::Z, 5.0);
+        let surf = Surface3::Sphere(sphere);
+        let u_params = uniform_params(0.0, 6.28318, 5);
+        let v_params = uniform_params(-1.5, 1.5, 3);
+        let grid = crate::tkg3d_complete::batch_eval_surface(&surf, &u_params, &v_params);
+        for pt in grid.iter().flat_map(|r| r.iter()) {
+            assert!((pt.length() - 5.0).abs() < 1e-5);
+        }
+    }
+}

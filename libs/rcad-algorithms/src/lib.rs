@@ -123,6 +123,7 @@ pub mod sweep;
 pub mod tcol_std;
 pub mod thicken;
 pub mod tkg3d_batch_eval;
+pub mod tkg3d_complete;
 pub mod tkg3d_geom_adaptor;
 pub mod tkg3d_geometric_hash;
 pub mod tkg3d_gtests;
