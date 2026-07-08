@@ -295,7 +295,8 @@ pub use top_loc::{
     Datum, Location, LocationManager, apply_location_to_shape, apply_location_to_shape_owned,
 };
 
-use rcad_kernel::BRep;
+
+
 use rcad_kernel::topods;
 
 // pub use adaptor3d::{Curve3dAdaptor, CurveOnSurfaceAdaptor, HSurfaceAdaptor, SurfaceAdaptor}; // removed
@@ -795,9 +796,5 @@ pub use triangulate::{
     MeshQualityMetrics, MeshSimplifier, SurfaceMesh, TessellationParams, compute_mesh_quality,
     mesh_brep, triangulate_surface,
 };
-include!("lib_inline/inc_1.rs");
-include!("lib_inline/inc_2.rs");
-include!("lib_inline/inc_3.rs");
-include!("lib_inline/inc_4.rs");
-include!("lib_inline/inc_5.rs");
-include!("lib_inline/inc_6.rs");
+pub mod lib_inline;
+pub use lib_inline::*;
