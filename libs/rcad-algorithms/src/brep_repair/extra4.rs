@@ -1,12 +1,12 @@
-﻿fn create_face_from_boundary(chain: &[usize], brep: &rcad_kernel::BRep, _tolerance: f64) -> Option<Face> {
+fn create_face_from_boundary(chain: &[usize], brep: &rcad_kernel::BRep, _tolerance: f64) -> Option<Face> {
  if chain.len() < 3 { return None; }
  let mut wire_edges: Vec<WireEdge> = Vec::new();
  let mut nodes: Vec<DVec3> = Vec::new();
  for (i, &ei) in chain.iter().enumerate() {
- let edge = brep.edges.get(ei)?;
+ let e = ed_opt(brep, ei)?;
  wire_edges.push(WireEdge::fwd(ei));
- if i == 0 { nodes.push(brep.vertices.get(edge.start)?.point); }
- nodes.push(brep.vertices.get(edge.end)?.point);
+ if i == 0 { nodes.push(vpoint(brep, e.first.index)); }
+ nodes.push(vpoint(brep, e.last.index));
  }
  let mut normal = DVec3::ZERO;
  for i in 0..nodes.len() {
@@ -34,7 +34,7 @@ pub fn repair_non_manifold_edges(shell: &Shell, brep: &rcad_kernel::BRep) -> Man
  is_manifold: false,
  edge_details: vec![],
  };
- let n_edges = brep.edges.len();
+ let n_edges = brep.edge_count();
  let mut edge_faces: HashMap<usize, Vec<usize>> = HashMap::new();
 
  for (face_idx, face) in shell.faces.iter().enumerate() {
@@ -71,8 +71,8 @@ pub fn validate_shell_topology(shell: &Shell, brep: &rcad_kernel::BRep) -> Shell
  use std::collections::{HashMap, HashSet};
 
  let mut report = ShellValidationReport::default();
- let n_edges = brep.edges.len();
- let n_verts = brep.vertices.len();
+ let n_edges = brep.edge_count();
+ let n_verts = brep.vertex_count();
 
  report.face_count = shell.faces.len();
  let mut edge_face_count: HashMap<usize, usize> = HashMap::new();
@@ -90,9 +90,9 @@ pub fn validate_shell_topology(shell: &Shell, brep: &rcad_kernel::BRep) -> Shell
  report.edge_count = unique_edges.len();
  let mut unique_verts: HashSet<usize> = HashSet::new();
  for &ei in &unique_edges {
- if let Some(edge) = brep.edges.get(ei) {
- if edge.start < n_verts { unique_verts.insert(edge.start); }
- if edge.end < n_verts { unique_verts.insert(edge.end); }
+ if let Some(e) = ed_opt(brep, ei) {
+ if e.first.index < n_verts { unique_verts.insert(e.first.index); }
+ if e.last.index < n_verts { unique_verts.insert(e.last.index); }
  }
  }
  report.vertex_count = unique_verts.len();
@@ -112,11 +112,11 @@ pub fn validate_shell_topology(shell: &Shell, brep: &rcad_kernel::BRep) -> Shell
  for (face_idx, face) in shell.faces.iter().enumerate() {
  for we in &face.outer_wire.edges {
  if we.idx < n_edges
- && let Some(edge) = brep.edges.get(we.idx) {
- vertex_edges.entry(edge.start).or_default().insert(we.idx);
- vertex_edges.entry(edge.end).or_default().insert(we.idx);
- vertex_faces.entry(edge.start).or_default().insert(face_idx);
- vertex_faces.entry(edge.end).or_default().insert(face_idx);
+ && let Some(e) = ed_opt(brep, we.idx) {
+ vertex_edges.entry(e.first.index).or_default().insert(we.idx);
+ vertex_edges.entry(e.last.index).or_default().insert(we.idx);
+ vertex_faces.entry(e.first.index).or_default().insert(face_idx);
+ vertex_faces.entry(e.last.index).or_default().insert(face_idx);
  }
  }
  }
@@ -368,11 +368,11 @@ fn compute_shell_bounds(shell: &Shell, brep: &rcad_kernel::BRep) -> (DVec3, DVec
 
  for face in &shell.faces {
  for we in &face.outer_wire.edges {
- if let Some(edge) = brep.edges.get(we.idx) {
- for &vi in &[edge.start, edge.end] {
- if let Some(v) = brep.vertices.get(vi) {
- min_bound = min_bound.min(v.point);
- max_bound = max_bound.max(v.point);
+ if let Some(e) = ed_opt(brep, we.idx) {
+ for &vi in &[e.first.index, e.last.index] {
+ if let Some(pt) = brep.vertex_point(vi) {
+ min_bound = min_bound.min(pt);
+ max_bound = max_bound.max(pt);
  }
  }
  }
@@ -1689,19 +1689,17 @@ pub fn fix_uv_gaps(
  let mut result = brep.clone();
  let mut report = UvGapRepairReport::default();
 
- let Some(solid) = brep.solids.get(solid_idx) else { return (result, report); };
- let Some(shell) = solid.shells.get(shell_idx) else { return (result, report); };
- let Some(_face) = shell.faces.get(face_idx) else { return (result, report); };
-
  // Compute flat face index for geometry lookup
  let flat_face_idx = compute_flat_face_idx_for_repair(brep, solid_idx, shell_idx, face_idx);
 
- let Some(surface_idx) = brep.geom.face_surface.get(flat_face_idx).and_then(|v| *v) else {
+ // Get the face from tshapes instead of brep.solids/shells/faces
+ let Some(fd) = brep.tshapes.get(flat_face_idx).and_then(|ts| {
+ if let TShape::Face(fd) = &**ts { Some(fd) } else { None }
+}) else { return (result, report); };
+ let Some(surface) = &fd.surface else {
  return (result, report);
  };
- let Some(surface) = brep.geom.surfaces.get(surface_idx) else {
- return (result, report);
- };
+ let _surface = surface; // used below
 
  report.faces_processed = 1;
 
@@ -1714,8 +1712,6 @@ pub fn fix_uv_gaps(
 
  // Get surface properties
  let domain = surface.default_domain();
- let _is_u_periodic = matches!(surface, rcad_kernel::geom::Surface3::Cylinder(_) | rcad_kernel::geom::Surface3::Sphere(_) | rcad_kernel::geom::Surface3::Cone(_) | rcad_kernel::geom::Surface3::Torus(_) | rcad_kernel::geom::Surface3::Revolution(_) | rcad_kernel::geom::Surface3::Helicoid(_));
- let _is_v_periodic = matches!(surface, rcad_kernel::geom::Surface3::Torus(_));
 
  // Process each detected gap
  for gap in gap_report.u_min_gaps.iter().chain(&gap_report.u_max_gaps)
@@ -1742,7 +1738,8 @@ pub fn fix_uv_gaps(
  }
 
  // Attempt to repair the gap by extending the PCurve
- let repair_result = repair_single_gap(&mut result, gap, surface_idx, surface, &domain, config);
+ // Use flat_face_idx as the face key for pcurve lookup in TEdgeData
+ let repair_result = repair_single_gap(&mut result, gap, flat_face_idx, surface, &domain, config);
 
  match repair_result {
  Ok(extended) => {
@@ -1769,7 +1766,7 @@ pub fn fix_uv_gaps(
  continue;
  }
 
- let seam_result = repair_periodic_seam_gap(&mut result, gap, surface_idx, surface, &domain, config);
+ let seam_result = repair_periodic_seam_gap(&mut result, gap, flat_face_idx, surface, &domain, config);
 
  match seam_result {
  Ok(adjusted) => {
@@ -1794,13 +1791,27 @@ pub fn fix_uv_gaps(
 /// Compute flat face index for geometry lookup.
 fn compute_flat_face_idx_for_repair(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> usize {
  let mut idx = 0usize;
- for s in 0..solid_idx {
- for sh in &brep.solids[s].shells {
- idx += sh.faces.len();
+ let mut cur_solid = 0usize;
+ for ts in &brep.tshapes {
+ if let TShape::Solid(sd) = &**ts {
+ if cur_solid < solid_idx {
+ for sr in &sd.shells {
+ if let TShape::Shell(shd) = &*brep.tshapes[sr.index] {
+ idx += shd.faces.len();
  }
  }
- for sh in 0..shell_idx {
- idx += brep.solids[solid_idx].shells[sh].faces.len();
+ cur_solid += 1;
+ } else if cur_solid == solid_idx {
+ for (shi, sr) in sd.shells.iter().enumerate() {
+ if shi < shell_idx {
+ if let TShape::Shell(shd) = &*brep.tshapes[sr.index] {
+ idx += shd.faces.len();
+ }
+ }
+ }
+ break;
+ }
+ }
  }
  idx + face_idx
 }
@@ -1811,29 +1822,19 @@ use crate::shape_analysis::{EndpointGap, PeriodicGap};
 fn repair_single_gap(
  result: &mut rcad_kernel::BRep,
  gap: &EndpointGap,
- surface_idx: usize,
+ face_idx: usize,
  surface: &rcad_kernel::geom::Surface3,
  domain: &[f64; 4],
  config: &UvGapRepairConfig,
 ) -> Result<bool, GapRepairFailureReason> {
- // Get the PCurve for this edge
- let Some(pcurves) = result.geom.edge_pcurves.get(gap.edge_idx) else {
+ // Get the PCurve for this edge from TEdgeData.pcurves (keyed by face index)
+ let Some((curve2d, t_min, t_max)) = (|| -> Option<(&rcad_kernel::Curve2d, f64, f64)> {
+ let e = ed_opt(result, gap.edge_idx)?;
+ e.pcurves.get(&face_idx).map(|(c, mn, mx)| (c, *mn, *mx))
+ })() else {
  return Err(GapRepairFailureReason::NoExtensionMethod);
  };
-
- let pc_idx = pcurves.iter().position(|pc| pc.surface_idx == surface_idx);
- let Some(pc_idx) = pc_idx else {
- return Err(GapRepairFailureReason::NoExtensionMethod);
- };
-
- let curve2d_idx = pcurves[pc_idx].curve2d_idx;
- let Some(curve2d) = result.geom.curve2ds.get(curve2d_idx) else {
- return Err(GapRepairFailureReason::NoExtensionMethod);
- };
-
- let range = result.geom.curve2d_range.get(curve2d_idx)
- .and_then(|r| *r)
- .unwrap_or([0.0, 1.0]);
+ let range = [t_min, t_max];
 
  // Determine the target UV coordinate (surface boundary)
  let target_uv = gap.boundary_uv;
@@ -1884,16 +1885,13 @@ fn repair_single_gap(
 
  match extended {
  Some(new_curve) => {
- // Add the new curve
- let new_idx = result.geom.curve2ds.len();
- result.geom.curve2ds.push(new_curve);
-
- // Update the PCurve reference
- if let Some(pcs) = result.geom.edge_pcurves.get_mut(gap.edge_idx)
- && let Some(pc) = pcs.iter_mut().find(|p| p.surface_idx == surface_idx) {
- pc.curve2d_idx = new_idx;
+ // Update the PCurve in TEdgeData using Arc::make_mut
+ if let Some(ts) = result.tshapes.get(gap.edge_idx) {
+ let edge_arc = ts.clone(); // clone Arc to avoid ownership issue
+ if let TShape::Edge(ed) = &mut *Arc::make_mut(&mut result.tshapes[gap.edge_idx]) {
+ ed.pcurves.insert(face_idx, (new_curve, t_min, t_max));
  }
-
+ }
  Ok(true)
  }
  None => Err(GapRepairFailureReason::NoExtensionMethod),

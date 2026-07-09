@@ -175,8 +175,8 @@ impl BooleanOp {
 
         // 鉁?OCCT-aligned: Build BOPDS_DS (data structure) from the two shapes
         // OCCT ref: BOPAlgo_PaveFiller::Perform 鈫?BOPDS_DS::Alloc
-        let a_t = a.to_topods();
-        let b_t = b.to_topods();
+        let a_t = a;
+        let b_t = b;
         let mut ds = DS::new_from_topods(&a_t, &b_t, self.tolerance.max(TOLERANCE_ABS));
 
         // 鉁?OCCT-aligned: Build BVH acceleration (optional in OCCT)
@@ -199,7 +199,7 @@ impl BooleanOp {
         let (t, bool_history) = builder.build_with_history()?;
 
         self.history = Some(bool_history);
-        self.result = Some(rcad_kernel::BRep::from_topods(&t));
+        self.result = Some((t).clone());
         Ok(self.result.as_ref().unwrap())
     }
 

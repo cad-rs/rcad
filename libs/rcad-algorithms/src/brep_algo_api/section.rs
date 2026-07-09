@@ -13,6 +13,7 @@
 //! ```
 //! use rcad_algorithms::brep_algo_api::section::Section;
 //! use rcad_kernel::PrimitiveSolid;
+use rcad_kernel::PCurve;
 //!
 //! let a = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
 //! let b = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 3.0 });
@@ -31,6 +32,7 @@ use crate::pave_filler::PaveFiller;
 use crate::tolerance::TOLERANCE_ABS;
 use rcad_kernel::geom::Curve3;
 use rcad_kernel::topology::{Edge, Vertex};
+use rcad_kernel::topology::Face;
 use rcad_kernel::topods;
 use rcad_kernel::geom::Line3;
 
@@ -145,8 +147,8 @@ impl Section {
         let b = self.ensure_geometry(&self.shape_b);
 
         // 鉁?OCCT-aligned: Build BOPDS_DS
-        let a_t = a.to_topods();
-        let b_t = b.to_topods();
+        let a_t = a;
+        let b_t = b;
         let mut ds = DS::new_from_topods(&a_t, &b_t, TOLERANCE_ABS);
 
         // 鉁?OCCT-aligned: Build BVH for acceleration

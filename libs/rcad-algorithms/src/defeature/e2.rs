@@ -143,7 +143,7 @@ pub fn defeature_brep(
                 }
                 match make_fill_cylinder(feature, margin) {
                     Ok(fill) => {
-                        let fill_old = rcad_kernel::BRep::from_topods(&fill);
+                        let fill_old = (fill).clone();
                         let result = if options.enable_retry {
                             try_boolean_with_retry(
                                 BooleanOpType::Union,
@@ -155,7 +155,7 @@ pub fn defeature_brep(
                             )
                         } else {
                             boolean_op(BooleanOpType::Union, &current, &fill_old)
-                                .map(|b| (rcad_kernel::BRep::from_topods(&b), false))
+                                .map(|b| ((b).clone(), false))
                         };
                         match result {
                             Ok((new_brep, retried)) => {
@@ -180,7 +180,7 @@ pub fn defeature_brep(
                 }
                 match make_boss_cylinder(feature, margin) {
                     Ok(boss) => {
-                        let boss_old = rcad_kernel::BRep::from_topods(&boss);
+                        let boss_old = (boss).clone();
                         let result = if options.enable_retry {
                             try_boolean_with_retry(
                                 BooleanOpType::Difference,
@@ -192,7 +192,7 @@ pub fn defeature_brep(
                             )
                         } else {
                             boolean_op(BooleanOpType::Difference, &current, &boss_old)
-                                .map(|b| (rcad_kernel::BRep::from_topods(&b), false))
+                                .map(|b| ((b).clone(), false))
                         };
                         match result {
                             Ok((new_brep, retried)) => {
@@ -229,7 +229,7 @@ pub fn defeature_brep(
             // A proper implementation would construct a conical solid.
             match make_fill_cone(feature, options.fill_margin) {
                 Ok(fill) => {
-                    let fill_old = rcad_kernel::BRep::from_topods(&fill);
+                    let fill_old = (fill).clone();
                     let result = if options.enable_retry {
                         try_boolean_with_retry(
                             BooleanOpType::Union,
@@ -241,7 +241,7 @@ pub fn defeature_brep(
                         )
                     } else {
  boolean_op(BooleanOpType::Union, &current, &fill_old)
-                                .map(|b| (rcad_kernel::BRep::from_topods(&b), false))
+                                .map(|b| ((b).clone(), false))
                     };
                     match result {
                         Ok((new_brep, retried)) => {
@@ -266,8 +266,8 @@ pub fn defeature_brep(
     // -- Post-defeature healing ---------------------------------------------
     if options.run_post_healing {
         let (healed_t, heal_report) =
-            make_connected_enhanced(&current.to_topods(), options.healing_tolerance, 3);
-        current = rcad_kernel::BRep::from_topods(&healed_t);
+            make_connected_enhanced(&current, options.healing_tolerance, 3);
+        current = (healed_t).clone();
         report.healing_performed = true;
         report.healing_vertices_merged = heal_report.vertices_merged;
         report.healing_small_edges_removed = heal_report.small_edges_removed;
@@ -290,7 +290,7 @@ fn try_boolean_with_retry(
 ) -> Result<(rcad_kernel::BRep, bool), crate::BooleanError> {
     // First attempt with default fuzzy tolerance.
     match boolean_op(op, a, b) {
-        Ok(result) => Ok((rcad_kernel::BRep::from_topods(&result), false)),
+        Ok(result) => Ok(((result).clone(), false)),
         Err(first_err) => {
             // Build retry ladder based on multiplier.
             let ladder: Vec<f64> = (1..=max_retries)
@@ -588,7 +588,7 @@ fn process_feature_group(
             };
 
             if let Ok(fill) = fill_result {
-                let fill_old = rcad_kernel::BRep::from_topods(&fill);
+                let fill_old = (fill).clone();
                 let op = if feature.is_hole {
                     BooleanOpType::Union
                 } else {
@@ -611,7 +611,7 @@ fn process_feature_group(
                     boolean_op_robust(op, &current, &fill_old, robust_opts)
                         .map(|(b, _)| b)
                 } else {
-                    boolean_op(op, &current, &fill_old).map(|b| rcad_kernel::BRep::from_topods(&b))
+                    boolean_op(op, &current, &fill_old).map(|b| (b).clone())
                 };
 
                 match result {
@@ -649,7 +649,7 @@ fn process_feature_group(
         if let Some(feature) = conical_features.get(idx) {
             if feature.is_hole {
                 if let Ok(fill) = make_fill_cone(feature, margin) {
-                    let fill_old = rcad_kernel::BRep::from_topods(&fill);
+                    let fill_old = (fill).clone();
                     if boolean_op(BooleanOpType::Union, &current, &fill_old).is_ok() {
                         report.base.conical_features_removed += 1;
                     }

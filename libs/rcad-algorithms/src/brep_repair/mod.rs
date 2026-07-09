@@ -20,6 +20,7 @@
 use std::sync::Arc;
 use glam::DVec3;
 use rcad_kernel::topods;
+use rcad_kernel::PCurve;
 use rcad_kernel::topods::{BRep, ShapeRef, TShape, Orientation, TVertexData, TEdgeData, TFaceData, TShellData, TSolidData, TWireData};
 use rcad_kernel::CurveEval;
 use rcad_kernel::Curve2dEval;
@@ -1771,7 +1772,7 @@ fn edges_similar_geometry(brep: &rcad_kernel::BRep, e1: usize, e2: usize, tol: f
 pub fn merge_close_vertices_topods(brep: &topods::BRep, tolerance: f64) -> (topods::BRep, usize) {
     let old = rcad_kernel::BRep::from_topods_with_location(brep, glam::DAffine3::IDENTITY);
     let (result, merged) = merge_close_vertices(&old, tolerance);
-    (result.to_topods(), merged)
+    (result, merged)
 }
 
 /// Enhanced make-connected with edge sewing.
@@ -1783,7 +1784,7 @@ pub fn merge_close_vertices_topods(brep: &topods::BRep, tolerance: f64) -> (topo
 pub fn make_connected_enhanced(brep: &topods::BRep, tolerance: f64, max_passes: usize) -> (topods::BRep, MakeConnectedReport) {
  let old = rcad_kernel::BRep::from_topods_with_location(brep, glam::DAffine3::IDENTITY);
  let (result, report) = make_connected_enhanced_old(&old, tolerance, max_passes);
- (result.to_topods(), report)
+ (result, report)
 }
 
 /// Legacy: takes old BRep.

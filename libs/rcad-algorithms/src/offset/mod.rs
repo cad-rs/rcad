@@ -48,6 +48,7 @@ use rcad_kernel::{
  geom::{Curve3, Surface3, Line3, Plane, Circle3, Ellipse3, Parabola3, Hyperbola3, CylindricalSurface, SphericalSurface, ConicalSurface, ToroidalSurface, OffsetSurface},
  topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge},
 };
+use rcad_kernel::PCurve;
 use crate::tolerance::*;
 use crate::inttools::cone_cone::{ConeConeResult, intersect_cone_cone};
 use crate::inttools::cylinder_cone::{CylinderConeResult, intersect_cylinder_cone};

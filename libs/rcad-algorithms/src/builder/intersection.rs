@@ -1,5 +1,6 @@
 ﻿use glam::DVec2;
 use rcad_kernel::geom::*;
+use rcad_kernel::PCurve;
 use super::curve_tools::*;
 use super::intres2d::*;
 

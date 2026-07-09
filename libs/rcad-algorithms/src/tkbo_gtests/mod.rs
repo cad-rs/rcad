@@ -124,21 +124,21 @@ mod bop_algo_direct_tests {
     use crate::BooleanOpType;
 
     fn perform_bop(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep, op: BooleanOpType) -> rcad_kernel::BRep {
-        rcad_kernel::BRep::from_topods(&crate::boolean_op(op, a, b).expect("BOP operation failed"))
+        (crate::boolean_op(op, a, b).clone().expect("BOP operation failed"))
     }
 
     #[test]
     fn direct_cut_sphere_minus_box() {
-        let sphere_b = rcad_kernel::BRep::from_topods(&make_unit_sphere());
-        let box_b = rcad_kernel::BRep::from_topods(&make_unit_box());
+        let sphere_b = (make_unit_sphere().clone());
+        let box_b = (make_unit_box().clone());
         let result = perform_bop(&sphere_b, &box_b, BooleanOpType::Difference);
         assert!(get_surface_area(&result) > 0.0);
     }
 
     #[test]
     fn direct_fuse_sphere_plus_box() {
-        let sphere_b = rcad_kernel::BRep::from_topods(&make_unit_sphere());
-        let box_b = rcad_kernel::BRep::from_topods(&make_unit_box());
+        let sphere_b = (make_unit_sphere().clone());
+        let box_b = (make_unit_box().clone());
         let result = perform_bop(&sphere_b, &box_b, BooleanOpType::Union);
         let vol = get_volume(&result);
         assert!(vol > get_volume(&sphere_b));
@@ -147,16 +147,16 @@ mod bop_algo_direct_tests {
 
     #[test]
     fn direct_common_overlapping_boxes() {
-        let b1 = rcad_kernel::BRep::from_topods(&make_box(DVec3::ZERO, 2.0, 2.0, 2.0));
-        let b2 = rcad_kernel::BRep::from_topods(&make_box(DVec3::new(1.0, 1.0, 1.0), 2.0, 2.0, 2.0));
+        let b1 = (make_box(DVec3::ZERO, 2.0, 2.0, 2.0).clone());
+        let b2 = (make_box(DVec3::new(1.0, 1.0, 1.0).clone(), 2.0, 2.0, 2.0));
         let result = perform_bop(&b1, &b2, BooleanOpType::Intersection);
         validate_result(&result, -1.0, 1.0, false);
     }
 
     #[test]
     fn direct_tuc_identical_boxes() {
-        let b1 = rcad_kernel::BRep::from_topods(&make_box(DVec3::ZERO, 1.0, 1.0, 1.0));
-        let b2 = rcad_kernel::BRep::from_topods(&make_box(DVec3::ZERO, 1.0, 1.0, 1.0));
+        let b1 = (make_box(DVec3::ZERO, 1.0, 1.0, 1.0).clone());
+        let b2 = (make_box(DVec3::ZERO, 1.0, 1.0, 1.0).clone());
         let result = perform_bop(&b2, &b1, BooleanOpType::Difference);
         validate_result(&result, -1.0, -1.0, true);
     }
@@ -174,8 +174,8 @@ mod pave_filler_tests {
     fn fuse_cone_with_box_degenerated_edge() {
         let cone = make_cone(10.0, 20.0);
         let box_ = make_box(DVec3::new(-5.0, -5.0, 15.0), 10.0, 10.0, 10.0);
-        let cone_b = rcad_kernel::BRep::from_topods(&cone);
-        let box_b = rcad_kernel::BRep::from_topods(&box_);
+        let cone_b = (cone).clone();
+        let box_b = (box_).clone();
 
         let mut fuser = crate::brep_algo_api::BRepAlgoAPI_Fuse::new(&cone_b, &box_b);
         assert!(fuser.build(), "Boolean fuse of cone and box should succeed");
@@ -184,8 +184,8 @@ mod pave_filler_tests {
 
     #[test]
     fn fuse_sphere_with_box() {
-        let sphere_b = rcad_kernel::BRep::from_topods(&make_unit_sphere());
-        let box_b = rcad_kernel::BRep::from_topods(&make_unit_box());
+        let sphere_b = (make_unit_sphere().clone());
+        let box_b = (make_unit_box().clone());
 
         let mut fuser = crate::brep_algo_api::BRepAlgoAPI_Fuse::new(&sphere_b, &box_b);
         assert!(fuser.build(), "Boolean fuse should succeed");
@@ -256,8 +256,8 @@ mod bop_common_simple_tests {
 
     #[test]
     fn identical_boxes_a1() {
-        let b1 = rcad_kernel::BRep::from_topods(&make_box(DVec3::ZERO, 1.0, 1.0, 1.0));
-        let b2 = rcad_kernel::BRep::from_topods(&make_box(DVec3::ZERO, 1.0, 1.0, 1.0));
+        let b1 = (make_box(DVec3::ZERO, 1.0, 1.0, 1.0).clone());
+        let b2 = (make_box(DVec3::ZERO, 1.0, 1.0, 1.0).clone());
 
         let mut common = crate::brep_algo_api::BRepAlgoAPI_Common::new(&b1, &b2);
         assert!(common.build(), "Common operation should succeed");

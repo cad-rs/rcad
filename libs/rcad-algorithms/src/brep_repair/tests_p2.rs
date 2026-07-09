@@ -225,6 +225,8 @@
  #[test]
  fn detect_duplicate_faces_with_duplicates() {
  use rcad_kernel::topology::{Edge, Face, Shell, Solid, Wire, WireEdge};
+use rcad_kernel::topology::Face;
+use rcad_kernel::PCurve;
 
  // Create a brep with two identical faces
  let mut brep = rcad_kernel::BRep::new();

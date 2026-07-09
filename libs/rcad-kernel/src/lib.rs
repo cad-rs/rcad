@@ -288,6 +288,12 @@ pub struct GeomStore {
  pub edge_vertex_params: Vec<Option<[f64; 2]>>,
 }
 
+impl GeomStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 /// Main BRep type — alias for the OCCT-aligned `topods::BRep`.
 pub use topods::BRep;
 

@@ -9,6 +9,7 @@ use crate::builder::SourceSide;
 use crate::builder::{hash_point, curve_eq};
 use crate::triangulate::{triangulate_polygon, triangulate_polygon_with_holes};
 use rcad_kernel::topology::*;
+use rcad_kernel::topology::Face;
 
 /// Builds result BRep from accumulated DS face data.
 ///
@@ -1324,4 +1325,4 @@ impl ResultBuilder {
  source_history: Vec::new(),
  }
  }
-}
+}

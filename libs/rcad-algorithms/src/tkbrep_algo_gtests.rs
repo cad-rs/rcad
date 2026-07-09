@@ -13,19 +13,19 @@ const TOL: f64 = 1e-6;
 fn make_unit_box() -> rcad_kernel::BRep {
     let t = rcad_modeling::make_box_brep(DVec3::ZERO, DVec3::X, DVec3::Y, 1.0, 1.0, 1.0)
         .expect("unit box");
-    rcad_kernel::BRep::from_topods(&t)
+    (t).clone()
 }
 
 fn make_box_at(origin: DVec3, size: f64) -> rcad_kernel::BRep {
     let t = rcad_modeling::make_box_brep(origin, DVec3::X, DVec3::Y, size, size, size)
         .expect("box");
-    rcad_kernel::BRep::from_topods(&t)
+    (t).clone()
 }
 
 fn make_cylinder_brep(radius: f64, height: f64) -> rcad_kernel::BRep {
     let t = rcad_modeling::make_cylinder_brep(DVec3::ZERO, DVec3::Z, DVec3::X, radius, height)
         .expect("cylinder");
-    rcad_kernel::BRep::from_topods(&t)
+    (t).clone()
 }
 
 // =============================================================================

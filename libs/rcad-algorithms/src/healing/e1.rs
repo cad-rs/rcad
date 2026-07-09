@@ -199,7 +199,7 @@ impl HealingReport {
 pub fn analyze_and_heal(brep: &topods::BRep, options: HealingOptions) -> (topods::BRep, HealingReport) {
     let old = rcad_kernel::BRep::from_topods_with_location(brep, glam::DAffine3::IDENTITY);
     let (healed, report) = analyze_and_heal_old(&old, options);
-    (healed.to_topods(), report)
+    (healed, report)
 }
 
 /// Legacy: takes old BRep. Internal implementation.
@@ -514,8 +514,8 @@ fn has_parametric_issues(brep: &rcad_kernel::BRep, tolerance: f64) -> bool {
 
 /// Convenience wrapper using default options.
 pub fn heal(brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, HealingReport) {
-    let (t, report) = analyze_and_heal(&brep.to_topods(), HealingOptions::default());
-    (rcad_kernel::BRep::from_topods(&t), report)
+    let (t, report) = analyze_and_heal(&brep, HealingOptions::default());
+    ((t).clone(), report)
 }
 
 /// Execute a ShapeProcess-like custom operator chain.
@@ -1115,6 +1115,7 @@ fn fix_sliver_faces(brep: &rcad_kernel::BRep, max_aspect_ratio: f64) -> (rcad_ke
 /// Returns (modified BRep, count of edges processed).
 fn fix_non_manifold(brep: &rcad_kernel::BRep, _tolerance: f64) -> (rcad_kernel::BRep, usize) {
     use rcad_kernel::BRepGraph;
+use rcad_kernel::PCurve;
 
     let graph = BRepGraph::from_brep(brep);
     let summary = graph.non_manifold_summary();

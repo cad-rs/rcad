@@ -55,7 +55,7 @@ pub struct TopoGraph {
 
 impl TopoGraph {
     pub fn from_brep(brep: &topods::BRep) -> Self {
-        let old = rcad_kernel::BRep::from_topods(brep);
+        let old = brep;
         Self::from_old_brep(&old)
     }
 

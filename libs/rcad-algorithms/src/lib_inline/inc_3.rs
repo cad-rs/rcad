@@ -305,7 +305,7 @@ fn brep_operand_for_compound_solid(full: &rcad_kernel::BRep, solid: &rcad_kernel
  .iter()
  .position(|s| std::ptr::eq(s, solid))
  .or_else(|| {
- full.flatten_to_solids()
+ full
  .iter()
  .position(|&s| std::ptr::eq(s, solid))
  })
@@ -322,8 +322,8 @@ fn brep_operand_for_compound_solid(full: &rcad_kernel::BRep, solid: &rcad_kernel
 /// For difference operations, each solid from A is subtracted by all solids from B.
 /// For intersection operations, each solid from A is intersected with all solids from B.
 pub fn boolean_op_compound(op: BooleanOpType, a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
- let a_solids = a.flatten_to_solids();
- let b_solids = b.flatten_to_solids();
+ let a_solids = a;
+ let b_solids = b;
 
  if a_solids.is_empty() && b_solids.is_empty() {
  return Ok(rcad_kernel::BRep::default());
@@ -364,7 +364,7 @@ pub fn boolean_op_compound(op: BooleanOpType, a: &rcad_kernel::BRep, b: &rcad_ke
  let mut acc = brep_operand_for_compound_solid(a, solid_a);
  for solid_b in &b_solids {
  let brep_b = brep_operand_for_compound_solid(b, solid_b);
- let t = boolean_op(BooleanOpType::Difference, &acc, &brep_b)?; acc = rcad_kernel::BRep::from_topods(&t);
+ let t = boolean_op(BooleanOpType::Difference, &acc, &brep_b)?; acc = (t).clone();
  }
  results.push(acc);
  }
@@ -385,7 +385,7 @@ pub fn boolean_op_compound(op: BooleanOpType, a: &rcad_kernel::BRep, b: &rcad_ke
  let brep_b = brep_operand_for_compound_solid(b, solid_b);
 
  if let Ok(t) = boolean_op(BooleanOpType::Intersection, &brep_a, &brep_b) {
- let result = rcad_kernel::BRep::from_topods(&t);
+ let result = (t).clone();
  if !result.solids.is_empty() {
  results.push(result);
  }
@@ -533,8 +533,8 @@ pub fn boolean_op_compound_with_options(
  b: &rcad_kernel::BRep,
  options: BooleanOptions,
 ) -> Result<(rcad_kernel::BRep, BooleanExecutionReport), BooleanError> {
- let a_solids = a.flatten_to_solids();
- let b_solids = b.flatten_to_solids();
+ let a_solids = a;
+ let b_solids = b;
 
  if a_solids.is_empty() && b_solids.is_empty() {
  return Ok((rcad_kernel::BRep::default(), BooleanExecutionReport::default()));
@@ -655,7 +655,7 @@ pub fn boolean_op_compound_with_options(
 ///
 /// This is equivalent to a general fuse operation on the compound's constituents.
 pub fn fuse_compound(compound: &rcad_kernel::BRep) -> Result<rcad_kernel::BRep, BooleanError> {
- let solids = compound.flatten_to_solids();
+ let solids = compound;
  if solids.is_empty() {
  return Err(BooleanError::EmptyInput);
  }
@@ -897,6 +897,7 @@ pub fn unify_same_domain_faces_with_origins(
 pub fn occt_fill_same_domain_faces(brep: &rcad_kernel::BRep) -> (rcad_kernel::BRep, usize) {
  use std::collections::{BTreeSet, HashMap, HashSet};
  use rcad_kernel::geom::Surface3;
+use rcad_kernel::PCurve;
 
  if !brep.has_solids() {
  return (brep.clone(), 0);
@@ -1395,6 +1396,7 @@ pub fn occt_merge_same_surface_faces(brep: &rcad_kernel::BRep) -> (rcad_kernel::
  // )。rcad �?DFS  , �?edge �?forward flag  ,
  // �? �?OCCT  �?
  use rcad_kernel::topology::WireEdge;
+use rcad_kernel::topology::Face;
  let ow = rcad_kernel::topology::Wire { edges: ol.iter().map(|&(ei,f)| WireEdge{idx:ei,forward:f}).collect() };
  let iws: Vec<rcad_kernel::topology::Wire> = loops.iter().map(|lp| rcad_kernel::topology::Wire { edges: lp.iter().map(|&(ei,f)| WireEdge{idx:ei,forward:f}).collect() }).collect();
  let nm = out.solids[si].shells[shi].faces[g[0]].normal;

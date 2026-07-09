@@ -33,6 +33,10 @@ use std::f64::consts::PI;
 use crate::inttools::{
     intersect_surfaces_with_density_tol, SurfaceCurve, SurfaceIntersectionResult,
 };
+use crate::inttools::plane_plane::PlanePlaneResult;
+use crate::inttools::plane_cylinder::PlaneCylinderResult;
+use crate::inttools::plane_sphere::PlaneSphereResult;
+use crate::inttools::plane_cone::PlaneConicalResult;
 use crate::tolerance::{
     intss_geom_tol_floor,
     max_face_tolerance_or_abs_pair,

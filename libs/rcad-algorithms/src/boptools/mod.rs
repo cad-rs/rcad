@@ -6,6 +6,7 @@
 use glam::DVec2;
 use glam::DVec3;
 use rcad_kernel::geom::{Curve2d, Curve2dEval, Curve3, CurveEval, Line2d, Circle2d, Surface3};
+use rcad_kernel::PCurve;
 use rcad_kernel::topods;
 use crate::bopds::ds::DS;
 use crate::classify::Classification;

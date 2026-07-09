@@ -25,6 +25,7 @@ use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::geom::{Curve3, Line3, Surface3};
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+use rcad_kernel::topology::Face;
 use rcad_kernel::topods;
 use std::collections::HashMap;
 
@@ -1243,11 +1244,11 @@ fn rotate_vector_around_axis(v: DVec3, axis: DVec3, angle: f64) -> DVec3 {
 // ── Topods-native wrappers ──
 
 pub fn draft_solid_topods(brep: &topods::BRep, params: &DraftParams) -> Result<topods::BRep, DraftError> {
- let old = rcad_kernel::BRep::from_topods(brep);
- draft_solid(&old, params).map(|b| b.to_topods())
+ let old = brep;
+ draft_solid(&old, params).map(|b| b)
 }
 
 pub fn draft_solid_advanced_topods(brep: &topods::BRep, params: &DraftParamsAdvanced) -> Result<topods::BRep, DraftError> {
- let old = rcad_kernel::BRep::from_topods(brep);
- draft_solid_advanced(&old, params).map(|b| b.to_topods())
+ let old = brep;
+ draft_solid_advanced(&old, params).map(|b| b)
 }

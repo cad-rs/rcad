@@ -72,8 +72,8 @@ impl DistShapeShape {
     pub fn perform(&mut self) {
         let Some(ref s1) = self.shape1 else { return };
         let Some(ref s2) = self.shape2 else { return };
-        let old1 = rcad_kernel::BRep::from_topods(s1);
-        let old2 = rcad_kernel::BRep::from_topods(s2);
+        let old1 = s1;
+        let old2 = s2;
         let (dist, p1, p2) = distance_brep_brep(&old1, &old2);
         self.distance = dist;
         self.pt1 = p1;

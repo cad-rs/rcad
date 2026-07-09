@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use indexmap::IndexMap;
 use glam::DVec2; use glam::DVec3;
 use rcad_kernel::geom::*;
+use rcad_kernel::PCurve;
 use crate::bopds::ds::*; use crate::tolerance::*;
 use super::angle_2d::{dir_to_angle, angle_2d, clock_wise_angle};
 use super::types::{WireSegment, WireFace, WireEdgeSource, WireOrientation};

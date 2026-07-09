@@ -1033,7 +1033,7 @@ where
 
     // Build the fill solid
     let fill_brep = feature.to_fill_brep();
-    let fill_old = rcad_kernel::BRep::from_topods(&fill_brep);
+    let fill_old = (fill_brep).clone();
 
     // Perform the boolean operation
     let result = if feature.is_removal_by_union() {
@@ -1043,7 +1043,7 @@ where
     };
 
     let mut result_brep = match result {
-        Ok(b) => rcad_kernel::BRep::from_topods(&b),
+        Ok(b) => (b).clone(),
         Err(_) => return brep.clone(),
     };
 

@@ -87,7 +87,7 @@ pub fn shrunk_range(
 ) -> Option<[f64; 2]> {
     let [t1, t2] = t_range;
     // OCCT L117-120: if range < PConfusion → micro-edge
-    if (t2 - t1).abs() < rcad_kernel::tolerance::P_CONFUSION { return None; }
+    if (t2 - t1).abs() < rcad_kernel::tolerance::CONFUSION { return None; }
     // OCCT L129-142: aTolV = max(aTolV, aTolE) + Confusion
     let confusion = rcad_kernel::tolerance::CONFUSION;
     let a_tol_v1 = v1_tol.max(edge_tol) + confusion;
@@ -103,7 +103,7 @@ pub fn shrunk_range(
         (None, Some(l)) => (t1, l), (None, None) => return None,
     };
     // OCCT L152-155: if shrunk range < PConfusion → micro-edge
-    if the_first >= the_last || (the_last - the_first) < rcad_kernel::tolerance::P_CONFUSION { return None; }
+    if the_first >= the_last || (the_last - the_first) < rcad_kernel::tolerance::CONFUSION { return None; }
     Some([the_first, the_last])
 }
 

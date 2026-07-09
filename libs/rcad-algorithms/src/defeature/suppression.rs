@@ -804,7 +804,7 @@ pub fn suppress_feature_robust(
             };
             boolean_op_with_options(op, &current, fill_solid, fuzzy_opts)
         } else {
-            boolean_op(op, &current, fill_solid).map(|t| rcad_kernel::BRep::from_topods(&t))
+            boolean_op(op, &current, fill_solid).map(|t| (t).clone())
         };
 
         match result {
@@ -862,7 +862,7 @@ fn boolean_op_with_options(
         };
         boolean_op_robust(op, a, b, robust_opts).map(|(b, _)| b)
     } else {
-        boolean_op(op, a, b).map(|t| rcad_kernel::BRep::from_topods(&t))
+        boolean_op(op, a, b).map(|t| (t).clone())
     }
 }
 
@@ -1092,7 +1092,7 @@ pub fn defeature_brep_v2(
             };
 
             // Apply robust suppression
-            let fill_old = rcad_kernel::BRep::from_topods(&fill);
+            let fill_old = (fill).clone();
             let result = suppress_feature_robust(&current, &fill_old, feature.is_hole, &options.robustness);
 
             report.total_attempts += result.attempts;

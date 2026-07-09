@@ -11,6 +11,7 @@
 use crate::tolerance::*;
 use glam::DVec3;
 use rcad_kernel::topods;
+use rcad_kernel::PCurve;
 use rcad_kernel::topology;
 use rcad_kernel::geom::{any_perpendicular, Curve3, CurveEval, Surface3, SurfaceEval};
 use std::collections::HashMap;

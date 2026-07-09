@@ -3,6 +3,7 @@ use crate::tolerance::*;
 
 use glam::DVec3;
 use rcad_kernel::topods::{self, TShape};
+use rcad_kernel::PCurve;
 use rcad_kernel::geom::*;
 
 use crate::inttools::pcurve_derive::fallback_pcurve_by_projection;

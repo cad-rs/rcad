@@ -1277,6 +1277,87 @@ pub struct BRepBuilder {
     vertex_cache: Vec<[f64; 3]>,
 }
 
+
+// --- Backward-compat flat-index methods ---
+// These emulate the old brep.solids, brep.edges, brep.vertices, brep.geom access
+// for modules not yet migrated to the tshape-based API.
+impl BRep {
+    /// Return flat list of vertex points in tshape order.
+    pub fn vertices(&self) -> Vec<crate::Vertex> {
+        self.tshapes.iter().filter_map(|ts| {
+            if let TShape::Vertex(vd) = ts.as_ref() {
+                Some(crate::Vertex { point: vd.point })
+            } else { None }
+        }).collect()
+    }
+
+    /// Return flat list of edge topologies in tshape order (start/end are old-style vertex indices).
+    pub fn edges(&self) -> Vec<crate::topology::Edge> {
+        self.tshapes.iter().filter_map(|ts| {
+            if let TShape::Edge(ed) = ts.as_ref() {
+                Some(crate::topology::Edge { start: ed.first.index, end: ed.last.index })
+            } else { None }
+        }).collect()
+    }
+
+    /// Return flat list of solid topologies (materialized from tshapes).
+    pub fn solids(&self) -> Vec<crate::topology::Solid> {
+        let mut out = Vec::new();
+        for ts in &self.tshapes {
+            if let TShape::Solid(sd) = ts.as_ref() {
+                let mut shells = Vec::new();
+                for shell_sr in &sd.shells {
+                    if let TShape::Shell(shd) = &*self.tshapes[shell_sr.index] {
+                        let mut faces = Vec::new();
+                        for face_sr in &shd.faces {
+                            if let TShape::Face(fd) = &*self.tshapes[face_sr.index] {
+                                let outer_wire = {
+                                    let mut edges = Vec::new();
+                                    if let TShape::Wire(wd) = &*self.tshapes[fd.outer_wire.index] {
+                                        for esr in &wd.edges {
+                                            edges.push(crate::topology::WireEdge { idx: esr.index, forward: true });
+                                        }
+                                    }
+                                    crate::topology::Wire { edges }
+                                };
+                                let inner_wires = fd.inner_wires.iter().map(|iw_sr| {
+                                    let mut edges = Vec::new();
+                                    if let TShape::Wire(wd) = &*self.tshapes[iw_sr.index] {
+                                        for esr in &wd.edges {
+                                            edges.push(crate::topology::WireEdge { idx: esr.index, forward: true });
+                                        }
+                                    }
+                                    crate::topology::Wire { edges }
+                                }).collect();
+                                let normal = fd.surface.as_ref().map(|s| {
+                                    crate::geom::SurfaceEval::normal_at(s, 0.0, 0.0)
+                                }).unwrap_or_default();
+                                faces.push(crate::topology::Face {
+                                    outer_wire,
+                                    inner_wires,
+                                    normal,
+                                    triangles: Vec::new(),
+                                    sample_point: fd.sample_point,
+                                    mesh_dirty: true,
+                                    surface_idx: None,
+                                });
+                            }
+                        }
+                        shells.push(crate::topology::Shell { faces });
+                    }
+                }
+                out.push(crate::topology::Solid { shells });
+            }
+        }
+        out
+    }
+
+    /// Return old-style geom store (empty — geom now embedded in TShapes).
+    pub fn geom(&self) -> crate::GeomStore {
+        crate::GeomStore::new()
+    }
+}
+
 impl BRepBuilder {
     pub fn new() -> Self {
         Self { root: None, vertex_cache: Vec::new() }

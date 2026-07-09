@@ -65,6 +65,7 @@ fn unify_one_merge_pass_with_origins(brep: &mut rcad_kernel::BRep, face_origins:
         };
 
         use rcad_kernel::geom::Surface3;
+use rcad_kernel::PCurve;
         match (s1, s2) {
             (Surface3::Plane(p1), Surface3::Plane(p2)) => {
                 let n1 = p1.normal.normalize_or_zero();

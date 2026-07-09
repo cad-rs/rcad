@@ -786,7 +786,7 @@ impl ArgumentAnalyzer {
     fn check_single_self_interference(&self, shape: &rcad_kernel::BRep, is_shape1: bool) -> Option<CheckResult> {
         let mut checker = CheckerSI::new();
         checker.set_level_of_check(3); // OCCT: full check for self-interference
-        let topods_shape = shape.to_topods();
+        let topods_shape = shape;
         checker.perform(&topods_shape);
 
         if !checker.has_interferences() {

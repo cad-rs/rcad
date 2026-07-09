@@ -65,6 +65,7 @@ fn is_approximately_helical_on_cylinder(
     edge: &rcad_kernel::topology::Edge,
 ) -> bool {
     use rcad_kernel::geom::CurveEval;
+use rcad_kernel::PCurve;
 
     // Sample the curve and check if points lie on the cylinder surface
     // and the curve makes an angle with the axis

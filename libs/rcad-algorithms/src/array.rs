@@ -20,6 +20,7 @@ use rcad_kernel::geom::{
  ToroidalSurface, TrimmedSurface,
 };
 use rcad_kernel::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
+use rcad_kernel::topology::Face;
 
 /// Parameters for a linear pattern.
 #[derive(Debug, Clone)]

@@ -39,6 +39,7 @@
 use crate::tolerance::*;
 use glam::{DVec2, DVec3};
 use rcad_kernel::topods;
+use rcad_kernel::PCurve;
 use rcad_kernel::geom::{Curve2dEval, CurveEval, SurfaceEval};
 
 /// A single validity issue found during checking.
@@ -1339,7 +1340,7 @@ pub fn analyze_wire_issues(brep: &topods::BRep, tolerance: f64) -> WireAnalysisR
 #[cfg(test)]
 pub(crate) fn analyze_wire_issues_flat(brep: &rcad_kernel::BRep, tolerance: f64) -> WireAnalysisReport {
  // Reuse the topods implementation by converting
- analyze_wire_issues(&brep.to_topods(), tolerance)
+ analyze_wire_issues(&brep, tolerance)
 }
 
 /// Scan all edges in `brep` for SameParameter violations.
