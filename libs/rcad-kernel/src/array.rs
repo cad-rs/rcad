@@ -912,7 +912,7 @@ fn append_transformed_brep(
   let mut shell_refs = Vec::new();
   for sr in &sd.shells {
   if let topods::TShape::Shell(shd) = &*source.tshapes[sr.index] {
-   let mut face_refs = Vec::new();
+   let mut face_refs: Vec<topods::ShapeRef> = Vec::new();
    for fsr in &shd.faces {
    if let topods::TShape::Face(fd) = &*source.tshapes[fsr.index] {
     // Outer wire

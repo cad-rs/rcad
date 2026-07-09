@@ -1,4 +1,4 @@
-//! Topology query helpers — analogous to OCCT `TopExp_Explorer` and
+﻿//! Topology query helpers 鈥?analogous to OCCT `TopExp_Explorer` and
 //! `TopExp::MapShapesAndAncestors`.
 //!
 //! All functions operate on `topods::BRep` and use ShapeRef-based access.
@@ -9,7 +9,7 @@ use crate::topology::WireEdge;
 use crate::topods;
 
 /// Returns wire edges in order, keeping only the **first** occurrence of each
-/// `edge_idx` (semantic edge — one row per edge index in tree UIs).
+/// `edge_idx` (semantic edge 鈥?one row per edge index in tree UIs).
 ///
 /// Closed periodic faces often list the same seam edge twice (e.g. forward then
 /// reverse) so the boundary is closed; the duplicate [`WireEdge`] entries are
@@ -27,7 +27,7 @@ fn collect_vertex_indices(brep: &topods::BRep) -> Vec<usize> {
     brep.tshapes
         .iter()
         .enumerate()
-        .filter(|(_, ts)| matches!(&**ts, &topods::TShape::Vertex(_)))
+        .filter(|(_, ts)| matches!((&**ts).as_ref(), topods::TShape::Vertex(_)))
         .map(|(i, _)| i)
         .collect()
 }
@@ -37,7 +37,7 @@ fn collect_edge_indices(brep: &topods::BRep) -> Vec<usize> {
     brep.tshapes
         .iter()
         .enumerate()
-        .filter(|(_, ts)| matches!(&**ts, &topods::TShape::Edge(_)))
+        .filter(|(_, ts)| matches!((&**ts).as_ref(), topods::TShape::Edge(_)))
         .map(|(i, _)| i)
         .collect()
 }
@@ -47,7 +47,7 @@ fn collect_face_indices(brep: &topods::BRep) -> Vec<usize> {
     brep.tshapes
         .iter()
         .enumerate()
-        .filter(|(_, ts)| matches!(&**ts, &topods::TShape::Face(_)))
+        .filter(|(_, ts)| matches!((&**ts).as_ref(), topods::TShape::Face(_)))
         .map(|(i, _)| i)
         .collect()
 }
@@ -57,7 +57,7 @@ fn collect_solid_indices(brep: &topods::BRep) -> Vec<usize> {
     brep.tshapes
         .iter()
         .enumerate()
-        .filter(|(_, ts)| matches!(&**ts, &topods::TShape::Solid(_)))
+        .filter(|(_, ts)| matches!((&**ts).as_ref(), topods::TShape::Solid(_)))
         .map(|(i, _)| i)
         .collect()
 }
@@ -123,7 +123,7 @@ pub fn topological_vertex_count(brep: &topods::BRep) -> usize {
     vi.len()
 }
 
-/// Returns `true` if `edge_tshape_idx` is a degenerate edge — i.e. its start
+/// Returns `true` if `edge_tshape_idx` is a degenerate edge 鈥?i.e. its start
 /// and end vertices are the same point, or it is explicitly flagged degenerate.
 ///
 /// Analogous to `BRep_Tool::Degenerated(edge)` in OCCT.
@@ -139,7 +139,7 @@ pub fn is_degenerate_edge(brep: &topods::BRep, edge_tshape_idx: usize) -> bool {
     (vd_end.point - vd_start.point).length_squared() < 1e-20
 }
 
-/// Returns all edge tshape indices that are candidates for seam edges — edges
+/// Returns all edge tshape indices that are candidates for seam edges 鈥?edges
 /// whose start and end vertices are the same (or nearly the same) 3D point,
 /// but that are *not* flagged as degenerate.
 ///
@@ -212,3 +212,4 @@ pub fn salient_vertex_indices(brep: &topods::BRep) -> Vec<usize> {
         })
         .collect()
 }
+

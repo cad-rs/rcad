@@ -42,7 +42,7 @@ fn sample_wire_polyline_3d_with_n(brep: &topods::BRep, wire: &Wire, n: usize) ->
  use crate::geom::CurveEval;
  let mut pts = Vec::new();
  for we in &wire.edges {
- let edge = match brep.edges.get(we.idx) {
+ let edge = match brep.flat_edges().get(we.idx) {
  Some(e) => e,
  None => continue,
  };
@@ -1057,7 +1057,7 @@ fn bbox2d_components(uv: &[(f64, f64)]) -> Option<(f64, f64, f64, f64)> {
 /// vertex ring still traces the true boundary; comparing both shoelaces disambiguates that
 /// from legitimate concave faces (`bfuse_simple/D9` vs `bfuse_simple/E5`).
 fn wire_edge_endpoint_3d(brep: &BRep, we: &WireEdge) -> Option<DVec3> {
- let edge = brep.edges.get(we.idx)?;
+ let edge = brep.flat_edges().get(we.idx)?;
  // Use edge curve when available (handles degenerate edges where start==end
  // but curve spans the full distance between two different positions).
  if let Some(curve) = brep.geom.edge_curve.get(we.idx)
@@ -1077,7 +1077,7 @@ fn wire_edge_endpoint_3d(brep: &BRep, we: &WireEdge) -> Option<DVec3> {
  return Some(curve.point_at(t));
  }
  let vidx = if we.forward { edge.0 } else { edge.1 };
- Some(brep.vertex_point(vidx)?.point)
+ Some(brep.vertex_point(vidx)?)
 }
 
 fn outer_wire_ordered_vertex_uvs(
@@ -1124,7 +1124,7 @@ fn outer_wire_unique_vertex_uvs(
 ) -> Vec<(f64, f64)> {
  let mut out: Vec<(f64, f64)> = Vec::new();
  for we in &wire.edges {
- let Some(edge) = brep.edges.get(we.idx) else {
+ let Some(edge) = brep.flat_edges().get(we.idx) else {
  continue;
  };
  // Use edge curve endpoints when available (handles degenerate edges
@@ -1492,7 +1492,7 @@ fn try_planar_face_exact_contour_area(brep: &BRep, face: &Face, face_normal: DVe
  if w.edges.len() < 3 { continue; }
  // Compute hole area via dense-sampled polyline projection.
  let hole_pts: Vec<DVec3> = w.edges.iter().filter_map(|we| {
- let e = brep.edges.get(we.idx)?;
+ let e = brep.flat_edges().get(we.idx)?;
  let vi = if we.forward { e.start } else { e.end };
  brep.vertex_point(vi)
  }).collect();
@@ -1676,7 +1676,7 @@ fn try_boundary_convex_hull_area(
  // Collect unique vertex indices from wire edges
  let mut vert_indices: Vec<usize> = Vec::new();
  for we in &wire.edges {
- let edge = brep.edges.get(we.idx)?;
+ let edge = brep.flat_edges().get(we.idx)?;
  vert_indices.push(edge.0);
  vert_indices.push(edge.1);
  }
@@ -2601,7 +2601,7 @@ fn try_analytic_face_surface_area(
  // for valid planar faces with boolean-T-junction scrambled wires
  // or curves that the exact-contour handler cannot process.
  let pts: Vec<DVec3> = face.outer_wire.edges.iter().filter_map(|we| {
- let e = brep.edges.get(we.idx)?;
+ let e = brep.flat_edges().get(we.idx)?;
  let vi = if we.forward { e.start } else { e.end };
  brep.vertex_point(vi)
  }).collect();
@@ -2636,7 +2636,7 @@ fn try_analytic_face_surface_area(
  // (boolean T-junction wire reordering, bspline edge evaluation
  // noise from restrict_to_bspline).  The mesh vertices are exact.
  let pts: Vec<DVec3> = face.outer_wire.edges.iter().filter_map(|we| {
- let e = brep.edges.get(we.idx)?;
+ let e = brep.flat_edges().get(we.idx)?;
  let vi = if we.forward { e.start } else { e.end };
  brep.vertex_point(vi)
  }).collect();
@@ -3491,7 +3491,7 @@ fn estimate_uv_domain_from_wire(
  let pts: Vec<DVec3> = all_wires
  .flat_map(|w| &w.edges)
  .filter_map(|we| {
- let edge = brep.edges.get(we.idx)?;
+ let edge = brep.flat_edges().get(we.idx)?;
  let vidx = if we.forward { edge.0 } else { edge.1 };
  brep.vertex_point(vidx)
  })
@@ -3681,7 +3681,7 @@ fn face_triangles(
  // inter-edge duplicates that confuse earcut).  The fan-from-vertex-0
  // approach fills the convex hull, inflating volume for concave caps.
  let face_verts: Vec<DVec3> = face.outer_wire.edges.iter().filter_map(|we| {
- let edge = brep.edges.get(we.idx)?;
+ let edge = brep.flat_edges().get(we.idx)?;
  let vi = if we.forward { edge.0 } else { edge.1 };
  brep.vertex_point(vi)
  }).collect();
