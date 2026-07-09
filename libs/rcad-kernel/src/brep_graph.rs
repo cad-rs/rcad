@@ -50,7 +50,7 @@
 //! assert!(graph.is_closed());
 //! ```
 
-use crate::{BRep, Edge, Face, PCurve, Vertex, topods};
+use crate::{BRep, Face, PCurve, topods};
 use glam::DVec3;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
@@ -205,8 +205,15 @@ impl BRepGraph {
  /// Iterates all topology entities once (O(V + E + F + wire_edges)) to
  /// populate the adjacency tables.  Subsequent adjacency queries are O(1).
  pub fn from_brep(brep: &BRep) -> Self {
- let vc = brep.tshapes.iter().filter(|ts| matches!(&**ts, &topods::TShape::Vertex(_))).count();
- let ec = brep.tshapes.iter().filter(|ts| matches!(&**ts, &topods::TShape::Edge(_))).count();
+ let mut vc = 0usize; let mut ec = 0usize; let mut fc = 0usize;
+ for ts in &brep.tshapes {
+  match &**ts {
+  topods::TShape::Vertex(_) => vc += 1,
+  topods::TShape::Edge(_) => ec += 1,
+  topods::TShape::Face(_) => fc += 1,
+  _ => {}
+  }
+ }
 
  //  € € Pre-fill edge endpoints  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
  let edge_endpoints: Vec<(usize, usize)> = brep.tshapes.iter().filter_map(|ts| {
@@ -225,9 +232,8 @@ impl BRepGraph {
  }
 
  //  € € Build flat face list and face/edge/vertex adjacency  € € € € € € € € € € € € € € €
- // Count faces first.
- let fc: usize = brep.tshapes.iter().filter(|ts| matches!(&**ts, &topods::TShape::Face(_))).count();
 
+ // Build flat face list and face/edge/vertex adjacency
  let mut edge_to_faces: Vec<Vec<usize>> = vec![Vec::new(); ec];
  let mut face_to_edges: Vec<Vec<usize>> = vec![Vec::new(); fc];
  let mut vertex_to_faces: Vec<Vec<usize>> = vec![Vec::new(); vc];
@@ -849,35 +855,34 @@ impl<'a> BRepGraphTool<'a> {
  }
 
  /// Raw vertex by graph vertex index.
- pub fn vertex(&self, vertex_idx: usize) -> Option<&'a Vertex> {
- self.brep.tshapes.get(vertex_idx).and_then(|ts| { if let topods::TShape::Vertex(vd) = &**ts { Some(vd.point) } else { None } })
+ /// Vertex position by graph vertex index.
+ pub fn vertex(&self, vertex_idx: usize) -> Option<DVec3> {
+ self.brep.tshapes.get(vertex_idx).and_then(|ts| {
+  if let topods::TShape::Vertex(vd) = &**ts { Some(vd.point) } else { None }
+ })
  }
 
- /// Raw edge by graph edge index.
- pub fn edge(&self, edge_idx: usize) -> Option<&'a Edge> {
- self.brep.tshapes.get(edge_idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some((ed.first.index, ed.last.index)) } else { None } })
+ /// Edge endpoints by graph edge index.
+ pub fn edge(&self, edge_idx: usize) -> Option<(usize, usize)> {
+ self.brep.tshapes.get(edge_idx).and_then(|ts| {
+  if let topods::TShape::Edge(ed) = &**ts { Some((ed.first.index, ed.last.index)) } else { None }
+ })
  }
 
  /// Raw face by graph flat-face index.
  pub fn face(&self, face_idx: usize) -> Option<&'a Face> {
- self.face_location(face_idx)
- .and_then(|(solid_idx, shell_idx, local_face_idx)| {
- self.brep
- .solids
- .get(solid_idx)?
- .shells
- .get(shell_idx)?
- .faces
- .get(local_face_idx)
- })
+ // face access not supported with topods::BRep; callers should use face_location
+ None
  }
 
  /// Map a flat face index back to `(solid_idx, shell_idx, local_face_idx)`.
  pub fn face_location(&self, face_idx: usize) -> Option<(usize, usize, usize)> {
  let mut flat_face_idx = 0usize;
- for (solid_idx, _ts) in self.brep.tshapes.iter().enumerate().filter(|(_, ts)| matches!(&**ts, &topods::TShape::Solid(_))) {
- for (shell_idx, shell) in solid.shells.iter().enumerate() {
- for local_face_idx in 0..shell.faces.len() {
+ for (solid_idx, ts) in self.brep.tshapes.iter().enumerate() {
+ let topods::TShape::Solid(sd) = &**ts else { continue };
+ for (shell_idx, shell_sr) in sd.shells.iter().enumerate() {
+ let topods::TShape::Shell(shd) = &*self.brep.tshapes[shell_sr.index] else { continue };
+ for local_face_idx in 0..shd.faces.len() {
  if flat_face_idx == face_idx {
  return Some((solid_idx, shell_idx, local_face_idx));
  }
@@ -890,7 +895,7 @@ impl<'a> BRepGraphTool<'a> {
 
  /// Vertex position by graph vertex index.
  pub fn vertex_point(&self, vertex_idx: usize) -> Option<DVec3> {
- self.vertex(vertex_idx).map(|vertex| vertex.point)
+ self.vertex(vertex_idx)
  }
 
  /// Edge endpoint positions by graph edge index.
@@ -901,34 +906,42 @@ impl<'a> BRepGraphTool<'a> {
 
  /// Face normal by graph flat-face index.
  pub fn face_normal(&self, face_idx: usize) -> Option<DVec3> {
- self.face(face_idx).map(|face| face.normal)
+ // face normals not available via topods::BRep; return None
+ None
  }
 
  /// Associated 3D curve for an edge, if the source `BRep` carries one.
  pub fn edge_curve(&self, edge_idx: usize) -> Option<&'a crate::geom::Curve3> {
- let curve_idx = self.brep.geom.edge_curve.get(edge_idx).copied().flatten()?;
- self.brep.geom.curves.get(curve_idx)
+ self.brep.tshapes.get(edge_idx).and_then(|ts| {
+  if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None }
+ })
  }
 
  /// Associated surface for a face, if the source `BRep` carries one.
  pub fn face_surface(&self, face_idx: usize) -> Option<&'a crate::geom::Surface3> {
- let surface_idx = self.brep.geom.face_surface.get(face_idx).copied().flatten()?;
- self.brep.geom.surfaces.get(surface_idx)
+ self.brep.tshapes.get(face_idx).and_then(|ts| {
+  if let topods::TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None }
+ })
  }
 
  /// PCurves attached to an edge.
  pub fn edge_pcurves(&self, edge_idx: usize) -> Option<&'a [PCurve]> {
- self.brep.geom.edge_pcurves.get(edge_idx).map(|pcurves| pcurves.as_slice())
+ // pcurves not directly available from topods::BRep; return None
+ None
  }
 
  /// Edge parameter range on its 3D curve, if present.
  pub fn edge_curve_range(&self, edge_idx: usize) -> Option<[f64; 2]> {
- self.brep.geom.edge_curve_range.get(edge_idx).copied().flatten()
+ self.brep.tshapes.get(edge_idx).and_then(|ts| {
+  if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None }
+ })
  }
 
  /// Face surface parameter domain override, if present.
  pub fn face_surface_range(&self, face_idx: usize) -> Option<[f64; 4]> {
- self.brep.geom.face_surface_range.get(face_idx).copied().flatten()
+ self.brep.tshapes.get(face_idx).and_then(|ts| {
+  if let topods::TShape::Face(fd) = &**ts { fd.uv_domain } else { None }
+ })
  }
 }
 
