@@ -27,6 +27,8 @@ fn curve2d_domain(curve: &Curve2d) -> [f64; 2] {
         Curve2d::Bezier(_) => [0.0, 1.0],
         Curve2d::Trimmed(tc) => curve2d_domain(tc.curve.as_ref()),
         Curve2d::Offset(c) => curve2d_domain(c.basis.as_ref()),
+        Curve2d::AHTBezier(_) => [0.0, 1.0],
+        Curve2d::TBezier(c) => [0.0, std::f64::consts::PI / c.alpha],
     }
 }
 

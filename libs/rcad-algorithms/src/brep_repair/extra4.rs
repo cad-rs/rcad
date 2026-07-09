@@ -2004,7 +2004,7 @@ fn extend_pcurve_to_boundary(
  t_max: tc.t_max,
  }))
  }
- Curve2d::Parabola(_) | Curve2d::Hyperbola(_) | Curve2d::Offset(_) => None,
+ Curve2d::Parabola(_) | Curve2d::Hyperbola(_) | Curve2d::Offset(_) | Curve2d::AHTBezier(_) | Curve2d::TBezier(_) => None,
  }
 }
 

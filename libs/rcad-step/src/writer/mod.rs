@@ -2498,7 +2498,8 @@ impl Part21Writer {
  let vec = self.vector("pc_vec", dir, 1e-9);
  self.line("pcurve_line", p, vec)
  }
- Some(Curve2d::Parabola(_)) | Some(Curve2d::Hyperbola(_)) | Some(Curve2d::Offset(_)) => {
+ Some(Curve2d::Parabola(_)) | Some(Curve2d::Hyperbola(_)) | Some(Curve2d::Offset(_))
+ | Some(Curve2d::AHTBezier(_)) | Some(Curve2d::TBezier(_)) => {
  let p = self.cartesian_point_2d("pc_origin", [0.0, 0.0]);
  let dir = self.direction_2d("pc_dir", [1.0, 0.0]);
  let vec = self.vector("pc_vec", dir, 1e-9);

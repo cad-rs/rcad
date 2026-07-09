@@ -1,4 +1,4 @@
-﻿//! Analytic derivation of 2D parametric curves (PCurves) for surface-surface
+//! Analytic derivation of 2D parametric curves (PCurves) for surface-surface
 //! intersection results.
 //!
 //! Each function takes a 3D intersection curve together with surface geometry
@@ -796,7 +796,8 @@ pub fn is_curve_valid_2d(curve: &Curve2d) -> bool {
  | Curve2d::SineWave(_)
  | Curve2d::Parabola(_)
  | Curve2d::Hyperbola(_)
- | Curve2d::Offset(_) => true,
+ | Curve2d::Offset(_)
+ | Curve2d::AHTBezier(_) | Curve2d::TBezier(_) => true,
  // BSpline/Bezier: check polyline self-intersection
  Curve2d::BSpline(_) | Curve2d::Bezier(_) => {
  let pts = (0..100)

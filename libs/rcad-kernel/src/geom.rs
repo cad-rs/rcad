@@ -982,6 +982,43 @@ pub struct OffsetCurve2d {
     pub offset_distance: f64,
 }
 
+/// A 2D Algebraic-Hyperbolic-Trigonometric (AHT) Bezier curve.
+///
+/// Basis functions: `{1, t, ..., t^k, sinh(α·t), cosh(α·t), sin(β·t), cos(β·t)}`
+/// where `k = alg_degree`. OCCT equivalent: `Geom2dEval_AHTBezierCurve`.
+///
+/// Number of poles = `alg_degree + 1 + (alpha > 0 ? 2 : 0) + (beta > 0 ? 2 : 0)`.
+/// Domain is `[0, 1]`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AHTBezierCurve2 {
+    pub control_points: Vec<DVec2>,
+    /// Homogeneous weights; empty for non-rational.
+    pub weights: Vec<f64>,
+    /// Algebraic degree k (polynomial part `{1, t, ..., t^k}`).
+    pub alg_degree: usize,
+    /// Hyperbolic coefficient α (0 = no hyperbolic terms).
+    pub alpha: f64,
+    /// Trigonometric coefficient β (0 = no trigonometric terms).
+    pub beta: f64,
+}
+
+/// A 2D Trigonometric Bezier (T-Bezier) curve.
+///
+/// Basis functions: `{1, cos(t), sin(t), cos(2·t), sin(2·t), ..., cos(n·t), sin(n·t)}`
+/// where `n = order`. OCCT equivalent: `Geom2dEval_TBezierCurve`.
+///
+/// Number of poles = `2·order + 1`. Domain is `[0, π/α]`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TBezierCurve2 {
+    pub control_points: Vec<DVec2>,
+    /// Homogeneous weights; empty for non-rational.
+    pub weights: Vec<f64>,
+    /// Order n (trigonometric degree).
+    pub order: usize,
+    /// Frequency-scaling factor α (> 0). Domain = `[0, π/α]`.
+    pub alpha: f64,
+}
+
 /// A curve defined in the 2D parameter space (u, v) of a surface.
 ///
 /// Used for PCurves: the image of a 3D edge on the parameter domain of an
@@ -1010,6 +1047,12 @@ pub enum Curve2d {
     ///
     /// Analogous to OCCT `Geom2d_OffsetCurve`.
     Offset(OffsetCurve2d),
+    /// Algebraic-Hyperbolic-Trigonometric Bezier curve (AHT Bezier).
+    /// OCCT equivalent: `Geom2dEval_AHTBezierCurve`.
+    AHTBezier(AHTBezierCurve2),
+    /// Trigonometric Bezier curve (T-Bezier).
+    /// OCCT equivalent: `Geom2dEval_TBezierCurve`.
+    TBezier(TBezierCurve2),
 }
 
 /// Returns a vector perpendicular to `v`. Stable for any non-zero input.
@@ -2584,6 +2627,8 @@ impl Curve2dEval for Curve2d {
             Curve2d::BSpline(c) => c.point_at(t),
             Curve2d::Bezier(c) => c.point_at(t),
             Curve2d::Offset(c) => c.point_at(t),
+            Curve2d::AHTBezier(c) => c.point_at(t),
+            Curve2d::TBezier(c) => c.point_at(t),
         }
     }
     fn tangent_at(&self, t: f64) -> DVec2 {
@@ -2601,6 +2646,8 @@ impl Curve2dEval for Curve2d {
             Curve2d::BSpline(c) => c.tangent_at(t),
             Curve2d::Bezier(c) => c.tangent_at(t),
             Curve2d::Offset(c) => c.tangent_at(t),
+            Curve2d::AHTBezier(c) => c.derivative_at(t).normalize_or_zero(),
+            Curve2d::TBezier(c) => c.derivative_at(t).normalize_or_zero(),
         }
     }
     fn derivative_at(&self, t: f64) -> DVec2 {
@@ -2618,6 +2665,8 @@ impl Curve2dEval for Curve2d {
             Curve2d::BSpline(c) => c.derivative_at(t),
             Curve2d::Bezier(c) => c.derivative_at(t),
             Curve2d::Offset(c) => c.derivative_at(t),
+            Curve2d::AHTBezier(c) => c.derivative_at(t),
+            Curve2d::TBezier(c) => c.derivative_at(t),
         }
     }
     fn default_domain(&self) -> [f64; 2] {
@@ -2637,6 +2686,8 @@ impl Curve2dEval for Curve2d {
             }
             Curve2d::Bezier(_) => [0.0, 1.0],
             Curve2d::Offset(c) => c.basis.default_domain(),
+            Curve2d::AHTBezier(_) => [0.0, 1.0],
+            Curve2d::TBezier(c) => [0.0, std::f64::consts::PI / c.alpha],
         }
     }
 }
@@ -2691,6 +2742,92 @@ impl Curve2dEval for OffsetCurve2d {
         // Left normal: Rot90(tangent)
         let normal = DVec2::new(-tangent.y, tangent.x);
         base_pt + self.offset_distance * normal
+    }
+}
+
+fn aht_basis_values(t: f64, alg_deg: usize, alpha: f64, beta: f64) -> Vec<f64> {
+    // Basis: {1, t, ..., t^k, sinh(αt), cosh(αt), sin(βt), cos(βt)}
+    let mut basis = Vec::new();
+    // Polynomial part: 1, t, t^2, ..., t^k
+    let mut tp = 1.0;
+    for _ in 0..=alg_deg {
+        basis.push(tp);
+        tp *= t;
+    }
+    // Hyperbolic part: sinh(αt), cosh(αt)
+    if alpha > 0.0 {
+        let a = alpha * t;
+        basis.push(a.sinh());
+        basis.push(a.cosh());
+    }
+    // Trigonometric part: sin(βt), cos(βt)
+    if beta > 0.0 {
+        let b = beta * t;
+        basis.push(b.sin());
+        basis.push(b.cos());
+    }
+    basis
+}
+
+impl Curve2dEval for AHTBezierCurve2 {
+    fn point_at(&self, t: f64) -> DVec2 {
+        let basis = aht_basis_values(t, self.alg_degree, self.alpha, self.beta);
+        let n = self.control_points.len().min(basis.len());
+        if self.weights.is_empty() {
+            // Non-rational: straight sum
+            let mut pt = DVec2::ZERO;
+            for i in 0..n {
+                pt += self.control_points[i] * basis[i];
+            }
+            pt
+        } else {
+            // Rational: weighted sum / weight sum
+            let mut pt = DVec2::ZERO;
+            let mut wsum = 0.0;
+            for i in 0..n {
+                let w = if i < self.weights.len() { self.weights[i] } else { 1.0 };
+                pt += self.control_points[i] * (w * basis[i]);
+                wsum += w * basis[i];
+            }
+            if wsum.abs() > 1e-15 { pt / wsum } else { pt }
+        }
+    }
+    fn default_domain(&self) -> [f64; 2] { [0.0, 1.0] }
+}
+
+impl Curve2dEval for TBezierCurve2 {
+    fn point_at(&self, t: f64) -> DVec2 {
+        // Basis: {1, cos(αt), sin(αt), cos(2αt), sin(2αt), ..., cos(n·αt), sin(n·αt)}
+        let n = self.order;
+        let at = self.alpha * t;
+        let mut pt = DVec2::ZERO;
+        let mut wsum = 0.0;
+        let has_weights = !self.weights.is_empty();
+        // Constant basis = 1
+        let w0 = if has_weights { self.weights[0] } else { 1.0 };
+        pt += self.control_points[0] * w0;
+        wsum += w0;
+        for i in 1..=n {
+            let fi = i as f64;
+            let c = (fi * at).cos();
+            let s = (fi * at).sin();
+            let idx_c = 2 * i - 1;
+            let idx_s = 2 * i;
+            if idx_c < self.control_points.len() {
+                let wc = if has_weights && idx_c < self.weights.len() { self.weights[idx_c] } else { 1.0 };
+                pt += self.control_points[idx_c] * (wc * c);
+                wsum += wc * c;
+            }
+            if idx_s < self.control_points.len() {
+                let ws = if has_weights && idx_s < self.weights.len() { self.weights[idx_s] } else { 1.0 };
+                pt += self.control_points[idx_s] * (ws * s);
+                wsum += ws * s;
+            }
+        }
+        if has_weights && wsum.abs() > 1e-15 { pt / wsum } else { pt }
+    }
+    fn default_domain(&self) -> [f64; 2] {
+        [0.0, std::f64::consts::PI / self.alpha]
     }
 }
 
