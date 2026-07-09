@@ -13,8 +13,8 @@
 //! NOTE: rcad_kernel::BRepAlgoAPI_Fuse_Test.cxx, rcad_kernel::BRepAlgoAPI_Cut_Test.cxx, and Cut_Test_1.cxx
 //! (bfuse_simple / bcut_simple DRAW series) overlap with the existing
 //! DRAW-derived generated OCCT tests (tests/occt/tests/generated_occt_boolean_bfuse_simple.rs
-//! and generated_occt_boolean_bcut_simple.rs). Those test series are NOT re-translated
-//! here to avoid duplication.
+//! and generated_occt_boolean_bcut_simple.rs). Those test series are covered by
+//! the tkremaining_gtests module as stubs to avoid duplication.
 
 use glam::DVec3;
 use rcad_kernel::{surface_area, volume};

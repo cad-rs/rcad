@@ -116,6 +116,7 @@ pub mod tkbo_gtests;
 pub mod tkbool_gtests;
 pub mod tkprim_gtests;
 pub mod tktopalgo_gtests;
+pub mod tkremaining_gtests;
 pub mod tkshhealing_gtests;
 #[cfg(test)]
 pub mod tkbrep_algo_gtests;
