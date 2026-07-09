@@ -651,11 +651,70 @@ pub enum PrimitiveSolid {
     },
 }
 
-/// A line in 2D parameter space: point + direction.
+/// A line in 2D parameter space: point + direction (OCCT-aligned: gp_Lin2d / Geom2d_Line).
+///
+/// OCCT: gp_Dir2d is ALWAYS a unit vector — direction must be normalized.
+/// Use `Line2d::new()` which enforces unit direction.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Line2d {
     pub origin: Point2,
+    /// Unit direction vector (OCCT gp_Dir2d invariant — always unit length).
     pub direction: Vec2,
+}
+
+impl Line2d {
+    /// OCCT-aligned: construct from point + direction (direction is normalized to unit).
+    pub fn new(origin: DVec2, direction: DVec2) -> Self {
+        Line2d { origin, direction: direction.normalize_or_zero() }
+    }
+
+    /// OCCT-aligned: Geom2d_Line::Distance(gp_Pnt2d)
+    /// Perpendicular distance from a point to the infinite line.
+    pub fn distance(&self, point: DVec2) -> f64 {
+        let d = point - self.origin;
+        // In 2D: cross = |(p - o) × dir| where |dir| = 1 (unit invariant)
+        (d.x * self.direction.y - d.y * self.direction.x).abs()
+    }
+
+    /// OCCT-aligned: Geom2d_Line::ReversedParameter(t) → -t
+    pub fn reversed_parameter(&self, t: f64) -> f64 { -t }
+
+    /// OCCT-aligned: Geom2d_Line::IsClosed() → false
+    pub fn is_closed(&self) -> bool { false }
+
+    /// OCCT-aligned: Geom2d_Line::IsPeriodic() → false
+    pub fn is_periodic(&self) -> bool { false }
+
+    /// OCCT-aligned: Geom2d_Line::SetDirection(gp_Dir2d)
+    pub fn with_direction(&self, direction: DVec2) -> Self {
+        Line2d::new(self.origin, direction)
+    }
+
+    /// OCCT-aligned: Geom2d_Line::SetLocation(gp_Pnt2d)
+    pub fn with_origin(&self, origin: DVec2) -> Self {
+        Line2d { origin, direction: self.direction }
+    }
+
+    /// OCCT-aligned: Geom2d_Line::Transform(gp_Trsf2d) — translation
+    pub fn translate(&self, offset: DVec2) -> Self {
+        Line2d { origin: self.origin + offset, direction: self.direction }
+    }
+
+    /// OCCT-aligned: Geom2d_Line::Transform(gp_Trsf2d) — rotation around center
+    pub fn rotate(&self, center: DVec2, angle_rad: f64) -> Self {
+        let cos_a = angle_rad.cos();
+        let sin_a = angle_rad.sin();
+        let p = self.origin - center;
+        let origin = center + DVec2::new(
+            p.x * cos_a - p.y * sin_a,
+            p.x * sin_a + p.y * cos_a,
+        );
+        let dir = DVec2::new(
+            self.direction.x * cos_a - self.direction.y * sin_a,
+            self.direction.x * sin_a + self.direction.y * cos_a,
+        );
+        Line2d::new(origin, dir)
+    }
 }
 
 /// A circle in 2D parameter space.
@@ -2270,9 +2329,11 @@ impl SurfaceEval for BSplineSurface {
 // --- Curve2dEval implementations ---
 
 impl Curve2dEval for Line2d {
+    /// OCCT-aligned: P(t) = Location + t * Direction (Direction = gp_Dir2d = unit)
     fn point_at(&self, t: f64) -> DVec2 {
         self.origin + t * self.direction
     }
+    /// OCCT-aligned: D1(t) = Direction = constant unit vector (gp_Dir2d invariant).
     fn tangent_at(&self, _t: f64) -> DVec2 { self.direction }
     fn derivative_at(&self, _t: f64) -> DVec2 { self.direction }
 }
