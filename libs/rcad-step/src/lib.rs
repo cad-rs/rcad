@@ -7314,92 +7314,36 @@ impl ExportReadinessReport {
 /// queries before a `WriteSTEP` call.
 pub fn validate_export_readiness(brep: &BRep) -> ExportReadinessReport {
     let mut issues = Vec::new();
-    let n_surfaces = brep.geom.surfaces.len();
-    let n_curve2ds = brep.geom.curve2ds.len();
-    let n_edge_pcurve_entries = brep.geom.edge_pcurves.len();
-    let n_edges = brep.edges.len();
     let mut pcurves_checked = 0usize;
+    let mut edges_checked = 0usize;
 
-    // ???? 1 & 2: PCurve index validity and cardinality ????????????????????????????????????????????????????
-    for ei in 0..n_edge_pcurve_entries {
-        let pcs = &brep.geom.edge_pcurves[ei];
-        if pcs.len() > 2 {
-            issues.push(ExportIssue::TooManyPcurves { edge_idx: ei, count: pcs.len() });
+    // Check edge tolerances and pcurves from topods TShape data.
+    for (ei, ts) in brep.tshapes.iter().enumerate() {
+        let topods::TShape::Edge(ed) = &**ts else { continue };
+        edges_checked += 1;
+        let n_pc = ed.pcurves.len();
+        if n_pc > 2 {
+            issues.push(ExportIssue::TooManyPcurves { edge_idx: ei, count: n_pc });
         }
-        for pc in pcs {
-            pcurves_checked += 1;
-            if pc.surface_idx >= n_surfaces {
-                issues.push(ExportIssue::PcurveSurfaceOutOfRange {
-                    edge_idx: ei,
-                    surface_idx: pc.surface_idx,
-                });
-            }
-            if pc.curve2d_idx >= n_curve2ds {
-                issues.push(ExportIssue::PcurveCurveOutOfRange {
-                    edge_idx: ei,
-                    curve2d_idx: pc.curve2d_idx,
-                });
-            }
+        pcurves_checked += n_pc;
+        if ed.tolerance > 0.0 && ed.tolerance < CONFUSION {
+            issues.push(ExportIssue::EdgeToleranceTooTight { edge_idx: ei, tolerance: ed.tolerance });
         }
     }
 
-    // ???? 3: Missing PCurves ????????????????????????????????????????????????????????????????????????????????????????????????????????
-    // Only flag when `edge_pcurves` has been partially populated (i.e. the BRep
-    // uses explicit PCurve storage) but a particular edge slot is empty or absent.
-    // If the slice is entirely empty the writer uses analytic fallback paths and
-    // we should not raise false-positive MissingPcurve issues.
-    let any_pcurves_stored = brep.geom.edge_pcurves.iter().any(|v| !v.is_empty());
-    if any_pcurves_stored {
-        // Collect edge indices that are adjacent to surface-bearing faces.
-        let mut surface_edges: std::collections::HashSet<usize> =
-            std::collections::HashSet::new();
-        let mut flat_fi = 0usize;
-        for solid in &brep.solids {
-            for shell in &solid.shells {
-                for face in &shell.faces {
-                    let has_surface = brep.geom.face_surface
-                        .get(flat_fi)
-                        .and_then(|o| *o)
-                        .is_some();
-                    if has_surface {
-                        for we in &face.outer_wire.edges {
-                            surface_edges.insert(we.idx);
-                        }
-                        for iw in &face.inner_wires {
-                            for we in &iw.edges {
-                                surface_edges.insert(we.idx);
-                            }
-                        }
-                    }
-                    flat_fi += 1;
-                }
-            }
-        }
-
-        for &ei in &surface_edges {
-            let has_pcurve = brep.geom.edge_pcurves
-                .get(ei)
-                .is_some_and(|v| !v.is_empty());
-            if !has_pcurve {
-                issues.push(ExportIssue::MissingPcurve { edge_idx: ei });
-            }
+    // Check vertex tolerances.
+    for (vi, ts) in brep.tshapes.iter().enumerate() {
+        let topods::TShape::Vertex(vd) = &**ts else { continue };
+        if vd.tolerance > 0.0 && vd.tolerance < CONFUSION {
+            issues.push(ExportIssue::VertexToleranceTooTight { vertex_idx: vi, tolerance: vd.tolerance });
         }
     }
 
-    // ???? 4: Tolerance floor ????????????????????????????????????????????????????????????????????????????????????????????????????????
-    for (vi, &t) in brep.geom.vertex_tolerance.iter().enumerate() {
-        if t > 0.0 && t < CONFUSION {
-            issues.push(ExportIssue::VertexToleranceTooTight { vertex_idx: vi, tolerance: t });
-        }
-    }
-    for (ei, &t) in brep.geom.edge_tolerance.iter().enumerate() {
-        if t > 0.0 && t < CONFUSION {
-            issues.push(ExportIssue::EdgeToleranceTooTight { edge_idx: ei, tolerance: t });
-        }
-    }
-    for (fi, &t) in brep.geom.face_tolerance.iter().enumerate() {
-        if t > 0.0 && t < CONFUSION {
-            issues.push(ExportIssue::FaceToleranceTooTight { face_idx: fi, tolerance: t });
+    // Check face tolerances.
+    for (fi, ts) in brep.tshapes.iter().enumerate() {
+        let topods::TShape::Face(fd) = &**ts else { continue };
+        if fd.tolerance > 0.0 && fd.tolerance < CONFUSION {
+            issues.push(ExportIssue::FaceToleranceTooTight { face_idx: fi, tolerance: fd.tolerance });
         }
     }
 
@@ -7407,7 +7351,7 @@ pub fn validate_export_readiness(brep: &BRep) -> ExportReadinessReport {
     ExportReadinessReport {
         is_ready,
         issues,
-        edges_checked: n_edges,
+        edges_checked,
         pcurves_checked,
     }
 }

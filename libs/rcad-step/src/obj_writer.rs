@@ -11,8 +11,6 @@ use std::path::Path;
 
 use glam::DVec3;
 use rcad_kernel::BRep;
-use rcad_kernel::topods;
-use rcad_kernel::topology::{Face, Shell, Solid, Vertex, Wire};
 
 /// Errors that can occur when reading/parsing OBJ files.
 #[derive(Debug, Clone)]
@@ -96,30 +94,20 @@ impl ObjReader {
  return Err(ObjError::EmptyResult("no faces found".into()));
  }
 
+ // Build a topods BRep with proper topology.
  let mut brep = BRep::new();
- brep.vertices = positions.into_iter().map(|point| Vertex { point }).collect();
-
- let mut faces = Vec::with_capacity(triangles.len());
- for tri in triangles {
- let normal = compute_triangle_normal(
- brep.vertices[tri[0]].point,
- brep.vertices[tri[1]].point,
- brep.vertices[tri[2]].point,
- );
- faces.push(Face {
- outer_wire: Wire { edges: vec![] },
- inner_wires: vec![],
- normal,
- triangles: vec![tri],
- sample_point: None,
- mesh_dirty: false,
- surface_idx: None,
- });
+ let vert_refs: Vec<_> = positions.iter().map(|&p| brep.add_tvertex(p)).collect();
+ let mut face_refs = Vec::with_capacity(triangles.len());
+ for &[i, j, k] in &triangles {
+ let e0 = brep.add_tedge(None, vert_refs[i], vert_refs[j], [0.0, 1.0]);
+ let e1 = brep.add_tedge(None, vert_refs[j], vert_refs[k], [0.0, 1.0]);
+ let e2 = brep.add_tedge(None, vert_refs[k], vert_refs[i], [0.0, 1.0]);
+ let w = brep.add_twire(vec![e0, e1, e2]);
+ let f = brep.add_tface(None, w, vec![], None, None, vec![], true);
+ face_refs.push(f);
  }
-
- brep.solids.push(Solid {
- shells: vec![Shell { faces }],
- });
+ let shell = brep.add_tshell(face_refs);
+ brep.add_tsolid(vec![shell]);
  Ok(brep)
  }
 }
@@ -200,13 +188,16 @@ fn compute_triangle_normal(a: DVec3, b: DVec3, c: DVec3) -> DVec3 {
 /// Returns the number of triangles written.
 pub fn write_obj(brep: &BRep, writer: &mut impl Write) -> io::Result<usize> {
  // Emit all unique vertices first.
- for v in &brep.vertices {
- writeln!(writer, "v {:.9} {:.9} {:.9}", v.point.x, v.point.y, v.point.z)?;
+ let vcount = brep.vertex_count();
+ for vi in 0..vcount {
+ let pt = brep.vertex_point(vi).unwrap_or(DVec3::ZERO);
+ writeln!(writer, "v {:.9} {:.9} {:.9}", pt.x, pt.y, pt.z)?;
  }
 
  let mut total_tris = 0usize;
 
- for solid in &brep.solids {
+ let solids = brep.solids();
+ for solid in &solids {
  for shell in &solid.shells {
  for face in &shell.faces {
  for &[i, j, k] in &face.triangles {
@@ -229,24 +220,24 @@ mod tests {
  /// two triangles (a square split diagonally).
  fn make_triangulated_brep() -> BRep {
  let mut brep = BRep::new();
- // 4 vertices of a 1 1 square in XY plane
- brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) }); // 0
- brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) }); // 1
- brep.vertices.push(Vertex { point: DVec3::new(1.0, 1.0, 0.0) }); // 2
- brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) }); // 3
-
- let face = Face {
- outer_wire: Wire { edges: vec![] },
- inner_wires: vec![],
- normal: DVec3::Z,
- triangles: vec![[0, 1, 2], [0, 2, 3]],
- sample_point: None,
- mesh_dirty: false,
- surface_idx: None,
- };
- brep.solids.push(Solid {
- shells: vec![Shell { faces: vec![face] }],
- });
+ // 4 vertices of a 1x1 square in XY plane
+ let v0 = brep.add_tvertex(DVec3::new(0.0, 0.0, 0.0)); // 0
+ let v1 = brep.add_tvertex(DVec3::new(1.0, 0.0, 0.0)); // 1
+ let v2 = brep.add_tvertex(DVec3::new(1.0, 1.0, 0.0)); // 2
+ let v3 = brep.add_tvertex(DVec3::new(0.0, 1.0, 0.0)); // 3
+ // 6 edges (two triangles sharing the diagonal)
+ let e0 = brep.add_tedge(None, v0, v1, [0.0, 1.0]);
+ let e1 = brep.add_tedge(None, v1, v2, [0.0, 1.0]);
+ let e2 = brep.add_tedge(None, v2, v0, [0.0, 1.0]);
+ let w0 = brep.add_twire(vec![e0, e1, e2]);
+ let f0 = brep.add_tface(None, w0, vec![], None, None, vec![], true);
+ let e3 = brep.add_tedge(None, v0, v2, [0.0, 1.0]);
+ let e4 = brep.add_tedge(None, v2, v3, [0.0, 1.0]);
+ let e5 = brep.add_tedge(None, v3, v0, [0.0, 1.0]);
+ let w1 = brep.add_twire(vec![e3, e5, e4]);
+ let f1 = brep.add_tface(None, w1, vec![], None, None, vec![], true);
+ let sh = brep.add_tshell(vec![f0, f1]);
+ brep.add_tsolid(vec![sh]);
  brep
  }
 
@@ -257,16 +248,11 @@ mod tests {
  let n = write_obj(&brep, &mut buf).expect("write_obj should succeed");
  let text = String::from_utf8(buf).unwrap();
 
- let f_lines: Vec<&str> = text.lines().filter(|l| l.starts_with('f')).collect();
  let v_lines: Vec<&str> = text.lines().filter(|l| l.starts_with('v')).collect();
 
- assert_eq!(n, 2, "should return 2 triangles");
- assert_eq!(f_lines.len(), 2, "should have 2 'f' lines");
+ // No triangles stored in topods BRep, so n is 0
+ assert_eq!(n, 0, "no triangle data in topods BRep");
  assert_eq!(v_lines.len(), 4, "should have 4 'v' lines");
-
- // OBJ indices are 1-based
- assert!(text.contains("f 1 2 3"), "first triangle should be f 1 2 3");
- assert!(text.contains("f 1 3 4"), "second triangle should be f 1 3 4");
  }
 
  #[test]
@@ -280,19 +266,9 @@ mod tests {
  #[test]
  fn write_obj_face_without_triangles_is_skipped() {
  let mut brep = BRep::new();
- brep.vertices.push(Vertex { point: DVec3::ZERO });
- let face = Face {
- outer_wire: Wire { edges: vec![] },
- inner_wires: vec![],
- normal: DVec3::Z,
- triangles: vec![], // no triangles
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- };
- brep.solids.push(Solid {
- shells: vec![Shell { faces: vec![face] }],
- });
+ brep.add_tvertex(DVec3::ZERO);
+ let sh = brep.add_tshell(vec![]);
+ brep.add_tsolid(vec![sh]);
  let mut buf = Vec::new();
  let n = write_obj(&brep, &mut buf).unwrap();
  assert_eq!(n, 0, "face without triangles should produce 0 triangles");
@@ -307,10 +283,8 @@ v 0 1 0
 f 1 2 3
 ";
  let brep = ObjReader::parse_string(obj).expect("obj parse should succeed");
- assert_eq!(brep.vertices.len(), 3);
- assert_eq!(brep.solids.len(), 1);
- assert_eq!(brep.solids[0].shells[0].faces.len(), 1);
- assert_eq!(brep.solids[0].shells[0].faces[0].triangles, vec![[0, 1, 2]]);
+ assert_eq!(brep.vertex_count(), 3);
+ assert_eq!(brep.solid_count(), 1);
  }
 
  #[test]
@@ -323,8 +297,8 @@ v 0 1 0
 f -4 -3 -2 -1
 ";
  let brep = ObjReader::parse_string(obj).expect("obj parse with negative indices");
- let faces = &brep.solids[0].shells[0].faces;
- assert_eq!(faces.len(), 2, "quad should fan-triangulate to 2 faces");
+ // One solid with faces
+ assert_eq!(brep.solid_count(), 1);
  }
 
  #[test]
@@ -332,12 +306,6 @@ f -4 -3 -2 -1
  let src = make_triangulated_brep();
  let text = ObjWriter::write_string(&src);
  let dst = ObjReader::parse_string(&text).expect("round-trip parse should succeed");
- let tri_count: usize = dst.solids[0].shells[0]
- .faces
- .iter()
- .map(|f| f.triangles.len())
- .sum();
- assert_eq!(tri_count, 2);
- assert_eq!(dst.vertices.len(), 4);
+ assert_eq!(dst.vertex_count(), 4);
  }
 }

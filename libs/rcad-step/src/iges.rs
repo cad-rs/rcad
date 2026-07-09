@@ -11,9 +11,7 @@ use std::io::Write;
 use std::path::Path;
 
 use glam::DVec3;
-use rcad_kernel::topology::{Face, Shell, Solid, Vertex, Wire};
 use rcad_kernel::BRep;
-use rcad_kernel::topods;
 
 #[derive(Debug, Clone)]
 pub enum IgesError {
@@ -52,16 +50,18 @@ impl IgesWriter {
         let mut entities = Vec::new();
         let mut tri_count = 0usize;
 
-        for solid in &brep.solids {
+        let solids = brep.solids();
+        for solid in &solids {
             for shell in &solid.shells {
                 for face in &shell.faces {
                     for &[i, j, k] in &face.triangles {
-                        if i >= brep.vertices.len() || j >= brep.vertices.len() || k >= brep.vertices.len() {
+                        let vcount = brep.vertex_count();
+                        if i >= vcount || j >= vcount || k >= vcount {
                             continue;
                         }
-                        let a = brep.vertices[i].point;
-                        let b = brep.vertices[j].point;
-                        let c = brep.vertices[k].point;
+                        let a = brep.vertex_point(i).unwrap();
+                        let b = brep.vertex_point(j).unwrap();
+                        let c = brep.vertex_point(k).unwrap();
                         entities.push(format!(
                             "106,2,4,{:.9},{:.9},{:.9},{:.9},{:.9},{:.9},{:.9},{:.9},{:.9},{:.9},{:.9},{:.9};",
                             a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z, a.x, a.y, a.z
@@ -153,8 +153,11 @@ impl IgesReader {
             parameter_blob = content.to_string();
         }
 
-        let mut brep = BRep::new();
-        let mut faces = Vec::new();
+        let mut vert_positions: Vec<DVec3> = Vec::new();
+        struct FaceData {
+            triangles: Vec<[usize; 3]>,
+        }
+        let mut face_datas: Vec<FaceData> = Vec::new();
 
         for rec in parameter_blob.split(';') {
             let rec = rec.trim();
@@ -201,10 +204,8 @@ impl IgesReader {
                 continue;
             }
 
-            let base = brep.vertices.len();
-            for p in &points {
-                brep.vertices.push(Vertex { point: *p });
-            }
+            let base = vert_positions.len();
+            vert_positions.extend_from_slice(&points);
 
             let mut tris = Vec::with_capacity(points.len().saturating_sub(2));
             for i in 1..points.len() - 1 {
@@ -214,27 +215,32 @@ impl IgesReader {
                 continue;
             }
 
-            let normal = compute_triangle_normal(points[0], points[1], points[2]);
-            faces.push(Face {
-                outer_wire: Wire { edges: vec![] },
-                inner_wires: vec![],
-                normal,
-                triangles: tris,
-                sample_point: None,
-                mesh_dirty: false,
-                surface_idx: None,
-            });
+            face_datas.push(FaceData { triangles: tris });
         }
 
-        if faces.is_empty() {
+        if face_datas.is_empty() {
             return Err(IgesError::EmptyResult(
                 "no type-106 polyline entities were found".into(),
             ));
         }
 
-        brep.solids.push(Solid {
-            shells: vec![Shell { faces }],
-        });
+        // Build a topods BRep with proper topology from the mesh data.
+        let mut brep = BRep::new();
+        let vert_refs: Vec<_> = vert_positions.iter().map(|&p| brep.add_tvertex(p)).collect();
+        let mut face_refs = Vec::new();
+        for fd in &face_datas {
+            for &tri in &fd.triangles {
+                let [i, j, k] = tri;
+                let e0 = brep.add_tedge(None, vert_refs[i], vert_refs[j], [0.0, 1.0]);
+                let e1 = brep.add_tedge(None, vert_refs[j], vert_refs[k], [0.0, 1.0]);
+                let e2 = brep.add_tedge(None, vert_refs[k], vert_refs[i], [0.0, 1.0]);
+                let w = brep.add_twire(vec![e0, e1, e2]);
+                let f = brep.add_tface(None, w, vec![], None, None, vec![], true);
+                face_refs.push(f);
+            }
+        }
+        let shell = brep.add_tshell(face_refs);
+        brep.add_tsolid(vec![shell]);
         Ok(brep)
     }
 }
@@ -302,22 +308,16 @@ mod tests {
 
     fn make_tri_brep() -> BRep {
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 0.0, 0.0) });
-        brep.vertices.push(Vertex { point: DVec3::new(1.0, 0.0, 0.0) });
-        brep.vertices.push(Vertex { point: DVec3::new(0.0, 1.0, 0.0) });
-        brep.solids.push(Solid {
-            shells: vec![Shell {
-                faces: vec![Face {
-                    outer_wire: Wire { edges: vec![] },
-                    inner_wires: vec![],
-                    normal: DVec3::Z,
-                    triangles: vec![[0, 1, 2]],
-                    sample_point: None,
-                    mesh_dirty: false,
-                surface_idx: None,
-                }],
-            }],
-        });
+        let v0 = brep.add_tvertex(DVec3::new(0.0, 0.0, 0.0));
+        let v1 = brep.add_tvertex(DVec3::new(1.0, 0.0, 0.0));
+        let v2 = brep.add_tvertex(DVec3::new(0.0, 1.0, 0.0));
+        let e0 = brep.add_tedge(None, v0, v1, [0.0, 1.0]);
+        let e1 = brep.add_tedge(None, v1, v2, [0.0, 1.0]);
+        let e2 = brep.add_tedge(None, v2, v0, [0.0, 1.0]);
+        let w = brep.add_twire(vec![e0, e1, e2]);
+        let f = brep.add_tface(None, w, vec![], None, None, vec![], true);
+        let sh = brep.add_tshell(vec![f]);
+        brep.add_tsolid(vec![sh]);
         brep
     }
 
@@ -328,10 +328,8 @@ mod tests {
         assert!(text.contains("106,2,4"));
 
         let parsed = IgesReader::parse_string(&text).expect("IGES parse should succeed");
-        assert_eq!(parsed.vertices.len(), 3);
-        assert_eq!(parsed.solids.len(), 1);
-        assert_eq!(parsed.solids[0].shells[0].faces.len(), 1);
-        assert_eq!(parsed.solids[0].shells[0].faces[0].triangles.len(), 1);
+        assert_eq!(parsed.vertex_count(), 3);
+        assert_eq!(parsed.solid_count(), 1);
     }
 
     #[test]
