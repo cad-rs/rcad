@@ -10,7 +10,32 @@ pub type Vec2 = DVec2;
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Line3 {
     pub origin: Point3,
+    /// Unit direction vector (OCCT gp_Dir invariant — always unit length).
+    /// Use Line3::new() for normalized construction.
     pub direction: Vec3,
+}
+
+impl Line3 {
+    /// OCCT-aligned: construct from point and direction (direction normalized to unit).
+    pub fn new(origin: DVec3, direction: DVec3) -> Self {
+        Line3 { origin, direction: direction.normalize_or_zero() }
+    }
+
+    /// OCCT-aligned: gp_Lin::Distance(gp_Pnt) — perpendicular distance.
+    pub fn distance(&self, point: DVec3) -> f64 {
+        let d = point - self.origin;
+        // |d × direction| / |direction| — direction is unit, so denominator = 1
+        d.cross(self.direction).length()
+    }
+
+    /// OCCT-aligned: Geom_Line::ReversedParameter(t) = -t
+    pub fn reversed_parameter(&self, t: f64) -> f64 { -t }
+
+    /// OCCT-aligned: Geom_Line::IsClosed() = false
+    pub fn is_closed(&self) -> bool { false }
+
+    /// OCCT-aligned: Geom_Line::IsPeriodic() = false
+    pub fn is_periodic(&self) -> bool { false }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
