@@ -32,9 +32,9 @@
 //! # Examples
 //!
 //! ```rust
-//! use rcad_kernel::{BRep, BRepGraph, PrimitiveSolid};
+//! use rcad_kernel::{BRep, BRepGraph};
 //!
-//! let brep = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+//! let (brep, _root) = BRep::build_unit_cube();
 //! let graph = BRepGraph::from_brep(&brep);
 //!
 //! // O(1) adjacency
@@ -1269,98 +1269,40 @@ impl BRepGraph {
 #[cfg(test)]
 mod tests {
  use super::*;
- use crate::{
- BRep, Edge, Face, Shell, Solid, Surface3, Vertex, Wire, WireEdge,
- geom::PrimitiveSolid,
- };
+ use crate::topods::{Orientation, ShapeRef};
  use glam::DVec3;
 
  fn unit_box() -> BRep {
- BRep::from_primitive(PrimitiveSolid::Box {
- width: 1.0,
- height: 1.0,
- depth: 1.0,
- })
+ let (brep, _root) = BRep::build_unit_cube();
+ brep
  }
 
  /// Build a minimal non-manifold BRep where edge 0 is shared by 3 faces.
  fn non_manifold_tripod() -> BRep {
- let vertices = vec![
- Vertex { point: DVec3::new(0.0, 0.0, 0.0) }, // 0
- Vertex { point: DVec3::new(1.0, 0.0, 0.0) }, // 1
- Vertex { point: DVec3::new(0.0, 1.0, 0.0) }, // 2
- Vertex { point: DVec3::new(0.0, 0.0, 1.0) }, // 3
- Vertex { point: DVec3::new(0.0, -1.0, 0.0) }, // 4
- ];
- // Edge 0 is the shared spine. Other edges are unique per triangle face.
- let edges = vec![
- Edge { start: 0, end: 1 }, // shared by 3 faces
- Edge { start: 1, end: 2 },
- Edge { start: 2, end: 0 },
- Edge { start: 1, end: 3 },
- Edge { start: 3, end: 0 },
- Edge { start: 1, end: 4 },
- Edge { start: 4, end: 0 },
- ];
-
- let f0 = Face {
- outer_wire: Wire {
- edges: vec![
- WireEdge::new(0, true),
- WireEdge::new(1, true),
- WireEdge::new(2, true),
- ],
- },
- inner_wires: vec![],
- normal: DVec3::Z,
- triangles: vec![],
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- };
- let f1 = Face {
- outer_wire: Wire {
- edges: vec![
- WireEdge::new(0, true),
- WireEdge::new(3, true),
- WireEdge::new(4, true),
- ],
- },
- inner_wires: vec![],
- normal: DVec3::Y,
- triangles: vec![],
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- };
- let f2 = Face {
- outer_wire: Wire {
- edges: vec![
- WireEdge::new(0, true),
- WireEdge::new(5, true),
- WireEdge::new(6, true),
- ],
- },
- inner_wires: vec![],
- normal: -DVec3::Y,
- triangles: vec![],
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- };
-
- BRep {
- vertices,
- edges,
- solids: vec![Solid {
- shells: vec![Shell {
- faces: vec![f0, f1, f2],
- }],
- }],
- geom: Default::default(),
- compound: None,
- compsolid: None,
- }
+ let mut brep = BRep::new();
+ let v: Vec<topods::ShapeRef> = vec![
+ DVec3::new(0.0, 0.0, 0.0),
+ DVec3::new(1.0, 0.0, 0.0),
+ DVec3::new(0.0, 1.0, 0.0),
+ DVec3::new(0.0, 0.0, 1.0),
+ DVec3::new(0.0, -1.0, 0.0),
+ ].into_iter().map(|p| brep.add_tvertex(p)).collect();
+ let e01 = brep.add_tedge(None, v[0], ShapeRef::synthetic_with_orientation(v[1].index, Orientation::Reversed), [0.0, 1.0]);
+ let e12 = brep.add_tedge(None, v[1], ShapeRef::synthetic_with_orientation(v[2].index, Orientation::Reversed), [0.0, 1.0]);
+ let e20 = brep.add_tedge(None, v[2], ShapeRef::synthetic_with_orientation(v[0].index, Orientation::Reversed), [0.0, 1.0]);
+ let e13 = brep.add_tedge(None, v[1], ShapeRef::synthetic_with_orientation(v[3].index, Orientation::Reversed), [0.0, 1.0]);
+ let e30 = brep.add_tedge(None, v[3], ShapeRef::synthetic_with_orientation(v[0].index, Orientation::Reversed), [0.0, 1.0]);
+ let e14 = brep.add_tedge(None, v[1], ShapeRef::synthetic_with_orientation(v[4].index, Orientation::Reversed), [0.0, 1.0]);
+ let e40 = brep.add_tedge(None, v[4], ShapeRef::synthetic_with_orientation(v[0].index, Orientation::Reversed), [0.0, 1.0]);
+ let w0 = brep.add_twire(vec![e01, e12, e20]);
+ let w1 = brep.add_twire(vec![e01, e13, e30]);
+ let w2 = brep.add_twire(vec![e01, e14, e40]);
+ let f0 = brep.add_tface(None, w0, vec![], None, None, vec![], true);
+ let f1 = brep.add_tface(None, w1, vec![], None, None, vec![], true);
+ let f2 = brep.add_tface(None, w2, vec![], None, None, vec![], true);
+ let sh = brep.add_tshell(vec![f0, f1, f2]);
+ brep.add_tsolid(vec![sh]);
+ brep
  }
 
  //  € € Construction & counts  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
@@ -1431,10 +1373,11 @@ mod tests {
  fn edge_endpoints_match_brep_edges() {
  let brep = unit_box();
  let g = BRepGraph::from_brep(&brep);
- for (ei, edge) in brep.edges.iter().enumerate() {
+ let fe = brep.flat_edges();
+ for (ei, &(start, end)) in fe.iter().enumerate() {
  let ep = g.edge_endpoints(ei).expect("endpoints should exist");
- assert_eq!(ep.0, edge.start);
- assert_eq!(ep.1, edge.end);
+ assert_eq!(ep.0, start);
+ assert_eq!(ep.1, end);
  }
  }
 
@@ -1573,7 +1516,7 @@ mod tests {
  fn edge_valence_manifold_box() {
  let brep = unit_box();
  let g = BRepGraph::from_brep(&brep);
- for ei in 0..brep.edges.len() {
+ for ei in 0..brep.edge_count() {
  assert_eq!(g.edge_valence(ei), 2, "every box edge should have valence 2");
  }
  assert_eq!(g.edge_valence(9999), 0, "out-of-range returns 0");
@@ -1592,7 +1535,7 @@ mod tests {
  let brep = unit_box();
  let g = BRepGraph::from_brep(&brep);
  // Every vertex of a box is incident to exactly 3 edges.
- for vi in 0..brep.vertices.len() {
+ for vi in 0..brep.vertex_count() {
  assert_eq!(g.vertex_degree(vi), 3, "box vertex {vi} should have degree 3");
  }
  }
@@ -1766,26 +1709,32 @@ mod tests {
 
  #[test]
  fn tool_exposes_flat_face_and_geometry_access() {
- let mut brep = unit_box();
- brep.geom.surfaces.push(Surface3::Plane(crate::geom::Plane {
- origin: DVec3::ZERO,
- normal: DVec3::Z,
- }));
- brep.geom.face_surface = vec![Some(0); 6];
- brep.geom.face_surface_range = vec![Some([0.0, 1.0, 0.0, 1.0]); 6];
-
+ let brep = unit_box();
  let graph = BRepGraph::from_brep(&brep);
  let tool = graph.tool(&brep);
 
- let face = tool.face(0).expect("flat face 0 should resolve");
- assert_eq!(face.outer_wire.edges.len(), 4);
- assert_eq!(tool.face_location(0), Some((0, 0, 0)));
- assert!(tool.face_normal(0).is_some());
- assert!(matches!(tool.face_surface(0), Some(Surface3::Plane(_))));
- assert_eq!(tool.face_surface_range(0), Some([0.0, 1.0, 0.0, 1.0]));
+ // face_location: all 6 faces should resolve to (solid 0, shell 0, face fi)
+ for fi in 0..6 {
+  assert_eq!(tool.face_location(fi), Some((0, 0, fi)),
+   "flat face {fi} should resolve to (0,0,{fi})");
+ }
 
+ // edge_points via graph adjacency tables
+ let fe = brep.flat_edges();
+ let (start_vi, end_vi) = fe[0];
  let (start_point, end_point) = tool.edge_points(0).expect("edge 0 should have endpoints");
- assert_eq!(start_point, brep.vertices[brep.edges[0].start].point);
- assert_eq!(end_point, brep.vertices[brep.edges[0].end].point);
+ assert_eq!(start_point, brep.vertex_point(start_vi).unwrap());
+ assert_eq!(end_point, brep.vertex_point(end_vi).unwrap());
+
+ // vertex access
+ let v0 = tool.vertex(0).expect("vertex 0 should exist");
+ assert_eq!(v0, brep.vertex_point(0).unwrap());
+
+ // face() and face_normal() are not supported with topods::BRep (return None)
+ assert!(tool.face(0).is_none());
+ assert!(tool.face_normal(0).is_none());
+ // cube faces have surface=None in build_unit_cube
+ assert!(tool.face_surface(0).is_none());
+ assert!(tool.face_surface_range(0).is_none());
  }
 }

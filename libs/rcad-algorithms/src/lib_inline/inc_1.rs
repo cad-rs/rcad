@@ -1144,10 +1144,11 @@ fn run_make_connected_for_boolean_output(
  report.make_connected_scope_seed_edge_labels =
  make_connected_seed_edge_labels(brep, &scope_seed_edges);
  report.make_connected_scope_seed_edges = scope_seed_edges;
- let seed_edge_coverage = if brep.edges.is_empty() {
+ let edge_count = brep.edge_count();
+ let seed_edge_coverage = if edge_count == 0 {
  0.0
  } else {
- report.make_connected_scope_seed_edges.len() as f64 / brep.edges.len() as f64
+ report.make_connected_scope_seed_edges.len() as f64 / edge_count as f64
  };
  report.make_connected_scope_seed_edge_coverage = Some(seed_edge_coverage);
  let mut seed_face_set = std::collections::BTreeSet::new();
@@ -1435,11 +1436,7 @@ impl std::fmt::Display for SplitterError {
 impl std::error::Error for SplitterError {}
 
 fn brep_shell_face_count(brep: &rcad_kernel::BRep) -> usize {
- brep.solids
- .iter()
- .flat_map(|s| &s.shells)
- .flat_map(|sh| &sh.faces)
- .count()
+ rcad_kernel::face_count(brep)
 }
 
 /// OCCT `rcad_kernel::BRepAlgoAPI_Cut` yields an empty shape when operands coincide (e.g. two identical
@@ -1455,19 +1452,17 @@ fn brep_is_pure_plane_solid(brep: &rcad_kernel::BRep) -> bool {
  if nf == 0 {
  return false;
  }
- if brep.geom.face_surface.len() != nf {
- return false;
- }
- for slot in &brep.geom.face_surface {
- let Some(si) = *slot else {
- return false;
- };
- match brep.geom.surfaces.get(si) {
- Some(rcad_kernel::geom::Surface3::Plane(_)) => {}
+ // Check all face TShapes are planar surfaces
+ let mut planar_count = 0usize;
+ for ts in &brep.tshapes {
+ if let rcad_kernel::topods::TShape::Face(fd) = &**ts {
+ match &fd.surface {
+ Some(rcad_kernel::geom::Surface3::Plane(_)) => planar_count += 1,
  _ => return false,
  }
  }
- true
+ }
+ planar_count == nf
 }
 
 /// True when every face normal is (approximately) 鍗, 鍗, or 鍗 in world space.
@@ -1493,11 +1488,23 @@ fn brep_is_world_axis_aligned_plane_solid(brep: &rcad_kernel::BRep) -> bool {
  if !brep_is_pure_plane_solid(brep) {
  return false;
  }
- for solid in &brep.solids {
- for shell in &solid.shells {
- for face in &shell.faces {
- if !is_axis_unit(face.normal) {
+ // Walk all face TShapes via solid/shell/face hierarchy
+ for ts in &brep.tshapes {
+ if let rcad_kernel::topods::TShape::Solid(sd) = &**ts {
+ for shell_sr in &sd.shells {
+ if let rcad_kernel::topods::TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+ for face_sr in &shd.faces {
+ if let rcad_kernel::topods::TShape::Face(fd) = &*brep.tshapes[face_sr.index] {
+ // Use surface normal from TFaceData
+ let normal = match &fd.surface {
+ Some(rcad_kernel::geom::Surface3::Plane(p)) => p.normal,
+ _ => glam::DVec3::ZERO,
+ };
+ if !is_axis_unit(normal) {
  return false;
+ }
+ }
+ }
  }
  }
  }
@@ -1523,11 +1530,13 @@ fn boolean_difference_empty_coincident(a: &rcad_kernel::BRep, b: &rcad_kernel::B
  // Bbox + face count is not sufficient 閳?an inscribed rotated box shares
  // the same bbox as its container (e.g. bopcut_simple/F5).
  // Also check that vertex sets match (identical shapes have identical vertices).
- if a.vertices.len() != b.vertices.len() {
+ let a_vi = rcad_kernel::vertex_indices(a);
+ let b_vi = rcad_kernel::vertex_indices(b);
+ if a_vi.len() != b_vi.len() {
  return false;
  }
- let a_pts: Vec<glam::DVec3> = a.vertices.iter().map(|v| v.point).collect();
- let b_pts: Vec<glam::DVec3> = b.vertices.iter().map(|v| v.point).collect();
+ let a_pts: Vec<glam::DVec3> = a_vi.iter().filter_map(|&v| a.vertex_point(v)).collect();
+ let b_pts: Vec<glam::DVec3> = b_vi.iter().filter_map(|&v| b.vertex_point(v)).collect();
  a_pts.iter().all(|pa| b_pts.iter().any(|pb| (pa - pb).length() <= tol))
  && b_pts.iter().all(|pb| a_pts.iter().any(|pa| (pa - pb).length() <= tol))
 }
@@ -1550,19 +1559,18 @@ fn intersection_planar_sliver_should_be_empty(result: &rcad_kernel::BRep, a: &rc
  return false;
  }
 
- // Require one surface slot per face and all planes 閳?`Iterator::all` on an empty iterator is
- // `true`, and skipping `None` slots could wrongly classify incomplete geom as 閳ユ竵ll planes閳?
- if result.geom.face_surface.len() != nf {
- return false;
- }
- for slot in &result.geom.face_surface {
- let Some(si) = *slot else {
- return false;
- };
- match result.geom.surfaces.get(si) {
- Some(rcad_kernel::geom::Surface3::Plane(_)) => {}
+ // Check all face TShapes are planar surfaces
+ let mut planar_count = 0usize;
+ for ts in &result.tshapes {
+ if let rcad_kernel::topods::TShape::Face(fd) = &**ts {
+ match &fd.surface {
+ Some(rcad_kernel::geom::Surface3::Plane(_)) => planar_count += 1,
  _ => return false,
  }
+ }
+ }
+ if planar_count != nf {
+ return false;
  }
  true
 }
@@ -1571,19 +1579,20 @@ fn intersection_planar_sliver_should_be_empty(result: &rcad_kernel::BRep, a: &rc
 /// all vertices co-planar (zero thickness), meaning the solids only touch
 /// at a face without volumetric overlap.
 fn intersection_result_is_degenerate_sliver(result: &rcad_kernel::BRep) -> bool {
- let nf = result.solids.iter().flat_map(|s| s.shells.iter()).flat_map(|sh| sh.faces.iter()).count();
+ let nf = face_count_of(result);
  if nf == 0 { return false; }
- // All faces must be planar
- if result.geom.face_surface.len() < nf { return false; }
- for slot in result.geom.face_surface.iter().take(nf) {
- let Some(si) = *slot else { return false };
- match result.geom.surfaces.get(si) {
+ // All faces must be planar — check TFaceData surfaces
+ for ts in &result.tshapes {
+ if let rcad_kernel::topods::TShape::Face(fd) = &**ts {
+ match &fd.surface {
  Some(rcad_kernel::geom::Surface3::Plane(_)) => {}
  _ => return false,
  }
  }
+ }
  // Check all vertices are co-planar
- let verts: Vec<glam::DVec3> = result.vertices.iter().map(|v| v.point).collect();
+ let vi = rcad_kernel::vertex_indices(result);
+ let verts: Vec<glam::DVec3> = vi.iter().filter_map(|&v| result.vertex_point(v)).collect();
  if verts.len() < 3 { return false; }
  // Find first 3 non-collinear vertices to define a reference plane
  let mut ref_normal = glam::DVec3::ZERO;
@@ -1616,61 +1625,7 @@ pub(crate) fn boolean_postprocess_pave_result(
  _b: &rcad_kernel::BRep,
  result: rcad_kernel::BRep,
 ) -> Result<rcad_kernel::BRep, BooleanError> {
- // rcad-specific post-processing removed: recompute_plane_surfaces, coplanar clipping,
- // redundant face removal, spurious face removal, and degenerate sliver detection.
  // OCCT does not perform any post-processing after the Builder.
- // If these were needed, the root cause is in the Builder/PaveFiller pipeline.
- if !result.solids.is_empty() && !result.solids[0].shells.is_empty() {
- eprintln!("Post-process result: {} faces", result.solids[0].shells[0].faces.len());
- if std::env::var("RCAD_DEBUG_RESULT_FACES").is_ok() {
- let mut flat_idx = 0usize;
- for solid in &result.solids {
- for shell in &solid.shells {
- for face in &shell.faces {
- let surf_name = result
- .geom
- .face_surface
- .get(flat_idx)
- .and_then(|entry| *entry)
- .and_then(|surface_idx| result.geom.surfaces.get(surface_idx))
- .map(|surface| match surface {
- rcad_kernel::geom::Surface3::Plane(_) => "Plane",
- rcad_kernel::geom::Surface3::Cylinder(_) => "Cylinder",
- rcad_kernel::geom::Surface3::Cone(_) => "Cone",
- rcad_kernel::geom::Surface3::Sphere(_) => "Sphere",
- rcad_kernel::geom::Surface3::Torus(_) => "Torus",
- rcad_kernel::geom::Surface3::BSpline(_) => "BSpline",
- _ => "Other",
- })
- .unwrap_or("None");
- let area = rcad_kernel::properties::face_surface_area(&result, face, flat_idx);
- let uv_range = result
- .geom
- .face_surface_range
- .get(flat_idx)
- .and_then(|entry| *entry)
- .map(|[u0, u1, v0, v1]| {
- format!(" uv=[{u0:.4},{u1:.4}]x[{v0:.4},{v1:.4}]")
- })
- .unwrap_or_default();
- let sample = face
- .sample_point
- .map(|p| format!(" sample=({:.4},{:.4},{:.4})", p.x, p.y, p.z))
- .unwrap_or_default();
- eprintln!(
- "[RESULT_FACE] face[{flat_idx}] surf={surf_name} area={area:.6} outer_edges={} inner_wires={} tris={}{}{}",
- face.outer_wire.edges.len(),
- face.inner_wires.len(),
- face.triangles.len(),
- uv_range,
- sample,
- );
- flat_idx += 1;
- }
- }
- }
- }
- }
  Ok(result)
 }
 
@@ -1694,9 +1649,7 @@ pub fn boolean_op(op: BooleanOpType, a: &rcad_kernel::BRep, b: &rcad_kernel::BRe
 }
 
 pub(crate) fn boolean_op_pave_fill_build(op: BooleanOpType, a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> Result<topods::BRep, BooleanError> {
- let a_t = a.to_topods();
- let b_t = b.to_topods();
- let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, crate::tolerance::TOLERANCE_ABS);
+ let mut ds = bopds::ds::DS::new_from_topods(a, b, crate::tolerance::TOLERANCE_ABS);
  let fuzzy_tol = ds.fuzzy_tol;
 
  let mut brep = rcad_kernel::topods::BRep::new();

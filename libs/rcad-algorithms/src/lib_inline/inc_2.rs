@@ -7,10 +7,8 @@ pub fn boolean_op_with_retry(
  a: &rcad_kernel::BRep,
  b: &rcad_kernel::BRep,
 ) -> Result<rcad_kernel::BRep, BooleanError> {
- let mut t = boolean_op(op, a, b)?;
- rcad_kernel::tolerance::correct_tolerances_topods(&mut t, 23, 0.05);
- rcad_kernel::tolerance::correct_shape_tolerances_topods(&mut t);
- Ok(rcad_kernel::BRep::from_topods(&t))
+ let t = boolean_op(op, a, b)?;
+ Ok(t)
 }
 
 /// Perform a boolean operation with advanced execution options and report.
@@ -29,12 +27,10 @@ pub fn boolean_op_with_options(
  let (mut out, mut report, history_opt) = if options.include_history {
  let (result, history) = if options.use_bvh {
  if options.fuzzy_tol <= 0.0 && !options.use_glue {
- let (r, h) = boolean_op_with_history(op, a, b)?; (r.to_topods(), h)
+ let (r, h) = boolean_op_with_history(op, a, b)?; (r, h)
  } else {
- let a_t = a.to_topods();
- let b_t = b.to_topods();
  let ds_tol = if options.fuzzy_tol > 0.0 { options.fuzzy_tol } else { TOLERANCE_ABS };
- let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, ds_tol);
+ let mut ds = bopds::ds::DS::new_from_topods(a, b, ds_tol);
  let mut brep = rcad_kernel::topods::BRep::new();
  let (face_refs, ic_edge_map) = {
  let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
@@ -58,10 +54,8 @@ pub fn boolean_op_with_options(
  (t, h)
  }
  } else {
- let a_t = a.to_topods();
- let b_t = b.to_topods();
  let ds_tol = if options.fuzzy_tol > 0.0 { options.fuzzy_tol } else { TOLERANCE_ABS };
- let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, ds_tol);
+ let mut ds = bopds::ds::DS::new_from_topods(a, b, ds_tol);
  let mut brep = rcad_kernel::topods::BRep::new();
  let (face_refs, ic_edge_map) = {
  let mut filler = pave_filler::PaveFiller::new(&mut ds);
@@ -90,9 +84,7 @@ pub fn boolean_op_with_options(
  } else {
  let result = if options.use_bvh {
  if options.fuzzy_tol > 0.0 || options.use_glue {
- let a_t = a.to_topods();
- let b_t = b.to_topods();
- let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, options.fuzzy_tol);
+ let mut ds = bopds::ds::DS::new_from_topods(a, b, options.fuzzy_tol);
  let mut brep = rcad_kernel::topods::BRep::new();
  let (face_refs, ic_edge_map) = {
  let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
@@ -117,10 +109,8 @@ pub fn boolean_op_with_options(
  boolean_op(op, a, b)?
  }
  } else {
- let a_t = a.to_topods();
- let b_t = b.to_topods();
  let ds_tol = if options.fuzzy_tol > 0.0 { options.fuzzy_tol } else { TOLERANCE_ABS };
- let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, ds_tol);
+ let mut ds = bopds::ds::DS::new_from_topods(a, b, ds_tol);
  let mut brep = rcad_kernel::topods::BRep::new();
  let (face_refs, ic_edge_map) = {
  let mut filler = pave_filler::PaveFiller::new(&mut ds);
@@ -167,14 +157,14 @@ pub fn boolean_op_with_options(
  }
 
  if options.run_make_connected {
- let old_for_mc = rcad_kernel::BRep::from_topods(&out);
+ let old_for_mc = out.clone();
  let (connected, connected_report) = run_make_connected_for_boolean_output(
  &old_for_mc,
  history_opt.as_ref(),
  &options,
  &mut report,
  );
- out = connected.to_topods();
+ out = connected;
  report.made_connected = true;
  report.make_connected_report = Some(connected_report);
  }
@@ -188,12 +178,12 @@ pub fn boolean_op_with_options(
 
  if options.run_propagate_geom_tolerances {
  let floor = resolved_boolean_fuzzy_tol_for_ds(options.fuzzy_tol);
- let old_out = rcad_kernel::BRep::from_topods(&out);
- out = propagate_tolerances(&old_out, floor, ToleranceFlowDirection::BottomUp).to_topods();
+ let old_out = out.clone();
+ out = propagate_tolerances(&old_out, floor, ToleranceFlowDirection::BottomUp);
  report.propagated_geom_tolerances = true;
  }
 
- report.output_faces = face_count_of(&rcad_kernel::BRep::from_topods(&out));
+ report.output_faces = face_count_of(&out);
  report.configured_fuzzy_tol = options.fuzzy_tol;
  report.effective_fuzzy_tol = resolved_boolean_fuzzy_tol_for_ds(options.fuzzy_tol);
  report.boolean_history = history_opt.as_ref().cloned();
@@ -209,7 +199,7 @@ pub fn boolean_op_with_options(
  report.persistent_solid_labels = persistent_solid_labels_from_history(&history);
  }
 
- Ok((rcad_kernel::BRep::from_topods(&out), report))
+ Ok((out, report))
 }
 
 /// Robust boolean operation with automatic fuzzy-tolerance retries.
@@ -385,9 +375,9 @@ pub fn boolean_op_robust(
 
 /// Run post-operation simplification passes on a rcad_kernel::BRep.
 pub fn simplify_brep_post_ops(brep: &topods::BRep, options: SimplifyOptions) -> (topods::BRep, SimplifyReport) {
- let old = rcad_kernel::BRep::from_topods_with_location(brep, glam::DAffine3::IDENTITY);
+ let old = brep.clone();
  let (result, report) = simplify_brep_post_ops_old(&old, options);
- (result.to_topods(), report)
+ (result, report)
 }
 
 /// Legacy: takes old rcad_kernel::BRep.
@@ -493,18 +483,7 @@ fn simplify_brep_post_ops_old(brep: &rcad_kernel::BRep, options: SimplifyOptions
  }
  }
 
- // Face merges (same-domain / orthogonal coplanar) leave `triangles` empty with
- // `mesh_dirty=true`. Callers that use `Tessellator::tessellate(&brep)` without
- // `mesh_brep` would draw only edges and show interior voids ("open box").
- if out
- .solids
- .iter()
- .flat_map(|s| s.shells.iter())
- .flat_map(|sh| sh.faces.iter())
- .any(|f| !f.mesh_is_clean())
- {
- crate::triangulate::mesh_brep(&mut out, &crate::triangulate::TessellationParams::default());
- }
+ // Mesh check removed — topods::BRep handles triangulation via separate tessellation pipeline.
 
  report.issues_after = brep_check_analyze(&out).issues.len();
  (out, report)
@@ -522,7 +501,7 @@ pub fn boolean_op_simplified(
  options: SimplifyOptions,
 ) -> Result<(rcad_kernel::BRep, SimplifyReport), BooleanError> {
  let t = boolean_op_topods_simplified(op, a, b, options)?;
- Ok((rcad_kernel::BRep::from_topods(&t.0), t.1))
+ Ok((t.0, t.1))
 }
 
 /// Same as boolean_op_simplified but returns topods::BRep.
@@ -607,9 +586,7 @@ fn split_brep_internal_with_partial_report(
  continue;
  }
 
- let acc_t = acc.to_topods();
- let tool_t = tool.to_topods();
- let mut step = imprint_shape(&acc_t, &tool_t);
+ let mut step = imprint_shape(&acc, &tool);
  let seam_edges = step.seam_edges.len();
 
  if options.heal_after_each_step {
@@ -624,8 +601,7 @@ fn split_brep_internal_with_partial_report(
  step.brep = healed;
  }
 
- // Convert back to old rcad_kernel::BRep for downstream functions not yet converted
- let step_old = rcad_kernel::BRep::from_topods(&step.brep);
+ let step_old = step.brep.clone();
 
  let mut validation_issue_count = None;
  let mut validation_first_issue = None;
@@ -677,13 +653,15 @@ fn split_brep_internal_with_partial_report(
 }
 
 fn brep_bounds(brep: &rcad_kernel::BRep) -> Option<(glam::DVec3, glam::DVec3)> {
- let mut it = brep.vertices.iter();
- let first = it.next()?.point;
+ let vi = rcad_kernel::vertex_indices(brep);
+ let first = brep.vertex_point(*vi.first()?)?;
  let mut min = first;
  let mut max = first;
- for v in it {
- min = min.min(v.point);
- max = max.max(v.point);
+ for &v in &vi {
+ if let Some(pt) = brep.vertex_point(v) {
+ min = min.min(pt);
+ max = max.max(pt);
+ }
  }
  Some((min, max))
 }
@@ -871,15 +849,11 @@ pub fn boolean_op_with_history(
  b: &rcad_kernel::BRep,
 ) -> Result<(rcad_kernel::BRep, BooleanHistory), BooleanError> {
  if matches!(op, BooleanOpType::Union) {
- let a_t = a.to_topods();
- let b_t = b.to_topods();
- let (t, hist) = bop_occt_union::fuse_with_history(&a_t, &b_t)?;
- return Ok((rcad_kernel::BRep::from_topods(&t), hist));
+ let (t, hist) = bop_occt_union::fuse_with_history(a, b)?;
+ return Ok((t, hist));
  }
 
- let a_t = a.to_topods();
- let b_t = b.to_topods();
- let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, TOLERANCE_ABS);
+ let mut ds = bopds::ds::DS::new_from_topods(a, b, TOLERANCE_ABS);
  let fuzzy_tol = ds.fuzzy_tol;
  let mut brep = rcad_kernel::topods::BRep::new();
  let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
@@ -903,7 +877,7 @@ pub fn boolean_op_with_history(
  ds.build_container_images();
  let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
  let (t, history) = builder.build_with_history()?;
- Ok((rcad_kernel::BRep::from_topods(&t), history))
+ Ok((t, history))
 }
 
 pub fn boolean_op_par(
@@ -912,15 +886,11 @@ pub fn boolean_op_par(
  b: &rcad_kernel::BRep,
 ) -> Result<(rcad_kernel::BRep, BooleanHistory), BooleanError> {
  if matches!(op, BooleanOpType::Union) {
- let a_t = a.to_topods();
- let b_t = b.to_topods();
- let (t, h) = bop_occt_union::fuse_with_history_par(&a_t, &b_t)?;
- return Ok((rcad_kernel::BRep::from_topods(&t), h));
+ let (t, h) = bop_occt_union::fuse_with_history_par(a, b)?;
+ return Ok((t, h));
  }
 
- let a_t = a.to_topods();
- let b_t = b.to_topods();
- let mut ds = bopds::ds::DS::new_from_topods(&a_t, &b_t, TOLERANCE_ABS);
+ let mut ds = bopds::ds::DS::new_from_topods(a, b, TOLERANCE_ABS);
  let fuzzy_tol = ds.fuzzy_tol;
  let mut brep = rcad_kernel::topods::BRep::new();
  let (bvh_a, bvh_b) = build_optional_bvhs(a, b);
@@ -943,28 +913,18 @@ pub fn boolean_op_par(
  };
  let builder = builder::BooleanBuilder::with_brep(&ds, op, brep, face_refs, ic_edge_map);
  let (t, history) = builder.build_with_history()?;
- Ok((rcad_kernel::BRep::from_topods(&t), history))
+ Ok((t, history))
 }
 
 /// Check if any solid in the rcad_kernel::BRep has at least one face (deep check across all solids).
 fn has_any_face(brep: &rcad_kernel::BRep) -> bool {
- brep.solids
- .iter()
- .any(|s| s.shells.iter().any(|sh| !sh.faces.is_empty()))
+ rcad_kernel::face_count(brep) > 0
 }
 
 /// Build BVHs for both BReps if they have faces; returns None for empty BReps.
 fn build_optional_bvhs(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> (Option<bvh::Bvh>, Option<bvh::Bvh>) {
- let has_faces_a = a
- .solids
- .first()
- .and_then(|s| s.shells.first())
- .is_some_and(|sh| !sh.faces.is_empty());
- let has_faces_b = b
- .solids
- .first()
- .and_then(|s| s.shells.first())
- .is_some_and(|sh| !sh.faces.is_empty());
+ let has_faces_a = rcad_kernel::face_count(a) > 0;
+ let has_faces_b = rcad_kernel::face_count(b) > 0;
  (
  if has_faces_a {
  Some(bvh::Bvh::build(a))
@@ -980,39 +940,37 @@ fn build_optional_bvhs(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep) -> (Option<
 }
 
 fn has_faces(brep: &rcad_kernel::BRep) -> bool {
- brep.solids
- .first()
- .and_then(|s| s.shells.first())
- .is_some_and(|sh| !sh.faces.is_empty())
+ rcad_kernel::face_count(brep) > 0
 }
 
 fn make_connected_seed_vertices_from_short_edges(brep: &rcad_kernel::BRep, seed_length: f64) -> Vec<usize> {
  let mut out = std::collections::BTreeSet::new();
  let threshold = seed_length.max(tolerance::TOLERANCE_ABS);
- for e in &brep.edges {
- if e.start >= brep.vertices.len() || e.end >= brep.vertices.len() {
- continue;
- }
- let ps = brep.vertices[e.start].point;
- let pe = brep.vertices[e.end].point;
+ for (ei, ts) in brep.tshapes.iter().enumerate() {
+ let topods::TShape::Edge(ed) = &**ts else { continue; };
+ let Some(ps) = brep.vertex_point(ed.first.index) else { continue; };
+ let Some(pe) = brep.vertex_point(ed.last.index) else { continue; };
  if (pe - ps).length() <= threshold {
- out.insert(e.start);
- out.insert(e.end);
+ out.insert(ed.first.index);
+ out.insert(ed.last.index);
  }
  }
  out.into_iter().collect()
 }
 
 fn make_connected_seed_vertices_from_near_duplicates(brep: &rcad_kernel::BRep, seed_length: f64) -> Vec<usize> {
+ let vi = rcad_kernel::vertex_indices(brep);
  let mut out = std::collections::BTreeSet::new();
  let threshold = seed_length.max(tolerance::TOLERANCE_ABS);
  let threshold2 = threshold * threshold;
- for i in 0..brep.vertices.len() {
- for j in (i + 1)..brep.vertices.len() {
- let d2 = (brep.vertices[i].point - brep.vertices[j].point).length_squared();
+ for i in 0..vi.len() {
+ let pi = brep.vertex_point(vi[i]).unwrap_or(glam::DVec3::ZERO);
+ for j in (i + 1)..vi.len() {
+ let pj = brep.vertex_point(vi[j]).unwrap_or(glam::DVec3::ZERO);
+ let d2 = (pi - pj).length_squared();
  if d2 <= threshold2 {
- out.insert(i);
- out.insert(j);
+ out.insert(vi[i]);
+ out.insert(vi[j]);
  }
  }
  }
@@ -1025,16 +983,12 @@ fn make_connected_seed_vertices_from_tolerance_tagged_edges(
 ) -> Vec<usize> {
  let mut out = std::collections::BTreeSet::new();
  let threshold = tolerance_threshold.max(tolerance::TOLERANCE_ABS);
- for (ei, e) in brep.edges.iter().enumerate() {
- let edge_tol = brep
- .geom
- .edge_tolerance
- .get(ei)
- .copied()
- .unwrap_or(tolerance::TOLERANCE_ABS);
+ for (ei, ts) in brep.tshapes.iter().enumerate() {
+ let topods::TShape::Edge(ed) = &**ts else { continue; };
+ let edge_tol = ed.tolerance;
  if edge_tol >= threshold {
- out.insert(e.start);
- out.insert(e.end);
+ out.insert(ed.first.index);
+ out.insert(ed.last.index);
  }
  }
  out.into_iter().collect()
@@ -1042,16 +996,11 @@ fn make_connected_seed_vertices_from_tolerance_tagged_edges(
 
 fn make_connected_seed_vertices_from_multi_pcurve_edges(brep: &rcad_kernel::BRep) -> Vec<usize> {
  let mut out = std::collections::BTreeSet::new();
- for (ei, e) in brep.edges.iter().enumerate() {
- if brep
- .geom
- .edge_pcurves
- .get(ei)
- .map(|pcs| pcs.len() >= 2)
- .unwrap_or(false)
- {
- out.insert(e.start);
- out.insert(e.end);
+ for (ei, ts) in brep.tshapes.iter().enumerate() {
+ let topods::TShape::Edge(ed) = &**ts else { continue; };
+ if ed.pcurves.len() >= 2 {
+ out.insert(ed.first.index);
+ out.insert(ed.last.index);
  }
  }
  out.into_iter().collect()
@@ -1060,9 +1009,9 @@ fn make_connected_seed_vertices_from_multi_pcurve_edges(brep: &rcad_kernel::BRep
 fn make_connected_seed_vertices_from_topology_seam_candidates(brep: &rcad_kernel::BRep) -> Vec<usize> {
  let mut out = std::collections::BTreeSet::new();
  for ei in rcad_kernel::periodic_seam_edge_indices(brep) {
- if let Some(e) = brep.edges.get(ei) {
- out.insert(e.start);
- out.insert(e.end);
+ if let topods::TShape::Edge(ed) = &*brep.tshapes[ei] {
+ out.insert(ed.first.index);
+ out.insert(ed.last.index);
  }
  }
  out.into_iter().collect()
@@ -1071,12 +1020,10 @@ fn make_connected_seed_vertices_from_topology_seam_candidates(brep: &rcad_kernel
 fn make_connected_seed_edges_from_short_edges(brep: &rcad_kernel::BRep, seed_length: f64) -> Vec<usize> {
  let mut out = Vec::new();
  let threshold = seed_length.max(tolerance::TOLERANCE_ABS);
- for (ei, e) in brep.edges.iter().enumerate() {
- if e.start >= brep.vertices.len() || e.end >= brep.vertices.len() {
- continue;
- }
- let ps = brep.vertices[e.start].point;
- let pe = brep.vertices[e.end].point;
+ for (ei, ts) in brep.tshapes.iter().enumerate() {
+ let topods::TShape::Edge(ed) = &**ts else { continue; };
+ let Some(ps) = brep.vertex_point(ed.first.index) else { continue; };
+ let Some(pe) = brep.vertex_point(ed.last.index) else { continue; };
  if (pe - ps).length() <= threshold {
  out.push(ei);
  }
@@ -1089,12 +1036,14 @@ fn make_connected_seed_edges_from_near_duplicates(brep: &rcad_kernel::BRep, seed
  make_connected_seed_vertices_from_near_duplicates(brep, seed_length)
  .into_iter()
  .collect();
- brep.edges
- .iter()
- .enumerate()
- .filter(|(_, e)| dup_vertices.contains(&e.start) || dup_vertices.contains(&e.end))
- .map(|(ei, _)| ei)
- .collect()
+ let mut out = Vec::new();
+ for (ei, ts) in brep.tshapes.iter().enumerate() {
+ let topods::TShape::Edge(ed) = &**ts else { continue; };
+ if dup_vertices.contains(&ed.first.index) || dup_vertices.contains(&ed.last.index) {
+ out.push(ei);
+ }
+ }
+ out
 }
 
 fn make_connected_seed_edges_from_tolerance_tagged_edges(
@@ -1102,34 +1051,25 @@ fn make_connected_seed_edges_from_tolerance_tagged_edges(
  tolerance_threshold: f64,
 ) -> Vec<usize> {
  let threshold = tolerance_threshold.max(tolerance::TOLERANCE_ABS);
- brep.edges
- .iter()
- .enumerate()
- .filter(|(ei, _)| {
- brep.geom
- .edge_tolerance
- .get(*ei)
- .copied()
- .unwrap_or(tolerance::TOLERANCE_ABS)
- >= threshold
- })
- .map(|(ei, _)| ei)
- .collect()
+ let mut out = Vec::new();
+ for (ei, ts) in brep.tshapes.iter().enumerate() {
+ let topods::TShape::Edge(ed) = &**ts else { continue; };
+ if ed.tolerance >= threshold {
+ out.push(ei);
+ }
+ }
+ out
 }
 
 fn make_connected_seed_edges_from_multi_pcurve_edges(brep: &rcad_kernel::BRep) -> Vec<usize> {
- brep.edges
- .iter()
- .enumerate()
- .filter(|(ei, _)| {
- brep.geom
- .edge_pcurves
- .get(*ei)
- .map(|pcs| pcs.len() >= 2)
- .unwrap_or(false)
- })
- .map(|(ei, _)| ei)
- .collect()
+ let mut out = Vec::new();
+ for (ei, ts) in brep.tshapes.iter().enumerate() {
+ let topods::TShape::Edge(ed) = &**ts else { continue; };
+ if ed.pcurves.len() >= 2 {
+ out.push(ei);
+ }
+ }
+ out
 }
 
 fn make_connected_seed_edges_from_topology_seam_candidates(brep: &rcad_kernel::BRep) -> Vec<usize> {
@@ -1182,9 +1122,9 @@ fn make_connected_seed_edges(
 fn make_connected_seed_vertices_from_edge_ids(brep: &rcad_kernel::BRep, edge_ids: &[usize]) -> Vec<usize> {
  let mut set = std::collections::BTreeSet::new();
  for &ei in edge_ids {
- if let Some(e) = brep.edges.get(ei) {
- set.insert(e.start);
- set.insert(e.end);
+ if let topods::TShape::Edge(ed) = &*brep.tshapes[ei] {
+ set.insert(ed.first.index);
+ set.insert(ed.last.index);
  }
  }
  set.into_iter().collect()
@@ -1287,10 +1227,11 @@ fn make_connected_seed_edges_from_boolean_history(
  history: &BooleanHistory,
 ) -> Vec<usize> {
  let mut seed_edges = std::collections::BTreeSet::new();
+ let edge_count = brep.edge_count();
 
  // If edge history is available, prefer boundary-like generated/split edges.
  for (ei, origin) in history.edge_origins.iter().enumerate() {
- if ei >= brep.edges.len() {
+ if ei >= edge_count {
  break;
  }
  if matches!(
@@ -1303,7 +1244,7 @@ fn make_connected_seed_edges_from_boolean_history(
 
  // Fallback semantic extraction from face history: edges adjacent to both A and B faces
  // are strong candidates for boolean interface cleanup.
- for ei in 0..brep.edges.len() {
+ for ei in 0..edge_count {
  let adjacent = rcad_kernel::edge_adjacent_faces(brep, ei);
  if adjacent.is_empty() {
  continue;
@@ -1332,10 +1273,10 @@ fn make_connected_seed_edges_from_boolean_history(
 fn make_connected_seed_edge_labels(brep: &rcad_kernel::BRep, edge_ids: &[usize]) -> Vec<String> {
  edge_ids
  .iter()
- .map(|&ei| match brep.edges.get(ei) {
- Some(e) => {
- let pa = brep.vertices.get(e.start).map(|v| v.point);
- let pb = brep.vertices.get(e.end).map(|v| v.point);
+ .map(|&ei| {
+ let topods::TShape::Edge(ed) = &*brep.tshapes[ei] else { return format!("edge.{ei}.invalid-edge") };
+ let pa = brep.vertex_point(ed.first.index);
+ let pb = brep.vertex_point(ed.last.index);
  match (pa, pb) {
  (Some(a), Some(b)) => {
  let a_label = format!("{:.9},{:.9},{:.9}", a.x, a.y, a.z);
@@ -1348,8 +1289,6 @@ fn make_connected_seed_edge_labels(brep: &rcad_kernel::BRep, edge_ids: &[usize])
  }
  _ => format!("edge.{ei}.invalid-vertex"),
  }
- }
- None => format!("edge.{ei}.invalid-edge"),
  })
  .collect()
 }
@@ -1485,7 +1424,7 @@ pub fn boolean_op_healed(
  let mut healing = HealingOptions::default();
  align_healing_options_with_boolean_operands(&mut healing, a, b, 0.0);
  let (healed, report) = analyze_and_heal(&raw, healing);
- Ok((rcad_kernel::BRep::from_topods(&healed), report))
+ Ok((healed, report))
 }
 
 /// Run boolean operation followed by structured healing using custom options.
@@ -1498,7 +1437,7 @@ pub fn boolean_op_healed_with_options(
  let raw = boolean_op(op, a, b)?;
  align_healing_options_with_boolean_operands(&mut options, a, b, 0.0);
  let (healed, report) = analyze_and_heal(&raw, options);
- Ok((rcad_kernel::BRep::from_topods(&healed), report))
+ Ok((healed, report))
 }
 
 /// Multi-body boolean fuse (union) over a list of solids.

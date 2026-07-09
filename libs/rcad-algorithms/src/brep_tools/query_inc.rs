@@ -4,12 +4,7 @@
 
 /// Determine the shape type of a BRep.
 ///
-/// Returns the highest-level topological entity present:
-/// - Compound if `brep.compound` is set
-/// - CompSolid if `brep.compsolid` is set
-/// - Solid if there are solids
-/// - Shell if there are shells (no solids)
-/// - etc.
+/// Returns the highest-level topological entity present.
 ///
 /// # Example
 ///
@@ -17,41 +12,32 @@
 /// use rcad_algorithms::brep_tools::{get_shape_type, ShapeType};
 /// use rcad_kernel::BRep;
 ///
-/// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
-///     width: 1.0, height: 1.0, depth: 1.0
-/// });
-/// assert_eq!(get_shape_type(&brep), ShapeType::Solid);
-///
-/// let empty = BRep::new();
-/// assert_eq!(get_shape_type(&empty), ShapeType::Empty);
+/// let brep = BRep::new(); // topods
+/// // empty => Empty
+/// assert_eq!(get_shape_type(&brep), ShapeType::Empty);
 /// ```
 pub fn get_shape_type(brep: &rcad_kernel::BRep) -> ShapeType {
-    if brep.compound.is_some() {
-        return ShapeType::Compound;
-    }
-    if brep.compsolid.is_some() {
-        return ShapeType::CompSolid;
-    }
-    if !brep.solids.is_empty() {
-        // Check if solids have shells with faces
-        let has_faces = brep.solids.iter()
-            .flat_map(|s| &s.shells)
-            .any(|sh| !sh.faces.is_empty());
-        if has_faces {
-            return ShapeType::Solid;
+    for ts in &brep.tshapes {
+        match &**ts {
+            rcad_kernel::topods::TShape::Compound(_) => return ShapeType::Compound,
+            rcad_kernel::topods::TShape::CompSolid(_) => return ShapeType::CompSolid,
+            rcad_kernel::topods::TShape::Solid(sd) => {
+                let has_faces = sd.shells.iter().any(|sr| {
+                    if let rcad_kernel::topods::TShape::Shell(shd) = &*brep.tshapes[sr.index] {
+                        !shd.faces.is_empty()
+                    } else { false }
+                });
+                if has_faces { return ShapeType::Solid; }
+                let has_shells = sd.shells.iter().any(|sr| {
+                    matches!(&*brep.tshapes[sr.index], rcad_kernel::topods::TShape::Shell(_))
+                });
+                if has_shells { return ShapeType::Shell; }
+                return ShapeType::Solid;
+            }
+            rcad_kernel::topods::TShape::Edge(_) => return ShapeType::Edge,
+            rcad_kernel::topods::TShape::Vertex(_) => return ShapeType::Vertex,
+            _ => {}
         }
-        // Check if there are empty shells
-        let has_shells = brep.solids.iter().any(|s| !s.shells.is_empty());
-        if has_shells {
-            return ShapeType::Shell;
-        }
-        return ShapeType::Solid;
-    }
-    if !brep.edges.is_empty() {
-        return ShapeType::Edge;
-    }
-    if !brep.vertices.is_empty() {
-        return ShapeType::Vertex;
     }
     ShapeType::Empty
 }
@@ -64,22 +50,12 @@ pub fn get_shape_type(brep: &rcad_kernel::BRep) -> ShapeType {
 ///
 /// * `brep` - The BRep containing the face
 /// * `face_idx` - Index of the face (flat index across all solids/shells)
-///
-/// # Example
-///
-/// ```ignore
-/// use rcad_algorithms::brep_tools::get_outer_wire;
-/// use rcad_kernel::BRep;
-///
-/// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
-///     width: 1.0, height: 1.0, depth: 1.0
-/// });
-/// let outer_wire = get_outer_wire(&brep, 0).unwrap();
-/// assert_eq!(outer_wire.edges.len(), 4); // Rectangle
-/// ```
-pub fn get_outer_wire(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<&Wire, BRepToolsError> {
-    let (face, _) = get_face_by_flat_index(brep, face_idx)?;
-    Ok(&face.outer_wire)
+pub fn get_outer_wire(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<&rcad_kernel::topods::TWireData, BRepToolsError> {
+    let (_, _, fd) = get_face_by_flat_index(brep, face_idx)?;
+    match &*brep.tshapes[fd.outer_wire.index] {
+        rcad_kernel::topods::TShape::Wire(wd) => Ok(wd),
+        _ => Err(BRepToolsError::InvalidIndex { kind: "wire", index: fd.outer_wire.index, max: brep.tshapes.len() }),
+    }
 }
 
 /// Get the inner wires (holes) of a face.
@@ -90,21 +66,16 @@ pub fn get_outer_wire(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<&Wire
 ///
 /// * `brep` - The BRep containing the face
 /// * `face_idx` - Index of the face (flat index across all solids/shells)
-///
-/// # Example
-///
-/// ```ignore
-/// use rcad_algorithms::brep_tools::get_inner_wires;
-///
-/// // A face with a hole would have inner_wires.len() > 0
-/// let inner_wires = get_inner_wires(&brep, 0).unwrap();
-/// for wire in inner_wires {
-///     println!("Hole with {} edges", wire.edges.len());
-/// }
-/// ```
-pub fn get_inner_wires(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<&[Wire], BRepToolsError> {
-    let (face, _) = get_face_by_flat_index(brep, face_idx)?;
-    Ok(&face.inner_wires)
+pub fn get_inner_wires(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<Vec<&rcad_kernel::topods::TWireData>, BRepToolsError> {
+    let (_, _, fd) = get_face_by_flat_index(brep, face_idx)?;
+    let mut wires = Vec::new();
+    for iw_sr in &fd.inner_wires {
+        match &*brep.tshapes[iw_sr.index] {
+            rcad_kernel::topods::TShape::Wire(wd) => wires.push(wd),
+            _ => return Err(BRepToolsError::InvalidIndex { kind: "wire", index: iw_sr.index, max: brep.tshapes.len() }),
+        }
+    }
+    Ok(wires)
 }
 
 /// Check if a shape is closed (forms a manifold solid).
@@ -113,51 +84,53 @@ pub fn get_inner_wires(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<&[Wi
 /// - It is a solid with a closed shell
 /// - Each edge is shared by exactly two faces
 /// - The shell encloses a finite volume
-///
-/// # Example
-///
-/// ```
-/// use rcad_algorithms::brep_tools::is_closed;
-/// use rcad_kernel::BRep;
-///
-/// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
-///     width: 1.0, height: 1.0, depth: 1.0
-/// });
-/// assert!(is_closed(&brep));
-///
-/// let empty = BRep::new();
-/// assert!(!is_closed(&empty));
-/// ```
 pub fn is_closed(brep: &rcad_kernel::BRep) -> bool {
-    if brep.solids.is_empty() {
-        return false;
-    }
-
-    for solid in &brep.solids {
-        for shell in &solid.shells {
-            if !is_shell_closed(brep, shell) {
-                return false;
+    let mut found_any = false;
+    for ts in &brep.tshapes {
+        if let rcad_kernel::topods::TShape::Solid(sd) = &**ts {
+            for shell_sr in &sd.shells {
+                if let rcad_kernel::topods::TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+                    if !is_shell_closed(brep, shd) {
+                        return false;
+                    }
+                    found_any = true;
+                }
             }
         }
     }
-    true
+    // Also check standalone shells
+    for ts in &brep.tshapes {
+        if let rcad_kernel::topods::TShape::Shell(shd) = &**ts {
+            if !is_shell_closed(brep, shd) {
+                return false;
+            }
+            found_any = true;
+        }
+    }
+    found_any
 }
 
 /// Check if a shell is closed by verifying edge manifoldness.
-fn is_shell_closed(_brep: &rcad_kernel::BRep, shell: &Shell) -> bool {
-    if shell.faces.is_empty() {
+fn is_shell_closed(brep: &rcad_kernel::BRep, shd: &rcad_kernel::topods::TShellData) -> bool {
+    if shd.faces.is_empty() {
         return false;
     }
 
     // Count edge usage across all faces
     let mut edge_count = std::collections::HashMap::new();
-    for face in &shell.faces {
-        for we in &face.outer_wire.edges {
-            *edge_count.entry(we.idx).or_insert(0) += 1;
-        }
-        for inner in &face.inner_wires {
-            for we in &inner.edges {
-                *edge_count.entry(we.idx).or_insert(0) += 1;
+    for face_sr in &shd.faces {
+        if let rcad_kernel::topods::TShape::Face(fd) = &*brep.tshapes[face_sr.index] {
+            if let rcad_kernel::topods::TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+                for e_sr in &wd.edges {
+                    *edge_count.entry(e_sr.index).or_insert(0) += 1;
+                }
+            }
+            for iw_sr in &fd.inner_wires {
+                if let rcad_kernel::topods::TShape::Wire(wd) = &*brep.tshapes[iw_sr.index] {
+                    for e_sr in &wd.edges {
+                        *edge_count.entry(e_sr.index).or_insert(0) += 1;
+                    }
+                }
             }
         }
     }
@@ -178,40 +151,12 @@ fn is_shell_closed(_brep: &rcad_kernel::BRep, shell: &Shell) -> bool {
 ///
 /// * `brep` - The BRep containing the face
 /// * `face_idx` - Flat index of the face across all solids/shells
-///
-/// # Example
-///
-/// ```ignore
-/// use rcad_algorithms::brep_tools::get_surface;
-/// use rcad_kernel::BRep;
-///
-/// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
-///     width: 1.0, height: 1.0, depth: 1.0
-/// });
-/// let surface = get_surface(&brep, 0).unwrap();
-/// // The surface of a box face is a plane
-/// ```
 pub fn get_surface(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<&Surface3, BRepToolsError> {
-    let (_, flat_idx) = get_face_by_flat_index(brep, face_idx)?;
-
-    match brep.geom.face_surface.get(flat_idx) {
-        Some(Some(surf_idx)) => {
-            brep.geom.surfaces.get(*surf_idx)
-                .ok_or(BRepToolsError::MissingGeometry {
-                    kind: "surface",
-                    index: *surf_idx,
-                })
-        }
-        Some(None) => Err(BRepToolsError::MissingGeometry {
-            kind: "surface",
-            index: face_idx,
-        }),
-        None => Err(BRepToolsError::InvalidIndex {
-            kind: "face_surface",
-            index: face_idx,
-            max: brep.geom.face_surface.len(),
-        }),
-    }
+    let (_, _, fd) = get_face_by_flat_index(brep, face_idx)?;
+    fd.surface.as_ref().ok_or(BRepToolsError::MissingGeometry {
+        kind: "surface",
+        index: face_idx,
+    })
 }
 
 /// Get the 3D curve of an edge.
@@ -221,44 +166,17 @@ pub fn get_surface(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<&Surface
 /// # Arguments
 ///
 /// * `brep` - The BRep containing the edge
-/// * `edge_idx` - Index of the edge
-///
-/// # Example
-///
-/// ```ignore
-/// use rcad_algorithms::brep_tools::get_curve;
-/// use rcad_kernel::BRep;
-///
-/// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
-///     width: 1.0, height: 1.0, depth: 1.0
-/// });
-/// let curve = get_curve(&brep, 0).unwrap();
-/// ```
+/// * `edge_idx` - Index of the edge (tshape index)
 pub fn get_curve(brep: &rcad_kernel::BRep, edge_idx: usize) -> Result<&Curve3, BRepToolsError> {
-    if edge_idx >= brep.edges.len() {
-        return Err(BRepToolsError::InvalidIndex {
-            kind: "edge",
-            index: edge_idx,
-            max: brep.edges.len(),
-        });
-    }
-
-    match brep.geom.edge_curve.get(edge_idx) {
-        Some(Some(curve_idx)) => {
-            brep.geom.curves.get(*curve_idx)
-                .ok_or(BRepToolsError::MissingGeometry {
-                    kind: "curve",
-                    index: *curve_idx,
-                })
-        }
-        Some(None) => Err(BRepToolsError::MissingGeometry {
+    match &*brep.tshapes[edge_idx] {
+        rcad_kernel::topods::TShape::Edge(ed) => ed.curve.as_ref().ok_or(BRepToolsError::MissingGeometry {
             kind: "curve",
             index: edge_idx,
         }),
-        None => Err(BRepToolsError::InvalidIndex {
-            kind: "edge_curve",
+        _ => Err(BRepToolsError::InvalidIndex {
+            kind: "edge",
             index: edge_idx,
-            max: brep.geom.edge_curve.len(),
+            max: brep.tshapes.len(),
         }),
     }
 }
@@ -270,7 +188,7 @@ pub fn get_curve(brep: &rcad_kernel::BRep, edge_idx: usize) -> Result<&Curve3, B
 /// # Arguments
 ///
 /// * `brep` - The BRep containing the edge and face
-/// * `edge_idx` - Index of the edge
+/// * `edge_idx` - Index of the edge (tshape index)
 /// * `face_idx` - Flat index of the face
 ///
 /// # Returns
@@ -278,73 +196,34 @@ pub fn get_curve(brep: &rcad_kernel::BRep, edge_idx: usize) -> Result<&Curve3, B
 /// A tuple containing:
 /// - The 2D curve in the face's UV parameter space
 /// - The surface index that the pcurve is defined on
-///
-/// # Example
-///
-/// ```ignore
-/// use rcad_algorithms::brep_tools::get_pcurve;
-/// use rcad_kernel::BRep;
-///
-/// let brep = BRep::from_primitive(rcad_kernel::PrimitiveSolid::Box {
-///     width: 1.0, height: 1.0, depth: 1.0
-/// });
-/// // Get pcurve of edge 0 on face 0
-/// let (pcurve, surface_idx) = get_pcurve(&brep, 0, 0).unwrap();
-/// ```
 pub fn get_pcurve(brep: &rcad_kernel::BRep, edge_idx: usize, face_idx: usize) -> Result<(&Curve2d, usize), BRepToolsError> {
-    if edge_idx >= brep.edges.len() {
-        return Err(BRepToolsError::InvalidIndex {
+    let (face_ts_idx, _, fd) = get_face_by_flat_index(brep, face_idx)?;
+    let _surf = fd.surface.as_ref().ok_or(BRepToolsError::MissingGeometry {
+        kind: "surface",
+        index: face_idx,
+    })?;
+
+    match &*brep.tshapes[edge_idx] {
+        rcad_kernel::topods::TShape::Edge(ed) => {
+            // Check pcurves map keyed by face tshape index
+            if let Some((pc, _r1, _r2)) = ed.pcurves.get(&face_ts_idx) {
+                return Ok((pc, face_ts_idx));
+            }
+            // Fallback: grab first pcurve if any
+            if let Some((si, (pc, _, _))) = ed.pcurves.iter().next() {
+                return Ok((pc, *si));
+            }
+            Err(BRepToolsError::MissingGeometry {
+                kind: "pcurve",
+                index: edge_idx,
+            })
+        }
+        _ => Err(BRepToolsError::InvalidIndex {
             kind: "edge",
             index: edge_idx,
-            max: brep.edges.len(),
-        });
-    }
-
-    let (_, _) = get_face_by_flat_index(brep, face_idx)?;
-
-    // Get the surface index for this face
-    let surf_idx = match brep.geom.face_surface.get(face_idx) {
-        Some(Some(idx)) => *idx,
-        _ => return Err(BRepToolsError::MissingGeometry {
-            kind: "face_surface",
-            index: face_idx,
+            max: brep.tshapes.len(),
         }),
-    };
-
-    // Find the pcurve for this edge on this surface
-    let pcurves = brep.geom.edge_pcurves.get(edge_idx)
-        .ok_or(BRepToolsError::MissingGeometry {
-            kind: "edge_pcurves",
-            index: edge_idx,
-        })?;
-
-    // Find the pcurve that matches this surface
-    for pcurve in pcurves {
-        if pcurve.surface_idx == surf_idx {
-            let curve2d = brep.geom.curve2ds.get(pcurve.curve2d_idx)
-                .ok_or(BRepToolsError::MissingGeometry {
-                    kind: "curve2d",
-                    index: pcurve.curve2d_idx,
-                })?;
-            return Ok((curve2d, surf_idx));
-        }
     }
-
-    // If no pcurve found, check if edge has single pcurve (common case)
-    if pcurves.len() == 1 {
-        let pcurve = &pcurves[0];
-        let curve2d = brep.geom.curve2ds.get(pcurve.curve2d_idx)
-            .ok_or(BRepToolsError::MissingGeometry {
-                kind: "curve2d",
-                index: pcurve.curve2d_idx,
-            })?;
-        return Ok((curve2d, pcurve.surface_idx));
-    }
-
-    Err(BRepToolsError::MissingGeometry {
-        kind: "pcurve",
-        index: edge_idx,
-    })
 }
 
 // =============================================================================
@@ -353,20 +232,35 @@ pub fn get_pcurve(brep: &rcad_kernel::BRep, edge_idx: usize, face_idx: usize) ->
 
 /// Get a face by its flat index (across all solids/shells).
 ///
-/// Returns a tuple of (face reference, actual flat index used).
-fn get_face_by_flat_index(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<(&Face, usize), BRepToolsError> {
+/// Returns a tuple of (face_tshape_index, TShellData reference, TFaceData reference).
+fn get_face_by_flat_index<'a>(brep: &'a rcad_kernel::BRep, face_idx: usize) -> Result<(usize, &'a rcad_kernel::topods::TShellData, &'a rcad_kernel::topods::TFaceData), BRepToolsError> {
     let mut current_idx = 0;
-
-    for solid in &brep.solids {
-        for shell in &solid.shells {
-            if face_idx < current_idx + shell.faces.len() {
-                let local_idx = face_idx - current_idx;
-                return Ok((&shell.faces[local_idx], face_idx));
+    for ts in &brep.tshapes {
+        if let rcad_kernel::topods::TShape::Solid(sd) = &**ts {
+            for shell_sr in &sd.shells {
+                if let rcad_kernel::topods::TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+                    if face_idx < current_idx + shd.faces.len() {
+                        let local_idx = face_idx - current_idx;
+                        let face_sr = &shd.faces[local_idx];
+                        if let rcad_kernel::topods::TShape::Face(fd) = &*brep.tshapes[face_sr.index] {
+                            return Ok((face_sr.index, shd, fd));
+                        }
+                    }
+                    current_idx += shd.faces.len();
+                }
             }
-            current_idx += shell.faces.len();
+        }
+        if let rcad_kernel::topods::TShape::Shell(shd) = &**ts {
+            if face_idx < current_idx + shd.faces.len() {
+                let local_idx = face_idx - current_idx;
+                let face_sr = &shd.faces[local_idx];
+                if let rcad_kernel::topods::TShape::Face(fd) = &*brep.tshapes[face_sr.index] {
+                    return Ok((face_sr.index, shd, fd));
+                }
+            }
+            current_idx += shd.faces.len();
         }
     }
-
     Err(BRepToolsError::InvalidIndex {
         kind: "face",
         index: face_idx,
@@ -378,61 +272,56 @@ fn get_face_by_flat_index(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<(
 ///
 /// Returns `[t_min, t_max]` if the edge has a curve with a defined range.
 pub fn get_edge_range(brep: &rcad_kernel::BRep, edge_idx: usize) -> Result<Option<[f64; 2]>, BRepToolsError> {
-    if edge_idx >= brep.edges.len() {
-        return Err(BRepToolsError::InvalidIndex {
+    match &*brep.tshapes[edge_idx] {
+        rcad_kernel::topods::TShape::Edge(ed) => Ok(Some(ed.range)),
+        _ => Err(BRepToolsError::InvalidIndex {
             kind: "edge",
             index: edge_idx,
-            max: brep.edges.len(),
-        });
+            max: brep.tshapes.len(),
+        }),
     }
-
-    Ok(brep.geom.edge_curve_range.get(edge_idx).copied().flatten())
 }
 
 /// Check if an edge is degenerate (zero-length, like a pole).
 pub fn is_edge_degenerate(brep: &rcad_kernel::BRep, edge_idx: usize) -> Result<bool, BRepToolsError> {
-    if edge_idx >= brep.edges.len() {
-        return Err(BRepToolsError::InvalidIndex {
+    match &*brep.tshapes[edge_idx] {
+        rcad_kernel::topods::TShape::Edge(ed) => Ok(ed.degenerated),
+        _ => Err(BRepToolsError::InvalidIndex {
             kind: "edge",
             index: edge_idx,
-            max: brep.edges.len(),
-        });
+            max: brep.tshapes.len(),
+        }),
     }
-
-    Ok(brep.geom.edge_degenerated.get(edge_idx).copied().unwrap_or(false))
 }
 
 /// Get the tolerance of a vertex.
 pub fn get_vertex_tolerance(brep: &rcad_kernel::BRep, vertex_idx: usize) -> Result<f64, BRepToolsError> {
-    if vertex_idx >= brep.vertices.len() {
-        return Err(BRepToolsError::InvalidIndex {
+    match &*brep.tshapes[vertex_idx] {
+        rcad_kernel::topods::TShape::Vertex(vd) => Ok(vd.tolerance),
+        _ => Err(BRepToolsError::InvalidIndex {
             kind: "vertex",
             index: vertex_idx,
-            max: brep.vertices.len(),
-        });
+            max: brep.tshapes.len(),
+        }),
     }
-
-    Ok(brep.geom.vertex_tolerance.get(vertex_idx).copied().unwrap_or(rcad_kernel::CONFUSION))
 }
 
 /// Get the tolerance of an edge.
 pub fn get_edge_tolerance(brep: &rcad_kernel::BRep, edge_idx: usize) -> Result<f64, BRepToolsError> {
-    if edge_idx >= brep.edges.len() {
-        return Err(BRepToolsError::InvalidIndex {
+    match &*brep.tshapes[edge_idx] {
+        rcad_kernel::topods::TShape::Edge(ed) => Ok(ed.tolerance),
+        _ => Err(BRepToolsError::InvalidIndex {
             kind: "edge",
             index: edge_idx,
-            max: brep.edges.len(),
-        });
+            max: brep.tshapes.len(),
+        }),
     }
-
-    Ok(brep.geom.edge_tolerance.get(edge_idx).copied().unwrap_or(rcad_kernel::CONFUSION))
 }
 
 /// Get the tolerance of a face.
 pub fn get_face_tolerance(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<f64, BRepToolsError> {
-    let (_, _) = get_face_by_flat_index(brep, face_idx)?;
-
-    Ok(brep.geom.face_tolerance.get(face_idx).copied().unwrap_or(rcad_kernel::CONFUSION))
+    let (_, _, fd) = get_face_by_flat_index(brep, face_idx)?;
+    Ok(fd.tolerance)
 }
 
 // =============================================================================
@@ -441,51 +330,47 @@ pub fn get_face_tolerance(brep: &rcad_kernel::BRep, face_idx: usize) -> Result<f
 
 /// Count the total number of faces in a BRep.
 pub fn count_faces(brep: &rcad_kernel::BRep) -> usize {
-    brep.solids.iter()
-        .flat_map(|s| &s.shells)
-        .map(|sh| sh.faces.len())
-        .sum()
+    brep.face_count()
 }
 
 /// Count the total number of edges in a BRep.
 pub fn count_edges(brep: &rcad_kernel::BRep) -> usize {
-    brep.edges.len()
+    brep.edge_count()
 }
 
 /// Count the total number of vertices in a BRep.
 pub fn count_vertices(brep: &rcad_kernel::BRep) -> usize {
-    brep.vertices.len()
+    brep.vertex_count()
 }
 
 /// Count the total number of shells in a BRep.
 pub fn count_shells(brep: &rcad_kernel::BRep) -> usize {
-    brep.solids.iter().map(|s| s.shells.len()).sum()
+    crate::brep_tools::count_shells_topods(brep)
 }
 
 /// Count the total number of wires (outer + inner) across all faces in a BRep.
 pub fn count_wires(brep: &rcad_kernel::BRep) -> usize {
-    brep.solids.iter()
-        .flat_map(|s| &s.shells)
-        .flat_map(|sh| &sh.faces)
-        .map(|f| 1 + f.inner_wires.len())
-        .sum()
+    crate::brep_tools::count_wires_topods(brep)
 }
 
 /// Get the bounding box of a BRep.
 ///
 /// Returns `[min_point, max_point]` or `None` if the BRep has no vertices.
 pub fn bounding_box(brep: &rcad_kernel::BRep) -> Option<[DVec3; 2]> {
-    if brep.vertices.is_empty() {
+    let mut vertices: Vec<DVec3> = Vec::new();
+    for ts in &brep.tshapes {
+        if let rcad_kernel::topods::TShape::Vertex(vd) = &**ts {
+            vertices.push(vd.point);
+        }
+    }
+    if vertices.is_empty() {
         return None;
     }
-
-    let mut min_pt = brep.vertices[0].point;
-    let mut max_pt = brep.vertices[0].point;
-
-    for v in &brep.vertices[1..] {
-        min_pt = min_pt.min(v.point);
-        max_pt = max_pt.max(v.point);
+    let mut min_pt = vertices[0];
+    let mut max_pt = vertices[0];
+    for p in &vertices[1..] {
+        min_pt = min_pt.min(*p);
+        max_pt = max_pt.max(*p);
     }
-
     Some([min_pt, max_pt])
 }

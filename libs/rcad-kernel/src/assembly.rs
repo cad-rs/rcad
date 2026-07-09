@@ -221,12 +221,12 @@ impl<'de> Deserialize<'de> for SerializableAffine3 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BRep, PrimitiveSolid};
+    use crate::BRep;
 
     #[test]
     fn assembly_flatten() {
-        let box1 = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
-        let box2 = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 0.5 });
+        let (box1, _) = BRep::build_unit_cube();
+        let (box2, _) = BRep::build_unit_cube();
 
         let mut asm = Assembly::new("root");
         asm.add(Component::from_brep("box", box1));
@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn assembly_nested() {
-        let box1 = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let (box1, _) = BRep::build_unit_cube();
 
         let mut sub = Assembly::new("sub");
         sub.add(Component::from_brep("part", box1));
@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn assembly_find_component() {
-        let box1 = BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 1.0 });
+        let (box1, _) = BRep::build_unit_cube();
         let mut asm = Assembly::new("root");
         asm.add(Component::from_brep("target", box1));
 

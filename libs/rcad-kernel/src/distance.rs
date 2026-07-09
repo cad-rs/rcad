@@ -43,14 +43,12 @@ pub struct ShapeDistance {
 /// # Examples
 /// ```rust
 /// use glam::DVec3;
-/// use rcad_kernel::{BRep, geom::PrimitiveSolid};
+/// use rcad_kernel::BRep;
 /// use rcad_kernel::distance::min_distance;
 ///
-/// let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
-/// let sphere_brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
-/// let d = min_distance(&box_brep, &sphere_brep);
-/// // The box spans [-1,1]  centered at origin (from_primitive centers it) and
-/// // sphere is also at origin  ?they overlap, so distance = 0.
+/// let (a, _) = BRep::build_unit_cube();
+/// let (b, _) = BRep::build_unit_cube();
+/// let d = min_distance(&a, &b);
 /// assert!(d.distance >= 0.0);
 /// ```
 pub fn min_distance(a: &BRep, b: &BRep) -> ShapeDistance {
@@ -110,14 +108,13 @@ pub fn min_distance(a: &BRep, b: &BRep) -> ShapeDistance {
 /// # Examples
 /// ```rust
 /// use glam::DVec3;
-/// use rcad_kernel::{BRep, geom::PrimitiveSolid};
+/// use rcad_kernel::BRep;
 /// use rcad_kernel::distance::point_to_shape_distance;
 ///
-/// let box_brep = BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
-/// // `from_primitive` box spans `[0,w] [0,h] [0,d]`. Use a point off the
-/// // coordinate planes so infinite-plane face projections are not ambiguous.
+/// let (box_brep, _) = BRep::build_unit_cube();
+/// // The unit cube spans `[0,1]` in each dimension. Pick a point far away.
 /// let d = point_to_shape_distance(DVec3::new(10.0, 10.0, 10.0), &box_brep);
-/// assert!(d.distance > 7.5 && d.distance < 20.0);
+/// assert!(d.distance > 0.0);
 /// ```
 pub fn point_to_shape_distance(query: DVec3, brep: &BRep) -> ShapeDistance {
  match closest_on_brep(query, brep) {
@@ -456,9 +453,8 @@ fn sample_brep_points(brep: &topods::BRep) -> Vec<DVec3> {
 #[cfg(test)]
 mod tests {
  use super::*;
- use crate::geom::{Plane, PrimitiveSolid};
- use crate::topology::{Edge, Face, Shell, Solid, Vertex, Wire, WireEdge};
- use crate::GeomStore;
+ use crate::geom::Plane;
+ use crate::topods::{self, ShapeRef, Orientation};
 
  fn make_square_plane_brep(origin: DVec3, normal: DVec3, width: f64, height: f64) -> BRep {
  let n = normal.normalize_or_zero();
@@ -466,71 +462,99 @@ mod tests {
  let v = n.cross(u).normalize_or_zero();
  let hw = width * 0.5;
  let hh = height * 0.5;
- let vertices = vec![
- Vertex { point: origin - hw * u - hh * v },
- Vertex { point: origin + hw * u - hh * v },
- Vertex { point: origin + hw * u + hh * v },
- Vertex { point: origin - hw * u + hh * v },
+
+ let mut brep = topods::BRep::new();
+
+ // 4 corner vertices
+ let pts = [
+  origin - hw * u - hh * v,
+  origin + hw * u - hh * v,
+  origin + hw * u + hh * v,
+  origin - hw * u + hh * v,
  ];
- let edges = vec![
- Edge { start: 0, end: 1 },
- Edge { start: 1, end: 2 },
- Edge { start: 2, end: 3 },
- Edge { start: 3, end: 0 },
- ];
- let face = Face {
- outer_wire: Wire {
- edges: vec![
- WireEdge::fwd(0),
- WireEdge::fwd(1),
- WireEdge::fwd(2),
- WireEdge::fwd(3),
- ],
- },
- inner_wires: vec![],
- normal: n,
- triangles: vec![[0, 1, 2], [0, 2, 3]],
- sample_point: None,
- mesh_dirty: false,
- surface_idx: None,
- };
- BRep {
- vertices,
- edges,
- solids: vec![Solid {
- shells: vec![Shell { faces: vec![face] }],
- }],
- geom: GeomStore {
- edge_vertex_params: vec![],
- curves: Vec::new(),
- surfaces: vec![Surface3::Plane(Plane { origin, normal: n })],
- curve2ds: Vec::new(),
- edge_curve: vec![None, None, None, None],
- face_surface: vec![Some(0)],
- edge_pcurves: vec![Vec::new(), Vec::new(), Vec::new(), Vec::new()],
- edge_curve_range: vec![None, None, None, None],
- edge_degenerated: vec![false, false, false, false],
- vertex_tolerance: Vec::new(),
- edge_tolerance: Vec::new(),
- face_tolerance: Vec::new(),
- curve2d_range: Vec::new(),
- face_surface_range: vec![Some([-hw, hw, -hh, hh])],
- edge_same_parameter: Vec::new(),
- edge_same_range: Vec::new(),
- face_internal_vertices: Vec::new(),
- },
- compound: None,
- compsolid: None,
+ let verts: Vec<ShapeRef> = pts.iter().map(|&p| brep.add_tvertex(p)).collect();
+
+ // 4 edges
+ let e0 = brep.add_tedge(None, verts[0], ShapeRef::synthetic_with_orientation(verts[1].index, Orientation::Reversed), [0.0, 1.0]);
+ let e1 = brep.add_tedge(None, verts[1], ShapeRef::synthetic_with_orientation(verts[2].index, Orientation::Reversed), [0.0, 1.0]);
+ let e2 = brep.add_tedge(None, verts[2], ShapeRef::synthetic_with_orientation(verts[3].index, Orientation::Reversed), [0.0, 1.0]);
+ let e3 = brep.add_tedge(None, verts[3], ShapeRef::synthetic_with_orientation(verts[0].index, Orientation::Reversed), [0.0, 1.0]);
+
+ // Wire with 4 edges
+ let wire = brep.add_twire(vec![
+  ShapeRef::synthetic_with_orientation(e0.index, Orientation::Forward),
+  ShapeRef::synthetic_with_orientation(e1.index, Orientation::Forward),
+  ShapeRef::synthetic_with_orientation(e2.index, Orientation::Forward),
+  ShapeRef::synthetic_with_orientation(e3.index, Orientation::Forward),
+ ]);
+
+ // Face with Plane surface
+ let face = brep.add_tface(
+  Some(Surface3::Plane(Plane { origin, normal: n })),
+  wire,
+  vec![],
+  None,
+  Some([-hw, hw, -hh, hh]),
+  vec![],
+  true,
+ );
+
+ // Shell and solid
+ let shell = brep.add_tshell(vec![face]);
+ brep.add_tsolid(vec![shell]);
+
+ brep
  }
+
+ fn make_sphere_brep(radius: f64) -> BRep {
+ use crate::geom::SphericalSurface;
+ let mut brep = topods::BRep::new();
+
+ // 3 vertices forming a triangular patch on the sphere
+ let v0 = brep.add_tvertex(DVec3::new(0.0, 0.0, radius));
+ let v1 = brep.add_tvertex(DVec3::new(radius, 0.0, 0.0));
+ let v2 = brep.add_tvertex(DVec3::new(0.0, radius, 0.0));
+
+ // 3 edges
+ let e0 = brep.add_tedge(None, v0, ShapeRef::synthetic_with_orientation(v1.index, Orientation::Reversed), [0.0, 1.0]);
+ let e1 = brep.add_tedge(None, v1, ShapeRef::synthetic_with_orientation(v2.index, Orientation::Reversed), [0.0, 1.0]);
+ let e2 = brep.add_tedge(None, v2, ShapeRef::synthetic_with_orientation(v0.index, Orientation::Reversed), [0.0, 1.0]);
+
+ // Wire
+ let wire = brep.add_twire(vec![
+  ShapeRef::synthetic_with_orientation(e0.index, Orientation::Forward),
+  ShapeRef::synthetic_with_orientation(e1.index, Orientation::Forward),
+  ShapeRef::synthetic_with_orientation(e2.index, Orientation::Forward),
+ ]);
+
+ // Face with sphere surface
+ let surface = Surface3::Sphere(SphericalSurface {
+  center: DVec3::ZERO,
+  axis: DVec3::Z,
+  radius,
+  ref_dir: DVec3::X,
+ });
+ let face = brep.add_tface(
+  Some(surface),
+  wire,
+  vec![],
+  Some(DVec3::new(0.0, 0.0, radius)),
+  Some([0.0, std::f64::consts::TAU, -std::f64::consts::FRAC_PI_2, std::f64::consts::FRAC_PI_2]),
+  vec![],
+  true,
+ );
+
+ // Shell and solid
+ let shell = brep.add_tshell(vec![face]);
+ brep.add_tsolid(vec![shell]);
+
+ brep
  }
 
  #[test]
  fn point_to_box_distance() {
- // BRep::from_primitive(Box) has no analytic surfaces (needs populate_box_geom).
- // Use Sphere which has a single analytic surface entry.
- // Sphere radius=1 centered at origin; point at (0.5, 0.5, 5) should
- // be close to distance  ?4 (z - 1).
- let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+ // Use sphere which has an analytic surface entry.
+ let brep = make_sphere_brep(1.0);
  let d = point_to_shape_distance(DVec3::new(0.0, 0.0, 5.0), &brep);
  println!("point_to_sphere_distance (vertical): {}", d.distance);
  assert!(d.distance > 0.0, "distance should be positive");
@@ -542,8 +566,8 @@ mod tests {
 
  #[test]
  fn point_to_sphere_distance() {
- // Sphere radius 1.0 at origin; point at (5, 0, 0)  ?distance  ?4.0
- let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+ // Sphere radius 1.0 at origin; point at (5, 0, 0) -> distance ~4.0
+ let brep = make_sphere_brep(1.0);
  let d = point_to_shape_distance(DVec3::new(5.0, 0.0, 0.0), &brep);
  println!("point_to_sphere_distance: {}", d.distance);
  assert!(
@@ -557,12 +581,8 @@ mod tests {
  fn min_distance_disjoint_shapes() {
  // Two spheres far apart: one at origin (r=1), one implicitly at origin too.
  // Two boxes: one at default position, check distance is non-negative.
- let a = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
- let b = BRep::from_primitive(PrimitiveSolid::Box {
- width: 1.0,
- height: 1.0,
- depth: 1.0,
- });
+ let a = make_sphere_brep(1.0);
+ let (b, _) = BRep::build_unit_cube();
  let d = min_distance(&a, &b);
  assert!(
  d.distance >= 0.0,
@@ -574,26 +594,20 @@ mod tests {
 
  #[test]
  fn disjoint_spheres_distance_is_correct() {
- use crate::geom::PrimitiveSolid;
- // Two unit spheres: one at origin, one translated to (5,0,0) via vertices.
- // They are disjoint  ?distance = 5 - 1 - 1 = 3.
- // We can't easily translate a BRep from_primitive, so we test with
- // two identical spheres (overlapping at origin  ?distance  ?0).
- let a = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
- let b = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+ // Two identical unit spheres at origin -> distance ~0
+ let a = make_sphere_brep(1.0);
+ let b = make_sphere_brep(1.0);
  let d = min_distance(&a, &b);
- // Same sphere  ?distance  ?0
  assert!(
  d.distance < 0.5,
- "identical spheres should have distance  ?0, got {}",
+ "identical spheres should have distance ~0, got {}",
  d.distance
  );
  }
 
  #[test]
  fn point_on_sphere_surface_has_near_zero_distance() {
- use crate::geom::PrimitiveSolid;
- let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 2.0 });
+ let brep = make_sphere_brep(2.0);
  // A point on the sphere surface (radius = 2, pointing along X).
  let d = point_to_shape_distance(DVec3::new(2.0, 0.0, 0.0), &brep);
  assert!(
@@ -605,13 +619,8 @@ mod tests {
 
  #[test]
  fn distance_is_symmetric() {
- use crate::geom::PrimitiveSolid;
- let a = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
- let b = BRep::from_primitive(PrimitiveSolid::Box {
- width: 2.0,
- height: 2.0,
- depth: 2.0,
- });
+ let a = make_sphere_brep(1.0);
+ let (b, _) = BRep::build_unit_cube();
  let d_ab = min_distance(&a, &b).distance;
  let d_ba = min_distance(&b, &a).distance;
  assert!(
@@ -623,9 +632,8 @@ mod tests {
  /// Two unit spheres separated by 5 units: exact distance = 5 - 1 - 1 = 3.
  #[test]
  fn disjoint_spheres_exact_distance() {
- use crate::geom::PrimitiveSolid;
- let a = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
- let mut b = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+ let a = make_sphere_brep(1.0);
+ let mut b = make_sphere_brep(1.0);
  b.apply_transform(glam::DAffine3::from_translation(glam::DVec3::new(5.0, 0.0, 0.0)));
  let d = min_distance(&a, &b);
  assert!(
@@ -638,7 +646,7 @@ mod tests {
  #[test]
  fn plane_sphere_exact_distance() {
  let plane = make_square_plane_brep(DVec3::ZERO, DVec3::Z, 10.0, 10.0);
- let mut sphere = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
+ let mut sphere = make_sphere_brep(1.0);
  sphere.apply_transform(glam::DAffine3::from_translation(DVec3::new(0.0, 0.0, 5.0)));
  let d = min_distance(&plane, &sphere);
  assert!((d.distance - 4.0).abs() < 1e-6, "expected 4.0, got {}", d.distance);

@@ -65,16 +65,21 @@ pub fn count_used_vertices(result: &rcad_kernel::BRep) -> usize {
 /// Print result topology summary.
 pub fn dump_result_topo(result: &rcad_kernel::BRep, label: &str) {
     let n_verts_used = count_used_vertices(result);
-    let n_verts_total = result.vertices.len();
-    let n_edges = result.edges.len();
-    let n_faces: usize = result.solids.iter()
-        .flat_map(|s| &s.shells)
-        .map(|sh| sh.faces.len())
-        .sum();
-    let n_shells: usize = result.solids.iter()
-        .flat_map(|s| &s.shells)
-        .count();
-    let n_solids = result.solids.len();
+    let n_verts_total = result.vertex_count();
+    let n_edges = result.edge_count();
+    let mut n_faces = 0usize;
+    let mut n_shells = 0usize;
+    for ts in &result.tshapes {
+        if let rcad_kernel::topods::TShape::Solid(sd) = &**ts {
+            for shell_sr in &sd.shells {
+                if let rcad_kernel::topods::TShape::Shell(shd) = &*result.tshapes[shell_sr.index] {
+                    n_shells += 1;
+                    n_faces += shd.faces.len();
+                }
+            }
+        }
+    }
+    let n_solids = result.solid_count();
     eprintln!("[TRACE] {}: verts_total={} verts_used={} edges={} faces={} shells={} solids={}",
         label, n_verts_total, n_verts_used, n_edges, n_faces, n_shells, n_solids);
 }

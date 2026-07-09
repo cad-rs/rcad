@@ -164,149 +164,134 @@ pub fn general_fuse_par(parts: &[rcad_kernel::BRep]) -> Result<(rcad_kernel::BRe
 
 /// Count faces in all solids strictly before `solid_idx`.
 fn face_count_before_solid(full: &rcad_kernel::BRep, solid_idx: usize) -> usize {
- full.solids
- .iter()
- .take(solid_idx)
- .flat_map(|s| &s.shells)
- .map(|sh| sh.faces.len())
- .sum()
+ let mut count = 0usize;
+ let mut solid_n = 0usize;
+ for ts in &full.tshapes {
+ if let rcad_kernel::topods::TShape::Solid(sd) = &**ts {
+ if solid_n >= solid_idx { break; }
+ for shell_sr in &sd.shells {
+ if let rcad_kernel::topods::TShape::Shell(shd) = &*full.tshapes[shell_sr.index] {
+ count += shd.faces.len();
+ }
+ }
+ solid_n += 1;
+ }
+ }
+ count
 }
 
 /// Build a self-contained [`rcad_kernel::BRep`] holding only solid `solid_idx` of `full`, with
 /// vertices/edges/face geometry trimmed so boolean DS loading does not ingest
 /// orphan topology from sibling solids (e.g. after [`rcad_kernel::BRep::compound_from_shapes`]).
 fn compact_brep_isolated_solid(full: &rcad_kernel::BRep, solid_idx: usize) -> Option<rcad_kernel::BRep> {
- use rcad_kernel::topology::{Face, Shell, Solid, Wire, WireEdge};
  use std::collections::BTreeSet;
 
- let solid = full.solids.get(solid_idx)?;
+ // Find the solid tshape at index solid_idx
+ let mut solid_n = 0usize;
+ let mut solid_data: Option<(usize, &rcad_kernel::topods::TSolidData)> = None;
+ for (i, ts) in full.tshapes.iter().enumerate() {
+ if let rcad_kernel::topods::TShape::Solid(sd) = &**ts {
+ if solid_n == solid_idx {
+ solid_data = Some((i, sd));
+ break;
+ }
+ solid_n += 1;
+ }
+ }
+ let (_solid_tshape_idx, solid) = solid_data?;
+
+ // Collect used edge and vertex indices from the solid's shell/face hierarchy
  let mut used_e: BTreeSet<usize> = BTreeSet::new();
- for sh in &solid.shells {
- for fa in &sh.faces {
- for we in &fa.outer_wire.edges {
- used_e.insert(we.idx);
+ for shell_sr in &solid.shells {
+ if let rcad_kernel::topods::TShape::Shell(shd) = &*full.tshapes[shell_sr.index] {
+ for face_sr in &shd.faces {
+ if let rcad_kernel::topods::TShape::Face(fd) = &*full.tshapes[face_sr.index] {
+ // Outer wire
+ if let rcad_kernel::topods::TShape::Wire(wd) = &*full.tshapes[fd.outer_wire.index] {
+ for esr in &wd.edges { used_e.insert(esr.index); }
  }
- for iw in &fa.inner_wires {
- for we in &iw.edges {
- used_e.insert(we.idx);
+ // Inner wires
+ for iw_sr in &fd.inner_wires {
+ if let rcad_kernel::topods::TShape::Wire(iwd) = &*full.tshapes[iw_sr.index] {
+ for esr in &iwd.edges { used_e.insert(esr.index); }
  }
  }
  }
  }
+ }
+ }
+
+ // Collect vertex indices from used edges
  let mut used_v: BTreeSet<usize> = BTreeSet::new();
  for &ei in &used_e {
- let e = full.edges.get(ei)?;
- used_v.insert(e.start);
- used_v.insert(e.end);
+ if let rcad_kernel::topods::TShape::Edge(ed) = &*full.tshapes[ei] {
+ used_v.insert(ed.first.index);
+ used_v.insert(ed.last.index);
  }
- let v_list: Vec<usize> = used_v.into_iter().collect();
- let mut v_map = vec![usize::MAX; full.vertices.len()];
- for (ni, &oi) in v_list.iter().enumerate() {
- v_map[oi] = ni;
- }
- let e_list: Vec<usize> = used_e.into_iter().collect();
- let mut e_map = vec![usize::MAX; full.edges.len()];
- for (ni, &oi) in e_list.iter().enumerate() {
- e_map[oi] = ni;
  }
 
- let remap_wire = |w: &Wire| -> Wire {
- Wire {
- edges: w
- .edges
- .iter()
- .map(|we| WireEdge {
- idx: e_map[we.idx],
- forward: we.forward,
- })
- .collect(),
- }
- };
+ // Build compact BRep using new API
+ let mut out = rcad_kernel::topods::BRep::new();
 
- let remap_face = |face: &Face| -> Face {
- Face {
- outer_wire: remap_wire(&face.outer_wire),
- inner_wires: face.inner_wires.iter().map(remap_wire).collect(),
- normal: face.normal,
- triangles: face
- .triangles
- .iter()
- .map(|&[a, b, c]| [v_map[a], v_map[b], v_map[c]])
- .collect(),
- sample_point: face.sample_point,
- mesh_dirty: face.mesh_dirty,
- surface_idx: None,
+ // Add all used vertices
+ for &vi in &used_v {
+ if let rcad_kernel::topods::TShape::Vertex(vd) = &*full.tshapes[vi] {
+ out.add_tvertex(vd.point);
  }
- };
-
- let mut out = rcad_kernel::BRep::new();
- for &vi in &v_list {
- out.vertices.push(full.vertices[vi].clone());
- out.geom
- .vertex_tolerance
- .push(*full.geom.vertex_tolerance.get(vi).unwrap_or(&0.0));
  }
 
- out.geom.curves = full.geom.curves.clone();
- out.geom.surfaces = full.geom.surfaces.clone();
- out.geom.curve2ds = full.geom.curve2ds.clone();
- out.geom.curve2d_range = full.geom.curve2d_range.clone();
-
- for &old_ei in &e_list {
- let e = &full.edges[old_ei];
- out.edges.push(rcad_kernel::topology::Edge {
- start: v_map[e.start],
- end: v_map[e.end],
- });
- out.geom
- .edge_curve
- .push(full.geom.edge_curve.get(old_ei).copied().flatten());
- out.geom.edge_pcurves.push(
- full.geom
- .edge_pcurves
- .get(old_ei)
- .cloned()
- .unwrap_or_default(),
- );
- out.geom
- .edge_curve_range
- .push(full.geom.edge_curve_range.get(old_ei).copied().flatten());
- out.geom
- .edge_degenerated
- .push(*full.geom.edge_degenerated.get(old_ei).unwrap_or(&false));
- out.geom
- .edge_tolerance
- .push(*full.geom.edge_tolerance.get(old_ei).unwrap_or(&0.0));
- out.geom
- .edge_same_parameter
- .push(*full.geom.edge_same_parameter.get(old_ei).unwrap_or(&true));
- out.geom
- .edge_same_range
- .push(*full.geom.edge_same_range.get(old_ei).unwrap_or(&true));
+ // Add all used edges
+ for &ei in &used_e {
+ if let rcad_kernel::topods::TShape::Edge(ed) = &*full.tshapes[ei] {
+ let first_idx = ed.first.index;
+ let last_idx = ed.last.index;
+ // Find remapped indices in the new BRep
+ // Since we add vertices first, vertex tshapes are at indices 0..used_v.len()
+ let remap_first = used_v.iter().position(|&v| v == first_idx).unwrap_or(0);
+ let remap_last = used_v.iter().position(|&v| v == last_idx).unwrap_or(0);
+ out.add_edge_flat(remap_first, remap_last, ed.curve.clone(), ed.range);
+ }
  }
 
- let mut gfi = face_count_before_solid(full, solid_idx);
- let mut new_shells: Vec<Shell> = Vec::new();
- for sh in &solid.shells {
- let mut new_faces = Vec::new();
- for face in &sh.faces {
- new_faces.push(remap_face(face));
- out.geom
- .face_surface
- .push(full.geom.face_surface.get(gfi).copied().flatten());
- out.geom
- .face_surface_range
- .push(full.geom.face_surface_range.get(gfi).copied().flatten());
- out.geom
- .face_tolerance
- .push(*full.geom.face_tolerance.get(gfi).unwrap_or(&0.0));
- gfi += 1;
+ // Build shell and solid from face/wire hierarchy
+ // For simplicity: create a wire per face, face per wire, then shell + solid
+ let mut face_refs = Vec::new();
+ for shell_sr in &solid.shells {
+ if let rcad_kernel::topods::TShape::Shell(shd) = &*full.tshapes[shell_sr.index] {
+ for face_sr in &shd.faces {
+ if let rcad_kernel::topods::TShape::Face(fd) = &*full.tshapes[face_sr.index] {
+ // Remap edges for outer wire
+ let mut outer_edges = Vec::new();
+ if let rcad_kernel::topods::TShape::Wire(wd) = &*full.tshapes[fd.outer_wire.index] {
+ for esr in &wd.edges {
+ if let Some(&new_ei) = used_e.iter().position(|&e| e == esr.index) {
+ outer_edges.push(rcad_kernel::topods::ShapeRef::synthetic(new_ei));
  }
- new_shells.push(Shell { faces: new_faces });
  }
- out.solids.push(Solid { shells: new_shells });
+ }
+ let ow = out.add_twire(outer_edges);
+ // Remap edges for inner wires
+ let mut inner_refs = Vec::new();
+ for iw_sr in &fd.inner_wires {
+ if let rcad_kernel::topods::TShape::Wire(iwd) = &*full.tshapes[iw_sr.index] {
+ let mut inner_edges = Vec::new();
+ for esr in &iwd.edges {
+ if let Some(&new_ei) = used_e.iter().position(|&e| e == esr.index) {
+ inner_edges.push(rcad_kernel::topods::ShapeRef::synthetic(new_ei));
+ }
+ }
+ inner_refs.push(out.add_twire(inner_edges));
+ }
+ }
+ let fr = out.add_tface(fd.surface.clone(), ow, inner_refs, fd.sample_point, fd.uv_domain, Vec::new(), fd.natural_restriction);
+ face_refs.push(fr);
+ }
+ }
+ }
+ }
+ let shell_ref = out.add_tshell(face_refs);
+ out.add_tsolid(vec![shell_ref]);
 
- rcad_kernel::tolerance::resize_tolerance_arrays(&mut out);
  Some(out)
 }
 
@@ -913,16 +898,40 @@ pub fn occt_fill_same_domain_faces(brep: &rcad_kernel::BRep) -> (rcad_kernel::BR
  use std::collections::{BTreeSet, HashMap, HashSet};
  use rcad_kernel::geom::Surface3;
 
- if brep.solids.is_empty() {
+ if !brep.has_solids() {
  return (brep.clone(), 0);
  }
 
  let mut out = brep.clone();
  let mut total_merges = 0usize;
 
- for si in 0..out.solids.len() {
- for shi in 0..out.solids[si].shells.len() {
- let nf = out.solids[si].shells[shi].faces.len();
+ let solid_indices: Vec<usize> = out.tshapes.iter().enumerate()
+ .filter(|(_, ts)| matches!((&**ts).as_ref(), rcad_kernel::topods::TShape::Solid(_)))
+ .map(|(i, _)| i)
+ .collect();
+ let shell_data: Vec<(usize, usize)> = solid_indices.iter().flat_map(|&si| {
+ if let rcad_kernel::topods::TShape::Solid(sd) = &*out.tshapes[si] {
+ sd.shells.iter().map(move |sr| (si, sr.index)).collect::<Vec<_>>()
+ } else { vec![] }
+ }).collect();
+ let face_data: Vec<(usize, usize, usize)> = shell_data.iter().flat_map(|&(si, shi)| {
+ if let rcad_kernel::topods::TShape::Shell(shd) = &*out.tshapes[shi] {
+ shd.faces.iter().enumerate().map(move |(fi, _fr)| (si, shi, fi)).collect::<Vec<_>>()
+ } else { vec![] }
+ }).collect();
+ let n_solids = solid_indices.len();
+
+ for si in 0..n_solids {
+ let shells_for_solid: Vec<usize> = shell_data.iter()
+ .filter(|&&(s, _)| s == solid_indices[si])
+ .map(|&(_, sh)| sh)
+ .collect();
+ for shi in 0..shells_for_solid.len() {
+ let faces_for_shell: Vec<(usize, usize)> = face_data.iter()
+ .filter(|&&(s, sh, _)| s == solid_indices[si] && sh == shells_for_solid[shi])
+ .map(|&(_, _, fi)| (fi, 0))
+ .collect();
+ let nf = faces_for_shell.len();
  if nf < 2 {
  continue;
  }
