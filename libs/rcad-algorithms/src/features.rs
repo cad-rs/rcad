@@ -400,7 +400,7 @@ fn build_prism_from_sections(bot: &[DVec3], top: &[DVec3], dir: DVec3) -> Result
 
     // Build shell and solid
     let face_refs: Vec<topods::ShapeRef> = brep.tshapes.iter().enumerate()
-        .filter(|(_, ts)| matches!(&**ts, topods::TShape::Face(_)))
+        .filter(|(_, ts)| matches!(ts.as_ref(), topods::TShape::Face(_)))
         .map(|(i, _)| topods::ShapeRef { ptr_id: 0, index: i, orientation: topods::Orientation::Forward, location: 0 })
         .collect();
     let shell = brep.add_tshell(face_refs);
@@ -461,7 +461,7 @@ pub fn split_face_by_wire(
 
     // Collect all solid TShapes.
     let solid_ts_indices: Vec<usize> = brep.tshapes.iter().enumerate()
-        .filter(|(_, ts)| matches!(&**ts, topods::TShape::Solid(_)))
+        .filter(|(_, ts)| matches!(ts.as_ref(), topods::TShape::Solid(_)))
         .map(|(i, _)| i)
         .collect();
     let solid_tsi = *solid_ts_indices.get(solid_idx).ok_or(SplitShapeError::FaceNotFound)?;
@@ -578,7 +578,7 @@ pub fn split_face_by_wire(
     let face_b_ref = brep.add_tface(orig_surface, wire_b, orig_inner, face_sd.sample_point, face_sd.uv_domain, face_sd.internal_vertices.clone(), face_sd.natural_restriction);
 
     // Add faces to the shell
-    let sd = brep.shell_mut(shell_sr);
+    let sd = brep.shell_mut(*shell_sr);
     sd.faces[face_idx] = face_a_ref;
     sd.faces.insert(face_idx + 1, face_b_ref);
     sd.my_shapes.push(face_b_ref);

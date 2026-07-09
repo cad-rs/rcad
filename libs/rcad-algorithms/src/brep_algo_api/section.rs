@@ -13,14 +13,14 @@
 //! ```
 //! use rcad_algorithms::brep_algo_api::section::Section;
 //! use rcad_kernel::PrimitiveSolid;
-use rcad_kernel::PCurve;
+//! use rcad_kernel::topods::TShape;
 //!
 //! let a = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 2.0, height: 2.0, depth: 2.0 });
 //! let b = rcad_kernel::BRep::from_primitive(PrimitiveSolid::Box { width: 1.0, height: 1.0, depth: 3.0 });
 //!
 //! let mut section = Section::new(a, b);
 //! if let Ok(result) = section.perform() {
-//!     println!("Section produced {} edges", result.edges.len());
+//!     println!("Section produced {} edges", result.tshapes.iter().filter(|ts| matches!(&**ts, TShape::Edge(_))).count());
 //! }
 //! ```
 
@@ -31,9 +31,8 @@ use crate::bvh::Bvh;
 use crate::pave_filler::PaveFiller;
 use crate::tolerance::TOLERANCE_ABS;
 use rcad_kernel::geom::Curve3;
-use rcad_kernel::topology::{Edge, Vertex};
-use rcad_kernel::topology::Face;
 use rcad_kernel::topods;
+use rcad_kernel::topods::TShape;
 use rcad_kernel::geom::Line3;
 
 /// Section 鈥?compute intersection curves between two shapes.
@@ -136,7 +135,9 @@ impl Section {
         self.edge_to_ic = Vec::new();
 
         // 鉁?OCCT-aligned: Check for empty inputs
-        if self.shape_a.solids.is_empty() || self.shape_b.solids.is_empty() {
+        let a_has_solids = self.shape_a.tshapes.iter().any(|ts| matches!(&**ts, TShape::Solid(_)));
+        let b_has_solids = self.shape_b.tshapes.iter().any(|ts| matches!(&**ts, TShape::Solid(_)));
+        if !a_has_solids || !b_has_solids {
             let err = BooleanError::EmptyInput;
             self.error = Some(err);
             return Err(BooleanError::EmptyInput);
@@ -147,9 +148,7 @@ impl Section {
         let b = self.ensure_geometry(&self.shape_b);
 
         // 鉁?OCCT-aligned: Build BOPDS_DS
-        let a_t = a;
-        let b_t = b;
-        let mut ds = DS::new_from_topods(&a_t, &b_t, TOLERANCE_ABS);
+        let mut ds = DS::new_from_topods(&a, &b, TOLERANCE_ABS);
 
         // 鉁?OCCT-aligned: Build BVH for acceleration
         let bvh_a = Bvh::build(&a);
@@ -171,7 +170,7 @@ impl Section {
         // after PaveFiller has computed all face-face intersection curves.
         let (brep, edge_map) = Self::build_section_edges(&ds);
 
-        if brep.edges.is_empty() {
+        if brep.edge_count() == 0 {
             // Fallback: no intersection curves from PaveFiller (e.g. planar
             // face intersections that were handled via EE/EF interferences).
             // Use the general brep_section which handles all surface types
@@ -281,45 +280,31 @@ impl Section {
             *shape_edge_count.entry(ei).or_insert(0) += 1;
         }
 
-        // Build result BRep from shared edges (count > 0 means shared between sides)
+        // Build result BRep using topods TShape API
         // OCCT: only includes V/E that appear in >1 argument
         // rcad: all section edges come from intersection, include all
+        let mut used_verts: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for &ei in &section_edges {
             if ei >= ds.edges.len() { continue; }
             let e = &ds.edges[ei];
             let sv = e.start_vertex;
             let ev = e.end_vertex;
             if sv >= ds.vertices.len() || ev >= ds.vertices.len() { continue; }
-            let vi_a = result.vertices.len();
-            result.vertices.push(rcad_kernel::topology::Vertex { point: ds.vertices[sv].point });
-            let vi_b = result.vertices.len();
-            result.vertices.push(rcad_kernel::topology::Vertex { point: ds.vertices[ev].point });
-            let edge_idx = result.edges.len();
-            result.edges.push(rcad_kernel::topology::Edge { start: vi_a, end: vi_b });
-            let curve_idx = result.geom.curves.len();
-            result.geom.curves.push(e.curve.clone());
-            while result.geom.edge_curve.len() <= edge_idx { result.geom.edge_curve.push(None); }
-            while result.geom.edge_curve_range.len() <= edge_idx { result.geom.edge_curve_range.push(None); }
-            while result.geom.edge_degenerated.len() <= edge_idx { result.geom.edge_degenerated.push(false); }
-            result.geom.edge_curve[edge_idx] = Some(curve_idx);
-            result.geom.edge_curve_range[edge_idx] = Some(e.t_range);
+            let sv_sr = result.add_tvertex(ds.vertices[sv].point);
+            let ev_sr = result.add_tvertex(ds.vertices[ev].point);
+            result.add_tedge(Some(e.curve.clone()), sv_sr, ev_sr, e.t_range);
+            used_verts.insert(sv);
+            used_verts.insert(ev);
             edge_to_ic.push(ei);
         }
 
         // Add isolated section vertices (OCCT L391-397)
-        let mut added_verts: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for &vi in &section_verts {
             if vi >= ds.vertices.len() { continue; }
-            if !section_edges.iter().any(|&ei| {
-                ds.edges.get(ei).map_or(false, |e| e.start_vertex == vi || e.end_vertex == vi)
-            }) {
-                if added_verts.insert(vi) {
-                    let _v_idx = result.vertices.len();
-                    result.vertices.push(rcad_kernel::topology::Vertex { point: ds.vertices[vi].point });
-                    // OCCT adds isolated vertices as standalone shapes in a compound
-                    // rcad: vertex edges are empty (no edge connected)
-                }
-            }
+            if used_verts.contains(&vi) { continue; }
+            // OCCT adds isolated vertices as standalone shapes in a compound
+            // rcad: vertex edges are empty (no edge connected)
+            result.add_tvertex(ds.vertices[vi].point);
         }
 
         (result, edge_to_ic)
@@ -327,7 +312,12 @@ impl Section {
 
     /// Ensure geometry is populated for primitive shapes.
     fn ensure_geometry(&self, brep: &rcad_kernel::BRep) -> rcad_kernel::BRep {
-        if brep.geom.surfaces.is_empty() && !brep.solids.is_empty() {
+        let has_surfaces = brep.tshapes.iter().any(|ts| match &**ts {
+            TShape::Face(fd) => fd.surface.is_some(),
+            _ => false,
+        });
+        let has_solids = brep.tshapes.iter().any(|ts| matches!(&**ts, TShape::Solid(_)));
+        if !has_surfaces && has_solids {
             let mut result = brep.clone();
             crate::geom_populate::populate_box_geom(&mut result);
             result
@@ -383,7 +373,7 @@ impl Section {
         let Some(ref result) = self.result else {
             return false;
         };
-        if edge_idx >= result.edges.len() {
+        if edge_idx >= result.edge_count() {
             return false;
         }
         // 鉁?OCCT-aligned: All section edges result from face-face
@@ -399,7 +389,7 @@ impl Section {
         let Some(ref result) = self.result else {
             return false;
         };
-        if edge_idx >= result.edges.len() {
+        if edge_idx >= result.edge_count() {
             return false;
         }
         // 鉁?OCCT-aligned: Same reasoning as has_ancestor_face_on_1
@@ -416,7 +406,7 @@ impl Section {
 
     /// Get the number of section edges in the result.
     pub fn num_edges(&self) -> usize {
-        self.result.as_ref().map_or(0, |r| r.edges.len())
+        self.result.as_ref().map_or(0, |r| r.edge_count())
     }
 
     /// Get the number of intersection curves found.

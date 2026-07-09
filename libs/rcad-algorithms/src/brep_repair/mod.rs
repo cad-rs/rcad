@@ -21,7 +21,7 @@ use std::sync::Arc;
 use glam::DVec3;
 use rcad_kernel::topods;
 use rcad_kernel::PCurve;
-use rcad_kernel::topods::{BRep, ShapeRef, TShape, Orientation, TVertexData, TEdgeData, TFaceData, TShellData, TSolidData, TWireData};
+use rcad_kernel::topods::{BRep, ShapeRef, TShape, Orientation, TVertexData, TEdgeData, TFaceData, TShellData, TSolidData, TWireData, tshape_flags};
 use rcad_kernel::CurveEval;
 use rcad_kernel::Curve2dEval;
 use rcad_kernel::SurfaceEval;

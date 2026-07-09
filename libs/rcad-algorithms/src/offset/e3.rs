@@ -331,7 +331,7 @@ pub fn offset_shape(brep: &rcad_kernel::BRep, opts: OffsetOptions) -> Result<Off
 
  // Find first face tshape in brep to extract a shell for offset_shell_with_options
  let face_indices: Vec<usize> = brep.tshapes.iter().enumerate()
-  .filter(|(_, ts)| matches!(&**ts, rcad_kernel::topods::TShape::Face(_)))
+  .filter(|(_, ts)| matches!(ts.as_ref(), rcad_kernel::topods::TShape::Face(_)))
   .map(|(i, _)| i)
   .collect();
 

@@ -1225,13 +1225,13 @@ fn offset_vertex_from_faces(
  // Curved-surface path
  let curved_idx = face_indices.iter().position(|fi| {
  match &*brep.tshapes[*fi] {
- rcad_kernel::topods::TShape::Face(fd) => matches!(fd.surface.as_deref(), Some(Surface3::Cylinder(_)) | Some(Surface3::Cone(_))),
+ rcad_kernel::topods::TShape::Face(fd) => matches!(fd.surface.as_ref(), Some(Surface3::Cylinder(_)) | Some(Surface3::Cone(_))),
  _ => false,
  }
  });
  let plane_indices: Vec<usize> = face_indices.iter().filter(|fi| {
  match &*brep.tshapes[**fi] {
- rcad_kernel::topods::TShape::Face(fd) => matches!(fd.surface.as_deref(), Some(Surface3::Plane(_))),
+ rcad_kernel::topods::TShape::Face(fd) => matches!(fd.surface.as_ref(), Some(Surface3::Plane(_))),
  _ => false,
  }
  }).copied().collect();

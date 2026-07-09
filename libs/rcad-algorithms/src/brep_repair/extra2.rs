@@ -394,7 +394,7 @@ pub fn ensure_normal_consistency(brep: &mut rcad_kernel::BRep) -> usize {
        if nv < 3 { continue; }
        fc /= nv as f64;
        // Compute face normal from surface
-       let fnorm = match fd.surface { Some(ref s) => { match s { Surface3::Plane(ref p) => p.normal, _ => DVec3::Z } }, None => DVec3::Z };
+       let fnorm = match &fd.surface { Some(s) => { match s { Surface3::Plane(p) => p.normal, _ => DVec3::Z } }, None => DVec3::Z };
        // Solid centroid approximation using all solid vertices
        let sc = brep.tshapes.iter().filter_map(|t| {
         if let TShape::Vertex(vd2) = &**t { Some(vd2.point) } else { None }

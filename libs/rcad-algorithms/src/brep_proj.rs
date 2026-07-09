@@ -175,7 +175,7 @@ fn sample_edge(
     tol: f64,
     pts: &mut Vec<DVec3>,
 ) {
-    let TShape::Edge(ed) = match brep.tshapes.get(ei) {
+    let ed = match brep.tshapes.get(ei) {
         Some(ts) => match ts.as_ref() {
             TShape::Edge(ed) => ed,
             _ => return,

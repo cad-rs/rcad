@@ -1333,7 +1333,8 @@ pub fn wires_to_faces(
  wire_groups.push(group);
  }
 
- // OCCT L743-789: build faces from each group
+ // OCCT L743-789: build faces from each group — use tshape API
+ let mut face_srs: Vec<rcad_kernel::topods::ShapeRef> = Vec::new();
  for group in &wire_groups {
  if group.is_empty() {
  continue;
@@ -1346,8 +1347,7 @@ pub fn wires_to_faces(
  .and_then(|wi| a_dm_wire_pln[wi].as_ref())
  })() else { continue };
 
- // Collect all edges (FORWARD + REVERSED per OCCT L752-753)
- let mut all_edge_vertices: Vec<usize> = Vec::new();
+ // Collect all edges from this group
  let mut all_edges: Vec<(usize, bool)> = Vec::new();
  for &w_idx in group {
  if w_idx >= ds.wires.len() {
@@ -1357,15 +1357,7 @@ pub fn wires_to_faces(
  if ei >= ds.edges.len() {
  continue;
  }
- all_edges.push((ei, true)); // FORWARD
- all_edges.push((ei, false)); // REVERSED
- // Add vertex positions for plane estimation
- if ds.edges[ei].start_vertex < ds.vertices.len() {
- all_edge_vertices.push(ds.edges[ei].start_vertex);
- }
- if ds.edges[ei].end_vertex < ds.vertices.len() {
- all_edge_vertices.push(ds.edges[ei].end_vertex);
- }
+ all_edges.push((ei, true));
  }
  }
 
@@ -1381,86 +1373,38 @@ pub fn wires_to_faces(
  }
  );
 
- // Deduplicate edges and construct the face
+ // Deduplicate edges and collect unique DS edge indices
  let mut seen_edges = std::collections::HashSet::new();
- let mut outer_edges: Vec<(usize, bool)> = Vec::new();
- for &(ei, fwd) in &all_edges {
+ let mut group_ei: Vec<usize> = Vec::new();
+ for &(ei, _fwd) in &all_edges {
  if seen_edges.insert(ei) {
- outer_edges.push((ei, fwd));
+ group_ei.push(ei);
  }
  }
 
- // Create wire from edges (vertex mapping via BRep)
- let mut wire_edges: Vec<rcad_kernel::topology::WireEdge> = Vec::new();
- for &(ei, fwd) in &outer_edges {
- let we = rcad_kernel::topology::WireEdge::new(ei, fwd);
- wire_edges.push(we);
+ // Create ShapeRefs for vertices and edges (tshape API)
+ let mut edge_srs: Vec<rcad_kernel::topods::ShapeRef> = Vec::new();
+ for &ei in &group_ei {
+ if ei >= ds.edges.len() { continue; }
+ let de = &ds.edges[ei];
+ let p1 = if de.start_vertex < ds.vertices.len() { ds.vertices[de.start_vertex].point } else { glam::DVec3::ZERO };
+ let p2 = if de.end_vertex < ds.vertices.len() { ds.vertices[de.end_vertex].point } else { glam::DVec3::ZERO };
+ let v1 = out.add_tvertex(p1);
+ let v2 = out.add_tvertex(p2);
+ let e_sr = out.add_tedge(Some(de.curve.clone()), v1, v2, de.t_range);
+ edge_srs.push(e_sr);
  }
 
- // Build the face
- let face = rcad_kernel::topology::Face {
- outer_wire: rcad_kernel::topology::Wire { edges: wire_edges },
- inner_wires: Vec::new(),
- normal: pln_info.normal,
- triangles: Vec::new(),
- sample_point: None,
- mesh_dirty: true,
- surface_idx: None,
- };
-
- // Add face to a shell/solid in the output BRep
- if out.solids.is_empty() {
- out.solids.push(rcad_kernel::Solid {
- shells: vec![rcad_kernel::Shell { faces: Vec::new() }],
- });
- }
- out.solids[0].shells[0].faces.push(face);
+ // Build wire and face
+ let wire_sr = out.add_twire(edge_srs);
+ let face_sr = out.add_tface(Some(plane_surface), wire_sr, Vec::new(), Some(pln_info.point), None, Vec::new(), true);
+ face_srs.push(face_sr);
  }
 
- // Copy edges used by the new faces into the output BRep
- let mut edge_map: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
- for group in &wire_groups {
- for &w_idx in group {
- if w_idx >= ds.wires.len() {
- continue;
- }
- for &ei in &ds.wires[w_idx].edges {
- if ei >= ds.edges.len() {
- continue;
- }
- if !edge_map.contains_key(&ei) {
- let e = &ds.edges[ei];
- let sv = out.vertices.len();
- out.vertices.push(rcad_kernel::Vertex {
- point: if e.start_vertex < ds.vertices.len() {
- ds.vertices[e.start_vertex].point
- } else { glam::DVec3::ZERO }
- });
- let ev = out.vertices.len();
- out.vertices.push(rcad_kernel::Vertex {
- point: if e.end_vertex < ds.vertices.len() {
- ds.vertices[e.end_vertex].point
- } else { glam::DVec3::ZERO }
- });
- edge_map.insert(ei, out.edges.len());
- out.edges.push(rcad_kernel::Edge { start: sv, end: ev });
- }
- }
- }
- }
-
- // Remap edges in the created faces to use output BRep edge indices
- for solid in &mut out.solids {
- for shell in &mut solid.shells {
- for face in &mut shell.faces {
- let new_edges: Vec<rcad_kernel::topology::WireEdge> = face.outer_wire.edges.iter()
- .filter_map(|we| edge_map.get(&we.idx).map(|&new_ei| {
- rcad_kernel::topology::WireEdge::new(new_ei, we.forward)
- }))
- .collect();
- face.outer_wire.edges = new_edges;
- }
- }
+ // Build shell(s) and solid(s) from created faces
+ if !face_srs.is_empty() {
+ let shell_sr = out.add_tshell(face_srs);
+ out.add_tsolid(vec![shell_sr]);
  }
 
  out

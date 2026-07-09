@@ -729,7 +729,6 @@ pub use shape_analysis::{
     check_face_wires,
     check_uv_consistency,
     compute_surface_deviation,
-    detect_surface_self_intersection,
 };
 pub use shape_build::{
     BRepBuilder, BuildError, BuildFace, BuildShell, BuildSolid, BuildVertex, BuildWire, Rebuild,

@@ -63,14 +63,14 @@ impl TopoGraph {
         let mut g = Self::default();
         g.record("from_brep");
 
-        for vi in 0..brep.vertices.len() {
+        for vi in 0..brep.vertices().len() {
             g.add_node(TopoNode {
                 kind: NodeKind::Vertex,
                 index: vi,
             });
         }
 
-        for (ei, e) in brep.edges.iter().enumerate() {
+        for (ei, e) in brep.edges().iter().enumerate() {
             let en = TopoNode {
                 kind: NodeKind::Edge,
                 index: ei,
@@ -97,7 +97,7 @@ impl TopoGraph {
         let mut face_idx = 0usize;
         let mut wire_idx = 0usize;
 
-        for (si, solid) in brep.solids.iter().enumerate() {
+        for (si, solid) in brep.solids().iter().enumerate() {
             let sn = TopoNode {
                 kind: NodeKind::Solid,
                 index: si,
@@ -141,7 +141,7 @@ impl TopoGraph {
                                 kind: NodeKind::Edge,
                                 index: we.idx,
                             };
-                            if we.idx < brep.edges.len() {
+                            if we.idx < brep.edges().len() {
                                 g.connect(wn, en);
                                 if !g.wire_edges[wire_idx].contains(&we.idx) {
                                     g.wire_edges[wire_idx].push(we.idx);

@@ -125,8 +125,9 @@ fn collect_faces_nested_tp(brep: &BRep) -> Vec<(usize, usize, usize)> {
 // ===========================================================================
 
 /// Strategy for tolerance propagation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ToleranceRule {
+    #[default]
     OcctStandard, Conservative, Aggressive, Harmonized, Bounded, ModelScale,
 }
 
@@ -203,7 +204,8 @@ impl TolerancePropagationEngine {
 
         for _pass in 0..self.config.propagation_passes {
             // Vertex -> Edge
-            for (ei, _) in each_edge(&result) {
+            let edge_idxs: Vec<usize> = each_edge(&result).map(|(ei, _)| ei).collect();
+            for &ei in &edge_idxs {
                 let ted = ed(&result, ei);
                 let new_etol = e_tol(&result, ei)
                     .max(v_tol(&result, ted.first.index))
@@ -216,7 +218,9 @@ impl TolerancePropagationEngine {
             }
 
             // Edge -> Face
-            for (fi, fd) in each_face(&result) {
+            let face_idxs: Vec<usize> = each_face(&result).map(|(fi, _)| fi).collect();
+            for &fi in &face_idxs {
+                let fd = match &*result.tshapes[fi] { TShape::Face(f) => f, _ => continue };
                 let mut max_etol = floor;
                 if let TShape::Wire(wd) = &*result.tshapes[fd.outer_wire.index] {
                     for er in &wd.edges { max_etol = max_etol.max(e_tol(&result, er.index)); }
@@ -261,7 +265,8 @@ impl TolerancePropagationEngine {
 
         for _pass in 0..self.config.propagation_passes {
             // Vertex -> Edge
-            for (ei, _) in each_edge(&result) {
+            let edge_idxs: Vec<usize> = each_edge(&result).map(|(ei, _)| ei).collect();
+            for &ei in &edge_idxs {
                 let ted = ed(&result, ei);
                 let new_etol = v_tol(&result, ted.first.index).max(v_tol(&result, ted.last.index));
                 if new_etol > e_tol(&result, ei) {
@@ -271,7 +276,9 @@ impl TolerancePropagationEngine {
             }
 
             // Edge -> Face
-            for (fi, fd) in each_face(&result) {
+            let face_idxs: Vec<usize> = each_face(&result).map(|(fi, _)| fi).collect();
+            for &fi in &face_idxs {
+                let fd = match &*result.tshapes[fi] { TShape::Face(f) => f, _ => continue };
                 let mut max_etol = floor;
                 if let TShape::Wire(wd) = &*result.tshapes[fd.outer_wire.index] {
                     for er in &wd.edges { max_etol = max_etol.max(e_tol(&result, er.index)); }
@@ -288,28 +295,33 @@ impl TolerancePropagationEngine {
             }
 
             // Face -> Edge (reverse)
-            for (fi, fd) in each_face(&result) {
+            let face_idxs: Vec<usize> = each_face(&result).map(|(fi, _)| fi).collect();
+            for &fi in &face_idxs {
+                let fd = match &*result.tshapes[fi] { TShape::Face(f) => f, _ => continue };
                 let ftol = f_tol(&result, fi);
-                if let TShape::Wire(wd) = &*result.tshapes[fd.outer_wire.index] {
-                    for er in &wd.edges {
-                        if ftol > e_tol(&result, er.index) {
-                            set_e_tol(&mut result, er.index, ftol);
-                            report.edges_updated += 1;
-                        }
+                let wire_edges: Vec<usize> = {
+                    let wd = match &*result.tshapes[fd.outer_wire.index] { TShape::Wire(w) => w, _ => continue };
+                    wd.edges.iter().map(|er| er.index).collect()
+                };
+                for &ei in &wire_edges {
+                    if ftol > e_tol(&result, ei) {
+                        set_e_tol(&mut result, ei, ftol);
+                        report.edges_updated += 1;
                     }
                 }
             }
 
             // Edge -> Vertex (reverse)
-            for (ei, _) in each_edge(&result) {
-                let ted = ed(&result, ei);
+            let edge_idxs: Vec<usize> = each_edge(&result).map(|(ei, _)| ei).collect();
+            for &ei in &edge_idxs {
+                let (fi, li) = { let ted = ed(&result, ei); (ted.first.index, ted.last.index) };
                 let etol = e_tol(&result, ei);
-                if etol > v_tol(&result, ted.first.index) {
-                    set_v_tol(&mut result, ted.first.index, etol);
+                if etol > v_tol(&result, fi) {
+                    set_v_tol(&mut result, fi, etol);
                     report.vertices_updated += 1;
                 }
-                if etol > v_tol(&result, ted.last.index) {
-                    set_v_tol(&mut result, ted.last.index, etol);
+                if etol > v_tol(&result, li) {
+                    set_v_tol(&mut result, li, etol);
                     report.vertices_updated += 1;
                 }
             }
@@ -335,16 +347,17 @@ impl TolerancePropagationEngine {
 
         for _pass in 0..self.config.propagation_passes {
             let mut changed = false;
-            for (ei, _) in each_edge(&result) {
-                let ted = ed(&result, ei);
-                let vs = v_max_etol.get(ted.first.index).copied().unwrap_or(floor);
-                let ve = v_max_etol.get(ted.last.index).copied().unwrap_or(floor);
+            let edge_idxs: Vec<usize> = each_edge(&result).map(|(ei, _)| ei).collect();
+            for &ei in &edge_idxs {
+                let (fi, li) = { let ted = ed(&result, ei); (ted.first.index, ted.last.index) };
+                let vs = v_max_etol.get(fi).copied().unwrap_or(floor);
+                let ve = v_max_etol.get(li).copied().unwrap_or(floor);
                 let cur = e_tol(&result, ei);
                 let h = cur.max(vs).max(ve);
                 if h > cur + TOLERANCE_FLOAT_DEDUP {
                     set_e_tol(&mut result, ei, h);
-                    if ted.first.index < nv { v_max_etol[ted.first.index] = v_max_etol[ted.first.index].max(h); }
-                    if ted.last.index < nv { v_max_etol[ted.last.index] = v_max_etol[ted.last.index].max(h); }
+                    if fi < nv { v_max_etol[fi] = v_max_etol[fi].max(h); }
+                    if li < nv { v_max_etol[li] = v_max_etol[li].max(h); }
                     report.edges_updated += 1;
                     changed = true;
                 }
@@ -352,7 +365,9 @@ impl TolerancePropagationEngine {
             if !changed { break; }
         }
 
-        for (fi, fd) in each_face(&result) {
+        let face_idxs: Vec<usize> = each_face(&result).map(|(fi, _)| fi).collect();
+        for &fi in &face_idxs {
+            let fd = match &*result.tshapes[fi] { TShape::Face(f) => f, _ => continue };
             let mut max_etol = floor;
             if let TShape::Wire(wd) = &*result.tshapes[fd.outer_wire.index] {
                 for er in &wd.edges { max_etol = max_etol.max(e_tol(&result, er.index)); }
@@ -377,7 +392,8 @@ impl TolerancePropagationEngine {
         let floor = self.config.tolerance_floor.max(CONFUSION);
         let bound = self.config.bound_value.max(floor);
 
-        for (ei, _) in each_edge(&result) {
+        let edge_idxs: Vec<usize> = each_edge(&result).map(|(ei, _)| ei).collect();
+        for &ei in &edge_idxs {
             let ted = ed(&result, ei);
             let new_etol = e_tol(&result, ei)
                 .max(v_tol(&result, ted.first.index))
@@ -389,7 +405,9 @@ impl TolerancePropagationEngine {
             }
         }
 
-        for (fi, fd) in each_face(&result) {
+        let face_idxs: Vec<usize> = each_face(&result).map(|(fi, _)| fi).collect();
+        for &fi in &face_idxs {
+            let fd = match &*result.tshapes[fi] { TShape::Face(f) => f, _ => continue };
             let mut max_etol = floor;
             if let TShape::Wire(wd) = &*result.tshapes[fd.outer_wire.index] {
                 for er in &wd.edges { max_etol = max_etol.max(e_tol(&result, er.index)); }
@@ -406,9 +424,12 @@ impl TolerancePropagationEngine {
             }
         }
 
-        for (vi, _) in each_vertex(&result) { let c = v_tol(&result, vi); if c > bound { set_v_tol(&mut result, vi, bound); } }
-        for (ei, _) in each_edge(&result) { let c = e_tol(&result, ei); if c > bound { set_e_tol(&mut result, ei, bound); } }
-        for (fi, _) in each_face(&result) { let c = f_tol(&result, fi); if c > bound { set_f_tol(&mut result, fi, bound); } }
+        let vert_idxs_b: Vec<usize> = each_vertex(&result).map(|(vi, _)| vi).collect();
+        for &vi in &vert_idxs_b { let c = v_tol(&result, vi); if c > bound { set_v_tol(&mut result, vi, bound); } }
+        let edge_idxs_b: Vec<usize> = each_edge(&result).map(|(ei, _)| ei).collect();
+        for &ei in &edge_idxs_b { let c = e_tol(&result, ei); if c > bound { set_e_tol(&mut result, ei, bound); } }
+        let face_idxs_b: Vec<usize> = each_face(&result).map(|(fi, _)| fi).collect();
+        for &fi in &face_idxs_b { let c = f_tol(&result, fi); if c > bound { set_f_tol(&mut result, fi, bound); } }
 
         self.compute_report_stats(&result, &mut report);
         (result, report)
@@ -421,20 +442,24 @@ impl TolerancePropagationEngine {
         let floor = self.config.tolerance_floor.max(CONFUSION * scale);
         let cap = self.config.max_tolerance;
 
-        for (vi, _) in each_vertex(&result) {
+        let vert_idxs_ms: Vec<usize> = each_vertex(&result).map(|(vi, _)| vi).collect();
+        for &vi in &vert_idxs_ms {
             let v = (v_tol(&result, vi) * scale).max(floor).min(cap);
             set_v_tol(&mut result, vi, v);
         }
-        for (ei, _) in each_edge(&result) {
+        let edge_idxs_ms: Vec<usize> = each_edge(&result).map(|(ei, _)| ei).collect();
+        for &ei in &edge_idxs_ms {
             let v = (e_tol(&result, ei) * scale).max(floor).min(cap);
             set_e_tol(&mut result, ei, v);
         }
-        for (fi, _) in each_face(&result) {
+        let face_idxs_ms: Vec<usize> = each_face(&result).map(|(fi, _)| fi).collect();
+        for &fi in &face_idxs_ms {
             let v = (f_tol(&result, fi) * scale).max(floor).min(cap);
             set_f_tol(&mut result, fi, v);
         }
 
-        for (ei, _) in each_edge(&result) {
+        let edge_idxs_ms2: Vec<usize> = each_edge(&result).map(|(ei, _)| ei).collect();
+        for &ei in &edge_idxs_ms2 {
             let ted = ed(&result, ei);
             let new_etol = e_tol(&result, ei)
                 .max(v_tol(&result, ted.first.index))
@@ -455,7 +480,8 @@ impl TolerancePropagationEngine {
             ConflictResolutionPolicy::PropagateUp => {
                 let mut conflicts = 0usize;
                 let mut resolved = 0usize;
-                for (ei, _) in each_edge(brep) {
+                let edge_idxs: Vec<usize> = each_edge(brep).map(|(ei, _)| ei).collect();
+                for &ei in &edge_idxs {
                     let ted = ed(brep, ei);
                     let vs = v_tol(brep, ted.first.index);
                     let ve = v_tol(brep, ted.last.index);
@@ -466,7 +492,9 @@ impl TolerancePropagationEngine {
                         resolved += 1;
                     }
                 }
-                for (fi, fd) in each_face(brep) {
+                let face_idxs: Vec<usize> = each_face(brep).map(|(fi, _)| fi).collect();
+                for &fi in &face_idxs {
+                    let fd = match &*brep.tshapes[fi] { TShape::Face(f) => f, _ => continue };
                     let ft = f_tol(brep, fi);
                     let mut max_et = floor;
                     let mut has = false;
@@ -485,15 +513,16 @@ impl TolerancePropagationEngine {
             ConflictResolutionPolicy::ClampDown => {
                 let mut conflicts = 0usize;
                 let mut resolved = 0usize;
-                for (ei, _) in each_edge(brep) {
-                    let ted = ed(brep, ei);
-                    let vs = v_tol(brep, ted.first.index);
-                    let ve = v_tol(brep, ted.last.index);
+                let edge_idxs: Vec<usize> = each_edge(brep).map(|(ei, _)| ei).collect();
+                for &ei in &edge_idxs {
+                    let (fi, li) = { let ted = ed(brep, ei); (ted.first.index, ted.last.index) };
+                    let vs = v_tol(brep, fi);
+                    let ve = v_tol(brep, li);
                     let et = e_tol(brep, ei);
                     if vs > et + TOLERANCE_FLOAT_DEDUP || ve > et + TOLERANCE_FLOAT_DEDUP {
                         conflicts += 1;
-                        if vs > et { set_v_tol(brep, ted.first.index, et.min(vs)); }
-                        if ve > et { set_v_tol(brep, ted.last.index, et.min(ve)); }
+                        if vs > et { set_v_tol(brep, fi, et.min(vs)); }
+                        if ve > et { set_v_tol(brep, li, et.min(ve)); }
                         resolved += 1;
                     }
                 }

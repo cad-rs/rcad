@@ -1,4 +1,4 @@
-﻿//! History tracking for topology operations, matching OCCT BRepAlgoAPI_BuilderShape capabilities.
+//! History tracking for topology operations, matching OCCT BRepAlgoAPI_BuilderShape capabilities.
 //!
 //! This module provides comprehensive tracking of:
 //! - **Modifications**: Entities modified during an operation
@@ -1640,8 +1640,8 @@ impl BooleanHistory {
 
  let stats = OperationStats {
  entity_count_before: entity_count_before_a + entity_count_before_b,
- entity_count_after: result_brep.vertices.len() + result_brep.edges.len() +
- result_brep.solids.iter()
+ entity_count_after: result_brep.vertices().len() + result_brep.edges().len() +
+ result_brep.solids().iter()
  .flat_map(|s| s.shells.iter())
  .map(|sh| sh.faces.len())
  .sum::<usize>(),

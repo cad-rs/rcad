@@ -53,8 +53,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use glam::DVec3;
 use rcad_kernel::topods;
+use rcad_kernel::topods::{TShape, TEdgeData, TFaceData, TWireData, TShellData, TSolidData, ShapeRef};
 use rcad_kernel::geom::{ConicalSurface, CylindricalSurface, Plane, SphericalSurface, Surface3, ToroidalSurface, any_perpendicular};
-use rcad_kernel::topology::{Face, Wire};
 use rcad_modeling::make_cylinder_brep;
 
 use crate::tolerance::*;
@@ -596,26 +596,48 @@ impl std::error::Error for DefeaturingError {}
 
 // -- Internal helpers --------------------------------------------------------
 
-/// Compute the flat face index for a face in `solids[si].shells[shi].faces[fi]`.
-fn flat_face_index(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> usize {
-    let mut idx = 0usize;
-    for s in 0..si {
-        for sh in &brep.solids[s].shells {
-            idx += sh.faces.len();
+/// Walk the TShape hierarchy to find the Nth solid's Nth shell's Nth face TShape.
+/// Returns (solid_index_in_tshapes, shell_index_in_tshapes, face_index_in_tshapes, &TFaceData).
+fn walk_ssf<'a>(brep: &'a rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Option<(usize, usize, usize, &'a TFaceData)> {
+    let mut solid_count = 0usize;
+    for (solid_ts_idx, ts) in brep.tshapes.iter().enumerate() {
+        if let TShape::Solid(sd) = ts.as_ref() {
+            if solid_count == si {
+                let shell_sr = sd.shells.get(shi)?;
+                if let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+                    let face_sr = shd.faces.get(fi)?;
+                    if let TShape::Face(fd) = &*brep.tshapes[face_sr.index] {
+                        return Some((solid_ts_idx, shell_sr.index, face_sr.index, fd));
+                    }
+                }
+                return None;
+            }
+            solid_count += 1;
         }
     }
-    for sh in 0..shi {
-        idx += brep.solids[si].shells[sh].faces.len();
+    None
+}
+
+/// Walk TShape hierarchy and return TFaceData for a face at (si, shi, fi).
+fn get_face_data<'a>(brep: &'a rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Option<&'a TFaceData> {
+    walk_ssf(brep, si, shi, fi).map(|(_, _, _, fd)| fd)
+}
+
+/// Walk TShape hierarchy and return edge data for an edge at tshape index ei.
+fn get_edge_data<'a>(brep: &'a rcad_kernel::BRep, ei: usize) -> Option<&'a TEdgeData> {
+    match brep.tshapes.get(ei)? {
+        t if matches!(t.as_ref(), TShape::Edge(_)) => {
+            if let TShape::Edge(ed) = t.as_ref() { Some(ed) } else { None }
+        }
+        _ => None,
     }
-    idx + fi
 }
 
 /// Return the `CylindricalSurface` backing a face, or `None` if the face has
 /// no surface data or is not a cylinder.
 fn face_cylinder(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Option<CylindricalSurface> {
-    let ffi = flat_face_index(brep, si, shi, fi);
-    let sid = brep.geom.face_surface.get(ffi)?.as_ref().copied()?;
-    match brep.geom.surfaces.get(sid)? {
+    let fd = get_face_data(brep, si, shi, fi)?;
+    match fd.surface.as_ref()? {
         Surface3::Cylinder(c) => Some(*c),
         _ => None,
     }
@@ -624,9 +646,8 @@ fn face_cylinder(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> 
 /// Return the `ConicalSurface` backing a face, or `None` if the face has
 /// no surface data or is not a cone.
 fn face_cone(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Option<ConicalSurface> {
-    let ffi = flat_face_index(brep, si, shi, fi);
-    let sid = brep.geom.face_surface.get(ffi)?.as_ref().copied()?;
-    match brep.geom.surfaces.get(sid)? {
+    let fd = get_face_data(brep, si, shi, fi)?;
+    match fd.surface.as_ref()? {
         Surface3::Cone(c) => Some(*c),
         _ => None,
     }
@@ -635,9 +656,8 @@ fn face_cone(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Opti
 /// Return the `Plane` backing a face, or `None` if the face has
 /// no surface data or is not a plane.
 fn face_plane(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Option<Plane> {
-    let ffi = flat_face_index(brep, si, shi, fi);
-    let sid = brep.geom.face_surface.get(ffi)?.as_ref().copied()?;
-    match brep.geom.surfaces.get(sid)? {
+    let fd = get_face_data(brep, si, shi, fi)?;
+    match fd.surface.as_ref()? {
         Surface3::Plane(p) => Some(*p),
         _ => None,
     }
@@ -646,9 +666,8 @@ fn face_plane(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Opt
 /// Return the `ToroidalSurface` backing a face, or `None` if the face has
 /// no surface data or is not a torus.
 fn face_torus(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Option<ToroidalSurface> {
-    let ffi = flat_face_index(brep, si, shi, fi);
-    let sid = brep.geom.face_surface.get(ffi)?.as_ref().copied()?;
-    match brep.geom.surfaces.get(sid)? {
+    let fd = get_face_data(brep, si, shi, fi)?;
+    match fd.surface.as_ref()? {
         Surface3::Torus(t) => Some(*t),
         _ => None,
     }
@@ -657,9 +676,8 @@ fn face_torus(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Opt
 /// Return the `SphericalSurface` backing a face, or `None` if the face has
 /// no surface data or is not a sphere.
 fn face_sphere(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Option<SphericalSurface> {
-    let ffi = flat_face_index(brep, si, shi, fi);
-    let sid = brep.geom.face_surface.get(ffi)?.as_ref().copied()?;
-    match brep.geom.surfaces.get(sid)? {
+    let fd = get_face_data(brep, si, shi, fi)?;
+    match fd.surface.as_ref()? {
         Surface3::Sphere(s) => Some(*s),
         _ => None,
     }
@@ -673,15 +691,18 @@ fn detect_blend_face(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize,
         if let Some(torus) = face_torus(brep, si, shi, fi) {
             // Torus minor radius indicates fillet radius
             if torus.minor_radius > 0.0 && torus.minor_radius <= max_blend_radius {
-                let face = &brep.solids[si].shells[shi].faces[fi];
                 let sample_point = get_face_sample_point(brep, si, shi, fi).unwrap_or(torus.center);
+                let normal = get_face_data(brep, si, shi, fi)
+                    .and_then(|fd| fd.surface.as_ref())
+                    .map(|s| surface_normal_at_origin(s))
+                    .unwrap_or_default();
                 return Some(BlendFeature {
                     face_indices: vec![fi],
                     is_fillet: true,
                     radius: torus.minor_radius,
                     chamfer_distance: 0.0,
                     sample_point,
-                    normal: face.normal.normalize_or_zero(),
+                    normal,
                 });
             }
         }
@@ -689,29 +710,35 @@ fn detect_blend_face(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize,
         // Check for sphere (ball-end fillet)
         if let Some(sphere) = face_sphere(brep, si, shi, fi)
             && sphere.radius > 0.0 && sphere.radius <= max_blend_radius {
-                let face = &brep.solids[si].shells[shi].faces[fi];
+                let normal = get_face_data(brep, si, shi, fi)
+                    .and_then(|fd| fd.surface.as_ref())
+                    .map(|s| surface_normal_at_origin(s))
+                    .unwrap_or_default();
                 return Some(BlendFeature {
                     face_indices: vec![fi],
                     is_fillet: true,
                     radius: sphere.radius,
                     chamfer_distance: 0.0,
                     sample_point: sphere.center,
-                    normal: face.normal.normalize_or_zero(),
+                    normal,
                 });
             }
 
         // Check for cylinder with small radius (edge fillet)
         if let Some(cyl) = face_cylinder(brep, si, shi, fi)
             && cyl.radius > 0.0 && cyl.radius <= max_blend_radius {
-                let face = &brep.solids[si].shells[shi].faces[fi];
                 let sample_point = cyl.origin;
+                let normal = get_face_data(brep, si, shi, fi)
+                    .and_then(|fd| fd.surface.as_ref())
+                    .map(|s| surface_normal_at_origin(s))
+                    .unwrap_or_default();
                 return Some(BlendFeature {
                     face_indices: vec![fi],
                     is_fillet: true,
                     radius: cyl.radius,
                     chamfer_distance: 0.0,
                     sample_point,
-                    normal: face.normal.normalize_or_zero(),
+                    normal,
                 });
             }
     }
@@ -719,24 +746,23 @@ fn detect_blend_face(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize,
     // Check for chamfer (small planar face connecting two other faces at an angle)
     if max_chamfer_distance > 0.0
         && let Some(_plane) = face_plane(brep, si, shi, fi) {
-            // Heuristic: small planar face that connects two non-parallel faces
-            // This is a simplified check; a full implementation would analyze
-            // the adjacent faces and check if they meet at an angle
-            let face = &brep.solids[si].shells[shi].faces[fi];
-
             // Estimate chamfer size from face dimensions
             let face_area = estimate_face_area(brep, si, shi, fi);
             let chamfer_estimate = face_area.sqrt() / 1.414; // Approximate for 45-degree chamfer
 
             if chamfer_estimate > 0.0 && chamfer_estimate <= max_chamfer_distance {
                 let sample_point = get_face_sample_point(brep, si, shi, fi).unwrap_or_default();
+                let normal = get_face_data(brep, si, shi, fi)
+                    .and_then(|fd| fd.surface.as_ref())
+                    .map(|s| surface_normal_at_origin(s))
+                    .unwrap_or_default();
                 return Some(BlendFeature {
                     face_indices: vec![fi],
                     is_fillet: false,
                     radius: 0.0,
                     chamfer_distance: chamfer_estimate,
                     sample_point,
-                    normal: face.normal.normalize_or_zero(),
+                    normal,
                 });
             }
         }
@@ -744,32 +770,27 @@ fn detect_blend_face(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize,
     None
 }
 
+/// Compute surface normal at UV origin for a given surface.
+fn surface_normal_at_origin(surface: &Surface3) -> DVec3 {
+    use rcad_kernel::geom::SurfaceEval;
+    surface.normal_at(0.0, 0.0)
+}
+
 /// Get a sample point from a face (first vertex).
 fn get_face_sample_point(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> Option<DVec3> {
-    let face = &brep.solids[si].shells[shi].faces[fi];
-    for we in &face.outer_wire.edges {
-        if let Some(edge) = brep.edges.get(we.idx)
-            && let Some(v) = brep.vertices.get(edge.start) {
-                return Some(v.point);
-            }
-    }
-    None
+    let fd = get_face_data(brep, si, shi, fi)?;
+    collect_wire_vertices(brep, fd.outer_wire, false).first().copied()
 }
 
 /// Estimate the area of a face using fan triangulation.
 fn estimate_face_area(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize) -> f64 {
-    let face = &brep.solids[si].shells[shi].faces[fi];
+    let fd = match get_face_data(brep, si, shi, fi) {
+        Some(fd) => fd,
+        None => return 0.0,
+    };
 
     // Collect vertex positions in order
-    let mut pts: Vec<DVec3> = Vec::new();
-    for we in &face.outer_wire.edges {
-        if let Some(edge) = brep.edges.get(we.idx) {
-            let vi = if we.forward { edge.start } else { edge.end };
-            if let Some(v) = brep.vertices.get(vi) {
-                pts.push(v.point);
-            }
-        }
-    }
+    let pts = collect_wire_vertices(brep, fd.outer_wire, true);
 
     if pts.len() < 3 {
         return 0.0;
@@ -783,6 +804,26 @@ fn estimate_face_area(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi: usize
     }
 
     area
+}
+
+/// Collect vertex positions from a wire in order.
+fn collect_wire_vertices(brep: &rcad_kernel::BRep, wire_sr: ShapeRef, orient: bool) -> Vec<DVec3> {
+    let mut pts: Vec<DVec3> = Vec::new();
+    if let TShape::Wire(wd) = &*brep.tshapes[wire_sr.index] {
+        for edge_sr in &wd.edges {
+            if let TShape::Edge(ed) = &*brep.tshapes[edge_sr.index] {
+                let vi = if orient && edge_sr.orientation == rcad_kernel::topods::Orientation::Reversed {
+                    ed.last.index
+                } else {
+                    ed.first.index
+                };
+                if let Some(pt) = brep.vertex_point(vi) {
+                    pts.push(pt);
+                }
+            }
+        }
+    }
+    pts
 }
 
 /// Return `true` if two normalized axis vectors are parallel (or antiparallel).
@@ -806,55 +847,52 @@ fn axes_same_line(o1: DVec3, ax1: DVec3, o2: DVec3, ax2: DVec3) -> bool {
 }
 
 /// Determine whether a cylindrical face is likely a hole wall by checking
-/// the majority voting of `face.normal` against the radial outward directions
-/// at each boundary vertex.
+/// the majority voting of the face surface normal against the radial outward
+/// directions at each boundary vertex.
 ///
-/// **Limitation**: after a boolean operation the stored `face.normal` may be
-/// the cylinder's seam direction rather than the true outward-from-solid normal
-/// (this is a known limitation of the legacy curved-face split path).  We use a
-/// majority vote across ALL boundary vertices to reduce sensitivity to any single
-/// seam-direction artifact.  Falls back to `true` (hole) on tie or missing data.
-fn is_hole_face(face: &Face, brep: &rcad_kernel::BRep, cyl: &CylindricalSurface) -> bool {
+/// The face surface normal is computed from the face surface (not a stored face.normal).
+/// **Limitation**: after a boolean operation the face surface normal may be
+/// the cylinder's seam direction rather than the true outward-from-solid normal.
+/// We use a majority vote across ALL boundary vertices to reduce sensitivity.
+/// Falls back to `true` (hole) on tie or missing data.
+fn is_hole_face(fd: &TFaceData, brep: &rcad_kernel::BRep, cyl: &CylindricalSurface) -> bool {
     let ax = cyl.axis.normalize_or_zero();
-    let face_n = face.normal.normalize_or_zero();
+    // Compute face normal from surface at origin.
+    let face_n = fd.surface.as_ref()
+        .map(|s| surface_normal_at_origin(s))
+        .unwrap_or_default()
+        .normalize_or_zero();
     if face_n.length_squared() < TOLERANCE_METRIC_SQ_NEAR_ZERO {
-        return true; // no normal stored -> assume hole
+        return true; // no surface -> assume hole
     }
 
-    // Collect unique vertex indices to avoid biasing the vote on seam
-    // vertices that appear as both `edge.end` and `edge.start` on adjacent
-    // edges in the outer wire.
+    // Collect unique vertex indices from all wires of this face.
     let mut seen: HashSet<usize> = HashSet::new();
-    let mut collect_verts = |wire: &Wire| {
-        for we in &wire.edges {
-            let Some(edge) = brep.edges.get(we.idx) else { continue; };
-            seen.insert(edge.start);
-            seen.insert(edge.end);
+    let collect_wire_verts = |brep: &rcad_kernel::BRep, wire_sr: ShapeRef, seen: &mut HashSet<usize>| {
+        if let TShape::Wire(wd) = &*brep.tshapes[wire_sr.index] {
+            for edge_sr in &wd.edges {
+                if let TShape::Edge(ed) = &*brep.tshapes[edge_sr.index] {
+                    seen.insert(ed.first.index);
+                    seen.insert(ed.last.index);
+                }
+            }
         }
     };
-    collect_verts(&face.outer_wire);
-    for iw in &face.inner_wires {
-        collect_verts(iw);
+    collect_wire_verts(brep, fd.outer_wire, &mut seen);
+    for iw_sr in &fd.inner_wires {
+        collect_wire_verts(brep, *iw_sr, &mut seen);
     }
 
     let mut hole_votes: i32 = 0;
     let mut boss_votes: i32 = 0;
     for &vi in &seen {
-        let Some(v) = brep.vertices.get(vi) else { continue; };
-        let to_pt = v.point - cyl.origin;
+        let Some(pt) = brep.vertex_point(vi) else { continue; };
+        let to_pt = pt - cyl.origin;
         let radial = to_pt - to_pt.dot(ax) * ax;
         if radial.length_squared() < TOLERANCE_METRIC_SQ_NEAR_ZERO {
             continue;
         }
         let radial_dir = radial.normalize();
-        // For a cylindrical HOLE wall (drill removed from solid), the
-        // boolean builder stores face.normal pointing OUTWARD from the
-        // cylinder axis (i.e. in the +radial direction), because the
-        // cylinder's seam normal is the ref_dir == the outward direction
-        // at the seam.  dot > 0 -> face_n agrees with outward radial -> hole.
-        // For a BOSS, the face is part of the exterior of the added cylinder,
-        // so the same seam normal convention still holds: dot > 0 -> hole wall.
-        // We therefore use dot > 0 as the "outward (hole)" signal.
         let dot = face_n.dot(radial_dir);
         if dot > TOLERANCE_MESH_LEGACY {
             hole_votes += 1;
@@ -880,21 +918,18 @@ fn axis_extent_of_group(
     let mut t_max = f64::NEG_INFINITY;
 
     for &fi in face_indices {
-        let face = &brep.solids[si].shells[shi].faces[fi];
-        for we in &face.outer_wire.edges {
-            let Some(edge) = brep.edges.get(we.idx) else {
-                continue;
-            };
-            for &vi in &[edge.start, edge.end] {
-                let Some(v) = brep.vertices.get(vi) else {
-                    continue;
-                };
-                let t = (v.point - cyl.origin).dot(ax);
-                if t < t_min {
-                    t_min = t;
-                }
-                if t > t_max {
-                    t_max = t;
+        let Some(fd) = get_face_data(brep, si, shi, fi) else { continue; };
+        // Walk outer wire edges to collect vertex positions.
+        if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+            for edge_sr in &wd.edges {
+                if let TShape::Edge(ed) = &*brep.tshapes[edge_sr.index] {
+                    for &vi in &[ed.first.index, ed.last.index] {
+                        if let Some(pt) = brep.vertex_point(vi) {
+                            let t = (pt - cyl.origin).dot(ax);
+                            if t < t_min { t_min = t; }
+                            if t > t_max { t_max = t; }
+                        }
+                    }
                 }
             }
         }
@@ -908,6 +943,86 @@ fn axis_extent_of_group(
 }
 
 // -- Public detection functions ---------------------------------------------
+
+/// Helper: build edge index to face-local-index adjacency from TShape data.
+fn build_edge_to_faces_map(brep: &rcad_kernel::BRep, si: usize, shi: usize) -> HashMap<usize, Vec<usize>> {
+    let mut map: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut fi: usize = 0;
+    // Find first solid and its shell with given indices.
+    for ts in &brep.tshapes {
+        if let TShape::Solid(sd) = ts.as_ref() {
+            if si == 0 {
+                if let Some(shell_sr) = sd.shells.get(shi) {
+                    if let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+                        for face_sr in &shd.faces {
+                            if let TShape::Face(fd) = &*brep.tshapes[face_sr.index] {
+                                // Add outer wire edges.
+                                if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+                                    for edge_sr in &wd.edges {
+                                        map.entry(edge_sr.index).or_default().push(fi);
+                                    }
+                                }
+                                // Add inner wire edges.
+                                for iw_sr in &fd.inner_wires {
+                                    if let TShape::Wire(wd) = &*brep.tshapes[iw_sr.index] {
+                                        for edge_sr in &wd.edges {
+                                            map.entry(edge_sr.index).or_default().push(fi);
+                                        }
+                                    }
+                                }
+                            }
+                            fi += 1;
+                        }
+                    }
+                }
+                break;
+            }
+            // skip this solid, decrement si
+            let mut skip = true;
+            if let Some(shell_sr) = sd.shells.get(shi) {
+                if let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+                    fi += shd.faces.len();
+                    skip = false;
+                }
+            }
+            let _ = skip;
+        }
+    }
+    map
+}
+
+/// Count faces in solid[si].shell[shi] via TShape walk.
+fn count_faces_in_shell(brep: &rcad_kernel::BRep, si: usize, shi: usize) -> usize {
+    let mut solid_count = 0;
+    for ts in &brep.tshapes {
+        if let TShape::Solid(sd) = ts.as_ref() {
+            if solid_count == si {
+                if let Some(shell_sr) = sd.shells.get(shi) {
+                    if let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+                        return shd.faces.len();
+                    }
+                }
+                return 0;
+            }
+            solid_count += 1;
+        }
+    }
+    0
+}
+
+/// Collect edge tshape indices from a face's outer and inner wires.
+fn collect_face_edge_indices(brep: &rcad_kernel::BRep, fd: &TFaceData) -> Vec<usize> {
+    let mut es: Vec<usize> = Vec::new();
+    if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+        es.extend(wd.edges.iter().map(|sr| sr.index));
+    }
+    for iw_sr in &fd.inner_wires {
+        if let TShape::Wire(wd) = &*brep.tshapes[iw_sr.index] {
+            es.extend(wd.edges.iter().map(|sr| sr.index));
+        }
+    }
+    es
+}
 
 /// Detect all cylindrical features (holes and bosses) in `solids[0].shells[0]`
 /// whose radius falls within the specified bounds.
@@ -923,23 +1038,14 @@ pub fn detect_cylindrical_features(
 ) -> Vec<CylindricalFeature> {
     let si = 0;
     let shi = 0;
-    let Some(shell) = brep.solids.first().and_then(|s| s.shells.first()) else {
+
+    let n_faces = count_faces_in_shell(brep, si, shi);
+    if n_faces == 0 {
         return Vec::new();
-    };
-    let n_faces = shell.faces.len();
+    }
 
     // Build edge -> [local face_idx] adjacency.
-    let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
-    for (fi, face) in shell.faces.iter().enumerate() {
-        for we in &face.outer_wire.edges {
-            edge_to_faces.entry(we.idx).or_default().push(fi);
-        }
-        for inner in &face.inner_wires {
-            for we in &inner.edges {
-                edge_to_faces.entry(we.idx).or_default().push(fi);
-            }
-        }
-    }
+    let edge_to_faces = build_edge_to_faces_map(brep, si, shi);
 
     let mut visited = vec![false; n_faces];
     let mut features = Vec::new();
@@ -958,8 +1064,6 @@ pub fn detect_cylindrical_features(
         // group without pre-filtering on the (unreliable) is_hole flag.
         let effective_max = max_hole_radius.max(max_boss_radius);
         if effective_max <= 0.0 || cyl.radius > effective_max {
-            // Radius out of range -> skip but don't mark visited so other
-            // features sharing an edge can still be explored.
             continue;
         }
 
@@ -972,14 +1076,8 @@ pub fn detect_cylindrical_features(
         while let Some(fi) = queue.pop_front() {
             group.push(fi);
 
-            let face_edges: Vec<usize> = {
-                let f = &shell.faces[fi];
-                let mut es: Vec<usize> = f.outer_wire.edges.iter().map(|we| we.idx).collect();
-                for iw in &f.inner_wires {
-                    es.extend(iw.edges.iter().map(|we| we.idx));
-                }
-                es
-            };
+            let Some(fd) = get_face_data(brep, si, shi, fi) else { continue; };
+            let face_edges = collect_face_edge_indices(brep, fd);
 
             for ei in face_edges {
                 let Some(neighbours) = edge_to_faces.get(&ei) else {
@@ -1004,13 +1102,13 @@ pub fn detect_cylindrical_features(
             }
         }
 
-        // Determine is_hole by group-level majority vote.  Aggregating across
-        // all faces in the group avoids sensitivity to the seam-direction
-        // artefact that makes per-face voting unreliable after a boolean op.
-        // Tie-breaks towards hole (the more common defeaturing target).
+        // Determine is_hole by group-level majority vote.
         let group_hole_count = group
             .iter()
-            .filter(|&&fi| is_hole_face(&shell.faces[fi], brep, &cyl))
+            .filter(|&&fi| {
+                get_face_data(brep, si, shi, fi)
+                    .is_some_and(|fd| is_hole_face(fd, brep, &cyl))
+            })
             .count();
         let is_hole = group_hole_count * 2 >= group.len();
 
@@ -1042,23 +1140,14 @@ pub fn detect_conical_features(
 ) -> Vec<ConicalFeature> {
     let si = 0;
     let shi = 0;
-    let Some(shell) = brep.solids.first().and_then(|s| s.shells.first()) else {
+
+    let n_faces = count_faces_in_shell(brep, si, shi);
+    if n_faces == 0 {
         return Vec::new();
-    };
-    let n_faces = shell.faces.len();
+    }
 
     // Build edge -> [local face_idx] adjacency.
-    let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
-    for (fi, face) in shell.faces.iter().enumerate() {
-        for we in &face.outer_wire.edges {
-            edge_to_faces.entry(we.idx).or_default().push(fi);
-        }
-        for inner in &face.inner_wires {
-            for we in &inner.edges {
-                edge_to_faces.entry(we.idx).or_default().push(fi);
-            }
-        }
-    }
+    let edge_to_faces = build_edge_to_faces_map(brep, si, shi);
 
     let mut visited = vec![false; n_faces];
     let mut features = Vec::new();
@@ -1075,15 +1164,7 @@ pub fn detect_conical_features(
 
         // Calculate reference radius at mid-height for size filtering.
         // Use a point on the cone surface to estimate the reference radius.
-        let face = &shell.faces[start];
-        let mut sample_point: Option<DVec3> = None;
-        for we in &face.outer_wire.edges {
-            if let Some(edge) = brep.edges.get(we.idx)
-                && let Some(v) = brep.vertices.get(edge.start) {
-                    sample_point = Some(v.point);
-                    break;
-                }
-        }
+        let sample_point = get_face_sample_point(brep, si, shi, start);
 
         let reference_radius = if let Some(pt) = sample_point {
             let ax = cone.axis.normalize_or_zero();
@@ -1109,14 +1190,8 @@ pub fn detect_conical_features(
         while let Some(fi) = queue.pop_front() {
             group.push(fi);
 
-            let face_edges: Vec<usize> = {
-                let f = &shell.faces[fi];
-                let mut es: Vec<usize> = f.outer_wire.edges.iter().map(|we| we.idx).collect();
-                for iw in &f.inner_wires {
-                    es.extend(iw.edges.iter().map(|we| we.idx));
-                }
-                es
-            };
+            let Some(fd) = get_face_data(brep, si, shi, fi) else { continue; };
+            let face_edges = collect_face_edge_indices(brep, fd);
 
             for ei in face_edges {
                 let Some(neighbours) = edge_to_faces.get(&ei) else {
@@ -1145,51 +1220,58 @@ pub fn detect_conical_features(
         // Determine is_hole by checking if the cone widens away from apex
         // and the face normal points inward (toward axis).
         let ax = cone.axis.normalize_or_zero();
-        let is_hole = {
-            // Sample the first face's normal to determine hole vs boss.
-            let f = &shell.faces[group[0]];
-            let fnormal = f.normal.normalize_or_zero();
+        let is_hole = if let Some(fd) = get_face_data(brep, si, shi, group[0]) {
+            let fnormal = fd.surface.as_ref()
+                .map(|s| surface_normal_at_origin(s))
+                .unwrap_or_default()
+                .normalize_or_zero();
             // For a conical hole, the normal points outward from the solid,
             // which for an inward-facing cone wall means pointing toward the axis.
             // Check by computing radial direction at a sample point.
             let mut toward_axis_votes = 0i32;
             let mut away_axis_votes = 0i32;
-            for we in &f.outer_wire.edges {
-                if let Some(edge) = brep.edges.get(we.idx) {
-                    for &vi in &[edge.start, edge.end] {
-                        if let Some(v) = brep.vertices.get(vi) {
-                            let to_pt = v.point - cone.apex;
-                            let radial = to_pt - to_pt.dot(ax) * ax;
-                            if radial.length_squared() < TOLERANCE_METRIC_SQ_NEAR_ZERO {
-                                continue;
-                            }
-                            let radial_dir = radial.normalize();
-                            // Dot < 0 means normal points toward axis (hole).
-                            let dot = fnormal.dot(radial_dir);
-                            if dot < -TOLERANCE_MESH_LEGACY {
-                                toward_axis_votes += 1;
-                            } else if dot > TOLERANCE_MESH_LEGACY {
-                                away_axis_votes += 1;
+            if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+                for edge_sr in &wd.edges {
+                    if let TShape::Edge(ed) = &*brep.tshapes[edge_sr.index] {
+                        for &vi in &[ed.first.index, ed.last.index] {
+                            if let Some(pt) = brep.vertex_point(vi) {
+                                let to_pt = pt - cone.apex;
+                                let radial = to_pt - to_pt.dot(ax) * ax;
+                                if radial.length_squared() < TOLERANCE_METRIC_SQ_NEAR_ZERO {
+                                    continue;
+                                }
+                                let radial_dir = radial.normalize();
+                                // Dot < 0 means normal points toward axis (hole).
+                                let dot = fnormal.dot(radial_dir);
+                                if dot < -TOLERANCE_MESH_LEGACY {
+                                    toward_axis_votes += 1;
+                                } else if dot > TOLERANCE_MESH_LEGACY {
+                                    away_axis_votes += 1;
+                                }
                             }
                         }
                     }
                 }
             }
             toward_axis_votes >= away_axis_votes
+        } else {
+            false
         };
 
         // Compute axis extents from vertices.
         let mut t_min = f64::INFINITY;
         let mut t_max = f64::NEG_INFINITY;
         for &fi in &group {
-            let f = &shell.faces[fi];
-            for we in &f.outer_wire.edges {
-                if let Some(edge) = brep.edges.get(we.idx) {
-                    for &vi in &[edge.start, edge.end] {
-                        if let Some(v) = brep.vertices.get(vi) {
-                            let t = (v.point - cone.apex).dot(ax);
-                            t_min = t_min.min(t);
-                            t_max = t_max.max(t);
+            let Some(fd) = get_face_data(brep, si, shi, fi) else { continue; };
+            if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+                for edge_sr in &wd.edges {
+                    if let TShape::Edge(ed) = &*brep.tshapes[edge_sr.index] {
+                        for &vi in &[ed.first.index, ed.last.index] {
+                            if let Some(pt) = brep.vertex_point(vi) {
+                                let t = (pt - cone.apex).dot(ax);
+                                t_min = t_min.min(t);
+                                t_max = t_max.max(t);
+                            }
                         }
                     }
                 }
@@ -1237,23 +1319,13 @@ pub fn detect_slot_features(
 
     let si = 0;
     let shi = 0;
-    let Some(shell) = brep.solids.first().and_then(|s| s.shells.first()) else {
+    let n_faces = count_faces_in_shell(brep, si, shi);
+    if n_faces == 0 {
         return Vec::new();
-    };
-    let n_faces = shell.faces.len();
+    }
 
     // Build edge -> face adjacency
-    let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
-    for (fi, face) in shell.faces.iter().enumerate() {
-        for we in &face.outer_wire.edges {
-            edge_to_faces.entry(we.idx).or_default().push(fi);
-        }
-        for inner in &face.inner_wires {
-            for we in &inner.edges {
-                edge_to_faces.entry(we.idx).or_default().push(fi);
-            }
-        }
-    }
+    let edge_to_faces = build_edge_to_faces_map(brep, si, shi);
 
     let mut visited = vec![false; n_faces];
     let mut features = Vec::new();
@@ -1295,14 +1367,8 @@ pub fn detect_slot_features(
                     cylinders.push((cyl, fi));
                 }
 
-            let face_edges: Vec<usize> = {
-                let f = &shell.faces[fi];
-                let mut es: Vec<usize> = f.outer_wire.edges.iter().map(|we| we.idx).collect();
-                for iw in &f.inner_wires {
-                    es.extend(iw.edges.iter().map(|we| we.idx));
-                }
-                es
-            };
+            let Some(fd) = get_face_data(brep, si, shi, fi) else { continue; };
+            let face_edges = collect_face_edge_indices(brep, fd);
 
             for ei in face_edges {
                 let Some(neighbours) = edge_to_faces.get(&ei) else {
@@ -1360,14 +1426,16 @@ fn analyze_slot_group(
     // Collect all vertices
     let mut vertices: Vec<DVec3> = Vec::new();
     for &fi in group {
-        let face = &brep.solids[si].shells[shi].faces[fi];
-        for we in &face.outer_wire.edges {
-            if let Some(edge) = brep.edges.get(we.idx) {
-                if let Some(v) = brep.vertices.get(edge.start) {
-                    vertices.push(v.point);
-                }
-                if let Some(v) = brep.vertices.get(edge.end) {
-                    vertices.push(v.point);
+        let Some(fd) = get_face_data(brep, si, shi, fi) else { continue; };
+        if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+            for edge_sr in &wd.edges {
+                if let TShape::Edge(ed) = &*brep.tshapes[edge_sr.index] {
+                    if let Some(p) = brep.vertex_point(ed.first.index) {
+                        vertices.push(p);
+                    }
+                    if let Some(p) = brep.vertex_point(ed.last.index) {
+                        vertices.push(p);
+                    }
                 }
             }
         }
@@ -1464,23 +1532,13 @@ pub fn detect_pocket_features(
 
     let si = 0;
     let shi = 0;
-    let Some(shell) = brep.solids.first().and_then(|s| s.shells.first()) else {
+    let n_faces = count_faces_in_shell(brep, si, shi);
+    if n_faces == 0 {
         return Vec::new();
-    };
-    let n_faces = shell.faces.len();
-
-    // Build edge -> face adjacency
-    let mut edge_to_faces: HashMap<usize, Vec<usize>> = HashMap::new();
-    for (fi, face) in shell.faces.iter().enumerate() {
-        for we in &face.outer_wire.edges {
-            edge_to_faces.entry(we.idx).or_default().push(fi);
-        }
-        for inner in &face.inner_wires {
-            for we in &inner.edges {
-                edge_to_faces.entry(we.idx).or_default().push(fi);
-            }
-        }
     }
+
+    // Build edge -> face adjacency using TShape API
+    let edge_to_faces = build_edge_to_faces_map(brep, si, shi);
 
     let mut visited = vec![false; n_faces];
     let mut features = Vec::new();
@@ -1523,14 +1581,8 @@ pub fn detect_pocket_features(
                     cylindrical_radius = cyl.radius;
                 }
 
-            let face_edges: Vec<usize> = {
-                let f = &shell.faces[fi];
-                let mut es: Vec<usize> = f.outer_wire.edges.iter().map(|we| we.idx).collect();
-                for iw in &f.inner_wires {
-                    es.extend(iw.edges.iter().map(|we| we.idx));
-                }
-                es
-            };
+            let Some(fd) = get_face_data(brep, si, shi, fi) else { continue; };
+            let face_edges = collect_face_edge_indices(brep, fd);
 
             for ei in face_edges {
                 let Some(neighbours) = edge_to_faces.get(&ei) else {
@@ -1588,20 +1640,11 @@ fn analyze_pocket_group(
         return None;
     }
 
-    // Collect all vertices
+    // Collect all vertices using TShape API
     let mut vertices: Vec<DVec3> = Vec::new();
     for &fi in group {
-        let face = &brep.solids[si].shells[shi].faces[fi];
-        for we in &face.outer_wire.edges {
-            if let Some(edge) = brep.edges.get(we.idx) {
-                if let Some(v) = brep.vertices.get(edge.start) {
-                    vertices.push(v.point);
-                }
-                if let Some(v) = brep.vertices.get(edge.end) {
-                    vertices.push(v.point);
-                }
-            }
-        }
+        let Some(fd) = get_face_data(brep, si, shi, fi) else { continue; };
+        vertices.extend(collect_wire_vertices(brep, fd.outer_wire, true));
     }
 
     if vertices.len() < 3 {

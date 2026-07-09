@@ -1445,7 +1445,7 @@ pub fn analyze_surface_bounds(
             }
 
             // Get pcurves for this edge on this face
-            if let Some((ref curve2d, t1, t2)) = ed.pcurves.get(&face_index) {
+            if let Some((curve2d, t1, t2)) = ed.pcurves.get(&face_index) {
                 has_pcurve_data = true;
                 let range = [*t1, *t2];
                 let n_samples = 16usize;

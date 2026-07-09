@@ -163,7 +163,7 @@ impl BooleanOp {
         self.history = None;
 
         // 鉁?OCCT-aligned: BOPAlgo_BOP::CheckInputData 鈥?verify valid inputs
-        if self.shape_a.solids.is_empty() || self.shape_b.solids.is_empty() {
+        if self.shape_a.solids().is_empty() || self.shape_b.solids().is_empty() {
             let err = BooleanError::EmptyInput;
             self.error = Some(err);
             return Err(BooleanError::EmptyInput);
@@ -175,9 +175,7 @@ impl BooleanOp {
 
         // 鉁?OCCT-aligned: Build BOPDS_DS (data structure) from the two shapes
         // OCCT ref: BOPAlgo_PaveFiller::Perform 鈫?BOPDS_DS::Alloc
-        let a_t = a;
-        let b_t = b;
-        let mut ds = DS::new_from_topods(&a_t, &b_t, self.tolerance.max(TOLERANCE_ABS));
+        let mut ds = DS::new_from_topods(&a, &b, self.tolerance.max(TOLERANCE_ABS));
 
         // 鉁?OCCT-aligned: Build BVH acceleration (optional in OCCT)
         let bvh_a = Bvh::build(&a);
@@ -205,7 +203,7 @@ impl BooleanOp {
 
     /// Ensure geometry is populated for primitive shapes.
     fn ensure_geometry(&self, brep: &rcad_kernel::BRep) -> rcad_kernel::BRep {
-        if brep.geom.surfaces.is_empty() && !brep.solids.is_empty() {
+        if !brep.solids().is_empty() && brep.tshapes.iter().any(|ts| matches!(ts.as_ref(), rcad_kernel::topods::TShape::Face(fd) if fd.surface.is_none())) {
             let mut result = brep.clone();
             crate::geom_populate::populate_box_geom(&mut result);
             result
@@ -385,12 +383,12 @@ impl BooleanOp {
             Some(r) => r,
             None => return BooleanOpStatistics::default(),
         };
-        let n_vertices = result.vertices.len();
-        let n_edges = result.edges.len();
+        let n_vertices = result.vertices().len();
+        let n_edges = result.edges().len();
         let mut n_faces = 0;
         let mut n_shells = 0;
-        let n_solids = result.solids.len();
-        for solid in &result.solids {
+        let n_solids = result.solids().len();
+        for solid in &result.solids() {
             for shell in &solid.shells {
                 n_shells += 1;
                 n_faces += shell.faces.len();

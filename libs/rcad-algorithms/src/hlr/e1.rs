@@ -1,3 +1,6 @@
+use std::sync::Arc;
+use std::collections::BTreeSet;
+use rcad_kernel::topods::{TShape, TEdgeData, CurveRepresentation};
 
 /// Helper function to build an orthonormal frame from axis and reference direction.
 ///
@@ -29,15 +32,12 @@ pub fn is_thread_edge(
     edge_idx: usize,
     surface: &Surface3,
 ) -> bool {
-    let Some(edge) = brep.edges.get(edge_idx) else {
+    let TShape::Edge(ed) = &*brep.tshapes[edge_idx] else {
         return false;
     };
 
-    // Get the edge curve
-    let Some(curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|&c| c) else {
-        return false;
-    };
-    let Some(curve) = brep.geom.curves.get(curve_idx) else {
+    // Get the edge curve (directly on TEdgeData)
+    let Some(curve) = &ed.curve else {
         return false;
     };
 
@@ -48,10 +48,10 @@ pub fn is_thread_edge(
 
         // Check for approximately helical curves
         (Surface3::Cylinder(cyl), curve3d) => {
-            is_approximately_helical_on_cylinder(curve3d, cyl, brep, edge)
+            is_approximately_helical_on_cylinder(curve3d, cyl, brep, ed)
         }
         (Surface3::Cone(cone), curve3d) => {
-            is_approximately_helical_on_cone(curve3d, cone, brep, edge)
+            is_approximately_helical_on_cone(curve3d, cone, brep, ed)
         }
         _ => false,
     }
@@ -62,15 +62,16 @@ fn is_approximately_helical_on_cylinder(
     curve: &rcad_kernel::geom::Curve3,
     cyl: &rcad_kernel::geom::CylindricalSurface,
     brep: &rcad_kernel::BRep,
-    edge: &rcad_kernel::topology::Edge,
+    ed: &TEdgeData,
 ) -> bool {
     use rcad_kernel::geom::CurveEval;
-use rcad_kernel::PCurve;
 
-    // Sample the curve and check if points lie on the cylinder surface
-    // and the curve makes an angle with the axis
-    let Some(_v_start) = brep.vertices.get(edge.start) else { return false; };
-    let Some(_v_end) = brep.vertices.get(edge.end) else { return false; };
+    // Verify vertices exist via new API
+    if brep.vertex_point(ed.first.index).is_none()
+        || brep.vertex_point(ed.last.index).is_none()
+    {
+        return false;
+    }
 
     let [t0, t1] = curve.default_domain();
     let samples = 16;
@@ -111,7 +112,6 @@ use rcad_kernel::PCurve;
         }
     }
 
-    // Thread edge is on surface and has both axial and angular components
     on_surface_count > samples / 2 && has_axial_component && has_angular_component
 }
 
@@ -120,12 +120,15 @@ fn is_approximately_helical_on_cone(
     curve: &rcad_kernel::geom::Curve3,
     cone: &rcad_kernel::geom::ConicalSurface,
     brep: &rcad_kernel::BRep,
-    edge: &rcad_kernel::topology::Edge,
+    ed: &TEdgeData,
 ) -> bool {
     use rcad_kernel::geom::CurveEval;
 
-    let Some(_v_start) = brep.vertices.get(edge.start) else { return false; };
-    let Some(_v_end) = brep.vertices.get(edge.end) else { return false; };
+    if brep.vertex_point(ed.first.index).is_none()
+        || brep.vertex_point(ed.last.index).is_none()
+    {
+        return false;
+    }
 
     let [t0, t1] = curve.default_domain();
     let samples = 16;
@@ -180,45 +183,19 @@ fn is_approximately_helical_on_cone(
 /// Check if an edge is a seam edge on a closed surface.
 ///
 /// Seam edges are edges where a closed surface (cylinder, cone, sphere, torus)
-/// meets itself at the parameter boundary (u = 0 and u = 2π).
+/// meets itself at the parameter boundary (u = 0 and u = 2pi).
 pub fn is_seam_edge(
     brep: &rcad_kernel::BRep,
     edge_idx: usize,
     surface: &Surface3,
 ) -> bool {
-    // A seam edge has two PCurves on the same surface with different u values
-    // (typically 0 and 2π)
-
-    let Some(_edge) = brep.edges.get(edge_idx) else {
+    let TShape::Edge(ed) = &*brep.tshapes[edge_idx] else {
         return false;
     };
 
-    // Check if this edge has multiple PCurves on the same surface
-    let Some(pcurves) = brep.geom.edge_pcurves.get(edge_idx) else {
-        return false;
-    };
-
-    if pcurves.len() < 2 {
-        return false;
-    }
-
-    // Check if two PCurves are on the same surface
-    let mut surface_counts: HashMap<usize, usize> = HashMap::new();
-    for pcurve in pcurves {
-        *surface_counts.entry(pcurve.surface_idx).or_insert(0) += 1;
-    }
-
-    // If any surface has multiple PCurves for this edge, it's likely a seam
-    for &count in surface_counts.values() {
-        if count >= 2 {
-            // Verify the surface is closed
-            match surface {
-                Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Sphere(_) | Surface3::Torus(_) => {
-                    return true;
-                }
-                _ => {}
-            }
-        }
+    // Check for CurveOnClosedSurface representation (seam edge on periodic surface)
+    if ed.representations.iter().any(|r| matches!(r, CurveRepresentation::CurveOnClosedSurface { .. })) {
+        return matches!(surface, Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Sphere(_) | Surface3::Torus(_));
     }
 
     false
@@ -226,8 +203,10 @@ pub fn is_seam_edge(
 
 /// Check if an edge is a degenerate edge (zero length, e.g., pole singularity).
 pub fn is_degenerate_edge_for_hlr(brep: &rcad_kernel::BRep, edge_idx: usize) -> bool {
-    // Check the degenerated flag in GeomStore
-    brep.geom.edge_degenerated.get(edge_idx).copied().unwrap_or(false)
+    let TShape::Edge(ed) = &*brep.tshapes[edge_idx] else {
+        return false;
+    };
+    ed.degenerated
 }
 
 // ── Curve-Surface Intersection for HLR ──────────────────────────────────────────
@@ -242,7 +221,6 @@ pub struct CurveSurfaceIntersection {
     /// UV parameters on the surface for each intersection.
     pub surface_uvs: Vec<(f64, f64)>,
     /// Visibility status between consecutive intersections.
-    /// visibility[i] indicates visibility between intersection i and i+1.
     pub visibility: Vec<bool>,
 }
 
@@ -253,21 +231,23 @@ pub struct CurveSurfaceIntersection {
 pub fn compute_curve_visibility_on_surface(
     brep: &rcad_kernel::BRep,
     edge_idx: usize,
-    surface_idx: usize,
+    surface: &Surface3,
     camera: &HlrCamera,
     opts: &HlrOptions,
 ) -> Option<CurveSurfaceIntersection> {
-    let _edge = brep.edges.get(edge_idx)?;
-    let surface = brep.geom.surfaces.get(surface_idx)?;
+    let TShape::Edge(ed) = &*brep.tshapes[edge_idx] else {
+        return None;
+    };
 
-    // Get the edge curve
-    let curve_idx = brep.geom.edge_curve.get(edge_idx).and_then(|&c| c)?;
-    let curve = brep.geom.curves.get(curve_idx)?;
+    // Get the edge curve (directly on TEdgeData)
+    let curve = ed.curve.as_ref()?;
 
-    // Get parameter range
-    let [t0, t1] = brep.geom.edge_curve_range.get(edge_idx)
-        .and_then(|r| *r)
-        .unwrap_or_else(|| curve.default_domain());
+    // Get parameter range from edge data
+    let [t0, t1] = if ed.range[0] == ed.range[1] {
+        curve.default_domain()
+    } else {
+        ed.range
+    };
 
     // Sample the curve
     let num_samples = opts.edge_samples.max(16);
@@ -295,14 +275,13 @@ pub fn compute_curve_visibility_on_surface(
     // Compute visibility at each sample point
     let mut visibility = Vec::with_capacity(num_samples);
 
-    for &pt in points.iter() {
-        let _dist = (camera.eye - pt).length();
+    for _pt in points.iter() {
         let is_visible = true; // Will be computed by the main HLR pipeline
         visibility.push(is_visible);
     }
 
     // Find silhouette crossings
-    let mut silhouette_crossings: Vec<(f64, DVec3)> = Vec::new();
+    let mut _silhouette_crossings: Vec<(f64, DVec3)> = Vec::new();
 
     for i in 1..num_samples {
         let prev_uv = surface_uvs[i - 1];
@@ -322,7 +301,7 @@ pub fn compute_curve_visibility_on_surface(
                 curve_params[i - 1], curve_params[i],
                 10,
             ) {
-                silhouette_crossings.push((t_cross, pt_cross));
+                _silhouette_crossings.push((t_cross, pt_cross));
             }
         }
     }
@@ -409,7 +388,7 @@ pub fn classify_edges(
 ) -> Vec<EdgeClassInfo> {
     let mut classifications: Vec<EdgeClassInfo> = Vec::new();
 
-    for edge_idx in 0..brep.edges.len() {
+    for edge_idx in 0..brep.edge_count() {
         let classification = classify_single_edge(brep, edge_idx, camera, opts);
         classifications.push(classification);
     }
@@ -424,7 +403,7 @@ fn classify_single_edge(
     _camera: &HlrCamera,
     opts: &HlrOptions,
 ) -> EdgeClassInfo {
-    let Some(_edge) = brep.edges.get(edge_idx) else {
+    let TShape::Edge(_ed) = &*brep.tshapes[edge_idx] else {
         return EdgeClassInfo {
             edge_idx,
             classification: EdgeClassification::Hidden,
@@ -435,40 +414,45 @@ fn classify_single_edge(
         };
     };
 
-    // Get the surface this edge is on (if any)
-    let surface_idx = get_edge_surface(brep, edge_idx);
-    let on_curved_surface = surface_idx.is_some_and(|idx| {
+    // Get the surface this edge is on (if any) via TShape-based get_edge_surface
+    let face_idx = get_edge_surface(brep, edge_idx);
+    let on_curved_surface = face_idx.is_some_and(|fidx| {
         matches!(
-            brep.geom.surfaces.get(idx),
-            Some(Surface3::Cylinder(_) | Surface3::Sphere(_) | Surface3::Cone(_) | Surface3::Torus(_))
+            &*brep.tshapes[fidx],
+            TShape::Face(fd) if fd.surface.as_ref().is_some_and(|s| matches!(
+                s,
+                Surface3::Cylinder(_) | Surface3::Sphere(_) | Surface3::Cone(_) | Surface3::Torus(_)
+            ))
         )
     });
 
-    // Check for thread edge
-    if let Some(idx) = surface_idx
-        && let Some(surface) = brep.geom.surfaces.get(idx) {
-            if opts.detect_thread_edges && is_thread_edge(brep, edge_idx, surface) {
-                return EdgeClassInfo {
-                    edge_idx,
-                    classification: EdgeClassification::Thread,
-                    visible_segments: 0,
-                    hidden_segments: 0,
-                    on_curved_surface: true,
-                    surface_idx: Some(idx),
-                };
-            }
-
-            if opts.detect_seam_edges && is_seam_edge(brep, edge_idx, surface) {
-                return EdgeClassInfo {
-                    edge_idx,
-                    classification: EdgeClassification::Seam,
-                    visible_segments: 0,
-                    hidden_segments: 0,
-                    on_curved_surface: true,
-                    surface_idx: Some(idx),
-                };
-            }
+    // Check for thread / seam edges
+    if let Some(fidx) = face_idx
+        && let TShape::Face(fd) = &*brep.tshapes[fidx]
+        && let Some(surface) = &fd.surface
+    {
+        if opts.detect_thread_edges && is_thread_edge(brep, edge_idx, surface) {
+            return EdgeClassInfo {
+                edge_idx,
+                classification: EdgeClassification::Thread,
+                visible_segments: 0,
+                hidden_segments: 0,
+                on_curved_surface: true,
+                surface_idx: Some(fidx),
+            };
         }
+
+        if opts.detect_seam_edges && is_seam_edge(brep, edge_idx, surface) {
+            return EdgeClassInfo {
+                edge_idx,
+                classification: EdgeClassification::Seam,
+                visible_segments: 0,
+                hidden_segments: 0,
+                on_curved_surface: true,
+                surface_idx: Some(fidx),
+            };
+        }
+    }
 
     // Default classification - will be updated during HLR processing
     EdgeClassInfo {
@@ -477,14 +461,18 @@ fn classify_single_edge(
         visible_segments: 0,
         hidden_segments: 0,
         on_curved_surface,
-        surface_idx,
+        surface_idx: face_idx,
     }
 }
 
-/// Get the primary surface an edge is on.
+/// Get the primary surface an edge is on (returns face index from pcurves).
 fn get_edge_surface(brep: &rcad_kernel::BRep, edge_idx: usize) -> Option<usize> {
-    let pcurves = brep.geom.edge_pcurves.get(edge_idx)?;
-    pcurves.first().map(|pc| pc.surface_idx)
+    let TShape::Edge(ed) = &*brep.tshapes[edge_idx] else {
+        return None;
+    };
+    // pcurves maps face_index -> (curve2d, u, v)
+    // Return the first face index from pcurves
+    ed.pcurves.keys().next().copied()
 }
 
 // ── Spatial Indexing for Silhouette Queries ─────────────────────────────────────
@@ -617,7 +605,7 @@ impl SilhouetteSpatialIndex {
 
 /// Numerical silhouette extraction for general parametric surfaces.
 ///
-/// Uses a marching approach to find curves where normal · view_dir = 0.
+/// Uses a marching approach to find curves where normal . view_dir = 0.
 /// This implementation includes:
 /// - Marching along iso-parametric curves to trace silhouette curves
 /// - Curvature-adaptive sampling for better accuracy in high-curvature regions
@@ -641,7 +629,7 @@ fn extract_numerical_silhouettes(
     }
 
     // March from each seed to trace silhouette curves
-    let mut visited: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    let mut visited: HashSet<(usize, usize)> = HashSet::new();
 
     for (i, j, u, v) in seeds {
         if visited.contains(&(i, j)) {
@@ -697,7 +685,7 @@ fn find_silhouette_seeds(
     let [u0, u1, v0, v1] = domain;
     let mut seeds = Vec::new();
 
-    // Sample grid and look for sign changes in normal · view_dir
+    // Sample grid and look for sign changes in normal . view_dir
     let mut dot_values: Vec<Vec<f64>> = vec![vec![0.0; grid_size]; grid_size];
 
     // Compute dot products at grid sample nodes
@@ -770,7 +758,7 @@ fn find_crossing_point(
     None
 }
 
-/// Bisection search to find where normal · view_dir = 0.
+/// Bisection search to find where normal . view_dir = 0.
 fn bisection_search(
     surface: &Surface3,
     view_dir: DVec3,
@@ -919,12 +907,12 @@ fn compute_silhouette_tangent(
 ) -> DVec2 {
     const EPS: f64 = TOLERANCE_MESH_LEGACY;
 
-    // Compute gradients of the implicit function f(u,v) = N(u,v) · V
+    // Compute gradients of the implicit function f(u,v) = N(u,v) . V
     let n = surface.normal_at(u, v);
     let n_u = surface.normal_at(u + EPS, v);
     let n_v = surface.normal_at(u, v + EPS);
 
-    // Gradient of f = N · V
+    // Gradient of f = N . V
     let df_du = (n_u - n).dot(view_dir) / EPS;
     let df_dv = (n_v - n).dot(view_dir) / EPS;
 
@@ -1032,10 +1020,6 @@ fn fit_bspline_to_points(points: &[DVec3], tolerance: f64) -> Vec<DVec3> {
     if points.len() < 4 {
         return points.to_vec();
     }
-
-    // Simple approach: sample the fitted B-spline at uniform intervals
-    // For a proper implementation, we would use least-squares fitting
-    // Here we use a simplified version that preserves the shape
 
     let n = points.len();
     let mut result: Vec<DVec3> = Vec::with_capacity(n);
@@ -1360,23 +1344,33 @@ pub fn compute_hlr_with_options(brep: &rcad_kernel::BRep, camera: &HlrCamera, op
 
     // ── Wire edges ────────────────────────────────────────────────────────────
 
-    // Collect all unique edges from all faces + standalone edges
-    let mut edge_indices: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
-    for solid in &brep.solids {
-        for shell in &solid.shells {
-            for face in &shell.faces {
-                for we in &face.outer_wire.edges {
-                    edge_indices.insert(we.idx);
-                }
-                for inner in &face.inner_wires {
-                    for we in &inner.edges {
-                        edge_indices.insert(we.idx);
+    // Collect all unique edges from TShape tree + standalone edges
+    let mut edge_indices: BTreeSet<usize> = BTreeSet::new();
+    for ts in &brep.tshapes {
+        if let TShape::Solid(sd) = ts.as_ref() {
+            for shell_sr in &sd.shells {
+                if let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+                    for face_sr in &shd.faces {
+                        if let TShape::Face(fd) = &*brep.tshapes[face_sr.index] {
+                            if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+                                for esr in &wd.edges {
+                                    edge_indices.insert(esr.index);
+                                }
+                            }
+                            for iw_sr in &fd.inner_wires {
+                                if let TShape::Wire(wd) = &*brep.tshapes[iw_sr.index] {
+                                    for esr in &wd.edges {
+                                        edge_indices.insert(esr.index);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
     }
-    for i in 0..brep.edges.len() {
+    for i in 0..brep.edge_count() {
         edge_indices.insert(i);
     }
 
@@ -1474,12 +1468,10 @@ fn process_single_edge(
 ) -> Vec<HlrSegment> {
     let segments: Vec<HlrSegment> = Vec::new();
 
-    let Some(edge) = brep.edges.get(edge_idx) else { return segments; };
-    let Some(v_start) = brep.vertices.get(edge.start) else { return segments; };
-    let Some(v_end) = brep.vertices.get(edge.end) else { return segments; };
-
-    let p0 = v_start.point;
-    let p1 = v_end.point;
+    // Get edge data via TShape API
+    let TShape::Edge(ed) = &*brep.tshapes[edge_idx] else { return segments; };
+    let Some(p0) = brep.vertex_point(ed.first.index) else { return segments; };
+    let Some(p1) = brep.vertex_point(ed.last.index) else { return segments; };
 
     // Determine edge type
     let segment_type = if let Some(class_info) = edge_classifications.get(edge_idx) {
@@ -1492,12 +1484,7 @@ fn process_single_edge(
         SegmentType::Edge
     };
 
-    let edge_curve = brep
-        .geom
-        .edge_curve
-        .get(edge_idx)
-        .and_then(|&ci| ci)
-        .and_then(|ci| brep.geom.curves.get(ci));
+    let edge_curve = ed.curve.as_ref();
 
     let circle_info: Option<Circle3> = edge_curve.and_then(|c| {
         if let rcad_kernel::geom::Curve3::Circle(circ) = c { Some(*circ) } else { None }
@@ -1513,20 +1500,22 @@ fn process_single_edge(
         if let Some(class_info) = edge_classifications.get(edge_idx) {
             if class_info.on_curved_surface {
                 if let Some(surf_idx) = class_info.surface_idx {
-                    if let Some(surface) = brep.geom.surfaces.get(surf_idx) {
-                        // Compute curvature at midpoint
-                        let domain = brep.geom.face_surface_range
-                            .iter()
-                            .find_map(|r| *r)
-                            .unwrap_or_else(|| surface.default_domain());
-                        let mid_u = (domain[0] + domain[1]) * 0.5;
-                        let mid_v = (domain[2] + domain[3]) * 0.5;
-                        let (k1, k2) = rcad_kernel::curvature::principal_curvatures(surface, mid_u, mid_v);
-                        let max_k = k1.abs().max(k2.abs());
+                    // surf_idx is now a face index (from get_edge_surface via TShape)
+                    if let TShape::Face(fd) = &*brep.tshapes[surf_idx] {
+                        if let Some(surface) = &fd.surface {
+                            // Compute curvature at midpoint using face UV domain
+                            let domain = fd.uv_domain.unwrap_or_else(|| surface.default_domain());
+                            let mid_u = (domain[0] + domain[1]) * 0.5;
+                            let mid_v = (domain[2] + domain[3]) * 0.5;
+                            let (k1, k2) = rcad_kernel::curvature::principal_curvatures(surface, mid_u, mid_v);
+                            let max_k = k1.abs().max(k2.abs());
 
-                        // More samples for higher curvature
-                        let adaptive_factor = (max_k / 10.0).min(8.0).max(1.0);
-                        ((opts.edge_samples as f64 * adaptive_factor * 4.0) as usize).max(32).min(256)
+                            // More samples for higher curvature
+                            let adaptive_factor = (max_k / 10.0).min(8.0).max(1.0);
+                            ((opts.edge_samples as f64 * adaptive_factor * 4.0) as usize).max(32).min(256)
+                        } else {
+                            (opts.edge_samples * 4).max(32)
+                        }
                     } else {
                         (opts.edge_samples * 4).max(32)
                     }
@@ -1544,12 +1533,12 @@ fn process_single_edge(
     };
 
     let world_pts: Vec<DVec3> = if let Some(circ) = &circle_info {
-        let [t0, t1] = brep
-            .geom
-            .edge_curve_range
-            .get(edge_idx)
-            .and_then(|r| *r)
-            .unwrap_or_else(|| circ.default_domain());
+        let range = ed.range;
+        let [t0, t1] = if range[0] == range[1] {
+            circ.default_domain()
+        } else {
+            range
+        };
         (0..this_edge_samples)
             .map(|i| {
                 let t = t0 + (t1 - t0) * (i as f64 / (this_edge_samples - 1) as f64);
@@ -1557,12 +1546,12 @@ fn process_single_edge(
             })
             .collect()
     } else if let Some(curve) = edge_curve.filter(|_| is_other_curve) {
-        let [t0, t1] = brep
-            .geom
-            .edge_curve_range
-            .get(edge_idx)
-            .and_then(|r| *r)
-            .unwrap_or_else(|| curve.default_domain());
+        let range = ed.range;
+        let [t0, t1] = if range[0] == range[1] {
+            curve.default_domain()
+        } else {
+            range
+        };
         (0..this_edge_samples)
             .map(|i| {
                 let t = t0 + (t1 - t0) * (i as f64 / (this_edge_samples - 1) as f64);
@@ -1636,7 +1625,7 @@ pub struct ComponentHlr {
     pub segments: Vec<HlrSegment>,
 }
 
-/// Output of assembly HLR — one `ComponentHlr` per leaf BRep.
+/// Output of assembly HLR -- one `ComponentHlr` per leaf BRep.
 #[derive(Debug, Clone, Default)]
 pub struct AssemblyHlrResult {
     pub components: Vec<ComponentHlr>,
@@ -1662,8 +1651,10 @@ impl AssemblyHlrResult {
 /// Returns a new BRep with transformed vertex positions.
 fn transform_brep(brep: &rcad_kernel::BRep, transform: &DAffine3) -> rcad_kernel::BRep {
     let mut out = brep.clone();
-    for v in &mut out.vertices {
-        v.point = transform.transform_point3(v.point);
+    for ts in &mut out.tshapes {
+        if let TShape::Vertex(vd) = Arc::make_mut(ts) {
+            vd.point = transform.transform_point3(vd.point);
+        }
     }
     out
 }
@@ -1702,39 +1693,41 @@ pub fn hlr_assembly(
         let mut comp_result = HlrResult::default();
 
         // ── Wire edges ────────────────────────────────────────────────────
-        let mut edge_indices: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
-        for solid in &wb.solids {
-            for shell in &solid.shells {
-                for face in &shell.faces {
-                    for we in &face.outer_wire.edges {
-                        edge_indices.insert(we.idx);
-                    }
-                    for inner in &face.inner_wires {
-                        for we in &inner.edges {
-                            edge_indices.insert(we.idx);
+        let mut edge_indices: BTreeSet<usize> = BTreeSet::new();
+        for ts in &wb.tshapes {
+            if let TShape::Solid(sd) = ts.as_ref() {
+                for shell_sr in &sd.shells {
+                    if let TShape::Shell(shd) = &*wb.tshapes[shell_sr.index] {
+                        for face_sr in &shd.faces {
+                            if let TShape::Face(fd) = &*wb.tshapes[face_sr.index] {
+                                if let TShape::Wire(wd) = &*wb.tshapes[fd.outer_wire.index] {
+                                    for esr in &wd.edges {
+                                        edge_indices.insert(esr.index);
+                                    }
+                                }
+                                for iw_sr in &fd.inner_wires {
+                                    if let TShape::Wire(wd) = &*wb.tshapes[iw_sr.index] {
+                                        for esr in &wd.edges {
+                                            edge_indices.insert(esr.index);
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
         }
-        for i in 0..wb.edges.len() {
+        for i in 0..wb.edge_count() {
             edge_indices.insert(i);
         }
 
         for &edge_idx in &edge_indices {
-            let Some(edge) = wb.edges.get(edge_idx) else { continue };
-            let Some(v_start) = wb.vertices.get(edge.start) else { continue };
-            let Some(v_end) = wb.vertices.get(edge.end) else { continue };
+            let TShape::Edge(ed) = &*wb.tshapes[edge_idx] else { continue };
+            let Some(p0) = wb.vertex_point(ed.first.index) else { continue };
+            let Some(p1) = wb.vertex_point(ed.last.index) else { continue };
 
-            let p0 = v_start.point;
-            let p1 = v_end.point;
-
-            let edge_curve = wb
-                .geom
-                .edge_curve
-                .get(edge_idx)
-                .and_then(|&ci| ci)
-                .and_then(|ci| wb.geom.curves.get(ci));
+            let edge_curve = ed.curve.as_ref();
 
             let circle_info: Option<Circle3> = edge_curve.and_then(|c| {
                 if let rcad_kernel::geom::Curve3::Circle(circ) = c { Some(*circ) } else { None }
@@ -1751,12 +1744,12 @@ pub fn hlr_assembly(
             };
 
             let world_pts: Vec<DVec3> = if let Some(circ) = &circle_info {
-                let [t0, t1] = wb
-                    .geom
-                    .edge_curve_range
-                    .get(edge_idx)
-                    .and_then(|r| *r)
-                    .unwrap_or_else(|| circ.default_domain());
+                let range = ed.range;
+                let [t0, t1] = if range[0] == range[1] {
+                    circ.default_domain()
+                } else {
+                    range
+                };
                 (0..edge_samples)
                     .map(|i| {
                         let t = t0 + (t1 - t0) * (i as f64 / (edge_samples - 1) as f64);
@@ -1764,12 +1757,12 @@ pub fn hlr_assembly(
                     })
                     .collect()
             } else if let Some(curve) = edge_curve.filter(|_| is_other_curve) {
-                let [t0, t1] = wb
-                    .geom
-                    .edge_curve_range
-                    .get(edge_idx)
-                    .and_then(|r| *r)
-                    .unwrap_or_else(|| curve.default_domain());
+                let range = ed.range;
+                let [t0, t1] = if range[0] == range[1] {
+                    curve.default_domain()
+                } else {
+                    range
+                };
                 (0..edge_samples)
                     .map(|i| {
                         let t = t0 + (t1 - t0) * (i as f64 / (edge_samples - 1) as f64);
@@ -1899,5 +1892,3 @@ pub fn hlr_to_svg(result: &HlrResult, scale: f64, margin: f64) -> String {
     svg.push_str("</svg>\n");
     svg
 }
-
-// ── Tests ─────────────────────────────────────────────────────────────────────

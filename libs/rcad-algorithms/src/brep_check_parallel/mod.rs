@@ -22,10 +22,85 @@
 use crate::tolerance::*;
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Instant;
 use glam::DVec3;
-use rcad_kernel::topods;
+use rcad_kernel::topods::{self, BRep, ShapeRef, TShape, Orientation};
 use rcad_kernel::geom::CurveEval;
+
+// ---------------------------------------------------------------------------
+// Helper functions for TShape-based access
+// ---------------------------------------------------------------------------
+
+/// Get the point of a vertex at flat index `vi`.
+pub(crate) fn vpoint(brep: &BRep, vi: usize) -> DVec3 {
+    brep.vertex_point(vi).unwrap_or(DVec3::ZERO)
+}
+
+/// Get the start vertex index of the edge at flat index `ei`.
+pub(crate) fn edge_start(brep: &BRep, ei: usize) -> usize {
+    match &*brep.tshapes[ei] {
+        TShape::Edge(ed) => ed.first.index,
+        _ => panic!("edge_start: not an edge at index {}", ei),
+    }
+}
+
+/// Get the end vertex index of the edge at flat index `ei`.
+pub(crate) fn edge_end(brep: &BRep, ei: usize) -> usize {
+    match &*brep.tshapes[ei] {
+        TShape::Edge(ed) => ed.last.index,
+        _ => panic!("edge_end: not an edge at index {}", ei),
+    }
+}
+
+/// Get (start_vertex, end_vertex) for the edge at flat index `ei`.
+pub(crate) fn edge_verts(brep: &BRep, ei: usize) -> (usize, usize) {
+    match &*brep.tshapes[ei] {
+        TShape::Edge(ed) => (ed.first.index, ed.last.index),
+        _ => panic!("edge_verts: not an edge at index {}", ei),
+    }
+}
+
+/// Iterate all edge references from a face ShapeRef, calling `f(ei, forward)` for each.
+pub(crate) fn for_each_face_edge<F>(brep: &BRep, face_sr: ShapeRef, mut f: F)
+where
+    F: FnMut(usize, bool),
+{
+    let TShape::Face(fd) = &*brep.tshapes[face_sr.index] else { return };
+    // Outer wire
+    let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] else { return };
+    for esr in &wd.edges {
+        f(esr.index, esr.orientation == Orientation::Forward);
+    }
+    // Inner wires
+    for iw_sr in &fd.inner_wires {
+        let TShape::Wire(iwd) = &*brep.tshapes[iw_sr.index] else { continue };
+        for esr in &iwd.edges {
+            f(esr.index, esr.orientation == Orientation::Forward);
+        }
+    }
+}
+
+/// Collect all edge indices referenced by a face.
+pub(crate) fn face_edge_refs(brep: &BRep, face_sr: ShapeRef) -> Vec<usize> {
+    let mut out = Vec::new();
+    for_each_face_edge(brep, face_sr, |ei, _| out.push(ei));
+    out
+}
+
+/// Build a wire_verts Vec<(start, end)> from a wire's ShapeRef.
+/// Uses `we_sr.index` as edge index into the BRep; `forward` is determined by orientation.
+fn wire_vert_pairs(brep: &BRep, wire_sr: ShapeRef) -> Vec<(usize, usize)> {
+    let TShape::Wire(wd) = &*brep.tshapes[wire_sr.index] else { return vec![] };
+    let mut out = Vec::with_capacity(wd.edges.len());
+    for esr in &wd.edges {
+        let (s, e) = edge_verts(brep, esr.index);
+        if esr.orientation == Orientation::Forward {
+            out.push((s, e));
+        } else {
+            out.push((e, s));
+        }
+    }
+    out
+}
 
 // Re-export CheckIssue and CheckResult from the base module for convenience.
 pub use crate::brep_check::{CheckIssue, CheckResult};
@@ -201,12 +276,10 @@ impl ParallelCheckResult {
 /// # Returns
 ///
 /// A `ParallelCheckResult` containing all issues found and execution metadata.
-pub fn check_parallel_with_options(brep: &rcad_kernel::BRep, options: &ParallelCheckOptions) -> ParallelCheckResult {
- let face_count: usize = brep.solids.iter()
- .map(|s| s.shells.iter().map(|sh| sh.faces.len()).sum::<usize>())
- .sum();
- let edge_count = brep.edges.len();
- let vertex_count = brep.vertices.len();
+pub fn check_parallel_with_options(brep: &BRep, options: &ParallelCheckOptions) -> ParallelCheckResult {
+ let face_count = brep.face_count();
+ let edge_count = brep.edge_count();
+ let vertex_count = brep.vertex_count();
 
  // Decide whether to use parallel or sequential processing
  let use_parallel = face_count >= options.min_faces_for_parallel
@@ -231,52 +304,64 @@ pub fn check_parallel_with_options(brep: &rcad_kernel::BRep, options: &ParallelC
 }
 
 /// Internal parallel check implementation.
-fn check_parallel_internal(brep: &rcad_kernel::BRep, options: &ParallelCheckOptions) -> ParallelCheckResult {
+fn check_parallel_internal(brep: &BRep, options: &ParallelCheckOptions) -> ParallelCheckResult {
  let mut issues = Vec::new();
  let mut parallel_issues = Vec::new();
- let n_edges = brep.edges.len();
- let n_verts = brep.vertices.len();
+ let n_edges = brep.edge_count();
+ let n_verts = brep.vertex_count();
 
- // C5: edge vertex bounds (parallel)
- let edge_issues: Vec<CheckIssue> = brep.edges
- .par_iter()
- .enumerate()
- .flat_map(|(eidx, edge)| {
- let mut local_issues = Vec::new();
- if edge.start >= n_verts {
- local_issues.push(CheckIssue::InvalidVertexIndex {
- edge: eidx,
- vertex_idx: edge.start,
- });
- }
- if edge.end >= n_verts {
- local_issues.push(CheckIssue::InvalidVertexIndex {
- edge: eidx,
- vertex_idx: edge.end,
- });
- }
- local_issues
- })
- .collect();
+ // C5: edge vertex bounds (parallel) via TShape iteration
+ let edge_data: Vec<(usize, usize, usize)> = brep
+    .tshapes
+    .par_iter()
+    .enumerate()
+    .filter_map(|(ei, ts)| {
+        if let TShape::Edge(ed) = &**ts {
+            Some((ei, ed.first.index, ed.last.index))
+        } else {
+            None
+        }
+    })
+    .collect();
+
+ let edge_issues: Vec<CheckIssue> = edge_data
+    .par_iter()
+    .flat_map(|&(eidx, start, end)| {
+        let mut local_issues = Vec::new();
+        if start >= n_verts {
+            local_issues.push(CheckIssue::InvalidVertexIndex {
+                edge: eidx,
+                vertex_idx: start,
+            });
+        }
+        if end >= n_verts {
+            local_issues.push(CheckIssue::InvalidVertexIndex {
+                edge: eidx,
+                vertex_idx: end,
+            });
+        }
+        local_issues
+    })
+    .collect();
  issues.extend(edge_issues);
 
  // C6: manifold check - count edge references (parallel reduction)
  let edge_face_count: Vec<usize> = compute_edge_face_counts_parallel(brep, n_edges);
 
  let manifold_issues: Vec<CheckIssue> = edge_face_count
- .par_iter()
- .enumerate()
- .filter_map(|(eidx, &count)| {
- if count != 2 {
- Some(CheckIssue::NonManifoldEdge {
- edge_idx: eidx,
- face_count: count,
- })
- } else {
- None
- }
- })
- .collect();
+    .par_iter()
+    .enumerate()
+    .filter_map(|(eidx, &count)| {
+        if count != 2 {
+            Some(CheckIssue::NonManifoldEdge {
+                edge_idx: eidx,
+                face_count: count,
+            })
+        } else {
+            None
+        }
+    })
+    .collect();
  issues.extend(manifold_issues);
 
  // Face-level checks (parallel with chunking)
@@ -288,15 +373,15 @@ fn check_parallel_internal(brep: &rcad_kernel::BRep, options: &ParallelCheckOpti
  parallel_issues.extend(vertex_results);
 
  ParallelCheckResult {
- issues,
- parallel_issues,
- was_parallel: true,
- thread_count: rayon::current_num_threads(),
+    issues,
+    parallel_issues,
+    was_parallel: true,
+    thread_count: rayon::current_num_threads(),
  }
 }
 
 /// Internal sequential check implementation (fallback for small models).
-fn check_sequential_internal(brep: &rcad_kernel::BRep, options: &ParallelCheckOptions) -> ParallelCheckResult {
+fn check_sequential_internal(brep: &BRep, options: &ParallelCheckOptions) -> ParallelCheckResult {
  // Use the standard sequential check for basic issues
  let result = crate::brep_check::brep_check_analyze(brep);
  let mut parallel_issues = Vec::new();
@@ -338,32 +423,36 @@ fn check_sequential_internal(brep: &rcad_kernel::BRep, options: &ParallelCheckOp
 /// # Returns
 ///
 /// A `CheckResult` containing all issues found.
-pub fn check_parallel(brep: &rcad_kernel::BRep) -> CheckResult {
+pub fn check_parallel(brep: &BRep) -> CheckResult {
  let options = ParallelCheckOptions::default();
  check_parallel_with_options(brep, &options).to_check_result()
 }
 
 /// Compute edge face counts in parallel.
-fn compute_edge_face_counts_parallel(brep: &rcad_kernel::BRep, n_edges: usize) -> Vec<usize> {
+fn compute_edge_face_counts_parallel(brep: &BRep, n_edges: usize) -> Vec<usize> {
  // Use atomic counters for thread-safe counting
  let counts: Vec<AtomicUsize> = (0..n_edges)
  .map(|_| AtomicUsize::new(0))
  .collect();
 
- // Collect all edge references first in parallel
- let edge_refs: Vec<usize> = brep.solids
- .iter()
- .flat_map(|solid| solid.shells.iter())
- .flat_map(|shell| shell.faces.iter())
- .flat_map(|face| {
- let outer_refs: Vec<usize> = face.outer_wire.edges.iter().map(|we| we.idx).collect();
- let inner_refs: Vec<usize> = face.inner_wires.iter()
- .flat_map(|wire| wire.edges.iter().map(|we| we.idx))
- .collect();
- outer_refs.into_iter().chain(inner_refs)
- })
- .filter(|&idx| idx < n_edges)
- .collect();
+ // Collect all edge references first via TShape hierarchy
+ let edge_refs: Vec<usize> = brep
+    .tshapes
+    .iter()
+    .filter_map(|ts| {
+        if let TShape::Solid(sd) = &**ts { Some(sd) } else { None }
+    })
+    .flat_map(|sd| sd.shells.iter())
+    .flat_map(|shell_sr| {
+        if let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+            shd.faces.iter().map(|fsr| *fsr).collect::<Vec<_>>()
+        } else {
+            vec![]
+        }
+    })
+    .flat_map(|face_sr| face_edge_refs(brep, face_sr))
+    .filter(|&idx| idx < n_edges)
+    .collect();
 
  // Increment counts atomically
  for idx in edge_refs {
@@ -375,47 +464,66 @@ fn compute_edge_face_counts_parallel(brep: &rcad_kernel::BRep, n_edges: usize) -
 }
 
 /// Check all faces in parallel with chunking for work stealing.
-fn check_faces_parallel_chunked(brep: &rcad_kernel::BRep, n_edges: usize, chunk_size: usize) -> Vec<CheckIssue> {
- // Create a flat list of (solid_idx, shell_idx, face_idx, face_ref) for parallel iteration
- let face_items: Vec<(usize, usize, usize, &rcad_kernel::topology::Face)> = brep.solids
- .iter()
- .enumerate()
- .flat_map(|(si, solid)| {
- solid.shells.iter().enumerate().flat_map(move |(shi, shell)| {
- shell.faces.iter().enumerate().map(move |(fi, face)| {
- (si, shi, fi, face)
- })
- })
- })
- .collect();
+fn check_faces_parallel_chunked(brep: &BRep, n_edges: usize, chunk_size: usize) -> Vec<CheckIssue> {
+ // Build flat list of (solid_tshape_idx, shell_index_in_solid, face_index_in_shell)
+ let face_items: Vec<(usize, usize, usize)> = brep
+    .tshapes
+    .iter()
+    .enumerate()
+    .filter_map(|(si, ts)| {
+        if let TShape::Solid(sd) = &**ts { Some((si, sd)) } else { None }
+    })
+    .flat_map(|(si, sd)| {
+        sd.shells.iter().enumerate().flat_map(move |(shi, shell_sr)| {
+            let nf = if let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+                shd.faces.len()
+            } else {
+                0
+            };
+            (0..nf).map(move |fi| (si, shi, fi))
+        })
+    })
+    .collect();
 
  // Process in chunks for better work stealing
  face_items
  .par_chunks(chunk_size.max(1))
  .flat_map(|chunk| {
  chunk.iter()
- .flat_map(|&(si, shi, fi, face)| {
- check_single_face(brep, face, si, shi, fi, n_edges)
+ .flat_map(|&(si, shi, fi)| {
+ check_single_face(brep, si, shi, fi, n_edges)
  })
  .collect::<Vec<_>>()
  })
  .collect()
 }
 
-/// Check a single face for all issues.
+/// Check a single face for all issues (TShape-based).
 fn check_single_face(
- brep: &rcad_kernel::BRep,
- face: &rcad_kernel::topology::Face,
+ brep: &BRep,
  si: usize,
  shi: usize,
  fi: usize,
  n_edges: usize,
 ) -> Vec<CheckIssue> {
  let mut issues = Vec::new();
- let wire = &face.outer_wire;
+
+ // Resolve shell face data from TShape hierarchy
+ let sd = match &*brep.tshapes[si] { TShape::Solid(s) => s, _ => return issues };
+ let shell_sr = match sd.shells.get(shi) { Some(sr) => *sr, None => return issues };
+ let shd = match &*brep.tshapes[shell_sr.index] { TShape::Shell(s) => s, _ => return issues };
+ let face_sr = match shd.faces.get(fi) { Some(sr) => *sr, None => return issues };
+ let fd = match &*brep.tshapes[face_sr.index] { TShape::Face(f) => f, _ => return issues };
+
+ // Compute normal from surface
+ let normal = fd
+    .surface
+    .as_ref()
+    .map(|s| rcad_kernel::geom::SurfaceEval::normal_at(s, 0.0, 0.0))
+    .unwrap_or(DVec3::ZERO);
 
  // C2: zero normal
- if face.normal == DVec3::ZERO {
+ if normal == DVec3::ZERO {
  issues.push(CheckIssue::ZeroNormal {
  solid: si,
  shell: shi,
@@ -423,36 +531,44 @@ fn check_single_face(
  });
  }
 
+ // Get outer wire edges
+ let outer_wire_edges: Vec<ShapeRef> = {
+    let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] else {
+        issues.push(CheckIssue::DegenerateFace { solid: si, shell: shi, face: fi });
+        return issues;
+    };
+    wd.edges.clone()
+ };
+
  // C3: degenerate face
- if wire.edges.len() < 3 {
+ if outer_wire_edges.len() < 3 {
  issues.push(CheckIssue::DegenerateFace {
  solid: si,
  shell: shi,
  face: fi,
  });
- return issues; // Can't check wire closure for degenerate face
+ return issues;
  }
 
  // C4: edge index bounds + collect wire vertices
  let mut valid = true;
  let mut wire_verts: Vec<(usize, usize)> = Vec::new();
- for we in &wire.edges {
- if we.idx >= n_edges {
+ for esr in &outer_wire_edges {
+ if esr.index >= n_edges {
  issues.push(CheckIssue::InvalidEdgeIndex {
  solid: si,
  shell: shi,
  face: fi,
- edge_idx: we.idx,
+ edge_idx: esr.index,
  });
  valid = false;
  } else {
- let edge = &brep.edges[we.idx];
- let (sv, ev) = if we.forward {
- (edge.start, edge.end)
- } else {
- (edge.end, edge.start)
- };
+ let (sv, ev) = edge_verts(brep, esr.index);
+ if esr.orientation == Orientation::Forward {
  wire_verts.push((sv, ev));
+ } else {
+ wire_verts.push((ev, sv));
+ }
  }
  }
 
@@ -467,8 +583,8 @@ fn check_single_face(
  let end_v = wire_verts[i].1;
  let start_v = wire_verts[next].0;
  if end_v != start_v {
- let end_pt = brep.vertices[end_v].point;
- let start_pt = brep.vertices[start_v].point;
+ let end_pt = vpoint(brep, end_v);
+ let start_pt = vpoint(brep, start_v);
  if (end_pt - start_pt).length() > TOLERANCE_MESH_LEGACY {
  issues.push(CheckIssue::OpenWire {
  solid: si,
@@ -480,10 +596,13 @@ fn check_single_face(
  }
  }
 
+ // Build vertex points vec for self-intersection check
+ let vert_points: Vec<DVec3> = (0..brep.vertex_count()).map(|vi| vpoint(brep, vi)).collect();
+
  // C7: wire self-intersection
  check_wire_self_intersection_local(
  &wire_verts,
- &brep.vertices,
+ &vert_points,
  si, shi, fi, 0,
  &mut issues,
  );
@@ -491,37 +610,37 @@ fn check_single_face(
  // C8: geometric self-intersection
  check_geometric_self_intersection_local(
  &wire_verts,
- &brep.vertices,
+ &vert_points,
  si, shi, fi,
  &mut issues,
  );
 
  // Check inner wires
- for (wi, inner_wire) in face.inner_wires.iter().enumerate() {
- if inner_wire.edges.len() < 2 {
+ for (wi, iw_sr) in fd.inner_wires.iter().enumerate() {
+ let TShape::Wire(iwd) = &*brep.tshapes[iw_sr.index] else { continue };
+ if iwd.edges.len() < 2 {
  continue;
  }
 
  let mut inner_verts: Vec<(usize, usize)> = Vec::new();
  let mut inner_valid = true;
 
- for we in &inner_wire.edges {
- if we.idx >= n_edges {
+ for esr in &iwd.edges {
+ if esr.index >= n_edges {
  issues.push(CheckIssue::InvalidEdgeIndex {
  solid: si,
  shell: shi,
  face: fi,
- edge_idx: we.idx,
+ edge_idx: esr.index,
  });
  inner_valid = false;
  } else {
- let edge = &brep.edges[we.idx];
- let (sv, ev) = if we.forward {
- (edge.start, edge.end)
- } else {
- (edge.end, edge.start)
- };
+ let (sv, ev) = edge_verts(brep, esr.index);
+ if esr.orientation == Orientation::Forward {
  inner_verts.push((sv, ev));
+ } else {
+ inner_verts.push((ev, sv));
+ }
  }
  }
 
@@ -536,8 +655,8 @@ fn check_single_face(
  let end_v = inner_verts[i].1;
  let start_v = inner_verts[next].0;
  if end_v != start_v {
- let end_pt = brep.vertices[end_v].point;
- let start_pt = brep.vertices[start_v].point;
+ let end_pt = vpoint(brep, end_v);
+ let start_pt = vpoint(brep, start_v);
  if (end_pt - start_pt).length() > TOLERANCE_MESH_LEGACY {
  issues.push(CheckIssue::OpenWire {
  solid: si,
@@ -551,7 +670,7 @@ fn check_single_face(
 
  check_wire_self_intersection_local(
  &inner_verts,
- &brep.vertices,
+ &vert_points,
  si, shi, fi,
  wi + 1,
  &mut issues,
@@ -564,7 +683,7 @@ fn check_single_face(
 /// Check a wire for self-intersection topology.
 fn check_wire_self_intersection_local(
  wire_verts: &[(usize, usize)],
- vertices: &[rcad_kernel::topology::Vertex],
+ vert_points: &[DVec3],
  solid: usize,
  shell: usize,
  face: usize,
@@ -579,7 +698,7 @@ fn check_wire_self_intersection_local(
  }
  for (&vidx, &count) in &vertex_count {
  if count > 2
- && vidx < vertices.len() {
+ && vidx < vert_points.len() {
  issues.push(CheckIssue::SelfIntersectingWire {
  solid,
  shell,
@@ -594,7 +713,7 @@ fn check_wire_self_intersection_local(
 /// Check for geometric self-intersection in a wire.
 fn check_geometric_self_intersection_local(
  wire_verts: &[(usize, usize)],
- vertices: &[rcad_kernel::topology::Vertex],
+ vert_points: &[DVec3],
  solid: usize,
  shell: usize,
  face: usize,
@@ -602,28 +721,23 @@ fn check_geometric_self_intersection_local(
 ) {
  let n = wire_verts.len();
  if n < 4 {
- return; // Need at least 4 edges for potential self-intersection
+ return;
  }
 
- // Check pairs of non-adjacent edges for intersection
  for i in 0..n {
- // Adjacent edges share a vertex, so check edges that are at least 2 apart
  for j in (i + 2)..n {
- // Skip if edges are adjacent (wraparound case)
  if i == 0 && j == n - 1 {
  continue;
  }
 
- // Get edge endpoints
  let (a_start, a_end) = wire_verts[i];
  let (b_start, b_end) = wire_verts[j];
 
- let p1 = vertices[a_start].point;
- let p2 = vertices[a_end].point;
- let p3 = vertices[b_start].point;
- let p4 = vertices[b_end].point;
+ let p1 = vert_points[a_start];
+ let p2 = vert_points[a_end];
+ let p3 = vert_points[b_start];
+ let p4 = vert_points[b_end];
 
- // Check 2D projection intersection (XY plane)
  if segments_intersect_2d(p1, p2, p3, p4) {
  issues.push(CheckIssue::GeometricSelfIntersection {
  solid,
@@ -671,48 +785,57 @@ fn segments_intersect_2d(p1: DVec3, p2: DVec3, p3: DVec3, p4: DVec3) -> bool {
 }
 
 /// Check vertices in parallel for duplicate, isolated, and non-finite vertices.
-fn check_vertices_parallel(brep: &rcad_kernel::BRep, options: &ParallelCheckOptions) -> Vec<ParallelCheckIssue> {
- let n_verts = brep.vertices.len();
+fn check_vertices_parallel(brep: &BRep, options: &ParallelCheckOptions) -> Vec<ParallelCheckIssue> {
+ let n_verts = brep.vertex_count();
  if n_verts == 0 {
  return Vec::new();
  }
 
  let mut issues = Vec::new();
 
+ // Build flat points vec from TShapes
+ let points: Vec<DVec3> = brep
+    .tshapes
+    .iter()
+    .filter_map(|ts| {
+        if let TShape::Vertex(vd) = &**ts { Some(vd.point) } else { None }
+    })
+    .collect();
+
  // Check for non-finite vertices (parallel)
  if options.check_finite_vertices {
- let non_finite: Vec<ParallelCheckIssue> = brep.vertices
- .par_iter()
- .enumerate()
- .filter_map(|(vidx, v)| {
- if !v.point.is_finite() {
- Some(ParallelCheckIssue::NonFiniteVertex { vertex_idx: vidx })
- } else {
- None
- }
- })
- .collect();
+ let non_finite: Vec<ParallelCheckIssue> = points
+    .par_iter()
+    .enumerate()
+    .filter_map(|(vidx, pt)| {
+        if !pt.is_finite() {
+            Some(ParallelCheckIssue::NonFiniteVertex { vertex_idx: vidx })
+        } else {
+            None
+        }
+    })
+    .collect();
  issues.extend(non_finite);
  }
 
  // Check for isolated vertices (parallel)
  if options.check_isolated_vertices {
- // Build a set of referenced vertices using atomic booleans
  let referenced: Vec<std::sync::atomic::AtomicBool> = (0..n_verts)
  .map(|_| std::sync::atomic::AtomicBool::new(false))
  .collect();
 
- // Mark all vertices referenced by edges
- brep.edges.par_iter().for_each(|edge| {
- if edge.start < n_verts {
- referenced[edge.start].store(true, Ordering::Relaxed);
+ // Mark all vertices referenced by edges via TShape iteration
+ for ts in &brep.tshapes {
+ if let TShape::Edge(ed) = &**ts {
+ if ed.first.index < n_verts {
+ referenced[ed.first.index].store(true, Ordering::Relaxed);
  }
- if edge.end < n_verts {
- referenced[edge.end].store(true, Ordering::Relaxed);
+ if ed.last.index < n_verts {
+ referenced[ed.last.index].store(true, Ordering::Relaxed);
  }
- });
+ }
+ }
 
- // Find isolated vertices
  let isolated: Vec<ParallelCheckIssue> = referenced
  .into_par_iter()
  .enumerate()
@@ -729,7 +852,7 @@ fn check_vertices_parallel(brep: &rcad_kernel::BRep, options: &ParallelCheckOpti
 
  // Check for duplicate vertices (parallel spatial hashing)
  if options.check_duplicate_vertices {
- let duplicates = find_duplicate_vertices_parallel(&brep.vertices, options.tolerance);
+ let duplicates = find_duplicate_vertices_parallel(&points, options.tolerance);
  issues.extend(duplicates);
  }
 
@@ -737,18 +860,27 @@ fn check_vertices_parallel(brep: &rcad_kernel::BRep, options: &ParallelCheckOpti
 }
 
 /// Check vertices sequentially (fallback for small models).
-fn check_vertices_sequential(brep: &rcad_kernel::BRep, options: &ParallelCheckOptions) -> Vec<ParallelCheckIssue> {
- let n_verts = brep.vertices.len();
+fn check_vertices_sequential(brep: &BRep, options: &ParallelCheckOptions) -> Vec<ParallelCheckIssue> {
+ let n_verts = brep.vertex_count();
  if n_verts == 0 {
  return Vec::new();
  }
 
  let mut issues = Vec::new();
 
+ // Build flat points vec
+ let points: Vec<DVec3> = brep
+    .tshapes
+    .iter()
+    .filter_map(|ts| {
+        if let TShape::Vertex(vd) = &**ts { Some(vd.point) } else { None }
+    })
+    .collect();
+
  // Check for non-finite vertices
  if options.check_finite_vertices {
- for (vidx, v) in brep.vertices.iter().enumerate() {
- if !v.point.is_finite() {
+ for (vidx, pt) in points.iter().enumerate() {
+ if !pt.is_finite() {
  issues.push(ParallelCheckIssue::NonFiniteVertex { vertex_idx: vidx });
  }
  }
@@ -757,12 +889,14 @@ fn check_vertices_sequential(brep: &rcad_kernel::BRep, options: &ParallelCheckOp
  // Check for isolated vertices
  if options.check_isolated_vertices {
  let mut referenced = vec![false; n_verts];
- for edge in &brep.edges {
- if edge.start < n_verts {
- referenced[edge.start] = true;
+ for ts in &brep.tshapes {
+ if let TShape::Edge(ed) = &**ts {
+ if ed.first.index < n_verts {
+ referenced[ed.first.index] = true;
  }
- if edge.end < n_verts {
- referenced[edge.end] = true;
+ if ed.last.index < n_verts {
+ referenced[ed.last.index] = true;
+ }
  }
  }
  for (vidx, &is_ref) in referenced.iter().enumerate() {
@@ -776,7 +910,7 @@ fn check_vertices_sequential(brep: &rcad_kernel::BRep, options: &ParallelCheckOp
  if options.check_duplicate_vertices {
  for i in 0..n_verts {
  for j in (i + 1)..n_verts {
- let dist = (brep.vertices[i].point - brep.vertices[j].point).length();
+ let dist = (points[i] - points[j]).length();
  if dist < options.tolerance {
  issues.push(ParallelCheckIssue::DuplicateVertex {
  vertex_a: i,
@@ -791,46 +925,42 @@ fn check_vertices_sequential(brep: &rcad_kernel::BRep, options: &ParallelCheckOp
  issues
 }
 
-/// Find duplicate vertices using parallel spatial hashing.
+/// Find duplicate vertices using parallel spatial hashing (DVec3 version).
 fn find_duplicate_vertices_parallel(
- vertices: &[rcad_kernel::topology::Vertex],
+ points: &[DVec3],
  tolerance: f64,
 ) -> Vec<ParallelCheckIssue> {
  use std::collections::HashMap;
 
- let cell_size = tolerance * 10.0; // Grid cell size
+ let cell_size = tolerance * 10.0;
 
- // Compute spatial hash for each vertex in parallel
- let hashed: Vec<(i64, i64, i64, usize)> = vertices
+ let hashed: Vec<(i64, i64, i64, usize)> = points
  .par_iter()
  .enumerate()
- .filter_map(|(vidx, v)| {
- if !v.point.is_finite() {
+ .filter_map(|(vidx, pt)| {
+ if !pt.is_finite() {
  return None;
  }
- let cell_x = (v.point.x / cell_size).floor() as i64;
- let cell_y = (v.point.y / cell_size).floor() as i64;
- let cell_z = (v.point.z / cell_size).floor() as i64;
+ let cell_x = (pt.x / cell_size).floor() as i64;
+ let cell_y = (pt.y / cell_size).floor() as i64;
+ let cell_z = (pt.z / cell_size).floor() as i64;
  Some((cell_x, cell_y, cell_z, vidx))
  })
  .collect();
 
- // Group by cell
  let mut cells: HashMap<(i64, i64, i64), Vec<usize>> = HashMap::new();
  for (cx, cy, cz, vidx) in hashed {
  cells.entry((cx, cy, cz)).or_default().push(vidx);
  }
 
- // Check for duplicates within each cell and neighboring cells
  let mut issues = Vec::new();
 
  for ((cx, cy, cz), cell_vertices) in &cells {
- // Check vertices within this cell
  for i in 0..cell_vertices.len() {
  for j in (i + 1)..cell_vertices.len() {
  let vi = cell_vertices[i];
  let vj = cell_vertices[j];
- let dist = (vertices[vi].point - vertices[vj].point).length();
+ let dist = (points[vi] - points[vj]).length();
  if dist < tolerance {
  issues.push(ParallelCheckIssue::DuplicateVertex {
  vertex_a: vi,
@@ -841,7 +971,6 @@ fn find_duplicate_vertices_parallel(
  }
  }
 
- // Check neighboring cells
  for dx in -1..=1 {
  for dy in -1..=1 {
  for dz in -1..=1 {
@@ -853,9 +982,9 @@ fn find_duplicate_vertices_parallel(
  for &vi in cell_vertices {
  for &vj in neighbor_vertices {
  if vi >= vj {
- continue; // Avoid duplicate pairs
+ continue;
  }
- let dist = (vertices[vi].point - vertices[vj].point).length();
+ let dist = (points[vi] - points[vj]).length();
  if dist < tolerance {
  issues.push(ParallelCheckIssue::DuplicateVertex {
  vertex_a: vi,
@@ -886,7 +1015,7 @@ fn find_duplicate_vertices_parallel(
 /// # Returns
 ///
 /// A `CheckResult` containing all issues found.
-pub fn check_parallel_with_batch_size(brep: &rcad_kernel::BRep, batch_size: usize) -> CheckResult {
+pub fn check_parallel_with_batch_size(brep: &BRep, batch_size: usize) -> CheckResult {
  let options = ParallelCheckOptions {
  chunk_size: batch_size,
  ..ParallelCheckOptions::default()
@@ -905,7 +1034,7 @@ pub fn check_parallel_with_batch_size(brep: &rcad_kernel::BRep, batch_size: usiz
 /// # Returns
 ///
 /// Vector of `CheckResult`s, one per input BRep.
-pub fn check_many_parallel(breps: &[rcad_kernel::BRep]) -> Vec<CheckResult> {
+pub fn check_many_parallel(breps: &[BRep]) -> Vec<CheckResult> {
  breps.par_iter().map(check_parallel).collect()
 }
 
@@ -919,7 +1048,7 @@ pub fn check_many_parallel(breps: &[rcad_kernel::BRep]) -> Vec<CheckResult> {
 /// # Returns
 ///
 /// Vector of `ParallelCheckResult`s, one per input BRep.
-pub fn check_many_parallel_with_options(breps: &[rcad_kernel::BRep], options: &ParallelCheckOptions) -> Vec<ParallelCheckResult> {
+pub fn check_many_parallel_with_options(breps: &[BRep], options: &ParallelCheckOptions) -> Vec<ParallelCheckResult> {
  breps.par_iter().map(|brep| check_parallel_with_options(brep, options)).collect()
 }
 
@@ -1396,25 +1525,29 @@ impl ParallelCheckReport {
 /// # Returns
 ///
 /// A vector of `FaceCheckResult`, one per face.
-pub fn check_faces_parallel(brep: &rcad_kernel::BRep, num_threads: usize) -> Vec<FaceCheckResult> {
- let n_edges = brep.edges.len();
+pub fn check_faces_parallel(brep: &BRep, num_threads: usize) -> Vec<FaceCheckResult> {
+ let n_edges = brep.edge_count();
  let tolerance = TOLERANCE_MESH_LEGACY;
 
- // Create a flat list of face references for parallel iteration
- let face_items: Vec<(usize, usize, usize)> = brep.solids
- .iter()
- .enumerate()
- .flat_map(|(si, solid)| {
- solid.shells.iter().enumerate().flat_map(move |(shi, shell)| {
- shell.faces.iter().enumerate().map(move |(fi, _)| {
- (si, shi, fi)
- })
- })
- })
- .collect();
-
- // Configure thread pool if specified
- 
+ // Build flat list of (solid_tshape_idx, shell_idx, face_idx) via TShape iteration
+ let face_items: Vec<(usize, usize, usize)> = brep
+    .tshapes
+    .iter()
+    .enumerate()
+    .filter_map(|(si, ts)| {
+        if let TShape::Solid(sd) = &**ts { Some((si, sd)) } else { None }
+    })
+    .flat_map(|(si, sd)| {
+        sd.shells.iter().enumerate().flat_map(move |(shi, shell_sr)| {
+            let nf = if let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+                shd.faces.len()
+            } else {
+                0
+            };
+            (0..nf).map(move |fi| (si, shi, fi))
+        })
+    })
+    .collect();
 
  if num_threads > 0 {
  let pool = rayon::ThreadPoolBuilder::new()
@@ -1435,17 +1568,35 @@ pub fn check_faces_parallel(brep: &rcad_kernel::BRep, num_threads: usize) -> Vec
 
 /// Check a single face and return a detailed result.
 fn check_single_face_detailed(
- brep: &rcad_kernel::BRep,
+ brep: &BRep,
  si: usize,
  shi: usize,
  fi: usize,
  n_edges: usize,
  tolerance: f64,
 ) -> FaceCheckResult {
- let solid = &brep.solids[si];
- let shell = &solid.shells[shi];
- let face = &shell.faces[fi];
- let wire = &face.outer_wire;
+ // Build a default error result for early exits
+ let err_result = || FaceCheckResult {
+    solid_idx: si, shell_idx: shi, face_idx: fi,
+    is_valid: false, issues: Vec::new(),
+    outer_wire_edge_count: 0, inner_wire_count: 0,
+    normal: DVec3::ZERO, normal_valid: false,
+    outer_wire_closed: false, outer_wire_gaps: 0, has_self_intersection: false,
+ };
+
+ // Resolve face data from TShape hierarchy
+ let sd = match &*brep.tshapes[si] { TShape::Solid(s) => s, _ => return err_result() };
+ let shell_sr = match sd.shells.get(shi) { Some(sr) => *sr, None => return err_result() };
+ let shd = match &*brep.tshapes[shell_sr.index] { TShape::Shell(s) => s, _ => return err_result() };
+ let face_sr = match shd.faces.get(fi) { Some(sr) => *sr, None => return err_result() };
+ let fd = match &*brep.tshapes[face_sr.index] { TShape::Face(f) => f, _ => return err_result() };
+
+ // Compute normal from surface
+ let normal = fd
+    .surface
+    .as_ref()
+    .map(|s| rcad_kernel::geom::SurfaceEval::normal_at(s, 0.0, 0.0))
+    .unwrap_or(DVec3::ZERO);
 
  let mut issues = Vec::new();
  let mut outer_wire_closed = true;
@@ -1453,27 +1604,35 @@ fn check_single_face_detailed(
  let mut has_self_intersection = false;
 
  // Check normal
- let normal_valid = face.normal != DVec3::ZERO && (face.normal.length() - 1.0).abs() < 0.01;
- if face.normal == DVec3::ZERO {
+ let normal_valid = normal != DVec3::ZERO && (normal.length() - 1.0).abs() < 0.01;
+ if normal == DVec3::ZERO {
  issues.push(FaceCheckIssue::ZeroNormal);
  }
 
+ // Get outer wire edges
+ let outer_wire_edges: Vec<ShapeRef> = {
+    let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] else {
+        return FaceCheckResult {
+            solid_idx: si, shell_idx: shi, face_idx: fi,
+            is_valid: false, issues,
+            outer_wire_edge_count: 0, inner_wire_count: fd.inner_wires.len(),
+            normal, normal_valid,
+            outer_wire_closed: false, outer_wire_gaps: 0, has_self_intersection: false,
+        };
+    };
+    wd.edges.clone()
+ };
+
  // Check degenerate face
- if wire.edges.len() < 3 {
+ if outer_wire_edges.len() < 3 {
  issues.push(FaceCheckIssue::DegenerateFace);
  return FaceCheckResult {
- solid_idx: si,
- shell_idx: shi,
- face_idx: fi,
- is_valid: false,
- issues,
- outer_wire_edge_count: wire.edges.len(),
- inner_wire_count: face.inner_wires.len(),
- normal: face.normal,
- normal_valid,
- outer_wire_closed: false,
- outer_wire_gaps: 0,
- has_self_intersection: false,
+    solid_idx: si, shell_idx: shi, face_idx: fi,
+    is_valid: false, issues,
+    outer_wire_edge_count: outer_wire_edges.len(),
+    inner_wire_count: fd.inner_wires.len(),
+    normal, normal_valid,
+    outer_wire_closed: false, outer_wire_gaps: 0, has_self_intersection: false,
  };
  }
 
@@ -1481,14 +1640,17 @@ fn check_single_face_detailed(
  let mut wire_verts: Vec<(usize, usize)> = Vec::new();
  let mut valid = true;
 
- for we in &wire.edges {
- if we.idx >= n_edges {
- issues.push(FaceCheckIssue::InvalidEdgeIndex { edge_idx: we.idx });
+ for esr in &outer_wire_edges {
+ if esr.index >= n_edges {
+ issues.push(FaceCheckIssue::InvalidEdgeIndex { edge_idx: esr.index });
  valid = false;
  } else {
- let edge = &brep.edges[we.idx];
- let (sv, ev) = if we.forward { (edge.start, edge.end) } else { (edge.end, edge.start) };
+ let (sv, ev) = edge_verts(brep, esr.index);
+ if esr.orientation == Orientation::Forward {
  wire_verts.push((sv, ev));
+ } else {
+ wire_verts.push((ev, sv));
+ }
  }
  }
 
@@ -1500,8 +1662,8 @@ fn check_single_face_detailed(
  let end_v = wire_verts[i].1;
  let start_v = wire_verts[next].0;
  if end_v != start_v {
- let end_pt = brep.vertices.get(end_v).map(|v| v.point).unwrap_or_default();
- let start_pt = brep.vertices.get(start_v).map(|v| v.point).unwrap_or_default();
+ let end_pt = vpoint(brep, end_v);
+ let start_pt = vpoint(brep, start_v);
  let gap = (end_pt - start_pt).length();
  if gap > tolerance {
  issues.push(FaceCheckIssue::OpenWire { wire_pos: i, gap_distance: gap });
@@ -1525,27 +1687,34 @@ fn check_single_face_detailed(
  }
  }
 
+ // Build vertex points vec for geometric intersection check
+ let vert_points: Vec<DVec3> = (0..brep.vertex_count()).map(|vi| vpoint(brep, vi)).collect();
+
  // Check for geometric self-intersection
- check_geometric_self_intersection_face(&wire_verts, &brep.vertices, &mut issues);
+ check_geometric_self_intersection_face(&wire_verts, &vert_points, &mut issues);
  }
 
  // Check inner wires
- for (wi, inner_wire) in face.inner_wires.iter().enumerate() {
- if inner_wire.edges.len() < 2 {
+ for (wi, iw_sr) in fd.inner_wires.iter().enumerate() {
+ let TShape::Wire(iwd) = &*brep.tshapes[iw_sr.index] else { continue };
+ if iwd.edges.len() < 2 {
  continue;
  }
 
  let mut inner_verts: Vec<(usize, usize)> = Vec::new();
  let mut inner_valid = true;
 
- for we in &inner_wire.edges {
- if we.idx >= n_edges {
- issues.push(FaceCheckIssue::InvalidEdgeIndex { edge_idx: we.idx });
+ for esr in &iwd.edges {
+ if esr.index >= n_edges {
+ issues.push(FaceCheckIssue::InvalidEdgeIndex { edge_idx: esr.index });
  inner_valid = false;
  } else {
- let edge = &brep.edges[we.idx];
- let (sv, ev) = if we.forward { (edge.start, edge.end) } else { (edge.end, edge.start) };
+ let (sv, ev) = edge_verts(brep, esr.index);
+ if esr.orientation == Orientation::Forward {
  inner_verts.push((sv, ev));
+ } else {
+ inner_verts.push((ev, sv));
+ }
  }
  }
 
@@ -1556,8 +1725,8 @@ fn check_single_face_detailed(
  let end_v = inner_verts[i].1;
  let start_v = inner_verts[next].0;
  if end_v != start_v {
- let end_pt = brep.vertices.get(end_v).map(|v| v.point).unwrap_or_default();
- let start_pt = brep.vertices.get(start_v).map(|v| v.point).unwrap_or_default();
+ let end_pt = vpoint(brep, end_v);
+ let start_pt = vpoint(brep, start_v);
  let gap = (end_pt - start_pt).length();
  if gap > tolerance {
  issues.push(FaceCheckIssue::InnerWireOpen { wire_idx: wi + 1, wire_pos: i });
@@ -1573,9 +1742,9 @@ fn check_single_face_detailed(
  face_idx: fi,
  is_valid: issues.is_empty(),
  issues,
- outer_wire_edge_count: wire.edges.len(),
- inner_wire_count: face.inner_wires.len(),
- normal: face.normal,
+ outer_wire_edge_count: outer_wire_edges.len(),
+ inner_wire_count: fd.inner_wires.len(),
+ normal,
  normal_valid,
  outer_wire_closed,
  outer_wire_gaps,
@@ -1586,7 +1755,7 @@ fn check_single_face_detailed(
 /// Check for geometric self-intersections in a face wire.
 fn check_geometric_self_intersection_face(
  wire_verts: &[(usize, usize)],
- vertices: &[rcad_kernel::topology::Vertex],
+ vert_points: &[DVec3],
  issues: &mut Vec<FaceCheckIssue>,
 ) {
  let n = wire_verts.len();
@@ -1594,7 +1763,6 @@ fn check_geometric_self_intersection_face(
  return;
  }
 
- // Check pairs of non-adjacent edges
  for i in 0..n {
  for j in (i + 2)..n {
  if i == 0 && j == n - 1 {
@@ -1604,10 +1772,10 @@ fn check_geometric_self_intersection_face(
  let (a_start, a_end) = wire_verts[i];
  let (b_start, b_end) = wire_verts[j];
 
- let p1 = vertices.get(a_start).map(|v| v.point).unwrap_or_default();
- let p2 = vertices.get(a_end).map(|v| v.point).unwrap_or_default();
- let p3 = vertices.get(b_start).map(|v| v.point).unwrap_or_default();
- let p4 = vertices.get(b_end).map(|v| v.point).unwrap_or_default();
+ let p1 = vert_points.get(a_start).copied().unwrap_or_default();
+ let p2 = vert_points.get(a_end).copied().unwrap_or_default();
+ let p3 = vert_points.get(b_start).copied().unwrap_or_default();
+ let p4 = vert_points.get(b_end).copied().unwrap_or_default();
 
  if segments_intersect_2d(p1, p2, p3, p4) {
  issues.push(FaceCheckIssue::GeometricSelfIntersection { edge_a: i, edge_b: j });
@@ -1638,14 +1806,32 @@ fn check_geometric_self_intersection_face(
 /// # Returns
 ///
 /// A vector of `EdgeCheckResult`, one per edge.
-pub fn check_edges_parallel(brep: &rcad_kernel::BRep, num_threads: usize) -> Vec<EdgeCheckResult> {
- let n_verts = brep.vertices.len();
+pub fn check_edges_parallel(brep: &BRep, num_threads: usize) -> Vec<EdgeCheckResult> {
+ let n_verts = brep.vertex_count();
+ let n_edges = brep.edge_count();
  let tolerance = TOLERANCE_MESH_LEGACY;
 
- // Pre-compute edge face counts
- let edge_face_counts = compute_edge_face_counts_parallel(brep, brep.edges.len());
+ // Build edge data from TShapes: (index, start, end)
+ let edge_data: Vec<(usize, usize, usize)> = brep
+    .tshapes
+    .iter()
+    .enumerate()
+    .filter_map(|(ei, ts)| {
+        if let TShape::Edge(ed) = &**ts {
+            Some((ei, ed.first.index, ed.last.index))
+        } else {
+            None
+        }
+    })
+    .collect();
 
- 
+ // Pre-compute edge face counts
+ let edge_face_counts = compute_edge_face_counts_parallel(brep, n_edges);
+
+ let do_check = |eidx: usize, start: usize, end: usize| {
+    let edge = rcad_kernel::topology::Edge { start, end };
+    check_single_edge(brep, eidx, &edge, n_verts, edge_face_counts[eidx], tolerance)
+ };
 
  if num_threads > 0 {
  let pool = rayon::ThreadPoolBuilder::new()
@@ -1653,22 +1839,20 @@ pub fn check_edges_parallel(brep: &rcad_kernel::BRep, num_threads: usize) -> Vec
  .build()
  .unwrap_or_else(|_| rayon::ThreadPoolBuilder::new().build().unwrap());
  pool.install(|| {
- brep.edges.par_iter()
- .enumerate()
- .map(|(eidx, edge)| check_single_edge(brep, eidx, edge, n_verts, edge_face_counts[eidx], tolerance))
+ edge_data.par_iter()
+ .map(|&(eidx, start, end)| do_check(eidx, start, end))
  .collect()
  })
  } else {
- brep.edges.par_iter()
- .enumerate()
- .map(|(eidx, edge)| check_single_edge(brep, eidx, edge, n_verts, edge_face_counts[eidx], tolerance))
+ edge_data.par_iter()
+ .map(|&(eidx, start, end)| do_check(eidx, start, end))
  .collect()
  }
 }
 
 /// Check a single edge and return a detailed result.
 fn check_single_edge(
- brep: &rcad_kernel::BRep,
+ brep: &BRep,
  eidx: usize,
  edge: &rcad_kernel::topology::Edge,
  n_verts: usize,
@@ -1689,8 +1873,8 @@ fn check_single_edge(
  }
 
  // Compute edge length
- let start_pt = if start_valid { brep.vertices[edge.start].point } else { DVec3::ZERO };
- let end_pt = if end_valid { brep.vertices[edge.end].point } else { DVec3::ZERO };
+ let start_pt = if start_valid { vpoint(brep, edge.start) } else { DVec3::ZERO };
+ let end_pt = if end_valid { vpoint(brep, edge.end) } else { DVec3::ZERO };
  let length = (end_pt - start_pt).length();
  let is_degenerate = length < tolerance;
 
@@ -1706,12 +1890,12 @@ fn check_single_edge(
  issues.push(EdgeCheckIssue::NonManifold { face_count });
  }
 
- // Check SameParameter condition
+ // Check SameParameter condition using TShape edge data
  let mut edge_tolerance = tolerance;
- if let Some(curve_idx) = brep.geom.edge_curve.get(eidx).and_then(|c| *c)
- && let Some(curve) = brep.geom.curves.get(curve_idx)
- && let Some(range) = brep.geom.edge_curve_range.get(eidx).and_then(|r| *r)
- && start_valid && end_valid {
+ if let TShape::Edge(ed) = &*brep.tshapes[eidx] {
+ if let Some(ref curve) = ed.curve {
+ if start_valid && end_valid {
+ let range = ed.range;
  let eval_start = curve.point_at(range[0]);
  let eval_end = curve.point_at(range[1]);
  let start_gap = (eval_start - start_pt).length();
@@ -1721,6 +1905,8 @@ fn check_single_edge(
 
  if start_gap > tolerance || end_gap > tolerance {
  issues.push(EdgeCheckIssue::SameParameterViolation { start_gap, end_gap });
+ }
+ }
  }
  }
 
@@ -1735,7 +1921,7 @@ fn check_single_edge(
  face_count,
  is_manifold,
  tolerance: edge_tolerance,
- has_self_intersection: false, // Would require curve evaluation
+ has_self_intersection: false,
  }
 }
 
@@ -1758,15 +1944,19 @@ fn check_single_edge(
 /// # Returns
 ///
 /// A vector of `ShellValidationResult`, one per shell.
-pub fn validate_shells_parallel(brep: &rcad_kernel::BRep) -> Vec<ShellValidationResult> {
- // Create a flat list of shells for parallel processing
- let shell_items: Vec<(usize, usize)> = brep.solids
- .iter()
- .enumerate()
- .flat_map(|(si, solid)| {
- solid.shells.iter().enumerate().map(move |(shi, _)| (si, shi))
- })
- .collect();
+pub fn validate_shells_parallel(brep: &BRep) -> Vec<ShellValidationResult> {
+ // Build flat list of (solid_tshape_idx, shell_index_in_solid) via TShape iteration
+ let shell_items: Vec<(usize, usize)> = brep
+    .tshapes
+    .iter()
+    .enumerate()
+    .filter_map(|(si, ts)| {
+        if let TShape::Solid(sd) = &**ts { Some((si, sd)) } else { None }
+    })
+    .flat_map(|(si, sd)| {
+        sd.shells.iter().enumerate().map(move |(shi, _)| (si, shi))
+    })
+    .collect();
 
  shell_items.par_iter()
  .map(|&(si, shi)| validate_single_shell(brep, si, shi))
@@ -1774,59 +1964,44 @@ pub fn validate_shells_parallel(brep: &rcad_kernel::BRep) -> Vec<ShellValidation
 }
 
 /// Validate a single shell.
-fn validate_single_shell(brep: &rcad_kernel::BRep, si: usize, shi: usize) -> ShellValidationResult {
+fn validate_single_shell(brep: &BRep, si: usize, shi: usize) -> ShellValidationResult {
  use std::collections::{HashMap, HashSet};
 
- let solid = &brep.solids[si];
- let shell = &solid.shells[shi];
- let n_edges = brep.edges.len();
+ // Resolve shell from TShape hierarchy
+ let sd = match &*brep.tshapes[si] { TShape::Solid(s) => s, _ => panic!("not solid") };
+ let shell_sr = match sd.shells.get(shi) { Some(sr) => *sr, None => panic!("shell index out of range") };
+ let shd = match &*brep.tshapes[shell_sr.index] { TShape::Shell(s) => s, _ => panic!("not shell") };
+
+ let n_edges = brep.edge_count();
  let tolerance = TOLERANCE_MESH_LEGACY;
 
  let mut errors = Vec::new();
  let mut warnings = Vec::new();
 
- // Count edges and vertices
+ // Count edges and vertices via face iteration
  let mut unique_edges: HashSet<usize> = HashSet::new();
  let mut unique_vertices: HashSet<usize> = HashSet::new();
 
- for face in &shell.faces {
- for we in &face.outer_wire.edges {
- if we.idx < n_edges {
- unique_edges.insert(we.idx);
- let edge = &brep.edges[we.idx];
- unique_vertices.insert(edge.start);
- unique_vertices.insert(edge.end);
- }
- }
- for wire in &face.inner_wires {
- for we in &wire.edges {
- if we.idx < n_edges {
- unique_edges.insert(we.idx);
- let edge = &brep.edges[we.idx];
- unique_vertices.insert(edge.start);
- unique_vertices.insert(edge.end);
- }
+ for face_sr in &shd.faces {
+ for ei in face_edge_refs(brep, *face_sr) {
+ if ei < n_edges {
+ unique_edges.insert(ei);
+ unique_vertices.insert(edge_start(brep, ei));
+ unique_vertices.insert(edge_end(brep, ei));
  }
  }
  }
 
  let edge_count = unique_edges.len();
  let vertex_count = unique_vertices.len();
- let face_count = shell.faces.len();
+ let face_count = shd.faces.len();
 
  // Count edge face references
  let mut edge_face_count: HashMap<usize, usize> = HashMap::new();
- for face in &shell.faces {
- for we in &face.outer_wire.edges {
- if we.idx < n_edges {
- *edge_face_count.entry(we.idx).or_insert(0) += 1;
- }
- }
- for wire in &face.inner_wires {
- for we in &wire.edges {
- if we.idx < n_edges {
- *edge_face_count.entry(we.idx).or_insert(0) += 1;
- }
+ for face_sr in &shd.faces {
+ for ei in face_edge_refs(brep, *face_sr) {
+ if ei < n_edges {
+ *edge_face_count.entry(ei).or_insert(0) += 1;
  }
  }
  }
@@ -1849,13 +2024,11 @@ fn validate_single_shell(brep: &rcad_kernel::BRep, si: usize, shi: usize) -> She
  };
 
  // Check orientation consistency
- let orientation_consistent = check_shell_orientation_consistency(shell, brep);
+ let orientation_consistent = check_shell_orientation_consistency(brep, shd);
 
  // Get face results
- let face_results: Vec<FaceCheckResult> = shell.faces
- .iter()
- .enumerate()
- .map(|(fi, _)| check_single_face_detailed(brep, si, shi, fi, n_edges, tolerance))
+ let face_results: Vec<FaceCheckResult> = (0..face_count)
+ .map(|fi| check_single_face_detailed(brep, si, shi, fi, n_edges, tolerance))
  .collect();
 
  // Generate errors and warnings
@@ -1892,16 +2065,18 @@ fn validate_single_shell(brep: &rcad_kernel::BRep, si: usize, shi: usize) -> She
 }
 
 /// Check orientation consistency for a shell.
-fn check_shell_orientation_consistency(shell: &rcad_kernel::topology::Shell, brep: &rcad_kernel::BRep) -> bool {
+fn check_shell_orientation_consistency(brep: &BRep, shd: &topods::TShellData) -> bool {
  use std::collections::HashMap;
 
- let n_edges = brep.edges.len();
+ let n_edges = brep.edge_count();
  let mut edge_orientations: HashMap<usize, Vec<bool>> = HashMap::new();
 
- for face in &shell.faces {
- for we in &face.outer_wire.edges {
- if we.idx < n_edges {
- edge_orientations.entry(we.idx).or_default().push(we.forward);
+ for face_sr in &shd.faces {
+ let TShape::Face(fd) = &*brep.tshapes[face_sr.index] else { continue };
+ let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] else { continue };
+ for esr in &wd.edges {
+ if esr.index < n_edges {
+ edge_orientations.entry(esr.index).or_default().push(esr.orientation == Orientation::Forward);
  }
  }
  }
@@ -1909,7 +2084,6 @@ fn check_shell_orientation_consistency(shell: &rcad_kernel::topology::Shell, bre
  // For a properly oriented shell, each edge should have one forward and one backward reference
  for orientations in edge_orientations.values() {
  if orientations.len() == 2 {
- // Adjacent faces should have opposite orientations for shared edges
  if orientations[0] == orientations[1] {
  return false;
  }

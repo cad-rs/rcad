@@ -9,7 +9,8 @@ pub fn identify_small_faces(brep: &rcad_kernel::BRep, max_area: f64) -> Vec<usiz
     if max_area <= 0.0 {
         return Vec::new();
     }
-    let Some(shell) = brep.solids.first().and_then(|s| s.shells.first()) else {
+    let solids = brep.solids();
+    let Some(shell) = solids.first().and_then(|s| s.shells.first()) else {
         return Vec::new();
     };
 
@@ -19,11 +20,13 @@ pub fn identify_small_faces(brep: &rcad_kernel::BRep, max_area: f64) -> Vec<usiz
         // Collect outer-wire vertex positions (in order).
         let mut pts: Vec<DVec3> = Vec::new();
         for we in &face.outer_wire.edges {
-            let Some(edge) = brep.edges.get(we.idx) else {
+            let edges = brep.edges();
+            let Some(edge) = edges.get(we.idx) else {
                 continue;
             };
             let vi = if we.forward { edge.start } else { edge.end };
-            if let Some(v) = brep.vertices.get(vi) {
+            let vertices = brep.vertices();
+            if let Some(v) = vertices.get(vi) {
                 pts.push(v.point);
             }
         }
@@ -105,7 +108,8 @@ pub fn defeature_brep(
     brep: &rcad_kernel::BRep,
     options: &DefeaturingOptions,
 ) -> Result<(rcad_kernel::BRep, DefeaturingReport), DefeaturingError> {
-    if brep.solids.is_empty() || brep.solids[0].shells.is_empty() {
+    let solids = brep.solids();
+    if solids.is_empty() || solids[0].shells.is_empty() {
         return Err(DefeaturingError::EmptyInput);
     }
 
@@ -472,7 +476,8 @@ pub fn defeature_brep_enhanced(
     brep: &rcad_kernel::BRep,
     options: &DefeaturingOptionsEnhanced,
 ) -> Result<(rcad_kernel::BRep, DefeaturingReportEnhanced), DefeaturingError> {
-    if brep.solids.is_empty() || brep.solids[0].shells.is_empty() {
+    let solids = brep.solids();
+    if solids.is_empty() || solids[0].shells.is_empty() {
         return Err(DefeaturingError::EmptyInput);
     }
 

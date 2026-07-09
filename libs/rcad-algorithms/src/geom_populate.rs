@@ -13,30 +13,47 @@ use crate::inttools::pcurve_derive::fallback_pcurve_by_projection;
 /// After this call, every edge has a `Curve3::Line` and every face has a `Surface3::Plane`.
 /// Precondition: brep was created by `BRep::from_primitive(Box{..})`.
 pub fn populate_box_geom(brep: &mut rcad_kernel::BRep) {
-    // Set line curves on all edge tshapes that don't have one.
-    for ts in &mut brep.tshapes {
-        let TShape::Edge(ed) = Arc::make_mut(ts) else { continue };
-        if ed.curve.is_some() {
-            continue;
-        }
-        let p0 = brep.vertex_point(ed.first.index).unwrap_or(DVec3::ZERO);
-        let p1 = brep.vertex_point(ed.last.index).unwrap_or(DVec3::ZERO);
+    // Collect edge indices (ts_index, first_idx, last_idx) for edges missing a curve.
+    let edge_data: Vec<(usize, usize, usize)> = brep.tshapes.iter().enumerate().filter_map(|(ti, ts)| {
+        if let TShape::Edge(ed) = ts.as_ref() {
+            if ed.curve.is_none() {
+                Some((ti, ed.first.index, ed.last.index))
+            } else { None }
+        } else { None }
+    }).collect();
+
+    // Set line curves in a separate pass (avoids borrow conflict with vertex_point).
+    for (ei, first_idx, last_idx) in &edge_data {
+        let p0 = brep.vertex_point(*first_idx).unwrap_or(DVec3::ZERO);
+        let p1 = brep.vertex_point(*last_idx).unwrap_or(DVec3::ZERO);
         let delta = p1 - p0;
         let len = delta.length();
         let dir = if len > TOLERANCE_LEN_MIN { delta / len } else { DVec3::X };
+        let ts = &mut brep.tshapes[*ei];
+        let TShape::Edge(ed) = Arc::make_mut(ts) else { continue };
         ed.curve = Some(Curve3::Line(Line3 { origin: p0, direction: dir }));
         ed.range = [0.0, len.max(TOLERANCE_LEN_MIN)];
         ed.degenerated = len <= TOLERANCE_LEN_MIN;
     }
 
-    // Set plane surfaces on all face tshapes that don't have one.
-    for ts in &mut brep.tshapes {
+    // Collect face indices whose surfaces need to be set.
+    let face_indices: Vec<usize> = brep.tshapes.iter().enumerate().filter_map(|(fi, ts)| {
+        if let TShape::Face(fd) = ts.as_ref() {
+            if fd.surface.is_none() {
+                Some(fi)
+            } else { None }
+        } else { None }
+    }).collect();
+
+    // Compute plane from wire for each face in a separate pass.
+    for &fi in &face_indices {
+        let (origin, normal) = {
+            let ts = &brep.tshapes[fi];
+            let TShape::Face(fd) = ts.as_ref() else { continue };
+            compute_face_plane_from_wire(brep, fd)
+        };
+        let ts = &mut brep.tshapes[fi];
         let TShape::Face(fd) = Arc::make_mut(ts) else { continue };
-        if fd.surface.is_some() {
-            continue;
-        }
-        // Compute a plane from the first three distinct wire vertices.
-        let (origin, normal) = compute_face_plane_from_wire(brep, fd);
         fd.surface = Some(Surface3::Plane(Plane { origin, normal }));
     }
 }
@@ -90,14 +107,13 @@ pub fn recompute_plane_surfaces(brep: &mut rcad_kernel::BRep) {
     for (fi, ts) in brep.tshapes.iter().enumerate() {
         let TShape::Face(fd) = ts.as_ref() else { continue };
         // Compute origin from the first vertex of the outer wire.
-        let origin = (|| -> Option<DVec3> {
-            let wire_ts = brep.tshapes.get(fd.outer_wire.index)?;
-            let TShape::Wire(wd) = wire_ts.as_ref()?;
+        let origin = brep.tshapes.get(fd.outer_wire.index).and_then(|wire_ts| {
+            let TShape::Wire(wd) = wire_ts.as_ref() else { return None };
             let first_edge_ref = wd.edges.first()?;
             let edge_ts = brep.tshapes.get(first_edge_ref.index)?;
-            let TShape::Edge(ed) = edge_ts.as_ref()?;
+            let TShape::Edge(ed) = edge_ts.as_ref() else { return None };
             brep.vertex_point(ed.first.index)
-        })().unwrap_or(DVec3::ZERO);
+        }).unwrap_or(DVec3::ZERO);
         face_origins.push((fi, origin));
     }
 
@@ -112,16 +128,24 @@ pub fn recompute_plane_surfaces(brep: &mut rcad_kernel::BRep) {
     }
 
     // Add straight-line edge curves only where missing.
-    for ts in &mut brep.tshapes {
-        let TShape::Edge(ed) = Arc::make_mut(ts) else { continue };
-        if ed.curve.is_some() {
-            continue; // already has a curve
-        }
-        let p0 = brep.vertex_point(ed.first.index).unwrap_or(DVec3::ZERO);
-        let p1 = brep.vertex_point(ed.last.index).unwrap_or(DVec3::ZERO);
+    // Collect (ts_index, first_idx, last_idx) for edges missing a curve.
+    let edge_data: Vec<(usize, usize, usize)> = brep.tshapes.iter().enumerate().filter_map(|(ti, ts)| {
+        if let TShape::Edge(ed) = ts.as_ref() {
+            if ed.curve.is_none() {
+                Some((ti, ed.first.index, ed.last.index))
+            } else { None }
+        } else { None }
+    }).collect();
+
+    // Set curves in a separate pass (avoids borrow conflict).
+    for (ei, first_idx, last_idx) in &edge_data {
+        let p0 = brep.vertex_point(*first_idx).unwrap_or(DVec3::ZERO);
+        let p1 = brep.vertex_point(*last_idx).unwrap_or(DVec3::ZERO);
         let delta = p1 - p0;
         let len = delta.length();
         let dir = if len > TOLERANCE_LEN_MIN { delta / len } else { DVec3::X };
+        let ts = &mut brep.tshapes[*ei];
+        let TShape::Edge(ed) = Arc::make_mut(ts) else { continue };
         ed.curve = Some(Curve3::Line(Line3 { origin: p0, direction: dir }));
         ed.range = [0.0, (p1 - p0).dot(dir)];
         ed.degenerated = len <= TOLERANCE_LEN_MIN;
@@ -167,7 +191,7 @@ pub fn populate_boolean_result_pcurves(brep: &mut rcad_kernel::BRep) {
                 }
             }
         }
-        edge_refs.into_iter().map(move |ei| (ei, *fi, surf.clone()))
+        edge_refs.into_iter().map(move |ei| (ei, *fi, surf.clone())).collect::<Vec<_>>()
     }).collect();
 
     for (edge_idx, face_idx, surface) in face_edge_pairs {

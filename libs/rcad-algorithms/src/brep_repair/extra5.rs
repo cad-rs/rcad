@@ -42,24 +42,30 @@ pub fn fix_all_uv_gaps(brep: &rcad_kernel::BRep, config: &UvGapRepairConfig) -> 
  let mut si = 0usize;
  let mut solid_idx = 0usize;
  while solid_idx < result.tshapes.len() {
-  if let TShape::Solid(ref sd) = *result.tshapes[solid_idx] {
-   for (shi, shell_sr) in sd.shells.iter().enumerate() {
-    if let TShape::Shell(ref shd) = *result.tshapes[shell_sr.index] {
-     for fi in 0..shd.faces.len() {
-      let (new_brep, face_report) = fix_uv_gaps(si, shi, fi, &result, config);
-      result = new_brep;
+  // Clone shell indices to avoid borrowing result during fix_uv_gaps
+  let shell_refs: Vec<(usize, ShapeRef)> = {
+   let TShape::Solid(sd) = &*result.tshapes[solid_idx] else { solid_idx += 1; continue };
+   sd.shells.iter().enumerate().map(|(shi, sr)| (shi, *sr)).collect()
+  };
+  for (shi, shell_sr) in &shell_refs {
+   let n_faces = {
+    let TShape::Shell(shd) = &*result.tshapes[shell_sr.index] else { continue };
+    shd.faces.len()
+   };
+   for fi in 0..n_faces {
+    let result_clone = result.clone();
+    let (new_brep, face_report) = fix_uv_gaps(si, *shi, fi, &result_clone, config);
+    result = new_brep;
 
-      total_report.faces_processed += face_report.faces_processed;
-      total_report.gaps_repaired += face_report.gaps_repaired;
-      total_report.pcurves_extended += face_report.pcurves_extended;
-      total_report.pcurves_trimmed += face_report.pcurves_trimmed;
-      total_report.seam_edges_adjusted += face_report.seam_edges_adjusted;
-      total_report.unrepaired_gaps.extend(face_report.unrepaired_gaps);
-     }
-    }
+    total_report.faces_processed += face_report.faces_processed;
+    total_report.gaps_repaired += face_report.gaps_repaired;
+    total_report.pcurves_extended += face_report.pcurves_extended;
+    total_report.pcurves_trimmed += face_report.pcurves_trimmed;
+    total_report.seam_edges_adjusted += face_report.seam_edges_adjusted;
+    total_report.unrepaired_gaps.extend(face_report.unrepaired_gaps);
    }
-   si += 1;
   }
+  si += 1;
   solid_idx += 1;
  }
 
@@ -2029,11 +2035,11 @@ pub fn propagate_tolerances_post_sew_with_config(
 
  for &(e1, e2) in seam_edge_pairs {
   let tol1 = match &*result.tshapes[e1] {
-   TShape::Edge(ref ed) => ed.tolerance,
+   TShape::Edge(ed) => ed.tolerance,
    _ => floor,
   };
   let tol2 = match &*result.tshapes[e2] {
-   TShape::Edge(ref ed) => ed.tolerance,
+   TShape::Edge(ed) => ed.tolerance,
    _ => floor,
   };
   let harmonized_tol = tol1.max(tol2).max(seam_tol);

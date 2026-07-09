@@ -1,4 +1,4 @@
-﻿//! BRepExtrema-style distance/extrema calculations.
+//! BRepExtrema-style distance/extrema calculations.
 //!
 //! OCCT-aligned:
 //! - `DistShapeShape` (class): distance between two shapes, with
@@ -310,13 +310,17 @@ pub fn distance_brep_brep(brep1: &rcad_kernel::BRep, brep2: &rcad_kernel::BRep) 
     }
 
     // Also check vertex-to-vertex distances
-    for v1 in &brep1.vertices {
-        for v2 in &brep2.vertices {
-            let dist = (v2.point - v1.point).length();
-            if dist < best_dist {
-                best_dist = dist;
-                best_pt1 = v1.point;
-                best_pt2 = v2.point;
+    for ts1 in &brep1.tshapes {
+        if let topods::TShape::Vertex(v1) = ts1.as_ref() {
+            for ts2 in &brep2.tshapes {
+                if let topods::TShape::Vertex(v2) = ts2.as_ref() {
+                    let dist = (v2.point - v1.point).length();
+                    if dist < best_dist {
+                        best_dist = dist;
+                        best_pt1 = v1.point;
+                        best_pt2 = v2.point;
+                    }
+                }
             }
         }
     }
@@ -380,15 +384,17 @@ pub fn find_furthest_points(brep: &rcad_kernel::BRep, direction: DVec3) -> (DVec
     let mut max_point = DVec3::ZERO;
 
     // Check all vertices
-    for v in &brep.vertices {
-        let proj = v.point.dot(dir);
-        if proj < min_proj {
-            min_proj = proj;
-            min_point = v.point;
-        }
-        if proj > max_proj {
-            max_proj = proj;
-            max_point = v.point;
+    for ts in &brep.tshapes {
+        if let topods::TShape::Vertex(v) = ts.as_ref() {
+            let proj = v.point.dot(dir);
+            if proj < min_proj {
+                min_proj = proj;
+                min_point = v.point;
+            }
+            if proj > max_proj {
+                max_proj = proj;
+                max_point = v.point;
+            }
         }
     }
 
@@ -527,34 +533,34 @@ pub fn find_supporting_edge(brep: &rcad_kernel::BRep, point: DVec3) -> Option<us
     let mut best_dist = f64::INFINITY;
     let tolerance = TOLERANCE_ABS * 100.0;
 
-    for (edge_idx, edge) in brep.edges.iter().enumerate() {
-        // Try to get the curve from geometry store, or create a line from vertices
-        let curve = if let Some(c) = get_brep_curve(brep, edge_idx) {
-            c
-        } else {
-            // Create an implicit line from edge vertices
-            let start_pt = brep.vertices.get(edge.start).map(|v| v.point)?;
-            let end_pt = brep.vertices.get(edge.end).map(|v| v.point)?;
-            let dir = (end_pt - start_pt).normalize();
-            Curve3::Line(Line3 {
-                origin: start_pt,
-                direction: dir,
-            })
-        };
+    for (edge_idx, ts) in brep.tshapes.iter().enumerate() {
+        if let topods::TShape::Edge(ed) = ts.as_ref() {
+            // Try to get the curve from geometry data, or create a line from vertices
+            let curve = if let Some(c) = ed.curve.clone() {
+                c
+            } else {
+                // Create an implicit line from edge vertex positions
+                let start_pt = brep.vertex_point(ed.first.index)?;
+                let end_pt = brep.vertex_point(ed.last.index)?;
+                let dir = (end_pt - start_pt).normalize();
+                Curve3::Line(Line3 {
+                    origin: start_pt,
+                    direction: dir,
+                })
+            };
 
-        let (t, closest) = closest_point_on_curve(&curve, point);
-        let dist = (closest - point).length();
+            let (t, closest) = closest_point_on_curve(&curve, point);
+            let dist = (closest - point).length();
 
-        // Check if parameter is within edge range
-        let edge_range = brep.geom.edge_curve_range.get(edge_idx)
-            .and_then(|r| *r)
-            .unwrap_or_else(|| curve.default_domain());
+            // Check if parameter is within edge range
+            let edge_range = ed.range;
 
-        if t >= edge_range[0] - tolerance && t <= edge_range[1] + tolerance
-            && dist < best_dist {
-                best_dist = dist;
-                best_edge = Some(edge_idx);
-            }
+            if t >= edge_range[0] - tolerance && t <= edge_range[1] + tolerance
+                && dist < best_dist {
+                    best_dist = dist;
+                    best_edge = Some(edge_idx);
+                }
+        }
     }
 
     best_edge
@@ -585,35 +591,42 @@ fn surface_domain(surface: &Surface3) -> [f64; 4] {
 /// Compute the AABB of a BRep.
 fn compute_brep_aabb(brep: &rcad_kernel::BRep) -> Aabb {
     let mut aabb = Aabb::empty();
-    for v in &brep.vertices {
-        aabb.expand_point(v.point);
+    for ts in &brep.tshapes {
+        if let topods::TShape::Vertex(v) = ts.as_ref() {
+            aabb.expand_point(v.point);
+        }
     }
     aabb
 }
 
-/// Get a surface from a BRep by face index.
+/// Get a surface from a BRep by face tshape index.
 fn get_brep_surface(brep: &rcad_kernel::BRep, face_idx: usize) -> Option<Surface3> {
-    brep.geom.face_surface.get(face_idx)
-        .and_then(|s| *s)
-        .and_then(|idx| brep.geom.surfaces.get(idx).cloned())
-}
-
-/// Get all face indices from a BRep.
-fn get_all_face_indices(brep: &rcad_kernel::BRep) -> Vec<usize> {
-    let mut count = 0usize;
-    for solid in &brep.solids {
-        for shell in &solid.shells {
-            count += shell.faces.len();
+    brep.tshapes.get(face_idx).and_then(|ts| {
+        if let topods::TShape::Face(fd) = ts.as_ref() {
+            fd.surface.clone()
+        } else {
+            None
         }
-    }
-    (0..count).collect()
+    })
 }
 
-/// Get a curve from a BRep by edge index.
+/// Get all face tshape indices from a BRep.
+fn get_all_face_indices(brep: &rcad_kernel::BRep) -> Vec<usize> {
+    brep.tshapes.iter().enumerate()
+        .filter(|(_, ts)| matches!(ts.as_ref(), topods::TShape::Face(_)))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Get a curve from a BRep by edge tshape index.
 fn get_brep_curve(brep: &rcad_kernel::BRep, edge_idx: usize) -> Option<Curve3> {
-    brep.geom.edge_curve.get(edge_idx)
-        .and_then(|c| *c)
-        .and_then(|idx| brep.geom.curves.get(idx).cloned())
+    brep.tshapes.get(edge_idx).and_then(|ts| {
+        if let topods::TShape::Edge(ed) = ts.as_ref() {
+            ed.curve.clone()
+        } else {
+            None
+        }
+    })
 }
 
 /// Compute curve derivative via finite differences.

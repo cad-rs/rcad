@@ -854,29 +854,31 @@ fn project(p: DVec3, view: &DMat4) -> (DVec2, f64) {
 /// Collect all triangles from a rcad_kernel::BRep (fan-triangulate faces without pre-triangulated data).
 fn collect_triangles(brep: &rcad_kernel::BRep) -> Vec<[DVec3; 3]> {
     let mut tris = Vec::new();
-    for solid in &brep.solids {
+    for solid in &brep.solids() {
         for shell in &solid.shells {
             for face in &shell.faces {
                 if !face.triangles.is_empty() {
                     for &[i, j, k] in &face.triangles {
                         if let (Some(a), Some(b), Some(c)) = (
-                            brep.vertices.get(i),
-                            brep.vertices.get(j),
-                            brep.vertices.get(k),
+                            brep.vertices().get(i),
+                            brep.vertices().get(j),
+                            brep.vertices().get(k),
                         ) {
                             tris.push([a.point, b.point, c.point]);
                         }
                     }
                 } else {
                     // Fan-triangulate from wire
+                    let edges = brep.edges();
+                    let vertices = brep.vertices();
                     let pts: Vec<DVec3> = face
                         .outer_wire
                         .edges
                         .iter()
                         .filter_map(|we| {
-                            let edge = brep.edges.get(we.idx)?;
+                            let edge = edges.get(we.idx)?;
                             let vi = if we.forward { edge.start } else { edge.end };
-                            brep.vertices.get(vi).map(|v| v.point)
+                            vertices.get(vi).map(|v| v.point)
                         })
                         .collect();
                     if pts.len() >= 3 {
@@ -1296,41 +1298,37 @@ pub struct SilhouetteCurve3 {
 pub fn extract_silhouette_curves(brep: &rcad_kernel::BRep, view_dir: DVec3, opts: &HlrOptions) -> Vec<SilhouetteCurve3> {
     let mut curves: Vec<SilhouetteCurve3> = Vec::new();
 
-    if brep.solids.is_empty() {
+    if brep.solids().is_empty() {
         return curves;
     }
 
     let line_samples = opts.silhouette_samples.max(16);
     let dense_curve_samples = (opts.silhouette_samples * 4).max(64);
 
+    use rcad_kernel::topods::TShape;
     let mut face_idx = 0usize;
-    for shell in &brep.solids[0].shells {
-        for _face in &shell.faces {
-            let surf_idx = match brep.geom.face_surface.get(face_idx).and_then(|o| *o) {
-                Some(idx) => idx,
-                None => {
+    for ts in &brep.tshapes {
+        if let TShape::Face(fd) = ts.as_ref() {
+            let (surface, domain) = match (&fd.surface, fd.uv_domain) {
+                (Some(surf), Some(dom)) => (surf.clone(), dom),
+                (Some(surf), None) => (surf.clone(), surf.default_domain()),
+                (None, _) => {
                     face_idx += 1;
                     continue;
                 }
-            };
-            let surface = &brep.geom.surfaces[surf_idx];
-
-            let domain = match brep.geom.face_surface_range.get(face_idx).and_then(|o| *o) {
-                Some(r) => r,
-                None => surface.default_domain(),
             };
             let [_u0, _u1, _v0, _v1] = domain;
 
             // Extract silhouettes based on surface type
             let face_curves = extract_surface_silhouettes(
-                surface, view_dir, domain, brep, opts, line_samples, dense_curve_samples,
+                &surface, view_dir, domain, brep, opts, line_samples, dense_curve_samples,
             );
 
             for pts in face_curves {
                 if pts.len() >= 2 {
                     curves.push(SilhouetteCurve3 {
                         points: pts,
-                        surface_index: surf_idx,
+                        surface_index: face_idx,
                     });
                 }
             }
@@ -1425,7 +1423,7 @@ fn extract_cylinder_silhouettes(
     } else {
         let mut lo = f64::INFINITY;
         let mut hi = f64::NEG_INFINITY;
-        for vert in &brep.vertices {
+        for vert in &brep.vertices() {
             let proj = (vert.point - cyl.origin).dot(cyl.axis);
             lo = lo.min(proj);
             hi = hi.max(proj);
@@ -1492,7 +1490,7 @@ fn extract_cone_silhouettes(
     } else {
         let mut lo = f64::INFINITY;
         let mut hi = f64::NEG_INFINITY;
-        for vert in &brep.vertices {
+        for vert in &brep.vertices() {
             let proj = (vert.point - con.apex).dot(con.axis);
             lo = lo.min(proj);
             hi = hi.max(proj);

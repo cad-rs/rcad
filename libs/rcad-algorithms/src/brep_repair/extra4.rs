@@ -2008,4 +2008,21 @@ fn extend_pcurve_to_boundary(
  }
 }
 
+/// Simple triangle-fan face area approximation from outer wire vertices.
+fn compute_face_area(brep: &rcad_kernel::BRep, face: &Face) -> f64 {
+    let verts: Vec<DVec3> = face.outer_wire.edges.iter().filter_map(|we| {
+        brep.tshapes.get(we.idx).and_then(|ts| {
+            if let rcad_kernel::topods::TShape::Edge(ed) = ts.as_ref() {
+                brep.vertex_point(ed.first.index)
+            } else { None }
+        })
+    }).collect();
+    if verts.len() < 3 { return 0.0; }
+    let mut area = 0.0;
+    for i in 1..verts.len() - 1 {
+        area += (verts[i] - verts[0]).cross(verts[i + 1] - verts[0]).length() * 0.5;
+    }
+    area
+}
+
 

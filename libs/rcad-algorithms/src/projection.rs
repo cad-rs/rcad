@@ -33,7 +33,7 @@
 use crate::tolerance::*;
 use glam::{DVec2, DVec3};
 use rcad_kernel::geom::{Curve3, Curve2d, Surface3, CurveEval, SurfaceEval};
-use rcad_kernel::{topods, Face};
+use rcad_kernel::topods;
 use rcad_kernel::topology::Wire;
 use rcad_kernel::topology::Face;
 use rcad_kernel::projection::{closest_point_on_curve, closest_point_on_surface};
@@ -309,32 +309,31 @@ pub fn project_point_on_brep(
 ) -> Vec<PointBRepProjection> {
     let mut projections = Vec::new();
 
-    // Iterate over all faces in the BRep
-    for (solid_idx, solid) in brep.solids.iter().enumerate() {
-        for (shell_idx, shell) in solid.shells.iter().enumerate() {
-            for (face_idx, _face) in shell.faces.iter().enumerate() {
-                let flat_face_idx = compute_flat_face_index(brep, solid_idx, shell_idx, face_idx);
+    // Iterate over all faces in the BRep using tshape API
+    for ts in &brep.tshapes {
+        if let topods::TShape::Solid(sd) = &**ts {
+            for shell_sr in &sd.shells {
+                if let topods::TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+                    for face_sr in &shd.faces {
+                        if let topods::TShape::Face(fd) = &*brep.tshapes[face_sr.index] {
+                            let surface = match &fd.surface {
+                                Some(s) => s,
+                                None => continue,
+                            };
 
-                // Get the surface for this face
-                let surface_idx = match brep.geom.face_surface.get(flat_face_idx).copied().flatten() {
-                    Some(idx) => idx,
-                    None => continue,
-                };
-                let surface = match brep.geom.surfaces.get(surface_idx) {
-                    Some(s) => s,
-                    None => continue,
-                };
+                            // Project onto the surface
+                            let result = closest_point_on_surface(surface, point, options.samples);
+                            let uv = DVec2::new(result.params.0, result.params.1);
 
-                // Project onto the surface
-                let result = closest_point_on_surface(surface, point, options.samples);
-                let uv = DVec2::new(result.params.0, result.params.1);
-
-                projections.push(PointBRepProjection {
-                    point: result.point,
-                    face_index: flat_face_idx,
-                    distance: result.distance,
-                    uv,
-                });
+                            projections.push(PointBRepProjection {
+                                point: result.point,
+                                face_index: face_sr.index,
+                                distance: result.distance,
+                                uv,
+                            });
+                        }
+                    }
+                }
             }
         }
     }
@@ -345,20 +344,6 @@ pub fn project_point_on_brep(
     });
 
     projections
-}
-
-/// Compute the flat face index from solid/shell/face indices.
-fn compute_flat_face_index(brep: &rcad_kernel::BRep, solid_idx: usize, shell_idx: usize, face_idx: usize) -> usize {
-    let mut count = 0;
-    for (si, solid) in brep.solids.iter().enumerate() {
-        for (shi, shell) in solid.shells.iter().enumerate() {
-            if si == solid_idx && shi == shell_idx {
-                return count + face_idx;
-            }
-            count += shell.faces.len();
-        }
-    }
-    count
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -403,24 +388,23 @@ pub fn project_wire_on_surface(
     let mut projected_edges = Vec::new();
 
     for wire_edge in &wire.edges {
-        // Get the 3D curve for this edge
-        let _edge = match brep.edges.get(wire_edge.idx) {
-            Some(e) => e,
+        // Get the TShape::Edge for this edge
+        let ed = match brep.tshapes.get(wire_edge.idx) {
+            Some(ts) => match &**ts {
+                topods::TShape::Edge(ed) => ed,
+                _ => continue,
+            },
             None => continue,
         };
 
-        let curve_idx = match brep.geom.edge_curve.get(wire_edge.idx).copied().flatten() {
-            Some(idx) => idx,
-            None => continue,
-        };
-        let curve = match brep.geom.curves.get(curve_idx) {
+        let curve = match &ed.curve {
             Some(c) => c,
             None => continue,
         };
 
         // Get the parameter range for this edge
-        let range = brep.geom.edge_curve_range.get(wire_edge.idx).copied().flatten();
-        let [t0, t1] = range.unwrap_or_else(|| curve.default_domain());
+        let range = ed.range;
+        let [t0, t1] = if range[0] == 0.0 && range[1] == 0.0 { curve.default_domain() } else { range };
 
         // Sample the curve and project each sample point
         let n_samples = 16;
@@ -469,20 +453,16 @@ pub fn project_wire_on_face(
     direction: DVec3,
 ) -> Wire {
     // Get the surface for this face
-    let surface_idx = match brep.geom.face_surface.get(face_index).copied().flatten() {
-        Some(idx) => idx,
+    let surface = match brep.tshapes.get(face_index) {
+        Some(ts) => match &**ts {
+            topods::TShape::Face(fd) => match &fd.surface {
+                Some(s) => s,
+                None => return Wire { edges: Vec::new() },
+            },
+            _ => return Wire { edges: Vec::new() },
+        },
         None => return Wire { edges: Vec::new() },
     };
-    let surface = match brep.geom.surfaces.get(surface_idx) {
-        Some(s) => s,
-        None => return Wire { edges: Vec::new() },
-    };
-
-    // Project onto the surface
-    
-
-    // Clip to face bounds (simplified)
-    // A full implementation would intersect with the face's wire
 
     project_wire_on_surface(wire, brep, surface, direction)
 }
@@ -757,24 +737,33 @@ pub fn compute_silhouette_curves(
     let dir = view_dir.normalize_or_zero();
     let mut curves = Vec::new();
 
-    // Iterate over all faces
-    for (solid_idx, solid) in brep.solids.iter().enumerate() {
-        for (shell_idx, shell) in solid.shells.iter().enumerate() {
-            for (face_idx, face) in shell.faces.iter().enumerate() {
-                let flat_face_idx = compute_flat_face_index(brep, solid_idx, shell_idx, face_idx);
+    // Iterate over all faces using tshape API
+    for ts in &brep.tshapes {
+        if let topods::TShape::Solid(sd) = &**ts {
+            for shell_sr in &sd.shells {
+                if let topods::TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+                    for face_sr in &shd.faces {
+                        if let topods::TShape::Face(fd) = &*brep.tshapes[face_sr.index] {
+                            let surface = match &fd.surface {
+                                Some(s) => s,
+                                None => continue,
+                            };
 
-                let surface_idx = match brep.geom.face_surface.get(flat_face_idx).copied().flatten() {
-                    Some(idx) => idx,
-                    None => continue,
-                };
-                let surface = match brep.geom.surfaces.get(surface_idx) {
-                    Some(s) => s,
-                    None => continue,
-                };
-
-                // Compute silhouette curves for this surface
-                let face_curves = compute_surface_silhouette(surface, face, dir, options);
-                curves.extend(face_curves);
+                            // Compute silhouette curves for this surface
+                            let dummy_face = Face {
+                                outer_wire: Wire { edges: Vec::new() },
+                                inner_wires: Vec::new(),
+                                normal: DVec3::Z,
+                                triangles: Vec::new(),
+                                sample_point: None,
+                                mesh_dirty: true,
+                                surface_idx: None,
+                            };
+                            let face_curves = compute_surface_silhouette(surface, &dummy_face, dir, options);
+                            curves.extend(face_curves);
+                        }
+                    }
+                }
             }
         }
     }
@@ -972,13 +961,26 @@ pub fn compute_contour_edges(brep: &rcad_kernel::BRep, view_dir: DVec3) -> Vec<u
     // Build face normals lookup
     let mut face_normals: std::collections::HashMap<usize, DVec3> = std::collections::HashMap::new();
 
-    for (solid_idx, solid) in brep.solids.iter().enumerate() {
-        for (shell_idx, shell) in solid.shells.iter().enumerate() {
-            for (face_idx, face) in shell.faces.iter().enumerate() {
-                let flat_face_idx = compute_flat_face_index(brep, solid_idx, shell_idx, face_idx);
-                face_normals.insert(flat_face_idx, face.normal);
-                for wire_edge in &face.outer_wire.edges {
-                    edge_faces.entry(wire_edge.idx).or_default().push(flat_face_idx);
+    // Iterate over all faces using tshape API
+    for ts in &brep.tshapes {
+        if let topods::TShape::Solid(sd) = &**ts {
+            for shell_sr in &sd.shells {
+                if let topods::TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+                    for face_sr in &shd.faces {
+                        if let topods::TShape::Face(fd) = &*brep.tshapes[face_sr.index] {
+                            let normal = fd.surface.as_ref().map(|s| {
+                                rcad_kernel::geom::SurfaceEval::normal_at(s, 0.0, 0.0)
+                            }).unwrap_or(DVec3::Z);
+                            face_normals.insert(face_sr.index, normal);
+
+                            // Outer wire edges
+                            if let topods::TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+                                for esr in &wd.edges {
+                                    edge_faces.entry(esr.index).or_default().push(face_sr.index);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

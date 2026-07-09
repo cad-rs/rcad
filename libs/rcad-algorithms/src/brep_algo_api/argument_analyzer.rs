@@ -13,6 +13,7 @@
 
 
 use rcad_kernel::topods;
+use rcad_kernel::topods::TShape;
 use crate::tolerance::TOLERANCE_ABS;
 use crate::brep_tools::{get_shape_type, ShapeType};
 use crate::bopds::checker_si::CheckerSI;
@@ -671,7 +672,7 @@ impl ArgumentAnalyzer {
     fn prepare(&mut self) -> bool {
         // OCCT: Check if shapes are empty
         let shape1_ok = self.shape1.as_ref().map_or(false, |s| {
-            !s.solids.is_empty() || !s.edges.is_empty() || !s.vertices.is_empty()
+            s.has_solids() || s.edge_count() > 0 || s.vertex_count() > 0
         });
         let shape2_present = self.shape2.is_some();
 
@@ -683,7 +684,7 @@ impl ArgumentAnalyzer {
                     .as_ref()
                     .map(|s| {
                         let mut v = Vec::new();
-                        for si in 0..s.solids.len() {
+                        for si in 0..s.solid_count() {
                             v.push(si);
                         }
                         v
@@ -870,7 +871,10 @@ impl ArgumentAnalyzer {
         // Check shape1 edges
         if let Some(s1) = self.shape1.as_ref() {
             let mut small_edges1 = Vec::new();
-            for (edge_idx, _edge) in s1.edges.iter().enumerate() {
+            let s1_edges: Vec<&rcad_kernel::topods::TEdgeData> = s1.tshapes.iter()
+                .filter_map(|ts| if let TShape::Edge(ed) = ts.as_ref() { Some(ed) } else { None })
+                .collect();
+            for (edge_idx, _edge) in s1_edges.iter().enumerate() {
                 let len = self.compute_edge_length(s1, edge_idx);
                 if len < threshold {
                     small_edges1.push(edge_idx);
@@ -890,7 +894,10 @@ impl ArgumentAnalyzer {
         // Check shape2 edges
         if let Some(s2) = self.shape2.as_ref() {
             let mut small_edges2 = Vec::new();
-            for (edge_idx, _edge) in s2.edges.iter().enumerate() {
+            let s2_edges: Vec<&rcad_kernel::topods::TEdgeData> = s2.tshapes.iter()
+                .filter_map(|ts| if let TShape::Edge(ed) = ts.as_ref() { Some(ed) } else { None })
+                .collect();
+            for (edge_idx, _edge) in s2_edges.iter().enumerate() {
                 let len = self.compute_edge_length(s2, edge_idx);
                 if len < threshold {
                     small_edges2.push(edge_idx);
@@ -909,19 +916,17 @@ impl ArgumentAnalyzer {
     ///
     /// 鉁?OCCT-aligned: BRep_Tool::IsMicroEdge checks vertex distance.
     fn compute_edge_length(&self, brep: &rcad_kernel::BRep, edge_idx: usize) -> f64 {
-        let Some(edge) = brep.edges.get(edge_idx) else {
+        let edges: Vec<&rcad_kernel::topods::TEdgeData> = brep.tshapes.iter()
+            .filter_map(|ts| if let TShape::Edge(ed) = ts.as_ref() { Some(ed) } else { None })
+            .collect();
+        let Some(edge) = edges.get(edge_idx) else {
             return 0.0;
         };
-        let start_pt = brep
-            .vertices
-            .get(edge.start)
-            .map(|v| v.point)
-            .unwrap_or(DVec3::ZERO);
-        let end_pt = brep
-            .vertices
-            .get(edge.end)
-            .map(|v| v.point)
-            .unwrap_or(DVec3::ZERO);
+        let vertices: Vec<DVec3> = brep.tshapes.iter()
+            .filter_map(|ts| if let TShape::Vertex(vd) = ts.as_ref() { Some(vd.point) } else { None })
+            .collect();
+        let start_pt = vertices.get(edge.first.index).copied().unwrap_or(DVec3::ZERO);
+        let end_pt = vertices.get(edge.last.index).copied().unwrap_or(DVec3::ZERO);
         (end_pt - start_pt).length()
     }
 
@@ -970,18 +975,21 @@ impl ArgumentAnalyzer {
         let mut faulty: Vec<usize> = Vec::new();
         let mut global_face_idx: usize = 0;
 
-        for (solid_idx, solid) in brep.solids.iter().enumerate() {
-            for (shell_idx, shell) in solid.shells.iter().enumerate() {
-                for (_face_idx, face) in shell.faces.iter().enumerate() {
-                    let needs_rebuild = !self.face_rebuildable(brep, global_face_idx, face);
-                    if needs_rebuild {
-                        faulty.push(global_face_idx);
+        // Iterate solids/shells/faces via tshape hierarchy
+        for ts in &brep.tshapes {
+            if let TShape::Solid(sd) = ts.as_ref() {
+                for &sh_ref in &sd.shells {
+                    if let TShape::Shell(shd) = &*brep.tshapes[sh_ref.index] {
+                        for &f_ref in &shd.faces {
+                            let needs_rebuild = !self.face_rebuildable_topo(brep, global_face_idx, f_ref);
+                            if needs_rebuild {
+                                faulty.push(global_face_idx);
+                            }
+                            global_face_idx += 1;
+                        }
                     }
-                    global_face_idx += 1;
                 }
-                let _ = shell_idx;
             }
-            let _ = solid_idx;
         }
 
         if !faulty.is_empty() {
@@ -997,58 +1005,47 @@ impl ArgumentAnalyzer {
     /// Structural check whether a face can be rebuilt from its wire edges.
     ///
     /// 鉁?OCCT-aligned: Verifies wire closure and edge existence.
-    fn face_rebuildable(
+    fn face_rebuildable_topo(
         &self,
         brep: &rcad_kernel::BRep,
         _global_face_idx: usize,
-        face: &rcad_kernel::topology::Face,
+        face_ref: rcad_kernel::topods::ShapeRef,
     ) -> bool {
-        let wire = &face.outer_wire;
+        use rcad_kernel::topods::Orientation;
+        let TShape::Face(fd) = &*brep.tshapes[face_ref.index] else { return false };
+        let TShape::Wire(owd) = &*brep.tshapes[fd.outer_wire.index] else { return false };
 
-        // Check minimum edge count (at least 3 for a proper face, but 2 for degenerate)
-        if wire.edges.len() < 3 {
+        // Check minimum edge count
+        if owd.edges.len() < 3 {
             return false;
         }
 
-        // Check closure: the start vertex of the first edge should match
-        // the end vertex of the last edge (accounting for orientation).
-        let first_edge = match wire.edges.first() {
-            Some(we) => we,
-            None => return false,
-        };
-        let last_edge = match wire.edges.last() {
-            Some(we) => we,
-            None => return false,
-        };
+        // Check closure: first edge's start vertex == last edge's end vertex
+        let Some(first_er) = owd.edges.first() else { return false };
+        let Some(last_er) = owd.edges.last() else { return false };
+        let TShape::Edge(first_ed) = &*brep.tshapes[first_er.index] else { return false };
+        let TShape::Edge(last_ed) = &*brep.tshapes[last_er.index] else { return false };
 
-        let first_edge_data = brep.edges.get(first_edge.idx);
-        let last_edge_data = brep.edges.get(last_edge.idx);
-
-        match (first_edge_data, last_edge_data) {
-            (Some(fe), Some(le)) => {
-                // Get the actual vertices based on orientation
-                let first_start = if !first_edge.forward {
-                    fe.end
-                } else {
-                    fe.start
-                };
-                let last_end = if !last_edge.forward {
-                    le.start
-                } else {
-                    le.end
-                };
-                // For a closed wire, the start of the first edge must equal
-                // the end of the last edge (same vertex index).
-                if first_start != last_end {
-                    return false;
-                }
-            }
-            _ => return false,
+        let first_start = if matches!(first_er.orientation, rcad_kernel::topods::Orientation::Reversed) {
+            last_ed.first.index
+        } else {
+            first_ed.first.index
+        };
+        let last_end = if matches!(last_er.orientation, rcad_kernel::topods::Orientation::Reversed) {
+            last_ed.last.index
+        } else {
+            last_ed.last.index
+        };
+        if first_start != last_end {
+            return false;
         }
 
-        // Check that all referenced edges exist
-        for wire_edge in &wire.edges {
-            if wire_edge.idx >= brep.edges.len() {
+        // Check that all referenced edges are valid Edge TShapes
+        for wire_edge in &owd.edges {
+            if wire_edge.index >= brep.tshapes.len() {
+                return false;
+            }
+            if !matches!(&*brep.tshapes[wire_edge.index], TShape::Edge(_)) {
                 return false;
             }
         }
@@ -1131,13 +1128,29 @@ impl ArgumentAnalyzer {
 
         let merge_tol = TOLERANCE_ABS * 100.0; // 鉁?OCCT-aligned: merge tolerance
 
+        // Helper: extract vertex points from tshapes
+        let get_vertex_points = |brep: &rcad_kernel::BRep| -> Vec<DVec3> {
+            brep.tshapes.iter()
+                .filter_map(|ts| if let TShape::Vertex(vd) = ts.as_ref() { Some(vd.point) } else { None })
+                .collect()
+        };
+        // Helper: extract edge data from tshapes
+        let get_edge_endpoints = |brep: &rcad_kernel::BRep| -> Vec<(usize, usize)> {
+            brep.tshapes.iter()
+                .filter_map(|ts| if let TShape::Edge(ed) = ts.as_ref() { Some((ed.first.index, ed.last.index)) } else { None })
+                .collect()
+        };
+
+        let s1_verts = get_vertex_points(s1);
+        let s2_verts = get_vertex_points(s2);
+
         if is_vertex {
             // Check shape1 vertices against shape2 vertices
             let mut faulty1: Vec<usize> = Vec::new();
-            for (i, v1) in s1.vertices.iter().enumerate() {
+            for (i, v1) in s1_verts.iter().enumerate() {
                 let mut matches = 0usize;
-                for v2 in &s2.vertices {
-                    let dist = (v1.point - v2.point).length();
+                for v2 in &s2_verts {
+                    let dist = (*v1 - *v2).length();
                     if dist < merge_tol {
                         matches += 1;
                         if matches > 1 {
@@ -1159,10 +1172,10 @@ impl ArgumentAnalyzer {
 
             // Check shape2 vertices against shape1 vertices
             let mut faulty2: Vec<usize> = Vec::new();
-            for (i, v2) in s2.vertices.iter().enumerate() {
+            for (i, v2) in s2_verts.iter().enumerate() {
                 let mut matches = 0usize;
-                for v1 in &s1.vertices {
-                    let dist = (v2.point - v1.point).length();
+                for v1 in &s1_verts {
+                    let dist = (*v2 - *v1).length();
                     if dist < merge_tol {
                         matches += 1;
                         if matches > 1 {
@@ -1179,17 +1192,17 @@ impl ArgumentAnalyzer {
                 ));
             }
         } else {
+            let s1_edges = get_edge_endpoints(s1);
+            let s2_edges = get_edge_endpoints(s2);
+
             // Edge merge test
             let mut faulty1: Vec<usize> = Vec::new();
-            for (i, _e1) in s1.edges.iter().enumerate() {
-                let mid1 = self.edge_midpoint(s1, i);
-                if mid1.is_none() {
-                    continue;
-                }
-                let mid1 = mid1.unwrap();
+            for (i, (s1_sv, s1_ev)) in s1_edges.iter().enumerate() {
+                let mid1 = self.midpoint_from_verts(&s1_verts, *s1_sv, *s1_ev);
+                let mid1 = match mid1 { Some(m) => m, None => continue };
                 let mut matches = 0usize;
-                for (j, _e2) in s2.edges.iter().enumerate() {
-                    let mid2 = self.edge_midpoint(s2, j);
+                for (_j, (s2_sv, s2_ev)) in s2_edges.iter().enumerate() {
+                    let mid2 = self.midpoint_from_verts(&s2_verts, *s2_sv, *s2_ev);
                     if let Some(m2) = mid2 {
                         let dist = (mid1 - m2).length();
                         if dist < merge_tol {
@@ -1213,15 +1226,12 @@ impl ArgumentAnalyzer {
             }
 
             let mut faulty2: Vec<usize> = Vec::new();
-            for (i, _e2) in s2.edges.iter().enumerate() {
-                let mid2 = self.edge_midpoint(s2, i);
-                if mid2.is_none() {
-                    continue;
-                }
-                let mid2 = mid2.unwrap();
+            for (i, (s2_sv, s2_ev)) in s2_edges.iter().enumerate() {
+                let mid2 = self.midpoint_from_verts(&s2_verts, *s2_sv, *s2_ev);
+                let mid2 = match mid2 { Some(m) => m, None => continue };
                 let mut matches = 0usize;
-                for (j, _e1) in s1.edges.iter().enumerate() {
-                    let mid1 = self.edge_midpoint(s1, j);
+                for (_j, (s1_sv, s1_ev)) in s1_edges.iter().enumerate() {
+                    let mid1 = self.midpoint_from_verts(&s1_verts, *s1_sv, *s1_ev);
                     if let Some(m1) = mid1 {
                         let dist = (mid2 - m1).length();
                         if dist < merge_tol {
@@ -1243,12 +1253,11 @@ impl ArgumentAnalyzer {
         }
     }
 
-    /// Compute the midpoint of an edge from its start/end vertex positions.
-    fn edge_midpoint(&self, brep: &rcad_kernel::BRep, edge_idx: usize) -> Option<DVec3> {
-        let edge = brep.edges.get(edge_idx)?;
-        let start = brep.vertices.get(edge.start)?;
-        let end = brep.vertices.get(edge.end)?;
-        Some((start.point + end.point) * 0.5)
+    /// Compute the midpoint of an edge from vertex points array.
+    fn midpoint_from_verts(&self, verts: &[DVec3], sv: usize, ev: usize) -> Option<DVec3> {
+        let start = verts.get(sv)?;
+        let end = verts.get(ev)?;
+        Some((*start + *end) * 0.5)
     }
 
     // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
