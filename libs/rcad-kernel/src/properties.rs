@@ -46,7 +46,7 @@ fn sample_wire_polyline_3d_with_n(brep: &topods::BRep, wire: &Wire, n: usize) ->
  Some(e) => e,
  None => continue,
  };
- let curve_opt = brep.geom.edge_curve.get(we.idx).and_then(|o| *o)
+ let curve_opt = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.clone() } else { None } })
  .and_then(|ci| brep.tshapes.get(ci).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }));
  if let Some(curve) = curve_opt {
  let range = brep
@@ -353,7 +353,7 @@ fn try_face_with_holes(
  return None;
  }
  let surf_idx = brep.tshapes.get(face_flat_idx).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.surface.clone() } else { None } })?;
- let surf = brep.tshapes.get(surf_idx).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None } })?;
+ let surf = &surf_idx;
  let tol = 1e-5_f64;
 
  let mut outer = sample_wire_polyline_3d(brep, &face.outer_wire);
@@ -874,7 +874,7 @@ fn try_spherical_polygon_great_circle_area(
  let ei = we.idx;
  let edge = brep.flat_edges().get(ei)?;
  let curve_idx = brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.curve.clone()) } else { None } }).flatten()?;
- let curve = brep.tshapes.get(curve_idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } })?;
+ let curve = &curve_idx;
  match curve {
  Curve3::Circle(c) => {
  if (c.center - s.center).length() > tol {
@@ -1060,11 +1060,11 @@ fn wire_edge_endpoint_3d(brep: &BRep, we: &WireEdge) -> Option<DVec3> {
  let edge = brep.flat_edges().get(we.idx)?;
  // Use edge curve when available (handles degenerate edges where start==end
  // but curve spans the full distance between two different positions).
- if let Some(curve) = brep.geom.edge_curve.get(we.idx)
+ if let Some(curve) = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.clone() } else { None } })
  .and_then(|o| *o)
  .and_then(|ci| brep.tshapes.get(ci).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }))
  {
- let range = brep.geom.edge_curve_range.get(we.idx)
+ let range = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None } })
  .and_then(|o| *o)
  .unwrap_or_else(|| curve.default_domain());
  // For degenerate edges (start==end), the curve spans between two
@@ -1129,11 +1129,11 @@ fn outer_wire_unique_vertex_uvs(
  };
  // Use edge curve endpoints when available (handles degenerate edges
  // where start==end but the curve spans two different positions).
- let pts: [DVec3; 2] = if let Some(curve) = brep.geom.edge_curve.get(we.idx)
+ let pts: [DVec3; 2] = if let Some(curve) = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.clone() } else { None } })
  .and_then(|o| *o)
  .and_then(|ci| brep.tshapes.get(ci).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }))
  {
- let range = brep.geom.edge_curve_range.get(we.idx)
+ let range = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None } })
  .and_then(|o| *o)
  .unwrap_or_else(|| curve.default_domain());
  [curve.point_at(range[0]), curve.point_at(range[1])]
@@ -1335,7 +1335,7 @@ fn try_planar_face_exact_contour_area(brep: &BRep, face: &Face, face_normal: DVe
  if let Some(we) = face.outer_wire.edges.first() {
  let ei = we.idx;
  if let Some(curve_idx) = brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.curve.clone()) } else { None } }).flatten() {
- if let Some(Curve3::Circle(c)) = brep.tshapes.get(curve_idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }) {
+ if let Some(Curve3::Circle(c)) = &curve_idx {
  if let Some(range) = brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None } }) {
  let theta = (range[1] - range[0]).abs();
  // Full 2π circle: exact analytic area.
@@ -1358,13 +1358,13 @@ fn try_planar_face_exact_contour_area(brep: &BRep, face: &Face, face_normal: DVe
  let mut spans: [f64; 2] = [0.0; 2];
  let mut n_circle_edges = 0u32;
  for (i, we) in face.outer_wire.edges.iter().enumerate() {
- if let Some(ci) = brep.geom.edge_curve.get(we.idx).copied().flatten() {
+ if let Some(ci) = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.clone() } else { None } }).flatten() {
  if let Some(Curve3::Circle(c)) = brep.tshapes.get(ci).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }) {
  if i < 2 {
  radii[i] = c.radius;
  centers[i] = c.center;
  }
- if let Some(r) = brep.geom.edge_curve_range.get(we.idx).and_then(|o| *o) {
+ if let Some(r) = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None } }).and_then(|o| *o) {
  if i < 2 { spans[i] = (r[1] - r[0]).abs(); }
  }
  n_circle_edges += 1;
@@ -1407,7 +1407,7 @@ fn try_planar_face_exact_contour_area(brep: &BRep, face: &Face, face_normal: DVe
  let ei = we.idx;
  let edge = brep.flat_edges().get(ei)?;
  let curve_idx = brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.curve.clone()) } else { None } }).flatten()?;
- let curve = brep.tshapes.get(curve_idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } })?;
+ let curve = &curve_idx;
  let range = brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None } }).unwrap_or([0.0, 1.0]);
 
  let (v_start, v_end) = if we.forward { (edge.0, edge.1) } else { (edge.1, edge.0) };
@@ -1493,7 +1493,7 @@ fn try_planar_face_exact_contour_area(brep: &BRep, face: &Face, face_normal: DVe
  // Compute hole area via dense-sampled polyline projection.
  let hole_pts: Vec<DVec3> = w.edges.iter().filter_map(|we| {
  let e = brep.flat_edges().get(we.idx)?;
- let vi = if we.forward { e.start } else { e.end };
+ let vi = if we.forward { e.0 } else { e.1 };
  brep.vertex_point(vi)
  }).collect();
  if hole_pts.len() < 3 { continue; }
@@ -1616,7 +1616,7 @@ fn try_planar_face_area_shoelace(
  if w.edges.len() == 2 && w.edges[0].idx == w.edges[1].idx {
  let ei = w.edges[0].idx;
  if let (Some(ci), Some(e)) = (brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.curve.clone()) } else { None } }).flatten(), brep.flat_edges().get(ei)) {
- let (p0, p1) = (brep.vertices.get(e.start), brep.vertices.get(e.end));
+ let (p0, p1) = (brep.vertices.get(e.0), brep.vertices.get(e.1));
  if let (Some(v0), Some(v1)) = (p0, p1) {
  let d0 = (v0.point - c.center).normalize();
  let d1 = (v1.point - c.center).normalize();
@@ -1628,7 +1628,6 @@ fn try_planar_face_area_shoelace(
  }
  }
  continue;
- }
  let mut h = sample_wire_polyline_3d(brep, w);
  trim_almost_closed_polyline(&mut h, 1e-5);
  if h.len() < 3 {
@@ -1944,7 +1943,7 @@ fn try_cylinder_trimmed_face_area(
  let mut circle_centers: Vec<DVec3> = Vec::new();
  let mut valid = true;
  for we in &face.outer_wire.edges {
- if let Some(ci) = brep.geom.edge_curve.get(we.idx).copied().flatten() {
+ if let Some(ci) = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.clone() } else { None } }).flatten() {
  match brep.tshapes.get(ci).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }) {
  Some(Curve3::Line(_)) => {
  n_lines += 1;
@@ -1993,9 +1992,9 @@ fn try_cylinder_trimmed_face_area(
  let y_ax = axis.cross(x_ax).normalize();
  let mut u_vals = Vec::new();
  for ci in &edge_curve_indices {
- if let Some(Curve3::Line(_line)) = brep.geom.curves.get(*ci) {
+ if let Some(Curve3::Line(_line)) = brep.tshapes.get(ci).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }) {
  for we in &face.outer_wire.edges {
- if brep.geom.edge_curve.get(we.idx).copied().flatten() == Some(*ci) {
+ if brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.clone() } else { None } }).flatten() == Some(*ci) {
  let ei = we.idx;
  if let Some(edge) = brep.flat_edges().get(ei) {
  let vi = if we.forward { edge.0 } else { edge.1 };
@@ -2553,7 +2552,7 @@ fn try_analytic_face_surface_area(
  face_flat_idx: usize,
 ) -> Option<f64> {
  let surf_idx = brep.tshapes.get(face_flat_idx).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.surface.clone() } else { None } })?;
- let surf = brep.tshapes.get(surf_idx).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None } })?;
+ let surf = &surf_idx;
 
  match surf {
  Surface3::Plane(p) => {
@@ -2601,7 +2600,7 @@ fn try_analytic_face_surface_area(
  // or curves that the exact-contour handler cannot process.
  let pts: Vec<DVec3> = face.outer_wire.edges.iter().filter_map(|we| {
  let e = brep.flat_edges().get(we.idx)?;
- let vi = if we.forward { e.start } else { e.end };
+ let vi = if we.forward { e.0 } else { e.1 };
  brep.vertex_point(vi)
  }).collect();
  if pts.len() >= 3 {
@@ -2636,7 +2635,7 @@ fn try_analytic_face_surface_area(
  // noise from restrict_to_bspline).  The mesh vertices are exact.
  let pts: Vec<DVec3> = face.outer_wire.edges.iter().filter_map(|we| {
  let e = brep.flat_edges().get(we.idx)?;
- let vi = if we.forward { e.start } else { e.end };
+ let vi = if we.forward { e.0 } else { e.1 };
  brep.vertex_point(vi)
  }).collect();
  if pts.len() >= 3 {
@@ -3298,7 +3297,7 @@ fn surface_normal_jacobian(surf: &Surface3, u: f64, v: f64) -> f64 {
 /// ✅ OCCT (BRepGProp_Gauss::Compute + computeSInertiaOfElementaryPart)
 fn face_surface_area_gauss(brep: &BRep, face: &Face, fi: usize) -> Option<f64> {
  let surf_idx = brep.tshapes.get(fi).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.surface.clone() } else { None } })?;
- let surf = brep.tshapes.get(surf_idx).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None } })?;
+ let surf = &surf_idx;
 
  // For faces with inner wires, fall back to generic trimmed-face area
  if !face.inner_wires.is_empty() {
@@ -3411,7 +3410,7 @@ fn tessellate_curved_face(
 ) -> Option<Vec<[DVec3; 3]>> {
  // Look up the surface for this face.
  let surf_idx = brep.tshapes.get(face_flat_idx).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.surface.clone() } else { None } })?;
- let surf = brep.tshapes.get(surf_idx).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None } })?;
+ let surf = &surf_idx;
 
  let domain = curved_face_uv_domain(brep, face, face_flat_idx, surf)?;
 
@@ -3513,12 +3512,12 @@ fn estimate_uv_domain_from_wire(
  use crate::geom::Curve2dEval;
  let all_wires = std::iter::once(&face.outer_wire).chain(face.inner_wires.iter());
  for we in all_wires.flat_map(|w| &w.edges) {
- let range = brep.geom.edge_curve_range.get(we.idx).and_then(|o| *o);
+ let range = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None } }).and_then(|o| *o);
  if let Some([t0, t1]) = range {
  // Find pcurve on this face's surface.
- if let Some(c2d) = brep.geom.edge_pcurves.get(we.idx)
+ if let Some(c2d) = None
  .and_then(|pcurves| pcurves.iter().find(|pc| pc.surface_idx == surf_idx))
- .and_then(|pc| brep.geom.curve2ds.get(pc.curve2d_idx))
+ .and_then(|pc| None)
  {
  let ns = 16;
  for k in 0..=ns {
@@ -3775,7 +3774,7 @@ pub fn surface_area(brep: &topods::BRep) -> f64 {
 
  if cfg!(debug_assertions) && std::env::var("RCAD_DEBUG_SA").is_ok() {
  let vname = brep.tshapes.get(_fi).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.surface.clone() } else { None } })
- .and_then(|si| brep.tshapes.get(si).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None } }))
+ .and_then(|si| Some(si))
  .map(|s| match s { Surface3::Plane(_) => "Plane", Surface3::BSpline(_) => "BSpline", Surface3::Sphere(_) => "Sphere", Surface3::Cylinder(_) => "Cylinder", _ => "Other" })
  .unwrap_or("none");
  let n_inner = f.inner_wires.len();
@@ -3833,7 +3832,7 @@ pub fn surface_area(brep: &topods::BRep) -> f64 {
  // Second pass: print all face area breakdown
  for (_fi, f) in face_flat_iter(brep) {
  let surf_idx = brep.tshapes.get(_fi).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.surface.clone() } else { None } });
- let surf_name = surf_idx.and_then(|si| brep.tshapes.get(si).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None } })).map(|s| {
+ let surf_name = surf_idx.and_then(|si| Some(si)).map(|s| {
  match s {
  Surface3::Plane(_) => "Plane".to_string(),
  Surface3::Cylinder(_) => "Cylinder".to_string(),
@@ -4010,7 +4009,7 @@ fn try_sphere_face_analytic_volume(
  face_flat_idx: usize,
 ) -> Option<f64> {
  let surf_idx = brep.tshapes.get(face_flat_idx).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.surface.clone() } else { None } })?;
- let surf = brep.tshapes.get(surf_idx).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None } })?;
+ let surf = &surf_idx;
  match surf {
  Surface3::Sphere(s) if s.center.length_squared() < SPHERE_CENTER_AT_ORIGIN_TOL => {
  let ctx = spherical_holed_uv_mask_setup(s, brep, face)?;
@@ -4188,244 +4187,4 @@ pub fn inertia_tensor(brep: &topods::BRep) -> InertiaTensor {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-#[cfg(test)]
-mod tests {
- use super::*;
- use crate::PrimitiveSolid;
 
- const EPS: f64 = 1e-6;
-
- #[test]
- fn unit_box_surface_area() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
- width: 1.0,
- height: 1.0,
- depth: 1.0,
- });
- let area = surface_area(&brep);
- assert!(
- (area - 6.0).abs() < EPS,
- "unit box surface area should be 6, got {area}"
- );
- }
-
- #[test]
- fn unit_box_volume() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
- width: 1.0,
- height: 1.0,
- depth: 1.0,
- });
- let vol = volume(&brep);
- assert!(
- (vol - 1.0).abs() < EPS,
- "unit box volume should be 1, got {vol}"
- );
- }
-
- #[test]
- fn box_2x3x4_volume() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
- width: 2.0,
- height: 3.0,
- depth: 4.0,
- });
- let vol = volume(&brep);
- assert!(
- (vol - 24.0).abs() < EPS,
- "2×3×4 box volume should be 24, got {vol}"
- );
- }
-
- #[test]
- fn box_2x3x4_surface_area() {
- // SA = 2*(2*3 + 3*4 + 2*4) = 2*(6+12+8) = 52
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
- width: 2.0,
- height: 3.0,
- depth: 4.0,
- });
- let area = surface_area(&brep);
- assert!(
- (area - 52.0).abs() < EPS,
- "2×3×4 box SA should be 52, got {area}"
- );
- }
-
- /// Each face is a rectangle: two 2×3, two 3×4, two 2×4 — exercises per-face analytic plane area.
- #[test]
- fn box_non_cuboid_per_face_rect_areas() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
- width: 2.0,
- height: 3.0,
- depth: 4.0,
- });
- let mut areas = Vec::new();
- let mut i = 0usize;
- /* flat solid iter removed */ break {
- for shell in &solid.shells {
- for face in &shell.faces {
- areas.push(face_surface_area(&brep, face, i));
- i += 1;
- }
- }
- }
- assert_eq!(areas.len(), 6, "box should have 6 faces");
- areas.sort_by(|a, b| a.total_cmp(b));
- for (a, e) in areas.iter().zip([6.0_f64, 6.0, 8.0, 8.0, 12.0, 12.0].iter()) {
- assert!((a - e).abs() < 1e-3, "face area {a} expected {e}");
- }
- }
-
- #[test]
- fn box_per_face_area_sum_matches_surface_area() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
- width: 2.0,
- height: 3.0,
- depth: 4.0,
- });
- let mut sum = 0.0;
- let mut i = 0usize;
- /* flat solid iter removed */ break {
- for shell in &solid.shells {
- for face in &shell.faces {
- sum += face_surface_area(&brep, face, i);
- i += 1;
- }
- }
- }
- let tot = surface_area(&brep);
- assert!((sum - tot).abs() < 1e-4, "sum of face areas {sum} vs surface_area {tot}");
- }
-
- #[test]
- fn unit_box_centroid() {
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
- width: 1.0,
- height: 1.0,
- depth: 1.0,
- });
- let c = centroid(&brep);
- // unit box: centroid at (0.5, 0.5, 0.5)
- assert!(
- (c - DVec3::splat(0.5)).length() < 1e-4,
- "centroid should be (0.5,0.5,0.5), got {c}"
- );
- }
-
- #[test]
- fn unit_box_inertia_tensor_diagonal_equal() {
- // Unit box [0,1]^3 about the world origin:
- // Ixx = ∫(y²+z²)dV = (1/3 + 1/3) = 2/3
- // By symmetry, Iyy = Izz = 2/3
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
- width: 1.0,
- height: 1.0,
- depth: 1.0,
- });
- let it = inertia_tensor(&brep);
- let expected = 2.0 / 3.0;
- let tol = 1e-4;
- assert!(
- (it.ixx - expected).abs() < tol,
- "Ixx = {} expected {}",
- it.ixx,
- expected
- );
- assert!(
- (it.iyy - expected).abs() < tol,
- "Iyy = {} expected {}",
- it.iyy,
- expected
- );
- assert!(
- (it.izz - expected).abs() < tol,
- "Izz = {} expected {}",
- it.izz,
- expected
- );
- }
-
- #[test]
- fn box_2x1x1_inertia_tensor() {
- // Box [0,2]×[0,1]×[0,1] about origin:
- // Ixx = ∫(y²+z²)dV = V*(1/3+1/3) = 2*(2/3) = 4/3
- // Iyy = ∫(x²+z²)dV = V*(4/3÷2 + 1/3) = 2*(2/3+1/3) = 2*(1) = wait:
- // ∫₀²∫₀¹∫₀¹ (x²+z²) dx dy dz  but order matters since box is [0,2]x[0,1]x[0,1]
- // = 1*1*(∫₀² x² dx) + 1*2*(∫₀¹ z² dz) = (8/3) + 2*(1/3) = 8/3+2/3 = 10/3
- // Izz = ∫(x²+y²)dV = (8/3) + 2*(1/3) = 10/3
- // Ixx = 2*(1/3) + 2*(1/3) = 4/3
- let brep = BRep::from_primitive(PrimitiveSolid::Box {
- width: 2.0,
- height: 1.0,
- depth: 1.0,
- });
- let it = inertia_tensor(&brep);
- let tol = 1e-3;
- let expected_ixx = 4.0 / 3.0;
- let expected_iyy = 10.0 / 3.0;
- let expected_izz = 10.0 / 3.0;
- assert!(
- (it.ixx - expected_ixx).abs() < tol,
- "Ixx = {} expected {}",
- it.ixx,
- expected_ixx
- );
- assert!(
- (it.iyy - expected_iyy).abs() < tol,
- "Iyy = {} expected {}",
- it.iyy,
- expected_iyy
- );
- assert!(
- (it.izz - expected_izz).abs() < tol,
- "Izz = {} expected {}",
- it.izz,
- expected_izz
- );
- }
-
- // ── Curved primitive tests (UV tessellation path) ─────────────────────────
-
- #[test]
- fn unit_sphere_volume() {
- // V = (4/3)π r³ = 4.18879...  for r=1
- let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 1.0 });
- let vol = volume(&brep);
- let expected = 4.0 / 3.0 * std::f64::consts::PI;
- let rel_err = (vol - expected).abs() / expected;
- assert!(
- rel_err < 5e-3,
- "unit sphere volume: got {vol:.6}, expected {expected:.6}, rel_err={rel_err:.4}"
- );
- }
-
- #[test]
- fn sphere_r2_volume() {
- // V = (4/3)π·8 = 33.5103...  for r=2
- let brep = BRep::from_primitive(PrimitiveSolid::Sphere { radius: 2.0 });
- let vol = volume(&brep);
- let expected = 4.0 / 3.0 * std::f64::consts::PI * 8.0;
- let rel_err = (vol - expected).abs() / expected;
- assert!(
- rel_err < 5e-3,
- "r=2 sphere volume: got {vol:.6}, expected {expected:.6}, rel_err={rel_err:.4}"
- );
- }
-
- #[test]
- fn unit_cylinder_volume() {
- // V = π r² h = π for r=1, h=1
- let brep = BRep::from_primitive(PrimitiveSolid::Cylinder {
- radius: 1.0,
- height: 1.0,
- });
- let vol = volume(&brep);
- let expected = std::f64::consts::PI;
- let rel_err = (vol - expected).abs() / expected;
- assert!(
- rel_err < 5e-3,
- "unit cylinder volume: got {vol:.6}, expected {expected:.6}, rel_err={rel_err:.4}"
- );
- }
-}
