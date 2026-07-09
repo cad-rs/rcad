@@ -1,4 +1,4 @@
-﻿//! OCCT-aligned TKBO GTest translations.
+//! OCCT-aligned TKBO GTest translations.
 //!
 //! OCCT source: src/ModelingAlgorithms/TKBO/GTests/
 //!
@@ -124,7 +124,7 @@ mod bop_algo_direct_tests {
     use crate::BooleanOpType;
 
     fn perform_bop(a: &rcad_kernel::BRep, b: &rcad_kernel::BRep, op: BooleanOpType) -> rcad_kernel::BRep {
-        (crate::boolean_op(op, a, b).clone().expect("BOP operation failed"))
+        crate::boolean_op(op, a, b).expect("BOP operation failed")
     }
 
     #[test]
@@ -163,13 +163,22 @@ mod bop_algo_direct_tests {
 }
 
 // =============================================================================
-// BOPAlgo_PaveFiller_Test.cxx 鈥?Degenerated edge handling
+// BOPAlgo_PaveFiller_Test.cxx -- Degenerated edge handling
+//
+// Not yet translatable:
+//   - FuseConeLoftWithBox_DegeneratedEdge: requires loft (BRepOffsetAPI_ThruSections)
+//   - FuseTwoLofts_RobustnessCheck: requires loft
+//   - FuseConeWithRemovedPCurve_NullPCurveHandling: requires manual BRep_Builder
+//     manipulation (creating edges without pcurves)
 // =============================================================================
 
 #[cfg(test)]
 mod pave_filler_tests {
     use super::*;
 
+    /// OCCT: FuseConeWithBox_DegeneratedEdge
+    /// Cone (R1=10, R2=0, H=20) fused with box near apex.
+    /// Tests that degenerated edge at cone apex doesn't crash FillPaves().
     #[test]
     fn fuse_cone_with_box_degenerated_edge() {
         let cone = make_cone(10.0, 20.0);
@@ -194,12 +203,20 @@ mod pave_filler_tests {
 }
 
 // =============================================================================
-// IntTools_FaceFace_Test.cxx 鈥?Face-face intersection
+// IntTools_FaceFace_Test.cxx -- Face-face intersection
+//
+// Not yet translatable (require boundary-aware face-face intersection):
+//   - HalfCylinderOutsideCircularPlane_NoIntersection
+//   - HalfCylinderInsideCircularPlane_HasIntersection
+//   - OppositeHalfInsideCircle_HasIntersection
+//   - PartialCrossing_ProperlyTrimmed
+//   - BothHalvesCompletelyOutside_NoIntersection
 // =============================================================================
 
 #[cfg(test)]
 mod int_tools_face_face_tests {
     use super::*;
+    use crate::inttools::face_face::intersect_faces;
     use crate::inttools::int_ana_quad_quad_geo::QuadQuadGeo;
     use crate::inttools::int_surf_quadric::Quadric;
 
@@ -243,6 +260,57 @@ mod int_tools_face_face_tests {
         qq.init_tolerances();
         qq.perform_plane_cylinder(&q_pl, &q_cyl, 1e-10, 1e-10, 10.0);
         assert!(qq.is_done(), "Cylinder-plane intersection should complete");
+    }
+
+    /// OCCT: PerpendicularCylinderBoundaryTouch_OrderIndependent
+    /// Two perpendicular cylinders whose analytical intersection should not
+    /// depend on argument order (curve and point counts must match).
+    #[test]
+    fn cylinder_cylinder_order_independent() {
+        // Cylinder 1: axis Z, radius 2
+        let s1 = rcad_kernel::geom::Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
+            origin: DVec3::ZERO,
+            axis: DVec3::Z,
+            ref_dir: DVec3::X,
+            radius: 2.0,
+        });
+        // Cylinder 2: axis X, radius 0.5, offset to touch cylinder 1 at (0,2,0)
+        let s2 = rcad_kernel::geom::Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
+            origin: DVec3::new(0.0, 2.0, 0.0),
+            axis: DVec3::X,
+            ref_dir: DVec3::Y,
+            radius: 0.5,
+        });
+
+        let c12 = intersect_faces(&s1, &s2, 1e-7, 1e-7);
+        let c21 = intersect_faces(&s2, &s1, 1e-7, 1e-7);
+
+        assert_eq!(c12.len(), c21.len(),
+            "Intersection curve count should not depend on argument order: {} vs {}",
+            c12.len(), c21.len());
+    }
+
+    /// OCCT: OCC24005_PlaneCylinderIntersection
+    /// Slightly off-angle plane intersecting a cylinder.
+    /// Original OCCT regression test: must complete quickly (no hang) and
+    /// produce at least one intersection result.
+    #[test]
+    fn occ24005_plane_cylinder_intersection() {
+        let plane_s = rcad_kernel::geom::Surface3::Plane(rcad_kernel::geom::Plane {
+            origin: DVec3::new(-72.948737453424499, 754.30437716359393, 259.52151854671678),
+            normal: DVec3::new(6.2471473085930200e-007, -0.99999999999980493, 0.0).normalize(),
+        });
+        let cyl_s = rcad_kernel::geom::Surface3::Cylinder(rcad_kernel::geom::CylindricalSurface {
+            origin: DVec3::new(-6.4812490053250649, 753.39408794522092, 279.16400974257465),
+            axis: DVec3::X,
+            ref_dir: DVec3::Y,
+            radius: 19.712534607908712,
+        });
+
+        let curves = intersect_faces(&plane_s, &cyl_s, 1e-7, 1e-7);
+
+        assert!(!curves.is_empty(),
+            "Expected at least one intersection curve for plane-cylinder");
     }
 }
 
