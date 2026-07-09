@@ -298,7 +298,7 @@ impl GeomStore {
 pub use topods::BRep;
 
 /// Conservative bounding-box contribution from an analytic curve.
-fn curve_bounding_box(curve: &geom::Curve3) -> Option<[DVec3; 2]> {
+pub fn curve_bounding_box(curve: &geom::Curve3) -> Option<[DVec3; 2]> {
  match curve {
  geom::Curve3::Circle(c) => {
  // A circle only extends in its own plane, not in the normal
@@ -347,7 +347,7 @@ fn curve_bounding_box(curve: &geom::Curve3) -> Option<[DVec3; 2]> {
 
  /// Conservative bounding-box contribution from an analytic surface,
  /// expanding based on vertex positions projected onto the surface frame.
- fn surface_bounding_box(surface: &geom::Surface3, vertices: &[crate::Vertex]) -> Option<[DVec3; 2]> {
+ pub fn surface_bounding_box(surface: &geom::Surface3, vertices: &[crate::Vertex]) -> Option<[DVec3; 2]> {
  match surface {
  geom::Surface3::Cylinder(cyl) => {
  let r = cyl.radius;
