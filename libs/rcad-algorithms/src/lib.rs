@@ -113,6 +113,7 @@ pub mod splitter;
 pub mod sweep;
 pub mod thicken;
 pub mod tkbo_gtests;
+pub mod tkbool_gtests;
 pub mod tkprim_gtests;
 pub mod tktopalgo_gtests;
 #[cfg(test)]
