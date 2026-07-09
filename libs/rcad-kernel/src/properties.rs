@@ -1,10 +1,10 @@
-//! Shape properties: surface area, volume, and centroid.
+﻿//! Shape properties: surface area, volume, and centroid.
 //!
 //! Analogous to OCCT `GProp_GProps` with `BRepGProp`.
 //!
 //! `surface_area` first uses analytic or parametric integrals (plane: shoe-lace; sphere: UV
-//! mask and `R² dΩ`; other finite UV patches without `inner_wires`: cylinder `r·Δu·Δv` or a
-//! midpoint `‖∂P/∂u×∂P/∂v‖` sum on the same domain as `tessellate_curved_face`), then
+//! mask and `R虏 d惟`; other finite UV patches without `inner_wires`: cylinder `r路螖u路螖v` or a
+//! midpoint `鈥栤垈P/鈭倁脳鈭侾/鈭倂鈥朻 sum on the same domain as `tessellate_curved_face`), then
 //! triangulated faces. Where triangles are used: UV-grid tessellation, holed
 //! ear-cut, or fan-triangulation from wire vertices.
 
@@ -16,7 +16,7 @@ use crate::topods;
 use crate::geom::{ConicalSurface, Curve3, CurveEval, CylindricalSurface, SphericalSurface, Surface3, SurfaceEval};
 use crate::topology::{Face, Wire, WireEdge};
 
-// ── Internal helpers ──────────────────────────────────────────────────────────
+// 鈹€鈹€ Internal helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Compute the signed area of a triangle from three points.
 /// The sign depends on the orientation relative to the caller.
@@ -46,8 +46,7 @@ fn sample_wire_polyline_3d_with_n(brep: &topods::BRep, wire: &Wire, n: usize) ->
  Some(e) => e,
  None => continue,
  };
- let curve_opt = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.clone() } else { None } })
- .and_then(|ci| brep.tshapes.get(ci).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }));
+ let curve_opt = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } });
  if let Some(curve) = curve_opt {
  let range = brep
  .geom
@@ -69,7 +68,7 @@ fn sample_wire_polyline_3d_with_n(brep: &topods::BRep, wire: &Wire, n: usize) ->
  }
  let vidx = if we.forward { edge.0 } else { edge.1 };
  if let Some(v) = brep.vertex_point(vidx) {
- pts.push(v.point);
+ pts.push(v);
  }
  }
  pts
@@ -92,13 +91,13 @@ fn local_basis_from_normal(normal: DVec3) -> (DVec3, DVec3) {
  (u, v)
 }
 
-/// Spherical (u, v) with u ∈ [−π, π] (longitude) and v ∈ [0, π] (colatitude),
+/// Spherical (u, v) with u 鈭?[鈭捪€, 蟺] (longitude) and v 鈭?[0, 蟺] (colatitude),
 /// matching [`SphericalSurface`](crate::geom::SphericalSurface) / `SurfaceEval`.
 fn sphere_point_to_uv(s: &SphericalSurface, p: DVec3) -> DVec2 {
  (*s).world_to_uv(p)
 }
 
-/// Remove 2π jumps in u so consecutive samples stay in one branch (for earcut).
+/// Remove 2蟺 jumps in u so consecutive samples stay in one branch (for earcut).
 fn unwrap_sphere_u_in_chain(uvs: &mut [DVec2]) {
  use std::f64::consts::PI;
  if uvs.len() < 2 {
@@ -209,7 +208,7 @@ fn try_spherical_earcut_simple(
  }
  let mut outer_uv: Vec<DVec2> = outer.iter().map(|p| sphere_point_to_uv(s, *p)).collect();
  // Closed-chain-aware unwrapping: `unwrap_u_circle_chain_closed` normalises
- // the u-range so a seam-crossing boundary stays within a single 2π interval.
+ // the u-range so a seam-crossing boundary stays within a single 2蟺 interval.
  // Using `unwrap_sphere_u_in_chain` here caused the ear-cut to cover an
  // extra wrap-around on rotated-sphere faces that cross the seam, producing
  // triangle areas larger than the entire sphere surface.
@@ -218,7 +217,7 @@ fn try_spherical_earcut_simple(
  for (uv, u) in outer_uv.iter_mut().zip(unwrapped_u.iter()) {
  uv.x = *u;
  }
- // Decimate the UV chain after unwrapping: keeps the ear-cut O(n²) tractable
+ // Decimate the UV chain after unwrapping: keeps the ear-cut O(n虏) tractable
  // while preserving the correct UV range.
  const MAX_UV_PTS: usize = 8000;
  if outer_uv.len() > MAX_UV_PTS {
@@ -306,7 +305,7 @@ fn try_spherical_earcut_holes(
  earcut_flat_to_tris(&flat, &hole_starts, &all_3d, face_normal)
 }
 
-/// One outer ring only in the plane (pivot) ⟂ `face_normal` (for nearly planar caps).
+/// One outer ring only in the plane (pivot) 鉄?`face_normal` (for nearly planar caps).
 fn try_planar_earcut_simple_outer(outer: &[DVec3], face_normal: DVec3) -> Option<Vec<[DVec3; 3]>> {
  if outer.len() < 3 {
  return None;
@@ -393,13 +392,13 @@ fn try_face_with_holes(
 
 /// Resolution used for UV-grid tessellation of curved faces (per axis).
 ///
-/// 64×64 gives a <0.1% volume error for a unit sphere.
+/// 64脳64 gives a <0.1% volume error for a unit sphere.
 const UV_TESS_N: usize = 80;
 
 /// Finer grid for masked sphere patches (trimmed / holed) when ear-cut fails.
 const SPHERE_UV_MASK_N: usize = 100;
 
-/// Grid for ‖∂P/∂u×∂P/∂v‖ midpoint integration on a UV rectangle (per-axis).
+/// Grid for 鈥栤垈P/鈭倁脳鈭侾/鈭倂鈥?midpoint integration on a UV rectangle (per-axis).
 const PARAM_RECT_AREA_N: usize = 80;
 
 /// Winding-number test; correct for self-intersecting polygons, unlike the
@@ -426,7 +425,7 @@ fn winding_number_2d(poly: &[DVec2], pt: DVec2) -> i32 {
  wn
 }
 
-/// Cross product (b−a)×(c−a) for 2D orientation / signed area.
+/// Cross product (b鈭抋)脳(c鈭抋) for 2D orientation / signed area.
 fn is_left_2d(a: DVec2, b: DVec2, c: DVec2) -> f64 {
  (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
 }
@@ -453,7 +452,7 @@ fn point_in_polygon_2d(poly: &[DVec2], pt: DVec2) -> bool {
 
 /// Test if `point` (on the sphere) is inside a spherical polygon defined by
 /// `boundary` (closed 3D polyline on the sphere).  Uses the angular sum test:
-/// the signed angles around the polygon sum to ±2π for inside, 0 for outside.
+/// the signed angles around the polygon sum to 卤2蟺 for inside, 0 for outside.
 /// Correct for any spherical polygon, no UV-mapping degeneracies.
 fn point_in_spherical_polygon_3d(boundary: &[DVec3], point: DVec3) -> bool {
  let n = boundary.len();
@@ -482,7 +481,7 @@ pub fn point_in_spherical_polygon_3d_pub(boundary: &[DVec3], point: DVec3) -> bo
  point_in_spherical_polygon_3d(boundary, point)
 }
 
-/// Shortest signed step from `a` to `b` on the circle, with `a, b` reduced mod 2π to [0,2π).
+/// Shortest signed step from `a` to `b` on the circle, with `a, b` reduced mod 2蟺 to [0,2蟺).
 #[inline]
 fn short_delta_on_circle_01(a: f64, b: f64) -> f64 {
  const TWO_PI: f64 = 2.0 * std::f64::consts::PI;
@@ -499,9 +498,9 @@ fn short_delta_on_circle_01(a: f64, b: f64) -> f64 {
  d
 }
 
-/// Cumulative u along a **closed** wire, using only short steps on S¹, then remove full 2π
-/// turns so the first and last point close in ℝ (winding 0 in the (u, v) chart).
-/// This fixes `unwrap_sphere_u_in_chain` sometimes representing a small patch with span > 2π.
+/// Cumulative u along a **closed** wire, using only short steps on S鹿, then remove full 2蟺
+/// turns so the first and last point close in 鈩?(winding 0 in the (u, v) chart).
+/// This fixes `unwrap_sphere_u_in_chain` sometimes representing a small patch with span > 2蟺.
 fn unwrap_u_circle_chain_closed(b: &[f64]) -> Vec<f64> {
  const TWO_PI: f64 = 2.0 * std::f64::consts::PI;
  let n = b.len();
@@ -527,7 +526,7 @@ fn unwrap_u_circle_chain_closed(b: &[f64]) -> Vec<f64> {
  o
 }
 
-/// Add +2πk to an inner u-chain so it lies near the outer patch in ℝ (shared chart for PIP).
+/// Add +2蟺k to an inner u-chain so it lies near the outer patch in 鈩?(shared chart for PIP).
 fn align_inner_u_chain_to_outer(outer_umin: f64, outer_umax: f64, o_inner: &mut [f64]) {
  if o_inner.is_empty() {
  return;
@@ -696,8 +695,8 @@ fn spherical_holed_uv_mask_setup(
  }
 
  // Fix degenerate pole-boundary closing edges in UV polygon.
- // At sphere poles (v ≈ 0 or v ≈ π), many u-values map to the same 3D
- // point.  The closing edge (last→first sample) can jump diagonally
+ // At sphere poles (v 鈮?0 or v 鈮?蟺), many u-values map to the same 3D
+ // point.  The closing edge (last鈫抐irst sample) can jump diagonally
  // across the UV interior instead of following the constant-v pole
  // boundary.  Insert intermediate points along the pole.
  const POLE_V_THRESHOLD: f64 = 0.15;
@@ -775,7 +774,7 @@ fn spherical_holed_uv_mask_setup(
  }
  }
  // Snapshot raw u-range before margins to detect UV wrapping (merged faces
- // can produce u-ranges > 2π from multiple seam crossings).
+ // can produce u-ranges > 2蟺 from multiple seam crossings).
  let raw_u_range = umax - umin;
  let margin_u = raw_u_range * 0.02 + 1e-4;
  let margin_v = (vmax - vmin) * 0.02 + 1e-4;
@@ -796,14 +795,14 @@ fn spherical_holed_uv_mask_setup(
  return None;
  }
  // Disable UV winding-number when the polygon wraps u multiple times
- // (raw range >> 2π). Winding number in a non-periodic 2D domain gives
+ // (raw range >> 2蟺). Winding number in a non-periodic 2D domain gives
  // wrong results for wrapped polygons.
  let two_pi = 2.0 * std::f64::consts::PI;
  let outer_u_min = outer_uv.iter().map(|p| p.x).fold(f64::INFINITY, f64::min);
  let outer_u_max = outer_uv.iter().map(|p| p.x).fold(f64::NEG_INFINITY, f64::max);
  let outer_u_span = outer_u_max - outer_u_min;
- // Also check that the outer UV polygon's own u-span doesn't exceed π.
- // When a polygon spans > π in u (e.g. nearly 2π from seam wrapping),
+ // Also check that the outer UV polygon's own u-span doesn't exceed 蟺.
+ // When a polygon spans > 蟺 in u (e.g. nearly 2蟺 from seam wrapping),
  // the 2D winding number gives wrong inside/outside classification
  // because the boundary goes the "long way" around the sphere.
  // Such polygons must be tested with 3D-only point-in-spherical-polygon.
@@ -835,7 +834,7 @@ fn spherical_holed_uv_mask_setup(
  })
 }
 
-/// Sum `∫ R² sin v dudv` over the same masked grid (no triangulation), for GProp-style area.
+/// Sum `鈭?R虏 sin v dudv` over the same masked grid (no triangulation), for GProp-style area.
 /// projected loop in world UV, return that box's `width * height`.
 
 /// Compute sphere face area using 2x2 Gauss-Legendre quadrature over the
@@ -849,7 +848,7 @@ fn spherical_holed_uv_mask_setup(
 /// Uses the formula A = R^2 * (sum(interior_angles) - (n-2)*pi) for a spherical
 /// polygon bounded by great-circle arcs.  Interior angles are computed from the
 /// tangent vectors at each vertex via projection onto the tangent plane, which
-/// is independent of the edge curve parameterization — the great-circle check
+/// is independent of the edge curve parameterization 鈥?the great-circle check
 /// only needs the Curve3 type + center, not the normal direction.
 ///
 /// Returns None when any edge is not a great circle or when the face has
@@ -873,7 +872,7 @@ fn try_spherical_polygon_great_circle_area(
  for we in &face.outer_wire.edges {
  let ei = we.idx;
  let edge = brep.flat_edges().get(ei)?;
- let curve_idx = brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.curve.clone()) } else { None } }).flatten()?;
+ let curve_idx = brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } })?;
  let curve = &curve_idx;
  match curve {
  Curve3::Circle(c) => {
@@ -912,18 +911,18 @@ fn try_spherical_polygon_great_circle_area(
  let v_next = verts[i + 1]; // verts[n] == verts[0] via closure
  let v_hat = v_curr.normalize();
 
- // Tangent of incoming edge (from v_prev → v_curr, pointing into v_curr)
+ // Tangent of incoming edge (from v_prev 鈫?v_curr, pointing into v_curr)
  // projected onto the tangent plane of the sphere at v_curr.
  let t_in = (v_prev - v_hat * v_prev.dot(v_hat)).normalize();
- // Tangent of outgoing edge (from v_curr → v_next)
+ // Tangent of outgoing edge (from v_curr 鈫?v_next)
  let t_out = (v_next - v_hat * v_next.dot(v_hat)).normalize();
 
  let cos_theta = t_in.dot(t_out).clamp(-1.0, 1.0);
  let theta = cos_theta.acos();
 
  // Signed turn direction.
- // For a CCW outer wire (outward-facing sphere): right turn → convex, left → reflex.
- // We take interior = π - θ for right turns, π + θ for left turns.
+ // For a CCW outer wire (outward-facing sphere): right turn 鈫?convex, left 鈫?reflex.
+ // We take interior = 蟺 - 胃 for right turns, 蟺 + 胃 for left turns.
  let cross_sign = t_in.cross(t_out).dot(v_hat);
  let interior = if cross_sign < 0.0 {
  std::f64::consts::PI - theta  // right turn, convex
@@ -941,18 +940,18 @@ fn try_spherical_polygon_great_circle_area(
  n, sum_angles, area, full, face.sample_point);
  }
  // For CW (reversed) wires, the spherical polygon formula gives area < 0.
- // Take the absolute value — the correct region (small polygon vs complement)
+ // Take the absolute value 鈥?the correct region (small polygon vs complement)
  // is determined below by the sample_point check.
  area = area.abs();
  if area <= full + 1e-12 {
- // ✅ OCCT :  。
- // area > half sphere complement（ ）。
+ // 鉁?OCCT :  銆?
+ // area > half sphere complement锛?锛夈€?
  if area > full * 0.5 { area = full - area; }
  if let Some(sp) = face.sample_point {
  let inside = point_in_spherical_polygon_3d(&verts[..n], sp);
  if !inside { area = full - area; }
  }
- // ✅ OCCT : clamp  。
+ // 鉁?OCCT : clamp  銆?
  if area > 0.0 && area <= full + 1e-12 {
  return Some(area);
  }
@@ -962,7 +961,7 @@ fn try_spherical_polygon_great_circle_area(
 
 /// Compute sphere face area using 2x2 Gauss-Legendre quadrature over the
 /// for all surface types including spheres.  This replaces the old grid-raster
-/// approach that used a uniform grid with a 5-point OR test — approximating
+/// approach that used a uniform grid with a 5-point OR test 鈥?approximating
 /// the boundary poorly and underestimating area for faces without pcurves
 /// (e.g. analytic-constructed spherical caps).
 ///
@@ -1060,17 +1059,14 @@ fn wire_edge_endpoint_3d(brep: &BRep, we: &WireEdge) -> Option<DVec3> {
  let edge = brep.flat_edges().get(we.idx)?;
  // Use edge curve when available (handles degenerate edges where start==end
  // but curve spans the full distance between two different positions).
- if let Some(curve) = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.clone() } else { None } })
- .and_then(|o| *o)
- .and_then(|ci| brep.tshapes.get(ci).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }))
+ if let Some(curve) = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } })
  {
  let range = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None } })
- .and_then(|o| *o)
  .unwrap_or_else(|| curve.default_domain());
  // For degenerate edges (start==end), the curve spans between two
  // different positions. The face boundary needs BOTH curve endpoints
  // to form a correct polygon. Use the EDGE DIRECTION to select which
- // endpoint: forward → range[0], reverse → range[1]. For non-degenerate
+ // endpoint: forward 鈫?range[0], reverse 鈫?range[1]. For non-degenerate
  // edges this matches vertex.position; for degenerate edges it gives
  // the correct geometric position on the face boundary.
  let t = if we.forward { range[0] } else { range[1] };
@@ -1129,18 +1125,15 @@ fn outer_wire_unique_vertex_uvs(
  };
  // Use edge curve endpoints when available (handles degenerate edges
  // where start==end but the curve spans two different positions).
- let pts: [DVec3; 2] = if let Some(curve) = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.clone() } else { None } })
- .and_then(|o| *o)
- .and_then(|ci| brep.tshapes.get(ci).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }))
+ let pts: [DVec3; 2] = if let Some(curve) = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } })
  {
  let range = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None } })
- .and_then(|o| *o)
  .unwrap_or_else(|| curve.default_domain());
  [curve.point_at(range[0]), curve.point_at(range[1])]
  } else {
- let p0 = brep.vertices.get(edge.0).map(|v| v.point)
+ let p0 = brep.vertex_point(edge.0).map(|v| v)
  .unwrap_or(DVec3::ZERO);
- let p1 = brep.vertices.get(edge.1).map(|v| v.point)
+ let p1 = brep.vertex_point(edge.1).map(|v| v)
  .unwrap_or(DVec3::ZERO);
  [p0, p1]
  };
@@ -1211,8 +1204,8 @@ fn try_axis_aligned_world_rect_plane_area(
  let [i, j] = axis_aligned_world_plane_uv_axes(n)?;
  // Boolean T-junction repair can permute `outer_wire` edge order so dense sampling walks a
  // self-intersecting polyline while the face is still a convex patch (OCCT `bcommon_simple/B1`).
- // Unique-vertex convex hull in the plane normal to ±X/±Y/±Z recovers the true area; the
- // bbox×shoelace branch below still handles large sampled loops.
+ // Unique-vertex convex hull in the plane normal to 卤X/卤Y/卤Z recovers the true area; the
+ // bbox脳shoelace branch below still handles large sampled loops.
  let pos_tol = (1e-7_f64 * brep
  .bounding_box()
  .map(|[mn, mx]| (mx - mn).length())
@@ -1242,8 +1235,8 @@ fn try_axis_aligned_world_rect_plane_area(
  let abs_eps = 1e-9 * scale;
  // Concave silhouette after booleans: hull area > true boundary; dense-sample
  // shoelace should match the vertex-ring shoelace when edges are straight (`D9`).
- // When dense samples self-cross (`E5`), vertex ring still matches the face — disagree
- // → convex hull (vertex set) recovers area.
+ // When dense samples self-cross (`E5`), vertex ring still matches the face 鈥?disagree
+ // 鈫?convex hull (vertex set) recovers area.
  if a_loop > 1e-18 && a_hull > a_loop * (1.0 + REL) + abs_eps {
  let uv_vert =
  outer_wire_ordered_vertex_uvs(brep, &face.outer_wire, i, j, pos_tol);
@@ -1258,7 +1251,7 @@ fn try_axis_aligned_world_rect_plane_area(
  {
  return Some(a_loop);
  }
- // Vertex ring and dense sample agree, but hull is much larger → very concave face.
+ // Vertex ring and dense sample agree, but hull is much larger 鈫?very concave face.
  // The polygon is simple and the shoelace is trustworthy (e.g. box-cylinder annular cap).
  if (a_vert - a_loop).abs() <= AGREE_REL * scale_agree + abs_eps
  && a_vert + abs_eps < a_hull * 0.6
@@ -1281,7 +1274,7 @@ fn try_axis_aligned_world_rect_plane_area(
  }
  // When hull is NOT significantly larger than the dense-sample loop, the loop
  // correctly traces the boundary (may be concave, e.g. a clipped cylinder cap
- // with a circular arc → hull under-estimates).  Return the loop area when it
+ // with a circular arc 鈫?hull under-estimates).  Return the loop area when it
  // is at least as large as the hull.
  if a_loop > 1e-18 && a_loop + abs_eps >= a_hull {
  return Some(a_loop);
@@ -1319,7 +1312,7 @@ fn try_axis_aligned_world_rect_plane_area(
 /// Exact area for a planar face whose outer wire consists of line segments
 /// and great-circle arcs (Circle3 curves).  Line edges use the exact shoelace
 /// vertex contribution; circular arcs add the exact segment area between the
-/// chord and the arc: ±r²·(θ - sin(θ))/2.
+/// chord and the arc: 卤r虏路(胃 - sin(胃))/2.
 ///
 /// Returns `None` if any edge has a curve type other than Line3 or Circle3,
 /// falling through to the sampled shoelace fallback.
@@ -1330,15 +1323,15 @@ fn try_planar_face_exact_contour_area(brep: &BRep, face: &Face, face_normal: DVe
  // Fast path: single full-circle edge (planar cap from cylinder/sphere clipping).
  // The standard code below requires >= 3 edges for shoelace and handles arcs via
  // chord-segment correction, but the cross-product sign heuristic fails when
- // start == end (full circle — trav = 0).  Detect this case directly.
+ // start == end (full circle 鈥?trav = 0).  Detect this case directly.
  if n_edges == 1 {
  if let Some(we) = face.outer_wire.edges.first() {
  let ei = we.idx;
- if let Some(curve_idx) = brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.curve.clone()) } else { None } }).flatten() {
+ if let Some(curve_idx) = brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }) {
  if let Some(Curve3::Circle(c)) = &curve_idx {
  if let Some(range) = brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None } }) {
  let theta = (range[1] - range[0]).abs();
- // Full 2π circle: exact analytic area.
+ // Full 2蟺 circle: exact analytic area.
  if (theta - 2.0 * std::f64::consts::PI).abs() < 1e-12 {
  return Some(std::f64::consts::PI * c.radius * c.radius);
  }
@@ -1351,20 +1344,20 @@ fn try_planar_face_exact_contour_area(brep: &BRep, face: &Face, face_normal: DVe
 
  // Fast path: two circular edges forming a full circle (split by cylinder seam).
  // Common for planar cavity caps where the cylinder seam cuts the circle into
- // two complementary arcs.  Combined they cover 2π → area = πr².
+ // two complementary arcs.  Combined they cover 2蟺 鈫?area = 蟺r虏.
  if n_edges == 2 {
  let mut radii: [f64; 2] = [0.0; 2];
  let mut centers: [DVec3; 2] = [DVec3::ZERO; 2];
  let mut spans: [f64; 2] = [0.0; 2];
  let mut n_circle_edges = 0u32;
  for (i, we) in face.outer_wire.edges.iter().enumerate() {
- if let Some(ci) = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.clone() } else { None } }).flatten() {
- if let Some(Curve3::Circle(c)) = brep.tshapes.get(ci).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }) {
+ if let Some(ci) = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }) {
+ if let Curve3::Circle(c) = ci {
  if i < 2 {
  radii[i] = c.radius;
  centers[i] = c.center;
  }
- if let Some(r) = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None } }).and_then(|o| *o) {
+ if let Some(r) = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None } }) {
  if i < 2 { spans[i] = (r[1] - r[0]).abs(); }
  }
  n_circle_edges += 1;
@@ -1390,7 +1383,7 @@ fn try_planar_face_exact_contour_area(brep: &BRep, face: &Face, face_normal: DVe
  struct EdgeInfo {
  is_arc: bool, // Circle3 (true) vs Line3 (false)
  radius: f64, // for arcs: circle radius
- theta: f64, // for arcs: central angle (positive, < 2π)
+ theta: f64, // for arcs: central angle (positive, < 2蟺)
  center_2d: DVec2, // for arcs: circle center projected to face plane
  sign: f64, // +1 if arc bulges outward, -1 if inward cutout
  start_2d: DVec2, // edge start in local 2D
@@ -1399,14 +1392,14 @@ fn try_planar_face_exact_contour_area(brep: &BRep, face: &Face, face_normal: DVe
  let mut edges: Vec<EdgeInfo> = Vec::with_capacity(n_edges);
  // Use first vertex's 3D point as pivot for 2D projection.
  let first_we = &face.outer_wire.edges[0];
- let first_e = brep.edges.get(first_we.idx)?;
- let first_vi = if first_we.forward { first_e.start } else { first_e.end };
+ let first_e = brep.flat_edges().get(first_we.idx)?;
+ let first_vi = if first_we.forward { first_e.0 } else { first_e.1 };
  let pivot = brep.vertex_point(first_vi).unwrap_or(DVec3::ZERO);
 
  for we in &face.outer_wire.edges {
  let ei = we.idx;
  let edge = brep.flat_edges().get(ei)?;
- let curve_idx = brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.curve.clone()) } else { None } }).flatten()?;
+ let curve_idx = brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } })?;
  let curve = &curve_idx;
  let range = brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None } }).unwrap_or([0.0, 1.0]);
 
@@ -1536,7 +1529,7 @@ fn try_planar_face_area_shoelace(
  let scale = a_rect.max(a_shoe).max(1.0);
  let abs_eps = 1e-9 * scale;
 
- // OCCT `bcommon_simple/C8`: axis-aligned plane ∩ tilted box gives a parallelogram
+ // OCCT `bcommon_simple/C8`: axis-aligned plane 鈭?tilted box gives a parallelogram
  // whose vertices all sit on the loop's axis-aligned bbox; `w*h` over-counts.
  // Boolean T-junctions can permute wire edge order so shoe-lace on dense samples
  // under-counts while hull/bbox from [`try_axis_aligned_world_rect_plane_area`] is
@@ -1591,7 +1584,7 @@ fn try_planar_face_area_shoelace(
 
  // Boolean T-junction repair can scramble wire edge order so the dense-sampled
  // polyline zig-zags across the face instead of tracing the boundary.  The
- // shoelace then gives ~0 even for a valid face (e.g. rotated-box ∩ unit cube in
+ // shoelace then gives ~0 even for a valid face (e.g. rotated-box 鈭?unit cube in
  // bcommon_simple/G1).  Compute a rough bbox and bail if the area is implausible:
  // face_triangles uses stored boundary or triangle fan, which is robust to this.
  if a < 1e-12 {
@@ -1603,7 +1596,7 @@ fn try_planar_face_area_shoelace(
  }
  let bbox_diag = (bbox_max - bbox_min).length();
  if bbox_diag > 1e-10 {
- // bbox area ≈ diag², so if a << diag² the polyline is degenerate
+ // bbox area 鈮?diag虏, so if a << diag虏 the polyline is degenerate
  if a < 1e-12 * bbox_diag * bbox_diag {
  return None;
  }
@@ -1612,14 +1605,15 @@ fn try_planar_face_area_shoelace(
  }
  }
  for w in &face.inner_wires {
- // ✅ OCCT :  ( Circle3  forward+reverse)→ - 。
+ // 鉁?OCCT :  ( Circle3  forward+reverse)鈫?- 銆?
  if w.edges.len() == 2 && w.edges[0].idx == w.edges[1].idx {
  let ei = w.edges[0].idx;
- if let (Some(ci), Some(e)) = (brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.curve.clone()) } else { None } }).flatten(), brep.flat_edges().get(ei)) {
- let (p0, p1) = (brep.vertices.get(e.0), brep.vertices.get(e.1));
+ if let (Some(ci), Some(e)) = (brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }), brep.flat_edges().get(ei)) {
+ let c = if let Curve3::Circle(ref c_val) = ci { c_val } else { continue; };
+ let (p0, p1) = (brep.vertex_point(e.0), brep.vertex_point(e.1));
  if let (Some(v0), Some(v1)) = (p0, p1) {
- let d0 = (v0.point - c.center).normalize();
- let d1 = (v1.point - c.center).normalize();
+ let d0 = (v0 - c.center).normalize();
+ let d1 = (v1 - c.center).normalize();
  let theta = d0.dot(d1).clamp(-1.0, 1.0).acos();
  if theta > 1e-12 {
  a -= c.radius * c.radius * (theta - theta.sin()) * 0.5;
@@ -1690,8 +1684,8 @@ fn try_boundary_convex_hull_area(
  .iter()
  .filter_map(|&vi| brep.vertex_point(vi))
  .map(|v| DVec2::new(
- (v.point - pivot).dot(ux),
- (v.point - pivot).dot(uy),
+ (v - pivot).dot(ux),
+ (v - pivot).dot(uy),
  ))
  .collect();
 
@@ -1699,7 +1693,7 @@ fn try_boundary_convex_hull_area(
  return None;
  }
 
- // Monotone chain (Andrew's algorithm) convex hull ────────────────────────
+ // Monotone chain (Andrew's algorithm) convex hull 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
  let mut sorted: Vec<usize> = (0..pts_2d.len()).collect();
  sorted.sort_by(|&a, &b| {
  let pa = pts_2d[a];
@@ -1831,25 +1825,25 @@ fn cylinder_uv_area_gl(uvs: &[DVec2]) -> Option<f64> {
  Some(total)
 }
 
-/// For cylinders, `|∂P/∂u × ∂P/∂v| = R` (constant), so surface area = R × area of the UV region.
-/// Uses a Green's theorem line integral ∮ v·du, integrating from the minimum-v boundary edge
+/// For cylinders, `|鈭侾/鈭倁 脳 鈭侾/鈭倂| = R` (constant), so surface area = R 脳 area of the UV region.
+/// Uses a Green's theorem line integral 鈭?v路du, integrating from the minimum-v boundary edge
 /// in the +u direction, to avoid the cancellation that occurs when the wire traces the same
 /// curve forward and backward (e.g., Steinmetz lens bounded by a single intersection curve).
-/// Compute the area of a cylinder UV polygon using 2×2 Gauss-Legendre
-/// quadrature over the UV bounding box.  Since |∂P/∂u × ∂P/∂v| = R is
-/// constant, the surface area = R × ∫∫ du dv, so we just integrate the
+/// Compute the area of a cylinder UV polygon using 2脳2 Gauss-Legendre
+/// quadrature over the UV bounding box.  Since |鈭侾/鈭倁 脳 鈭侾/鈭倂| = R is
+/// constant, the surface area = R 脳 鈭埆 du dv, so we just integrate the
 /// area of the UV domain (no surface-integrand evaluation needed).
 ///
 /// OCCT uses adaptive Gauss-Legendre integration in BRepGProp for trimmed
 /// surfaces including cylinders.  This replaces the shoelace-from-samples
-/// approach whose accuracy depends on the 3D→UV projection convergence.
+/// approach whose accuracy depends on the 3D鈫扷V projection convergence.
 fn cylinder_gl_uv_area(uvs: &[DVec2]) -> Option<f64> {
  const N: usize = 60;
  if uvs.len() < 3 { return None; }
  let n = uvs.len();
  const TWO_PI: f64 = std::f64::consts::PI * 2.0;
 
- // Unwrap U coordinates to handle 2π wrapping (same approach as
+ // Unwrap U coordinates to handle 2蟺 wrapping (same approach as
  // try_cylinder_trimmed_face_area's shoelace path).
  let unwrapped: Vec<f64> = {
  let mut o = Vec::with_capacity(n);
@@ -1873,8 +1867,8 @@ fn cylinder_gl_uv_area(uvs: &[DVec2]) -> Option<f64> {
  let v_range = vmax - vmin;
 
  // The UV polygon might wrap the cylinder in u.  If the unwrapped range
- // is nearly 2π, the face covers the full circumference — integrate
- // over the full [umin, umin+2π] domain.
+ // is nearly 2蟺, the face covers the full circumference 鈥?integrate
+ // over the full [umin, umin+2蟺] domain.
  let u_lo = umin;
  let u_hi = if u_range > TWO_PI - 0.1 { umin + TWO_PI } else { umax };
  let v_lo = vmin;
@@ -1899,9 +1893,9 @@ fn cylinder_gl_uv_area(uvs: &[DVec2]) -> Option<f64> {
  for &gv in &gl_pts {
  let v = v_mid + gv * dv * 0.5;
  // Test against original UV polygon (with wrapped U).
- // The polygon's U values are in [0, 2π) while the
+ // The polygon's U values are in [0, 2蟺) while the
  // integration point u might exceed that range due to
- // unwrapping — remap to [0, 2π) for the point test.
+ // unwrapping 鈥?remap to [0, 2蟺) for the point test.
  let inside = winding_number_2d(uvs, DVec2::new(u_mod, v)) != 0;
  if inside { n_hit += 1; }
  }
@@ -1927,10 +1921,10 @@ fn try_cylinder_trimmed_face_area(
  // Boolean splitting along iso-parametric lines produces sub-faces whose UV
  // domain is a clean rectangle: two generator edges (u = constant, Line3 in
  // 3D) and two circular edges (v = constant, Circle3 in 3D).  For these,
- // the exact analytic area is simply R × ΔU × ΔV.
+ // the exact analytic area is simply R 脳 螖U 脳 螖V.
  //
- // We compute ΔU and ΔV directly from the edge curves rather than using
- // curved_face_uv_domain (which relies on wire sampling → closest-point
+ // We compute 螖U and 螖V directly from the edge curves rather than using
+ // curved_face_uv_domain (which relies on wire sampling 鈫?closest-point
  // projection and inherits numerical error).
  if face.inner_wires.is_empty() && face.outer_wire.edges.len() == 4 {
  if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
@@ -1943,8 +1937,8 @@ fn try_cylinder_trimmed_face_area(
  let mut circle_centers: Vec<DVec3> = Vec::new();
  let mut valid = true;
  for we in &face.outer_wire.edges {
- if let Some(ci) = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.clone() } else { None } }).flatten() {
- match brep.tshapes.get(ci).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }) {
+ if let Some(ci) = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }) {
+ match ci.as_ref() {
  Some(Curve3::Line(_)) => {
  n_lines += 1;
  edge_curve_indices.push(ci);
@@ -1963,16 +1957,16 @@ fn try_cylinder_trimmed_face_area(
  eprintln!("[CYL_RECT_FAST] valid={} lines={} circles={} centers={}", valid, n_lines, n_circles, circle_centers.len());
  }
  if valid && n_lines == 2 && n_circles == 2 && circle_centers.len() == 2 {
- // ΔV: project circle centers onto cylinder axis.
+ // 螖V: project circle centers onto cylinder axis.
  let axis = cyl.axis;
  let v0 = (circle_centers[0] - cyl.origin).dot(axis);
  let v1 = (circle_centers[1] - cyl.origin).dot(axis);
  let dv = (v1 - v0).abs();
- // ΔU: prefer face_surface_range (most reliable, set by analytic
+ // 螖U: prefer face_surface_range (most reliable, set by analytic
  // builders like build_box_minus_cylinder_full_uv_z_fail).
  // Fall back to seam-detection, then angular vertex computation.
  let du = 'du: {
- // Priority 1: face_surface_range — the builder knows the exact UV domain.
+ // Priority 1: face_surface_range 鈥?the builder knows the exact UV domain.
  if let Some(Some(range)) = brep.tshapes.get(face_flat_idx).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.uv_domain } else { None } }) {
  let du_r = (range[1] - range[0]).abs();
  let dv_r = (range[3] - range[2]).abs();
@@ -1983,7 +1977,7 @@ fn try_cylinder_trimmed_face_area(
  break 'du du_r;
  }
  }
- // Priority 2: both Line edges share the same curve index (cylinder seam → full 2π).
+ // Priority 2: both Line edges share the same curve index (cylinder seam 鈫?full 2蟺).
  if edge_curve_indices.len() == 2 && edge_curve_indices[0] == edge_curve_indices[1] {
  break 'du (std::f64::consts::PI * 2.0);
  }
@@ -1992,14 +1986,14 @@ fn try_cylinder_trimmed_face_area(
  let y_ax = axis.cross(x_ax).normalize();
  let mut u_vals = Vec::new();
  for ci in &edge_curve_indices {
- if let Some(Curve3::Line(_line)) = brep.tshapes.get(ci).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }) {
+ if let Curve3::Line(_line) = ci {
  for we in &face.outer_wire.edges {
- if brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.clone() } else { None } }).flatten() == Some(*ci) {
+ if brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }) == Some(*ci) {
  let ei = we.idx;
  if let Some(edge) = brep.flat_edges().get(ei) {
  let vi = if we.forward { edge.0 } else { edge.1 };
  if let Some(v) = brep.vertex_point(vi) {
- let d = v.point - cyl.origin;
+ let d = v - cyl.origin;
  let u = d.dot(y_ax).atan2(d.dot(x_ax));
  u_vals.push(u);
  }
@@ -2055,7 +2049,7 @@ fn try_cylinder_trimmed_face_area(
  eprintln!("[CYL_GL] n_uvs={} gl={:?} cyl_R={:.6}", uvs.len(), gl_res, cyl.radius);
  }
 
- // Simple unwrapping for cylinder faces: accumulate via short deltas on S¹.
+ // Simple unwrapping for cylinder faces: accumulate via short deltas on S鹿.
  let unwrapped: Vec<f64> = {
  let mut o = Vec::with_capacity(n);
  o.push(uvs[0].x);
@@ -2121,8 +2115,8 @@ fn try_cylinder_trimmed_face_area(
  }
  // The envelope method with wrap-around is only valid when the UV
  // polygon actually wraps around the full cylinder (populated bins
- // cover nearly all of 0-2π).  For partial-wrap faces (e.g., wedge
- // faces from boolean splitting where u_span ~200° but only ~55% of
+ // cover nearly all of 0-2蟺).  For partial-wrap faces (e.g., wedge
+ // faces from boolean splitting where u_span ~200掳 but only ~55% of
  // bins are populated), the wrap-around gap closure would integrate
  // across empty bins and overcount.  A 85% threshold distinguishes
  // true wrap-around (figure-8) from partial-wrap merged faces.
@@ -2270,14 +2264,14 @@ fn cylinder_outer_wire_uv_shoelace_area(cyl: &CylindricalSurface, brep: &BRep, f
 
 /// UV-polygon-aware surface area for trimmed cone sub-faces.
 ///
-/// For a cone parameterized as P(u,v) = apex + v·cos(α)·axis + (R + v·sin(α))·(cos(u)·x̂ + sin(u)·ŷ),
-/// the area element is |∂P/∂u × ∂P/∂v| = R + v·sin(α).  The surface area over a
+/// For a cone parameterized as P(u,v) = apex + v路cos(伪)路axis + (R + v路sin(伪))路(cos(u)路x虃 + sin(u)路欧),
+/// the area element is |鈭侾/鈭倁 脳 鈭侾/鈭倂| = R + v路sin(伪).  The surface area over a
 /// UV polygon is therefore:
 ///
-/// A = ∫∫ (R + v·sin(α)) du dv
-/// = R · Area(UV_polygon) + sin(α) · ∫∫ v du dv
+/// A = 鈭埆 (R + v路sin(伪)) du dv
+/// = R 路 Area(UV_polygon) + sin(伪) 路 鈭埆 v du dv
 ///
-/// where ∫∫ v du dv is the first moment about the u-axis, computed via Green's theorem
+/// where 鈭埆 v du dv is the first moment about the u-axis, computed via Green's theorem
 /// from the polygon boundary.  This avoids the overcount from `param_rect_area_cross`
 /// which integrates over the bounding rectangle of the UV polygon.
 fn try_cone_trimmed_face_area(
@@ -2299,7 +2293,7 @@ fn try_cone_trimmed_face_area(
  .map(|&p| { let proj = closest_point_on_surface(&surf, p, 256); DVec2::new(proj.params.0, proj.params.1) })
  .collect();
 
- // Unwrap u for periodic S¹ parameter
+ // Unwrap u for periodic S鹿 parameter
  let unwrapped: Vec<f64> = {
  let mut o = Vec::with_capacity(n);
  o.push(uvs[0].x);
@@ -2309,9 +2303,9 @@ fn try_cone_trimmed_face_area(
  o
  };
 
- // Shoelace area and first moment M_u = ∫∫ v du dv
+ // Shoelace area and first moment M_u = 鈭埆 v du dv
  let mut area2 = 0.0_f64;
- let mut moment6 = 0.0_f64;  // 6 × M_u before division
+ let mut moment6 = 0.0_f64;  // 6 脳 M_u before division
  for i in 0..n {
  let j = if i + 1 < n { i + 1 } else { 0 };
  let cross = unwrapped[i] * uvs[j].y - unwrapped[j] * uvs[i].y;
@@ -2319,7 +2313,7 @@ fn try_cone_trimmed_face_area(
  moment6 += (uvs[i].y + uvs[j].y) * cross;
  }
  let uv_area = area2.abs() * 0.5;
- let mu = moment6.abs() / 6.0;  // ∫∫ v du dv = |moment6| / 6
+ let mu = moment6.abs() / 6.0;  // 鈭埆 v du dv = |moment6| / 6
 
  // Detect doubled-back UV polygon: short_delta unwrapping cancels the net u
  // range, producing a near-zero uv_area even though the face has real area.
@@ -2328,7 +2322,7 @@ fn try_cone_trimmed_face_area(
  .sum();
  let net_range = (unwrapped[n - 1] - unwrapped[0]).abs();
  if net_range < total_abs_path * 0.25 && total_abs_path > std::f64::consts::PI {
- // Envelope method: bin UV points by u-mod-2π, track v_min/v_max per bin,
+ // Envelope method: bin UV points by u-mod-2蟺, track v_min/v_max per bin,
  // then integrate trapezoidally.  Handles doubled-back polygons correctly
  // because it does not depend on winding order.
  const TWO_PI: f64 = std::f64::consts::TAU;
@@ -2390,12 +2384,12 @@ fn try_cone_trimmed_face_area(
  if total > 1e-14 { Some(total) } else { None }
 }
 
-/// Generic trimmed face area via UV-grid integration of |∂P/∂u × ∂P/∂v|.
+/// Generic trimmed face area via UV-grid integration of |鈭侾/鈭倁 脳 鈭侾/鈭倂|.
 ///
 /// Samples the wire boundary in 3D, projects to UV via [`closest_point_on_surface`],
-/// then rasterizes the UV polygon at ~200×200 grid resolution with winding-number
+/// then rasterizes the UV polygon at ~200脳200 grid resolution with winding-number
 /// point-in-polygon tests for outer/inner wires.  Handles any surface type (torus,
-/// BSpline, Bezier, …) where the existing per-surface optimisations don't apply.
+/// BSpline, Bezier, 鈥? where the existing per-surface optimisations don't apply.
 fn try_generic_trimmed_face_area(
  surf: &Surface3,
  brep: &BRep,
@@ -2412,7 +2406,7 @@ fn try_generic_trimmed_face_area(
  );
  let is_v_periodic = matches!(surf, Surface3::Torus(_));
 
- // Sample wire 3D points → project to UV → optionally unwrap U so that the
+ // Sample wire 3D points 鈫?project to UV 鈫?optionally unwrap U so that the
  // winding-number test works correctly across the periodic seam.
  let wire_to_uv = |wire: &Wire| -> Option<Vec<DVec2>> {
  let mut pts_3d = sample_wire_polyline_3d_with_n(brep, wire, PER_WIRE);
@@ -2544,8 +2538,8 @@ fn try_generic_trimmed_face_area(
 }
 
 /// Prefer analytic / parametric area for `surface_area`: plane (shoelace); all sphere faces
-/// (UV polygon mask + `R² dΩ`); finite-UV rectangular patches on other surfaces without inner
-/// wires (cylinder exact; otherwise `‖Pu×Pv‖` midpoint rule on the same domain as tessellation).
+/// (UV polygon mask + `R虏 d惟`); finite-UV rectangular patches on other surfaces without inner
+/// wires (cylinder exact; otherwise `鈥朠u脳Pv鈥朻 midpoint rule on the same domain as tessellation).
 fn try_analytic_face_surface_area(
  brep: &BRep,
  face: &Face,
@@ -2566,21 +2560,21 @@ fn try_analytic_face_surface_area(
  }
 
  // Compute both shoelace and GL areas.
- // BSpline→Plane promotion can produce Plane faces whose 3D vertices
- // don't lie exactly on the promoted Plane (best-fit plane ≠ original
+ // BSpline鈫扨lane promotion can produce Plane faces whose 3D vertices
+ // don't lie exactly on the promoted Plane (best-fit plane 鈮?original
  // BSpline surface).  The shoelace projects vertices to the 2D plane,
  // getting distorted area (e.g. 0.748 instead of 1.0).  GL integration
- // evaluates |Su × Sv| directly on the Plane at UV Gauss points, giving
+ // evaluates |Su 脳 Sv| directly on the Plane at UV Gauss points, giving
  // the exact UV-rectangle area (works for full-rectangle faces).
- // ✅ OCCT  : BRepGProp uses GL for ALL surface types, including Plane.
+ // 鉁?OCCT  : BRepGProp uses GL for ALL surface types, including Plane.
  // (BRepGProp_Face.cxx L217-257: SIntOrder returns Nu=1,Nv=1 for Plane)
  let shoelace = try_planar_face_area_shoelace(brep, face, p.normal);
  let gl = face_surface_area_gauss(brep, face, face_flat_idx);
  match (shoelace, gl) {
  (Some(s), Some(g)) => {
  // When shoelace and GL disagree (>2%), the face may have
- // BSpline→Plane promotion artifact.  Use GL if the face is
- // a simple 4-edge rectangle (no inner wires) — these are
+ // BSpline鈫扨lane promotion artifact.  Use GL if the face is
+ // a simple 4-edge rectangle (no inner wires) 鈥?these are
  // full UV rectangles where GL gives exact area.
  let ratio = if g > 1e-12 { (s - g).abs() / g } else { 0.0 };
  if ratio > 0.02
@@ -2717,7 +2711,7 @@ let ctx = spherical_holed_uv_mask_setup(s, brep, face)?;
  }
  // Also check sample_inside consistency: if the sample point is
  // outside the UV polygon but the face is CCW (small region),
- // the region is wrong → return None (let triangulation handle it).
+ // the region is wrong 鈫?return None (let triangulation handle it).
  if !suspicious_wrap && !is_cw && v > 0.0 && v < full_sphere_area * 0.5 {
  if !sample_inside {
  return None;
@@ -2798,7 +2792,7 @@ fn try_spherical_uv_masked_raster(
  let use_uv_winding = ctx.use_uv_winding;
 
  // When the UV polygon wraps around u (use_uv_winding=false), use the
- // full sphere domain [−π, π] × [0, π] so every physical point is
+ // full sphere domain [鈭捪€, 蟺] 脳 [0, 蟺] so every physical point is
  // tested exactly once. The 3D angular-sum test is insensitive to the
  // UV wrapping.
  let (umin_eff, umax_eff, nu, nv) = if use_uv_winding {
@@ -2847,9 +2841,9 @@ fn try_spherical_uv_masked_raster(
  }
  if use_inner_mask {
  // Use UV-space winding number for inner-hole test regardless of
- // use_uv_winding.  Inner wires bound small regions (area < π), but
- // point_in_spherical_polygon_3d's `|total| > π` threshold cannot
- // detect points inside patches smaller than a hemisphere — it returns
+ // use_uv_winding.  Inner wires bound small regions (area < 蟺), but
+ // point_in_spherical_polygon_3d's `|total| > 蟺` threshold cannot
+ // detect points inside patches smaller than a hemisphere 鈥?it returns
  // false for *all* points.  UV-space handles small holes correctly.
  let in_hole = inner_polys.iter().any(|h| winding_number_2d(h, DVec2::new(uc, vc)) != 0);
  if in_hole {
@@ -2857,7 +2851,7 @@ fn try_spherical_uv_masked_raster(
  }
  }
  let nref = s.normal_at(uc, vc);
- // Exact area in (u, v) for a sphere: R² · du · (cos v0 − cos v1); isotropic
+ // Exact area in (u, v) for a sphere: R虏 路 du 路 (cos v0 鈭?cos v1); isotropic
  // scale of the chordal bilinear patch toward the cell centre to match dA.
  let r2 = radius * radius;
  let d_target = r2 * du * (v0.cos() - v1.cos());
@@ -2895,11 +2889,11 @@ fn try_spherical_uv_masked_raster(
 }
 
 /// Tessellate a curved face by sampling the underlying `Surface3` over its
-/// UV domain on a regular `UV_TESS_N × UV_TESS_N` grid.
+/// UV domain on a regular `UV_TESS_N 脳 UV_TESS_N` grid.
 ///
 /// Returns triangles oriented outward (consistent with the surface normal).
 /// UV rectangle used by [`tessellate_curved_face`] and parametric `surface_area` fallbacks
-/// (same resolution priority as triangulation: range → finite `default_domain` → wire estimate).
+/// (same resolution priority as triangulation: range 鈫?finite `default_domain` 鈫?wire estimate).
 fn curved_face_uv_domain(
  brep: &BRep,
  face: &Face,
@@ -2918,12 +2912,12 @@ fn curved_face_uv_domain(
  }
 }
 
-// ── Gauss-Legendre Integration (OCCT BRepGProp alignment) ──────────────────────
+// 鈹€鈹€ Gauss-Legendre Integration (OCCT BRepGProp alignment) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Gauss-Legendre nodes and weights for orders 1..=12.
 /// Generated from Legendre polynomial roots.
 /// Reference: OCCT math_GaussPoints.cxx
-/// ✅ OCCT (math::GaussPoints / math::GaussWeights)
+/// 鉁?OCCT (math::GaussPoints / math::GaussWeights)
 #[allow(dead_code)]
 struct GLTable {
  #[allow(dead_code)]
@@ -3163,7 +3157,7 @@ fn gl_table(order: usize) -> &'static GLTable {
 
 /// OCCT-aligned: BRepGProp_Face::SIntOrder (BRepGProp_Face.cxx L217-257)
 /// Returns the number of Gauss points in U and V for integration over the surface.
-/// ✅ OCCT  
+/// 鉁?OCCT  
 fn gl_s_integration_order(surf: &Surface3) -> (usize, usize) {
  match surf {
  Surface3::Plane(_) => (1, 1),
@@ -3187,7 +3181,7 @@ fn gl_s_integration_order(surf: &Surface3) -> (usize, usize) {
 
 /// OCCT-aligned: BRepGProp_Face::SUIntSubs (BRepGProp_Face.cxx L261-292)
 /// Returns number of U intervals for subdivision.
-/// ✅ OCCT  
+/// 鉁?OCCT  
 fn gl_s_u_subs(surf: &Surface3) -> usize {
  match surf {
  Surface3::Plane(_) => 1,
@@ -3199,7 +3193,7 @@ fn gl_s_u_subs(surf: &Surface3) -> usize {
 
 /// OCCT-aligned: BRepGProp_Face::SVIntSubs (BRepGProp_Face.cxx L296-327)
 /// Returns number of V intervals for subdivision.
-/// ✅ OCCT  
+/// 鉁?OCCT  
 fn gl_s_v_subs(surf: &Surface3) -> usize {
  match surf {
  Surface3::Plane(_) | Surface3::Cylinder(_) | Surface3::Cone(_) => 1,
@@ -3212,12 +3206,12 @@ fn gl_s_v_subs(surf: &Surface3) -> usize {
 
 /// OCCT-aligned: BRepGProp_Face::UKnots (BRepGProp_Face.cxx L331-356)
 /// Returns U knot positions for subdividing the integration domain, clipped to [u0, u1].
-/// ✅ OCCT  
+/// 鉁?OCCT  
 fn gl_u_knots(surf: &Surface3, u0: f64, u1: f64) -> Vec<f64> {
  let knots = match surf {
  Surface3::Plane(_) => vec![u0, u1],
  Surface3::Cylinder(_) | Surface3::Cone(_) | Surface3::Sphere(_) | Surface3::Torus(_) => {
- // OCCT: 0, 2π/3, 4π/3, 2π
+ // OCCT: 0, 2蟺/3, 4蟺/3, 2蟺
  vec![0.0, std::f64::consts::TAU / 3.0, 2.0 * std::f64::consts::TAU / 3.0, std::f64::consts::TAU]
  }
  Surface3::BSpline(bsp) => bsp.knots_u.clone(),
@@ -3240,18 +3234,18 @@ fn gl_u_knots(surf: &Surface3, u0: f64, u1: f64) -> Vec<f64> {
 
 /// OCCT-aligned: BRepGProp_Face::VKnots (BRepGProp_Face.cxx L360-389)
 /// Returns V knot positions for subdividing the integration domain, clipped to [v0, v1].
-/// ✅ OCCT  
+/// 鉁?OCCT  
 fn gl_v_knots(surf: &Surface3, v0: f64, v1: f64) -> Vec<f64> {
  let knots = match surf {
  Surface3::Plane(_) | Surface3::Cylinder(_) | Surface3::Cone(_) => {
  vec![v0, v1]
  }
  Surface3::Sphere(_) => {
- // OCCT: -π/2, 0, π/2
+ // OCCT: -蟺/2, 0, 蟺/2
  vec![-std::f64::consts::FRAC_PI_2, 0.0, std::f64::consts::FRAC_PI_2]
  }
  Surface3::Torus(_) => {
- // OCCT: 0, 2π/3, 4π/3, 2π
+ // OCCT: 0, 2蟺/3, 4蟺/3, 2蟺
  vec![0.0, std::f64::consts::TAU / 3.0, 2.0 * std::f64::consts::TAU / 3.0, std::f64::consts::TAU]
  }
  Surface3::BSpline(bsp) => bsp.knots_v.clone(),
@@ -3271,11 +3265,11 @@ fn gl_v_knots(surf: &Surface3, v0: f64, v1: f64) -> Vec<f64> {
  clipped
 }
 
-/// Compute |Su × Sv| at parameter (u,v) via central finite differences.
+/// Compute |Su 脳 Sv| at parameter (u,v) via central finite differences.
 /// Equivalent to OCCT BRepGProp_Face::Normal (BRepGProp_Face.cxx L191-198)
-/// which returns the UNNORMALIZED surface normal = Su × Sv.
-/// The magnitude |Su × Sv| is the area element Jacobian.
-/// ⏳  : uses finite differences (rcad has no D1 evaluation trait);
+/// which returns the UNNORMALIZED surface normal = Su 脳 Sv.
+/// The magnitude |Su 脳 Sv| is the area element Jacobian.
+/// 鈴? : uses finite differences (rcad has no D1 evaluation trait);
 /// OCCT uses exact D1 evaluation. Accuracy is equivalent for analytical
 /// surfaces and within 1e-8 for BSpline at the chosen h.
 fn surface_normal_jacobian(surf: &Surface3, u: f64, v: f64) -> f64 {
@@ -3291,10 +3285,10 @@ fn surface_normal_jacobian(surf: &Surface3, u: f64, v: f64) -> f64 {
 ///
 /// For faces without inner wires (no holes), performs a nested GL double
 /// integral using SIntOrder integration order and UKnots/VKnots subdivision.
-/// The integral is ∑∑ |Su × Sv| · w_u · w_v · u_rad · v_rad over all
+/// The integral is 鈭戔垜 |Su 脳 Sv| 路 w_u 路 w_v 路 u_rad 路 v_rad over all
 /// sub-intervals and Gauss points.
 ///
-/// ✅ OCCT (BRepGProp_Gauss::Compute + computeSInertiaOfElementaryPart)
+/// 鉁?OCCT (BRepGProp_Gauss::Compute + computeSInertiaOfElementaryPart)
 fn face_surface_area_gauss(brep: &BRep, face: &Face, fi: usize) -> Option<f64> {
  let surf_idx = brep.tshapes.get(fi).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.surface.clone() } else { None } })?;
  let surf = &surf_idx;
@@ -3357,7 +3351,7 @@ fn face_surface_area_gauss(brep: &BRep, face: &Face, fi: usize) -> Option<f64> {
  let u = u_mid + u_rad * glu.points[i];
  let w_u = glu.weights[i];
 
- // Evaluate |Su × Sv| at (u,v)
+ // Evaluate |Su 脳 Sv| at (u,v)
  let jac = surface_normal_jacobian(surf, u, v);
  sub_area += jac * w_u * w_v;
  }
@@ -3374,7 +3368,7 @@ fn face_surface_area_gauss(brep: &BRep, face: &Face, fi: usize) -> Option<f64> {
  }
 }
 
-/// `∫∫ ‖∂P/∂u×∂P/∂v‖ dudv` on `[u0,u1]×[v0,v1]` (midpoint rule, central differences for partials).
+/// `鈭埆 鈥栤垈P/鈭倁脳鈭侾/鈭倂鈥?dudv` on `[u0,u1]脳[v0,v1]` (midpoint rule, central differences for partials).
 /// Matches the same UV box as `tessellate_curved_face` without chordal tri area bias.
 fn param_rect_area_cross(surf: &Surface3, u0: f64, u1: f64, v0: f64, v1: f64) -> Option<f64> {
  if !u0.is_finite() || !u1.is_finite() || !v0.is_finite() || !v1.is_finite() {
@@ -3427,7 +3421,7 @@ fn tessellate_curved_face(
  let nu = UV_TESS_N;
  let nv = UV_TESS_N;
 
- // Build a (nu+1)×(nv+1) grid of 3-D points.
+ // Build a (nu+1)脳(nv+1) grid of 3-D points.
  let mut pts = Vec::with_capacity((nu + 1) * (nv + 1));
  for i in 0..=nu {
  let u = u0 + (u1 - u0) * (i as f64 / nu as f64);
@@ -3437,7 +3431,7 @@ fn tessellate_curved_face(
  }
  }
 
- // Emit two triangles per quad cell (i,j)–(i+1,j)–(i,j+1)–(i+1,j+1).
+ // Emit two triangles per quad cell (i,j)鈥?i+1,j)鈥?i,j+1)鈥?i+1,j+1).
  let idx = |i: usize, j: usize| i * (nv + 1) + j;
  let mut tris: Vec<[DVec3; 3]> = Vec::with_capacity(nu * nv * 2);
 
@@ -3512,7 +3506,7 @@ fn estimate_uv_domain_from_wire(
  use crate::geom::Curve2dEval;
  let all_wires = std::iter::once(&face.outer_wire).chain(face.inner_wires.iter());
  for we in all_wires.flat_map(|w| &w.edges) {
- let range = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None } }).and_then(|o| *o);
+ let range = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None } });
  if let Some([t0, t1]) = range {
  // Find pcurve on this face's surface.
  if let Some(c2d) = None
@@ -3556,7 +3550,7 @@ fn estimate_uv_domain_from_wire(
  Some([u0 - 1e-10, u1 + 1e-10, v0 - 1e-10, v1 + 1e-10])
  }
  Surface3::Cone(con) => {
- // ConicalSurface: u = azimuth [0, 2π], v = slant distance ≥ 0.
+ // ConicalSurface: u = azimuth [0, 2蟺], v = slant distance 鈮?0.
  let d = surf.default_domain();
  let u0 = d[0];
  let u1 = d[1];
@@ -3584,7 +3578,7 @@ fn face_triangles(
  face_flat_idx: usize,
 ) -> Vec<[DVec3; 3]> {
  // Determine whether the face has a curved surface (not Plane).
- // For curved surfaces, `face.normal` is unreliable — it is typically estimated
+ // For curved surfaces, `face.normal` is unreliable 鈥?it is typically estimated
  // from the boundary polygon (Newell method) and can point in a completely wrong
  // direction for surfaces like the wall of a half-cylinder.  Using it in
  // `orient_tri` flips the winding of valid triangles, causing the signed volume
@@ -3640,7 +3634,7 @@ fn face_triangles(
  // For planar surfaces, stored triangles from emit_face_with_origin's
  // triangulate_polygon are correct (the surface IS planar).  For curved
  // surfaces, those same triangles are ear-clipped chordal triangles that
- // cut across the interior rather than following the surface — they produce
+ // cut across the interior rather than following the surface 鈥?they produce
  // wrong signed volume.  Always fall through to tessellate_curved_face for
  // curved surfaces even when face.triangles is non-empty.
  if !is_curved && face.inner_wires.is_empty() && !face.triangles.is_empty() {
@@ -3703,12 +3697,22 @@ fn orient_tri(tri: [DVec3; 3], face_normal: DVec3) -> [DVec3; 3] {
 }
 
 /// Iterate over (face_flat_index, &Face) pairs across all solids/shells.
-pub fn face_flat_iter(brep: &topods::BRep) -> Vec<(usize, ())> {
- // flat face iteration not available with topods::BRep
- Vec::new()
+pub fn face_flat_iter(brep: &topods::BRep) -> Vec<(usize, crate::topology::Face)> {
+ let mut faces = Vec::new();
+ for (fi, ts) in brep.tshapes.iter().enumerate() {
+  if let topods::TShape::Face(fd) = &**ts {
+  faces.push((fi, crate::topology::Face {
+   outer_wire: crate::topology::Wire { edges: Vec::new() },
+   inner_wires: Vec::new(), normal: DVec3::Z,
+   triangles: Vec::new(), sample_point: fd.sample_point,
+   mesh_dirty: true, surface_idx: None,
+  }));
+  }
+ }
+ faces
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
+// 鈹€鈹€ Public API 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Public re-export of `face_triangles` for diagnostic use in tests.
 /// Not part of the stable API.
@@ -3724,14 +3728,14 @@ pub fn face_triangles_pub(
 /// Compute the total surface area of all faces in the BRep.
 ///
 /// For each face, uses analytic area when available (planar shoe lace; holed
-/// sphere: parametric `R² dΩ` on the same UV mask as the raster), otherwise
+/// sphere: parametric `R虏 d惟` on the same UV mask as the raster), otherwise
 /// sums triangle areas (pre-triangulated, UV-sampled, or fan-triangulated).
 /// Returns 0.0 if the BRep has no faces.
 ///
 /// Cylinder sub-faces from boolean splitting may have overlapping UV polygons
 /// (the intersection curve mapping is numerically inconsistent).  When the sum
 /// of UV shoelace areas across all sub-faces on a cylinder surface exceeds
-/// `2π × (v_global_max - v_global_min)`, each sub-face area is scaled down
+/// `2蟺 脳 (v_global_max - v_global_min)`, each sub-face area is scaled down
 /// proportionally to the correct total.
 pub fn surface_area(brep: &topods::BRep) -> f64 {
  struct CylEntry { sa: f64, uv_area: f64, v_min: f64, v_max: f64, radius: f64 }
@@ -3748,9 +3752,9 @@ pub fn surface_area(brep: &topods::BRep) -> f64 {
  // Pre-computed clean triangles (e.g. Steinmetz analytic builder which
  // tessellates each face accurately in UV space) avoid
  // `short_delta_on_circle_01` picking the wrong direction for
- // triangular faces that span >π on a cylinder's angular domain.
+ // triangular faces that span >蟺 on a cylinder's angular domain.
  // HOWEVER: `mesh_brep` (called after boolean pipeline) tessellates
- // sphere faces using the full default UV domain [0,2π]×[-π/2,π/2]
+ // sphere faces using the full default UV domain [0,2蟺]脳[-蟺/2,蟺/2]
  // instead of the trimmed portion, producing wrong triangles for
  // trimmed spherical sub-faces.  Always try analytic first.
  let analytic = try_analytic_face_surface_area(brep, f, _fi);
@@ -3785,7 +3789,7 @@ pub fn surface_area(brep: &topods::BRep) -> f64 {
  // CI assertion: warn if any face has no surface reference (mesh-only fast-path).
  // All boolean results should have proper analytic surfaces for exact SA.
  if analytic.is_none() && !f.triangles.is_empty() && cfg!(debug_assertions) {
- eprintln!("[SA_WARN] face[{}] has no analytic surface — SA from {} triangles (total {:.6})",
+ eprintln!("[SA_WARN] face[{}] has no analytic surface 鈥?SA from {} triangles (total {:.6})",
  _fi, f.triangles.len(), a);
  }
 
@@ -3793,7 +3797,7 @@ pub fn surface_area(brep: &topods::BRep) -> f64 {
  // Skip faces with inner wires (figure-8 case has its own handling).
  if analytic.is_some() {
  if let Some(si) = brep.tshapes.get(_fi).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.surface.clone() } else { None } }) {
- if let Some(surf) = brep.tshapes.get(si).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None } }) {
+ if let Some(surf) = Some(si) {
  if let Surface3::Cylinder(c) = surf {
  if f.inner_wires.is_empty() {
  if let Some([_, _, v0, v1]) = curved_face_uv_domain(brep, f, _fi, surf) {
@@ -3827,7 +3831,7 @@ pub fn surface_area(brep: &topods::BRep) -> f64 {
  }
 
  // Normalize each cylinder group: if sum of UV shoelace areas exceeds
- // the maximum possible UV area (2π × global v-span), scale down proportionally.
+ // the maximum possible UV area (2蟺 脳 global v-span), scale down proportionally.
  if std::env::var("RCAD_DEBUG_BUILDER").is_ok() {
  // Second pass: print all face area breakdown
  for (_fi, f) in face_flat_iter(brep) {
@@ -3905,15 +3909,15 @@ pub fn face_surface_area(brep: &topods::BRep, face: &Face, face_flat_idx: usize)
  }
 }
 
-/// Analytic volume contribution of a sphere face: V = (R/3) × A from the parametric
+/// Analytic volume contribution of a sphere face: V = (R/3) 脳 A from the parametric
 /// UV-mask integral using the 5-point OR acceptance test (same as the raster used
 /// by `try_spherical_uv_masked_raster`), not the strict all-corners test used by
 /// `sphere_holed_mask_param_area_sum`.  The 5-point test captures partially-covered
 /// boundary cells that the all-corners test misses, giving a more accurate surface
 /// integral at moderate grid resolutions.
 ///
-/// For a sphere centered at origin, r·n = R, so the divergence-theorem integral
-/// V = (1/3)∫∫ r·n dA reduces to (R/3)·A.
+/// For a sphere centered at origin, r路n = R, so the divergence-theorem integral
+/// V = (1/3)鈭埆 r路n dA reduces to (R/3)路A.
 fn sphere_holed_mask_param_volume_sum(s: &SphericalSurface, ctx: &SphereHoledMaskCtx) -> f64 {
  const N: usize = SPHERE_UV_MASK_N;
  let umin = ctx.umin;
@@ -3968,7 +3972,7 @@ fn sphere_holed_mask_param_volume_sum(s: &SphericalSurface, ctx: &SphereHoledMas
  }
  }
 
- // Analytic dV = (R/3) * R² * du * (cos(v₀) - cos(v₁))
+ // Analytic dV = (R/3) * R虏 * du * (cos(v鈧€) - cos(v鈧?)
  v += r3 / 3.0 * du * (v0.cos() - v1.cos());
  }
  }
@@ -3994,13 +3998,13 @@ fn sphere_holed_mask_param_volume_sum(s: &SphericalSurface, ctx: &SphereHoledMas
  t
 }
 
-/// Analytic volume contribution of a sphere face: V = (R/3) × A from the parametric
-/// UV-mask integral.  For a sphere centered at origin, r·n = R, so the divergence-theorem
-/// integral V = (1/3)∫∫ r·n dA reduces to (R/3)·A.  This avoids the non-manifold tet-sum
+/// Analytic volume contribution of a sphere face: V = (R/3) 脳 A from the parametric
+/// UV-mask integral.  For a sphere centered at origin, r路n = R, so the divergence-theorem
+/// integral V = (1/3)鈭埆 r路n dA reduces to (R/3)路A.  This avoids the non-manifold tet-sum
 /// error from the area-corrected chordal triangulation in `try_spherical_uv_masked_raster`.
 ///
-/// Only applies when the sphere center is at the origin (within tolerance) — for offset
-/// spheres the surface integral does not simplify to (R/3)·A and the tet sum fallback
+/// Only applies when the sphere center is at the origin (within tolerance) 鈥?for offset
+/// spheres the surface integral does not simplify to (R/3)路A and the tet sum fallback
 /// is used instead.
 const SPHERE_CENTER_AT_ORIGIN_TOL: f64 = 1e-10;
 fn try_sphere_face_analytic_volume(
@@ -4020,9 +4024,9 @@ fn try_sphere_face_analytic_volume(
  }
 }
 
-/// Divergence-theorem signed volume: `(1/6) Σ a·(b×c)` over surface triangles (no absolute value).
+/// Divergence-theorem signed volume: `(1/6) 危 a路(b脳c)` over surface triangles (no absolute value).
 ///
-/// Sphere faces use the analytic parametric integral (V = (R/3)·A) instead of the
+/// Sphere faces use the analytic parametric integral (V = (R/3)路A) instead of the
 /// per-cell area-corrected triangulation which creates a non-manifold mesh and
 /// systematically underestimates volume via the tet sum.  Plane and other faces
 /// use the standard triangulation which remains correct.
@@ -4050,7 +4054,7 @@ pub fn volume(brep: &topods::BRep) -> f64 {
 
 /// Compute the centroid (center of mass) of the solid by volumetric integration.
 ///
-/// Uses the formula: C = (1 / 8V) Σ_triangles (a+b+c) * tet_signed_vol(a,b,c)
+/// Uses the formula: C = (1 / 8V) 危_triangles (a+b+c) * tet_signed_vol(a,b,c)
 /// where the sum is over all surface triangles.
 ///
 /// Falls back to `BRep::center()` (vertex average) if the volume is near zero.
@@ -4063,7 +4067,7 @@ pub fn centroid(brep: &topods::BRep) -> DVec3 {
  let sv = tet_signed_volume(a, b, c);
  vol_sum += sv;
  // Weight the centroid of each tet (at (a+b+c+origin)/4,
- // origin=0) → simplified to (a+b+c) * sv
+ // origin=0) 鈫?simplified to (a+b+c) * sv
  weighted_sum += (a + b + c) * sv;
  }
  }
@@ -4072,19 +4076,19 @@ pub fn centroid(brep: &topods::BRep) -> DVec3 {
  return brep.center();
  }
 
- // Centroid formula: (1/(2 * 4 * vol_sum)) * Σ (a+b+c) * sv
+ // Centroid formula: (1/(2 * 4 * vol_sum)) * 危 (a+b+c) * sv
  // Simplification: weighted_sum / (4 * vol_sum) gives tet centroid average
  weighted_sum / (4.0 * vol_sum)
 }
 
-// ── Inertia tensor ────────────────────────────────────────────────────────────
+// 鈹€鈹€ Inertia tensor 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
-/// Symmetric 3×3 moment of inertia tensor (assuming uniform density = 1).
+/// Symmetric 3脳3 moment of inertia tensor (assuming uniform density = 1).
 ///
 /// The components are defined as:
 /// ```text
-/// Ixx = ∫(y²+z²) dV,  Iyy = ∫(x²+z²) dV,  Izz = ∫(x²+y²) dV
-/// Ixy = -∫xy dV, Ixz = -∫xz dV, Iyz = -∫yz dV
+/// Ixx = 鈭?y虏+z虏) dV,  Iyy = 鈭?x虏+z虏) dV,  Izz = 鈭?x虏+y虏) dV
+/// Ixy = -鈭玿y dV, Ixz = -鈭玿z dV, Iyz = -鈭珁z dV
 /// ```
 ///
 /// Computed about the world origin. To get the tensor about the centroid,
@@ -4100,7 +4104,7 @@ pub struct InertiaTensor {
 }
 
 impl InertiaTensor {
- /// Returns the 3×3 inertia matrix as row-major `[[f64;3];3]`.
+ /// Returns the 3脳3 inertia matrix as row-major `[[f64;3];3]`.
  pub fn to_matrix(&self) -> [[f64; 3]; 3] {
  [
  [self.ixx, -self.ixy, -self.ixz],
@@ -4130,11 +4134,11 @@ pub fn inertia_tensor(brep: &topods::BRep) -> InertiaTensor {
  for (fi, face) in face_flat_iter(brep) {
  for [a, b, c] in face_triangles(brep, face, fi) {
  // Signed volume of tet (origin, a, b, c)
- // sv = a·(b×c)/6 — same as tet_signed_volume
+ // sv = a路(b脳c)/6 鈥?same as tet_signed_volume
  let sv = a.dot(b.cross(c)) / 6.0;
 
  // Symmetric quadratic sums for each coordinate pair.
- // For ∫_tet x² dV = sv/10 * x2_sym (from simplex integration).
+ // For 鈭玙tet x虏 dV = sv/10 * x2_sym (from simplex integration).
  let x2 = a.x * a.x + b.x * b.x + c.x * c.x + a.x * b.x + a.x * c.x + b.x * c.x;
  let y2 = a.y * a.y + b.y * b.y + c.y * c.y + a.y * b.y + a.y * c.y + b.y * c.y;
  let z2 = a.z * a.z + b.z * b.z + c.z * c.z + a.z * b.z + a.z * c.z + b.z * c.z;
@@ -4143,8 +4147,8 @@ pub fn inertia_tensor(brep: &topods::BRep) -> InertiaTensor {
  iyy += sv / 10.0 * (x2 + z2);
  izz += sv / 10.0 * (x2 + y2);
 
- // For ∫_tet xy dV = sv/20 * xy_mixed (from simplex integration).
- // Product-moment: Ixy = -∫xy dV, etc.
+ // For 鈭玙tet xy dV = sv/20 * xy_mixed (from simplex integration).
+ // Product-moment: Ixy = -鈭玿y dV, etc.
  let xy = 2.0 * (a.x * a.y + b.x * b.y + c.x * c.y)
  + a.x * b.y
  + b.x * a.y
@@ -4174,7 +4178,7 @@ pub fn inertia_tensor(brep: &topods::BRep) -> InertiaTensor {
  }
 
  // Diagonal terms must be positive for a physical solid.
- // Off-diagonal sign: Ixy = -∫xy dV so negate the accumulated sums.
+ // Off-diagonal sign: Ixy = -鈭玿y dV so negate the accumulated sums.
  InertiaTensor {
  ixx: ixx.abs(),
  iyy: iyy.abs(),
@@ -4185,6 +4189,10 @@ pub fn inertia_tensor(brep: &topods::BRep) -> InertiaTensor {
  }
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+// 鈹€鈹€ Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+
+
+
+
 
 
