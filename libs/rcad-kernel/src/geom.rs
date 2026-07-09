@@ -224,7 +224,16 @@ pub enum Curve3 {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Plane {
     pub origin: Point3,
+    /// Unit normal vector (OCCT gp_Dir invariant). Use Plane::new() for normalized construction.
     pub normal: Vec3,
+}
+
+impl Plane {
+    /// OCCT-aligned: construct from origin and normal.
+    /// Normal is normalized to unit length (gp_Dir invariant).
+    pub fn new(origin: DVec3, normal: DVec3) -> Self {
+        Plane { origin, normal: normal.normalize_or_zero() }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -1292,6 +1301,8 @@ impl CurveEval for Curve3 {
 // --- SurfaceEval implementations ---
 
 impl SurfaceEval for Plane {
+    /// OCCT-aligned: P(u,v) = origin + u*x_dir + v*y_dir with deterministic UV frame.
+    /// x_dir = any_perpendicular(normal); y_dir = normal × x_dir.
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
         let x_ax = any_perpendicular(self.normal);
         let y_ax = self.normal.cross(x_ax);
@@ -1301,12 +1312,7 @@ impl SurfaceEval for Plane {
         self.normal
     }
     fn default_domain(&self) -> [f64; 4] {
-        [
-            f64::NEG_INFINITY,
-            f64::INFINITY,
-            f64::NEG_INFINITY,
-            f64::INFINITY,
-        ]
+        [f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY]
     }
     fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
         let x_ax = any_perpendicular(self.normal);
@@ -1317,13 +1323,14 @@ impl SurfaceEval for Plane {
 
 impl SurfaceEval for CylindricalSurface {
     /// u = azimuth angle [0, 2π], v = height along axis.
+    /// OCCT-aligned: uses stored ref_dir for deterministic UV mapping.
     fn point_at(&self, u: f64, v: f64) -> DVec3 {
-        let x_ax = any_perpendicular(self.axis);
+        let x_ax = self.ref_dir.normalize_or_zero();
         let y_ax = self.axis.cross(x_ax).normalize();
         self.origin + self.radius * (u.cos() * x_ax + u.sin() * y_ax) + v * self.axis
     }
     fn normal_at(&self, u: f64, _v: f64) -> DVec3 {
-        let x_ax = any_perpendicular(self.axis);
+        let x_ax = self.ref_dir.normalize_or_zero();
         let y_ax = self.axis.cross(x_ax).normalize();
         (u.cos() * x_ax + u.sin() * y_ax).normalize()
     }
@@ -1331,7 +1338,7 @@ impl SurfaceEval for CylindricalSurface {
         [0.0, 2.0 * PI, f64::NEG_INFINITY, f64::INFINITY]
     }
     fn derivatives(&self, u: f64, v: f64) -> (DVec3, DVec3, DVec3) {
-        let x_ax = any_perpendicular(self.axis);
+        let x_ax = self.ref_dir.normalize_or_zero();
         let y_ax = self.axis.cross(x_ax).normalize();
         let (su, cu) = u.sin_cos();
         let p = self.origin + self.radius * (cu * x_ax + su * y_ax) + v * self.axis;
