@@ -1202,6 +1202,76 @@ pub fn v_resolution_for_surface(surf: &Surface3, tol3d: f64) -> f64 {
 // BRepBuilder — OCCT BRep_Builder equivalent for incrementally constructing BRep
 // ---------------------------------------------------------------------------
 
+// ── Backward-compat flat-index access methods ──────────────────────
+// These provide the old brep.vertices/edges/solids/geom patterns
+// for modules that haven't been migrated yet.
+impl BRep {
+    /// Collect vertex points in tshape order (like old brep.vertices).
+    pub fn flat_vertices(&self) -> Vec<DVec3> {
+        self.tshapes.iter().filter_map(|ts| {
+            if let TShape::Vertex(vd) = &**ts { Some(vd.point) } else { None }
+        }).collect()
+    }
+
+    /// Collect edge endpoint pairs in tshape order (like old brep.edges).
+    pub fn flat_edges(&self) -> Vec<(usize, usize)> {
+        self.tshapes.iter().filter_map(|ts| {
+            if let TShape::Edge(ed) = &**ts { Some((ed.first.index, ed.last.index)) } else { None }
+        }).collect()
+    }
+
+    /// Count vertex TShapes.
+    pub fn vertex_count(&self) -> usize {
+        self.tshapes.iter().filter(|ts| matches!(&**ts, TShape::Vertex(_))).count()
+    }
+
+    /// Count edge TShapes.
+    pub fn edge_count(&self) -> usize {
+        self.tshapes.iter().filter(|ts| matches!(&**ts, TShape::Edge(_))).count()
+    }
+
+    /// Count face TShapes.
+    pub fn face_count(&self) -> usize {
+        self.tshapes.iter().filter(|ts| matches!(&**ts, TShape::Face(_))).count()
+    }
+
+    /// Count solid TShapes.
+    pub fn solid_count(&self) -> usize {
+        self.tshapes.iter().filter(|ts| matches!(&**ts, TShape::Solid(_))).count()
+    }
+
+    /// Check if any solid TShapes exist.
+    pub fn has_solids(&self) -> bool {
+        self.tshapes.iter().any(|ts| matches!(&**ts, TShape::Solid(_)))
+    }
+
+    /// Get vertex point by tshape index.
+    pub fn vertex_point(&self, idx: usize) -> Option<DVec3> {
+        self.tshapes.get(idx).and_then(|ts| {
+            if let TShape::Vertex(vd) = &**ts { Some(vd.point) } else { None }
+        })
+    }
+
+    /// Add a new edge from flat indices (creates ShapeRef for each vertex).
+    /// Returns the tshape index of the new edge.
+    pub fn add_edge_flat(&mut self, start_idx: usize, end_idx: usize, curve: Option<Curve3>, range: [f64; 2]) -> usize {
+        let first = self.tshapes.get(start_idx).map(|ts| ShapeRef {
+            ptr_id: Arc::as_ptr(ts) as u64,
+            index: start_idx,
+            orientation: Orientation::Forward,
+            location: 0,
+        }).unwrap_or(ShapeRef::NULL);
+        let last = self.tshapes.get(end_idx).map(|ts| ShapeRef {
+            ptr_id: Arc::as_ptr(ts) as u64,
+            index: end_idx,
+            orientation: Orientation::Forward,
+            location: 0,
+        }).unwrap_or(ShapeRef::NULL);
+        let sr = self.add_tedge(curve, first, last, range);
+        sr.index
+    }
+}
+
 pub struct BRepBuilder {
     pub root: Option<ShapeRef>,
     vertex_cache: Vec<[f64; 3]>,
