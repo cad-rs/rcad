@@ -110,12 +110,15 @@ pub fn project_wire_onto_surface(
 /// - `edge.start` if `we.forward == true`
 /// - `edge.end` if `we.forward == false`
 fn wire_ordered_vertex_positions(brep: &BRep, wire: &Wire) -> Vec<DVec3> {
+    use topods::TShape;
     let mut pts = Vec::with_capacity(wire.edges.len());
     for we in &wire.edges {
-        if let Some(e) = brep.edges.get(we.idx) {
-            let v_idx = if we.forward { e.start } else { e.end };
-            if let Some(v) = brep.vertices.get(v_idx) {
-                pts.push(v.point);
+        if let Some(ts) = brep.tshapes.get(we.idx) {
+            if let TShape::Edge(ed) = &**ts {
+                let v_idx = if we.forward { ed.first.index } else { ed.last.index };
+                if let Some(pt) = brep.vertex_point(v_idx) {
+                    pts.push(pt);
+                }
             }
         }
     }
@@ -375,7 +378,16 @@ mod tests {
     // ── project_wire_onto_surface ─────────────────────────────────────────────
 
     fn box_wire_0(brep: &BRep) -> Wire {
-        brep.solids[0].shells[0].faces[0].outer_wire.clone()
+        use topods::TShape;
+        let solid_idx = brep.tshapes.iter().position(|ts| matches!(&**ts, TShape::Solid(_)))
+            .expect("box should have a solid");
+        let sd = match &*brep.tshapes[solid_idx] { TShape::Solid(sd) => sd, _ => unreachable!() };
+        let shell_ref = &sd.shells[0];
+        let face_ref = match &*brep.tshapes[shell_ref.index] { TShape::Shell(sd) => &sd.faces[0], _ => panic!("not a shell") };
+        let wire_ref = match &*brep.tshapes[face_ref.index] { TShape::Face(fd) => &fd.outer_wire, _ => panic!("not a face") };
+        let wd = match &*brep.tshapes[wire_ref.index] { TShape::Wire(wd) => wd, _ => panic!("not a wire") };
+        let edges = wd.edges.iter().map(|sr| WireEdge::fwd(sr.index)).collect();
+        Wire { edges }
     }
 
     #[test]
@@ -405,15 +417,14 @@ mod tests {
         // Build a small square wire manually (elevated at z=2) and project onto z=0 plane.
         let mut brep = BRep::new();
         use rcad_kernel::topology::Vertex;
-        let v0 = { brep.vertices.push(Vertex { point: glam::DVec3::new(0.0, 0.0, 2.0) }); brep.vertices.len()-1 };
-        let v1 = { brep.vertices.push(Vertex { point: glam::DVec3::new(1.0, 0.0, 2.0) }); brep.vertices.len()-1 };
-        let v2 = { brep.vertices.push(Vertex { point: glam::DVec3::new(1.0, 1.0, 2.0) }); brep.vertices.len()-1 };
-        let v3 = { brep.vertices.push(Vertex { point: glam::DVec3::new(0.0, 1.0, 2.0) }); brep.vertices.len()-1 };
-        use rcad_kernel::topology::Edge;
-        let e0 = { brep.edges.push(Edge { start: v0, end: v1 }); brep.edges.len()-1 };
-        let e1 = { brep.edges.push(Edge { start: v1, end: v2 }); brep.edges.len()-1 };
-        let e2 = { brep.edges.push(Edge { start: v2, end: v3 }); brep.edges.len()-1 };
-        let e3 = { brep.edges.push(Edge { start: v3, end: v0 }); brep.edges.len()-1 };
+        let v0 = brep.add_tvertex(glam::DVec3::new(0.0, 0.0, 2.0)).index;
+        let v1 = brep.add_tvertex(glam::DVec3::new(1.0, 0.0, 2.0)).index;
+        let v2 = brep.add_tvertex(glam::DVec3::new(1.0, 1.0, 2.0)).index;
+        let v3 = brep.add_tvertex(glam::DVec3::new(0.0, 1.0, 2.0)).index;
+        let e0 = brep.add_edge_flat(v0, v1, None, [0.0, f64::NAN]);
+        let e1 = brep.add_edge_flat(v1, v2, None, [0.0, f64::NAN]);
+        let e2 = brep.add_edge_flat(v2, v3, None, [0.0, f64::NAN]);
+        let e3 = brep.add_edge_flat(v3, v0, None, [0.0, f64::NAN]);
         let wire = Wire {
             edges: vec![WireEdge::fwd(e0), WireEdge::fwd(e1), WireEdge::fwd(e2), WireEdge::fwd(e3)],
         };

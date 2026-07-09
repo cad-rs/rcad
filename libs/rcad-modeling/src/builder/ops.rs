@@ -8,9 +8,10 @@ use glam::{DVec2, DVec3};
 use rcad_kernel::BRep;
 use rcad_kernel::topods;
 use rcad_kernel::geom::{Curve3, Line3, Plane, Surface3};
-use rcad_kernel::topology::{Vertex, WireEdge};
+use rcad_kernel::topology::WireEdge;
+use rcad_kernel::topods::TShape;
 
-use crate::builder::brep_builder::{make_edge, make_face, make_wire};
+use crate::builder::brep_builder::{make_edge, make_face, make_vertex, make_wire};
 use crate::builder::{BuildError, normalize_vector};
 
 // 鈹€鈹€ History types 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -106,14 +107,7 @@ fn revolve_full_turn_tessellated(
     const NSEG_MAX: usize = 96;
     let nseg = (320usize / n.max(3)).clamp(NSEG_MIN, NSEG_MAX);
 
-    let mut result = BRep {
-        vertices: Vec::new(),
-        edges: Vec::new(),
-        solids: Vec::new(),
-        geom: rcad_kernel::GeomStore::default(),
-        compound: None,
-        compsolid: None,
-    };
+    let mut result = BRep::new();
 
     let mut lateral_faces = Vec::new();
     let mut profile_edge_to_lateral = HashMap::new();
@@ -153,12 +147,9 @@ fn revolve_full_turn_tessellated(
                 if nrm.length_squared() <= eps_a {
                     continue;
                 }
-                let v0 = result.vertices.len();
-                result.vertices.push(Vertex { point: p00 });
-                let v1 = result.vertices.len();
-                result.vertices.push(Vertex { point: p01 });
-                let v2 = result.vertices.len();
-                result.vertices.push(Vertex { point: p11 });
+                let v0 = make_vertex(&mut result, p00);
+                let v1 = make_vertex(&mut result, p01);
+                let v2 = make_vertex(&mut result, p11);
 
                 let l01 = (p01 - p00).length();
                 let l12 = (p11 - p01).length();
@@ -229,12 +220,9 @@ fn revolve_full_turn_tessellated(
                 if nrm.length_squared() <= eps_a {
                     continue;
                 }
-                let v0 = result.vertices.len();
-                result.vertices.push(Vertex { point: p00 });
-                let v1 = result.vertices.len();
-                result.vertices.push(Vertex { point: p10 });
-                let v2 = result.vertices.len();
-                result.vertices.push(Vertex { point: p11 });
+                let v0 = make_vertex(&mut result, p00);
+                let v1 = make_vertex(&mut result, p10);
+                let v2 = make_vertex(&mut result, p11);
 
                 let l01 = (p10 - p00).length();
                 let l12 = (p11 - p10).length();
@@ -306,14 +294,10 @@ fn revolve_full_turn_tessellated(
                     continue;
                 }
 
-                let v00 = result.vertices.len();
-                result.vertices.push(Vertex { point: p00 });
-                let v01 = result.vertices.len();
-                result.vertices.push(Vertex { point: p01 });
-                let v11 = result.vertices.len();
-                result.vertices.push(Vertex { point: p11 });
-                let v10 = result.vertices.len();
-                result.vertices.push(Vertex { point: p10 });
+                let v00 = make_vertex(&mut result, p00);
+                let v01 = make_vertex(&mut result, p01);
+                let v11 = make_vertex(&mut result, p11);
+                let v10 = make_vertex(&mut result, p10);
 
                 let len_bot = (p01 - p00).length();
                 let len_top = (p11 - p10).length();
@@ -416,28 +400,36 @@ fn revolve_full_turn_tessellated(
 
 /// Extract ordered boundary points from a face's outer wire.
 fn face_boundary_points(brep: &BRep, face_idx: usize) -> Vec<DVec3> {
-    let face = match brep
-        .solids
-        .first()
-        .and_then(|s| s.shells.first())
-        .and_then(|sh| sh.faces.get(face_idx))
-    {
-        Some(f) => f,
-        None => return Vec::new(),
+    let face_ts = match brep.tshapes.get(face_idx) {
+        Some(ts) if matches!(&**ts, TShape::Face(_)) => ts,
+        _ => return Vec::new(),
     };
-
-    // Collect start vertex of each wire edge in order.
-    // Each wire edge's start vertex gives a distinct corner.
-    let mut pts = Vec::new();
-    for we in &face.outer_wire.edges {
-        if let Some(edge) = brep.edges.get(we.idx) {
-            let vidx = if we.forward { edge.start } else { edge.end };
-            if let Some(v) = brep.vertices.get(vidx) {
-                pts.push(v.point);
+    if let TShape::Face(fd) = &**face_ts {
+        let mut pts = Vec::new();
+        if let Some(wire_ts) = brep.tshapes.get(fd.outer_wire.index) {
+            if let TShape::Wire(wd) = &**wire_ts {
+                for edge_sr in &wd.edges {
+                    if let Some(edge_ts) = brep.tshapes.get(edge_sr.index) {
+                        if let TShape::Edge(ed) = &**edge_ts {
+                            let vert_sr = if edge_sr.orientation.is_forward() {
+                                &ed.first
+                            } else {
+                                &ed.last
+                            };
+                            if let Some(vert_ts) = brep.tshapes.get(vert_sr.index) {
+                                if let TShape::Vertex(vd) = &**vert_ts {
+                                    pts.push(vd.point);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
+        pts
+    } else {
+        Vec::new()
     }
-    pts
 }
 
 // 鈹€鈹€ Linear extrusion 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -460,8 +452,7 @@ pub fn extrude(
     direction: DVec3,
     distance: f64,
 ) -> Result<topods::BRep, BuildError> {
-    let old = rcad_kernel::BRep::from_topods(profile);
-    extrude_with_history_inner(&old, face_idx, direction, distance).map(|(brep, _)| brep.to_topods())
+    extrude_with_history_inner(profile, face_idx, direction, distance).map(|(brep, _)| brep)
 }
 
 /// Extrude a profile face and return history mapping face origins.
@@ -474,9 +465,8 @@ pub fn extrude_with_history(
     direction: DVec3,
     distance: f64,
 ) -> Result<(topods::BRep, SweepHistory), BuildError> {
-    let old = rcad_kernel::BRep::from_topods(profile);
-    let (brep, h) = extrude_with_history_inner(&old, face_idx, direction, distance)?;
-    Ok((brep.to_topods(), h))
+    let (brep, h) = extrude_with_history_inner(profile, face_idx, direction, distance)?;
+    Ok((brep, h))
 }
 
 fn extrude_with_history_inner(
@@ -490,12 +480,13 @@ fn extrude_with_history_inner(
         return Err(BuildError::NonPositiveValue("distance"));
     }
 
-    // Validate face_idx
+    // Validate face_idx (tshape index)
     profile
-        .solids
-        .first()
-        .and_then(|s| s.shells.first())
-        .and_then(|sh| sh.faces.get(face_idx))
+        .tshapes
+        .get(face_idx)
+        .and_then(|ts| {
+            if matches!(&**ts, TShape::Face(_)) { Some(()) } else { None }
+        })
         .ok_or(BuildError::InvalidIndex(face_idx))?;
 
     let bot_pts = face_boundary_points(profile, face_idx);
@@ -509,32 +500,11 @@ fn extrude_with_history_inner(
     let top_pts: Vec<DVec3> = bot_pts.iter().map(|&p| p + offset).collect();
     let n = bot_pts.len();
 
-    let mut result = BRep {
-        vertices: Vec::new(),
-        edges: Vec::new(),
-        solids: Vec::new(),
-        geom: rcad_kernel::GeomStore::default(),
-        compound: None,
-        compsolid: None,
-    };
+    let mut result = BRep::new();
 
     // Add all vertices: bot[0..n], top[0..n]
-    let bot_vi: Vec<usize> = bot_pts
-        .iter()
-        .map(|&p| {
-            let idx = result.vertices.len();
-            result.vertices.push(Vertex { point: p });
-            idx
-        })
-        .collect();
-    let top_vi: Vec<usize> = top_pts
-        .iter()
-        .map(|&p| {
-            let idx = result.vertices.len();
-            result.vertices.push(Vertex { point: p });
-            idx
-        })
-        .collect();
+    let bot_vi: Vec<usize> = bot_pts.iter().map(|&p| make_vertex(&mut result, p)).collect();
+    let top_vi: Vec<usize> = top_pts.iter().map(|&p| make_vertex(&mut result, p)).collect();
 
     // Build bottom cap (inward normal = -dir)
     let bot_face = {
@@ -715,8 +685,7 @@ pub fn revolve(
     axis_dir: DVec3,
     angle: f64,
 ) -> Result<topods::BRep, BuildError> {
-    let old = rcad_kernel::BRep::from_topods(profile);
-    revolve_with_history_inner(&old, face_idx, axis_origin, axis_dir, angle).map(|(brep, _)| brep.to_topods())
+    revolve_with_history_inner(profile, face_idx, axis_origin, axis_dir, angle).map(|(brep, _)| brep)
 }
 
 /// Revolve a profile face around an axis and return history mapping face origins.
@@ -731,8 +700,7 @@ pub fn revolve_with_history(
     axis_dir: DVec3,
     angle: f64,
 ) -> Result<(topods::BRep, SweepHistory), BuildError> {
-    let old = rcad_kernel::BRep::from_topods(profile);
-    revolve_with_history_inner(&old, face_idx, axis_origin, axis_dir, angle).map(|(brep, h)| (brep.to_topods(), h))
+    revolve_with_history_inner(profile, face_idx, axis_origin, axis_dir, angle).map(|(brep, h)| (brep, h))
 }
 
 fn revolve_with_history_inner(
@@ -747,12 +715,13 @@ fn revolve_with_history_inner(
         return Err(BuildError::NonPositiveValue("angle"));
     }
 
-    // Validate face_idx
+    // Validate face_idx (tshape index)
     profile
-        .solids
-        .first()
-        .and_then(|s| s.shells.first())
-        .and_then(|sh| sh.faces.get(face_idx))
+        .tshapes
+        .get(face_idx)
+        .and_then(|ts| {
+            if matches!(&**ts, TShape::Face(_)) { Some(()) } else { None }
+        })
         .ok_or(BuildError::InvalidIndex(face_idx))?;
 
     let profile_pts = face_boundary_points(profile, face_idx);
@@ -772,14 +741,7 @@ fn revolve_with_history_inner(
         return revolve_full_turn_tessellated(&profile_pts, axis_origin, dir);
     }
 
-    let mut result = BRep {
-        vertices: Vec::new(),
-        edges: Vec::new(),
-        solids: Vec::new(),
-        geom: rcad_kernel::GeomStore::default(),
-        compound: None,
-        compsolid: None,
-    };
+    let mut result = BRep::new();
 
     // Rotate each profile point
     let rot_pts: Vec<DVec3> = profile_pts
@@ -788,24 +750,10 @@ fn revolve_with_history_inner(
         .collect();
 
     // Add start vertices (bottom/start cap positions)
-    let start_vi: Vec<usize> = profile_pts
-        .iter()
-        .map(|&p| {
-            let idx = result.vertices.len();
-            result.vertices.push(Vertex { point: p });
-            idx
-        })
-        .collect();
+    let start_vi: Vec<usize> = profile_pts.iter().map(|&p| make_vertex(&mut result, p)).collect();
 
     // End vertices for partial revolution (distinct from start)
-    let end_vi: Vec<usize> = rot_pts
-        .iter()
-        .map(|&p| {
-            let idx = result.vertices.len();
-            result.vertices.push(Vertex { point: p });
-            idx
-        })
-        .collect();
+    let end_vi: Vec<usize> = rot_pts.iter().map(|&p| make_vertex(&mut result, p)).collect();
 
     // Cap faces (bottom = original profile, top = rotated profile)
     let mut bottom_cap = Vec::new();
@@ -1039,27 +987,12 @@ pub fn loft_with_history(profiles: &[Vec<DVec3>]) -> Result<(topods::BRep, LoftH
 
     let s = profiles.len(); // number of sections
 
-    let mut result = BRep {
-        vertices: Vec::new(),
-        edges: Vec::new(),
-        solids: Vec::new(),
-        geom: rcad_kernel::GeomStore::default(),
-        compound: None,
-        compsolid: None,
-    };
+    let mut result = BRep::new();
 
     // Add all vertices; vi[section][vertex]
     let vi: Vec<Vec<usize>> = profiles
         .iter()
-        .map(|prof| {
-            prof.iter()
-                .map(|&p| {
-                    let idx = result.vertices.len();
-                    result.vertices.push(Vertex { point: p });
-                    idx
-                })
-                .collect()
-        })
+        .map(|prof| prof.iter().map(|&p| make_vertex(&mut result, p)).collect())
         .collect();
 
     // Bottom cap (profile[0]) 鈥?normal pointing away from profile[1]
@@ -1231,7 +1164,7 @@ pub fn loft_with_history(profiles: &[Vec<DVec3>]) -> Result<(topods::BRep, LoftH
         lateral_faces,
     };
 
-    Ok((result.to_topods(), history))
+    Ok((result, history))
 }
 
 // Pipe Sweep

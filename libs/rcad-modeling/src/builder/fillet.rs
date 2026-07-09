@@ -10,15 +10,56 @@
 
 use std::collections::BTreeMap;
 use std::f64::consts::PI;
+use std::sync::Arc;
 
 use glam::DVec3;
 use rcad_kernel::BRep;
-use rcad_kernel::topods;
+use rcad_kernel::topods::{self, TShape, ShapeRef};
 use rcad_kernel::geom::{any_perpendicular, Circle3, ConicalSurface, Curve3, CylindricalSurface, Line3, Plane, SphericalSurface, Surface3};
-use rcad_kernel::topology::{Edge, Face, Vertex, WireEdge};
+use rcad_kernel::topology::WireEdge;
 
 use crate::builder::BuildError;
 use crate::builder::brep_builder::{make_edge, make_face, make_wire};
+
+// --- Helpers for new topods::BRep access ---
+
+/// Get edge TShape data by tshape index.
+#[inline]
+fn edge_data<'a>(brep: &'a BRep, ei: usize) -> &'a topods::TEdgeData {
+    match &*brep.tshapes[ei] {
+        TShape::Edge(e) => e,
+        _ => panic!("fillet: tshape {ei} is not an Edge"),
+    }
+}
+
+/// Get face TShape data by tshape index.
+#[inline]
+fn face_data<'a>(brep: &'a BRep, fi: usize) -> &'a topods::TFaceData {
+    match &*brep.tshapes[fi] {
+        TShape::Face(f) => f,
+        _ => panic!("fillet: tshape {fi} is not a Face"),
+    }
+}
+
+/// Get first solid's first shell face ShapeRefs (as a vec of tshape indices).
+fn shell_face_indices(brep: &BRep) -> Vec<usize> {
+    for ts in &brep.tshapes {
+        if let TShape::Solid(sd) = &**ts {
+            if let Some(shell_sr) = sd.shells.first() {
+                if let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+                    return shd.faces.iter().map(|f| f.index).collect();
+                }
+            }
+        }
+    }
+    vec![]
+}
+
+/// Vertex point by tshape index (panics if not a vertex).
+#[inline]
+fn vert_point(brep: &BRep, vi: usize) -> DVec3 {
+    brep.vertex_point(vi).unwrap_or_else(|| panic!("fillet: vertex tshape {vi} not found"))
+}
 
 //  鈧?鈧?Convexity classification  鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?
 
@@ -127,11 +168,14 @@ pub struct CornerBlendHistory {
 /// Find the two faces in `solids[0].shells[0]` that share `edge_idx`.
 /// Returns `None` if not exactly two faces reference the edge.
 fn find_adjacent_faces(brep: &BRep, edge_idx: usize) -> Option<(usize, usize)> {
- let shell = brep.solids.first()?.shells.first()?;
+ let face_idxs = shell_face_indices(brep);
  let mut found = Vec::new();
- for (fi, face) in shell.faces.iter().enumerate() {
- if face.outer_wire.edges.iter().any(|we| we.idx == edge_idx) {
+ for &fi in &face_idxs {
+ let fd = face_data(brep, fi);
+ if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+ if wd.edges.iter().any(|esr| esr.index == edge_idx) {
  found.push(fi);
+ }
  }
  if found.len() > 2 {
  return None;
@@ -145,8 +189,9 @@ fn find_adjacent_faces(brep: &BRep, edge_idx: usize) -> Option<(usize, usize)> {
 }
 
 #[inline]
-fn undirected_edge_key(e: &Edge) -> (usize, usize) {
- let (a, b) = (e.start, e.end);
+fn undirected_edge_key(brep: &BRep, ei: usize) -> (usize, usize) {
+ let ed = edge_data(brep, ei);
+ let (a, b) = (ed.first.index, ed.last.index);
  if a <= b { (a, b) } else { (b, a) }
 }
 
@@ -156,30 +201,81 @@ fn undirected_edge_key(e: &Edge) -> (usize, usize) {
 /// then sees 1 face (or >2) per index and chained [`fillet_edge`] fails. This pass restores a
 /// minimal manifold wiring for straight edges.
 fn unify_line_edges_by_endpoint_pair(brep: &mut BRep) {
+ let n = brep.tshapes.len();
  let mut key_to_min: BTreeMap<(usize, usize), usize> = BTreeMap::new();
- for (i, e) in brep.edges.iter().enumerate() {
- let k = undirected_edge_key(e);
+ for i in 0..n {
+ if !matches!(&*brep.tshapes[i], TShape::Edge(_)) { continue; }
+ let k = undirected_edge_key(brep, i);
  key_to_min
  .entry(k)
  .and_modify(|m| *m = (*m).min(i))
  .or_insert(i);
  }
- let remap: Vec<usize> = (0..brep.edges.len())
+ let remap: Vec<usize> = (0..n)
  .map(|i| {
- let k = undirected_edge_key(&brep.edges[i]);
+ if !matches!(&*brep.tshapes[i], TShape::Edge(_)) { return i; }
+ let k = undirected_edge_key(brep, i);
  key_to_min[&k]
  })
  .collect();
 
- for solid in &mut brep.solids {
- for shell in &mut solid.shells {
- for face in &mut shell.faces {
- for we in &mut face.outer_wire.edges {
- we.idx = remap[we.idx];
+ // Collect all (face_idx, [(outer_pos, new_idx)], [inner_i -> [(pos, new_idx)]]) tuples
+ // through immutable borrows, then apply via Arc::make_mut.
+ struct WireRemap { outer: Vec<(usize, usize)>, inners: Vec<Vec<(usize, usize)>> }
+ let mut to_remap: Vec<(usize, WireRemap)> = Vec::new();
+ for i in 0..n {
+ if let TShape::Solid(sd) = &*brep.tshapes[i] {
+ for shell_sr in &sd.shells {
+ if let TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] {
+ for face_sr in &shd.faces {
+ if let TShape::Face(fd) = &*brep.tshapes[face_sr.index] {
+ let outer = if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+ wd.edges.iter().enumerate().map(|(pos, esr)| (pos, remap[esr.index])).collect()
+ } else { Vec::new() };
+ let inners: Vec<Vec<(usize, usize)>> = fd.inner_wires.iter().map(|iw_sr| {
+ if let TShape::Wire(iwd) = &*brep.tshapes[iw_sr.index] {
+ iwd.edges.iter().enumerate().map(|(pos, esr)| (pos, remap[esr.index])).collect()
+ } else { Vec::new() }
+ }).collect();
+ to_remap.push((face_sr.index, WireRemap { outer, inners }));
  }
- for inner in &mut face.inner_wires {
- for we in &mut inner.edges {
- we.idx = remap[we.idx];
+ }
+ }
+ }
+ }
+ }
+
+ // Apply collected remaps: extract wire indices first to avoid nested mutable borrows
+ for (face_idx, remap_data) in to_remap {
+ // Read wire indices from the face without mutable borrow
+ let outer_wire_idx = {
+ if let TShape::Face(fd) = &*brep.tshapes[face_idx] {
+ fd.outer_wire.index
+ } else { continue; }
+ };
+ let inner_wire_idxs: Vec<usize> = {
+ if let TShape::Face(fd) = &*brep.tshapes[face_idx] {
+ fd.inner_wires.iter().map(|sr| sr.index).collect()
+ } else { Vec::new() }
+ };
+
+ // Apply outer wire remap
+ if let TShape::Wire(wd) = Arc::make_mut(&mut brep.tshapes[outer_wire_idx]) {
+ for (pos, new_idx) in remap_data.outer {
+ if let Some(esr) = wd.edges.get_mut(pos) {
+ esr.index = new_idx;
+ }
+ }
+ }
+
+ // Apply inner wire remaps
+ for (iw_idx, inner_updates) in remap_data.inners.iter().enumerate() {
+ if iw_idx < inner_wire_idxs.len() {
+ if let TShape::Wire(iwd) = Arc::make_mut(&mut brep.tshapes[inner_wire_idxs[iw_idx]]) {
+ for (pos, new_idx) in inner_updates {
+ if let Some(esr) = iwd.edges.get_mut(*pos) {
+ esr.index = *new_idx;
+ }
  }
  }
  }
@@ -196,19 +292,19 @@ fn unify_line_edges_by_endpoint_pair(brep: &mut BRep) {
 /// For curved faces: samples the surface normal at the edge midpoint and
 /// computes the inward direction as `n edge_dir` (perpendicular to both).
 fn setback_direction(brep: &BRep, face_idx: usize, edge_idx: usize) -> DVec3 {
- let edge = &brep.edges[edge_idx];
- let p0 = brep.vertices[edge.start].point;
- let p1 = brep.vertices[edge.end].point;
+ let ed = edge_data(brep, edge_idx);
+ let p0 = vert_point(brep, ed.first.index);
+ let p1 = vert_point(brep, ed.last.index);
  let edge_dir = (p1 - p0).normalize_or_zero();
 
- let face = &brep.solids[0].shells[0].faces[face_idx];
- // Collect all vertex indices referenced by this face's outer wire.
- let edge_verts = [edge.start, edge.end];
- for we in &face.outer_wire.edges {
- if let Some(e) = brep.edges.get(we.idx) {
- for &vi in &[e.start, e.end] {
+ let fd = face_data(brep, face_idx);
+ let edge_verts = [ed.first.index, ed.last.index];
+ if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+ for esr in &wd.edges {
+ if let TShape::Edge(e) = &*brep.tshapes[esr.index] {
+ for &vi in &[e.first.index, e.last.index] {
  if !edge_verts.contains(&vi) {
- let v_other = brep.vertices[vi].point;
+ let v_other = vert_point(brep, vi);
  let diff = v_other - p0;
  let along = edge_dir * edge_dir.dot(diff);
  let perp = diff - along;
@@ -220,16 +316,14 @@ fn setback_direction(brep: &BRep, face_idx: usize, edge_idx: usize) -> DVec3 {
  }
  }
  }
+ }
 
  // Fallback for curved/closed edges: use surface normal at edge midpoint
  // and compute inward direction as n tangent.
- if let Some(&surf_idx) = brep.geom.face_surface.get(face_idx).and_then(|o| o.as_ref()) {
- let surf = &brep.geom.surfaces[surf_idx];
  let mid = (p0 + p1) * 0.5;
-
- // Get tangent direction from curve if available
- let tangent = if let Some(&curve_idx) = brep.geom.edge_curve.get(edge_idx).and_then(|o| o.as_ref()) {
- match &brep.geom.curves[curve_idx] {
+ if let Some(ref surf) = fd.surface {
+ let tangent = if let Some(ref curve) = ed.curve {
+ match curve {
  Curve3::Circle(c) => {
  let d = mid - c.center;
  let radial = if d.length_squared() > 1e-20 {
@@ -283,7 +377,21 @@ fn setback_direction(brep: &BRep, face_idx: usize, edge_idx: usize) -> DVec3 {
 /// Return the face normal for face `face_idx` in `solids[0].shells[0]`.
 /// Falls back to the stored `face.normal`.
 fn face_normal(brep: &BRep, face_idx: usize) -> DVec3 {
- brep.solids[0].shells[0].faces[face_idx].normal
+ let fd = face_data(brep, face_idx);
+ if let Some(ref surf) = fd.surface {
+ match surf {
+ Surface3::Plane(pl) => pl.normal,
+ Surface3::Cylinder(cyl) => cyl.axis,
+ Surface3::Sphere(sp) => {
+ // Use outward radial at sample point or default axis
+ sp.axis
+ }
+ Surface3::Cone(cone) => cone.axis,
+ _ => DVec3::Z,
+ }
+ } else {
+ DVec3::Z
+ }
 }
 
 //  鈧?鈧?Rebuild helpers  鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?
@@ -291,21 +399,21 @@ fn face_normal(brep: &BRep, face_idx: usize) -> DVec3 {
 /// Get the start vertex of a WireEdge (respecting orientation).
 #[allow(dead_code)]
 fn wire_edge_start(brep: &BRep, we: &WireEdge) -> usize {
- let e = &brep.edges[we.idx];
- if we.forward { e.start } else { e.end }
+ let ed = edge_data(brep, we.idx);
+ if we.forward { ed.first.index } else { ed.last.index }
 }
 
 /// Get the end vertex of a WireEdge (respecting orientation).
 #[allow(dead_code)]
 fn wire_edge_end(brep: &BRep, we: &WireEdge) -> usize {
- let e = &brep.edges[we.idx];
- if we.forward { e.end } else { e.start }
+ let ed = edge_data(brep, we.idx);
+ if we.forward { ed.last.index } else { ed.first.index }
 }
 
 /// Add a straight line edge between two vertices in `dst`.
 fn add_line_edge(dst: &mut BRep, va: usize, vb: usize) -> Result<usize, BuildError> {
- let pa = dst.vertices[va].point;
- let pb = dst.vertices[vb].point;
+ let pa = vert_point(dst, va);
+ let pb = vert_point(dst, vb);
  let dir = (pb - pa).normalize_or_zero();
  let len = (pb - pa).length();
  let curve = rcad_kernel::geom::Curve3::Line(Line3 {
@@ -318,9 +426,9 @@ fn add_line_edge(dst: &mut BRep, va: usize, vb: usize) -> Result<usize, BuildErr
 /// Add a triangular closing face with the given three vertex indices.
 #[allow(dead_code)]
 fn add_closing_triangle(dst: &mut BRep, v0: usize, v1: usize, v2: usize) -> Result<(), BuildError> {
- let p0 = dst.vertices[v0].point;
- let p1 = dst.vertices[v1].point;
- let p2 = dst.vertices[v2].point;
+ let p0 = vert_point(dst, v0);
+ let p1 = vert_point(dst, v1);
+ let p2 = vert_point(dst, v2);
  let n = (p1 - p0).cross(p2 - p0).normalize_or_zero();
  let surf = Surface3::Plane(Plane {
  origin: p0,
@@ -352,8 +460,8 @@ fn add_arc_edge(
  center: DVec3,
  radius: f64,
 ) -> Result<usize, BuildError> {
- let pa = dst.vertices[va].point;
- let pb = dst.vertices[vb].point;
+ let pa = vert_point(dst, va);
+ let pb = vert_point(dst, vb);
 
  let da = (pa - center).normalize_or_zero();
  let db = (pb - center).normalize_or_zero();
@@ -396,9 +504,9 @@ fn add_closing_spherical_triangle(
  center: DVec3,
  radius: f64,
 ) -> Result<(), BuildError> {
- let p0 = dst.vertices[v0].point;
- let p1 = dst.vertices[v1].point;
- let p2 = dst.vertices[v2].point;
+ let p0 = vert_point(dst, v0);
+ let p1 = vert_point(dst, v1);
+ let p2 = vert_point(dst, v2);
 
  // Sphere axis: outward normal through the centroid of the triangle.
  let centroid = (p0 + p1 + p2) / 3.0;
@@ -427,16 +535,16 @@ fn add_closing_spherical_triangle(
 /// Copy all vertices and geom data from `src` into `dst` (start of rebuild).
 /// After this call, vertex indices in `dst` match those in `src`.
 fn copy_vertices_from(dst: &mut BRep, src: &BRep) {
- for v in &src.vertices {
- dst.vertices.push(Vertex { point: v.point });
+ for ts in &src.tshapes {
+ if let TShape::Vertex(vd) = &**ts {
+ dst.add_tvertex(vd.point);
+ }
  }
 }
 
 /// Push a vertex into `dst` and return its index.
 fn push_vertex(dst: &mut BRep, point: DVec3) -> usize {
- let idx = dst.vertices.len();
- dst.vertices.push(Vertex { point });
- idx
+ dst.add_tvertex(point).index
 }
 
 /// Rebuild one face from `src` into `dst`, applying vertex remapping.
@@ -444,27 +552,30 @@ fn push_vertex(dst: &mut BRep, point: DVec3) -> usize {
 /// `vi_remap[old_vi]` gives the new vertex index for `old_vi`. If `vi_remap[i] == i`
 /// no remapping occurs (identity). Edges are recreated as straight lines.
 ///
+/// `face_idx` is the tshape index of the face in `src`.
 /// Returns the index of the newly created face.
 fn copy_face_remapped(
  dst: &mut BRep,
  src: &BRep,
- face: &Face,
+ face_idx: usize,
  vi_remap: &[usize],
 ) -> Result<usize, BuildError> {
+ let fd = face_data(src, face_idx);
  // Build a new wire by walking the outer_wire and remapping vertices.
  let mut new_wire_edges = Vec::new();
 
- for we in &face.outer_wire.edges {
- let src_edge = &src.edges[we.idx];
- let old_va = if we.forward {
- src_edge.start
+ if let TShape::Wire(wd) = &*src.tshapes[fd.outer_wire.index] {
+ for esr in &wd.edges {
+ let ed = edge_data(src, esr.index);
+ let old_va = if esr.orientation == topods::Orientation::Forward {
+ ed.first.index
  } else {
- src_edge.end
+ ed.last.index
  };
- let old_vb = if we.forward {
- src_edge.end
+ let old_vb = if esr.orientation == topods::Orientation::Forward {
+ ed.last.index
  } else {
- src_edge.start
+ ed.first.index
  };
  let new_va = vi_remap[old_va];
  let new_vb = vi_remap[old_vb];
@@ -473,31 +584,47 @@ fn copy_face_remapped(
  let ei = add_line_edge(dst, new_va, new_vb)?;
  new_wire_edges.push(WireEdge::fwd(ei));
  }
+ }
 
  let wire = make_wire(new_wire_edges);
 
  // Compute face normal from first 3 vertices of the wire.
  let normal = {
- let pts: Vec<DVec3> = face
- .outer_wire
- .edges
- .iter()
- .take(3)
- .map(|we| {
- let src_e = &src.edges[we.idx];
- let old_v = if we.forward { src_e.start } else { src_e.end };
- dst.vertices[vi_remap[old_v]].point
- })
- .collect();
+ let pts: Vec<DVec3> = (|| {
+ if let TShape::Wire(wd) = &*src.tshapes[fd.outer_wire.index] {
+ wd.edges.iter().take(3).map(|esr| {
+ let ed = edge_data(src, esr.index);
+ let old_v = if esr.orientation == topods::Orientation::Forward {
+ ed.first.index
+ } else {
+ ed.last.index
+ };
+ vert_point(dst, vi_remap[old_v])
+ }).collect()
+ } else { vec![] }
+ })();
  if pts.len() >= 3 {
  (pts[1] - pts[0]).cross(pts[2] - pts[0]).normalize_or_zero()
  } else {
- face.normal
+ face_normal(src, face_idx)
  }
  };
 
  let surf = Surface3::Plane(Plane {
- origin: dst.vertices[vi_remap[src.edges[face.outer_wire.edges[0].idx].start]].point,
+ origin: {
+ let first_esr = if let TShape::Wire(wd) = &*src.tshapes[fd.outer_wire.index] {
+ wd.edges.first()
+ } else { None };
+ if let Some(esr) = first_esr {
+ let ed = edge_data(src, esr.index);
+ let old_v = if esr.orientation == topods::Orientation::Forward {
+ ed.first.index
+ } else {
+ ed.last.index
+ };
+ vert_point(dst, vi_remap[old_v])
+ } else { DVec3::ZERO }
+ },
  normal,
  });
 
@@ -533,7 +660,7 @@ pub fn chamfer_edge_with_history(
  if dist <= 0.0 {
  return Err(BuildError::NonPositiveValue("dist"));
  }
- if edge_idx >= brep.edges.len() {
+ if edge_idx >= brep.tshapes.len() || !matches!(&*brep.tshapes[edge_idx], TShape::Edge(_)) {
  return Err(BuildError::InvalidIndex(edge_idx));
  }
 
@@ -549,9 +676,9 @@ pub fn chamfer_edge_with_history(
  ));
  }
 
- let edge = &brep.edges[edge_idx];
- let p0 = brep.vertices[edge.start].point;
- let p1 = brep.vertices[edge.end].point;
+ let ed_ch = edge_data(brep, edge_idx);
+ let p0 = vert_point(brep, ed_ch.first.index);
+ let p1 = vert_point(brep, ed_ch.last.index);
 
  // 4 new setback vertices
  let nv0a = p0 + dist * s0; // face f0, at v0
@@ -613,7 +740,7 @@ pub fn chamfer_edge_angle_with_history(
  if angle_rad <= 0.0 {
  return Err(BuildError::NonPositiveValue("angle_rad"));
  }
- if edge_idx >= brep.edges.len() {
+ if edge_idx >= brep.tshapes.len() || !matches!(&*brep.tshapes[edge_idx], TShape::Edge(_)) {
  return Err(BuildError::InvalidIndex(edge_idx));
  }
 
@@ -653,9 +780,9 @@ pub fn chamfer_edge_angle_with_history(
  let sb0 = dist;
  let sb1 = dist * angle_rad.sin() / sin_beta_minus_alpha;
 
- let edge = &brep.edges[edge_idx];
- let p0 = brep.vertices[edge.start].point;
- let p1 = brep.vertices[edge.end].point;
+ let ed_ch = edge_data(brep, edge_idx);
+ let p0 = vert_point(brep, ed_ch.first.index);
+ let p1 = vert_point(brep, ed_ch.last.index);
 
  let sign = match convexity {
  EdgeConvexity::Convex => 1.0,
@@ -701,23 +828,21 @@ fn max_safe_setback(brep: &BRep, edge_idx: usize) -> f64 {
  if s0.length_squared() < 1e-20 || s1.length_squared() < 1e-20 {
  return f64::INFINITY;
  }
- let edge = &brep.edges[edge_idx];
- let p0 = brep.vertices[edge.start].point;
- let p1 = brep.vertices[edge.end].point;
+ let ed = edge_data(brep, edge_idx);
+ let p0 = vert_point(brep, ed.first.index);
+ let p1 = vert_point(brep, ed.last.index);
  let edge_len = (p1 - p0).length();
 
  // Maximum setback is half the shortest adjacent edge in either face.
  let mut min_len = f64::INFINITY;
- let shell = &brep.solids[0].shells[0];
- for face in [&shell.faces[f0], &shell.faces[f1]] {
- for we in &face.outer_wire.edges {
- if we.idx == edge_idx {
- continue;
- }
- if let Some(e) = brep.edges.get(we.idx) {
- let l = (brep.vertices[e.start].point - brep.vertices[e.end].point).length();
- if l < min_len {
- min_len = l;
+ for &fi in &[f0, f1] {
+ let fd = face_data(brep, fi);
+ if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+ for esr in &wd.edges {
+ if esr.index == edge_idx { continue; }
+ if let TShape::Edge(e) = &*brep.tshapes[esr.index] {
+ let l = (vert_point(brep, e.first.index) - vert_point(brep, e.last.index)).length();
+ if l < min_len { min_len = l; }
  }
  }
  }
@@ -804,7 +929,7 @@ pub fn fillet_edge_with_history(
  if radius <= 0.0 {
  return Err(BuildError::NonPositiveValue("radius"));
  }
- if edge_idx >= brep.edges.len() {
+ if edge_idx >= brep.tshapes.len() || !matches!(&*brep.tshapes[edge_idx], TShape::Edge(_)) {
  return Err(BuildError::InvalidIndex(edge_idx));
  }
 
@@ -840,9 +965,9 @@ pub fn fillet_edge_with_history(
  radius / half_beta.tan()
  };
 
- let edge = &brep.edges[edge_idx];
- let p0 = brep.vertices[edge.start].point;
- let p1 = brep.vertices[edge.end].point;
+ let ed_f = edge_data(brep, edge_idx);
+ let p0 = vert_point(brep, ed_f.first.index);
+ let p1 = vert_point(brep, ed_f.last.index);
 
  // For concave edges, the setback directions point *into* the faces from the
  // edge, but the fillet cylinder center is on the *opposite* side of the edge.
@@ -900,7 +1025,7 @@ pub fn fillet_edge_variable_radius_with_history(
  if end_radius <= 0.0 {
  return Err(BuildError::NonPositiveValue("end_radius"));
  }
- if edge_idx >= brep.edges.len() {
+ if edge_idx >= brep.tshapes.len() || !matches!(&*brep.tshapes[edge_idx], TShape::Edge(_)) {
  return Err(BuildError::InvalidIndex(edge_idx));
  }
 
@@ -946,9 +1071,9 @@ pub fn fillet_edge_variable_radius_with_history(
  end_radius / tan_half_beta
  };
 
- let edge = &brep.edges[edge_idx];
- let p0 = brep.vertices[edge.start].point;
- let p1 = brep.vertices[edge.end].point;
+ let ed_vr = edge_data(brep, edge_idx);
+ let p0 = vert_point(brep, ed_vr.first.index);
+ let p1 = vert_point(brep, ed_vr.last.index);
 
  // Blend face vertices: setback computed independently at each endpoint.
  let nv0a = p0 + sign * setback_start * s0; // face f0, at p0
@@ -1022,9 +1147,9 @@ fn rebuild_with_variable_fillet_verts_history(
  start_radius: f64,
  end_radius: f64,
 ) -> Result<(BRep, FilletHistory), BuildError> {
- let orig_edge = &brep.edges[edge_idx];
- let v0_orig = orig_edge.start;
- let v1_orig = orig_edge.end;
+ let orig_edge = edge_data(brep, edge_idx);
+ let v0_orig = orig_edge.first.index;
+ let v1_orig = orig_edge.last.index;
 
  let mut dst = BRep::new();
  copy_vertices_from(&mut dst, brep);
@@ -1034,29 +1159,28 @@ fn rebuild_with_variable_fillet_verts_history(
  let nv1a_idx = push_vertex(&mut dst, nv1a);
  let nv1b_idx = push_vertex(&mut dst, nv1b);
 
- let shell = &brep.solids[0].shells[0];
- let n_faces = shell.faces.len();
+ let face_idxs = shell_face_indices(brep);
 
  let mut modified_faces = Vec::new();
- for fi in 0..n_faces {
- let face = &shell.faces[fi];
- if fi == f0 {
- let remap = build_remap(brep, face, v0_orig, v1_orig, nv0a_idx, nv1a_idx);
- let new_fi = copy_face_remapped(&mut dst, brep, face, &remap)?;
+ for (pos, &fi) in face_idxs.iter().enumerate() {
+ if pos == f0 {
+ let remap = build_remap(brep, fi, v0_orig, v1_orig, nv0a_idx, nv1a_idx);
+ let new_fi = copy_face_remapped(&mut dst, brep, fi, &remap)?;
  modified_faces.push(new_fi);
- } else if fi == f1 {
- let remap = build_remap(brep, face, v0_orig, v1_orig, nv0b_idx, nv1b_idx);
- let new_fi = copy_face_remapped(&mut dst, brep, face, &remap)?;
+ } else if pos == f1 {
+ let remap = build_remap(brep, fi, v0_orig, v1_orig, nv0b_idx, nv1b_idx);
+ let new_fi = copy_face_remapped(&mut dst, brep, fi, &remap)?;
  modified_faces.push(new_fi);
  } else {
- let remap: Vec<usize> = (0..brep.vertices.len()).collect();
- copy_face_remapped(&mut dst, brep, face, &remap)?;
+ let n_verts = brep.tshapes.len();
+ let remap: Vec<usize> = (0..n_verts).collect();
+ copy_face_remapped(&mut dst, brep, fi, &remap)?;
  }
  }
 
  // Blend face surface: cone when radii differ, cylinder when equal.
- let p_orig0 = brep.vertices[v0_orig].point;
- let p_orig1 = brep.vertices[v1_orig].point;
+ let p_orig0 = vert_point(brep, v0_orig);
+ let p_orig1 = vert_point(brep, v1_orig);
  let edge_vec = p_orig1 - p_orig0;
  let edge_len = edge_vec.length();
  let edge_dir = edge_vec.normalize_or_zero();
@@ -1115,9 +1239,9 @@ fn rebuild_with_variable_fillet_verts_history(
  let v0 = v0_orig;
  let v1 = nv0a_idx;
  let v2 = nv0b_idx;
- let p0 = dst.vertices[v0].point;
- let p1_c = dst.vertices[v1].point;
- let p2 = dst.vertices[v2].point;
+ let p0 = vert_point(&dst, v0);
+ let p1_c = vert_point(&dst, v1);
+ let p2 = vert_point(&dst, v2);
  let n = (p1_c - p0).cross(p2 - p0).normalize_or_zero();
  let surf = Surface3::Plane(Plane { origin: p0, normal: n });
  let e01 = add_line_edge(&mut dst, v0, v1)?;
@@ -1132,9 +1256,9 @@ fn rebuild_with_variable_fillet_verts_history(
  let v0 = v1_orig;
  let v1 = nv1b_idx;
  let v2 = nv1a_idx;
- let p0 = dst.vertices[v0].point;
- let p1_c = dst.vertices[v1].point;
- let p2 = dst.vertices[v2].point;
+ let p0 = vert_point(&dst, v0);
+ let p1_c = vert_point(&dst, v1);
+ let p2 = vert_point(&dst, v2);
  let n = (p1_c - p0).cross(p2 - p0).normalize_or_zero();
  let surf = Surface3::Plane(Plane { origin: p0, normal: n });
  let e01 = add_line_edge(&mut dst, v0, v1)?;
@@ -1168,9 +1292,9 @@ fn rebuild_with_chamfer_verts_history(
  nv0b: DVec3,
  nv1b: DVec3,
 ) -> Result<(BRep, FilletHistory), BuildError> {
- let orig_edge = &brep.edges[edge_idx];
- let v0_orig = orig_edge.start;
- let v1_orig = orig_edge.end;
+ let orig_edge = edge_data(brep, edge_idx);
+ let v0_orig = orig_edge.first.index;
+ let v1_orig = orig_edge.last.index;
 
  let mut dst = BRep::new();
  copy_vertices_from(&mut dst, brep);
@@ -1181,24 +1305,23 @@ fn rebuild_with_chamfer_verts_history(
  let nv0b_idx = push_vertex(&mut dst, nv0b);
  let nv1b_idx = push_vertex(&mut dst, nv1b);
 
- let shell = &brep.solids[0].shells[0];
- let n_faces = shell.faces.len();
+ let face_idxs = shell_face_indices(brep);
 
  let mut modified_faces = Vec::new();
- for fi in 0..n_faces {
- let face = &shell.faces[fi];
- if fi == f0 {
- let remap = build_remap(brep, face, v0_orig, v1_orig, nv0a_idx, nv1a_idx);
- let new_fi = copy_face_remapped(&mut dst, brep, face, &remap)?;
+ for (pos, &fi) in face_idxs.iter().enumerate() {
+ if pos == f0 {
+ let remap = build_remap(brep, fi, v0_orig, v1_orig, nv0a_idx, nv1a_idx);
+ let new_fi = copy_face_remapped(&mut dst, brep, fi, &remap)?;
  modified_faces.push(new_fi);
- } else if fi == f1 {
- let remap = build_remap(brep, face, v0_orig, v1_orig, nv0b_idx, nv1b_idx);
- let new_fi = copy_face_remapped(&mut dst, brep, face, &remap)?;
+ } else if pos == f1 {
+ let remap = build_remap(brep, fi, v0_orig, v1_orig, nv0b_idx, nv1b_idx);
+ let new_fi = copy_face_remapped(&mut dst, brep, fi, &remap)?;
  modified_faces.push(new_fi);
  } else {
  // Copy unchanged  ?identity remap
- let remap: Vec<usize> = (0..brep.vertices.len()).collect();
- copy_face_remapped(&mut dst, brep, face, &remap)?;
+ let n_verts = brep.tshapes.len();
+ let remap: Vec<usize> = (0..n_verts).collect();
+ copy_face_remapped(&mut dst, brep, fi, &remap)?;
  }
  }
 
@@ -1232,9 +1355,9 @@ fn rebuild_with_chamfer_verts_history(
  let v0 = v0_orig;
  let v1 = nv0a_idx;
  let v2 = nv0b_idx;
- let p0 = dst.vertices[v0].point;
- let p1 = dst.vertices[v1].point;
- let p2 = dst.vertices[v2].point;
+ let p0 = vert_point(&dst, v0);
+ let p1 = vert_point(&dst, v1);
+ let p2 = vert_point(&dst, v2);
  let n = (p1 - p0).cross(p2 - p0).normalize_or_zero();
  let surf = Surface3::Plane(Plane {
  origin: p0,
@@ -1255,9 +1378,9 @@ fn rebuild_with_chamfer_verts_history(
  let v0 = v1_orig;
  let v1 = nv1b_idx;
  let v2 = nv1a_idx;
- let p0 = dst.vertices[v0].point;
- let p1 = dst.vertices[v1].point;
- let p2 = dst.vertices[v2].point;
+ let p0 = vert_point(&dst, v0);
+ let p1 = vert_point(&dst, v1);
+ let p2 = vert_point(&dst, v2);
  let n = (p1 - p0).cross(p2 - p0).normalize_or_zero();
  let surf = Surface3::Plane(Plane {
  origin: p0,
@@ -1298,9 +1421,9 @@ fn rebuild_with_fillet_verts_history(
  nv1b: DVec3,
  radius: f64,
 ) -> Result<(BRep, FilletHistory), BuildError> {
- let orig_edge = &brep.edges[edge_idx];
- let v0_orig = orig_edge.start;
- let v1_orig = orig_edge.end;
+ let orig_edge = edge_data(brep, edge_idx);
+ let v0_orig = orig_edge.first.index;
+ let v1_orig = orig_edge.last.index;
 
  let mut dst = BRep::new();
  copy_vertices_from(&mut dst, brep);
@@ -1310,30 +1433,29 @@ fn rebuild_with_fillet_verts_history(
  let nv0b_idx = push_vertex(&mut dst, nv0b);
  let nv1b_idx = push_vertex(&mut dst, nv1b);
 
- let shell = &brep.solids[0].shells[0];
- let n_faces = shell.faces.len();
+ let face_idxs = shell_face_indices(brep);
 
  let mut modified_faces = Vec::new();
- for fi in 0..n_faces {
- let face = &shell.faces[fi];
- if fi == f0 {
- let remap = build_remap(brep, face, v0_orig, v1_orig, nv0a_idx, nv1a_idx);
- let new_fi = copy_face_remapped(&mut dst, brep, face, &remap)?;
+ for (pos, &fi) in face_idxs.iter().enumerate() {
+ if pos == f0 {
+ let remap = build_remap(brep, fi, v0_orig, v1_orig, nv0a_idx, nv1a_idx);
+ let new_fi = copy_face_remapped(&mut dst, brep, fi, &remap)?;
  modified_faces.push(new_fi);
- } else if fi == f1 {
- let remap = build_remap(brep, face, v0_orig, v1_orig, nv0b_idx, nv1b_idx);
- let new_fi = copy_face_remapped(&mut dst, brep, face, &remap)?;
+ } else if pos == f1 {
+ let remap = build_remap(brep, fi, v0_orig, v1_orig, nv0b_idx, nv1b_idx);
+ let new_fi = copy_face_remapped(&mut dst, brep, fi, &remap)?;
  modified_faces.push(new_fi);
  } else {
- let remap: Vec<usize> = (0..brep.vertices.len()).collect();
- copy_face_remapped(&mut dst, brep, face, &remap)?;
+ let n_verts = brep.tshapes.len();
+ let remap: Vec<usize> = (0..n_verts).collect();
+ copy_face_remapped(&mut dst, brep, fi, &remap)?;
  }
  }
 
  // Fillet face: cylindrical surface along the original edge direction
  let fillet_face = {
- let p_orig0 = brep.vertices[v0_orig].point;
- let p_orig1 = brep.vertices[v1_orig].point;
+ let p_orig0 = vert_point(brep, v0_orig);
+ let p_orig1 = vert_point(brep, v1_orig);
  let edge_dir = (p_orig1 - p_orig0).normalize_or_zero();
 
  let surf = Surface3::Cylinder(CylindricalSurface {
@@ -1361,9 +1483,9 @@ fn rebuild_with_fillet_verts_history(
  let v0 = v0_orig;
  let v1 = nv0a_idx;
  let v2 = nv0b_idx;
- let p0 = dst.vertices[v0].point;
- let p1 = dst.vertices[v1].point;
- let p2 = dst.vertices[v2].point;
+ let p0 = vert_point(&dst, v0);
+ let p1 = vert_point(&dst, v1);
+ let p2 = vert_point(&dst, v2);
  let n = (p1 - p0).cross(p2 - p0).normalize_or_zero();
  let surf = Surface3::Plane(Plane {
  origin: p0,
@@ -1383,9 +1505,9 @@ fn rebuild_with_fillet_verts_history(
  let v0 = v1_orig;
  let v1 = nv1b_idx;
  let v2 = nv1a_idx;
- let p0 = dst.vertices[v0].point;
- let p1 = dst.vertices[v1].point;
- let p2 = dst.vertices[v2].point;
+ let p0 = vert_point(&dst, v0);
+ let p1 = vert_point(&dst, v1);
+ let p2 = vert_point(&dst, v2);
  let n = (p1 - p0).cross(p2 - p0).normalize_or_zero();
  let surf = Surface3::Plane(Plane {
  origin: p0,
@@ -1416,21 +1538,25 @@ fn rebuild_with_fillet_verts_history(
 /// `v1_orig` with `new_v1` everywhere in a face.
 fn build_remap(
  brep: &BRep,
- face: &Face,
+ face_idx: usize,
  v0_orig: usize,
  v1_orig: usize,
  new_v0: usize,
  new_v1: usize,
 ) -> Vec<usize> {
- let mut remap: Vec<usize> = (0..brep.vertices.len()).collect();
+ let n_verts = brep.tshapes.len();
+ let mut remap: Vec<usize> = (0..n_verts).collect();
  // Check if this face actually references v0_orig / v1_orig
- let face_verts: Vec<usize> = face
- .outer_wire
- .edges
- .iter()
- .filter_map(|we| brep.edges.get(we.idx))
- .flat_map(|e| [e.start, e.end])
- .collect();
+ let fd = face_data(brep, face_idx);
+ let face_verts: Vec<usize> = (|| {
+ if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+ wd.edges.iter().flat_map(|esr| {
+ if let TShape::Edge(e) = &*brep.tshapes[esr.index] {
+ vec![e.first.index, e.last.index]
+ } else { vec![] }
+ }).collect()
+ } else { vec![] }
+ })();
  if face_verts.contains(&v0_orig) {
  remap[v0_orig] = new_v0;
  }
@@ -1475,25 +1601,25 @@ pub fn corner_blend_with_history(
  if radius <= 0.0 {
  return Err(BuildError::NonPositiveValue("radius"));
  }
- if vertex_idx >= brep.vertices.len() {
+ if vertex_idx >= brep.tshapes.len() || !matches!(&*brep.tshapes[vertex_idx], TShape::Vertex(_)) {
  return Err(BuildError::InvalidIndex(vertex_idx));
  }
 
- let v = brep.vertices[vertex_idx].point;
+ let v = vert_point(brep, vertex_idx);
 
  // Collect edges incident to vertex_idx
  let incident_edges: Vec<(usize, DVec3)> = brep
- .edges
+ .tshapes
  .iter()
  .enumerate()
- .filter_map(|(ei, e)| {
- if e.start == vertex_idx {
- Some((ei, brep.vertices[e.end].point))
- } else if e.end == vertex_idx {
- Some((ei, brep.vertices[e.start].point))
- } else {
- None
- }
+ .filter_map(|(ei, ts)| {
+ if let TShape::Edge(e) = &**ts {
+ if e.first.index == vertex_idx {
+ Some((ei, vert_point(brep, e.last.index)))
+ } else if e.last.index == vertex_idx {
+ Some((ei, vert_point(brep, e.first.index)))
+ } else { None }
+ } else { None }
  })
  .collect();
 
@@ -1514,7 +1640,7 @@ pub fn corner_blend_with_history(
 
  // For each face, rebuild its boundary replacing vertex_idx with the two
  // setback points on the edges incident to vertex_idx in that face.
- let shell = &brep.solids[0].shells[0];
+ let face_idxs = shell_face_indices(brep);
  let mut dst = BRep::new();
 
  // Copy all original vertices
@@ -1526,7 +1652,7 @@ pub fn corner_blend_with_history(
  .map(|&(_, p)| push_vertex(&mut dst, p))
  .collect();
 
- // Helper: edge_idx  ?setback vertex index in dst
+ // Helper: edge_idx -> setback vertex index in dst
  let sb_vi_for_edge = |ei: usize| -> Option<usize> {
  setbacks
  .iter()
@@ -1536,26 +1662,29 @@ pub fn corner_blend_with_history(
  };
 
  let mut modified_faces = Vec::new();
- for face in &shell.faces {
+ for &fi in &face_idxs {
+ let fd = face_data(brep, fi);
  // Collect ordered boundary as (vertex_index, entering_edge_index) pairs.
- // For each wire edge we, the "start" vertex of that step is the vertex we
- // arrive at when entering from the previous wire edge.
- let boundary_verts: Vec<(usize, usize)> = face
- .outer_wire
- .edges
- .iter()
- .map(|we| {
- let e = &brep.edges[we.idx];
- let vi = if we.forward { e.start } else { e.end };
- (vi, we.idx)
- })
- .collect();
+ let boundary_verts: Vec<(usize, usize)> = (|| {
+ if let TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] {
+ wd.edges.iter().map(|esr| {
+ let ed_b = edge_data(brep, esr.index);
+ let vi = if esr.orientation == topods::Orientation::Forward {
+ ed_b.first.index
+ } else {
+ ed_b.last.index
+ };
+ (vi, esr.index)
+ }).collect()
+ } else { vec![] }
+ })();
 
  let has_corner = boundary_verts.iter().any(|&(vi, _)| vi == vertex_idx);
  if !has_corner {
- // Face doesn't touch this vertex  ?copy unchanged
- let remap: Vec<usize> = (0..brep.vertices.len()).collect();
- copy_face_remapped(&mut dst, brep, face, &remap)?;
+ // Face doesn't touch this vertex - copy unchanged
+ let n_verts = brep.tshapes.len();
+ let remap: Vec<usize> = (0..n_verts).collect();
+ copy_face_remapped(&mut dst, brep, fi, &remap)?;
  continue;
  }
 
@@ -1572,17 +1701,17 @@ pub fn corner_blend_with_history(
  // The entering edge leads to vertex_idx.
  // Insert: setback on entering_edge, then setback on next_edge.
  if let Some(sb_enter) = sb_vi_for_edge(entering_edge) {
- new_boundary.push(dst.vertices[sb_enter].point);
+ new_boundary.push(vert_point(&dst, sb_enter));
  } else {
  new_boundary.push(v); // fallback
  }
  if let Some(sb_exit) = sb_vi_for_edge(next_edge) {
- new_boundary.push(dst.vertices[sb_exit].point);
+ new_boundary.push(vert_point(&dst, sb_exit));
  } else {
  new_boundary.push(v); // fallback
  }
  } else {
- new_boundary.push(brep.vertices[vi].point);
+ new_boundary.push(vert_point(brep, vi));
  }
  }
 
@@ -1602,7 +1731,7 @@ pub fn corner_blend_with_history(
  }
 
  // Create a planar face from the new boundary
- let n_raw = face.normal;
+ let n_raw = face_normal(brep, fi);
  let surf = Surface3::Plane(Plane {
  origin: new_boundary[0],
  normal: n_raw,
@@ -1613,14 +1742,14 @@ pub fn corner_blend_with_history(
  .iter()
  .map(|&p| {
  // Check if already in dst (original or setback vertex)
- for (i, dv) in dst.vertices.iter().enumerate() {
- if points_coincide(dv.point, p) {
+ for i in 0..dst.tshapes.len() {
+ if let Some(pt) = dst.vertex_point(i) {
+ if points_coincide(pt, p) {
  return i;
  }
  }
- let idx = dst.vertices.len();
- dst.vertices.push(Vertex { point: p });
- idx
+ }
+ push_vertex(&mut dst, p)
  })
  .collect();
 
@@ -1637,9 +1766,9 @@ pub fn corner_blend_with_history(
 
  // Add the spherical closing face connecting the 3 setback vertices
  let corner_face = {
- let p0 = dst.vertices[sb_indices[0]].point;
- let p1 = dst.vertices[sb_indices[1]].point;
- let p2 = dst.vertices[sb_indices[2]].point;
+ let p0 = vert_point(&dst, sb_indices[0]);
+ let p1 = vert_point(&dst, sb_indices[1]);
+ let p2 = vert_point(&dst, sb_indices[2]);
 
  // Sphere axis: outward normal through the centroid of the triangle.
  let centroid = (p0 + p1 + p2) / 3.0;
@@ -2403,19 +2532,19 @@ mod tests {
  }
 }
 
-// topods entry points
-pub fn chamfer_edge_topods(brep: &topods::BRep, edge_idx: usize, dist: f64) -> Result<topods::BRep, BuildError> {
-    let old = rcad_kernel::BRep::from_topods(brep); chamfer_edge(&old, edge_idx, dist).map(|b| b.to_topods())
+// topods entry points  — BRep is now topods::BRep, just delegate directly.
+pub fn chamfer_edge_topods(brep: &BRep, edge_idx: usize, dist: f64) -> Result<BRep, BuildError> {
+    chamfer_edge(brep, edge_idx, dist)
 }
-pub fn chamfer_edge_angle_topods(brep: &topods::BRep, edge_idx: usize, dist: f64, angle_rad: f64) -> Result<topods::BRep, BuildError> {
-    let old = rcad_kernel::BRep::from_topods(brep); chamfer_edge_angle(&old, edge_idx, dist, angle_rad).map(|b| b.to_topods())
+pub fn chamfer_edge_angle_topods(brep: &BRep, edge_idx: usize, dist: f64, angle_rad: f64) -> Result<BRep, BuildError> {
+    chamfer_edge_angle(brep, edge_idx, dist, angle_rad)
 }
-pub fn fillet_edge_topods(brep: &topods::BRep, edge_idx: usize, radius: f64) -> Result<topods::BRep, BuildError> {
-    let old = rcad_kernel::BRep::from_topods(brep); fillet_edge(&old, edge_idx, radius).map(|b| b.to_topods())
+pub fn fillet_edge_topods(brep: &BRep, edge_idx: usize, radius: f64) -> Result<BRep, BuildError> {
+    fillet_edge(brep, edge_idx, radius)
 }
-pub fn fillet_edge_variable_radius_topods(brep: &topods::BRep, edge_idx: usize, start_radius: f64, end_radius: f64) -> Result<topods::BRep, BuildError> {
-    let old = rcad_kernel::BRep::from_topods(brep); fillet_edge_variable_radius(&old, edge_idx, start_radius, end_radius).map(|b| b.to_topods())
+pub fn fillet_edge_variable_radius_topods(brep: &BRep, edge_idx: usize, start_radius: f64, end_radius: f64) -> Result<BRep, BuildError> {
+    fillet_edge_variable_radius(brep, edge_idx, start_radius, end_radius)
 }
-pub fn corner_blend_topods(brep: &topods::BRep, vertex_idx: usize, radius: f64) -> Result<topods::BRep, BuildError> {
-    let old = rcad_kernel::BRep::from_topods(brep); corner_blend(&old, vertex_idx, radius).map(|b| b.to_topods())
+pub fn corner_blend_topods(brep: &BRep, vertex_idx: usize, radius: f64) -> Result<BRep, BuildError> {
+    corner_blend(brep, vertex_idx, radius)
 }

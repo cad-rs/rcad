@@ -25,9 +25,9 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use glam::DVec3;
-use rcad_kernel::topology::{Face, Shell, Solid, Vertex, Wire};
-use rcad_kernel::{topods, BRep, BSplineSurface, Curve3, Surface3};
+use rcad_kernel::{BRep, BSplineSurface, Curve3, Surface3};
 use rcad_kernel::geom::{BSplineCurve3, Circle3, Line3, Plane};
+use rcad_kernel::topods::{ShapeRef, TShape};
 
 /// Errors that can occur when reading or parsing an IGES file.
 #[derive(Debug, Clone)]
@@ -623,12 +623,14 @@ impl IgesReader {
 struct IgesBrepBuilder {
     brep: BRep,
     // Maps from IGES entity pointers to RCAD indices
-    point_map: HashMap<i32, usize>,       // pointer -> vertex index
-    curve_map: HashMap<i32, usize>,       // pointer -> curve index in GeomStore
-    surface_map: HashMap<i32, usize>,     // pointer -> surface index in GeomStore
+    point_map: HashMap<i32, ShapeRef>,    // pointer -> vertex ShapeRef
+    curve_map: HashMap<i32, Curve3>,     // pointer -> 3D curve
+    surface_map: HashMap<i32, Surface3>, // pointer -> surface
     // Parsed geometry cache
     points: HashMap<i32, DVec3>,
     transformations: HashMap<i32, glam::DAffine3>,
+    // Accumulated face ShapeRefs for final shell/solid construction
+    face_refs: Vec<ShapeRef>,
 }
 
 impl IgesBrepBuilder {
@@ -640,6 +642,7 @@ impl IgesBrepBuilder {
             surface_map: HashMap::new(),
             points: HashMap::new(),
             transformations: HashMap::new(),
+            face_refs: Vec::new(),
         }
     }
 
@@ -682,9 +685,8 @@ impl IgesBrepBuilder {
         self.points.insert(de.sequence, point);
 
         // Add vertex
-        let v_idx = self.brep.vertices.len();
-        self.brep.vertices.push(Vertex { point });
-        self.point_map.insert(de.sequence, v_idx);
+        let sr = self.brep.add_tvertex(point);
+        self.point_map.insert(de.sequence, sr);
 
         Ok(())
     }
@@ -725,9 +727,7 @@ impl IgesBrepBuilder {
         let circle = Circle3::new(center, normal, radius);
 
         // Store the 3D curve
-        let curve_idx = self.brep.geom.curves.len();
-        self.brep.geom.curves.push(Curve3::Circle(circle));
-        self.curve_map.insert(de.sequence, curve_idx);
+        self.curve_map.insert(de.sequence, Curve3::Circle(circle));
 
         // Store start/end points for later edge construction
         // (arc goes from p1 to p3 through p2)
@@ -761,9 +761,7 @@ impl IgesBrepBuilder {
             direction,
         };
 
-        let curve_idx = self.brep.geom.curves.len();
-        self.brep.geom.curves.push(Curve3::Line(line));
-        self.curve_map.insert(de.sequence, curve_idx);
+        self.curve_map.insert(de.sequence, Curve3::Line(line));
 
         // Store endpoints
         self.points.insert(de.sequence * 10 + 1, start);
@@ -863,9 +861,7 @@ impl IgesBrepBuilder {
             weights,
         };
 
-        let curve_idx = self.brep.geom.curves.len();
-        self.brep.geom.curves.push(Curve3::BSpline(bspline));
-        self.curve_map.insert(de.sequence, curve_idx);
+        self.curve_map.insert(de.sequence, Curve3::BSpline(bspline));
 
         Ok(())
     }
@@ -971,9 +967,7 @@ impl IgesBrepBuilder {
             weights,
         };
 
-        let surf_idx = self.brep.geom.surfaces.len();
-        self.brep.geom.surfaces.push(Surface3::BSpline(bspline));
-        self.surface_map.insert(de.sequence, surf_idx);
+        self.surface_map.insert(de.sequence, Surface3::BSpline(bspline));
 
         Ok(())
     }
@@ -1048,9 +1042,7 @@ impl IgesBrepBuilder {
 
         let plane = Plane { origin, normal };
 
-        let surf_idx = self.brep.geom.surfaces.len();
-        self.brep.geom.surfaces.push(Surface3::Plane(plane));
-        self.surface_map.insert(de.sequence, surf_idx);
+        self.surface_map.insert(de.sequence, Surface3::Plane(plane));
 
         Ok(())
     }
@@ -1138,57 +1130,42 @@ impl IgesBrepBuilder {
         }
 
         let surface_ptr = self.get_int(&pd.values[1])? as i32;
-        let outer_bound_ptr = self.get_int(&pd.values[2])?;
-        let n_inner = if pd.values.len() > 3 { self.get_int(&pd.values[3])? as usize } else { 0 };
+        let _outer_bound_ptr = self.get_int(&pd.values[2])?;
+        let _n_inner = if pd.values.len() > 3 { self.get_int(&pd.values[3])? as usize } else { 0 };
 
-        // Get surface index
-        let surf_idx = self.surface_map.get(&surface_ptr).copied();
+        // Get surface from map
+        let surface = self.surface_map.get(&surface_ptr).cloned();
 
-        // Create a face with empty wire for now
-        let face = Face {
-            outer_wire: Wire { edges: vec![] },
-            inner_wires: vec![],
-            normal: DVec3::Z,
-            triangles: vec![],
-            sample_point: None,
-            mesh_dirty: true,
-            surface_idx: None,
-        };
+        // Create empty outer wire
+        let outer_wire = self.brep.add_twire(vec![]);
 
-        let _ = (outer_bound_ptr, n_inner, surf_idx);
-
-        // Add face to a shell
-        // For now, create a simple structure
-        if self.brep.solids.is_empty() {
-            self.brep.solids.push(Solid {
-                shells: vec![Shell { faces: vec![] }],
-            });
-        }
-
-        if let Some(solid) = self.brep.solids.first_mut() {
-            if solid.shells.is_empty() {
-                solid.shells.push(Shell { faces: vec![] });
-            }
-            if let Some(shell) = solid.shells.first_mut() {
-                shell.faces.push(face);
-                // Set surface reference
-                if let Some(idx) = surf_idx {
-                    self.brep.geom.face_surface.push(Some(idx));
-                } else {
-                    self.brep.geom.face_surface.push(None);
-                }
-            }
-        }
+        // Create face with the surface and accumulate
+        let face_sr = self.brep.add_tface(
+            surface,
+            outer_wire,
+            vec![],       // no inner wires
+            None,         // no sample point
+            None,         // no UV domain
+            vec![],       // no internal vertices
+            false,        // not natural restriction
+        );
+        self.face_refs.push(face_sr);
 
         Ok(())
     }
 
     /// Finish building and return the BRep.
-    fn finish(self) -> Result<BRep, IgesError> {
-        if self.brep.vertices.is_empty() && self.brep.solids.is_empty() {
+    fn finish(mut self) -> Result<BRep, IgesError> {
+        if self.brep.vertex_count() == 0 && self.face_refs.is_empty() {
             return Err(IgesError::EmptyResult(
                 "IGES file contained no valid geometry".into(),
             ));
+        }
+
+        // Create shell and solid if we accumulated any faces
+        if !self.face_refs.is_empty() {
+            let shell = self.brep.add_tshell(std::mem::take(&mut self.face_refs));
+            self.brep.add_tsolid(vec![shell]);
         }
 
         Ok(self.brep)
@@ -1320,8 +1297,7 @@ impl IgesWriter {
 
     /// Write topods::BRep to an IGES string (converts internally).
     pub fn write_string_topods(brep: &rcad_kernel::topods::BRep) -> String {
-        let old = rcad_kernel::BRep::from_topods(brep);
-        Self::write_string(&old)
+        Self::write_string(brep)
     }
 
     /// Write BRep to an IGES file.
@@ -1334,8 +1310,7 @@ impl IgesWriter {
 
     /// Write topods::BRep to an IGES file (converts internally).
     pub fn write_file_topods<P: AsRef<Path>>(brep: &rcad_kernel::topods::BRep, path: P) -> Result<usize, io::Error> {
-        let old = rcad_kernel::BRep::from_topods(brep);
-        Self::write_file(&old, path)
+        Self::write_file(brep, path)
     }
 
     /// Convert BRep to IGES string.
@@ -1362,13 +1337,59 @@ impl IgesWriter {
 
         let mut entity_count = 0usize;
 
-        // Write surfaces
-        for surface in &brep.geom.surfaces {
-            if let Some(params) = self.surface_to_iges_params(surface) {
+        // Write surfaces (from face tshapes)
+        for ts in &brep.tshapes {
+            if let TShape::Face(fd) = ts.as_ref() {
+                if let Some(ref surface) = fd.surface {
+                    if let Some(params) = self.surface_to_iges_params(surface) {
+                        let de_seq = self.next_seq;
+                        self.next_seq += 1;
+
+                        let (d1, d2) = self.make_directory_entry(128, de_seq, (params.len() / 64 + 1) as i32);
+                        d_lines.push(section_line(&d1, 'D', d_lines.len() as i32 + 1));
+                        d_lines.push(section_line(&d2, 'D', d_lines.len() as i32 + 1));
+
+                        let p_line = format!("{:<64}{:>8}", params, de_seq * 2 - 1);
+                        p_lines.push(section_line(&p_line, 'P', p_lines.len() as i32 + 1));
+
+                        entity_count += 1;
+                    }
+                }
+            }
+        }
+
+        // Write curves (from edge tshapes)
+        for ts in &brep.tshapes {
+            if let TShape::Edge(ed) = ts.as_ref() {
+                if let Some(ref curve) = ed.curve {
+                    if let Some((entity_type, params)) = self.curve_to_iges_params(curve) {
+                        let de_seq = self.next_seq;
+                        self.next_seq += 1;
+
+                        let (d1, d2) = self.make_directory_entry(entity_type, de_seq, (params.len() / 64 + 1) as i32);
+                        d_lines.push(section_line(&d1, 'D', d_lines.len() as i32 + 1));
+                        d_lines.push(section_line(&d2, 'D', d_lines.len() as i32 + 1));
+
+                        let p_line = format!("{:<64}{:>8}", params, de_seq * 2 - 1);
+                        p_lines.push(section_line(&p_line, 'P', p_lines.len() as i32 + 1));
+
+                        entity_count += 1;
+                    }
+                }
+            }
+        }
+
+        // Write vertices as points (from vertex tshapes)
+        for ts in &brep.tshapes {
+            if let TShape::Vertex(vd) = ts.as_ref() {
+                let params = format!(
+                    "116,{:.9},{:.9},{:.9};",
+                    vd.point.x, vd.point.y, vd.point.z
+                );
                 let de_seq = self.next_seq;
                 self.next_seq += 1;
 
-                let (d1, d2) = self.make_directory_entry(128, de_seq, (params.len() / 64 + 1) as i32);
+                let (d1, d2) = self.make_directory_entry(116, de_seq, 1);
                 d_lines.push(section_line(&d1, 'D', d_lines.len() as i32 + 1));
                 d_lines.push(section_line(&d2, 'D', d_lines.len() as i32 + 1));
 
@@ -1377,42 +1398,6 @@ impl IgesWriter {
 
                 entity_count += 1;
             }
-        }
-
-        // Write curves
-        for curve in &brep.geom.curves {
-            if let Some((entity_type, params)) = self.curve_to_iges_params(curve) {
-                let de_seq = self.next_seq;
-                self.next_seq += 1;
-
-                let (d1, d2) = self.make_directory_entry(entity_type, de_seq, (params.len() / 64 + 1) as i32);
-                d_lines.push(section_line(&d1, 'D', d_lines.len() as i32 + 1));
-                d_lines.push(section_line(&d2, 'D', d_lines.len() as i32 + 1));
-
-                let p_line = format!("{:<64}{:>8}", params, de_seq * 2 - 1);
-                p_lines.push(section_line(&p_line, 'P', p_lines.len() as i32 + 1));
-
-                entity_count += 1;
-            }
-        }
-
-        // Write vertices as points
-        for vertex in &brep.vertices {
-            let params = format!(
-                "116,{:.9},{:.9},{:.9};",
-                vertex.point.x, vertex.point.y, vertex.point.z
-            );
-            let de_seq = self.next_seq;
-            self.next_seq += 1;
-
-            let (d1, d2) = self.make_directory_entry(116, de_seq, 1);
-            d_lines.push(section_line(&d1, 'D', d_lines.len() as i32 + 1));
-            d_lines.push(section_line(&d2, 'D', d_lines.len() as i32 + 1));
-
-            let p_line = format!("{:<64}{:>8}", params, de_seq * 2 - 1);
-            p_lines.push(section_line(&p_line, 'P', p_lines.len() as i32 + 1));
-
-            entity_count += 1;
         }
 
         lines.append(&mut d_lines);
@@ -1635,27 +1620,33 @@ mod tests {
 
     fn make_simple_brep() -> BRep {
         let mut brep = BRep::new();
-        brep.vertices.push(Vertex {
-            point: DVec3::new(0.0, 0.0, 0.0),
-        });
-        brep.vertices.push(Vertex {
-            point: DVec3::new(1.0, 0.0, 0.0),
-        });
-        brep.vertices.push(Vertex {
-            point: DVec3::new(0.0, 1.0, 0.0),
-        });
 
+        // Add vertices
+        let v0 = brep.add_tvertex(DVec3::new(0.0, 0.0, 0.0));
+        let v1 = brep.add_tvertex(DVec3::new(1.0, 0.0, 0.0));
+
+        // Add edge with line curve
         let line = Line3 {
             origin: DVec3::ZERO,
             direction: DVec3::X,
         };
-        brep.geom.curves.push(Curve3::Line(line));
+        let edge = brep.add_tedge(
+            Some(Curve3::Line(line)),
+            v0, v1,
+            [0.0, 1.0],
+        );
 
+        // Add face with plane surface
         let plane = Plane {
             origin: DVec3::ZERO,
             normal: DVec3::Z,
         };
-        brep.geom.surfaces.push(Surface3::Plane(plane));
+        let wire = brep.add_twire(vec![edge]);
+        brep.add_tface(
+            Some(Surface3::Plane(plane)),
+            wire,
+            vec![], None, None, vec![], false,
+        );
 
         brep
     }
@@ -1710,7 +1701,7 @@ S      1G      1D      2P      1                                             T  
         let result = IgesReader::parse_string(iges);
         match result {
             Ok(brep) => {
-                assert!(!brep.vertices.is_empty());
+                assert!(brep.vertex_count() > 0);
             }
             Err(IgesError::EmptyResult(_)) => {}
             Err(e) => {
