@@ -47,7 +47,7 @@ fn sample_wire_polyline_3d_with_n(brep: &topods::BRep, wire: &Wire, n: usize) ->
  None => continue,
  };
  let curve_opt = brep.geom.edge_curve.get(we.idx).and_then(|o| *o)
- .and_then(|ci| brep.geom.curves.get(ci));
+ .and_then(|ci| brep.tshapes.get(ci).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }));
  if let Some(curve) = curve_opt {
  let range = brep
  .geom
@@ -67,8 +67,8 @@ fn sample_wire_polyline_3d_with_n(brep: &topods::BRep, wire: &Wire, n: usize) ->
  continue;
  }
  }
- let vidx = if we.forward { edge.start } else { edge.end };
- if let Some(v) = brep.vertices.get(vidx) {
+ let vidx = if we.forward { edge.0 } else { edge.1 };
+ if let Some(v) = brep.vertex_point(vidx) {
  pts.push(v.point);
  }
  }
@@ -352,7 +352,7 @@ fn try_face_with_holes(
  if face.inner_wires.is_empty() {
  return None;
  }
- let surf_idx = brep.geom.face_surface.get(face_flat_idx)?.as_ref().copied()?;
+ let surf_idx = brep.tshapes.get(face_flat_idx).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.surface.clone() } else { None } })?;
  let surf = brep.tshapes.get(surf_idx).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None } })?;
  let tol = 1e-5_f64;
 
@@ -873,8 +873,8 @@ fn try_spherical_polygon_great_circle_area(
  for we in &face.outer_wire.edges {
  let ei = we.idx;
  let edge = brep.flat_edges().get(ei)?;
- let curve_idx = brep.geom.edge_curve.get(ei).copied().flatten()?;
- let curve = brep.geom.curves.get(curve_idx)?;
+ let curve_idx = brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.curve.clone()) } else { None } }).flatten()?;
+ let curve = brep.tshapes.get(curve_idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } })?;
  match curve {
  Curve3::Circle(c) => {
  if (c.center - s.center).length() > tol {
@@ -885,7 +885,7 @@ fn try_spherical_polygon_great_circle_area(
  }
  // Start vertex: for WireEdge::rev, the boundary enters via the
  // forward edge's end vertex.
- let vi = if we.forward { edge.start } else { edge.end };
+ let vi = if we.forward { edge.0 } else { edge.1 };
  let pt = brep.vertex_point(vi).unwrap_or(DVec3::ZERO);
  if verts.is_empty() || (pt - *verts.last()?).length() > tol {
  verts.push(pt);
@@ -1062,7 +1062,7 @@ fn wire_edge_endpoint_3d(brep: &BRep, we: &WireEdge) -> Option<DVec3> {
  // but curve spans the full distance between two different positions).
  if let Some(curve) = brep.geom.edge_curve.get(we.idx)
  .and_then(|o| *o)
- .and_then(|ci| brep.geom.curves.get(ci))
+ .and_then(|ci| brep.tshapes.get(ci).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }))
  {
  let range = brep.geom.edge_curve_range.get(we.idx)
  .and_then(|o| *o)
@@ -1076,8 +1076,8 @@ fn wire_edge_endpoint_3d(brep: &BRep, we: &WireEdge) -> Option<DVec3> {
  let t = if we.forward { range[0] } else { range[1] };
  return Some(curve.point_at(t));
  }
- let vidx = if we.forward { edge.start } else { edge.end };
- Some(brep.vertices.get(vidx)?.point)
+ let vidx = if we.forward { edge.0 } else { edge.1 };
+ Some(brep.vertex_point(vidx)?.point)
 }
 
 fn outer_wire_ordered_vertex_uvs(
@@ -1131,16 +1131,16 @@ fn outer_wire_unique_vertex_uvs(
  // where start==end but the curve spans two different positions).
  let pts: [DVec3; 2] = if let Some(curve) = brep.geom.edge_curve.get(we.idx)
  .and_then(|o| *o)
- .and_then(|ci| brep.geom.curves.get(ci))
+ .and_then(|ci| brep.tshapes.get(ci).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }))
  {
  let range = brep.geom.edge_curve_range.get(we.idx)
  .and_then(|o| *o)
  .unwrap_or_else(|| curve.default_domain());
  [curve.point_at(range[0]), curve.point_at(range[1])]
  } else {
- let p0 = brep.vertices.get(edge.start).map(|v| v.point)
+ let p0 = brep.vertices.get(edge.0).map(|v| v.point)
  .unwrap_or(DVec3::ZERO);
- let p1 = brep.vertices.get(edge.end).map(|v| v.point)
+ let p1 = brep.vertices.get(edge.1).map(|v| v.point)
  .unwrap_or(DVec3::ZERO);
  [p0, p1]
  };
@@ -1334,8 +1334,8 @@ fn try_planar_face_exact_contour_area(brep: &BRep, face: &Face, face_normal: DVe
  if n_edges == 1 {
  if let Some(we) = face.outer_wire.edges.first() {
  let ei = we.idx;
- if let Some(curve_idx) = brep.geom.edge_curve.get(ei).copied().flatten() {
- if let Some(Curve3::Circle(c)) = brep.geom.curves.get(curve_idx) {
+ if let Some(curve_idx) = brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.curve.clone()) } else { None } }).flatten() {
+ if let Some(Curve3::Circle(c)) = brep.tshapes.get(curve_idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }) {
  if let Some(range) = brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None } }) {
  let theta = (range[1] - range[0]).abs();
  // Full 2π circle: exact analytic area.
@@ -1359,7 +1359,7 @@ fn try_planar_face_exact_contour_area(brep: &BRep, face: &Face, face_normal: DVe
  let mut n_circle_edges = 0u32;
  for (i, we) in face.outer_wire.edges.iter().enumerate() {
  if let Some(ci) = brep.geom.edge_curve.get(we.idx).copied().flatten() {
- if let Some(Curve3::Circle(c)) = brep.geom.curves.get(ci) {
+ if let Some(Curve3::Circle(c)) = brep.tshapes.get(ci).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }) {
  if i < 2 {
  radii[i] = c.radius;
  centers[i] = c.center;
@@ -1406,11 +1406,11 @@ fn try_planar_face_exact_contour_area(brep: &BRep, face: &Face, face_normal: DVe
  for we in &face.outer_wire.edges {
  let ei = we.idx;
  let edge = brep.flat_edges().get(ei)?;
- let curve_idx = brep.geom.edge_curve.get(ei).copied().flatten()?;
- let curve = brep.geom.curves.get(curve_idx)?;
+ let curve_idx = brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.curve.clone()) } else { None } }).flatten()?;
+ let curve = brep.tshapes.get(curve_idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } })?;
  let range = brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None } }).unwrap_or([0.0, 1.0]);
 
- let (v_start, v_end) = if we.forward { (edge.start, edge.end) } else { (edge.end, edge.start) };
+ let (v_start, v_end) = if we.forward { (edge.0, edge.1) } else { (edge.1, edge.0) };
  let p_start = brep.vertex_point(v_start).unwrap_or(DVec3::ZERO);
  let p_end = brep.vertex_point(v_end).unwrap_or(DVec3::ZERO);
  let start_2d = DVec2::new((p_start - pivot).dot(ux), (p_start - pivot).dot(uy));
@@ -1615,8 +1615,8 @@ fn try_planar_face_area_shoelace(
  // ✅ OCCT :  ( Circle3  forward+reverse)→ - 。
  if w.edges.len() == 2 && w.edges[0].idx == w.edges[1].idx {
  let ei = w.edges[0].idx;
- if let (Some(ci), Some(e)) = (brep.geom.edge_curve.get(ei).copied().flatten(), brep.flat_edges().get(ei)) {
- if let Some(Curve3::Circle(c)) = brep.geom.curves.get(ci) {
+ if let (Some(ci), Some(e)) = (brep.tshapes.get(ei).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.curve.clone()) } else { None } }).flatten(), brep.flat_edges().get(ei)) {
+ if let Some(Curve3::Circle(c)) = brep.tshapes.get(ci).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }) {
  let (p0, p1) = (brep.vertices.get(e.start), brep.vertices.get(e.end));
  if let (Some(v0), Some(v1)) = (p0, p1) {
  let d0 = (v0.point - c.center).normalize();
@@ -1677,8 +1677,8 @@ fn try_boundary_convex_hull_area(
  let mut vert_indices: Vec<usize> = Vec::new();
  for we in &wire.edges {
  let edge = brep.edges.get(we.idx)?;
- vert_indices.push(edge.start);
- vert_indices.push(edge.end);
+ vert_indices.push(edge.0);
+ vert_indices.push(edge.1);
  }
  vert_indices.sort();
  vert_indices.dedup();
@@ -1690,7 +1690,7 @@ fn try_boundary_convex_hull_area(
  // Project unique vertices to the 2D local basis
  let pts_2d: Vec<DVec2> = vert_indices
  .iter()
- .filter_map(|&vi| brep.vertices.get(vi))
+ .filter_map(|&vi| brep.vertex_point(vi))
  .map(|v| DVec2::new(
  (v.point - pivot).dot(ux),
  (v.point - pivot).dot(uy),
@@ -1946,7 +1946,7 @@ fn try_cylinder_trimmed_face_area(
  let mut valid = true;
  for we in &face.outer_wire.edges {
  if let Some(ci) = brep.geom.edge_curve.get(we.idx).copied().flatten() {
- match brep.geom.curves.get(ci) {
+ match brep.tshapes.get(ci).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } }) {
  Some(Curve3::Line(_)) => {
  n_lines += 1;
  edge_curve_indices.push(ci);
@@ -1975,7 +1975,7 @@ fn try_cylinder_trimmed_face_area(
  // Fall back to seam-detection, then angular vertex computation.
  let du = 'du: {
  // Priority 1: face_surface_range — the builder knows the exact UV domain.
- if let Some(Some(range)) = brep.geom.face_surface_range.get(face_flat_idx) {
+ if let Some(Some(range)) = brep.tshapes.get(face_flat_idx).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.uv_domain } else { None } }) {
  let du_r = (range[1] - range[0]).abs();
  let dv_r = (range[3] - range[2]).abs();
  if du_r > 1e-14 && dv_r > 1e-14 {
@@ -1999,8 +1999,8 @@ fn try_cylinder_trimmed_face_area(
  if brep.geom.edge_curve.get(we.idx).copied().flatten() == Some(*ci) {
  let ei = we.idx;
  if let Some(edge) = brep.flat_edges().get(ei) {
- let vi = if we.forward { edge.start } else { edge.end };
- if let Some(v) = brep.vertices.get(vi) {
+ let vi = if we.forward { edge.0 } else { edge.1 };
+ if let Some(v) = brep.vertex_point(vi) {
  let d = v.point - cyl.origin;
  let u = d.dot(y_ax).atan2(d.dot(x_ax));
  u_vals.push(u);
@@ -2908,7 +2908,7 @@ fn curved_face_uv_domain(
  face_flat_idx: usize,
  surf: &Surface3,
 ) -> Option<[f64; 4]> {
- if let Some(Some(r)) = brep.geom.face_surface_range.get(face_flat_idx) {
+ if let Some(Some(r)) = brep.tshapes.get(face_flat_idx).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.uv_domain } else { None } }) {
  Some(*r)
  } else {
  let d = surf.default_domain();
@@ -3411,7 +3411,7 @@ fn tessellate_curved_face(
  face_flat_idx: usize,
 ) -> Option<Vec<[DVec3; 3]>> {
  // Look up the surface for this face.
- let surf_idx = brep.geom.face_surface.get(face_flat_idx)?.as_ref().copied()?;
+ let surf_idx = brep.tshapes.get(face_flat_idx).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.surface.clone() } else { None } })?;
  let surf = brep.tshapes.get(surf_idx).and_then(|ts| { if let topods::TShape::Face(fd) = &**ts { fd.surface.as_ref() } else { None } })?;
 
  let domain = curved_face_uv_domain(brep, face, face_flat_idx, surf)?;
@@ -3492,7 +3492,7 @@ fn estimate_uv_domain_from_wire(
  .flat_map(|w| &w.edges)
  .filter_map(|we| {
  let edge = brep.edges.get(we.idx)?;
- let vidx = if we.forward { edge.start } else { edge.end };
+ let vidx = if we.forward { edge.0 } else { edge.1 };
  brep.vertex_point(vidx)
  })
  .collect();
@@ -3650,9 +3650,9 @@ fn face_triangles(
  .triangles
  .iter()
  .filter_map(|&[i, j, k]| {
- let a = brep.vertices.get(i)?.point;
- let b = brep.vertices.get(j)?.point;
- let c = brep.vertices.get(k)?.point;
+ let a = brep.vertex_point(i)?.point;
+ let b = brep.vertex_point(j)?.point;
+ let c = brep.vertex_point(k)?.point;
  Some(orient_tri([a, b, c], face.normal))
  })
  .collect();
@@ -3682,7 +3682,7 @@ fn face_triangles(
  // approach fills the convex hull, inflating volume for concave caps.
  let face_verts: Vec<DVec3> = face.outer_wire.edges.iter().filter_map(|we| {
  let edge = brep.edges.get(we.idx)?;
- let vi = if we.forward { edge.start } else { edge.end };
+ let vi = if we.forward { edge.0 } else { edge.1 };
  brep.vertex_point(vi)
  }).collect();
  if face_verts.len() >= 3 {
