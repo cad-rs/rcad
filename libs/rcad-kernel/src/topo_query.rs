@@ -27,7 +27,7 @@ fn collect_vertex_indices(brep: &topods::BRep) -> Vec<usize> {
     brep.tshapes
         .iter()
         .enumerate()
-        .filter(|(_, ts)| matches!(&**ts, topods::TShape::Vertex(_)))
+        .filter(|(_, ts)| matches!(&**ts, &topods::TShape::Vertex(_)))
         .map(|(i, _)| i)
         .collect()
 }
@@ -37,7 +37,7 @@ fn collect_edge_indices(brep: &topods::BRep) -> Vec<usize> {
     brep.tshapes
         .iter()
         .enumerate()
-        .filter(|(_, ts)| matches!(&**ts, topods::TShape::Edge(_)))
+        .filter(|(_, ts)| matches!(&**ts, &topods::TShape::Edge(_)))
         .map(|(i, _)| i)
         .collect()
 }
@@ -47,7 +47,7 @@ fn collect_face_indices(brep: &topods::BRep) -> Vec<usize> {
     brep.tshapes
         .iter()
         .enumerate()
-        .filter(|(_, ts)| matches!(&**ts, topods::TShape::Face(_)))
+        .filter(|(_, ts)| matches!(&**ts, &topods::TShape::Face(_)))
         .map(|(i, _)| i)
         .collect()
 }
@@ -57,7 +57,7 @@ fn collect_solid_indices(brep: &topods::BRep) -> Vec<usize> {
     brep.tshapes
         .iter()
         .enumerate()
-        .filter(|(_, ts)| matches!(&**ts, topods::TShape::Solid(_)))
+        .filter(|(_, ts)| matches!(&**ts, &topods::TShape::Solid(_)))
         .map(|(i, _)| i)
         .collect()
 }

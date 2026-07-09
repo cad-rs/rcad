@@ -135,7 +135,8 @@ pub fn update_face_tolerance(brep: &mut topods::BRep, tshape_idx: usize, tol: f6
 /// Sets all vertex/edge/face tolerances to CONFUSION.
 pub fn finalize_tolerance_hierarchy(brep: &mut topods::BRep) {
     for ts in &mut brep.tshapes {
-        match &mut **ts {
+        let ts_mut = std::sync::Arc::make_mut(ts);
+        match ts_mut {
             topods::TShape::Vertex(vd) => {
                 if vd.tolerance <= 0.0 { vd.tolerance = CONFUSION; }
             }

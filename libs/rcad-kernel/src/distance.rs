@@ -1,4 +1,4 @@
-﻿//! Shape-to-shape and point-to-shape minimum distance.
+//! Shape-to-shape and point-to-shape minimum distance.
 //!
 //! Analogous to OCCT `BRepExtrema_DistShapeShape`.
 //!
@@ -15,7 +15,7 @@
 
 use glam::{DVec2, DVec3};
 
-use crate::{BRep, Surface3, closest_point_on_surface, geom::SurfaceEval};
+use crate::{BRep, topods, Surface3, closest_point_on_surface, geom::SurfaceEval};
 
 //  € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € € €
 // Result type
@@ -234,25 +234,26 @@ fn analytic_min_distance_single_face(a: &BRep, b: &BRep) -> Option<ShapeDistance
  }
 }
 
-fn single_face_info(brep: &BRep) -> Option<SingleFaceInfo<'_>> {
- let solid = brep.solids.first()?;
- let shell = solid.shells.first()?;
- if shell.faces.len() != 1 {
- return None;
- }
- let face = shell.faces.first()?;
- let surf_idx = brep.geom.face_surface.first().and_then(|o| *o)?;
- let surface = brep.geom.surfaces.get(surf_idx)?;
- let polygon: Vec<DVec3> = face
- .outer_wire
- .edges
- .iter()
- .filter_map(|we| brep.edges.get(we.idx))
- .map(|e| brep.vertices[e.start].point)
- .collect();
- if polygon.len() < 3 {
- return None;
- }
+fn single_face_info(brep: &topods::BRep) -> Option<SingleFaceInfo<'_>> {
+ // Find first Solid tshape
+ let solid_idx = brep.tshapes.iter().position(|ts| {
+  if let topods::TShape::Solid(_) = &**ts { true } else { false }
+ })?;
+ let topods::TShape::Solid(sd) = &*brep.tshapes[solid_idx] else { return None };
+ let shell_sr = sd.shells.first()?;
+ let topods::TShape::Shell(shd) = &*brep.tshapes[shell_sr.index] else { return None };
+ if shd.faces.len() != 1 { return None }
+ let face_sr = shd.faces.first()?;
+ let topods::TShape::Face(fd) = &*brep.tshapes[face_sr.index] else { return None };
+ let surface = fd.surface.as_ref()?;
+ let topods::TShape::Wire(wd) = &*brep.tshapes[fd.outer_wire.index] else { return None };
+ let polygon: Vec<DVec3> = wd.edges.iter().filter_map(|we| {
+  let topods::TShape::Edge(ed) = &*brep.tshapes[we.index] else { return None };
+  let v_idx = if we.orientation.is_forward() { ed.first.index } else { ed.last.index };
+  let topods::TShape::Vertex(vd) = &*brep.tshapes[v_idx] else { return None };
+  Some(vd.point)
+ }).collect();
+ if polygon.len() < 3 { return None }
  Some(SingleFaceInfo { surface, polygon })
 }
 
@@ -394,71 +395,55 @@ fn segment_intersection_2d(a0: DVec2, a1: DVec2, b0: DVec2, b1: DVec2) -> Option
 
 /// Find the closest point on any face surface of `brep` to `query`.
 /// Returns `None` if the BRep has no faces with analytic surfaces.
-fn closest_on_brep(query: DVec3, brep: &BRep) -> Option<ClosestResult> {
- if brep.solids.is_empty() {
- return None;
- }
+fn closest_on_brep(query: DVec3, brep: &topods::BRep) -> Option<ClosestResult> {
  let mut best: Option<ClosestResult> = None;
 
- for shell in &brep.solids[0].shells {
- for (fi, _face) in shell.faces.iter().enumerate() {
- // Get the analytic surface for this face
- let surf_idx = match brep.geom.face_surface.get(fi).and_then(|o| *o) {
- Some(idx) => idx,
- None => continue,
- };
- let surface = &brep.geom.surfaces[surf_idx];
-
- let proj = closest_point_on_surface(surface, query, 8);
- if best.as_ref().is_none_or(|b| proj.distance < b.distance) {
- best = Some(ClosestResult {
- point: proj.point,
- distance: proj.distance,
- });
- }
- }
+ for ts in &brep.tshapes {
+  let topods::TShape::Face(fd) = &**ts else { continue };
+  let surface = fd.surface.as_ref()?;
+  let proj = closest_point_on_surface(surface, query, 8);
+  if best.as_ref().is_none_or(|b| proj.distance < b.distance) {
+  best = Some(ClosestResult {
+   point: proj.point,
+   distance: proj.distance,
+  });
+  }
  }
 
  best
 }
 
 /// Collect sample points from the surface of a BRep: 8 8 grid per face + vertices.
-fn sample_brep_points(brep: &BRep) -> Vec<DVec3> {
+fn sample_brep_points(brep: &topods::BRep) -> Vec<DVec3> {
  const GRID: usize = 8;
  let mut pts = Vec::new();
 
- if brep.solids.is_empty() {
- return pts;
- }
-
  // Vertex positions
- for v in &brep.vertices {
- pts.push(v.point);
+ for ts in &brep.tshapes {
+  if let topods::TShape::Vertex(vd) = &**ts {
+  pts.push(vd.point);
+  }
  }
 
  // Per-face surface grid
- for shell in &brep.solids[0].shells {
- for (fi, _face) in shell.faces.iter().enumerate() {
- let surf_idx = match brep.geom.face_surface.get(fi).and_then(|o| *o) {
- Some(idx) => idx,
- None => continue,
- };
- let surface = &brep.geom.surfaces[surf_idx];
+ for ts in &brep.tshapes {
+  let topods::TShape::Face(fd) = &**ts else { continue };
+  let surface = match fd.surface.as_ref() {
+  Some(s) => s,
+  None => continue,
+  };
+  let [u0, u1, v0, v1] = match fd.uv_domain {
+  Some(r) => r,
+  None => surface.default_domain(),
+  };
 
- // Use per-face domain if available, else surface default
- let [u0, u1, v0, v1] = match brep.geom.face_surface_range.get(fi).and_then(|o| *o) {
- Some(r) => r,
- None => surface.default_domain(),
- };
-
- for i in 0..GRID {
- for j in 0..GRID {
- let u = u0 + (u1 - u0) * (i as f64 + 0.5) / GRID as f64;
- let v = v0 + (v1 - v0) * (j as f64 + 0.5) / GRID as f64;
- pts.push(surface.point_at(u, v));
- }
- }
- }
+  for i in 0..GRID {
+  for j in 0..GRID {
+   let u = u0 + (u1 - u0) * (i as f64 + 0.5) / GRID as f64;
+   let v = v0 + (v1 - v0) * (j as f64 + 0.5) / GRID as f64;
+   pts.push(surface.point_at(u, v));
+  }
+  }
  }
 
  pts

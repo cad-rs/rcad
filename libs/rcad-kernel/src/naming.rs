@@ -274,14 +274,14 @@ impl PersistentNamingHooks {
 fn flat_face_count(brep: &topods::BRep) -> usize {
     brep.tshapes
         .iter()
-        .filter(|ts| matches!(&**ts, topods::TShape::Face(_)))
+        .filter(|ts| matches!(&**ts, &topods::TShape::Face(_)))
         .count()
 }
 
 fn is_valid_ref_for_brep(brep: &topods::BRep, target: TopoEntityRef) -> bool {
     match target {
         TopoEntityRef::Vertex(i) => {
-            brep.tshapes.get(i).is_some_and(|ts| matches!(&**ts, topods::TShape::Vertex(_)))
+            brep.tshapes.get(i).is_some_and(|ts| matches!(&**ts, &topods::TShape::Vertex(_)))
         }
         TopoEntityRef::Edge(i) => {
             brep.tshapes.get(i).is_some_and(|ts| matches!(&**ts, topods::TShape::Edge(_)))
