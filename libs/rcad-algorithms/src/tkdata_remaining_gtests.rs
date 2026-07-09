@@ -556,18 +556,18 @@ mod tkdata_tkg2d_tests {
     // =============================================================================
     #[test]
     fn geom2d_offset_curve_basic() {
-        // OCCT: circle radius 5 offset by +2
+        // OCCT: circle radius 5 offset by +2 → outward = radius 7
         let base = Curve2d::Circle(Circle2d::new(Point2::ZERO, 5.0));
         let off = OffsetCurve2d {
             basis: Box::new(base.clone()),
             offset_distance: 2.0,
         };
         let c = Curve2d::Offset(off);
-        // rcad offset uses left normal (Rot90 of tangent).
-        // For CCW circle at t=0: C=(5,0), T=(0,5)→(0,1), N=Rot90(0,1)=(-1,0).
-        // offset +2 along (-1,0) gives (3,0) — inward offset.
+        // rcad uses OCCT-aligned right-hand normal (Ty, -Tx).
+        // For CCW circle at t=0: C=(5,0), T=(0,5)→(0,1), N=(1,0).
+        // offset +2 along (1,0) gives (7,0) — outward offset.
         let p = c.point_at(0.0);
-        assert!((p - Point2::new(3.0, 0.0)).length() < TOL);
+        assert!((p - Point2::new(7.0, 0.0)).length() < TOL);
     }
 
     #[test]
@@ -819,16 +819,14 @@ mod tkdata_tkg2d_tests {
     // =============================================================================
     #[test]
     fn adaptor2d_offset_curve_value() {
-        // OCCT: offset horizontal +X line by +3 → Y=-3 (right-hand offset)
+        // OCCT: offset horizontal +X line by +3, right-hand normal => Y = -3
         let base = Curve2d::Line(Line2d { origin: Point2::ZERO, direction: Vec2::X });
         let off = OffsetCurve2d { basis: Box::new(base), offset_distance: 3.0 };
         let c = Curve2d::Offset(off);
         let p = c.point_at(5.0);
         assert!((p.x - 5.0).abs() < TOL);
-        // rcad offset: P(t) = P_base(t) + offset * N(t)
-        // where N(t) = left normal = (-Ty, Tx)
-        // For line direction (1,0): T=(1,0), N=(0,1); offset 3 → Y = +3
-        assert!((p.y - 3.0).abs() < TOL);
+        // OCCT-aligned: right-hand normal N = (Ty, -Tx) = (0, -1)
+        assert!((p.y + 3.0).abs() < TOL, "offset line y={}, expected -3", p.y);
     }
 
     #[test]

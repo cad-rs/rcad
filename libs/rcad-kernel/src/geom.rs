@@ -966,19 +966,20 @@ pub struct TrimmedCurve2 {
     pub t_max: f64,
 }
 
-/// A 2D curve offset from a base curve by a fixed distance along the left normal.
+/// A 2D curve offset from a base curve by a fixed distance along the right-hand normal.
 ///
 /// `P(t) = P_base(t) + offset_distance * N(t)`
-/// where `N(t) = Rot90(T(t)) = (-Ty, Tx)` is the unit normal pointing to the
-/// left of the direction of travel.  The tangent `T(t)` is computed via
-/// finite differences when the base curve does not provide an analytic derivative.
+/// where `N(t) = Z_cross_T(t) = (Ty, -Tx)` is the unit normal pointing to the
+/// right of the direction of travel (OCCT convention). The tangent `T(t)` is
+/// computed via finite differences when the base curve does not provide an
+/// analytic derivative.
 ///
 /// Analogous to OCCT `Geom2d_OffsetCurve`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OffsetCurve2d {
     /// The basis curve.
     pub basis: Box<Curve2d>,
-    /// Offset distance (positive = left of travel direction).
+    /// Offset distance (positive = right of travel direction, OCCT convention).
     pub offset_distance: f64,
 }
 
@@ -2739,8 +2740,8 @@ impl Curve2dEval for OffsetCurve2d {
         let t_lo = t - eps;
         let dp = self.basis.point_at(t_hi) - self.basis.point_at(t_lo);
         let tangent = dp.normalize_or_zero();
-        // Left normal: Rot90(tangent)
-        let normal = DVec2::new(-tangent.y, tangent.x);
+        // OCCT-aligned right-hand normal: Z_cross_tangent = (Ty, -Tx)
+        let normal = DVec2::new(tangent.y, -tangent.x);
         base_pt + self.offset_distance * normal
     }
 }
