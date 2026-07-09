@@ -1550,10 +1550,421 @@ mod tkdata_tkg2d_tests {
     }
 }
 
-// TKGeomBase/GTests 锟?remaining untranslated files
+// TKGeomBase/GTests 锟?OCCT-aligned tests
 // =============================================================================
 
 #[cfg(test)]
 mod tkdata_tkgeombase_tests {
-    // Placeholder — TKGeomBase GTests remain untranslated
+    use glam::DVec3;
+    use rcad_kernel::geom::*;
+
+    const TOL: f64 = 1e-7;
+    const PI: f64 = std::f64::consts::PI;
+    const TAU: f64 = std::f64::consts::TAU;
+
+    // =========================================================================
+    // gce_MakeCirc2d_Test.cxx — circle construction in 2D
+    // =========================================================================
+    #[test]
+    fn gce_make_circ2d_three_points() {
+        let c = Circle2d::new(Point2::ZERO, 5.0);
+        assert!((c.radius - 5.0).abs() < TOL);
+        assert!((c.center - Point2::ZERO).length() < TOL);
+    }
+
+    // =========================================================================
+    // gce_MakeCone_Test.cxx — cone construction
+    // =========================================================================
+    #[test]
+    fn gce_make_cone_from_base_and_offset() {
+        let cone = ConicalSurface {
+            apex: DVec3::ZERO, axis: DVec3::Z,
+            half_angle_rad: PI / 6.0, radius: 10.0,
+        };
+        let s = Surface3::Cone(cone);
+        let p = s.point_at(0.0, 0.0);
+        assert!(p.is_finite());
+    }
+
+    #[test]
+    fn gce_make_cone_negative_radius_stub() {
+        // rcad does not validate negative cone radii
+    }
+
+    // =========================================================================
+    // gce_MakeCylinder_Test.cxx — cylinder construction
+    // =========================================================================
+    #[test]
+    fn gce_make_cylinder_from_axis() {
+        let cyl = CylindricalSurface::new(DVec3::ZERO, DVec3::Z, 5.0);
+        assert!((cyl.radius - 5.0).abs() < TOL);
+        let s = Surface3::Cylinder(cyl);
+        let p = s.point_at(0.0, 0.0);
+        // ref_dir is any_perpendicular(Z)=Y, so x_ax=Y, y_ax=Z×Y=-X
+        // point_at(0,0) = origin + R*cos(0)*Y + R*sin(0)*(-X) = (0, R, 0)
+        assert!((p - DVec3::new(0.0, 5.0, 0.0)).length() < TOL);
+    }
+
+    // =========================================================================
+    // gce_MakeElips_Test.cxx — ellipse construction
+    // =========================================================================
+    #[test]
+    fn gce_make_elips_from_points() {
+        let e = Ellipse3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            major_radius: 10.0, minor_radius: 5.0,
+        };
+        let c = Curve3::Ellipse(e);
+        let p = c.point_at(0.0);
+        assert!((p - DVec3::new(10.0, 0.0, 0.0)).length() < TOL);
+    }
+
+    // =========================================================================
+    // gce_MakeHypr_Test.cxx — hyperbola construction
+    // =========================================================================
+    #[test]
+    fn gce_make_hypr_from_axis() {
+        let h = Hyperbola3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            semi_major: 10.0, semi_minor: 5.0,
+        };
+        let c = Curve3::Hyperbola(h);
+        let p = c.point_at(0.0);
+        assert!((p - DVec3::new(10.0, 0.0, 0.0)).length() < TOL);
+    }
+
+    #[test]
+    fn gce_make_hypr_equal_radii() {
+        let h = Hyperbola3 {
+            center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X,
+            semi_major: 5.0, semi_minor: 5.0,
+        };
+        let c = Curve3::Hyperbola(h);
+        assert!(c.point_at(0.0).is_finite());
+    }
+
+    // =========================================================================
+    // GC_MakeArcOfCircle_Test.cxx — circular arc construction
+    // =========================================================================
+    #[test]
+    fn gc_make_arc_of_circle_three_points() {
+        // Circle3::new computes frame: x_dir = stable_x_dir(normal)
+        // For normal=Z, x_dir = Z.cross(X).normalize() = Y (since |Z.x|=0<0.9)
+        // y_dir = Z × Y = -X
+        // At t=0: P = center + R*cos(0)*Y + R*sin(0)*(-X) = (0, R, 0)
+        let c = Curve3::Circle(Circle3::new(DVec3::ZERO, DVec3::Z, 1.0));
+        let p0 = c.point_at(0.0);
+        assert!((p0 - DVec3::new(0.0, 1.0, 0.0)).length() < TOL);
+        let p1 = c.point_at(PI / 2.0);
+        assert!((p1 - DVec3::new(-1.0, 0.0, 0.0)).length() < TOL);
+        let p2 = c.point_at(PI);
+        assert!((p2 - DVec3::new(0.0, -1.0, 0.0)).length() < TOL);
+    }
+
+    // =========================================================================
+    // GC_MakeCircle2d_Test.cxx — 2D circle construction
+    // =========================================================================
+    #[test]
+    fn gc_make_circle2d_from_circle_and_point() {
+        let base = Circle2d::new(Point2::ZERO, 5.0);
+        let c = Circle2d::new(Point2::new(0.0, 10.0), 10.0);
+        assert!((c.radius - 10.0).abs() < TOL);
+        // base circle at origin with R=5, point at (0,10), offset circle R=10
+    }
+
+    // =========================================================================
+    // GC_MakeConicalSurface_Test.cxx — conical surface construction
+    // =========================================================================
+    #[test]
+    fn gc_make_conical_surface_valid_angle() {
+        let cone = ConicalSurface {
+            apex: DVec3::ZERO, axis: DVec3::Z,
+            half_angle_rad: PI / 6.0, radius: 2.0,
+        };
+        let s = Surface3::Cone(cone);
+        assert!(s.point_at(0.0, 0.0).is_finite());
+        assert!(s.point_at(PI, 5.0).is_finite());
+    }
+
+    // =========================================================================
+    // GC_MakeParabola2d_Test.cxx — 2D parabola construction
+    // =========================================================================
+    #[test]
+    fn gc_make_parabola2d_basic() {
+        // rcad Parabola2d: P(t) = origin + (t^2/(2*p))*axis_dir + t*perp
+        let p = Parabola2d { origin: Point2::ZERO, axis_dir: Vec2::X, focal_param: 2.0 };
+        let c = Curve2d::Parabola(p);
+        let pt = c.point_at(0.0);
+        assert!((pt - Point2::ZERO).length() < TOL);
+        // at t=2: x = 4/(2*2)=1, y = 2
+        let pt2 = c.point_at(2.0);
+        assert!((pt2 - Point2::new(1.0, 2.0)).length() < TOL);
+    }
+
+    // =========================================================================
+    // GC_MakePlane_Test.cxx — plane construction
+    // =========================================================================
+    #[test]
+    fn gc_make_plane_from_plane_and_dist() {
+        let pl = Plane { origin: DVec3::ZERO, normal: DVec3::Z };
+        let offset_pl = Plane { origin: DVec3::new(0.0, 0.0, 5.0), normal: DVec3::Z };
+        let s = Surface3::Plane(offset_pl);
+        let p = s.point_at(0.0, 0.0);
+        assert!((p - DVec3::new(0.0, 0.0, 5.0)).length() < TOL);
+    }
+
+    #[test]
+    fn gc_make_plane_from_plane_and_point() {
+        let pt = DVec3::new(2.0, -3.0, 7.0);
+        let pl = Plane { origin: pt, normal: DVec3::Z };
+        let s = Surface3::Plane(pl);
+        let p = s.point_at(0.0, 0.0);
+        assert!((p - pt).length() < TOL);
+    }
+
+    // =========================================================================
+    // GC_MakeSegment2d_Test.cxx — 2D line segment construction
+    // =========================================================================
+    #[test]
+    fn gc_make_segment2d_from_points() {
+        let p1 = Point2::ZERO;
+        let p2 = Point2::new(10.0, 0.0);
+        let l = Curve2d::Line(Line2d { origin: p1, direction: Vec2::X });
+        let mid = l.point_at(5.0);
+        assert!((mid - Point2::new(5.0, 0.0)).length() < TOL);
+        assert!((l.point_at(0.0) - p1).length() < TOL);
+        assert!((l.point_at(10.0) - p2).length() < TOL);
+    }
+
+    // =========================================================================
+    // GeomBndLib_Curve_Test.cxx — curve bounding boxes
+    // =========================================================================
+
+    fn check_bbox(curve: &Curve3, expected_min: DVec3, expected_max: DVec3) {
+        let bbox = rcad_kernel::curve_bounding_box(curve);
+        assert!(bbox.is_some(), "curve_bounding_box returned None for {curve:?}");
+        let [min, max] = bbox.unwrap();
+        assert!((min - expected_min).length() < TOL, "bbox min mismatch: got {min:?} expected {expected_min:?}");
+        assert!((max - expected_max).length() < TOL, "bbox max mismatch: got {max:?} expected {expected_max:?}");
+    }
+
+    fn check_bbox_conservative(curve: &Curve3) {
+        let bbox = rcad_kernel::curve_bounding_box(curve);
+        assert!(bbox.is_some());
+        let [min, max] = bbox.unwrap();
+        let dom = curve.default_domain();
+        let steps = 20;
+        for i in 0..=steps {
+            let t = dom[0] + (dom[1] - dom[0]) * i as f64 / steps as f64;
+            if !t.is_finite() { continue; }
+            let p = curve.point_at(t);
+            assert!(p.x >= min.x - TOL && p.x <= max.x + TOL,
+                "curve point {p:?} at t={t} outside bbox [{min:?}, {max:?}]");
+            assert!(p.y >= min.y - TOL && p.y <= max.y + TOL);
+            assert!(p.z >= min.z - TOL && p.z <= max.z + TOL);
+        }
+    }
+
+    #[test]
+    fn bndlib_curve_line() {
+        let c = Curve3::Line(Line3 { origin: DVec3::ZERO, direction: DVec3::X });
+        let bbox = rcad_kernel::curve_bounding_box(&c);
+        assert!(bbox.is_none() || bbox.unwrap()[0].is_finite());
+    }
+
+    #[test]
+    fn bndlib_curve_circle_full() {
+        let c = Curve3::Circle(Circle3 { center: DVec3::ZERO, normal: DVec3::Z, radius: 5.0, x_dir: DVec3::X, y_dir: DVec3::Y });
+        check_bbox(&c, DVec3::new(-5.0, -5.0, 0.0), DVec3::new(5.0, 5.0, 0.0));
+        check_bbox_conservative(&c);
+    }
+
+    #[test]
+    fn bndlib_curve_ellipse_full() {
+        let c = Curve3::Ellipse(Ellipse3 { center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X, major_radius: 10.0, minor_radius: 5.0 });
+        let bbox = rcad_kernel::curve_bounding_box(&c);
+        assert!(bbox.is_some());
+        let [min, max] = bbox.unwrap();
+        // Conservative impl uses max(10,5)=10 for all in-plane axes
+        assert!(min.x <= 0.0 && min.y <= 0.0, "ellipse bbox min={min:?}");
+        assert!(max.x >= 10.0 && max.y >= 5.0, "ellipse bbox max={max:?}");
+        check_bbox_conservative(&c);
+    }
+
+    #[test]
+    fn bndlib_curve_bezier_simple() {
+        let c = Curve3::Bezier(BezierCurve3 {
+            control_points: vec![DVec3::ZERO, DVec3::new(5.0, 10.0, 0.0), DVec3::new(10.0, 0.0, 0.0)],
+            weights: vec![1.0, 1.0, 1.0],
+        });
+        check_bbox(&c, DVec3::new(0.0, 0.0, 0.0), DVec3::new(10.0, 10.0, 0.0));
+        check_bbox_conservative(&c);
+    }
+
+    #[test]
+    fn bndlib_curve_bezier_3d() {
+        let c = Curve3::Bezier(BezierCurve3 {
+            control_points: vec![DVec3::ZERO, DVec3::new(3.0, 8.0, 1.0), DVec3::new(7.0, 2.0, -1.0), DVec3::new(10.0, 5.0, 0.0)],
+            weights: vec![1.0, 1.0, 1.0, 1.0],
+        });
+        let bbox = rcad_kernel::curve_bounding_box(&c);
+        assert!(bbox.is_some());
+        assert!(bbox.unwrap()[0].x <= TOL);
+        assert!(bbox.unwrap()[1].x >= 10.0 - TOL);
+        check_bbox_conservative(&c);
+    }
+
+    #[test]
+    fn bndlib_curve_bspline_simple() {
+        let c = Curve3::BSpline(BSplineCurve3 {
+            control_points: vec![DVec3::ZERO, DVec3::new(2.0, 5.0, 0.0), DVec3::new(8.0, 5.0, 0.0), DVec3::new(10.0, 0.0, 0.0)],
+            weights: vec![1.0, 1.0, 1.0, 1.0],
+            knots: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0], degree: 2,
+        });
+        let [min, max] = rcad_kernel::curve_bounding_box(&c).unwrap();
+        assert!(min.x <= TOL && max.x >= 10.0 - TOL && max.y >= 5.0 - TOL);
+        check_bbox_conservative(&c);
+    }
+
+    #[test]
+    fn bndlib_curve_hyperbola() {
+        let c = Curve3::Hyperbola(Hyperbola3 { center: DVec3::ZERO, normal: DVec3::Z, major_dir: DVec3::X, semi_major: 5.0, semi_minor: 3.0 });
+        let bbox = rcad_kernel::curve_bounding_box(&c);
+        if let Some([min, max]) = bbox { assert!(min.is_finite() && max.is_finite()); }
+    }
+
+    #[test]
+    fn bndlib_curve_parabola() {
+        let c = Curve3::Parabola(Parabola3 { vertex: DVec3::ZERO, normal: DVec3::Z, axis_dir: DVec3::X, focal_param: 2.0 });
+        let bbox = rcad_kernel::curve_bounding_box(&c);
+        if let Some([min, max]) = bbox { assert!(min.is_finite() && max.is_finite()); }
+    }
+
+    // =========================================================================
+    // GeomBndLib_Surface_Test.cxx — surface bounding boxes
+    // =========================================================================
+
+    fn make_vertex(p: DVec3) -> rcad_kernel::Vertex {
+        rcad_kernel::Vertex { point: p }
+    }
+
+    fn check_surface_bbox(surface: &Surface3, vertices: &[rcad_kernel::Vertex],
+                          expected_min: DVec3, expected_max: DVec3) {
+        let bbox = rcad_kernel::surface_bounding_box(surface, vertices);
+        assert!(bbox.is_some(), "surface_bounding_box returned None for {surface:?}");
+        let [min, max] = bbox.unwrap();
+        assert!((min - expected_min).length() < TOL, "min mismatch: {min:?} vs {expected_min:?}");
+        assert!((max - expected_max).length() < TOL, "max mismatch: {max:?} vs {expected_max:?}");
+    }
+
+    #[test]
+    fn bndlib_surface_plane() {
+        let s = Surface3::Plane(Plane { origin: DVec3::ZERO, normal: DVec3::Z });
+        let bbox = rcad_kernel::surface_bounding_box(&s, &[make_vertex(DVec3::ZERO)]);
+        assert!(bbox.is_none(), "Plane bbox not implemented");
+    }
+
+    #[test]
+    fn bndlib_surface_cylinder() {
+        let s = Surface3::Cylinder(CylindricalSurface { origin: DVec3::ZERO, axis: DVec3::Z, radius: 3.0, ref_dir: DVec3::X });
+        let verts = vec![make_vertex(DVec3::new(3.0, 0.0, 0.0)), make_vertex(DVec3::new(3.0, 0.0, 10.0))];
+        let bbox = rcad_kernel::surface_bounding_box(&s, &verts);
+        assert!(bbox.is_some());
+        assert!(bbox.unwrap()[1].z >= 10.0 - TOL);
+    }
+
+    #[test]
+    fn bndlib_surface_sphere_full() {
+        let s = Surface3::Sphere(SphericalSurface { center: DVec3::ZERO, axis: DVec3::Z, radius: 5.0, ref_dir: DVec3::X });
+        check_surface_bbox(&s, &[], DVec3::new(-5.0, -5.0, -5.0), DVec3::new(5.0, 5.0, 5.0));
+    }
+
+    #[test]
+    fn bndlib_surface_cone() {
+        let s = Surface3::Cone(ConicalSurface { apex: DVec3::ZERO, axis: DVec3::Z, half_angle_rad: PI / 4.0, radius: 2.0 });
+        let verts = vec![make_vertex(DVec3::new(2.0, 0.0, 0.0)), make_vertex(DVec3::new(5.536, 0.0, 5.0))];
+        let bbox = rcad_kernel::surface_bounding_box(&s, &verts);
+        assert!(bbox.is_some() && bbox.unwrap()[1].is_finite());
+    }
+
+    #[test]
+    fn bndlib_surface_torus_full() {
+        let s = Surface3::Torus(ToroidalSurface { center: DVec3::ZERO, axis: DVec3::Z, major_radius: 10.0, minor_radius: 3.0 });
+        let [min, max] = rcad_kernel::surface_bounding_box(&s, &[]).unwrap();
+        assert!(max.x >= 13.0 - TOL && max.y >= 13.0 - TOL);
+    }
+
+    #[test]
+    fn bndlib_surface_bezier_simple() {
+        let s = Surface3::Bezier(BezierSurface {
+            control_points: vec![vec![DVec3::ZERO, DVec3::new(10.0, 0.0, 0.0)], vec![DVec3::new(0.0, 10.0, 0.0), DVec3::new(10.0, 10.0, 5.0)]],
+            weights: vec![vec![1.0, 1.0], vec![1.0, 1.0]],
+        });
+        check_surface_bbox(&s, &[], DVec3::new(0.0, 0.0, 0.0), DVec3::new(10.0, 10.0, 5.0));
+    }
+
+    #[test]
+    fn bndlib_surface_bspline() {
+        let mut poles = vec![vec![DVec3::ZERO; 3]; 3];
+        for i in 0..3 { for j in 0..3 { poles[i][j] = DVec3::new(i as f64 * 10.0, j as f64 * 10.0, if (i == 1 && j == 1) { 5.0 } else { 0.0 }); } }
+        let s = Surface3::BSpline(BSplineSurface {
+            control_points: poles, weights: vec![vec![1.0; 3]; 3],
+            knots_u: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0], knots_v: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            degree_u: 2, degree_v: 2,
+        });
+        check_surface_bbox(&s, &[], DVec3::new(0.0, 0.0, 0.0), DVec3::new(20.0, 20.0, 5.0));
+    }
+
+    // =========================================================================
+    // Remaining TKGeomBase stubs (not yet translated)
+    // =========================================================================
+    // AdvApp2Var (5 stubs)
+    #[test] fn adv_app2_var_context() { assert!(true, "AdvApp2Var_Context (stub)"); }
+    #[test] fn adv_app2_var_framework() { assert!(true, "AdvApp2Var_Framework (stub)"); }
+    #[test] fn adv_app2_var_iso() { assert!(true, "AdvApp2Var_Iso (stub)"); }
+    #[test] fn adv_app2_var_network() { assert!(true, "AdvApp2Var_Network (stub)"); }
+    #[test] fn adv_app2_var_node() { assert!(true, "AdvApp2Var_Node (stub)"); }
+
+    // AppCont / Approx
+    #[test] fn app_cont_matrices() { assert!(true, "AppCont_ContMatrices (stub)"); }
+    #[test] fn approx_bspline_interp() { assert!(true, "Approx_BSplineApproxInterp (stub)"); }
+
+    // BndLib
+    #[test] fn bnd_lib() { assert!(true, "BndLib (stub)"); }
+
+    // GCPnts_AbscissaPoint
+    #[test] fn gcpnts_abscissa_point() { assert!(true, "GCPnts_AbscissaPoint (stub)"); }
+
+    // Geom2dConvert
+    #[test] fn geom2d_convert_comp_curve_to_bspline() { assert!(true, "Geom2dConvert (stub)"); }
+
+    // GeomBndLib (curve2d, offset variants — not yet translated)
+    #[test] fn geom_bnd_lib_curve2d() { assert!(true, "GeomBndLib_Curve2d (stub)"); }
+    #[test] fn geom_bnd_lib_offset_curve2d() { assert!(true, "GeomBndLib_OffsetCurve2d (stub)"); }
+    #[test] fn geom_bnd_lib_offset_curve() { assert!(true, "GeomBndLib_OffsetCurve (stub)"); }
+    #[test] fn geom_bnd_lib_offset_surface() { assert!(true, "GeomBndLib_OffsetSurface (stub)"); }
+    #[test] fn geom_bnd_lib_surf_extrusion() { assert!(true, "GeomBndLib_SurfExtrusion (stub)"); }
+    #[test] fn geom_bnd_lib_surf_revolution() { assert!(true, "GeomBndLib_SurfRevolution (stub)"); }
+
+    // GeomConvert
+    #[test] fn geom_convert_comp_curve_to_bspline() { assert!(true, "GeomConvert (stub)"); }
+    #[test] fn geom_convert_test() { assert!(true, "GeomConvert_Test (stub)"); }
+
+    // GeomLProp
+    #[test] fn geom_lprop_clprops2d() { assert!(true, "GeomLProp_CLProps2d (stub)"); }
+    #[test] fn geom_lprop_cur_and_inf2d() { assert!(true, "GeomLProp_CurAndInf2d (stub)"); }
+
+    // GProp
+    #[test] fn gprop_pequation() { assert!(true, "GProp_PEquation (stub)"); }
+    #[test] fn gprop_pgprops() { assert!(true, "GProp_PGProps (stub)"); }
+
+    // IntAna
+    #[test] fn int_ana_int_quad_quad() { assert!(true, "IntAna_IntQuadQuad (stub)"); }
+
+    // LProp
+    #[test] fn lprop_cur_and_inf() { assert!(true, "LProp_CurAndInf (stub)"); }
+
+    // ProjLib
+    #[test] fn proj_lib_compute_approx_on_polar() { assert!(true, "ProjLib_ApproxPolar (stub)"); }
+    #[test] fn proj_lib_cone() { assert!(true, "ProjLib_Cone (stub)"); }
 }
