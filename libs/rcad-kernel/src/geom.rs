@@ -1049,6 +1049,18 @@ pub trait CurveEval {
     /// Natural parameter domain `[t_min, t_max]`.
     /// Lines use `[NEG_INFINITY, INFINITY]`; circles/ellipses use `[0, 2π]`.
     fn default_domain(&self) -> [f64; 2];
+
+    /// OCCT-aligned: IsClosed — true for periodic curves where start == end (circle, ellipse).
+    fn is_closed(&self) -> bool { false }
+
+    /// OCCT-aligned: IsPeriodic — true for curves with cyclic parameter (circle, ellipse).
+    fn is_periodic(&self) -> bool { false }
+
+    /// OCCT-aligned: ReversedParameter(t) — parameter of the same geometric point
+    /// when traversed in the opposite direction.
+    /// For periodic curves (circle): `period - t` (mod period).
+    /// For non-periodic curves: `-t` (line).
+    fn reversed_parameter(&self, t: f64) -> f64 { t }
 }
 
 /// Parametric evaluation of a 3D surface: `(u, v) -> Point3`.
@@ -1098,6 +1110,15 @@ pub trait Curve2dEval {
     fn default_domain(&self) -> [f64; 2] {
         [f64::NEG_INFINITY, f64::INFINITY]
     }
+
+    /// OCCT-aligned: IsClosed — true for closed curves (circle, ellipse).
+    fn is_closed(&self) -> bool { false }
+
+    /// OCCT-aligned: IsPeriodic — true for periodic curves (circle, ellipse).
+    fn is_periodic(&self) -> bool { false }
+
+    /// OCCT-aligned: ReversedParameter(t) — parameter of the same point in reverse.
+    fn reversed_parameter(&self, t: f64) -> f64 { t }
 }
 
 // --- CurveEval implementations ---
@@ -1115,6 +1136,7 @@ impl CurveEval for Line3 {
     fn default_domain(&self) -> [f64; 2] {
         [f64::NEG_INFINITY, f64::INFINITY]
     }
+    fn reversed_parameter(&self, t: f64) -> f64 { -t }
 }
 
 impl CurveEval for Circle3 {
@@ -1130,6 +1152,9 @@ impl CurveEval for Circle3 {
     fn default_domain(&self) -> [f64; 2] {
         [0.0, 2.0 * PI]
     }
+    fn is_closed(&self) -> bool { true }
+    fn is_periodic(&self) -> bool { true }
+    fn reversed_parameter(&self, t: f64) -> f64 { 2.0 * PI - t }
 }
 
 impl CurveEval for Ellipse3 {
@@ -1151,6 +1176,9 @@ impl CurveEval for Ellipse3 {
     fn default_domain(&self) -> [f64; 2] {
         [0.0, 2.0 * PI]
     }
+    fn is_closed(&self) -> bool { true }
+    fn is_periodic(&self) -> bool { true }
+    fn reversed_parameter(&self, t: f64) -> f64 { 2.0 * PI - t }
 }
 
 impl CurveEval for Hyperbola3 {
@@ -2368,6 +2396,7 @@ impl Curve2dEval for Line2d {
     /// OCCT-aligned: D1(t) = Direction = constant unit vector (gp_Dir2d invariant).
     fn tangent_at(&self, _t: f64) -> DVec2 { self.direction }
     fn derivative_at(&self, _t: f64) -> DVec2 { self.direction }
+    fn reversed_parameter(&self, t: f64) -> f64 { -t }
 }
 
 impl Curve2dEval for Circle2d {
@@ -2382,6 +2411,9 @@ impl Curve2dEval for Circle2d {
         self.radius * (-t.sin() * self.x_dir + t.cos() * self.y_dir)
     }
     fn default_domain(&self) -> [f64; 2] { [0.0, 2.0 * PI] }
+    fn is_closed(&self) -> bool { true }
+    fn is_periodic(&self) -> bool { true }
+    fn reversed_parameter(&self, t: f64) -> f64 { 2.0 * PI - t }
 }
 
 impl Curve2dEval for Ellipse2d {
@@ -2398,6 +2430,9 @@ impl Curve2dEval for Ellipse2d {
         -self.major_radius * t.sin() * self.major_dir + self.minor_radius * t.cos() * minor
     }
     fn default_domain(&self) -> [f64; 2] { [0.0, 2.0 * PI] }
+    fn is_closed(&self) -> bool { true }
+    fn is_periodic(&self) -> bool { true }
+    fn reversed_parameter(&self, t: f64) -> f64 { 2.0 * PI - t }
 }
 
 impl Curve2dEval for Parabola2d {
