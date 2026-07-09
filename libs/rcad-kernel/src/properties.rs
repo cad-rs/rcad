@@ -1,4 +1,4 @@
-﻿//! Shape properties: surface area, volume, and centroid.
+//! Shape properties: surface area, volume, and centroid.
 //!
 //! Analogous to OCCT `GProp_GProps` with `BRepGProp`.
 //!
@@ -49,10 +49,9 @@ fn sample_wire_polyline_3d_with_n(brep: &topods::BRep, wire: &Wire, n: usize) ->
  let curve_opt = brep.tshapes.get(we.idx).and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { ed.curve.as_ref() } else { None } });
  if let Some(curve) = curve_opt {
  let range = brep
- .geom
- .edge_curve_range
+ .tshapes
  .get(we.idx)
- .and_then(|o| *o)
+ .and_then(|ts| { if let topods::TShape::Edge(ed) = &**ts { Some(ed.range) } else { None } })
  .unwrap_or_else(|| curve.default_domain());
  let [t0, t1] = if we.forward { range } else { [range[1], range[0]] };
  if (t1 - t0).abs() > 1e-12 && t0.is_finite() && t1.is_finite() {
