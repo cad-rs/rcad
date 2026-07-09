@@ -41,8 +41,8 @@ pub fn handle_degenerate_points(brep: &rcad_kernel::BRep, tolerance: f64) -> (rc
 
  // Check vertices for degeneracy
  for we in &face.outer_wire.edges {
- if let Some(edge) = ed_opt(brep, we.idx) {
- let vi = if we.forward { edge.start } else { edge.end };
+ if let Some(edge) = ed_opt(brep, we.index) {
+ let vi = if we.orientation == Orientation::Forward { edge.first.index } else { edge.last.index };
  if let Some(vertex) = brep.vertices.get(vi)
  && is_vertex_at_degenerate_point(
  vertex,
@@ -67,7 +67,7 @@ pub fn handle_degenerate_points(brep: &rcad_kernel::BRep, tolerance: f64) -> (rc
  for vi in &degenerate_vertices {
  // Find edges incident to this vertex and mark them if needed
  for (ei, edge) in result.edges.iter().enumerate() {
- if (edge.start == *vi || edge.end == *vi)
+ if (edge.first.index == *vi || edge.last.index == *vi)
  && result.geom.edge_degenerated.len() <= ei {
  result.geom.edge_degenerated.resize(ei + 1, false);
  }
@@ -159,15 +159,15 @@ pub fn merge_seam_edges(brep: &rcad_kernel::BRep, config: &PeriodicSeamConfig) -
  let mut edge_uv_endpoints: Vec<(usize, glam::DVec2, glam::DVec2)> = Vec::new();
 
  for we in &face.outer_wire.edges {
- if let Some(pcurves) = brep.geom.edge_pcurves.get(we.idx) {
+ if let Some(pcurves) = brep.geom.edge_pcurves.get(we.index) {
  for pc in pcurves {
  if pc.surface_idx != surface_idx {
  continue;
  }
  if let Some(curve2d) = brep.geom.curve2ds.get(pc.curve2d_idx) {
- let uv_start = curve2d.point_at(if we.forward { 0.0 } else { 1.0 });
- let uv_end = curve2d.point_at(if we.forward { 1.0 } else { 0.0 });
- edge_uv_endpoints.push((we.idx, uv_start, uv_end));
+ let uv_start = curve2d.point_at(if we.orientation == Orientation::Forward { 0.0 } else { 1.0 });
+ let uv_end = curve2d.point_at(if we.orientation == Orientation::Forward { 1.0 } else { 0.0 });
+ edge_uv_endpoints.push((we.index, uv_start, uv_end));
  }
  }
  }
@@ -198,7 +198,7 @@ pub fn merge_seam_edges(brep: &rcad_kernel::BRep, config: &PeriodicSeamConfig) -
  None => continue,
  };
 
- let shares_vertex = edge_i.end == edge_j.start || edge_i.start == edge_j.end;
+ let shares_vertex = edge_i.last.index == edge_j.first.index || edge_i.first.index == edge_j.last.index;
  if !shares_vertex {
  continue;
  }
@@ -424,8 +424,8 @@ fn compute_curvature_adjusted_tolerance(brep: &rcad_kernel::BRep, base_tolerance
 fn compute_face_area(brep: &rcad_kernel::BRep, face: &Face) -> f64 {
  let mut pts: Vec<DVec3> = Vec::new();
  for we in &face.outer_wire.edges {
- if let Some(edge) = ed_opt(brep, we.idx) {
- let vi = if we.forward { edge.start } else { edge.end };
+ if let Some(edge) = ed_opt(brep, we.index) {
+ let vi = if we.orientation == Orientation::Forward { edge.first.index } else { edge.last.index };
  if let Some(v) = brep.vertices.get(vi) {
  pts.push(v.point);
  }
@@ -1106,8 +1106,8 @@ fn find_shared_edge(brep: &rcad_kernel::BRep, si: usize, shi: usize, fi1: usize,
  let face1 = &brep.solids[si].shells[shi].faces[fi1];
  let face2 = &brep.solids[si].shells[shi].faces[fi2];
 
- let edges1: HashSet<usize> = face1.outer_wire.edges.iter().map(|we| we.idx).collect();
- let edges2: HashSet<usize> = face2.outer_wire.edges.iter().map(|we| we.idx).collect();
+ let edges1: HashSet<usize> = face1.outer_wire.edges.iter().map(|we| we.index).collect();
+ let edges2: HashSet<usize> = face2.outer_wire.edges.iter().map(|we| we.index).collect();
 
  edges1.intersection(&edges2).copied().next()
 }
@@ -1118,8 +1118,8 @@ fn splice_wires_for_merge(
  wire_b: &[rcad_kernel::topology::WireEdge],
  shared_edge_idx: usize,
 ) -> Option<Vec<rcad_kernel::topology::WireEdge>> {
- let pos_a = wire_a.iter().position(|we| we.idx == shared_edge_idx)?;
- let pos_b = wire_b.iter().position(|we| we.idx == shared_edge_idx)?;
+ let pos_a = wire_a.iter().position(|we| we.index == shared_edge_idx)?;
+ let pos_b = wire_b.iter().position(|we| we.index == shared_edge_idx)?;
 
  let n_b = wire_b.len();
  // B's edges (excluding the shared edge), in cyclic order starting at pos_b + 1
@@ -1268,17 +1268,17 @@ pub fn check_shell_closure(shell: &Shell, brep: &rcad_kernel::BRep) -> ClosureRe
  for face in &shell.faces {
  // Count edges in outer wire
  for we in &face.outer_wire.edges {
- if we.idx < n_edges {
- unique_edges.insert(we.idx);
- *edge_face_count.entry(we.idx).or_insert(0) += 1;
+ if we.index < n_edges {
+ unique_edges.insert(we.index);
+ *edge_face_count.entry(we.index).or_insert(0) += 1;
  }
  }
  // Count edges in inner wires
  for wire in &face.inner_wires {
  for we in &wire.edges {
- if we.idx < n_edges {
- unique_edges.insert(we.idx);
- *edge_face_count.entry(we.idx).or_insert(0) += 1;
+ if we.index < n_edges {
+ unique_edges.insert(we.index);
+ *edge_face_count.entry(we.index).or_insert(0) += 1;
  }
  }
  }
@@ -1296,8 +1296,8 @@ pub fn check_shell_closure(shell: &Shell, brep: &rcad_kernel::BRep) -> ClosureRe
  let mut unique_verts: HashSet<usize> = HashSet::new();
  for &ei in &unique_edges {
  if let Some(edge) = ed_opt(brep, ei) {
- unique_verts.insert(edge.start);
- unique_verts.insert(edge.end);
+ unique_verts.insert(edge.first.index);
+ unique_verts.insert(edge.last.index);
  }
  }
 
@@ -1428,8 +1428,8 @@ fn compute_shell_centroid(shell: &Shell, brep: &rcad_kernel::BRep) -> DVec3 {
 
  for face in &shell.faces {
  for we in &face.outer_wire.edges {
- if let Some(edge) = ed_opt(brep, we.idx) {
- let vi = if we.forward { edge.start } else { edge.end };
+ if let Some(edge) = ed_opt(brep, we.index) {
+ let vi = if we.orientation == Orientation::Forward { edge.first.index } else { edge.last.index };
  if let Some(v) = brep.vertices.get(vi) {
  sum += v.point;
  count += 1;
@@ -1451,8 +1451,8 @@ fn compute_face_centroid(wire: &Wire, brep: &rcad_kernel::BRep) -> DVec3 {
  let mut count = 0usize;
 
  for we in &wire.edges {
- if let Some(edge) = ed_opt(brep, we.idx) {
- let vi = if we.forward { edge.start } else { edge.end };
+ if let Some(edge) = ed_opt(brep, we.index) {
+ let vi = if we.orientation == Orientation::Forward { edge.first.index } else { edge.last.index };
  if let Some(v) = brep.vertices.get(vi) {
  sum += v.point;
  count += 1;
@@ -1485,14 +1485,14 @@ fn analyze_shell_manifoldness(shell: &Shell, brep: &rcad_kernel::BRep) -> Manifo
  let mut edge_face_count: HashMap<usize, usize> = HashMap::new();
  for face in &shell.faces {
  for we in &face.outer_wire.edges {
- if we.idx < n_edges {
- *edge_face_count.entry(we.idx).or_insert(0) += 1;
+ if we.index < n_edges {
+ *edge_face_count.entry(we.index).or_insert(0) += 1;
  }
  }
  for wire in &face.inner_wires {
  for we in &wire.edges {
- if we.idx < n_edges {
- *edge_face_count.entry(we.idx).or_insert(0) += 1;
+ if we.index < n_edges {
+ *edge_face_count.entry(we.index).or_insert(0) += 1;
  }
  }
  }
@@ -1509,8 +1509,8 @@ fn analyze_shell_manifoldness(shell: &Shell, brep: &rcad_kernel::BRep) -> Manifo
  let mut vertex_edge_count: HashMap<usize, HashSet<usize>> = HashMap::new();
  for &ei in edge_face_count.keys() {
  if let Some(edge) = ed_opt(brep, ei) {
- vertex_edge_count.entry(edge.start).or_default().insert(ei);
- vertex_edge_count.entry(edge.end).or_default().insert(ei);
+ vertex_edge_count.entry(edge.first.index).or_default().insert(ei);
+ vertex_edge_count.entry(edge.last.index).or_default().insert(ei);
  }
  }
 
@@ -1748,14 +1748,14 @@ pub fn fix_shell_orientation_advanced(shell: &Shell, brep: &rcad_kernel::BRep) -
 
  for (face_idx, face) in shell.faces.iter().enumerate() {
  for we in &face.outer_wire.edges {
- if we.idx < n_edges {
- edge_faces.entry(we.idx).or_default().push((face_idx, we.forward));
+ if we.index < n_edges {
+ edge_faces.entry(we.index).or_default().push((face_idx, we.orientation == Orientation::Forward));
  }
  }
  for wire in &face.inner_wires {
  for we in &wire.edges {
- if we.idx < n_edges {
- edge_faces.entry(we.idx).or_default().push((face_idx, we.forward));
+ if we.index < n_edges {
+ edge_faces.entry(we.index).or_default().push((face_idx, we.orientation == Orientation::Forward));
  }
  }
  }
@@ -1771,11 +1771,11 @@ pub fn fix_shell_orientation_advanced(shell: &Shell, brep: &rcad_kernel::BRep) -
  while let Some(current_face) = queue.pop_front() {
  let current_keep = face_orientation[current_face].unwrap();
  for we in &shell.faces[current_face].outer_wire.edges {
- if we.idx >= n_edges { continue; }
- if let Some(adjacent) = edge_faces.get(&we.idx) {
+ if we.index >= n_edges { continue; }
+ if let Some(adjacent) = edge_faces.get(&we.index) {
  for &(adj_face_idx, adj_forward) in adjacent {
  if adj_face_idx == current_face || face_orientation[adj_face_idx].is_some() { continue; }
- let current_forward = we.forward;
+ let current_forward = we.orientation == Orientation::Forward;
  if adjacent.len() == 2 {
  let should_flip = if current_keep { current_forward == adj_forward } else { current_forward != adj_forward };
  face_orientation[adj_face_idx] = Some(!should_flip);
@@ -1848,7 +1848,7 @@ pub fn repair_shell_closure(shell: &Shell, brep: &rcad_kernel::BRep, tolerance: 
  let mut edge_face_count: HashMap<usize, usize> = HashMap::new();
  for face in &shell.faces {
  for we in &face.outer_wire.edges {
- if we.idx < n_edges { *edge_face_count.entry(we.idx).or_insert(0) += 1; }
+ if we.index < n_edges { *edge_face_count.entry(we.index).or_insert(0) += 1; }
  }
  }
 
@@ -1876,7 +1876,7 @@ pub fn repair_shell_closure(shell: &Shell, brep: &rcad_kernel::BRep, tolerance: 
  let last = ed_opt(brep, chain[chain.len() - 1]);
  let curr = ed_opt(brep, oe);
  if let (Some(l), Some(c)) = (last, curr)
- && (l.end == c.start || l.end == c.end || l.start == c.start || l.start == c.end) {
+ && (l.last.index == c.first.index || l.last.index == c.last.index || l.first.index == c.first.index || l.first.index == c.last.index) {
  chain.push(oe);
  visited.insert(oe);
  extended = true;
@@ -1891,7 +1891,7 @@ pub fn repair_shell_closure(shell: &Shell, brep: &rcad_kernel::BRep, tolerance: 
  let first = ed_opt(brep, chain[0]);
  let last = ed_opt(brep, chain[chain.len() - 1]);
  if let (Some(f), Some(l)) = (first, last) {
- l.end == f.start || l.start == f.start || l.end == f.end || l.start == f.end
+ l.last.index == f.first.index || l.first.index == f.first.index || l.last.index == f.last.index || l.first.index == f.last.index
  } else { false }
  };
 
@@ -1925,7 +1925,7 @@ fn estimate_chain_area(chain: &[usize], brep: &rcad_kernel::BRep) -> f64 {
  let mut nodes: Vec<DVec3> = Vec::new();
  for &ei in chain {
  if let Some(edge) = ed_opt(brep, ei)
- && let (Some(s), Some(e)) = (brep.vertices.get(edge.start), brep.vertices.get(edge.end)) {
+ && let (Some(s), Some(e)) = (brep.vertices.get(edge.first.index), brep.vertices.get(edge.last.index)) {
  if nodes.is_empty() { nodes.push(s.point); }
  nodes.push(e.point);
  }
