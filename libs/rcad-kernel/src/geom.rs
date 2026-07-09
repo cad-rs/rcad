@@ -1082,6 +1082,18 @@ pub trait SurfaceEval {
         let pv = self.point_at(u, v + eps);
         (p, (pu - p) / eps, (pv - p) / eps)
     }
+
+    /// OCCT-aligned: IsUClosed / IsVClosed — true if surface is closed in that direction.
+    fn is_u_closed(&self) -> bool { false }
+    fn is_v_closed(&self) -> bool { false }
+
+    /// OCCT-aligned: IsUPeriodic / IsVPeriodic — true if parameter is cyclic.
+    fn is_u_periodic(&self) -> bool { false }
+    fn is_v_periodic(&self) -> bool { false }
+
+    /// OCCT-aligned: UReversedParameter / VReversedParameter — parameter in reverse direction.
+    fn u_reversed_parameter(&self, t: f64) -> f64 { t }
+    fn v_reversed_parameter(&self, t: f64) -> f64 { t }
 }
 
 /// Parametric evaluation of a 2D curve (PCurve): `t -> Point2`.
@@ -1398,6 +1410,9 @@ impl SurfaceEval for CylindricalSurface {
         let dpu = self.radius * (-su * x_ax + cu * y_ax);
         (p, dpu, self.axis)
     }
+    fn is_u_closed(&self) -> bool { true }
+    fn is_u_periodic(&self) -> bool { true }
+    fn u_reversed_parameter(&self, t: f64) -> f64 { 2.0 * PI - t }
 }
 
 impl SphericalSurface {
@@ -1474,6 +1489,10 @@ impl SurfaceEval for SphericalSurface {
         let dpv = self.radius * (cv * radial - sv * self.axis);
         (p, dpu, dpv)
     }
+    fn is_u_closed(&self) -> bool { true }
+    fn is_u_periodic(&self) -> bool { true }
+    fn u_reversed_parameter(&self, t: f64) -> f64 { 2.0 * PI - t }
+    fn v_reversed_parameter(&self, t: f64) -> f64 { PI - t }  // OCCT: colatitude [0, π]
 }
 
 impl SurfaceEval for ConicalSurface {
@@ -1550,6 +1569,12 @@ impl SurfaceEval for ToroidalSurface {
         let dpv = -r_minor * sv * r_vec + r_minor * cv * self.axis;
         (p, dpu, dpv)
     }
+    fn is_u_closed(&self) -> bool { true }
+    fn is_u_periodic(&self) -> bool { true }
+    fn u_reversed_parameter(&self, t: f64) -> f64 { 2.0 * PI - t }
+    fn is_v_closed(&self) -> bool { true }
+    fn is_v_periodic(&self) -> bool { true }
+    fn v_reversed_parameter(&self, t: f64) -> f64 { 2.0 * PI - t }
 }
 
 impl ToroidalSurface {
